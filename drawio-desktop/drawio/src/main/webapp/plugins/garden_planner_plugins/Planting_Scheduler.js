@@ -60,7 +60,6 @@ Draw.loadPlugin(function (ui) {
 
     async function getDbPath() {
         if (__dbPathCached) {
-            console.log("[DB] Using cached database path:", __dbPathCached);
             return __dbPathCached;
         }
 
@@ -75,8 +74,6 @@ Draw.loadPlugin(function (ui) {
         });
 
         __dbPathCached = r.dbPath;
-
-        console.log("[DB] Resolved database path:", __dbPathCached);
 
         return __dbPathCached;
     }
@@ -190,8 +187,6 @@ Draw.loadPlugin(function (ui) {
         }
 
         static async loadById(id) {
-            console.log('[PlantModel.loadById] called with id:', id);
-
             const sql = `
           SELECT *,
                  COALESCE(direct_sow,0) AS direct_sow,
@@ -1063,7 +1058,11 @@ Draw.loadPlugin(function (ui) {
         const sow0 = schedule[0];
 
         if (!(sow0 instanceof Date) || Number.isNaN(sow0.getTime())) {
-            return { rows: [], lastScheduledHarvestEndISO: null };
+            return {
+                rows: [],
+                firstScheduledHarvestISO: null, // CHANGED
+                lastScheduledHarvestEndISO: null
+            };
         }
 
         const stageDays = {
@@ -1084,7 +1083,13 @@ Draw.loadPlugin(function (ui) {
         });
 
         const tl = timelines[0];
-        if (!tl || !(tl.harvestEnd instanceof Date)) return { rows: [], lastScheduledHarvestEndISO: null };
+        if (!tl || !(tl.harvestStart instanceof Date) || !(tl.harvestEnd instanceof Date)) {
+            return {
+                rows: [],
+                firstScheduledHarvestISO: null, // CHANGED
+                lastScheduledHarvestEndISO: null
+            };
+        }
 
         const row = {
             idx: 1,
@@ -1098,10 +1103,12 @@ Draw.loadPlugin(function (ui) {
             mult: (Number.isFinite(multipliers[0]) ? multipliers[0].toFixed(3) : ''),
         };
 
-        return { rows: [row], lastScheduledHarvestEndISO: row.harvEnd };
+        return {
+            rows: [row],
+            firstScheduledHarvestISO: row.harvStart, // CHANGED
+            lastScheduledHarvestEndISO: row.harvEnd
+        };
     }
-
-
 
     async function resolveVarietyName(varietyId, varietyList) {
         if (!varietyId) return '';
@@ -1456,6 +1463,257 @@ Draw.loadPlugin(function (ui) {
 
 
 
+    function buildAutoWindowPlanner(params) {
+        const {
+            method, budget, HW_DAYS,
+            dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
+            scanStart, scanEndHard,
+            soilGateThresholdC, soilGateConsecutiveDays,
+            startCoolingThresholdC,
+            useSpringFrostGate,
+            daysTransplant,
+            overwinterAllowed
+        } = params;
+
+        const fakePlant = {
+            start_cooling_threshold_c: startCoolingThresholdC,
+            soil_temp_min_plant_c: soilGateThresholdC,
+            isPerennial: () => false,
+            isBiennial: () => false,
+            overwinter_ok: overwinterAllowed ? 1 : 0,
+            days_transplant: daysTransplant,
+            cropTempEnvelope: () => cropTemp,
+            firstHarvestBudget: () => budget
+        };
+
+        const fakeCity = {
+            dailyRates: (_tbase, _year) => dailyRatesMap,
+            monthlyMeans: () => monthlyAvgTemp
+        };
+
+        const policy = new PolicyFlags({
+            useSoilTempGate: Number.isFinite(soilGateThresholdC) && method === 'direct_sow',
+            soilGateThresholdC,
+            soilGateConsecutiveDays,
+            overwinterAllowed,
+            useSpringFrostGate: !!useSpringFrostGate && !overwinterAllowed,
+            springFrostRisk: 'p50'
+        });
+
+        const inputs = new ScheduleInputs({
+            plant: fakePlant,
+            city: fakeCity,
+            method,
+            startISO: scanStart.toISOString().slice(0, 10),
+            seasonEndISO: scanEndHard.toISOString().slice(0, 10),
+            policy,
+            seasonStartYear: scanStart.getUTCFullYear(),
+            harvestWindowDays: HW_DAYS // CHANGED
+        });
+
+        const planner = new Planner(inputs);
+        return { planner, ctx: planner.ctx };
+    }
+
+
+    // -------------------- Feasibility + window (single pure function) --------------------
+    function computeAutoStartEndWindowForward(params) {
+        const {
+            method, budget, HW_DAYS,
+            dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
+            scanStart, scanEndHard,
+            // gates                                                                         
+            soilGateThresholdC = null, soilGateConsecutiveDays = 3,
+            startCoolingThresholdC = null,
+            useSpringFrostGate = false,
+            lastSpringFrostDOY = null,
+            // transplant specifics                                                          
+            daysTransplant = 0,
+            // behavior                                                                      
+            overwinterAllowed = false,
+        } = params;
+
+        // Build planner using fake plant/city with the given environment                    
+        const { planner } = buildAutoWindowPlanner({
+            method, budget, HW_DAYS,
+            dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
+            scanStart, scanEndHard,
+            soilGateThresholdC, soilGateConsecutiveDays,
+            startCoolingThresholdC,
+            useSpringFrostGate,
+            daysTransplant,
+            overwinterAllowed
+        });
+
+        const C = planner.ctx;
+
+        // Limit sow scanning for overwinter crops to the first season year        
+        const sowScanEnd = overwinterAllowed
+            ? asUTCDate(C.scanStart.getUTCFullYear(), 12, 31)
+            : C.scanEndHard;
+
+        // --- Build earliest FIELD date (air-gated date) ---                                
+        let fieldGateStart = new Date(C.scanStart);
+
+        // spring frost gate                                                                 
+        if (useSpringFrostGate && Number.isFinite(lastSpringFrostDOY)) {
+            const frostDate = dateFromDOY(C.scanStart.getUTCFullYear(), lastSpringFrostDOY);
+            if (frostDate > fieldGateStart) fieldGateStart = frostDate;
+        }
+
+        // cooling gate (air)                                                                
+        if (Number.isFinite(startCoolingThresholdC)) {
+            const cross = firstCoolingCrossingDate({
+                thresholdC: startCoolingThresholdC,
+                monthlyAvgTemp,
+                scanStart: C.scanStart,
+                scanEndHard: C.scanEndHard
+            });
+            if (cross && cross > fieldGateStart) fieldGateStart = cross;
+        }
+
+        // --- Convert fieldGateStart → sow candidate based on method ---                    
+        let sowCandidate = new Date(fieldGateStart);
+
+        if (method === 'transplant_indoor') {
+            const dt = Math.max(0, Math.round(Number(daysTransplant) || 0));
+            const indoorSow = planner.addDays(fieldGateStart, -dt);
+            sowCandidate = indoorSow < C.scanStart ? new Date(C.scanStart) : indoorSow;
+        } else if (method === 'transplant_outdoor') {
+            sowCandidate = fieldGateStart;
+        } else if (method === 'direct_sow') {
+            sowCandidate = fieldGateStart;
+        }
+
+        // --- Walk feasibility from that candidate using full planner logic ---             
+        const firstNonSoil = (method === 'direct_sow')
+            ? (firstNonSoilStart(planner, sowCandidate) || sowCandidate)
+            : sowCandidate;
+
+        let firstOkSow = null;
+        let firstOkHarvestStart = null; // CHANGED
+        let firstOkHarvestEnd = null;
+        let lastOkHarvestEnd = null;
+        let lastThermalHarvestEnd = null;
+        let lastOkSow = null;
+
+        for (let d = new Date(firstNonSoil); d <= sowScanEnd; d = planner.addDays(d, 1)) {
+            const r = planner.isSowFeasible(d); // CHANGED
+            if (r.ok) {
+
+                if (!firstOkSow) {
+                    firstOkSow = new Date(d);
+                    firstOkHarvestStart = r.harvestStart; // CHANGED
+                    firstOkHarvestEnd = r.harvestEnd;
+                }
+
+                lastOkSow = new Date(d);
+
+                const hEnd = r.harvestEnd;
+                if (!lastOkHarvestEnd || hEnd > lastOkHarvestEnd) {
+                    lastOkHarvestEnd = hEnd;
+                }
+            } else {
+                const isThermal = classifyIsThermal(r.reason) ||
+                    r.reason === 'cross_year_disallowed' ||
+                    r.reason === 'beyond_hard_end';
+                if (isThermal && Number.isFinite(HW_DAYS)) {
+                    let hEnd = impliedHarvestEndForDate(planner, d, HW_DAYS);
+                    if (hEnd > C.scanEndHard) hEnd = new Date(C.scanEndHard);
+                    if (!lastThermalHarvestEnd || hEnd > lastThermalHarvestEnd) {
+                        lastThermalHarvestEnd = hEnd;
+                    }
+                }
+            }
+        }
+
+        // No feasible sow found                                                             
+        if (!firstOkSow) {
+            console.log('[autoWindow] scan (no feasible)', {
+                scanStart: C.scanStart.toISOString().slice(0, 10),
+                scanEndHard: C.scanEndHard.toISOString().slice(0, 10),
+                method,
+                firstNonSoil: firstNonSoil ? firstNonSoil.toISOString().slice(0, 10) : null,
+                lastThermalHarvestEnd: lastThermalHarvestEnd
+                    ? lastThermalHarvestEnd.toISOString().slice(0, 10)
+                    : null
+            });
+
+            const earliest = firstNonSoil || new Date(C.scanStart);
+            const fallbackHarvestEnd = lastThermalHarvestEnd || new Date(C.scanEndHard);
+
+            return {
+                earliestFeasibleSowDate: earliest,
+                earliestHarvestStartDate: null, // CHANGED
+                earliestHarvestEndDate: fallbackHarvestEnd, // CHANGED
+                lastFeasibleSowDate: null,
+                climateEndDate: fallbackHarvestEnd
+            };
+        }
+
+        const earliestFeasibleSow = firstOkSow;
+        const lastFeasibleSow = lastOkSow;
+        const firstFeasibleHarvestStart = firstOkHarvestStart; // CHANGED
+        const firstFeasibleHarvestEnd = firstOkHarvestEnd;
+        const lastFeasibleHarvestEnd = lastOkHarvestEnd;
+
+        // Fallback for logging/debug
+        const fallbackHarvestEnd = lastFeasibleHarvestEnd ||
+            firstFeasibleHarvestEnd ||
+            lastThermalHarvestEnd ||
+            new Date(C.scanEndHard);
+
+        // These are now explicit, not overloaded
+        const earliestHarvestStartDate = firstFeasibleHarvestStart || null; // CHANGED
+        const earliestHarvestEndDate = firstFeasibleHarvestEnd || earliestFeasibleSow; // CHANGED
+
+        // climate-level end of window
+        let climateEndDate;
+        if (overwinterAllowed) {
+            // For overwinter crops, tie climate end to the last (schedule) harvest      
+
+            climateEndDate = earliestHarvestEndDate
+                || lastFeasibleHarvestEnd
+                || lastThermalHarvestEnd
+                || new Date(C.scanEndHard);
+        } else {
+            // Non-overwinter crops: keep full climate envelope behavior as before       
+            climateEndDate = lastFeasibleHarvestEnd
+                || lastThermalHarvestEnd
+                || earliestHarvestEndDate
+                || new Date(C.scanEndHard);
+        }
+
+        console.log('[autoWindow] RESULT', {
+            earliestFeasibleSowDate: fmtISO(earliestFeasibleSow),
+            earliestHarvestStartDate: earliestHarvestStartDate ? fmtISO(earliestHarvestStartDate) : null, // CHANGED
+            earliestHarvestEndDate: fmtISO(earliestHarvestEndDate), // CHANGED
+            lastFeasibleSowDate: lastFeasibleSow ? fmtISO(lastFeasibleSow) : null,
+            climateEndDate: climateEndDate ? fmtISO(climateEndDate) : null, // CHANGED
+            HW_DAYS,
+            method
+        });
+
+        return {
+            earliestFeasibleSowDate: earliestFeasibleSow,
+            earliestHarvestStartDate, // CHANGED
+            earliestHarvestEndDate,   // CHANGED
+            lastFeasibleSowDate: lastFeasibleSow,
+            climateEndDate
+        };
+    }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1569,267 +1827,6 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    function buildAutoWindowPlanner(params) {
-        const {
-            method, budget, HW_DAYS,
-            dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
-            scanStart, scanEndHard,
-            soilGateThresholdC, soilGateConsecutiveDays,
-            startCoolingThresholdC,
-            useSpringFrostGate,
-            daysTransplant,
-            overwinterAllowed
-        } = params;
-
-        const fakePlant = {
-            start_cooling_threshold_c: startCoolingThresholdC,
-            soil_temp_min_plant_c: soilGateThresholdC,
-            isPerennial: () => false,
-            isBiennial: () => false,
-            overwinter_ok: overwinterAllowed ? 1 : 0,
-            days_transplant: daysTransplant,
-            cropTempEnvelope: () => cropTemp,
-            firstHarvestBudget: () => budget
-        };
-
-        const fakeCity = {
-            dailyRates: (_tbase, _year) => dailyRatesMap,
-            monthlyMeans: () => monthlyAvgTemp
-        };
-
-        const policy = new PolicyFlags({
-            useSoilTempGate: Number.isFinite(soilGateThresholdC) && method === 'direct_sow',
-            soilGateThresholdC,
-            soilGateConsecutiveDays,
-            overwinterAllowed,
-            useSpringFrostGate: !!useSpringFrostGate && !overwinterAllowed,
-            springFrostRisk: 'p50'
-        });
-
-        const inputs = new ScheduleInputs({
-            plant: fakePlant,
-            city: fakeCity,
-            method,
-            startISO: scanStart.toISOString().slice(0, 10),
-            seasonEndISO: scanEndHard.toISOString().slice(0, 10),
-            policy,
-            seasonStartYear: scanStart.getUTCFullYear()
-        });
-
-        const planner = new Planner(inputs);
-        return { planner, ctx: planner.ctx };
-    }
-
-
-    // -------------------- Feasibility + window (single pure function) --------------------
-    function computeAutoStartEndWindowForward(params) {
-        const {
-            method, budget, HW_DAYS,
-            dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
-            scanStart, scanEndHard,
-            // gates                                                                         
-            soilGateThresholdC = null, soilGateConsecutiveDays = 3,
-            startCoolingThresholdC = null,
-            useSpringFrostGate = false,
-            lastSpringFrostDOY = null,
-            // transplant specifics                                                          
-            daysTransplant = 0,
-            // behavior                                                                      
-            overwinterAllowed = false,
-        } = params;
-
-        // Build planner using fake plant/city with the given environment                    
-        const { planner } = buildAutoWindowPlanner({
-            method, budget, HW_DAYS,
-            dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
-            scanStart, scanEndHard,
-            soilGateThresholdC, soilGateConsecutiveDays,
-            startCoolingThresholdC,
-            useSpringFrostGate,
-            daysTransplant,
-            overwinterAllowed
-        });
-
-        const C = planner.ctx;
-
-        // Limit sow scanning for overwinter crops to the first season year        
-        const sowScanEnd = overwinterAllowed
-            ? asUTCDate(C.scanStart.getUTCFullYear(), 12, 31)
-            : C.scanEndHard;
-
-        // --- Build earliest FIELD date (air-gated date) ---                                
-        let fieldGateStart = new Date(C.scanStart);
-
-        // spring frost gate                                                                 
-        if (useSpringFrostGate && Number.isFinite(lastSpringFrostDOY)) {
-            const frostDate = dateFromDOY(C.scanStart.getUTCFullYear(), lastSpringFrostDOY);
-            if (frostDate > fieldGateStart) fieldGateStart = frostDate;
-        }
-
-        // cooling gate (air)                                                                
-        if (Number.isFinite(startCoolingThresholdC)) {
-            const cross = firstCoolingCrossingDate({
-                thresholdC: startCoolingThresholdC,
-                monthlyAvgTemp,
-                scanStart: C.scanStart,
-                scanEndHard: C.scanEndHard
-            });
-            if (cross && cross > fieldGateStart) fieldGateStart = cross;
-        }
-
-        // --- Convert fieldGateStart → sow candidate based on method ---                    
-        let sowCandidate = new Date(fieldGateStart);
-
-        if (method === 'transplant_indoor') {
-            const dt = Math.max(0, Math.round(Number(daysTransplant) || 0));
-            const indoorSow = planner.addDays(fieldGateStart, -dt);
-            sowCandidate = indoorSow < C.scanStart ? new Date(C.scanStart) : indoorSow;
-        } else if (method === 'transplant_outdoor') {
-            sowCandidate = fieldGateStart;
-        } else if (method === 'direct_sow') {
-            sowCandidate = fieldGateStart;
-        }
-
-        // --- Walk feasibility from that candidate using full planner logic ---             
-        const firstNonSoil = (method === 'direct_sow')
-            ? (firstNonSoilStart(planner, sowCandidate) || sowCandidate)
-            : sowCandidate;
-
-        let firstOkSow = null;
-        let firstOkHarvestEnd = null;
-        let lastOkHarvestEnd = null;
-        let lastThermalHarvestEnd = null;
-        let lastOkSow = null;
-
-        for (let d = new Date(firstNonSoil); d <= sowScanEnd; d = planner.addDays(d, 1)) {
-            const r = planner.isSowFeasible(d, true);
-            if (r.ok) {
-
-                if (!firstOkSow) {
-                    firstOkSow = new Date(d);
-                    firstOkHarvestEnd = r.harvestEnd;
-                }
-                lastOkSow = new Date(d);
-
-                const hEnd = r.harvestEnd;
-                if (!lastOkHarvestEnd || hEnd > lastOkHarvestEnd) {
-                    lastOkHarvestEnd = hEnd;
-                }
-            } else {
-                const isThermal = classifyIsThermal(r.reason) ||
-                    r.reason === 'cross_year_disallowed' ||
-                    r.reason === 'beyond_hard_end';
-                if (isThermal && Number.isFinite(HW_DAYS)) {
-                    let hEnd = impliedHarvestEndForDate(planner, d, HW_DAYS);
-                    if (hEnd > C.scanEndHard) hEnd = new Date(C.scanEndHard);
-                    if (!lastThermalHarvestEnd || hEnd > lastThermalHarvestEnd) {
-                        lastThermalHarvestEnd = hEnd;
-                    }
-                }
-            }
-        }
-
-        // No feasible sow found                                                             
-        if (!firstOkSow) {
-            console.log('[autoWindow] scan (no feasible)', {
-                scanStart: C.scanStart.toISOString().slice(0, 10),
-                scanEndHard: C.scanEndHard.toISOString().slice(0, 10),
-                method,
-                firstNonSoil: firstNonSoil ? firstNonSoil.toISOString().slice(0, 10) : null,
-                lastThermalHarvestEnd: lastThermalHarvestEnd
-                    ? lastThermalHarvestEnd.toISOString().slice(0, 10)
-                    : null
-            });
-
-            const earliest = firstNonSoil || new Date(C.scanStart);
-            const fallbackHarvestEnd = lastThermalHarvestEnd || new Date(C.scanEndHard);
-
-            return {
-                earliestFeasibleSowDate: earliest,
-                lastHarvestDate: fallbackHarvestEnd,
-                lastFeasibleSowDate: null,
-                climateEndDate: fallbackHarvestEnd
-            };
-        }
-
-        // At least one feasible sow                                                         
-        const earliestFeasibleSow = firstOkSow;
-        const lastFeasibleSow = lastOkSow;
-        const firstFeasibleHarvestEnd = firstOkHarvestEnd;
-        const lastFeasibleHarvestEnd = lastOkHarvestEnd;
-
-        // Fallback for logging/debug (not used in return)                                   
-        const fallbackHarvestEnd = lastFeasibleHarvestEnd ||
-            firstFeasibleHarvestEnd ||
-            lastThermalHarvestEnd ||
-            new Date(C.scanEndHard);
-
-        // Decide which harvest-end to expose as lastHarvestDate                             
-        const lastHarvestDate = firstFeasibleHarvestEnd || earliestFeasibleSow;
-
-        // climate-level end of window
-        let climateEndDate;
-        if (overwinterAllowed) {
-            // For overwinter crops, tie climate end to the last (schedule) harvest      
-            climateEndDate = lastHarvestDate
-                || lastFeasibleHarvestEnd
-                || lastThermalHarvestEnd
-                || firstFeasibleHarvestEnd
-                || new Date(C.scanEndHard);
-        } else {
-            // Non-overwinter crops: keep full climate envelope behavior as before       
-            climateEndDate = lastFeasibleHarvestEnd
-                || lastThermalHarvestEnd
-                || firstFeasibleHarvestEnd
-                || new Date(C.scanEndHard);
-        }
-
-
-        console.log('[autoWindow] RESULT', {
-            earliestFeasibleSowDate: fmtISO(earliestFeasibleSow),
-            lastHarvestDate: fmtISO(lastHarvestDate),
-            lastFeasibleSowDate: lastFeasibleSow ? fmtISO(lastFeasibleSow) : null,
-            HW_DAYS, method
-        });
-
-        return {
-            earliestFeasibleSowDate: earliestFeasibleSow,
-            lastHarvestDate,
-            lastFeasibleSowDate: lastFeasibleSow,
-            climateEndDate
-        };
-    }
 
 
 
@@ -3388,7 +3385,12 @@ Draw.loadPlugin(function (ui) {
 
 
         const div = document.createElement('div');
-        div.style.padding = '12px'; div.style.width = '600px';
+        div.style.padding = '12px';
+        div.style.width = '720px'; // CHANGED
+        div.style.maxWidth = '96vw'; // CHANGED
+        div.style.maxHeight = '85vh'; // CHANGED
+        div.style.overflow = 'auto'; // CHANGED
+        div.style.boxSizing = 'border-box'; // CHANGED
 
         // ---- inline error bar --------------------------------------------------- 
         const errorBar = document.createElement('div');
@@ -3417,6 +3419,98 @@ Draw.loadPlugin(function (ui) {
             return b;
         };
 
+        const contextSection = makeSection('Schedule Context'); // CHANGED
+        const contentCol = document.createElement('div'); // CHANGED
+        contentCol.style.display = 'flex'; // CHANGED
+        contentCol.style.flexDirection = 'column'; // CHANGED
+        contentCol.style.gap = '12px'; // CHANGED
+
+        const plantSection = makeSection('Crop'); // CHANGED
+        const envSection = makeSection('Method'); // CHANGED
+        const windowSection = makeSection('Sowing Window'); // CHANGED
+        const timelineSection = makeSection('Timeline'); // CHANGED
+        const inputsSection = makeSection('Planting'); // CHANGED
+        const harvestSection = makeSection('Harvest'); // CHANGED
+
+        div.appendChild(contextSection.wrap); // CHANGED
+
+        contentCol.appendChild(plantSection.wrap); // CHANGED
+        contentCol.appendChild(envSection.wrap); // CHANGED
+        contentCol.appendChild(windowSection.wrap); // CHANGED
+        contentCol.appendChild(timelineSection.wrap); // CHANGED
+        contentCol.appendChild(inputsSection.wrap); // CHANGED
+        contentCol.appendChild(harvestSection.wrap); // CHANGED
+
+        div.appendChild(contentCol); // CHANGED
+
+        function styleCompactActionButton(btn) { // CHANGED
+            btn.style.marginLeft = '0'; // CHANGED
+            btn.style.minWidth = '28px'; // CHANGED
+            btn.style.padding = '4px 8px'; // CHANGED
+            btn.style.lineHeight = '1.2'; // CHANGED
+            return btn; // CHANGED
+        } // CHANGED
+
+        function makeSection(title) { // CHANGED
+            const wrap = document.createElement('div'); // CHANGED
+            wrap.style.marginTop = '12px'; // CHANGED
+
+            const heading = document.createElement('div'); // CHANGED
+            heading.textContent = title; // CHANGED
+            heading.style.fontWeight = '600'; // CHANGED
+            heading.style.fontSize = '13px'; // CHANGED
+            heading.style.padding = '0 0 6px 0'; // CHANGED
+            heading.style.borderBottom = '1px solid #d1d5db'; // CHANGED
+            heading.style.marginBottom = '8px'; // CHANGED
+
+            const body = document.createElement('div'); // CHANGED
+            wrap.appendChild(heading); // CHANGED
+            wrap.appendChild(body); // CHANGED
+
+            return { wrap, body }; // CHANGED
+        } // CHANGED
+
+        function makeDisplayField(initialValue = '', opts = {}) { // CHANGED
+            const el = document.createElement('div'); // CHANGED
+            el.textContent = initialValue || ''; // CHANGED
+            el.style.width = '100%'; // CHANGED
+            el.style.boxSizing = 'border-box'; // CHANGED
+            el.style.padding = opts.emphasis ? '8px 10px' : '6px 8px'; // CHANGED
+            el.style.minHeight = opts.emphasis ? '36px' : '32px'; // CHANGED
+            el.style.border = '1px solid #d1d5db'; // CHANGED
+            el.style.background = opts.emphasis ? '#eef6ff' : '#f3f4f6'; // CHANGED
+            el.style.color = '#374151'; // CHANGED
+            el.style.borderRadius = '4px'; // CHANGED
+            el.style.display = 'flex'; // CHANGED
+            el.style.alignItems = 'center'; // CHANGED
+            if (opts.emphasis) { // CHANGED
+                el.style.fontWeight = '600'; // CHANGED
+                el.style.fontSize = '14px'; // CHANGED
+                el.style.borderColor = '#93c5fd'; // CHANGED
+            } // CHANGED
+            return el; // CHANGED
+        } // CHANGED
+
+        function setDisplayFieldValue(el, value) { // CHANGED
+            el.textContent = value || ''; // CHANGED
+        } // CHANGED
+
+        function fmtShortDate(iso) { // CHANGED
+            if (!iso) return ''; // CHANGED
+            const d = new Date(iso + 'T00:00:00Z'); // CHANGED
+            return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }); // CHANGED
+        } // CHANGED
+
+        function parseISODateUTC(iso) { // CHANGED
+            if (!iso) return null; // CHANGED
+            const d = new Date(iso + 'T00:00:00Z'); // CHANGED
+            return Number.isNaN(d.getTime()) ? null : d; // CHANGED
+        } // CHANGED
+
+        function daysBetweenUTC(a, b) { // CHANGED
+            const ms = 24 * 60 * 60 * 1000; // CHANGED
+            return Math.round((b.getTime() - a.getTime()) / ms); // CHANGED
+        } // CHANGED
 
         // Plant selector
         const plantOpts = (plantsLocal || []).map(p => ({ value: String(p.plant_id), label: p.plant_name + (p.abbr ? ` (${p.abbr})` : '') }));
@@ -3428,7 +3522,7 @@ Draw.loadPlugin(function (ui) {
         plantControlsWrap.style.alignItems = 'center';
         plantControlsWrap.appendChild(plantSel);
 
-        const addPlantBtn = inlineButton('Add plant', async () => {
+        const addPlantBtn = styleCompactActionButton(inlineButton('+', async () => { // CHANGED
             try {
                 const saved = await openPlantEditorDialog(ui, { mode: 'add', plantId: null, varietyId: null });
                 if (!saved) return;
@@ -3439,9 +3533,9 @@ Draw.loadPlugin(function (ui) {
             } catch (e) {
                 showErrorInline('Add plant error: ' + (e?.message || String(e)));
             }
-        });
+        })); // CHANGED
 
-        const editPlantBtn = inlineButton('Edit plant', async () => {
+        const editPlantBtn = styleCompactActionButton(inlineButton('Edit', async () => { // CHANGED
             try {
                 syncStateFromControls();
 
@@ -3466,13 +3560,13 @@ Draw.loadPlugin(function (ui) {
             } catch (e) {
                 showErrorInline('Edit plant error: ' + (e?.message || String(e)));
             }
-        });
+        })); // CHANGED
 
         plantControlsWrap.appendChild(addPlantBtn);
         plantControlsWrap.appendChild(editPlantBtn);
 
-        const plantSelectRow = row('Select plant:', plantControlsWrap);
-        div.appendChild(plantSelectRow.row);
+        const plantSelectRow = row('Plant:', plantControlsWrap); // CHANGED
+        plantSection.body.appendChild(plantSelectRow.row); // CHANGED
 
         const findPlantById = (id) => (plantsLocal || []).find(p => Number(p.plant_id) === Number(id)) || null;
 
@@ -3552,12 +3646,8 @@ Draw.loadPlugin(function (ui) {
             await refreshTaskTemplateFromSelection();
         }
 
-        const plantRow = document.createElement('div');
-        const plantLbl = document.createElement('span'); plantLbl.textContent = 'Plant:';
-        const plantNameSpan = document.createElement('span'); plantNameSpan.style.fontWeight = '600';
-        plantNameSpan.textContent = selPlant.plant_name;
-        plantRow.appendChild(plantLbl); plantRow.appendChild(document.createTextNode(' ')); plantRow.appendChild(plantNameSpan);
-        div.appendChild(plantRow); div.appendChild(document.createElement('br'));
+        const plantNameSpan = document.createElement('span'); // CHANGED
+        plantNameSpan.textContent = selPlant.plant_name; // CHANGED
 
         // Variety selector + Add button                                       
         const varietySel = document.createElement('select');
@@ -3570,7 +3660,7 @@ Draw.loadPlugin(function (ui) {
         varietyControlsWrap.style.alignItems = 'center';
         varietyControlsWrap.appendChild(varietySel);
 
-        const addVarietyBtn = inlineButton('Add variety', async () => {
+        const addVarietyBtn = styleCompactActionButton(inlineButton('+', async () => { // CHANGED
             try {
                 syncStateFromControls();
 
@@ -3606,11 +3696,11 @@ Draw.loadPlugin(function (ui) {
             } catch (e) {
                 showErrorInline('Add variety error: ' + (e?.message || String(e)));
             }
-        });
+        })); // CHANGED
 
         varietyControlsWrap.appendChild(addVarietyBtn);
 
-        const editVarietyBtn = inlineButton('Edit variety', async () => {
+        const editVarietyBtn = styleCompactActionButton(inlineButton('Edit', async () => { // CHANGED
             try {
                 syncStateFromControls();
 
@@ -3647,19 +3737,19 @@ Draw.loadPlugin(function (ui) {
             } catch (e) {
                 setVarietyStatus('Edit variety error: ' + (e?.message || String(e)));
             }
-        });
+        })); // CHANGED
 
         varietyControlsWrap.appendChild(editVarietyBtn);
 
-        const varietyRow = row('Variety:', varietyControlsWrap);
-        div.appendChild(varietyRow.row);
+        const varietyRow = row('Variety:', varietyControlsWrap); // CHANGED
+        plantSection.body.appendChild(varietyRow.row); // CHANGED
 
         const varietyStatus = document.createElement('div');
         varietyStatus.style.fontSize = '12px';
         varietyStatus.style.color = '#92400e';
         varietyStatus.style.marginTop = '4px';
         varietyStatus.textContent = '';
-        div.appendChild(varietyStatus);
+        plantSection.body.appendChild(varietyStatus); // CHANGED
 
         function setVarietyStatus(msg) {
             varietyStatus.textContent = msg || '';
@@ -3780,8 +3870,8 @@ Draw.loadPlugin(function (ui) {
         const initialEndISO = lastHarvestDate.toISOString().slice(0, 10);
 
         // Read-only auto-computed bounds                                         
-        const autoEarliestInput = makeDate(initialStartISO, true);
-        const autoLastSowInput = makeDate(initialStartISO, true);
+        const autoEarliestInput = makeDisplayField(initialStartISO); // CHANGED
+        const autoLastSowInput = makeDisplayField(initialStartISO); // CHANGED
 
         // User-controlled first sow date (used for schedule startISO)                   
         const startInput = makeDate(initialStartISO, false);
@@ -3789,9 +3879,9 @@ Draw.loadPlugin(function (ui) {
         // Auto-computed season end constraint (read-only for annuals, editable for perennials)
         const seasonEndInput = makeDate(initialEndISO, true);
 
-        // Schedule-derived last harvest date (always read-only)
-        const lastHarvestInput = makeDate(initialEndISO, true);
-
+        const harvestStartInput = makeDisplayField('', { emphasis: true }); // CHANGED
+        const harvestEndInput = makeDisplayField(initialEndISO); // CHANGED
+        const daysToFirstHarvestInput = makeDisplayField(''); // CHANGED
         let firstSowDirty = false;
 
         const startNoteSpan = document.createElement('span');
@@ -3867,6 +3957,7 @@ Draw.loadPlugin(function (ui) {
             harvestWindowDays: (harvestWindowInput.value === '' ? null : Number(harvestWindowInput.value)),
             autoEarliestISO: initialStartISO,
             lastFeasibleSowISO: null,
+            firstHarvestISO: null, // CHANGED
             lastHarvestISO: initialEndISO,
             lastHarvestSource: 'auto'
         };
@@ -3888,20 +3979,42 @@ Draw.loadPlugin(function (ui) {
         }
 
 
-        function syncControlsFromState({ start = false, end = false, lastHarvest = false } = {}) {
+        function syncControlsFromState({ start = false, end = false, harvest = false } = {}) { // CHANGED
             if (start && formState.startISO) {
                 startInput.value = formState.startISO;
             }
             if (end && formState.seasonEndISO) {
                 seasonEndInput.value = formState.seasonEndISO;
             }
-            if (lastHarvest && lastHarvestInput) {
-                lastHarvestInput.value = formState.lastHarvestISO || '';
+            if (harvest) { // CHANGED
+                if (harvestStartInput) {
+                    setDisplayFieldValue(harvestStartInput, formState.firstHarvestISO || ''); // CHANGED
+                }
+                if (harvestEndInput) {
+                    setDisplayFieldValue(harvestEndInput, formState.lastHarvestISO || ''); // CHANGED
+                }
             }
-            // Other controls are already wired directly from user edits               
+            updateDaysToFirstHarvest(); // CHANGED
         }
 
+        function syncStartDateBounds() { // CHANGED
+            if (!startInput) return; // CHANGED
+            startInput.min = formState.autoEarliestISO || ''; // CHANGED
+            startInput.max = formState.lastFeasibleSowISO || ''; // CHANGED
+        } // CHANGED
 
+        function updateDaysToFirstHarvest() { // CHANGED
+            const sow = parseISODateUTC(formState.startISO); // CHANGED
+            const harvest = parseISODateUTC(formState.firstHarvestISO); // CHANGED
+
+            if (!sow || !harvest) { // CHANGED
+                setDisplayFieldValue(daysToFirstHarvestInput, ''); // CHANGED
+                return; // CHANGED
+            } // CHANGED
+
+            const dtm = daysBetweenUTC(sow, harvest); // CHANGED
+            setDisplayFieldValue(daysToFirstHarvestInput, String(dtm)); // CHANGED
+        } // CHANGED
 
         // -------------------- Form schema for simple labeled fields ---------------- 
         const FIELD_SCHEMA = [
@@ -3935,47 +4048,55 @@ Draw.loadPlugin(function (ui) {
         });
 
 
-        const autoEarliestRowObj = row('Earliest feasible sow:', autoEarliestInput);
+        const autoEarliestRowObj = row('Earliest:', autoEarliestInput); // CHANGED
+        const autoLastSowRowObj = row('Latest:', autoLastSowInput); // CHANGED
 
-        const autoLastSowRowObj = row('Last feasible sow:', autoLastSowInput);
+        const firstSowRowObj = row('Sow date:', startInput); // CHANGED
+        if (startNote) firstSowRowObj.row.appendChild(startNoteSpan); // CHANGED
 
-        const firstSowRowObj = row('First sow date:', startInput);
-        if (startNote) firstSowRowObj.row.appendChild(startNoteSpan);
+        const endRow = row('Season end date:', seasonEndInput); // CHANGED
+        const harvestStartRowObj = row('Harvest start date:', harvestStartInput); // CHANGED
+        const harvestEndRowObj = row('Harvest end date:', harvestEndInput); // CHANGED
+        const daysToFirstHarvestRowObj = row('Days to first harvest:', daysToFirstHarvestInput); // CHANGED
 
-        const endRow = row('Season end date:', seasonEndInput);
+        appendFieldRows(contextSection.body, fieldRows, ['seasonStartYear', 'cityName']); // CHANGED
+        appendFieldRows(envSection.body, fieldRows, ['methodCategoryId', 'methodId']); // CHANGED
 
-        const lastHarvestRowObj = row('Last harvest date:', lastHarvestInput);
+        windowSection.body.appendChild(autoEarliestRowObj.row); // CHANGED
+        windowSection.body.appendChild(autoLastSowRowObj.row); // CHANGED
+        windowSection.body.appendChild(endRow.row); // CHANGED
 
-        appendFieldRows(div, fieldRows, ['seasonStartYear']);
-        appendFieldRows(div, fieldRows, ['cityName', 'methodCategoryId', 'methodId', 'harvestWindowDays']);
-        div.appendChild(autoEarliestRowObj.row);
-        div.appendChild(autoLastSowRowObj.row);
-        div.appendChild(firstSowRowObj.row);
-        div.appendChild(endRow.row);
-        div.appendChild(lastHarvestRowObj.row);
+        inputsSection.body.appendChild(firstSowRowObj.row); // CHANGED
+        appendFieldRows(inputsSection.body, fieldRows, ['harvestWindowDays']); // CHANGED
 
+        harvestSection.body.appendChild(harvestStartRowObj.row); // CHANGED
+        harvestSection.body.appendChild(harvestEndRowObj.row); // CHANGED
+        harvestSection.body.appendChild(daysToFirstHarvestRowObj.row); // CHANGED
 
         const baseStartNote = startNote || '';
 
         function applyModeToUI() {
             const perennial = mode.perennial;
 
-            // Labels                                                                   
             if (perennial) {
-                firstSowRowObj.label.textContent = 'Planting date:';
-                endRow.label.textContent = 'Lifespan end:';
-                lastHarvestRowObj.row.style.display = 'none';                           // hide schedule last-harvest for perennials
+                firstSowRowObj.label.textContent = 'Planting date:'; // CHANGED
+                endRow.label.textContent = 'Lifespan end:'; // CHANGED
+                harvestStartRowObj.row.style.display = 'none'; // CHANGED
+                harvestEndRowObj.row.style.display = 'none'; // CHANGED
+                daysToFirstHarvestRowObj.row.style.display = 'none'; // CHANGED
             } else {
-                endRow.label.textContent = 'Season end date:';
-                lastHarvestRowObj.row.style.display = '';
+                firstSowRowObj.label.textContent = 'Sow date:'; // CHANGED
+                endRow.label.textContent = 'Season end date:'; // CHANGED
+                harvestStartRowObj.row.style.display = ''; // CHANGED
+                harvestEndRowObj.row.style.display = ''; // CHANGED
+                daysToFirstHarvestRowObj.row.style.display = ''; // CHANGED
             }
 
-            // Auto-window visibility                                                   
-            autoEarliestRowObj.row.style.display = perennial ? 'none' : '';
-            autoLastSowRowObj.row.style.display = perennial ? 'none' : '';
+            autoEarliestRowObj.row.style.display = perennial ? 'none' : ''; // CHANGED
+            autoLastSowRowObj.row.style.display = perennial ? 'none' : ''; // CHANGED
+            timelineSection.wrap.style.display = perennial ? 'none' : ''; // CHANGED
 
-            // End date editability                                                     
-            seasonEndInput.disabled = !perennial;
+            seasonEndInput.disabled = !perennial; // CHANGED
         }
 
 
@@ -4084,9 +4205,16 @@ Draw.loadPlugin(function (ui) {
 
                 const autoStartISO = r.earliestFeasibleSowDate.toISOString().slice(0, 10);
                 const lastSowISO = r.lastFeasibleSowDate ? r.lastFeasibleSowDate.toISOString().slice(0, 10) : null;
+
+                const autoHarvestISO = r.lastHarvestDate
+                    ? r.lastHarvestDate.toISOString().slice(0, 10)
+                    : null; // ADDED
+
                 // Store auto window (for display/guidance)                          
                 formState.autoEarliestISO = autoStartISO;
                 formState.lastFeasibleSowISO = lastSowISO;
+                formState.firstHarvestISO = null; // CHANGED
+                formState.lastHarvestISO = autoHarvestISO; // ADDED
 
                 // Optionally reset user-chosen first sow date to earliest           
                 if (forceWriteStart || !firstSowDirty) {
@@ -4100,18 +4228,20 @@ Draw.loadPlugin(function (ui) {
 
                 // Push values to the read-only controls                              
                 if (formState.autoEarliestISO && autoEarliestInput) {
-                    autoEarliestInput.value = formState.autoEarliestISO;
+                    setDisplayFieldValue(autoEarliestInput, formState.autoEarliestISO); // CHANGED
                 }
                 if (autoLastSowInput) {
-                    autoLastSowInput.value = formState.lastFeasibleSowISO || '';
+                    setDisplayFieldValue(autoLastSowInput, formState.lastFeasibleSowISO || ''); // CHANGED
                 }
 
-                // Push editable fields (first sow & last harvest) as needed          
                 syncControlsFromState({
                     start: forceWriteStart || !firstSowDirty,
-                    end: forceWriteEnd
+                    end: forceWriteEnd,
+                    harvest: true
                 });
+
                 updateStartNote();
+                syncStartDateBounds(); // CHANGED
             } catch (_) { /* silent */ }
         }
 
@@ -4148,9 +4278,12 @@ Draw.loadPlugin(function (ui) {
 
                 formState.startISO = startInput.value;
                 formState.seasonEndISO = seasonEndInput.value;
-                formState.lastHarvestISO = formState.seasonEndISO;                    // tie schedule last-harvest to lifespan end for perennials
+                formState.firstHarvestISO = null; // CHANGED
+                formState.lastHarvestISO = formState.seasonEndISO; // CHANGED
+                formState.lastScheduleEndISO = formState.seasonEndISO; // CHANGED
                 syncStateFromControls();
                 firstSowDirty = false;
+
             } else {
                 // Non-perennial: reset HW default and clear dirty flag               
                 harvestWindowInput.value = (plant?.defaultHW() ?? '').toString();
@@ -4178,14 +4311,22 @@ Draw.loadPlugin(function (ui) {
                 seasonEndInput.value = endISO;
                 formState.seasonEndISO = endISO;
 
-                // For perennials, schedule last harvest == lifespan end                 
-                formState.lastScheduleEndISO = endISO;
-                formState.lastHarvestSource = 'user';
+                formState.firstHarvestISO = null; // CHANGED
+                formState.lastHarvestISO = endISO; // CHANGED
+                formState.lastScheduleEndISO = endISO; // CHANGED
+                formState.lastHarvestSource = 'user'; // CHANGED
 
-                if (lastHarvestInput) {
-                    lastHarvestInput.value = endISO;
+                if (harvestStartInput) {
+                    setDisplayFieldValue(harvestStartInput, ''); // CHANGED
+                }
+                if (harvestEndInput) {
+                    setDisplayFieldValue(harvestEndInput, endISO); // CHANGED
                 }
 
+                updateDaysToFirstHarvest(); // CHANGED
+
+                syncStartDateBounds(); // CHANGED
+                updateTimeline(); // CHANGED
                 return;
             }
 
@@ -4242,11 +4383,90 @@ Draw.loadPlugin(function (ui) {
             syncControlsFromState({
                 start: true,
                 end: true,
-                lastHarvest: true
+                harvest: true
             });
+            syncStartDateBounds(); // CHANGED
             updateStartNote();
+            updateTimeline(); // CHANGED
         }
 
+        const timelineWrap = document.createElement('div'); // CHANGED
+        timelineWrap.style.display = 'flex'; // CHANGED
+        timelineWrap.style.flexDirection = 'column'; // CHANGED
+        timelineWrap.style.gap = '6px'; // CHANGED
+
+        const timelineLabels = document.createElement('div'); // CHANGED
+        timelineLabels.style.display = 'flex'; // CHANGED
+        timelineLabels.style.justifyContent = 'space-between'; // CHANGED
+        timelineLabels.style.fontSize = '12px'; // CHANGED
+        timelineLabels.style.color = '#6b7280'; // CHANGED
+
+        const timelineStartLabel = document.createElement('span'); // CHANGED
+        const timelineEndLabel = document.createElement('span'); // CHANGED
+        timelineLabels.appendChild(timelineStartLabel); // CHANGED
+        timelineLabels.appendChild(timelineEndLabel); // CHANGED
+
+        const timelineBarWrap = document.createElement('div'); // CHANGED
+        timelineBarWrap.style.position = 'relative'; // CHANGED
+        timelineBarWrap.style.height = '26px'; // CHANGED
+
+        const timelineBar = document.createElement('div'); // CHANGED
+        timelineBar.style.position = 'absolute'; // CHANGED
+        timelineBar.style.left = '0'; // CHANGED
+        timelineBar.style.right = '0'; // CHANGED
+        timelineBar.style.top = '11px'; // CHANGED
+        timelineBar.style.height = '4px'; // CHANGED
+        timelineBar.style.background = '#d1d5db'; // CHANGED
+        timelineBar.style.borderRadius = '999px'; // CHANGED
+
+        const timelineMarker = document.createElement('div'); // CHANGED
+        timelineMarker.textContent = '▲'; // CHANGED
+        timelineMarker.style.position = 'absolute'; // CHANGED
+        timelineMarker.style.top = '-2px'; // CHANGED
+        timelineMarker.style.transform = 'translateX(-50%)'; // CHANGED
+        timelineMarker.style.fontSize = '14px'; // CHANGED
+        timelineMarker.style.color = '#111827'; // CHANGED
+
+        const timelineStatus = document.createElement('div'); // CHANGED
+        timelineStatus.style.fontSize = '12px'; // CHANGED
+        timelineStatus.style.color = '#6b7280'; // CHANGED
+
+        timelineBarWrap.appendChild(timelineBar); // CHANGED
+        timelineBarWrap.appendChild(timelineMarker); // CHANGED
+        timelineWrap.appendChild(timelineLabels); // CHANGED
+        timelineWrap.appendChild(timelineBarWrap); // CHANGED
+        timelineWrap.appendChild(timelineStatus); // CHANGED
+        timelineSection.body.appendChild(timelineWrap); // CHANGED
+
+        function updateTimeline() { // CHANGED
+            const earliest = parseISODateUTC(formState.autoEarliestISO); // CHANGED
+            const latest = parseISODateUTC(formState.lastFeasibleSowISO); // CHANGED
+            const sow = parseISODateUTC(formState.startISO); // CHANGED
+
+            timelineStartLabel.textContent = fmtShortDate(formState.autoEarliestISO); // CHANGED
+            timelineEndLabel.textContent = fmtShortDate(formState.lastFeasibleSowISO); // CHANGED
+
+            if (mode.perennial || !earliest || !latest || !sow || latest < earliest) { // CHANGED
+                timelineSection.wrap.style.display = 'none'; // CHANGED
+                return; // CHANGED
+            } // CHANGED
+
+            timelineSection.wrap.style.display = ''; // CHANGED
+
+            const totalDays = Math.max(1, daysBetweenUTC(earliest, latest)); // CHANGED
+            const offsetDays = daysBetweenUTC(earliest, sow); // CHANGED
+            const ratio = offsetDays / totalDays; // CHANGED
+            const clampedRatio = Math.max(0, Math.min(1, ratio)); // CHANGED
+
+            timelineMarker.style.left = `${clampedRatio * 100}%`; // CHANGED
+
+            const isInvalid = sow < earliest || sow > latest; // CHANGED
+            timelineMarker.style.color = isInvalid ? '#b91c1c' : '#111827'; // CHANGED
+            timelineStatus.style.color = isInvalid ? '#b91c1c' : '#6b7280'; // CHANGED
+            timelineStatus.textContent = isInvalid // CHANGED
+                ? `Selected sow date ${fmtShortDate(formState.startISO)} is outside the feasible window.` // CHANGED
+                : `Selected sow date: ${fmtShortDate(formState.startISO)}`; // CHANGED
+        } // CHANGED
 
         plantSel.addEventListener('change', async () => {
             const newPlant = findPlantById(Number(plantSel.value)); if (!newPlant) return;
@@ -4403,8 +4623,18 @@ Draw.loadPlugin(function (ui) {
                 });
 
 
-                const { rows, lastScheduledHarvestEndISO } =
-                    await computeScheduleResult(inputs);
+                const {
+                    rows,
+                    firstScheduledHarvestISO, // CHANGED
+                    lastScheduledHarvestEndISO
+                } = await computeScheduleResult(inputs);
+
+                console.log('[SCHEDULE RESULT]', {
+                    rowsCount: rows?.length,
+                    firstRow: rows?.[0],
+                    lastRow: rows?.[rows.length - 1],
+                    lastScheduledHarvestEndISO
+                });
 
                 if (!rows.length || !lastScheduledHarvestEndISO) {
                     console.log('[recomputeLastHarvestFromSchedule] no rows', {
@@ -4412,8 +4642,18 @@ Draw.loadPlugin(function (ui) {
                         seasonEndISO: formState.seasonEndISO,
                         harvestWindowDays: formState.harvestWindowDays,
                     });
+
                     formState.lastScheduleEndISO = null;
-                    if (lastHarvestInput) lastHarvestInput.value = '';
+                    formState.firstHarvestISO = null; // CHANGED
+
+                    if (harvestStartInput) {
+                        setDisplayFieldValue(harvestStartInput, ''); // CHANGED
+                    }
+                    if (harvestEndInput) {
+                        setDisplayFieldValue(harvestEndInput, formState.lastHarvestISO || ''); // CHANGED
+                    }
+
+                    updateDaysToFirstHarvest();
                     return;
                 }
 
@@ -4423,13 +4663,17 @@ Draw.loadPlugin(function (ui) {
                     last: rows[rows.length - 1]
                 });
 
+                formState.firstHarvestISO = firstScheduledHarvestISO; // CHANGED
                 formState.lastScheduleEndISO = lastScheduledHarvestEndISO;
                 formState.lastHarvestISO = lastScheduledHarvestEndISO;
 
-                // Update schedule-derived last-harvest field ONLY                        
-                if (typeof lastHarvestInput !== 'undefined' && lastHarvestInput) {
-                    lastHarvestInput.value = lastScheduledHarvestEndISO;
+                if (harvestStartInput) {
+                    setDisplayFieldValue(harvestStartInput, formState.firstHarvestISO || ''); // CHANGED
                 }
+                if (harvestEndInput) {
+                    setDisplayFieldValue(harvestEndInput, formState.lastHarvestISO || ''); // CHANGED
+                }
+                updateDaysToFirstHarvest(); // CHANGED
 
                 console.log('[recomputeLastHarvestFromSchedule] scheduleEnd', {
                     lastScheduleEndISO: formState.lastScheduleEndISO
@@ -4443,11 +4687,12 @@ Draw.loadPlugin(function (ui) {
 
 
 
-        const btns = document.createElement('div');
-        btns.style.marginTop = '12px'; btns.style.display = 'flex'; btns.style.justifyContent = 'space-between';
-        const rightBtns = document.createElement('div'); rightBtns.style.display = 'flex'; rightBtns.style.gap = '8px';
+        const btns = document.createElement('div'); // CHANGED
+        btns.style.marginTop = '12px'; // CHANGED
+        btns.style.display = 'flex'; // CHANGED
+        btns.style.justifyContent = 'flex-end'; // CHANGED
 
-        const explainBtn = mxUtils.button('Explain season', async () => {
+        const explainBtn = mxUtils.button('Explain Sowing Range', async () => { // CHANGED
             try {
                 syncStateFromControls();
 
@@ -4485,8 +4730,15 @@ Draw.loadPlugin(function (ui) {
 
             } catch (e) { showErrorInline('Explain error: ' + e.message); }
         });
-        rightBtns.insertBefore(explainBtn, rightBtns.firstChild);
 
+        const rightBtns = document.createElement('div'); // CHANGED
+        rightBtns.style.display = 'flex'; // CHANGED
+        rightBtns.style.gap = '8px'; // CHANGED
+
+        const windowActions = document.createElement('div'); // CHANGED
+        windowActions.style.marginTop = '8px'; // CHANGED
+        windowActions.appendChild(explainBtn); // CHANGED
+        windowSection.body.appendChild(windowActions); // CHANGED
 
         const previewBtn = mxUtils.button('Preview', async () => {
             try {
@@ -4505,7 +4757,7 @@ Draw.loadPlugin(function (ui) {
         });
 
 
-        const okBtn = mxUtils.button('OK', async () => {
+        const okBtn = mxUtils.button('Save', async () => { // CHANGED
             try {
                 syncStateFromControls();
 
@@ -4577,8 +4829,10 @@ Draw.loadPlugin(function (ui) {
         [previewBtn, okBtn, cancelBtn].forEach(b => rightBtns.appendChild(b));
         btns.appendChild(rightBtns); div.appendChild(btns);
 
-        await recomputeAll('cityChanged');        // or 'yearChanged' or 'methodChanged'       
-
+        await recomputeAll('cityChanged'); // CHANGED
+        applyModeToUI(); // CHANGED
+        syncStartDateBounds(); // CHANGED
+        updateTimeline(); // CHANGED
 
 
 
@@ -4640,6 +4894,7 @@ Draw.loadPlugin(function (ui) {
         tasksHeaderRow.style.alignItems = "center";
         tasksHeaderRow.style.gap = "8px";
         tasksHeaderRow.style.marginBottom = "10px";
+
 
         const currentMethodSpan = document.createElement("div");
         currentMethodSpan.style.fontWeight = "600";
@@ -4723,7 +4978,7 @@ Draw.loadPlugin(function (ui) {
 
                 const editBtn = mxUtils.button("Edit", () => openTaskEditor(rule, idx));
                 const delBtn = mxUtils.button("Delete", () => {
-                
+
                     const isBuiltIn = isCanonicalTaskRule(rule);
                     if (isBuiltIn) {
                         const ok = confirm("This is a built-in task for the current method. Delete it from this template?");
@@ -4732,7 +4987,7 @@ Draw.loadPlugin(function (ui) {
                             return;
                         }
                     }
-                
+
                     taskRules.splice(idx, 1);
                     taskDirty = true;
                     renderTasksList();
@@ -4806,6 +5061,32 @@ Draw.loadPlugin(function (ui) {
             taskEditorDiv.innerHTML = "";
 
             const editing = !!rule;
+
+            // --------------------------------------------------
+            // Editor header
+            // --------------------------------------------------
+            const editorHeader = document.createElement("div"); // CHANGED
+            editorHeader.style.marginTop = "14px"; // CHANGED
+            editorHeader.style.marginBottom = "8px"; // CHANGED
+            editorHeader.style.paddingTop = "8px"; // CHANGED
+            editorHeader.style.borderTop = "1px solid #ccc"; // CHANGED
+            editorHeader.style.fontWeight = "600"; // CHANGED
+            editorHeader.textContent = editing ? "Edit task" : "Add task"; // CHANGED
+
+            taskEditorDiv.appendChild(editorHeader); // CHANGED
+
+            const editorBody = document.createElement("div"); // CHANGED
+            editorBody.style.display = "flex"; // CHANGED
+            editorBody.style.flexDirection = "column"; // CHANGED
+            editorBody.style.gap = "8px"; // CHANGED
+
+            editorBody.style.background = "#fafafa";
+            editorBody.style.padding = "8px";
+            editorBody.style.border = "1px solid #ddd";
+            editorBody.style.borderRadius = "4px";
+
+            taskEditorDiv.appendChild(editorBody); // CHANGED
+
             const r = normalizeTaskRule( // CHANGED
                 rule ? JSON.parse(JSON.stringify(rule)) : { // CHANGED
                     id: "rule_" + Date.now(),
@@ -4944,13 +5225,13 @@ Draw.loadPlugin(function (ui) {
             repeatModeSel.addEventListener("change", syncTaskEditorVisibility); // CHANGED
             repeatUntilModeSel.addEventListener("change", syncTaskEditorVisibility); // CHANGED
 
-            taskEditorDiv.appendChild(titleRow);
-            taskEditorDiv.appendChild(startRow); // CHANGED
-            taskEditorDiv.appendChild(endModeRow); // CHANGED
-            taskEditorDiv.appendChild(durationRow);
-            taskEditorDiv.appendChild(endAnchorRow); // CHANGED
-            taskEditorDiv.appendChild(repeatModeRow); // CHANGED
-            taskEditorDiv.appendChild(repeatConfigDiv);
+            editorBody.appendChild(titleRow);
+            editorBody.appendChild(startRow); // CHANGED
+            editorBody.appendChild(endModeRow); // CHANGED
+            editorBody.appendChild(durationRow);
+            editorBody.appendChild(endAnchorRow); // CHANGED
+            editorBody.appendChild(repeatModeRow); // CHANGED
+            editorBody.appendChild(repeatConfigDiv);
 
             syncTaskEditorVisibility(); // CHANGED
 
@@ -5107,7 +5388,7 @@ Draw.loadPlugin(function (ui) {
         // INITIAL RENDER
         renderTasksList();
 
-        ui.showDialog(tabsContainer, 620, 560, true, true);
+        ui.showDialog(tabsContainer, 720, 560, true, true);
 
 
         // inner helpers (closure over UI controls)
@@ -6212,10 +6493,15 @@ Draw.loadPlugin(function (ui) {
         const HW_DAYS = selectedPlant.defaultHW(); // may be null
 
         let earliestFeasibleSowDate = new Date(scanStart);
-        let lastHarvestDate = new Date(scanEndHard);
+        let climateEndDate = new Date(scanEndHard); // CHANGED
+        let lastHarvestDate = new Date(scanEndHard); // CHANGED
 
         if (Number.isFinite(HW_DAYS)) {
-            const { earliestFeasibleSowDate: a, lastHarvestDate: b } = computeAutoStartEndWindowForward({
+            const {
+                earliestFeasibleSowDate: a,
+                climateEndDate: c,
+                earliestHarvestEndDate: hEnd
+            } = computeAutoStartEndWindowForward({
                 method: methodPreview,
                 budget: budget,
                 HW_DAYS: HW_DAYS,
@@ -6232,10 +6518,11 @@ Draw.loadPlugin(function (ui) {
                 startCoolingThresholdC: asCoolingThresholdC(selectedPlant.start_cooling_threshold_c),
                 overwinterAllowed: overwinterAllowed0
             });
-            earliestFeasibleSowDate = a;
-            lastHarvestDate = b;
-        }
 
+            earliestFeasibleSowDate = a || new Date(scanStart); // CHANGED
+            climateEndDate = c || new Date(scanEndHard); // CHANGED
+            lastHarvestDate = hEnd || climateEndDate; // CHANGED
+        }
 
         // no stray reassignments like: earliestFeasibleSowDate = a; lastHarvestDate = b;  <-- remove these
 
@@ -6250,9 +6537,10 @@ Draw.loadPlugin(function (ui) {
                 city: cityInit,
                 method: methodPreview,
                 startISO: earliestFeasibleSowDate.toISOString().slice(0, 10),
-                seasonEndISO: lastHarvestDate.toISOString().slice(0, 10),
+                seasonEndISO: climateEndDate.toISOString().slice(0, 10), // CHANGED
                 policy: PolicyFlags.fromPlant(selectedPlant, methodPreview),
-                seasonStartYear: year
+                seasonStartYear: year,
+                harvestWindowDays: HW_DAYS // CHANGED
             });
 
             const planner0 = new Planner(inputs0);
@@ -6284,11 +6572,57 @@ Draw.loadPlugin(function (ui) {
         });
     }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     const USL_DEBUG_HARVEST_WINDOWS = true;
-
-
-
-
 
     // -------------------- Public API --------------------------------------------------------
     window.USL = window.USL || {};
@@ -6408,12 +6742,18 @@ Draw.loadPlugin(function (ui) {
                 const policy = PolicyFlags.fromPlant(plant, method);
 
                 const inputs = new ScheduleInputs({
-                    plant, city, method,
+                    plant,
+                    city,
+                    method,
                     startISO: `${year}-01-01`,
                     seasonEndISO: `${year}-12-31`,
                     policy,
                     seasonStartYear: year,
-                    varietyId, varietyName: ""
+                    harvestWindowDays: Number.isFinite(Number(plant?.harvest_window_days))
+                        ? Number(plant.harvest_window_days)
+                        : null, // CHANGED
+                    varietyId,
+                    varietyName: ""
                 });
 
                 const planner = new Planner(inputs);
@@ -6461,6 +6801,40 @@ Draw.loadPlugin(function (ui) {
                 return { cropId, harvestStart: null, harvestEnd: null, shelfLifeDays: null, reason: String(e?.message || e) };
             }
         }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
         if (graph.popupMenuHandler) graph.popupMenuHandler.selectOnPopup = false;
