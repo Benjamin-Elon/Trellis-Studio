@@ -626,6 +626,58 @@ Draw.loadPlugin(function (ui) {
         return out;
     }
 
+    async function resolveEffectivePlant(plantId, varietyId = null) {
+        const pid = Number(plantId);
+        if (!Number.isFinite(pid)) return null;
+    
+        const basePlant = await PlantModel.loadById(pid);
+        if (!basePlant) return null;
+    
+        const vid = Number(varietyId);
+        if (!Number.isFinite(vid)) {
+            return basePlant;
+        }
+    
+        const variety = await PlantVarietyModel.loadById(vid);
+        if (!variety) {
+            return basePlant;
+        }
+    
+        // Safety: ensure the variety belongs to the requested plant
+        if (Number(variety.plant_id) !== pid) {
+            console.warn("[resolveEffectivePlant] variety does not belong to plant", {
+                plantId: pid,
+                varietyId: vid,
+                varietyPlantId: variety.plant_id
+            });
+            return basePlant;
+        }
+    
+        const overrides = variety.overridesObject();
+        const mergedRow = applyPlantOverrides(toPlainDict(basePlant), overrides);
+    
+        // Preserve canonical ids/names
+        mergedRow.plant_id = basePlant.plant_id;
+        mergedRow.plant_name = basePlant.plant_name;
+        mergedRow.abbr = basePlant.abbr;
+    
+        return new PlantModel(mergedRow);
+    }
+
+    async function resolveVarietyName(varietyId, currentVarieties = null) {
+        const vid = Number(varietyId);
+        if (!Number.isFinite(vid)) return '';
+    
+        if (Array.isArray(currentVarieties)) {
+            const found = currentVarieties.find(v => Number(v?.variety_id) === vid);
+            if (found) {
+                return String(found.variety_name || '').trim();
+            }
+        }
+    
+        const row = await PlantVarietyModel.loadById(vid);
+        return row ? String(row.variety_name || '').trim() : '';
+    }
 
     class CityClimate {
         constructor(row) {
@@ -711,18 +763,38 @@ Draw.loadPlugin(function (ui) {
             Object.freeze(this);
         }
 
-        static fromPlant(plant, method) {
-            const raw = Number(plant.soil_temp_min_plant_c);
-            const threshold = Number.isFinite(raw) ? raw : null;
-            const soilGate = (method === 'direct_sow') && threshold != null;
-            const overwinterAllowed = plant.isPerennial() || Number(plant.overwinter_ok ?? 0) === 1;
+        static fromResolvedBehavior(plant, resolvedBehavior) { // CHANGED
+            const raw = Number(plant?.soil_temp_min_plant_c); // CHANGED
+            const threshold = Number.isFinite(raw) ? raw : null; // CHANGED
+            const overwinterAllowed = plant.isPerennial() || Number(plant.overwinter_ok ?? 0) === 1; // CHANGED
 
+            return new PolicyFlags({ // CHANGED
+                useSpringFrostGate: !overwinterAllowed, // CHANGED
+                springFrostRisk: 'p50', // CHANGED
+                useSoilTempGate: !!resolvedBehavior?.usesSoilTempGate && threshold != null, // CHANGED
+                soilGateThresholdC: threshold, // CHANGED
+                soilGateConsecutiveDays: 3, // CHANGED
+                overwinterAllowed // CHANGED
+            }); // CHANGED
+        } // CHANGED
+
+        static fromPlant(plant, method) {
+            const planningMode = String(method || "").trim();
+        
+            const usesSoilTempGate =
+                planningMode === "direct_sow" ||
+                planningMode === "transplant_indoor" ||
+                planningMode === "transplant_outdoor";
+        
+            const raw = Number(plant?.soil_temp_min_plant_c);
+            const threshold = Number.isFinite(raw) ? raw : null;
+            const overwinterAllowed =
+                plant.isPerennial() || Number(plant.overwinter_ok ?? 0) === 1;
+        
             return new PolicyFlags({
-                rejectOutsideThermalWindow: true,
-                // default spring frost ON when not overwintering
                 useSpringFrostGate: !overwinterAllowed,
-                springFrostRisk: 'p50',
-                useSoilTempGate: soilGate,
+                springFrostRisk: "p50",
+                useSoilTempGate: !!usesSoilTempGate && threshold != null,
                 soilGateThresholdC: threshold,
                 soilGateConsecutiveDays: 3,
                 overwinterAllowed
@@ -732,10 +804,56 @@ Draw.loadPlugin(function (ui) {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     class ScheduleInputs {
-        constructor({ plant, city, method, startISO, seasonEndISO, policy, seasonStartYear, harvestWindowDays, varietyId = null, varietyName = '' }) {
+        constructor({
+            plant,
+            city,
+            method,
+            methodCategoryId = "", // CHANGED
+            methodId = "", // CHANGED
+            startISO,
+            seasonEndISO,
+            policy,
+            seasonStartYear,
+            harvestWindowDays,
+            varietyId = null,
+            varietyName = ''
+        }) {
             Object.assign(this, {
-                plant, city, method, startISO, seasonEndISO, policy,
+                plant,
+                city,
+                method,
+                methodCategoryId: String(methodCategoryId || ""), // CHANGED
+                methodId: String(methodId || ""), // CHANGED
+                startISO,
+                seasonEndISO,
+                policy,
                 seasonStartYear: Number(seasonStartYear),
                 harvestWindowDays: (harvestWindowDays == null ? null : Number(harvestWindowDays)),
                 varietyId: (varietyId != null ? Number(varietyId) : null),
@@ -757,20 +875,16 @@ Draw.loadPlugin(function (ui) {
                     throw new Error('Perennial requires lifespan_years in DB.');
                 scanYears = Math.floor(this.plant.lifespan_years);
             } else if (this.plant.isBiennial()) {
-                // Expect 2+ years to finish; use lifespan_years if present, else block.
                 if (!Number.isFinite(this.plant.lifespan_years) || this.plant.lifespan_years < 2)
                     throw new Error('Biennial requires lifespan_years ≥ 2 in DB (e.g., 2 for bulbils).');
                 scanYears = Math.floor(this.plant.lifespan_years);
             } else {
-                // Annuals: 1 season; if DB marks overwinter_ok=1 you may allow 2 seasons,
-                // but ONLY if you also have an explicit DB maturity span that needs it.
                 scanYears = 1 + (Number(this.plant.overwinter_ok) === 1 ? 1 : 0);
             }
 
             const scanStart = asUTCDate(this.seasonStartYear, 1, 1);
             const scanEndHard = asUTCDate(this.seasonStartYear + scanYears - 1, 12, 31);
 
-            // Build thermals keyed to the first scan year only (monthly means are reused)
             const year = scanStart.getUTCFullYear();
             const dailyRates = this.city.dailyRates(env.Tbase, year);
             const monthlyAvg = this.city.monthlyMeans();
@@ -779,59 +893,17 @@ Draw.loadPlugin(function (ui) {
         }
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     class Planner {
         constructor(inputs) {
-            // Build the full, read-only context once
-            const { plant, city, method, policy, varietyId, varietyName } = inputs;
+            const { plant, city, method, methodCategoryId, methodId, policy, varietyId, varietyName } = inputs;
             const { startDate, seasonEnd, env, dailyRates, monthlyAvg, scanStart, scanEndHard } = inputs.derived();
-            const budget = plant.firstHarvestBudget();  // {mode, amount}
+            const budget = plant.firstHarvestBudget();
 
             const HW_DAYS = Number.isFinite(Number(inputs.harvestWindowDays))
                 ? Number(inputs.harvestWindowDays)
                 : (Number.isFinite(Number(plant.harvest_window_days)) ? Number(plant.harvest_window_days) : 7);
 
-            // --- cooling gate (based on plant.start_cooling_threshold_c) ---
             const coolingThreshold = asCoolingThresholdC(plant.start_cooling_threshold_c);
-
 
             let coolingCross = null;
             if (coolingThreshold != null) {
@@ -843,14 +915,14 @@ Draw.loadPlugin(function (ui) {
                 });
             }
 
-
             this.ctx = Object.freeze({
-                // inmethods for the whole planning pass
                 method,
-                // cooling gate config
+                methodCategoryId: String(methodCategoryId || ""),
+                methodId: String(methodId || ""),
+
                 useCoolingGate: coolingThreshold != null,
                 coolingThresholdC: coolingThreshold,
-                coolingCrossDate: coolingCross,   // first day gate opens (may be null)
+                coolingCrossDate: coolingCross,
                 overwinterAllowed: policy.overwinterAllowed,
                 useSoilTempGate: policy.useSoilTempGate,
                 soilGateThresholdC: policy.soilGateThresholdC,
@@ -861,22 +933,19 @@ Draw.loadPlugin(function (ui) {
                 plant,
                 HW_DAYS,
 
-                // crop & climate
                 BUDGET: budget,
-                env,                // {Tmin,ToptLow,ToptHigh,Tmax,Tbase}
-                dailyRates,         // {1..12: gdd/day}
-                monthlyAvg,         // {1..12: mean air temp}
+                env,
+                dailyRates,
+                monthlyAvg,
                 Tbase: env.Tbase,
 
-                // season anchors
                 startDate,
-                seasonEnd,          // UI end
-                scanStart,          // hard window start
-                scanEndHard,        // hard window end
+                seasonEnd,
+                scanStart,
+                scanEndHard,
             });
         }
 
-        // --- tiny accessors -----------------------------------------------------
         gddRateOn(d) { return (this.ctx.dailyRates[d.getUTCMonth() + 1] ?? 0); }
         addDays(d, k) { return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + k)); }
         withinWindow(d) { return d >= this.ctx.scanStart && d <= this.ctx.scanEndHard; }
@@ -886,11 +955,10 @@ Draw.loadPlugin(function (ui) {
         }
 
         soilGateOK(startDate) {
-            const { soilGateConsecutiveDays, soilGateThresholdC, monthlyAvg } = this.ctx;   //(optional)
+            const { soilGateConsecutiveDays, soilGateThresholdC, monthlyAvg } = this.ctx;
 
             let cur = new Date(startDate);
             for (let i = 0; i < soilGateConsecutiveDays; i++) {
-                // simple soil estimate using monthly mean w/ lag baked into policy option
                 const lagged = this.addDays(cur, -10);
                 const Tair = monthlyAvg[lagged.getUTCMonth() + 1] ?? 0;
                 const Tsoil = 1 * Tair - 1;
@@ -900,8 +968,6 @@ Draw.loadPlugin(function (ui) {
             return true;
         }
 
-
-        // --- gate helpers as instance methods -----------------------------------
         checkSpringFrostGate(gateDate) {
             const C = this.ctx;
             if (!C.useSpringFrostGate || !gateDate) return { ok: true };
@@ -921,22 +987,21 @@ Draw.loadPlugin(function (ui) {
             return { ok: true };
         }
 
-        checkSoilGate(sowDate) {
+        checkSoilGate(gateDate) {
             const C = this.ctx;
-            if (!C.useSoilTempGate || C.method !== 'direct_sow') return { ok: true };
-            if (!this.soilGateOK(sowDate)) {
+            if (!C.useSoilTempGate) return { ok: true };
+            if (!gateDate) return { ok: false, reason: 'soil_gate_missing_date' };
+            if (!this.soilGateOK(gateDate)) {
                 return { ok: false, reason: 'soil_gate' };
             }
             return { ok: true };
         }
-
 
         isSowFeasible(sowDate) {
             const C = this.ctx;
 
             if (!this.withinWindow(sowDate)) return { ok: false, reason: 'outside_scan_window' };
 
-            // --- compute transplant date (for transplant_* methods)
             let transplantDate = null;
             if (C.method === 'transplant_indoor' || C.method === 'transplant_outdoor') {
                 const dTrans = Number(C.plant?.days_transplant ?? NaN);
@@ -946,17 +1011,15 @@ Draw.loadPlugin(function (ui) {
 
             const gateDate = (C.method === 'direct_sow') ? sowDate : transplantDate;
 
-            // --- gates, in order
             const frost = this.checkSpringFrostGate(gateDate);
             if (!frost.ok) return frost;
 
             const cooling = this.checkCoolingGate(gateDate);
             if (!cooling.ok) return cooling;
 
-            const soil = this.checkSoilGate(sowDate);
+            const soil = this.checkSoilGate(gateDate);
             if (!soil.ok) return soil;
 
-            // --- GDD sufficiency
             if (C.BUDGET.mode === 'gdd') {
                 const acc = accumulateGDDUntil(sowDate, C.BUDGET.amount, C.dailyRates, C.scanEndHard);
                 if (!acc.reached) {
@@ -964,7 +1027,6 @@ Draw.loadPlugin(function (ui) {
                 }
             }
 
-            // --- maturity / harvest window (truncation logic as you wrote)
             const mat = maturityDateFromBudget(sowDate, C.BUDGET, C.dailyRates, C.scanEndHard);
             const fullHarvestEnd = this.addDays(mat, C.HW_DAYS);
 
@@ -1027,117 +1089,19 @@ Draw.loadPlugin(function (ui) {
         }
     }
 
-    // dialog helpers
-
-    async function resolveEffectivePlant(plantId, varietyId) {
-        const base = await PlantModel.loadById(Number(plantId));
-        if (!base) return null;
-        if (!varietyId) return base;
-
-        const v = await PlantVarietyModel.loadById(Number(varietyId));
-        if (!v) return base;
-
-        const overrides = (typeof v.overridesObject === 'function')
-            ? v.overridesObject()
-            : {};
-
-        const merged = applyPlantOverrides(toPlainDict(base), overrides);
-        return new PlantModel(merged);
-    }
-
-
-    // -------------------- Centralized builder for schedule results (pure) -----------
-    async function computeScheduleResult(inputs) {
-        const { plant, method } = inputs;
-        const { seasonEnd, env, dailyRates, monthlyAvg } = inputs.derived();
-
-        const HW_DAYS = Number.isFinite(Number(inputs.harvestWindowDays)) ? Number(inputs.harvestWindowDays) : 0;
-        const budget = plant.firstHarvestBudget();
-
-        const schedule = buildPlantingSchedule(inputs);
-        const sow0 = schedule[0];
-
-        if (!(sow0 instanceof Date) || Number.isNaN(sow0.getTime())) {
-            return {
-                rows: [],
-                firstScheduledHarvestISO: null, // CHANGED
-                lastScheduledHarvestEndISO: null
-            };
-        }
-
-        const stageDays = {
-            maturityDays: (budget.mode === 'days') ? budget.amount : (Number(plant.days_maturity) || 0),
-            transplantDays: Number.isFinite(Number(plant.days_transplant)) ? Number(plant.days_transplant) : 0,
-            germinationDays: Number.isFinite(Number(plant.days_germ)) ? Number(plant.days_germ) : 0,
-            harvest_window_days: HW_DAYS
-        };
-
-        const timelines = computeStageTimelineForSchedule({
-            schedule, budget, stageDays, dailyRatesMap: dailyRates, seasonEnd
-        });
-
-        const multipliers = deriveYieldMultipliersFromTemp({
-            schedule, budget, dailyRatesMap: dailyRates,
-            cropTemp: env, monthlyAvgTemp: monthlyAvg,
-            seasonEnd, Tbase: env.Tbase, window: 'harvest', HW_DAYS
-        });
-
-        const tl = timelines[0];
-        if (!tl || !(tl.harvestStart instanceof Date) || !(tl.harvestEnd instanceof Date)) {
-            return {
-                rows: [],
-                firstScheduledHarvestISO: null, // CHANGED
-                lastScheduledHarvestEndISO: null
-            };
-        }
-
-        const row = {
-            idx: 1,
-            plant: plant.plant_name || (plant.abbr || '?'),
-            method,
-            sow: fmtISO(sow0),
-            germ: fmtISO(tl.germ),
-            trans: fmtISO(tl.transplant),
-            harvStart: fmtISO(tl.harvestStart),
-            harvEnd: fmtISO(tl.harvestEnd),
-            mult: (Number.isFinite(multipliers[0]) ? multipliers[0].toFixed(3) : ''),
-        };
-
-        return {
-            rows: [row],
-            firstScheduledHarvestISO: row.harvStart, // CHANGED
-            lastScheduledHarvestEndISO: row.harvEnd
-        };
-    }
-
-    async function resolveVarietyName(varietyId, varietyList) {
-        if (!varietyId) return '';
-
-        // Prefer UI-provided list (no DB round-trip)                                        
-        const list = Array.isArray(varietyList) ? varietyList : [];
-        const hit = list.find(v => Number(v.variety_id) === Number(varietyId));
-        if (hit && hit.variety_name != null) return String(hit.variety_name);
-
-        // Fallback: query DB by id                                                          
-        const v = await PlantVarietyModel.loadById(Number(varietyId));
-        return v && v.variety_name != null ? String(v.variety_name) : '';
-    }
-
-
-    // -------------------- Centralized builder for schedule context -------------------- 
     async function buildScheduleContextFromForm(formState, selPlant, options = {}) {
-
         const plant = await resolveEffectivePlant(formState.plantId, formState.varietyId);
         if (!plant) throw new Error('Plant not found for schedule.');
 
         const city = await CityClimate.loadByName(formState.cityName);
         if (!city) throw new Error('City not found for schedule.');
 
-        const methodCategoryId = String(formState.methodCategoryId || '').trim();
-        const methodId = String(formState.methodId || '').trim();
-        const method = String(formState.method || '').trim();                // existing meaning (your legacy alias)
+        const methodCategoryId = String(formState.methodCategoryId || '').trim().toLowerCase();
+        const methodId = String(formState.methodId || '').trim().toLowerCase();
+        const resolvedBehavior = resolveMethodBehavior({ methodCategoryId, methodId });
+        const method = resolvedBehavior.planningMode;
 
-        const policy = PolicyFlags.fromPlant(plant, method);
+        const policy = PolicyFlags.fromResolvedBehavior(plant, resolvedBehavior);
 
         const varietyId = formState.varietyId != null ? Number(formState.varietyId) : null;
         const varietyName = varietyId
@@ -1148,6 +1112,8 @@ Draw.loadPlugin(function (ui) {
             plant,
             city,
             method,
+            methodCategoryId: resolvedBehavior.methodCategoryId, // CHANGED
+            methodId: resolvedBehavior.methodId, // CHANGED
             startISO: formState.startISO,
             seasonEndISO: formState.seasonEndISO,
             policy,
@@ -1157,63 +1123,54 @@ Draw.loadPlugin(function (ui) {
             varietyName
         });
 
-        inputs.methodCategoryId = methodCategoryId;
-        inputs.methodId = methodId;
-
-        return { plant, city, method, methodCategoryId, methodId, policy, inputs };
+        return {
+            plant,
+            city,
+            method,
+            methodCategoryId: resolvedBehavior.methodCategoryId,
+            methodId: resolvedBehavior.methodId,
+            resolvedBehavior,
+            policy,
+            inputs
+        };
     }
 
-    async function computeFeasibilityWindow({
-        plant,          // effectivePlant (base+variety resolved)
-        cityName,
-        seasonStartYear,
-        method,
-        harvestWindowDays,
-    }) {
-        const city = await CityClimate.loadByName(cityName);
-        if (!city) return null;
+    function getGateDateForCandidate(planner, sowDate) { // CHANGED
+        const C = planner.ctx; // CHANGED
+        if (C.method === 'direct_sow') return new Date(sowDate); // CHANGED
+        if (C.method === 'transplant_indoor' || C.method === 'transplant_outdoor') { // CHANGED
+            const dTrans = Number(C.plant?.days_transplant ?? NaN); // CHANGED
+            const daysTrans = Number.isFinite(dTrans) && dTrans > 0 ? Math.round(dTrans) : 0; // CHANGED
+            return planner.addDays(sowDate, daysTrans); // CHANGED
+        } // CHANGED
+        return new Date(sowDate); // CHANGED
+    } // CHANGED
 
-        const env = plant.cropTempEnvelope();
-        const dailyRates = city.dailyRates(env.Tbase, seasonStartYear);
-        const monthlyAvgTemp = city.monthlyMeans();
-        const budget = plant.firstHarvestBudget();
+    function deriveInitialSowCandidate(planner) { // CHANGED
+        const C = planner.ctx; // CHANGED
 
-        const overwinterAllowed = plant.isPerennial() || Number(plant.overwinter_ok ?? 0) === 1;
-        const scanStart = asUTCDate(seasonStartYear, 1, 1);
-        const scanEndYear = overwinterAllowed ? (seasonStartYear + 1) : seasonStartYear;
-        const scanEndHard = asUTCDate(scanEndYear, 12, 31);
+        let fieldGateStart = new Date(Math.max(C.startDate, C.scanStart)); // CHANGED
+        if (C.coolingCrossDate && C.coolingCrossDate > fieldGateStart) { // CHANGED
+            fieldGateStart = new Date(C.coolingCrossDate); // CHANGED
+        } // CHANGED
 
-        const soilGateThresholdC = Number.isFinite(Number(plant.soil_temp_min_plant_c))
-            ? Number(plant.soil_temp_min_plant_c)
-            : null;
+        if (C.method === 'transplant_indoor') { // CHANGED
+            const dTrans = Number(C.plant?.days_transplant ?? NaN); // CHANGED
+            const daysTrans = Number.isFinite(dTrans) && dTrans > 0 ? Math.round(dTrans) : 0; // CHANGED
+            const indoorSow = planner.addDays(fieldGateStart, -daysTrans); // CHANGED
+            return indoorSow < C.scanStart ? new Date(C.scanStart) : indoorSow; // CHANGED
+        } // CHANGED
 
-        const daysTransplant = Number.isFinite(Number(plant.days_transplant)) ? Number(plant.days_transplant) : 0;
-        const lastSpringFrostDOY = pickFrostByRisk(city, "p50");
+        return fieldGateStart; // CHANGED
+    } // CHANGED
 
-        const r = computeAutoStartEndWindowForward({
-            method,
-            budget,
-            HW_DAYS: harvestWindowDays,
-            dailyRatesMap: dailyRates,
-            monthlyAvgTemp,
-            Tbase: env.Tbase,
-            cropTemp: env,
-            scanStart,
-            scanEndHard,
-            soilGateThresholdC,
-            soilGateConsecutiveDays: 3,
-            startCoolingThresholdC: asCoolingThresholdC(plant.start_cooling_threshold_c),
-            useSpringFrostGate: !overwinterAllowed,
-            lastSpringFrostDOY,
-            daysTransplant,
-            overwinterAllowed
-        });
-
-        return {
-            autoEarliestISO: r.earliestFeasibleSowDate?.toISOString().slice(0, 10) ?? null,
-            lastFeasibleSowISO: r.lastFeasibleSowDate ? r.lastFeasibleSowDate.toISOString().slice(0, 10) : null,
-            climateEndISO: (r.climateEndDate instanceof Date) ? r.climateEndDate.toISOString().slice(0, 10) : null
-        };
+    function firstNonSoilStart(planner, startD) {
+        const C = planner.ctx;
+        let d = new Date(Math.max(startD.getTime(), C.scanStart.getTime()));        for (; d <= C.scanEndHard; d = planner.addDays(d, 1)) {
+            const gateDate = getGateDateForCandidate(planner, d); // CHANGED
+            if (!C.useSoilTempGate || planner.soilGateOK(gateDate)) return d; // CHANGED
+        }
+        return null;
     }
 
     function accumulateGDDUntil(startDate, targetGDD, dailyRatesMap, seasonEnd) {
@@ -1361,28 +1318,6 @@ Draw.loadPlugin(function (ui) {
         return null;
     }
 
-    function buildPlantingSchedule(inputs) {
-        const planner = new Planner(inputs);
-        const C = planner.ctx;
-
-        // 1) first sow baseline: scanStart or cooling trigger
-        let first = new Date(Math.max(C.startDate, C.scanStart));
-        if (C.coolingCrossDate) {
-            first = new Date(Math.max(first, C.coolingCrossDate));
-        }
-
-        // 2) slide forward by soil gate & overall feasibility
-        let feas = planner.isSowFeasible(first);
-        if (!feas.ok) {
-            const nxt = planner.findNextFeasible(first);
-            if (!nxt.date) return [];
-            first = nxt.date;
-        }
-
-        // single planting date only
-        return [first];
-    }
-
 
     function computeStageDatesForPlanting({ sowDate, budget, stageDays, dailyRatesMap, seasonEnd }) {
         const maturity = maturityDateFromBudget(sowDate, budget, dailyRatesMap, seasonEnd);
@@ -1430,15 +1365,6 @@ Draw.loadPlugin(function (ui) {
             reason === 'insufficient_gdd';
     }
 
-    function firstNonSoilStart(planner, startD) {
-        const C = planner.ctx;
-        let d = new Date(Math.max(startD, C.scanStart));
-        for (; d <= C.scanEndHard; d = planner.addDays(d, 1)) {
-            if (!C.useSoilTempGate || planner.soilGateOK(d)) return d;
-        }
-        return null;
-    }
-
     function impliedHarvestEndForDate(planner, sow, HW_DAYS) {
         const C = planner.ctx;
         const mat = maturityDateFromBudget(sow, C.BUDGET, C.dailyRates, C.scanEndHard);
@@ -1452,7 +1378,166 @@ Draw.loadPlugin(function (ui) {
     }
 
 
+    const METHOD_BEHAVIOR = Object.freeze({ // CHANGED
+        "transplant.indoor": Object.freeze({ // CHANGED
+            methodCategoryId: "transplant", // CHANGED
+            planningMode: "transplant_indoor", // CHANGED
+            usesSoilTempGate: true, // CHANGED
+            leadDaysMode: "days_transplant" // CHANGED
+        }), // CHANGED
+        "transplant.outdoor": Object.freeze({ // CHANGED
+            methodCategoryId: "transplant", // CHANGED
+            planningMode: "transplant_outdoor", // CHANGED
+            usesSoilTempGate: true, // CHANGED
+            leadDaysMode: "none" // CHANGED
+        }), // CHANGED
+        "transplant.purchased": Object.freeze({ // CHANGED
+            methodCategoryId: "transplant", // CHANGED
+            planningMode: "transplant_outdoor", // CHANGED
+            usesSoilTempGate: true, // CHANGED
+            leadDaysMode: "none" // CHANGED
+        }), // CHANGED
+        "transplant.cutting": Object.freeze({ // CHANGED
+            methodCategoryId: "transplant", // CHANGED
+            planningMode: "transplant_indoor", // CHANGED
+            usesSoilTempGate: true, // CHANGED
+            leadDaysMode: "days_transplant" // CHANGED
+        }), // CHANGED
+        "direct_sow.field": Object.freeze({ // CHANGED
+            methodCategoryId: "direct_sow", // CHANGED
+            planningMode: "direct_sow", // CHANGED
+            usesSoilTempGate: true, // CHANGED
+            leadDaysMode: "none" // CHANGED
+        }), // CHANGED
+        "direct_sow.pre_germinated": Object.freeze({ // CHANGED
+            methodCategoryId: "direct_sow", // CHANGED
+            planningMode: "direct_sow", // CHANGED
+            usesSoilTempGate: true, // CHANGED
+            leadDaysMode: "none" // CHANGED
+        }), // CHANGED
+        "direct_sow.plug": Object.freeze({ // CHANGED
+            methodCategoryId: "direct_sow", // CHANGED
+            planningMode: "transplant_outdoor", // CHANGED
+            usesSoilTempGate: true, // CHANGED
+            leadDaysMode: "none" // CHANGED
+        }) // CHANGED
+    }); // CHANGED
 
+    function resolveMethodBehavior({ methodCategoryId, methodId }) { // CHANGED
+        const category = String(methodCategoryId || "").trim().toLowerCase(); // CHANGED
+        const id = String(methodId || "").trim().toLowerCase(); // CHANGED
+
+        if (!category) throw new Error("methodCategoryId is required."); // CHANGED
+        if (!id) throw new Error("methodId is required."); // CHANGED
+
+        const behavior = METHOD_BEHAVIOR[id]; // CHANGED
+        if (!behavior) throw new Error(`Unsupported methodId: ${id}`); // CHANGED
+
+        if (behavior.methodCategoryId !== category) { // CHANGED
+            throw new Error(`methodId "${id}" does not belong to methodCategoryId "${category}".`); // CHANGED
+        } // CHANGED
+
+        if (!id.startsWith(category + ".")) { // CHANGED
+            throw new Error(`methodId "${id}" must begin with "${category}."`); // CHANGED
+        } // CHANGED
+
+        return { // CHANGED
+            methodCategoryId: category, // CHANGED
+            methodId: id, // CHANGED
+            planningMode: behavior.planningMode, // CHANGED
+            usesSoilTempGate: !!behavior.usesSoilTempGate, // CHANGED
+            leadDaysMode: String(behavior.leadDaysMode || "none") // CHANGED
+        }; // CHANGED
+    } // CHANGED
+
+    function validateAutoWindowMethodInputs({ resolvedBehavior, daysTransplant }) { // CHANGED
+        if (!resolvedBehavior || typeof resolvedBehavior !== "object") { // CHANGED
+            throw new Error("resolvedBehavior is required."); // CHANGED
+        } // CHANGED
+
+        if (resolvedBehavior.leadDaysMode === "days_transplant") { // CHANGED
+            const dt = Number(daysTransplant); // CHANGED
+            if (!Number.isFinite(dt) || dt <= 0) { // CHANGED
+                throw new Error(`methodId "${resolvedBehavior.methodId}" requires daysTransplant > 0.`); // CHANGED
+            } // CHANGED
+        } // CHANGED
+    } // CHANGED
+
+
+    async function resolveInitialMethodSelection(cell, plant) {
+        const cellMethodCategoryId = String(cell?.getAttribute?.('method_category_id') || '').trim().toLowerCase();
+        const cellMethodId = String(cell?.getAttribute?.('method_id') || '').trim().toLowerCase();
+    
+        // 1) Prefer fully-specified cell selection
+        if (cellMethodCategoryId && cellMethodId) {
+            try {
+                const resolved = resolveMethodBehavior({
+                    methodCategoryId: cellMethodCategoryId,
+                    methodId: cellMethodId
+                });
+    
+                return {
+                    methodCategoryId: resolved.methodCategoryId,
+                    methodId: resolved.methodId,
+                    resolvedBehavior: resolved
+                };
+            } catch (_) {
+                // fall through
+            }
+        }
+    
+        // 2) Plant default planting method
+        const defaultMethodId = String(plant?.default_planting_method || '').trim().toLowerCase();
+        if (defaultMethodId) {
+            const methodRow = await PlantModel.getMethodById(defaultMethodId);
+            if (methodRow?.method_category_id && methodRow?.method_id) {
+                const resolved = resolveMethodBehavior({
+                    methodCategoryId: String(methodRow.method_category_id).trim().toLowerCase(),
+                    methodId: String(methodRow.method_id).trim().toLowerCase()
+                });
+    
+                return {
+                    methodCategoryId: resolved.methodCategoryId,
+                    methodId: resolved.methodId,
+                    resolvedBehavior: resolved
+                };
+            }
+        }
+    
+        // 3) First allowed category + first method in that category
+        const allowedCategories = await PlantModel.listAllowedMethodCategoriesForPlant(Number(plant?.plant_id));
+        for (const cat of (allowedCategories || [])) {
+            const methodCategoryId = String(cat?.method_category_id || '').trim().toLowerCase();
+            if (!methodCategoryId) continue;
+    
+            const methods = await PlantModel.listMethodsForMethodCategory(methodCategoryId);
+            const firstMethod = Array.isArray(methods) ? methods[0] : null;
+            if (!firstMethod?.method_id) continue;
+    
+            const resolved = resolveMethodBehavior({
+                methodCategoryId,
+                methodId: String(firstMethod.method_id).trim().toLowerCase()
+            });
+    
+            return {
+                methodCategoryId: resolved.methodCategoryId,
+                methodId: resolved.methodId,
+                resolvedBehavior: resolved
+            };
+        }
+    
+        // 4) Final hard fallback
+        const resolved = resolveMethodBehavior({
+            methodCategoryId: 'direct_sow',
+            methodId: 'direct_sow.field'
+        });
+    
+        return {
+            methodCategoryId: resolved.methodCategoryId,
+            methodId: resolved.methodId,
+            resolvedBehavior: resolved
+        };
+    }
 
 
 
@@ -1465,7 +1550,7 @@ Draw.loadPlugin(function (ui) {
 
     function buildAutoWindowPlanner(params) {
         const {
-            method, budget, HW_DAYS,
+            methodId, methodCategoryId, budget, HW_DAYS,
             dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
             scanStart, scanEndHard,
             soilGateThresholdC, soilGateConsecutiveDays,
@@ -1474,6 +1559,9 @@ Draw.loadPlugin(function (ui) {
             daysTransplant,
             overwinterAllowed
         } = params;
+
+        const resolvedBehavior = resolveMethodBehavior({ methodCategoryId, methodId });
+        validateAutoWindowMethodInputs({ resolvedBehavior, daysTransplant });
 
         const fakePlant = {
             start_cooling_threshold_c: startCoolingThresholdC,
@@ -1492,7 +1580,7 @@ Draw.loadPlugin(function (ui) {
         };
 
         const policy = new PolicyFlags({
-            useSoilTempGate: Number.isFinite(soilGateThresholdC) && method === 'direct_sow',
+            useSoilTempGate: Number.isFinite(soilGateThresholdC) && resolvedBehavior.usesSoilTempGate,
             soilGateThresholdC,
             soilGateConsecutiveDays,
             overwinterAllowed,
@@ -1503,39 +1591,39 @@ Draw.loadPlugin(function (ui) {
         const inputs = new ScheduleInputs({
             plant: fakePlant,
             city: fakeCity,
-            method,
+            method: resolvedBehavior.planningMode,
+            methodCategoryId: resolvedBehavior.methodCategoryId, // CHANGED
+            methodId: resolvedBehavior.methodId, // CHANGED
             startISO: scanStart.toISOString().slice(0, 10),
             seasonEndISO: scanEndHard.toISOString().slice(0, 10),
             policy,
             seasonStartYear: scanStart.getUTCFullYear(),
-            harvestWindowDays: HW_DAYS // CHANGED
+            harvestWindowDays: HW_DAYS
         });
 
         const planner = new Planner(inputs);
-        return { planner, ctx: planner.ctx };
+        return { planner, ctx: planner.ctx, resolvedBehavior };
     }
-
 
     // -------------------- Feasibility + window (single pure function) --------------------
     function computeAutoStartEndWindowForward(params) {
         const {
-            method, budget, HW_DAYS,
+            methodId, methodCategoryId, budget, HW_DAYS, // CHANGED
             dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
             scanStart, scanEndHard,
-            // gates                                                                         
+            // gates
             soilGateThresholdC = null, soilGateConsecutiveDays = 3,
             startCoolingThresholdC = null,
             useSpringFrostGate = false,
             lastSpringFrostDOY = null,
-            // transplant specifics                                                          
+            // transplant specifics
             daysTransplant = 0,
-            // behavior                                                                      
+            // behavior
             overwinterAllowed = false,
         } = params;
 
-        // Build planner using fake plant/city with the given environment                    
-        const { planner } = buildAutoWindowPlanner({
-            method, budget, HW_DAYS,
+        const { planner, resolvedBehavior } = buildAutoWindowPlanner({ // CHANGED
+            methodId, methodCategoryId, budget, HW_DAYS, // CHANGED
             dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
             scanStart, scanEndHard,
             soilGateThresholdC, soilGateConsecutiveDays,
@@ -1546,22 +1634,23 @@ Draw.loadPlugin(function (ui) {
         });
 
         const C = planner.ctx;
+        const planningMode = resolvedBehavior.planningMode; // CHANGED
 
-        // Limit sow scanning for overwinter crops to the first season year        
+        // Limit sow scanning for overwinter crops to the first season year
         const sowScanEnd = overwinterAllowed
             ? asUTCDate(C.scanStart.getUTCFullYear(), 12, 31)
             : C.scanEndHard;
 
-        // --- Build earliest FIELD date (air-gated date) ---                                
+        // --- Build earliest FIELD date (air-gated date) ---
         let fieldGateStart = new Date(C.scanStart);
 
-        // spring frost gate                                                                 
+        // spring frost gate
         if (useSpringFrostGate && Number.isFinite(lastSpringFrostDOY)) {
             const frostDate = dateFromDOY(C.scanStart.getUTCFullYear(), lastSpringFrostDOY);
             if (frostDate > fieldGateStart) fieldGateStart = frostDate;
         }
 
-        // cooling gate (air)                                                                
+        // cooling gate (air)
         if (Number.isFinite(startCoolingThresholdC)) {
             const cross = firstCoolingCrossingDate({
                 thresholdC: startCoolingThresholdC,
@@ -1572,38 +1661,35 @@ Draw.loadPlugin(function (ui) {
             if (cross && cross > fieldGateStart) fieldGateStart = cross;
         }
 
-        // --- Convert fieldGateStart → sow candidate based on method ---                    
-        let sowCandidate = new Date(fieldGateStart);
+        // --- Convert fieldGateStart → sow candidate based on method behavior ---
+        let sowCandidate = new Date(fieldGateStart); // CHANGED
 
-        if (method === 'transplant_indoor') {
-            const dt = Math.max(0, Math.round(Number(daysTransplant) || 0));
-            const indoorSow = planner.addDays(fieldGateStart, -dt);
-            sowCandidate = indoorSow < C.scanStart ? new Date(C.scanStart) : indoorSow;
-        } else if (method === 'transplant_outdoor') {
-            sowCandidate = fieldGateStart;
-        } else if (method === 'direct_sow') {
-            sowCandidate = fieldGateStart;
-        }
+        if (resolvedBehavior.leadDaysMode === "days_transplant") { // CHANGED
+            const dt = Math.max(0, Math.round(Number(daysTransplant) || 0)); // CHANGED
+            const indoorSow = planner.addDays(fieldGateStart, -dt); // CHANGED
+            sowCandidate = indoorSow < C.scanStart ? new Date(C.scanStart) : indoorSow; // CHANGED
+        } else { // CHANGED
+            sowCandidate = fieldGateStart; // CHANGED
+        } // CHANGED
 
-        // --- Walk feasibility from that candidate using full planner logic ---             
-        const firstNonSoil = (method === 'direct_sow')
-            ? (firstNonSoilStart(planner, sowCandidate) || sowCandidate)
-            : sowCandidate;
+        // --- Walk feasibility from that candidate using full planner logic ---
+        const firstNonSoil = resolvedBehavior.usesSoilTempGate // CHANGED
+            ? (firstNonSoilStart(planner, sowCandidate) || sowCandidate) // CHANGED
+            : sowCandidate; // CHANGED
 
         let firstOkSow = null;
-        let firstOkHarvestStart = null; // CHANGED
+        let firstOkHarvestStart = null;
         let firstOkHarvestEnd = null;
         let lastOkHarvestEnd = null;
         let lastThermalHarvestEnd = null;
         let lastOkSow = null;
 
         for (let d = new Date(firstNonSoil); d <= sowScanEnd; d = planner.addDays(d, 1)) {
-            const r = planner.isSowFeasible(d); // CHANGED
+            const r = planner.isSowFeasible(d);
             if (r.ok) {
-
                 if (!firstOkSow) {
                     firstOkSow = new Date(d);
-                    firstOkHarvestStart = r.harvestStart; // CHANGED
+                    firstOkHarvestStart = r.harvestStart;
                     firstOkHarvestEnd = r.harvestEnd;
                 }
 
@@ -1627,12 +1713,13 @@ Draw.loadPlugin(function (ui) {
             }
         }
 
-        // No feasible sow found                                                             
         if (!firstOkSow) {
             console.log('[autoWindow] scan (no feasible)', {
                 scanStart: C.scanStart.toISOString().slice(0, 10),
                 scanEndHard: C.scanEndHard.toISOString().slice(0, 10),
-                method,
+                methodCategoryId: resolvedBehavior.methodCategoryId, // CHANGED
+                methodId: resolvedBehavior.methodId, // CHANGED
+                planningMode, // CHANGED
                 firstNonSoil: firstNonSoil ? firstNonSoil.toISOString().slice(0, 10) : null,
                 lastThermalHarvestEnd: lastThermalHarvestEnd
                     ? lastThermalHarvestEnd.toISOString().slice(0, 10)
@@ -1644,8 +1731,8 @@ Draw.loadPlugin(function (ui) {
 
             return {
                 earliestFeasibleSowDate: earliest,
-                earliestHarvestStartDate: null, // CHANGED
-                earliestHarvestEndDate: fallbackHarvestEnd, // CHANGED
+                earliestHarvestStartDate: null,
+                earliestHarvestEndDate: fallbackHarvestEnd,
                 lastFeasibleSowDate: null,
                 climateEndDate: fallbackHarvestEnd
             };
@@ -1653,31 +1740,25 @@ Draw.loadPlugin(function (ui) {
 
         const earliestFeasibleSow = firstOkSow;
         const lastFeasibleSow = lastOkSow;
-        const firstFeasibleHarvestStart = firstOkHarvestStart; // CHANGED
+        const firstFeasibleHarvestStart = firstOkHarvestStart;
         const firstFeasibleHarvestEnd = firstOkHarvestEnd;
         const lastFeasibleHarvestEnd = lastOkHarvestEnd;
 
-        // Fallback for logging/debug
         const fallbackHarvestEnd = lastFeasibleHarvestEnd ||
             firstFeasibleHarvestEnd ||
             lastThermalHarvestEnd ||
             new Date(C.scanEndHard);
 
-        // These are now explicit, not overloaded
-        const earliestHarvestStartDate = firstFeasibleHarvestStart || null; // CHANGED
-        const earliestHarvestEndDate = firstFeasibleHarvestEnd || earliestFeasibleSow; // CHANGED
+        const earliestHarvestStartDate = firstFeasibleHarvestStart || null;
+        const earliestHarvestEndDate = firstFeasibleHarvestEnd || earliestFeasibleSow;
 
-        // climate-level end of window
         let climateEndDate;
         if (overwinterAllowed) {
-            // For overwinter crops, tie climate end to the last (schedule) harvest      
-
             climateEndDate = earliestHarvestEndDate
                 || lastFeasibleHarvestEnd
                 || lastThermalHarvestEnd
                 || new Date(C.scanEndHard);
         } else {
-            // Non-overwinter crops: keep full climate envelope behavior as before       
             climateEndDate = lastFeasibleHarvestEnd
                 || lastThermalHarvestEnd
                 || earliestHarvestEndDate
@@ -1686,18 +1767,20 @@ Draw.loadPlugin(function (ui) {
 
         console.log('[autoWindow] RESULT', {
             earliestFeasibleSowDate: fmtISO(earliestFeasibleSow),
-            earliestHarvestStartDate: earliestHarvestStartDate ? fmtISO(earliestHarvestStartDate) : null, // CHANGED
-            earliestHarvestEndDate: fmtISO(earliestHarvestEndDate), // CHANGED
+            earliestHarvestStartDate: earliestHarvestStartDate ? fmtISO(earliestHarvestStartDate) : null,
+            earliestHarvestEndDate: fmtISO(earliestHarvestEndDate),
             lastFeasibleSowDate: lastFeasibleSow ? fmtISO(lastFeasibleSow) : null,
-            climateEndDate: climateEndDate ? fmtISO(climateEndDate) : null, // CHANGED
+            climateEndDate: climateEndDate ? fmtISO(climateEndDate) : null,
             HW_DAYS,
-            method
+            methodCategoryId: resolvedBehavior.methodCategoryId, // CHANGED
+            methodId: resolvedBehavior.methodId, // CHANGED
+            planningMode // CHANGED
         });
 
         return {
             earliestFeasibleSowDate: earliestFeasibleSow,
-            earliestHarvestStartDate, // CHANGED
-            earliestHarvestEndDate,   // CHANGED
+            earliestHarvestStartDate,
+            earliestHarvestEndDate,
             lastFeasibleSowDate: lastFeasibleSow,
             climateEndDate
         };
@@ -1994,7 +2077,7 @@ Draw.loadPlugin(function (ui) {
         let d = new Date(Math.max(planner.ctx.startDate, planner.ctx.scanStart));
         for (let i = 0; i < maxDays && d <= planner.ctx.scanEndHard; i++) {
             try {
-                const r = planner.isSowFeasible(d, true);
+                const r = planner.isSowFeasible(d);
                 if (r && r.ok) {
                     out.push({
                         date: fmtISO(d),
@@ -2172,6 +2255,11 @@ Draw.loadPlugin(function (ui) {
             existing = await PlantModel.loadById(Number(plantId));
         }
 
+        function showErrorInline(msg) {
+            errorBar.textContent = String(msg || 'Unknown error');
+            errorBar.style.display = '';
+        }
+
         function parsePositiveId(v) {
             if (v === null || v === undefined) return null;
             const s = String(v).trim();
@@ -2197,6 +2285,60 @@ Draw.loadPlugin(function (ui) {
         let currentVarietyId = null;
         let currentVarietyRow = null;
         let varietiesCache = [];
+
+        const DIALOG_MODE = {
+            PLANT_ADD: 'plant_add',
+            PLANT_EDIT: 'plant_edit',
+            VARIETY_ADD: 'variety_add',
+            VARIETY_EDIT: 'variety_edit'
+        }; // ADDED
+
+        function applyDialogMode(nextMode) { // ADDED
+            switch (nextMode) {
+                case DIALOG_MODE.PLANT_ADD:
+                    currentPlantMode = 'add';
+                    currentVarietyMode = null;
+                    currentVarietyId = null;
+                    currentVarietyRow = null;
+                    setPlantControlsEnabled(true);
+                    setInlineOverridesVisible(false);
+                    varietyNameRow.row.style.display = 'none';
+                    break;
+
+                case DIALOG_MODE.PLANT_EDIT:
+                    currentPlantMode = 'edit';
+                    currentVarietyMode = null;
+                    currentVarietyId = null;
+                    currentVarietyRow = null;
+                    setPlantControlsEnabled(true);
+                    setInlineOverridesVisible(false);
+                    varietyNameRow.row.style.display = 'none';
+                    break;
+
+                case DIALOG_MODE.VARIETY_ADD:
+                    currentVarietyMode = 'add';
+                    currentVarietyId = null;
+                    currentVarietyRow = null;
+                    setPlantControlsEnabled(false);
+                    setInlineOverridesVisible(true);
+                    varietyNameRow.row.style.display = 'flex';
+                    refreshInlineBaseHints();
+                    break;
+
+                case DIALOG_MODE.VARIETY_EDIT:
+                    currentVarietyMode = 'edit';
+                    setPlantControlsEnabled(false);
+                    setInlineOverridesVisible(true);
+                    varietyNameRow.row.style.display = 'flex';
+                    refreshInlineBaseHints();
+                    break;
+
+                default:
+                    throw new Error(`Unknown dialog mode: ${nextMode}`);
+            }
+
+            syncSaveButtonLabel();
+        } // ADDED
 
         const div = document.createElement('div');
         div.style.padding = '12px';
@@ -2463,10 +2605,8 @@ Draw.loadPlugin(function (ui) {
 
         function selectDefaultMethodFromPlantRow() {
             const wanted = String(
-                currentPlantRow?.default_planting_method ??
-                currentPlantRow?.default_planting_method ??
-                ''
-            ).trim();
+                currentPlantRow?.default_planting_method ?? ''
+            ).trim(); // CHANGED
 
             if (!wanted) return;
 
@@ -2764,6 +2904,59 @@ Draw.loadPlugin(function (ui) {
         // hide overrides by default
         setInlineOverridesVisible(false);
 
+        const PLANT_FIELD_BINDINGS = [ // ADDED
+            { key: 'plant_name', input: nameInput, kind: 'text', empty: '' }, // ADDED
+            { key: 'abbr', input: abbrInput, kind: 'text', empty: '' }, // ADDED
+
+            { key: 'days_germ', input: daysGermInput, kind: 'number', empty: '0' }, // ADDED
+            { key: 'days_transplant', input: daysTransInput, kind: 'number', empty: '0' }, // ADDED
+
+            { key: 'yield_per_plant_kg', input: yieldInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'harvest_window_days', input: hwInput, kind: 'nullable-number', empty: '' }, // ADDED
+
+            { key: 'tbase_c', input: tbaseInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'tmin_c', input: tminInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'topt_low_c', input: toptLowInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'topt_high_c', input: toptHighInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'tmax_c', input: tmaxInput, kind: 'nullable-number', empty: '' }, // ADDED
+
+            { key: 'soil_temp_min_plant_c', input: soilMinInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'start_cooling_threshold_c', input: coolThreshInput, kind: 'nullable-number', empty: '' }, // ADDED
+
+            { key: 'veg_height_cm', input: vegHeightInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'veg_diameter_cm', input: vegDiamInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'spacing_cm', input: spacingInput, kind: 'nullable-number', empty: '' }, // ADDED
+        ]; // ADDED
+
+        function setBoundInputValue(binding, row) { // ADDED
+            const { key, input, kind, empty = '' } = binding; // ADDED
+            const value = row?.[key]; // ADDED
+
+            if (kind === 'text') { // ADDED
+                input.value = value == null ? empty : String(value); // ADDED
+                return; // ADDED
+            } // ADDED
+
+            if (kind === 'number' || kind === 'nullable-number') { // ADDED
+                input.value = value == null ? empty : String(value); // ADDED
+                return; // ADDED
+            } // ADDED
+
+            throw new Error(`Unknown binding kind: ${kind}`); // ADDED
+        } // ADDED
+
+        function resetBoundPlantFields() { // ADDED
+            for (const binding of PLANT_FIELD_BINDINGS) { // ADDED
+                binding.input.value = binding.empty ?? ''; // ADDED
+            } // ADDED
+        } // ADDED
+
+        function applyBoundPlantFields(row) { // ADDED
+            for (const binding of PLANT_FIELD_BINDINGS) { // ADDED
+                setBoundInputValue(binding, row); // ADDED
+            } // ADDED
+        } // ADDED
+
         function setPlantControlsEnabled(enabled) {
             const els = [
                 nameInput, abbrInput, typeSel, /* lifespanInput, */ overwinterChk,
@@ -2826,40 +3019,20 @@ Draw.loadPlugin(function (ui) {
             addVarBtn.disabled = !hasPlant;
         }
 
-        function applyPlantRowToUI(p) {
-            nameInput.value = p?.plant_name ?? '';
-            abbrInput.value = p?.abbr ?? '';
+        function applyPlantRowToUI(p) { // CHANGED
+            applyBoundPlantFields(p); // ADDED
 
-            typeSel.value = (p?.perennial === 1) ? 'perennial' : (p?.biennial === 1 ? 'biennial' : 'annual');
-            lifespanInput.value = (p?.lifespan_years ?? '') === null ? '' : String(p?.lifespan_years ?? '');
-            overwinterChk.checked = (p?.overwinter_ok === 1);
-            syncLifecycleFields();
+            typeSel.value = (p?.perennial === 1) ? 'perennial' : (p?.biennial === 1 ? 'biennial' : 'annual'); // CHANGED
+            lifespanInput.value = p?.lifespan_years == null ? '' : String(p.lifespan_years); // CHANGED
+            overwinterChk.checked = (p?.overwinter_ok === 1); // CHANGED
+            syncLifecycleFields(); // CHANGED
 
-            const hasGddLocal = Number(p?.gdd_to_maturity ?? 0) > 0;
-            budgetModeSel.value = hasGddLocal ? 'gdd' : 'days';
-            gddInput.value = (p?.gdd_to_maturity ?? '') === null ? '' : String(p?.gdd_to_maturity ?? '');
-            daysMatInput.value = (p?.days_maturity ?? '') === null ? '' : String(p?.days_maturity ?? '');
-            syncBudgetModeUI();
-
-            daysGermInput.value = String(p?.days_germ ?? 0);
-            daysTransInput.value = String(p?.days_transplant ?? 0);
-
-            yieldInput.value = (p?.yield_per_plant_kg ?? '') === null ? '' : String(p?.yield_per_plant_kg ?? '');
-            hwInput.value = (p?.harvest_window_days ?? '') === null ? '' : String(p?.harvest_window_days ?? '');
-
-            tbaseInput.value = (p?.tbase_c ?? '') === null ? '' : String(p?.tbase_c ?? '');
-            tminInput.value = (p?.tmin_c ?? '') === null ? '' : String(p?.tmin_c ?? '');
-            toptLowInput.value = (p?.topt_low_c ?? '') === null ? '' : String(p?.topt_low_c ?? '');
-            toptHighInput.value = (p?.topt_high_c ?? '') === null ? '' : String(p?.topt_high_c ?? '');
-            tmaxInput.value = (p?.tmax_c ?? '') === null ? '' : String(p?.tmax_c ?? '');
-
-            soilMinInput.value = (p?.soil_temp_min_plant_c ?? '') === null ? '' : String(p?.soil_temp_min_plant_c ?? '');
-            coolThreshInput.value = (p?.start_cooling_threshold_c ?? '') === null ? '' : String(p?.start_cooling_threshold_c ?? '');
-
-            vegHeightInput.value = (p?.veg_height_cm ?? '') === null ? '' : String(p?.veg_height_cm ?? '');
-            vegDiamInput.value = (p?.veg_diameter_cm ?? '') === null ? '' : String(p?.veg_diameter_cm ?? '');
-            spacingInput.value = (p?.spacing_cm ?? '') === null ? '' : String(p?.spacing_cm ?? '');
-        }
+            const hasGddLocal = Number(p?.gdd_to_maturity ?? 0) > 0; // CHANGED
+            budgetModeSel.value = hasGddLocal ? 'gdd' : 'days'; // CHANGED
+            gddInput.value = p?.gdd_to_maturity == null ? '' : String(p.gdd_to_maturity); // CHANGED
+            daysMatInput.value = p?.days_maturity == null ? '' : String(p.days_maturity); // CHANGED
+            syncBudgetModeUI(); // CHANGED
+        } // CHANGED
 
         async function loadPlantIntoForm(pidOrNull, preferredVarietyId = null, preferredStartVarietyMode = null) {
             console.group('[PlantEditorDialog] loadPlantIntoForm');
@@ -2867,54 +3040,26 @@ Draw.loadPlugin(function (ui) {
             console.log('currentPlantMode (before):', currentPlantMode);
             console.groupEnd();
 
-            // Reset upfront
-            setInlineOverridesVisible(false);
-            varietyNameRow.row.style.display = 'flex';
-
-            currentVarietyMode = null;
-            currentVarietyId = null;
-            currentVarietyRow = null;
-            setPlantControlsEnabled(true);
-
             const pidNum = Number(pidOrNull);
             if (!pidOrNull || !Number.isFinite(pidNum) || pidNum <= 0) {
                 console.log('[PlantEditorDialog] entering ADD plant reset path');
-                currentPlantMode = 'add';
                 currentPlantId = null;
                 currentPlantRow = null;
+                applyDialogMode(DIALOG_MODE.PLANT_ADD); // CHANGED
 
                 title.textContent = 'Add plant';
 
-                // Clear plant fields                                                     
-                nameInput.value = '';
-                abbrInput.value = '';
-                typeSel.value = 'annual';
-                lifespanInput.value = '';
-                overwinterChk.checked = false;
-                syncLifecycleFields();
+                resetBoundPlantFields(); // ADDED
 
-                budgetModeSel.value = 'days';
-                gddInput.value = '';
-                daysMatInput.value = '';
-                syncBudgetModeUI();
+                typeSel.value = 'annual'; // CHANGED
+                lifespanInput.value = ''; // CHANGED
+                overwinterChk.checked = false; // CHANGED
+                syncLifecycleFields(); // CHANGED
 
-                daysGermInput.value = '0';
-                daysTransInput.value = '0';
-                yieldInput.value = '';
-                hwInput.value = '';
-
-                tbaseInput.value = '';
-                tminInput.value = '';
-                toptLowInput.value = '';
-                toptHighInput.value = '';
-                tmaxInput.value = '';
-
-                soilMinInput.value = '';
-                coolThreshInput.value = '';
-
-                vegHeightInput.value = '';
-                vegDiamInput.value = '';
-                spacingInput.value = '';
+                budgetModeSel.value = 'days'; // CHANGED
+                gddInput.value = ''; // CHANGED
+                daysMatInput.value = ''; // CHANGED
+                syncBudgetModeUI(); // CHANGED
 
                 // Reset methods + default method                                        
                 for (const chk of methodChecksById.values()) chk.checked = false;
@@ -2930,14 +3075,6 @@ Draw.loadPlugin(function (ui) {
                 varietySel.appendChild(none);
                 addVarBtn.disabled = true;
 
-                currentVarietyMode = null;
-                currentVarietyId = null;
-                currentVarietyRow = null;
-                setInlineOverridesVisible(false);
-                varietyNameRow.row.style.display = 'none';
-                setPlantControlsEnabled(true);
-
-                syncSaveButtonLabel();
                 return;
             }
 
@@ -2946,9 +3083,9 @@ Draw.loadPlugin(function (ui) {
             const rowObj = await PlantModel.loadById(pid);
             if (!rowObj) throw new Error('Plant not found');
 
-            currentPlantMode = 'edit';
             currentPlantId = pid;
             currentPlantRow = toPlainDict(rowObj);
+            applyDialogMode(DIALOG_MODE.PLANT_EDIT); // CHANGED
             title.textContent = 'Edit plant';
 
             applyPlantRowToUI(currentPlantRow);
@@ -2980,29 +3117,12 @@ Draw.loadPlugin(function (ui) {
                 return;
             }
 
-            // stay in plant mode
-            currentVarietyMode = null;
-            currentVarietyId = null;
-            currentVarietyRow = null;
-            setInlineOverridesVisible(false);
-            varietyNameRow.row.style.display = 'none';
-            setPlantControlsEnabled(true);
-            syncSaveButtonLabel();
         }
 
         function startNewVarietyMode() {
-            currentVarietyMode = 'add';
-            currentVarietyId = null;
-            currentVarietyRow = null;
-
             varietyNameInput.value = '';
             applyOverridesToUI({});
-
-            setPlantControlsEnabled(false);
-            setInlineOverridesVisible(true);
-            varietyNameRow.row.style.display = 'flex';
-            refreshInlineBaseHints();
-            syncSaveButtonLabel();
+            applyDialogMode(DIALOG_MODE.VARIETY_ADD); // CHANGED
         }
 
         async function loadVarietyIntoOverrides(varietyId) {
@@ -3031,11 +3151,7 @@ Draw.loadPlugin(function (ui) {
             varietyNameInput.value = String(currentVarietyRow?.variety_name ?? '');
             applyOverridesToUI(overrides);
 
-            setPlantControlsEnabled(false);
-            setInlineOverridesVisible(true);
-            varietyNameRow.row.style.display = 'flex';
-            refreshInlineBaseHints();
-            syncSaveButtonLabel();
+            applyDialogMode(DIALOG_MODE.VARIETY_EDIT); // CHANGED
         }
 
         // -------------------- Populate plant dropdown --------------------
@@ -3102,14 +3218,16 @@ Draw.loadPlugin(function (ui) {
                     const newVid = Number(savedVar?.variety_id);
                     if (Number.isFinite(newVid)) {
                         currentVarietyId = newVid;
-                        currentVarietyMode = 'edit';
+                        currentVarietyRow = toPlainDict(await PlantVarietyModel.loadById(newVid)); // CHANGED
                         await refreshVarietyDropdown(pid, newVid);
                         varietySel.value = String(newVid);
+                        applyDialogMode(DIALOG_MODE.VARIETY_EDIT); // CHANGED
                     } else {
                         await refreshVarietyDropdown(pid, null);
                     }
 
                     div.__commit(savedVar);
+
                     return;
                 }
 
@@ -3192,23 +3310,13 @@ Draw.loadPlugin(function (ui) {
 
                 // After save, sync dialog state to saved plant
                 currentPlantId = savedId;
-                currentPlantMode = 'edit';
                 plantSel.value = String(savedId);
                 currentPlantRow = toPlainDict(await PlantModel.loadById(savedId));
+                applyDialogMode(DIALOG_MODE.PLANT_EDIT); // CHANGED
                 refreshInlineBaseHints();
 
                 await refreshAllowedMethodCategoriesUIForPlant(savedId);
                 await refreshVarietyDropdown(savedId, null);
-
-                currentVarietyMode = null;
-                currentVarietyId = null;
-                currentVarietyRow = null;
-
-                setInlineOverridesVisible(false);
-                varietyNameRow.row.style.display = 'none';
-                setPlantControlsEnabled(true);
-                varietySel.value = '';
-                syncSaveButtonLabel();
 
                 div.__commit(saved);
             } catch (e) {
@@ -3267,14 +3375,11 @@ Draw.loadPlugin(function (ui) {
                 addVarBtn.disabled = !hasPlant;
 
                 if (!v) {
-                    currentVarietyMode = null;
-                    currentVarietyId = null;
-                    currentVarietyRow = null;
-
-                    setInlineOverridesVisible(false);
-                    varietyNameRow.row.style.display = 'none';
-                    setPlantControlsEnabled(true);
-                    syncSaveButtonLabel();
+                    applyDialogMode(
+                        Number.isFinite(Number(currentPlantId))
+                            ? DIALOG_MODE.PLANT_EDIT
+                            : DIALOG_MODE.PLANT_ADD
+                    ); // CHANGED
                     return;
                 }
 
@@ -3349,6 +3454,85 @@ Draw.loadPlugin(function (ui) {
 
 
 
+
+
+
+
+    function computeScheduleResult(inputs) { // ADDED
+        const { plant, method } = inputs;
+        const { startDate, seasonEnd, env, dailyRates, monthlyAvg } = inputs.derived();
+    
+        const planner = new Planner(inputs); // NEW
+        const feasibility = planner.isSowFeasible(startDate); // NEW
+        if (!feasibility.ok) { // NEW
+            throw new Error(`Selected sow date is not feasible: ${feasibility.reason}`); // NEW
+        } // NEW
+    
+        const budget = plant.firstHarvestBudget();
+        if (!budget || !Number.isFinite(budget.amount) || budget.amount <= 0) {
+            throw new Error("Invalid maturity budget for " + plant.plant_name);
+        }
+    
+        const schedule = [startDate];
+    
+        const stageDays = {
+            maturityDays: Number.isFinite(Number(plant.days_maturity)) && Number(plant.days_maturity) > 0
+                ? Number(plant.days_maturity)
+                : (budget.mode === "days" ? Number(budget.amount) : 0),
+            transplantDays: Number.isFinite(Number(plant.days_transplant)) ? Number(plant.days_transplant) : 0,
+            germinationDays: Number.isFinite(Number(plant.days_germ)) ? Number(plant.days_germ) : 0,
+            harvest_window_days: Number.isFinite(Number(inputs.harvestWindowDays))
+                ? Number(inputs.harvestWindowDays)
+                : (Number.isFinite(Number(plant.harvest_window_days)) ? Number(plant.harvest_window_days) : 0) // NEW
+        };
+    
+        const timelines = computeStageTimelineForSchedule({
+            schedule,
+            budget,
+            stageDays,
+            dailyRatesMap: dailyRates,
+            seasonEnd
+        });
+    
+        const yieldMultipliers = deriveYieldMultipliersFromTemp({
+            schedule,
+            budget,
+            dailyRatesMap: dailyRates,
+            cropTemp: env,
+            monthlyAvgTemp: monthlyAvg,
+            seasonEnd,
+            Tbase: env.Tbase,
+            window: "harvest",
+            HW_DAYS: stageDays.harvest_window_days || 0
+        });
+    
+        const rows = schedule.map((sowDate, idx) => {
+            const tl = timelines[idx] || {};
+            const mult = Number.isFinite(Number(yieldMultipliers[idx])) ? Number(yieldMultipliers[idx]) : 1;
+    
+            return {
+                plant: plant.plant_name,
+                method,
+                sow: fmtISO(sowDate),
+                germ: fmtISO(tl.germ),
+                trans: fmtISO(tl.transplant),
+                harvStart: fmtISO(tl.harvestStart),
+                harvEnd: fmtISO(tl.harvestEnd),
+                mult: mult.toFixed(2),
+                plantsReq: ""
+            };
+        });
+    
+        return {
+            plant,
+            method,
+            schedule,
+            timelines,
+            rows,
+            firstScheduledHarvestISO: timelines[0]?.harvestStart ? fmtISO(timelines[0].harvestStart) : null,
+            lastScheduledHarvestEndISO: timelines.length ? fmtISO(timelines[timelines.length - 1]?.harvestEnd) : null
+        };
+    }
 
 
 
@@ -3923,6 +4107,7 @@ Draw.loadPlugin(function (ui) {
             taskDirty = false;
             renderTasksList();
             updateTasksHeader({
+                methodCategorySel, // CHANGED
                 methodSel,
                 formState,
                 currentMethodSpan,
@@ -3970,7 +4155,6 @@ Draw.loadPlugin(function (ui) {
 
             formState.methodCategoryId = methodCategorySel.value;
             formState.methodId = methodSel.value;
-            formState.method = formState.methodId; // backward-compatible alias (method_id)
 
             formState.startISO = startInput.value;
             formState.seasonEndISO = seasonEndInput.value;
@@ -4169,13 +4353,15 @@ Draw.loadPlugin(function (ui) {
                     ? Number(p.soil_temp_min_plant_c)
                     : null);
 
-                const methodVal = formState.method;
+                const methodCategoryId = String(formState.methodCategoryId || '').trim().toLowerCase(); // CHANGED
+                const methodId = String(formState.methodId || '').trim().toLowerCase(); // CHANGED
                 const daysTransplant = Number.isFinite(Number(p.days_transplant)) ? Number(p.days_transplant) : 0;
 
                 const lsf = pickFrostByRisk(city, 'p50');
 
                 const r = computeAutoStartEndWindowForward({
-                    method: methodVal,
+                    methodCategoryId, // CHANGED
+                    methodId, // CHANGED
                     budget,
                     HW_DAYS,
                     dailyRatesMap: dailyRates,
@@ -4199,16 +4385,16 @@ Draw.loadPlugin(function (ui) {
                     startISO_before: formState.startISO,
                     seasonEndISO_before: formState.seasonEndISO,
                     earliestFeasibleSowDate: fmtISO(r.earliestFeasibleSowDate),
-                    lastHarvestDate: fmtISO(r.lastHarvestDate),
+                    climateEndDate: r.climateEndDate ? fmtISO(r.climateEndDate) : null, // CHANGED
                     lastFeasibleSowDate: r.lastFeasibleSowDate ? fmtISO(r.lastFeasibleSowDate) : null
                 });
 
                 const autoStartISO = r.earliestFeasibleSowDate.toISOString().slice(0, 10);
                 const lastSowISO = r.lastFeasibleSowDate ? r.lastFeasibleSowDate.toISOString().slice(0, 10) : null;
 
-                const autoHarvestISO = r.lastHarvestDate
-                    ? r.lastHarvestDate.toISOString().slice(0, 10)
-                    : null; // ADDED
+                const autoHarvestISO = r.climateEndDate
+                    ? r.climateEndDate.toISOString().slice(0, 10)
+                    : null; // CHANGED
 
                 // Store auto window (for display/guidance)                          
                 formState.autoEarliestISO = autoStartISO;
@@ -4242,7 +4428,10 @@ Draw.loadPlugin(function (ui) {
 
                 updateStartNote();
                 syncStartDateBounds(); // CHANGED
-            } catch (_) { /* silent */ }
+            } catch (e) {
+                console.warn('recomputeAnchors error:', e);
+                showErrorInline('Scheduling error: ' + (e?.message || String(e)));
+            }
         }
 
         // --- mode switcher (annual <-> perennial) ---
@@ -4494,8 +4683,6 @@ Draw.loadPlugin(function (ui) {
 
             formState.methodCategoryId = methodCategorySel.value;
             formState.methodId = methodSel.value;
-            formState.method = formState.methodId;
-
 
             harvestWindowInput.value = (effectivePlant.defaultHW() ?? '');
             formState.harvestWindowDays = (harvestWindowInput.value === '' ? null : Number(harvestWindowInput.value));
@@ -4586,6 +4773,7 @@ Draw.loadPlugin(function (ui) {
             await recomputeAll('methodChanged');
             await refreshTaskTemplateFromSelection();
             updateTasksHeader({
+                methodCategorySel, // CHANGED
                 methodSel,
                 formState,
                 currentMethodSpan,
@@ -4602,6 +4790,7 @@ Draw.loadPlugin(function (ui) {
             await recomputeAll('methodChanged');
             await refreshTaskTemplateFromSelection();
             updateTasksHeader({
+                methodCategorySel, // CHANGED
                 methodSel,
                 formState,
                 currentMethodSpan,
@@ -4868,7 +5057,7 @@ Draw.loadPlugin(function (ui) {
 
 
         // ============================================================================
-        // TASK TAB UI ADDITION
+        // TASK TAB UI
         // ============================================================================
 
         // 1. Load existing OR resolve from DB fallback chain
@@ -4935,6 +5124,7 @@ Draw.loadPlugin(function (ui) {
                 taskDirty = true;
                 renderTasksList();
                 updateTasksHeader({
+                    methodCategorySel, // CHANGED
                     methodSel,
                     formState,
                     currentMethodSpan,
@@ -5012,6 +5202,7 @@ Draw.loadPlugin(function (ui) {
         async function refreshTaskTemplateFromSelection() {
             syncStateFromControls();
             updateTasksHeader({
+                methodCategorySel, // CHANGED
                 methodSel,
                 formState,
                 currentMethodSpan,
@@ -5038,6 +5229,7 @@ Draw.loadPlugin(function (ui) {
             taskEditorDiv.innerHTML = '';
             renderTasksList();
             updateTasksHeader({
+                methodCategorySel, // CHANGED
                 methodSel,
                 formState,
                 currentMethodSpan,
@@ -5049,6 +5241,7 @@ Draw.loadPlugin(function (ui) {
 
         syncStateFromControls();
         updateTasksHeader({
+            methodCategorySel, // CHANGED
             methodSel,
             formState,
             currentMethodSpan,
@@ -5208,17 +5401,24 @@ Draw.loadPlugin(function (ui) {
             repeatConfigDiv.appendChild(repeatTimesRow);
             repeatConfigDiv.appendChild(repeatUntilAnchorRow);
 
-            function syncTaskEditorVisibility() { // CHANGED
-                const endMode = endModeSel.value; // CHANGED
-                durationRow.style.display = (endMode === "fixed_days") ? "" : "none"; // CHANGED
-                endAnchorRow.style.display = (endMode === "anchor_range") ? "" : "none"; // CHANGED
-
-                const repeating = repeatModeSel.value === "interval"; // CHANGED
-                repeatConfigDiv.style.display = repeating ? "" : "none"; // CHANGED
-
-                const untilMode = repeatUntilModeSel.value; // CHANGED
-                repeatTimesRow.style.display = (repeating && untilMode === "x_times") ? "" : "none"; // CHANGED
-                repeatUntilAnchorRow.style.display = (repeating && untilMode === "until_anchor") ? "" : "none"; // CHANGED
+            function syncTaskEditorVisibility() {
+                const endMode = endModeSel.value;
+                const anchorRange = endMode === "anchor_range";
+            
+                durationRow.style.display = (endMode === "fixed_days") ? "" : "none";
+                endAnchorRow.style.display = anchorRange ? "" : "none";
+            
+                if (anchorRange && repeatModeSel.value === "interval") {
+                    repeatModeSel.value = "none";
+                }
+                repeatModeSel.disabled = anchorRange;
+            
+                const repeating = !anchorRange && repeatModeSel.value === "interval";
+                repeatConfigDiv.style.display = repeating ? "" : "none";
+            
+                const untilMode = repeatUntilModeSel.value;
+                repeatTimesRow.style.display = (repeating && untilMode === "x_times") ? "" : "none";
+                repeatUntilAnchorRow.style.display = (repeating && untilMode === "until_anchor") ? "" : "none";
             }
 
             endModeSel.addEventListener("change", syncTaskEditorVisibility); // CHANGED
@@ -5278,6 +5478,7 @@ Draw.loadPlugin(function (ui) {
                     taskEditorDiv.innerHTML = "";
                     renderTasksList();
                     updateTasksHeader({ // CHANGED
+                        methodCategorySel, // CHANGED
                         methodSel,
                         formState,
                         currentMethodSpan,
@@ -5366,6 +5567,7 @@ Draw.loadPlugin(function (ui) {
         const tasksTabBtn = mxUtils.button("Tasks", async () => {
             await refreshTaskTemplateFromSelection();
             updateTasksHeader({
+                methodCategorySel, // CHANGED
                 methodSel,
                 formState,
                 currentMethodSpan,
@@ -5449,6 +5651,30 @@ Draw.loadPlugin(function (ui) {
         HARVEST_END: "Harvest end"
     };
 
+    const METHOD_TASK_STAGE_POLICY = Object.freeze({
+        "transplant.indoor": {
+            allowedStages: ["SOW", "TRANSPLANT", "HARVEST_START", "HARVEST_END"]
+        },
+        "transplant.outdoor": {
+            allowedStages: ["SOW", "TRANSPLANT", "HARVEST_START", "HARVEST_END"]
+        },
+        "transplant.purchased": {
+            allowedStages: ["TRANSPLANT", "HARVEST_START", "HARVEST_END"]
+        },
+        "transplant.cutting": {
+            allowedStages: ["SOW", "TRANSPLANT", "HARVEST_START", "HARVEST_END"]
+        },
+        "direct_sow.field": {
+            allowedStages: ["SOW", "GERM", "HARVEST_START", "HARVEST_END"]
+        },
+        "direct_sow.pre_germinated": {
+            allowedStages: ["SOW", "GERM", "HARVEST_START", "HARVEST_END"]
+        },
+        "direct_sow.plug": {
+            allowedStages: ["TRANSPLANT", "HARVEST_START", "HARVEST_END"]
+        }
+    });
+
     const CANONICAL_TASK_IDS = ["prep", "sow", "start", "harden", "transplant", "thin", "harvest"];
 
     function isCanonicalTaskId(id) {
@@ -5505,21 +5731,41 @@ Draw.loadPlugin(function (ui) {
             .map(x => x.rule);
     }
 
-    function getAllowedAnchorStagesForMethodCategory(methodCategoryId) {
-        switch (String(methodCategoryId || "").trim()) {
-            case "direct_sow":
-                return ["SOW", "GERM", "HARVEST_START", "HARVEST_END"];
-            case "transplant":
-                return ["SOW", "TRANSPLANT", "HARVEST_START", "HARVEST_END"];
-            default:
-                return ["SOW", "GERM", "TRANSPLANT", "HARVEST_START", "HARVEST_END"];
-        }
-    }
-
+    function getAllowedAnchorStagesForPlanningMode(planningMode) { // CHANGED
+        switch (String(planningMode || "").trim()) { // CHANGED
+            case "direct_sow": // CHANGED
+                return ["SOW", "GERM", "HARVEST_START", "HARVEST_END"]; // CHANGED
+            case "transplant_indoor": // CHANGED
+            case "transplant_outdoor": // CHANGED
+                return ["SOW", "TRANSPLANT", "HARVEST_START", "HARVEST_END"]; // CHANGED
+            default: // CHANGED
+                return ["SOW", "GERM", "TRANSPLANT", "HARVEST_START", "HARVEST_END"]; // CHANGED
+        } // CHANGED
+    } // CHANGED
+    
     async function getAllowedAnchorStagesForMethod(methodId) {
-        const method = await getPlantingMethodById(methodId);
-        if (!method) return Object.keys(TASK_STAGE_LABELS);
-        return getAllowedAnchorStagesForMethodCategory(method.method_category_id);
+        const id = String(methodId || "").trim().toLowerCase();
+    
+        if (!id) {
+            return ["SOW", "GERM", "TRANSPLANT", "HARVEST_START", "HARVEST_END"];
+        }
+    
+        const policy = METHOD_TASK_STAGE_POLICY[id];
+        if (policy && Array.isArray(policy.allowedStages) && policy.allowedStages.length) {
+            return [...policy.allowedStages];
+        }
+    
+        const method = await getPlantingMethodById(id);
+        if (!method) {
+            return ["SOW", "GERM", "TRANSPLANT", "HARVEST_START", "HARVEST_END"];
+        }
+    
+        const resolved = resolveMethodBehavior({
+            methodCategoryId: method.method_category_id,
+            methodId: method.method_id
+        });
+    
+        return getAllowedAnchorStagesForPlanningMode(resolved.planningMode);
     }
 
     function humanStageLabel(stage) {
@@ -5737,6 +5983,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function updateTasksHeader({
+        methodCategorySel,
         methodSel,
         formState,
         currentMethodSpan,
@@ -5744,14 +5991,20 @@ Draw.loadPlugin(function (ui) {
         taskDirty,
         taskTemplateSource
     }) {
+        const methodCategoryName = (() => {
+            const opt = methodCategorySel?.selectedOptions?.[0];
+            const label = opt ? String(opt.textContent || "").trim() : "";
+            return label || String(formState?.methodCategoryId || "").trim() || "(none)";
+        })();
+    
         const methodName = (() => {
             const opt = methodSel?.selectedOptions?.[0];
             const label = opt ? String(opt.textContent || "").trim() : "";
             return label || String(formState?.methodId || "").trim() || "(none)";
         })();
-
-        currentMethodSpan.textContent = `Method: ${methodName}`;
-
+    
+        currentMethodSpan.textContent = `Method: ${methodCategoryName} / ${methodName}`; // CHANGED
+    
         const dirtyLabel = taskDirty ? " • Dirty" : "";
         currentTemplateSourceSpan.textContent =
             `Source: ${prettySourceLabel(taskTemplateSource)}${dirtyLabel}`;
@@ -5783,12 +6036,12 @@ Draw.loadPlugin(function (ui) {
         return { template: null, source: "none" };
     }
 
-    function prepAnchorForBaseMethod(methodCategoryId) {
-        return methodCategoryId === "direct_sow" ? "SOW" : "TRANSPLANT";
-    }
+    function prepAnchorForPlanningMode(planningMode) { // CHANGED
+        return planningMode === "direct_sow" ? "SOW" : "TRANSPLANT"; // CHANGED
+    } // CHANGED
 
-    function taskRuleLibraryForBaseMethod(methodCategoryId) {
-        const prepAnchor = prepAnchorForBaseMethod(methodCategoryId);
+    function taskRuleLibraryForPlanningMode(planningMode) {
+        const prepAnchor = prepAnchorForPlanningMode(planningMode);
 
         return {
             prep: {
@@ -5921,16 +6174,18 @@ Draw.loadPlugin(function (ui) {
 
     // -------------------- Default template from method --------------------------
 
-    async function getDefaultTaskTemplateForPlantingMethods(methodId) {
+    async function getDefaultTaskTemplateForPlantingMethods(methodId) { // CHANGED
         if (!methodId) return null;
-
+    
         const method = await getPlantingMethodById(methodId);
         if (!method) return null;
-
-        const baseMethodCategoryId = String(method.method_category_id || "").trim();
-        if (!baseMethodCategoryId) return null;
-
-        const lib = taskRuleLibraryForBaseMethod(baseMethodCategoryId);
+    
+        const resolved = resolveMethodBehavior({ // CHANGED
+            methodCategoryId: method.method_category_id, // CHANGED
+            methodId: method.method_id // CHANGED
+        }); // CHANGED
+    
+        const lib = taskRuleLibraryForPlanningMode(resolved.planningMode); // CHANGED
 
         const required = safeJsonParse(method.tasks_required_json, {}) || {};
         const orderedIds = ["prep", "sow", "start", "harden", "transplant", "thin", "harvest"];
@@ -6067,48 +6322,17 @@ Draw.loadPlugin(function (ui) {
 
 
     async function applyScheduleToGraph(ui, cell, inputs) {
-        const { plant, city, method } = inputs;
-        const { startDate, seasonEnd, env, dailyRates, monthlyAvg } = inputs.derived();
+        const { plant, city } = inputs;
+        const { env } = inputs.derived();
+    
+        const result = computeSinglePlantingResult(inputs); // NEW
+        const schedule = result.schedule; // NEW
+        const timelines = result.timelines; // NEW
 
         const budget = plant.firstHarvestBudget();
         if (!budget || !Number.isFinite(budget.amount) || budget.amount <= 0) {
             throw new Error("Invalid maturity budget for " + plant.plant_name);
         }
-
-        // Single-planting model: schedule is exactly one start date. 
-        const schedule = [startDate];
-        if (!(schedule[0] instanceof Date)) {
-            throw new Error("Invalid start date for scheduling.");
-        }
-
-        const stageDays = {
-            maturityDays: Number.isFinite(Number(plant.days_maturity)) && Number(plant.days_maturity) > 0
-                ? Number(plant.days_maturity)
-                : (budget.mode === "days" ? budget.amount : 0),
-            transplantDays: Number.isFinite(Number(plant.days_transplant)) ? Number(plant.days_transplant) : 0,
-            germinationDays: Number.isFinite(Number(plant.days_germ)) ? Number(plant.days_germ) : 0,
-        };
-
-        const timelines = computeStageTimelineForSchedule({
-            schedule,
-            budget,
-            stageDays,
-            dailyRatesMap: dailyRates,
-            seasonEnd
-        });
-
-        // Plants allocation is single-group only.                                             
-        // Prefer an explicit per-group requirement if you already store it.                   
-        const plantsReqRaw =
-            cell?.getAttribute?.("plants_required") ??
-            cell?.getAttribute?.("plantsReq") ??
-            cell?.getAttribute?.("actualPlants") ??
-            "";
-
-        const plantsReq = (() => {
-            const n = Number(String(plantsReqRaw).trim());
-            return Number.isFinite(n) && n >= 0 ? n : 0;
-        })();
 
         const ypp = (() => {
             const v =
@@ -6473,7 +6697,11 @@ Draw.loadPlugin(function (ui) {
         const todayUTC = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()));
         const groupCityName = (cell && cell.getAttribute && cell.getAttribute('city_name')) || null;
         const initialCityName = groupCityName || (cities[0].city_name || cities[0]);
-        const methodPreview = (selectedPlant.AllowedMethodCategories?.()[0]) || 'direct_sow';
+
+        const initialMethodSelection = await resolveInitialMethodSelection(cell, selectedPlant);
+        const initialMethodCategoryId = initialMethodSelection.methodCategoryId;
+        const initialMethodId = initialMethodSelection.methodId;
+        const initialResolvedBehavior = initialMethodSelection.resolvedBehavior;
 
         const cityInit = await CityClimate.loadByName(initialCityName);
         if (!cityInit) throw new Error(`City not found: ${initialCityName}`);
@@ -6502,7 +6730,8 @@ Draw.loadPlugin(function (ui) {
                 climateEndDate: c,
                 earliestHarvestEndDate: hEnd
             } = computeAutoStartEndWindowForward({
-                method: methodPreview,
+                methodCategoryId: initialMethodCategoryId,
+                methodId: initialMethodId,
                 budget: budget,
                 HW_DAYS: HW_DAYS,
                 dailyRatesMap: dailyRates,
@@ -6511,11 +6740,18 @@ Draw.loadPlugin(function (ui) {
                 cropTemp: env,
                 scanStart,
                 scanEndHard,
-                soilGateThresholdC: (Number.isFinite(Number(selectedPlant.soil_temp_min_plant_c))
-                    ? Number(selectedPlant.soil_temp_min_plant_c)
-                    : null),
+                soilGateThresholdC: (
+                    Number.isFinite(Number(selectedPlant.soil_temp_min_plant_c))
+                        ? Number(selectedPlant.soil_temp_min_plant_c)
+                        : null
+                ),
                 soilGateConsecutiveDays: 3,
                 startCoolingThresholdC: asCoolingThresholdC(selectedPlant.start_cooling_threshold_c),
+                useSpringFrostGate: !overwinterAllowed0,
+                lastSpringFrostDOY: pickFrostByRisk(cityInit, 'p50'),
+                daysTransplant: Number.isFinite(Number(selectedPlant.days_transplant))
+                    ? Number(selectedPlant.days_transplant)
+                    : 0,
                 overwinterAllowed: overwinterAllowed0
             });
 
@@ -6535,12 +6771,14 @@ Draw.loadPlugin(function (ui) {
             const inputs0 = new ScheduleInputs({
                 plant: selectedPlant,
                 city: cityInit,
-                method: methodPreview,
+                method: initialResolvedBehavior.planningMode,
+                methodCategoryId: initialMethodCategoryId,
+                methodId: initialMethodId,
                 startISO: earliestFeasibleSowDate.toISOString().slice(0, 10),
-                seasonEndISO: climateEndDate.toISOString().slice(0, 10), // CHANGED
-                policy: PolicyFlags.fromPlant(selectedPlant, methodPreview),
+                seasonEndISO: climateEndDate.toISOString().slice(0, 10),
+                policy: PolicyFlags.fromResolvedBehavior(selectedPlant, initialResolvedBehavior),
                 seasonStartYear: year,
-                harvestWindowDays: HW_DAYS // CHANGED
+                harvestWindowDays: HW_DAYS
             });
 
             const planner0 = new Planner(inputs0);
@@ -6691,7 +6929,6 @@ Draw.loadPlugin(function (ui) {
             }
         }
 
-
         console.log("[Scheduler] defining normalizeUtcMidnight now");
 
         function normalizeUtcMidnight(d) {
@@ -6701,6 +6938,14 @@ Draw.loadPlugin(function (ui) {
         function toYmdUTC(d) {
             if (!d) return null;
             return normalizeUtcMidnight(d).toISOString().slice(0, 10);
+        }
+
+        function normalizePlanningMethod(raw) { // CHANGED
+            const m = String(raw || "").trim(); // CHANGED
+            if (m === "direct_sow") return "direct_sow"; // CHANGED
+            if (m === "transplant_indoor") return "transplant_indoor"; // CHANGED
+            if (m === "transplant_outdoor") return "transplant_outdoor"; // CHANGED
+            return "direct_sow"; // CHANGED
         }
 
         function findPrevFeasible(planner, endCandidate, maxDays) {
@@ -6734,7 +6979,7 @@ Draw.loadPlugin(function (ui) {
                 const city = await CityClimate.loadByName(cityName);
                 if (!city) return { cropId, harvestStart: null, harvestEnd: null, shelfLifeDays: null, reason: "City not found" };
 
-                const method = String(req?.method || "direct_sow");
+                const method = normalizePlanningMethod(req?.method); // CHANGED
 
                 let hw = Number(plant.harvest_window_days ?? (typeof plant.defaultHW === "function" ? plant.defaultHW() : NaN));
                 if (!Number.isFinite(hw) || hw <= 0) hw = 14; // planning fallback
@@ -6749,9 +6994,7 @@ Draw.loadPlugin(function (ui) {
                     seasonEndISO: `${year}-12-31`,
                     policy,
                     seasonStartYear: year,
-                    harvestWindowDays: Number.isFinite(Number(plant?.harvest_window_days))
-                        ? Number(plant.harvest_window_days)
-                        : null, // CHANGED
+                    harvestWindowDays: hw, // CHANGED
                     varietyId,
                     varietyName: ""
                 });
@@ -6767,18 +7010,22 @@ Draw.loadPlugin(function (ui) {
                 }
 
                 const last = findPrevFeasible(planner, C.scanEndHard, maxSpanDays);
+
+                const shelfLifeDays =
+                    Number.isFinite(Number(plant.shelf_life_days)) ? Number(plant.shelf_life_days) : null; // CHANGED
+
+                // We approximate crop harvest window as:
+                // earliest harvest start from earliest feasible sow,
+                // latest harvest end from latest feasible sow. // CHANGED
                 if (!last?.date || !last?.info?.ok) {
                     return {
                         cropId,
                         harvestStart: toYmdUTC(first.info.harvestStart),
                         harvestEnd: toYmdUTC(first.info.harvestEnd),
-                        shelfLifeDays: null,
+                        shelfLifeDays, // CHANGED
                         reason: "No late-season feasible sow date found"
                     };
                 }
-
-                const shelfLifeDays =
-                    Number.isFinite(Number(plant.shelf_life_days)) ? Number(plant.shelf_life_days) : null;
 
                 // ordering sanity
                 if (last.info.harvestEnd < first.info.harvestStart) {

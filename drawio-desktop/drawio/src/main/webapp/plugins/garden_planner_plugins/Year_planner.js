@@ -78,7 +78,7 @@ Draw.loadPlugin(function (ui) {
 
     // -------------------- Env --------------------                                                     
     const Env = (() => {
-        const DEBUG = false;                      
+        const DEBUG = false;
 
         function safeJsonStringParse(s, fallback) {
             try { return JSON.parse(String(s || "")); } catch (_) { return fallback; }
@@ -101,6 +101,19 @@ Draw.loadPlugin(function (ui) {
             }
         };
     })();
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     // -------------------- DiagramStore --------------------                                            
     const DiagramStore = (() => {
@@ -169,6 +182,22 @@ Draw.loadPlugin(function (ui) {
         };
     })();
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     // -------------------- DbClient --------------------                                                 
     const DbClient = (() => {
         let __dbPathCached = null;
@@ -205,7 +234,7 @@ Draw.loadPlugin(function (ui) {
 
         async function listPlantsBasicRows() {
             const sql = `
-          SELECT plant_id, plant_name, yield_per_plant_kg, harvest_window_days
+          SELECT plant_id, plant_name, yield_per_plant_kg, harvest_window_days, default_planting_method
           FROM Plants
           WHERE abbr IS NOT NULL
           ORDER BY plant_name;`;
@@ -242,6 +271,28 @@ Draw.loadPlugin(function (ui) {
             queryVarietiesByPlantId
         };
     })();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     // -------------------- PlanMath --------------------                                                  
     const PlanMath = (() => {
@@ -581,6 +632,34 @@ Draw.loadPlugin(function (ui) {
         };
     })();
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     // -------------------- Extractors --------------------                                                
     const Extractors = (() => {
         function isTilerGroupCell(cell) {
@@ -696,6 +775,23 @@ Draw.loadPlugin(function (ui) {
         };
     })();
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     // -------------------- local aliases ------------------------------------ 
     const safeJsonStringParse = Env.safeJsonStringParse;
     const uid = Env.uid;
@@ -769,6 +865,15 @@ Draw.loadPlugin(function (ui) {
     }
 
 
+
+
+
+
+
+
+
+
+
     // -------------------- Actual harvest from diagram helpers --------------------
 
     function harvestStartYmd(tg) {
@@ -794,6 +899,23 @@ Draw.loadPlugin(function (ui) {
         return new Date(ms).getFullYear();        // LOCAL year (consistent with parseYmdLocalToMs)
     }
 
+    function harvestWindowOverlapsYear(tg, year) { // CHANGED
+        const hs = harvestStartYmd(tg); // CHANGED
+        const he = harvestEndYmd(tg); // CHANGED
+        if (!hasYmd(hs) || !hasYmd(he)) return false; // CHANGED
+
+        const startMs = parseYmdLocalToMs(hs); // CHANGED
+        const endMs = parseYmdLocalToMs(he); // CHANGED
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return false; // CHANGED
+
+        const yearStartMs = parseYmdLocalToMs(`${Number(year)}-01-01`); // CHANGED
+        const yearEndMs = parseYmdLocalToMs(`${Number(year)}-12-31`); // CHANGED
+        if (!Number.isFinite(yearStartMs) || !Number.isFinite(yearEndMs)) return false; // CHANGED
+
+        const a = Math.min(startMs, endMs); // CHANGED
+        const b = Math.max(startMs, endMs); // CHANGED
+        return b >= yearStartMs && a <= yearEndMs; // CHANGED
+    } // CHANGED
 
     function weekRangeForWindow(weekStarts, fromYmd, toYmd) {
         if (!hasYmd(fromYmd) || !hasYmd(toYmd)) return null;
@@ -816,7 +938,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         for (const tg of tilers) {
-            if (!shouldIncludeTilerGroupInYear(tg, year, harvestEndLocalYear)) continue;
+            if (!harvestWindowOverlapsYear(tg, year)) continue; // CHANGED
 
             const plantCount = Number(getCellAttr(tg, "plant_count", ""));
             const nPlants = (Number.isFinite(plantCount) && plantCount > 0) ? Math.trunc(plantCount) : 0;
@@ -888,6 +1010,15 @@ Draw.loadPlugin(function (ui) {
             }
         }
     }
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1142,13 +1273,28 @@ Draw.loadPlugin(function (ui) {
         `.trim();
     }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    // ------------ openPlanModal --------------
     function openPlanModal(moduleCell, year) {
         closeSession();
 
         let currentYear = year;
 
         const __actualControlsByCropId = new Map();
-        const __requiredControlsByCropId = new Map(); 
+        const __requiredControlsByCropId = new Map();
 
         const existing = loadPlanForYear(moduleCell, year);
         const plan = existing || {
@@ -1662,27 +1808,27 @@ Draw.loadPlugin(function (ui) {
             }
         }
 
-        
-        function syncRequiredPlantsInputs(cropTotalsRows) { 
-            const byId = new Map(); 
-            for (const r of (cropTotalsRows || [])) { 
-                const id = String(r?.crop?.id || ""); 
-                if (!id) continue; 
-                byId.set(id, r); 
-            } 
 
-            for (const c of (plan.crops || [])) { 
-                const ctl = __requiredControlsByCropId.get(c.id); 
-                if (!ctl || !ctl.input) continue; 
+        function syncRequiredPlantsInputs(cropTotalsRows) {
+            const byId = new Map();
+            for (const r of (cropTotalsRows || [])) {
+                const id = String(r?.crop?.id || "");
+                if (!id) continue;
+                byId.set(id, r);
+            }
 
-                const r = byId.get(String(c.id)) || null; 
-                const pr = r ? Number(r.plantsReq) : NaN; 
+            for (const c of (plan.crops || [])) {
+                const ctl = __requiredControlsByCropId.get(c.id);
+                if (!ctl || !ctl.input) continue;
+
+                const r = byId.get(String(c.id)) || null;
+                const pr = r ? Number(r.plantsReq) : NaN;
 
                 // Display as integer plants (ceil). If NaN/<=0 => 0. 
-                const shown = (Number.isFinite(pr) && pr > 0) ? Math.ceil(pr) : 0; 
-                ctl.input.value = String(shown); 
-            } 
-        } 
+                const shown = (Number.isFinite(pr) && pr > 0) ? Math.ceil(pr) : 0;
+                ctl.input.value = String(shown);
+            }
+        }
 
         function syncactualPlantsInputs() {
             for (const c of (plan.crops || [])) {
@@ -1961,27 +2107,27 @@ Draw.loadPlugin(function (ui) {
 
             const weekly = computePlanWeekly(plan, warnings);
 
-            const totalsRows = computePlanCropTotals(plan, weekly); 
+            const totalsRows = computePlanCropTotals(plan, weekly);
 
             // Persist computed requirements onto the plan crop objects.                         
-            const totalsById = new Map();                                                     
-            for (const r of (totalsRows || [])) {                                             
-                const id = String(r?.crop?.id || "");                                         
-                if (!id) continue;                                                           
-                totalsById.set(id, r);                                                       
-            }                                                                                
+            const totalsById = new Map();
+            for (const r of (totalsRows || [])) {
+                const id = String(r?.crop?.id || "");
+                if (!id) continue;
+                totalsById.set(id, r);
+            }
 
-            for (const c of (plan.crops || [])) {                                             
-                const r = totalsById.get(String(c.id)) || null;                               
-                const pr = r ? Number(r.plantsReq) : NaN;                                     
-                const sr = r ? Number(r.seedsReq) : NaN;                                      
+            for (const c of (plan.crops || [])) {
+                const r = totalsById.get(String(c.id)) || null;
+                const pr = r ? Number(r.plantsReq) : NaN;
+                const sr = r ? Number(r.seedsReq) : NaN;
 
                 // Store as integers; NaN/<=0 => 0.                                            
-                c.plantsReq = (Number.isFinite(pr) && pr > 0) ? Math.ceil(pr) : 0;            
-                c.seedsReq = (Number.isFinite(sr) && sr > 0) ? Math.ceil(sr) : 0;            
-            }                                                                                
+                c.plantsReq = (Number.isFinite(pr) && pr > 0) ? Math.ceil(pr) : 0;
+                c.seedsReq = (Number.isFinite(sr) && sr > 0) ? Math.ceil(sr) : 0;
+            }
 
-            syncRequiredPlantsInputs(totalsRows);                                             
+            syncRequiredPlantsInputs(totalsRows);
 
             const cropId = String(plan.cropFilterId || "");
 
@@ -2024,7 +2170,7 @@ Draw.loadPlugin(function (ui) {
 
             session.ui.harvestVizByCropId.clear();
 
-            __requiredControlsByCropId.clear();             
+            __requiredControlsByCropId.clear();
 
             const crops = plan.crops || [];
 
@@ -2073,10 +2219,10 @@ Draw.loadPlugin(function (ui) {
                 actual.title = "Auto from diagram tiler groups (sum of plant_count for this crop in the selected year).";
                 __actualControlsByCropId.set(crop.id, { input: actual });
 
-                const requiredPlants = mkInput("number", 0, 120); 
-                requiredPlants.disabled = true; 
-                requiredPlants.title = "Plants required to meet the plan target (computed from demand and kg/plant). Rounded up."; 
-                __requiredControlsByCropId.set(crop.id, { input: requiredPlants });                 
+                const requiredPlants = mkInput("number", 0, 120);
+                requiredPlants.disabled = true;
+                requiredPlants.title = "Plants required to meet the plan target (computed from demand and kg/plant). Rounded up.";
+                __requiredControlsByCropId.set(crop.id, { input: requiredPlants });
 
                 actual.value = String(
                     Number.isFinite(Number(crop.actualPlants))
@@ -2148,8 +2294,8 @@ Draw.loadPlugin(function (ui) {
                 row.appendChild(shelf);
                 row.appendChild(syncharvestLab);
 
-                row.appendChild(document.createTextNode("plants req")); 
-                row.appendChild(requiredPlants);                        
+                row.appendChild(document.createTextNode("plants req"));
+                row.appendChild(requiredPlants);
 
                 row.appendChild(document.createTextNode("actual plants"));
                 row.appendChild(actual);
@@ -2491,7 +2637,7 @@ Draw.loadPlugin(function (ui) {
                 delCrop.addEventListener("click", (ev) => {
                     ev.preventDefault();
                     __actualControlsByCropId.delete(crop.id);
-                    __requiredControlsByCropId.delete(crop.id); 
+                    __requiredControlsByCropId.delete(crop.id);
                     __varietyControlsByCropId.delete(crop.id);
                     plan.crops = (plan.crops || []).filter(x => x !== crop);
                     if (plan.csa && Array.isArray(plan.csa.components)) {
@@ -2733,6 +2879,7 @@ Draw.loadPlugin(function (ui) {
                 id: uid("crop"),
                 plantId: String(p.plant_id),
                 plant: String(p.plant_name),
+                method: String(p.default_planting_method || "").trim() || "direct_sow", // CHANGED
                 variety: "",
                 harvestStart: "",
                 harvestEnd: "",
@@ -2750,34 +2897,8 @@ Draw.loadPlugin(function (ui) {
             plan.crops.push(crop);
             refreshCropFilterDropdown();
 
-            const USL_DEBUG_HARVEST_WINDOWS = true;
-
-
-            function emitHarvestWindowsNeeded(moduleCell, year, cropsReq) {
-                if (USL_DEBUG_HARVEST_WINDOWS) {
-                    console.groupCollapsed('[USL][YearPlanner] emit usl:harvestWindowsNeeded');
-                    console.log('moduleCellId:', moduleCell.getId ? moduleCell.getId() : moduleCell.id);
-                    console.log('year:', year);
-                    console.log('cropsReq:', JSON.parse(JSON.stringify(cropsReq)));
-                    console.groupEnd();
-                }
-
-                try {
-                    window.dispatchEvent(new CustomEvent("usl:harvestWindowsNeeded", {
-                        detail: {
-                            moduleCellId: moduleCell.getId ? moduleCell.getId() : moduleCell.id,
-                            currentYear,
-                            crops: cropsReq
-                        }
-                    }));
-                } catch (e) {
-                    console.error('[USL][YearPlanner] Failed to dispatch usl:harvestWindowsNeeded', e);
-                }
-            }
-
-
             // after plan.crops.push(crop);
-            emitHarvestWindowsNeeded(moduleCell, year, [{
+            emitHarvestWindowsNeeded(moduleCell, currentYear, [{
                 cropId: crop.id,
                 plantId: crop.plantId,
                 varietyId: crop.varietyId ?? null,
@@ -2878,17 +2999,17 @@ Draw.loadPlugin(function (ui) {
             }
 
             // Recompute plantsReq/seedsReq right before persisting (avoid stale values).        
-            const warnings2 = [];                                                             
-            const weekly2 = computePlanWeekly(plan, warnings2);                                
-            const totals2 = computePlanCropTotals(plan, weekly2);                              
-            const totalsById2 = new Map(totals2.map(r => [String(r.crop.id), r]));              
-            for (const c of (plan.crops || [])) {                                              
-                const r = totalsById2.get(String(c.id)) || null;                               
-                const pr = r ? Number(r.plantsReq) : NaN;                                      
-                const sr = r ? Number(r.seedsReq) : NaN;                                       
-                c.plantsReq = (Number.isFinite(pr) && pr > 0) ? Math.ceil(pr) : 0;             
-                c.seedsReq = (Number.isFinite(sr) && sr > 0) ? Math.ceil(sr) : 0;             
-            }                                                                                  
+            const warnings2 = [];
+            const weekly2 = computePlanWeekly(plan, warnings2);
+            const totals2 = computePlanCropTotals(plan, weekly2);
+            const totalsById2 = new Map(totals2.map(r => [String(r.crop.id), r]));
+            for (const c of (plan.crops || [])) {
+                const r = totalsById2.get(String(c.id)) || null;
+                const pr = r ? Number(r.plantsReq) : NaN;
+                const sr = r ? Number(r.seedsReq) : NaN;
+                c.plantsReq = (Number.isFinite(pr) && pr > 0) ? Math.ceil(pr) : 0;
+                c.seedsReq = (Number.isFinite(sr) && sr > 0) ? Math.ceil(sr) : 0;
+            }
 
 
             const persisted = JSON.parse(JSON.stringify(plan));
@@ -2931,6 +3052,31 @@ Draw.loadPlugin(function (ui) {
             renderCsaSection();
             renderPreview();
         });
+
+        const USL_DEBUG_HARVEST_WINDOWS = true;
+
+
+        function emitHarvestWindowsNeeded(moduleCell, year, cropsReq) {
+            if (USL_DEBUG_HARVEST_WINDOWS) {
+                console.groupCollapsed('[USL][YearPlanner] emit usl:harvestWindowsNeeded');
+                console.log('moduleCellId:', moduleCell.getId ? moduleCell.getId() : moduleCell.id);
+                console.log('year:', year);
+                console.log('cropsReq:', JSON.parse(JSON.stringify(cropsReq)));
+                console.groupEnd();
+            }
+
+            try {
+                window.dispatchEvent(new CustomEvent("usl:harvestWindowsNeeded", {
+                    detail: {
+                        moduleCellId: moduleCell.getId ? moduleCell.getId() : moduleCell.id,
+                        year: Number(year),
+                        crops: cropsReq
+                    }
+                }));
+            } catch (e) {
+                console.error('[USL][YearPlanner] Failed to dispatch usl:harvestWindowsNeeded', e);
+            }
+        }
 
         function applyHarvestSuggestionsToPlan(plan, results) {                             // RESTORE
             if (!plan || !Array.isArray(plan.crops)) return;
@@ -3026,6 +3172,20 @@ Draw.loadPlugin(function (ui) {
         renderPreview();
 
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
