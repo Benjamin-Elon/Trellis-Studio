@@ -1,4 +1,4 @@
-Trellis for Drawio extends Draw.io with a coordinated suite of plugins that turn diagrams into interactive, computational garden plans.
+Trellis for Drawio extends Draw.io with a coordinated suite of plugins that turn diagrams into a visual garden planning and management system.
 
 Several of the plugins depend on local database access, requiring the slightly modified version of Draw.io included in this repository . The only changes are a file system bridge for Database access, and new built-in plugins.
 
