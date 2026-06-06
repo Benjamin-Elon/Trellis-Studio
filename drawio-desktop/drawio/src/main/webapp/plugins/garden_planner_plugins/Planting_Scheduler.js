@@ -8,7 +8,7 @@
 //  * Class-based encapsulation: PlantModel, CityClimate, PolicyFlags, ScheduleInputs
 //  * Overwinter-aware feasibility & scanning
 //  * Yield multipliers computed over HARVEST window
-//  * UI keeps the same behavior (manual/auto dates, min fi filter, preview)
+//  * UI keeps the same behavior (manual/auto dates, minimum yield filter, preview)
 //
 // ---------------------------------------------------------------------------------------------
 
@@ -46,12 +46,27 @@ Draw.loadPlugin(function (ui) {
         const ms = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - start;
         return Math.floor(ms / 86400000) + 1;
     }
+    function finiteNumberOrNull(value) {
+        if (value === null || value === undefined || value === '') return null;
+        const n = Number(value);
+        return Number.isFinite(n) ? n : null;
+    }
+    function parseISODateUTCValue(value) {
+        const s = String(value ?? '').trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+        const d = new Date(s + 'T00:00:00Z');
+        return Number.isNaN(d.getTime()) ? null : d;
+    }
     function pickFrostByRisk(city, risk = 'p50') {
         // fallbacks: specific percentile → pX → plain
-        if (risk === 'p90' && Number.isFinite(Number(city.last_spring_frost_p90_doy))) return Number(city.last_spring_frost_p90_doy);
-        if (risk === 'p50' && Number.isFinite(Number(city.last_spring_frost_p50_doy))) return Number(city.last_spring_frost_p50_doy);
-        if (risk === 'p10' && Number.isFinite(Number(city.last_spring_frost_p10_doy))) return Number(city.last_spring_frost_p10_doy);
-        if (Number.isFinite(Number(city.last_spring_frost_doy))) return Number(city.last_spring_frost_doy);
+        const p90 = finiteNumberOrNull(city?.last_spring_frost_p90_doy);
+        const p50 = finiteNumberOrNull(city?.last_spring_frost_p50_doy);
+        const p10 = finiteNumberOrNull(city?.last_spring_frost_p10_doy);
+        const plain = finiteNumberOrNull(city?.last_spring_frost_doy);
+        if (risk === 'p90' && p90 != null) return p90;
+        if (risk === 'p50' && p50 != null) return p50;
+        if (risk === 'p10' && p10 != null) return p10;
+        if (plain != null) return plain;
         // worst-case: mid-April DOY=105 (safe-ish default for many temperate zones)
         return 105;
     }
@@ -111,6 +126,20 @@ Draw.loadPlugin(function (ui) {
         } finally {
             try { await window.dbBridge.close(opened.dbId); } catch (_) { }
         }
+    }
+
+    async function withDbTransaction(fn) { // FIX: keep related database writes atomic
+        return await withDbWrite(async (dbId) => { // FIX: use one connection for the full transaction
+            await execRunOnDb(dbId, "BEGIN;"); // FIX: begin before any related record changes
+            try {
+                const result = await fn(dbId); // FIX: run all writes inside the transaction
+                await execRunOnDb(dbId, "COMMIT;"); // FIX: publish only after every write succeeds
+                return result;
+            } catch (e) {
+                try { await execRunOnDb(dbId, "ROLLBACK;"); } catch (_) { } // FIX: discard partial writes
+                throw e;
+            }
+        });
     }
 
     async function queryAll(sql, params) {
@@ -360,6 +389,63 @@ Draw.loadPlugin(function (ui) {
             await execAll(sql, vals);
 
             return await PlantModel.loadById(id);
+        }
+
+        static async saveWithAllowedMethodCategories(plantId, patch, methodCategoryIds) { // FIX: save plant and allowed methods together
+            const existingId = finiteNumberOrNull(plantId); // FIX: distinguish insert from update without another connection
+            const ids = Array.from(new Set((methodCategoryIds || [])
+                .map(id => String(id || '').trim())
+                .filter(Boolean))); // FIX: normalize duplicate category selections
+
+            if (!ids.length) throw new Error('Enable at least one method'); // FIX: enforce the editor invariant in the model operation
+
+            return await withDbTransaction(async (dbId) => { // FIX: make the plant and junction-table writes atomic
+                let savedId = existingId;
+                const entries = Object.entries(patch || {}).filter(([, value]) => value !== undefined);
+
+                for (const [key] of entries) {
+                    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error('Invalid column: ' + key); // FIX: retain dynamic-column validation
+                }
+                if (!entries.length) throw new Error('No fields to save plant.'); // FIX: avoid an invalid empty statement
+
+                if (savedId != null) {
+                    const sets = entries.map(([key]) => `${key} = ?`);
+                    const values = entries.map(([, value]) => value);
+                    values.push(savedId);
+                    await execRunOnDb(dbId, `UPDATE Plants SET ${sets.join(', ')} WHERE plant_id = ?;`, values); // FIX: update on the shared transaction
+                } else {
+                    const columns = entries.map(([key]) => key);
+                    const values = entries.map(([, value]) => value);
+                    const placeholders = columns.map(() => '?');
+                    await execRunOnDb(
+                        dbId,
+                        `INSERT INTO Plants (${columns.join(', ')}) VALUES (${placeholders.join(', ')});`,
+                        values
+                    ); // FIX: insert on the shared transaction
+                    const idRows = await queryAllOnDb(dbId, "SELECT last_insert_rowid() AS id;", []); // FIX: resolve the inserted ID on the same connection
+                    savedId = Number(idRows?.[0]?.id);
+                }
+
+                if (!Number.isFinite(savedId)) throw new Error('Save succeeded but plant_id is missing'); // FIX: prevent junction writes without a valid owner
+
+                await execRunOnDb(
+                    dbId,
+                    "DELETE FROM PlantAllowedMethodCategories WHERE plant_id = ?;",
+                    [savedId]
+                ); // FIX: replace the allowed-method set within the transaction
+
+                for (const methodCategoryId of ids) {
+                    await execRunOnDb(
+                        dbId,
+                        "INSERT OR IGNORE INTO PlantAllowedMethodCategories (plant_id, method_category_id) VALUES (?, ?);",
+                        [savedId, methodCategoryId]
+                    ); // FIX: keep each junction insert in the same transaction
+                }
+
+                const rows = await queryAllOnDb(dbId, "SELECT * FROM Plants WHERE plant_id = ?;", [savedId]); // FIX: return the transaction's saved row
+                if (!rows[0]) throw new Error(`Plant not found after save: ${savedId}`); // FIX: roll back junction changes when the owner row is missing
+                return new PlantModel(rows[0]);
+            });
         }
     }
 
@@ -752,8 +838,7 @@ Draw.loadPlugin(function (ui) {
         } = {}) {
             this.overwinterAllowed = !!overwinterAllowed;
 
-            // Spring frost is disabled if overwinter is allowed
-            this.useSpringFrostGate = !!useSpringFrostGate && !this.overwinterAllowed;
+            this.useSpringFrostGate = !!useSpringFrostGate; // FIX: overwinter capability does not make early field planting frost-safe
             this.springFrostRisk = springFrostRisk;
 
             const thr = Number(soilGateThresholdC);
@@ -764,12 +849,11 @@ Draw.loadPlugin(function (ui) {
         }
 
         static fromResolvedBehavior(plant, resolvedBehavior) { // CHANGED
-            const raw = Number(plant?.soil_temp_min_plant_c); // CHANGED
-            const threshold = Number.isFinite(raw) ? raw : null; // CHANGED
+            const threshold = finiteNumberOrNull(plant?.soil_temp_min_plant_c); // CHANGED
             const overwinterAllowed = plant.isPerennial() || Number(plant.overwinter_ok ?? 0) === 1; // CHANGED
 
             return new PolicyFlags({ // CHANGED
-                useSpringFrostGate: !overwinterAllowed, // CHANGED
+                useSpringFrostGate: true, // FIX: apply the field frost gate to perennials and overwinter-capable crops
                 springFrostRisk: 'p50', // CHANGED
                 useSoilTempGate: !!resolvedBehavior?.usesSoilTempGate && threshold != null, // CHANGED
                 soilGateThresholdC: threshold, // CHANGED
@@ -778,6 +862,26 @@ Draw.loadPlugin(function (ui) {
             }); // CHANGED
         } // CHANGED
 
+    }
+
+    function getPlantScanYears(plant) { // FIX: centralize lifecycle-aware scan bounds
+        if (plant.isPerennial()) {
+            const lifespan = Number(plant.lifespan_years);
+            if (!Number.isFinite(lifespan) || lifespan < 1) {
+                throw new Error('Perennial requires lifespan_years in DB.');
+            }
+            return Math.floor(lifespan);
+        }
+
+        if (plant.isBiennial()) {
+            const lifespan = Number(plant.lifespan_years);
+            if (!Number.isFinite(lifespan) || lifespan < 2) {
+                throw new Error('Biennial requires lifespan_years >= 2 in DB.');
+            }
+            return Math.floor(lifespan);
+        }
+
+        return 1 + (Number(plant.overwinter_ok) === 1 ? 1 : 0);
     }
 
 
@@ -820,6 +924,7 @@ Draw.loadPlugin(function (ui) {
             policy,
             seasonStartYear,
             harvestWindowDays,
+            minYieldMultiplier = 0,
             varietyId = null,
             varietyName = ''
         }) {
@@ -834,6 +939,7 @@ Draw.loadPlugin(function (ui) {
                 policy,
                 seasonStartYear: Number(seasonStartYear),
                 harvestWindowDays: (harvestWindowDays == null ? null : Number(harvestWindowDays)),
+                minYieldMultiplier: Number(minYieldMultiplier),
                 varietyId: (varietyId != null ? Number(varietyId) : null),
                 varietyName: String(varietyName || '')
             });
@@ -846,19 +952,7 @@ Draw.loadPlugin(function (ui) {
 
             const env = this.plant.cropTempEnvelope();
 
-            // Determine scan years strictly from DB (no implicit defaults):
-            let scanYears = 1;
-            if (this.plant.isPerennial()) {
-                if (!Number.isFinite(this.plant.lifespan_years) || this.plant.lifespan_years < 1)
-                    throw new Error('Perennial requires lifespan_years in DB.');
-                scanYears = Math.floor(this.plant.lifespan_years);
-            } else if (this.plant.isBiennial()) {
-                if (!Number.isFinite(this.plant.lifespan_years) || this.plant.lifespan_years < 2)
-                    throw new Error('Biennial requires lifespan_years ≥ 2 in DB (e.g., 2 for bulbils).');
-                scanYears = Math.floor(this.plant.lifespan_years);
-            } else {
-                scanYears = 1 + (Number(this.plant.overwinter_ok) === 1 ? 1 : 0);
-            }
+            const scanYears = getPlantScanYears(this.plant); // FIX: use the same lifecycle calculation in every planner entry point
 
             const scanStart = asUTCDate(this.seasonStartYear, 1, 1);
             const scanEndHard = asUTCDate(this.seasonStartYear + scanYears - 1, 12, 31);
@@ -873,13 +967,13 @@ Draw.loadPlugin(function (ui) {
 
     class Planner {
         constructor(inputs) {
-            const { plant, city, method, methodCategoryId, methodId, policy, varietyId, varietyName } = inputs;
+            const { plant, city, planningMode, methodCategoryId, methodId, policy } = inputs;
             const { startDate, seasonEnd, env, dailyRates, monthlyAvg, scanStart, scanEndHard } = inputs.derived();
             const budget = plant.firstHarvestBudget();
 
-            const HW_DAYS = Number.isFinite(Number(inputs.harvestWindowDays))
-                ? Number(inputs.harvestWindowDays)
-                : (Number.isFinite(Number(plant.harvest_window_days)) ? Number(plant.harvest_window_days) : 7);
+            const inputHarvestWindow = finiteNumberOrNull(inputs.harvestWindowDays);
+            const plantHarvestWindow = finiteNumberOrNull(plant.harvest_window_days);
+            const HW_DAYS = inputHarvestWindow ?? plantHarvestWindow ?? 7;
 
             const coolingThreshold = asCoolingThresholdC(plant.start_cooling_threshold_c);
 
@@ -981,13 +1075,15 @@ Draw.loadPlugin(function (ui) {
             if (!this.withinWindow(sowDate)) return { ok: false, reason: 'outside_scan_window' };
 
             let transplantDate = null;
-            if (C.planningMode === 'transplant_indoor' || C.method === 'transplant_outdoor') {
+            if (C.planningMode === 'transplant_indoor') {
                 const dTrans = Number(C.plant?.days_transplant ?? NaN);
                 const daysTrans = Number.isFinite(dTrans) && dTrans > 0 ? Math.round(dTrans) : 0;
                 transplantDate = this.addDays(sowDate, daysTrans);
+            } else if (C.planningMode === 'transplant_outdoor') {
+                transplantDate = new Date(sowDate);
             }
 
-            const gateDate = (C.method === 'direct_sow') ? sowDate : transplantDate;
+            const gateDate = (C.planningMode === 'direct_sow') ? sowDate : transplantDate;
 
             const frost = this.checkSpringFrostGate(gateDate);
             if (!frost.ok) return frost;
@@ -1097,6 +1193,7 @@ Draw.loadPlugin(function (ui) {
             policy,
             seasonStartYear: formState.seasonStartYear,
             harvestWindowDays: formState.harvestWindowDays,
+            minYieldMultiplier: formState.minYieldMultiplier,
             varietyId,
             varietyName
         });
@@ -1104,7 +1201,7 @@ Draw.loadPlugin(function (ui) {
         return {
             plant,
             city,
-            method,
+            method: resolvedBehavior.methodId,
             methodCategoryId: resolvedBehavior.methodCategoryId,
             methodId: resolvedBehavior.methodId,
             resolvedBehavior,
@@ -1116,11 +1213,12 @@ Draw.loadPlugin(function (ui) {
     function getGateDateForCandidate(planner, sowDate) { // CHANGED
         const C = planner.ctx; // CHANGED
         if (C.planningMode === 'direct_sow') return new Date(sowDate); // CHANGED
-        if (C.planningMode === 'transplant_indoor' || C.method === 'transplant_outdoor') { // CHANGED
+        if (C.planningMode === 'transplant_indoor') { // CHANGED
             const dTrans = Number(C.plant?.days_transplant ?? NaN); // CHANGED
             const daysTrans = Number.isFinite(dTrans) && dTrans > 0 ? Math.round(dTrans) : 0; // CHANGED
             return planner.addDays(sowDate, daysTrans); // CHANGED
         } // CHANGED
+        if (C.planningMode === 'transplant_outdoor') return new Date(sowDate); // CHANGED
         return new Date(sowDate); // CHANGED
     } // CHANGED
 
@@ -1220,20 +1318,6 @@ Draw.loadPlugin(function (ui) {
         return n > 0 ? (sum / n) : Tbase;
     }
 
-    function deriveYieldMultipliersFromTemp({ schedule, budget, dailyRatesMap, cropTemp, monthlyAvgTemp, seasonEnd, Tbase, window = 'harvest', HW_DAYS = 0 }) {
-        const raw = schedule.map(sow => {
-            const mat = maturityDateFromBudget(sow, budget, dailyRatesMap, seasonEnd);
-            const wStart = (window === 'harvest') ? mat : sow;
-            const wEnd = (window === 'harvest') ? addDaysUTC(mat, Math.max(0, HW_DAYS))
-                : mat;
-            const Tmean = weightedMeanTempOverRange(wStart, wEnd, monthlyAvgTemp, dailyRatesMap, Tbase);
-            return thermalYieldFactor(Tmean, cropTemp);
-        });
-        const maxF = Math.max(...raw, 0);
-        return raw.map(f => Math.max(0.05, Math.min(1, maxF > 0 ? f / maxF : 0)));
-    }
-
-
     // -------------------- Soil-temperature gate --------------------------------------------
 
     // Convert model instance to plain {column: value} dict (primitives only)           
@@ -1297,7 +1381,7 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-    function computeStageDatesForPlanting({ sowDate, budget, stageDays, dailyRatesMap, seasonEnd }) {
+    function computeStageDatesForPlanting({ sowDate, budget, stageDays, dailyRatesMap, seasonEnd, planningMode }) {
         const maturity = maturityDateFromBudget(sowDate, budget, dailyRatesMap, seasonEnd);
         const harvestDays = Math.max(0, stageDays.harvest_window_days || 0);
         const harvestStart = maturity;                          // first harvest
@@ -1313,12 +1397,20 @@ Draw.loadPlugin(function (ui) {
 
         const mDays = Number(stageDays.maturityDays); // optional legacy
         const f_germ = mDays ? (Number(stageDays.germinationDays || stageDays.days_germ) / mDays) : null;
-        const f_trans = mDays ? (Number(stageDays.transplantDays || stageDays.days_transplant) / mDays) : null;
+        let transplant = null;
+        if (planningMode === 'transplant_outdoor') {
+            transplant = new Date(sowDate);
+        } else if (planningMode === 'transplant_indoor') {
+            const daysToTransplant = Number(stageDays.transplantDays);
+            transplant = Number.isFinite(daysToTransplant) && daysToTransplant > 0
+                ? addDaysUTC(sowDate, Math.round(daysToTransplant))
+                : new Date(sowDate);
+        }
 
         return {
             sow: sowDate,
             germ: byFrac(f_germ),
-            transplant: byFrac(f_trans),
+            transplant,
             maturity,
             harvestStart,
             harvestEnd
@@ -1326,13 +1418,13 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-    function computeStageTimelineForSchedule({ schedule, budget, stageDays, dailyRatesMap, seasonEnd }) {
+    function computeStageTimelineForSchedule({ schedule, budget, stageDays, dailyRatesMap, seasonEnd, planningMode }) {
 
         if (!budget || !Number.isFinite(budget.amount) || budget.amount <= 0) {
             throw new Error('Invalid maturity budget');
         }
         return (schedule || []).map(sow =>
-            computeStageDatesForPlanting({ sowDate: sow, budget, stageDays, dailyRatesMap, seasonEnd })
+            computeStageDatesForPlanting({ sowDate: sow, budget, stageDays, dailyRatesMap, seasonEnd, planningMode })
         );
     }
 
@@ -1534,6 +1626,7 @@ Draw.loadPlugin(function (ui) {
             soilGateThresholdC, soilGateConsecutiveDays,
             startCoolingThresholdC,
             useSpringFrostGate,
+            lastSpringFrostDOY, // FIX: accept the selected city's frost date
             daysTransplant,
             overwinterAllowed
         } = params;
@@ -1554,7 +1647,9 @@ Draw.loadPlugin(function (ui) {
 
         const fakeCity = {
             dailyRates: (_tbase, _year) => dailyRatesMap,
-            monthlyMeans: () => monthlyAvgTemp
+            monthlyMeans: () => monthlyAvgTemp,
+            last_spring_frost_p50_doy: lastSpringFrostDOY, // FIX: pass frost data into Planner
+            last_spring_frost_doy: lastSpringFrostDOY // FIX: preserve Planner's plain-column fallback
         };
 
         const policy = new PolicyFlags({
@@ -1562,7 +1657,7 @@ Draw.loadPlugin(function (ui) {
             soilGateThresholdC,
             soilGateConsecutiveDays,
             overwinterAllowed,
-            useSpringFrostGate: !!useSpringFrostGate && !overwinterAllowed,
+            useSpringFrostGate: !!useSpringFrostGate, // FIX: keep frost gating independent from overwinter support
             springFrostRisk: 'p50'
         });
 
@@ -1607,6 +1702,7 @@ Draw.loadPlugin(function (ui) {
             soilGateThresholdC, soilGateConsecutiveDays,
             startCoolingThresholdC,
             useSpringFrostGate,
+            lastSpringFrostDOY, // FIX: forward the caller's frost date instead of using the default DOY
             daysTransplant,
             overwinterAllowed
         });
@@ -1802,7 +1898,19 @@ Draw.loadPlugin(function (ui) {
 
 
     // -------------------- Graph helpers ----------------------------------------------------
-    function setAttr(cell, k, v) { const val = cell && cell.value; if (val && val.setAttribute) val.setAttribute(k, String(v)); }
+    function setAttr(cell, k, v) {
+        const nextValue = v == null ? '' : String(v);
+        const val = cell && cell.value;
+        if (!val || !val.setAttribute) return;
+        if (cell.getAttribute && String(cell.getAttribute(k) ?? '') === nextValue) return;
+
+        const model = graph && typeof graph.getModel === 'function' ? graph.getModel() : null;
+        if (model && typeof model.execute === 'function' && typeof mxCellAttributeChange === 'function') {
+            model.execute(new mxCellAttributeChange(cell, k, nextValue));
+        } else {
+            val.setAttribute(k, nextValue);
+        }
+    }
     function getAttr(cell, k) { return cell && cell.getAttribute ? cell.getAttribute(k) : null; }
     function isTilerGroup(cell) { return !!cell && cell.getAttribute && cell.getAttribute('tiler_group') === '1'; }
     // --- NEW: tiny helper to detect schedule -----------------------------------
@@ -3241,11 +3349,11 @@ Draw.loadPlugin(function (ui) {
                 const gdd_to_maturity = (budgetMode === 'gdd') ? readNullableNumber(gddInput) : null;
                 const days_maturity = (budgetMode === 'days') ? readNullableNumber(daysMatInput) : null;
 
-                if (budgetMode === 'gdd' && !(Number.isFinite(Number(gdd_to_maturity)) && Number(gdd_to_maturity) >= 0)) {
-                    throw new Error('GDD to maturity must be >= 0');
+                if (budgetMode === 'gdd' && !(Number.isFinite(Number(gdd_to_maturity)) && Number(gdd_to_maturity) > 0)) { // FIX: match scheduler requirements
+                    throw new Error('GDD to maturity must be greater than 0'); // FIX: prevent saving an unusable plant
                 }
-                if (budgetMode === 'days' && !(Number.isFinite(Number(days_maturity)) && Number(days_maturity) >= 0)) {
-                    throw new Error('Days to maturity must be >= 0');
+                if (budgetMode === 'days' && !(Number.isFinite(Number(days_maturity)) && Number(days_maturity) > 0)) { // FIX: match scheduler requirements
+                    throw new Error('Days to maturity must be greater than 0'); // FIX: prevent saving an unusable plant
                 }
 
                 const patch = {
@@ -3273,18 +3381,16 @@ Draw.loadPlugin(function (ui) {
                     spacing_cm: readNullableNumber(spacingInput)
                 };
 
-                let saved = null;
-                if (currentPlantMode === 'edit') {
-                    const pid = Number(currentPlantId);
-                    if (!Number.isFinite(pid)) throw new Error('Select a plant');
-                    saved = await PlantModel.update(pid, patch);
-                } else {
-                    saved = await PlantModel.create(patch);
-                }
+                const plantIdToSave = currentPlantMode === 'edit' ? Number(currentPlantId) : null; // FIX: provide one atomic save path
+                if (currentPlantMode === 'edit' && !Number.isFinite(plantIdToSave)) throw new Error('Select a plant'); // FIX: validate before opening the transaction
+                const saved = await PlantModel.saveWithAllowedMethodCategories(
+                    plantIdToSave,
+                    patch,
+                    allowedmethodCategoryIds
+                ); // FIX: commit the plant and allowed-method records together
 
                 const savedId = Number(saved?.plant_id ?? currentPlantId);
                 if (!Number.isFinite(savedId)) throw new Error('Save succeeded but plant_id is missing');
-                await setAllowedmethodCategoryIdsForPlant(savedId, allowedmethodCategoryIds);
 
                 // After save, sync dialog state to saved plant
                 currentPlantId = savedId;
@@ -3437,8 +3543,9 @@ Draw.loadPlugin(function (ui) {
 
 
     function computeScheduleResult(inputs) { // ADDED
-        const { plant, method } = inputs;
-        const { startDate, seasonEnd, env, dailyRates, monthlyAvg } = inputs.derived();
+        const { plant, methodId } = inputs;
+        const method = methodId;
+        const { startDate, seasonEnd, env, dailyRates } = inputs.derived();
     
         const planner = new Planner(inputs); // NEW
         const feasibility = planner.isSowFeasible(startDate); // NEW
@@ -3469,20 +3576,26 @@ Draw.loadPlugin(function (ui) {
             budget,
             stageDays,
             dailyRatesMap: dailyRates,
-            seasonEnd
+            seasonEnd,
+            planningMode: inputs.planningMode
         });
     
-        const yieldMultipliers = deriveYieldMultipliersFromTemp({
-            schedule,
-            budget,
-            dailyRatesMap: dailyRates,
-            cropTemp: env,
-            monthlyAvgTemp: monthlyAvg,
-            seasonEnd,
-            Tbase: env.Tbase,
-            window: "harvest",
-            HW_DAYS: stageDays.harvest_window_days || 0
-        });
+        const authoritativeTimeline = timelines[0];
+        authoritativeTimeline.maturity = new Date(feasibility.maturity);
+        authoritativeTimeline.harvestStart = new Date(feasibility.harvestStart);
+        authoritativeTimeline.harvestEnd = new Date(feasibility.harvestEnd);
+
+        const yieldMultipliers = [
+            thermalYieldFactor(feasibility.TmeanHarvest, env)
+        ];
+
+        const minYieldMultiplier = finiteNumberOrNull(inputs.minYieldMultiplier) ?? 0;
+        if (yieldMultipliers[0] < minYieldMultiplier) {
+            throw new Error(
+                `Selected sow date yield multiplier ${yieldMultipliers[0].toFixed(2)} ` +
+                `is below the minimum ${minYieldMultiplier.toFixed(2)}.`
+            );
+        }
     
         const rows = schedule.map((sowDate, idx) => {
             const tl = timelines[idx] || {};
@@ -3524,7 +3637,14 @@ Draw.loadPlugin(function (ui) {
     // -------------------- Dialog builder ---------------------------------------------------
     async function buildScheduleDialog(ui, cell, plants, cities, onSubmit, options) {
         let plantsLocal = Array.isArray(plants) ? plants.slice() : [];
-        const { selectedPlant: initialPlant, earliestFeasibleSowDate, lastHarvestDate, startNote } = options || {};
+        const {
+            selectedPlant: initialPlant,
+            earliestFeasibleSowDate,
+            lastHarvestDate,
+            startNote,
+            initialCityName = '',
+            hasStoredSchedule = false
+        } = options || {};
 
         // Helper to centralize plant mode (perennial vs annual/biennial)          
         function getModeForPlant(plant) {
@@ -3938,7 +4058,10 @@ Draw.loadPlugin(function (ui) {
 
         // City & Method & Method
         const cityOpts = cities.map(c => ({ value: c.city_name, label: c.city_name }));
-        const citySel = makeSelect(cityOpts, cityOpts[0]?.value);
+        const cityValue = cityOpts.some(o => o.value === initialCityName)
+            ? initialCityName
+            : cityOpts[0]?.value;
+        const citySel = makeSelect(cityOpts, cityValue);
 
         // base method select (allowed per plant)
         const methodCategorySel = document.createElement('select');
@@ -4044,7 +4167,7 @@ Draw.loadPlugin(function (ui) {
         const harvestStartInput = makeDisplayField('', { emphasis: true }); // CHANGED
         const harvestEndInput = makeDisplayField(initialEndISO); // CHANGED
         const daysToFirstHarvestInput = makeDisplayField(''); // CHANGED
-        let firstSowDirty = false;
+        let firstSowDirty = !!hasStoredSchedule;
 
         const startNoteSpan = document.createElement('span');
         startNoteSpan.style.marginLeft = '8px'; startNoteSpan.style.fontSize = '12px'; startNoteSpan.style.color = '#92400e';
@@ -4054,9 +4177,11 @@ Draw.loadPlugin(function (ui) {
         const hwDefault = effectivePlant.defaultHW();
         const harvestWindowInput = makeNullableNumber(hwDefault ?? null, { min: 0, step: 1 });
         const minYieldMultInput = makeNumber(0.50, { min: 0 }); minYieldMultInput.step = '0.01';
+        minYieldMultInput.max = '1';
 
         // --- Season control (single field) ---
-        const seasonStartYear0 = Number(cell.getAttribute?.('season_start_year') ?? (new Date()).getUTCFullYear());
+        const seasonStartYear0 = finiteNumberOrNull(cell.getAttribute?.('season_start_year'))
+            ?? earliestFeasibleSowDate.getUTCFullYear();
         const seasonYearInput = makeNumber(seasonStartYear0, { min: 1900 });
         seasonYearInput.step = '1';
 
@@ -4064,36 +4189,8 @@ Draw.loadPlugin(function (ui) {
         let taskRules = Array.isArray(taskTemplate?.rules) ? [...taskTemplate.rules] : [];
         // --- task reset helpers ----------------------------------------------------   
         let taskDirty = false;
-
-        function clearCellTaskTemplateUndoable(graph, cell) {
-            const model = graph.getModel();
-            model.execute(new mxCellAttributeChange(cell, "task_template_json", ""));
-            graph.refresh(cell);
-        }
-
-        async function loadDefaultsForCurrentSelection() {
-            const resolved = await resolveTaskTemplate({
-                cell: null,
-                plantId: formState.plantId ?? null,
-                methodId: String(formState.methodId ?? "").trim() || null
-            });
-
-            taskTemplate = resolved?.template ?? null;
-            taskTemplateSource = resolved?.source ?? "unknown";
-            taskRules = Array.isArray(taskTemplate?.rules) ? [...taskTemplate.rules] : [];
-            taskEditorDiv.innerHTML = "";
-            taskDirty = false;
-            renderTasksList();
-            updateTasksHeader({
-                methodCategorySel, // CHANGED
-                methodSel,
-                formState,
-                currentMethodSpan,
-                currentTemplateSourceSpan,
-                taskDirty,
-                taskTemplateSource
-            });
-        }
+        let taskTemplateResetRequested = false;
+        let plantDefaultTaskDeleteRequested = false;
 
         const saveDefaultChk = makeCheckbox(false);
 
@@ -4118,6 +4215,7 @@ Draw.loadPlugin(function (ui) {
             seasonEndISO: seasonEndInput.value,
             seasonStartYear: Number(seasonYearInput.value || (new Date()).getUTCFullYear()),
             harvestWindowDays: (harvestWindowInput.value === '' ? null : Number(harvestWindowInput.value)),
+            minYieldMultiplier: Number(minYieldMultInput.value || 0),
             autoEarliestISO: initialStartISO,
             lastFeasibleSowISO: null,
             firstHarvestISO: null, // CHANGED
@@ -4138,6 +4236,7 @@ Draw.loadPlugin(function (ui) {
             formState.seasonEndISO = seasonEndInput.value;
             formState.seasonStartYear = Number(seasonYearInput.value || (new Date()).getUTCFullYear());
             formState.harvestWindowDays = (harvestWindowInput.value === '' ? null : Number(harvestWindowInput.value));
+            formState.minYieldMultiplier = Number(minYieldMultInput.value || 0);
         }
 
 
@@ -4185,6 +4284,7 @@ Draw.loadPlugin(function (ui) {
             { key: 'methodCategoryId', label: 'Planting Method Category:', control: methodCategorySel },
             { key: 'methodId', label: 'Planting Method:', control: methodSel },
             { key: 'harvestWindowDays', label: 'Harvest window days:', control: harvestWindowInput },
+            { key: 'minYieldMultiplier', label: 'Minimum yield multiplier:', control: minYieldMultInput },
         ];
 
         const { fieldRows } = buildFieldRows(FIELD_SCHEMA);
@@ -4229,7 +4329,7 @@ Draw.loadPlugin(function (ui) {
         windowSection.body.appendChild(endRow.row); // CHANGED
 
         inputsSection.body.appendChild(firstSowRowObj.row); // CHANGED
-        appendFieldRows(inputsSection.body, fieldRows, ['harvestWindowDays']); // CHANGED
+        appendFieldRows(inputsSection.body, fieldRows, ['harvestWindowDays', 'minYieldMultiplier']); // CHANGED
 
         harvestSection.body.appendChild(harvestStartRowObj.row); // CHANGED
         harvestSection.body.appendChild(harvestEndRowObj.row); // CHANGED
@@ -4324,7 +4424,7 @@ Draw.loadPlugin(function (ui) {
 
                 const overwinterAllowed = p.isPerennial() || Number(p.overwinter_ok ?? 0) === 1;
                 const scanStart = asUTCDate(seasonStartYear, 1, 1);
-                const scanEndYear = overwinterAllowed ? (seasonStartYear + 1) : seasonStartYear;
+                const scanEndYear = seasonStartYear + getPlantScanYears(p) - 1; // FIX: honor biennial and perennial lifespans
                 const scanEndHard = asUTCDate(scanEndYear, 12, 31);
 
                 const soilGateThresholdC = (Number.isFinite(Number(p.soil_temp_min_plant_c))
@@ -4351,7 +4451,7 @@ Draw.loadPlugin(function (ui) {
                     soilGateThresholdC,
                     soilGateConsecutiveDays: 3,
                     startCoolingThresholdC: asCoolingThresholdC(p.start_cooling_threshold_c),
-                    useSpringFrostGate: !overwinterAllowed,
+                    useSpringFrostGate: true, // FIX: overwinter support does not disable field frost checks
                     lastSpringFrostDOY: lsf,
                     daysTransplant,
                     overwinterAllowed,
@@ -4733,6 +4833,11 @@ Draw.loadPlugin(function (ui) {
             await refreshTaskTemplateFromSelection();
         });
 
+        minYieldMultInput.addEventListener('input', async () => {
+            syncStateFromControls();
+            await recomputeLastHarvestFromSchedule();
+        });
+
         citySel.addEventListener('change', () => {
             (async () => {
                 await recomputeAll('cityChanged');
@@ -4940,51 +5045,38 @@ Draw.loadPlugin(function (ui) {
                     rules: taskRules // CHANGED
                 }); // CHANGED
 
-                // Save template if requested
-                if (saveDefaultChk.checked) {
-                    const methodId = String(formState.methodId || "").trim();
-                    if (!methodId) {
-                        throw new Error('Select a planting method before saving a plant default.');
+                // Validate the complete schedule before mutating the DB or graph.
+                const scheduleResult = computeScheduleResult(inputs);
+
+                const persistPlantTaskDefault = async () => { // FIX: run DB persistence only after graph mutation succeeds
+                    if (saveDefaultChk.checked) {
+                        const methodId = String(formState.methodId || "").trim();
+                        if (!methodId) {
+                            throw new Error('Select a planting method before saving a plant default.');
+                        }
+
+                        await TaskTemplateModel.saveForSelection({
+                            plantId: formState.plantId,
+                            methodId,
+                            template: taskTemplate
+                        });
+                    } else if (plantDefaultTaskDeleteRequested) {
+                        await TaskTemplateModel.deleteForSelection({
+                            plantId: formState.plantId,
+                            methodId: String(formState.methodId || "").trim()
+                        });
                     }
+                };
 
-                    await TaskTemplateModel.saveForSelection({
-                        plantId: formState.plantId,
-                        methodId,
-                        template: taskTemplate
-                    });
-                }
+                const taskTemplateJson = taskDirty
+                    ? JSON.stringify(taskTemplate)
+                    : (taskTemplateResetRequested ? "" : undefined);
 
-                const graph = ui.editor.graph;
-                const model = graph.getModel();
-
-                model.beginUpdate();
-                try {
-                    if (taskDirty) {
-                        model.execute(
-                            new mxCellAttributeChange(cell, "task_template_json", JSON.stringify(taskTemplate))
-                        );
-                    } else {
-                        model.execute(new mxCellAttributeChange(cell, "task_template_json", ""));
-                    }
-
-                    model.execute(new mxCellAttributeChange(cell, 'plant_id', String(formState.plantId)));
-                    const isBase = (formState.varietyId == null);
-
-                    model.execute(new mxCellAttributeChange(cell, 'variety_id', isBase ? '' : String(formState.varietyId)));
-                    model.execute(new mxCellAttributeChange(cell, 'variety_name', isBase ? '' : String(inputs.varietyName || '')));
-
-                    // persist planting method selection on the cell
-                    model.execute(new mxCellAttributeChange(cell, 'method_category_id', String(formState.methodCategoryId ?? '')));
-                    model.execute(new mxCellAttributeChange(cell, 'method_id', String(formState.methodId ?? '')));
-                } finally {
-                    model.endUpdate();
-                }
-                graph.refresh(cell);
-
-
-
-
-                await applyScheduleToGraph(ui, cell, inputs);
+                await applyScheduleToGraph(ui, cell, inputs, {
+                    result: scheduleResult,
+                    taskTemplateJson,
+                    afterGraphUpdate: persistPlantTaskDefault // FIX: undo graph edits if the database write fails
+                });
                 ui.hideDialog();
             } catch (e) {
                 showErrorInline('Scheduling error: ' + e.message);
@@ -5483,18 +5575,28 @@ Draw.loadPlugin(function (ui) {
             try {
                 syncStateFromControls();
 
-                const graph = ui.editor.graph;
-                clearCellTaskTemplateUndoable(graph, cell); // remove per-plan override
-
                 const methodId = String(formState.methodId || "").trim();
-                if (methodId) {
-                    await TaskTemplateModel.deleteForSelection({
-                        plantId: formState.plantId,
-                        methodId
-                    });
-                }
+                const methodTemplate = methodId
+                    ? await getDefaultTaskTemplateForPlantingMethods(methodId)
+                    : null;
 
-                await loadDefaultsForCurrentSelection(); // reload fallback chain (method default if no DB row)
+                taskTemplate = normalizeTaskTemplate(methodTemplate);
+                taskTemplateSource = methodTemplate ? "method_builtin" : "none";
+                taskRules = Array.isArray(taskTemplate.rules) ? [...taskTemplate.rules] : [];
+                taskTemplateResetRequested = true;
+                plantDefaultTaskDeleteRequested = true;
+                taskDirty = false;
+                taskEditorDiv.innerHTML = "";
+                renderTasksList();
+                updateTasksHeader({
+                    methodCategorySel,
+                    methodSel,
+                    formState,
+                    currentMethodSpan,
+                    currentTemplateSourceSpan,
+                    taskDirty,
+                    taskTemplateSource
+                });
             } catch (e) {
                 showErrorInline("Reset tasks error: " + (e?.message || String(e)));
             }
@@ -6266,9 +6368,8 @@ Draw.loadPlugin(function (ui) {
     }) {
         const fmt = (d) => (d ? d.toISOString().slice(0, 10) : null);
 
-        if (Number.isFinite(Number(plant.start_cooling_threshold_c))) {
-            setAttr(cell, 'start_cooling_threshold_c', String(plant.start_cooling_threshold_c));
-        }
+        const coolingThreshold = finiteNumberOrNull(plant.start_cooling_threshold_c);
+        setAttr(cell, 'start_cooling_threshold_c', coolingThreshold);
 
         setAttr(cell, 'label', plant.plant_name + ' group');
 
@@ -6298,11 +6399,12 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-    async function applyScheduleToGraph(ui, cell, inputs) {
+    async function applyScheduleToGraph(ui, cell, inputs, options = {}) {
         const { plant, city } = inputs;
+        const method = inputs.methodId;
         const { env } = inputs.derived();
     
-        const result = computeSinglePlantingResult(inputs); // NEW
+        const result = options.result || computeScheduleResult(inputs);
         const schedule = result.schedule; // NEW
         const timelines = result.timelines; // NEW
 
@@ -6540,10 +6642,18 @@ Draw.loadPlugin(function (ui) {
         const model = graph.getModel();
 
         const unit = 'kg';
-        setAttr(cell, 'season_start_year', String(inputs.seasonStartYear));
+
+        let graphEdit = null; // FIX: retain the completed edit so later persistence failures can be compensated
+        let graphMutationError = null; // FIX: defer errors until the model transaction has been closed
 
         model.beginUpdate();
         try {
+            if (options.taskTemplateJson !== undefined) {
+                setAttr(cell, "task_template_json", options.taskTemplateJson);
+            }
+
+            setAttr(cell, 'season_start_year', String(inputs.seasonStartYear));
+
             if (budget.mode === 'gdd') {
                 setAttr(cell, 'gdd_to_maturity', String(budget.amount));
                 setAttr(cell, 'days_maturity', '');
@@ -6578,8 +6688,36 @@ Draw.loadPlugin(function (ui) {
             if (typeof r === 'function') r(graph, cell);
             graph.refresh(cell);
 
+        } catch (e) {
+            graphMutationError = e; // FIX: close the model transaction before undoing its changes
         } finally {
-            model.endUpdate();
+            graphEdit = model.currentEdit || null; // FIX: capture the exact edit produced by this save
+            try {
+                model.endUpdate();
+            } catch (e) {
+                graphMutationError = graphMutationError || e; // FIX: treat model commit failures like other graph failures
+            }
+        }
+
+        const rollbackGraphEdit = () => { // FIX: compensate graph changes when any later save step fails
+            if (graphEdit && typeof graphEdit.undo === 'function') {
+                graphEdit.undo();
+                graph.refresh(cell);
+            }
+        };
+
+        if (graphMutationError) {
+            try { rollbackGraphEdit(); } catch (_) { } // FIX: make a best-effort rollback before surfacing the original failure
+            throw graphMutationError;
+        }
+
+        try {
+            if (typeof options.afterGraphUpdate === 'function') {
+                await options.afterGraphUpdate(); // FIX: persist task defaults only after graph mutation succeeds
+            }
+        } catch (e) {
+            try { rollbackGraphEdit(); } catch (_) { } // FIX: do not leave the diagram changed when DB persistence fails
+            throw e;
         }
 
         await emitTasksForPlan({
@@ -6658,20 +6796,35 @@ Draw.loadPlugin(function (ui) {
         const cities = await CityClimate.loadAll();
         if (!cities.length) throw new Error('Cities not available');
 
-        // 2) Selected plant: fall back if cell has no plant_name
+        // 2) Selected plant: prefer the stable ID and retain name lookup for legacy cells
+        const plantIdAttr = finiteNumberOrNull(cell && cell.getAttribute && cell.getAttribute('plant_id')); // FIX: read the stable persisted identity
         const plantNameAttr = cell && cell.getAttribute && cell.getAttribute('plant_name');
         let selectedPlant = null;
-        if (plantNameAttr) {
+        if (plantIdAttr != null) {
+            selectedPlant = await PlantModel.loadById(plantIdAttr); // FIX: plant renames no longer orphan saved schedules
+        }
+        if (!selectedPlant && plantNameAttr) {
             selectedPlant = await PlantModel.loadByName(plantNameAttr);
-            if (!selectedPlant) throw new Error(`Plant not found: ${plantNameAttr}`);
-        } else {
+        }
+        if (!selectedPlant) {
+            if (plantIdAttr != null || plantNameAttr) {
+                throw new Error(`Plant not found: ${plantIdAttr ?? plantNameAttr}`); // FIX: report the persisted identity that failed
+            }
             if (!plants.length) throw new Error('No plants available');
             selectedPlant = plants[0];
         }
 
         // 3) Initial city & method
-        const year = (new Date()).getUTCFullYear();
-        const todayUTC = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()));
+        const now = new Date();
+        const currentYear = now.getUTCFullYear();
+        const todayUTC = new Date(Date.UTC(currentYear, now.getUTCMonth(), now.getUTCDate()));
+        const storedSowDate = parseISODateUTCValue(cell?.getAttribute?.('sow_date'));
+        const storedHarvestEndDate = parseISODateUTCValue(cell?.getAttribute?.('harvest_end'));
+        const storedSeasonYear = finiteNumberOrNull(cell?.getAttribute?.('season_start_year'));
+        const year = storedSeasonYear != null && storedSeasonYear >= 1900 && storedSeasonYear <= 3000
+            ? Math.trunc(storedSeasonYear)
+            : (storedSowDate ? storedSowDate.getUTCFullYear() : currentYear);
+        const hasStoredSchedule = storedSowDate != null;
         const groupCityName = (cell && cell.getAttribute && cell.getAttribute('city_name')) || null;
         const initialCityName = groupCityName || (cities[0].city_name || cities[0]);
 
@@ -6691,7 +6844,7 @@ Draw.loadPlugin(function (ui) {
         // --- compute initial auto anchors safely ---
         const overwinterAllowed0 = selectedPlant.isPerennial() || Number(selectedPlant.overwinter_ok ?? 0) === 1;
         const scanStart = asUTCDate(year, 1, 1);
-        const scanEndHard = asUTCDate(overwinterAllowed0 ? (year + 1) : year, 12, 31);
+        const scanEndHard = asUTCDate(year + getPlantScanYears(selectedPlant) - 1, 12, 31); // FIX: use lifecycle-aware scan bounds
 
 
         // HW_DAYS may be null (perennials etc.)
@@ -6717,14 +6870,10 @@ Draw.loadPlugin(function (ui) {
                 cropTemp: env,
                 scanStart,
                 scanEndHard,
-                soilGateThresholdC: (
-                    Number.isFinite(Number(selectedPlant.soil_temp_min_plant_c))
-                        ? Number(selectedPlant.soil_temp_min_plant_c)
-                        : null
-                ),
+                soilGateThresholdC: finiteNumberOrNull(selectedPlant.soil_temp_min_plant_c),
                 soilGateConsecutiveDays: 3,
                 startCoolingThresholdC: asCoolingThresholdC(selectedPlant.start_cooling_threshold_c),
-                useSpringFrostGate: !overwinterAllowed0,
+                useSpringFrostGate: true, // FIX: keep spring frost checks for overwinter-capable plants
                 lastSpringFrostDOY: pickFrostByRisk(cityInit, 'p50'),
                 daysTransplant: Number.isFinite(Number(selectedPlant.days_transplant))
                     ? Number(selectedPlant.days_transplant)
@@ -6739,12 +6888,15 @@ Draw.loadPlugin(function (ui) {
 
         // no stray reassignments like: earliestFeasibleSowDate = a; lastHarvestDate = b;  <-- remove these
 
-        let previewStart = earliestFeasibleSowDate;
+        let previewStart = storedSowDate || earliestFeasibleSowDate;
+        if (storedHarvestEndDate) {
+            lastHarvestDate = storedHarvestEndDate;
+        }
         let startNote = '';
 
         // If we have a finite harvest window, we can run feasibility tweaks.
         // (For perennials / null HW_DAYS we skip this step but still open the dialog.)
-        if (Number.isFinite(HW_DAYS)) {
+        if (Number.isFinite(HW_DAYS) && !hasStoredSchedule) {
             const inputs0 = new ScheduleInputs({
                 plant: selectedPlant,
                 city: cityInit,
@@ -6783,7 +6935,9 @@ Draw.loadPlugin(function (ui) {
             selectedPlant,
             earliestFeasibleSowDate: previewStart,
             lastHarvestDate,
-            startNote
+            startNote,
+            initialCityName,
+            hasStoredSchedule
         });
     }
 
@@ -6845,6 +6999,17 @@ Draw.loadPlugin(function (ui) {
         openScheduleDialog: (ui, cell) => openScheduleDialog(ui, cell)
     });
     window.openUSLScheduleDialog = window.USL.scheduler.openScheduleDialog;
+    if (window.USL_SCHEDULER_TESTING) {
+        window.USL.scheduler.__test = {
+            PlantModel,
+            CityClimate,
+            PolicyFlags,
+            ScheduleInputs,
+            Planner,
+            computeAutoStartEndWindowForward,
+            getPlantScanYears
+        }; // FIX: expose pure planner internals only when the regression harness opts in
+    }
 
     // -------------------- Plugin entry: add popup menu item --------------------------------
     Draw.loadPlugin(function (ui) {
@@ -6974,8 +7139,10 @@ Draw.loadPlugin(function (ui) {
                     plant,
                     city,
                     planningMode,
+                    methodCategoryId: resolvedBehavior.methodCategoryId, // FIX: preserve the resolved method context
+                    methodId: resolvedBehavior.methodId, // FIX: preserve the resolved method context
                     startISO: `${year}-01-01`,
-                    seasonEndISO: `${year}-12-31`,
+                    seasonEndISO: `${year + getPlantScanYears(plant) - 1}-12-31`, // FIX: allow overwinter and multi-year harvests
                     policy,
                     seasonStartYear: year,
                     harvestWindowDays: hw, // CHANGED
