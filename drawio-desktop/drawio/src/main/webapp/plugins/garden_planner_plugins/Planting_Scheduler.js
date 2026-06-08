@@ -52,6 +52,33 @@ Draw.loadPlugin(function (ui) {
         return Number.isFinite(n) ? n : null;
     }
 
+    function isPerennialPlant(plant) { // FIX: keep lifespan-only schedules out of maturity-budget code paths
+        return !!(plant && typeof plant.isPerennial === 'function' && plant.isPerennial());
+    }
+
+    function requirePerennialLifespanYears(plant) { // FIX: validate the sole required duration for perennial schedules
+        const lifespanYears = finiteNumberOrNull(plant?.lifespan_years);
+        if (lifespanYears == null || lifespanYears < 1) {
+            throw new Error(`Perennial "${plant?.plant_name || 'plant'}" requires lifespan_years >= 1.`);
+        }
+        return Math.floor(lifespanYears);
+    }
+
+    function computePerennialLifespanEndISO(fromISO, seasonStartYear, lifespanYears) { // FIX: centralize lifespan-based schedule ends
+        const start = parseISODateUTCValue(fromISO) || asUTCDate(Number(seasonStartYear), 1, 1);
+        const years = Math.max(1, Math.floor(Number(lifespanYears) || 0));
+        return asUTCDate(start.getUTCFullYear() + years, 12, 31).toISOString().slice(0, 10);
+    }
+
+    async function runUiAsyncOperation(label, fn, onError) { // FIX: testable async UI error boundary
+        try {
+            return await fn();
+        } catch (e) {
+            if (typeof onError === 'function') onError(`${label}: ${e?.message || String(e)}`, e);
+            return null;
+        }
+    }
+
     const DEFAULT_HARVEST_WINDOW_DAYS = 7; // FIX: use one fallback across every scheduling entry point
 
     // Resolves user, plant, and fallback values while preserving an explicit zero-day window.
@@ -988,6 +1015,9 @@ Draw.loadPlugin(function (ui) {
         constructor(inputs) {
             const { plant, city, planningMode, methodCategoryId, methodId, policy } = inputs;
             const { startDate, seasonEnd, env, dailyRates, monthlyAvg, scanStart, scanEndHard } = inputs.derived();
+            if (isPerennialPlant(plant)) {
+                throw new Error('Perennial schedules use lifespan dates instead of the maturity planner.');
+            } // FIX: never request a maturity budget for a perennial
             const budget = plant.firstHarvestBudget();
 
             const HW_DAYS = resolveHarvestWindowDays(inputs.harvestWindowDays, plant); // FIX: use the canonical fallback
@@ -1339,36 +1369,46 @@ Draw.loadPlugin(function (ui) {
     }
 
     function firstCoolingCrossingDate({ thresholdC, monthlyAvgTemp, scanStart, scanEndHard }) {
-        // Walk month by month within [scanStart, scanEndHard]
+        // Ignore winter cold until the scan has observed a warm month. // FIX
         let cursor = asUTCDate(scanStart.getUTCFullYear(), scanStart.getUTCMonth() + 1, 1);
         const end = asUTCDate(scanEndHard.getUTCFullYear(), scanEndHard.getUTCMonth() + 1, 1);
-
-        // previous month reference
-        let prevMonth = addDaysUTC(cursor, -1);
-        let Tprev = monthMeanAt(prevMonth, monthlyAvgTemp);
+        let armed = false; // FIX: a cooling trigger requires an earlier warm period in the scan window
+        let previousWarmMonth = null; // FIX: retain only an adjacent warm month for interpolation
+        let previousWarmTemp = null; // FIX
 
         while (dateLTE(cursor, end)) {
             const Tcur = monthMeanAt(cursor, monthlyAvgTemp);
-            if (Tcur != null && Tprev != null) {
-                if (Tprev > thresholdC && Tcur <= thresholdC) {
-                    // Linear day-of-month estimate
+            if (Tcur == null) { // FIX: missing data breaks adjacency and cannot form a crossing
+                armed = false;
+                previousWarmMonth = null;
+                previousWarmTemp = null;
+            } else if (Tcur > thresholdC) {
+                armed = true;
+                previousWarmMonth = new Date(cursor);
+                previousWarmTemp = Number(Tcur);
+            } else if (armed && previousWarmMonth && previousWarmTemp != null) {
+                const expectedNextMonth = asUTCDate(
+                    previousWarmMonth.getUTCFullYear(),
+                    previousWarmMonth.getUTCMonth() + 2,
+                    1
+                );
+                if (expectedNextMonth.getTime() === cursor.getTime()) { // FIX: interpolate only adjacent monthly observations
                     const dim = daysInMonth(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1);
-                    const frac = Math.min(1, Math.max(0, (Tprev - thresholdC) / Math.max(1e-6, (Tprev - Tcur))));
+                    const frac = Math.min(1, Math.max(
+                        0,
+                        (previousWarmTemp - thresholdC) / Math.max(1e-6, previousWarmTemp - Number(Tcur))
+                    ));
                     const day = Math.max(1, Math.min(dim, Math.round(frac * dim)));
                     return asUTCDate(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, day);
                 }
+                armed = false; // FIX
+                previousWarmMonth = null; // FIX
+                previousWarmTemp = null; // FIX
             }
-            Tprev = Tcur;
-            // next month 1st
             cursor = asUTCDate(cursor.getUTCFullYear(), cursor.getUTCMonth() + 2, 1);
         }
 
-        // Edge cases:
-        // If scanStart month is already <= threshold, start at scanStart.
-        const Tstart = monthMeanAt(scanStart, monthlyAvgTemp);
-        if (Tstart != null && Tstart <= thresholdC) return new Date(scanStart);
-
-        return null;
+        return null; // FIX: January cold or a climate without an autumn crossing is not a trigger
     }
 
 
@@ -1506,6 +1546,14 @@ Draw.loadPlugin(function (ui) {
         }; // CHANGED
     } // CHANGED
 
+    function resolveValidMethodRecord(methodRow, fallbackMethodCategoryId = '') { // FIX: validate DB method rows consistently
+        const methodCategoryId = String(
+            methodRow?.method_category_id ?? fallbackMethodCategoryId ?? ''
+        ).trim().toLowerCase();
+        const methodId = String(methodRow?.method_id ?? '').trim().toLowerCase();
+        return resolveMethodBehavior({ methodCategoryId, methodId });
+    }
+
     function validateAutoWindowMethodInputs({ resolvedBehavior, daysTransplant }) { // CHANGED
         if (!resolvedBehavior || typeof resolvedBehavior !== "object") { // CHANGED
             throw new Error("resolvedBehavior is required."); // CHANGED
@@ -1545,41 +1593,65 @@ Draw.loadPlugin(function (ui) {
         // 2) Plant default planting method
         const defaultMethodId = String(plant?.default_planting_method || '').trim().toLowerCase();
         if (defaultMethodId) {
-            const methodRow = await PlantModel.getMethodById(defaultMethodId);
-            if (methodRow?.method_category_id && methodRow?.method_id) {
-                const resolved = resolveMethodBehavior({
-                    methodCategoryId: String(methodRow.method_category_id).trim().toLowerCase(),
-                    methodId: String(methodRow.method_id).trim().toLowerCase()
-                });
-    
-                return {
-                    methodCategoryId: resolved.methodCategoryId,
-                    methodId: resolved.methodId,
-                    resolvedBehavior: resolved
-                };
+            try { // FIX: an invalid plant default must not block the scheduler
+                const methodRow = await PlantModel.getMethodById(defaultMethodId);
+                if (methodRow) {
+                    const resolved = resolveValidMethodRecord(methodRow);
+                    return {
+                        methodCategoryId: resolved.methodCategoryId,
+                        methodId: resolved.methodId,
+                        resolvedBehavior: resolved
+                    };
+                }
+            } catch (e) {
+                console.warn('[Scheduler] Ignoring invalid plant default method', {
+                    plantId: plant?.plant_id,
+                    methodId: defaultMethodId,
+                    reason: e?.message || String(e)
+                }); // FIX
             }
         }
     
         // 3) First allowed category + first method in that category
-        const allowedCategories = await PlantModel.listAllowedMethodCategoriesForPlant(Number(plant?.plant_id));
+        let allowedCategories = [];
+        try {
+            allowedCategories = await PlantModel.listAllowedMethodCategoriesForPlant(Number(plant?.plant_id));
+        } catch (e) {
+            console.warn('[Scheduler] Unable to load allowed method categories', {
+                plantId: plant?.plant_id,
+                reason: e?.message || String(e)
+            }); // FIX
+        }
         for (const cat of (allowedCategories || [])) {
             const methodCategoryId = String(cat?.method_category_id || '').trim().toLowerCase();
             if (!methodCategoryId) continue;
-    
-            const methods = await PlantModel.listMethodsForMethodCategory(methodCategoryId);
-            const firstMethod = Array.isArray(methods) ? methods[0] : null;
-            if (!firstMethod?.method_id) continue;
-    
-            const resolved = resolveMethodBehavior({
-                methodCategoryId,
-                methodId: String(firstMethod.method_id).trim().toLowerCase()
-            });
-    
-            return {
-                methodCategoryId: resolved.methodCategoryId,
-                methodId: resolved.methodId,
-                resolvedBehavior: resolved
-            };
+
+            try { // FIX: skip invalid categories and method records independently
+                const methods = await PlantModel.listMethodsForMethodCategory(methodCategoryId);
+                for (const methodRow of (methods || [])) {
+                    try {
+                        const resolved = resolveValidMethodRecord(methodRow, methodCategoryId);
+                        return {
+                            methodCategoryId: resolved.methodCategoryId,
+                            methodId: resolved.methodId,
+                            resolvedBehavior: resolved
+                        };
+                    } catch (e) {
+                        console.warn('[Scheduler] Skipping invalid allowed method record', {
+                            plantId: plant?.plant_id,
+                            methodCategoryId,
+                            methodId: methodRow?.method_id,
+                            reason: e?.message || String(e)
+                        }); // FIX
+                    }
+                }
+            } catch (e) {
+                console.warn('[Scheduler] Skipping invalid allowed method category', {
+                    plantId: plant?.plant_id,
+                    methodCategoryId,
+                    reason: e?.message || String(e)
+                }); // FIX
+            }
         }
     
         // 4) Final hard fallback
@@ -3484,7 +3556,53 @@ Draw.loadPlugin(function (ui) {
         const { plant, methodId } = inputs;
         const method = methodId;
         const { startDate, seasonEnd, env, dailyRates } = inputs.derived();
-    
+
+        if (isPerennialPlant(plant)) { // FIX: lifespan-only perennials do not require maturity or GDD
+            const lifespanYears = requirePerennialLifespanYears(plant);
+            const lifespanEndISO = computePerennialLifespanEndISO(
+                fmtISO(startDate),
+                inputs.seasonStartYear,
+                lifespanYears
+            );
+            const germinationDays = finiteNumberOrNull(plant.days_germ);
+            const transplantDays = finiteNumberOrNull(plant.days_transplant);
+            const timeline = {
+                sow: new Date(startDate),
+                germ: germinationDays != null && germinationDays >= 0
+                    ? addDaysUTC(startDate, Math.round(germinationDays))
+                    : null,
+                transplant: inputs.planningMode === 'transplant_outdoor'
+                    ? new Date(startDate)
+                    : (inputs.planningMode === 'transplant_indoor'
+                        ? addDaysUTC(startDate, Math.max(0, Math.round(transplantDays || 0)))
+                        : null),
+                maturity: null,
+                harvestStart: null,
+                harvestEnd: null
+            }; // FIX
+
+            return {
+                plant,
+                method,
+                schedule: [new Date(startDate)],
+                timelines: [timeline],
+                rows: [{
+                    plant: plant.plant_name,
+                    method,
+                    sow: fmtISO(startDate),
+                    germ: fmtISO(timeline.germ),
+                    trans: fmtISO(timeline.transplant),
+                    harvStart: '',
+                    harvEnd: '',
+                    mult: '',
+                    plantsReq: ''
+                }],
+                firstScheduledHarvestISO: null,
+                lastScheduledHarvestEndISO: null,
+                lifespanEndISO
+            }; // FIX
+        }
+
         const planner = new Planner(inputs); // NEW
         const feasibility = planner.isSowFeasible(startDate); // NEW
         if (!feasibility.ok) { // NEW
@@ -3629,6 +3747,14 @@ Draw.loadPlugin(function (ui) {
         function clearErrorInline() {
             errorBar.textContent = '';
             errorBar.style.display = 'none';
+        }
+
+        async function runUiAsync(label, fn) { // FIX: contain async event-handler failures in the dialog
+            clearErrorInline();
+            return runUiAsyncOperation(label, fn, (message, e) => {
+                console.warn(`[Scheduler UI] ${label} failed:`, e);
+                showErrorInline(message);
+            }); // FIX
         }
 
         const inlineButton = (label, onClick) => {
@@ -3968,19 +4094,58 @@ Draw.loadPlugin(function (ui) {
 
         async function resetMethodOptionsForPlant(plantId, { preferMethodCategoryId = null } = {}) {
             const pid = Number(plantId);
-            currentAllowedMethodCategories = Number.isFinite(pid)
-                ? await PlantModel.listAllowedMethodCategoriesForPlant(pid)
-                : [];
+            let loadedCategories = [];
+            try {
+                loadedCategories = Number.isFinite(pid)
+                    ? await PlantModel.listAllowedMethodCategoriesForPlant(pid)
+                    : [];
+            } catch (e) {
+                console.warn('[Scheduler] Falling back after allowed-category load failure', {
+                    plantId: pid,
+                    reason: e?.message || String(e)
+                }); // FIX
+            }
+
+            currentAllowedMethodCategories = []; // FIX: expose only categories containing a supported method
+            for (const categoryRow of (loadedCategories || [])) {
+                const methodCategoryId = String(categoryRow?.method_category_id ?? '').trim().toLowerCase();
+                if (!methodCategoryId) continue;
+                try {
+                    const methods = await PlantModel.listMethodsForMethodCategory(methodCategoryId);
+                    const hasValidMethod = (methods || []).some(methodRow => {
+                        try {
+                            resolveValidMethodRecord(methodRow, methodCategoryId);
+                            return true;
+                        } catch (_) {
+                            return false;
+                        }
+                    });
+                    if (hasValidMethod) currentAllowedMethodCategories.push(categoryRow);
+                } catch (e) {
+                    console.warn('[Scheduler] Skipping method category option', {
+                        plantId: pid,
+                        methodCategoryId,
+                        reason: e?.message || String(e)
+                    }); // FIX
+                }
+            }
+
+            if (!currentAllowedMethodCategories.length) {
+                currentAllowedMethodCategories = [{
+                    method_category_id: 'direct_sow',
+                    method_category_name: 'Direct sow'
+                }]; // FIX: retain the canonical hard fallback in the dialog
+            }
 
             const opts = (currentAllowedMethodCategories || []).map(mc => ({
-                value: String(mc.method_category_id ?? '').trim(),
+                value: String(mc.method_category_id ?? '').trim().toLowerCase(),
                 label: String(mc.method_category_name || mc.method_category_id || '').trim()
             })).filter(o => o.value);
 
             // Optional but recommended: allow blank selection
             const withBlank = [{ value: '', label: '' }].concat(opts);
 
-            const preferred = String(preferMethodCategoryId ?? '').trim();
+            const preferred = String(preferMethodCategoryId ?? '').trim().toLowerCase();
             const hasPreferred = preferred && withBlank.some(o => o.value === preferred);
 
             const desired = hasPreferred ? preferred : (opts[0]?.value ?? '');
@@ -3991,9 +4156,39 @@ Draw.loadPlugin(function (ui) {
 
         async function resetMethodOptionsForMethodCategory(methodCategoryId, { preferMethodId = null } = {}) {
             const mcid = String(methodCategoryId ?? '').trim();
-            currentMethods = mcid
-                ? await PlantModel.listMethodsForMethodCategory(mcid)
-                : [];
+            let loadedMethods = [];
+            try {
+                loadedMethods = mcid
+                    ? await PlantModel.listMethodsForMethodCategory(mcid)
+                    : [];
+            } catch (e) {
+                console.warn('[Scheduler] Falling back after method load failure', {
+                    methodCategoryId: mcid,
+                    reason: e?.message || String(e)
+                }); // FIX
+            }
+
+            currentMethods = (loadedMethods || []).filter(methodRow => { // FIX: invalid DB methods must not enter the UI
+                try {
+                    resolveValidMethodRecord(methodRow, mcid);
+                    return true;
+                } catch (e) {
+                    console.warn('[Scheduler] Skipping invalid method option', {
+                        methodCategoryId: mcid,
+                        methodId: methodRow?.method_id,
+                        reason: e?.message || String(e)
+                    });
+                    return false;
+                }
+            });
+
+            if (!currentMethods.length && mcid.toLowerCase() === 'direct_sow') {
+                currentMethods = [{
+                    method_category_id: 'direct_sow',
+                    method_id: 'direct_sow.field',
+                    method_name: 'Field direct sow'
+                }]; // FIX: preserve the final canonical fallback without requiring a valid DB row
+            }
 
             const opts = (currentMethods || []).map(m => ({
                 value: String(m.method_id ?? '').trim(),
@@ -4002,7 +4197,7 @@ Draw.loadPlugin(function (ui) {
 
             const withBlank = [{ value: '', label: '' }].concat(opts);
 
-            const preferred = String(preferMethodId ?? '').trim();
+            const preferred = String(preferMethodId ?? '').trim().toLowerCase();
             const hasPreferred = preferred && withBlank.some(o => o.value === preferred);
 
             const desired = hasPreferred ? preferred : (opts[0]?.value ?? '');
@@ -4291,7 +4486,7 @@ Draw.loadPlugin(function (ui) {
         //  - allowed to change seasonEndISO ONLY when called with forceWriteEnd=true
         async function recomputeAnchors(forceWriteStart = false, forceWriteEnd = false) {
             try {
-                if (mode.perennial) return;
+                if (mode.perennial) return true; // FIX: lifespan dates are recomputed by recomputeAll
 
                 syncStateFromControls();
 
@@ -4300,7 +4495,7 @@ Draw.loadPlugin(function (ui) {
 
 
                 const city = await CityClimate.loadByName(formState.cityName);
-                if (!city) return;
+                if (!city) throw new Error(`City not found: ${formState.cityName}`); // FIX
 
                 const seasonStartYear = formState.seasonStartYear;
 
@@ -4395,28 +4590,29 @@ Draw.loadPlugin(function (ui) {
 
                 updateStartNote();
                 syncStartDateBounds(); // CHANGED
+                return true; // FIX: allow dependent recomputation only after valid anchors
             } catch (e) {
                 console.warn('recomputeAnchors error:', e);
+                clearComputedHarvestResult(); // FIX: anchor failure invalidates all schedule-derived harvest state
                 showErrorInline('Scheduling error: ' + (e?.message || String(e)));
+                return false; // FIX
             }
         }
 
         // --- mode switcher (annual <-> perennial) ---
         function computePerennialEndISO(fromISO, lifespanYears) {
-            // if no start yet, anchor to Jan 1 of season year
-            const s = fromISO ? new Date(fromISO + 'T00:00:00Z')
-                : asUTCDate(Number(seasonYearInput.value), 1, 1);
-            const end = new Date(Date.UTC(
-                s.getUTCFullYear() + Math.max(1, Math.floor(Number(lifespanYears) || 1)),
-                11, 31
-            ));
-            return end.toISOString().slice(0, 10);
+            return computePerennialLifespanEndISO(
+                fromISO,
+                Number(seasonYearInput.value),
+                lifespanYears
+            ); // FIX
         }
 
         function setPerennialMode(on, plant) {
             mode = getModeForPlant(plant);
 
             if (mode.perennial) {
+                const lifespanYears = requirePerennialLifespanYears(plant); // FIX
                 // Ensure start date exists                                           
                 if (!startInput.value) {
                     const sISO = asUTCDate(Number(seasonYearInput.value), 1, 1)
@@ -4427,15 +4623,13 @@ Draw.loadPlugin(function (ui) {
                 // Compute lifespan end based on current start                         
                 seasonEndInput.value = computePerennialEndISO(
                     startInput.value,
-                    plant && Number.isFinite(Number(plant.lifespan_years))
-                        ? Number(plant.lifespan_years)
-                        : 1
+                    lifespanYears
                 );
 
                 formState.startISO = startInput.value;
                 formState.seasonEndISO = seasonEndInput.value;
                 formState.firstHarvestISO = null; // CHANGED
-                formState.lastHarvestISO = formState.seasonEndISO; // CHANGED
+                formState.lastHarvestISO = null; // FIX: lifespan end is not a harvest date
                 formState.lastScheduleEndISO = formState.seasonEndISO; // CHANGED
                 syncStateFromControls();
                 firstSowDirty = false;
@@ -4459,16 +4653,17 @@ Draw.loadPlugin(function (ui) {
             const isPerennial = mode.perennial;
 
             if (isPerennial) {
+                const lifespanYears = requirePerennialLifespanYears(effectivePlant); // FIX
                 const endISO = computePerennialEndISO(
                     startInput.value,
-                    effectivePlant.lifespan_years
+                    lifespanYears
                 );
 
                 seasonEndInput.value = endISO;
                 formState.seasonEndISO = endISO;
 
                 formState.firstHarvestISO = null; // CHANGED
-                formState.lastHarvestISO = endISO; // CHANGED
+                formState.lastHarvestISO = null; // FIX: lifespan-only schedules have no inferred harvest
                 formState.lastScheduleEndISO = endISO; // CHANGED
                 formState.lastHarvestSource = 'user'; // CHANGED
 
@@ -4476,28 +4671,28 @@ Draw.loadPlugin(function (ui) {
                     setDisplayFieldValue(harvestStartInput, ''); // CHANGED
                 }
                 if (harvestEndInput) {
-                    setDisplayFieldValue(harvestEndInput, endISO); // CHANGED
+                    setDisplayFieldValue(harvestEndInput, ''); // FIX
                 }
 
                 updateDaysToFirstHarvest(); // CHANGED
 
                 syncStartDateBounds(); // CHANGED
                 updateTimeline(); // CHANGED
-                return;
+                return true; // FIX
             }
 
 
             switch (reason) {
 
                 case 'varietyChanged': {
-                    await recomputeAnchors(true, true);
+                    if (!await recomputeAnchors(true, true)) return false; // FIX
                     await recomputeLastHarvestFromSchedule();
                     break;
                 }
 
                 case 'yearChanged': {
                     // season → refresh both start and end from feasibility
-                    await recomputeAnchors(true, true);
+                    if (!await recomputeAnchors(true, true)) return false; // FIX
 
                     await recomputeLastHarvestFromSchedule();
                     break;
@@ -4505,7 +4700,7 @@ Draw.loadPlugin(function (ui) {
 
                 case 'plantChanged': {
                     // City/method/plant change → respect user sow date if dirty
-                    await recomputeAnchors(true, true);
+                    if (!await recomputeAnchors(true, true)) return false; // FIX
 
                     await recomputeLastHarvestFromSchedule();
                     break;
@@ -4515,7 +4710,7 @@ Draw.loadPlugin(function (ui) {
                 case 'methodChanged': {
                     // City/method change → keep user sow date if dirty,              
                     // but don't force end update unless you want to:                 
-                    await recomputeAnchors(false, false);
+                    if (!await recomputeAnchors(false, false)) return false; // FIX
 
                     await recomputeLastHarvestFromSchedule();
                     break;
@@ -4523,12 +4718,12 @@ Draw.loadPlugin(function (ui) {
 
                 case 'startChanged':
                     // User explicitly changed first sow; keep it, but recompute schedule 
-                    await recomputeAnchors(false, false);
+                    if (!await recomputeAnchors(false, false)) return false; // FIX
                     await recomputeLastHarvestFromSchedule();
                     break;
 
                 case 'hwChanged': {
-                    await recomputeAnchors(false, false);
+                    if (!await recomputeAnchors(false, false)) return false; // FIX
                     await recomputeLastHarvestFromSchedule();
                     break;
                 }
@@ -4544,6 +4739,7 @@ Draw.loadPlugin(function (ui) {
             syncStartDateBounds(); // CHANGED
             updateStartNote();
             updateTimeline(); // CHANGED
+            return true; // FIX
         }
 
         const timelineWrap = document.createElement('div'); // CHANGED
@@ -4707,85 +4903,99 @@ Draw.loadPlugin(function (ui) {
 
 
         startInput.addEventListener('input', () => {
-            firstSowDirty = true;
-            syncStateFromControls();
-            if (mode.perennial) {
-                seasonEndInput.value = computePerennialEndISO(
-                    startInput.value,
-                    effectivePlant.lifespan_years
-                );
-                formState.seasonEndISO = seasonEndInput.value;
-                updateStartNote();
-            } else {
-                recomputeAll('startChanged');
-            }
+            void runUiAsync('Date change error', async () => { // FIX
+                firstSowDirty = true;
+                syncStateFromControls();
+                if (mode.perennial) {
+                    seasonEndInput.value = computePerennialEndISO(
+                        startInput.value,
+                        requirePerennialLifespanYears(effectivePlant)
+                    );
+                    formState.seasonEndISO = seasonEndInput.value;
+                    updateStartNote();
+                } else {
+                    await recomputeAll('startChanged');
+                }
+            });
         });
 
 
 
 
         seasonEndInput.addEventListener('input', () => {
-            syncStateFromControls();
+            void runUiAsync('Date change error', async () => { // FIX
+                syncStateFromControls();
+            });
         });
 
 
         seasonYearInput.addEventListener('input', () => {
-            recomputeAll('yearChanged');
+            void runUiAsync('Year change error', async () => { // FIX
+                await recomputeAll('yearChanged');
+            });
         });
 
-        harvestWindowInput.addEventListener('input', async () => {
-            syncStateFromControls();
-            await recomputeAll('hwChanged');
-            await refreshTaskTemplateFromSelection();
+        harvestWindowInput.addEventListener('input', () => {
+            void runUiAsync('Harvest window change error', async () => { // FIX
+                syncStateFromControls();
+                await recomputeAll('hwChanged');
+                await refreshTaskTemplateFromSelection();
+            });
         });
 
-        minYieldMultInput.addEventListener('input', async () => {
-            syncStateFromControls();
-            await recomputeLastHarvestFromSchedule();
+        minYieldMultInput.addEventListener('input', () => {
+            void runUiAsync('Yield change error', async () => { // FIX
+                syncStateFromControls();
+                await recomputeLastHarvestFromSchedule();
+            });
         });
 
         citySel.addEventListener('change', () => {
-            (async () => {
+            void runUiAsync('City change error', async () => { // FIX
                 await recomputeAll('cityChanged');
-            })();
-        });
-
-        methodCategorySel.addEventListener('change', async () => {
-            syncStateFromControls();
-
-            await resetMethodOptionsForMethodCategory(methodCategorySel.value, {
-                preferMethodId: String(formState.methodId ?? effectivePlant?.default_planting_method ?? '')
-            });
-
-            syncStateFromControls();
-
-            await recomputeAll('methodChanged');
-            await refreshTaskTemplateFromSelection();
-            updateTasksHeader({
-                methodCategorySel, // CHANGED
-                methodSel,
-                formState,
-                currentMethodSpan,
-                currentTemplateSourceSpan,
-                taskDirty,
-                taskTemplateSource
             });
         });
 
+        methodCategorySel.addEventListener('change', () => {
+            void runUiAsync('Method category change error', async () => { // FIX
+                syncStateFromControls();
+
+                await resetMethodOptionsForMethodCategory(methodCategorySel.value, {
+                    preferMethodId: String(formState.methodId ?? effectivePlant?.default_planting_method ?? '')
+                });
+
+                syncStateFromControls();
+
+                await recomputeAll('methodChanged');
+                await refreshTaskTemplateFromSelection();
+                updateTasksHeader({
+                    methodCategorySel, // CHANGED
+                    methodSel,
+                    formState,
+                    currentMethodSpan,
+                    currentTemplateSourceSpan,
+                    taskDirty,
+                    taskTemplateSource
+                });
+            });
+        });
 
 
-        methodSel.addEventListener('change', async () => {
-            syncStateFromControls();
-            await recomputeAll('methodChanged');
-            await refreshTaskTemplateFromSelection();
-            updateTasksHeader({
-                methodCategorySel, // CHANGED
-                methodSel,
-                formState,
-                currentMethodSpan,
-                currentTemplateSourceSpan,
-                taskDirty,
-                taskTemplateSource
+
+        methodSel.addEventListener('change', () => {
+            void runUiAsync('Method change error', async () => { // FIX
+                syncStateFromControls();
+                await recomputeAll('methodChanged');
+                await refreshTaskTemplateFromSelection();
+                updateTasksHeader({
+                    methodCategorySel, // CHANGED
+                    methodSel,
+                    formState,
+                    currentMethodSpan,
+                    currentTemplateSourceSpan,
+                    taskDirty,
+                    taskTemplateSource
+                });
             });
         });
 
@@ -4997,6 +5207,7 @@ Draw.loadPlugin(function (ui) {
                 await applyScheduleToGraph(ui, cell, inputs, {
                     result: scheduleResult,
                     taskTemplateJson,
+                    taskTemplate, // FIX: generate tasks from the in-memory template saved by this action
                     afterGraphUpdate: persistPlantTaskDefault // FIX: undo graph edits if the database write fails
                 });
                 ui.hideDialog();
@@ -6350,8 +6561,9 @@ Draw.loadPlugin(function (ui) {
         const schedule = result.schedule; // NEW
         const timelines = result.timelines; // NEW
 
-        const budget = plant.firstHarvestBudget();
-        if (!budget || !Number.isFinite(budget.amount) || budget.amount <= 0) {
+        const perennial = isPerennialPlant(plant); // FIX
+        const budget = perennial ? null : plant.firstHarvestBudget(); // FIX
+        if (!perennial && (!budget || !Number.isFinite(budget.amount) || budget.amount <= 0)) {
             throw new Error("Invalid maturity budget for " + plant.plant_name);
         }
 
@@ -6376,11 +6588,7 @@ Draw.loadPlugin(function (ui) {
             const tasks = [];
             const plantName = plant?.plant_name || plant?.abbr || "Plant";
 
-            const resolved = (taskTemplate && Array.isArray(taskTemplate.rules))
-                ? { template: taskTemplate }
-                : await resolveTaskTemplate({ cell, plantId, methodId });
-
-            const tpl = normalizeTaskTemplate(resolved?.template ?? null); // CHANGED
+            const tpl = normalizeTaskTemplate(taskTemplate ?? null); // FIX: use the template captured before graph mutation
             const rules = Array.isArray(tpl?.rules) ? tpl.rules : []; // CHANGED
 
             // Single planting only
@@ -6549,11 +6757,9 @@ Draw.loadPlugin(function (ui) {
             plantId = null,
             varietyId = null,
             methodCategoryId = null,
-            methodId = null
+            methodId = null,
+            taskTemplate = null // FIX
         }) {
-            const resolved = await resolveTaskTemplate({ cell, plantId, methodId });
-            const taskTemplate = resolved?.template ?? null;
-
             const tasks = await buildTasksForPlan({
                 method,
                 plant,
@@ -6568,6 +6774,7 @@ Draw.loadPlugin(function (ui) {
             });
 
             const detail = {
+                mode: "replace", // FIX: make replacement semantics explicit
                 tasks,
                 plantName: plant.plant_name,
                 targetGroupId: cell.id
@@ -6601,7 +6808,10 @@ Draw.loadPlugin(function (ui) {
 
             setAttr(cell, 'season_start_year', String(inputs.seasonStartYear));
 
-            if (budget.mode === 'gdd') {
+            if (perennial) {
+                setAttr(cell, 'days_maturity', ''); // FIX: lifespan-only perennial schedules have no maturity budget
+                setAttr(cell, 'gdd_to_maturity', ''); // FIX
+            } else if (budget.mode === 'gdd') {
                 setAttr(cell, 'gdd_to_maturity', String(budget.amount));
                 setAttr(cell, 'days_maturity', '');
             } else {
@@ -6672,7 +6882,8 @@ Draw.loadPlugin(function (ui) {
                 plantId: Number(cell?.getAttribute?.("plant_id") ?? inputs?.plant?.plant_id ?? null),
                 varietyId: inputs?.varietyId ?? null,
                 methodCategoryId: String(inputs?.methodCategoryId ?? cell?.getAttribute?.("method_category_id") ?? ""),
-                methodId: String(inputs?.methodId ?? cell?.getAttribute?.("method_id") ?? "")
+                methodId: String(inputs?.methodId ?? cell?.getAttribute?.("method_id") ?? ""),
+                taskTemplate: options.taskTemplate ?? null // FIX: do not reread task_template_json after mutation
             });
         } catch (e) {
             try { rollbackGraphEdit(); } catch (_) { } // FIX: do not leave the diagram changed when a required post-update step fails
@@ -6786,7 +6997,11 @@ Draw.loadPlugin(function (ui) {
         const env = selectedPlant.cropTempEnvelope();
         const dailyRates = cityInit.dailyRates(env.Tbase, year);
         const monthlyAvgTemp = cityInit.monthlyMeans();
-        const budget = selectedPlant.firstHarvestBudget();
+        const selectedIsPerennial = isPerennialPlant(selectedPlant); // FIX
+        const perennialLifespanYears = selectedIsPerennial
+            ? requirePerennialLifespanYears(selectedPlant)
+            : null; // FIX
+        const budget = selectedIsPerennial ? null : selectedPlant.firstHarvestBudget(); // FIX
 
         // --- compute initial auto anchors safely ---
         const overwinterAllowed0 = isCrossYearCrop(selectedPlant); // FIX: biennials may harvest in a later year
@@ -6797,10 +7012,16 @@ Draw.loadPlugin(function (ui) {
         const HW_DAYS = resolveHarvestWindowDays(null, selectedPlant); // FIX: use the canonical fallback
 
         let earliestFeasibleSowDate = new Date(scanStart);
-        let climateEndDate = new Date(scanEndHard); // CHANGED
+        let climateEndDate = selectedIsPerennial
+            ? parseISODateUTCValue(computePerennialLifespanEndISO(
+                fmtISO(storedSowDate || scanStart),
+                year,
+                perennialLifespanYears
+            ))
+            : new Date(scanEndHard); // FIX
         let lastHarvestDate = new Date(scanEndHard); // CHANGED
 
-        if (Number.isFinite(HW_DAYS)) {
+        if (!selectedIsPerennial && Number.isFinite(HW_DAYS)) { // FIX
             const {
                 earliestFeasibleSowDate: a,
                 climateEndDate: c,
@@ -6842,7 +7063,7 @@ Draw.loadPlugin(function (ui) {
 
         // If we have a finite harvest window, we can run feasibility tweaks.
         // (For perennials / null HW_DAYS we skip this step but still open the dialog.)
-        if (Number.isFinite(HW_DAYS) && !hasStoredSchedule) {
+        if (!selectedIsPerennial && Number.isFinite(HW_DAYS) && !hasStoredSchedule) { // FIX
             const inputs0 = new ScheduleInputs({
                 plant: selectedPlant,
                 city: cityInit,
@@ -7058,6 +7279,16 @@ Draw.loadPlugin(function (ui) {
             try {
                 const plant = await resolveEffectivePlant(plantId, varietyId);
                 if (!plant) return { cropId, harvestStart: null, harvestEnd: null, shelfLifeDays: null, reason: "Plant not found" };
+                if (isPerennialPlant(plant)) { // FIX: harvest suggestions require an explicit maturity model
+                    requirePerennialLifespanYears(plant);
+                    return {
+                        cropId,
+                        harvestStart: null,
+                        harvestEnd: null,
+                        shelfLifeDays: null,
+                        reason: "Perennial harvest timing requires maturity data"
+                    };
+                }
 
                 const city = await CityClimate.loadByName(cityName);
                 if (!city) return { cropId, harvestStart: null, harvestEnd: null, shelfLifeDays: null, reason: "City not found" };
@@ -7296,6 +7527,28 @@ Draw.loadPlugin(function (ui) {
             }
         };
 
+    }
+
+    if (typeof window !== 'undefined' && window.__TRELLIS_PLANTING_SCHEDULER_TEST__) { // FIX: opt-in test surface only
+        window.__TRELLIS_PLANTING_SCHEDULER_TEST_HOOKS__ = {
+            PlantModel,
+            CityClimate,
+            PolicyFlags,
+            ScheduleInputs,
+            Planner,
+            applyPlantOverrides,
+            computeScheduleResult,
+            computeStageDatesForPlanting,
+            computePerennialLifespanEndISO,
+            firstCoolingCrossingDate,
+            getPlantScanYears,
+            resolveHarvestWindowDays,
+            resolveInitialMethodSelection,
+            resolveMethodBehavior,
+            resolveValidMethodRecord,
+            runUiAsyncOperation
+        };
+        return; // FIX: tests do not install Draw.io menus
     }
 
     installSchedulerPlugin(ui); // FIX: avoid nested plugin registration

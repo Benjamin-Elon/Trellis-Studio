@@ -1,6 +1,27 @@
 /**
  * Draw.io Plugin: Task Manager (Kanban Template Style + Auto Placement + Auto Archive + Badges)
  */
+function normalizeTaskReplacementDetail(detail) { // FIX: centralize the scheduler event contract
+    const source = detail && typeof detail === 'object' ? detail : {};
+    return {
+        mode: String(source.mode || 'replace').trim().toLowerCase(),
+        targetGroupId: source.targetGroupId,
+        tasks: Array.isArray(source.tasks) ? source.tasks : []
+    };
+}
+
+function applyImmediateTaskReplacement({ targetGroupId, tasks, removeTasks, createTasks }) { // FIX: make empty replacement testable
+    removeTasks(targetGroupId);
+    if (tasks.length) createTasks(tasks, targetGroupId, { reflow: true });
+}
+
+if (typeof globalThis !== 'undefined' && globalThis.__TRELLIS_TASK_MANAGER_TEST__) { // FIX: no runtime exposure unless tests opt in
+    globalThis.__TRELLIS_TASK_MANAGER_TEST_HOOKS__ = {
+        normalizeTaskReplacementDetail,
+        applyImmediateTaskReplacement
+    };
+}
+
 Draw.loadPlugin(function (ui) {
     const graph = ui.editor.graph;
     const model = graph.getModel();
@@ -1308,9 +1329,10 @@ Draw.loadPlugin(function (ui) {
     // -------------------- Event bridge from scheduler --------------------                
     function handleTasksCreatedEvent(ev) {
         const detail = ev && ev.detail ? ev.detail : {};
-        const tasks = Array.isArray(detail.tasks) ? detail.tasks : [];
-        const targetGroupId = detail.targetGroupId;
-        if (!tasks.length || !targetGroupId) return;
+        const replacement = normalizeTaskReplacementDetail(detail); // FIX
+        const tasks = replacement.tasks; // FIX
+        const targetGroupId = replacement.targetGroupId; // FIX
+        if (replacement.mode !== 'replace' || !targetGroupId) return; // FIX: missing mode remains replace-compatible
 
         // Prefer successionOffset if present, else fallback to successionIndex      
         const rawIdx = (detail.successionOffset != null)
@@ -1341,8 +1363,12 @@ Draw.loadPlugin(function (ui) {
                 console.log('[Kanban] immediate createTasks (no/1 succession)', {
                     targetGroupId, taskCount: tasks.length
                 });
-                removeTasksLinkedOnlyTo(targetGroupId);
-                createTasks(tasks, targetGroupId, { reflow: true });
+                applyImmediateTaskReplacement({
+                    targetGroupId,
+                    tasks,
+                    removeTasks: removeTasksLinkedOnlyTo,
+                    createTasks
+                }); // FIX: an empty replacement still clears stale tasks
                 return;
             }
 
