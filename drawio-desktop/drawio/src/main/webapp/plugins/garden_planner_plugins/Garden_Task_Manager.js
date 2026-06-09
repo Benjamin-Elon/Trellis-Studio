@@ -15,6 +15,9 @@ function applyImmediateTaskReplacement({ targetGroupId, tasks, removeTasks, crea
     if (tasks.length) createTasks(tasks, targetGroupId, { reflow: true });
 }
 
+const CARD_NOTE_ATTR = 'card_note'; // NEW: user annotation kept separate from scheduler task notes
+const CARD_NOTE_MAX_LENGTH = 40; // NEW
+
 const EDITABLE_CARD_DATE_LANES = new Set([ // NEW: completed lanes intentionally remain immutable in version one
     'UPCOMING_FUTURE',
     'UPCOMING_YEAR',
@@ -62,14 +65,33 @@ function shiftTaskCalendarISO(iso, dayDelta) { // NEW: UTC calendar arithmetic a
     return `${year}-${month}-${day}`;
 }
 
-function readTaskDateAttribute(source, key) { // NEW: supports XML cells and plain objects in reliability tests
+function readAttributeValue(source, key) { // CHANGE: supports XML cells and plain objects in reliability tests
     if (source && typeof source.getAttribute === 'function') return source.getAttribute(key);
     return source && Object.prototype.hasOwnProperty.call(source, key) ? source[key] : null;
 }
 
+function normalizeCardNote(value) { // NEW: normalize badge text and truncate by Unicode code point
+    const collapsed = String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+    return Array.from(collapsed).slice(0, CARD_NOTE_MAX_LENGTH).join('');
+}
+
+function buildCardNotePatch(source, note) { // NEW: empty notes remove only the user annotation attribute
+    const currentRaw = String(readAttributeValue(source, CARD_NOTE_ATTR) || ''); // CHANGE
+    const normalized = normalizeCardNote(note);
+    if (currentRaw === normalized) return { changed: false, normalized }; // CHANGE: saving also cleans legacy raw values
+
+    return {
+        changed: true,
+        normalized,
+        attributes: {
+            [CARD_NOTE_ATTR]: normalized || null
+        }
+    };
+}
+
 function getTaskDateRange(source, startKey = 'start', endKey = 'end') { // NEW
-    const startISO = String(readTaskDateAttribute(source, startKey) || '').trim();
-    const endISO = String(readTaskDateAttribute(source, endKey) || '').trim();
+    const startISO = String(readAttributeValue(source, startKey) || '').trim(); // CHANGE
+    const endISO = String(readAttributeValue(source, endKey) || '').trim(); // CHANGE
     const start = parseTaskCalendarISO(startISO);
     const end = parseTaskCalendarISO(endISO);
     if (!start || !end || end.dayNumber < start.dayNumber) return null;
@@ -143,7 +165,9 @@ if (typeof globalThis !== 'undefined' && globalThis.__TRELLIS_TASK_MANAGER_TEST_
         buildInitialCardDateAttributes, // NEW
         buildCardDateOverridePatch, // NEW
         buildCardDateResetPatch, // NEW
-        isEditableCardDateLane // NEW
+        isEditableCardDateLane, // NEW
+        normalizeCardNote, // NEW
+        buildCardNotePatch // NEW
     };
 }
 
@@ -510,18 +534,25 @@ Draw.loadPlugin(function (ui) {
         return clone;
     }
 
-    function commitCardDatePatch(card, attributes) { // NEW: value update and resulting reflow share one undo transaction
-        const board = findBoardAncestor(card);
-        if (!board) return false;
+    function commitCardPatch(card, attributes, opts) { // CHANGE: note and date edits share one undoable value replacement
+        if (!card || !isKanbanCard(card)) return false;
+        const shouldReflow = !!(opts && opts.reflow); // NEW
+        const board = shouldReflow ? findBoardAncestor(card) : null; // NEW
+        if (shouldReflow && !board) return false;
 
         model.beginUpdate();
         try {
             model.setValue(card, cloneCardValueWithAttributes(card, attributes)); // NEW
-            scanAndReflowBoard(board, { insideUpdate: true }); // NEW
+            if (shouldReflow) {
+                scanAndReflowBoard(board, { insideUpdate: true }); // CHANGE
+            } else {
+                refreshCardLabel(card, true); // NEW: note-only edits do not need board classification
+            }
         } finally {
             model.endUpdate();
         }
 
+        if (!shouldReflow) graph.refresh(card); // NEW
         return true;
     }
 
@@ -529,13 +560,28 @@ Draw.loadPlugin(function (ui) {
         if (!canEditCardDates(card)) return false;
         const patch = buildCardDateOverridePatch(card.value, newStartISO);
         if (!patch || patch.changed === false) return false;
-        return commitCardDatePatch(card, patch.attributes);
+        return commitCardPatch(card, patch.attributes, { reflow: true }); // CHANGE
     }
 
     function resetCardDates(card) { // NEW
         if (!canEditCardDates(card) || !hasCardDateOverride(card)) return false;
         const patch = buildCardDateResetPatch(card.value);
-        return patch ? commitCardDatePatch(card, patch) : false;
+        return patch ? commitCardPatch(card, patch, { reflow: true }) : false; // CHANGE
+    }
+
+    function getCardNote(card) { // NEW
+        return normalizeCardNote(getAttr(card, CARD_NOTE_ATTR));
+    }
+
+    function setCardNote(card, note) { // NEW
+        if (!card || !isKanbanCard(card)) return false;
+        const patch = buildCardNotePatch(card.value, note);
+        if (!patch || patch.changed === false) return false;
+        return commitCardPatch(card, patch.attributes, { reflow: false });
+    }
+
+    function clearCardNote(card) { // NEW
+        return setCardNote(card, '');
     }
 
     function fmtSigned(n) {
@@ -897,10 +943,11 @@ Draw.loadPlugin(function (ui) {
 
         const linkCount = getLinkCount(card);
         const linkBadge = (linkCount > 1) ? renderBadge('Links', linkCount) : '';
+        const noteBadge = renderBadge('Note', getCardNote(card)); // NEW
         const editedDateBadge = hasCardDateOverride(card) ? renderBadge('Dates', 'Edited') : ''; // NEW
 
-        const badgesBlock = (badgesHtml || editedDateBadge || linkBadge) // CHANGE
-            ? ('<br/>' + badgesHtml + editedDateBadge + linkBadge) // CHANGE
+        const badgesBlock = (badgesHtml || noteBadge || editedDateBadge || linkBadge) // CHANGE
+            ? ('<br/>' + badgesHtml + noteBadge + editedDateBadge + linkBadge) // CHANGE
             : '';
 
         const html = title + badgesBlock;
@@ -1725,11 +1772,12 @@ Draw.loadPlugin(function (ui) {
         return out;
     }
 
-    function showEditCardDatesDialog(card) { // NEW
-        if (!canEditCardDates(card)) return;
+    function showEditCardDialog(card) { // CHANGE: notes are editable on every Kanban card
+        if (!card || !isKanbanCard(card)) return;
 
-        const currentRange = getTaskDateRange(card.value);
-        if (!currentRange) return;
+        const datesEditableAtOpen = canEditCardDates(card); // NEW
+        const currentRange = datesEditableAtOpen ? getTaskDateRange(card.value) : null; // CHANGE
+        const currentNote = getCardNote(card); // NEW
 
         const div = document.createElement('div');
         div.style.padding = '12px';
@@ -1737,7 +1785,7 @@ Draw.loadPlugin(function (ui) {
         div.style.fontFamily = 'Arial, sans-serif';
 
         const heading = document.createElement('div');
-        heading.textContent = 'Edit Card Dates';
+        heading.textContent = 'Edit Card'; // CHANGE
         heading.style.fontSize = '16px';
         heading.style.fontWeight = 'bold';
         heading.style.marginBottom = '12px';
@@ -1767,17 +1815,33 @@ Draw.loadPlugin(function (ui) {
         titleInput.value = getAttr(card, 'title') || 'Task';
         addRow('Title:', titleInput);
 
-        const startInput = document.createElement('input');
-        startInput.type = 'date';
-        startInput.required = true;
-        startInput.value = currentRange.startISO;
-        addRow('Start date:', startInput);
+        const noteInput = document.createElement('input'); // NEW
+        noteInput.type = 'text'; // NEW
+        noteInput.value = currentNote; // NEW
+        noteInput.placeholder = 'Short card note'; // NEW
+        addRow('Note:', noteInput); // NEW
 
-        const endInput = document.createElement('input');
-        endInput.type = 'date';
-        endInput.readOnly = true;
-        endInput.value = currentRange.endISO;
-        addRow('End date:', endInput);
+        const noteFeedback = document.createElement('div'); // NEW
+        noteFeedback.style.margin = '-6px 0 10px 95px'; // NEW
+        noteFeedback.style.fontSize = '12px'; // NEW
+        div.appendChild(noteFeedback); // NEW
+
+        let startInput = null; // CHANGE
+        let endInput = null; // CHANGE
+
+        if (datesEditableAtOpen && currentRange) { // CHANGE: completed cards receive a note-only dialog
+            startInput = document.createElement('input');
+            startInput.type = 'date';
+            startInput.required = true;
+            startInput.value = currentRange.startISO;
+            addRow('Start date:', startInput);
+
+            endInput = document.createElement('input');
+            endInput.type = 'date';
+            endInput.readOnly = true;
+            endInput.value = currentRange.endISO;
+            addRow('End date:', endInput);
+        }
 
         const error = document.createElement('div');
         error.style.color = '#b91c1c';
@@ -1786,14 +1850,24 @@ Draw.loadPlugin(function (ui) {
         error.style.marginBottom = '8px';
         div.appendChild(error);
 
-        function updateComputedEnd() { // NEW
+        function updateNoteFeedback() { // NEW
+            const collapsed = String(noteInput.value || '').replace(/\s+/g, ' ').trim(); // NEW
+            const length = Array.from(collapsed).length; // NEW
+            noteFeedback.textContent = length + '/' + CARD_NOTE_MAX_LENGTH; // NEW
+            noteFeedback.style.color = length > CARD_NOTE_MAX_LENGTH ? '#b91c1c' : '#6b7280'; // NEW
+        }
+
+        function updateComputedEnd() { // CHANGE
+            if (!startInput || !endInput || !currentRange) return null; // NEW
             const nextEnd = shiftTaskCalendarISO(startInput.value, currentRange.durationDays);
             endInput.value = nextEnd || '';
             error.textContent = nextEnd ? '' : 'Enter a valid start date.';
             return nextEnd;
         }
 
-        startInput.addEventListener('input', updateComputedEnd);
+        noteInput.addEventListener('input', updateNoteFeedback); // NEW
+        updateNoteFeedback(); // NEW
+        if (startInput) startInput.addEventListener('input', updateComputedEnd); // CHANGE
 
         const buttons = document.createElement('div');
         buttons.style.display = 'flex';
@@ -1804,24 +1878,40 @@ Draw.loadPlugin(function (ui) {
             ui.hideDialog();
         });
         const saveButton = mxUtils.button('Save', function () {
-            const nextEnd = updateComputedEnd();
-            if (!nextEnd) {
-                startInput.focus();
-                return;
+            const attributes = {}; // NEW
+            const notePatch = buildCardNotePatch(card.value, noteInput.value); // NEW
+            if (notePatch && notePatch.changed) Object.assign(attributes, notePatch.attributes); // NEW
+
+            let dateChanged = false; // NEW
+            if (startInput && currentRange && startInput.value !== currentRange.startISO) { // CHANGE
+                const nextEnd = updateComputedEnd();
+                if (!nextEnd) {
+                    startInput.focus();
+                    return;
+                }
+
+                if (!canEditCardDates(card)) { // CHANGE: reject the entire combined save if changed dates are no longer eligible
+                    error.textContent = 'This card is no longer eligible for date editing.';
+                    return;
+                }
+
+                const datePatch = buildCardDateOverridePatch(card.value, startInput.value); // NEW
+                if (!datePatch || datePatch.changed === false) {
+                    error.textContent = 'The card dates could not be updated.';
+                    return;
+                }
+
+                Object.assign(attributes, datePatch.attributes); // NEW
+                dateChanged = true; // NEW
             }
 
-            if (startInput.value === currentRange.startISO) { // NEW: unchanged submission is a no-op
+            if (Object.keys(attributes).length === 0) { // NEW: unchanged combined submission is a no-op
                 ui.hideDialog();
                 return;
             }
 
-            if (!canEditCardDates(card)) { // NEW: guard against lane changes while the modal is open
-                error.textContent = 'This card is no longer eligible for date editing.';
-                return;
-            }
-
-            if (!applyCardDateOverride(card, startInput.value)) {
-                error.textContent = 'The card dates could not be updated.';
+            if (!commitCardPatch(card, attributes, { reflow: dateChanged })) { // NEW
+                error.textContent = 'The card could not be updated.';
                 return;
             }
 
@@ -1837,8 +1927,8 @@ Draw.loadPlugin(function (ui) {
             if (evt.key === 'Escape') ui.hideDialog();
         });
 
-        ui.showDialog(div, 420, 260, true, true);
-        startInput.focus();
+        ui.showDialog(div, 420, datesEditableAtOpen ? 310 : 230, true, true); // CHANGE
+        noteInput.focus(); // CHANGE
     }
 
     // -------------------- Menu hook --------------------
@@ -1849,13 +1939,19 @@ Draw.loadPlugin(function (ui) {
             if (typeof prev === 'function') prev.apply(this, arguments);
             const card = cell && model.isVertex(cell) && isKanbanCard(cell) ? cell : null; // NEW
 
-            if (card && canEditCardDates(card)) { // NEW
+            if (card) { // CHANGE: note actions are available in every Kanban lane
                 menu.addSeparator(); // NEW
-                menu.addItem('Edit Card Dates...', null, function () { // NEW
-                    showEditCardDatesDialog(card); // NEW
-                }); // NEW
+                menu.addItem('Edit Card...', null, function () { // CHANGE
+                    showEditCardDialog(card); // CHANGE
+                }); // CHANGE
 
-                if (hasCardDateOverride(card)) { // NEW
+                if (getCardNote(card)) { // NEW
+                    menu.addItem('Clear Card Note', null, function () { // NEW
+                        clearCardNote(card); // NEW
+                    }); // NEW
+                } // NEW
+
+                if (canEditCardDates(card) && hasCardDateOverride(card)) { // CHANGE
                     menu.addItem('Reset Card Dates', null, function () { // NEW
                         resetCardDates(card); // NEW
                     }); // NEW

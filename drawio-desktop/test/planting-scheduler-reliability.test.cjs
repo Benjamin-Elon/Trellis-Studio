@@ -752,13 +752,80 @@ test('scheduler regeneration creates a fresh baseline without preserving an over
     assert.equal(Object.hasOwn(regenerated, 'date_override'), false);
 });
 
-test('manual date actions are wired to one value change, reflow, and edited badge rendering', () => {
+test('card note normalization trims, collapses whitespace, and enforces 40 Unicode code points', () => {
+    assert.equal(taskHooks.normalizeCardNote('  Water   deeply \n tomorrow  '), 'Water deeply tomorrow');
+    assert.equal(taskHooks.normalizeCardNote('\n\t  '), '');
+
+    const exact = '1234567890'.repeat(4);
+    assert.equal(Array.from(exact).length, 40);
+    assert.equal(taskHooks.normalizeCardNote(exact), exact);
+    assert.equal(taskHooks.normalizeCardNote(exact + 'extra'), exact);
+
+    const unicode = '🌱'.repeat(40);
+    assert.equal(Array.from(unicode).length, 40);
+    assert.equal(taskHooks.normalizeCardNote(unicode + 'x'), unicode);
+});
+
+test('card note patches set or clear only card_note and leave scheduler notes untouched', () => {
+    const source = {
+        card_note: 'Old note',
+        notes: 'Scheduler-generated task detail'
+    };
+    const setPatch = taskHooks.buildCardNotePatch(source, '  New\n note  ');
+    assert.equal(setPatch.changed, true);
+    assert.equal(setPatch.normalized, 'New note');
+    assert.deepEqual({ ...setPatch.attributes }, { card_note: 'New note' });
+    assert.equal(Object.hasOwn(setPatch.attributes, 'notes'), false);
+    assert.equal(source.notes, 'Scheduler-generated task detail');
+
+    const clearPatch = taskHooks.buildCardNotePatch(source, ' \n ');
+    assert.equal(clearPatch.changed, true);
+    assert.deepEqual({ ...clearPatch.attributes }, { card_note: null });
+
+    const unchanged = taskHooks.buildCardNotePatch({ card_note: 'Same note' }, ' Same   note ');
+    assert.equal(unchanged.changed, false);
+    assert.equal(unchanged.normalized, 'Same note');
+
+    const cleanup = taskHooks.buildCardNotePatch({ card_note: ' Same   note ' }, 'Same note');
+    assert.equal(cleanup.changed, true);
+    assert.deepEqual({ ...cleanup.attributes }, { card_note: 'Same note' });
+});
+
+test('card note badge is escaped and ordered between timing and edited-date badges', () => {
     const source = fs.readFileSync(taskManagerPath, 'utf8');
-    assert.match(source, /model\.setValue\(card,\s*cloneCardValueWithAttributes\(card,\s*attributes\)\)/);
-    assert.match(source, /scanAndReflowBoard\(board,\s*\{\s*insideUpdate:\s*true\s*\}\)/);
-    assert.match(source, /renderBadge\('Dates',\s*'Edited'\)/);
-    assert.match(source, /menu\.addItem\('Edit Card Dates\.\.\.'/);
+    assert.match(source, /const noteBadge = renderBadge\('Note',\s*getCardNote\(card\)\)/);
+    assert.match(source, /badgesHtml \+ noteBadge \+ editedDateBadge \+ linkBadge/);
+    assert.match(source, /mxUtils\.htmlEntities\(String\(text\)\)/);
+});
+
+test('unified card editor exposes notes on all cards and dates only when eligible', () => {
+    const source = fs.readFileSync(taskManagerPath, 'utf8');
+    assert.match(source, /function showEditCardDialog\(card\)/);
+    assert.match(source, /const datesEditableAtOpen = canEditCardDates\(card\)/);
+    assert.match(source, /if \(datesEditableAtOpen && currentRange\)/);
+    assert.match(source, /if \(card\) \{\s*\/\/ CHANGE: note actions are available in every Kanban lane/);
+    assert.match(source, /menu\.addItem\('Edit Card\.\.\.'/);
+    assert.match(source, /menu\.addItem\('Clear Card Note'/);
+    assert.match(source, /if \(canEditCardDates\(card\) && hasCardDateOverride\(card\)\)/);
     assert.match(source, /menu\.addItem\('Reset Card Dates'/);
+    assert.doesNotMatch(source, /Edit Card Dates\.\.\./);
+});
+
+test('combined card saves use one value replacement and reflow only for date changes', () => {
+    const source = fs.readFileSync(taskManagerPath, 'utf8');
+    const valueWrites = source.match(/model\.setValue\(card,\s*cloneCardValueWithAttributes\(card,\s*attributes\)\)/g) || [];
+    assert.equal(valueWrites.length, 1);
+    assert.match(source, /function commitCardPatch\(card,\s*attributes,\s*opts\)/);
+    assert.match(source, /if \(shouldReflow\) \{\s*scanAndReflowBoard\(board,\s*\{\s*insideUpdate:\s*true\s*\}\)/);
+    assert.match(source, /commitCardPatch\(card,\s*attributes,\s*\{\s*reflow:\s*dateChanged\s*\}\)/);
+    assert.match(source, /if \(!canEditCardDates\(card\)\).*reject the entire combined save/s);
+    assert.match(source, /if \(Object\.keys\(attributes\)\.length === 0\)/);
+});
+
+test('manual date actions still use reflow and edited badge rendering', () => {
+    const source = fs.readFileSync(taskManagerPath, 'utf8');
+    assert.match(source, /commitCardPatch\(card,\s*patch\.attributes,\s*\{\s*reflow:\s*true\s*\}\)/);
+    assert.match(source, /renderBadge\('Dates',\s*'Edited'\)/);
     assert.match(source, /const PROTECTED_WORK_LANES = new Set\(\['TODO',\s*'DOING'\]\)/);
 });
 
