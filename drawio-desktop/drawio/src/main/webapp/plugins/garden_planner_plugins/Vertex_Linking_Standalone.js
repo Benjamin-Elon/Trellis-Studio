@@ -16,42 +16,42 @@ Draw.loadPlugin(function (ui) {
 
     // -------------------- Helpers --------------------
 
-    function asVertexArray(cells) {                                                          
-        if (!cells) return [];                                                               
-        const m = graph.getModel();                                                          
-        const out = [];                                                                      
-        const seen = new Set();                                                              
-    
-        for (const raw of cells) {                                                           
-            const c = normalizeForLinkingAndPrimary(raw);                                    
-            if (!c || !m.isVertex(c)) continue;                                              
-            if (seen.has(c.id)) continue;                                                    
-            seen.add(c.id);                                                                  
-            out.push(c);                                                                     
-        }                                                                                    
-        return out;                                                                          
-    }                                                                                        
-    
+    function asVertexArray(cells) {
+        if (!cells) return [];
+        const m = graph.getModel();
+        const out = [];
+        const seen = new Set();
 
-    function ensureValueIsElementUndoable(cell) {                                     
-        if (!cell) return null;                                                      
-        const v = cell.value;                                                        
-        if (v && typeof v !== 'string' && v.getAttribute) return v;                   
+        for (const raw of cells) {
+            const c = normalizeForLinkingAndPrimary(raw);
+            if (!c || !m.isVertex(c)) continue;
+            if (seen.has(c.id)) continue;
+            seen.add(c.id);
+            out.push(c);
+        }
+        return out;
+    }
 
-        const doc = mxUtils.createXmlDocument();                                      
-        const obj = doc.createElement('object');                                      
-        if (typeof v === 'string') obj.setAttribute('label', v);                      
-        else obj.setAttribute('label', '');                                           
+
+    function ensureValueIsElementUndoable(cell) {
+        if (!cell) return null;
+        const v = cell.value;
+        if (v && typeof v !== 'string' && v.getAttribute) return v;
+
+        const doc = mxUtils.createXmlDocument();
+        const obj = doc.createElement('object');
+        if (typeof v === 'string') obj.setAttribute('label', v);
+        else obj.setAttribute('label', '');
 
         // Make this change undoable                                                   
-        const change = new mxValueChange(cell, obj);                                   
-        model.execute(change);                                                        
-        return cell.value;                                                            
+        const change = new mxValueChange(cell, obj);
+        model.execute(change);
+        return cell.value;
     }
 
     // ---- Undoable helpers ----
     function setCellAttrUndoable(cell, attr, value) {
-        ensureValueIsElementUndoable(cell);                                           
+        ensureValueIsElementUndoable(cell);
         const change = new mxCellAttributeChange(cell, attr, value);
         model.execute(change);
     }
@@ -65,6 +65,56 @@ Draw.loadPlugin(function (ui) {
     function isKanbanCard(cell) {
         return !!cell && getAttr(cell, 'kanban_card') === '1';
     }
+
+    function isKanbanBoard(cell) { // CHANGE
+        return !!cell && (getAttr(cell, 'board_key') === 'KANBAN_BOARD'); // CHANGE
+    } // CHANGE
+
+    function findKanbanBoardAncestor(cell) { // CHANGE
+        const m = graph.getModel(); // CHANGE
+        let cur = cell; // CHANGE
+        while (cur) { // CHANGE
+            if (isKanbanBoard(cur)) return cur; // CHANGE
+            cur = m.getParent(cur); // CHANGE
+        } // CHANGE
+        return null; // CHANGE
+    } // CHANGE
+
+    function collectSameBoardLinkedKanbanCards(selectedCard, directTargets) { // CHANGE
+        if (!isKanbanCard(selectedCard)) return []; // CHANGE
+
+        const board = findKanbanBoardAncestor(selectedCard); // CHANGE
+        if (!board) return []; // CHANGE
+
+        const out = []; // CHANGE
+        const seen = new Set([selectedCard.id]); // CHANGE
+
+        // Avoid duplicate highlighting for cards already highlighted as direct targets. // CHANGE
+        for (const t of directTargets || []) { // CHANGE
+            if (t && t.id) seen.add(t.id); // CHANGE
+        } // CHANGE
+
+        // A selected task card may link to a shared source, such as a tiler group. // CHANGE
+        // Highlight the other task cards linked to that same source, but only inside this board. // CHANGE
+        for (const sourceId of getLinkSet(selectedCard)) { // CHANGE
+            const source = model.getCell(sourceId); // CHANGE
+            if (!source || !model.isVertex(source)) continue; // CHANGE
+
+            for (const candidateId of getLinkSet(source)) { // CHANGE
+                const candidate = model.getCell(candidateId); // CHANGE
+                if (!candidate || !model.isVertex(candidate)) continue; // CHANGE
+                if (!isKanbanCard(candidate)) continue; // CHANGE
+                if (candidate === selectedCard) continue; // CHANGE
+                if (findKanbanBoardAncestor(candidate) !== board) continue; // CHANGE
+                if (seen.has(candidate.id)) continue; // CHANGE
+
+                seen.add(candidate.id); // CHANGE
+                out.push(candidate); // CHANGE
+            } // CHANGE
+        } // CHANGE
+
+        return out; // CHANGE
+    } // CHANGE
 
     function findLaneAncestor(cell) {
         const m = graph.getModel();
@@ -487,22 +537,22 @@ Draw.loadPlugin(function (ui) {
         return !!cell && getAttr(cell, 'tiler_group') === '1';
     }
 
-    function findTilerGroupAncestor(cell) {                                                  
-        const m = graph.getModel();                                                          
-        let cur = cell;                                                                      
-        while (cur) {                                                                        
-            if (isTilerGroup(cur)) return cur;                                               
-            cur = m.getParent(cur);                                                          
-        }                                                                                    
-        return null;                                                                         
-    }                                                                                        
+    function findTilerGroupAncestor(cell) {
+        const m = graph.getModel();
+        let cur = cell;
+        while (cur) {
+            if (isTilerGroup(cur)) return cur;
+            cur = m.getParent(cur);
+        }
+        return null;
+    }
 
-    function normalizeForLinkingAndPrimary(cell) {                                           
-        if (!cell) return null;                                                              
-        const tg = findTilerGroupAncestor(cell);                                             
+    function normalizeForLinkingAndPrimary(cell) {
+        if (!cell) return null;
+        const tg = findTilerGroupAncestor(cell);
         // If it's inside a tiler group (including the group itself), operate on the group  
-        return tg || cell;                                                                   
-    }                                                                                        
+        return tg || cell;
+    }
 
 
     /**                                                                             
@@ -984,58 +1034,58 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-    function computeApplicablePairsForLinking(verts) {                                  
-        const { P, S } = derivePrimariesAndSecondaries(verts);                          
-        const pairs = [];                                                              
+    function computeApplicablePairsForLinking(verts) {
+        const { P, S } = derivePrimariesAndSecondaries(verts);
+        const pairs = [];
 
-        if (P.length > 0) {                                                            
-            for (const a of P) for (const b of S) {                                     
-                if (a && b && a !== b) pairs.push([a, b]);                              
+        if (P.length > 0) {
+            for (const a of P) for (const b of S) {
+                if (a && b && a !== b) pairs.push([a, b]);
             }
-        } else {                                                                       
-            for (let i = 0; i < verts.length; i++) {                                   
-                for (let j = i + 1; j < verts.length; j++) {                           
-                    const a = verts[i], b = verts[j];                                  
-                    if (a && b && a !== b) pairs.push([a, b]);                          
+        } else {
+            for (let i = 0; i < verts.length; i++) {
+                for (let j = i + 1; j < verts.length; j++) {
+                    const a = verts[i], b = verts[j];
+                    if (a && b && a !== b) pairs.push([a, b]);
                 }
             }
         }
-        return pairs;                                                                  
+        return pairs;
     }
 
-    function isPairLinked(a, b) {                                                      
-        if (!a || !b) return false;                                                    
-        const aSet = getLinkSet(a);                                                    
-        return aSet.has(b.id);                                                         
+    function isPairLinked(a, b) {
+        if (!a || !b) return false;
+        const aSet = getLinkSet(a);
+        return aSet.has(b.id);
     }
 
-    function countLinkedPairs(pairs) {                                                 
-        let linked = 0;                                                                
-        for (const [a, b] of pairs) {                                                  
-            if (isPairLinked(a, b) && isPairLinked(b, a)) linked++;                    
+    function countLinkedPairs(pairs) {
+        let linked = 0;
+        for (const [a, b] of pairs) {
+            if (isPairLinked(a, b) && isPairLinked(b, a)) linked++;
         }
-        return linked;                                                                 
+        return linked;
     }
 
-    function unlinkRespectingPrimaries(verts) {                                        
-        const pairs = computeApplicablePairsForLinking(verts);                         
-        let removed = 0;                                                               
+    function unlinkRespectingPrimaries(verts) {
+        const pairs = computeApplicablePairsForLinking(verts);
+        let removed = 0;
 
-        model.beginUpdate();                                                           
+        model.beginUpdate();
         try {
-            for (const [a, b] of pairs) {                                              
-                if (removeBidirectionalLink(a, b)) {                                   
-                    removed++;                                                         
-                    graph.refresh(a);                                                  
-                    graph.refresh(b);                                                  
+            for (const [a, b] of pairs) {
+                if (removeBidirectionalLink(a, b)) {
+                    removed++;
+                    graph.refresh(a);
+                    graph.refresh(b);
                 }
             }
-        } finally { model.endUpdate(); }                                               
+        } finally { model.endUpdate(); }
 
-        if (removed > 0) {                                                             
-            try { graph.fireEvent(new mxEventObject('linksChanged', 'cells', verts)); } catch (_) { } 
+        if (removed > 0) {
+            try { graph.fireEvent(new mxEventObject('linksChanged', 'cells', verts)); } catch (_) { }
         }
-        return { pairs: pairs.length, removed };                                       
+        return { pairs: pairs.length, removed };
     }
 
 
@@ -1161,21 +1211,19 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-    // Highlight a cell via DOM style (view-only) and track it       
-    function highlight(cell, color) {
-        domHighlightVertex(cell, color);
+    function highlight(cell, color, widthPx) { // CHANGE
+        domHighlightVertex(cell, color, widthPx); // CHANGE
     }
 
 
 
     // DOM-based vertex highlighting (no model/undo impact)                    
-    function domHighlightVertex(cell, color) {
+    function domHighlightVertex(cell, color, widthPx) { // CHANGE
         if (!cell || !cell.id) return;
         const st = graph.getView().getState(cell);
         if (!st || !st.shape || !st.shape.node) return;
 
         const root = st.shape.node;
-        // pick actual drawable child (path/rect) instead of the <g> container
         let target = root.querySelector('path, rect');
         if (!target) target = root;
 
@@ -1187,7 +1235,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         target.style.stroke = color || '#ff0000';
-        target.style.strokeWidth = '3px';
+        target.style.strokeWidth = (widthPx || 3) + 'px'; // CHANGE
         markHighlighted(cell);
     }
 
@@ -1216,19 +1264,19 @@ Draw.loadPlugin(function (ui) {
     // Clear visuals WITHOUT opening a transaction; caller groups.
     // Only clear what we previously changed, and only on vertices.
     function clearAllHighlights() {
-        linkOverlays.clearAll();                                             
-        clearDomHighlights();                                               
+        linkOverlays.clearAll();
+        clearDomHighlights();
     }
 
 
     function refreshCurrentHighlight() { // CHANGE
         const selected = graph.getSelectionCells(); // CHANGE
-    
+
         if (!selected || selected.length !== 1) { // CHANGE
             highlightLinked(null); // CHANGE
             return; // CHANGE
         }
-    
+
         const cell = normalizeForLinkingAndPrimary(selected[0]); // CHANGE
         if (cell && model.isVertex(cell)) { // CHANGE
             highlightLinked(cell); // CHANGE
@@ -1270,6 +1318,8 @@ Draw.loadPlugin(function (ui) {
                     targets.push(other);
             }
 
+            const sameBoardLinkedCards = collectSameBoardLinkedKanbanCards(cell, targets); // CHANGE
+
             const exitMap = computeExitParamsForOrigin(cell, targets);
 
             for (const other of targets) {
@@ -1293,6 +1343,11 @@ Draw.loadPlugin(function (ui) {
                     );
                 }
             }
+
+            for (const otherCard of sameBoardLinkedCards) { // CHANGE
+                const otherIsPrimary = isPrimary(otherCard); // CHANGE
+                highlight(otherCard, otherIsPrimary ? YELLOW : RED, 1.5); // CHANGE
+            } // CHANGE
 
 
         } finally {
@@ -1442,8 +1497,8 @@ Draw.loadPlugin(function (ui) {
             highlightLinked(null);
             return;
         }
-        const cell = normalizeForLinkingAndPrimary(selected[0]);                                 
-        if (cell && model.isVertex(cell)) highlightLinked(cell);                                         
+        const cell = normalizeForLinkingAndPrimary(selected[0]);
+        if (cell && model.isVertex(cell)) highlightLinked(cell);
     });
 
 
@@ -1462,15 +1517,15 @@ Draw.loadPlugin(function (ui) {
                 // --- Primary actions (conditional) --------------------------------------------
 
                 // Counts
-                const total = verts.length;                                                      
-                const primCount = verts.reduce((n, v) => n + (isPrimary(v) ? 1 : 0), 0);          
-                const nonPrimCount = total - primCount;                                          
+                const total = verts.length;
+                const primCount = verts.reduce((n, v) => n + (isPrimary(v) ? 1 : 0), 0);
+                const nonPrimCount = total - primCount;
 
-                menu.addSeparator();                                                          
+                menu.addSeparator();
 
                 // Only primaries -> only "Remove Primary"
-                if (primCount === total) {                                                       
-                    menu.addItem(`Remove Primary (${total})`, null, function () {                 
+                if (primCount === total) {
+                    menu.addItem(`Remove Primary (${total})`, null, function () {
                         model.beginUpdate();
                         try {
                             for (const v of verts) setPrimary(v, false);
@@ -1481,8 +1536,8 @@ Draw.loadPlugin(function (ui) {
                     });
                 }
                 // Only non-primaries -> only "Mark as Primary"
-                else if (nonPrimCount === total) {                                               
-                    menu.addItem(`Mark as Primary (${total})`, null, function () {                
+                else if (nonPrimCount === total) {
+                    menu.addItem(`Mark as Primary (${total})`, null, function () {
                         model.beginUpdate();
                         try {
                             for (const v of verts) setPrimary(v, true);
@@ -1494,11 +1549,11 @@ Draw.loadPlugin(function (ui) {
                 }
                 // Mixed -> show both
                 else {                                                                                 // UNCHANGED
-                    menu.addItem(`Mark as Primary (${nonPrimCount})`, null, function () {              
+                    menu.addItem(`Mark as Primary (${nonPrimCount})`, null, function () {
                         model.beginUpdate();
                         try {
-                            for (const v of verts) {                                                   
-                                if (!isPrimary(v)) setPrimary(v, true);                                
+                            for (const v of verts) {
+                                if (!isPrimary(v)) setPrimary(v, true);
                             }
                         } finally { model.endUpdate(); }
                         console.log(`[Primary] Marked: ${verts.filter(v => !isPrimary(v)).map(v => v.id).join(', ')}`); // OPTIONAL (see note)
@@ -1506,11 +1561,11 @@ Draw.loadPlugin(function (ui) {
                         if (sel && model.isVertex(sel)) highlightLinked(sel);
                     });
 
-                    menu.addItem(`Remove Primary (${primCount})`, null, function () {                  
+                    menu.addItem(`Remove Primary (${primCount})`, null, function () {
                         model.beginUpdate();
                         try {
-                            for (const v of verts) {                                                   
-                                if (isPrimary(v)) setPrimary(v, false);                                
+                            for (const v of verts) {
+                                if (isPrimary(v)) setPrimary(v, false);
                             }
                         } finally { model.endUpdate(); }
                         console.log(`[Primary] Removed: ${verts.filter(v => isPrimary(v)).map(v => v.id).join(', ')}`); // OPTIONAL (see note)
@@ -1541,23 +1596,23 @@ Draw.loadPlugin(function (ui) {
             }
 
             if (verts.length >= 2) {
-                const pairs = computeApplicablePairsForLinking(verts);                  
-                const totalPairs = pairs.length;                                        
-                const linkedPairs = countLinkedPairs(pairs);                            
-                const missingPairs = totalPairs - linkedPairs;                          
+                const pairs = computeApplicablePairsForLinking(verts);
+                const totalPairs = pairs.length;
+                const linkedPairs = countLinkedPairs(pairs);
+                const missingPairs = totalPairs - linkedPairs;
 
                 // Only linked -> only "Unlink"                                          
-                if (linkedPairs === totalPairs && totalPairs > 0) {                     
-                    menu.addItem(`Unlink Selected (${linkedPairs})`, null, function () { 
-                        const res = unlinkRespectingPrimaries(verts);                   
-                        console.log(`[BULK UNLINK] pairs=${res.pairs}, removed=${res.removed}`); 
-                        const sel = graph.getSelectionCell();                           
-                        if (sel && model.isVertex(sel)) highlightLinked(sel);           
+                if (linkedPairs === totalPairs && totalPairs > 0) {
+                    menu.addItem(`Unlink Selected (${linkedPairs})`, null, function () {
+                        const res = unlinkRespectingPrimaries(verts);
+                        console.log(`[BULK UNLINK] pairs=${res.pairs}, removed=${res.removed}`);
+                        const sel = graph.getSelectionCell();
+                        if (sel && model.isVertex(sel)) highlightLinked(sel);
                     });
                 }
                 // Only missing -> only "Link"                                           
-                else if (missingPairs === totalPairs && totalPairs > 0) {               
-                    menu.addItem(`Link Selected (respect primaries) (${totalPairs})`, null, function () { 
+                else if (missingPairs === totalPairs && totalPairs > 0) {
+                    menu.addItem(`Link Selected (respect primaries) (${totalPairs})`, null, function () {
                         const res = linkRespectingPrimaries(verts);                     // UNCHANGED
                         console.log(`[LINK P↔S] pairs=${res.pairs}, changed=${res.changes}`); // UNCHANGED
                         const sel = graph.getSelectionCell();                           // UNCHANGED
@@ -1565,19 +1620,19 @@ Draw.loadPlugin(function (ui) {
                     });
                 }
                 // Mixed -> show both with counts                                        
-                else if (totalPairs > 0) {                                              
-                    menu.addItem(`Link Selected (respect primaries) (${missingPairs})`, null, function () { 
+                else if (totalPairs > 0) {
+                    menu.addItem(`Link Selected (respect primaries) (${missingPairs})`, null, function () {
                         const res = linkRespectingPrimaries(verts);                     // UNCHANGED
                         console.log(`[LINK P↔S] pairs=${res.pairs}, changed=${res.changes}`); // UNCHANGED
                         const sel = graph.getSelectionCell();                           // UNCHANGED
                         if (sel && model.isVertex(sel)) highlightLinked(sel);           // UNCHANGED
                     });
 
-                    menu.addItem(`Unlink Selected (${linkedPairs})`, null, function () { 
-                        const res = unlinkRespectingPrimaries(verts);                   
-                        console.log(`[BULK UNLINK] pairs=${res.pairs}, removed=${res.removed}`); 
-                        const sel = graph.getSelectionCell();                           
-                        if (sel && model.isVertex(sel)) highlightLinked(sel);           
+                    menu.addItem(`Unlink Selected (${linkedPairs})`, null, function () {
+                        const res = unlinkRespectingPrimaries(verts);
+                        console.log(`[BULK UNLINK] pairs=${res.pairs}, removed=${res.removed}`);
+                        const sel = graph.getSelectionCell();
+                        if (sel && model.isVertex(sel)) highlightLinked(sel);
                     });
                 }
             }
@@ -1757,7 +1812,7 @@ Draw.loadPlugin(function (ui) {
     if (view && view.addListener) {
         function refreshViewOnlyLinkVisuals() { // CHANGE
             linkOverlays.refreshAll(); // CHANGE
-    
+
             // Draw.io may recreate SVG nodes during zoom/pan, so reapply DOM highlights
             // after the view has finished its redraw cycle. // CHANGE
             setTimeout(function () { // CHANGE
@@ -1765,7 +1820,7 @@ Draw.loadPlugin(function (ui) {
                 linkOverlays.refreshAll(); // CHANGE
             }, 0); // CHANGE
         } // CHANGE
-    
+
         view.addListener(mxEvent.SCALE, refreshViewOnlyLinkVisuals); // CHANGE
         view.addListener(mxEvent.TRANSLATE, refreshViewOnlyLinkVisuals); // CHANGE
         view.addListener(mxEvent.SCALE_AND_TRANSLATE, refreshViewOnlyLinkVisuals); // CHANGE
