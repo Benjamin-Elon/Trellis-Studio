@@ -545,6 +545,203 @@ test('mixed-case method records and attributes normalize to canonical IDs', asyn
     }
 });
 
+test('combined method selection round-trips delimiter-like identifiers', () => { // ADDED
+    const encoded = hooks.encodeMethodSelection(' Direct|Sow ', ' Direct|Sow.Field::One '); // ADDED
+    const decoded = hooks.decodeMethodSelection(encoded); // ADDED
+    assert.equal(decoded.methodCategoryId, 'direct|sow'); // ADDED
+    assert.equal(decoded.methodId, 'direct|sow.field::one'); // ADDED
+    assert.equal(hooks.decodeMethodSelection('not-json'), null); // ADDED
+}); // ADDED
+
+test('feasibility helpers classify schedule dates and humanize planner reasons', () => { // ADDED
+    assert.equal(hooks.humanFeasibilityReason('insufficient_gdd'), 'There is not enough growing-degree accumulation to reach maturity.'); // ADDED
+    assert.equal(hooks.classifySelectedSowDate({ perennial: true }).status, 'not_applicable'); // ADDED
+    assert.equal(hooks.classifySelectedSowDate({ windowFeasible: false }).status, 'no_window'); // ADDED
+    assert.equal(hooks.classifySelectedSowDate({ windowFeasible: true }).status, 'missing'); // ADDED
+    assert.equal(hooks.classifySelectedSowDate({ // ADDED
+        windowFeasible: true, // ADDED
+        startISO: '2026-03-01', // ADDED
+        earliestISO: '2026-04-01', // ADDED
+        latestISO: '2026-05-01' // ADDED
+    }).status, 'early'); // ADDED
+    assert.equal(hooks.classifySelectedSowDate({ // ADDED
+        windowFeasible: true, // ADDED
+        startISO: '2026-06-01', // ADDED
+        earliestISO: '2026-04-01', // ADDED
+        latestISO: '2026-05-01' // ADDED
+    }).status, 'late'); // ADDED
+    assert.equal(hooks.classifySelectedSowDate({ // ADDED
+        windowFeasible: true, // ADDED
+        startISO: '2026-04-15', // ADDED
+        earliestISO: '2026-04-01', // ADDED
+        latestISO: '2026-05-01' // ADDED
+    }).status, 'feasible'); // ADDED
+}); // ADDED
+
+test('schedule summary state uses perennial and annual harvest semantics', () => { // ADDED
+    const annual = hooks.buildScheduleViewState({ // ADDED
+        plantName: 'Tomato', // ADDED
+        varietyName: 'Roma', // ADDED
+        cityName: 'Test City', // ADDED
+        seasonStartYear: 2026, // ADDED
+        methodName: 'Field direct sow', // ADDED
+        windowFeasible: true, // ADDED
+        startISO: '2026-04-01', // ADDED
+        earliestISO: '2026-03-20', // ADDED
+        latestISO: '2026-05-01', // ADDED
+        firstHarvestISO: '2026-05-01', // ADDED
+        lastHarvestISO: '2026-05-08' // ADDED
+    }); // ADDED
+    assert.equal(annual.crop, 'Tomato / Roma'); // ADDED
+    assert.equal(annual.feasibility.status, 'feasible'); // ADDED
+    assert.equal(annual.harvestEnd, '2026-05-08'); // ADDED
+
+    const perennial = hooks.buildScheduleViewState({ perennial: true, plantName: 'Asparagus' }); // ADDED
+    assert.equal(perennial.feasibility.status, 'not_applicable'); // ADDED
+    assert.match(perennial.firstHarvest, /Not calculated/); // ADDED
+}); // ADDED
+
+test('task preview and save share generated dates before display filtering', async () => { // ADDED
+    const plant = makePlant({ plant_name: 'Carrot' }); // ADDED
+    const result = hooks.computeScheduleResult(makeInputs({ plant })); // ADDED
+    const template = { // ADDED
+        version: 2, // ADDED
+        rules: [{ // ADDED
+            id: 'water', // ADDED
+            title: 'Water {plant}', // ADDED
+            startAnchorStage: 'SOW', // ADDED
+            startOffsetDays: 0, // ADDED
+            startOffsetDirection: 'after', // ADDED
+            endMode: 'fixed_days', // ADDED
+            durationDays: 1, // ADDED
+            repeatMode: 'interval', // ADDED
+            repeatEveryDays: 3, // ADDED
+            repeatUntilMode: 'x_times', // ADDED
+            repeatTimes: 3 // ADDED
+        }] // ADDED
+    }; // ADDED
+    const savedTasks = await hooks.buildTasksForPlan({ // ADDED
+        plant, // ADDED
+        schedule: result.schedule, // ADDED
+        timelines: result.timelines, // ADDED
+        taskTemplate: template // ADDED
+    }); // ADDED
+    const previewTasks = await hooks.buildTasksForPlan({ // ADDED
+        plant, // ADDED
+        schedule: result.schedule, // ADDED
+        timelines: result.timelines, // ADDED
+        taskTemplate: template, // ADDED
+        includePreviewMetadata: true // ADDED
+    }); // ADDED
+    assert.deepEqual( // ADDED
+        previewTasks.map(task => [task.startISO, task.endISO]), // ADDED
+        savedTasks.map(task => [task.startISO, task.endISO]) // ADDED
+    ); // ADDED
+    assert.equal(Object.keys(savedTasks[0]).includes('previewRuleKey'), false); // ADDED
+    assert.equal(Object.keys(previewTasks[0]).includes('previewRuleKey'), false); // ADDED
+    assert.equal(previewTasks[0].previewRuleKey, 'water::0'); // ADDED
+}); // ADDED
+
+test('task preview range uses the complete annual schedule instead of selected task dates', () => { // ADDED
+    const result = hooks.computeScheduleResult(makeInputs({ startISO: '2026-04-01' })); // ADDED
+    const range = hooks.resolveTaskPreviewScheduleRange(result); // ADDED
+    assert.deepEqual({ ...range }, { // ADDED
+        startISO: '2026-04-01', // ADDED
+        endISO: result.lastScheduledHarvestEndISO // ADDED
+    }); // ADDED
+    assert.notEqual(range.endISO, '2026-04-01'); // ADDED
+}); // ADDED
+
+test('task preview range uses the complete perennial lifespan', () => { // ADDED
+    const plant = makePlant({ annual: 0, perennial: 1, lifespan_years: 3 }); // ADDED
+    const result = hooks.computeScheduleResult(makeInputs({ plant, startISO: '2026-04-15' })); // ADDED
+    assert.deepEqual({ ...hooks.resolveTaskPreviewScheduleRange(result) }, { // ADDED
+        startISO: result.lifespanStartISO, // ADDED
+        endISO: result.lifespanEndISO // ADDED
+    }); // ADDED
+}); // ADDED
+
+test('task preview filtering is display-only and includes all occurrences for selected rules', async () => { // CHANGED
+    const plant = makePlant(); // ADDED
+    const result = hooks.computeScheduleResult(makeInputs({ plant })); // ADDED
+    const rules = [ // ADDED
+        { id: 'duplicate', title: 'First', startAnchorStage: 'SOW', endMode: 'fixed_days', durationDays: 0, repeatMode: 'interval', repeatEveryDays: 1, repeatUntilMode: 'x_times', repeatTimes: 3 }, // ADDED
+        { id: 'duplicate', title: 'Second', startAnchorStage: 'SOW', endMode: 'fixed_days', durationDays: 0, repeatMode: 'interval', repeatEveryDays: 2, repeatUntilMode: 'x_times', repeatTimes: 2 } // ADDED
+    ]; // ADDED
+    const originalRules = JSON.stringify(rules); // ADDED
+    const generated = await hooks.buildTasksForPlan({ // ADDED
+        plant, // ADDED
+        schedule: result.schedule, // ADDED
+        timelines: result.timelines, // ADDED
+        taskTemplate: { version: 2, rules }, // ADDED
+        includePreviewMetadata: true // ADDED
+    }); // ADDED
+    const filtered = hooks.filterPreviewTasks(generated, new Set(['duplicate::1'])); // CHANGED
+    assert.equal(filtered.length, 2); // CHANGED
+    assert.equal(filtered.every(task => task.title === 'Second'), true); // CHANGED
+    assert.equal(filtered.map(task => task.previewOccurrenceIndex).join(','), '0,1'); // ADDED
+    assert.equal(JSON.stringify(rules), originalRules); // ADDED
+    assert.equal(generated.length, 5); // ADDED
+}); // ADDED
+
+test('task rule display order follows first generated occurrence and keeps original indexes', () => { // ADDED
+    const rules = [ // ADDED
+        { id: 'late', title: 'Late task' }, // ADDED
+        { id: 'missing', title: 'Missing anchor task' }, // ADDED
+        { id: 'early', title: 'Early task' }, // ADDED
+        { id: 'same_day', title: 'Same-day task' } // ADDED
+    ]; // ADDED
+    const generated = [ // ADDED
+        { previewRuleKey: 'late::0', startISO: '2026-06-10' }, // ADDED
+        { previewRuleKey: 'early::2', startISO: '2026-04-01' }, // ADDED
+        { previewRuleKey: 'early::2', startISO: '2026-04-05' }, // ADDED
+        { previewRuleKey: 'same_day::3', startISO: '2026-04-01' } // ADDED
+    ]; // ADDED
+    const ordered = hooks.buildTaskRuleDisplayOrder(rules, generated); // ADDED
+    assert.equal(ordered.map(entry => entry.rule.id).join(','), 'early,same_day,late,missing'); // ADDED
+    assert.equal(ordered.map(entry => entry.originalIndex).join(','), '2,3,0,1'); // ADDED
+}); // ADDED
+
+test('task preview groups repeats on one row ordered by first occurrence', () => { // ADDED
+    const tasks = [ // ADDED
+        { title: 'Later', startISO: '2026-05-10', endISO: '2026-05-11', previewRuleKey: 'later::0', previewRuleIndex: 0, previewOccurrenceIndex: 0 }, // ADDED
+        { title: 'Repeat', startISO: '2026-04-08', endISO: '2026-04-09', previewRuleKey: 'repeat::1', previewRuleIndex: 1, previewOccurrenceIndex: 1 }, // ADDED
+        { title: 'Repeat', startISO: '2026-04-01', endISO: '2026-04-02', previewRuleKey: 'repeat::1', previewRuleIndex: 1, previewOccurrenceIndex: 0 }, // ADDED
+        { title: 'Repeat', startISO: '2026-04-15', endISO: '2026-04-16', previewRuleKey: 'repeat::1', previewRuleIndex: 1, previewOccurrenceIndex: 2 } // ADDED
+    ]; // ADDED
+    const groups = hooks.groupPreviewTasksByRule(tasks); // ADDED
+    assert.equal(groups.length, 2); // ADDED
+    assert.equal(groups[0].title, 'Repeat'); // ADDED
+    assert.equal(groups[0].occurrences.length, 3); // ADDED
+    assert.equal(groups[0].occurrences.map(task => task.startISO).join(','), '2026-04-01,2026-04-08,2026-04-15'); // ADDED
+    assert.equal(groups[1].title, 'Later'); // ADDED
+}); // ADDED
+
+test('perennial task generation omits rules whose annual anchors are missing', async () => { // ADDED
+    const plant = makePlant({ // ADDED
+        annual: 0, // ADDED
+        perennial: 1, // ADDED
+        lifespan_years: 3, // ADDED
+        days_maturity: null, // ADDED
+        gdd_to_maturity: null // ADDED
+    }); // ADDED
+    const result = hooks.computeScheduleResult(makeInputs({ plant, startISO: '2026-04-15' })); // ADDED
+    const tasks = await hooks.buildTasksForPlan({ // ADDED
+        plant, // ADDED
+        schedule: result.schedule, // ADDED
+        timelines: result.timelines, // ADDED
+        taskTemplate: { // ADDED
+            rules: [ // ADDED
+                { id: 'plant', title: 'Plant', startAnchorStage: 'SOW', endMode: 'fixed_days', durationDays: 0 }, // ADDED
+                { id: 'harvest', title: 'Harvest', startAnchorStage: 'HARVEST_START', endMode: 'fixed_days', durationDays: 0 } // ADDED
+            ] // ADDED
+        }, // ADDED
+        includePreviewMetadata: true // ADDED
+    }); // ADDED
+    assert.equal(tasks.length, 1); // ADDED
+    assert.equal(tasks[0].rule_id, 'plant'); // ADDED
+}); // ADDED
+
 test('database persistence failure restores snapshotted graph attributes', async () => {
     const cell = makeAttributeCell({ sow_date: '2026-04-01', method_id: 'direct_sow.field' });
     const patch = { sow_date: '2026-05-01', method_id: 'transplant.indoor', lifespan_end: '2029-12-31' };

@@ -47,12 +47,12 @@ Draw.loadPlugin(function (ui) {
     const PLAN_YEAR_EVENT = "usl:planYearRequested";
     const ALLOCATE_PLAN_EVENT = "usl:allocatePlanRequested";
 
-    const GROUP_LABEL_FONT_PX = 12;                                      
-    const GROUP_LABEL_LINE_HEIGHT = 1.25;                                
-    const GROUP_LABEL_BAND_PAD_PX = 6;                                   
-    const GROUP_LABEL_BAND_PX = Math.ceil(                               
+    const GROUP_LABEL_FONT_PX = 12;
+    const GROUP_LABEL_LINE_HEIGHT = 1.25;
+    const GROUP_LABEL_BAND_PAD_PX = 6;
+    const GROUP_LABEL_BAND_PX = Math.ceil(
         GROUP_LABEL_FONT_PX * GROUP_LABEL_LINE_HEIGHT + GROUP_LABEL_BAND_PAD_PX
-    );                                                                       
+    );
 
     // -------------------- Helpers --------------------
     function getStyleSafe(cell) {
@@ -263,13 +263,13 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-    function unitsToAreaM2(wUnits, hUnits) {                             
-        const k = (PX_PER_CM * DRAW_SCALE * 100);                       
-        const wM = Number(wUnits) / k;                                   
-        const hM = Number(hUnits) / k;                                   
-        if (!Number.isFinite(wM) || !Number.isFinite(hM)) return 0;      
-        return wM * hM;                                                  
-    }                                                                    
+    function unitsToAreaM2(wUnits, hUnits) {
+        const k = (PX_PER_CM * DRAW_SCALE * 100);
+        const wM = Number(wUnits) / k;
+        const hM = Number(hUnits) / k;
+        if (!Number.isFinite(wM) || !Number.isFinite(hM)) return 0;
+        return wM * hM;
+    }
 
 
     function getCropKey(tg) {
@@ -350,9 +350,9 @@ Draw.loadPlugin(function (ui) {
             const geo = model.getGeometry(tg);
             let areaM2 = 0;
             if (geo) {
-                const wUnits = geo.width;                                        
-                const hUnits = Math.max(0, geo.height - GROUP_LABEL_BAND_PX);     
-                areaM2 = unitsToAreaM2(wUnits, hUnits);                          
+                const wUnits = geo.width;
+                const hUnits = Math.max(0, geo.height - GROUP_LABEL_BAND_PX);
+                areaM2 = unitsToAreaM2(wUnits, hUnits);
             }
 
             const actualPlants = toNum(getCellAttr(tg, "plant_count", 0), 0);
@@ -1263,6 +1263,9 @@ Draw.loadPlugin(function (ui) {
 
     // -------------------- View/model event wiring --------------------
     let rafPending = false;
+    let attachExistingDashboardsOncePending = false; // CHANGE
+    let attachExistingDashboardsOnceDone = false; // CHANGE
+
     function scheduleOverlayReposition() {
         if (rafPending) return;
         rafPending = true;
@@ -1364,5 +1367,18 @@ Draw.loadPlugin(function (ui) {
         scheduleOverlayReposition();
     }
 
-    attachExistingDashboards();
+    function scheduleAttachExistingDashboards() {    
+        setTimeout(function () {
+            attachExistingDashboards();
+        }, 5000);
+    }
+
+    function scheduleAttachExistingDashboards() {    
+        setTimeout(function () {
+            attachExistingDashboards();
+        }, 10000);
+    }
+    
+    scheduleAttachExistingDashboards();
+
 });

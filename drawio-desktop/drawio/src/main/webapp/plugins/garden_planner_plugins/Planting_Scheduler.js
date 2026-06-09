@@ -2267,6 +2267,160 @@ Draw.loadPlugin(function (ui) {
         });
     }
 
+    function encodeMethodSelection(methodCategoryId, methodId) { // ADDED
+        return JSON.stringify([normId(methodCategoryId), normId(methodId)]); // ADDED
+    } // ADDED
+
+    function decodeMethodSelection(value) { // ADDED
+        try { // ADDED
+            const parsed = JSON.parse(String(value || '')); // ADDED
+            if (!Array.isArray(parsed) || parsed.length !== 2) return null; // ADDED
+            const methodCategoryId = normId(parsed[0]); // ADDED
+            const methodId = normId(parsed[1]); // ADDED
+            if (!methodCategoryId || !methodId) return null; // ADDED
+            return { methodCategoryId, methodId }; // ADDED
+        } catch (_) { // ADDED
+            return null; // ADDED
+        } // ADDED
+    } // ADDED
+
+    function humanFeasibilityReason(reason) { // ADDED
+        const raw = String(reason || '').trim(); // ADDED
+        if (!raw || raw === 'ok') return 'Feasible'; // ADDED
+        if (raw === 'outside_scan_window') return 'The selected date is outside the planning season.'; // ADDED
+        if (raw === 'gate_outside_scan_window') return 'The planting or transplant date falls outside the planning season.'; // ADDED
+        if (raw.indexOf('spring_frost_gate') === 0) return 'The planting date is before the frost-safety date.'; // ADDED
+        if (raw === 'cooling_gate') return 'The crop requires a later seasonal cooling trigger.'; // ADDED
+        if (raw === 'soil_gate_missing_date') return 'A soil-temperature check could not be evaluated.'; // ADDED
+        if (raw === 'soil_gate') return 'The soil is expected to be too cold on this date.'; // ADDED
+        if (raw === 'insufficient_gdd') return 'There is not enough growing-degree accumulation to reach maturity.'; // ADDED
+        if (raw === 'cross_year_disallowed') return 'This planting would extend into another year.'; // ADDED
+        if (raw === 'beyond_hard_end') return 'There is not enough season remaining for the harvest window.'; // ADDED
+        if (raw.indexOf('harvest_too_cold') === 0) return 'Expected harvest temperatures are too cold.'; // ADDED
+        if (raw.indexOf('harvest_too_hot') === 0) return 'Expected harvest temperatures are too hot.'; // ADDED
+        if (raw.indexOf('error:') === 0) return raw.slice(6).trim() || 'The feasibility check failed.'; // ADDED
+        return raw.replace(/_/g, ' '); // ADDED
+    } // ADDED
+
+    function classifySelectedSowDate({ // ADDED
+        perennial = false, // ADDED
+        windowFeasible = false, // ADDED
+        startISO = '', // ADDED
+        earliestISO = '', // ADDED
+        latestISO = '' // ADDED
+    } = {}) { // ADDED
+        if (perennial) { // ADDED
+            return { status: 'not_applicable', label: 'Not applicable for perennial planting dates.' }; // ADDED
+        } // ADDED
+        if (!windowFeasible) { // ADDED
+            return { status: 'no_window', label: 'No feasible sowing window is available.' }; // ADDED
+        } // ADDED
+        const selected = parseISODateUTCValue(startISO); // ADDED
+        if (!selected) return { status: 'missing', label: 'Select a sow date.' }; // ADDED
+        const earliest = parseISODateUTCValue(earliestISO); // ADDED
+        const latest = parseISODateUTCValue(latestISO); // ADDED
+        if (earliest && selected < earliest) { // ADDED
+            return { status: 'early', label: 'The selected sow date is earlier than the feasible window.' }; // ADDED
+        } // ADDED
+        if (latest && selected > latest) { // ADDED
+            return { status: 'late', label: 'The selected sow date is later than the feasible window.' }; // ADDED
+        } // ADDED
+        return { status: 'feasible', label: 'The selected sow date is feasible.' }; // ADDED
+    } // ADDED
+
+    function buildScheduleViewState({ // ADDED
+        perennial = false, // ADDED
+        windowFeasible = false, // ADDED
+        plantName = '', // ADDED
+        varietyName = '', // ADDED
+        cityName = '', // ADDED
+        seasonStartYear = '', // ADDED
+        methodName = '', // ADDED
+        startISO = '', // ADDED
+        earliestISO = '', // ADDED
+        latestISO = '', // ADDED
+        firstHarvestISO = '', // ADDED
+        lastHarvestISO = '' // ADDED
+    } = {}) { // ADDED
+        const feasibility = classifySelectedSowDate({ // ADDED
+            perennial, // ADDED
+            windowFeasible, // ADDED
+            startISO, // ADDED
+            earliestISO, // ADDED
+            latestISO // ADDED
+        }); // ADDED
+        return { // ADDED
+            crop: [plantName, varietyName].filter(Boolean).join(' / ') || '(none)', // ADDED
+            context: [cityName, seasonStartYear].filter(value => String(value || '').trim()).join(' / ') || '(none)', // ADDED
+            method: methodName || '(none)', // ADDED
+            selectedDate: startISO || '(not selected)', // ADDED
+            firstHarvest: perennial ? 'Not calculated for perennial schedules' : (firstHarvestISO || '(not available)'), // ADDED
+            harvestEnd: perennial ? 'Not calculated for perennial schedules' : (lastHarvestISO || '(not available)'), // ADDED
+            feasibility // ADDED
+        }; // ADDED
+    } // ADDED
+
+    function renderScheduleSummary() { // ADDED
+        const root = document.createElement('div'); // ADDED
+        root.style.border = '1px solid #93c5fd'; // ADDED
+        root.style.background = '#eff6ff'; // ADDED
+        root.style.borderRadius = '6px'; // ADDED
+        root.style.padding = '10px 12px'; // ADDED
+        root.style.marginBottom = '10px'; // ADDED
+
+        const title = document.createElement('div'); // ADDED
+        title.textContent = 'Schedule summary'; // ADDED
+        title.style.fontWeight = '600'; // ADDED
+        title.style.marginBottom = '8px'; // ADDED
+        root.appendChild(title); // ADDED
+
+        const grid = document.createElement('div'); // ADDED
+        grid.style.display = 'grid'; // ADDED
+        grid.style.gridTemplateColumns = 'repeat(auto-fit, minmax(220px, 1fr))'; // ADDED
+        grid.style.gap = '6px 16px'; // ADDED
+        root.appendChild(grid); // ADDED
+
+        const fields = {}; // ADDED
+        [ // ADDED
+            ['crop', 'Plant / variety'], // ADDED
+            ['context', 'City / year'], // ADDED
+            ['method', 'Planting method'], // ADDED
+            ['selectedDate', 'Selected sow or planting date'], // ADDED
+            ['firstHarvest', 'Expected first harvest'], // ADDED
+            ['harvestEnd', 'Expected harvest end'], // ADDED
+            ['feasibility', 'Feasibility'] // ADDED
+        ].forEach(([key, label]) => { // ADDED
+            const item = document.createElement('div'); // ADDED
+            const labelEl = document.createElement('div'); // ADDED
+            labelEl.textContent = label; // ADDED
+            labelEl.style.fontSize = '11px'; // ADDED
+            labelEl.style.color = '#4b5563'; // ADDED
+            const valueEl = document.createElement('div'); // ADDED
+            valueEl.style.fontSize = '12px'; // ADDED
+            valueEl.style.fontWeight = key === 'feasibility' ? '600' : '400'; // ADDED
+            item.appendChild(labelEl); // ADDED
+            item.appendChild(valueEl); // ADDED
+            grid.appendChild(item); // ADDED
+            fields[key] = valueEl; // ADDED
+        }); // ADDED
+
+        return { root, fields }; // ADDED
+    } // ADDED
+
+    function updateScheduleSummary(summaryView, viewState) { // ADDED
+        if (!summaryView?.fields || !viewState) return; // ADDED
+        summaryView.fields.crop.textContent = viewState.crop; // ADDED
+        summaryView.fields.context.textContent = viewState.context; // ADDED
+        summaryView.fields.method.textContent = viewState.method; // ADDED
+        summaryView.fields.selectedDate.textContent = viewState.selectedDate; // ADDED
+        summaryView.fields.firstHarvest.textContent = viewState.firstHarvest; // ADDED
+        summaryView.fields.harvestEnd.textContent = viewState.harvestEnd; // ADDED
+        summaryView.fields.feasibility.textContent = viewState.feasibility.label; // ADDED
+        summaryView.fields.feasibility.style.color = viewState.feasibility.status === 'feasible' // ADDED
+            ? '#166534' // ADDED
+            : (viewState.feasibility.status === 'not_applicable' ? '#374151' : '#b91c1c'); // ADDED
+    } // ADDED
+
     // Scans season feasibility day-by-day.
     async function explainFeasibilityOverSeason(inputs, maxDays = 400, stopAtFirstOk = false) {
         const planner = new Planner(inputs);
@@ -3736,7 +3890,7 @@ Draw.loadPlugin(function (ui) {
         const planner = new Planner(inputs); // NEW
         const feasibility = planner.isSowFeasible(startDate); // NEW
         if (!feasibility.ok) { // NEW
-            throw new Error(`Selected sow date is not feasible: ${feasibility.reason}`); // NEW
+            throw new Error(`Selected sow date is not feasible: ${humanFeasibilityReason(feasibility.reason)}`); // CHANGED
         } // NEW
     
         const budget = plant.firstHarvestBudget();
@@ -3856,11 +4010,12 @@ Draw.loadPlugin(function (ui) {
 
         const div = document.createElement('div');
         div.style.padding = '12px';
-        div.style.width = '720px'; // CHANGED
+        div.style.width = '100%'; // CHANGED
         div.style.maxWidth = '96vw'; // CHANGED
-        div.style.maxHeight = '85vh'; // CHANGED
-        div.style.overflow = 'auto'; // CHANGED
         div.style.boxSizing = 'border-box'; // CHANGED
+
+        const summaryView = renderScheduleSummary(); // ADDED
+        div.appendChild(summaryView.root); // ADDED
 
         // ---- inline error bar --------------------------------------------------- 
         const errorBar = document.createElement('div');
@@ -3897,29 +4052,42 @@ Draw.loadPlugin(function (ui) {
             return b;
         };
 
-        const contextSection = makeSection('Schedule Context'); // CHANGED
-        const contentCol = document.createElement('div'); // CHANGED
-        contentCol.style.display = 'flex'; // CHANGED
-        contentCol.style.flexDirection = 'column'; // CHANGED
-        contentCol.style.gap = '12px'; // CHANGED
-
+        const contextSection = makeSection('Context'); // CHANGED
         const plantSection = makeSection('Crop'); // CHANGED
-        const envSection = makeSection('Method'); // CHANGED
-        const windowSection = makeSection('Sowing Window'); // CHANGED
+        const windowSection = makeSection('Feasibility'); // CHANGED
         const timelineSection = makeSection('Timeline'); // CHANGED
         const inputsSection = makeSection('Planting'); // CHANGED
         const harvestSection = makeSection('Harvest'); // CHANGED
 
-        div.appendChild(contextSection.wrap); // CHANGED
+        const contentGrid = document.createElement('div'); // ADDED
+        contentGrid.style.display = 'grid'; // ADDED
+        contentGrid.style.gridTemplateColumns = 'repeat(auto-fit, minmax(360px, 1fr))'; // ADDED
+        contentGrid.style.gap = '16px'; // ADDED
 
-        contentCol.appendChild(plantSection.wrap); // CHANGED
-        contentCol.appendChild(envSection.wrap); // CHANGED
-        contentCol.appendChild(windowSection.wrap); // CHANGED
-        contentCol.appendChild(timelineSection.wrap); // CHANGED
-        contentCol.appendChild(inputsSection.wrap); // CHANGED
-        contentCol.appendChild(harvestSection.wrap); // CHANGED
+        const leftColumn = document.createElement('div'); // ADDED
+        const rightColumn = document.createElement('div'); // ADDED
+        leftColumn.appendChild(plantSection.wrap); // ADDED
+        leftColumn.appendChild(contextSection.wrap); // ADDED
+        leftColumn.appendChild(inputsSection.wrap); // ADDED
+        rightColumn.appendChild(windowSection.wrap); // ADDED
+        rightColumn.appendChild(timelineSection.wrap); // ADDED
+        rightColumn.appendChild(harvestSection.wrap); // ADDED
+        contentGrid.appendChild(leftColumn); // ADDED
+        contentGrid.appendChild(rightColumn); // ADDED
+        div.appendChild(contentGrid); // ADDED
 
-        div.appendChild(contentCol); // CHANGED
+        const advancedDetails = document.createElement('details'); // ADDED
+        advancedDetails.style.marginTop = '14px'; // ADDED
+        advancedDetails.style.borderTop = '1px solid #d1d5db'; // ADDED
+        const advancedSummary = document.createElement('summary'); // ADDED
+        advancedSummary.textContent = 'Advanced'; // ADDED
+        advancedSummary.style.cursor = 'pointer'; // ADDED
+        advancedSummary.style.fontWeight = '600'; // ADDED
+        advancedSummary.style.padding = '10px 0 6px'; // ADDED
+        const advancedBody = document.createElement('div'); // ADDED
+        advancedDetails.appendChild(advancedSummary); // ADDED
+        advancedDetails.appendChild(advancedBody); // ADDED
+        div.appendChild(advancedDetails); // ADDED
 
         function styleCompactActionButton(btn) { // CHANGED
             btn.style.marginLeft = '0'; // CHANGED
@@ -4217,14 +4385,21 @@ Draw.loadPlugin(function (ui) {
         const methodCategorySel = document.createElement('select');
         methodCategorySel.style.width = '100%';
         methodCategorySel.style.padding = '6px';
+        methodCategorySel.style.display = 'none'; // ADDED
 
         // method select (filtered by method)
         const methodSel = document.createElement('select');
         methodSel.style.width = '100%';
         methodSel.style.padding = '6px';
+        methodSel.style.display = 'none'; // ADDED
+
+        const combinedMethodSel = document.createElement('select'); // ADDED
+        combinedMethodSel.style.width = '100%'; // ADDED
+        combinedMethodSel.style.padding = '6px'; // ADDED
 
         let currentAllowedMethodCategories = [];   // [{method_category_id, method_category_name}]  
         let currentMethods = [];                  // [{method_id, method_name, method_category_id, ...}] 
+        const currentMethodsByCategory = new Map(); // ADDED
 
         async function resetMethodOptionsForPlant(plantId, { preferMethodCategoryId = null } = {}) {
             const pid = Number(plantId);
@@ -4241,12 +4416,13 @@ Draw.loadPlugin(function (ui) {
             }
 
             currentAllowedMethodCategories = []; // FIX: expose only categories containing a supported method
+            currentMethodsByCategory.clear(); // ADDED
             for (const categoryRow of (loadedCategories || [])) {
                 const methodCategoryId = normId(categoryRow?.method_category_id); // FIX
                 if (!methodCategoryId) continue;
                 try {
                     const methods = await PlantModel.listMethodsForMethodCategory(methodCategoryId);
-                    const hasValidMethod = (methods || []).some(methodRow => {
+                    const validMethods = (methods || []).filter(methodRow => { // CHANGED
                         try {
                             resolveValidMethodRecord(methodRow, methodCategoryId);
                             return true;
@@ -4254,7 +4430,10 @@ Draw.loadPlugin(function (ui) {
                             return false;
                         }
                     });
-                    if (hasValidMethod) currentAllowedMethodCategories.push(categoryRow);
+                    if (validMethods.length) { // CHANGED
+                        currentAllowedMethodCategories.push(categoryRow); // CHANGED
+                        currentMethodsByCategory.set(methodCategoryId, validMethods); // ADDED
+                    } // CHANGED
                 } catch (e) {
                     console.warn('[Scheduler] Skipping method category option', {
                         plantId: pid,
@@ -4269,6 +4448,11 @@ Draw.loadPlugin(function (ui) {
                     method_category_id: 'direct_sow',
                     method_category_name: 'Direct sow'
                 }]; // FIX: retain the canonical hard fallback in the dialog
+                currentMethodsByCategory.set('direct_sow', [{ // ADDED
+                    method_category_id: 'direct_sow', // ADDED
+                    method_id: 'direct_sow.field', // ADDED
+                    method_name: 'Field direct sow' // ADDED
+                }]); // ADDED
             }
 
             const opts = (currentAllowedMethodCategories || []).map(mc => ({
@@ -4290,16 +4474,18 @@ Draw.loadPlugin(function (ui) {
 
         async function resetMethodOptionsForMethodCategory(methodCategoryId, { preferMethodId = null } = {}) {
             const mcid = normId(methodCategoryId); // FIX
-            let loadedMethods = [];
-            try {
-                loadedMethods = mcid
-                    ? await PlantModel.listMethodsForMethodCategory(mcid)
-                    : [];
-            } catch (e) {
-                console.warn('[Scheduler] Falling back after method load failure', {
-                    methodCategoryId: mcid,
-                    reason: e?.message || String(e)
-                }); // FIX
+            let loadedMethods = currentMethodsByCategory.get(mcid) || []; // CHANGED
+            if (!loadedMethods.length) { // ADDED
+                try {
+                    loadedMethods = mcid
+                        ? await PlantModel.listMethodsForMethodCategory(mcid)
+                        : [];
+                } catch (e) {
+                    console.warn('[Scheduler] Falling back after method load failure', {
+                        methodCategoryId: mcid,
+                        reason: e?.message || String(e)
+                    }); // FIX
+                }
             }
 
             currentMethods = (loadedMethods || []).filter(methodRow => { // FIX: invalid DB methods must not enter the UI
@@ -4323,6 +4509,7 @@ Draw.loadPlugin(function (ui) {
                     method_name: 'Field direct sow'
                 }]; // FIX: preserve the final canonical fallback without requiring a valid DB row
             }
+            if (mcid && currentMethods.length) currentMethodsByCategory.set(mcid, currentMethods); // ADDED
 
             const opts = (currentMethods || []).map(m => ({
                 value: normId(m.method_id), // FIX
@@ -4338,6 +4525,37 @@ Draw.loadPlugin(function (ui) {
 
             setSelectOptions(methodSel, withBlank, desired);
         }
+
+        function syncCombinedMethodControl() { // ADDED
+            const desiredValue = encodeMethodSelection(methodCategorySel.value, methodSel.value); // ADDED
+            combinedMethodSel.innerHTML = ''; // ADDED
+            currentAllowedMethodCategories.forEach(category => { // ADDED
+                const methodCategoryId = normId(category?.method_category_id); // ADDED
+                const methods = currentMethodsByCategory.get(methodCategoryId) || []; // ADDED
+                if (!methodCategoryId || !methods.length) return; // ADDED
+                const group = document.createElement('optgroup'); // ADDED
+                group.label = String(category?.method_category_name || methodCategoryId); // ADDED
+                methods.forEach(method => { // ADDED
+                    const methodId = normId(method?.method_id); // ADDED
+                    if (!methodId) return; // ADDED
+                    const option = document.createElement('option'); // ADDED
+                    option.value = encodeMethodSelection(methodCategoryId, methodId); // ADDED
+                    option.textContent = String(method?.method_name || methodId); // ADDED
+                    group.appendChild(option); // ADDED
+                }); // ADDED
+                if (group.children.length) combinedMethodSel.appendChild(group); // ADDED
+            }); // ADDED
+            if (Array.from(combinedMethodSel.options).some(option => option.value === desiredValue)) { // ADDED
+                combinedMethodSel.value = desiredValue; // ADDED
+            } else if (combinedMethodSel.options[0]) { // ADDED
+                combinedMethodSel.selectedIndex = 0; // ADDED
+            } // ADDED
+            const selected = decodeMethodSelection(combinedMethodSel.value); // ADDED
+            if (selected) { // ADDED
+                methodCategorySel.value = selected.methodCategoryId; // ADDED
+                methodSel.value = selected.methodId; // ADDED
+            } // ADDED
+        } // ADDED
 
 
         // Prefill method category + method from existing cell attrs
@@ -4368,6 +4586,7 @@ Draw.loadPlugin(function (ui) {
         await resetMethodOptionsForMethodCategory(methodCategorySel.value, {
             preferMethodId: preferredMethod0
         });
+        syncCombinedMethodControl(); // ADDED
 
         // Start/End inputs + auto buttons
         const initialStartISO = fmtISO(earliestFeasibleSowDate); // FIX: allow an explicitly empty no-window state
@@ -4477,6 +4696,7 @@ Draw.loadPlugin(function (ui) {
                 }
             }
             updateDaysToFirstHarvest(); // CHANGED
+            updateScheduleSummaryFromState(); // ADDED
         }
 
         function syncStartDateBounds() { // CHANGED
@@ -4502,8 +4722,7 @@ Draw.loadPlugin(function (ui) {
         const FIELD_SCHEMA = [
             { key: 'seasonStartYear', label: 'Season start year:', control: seasonYearInput },
             { key: 'cityName', label: 'City:', control: citySel },
-            { key: 'methodCategoryId', label: 'Planting Method Category:', control: methodCategorySel },
-            { key: 'methodId', label: 'Planting Method:', control: methodSel },
+            { key: 'methodSelection', label: 'Planting method:', control: combinedMethodSel }, // CHANGED
             { key: 'harvestWindowDays', label: 'Harvest window days:', control: harvestWindowInput },
             { key: 'minYieldMultiplier', label: 'Minimum yield multiplier:', control: minYieldMultInput },
         ];
@@ -4529,28 +4748,33 @@ Draw.loadPlugin(function (ui) {
         await resetMethodOptionsForMethodCategory(methodCategorySel.value, {
             preferMethodId: String(formState.methodId ?? cellMethodId0 ?? effectivePlant?.default_planting_method ?? '')
         });
+        syncCombinedMethodControl(); // ADDED
 
 
-        const autoEarliestRowObj = row('Earliest:', autoEarliestInput); // CHANGED
-        const autoLastSowRowObj = row('Latest:', autoLastSowInput); // CHANGED
+        const autoEarliestRowObj = row('Earliest feasible sow:', autoEarliestInput); // CHANGED
+        const autoLastSowRowObj = row('Latest feasible sow:', autoLastSowInput); // CHANGED
 
         const firstSowRowObj = row('Sow date:', startInput); // CHANGED
         if (startNote) firstSowRowObj.row.appendChild(startNoteSpan); // CHANGED
 
-        const endRow = row('Season end date:', seasonEndInput); // CHANGED
-        const harvestStartRowObj = row('Harvest start date:', harvestStartInput); // CHANGED
-        const harvestEndRowObj = row('Harvest end date:', harvestEndInput); // CHANGED
+        const endRow = row('Recommended harvest end:', seasonEndInput); // CHANGED
+        const harvestStartRowObj = row('Expected first harvest:', harvestStartInput); // CHANGED
+        const harvestEndRowObj = row('Expected harvest end:', harvestEndInput); // CHANGED
         const daysToFirstHarvestRowObj = row('Days to first harvest:', daysToFirstHarvestInput); // CHANGED
 
-        appendFieldRows(contextSection.body, fieldRows, ['seasonStartYear', 'cityName']); // CHANGED
-        appendFieldRows(envSection.body, fieldRows, ['methodCategoryId', 'methodId']); // CHANGED
+        appendFieldRows(contextSection.body, fieldRows, ['seasonStartYear', 'cityName', 'methodSelection']); // CHANGED
+        const legacyMethodControls = document.createElement('div'); // ADDED
+        legacyMethodControls.style.display = 'none'; // ADDED
+        legacyMethodControls.appendChild(methodCategorySel); // ADDED
+        legacyMethodControls.appendChild(methodSel); // ADDED
+        contextSection.body.appendChild(legacyMethodControls); // ADDED
 
         windowSection.body.appendChild(autoEarliestRowObj.row); // CHANGED
         windowSection.body.appendChild(autoLastSowRowObj.row); // CHANGED
         windowSection.body.appendChild(endRow.row); // CHANGED
 
         inputsSection.body.appendChild(firstSowRowObj.row); // CHANGED
-        appendFieldRows(inputsSection.body, fieldRows, ['harvestWindowDays', 'minYieldMultiplier']); // CHANGED
+        appendFieldRows(advancedBody, fieldRows, ['harvestWindowDays', 'minYieldMultiplier']); // CHANGED
 
         harvestSection.body.appendChild(harvestStartRowObj.row); // CHANGED
         harvestSection.body.appendChild(harvestEndRowObj.row); // CHANGED
@@ -4558,6 +4782,26 @@ Draw.loadPlugin(function (ui) {
 
         const baseStartNote = startNote || '';
         let windowActions = null; // FIX: mode rendering owns perennial-only action visibility
+
+        function updateScheduleSummaryFromState() { // ADDED
+            const varietyOption = varietySel?.selectedOptions?.[0]; // ADDED
+            const varietyName = varietySel?.value ? String(varietyOption?.textContent || '').trim() : ''; // ADDED
+            const methodName = String(combinedMethodSel?.selectedOptions?.[0]?.textContent || '').trim(); // ADDED
+            updateScheduleSummary(summaryView, buildScheduleViewState({ // ADDED
+                perennial: mode.perennial, // ADDED
+                windowFeasible: formState.windowFeasible, // ADDED
+                plantName: effectivePlant?.plant_name || selPlant?.plant_name || '', // ADDED
+                varietyName, // ADDED
+                cityName: formState.cityName, // ADDED
+                seasonStartYear: formState.seasonStartYear, // ADDED
+                methodName, // ADDED
+                startISO: formState.startISO, // ADDED
+                earliestISO: formState.autoEarliestISO, // ADDED
+                latestISO: formState.lastFeasibleSowISO, // ADDED
+                firstHarvestISO: formState.firstHarvestISO, // ADDED
+                lastHarvestISO: formState.lastHarvestISO // ADDED
+            })); // ADDED
+        } // ADDED
 
         function applyModeToUI() {
             const perennial = mode.perennial;
@@ -4570,7 +4814,7 @@ Draw.loadPlugin(function (ui) {
                 daysToFirstHarvestRowObj.row.style.display = 'none'; // CHANGED
             } else {
                 firstSowRowObj.label.textContent = 'Sow date:'; // CHANGED
-                endRow.label.textContent = 'Season end date:'; // CHANGED
+                endRow.label.textContent = 'Recommended harvest end:'; // CHANGED
                 harvestStartRowObj.row.style.display = ''; // CHANGED
                 harvestEndRowObj.row.style.display = ''; // CHANGED
                 daysToFirstHarvestRowObj.row.style.display = ''; // CHANGED
@@ -4582,38 +4826,22 @@ Draw.loadPlugin(function (ui) {
             if (windowActions) windowActions.style.display = perennial ? 'none' : ''; // FIX
 
             seasonEndInput.disabled = !perennial; // CHANGED
+            updateScheduleSummaryFromState(); // ADDED
         }
 
 
         function updateStartNote() {
             if (!startNoteSpan) return;
-
-            const userISO = formState.startISO;
-            const autoStartISO = formState.autoEarliestISO;
-            const lastSowISO = formState.lastFeasibleSowISO;
-
-            let status = '';
-
-            if (userISO && autoStartISO) {
-                const userD = new Date(userISO + 'T00:00:00Z');
-                const autoStartD = new Date(autoStartISO + 'T00:00:00Z');
-                const lastSowD = lastSowISO ? new Date(lastSowISO + 'T00:00:00Z') : null;
-
-                if (userD < autoStartD) {
-                    status = 'Selected first sow is earlier than the earliest feasible sow.';
-                } else if (lastSowD && userD > lastSowD) {
-                    status = 'Selected first sow is later than the last feasible sow.';
-                } else {
-                    status = '';
-                }
-            }
-
-            const hasFeasibleWindow = !!formState.windowFeasible; // FIX
-
+            const classification = classifySelectedSowDate({ // CHANGED
+                perennial: mode.perennial, // CHANGED
+                windowFeasible: formState.windowFeasible, // CHANGED
+                startISO: formState.startISO, // CHANGED
+                earliestISO: formState.autoEarliestISO, // CHANGED
+                latestISO: formState.lastFeasibleSowISO // CHANGED
+            }); // CHANGED
             const parts = [];
-            if (!mode.perennial && !hasFeasibleWindow) parts.push('No feasible window.'); // FIX
-            if (baseStartNote && !hasFeasibleWindow && baseStartNote !== 'No feasible window.') parts.push(baseStartNote);
-            if (status) parts.push(status);
+            if (!mode.perennial && classification.status !== 'feasible') parts.push(classification.label); // CHANGED
+            if (baseStartNote && classification.status === 'no_window' && baseStartNote !== 'No feasible window.') parts.push(baseStartNote); // CHANGED
 
             startNoteSpan.textContent = parts.join(' ');
         }
@@ -4957,16 +5185,34 @@ Draw.loadPlugin(function (ui) {
             const earliest = parseISODateUTC(formState.autoEarliestISO); // CHANGED
             const latest = parseISODateUTC(formState.lastFeasibleSowISO); // CHANGED
             const sow = parseISODateUTC(formState.startISO); // CHANGED
+            const classification = classifySelectedSowDate({ // ADDED
+                perennial: mode.perennial, // ADDED
+                windowFeasible: formState.windowFeasible, // ADDED
+                startISO: formState.startISO, // ADDED
+                earliestISO: formState.autoEarliestISO, // ADDED
+                latestISO: formState.lastFeasibleSowISO // ADDED
+            }); // ADDED
 
             timelineStartLabel.textContent = fmtShortDate(formState.autoEarliestISO); // CHANGED
             timelineEndLabel.textContent = fmtShortDate(formState.lastFeasibleSowISO); // CHANGED
 
-            if (mode.perennial || !earliest || !latest || !sow || latest < earliest) { // CHANGED
+            if (mode.perennial) { // CHANGED
                 timelineSection.wrap.style.display = 'none'; // CHANGED
+                updateScheduleSummaryFromState(); // ADDED
                 return; // CHANGED
             } // CHANGED
 
             timelineSection.wrap.style.display = ''; // CHANGED
+            if (!earliest || !latest || !sow || latest < earliest) { // ADDED
+                timelineLabels.style.display = 'none'; // ADDED
+                timelineBarWrap.style.display = 'none'; // ADDED
+                timelineStatus.style.color = '#b91c1c'; // ADDED
+                timelineStatus.textContent = classification.label; // ADDED
+                updateScheduleSummaryFromState(); // ADDED
+                return; // ADDED
+            } // ADDED
+            timelineLabels.style.display = 'flex'; // ADDED
+            timelineBarWrap.style.display = 'block'; // ADDED
 
             const totalDays = Math.max(1, daysBetweenUTC(earliest, latest)); // CHANGED
             const offsetDays = daysBetweenUTC(earliest, sow); // CHANGED
@@ -4975,12 +5221,11 @@ Draw.loadPlugin(function (ui) {
 
             timelineMarker.style.left = `${clampedRatio * 100}%`; // CHANGED
 
-            const isInvalid = sow < earliest || sow > latest; // CHANGED
+            const isInvalid = classification.status !== 'feasible'; // CHANGED
             timelineMarker.style.color = isInvalid ? '#b91c1c' : '#111827'; // CHANGED
             timelineStatus.style.color = isInvalid ? '#b91c1c' : '#6b7280'; // CHANGED
-            timelineStatus.textContent = isInvalid // CHANGED
-                ? `Selected sow date ${fmtShortDate(formState.startISO)} is outside the feasible window.` // CHANGED
-                : `Selected sow date: ${fmtShortDate(formState.startISO)}`; // CHANGED
+            timelineStatus.textContent = classification.label; // CHANGED
+            updateScheduleSummaryFromState(); // ADDED
         } // CHANGED
 
         async function handleSchedulePlantChange({ preferVarietyId = null } = {}) { // FIX: provide an awaitable schedule plant workflow
@@ -5011,6 +5256,7 @@ Draw.loadPlugin(function (ui) {
             await resetMethodOptionsForMethodCategory(methodCategorySel.value, {
                 preferMethodId: String(formState.methodId ?? cellMethodId0 ?? effectivePlant?.default_planting_method ?? '')
             });
+            syncCombinedMethodControl(); // ADDED
 
 
             formState.methodCategoryId = normId(methodCategorySel.value); // FIX
@@ -5045,6 +5291,7 @@ Draw.loadPlugin(function (ui) {
             await resetMethodOptionsForMethodCategory(methodCategorySel.value, {
                 preferMethodId: String(formState.methodId ?? effectivePlant?.default_planting_method ?? '')
             });
+            syncCombinedMethodControl(); // ADDED
 
             harvestWindowInput.value = (effectivePlant.defaultHW() ?? '');
             formState.harvestWindowDays = (harvestWindowInput.value === '' ? null : Number(harvestWindowInput.value));
@@ -5119,6 +5366,31 @@ Draw.loadPlugin(function (ui) {
             });
         });
 
+        combinedMethodSel.addEventListener('change', () => { // ADDED
+            void runUiAsync('Method change error', async () => { // ADDED
+                const selected = decodeMethodSelection(combinedMethodSel.value); // ADDED
+                if (!selected) throw new Error('Select a planting method.'); // ADDED
+                methodCategorySel.value = selected.methodCategoryId; // ADDED
+                await resetMethodOptionsForMethodCategory(selected.methodCategoryId, { // ADDED
+                    preferMethodId: selected.methodId // ADDED
+                }); // ADDED
+                methodSel.value = selected.methodId; // ADDED
+                syncCombinedMethodControl(); // ADDED
+                syncStateFromControls(); // ADDED
+                await recomputeAll('methodChanged'); // ADDED
+                await refreshTaskTemplateFromSelection(); // ADDED
+                updateTasksHeader({ // ADDED
+                    methodCategorySel, // ADDED
+                    methodSel, // ADDED
+                    formState, // ADDED
+                    currentMethodSpan, // ADDED
+                    currentTemplateSourceSpan, // ADDED
+                    taskDirty, // ADDED
+                    taskTemplateSource // ADDED
+                }); // ADDED
+            }); // ADDED
+        }); // ADDED
+
         methodCategorySel.addEventListener('change', () => {
             void runUiAsync('Method category change error', async () => { // FIX
                 syncStateFromControls();
@@ -5126,6 +5398,7 @@ Draw.loadPlugin(function (ui) {
                 await resetMethodOptionsForMethodCategory(methodCategorySel.value, {
                     preferMethodId: String(formState.methodId ?? effectivePlant?.default_planting_method ?? '')
                 });
+                syncCombinedMethodControl(); // ADDED
 
                 syncStateFromControls();
 
@@ -5147,6 +5420,7 @@ Draw.loadPlugin(function (ui) {
 
         methodSel.addEventListener('change', () => {
             void runUiAsync('Method change error', async () => { // FIX
+                syncCombinedMethodControl(); // ADDED
                 syncStateFromControls();
                 await recomputeAll('methodChanged');
                 await refreshTaskTemplateFromSelection();
@@ -5306,7 +5580,7 @@ Draw.loadPlugin(function (ui) {
         windowActions = document.createElement('div'); // FIX
         windowActions.style.marginTop = '8px'; // CHANGED
         windowActions.appendChild(explainBtn); // CHANGED
-        windowSection.body.appendChild(windowActions); // CHANGED
+        advancedBody.appendChild(windowActions); // CHANGED
 
         const previewBtn = mxUtils.button('Preview', async () => {
             try {
@@ -5482,6 +5756,37 @@ Draw.loadPlugin(function (ui) {
 
         tasksTab.appendChild(tasksHeaderRow);
 
+        const taskPreviewSection = document.createElement('div'); // ADDED
+        taskPreviewSection.style.border = '1px solid #d1d5db'; // ADDED
+        taskPreviewSection.style.borderRadius = '6px'; // ADDED
+        taskPreviewSection.style.padding = '10px'; // ADDED
+        taskPreviewSection.style.marginBottom = '12px'; // ADDED
+        const taskPreviewTitle = document.createElement('div'); // ADDED
+        taskPreviewTitle.textContent = 'Generated task timeline'; // ADDED
+        taskPreviewTitle.style.fontWeight = '600'; // ADDED
+        taskPreviewTitle.style.marginBottom = '8px'; // ADDED
+        const taskPreviewControls = document.createElement('div'); // ADDED
+        taskPreviewControls.style.display = 'flex'; // ADDED
+        taskPreviewControls.style.flexWrap = 'wrap'; // ADDED
+        taskPreviewControls.style.alignItems = 'center'; // ADDED
+        taskPreviewControls.style.gap = '8px 16px'; // ADDED
+        taskPreviewControls.style.marginBottom = '8px'; // ADDED
+        const taskPreviewRuleSelectors = document.createElement('div'); // ADDED
+        taskPreviewRuleSelectors.style.display = 'flex'; // ADDED
+        taskPreviewRuleSelectors.style.flexWrap = 'wrap'; // ADDED
+        taskPreviewRuleSelectors.style.gap = '6px 12px'; // ADDED
+        const taskPreviewStatus = document.createElement('div'); // ADDED
+        taskPreviewStatus.style.fontSize = '11px'; // ADDED
+        taskPreviewStatus.style.color = '#6b7280'; // ADDED
+        taskPreviewStatus.style.marginBottom = '6px'; // ADDED
+        const taskPreviewTimeline = document.createElement('div'); // ADDED
+        taskPreviewControls.appendChild(taskPreviewRuleSelectors); // ADDED
+        taskPreviewSection.appendChild(taskPreviewTitle); // ADDED
+        taskPreviewSection.appendChild(taskPreviewControls); // ADDED
+        taskPreviewSection.appendChild(taskPreviewStatus); // ADDED
+        taskPreviewSection.appendChild(taskPreviewTimeline); // ADDED
+        tasksTab.appendChild(taskPreviewSection); // ADDED
+
         // "Add Task" button
         const addTaskBtn = mxUtils.button("Add Task", () => openTaskEditor(null, null));
         addTaskBtn.style.marginTop = "12px";
@@ -5489,6 +5794,10 @@ Draw.loadPlugin(function (ui) {
 
         // List container
         const tasksListDiv = document.createElement("div");
+        const previewRuleSelections = new Map(); // ADDED
+        let generatedPreviewTasks = []; // ADDED
+        let taskPreviewScheduleRange = null; // ADDED
+        let taskPreviewVersion = 0; // ADDED
 
         function restoreFocus(el) { // FIX: restore keyboard focus after task-list DOM updates
             setTimeout(() => {
@@ -5496,7 +5805,7 @@ Draw.loadPlugin(function (ui) {
             }, 0);
         }
 
-        const restoreBuiltinsBtn = mxUtils.button("Restore built-in tasks", async () => {
+        const restoreBuiltinsBtn = mxUtils.button("Restore missing built-in tasks", async () => { // CHANGED
             try {
                 syncStateFromControls();
 
@@ -5505,16 +5814,7 @@ Draw.loadPlugin(function (ui) {
 
                 taskRules = mergeMissingCanonicalRules(taskRules, defaultRules).map(normalizeTaskRule);
                 taskDirty = true;
-                renderTasksList();
-                updateTasksHeader({
-                    methodCategorySel, // CHANGED
-                    methodSel,
-                    formState,
-                    currentMethodSpan,
-                    currentTemplateSourceSpan,
-                    taskDirty,
-                    taskTemplateSource
-                });
+                await refreshTasksTabUI(); // CHANGED
             } catch (e) {
                 showErrorInline("Restore built-in tasks error: " + (e?.message || String(e)));
             }
@@ -5530,7 +5830,7 @@ Draw.loadPlugin(function (ui) {
                 return;
             }
 
-            taskRules.forEach((rule, idx) => {
+            buildTaskRuleDisplayOrder(taskRules, generatedPreviewTasks).forEach(({ rule, originalIndex }) => { // CHANGED
                 const wrap = document.createElement("div");
                 wrap.style.border = "1px solid #ddd";
                 wrap.style.margin = "6px 0";
@@ -5549,7 +5849,7 @@ Draw.loadPlugin(function (ui) {
                 btnWrap.style.display = "flex";
                 btnWrap.style.gap = "6px";
 
-                const editBtn = mxUtils.button("Edit", () => openTaskEditor(rule, idx));
+                const editBtn = mxUtils.button("Edit", () => openTaskEditor(rule, originalIndex)); // CHANGED
                 const delBtn = mxUtils.button("Delete", () => {
 
                     const isBuiltIn = isCanonicalTaskRule(rule);
@@ -5561,9 +5861,9 @@ Draw.loadPlugin(function (ui) {
                         }
                     }
 
-                    taskRules.splice(idx, 1);
+                    taskRules.splice(originalIndex, 1); // CHANGED
                     taskDirty = true;
-                    renderTasksList();
+                    void refreshTasksTabUI(); // CHANGED
                     restoreFocus(addTaskBtn);
                 });
 
@@ -5581,6 +5881,119 @@ Draw.loadPlugin(function (ui) {
         // 3. Task editor (inline)
         const taskEditorDiv = document.createElement("div");
         tasksTab.appendChild(taskEditorDiv);
+
+        function selectedPreviewRuleKeys() { // ADDED
+            return new Set( // ADDED
+                Array.from(previewRuleSelections.entries()) // ADDED
+                    .filter(([, selected]) => selected) // ADDED
+                    .map(([key]) => key) // ADDED
+            ); // ADDED
+        } // ADDED
+
+        function renderTaskPreviewRuleSelectors() { // ADDED
+            const activeKeys = new Set(); // ADDED
+            taskPreviewRuleSelectors.innerHTML = ''; // ADDED
+            buildTaskRuleDisplayOrder(taskRules, generatedPreviewTasks).forEach(({ rule, originalIndex, key }) => { // CHANGED
+                activeKeys.add(key); // ADDED
+                if (!previewRuleSelections.has(key)) previewRuleSelections.set(key, true); // ADDED
+                const label = document.createElement('label'); // ADDED
+                label.style.display = 'inline-flex'; // ADDED
+                label.style.alignItems = 'center'; // ADDED
+                label.style.gap = '4px'; // ADDED
+                const checkbox = makeCheckbox(previewRuleSelections.get(key)); // ADDED
+                checkbox.addEventListener('change', () => { // ADDED
+                    previewRuleSelections.set(key, checkbox.checked); // ADDED
+                    renderCachedTaskPreview(); // ADDED
+                }); // ADDED
+                const text = document.createElement('span'); // ADDED
+                text.textContent = String(rule?.title || rule?.id || `Task ${originalIndex + 1}`); // CHANGED
+                label.appendChild(checkbox); // ADDED
+                label.appendChild(text); // ADDED
+                taskPreviewRuleSelectors.appendChild(label); // ADDED
+            }); // ADDED
+            Array.from(previewRuleSelections.keys()).forEach(key => { // ADDED
+                if (!activeKeys.has(key)) previewRuleSelections.delete(key); // ADDED
+            }); // ADDED
+        } // ADDED
+
+        function renderCachedTaskPreview({ message = '', error = '' } = {}) { // ADDED
+            const selectedKeys = selectedPreviewRuleKeys(); // ADDED
+            if (!selectedKeys.size && !error) message = 'Select at least one task rule to preview.'; // ADDED
+            const visible = updateTaskTimelinePreview({ // ADDED
+                container: taskPreviewTimeline, // ADDED
+                generatedTasks: generatedPreviewTasks, // ADDED
+                selectedRuleKeys: selectedKeys, // ADDED
+                scheduleRange: taskPreviewScheduleRange, // ADDED
+                message, // ADDED
+                error // ADDED
+            }); // ADDED
+            taskPreviewStatus.textContent = visible.length // ADDED
+                ? `${visible.length} task occurrence${visible.length === 1 ? '' : 's'} shown.` // ADDED
+                : ''; // ADDED
+        } // ADDED
+
+        async function updateTaskPreview() { // ADDED
+            const requestVersion = ++taskPreviewVersion; // ADDED
+            syncStateFromControls(); // ADDED
+            renderTaskPreviewRuleSelectors(); // ADDED
+            if (!taskRules.length) { // ADDED
+                generatedPreviewTasks = []; // ADDED
+                taskPreviewScheduleRange = null; // ADDED
+                renderCachedTaskPreview({ message: 'No task rules are defined.' }); // ADDED
+                return; // ADDED
+            } // ADDED
+            if (!mode.perennial && !formState.windowFeasible) { // ADDED
+                generatedPreviewTasks = []; // ADDED
+                taskPreviewScheduleRange = null; // ADDED
+                renderCachedTaskPreview({ error: 'No feasible sowing window is available for task generation.' }); // ADDED
+                return; // ADDED
+            } // ADDED
+            try { // ADDED
+                const { inputs } = await buildScheduleContextFromForm(formState, selPlant, { currentVarieties }); // ADDED
+                const result = computeScheduleResult(inputs); // ADDED
+                const tasks = await buildTasksForPlan({ // ADDED
+                    plant: result.plant, // ADDED
+                    schedule: result.schedule, // ADDED
+                    timelines: result.timelines, // ADDED
+                    taskTemplate: { version: 2, rules: taskRules }, // ADDED
+                    includePreviewMetadata: true // ADDED
+                }); // ADDED
+                if (requestVersion !== taskPreviewVersion) return; // ADDED
+                generatedPreviewTasks = tasks; // ADDED
+                taskPreviewScheduleRange = resolveTaskPreviewScheduleRange(result); // ADDED
+                renderTaskPreviewRuleSelectors(); // ADDED
+                const selectedKeys = selectedPreviewRuleKeys(); // ADDED
+                const generatedKeys = new Set(tasks.map(task => task.previewRuleKey)); // ADDED
+                const missingAnchorCount = Array.from(selectedKeys).filter(key => !generatedKeys.has(key)).length; // ADDED
+                renderCachedTaskPreview({ // ADDED
+                    message: tasks.length // ADDED
+                        ? '' // ADDED
+                        : 'No tasks could be generated. Required schedule anchors may be unavailable.' // ADDED
+                }); // ADDED
+                if (missingAnchorCount > 0 && tasks.length) { // ADDED
+                    taskPreviewStatus.textContent += ` ${missingAnchorCount} selected rule${missingAnchorCount === 1 ? '' : 's'} omitted because schedule anchors are unavailable.`; // ADDED
+                } // ADDED
+            } catch (e) { // ADDED
+                if (requestVersion !== taskPreviewVersion) return; // ADDED
+                generatedPreviewTasks = []; // ADDED
+                taskPreviewScheduleRange = null; // ADDED
+                renderCachedTaskPreview({ error: `Task preview error: ${e?.message || String(e)}` }); // ADDED
+            } // ADDED
+        } // ADDED
+
+        async function refreshTasksTabUI() { // ADDED
+            updateTasksHeader({ // ADDED
+                methodCategorySel, // ADDED
+                methodSel, // ADDED
+                formState, // ADDED
+                currentMethodSpan, // ADDED
+                currentTemplateSourceSpan, // ADDED
+                taskDirty, // ADDED
+                taskTemplateSource // ADDED
+            }); // ADDED
+            await updateTaskPreview(); // ADDED
+            renderTasksList(); // CHANGED
+        } // ADDED
 
         async function refreshTaskTemplateFromSelection() {
             syncStateFromControls();
@@ -5859,16 +6272,7 @@ Draw.loadPlugin(function (ui) {
                     taskDirty = true;
 
                     taskEditorDiv.innerHTML = "";
-                    renderTasksList();
-                    updateTasksHeader({ // CHANGED
-                        methodCategorySel, // CHANGED
-                        methodSel,
-                        formState,
-                        currentMethodSpan,
-                        currentTemplateSourceSpan,
-                        taskDirty,
-                        taskTemplateSource
-                    });
+                    await refreshTasksTabUI(); // CHANGED
                 } catch (e) {
                     showErrorInline("Save task error: " + (e?.message || String(e))); // CHANGED
                 }
@@ -5885,7 +6289,7 @@ Draw.loadPlugin(function (ui) {
 
 
         // Reset to defaults button
-        const resetTasksBtn = mxUtils.button("Clear override + plant default", async () => { // CHANGED
+        const resetTasksBtn = mxUtils.button("Reset tasks to plant-default", async () => { // CHANGED
             try {
                 syncStateFromControls();
 
@@ -5901,31 +6305,24 @@ Draw.loadPlugin(function (ui) {
                 plantDefaultTaskDeleteRequested = true;
                 taskDirty = false;
                 taskEditorDiv.innerHTML = "";
-                renderTasksList();
-                updateTasksHeader({
-                    methodCategorySel,
-                    methodSel,
-                    formState,
-                    currentMethodSpan,
-                    currentTemplateSourceSpan,
-                    taskDirty,
-                    taskTemplateSource
-                });
+                await refreshTasksTabUI(); // CHANGED
             } catch (e) {
                 showErrorInline("Reset tasks error: " + (e?.message || String(e)));
             }
         });
 
-        resetTasksBtn.style.marginTop = "8px";
-        tasksTab.appendChild(resetTasksBtn);
-
-        restoreBuiltinsBtn.style.marginTop = "8px";
-        tasksTab.appendChild(restoreBuiltinsBtn);
-
-        // Save default checkbox
-        tasksTab.appendChild(
-            row("Save tasks as plant default", saveDefaultChk).row
-        );
+        const taskDefaultsActions = document.createElement('div'); // ADDED
+        taskDefaultsActions.style.marginTop = '10px'; // ADDED
+        taskDefaultsActions.style.paddingTop = '10px'; // ADDED
+        taskDefaultsActions.style.borderTop = '1px solid #d1d5db'; // ADDED
+        taskDefaultsActions.style.display = 'flex'; // ADDED
+        taskDefaultsActions.style.flexWrap = 'wrap'; // ADDED
+        taskDefaultsActions.style.alignItems = 'center'; // ADDED
+        taskDefaultsActions.style.gap = '8px'; // ADDED
+        taskDefaultsActions.appendChild(resetTasksBtn); // ADDED
+        taskDefaultsActions.appendChild(restoreBuiltinsBtn); // ADDED
+        taskDefaultsActions.appendChild(row("Save these tasks as plant default", saveDefaultChk).row); // CHANGED
+        tasksTab.insertBefore(taskDefaultsActions, taskEditorDiv); // ADDED
 
 
         // ============================================================================
@@ -5936,6 +6333,10 @@ Draw.loadPlugin(function (ui) {
         tabsContainer.style.display = "flex";
         tabsContainer.style.flexDirection = "column";
         tabsContainer.style.height = "100%";
+        tabsContainer.style.maxWidth = "96vw"; // ADDED
+        tabsContainer.style.maxHeight = "85vh"; // ADDED
+        tabsContainer.style.overflow = "hidden"; // ADDED
+        tabsContainer.style.boxSizing = "border-box"; // ADDED
 
         const tabsHeader = document.createElement("div");
         tabsHeader.style.display = "flex";
@@ -5959,15 +6360,7 @@ Draw.loadPlugin(function (ui) {
 
         const tasksTabBtn = mxUtils.button("Tasks", async () => {
             await refreshTaskTemplateFromSelection();
-            updateTasksHeader({
-                methodCategorySel, // CHANGED
-                methodSel,
-                formState,
-                currentMethodSpan,
-                currentTemplateSourceSpan,
-                taskDirty,
-                taskTemplateSource
-            });
+            await refreshTasksTabUI(); // CHANGED
             tabsBody.innerHTML = "";
             tabsBody.appendChild(tasksTab);
         });
@@ -5983,8 +6376,7 @@ Draw.loadPlugin(function (ui) {
         // INITIAL RENDER
         renderTasksList();
 
-        ui.showDialog(tabsContainer, 720, 560, true, true);
-
+        ui.showDialog(tabsContainer, 960, 640, true, true); // CHANGED
 
     }
 
@@ -6345,6 +6737,320 @@ Draw.loadPlugin(function (ui) {
 
         return parts.join(" • ");
     }
+
+    function getTaskPreviewRuleKey(rule, ruleIndex) { // ADDED
+        const id = String(rule?.id || 'rule').trim() || 'rule'; // ADDED
+        return `${id}::${Number(ruleIndex)}`; // ADDED
+    } // ADDED
+
+    async function buildTasksForPlan({ // ADDED
+        plant, // ADDED
+        schedule, // ADDED
+        timelines, // ADDED
+        taskTemplate, // ADDED
+        includePreviewMetadata = false // ADDED
+    }) { // ADDED
+        const tasks = []; // ADDED
+        const plantName = plant?.plant_name || plant?.abbr || "Plant"; // ADDED
+        const tpl = normalizeTaskTemplate(taskTemplate ?? null); // ADDED
+        const rules = Array.isArray(tpl?.rules) ? tpl.rules : []; // ADDED
+        const sowDate = Array.isArray(schedule) ? schedule[0] : schedule; // ADDED
+        const timeline = Array.isArray(timelines) ? timelines[0] : timelines; // ADDED
+        if (!sowDate || !timeline) return tasks; // ADDED
+
+        function substituteTitle(template) { // ADDED
+            return String(template || '') // ADDED
+                .replace(/\{plant\}/g, plantName) // ADDED
+                .replace(/\{succ\}/g, ''); // ADDED
+        } // ADDED
+
+        function anchorDatesForTimeline(currentTimeline, currentSowDate) { // ADDED
+            return { // ADDED
+                SOW: iso(currentSowDate), // ADDED
+                GERM: iso(currentTimeline.germ), // ADDED
+                TRANSPLANT: iso(currentTimeline.transplant), // ADDED
+                HARVEST_START: iso(currentTimeline.harvestStart), // ADDED
+                HARVEST_END: iso(currentTimeline.harvestEnd) // ADDED
+            }; // ADDED
+        } // ADDED
+
+        function resolveAnchorISO(anchors, stage) { // ADDED
+            let anchorISO = anchors[String(stage || '').trim()] || null; // ADDED
+            if (!anchorISO && stage === 'GERM') anchorISO = anchors.SOW || null; // ADDED
+            return anchorISO; // ADDED
+        } // ADDED
+
+        function applyOffset(anchorISO, days, direction) { // ADDED
+            if (!anchorISO) return null; // ADDED
+            const count = Number(days ?? 0); // ADDED
+            return shiftDays(anchorISO, (direction === 'before' ? -1 : 1) * count); // ADDED
+        } // ADDED
+
+        const anchors = anchorDatesForTimeline(timeline, sowDate); // ADDED
+        for (let ruleIndex = 0; ruleIndex < rules.length; ruleIndex++) { // ADDED
+            const rule = normalizeTaskRule(rules[ruleIndex]); // ADDED
+            const startAnchorISO = resolveAnchorISO(anchors, rule.startAnchorStage); // ADDED
+            if (!startAnchorISO) continue; // ADDED
+            const startISO = applyOffset(startAnchorISO, rule.startOffsetDays, rule.startOffsetDirection); // ADDED
+            if (!startISO) continue; // ADDED
+
+            let endISO = startISO; // ADDED
+            if (rule.endMode === 'fixed_days') { // ADDED
+                const duration = Number(rule.durationDays ?? 0); // ADDED
+                endISO = Number.isFinite(duration) && duration >= 0 ? shiftDays(startISO, duration) : startISO; // ADDED
+            } else if (rule.endMode === 'anchor_range') { // ADDED
+                const endAnchorISO = resolveAnchorISO(anchors, rule.endAnchorStage); // ADDED
+                if (!endAnchorISO) continue; // ADDED
+                endISO = applyOffset(endAnchorISO, rule.endAnchorOffsetDays, rule.endAnchorOffsetDirection); // ADDED
+                if (!endISO) continue; // ADDED
+            } else { // ADDED
+                continue; // ADDED
+            } // ADDED
+
+            let rangeStartISO = startISO; // ADDED
+            let rangeEndISO = endISO; // ADDED
+            if (rangeEndISO < rangeStartISO) { // ADDED
+                [rangeStartISO, rangeEndISO] = [rangeEndISO, rangeStartISO]; // ADDED
+            } // ADDED
+
+            const occurrences = []; // ADDED
+            if (rule.repeatMode !== 'interval') { // ADDED
+                occurrences.push({ startISO: rangeStartISO, endISO: rangeEndISO }); // ADDED
+            } else { // ADDED
+                const every = Number(rule.repeatEveryDays ?? 0); // ADDED
+                if (!Number.isFinite(every) || every < 1) continue; // ADDED
+                if (rule.repeatUntilMode === 'x_times') { // ADDED
+                    const times = Number(rule.repeatTimes ?? 1); // ADDED
+                    if (!Number.isFinite(times) || times < 1) continue; // ADDED
+                    let currentStart = rangeStartISO; // ADDED
+                    let currentEnd = rangeEndISO; // ADDED
+                    for (let occurrenceIndex = 0; occurrenceIndex < times; occurrenceIndex++) { // ADDED
+                        occurrences.push({ startISO: currentStart, endISO: currentEnd }); // ADDED
+                        currentStart = shiftDays(currentStart, every); // ADDED
+                        currentEnd = shiftDays(currentEnd, every); // ADDED
+                    } // ADDED
+                } else if (rule.repeatUntilMode === 'until_anchor') { // ADDED
+                    const untilAnchorISO = resolveAnchorISO(anchors, rule.repeatUntilAnchorStage); // ADDED
+                    if (!untilAnchorISO) continue; // ADDED
+                    let currentStart = rangeStartISO; // ADDED
+                    let currentEnd = rangeEndISO; // ADDED
+                    while (currentStart <= untilAnchorISO) { // ADDED
+                        occurrences.push({ startISO: currentStart, endISO: currentEnd }); // ADDED
+                        currentStart = shiftDays(currentStart, every); // ADDED
+                        currentEnd = shiftDays(currentEnd, every); // ADDED
+                    } // ADDED
+                } else { // ADDED
+                    continue; // ADDED
+                } // ADDED
+            } // ADDED
+
+            const title = substituteTitle(rule.title) || `Task for ${plantName}`; // ADDED
+            const previewRuleKey = getTaskPreviewRuleKey(rule, ruleIndex); // ADDED
+            occurrences.forEach((occurrence, occurrenceIndex) => { // ADDED
+                if (!occurrence.startISO && !occurrence.endISO) return; // ADDED
+                const task = { // ADDED
+                    title, // ADDED
+                    startISO: occurrence.startISO || occurrence.endISO, // ADDED
+                    endISO: occurrence.endISO || occurrence.startISO, // ADDED
+                    plant_name: plantName, // ADDED
+                    rule_id: rule.id || null, // ADDED
+                    startAnchorStage: rule.startAnchorStage, // ADDED
+                    endMode: rule.endMode // ADDED
+                }; // ADDED
+                if (includePreviewMetadata) { // ADDED
+                    Object.defineProperties(task, { // ADDED
+                        previewRuleKey: { value: previewRuleKey, enumerable: false }, // ADDED
+                        previewRuleIndex: { value: ruleIndex, enumerable: false }, // ADDED
+                        previewOccurrenceIndex: { value: occurrenceIndex, enumerable: false } // ADDED
+                    }); // ADDED
+                } // ADDED
+                tasks.push(task); // ADDED
+            }); // ADDED
+        } // ADDED
+        return tasks; // ADDED
+    } // ADDED
+
+    function filterPreviewTasks(tasks, selectedRuleKeys) { // CHANGED
+        const selected = selectedRuleKeys instanceof Set ? selectedRuleKeys : new Set(selectedRuleKeys || []); // ADDED
+        return (Array.isArray(tasks) ? tasks : []).filter(task => selected.has(task.previewRuleKey)); // CHANGED
+    } // ADDED
+
+    function buildTaskRuleDisplayOrder(taskRules, generatedTasks) { // ADDED
+        const firstOccurrenceByRule = new Map(); // ADDED
+        (Array.isArray(generatedTasks) ? generatedTasks : []).forEach(task => { // ADDED
+            const key = task.previewRuleKey; // ADDED
+            const startISO = String(task.startISO || ''); // ADDED
+            if (!key || !startISO) return; // ADDED
+            const current = firstOccurrenceByRule.get(key); // ADDED
+            if (!current || startISO < current) firstOccurrenceByRule.set(key, startISO); // ADDED
+        }); // ADDED
+        return (Array.isArray(taskRules) ? taskRules : []) // ADDED
+            .map((rule, originalIndex) => ({ // ADDED
+                rule, // ADDED
+                originalIndex, // ADDED
+                key: getTaskPreviewRuleKey(rule, originalIndex), // ADDED
+                firstOccurrenceISO: firstOccurrenceByRule.get(getTaskPreviewRuleKey(rule, originalIndex)) || null // ADDED
+            })) // ADDED
+            .sort((left, right) => { // ADDED
+                if (left.firstOccurrenceISO && right.firstOccurrenceISO) { // ADDED
+                    const dateOrder = left.firstOccurrenceISO.localeCompare(right.firstOccurrenceISO); // ADDED
+                    if (dateOrder !== 0) return dateOrder; // ADDED
+                } else if (left.firstOccurrenceISO) { // ADDED
+                    return -1; // ADDED
+                } else if (right.firstOccurrenceISO) { // ADDED
+                    return 1; // ADDED
+                } // ADDED
+                return left.originalIndex - right.originalIndex; // ADDED
+            }); // ADDED
+    } // ADDED
+
+    function groupPreviewTasksByRule(tasks) { // ADDED
+        const groupsByKey = new Map(); // ADDED
+        (Array.isArray(tasks) ? tasks : []).forEach((task, taskIndex) => { // ADDED
+            const key = task.previewRuleKey || `${String(task.rule_id || 'rule')}::${taskIndex}`; // ADDED
+            if (!groupsByKey.has(key)) { // ADDED
+                groupsByKey.set(key, { // ADDED
+                    key, // ADDED
+                    title: task.title, // ADDED
+                    originalIndex: Number(task.previewRuleIndex ?? taskIndex), // ADDED
+                    firstOccurrenceISO: String(task.startISO || ''), // ADDED
+                    occurrences: [] // ADDED
+                }); // ADDED
+            } // ADDED
+            const group = groupsByKey.get(key); // ADDED
+            group.occurrences.push(task); // ADDED
+            if (task.startISO && (!group.firstOccurrenceISO || task.startISO < group.firstOccurrenceISO)) { // ADDED
+                group.firstOccurrenceISO = task.startISO; // ADDED
+            } // ADDED
+        }); // ADDED
+        return Array.from(groupsByKey.values()) // ADDED
+            .map(group => ({ // ADDED
+                ...group, // ADDED
+                occurrences: group.occurrences.slice().sort((left, right) => { // ADDED
+                    const startOrder = String(left.startISO || '').localeCompare(String(right.startISO || '')); // ADDED
+                    if (startOrder !== 0) return startOrder; // ADDED
+                    return String(left.endISO || '').localeCompare(String(right.endISO || '')); // ADDED
+                }) // ADDED
+            })) // ADDED
+            .sort((left, right) => { // ADDED
+                const dateOrder = left.firstOccurrenceISO.localeCompare(right.firstOccurrenceISO); // ADDED
+                if (dateOrder !== 0) return dateOrder; // ADDED
+                return left.originalIndex - right.originalIndex; // CHANGED
+            }); // ADDED
+    } // ADDED
+
+    function resolveTaskPreviewScheduleRange(result) { // ADDED
+        const startISO = result?.kind === 'perennial' // ADDED
+            ? String(result.lifespanStartISO || '') // ADDED
+            : fmtISO(result?.schedule?.[0]); // ADDED
+        const endISO = result?.kind === 'perennial' // ADDED
+            ? String(result.lifespanEndISO || '') // ADDED
+            : String(result?.lastScheduledHarvestEndISO || ''); // ADDED
+        const start = parseISODateUTCValue(startISO); // ADDED
+        const end = parseISODateUTCValue(endISO); // ADDED
+        if (!start || !end || end < start) return null; // ADDED
+        return { startISO: fmtISO(start), endISO: fmtISO(end) }; // ADDED
+    } // ADDED
+
+    function renderTaskTimelinePreview(container, { tasks = [], scheduleRange = null, message = '', error = '' } = {}) { // CHANGED
+        container.innerHTML = ''; // ADDED
+        if (error || message || !tasks.length) { // ADDED
+            const empty = document.createElement('div'); // ADDED
+            empty.textContent = error || message || 'No tasks are available for the current preview selection.'; // ADDED
+            empty.style.padding = '10px'; // ADDED
+            empty.style.border = `1px solid ${error ? '#fca5a5' : '#d1d5db'}`; // ADDED
+            empty.style.background = error ? '#fef2f2' : '#f9fafb'; // ADDED
+            empty.style.color = error ? '#991b1b' : '#4b5563'; // ADDED
+            container.appendChild(empty); // ADDED
+            return; // ADDED
+        } // ADDED
+
+        const rangeStart = parseISODateUTCValue(scheduleRange?.startISO); // CHANGED
+        const rangeEnd = parseISODateUTCValue(scheduleRange?.endISO); // CHANGED
+        if (!rangeStart || !rangeEnd || rangeEnd < rangeStart) { // CHANGED
+            renderTaskTimelinePreview(container, { error: 'The schedule does not contain valid preview bounds.' }); // CHANGED
+            return; // ADDED
+        } // ADDED
+        const totalDays = Math.max(1, Math.round((rangeEnd - rangeStart) / 86400000)); // ADDED
+
+        const labels = document.createElement('div'); // ADDED
+        labels.style.display = 'grid'; // ADDED
+        labels.style.gridTemplateColumns = '190px 1fr'; // ADDED
+        labels.style.gap = '8px'; // ADDED
+        const spacer = document.createElement('div'); // ADDED
+        const dateScale = document.createElement('div'); // ADDED
+        dateScale.style.display = 'flex'; // ADDED
+        dateScale.style.justifyContent = 'space-between'; // ADDED
+        dateScale.style.fontSize = '11px'; // ADDED
+        dateScale.style.color = '#6b7280'; // ADDED
+        const startLabel = document.createElement('span'); // ADDED
+        const endLabel = document.createElement('span'); // ADDED
+        startLabel.textContent = fmtISO(rangeStart); // ADDED
+        endLabel.textContent = fmtISO(rangeEnd); // ADDED
+        dateScale.appendChild(startLabel); // ADDED
+        dateScale.appendChild(endLabel); // ADDED
+        labels.appendChild(spacer); // ADDED
+        labels.appendChild(dateScale); // ADDED
+        container.appendChild(labels); // ADDED
+
+        groupPreviewTasksByRule(tasks).forEach(group => { // CHANGED
+            const rowEl = document.createElement('div'); // ADDED
+            rowEl.style.display = 'grid'; // ADDED
+            rowEl.style.gridTemplateColumns = '190px 1fr'; // ADDED
+            rowEl.style.gap = '8px'; // ADDED
+            rowEl.style.alignItems = 'center'; // ADDED
+            rowEl.style.margin = '5px 0'; // ADDED
+            const taskLabel = document.createElement('div'); // ADDED
+            taskLabel.textContent = group.title; // CHANGED
+            taskLabel.title = `${group.occurrences.length} occurrence${group.occurrences.length === 1 ? '' : 's'}`; // CHANGED
+            taskLabel.style.fontSize = '12px'; // ADDED
+            taskLabel.style.overflow = 'hidden'; // ADDED
+            taskLabel.style.textOverflow = 'ellipsis'; // ADDED
+            taskLabel.style.whiteSpace = 'nowrap'; // ADDED
+            const track = document.createElement('div'); // ADDED
+            track.style.position = 'relative'; // ADDED
+            track.style.height = '16px'; // ADDED
+            track.style.background = '#e5e7eb'; // ADDED
+            track.style.borderRadius = '3px'; // ADDED
+            group.occurrences.forEach(task => { // ADDED
+                const taskStart = parseISODateUTCValue(task.startISO); // ADDED
+                const taskEnd = parseISODateUTCValue(task.endISO); // ADDED
+                if (!taskStart || !taskEnd) return; // ADDED
+                if (taskEnd < rangeStart || taskStart > rangeEnd) return; // ADDED
+                const clippedStart = new Date(Math.max(taskStart.getTime(), rangeStart.getTime())); // ADDED
+                const clippedEnd = new Date(Math.min(taskEnd.getTime(), rangeEnd.getTime())); // ADDED
+                const offsetDays = Math.round((clippedStart - rangeStart) / 86400000); // CHANGED
+                const durationDays = Math.max(0, Math.round((clippedEnd - clippedStart) / 86400000)); // CHANGED
+                const leftPercent = Math.max(0, Math.min(99, (offsetDays / totalDays) * 100)); // CHANGED
+                const widthPercent = Math.max(1, Math.min(100 - leftPercent, (Math.max(1, durationDays) / totalDays) * 100)); // ADDED
+                const bar = document.createElement('div'); // ADDED
+                bar.style.position = 'absolute'; // ADDED
+                bar.style.left = `${leftPercent}%`; // CHANGED
+                bar.style.width = `${widthPercent}%`; // CHANGED
+                bar.style.height = '100%'; // ADDED
+                bar.style.background = '#2563eb'; // ADDED
+                bar.style.borderRadius = '3px'; // ADDED
+                bar.title = `${task.title}: ${task.startISO} to ${task.endISO}`; // ADDED
+                track.appendChild(bar); // ADDED
+            }); // ADDED
+            rowEl.appendChild(taskLabel); // ADDED
+            rowEl.appendChild(track); // ADDED
+            container.appendChild(rowEl); // ADDED
+        }); // ADDED
+    } // ADDED
+
+    function updateTaskTimelinePreview({ // ADDED
+        container, // ADDED
+        generatedTasks = [], // ADDED
+        selectedRuleKeys = new Set(), // ADDED
+        scheduleRange = null, // ADDED
+        message = '', // ADDED
+        error = '' // ADDED
+    } = {}) { // ADDED
+        const tasks = filterPreviewTasks(generatedTasks, selectedRuleKeys); // CHANGED
+        renderTaskTimelinePreview(container, { tasks, scheduleRange, message, error }); // CHANGED
+        return tasks; // ADDED
+    } // ADDED
 
     async function getPlantingMethodById(methodId) {
         const normalizedMethodId = normId(methodId); // FIX
@@ -6818,177 +7524,6 @@ Draw.loadPlugin(function (ui) {
         const result = options.result || computeScheduleResult(inputs);
         const schedule = result.schedule; // NEW
         const timelines = result.timelines; // NEW
-
-        async function buildTasksForPlan({
-            plant,
-            schedule,
-            timelines,
-            taskTemplate,
-            methodId = null,
-            plantId = null,
-        }) {
-            const tasks = [];
-            const plantName = plant?.plant_name || plant?.abbr || "Plant";
-
-            const tpl = normalizeTaskTemplate(taskTemplate ?? null); // FIX: use the template captured before graph mutation
-            const rules = Array.isArray(tpl?.rules) ? tpl.rules : []; // CHANGED
-
-            // Single planting only
-            const sowDate = Array.isArray(schedule) ? schedule[0] : schedule;
-            const tl = Array.isArray(timelines) ? timelines[0] : timelines;
-            if (!sowDate || !tl) return tasks;
-
-            function substituteTitle(template, { plantName }) {
-                let t = template || "";
-                t = t.replace(/\{plant\}/g, plantName);
-                t = t.replace(/\{succ\}/g, "");
-                return t;
-            }
-
-            function anchorDatesForTimeline(tl, sowDate) {
-                return {
-                    SOW: iso(sowDate),
-                    GERM: iso(tl.germ),
-                    TRANSPLANT: iso(tl.transplant),
-                    HARVEST_START: iso(tl.harvestStart),
-                    HARVEST_END: iso(tl.harvestEnd)
-                };
-            }
-
-            function resolveAnchorISO(anchors, stage) {
-                let anchorISO = anchors[String(stage || "").trim()] || null;
-
-                // Optional fallback for missing GERM
-                if (!anchorISO && stage === "GERM") {
-                    anchorISO = anchors.SOW || null;
-                }
-
-                return anchorISO;
-            }
-
-            function applyOffset(anchorISO, days, direction) {
-                if (!anchorISO) return null;
-                const n = Number(days ?? 0);
-                const dir = direction === "before" ? -1 : 1;
-                return shiftDays(anchorISO, dir * n);
-            }
-
-            const anchors = anchorDatesForTimeline(tl, sowDate);
-
-            for (const rawRule of rules) {
-                const r = normalizeTaskRule(rawRule); // CHANGED
-
-                // -------------------- start --------------------
-                const startAnchorISO = resolveAnchorISO(anchors, r.startAnchorStage); // CHANGED
-                if (!startAnchorISO) continue;
-
-                const startISO = applyOffset(
-                    startAnchorISO,
-                    r.startOffsetDays,
-                    r.startOffsetDirection
-                ); // CHANGED
-                if (!startISO) continue;
-
-                // -------------------- end --------------------
-                let endISO = startISO; // CHANGED
-
-                if (r.endMode === "fixed_days") { // CHANGED
-                    const dur = Number(r.durationDays ?? 0);
-                    endISO = Number.isFinite(dur) && dur >= 0
-                        ? shiftDays(startISO, dur)
-                        : startISO;
-                } else if (r.endMode === "anchor_range") { // CHANGED
-                    const endAnchorISO = resolveAnchorISO(anchors, r.endAnchorStage);
-                    if (!endAnchorISO) continue;
-
-                    endISO = applyOffset(
-                        endAnchorISO,
-                        r.endAnchorOffsetDays,
-                        r.endAnchorOffsetDirection
-                    );
-
-                    if (!endISO) continue;
-                } else {
-                    continue;
-                }
-
-                // Normalize reversed ranges if needed
-                let rangeStartISO = startISO; // CHANGED
-                let rangeEndISO = endISO; // CHANGED
-                if (rangeEndISO < rangeStartISO) { // CHANGED
-                    const tmp = rangeStartISO;
-                    rangeStartISO = rangeEndISO;
-                    rangeEndISO = tmp;
-                }
-
-                // -------------------- repeat --------------------
-                const occurrences = [];
-
-                if (r.repeatMode !== "interval") { // CHANGED
-                    occurrences.push({
-                        startISO: rangeStartISO,
-                        endISO: rangeEndISO
-                    });
-                } else {
-                    const every = Number(r.repeatEveryDays ?? 0); // CHANGED
-                    if (!Number.isFinite(every) || every < 1) continue;
-
-                    if (r.repeatUntilMode === "x_times") { // CHANGED
-                        const times = Number(r.repeatTimes ?? 1); // CHANGED
-                        if (!Number.isFinite(times) || times < 1) continue;
-
-                        let curStart = rangeStartISO;
-                        let curEnd = rangeEndISO;
-
-                        for (let k = 0; k < times; k++) {
-                            occurrences.push({
-                                startISO: curStart,
-                                endISO: curEnd
-                            });
-                            curStart = shiftDays(curStart, every);
-                            curEnd = shiftDays(curEnd, every);
-                        }
-                    } else if (r.repeatUntilMode === "until_anchor") { // CHANGED
-                        const untilAnchorISO = resolveAnchorISO(anchors, r.repeatUntilAnchorStage); // CHANGED
-                        if (!untilAnchorISO) continue;
-
-                        let curStart = rangeStartISO;
-                        let curEnd = rangeEndISO;
-
-                        while (curStart <= untilAnchorISO) { // CHANGED
-                            occurrences.push({
-                                startISO: curStart,
-                                endISO: curEnd
-                            });
-                            curStart = shiftDays(curStart, every);
-                            curEnd = shiftDays(curEnd, every);
-                        }
-                    } else {
-                        continue;
-                    }
-                }
-
-                // -------------------- emit tasks --------------------
-                const baseTitle = substituteTitle(r.title || "", { plantName });
-                const finalTitle = baseTitle || `Task for ${plantName}`;
-
-                for (const occ of occurrences) {
-                    if (!occ.startISO && !occ.endISO) continue;
-
-                    tasks.push({
-                        title: finalTitle,
-                        startISO: occ.startISO || occ.endISO,
-                        endISO: occ.endISO || occ.startISO,
-                        plant_name: plantName,
-                        rule_id: r.id || null,
-                        startAnchorStage: r.startAnchorStage, // CHANGED
-                        endMode: r.endMode // CHANGED
-                    });
-                }
-            }
-
-            return tasks;
-        }
 
         async function emitTasksForPlan({
             method,
@@ -7744,6 +8279,17 @@ Draw.loadPlugin(function (ui) {
             runUiAsyncOperation,
             computeAutoStartEndWindowForward,
             normId,
+            encodeMethodSelection, // ADDED
+            decodeMethodSelection, // ADDED
+            humanFeasibilityReason, // ADDED
+            classifySelectedSowDate, // ADDED
+            buildScheduleViewState, // ADDED
+            buildTasksForPlan, // ADDED
+            filterPreviewTasks, // ADDED
+            getTaskPreviewRuleKey, // ADDED
+            buildTaskRuleDisplayOrder, // ADDED
+            groupPreviewTasksByRule, // ADDED
+            resolveTaskPreviewScheduleRange, // ADDED
             resolveStartAfterWindow,
             buildScheduleAttributePatch,
             snapshotCellAttributes,
