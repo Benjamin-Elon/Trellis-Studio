@@ -1221,7 +1221,21 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-
+    function refreshCurrentHighlight() { // CHANGE
+        const selected = graph.getSelectionCells(); // CHANGE
+    
+        if (!selected || selected.length !== 1) { // CHANGE
+            highlightLinked(null); // CHANGE
+            return; // CHANGE
+        }
+    
+        const cell = normalizeForLinkingAndPrimary(selected[0]); // CHANGE
+        if (cell && model.isVertex(cell)) { // CHANGE
+            highlightLinked(cell); // CHANGE
+        } else { // CHANGE
+            highlightLinked(null); // CHANGE
+        } // CHANGE
+    } // CHANGE
 
     // Config: whether a Primary vertex should be highlighted even without links
     const ALLOW_PRIMARY_WHEN_UNLINKED = true; // set to false to require links
@@ -1741,15 +1755,20 @@ Draw.loadPlugin(function (ui) {
     // Keep link overlays attached on zoom/pan and geometry changes                 
     const view = graph.getView();
     if (view && view.addListener) {
-        view.addListener(mxEvent.SCALE, function () {
-            linkOverlays.refreshAll();
-        });
-        view.addListener(mxEvent.TRANSLATE, function () {
-            linkOverlays.refreshAll();
-        });
-        view.addListener(mxEvent.SCALE_AND_TRANSLATE, function () {
-            linkOverlays.refreshAll();
-        });
+        function refreshViewOnlyLinkVisuals() { // CHANGE
+            linkOverlays.refreshAll(); // CHANGE
+    
+            // Draw.io may recreate SVG nodes during zoom/pan, so reapply DOM highlights
+            // after the view has finished its redraw cycle. // CHANGE
+            setTimeout(function () { // CHANGE
+                refreshCurrentHighlight(); // CHANGE
+                linkOverlays.refreshAll(); // CHANGE
+            }, 0); // CHANGE
+        } // CHANGE
+    
+        view.addListener(mxEvent.SCALE, refreshViewOnlyLinkVisuals); // CHANGE
+        view.addListener(mxEvent.TRANSLATE, refreshViewOnlyLinkVisuals); // CHANGE
+        view.addListener(mxEvent.SCALE_AND_TRANSLATE, refreshViewOnlyLinkVisuals); // CHANGE
     }
 
     graph.getModel().addListener(mxEvent.CHANGE, function () {
