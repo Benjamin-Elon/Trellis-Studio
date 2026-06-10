@@ -1074,9 +1074,6 @@ Draw.loadPlugin(function (ui) {
 
                 if (t.method) setAttrNoUndo(card, 'method', t.method);
                 if (t.plant_name) setAttrNoUndo(card, 'plant_name', t.plant_name);
-                if (t.succession_index != null) {
-                    setAttrNoUndo(card, 'succession_index', String(t.succession_index));
-                }
 
                 if (grp) linkBothWays(grp, card);
                 updateBadgeForLane(card, getAttr(parentLane, 'lane_key'));
@@ -1973,170 +1970,22 @@ Draw.loadPlugin(function (ui) {
         };
     })();
 
-    // -------------------- Succession buffers keyed per recompute --------------------
-    const successionBuffers = new Map(); // CHANGE: key -> { totalSucc, chunks, clearedGroups, seenSuccIndexes }
-
-    function getSuccessionBatchKey(detail, targetGroupId, totalSucc) { // NEW
-        const batchId = detail && detail.batchId != null
-            ? String(detail.batchId).trim()
-            : '';
-
-        if (batchId) return batchId; // NEW: prefer scheduler-provided batch id
-
-        return String(targetGroupId || '') + ':' + String(totalSucc || ''); // NEW: fallback
-    }
-
-    // -------------------- Event bridge from scheduler --------------------                
+    // -------------------- Event bridge from scheduler --------------------
     function handleTasksCreatedEvent(ev) {
         const detail = ev && ev.detail ? ev.detail : {};
-        const replacement = normalizeTaskReplacementDetail(detail); // FIX
-        const tasks = replacement.tasks; // FIX
-        const targetGroupId = replacement.targetGroupId; // FIX
-        if (replacement.mode !== 'replace' || !targetGroupId) return; // FIX: missing mode remains replace-compatible
+        const replacement = normalizeTaskReplacementDetail(detail);
+        const tasks = replacement.tasks;
+        const targetGroupId = replacement.targetGroupId;
 
-        // Prefer successionOffset if present, else fallback to successionIndex      
-        const rawIdx = (detail.successionOffset != null)
-            ? detail.successionOffset
-            : detail.successionIndex;
+        if (replacement.mode !== 'replace' || !targetGroupId) return;
 
-        const rawTotal = detail.totalSuccessions;
-
-        const succIndex = Number.isFinite(Number(rawIdx))
-            ? Number(rawIdx)
-            : null;
-        const totalSucc = Number.isFinite(Number(rawTotal))
-            ? Number(rawTotal)
-            : null;
-
-        const hasMeta = (totalSucc != null && totalSucc > 0);
-
-        // DEBUG: event summary                                                  (optional to remove later)
-        console.log('[Kanban] tasksCreated event', {
-            targetGroupId, rawIdx, rawTotal, succIndex, totalSucc,
-            hasMeta, taskCount: tasks.length
-        });
-
-        // Defer so the scheduler UI thread is not blocked
         setTimeout(function () {
-            // No meta or trivially 1 succession -> behave as before              
-            if (!hasMeta || totalSucc === 1) {
-                console.log('[Kanban] immediate createTasks (no/1 succession)', {
-                    targetGroupId, taskCount: tasks.length
-                });
-                applyImmediateTaskReplacement({
-                    targetGroupId,
-                    tasks,
-                    removeTasks: removeTasksLinkedOnlyTo,
-                    createTasks
-                }); // FIX: an empty replacement still clears stale tasks
-                return;
-            }
-
-            // -------------------- Keyed buffered-per-batch path --------------------
-
-            const bufferKey = getSuccessionBatchKey(detail, targetGroupId, totalSucc); // CHANGE
-
-            let buf = successionBuffers.get(bufferKey);
-            if (!buf) {
-                console.log('[Kanban] init keyed succession buffer', { // CHANGE
-                    bufferKey,
-                    totalSucc
-                });
-
-                buf = {
-                    totalSucc: totalSucc,
-                    chunks: [],
-                    clearedGroups: new Set(),
-                    seenSuccIndexes: new Set()
-                };
-
-                successionBuffers.set(bufferKey, buf); // CHANGE
-            }
-
-            if (buf.totalSucc !== totalSucc) { // NEW: defensive reset on malformed reused key
-                console.warn('[Kanban] resetting succession buffer due to totalSucc mismatch', {
-                    bufferKey,
-                    oldTotalSucc: buf.totalSucc,
-                    newTotalSucc: totalSucc
-                });
-
-                buf = {
-                    totalSucc: totalSucc,
-                    chunks: [],
-                    clearedGroups: new Set(),
-                    seenSuccIndexes: new Set()
-                };
-
-                successionBuffers.set(bufferKey, buf);
-            }
-
-            // Clear old tasks exactly once per group for this batch.
-            if (!buf.clearedGroups.has(targetGroupId)) {
-                console.log('[Kanban] clearing old tasks for group', {
-                    bufferKey,
-                    targetGroupId
-                });
-
-                removeTasksLinkedOnlyTo(targetGroupId);
-                buf.clearedGroups.add(targetGroupId);
-            }
-
-            const beforeChunks = buf.chunks.length;
-            buf.chunks.push({ succIndex, targetGroupId, tasks });
-
-            if (succIndex != null) {
-                buf.seenSuccIndexes.add(succIndex);
-            }
-
-            console.log('[Kanban] keyed buffer updated', {
-                bufferKey,
-                beforeChunks,
-                afterChunks: buf.chunks.length,
-                pushedSuccIndex: succIndex,
-                pushedTasks: tasks.length,
-                seenSuccIndexes: Array.from(buf.seenSuccIndexes)
+            applyImmediateTaskReplacement({
+                targetGroupId,
+                tasks,
+                removeTasks: removeTasksLinkedOnlyTo,
+                createTasks
             });
-
-            const haveAllSucc = (
-                succIndex != null &&
-                buf.seenSuccIndexes.size >= buf.totalSucc
-            );
-
-            if (!haveAllSucc) {
-                return;
-            }
-
-            const chunksSorted = buf.chunks.slice().sort((a, b) => {
-                const ai = (a.succIndex != null ? a.succIndex : 0);
-                const bi = (b.succIndex != null ? b.succIndex : 0);
-                return ai - bi;
-            });
-
-            const perGroup = new Map();
-            for (const chunk of chunksSorted) {
-                const gid = chunk.targetGroupId;
-                if (!perGroup.has(gid)) perGroup.set(gid, []);
-                perGroup.get(gid).push.apply(perGroup.get(gid), chunk.tasks);
-            }
-
-            let mergedTotal = 0;
-            perGroup.forEach(arr => { mergedTotal += arr.length; });
-
-            console.log('[Kanban] flushing keyed succession buffer', {
-                bufferKey,
-                totalSucc: buf.totalSucc,
-                totalChunks: buf.chunks.length,
-                groups: Array.from(perGroup.keys()),
-                mergedTaskCount: mergedTotal
-            });
-
-            successionBuffers.delete(bufferKey); // CHANGE: flush only this completed batch
-
-            let first = true;
-            for (const [gid, taskList] of perGroup.entries()) {
-                createTasks(taskList || [], gid, { reflow: first }); // CHANGE: allow empty group replacement
-                first = false;
-            }
         }, 0);
     }
 
