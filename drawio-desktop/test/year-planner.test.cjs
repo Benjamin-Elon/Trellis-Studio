@@ -306,3 +306,106 @@ test("PlanRuntimeService derives actual harvest windows and returns calculation 
     assert.ok(derived.actualHarvestWeeklyKg.some(value => value > 0));
     assert.ok(runtime.warnings.some(warning => warning.includes("missing dates")));
 });
+
+test("YearPlanDashboard aggregates shortage and surplus without netting crops", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+    const shortCrop = emptyCrop({ id: "short", plant: "Tomato", useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-30" }); // NEW
+    const surplusCrop = emptyCrop({ id: "surplus", plantId: "2", plant: "Carrot", useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-30" }); // NEW
+    const noDemandCrop = emptyCrop({ id: "none", plantId: "3", plant: "Lettuce", useActualHarvest: false }); // NEW
+    plan.crops.push(shortCrop, surplusCrop, noDemandCrop); // NEW
+    const runtime = { // NEW
+        warnings: [],
+        cropTotals: [
+            { crop: shortCrop, targetKg: 10, supplyKg: 4, plantsReq: 10, seedsReq: 13 },
+            { crop: surplusCrop, targetKg: 5, supplyKg: 8, plantsReq: 5, seedsReq: 7 },
+            { crop: noDemandCrop, targetKg: 0, supplyKg: 2, plantsReq: 0, seedsReq: 0 }
+        ]
+    }; // NEW
+
+    const dashboard = api.YearPlanDashboard.compute(plan, runtime); // NEW
+    assert.equal(dashboard.targetKg, 15); // NEW
+    assert.equal(dashboard.supplyKg, 14); // NEW
+    assert.equal(dashboard.shortKg, 6); // NEW
+    assert.equal(dashboard.surplusKg, 5); // NEW
+    assert.equal(dashboard.cropMetricsById.get("short").status, "Short"); // NEW
+    assert.equal(dashboard.cropMetricsById.get("surplus").status, "Surplus"); // NEW
+    assert.equal(dashboard.cropMetricsById.get("none").status, "No demand"); // NEW
+    assert.ok(dashboard.badges.includes("Short")); // NEW
+    assert.ok(dashboard.badges.includes("Surplus")); // NEW
+    assert.ok(dashboard.badges.includes("Manual harvest dates")); // NEW
+}); // NEW
+
+test("YearPlanDashboard treats zero supply as a full shortage and validation errors as missing data", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+    const valid = emptyCrop({ id: "valid", useActualHarvest: true, harvestStart: "2026-06-01", harvestEnd: "2026-06-30" }); // NEW
+    const invalid = emptyCrop({ id: "invalid", plantId: "2", plant: "Bad", kgPerPlant: null, harvestStart: "2026-06-01", harvestEnd: "2026-06-30" }); // NEW
+    plan.crops.push(valid, invalid); // NEW
+    const repeatedError = 'Crop "Bad" missing valid kg/plant.'; // NEW
+    const runtime = { // NEW
+        warnings: [repeatedError, repeatedError],
+        cropTotals: [
+            { crop: valid, targetKg: 7, supplyKg: 0, plantsReq: 7, seedsReq: 9 },
+            { crop: invalid, targetKg: 4, supplyKg: 0, plantsReq: NaN, seedsReq: NaN }
+        ]
+    }; // NEW
+
+    const dashboard = api.YearPlanDashboard.compute(plan, runtime); // NEW
+    assert.equal(dashboard.cropMetricsById.get("valid").status, "Short"); // NEW
+    assert.equal(dashboard.cropMetricsById.get("valid").shortKg, 7); // NEW
+    assert.equal(dashboard.cropMetricsById.get("invalid").status, "Missing data"); // NEW
+    assert.equal(dashboard.warningCount, 1); // NEW
+    assert.deepEqual(Array.from(dashboard.diagnostics), [repeatedError]); // NEW
+}); // NEW
+
+test("YearPlanDashboard promotes a missing harvest window to missing data when demand exists", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+    const crop = emptyCrop({ id: "window", plant: "Lettuce", harvestStart: "", harvestEnd: "" }); // NEW
+    plan.crops.push(crop); // NEW
+    const dashboard = api.YearPlanDashboard.compute(plan, { // NEW
+        warnings: [],
+        cropTotals: [{ crop, targetKg: 3, supplyKg: 0, plantsReq: 3, seedsReq: 4 }]
+    }); // NEW
+    assert.equal(dashboard.cropMetricsById.get("window").status, "Missing data"); // NEW
+    assert.ok(dashboard.validationErrors.some(error => error.includes("missing harvest window"))); // NEW
+}); // NEW
+
+test("YearPlanDashboard dirty snapshots ignore runtime fields and update after save baselines", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+    plan.crops.push(emptyCrop()); // NEW
+    const state = api.YearPlanDashboard.createState(plan); // NEW
+
+    api.YearPlanDashboard.markBaseline(state, plan, null); // NEW
+    assert.equal(api.YearPlanDashboard.isDirty(state, plan), false); // NEW
+    plan.crops[0].__actualHarvestWeeklyKg = [1, 2, 3]; // NEW
+    assert.equal(api.YearPlanDashboard.isDirty(state, plan), false); // NEW
+    plan.crops[0].market.push({ qty: 2, unit: "kg", from: "2026-06-01", to: "2026-06-07" }); // NEW
+    assert.equal(api.YearPlanDashboard.isDirty(state, plan), true); // NEW
+    api.YearPlanDashboard.markBaseline(state, plan, new Date("2026-06-14T12:00:00Z")); // NEW
+    assert.equal(api.YearPlanDashboard.isDirty(state, plan), false); // NEW
+    plan.crops[0].savePackagesAsDefault = true; // NEW
+    assert.equal(api.YearPlanDashboard.isDirty(state, plan), true); // NEW
+    api.YearPlanDashboard.markBaseline(state, plan, null); // NEW
+    assert.equal(api.YearPlanDashboard.isDirty(state, plan), false); // NEW
+    assert.equal(state.validationState, "valid"); // NEW
+}); // NEW
+
+test("YearPlanDashboard resolves selection after crop removal and preserves unknown methods", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const crops = [{ id: "a" }, { id: "b" }, { id: "c" }]; // NEW
+    assert.equal(api.YearPlanDashboard.resolveSelectedCropId(crops, "b", 0), "b"); // NEW
+    assert.equal(api.YearPlanDashboard.resolveSelectedCropId([{ id: "a" }, { id: "c" }], "b", 1), "c"); // NEW
+    assert.equal(api.YearPlanDashboard.resolveSelectedCropId([], "b", 0), ""); // NEW
+
+    const options = api.YearPlanDashboard.buildMethodOptions([ // NEW
+        { method_id: "direct_sow.field", method_name: "Direct sow" },
+        { method_id: "direct_sow.field", method_name: "Duplicate" }
+    ], "legacy.method"); // NEW
+    assert.deepEqual(JSON.parse(JSON.stringify(options)), [ // NEW
+        { value: "legacy.method", label: "legacy.method (legacy/unavailable)", unavailable: true },
+        { value: "direct_sow.field", label: "Direct sow", unavailable: false }
+    ]); // NEW
+}); // NEW
