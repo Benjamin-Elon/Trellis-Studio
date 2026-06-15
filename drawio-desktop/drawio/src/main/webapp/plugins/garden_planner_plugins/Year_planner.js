@@ -18,6 +18,7 @@ Draw.loadPlugin(function (ui) {
     const PLAN_YEARS_ATTR = "plan_year_json";
     const PLAN_TEMPLATES_ATTR = "plan_year_templates";      // (diagram-scoped)
     const PLAN_UNIT_DEFAULTS_ATTR = "plan_unit_defaults";   // (diagram-scoped, per plantId)
+    const PLAN_METADATA_CELL_ATTR = "usl_year_planner_metadata"; // NEW
     const __YP_GLOBAL = window.__uslYearPlannerGlobal || (window.__uslYearPlannerGlobal = {});
 
     // -------------------- SessionController -------------------- // CHANGE
@@ -104,7 +105,8 @@ Draw.loadPlugin(function (ui) {
             ATTRS: {
                 PLAN_YEARS_ATTR,
                 PLAN_TEMPLATES_ATTR,
-                PLAN_UNIT_DEFAULTS_ATTR
+                PLAN_UNIT_DEFAULTS_ATTR,
+                PLAN_METADATA_CELL_ATTR // NEW
             }
         };
     })();
@@ -198,7 +200,8 @@ Draw.loadPlugin(function (ui) {
 
         async function listPlantsBasicRows() {
             const sql = `
-          SELECT plant_id, plant_name, yield_per_plant_kg, harvest_window_days, default_planting_method
+          SELECT plant_id, plant_name, yield_per_plant_kg, harvest_window_days, default_planting_method,
+                 annual, biennial, perennial /* CHANGE */
           FROM Plants
           WHERE abbr IS NOT NULL
           ORDER BY plant_name;`;
@@ -229,7 +232,7 @@ Draw.loadPlugin(function (ui) {
         async function queryPlantingMethodsForPlantId(plantId) { // NEW
             const pid = Number(plantId); // NEW
             if (!Number.isFinite(pid)) return []; // NEW
-            const sql = ` // NEW
+            const sql = `
         SELECT pm.method_id, pm.method_name, pm.method_category_id
         FROM PlantingMethods pm
         INNER JOIN PlantAllowedMethodCategories allowed
@@ -441,9 +444,10 @@ Draw.loadPlugin(function (ui) {
             const t0 = parseYmdLocalToMs(fromYmd); // NEW
             const t1 = parseYmdLocalToMs(toYmd); // NEW
             if (!Number.isFinite(t0) || !Number.isFinite(t1)) return false; // NEW
+            if (t0 > t1) return false; // CHANGE
 
-            const winStart = Math.min(t0, t1); // NEW
-            const winEndEx = addDaysMs(Math.max(t0, t1), 1); // NEW
+            const winStart = t0; // CHANGE
+            const winEndEx = addDaysMs(t1, 1); // CHANGE
 
             const yearStart = parseYmdLocalToMs(`${y}-01-01`); // NEW
             const yearEndEx = parseYmdLocalToMs(`${y + 1}-01-01`); // NEW
@@ -472,17 +476,127 @@ Draw.loadPlugin(function (ui) {
             return added; // NEW
         } // NEW
 
+        /**
+         * Simulates weekly FIFO inventory for one crop without changing its harvest series. // NEW
+         * Shelf life is approximated in whole weekly buckets; harvest remains usable in its harvest week. // NEW
+         */ // NEW
+        function buildUsableSupplySeries(harvestSeries, targetSeries, shelfLifeDays, weekStarts) { // NEW
+            const harvest = Array.isArray(harvestSeries) ? harvestSeries : []; // NEW
+            const target = Array.isArray(targetSeries) ? targetSeries : []; // NEW
+            const weeks = Array.isArray(weekStarts) ? weekStarts : []; // NEW
+            const length = Math.max(harvest.length, target.length, weeks.length); // NEW
+            const lifetimeWeeks = Math.max(1, Math.ceil(Math.max(0, Number(shelfLifeDays) || 0) / 7)); // NEW
+            const availableSupply = Array(length).fill(0); // NEW
+            const usableSupply = Array(length).fill(0); // NEW
+            const short = Array(length).fill(0); // NEW
+            const surplus = Array(length).fill(0); // NEW
+            const expired = Array(length).fill(0); // NEW
+            const endingInventory = Array(length).fill(0); // NEW
+            const inventory = []; // NEW
+
+            for (let weekIndex = 0; weekIndex < length; weekIndex++) { // NEW
+                const harvestedKg = Math.max(0, Number(harvest[weekIndex]) || 0); // NEW
+                if (harvestedKg > 0) { // NEW
+                    inventory.push({ kg: harvestedKg, expiresWeek: weekIndex + lifetimeWeeks }); // NEW
+                } // NEW
+
+                while (inventory.length && inventory[0].expiresWeek <= weekIndex) { // NEW
+                    expired[weekIndex] += inventory.shift().kg; // NEW
+                } // NEW
+
+                availableSupply[weekIndex] = inventory.reduce((sum, batch) => sum + batch.kg, 0); // NEW
+                let demandRemaining = Math.max(0, Number(target[weekIndex]) || 0); // NEW
+
+                while (demandRemaining > 0 && inventory.length) { // NEW
+                    const batch = inventory[0]; // NEW
+                    const usedKg = Math.min(demandRemaining, batch.kg); // NEW
+                    batch.kg -= usedKg; // NEW
+                    demandRemaining -= usedKg; // NEW
+                    usableSupply[weekIndex] += usedKg; // NEW
+                    if (batch.kg <= 1e-9) inventory.shift(); // NEW
+                } // NEW
+
+                short[weekIndex] = demandRemaining; // NEW
+                endingInventory[weekIndex] = inventory.reduce((sum, batch) => sum + batch.kg, 0); // NEW
+                surplus[weekIndex] = endingInventory[weekIndex]; // NEW
+            } // NEW
+
+            return { availableSupply, usableSupply, short, surplus, expired, endingInventory }; // NEW
+        } // NEW
+
+        function buildPlanChartModel(weekly, cropId) { // NEW
+            const source = cropId && weekly && weekly.perCrop // NEW
+                ? (weekly.perCrop.get(cropId) || weekly.perCrop.get(String(cropId))) // CHANGE
+                : null; // NEW
+            const weeks = weekly && Array.isArray(weekly.weeks) ? weekly.weeks : []; // NEW
+            const target = source ? source.target : (weekly && weekly.targetTotal) || []; // NEW
+            const harvest = source ? source.supply : (weekly && weekly.supplyTotal) || []; // NEW
+            const available = source ? source.availableSupply : (weekly && weekly.availableSupplyTotal) || []; // NEW
+            const usable = source ? source.usableSupply : (weekly && weekly.usableSupplyTotal) || []; // NEW
+            const short = source ? source.short : (weekly && weekly.shortTotal) || []; // NEW
+            const surplus = source ? source.surplus : (weekly && weekly.surplusTotal) || []; // NEW
+            const expired = source ? source.expired : (weekly && weekly.expiredTotal) || []; // NEW
+            const endingInventory = source ? source.endingInventory : (weekly && weekly.endingInventoryTotal) || []; // NEW
+
+            return weeks.map((week, index) => ({ // NEW
+                week: week && week.iso ? String(week.iso) : "", // NEW
+                targetKg: Math.max(0, Number(target[index]) || 0), // NEW
+                harvestKg: Math.max(0, Number(harvest[index]) || 0), // NEW
+                availableSupplyKg: Math.max(0, Number(available[index]) || 0), // NEW
+                usableSupplyKg: Math.max(0, Number(usable[index]) || 0), // NEW
+                shortKg: Math.max(0, Number(short[index]) || 0), // NEW
+                surplusKg: Math.max(0, Number(surplus[index]) || 0), // NEW
+                expiredKg: Math.max(0, Number(expired[index]) || 0), // NEW
+                endingInventoryKg: Math.max(0, Number(endingInventory[index]) || 0) // NEW
+            })); // NEW
+        } // NEW
+
+        function summarizePlanChartModel(chartModel) { // NEW
+            const rows = Array.isArray(chartModel) ? chartModel : []; // NEW
+            const summary = { // NEW
+                targetKg: 0, // NEW
+                harvestKg: 0, // NEW
+                usableSupplyKg: 0, // NEW
+                shortKg: 0, // NEW
+                expiredKg: 0, // NEW
+                worstShortageKg: 0, // NEW
+                worstShortageWeek: "", // NEW
+                shortWeeks: 0 // NEW
+            }; // NEW
+
+            for (const row of rows) { // NEW
+                summary.targetKg += Math.max(0, Number(row && row.targetKg) || 0); // NEW
+                summary.harvestKg += Math.max(0, Number(row && row.harvestKg) || 0); // NEW
+                summary.usableSupplyKg += Math.max(0, Number(row && row.usableSupplyKg) || 0); // NEW
+                summary.shortKg += Math.max(0, Number(row && row.shortKg) || 0); // NEW
+                summary.expiredKg += Math.max(0, Number(row && row.expiredKg) || 0); // NEW
+                if (Number(row && row.shortKg) > 1e-9) summary.shortWeeks += 1; // NEW
+                if (Number(row && row.shortKg) > summary.worstShortageKg) { // NEW
+                    summary.worstShortageKg = Number(row.shortKg); // NEW
+                    summary.worstShortageWeek = String(row.week || ""); // NEW
+                } // NEW
+            } // NEW
+            return summary; // NEW
+        } // NEW
+
         function computePlanWeekly(plan, warns) {
 
             warns = Array.isArray(warns) ? warns : [];
 
+            PlanSchema.normalizeForRuntime(plan, plan && plan.year); // CHANGE
             const year = Number(plan && plan.year);
-            const weekStartDow = Number.isFinite(plan && plan.weekStartDow) ? plan.weekStartDow : 1;
+            const weekStartDow = plan.weekStartDow; // CHANGE
             const weeks = buildWeekStartsForYearLocal(year, weekStartDow);
             const n = weeks.length;
 
             const targetTotal = Array(n).fill(0);
             const supplyTotal = Array(n).fill(0);
+            const availableSupplyTotal = Array(n).fill(0); // NEW
+            const usableSupplyTotal = Array(n).fill(0); // NEW
+            const shortTotal = Array(n).fill(0); // NEW
+            const surplusTotal = Array(n).fill(0); // NEW
+            const expiredTotal = Array(n).fill(0); // NEW
+            const endingInventoryTotal = Array(n).fill(0); // NEW
             const perCrop = new Map();
 
             function ensureCropArrays(cropId) {
@@ -510,6 +624,10 @@ Draw.loadPlugin(function (ui) {
                         pushWarn(warns, `Market line skipped (missing dates) for ${crop.plant || crop.id}`);
                         continue;
                     }
+                    if (line.from > line.to) { // NEW
+                        pushWarn(warns, `Market line skipped (start date after end date) for ${crop.plant || crop.id}`); // NEW
+                        continue; // NEW
+                    } // NEW
 
                     const kgPerUnit = resolveUnitToKgPerUnit(crop, line.unit);
                     if (!Number.isFinite(kgPerUnit)) {
@@ -553,6 +671,10 @@ Draw.loadPlugin(function (ui) {
                             pushWarn(warns, `CSA component skipped (missing dates) for ${crop.plant || crop.id}`);
                             continue;
                         }
+                        if (from > to) { // NEW
+                            pushWarn(warns, `CSA component skipped (start date after end date) for ${crop.plant || crop.id}`); // NEW
+                            continue; // NEW
+                        } // NEW
 
                         const wr = PlanMath.weekRangeForWindowClamped(weeks, from, to); // CHANGE
                         if (!wr) continue; // CHANGE
@@ -601,6 +723,10 @@ Draw.loadPlugin(function (ui) {
                     pushWarn(warns, `Supply skipped (harvest window missing) for ${crop.plant || crop.id}`);
                     continue;
                 }
+                if (crop.harvestStart > crop.harvestEnd) { // NEW
+                    pushWarn(warns, `Supply skipped (harvest start date after end date) for ${crop.plant || crop.id}`); // NEW
+                    continue; // NEW
+                } // NEW
 
                 const totalKg = actualPlants * kgPerPlant; // CHANGE
 
@@ -614,15 +740,43 @@ Draw.loadPlugin(function (ui) {
                 );
             }
 
+            for (const crop of crops) { // NEW
+                if (!crop || !crop.id) continue; // NEW
+                const arr = ensureCropArrays(crop.id); // NEW
+                Object.assign(arr, buildUsableSupplySeries( // NEW
+                    arr.supply, // NEW
+                    arr.target, // NEW
+                    crop.shelfLifeDays, // NEW
+                    weeks // NEW
+                )); // NEW
+            } // NEW
+
             // Aggregate all per-crop series into total series before returning. // CHANGE
             for (const v of perCrop.values()) { // CHANGE
                 for (let i = 0; i < n; i++) { // CHANGE
                     targetTotal[i] += Math.max(0, Number(v.target[i]) || 0); // CHANGE
                     supplyTotal[i] += Math.max(0, Number(v.supply[i]) || 0); // CHANGE
+                    availableSupplyTotal[i] += Math.max(0, Number(v.availableSupply[i]) || 0); // NEW
+                    usableSupplyTotal[i] += Math.max(0, Number(v.usableSupply[i]) || 0); // NEW
+                    shortTotal[i] += Math.max(0, Number(v.short[i]) || 0); // NEW
+                    surplusTotal[i] += Math.max(0, Number(v.surplus[i]) || 0); // NEW
+                    expiredTotal[i] += Math.max(0, Number(v.expired[i]) || 0); // NEW
+                    endingInventoryTotal[i] += Math.max(0, Number(v.endingInventory[i]) || 0); // NEW
                 } // CHANGE
             } // CHANGE
 
-            return { weeks, targetTotal, supplyTotal, perCrop };
+            return { // CHANGE
+                weeks, // CHANGE
+                targetTotal, // CHANGE
+                supplyTotal, // CHANGE
+                availableSupplyTotal, // NEW
+                usableSupplyTotal, // NEW
+                shortTotal, // NEW
+                surplusTotal, // NEW
+                expiredTotal, // NEW
+                endingInventoryTotal, // NEW
+                perCrop // CHANGE
+            }; // CHANGE
         }
 
         function computePlanCropTotals(plan, weekly) {
@@ -661,6 +815,9 @@ Draw.loadPlugin(function (ui) {
             resolveUnitToKgPerUnit,
             addKgAcrossWeeks,
             addTotalKgAcrossWindowProrated, // NEW
+            buildUsableSupplySeries, // NEW
+            buildPlanChartModel, // NEW
+            summarizePlanChartModel, // NEW
             computePlanWeekly,
             computePlanCropTotals
         };
@@ -723,7 +880,10 @@ Draw.loadPlugin(function (ui) {
             normalized.version = Number(normalized.version) || 1;
             normalized.year = Number.isFinite(Number(year)) ? Number(year) : Number(normalized.year);
             if (!Number.isFinite(normalized.year)) normalized.year = new Date().getFullYear();
-            if (!Number.isFinite(Number(normalized.weekStartDow))) normalized.weekStartDow = 1;
+            const weekStartDow = Math.trunc(Number(normalized.weekStartDow)); // CHANGE
+            normalized.weekStartDow = Number.isFinite(weekStartDow) && weekStartDow >= 0 && weekStartDow <= 6 // CHANGE
+                ? weekStartDow // CHANGE
+                : 1; // CHANGE
             normalized.crops = Array.isArray(normalized.crops) ? normalized.crops : [];
 
             if (!normalized.csa || typeof normalized.csa !== "object") {
@@ -820,6 +980,9 @@ Draw.loadPlugin(function (ui) {
             if (!Number.isFinite(Number(crop.kgPerPlant)) || Number(crop.kgPerPlant) <= 0) {
                 errors.push(`Crop "${crop.plant || crop.id}" missing valid kg/plant.`);
             }
+            if (PlanMath.hasYmd(crop.harvestStart) && PlanMath.hasYmd(crop.harvestEnd) && crop.harvestStart > crop.harvestEnd) { // NEW
+                errors.push(`Crop "${crop.plant || crop.id}" harvest start date is after harvest end date.`); // NEW
+            } // NEW
 
             for (const pkg of (crop.packages || [])) {
                 const unit = String(pkg.unit || "").trim();
@@ -837,6 +1000,9 @@ Draw.loadPlugin(function (ui) {
                 if (!PlanMath.hasYmd(marketLine.from) || !PlanMath.hasYmd(marketLine.to)) {
                     errors.push(`Crop "${crop.plant || crop.id}" market line missing dates.`);
                 }
+                if (PlanMath.hasYmd(marketLine.from) && PlanMath.hasYmd(marketLine.to) && marketLine.from > marketLine.to) { // NEW
+                    errors.push(`Crop "${crop.plant || crop.id}" market line has start date after end date.`); // NEW
+                } // NEW
                 if (!Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, marketLine.unit))) {
                     errors.push(`Crop "${crop.plant || crop.id}" market unit "${marketLine.unit}" does not resolve to kg.`);
                 }
@@ -855,6 +1021,9 @@ Draw.loadPlugin(function (ui) {
                 if (!Number.isFinite(Number(plan.csa.boxesPerWeek)) || Number(plan.csa.boxesPerWeek) <= 0) { // CHANGE
                     errors.push("CSA enabled but boxes/week is not set.");
                 }
+                if (PlanMath.hasYmd(plan.csa.start) && PlanMath.hasYmd(plan.csa.end) && plan.csa.start > plan.csa.end) { // NEW
+                    errors.push("CSA start date is after CSA end date."); // NEW
+                } // NEW
                 for (const component of (plan.csa.components || [])) {
                     const crop = PlanMath.findCrop(plan, component.cropId);
                     if (!crop) {
@@ -866,6 +1035,9 @@ Draw.loadPlugin(function (ui) {
                     if (!PlanMath.hasYmd(from) || !PlanMath.hasYmd(to)) {
                         errors.push(`CSA component for "${crop.plant || crop.id}" missing dates.`);
                     }
+                    if (PlanMath.hasYmd(from) && PlanMath.hasYmd(to) && from > to) { // NEW
+                        errors.push(`CSA component for "${crop.plant || crop.id}" has start date after end date.`); // NEW
+                    } // NEW
                     if (!Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, component.unit))) {
                         errors.push(`CSA component for "${crop.plant || crop.id}" unit "${component.unit}" does not resolve to kg.`);
                     }
@@ -928,12 +1100,72 @@ Draw.loadPlugin(function (ui) {
             try { return Env.model.getRoot(); } catch (_) { return null; }
         }
 
-        function readRootJsonMap(attributeName) { // NEW
-            return readJsonMap(getDiagramRootCell(), attributeName);
+        function findDiagramMetadataCell() { // NEW
+            const root = getDiagramRootCell(); // NEW
+            if (!root) return null; // NEW
+            const queue = [root]; // NEW
+            while (queue.length) { // NEW
+                const cell = queue.shift(); // NEW
+                if (DiagramStore.getCellAttr(cell, Env.ATTRS.PLAN_METADATA_CELL_ATTR, "") === "1") return cell; // NEW
+                const count = Env.model.getChildCount(cell); // NEW
+                for (let index = 0; index < count; index++) queue.push(Env.model.getChildAt(cell, index)); // NEW
+            }
+            return null; // NEW
         }
 
+        /**
+         * Creates one invisible vertex so diagram-level JSON is encoded as an XML user object. // NEW
+         */
+        function createDiagramMetadataCell() { // NEW
+            const parent = Env.graph.getDefaultParent ? Env.graph.getDefaultParent() : getDiagramRootCell(); // NEW
+            if (!parent || typeof Env.graph.insertVertex !== "function") return null; // NEW
+            const xmlDocument = (typeof mxUtils !== "undefined" && typeof mxUtils.createXmlDocument === "function") // NEW
+                ? mxUtils.createXmlDocument() : document; // NEW
+            const value = xmlDocument.createElement("uslYearPlannerMetadata"); // NEW
+            value.setAttribute(Env.ATTRS.PLAN_METADATA_CELL_ATTR, "1"); // NEW
+            const cell = Env.graph.insertVertex(parent, null, value, 0, 0, 0, 0, "shape=none;opacity=0;noLabel=1;locked=1;"); // NEW
+            if (cell && typeof cell.setVisible === "function") cell.setVisible(false); // NEW
+            if (cell && typeof cell.setConnectable === "function") cell.setConnectable(false); // NEW
+            return cell; // NEW
+        }
+
+        function rawCellAttribute(cell, attributeName) { // NEW
+            return DiagramStore.getCellAttr(cell, attributeName, ""); // NEW
+        }
+
+        function parseJsonMap(raw) { // NEW
+            const parsed = Env.safeJsonStringParse(raw, null); // NEW
+            return (parsed && typeof parsed === "object" && !Array.isArray(parsed)) ? parsed : {}; // NEW
+        }
+
+        function readRootJsonMap(attributeName) { // NEW
+            const metadataCell = findDiagramMetadataCell(); // NEW
+            const metadataRaw = rawCellAttribute(metadataCell, attributeName); // NEW
+            if (metadataRaw !== "") return parseJsonMap(metadataRaw); // NEW
+            return readJsonMap(getDiagramRootCell(), attributeName); // CHANGE
+        }
+
+        /**
+         * Copies both legacy root maps on the first write, then makes the metadata cell canonical. // NEW
+         */
         function writeRootJsonMap(attributeName, map) { // NEW
-            writeJsonMap(getDiagramRootCell(), attributeName, map);
+            const root = getDiagramRootCell(); // NEW
+            Env.model.beginUpdate(); // NEW
+            let metadataCell = null; // NEW
+            try {
+                metadataCell = findDiagramMetadataCell() || createDiagramMetadataCell(); // NEW
+                if (!metadataCell) return; // NEW
+                for (const legacyAttribute of [Env.ATTRS.PLAN_TEMPLATES_ATTR, Env.ATTRS.PLAN_UNIT_DEFAULTS_ATTR]) { // NEW
+                    const metadataRaw = rawCellAttribute(metadataCell, legacyAttribute); // NEW
+                    const legacyRaw = rawCellAttribute(root, legacyAttribute); // NEW
+                    if (metadataRaw === "" && legacyRaw !== "") DiagramStore.setCellAttr(metadataCell, legacyAttribute, legacyRaw); // NEW
+                    if (legacyRaw !== "") DiagramStore.setCellAttr(root, legacyAttribute, null); // NEW
+                }
+                DiagramStore.setCellAttr(metadataCell, attributeName, JSON.stringify(map || {})); // NEW
+            } finally {
+                Env.model.endUpdate(); // NEW
+            }
+            if (metadataCell) Env.graph.refresh(metadataCell); // NEW
         }
 
         function loadPlanForYear(moduleCell, year) { // CHANGE
@@ -1230,11 +1462,12 @@ Draw.loadPlugin(function (ui) {
             const endMs = PlanMath.parseYmdLocalToMs(harvestEndYmd(tg));
             const selectedYear = Number(year);
             if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !Number.isFinite(selectedYear)) return false;
+            if (startMs > endMs) return false; // CHANGE
 
             const yearStartMs = PlanMath.parseYmdLocalToMs(`${selectedYear}-01-01`);
             const yearEndExMs = PlanMath.parseYmdLocalToMs(`${selectedYear + 1}-01-01`);
-            const windowStartMs = Math.min(startMs, endMs);
-            const windowEndExMs = PlanMath.addDaysMs(Math.max(startMs, endMs), 1);
+            const windowStartMs = startMs; // CHANGE
+            const windowEndExMs = PlanMath.addDaysMs(endMs, 1); // CHANGE
             return windowStartMs < yearEndExMs && windowEndExMs > yearStartMs;
         }
 
@@ -1242,14 +1475,34 @@ Draw.loadPlugin(function (ui) {
             return getAllDescendants(Env.model, moduleCell).filter(isTilerGroupCell);
         }
 
-        function actualPlantsMapFromTilers(tilerGroups, selectedYear) { // NEW
+        /**
+         * Returns stable crop metadata from every tiler group in the garden module. // NEW
+         * Database availability and legacy variety-name resolution remain caller concerns. // NEW
+         */ // NEW
+        function readGardenCropCandidates(moduleCell) { // NEW
+            const candidates = []; // NEW
+            for (const tilerGroup of getTilerGroups(moduleCell)) { // NEW
+                const plantId = String(DiagramStore.getCellAttr(tilerGroup, "plant_id", "") || "").trim(); // NEW
+                if (!plantId) continue; // NEW
+                candidates.push({ // NEW
+                    plantId, // NEW
+                    plantName: String(DiagramStore.getCellAttr(tilerGroup, "plant_name", "") || "").trim(), // NEW
+                    varietyId: String(DiagramStore.getCellAttr(tilerGroup, "variety_id", "") || "").trim() || null, // NEW
+                    varietyName: String(DiagramStore.getCellAttr(tilerGroup, "variety_name", "") || "").trim() // NEW
+                }); // NEW
+            } // NEW
+            return candidates; // NEW
+        } // NEW
+
+        function actualPlantsMapFromTilers(tilerGroups, selectedYear, resolveCropKey) { // CHANGE
             const actualPlantsByCropKey = new Map();
             for (const tilerGroup of tilerGroups) {
                 if (!shouldIncludeTilerGroupInYear(tilerGroup, selectedYear, harvestEndLocalYear)) continue;
                 const plantCount = Number(DiagramStore.getCellAttr(tilerGroup, "plant_count", ""));
                 const count = Number.isFinite(plantCount) && plantCount > 0 ? Math.trunc(plantCount) : 0;
                 if (count <= 0) continue;
-                const key = getCropKeyFromTilerGroup(tilerGroup);
+                const key = resolveCropKey ? resolveCropKey(tilerGroup) : getCropKeyFromTilerGroup(tilerGroup); // CHANGE
+                if (!key) continue; // NEW
                 actualPlantsByCropKey.set(key, (actualPlantsByCropKey.get(key) || 0) + count);
             }
             return actualPlantsByCropKey;
@@ -1259,7 +1512,7 @@ Draw.loadPlugin(function (ui) {
             return actualPlantsMapFromTilers(getTilerGroups(moduleCell), selectedYear);
         }
 
-        function buildActualHarvestSeriesFromTilers(tilerGroups, year, weekStarts, cropKeyToKgPerPlant) { // NEW
+        function buildActualHarvestSeriesFromTilers(tilerGroups, year, weekStarts, cropKeyToKgPerPlant, resolveCropKey) { // CHANGE
             const seriesByCropKey = new Map();
             const ensureSeries = key => {
                 if (!seriesByCropKey.has(key)) seriesByCropKey.set(key, Array(weekStarts.length).fill(0));
@@ -1272,7 +1525,8 @@ Draw.loadPlugin(function (ui) {
                 const count = Number.isFinite(plantCount) && plantCount > 0 ? Math.trunc(plantCount) : 0;
                 if (count <= 0) continue;
 
-                const key = getCropKeyFromTilerGroup(tilerGroup);
+                const key = resolveCropKey ? resolveCropKey(tilerGroup) : getCropKeyFromTilerGroup(tilerGroup); // CHANGE
+                if (!key) continue; // NEW
                 const kgPerPlant = Number(cropKeyToKgPerPlant.get(key));
                 if (!Number.isFinite(kgPerPlant) || kgPerPlant <= 0) continue;
 
@@ -1292,20 +1546,113 @@ Draw.loadPlugin(function (ui) {
             return buildActualHarvestSeriesFromTilers(getTilerGroups(moduleCell), year, weekStarts, cropKeyToKgPerPlant);
         }
 
+        function normalizeIdentityName(value) { // NEW
+            return String(value || "").trim().toLocaleLowerCase(); // NEW
+        } // NEW
+
+        /**
+         * Resolves legacy variety-name-only tiler groups against unique planned crop identities. // NEW
+         */ // NEW
+        function createPlanCropKeyResolver(plan, diagnostics) { // NEW
+            const plannedByPlantAndVarietyName = new Map(); // NEW
+            for (const crop of ((plan && plan.crops) || [])) { // NEW
+                const plantId = String(crop && crop.plantId || "").trim(); // NEW
+                const varietyId = String((crop && crop.varietyId) ?? "").trim(); // NEW
+                const varietyName = normalizeIdentityName(crop && crop.variety); // NEW
+                if (!plantId || !varietyId || !varietyName) continue; // NEW
+                const lookupKey = `${plantId}|${varietyName}`; // NEW
+                const matches = plannedByPlantAndVarietyName.get(lookupKey) || []; // NEW
+                matches.push(getCropKeyFromPlanCrop(crop)); // NEW
+                plannedByPlantAndVarietyName.set(lookupKey, matches); // NEW
+            } // NEW
+
+            return tilerGroup => { // NEW
+                const plantId = String(DiagramStore.getCellAttr(tilerGroup, "plant_id", "") || "").trim(); // NEW
+                const varietyId = String(DiagramStore.getCellAttr(tilerGroup, "variety_id", "") || "").trim(); // NEW
+                if (!plantId || varietyId) return getCropKeyFromTilerGroup(tilerGroup); // NEW
+
+                const varietyName = String(DiagramStore.getCellAttr(tilerGroup, "variety_name", "") || "").trim(); // NEW
+                if (!varietyName) return getCropKeyFromTilerGroup(tilerGroup); // NEW
+
+                const matches = plannedByPlantAndVarietyName.get(`${plantId}|${normalizeIdentityName(varietyName)}`) || []; // NEW
+                const plantName = String(DiagramStore.getCellAttr(tilerGroup, "plant_name", "") || plantId).trim(); // NEW
+                const label = `${plantName} - ${varietyName}`; // NEW
+                if (matches.length === 1) return matches[0]; // NEW
+                diagnostics.push(matches.length > 1 // NEW
+                    ? `Diagram crop "${label}" matches multiple planned varieties and was ignored.` // NEW
+                    : `Diagram crop "${label}" has no unique planned variety match and was ignored.`); // NEW
+                return ""; // NEW
+            }; // NEW
+        } // NEW
+
+        /**
+         * Scans relevant tiler groups once so counts, weekly harvest, and exact ranges share one identity. // NEW
+         */ // NEW
+        function collectYearFactsFromTilers(tilerGroups, year, weekStarts, cropKeyToKgPerPlant, plan) { // NEW
+            const diagnostics = []; // NEW
+            const resolveCropKey = createPlanCropKeyResolver(plan, diagnostics); // NEW
+            const actualPlantsByCropKey = new Map(); // NEW
+            const actualHarvestSeriesByCropKey = new Map(); // NEW
+            const actualHarvestDateRangeByCropKey = new Map(); // NEW
+            const ensureSeries = key => { // NEW
+                if (!actualHarvestSeriesByCropKey.has(key)) actualHarvestSeriesByCropKey.set(key, Array(weekStarts.length).fill(0)); // NEW
+                return actualHarvestSeriesByCropKey.get(key); // NEW
+            }; // NEW
+
+            for (const tilerGroup of tilerGroups) { // NEW
+                if (!shouldIncludeTilerGroupInYear(tilerGroup, year, harvestEndLocalYear)) continue; // NEW
+                const plantCount = Number(DiagramStore.getCellAttr(tilerGroup, "plant_count", "")); // NEW
+                const count = Number.isFinite(plantCount) && plantCount > 0 ? Math.trunc(plantCount) : 0; // NEW
+                if (count <= 0) continue; // NEW
+                const key = resolveCropKey(tilerGroup); // NEW
+                if (!key) continue; // NEW
+
+                actualPlantsByCropKey.set(key, (actualPlantsByCropKey.get(key) || 0) + count); // NEW
+                const start = harvestStartYmd(tilerGroup); // NEW
+                const end = harvestEndYmd(tilerGroup); // NEW
+                const label = String(DiagramStore.getCellAttr(tilerGroup, "plant_name", "") || key).trim(); // NEW
+                if (!PlanMath.hasYmd(start) || !PlanMath.hasYmd(end)) { // NEW
+                    diagnostics.push(`Diagram harvest window for "${label}" is incomplete and was ignored.`); // NEW
+                    continue; // NEW
+                } // NEW
+                if (start > end) { // NEW
+                    diagnostics.push(`Diagram harvest window for "${label}" has start date after end date and was ignored.`); // NEW
+                    continue; // NEW
+                } // NEW
+                if (!harvestWindowOverlapsYear(tilerGroup, year)) continue; // NEW
+
+                const currentRange = actualHarvestDateRangeByCropKey.get(key); // NEW
+                actualHarvestDateRangeByCropKey.set(key, { // NEW
+                    start: currentRange && currentRange.start < start ? currentRange.start : start, // NEW
+                    end: currentRange && currentRange.end > end ? currentRange.end : end // NEW
+                }); // NEW
+
+                const kgPerPlant = Number(cropKeyToKgPerPlant.get(key)); // NEW
+                if (!Number.isFinite(kgPerPlant) || kgPerPlant <= 0) continue; // NEW
+                PlanMath.addTotalKgAcrossWindowProrated( // NEW
+                    ensureSeries(key), // NEW
+                    weekStarts, // NEW
+                    start, // NEW
+                    end, // NEW
+                    count * kgPerPlant, // NEW
+                    year // NEW
+                ); // NEW
+            } // NEW
+
+            return { // NEW
+                actualPlantsByCropKey, // NEW
+                actualHarvestSeriesByCropKey, // NEW
+                actualHarvestDateRangeByCropKey, // NEW
+                diagnostics // NEW
+            }; // NEW
+        } // NEW
+
         /**
          * Scans module descendants once and returns all diagram facts needed by recalculation. // NEW
          */
-        function readYearFacts(moduleCell, year, weekStarts, cropKeyToKgPerPlant) { // NEW
+        function readYearFacts(moduleCell, year, weekStarts, cropKeyToKgPerPlant, plan) { // CHANGE
             const tilerGroups = getTilerGroups(moduleCell);
-            return {
-                actualPlantsByCropKey: actualPlantsMapFromTilers(tilerGroups, year),
-                actualHarvestSeriesByCropKey: buildActualHarvestSeriesFromTilers(
-                    tilerGroups,
-                    year,
-                    weekStarts,
-                    cropKeyToKgPerPlant
-                )
-            };
+            return collectYearFactsFromTilers(tilerGroups, year, weekStarts, cropKeyToKgPerPlant, plan); // CHANGE
         }
 
         return {
@@ -1321,6 +1668,8 @@ Draw.loadPlugin(function (ui) {
             harvestStartYmd,
             harvestEndYmd,
             harvestWindowOverlapsYear,
+            readGardenCropCandidates, // NEW
+            createPlanCropKeyResolver, // NEW
             readYearFacts
         };
     })();
@@ -1356,8 +1705,13 @@ Draw.loadPlugin(function (ui) {
 
         function cropAvailableEndYmd(crop) { // NEW
             if (!PlanMath.hasYmd(crop && crop.harvestEnd)) return null;
-            const shelfDays = Number.isFinite(Number(crop.shelfLifeDays)) ? Number(crop.shelfLifeDays) : 0;
-            return addDaysYmd(crop.harvestEnd, shelfDays) || crop.harvestEnd;
+            return String(crop.harvestEnd); // CHANGE
+        } // CHANGE
+
+        function legacyShelfExtendedEndYmd(crop, harvestEnd) { // NEW
+            if (!PlanMath.hasYmd(harvestEnd)) return null; // NEW
+            const shelfDays = Math.max(0, Math.trunc(Number(crop && crop.shelfLifeDays) || 0)); // NEW
+            return shelfDays > 0 ? addDaysYmd(harvestEnd, shelfDays) : null; // NEW
         }
 
         function ymdMin(a, b) { // NEW
@@ -1390,6 +1744,8 @@ Draw.loadPlugin(function (ui) {
             const harvestStart = crop.harvestStart;
             const harvestEnd = crop.harvestEnd;
             const availableEnd = cropAvailableEndYmd(crop);
+            const previousHarvestEnd = oldSnapshot && oldSnapshot.he; // NEW
+            const previousLegacyEnd = legacyShelfExtendedEndYmd(crop, previousHarvestEnd); // NEW
             const csa = plan && plan.csa ? plan.csa : null;
 
             crop.__sync_lastHarvestStart = crop.__sync_lastHarvestStart ?? (oldSnapshot && oldSnapshot.hs) ?? "";
@@ -1399,6 +1755,7 @@ Draw.loadPlugin(function (ui) {
             crop.market = crop.market || [];
             for (const marketLine of crop.market) {
                 if (!marketLine) continue;
+                if (previousLegacyEnd && String(marketLine.to || "") === previousLegacyEnd) marketLine.to = previousHarvestEnd; // NEW
                 if (shouldAutoReplaceDate(marketLine.from, crop.__sync_lastHarvestStart) && PlanMath.hasYmd(harvestStart)) {
                     marketLine.from = harvestStart;
                 }
@@ -1418,6 +1775,7 @@ Draw.loadPlugin(function (ui) {
             if (csa && Array.isArray(csa.components)) {
                 for (const component of csa.components) {
                     if (!component || component.cropId !== crop.id) continue;
+                    if (previousLegacyEnd && String(component.end || "") === previousLegacyEnd) component.end = previousHarvestEnd; // NEW
                     const desiredStart = PlanMath.hasYmd(harvestStart) ? ymdMax(harvestStart, csa.start) : csa.start;
                     if (shouldAutoReplaceDate(component.start, crop.__sync_lastHarvestStart) && PlanMath.hasYmd(desiredStart)) {
                         component.start = desiredStart;
@@ -1474,31 +1832,10 @@ Draw.loadPlugin(function (ui) {
             }
         }
 
-        function deriveHarvestWindow(crop, weekStarts, series) { // NEW
-            if (crop.useActualHarvest === false) return;
-            let first = -1;
-            let last = -1;
-            for (let index = 0; index < series.length; index++) {
-                if (Number(series[index]) > 0) {
-                    first = index;
-                    break;
-                }
-            }
-            for (let index = series.length - 1; index >= 0; index--) {
-                if (Number(series[index]) > 0) {
-                    last = index;
-                    break;
-                }
-            }
-            if (first < 0 || last < 0) return;
-            crop.harvestStart = String(weekStarts[first].iso);
-            crop.harvestEnd = PlanMath.toIsoDateLocal(new Date(PlanMath.addDaysMs(weekStarts[last].ms, 6)));
-        }
-
         function recalculate(moduleCell, year, plan) { // NEW
             PlanSchema.normalizeForRuntime(plan, year);
             const selectedYear = Number(plan.year);
-            const weekStartDow = Number.isFinite(Number(plan.weekStartDow)) ? Number(plan.weekStartDow) : 1;
+            const weekStartDow = plan.weekStartDow; // CHANGE
             const weekStarts = PlanMath.buildWeekStartsForYearLocal(selectedYear, weekStartDow);
             const kgPerPlantByCropKey = new Map();
 
@@ -1512,7 +1849,8 @@ Draw.loadPlugin(function (ui) {
                 moduleCell,
                 selectedYear,
                 weekStarts,
-                kgPerPlantByCropKey
+                kgPerPlantByCropKey,
+                plan // CHANGE
             );
             const beforeHarvestById = new Map();
 
@@ -1526,13 +1864,17 @@ Draw.loadPlugin(function (ui) {
                 });
                 crop.__actualHarvestWeeklyKg = diagramFacts.actualHarvestSeriesByCropKey.get(key)
                     || Array(weekStarts.length).fill(0);
-                deriveHarvestWindow(crop, weekStarts, crop.__actualHarvestWeeklyKg);
+                const exactRange = diagramFacts.actualHarvestDateRangeByCropKey.get(key); // CHANGE
+                if (crop.useActualHarvest !== false && exactRange) { // CHANGE
+                    crop.harvestStart = exactRange.start; // CHANGE
+                    crop.harvestEnd = exactRange.end; // CHANGE
+                } // CHANGE
             }
 
             for (const crop of plan.crops) syncCropDatesIfEnabled(plan, crop, beforeHarvestById.get(crop.id));
             autoFillAndClampCsa(plan);
 
-            const warnings = [];
+            const warnings = Array.from(diagramFacts.diagnostics || []); // CHANGE
             const weekly = PlanMath.computePlanWeekly(plan, warnings);
             const cropTotals = PlanMath.computePlanCropTotals(plan, weekly);
             const totalsById = new Map(cropTotals.map(row => [String(row.crop.id), row]));
@@ -1617,8 +1959,10 @@ Draw.loadPlugin(function (ui) {
             return { // NEW
                 selectedCropId: resolveSelectedCropId(crops, "", 0), // NEW
                 activeTab: "basics", // NEW
-                previewExpanded: false, // NEW
                 csaExpanded: false, // NEW
+                demandExpanded: true, // NEW
+                cropPlanExpanded: true, // NEW
+                planCheckExpanded: false, // CHANGE
                 hadBlockingErrors: false, // NEW
                 hadCsaErrors: false, // NEW
                 baselineSnapshot: "", // NEW
@@ -1690,10 +2034,10 @@ Draw.loadPlugin(function (ui) {
         function syncExpansionState(state, dashboard, csaErrors) { // NEW
             const hasBlockingErrors = !!(dashboard && dashboard.validationErrors && dashboard.validationErrors.length); // NEW
             const hasCsaErrors = !!(csaErrors && csaErrors.length); // NEW
-            const changes = { previewChanged: false, csaChanged: false }; // NEW
-            if (hasBlockingErrors && !state.hadBlockingErrors && !state.previewExpanded) { // NEW
-                state.previewExpanded = true; // NEW
-                changes.previewChanged = true; // NEW
+            const changes = { planCheckChanged: false, csaChanged: false }; // CHANGE
+            if (hasBlockingErrors && !state.hadBlockingErrors && !state.planCheckExpanded) { // CHANGE
+                state.planCheckExpanded = true; // CHANGE
+                changes.planCheckChanged = true; // CHANGE
             } // NEW
             if (hasCsaErrors && !state.hadCsaErrors && !state.csaExpanded) { // NEW
                 state.csaExpanded = true; // NEW
@@ -1708,6 +2052,7 @@ Draw.loadPlugin(function (ui) {
             const settings = options || {}; // NEW
             const rows = runtime && Array.isArray(runtime.cropTotals) ? runtime.cropTotals : []; // NEW
             const rowsById = new Map(rows.map(row => [String(row && row.crop && row.crop.id || ""), row])); // NEW
+            const weekly = runtime && runtime.weekly; // NEW
             const cropMetrics = []; // NEW
             let targetKg = 0; // NEW
             let supplyKg = 0; // NEW
@@ -1718,10 +2063,19 @@ Draw.loadPlugin(function (ui) {
 
             for (const crop of ((plan && plan.crops) || [])) { // NEW
                 const row = rowsById.get(String(crop.id || "")) || { targetKg: 0, supplyKg: 0, plantsReq: NaN, seedsReq: NaN }; // NEW
-                const target = Math.max(0, Number(row.targetKg) || 0); // NEW
-                const supply = Math.max(0, Number(row.supplyKg) || 0); // NEW
-                const shortage = Math.max(0, target - supply); // NEW
-                const surplus = Math.max(0, supply - target); // NEW
+                const chartSummary = weekly // NEW
+                    ? PlanMath.summarizePlanChartModel(PlanMath.buildPlanChartModel(weekly, String(crop.id))) // NEW
+                    : { // NEW
+                        targetKg: Math.max(0, Number(row.targetKg) || 0), // NEW
+                        harvestKg: Math.max(0, Number(row.supplyKg) || 0), // NEW
+                        usableSupplyKg: Math.min(Math.max(0, Number(row.targetKg) || 0), Math.max(0, Number(row.supplyKg) || 0)), // NEW
+                        shortKg: Math.max(0, (Number(row.targetKg) || 0) - (Number(row.supplyKg) || 0)), // NEW
+                        expiredKg: 0 // NEW
+                    }; // NEW
+                const target = chartSummary.targetKg; // CHANGE
+                const supply = chartSummary.harvestKg; // CHANGE
+                const shortage = chartSummary.shortKg; // CHANGE
+                const surplus = Math.max(0, supply - chartSummary.usableSupplyKg); // CHANGE
                 const errors = PlanSchema.validateCrop(crop); // NEW
                 if (target > EPS && (!PlanMath.hasYmd(crop.harvestStart) || !PlanMath.hasYmd(crop.harvestEnd))) { // NEW
                     errors.push(`Crop "${crop.plant || crop.id}" missing harvest window.`); // NEW
@@ -1730,7 +2084,8 @@ Draw.loadPlugin(function (ui) {
 
                 if (errors.length > 0) status = "Missing data"; // NEW
                 else if (target <= EPS) status = "No demand"; // NEW
-                else if (shortage > EPS) status = "Short"; // NEW
+                else if (shortage > EPS && supply + EPS < target) status = "Short"; // CHANGE
+                else if (shortage > EPS) status = "Expired / timing issue"; // NEW
                 else if (surplus > EPS) status = "Surplus"; // NEW
 
                 targetKg += target; // NEW
@@ -1750,6 +2105,7 @@ Draw.loadPlugin(function (ui) {
                     supplyKg: supply,
                     shortKg: shortage,
                     surplusKg: surplus,
+                    expiredKg: chartSummary.expiredKg, // NEW
                     plantsReq: Number(row.plantsReq),
                     seedsReq: Number(row.seedsReq),
                     errors,
@@ -1769,6 +2125,7 @@ Draw.loadPlugin(function (ui) {
             const badges = []; // NEW
             if (cropMetrics.some(metric => metric.status === "Missing data")) badges.push("Missing data"); // NEW
             if (cropMetrics.some(metric => metric.status === "Short")) badges.push("Short"); // NEW
+            if (cropMetrics.some(metric => metric.status === "Expired / timing issue")) badges.push("Expired / timing issue"); // NEW
             if (cropMetrics.some(metric => metric.status === "Surplus")) badges.push("Surplus"); // NEW
             if (cropMetrics.length > 0 && cropMetrics.every(metric => metric.status === "OK" || metric.status === "No demand")) badges.push("OK"); // NEW
             if (actualHarvestActive) badges.push("Actual harvest active"); // NEW
@@ -1824,59 +2181,128 @@ Draw.loadPlugin(function (ui) {
         URL.revokeObjectURL(url);
     }
 
-    function drawPlanChart(canvas, weekly, seriesTarget, seriesSupply) {
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-        const t = seriesTarget || weekly.targetTotal || [];
-        const s = seriesSupply || weekly.supplyTotal || [];
+    /** Defines the chart's visual encodings once for rendering, legend controls, and hover details. */ // NEW
+    const PLAN_CHART_SERIES = Object.freeze([ // NEW
+        { id: "target", label: "Target demand", tooltipLabel: "Target", field: "targetKg", kind: "line", color: "#222", lineWidth: 2, dash: [], help: "Weekly demand required by market and CSA plans." }, // NEW
+        { id: "available", label: "Available supply", tooltipLabel: "Available", field: "availableSupplyKg", kind: "dashed-line", color: "#1f7a3d", lineWidth: 2, dash: [6, 3], help: "Harvested inventory available before weekly demand is allocated." }, // NEW
+        { id: "usable", label: "Usable supply", tooltipLabel: "Usable", field: "usableSupplyKg", kind: "line", color: "#62a96b", lineWidth: 1.5, dash: [], help: "Available supply used to satisfy this week's demand." }, // NEW
+        { id: "harvest", label: "Harvest", tooltipLabel: "Harvested", field: "harvestKg", kind: "bar", color: "#4285f4", fill: "rgba(66, 133, 244, 0.34)", help: "Estimated harvested weight added during the week." }, // NEW
+        { id: "shortage", label: "Shortage", tooltipLabel: "Short", field: "shortKg", kind: "area", color: "#d63939", fill: "rgba(214, 57, 57, 0.20)", help: "Demand that remains unmet after available supply is used." }, // NEW
+        { id: "expired", label: "Expired", tooltipLabel: "Expired", field: "expiredKg", kind: "point", color: "#d97706", help: "Stored harvest that reaches the end of its shelf life this week." } // NEW
+    ]); // NEW
 
-        const n = Math.max(t.length, s.length);
-        if (n === 0) { ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
+    function isPlanChartSeriesVisible(visibleSeriesIds, seriesId) { // NEW
+        return !visibleSeriesIds || visibleSeriesIds.has(seriesId); // NEW
+    } // NEW
 
-        const maxV = Math.max(1, ...t, ...s);
-        const w = canvas.width, h = canvas.height;
-        const padL = 40, padR = 10, padT = 10, padB = 24;
+    function drawPlanChart(canvas, chartModel, visibleSeriesIds) { // CHANGE
+        const ctx = canvas.getContext("2d"); // CHANGE
+        const rows = Array.isArray(chartModel) ? chartModel : []; // NEW
+        const seriesById = new Map(PLAN_CHART_SERIES.map(series => [series.id, series])); // NEW
+        if (!ctx) return null; // CHANGE
+        const width = canvas.width; // CHANGE
+        const height = canvas.height; // CHANGE
+        ctx.clearRect(0, 0, width, height); // CHANGE
+        if (!rows.length) return null; // CHANGE
 
-        ctx.clearRect(0, 0, w, h);
+        const padLeft = 48; // CHANGE
+        const padRight = 14; // CHANGE
+        const padTop = 12; // CHANGE
+        const padBottom = 28; // CHANGE
+        const plotRight = width - padRight; // NEW
+        const plotBottom = height - padBottom; // NEW
+        const plotWidth = plotRight - padLeft; // NEW
+        const plotHeight = plotBottom - padTop; // NEW
+        const step = plotWidth / rows.length; // NEW
+        const weekCenters = rows.map((row, index) => padLeft + ((index + 0.5) * step)); // NEW
+        const maxValue = Math.max(1, ...rows.flatMap(row => [ // CHANGE
+            row.targetKg, // NEW
+            row.harvestKg, // NEW
+            row.availableSupplyKg, // NEW
+            row.usableSupplyKg, // NEW
+            row.expiredKg // NEW
+        ]).map(value => Math.max(0, Number(value) || 0))); // CHANGE
+        const y = value => plotBottom - ((Math.max(0, Number(value) || 0) / maxValue) * plotHeight); // NEW
 
-        ctx.strokeStyle = "#999";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(padL, padT);
-        ctx.lineTo(padL, h - padB);
-        ctx.lineTo(w - padR, h - padB);
-        ctx.stroke();
+        ctx.font = "10px Arial"; // NEW
+        ctx.textBaseline = "middle"; // NEW
+        ctx.lineWidth = 1; // CHANGE
+        for (let tick = 0; tick <= 4; tick++) { // NEW
+            const value = maxValue * tick / 4; // NEW
+            const tickY = y(value); // NEW
+            ctx.strokeStyle = tick === 0 ? "#999" : "#e4e4e4"; // NEW
+            ctx.beginPath(); // CHANGE
+            ctx.moveTo(padLeft, tickY); // CHANGE
+            ctx.lineTo(plotRight, tickY); // CHANGE
+            ctx.stroke(); // CHANGE
+            ctx.fillStyle = "#555"; // NEW
+            ctx.textAlign = "right"; // NEW
+            ctx.fillText(`${value.toFixed(value >= 10 ? 0 : 1)} kg`, padLeft - 5, tickY); // NEW
+        } // NEW
 
-        function x(i) { return padL + (i * (w - padL - padR) / Math.max(1, n - 1)); }
-        function y(v) {
-            const frac = v / maxV;
-            return (h - padB) - frac * (h - padT - padB);
-        }
+        let previousMonth = ""; // NEW
+        for (let index = 0; index < rows.length; index++) { // NEW
+            const week = String(rows[index].week || ""); // NEW
+            const month = week.slice(0, 7); // NEW
+            if (!month || month === previousMonth) continue; // NEW
+            const boundaryX = padLeft + (index * step); // NEW
+            ctx.strokeStyle = "#d4d4d4"; // NEW
+            ctx.beginPath(); // NEW
+            ctx.moveTo(boundaryX, padTop); // NEW
+            ctx.lineTo(boundaryX, plotBottom); // NEW
+            ctx.stroke(); // NEW
+            ctx.fillStyle = "#666"; // NEW
+            ctx.textAlign = "left"; // NEW
+            ctx.textBaseline = "alphabetic"; // NEW
+            ctx.fillText(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(week.slice(5, 7)) - 1] || "", boundaryX + 2, height - 8); // NEW
+            previousMonth = month; // NEW
+        } // NEW
 
-        ctx.strokeStyle = "#000";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        for (let i = 0; i < n; i++) {
-            const v = t[i] || 0;
-            if (i === 0) ctx.moveTo(x(i), y(v)); else ctx.lineTo(x(i), y(v));
-        }
-        ctx.stroke();
-        ctx.fillStyle = "#000";
-        ctx.fillText("Target", padL + 6, padT + 12);
+        const barWidth = Math.max(2, Math.min(12, step * 0.58)); // NEW
+        for (let index = 0; index < rows.length; index++) { // NEW
+            const row = rows[index]; // NEW
+            const centerX = weekCenters[index]; // NEW
+            if (isPlanChartSeriesVisible(visibleSeriesIds, "harvest")) { // NEW
+                const harvestTop = y(row.harvestKg); // NEW
+                ctx.fillStyle = seriesById.get("harvest").fill; // CHANGE
+                ctx.fillRect(centerX - (barWidth / 2), harvestTop, barWidth, plotBottom - harvestTop); // NEW
+            } // NEW
+            if (isPlanChartSeriesVisible(visibleSeriesIds, "shortage") && row.shortKg > 0) { // CHANGE
+                const targetY = y(row.targetKg); // NEW
+                const usableY = y(row.usableSupplyKg); // NEW
+                ctx.fillStyle = seriesById.get("shortage").fill; // CHANGE
+                ctx.fillRect(centerX - (step * 0.38), targetY, step * 0.76, Math.max(2, usableY - targetY)); // NEW
+            } // NEW
+            if (isPlanChartSeriesVisible(visibleSeriesIds, "expired") && row.expiredKg > 0) { // CHANGE
+                ctx.fillStyle = seriesById.get("expired").color; // CHANGE
+                ctx.beginPath(); // NEW
+                ctx.arc(centerX, y(row.expiredKg), 3, 0, Math.PI * 2); // NEW
+                ctx.fill(); // NEW
+            } // NEW
+        } // NEW
 
-        ctx.strokeStyle = "#555";
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6, 4]);
-        ctx.beginPath();
-        for (let i = 0; i < n; i++) {
-            const v = s[i] || 0;
-            if (i === 0) ctx.moveTo(x(i), y(v)); else ctx.lineTo(x(i), y(v));
-        }
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = "#555";
-        ctx.fillText("Supply", padL + 60, padT + 12);
-    }
+        function drawLine(field, color, lineWidth, dash) { // NEW
+            ctx.strokeStyle = color; // NEW
+            ctx.lineWidth = lineWidth; // NEW
+            ctx.setLineDash(dash || []); // NEW
+            ctx.beginPath(); // NEW
+            for (let index = 0; index < rows.length; index++) { // NEW
+                const pointY = y(rows[index][field]); // NEW
+                if (index === 0) ctx.moveTo(weekCenters[index], pointY); // NEW
+                else ctx.lineTo(weekCenters[index], pointY); // NEW
+            } // NEW
+            ctx.stroke(); // NEW
+            ctx.setLineDash([]); // NEW
+        } // NEW
+
+        for (const series of PLAN_CHART_SERIES) { // NEW
+            if ((series.kind === "line" || series.kind === "dashed-line") && isPlanChartSeriesVisible(visibleSeriesIds, series.id)) { // NEW
+                drawLine(series.field, series.color, series.lineWidth, series.dash); // NEW
+            } // NEW
+        } // NEW
+
+        return { rows, weekCenters, plotLeft: padLeft, plotRight, step, maxValue }; // CHANGE
+    } // CHANGE
 
     function renderHarvestDots(hostEl, weekStarts, weeklyKg) { // NEW
         if (!hostEl) return; // NEW
@@ -1902,15 +2328,22 @@ Draw.loadPlugin(function (ui) {
         function open(moduleCell, year) { // NEW
             let currentYear = Number(year); // NEW
             const existing = PlanRepository.loadPlanForYear(moduleCell, currentYear); // NEW
+            let loadedExistingForCurrentYear = !!existing; // NEW
             const plan = PlanSchema.normalizeForRuntime(existing || PlanSchema.createEmptyPlan(currentYear), currentYear); // NEW
             const state = YearPlanDashboard.createState(plan); // NEW
             const session = SessionController.start(moduleCell, currentYear, plan); // NEW
             const varietyCache = new Map(); // NEW
             const methodCache = new Map(); // NEW
+            const addCropOptionById = new Map(); // NEW
+            let addCropOptionsLoadVersion = 0; // NEW
             let runtime = null; // NEW
             let dashboard = null; // NEW
             let refreshTimer = null; // NEW
+            let pendingRefreshOptions = null; // NEW
             let editorRefs = {}; // NEW
+            let demandRefs = {}; // NEW
+            let chartHitModel = null; // NEW
+            const visibleChartSeriesIds = new Set(PLAN_CHART_SERIES.map(series => series.id)); // NEW
 
             const wrap = document.createElement("div"); // NEW
             wrap.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;"; // NEW
@@ -1919,15 +2352,30 @@ Draw.loadPlugin(function (ui) {
             const style = document.createElement("style"); // NEW
             style.textContent = ` /* NEW */
                 .yp-dashboard-grid{display:grid;grid-template-columns:280px minmax(0,1fr);gap:12px;align-items:start}
+                .yp-strip-box{border:1px solid #ddd;border-radius:8px;background:#fff;overflow:hidden}
+                .yp-strip-header{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:0;background:#f7f7f7;cursor:pointer;text-align:left;font:12px Arial,sans-serif}
+                .yp-strip-title{flex:0 0 auto;font-weight:700;font-size:13px}
+                .yp-strip-summary{flex:1 1 auto;min-width:0;color:#555;overflow-wrap:anywhere}
+                .yp-strip-toggle{flex:0 0 auto;color:#333}
+                .yp-strip-details{padding:10px;border-top:1px solid #ddd}
                 .yp-field-grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:10px}
                 .yp-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
                 .yp-line{display:grid;grid-template-columns:minmax(70px,1fr) 120px 150px 150px auto;gap:8px;align-items:center}
                 .yp-package-line{display:grid;grid-template-columns:32px minmax(90px,1fr) 26px 100px 100px 90px auto;gap:8px;align-items:center}
+                .yp-chart-legend{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;margin:0 0 6px}
+                .yp-chart-legend-item{display:inline-flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid #aaa;border-radius:999px;background:#fff;color:#222;cursor:pointer;font:12px Arial,sans-serif}
+                .yp-chart-legend-item[aria-pressed="false"]{opacity:.48;background:#f2f2f2;text-decoration:line-through}
+                .yp-chart-legend-swatch{position:relative;display:inline-block;flex:0 0 22px;width:22px;height:10px}
+                .yp-chart-legend-swatch[data-kind="line"]::before,.yp-chart-legend-swatch[data-kind="dashed-line"]::before{content:"";position:absolute;left:0;right:0;top:4px;border-top:2px solid var(--yp-series-color)}
+                .yp-chart-legend-swatch[data-kind="dashed-line"]::before{border-top-style:dashed}
+                .yp-chart-legend-swatch[data-kind="bar"]{height:10px;border:1px solid var(--yp-series-color);background:var(--yp-series-fill)}
+                .yp-chart-legend-swatch[data-kind="area"]{height:10px;border:1px solid var(--yp-series-color);background:var(--yp-series-fill)}
+                .yp-chart-legend-swatch[data-kind="point"]::before{content:"";position:absolute;left:7px;top:1px;width:8px;height:8px;border-radius:50%;background:var(--yp-series-color)}
                 @media(max-width:850px){
                     .yp-dashboard-grid{grid-template-columns:1fr}
                     .yp-field-grid{grid-template-columns:1fr}
                     .yp-line,.yp-package-line{display:flex;flex-wrap:wrap}
-                    .yp-preview-grid{grid-template-columns:1fr!important}
+                    .yp-plan-check-grid{grid-template-columns:1fr!important}
                 }`; // NEW
             card.appendChild(style); // NEW
 
@@ -1940,7 +2388,7 @@ Draw.loadPlugin(function (ui) {
             const summaryBox = document.createElement("div"); // NEW
             summaryBox.style.cssText = "padding:8px 12px;border-bottom:1px solid #ddd;background:#fafafa;"; // NEW
             const body = document.createElement("div"); // NEW
-            body.style.cssText = "padding:12px;overflow:auto;flex:1 1 auto;min-height:0;"; // NEW
+            body.style.cssText = "padding:12px;overflow:auto;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:10px;"; // CHANGE
             const addRow = document.createElement("div"); // NEW
             addRow.className = "yp-row"; // NEW
             addRow.style.marginBottom = "12px"; // NEW
@@ -1960,50 +2408,66 @@ Draw.loadPlugin(function (ui) {
             const editorBox = document.createElement("div"); // NEW
             editorBox.style.cssText = "border:1px solid #ddd;border-radius:8px;background:#fff;min-height:280px;"; // NEW
             const csaBox = document.createElement("div"); // NEW
-            csaBox.style.cssText = "border:1px solid #ddd;border-radius:8px;background:#fff;overflow:hidden;"; // CHANGE
+            const demandBox = document.createElement("div"); // NEW
+            const cropPlanBox = document.createElement("div"); // NEW
+            const planCheckBox = document.createElement("div"); // NEW
+            csaBox.dataset.yearPlanStrip = "csa"; // NEW
+            demandBox.dataset.yearPlanStrip = "demand"; // NEW
+            cropPlanBox.dataset.yearPlanStrip = "crop-plan"; // NEW
+            planCheckBox.dataset.yearPlanStrip = "plan-check"; // NEW
             mainColumn.appendChild(editorBox); // NEW
-            mainColumn.appendChild(csaBox); // NEW
             dashboardGrid.appendChild(sidebar); // NEW
             dashboardGrid.appendChild(mainColumn); // NEW
-            body.appendChild(addRow); // NEW
-            body.appendChild(dashboardGrid); // NEW
+            body.appendChild(cropPlanBox); // CHANGE
+            body.appendChild(demandBox); // CHANGE
+            body.appendChild(csaBox); // CHANGE
+            body.appendChild(planCheckBox); // NEW
 
-            const previewDock = document.createElement("div"); // NEW
-            previewDock.style.cssText = "border-top:1px solid #ccc;background:#fff;flex:0 0 auto;"; // NEW
-            const previewBar = document.createElement("div"); // NEW
-            previewBar.style.cssText = "padding:7px 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;background:#f7f7f7;cursor:pointer;"; // NEW
-            const previewSummary = document.createElement("div"); // NEW
-            previewSummary.style.fontWeight = "700"; // NEW
-            const previewToggle = mkBtn("Show plan check"); // CHANGE
-            const previewDetails = document.createElement("div"); // NEW
-            previewDetails.style.cssText = "display:none;max-height:310px;overflow:auto;padding:10px 12px;border-top:1px solid #ddd;"; // NEW
-            const previewGrid = document.createElement("div"); // NEW
-            previewGrid.className = "yp-preview-grid"; // NEW
-            previewGrid.style.cssText = "display:grid;grid-template-columns:minmax(0,1fr) minmax(340px,1fr);gap:12px;"; // NEW
+            const planCheckGrid = document.createElement("div"); // CHANGE
+            planCheckGrid.className = "yp-plan-check-grid"; // CHANGE
+            planCheckGrid.style.cssText = "display:grid;grid-template-columns:minmax(0,1fr) minmax(340px,1fr);gap:12px;"; // CHANGE
             const chartBox = document.createElement("div"); // NEW
+            chartBox.style.position = "relative"; // NEW
             const chartControls = document.createElement("div"); // NEW
             chartControls.className = "yp-row"; // NEW
             chartControls.style.marginBottom = "6px"; // NEW
             const cropFilterSel = document.createElement("select"); // NEW
+            const planCheckSummary = document.createElement("div"); // NEW
+            planCheckSummary.className = "yp-plan-check-summary"; // NEW
+            planCheckSummary.style.cssText = "display:flex;flex-wrap:wrap;gap:5px 14px;padding:7px 8px;margin-bottom:6px;border:1px solid #e0e0e0;border-radius:6px;background:#fafafa;"; // NEW
+            const chartLegend = document.createElement("div"); // NEW
+            chartLegend.className = "yp-chart-legend"; // NEW
+            chartLegend.setAttribute("role", "group"); // NEW
+            chartLegend.setAttribute("aria-label", "Chart series visibility"); // NEW
+            const chartLegendHelp = document.createElement("div"); // NEW
+            chartLegendHelp.className = "yp-chart-legend-help"; // NEW
+            chartLegendHelp.style.cssText = "margin:-1px 0 6px;color:#666;font-size:11px;"; // NEW
+            chartLegendHelp.textContent = "Toggle chart series. Plan Check calculations and totals are unchanged."; // NEW
             const canvas = document.createElement("canvas"); // NEW
             canvas.width = 900; // NEW
-            canvas.height = 190; // NEW
-            canvas.style.cssText = "width:100%;height:190px;border:1px solid #eee;"; // NEW
+            canvas.height = 240; // CHANGE
+            canvas.style.cssText = "width:100%;height:240px;border:1px solid #eee;"; // CHANGE
+            const chartHiddenMessage = document.createElement("div"); // NEW
+            chartHiddenMessage.className = "yp-plan-chart-hidden-message"; // NEW
+            chartHiddenMessage.style.cssText = "display:none;position:absolute;left:50%;top:62%;transform:translate(-50%,-50%);pointer-events:none;padding:6px 9px;border:1px solid #bbb;border-radius:5px;background:rgba(255,255,255,.94);color:#555;font-weight:700;"; // NEW
+            chartHiddenMessage.textContent = "All chart series hidden"; // NEW
+            const chartTooltip = document.createElement("div"); // NEW
+            chartTooltip.className = "yp-plan-chart-tooltip"; // NEW
+            chartTooltip.style.cssText = "display:none;position:absolute;z-index:2;pointer-events:none;min-width:170px;padding:7px 8px;border:1px solid #777;border-radius:5px;background:rgba(255,255,255,.97);box-shadow:0 3px 12px rgba(0,0,0,.18);line-height:1.45;"; // NEW
             const totalsBox = document.createElement("div"); // NEW
             const diagnosticsBox = document.createElement("div"); // NEW
             diagnosticsBox.style.marginTop = "10px"; // NEW
             chartControls.appendChild(document.createTextNode("Crop filter")); // NEW
             chartControls.appendChild(cropFilterSel); // NEW
             chartBox.appendChild(chartControls); // NEW
+            chartBox.appendChild(planCheckSummary); // NEW
+            chartBox.appendChild(chartLegend); // NEW
+            chartBox.appendChild(chartLegendHelp); // NEW
             chartBox.appendChild(canvas); // NEW
-            previewGrid.appendChild(chartBox); // NEW
-            previewGrid.appendChild(totalsBox); // NEW
-            previewDetails.appendChild(previewGrid); // NEW
-            previewDetails.appendChild(diagnosticsBox); // NEW
-            previewBar.appendChild(previewSummary); // NEW
-            previewBar.appendChild(previewToggle); // NEW
-            previewDock.appendChild(previewBar); // NEW
-            previewDock.appendChild(previewDetails); // NEW
+            chartBox.appendChild(chartHiddenMessage); // NEW
+            chartBox.appendChild(chartTooltip); // NEW
+            planCheckGrid.appendChild(chartBox); // CHANGE
+            planCheckGrid.appendChild(totalsBox); // CHANGE
 
             const footer = document.createElement("div"); // NEW
             footer.style.cssText = "padding:9px 12px;border-top:1px solid #ccc;background:#fff;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"; // NEW
@@ -2022,7 +2486,6 @@ Draw.loadPlugin(function (ui) {
             card.appendChild(header); // NEW
             card.appendChild(summaryBox); // NEW
             card.appendChild(body); // NEW
-            card.appendChild(previewDock); // NEW
             card.appendChild(footer); // NEW
             wrap.appendChild(card); // NEW
             document.body.appendChild(wrap); // NEW
@@ -2059,6 +2522,51 @@ Draw.loadPlugin(function (ui) {
                 return select; // NEW
             } // NEW
 
+            /**
+             * Renders one persistent collapsible strip shell and rebuilds its details only when requested. // NEW
+             */ // NEW
+            function renderStripBox(box, config) { // NEW
+                const settings = config || {}; // NEW
+                let shell = box.__yearPlanStrip; // NEW
+                if (!shell) { // NEW
+                    box.className = "yp-strip-box"; // NEW
+                    const header = document.createElement("button"); // NEW
+                    header.type = "button"; // NEW
+                    header.className = "yp-strip-header"; // NEW
+                    const title = document.createElement("span"); // NEW
+                    title.className = "yp-strip-title"; // NEW
+                    const summary = document.createElement("span"); // NEW
+                    summary.className = "yp-strip-summary"; // NEW
+                    const toggle = document.createElement("span"); // NEW
+                    toggle.className = "yp-strip-toggle"; // NEW
+                    const details = document.createElement("div"); // NEW
+                    details.className = "yp-strip-details"; // NEW
+                    details.id = settings.detailsId || Env.uid("yp-strip-details"); // NEW
+                    header.setAttribute("aria-controls", details.id); // NEW
+                    header.appendChild(title); // NEW
+                    header.appendChild(summary); // NEW
+                    header.appendChild(toggle); // NEW
+                    box.appendChild(header); // NEW
+                    box.appendChild(details); // NEW
+                    shell = { header, title, summary, toggle, details, detailsBuilt: false, onToggle: null }; // NEW
+                    header.addEventListener("click", () => { if (shell.onToggle) shell.onToggle(); }); // NEW
+                    box.__yearPlanStrip = shell; // NEW
+                } // NEW
+                shell.onToggle = settings.onToggle || null; // NEW
+                shell.title.textContent = String(settings.title || ""); // NEW
+                shell.summary.textContent = String(settings.summaryText || ""); // NEW
+                shell.toggle.textContent = settings.expanded ? "Collapse" : "Expand"; // NEW
+                shell.header.setAttribute("aria-expanded", settings.expanded ? "true" : "false"); // NEW
+                shell.details.style.display = settings.expanded ? "block" : "none"; // NEW
+                const shouldBuild = !!settings.rebuildDetails || (!shell.detailsBuilt && (settings.expanded || settings.mountWhenCollapsed)); // NEW
+                if (shouldBuild && settings.renderDetails) { // NEW
+                    shell.details.innerHTML = ""; // NEW
+                    settings.renderDetails(shell.details); // NEW
+                    shell.detailsBuilt = true; // NEW
+                } // NEW
+                return shell; // NEW
+            } // NEW
+
             function cropLabel(crop) { // NEW
                 const plantName = String(crop && crop.plant || "").trim(); // NEW
                 const varietyName = String(crop && crop.variety || "").trim(); // NEW
@@ -2069,6 +2577,7 @@ Draw.loadPlugin(function (ui) {
 
             function statusColor(status) { // NEW
                 if (status === "Short" || status === "Missing data") return "#a33"; // NEW
+                if (status === "Expired / timing issue") return "#9a5a00"; // NEW
                 if (status === "Surplus") return "#256a36"; // NEW
                 if (status === "OK") return "#256a36"; // NEW
                 return "#666"; // NEW
@@ -2114,27 +2623,81 @@ Draw.loadPlugin(function (ui) {
                 return field; // NEW
             } // NEW
 
-            function debounceRefresh() { // NEW
+            /**
+             * Keeps one editable date pair valid without rewriting the opposite endpoint. // NEW
+             */ // NEW
+            function bindPairedDateControls(startInput, endInput, options) { // NEW
+                const settings = options || {}; // NEW
+                const diagnostic = String(settings.diagnostic || "Start date cannot be after end date."); // NEW
+                let lastStartValue = String(startInput.value || ""); // NEW
+                let lastEndValue = String(endInput.value || ""); // NEW
+
+                function updateConstraints() { // NEW
+                    startInput.max = PlanMath.hasYmd(endInput.value) ? endInput.value : ""; // NEW
+                    endInput.min = PlanMath.hasYmd(startInput.value) ? startInput.value : ""; // NEW
+                } // NEW
+
+                function syncFromInputs() { // NEW
+                    lastStartValue = String(startInput.value || ""); // NEW
+                    lastEndValue = String(endInput.value || ""); // NEW
+                    updateConstraints(); // NEW
+                } // NEW
+
+                function removeDiagnostic() { // NEW
+                    state.extraDiagnostics = (state.extraDiagnostics || []).filter(message => message !== diagnostic); // NEW
+                } // NEW
+
+                function rejectChange(input, previousValue, beforeDateRanges) { // NEW
+                    input.value = previousValue; // NEW
+                    state.extraDiagnostics = YearPlanDashboard.uniqueMessages([...(state.extraDiagnostics || []), diagnostic]); // NEW
+                    state.planCheckExpanded = true; // CHANGE
+                    updateConstraints(); // NEW
+                    refreshDerived(beforeDateRanges); // NEW
+                } // NEW
+
+                function handleChange(changedField) { // NEW
+                    const beforeDateRanges = captureDateRangeSnapshot(); // NEW
+                    const nextStart = String(startInput.value || ""); // NEW
+                    const nextEnd = String(endInput.value || ""); // NEW
+                    if (PlanMath.hasYmd(nextStart) && PlanMath.hasYmd(nextEnd) && nextStart > nextEnd) { // NEW
+                        rejectChange( // NEW
+                            changedField === "start" ? startInput : endInput, // NEW
+                            changedField === "start" ? lastStartValue : lastEndValue, // NEW
+                            beforeDateRanges // NEW
+                        ); // NEW
+                        return; // NEW
+                    } // NEW
+
+                    const previousPair = { start: lastStartValue, end: lastEndValue }; // NEW
+                    removeDiagnostic(); // NEW
+                    if (changedField === "start") { // NEW
+                        lastStartValue = nextStart; // NEW
+                        if (settings.setStart) settings.setStart(nextStart); // NEW
+                    } else { // NEW
+                        lastEndValue = nextEnd; // NEW
+                        if (settings.setEnd) settings.setEnd(nextEnd); // NEW
+                    } // NEW
+                    updateConstraints(); // NEW
+                    if (settings.afterCommit) settings.afterCommit(beforeDateRanges, previousPair, changedField); // NEW
+                    else refreshDerived(beforeDateRanges); // NEW
+                } // NEW
+
+                startInput.__syncPairedDateState = syncFromInputs; // NEW
+                endInput.__syncPairedDateState = syncFromInputs; // NEW
+                syncFromInputs(); // CHANGE
+                startInput.addEventListener("change", () => handleChange("start")); // NEW
+                endInput.addEventListener("change", () => handleChange("end")); // NEW
+            } // NEW
+
+            function debounceRefresh(renderOptions) { // CHANGE
+                if (renderOptions) pendingRefreshOptions = { ...(pendingRefreshOptions || {}), ...renderOptions }; // NEW
                 if (refreshTimer) clearTimeout(refreshTimer); // NEW
                 refreshTimer = setTimeout(() => { // NEW
                     refreshTimer = null; // NEW
-                    if (SessionController.isActive(session)) refreshDerived(); // NEW
+                    const options = pendingRefreshOptions; // NEW
+                    pendingRefreshOptions = null; // NEW
+                    if (SessionController.isActive(session)) refreshDerived(null, options); // CHANGE
                 }, 90); // NEW
-            } // NEW
-
-            function ensureMarketBaseTo(crop, line) { // NEW
-                if (!line || PlanMath.hasYmd(line.__baseTo)) return; // NEW
-                line.__baseTo = PlanMath.hasYmd(line.to) ? String(line.to) : (PlanMath.hasYmd(crop.harvestEnd) ? String(crop.harvestEnd) : ""); // NEW
-            } // NEW
-
-            function applyShelfToMarket(crop, line) { // NEW
-                ensureMarketBaseTo(crop, line); // NEW
-                if (PlanMath.hasYmd(line.__baseTo)) line.to = PlanRuntimeService.addDaysYmd(line.__baseTo, Math.max(0, Math.trunc(Number(crop.shelfLifeDays) || 0))) || line.to; // NEW
-            } // NEW
-
-            function removeShelfFromMarket(crop, line) { // NEW
-                ensureMarketBaseTo(crop, line); // NEW
-                if (PlanMath.hasYmd(line.__baseTo)) line.to = String(line.__baseTo); // NEW
             } // NEW
 
             function fillTemplateDropdown() { // NEW
@@ -2152,14 +2715,14 @@ Draw.loadPlugin(function (ui) {
                 plan.cropFilterId = cropFilterSel.value; // NEW
             } // NEW
 
-            function replacePlan(nextPlan, nextYear) { // NEW
+            function replacePlan(nextPlan, nextYear, loadedExisting) { // CHANGE
                 Object.keys(plan).forEach(key => delete plan[key]); // NEW
                 Object.assign(plan, PlanSchema.normalizeForRuntime(nextPlan, nextYear)); // NEW
                 currentYear = Number(nextYear); // NEW
+                loadedExistingForCurrentYear = !!loadedExisting; // NEW
                 plan.year = currentYear; // NEW
                 state.selectedCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, "", 0); // NEW
                 state.activeTab = "basics"; // NEW
-                state.csaExpanded = false; // NEW
                 state.hadBlockingErrors = false; // NEW
                 state.hadCsaErrors = false; // NEW
                 state.validationState = "idle"; // NEW
@@ -2189,7 +2752,8 @@ Draw.loadPlugin(function (ui) {
                     const cardEl = document.createElement("button"); // NEW
                     cardEl.type = "button"; // NEW
                     cardEl.style.cssText = `border:0;border-bottom:1px solid #eee;background:${selected ? "#eef4ff" : "#fff"};padding:10px;text-align:left;cursor:pointer;width:100%;`; // NEW
-                    const detail = metric.status === "Short" ? `Short ${formatKg(metric.shortKg)}` // NEW
+                    const detail = metric.status === "Short" || metric.status === "Expired / timing issue" // CHANGE
+                        ? `${metric.status} ${formatKg(metric.shortKg)}` // CHANGE
                         : metric.status === "Surplus" ? `Surplus ${formatKg(metric.surplusKg)}` // NEW
                             : metric.status; // NEW
                     cardEl.innerHTML = `<div style="font-weight:700;">${mxUtils.htmlEntities(cropLabel(metric.crop))}</div><div style="margin-top:4px;color:#555;">Target ${formatKg(metric.targetKg)} | Supply ${formatKg(metric.supplyKg)}</div><div style="margin-top:4px;color:${statusColor(metric.status)};font-weight:700;">${mxUtils.htmlEntities(detail)}</div>`; // NEW
@@ -2198,6 +2762,8 @@ Draw.loadPlugin(function (ui) {
                         state.activeTab = "basics"; // NEW
                         renderCropList(); // NEW
                         renderSelectedEditor(); // NEW
+                        renderDemandStrip(true); // NEW
+                        renderCropPlan(false); // NEW
                     }); // NEW
                     cropList.appendChild(cardEl); // NEW
                 } // NEW
@@ -2212,23 +2778,98 @@ Draw.loadPlugin(function (ui) {
                 if (editorRefs.seeds) editorRefs.seeds.value = String(metric && Number.isFinite(metric.seedsReq) && metric.seedsReq > 0 ? Math.ceil(metric.seedsReq) : 0); // NEW
                 if (editorRefs.harvestStart) editorRefs.harvestStart.value = PlanMath.hasYmd(crop.harvestStart) ? crop.harvestStart : ""; // NEW
                 if (editorRefs.harvestEnd) editorRefs.harvestEnd.value = PlanMath.hasYmd(crop.harvestEnd) ? crop.harvestEnd : ""; // NEW
-                if (editorRefs.demandSummary && metric) editorRefs.demandSummary.textContent = `Market target: ${formatKg(metric.targetKg)} | Estimated supply: ${formatKg(metric.supplyKg)} | Short: ${formatKg(metric.shortKg)} | Surplus: ${formatKg(metric.surplusKg)}`; // NEW
+                if (editorRefs.harvestStart && editorRefs.harvestStart.__syncPairedDateState) editorRefs.harvestStart.__syncPairedDateState(); // NEW
                 if (editorRefs.harvestDots && runtime) { // NEW
                     const derived = runtime.derivedByCropId.get(String(crop.id)); // NEW
                     renderHarvestDots(editorRefs.harvestDots, runtime.weekStarts, derived ? derived.actualHarvestWeeklyKg : []); // NEW
                 } // NEW
             } // NEW
 
-            function renderPreview() { // NEW
-                previewDetails.style.display = state.previewExpanded ? "block" : "none"; // NEW
-                previewToggle.textContent = state.previewExpanded ? "Hide plan check" : "Show plan check"; // CHANGE
-                previewSummary.textContent = `Target ${formatKg(dashboard.targetKg)} | Supply ${formatKg(dashboard.supplyKg)} | Short ${formatKg(dashboard.shortKg)} | ${dashboard.warningCount} warning${dashboard.warningCount === 1 ? "" : "s"}`; // NEW
-                if (!state.previewExpanded) return; // NEW
+            function syncDemandDerived() { // NEW
+                const crop = selectedCrop(); // NEW
+                if (!crop || !dashboard || !demandRefs.summary) return; // NEW
+                const metric = dashboard.cropMetricsById.get(String(crop.id)); // NEW
+                if (metric) demandRefs.summary.textContent = `Market target: ${formatKg(metric.targetKg)} | Estimated supply: ${formatKg(metric.supplyKg)} | Short: ${formatKg(metric.shortKg)} | Surplus: ${formatKg(metric.surplusKg)}`; // NEW
+            } // NEW
+
+            function updateChartLegendState() { // NEW
+                for (const button of chartLegend.querySelectorAll(".yp-chart-legend-item")) { // NEW
+                    const series = PLAN_CHART_SERIES.find(item => item.id === button.dataset.seriesId); // NEW
+                    if (!series) continue; // NEW
+                    const visible = visibleChartSeriesIds.has(series.id); // NEW
+                    button.setAttribute("aria-pressed", visible ? "true" : "false"); // NEW
+                    button.setAttribute("aria-label", `${series.label}. ${series.help} Currently ${visible ? "shown" : "hidden"}.`); // NEW
+                    button.title = `${series.label}: ${series.help} Click to ${visible ? "hide" : "show"}.`; // NEW
+                } // NEW
+            } // NEW
+
+            function renderChartLegend() { // NEW
+                chartLegend.innerHTML = ""; // NEW
+                for (const series of PLAN_CHART_SERIES) { // NEW
+                    const button = document.createElement("button"); // NEW
+                    button.type = "button"; // NEW
+                    button.className = "yp-chart-legend-item"; // NEW
+                    button.dataset.seriesId = series.id; // NEW
+                    const swatch = document.createElement("span"); // NEW
+                    swatch.className = "yp-chart-legend-swatch"; // NEW
+                    swatch.dataset.kind = series.kind; // NEW
+                    swatch.setAttribute("aria-hidden", "true"); // NEW
+                    swatch.style.setProperty("--yp-series-color", series.color); // NEW
+                    swatch.style.setProperty("--yp-series-fill", series.fill || series.color); // NEW
+                    const label = document.createElement("span"); // NEW
+                    label.textContent = series.label; // NEW
+                    button.appendChild(swatch); // NEW
+                    button.appendChild(label); // NEW
+                    button.addEventListener("click", () => { // NEW
+                        if (visibleChartSeriesIds.has(series.id)) visibleChartSeriesIds.delete(series.id); // NEW
+                        else visibleChartSeriesIds.add(series.id); // NEW
+                        chartTooltip.style.display = "none"; // NEW
+                        renderPlanCheck(); // CHANGE
+                    }); // NEW
+                    chartLegend.appendChild(button); // NEW
+                } // NEW
+                updateChartLegendState(); // NEW
+            } // NEW
+
+            function renderPlanCheck() { // CHANGE
                 const cropId = String(plan.cropFilterId || ""); // NEW
-                const series = cropId && runtime.weekly.perCrop.get(cropId); // NEW
-                drawPlanChart(canvas, runtime.weekly, series ? series.target : undefined, series ? series.supply : undefined); // NEW
-                const rows = dashboard.cropMetrics.map(metric => `<tr><td>${mxUtils.htmlEntities(cropLabel(metric.crop))}</td><td>${metric.targetKg.toFixed(1)}</td><td>${metric.supplyKg.toFixed(1)}</td><td>${metric.shortKg.toFixed(1)}</td><td>${metric.surplusKg.toFixed(1)}</td><td>${mxUtils.htmlEntities(metric.status)}</td></tr>`).join(""); // NEW
-                totalsBox.innerHTML = `<div style="font-weight:700;margin-bottom:6px;">Totals</div><table style="width:100%;border-collapse:collapse;"><thead><tr><th>Crop</th><th>Target</th><th>Supply</th><th>Short</th><th>Surplus</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No crops.</td></tr>'}</tbody></table>`; // NEW
+                const chartModel = PlanMath.buildPlanChartModel(runtime.weekly, cropId); // NEW
+                const chartSummary = PlanMath.summarizePlanChartModel(chartModel); // NEW
+                const worstShortageText = chartSummary.worstShortageKg > 0 // NEW
+                    ? `${formatKg(chartSummary.worstShortageKg)} \u00b7 Week of ${chartSummary.worstShortageWeek}` // NEW
+                    : "-"; // NEW
+                const planCheckSummaryText = `Target ${formatKg(chartSummary.targetKg)} | Harvested ${formatKg(chartSummary.harvestKg)} | Usable ${formatKg(chartSummary.usableSupplyKg)} | Short ${formatKg(chartSummary.shortKg)} | Expired ${formatKg(chartSummary.expiredKg)} | Worst shortage ${worstShortageText} | Short weeks ${chartSummary.shortWeeks}`; // CHANGE
+                renderStripBox(planCheckBox, { // NEW
+                    title: "Plan Check", // NEW
+                    expanded: state.planCheckExpanded, // NEW
+                    summaryText: planCheckSummaryText, // NEW
+                    onToggle: () => { state.planCheckExpanded = !state.planCheckExpanded; renderPlanCheck(); }, // NEW
+                    mountWhenCollapsed: true, // NEW
+                    renderDetails: details => { details.appendChild(planCheckGrid); details.appendChild(diagnosticsBox); } // NEW
+                }); // NEW
+                if (!state.planCheckExpanded) chartTooltip.style.display = "none"; // CHANGE
+                updateChartLegendState(); // NEW
+                chartHiddenMessage.style.display = visibleChartSeriesIds.size === 0 ? "block" : "none"; // NEW
+                chartHitModel = drawPlanChart(canvas, chartModel, visibleChartSeriesIds); // CHANGE
+                const worstShortage = chartSummary.worstShortageKg > 0 // NEW
+                    ? `${formatKg(chartSummary.worstShortageKg)} \u00b7 Week of ${mxUtils.htmlEntities(chartSummary.worstShortageWeek)}` // NEW
+                    : "-"; // NEW
+                planCheckSummary.innerHTML = [ // NEW
+                    ["Target", formatKg(chartSummary.targetKg)], // NEW
+                    ["Harvested", formatKg(chartSummary.harvestKg)], // NEW
+                    ["Usable", formatKg(chartSummary.usableSupplyKg)], // NEW
+                    ["Short", formatKg(chartSummary.shortKg)], // NEW
+                    ["Expired", formatKg(chartSummary.expiredKg)], // NEW
+                    ["Worst shortage", worstShortage], // NEW
+                    ["Short weeks", String(chartSummary.shortWeeks)] // NEW
+                ].map(([label, value]) => `<span><strong>${label}:</strong> ${value}</span>`).join(""); // NEW
+
+                const rows = (plan.crops || []).map(crop => { // CHANGE
+                    const summary = PlanMath.summarizePlanChartModel(PlanMath.buildPlanChartModel(runtime.weekly, String(crop.id))); // NEW
+                    const metric = dashboard.cropMetricsById.get(String(crop.id)); // CHANGE
+                    return `<tr><td>${mxUtils.htmlEntities(cropLabel(crop))}</td><td>${summary.targetKg.toFixed(1)}</td><td>${summary.harvestKg.toFixed(1)}</td><td>${summary.usableSupplyKg.toFixed(1)}</td><td>${summary.shortKg.toFixed(1)}</td><td>${summary.expiredKg.toFixed(1)}</td><td>${mxUtils.htmlEntities(metric ? metric.status : "Missing data")}</td></tr>`; // CHANGE
+                }).join(""); // CHANGE
+                totalsBox.innerHTML = `<div style="font-weight:700;margin-bottom:6px;">Plan Check totals</div><table style="width:100%;border-collapse:collapse;"><thead><tr><th>Crop</th><th>Target</th><th>Harvested</th><th>Usable</th><th>Short</th><th>Expired</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="7">No crops.</td></tr>'}</tbody></table>`; // CHANGE
                 for (const cell of totalsBox.querySelectorAll("th,td")) cell.style.cssText = "border:1px solid #ddd;padding:4px;text-align:left;"; // NEW
                 diagnosticsBox.innerHTML = dashboard.diagnostics.length // NEW
                     ? `<div style="font-weight:700;margin-bottom:5px;">Plan Check</div><ul style="margin:0 0 0 18px;padding:0;">${dashboard.diagnostics.map(message => `<li>${mxUtils.htmlEntities(message)}</li>`).join("")}</ul>` // CHANGE
@@ -2237,38 +2878,79 @@ Draw.loadPlugin(function (ui) {
 
             function renderFooter() { // NEW
                 const dirty = YearPlanDashboard.isDirty(state, plan); // NEW
+                reset.textContent = loadedExistingForCurrentYear ? "Reset" : "Clear"; // NEW
                 if (state.validationState === "invalid") footerStatus.textContent = "Validation failed"; // NEW
                 else if (dirty) footerStatus.textContent = "Unsaved changes"; // NEW
                 else if (state.lastSavedAt) footerStatus.textContent = `Last saved ${state.lastSavedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`; // NEW
-                else footerStatus.textContent = existing ? "Loaded saved plan" : "New plan"; // NEW
+                else footerStatus.textContent = loadedExistingForCurrentYear ? "Loaded saved plan" : "New plan"; // CHANGE
                 closePrompt.style.display = state.closePromptOpen ? "flex" : "none"; // NEW
                 footerActions.style.display = state.closePromptOpen ? "none" : "flex"; // NEW
             } // NEW
 
-            function refreshDerived() { // NEW
+            function captureDateRangeSnapshot() { // NEW
+                const crop = selectedCrop(); // NEW
+                const csa = plan && plan.csa ? plan.csa : {}; // NEW
+                return { // NEW
+                    csa: JSON.stringify({ // NEW
+                        start: String(csa.start || ""), // NEW
+                        end: String(csa.end || ""), // NEW
+                        components: (Array.isArray(csa.components) ? csa.components : []).map(component => ({ // NEW
+                            cropId: String(component && component.cropId || ""), // NEW
+                            start: String(component && component.start || ""), // NEW
+                            end: String(component && component.end || "") // NEW
+                        })) // NEW
+                    }), // NEW
+                    selectedCropId: crop ? String(crop.id || "") : "", // NEW
+                    market: JSON.stringify((crop && Array.isArray(crop.market) ? crop.market : []).map(line => ({ // NEW
+                        from: String(line && line.from || ""), // NEW
+                        to: String(line && line.to || "") // NEW
+                    }))) // NEW
+                }; // NEW
+            } // NEW
+
+            function refreshDerived(beforeDateRanges, renderOptions) { // CHANGE
+                const options = renderOptions || {}; // NEW
+                const beforeRecalculation = captureDateRangeSnapshot(); // NEW
                 runtime = PlanRuntimeService.recalculate(moduleCell, currentYear, plan); // NEW
                 const dirty = state.baselineSnapshot ? YearPlanDashboard.isDirty(state, plan) : false; // NEW
                 dashboard = YearPlanDashboard.compute(plan, runtime, { dirty, extraDiagnostics: state.extraDiagnostics }); // NEW
                 const expansionChanges = YearPlanDashboard.syncExpansionState(state, dashboard, PlanSchema.validateCsa(plan)); // NEW
                 state.selectedCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, state.selectedCropId, 0); // NEW
+                const afterRecalculation = captureDateRangeSnapshot(); // NEW
+                const comparisonSnapshot = beforeDateRanges || beforeRecalculation; // NEW
+                const csaDatesChanged = comparisonSnapshot.csa !== afterRecalculation.csa // NEW
+                    || beforeRecalculation.csa !== afterRecalculation.csa; // NEW
+                const demandDatesChanged = comparisonSnapshot.selectedCropId !== afterRecalculation.selectedCropId // NEW
+                    || comparisonSnapshot.market !== afterRecalculation.market // NEW
+                    || beforeRecalculation.selectedCropId !== afterRecalculation.selectedCropId // NEW
+                    || beforeRecalculation.market !== afterRecalculation.market; // NEW
                 renderSummary(); // NEW
                 renderCropList(); // NEW
-                renderPreview(); // NEW
-                if (expansionChanges.csaChanged) renderCsa(); // NEW
+                renderCsa(!!options.rebuildCsa || expansionChanges.csaChanged || (state.csaExpanded && csaDatesChanged)); // CHANGE
+                renderDemandStrip(!!options.rebuildDemand || (state.demandExpanded && demandDatesChanged)); // NEW
+                renderCropPlan(false); // NEW
+                renderPlanCheck(); // CHANGE
                 renderFooter(); // NEW
                 syncEditorDerived(); // NEW
+                syncDemandDerived(); // NEW
                 return runtime; // NEW
+            } // NEW
+
+            async function getVarietyRows(plantId) { // NEW
+                const key = String(plantId || ""); // NEW
+                let rows = varietyCache.get(key); // NEW
+                if (!rows) { // NEW
+                    rows = await DbClient.queryVarietiesByPlantId(key); // NEW
+                    varietyCache.set(key, rows); // NEW
+                } // NEW
+                return rows; // NEW
             } // NEW
 
             async function loadVarieties(crop, select) { // NEW
                 const key = String(crop.plantId || ""); // NEW
                 select.disabled = true; // NEW
                 try { // NEW
-                    let rows = varietyCache.get(key); // NEW
-                    if (!rows) { // NEW
-                        rows = await DbClient.queryVarietiesByPlantId(key); // NEW
-                        varietyCache.set(key, rows); // NEW
-                    } // NEW
+                    const rows = await getVarietyRows(key); // CHANGE
                     if (!SessionController.isActive(session) || selectedCrop() !== crop || editorRefs.variety !== select) return; // NEW
                     select.innerHTML = ""; // NEW
                     select.appendChild(new Option("(base plant)", "")); // NEW
@@ -2348,7 +3030,7 @@ Draw.loadPlugin(function (ui) {
                 const useActualLabel = document.createElement("label"); // NEW
                 useActualLabel.className = "yp-row"; useActualLabel.appendChild(useActual); useActualLabel.appendChild(document.createTextNode("Use actual harvest")); // NEW
                 const syncLabel = document.createElement("label"); // NEW
-                syncLabel.className = "yp-row"; syncLabel.appendChild(syncAvailability); syncLabel.appendChild(document.createTextNode("Sync availability")); // NEW
+                syncLabel.className = "yp-row"; syncLabel.appendChild(syncAvailability); syncLabel.appendChild(document.createTextNode("Sync demand to harvest window")); // CHANGE
                 harvestStart.disabled = harvestEnd.disabled = useActual.checked; // NEW
                 addField(grid, "Plant", plant); // NEW
                 addField(grid, "Variety", varietyRow); // NEW
@@ -2372,7 +3054,7 @@ Draw.loadPlugin(function (ui) {
                     if (duplicate) { // NEW
                         variety.value = crop.varietyId == null ? "" : String(crop.varietyId); // NEW
                         state.extraDiagnostics = ["That plant/variety already exists in this year plan."]; // NEW
-                        state.previewExpanded = true; // NEW
+                        state.planCheckExpanded = true; // CHANGE
                         refreshDerived(); // NEW
                         return; // NEW
                     } // NEW
@@ -2388,6 +3070,7 @@ Draw.loadPlugin(function (ui) {
                     if (Number.isFinite(autoYield) && autoYield > 0) crop.kgPerPlant = autoYield; // NEW
                     renderSelectedEditor(); // NEW
                     refreshDerived(); // NEW
+                    loadAddCropOptions(false); // NEW
                 }); // NEW
                 addVariety.addEventListener("click", () => { // NEW
                     graph.fireEvent(new mxEventObject("usl:openVarietyEditor", "cropId", String(crop.id), "plantId", Number(crop.plantId), "varietyId", crop.varietyId == null ? null : Number(crop.varietyId))); // NEW
@@ -2396,25 +3079,29 @@ Draw.loadPlugin(function (ui) {
                 germ.addEventListener("input", () => { crop.germRate = Math.max(0.01, Math.min(1, Number(germ.value) || 1)); debounceRefresh(); }); // NEW
                 useActual.addEventListener("change", () => { crop.useActualHarvest = useActual.checked; harvestStart.disabled = harvestEnd.disabled = useActual.checked; refreshDerived(); }); // NEW
                 syncAvailability.addEventListener("change", () => { // NEW
+                    const beforeDateRanges = captureDateRangeSnapshot(); // NEW
                     crop.syncharvest = syncAvailability.checked; // NEW
-                    for (const line of (crop.market || [])) crop.syncharvest ? applyShelfToMarket(crop, line) : removeShelfFromMarket(crop, line); // NEW
-                    refreshDerived(); // NEW
+                    if (crop.syncharvest) { // CHANGE
+                        const before = { hs: crop.harvestStart, he: crop.harvestEnd, availEnd: crop.harvestEnd }; // NEW
+                        PlanRuntimeService.syncCropDatesIfEnabled(plan, crop, before); // NEW
+                    } // NEW
+                    refreshDerived(beforeDateRanges); // CHANGE
                 }); // NEW
-                harvestStart.addEventListener("change", () => { // NEW
-                    const before = { hs: crop.harvestStart, he: crop.harvestEnd, availEnd: PlanRuntimeService.cropAvailableEndYmd(crop) }; // NEW
-                    crop.harvestStart = harvestStart.value; // NEW
-                    PlanRuntimeService.syncCropDatesIfEnabled(plan, crop, before); // NEW
-                    refreshDerived(); // NEW
-                }); // NEW
-                harvestEnd.addEventListener("change", () => { // NEW
-                    const before = { hs: crop.harvestStart, he: crop.harvestEnd, availEnd: PlanRuntimeService.cropAvailableEndYmd(crop) }; // NEW
-                    crop.harvestEnd = harvestEnd.value; // NEW
-                    PlanRuntimeService.syncCropDatesIfEnabled(plan, crop, before); // NEW
-                    refreshDerived(); // NEW
-                }); // NEW
+                bindPairedDateControls(harvestStart, harvestEnd, { // CHANGE
+                    diagnostic: `Harvest start date cannot be after end date for "${crop.plant || crop.id}".`, // NEW
+                    setStart: value => { crop.harvestStart = value; }, // NEW
+                    setEnd: value => { crop.harvestEnd = value; }, // NEW
+                    afterCommit: (beforeDateRanges, previousPair) => { // NEW
+                        PlanRuntimeService.syncCropDatesIfEnabled(plan, crop, { // NEW
+                            hs: previousPair.start, // NEW
+                            he: previousPair.end, // NEW
+                            availEnd: previousPair.end // NEW
+                        }); // NEW
+                        refreshDerived(beforeDateRanges); // NEW
+                    } // NEW
+                }); // CHANGE
                 shelf.addEventListener("input", () => { // NEW
                     crop.shelfLifeDays = Math.max(0, Math.trunc(Number(shelf.value) || 0)); // NEW
-                    if (crop.syncharvest) for (const line of (crop.market || [])) applyShelfToMarket(crop, line); // NEW
                     debounceRefresh(); // NEW
                 }); // NEW
             } // NEW
@@ -2423,7 +3110,7 @@ Draw.loadPlugin(function (ui) {
                 const summary = document.createElement("div"); // NEW
                 summary.style.cssText = "padding:8px;border:1px solid #ddd;border-radius:6px;background:#fafafa;font-weight:700;margin-bottom:10px;"; // NEW
                 content.appendChild(summary); // NEW
-                editorRefs.demandSummary = summary; // NEW
+                demandRefs.summary = summary; // CHANGE
                 const rowsHost = document.createElement("div"); // NEW
                 rowsHost.style.cssText = "display:flex;flex-direction:column;gap:7px;"; // NEW
                 content.appendChild(rowsHost); // NEW
@@ -2453,25 +3140,66 @@ Draw.loadPlugin(function (ui) {
                         rowsHost.appendChild(row); // NEW
                         qty.addEventListener("input", () => { line.qty = Math.max(0, Number(qty.value) || 0); debounceRefresh(); }); // NEW
                         unit.addEventListener("change", () => { line.unit = unit.value; refreshDerived(); }); // NEW
-                        from.addEventListener("change", () => { line.from = from.value; refreshDerived(); }); // NEW
-                        to.addEventListener("change", () => { // NEW
-                            line.to = to.value; // NEW
-                            line.__baseTo = crop.syncharvest ? (PlanRuntimeService.addDaysYmd(to.value, -Math.max(0, Math.trunc(Number(crop.shelfLifeDays) || 0))) || "") : to.value; // NEW
-                            refreshDerived(); // NEW
-                        }); // NEW
+                        bindPairedDateControls(from, to, { // CHANGE
+                            diagnostic: `Market start date cannot be after end date for "${crop.plant || crop.id}".`, // NEW
+                            setStart: value => { line.from = value; }, // NEW
+                            setEnd: value => { line.to = value; } // NEW
+                        }); // CHANGE
                         remove.addEventListener("click", () => { crop.market = crop.market.filter(item => item !== line); renderRows(); refreshDerived(); }); // NEW
                     } // NEW
                 } // NEW
 
                 add.addEventListener("click", () => { // NEW
                     const line = { qty: 0, unit: defaultUnit(crop), from: crop.harvestStart || "", to: crop.harvestEnd || "" }; // NEW
-                    line.__baseTo = line.to; // NEW
-                    if (crop.syncharvest) applyShelfToMarket(crop, line); // NEW
                     crop.market.push(line); // NEW
                     renderRows(); // NEW
                     refreshDerived(); // NEW
                 }); // NEW
                 renderRows(); // NEW
+            } // NEW
+
+            function renderDemandStrip(rebuildDetails) { // NEW
+                const crop = selectedCrop(); // NEW
+                const metric = crop && dashboard ? dashboard.cropMetricsById.get(String(crop.id)) : null; // NEW
+                const lineCount = crop && Array.isArray(crop.market) ? crop.market.length : 0; // NEW
+                const summaryText = crop // NEW
+                    ? `${cropLabel(crop)} | ${lineCount} demand line${lineCount === 1 ? "" : "s"} | Target ${formatKg(metric ? metric.targetKg : 0)}` // NEW
+                    : "No crop selected"; // NEW
+                renderStripBox(demandBox, { // NEW
+                    title: "Demand", // NEW
+                    expanded: state.demandExpanded, // NEW
+                    summaryText, // NEW
+                    rebuildDetails: !!rebuildDetails, // NEW
+                    onToggle: () => { // NEW
+                        state.demandExpanded = !state.demandExpanded; // NEW
+                        renderDemandStrip(state.demandExpanded); // NEW
+                        syncDemandDerived(); // NEW
+                    }, // NEW
+                    renderDetails: details => { // NEW
+                        demandRefs = {}; // NEW
+                        if (crop) renderDemand(crop, details); // NEW
+                        else { // NEW
+                            const empty = document.createElement("div"); // NEW
+                            empty.style.cssText = "padding:12px;color:#666;text-align:center;"; // NEW
+                            empty.textContent = "Add or select a crop in Crop Plan to edit demand."; // NEW
+                            details.appendChild(empty); // NEW
+                        } // NEW
+                    } // NEW
+                }); // NEW
+            } // NEW
+
+            function renderCropPlan(rebuildDetails) { // NEW
+                const crop = selectedCrop(); // NEW
+                const cropCount = Array.isArray(plan.crops) ? plan.crops.length : 0; // NEW
+                const summaryText = `${cropCount} crop${cropCount === 1 ? "" : "s"}${crop ? ` | Selected ${cropLabel(crop)}` : " | No crop selected"}`; // NEW
+                renderStripBox(cropPlanBox, { // NEW
+                    title: "Crop Plan", // NEW
+                    expanded: state.cropPlanExpanded, // NEW
+                    summaryText, // NEW
+                    rebuildDetails: !!rebuildDetails, // NEW
+                    onToggle: () => { state.cropPlanExpanded = !state.cropPlanExpanded; renderCropPlan(false); }, // NEW
+                    renderDetails: details => { details.appendChild(addRow); details.appendChild(dashboardGrid); } // NEW
+                }); // NEW
             } // NEW
 
             function renderPackages(crop, content) { // NEW
@@ -2508,15 +3236,15 @@ Draw.loadPlugin(function (ui) {
                         const remove = mkBtn("Remove"); // NEW
                         row.appendChild(document.createTextNode("1")); row.appendChild(unit); row.appendChild(document.createTextNode("=")); row.appendChild(baseQty); row.appendChild(baseType); row.appendChild(price); row.appendChild(remove); // NEW
                         rowsHost.appendChild(row); // NEW
-                        unit.addEventListener("input", () => { pkg.unit = unit.value; debounceRefresh(); }); // NEW
+                        unit.addEventListener("input", () => { pkg.unit = unit.value; debounceRefresh({ rebuildDemand: true, rebuildCsa: true }); }); // CHANGE
                         baseQty.addEventListener("input", () => { pkg.baseQty = Math.max(0, Number(baseQty.value) || 0); debounceRefresh(); }); // NEW
                         baseType.addEventListener("change", () => { pkg.baseType = baseType.value; refreshDerived(); }); // NEW
                         price.addEventListener("input", () => { pkg.price = price.value === "" ? NaN : Math.max(0, Number(price.value) || 0); renderFooter(); }); // NEW
-                        remove.addEventListener("click", () => { crop.packages = crop.packages.filter(item => item !== pkg); renderRows(); refreshDerived(); }); // NEW
+                        remove.addEventListener("click", () => { crop.packages = crop.packages.filter(item => item !== pkg); renderRows(); refreshDerived(null, { rebuildDemand: true, rebuildCsa: true }); }); // CHANGE
                     } // NEW
                 } // NEW
 
-                add.addEventListener("click", () => { crop.packages.push({ unit: "kg", baseType: "kg", baseQty: 1, price: NaN }); renderRows(); refreshDerived(); }); // NEW
+                add.addEventListener("click", () => { crop.packages.push({ unit: "kg", baseType: "kg", baseQty: 1, price: NaN }); renderRows(); refreshDerived(null, { rebuildDemand: true, rebuildCsa: true }); }); // CHANGE
                 renderRows(); // NEW
             } // NEW
 
@@ -2589,14 +3317,13 @@ Draw.loadPlugin(function (ui) {
                 tabs.style.cssText = "display:flex;gap:4px;padding:8px 10px 0;flex-wrap:wrap;"; // NEW
                 const content = document.createElement("div"); // NEW
                 content.style.padding = "12px"; // NEW
-                for (const tab of [{ id: "basics", label: "Basics" }, { id: "packages", label: "Packages" }, { id: "demand", label: "Demand" }, { id: "advanced", label: "Advanced" }]) { // CHANGE
+                for (const tab of [{ id: "basics", label: "Basics" }, { id: "packages", label: "Packages" }, { id: "advanced", label: "Advanced" }]) { // CHANGE
                     const button = mkBtn(tab.label, state.activeTab === tab.id); // NEW
                     button.addEventListener("click", () => { state.activeTab = tab.id; renderSelectedEditor(); syncEditorDerived(); }); // NEW
                     tabs.appendChild(button); // NEW
                 } // NEW
                 editorBox.appendChild(head); editorBox.appendChild(tabs); editorBox.appendChild(content); // NEW
-                if (state.activeTab === "demand") renderDemand(crop, content); // NEW
-                else if (state.activeTab === "packages") renderPackages(crop, content); // NEW
+                if (state.activeTab === "packages") renderPackages(crop, content); // CHANGE
                 else if (state.activeTab === "advanced") renderAdvanced(crop, content); // NEW
                 else renderBasics(crop, content); // NEW
                 remove.addEventListener("click", () => { // NEW
@@ -2604,29 +3331,25 @@ Draw.loadPlugin(function (ui) {
                     plan.crops = plan.crops.filter(item => item !== crop); // NEW
                     if (plan.csa && Array.isArray(plan.csa.components)) plan.csa.components = plan.csa.components.filter(component => component.cropId !== crop.id); // NEW
                     state.selectedCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, "", index); // NEW
-                    renderSelectedEditor(); renderCsa(); fillCropFilter(); refreshDerived(); // NEW
+                    renderSelectedEditor(); fillCropFilter(); refreshDerived(null, { rebuildCsa: true, rebuildDemand: true }); loadAddCropOptions(false); // CHANGE
                 }); // NEW
                 syncEditorDerived(); // NEW
             } // NEW
 
-            function renderCsa() { // NEW
-                csaBox.innerHTML = ""; // NEW
+            function renderCsa(rebuildDetails) { // CHANGE
                 plan.csa = plan.csa || { enabled: false, boxesPerWeek: 0, start: "", end: "", components: [] }; // NEW
-                const strip = document.createElement("button"); // NEW
-                strip.type = "button"; // NEW
-                strip.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:9px 10px;border:0;background:#f7f7f7;cursor:pointer;text-align:left;font:12px Arial,sans-serif;"; // NEW
-                strip.setAttribute("aria-expanded", state.csaExpanded ? "true" : "false"); // NEW
-                const summary = document.createElement("span"); // NEW
-                summary.style.fontWeight = "700"; // NEW
-                summary.textContent = YearPlanDashboard.buildCsaSummary(plan); // NEW
-                const toggle = document.createElement("span"); // NEW
-                toggle.textContent = state.csaExpanded ? "Collapse" : "Expand"; // NEW
-                strip.appendChild(summary); strip.appendChild(toggle); // NEW
-                csaBox.appendChild(strip); // NEW
-                strip.addEventListener("click", () => { state.csaExpanded = !state.csaExpanded; renderCsa(); }); // NEW
-                if (!state.csaExpanded) return; // NEW
-                const details = document.createElement("div"); // NEW
-                details.style.padding = "10px"; // NEW
+                const summaryText = YearPlanDashboard.buildCsaSummary(plan).replace(/^CSA Box Plan:\s*/, ""); // NEW
+                renderStripBox(csaBox, { // NEW
+                    title: "CSA", // NEW
+                    expanded: state.csaExpanded, // NEW
+                    summaryText, // NEW
+                    rebuildDetails: !!rebuildDetails && state.csaExpanded, // NEW
+                    onToggle: () => { state.csaExpanded = !state.csaExpanded; renderCsa(state.csaExpanded); }, // NEW
+                    renderDetails: renderCsaDetails // NEW
+                }); // NEW
+            } // NEW
+
+            function renderCsaDetails(details) { // NEW
                 const controls = document.createElement("div"); // NEW
                 controls.className = "yp-row"; // NEW
                 const enabled = document.createElement("input"); enabled.type = "checkbox"; enabled.checked = !!plan.csa.enabled; // NEW
@@ -2639,10 +3362,17 @@ Draw.loadPlugin(function (ui) {
                 rowsHost.style.cssText = "display:flex;flex-direction:column;gap:7px;margin-top:10px;"; // NEW
                 const add = mkBtn("Add component"); // NEW
                 add.style.marginTop = "8px"; // NEW
-                details.appendChild(controls); details.appendChild(rowsHost); details.appendChild(add); csaBox.appendChild(details); // CHANGE
-                const refreshSummary = () => { summary.textContent = YearPlanDashboard.buildCsaSummary(plan); }; // NEW
-                const sync = () => { plan.csa.enabled = enabled.checked; plan.csa.boxesPerWeek = Math.max(0, Math.trunc(Number(boxes.value) || 0)); plan.csa.start = start.value; plan.csa.end = end.value; refreshSummary(); debounceRefresh(); }; // CHANGE
-                enabled.addEventListener("change", sync); boxes.addEventListener("input", sync); start.addEventListener("change", sync); end.addEventListener("change", sync); // NEW
+                details.appendChild(controls); details.appendChild(rowsHost); details.appendChild(add); // CHANGE
+                const refreshSummary = () => { renderCsa(false); }; // CHANGE
+                const syncNonDateControls = () => { plan.csa.enabled = enabled.checked; plan.csa.boxesPerWeek = Math.max(0, Math.trunc(Number(boxes.value) || 0)); refreshSummary(); debounceRefresh(); }; // CHANGE
+                enabled.addEventListener("change", syncNonDateControls); // CHANGE
+                boxes.addEventListener("input", syncNonDateControls); // CHANGE
+                bindPairedDateControls(start, end, { // CHANGE
+                    diagnostic: "CSA start date cannot be after end date.", // NEW
+                    setStart: value => { plan.csa.start = value; }, // NEW
+                    setEnd: value => { plan.csa.end = value; }, // NEW
+                    afterCommit: beforeDateRanges => { refreshSummary(); refreshDerived(beforeDateRanges); } // NEW
+                }); // CHANGE
 
                 function renderRows() { // NEW
                     rowsHost.innerHTML = ""; // NEW
@@ -2664,8 +3394,11 @@ Draw.loadPlugin(function (ui) {
                         qty.addEventListener("input", () => { component.qty = Math.max(0, Number(qty.value) || 0); debounceRefresh(); }); // NEW
                         unit.addEventListener("change", () => { component.unit = unit.value; refreshDerived(); }); // NEW
                         every.addEventListener("input", () => { component.everyNWeeks = Math.max(1, Math.trunc(Number(every.value) || 1)); debounceRefresh(); }); // NEW
-                        from.addEventListener("change", () => { component.start = from.value; refreshDerived(); }); // NEW
-                        to.addEventListener("change", () => { component.end = to.value; refreshDerived(); }); // NEW
+                        bindPairedDateControls(from, to, { // CHANGE
+                            diagnostic: `CSA component start date cannot be after end date for "${crop ? crop.plant || crop.id : component.cropId}".`, // NEW
+                            setStart: value => { component.start = value; }, // NEW
+                            setEnd: value => { component.end = value; } // NEW
+                        }); // CHANGE
                         remove.addEventListener("click", () => { plan.csa.components = plan.csa.components.filter(item => item !== component); renderRows(); refreshSummary(); refreshDerived(); }); // CHANGE
                     } // NEW
                 } // NEW
@@ -2681,8 +3414,9 @@ Draw.loadPlugin(function (ui) {
             function renderAll() { // NEW
                 fillCropFilter(); // NEW
                 renderSelectedEditor(); // NEW
-                renderCsa(); // NEW
-                refreshDerived(); // NEW
+                renderCropPlan(true); // NEW
+                refreshDerived(null, { rebuildCsa: true, rebuildDemand: true }); // CHANGE
+                loadAddCropOptions(false); // NEW
             } // NEW
 
             function persistPackageDefaults() { // NEW
@@ -2695,13 +3429,14 @@ Draw.loadPlugin(function (ui) {
                 refreshDerived(); // NEW
                 if (dashboard.validationErrors.length) { // NEW
                     state.validationState = "invalid"; // NEW
-                    state.previewExpanded = true; // NEW
+                    state.planCheckExpanded = true; // CHANGE
                     if (PlanSchema.validateCsa(plan).length) state.csaExpanded = true; // NEW
-                    renderCsa(); renderPreview(); renderFooter(); // CHANGE
+                    renderCsa(true); renderPlanCheck(); renderFooter(); // CHANGE
                     return false; // NEW
                 } // NEW
                 persistPackageDefaults(); // NEW
                 PlanRepository.savePlanForYear(moduleCell, currentYear, plan); // NEW
+                loadedExistingForCurrentYear = true; // NEW
                 YearPlanDashboard.markBaseline(state, plan, new Date()); // NEW
                 state.closePromptOpen = false; // NEW
                 state.extraDiagnostics = []; // NEW
@@ -2735,7 +3470,7 @@ Draw.loadPlugin(function (ui) {
             const plantSelect = document.createElement("select"); // NEW
             plantSelect.style.cssText = "padding:6px;border:1px solid #bbb;border-radius:6px;min-width:260px;flex:1 1 260px;"; // NEW
             const addCrop = mkBtn("Add crop", true); // NEW
-            const reloadPlants = mkBtn("Reload plants"); // NEW
+            const reloadPlants = mkBtn("Reload crops"); // CHANGE
             const plantMessage = document.createElement("span"); // NEW
             plantMessage.style.color = "#666"; // NEW
             addRow.appendChild(plantSelect); addRow.appendChild(addCrop); addRow.appendChild(reloadPlants); addRow.appendChild(plantMessage); // NEW
@@ -2743,7 +3478,7 @@ Draw.loadPlugin(function (ui) {
             const save = mkBtn("Save", true); // NEW
             const saveClose = mkBtn("Save & Close"); // NEW
             const exportButton = mkBtn("Export"); // NEW
-            const reset = mkBtn(existing ? "Reset" : "Clear"); // NEW
+            const reset = mkBtn(loadedExistingForCurrentYear ? "Reset" : "Clear"); // CHANGE
             const close = mkBtn("Close"); // NEW
             footerActions.appendChild(save); footerActions.appendChild(saveClose); footerActions.appendChild(exportButton); footerActions.appendChild(reset); footerActions.appendChild(close); // NEW
             const promptSave = mkBtn("Save and Close", true); // NEW
@@ -2751,41 +3486,171 @@ Draw.loadPlugin(function (ui) {
             const promptCancel = mkBtn("Cancel"); // NEW
             closePrompt.appendChild(promptSave); closePrompt.appendChild(promptDiscard); closePrompt.appendChild(promptCancel); // NEW
 
-            async function loadPlants(force) { // NEW
+            function appendAddCropOptionGroup(label, options) { // NEW
+                if (!options.length) return; // NEW
+                const group = document.createElement("optgroup"); // NEW
+                group.label = label; // NEW
+                for (const option of options) { // NEW
+                    const optionId = Env.uid("addcrop"); // NEW
+                    addCropOptionById.set(optionId, option); // NEW
+                    const element = document.createElement("option"); // NEW
+                    element.value = optionId; // NEW
+                    element.textContent = option.label; // NEW
+                    group.appendChild(element); // NEW
+                } // NEW
+                plantSelect.appendChild(group); // NEW
+            } // NEW
+
+            function getPlantLifecycle(row) { // NEW
+                const enabled = [ // NEW
+                    ["annual", Number(row && row.annual) === 1], // NEW
+                    ["biennial", Number(row && row.biennial) === 1], // NEW
+                    ["perennial", Number(row && row.perennial) === 1] // NEW
+                ].filter(item => item[1]); // NEW
+                return enabled.length === 1 ? enabled[0][0] : "uncategorized"; // NEW
+            } // NEW
+
+            function parseVarietyOverrideYield(varietyRow) { // NEW
+                const overrides = varietyRow ? Env.safeJsonStringParse(varietyRow.overrides_json, null) : null; // NEW
+                const value = Number(overrides && (overrides.yield_per_plant_kg ?? overrides.overrides?.yield_per_plant_kg)); // NEW
+                return Number.isFinite(value) && value > 0 ? value : NaN; // NEW
+            } // NEW
+
+            async function resolveGardenCropOption(candidate, plantRowsById) { // NEW
+                const plantId = String(candidate && candidate.plantId || ""); // NEW
+                const row = plantRowsById.get(plantId); // NEW
+                if (!row) return null; // NEW
+                let varietyId = candidate && candidate.varietyId ? String(candidate.varietyId) : ""; // NEW
+                let varietyName = String(candidate && candidate.varietyName || "").trim(); // NEW
+                let varietyRow = null; // NEW
+
+                if (varietyId || varietyName) { // NEW
+                    const varietyRows = await getVarietyRows(plantId); // NEW
+                    if (varietyId) { // NEW
+                        varietyRow = varietyRows.find(item => String(item.variety_id) === varietyId) || null; // NEW
+                        if (!varietyName && varietyRow) varietyName = String(varietyRow.variety_name || "").trim(); // NEW
+                    } else { // NEW
+                        const normalizedName = varietyName.toLocaleLowerCase(); // NEW
+                        const matches = varietyRows.filter(item => String(item.variety_name || "").trim().toLocaleLowerCase() === normalizedName); // NEW
+                        if (matches.length !== 1) return null; // NEW
+                        varietyRow = matches[0]; // NEW
+                        varietyId = String(varietyRow.variety_id); // NEW
+                        varietyName = String(varietyRow.variety_name || varietyName).trim(); // NEW
+                    } // NEW
+                } // NEW
+
+                const plantName = String(row.plant_name || candidate.plantName || "").trim(); // NEW
+                return { // NEW
+                    source: "garden", // NEW
+                    plantId, // NEW
+                    plantName, // NEW
+                    varietyId: varietyId || null, // NEW
+                    varietyName, // NEW
+                    varietyRow, // NEW
+                    row, // NEW
+                    lifecycle: getPlantLifecycle(row), // NEW
+                    label: varietyName ? `${plantName} - ${varietyName}` : plantName // NEW
+                }; // NEW
+            } // NEW
+
+            async function loadAddCropOptions(force) { // NEW
+                const loadVersion = ++addCropOptionsLoadVersion; // NEW
+                plantSelect.disabled = true; // NEW
+                addCrop.disabled = true; // NEW
+                reloadPlants.disabled = true; // NEW
+                addCropOptionById.clear(); // NEW
+                plantSelect.innerHTML = ""; // NEW
+                plantSelect.appendChild(new Option("-- Select crop --", "")); // CHANGE
+                plantMessage.textContent = "Loading crops..."; // CHANGE
                 try { // NEW
-                    if (force) DbClient.invalidatePlantsBasicCache(); // NEW
-                    plantMessage.textContent = "Loading plants..."; // NEW
+                    if (force) { // NEW
+                        DbClient.invalidatePlantsBasicCache(); // NEW
+                        varietyCache.clear(); // NEW
+                    } // NEW
                     const plants = await DbClient.getPlantsBasicCached(); // NEW
-                    if (!SessionController.isActive(session)) return; // NEW
+                    const plantRowsById = new Map(plants.map(row => [String(row.plant_id), row])); // NEW
+                    const plannedKeys = new Set((plan.crops || []).map(crop => PlanSchema.getCropIdentityKey(crop)).filter(Boolean)); // NEW
+                    const gardenOptions = []; // NEW
+                    const gardenKeys = new Set(); // NEW
+                    let skippedGardenCount = 0; // NEW
+
+                    for (const candidate of DiagramPlanReader.readGardenCropCandidates(moduleCell)) { // NEW
+                        const option = await resolveGardenCropOption(candidate, plantRowsById); // NEW
+                        if (!option) { skippedGardenCount += 1; continue; } // NEW
+                        const key = PlanSchema.makeCropIdentityKey(option.plantId, option.varietyId || ""); // NEW
+                        if (!key || plannedKeys.has(key) || gardenKeys.has(key)) continue; // NEW
+                        gardenKeys.add(key); // NEW
+                        gardenOptions.push(option); // NEW
+                    } // NEW
+
+                    if (!SessionController.isActive(session) || loadVersion !== addCropOptionsLoadVersion) return; // NEW
+                    const byLifecycle = { annual: [], biennial: [], perennial: [], uncategorized: [] }; // NEW
+                    for (const row of plants) { // NEW
+                        const plantId = String(row.plant_id); // NEW
+                        const key = PlanSchema.makeCropIdentityKey(plantId, ""); // NEW
+                        if (!key || plannedKeys.has(key) || gardenKeys.has(key)) continue; // NEW
+                        const plantName = String(row.plant_name || "").trim(); // NEW
+                        const lifecycle = getPlantLifecycle(row); // NEW
+                        byLifecycle[lifecycle].push({ // NEW
+                            source: "database", // NEW
+                            plantId, // NEW
+                            plantName, // NEW
+                            varietyId: null, // NEW
+                            varietyName: "", // NEW
+                            varietyRow: null, // NEW
+                            row, // NEW
+                            lifecycle, // NEW
+                            label: plantName // NEW
+                        }); // NEW
+                    } // NEW
+
+                    const sortOptions = options => options.sort((a, b) => a.label.localeCompare(b.label)); // NEW
                     plantSelect.innerHTML = ""; // NEW
-                    plantSelect.appendChild(new Option("-- Select plant --", "")); // NEW
-                    for (const item of plants) plantSelect.appendChild(new Option(String(item.plant_name), String(item.plant_id))); // NEW
-                    plantMessage.textContent = ""; // NEW
+                    plantSelect.appendChild(new Option("-- Select crop --", "")); // NEW
+                    addCropOptionById.clear(); // NEW
+                    appendAddCropOptionGroup("Crops in this garden, not yet in plan", sortOptions(gardenOptions)); // NEW
+                    appendAddCropOptionGroup("Annual crops", sortOptions(byLifecycle.annual)); // NEW
+                    appendAddCropOptionGroup("Biennial crops", sortOptions(byLifecycle.biennial)); // NEW
+                    appendAddCropOptionGroup("Perennial crops", sortOptions(byLifecycle.perennial)); // NEW
+                    appendAddCropOptionGroup("Uncategorized crops", sortOptions(byLifecycle.uncategorized)); // NEW
+                    plantMessage.textContent = skippedGardenCount // NEW
+                        ? `Skipped ${skippedGardenCount} unavailable garden crop${skippedGardenCount === 1 ? "" : "s"}.` // NEW
+                        : ""; // NEW
                 } catch (error) { // NEW
-                    if (SessionController.isActive(session)) plantMessage.textContent = String(error && error.message || error); // NEW
+                    if (SessionController.isActive(session) && loadVersion === addCropOptionsLoadVersion) { // NEW
+                        addCropOptionById.clear(); // NEW
+                        plantMessage.textContent = String(error && error.message || error); // NEW
+                    } // NEW
+                } finally { // NEW
+                    if (SessionController.isActive(session) && loadVersion === addCropOptionsLoadVersion) { // NEW
+                        plantSelect.disabled = false; // NEW
+                        addCrop.disabled = false; // NEW
+                        reloadPlants.disabled = false; // NEW
+                    } // NEW
                 } // NEW
             } // NEW
 
-            addCrop.addEventListener("click", async () => { // NEW
-                const plantId = String(plantSelect.value || ""); // NEW
-                if (!plantId) return; // NEW
-                const requestYear = currentYear; // NEW
-                const plants = await DbClient.getPlantsBasicCached(); // NEW
-                if (!SessionController.isActive(session) || requestYear !== currentYear) return; // NEW
-                const item = plants.find(row => String(row.plant_id) === plantId); // NEW
-                if (!item) return; // NEW
-                if (PlanSchema.findDuplicateCrop(plan, plantId, "", "")) { // NEW
-                    state.extraDiagnostics = [`Crop already exists for ${item.plant_name} with the base variety.`]; // NEW
-                    state.previewExpanded = true; // NEW
+            addCrop.addEventListener("click", () => { // CHANGE
+                const selectedOption = addCropOptionById.get(String(plantSelect.value || "")); // NEW
+                if (!selectedOption) return; // NEW
+                if (PlanSchema.findDuplicateCrop(plan, selectedOption.plantId, selectedOption.varietyId || "", "")) { // CHANGE
+                    state.extraDiagnostics = [`Crop already exists for ${selectedOption.label}.`]; // CHANGE
+                    state.planCheckExpanded = true; // CHANGE
                     refreshDerived(); // NEW
                     return; // NEW
                 } // NEW
                 state.extraDiagnostics = []; // NEW
+                const plantId = selectedOption.plantId; // NEW
+                const item = selectedOption.row; // NEW
                 const defaults = PlanRepository.getDefaultsForPlant(plantId); // NEW
+                const baseYield = Number(item.yield_per_plant_kg); // NEW
+                const overrideYield = parseVarietyOverrideYield(selectedOption.varietyRow); // NEW
+                const cropYield = Number.isFinite(overrideYield) ? overrideYield : baseYield; // NEW
+                const numericVarietyId = selectedOption.varietyId == null ? NaN : Number(selectedOption.varietyId); // NEW
                 const crop = { // NEW
-                    id: Env.uid("crop"), plantId, plant: String(item.plant_name), method: String(item.default_planting_method || "").trim() || "direct_sow",
-                    varietyId: null, variety: "", harvestStart: "", harvestEnd: "", useActualHarvest: true, syncharvest: false,
-                    shelfLifeDays: 0, baseKgPerPlant: Number(item.yield_per_plant_kg), kgPerPlant: Number(item.yield_per_plant_kg),
+                    id: Env.uid("crop"), plantId, plant: selectedOption.plantName, method: String(item.default_planting_method || "").trim() || "direct_sow", // CHANGE
+                    varietyId: selectedOption.varietyId == null ? null : (Number.isFinite(numericVarietyId) ? numericVarietyId : selectedOption.varietyId), variety: selectedOption.varietyName, harvestStart: "", harvestEnd: "", useActualHarvest: true, syncharvest: false, // CHANGE
+                    shelfLifeDays: 0, baseKgPerPlant: baseYield, kgPerPlant: cropYield, // CHANGE
                     kgPerPlantMode: "auto", actualPlants: 0, germRate: 1,
                     packages: defaults && defaults.length ? PlanSchema.clonePlain(defaults) : [{ unit: "kg", baseType: "kg", baseQty: 1, price: NaN }],
                     market: []
@@ -2795,14 +3660,15 @@ Draw.loadPlugin(function (ui) {
                 emitHarvestWindowsNeeded(crop); // NEW
                 renderAll(); // NEW
             }); // NEW
-            reloadPlants.addEventListener("click", () => loadPlants(true)); // NEW
+            reloadPlants.addEventListener("click", () => loadAddCropOptions(true)); // CHANGE
 
             yearInput.addEventListener("change", () => { // NEW
                 const nextYear = Number(yearInput.value); // NEW
                 if (!Number.isFinite(nextYear) || nextYear < 1900 || nextYear > 3000) { yearInput.value = String(currentYear); return; } // NEW
                 if (nextYear === currentYear) return; // NEW
                 if (!saveCurrent(false)) { yearInput.value = String(currentYear); return; } // NEW
-                replacePlan(PlanRepository.loadPlanForYear(moduleCell, nextYear) || PlanSchema.createEmptyPlan(nextYear), nextYear); // NEW
+                const nextExisting = PlanRepository.loadPlanForYear(moduleCell, nextYear); // NEW
+                replacePlan(nextExisting || PlanSchema.createEmptyPlan(nextYear), nextYear, !!nextExisting); // CHANGE
                 renderAll(); // NEW
                 YearPlanDashboard.markBaseline(state, plan, null); // NEW
                 refreshDerived(); // NEW
@@ -2811,7 +3677,7 @@ Draw.loadPlugin(function (ui) {
                 const name = String(templateSel.value || ""); // NEW
                 const template = name && PlanRepository.loadTemplateByName(name); // NEW
                 if (!template) return; // NEW
-                replacePlan(PlanRepository.rekeyTemplateToPlan(template, currentYear), currentYear); // NEW
+                replacePlan(PlanRepository.rekeyTemplateToPlan(template, currentYear), currentYear, loadedExistingForCurrentYear); // CHANGE
                 renderAll(); // NEW
             }); // NEW
             templateSel.addEventListener("change", () => { // NEW
@@ -2831,9 +3697,34 @@ Draw.loadPlugin(function (ui) {
                 if (!name || !confirm(`Delete template "${name}"?`)) return; // NEW
                 PlanRepository.deleteTemplateByName(name); fillTemplateDropdown(); templateNameInput.value = ""; saveTemplate.disabled = true; // CHANGE
             }); // NEW
-            cropFilterSel.addEventListener("change", () => { plan.cropFilterId = cropFilterSel.value; renderPreview(); renderFooter(); }); // NEW
-            previewBar.addEventListener("click", event => { if (event.target === cropFilterSel) return; state.previewExpanded = !state.previewExpanded; renderPreview(); }); // NEW
-            previewToggle.addEventListener("click", event => { event.stopPropagation(); state.previewExpanded = !state.previewExpanded; renderPreview(); }); // NEW
+            cropFilterSel.addEventListener("change", () => { plan.cropFilterId = cropFilterSel.value; renderPlanCheck(); renderFooter(); }); // CHANGE
+            canvas.addEventListener("mousemove", event => { // NEW
+                if (!chartHitModel || !chartHitModel.weekCenters.length) return; // NEW
+                const canvasRect = canvas.getBoundingClientRect(); // NEW
+                const chartRect = chartBox.getBoundingClientRect(); // NEW
+                const canvasX = (event.clientX - canvasRect.left) * (canvas.width / Math.max(1, canvasRect.width)); // NEW
+                if (canvasX < chartHitModel.plotLeft || canvasX > chartHitModel.plotRight) { // NEW
+                    chartTooltip.style.display = "none"; // NEW
+                    return; // NEW
+                } // NEW
+                const index = Math.max(0, Math.min( // NEW
+                    chartHitModel.rows.length - 1, // NEW
+                    Math.floor((canvasX - chartHitModel.plotLeft) / chartHitModel.step) // NEW
+                )); // NEW
+                const row = chartHitModel.rows[index]; // NEW
+                if (!row) return; // NEW
+                const tooltipLines = [`<strong>Week of ${mxUtils.htmlEntities(row.week)}</strong>`]; // CHANGE
+                for (const series of PLAN_CHART_SERIES) { // NEW
+                    if (visibleChartSeriesIds.has(series.id)) tooltipLines.push(`${series.tooltipLabel}: ${formatKg(row[series.field])}`); // NEW
+                } // NEW
+                tooltipLines.push(`Inventory: ${formatKg(row.endingInventoryKg)}`); // NEW
+                chartTooltip.innerHTML = tooltipLines.join("<br>"); // CHANGE
+                const maximumLeft = Math.max(4, chartBox.clientWidth - 190); // NEW
+                chartTooltip.style.left = `${Math.max(4, Math.min(maximumLeft, event.clientX - chartRect.left + 12))}px`; // CHANGE
+                chartTooltip.style.top = `${Math.max(35, event.clientY - chartRect.top - 18)}px`; // NEW
+                chartTooltip.style.display = "block"; // NEW
+            }); // NEW
+            canvas.addEventListener("mouseleave", () => { chartTooltip.style.display = "none"; }); // NEW
             save.addEventListener("click", () => saveCurrent(false)); // NEW
             saveClose.addEventListener("click", () => saveCurrent(true)); // NEW
             promptSave.addEventListener("click", () => saveCurrent(true)); // NEW
@@ -2847,7 +3738,7 @@ Draw.loadPlugin(function (ui) {
             reset.addEventListener("click", () => { // NEW
                 if (!confirm(`Clear the saved ${currentYear} plan?`)) return; // NEW
                 PlanRepository.deletePlanForYear(moduleCell, currentYear); // NEW
-                replacePlan(PlanSchema.createEmptyPlan(currentYear), currentYear); // NEW
+                replacePlan(PlanSchema.createEmptyPlan(currentYear), currentYear, false); // CHANGE
                 renderAll(); // NEW
                 YearPlanDashboard.markBaseline(state, plan, null); // NEW
                 refreshDerived(); // NEW
@@ -2864,6 +3755,7 @@ Draw.loadPlugin(function (ui) {
             SessionController.addWindowListener(session, "usl:harvestWindowsSuggested", event => { // NEW
                 const detail = event && event.detail; // NEW
                 if (!detail || String(detail.moduleCellId || "") !== String(moduleCell.getId ? moduleCell.getId() : moduleCell.id) || Number(detail.year) !== currentYear) return; // NEW
+                const beforeDateRanges = captureDateRangeSnapshot(); // NEW
                 const byId = new Map((plan.crops || []).map(crop => [String(crop.id), crop])); // NEW
                 for (const result of (detail.results || [])) { // NEW
                     const crop = byId.get(String(result.cropId)); // NEW
@@ -2872,7 +3764,7 @@ Draw.loadPlugin(function (ui) {
                     if (!PlanMath.hasYmd(crop.harvestEnd) && PlanMath.hasYmd(result.harvestEnd)) crop.harvestEnd = result.harvestEnd; // NEW
                     if (!(Number(crop.shelfLifeDays) > 0) && Number(result.shelfLifeDays) > 0) crop.shelfLifeDays = Math.trunc(Number(result.shelfLifeDays)); // NEW
                 } // NEW
-                renderSelectedEditor(); renderCsa(); refreshDerived(); // NEW
+                refreshDerived(beforeDateRanges); // CHANGE
             }); // NEW
 
             SessionController.addGraphListener(session, graph, "usl:varietyEditorClosed", (sender, event) => { // NEW
@@ -2889,9 +3781,10 @@ Draw.loadPlugin(function (ui) {
                 } // NEW
                 if (selectedCrop() === crop) renderSelectedEditor(); // NEW
                 refreshDerived(); // NEW
+                loadAddCropOptions(false); // NEW
             }); // NEW
 
-            loadPlants(false); // NEW
+            renderChartLegend(); // NEW
             renderAll(); // NEW
             YearPlanDashboard.markBaseline(state, plan, null); // NEW
             refreshDerived(); // NEW

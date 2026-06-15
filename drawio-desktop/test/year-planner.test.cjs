@@ -22,6 +22,8 @@ class TestCell {
         this.id = id;
         this.children = [];
         this.attributes = new Map(Object.entries(attributes).map(([key, value]) => [key, String(value)]));
+        this.visible = true; // NEW
+        this.connectable = true; // NEW
     }
 
     getId() {
@@ -31,11 +33,28 @@ class TestCell {
     getAttribute(key) {
         return this.attributes.has(key) ? this.attributes.get(key) : null;
     }
+
+    setVisible(value) {
+        this.visible = Boolean(value); // NEW
+    }
+
+    setConnectable(value) {
+        this.connectable = Boolean(value); // NEW
+    }
 }
 
 function createHarness() {
     const root = new TestCell("root");
     const cells = new Map([[root.id, root]]);
+    const document = { // NEW
+        createElement() { // NEW
+            const attributes = new Map(); // NEW
+            return { // NEW
+                attributes, // NEW
+                setAttribute(name, value) { attributes.set(String(name), String(value)); } // NEW
+            }; // NEW
+        } // NEW
+    }; // NEW
     const model = {
         beginUpdate() {},
         endUpdate() {},
@@ -46,6 +65,15 @@ function createHarness() {
     };
     const graph = {
         getModel: () => model,
+        getDefaultParent: () => root, // NEW
+        insertVertex(parent, id, value) { // NEW
+            const cell = new TestCell(id || `cell_${cells.size}`); // NEW
+            cell.value = value; // NEW
+            for (const [name, attributeValue] of (value?.attributes || [])) cell.attributes.set(name, attributeValue); // NEW
+            parent.children.push(cell); // NEW
+            cells.set(cell.id, cell); // NEW
+            return cell; // NEW
+        },
         setAttributeForCell(cell, key, value) {
             if (value == null) cell.attributes.delete(key);
             else cell.attributes.set(key, String(value));
@@ -74,6 +102,7 @@ function createHarness() {
             }
         },
         Date,
+        document, // NEW
         JSON,
         Map,
         Math,
@@ -160,6 +189,23 @@ test("PlanSchema normalizes legacy yield fields and strips runtime-only persiste
     });
 });
 
+test("PlanSchema normalizes weekStartDow to an integer from zero through six", () => { // NEW
+    const { api } = createHarness(); // NEW
+    for (const [input, expected] of [[0, 0], ["6", 6], [2.9, 2], [-1, 1], [7, 1], ["bad", 1]]) { // NEW
+        const plan = { year: 2026, weekStartDow: input, crops: [] }; // NEW
+        api.PlanSchema.normalizeForRuntime(plan, 2026); // NEW
+        assert.equal(plan.weekStartDow, expected); // NEW
+        assert.equal(api.PlanMath.computePlanWeekly(plan, []).weeks[0].iso, api.PlanMath.buildWeekStartsForYearLocal(2026, expected)[0].iso); // NEW
+    } // NEW
+}); // NEW
+
+test("Planting-method SQL starts directly with SQL text", () => { // NEW
+    const functionSource = PLUGIN_SOURCE.match(/async function queryPlantingMethodsForPlantId[\s\S]*?return await queryAll\(sql, \[pid\]\);/); // NEW
+    assert.ok(functionSource); // NEW
+    assert.doesNotMatch(functionSource[0], /const sql = `\s*\/\//); // NEW
+    assert.match(functionSource[0], /const sql = `\s*SELECT pm\.method_id/); // NEW
+}); // NEW
+
 test("PlanSchema detects duplicate crop identities and validates invalid units", () => {
     const { api } = createHarness();
     const plan = api.PlanSchema.createEmptyPlan(2025);
@@ -186,6 +232,63 @@ test("PlanSchema exposes CSA validation independently from the full plan", () =>
     assert.ok(csaErrors.some(error => error.includes("missing dates"))); // NEW
     assert.ok(csaErrors.some(error => error.includes("does not resolve to kg"))); // NEW
     assert.ok(Array.from(api.PlanSchema.validate(plan)).length >= csaErrors.length); // NEW
+}); // NEW
+
+test("PlanSchema rejects reversed market and effective CSA date ranges", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+    const crop = emptyCrop({ // NEW
+        market: [{ qty: 1, unit: "kg", from: "2026-07-01", to: "2026-06-01" }] // NEW
+    }); // NEW
+    plan.crops.push(crop); // NEW
+    plan.csa.enabled = true; // NEW
+    plan.csa.boxesPerWeek = 10; // NEW
+    plan.csa.start = "2026-09-30"; // NEW
+    plan.csa.end = "2026-06-01"; // NEW
+    plan.csa.components.push({ cropId: crop.id, qty: 1, unit: "kg", everyNWeeks: 1, start: "", end: "" }); // NEW
+
+    const cropErrors = Array.from(api.PlanSchema.validateCrop(crop)); // NEW
+    const csaErrors = Array.from(api.PlanSchema.validateCsa(plan)); // NEW
+    assert.ok(cropErrors.some(error => error.includes("market line has start date after end date"))); // NEW
+    assert.ok(csaErrors.some(error => error === "CSA start date is after CSA end date.")); // NEW
+    assert.ok(csaErrors.some(error => error.includes("has start date after end date"))); // NEW
+}); // NEW
+
+test("PlanMath excludes reversed demand ranges while retaining explicit valid CSA components", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+    const crop = emptyCrop({ // NEW
+        market: [{ qty: 5, unit: "kg", from: "2026-07-01", to: "2026-06-01" }] // NEW
+    }); // NEW
+    plan.crops.push(crop); // NEW
+    plan.csa.enabled = true; // NEW
+    plan.csa.boxesPerWeek = 10; // NEW
+    plan.csa.start = "2026-09-30"; // NEW
+    plan.csa.end = "2026-06-01"; // NEW
+    plan.csa.components.push( // NEW
+        { cropId: crop.id, qty: 2, unit: "kg", everyNWeeks: 1, start: "", end: "" }, // NEW
+        { cropId: crop.id, qty: 1, unit: "kg", everyNWeeks: 1, start: "2026-06-01", end: "2026-06-07" } // NEW
+    ); // NEW
+    const warnings = []; // NEW
+
+    const weekly = api.PlanMath.computePlanWeekly(plan, warnings); // NEW
+    assert.equal(weekly.targetTotal.reduce((sum, value) => sum + value, 0), 10); // NEW
+    assert.ok(warnings.some(warning => warning.includes("Market line skipped (start date after end date)"))); // NEW
+    assert.ok(warnings.some(warning => warning.includes("CSA component skipped (start date after end date)"))); // NEW
+}); // NEW
+
+test("PlanMath rejects reversed manual harvest windows without producing supply", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+    const crop = emptyCrop({ // NEW
+        useActualHarvest: false, actualPlants: 10, harvestStart: "2026-07-10", harvestEnd: "2026-07-01" // NEW
+    }); // NEW
+    plan.crops.push(crop); // NEW
+    const warnings = []; // NEW
+    const weekly = api.PlanMath.computePlanWeekly(plan, warnings); // NEW
+    assert.equal(weekly.supplyTotal.reduce((sum, value) => sum + value, 0), 0); // NEW
+    assert.ok(warnings.some(warning => warning.includes("harvest start date after end date"))); // NEW
+    assert.ok(api.PlanSchema.validateCrop(crop).some(error => error.includes("harvest start date is after harvest end date"))); // NEW
 }); // NEW
 
 test("PlanRepository round-trips plans, templates, defaults, and leap-day shifts", () => {
@@ -227,6 +330,27 @@ test("PlanRepository round-trips plans, templates, defaults, and leap-day shifts
 
     api.PlanRepository.saveDefaultsForPlant("1", [{ unit: "box", baseType: "kg", baseQty: 2 }]);
     assert.equal(api.PlanRepository.getDefaultsForPlant("1")[0].unit, "box");
+    const metadataCell = root.children.find(cell => cell.getAttribute("usl_year_planner_metadata") === "1"); // NEW
+    assert.ok(metadataCell); // NEW
+    assert.equal(metadataCell.visible, false); // NEW
+    assert.ok(metadataCell.getAttribute("plan_year_templates")); // NEW
+    assert.ok(metadataCell.getAttribute("plan_unit_defaults")); // NEW
+});
+
+test("PlanRepository migrates legacy root maps on the first diagram-level write", () => { // NEW
+    const { api, root } = createHarness(); // NEW
+    root.attributes.set("plan_year_templates", JSON.stringify({ Legacy: { year: 2024 } })); // NEW
+    root.attributes.set("plan_unit_defaults", JSON.stringify({ 9: [{ unit: "bunch", baseType: "kg", baseQty: 1 }] })); // NEW
+
+    assert.deepEqual(Array.from(api.PlanRepository.listTemplateNames()), ["Legacy"]); // NEW
+    api.PlanRepository.saveTemplateByName("Current", { year: 2026 }); // NEW
+
+    const metadataCell = root.children.find(cell => cell.getAttribute("usl_year_planner_metadata") === "1"); // NEW
+    assert.ok(metadataCell); // NEW
+    assert.equal(root.getAttribute("plan_year_templates"), null); // NEW
+    assert.equal(root.getAttribute("plan_unit_defaults"), null); // NEW
+    assert.deepEqual(Array.from(api.PlanRepository.listTemplateNames()), ["Current", "Legacy"]); // NEW
+    assert.equal(api.PlanRepository.getDefaultsForPlant("9")[0].unit, "bunch"); // NEW
 });
 
 test("DiagramPlanReader aggregates perennial and cross-year tiler facts with one crop key", () => {
@@ -263,7 +387,99 @@ test("DiagramPlanReader aggregates perennial and cross-year tiler facts with one
     assert.equal(facts.actualPlantsByCropKey.get("pid:1|vid:"), 5);
     const actualKg = facts.actualHarvestSeriesByCropKey.get("pid:1|vid:").reduce((sum, value) => sum + value, 0);
     assert.ok(actualKg > 4 && actualKg <= 10);
+    assert.deepEqual(JSON.parse(JSON.stringify(facts.actualHarvestDateRangeByCropKey.get("pid:1|vid:"))), { // NEW
+        start: "2024-12-29", // NEW
+        end: "2025-06-07" // NEW
+    }); // NEW
 });
+
+test("DiagramPlanReader resolves legacy variety names and rejects malformed harvest ranges", () => { // NEW
+    const { api, root, addCell, TestCell: Cell } = createHarness(); // NEW
+    const moduleCell = addCell(root, new Cell("module")); // NEW
+    addCell(moduleCell, new Cell("roma-early", { // NEW
+        tiler_group: "1", plant_id: "1", plant_name: "Tomato", variety_name: " roma ", plant_count: "2", // NEW
+        season_start_year: "2026", harvest_start: "2026-06-03", harvest_end: "2026-06-05" // NEW
+    })); // NEW
+    addCell(moduleCell, new Cell("roma-late", { // NEW
+        tiler_group: "1", plant_id: "1", plant_name: "Tomato", variety_name: "Roma", plant_count: "3", // NEW
+        season_start_year: "2026", harvest_start: "2026-07-10", harvest_end: "2026-07-12" // NEW
+    })); // NEW
+    addCell(moduleCell, new Cell("reversed", { // NEW
+        tiler_group: "1", plant_id: "2", plant_name: "Carrot", plant_count: "4", // NEW
+        season_start_year: "2026", harvest_start: "2026-08-10", harvest_end: "2026-08-01" // NEW
+    })); // NEW
+    addCell(moduleCell, new Cell("incomplete", { // NEW
+        tiler_group: "1", plant_id: "3", plant_name: "Lettuce", plant_count: "1", // NEW
+        season_start_year: "2026", harvest_start: "2026-09-01" // NEW
+    })); // NEW
+    addCell(moduleCell, new Cell("unmatched", { // NEW
+        tiler_group: "1", plant_id: "1", plant_name: "Tomato", variety_name: "Unknown", plant_count: "1", // NEW
+        season_start_year: "2026", harvest_start: "2026-10-01", harvest_end: "2026-10-02" // NEW
+    })); // NEW
+    const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+    plan.crops.push( // NEW
+        emptyCrop({ id: "roma", varietyId: 10, variety: "Roma" }), // NEW
+        emptyCrop({ id: "carrot", plantId: "2", plant: "Carrot" }), // NEW
+        emptyCrop({ id: "lettuce", plantId: "3", plant: "Lettuce" }) // NEW
+    ); // NEW
+    const facts = api.DiagramPlanReader.readYearFacts( // NEW
+        moduleCell, // NEW
+        2026, // NEW
+        api.PlanMath.buildWeekStartsForYearLocal(2026, 1), // NEW
+        new Map([["pid:1|vid:10", 1], ["pid:2|vid:", 1], ["pid:3|vid:", 1]]), // NEW
+        plan // NEW
+    ); // NEW
+
+    assert.equal(facts.actualPlantsByCropKey.get("pid:1|vid:10"), 5); // NEW
+    assert.deepEqual(JSON.parse(JSON.stringify(facts.actualHarvestDateRangeByCropKey.get("pid:1|vid:10"))), { // NEW
+        start: "2026-06-03", end: "2026-07-12" // NEW
+    }); // NEW
+    assert.equal(facts.actualHarvestDateRangeByCropKey.has("pid:2|vid:"), false); // NEW
+    assert.equal(facts.actualHarvestDateRangeByCropKey.has("pid:3|vid:"), false); // NEW
+    assert.ok(facts.diagnostics.some(message => message.includes("start date after end date"))); // NEW
+    assert.ok(facts.diagnostics.some(message => message.includes("incomplete"))); // NEW
+    assert.ok(facts.diagnostics.some(message => message.includes("no unique planned variety match"))); // NEW
+}); // NEW
+
+test("DiagramPlanReader reports ambiguous planned legacy variety matches", () => { // NEW
+    const { api, root, addCell, TestCell: Cell } = createHarness(); // NEW
+    const moduleCell = addCell(root, new Cell("module")); // NEW
+    addCell(moduleCell, new Cell("roma", { // NEW
+        tiler_group: "1", plant_id: "1", plant_name: "Tomato", variety_name: "Roma", plant_count: "1", // NEW
+        season_start_year: "2026", harvest_start: "2026-06-01", harvest_end: "2026-06-02" // NEW
+    })); // NEW
+    const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+    plan.crops.push( // NEW
+        emptyCrop({ id: "roma-a", varietyId: 10, variety: "Roma" }), // NEW
+        emptyCrop({ id: "roma-b", varietyId: 11, variety: " roma " }) // NEW
+    ); // NEW
+    const facts = api.DiagramPlanReader.readYearFacts( // NEW
+        moduleCell, 2026, api.PlanMath.buildWeekStartsForYearLocal(2026, 1), new Map(), plan // NEW
+    ); // NEW
+    assert.equal(facts.actualPlantsByCropKey.size, 0); // NEW
+    assert.ok(facts.diagnostics.some(message => message.includes("matches multiple planned varieties"))); // NEW
+}); // NEW
+
+test("DiagramPlanReader returns normalized garden crop candidates and ignores groups without plant identity", () => { // NEW
+    const { api, root, addCell, TestCell: Cell } = createHarness(); // NEW
+    const moduleCell = addCell(root, new Cell("module")); // NEW
+    addCell(moduleCell, new Cell("valid", { // NEW
+        tiler_group: "1", // NEW
+        plant_id: " 12 ", // NEW
+        plant_name: " Tomato ", // NEW
+        variety_id: " 34 ", // NEW
+        variety_name: " Roma " // NEW
+    })); // NEW
+    addCell(moduleCell, new Cell("missing-id", { tiler_group: "1", plant_name: "Carrot" })); // NEW
+    addCell(moduleCell, new Cell("not-a-group", { plant_id: "99", plant_name: "Ignored" })); // NEW
+
+    assert.deepEqual(JSON.parse(JSON.stringify(api.DiagramPlanReader.readGardenCropCandidates(moduleCell))), [{ // NEW
+        plantId: "12", // NEW
+        plantName: "Tomato", // NEW
+        varietyId: "34", // NEW
+        varietyName: "Roma" // NEW
+    }]); // NEW
+}); // NEW
 
 test("PlanRuntimeService recalculation is idempotent and preserves manual harvest dates", () => {
     const { api, root, addCell, TestCell: Cell } = createHarness();
@@ -318,11 +534,133 @@ test("PlanRuntimeService derives actual harvest windows and returns calculation 
     const runtime = api.PlanRuntimeService.recalculate(moduleCell, 2025, plan);
     const derived = runtime.derivedByCropId.get("crop_1");
 
-    assert.equal(derived.harvestStart, "2025-09-01");
-    assert.equal(derived.harvestEnd, "2025-09-14");
+    assert.equal(derived.harvestStart, "2025-09-03"); // CHANGE
+    assert.equal(derived.harvestEnd, "2025-09-09"); // CHANGE
     assert.ok(derived.actualHarvestWeeklyKg.some(value => value > 0));
     assert.ok(runtime.warnings.some(warning => warning.includes("missing dates")));
 });
+
+test("PlanMath inventory uses conservative weekly shelf-life buckets and FIFO consumption", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const weeks = [{ iso: "2026-01-05" }, { iso: "2026-01-12" }, { iso: "2026-01-19" }, { iso: "2026-01-26" }]; // NEW
+
+    for (const shelfLifeDays of [0, 3, 7]) { // NEW
+        const result = api.PlanMath.buildUsableSupplySeries([10, 0], [0, 5], shelfLifeDays, weeks.slice(0, 2)); // NEW
+        assert.deepEqual(Array.from(result.usableSupply), [0, 0]); // NEW
+        assert.deepEqual(Array.from(result.expired), [0, 10]); // NEW
+        assert.deepEqual(Array.from(result.short), [0, 5]); // NEW
+    } // NEW
+
+    const eightDays = api.PlanMath.buildUsableSupplySeries([10, 0], [0, 5], 8, weeks.slice(0, 2)); // NEW
+    assert.deepEqual(Array.from(eightDays.availableSupply), [10, 10]); // NEW
+    assert.deepEqual(Array.from(eightDays.usableSupply), [0, 5]); // NEW
+    assert.deepEqual(Array.from(eightDays.endingInventory), [10, 5]); // NEW
+
+    const fifo = api.PlanMath.buildUsableSupplySeries([5, 5, 0], [0, 3, 6], 14, weeks.slice(0, 3)); // NEW
+    assert.deepEqual(Array.from(fifo.usableSupply), [0, 3, 5]); // NEW
+    assert.deepEqual(Array.from(fifo.expired), [0, 0, 2]); // NEW
+    assert.deepEqual(Array.from(fifo.short), [0, 0, 1]); // NEW
+
+    const longLife = api.PlanMath.buildUsableSupplySeries([4, 0, 0, 0], [0, 0, 0, 0], 21, weeks); // NEW
+    assert.deepEqual(Array.from(longLife.endingInventory), [4, 4, 4, 0]); // NEW
+    assert.deepEqual(Array.from(longLife.expired), [0, 0, 0, 4]); // NEW
+}); // NEW
+
+test("PlanMath keeps raw harvest stable and never pools inventory across crops", () => { // NEW
+    const { api } = createHarness(); // NEW
+    function makeWeeklyPlan(shelfLifeDays) { // NEW
+        const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+        plan.crops.push(emptyCrop({ // NEW
+            useActualHarvest: false, // NEW
+            actualPlants: 10, // NEW
+            shelfLifeDays, // NEW
+            harvestStart: "2026-01-05", // NEW
+            harvestEnd: "2026-01-11", // NEW
+            market: [{ qty: 5, unit: "kg", from: "2026-01-12", to: "2026-01-18" }] // NEW
+        })); // NEW
+        return api.PlanMath.computePlanWeekly(plan, []); // NEW
+    } // NEW
+
+    const shortLife = makeWeeklyPlan(0); // NEW
+    const stored = makeWeeklyPlan(8); // NEW
+    assert.equal(shortLife.supplyTotal.reduce((sum, value) => sum + value, 0), 10); // NEW
+    assert.equal(stored.supplyTotal.reduce((sum, value) => sum + value, 0), 10); // NEW
+    assert.equal(shortLife.usableSupplyTotal.reduce((sum, value) => sum + value, 0), 0); // NEW
+    assert.equal(stored.usableSupplyTotal.reduce((sum, value) => sum + value, 0), 5); // NEW
+
+    const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+    plan.crops.push( // NEW
+        emptyCrop({ id: "harvest", actualPlants: 10, useActualHarvest: false, shelfLifeDays: 8, harvestStart: "2026-01-05", harvestEnd: "2026-01-11" }), // NEW
+        emptyCrop({ id: "demand", plantId: "2", plant: "Carrot", actualPlants: 0, useActualHarvest: false, shelfLifeDays: 8, market: [{ qty: 5, unit: "kg", from: "2026-01-12", to: "2026-01-18" }] }) // NEW
+    ); // NEW
+    const weekly = api.PlanMath.computePlanWeekly(plan, []); // NEW
+    const demandSeries = weekly.perCrop.get("demand"); // NEW
+    assert.equal(demandSeries.usableSupply.reduce((sum, value) => sum + value, 0), 0); // NEW
+    assert.equal(demandSeries.short.reduce((sum, value) => sum + value, 0), 5); // NEW
+    assert.equal(weekly.usableSupplyTotal.reduce((sum, value) => sum + value, 0), 0); // NEW
+}); // NEW
+
+test("PlanMath builds filtered and aggregate chart models with additive flow summaries", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const weekly = { // NEW
+        weeks: [{ iso: "2026-01-05" }, { iso: "2026-01-12" }], // NEW
+        targetTotal: [5, 7], // NEW
+        supplyTotal: [8, 2], // NEW
+        availableSupplyTotal: [8, 4], // NEW
+        usableSupplyTotal: [5, 3], // NEW
+        shortTotal: [0, 4], // NEW
+        surplusTotal: [3, 1], // NEW
+        expiredTotal: [0, 2], // NEW
+        endingInventoryTotal: [3, 1], // NEW
+        perCrop: new Map([["a", { // NEW
+            target: [2, 4], // NEW
+            supply: [5, 0], // NEW
+            availableSupply: [5, 3], // NEW
+            usableSupply: [2, 3], // NEW
+            short: [0, 1], // NEW
+            surplus: [3, 0], // NEW
+            expired: [0, 0], // NEW
+            endingInventory: [3, 0] // NEW
+        }]]) // NEW
+    }; // NEW
+
+    const filtered = api.PlanMath.buildPlanChartModel(weekly, "a"); // NEW
+    assert.equal(filtered[1].shortKg, 1); // NEW
+    assert.equal(filtered[0].harvestKg, 5); // NEW
+    const aggregateSummary = api.PlanMath.summarizePlanChartModel(api.PlanMath.buildPlanChartModel(weekly, "")); // NEW
+    assert.deepEqual(JSON.parse(JSON.stringify(aggregateSummary)), { // NEW
+        targetKg: 12, // NEW
+        harvestKg: 10, // NEW
+        usableSupplyKg: 8, // NEW
+        shortKg: 4, // NEW
+        expiredKg: 2, // NEW
+        worstShortageKg: 4, // NEW
+        worstShortageWeek: "2026-01-12", // NEW
+        shortWeeks: 1 // NEW
+    }); // NEW
+}); // NEW
+
+test("PlanRuntimeService syncs demand to harvest dates and collapses legacy shelf extensions", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const crop = emptyCrop({ // NEW
+        syncharvest: true, // NEW
+        shelfLifeDays: 14, // NEW
+        harvestStart: "2026-06-01", // NEW
+        harvestEnd: "2026-06-07", // NEW
+        market: [{ qty: 1, unit: "kg", from: "2026-06-01", to: "2026-06-21" }] // NEW
+    }); // NEW
+    const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+    plan.crops.push(crop); // NEW
+    plan.csa.enabled = true; // NEW
+    plan.csa.start = "2026-06-01"; // NEW
+    plan.csa.end = "2026-06-30"; // NEW
+    plan.csa.components.push({ cropId: crop.id, qty: 1, unit: "kg", start: "2026-06-01", end: "2026-06-21" }); // NEW
+
+    api.PlanRuntimeService.syncCropDatesIfEnabled(plan, crop, { hs: "2026-06-01", he: "2026-06-07", availEnd: "2026-06-21" }); // NEW
+    assert.equal(crop.market[0].to, "2026-06-07"); // NEW
+    assert.equal(plan.csa.components[0].end, "2026-06-07"); // NEW
+    assert.equal(api.PlanRuntimeService.cropAvailableEndYmd(crop), "2026-06-07"); // NEW
+}); // NEW
 
 test("YearPlanDashboard aggregates shortage and surplus without netting crops", () => { // NEW
     const { api } = createHarness(); // NEW
@@ -351,6 +689,45 @@ test("YearPlanDashboard aggregates shortage and surplus without netting crops", 
     assert.ok(dashboard.badges.includes("Short")); // NEW
     assert.ok(dashboard.badges.includes("Surplus")); // NEW
     assert.ok(dashboard.badges.includes("Manual harvest dates")); // NEW
+}); // NEW
+
+test("YearPlanDashboard classifies weekly timing and avoids inventory snapshot surplus double-counting", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+    const crops = [ // NEW
+        emptyCrop({ id: "missing", plant: "Missing", kgPerPlant: null, harvestStart: "2026-01-01", harvestEnd: "2026-01-31" }), // NEW
+        emptyCrop({ id: "none", plantId: "2", plant: "None", harvestStart: "2026-01-01", harvestEnd: "2026-01-31" }), // NEW
+        emptyCrop({ id: "short", plantId: "3", plant: "Short", harvestStart: "2026-01-01", harvestEnd: "2026-01-31" }), // NEW
+        emptyCrop({ id: "timing", plantId: "4", plant: "Timing", harvestStart: "2026-01-01", harvestEnd: "2026-01-31" }), // NEW
+        emptyCrop({ id: "surplus", plantId: "5", plant: "Surplus", harvestStart: "2026-01-01", harvestEnd: "2026-01-31" }), // NEW
+        emptyCrop({ id: "ok", plantId: "6", plant: "OK", harvestStart: "2026-01-01", harvestEnd: "2026-01-31" }) // NEW
+    ]; // NEW
+    plan.crops.push(...crops); // NEW
+    const series = (target, supply, usable, short, surplus, expired, endingInventory) => ({ // NEW
+        target, supply, availableSupply: supply, usableSupply: usable, short, surplus, expired, endingInventory // NEW
+    }); // NEW
+    const weekly = { // NEW
+        weeks: [{ iso: "2026-01-05" }, { iso: "2026-01-12" }], // NEW
+        perCrop: new Map([ // NEW
+            ["missing", series([1, 0], [1, 0], [1, 0], [0, 0], [0, 0], [0, 0], [0, 0])], // NEW
+            ["none", series([0, 0], [2, 0], [0, 0], [0, 0], [2, 2], [0, 0], [2, 2])], // NEW
+            ["short", series([0, 10], [4, 0], [0, 0], [0, 10], [4, 0], [0, 4], [4, 0])], // NEW
+            ["timing", series([0, 10], [10, 0], [0, 0], [0, 10], [10, 0], [0, 10], [10, 0])], // NEW
+            ["surplus", series([5, 0], [8, 0], [5, 0], [0, 0], [3, 3], [0, 0], [3, 3])], // NEW
+            ["ok", series([5, 0], [5, 0], [5, 0], [0, 0], [0, 0], [0, 0], [0, 0])] // NEW
+        ]) // NEW
+    }; // NEW
+    const cropTotals = crops.map(crop => ({ crop, targetKg: 0, supplyKg: 0, plantsReq: 1, seedsReq: 2 })); // NEW
+    const dashboard = api.YearPlanDashboard.compute(plan, { weekly, cropTotals, warnings: [] }); // NEW
+
+    assert.equal(dashboard.cropMetricsById.get("missing").status, "Missing data"); // NEW
+    assert.equal(dashboard.cropMetricsById.get("none").status, "No demand"); // NEW
+    assert.equal(dashboard.cropMetricsById.get("short").status, "Short"); // NEW
+    assert.equal(dashboard.cropMetricsById.get("timing").status, "Expired / timing issue"); // NEW
+    assert.equal(dashboard.cropMetricsById.get("surplus").status, "Surplus"); // NEW
+    assert.equal(dashboard.cropMetricsById.get("surplus").surplusKg, 3); // NEW
+    assert.equal(dashboard.cropMetricsById.get("ok").status, "OK"); // NEW
+    assert.ok(dashboard.badges.includes("Expired / timing issue")); // NEW
 }); // NEW
 
 test("YearPlanDashboard treats zero supply as a full shortage and validation errors as missing data", () => { // NEW
@@ -423,18 +800,21 @@ test("YearPlanDashboard expands checks only when blocking errors first appear", 
     const { api } = createHarness(); // NEW
     const state = api.YearPlanDashboard.createState({ crops: [] }); // NEW
     assert.equal(state.csaExpanded, false); // NEW
+    assert.equal(state.demandExpanded, true); // NEW
+    assert.equal(state.cropPlanExpanded, true); // NEW
+    assert.equal(state.planCheckExpanded, false); // NEW
     const invalid = { validationErrors: ["Plan error"] }; // NEW
     let changes = api.YearPlanDashboard.syncExpansionState(state, invalid, ["CSA error"]); // NEW
-    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { previewChanged: true, csaChanged: true }); // NEW
-    state.previewExpanded = false; state.csaExpanded = false; // NEW
+    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: true, csaChanged: true }); // CHANGE
+    state.planCheckExpanded = false; state.csaExpanded = false; // CHANGE
     changes = api.YearPlanDashboard.syncExpansionState(state, invalid, ["CSA error"]); // NEW
-    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { previewChanged: false, csaChanged: false }); // NEW
+    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: false, csaChanged: false }); // CHANGE
     api.YearPlanDashboard.syncExpansionState(state, { validationErrors: [] }, []); // NEW
     changes = api.YearPlanDashboard.syncExpansionState(state, invalid, ["CSA error"]); // NEW
-    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { previewChanged: true, csaChanged: true }); // NEW
-    state.previewExpanded = false; state.csaExpanded = false; // NEW
+    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: true, csaChanged: true }); // CHANGE
+    state.planCheckExpanded = false; state.csaExpanded = false; // CHANGE
     changes = api.YearPlanDashboard.syncExpansionState(state, { validationErrors: [], diagnostics: ["Runtime warning"] }, []); // NEW
-    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { previewChanged: false, csaChanged: false }); // NEW
+    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: false, csaChanged: false }); // CHANGE
 }); // NEW
 
 test("YearPlanDashboard resolves selection after crop removal and preserves unknown methods", () => { // NEW
