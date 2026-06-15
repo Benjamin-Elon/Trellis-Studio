@@ -431,6 +431,80 @@ Draw.loadPlugin(function (ui) {
             for (let i = wr.a; i <= wr.b; i++) series[i] += kgPerWeek; // CHANGE
         }
 
+        function addDailyDemandAcrossWeeks(series, weekStarts, fromYmd, toYmd, kgPerOccurrence, everyN) { // NEW
+            if (!Array.isArray(series) || !Array.isArray(weekStarts)) return false; // NEW
+            if (!hasYmd(fromYmd) || !hasYmd(toYmd) || fromYmd > toYmd) return false; // NEW
+            const kg = Number(kgPerOccurrence); // NEW
+            const interval = Math.max(1, Math.trunc(Number(everyN) || 1)); // NEW
+            if (!Number.isFinite(kg) || kg <= 0) return false; // NEW
+            const match = String(fromYmd).match(/^(\d{4})-(\d{2})-(\d{2})$/); // NEW
+            if (!match) return false; // NEW
+            const anchor = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])); // NEW
+            const endMatch = String(toYmd).match(/^(\d{4})-(\d{2})-(\d{2})$/); // NEW
+            const end = Date.UTC(Number(endMatch[1]), Number(endMatch[2]) - 1, Number(endMatch[3])); // NEW
+            let added = false; // NEW
+            for (let day = anchor; day <= end; day += interval * DAY_MS) { // NEW
+                const date = new Date(day); // NEW
+                const ymd = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`; // NEW
+                const index = weekIndexForDate(weekStarts, ymd); // NEW
+                if (index < 0) continue; // NEW
+                series[index] += kg; // NEW
+                added = true; // NEW
+            } // NEW
+            return added; // NEW
+        } // NEW
+
+        function addWeeklyDemandAcrossWeeks(series, weekStarts, fromYmd, toYmd, kgPerOccurrence, everyN, weekStartDow) { // NEW
+            const wr = weekRangeForWindowClamped(weekStarts, fromYmd, toYmd); // NEW
+            const kg = Number(kgPerOccurrence); // NEW
+            const interval = Math.max(1, Math.trunc(Number(everyN) || 1)); // NEW
+            if (!wr || !Number.isFinite(kg) || kg <= 0) return false; // NEW
+            let added = false; // NEW
+            for (let i = wr.a; i <= wr.b; i++) { // NEW
+                const offset = weekOffsetFromWindowStart(weekStarts, i, fromYmd, weekStartDow); // NEW
+                if (offset % interval !== 0) continue; // NEW
+                series[i] += kg; // NEW
+                added = true; // NEW
+            } // NEW
+            return added; // NEW
+        } // NEW
+
+        function addMonthlyDemandAcrossWeeks(series, weekStarts, fromYmd, toYmd, kgPerMonth, everyN) { // NEW
+            if (!Array.isArray(series) || !Array.isArray(weekStarts)) return false; // NEW
+            if (!hasYmd(fromYmd) || !hasYmd(toYmd) || fromYmd > toYmd) return false; // NEW
+            const kg = Number(kgPerMonth); // NEW
+            const interval = Math.max(1, Math.trunc(Number(everyN) || 1)); // NEW
+            if (!Number.isFinite(kg) || kg <= 0) return false; // NEW
+            const fromParts = String(fromYmd).split("-").map(Number); // NEW
+            const toParts = String(toYmd).split("-").map(Number); // NEW
+            const anchorMonth = fromParts[0] * 12 + fromParts[1] - 1; // NEW
+            const lastMonth = toParts[0] * 12 + toParts[1] - 1; // NEW
+            let added = false; // NEW
+            for (let monthKey = anchorMonth; monthKey <= lastMonth; monthKey += interval) { // NEW
+                const year = Math.floor(monthKey / 12); // NEW
+                const monthIndex = monthKey % 12; // NEW
+                const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate(); // NEW
+                const activeStart = monthKey === anchorMonth ? fromParts[2] : 1; // NEW
+                const activeEnd = monthKey === lastMonth ? toParts[2] : daysInMonth; // NEW
+                for (let day = activeStart; day <= activeEnd; day++) { // NEW
+                    const ymd = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`; // NEW
+                    const index = weekIndexForDate(weekStarts, ymd); // NEW
+                    if (index < 0) continue; // NEW
+                    series[index] += kg / daysInMonth; // NEW
+                    added = true; // NEW
+                } // NEW
+            } // NEW
+            return added; // NEW
+        } // NEW
+
+        function addDemandAcrossWeeks(series, weekStarts, line, kgPerUnit, weekStartDow) { // NEW
+            const qtyKg = Number(line && line.qty) * Number(kgPerUnit); // NEW
+            const everyN = Math.max(1, Math.trunc(Number(line && line.everyN) || 1)); // NEW
+            if (line && line.frequency === "day") return addDailyDemandAcrossWeeks(series, weekStarts, line.from, line.to, qtyKg, everyN); // NEW
+            if (line && line.frequency === "month") return addMonthlyDemandAcrossWeeks(series, weekStarts, line.from, line.to, qtyKg, everyN); // NEW
+            return addWeeklyDemandAcrossWeeks(series, weekStarts, line && line.from, line && line.to, qtyKg, everyN, weekStartDow); // NEW
+        } // NEW
+
         function addTotalKgAcrossWindowProrated(series, weekStarts, fromYmd, toYmd, totalKg, selectedYear) { // NEW
             if (!Array.isArray(series) || !Array.isArray(weekStarts)) return false; // NEW
             if (!hasYmd(fromYmd) || !hasYmd(toYmd)) return false; // NEW
@@ -608,36 +682,42 @@ Draw.loadPlugin(function (ui) {
 
             const crops = (plan && plan.crops) ? plan.crops : [];
 
-            // market
-            for (const crop of crops) {
-                if (!crop || !crop.id) continue;
-                const arr = ensureCropArrays(crop.id);
-                const market = crop.market || [];
-                for (const line of market) {
-                    const qty = Number(line && line.qty);
-                    if (!Number.isFinite(qty) || qty <= 0) {
-                        pushWarn(warns, `Market line skipped (qty missing) for ${crop.plant || crop.id}`);
-                        continue;
-                    }
+            const demandLineOrder = new Map(); // NEW
+            const channelOrder = new Map(((plan && plan.demandChannels) || []).map((channel, index) => [String(channel && channel.id || ""), index])); // NEW
+            const perDemandLine = new Map(); // NEW
+            const perChannel = new Map(); // NEW
+            const perPriority = new Map(); // NEW
+            const csaWeekly = { target: Array(n).fill(0), usableSupply: Array(n).fill(0), short: Array(n).fill(0) }; // NEW
+            const priorityRank = new Map([["committed", 0], ["target", 1], ["optional", 2]]); // NEW
 
-                    if (!hasYmd(line.from) || !hasYmd(line.to)) {
-                        pushWarn(warns, `Market line skipped (missing dates) for ${crop.plant || crop.id}`);
-                        continue;
-                    }
-                    if (line.from > line.to) { // NEW
-                        pushWarn(warns, `Market line skipped (start date after end date) for ${crop.plant || crop.id}`); // NEW
-                        continue; // NEW
-                    } // NEW
-
-                    const kgPerUnit = resolveUnitToKgPerUnit(crop, line.unit);
-                    if (!Number.isFinite(kgPerUnit)) {
-                        pushWarn(warns, `Market line skipped (unknown unit "${line.unit}") for ${crop.plant || crop.id}`);
-                        continue;
-                    }
-
-                    addKgAcrossWeeks(arr.target, weeks, line.from, line.to, qty * kgPerUnit);
-                }
-            }
+            for (const [lineIndex, line] of ((plan && plan.demands) || []).entries()) { // NEW
+                demandLineOrder.set(String(line && line.id || ""), lineIndex); // NEW
+                const crop = findCrop(plan, line && line.cropId); // NEW
+                if (!crop) { pushWarn(warns, "Demand line skipped (missing crop)."); continue; } // NEW
+                const qty = Number(line && line.qty); // NEW
+                if (!Number.isFinite(qty) || qty <= 0) { pushWarn(warns, `Demand line skipped (qty missing) for ${crop.plant || crop.id}`); continue; } // NEW
+                if (!hasYmd(line.from) || !hasYmd(line.to)) { pushWarn(warns, `Demand line skipped (missing dates) for ${crop.plant || crop.id}`); continue; } // NEW
+                if (line.from > line.to) { pushWarn(warns, `Demand line skipped (start date after end date) for ${crop.plant || crop.id}`); continue; } // NEW
+                const kgPerUnit = resolveUnitToKgPerUnit(crop, line.unit); // NEW
+                if (!Number.isFinite(kgPerUnit)) { pushWarn(warns, `Demand line skipped (unknown unit "${line.unit}") for ${crop.plant || crop.id}`); continue; } // NEW
+                const target = Array(n).fill(0); // NEW
+                if (!addDemandAcrossWeeks(target, weeks, line, kgPerUnit, weekStartDow)) continue; // NEW
+                const result = { // NEW
+                    line, // NEW
+                    cropId: String(crop.id), // NEW
+                    channelId: String(line.channelId || ""), // NEW
+                    priority: String(line.priority || "target"), // NEW
+                    kgPerUnit, // NEW
+                    target, // NEW
+                    usableSupply: Array(n).fill(0), // NEW
+                    short: Array(n).fill(0), // NEW
+                    potentialRevenue: target.map(value => Number.isFinite(Number(line.price)) ? (value / kgPerUnit) * Math.max(0, Number(line.price)) : 0), // NEW
+                    fulfilledRevenue: Array(n).fill(0) // NEW
+                }; // NEW
+                perDemandLine.set(String(line.id), result); // NEW
+                const cropArrays = ensureCropArrays(crop.id); // NEW
+                for (let i = 0; i < n; i++) cropArrays.target[i] += target[i]; // NEW
+            } // NEW
 
             // CSA
             const csa = plan && plan.csa;
@@ -684,7 +764,11 @@ Draw.loadPlugin(function (ui) {
                         for (let i = wr.a; i <= wr.b; i++) { // CHANGE
                             const rel = weekOffsetFromWindowStart(weeks, i, from, weekStartDow); // CHANGE
                             if (rel % everyN !== 0) continue; // CHANGE
-                            arr.target[i] += boxes * qty * kgPerUnit; // CHANGE
+                            const targetKg = boxes * qty * kgPerUnit; // CHANGE
+                            arr.target[i] += targetKg; // CHANGE
+                            csaWeekly.target[i] += targetKg; // NEW
+                            if (!arr.csaTarget) arr.csaTarget = Array(n).fill(0); // NEW
+                            arr.csaTarget[i] += targetKg; // NEW
                         }
                     }
                 }
@@ -740,15 +824,88 @@ Draw.loadPlugin(function (ui) {
                 );
             }
 
-            for (const crop of crops) { // NEW
-                if (!crop || !crop.id) continue; // NEW
-                const arr = ensureCropArrays(crop.id); // NEW
-                Object.assign(arr, buildUsableSupplySeries( // NEW
-                    arr.supply, // NEW
-                    arr.target, // NEW
-                    crop.shelfLifeDays, // NEW
-                    weeks // NEW
-                )); // NEW
+            for (const crop of crops) { // CHANGE
+                if (!crop || !crop.id) continue; // CHANGE
+                const arr = ensureCropArrays(crop.id); // CHANGE
+                arr.availableSupply = Array(n).fill(0); // NEW
+                arr.usableSupply = Array(n).fill(0); // NEW
+                arr.short = Array(n).fill(0); // NEW
+                arr.surplus = Array(n).fill(0); // NEW
+                arr.expired = Array(n).fill(0); // NEW
+                arr.endingInventory = Array(n).fill(0); // NEW
+                const lifetimeWeeks = Math.max(1, Math.ceil(Math.max(0, Number(crop.shelfLifeDays) || 0) / 7)); // NEW
+                const inventory = []; // NEW
+                const demandResults = Array.from(perDemandLine.values()) // NEW
+                    .filter(result => result.cropId === String(crop.id)) // NEW
+                    .sort((a, b) => { // NEW
+                        const priorityDifference = (priorityRank.get(a.priority) ?? 1) - (priorityRank.get(b.priority) ?? 1); // NEW
+                        if (priorityDifference) return priorityDifference; // NEW
+                        const channelDifference = (channelOrder.get(a.channelId) ?? Number.MAX_SAFE_INTEGER) - (channelOrder.get(b.channelId) ?? Number.MAX_SAFE_INTEGER); // NEW
+                        if (channelDifference) return channelDifference; // NEW
+                        return (demandLineOrder.get(String(a.line.id)) ?? 0) - (demandLineOrder.get(String(b.line.id)) ?? 0); // NEW
+                    }); // NEW
+                const consume = requestedKg => { // NEW
+                    let remaining = Math.max(0, Number(requestedKg) || 0); // NEW
+                    let used = 0; // NEW
+                    while (remaining > 0 && inventory.length) { // NEW
+                        const batch = inventory[0]; // NEW
+                        const amount = Math.min(remaining, batch.kg); // NEW
+                        batch.kg -= amount; // NEW
+                        remaining -= amount; // NEW
+                        used += amount; // NEW
+                        if (batch.kg <= 1e-9) inventory.shift(); // NEW
+                    } // NEW
+                    return { used, short: remaining }; // NEW
+                }; // NEW
+                for (let weekIndex = 0; weekIndex < n; weekIndex++) { // NEW
+                    const harvestedKg = Math.max(0, Number(arr.supply[weekIndex]) || 0); // NEW
+                    if (harvestedKg > 0) inventory.push({ kg: harvestedKg, expiresWeek: weekIndex + lifetimeWeeks }); // NEW
+                    while (inventory.length && inventory[0].expiresWeek <= weekIndex) arr.expired[weekIndex] += inventory.shift().kg; // NEW
+                    arr.availableSupply[weekIndex] = inventory.reduce((sum, batch) => sum + batch.kg, 0); // NEW
+                    const csaAllocation = consume(arr.csaTarget && arr.csaTarget[weekIndex]); // NEW
+                    csaWeekly.usableSupply[weekIndex] += csaAllocation.used; // NEW
+                    csaWeekly.short[weekIndex] += csaAllocation.short; // NEW
+                    arr.usableSupply[weekIndex] += csaAllocation.used; // NEW
+                    arr.short[weekIndex] += csaAllocation.short; // NEW
+                    for (const result of demandResults) { // NEW
+                        const allocation = consume(result.target[weekIndex]); // NEW
+                        result.usableSupply[weekIndex] = allocation.used; // NEW
+                        result.short[weekIndex] = allocation.short; // NEW
+                        result.fulfilledRevenue[weekIndex] = Number.isFinite(Number(result.line.price)) // NEW
+                            ? (allocation.used / result.kgPerUnit) * Math.max(0, Number(result.line.price)) // NEW
+                            : 0; // NEW
+                        arr.usableSupply[weekIndex] += allocation.used; // NEW
+                        arr.short[weekIndex] += allocation.short; // NEW
+                    } // NEW
+                    arr.endingInventory[weekIndex] = inventory.reduce((sum, batch) => sum + batch.kg, 0); // NEW
+                    arr.surplus[weekIndex] = arr.endingInventory[weekIndex]; // NEW
+                } // NEW
+            } // CHANGE
+
+            function aggregateDemandResults(results) { // NEW
+                const aggregate = { // NEW
+                    target: Array(n).fill(0), usableSupply: Array(n).fill(0), short: Array(n).fill(0), // NEW
+                    potentialRevenue: Array(n).fill(0), fulfilledRevenue: Array(n).fill(0), lineIds: [] // NEW
+                }; // NEW
+                for (const result of results) { // NEW
+                    aggregate.lineIds.push(String(result.line.id)); // NEW
+                    for (let i = 0; i < n; i++) { // NEW
+                        aggregate.target[i] += result.target[i]; // NEW
+                        aggregate.usableSupply[i] += result.usableSupply[i]; // NEW
+                        aggregate.short[i] += result.short[i]; // NEW
+                        aggregate.potentialRevenue[i] += result.potentialRevenue[i]; // NEW
+                        aggregate.fulfilledRevenue[i] += result.fulfilledRevenue[i]; // NEW
+                    } // NEW
+                } // NEW
+                return aggregate; // NEW
+            } // NEW
+
+            for (const channel of ((plan && plan.demandChannels) || [])) { // NEW
+                const channelId = String(channel && channel.id || ""); // NEW
+                perChannel.set(channelId, aggregateDemandResults(Array.from(perDemandLine.values()).filter(result => result.channelId === channelId))); // NEW
+            } // NEW
+            for (const priority of ["committed", "target", "optional"]) { // NEW
+                perPriority.set(priority, aggregateDemandResults(Array.from(perDemandLine.values()).filter(result => result.priority === priority))); // NEW
             } // NEW
 
             // Aggregate all per-crop series into total series before returning. // CHANGE
@@ -775,7 +932,11 @@ Draw.loadPlugin(function (ui) {
                 surplusTotal, // NEW
                 expiredTotal, // NEW
                 endingInventoryTotal, // NEW
-                perCrop // CHANGE
+                perCrop, // CHANGE
+                perDemandLine, // NEW
+                perChannel, // NEW
+                perPriority, // NEW
+                csa: csaWeekly // NEW
             }; // CHANGE
         }
 
@@ -814,6 +975,10 @@ Draw.loadPlugin(function (ui) {
             findCrop,
             resolveUnitToKgPerUnit,
             addKgAcrossWeeks,
+            addDailyDemandAcrossWeeks, // NEW
+            addWeeklyDemandAcrossWeeks, // NEW
+            addMonthlyDemandAcrossWeeks, // NEW
+            addDemandAcrossWeeks, // NEW
             addTotalKgAcrossWindowProrated, // NEW
             buildUsableSupplySeries, // NEW
             buildPlanChartModel, // NEW
@@ -828,16 +993,28 @@ Draw.loadPlugin(function (ui) {
      * Owns the persisted plan shape, runtime normalization, validation, and crop identity rules. // NEW
      */
     const PlanSchema = (() => { // NEW
+        const DEFAULT_DEMAND_CHANNELS = [ // NEW
+            { id: "farm_store", label: "Farm Store", type: "farm_store" }, // NEW
+            { id: "restaurant_1", label: "Restaurant 1", type: "restaurant" }, // NEW
+            { id: "farmers_market", label: "Farmers Market", type: "market" }, // NEW
+            { id: "wholesale", label: "Wholesale", type: "wholesale" } // NEW
+        ]; // NEW
+        const DEMAND_CHANNEL_TYPES = ["farm_store", "restaurant", "market", "wholesale", "other"]; // NEW
+        const DEMAND_FREQUENCIES = ["day", "week", "month"]; // NEW
+        const DEMAND_PRIORITIES = ["committed", "target", "optional"]; // NEW
+
         function clonePlain(obj) { // NEW
             return JSON.parse(JSON.stringify(obj || {})); // NEW
         }
 
         function createEmptyPlan(year) { // NEW
             return normalizeForRuntime({ // NEW
-                version: 1,
+                version: 2, // CHANGE
                 year: Number(year),
                 weekStartDow: 1,
                 crops: [],
+                demandChannels: clonePlain(DEFAULT_DEMAND_CHANNELS), // NEW
+                demands: [], // NEW
                 csa: { enabled: false, boxesPerWeek: 0, start: "", end: "", components: [] }
             }, year);
         }
@@ -877,7 +1054,7 @@ Draw.loadPlugin(function (ui) {
 
         function normalizeForRuntime(plan, year) { // CHANGE
             const normalized = plan && typeof plan === "object" ? plan : {};
-            normalized.version = Number(normalized.version) || 1;
+            normalized.version = 2; // CHANGE
             normalized.year = Number.isFinite(Number(year)) ? Number(year) : Number(normalized.year);
             if (!Number.isFinite(normalized.year)) normalized.year = new Date().getFullYear();
             const weekStartDow = Math.trunc(Number(normalized.weekStartDow)); // CHANGE
@@ -885,6 +1062,8 @@ Draw.loadPlugin(function (ui) {
                 ? weekStartDow // CHANGE
                 : 1; // CHANGE
             normalized.crops = Array.isArray(normalized.crops) ? normalized.crops : [];
+            if (!Array.isArray(normalized.demandChannels)) normalized.demandChannels = clonePlain(DEFAULT_DEMAND_CHANNELS); // NEW
+            normalized.demands = Array.isArray(normalized.demands) ? normalized.demands : []; // NEW
 
             if (!normalized.csa || typeof normalized.csa !== "object") {
                 normalized.csa = { enabled: false, boxesPerWeek: 0, start: "", end: "", components: [] };
@@ -894,7 +1073,6 @@ Draw.loadPlugin(function (ui) {
             for (const crop of normalized.crops) {
                 normalizeYieldFieldsForRuntime(crop);
                 crop.packages = Array.isArray(crop.packages) ? crop.packages : [];
-                crop.market = Array.isArray(crop.market) ? crop.market : [];
                 if (!Number.isFinite(Number(crop.shelfLifeDays))) crop.shelfLifeDays = 0;
                 if (!Number.isFinite(Number(crop.germRate)) || Number(crop.germRate) <= 0 || Number(crop.germRate) > 1) {
                     crop.germRate = 1.0;
@@ -919,11 +1097,7 @@ Draw.loadPlugin(function (ui) {
                 delete crop.savePackagesAsDefault;
 
                 crop.kgPerPlantMode = crop.kgPerPlantMode === "manual" ? "manual" : "auto";
-                crop.market = Array.isArray(crop.market) ? crop.market : [];
-                for (const marketLine of crop.market) {
-                    delete marketLine.__baseTo;
-                    delete marketLine.__preSyncTo;
-                }
+                delete crop.market; // CHANGE
             }
             return plan;
         }
@@ -996,18 +1170,6 @@ Draw.loadPlugin(function (ui) {
                 }
             }
 
-            for (const marketLine of (crop.market || [])) {
-                if (!PlanMath.hasYmd(marketLine.from) || !PlanMath.hasYmd(marketLine.to)) {
-                    errors.push(`Crop "${crop.plant || crop.id}" market line missing dates.`);
-                }
-                if (PlanMath.hasYmd(marketLine.from) && PlanMath.hasYmd(marketLine.to) && marketLine.from > marketLine.to) { // NEW
-                    errors.push(`Crop "${crop.plant || crop.id}" market line has start date after end date.`); // NEW
-                } // NEW
-                if (!Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, marketLine.unit))) {
-                    errors.push(`Crop "${crop.plant || crop.id}" market unit "${marketLine.unit}" does not resolve to kg.`);
-                }
-            }
-
             const germinationRate = Number(crop.germRate);
             if (!Number.isFinite(germinationRate) || germinationRate <= 0 || germinationRate > 1) {
                 errors.push(`Crop "${crop.plant || crop.id}" missing valid germination rate (0..1).`);
@@ -1046,6 +1208,40 @@ Draw.loadPlugin(function (ui) {
             return errors; // NEW
         } // NEW
 
+        function validateDemand(plan) { // NEW
+            const errors = []; // NEW
+            const channels = (plan && plan.demandChannels) || []; // NEW
+            const demands = (plan && plan.demands) || []; // NEW
+            const channelIds = new Set(); // NEW
+            for (const channel of channels) { // NEW
+                const id = String(channel && channel.id || "").trim(); // NEW
+                if (!id) errors.push("Demand channel missing id."); // NEW
+                else if (channelIds.has(id)) errors.push(`Duplicate demand channel id "${id}".`); // NEW
+                else channelIds.add(id); // NEW
+                if (!String(channel && channel.label || "").trim()) errors.push(`Demand channel "${id || "unknown"}" missing label.`); // NEW
+                if (!DEMAND_CHANNEL_TYPES.includes(String(channel && channel.type || ""))) errors.push(`Demand channel "${id || "unknown"}" has invalid type.`); // NEW
+            } // NEW
+            const demandIds = new Set(); // NEW
+            for (const line of demands) { // NEW
+                const id = String(line && line.id || "").trim(); // NEW
+                const crop = PlanMath.findCrop(plan, line && line.cropId); // NEW
+                if (!id) errors.push("Demand line missing id."); // NEW
+                else if (demandIds.has(id)) errors.push(`Duplicate demand line id "${id}".`); // NEW
+                else demandIds.add(id); // NEW
+                if (!channelIds.has(String(line && line.channelId || ""))) errors.push(`Demand line "${id || "unknown"}" references missing channel.`); // NEW
+                if (!crop) errors.push(`Demand line "${id || "unknown"}" references missing crop.`); // NEW
+                if (!Number.isFinite(Number(line && line.qty)) || Number(line.qty) <= 0) errors.push(`Demand line "${id || "unknown"}" quantity must be > 0.`); // NEW
+                if (!DEMAND_FREQUENCIES.includes(String(line && line.frequency || ""))) errors.push(`Demand line "${id || "unknown"}" has invalid frequency.`); // NEW
+                if (!Number.isInteger(Number(line && line.everyN)) || Number(line.everyN) < 1) errors.push(`Demand line "${id || "unknown"}" everyN must be a positive integer.`); // NEW
+                if (!DEMAND_PRIORITIES.includes(String(line && line.priority || ""))) errors.push(`Demand line "${id || "unknown"}" has invalid priority.`); // NEW
+                if (!PlanMath.hasYmd(line && line.from) || !PlanMath.hasYmd(line && line.to)) errors.push(`Demand line "${id || "unknown"}" missing dates.`); // NEW
+                if (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to) errors.push(`Demand line "${id || "unknown"}" has start date after end date.`); // NEW
+                if (crop && !Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, line && line.unit))) errors.push(`Demand line "${id || "unknown"}" unit "${line && line.unit}" does not resolve to kg.`); // NEW
+                if (line && line.price !== "" && line.price !== null && line.price !== undefined && (!Number.isFinite(Number(line.price)) || Number(line.price) < 0)) errors.push(`Demand line "${id || "unknown"}" price must be blank or nonnegative.`); // NEW
+            } // NEW
+            return errors; // NEW
+        } // NEW
+
         function validate(plan) { // CHANGE
             const errors = [];
             const crops = (plan && plan.crops) || [];
@@ -1053,12 +1249,17 @@ Draw.loadPlugin(function (ui) {
 
             const duplicate = findFirstDuplicateCrop(plan); // NEW
             if (duplicate) errors.push("Duplicate crop rows found. Each plant/variety may appear only once per year plan."); // NEW
+            errors.push(...validateDemand(plan)); // NEW
             errors.push(...validateCsa(plan)); // NEW
             return errors;
         }
 
         return { // NEW
             clonePlain,
+            DEFAULT_DEMAND_CHANNELS, // NEW
+            DEMAND_CHANNEL_TYPES, // NEW
+            DEMAND_FREQUENCIES, // NEW
+            DEMAND_PRIORITIES, // NEW
             createEmptyPlan,
             normalizeYieldFieldsForRuntime,
             normalizeForRuntime,
@@ -1069,6 +1270,7 @@ Draw.loadPlugin(function (ui) {
             findDuplicateCrop,
             findFirstDuplicateCrop,
             validateCrop, // NEW
+            validateDemand, // NEW
             validateCsa, // NEW
             validate
         };
@@ -1210,11 +1412,11 @@ Draw.loadPlugin(function (ui) {
             for (const crop of (plan.crops || [])) {
                 shiftFieldYear(crop, "harvestStart", deltaYears);
                 shiftFieldYear(crop, "harvestEnd", deltaYears);
-                for (const marketLine of (crop.market || [])) {
-                    shiftFieldYear(marketLine, "from", deltaYears);
-                    shiftFieldYear(marketLine, "to", deltaYears);
-                }
             }
+            for (const demandLine of (plan.demands || [])) { // CHANGE
+                shiftFieldYear(demandLine, "from", deltaYears); // CHANGE
+                shiftFieldYear(demandLine, "to", deltaYears); // CHANGE
+            } // CHANGE
             if (!plan.csa) return;
             shiftFieldYear(plan.csa, "start", deltaYears);
             shiftFieldYear(plan.csa, "end", deltaYears);
@@ -1275,6 +1477,9 @@ Draw.loadPlugin(function (ui) {
             for (const component of rekeyed.csa.components) {
                 component.cropId = idMap.has(component.cropId) ? idMap.get(component.cropId) : "";
             }
+            for (const demandLine of rekeyed.demands) { // NEW
+                demandLine.cropId = idMap.has(demandLine.cropId) ? idMap.get(demandLine.cropId) : ""; // NEW
+            } // NEW
             if (idMap.has(rekeyed.cropFilterId)) rekeyed.cropFilterId = idMap.get(rekeyed.cropFilterId);
             else delete rekeyed.cropFilterId;
             delete rekeyed.templateBaseYear;
@@ -1752,24 +1957,23 @@ Draw.loadPlugin(function (ui) {
             crop.__sync_lastHarvestEnd = crop.__sync_lastHarvestEnd ?? (oldSnapshot && oldSnapshot.he) ?? "";
             crop.__sync_lastAvailEnd = crop.__sync_lastAvailEnd ?? (oldSnapshot && oldSnapshot.availEnd) ?? "";
 
-            crop.market = crop.market || [];
-            for (const marketLine of crop.market) {
-                if (!marketLine) continue;
-                if (previousLegacyEnd && String(marketLine.to || "") === previousLegacyEnd) marketLine.to = previousHarvestEnd; // NEW
-                if (shouldAutoReplaceDate(marketLine.from, crop.__sync_lastHarvestStart) && PlanMath.hasYmd(harvestStart)) {
-                    marketLine.from = harvestStart;
+            for (const demandLine of ((plan && plan.demands) || [])) { // CHANGE
+                if (!demandLine || demandLine.cropId !== crop.id) continue; // CHANGE
+                if (previousLegacyEnd && String(demandLine.to || "") === previousLegacyEnd) demandLine.to = previousHarvestEnd; // CHANGE
+                if (shouldAutoReplaceDate(demandLine.from, crop.__sync_lastHarvestStart) && PlanMath.hasYmd(harvestStart)) { // CHANGE
+                    demandLine.from = harvestStart; // CHANGE
                 }
-                marketLine.from = clampYmdIntoRange(marketLine.from, harvestStart, availableEnd);
+                demandLine.from = clampYmdIntoRange(demandLine.from, harvestStart, availableEnd); // CHANGE
 
                 const lastAutomaticEnd = crop.__sync_lastAvailEnd || crop.__sync_lastHarvestEnd;
                 const looksAutomatic = PlanMath.hasYmd(harvestEnd)
-                    && PlanMath.hasYmd(marketLine.to)
-                    && String(marketLine.to) === String(harvestEnd);
-                if (shouldAutoReplaceDate(marketLine.to, lastAutomaticEnd) || looksAutomatic) {
-                    if (PlanMath.hasYmd(availableEnd)) marketLine.to = availableEnd;
-                    else if (PlanMath.hasYmd(harvestEnd)) marketLine.to = harvestEnd;
+                    && PlanMath.hasYmd(demandLine.to) // CHANGE
+                    && String(demandLine.to) === String(harvestEnd); // CHANGE
+                if (shouldAutoReplaceDate(demandLine.to, lastAutomaticEnd) || looksAutomatic) { // CHANGE
+                    if (PlanMath.hasYmd(availableEnd)) demandLine.to = availableEnd; // CHANGE
+                    else if (PlanMath.hasYmd(harvestEnd)) demandLine.to = harvestEnd; // CHANGE
                 }
-                marketLine.to = clampYmdIntoRange(marketLine.to, harvestStart, availableEnd);
+                demandLine.to = clampYmdIntoRange(demandLine.to, harvestStart, availableEnd); // CHANGE
             }
 
             if (csa && Array.isArray(csa.components)) {
@@ -1961,10 +2165,12 @@ Draw.loadPlugin(function (ui) {
                 activeTab: "basics", // NEW
                 csaExpanded: false, // NEW
                 demandExpanded: true, // NEW
+                collapsedDemandChannelIds: new Set(), // NEW
                 cropPlanExpanded: true, // NEW
                 planCheckExpanded: false, // CHANGE
                 hadBlockingErrors: false, // NEW
                 hadCsaErrors: false, // NEW
+                hadDemandErrors: false, // NEW
                 baselineSnapshot: "", // NEW
                 validationState: "idle", // NEW
                 lastSavedAt: null, // NEW
@@ -2010,6 +2216,23 @@ Draw.loadPlugin(function (ui) {
             return month ? `${month} ${match[3]}` : ""; // NEW
         } // NEW
 
+        function formatMoney(value) { // NEW
+            const number = Number(value); // NEW
+            return Number.isFinite(number) ? `$${number.toFixed(2)}` : "-"; // NEW
+        } // NEW
+
+        function summarizeDemandAggregate(aggregate) { // NEW
+            const sum = values => (Array.isArray(values) ? values : []).reduce((total, value) => total + Math.max(0, Number(value) || 0), 0); // NEW
+            return { // NEW
+                targetKg: sum(aggregate && aggregate.target), // NEW
+                usableSupplyKg: sum(aggregate && aggregate.usableSupply), // NEW
+                shortKg: sum(aggregate && aggregate.short), // NEW
+                potentialRevenue: sum(aggregate && aggregate.potentialRevenue), // NEW
+                fulfilledRevenue: sum(aggregate && aggregate.fulfilledRevenue), // NEW
+                lineCount: Array.isArray(aggregate && aggregate.lineIds) ? aggregate.lineIds.length : 0 // NEW
+            }; // NEW
+        } // NEW
+
         function buildCompactStatus(dashboard) { // NEW
             const cropCount = Math.max(0, Math.trunc(Number(dashboard && dashboard.cropCount) || 0)); // NEW
             const parts = [String(Number(dashboard && dashboard.year) || ""), `${cropCount} crop${cropCount === 1 ? "" : "s"}`]; // NEW
@@ -2031,10 +2254,11 @@ Draw.loadPlugin(function (ui) {
             return parts.join(" \u00b7 "); // NEW
         } // NEW
 
-        function syncExpansionState(state, dashboard, csaErrors) { // NEW
+        function syncExpansionState(state, dashboard, csaErrors, demandErrors) { // CHANGE
             const hasBlockingErrors = !!(dashboard && dashboard.validationErrors && dashboard.validationErrors.length); // NEW
             const hasCsaErrors = !!(csaErrors && csaErrors.length); // NEW
-            const changes = { planCheckChanged: false, csaChanged: false }; // CHANGE
+            const hasDemandErrors = !!(demandErrors && demandErrors.length); // NEW
+            const changes = { planCheckChanged: false, csaChanged: false, demandChanged: false }; // CHANGE
             if (hasBlockingErrors && !state.hadBlockingErrors && !state.planCheckExpanded) { // CHANGE
                 state.planCheckExpanded = true; // CHANGE
                 changes.planCheckChanged = true; // CHANGE
@@ -2043,8 +2267,13 @@ Draw.loadPlugin(function (ui) {
                 state.csaExpanded = true; // NEW
                 changes.csaChanged = true; // NEW
             } // NEW
+            if (hasDemandErrors && !state.hadDemandErrors && !state.demandExpanded) { // NEW
+                state.demandExpanded = true; // NEW
+                changes.demandChanged = true; // NEW
+            } // NEW
             state.hadBlockingErrors = hasBlockingErrors; // NEW
             state.hadCsaErrors = hasCsaErrors; // NEW
+            state.hadDemandErrors = hasDemandErrors; // NEW
             return changes; // NEW
         } // NEW
 
@@ -2117,6 +2346,43 @@ Draw.loadPlugin(function (ui) {
                 ...PlanSchema.validate(plan), // NEW
                 ...cropMetrics.flatMap(metric => metric.errors) // NEW
             ]); // NEW
+            const channelMetrics = ((plan && plan.demandChannels) || []).map(channel => { // NEW
+                const channelId = String(channel && channel.id || ""); // NEW
+                const summary = summarizeDemandAggregate(weekly && weekly.perChannel && weekly.perChannel.get(channelId)); // NEW
+                summary.lineCount = ((plan && plan.demands) || []).filter(line => String(line && line.channelId || "") === channelId).length; // CHANGE
+                const priorityKg = { committed: 0, target: 0, optional: 0 }; // NEW
+                for (const result of (weekly && weekly.perDemandLine ? weekly.perDemandLine.values() : [])) { // NEW
+                    if (result.channelId !== channelId) continue; // NEW
+                    priorityKg[result.priority] = (priorityKg[result.priority] || 0) + result.target.reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0); // NEW
+                } // NEW
+                return { channel, ...summary, priorityKg, status: summary.shortKg > EPS ? "Short" : "OK" }; // NEW
+            }); // NEW
+            const priorityMetrics = ["committed", "target", "optional"].map(priority => ({ // NEW
+                priority, // NEW
+                ...summarizeDemandAggregate(weekly && weekly.perPriority && weekly.perPriority.get(priority)) // NEW
+            })); // NEW
+            const potentialRevenue = channelMetrics.reduce((sum, metric) => sum + metric.potentialRevenue, 0); // NEW
+            const fulfilledRevenue = channelMetrics.reduce((sum, metric) => sum + metric.fulfilledRevenue, 0); // NEW
+            const shortageWeeks = []; // NEW
+            if (weekly && Array.isArray(weekly.weeks)) { // NEW
+                for (let i = 0; i < weekly.weeks.length; i++) { // NEW
+                    const channelDemandKg = channelMetrics.reduce((sum, metric) => { // CHANGE
+                        const aggregate = weekly.perChannel && weekly.perChannel.get(String(metric.channel.id)); // NEW
+                        return sum + Math.max(0, Number(aggregate && aggregate.target && aggregate.target[i]) || 0); // NEW
+                    }, 0); // CHANGE
+                    const channelShortKg = channelMetrics.reduce((sum, metric) => { // CHANGE
+                        const aggregate = weekly.perChannel && weekly.perChannel.get(String(metric.channel.id)); // NEW
+                        return sum + Math.max(0, Number(aggregate && aggregate.short && aggregate.short[i]) || 0); // NEW
+                    }, 0); // CHANGE
+                    const csaDemandKg = Math.max(0, Number(weekly.csa && weekly.csa.target[i]) || 0); // NEW
+                    const csaShortKg = Math.max(0, Number(weekly.csa && weekly.csa.short[i]) || 0); // NEW
+                    if (channelShortKg + csaShortKg <= EPS) continue; // NEW
+                    shortageWeeks.push({ // NEW
+                        week: String(weekly.weeks[i] && weekly.weeks[i].iso || ""), // NEW
+                        channelDemandKg, channelShortKg, csaDemandKg, csaShortKg // NEW
+                    }); // NEW
+                } // NEW
+            } // NEW
             const diagnostics = uniqueMessages([ // NEW
                 ...((runtime && runtime.warnings) || []), // NEW
                 ...validationErrors, // NEW
@@ -2145,7 +2411,13 @@ Draw.loadPlugin(function (ui) {
                 badges, // NEW
                 dirty: !!settings.dirty, // NEW
                 cropMetrics, // NEW
-                cropMetricsById: new Map(cropMetrics.map(metric => [String(metric.crop.id), metric])) // NEW
+                cropMetricsById: new Map(cropMetrics.map(metric => [String(metric.crop.id), metric])), // CHANGE
+                channelMetrics, // NEW
+                channelMetricsById: new Map(channelMetrics.map(metric => [String(metric.channel.id), metric])), // NEW
+                priorityMetrics, // NEW
+                shortageWeeks, // NEW
+                potentialRevenue, // NEW
+                fulfilledRevenue // NEW
             }; // NEW
         } // NEW
 
@@ -2158,7 +2430,9 @@ Draw.loadPlugin(function (ui) {
             uniqueMessages,
             buildMethodOptions, // NEW
             formatKg, // NEW
+            formatMoney, // NEW
             formatYmd, // NEW
+            summarizeDemandAggregate, // NEW
             buildCompactStatus, // NEW
             buildCsaSummary, // NEW
             syncExpansionState, // NEW
@@ -2183,7 +2457,7 @@ Draw.loadPlugin(function (ui) {
 
     /** Defines the chart's visual encodings once for rendering, legend controls, and hover details. */ // NEW
     const PLAN_CHART_SERIES = Object.freeze([ // NEW
-        { id: "target", label: "Target demand", tooltipLabel: "Target", field: "targetKg", kind: "line", color: "#222", lineWidth: 2, dash: [], help: "Weekly demand required by market and CSA plans." }, // NEW
+        { id: "target", label: "Target demand", tooltipLabel: "Target", field: "targetKg", kind: "line", color: "#222", lineWidth: 2, dash: [], help: "Weekly demand required by channel and CSA plans." }, // CHANGE
         { id: "available", label: "Available supply", tooltipLabel: "Available", field: "availableSupplyKg", kind: "dashed-line", color: "#1f7a3d", lineWidth: 2, dash: [6, 3], help: "Harvested inventory available before weekly demand is allocated." }, // NEW
         { id: "usable", label: "Usable supply", tooltipLabel: "Usable", field: "usableSupplyKg", kind: "line", color: "#62a96b", lineWidth: 1.5, dash: [], help: "Available supply used to satisfy this week's demand." }, // NEW
         { id: "harvest", label: "Harvest", tooltipLabel: "Harvested", field: "harvestKg", kind: "bar", color: "#4285f4", fill: "rgba(66, 133, 244, 0.34)", help: "Estimated harvested weight added during the week." }, // NEW
@@ -2362,6 +2636,11 @@ Draw.loadPlugin(function (ui) {
                 .yp-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
                 .yp-line{display:grid;grid-template-columns:minmax(70px,1fr) 120px 150px 150px auto;gap:8px;align-items:center}
                 .yp-package-line{display:grid;grid-template-columns:32px minmax(90px,1fr) 26px 100px 100px 90px auto;gap:8px;align-items:center}
+                .yp-demand-channel{border:1px solid #d5d5d5;border-radius:7px;background:#fff;overflow:hidden}
+                .yp-demand-channel-header{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px;background:#f8f8f8}
+                .yp-demand-channel-summary{flex:1 1 360px;color:#555;overflow-wrap:anywhere}
+                .yp-demand-channel-details{padding:9px;border-top:1px solid #ddd}
+                .yp-demand-line{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:8px;padding:9px;border:1px solid #e1e1e1;border-radius:6px;background:#fcfcfc}
                 .yp-chart-legend{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;margin:0 0 6px}
                 .yp-chart-legend-item{display:inline-flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid #aaa;border-radius:999px;background:#fff;color:#222;cursor:pointer;font:12px Arial,sans-serif}
                 .yp-chart-legend-item[aria-pressed="false"]{opacity:.48;background:#f2f2f2;text-decoration:line-through}
@@ -2375,6 +2654,7 @@ Draw.loadPlugin(function (ui) {
                     .yp-dashboard-grid{grid-template-columns:1fr}
                     .yp-field-grid{grid-template-columns:1fr}
                     .yp-line,.yp-package-line{display:flex;flex-wrap:wrap}
+                    .yp-demand-line{grid-template-columns:1fr}
                     .yp-plan-check-grid{grid-template-columns:1fr!important}
                 }`; // NEW
             card.appendChild(style); // NEW
@@ -2574,6 +2854,7 @@ Draw.loadPlugin(function (ui) {
             } // NEW
 
             const formatKg = YearPlanDashboard.formatKg; // CHANGE
+            const formatMoney = YearPlanDashboard.formatMoney; // NEW
 
             function statusColor(status) { // NEW
                 if (status === "Short" || status === "Missing data") return "#a33"; // NEW
@@ -2725,6 +3006,7 @@ Draw.loadPlugin(function (ui) {
                 state.activeTab = "basics"; // NEW
                 state.hadBlockingErrors = false; // NEW
                 state.hadCsaErrors = false; // NEW
+                state.hadDemandErrors = false; // NEW
                 state.validationState = "idle"; // NEW
                 state.lastSavedAt = null; // NEW
                 state.closePromptOpen = false; // NEW
@@ -2786,10 +3068,11 @@ Draw.loadPlugin(function (ui) {
             } // NEW
 
             function syncDemandDerived() { // NEW
-                const crop = selectedCrop(); // NEW
-                if (!crop || !dashboard || !demandRefs.summary) return; // NEW
-                const metric = dashboard.cropMetricsById.get(String(crop.id)); // NEW
-                if (metric) demandRefs.summary.textContent = `Market target: ${formatKg(metric.targetKg)} | Estimated supply: ${formatKg(metric.supplyKg)} | Short: ${formatKg(metric.shortKg)} | Surplus: ${formatKg(metric.surplusKg)}`; // NEW
+                if (!dashboard || !demandRefs.channelSummaries) return; // CHANGE
+                for (const [channelId, summary] of demandRefs.channelSummaries) { // NEW
+                    const metric = dashboard.channelMetricsById.get(String(channelId)); // NEW
+                    if (metric) summary.textContent = buildChannelSummaryText(metric); // NEW
+                } // NEW
             } // NEW
 
             function updateChartLegendState() { // NEW
@@ -2838,7 +3121,7 @@ Draw.loadPlugin(function (ui) {
                 const worstShortageText = chartSummary.worstShortageKg > 0 // NEW
                     ? `${formatKg(chartSummary.worstShortageKg)} \u00b7 Week of ${chartSummary.worstShortageWeek}` // NEW
                     : "-"; // NEW
-                const planCheckSummaryText = `Target ${formatKg(chartSummary.targetKg)} | Harvested ${formatKg(chartSummary.harvestKg)} | Usable ${formatKg(chartSummary.usableSupplyKg)} | Short ${formatKg(chartSummary.shortKg)} | Expired ${formatKg(chartSummary.expiredKg)} | Worst shortage ${worstShortageText} | Short weeks ${chartSummary.shortWeeks}`; // CHANGE
+                const planCheckSummaryText = `Target ${formatKg(chartSummary.targetKg)} | Harvested ${formatKg(chartSummary.harvestKg)} | Usable ${formatKg(chartSummary.usableSupplyKg)} | Short ${formatKg(chartSummary.shortKg)} | Expired ${formatKg(chartSummary.expiredKg)} | Worst shortage ${worstShortageText} | Short weeks ${chartSummary.shortWeeks} | Potential ${formatMoney(dashboard.potentialRevenue)} | Fulfilled ${formatMoney(dashboard.fulfilledRevenue)}`; // CHANGE
                 renderStripBox(planCheckBox, { // NEW
                     title: "Plan Check", // NEW
                     expanded: state.planCheckExpanded, // NEW
@@ -2861,7 +3144,9 @@ Draw.loadPlugin(function (ui) {
                     ["Short", formatKg(chartSummary.shortKg)], // NEW
                     ["Expired", formatKg(chartSummary.expiredKg)], // NEW
                     ["Worst shortage", worstShortage], // NEW
-                    ["Short weeks", String(chartSummary.shortWeeks)] // NEW
+                    ["Short weeks", String(chartSummary.shortWeeks)], // CHANGE
+                    ["Potential revenue", formatMoney(dashboard.potentialRevenue)], // NEW
+                    ["Fulfilled revenue", formatMoney(dashboard.fulfilledRevenue)] // NEW
                 ].map(([label, value]) => `<span><strong>${label}:</strong> ${value}</span>`).join(""); // NEW
 
                 const rows = (plan.crops || []).map(crop => { // CHANGE
@@ -2869,7 +3154,20 @@ Draw.loadPlugin(function (ui) {
                     const metric = dashboard.cropMetricsById.get(String(crop.id)); // CHANGE
                     return `<tr><td>${mxUtils.htmlEntities(cropLabel(crop))}</td><td>${summary.targetKg.toFixed(1)}</td><td>${summary.harvestKg.toFixed(1)}</td><td>${summary.usableSupplyKg.toFixed(1)}</td><td>${summary.shortKg.toFixed(1)}</td><td>${summary.expiredKg.toFixed(1)}</td><td>${mxUtils.htmlEntities(metric ? metric.status : "Missing data")}</td></tr>`; // CHANGE
                 }).join(""); // CHANGE
-                totalsBox.innerHTML = `<div style="font-weight:700;margin-bottom:6px;">Plan Check totals</div><table style="width:100%;border-collapse:collapse;"><thead><tr><th>Crop</th><th>Target</th><th>Harvested</th><th>Usable</th><th>Short</th><th>Expired</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="7">No crops.</td></tr>'}</tbody></table>`; // CHANGE
+                const channelRows = dashboard.channelMetrics.map(metric => `<tr><td>${mxUtils.htmlEntities(metric.channel.label || metric.channel.id)}</td><td>${metric.targetKg.toFixed(1)}</td><td>${metric.usableSupplyKg.toFixed(1)}</td><td>${metric.shortKg.toFixed(1)}</td><td>${metric.lineCount}</td><td>${formatMoney(metric.potentialRevenue)}</td><td>${formatMoney(metric.fulfilledRevenue)}</td><td>${mxUtils.htmlEntities(metric.status)}</td></tr>`).join(""); // NEW
+                const priorityRows = dashboard.priorityMetrics.map(metric => `<tr><td>${mxUtils.htmlEntities(metric.priority)}</td><td>${metric.targetKg.toFixed(1)}</td><td>${metric.usableSupplyKg.toFixed(1)}</td><td>${metric.shortKg.toFixed(1)}</td><td>${formatMoney(metric.potentialRevenue)}</td><td>${formatMoney(metric.fulfilledRevenue)}</td></tr>`).join(""); // NEW
+                const shortageRows = dashboard.shortageWeeks.map(row => `<tr><td>${mxUtils.htmlEntities(row.week)}</td><td>${row.csaDemandKg.toFixed(1)}</td><td>${row.csaShortKg.toFixed(1)}</td><td>${row.channelDemandKg.toFixed(1)}</td><td>${row.channelShortKg.toFixed(1)}</td></tr>`).join(""); // NEW
+                totalsBox.innerHTML = // CHANGE
+                    `
+                    <div style="font-weight:700;margin-bottom:6px;">Plan Check totals</div>
+                    <table style="width:100%;border-collapse:collapse;"><thead><tr><th>Crop</th><th>Target</th><th>Harvested</th><th>Usable</th><th>Short</th><th>Expired</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="7">No crops.</td></tr>'}</tbody></table>
+                    <div style="font-weight:700;margin:10px 0 6px;">Channels</div>
+                    <table style="width:100%;border-collapse:collapse;"><thead><tr><th>Channel</th><th>Demand</th><th>Usable</th><th>Short</th><th>Lines</th><th>Potential</th><th>Fulfilled</th><th>Status</th></tr></thead><tbody>${channelRows || '<tr><td colspan="8">No channels.</td></tr>'}</tbody></table>
+                    <div style="font-weight:700;margin:10px 0 6px;">Priorities</div>
+                    <table style="width:100%;border-collapse:collapse;"><thead><tr><th>Priority</th><th>Demand</th><th>Usable</th><th>Short</th><th>Potential</th><th>Fulfilled</th></tr></thead><tbody>${priorityRows}</tbody></table>
+                    <div style="font-weight:700;margin:10px 0 6px;">Shortage weeks</div>
+                    <table style="width:100%;border-collapse:collapse;"><thead><tr><th>Week</th><th>CSA demand</th><th>CSA short</th><th>Channel demand</th><th>Channel short</th></tr></thead><tbody>${shortageRows || '<tr><td colspan="5">No shortage weeks.</td></tr>'}</tbody></table>
+                    <div style="margin-top:9px;"><strong>Revenue:</strong> Potential ${formatMoney(dashboard.potentialRevenue)} | Fulfilled ${formatMoney(dashboard.fulfilledRevenue)}. CSA excluded.</div>`; // CHANGE
                 for (const cell of totalsBox.querySelectorAll("th,td")) cell.style.cssText = "border:1px solid #ddd;padding:4px;text-align:left;"; // NEW
                 diagnosticsBox.innerHTML = dashboard.diagnostics.length // NEW
                     ? `<div style="font-weight:700;margin-bottom:5px;">Plan Check</div><ul style="margin:0 0 0 18px;padding:0;">${dashboard.diagnostics.map(message => `<li>${mxUtils.htmlEntities(message)}</li>`).join("")}</ul>` // CHANGE
@@ -2888,7 +3186,6 @@ Draw.loadPlugin(function (ui) {
             } // NEW
 
             function captureDateRangeSnapshot() { // NEW
-                const crop = selectedCrop(); // NEW
                 const csa = plan && plan.csa ? plan.csa : {}; // NEW
                 return { // NEW
                     csa: JSON.stringify({ // NEW
@@ -2900,8 +3197,8 @@ Draw.loadPlugin(function (ui) {
                             end: String(component && component.end || "") // NEW
                         })) // NEW
                     }), // NEW
-                    selectedCropId: crop ? String(crop.id || "") : "", // NEW
-                    market: JSON.stringify((crop && Array.isArray(crop.market) ? crop.market : []).map(line => ({ // NEW
+                    demand: JSON.stringify(((plan && plan.demands) || []).map(line => ({ // CHANGE
+                        id: String(line && line.id || ""), // NEW
                         from: String(line && line.from || ""), // NEW
                         to: String(line && line.to || "") // NEW
                     }))) // NEW
@@ -2914,20 +3211,23 @@ Draw.loadPlugin(function (ui) {
                 runtime = PlanRuntimeService.recalculate(moduleCell, currentYear, plan); // NEW
                 const dirty = state.baselineSnapshot ? YearPlanDashboard.isDirty(state, plan) : false; // NEW
                 dashboard = YearPlanDashboard.compute(plan, runtime, { dirty, extraDiagnostics: state.extraDiagnostics }); // NEW
-                const expansionChanges = YearPlanDashboard.syncExpansionState(state, dashboard, PlanSchema.validateCsa(plan)); // NEW
+                const demandErrors = PlanSchema.validateDemand(plan); // NEW
+                const hadDemandErrors = state.hadDemandErrors; // NEW
+                const expansionChanges = YearPlanDashboard.syncExpansionState(state, dashboard, PlanSchema.validateCsa(plan), demandErrors); // CHANGE
+                if (demandErrors.length && !hadDemandErrors) { // CHANGE
+                    for (const line of (plan.demands || [])) state.collapsedDemandChannelIds.delete(String(line.channelId || "")); // NEW
+                } // NEW
                 state.selectedCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, state.selectedCropId, 0); // NEW
                 const afterRecalculation = captureDateRangeSnapshot(); // NEW
                 const comparisonSnapshot = beforeDateRanges || beforeRecalculation; // NEW
                 const csaDatesChanged = comparisonSnapshot.csa !== afterRecalculation.csa // NEW
                     || beforeRecalculation.csa !== afterRecalculation.csa; // NEW
-                const demandDatesChanged = comparisonSnapshot.selectedCropId !== afterRecalculation.selectedCropId // NEW
-                    || comparisonSnapshot.market !== afterRecalculation.market // NEW
-                    || beforeRecalculation.selectedCropId !== afterRecalculation.selectedCropId // NEW
-                    || beforeRecalculation.market !== afterRecalculation.market; // NEW
+                const demandDatesChanged = comparisonSnapshot.demand !== afterRecalculation.demand // CHANGE
+                    || beforeRecalculation.demand !== afterRecalculation.demand; // CHANGE
                 renderSummary(); // NEW
                 renderCropList(); // NEW
                 renderCsa(!!options.rebuildCsa || expansionChanges.csaChanged || (state.csaExpanded && csaDatesChanged)); // CHANGE
-                renderDemandStrip(!!options.rebuildDemand || (state.demandExpanded && demandDatesChanged)); // NEW
+                renderDemandStrip(!!options.rebuildDemand || expansionChanges.demandChanged || (state.demandExpanded && demandDatesChanged)); // CHANGE
                 renderCropPlan(false); // NEW
                 renderPlanCheck(); // CHANGE
                 renderFooter(); // NEW
@@ -3106,65 +3406,194 @@ Draw.loadPlugin(function (ui) {
                 }); // NEW
             } // NEW
 
-            function renderDemand(crop, content) { // NEW
-                const summary = document.createElement("div"); // NEW
-                summary.style.cssText = "padding:8px;border:1px solid #ddd;border-radius:6px;background:#fafafa;font-weight:700;margin-bottom:10px;"; // NEW
-                content.appendChild(summary); // NEW
-                demandRefs.summary = summary; // CHANGE
-                const rowsHost = document.createElement("div"); // NEW
-                rowsHost.style.cssText = "display:flex;flex-direction:column;gap:7px;"; // NEW
-                content.appendChild(rowsHost); // NEW
-                const add = mkBtn("Add market line"); // NEW
-                add.style.marginTop = "8px"; // NEW
-                content.appendChild(add); // NEW
-
-                const columns = document.createElement("div"); // NEW
-                columns.className = "yp-line"; // NEW
-                columns.style.cssText += ";font-weight:700;color:#555;"; // NEW
-                for (const label of ["Qty", "Unit", "From", "To", ""]) columns.appendChild(document.createTextNode(label)); // NEW
-                rowsHost.appendChild(columns); // NEW
-
-                function renderRows() { // NEW
-                    rowsHost.innerHTML = ""; // NEW
-                    rowsHost.appendChild(columns); // NEW
-                    crop.market = Array.isArray(crop.market) ? crop.market : []; // NEW
-                    for (const line of crop.market) { // NEW
-                        const row = document.createElement("div"); // NEW
-                        row.className = "yp-line"; // NEW
-                        const qty = mkInput("number", line.qty ?? 0); // NEW
-                        const unit = mkSelect(listUnitOptions(crop), line.unit || defaultUnit(crop)); // NEW
-                        const from = mkInput("date", line.from || crop.harvestStart || ""); // NEW
-                        const to = mkInput("date", line.to || crop.harvestEnd || ""); // NEW
-                        const remove = mkBtn("Remove"); // NEW
-                        row.appendChild(qty); row.appendChild(unit); row.appendChild(from); row.appendChild(to); row.appendChild(remove); // NEW
-                        rowsHost.appendChild(row); // NEW
-                        qty.addEventListener("input", () => { line.qty = Math.max(0, Number(qty.value) || 0); debounceRefresh(); }); // NEW
-                        unit.addEventListener("change", () => { line.unit = unit.value; refreshDerived(); }); // NEW
-                        bindPairedDateControls(from, to, { // CHANGE
-                            diagnostic: `Market start date cannot be after end date for "${crop.plant || crop.id}".`, // NEW
-                            setStart: value => { line.from = value; }, // NEW
-                            setEnd: value => { line.to = value; } // NEW
-                        }); // CHANGE
-                        remove.addEventListener("click", () => { crop.market = crop.market.filter(item => item !== line); renderRows(); refreshDerived(); }); // NEW
-                    } // NEW
-                } // NEW
-
-                add.addEventListener("click", () => { // NEW
-                    const line = { qty: 0, unit: defaultUnit(crop), from: crop.harvestStart || "", to: crop.harvestEnd || "" }; // NEW
-                    crop.market.push(line); // NEW
-                    renderRows(); // NEW
-                    refreshDerived(); // NEW
-                }); // NEW
-                renderRows(); // NEW
+            function buildChannelSummaryText(metric) { // NEW
+                if (!metric) return "No demand"; // NEW
+                const status = metric.shortKg > 0.0001 ? `Short ${formatKg(metric.shortKg)}` : "OK"; // NEW
+                const split = `Committed ${formatKg(metric.priorityKg.committed)} | Target ${formatKg(metric.priorityKg.target)} | Optional ${formatKg(metric.priorityKg.optional)}`; // NEW
+                return `Demand ${formatKg(metric.targetKg)} | Usable ${formatKg(metric.usableSupplyKg)} | ${status} | ${metric.lineCount} line${metric.lineCount === 1 ? "" : "s"} | ${split} | Potential ${formatMoney(metric.potentialRevenue)} | Fulfilled ${formatMoney(metric.fulfilledRevenue)}`; // NEW
             } // NEW
 
+            function createDemandLine(channelId) { // NEW
+                const crop = (plan.crops || [])[0] || null; // NEW
+                return { // NEW
+                    id: Env.uid("demand"), // NEW
+                    channelId: String(channelId || ""), // NEW
+                    cropId: crop ? crop.id : "", // NEW
+                    qty: 1, // NEW
+                    unit: defaultUnit(crop), // NEW
+                    frequency: "week", // NEW
+                    everyN: 1, // NEW
+                    from: crop && crop.harvestStart || "", // NEW
+                    to: crop && crop.harvestEnd || "", // NEW
+                    priority: "target", // NEW
+                    price: null, // NEW
+                    notes: "" // NEW
+                }; // NEW
+            } // NEW
+
+            function addDemandLine(channelId) { // NEW
+                if (!(plan.crops || []).length || !(plan.demandChannels || []).some(channel => String(channel.id) === String(channelId))) return; // NEW
+                plan.demands.push(createDemandLine(channelId)); // NEW
+                state.collapsedDemandChannelIds.delete(String(channelId)); // NEW
+                refreshDerived(null, { rebuildDemand: true }); // NEW
+            } // NEW
+
+            function renderDemandLine(line, host) { // NEW
+                const crop = PlanMath.findCrop(plan, line.cropId); // NEW
+                const row = document.createElement("div"); // NEW
+                row.className = "yp-demand-line"; // NEW
+                row.dataset.demandLineId = String(line.id || ""); // NEW
+                const cropSelect = mkSelect((plan.crops || []).map(item => ({ value: item.id, label: cropLabel(PlanMath.findCrop(plan, item.id)) })), line.cropId || ""); // NEW
+                const qty = mkInput("number", line.qty ?? 1); // NEW
+                qty.min = "0"; qty.step = "any"; // NEW
+                const unit = mkSelect(listUnitOptions(crop), line.unit || defaultUnit(crop)); // NEW
+                const frequency = mkSelect([{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }], line.frequency || "week"); // NEW
+                const every = mkInput("number", line.everyN ?? 1); // NEW
+                every.min = "1"; every.step = "1"; // NEW
+                const from = mkInput("date", line.from || ""); // NEW
+                const to = mkInput("date", line.to || ""); // NEW
+                const priority = mkSelect([{ value: "committed", label: "Committed" }, { value: "target", label: "Target" }, { value: "optional", label: "Optional" }], line.priority || "target"); // NEW
+                const price = mkInput("number", line.price === null || line.price === undefined ? "" : line.price); // NEW
+                price.min = "0"; price.step = "any"; // NEW
+                const notes = document.createElement("textarea"); // NEW
+                notes.value = String(line.notes || ""); // NEW
+                notes.rows = 2; // NEW
+                notes.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;box-sizing:border-box;width:100%;resize:vertical;"; // NEW
+                const remove = mkBtn("Remove"); // NEW
+                addField(row, "Crop", cropSelect); // NEW
+                addField(row, "Qty", qty); // NEW
+                addField(row, "Unit", unit); // NEW
+                addField(row, "Frequency", frequency); // NEW
+                addField(row, "Every", every); // NEW
+                addField(row, "From", from); // NEW
+                addField(row, "To", to); // NEW
+                addField(row, "Priority", priority); // NEW
+                addField(row, "Price", price, "Per selected unit"); // NEW
+                addField(row, "Notes", notes); // NEW
+                addField(row, "Remove", remove); // NEW
+                host.appendChild(row); // NEW
+                cropSelect.addEventListener("change", () => { // NEW
+                    line.cropId = cropSelect.value; // NEW
+                    line.unit = defaultUnit(PlanMath.findCrop(plan, line.cropId)); // NEW
+                    refreshDerived(null, { rebuildDemand: true }); // NEW
+                }); // NEW
+                qty.addEventListener("input", () => { line.qty = Math.max(0, Number(qty.value) || 0); debounceRefresh(); }); // NEW
+                unit.addEventListener("change", () => { line.unit = unit.value; refreshDerived(); }); // NEW
+                frequency.addEventListener("change", () => { line.frequency = frequency.value; refreshDerived(); }); // NEW
+                every.addEventListener("input", () => { line.everyN = Math.max(1, Math.trunc(Number(every.value) || 1)); debounceRefresh(); }); // NEW
+                priority.addEventListener("change", () => { line.priority = priority.value; refreshDerived(); }); // NEW
+                price.addEventListener("input", () => { line.price = price.value === "" ? null : Math.max(0, Number(price.value) || 0); debounceRefresh(); }); // NEW
+                notes.addEventListener("input", () => { line.notes = notes.value; renderFooter(); }); // NEW
+                bindPairedDateControls(from, to, { // CHANGE
+                    diagnostic: `Demand line start date cannot be after end date for "${crop ? cropLabel(crop) : line.cropId}".`, // CHANGE
+                    setStart: value => { line.from = value; }, // NEW
+                    setEnd: value => { line.to = value; } // NEW
+                }); // CHANGE
+                remove.addEventListener("click", () => { // NEW
+                    plan.demands = plan.demands.filter(item => item !== line); // NEW
+                    refreshDerived(null, { rebuildDemand: true }); // NEW
+                }); // NEW
+            } // NEW
+
+            function renderDemandChannel(channel, host) { // NEW
+                const channelId = String(channel.id || ""); // NEW
+                const metric = dashboard && dashboard.channelMetricsById.get(channelId); // NEW
+                const box = document.createElement("section"); // NEW
+                box.className = "yp-demand-channel"; // NEW
+                box.dataset.demandChannelId = channelId; // NEW
+                const header = document.createElement("div"); // NEW
+                header.className = "yp-demand-channel-header"; // NEW
+                const label = mkInput("text", channel.label || ""); // NEW
+                label.setAttribute("aria-label", "Channel name"); // NEW
+                label.style.minWidth = "160px"; // NEW
+                const type = mkSelect([ // NEW
+                    { value: "farm_store", label: "Farm store" }, // NEW
+                    { value: "restaurant", label: "Restaurant" }, // NEW
+                    { value: "market", label: "Market" }, // NEW
+                    { value: "wholesale", label: "Wholesale" }, // NEW
+                    { value: "other", label: "Other" } // NEW
+                ], channel.type || "other", 120); // NEW
+                type.setAttribute("aria-label", "Channel type"); // NEW
+                const summary = document.createElement("div"); // NEW
+                summary.className = "yp-demand-channel-summary"; // NEW
+                summary.textContent = buildChannelSummaryText(metric); // NEW
+                demandRefs.channelSummaries.set(channelId, summary); // NEW
+                const lines = (plan.demands || []).filter(line => String(line.channelId) === channelId); // NEW
+                const removeChannel = mkBtn("Remove channel"); // NEW
+                removeChannel.disabled = lines.length > 0; // NEW
+                removeChannel.title = lines.length ? "Remove or move all demand lines before removing this channel." : ""; // NEW
+                const collapsed = state.collapsedDemandChannelIds.has(channelId); // NEW
+                const toggle = mkBtn(collapsed ? "Expand" : "Collapse"); // NEW
+                toggle.setAttribute("aria-expanded", collapsed ? "false" : "true"); // NEW
+                header.appendChild(label); header.appendChild(type); header.appendChild(summary); header.appendChild(removeChannel); header.appendChild(toggle); // NEW
+                const details = document.createElement("div"); // NEW
+                details.className = "yp-demand-channel-details"; // NEW
+                details.style.display = collapsed ? "none" : "block"; // NEW
+                const rows = document.createElement("div"); // NEW
+                rows.style.cssText = "display:flex;flex-direction:column;gap:8px;"; // NEW
+                for (const line of lines) renderDemandLine(line, rows); // NEW
+                if (!lines.length) { // NEW
+                    const empty = document.createElement("div"); // NEW
+                    empty.style.cssText = "color:#666;padding:4px 0 8px;"; // NEW
+                    empty.textContent = "No demand lines in this channel."; // NEW
+                    rows.appendChild(empty); // NEW
+                } // NEW
+                const add = mkBtn("Add demand line"); // NEW
+                add.style.marginTop = "8px"; // NEW
+                add.disabled = !(plan.crops || []).length; // NEW
+                add.addEventListener("click", () => addDemandLine(channelId)); // NEW
+                details.appendChild(rows); details.appendChild(add); // NEW
+                box.appendChild(header); box.appendChild(details); host.appendChild(box); // NEW
+                label.addEventListener("input", () => { channel.label = label.value; debounceRefresh(); }); // NEW
+                type.addEventListener("change", () => { channel.type = type.value; refreshDerived(); }); // NEW
+                removeChannel.addEventListener("click", () => { // NEW
+                    if ((plan.demands || []).some(line => String(line.channelId) === channelId)) return; // NEW
+                    plan.demandChannels = plan.demandChannels.filter(item => item !== channel); // NEW
+                    state.collapsedDemandChannelIds.delete(channelId); // NEW
+                    refreshDerived(null, { rebuildDemand: true }); // NEW
+                }); // NEW
+                toggle.addEventListener("click", () => { // NEW
+                    if (collapsed) state.collapsedDemandChannelIds.delete(channelId); // NEW
+                    else state.collapsedDemandChannelIds.add(channelId); // NEW
+                    renderDemandStrip(true); // NEW
+                    syncDemandDerived(); // NEW
+                }); // NEW
+            } // NEW
+
+            function renderDemand(content) { // CHANGE
+                demandRefs = { channelSummaries: new Map() }; // CHANGE
+                const toolbar = document.createElement("div"); // NEW
+                toolbar.className = "yp-row"; // NEW
+                toolbar.style.marginBottom = "9px"; // NEW
+                const addChannel = mkBtn("Add channel"); // NEW
+                const channelSelect = mkSelect((plan.demandChannels || []).map(channel => ({ value: channel.id, label: channel.label || channel.id })), plan.demandChannels && plan.demandChannels[0] ? plan.demandChannels[0].id : "", 180); // NEW
+                channelSelect.setAttribute("aria-label", "Demand line channel"); // NEW
+                const addLine = mkBtn("Add demand line"); // NEW
+                addLine.disabled = !(plan.crops || []).length || !(plan.demandChannels || []).length; // NEW
+                toolbar.appendChild(addChannel); toolbar.appendChild(channelSelect); toolbar.appendChild(addLine); // NEW
+                const channelsHost = document.createElement("div"); // NEW
+                channelsHost.style.cssText = "display:flex;flex-direction:column;gap:9px;"; // NEW
+                content.appendChild(toolbar); content.appendChild(channelsHost); // NEW
+                for (const channel of (plan.demandChannels || [])) renderDemandChannel(channel, channelsHost); // NEW
+                if (!(plan.demandChannels || []).length) { // NEW
+                    const empty = document.createElement("div"); // NEW
+                    empty.style.cssText = "padding:12px;color:#666;text-align:center;"; // NEW
+                    empty.textContent = "Add a demand channel to begin planning sales."; // NEW
+                    channelsHost.appendChild(empty); // NEW
+                } // NEW
+                addChannel.addEventListener("click", () => { // NEW
+                    const channel = { id: Env.uid("demand_channel"), label: "New Channel", type: "other" }; // NEW
+                    plan.demandChannels.push(channel); // NEW
+                    state.collapsedDemandChannelIds.delete(channel.id); // NEW
+                    refreshDerived(null, { rebuildDemand: true }); // NEW
+                }); // NEW
+                addLine.addEventListener("click", () => addDemandLine(channelSelect.value)); // NEW
+            } // CHANGE
+
             function renderDemandStrip(rebuildDetails) { // NEW
-                const crop = selectedCrop(); // NEW
-                const metric = crop && dashboard ? dashboard.cropMetricsById.get(String(crop.id)) : null; // NEW
-                const lineCount = crop && Array.isArray(crop.market) ? crop.market.length : 0; // NEW
-                const summaryText = crop // NEW
-                    ? `${cropLabel(crop)} | ${lineCount} demand line${lineCount === 1 ? "" : "s"} | Target ${formatKg(metric ? metric.targetKg : 0)}` // NEW
-                    : "No crop selected"; // NEW
+                const channelCount = (plan.demandChannels || []).length; // NEW
+                const lineCount = (plan.demands || []).length; // NEW
+                const summaryText = `${channelCount} channel${channelCount === 1 ? "" : "s"} | ${lineCount} line${lineCount === 1 ? "" : "s"} | Demand ${formatKg((dashboard && dashboard.channelMetrics || []).reduce((sum, metric) => sum + metric.targetKg, 0))} | Short ${formatKg((dashboard && dashboard.channelMetrics || []).reduce((sum, metric) => sum + metric.shortKg, 0))} | Potential ${formatMoney(dashboard && dashboard.potentialRevenue)} | Fulfilled ${formatMoney(dashboard && dashboard.fulfilledRevenue)}`; // CHANGE
                 renderStripBox(demandBox, { // NEW
                     title: "Demand", // NEW
                     expanded: state.demandExpanded, // NEW
@@ -3175,16 +3604,7 @@ Draw.loadPlugin(function (ui) {
                         renderDemandStrip(state.demandExpanded); // NEW
                         syncDemandDerived(); // NEW
                     }, // NEW
-                    renderDetails: details => { // NEW
-                        demandRefs = {}; // NEW
-                        if (crop) renderDemand(crop, details); // NEW
-                        else { // NEW
-                            const empty = document.createElement("div"); // NEW
-                            empty.style.cssText = "padding:12px;color:#666;text-align:center;"; // NEW
-                            empty.textContent = "Add or select a crop in Crop Plan to edit demand."; // NEW
-                            details.appendChild(empty); // NEW
-                        } // NEW
-                    } // NEW
+                    renderDetails: details => renderDemand(details) // CHANGE
                 }); // NEW
             } // NEW
 
@@ -3329,6 +3749,7 @@ Draw.loadPlugin(function (ui) {
                 remove.addEventListener("click", () => { // NEW
                     const index = plan.crops.indexOf(crop); // NEW
                     plan.crops = plan.crops.filter(item => item !== crop); // NEW
+                    plan.demands = (plan.demands || []).filter(line => line.cropId !== crop.id); // NEW
                     if (plan.csa && Array.isArray(plan.csa.components)) plan.csa.components = plan.csa.components.filter(component => component.cropId !== crop.id); // NEW
                     state.selectedCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, "", index); // NEW
                     renderSelectedEditor(); fillCropFilter(); refreshDerived(null, { rebuildCsa: true, rebuildDemand: true }); loadAddCropOptions(false); // CHANGE
@@ -3652,8 +4073,7 @@ Draw.loadPlugin(function (ui) {
                     varietyId: selectedOption.varietyId == null ? null : (Number.isFinite(numericVarietyId) ? numericVarietyId : selectedOption.varietyId), variety: selectedOption.varietyName, harvestStart: "", harvestEnd: "", useActualHarvest: true, syncharvest: false, // CHANGE
                     shelfLifeDays: 0, baseKgPerPlant: baseYield, kgPerPlant: cropYield, // CHANGE
                     kgPerPlantMode: "auto", actualPlants: 0, germRate: 1,
-                    packages: defaults && defaults.length ? PlanSchema.clonePlain(defaults) : [{ unit: "kg", baseType: "kg", baseQty: 1, price: NaN }],
-                    market: []
+                    packages: defaults && defaults.length ? PlanSchema.clonePlain(defaults) : [{ unit: "kg", baseType: "kg", baseQty: 1, price: NaN }] // CHANGE
                 }; // NEW
                 plan.crops.push(crop); // NEW
                 state.selectedCropId = crop.id; state.activeTab = "basics"; // NEW

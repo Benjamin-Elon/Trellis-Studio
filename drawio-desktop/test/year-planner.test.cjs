@@ -140,10 +140,29 @@ function emptyCrop(overrides = {}) {
         germRate: 0.8,
         shelfLifeDays: 0,
         packages: [{ unit: "kg", baseType: "kg", baseQty: 1 }],
-        market: [],
         ...overrides
     };
 }
+
+function addDemand(plan, overrides = {}) { // NEW
+    const line = { // NEW
+        id: `demand_${plan.demands.length + 1}`, // NEW
+        channelId: "farm_store", // NEW
+        cropId: "crop_1", // NEW
+        qty: 1, // NEW
+        unit: "kg", // NEW
+        frequency: "week", // NEW
+        everyN: 1, // NEW
+        from: "2026-06-01", // NEW
+        to: "2026-06-07", // NEW
+        priority: "target", // NEW
+        price: null, // NEW
+        notes: "", // NEW
+        ...overrides // NEW
+    }; // NEW
+    plan.demands.push(line); // NEW
+    return line; // NEW
+} // NEW
 
 test("PlanSchema normalizes legacy yield fields and strips runtime-only persistence fields", () => {
     const { api } = createHarness();
@@ -158,7 +177,7 @@ test("PlanSchema normalizes legacy yield fields and strips runtime-only persiste
             __actualHarvestWeeklyKg: [1],
             __sync_lastHarvestStart: "2025-01-01",
             savePackagesAsDefault: true,
-            market: [{ qty: 1, unit: "kg", from: "2025-01-01", to: "2025-01-02", __baseTo: "2025-01-02" }]
+            market: [{ qty: 1, unit: "kg", from: "2025-01-01", to: "2025-01-02", __baseTo: "2025-01-02" }] // CHANGE
         }]
     };
 
@@ -179,12 +198,18 @@ test("PlanSchema normalizes legacy yield fields and strips runtime-only persiste
             germRate: 0.8,
             shelfLifeDays: 0,
             packages: [{ unit: "kg", baseType: "kg", baseQty: 1 }],
-            market: [{ qty: 1, unit: "kg", from: "2025-01-01", to: "2025-01-02" }],
             baseKgPerPlant: 1.5,
             kgPerPlantMode: "auto"
         }],
-        version: 1,
+        version: 2, // CHANGE
         weekStartDow: 1,
+        demandChannels: [ // NEW
+            { id: "farm_store", label: "Farm Store", type: "farm_store" }, // NEW
+            { id: "restaurant_1", label: "Restaurant 1", type: "restaurant" }, // NEW
+            { id: "farmers_market", label: "Farmers Market", type: "market" }, // NEW
+            { id: "wholesale", label: "Wholesale", type: "wholesale" } // NEW
+        ], // NEW
+        demands: [], // NEW
         csa: { enabled: false, boxesPerWeek: 0, start: "", end: "", components: [] }
     });
 });
@@ -197,6 +222,17 @@ test("PlanSchema normalizes weekStartDow to an integer from zero through six", (
         assert.equal(plan.weekStartDow, expected); // NEW
         assert.equal(api.PlanMath.computePlanWeekly(plan, []).weeks[0].iso, api.PlanMath.buildWeekStartsForYearLocal(2026, expected)[0].iso); // NEW
     } // NEW
+}); // NEW
+
+test("PlanSchema adds default demand channels only when the collection is absent", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const missing = { year: 2026, crops: [] }; // NEW
+    const intentionallyEmpty = { year: 2026, crops: [], demandChannels: [], demands: [] }; // NEW
+    api.PlanSchema.normalizeForRuntime(missing, 2026); // NEW
+    api.PlanSchema.normalizeForRuntime(intentionallyEmpty, 2026); // NEW
+    assert.deepEqual(Array.from(missing.demandChannels, channel => channel.id), ["farm_store", "restaurant_1", "farmers_market", "wholesale"]); // NEW
+    assert.deepEqual(Array.from(intentionallyEmpty.demandChannels), []); // NEW
+    assert.equal(missing.version, 2); // NEW
 }); // NEW
 
 test("Planting-method SQL starts directly with SQL text", () => { // NEW
@@ -215,9 +251,9 @@ test("PlanSchema detects duplicate crop identities and validates invalid units",
     assert.equal(api.PlanSchema.findFirstDuplicateCrop(plan).key, "pid:1|vid:");
 
     plan.crops[1].varietyId = 9;
-    plan.crops[0].market.push({ qty: 1, unit: "crate", from: "", to: "" });
+    addDemand(plan, { unit: "crate", from: "", to: "" }); // CHANGE
     const errors = Array.from(api.PlanSchema.validate(plan));
-    assert.ok(errors.some(error => error.includes("market line missing dates")));
+    assert.ok(errors.some(error => error.includes("missing dates"))); // CHANGE
     assert.ok(errors.some(error => error.includes("does not resolve to kg")));
 });
 
@@ -234,22 +270,21 @@ test("PlanSchema exposes CSA validation independently from the full plan", () =>
     assert.ok(Array.from(api.PlanSchema.validate(plan)).length >= csaErrors.length); // NEW
 }); // NEW
 
-test("PlanSchema rejects reversed market and effective CSA date ranges", () => { // NEW
+test("PlanSchema rejects reversed demand and effective CSA date ranges", () => { // CHANGE
     const { api } = createHarness(); // NEW
     const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
-    const crop = emptyCrop({ // NEW
-        market: [{ qty: 1, unit: "kg", from: "2026-07-01", to: "2026-06-01" }] // NEW
-    }); // NEW
+    const crop = emptyCrop(); // CHANGE
     plan.crops.push(crop); // NEW
+    addDemand(plan, { from: "2026-07-01", to: "2026-06-01" }); // NEW
     plan.csa.enabled = true; // NEW
     plan.csa.boxesPerWeek = 10; // NEW
     plan.csa.start = "2026-09-30"; // NEW
     plan.csa.end = "2026-06-01"; // NEW
     plan.csa.components.push({ cropId: crop.id, qty: 1, unit: "kg", everyNWeeks: 1, start: "", end: "" }); // NEW
 
-    const cropErrors = Array.from(api.PlanSchema.validateCrop(crop)); // NEW
+    const demandErrors = Array.from(api.PlanSchema.validateDemand(plan)); // CHANGE
     const csaErrors = Array.from(api.PlanSchema.validateCsa(plan)); // NEW
-    assert.ok(cropErrors.some(error => error.includes("market line has start date after end date"))); // NEW
+    assert.ok(demandErrors.some(error => error.includes("start date after end date"))); // CHANGE
     assert.ok(csaErrors.some(error => error === "CSA start date is after CSA end date.")); // NEW
     assert.ok(csaErrors.some(error => error.includes("has start date after end date"))); // NEW
 }); // NEW
@@ -257,10 +292,9 @@ test("PlanSchema rejects reversed market and effective CSA date ranges", () => {
 test("PlanMath excludes reversed demand ranges while retaining explicit valid CSA components", () => { // NEW
     const { api } = createHarness(); // NEW
     const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
-    const crop = emptyCrop({ // NEW
-        market: [{ qty: 5, unit: "kg", from: "2026-07-01", to: "2026-06-01" }] // NEW
-    }); // NEW
+    const crop = emptyCrop(); // CHANGE
     plan.crops.push(crop); // NEW
+    addDemand(plan, { qty: 5, from: "2026-07-01", to: "2026-06-01" }); // NEW
     plan.csa.enabled = true; // NEW
     plan.csa.boxesPerWeek = 10; // NEW
     plan.csa.start = "2026-09-30"; // NEW
@@ -273,7 +307,7 @@ test("PlanMath excludes reversed demand ranges while retaining explicit valid CS
 
     const weekly = api.PlanMath.computePlanWeekly(plan, warnings); // NEW
     assert.equal(weekly.targetTotal.reduce((sum, value) => sum + value, 0), 10); // NEW
-    assert.ok(warnings.some(warning => warning.includes("Market line skipped (start date after end date)"))); // NEW
+    assert.ok(warnings.some(warning => warning.includes("Demand line skipped (start date after end date)"))); // CHANGE
     assert.ok(warnings.some(warning => warning.includes("CSA component skipped (start date after end date)"))); // NEW
 }); // NEW
 
@@ -307,6 +341,7 @@ test("PlanRepository round-trips plans, templates, defaults, and leap-day shifts
         start: "2024-02-29",
         end: "2024-03-02"
     });
+    addDemand(plan, { from: "2024-02-29", to: "2024-03-02" }); // NEW
 
     api.PlanRepository.savePlanForYear(moduleCell, 2024, plan);
     assert.equal(api.PlanRepository.loadPlanForYear(moduleCell, 2024).crops[0].harvestStart, "2024-02-29");
@@ -325,6 +360,8 @@ test("PlanRepository round-trips plans, templates, defaults, and leap-day shifts
     assert.equal(shifted.crops[0].harvestStart, "2025-02-28");
     assert.equal(shifted.csa.components[0].start, "2025-02-28");
     assert.equal(shifted.csa.components[0].cropId, shifted.crops[0].id);
+    assert.equal(shifted.demands[0].from, "2025-02-28"); // NEW
+    assert.equal(shifted.demands[0].cropId, shifted.crops[0].id); // NEW
     api.PlanRepository.deleteTemplateByName("Leap");
     assert.deepEqual(Array.from(api.PlanRepository.listTemplateNames()), []);
 
@@ -496,9 +533,9 @@ test("PlanRuntimeService recalculation is idempotent and preserves manual harves
     plan.crops.push(emptyCrop({
         useActualHarvest: false,
         harvestStart: "2025-08-01",
-        harvestEnd: "2025-08-07",
-        market: [{ qty: 2, unit: "kg", from: "2025-08-01", to: "2025-08-07" }]
+        harvestEnd: "2025-08-07"
     }));
+    addDemand(plan, { qty: 2, from: "2025-08-01", to: "2025-08-07" }); // NEW
 
     const first = api.PlanRuntimeService.recalculate(moduleCell, 2025, plan);
     const firstSnapshot = JSON.stringify(plan);
@@ -527,9 +564,9 @@ test("PlanRuntimeService derives actual harvest windows and returns calculation 
     plan.crops.push(emptyCrop({
         useActualHarvest: true,
         harvestStart: "",
-        harvestEnd: "",
-        market: [{ qty: 1, unit: "kg", from: "", to: "" }]
+        harvestEnd: ""
     }));
+    addDemand(plan, { from: "", to: "" }); // NEW
 
     const runtime = api.PlanRuntimeService.recalculate(moduleCell, 2025, plan);
     const derived = runtime.derivedByCropId.get("crop_1");
@@ -566,6 +603,65 @@ test("PlanMath inventory uses conservative weekly shelf-life buckets and FIFO co
     assert.deepEqual(Array.from(longLife.expired), [0, 0, 0, 4]); // NEW
 }); // NEW
 
+test("PlanMath expands daily, weekly, and prorated monthly demand on calendar anchors", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const weeks = api.PlanMath.buildWeekStartsForYearLocal(2024, 1); // NEW
+    const daily = Array(weeks.length).fill(0); // NEW
+    const weekly = Array(weeks.length).fill(0); // NEW
+    const monthly = Array(weeks.length).fill(0); // NEW
+    const leapPartial = Array(weeks.length).fill(0); // NEW
+
+    api.PlanMath.addDailyDemandAcrossWeeks(daily, weeks, "2024-02-28", "2024-03-03", 2, 2); // NEW
+    api.PlanMath.addWeeklyDemandAcrossWeeks(weekly, weeks, "2024-01-03", "2024-01-21", 5, 2, 1); // NEW
+    api.PlanMath.addMonthlyDemandAcrossWeeks(monthly, weeks, "2024-01-16", "2024-03-15", 31, 2); // NEW
+    api.PlanMath.addMonthlyDemandAcrossWeeks(leapPartial, weeks, "2024-02-15", "2024-02-29", 29, 1); // NEW
+
+    assert.equal(daily.reduce((sum, value) => sum + value, 0), 6); // NEW
+    assert.equal(weekly.reduce((sum, value) => sum + value, 0), 10); // NEW
+    assert.equal(monthly.reduce((sum, value) => sum + value, 0), 31); // NEW
+    assert.equal(leapPartial.reduce((sum, value) => sum + value, 0), 15); // NEW
+}); // NEW
+
+test("PlanMath allocates CSA first, then priority and channel order, with requested and fulfilled revenue", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+    const crop = emptyCrop({ actualPlants: 10, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07" }); // NEW
+    plan.crops.push(crop); // NEW
+    plan.csa.enabled = true; // NEW
+    plan.csa.boxesPerWeek = 1; // NEW
+    plan.csa.start = "2026-06-01"; // NEW
+    plan.csa.end = "2026-06-07"; // NEW
+    plan.csa.components.push({ cropId: crop.id, qty: 2, unit: "kg", everyNWeeks: 1, start: "", end: "" }); // NEW
+    addDemand(plan, { id: "farm_target", channelId: "farm_store", qty: 6, priority: "target", price: 2 }); // NEW
+    addDemand(plan, { id: "restaurant_committed", channelId: "restaurant_1", qty: 6, priority: "committed", price: 2 }); // NEW
+
+    const weekly = api.PlanMath.computePlanWeekly(plan, []); // NEW
+    const farm = weekly.perDemandLine.get("farm_target"); // NEW
+    const restaurant = weekly.perDemandLine.get("restaurant_committed"); // NEW
+    assert.equal(weekly.csa.usableSupply.reduce((sum, value) => sum + value, 0), 2); // NEW
+    assert.equal(restaurant.usableSupply.reduce((sum, value) => sum + value, 0), 6); // NEW
+    assert.equal(farm.usableSupply.reduce((sum, value) => sum + value, 0), 2); // NEW
+    assert.equal(farm.short.reduce((sum, value) => sum + value, 0), 4); // NEW
+
+    const dashboard = api.YearPlanDashboard.compute(plan, { weekly, cropTotals: api.PlanMath.computePlanCropTotals(plan, weekly), warnings: [] }); // NEW
+    assert.equal(dashboard.potentialRevenue, 24); // NEW
+    assert.equal(dashboard.fulfilledRevenue, 16); // NEW
+    assert.equal(dashboard.channelMetricsById.get("restaurant_1").status, "OK"); // NEW
+    assert.equal(dashboard.channelMetricsById.get("farm_store").shortKg, 4); // NEW
+    assert.equal(dashboard.priorityMetrics.find(metric => metric.priority === "committed").usableSupplyKg, 6); // NEW
+}); // NEW
+
+test("PlanMath breaks equal-priority shortages by stored channel order", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+    plan.crops.push(emptyCrop({ actualPlants: 8, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07" })); // NEW
+    addDemand(plan, { id: "later", channelId: "restaurant_1", qty: 5, priority: "committed" }); // NEW
+    addDemand(plan, { id: "earlier", channelId: "farm_store", qty: 5, priority: "committed" }); // NEW
+    const weekly = api.PlanMath.computePlanWeekly(plan, []); // NEW
+    assert.equal(weekly.perDemandLine.get("earlier").usableSupply.reduce((sum, value) => sum + value, 0), 5); // NEW
+    assert.equal(weekly.perDemandLine.get("later").usableSupply.reduce((sum, value) => sum + value, 0), 3); // NEW
+}); // NEW
+
 test("PlanMath keeps raw harvest stable and never pools inventory across crops", () => { // NEW
     const { api } = createHarness(); // NEW
     function makeWeeklyPlan(shelfLifeDays) { // NEW
@@ -575,9 +671,9 @@ test("PlanMath keeps raw harvest stable and never pools inventory across crops",
             actualPlants: 10, // NEW
             shelfLifeDays, // NEW
             harvestStart: "2026-01-05", // NEW
-            harvestEnd: "2026-01-11", // NEW
-            market: [{ qty: 5, unit: "kg", from: "2026-01-12", to: "2026-01-18" }] // NEW
+            harvestEnd: "2026-01-11" // CHANGE
         })); // NEW
+        addDemand(plan, { qty: 5, from: "2026-01-12", to: "2026-01-18" }); // NEW
         return api.PlanMath.computePlanWeekly(plan, []); // NEW
     } // NEW
 
@@ -591,8 +687,9 @@ test("PlanMath keeps raw harvest stable and never pools inventory across crops",
     const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
     plan.crops.push( // NEW
         emptyCrop({ id: "harvest", actualPlants: 10, useActualHarvest: false, shelfLifeDays: 8, harvestStart: "2026-01-05", harvestEnd: "2026-01-11" }), // NEW
-        emptyCrop({ id: "demand", plantId: "2", plant: "Carrot", actualPlants: 0, useActualHarvest: false, shelfLifeDays: 8, market: [{ qty: 5, unit: "kg", from: "2026-01-12", to: "2026-01-18" }] }) // NEW
+        emptyCrop({ id: "demand", plantId: "2", plant: "Carrot", actualPlants: 0, useActualHarvest: false, shelfLifeDays: 8 }) // CHANGE
     ); // NEW
+    addDemand(plan, { cropId: "demand", qty: 5, from: "2026-01-12", to: "2026-01-18" }); // NEW
     const weekly = api.PlanMath.computePlanWeekly(plan, []); // NEW
     const demandSeries = weekly.perCrop.get("demand"); // NEW
     assert.equal(demandSeries.usableSupply.reduce((sum, value) => sum + value, 0), 0); // NEW
@@ -646,18 +743,18 @@ test("PlanRuntimeService syncs demand to harvest dates and collapses legacy shel
         syncharvest: true, // NEW
         shelfLifeDays: 14, // NEW
         harvestStart: "2026-06-01", // NEW
-        harvestEnd: "2026-06-07", // NEW
-        market: [{ qty: 1, unit: "kg", from: "2026-06-01", to: "2026-06-21" }] // NEW
+        harvestEnd: "2026-06-07" // CHANGE
     }); // NEW
     const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
     plan.crops.push(crop); // NEW
+    addDemand(plan, { from: "2026-06-01", to: "2026-06-21" }); // NEW
     plan.csa.enabled = true; // NEW
     plan.csa.start = "2026-06-01"; // NEW
     plan.csa.end = "2026-06-30"; // NEW
     plan.csa.components.push({ cropId: crop.id, qty: 1, unit: "kg", start: "2026-06-01", end: "2026-06-21" }); // NEW
 
     api.PlanRuntimeService.syncCropDatesIfEnabled(plan, crop, { hs: "2026-06-01", he: "2026-06-07", availEnd: "2026-06-21" }); // NEW
-    assert.equal(crop.market[0].to, "2026-06-07"); // NEW
+    assert.equal(plan.demands[0].to, "2026-06-07"); // CHANGE
     assert.equal(plan.csa.components[0].end, "2026-06-07"); // NEW
     assert.equal(api.PlanRuntimeService.cropAvailableEndYmd(crop), "2026-06-07"); // NEW
 }); // NEW
@@ -776,7 +873,7 @@ test("YearPlanDashboard dirty snapshots ignore runtime fields and update after s
     assert.equal(api.YearPlanDashboard.isDirty(state, plan), false); // NEW
     plan.crops[0].__actualHarvestWeeklyKg = [1, 2, 3]; // NEW
     assert.equal(api.YearPlanDashboard.isDirty(state, plan), false); // NEW
-    plan.crops[0].market.push({ qty: 2, unit: "kg", from: "2026-06-01", to: "2026-06-07" }); // NEW
+    addDemand(plan, { qty: 2 }); // CHANGE
     assert.equal(api.YearPlanDashboard.isDirty(state, plan), true); // NEW
     api.YearPlanDashboard.markBaseline(state, plan, new Date("2026-06-14T12:00:00Z")); // NEW
     assert.equal(api.YearPlanDashboard.isDirty(state, plan), false); // NEW
@@ -804,17 +901,17 @@ test("YearPlanDashboard expands checks only when blocking errors first appear", 
     assert.equal(state.cropPlanExpanded, true); // NEW
     assert.equal(state.planCheckExpanded, false); // NEW
     const invalid = { validationErrors: ["Plan error"] }; // NEW
-    let changes = api.YearPlanDashboard.syncExpansionState(state, invalid, ["CSA error"]); // NEW
-    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: true, csaChanged: true }); // CHANGE
+    let changes = api.YearPlanDashboard.syncExpansionState(state, invalid, ["CSA error"], []); // CHANGE
+    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: true, csaChanged: true, demandChanged: false }); // CHANGE
     state.planCheckExpanded = false; state.csaExpanded = false; // CHANGE
-    changes = api.YearPlanDashboard.syncExpansionState(state, invalid, ["CSA error"]); // NEW
-    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: false, csaChanged: false }); // CHANGE
-    api.YearPlanDashboard.syncExpansionState(state, { validationErrors: [] }, []); // NEW
-    changes = api.YearPlanDashboard.syncExpansionState(state, invalid, ["CSA error"]); // NEW
-    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: true, csaChanged: true }); // CHANGE
+    changes = api.YearPlanDashboard.syncExpansionState(state, invalid, ["CSA error"], []); // CHANGE
+    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: false, csaChanged: false, demandChanged: false }); // CHANGE
+    api.YearPlanDashboard.syncExpansionState(state, { validationErrors: [] }, [], []); // CHANGE
+    changes = api.YearPlanDashboard.syncExpansionState(state, invalid, ["CSA error"], []); // CHANGE
+    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: true, csaChanged: true, demandChanged: false }); // CHANGE
     state.planCheckExpanded = false; state.csaExpanded = false; // CHANGE
-    changes = api.YearPlanDashboard.syncExpansionState(state, { validationErrors: [], diagnostics: ["Runtime warning"] }, []); // NEW
-    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: false, csaChanged: false }); // CHANGE
+    changes = api.YearPlanDashboard.syncExpansionState(state, { validationErrors: [], diagnostics: ["Runtime warning"] }, [], []); // CHANGE
+    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: false, csaChanged: false, demandChanged: false }); // CHANGE
 }); // NEW
 
 test("YearPlanDashboard resolves selection after crop removal and preserves unknown methods", () => { // NEW

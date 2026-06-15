@@ -13,6 +13,17 @@ function savePlan(harness, year, configure) {
     return plan;
 }
 
+function addDemand(plan, overrides = {}) { // NEW
+    const line = { // NEW
+        id: `demand_${plan.demands.length + 1}`, channelId: "farm_store", cropId: "crop_1", // NEW
+        qty: 1, unit: "kg", frequency: "week", everyN: 1, // NEW
+        from: "2026-06-01", to: "2026-06-07", priority: "target", price: null, notes: "", // NEW
+        ...overrides // NEW
+    }; // NEW
+    plan.demands.push(line); // NEW
+    return line; // NEW
+} // NEW
+
 function findStrip(document, id) { // CHANGE
     return document.querySelector(`[data-year-plan-strip="${id}"]`); // NEW
 } // NEW
@@ -99,9 +110,9 @@ test("empty plans show Demand and Crop Plan guidance", async t => { // NEW
     t.after(() => harness.dom.window.close()); // NEW
     await harness.openModal(2026); // NEW
 
-    assert.match(findStripDetails(harness.document, "demand").textContent, /Add or select a crop in Crop Plan/); // NEW
+    assert.match(findStripDetails(harness.document, "demand").textContent, /No demand lines in this channel/); // CHANGE
     assert.match(findStripDetails(harness.document, "crop-plan").textContent, /Add or select a crop to edit its plan/); // NEW
-    assert.match(findStripHeader(harness.document, "demand").textContent, /No crop selected/); // NEW
+    assert.match(findStripHeader(harness.document, "demand").textContent, /4 channels.*0 lines/); // CHANGE
     assert.match(findStripHeader(harness.document, "crop-plan").textContent, /0 crops.*No crop selected/); // NEW
 }); // NEW
 
@@ -143,7 +154,7 @@ test("debounced Demand typing preserves the focused control", async t => { // NE
     const harness = createYearPlannerHarness(); // NEW
     t.after(() => harness.dom.window.close()); // NEW
     savePlan(harness, 2026, plan => { // NEW
-        plan.crops[0].market = [{ qty: 1, unit: "kg", from: "2026-06-01", to: "2026-06-07" }]; // NEW
+        addDemand(plan); // CHANGE
     }); // NEW
     const session = await harness.openModal(2026); // NEW
     const qty = findStripDetails(harness.document, "demand").querySelector('input[type="number"]'); // NEW
@@ -154,7 +165,45 @@ test("debounced Demand typing preserves the focused control", async t => { // NE
     assert.equal(harness.document.activeElement, qty); // NEW
     assert.equal(qty.isConnected, true); // NEW
     assert.equal(qty.value, "7"); // NEW
-    assert.equal(session.plan.crops[0].market[0].qty, 7); // NEW
+    assert.equal(session.plan.demands[0].qty, 7); // CHANGE
+}); // NEW
+
+test("Demand channels support editing, collapse state, safe removal, and labeled line controls", async t => { // NEW
+    const harness = createYearPlannerHarness(); // NEW
+    t.after(() => harness.dom.window.close()); // NEW
+    savePlan(harness, 2026, plan => addDemand(plan, { qty: 5, price: 2 })); // NEW
+    const session = await harness.openModal(2026); // NEW
+    const demandDetails = findStripDetails(harness.document, "demand"); // NEW
+    let channels = demandDetails.querySelectorAll("[data-demand-channel-id]"); // NEW
+    assert.equal(channels.length, 4); // NEW
+    assert.match(channels[0].textContent, /Demand 5\.0 kg.*Potential \$10\.00.*Fulfilled \$0\.00/); // NEW
+    assert.match(channels[0].textContent, /Crop.*Qty.*Unit.*Frequency.*Every.*From.*To.*Priority.*Price.*Notes.*Remove/); // NEW
+    assert.equal(Array.from(channels[0].querySelectorAll("button")).find(button => button.textContent === "Remove channel").disabled, true); // NEW
+
+    Array.from(channels[0].querySelectorAll("button")).find(button => button.textContent === "Collapse").click(); // NEW
+    channels = demandDetails.querySelectorAll("[data-demand-channel-id]"); // NEW
+    assert.equal(channels[0].querySelector(".yp-demand-channel-details").style.display, "none"); // NEW
+    assert.equal("collapsedDemandChannelIds" in session.plan, false); // NEW
+
+    const emptyRemove = Array.from(channels[1].querySelectorAll("button")).find(button => button.textContent === "Remove channel"); // NEW
+    assert.equal(emptyRemove.disabled, false); // NEW
+    emptyRemove.click(); // NEW
+    assert.equal(session.plan.demandChannels.length, 3); // NEW
+    harness.findButton("Add channel").click(); // NEW
+    assert.equal(session.plan.demandChannels.length, 4); // NEW
+    channels = findStripDetails(harness.document, "demand").querySelectorAll("[data-demand-channel-id]"); // NEW
+    const added = channels[channels.length - 1]; // NEW
+    const name = added.querySelector('input[aria-label="Channel name"]'); // NEW
+    harness.setControlValue(name, "Chef Pickup"); // NEW
+    await harness.settle(120); // NEW
+    assert.equal(session.plan.demandChannels.at(-1).label, "Chef Pickup"); // NEW
+    const type = added.querySelector('select[aria-label="Channel type"]'); // NEW
+    type.value = "restaurant"; // NEW
+    type.dispatchEvent(new harness.window.Event("change", { bubbles: true })); // NEW
+    assert.equal(session.plan.demandChannels.at(-1).type, "restaurant"); // NEW
+    Array.from(added.querySelectorAll("button")).find(button => button.textContent === "Add demand line").click(); // NEW
+    assert.equal(session.plan.demands.length, 2); // NEW
+    assert.equal(session.plan.demands.at(-1).channelId, session.plan.demandChannels.at(-1).id); // NEW
 }); // NEW
 
 test("Add crop prioritizes garden crops and groups remaining plants by lifecycle", async t => { // NEW
@@ -229,28 +278,29 @@ test("Garden variety resolution preserves identity, applies yield override, and 
     assert.deepEqual(optionLabels(gardenGroup), ["Tomato - Roma"]); // NEW
 }); // NEW
 
-test("Demand follows Crop Plan selection and removal", async t => { // NEW
+test("Centralized Demand remains visible and removes lines with their crop", async t => { // CHANGE
     const harness = createYearPlannerHarness(); // NEW
     t.after(() => harness.dom.window.close()); // NEW
     savePlan(harness, 2026, plan => { // NEW
-        plan.crops[0].market = [{ qty: 1, unit: "kg", from: "2026-06-01", to: "2026-06-07" }]; // NEW
+        addDemand(plan); // CHANGE
         plan.crops.push(makePlanCrop({ // NEW
             id: "crop_2", // NEW
             plantId: "2", // NEW
-            plant: "Carrot", // NEW
-            market: [{ qty: 4, unit: "kg", from: "2026-07-01", to: "2026-07-07" }] // NEW
+            plant: "Carrot" // CHANGE
         })); // NEW
+        addDemand(plan, { id: "demand_2", cropId: "crop_2", qty: 4, from: "2026-07-01", to: "2026-07-07" }); // NEW
     }); // NEW
     const session = await harness.openModal(2026); // NEW
     const cropPlanDetails = findStripDetails(harness.document, "crop-plan"); // NEW
     const carrotButton = Array.from(cropPlanDetails.querySelectorAll("button")).find(button => button.textContent.includes("Carrot")); // NEW
     carrotButton.click(); // NEW
 
-    assert.match(findStripHeader(harness.document, "demand").textContent, /Carrot.*1 demand line/); // NEW
-    assert.equal(findStripDetails(harness.document, "demand").querySelector('input[type="number"]').value, "4"); // NEW
+    assert.match(findStripHeader(harness.document, "demand").textContent, /2 lines/); // CHANGE
+    assert.equal(findStripDetails(harness.document, "demand").querySelectorAll("[data-demand-line-id]").length, 2); // CHANGE
     harness.findButton("Remove crop").click(); // NEW
     assert.equal(session.plan.crops.length, 1); // NEW
-    assert.match(findStripHeader(harness.document, "demand").textContent, /Tomato.*1 demand line/); // NEW
+    assert.equal(session.plan.demands.length, 1); // NEW
+    assert.match(findStripHeader(harness.document, "demand").textContent, /1 line/); // CHANGE
     assert.equal(findStripDetails(harness.document, "demand").querySelector('input[type="number"]').value, "1"); // NEW
 }); // NEW
 
@@ -381,13 +431,13 @@ test("Plan Check summary follows the crop filter and chart hover shows inventory
     const harness = createYearPlannerHarness(); // NEW
     t.after(() => harness.dom.window.close()); // NEW
     savePlan(harness, 2026, plan => { // NEW
-        plan.crops[0].market = [{ qty: 2, unit: "kg", from: "2026-06-01", to: "2026-06-07" }]; // NEW
+        addDemand(plan, { qty: 2 }); // CHANGE
         plan.crops.push(makePlanCrop({ // NEW
             id: "crop_2", // NEW
             plantId: "2", // NEW
-            plant: "Carrot", // NEW
-            market: [{ qty: 3, unit: "kg", from: "2026-06-01", to: "2026-06-07" }] // NEW
+            plant: "Carrot" // CHANGE
         })); // NEW
+        addDemand(plan, { id: "demand_2", cropId: "crop_2", qty: 3 }); // NEW
     }); // NEW
 
     await harness.openModal(2026); // NEW
@@ -401,6 +451,7 @@ test("Plan Check summary follows the crop filter and chart hover shows inventory
     assert.ok(cropFilter); // NEW
     assert.match(summary.textContent, /Target:\s*5\.0 kg/); // NEW
     assert.match(summary.textContent, /Short weeks:\s*1/); // NEW
+    assert.match(findStripDetails(harness.document, "plan-check").textContent, /Channels[\s\S]*Priorities[\s\S]*Shortage weeks[\s\S]*Revenue:/); // CHANGE
 
     cropFilter.value = "crop_1"; // NEW
     cropFilter.dispatchEvent(new harness.window.Event("change", { bubbles: true })); // NEW
@@ -423,7 +474,7 @@ test("interactive chart legend controls drawing and hover details without changi
     const harness = createYearPlannerHarness(); // NEW
     t.after(() => harness.dom.window.close()); // NEW
     savePlan(harness, 2026, plan => { // NEW
-        plan.crops[0].market = [{ qty: 20, unit: "kg", from: "2026-06-01", to: "2026-06-07" }]; // NEW
+        addDemand(plan, { qty: 20 }); // CHANGE
     }); // NEW
     const template = harness.api.PlanSchema.serializeForPersistence(harness.api.PlanSchema.createEmptyPlan(2026), { forTemplate: true }); // NEW
     template.templateBaseYear = 2026; // NEW
@@ -605,11 +656,11 @@ test("CSA summary updates as controls and components change", async t => {
     assert.equal(harness.api.PlanSchema.validateCsa(session.plan).length, 0);
 });
 
-test("Market date controls reject reversed ranges and expose reciprocal picker constraints", async t => { // CHANGE
+test("Demand date controls reject reversed ranges and expose reciprocal picker constraints", async t => { // CHANGE
     const harness = createYearPlannerHarness(); // NEW
     t.after(() => harness.dom.window.close()); // NEW
     savePlan(harness, 2026, plan => { // NEW
-        plan.crops[0].market = [{ qty: 2, unit: "kg", from: "2026-06-01", to: "2026-06-07" }]; // NEW
+        addDemand(plan, { qty: 2 }); // CHANGE
     }); // NEW
     await harness.openModal(2026); // NEW
     setStripExpanded(harness.document, "demand", true); // CHANGE
@@ -633,7 +684,7 @@ test("Market date controls reject reversed ranges and expose reciprocal picker c
     assert.equal(editorDates[0].value, "2026-06-08"); // CHANGE
     assert.equal(editorDates[1].value, "2026-06-14"); // NEW
     assert.match(harness.document.querySelector(".yp-plan-check-summary").textContent, /Target:\s*2\.0 kg/); // CHANGE
-    assert.match(harness.document.body.textContent, /Market start date cannot be after end date/); // CHANGE
+    assert.match(harness.document.body.textContent, /Demand line start date cannot be after end date/); // CHANGE
     const totalCells = harness.document.querySelectorAll(".yp-plan-check-grid table tbody tr td"); // CHANGE
     assert.equal(totalCells[1].textContent, "2.0"); // CHANGE
 
@@ -734,7 +785,7 @@ test("Existing reversed persisted dates remain visible, block saving, and can be
     const harness = createYearPlannerHarness(); // NEW
     t.after(() => harness.dom.window.close()); // NEW
     savePlan(harness, 2026, plan => { // NEW
-        plan.crops[0].market = [{ qty: 1, unit: "kg", from: "2026-07-01", to: "2026-06-01" }]; // NEW
+        addDemand(plan, { from: "2026-07-01", to: "2026-06-01" }); // CHANGE
     }); // NEW
     const session = await harness.openModal(2026); // NEW
     setStripExpanded(harness.document, "demand", true); // CHANGE
@@ -746,19 +797,19 @@ test("Existing reversed persisted dates remain visible, block saving, and can be
 
     harness.findButton("Save").click(); // NEW
     assert.match(harness.document.body.textContent, /Validation failed/); // NEW
-    assert.equal(session.plan.crops[0].market[0].to, "2026-06-01"); // NEW
+    assert.equal(session.plan.demands[0].to, "2026-06-01"); // CHANGE
 
     dates = findStripDetails(harness.document, "demand").querySelectorAll('input[type="date"]'); // CHANGE
     harness.setControlValue(dates[1], "2026-07-01", "change"); // NEW
-    assert.equal(session.plan.crops[0].market[0].to, "2026-07-01"); // NEW
-    assert.equal(harness.api.PlanSchema.validateCrop(session.plan.crops[0]).some(error => error.includes("start date after end date")), false); // NEW
+    assert.equal(session.plan.demands[0].to, "2026-07-01"); // CHANGE
+    assert.equal(harness.api.PlanSchema.validateDemand(session.plan).some(error => error.includes("start date after end date")), false); // CHANGE
 }); // NEW
 
 test("Sync and harvest date changes keep expanded CSA and reopened Demand dates current", async t => { // NEW
     const harness = createYearPlannerHarness(); // NEW
     t.after(() => harness.dom.window.close()); // NEW
     savePlan(harness, 2026, plan => { // NEW
-        plan.crops[0].market = [{ qty: 1, unit: "kg", from: "2026-05-01", to: "2026-09-30" }]; // NEW
+        addDemand(plan, { from: "2026-05-01", to: "2026-09-30" }); // CHANGE
         plan.csa.enabled = true; // NEW
         plan.csa.boxesPerWeek = 10; // NEW
         plan.csa.start = "2026-06-01"; // NEW
@@ -773,8 +824,8 @@ test("Sync and harvest date changes keep expanded CSA and reopened Demand dates 
     const basicsChecks = editor.querySelectorAll('input[type="checkbox"]'); // NEW
     basicsChecks[1].checked = true; // NEW
     basicsChecks[1].dispatchEvent(new harness.window.Event("change", { bubbles: true })); // NEW
-    assert.equal(session.plan.crops[0].market[0].from, "2026-06-01"); // NEW
-    assert.equal(session.plan.crops[0].market[0].to, "2026-09-30"); // NEW
+    assert.equal(session.plan.demands[0].from, "2026-06-01"); // CHANGE
+    assert.equal(session.plan.demands[0].to, "2026-09-30"); // CHANGE
 
     let demandDates = findStripDetails(harness.document, "demand").querySelectorAll('input[type="date"]'); // CHANGE
     assert.equal(demandDates[0].value, "2026-06-01"); // NEW
@@ -801,7 +852,7 @@ test("Harvest-window suggestions synchronize visible Demand and CSA date control
         plan.crops[0].syncharvest = true; // NEW
         plan.crops[0].harvestStart = ""; // NEW
         plan.crops[0].harvestEnd = ""; // NEW
-        plan.crops[0].market = [{ qty: 1, unit: "kg", from: "", to: "" }]; // NEW
+        addDemand(plan, { from: "", to: "" }); // CHANGE
         plan.csa.enabled = true; // NEW
         plan.csa.boxesPerWeek = 10; // NEW
         plan.csa.start = ""; // NEW

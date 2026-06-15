@@ -281,7 +281,6 @@ function makePlanCrop(overrides = {}) {
         actualPlants: 0,
         germRate: 0.8,
         packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: null }],
-        market: [],
         ...overrides
     };
 }
