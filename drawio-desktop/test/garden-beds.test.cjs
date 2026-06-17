@@ -60,21 +60,6 @@ function appendChild(parent, child) { // NEW
     return child; // NEW
 } // NEW
 
-class TestMenu { // NEW
-    constructor() { // NEW
-        this.items = []; // NEW
-    } // NEW
-
-    addSeparator() { this.items.push({ separator: true }); } // NEW
-    addItem(label, image, fn) { this.items.push({ label, fn }); return this.items[this.items.length - 1]; } // NEW
-    labels() { return this.items.map(item => item.label).filter(Boolean); } // NEW
-    click(label) { // NEW
-        const item = this.items.find(entry => entry.label === label); // NEW
-        assert.ok(item, "missing menu item " + label); // NEW
-        item.fn(); // NEW
-    } // NEW
-} // NEW
-
 function makeXmlCell(document, id, attrs, style = "") { // NEW
     const node = document.implementation.createDocument("", "", null).createElement("object"); // NEW
     Object.entries(attrs || {}).forEach(([key, value]) => node.setAttribute(key, value)); // NEW
@@ -142,33 +127,35 @@ function getDialogButtonLabels(ui) { // NEW
     return Array.from(ui.lastDialog.querySelectorAll("button")).map(button => button.textContent); // NEW
 } // NEW
 
-test("context menu contributor registers only garden bed actions", () => { // CHANGE
-    const { api, legacyApi, contributors, bed, moduleCell } = loadPlugin(); // CHANGE
-    assert.equal(contributors.length, 1); // NEW
-    assert.equal(contributors[0].id, "gardenBeds"); // CHANGE
+function chooseDialogPreset(ui, key) { // NEW
+    const presetSelect = ui.lastDialog.querySelector("select"); // NEW
+    assert.ok(presetSelect, "missing preset select"); // NEW
+    presetSelect.value = key; // NEW
+    presetSelect.dispatchEvent(new ui.lastDialog.ownerDocument.defaultView.Event("change")); // NEW
+} // NEW
+
+function getSelectedBedOverlays(graph) { // NEW
+    return Array.from(graph.container.querySelectorAll(".trellis-bed-conditions-overlay")); // NEW
+} // NEW
+
+function overlayText(overlays) { // NEW
+    return overlays.map(overlay => overlay.textContent).join("\n"); // NEW
+} // NEW
+
+function plainRows(rows) { // NEW
+    return JSON.parse(JSON.stringify(rows)); // NEW
+} // NEW
+
+test("garden beds no longer register bed condition context menu actions", () => { // CHANGE
+    const { api, legacyApi, contributors } = loadPlugin(); // CHANGE
+    assert.equal(contributors.length, 0); // CHANGE
     assert.equal(legacyApi, api); // NEW
-
-    const bedMenu = new TestMenu(); // CHANGE
-    contributors[0].addItems(bedMenu, bed, null); // CHANGE
-
-    assert.deepEqual(bedMenu.labels(), [ // CHANGE
-        "Set Bed Conditions...", // NEW
-        "View Bed Conditions" // CHANGE
-    ]); // CHANGE
-
-    const moduleMenu = new TestMenu(); // NEW
-    contributors[0].addItems(moduleMenu, moduleCell, null); // NEW
-    assert.deepEqual(moduleMenu.labels(), []); // CHANGE
+    assert.equal(api.readDefaultBedConditions, undefined); // NEW
+    assert.equal(api.writeDefaultBedConditions, undefined); // NEW
 }); // NEW
 
-test("bed and default conditions persist, mirror, merge, and clear safely", () => { // NEW
-    const { api, moduleCell, bed } = loadPlugin(); // NEW
-
-    api.writeDefaultBedConditions(moduleCell, { // NEW
-        sunExposure: "full_sun", // NEW
-        soilTexture: "loamy", // NEW
-        irrigation: "manual" // NEW
-    }); // NEW
+test("bed conditions persist, mirror, and clear safely", () => { // CHANGE
+    const { api, bed } = loadPlugin(); // CHANGE
     api.writeBedConditions(bed, { // NEW
         sunExposure: "part_shade", // NEW
         soilMoisture: "bogus", // NEW
@@ -188,7 +175,7 @@ test("bed and default conditions persist, mirror, merge, and clear safely", () =
 
     const effective = api.getEffectiveBedConditions(bed); // NEW
     assert.equal(effective.sunExposure, "part_shade"); // NEW
-    assert.equal(effective.soilTexture, "loamy"); // NEW
+    assert.equal(effective.soilTexture, "unknown"); // CHANGE
     assert.equal(effective.irrigation, "drip"); // NEW
     assert.equal(effective.trellis, "available"); // NEW
 
@@ -198,55 +185,51 @@ test("bed and default conditions persist, mirror, merge, and clear safely", () =
     assert.equal(bed.getAttribute("label"), "Bed 1"); // NEW
 }); // NEW
 
-test("newly created garden beds inherit module default conditions", () => { // NEW
-    const { api, moduleCell, bed, model, document } = loadPlugin(); // NEW
-    api.writeDefaultBedConditions(moduleCell, { // NEW
+test("legacy module default attributes are ignored", () => { // CHANGE
+    const { api, moduleCell, bed, model, document } = loadPlugin(); // CHANGE
+    moduleCell.value.setAttribute("default_bed_conditions_json", JSON.stringify({ // NEW
+        schemaVersion: 1, // NEW
         sunExposure: "full_sun", // NEW
-        soilMoisture: "moderate", // NEW
-        irrigation: "drip", // NEW
-        trellis: "available" // NEW
-    }); // NEW
+        soilTexture: "loamy", // NEW
+        irrigation: "manual" // NEW
+    })); // NEW
 
     assert.equal(bed.getAttribute("bed_conditions_json"), null); // NEW
     const newBed = appendChild(moduleCell, makeXmlCell(document, "newBed", { garden_bed: "1", label: "New Bed" })); // NEW
     model.fire("change"); // NEW
 
-    const stored = JSON.parse(newBed.getAttribute("bed_conditions_json")); // NEW
-    assert.equal(stored.sunExposure, "full_sun"); // NEW
-    assert.equal(stored.soilMoisture, "moderate"); // NEW
-    assert.equal(stored.irrigation, "drip"); // NEW
-    assert.equal(newBed.getAttribute("sun_exposure"), "full_sun"); // NEW
-    assert.equal(newBed.getAttribute("irrigation"), "drip"); // NEW
+    assert.equal(newBed.getAttribute("bed_conditions_json"), null); // CHANGE
+    assert.equal(newBed.getAttribute("sun_exposure"), null); // CHANGE
     assert.equal(bed.getAttribute("bed_conditions_json"), null); // NEW
+    assert.equal(moduleCell.getAttribute("default_bed_conditions_json").indexOf("full_sun") >= 0, true); // NEW
+
+    const effective = api.getEffectiveBedConditions(bed); // NEW
+    assert.equal(effective.sunExposure, "unknown"); // NEW
+    assert.equal(effective.soilTexture, "unknown"); // NEW
+    assert.equal(effective.irrigation, "unknown"); // NEW
 }); // NEW
 
-test("invalid JSON and invalid enum values normalize to non-throwing defaults", () => { // NEW
+test("invalid JSON and invalid enum values normalize to non-throwing fallbacks", () => { // CHANGE
     const { api, bed } = loadPlugin(); // NEW
     bed.value.setAttribute("bed_conditions_json", "{not-json"); // NEW
 
     assert.equal(api.readBedConditions(bed).sunExposure, "unknown"); // NEW
     assert.equal(api._test.parseProfileRecord(bed, "bed_conditions_json").invalid, true); // NEW
     assert.equal(api._test.normalizeProfile({ sunExposure: "lava", trellis: "maybe" }).sunExposure, "unknown"); // NEW
-    assert.equal(api._test.normalizeProfile({ sunExposure: "lava", trellis: "maybe" }).trellis, "none"); // NEW
+    assert.equal(api._test.normalizeProfile({ sunExposure: "lava", trellis: "maybe" }).trellis, "unknown"); // CHANGE
 }); // NEW
 
-test("bed dialog exposes copy, paste, set-default, and clear actions", () => { // CHANGE
+test("bed dialog exposes copy, paste, and clear actions", () => { // CHANGE
     const setup = loadPlugin(); // NEW
-    const { api, contributors, moduleCell, bed, bed2, ui } = setup; // CHANGE
+    const { api, bed, bed2, ui } = setup; // CHANGE
     api.writeBedConditions(bed, { sunExposure: "full_sun", irrigation: "drip", trellis: "available" }); // NEW
 
-    const copyMenu = new TestMenu(); // NEW
-    contributors[0].addItems(copyMenu, bed, null); // NEW
-    copyMenu.click("Set Bed Conditions..."); // CHANGE
-    assert.deepEqual(getDialogButtonLabels(ui), ["Copy", "Paste", "Set as Default", "Clear", "Cancel", "Save"]); // CHANGE
+    api._test.showConditionEditorDialog(bed); // CHANGE
+    assert.deepEqual(getDialogButtonLabels(ui), ["Copy", "Paste", "Clear", "Cancel", "Save"]); // CHANGE
     getDialogButton(ui, "Copy").click(); // CHANGE
-    getDialogButton(ui, "Set as Default").click(); // NEW
-    assert.equal(JSON.parse(moduleCell.getAttribute("default_bed_conditions_json")).sunExposure, "full_sun"); // NEW
 
     setup.graph.getSelectionCells = () => [bed, bed2]; // NEW
-    const pasteMenu = new TestMenu(); // NEW
-    contributors[0].addItems(pasteMenu, bed2, null); // NEW
-    pasteMenu.click("Set Bed Conditions..."); // CHANGE
+    api._test.showConditionEditorDialog(bed2); // CHANGE
     getDialogButton(ui, "Paste").click(); // CHANGE
 
     assert.equal(bed2.getAttribute("sun_exposure"), "full_sun"); // NEW
@@ -254,40 +237,106 @@ test("bed dialog exposes copy, paste, set-default, and clear actions", () => { /
     assert.equal(bed2.getAttribute("trellis"), "available"); // NEW
 
     setup.graph.getSelectionCells = () => [bed2]; // NEW
-    const clearMenu = new TestMenu(); // NEW
-    contributors[0].addItems(clearMenu, bed2, null); // NEW
-    clearMenu.click("Set Bed Conditions..."); // NEW
+    api._test.showConditionEditorDialog(bed2); // CHANGE
     getDialogButton(ui, "Clear").click(); // CHANGE
     assert.equal(bed2.getAttribute("bed_conditions_json"), null); // NEW
 }); // NEW
 
-test("default conditions can still be applied to empty beds without module context options", () => { // CHANGE
-    const { api, contributors, moduleCell, bed2 } = loadPlugin(); // CHANGE
-    api.writeDefaultBedConditions(moduleCell, { sunExposure: "full_sun", irrigation: "manual" }); // NEW
+test("selected bed overlays render for garden-bed-only selections", () => { // NEW
+    const { api, bed, bed2, graph, root } = loadPlugin(); // NEW
+    api.writeBedConditions(bed, { sunExposure: "full_sun", irrigation: "drip", trellis: "available" }); // NEW
+    api.writeBedConditions(bed2, { soilMoisture: "moist", drainage: "slow" }); // NEW
 
-    const menu = new TestMenu(); // NEW
-    contributors[0].addItems(menu, moduleCell, null); // NEW
-    assert.deepEqual(menu.labels(), []); // CHANGE
-    api._test.applyDefaultsToEmptyBeds(moduleCell); // CHANGE
-    assert.equal(JSON.parse(bed2.getAttribute("bed_conditions_json")).sunExposure, "full_sun"); // NEW
+    graph.getSelectionCells = () => [bed]; // NEW
+    api._test.syncSelectedBedOverlays(); // NEW
+    let overlays = getSelectedBedOverlays(graph); // NEW
+    assert.equal(overlays.length, 1); // NEW
+    assert.match(overlays[0].textContent, /Set Bed Conditions/); // NEW
+    assert.match(overlays[0].textContent, /Sun exposureFull sun/); // NEW
+    assert.equal(overlays[0].style.left, "0px"); // NEW
+    assert.equal(overlays[0].style.top, "20px"); // NEW
+
+    graph.getSelectionCells = () => [bed, bed2]; // NEW
+    api._test.syncSelectedBedOverlays(); // NEW
+    overlays = getSelectedBedOverlays(graph); // NEW
+    assert.equal(overlays.length, 2); // NEW
+    assert.match(overlayText(overlays), /Soil moistureMoist/); // NEW
+
+    graph.getSelectionCells = () => [bed, root]; // NEW
+    api._test.syncSelectedBedOverlays(); // NEW
+    assert.equal(getSelectedBedOverlays(graph).length, 0); // NEW
+
+    graph.getSelectionCells = () => []; // NEW
+    api._test.syncSelectedBedOverlays(); // NEW
+    assert.equal(getSelectedBedOverlays(graph).length, 0); // NEW
 }); // NEW
 
-test("badges use priority text and respect module visibility", () => { // NEW
-    const { api, moduleCell, bed, graph } = loadPlugin(); // NEW
-    api.writeBedConditions(bed, { sunExposure: "full_sun", irrigation: "drip", trellis: "available" }); // NEW
+test("selected bed overlay opens the bed conditions editor", () => { // NEW
+    const { api, bed, graph, ui } = loadPlugin(); // NEW
+    graph.getSelectionCells = () => [bed]; // NEW
+    api._test.syncSelectedBedOverlays(); // NEW
 
-    api._test.syncBadges(); // NEW
-    assert.equal(graph.container.children.length, 0); // NEW
+    const button = getSelectedBedOverlays(graph)[0].querySelector("button"); // NEW
+    assert.equal(button.textContent, "Set Bed Conditions"); // NEW
+    button.click(); // NEW
+    assert.deepEqual(getDialogButtonLabels(ui), ["Copy", "Paste", "Clear", "Cancel", "Save"]); // CHANGE
+}); // NEW
 
-    api.writeDefaultBedConditions(moduleCell, { sunExposure: "part_shade", soilMoisture: "moist" }); // NEW
-    moduleCell.value.setAttribute("show_bed_condition_badges", "1"); // NEW
-    api._test.syncBadges(); // NEW
+test("preset identity persists only for matching bed presets", () => { // NEW
+    const { api, bed, ui } = loadPlugin(); // CHANGE
 
-    assert.equal(api._test.buildBadgeText(api.getEffectiveBedConditions(bed)), "Full sun - Drip - Trellis"); // NEW
-    assert.equal(graph.container.children.length, 2); // NEW
-    assert.equal(graph.container.children[0].textContent, "Full sun - Drip - Trellis"); // NEW
+    api._test.showConditionEditorDialog(bed); // NEW
+    chooseDialogPreset(ui, "sunny_vegetable"); // NEW
+    getDialogButton(ui, "Save").click(); // NEW
+    let stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // NEW
+    assert.equal(stored.presetKey, "sunny_vegetable"); // NEW
 
-    moduleCell.value.removeAttribute("show_bed_condition_badges"); // NEW
-    api._test.syncBadges(); // NEW
-    assert.equal(graph.container.children.length, 0); // NEW
+    api._test.showConditionEditorDialog(bed); // NEW
+    ui.lastDialog.querySelectorAll("select")[1].value = "shade"; // NEW
+    getDialogButton(ui, "Save").click(); // NEW
+    stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // NEW
+    assert.equal(stored.presetKey, undefined); // NEW
+
+    api._test.showConditionEditorDialog(bed); // NEW
+    chooseDialogPreset(ui, "sunny_vegetable"); // NEW
+    ui.lastDialog.querySelectorAll("select")[8].value = "sheltered"; // NEW
+    getDialogButton(ui, "Save").click(); // NEW
+    stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // NEW
+    assert.equal(stored.presetKey, "sunny_vegetable"); // NEW
+    assert.equal(stored.windExposure, "sheltered"); // NEW
+}); // NEW
+
+test("overlay summary shows presets, extras, and set values without unknowns", () => { // NEW
+    const { api, bed } = loadPlugin(); // NEW
+
+    let rows = api._test.buildOverlayRows(api.writeBedConditions(bed, { // NEW
+        presetKey: "sunny_vegetable", // NEW
+        sunExposure: "full_sun", // NEW
+        soilMoisture: "moderate", // NEW
+        drainage: "normal", // NEW
+        soilTexture: "loamy", // NEW
+        fertility: "high", // NEW
+        irrigation: "manual", // NEW
+        trellis: "none", // NEW
+        bedUse: "annuals", // NEW
+        windExposure: "exposed" // NEW
+    })); // NEW
+    assert.deepEqual(plainRows(rows), [ // NEW
+        { label: "Preset", value: "Sunny vegetable bed" }, // NEW
+        { label: "Irrigation", value: "Manual" }, // NEW
+        { label: "Wind exposure", value: "Exposed" } // NEW
+    ]); // NEW
+
+    rows = api._test.buildOverlayRows(api.writeBedConditions(bed, { // NEW
+        sunExposure: "part_shade", // NEW
+        soilMoisture: "unknown", // NEW
+        irrigation: "drip", // NEW
+        trellis: "none", // NEW
+        bedUse: "perennials" // NEW
+    })); // NEW
+    assert.deepEqual(plainRows(rows), [ // NEW
+        { label: "Sun exposure", value: "Part shade" }, // NEW
+        { label: "Irrigation", value: "Drip" }, // NEW
+        { label: "Bed use", value: "Perennials" } // NEW
+    ]); // NEW
 }); // NEW
