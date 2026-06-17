@@ -1321,9 +1321,24 @@ Draw.loadPlugin(function (ui) {
     });
 
     // -------------------- Context menu: Create Garden Dashboard --------------------
-    const oldCreatePopupMenu = ui.menus.createPopupMenu;
-    ui.menus.createPopupMenu = function (menu, cell, evt) {
-        oldCreatePopupMenu.apply(this, arguments);
+    function registerTrellisContextMenuContributor(contributor) { // NEW
+        function finishRegistration() { // NEW
+            if (!window.TrellisContextMenu) return; // NEW
+            window.TrellisContextMenu.install(ui); // NEW
+            window.TrellisContextMenu.register(contributor); // NEW
+        } // NEW
+
+        if (window.TrellisContextMenu) { // NEW
+            finishRegistration(); // NEW
+        } else if (typeof mxscript === "function") { // NEW
+            mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration); // NEW
+        } // NEW
+    } // NEW
+
+    registerTrellisContextMenuContributor({ // CHANGE
+        id: "gardenDashboard", // NEW
+        priority: 200, // NEW
+        addItems: function (menu, cell, evt) { // CHANGE
 
         if (!cell) return;
 
@@ -1347,7 +1362,8 @@ Draw.loadPlugin(function (ui) {
                 graph.getModel().endUpdate();
             }
         });
-    };
+        } // CHANGE
+    }); // CHANGE
 
     // -------------------- If dashboards already exist in file, attach overlays --------------------
     function attachExistingDashboards() {

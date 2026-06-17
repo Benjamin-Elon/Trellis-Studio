@@ -1,10 +1,11 @@
 /**
  * Draw.io Plugin: Context Menu Submenus for Copy/Paste, Move, and Edit
  *
- * - Adds one standard draw.io submenu to Trellis-owned cell right-click menus: // CHANGE
+ * - Adds tidy standard draw.io submenus to normal cell right-click menus. // CHANGE
  *   - "Copy / Paste": cut, copy, copy as image, copy as SVG, duplicate
  *   - "Move / Arrange": to front, to back, bring forward, send backward // CHANGE
  *   - "Edit Shape": edit style, edit data, edit link, edit connection points // CHANGE
+ *   - "Style": set as default style // NEW
  * - Hides the original top-level entries for those actions to clean up the menu.
  * - Cleans up leftover separators after hiding items.
  * - Suppresses draw.io XML data hover tooltips for Trellis-owned cells. // NEW
@@ -47,10 +48,15 @@ Draw.loadPlugin(function (ui) {
         'editConnectionPoints' // NEW
     ];
 
+    const STYLE_ACTIONS = [ // NEW
+        'setAsDefaultStyle' // NEW
+    ]; // NEW
+
     const COPY_PASTE_LABEL = 'Copy / Paste';
     const STANDARD_ACTIONS_LABEL = 'Standard draw.io actions'; // NEW
     const MOVE_LABEL = 'Move / Arrange'; // CHANGE
     const EDIT_LABEL = 'Edit Shape'; // CHANGE
+    const STYLE_LABEL = 'Style'; // NEW
 
     // Manual display labels for actions (human-friendly)
     const DISPLAY_LABELS = {
@@ -68,7 +74,9 @@ Draw.loadPlugin(function (ui) {
         editStyle: 'Edit Style',
         editData: 'Edit Data',
         editLink: 'Edit Link',
-        editConnectionPoints: 'Edit Connection Points' // NEW
+        editConnectionPoints: 'Edit Connection Points', // CHANGE
+
+        setAsDefaultStyle: 'Set As Default Style' // NEW
     };
 
     // -----------------------------
@@ -108,31 +116,36 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     /**
-     * Requires every selected cell to be Trellis-owned before changing multi-select menus.
+     * Detects whether the graph currently has selected cells for selection-driven cell menus.
      */
-    function isAllSelectedCellsTrellis() { // NEW
-        const selectedCells = graph.getSelectionCells ? graph.getSelectionCells() : []; // NEW
-        if (!selectedCells || selectedCells.length === 0) return false; // NEW
-
-        for (let i = 0; i < selectedCells.length; i++) { // NEW
-            if (!isTrellisCell(selectedCells[i])) return false; // NEW
-        } // NEW
-
-        return true; // NEW
+    function getSelectedCells() { // NEW
+        return graph.getSelectionCells ? (graph.getSelectionCells() || []) : []; // NEW
     } // NEW
 
+    function hasSelectedCells() { // CHANGE
+        const selectedCells = getSelectedCells(); // CHANGE
+        return !!(selectedCells && selectedCells.length > 0); // CHANGE
+    } // CHANGE
+
     /**
-     * Applies the Trellis menu only to single Trellis cells or all-Trellis selections.
+     * Applies the tidy standard-actions menu to cell or selected-cell context menus.
      */
-    function shouldUseTrellisContextMenu(cell) { // NEW
-        if (!cell || !isTrellisCell(cell)) return false; // NEW
+    function shouldUseTidyStandardActionsMenu(cell) { // CHANGE
+        return !!cell || hasSelectedCells(); // CHANGE
+    } // CHANGE
 
-        const selectedCells = graph.getSelectionCells ? graph.getSelectionCells() : []; // NEW
-        if (selectedCells && selectedCells.length > 0) { // CHANGE
-            return isAllSelectedCellsTrellis(); // NEW
-        } // NEW
+    /**
+     * Keeps Trellis-owned cells on the nested standard actions menu while regular cells get top-level tidy submenus.
+     */
+    function shouldNestTidySubmenusUnderStandardActions(cell) { // NEW
+        if (cell) return isTrellisCell(cell); // NEW
 
-        return true; // NEW
+        const selectedCells = getSelectedCells(); // NEW
+        if (!selectedCells.length) return false; // NEW
+
+        return selectedCells.every(function (selectedCell) { // NEW
+            return isTrellisCell(selectedCell); // NEW
+        }); // NEW
     } // NEW
 
     function getDisplayLabelForAction(actionKey) {
@@ -193,6 +206,8 @@ Draw.loadPlugin(function (ui) {
 
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
+            if (row.tbody) continue; // NEW
+
             const text = (row.innerText || row.textContent || '').trim().toLowerCase();
             if (!text) continue;
 
@@ -259,14 +274,19 @@ Draw.loadPlugin(function (ui) {
         return submenuParent; // CHANGE
     }
 
+    function buildTidyActionSubmenus(menu, parent) { // NEW
+        buildSubmenu(menu, COPY_PASTE_LABEL, COPY_PASTE_ACTIONS, parent); // NEW
+        buildSubmenu(menu, MOVE_LABEL, MOVE_ACTIONS, parent); // NEW
+        buildSubmenu(menu, EDIT_LABEL, EDIT_ACTIONS, parent); // NEW
+        buildSubmenu(menu, STYLE_LABEL, STYLE_ACTIONS, parent); // NEW
+    } // NEW
+
     /**
      * Builds the grouped standard draw.io submenu for Trellis cell menus.
      */
     function buildStandardActionsSubmenu(menu) { // NEW
         const parent = menu.addItem(STANDARD_ACTIONS_LABEL, null, null); // NEW
-        buildSubmenu(menu, COPY_PASTE_LABEL, COPY_PASTE_ACTIONS, parent); // NEW
-        buildSubmenu(menu, MOVE_LABEL, MOVE_ACTIONS, parent); // NEW
-        buildSubmenu(menu, EDIT_LABEL, EDIT_ACTIONS, parent); // NEW
+        buildTidyActionSubmenus(menu, parent); // CHANGE
         return parent; // NEW
     } // NEW
 
@@ -339,19 +359,24 @@ Draw.loadPlugin(function (ui) {
      * Main post-processor to reorganize the popup menu.
      */
     function reorganizeContextMenu(menu, cell, evt) {
-        // Only adjust for Trellis-owned cell popups. // CHANGE
-        if (!shouldUseTrellisContextMenu(cell)) { // CHANGE
+        // Only adjust cell or selected-cell popups; leave blank-canvas menus alone. // CHANGE
+        if (!shouldUseTidyStandardActionsMenu(cell)) { // CHANGE
             return;
         }
 
-        // Add grouped standard draw.io submenu. // CHANGE
+        // Add tidy draw.io submenus. Trellis cells keep the nested standard actions parent. // CHANGE
         menu.addSeparator();
-        buildStandardActionsSubmenu(menu); // CHANGE
+        if (shouldNestTidySubmenusUnderStandardActions(cell)) { // NEW
+            buildStandardActionsSubmenu(menu); // CHANGE
+        } else { // NEW
+            buildTidyActionSubmenus(menu, null); // NEW
+        } // NEW
 
         // Hide originals
         hideOriginalActionItems(menu, COPY_PASTE_ACTIONS);
         hideOriginalActionItems(menu, MOVE_ACTIONS);
         hideOriginalActionItems(menu, EDIT_ACTIONS);
+        hideOriginalActionItems(menu, STYLE_ACTIONS); // NEW
 
         // Cleanup separators (and remove hidden rows)
         cleanSeparators(menu);
@@ -386,19 +411,31 @@ Draw.loadPlugin(function (ui) {
 
     installTrellisTooltipSuppression(); // NEW
 
-    const oldFactory = graph.popupMenuHandler.factoryMethod;
+    function registerTrellisContextMenuContributor(contributor) { // NEW
+        function finishRegistration() { // NEW
+            if (!window.TrellisContextMenu) return; // NEW
+            window.TrellisContextMenu.install(ui); // NEW
+            window.TrellisContextMenu.register(contributor); // NEW
+        } // NEW
 
-    graph.popupMenuHandler.factoryMethod = function (menu, cell, evt) {
-        if (typeof oldFactory === 'function') {
-            oldFactory.apply(this, arguments);
-        }
+        if (window.TrellisContextMenu) { // NEW
+            finishRegistration(); // NEW
+        } else if (typeof mxscript === "function") { // NEW
+            mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration); // NEW
+        } // NEW
+    } // NEW
 
-        try {
-            reorganizeContextMenu(menu, cell, evt);
-        } catch (e) {
-            if (window && window.console && console.error) {
-                console.error('Context submenu plugin error:', e);
+    registerTrellisContextMenuContributor({ // CHANGE
+        id: "tidyContextMenu", // NEW
+        priority: 900, // NEW
+        addItems: function (menu, cell, evt) { // CHANGE
+            try {
+                reorganizeContextMenu(menu, cell, evt);
+            } catch (e) {
+                if (window && window.console && console.error) {
+                    console.error('Context submenu plugin error:', e);
+                }
             }
-        }
-    };
+        } // CHANGE
+    }); // CHANGE
 });

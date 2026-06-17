@@ -1412,13 +1412,26 @@ Draw.loadPlugin(function (ui) {
 
 
 
-    // ---------- Popup menu: install robust factory wrapper ----------
+    // ---------- Popup menu: register deterministic Trellis contributor ---------- // CHANGE
     if (graph && graph.popupMenuHandler) {
         graph.popupMenuHandler.selectOnPopup = false;
-        const oldFactory = graph.popupMenuHandler.factoryMethod;
         try {
-            mxLog.debug("[PlantTiler] Installing popup factory wrapper");
+            mxLog.debug("[PlantTiler] Registering ordered popup contributor"); // CHANGE
         } catch (_) { }
+
+        function registerTrellisContextMenuContributor(contributor) { // NEW
+            function finishRegistration() { // NEW
+                if (!window.TrellisContextMenu) return; // NEW
+                window.TrellisContextMenu.install(ui); // NEW
+                window.TrellisContextMenu.register(contributor); // NEW
+            } // NEW
+
+            if (window.TrellisContextMenu) { // NEW
+                finishRegistration(); // NEW
+            } else if (typeof mxscript === "function") { // NEW
+                mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration); // NEW
+            } // NEW
+        } // NEW
 
         // Helpers must be defined BEFORE factoryMethod uses them
         function hitTestCell(evt) {
@@ -1523,17 +1536,16 @@ Draw.loadPlugin(function (ui) {
         }
 
 
-        graph.popupMenuHandler.factoryMethod = function (menu, cell, evt) {
+        registerTrellisContextMenuContributor({ // CHANGE
+            id: "gardenLayout", // NEW
+            priority: 300, // NEW
+            addItems: function (menu, cell, evt) { // CHANGE
             try {
                 mxLog.debug(
                     "[PlantTiler][popup] start " +
-                    JSON.stringify({ hasOld: typeof oldFactory === "function" })
+                    JSON.stringify({ orderedContributor: true }) // CHANGE
                 );
             } catch (_) { }
-
-            if (typeof oldFactory === "function") {
-                oldFactory.apply(this, arguments);
-            }
 
             // ----- Tiler group item -----
             const target = resolveTarget(cell, evt);
@@ -1775,11 +1787,12 @@ Draw.loadPlugin(function (ui) {
                     menu.addItem("Set garden settings to add plants", null, function () { }, null, null, false);
                 }
             }
-        };
+            } // CHANGE
+        }); // CHANGE
 
         try {
             mxLog.debug(
-                "[PlantTiler] Popup wrapper installed " +
+                "[PlantTiler] Popup contributor registered " + // CHANGE
                 JSON.stringify({
                     hasPopup: !!graph.popupMenuHandler,
                     hasAction: !!ui.actions.get("setGroupSpacing"),

@@ -8204,9 +8204,24 @@ Draw.loadPlugin(function (ui) {
 
         if (graph.popupMenuHandler) graph.popupMenuHandler.selectOnPopup = false;
 
-        const oldCreateMenu = graph.popupMenuHandler.factoryMethod;
-        graph.popupMenuHandler.factoryMethod = function (menu, cell, evt) {
-            if (oldCreateMenu) oldCreateMenu.apply(this, arguments);
+        function registerTrellisContextMenuContributor(contributor) { // NEW
+            function finishRegistration() { // NEW
+                if (!window.TrellisContextMenu) return; // NEW
+                window.TrellisContextMenu.install(ui); // NEW
+                window.TrellisContextMenu.register(contributor); // NEW
+            } // NEW
+
+            if (window.TrellisContextMenu) { // NEW
+                finishRegistration(); // NEW
+            } else if (typeof mxscript === "function") { // NEW
+                mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration); // NEW
+            } // NEW
+        } // NEW
+
+        registerTrellisContextMenuContributor({ // CHANGE
+            id: "plantingScheduler", // NEW
+            priority: 400, // NEW
+            addItems: function (menu, cell, evt) { // CHANGE
 
             function hitTestCell(evt, cellArg) {
                 try {
@@ -8321,7 +8336,8 @@ Draw.loadPlugin(function (ui) {
                 });
 
             }
-        };
+            } // CHANGE
+        }); // CHANGE
 
     }
 

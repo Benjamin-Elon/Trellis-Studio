@@ -1,6 +1,7 @@
 /**
  * Copyright (c) 2006-2020, JGraph Holdings Ltd
  * Copyright (c) 2006-2020, draw.io AG
+ * Trellis change: built-in plugin registry includes ordered Trellis context menu dispatcher and corrected tidy menu path. // CHANGE
  */
 
 /**
@@ -283,16 +284,23 @@ App.startTime = new Date();
  * Defines plugin IDs for loading via p URL parameter. Update the table at
  * https://www.drawio.com/doc/faq/supported-url-parameters
  */
-App.pluginRegistry = {    'gardenSuccession': 'plugins/garden_planner_plugins/Bed_Succession_Navigator.js',           // CHANGE
+App.pluginRegistry = {    'trellisContextMenu': 'plugins/garden_planner_plugins/Trellis_Context_Menu.js',              // NEW
+    'gardenSuccession': 'plugins/garden_planner_plugins/Bed_Succession_Navigator.js',           // CHANGE
     'gardenLayout': 'plugins/garden_planner_plugins/Garden_Layout.js',                          // CHANGE
     'gardenTasks': 'plugins/garden_planner_plugins/Garden_Task_Manager.js',                     // CHANGE
     'gardenModules': 'plugins/garden_planner_plugins/Modules_Standalone.js',                    // CHANGE
     'gardenParenting': 'plugins/garden_planner_plugins/Planting_Group_Parenting_Controls.js',   // CHANGE
     'gardenScheduler': 'plugins/garden_planner_plugins/Planting_Scheduler.js',                  // CHANGE
     'gardenClickThrough': 'plugins/garden_planner_plugins/Deep_Click_Through.js',                // CHANGE
-    'gardenLinking': 'plugins/garden_planner_plugins/Vertex_Linking_Standalone.js' };
+    'gardenLinking': 'plugins/garden_planner_plugins/Vertex_Linking_Standalone.js',              // CHANGE
+    'tidyContextMenu': 'plugins/garden_planner_plugins/Tidy_context_menu.js',                    // NEW
+    'createdChangeMap': 'plugins/garden_planner_plugins/Created_change_map.js',                  // NEW
+    'gardenDashboard': 'plugins/garden_planner_plugins/Garden_Dashboard.js',                     // NEW
+    'gardenPlanner': 'plugins/garden_planner_plugins/Year_planner.js',                           // NEW
+    'gardenScale': 'plugins/garden_planner_plugins/Garden_scale.js' };                           // NEW
 
 App.publicPlugin = [
+    'trellisContextMenu',                                    // NEW
     'gardenSuccession',                                       // CHANGE
     'gardenLayout',                                           // CHANGE
     'gardenTasks',                                            // CHANGE
@@ -300,7 +308,12 @@ App.publicPlugin = [
     'gardenParenting',                                        // CHANGE
     'gardenScheduler',                                        // CHANGE
     'gardenClickThrough',                                     // CHANGE
-    'gardenLinking'
+    'gardenLinking',                                          // CHANGE
+    'tidyContextMenu',                                        // NEW
+    'createdChangeMap',                                       // NEW
+    'gardenDashboard',                                        // NEW
+    'gardenPlanner',                                          // NEW
+    'gardenScale'                                             // NEW
 ];
 
 /**

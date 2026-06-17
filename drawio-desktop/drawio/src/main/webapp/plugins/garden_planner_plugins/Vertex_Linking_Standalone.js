@@ -3063,30 +3063,28 @@ Draw.loadPlugin(function (ui) {
             }
         }
 
-        let hooked = false;
-        try {
-            if (ui.menus && typeof ui.menus.get === 'function') {
-                const cellMenu = ui.menus.get('cell');
-                if (cellMenu && typeof cellMenu.funct === 'function') {
-                    const prev = cellMenu.funct;
-                    cellMenu.funct = function (menu, cell, evt) {
-                        prev.apply(this, arguments);
-                        addMenuItems(menu);
-                    };
-                    hooked = true;
-                }
-            }
-        } catch (_) { }
+        function registerTrellisContextMenuContributor(contributor) { // NEW
+            function finishRegistration() { // NEW
+                if (!window.TrellisContextMenu) return; // NEW
+                window.TrellisContextMenu.install(ui); // NEW
+                window.TrellisContextMenu.register(contributor); // NEW
+            } // NEW
 
-        if (!hooked) {
-            const pmh = graph.popupMenuHandler;
-            const oldFactory = pmh ? pmh.factoryMethod : null;
-            pmh.factoryMethod = function (menu, cell, evt) {
-                if (typeof oldFactory === 'function') oldFactory.apply(this, arguments);
-                addMenuItems(menu);
-            };
-            console.log('[ManualLinker] Hooked popupMenuHandler.factoryMethod (fallback)');
-        }
+            if (window.TrellisContextMenu) { // NEW
+                finishRegistration(); // NEW
+            } else if (typeof mxscript === "function") { // NEW
+                mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration); // NEW
+            } // NEW
+        } // NEW
+
+        registerTrellisContextMenuContributor({ // CHANGE
+            id: "gardenLinking", // NEW
+            priority: 600, // NEW
+            addItems: function (menu) { // CHANGE
+                addMenuItems(menu); // NEW
+            } // CHANGE
+        }); // CHANGE
+        console.log('[ManualLinker] Registered ordered context menu contributor'); // CHANGE
     })();
 
     // always read the current model inside helpers                    

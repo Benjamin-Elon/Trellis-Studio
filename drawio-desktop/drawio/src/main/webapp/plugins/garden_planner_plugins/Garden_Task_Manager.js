@@ -2188,10 +2188,24 @@ Draw.loadPlugin(function (ui) {
 
     // -------------------- Menu hook --------------------
     (function addMenuHook() {
-        const pmh = graph.popupMenuHandler;
-        const prev = pmh.factoryMethod;
-        pmh.factoryMethod = function (menu, cell, evt) {
-            if (typeof prev === 'function') prev.apply(this, arguments);
+        function registerTrellisContextMenuContributor(contributor) { // NEW
+            function finishRegistration() { // NEW
+                if (!window.TrellisContextMenu) return; // NEW
+                window.TrellisContextMenu.install(ui); // NEW
+                window.TrellisContextMenu.register(contributor); // NEW
+            } // NEW
+
+            if (window.TrellisContextMenu) { // NEW
+                finishRegistration(); // NEW
+            } else if (typeof mxscript === "function") { // NEW
+                mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration); // NEW
+            } // NEW
+        } // NEW
+
+        registerTrellisContextMenuContributor({ // CHANGE
+            id: "gardenTasks", // NEW
+            priority: 500, // NEW
+            addItems: function (menu, cell, evt) { // CHANGE
             const card = cell && model.isVertex(cell) && isKanbanCard(cell) ? cell : null; // NEW
 
             if (card) { // CHANGE: note actions are available in every Kanban lane
@@ -2236,7 +2250,8 @@ Draw.loadPlugin(function (ui) {
                     model.endUpdate();
                 }
             });
-        };
+            } // CHANGE
+        }); // CHANGE
     })();
 
     // -------------------- Event bridge from scheduler --------------------

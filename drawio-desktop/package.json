@@ -10,7 +10,7 @@
   },
   "scripts": {
     "test": "npm run test:plugins",
-    "test:plugins": "node --test ./test/planting-scheduler-reliability.test.cjs ./test/year-planner.test.cjs ./test/year-planner-dom.test.cjs",
+    "test:plugins": "node --test ./test/planting-scheduler-reliability.test.cjs ./test/year-planner.test.cjs ./test/year-planner-dom.test.cjs ./test/trellis-context-menu.test.cjs ./test/tidy-context-menu.test.cjs",
     "start": "electron .",
     "sync": "node ./sync.cjs",
     "test:year-planner": "node --test ./test/year-planner.test.cjs ./test/year-planner-dom.test.cjs",

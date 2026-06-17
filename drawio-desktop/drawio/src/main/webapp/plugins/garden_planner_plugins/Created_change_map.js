@@ -1340,10 +1340,24 @@ Draw.loadPlugin(function (ui) {
 
   // -------------------- Context menu --------------------
 
-  const oldFactory = graph.popupMenuHandler.factoryMethod;
+  function registerTrellisContextMenuContributor(contributor) { // NEW
+    function finishRegistration() { // NEW
+      if (!window.TrellisContextMenu) return; // NEW
+      window.TrellisContextMenu.install(ui); // NEW
+      window.TrellisContextMenu.register(contributor); // NEW
+    } // NEW
 
-  graph.popupMenuHandler.factoryMethod = function (menu, cell, evt) {
-    oldFactory.apply(this, arguments);
+    if (window.TrellisContextMenu) { // NEW
+      finishRegistration(); // NEW
+    } else if (typeof mxscript === "function") { // NEW
+      mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration); // NEW
+    } // NEW
+  } // NEW
+
+  registerTrellisContextMenuContributor({ // CHANGE
+    id: "createdChangeMap", // NEW
+    priority: 700, // NEW
+    addItems: function (menu, cell, evt) { // CHANGE
 
     if (!shouldShowCcMapContext(cell)) return; // CHANGE
 
@@ -1351,6 +1365,7 @@ Draw.loadPlugin(function (ui) {
     menu.addItem(panelLabel, null, function () {
       togglePanel();
     });
-  };
+    } // CHANGE
+  }); // CHANGE
 
 });
