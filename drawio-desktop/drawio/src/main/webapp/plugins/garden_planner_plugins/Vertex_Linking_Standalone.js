@@ -1292,6 +1292,7 @@ Draw.loadPlugin(function (ui) {
         const MODE_SCHEDULE = 'schedule'; // CHANGE
         const PANEL_WIDTH = 380; // CHANGE
         const PANEL_GAP = 12; // CHANGE
+        const PANEL_SIDE_OFFSET = 60; // CHANGE
         const BODY_MAX_HEIGHT = 360; // CHANGE
         const registry = new Map(); // sourceId -> entry // CHANGE
         const selectedYearBySource = new Map(); // sourceId -> session-only year // CHANGE
@@ -2046,11 +2047,13 @@ Draw.loadPlugin(function (ui) {
             const visibleLeft = host.scrollLeft || 0; // CHANGE
             const visibleTop = host.scrollTop || 0; // CHANGE
             const visibleBottom = visibleTop + (host.clientHeight || 0); // CHANGE
-            let left = sourceBounds.x + sourceBounds.w / 2 - PANEL_WIDTH / 2; // CHANGE
+            let left = sourceBounds.x + sourceBounds.w + PANEL_GAP + PANEL_SIDE_OFFSET; // CHANGE
 
-            if (visibleRight) left = Math.min(left, visibleRight - PANEL_WIDTH - 4); // CHANGE
+            if (visibleRight && left + PANEL_WIDTH > visibleRight - 8) { // CHANGE
+                left = sourceBounds.x - PANEL_GAP - PANEL_SIDE_OFFSET - PANEL_WIDTH; // CHANGE
+            } // CHANGE
 
-            let top = sourceBounds.y + sourceBounds.h + PANEL_GAP; // CHANGE
+            let top = sourceBounds.y + sourceBounds.h / 2 - panelHeight / 2; // CHANGE
             if (visibleBottom) top = Math.min(top, visibleBottom - panelHeight - 4); // CHANGE
             top = Math.max(top, visibleTop + 4); // CHANGE
             left = Math.max(left, visibleLeft + 4); // CHANGE
@@ -3084,207 +3087,6 @@ Draw.loadPlugin(function (ui) {
             };
             console.log('[ManualLinker] Hooked popupMenuHandler.factoryMethod (fallback)');
         }
-    })();
-
-
-    // Force selection of deepest visible child under mouse
-    (function enforceDirectChildSelection() {
-        const graph = ui.editor.graph;
-
-        graph.selectParentAfterCollapse = false;
-        graph.cellsSelectable = true;
-        graph.keepEdgesInBackground = false;
-        graph.cellsLocked = false;
-
-        // --- Step 1: Override hit detection ---
-        graph.getCellAt = function (x, y, parent, vertices, edges) {
-            // Start from the top-level hit
-            const initial = mxGraph.prototype.getCellAt.apply(this, arguments);
-            if (!initial) return null;
-            if (!this.model.isVertex(initial)) return initial;
-
-            const descendants = [];
-            const collect = (c) => {
-                const children = this.model.getChildCells(c);
-                if (children) {
-                    for (const ch of children) {
-                        if (this.model.isVertex(ch) && this.isCellVisible(ch)) {
-                            descendants.push(ch);
-                        }
-                        collect(ch);
-                    }
-                }
-            };
-            collect(initial);
-
-            // Return the deepest child that contains the point
-            for (let i = descendants.length - 1; i >= 0; i--) {
-                const d = descendants[i];
-                const state = this.view.getState(d);
-                if (state && mxUtils.contains(state, x, y)) {
-                    return d;
-                }
-            }
-            return initial;
-        };
-
-        // --- Step 2: Override handler event logic ---
-        mxGraphHandler.prototype.getInitialCellForEvent = function (me) {
-            const graph = this.graph; // CHANGE
-            return getDragInitialCellForEvent(graph, me, me.getCell(), this); // CHANGE
-        };
-
-        function getDeepestCellForNativeEvent(graph, evt, fallback) { // CHANGE
-            if (!graph || !evt) return fallback || null; // CHANGE
-            const pt = mxUtils.convertPoint( // CHANGE
-                graph.container, // CHANGE
-                mxEvent.getClientX(evt), // CHANGE
-                mxEvent.getClientY(evt) // CHANGE
-            ); // CHANGE
-            return graph.getCellAt(pt.x, pt.y) || fallback || null; // CHANGE
-        } // CHANGE
-
-        function getSelectionCellForNativeEvent(graph, evt, fallback) { // CHANGE
-            const deepest = getDeepestCellForNativeEvent(graph, evt, fallback); // CHANGE
-            if (!graph || !deepest || !fallback || deepest === fallback) return deepest; // CHANGE
-            const model = graph.getModel(); // CHANGE
-            if (model.isVertex(deepest) && model.isVertex(fallback) && isStrictAncestorOf(model, fallback, deepest)) { // CHANGE
-                if (!graph.isCellMovable(deepest) && graph.isCellMovable(fallback)) return fallback; // CHANGE
-            } // CHANGE
-            return deepest; // CHANGE
-        } // CHANGE
-
-        function isStrictAncestorOf(model, ancestor, cell) { // CHANGE
-            if (!model || !ancestor || !cell || ancestor === cell) return false; // CHANGE
-            let cur = model.getParent(cell); // CHANGE
-            while (cur) { // CHANGE
-                if (cur === ancestor) return true; // CHANGE
-                cur = model.getParent(cur); // CHANGE
-            } // CHANGE
-            return false; // CHANGE
-        } // CHANGE
-        
-        function hasSelectedAncestor(graph, cell) { // CHANGE
-            if (!graph || !cell) return false; // CHANGE
-            const model = graph.getModel(); // CHANGE
-            const selected = graph.getSelectionCells ? graph.getSelectionCells() : []; // CHANGE
-            for (const selectedCell of selected || []) { // CHANGE
-                if (isStrictAncestorOf(model, selectedCell, cell)) return true; // CHANGE
-            } // CHANGE
-            return false; // CHANGE
-        } // CHANGE
-        
-        function getDeepestCellForMouseEvent(graph, me, fallback) { // CHANGE
-            if (!graph || !me) return fallback || null; // CHANGE
-            const pt = mxUtils.convertPoint(graph.container, me.getX(), me.getY()); // CHANGE
-            return graph.getCellAt(pt.x, pt.y) || fallback || null; // CHANGE
-        } // CHANGE
-        
-        function findMovableDragAncestorForLockedCell(graph, cell) { // CHANGE
-            if (!graph || !cell) return null; // CHANGE
-            const model = graph.getModel(); // CHANGE
-            let cur = model.getParent(cell); // CHANGE
-            while (cur) { // CHANGE
-                if (model.isVertex(cur) && graph.isCellMovable(cur)) return cur; // CHANGE
-                cur = model.getParent(cur); // CHANGE
-            } // CHANGE
-            return null; // CHANGE
-        } // CHANGE
-        
-        function getDragInitialCellForEvent(graph, me, fallback, handler) { // CHANGE
-            const deepest = getDeepestCellForMouseEvent(graph, me, fallback); // CHANGE
-            if (handler) { // CHANGE
-                handler.__manualLinkerLockedDragSource = null; // CHANGE
-                handler.__manualLinkerLockedDragParent = null; // CHANGE
-            } // CHANGE
-            if (!graph || !deepest || !graph.getModel().isVertex(deepest)) return deepest; // CHANGE
-            if (graph.isCellMovable(deepest)) return deepest; // CHANGE
-        
-            const movableParent = findMovableDragAncestorForLockedCell(graph, deepest); // CHANGE
-            if (!movableParent) return deepest; // CHANGE
-            if (handler) { // CHANGE
-                handler.__manualLinkerLockedDragSource = deepest; // CHANGE
-                handler.__manualLinkerLockedDragParent = movableParent; // CHANGE
-            } // CHANGE
-            return movableParent; // CHANGE
-        } // CHANGE
-        
-        const oldIsDelayedSelection = mxGraphHandler.prototype.isDelayedSelection; // CHANGE
-        mxGraphHandler.prototype.isDelayedSelection = function (cell, me) { // CHANGE
-            const graph = this.graph; // CHANGE
-            const deepest = getDeepestCellForMouseEvent(graph, me, cell); // CHANGE
-        
-            // If the parent is selected but the user actually pressed a descendant, // CHANGE
-            // do not delay selection. Select/drag the descendant immediately. // CHANGE
-            if (deepest && deepest !== cell && graph.getModel().isVertex(deepest)) { // CHANGE
-                if (!graph.isCellSelected(deepest) && hasSelectedAncestor(graph, deepest)) { // CHANGE
-                    return false; // CHANGE
-                } // CHANGE
-            } // CHANGE
-        
-            if (deepest && graph.getModel().isVertex(deepest)) { // CHANGE
-                if (!graph.isCellSelected(deepest) && hasSelectedAncestor(graph, deepest)) { // CHANGE
-                    return false; // CHANGE
-                } // CHANGE
-            } // CHANGE
-        
-            return oldIsDelayedSelection.apply(this, arguments); // CHANGE
-        }; // CHANGE
-        
-        const oldGetCellsForDrag = mxGraphHandler.prototype.getCells; // CHANGE
-        mxGraphHandler.prototype.getCells = function (initialCell, cells) { // CHANGE
-            const graph = this.graph; // CHANGE
-            const redirectedParent = this.__manualLinkerLockedDragParent; // CHANGE
-            if (redirectedParent && graph.getModel().isVertex(redirectedParent) && graph.isCellMovable(redirectedParent)) { // CHANGE
-                const explicitCells = cells || []; // CHANGE
-                if (initialCell === redirectedParent || this.cell === redirectedParent || explicitCells.indexOf(redirectedParent) >= 0) { // CHANGE
-                    return [redirectedParent]; // CHANGE
-                } // CHANGE
-            } // CHANGE
-        
-            // Defensive fix: even if mxGraph still has the parent selected, // CHANGE
-            // dragging an unselected descendant should move only that descendant. // CHANGE
-            if (initialCell && graph.getModel().isVertex(initialCell)) { // CHANGE
-                if (!graph.isCellSelected(initialCell) && hasSelectedAncestor(graph, initialCell)) { // CHANGE
-                    return [initialCell]; // CHANGE
-                } // CHANGE
-            } // CHANGE
-        
-            return oldGetCellsForDrag.apply(this, arguments); // CHANGE
-        }; // CHANGE
-
-        // --- Step 3: Improved selection (respects Ctrl/Shift multi-selection) ---
-        graph.selectCellForEvent = function (cell, evt) {
-            cell = getSelectionCellForNativeEvent(this, evt, cell); // CHANGE
-            if (!cell) retufindmovabledragrn;
-
-            const isCtrl = mxEvent.isControlDown(evt) || mxEvent.isMetaDown(evt);
-            const isShift = mxEvent.isShiftDown(evt);
-
-            // If we already toggled on mouseDown, skip doing anything here
-            if (isCtrl && this.__ctrlToggleHandled) {
-                this.__ctrlToggleHandled = false; // clear one-shot flag
-                return;
-            }
-
-            if (isCtrl) {
-                // Normal Ctrl toggle (when not handled in mouseDown)
-                if (this.isCellSelected(cell)) this.removeSelectionCell(cell);
-                else this.addSelectionCell(cell);
-                return;
-            }
-
-            if (isShift) {
-                this.addSelectionCell(cell);
-                return;
-            }
-
-            // Plain click
-            this.setSelectionCell(cell);
-        };
-
-
-        console.log("[ManualLinker] Direct child selection (deepest under mouse) enabled.");
     })();
 
     // always read the current model inside helpers                    

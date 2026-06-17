@@ -289,6 +289,7 @@ App.pluginRegistry = {    'gardenSuccession': 'plugins/garden_planner_plugins/Be
     'gardenModules': 'plugins/garden_planner_plugins/Modules_Standalone.js',                    // CHANGE
     'gardenParenting': 'plugins/garden_planner_plugins/Planting_Group_Parenting_Controls.js',   // CHANGE
     'gardenScheduler': 'plugins/garden_planner_plugins/Planting_Scheduler.js',                  // CHANGE
+    'gardenClickThrough': 'plugins/garden_planner_plugins/Deep_Click_Through.js',                // CHANGE
     'gardenLinking': 'plugins/garden_planner_plugins/Vertex_Linking_Standalone.js' };
 
 App.publicPlugin = [
@@ -298,6 +299,7 @@ App.publicPlugin = [
     'gardenModules',                                          // CHANGE
     'gardenParenting',                                        // CHANGE
     'gardenScheduler',                                        // CHANGE
+    'gardenClickThrough',                                     // CHANGE
     'gardenLinking'
 ];
 
