@@ -522,9 +522,12 @@ Draw.loadPlugin(function (ui) { // NEW
         const state = graph.view && graph.view.getState ? graph.view.getState(entry.cell) : null; // NEW
         if (!state) return false; // NEW
         const width = 190; // NEW
-        const left = Math.max(0, Math.round(state.x - 60 - width)); // NEW
+        const gap = 8; // CHANGE
+        const overlayHeight = entry.div.offsetHeight || 0; // CHANGE
+        const left = Math.max(0, Math.round(state.x - width - gap)); // CHANGE
+        const top = Math.max(0, Math.round(state.y + ((state.height || 0) - overlayHeight) / 2)); // CHANGE
         entry.div.style.left = left + "px"; // NEW
-        entry.div.style.top = Math.round(state.y) + "px"; // NEW
+        entry.div.style.top = top + "px"; // CHANGE
         return true; // NEW
     } // NEW
 

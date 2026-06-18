@@ -71,6 +71,8 @@ function makeHarness(options = {}) { // NEW
     const root = new TestCell("root"); // NEW
     const layer = appendChild(root, new TestCell("layer")); // NEW
     const bed = appendChild(layer, new TestCell("bed", { garden_bed: "1" })); // NEW
+    const extraBeds = []; // NEW
+    if (options.secondBed) extraBeds.push(appendChild(layer, new TestCell("bed2", { garden_bed: "1" }))); // NEW
     const tiler1 = appendChild(layer, new TestCell("tiler1", { tiler_group: "1" })); // NEW
     const extraCells = []; // NEW
 
@@ -80,11 +82,17 @@ function makeHarness(options = {}) { // NEW
 
     const model = new TestModel(root); // NEW
     let selectedCells = [tiler1]; // NEW
+    const selectionChangeListeners = []; // NEW
+    const selectionModel = { // NEW
+        addListener(event, listener) { if (event === "change") selectionChangeListeners.push(listener); } // NEW
+    }; // NEW
+    function fireSelectionChange() { selectionChangeListeners.forEach(listener => listener()); } // NEW
     const states = new Map([ // NEW
         [bed, { x: 0, y: 0, width: 100, height: 100 }], // NEW
         [tiler1, options.tilerOutsideBed ? { x: 130, y: 20, width: 20, height: 20 } : { x: 10, y: 10, width: 20, height: 20 }] // NEW
     ]); // NEW
 
+    if (extraBeds[0]) states.set(extraBeds[0], { x: 40, y: 40, width: 100, height: 100 }); // NEW
     if (extraCells[0]) states.set(extraCells[0], { x: 50, y: 50, width: 20, height: 20 }); // NEW
 
     const graph = { // NEW
@@ -99,10 +107,10 @@ function makeHarness(options = {}) { // NEW
         getDefaultParent() { return layer; }, // NEW
         getSelectionCell() { return selectedCells[0] || null; }, // NEW
         getSelectionCells() { return selectedCells.slice(); }, // NEW
-        setSelectionCell(cell) { selectedCells = cell ? [cell] : []; }, // NEW
-        setSelectionCells(cells) { selectedCells = cells.slice(); }, // NEW
+        setSelectionCell(cell) { selectedCells = cell ? [cell] : []; fireSelectionChange(); }, // CHANGE
+        setSelectionCells(cells) { selectedCells = cells.slice(); fireSelectionChange(); }, // CHANGE
         getChildVertices(parent) { return (parent.children || []).filter(child => model.isVertex(child)); }, // NEW
-        getSelectionModel() { return { addListener() {} }; }, // NEW
+        getSelectionModel() { return selectionModel; }, // CHANGE
         addListener() {}, // NEW
         refresh() {}, // NEW
         orderCells() {}, // NEW
@@ -133,7 +141,7 @@ function makeHarness(options = {}) { // NEW
     }; // NEW
 
     vm.runInNewContext(fs.readFileSync(PLUGIN_PATH, "utf8"), context, { filename: PLUGIN_PATH }); // NEW
-    return { document, graph, bed, tiler1, tiler2: extraCells[0] || null, getSelected: () => selectedCells.slice() }; // NEW
+    return { document, graph, layer, bed, bed2: extraBeds[0] || null, tiler1, tiler2: extraCells[0] || null, getSelected: () => selectedCells.slice() }; // CHANGE
 } // NEW
 
 function visibleControls(document) { // NEW
@@ -146,6 +154,10 @@ function visibleImageByAlt(document, alt) { // NEW
 
 function visibleImageByTitle(document, title) { // NEW
     return visibleControls(document).find(el => el.tagName === "IMG" && el.title === title); // NEW
+} // NEW
+
+function childOrder(parent) { // NEW
+    return (parent.children || []).map(child => child.id); // NEW
 } // NEW
 
 test("selected singleton tiler on a garden bed shows only the bed-select control", () => { // NEW
@@ -174,4 +186,37 @@ test("two selected tilers in the same garden bed keep succession controls and be
     assert.ok(visibleImageByAlt(document, "Select"), "expected visible cluster-select button"); // NEW
     assert.ok(visibleImageByTitle(document, "Previous"), "expected visible previous button"); // NEW
     assert.ok(visibleImageByTitle(document, "Next"), "expected visible next button"); // NEW
+}); // NEW
+
+test("bed-select returns beds behind tilers after selecting a tiler", () => { // NEW
+    const { document, graph, layer, bed, tiler1 } = makeHarness(); // NEW
+    const selectBeds = visibleImageByAlt(document, "Select beds"); // NEW
+
+    assert.deepEqual(childOrder(layer), ["bed", "tiler1"]); // NEW
+    selectBeds.dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true })); // NEW
+    assert.deepEqual(childOrder(layer), ["tiler1", "bed"]); // NEW
+
+    graph.setSelectionCells([tiler1]); // NEW
+    assert.deepEqual(childOrder(layer), ["bed", "tiler1"]); // NEW
+    assert.deepEqual(Array.from(graph.getSelectionCells(), cell => cell.id), ["tiler1"]); // CHANGE
+}); // NEW
+
+test("multiple selected garden beds remain temporarily in front", () => { // NEW
+    const { document, graph, layer, bed, bed2 } = makeHarness({ secondBed: true, secondTiler: true }); // NEW
+    const selectBeds = visibleImageByAlt(document, "Select beds"); // NEW
+
+    selectBeds.dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true })); // NEW
+    assert.deepEqual(Array.from(graph.getSelectionCells(), cell => cell.id), ["bed", "bed2"]); // CHANGE
+    assert.deepEqual(childOrder(layer), ["tiler1", "tiler2", "bed", "bed2"]); // NEW
+
+    graph.setSelectionCells([bed, bed2]); // NEW
+    assert.deepEqual(childOrder(layer), ["tiler1", "tiler2", "bed", "bed2"]); // NEW
+}); // NEW
+
+test("bed-select selects every significantly overlapping bed under the cluster", () => { // NEW
+    const { document, graph } = makeHarness({ secondBed: true, secondTiler: true }); // NEW
+    const selectBeds = visibleImageByAlt(document, "Select beds"); // NEW
+
+    selectBeds.dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true })); // NEW
+    assert.deepEqual(Array.from(graph.getSelectionCells(), cell => cell.id), ["bed", "bed2"]); // CHANGE
 }); // NEW
