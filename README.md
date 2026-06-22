@@ -59,9 +59,7 @@ In the root directory of this repo:
 **High priority TODO Features:**
 - Add automatic fit garden plantings to year plan plugin
 - Add users plugin and extend changeMap plugin with user selector
-- Extend planner to include bed turnover mode
-- Add task detailing for kanban boards
-- Add Gantt chart plugin for timeline schedule view
+- Extend planner to include bed turnover and companion mode
 - Extend scheduler with proper perennial scheduling.
-- Add inventory Plugin
+- Add equipment plugin
 - Add labor plugin (depends on inventory plugin)

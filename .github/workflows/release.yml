@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 env:
-  NODE_VERSION: "20"
+  NODE_VERSION: "22"
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 concurrency:
@@ -31,13 +31,13 @@ jobs:
       version: ${{ steps.package.outputs.version }}
     steps:
       - name: Check out release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -71,12 +71,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ needs.validate.outputs.tag }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -101,7 +101,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Check out release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ needs.validate.outputs.tag }}
           fetch-depth: 0
@@ -150,20 +150,23 @@ jobs:
           - name: Linux
             os: ubuntu-latest
             command: yarn run release-linux
-          - name: macOS
-            os: macos-latest
-            command: yarn run release-mac
+          - name: macOS x64
+            os: macos-15-intel
+            command: yarn run release-mac-x64
+          - name: macOS arm64
+            os: macos-15
+            command: yarn run release-mac-arm64
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
       - name: Check out release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ needs.validate.outputs.tag }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -171,7 +174,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgnome-keyring-dev icnsutils graphicsmagick xz-utils rpm
+          sudo apt-get install -y libsecret-1-dev icnsutils graphicsmagick xz-utils rpm
 
       - name: Install Yarn
         run: npm install -g yarn@1.22.22

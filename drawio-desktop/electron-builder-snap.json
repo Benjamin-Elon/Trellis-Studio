@@ -10,7 +10,7 @@
   "directories": {
     "output": "./dist/"
   },
-  "npmRebuild": false,
+  "npmRebuild": true,
   "linux": {
   	"executableName": "drawio",
     "category": "Graphics",

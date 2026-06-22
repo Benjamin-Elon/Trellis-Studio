@@ -9,7 +9,7 @@
   "directories": {
     "output": "./dist/"
   },
-  "npmRebuild": false,
+  "npmRebuild": true,
   "publish": {
       "provider": "github"
   },

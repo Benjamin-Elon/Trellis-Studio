@@ -1,20 +1,22 @@
 {
   "name": "trellis-for-drawio",
   "productName": "Trellis for Drawio",
-  "version": "1.0.0",
+  "version": "1.0.9",
   "drawioBaseVersion": "29.0.3",
   "description": "Trellis for Drawio desktop",
   "exports": "./src/main/electron.js",
   "type": "module",
   "main": "src/main/electron.js",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "test": "npm run test:plugins",
-    "test:plugins": "node --test ./test/planting-scheduler-reliability.test.cjs ./test/year-planner.test.cjs ./test/year-planner-dom.test.cjs ./test/trellis-context-menu.test.cjs ./test/tidy-context-menu.test.cjs ./test/garden-beds.test.cjs ./test/bed-succession-navigator.test.cjs",
+    "test:plugins": "node --test ./test/planting-scheduler-reliability.test.cjs ./test/year-planner.test.cjs ./test/year-planner-dom.test.cjs ./test/trellis-context-menu.test.cjs ./test/tidy-context-menu.test.cjs ./test/garden-beds.test.cjs ./test/bed-succession-navigator.test.cjs ./test/release-prepare.test.mjs ./test/electron-builder-config.test.cjs ./test/bundled-update-menu.test.cjs",
+    "test:release-prepare": "node --test ./test/release-prepare.test.mjs",
     "start": "electron .",
     "sync": "node ./sync.cjs",
+    "release:prepare": "node ./scripts/release-prepare.mjs",
     "test:year-planner": "node --test ./test/year-planner.test.cjs ./test/year-planner-dom.test.cjs",
     "test:year-planner:model": "node --test ./test/year-planner.test.cjs",
     "test:year-planner:dom": "node --test ./test/year-planner-dom.test.cjs",
@@ -24,6 +26,8 @@
     "release-appx": "electron-builder --config electron-builder-appx.json --publish always",
     "release-linux": "electron-builder --config electron-builder-linux-mac.json --publish always",
     "release-mac": "electron-builder --mac --config electron-builder-linux-mac.json --publish always",
+    "release-mac-x64": "electron-builder --mac --config electron-builder-mac-x64.json --publish always",
+    "release-mac-arm64": "electron-builder --mac --config electron-builder-mac-arm64.json --publish always",
     "release-snap": "electron-builder --config electron-builder-snap.json --publish never"
   },
   "repository": {
@@ -66,8 +70,5 @@
     "electron-builder": "^26.0.20",
     "jsdom": "^26.1.0",
     "sumchecker": "^3.0.1"
-  },
-  "directories": {
-    "doc": "doc"
   }
 }

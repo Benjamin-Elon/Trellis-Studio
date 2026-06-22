@@ -7,10 +7,7 @@
     "!**/WEB-INF{,/**}"
   ],
   "artifactName": "${productName}-${arch}-${version}.${ext}",
-  "directories": {
-    "output": "./dist/"
-  },
-  "npmRebuild": false,
+  "npmRebuild": true,
   "publish": {
       "provider": "github"
   },
@@ -28,8 +25,7 @@
       },
       { "target": "dmg", "arch": [
           "x64",
-          "arm64",
-          "universal"
+          "arm64"
         ]
       }
     ]

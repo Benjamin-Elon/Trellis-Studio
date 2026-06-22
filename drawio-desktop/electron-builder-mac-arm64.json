@@ -1,0 +1,51 @@
+{
+  "appId": "com.benjaminelon.trellisfordrawio",
+  "copyright": "Copyright 2026 Benjamin Elon",
+  "asar": true,
+  "files": [
+    "**/*",
+    "!**/WEB-INF{,/**}"
+  ],
+  "artifactName": "${productName}-${arch}-${version}.${ext}",
+  "npmRebuild": true,
+  "publish": {
+      "provider": "github"
+  },
+  "mac": {
+  	"hardenedRuntime": true,
+  	"gatekeeperAssess": false,
+  	"entitlements": "build/entitlements.mac.plist",
+  	"entitlementsInherit": "build/entitlements.mac.plist",
+    "category": "public.app-category.graphics-design",
+    "target": [
+      { "target": "zip", "arch": [
+          "arm64"
+        ]
+      },
+      { "target": "dmg", "arch": [
+          "arm64"
+        ]
+      }
+    ]
+  },
+  "afterSign": "build/notarize.mjs",
+  "afterPack": "build/fuses.cjs",
+  "dmg": {
+  },
+  "fileAssociations": [
+	  {
+	  	"ext": "drawio",
+	  	"name": "draw.io Diagram",
+	  	"description": "draw.io Diagram",
+	  	"mimeType": "application/vnd.jgraph.mxfile",
+	  	"role": "Editor"
+	  },
+	  {
+	  	"ext": "vsdx",
+	  	"name": "VSDX Document",
+	  	"description": "VSDX Document",
+	  	"mimeType": "application/vnd.visio",
+	  	"role": "Editor"
+	  }
+  ]
+}
