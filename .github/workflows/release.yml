@@ -150,9 +150,12 @@ jobs:
           - name: Linux
             os: ubuntu-latest
             command: yarn run release-linux
-          - name: macOS
-            os: macos-latest
-            command: yarn run release-mac
+          - name: macOS x64
+            os: macos-15-intel
+            command: yarn run release-mac-x64
+          - name: macOS arm64
+            os: macos-15
+            command: yarn run release-mac-arm64
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CSC_IDENTITY_AUTO_DISCOVERY: "false"

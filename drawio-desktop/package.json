@@ -26,6 +26,8 @@
     "release-appx": "electron-builder --config electron-builder-appx.json --publish always",
     "release-linux": "electron-builder --config electron-builder-linux-mac.json --publish always",
     "release-mac": "electron-builder --mac --config electron-builder-linux-mac.json --publish always",
+    "release-mac-x64": "electron-builder --mac --x64 --config electron-builder-linux-mac.json --publish always",
+    "release-mac-arm64": "electron-builder --mac --arm64 --config electron-builder-linux-mac.json --publish always",
     "release-snap": "electron-builder --config electron-builder-snap.json --publish never"
   },
   "repository": {
