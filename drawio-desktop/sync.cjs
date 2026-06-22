@@ -4,12 +4,11 @@ const path = require('path')
 const appjsonpath = path.join(__dirname, 'package.json')
 const disableUpdatePath = path.join(__dirname, 'src/main', 'disableUpdate.js')
 
-let ver = fs.readFileSync(path.join(__dirname, 'drawio', 'VERSION'), 'utf8')
-//let ver = '14.1.5' // just to test autoupdate
+let drawioBaseVersion = fs.readFileSync(path.join(__dirname, 'drawio', 'VERSION'), 'utf8').trim() // Trellis release: track upstream without replacing app semver.
 
 let pj = require(appjsonpath)
 
-pj.version = ver
+pj.drawioBaseVersion = drawioBaseVersion // Trellis release: preserve independent package.json version for GitHub tags.
 
 fs.writeFileSync(appjsonpath, JSON.stringify(pj, null, 2), 'utf8')
 //Enable/disable updates

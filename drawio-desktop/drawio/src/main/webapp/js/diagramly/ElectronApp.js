@@ -1,3 +1,4 @@
+// Trellis changes: desktop plugin filtering. // CHANGE
 /**
  * Copyright (c) 2020-2025, JGraph Holdings Ltd
  * Copyright (c) 2020-2025, draw.io AG
@@ -692,6 +693,40 @@ mxStencilRegistry.allowEval = false;
 		editorUi.actions.addAction('plugins...', function()
 		{
 			var pluginsMap = {};
+
+			function normalizePluginId(plugin)
+			{
+				if (plugin == null) return plugin;
+
+				if (App.pluginRegistry[plugin] != null)
+				{
+					return App.pluginRegistry[plugin]; // Trellis compatibility: selected built-ins may be stored as registry IDs.
+				}
+
+				if (plugin.substring(0, 2) == './')
+				{
+					plugin = plugin.substring(2); // Trellis compatibility: desktop loading prefixes built-in plugin paths with ./.
+				}
+				else if (plugin.charAt(0) == '/')
+				{
+					plugin = plugin.substring(1); // Trellis compatibility: older settings may contain /plugins/... paths.
+				}
+
+				return plugin;
+			}
+
+			function rememberSelectedPlugin(plugin)
+			{
+				pluginsMap[plugin] = true;
+				pluginsMap[normalizePluginId(plugin)] = true; // Trellis compatibility: filter equivalent plugin IDs and paths together.
+			}
+
+			function forgetSelectedPlugin(plugin)
+			{
+				delete pluginsMap[plugin];
+				delete pluginsMap[normalizePluginId(plugin)]; // Trellis compatibility: keep deletion symmetric with plugin selection.
+			}
+
 			//Initialize it with plugins in settings
 			var plugins = (mxSettings.settings != null) ? mxSettings.getPlugins() : null;
 
@@ -699,7 +734,7 @@ mxStencilRegistry.allowEval = false;
 			{
 				for (var i = 0; i < plugins.length; i++)
 				{
-					pluginsMap[plugins[i]] = true;
+					rememberSelectedPlugin(plugins[i]);
 				}
 			}
 
@@ -719,7 +754,7 @@ mxStencilRegistry.allowEval = false;
 				{
 					var p = App.publicPlugin[i];
 
-					if  (pluginsMap[App.pluginRegistry[p]]) continue;
+					if  (pluginsMap[p] || pluginsMap[App.pluginRegistry[p]]) continue;
 
 					var option = document.createElement('option');
 					mxUtils.write(option, p);
@@ -804,14 +839,14 @@ mxStencilRegistry.allowEval = false;
 				var dlg = new CustomDialog(editorUi, div, mxUtils.bind(this, function()
 				{
 					var newP = App.pluginRegistry[pluginsSelect.value];
-					pluginsMap[newP] = true;
+					rememberSelectedPlugin(newP);
 	        		callback(newP);
 				}));
 				editorUi.showDialog(dlg.container, 300, 125, true, true);
 			},
 			async function(plugin)
 			{
-				delete pluginsMap[plugin];
+				forgetSelectedPlugin(plugin);
 				
 				await requestSync({
 					action: 'uninstallPlugin',

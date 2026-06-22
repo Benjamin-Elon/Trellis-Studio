@@ -1,7 +1,9 @@
 {
-  "name": "draw.io",
-  "version": "29.0.3",
-  "description": "draw.io desktop",
+  "name": "trellis-for-drawio",
+  "productName": "Trellis for Drawio",
+  "version": "1.0.0",
+  "drawioBaseVersion": "29.0.3",
+  "description": "Trellis for Drawio desktop",
   "exports": "./src/main/electron.js",
   "type": "module",
   "main": "src/main/electron.js",
@@ -21,11 +23,12 @@
     "release-win-arm64": "electron-builder --config electron-builder-win-arm64.json --publish always",
     "release-appx": "electron-builder --config electron-builder-appx.json --publish always",
     "release-linux": "electron-builder --config electron-builder-linux-mac.json --publish always",
+    "release-mac": "electron-builder --mac --config electron-builder-linux-mac.json --publish always",
     "release-snap": "electron-builder --config electron-builder-snap.json --publish never"
   },
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/jgraph/drawio-desktop.git"
+    "url": "git+https://github.com/Benjamin-Elon/Trellis-for-Drawio.git"
   },
   "keywords": [
     "draw.io",
@@ -33,12 +36,12 @@
     "flowchart",
     "UML"
   ],
-  "author": "JGraph <support@draw.io>",
+  "author": "Benjamin Elon",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/jgraph/drawio-desktop/issues"
+    "url": "https://github.com/Benjamin-Elon/Trellis-for-Drawio/issues"
   },
-  "homepage": "https://github.com/jgraph/drawio",
+  "homepage": "https://github.com/Benjamin-Elon/Trellis-for-Drawio",
   "dependencies": {
     "@babel/parser": "^7.28.6",
     "@babel/traverse": "^7.28.6",

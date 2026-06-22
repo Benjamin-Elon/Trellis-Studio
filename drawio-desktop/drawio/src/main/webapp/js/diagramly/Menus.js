@@ -1,3 +1,4 @@
+// Trellis changes: support URL. // CHANGE
 /**
  * Copyright (c) 2006-2020, JGraph Holdings Ltd
  * Copyright (c) 2006-2020, draw.io AG
@@ -831,7 +832,7 @@
 		{
 			if (EditorUi.isElectronApp)
 			{
-				editorUi.openLink('https://github.com/jgraph/drawio-desktop/wiki/Getting-Support');
+				editorUi.openLink('https://github.com/Benjamin-Elon/Trellis-for-Drawio/issues'); // Trellis release: support belongs to this fork.
 			}
 			else
 			{

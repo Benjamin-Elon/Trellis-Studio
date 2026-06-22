@@ -1,3 +1,4 @@
+// Trellis changes: plugin duplicate filtering. // CHANGE
 /**
  * Copyright (c) 2006-2020, JGraph Holdings Ltd
  * Copyright (c) 2006-2020, draw.io AG
@@ -10209,6 +10210,53 @@ var PluginsDialog = function(editorUi, addFn, delFn, closeOnly)
 
 	var plugins = mxSettings.getPlugins().slice();
 	var changed = false;
+
+	function normalizePluginId(plugin)
+	{
+		if (plugin == null) return plugin;
+
+		if (App.pluginRegistry[plugin] != null)
+		{
+			return App.pluginRegistry[plugin]; // Trellis compatibility: built-ins may be stored as registry IDs.
+		}
+
+		if (plugin.substring(0, 2) == './')
+		{
+			plugin = plugin.substring(2); // Trellis compatibility: desktop loading may prefix built-in plugin paths with ./.
+		}
+		else if (plugin.charAt(0) == '/')
+		{
+			plugin = plugin.substring(1); // Trellis compatibility: older settings may contain /plugins/... paths.
+		}
+
+		return plugin;
+	}
+
+	function hasPlugin(plugin)
+	{
+		var pluginId = normalizePluginId(plugin);
+
+		for (var i = 0; i < plugins.length; i++)
+		{
+			if (normalizePluginId(plugins[i]) == pluginId)
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	function addPlugin(plugin)
+	{
+		if (plugin != null && plugin.length > 0 && !hasPlugin(plugin))
+		{
+			plugins.push(plugin); // Trellis compatibility: avoid duplicate selected/installed built-ins.
+			return true;
+		}
+
+		return false;
+	}
 	
 	function refresh()
 	{
@@ -10272,10 +10320,7 @@ var PluginsDialog = function(editorUi, addFn, delFn, closeOnly)
 	{
 		addFn(function(newPlugin)
 		{
-			if (newPlugin && mxUtils.indexOf(plugins, newPlugin) < 0)
-			{
-				plugins.push(newPlugin);
-			}
+			addPlugin(newPlugin); // Trellis compatibility: external adders can return equivalent built-in IDs or paths.
 			
 			refresh();
 		});
@@ -10294,6 +10339,11 @@ var PluginsDialog = function(editorUi, addFn, delFn, closeOnly)
 		
 		for (var i = 0; i < App.publicPlugin.length; i++)
 		{
+			if (hasPlugin(App.publicPlugin[i]) || hasPlugin(App.pluginRegistry[App.publicPlugin[i]]))
+			{
+				continue; // Trellis compatibility: hide already selected built-ins from the picker.
+			}
+
 			var option = document.createElement('option');
 			mxUtils.write(option, App.publicPlugin[i]);
 			option.value = App.publicPlugin[i];
@@ -10324,9 +10374,9 @@ var PluginsDialog = function(editorUi, addFn, delFn, closeOnly)
 							token = url;
 						}
 						
-						if (token.length > 0 && mxUtils.indexOf(plugins, token) < 0)
+						if (addPlugin(token))
 						{
-							plugins.push(token);
+							changed = true; // Trellis compatibility: custom plugin additions may normalize to an existing built-in.
 						}
 					}
 					
@@ -10349,9 +10399,8 @@ var PluginsDialog = function(editorUi, addFn, delFn, closeOnly)
 		{
 			var token = App.pluginRegistry[pluginsSelect.value];
 			
-			if (mxUtils.indexOf(plugins, token) < 0)
+			if (addPlugin(token))
 			{
-				plugins.push(token);
 				refresh();
 			}
 		}), null, null, null, customBtn);

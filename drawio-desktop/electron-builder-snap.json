@@ -1,6 +1,6 @@
 {
-  "appId": "com.jgraph.drawio.desktop",
-  "copyright": "Copyright 2017-2025 draw.io",
+  "appId": "com.benjaminelon.trellisfordrawio",
+  "copyright": "Copyright 2026 Benjamin Elon",
   "asar": true,
   "files": [
     "**/*",

@@ -9,6 +9,31 @@ const {
 let reqId = 1;
 let reqInfo = {};
 let fileChangedListeners = {};
+let msgListeners = {};
+
+function ensureMsgListener(action) {
+	if (msgListeners[action] != null) return;
+
+	msgListeners[action] = [];
+
+	ipcRenderer.on(action, function(event, args)
+	{
+		var listeners = msgListeners[action];
+
+		if (action === 'isModified' && listeners.length === 0)
+		{
+			ipcRenderer.send('isModified-result', { isModified: false, draftPath: null, uniqueId: args }); // Trellis compatibility: close promptly before the editor listener exists.
+			return;
+		}
+
+		for (var i = 0; i < listeners.length; i++)
+		{
+			listeners[i](args);
+		}
+	});
+}
+
+ensureMsgListener('isModified'); // Trellis compatibility: startup dialogs still need the window close handshake.
 
 // (ADD)
 function requestViaIPC(msg, callback, error) {
@@ -61,10 +86,8 @@ contextBridge.exposeInMainWorld(
   
 	  registerMsgListener: function(action, callback)
 	  {
-		ipcRenderer.on(action, function(event, args)
-		{
-		  callback(args);
-		});
+		ensureMsgListener(action);
+		msgListeners[action].push(callback); // Trellis compatibility: keep a single preload listener per main-process action.
 	  },
 	  sendMessage: function(action, args)
 	  {
@@ -266,8 +289,8 @@ window.addEventListener('message', (event) => {
 		  console.error('[PreloadBridge] Failed to forward electron-request:', e);
 		}
 	  }
-	  
-  
+
+
 	// 2. Handle fs-readText (example action)
 	if (msg.type === 'fs-readText') {
 	  try {
@@ -278,8 +301,6 @@ window.addEventListener('message', (event) => {
 	  }
 	}
   });
-  
-  console.log('[PreloadBridge] postMessage bridge active');
-  
 
-  
+  console.log('[PreloadBridge] postMessage bridge active');
+

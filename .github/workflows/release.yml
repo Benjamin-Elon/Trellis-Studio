@@ -1,0 +1,185 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build, for example v1.0.0 or v1.0.0-rc.1"
+        required: true
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: "20"
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.package.outputs.tag }}
+      version: ${{ steps.package.outputs.version }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Validate tag and package version
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${RELEASE_TAG}"
+
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tags must look like v1.0.0 or v1.0.0-rc.1." >&2
+            exit 1
+          fi
+
+          version="${tag#v}"
+          package_version="$(node -p "require('./drawio-desktop/package.json').version")"
+
+          if [[ "${package_version}" != "${version}" ]]; then
+            echo "Tag ${tag} does not match drawio-desktop/package.json version ${package_version}." >&2
+            exit 1
+          fi
+
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+  test:
+    name: Test release source
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Yarn
+        run: npm install -g yarn@1.22.22
+
+      - name: Install dependencies
+        working-directory: drawio-desktop
+        run: yarn install --frozen-lockfile
+
+      - name: Run tests
+        working-directory: drawio-desktop
+        run: yarn test
+
+  release-init:
+    name: Create draft release
+    needs:
+      - validate
+      - test
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Create draft GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ needs.validate.outputs.tag }}"
+          version="${{ needs.validate.outputs.version }}"
+
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            is_draft="$(gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq '.isDraft')"
+
+            if [[ "${is_draft}" != "true" ]]; then
+              echo "Release ${tag} already exists and is not a draft. Refusing to upload new assets." >&2
+              exit 1
+            fi
+
+            echo "Draft release ${tag} already exists; build jobs will upload assets to it."
+            exit 0
+          fi
+
+          # Trellis releases start as drafts so installers and updater metadata can be verified before publishing.
+          gh release create "${tag}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft \
+            --verify-tag \
+            --title "Trellis for Drawio ${version}" \
+            --notes "Draft release for Trellis for Drawio ${version}. Verify installer assets, updater metadata, and unsigned build warnings before publishing."
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs:
+      - validate
+      - release-init
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            command: yarn run release-win
+          - name: Linux
+            os: ubuntu-latest
+            command: yarn run release-linux
+          - name: macOS
+            os: macos-latest
+            command: yarn run release-mac
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgnome-keyring-dev icnsutils graphicsmagick xz-utils rpm
+
+      - name: Install Yarn
+        run: npm install -g yarn@1.22.22
+
+      - name: Install dependencies
+        working-directory: drawio-desktop
+        run: yarn install --frozen-lockfile
+
+      - name: Build and publish assets
+        working-directory: drawio-desktop
+        run: ${{ matrix.command }}

@@ -24,6 +24,19 @@ import { disableUpdate as disUpPkg } from './disableUpdate.js';
 // (ADD): SQLite
 import Database from 'better-sqlite3';
 
+try {
+	const drawioUserDataPath = path.join(app.getPath('appData'), 'draw.io'); // Trellis release: preserve the existing draw.io runtime profile.
+
+	if (!fs.existsSync(drawioUserDataPath)) {
+		fs.mkdirSync(drawioUserDataPath, { recursive: true }); // Trellis release: ensure electron-store and Chromium can use the compatibility path.
+	}
+
+	app.setPath('userData', drawioUserDataPath); // Trellis release: keep plugins, localStorage, drafts, and settings under the old profile.
+}
+catch (e) {
+	console.error('Failed to preserve draw.io userData path:', e); // Trellis release: launch with Electron default if compatibility pin fails.
+}
+
 let store;
 
 try {
@@ -82,6 +95,30 @@ autoUpdater.logger.transports.file.level = 'error'
 autoUpdater.logger.transports.console.level = 'error'
 autoUpdater.autoDownload = silentUpdate
 autoUpdater.autoInstallOnAppQuit = silentUpdate
+const trellisReleaseUrl = 'https://github.com/Benjamin-Elon/Trellis-for-Drawio'; // Trellis release: single source for public release links.
+const trellisSupportUrl = `${trellisReleaseUrl}/issues`; // Trellis release: keep support links on the fork.
+
+function canCheckForUpdates() {
+	return !disableUpdate && app.isPackaged; // Trellis release: dev runs do not have packaged updater metadata.
+}
+
+function checkForTrellisUpdates() {
+	if (!canCheckForUpdates()) return false; // Trellis release: avoid missing app-update.yml errors outside packaged builds.
+
+	try {
+		const updateCheck = autoUpdater.checkForUpdates();
+
+		if (updateCheck != null && typeof updateCheck.catch === 'function') {
+			updateCheck.catch(e => log.error('@update-check-error@\n', e));
+		}
+
+		return true;
+	}
+	catch (e) {
+		log.error('@update-check-error@\n', e);
+		return false;
+	}
+}
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
@@ -290,10 +327,15 @@ function createWindow(opt = {}) {
 		mainWindow.webContents.send('resize')
 	});
 
-	let uniqueIsModifiedId, modifiedModalOpen = false;
+	let uniqueIsModifiedId, closeCheckTimer = null, modifiedModalOpen = false;
 
 	ipcMain.on('isModified-result', async (e, data) => {
-		if (!validateSender(e.senderFrame) || uniqueIsModifiedId != data.uniqueId || modifiedModalOpen) return null;
+		if (!validateSender(e.senderFrame) || data == null || uniqueIsModifiedId != data.uniqueId || modifiedModalOpen) return null;
+
+		if (closeCheckTimer != null) {
+			clearTimeout(closeCheckTimer); // Trellis compatibility: renderer replied, so the close guard is no longer needed.
+			closeCheckTimer = null;
+		}
 
 		if (data.isModified) {
 			modifiedModalOpen = true;
@@ -345,6 +387,36 @@ function createWindow(opt = {}) {
 
 		if (contents != null) {
 			contents.send('isModified', uniqueIsModifiedId);
+			const closeCheckId = uniqueIsModifiedId;
+
+			if (closeCheckTimer != null) {
+				clearTimeout(closeCheckTimer); // Trellis compatibility: replace any stale close guard for repeated close clicks.
+			}
+
+			closeCheckTimer = setTimeout(() => {
+				if (mainWindow.isDestroyed() || modifiedModalOpen || uniqueIsModifiedId != closeCheckId) {
+					return;
+				}
+
+				modifiedModalOpen = true;
+				const response = dialog.showMessageBoxSync(
+					mainWindow,
+					{
+						type: 'warning',
+						buttons: ['Cancel', 'Close Anyway'],
+						title: 'Confirm',
+						message: 'Trellis could not check whether the current document has unsaved changes. Close anyway?' // Trellis compatibility: avoid trapping the window if the renderer close IPC is unavailable.
+					});
+
+				if (response === 1) {
+					mainWindow.destroy();
+				}
+				else {
+					cmdQPressed = false;
+					modifiedModalOpen = false;
+					closeCheckTimer = null;
+				}
+			}, 1000); // Trellis compatibility: preserve close without adding a multi-second delay if the renderer misses the request.
 			event.preventDefault();
 		}
 
@@ -946,10 +1018,19 @@ app.whenReady().then(() => {
 		if (e != null && e.senderFrame != null &&
 			!validateSender(e.senderFrame)) return null;
 
-		autoUpdater.checkForUpdates();
+		const updateCheckStarted = checkForTrellisUpdates(); // Trellis release: use electron-builder metadata instead of a hard-coded feed.
 
 		if (store != null) {
 			store.set('dontCheckUpdates', false);
+		}
+
+		if (!updateCheckStarted) {
+			dialog.showMessageBox({
+				type: 'info',
+				title: 'Updates unavailable',
+				message: 'Update checks are only available in packaged Trellis for Drawio releases.',
+			});
+			return;
 		}
 
 		if (!updateNoAvailAdded) {
@@ -1034,11 +1115,11 @@ app.whenReady().then(() => {
 			submenu: [
 				{
 					label: 'About ' + app.name,
-					click() { shell.openExternal('https://www.drawio.com'); }
+					click() { shell.openExternal(trellisReleaseUrl); } // Trellis release: point About to this project.
 				},
 				{
 					label: 'Support',
-					click() { shell.openExternal('https://github.com/jgraph/drawio-desktop/issues'); }
+					click() { shell.openExternal(trellisSupportUrl); } // Trellis release: point Support to this project.
 				},
 				checkForUpdates,
 				{ type: 'separator' },
@@ -1078,14 +1159,8 @@ app.whenReady().then(() => {
 		menu.setApplicationMenu(null)
 	}
 
-	autoUpdater.setFeedURL({
-		provider: 'github',
-		repo: 'drawio-desktop',
-		owner: 'jgraph'
-	})
-
 	if (store == null || (!disableUpdate && !store.get('dontCheckUpdates'))) {
-		autoUpdater.checkForUpdates()
+		checkForTrellisUpdates() // Trellis release: packaged builds use generated GitHub updater metadata.
 	}
 })
 
@@ -1206,8 +1281,8 @@ autoUpdater.on('update-available', (a, b) => {
 				autoUpdater.downloadUpdate()
 
 				var progressBar = new ProgressBar({
-					title: 'draw.io Update',
-					text: 'Downloading draw.io update...'
+					title: 'Trellis for Drawio Update',
+					text: 'Downloading Trellis for Drawio update...'
 				});
 
 				function reportUpdateError(e) {
@@ -1242,8 +1317,8 @@ autoUpdater.on('update-available', (a, b) => {
 
 						progressBar = new ProgressBar({
 							indeterminate: false,
-							title: 'draw.io Update',
-							text: 'Downloading draw.io update...',
+							title: 'Trellis for Drawio Update',
+							text: 'Downloading Trellis for Drawio update...',
 							detail: `${percent}% ...`,
 							initialValue: percent
 						});
