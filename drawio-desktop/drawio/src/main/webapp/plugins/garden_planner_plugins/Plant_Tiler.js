@@ -16,6 +16,7 @@ Draw.loadPlugin(function (ui) {
     const RESIZE_DEBOUNCE_MS = 120; // debounce tiling during resize // RESTORE
     const ROTATION_RETILE_DEBOUNCE_MS = 150; // CHANGE
     const DEBUG_PLANT_TILER = false; // CHANGE
+    const DEBUG_BED_FIT = false; // CHANGE
 
     const GROUP_LABEL_FONT_PX = 12;
     const GROUP_LABEL_LINE_HEIGHT = 1.25;
@@ -45,6 +46,7 @@ Draw.loadPlugin(function (ui) {
     const GROUP_LABEL_FONT_MIN_PX = 10;
     const GROUP_LABEL_FONT_MAX_PX = 100;
     const BED_FIT_TOLERANCE = 0.25; // MOVED
+    const BED_FIT_RESIZE_SUPPRESS_MS = 250; // CHANGE
     const EDGE_CIRCLE_CENTER_CONTAINED_PCT = 0.40; // MOVED
     const BED_AUTO_FIT_ATTR = "bed_auto_fit"; // MOVED
 
@@ -56,6 +58,27 @@ Draw.loadPlugin(function (ui) {
             mxLog.debug("[PlantTiler]", ...args);
         } catch (_) { }
     }
+
+    function bedFitLog(stage, payload) { // CHANGE
+        if (!DEBUG_BED_FIT || typeof console === "undefined") return; // CHANGE
+        try { // CHANGE
+            const data = payload || {}; // CHANGE
+            const tables = data.tables || {}; // CHANGE
+            const scalar = Object.assign({}, data); // CHANGE
+            delete scalar.tables; // CHANGE
+            if (console.groupCollapsed) console.groupCollapsed("[BedFit]", stage, scalar.txnId != null ? "txn=" + scalar.txnId : ""); // CHANGE
+            else console.log("[BedFit]", stage, scalar); // CHANGE
+            console.log(scalar); // CHANGE
+            for (const key of Object.keys(tables)) { // CHANGE
+                console.log(key); // CHANGE
+                if (console.table) console.table(tables[key]); // CHANGE
+                else console.log(tables[key]); // CHANGE
+            } // CHANGE
+            if (console.groupEnd) console.groupEnd(); // CHANGE
+        } catch (e) { // CHANGE
+            try { console.log("[BedFit] logging failed", stage, e); } catch (_) { } // CHANGE
+        } // CHANGE
+    } // CHANGE
 
     function withUndoSuppressed(fn) { // NEW
         if (graph.__withUndoSuppressed) return graph.__withUndoSuppressed(fn); // NEW
@@ -1284,10 +1307,81 @@ Draw.loadPlugin(function (ui) {
 
     // -------------------- Bed-aware model-space auto-fit -------------------- // MOVED
     let bedFitInProgress = false; // MOVED
+    let bedFitTxnSeq = 0; // CHANGE
+    let bedFitSuppressResizeUntil = 0; // CHANGE
+    let bedFitSuppressResizeIds = new Set(); // CHANGE
 
     function nearlySameNumber(a, b) { // MOVED
         return Math.abs((Number(a) || 0) - (Number(b) || 0)) < 0.001; // MOVED
     } // MOVED
+
+    function bedFitRound(value) { // CHANGE
+        const n = Number(value); // CHANGE
+        return Number.isFinite(n) ? Math.round(n * 1000) / 1000 : value; // CHANGE
+    } // CHANGE
+
+    function bedFitRectSnapshot(rect) { // CHANGE
+        if (!rect) return null; // CHANGE
+        return { // CHANGE
+            x: bedFitRound(rect.x), // CHANGE
+            y: bedFitRound(rect.y), // CHANGE
+            w: bedFitRound(rect.w != null ? rect.w : rect.width), // CHANGE
+            h: bedFitRound(rect.h != null ? rect.h : rect.height) // CHANGE
+        }; // CHANGE
+    } // CHANGE
+
+    function bedFitGeometrySnapshot(cell) { // CHANGE
+        const g = cell && cell.getGeometry ? cell.getGeometry() : null; // CHANGE
+        return g ? bedFitRectSnapshot(g) : null; // CHANGE
+    } // CHANGE
+
+    function bedFitCellId(cell) { // CHANGE
+        return cell && cell.id ? cell.id : null; // CHANGE
+    } // CHANGE
+
+    function bedFitTileSample(groupCell, limit) { // CHANGE
+        const model = graph.getModel(); // CHANGE
+        const out = []; // CHANGE
+        const n = model.getChildCount(groupCell); // CHANGE
+        const max = Math.max(1, Number(limit) || 6); // CHANGE
+        for (let i = 0; i < n && out.length < max; i++) { // CHANGE
+            const child = model.getChildAt(groupCell, i); // CHANGE
+            if (!model.isVertex(child) || !isPlantCircle(child)) continue; // CHANGE
+            const visualCenter = childVisualCenterLocal(child); // CHANGE
+            const unrotatedCenter = childCenterInUnrotatedGroupSpace(groupCell, child); // CHANGE
+            out.push({ // CHANGE
+                id: bedFitCellId(child), // CHANGE
+                r: child.getAttribute("tile_r"), // CHANGE
+                c: child.getAttribute("tile_c"), // CHANGE
+                auto: child.getAttribute("auto"), // CHANGE
+                dirty: child.getAttribute("dirty"), // CHANGE
+                geo: bedFitGeometrySnapshot(child), // CHANGE
+                visualCx: visualCenter ? bedFitRound(visualCenter.x) : null, // CHANGE
+                visualCy: visualCenter ? bedFitRound(visualCenter.y) : null, // CHANGE
+                unrotatedCx: unrotatedCenter ? bedFitRound(unrotatedCenter.x) : null, // CHANGE
+                unrotatedCy: unrotatedCenter ? bedFitRound(unrotatedCenter.y) : null // CHANGE
+            }); // CHANGE
+        } // CHANGE
+        return out; // CHANGE
+    } // CHANGE
+
+    function markBedFitResizeSuppression(items) { // CHANGE
+        bedFitSuppressResizeIds = new Set(); // CHANGE
+        for (const item of (items || [])) { // CHANGE
+            if (item && item.tg && item.tg.id) bedFitSuppressResizeIds.add(item.tg.id); // CHANGE
+        } // CHANGE
+        bedFitSuppressResizeUntil = bedFitSuppressResizeIds.size ? Date.now() + BED_FIT_RESIZE_SUPPRESS_MS : 0; // CHANGE
+    } // CHANGE
+
+    function shouldSuppressBedFitResize(source, groups) { // CHANGE
+        if (source !== "cells-resized" || !bedFitSuppressResizeIds.size) return false; // CHANGE
+        if (Date.now() > bedFitSuppressResizeUntil) { // CHANGE
+            bedFitSuppressResizeIds.clear(); // CHANGE
+            bedFitSuppressResizeUntil = 0; // CHANGE
+            return false; // CHANGE
+        } // CHANGE
+        return (groups || []).some(group => group && group.id && bedFitSuppressResizeIds.has(group.id)); // CHANGE
+    } // CHANGE
 
     function getModelRect(cell) { // MOVED
         const model = graph.getModel(); // MOVED
@@ -1417,19 +1511,47 @@ Draw.loadPlugin(function (ui) {
         return Array.from(out.values()); // MOVED
     } // MOVED
 
-    function getPlantCircleBBoxLocal(tg) { // MOVED
+    function captureBedFitLayoutSnapshot(tg) { // CHANGE
+        if (!tg || !isTilerGroup(tg)) return null; // CHANGE
+        const model = graph.getModel(); // CHANGE
+        const rotationDeg = getTilerRotationDeg(tg); // CHANGE
+        const tiles = []; // CHANGE
+        const childCount = model.getChildCount(tg); // CHANGE
+        for (let i = 0; i < childCount; i++) { // CHANGE
+            const child = model.getChildAt(tg, i); // CHANGE
+            if (!model.isVertex(child) || !isPlantCircle(child) || !hasTileRC(child)) continue; // CHANGE
+            const r = Number(child.getAttribute("tile_r")); // CHANGE
+            const c = Number(child.getAttribute("tile_c")); // CHANGE
+            if (!Number.isFinite(r) || !Number.isFinite(c)) continue; // CHANGE
+            const logicalGeo = childLogicalGeometryFromVisual(tg, child, rotationDeg); // CHANGE
+            if (!logicalGeo) continue; // CHANGE
+            tiles.push({ // CHANGE
+                r, c, // CHANGE
+                x: logicalGeo.x, y: logicalGeo.y, w: logicalGeo.w, h: logicalGeo.h, // CHANGE
+                auto: String(child.getAttribute("auto") || "0"), // CHANGE
+                dirty: String(child.getAttribute("dirty") || "0"), // CHANGE
+                abbr: String(child.getAttribute("abbr") || ""), // CHANGE
+                label: String(child.getAttribute("label") || "") // CHANGE
+            }); // CHANGE
+        } // CHANGE
+        if (!tiles.length && isCollapsedLOD(tg)) return readLodLayoutSnapshot(tg); // CHANGE
+        return { v: 1, tiles: tiles }; // CHANGE
+    } // CHANGE
+
+    function getPlantCircleBBoxLogical(tg) { // CHANGE
         const model = graph.getModel(); // MOVED
+        const rotationDeg = getTilerRotationDeg(tg); // CHANGE
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity; // MOVED
         const childCount = model.getChildCount(tg); // MOVED
         for (let i = 0; i < childCount; i++) { // MOVED
             const child = model.getChildAt(tg, i); // MOVED
             if (!model.isVertex(child) || !isPlantCircle(child)) continue; // MOVED
-            const cg = model.getGeometry(child); // MOVED
-            if (!cg) continue; // MOVED
-            const x = Number(cg.x) || 0; // MOVED
-            const y = Number(cg.y) || 0; // MOVED
-            const w = Number(cg.width) || 0; // MOVED
-            const h = Number(cg.height) || 0; // MOVED
+            const cg = childLogicalGeometryFromVisual(tg, child, rotationDeg); // CHANGE
+            if (!cg) continue; // CHANGE
+            const x = Number(cg.x) || 0; // CHANGE
+            const y = Number(cg.y) || 0; // CHANGE
+            const w = Number(cg.w) || 0; // CHANGE
+            const h = Number(cg.h) || 0; // CHANGE
             if (w <= 0 || h <= 0) continue; // MOVED
             minX = Math.min(minX, x); // MOVED
             minY = Math.min(minY, y); // MOVED
@@ -1438,26 +1560,32 @@ Draw.loadPlugin(function (ui) {
         } // MOVED
         if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return null; // MOVED
         return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }; // MOVED
-    } // MOVED
+    } // CHANGE
 
-    function shiftPlantCircleChildren(tg, dx, dy) { // MOVED
+    function shiftPlantCircleChildrenLogical(tg, dx, dy) { // CHANGE
         if (nearlySameNumber(dx, 0) && nearlySameNumber(dy, 0)) return false; // MOVED
         const model = graph.getModel(); // MOVED
+        const rotationDeg = getTilerRotationDeg(tg); // CHANGE
         let changed = false; // MOVED
         const childCount = model.getChildCount(tg); // MOVED
         for (let i = 0; i < childCount; i++) { // MOVED
             const child = model.getChildAt(tg, i); // MOVED
             if (!model.isVertex(child) || !isPlantCircle(child)) continue; // MOVED
-            const cg = model.getGeometry(child); // MOVED
-            if (!cg) continue; // MOVED
-            const next = cg.clone(); // MOVED
-            next.x = (Number(cg.x) || 0) + dx; // MOVED
-            next.y = (Number(cg.y) || 0) + dy; // MOVED
+            const logicalGeo = childLogicalGeometryFromVisual(tg, child, rotationDeg); // CHANGE
+            if (!logicalGeo) continue; // CHANGE
+            if ((Number(logicalGeo.w) || 0) <= 0 || (Number(logicalGeo.h) || 0) <= 0) continue; // CHANGE
+            const next = visualGeometryFromLogicalGeometry(tg, { // CHANGE
+                x: (Number(logicalGeo.x) || 0) + dx, // CHANGE
+                y: (Number(logicalGeo.y) || 0) + dy, // CHANGE
+                w: Number(logicalGeo.w) || 0, // CHANGE
+                h: Number(logicalGeo.h) || 0 // CHANGE
+            }); // CHANGE
+            if (!next) continue; // CHANGE
             model.setGeometry(child, next); // MOVED
             changed = true; // MOVED
         } // MOVED
-        return changed; // MOVED
-    } // MOVED
+        return changed; // CHANGE
+    } // CHANGE
 
     function rotateVectorModel(vx, vy, angleRad) { // MOVED
         const cos = Math.cos(angleRad); // MOVED
@@ -1502,12 +1630,32 @@ Draw.loadPlugin(function (ui) {
         return next; // MOVED
     } // MOVED
 
-    function trimGroupToPlantFootprint(tg, bed, bbox, fitWidth, fitHeight) { // MOVED
-        if (!tg || !bed || !bbox || bbox.w <= 0 || bbox.h <= 0) return false; // MOVED
+    function trimGroupToPlantFootprint(tg, bed, bbox, fitWidth, fitHeight, debugCtx) { // CHANGE
+        if (tg && isCollapsedLOD(tg)) { // CHANGE
+            bedFitLog("trim-skip", { // CHANGE
+                txnId: debugCtx && debugCtx.txnId, // CHANGE
+                groupId: bedFitCellId(tg), // CHANGE
+                bedId: bedFitCellId(bed), // CHANGE
+                reason: "lod-collapsed" // CHANGE
+            }); // CHANGE
+            return false; // CHANGE
+        } // CHANGE
+        if (!tg || !bed || !bbox || bbox.w <= 0 || bbox.h <= 0) { // CHANGE
+            bedFitLog("trim-skip", { // CHANGE
+                txnId: debugCtx && debugCtx.txnId, // CHANGE
+                groupId: bedFitCellId(tg), // CHANGE
+                bedId: bedFitCellId(bed), // CHANGE
+                reason: !bbox ? "missing-bbox" : "empty-bbox", // CHANGE
+                bbox: bedFitRectSnapshot(bbox) // CHANGE
+            }); // CHANGE
+            return false; // CHANGE
+        } // CHANGE
         if (!fitWidth && !fitHeight) return false; // MOVED
         const model = graph.getModel(); // MOVED
         const current = model.getGeometry(tg); // MOVED
         if (!current) return false; // MOVED
+        const beforeGeo = bedFitGeometrySnapshot(tg); // CHANGE
+        const beforeTiles = bedFitTileSample(tg, 6); // CHANGE
         const finalWidth = fitWidth ? Math.max(1, bbox.w + GROUP_PADDING_PX * 2) : current.width; // MOVED
         const solved = fitHeight // MOVED
             ? solveOuterHeightForPlantingFrame(bbox.h, finalWidth, current.height) // MOVED
@@ -1516,18 +1664,57 @@ Draw.loadPlugin(function (ui) {
         if (!next) return false; // MOVED
         const dx = fitWidth ? GROUP_PADDING_PX - bbox.x : 0; // MOVED
         const dy = fitHeight ? GROUP_PADDING_PX + solved.bandPx - bbox.y : 0; // MOVED
-        const childrenChanged = shiftPlantCircleChildren(tg, dx, dy); // MOVED
+        const childrenChanged = shiftPlantCircleChildrenLogical(tg, dx, dy); // CHANGE
         const groupChanged = !(nearlySameNumber(current.x, next.x) && nearlySameNumber(current.y, next.y) && nearlySameNumber(current.width, next.width) && nearlySameNumber(current.height, next.height)); // MOVED
         if (groupChanged) model.setGeometry(tg, next); // MOVED
+        bedFitLog("trim", { // CHANGE
+            txnId: debugCtx && debugCtx.txnId, // CHANGE
+            groupId: bedFitCellId(tg), // CHANGE
+            bedId: bedFitCellId(bed), // CHANGE
+            fitWidth, // CHANGE
+            fitHeight, // CHANGE
+            bbox: bedFitRectSnapshot(bbox), // CHANGE
+            finalWidth: bedFitRound(finalWidth), // CHANGE
+            finalHeight: bedFitRound(solved.outerHeight), // CHANGE
+            bandPx: bedFitRound(solved.bandPx), // CHANGE
+            dx: bedFitRound(dx), // CHANGE
+            dy: bedFitRound(dy), // CHANGE
+            childrenChanged, // CHANGE
+            groupChanged, // CHANGE
+            beforeGeo, // CHANGE
+            afterGeo: bedFitGeometrySnapshot(tg), // CHANGE
+            tables: { // CHANGE
+                "tiles before trim": beforeTiles, // CHANGE
+                "tiles after trim": bedFitTileSample(tg, 6) // CHANGE
+            } // CHANGE
+        }); // CHANGE
         return childrenChanged || groupChanged; // MOVED
     } // MOVED
 
-    function applyBedFitGeometry(tg, bed, allowDragIntoBedFit) { // MOVED
-        if (!tg || !bed || tg.getAttribute(BED_AUTO_FIT_ATTR) === "0") return null; // MOVED
+    function applyBedFitGeometry(tg, bed, allowDragIntoBedFit, debugCtx) { // CHANGE
+        if (!tg || !bed || tg.getAttribute(BED_AUTO_FIT_ATTR) === "0") { // CHANGE
+            bedFitLog("fit-skip", { // CHANGE
+                txnId: debugCtx && debugCtx.txnId, // CHANGE
+                groupId: bedFitCellId(tg), // CHANGE
+                bedId: bedFitCellId(bed), // CHANGE
+                reason: !tg ? "missing-group" : (!bed ? "missing-bed" : "bed-auto-fit-disabled") // CHANGE
+            }); // CHANGE
+            return null; // CHANGE
+        } // CHANGE
         const model = graph.getModel(); // MOVED
         const tgRect = getModelRect(tg); // MOVED
         const bedRect = getModelRect(bed); // MOVED
-        if (!tgRect || !bedRect || bedRect.w <= 0 || bedRect.h <= 0) return null; // MOVED
+        if (!tgRect || !bedRect || bedRect.w <= 0 || bedRect.h <= 0) { // CHANGE
+            bedFitLog("fit-skip", { // CHANGE
+                txnId: debugCtx && debugCtx.txnId, // CHANGE
+                groupId: bedFitCellId(tg), // CHANGE
+                bedId: bedFitCellId(bed), // CHANGE
+                reason: "invalid-rect", // CHANGE
+                groupRect: bedFitRectSnapshot(tgRect), // CHANGE
+                bedRect: bedFitRectSnapshot(bedRect) // CHANGE
+            }); // CHANGE
+            return null; // CHANGE
+        } // CHANGE
         const diameter = getPlantCircleDiameterPx(tg); // MOVED
         const overhang = allowedOverhangForDiameter(diameter); // MOVED
         const frameRect = getPlantingFrameRectModel(tgRect); // MOVED
@@ -1539,9 +1726,28 @@ Draw.loadPlugin(function (ui) {
         const canDragFit = allowDragIntoBedFit && diameter < bedRect.w && diameter < bedRect.h; // MOVED
         const fitWidth = widthClose || canDragFit; // MOVED
         const fitHeight = heightClose || canDragFit; // MOVED
-        if (!fitWidth && !fitHeight) return null; // MOVED
+        if (!fitWidth && !fitHeight) { // CHANGE
+            bedFitLog("fit-skip", { // CHANGE
+                txnId: debugCtx && debugCtx.txnId, // CHANGE
+                groupId: bedFitCellId(tg), // CHANGE
+                bedId: bedFitCellId(bed), // CHANGE
+                reason: "not-close-enough", // CHANGE
+                allowDragIntoBedFit, // CHANGE
+                diameter: bedFitRound(diameter), // CHANGE
+                frameRect: bedFitRectSnapshot(frameRect), // CHANGE
+                targetFrameWidth: bedFitRound(targetFrameWidth), // CHANGE
+                targetFrameHeight: bedFitRound(targetFrameHeight), // CHANGE
+                widthClose, // CHANGE
+                heightClose, // CHANGE
+                canDragFit // CHANGE
+            }); // CHANGE
+            return null; // CHANGE
+        } // CHANGE
         const g = model.getGeometry(tg); // MOVED
         if (!g) return null; // MOVED
+        const beforeGeo = bedFitGeometrySnapshot(tg); // CHANGE
+        const beforeRotation = getTilerRotationDeg(tg); // CHANGE
+        const layoutSnapshot = captureBedFitLayoutSnapshot(tg); // CHANGE
         const next = g.clone(); // MOVED
         if (fitWidth) next.width = targetFrameWidth + GROUP_PADDING_PX * 2; // MOVED
         if (fitHeight) { // MOVED
@@ -1555,16 +1761,76 @@ Draw.loadPlugin(function (ui) {
         const geometryChanged = !(nearlySameNumber(g.x, next.x) && nearlySameNumber(g.y, next.y) && nearlySameNumber(g.width, next.width) && nearlySameNumber(g.height, next.height)); // MOVED
         const rotationChanged = setCellRotationDeg(tg, bedRotation); // MOVED
         if (geometryChanged) model.setGeometry(tg, next); // MOVED
-        return { changed: geometryChanged || rotationChanged, fitWidth: fitWidth, fitHeight: fitHeight, bed: bed }; // MOVED
+        bedFitLog("fit", { // CHANGE
+            txnId: debugCtx && debugCtx.txnId, // CHANGE
+            source: debugCtx && debugCtx.source, // CHANGE
+            groupId: bedFitCellId(tg), // CHANGE
+            bedId: bedFitCellId(bed), // CHANGE
+            allowDragIntoBedFit, // CHANGE
+            beforeGeo, // CHANGE
+            afterGeo: bedFitGeometrySnapshot(tg), // CHANGE
+            bedRect: bedFitRectSnapshot(bedRect), // CHANGE
+            frameRect: bedFitRectSnapshot(frameRect), // CHANGE
+            targetFrameWidth: bedFitRound(targetFrameWidth), // CHANGE
+            targetFrameHeight: bedFitRound(targetFrameHeight), // CHANGE
+            diameter: bedFitRound(diameter), // CHANGE
+            overhang: bedFitRound(overhang), // CHANGE
+            widthClose, // CHANGE
+            heightClose, // CHANGE
+            canDragFit, // CHANGE
+            fitWidth, // CHANGE
+            fitHeight, // CHANGE
+            beforeRotation: bedFitRound(beforeRotation), // CHANGE
+            bedRotation: bedFitRound(bedRotation), // CHANGE
+            afterRotation: bedFitRound(getTilerRotationDeg(tg)), // CHANGE
+            geometryChanged, // CHANGE
+            rotationChanged, // CHANGE
+            snapshotTiles: layoutSnapshot && Array.isArray(layoutSnapshot.tiles) ? layoutSnapshot.tiles.length : 0 // CHANGE
+        }); // CHANGE
+        return { changed: geometryChanged || rotationChanged, fitWidth: fitWidth, fitHeight: fitHeight, bed: bed, layoutSnapshot: layoutSnapshot, previousRotationDeg: beforeRotation }; // CHANGE
     } // MOVED
 
-    function retileAfterBedFit(tg) { // MOVED
+    function retileAfterBedFit(tg, debugCtx) { // CHANGE
+        const beforeTiles = bedFitTileSample(tg, 6); // CHANGE
+        const beforeChildCount = (graph.getChildVertices(tg) || []).length; // CHANGE
+        const beforeGeo = bedFitGeometrySnapshot(tg); // CHANGE
+        const beforeRotation = getTilerRotationDeg(tg); // CHANGE
+        let threw = false; // CHANGE
+        let errorMessage = ""; // CHANGE
         try { // MOVED
-            retileGroup(graph, tg, { preferInPlace: true, inTransaction: true }); // MOVED
+            retileGroup(graph, tg, { // CHANGE
+                layoutSnapshot: debugCtx && debugCtx.layoutSnapshot, // CHANGE
+                previousRotationDeg: debugCtx && debugCtx.previousRotationDeg, // CHANGE
+                useLiveSnapshot: false, // CHANGE
+                preferInPlace: true, // CHANGE
+                inTransaction: true // CHANGE
+            }); // CHANGE
         } catch (e) { // MOVED
+            threw = true; // CHANGE
+            errorMessage = e && e.message ? e.message : String(e); // CHANGE
             try { mxLog.debug("[BedFit] retile failed:", e && e.message ? e.message : e); } catch (_) { } // MOVED
             graph.refresh(tg); // MOVED
         } // MOVED
+        bedFitLog("retile", { // CHANGE
+            txnId: debugCtx && debugCtx.txnId, // CHANGE
+            source: debugCtx && debugCtx.source, // CHANGE
+            groupId: bedFitCellId(tg), // CHANGE
+            beforeGeo, // CHANGE
+            afterGeo: bedFitGeometrySnapshot(tg), // CHANGE
+            beforeRotation: bedFitRound(beforeRotation), // CHANGE
+            afterRotation: bedFitRound(getTilerRotationDeg(tg)), // CHANGE
+            previousRotationDeg: bedFitRound(debugCtx && debugCtx.previousRotationDeg), // CHANGE
+            snapshotTiles: debugCtx && debugCtx.layoutSnapshot && Array.isArray(debugCtx.layoutSnapshot.tiles) ? debugCtx.layoutSnapshot.tiles.length : 0, // CHANGE
+            beforeChildCount, // CHANGE
+            afterChildCount: (graph.getChildVertices(tg) || []).length, // CHANGE
+            lodCollapsed: isCollapsedLOD(tg), // CHANGE
+            threw, // CHANGE
+            errorMessage, // CHANGE
+            tables: { // CHANGE
+                "tiles before retile": beforeTiles, // CHANGE
+                "tiles after retile": bedFitTileSample(tg, 6) // CHANGE
+            } // CHANGE
+        }); // CHANGE
     } // MOVED
 
     function finiteMoveDelta(value) { // MOVED
@@ -1572,17 +1838,34 @@ Draw.loadPlugin(function (ui) {
         return Number.isFinite(n) ? n : null; // MOVED
     } // MOVED
 
-    function movedWithinSameBed(parent, center, currentBed, moveDx, moveDy) { // MOVED
-        if (!parent || !center || !currentBed || moveDx == null || moveDy == null) return false; // MOVED
-        const previousCenter = { x: center.x - moveDx, y: center.y - moveDy }; // MOVED
-        const previousBed = findSmallestContainingBedModel(parent, previousCenter); // MOVED
-        return !!previousBed && !!previousBed.id && previousBed.id === currentBed.id; // MOVED
-    } // MOVED
-
     function normalizeMovedTilerGroupsToBeds(cells, opts) { // MOVED
-        if (bedFitInProgress) return 0; // MOVED
+        const txnId = ++bedFitTxnSeq; // CHANGE
+        const source = (opts && opts.source) || "unknown"; // CHANGE
+        if (bedFitInProgress) { // CHANGE
+            bedFitLog("normalize-skip", { txnId, source, reason: "in-progress" }); // CHANGE
+            return 0; // CHANGE
+        } // CHANGE
         const groups = getTilerGroupsFromEventCells(cells); // MOVED
-        if (!groups.length) return 0; // MOVED
+        const movedCells = (cells || []).filter(Boolean); // CHANGE
+        if (!groups.length) { // CHANGE
+            bedFitLog("normalize-skip", { // CHANGE
+                txnId, // CHANGE
+                source, // CHANGE
+                reason: "no-groups", // CHANGE
+                movedCellIds: movedCells.map(bedFitCellId) // CHANGE
+            }); // CHANGE
+            return 0; // CHANGE
+        } // CHANGE
+        if (shouldSuppressBedFitResize(source, groups)) { // CHANGE
+            bedFitLog("normalize-skip", { // CHANGE
+                txnId, // CHANGE
+                source, // CHANGE
+                reason: "recent-bed-fit-resize", // CHANGE
+                movedCellIds: movedCells.map(bedFitCellId), // CHANGE
+                groupIds: groups.map(bedFitCellId) // CHANGE
+            }); // CHANGE
+            return 0; // CHANGE
+        } // CHANGE
         const model = graph.getModel(); // MOVED
         const allowDragIntoBedFit = !!(opts && opts.allowDragIntoBedFit); // MOVED
         const skipSameBedMoveFit = !!(opts && opts.skipSameBedMoveFit); // MOVED
@@ -1590,6 +1873,16 @@ Draw.loadPlugin(function (ui) {
         const moveDy = finiteMoveDelta(opts && opts.moveDy); // MOVED
         const changed = []; // MOVED
         let trimmed = false; // MOVED
+        bedFitLog("normalize-start", { // CHANGE
+            txnId, // CHANGE
+            source, // CHANGE
+            allowDragIntoBedFit, // CHANGE
+            skipSameBedMoveFit, // CHANGE
+            moveDx: bedFitRound(moveDx), // CHANGE
+            moveDy: bedFitRound(moveDy), // CHANGE
+            movedCellIds: movedCells.map(bedFitCellId), // CHANGE
+            groupIds: groups.map(bedFitCellId) // CHANGE
+        }); // CHANGE
         bedFitInProgress = true; // MOVED
         model.beginUpdate(); // MOVED
         try { // MOVED
@@ -1597,14 +1890,44 @@ Draw.loadPlugin(function (ui) {
                 const parent = model.getParent(tg); // MOVED
                 const center = rectCenterModel(getModelRect(tg)); // MOVED
                 const bed = findSmallestContainingBedModel(parent, center); // MOVED
-                if (skipSameBedMoveFit && movedWithinSameBed(parent, center, bed, moveDx, moveDy)) continue; // MOVED
-                const fitResult = applyBedFitGeometry(tg, bed, allowDragIntoBedFit); // MOVED
-                if (fitResult) changed.push({ tg: tg, bed: fitResult.bed, fitWidth: fitResult.fitWidth, fitHeight: fitResult.fitHeight }); // MOVED
+                const previousCenter = center && moveDx != null && moveDy != null ? { x: center.x - moveDx, y: center.y - moveDy } : null; // CHANGE
+                const previousBed = previousCenter ? findSmallestContainingBedModel(parent, previousCenter) : null; // CHANGE
+                const sameBedMove = !!(skipSameBedMoveFit && bed && previousBed && previousBed.id === bed.id); // CHANGE
+                bedFitLog("group-evaluate", { // CHANGE
+                    txnId, // CHANGE
+                    source, // CHANGE
+                    groupId: bedFitCellId(tg), // CHANGE
+                    parentId: bedFitCellId(parent), // CHANGE
+                    currentBedId: bedFitCellId(bed), // CHANGE
+                    previousBedId: bedFitCellId(previousBed), // CHANGE
+                    center: center ? { x: bedFitRound(center.x), y: bedFitRound(center.y) } : null, // CHANGE
+                    previousCenter: previousCenter ? { x: bedFitRound(previousCenter.x), y: bedFitRound(previousCenter.y) } : null, // CHANGE
+                    groupGeo: bedFitGeometrySnapshot(tg), // CHANGE
+                    groupRotation: bedFitRound(getTilerRotationDeg(tg)), // CHANGE
+                    lodCollapsed: isCollapsedLOD(tg), // CHANGE
+                    skipReason: sameBedMove ? "same-bed-move" : "" // CHANGE
+                }); // CHANGE
+                if (sameBedMove) continue; // CHANGE
+                const fitResult = applyBedFitGeometry(tg, bed, allowDragIntoBedFit, { txnId, source }); // CHANGE
+                if (fitResult) changed.push({ // CHANGE
+                    tg: tg, // CHANGE
+                    bed: fitResult.bed, // CHANGE
+                    fitWidth: fitResult.fitWidth, // CHANGE
+                    fitHeight: fitResult.fitHeight, // CHANGE
+                    bedFitChanged: !!fitResult.changed, // CHANGE
+                    layoutSnapshot: fitResult.layoutSnapshot, // CHANGE
+                    previousRotationDeg: fitResult.previousRotationDeg // CHANGE
+                }); // CHANGE
             } // MOVED
-            for (const item of changed) retileAfterBedFit(item.tg); // MOVED
+            for (const item of changed) retileAfterBedFit(item.tg, { // CHANGE
+                txnId, // CHANGE
+                source, // CHANGE
+                layoutSnapshot: item.layoutSnapshot, // CHANGE
+                previousRotationDeg: item.previousRotationDeg // CHANGE
+            }); // CHANGE
             for (const item of changed) { // MOVED
-                const bbox = getPlantCircleBBoxLocal(item.tg); // MOVED
-                if (trimGroupToPlantFootprint(item.tg, item.bed, bbox, item.fitWidth, item.fitHeight)) trimmed = true; // MOVED
+                const bbox = getPlantCircleBBoxLogical(item.tg); // CHANGE
+                if (trimGroupToPlantFootprint(item.tg, item.bed, bbox, item.fitWidth, item.fitHeight, { txnId, source })) trimmed = true; // CHANGE
             } // MOVED
         } finally { // MOVED
             model.endUpdate(); // MOVED
@@ -1613,6 +1936,24 @@ Draw.loadPlugin(function (ui) {
         if (trimmed) { // MOVED
             for (const item of changed) graph.refresh(item.tg); // MOVED
         } // MOVED
+        if (trimmed || changed.some(item => item.bedFitChanged)) markBedFitResizeSuppression(changed); // CHANGE
+        bedFitLog("normalize-end", { // CHANGE
+            txnId, // CHANGE
+            source, // CHANGE
+            changedCount: changed.length, // CHANGE
+            trimmed, // CHANGE
+            tables: { // CHANGE
+                "changed groups": changed.map(item => ({ // CHANGE
+                    groupId: bedFitCellId(item.tg), // CHANGE
+                    bedId: bedFitCellId(item.bed), // CHANGE
+                    fitWidth: item.fitWidth, // CHANGE
+                    fitHeight: item.fitHeight, // CHANGE
+                    bedFitChanged: item.bedFitChanged, // CHANGE
+                    finalGeo: bedFitGeometrySnapshot(item.tg), // CHANGE
+                    finalRotation: bedFitRound(getTilerRotationDeg(item.tg)) // CHANGE
+                })) // CHANGE
+            } // CHANGE
+        }); // CHANGE
         return changed.length; // MOVED
     } // MOVED
 
@@ -2899,6 +3240,7 @@ Draw.loadPlugin(function (ui) {
         graph.addListener(mxEvent.CELLS_MOVED, function (_sender, evt) { // MOVED
             const cells = evt.getProperty("cells"); // MOVED
             normalizeMovedTilerGroupsToBeds(cells, { // MOVED
+                source: "cells-moved", // CHANGE
                 allowDragIntoBedFit: true, // MOVED
                 skipSameBedMoveFit: true, // MOVED
                 moveDx: evt.getProperty("dx"), // MOVED
@@ -2908,7 +3250,7 @@ Draw.loadPlugin(function (ui) {
 
         graph.addListener(mxEvent.CELLS_RESIZED, function (_sender, evt) { // MOVED
             const cells = evt.getProperty("cells"); // MOVED
-            normalizeMovedTilerGroupsToBeds(cells, { allowDragIntoBedFit: false }); // MOVED
+            normalizeMovedTilerGroupsToBeds(cells, { source: "cells-resized", allowDragIntoBedFit: false }); // CHANGE
         }); // MOVED
     })(); // MOVED
 
