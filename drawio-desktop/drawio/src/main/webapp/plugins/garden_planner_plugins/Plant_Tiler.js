@@ -44,7 +44,7 @@ Draw.loadPlugin(function (ui) {
     // --------------- Tiler group scaling font size -----------------
     const GROUP_BASE_AREA_PX2 = 240 * 240;
     const GROUP_LABEL_FONT_MIN_PX = 10;
-    const GROUP_LABEL_FONT_MAX_PX = 100;
+    const GROUP_LABEL_FONT_MAX_PX = 18; // CHANGE
     const BED_FIT_TOLERANCE = 0.25; // MOVED
     const BED_FIT_RESIZE_SUPPRESS_MS = 250; // CHANGE
     const EDGE_CIRCLE_CENTER_CONTAINED_PCT = 0.40; // MOVED
@@ -1523,13 +1523,16 @@ Draw.loadPlugin(function (ui) {
             const r = Number(child.getAttribute("tile_r")); // CHANGE
             const c = Number(child.getAttribute("tile_c")); // CHANGE
             if (!Number.isFinite(r) || !Number.isFinite(c)) continue; // CHANGE
+            const auto = String(child.getAttribute("auto") || "0"); // CHANGE
+            const dirty = String(child.getAttribute("dirty") || "0"); // CHANGE
+            if (!(dirty === "1" || auto !== "1")) continue; // CHANGE
             const logicalGeo = childLogicalGeometryFromVisual(tg, child, rotationDeg); // CHANGE
             if (!logicalGeo) continue; // CHANGE
             tiles.push({ // CHANGE
                 r, c, // CHANGE
                 x: logicalGeo.x, y: logicalGeo.y, w: logicalGeo.w, h: logicalGeo.h, // CHANGE
-                auto: String(child.getAttribute("auto") || "0"), // CHANGE
-                dirty: String(child.getAttribute("dirty") || "0"), // CHANGE
+                auto, // CHANGE
+                dirty, // CHANGE
                 abbr: String(child.getAttribute("abbr") || ""), // CHANGE
                 label: String(child.getAttribute("label") || "") // CHANGE
             }); // CHANGE
@@ -1747,6 +1750,7 @@ Draw.loadPlugin(function (ui) {
         if (!g) return null; // MOVED
         const beforeGeo = bedFitGeometrySnapshot(tg); // CHANGE
         const beforeRotation = getTilerRotationDeg(tg); // CHANGE
+        const beforeBandPx = groupLabelMetrics(tg).bandPx; // CHANGE
         const layoutSnapshot = captureBedFitLayoutSnapshot(tg); // CHANGE
         const next = g.clone(); // MOVED
         if (fitWidth) next.width = targetFrameWidth + GROUP_PADDING_PX * 2; // MOVED
@@ -1761,6 +1765,9 @@ Draw.loadPlugin(function (ui) {
         const geometryChanged = !(nearlySameNumber(g.x, next.x) && nearlySameNumber(g.y, next.y) && nearlySameNumber(g.width, next.width) && nearlySameNumber(g.height, next.height)); // MOVED
         const rotationChanged = setCellRotationDeg(tg, bedRotation); // MOVED
         if (geometryChanged) model.setGeometry(tg, next); // MOVED
+        const afterBandPx = groupLabelMetrics(tg).bandPx; // CHANGE
+        const bandDeltaY = (Number(afterBandPx) || 0) - (Number(beforeBandPx) || 0); // CHANGE
+        shiftLayoutSnapshotByDeltaY(layoutSnapshot, bandDeltaY); // CHANGE
         bedFitLog("fit", { // CHANGE
             txnId: debugCtx && debugCtx.txnId, // CHANGE
             source: debugCtx && debugCtx.source, // CHANGE
@@ -1783,6 +1790,9 @@ Draw.loadPlugin(function (ui) {
             beforeRotation: bedFitRound(beforeRotation), // CHANGE
             bedRotation: bedFitRound(bedRotation), // CHANGE
             afterRotation: bedFitRound(getTilerRotationDeg(tg)), // CHANGE
+            beforeBandPx: bedFitRound(beforeBandPx), // CHANGE
+            afterBandPx: bedFitRound(afterBandPx), // CHANGE
+            bandDeltaY: bedFitRound(bandDeltaY), // CHANGE
             geometryChanged, // CHANGE
             rotationChanged, // CHANGE
             snapshotTiles: layoutSnapshot && Array.isArray(layoutSnapshot.tiles) ? layoutSnapshot.tiles.length : 0 // CHANGE
@@ -3035,6 +3045,7 @@ Draw.loadPlugin(function (ui) {
         if (ownsTitleUpdate) model.beginUpdate(); // CHANGE
         try {
             syncGroupTitle(model, groupCell);
+            applyGroupLabelFont(model, groupCell); // CHANGE
         } finally {
             if (ownsTitleUpdate) model.endUpdate(); // CHANGE
         }
