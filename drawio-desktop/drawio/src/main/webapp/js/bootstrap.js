@@ -1,7 +1,7 @@
 /**
  * Copyright (c) 2020-2025, JGraph Holdings Ltd
  * Copyright (c) 2020-2025, draw.io AG
- * Trellis change: load Electron desktop hooks before App.main.
+ * Trellis change: share Electron desktop hook loading before App.main.
  */
 /**
  * URL Parameters and protocol description are here:
@@ -237,6 +237,29 @@ function checkAllLoaded()
     }
 };
 
+function loadElectronDesktopHooks(onLoaded)
+{
+    if (!mxIsElectron)
+    {
+        onLoaded();
+        return;
+    }
+
+    if (urlParams['dev'] == '1')
+    {
+        mxscript('js/diagramly/DesktopLibrary.js'); // Trellis change: dev Electron hooks live under diagramly, not desktop.
+        mxscript('js/diagramly/ElectronApp.js'); // Trellis change: keep desktop menu methods available in dev mode.
+        onLoaded(); // Trellis change: dev mxscript writes synchronously when no onLoad callback is supplied.
+    }
+    else
+    {
+        mxscript('js/diagramly/DesktopLibrary.js', function()
+        {
+            mxscript('js/diagramly/ElectronApp.js', onLoaded);
+        });
+    }
+};
+
 var t0 = new Date();
 
 // Changes paths for local development environment
@@ -268,14 +291,10 @@ if (urlParams['dev'] == '1')
     // loads asynchronously) are available when the code loaded in Devel.js runs.
     mxscript(drawDevUrl + 'js/diagramly/Devel.js');
     
-    // Electron
-    if (mxIsElectron)
+    loadElectronDesktopHooks(function()
     {
-        mxscript('js/desktop/DesktopLibrary.js');
-        mxscript('js/desktop/ElectronApp.js');
-    }
-    
-    mxscript(drawDevUrl + 'js/PostConfig.js');
+        mxscript(drawDevUrl + 'js/PostConfig.js');
+    });
 }
 else
 {
@@ -291,41 +310,37 @@ else
         {
             mxscript('js/app.min.js', function()
             {
-                // Electron
-                if (mxIsElectron)
+                loadElectronDesktopHooks(function()
                 {
-                    mxscript('js/diagramly/DesktopLibrary.js', function()
+                    if (mxIsElectron)
                     {
-                        mxscript('js/diagramly/ElectronApp.js', function()
-                        {
-                            mxScriptsLoaded = true; // Trellis change: Electron methods must exist before App.main creates menus.
-                            checkAllLoaded();
+                        mxScriptsLoaded = true; // Trellis change: Electron methods must exist before App.main creates menus.
+                        checkAllLoaded();
 
-                            mxscript('js/extensions.min.js', function()
+                        mxscript('js/extensions.min.js', function()
+                        {
+                            mxscript('js/stencils.min.js', function()
                             {
-                                mxscript('js/stencils.min.js', function()
+                                mxscript('js/shapes-14-6-5.min.js', function()
                                 {
-                                    mxscript('js/shapes-14-6-5.min.js', function()
-                                    {
-                                        mxscript('js/PostConfig.js');
-                                    });
+                                    mxscript('js/PostConfig.js');
                                 });
                             });
                         });
-                    });
-                }
-                else if (!supportedDomain || navigator.onLine)
-                {
-                    mxScriptsLoaded = true;
-                    checkAllLoaded();
+                    }
+                    else if (!supportedDomain || navigator.onLine)
+                    {
+                        mxScriptsLoaded = true;
+                        checkAllLoaded();
 
-                    mxscript('js/PostConfig.js');
-                }
-                else
-                {
-                    mxScriptsLoaded = true;
-                    checkAllLoaded();
-                }
+                        mxscript('js/PostConfig.js');
+                    }
+                    else
+                    {
+                        mxScriptsLoaded = true;
+                        checkAllLoaded();
+                    }
+                });
             });
         };
         
