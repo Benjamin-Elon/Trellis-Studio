@@ -2178,11 +2178,13 @@ Draw.loadPlugin(function (ui) {
     // -------------------- UI bits (small DOM helpers) --------------------------------------
     function row(labelText, controlEl) {
         const wrap = document.createElement('div');
+        wrap.className = 'usl-scheduler-row'; // CHANGE
         wrap.style.display = 'flex';
         wrap.style.alignItems = 'center';
         wrap.style.gap = '8px';
         wrap.style.margin = '6px 0';
         const lab = document.createElement('label');
+        lab.className = 'usl-scheduler-row-label'; // CHANGE
         lab.textContent = labelText;
         lab.style.display = 'inline-block';
         lab.style.minWidth = '180px';
@@ -2362,6 +2364,7 @@ Draw.loadPlugin(function (ui) {
 
     function renderScheduleSummary() { // ADDED
         const root = document.createElement('div'); // ADDED
+        root.className = 'usl-scheduler-summary'; // CHANGE
         root.style.border = '1px solid #93c5fd'; // ADDED
         root.style.background = '#eff6ff'; // ADDED
         root.style.borderRadius = '6px'; // ADDED
@@ -2369,12 +2372,14 @@ Draw.loadPlugin(function (ui) {
         root.style.marginBottom = '10px'; // ADDED
 
         const title = document.createElement('div'); // ADDED
+        title.className = 'usl-scheduler-summary-title'; // CHANGE
         title.textContent = 'Schedule summary'; // ADDED
         title.style.fontWeight = '600'; // ADDED
         title.style.marginBottom = '8px'; // ADDED
         root.appendChild(title); // ADDED
 
         const grid = document.createElement('div'); // ADDED
+        grid.className = 'usl-scheduler-summary-grid'; // CHANGE
         grid.style.display = 'grid'; // ADDED
         grid.style.gridTemplateColumns = 'repeat(auto-fit, minmax(220px, 1fr))'; // ADDED
         grid.style.gap = '6px 16px'; // ADDED
@@ -2391,11 +2396,14 @@ Draw.loadPlugin(function (ui) {
             ['feasibility', 'Feasibility'] // ADDED
         ].forEach(([key, label]) => { // ADDED
             const item = document.createElement('div'); // ADDED
+            item.className = 'usl-scheduler-summary-item'; // CHANGE
             const labelEl = document.createElement('div'); // ADDED
+            labelEl.className = 'usl-scheduler-summary-label'; // CHANGE
             labelEl.textContent = label; // ADDED
             labelEl.style.fontSize = '11px'; // ADDED
             labelEl.style.color = '#4b5563'; // ADDED
             const valueEl = document.createElement('div'); // ADDED
+            valueEl.className = 'usl-scheduler-summary-value'; // CHANGE
             valueEl.style.fontSize = '12px'; // ADDED
             valueEl.style.fontWeight = key === 'feasibility' ? '600' : '400'; // ADDED
             item.appendChild(labelEl); // ADDED
@@ -4099,9 +4107,11 @@ Draw.loadPlugin(function (ui) {
 
         function makeSection(title) { // CHANGED
             const wrap = document.createElement('div'); // CHANGED
+            wrap.className = 'usl-scheduler-section'; // CHANGE
             wrap.style.marginTop = '12px'; // CHANGED
 
             const heading = document.createElement('div'); // CHANGED
+            heading.className = 'usl-scheduler-section-heading'; // CHANGE
             heading.textContent = title; // CHANGED
             heading.style.fontWeight = '600'; // CHANGED
             heading.style.fontSize = '13px'; // CHANGED
@@ -4110,6 +4120,7 @@ Draw.loadPlugin(function (ui) {
             heading.style.marginBottom = '8px'; // CHANGED
 
             const body = document.createElement('div'); // CHANGED
+            body.className = 'usl-scheduler-section-body'; // CHANGE
             wrap.appendChild(heading); // CHANGED
             wrap.appendChild(body); // CHANGED
 
@@ -5529,6 +5540,7 @@ Draw.loadPlugin(function (ui) {
 
 
         const btns = document.createElement('div'); // CHANGED
+        btns.className = 'usl-scheduler-footer-actions'; // CHANGE
         btns.style.marginTop = '12px'; // CHANGED
         btns.style.display = 'flex'; // CHANGED
         btns.style.justifyContent = 'flex-end'; // CHANGED
@@ -5574,6 +5586,7 @@ Draw.loadPlugin(function (ui) {
         });
 
         const rightBtns = document.createElement('div'); // CHANGED
+        rightBtns.className = 'usl-scheduler-action-row'; // CHANGE
         rightBtns.style.display = 'flex'; // CHANGED
         rightBtns.style.gap = '8px'; // CHANGED
 
@@ -5667,7 +5680,7 @@ Draw.loadPlugin(function (ui) {
 
         const cancelBtn = mxUtils.button('Cancel', () => ui.hideDialog());
         [previewBtn, okBtn, cancelBtn].forEach(b => rightBtns.appendChild(b));
-        btns.appendChild(rightBtns); div.appendChild(btns);
+        btns.appendChild(rightBtns); // CHANGE
 
         await recomputeAll('cityChanged'); // CHANGED
         applyModeToUI(); // CHANGED
@@ -6331,6 +6344,7 @@ Draw.loadPlugin(function (ui) {
         // ============================================================================
 
         const tabsContainer = document.createElement("div");
+        tabsContainer.className = "usl-scheduler-dialog"; // CHANGE
         tabsContainer.style.display = "flex";
         tabsContainer.style.flexDirection = "column";
         tabsContainer.style.height = "100%";
@@ -6339,20 +6353,78 @@ Draw.loadPlugin(function (ui) {
         tabsContainer.style.overflow = "hidden"; // ADDED
         tabsContainer.style.boxSizing = "border-box"; // ADDED
 
+        const schedulerDialogStyle = document.createElement("style"); // NEW
+        schedulerDialogStyle.textContent = ` /* NEW */
+            .usl-scheduler-dialog{--usl-primary:#2563eb;--usl-primary-bg:#eff6ff;--usl-primary-soft:#93c5fd;--usl-primary-dark:#1d4ed8;--usl-success:#166534;--usl-success-bg:#f0fdf4;--usl-danger:#b91c1c;--usl-danger-bg:#fef2f2;--usl-warning:#92400e;--usl-warning-bg:#fffbeb;--usl-neutral-900:#172018;--usl-neutral-700:#4b5563;--usl-neutral-500:#777;--usl-neutral-300:#d1d5db;--usl-neutral-100:#f8f8f8;background:#fff;color:var(--usl-neutral-900);font:12px Arial,sans-serif;width:100%;min-width:0}
+            .usl-scheduler-header{padding:10px 12px 8px;border-bottom:1px solid var(--usl-neutral-300);display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:#fff}
+            .usl-scheduler-title{font-weight:700;font-size:15px;white-space:nowrap;color:var(--usl-neutral-900)}
+            .usl-scheduler-subtitle{color:var(--usl-neutral-700);font-weight:700;overflow-wrap:anywhere}
+            .usl-scheduler-tabs{padding:7px 12px;border-bottom:1px solid var(--usl-neutral-300);display:flex!important;gap:8px!important;align-items:center;flex-wrap:wrap;background:var(--usl-neutral-100);margin-bottom:0!important}
+            .usl-scheduler-tab{border:1px solid var(--usl-primary)!important;background:#fff!important;color:var(--usl-primary)!important;border-radius:6px!important;cursor:pointer!important;padding:6px 10px!important;font:12px Arial,sans-serif!important;min-width:100px!important}
+            .usl-scheduler-tab[data-active="true"]{background:var(--usl-primary)!important;color:#fff!important}
+            .usl-scheduler-body{flex:1 1 0!important;min-height:0;overflow-y:auto!important;overflow-x:hidden;padding:12px;overscroll-behavior:contain;background:#fff}
+            .usl-scheduler-footer{padding:9px 12px;border-top:1px solid #ccc;background:#fff;display:flex;justify-content:flex-end;align-items:center;gap:10px;flex-wrap:wrap}
+            .usl-scheduler-footer-actions{margin-top:0!important;display:flex!important;justify-content:flex-end!important;gap:8px;flex-wrap:wrap}
+            .usl-scheduler-action-row{display:flex!important;gap:8px!important;flex-wrap:wrap;justify-content:flex-end}
+            .usl-scheduler-dialog button{border:1px solid var(--usl-neutral-500);background:#fff;color:var(--usl-neutral-900);border-radius:6px;cursor:pointer;padding:6px 10px;font:12px Arial,sans-serif}
+            .usl-scheduler-dialog button:hover{border-color:var(--usl-primary);color:var(--usl-primary)}
+            .usl-scheduler-dialog input,.usl-scheduler-dialog select,.usl-scheduler-dialog textarea{padding:5px 6px;border:1px solid #bbb;border-radius:6px;box-sizing:border-box;font:12px Arial,sans-serif;max-width:100%}
+            .usl-scheduler-dialog input[type="checkbox"]{width:auto;padding:0;border:0}
+            .usl-scheduler-row > input[type="checkbox"]{flex:0 0 auto}
+            .usl-scheduler-dialog input:disabled,.usl-scheduler-dialog select:disabled{background:#f3f4f6;color:#6b7280}
+            .usl-scheduler-row{display:flex!important;gap:8px!important;align-items:center!important;flex-wrap:wrap;margin:6px 0!important}
+            .usl-scheduler-row-label{flex:0 0 180px;min-width:0!important;font-weight:700;color:var(--usl-neutral-700)}
+            .usl-scheduler-row > :not(label){flex:1 1 220px;min-width:0}
+            .usl-scheduler-section{border:1px solid var(--usl-neutral-300);border-radius:8px;background:#fff;overflow:hidden;margin-top:12px!important}
+            .usl-scheduler-section-heading{padding:9px 10px!important;border-bottom:1px solid var(--usl-neutral-300)!important;margin-bottom:0!important;background:var(--usl-neutral-100);font-weight:700!important;font-size:13px!important}
+            .usl-scheduler-section-body{padding:10px}
+            .usl-scheduler-summary{border:1px solid var(--usl-neutral-300)!important;border-radius:8px!important;background:linear-gradient(180deg,#fff,var(--usl-neutral-100))!important;margin-bottom:10px!important}
+            .usl-scheduler-summary-title{font-size:16px;font-weight:700!important;color:var(--usl-neutral-900)}
+            .usl-scheduler-summary-grid{display:grid!important;grid-template-columns:repeat(4,minmax(120px,1fr))!important;gap:6px!important}
+            .usl-scheduler-summary-item{border:1px solid var(--usl-neutral-300);border-radius:6px;background:#fff;padding:6px 7px;min-width:0}
+            .usl-scheduler-summary-label{color:var(--usl-neutral-700)!important;font-size:10px!important;font-weight:700;text-transform:uppercase}
+            .usl-scheduler-summary-value{margin-top:3px;font-size:13px!important;font-weight:700!important;color:var(--usl-neutral-900);white-space:normal;overflow-wrap:anywhere}
+            .usl-scheduler-dialog details{border:1px solid var(--usl-neutral-300)!important;border-radius:8px;background:#fff;margin-top:12px!important;overflow:hidden}
+            .usl-scheduler-dialog summary{padding:9px 10px!important;background:var(--usl-neutral-100);border-bottom:1px solid var(--usl-neutral-300);font-weight:700!important}
+            @media (max-width:760px){.usl-scheduler-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}.usl-scheduler-row-label{flex-basis:100%}.usl-scheduler-body{padding:10px}.usl-scheduler-title{white-space:normal}}
+        `; // NEW
+        tabsContainer.appendChild(schedulerDialogStyle); // NEW
+
+        const dialogHeader = document.createElement("div"); // NEW
+        dialogHeader.className = "usl-scheduler-header"; // NEW
+        const dialogTitle = document.createElement("div"); // NEW
+        dialogTitle.className = "usl-scheduler-title"; // NEW
+        dialogTitle.textContent = "Planting Scheduler"; // NEW
+        const dialogSubtitle = document.createElement("div"); // NEW
+        dialogSubtitle.className = "usl-scheduler-subtitle"; // NEW
+        dialogSubtitle.textContent = (effectivePlant?.plant_name || selPlant?.plant_name || "Schedule") + (hasPersistedSchedule ? " schedule" : " new schedule"); // NEW
+        dialogHeader.appendChild(dialogTitle); // NEW
+        dialogHeader.appendChild(dialogSubtitle); // NEW
+
         const tabsHeader = document.createElement("div");
+        tabsHeader.className = "usl-scheduler-tabs"; // CHANGE
         tabsHeader.style.display = "flex";
         tabsHeader.style.gap = "8px";
         tabsHeader.style.marginBottom = "8px";
 
         const tabsBody = document.createElement("div");
+        tabsBody.className = "usl-scheduler-body"; // CHANGE
         tabsBody.style.flex = "1";
         tabsBody.style.overflow = "auto";
 
-        function makeTabButton(label, targetEl) {
-            const b = mxUtils.button(label, () => {
+        function setActiveTabButton(activeButton) { // NEW
+            Array.from(tabsHeader.children).forEach(button => { // NEW
+                if (button && button.dataset) button.dataset.active = button === activeButton ? "true" : "false"; // NEW
+            }); // NEW
+        } // NEW
+
+        function makeTabButton(label, targetEl) { // CHANGE
+            const b = mxUtils.button(label, () => { // CHANGE
                 tabsBody.innerHTML = "";
                 tabsBody.appendChild(targetEl);
-            });
+                setActiveTabButton(b); // NEW
+            }); // CHANGE
+            b.className = "usl-scheduler-tab"; // NEW
             b.style.minWidth = "100px";
             return b;
         }
@@ -6364,20 +6436,29 @@ Draw.loadPlugin(function (ui) {
             await refreshTasksTabUI(); // CHANGED
             tabsBody.innerHTML = "";
             tabsBody.appendChild(tasksTab);
+            setActiveTabButton(tasksTabBtn); // NEW
         });
+        tasksTabBtn.className = "usl-scheduler-tab"; // NEW
         tasksTabBtn.style.minWidth = "100px";
 
         tabsHeader.appendChild(scheduleTabBtn);
         tabsHeader.appendChild(tasksTabBtn);
         tabsBody.appendChild(div);
 
-        tabsContainer.appendChild(tabsHeader);
-        tabsContainer.appendChild(tabsBody);
+        const dialogFooter = document.createElement("div"); // NEW
+        dialogFooter.className = "usl-scheduler-footer"; // NEW
+        dialogFooter.appendChild(btns); // NEW
+
+        tabsContainer.appendChild(dialogHeader); // NEW
+        tabsContainer.appendChild(tabsHeader); // CHANGE
+        tabsContainer.appendChild(tabsBody); // CHANGE
+        tabsContainer.appendChild(dialogFooter); // NEW
 
         // INITIAL RENDER
         renderTasksList();
+        setActiveTabButton(scheduleTabBtn); // NEW
 
-        ui.showDialog(tabsContainer, 960, 640, true, true); // CHANGED
+        ui.showDialog(tabsContainer, 1120, 720, true, true); // CHANGED
 
     }
 
@@ -7980,6 +8061,109 @@ Draw.loadPlugin(function (ui) {
     // -------------------- Plugin entry: add popup menu item --------------------------------
     function installSchedulerPlugin(ui) { // FIX: install from the existing outer plugin registration
         const graph = ui.editor.graph;
+
+        function installScheduleOverlayButton() { // NEW
+            if (graph.__uslScheduleOverlayButtonInstalled) return; // NEW
+            graph.__uslScheduleOverlayButtonInstalled = true; // NEW
+
+            const overlayState = { button: null, cell: null }; // NEW
+
+            function ensureGraphContainerPositioned() { // NEW
+                const container = graph.container; // NEW
+                if (!container) return false; // NEW
+                const computed = window.getComputedStyle(container); // NEW
+                if (computed.position === "static") container.style.position = "relative"; // NEW
+                return true; // NEW
+            } // NEW
+
+            function consumeOverlayEvent(evt) { // NEW
+                try { mxEvent.consume(evt); } catch (_) { } // NEW
+                if (evt && typeof evt.preventDefault === "function") evt.preventDefault(); // NEW
+                if (evt && typeof evt.stopPropagation === "function") evt.stopPropagation(); // NEW
+            } // NEW
+
+            function selectedTilerGroupForOverlay() { // NEW
+                const selected = graph.getSelectionCells ? graph.getSelectionCells() : []; // NEW
+                for (const cell of selected || []) { // NEW
+                    if (isTilerGroup(cell)) return cell; // NEW
+                } // NEW
+                return null; // NEW
+            } // NEW
+
+            function removeScheduleOverlayButton() { // NEW
+                const button = overlayState.button; // NEW
+                overlayState.button = null; // NEW
+                overlayState.cell = null; // NEW
+                if (button && button.parentNode) button.parentNode.removeChild(button); // NEW
+            } // NEW
+
+            function ensureScheduleOverlayButton() { // NEW
+                if (overlayState.button && overlayState.button.parentNode) return overlayState.button; // NEW
+                if (!ensureGraphContainerPositioned()) return null; // NEW
+
+                const button = document.createElement("button"); // NEW
+                button.type = "button"; // NEW
+                button.className = "usl-schedule-overlay-button"; // NEW
+                button.style.position = "absolute"; // NEW
+                button.style.zIndex = "1003"; // NEW
+                button.style.pointerEvents = "auto"; // NEW
+                button.style.border = "1px solid #2563eb"; // NEW
+                button.style.borderRadius = "6px"; // NEW
+                button.style.background = "#fff"; // NEW
+                button.style.color = "#1d4ed8"; // NEW
+                button.style.boxShadow = "0 2px 8px rgba(0,0,0,.18)"; // NEW
+                button.style.cursor = "pointer"; // NEW
+                button.style.font = "12px Arial,sans-serif"; // NEW
+                button.style.fontWeight = "700"; // NEW
+                button.style.padding = "5px 8px"; // NEW
+                button.style.whiteSpace = "nowrap"; // NEW
+                button.addEventListener("mousedown", consumeOverlayEvent); // NEW
+                button.addEventListener("dblclick", consumeOverlayEvent); // NEW
+                button.addEventListener("click", async function (evt) { // NEW
+                    consumeOverlayEvent(evt); // NEW
+                    const target = overlayState.cell; // NEW
+                    if (!target) return; // NEW
+                    try { await openScheduleDialog(ui, target); } // NEW
+                    catch (e) { mxUtils.alert("Scheduling error: " + (e?.message || String(e))); } // NEW
+                }); // NEW
+                graph.container.appendChild(button); // NEW
+                overlayState.button = button; // NEW
+                return button; // NEW
+            } // NEW
+
+            function syncScheduleOverlayButton() { // NEW
+                const target = selectedTilerGroupForOverlay(); // NEW
+                if (!target) { // NEW
+                    removeScheduleOverlayButton(); // NEW
+                    return; // NEW
+                } // NEW
+
+                const state = graph.view.getState(target); // NEW
+                if (!state) { // NEW
+                    removeScheduleOverlayButton(); // NEW
+                    return; // NEW
+                } // NEW
+
+                const button = ensureScheduleOverlayButton(); // NEW
+                if (!button) return; // NEW
+                overlayState.cell = target; // NEW
+                button.textContent = hasTilerSchedule(target) ? "Edit schedule" : "Set schedule"; // NEW
+                button.title = button.textContent; // NEW
+                button.style.left = Math.round(state.x + 6) + "px"; // NEW
+                button.style.top = Math.round(state.y + 6) + "px"; // NEW
+            } // NEW
+
+            graph.getSelectionModel().addListener(mxEvent.CHANGE, syncScheduleOverlayButton); // NEW
+            graph.view.addListener(mxEvent.SCALE, syncScheduleOverlayButton); // NEW
+            graph.view.addListener(mxEvent.TRANSLATE, syncScheduleOverlayButton); // NEW
+            graph.view.addListener(mxEvent.SCALE_AND_TRANSLATE, syncScheduleOverlayButton); // NEW
+            graph.getModel().addListener(mxEvent.CHANGE, syncScheduleOverlayButton); // NEW
+            if (graph.container) graph.container.addEventListener("scroll", syncScheduleOverlayButton, { passive: true }); // NEW
+            graph.addListener(mxEvent.DESTROY, removeScheduleOverlayButton); // NEW
+            syncScheduleOverlayButton(); // NEW
+        } // NEW
+
+        installScheduleOverlayButton(); // NEW
 
         // --- Harvest window bridge (installed once) ---
         if (!graph.__uslHarvestWindowsBridgeInstalled) {

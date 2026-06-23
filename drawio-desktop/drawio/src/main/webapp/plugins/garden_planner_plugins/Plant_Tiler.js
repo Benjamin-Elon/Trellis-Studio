@@ -23,6 +23,9 @@ Draw.loadPlugin(function (ui) {
     const GROUP_LABEL_BAND_PAD_PX = 6;
     const GROUP_LABEL_BAND_PX = Math.ceil(GROUP_LABEL_FONT_PX * GROUP_LABEL_LINE_HEIGHT + GROUP_LABEL_BAND_PAD_PX);
 
+    const MODULE_CURRENT_YEAR_ATTR = "current_year"; // NEW
+    const SEASON_START_YEAR_ATTR = "season_start_year"; // NEW
+
     // ---------- LOD settings ----------
     const LOD_TILE_THRESHOLD = 300; // collapse if rows*cols > this
     const LOD_SUMMARY_MIN_SIZE = 24; // min px size of summary marker
@@ -320,6 +323,23 @@ Draw.loadPlugin(function (ui) {
 
 
     // ----------------- Tiler group helpers ----------------------
+
+
+    function isValidGardenYear(value) { // NEW
+        const n = Number(value); // NEW
+        return Number.isFinite(n) && n > 1900 && n < 3000; // NEW
+    } // NEW
+    
+    function getCurrentCalendarYear() { // NEW
+        return new Date().getFullYear(); // NEW
+    } // NEW
+    
+    function getCurrentGardenYear(moduleCell) { // NEW
+        const moduleYear = getXmlAttr(moduleCell, MODULE_CURRENT_YEAR_ATTR, ""); // NEW
+        if (isValidGardenYear(moduleYear)) return Math.trunc(Number(moduleYear)); // NEW
+    
+        return getCurrentCalendarYear(); // NEW
+    } // NEW
 
     function findTilerGroupAncestor(graph, cell) {
         const model = graph.getModel();
@@ -2122,9 +2142,13 @@ Draw.loadPlugin(function (ui) {
         const relX = Math.max(0, Math.min(gw - w, localX));
         const relY = Math.max(0, Math.min(gh - h, localY));
 
+        const seasonStartYear = getCurrentGardenYear(moduleCell); // NEW
+
         const groupVal = createXmlValue("TilerGroup", {
             label: "New Plant Group",
             tiler_group: "1",
+            season_start_year: String(seasonStartYear), // NEW
+
             spacing_cm: String(spacingCm),
             spacing_x_cm: String(spacingCm),
             spacing_y_cm: String(spacingCm),
@@ -2775,6 +2799,9 @@ Draw.loadPlugin(function (ui) {
 
         const parent = model.getParent(first) || graph.getDefaultParent();
 
+        const moduleCell = findGardenModuleAncestor(graph, parent); // NEW
+        const seasonStartYear = moduleCell ? getCurrentGardenYear(moduleCell) : getCurrentCalendarYear(); // NEW
+
         // Assumption: all circles share the same parent after the move.                                   
         // If not, bucket before calling this function.                                                    
 
@@ -2820,6 +2847,8 @@ Draw.loadPlugin(function (ui) {
         const groupVal = createXmlValue("TilerGroup", {
             label: `${titleName}`,
             tiler_group: "1",
+            season_start_year: String(seasonStartYear), // NEW
+            
             plant_abbr: abbr,
             plant_id: plantId,
             plant_name: plantName,

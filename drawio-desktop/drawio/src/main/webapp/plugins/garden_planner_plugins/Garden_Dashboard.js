@@ -30,6 +30,7 @@ Draw.loadPlugin(function (ui) {
 
     const DASH_ATTR = "garden_dashboard";
     const DASH_YEAR_ATTR = "dashboard_year";
+    const MODULE_CURRENT_YEAR_ATTR = "current_year"; // NEW
     const YEAR_HIDDEN_ATTR = "year_hidden";
     const PLAN_YEAR_JSON_ATTR = "plan_year_json";
 
@@ -81,6 +82,16 @@ Draw.loadPlugin(function (ui) {
         }
         return null;
     }
+
+    function findGardenModuleAncestor(graph, cell) { // NEW
+        const m = graph.getModel(); // NEW
+        let cur = cell; // NEW
+        while (cur) { // NEW
+            if (isGardenModule(cur)) return cur; // NEW
+            cur = m.getParent(cur); // NEW
+        } // NEW
+        return null; // NEW
+    } // NEW
 
     function findDashboardAncestor(cell) {
         let cur = cell;
@@ -244,15 +255,45 @@ Draw.loadPlugin(function (ui) {
         return null;
     }
 
-    function getDashboardYear(dashCell) {
-        const y = toInt(getCellAttr(dashCell, DASH_YEAR_ATTR, ""), NaN);
-        if (Number.isFinite(y) && y > 1900 && y < 3000) return y;
-        return new Date().getFullYear();
-    }
+    function isValidYear(n) { // NEW
+        return Number.isFinite(n) && n > 1900 && n < 3000; // NEW
+    } // NEW
 
-    function setDashboardYear(dashCell, year) {
-        setCellAttr(dashCell, DASH_YEAR_ATTR, String(year));
-    }
+    function getAttrYear(cell, key) { // NEW
+        const y = toInt(getCellAttr(cell, key, ""), NaN); // NEW
+        return isValidYear(y) ? y : NaN; // NEW
+    } // NEW
+
+    function getModuleCurrentYear(moduleCell) { // NEW
+        return getAttrYear(moduleCell, MODULE_CURRENT_YEAR_ATTR); // NEW
+    } // NEW
+
+    function setModuleCurrentYear(moduleCell, year) { // NEW
+        const y = toInt(year, NaN); // NEW
+        if (!moduleCell || !isGardenModule(moduleCell) || !isValidYear(y)) return; // NEW
+        setCellAttr(moduleCell, MODULE_CURRENT_YEAR_ATTR, String(y)); // NEW
+    } // NEW
+
+    function getDashboardYear(dashCell) { // CHANGE
+        const dashYear = getAttrYear(dashCell, DASH_YEAR_ATTR); // CHANGE
+        if (isValidYear(dashYear)) return dashYear; // CHANGE
+
+        const moduleCell = findGardenModuleAncestor(graph, dashCell); // NEW
+        const moduleYear = getModuleCurrentYear(moduleCell); // NEW
+        if (isValidYear(moduleYear)) return moduleYear; // NEW
+
+        return new Date().getFullYear(); // CHANGE
+    } // CHANGE
+
+    function setDashboardYear(dashCell, year, moduleCell) { // CHANGE
+        const y = toInt(year, NaN); // NEW
+        if (!isValidYear(y)) return; // NEW
+
+        setCellAttr(dashCell, DASH_YEAR_ATTR, String(y)); // CHANGE
+
+        const mod = moduleCell || findGardenModuleAncestor(graph, dashCell); // NEW
+        if (mod) setModuleCurrentYear(mod, y); // NEW
+    } // CHANGE
 
     function notifyYearFilterChanged(moduleCell, selectedYear) {
         try {
@@ -552,6 +593,10 @@ Draw.loadPlugin(function (ui) {
     }
 
     function applyYearVisibilityToModule(moduleCell, selectedYear) {
+        selectedYear = toInt(selectedYear, new Date().getFullYear()); // NEW
+        if (!isValidYear(selectedYear)) selectedYear = new Date().getFullYear(); // NEW
+        setModuleCurrentYear(moduleCell, selectedYear); // NEW
+
         const all = getDescendants(moduleCell);
         const tilers = all.filter(isTilerGroup);
         const cards = all.filter(isKanbanCard);
@@ -905,16 +950,18 @@ Draw.loadPlugin(function (ui) {
         prev.addEventListener("click", (ev) => {
             ev.preventDefault();
             ev.stopPropagation();
+
+            const moduleCell = findGardenModuleAncestor(graph, dashCell); // CHANGE
+
             model.beginUpdate();
             try {
                 const y = getDashboardYear(dashCell);
-                setDashboardYear(dashCell, y - 1);
+                setDashboardYear(dashCell, y - 1, moduleCell); // CHANGE
             } finally {
                 model.endUpdate();
             }
 
-            const moduleCell = findModuleAncestor(graph, dashCell);
-            if (moduleCell) applyYearVisibilityToModule(moduleCell, getDashboardYear(dashCell));
+            if (moduleCell) applyYearVisibilityToModule(moduleCell, getDashboardYear(dashCell)); // CHANGE
 
             recomputeAndRenderDashboard(dashCell);
         });
@@ -923,15 +970,18 @@ Draw.loadPlugin(function (ui) {
         next.addEventListener("click", (ev) => {
             ev.preventDefault();
             ev.stopPropagation();
+
+            const moduleCell = findGardenModuleAncestor(graph, dashCell); // CHANGE
+
             model.beginUpdate();
             try {
                 const y = getDashboardYear(dashCell);
-                setDashboardYear(dashCell, y + 1);
+                setDashboardYear(dashCell, y + 1, moduleCell); // CHANGE
             } finally {
                 model.endUpdate();
             }
-            const moduleCell = findModuleAncestor(graph, dashCell);
-            if (moduleCell) applyYearVisibilityToModule(moduleCell, getDashboardYear(dashCell));
+
+            if (moduleCell) applyYearVisibilityToModule(moduleCell, getDashboardYear(dashCell)); // CHANGE
 
             recomputeAndRenderDashboard(dashCell);
         });
@@ -944,6 +994,8 @@ Draw.loadPlugin(function (ui) {
             if (!moduleCell) return;
 
             const year = getDashboardYear(dashCell);
+
+            setDashboardYear(dashCell, year, moduleCell); // NEW
 
             try {
                 window.dispatchEvent(new CustomEvent(PLAN_YEAR_EVENT, {
@@ -964,6 +1016,8 @@ Draw.loadPlugin(function (ui) {
             if (!moduleCell) return;
 
             const year = getDashboardYear(dashCell);
+
+            setDashboardYear(dashCell, year, moduleCell); // NEW
 
             try {
                 window.dispatchEvent(new CustomEvent(ALLOCATE_PLAN_EVENT, {
@@ -1210,8 +1264,10 @@ Draw.loadPlugin(function (ui) {
         const inserted = graph.insertVertex(parent, null, "", x, y, w, h, DASH_STYLE);
 
         setCellAttr(inserted, DASH_ATTR, "1");
-        setDashboardYear(inserted, new Date().getFullYear());
-        applyYearVisibilityToModule(moduleCell, getDashboardYear(inserted));
+
+        const initialYear = getModuleCurrentYear(moduleCell) || new Date().getFullYear(); // NEW
+        setDashboardYear(inserted, initialYear, moduleCell); // CHANGE
+        applyYearVisibilityToModule(moduleCell, initialYear); // CHANGE
 
         // Ensure it is visually on top of other children (optional)
         try { graph.orderCells(false, [inserted]); } catch (e) { }
@@ -1340,28 +1396,28 @@ Draw.loadPlugin(function (ui) {
         priority: 200, // NEW
         addItems: function (menu, cell, evt) { // CHANGE
 
-        if (!cell) return;
+            if (!cell) return;
 
-        // If user right-clicks inside something, we want the garden module ancestor
-        const mod = isGardenModule(cell) ? cell : (function () {
-            const anc = findModuleAncestor(graph, cell);
-            return (anc && isGardenModule(anc)) ? anc : null;
-        })();
+            // If user right-clicks inside something, we want the garden module ancestor
+            const mod = isGardenModule(cell) ? cell : (function () {
+                const anc = findModuleAncestor(graph, cell);
+                return (anc && isGardenModule(anc)) ? anc : null;
+            })();
 
-        if (!mod) return;
+            if (!mod) return;
 
-        const existing = findDashboardCell(mod);
-        if (existing) return;
+            const existing = findDashboardCell(mod);
+            if (existing) return;
 
-        menu.addSeparator();
-        menu.addItem("Create Garden Dashboard", null, function () {
-            graph.getModel().beginUpdate();
-            try {
-                createDashboardCell(mod);
-            } finally {
-                graph.getModel().endUpdate();
-            }
-        });
+            menu.addSeparator();
+            menu.addItem("Create Garden Dashboard", null, function () {
+                graph.getModel().beginUpdate();
+                try {
+                    createDashboardCell(mod);
+                } finally {
+                    graph.getModel().endUpdate();
+                }
+            });
         } // CHANGE
     }); // CHANGE
 
@@ -1375,26 +1431,24 @@ Draw.loadPlugin(function (ui) {
                 ensureOverlayForDashboard(c);
                 recomputeAndRenderDashboard(c);
 
-                const mod = findModuleAncestor(graph, c);
-                if (mod) applyYearVisibilityToModule(mod, getDashboardYear(c));
+                const mod = findGardenModuleAncestor(graph, c); // CHANGE
+                if (mod) { // CHANGE
+                    const year = getDashboardYear(c); // NEW
+                    setDashboardYear(c, year, mod); // NEW
+                    applyYearVisibilityToModule(mod, year); // CHANGE
+                } // CHANGE
             }
         }
 
         scheduleOverlayReposition();
     }
 
-    function scheduleAttachExistingDashboards() {    
-        setTimeout(function () {
-            attachExistingDashboards();
-        }, 5000);
-    }
-
-    function scheduleAttachExistingDashboards() {    
+    function scheduleAttachExistingDashboards() {
         setTimeout(function () {
             attachExistingDashboards();
         }, 10000);
     }
-    
+
     scheduleAttachExistingDashboards();
 
 });
