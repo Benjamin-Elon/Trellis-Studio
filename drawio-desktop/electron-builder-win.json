@@ -31,12 +31,12 @@
   	"oneClick": false,
     "perMachine": true,
     "allowToChangeInstallationDirectory": true,
-    "runAfterFinish": false,
+    "runAfterFinish": true,
     "createDesktopShortcut": false
   },
   "msi": {
     "artifactName": "${productName}-${version}.${ext}",
-    "runAfterFinish": false,
+    "runAfterFinish": true,
     "createDesktopShortcut": false
   },
   "afterPack": "build/fuses.cjs",

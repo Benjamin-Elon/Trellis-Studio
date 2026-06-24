@@ -24,3 +24,23 @@ test('Electron Builder configs rebuild native modules for the packaged Electron 
 		assert.equal(config.npmRebuild, true, `${fileName} must keep npmRebuild enabled`);
 	}
 });
+
+test('Windows installers offer to run Trellis after installation finishes', () => {
+	const windowsConfigs = [
+		'electron-builder-win.json',
+		'electron-builder-win32.json',
+		'electron-builder-win-arm64.json',
+	];
+
+	for (const fileName of windowsConfigs) {
+		const config = readBuilderConfig(fileName);
+
+		// Trellis release: NSIS finish pages should offer the checked Run Trellis for Drawio option.
+		assert.equal(config.nsis?.runAfterFinish, true, `${fileName} NSIS must run after finish`);
+	}
+
+	const winConfig = readBuilderConfig('electron-builder-win.json');
+
+	// Trellis release: the x64 MSI also supports electron-builder's finish-page run option.
+	assert.equal(winConfig.msi?.runAfterFinish, true, 'electron-builder-win.json MSI must run after finish');
+});

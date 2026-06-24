@@ -33,6 +33,7 @@ Draw.loadPlugin(function (ui) {
     const DEFAULT_METRIC_BED_LENGTH_CM = 200; // CHANGE
     const DEFAULT_IMPERIAL_BED_WIDTH_CM = 4 * CM_PER_FOOT; // CHANGE
     const DEFAULT_IMPERIAL_BED_LENGTH_CM = 8 * CM_PER_FOOT; // CHANGE
+    const TILER_GROUP_CREATED_EVENT = "usl:tilerGroupCreated"; // CHANGE
 
     // ---------- LOD settings ----------
     const LOD_TILE_THRESHOLD = 300; // collapse if rows*cols > this
@@ -2573,6 +2574,19 @@ Draw.loadPlugin(function (ui) {
         for (const c of (cells || [])) graph.refresh(c);
     }
 
+    function notifyTilerGroupCreated(graph, group, source) { // CHANGE
+        if (!graph || !group) return; // CHANGE
+        const groupId = group.id || ""; // CHANGE
+        setTimeout(function () { // CHANGE
+            const model = graph.getModel && graph.getModel(); // CHANGE
+            const liveGroup = groupId && model && model.getCell ? model.getCell(groupId) : group; // CHANGE
+            if (!liveGroup || !isTilerGroup(liveGroup)) return; // CHANGE
+            try { // CHANGE
+                graph.fireEvent(new mxEventObject(TILER_GROUP_CREATED_EVENT, "cell", liveGroup, "cellId", liveGroup.id || groupId, "source", source || "")); // CHANGE
+            } catch (_) { } // CHANGE
+        }, 0); // CHANGE
+    } // CHANGE
+
     function createDefaultGardenBed(graph, moduleCell, clickX, clickY) { // CHANGE
         const dimsCm = getDefaultBedDimensionsCm(moduleCell); // CHANGE
         if (!dimsCm) throw new Error("Default bed dimensions are not set."); // CHANGE
@@ -2671,6 +2685,7 @@ Draw.loadPlugin(function (ui) {
         } finally {
             model.endUpdate();
         }
+        notifyTilerGroupCreated(graph, group, "empty-group"); // CHANGE
         return group; // CHANGE
     }
 
@@ -3385,6 +3400,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         graph.setSelectionCell(group);
+        notifyTilerGroupCreated(graph, group, "plant-circle-wrap"); // CHANGE
         return group;
     }
 

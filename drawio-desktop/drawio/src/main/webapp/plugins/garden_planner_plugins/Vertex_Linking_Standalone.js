@@ -9,6 +9,7 @@ Draw.loadPlugin(function (ui) {
     let model = graph.getModel();
 
     const LINK_ATTR = 'linkedTo';
+    const TILER_GROUP_CREATED_EVENT = 'usl:tilerGroupCreated'; // CHANGE
     const HL_TAG_KEY = 'manualLinkHL';
     const HL_OLD_COLOR = 'manualLinkOldColor';
     const HL_OLD_WIDTH = 'manualLinkOldWidth';
@@ -3122,6 +3123,30 @@ Draw.loadPlugin(function (ui) {
             if (sel && m.isVertex(sel)) highlightLinked(sel);
         }
     });
+
+    function resolveLiveCreatedTilerGroup(evt) { // CHANGE
+        const m = graph.getModel(); // CHANGE
+        const eventCell = evt && evt.getProperty ? evt.getProperty('cell') : null; // CHANGE
+        const eventCellId = evt && evt.getProperty ? evt.getProperty('cellId') : null; // CHANGE
+        const cellId = eventCellId || (eventCell && eventCell.id) || ''; // CHANGE
+        const liveCell = cellId && m.getCell ? m.getCell(cellId) : eventCell; // CHANGE
+        if (!liveCell || !isTilerGroup(liveCell)) return null; // CHANGE
+        if (typeof m.contains === 'function' && !m.contains(liveCell)) return null; // CHANGE
+        return liveCell; // CHANGE
+    } // CHANGE
+
+    graph.addListener(TILER_GROUP_CREATED_EVENT, function (_sender, evt) { // CHANGE
+        const createdGroup = resolveLiveCreatedTilerGroup(evt); // CHANGE
+        if (!createdGroup) return; // CHANGE
+        if (graph.getSelectionCell && graph.getSelectionCell() !== createdGroup) graph.setSelectionCell(createdGroup); // CHANGE
+        setTimeout(function () { // CHANGE
+            const liveGroup = resolveLiveCreatedTilerGroup(evt); // CHANGE
+            if (!liveGroup) return; // CHANGE
+            if (graph.getSelectionCell && graph.getSelectionCell() !== liveGroup) graph.setSelectionCell(liveGroup); // CHANGE
+            taskScheduleOverlay.showScheduleOnly(liveGroup); // CHANGE
+            taskScheduleOverlay.refresh(); // CHANGE
+        }, 0); // CHANGE
+    }); // CHANGE
 
 
     // Selection Highlight Logic

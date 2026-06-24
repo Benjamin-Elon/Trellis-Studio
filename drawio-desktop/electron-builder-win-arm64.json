@@ -34,7 +34,7 @@
   	"oneClick": false,
     "perMachine": true,
     "allowToChangeInstallationDirectory": true,
-    "runAfterFinish": false,
+    "runAfterFinish": true,
     "createDesktopShortcut": false
   },
   "portable": {
