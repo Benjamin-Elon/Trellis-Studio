@@ -290,7 +290,7 @@ App.pluginRegistry = {    'trellisContextMenu': 'plugins/garden_planner_plugins/
     'gardenTasks': 'plugins/garden_planner_plugins/Garden_Task_Manager.js',                     // CHANGE
     'gardenModules': 'plugins/garden_planner_plugins/Modules_Standalone.js',                    // CHANGE
     'gardenParenting': 'plugins/garden_planner_plugins/Planting_Group_Parenting_Controls.js',   // CHANGE
-    'gardenScheduler': 'plugins/garden_planner_plugins/Planting_Scheduler.js',                  // CHANGE
+    'gardenScheduler': 'plugins/garden_planner_plugins/Garden_Scheduler_Dialog.js',              // CHANGE
     'gardenClickThrough': 'plugins/garden_planner_plugins/Deep_Click_Through.js',                // CHANGE
     'gardenLinking': 'plugins/garden_planner_plugins/Vertex_Linking_Standalone.js',              // CHANGE
     'tidyContextMenu': 'plugins/garden_planner_plugins/Tidy_Context_Menu.js',                    // CHANGE

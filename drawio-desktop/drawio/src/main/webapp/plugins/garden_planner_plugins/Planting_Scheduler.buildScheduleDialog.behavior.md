@@ -2,15 +2,23 @@
 
 ## Purpose
 
-This document freezes the observable behavior of `buildScheduleDialog()` before
-the function is decomposed. It describes the current implementation rather than
-an intended replacement design.
+This document freezes the observable behavior of `buildScheduleDialog()` while
+the scheduler is split into a dialog entrypoint plus pure scheduling cores. It
+describes the current behavior rather than an intended replacement design.
 
 Source under characterization:
 
-- `Planting_Scheduler.js`
-- `buildScheduleDialog()` begins near line 3670.
-- `openScheduleDialog()` calls it near line 6966.
+- `Garden_Scheduler_Dialog.js`
+- `Garden_Scheduler_Shared_Core.js`
+- `Garden_Scheduler_Annual_Core.js`
+- `Garden_Scheduler_Perennial_Core.js`
+- `buildScheduleDialog()` remains owned by the dialog entrypoint.
+- `openScheduleDialog()` remains the public `window.USL.scheduler` entrypoint.
+
+The split is intended to preserve dialog behavior. The shared, annual, and
+perennial core modules own pure scheduling calculations only; database models,
+dialog DOM, task editing, graph writes, and runtime event bridges remain in
+`Garden_Scheduler_Dialog.js`.
 
 ## Assumptions
 

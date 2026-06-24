@@ -13,8 +13,23 @@ const schedulerPath = path.join(
     'webapp',
     'plugins',
     'garden_planner_plugins',
-    'Planting_Scheduler.js'
+    'Garden_Scheduler_Dialog.js'
 );
+const schedulerCorePaths = [ // ADDED
+    'Garden_Scheduler_Shared_Core.js', // ADDED
+    'Garden_Scheduler_Annual_Core.js', // ADDED
+    'Garden_Scheduler_Perennial_Core.js' // ADDED
+].map(fileName => path.join( // ADDED
+    __dirname, // ADDED
+    '..', // ADDED
+    'drawio', // ADDED
+    'src', // ADDED
+    'main', // ADDED
+    'webapp', // ADDED
+    'plugins', // ADDED
+    'garden_planner_plugins', // ADDED
+    fileName // ADDED
+)); // ADDED
 const taskManagerPath = path.join(
     __dirname,
     '..',
@@ -44,6 +59,11 @@ function loadSchedulerHooks() {
             }
         }
     });
+    for (const corePath of schedulerCorePaths) { // ADDED
+        vm.runInContext(fs.readFileSync(corePath, 'utf8'), context, { // ADDED
+            filename: corePath // ADDED
+        }); // ADDED
+    } // ADDED
     vm.runInContext(fs.readFileSync(schedulerPath, 'utf8'), context, {
         filename: schedulerPath
     });
