@@ -1,0 +1,17 @@
+{
+  "city_history_years": 15,
+  "db_path": "trellis_database/Trellis_database.sqlite",
+  "default_variety_count": 5,
+  "forecast_days": 16,
+  "gdd_base_c": 5,
+  "open_meteo": {
+    "archive_url": "https://archive-api.open-meteo.com/v1/archive",
+    "forecast_model": "best_match",
+    "forecast_url": "https://api.open-meteo.com/v1/forecast",
+    "geocoding_url": "https://geocoding-api.open-meteo.com/v1/search",
+    "historical_dataset": "open-meteo-archive"
+  },
+  "openai_model": "gpt-5.5",
+  "openai_reasoning_effort": "high",
+  "runs_dir": "trellis_seed_runs"
+}

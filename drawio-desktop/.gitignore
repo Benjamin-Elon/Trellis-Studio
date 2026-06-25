@@ -6,3 +6,6 @@ node_modules
 /.settings
 package-lock.json
 .DS_Store
+trellis_seed_runs/
+__pycache__/
+*.pyc

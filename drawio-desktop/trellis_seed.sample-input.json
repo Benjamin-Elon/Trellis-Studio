@@ -1,0 +1,35 @@
+{
+  "tables": [
+    "Plants",
+    "Cities",
+    "Companions"
+  ],
+  "settings": {
+    "variety_count": 5
+  },
+  "cities": [
+    {
+      "name": "Vancouver, BC"
+    }
+  ],
+  "crops": [
+    {
+      "name": "Lettuce",
+      "sources": [
+        "Add extension, seed packet, or agronomy source URLs here."
+      ],
+      "notes": "Replace this sample with source-backed notes before generation.",
+      "variety_count": 5
+    }
+  ],
+  "companions": [
+    {
+      "p1": "Lettuce",
+      "p2": "Carrot",
+      "sources": [
+        "Add source URLs here."
+      ],
+      "notes": "Replace this sample with source-backed companion evidence."
+    }
+  ]
+}

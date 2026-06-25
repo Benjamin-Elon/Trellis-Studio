@@ -16,6 +16,8 @@
     "test:release-prepare": "node --test ./test/release-prepare.test.mjs",
     "start": "electron .",
     "sync": "node ./sync.cjs",
+    "trellis:seed": "python ./scripts/trellis_seed_cli.py",
+    "test:trellis-seed": "python -m unittest discover -s ./test/trellis_seed -p \"test_*.py\"",
     "release:prepare": "node ./scripts/release-prepare.mjs",
     "test:year-planner": "node --test ./test/year-planner.test.cjs ./test/year-planner-dom.test.cjs",
     "test:year-planner:model": "node --test ./test/year-planner.test.cjs",

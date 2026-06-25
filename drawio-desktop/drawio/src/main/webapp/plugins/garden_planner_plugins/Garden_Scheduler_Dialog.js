@@ -663,6 +663,13 @@ Draw.loadPlugin(function (ui) {
                   template_json TEXT    NOT NULL,
                   updated_at    TEXT    NOT NULL,
                   PRIMARY KEY (plant_id, method_id)
+                );
+                CREATE TABLE IF NOT EXISTS VarietyTaskTemplates (
+                  variety_id    INTEGER NOT NULL,
+                  method_id     TEXT    NOT NULL,
+                  template_json TEXT    NOT NULL,
+                  updated_at    TEXT    NOT NULL,
+                  PRIMARY KEY (variety_id, method_id)
                 );`;
             await execAll(sql, []);
         }
@@ -692,6 +699,29 @@ Draw.loadPlugin(function (ui) {
                 LIMIT 1;`;
             const rows = await queryAll(sql, [Number(plantId), normalizedMethodId]);
             return this._safeParseTemplateRow(rows[0] || null);
+        }
+
+        static async loadVarietyTemplate(varietyId, methodId) {
+            await this.ensureTables();
+            const vid = Number(varietyId);
+            const normalizedMethodId = normId(methodId); // FIX
+            if (!Number.isFinite(vid) || !normalizedMethodId) return null;
+            const sql = `
+                SELECT template_json
+                FROM VarietyTaskTemplates
+                WHERE variety_id = ? AND LOWER(TRIM(method_id)) = ?
+                ORDER BY CASE
+                           WHEN TRIM(method_id) = LOWER(TRIM(method_id)) THEN 0
+                           ELSE 1
+                         END,
+                         method_id
+                LIMIT 1;`;
+            const rows = await queryAll(sql, [vid, normalizedMethodId]);
+            return this._safeParseTemplateRow(rows[0] || null);
+        }
+
+        static async loadMethodBuiltinTemplate(methodId) {
+            return getDefaultTaskTemplateForPlantingMethods(methodId); // ADDED
         }
 
         static async savePlantTemplate(plantId, methodId, template) {
@@ -5829,6 +5859,7 @@ Draw.loadPlugin(function (ui) {
         const resolved = await resolveTaskTemplate({
             cell,
             plantId: formState.plantId,
+            varietyId: formState.varietyId,
             methodId: formState.methodId
         });
 
@@ -6148,6 +6179,7 @@ Draw.loadPlugin(function (ui) {
             const resolved = await resolveTaskTemplate({
                 cell,
                 plantId: formState.plantId,
+                varietyId: formState.varietyId,
                 methodId: formState.methodId
             });
 
@@ -7497,6 +7529,7 @@ Draw.loadPlugin(function (ui) {
     function prettySourceLabel(src) {
         const map = {
             cell: "Cell override",
+            variety: "Variety default",
             plant: "Plant default",
             method_builtin: "Built-in method template",
             none: "No template",
@@ -7533,7 +7566,7 @@ Draw.loadPlugin(function (ui) {
             `Source: ${prettySourceLabel(taskTemplateSource)}${dirtyLabel}`;
     }
 
-    async function resolveTaskTemplate({ cell, plantId, methodId }) {
+    async function resolveTaskTemplate({ cell, plantId, varietyId = null, methodId }) {
         const raw = String(cell?.getAttribute?.("task_template_json") ?? "").trim();
         if (raw.length > 0) {
             try {
@@ -7546,12 +7579,17 @@ Draw.loadPlugin(function (ui) {
             }
         }
 
+        const vTpl = await TaskTemplateModel.loadVarietyTemplate(varietyId, methodId);
+        if (vTpl) {
+            return { template: vTpl, source: "variety" };
+        }
+
         const pTpl = await TaskTemplateModel.loadPlantTemplate(plantId, methodId);
         if (pTpl) {
             return { template: pTpl, source: "plant" };
         }
 
-        const methodTpl = await getDefaultTaskTemplateForPlantingMethods(methodId);
+        const methodTpl = await TaskTemplateModel.loadMethodBuiltinTemplate(methodId); // CHANGED
         if (methodTpl) {
             return { template: methodTpl, source: "method_builtin" };
         }
@@ -8420,6 +8458,7 @@ Draw.loadPlugin(function (ui) {
     if (window.USL_SCHEDULER_TESTING) {
         window.USL.scheduler.__test = {
             PlantModel,
+            TaskTemplateModel,
             CityClimate,
             PolicyFlags,
             ScheduleInputs,
@@ -8723,6 +8762,8 @@ Draw.loadPlugin(function (ui) {
             resolveInitialMethodSelection,
             resolveMethodBehavior,
             resolveValidMethodRecord,
+            TaskTemplateModel, // ADDED
+            resolveTaskTemplate,
             runUiAsyncOperation,
             computeAutoStartEndWindowForward,
             normId,

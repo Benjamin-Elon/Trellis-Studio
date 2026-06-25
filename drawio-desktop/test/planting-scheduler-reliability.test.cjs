@@ -650,6 +650,61 @@ test('task rule normalization defaults repeat cutoff fields', () => { // ADDED
     assert.equal(rule.repeatCutoffOffsetDirection, 'after'); // ADDED
 }); // ADDED
 
+test('task template resolution uses cell, variety, plant, method, none precedence', async () => { // ADDED
+    const model = hooks.TaskTemplateModel; // ADDED
+    const originalVariety = model.loadVarietyTemplate; // ADDED
+    const originalPlant = model.loadPlantTemplate; // ADDED
+    const originalMethod = model.loadMethodBuiltinTemplate; // ADDED
+    const cellTemplate = { version: 2, rules: [{ id: 'cell' }] }; // ADDED
+    const varietyTemplate = { version: 2, rules: [{ id: 'variety' }] }; // ADDED
+    const plantTemplate = { version: 2, rules: [{ id: 'plant' }] }; // ADDED
+    const methodTemplate = { version: 2, rules: [{ id: 'method' }] }; // ADDED
+    const emptyCell = { getAttribute: () => '' }; // ADDED
+    try { // ADDED
+        model.loadVarietyTemplate = async () => { throw new Error('variety should not load for cell templates'); }; // ADDED
+        model.loadPlantTemplate = async () => { throw new Error('plant should not load for cell templates'); }; // ADDED
+        model.loadMethodBuiltinTemplate = async () => { throw new Error('method should not load for cell templates'); }; // ADDED
+        let resolved = await hooks.resolveTaskTemplate({ // ADDED
+            cell: { getAttribute: key => key === 'task_template_json' ? JSON.stringify(cellTemplate) : '' }, // ADDED
+            plantId: 1, // ADDED
+            varietyId: 10, // ADDED
+            methodId: 'direct_sow.field' // ADDED
+        }); // ADDED
+        assert.equal(resolved.source, 'cell'); // ADDED
+        assert.equal(JSON.stringify(resolved.template), JSON.stringify(cellTemplate)); // ADDED
+
+        model.loadVarietyTemplate = async () => varietyTemplate; // ADDED
+        model.loadPlantTemplate = async () => plantTemplate; // ADDED
+        model.loadMethodBuiltinTemplate = async () => methodTemplate; // ADDED
+        resolved = await hooks.resolveTaskTemplate({ cell: emptyCell, plantId: 1, varietyId: 10, methodId: 'direct_sow.field' }); // ADDED
+        assert.equal(resolved.source, 'variety'); // ADDED
+        assert.equal(JSON.stringify(resolved.template), JSON.stringify(varietyTemplate)); // ADDED
+
+        model.loadVarietyTemplate = async () => null; // ADDED
+        model.loadPlantTemplate = async () => plantTemplate; // ADDED
+        model.loadMethodBuiltinTemplate = async () => methodTemplate; // ADDED
+        resolved = await hooks.resolveTaskTemplate({ cell: emptyCell, plantId: 1, varietyId: 10, methodId: 'direct_sow.field' }); // ADDED
+        assert.equal(resolved.source, 'plant'); // ADDED
+        assert.equal(JSON.stringify(resolved.template), JSON.stringify(plantTemplate)); // ADDED
+
+        model.loadVarietyTemplate = async () => null; // ADDED
+        model.loadPlantTemplate = async () => null; // ADDED
+        model.loadMethodBuiltinTemplate = async () => methodTemplate; // ADDED
+        resolved = await hooks.resolveTaskTemplate({ cell: emptyCell, plantId: 1, varietyId: 10, methodId: 'direct_sow.field' }); // ADDED
+        assert.equal(resolved.source, 'method_builtin'); // ADDED
+        assert.equal(JSON.stringify(resolved.template), JSON.stringify(methodTemplate)); // ADDED
+
+        model.loadMethodBuiltinTemplate = async () => null; // ADDED
+        resolved = await hooks.resolveTaskTemplate({ cell: emptyCell, plantId: 1, varietyId: 10, methodId: 'direct_sow.field' }); // ADDED
+        assert.equal(resolved.source, 'none'); // ADDED
+        assert.equal(resolved.template, null); // ADDED
+    } finally { // ADDED
+        model.loadVarietyTemplate = originalVariety; // ADDED
+        model.loadPlantTemplate = originalPlant; // ADDED
+        model.loadMethodBuiltinTemplate = originalMethod; // ADDED
+    } // ADDED
+}); // ADDED
+
 test('task rule task type metadata is custom-only and canonical mappings are generated', () => { // NEW
     const custom = hooks.normalizeTaskRule({ id: 'water_weekly', title: 'Water', taskTypeId: 'Watering' }); // NEW
     assert.equal(custom.taskTypeId, 'watering'); // NEW
