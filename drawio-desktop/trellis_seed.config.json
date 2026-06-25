@@ -12,6 +12,6 @@
     "historical_dataset": "open-meteo-archive"
   },
   "openai_model": "gpt-5.5",
-  "openai_reasoning_effort": "high",
+  "openai_reasoning_effort": "low",
   "runs_dir": "trellis_seed_runs"
 }

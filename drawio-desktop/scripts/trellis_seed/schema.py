@@ -89,6 +89,7 @@ OPENAI_PLANT_SCHEMA = {
             "required": sorted(PLANT_COLUMNS - {"plant_id"}),
         },
         "allowed_method_categories": {"type": "array", "items": {"type": "string"}},
+        "allowed_method_ids": {"type": "array", "items": {"type": "string"}},  # concrete crop methods
         "varieties": {
             "type": "array",
             "items": {
@@ -104,7 +105,7 @@ OPENAI_PLANT_SCHEMA = {
         },
         "provenance": PROVENANCE_SCHEMA,
     },
-    "required": ["row", "allowed_method_categories", "varieties", "provenance"],
+    "required": ["row", "allowed_method_categories", "allowed_method_ids", "varieties", "provenance"],
 }
 
 OPENAI_TEMPLATE_SCHEMA = {

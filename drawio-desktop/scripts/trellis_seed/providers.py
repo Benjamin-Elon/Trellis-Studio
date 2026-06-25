@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.parse
 import urllib.request
+from urllib.error import URLError
 from dataclasses import dataclass
 from typing import Any
 
@@ -128,20 +130,24 @@ class OpenMeteoClient:
         data = self._get_json(url)
         return ProviderTrace("open-meteo", {"url": url}, {"ok": bool(data)})
 
-    def geocode(self, name: str) -> tuple[dict[str, Any], ProviderTrace]:
-        query, qualifiers = self._split_location_query(name)
+    def geocode(self, name: str, qualifiers: dict[str, Any] | None = None) -> tuple[dict[str, Any], ProviderTrace]:
+        query, qualifier_tokens = self._split_location_query(name)
+        qualifier_tokens.update(self._explicit_qualifiers(qualifiers or {}))
         attempts = [query]
-        if query != name:
+        display_name = str(qualifiers.get("display_name") or name) if qualifiers else name
+        if query != display_name:
+            attempts.append(display_name)
+        if query != name and name not in attempts:
             attempts.append(name)
         traces: list[dict[str, Any]] = []
         for attempt in attempts:
             url = self._url(self.config["geocoding_url"], {"name": attempt, "count": 10, "language": "en", "format": "json"})
             data = self._get_json(url)
             traces.append({"url": url, "result_count": len(data.get("results") or [])})
-            match = self._best_geocode_match(data.get("results") or [], qualifiers)
+            match = self._best_geocode_match(data.get("results") or [], qualifier_tokens)
             if match:
-                return match, ProviderTrace("open-meteo", {"input": name, "attempts": traces}, data)
-        raise ProviderError(f"Open-Meteo did not find location '{name}'. Try a city name plus country, such as 'Vancouver, Canada'.")
+                return match, ProviderTrace("open-meteo", {"input": name, "qualifiers": qualifiers or {}, "attempts": traces}, data)
+        raise ProviderError(f"Open-Meteo did not verify location '{display_name}'. Try a city name plus country, such as 'Vancouver, Canada'.")
 
     def historical_daily(self, *, latitude: float, longitude: float, timezone: str, start_date: str, end_date: str) -> tuple[dict[str, Any], ProviderTrace]:
         params = {
@@ -174,8 +180,17 @@ class OpenMeteoClient:
 
     @staticmethod
     def _get_json(url: str) -> dict[str, Any]:
-        with urllib.request.urlopen(url, timeout=30) as response:
-            return json.loads(response.read().decode("utf-8"))
+        last_error: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                with urllib.request.urlopen(url, timeout=30) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except (ConnectionResetError, TimeoutError, URLError) as exc:
+                last_error = exc
+                if attempt == 3:
+                    break
+                time.sleep(attempt * 2)
+        raise ProviderError(f"Open-Meteo request failed after 3 attempts: {last_error}") from last_error
 
     @staticmethod
     def _split_location_query(name: str) -> tuple[str, set[str]]:
@@ -188,6 +203,18 @@ class OpenMeteoClient:
             expanded.add(token)
             expanded.update(PROVINCE_ALIASES.get(token, set()))
         return parts[0], expanded
+
+    @staticmethod
+    def _explicit_qualifiers(qualifiers: dict[str, Any]) -> set[str]:
+        tokens: set[str] = set()
+        for key in ("admin1", "country", "country_code"):
+            value = str(qualifiers.get(key) or "").strip()
+            if not value:
+                continue
+            token = _normalize_location_token(value)
+            tokens.add(token)
+            tokens.update(PROVINCE_ALIASES.get(token, set()))
+        return tokens
 
     @staticmethod
     def _best_geocode_match(results: list[dict[str, Any]], qualifiers: set[str]) -> dict[str, Any] | None:
@@ -213,6 +240,32 @@ PROVINCE_ALIASES = {
     "bc": {"british columbia", "ca", "canada"},
     "b c": {"british columbia", "ca", "canada"},
     "british columbia": {"bc", "ca", "canada"},
+    "ab": {"alberta", "ca", "canada"},  # Canadian city suggestions
+    "alberta": {"ab", "ca", "canada"},
+    "sk": {"saskatchewan", "ca", "canada"},
+    "saskatchewan": {"sk", "ca", "canada"},
+    "mb": {"manitoba", "ca", "canada"},
+    "manitoba": {"mb", "ca", "canada"},
+    "on": {"ontario", "ca", "canada"},
+    "ontario": {"on", "ca", "canada"},
+    "qc": {"quebec", "québec", "ca", "canada"},
+    "quebec": {"qc", "québec", "ca", "canada"},
+    "québec": {"qc", "quebec", "ca", "canada"},
+    "nb": {"new brunswick", "ca", "canada"},
+    "new brunswick": {"nb", "ca", "canada"},
+    "ns": {"nova scotia", "ca", "canada"},
+    "nova scotia": {"ns", "ca", "canada"},
+    "pe": {"prince edward island", "pei", "ca", "canada"},
+    "pei": {"prince edward island", "pe", "ca", "canada"},
+    "prince edward island": {"pe", "pei", "ca", "canada"},
+    "nl": {"newfoundland and labrador", "ca", "canada"},
+    "newfoundland and labrador": {"nl", "ca", "canada"},
+    "yt": {"yukon", "ca", "canada"},
+    "yukon": {"yt", "ca", "canada"},
+    "nt": {"northwest territories", "ca", "canada"},
+    "northwest territories": {"nt", "ca", "canada"},
+    "nu": {"nunavut", "ca", "canada"},
+    "nunavut": {"nu", "ca", "canada"},
     "ca": {"canada"},
     "canada": {"ca"},
     "wa": {"washington", "us", "usa", "united states"},

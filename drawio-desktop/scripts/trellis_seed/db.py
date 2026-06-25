@@ -34,16 +34,21 @@ def load_method_categories(db_path: Path) -> set[str]:
 
 def create_diff_report(run_dir: Path, db_path: Path) -> dict[str, Any]:
     generated_dir = run_dir / "generated"
-    report: dict[str, Any] = {"tables": {}, "weather": {}}
+    report: dict[str, Any] = {"tables": {}, "weather": {}, "summary": {"generated_files": 0, "generated_rows": 0, "db_changes": 0, "weather_rows": 0}}
     generated_index = _load_generated_index(generated_dir)
     with closing(connect(db_path)) as conn:
         for path in sorted(generated_dir.glob("*.json")):
             table = path.stem
             rows = read_json(path, []) or []
+            report["summary"]["generated_files"] += 1
+            report["summary"]["generated_rows"] += len(rows)
             if table in WEATHER_TABLES:
                 report["weather"][table] = _weather_summary(rows)
+                report["summary"]["weather_rows"] += len(rows)
             else:
-                report["tables"][table] = [_diff_row(conn, table, row, generated_index) for row in rows]
+                diffs = [_diff_row(conn, table, row, generated_index) for row in rows]
+                report["tables"][table] = diffs
+                report["summary"]["db_changes"] += sum(1 for diff in diffs if diff["action"] != "unchanged")
     write_json(run_dir / "diff_report.json", report)
     return report
 
@@ -51,6 +56,10 @@ def create_diff_report(run_dir: Path, db_path: Path) -> dict[str, Any]:
 def print_diff_report(report: dict[str, Any]) -> None:
     print("\nDiff preview")
     print("============")
+    summary = report.get("summary") or {}
+    if not summary.get("generated_rows"):
+        print("No generated rows found for this run.")
+        return
     for table, diffs in report.get("tables", {}).items():
         print(f"\n[{table}] {len(diffs)} row(s)")
         for diff in diffs:
@@ -64,6 +73,8 @@ def print_diff_report(report: dict[str, Any]) -> None:
         print(f"  checksum: {summary['checksum']}")
         for sample in summary.get("samples", []):
             print(f"  sample: {sample}")
+    if not (report.get("summary") or {}).get("db_changes") and not (report.get("summary") or {}).get("weather_rows"):
+        print("No DB changes detected.")
 
 
 def apply_run(run_dir: Path, db_path: Path) -> dict[str, Any]:

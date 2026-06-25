@@ -6,7 +6,8 @@ import shutil
 import sqlite3
 import sys
 import tempfile
-from contextlib import closing
+from contextlib import closing, redirect_stdout
+from io import StringIO
 import unittest
 from pathlib import Path
 
@@ -14,14 +15,46 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from trellis_seed.db import apply_run, create_diff_report  # noqa: E402
+from trellis_seed.artifacts import (  # noqa: E402
+    artifact_status,
+    artifacts_after_keeping_latest,
+    artifacts_older_than,
+    input_summary_slug,
+    list_artifacts,
+    select_artifacts_by_indices,
+    slugify,
+    suggestion_summary_slug,
+)
+from trellis_seed.db import apply_run, create_diff_report, load_methods, print_diff_report  # noqa: E402
 from trellis_seed.config import Settings, read_openai_api_key  # noqa: E402
-from trellis_seed.generator import _call_openai_with_retry, _crop_source_values, _validate_crop_result, _validate_template_result  # noqa: E402
+from trellis_seed.generator import (
+    GenerationOptions,
+    _call_openai_with_retry,
+    _crop_source_values,
+    _generate_task_template,
+    _merge_template_polish,
+    _prepare_crop_result,
+    _validate_crop_result,
+    _validate_template_result,
+    build_task_template_from_method,
+    create_run,
+    estimate_openai_calls,
+)  # noqa: E402
 from trellis_seed.jsonio import write_json  # noqa: E402
+from trellis_seed.menu import _preflight_provider_labels, _should_prompt_template_generation  # noqa: E402
 from trellis_seed.migrations import apply_migrations, pending_migrations  # noqa: E402
 from trellis_seed.planner import effective_tables_from_input, selected_tables_warning  # noqa: E402
 from trellis_seed.providers import OpenAIJsonClient, OpenMeteoClient, ProviderTrace  # noqa: E402
 from trellis_seed.schema import OPENAI_PLANT_SCHEMA, OPENAI_TEMPLATE_SCHEMA  # noqa: E402
+from trellis_seed.suggestions import (  # noqa: E402
+    input_draft_schema,
+    load_suggestion_context,
+    parse_selection,
+    suggestion_list_schema,
+    validate_input_draft,
+    validate_suggestion_list,
+    write_suggestion_artifacts,
+)
 from trellis_seed.validator import validate_input, validate_row, validate_run  # noqa: E402
 
 
@@ -37,12 +70,14 @@ class TrellisSeederTests(unittest.TestCase):
 
     def test_migrations_create_weather_evidence_and_repair_variety_templates(self) -> None:
         with closing(sqlite3.connect(self.db_path)) as conn:
-            before = pending_migrations(conn)
-            self.assertIn("create CityWeatherDaily", before)
             with conn:
                 apply_migrations(conn)
             after = pending_migrations(conn)
             self.assertEqual(after, [])
+            tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            self.assertIn("CityWeatherDaily", tables)
+            self.assertIn("CityWeatherForecastDaily", tables)
+            self.assertIn("CompanionEvidence", tables)
             cols = [row[1] for row in conn.execute("PRAGMA table_info(VarietyTaskTemplates);")]
             self.assertIn("method_id", cols)
             self.assertIn("template_json", cols)
@@ -70,6 +105,272 @@ class TrellisSeederTests(unittest.TestCase):
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
+
+    def test_template_generation_option_removes_template_call_estimates(self) -> None:
+        data = {
+            "crops": [{
+                "name": "Lettuce",
+                "sources": ["source"],
+                "allowed_method_categories": ["direct_sow"],
+                "variety_task_overrides": [{"variety_name": "Test", "method_id": "direct_sow.field"}],
+            }],
+        }
+        settings = Settings(self.tmp_path / "config.json", {"default_variety_count": 5})
+        with_templates = estimate_openai_calls(data, settings, self.db_path, GenerationOptions(generate_templates=True))
+        without_templates = estimate_openai_calls(data, settings, self.db_path, GenerationOptions(generate_templates=False))
+        self.assertGreater(with_templates["plant_task_templates"], 0)
+        self.assertEqual(without_templates["plant_task_templates"], 0)
+        self.assertEqual(without_templates["variety_task_overrides"], 0)
+        self.assertEqual(without_templates["estimated_total"], without_templates["crop_rows"] + without_templates["companion_rows"])
+
+    def test_create_run_metadata_omits_template_tables_when_templates_disabled(self) -> None:
+        input_path = self.tmp_path / "input.json"
+        write_json(input_path, {"crops": [{"name": "Lettuce", "sources": ["source"]}]})
+        settings = Settings(self.tmp_path / "config.json", {
+            "db_path": str(self.db_path),
+            "runs_dir": str(self.tmp_path / "runs"),
+            "openai_model": "fake",
+            "openai_reasoning_effort": "low",
+        })
+        run_dir = create_run(settings, input_path, GenerationOptions(generate_templates=False, run_preflight=False))
+        metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+        self.assertFalse(metadata["generation_options"]["generate_templates"])
+        self.assertFalse(metadata["generation_options"]["run_preflight"])
+        self.assertFalse(metadata["generation_options"]["preflight_already_run"])
+        self.assertNotIn("PlantTaskTemplates", metadata["effective_tables"])
+        self.assertNotIn("VarietyTaskTemplates", metadata["effective_tables"])
+
+    def test_artifact_slugs_and_future_run_names_are_identifiable(self) -> None:
+        self.assertEqual(slugify("Canadian Cities! 10"), "canadian-cities-10")
+        self.assertEqual(suggestion_summary_slug("cities", 10, "Canadian Cities"), "cities-10-canadian-cities")
+        input_path = self.tmp_path / "mixed.json"
+        data = {"crops": [{"name": "Parsnip", "sources": ["source"]}], "cities": [{"name": "Victoria, BC"}]}
+        write_json(input_path, data)
+        settings = Settings(self.tmp_path / "config.json", {
+            "db_path": str(self.db_path),
+            "runs_dir": str(self.tmp_path / "runs"),
+            "openai_model": "fake",
+            "openai_reasoning_effort": "low",
+        })
+        run_dir = create_run(settings, input_path, GenerationOptions(generate_templates=False))
+        self.assertIn("crops-1-cities-1", run_dir.name)
+        self.assertEqual(input_summary_slug(data, input_path), "crops-1-cities-1")
+
+    def test_artifact_listing_excludes_suggestions_and_incomplete_runs_from_complete_runs(self) -> None:
+        runs_dir = self.tmp_path / "runs"
+        suggestion = runs_dir / "suggestion-20260625-010101-cities-1-test"
+        complete = runs_dir / "run-20260625-010102-cities-1-test"
+        incomplete = runs_dir / "run-20260625-010103-cities-1-failed"
+        failed = runs_dir / "run-20260625-010104-cities-1-failed"
+        for path in (suggestion, complete, incomplete, failed):
+            (path / "generated").mkdir(parents=True, exist_ok=True)
+        write_json(suggestion / "suggested_input.json", {"cities": [{"name": "Victoria, BC"}]})
+        write_json(complete / "generated" / "Cities.json", [{"city_name": "Victoria, BC"}])
+        write_json(complete / "validation_report.json", {"ok": True, "errors": []})
+        write_json(failed / "metadata.json", {"status": "failed"})
+
+        self.assertEqual(artifact_status(suggestion), "suggestion")
+        self.assertEqual(artifact_status(complete), "complete")
+        self.assertEqual(artifact_status(incomplete), "incomplete")
+        self.assertEqual(artifact_status(failed), "failed")
+        self.assertEqual(list_artifacts(runs_dir, complete_runs_only=True), [complete])
+
+    def test_cleanup_candidate_selection_is_limited_to_direct_children(self) -> None:
+        runs_dir = self.tmp_path / "runs"
+        first = runs_dir / "run-1"
+        second = runs_dir / "run-2"
+        nested = first / "nested"
+        outside = self.tmp_path / "outside"
+        for path in (first, second, nested, outside):
+            path.mkdir(parents=True, exist_ok=True)
+        artifacts = [first, second, nested, outside]
+        selected = select_artifacts_by_indices(artifacts, [0, 2, 3], runs_dir)
+        self.assertEqual(selected, [first])
+
+    def test_cleanup_candidates_older_than_cutoff(self) -> None:
+        runs_dir = self.tmp_path / "runs"
+        old = runs_dir / "run-old"
+        new = runs_dir / "run-new"
+        for path in (old, new):
+            path.mkdir(parents=True, exist_ok=True)
+        os.utime(old, (100, 100))
+        os.utime(new, (300, 300))
+        self.assertEqual(artifacts_older_than([new, old], 200, runs_dir), [old])
+        self.assertEqual(artifacts_older_than([new], 50, runs_dir), [])
+
+    def test_cleanup_candidates_after_keeping_latest(self) -> None:
+        runs_dir = self.tmp_path / "runs"
+        oldest = runs_dir / "run-oldest"
+        middle = runs_dir / "run-middle"
+        newest = runs_dir / "run-newest"
+        for path, stamp in ((oldest, 100), (middle, 200), (newest, 300)):
+            path.mkdir(parents=True, exist_ok=True)
+            os.utime(path, (stamp, stamp))
+        self.assertEqual(artifacts_after_keeping_latest([oldest, newest, middle], 1, runs_dir), [middle, oldest])
+        self.assertEqual(artifacts_after_keeping_latest([oldest, newest, middle], 3, runs_dir), [])
+
+    def test_menu_preflight_labels_are_section_relevant(self) -> None:
+        self.assertEqual(_preflight_provider_labels({"cities": [{"name": "Vancouver, BC"}]}), ["Open-Meteo"])
+        self.assertEqual(_preflight_provider_labels({"companions": [{"p1": "Apple", "p2": "Carrot", "sources": ["source"]}]}), ["OpenAI"])
+        self.assertEqual(_preflight_provider_labels({"crops": [{"name": "Parsnip", "sources": ["source"]}], "cities": [{"name": "Victoria, BC"}]}), ["OpenAI", "Open-Meteo"])
+
+    def test_menu_template_prompt_only_applies_to_crops(self) -> None:
+        self.assertFalse(_should_prompt_template_generation({"cities": [{"name": "Vancouver, BC"}]}))
+        self.assertFalse(_should_prompt_template_generation({"companions": [{"p1": "Apple", "p2": "Carrot", "sources": ["source"]}]}))
+        self.assertTrue(_should_prompt_template_generation({"crops": [{"name": "Parsnip", "sources": ["source"]}]}))
+
+    def test_suggestion_context_extracts_normalized_existing_db_values(self) -> None:
+        context = load_suggestion_context(self.db_path)
+        self.assertIn("lettuce", context["plant_keys"])
+        self.assertIn("vancouver, bc", context["city_keys"])
+        self.assertTrue(context["companion_pair_keys"])
+
+    def test_suggestion_validation_rejects_duplicates_and_bad_companion_endpoints(self) -> None:
+        context = load_suggestion_context(self.db_path)
+        crop_result = {
+            "section": "crops",
+            "requested_count": 2,
+            "suggestions": [
+                {"name": "Lettuce", "rationale": "already exists", "source_hints": ["source"]},
+                {"name": "Parsnip", "rationale": "new root crop", "source_hints": ["source"]},
+            ],
+        }
+        self.assertTrue(any("already exists" in error for error in validate_suggestion_list(crop_result, "crops", 2, context)))
+
+        companion_result = {
+            "section": "companions",
+            "requested_count": 1,
+            "suggestions": [{"p1": "Lettuce", "p2": "Missing Plant", "rationale": "bad endpoint", "source_hints": ["source"]}],
+        }
+        self.assertTrue(any("must already exist" in error for error in validate_suggestion_list(companion_result, "companions", 1, context)))
+
+    def test_suggestion_validation_accepts_fewer_than_requested(self) -> None:
+        context = load_suggestion_context(self.db_path)
+        result = {
+            "section": "cities",
+            "requested_count": 5,
+            "suggestions": [{"name": "Victoria, BC", "rationale": "regional climate coverage", "source_hints": []}],
+        }
+        self.assertEqual(validate_suggestion_list(result, "cities", 5, context), [])
+
+    def test_parse_selection_accepts_all_numbers_and_ranges(self) -> None:
+        self.assertEqual(parse_selection("", 4), [0, 1, 2, 3])
+        self.assertEqual(parse_selection("all", 4), [0, 1, 2, 3])
+        self.assertEqual(parse_selection("1,3-4", 4), [0, 2, 3])
+        with self.assertRaisesRegex(ValueError, "out of range"):
+            parse_selection("5", 4)
+
+    def test_input_draft_validation_for_sources_and_companion_endpoints(self) -> None:
+        context = load_suggestion_context(self.db_path)
+        accepted_crop = [{"name": "Parsnip", "rationale": "new crop", "source_hints": ["source"]}]
+        valid_crop_draft = {
+            "crops": [{"name": "Parsnip", "sources": ["https://example.test/parsnip"], "notes": "", "variety_count": 5}],
+            "cities": [],
+            "companions": [],
+        }
+        self.assertEqual(validate_input_draft(valid_crop_draft, "crops", accepted_crop, context), [])
+
+        invalid_crop_draft = {
+            "crops": [{"name": "Parsnip", "sources": [], "notes": "", "variety_count": 5}],
+            "cities": [],
+            "companions": [],
+        }
+        self.assertTrue(any("needs at least one source" in error for error in validate_input_draft(invalid_crop_draft, "crops", accepted_crop, context)))
+
+        accepted_companion = [{"p1": "Apple", "p2": "Carrot", "rationale": "existing endpoints", "source_hints": ["source"]}]
+        companion_draft = {
+            "crops": [],
+            "cities": [],
+            "companions": [{"p1": "Apple", "p2": "Carrot", "sources": ["https://example.test/apple-carrot"], "notes": ""}],
+        }
+        self.assertEqual(validate_input_draft(companion_draft, "companions", accepted_companion, context), [])
+
+    def test_city_input_draft_validation_requires_structured_location_fields(self) -> None:
+        context = load_suggestion_context(self.db_path)
+        accepted_city = [{"name": "Victoria, British Columbia, Canada", "rationale": "mild climate", "source_hints": []}]
+        valid_city_draft = {
+            "crops": [],
+            "cities": [{
+                "name": "Victoria, British Columbia, Canada",
+                "city_name": "Victoria",
+                "admin1": "British Columbia",
+                "country": "Canada",
+                "country_code": "CA",
+            }],
+            "companions": [],
+        }
+        self.assertEqual(validate_input_draft(valid_city_draft, "cities", accepted_city, context), [])
+
+        invalid_city_draft = {
+            "crops": [],
+            "cities": [{"name": "Victoria, BC"}],
+            "companions": [],
+        }
+        self.assertTrue(any("City draft field is required" in error for error in validate_input_draft(invalid_city_draft, "cities", accepted_city, context)))
+
+    def test_suggestion_artifact_draft_can_be_used_to_create_run(self) -> None:
+        settings = Settings(self.tmp_path / "config.json", {
+            "db_path": str(self.db_path),
+            "runs_dir": str(self.tmp_path / "runs"),
+            "openai_model": "fake",
+            "openai_reasoning_effort": "low",
+        })
+        request = {"section": "cities", "requested_count": 1}
+        suggestion_list = {"section": "cities", "requested_count": 1, "suggestions": [{"name": "Victoria, British Columbia, Canada", "rationale": "nearby", "source_hints": []}]}
+        draft = {
+            "crops": [],
+            "cities": [{
+                "name": "Victoria, British Columbia, Canada",
+                "city_name": "Victoria",
+                "admin1": "British Columbia",
+                "country": "Canada",
+                "country_code": "CA",
+            }],
+            "companions": [],
+        }
+        suggestion_dir = write_suggestion_artifacts(settings, request, suggestion_list, suggestion_list["suggestions"], draft, [ProviderTrace("fake", {})])
+        self.assertIn("suggestion-", suggestion_dir.name)
+        self.assertIn("cities-1-default", suggestion_dir.name)
+        run_dir = create_run(settings, suggestion_dir / "suggested_input.json", GenerationOptions(generate_templates=False))
+        self.assertIn("cities-1-default", run_dir.name)
+        metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+        self.assertIn("Cities", metadata["effective_tables"])
+
+    def test_diff_output_reports_empty_and_unchanged_runs(self) -> None:
+        empty_run = self.tmp_path / "empty-run"
+        (empty_run / "generated").mkdir(parents=True)
+        empty_report = create_diff_report(empty_run, self.db_path)
+        out = StringIO()
+        with redirect_stdout(out):
+            print_diff_report(empty_report)
+        self.assertIn("No generated rows found for this run.", out.getvalue())
+
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            existing_city = conn.execute("SELECT city_name FROM Cities ORDER BY city_name LIMIT 1").fetchone()[0]
+        unchanged_run = self.tmp_path / "unchanged-run"
+        write_json(unchanged_run / "generated" / "Cities.json", [{"city_name": existing_city}])
+        unchanged_report = create_diff_report(unchanged_run, self.db_path)
+        out = StringIO()
+        with redirect_stdout(out):
+            print_diff_report(unchanged_report)
+        self.assertIn("No DB changes detected.", out.getvalue())
+
+    def test_diff_output_summarizes_weather_only_runs(self) -> None:
+        run_dir = self.tmp_path / "weather-run"
+        write_json(run_dir / "generated" / "CityWeatherDaily.json", [{
+            "city_name": "Weather Test City",
+            "weather_date": "2026-01-01",
+            "provider": "test",
+            "dataset": "test",
+            "temp_min_c": 1,
+            "temp_max_c": 5,
+        }])
+        report = create_diff_report(run_dir, self.db_path)
+        out = StringIO()
+        with redirect_stdout(out):
+            print_diff_report(report)
+        self.assertIn("[CityWeatherDaily] weather summary", out.getvalue())
+        self.assertIn("rows: 1", out.getvalue())
 
     def test_open_meteo_geocode_handles_region_qualified_city_names(self) -> None:
         class FakeMeteo(OpenMeteoClient):
@@ -106,8 +407,117 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertIn("name=Vancouver", client.urls[0])
         self.assertEqual(trace.request["input"], "Vancouver, BC")
 
+    def test_open_meteo_geocode_handles_canadian_province_abbreviations(self) -> None:
+        class FakeMeteo(OpenMeteoClient):
+            def __init__(self) -> None:
+                super().__init__({"geocoding_url": "https://example.test/geocode"})
+
+            def _get_json(self, _url: str) -> dict:
+                return {
+                    "results": [
+                        {
+                            "name": "Toronto",
+                            "admin1": "Ohio",
+                            "country": "United States",
+                            "country_code": "US",
+                            "latitude": 40.46,
+                            "longitude": -80.6,
+                        },
+                        {
+                            "name": "Toronto",
+                            "admin1": "Ontario",
+                            "country": "Canada",
+                            "country_code": "CA",
+                            "latitude": 43.65,
+                            "longitude": -79.38,
+                        },
+                    ]
+                }
+
+        result, _trace = FakeMeteo().geocode("Toronto, ON")
+        self.assertEqual(result["admin1"], "Ontario")
+
+    def test_open_meteo_geocode_uses_structured_city_qualifiers(self) -> None:
+        class FakeMeteo(OpenMeteoClient):
+            def __init__(self) -> None:
+                super().__init__({"geocoding_url": "https://example.test/geocode"})
+                self.urls: list[str] = []
+
+            def _get_json(self, url: str) -> dict:
+                self.urls.append(url)
+                return {
+                    "results": [
+                        {
+                            "name": "Toronto",
+                            "admin1": "Ohio",
+                            "country": "United States",
+                            "country_code": "US",
+                            "latitude": 40.46,
+                            "longitude": -80.6,
+                        },
+                        {
+                            "name": "Toronto",
+                            "admin1": "Ontario",
+                            "country": "Canada",
+                            "country_code": "CA",
+                            "latitude": 43.65,
+                            "longitude": -79.38,
+                        },
+                    ]
+                }
+
+        client = FakeMeteo()
+        result, trace = client.geocode("Toronto", {
+            "display_name": "Toronto, Ontario, Canada",
+            "admin1": "Ontario",
+            "country": "Canada",
+            "country_code": "CA",
+        })
+        self.assertEqual(result["admin1"], "Ontario")
+        self.assertIn("name=Toronto", client.urls[0])
+        self.assertEqual(trace.request["qualifiers"]["admin1"], "Ontario")
+
+    def test_open_meteo_get_json_retries_transient_connection_reset(self) -> None:
+        calls = {"count": 0}
+        original_urlopen = OpenMeteoClient._get_json.__globals__["urllib"].request.urlopen
+        original_sleep = OpenMeteoClient._get_json.__globals__["time"].sleep
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"ok": true}'
+
+        def fake_urlopen(_url, timeout):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise ConnectionResetError("reset")
+            return FakeResponse()
+
+        try:
+            OpenMeteoClient._get_json.__globals__["urllib"].request.urlopen = fake_urlopen
+            OpenMeteoClient._get_json.__globals__["time"].sleep = lambda _seconds: None
+            self.assertEqual(OpenMeteoClient._get_json("https://example.test"), {"ok": True})
+            self.assertEqual(calls["count"], 2)
+        finally:
+            OpenMeteoClient._get_json.__globals__["urllib"].request.urlopen = original_urlopen
+            OpenMeteoClient._get_json.__globals__["time"].sleep = original_sleep
+
     def test_openai_schemas_are_strict_output_compatible(self) -> None:
-        for schema in (OPENAI_PLANT_SCHEMA, OPENAI_TEMPLATE_SCHEMA):
+        for schema in (
+            OPENAI_PLANT_SCHEMA,
+            OPENAI_TEMPLATE_SCHEMA,
+            suggestion_list_schema("crops"),
+            suggestion_list_schema("cities"),
+            suggestion_list_schema("companions"),
+            input_draft_schema("crops"),
+            input_draft_schema("cities"),
+            input_draft_schema("companions"),
+        ):
             self._assert_strict_schema(schema)
 
     def test_openai_client_does_not_mask_responses_api_errors(self) -> None:
@@ -221,6 +631,166 @@ class TrellisSeederTests(unittest.TestCase):
             },
         }
         self.assertEqual(_validate_template_result(result, source_values), [])
+
+    def test_deterministic_templates_from_all_db_methods_validate_without_openai(self) -> None:
+        for method in load_methods(self.db_path):
+            template = build_task_template_from_method(method)
+            row = {
+                "plant_name": "Lettuce",
+                "method_id": method["method_id"],
+                "template_json": json.dumps({"version": 2, "rules": template["rules"]}),
+                "provenance": template["provenance"],
+            }
+            report = validate_row("PlantTaskTemplates", row, source_values=_crop_source_values({"name": "Lettuce"}, [method]), required_source_fields={"rules"})
+            self.assertEqual(report["errors"], [], method["method_id"])
+
+    def test_template_polish_normalization_avoids_repair(self) -> None:
+        method = {
+            "method_id": "direct_sow.field",
+            "method_category_id": "direct_sow",
+            "method_name": "Direct sow (field)",
+            "tasks_required_json": '{"sow": true, "harvest": true}',
+        }
+        skeleton = build_task_template_from_method(method)
+        polished = _merge_template_polish(skeleton, {
+            "version": 2,
+            "rules": [{
+                "id": "sow",
+                "title": "Sow lettuce",
+                "startAnchorStage": "sowing",
+                "startOffsetDays": "0",
+                "startOffsetDirection": "later",
+                "endMode": "fixed",
+                "durationDays": "2",
+                "endAnchorStage": "none",
+                "endAnchorOffsetDays": "0",
+                "endAnchorOffsetDirection": "later",
+                "repeatMode": "no repeat",
+                "repeatEveryDays": "1",
+                "repeatUntilMode": "x times",
+                "repeatTimes": "1",
+                "repeatUntilAnchorStage": "harvest end",
+                "repeatCutoffOffsetDays": "0",
+                "repeatCutoffOffsetDirection": "later",
+            }],
+            "provenance": {"field_sources": []},
+        })
+        self.assertEqual(_validate_template_result(polished, _crop_source_values({"name": "Lettuce"}, [method])), [])
+        self.assertEqual(polished["rules"][0]["id"], "sow")
+        self.assertEqual(polished["rules"][0]["endMode"], "fixed_days")
+
+    def test_template_polish_repair_path_is_used_once(self) -> None:
+        class FakeOpenAI:
+            model = "fake"
+            reasoning_effort = "low"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def generate_json(self, **_kwargs):
+                self.calls += 1
+                trace = ProviderTrace("fake", {"call": self.calls})
+                if self.calls == 1:
+                    return {"version": 2, "rules": []}, trace
+                return {"version": 2, "rules": [{"id": "sow", "title": "Repaired sow"}, {"id": "harvest", "title": "Repaired harvest"}], "provenance": {"field_sources": []}}, trace
+
+        method = {
+            "method_id": "direct_sow.field",
+            "method_category_id": "direct_sow",
+            "method_name": "Direct sow (field)",
+            "tasks_required_json": '{"sow": true}',
+        }
+        fake = FakeOpenAI()
+        result, trace = _generate_task_template(fake, {"plant_name": "Lettuce"}, method, {"name": "Lettuce"}, "")
+        self.assertEqual(fake.calls, 2)
+        self.assertEqual(result["rules"][0]["title"], "Repaired sow")
+        self.assertIn("repair_for", trace.request)
+
+    def test_template_polish_unrepaired_invalid_output_fails(self) -> None:
+        class FakeOpenAI:
+            model = "fake"
+            reasoning_effort = "low"
+
+            def generate_json(self, **_kwargs):
+                return {"version": 2, "rules": []}, ProviderTrace("fake", {})
+
+        method = {
+            "method_id": "direct_sow.field",
+            "method_category_id": "direct_sow",
+            "method_name": "Direct sow (field)",
+            "tasks_required_json": '{"sow": true}',
+        }
+        with self.assertRaisesRegex(Exception, "OpenAI repair output failed validation"):
+            _generate_task_template(FakeOpenAI(), {"plant_name": "Lettuce"}, method, {"name": "Lettuce"}, "")
+
+    def test_controlled_crop_provenance_is_added_by_code(self) -> None:
+        result = {
+            "row": {
+                "plant_name": "Lettuce",
+                "abbr": "LET",
+                "direct_sow": "yes",
+                "transplant": "true",
+                "default_planting_method_category": "direct_sow",
+                "default_planting_method": "direct_sow.field",
+            },
+            "allowed_method_categories": ["direct_sow"],
+            "provenance": {"field_sources": []},
+        }
+        methods = [{"method_id": "direct_sow.field", "method_category_id": "direct_sow", "method_name": "Direct sow (field)"}]
+        prepared = _prepare_crop_result(result, {"name": "Lettuce"}, methods)
+        self.assertEqual(prepared["row"]["direct_sow"], 1)
+        self.assertEqual(prepared["row"]["transplant"], 1)
+        self.assertEqual(_validate_crop_result(prepared, _crop_source_values({"name": "Lettuce"}, methods)), [])
+
+    def test_concrete_allowed_methods_prevent_category_over_expansion(self) -> None:
+        methods = [
+            {"method_id": "transplant.cutting", "method_category_id": "transplant", "method_name": "Transplant from cutting"},
+            {"method_id": "transplant.indoor", "method_category_id": "transplant", "method_name": "Indoor seed start"},
+            {"method_id": "transplant.purchased", "method_category_id": "transplant", "method_name": "Purchased transplant"},
+        ]
+        result = {
+            "row": {
+                "plant_name": "Lettuce",
+                "abbr": "LET",
+                "direct_sow": 0,
+                "transplant": 1,
+                "default_planting_method_category": "transplant",
+                "default_planting_method": "transplant.indoor",
+            },
+            "allowed_method_categories": ["transplant"],
+            "allowed_method_ids": ["transplant.indoor", "transplant.purchased"],
+            "provenance": {"field_sources": []},
+        }
+        prepared = _prepare_crop_result(result, {"name": "Lettuce"}, methods)
+        self.assertEqual(prepared["allowed_method_ids"], ["transplant.indoor", "transplant.purchased"])
+        self.assertNotIn("transplant.cutting", prepared["allowed_method_ids"])
+        self.assertEqual(_validate_crop_result(prepared, _crop_source_values({"name": "Lettuce"}, methods), methods), [])
+
+    def test_crop_validation_rejects_missing_or_invalid_concrete_methods(self) -> None:
+        methods = [
+            {"method_id": "direct_sow.field", "method_category_id": "direct_sow", "method_name": "Direct sow (field)"},
+            {"method_id": "transplant.indoor", "method_category_id": "transplant", "method_name": "Indoor seed start"},
+        ]
+        base = {
+            "row": {
+                "plant_name": "Lettuce",
+                "abbr": "LET",
+                "direct_sow": 1,
+                "transplant": 1,
+                "default_planting_method_category": "direct_sow",
+                "default_planting_method": "direct_sow.field",
+            },
+            "allowed_method_categories": ["direct_sow"],
+            "provenance": {"field_sources": []},
+        }
+        missing = _prepare_crop_result(dict(base), {"name": "Lettuce"}, methods)
+        self.assertIn("allowed_method_ids is required.", _validate_crop_result(missing, _crop_source_values({"name": "Lettuce"}, methods), methods))
+
+        unknown = _prepare_crop_result(base | {"allowed_method_ids": ["direct_sow.unknown"]}, {"name": "Lettuce"}, methods)
+        self.assertIn("allowed_method_ids has unknown method_id: direct_sow.unknown", _validate_crop_result(unknown, _crop_source_values({"name": "Lettuce"}, methods), methods))
+
+        mismatch = _prepare_crop_result(base | {"allowed_method_ids": ["transplant.indoor"]}, {"name": "Lettuce"}, methods)
+        self.assertIn("allowed_method_ids method transplant.indoor is outside allowed_method_categories.", _validate_crop_result(mismatch, _crop_source_values({"name": "Lettuce"}, methods), methods))
 
     def test_model_retry_uses_row_local_validation_errors(self) -> None:
         class FakeOpenAI:
