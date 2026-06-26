@@ -26,6 +26,13 @@ def load_suggestion_context(db_path: Path) -> dict[str, Any]:
             {"p1": row["p1"], "p2": row["p2"]}
             for row in conn.execute("SELECT p1, p2 FROM Companions ORDER BY p1, p2")
         ]
+        coverage_summary = {  # coverage-gap prompting
+            "crop_categories": _select_counts(conn, "Plants", "crop_category"),
+            "plant_families": _select_counts(conn, "Plants", "family"),
+            "city_location_suffixes": _city_location_suffix_counts(cities),
+            "companion_ratings": _select_counts(conn, "Companions", "rating"),
+            "companion_types": _select_counts(conn, "Companions", "companion_type"),
+        }
     return {
         "plants": plants,
         "plant_keys": sorted({normalize_key(name) for name in plants}),
@@ -33,6 +40,7 @@ def load_suggestion_context(db_path: Path) -> dict[str, Any]:
         "city_keys": sorted({normalize_key(name) for name in cities}),
         "companion_pairs": companions,
         "companion_pair_keys": sorted({_pair_key(row["p1"], row["p2"]) for row in companions}),
+        "coverage_summary": coverage_summary,  # coverage-gap prompting
     }
 
 
@@ -41,7 +49,7 @@ def build_suggestion_request(section: str, requested_count: int, criteria: str, 
         "section": _clean_section(section),
         "requested_count": requested_count,
         "criteria": criteria.strip(),
-        "defaults": "Return fewer than requested rather than weak or unsourced suggestions.",
+        "defaults": "Prioritize credible coverage gaps; return fewer than requested rather than weak or unsourced suggestions.",  # coverage-gap prompting
         "existing_database_context": context,
     }
 
@@ -53,7 +61,9 @@ def generate_suggestion_list(openai: OpenAIJsonClient, request: dict[str, Any]) 
         json_schema=suggestion_list_schema(section),
         system=(
             "Suggest Trellis seed input candidates. Exclude existing normalized entries when possible. "
-            "Prefer common, useful garden data. Return fewer than requested if confidence or source hints are weak."
+            "Prioritize novel coverage gaps using existing_database_context.coverage_summary: underrepresented crop families/categories, "
+            "underrepresented city regions, and missing companion relationship patterns. "
+            "Prefer useful garden data with credible source hints; return fewer than requested if confidence or source hints are weak."
         ),
         user=json.dumps(request, indent=2),
     )
@@ -71,7 +81,8 @@ def generate_seed_input_draft(openai: OpenAIJsonClient, section: str, accepted_s
         system=(
             "Convert accepted Trellis suggestions into seed input JSON. "
             "Crops and companions must include source URLs or explicit source notes. Cities do not require sources. "
-            "Do not add suggestions that were not accepted."
+            "Preserve the accepted suggestion identities exactly, add enough notes for high-quality downstream agronomy generation, "
+            "and do not add suggestions that were not accepted."
         ),
         user=json.dumps({
             "section": section,
@@ -309,6 +320,31 @@ def _validate_suggestion_item(section: str, index: int, item: Any, context: dict
 
 def _select_names(conn: sqlite3.Connection, table: str, column: str) -> list[str]:
     return [row[0] for row in conn.execute(f"SELECT {column} FROM {table} ORDER BY {column}") if row[0]]
+
+
+def _select_counts(conn: sqlite3.Connection, table: str, column: str, limit: int = 25) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        f"SELECT {column} AS value, COUNT(1) AS count FROM {table} GROUP BY {column} ORDER BY COUNT(1) DESC, {column} LIMIT ?",
+        [limit],
+    )
+    return [{"value": _context_value(row["value"]), "count": int(row["count"])} for row in rows]  # coverage-gap prompting
+
+
+def _city_location_suffix_counts(cities: list[str]) -> list[dict[str, Any]]:
+    counts: dict[str, int] = {}
+    for city in cities:
+        parts = [part.strip() for part in str(city or "").split(",") if part.strip()]
+        suffix = ", ".join(parts[1:]) if len(parts) > 1 else "[unspecified]"
+        counts[suffix] = counts.get(suffix, 0) + 1
+    return [
+        {"value": value, "count": count}
+        for value, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:25]
+    ]  # coverage-gap prompting
+
+
+def _context_value(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if text else "[unspecified]"  # coverage-gap prompting
 
 
 def _pair_key(p1: Any, p2: Any) -> str:

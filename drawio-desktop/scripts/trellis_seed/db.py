@@ -10,7 +10,7 @@ from typing import Any
 
 from .jsonio import read_json, write_json
 from .migrations import apply_migrations, pending_migrations
-from .schema import CITY_COLUMNS, PLANT_COLUMNS, WEATHER_TABLES
+from .schema import CITY_COLUMNS, PLANT_COLUMNS, PLANTING_WINDOW_REFERENCE_COLUMNS, WEATHER_TABLES
 from .validator import normalize_key, validate_run
 from .weather import checksum_rows
 
@@ -30,6 +30,32 @@ def load_methods(db_path: Path) -> list[dict[str, Any]]:
 def load_method_categories(db_path: Path) -> set[str]:
     with closing(connect(db_path)) as conn:
         return {str(row[0]) for row in conn.execute("SELECT method_category_id FROM PlantingMethodCategories")}
+
+
+def load_plants(db_path: Path) -> list[dict[str, Any]]:
+    with closing(connect(db_path)) as conn:
+        return [dict(row) for row in conn.execute("SELECT * FROM Plants ORDER BY plant_name")]
+
+
+def load_cities(db_path: Path) -> list[dict[str, Any]]:
+    with closing(connect(db_path)) as conn:
+        return [dict(row) for row in conn.execute("SELECT * FROM Cities ORDER BY city_name")]
+
+
+def load_plant_allowed_categories(db_path: Path) -> dict[str, list[str]]:
+    with closing(connect(db_path)) as conn:
+        rows = conn.execute(
+            """
+            SELECT p.plant_name, a.method_category_id
+            FROM PlantAllowedMethodCategories a
+            JOIN Plants p ON p.plant_id = a.plant_id
+            ORDER BY p.plant_name, a.method_category_id
+            """
+        )
+        grouped: dict[str, list[str]] = {}
+        for row in rows:
+            grouped.setdefault(normalize_key(row["plant_name"]), []).append(str(row["method_category_id"]))
+        return grouped
 
 
 def create_diff_report(run_dir: Path, db_path: Path) -> dict[str, Any]:
@@ -162,7 +188,7 @@ def _apply_order() -> list[str]:
     return [
         "Plants", "Cities", "PlantAllowedMethodCategories", "PlantVarieties",
         "Companions", "CompanionEvidence", "PlantTaskTemplates",
-        "VarietyTaskTemplates", "CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily",
+        "VarietyTaskTemplates", "PlantingWindowReferences", "CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily",
     ]
 
 
@@ -183,6 +209,8 @@ def _apply_table(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]
         return _replace_plant_templates(conn, rows)
     if table == "VarietyTaskTemplates":
         return _replace_variety_templates(conn, rows)
+    if table == "PlantingWindowReferences":
+        return _replace_planting_window_references(conn, rows)
     if table == "CityWeatherMonthly":
         return _replace_weather(conn, table, rows, "weather_month", ["city_id", "weather_month", "provider", "dataset"])
     if table == "CityWeatherDaily":
@@ -297,6 +325,32 @@ def _replace_variety_templates(conn: sqlite3.Connection, rows: list[dict[str, An
     return len(rows)
 
 
+def _replace_planting_window_references(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
+    for raw in rows:
+        row = dict(raw)
+        plant_id = _resolve_plant_id(conn, row)
+        city_id = _resolve_city_id(conn, row)
+        payload = {k: row.get(k) for k in PLANTING_WINDOW_REFERENCE_COLUMNS if k in row}
+        payload["plant_id"] = plant_id
+        payload["city_id"] = city_id
+        payload.pop("plant_name", None)
+        payload.pop("city_name", None)
+        payload.pop("reference_id", None)
+        cols = [
+            "plant_id", "city_id", "method_id", "stage", "window_label",
+            "start_mm_dd", "end_mm_dd", "start_doy", "end_doy", "is_cross_year",
+            "source_url", "source_note", "confidence", "summary",
+        ]
+        key_cols = ["plant_id", "city_id", "method_id", "stage", "window_label", "start_mm_dd", "end_mm_dd"]
+        assignments = [c for c in cols if c not in key_cols]
+        sql = (
+            f"INSERT INTO PlantingWindowReferences ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)}) "
+            f"ON CONFLICT({', '.join(key_cols)}) DO UPDATE SET " + ", ".join(f"{c}=excluded.{c}" for c in assignments)
+        )
+        conn.execute(sql, [payload.get(c) for c in cols])
+    return len(rows)
+
+
 def _replace_weather(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]], date_col: str, key_cols: list[str]) -> int:
     if not rows:
         return 0
@@ -361,6 +415,18 @@ def _existing_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> 
                 "SELECT * FROM CompanionEvidence WHERE relation_id=? AND COALESCE(source_url,'')=COALESCE(?,'') AND COALESCE(source_note,'')=COALESCE(?,'')",
                 [relation_id, row.get("source_url"), row.get("source_note")]
             ).fetchone()
+        if table == "PlantingWindowReferences":
+            plant_id = row.get("plant_id") or _find_id_by_name(conn, "Plants", "plant_id", "plant_name", row.get("plant_name"))
+            city_id = row.get("city_id") or _find_id_by_name(conn, "Cities", "city_id", "city_name", row.get("city_name"))
+            if not plant_id or not city_id:
+                return None
+            return conn.execute(
+                """
+                SELECT * FROM PlantingWindowReferences
+                WHERE plant_id=? AND city_id=? AND method_id=? AND stage=? AND window_label=? AND start_mm_dd=? AND end_mm_dd=?
+                """,
+                [plant_id, city_id, row.get("method_id"), row.get("stage"), row.get("window_label"), row.get("start_mm_dd"), row.get("end_mm_dd")]
+            ).fetchone()
     except sqlite3.OperationalError:
         return None
     return None
@@ -412,6 +478,8 @@ def _identity_label(conn: sqlite3.Connection, table: str, row: dict[str, Any], g
         return f"{plant_name or row.get('plant_id')} / {variety_name or row.get('variety_id')} / {row.get('method_id')}"
     if table == "CompanionEvidence":
         return f"{row.get('p1')} / {row.get('p2')} / {row.get('source_url') or row.get('source_note')}"
+    if table == "PlantingWindowReferences":
+        return f"{row.get('plant_name') or _db_plant_name(conn, row.get('plant_id'))} / {row.get('city_name') or _db_city_name(conn, row.get('city_id'))} / {row.get('method_id')} / {row.get('stage')} / {row.get('window_label')}"
     return str(row.get("plant_name") or row.get("city_name") or row.get("variety_name") or row.get("method_id") or f"{row.get('p1')} / {row.get('p2')}")
 
 
@@ -420,6 +488,13 @@ def _db_plant_name(conn: sqlite3.Connection, plant_id: Any) -> str:
         return ""
     row = conn.execute("SELECT plant_name FROM Plants WHERE plant_id=?", [plant_id]).fetchone()
     return str(row["plant_name"]) if row else str(plant_id)
+
+
+def _db_city_name(conn: sqlite3.Connection, city_id: Any) -> str:
+    if not city_id:
+        return ""
+    row = conn.execute("SELECT city_name FROM Cities WHERE city_id=?", [city_id]).fetchone()
+    return str(row["city_name"]) if row else str(city_id)
 
 
 def _find_id_by_name(conn: sqlite3.Connection, table: str, id_col: str, name_col: str, name: Any) -> int | None:

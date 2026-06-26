@@ -7,13 +7,14 @@ SECTION_TABLES = {
     "cities": ["Cities", "CityWeatherMonthly", "CityWeatherForecastDaily"],
     "crops": ["Plants", "PlantAllowedMethodCategories", "PlantVarieties", "PlantTaskTemplates", "VarietyTaskTemplates"],
     "companions": ["Companions", "CompanionEvidence"],
+    "sowing_windows": ["PlantingWindowReferences"],
 }
 
 
 def effective_tables_from_input(input_data: dict[str, Any]) -> list[str]:
     tables: list[str] = []
     for section, section_tables in SECTION_TABLES.items():
-        if input_data.get(section):
+        if input_data.get(section) and (section != "sowing_windows" or (input_data.get("sowing_windows") or {}).get("enabled")):
             tables.extend(section_tables)
     seen: set[str] = set()
     return [table for table in tables if not (table in seen or seen.add(table))]

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 
 from .artifacts import artifact_label, artifacts_after_keeping_latest, artifacts_older_than, list_artifacts, select_artifacts_by_indices
@@ -18,6 +20,7 @@ from .suggestions import (
     parse_selection,
     write_suggestion_artifacts,
 )
+from .paths import PROJECT_DIR
 from .validator import validate_input, validate_run
 
 
@@ -33,7 +36,8 @@ def run_menu() -> None:
         print("5. Manage run folders")
         print("6. Settings and credentials")
         print("7. Run live tests")
-        print("8. Exit")
+        print("8. Compare scheduler to sowing-window references")
+        print("9. Exit")
         choice = input("Choose an option: ").strip()
         if choice == "1":
             _suggest_input_flow(settings)
@@ -50,6 +54,8 @@ def run_menu() -> None:
         elif choice == "7":
             _live_tests_flow()
         elif choice == "8":
+            _sowing_window_diagnostics_flow(settings)
+        elif choice == "9":
             return
         else:
             print("Unknown option.")
@@ -147,7 +153,7 @@ def _run_generation_for_input(settings, input_path: Path) -> None:
         generate_templates = input("Generate plant and variety task templates? Defaults usually suffice. [y/N]: ").strip().lower() == "y"
     options = GenerationOptions(generate_templates=generate_templates, run_preflight=False, preflight_already_run=run_preflight)  # run options
     estimate = estimate_openai_calls(normalized, settings, settings.db_path, options)
-    print("Estimated OpenAI calls:")
+    print("Estimated generation work:")  # deterministic templates are not OpenAI calls
     for key, value in estimate.items():
         print(f"- {key}: {value}")
     if input("Start generation? [y/N]: ").strip().lower() != "y":
@@ -206,7 +212,7 @@ def _prompt_yes_no(prompt: str, default: bool) -> bool:
 
 def _preflight_provider_labels(input_data: dict) -> list[str]:
     labels = []
-    if input_data.get("crops") or input_data.get("companions"):
+    if input_data.get("crops") or input_data.get("companions") or (input_data.get("sowing_windows") or {}).get("enabled"):
         labels.append("OpenAI")
     if input_data.get("cities"):
         labels.extend(["Open-Meteo", "NASA POWER"])
@@ -398,6 +404,49 @@ def _live_tests_flow() -> None:
     from .live_tests import run_live_tests
     ok = run_live_tests()
     print("Live tests:", "ok" if ok else "failed")
+
+
+def _sowing_window_diagnostics_flow(settings) -> None:
+    default_year = datetime.now().year
+    raw_year = input(f"Diagnostic year [{default_year}]: ").strip()
+    try:
+        year = int(raw_year) if raw_year else default_year
+    except ValueError:
+        print("Enter a whole-number year.")
+        return
+    raw_tolerance = input("Tolerance days [14]: ").strip()
+    try:
+        tolerance_days = int(raw_tolerance) if raw_tolerance else 14
+    except ValueError:
+        print("Enter a whole-number tolerance.")
+        return
+    report_path = settings.runs_dir / "sowing_window_diagnostics_report.json"
+    script_path = PROJECT_DIR / "scripts" / "trellis_seed_sowing_window_diagnostics.cjs"
+    cmd = [
+        "node",
+        str(script_path),
+        "--db",
+        str(settings.db_path),
+        "--year",
+        str(year),
+        "--tolerance-days",
+        str(tolerance_days),
+        "--out",
+        str(report_path),
+    ]
+    try:
+        completed = subprocess.run(cmd, cwd=PROJECT_DIR, text=True, capture_output=True, check=False)  # diagnostic bridge
+    except FileNotFoundError:
+        print("Node.js was not found on PATH; run this from the drawio-desktop npm environment.")
+        return
+    if completed.stdout:
+        print(completed.stdout.strip())
+    if completed.stderr:
+        print(completed.stderr.strip())
+    if completed.returncode:
+        print(f"Sowing-window diagnostics failed with exit code {completed.returncode}.")
+    else:
+        print("Sowing-window diagnostics complete.")
 
 
 def _choose_run(settings, complete_only: bool = False) -> Path | None:

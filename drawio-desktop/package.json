@@ -12,11 +12,12 @@
   },
   "scripts": {
     "test": "npm run test:plugins",
-    "test:plugins": "node --test ./test/planting-scheduler-reliability.test.cjs ./test/year-planner.test.cjs ./test/year-planner-dom.test.cjs ./test/trellis-context-menu.test.cjs ./test/tidy-context-menu.test.cjs ./test/garden-beds.test.cjs ./test/garden-equipment.test.cjs ./test/bed-succession-navigator.test.cjs ./test/release-prepare.test.mjs ./test/electron-builder-config.test.cjs ./test/updater-progress.test.cjs ./test/bundled-update-menu.test.cjs",
+    "test:plugins": "node --test ./test/planting-scheduler-reliability.test.cjs ./test/sowing-window-diagnostics.test.cjs ./test/year-planner.test.cjs ./test/year-planner-dom.test.cjs ./test/trellis-context-menu.test.cjs ./test/tidy-context-menu.test.cjs ./test/garden-beds.test.cjs ./test/garden-equipment.test.cjs ./test/bed-succession-navigator.test.cjs ./test/release-prepare.test.mjs ./test/electron-builder-config.test.cjs ./test/updater-progress.test.cjs ./test/bundled-update-menu.test.cjs",
     "test:release-prepare": "node --test ./test/release-prepare.test.mjs",
     "start": "electron .",
     "sync": "node ./sync.cjs",
     "trellis:seed": "python ./scripts/trellis_seed_cli.py",
+    "trellis:seed:sowing-window-diagnostics": "node ./scripts/trellis_seed_sowing_window_diagnostics.cjs",
     "test:trellis-seed": "python -m unittest discover -s ./test/trellis_seed -p \"test_*.py\"",
     "release:prepare": "node ./scripts/release-prepare.mjs",
     "test:year-planner": "node --test ./test/year-planner.test.cjs ./test/year-planner-dom.test.cjs",

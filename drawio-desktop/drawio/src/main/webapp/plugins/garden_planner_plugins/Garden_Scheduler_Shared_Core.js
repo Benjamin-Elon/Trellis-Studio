@@ -37,6 +37,133 @@
         const n = Number(value);
         return Number.isFinite(n) ? n : null;
     }
+    function monthlyMeanOnDate(date, monthlyAvgTemp) {
+        const year = date.getUTCFullYear();
+        const month = date.getUTCMonth() + 1;
+        const curMean = finiteNumberOrNull(monthlyAvgTemp?.[month]);
+        if (curMean == null) return null;
+        const curCenter = Date.UTC(year, month - 1, 15);
+        const nextMonth = month === 12 ? 1 : month + 1;
+        const prevMonth = month === 1 ? 12 : month - 1;
+        const nextYear = month === 12 ? year + 1 : year;
+        const prevYear = month === 1 ? year - 1 : year;
+        const nextMean = finiteNumberOrNull(monthlyAvgTemp?.[nextMonth]);
+        const prevMean = finiteNumberOrNull(monthlyAvgTemp?.[prevMonth]);
+        const target = Date.UTC(year, month - 1, date.getUTCDate());
+        if (target >= curCenter && nextMean != null) {
+            const nextCenter = Date.UTC(nextYear, nextMonth - 1, 15);
+            const ratio = (target - curCenter) / Math.max(1, nextCenter - curCenter);
+            return curMean + (nextMean - curMean) * Math.max(0, Math.min(1, ratio));
+        }
+        if (target < curCenter && prevMean != null) {
+            const prevCenter = Date.UTC(prevYear, prevMonth - 1, 15);
+            const ratio = (target - prevCenter) / Math.max(1, curCenter - prevCenter);
+            return prevMean + (curMean - prevMean) * Math.max(0, Math.min(1, ratio));
+        }
+        return curMean;
+    }
+    function normalizeBedProfile(profile) {
+        const source = profile && typeof profile === 'object' ? profile : {};
+        const pick = (key, fallback) => String(source[key] || fallback || 'unknown').trim() || 'unknown';
+        return {
+            sunExposure: pick('sunExposure', 'full_sun'),
+            soilMoisture: pick('soilMoisture', 'moderate'),
+            drainage: pick('drainage', 'normal'),
+            soilTexture: pick('soilTexture', 'loamy'),
+            windExposure: pick('windExposure', 'moderate'),
+            frostRisk: pick('frostRisk', 'low')
+        };
+    }
+    function bedSoilTemperatureOffsetC(profile) {
+        const bed = normalizeBedProfile(profile);
+        let offset = 3.0; // ADDED: generic open vegetable beds warm faster than monthly city-air means.
+        const add = (value) => { offset += value; };
+        if (bed.sunExposure === 'full_sun') add(0.4);
+        else if (bed.sunExposure === 'part_sun') add(0.1);
+        else if (bed.sunExposure === 'part_shade') add(-0.9);
+        else if (bed.sunExposure === 'shade') add(-1.8);
+        if (bed.soilMoisture === 'dry') add(0.4);
+        else if (bed.soilMoisture === 'moist') add(-0.5);
+        else if (bed.soilMoisture === 'wet') add(-1.0);
+        if (bed.drainage === 'fast') add(0.3);
+        else if (bed.drainage === 'slow') add(-0.6);
+        if (bed.soilTexture === 'sandy' || bed.soilTexture === 'amended') add(0.4);
+        else if (bed.soilTexture === 'clay') add(-0.5);
+        if (bed.windExposure === 'sheltered') add(0.2);
+        else if (bed.windExposure === 'exposed') add(-0.5);
+        if (bed.frostRisk === 'none') add(0.2);
+        else if (bed.frostRisk === 'medium') add(-0.3);
+        else if (bed.frostRisk === 'high') add(-0.7);
+        return Math.max(-1.5, Math.min(5.0, offset));
+    }
+    function estimateSoilTempC(date, monthlyAvgTemp, bedProfile = null) {
+        const air = monthlyMeanOnDate(date, monthlyAvgTemp);
+        if (air == null) return null;
+        return air + bedSoilTemperatureOffsetC(bedProfile); // ADDED: bed-aware soil estimate replaces fixed lagged-air heuristic.
+    }
+    function firstSoilReadyDate({ thresholdC, monthlyAvgTemp, scanStart, scanEndHard, bedProfile = null, consecutiveDays = 3 }) {
+        const threshold = finiteNumberOrNull(thresholdC);
+        if (threshold == null) return null;
+        const days = Math.max(1, Math.round(Number(consecutiveDays) || 1));
+        for (let d = new Date(scanStart); d <= scanEndHard; d = addDaysUTC(d, 1)) {
+            let ok = true;
+            for (let i = 0; i < days; i++) {
+                const sample = addDaysUTC(d, i);
+                if (sample > scanEndHard) { ok = false; break; }
+                const soil = estimateSoilTempC(sample, monthlyAvgTemp, bedProfile);
+                if (soil == null || soil < threshold) { ok = false; break; }
+            }
+            if (ok) return d;
+        }
+        return null;
+    }
+    function annualGddFromMonthlyMeans(monthlyAvgTemp, tbase, year, tempOffsetC = 0) {
+        const base = Number(tbase);
+        if (!Number.isFinite(base)) return null;
+        let total = 0;
+        for (let m = 1; m <= 12; m++) {
+            const mean = finiteNumberOrNull(monthlyAvgTemp?.[m]);
+            if (mean == null) continue;
+            total += Math.max(0, mean + Number(tempOffsetC || 0) - base) * daysInMonth(year, m);
+        }
+        return total;
+    }
+    function solveGddTemperatureOffset({ monthlyAvgTemp, targetGdd, gddBaseC, year }) {
+        const target = finiteNumberOrNull(targetGdd);
+        const base = finiteNumberOrNull(gddBaseC);
+        if (target == null || target <= 0 || base == null) {
+            return { usable: false, offsetC: 0, targetGdd: target, gddBaseC: base, uncalibratedGdd: null, calibratedGdd: null };
+        }
+        const uncalibrated = annualGddFromMonthlyMeans(monthlyAvgTemp, base, year, 0);
+        if (uncalibrated == null) {
+            return { usable: false, offsetC: 0, targetGdd: target, gddBaseC: base, uncalibratedGdd: null, calibratedGdd: null };
+        }
+        let lo = -15;
+        let hi = 15;
+        for (let i = 0; i < 50; i++) {
+            const mid = (lo + hi) / 2;
+            const gdd = annualGddFromMonthlyMeans(monthlyAvgTemp, base, year, mid);
+            if (gdd < target) lo = mid;
+            else hi = mid;
+        }
+        const offset = (lo + hi) / 2;
+        return {
+            usable: true,
+            offsetC: offset,
+            targetGdd: target,
+            gddBaseC: base,
+            uncalibratedGdd: uncalibrated,
+            calibratedGdd: annualGddFromMonthlyMeans(monthlyAvgTemp, base, year, offset)
+        };
+    }
+    function applyTemperatureOffsetToMonthlyMeans(monthlyAvgTemp, offsetC = 0) {
+        const out = {};
+        for (let m = 1; m <= 12; m++) {
+            const mean = finiteNumberOrNull(monthlyAvgTemp?.[m]);
+            if (mean != null) out[m] = mean + Number(offsetC || 0);
+        }
+        return out;
+    }
     function normId(value) {
         return String(value ?? '').trim().toLowerCase();
     }
@@ -130,6 +257,10 @@
         const n = Number(v);
         return Number.isFinite(n) ? n : null;
     }
+    function coolingGateThresholdC(plant) {
+        if (!isCrossYearCrop(plant)) return null; // FIX: heat-stress metadata must not force annual fall-only scheduling
+        return asCoolingThresholdC(plant?.start_cooling_threshold_c); // FIX
+    }
     function dateFromDOY(year, doy) {
         const d0 = Date.UTC(year, 0, 1);
         return new Date(d0 + (Math.max(1, Math.floor(doy)) - 1) * 86400000);
@@ -182,7 +313,9 @@
             harvestWindowDays,
             minYieldMultiplier = 0,
             varietyId = null,
-            varietyName = ''
+            varietyName = '',
+            bedProfile = null,
+            bedProfileSource = 'generic garden bed'
         }) {
             Object.assign(this, {
                 plant,
@@ -197,7 +330,9 @@
                 harvestWindowDays: (harvestWindowDays == null ? null : Number(harvestWindowDays)),
                 minYieldMultiplier: Number(minYieldMultiplier),
                 varietyId: (varietyId != null ? Number(varietyId) : null),
-                varietyName: String(varietyName || '')
+                varietyName: String(varietyName || ''),
+                bedProfile: normalizeBedProfile(bedProfile), // ADDED: carry bed conditions into soil-temperature gates.
+                bedProfileSource: String(bedProfileSource || 'generic garden bed') // ADDED
             });
             Object.freeze(this);
         }
@@ -211,7 +346,9 @@
             const scanEndHard = asUTCDate(this.seasonStartYear + scanYears - 1, 12, 31);
             const year = scanStart.getUTCFullYear();
             const dailyRates = this.city.dailyRates(env.Tbase, year);
-            const monthlyAvg = this.city.monthlyMeans();
+            const monthlyAvg = typeof this.city.calibratedMonthlyMeans === 'function'
+                ? this.city.calibratedMonthlyMeans(year)
+                : this.city.monthlyMeans(); // ADDED: use annual-GDD calibrated heat curve when city supports it.
             return { startDate, seasonEnd, year, env, dailyRates, monthlyAvg, scanStart, scanEndHard };
         }
     }
@@ -335,6 +472,14 @@
         shiftDays,
         dayOfYear,
         finiteNumberOrNull,
+        monthlyMeanOnDate,
+        normalizeBedProfile,
+        bedSoilTemperatureOffsetC,
+        estimateSoilTempC,
+        firstSoilReadyDate,
+        annualGddFromMonthlyMeans,
+        solveGddTemperatureOffset,
+        applyTemperatureOffsetToMonthlyMeans,
         normId,
         parseISODateUTCValue,
         resolveStartAfterWindow,
@@ -347,6 +492,7 @@
         isCrossYearCrop,
         getPlantScanYears,
         asCoolingThresholdC,
+        coolingGateThresholdC,
         dateFromDOY,
         PolicyFlags,
         ScheduleInputs,

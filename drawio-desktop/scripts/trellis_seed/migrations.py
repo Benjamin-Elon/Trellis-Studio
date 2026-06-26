@@ -24,6 +24,8 @@ def pending_migrations(conn: sqlite3.Connection) -> list[str]:
         pending.append("create CityWeatherForecastDaily")
     if "CompanionEvidence" not in tables:
         pending.append("create CompanionEvidence")
+    if "PlantingWindowReferences" not in tables:
+        pending.append("create PlantingWindowReferences")
     if "VarietyTaskTemplates" not in tables or "method_id" not in table_columns(conn, "VarietyTaskTemplates"):
         pending.append("repair VarietyTaskTemplates key to (variety_id, method_id)")
     return pending
@@ -111,6 +113,27 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
         CREATE INDEX IF NOT EXISTS idx_CompanionEvidence_relation
             ON CompanionEvidence(relation_id);
 
+        CREATE TABLE IF NOT EXISTS PlantingWindowReferences (
+            reference_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plant_id INTEGER NOT NULL REFERENCES Plants(plant_id) ON DELETE CASCADE,
+            city_id INTEGER NOT NULL REFERENCES Cities(city_id) ON DELETE CASCADE,
+            method_id TEXT NOT NULL REFERENCES PlantingMethods(method_id) ON DELETE CASCADE,
+            stage TEXT NOT NULL,
+            window_label TEXT NOT NULL,
+            start_mm_dd TEXT NOT NULL,
+            end_mm_dd TEXT NOT NULL,
+            start_doy INTEGER NOT NULL,
+            end_doy INTEGER NOT NULL,
+            is_cross_year INTEGER NOT NULL DEFAULT 0,
+            source_url TEXT,
+            source_note TEXT,
+            confidence TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            UNIQUE (plant_id, city_id, method_id, stage, window_label, start_mm_dd, end_mm_dd)
+        );
+        CREATE INDEX IF NOT EXISTS idx_PlantingWindowReferences_lookup
+            ON PlantingWindowReferences(plant_id, city_id, method_id, stage);
+
         CREATE TABLE IF NOT EXISTS VarietyTaskTemplates (
             variety_id INTEGER NOT NULL REFERENCES PlantVarieties(variety_id) ON DELETE CASCADE,
             method_id TEXT NOT NULL REFERENCES PlantingMethods(method_id) ON DELETE CASCADE,
@@ -120,7 +143,7 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
         );
         """
     )
-    for label in ("CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily", "CompanionEvidence", "VarietyTaskTemplates"):
+    for label in ("CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily", "CompanionEvidence", "PlantingWindowReferences", "VarietyTaskTemplates"):
         if label not in tables or label == "VarietyTaskTemplates":
             applied.append(f"ensured {label}")
     return applied

@@ -8,13 +8,14 @@ from typing import Any
 
 from .artifacts import input_summary_slug, unique_artifact_dir
 from .config import Settings, read_openai_api_key
-from .db import load_method_categories, load_methods
+from .db import load_cities, load_method_categories, load_methods, load_plant_allowed_categories, load_plants
 from .jsonio import read_json, write_json
 from .planner import effective_tables_from_input, selected_tables_warning
 from .providers import NasaPowerClient, OpenAIJsonClient, OpenMeteoClient, ProviderError, ProviderTrace
 from .schema import (
     GENERATED_TABLES,
     OPENAI_PLANT_SCHEMA,
+    OPENAI_SOWING_WINDOW_SCHEMA,
     OPENAI_TEMPLATE_SCHEMA,
     PLANT_FLAG_FIELDS,
     PLANT_INTEGER_FIELDS,
@@ -22,6 +23,7 @@ from .schema import (
     PROVENANCE_SCHEMA,
     compact_json,
 )
+from .sowing_windows import normalize_window_row, select_cities_for_crop, usable_crop_for_sowing_windows
 from .validator import normalize_key, source_values_from_input, validate_input, validate_row, validate_run
 from .weather import forecast_rows, history_window, summarize_city_monthly_weather
 
@@ -30,6 +32,28 @@ TASK_RULE_ORDER = ["prep", "sow", "start", "harden", "transplant", "thin", "harv
 VALID_STAGES = {"SOW", "GERM", "TRANSPLANT", "HARVEST_START", "HARVEST_END"}
 CONTROLLED_CROP_SOURCE_FIELDS = {
     "plant_name", "default_planting_method_category", "default_planting_method", "direct_sow", "transplant"
+}
+
+CROP_PROMPT_FIELD_GUIDE = {
+    "regional_default": "Use generic temperate home-garden assumptions unless the crop input specifies a region.",  # prompt quality
+    "field_completion": "Every plant row field is required; provide realistic expert estimates instead of nulls.",  # prompt quality
+    "flags": "Flag fields are integers: 1 means true/allowed, 0 means false/not typical.",  # prompt quality
+    "lifecycle": "Set annual, biennial, and perennial to a coherent lifecycle; normally exactly one is 1.",  # prompt quality
+    "units": "Fields ending _c are Celsius, _cm centimeters, _kg kilograms, and day fields are days.",  # prompt quality
+    "temperature": "Use plausible crop physiology values: tmin_c <= topt_low_c <= topt_high_c <= tmax_c.",  # prompt quality
+    "start_cooling_threshold_c": "This is a fall/overwinter cooling trigger, not a heat-stress threshold; use 0 for normal spring/summer annual crops.",  # scheduler semantics
+    "spacing": "spacing_x_cm and spacing_y_cm should describe in-row and between-row spacing when useful.",  # prompt quality
+    "methods": "allowed_method_categories are broad capabilities; allowed_method_ids are concrete fixed_methods that truly fit the crop.",  # prompt quality
+    "default_method": "default_planting_method must be one of allowed_method_ids and should reflect the most common reliable home-garden method.",  # prompt quality
+    "varieties": "Return real named cultivars only, preferably widely available and suitable for temperate gardens.",  # prompt quality
+    "provenance": "For required provenance fields, use exact strings from allowed_provenance_references only.",  # prompt quality
+}
+
+COMPANION_PROMPT_GUIDE = {
+    "rating": "-1 = antagonistic, 0 = mixed/unclear/neutral, 1 = beneficial.",  # prompt quality
+    "companion_type": "Use one conservative label: beneficial, antagonistic, neutral, mixed, pest, pollinator, support, nutrient, shade, or growth.",  # prompt quality
+    "companion_type_id": "Use null unless the input provides an exact Trellis type id mapping.",  # prompt quality
+    "evidence": "Summarize only the supplied evidence; do not infer a relationship beyond the source text.",  # prompt quality
 }
 
 
@@ -96,8 +120,10 @@ def normalize_input(input_data: dict[str, Any], settings: Settings) -> dict[str,
     data.setdefault("crops", [])
     data.setdefault("cities", [])
     data.setdefault("companions", [])
+    data.setdefault("sowing_windows", {})
     data.setdefault("settings", {})
     data["settings"].setdefault("variety_count", settings.data.get("default_variety_count", 5))
+    data["sowing_windows"] = settings.data.get("sowing_windows", {}) | (data.get("sowing_windows") or {})
     data["effective_tables"] = effective_tables_from_input(data)
     return data
 
@@ -108,6 +134,7 @@ def estimate_openai_calls(input_data: dict[str, Any], settings: Settings, db_pat
     categories = load_method_categories(db_path)
     crop_count = len(input_data.get("crops") or [])
     companion_count = len(input_data.get("companions") or [])
+    sowing_window_count = _estimate_sowing_window_calls(input_data, settings, db_path)
     template_count = 0
     variety_override_count = 0
     for crop in input_data.get("crops", []) or []:
@@ -122,13 +149,14 @@ def estimate_openai_calls(input_data: dict[str, Any], settings: Settings, db_pat
         "companion_rows": companion_count,
         "plant_task_templates": template_count,
         "variety_task_overrides": variety_override_count,
-        "estimated_total": crop_count + companion_count + template_count + variety_override_count,
+        "sowing_window_crops": sowing_window_count,
+        "estimated_total": crop_count + companion_count + sowing_window_count,  # template rows are deterministic, not OpenAI calls
     }
 
 
 def preflight(settings: Settings, input_data: dict[str, Any]) -> list[ProviderTrace]:
     traces = []
-    if input_data.get("crops") or input_data.get("companions"):
+    if input_data.get("crops") or input_data.get("companions") or (input_data.get("sowing_windows") or {}).get("enabled"):
         traces.append(OpenAIJsonClient(read_openai_api_key(), settings.openai_model, settings.openai_reasoning_effort).preflight())
     if input_data.get("cities"):
         traces.append(OpenMeteoClient(settings.data["open_meteo"]).preflight())
@@ -172,6 +200,8 @@ def generate_run(settings: Settings, input_path: Path, options: GenerationOption
             _generate_crops(settings, input_data, openai, methods, generated, provenance, generate_templates=options.generate_templates)
         if input_data.get("companions"):
             _generate_companions(input_data, openai, generated, provenance)
+        if (input_data.get("sowing_windows") or {}).get("enabled"):
+            _generate_sowing_windows(settings, input_data, openai, methods, generated, provenance, run_dir)
 
         _write_generated_checkpoint(run_dir, generated)
         write_json(run_dir / "provenance.json", provenance)
@@ -312,17 +342,19 @@ def _generate_crops(settings: Settings, input_data: dict[str, Any], openai: Open
             validator=lambda candidate: _validate_crop_result(_prepare_crop_result(candidate, crop, methods), source_values, methods),
             progress_label=f"crop row: {name}",
             system=(
-                "You are a professional horticultural agronomist creating complete Trellis SQLite seed rows. "
-                "Fill every plant row field with a non-null value. Use supplied sources/notes first, then general agronomy knowledge and best estimates when source notes are broad. "
-                "Use the units implied by field names: _c is Celsius, _cm is centimeters, _kg is kilograms, and day fields are days. "
-                "Text fields must be non-empty strings; use 'N/A' only for text fields that truly do not apply. Numeric and integer fields must be numbers, never text or null. "
+                "You are a professional horticultural agronomist creating complete database seed rows. "
+                "Create agronomically realistic data for a temperate home garden unless the input specifies a region. "
+                "Use supplied sources/notes first; when they are broad or incomplete, use expert horticultural estimates to complete every field. "
+                "Never return nulls or empty strings for plant row fields; use concise 'N/A' only for text fields that truly do not apply. "
+                "Numeric and integer fields must be in the requested units, never text. "
+                "Lifecycle flags must be coherent, method flags must match allowed planting methods, and default_planting_method must be a concrete allowed method. "
                 "Return real named cultivars/varieties only; never placeholders such as '<crop> variety 1', 'generic', 'standard', or crop-name-only varieties. "
-                "allowed_method_categories are broad capabilities; allowed_method_ids must include only concrete fixed_methods that are actual planting methods for this crop. "
-                "Do not include propagation-by-cutting unless the crop is normally grown from cuttings. "
-                "provenance.field_sources must include field/source entries for required fields using exact supplied source strings."
+                "Do not include planting methods (such as propagation-by-cutting) unless the crop is normally grown using the method. "
+                "provenance.field_sources must cite exact supplied strings from allowed_provenance_references for required provenance fields; do not cite invented estimate labels."
             ),
             user=json.dumps({
                 "crop": crop,
+                "trellis_field_guide": CROP_PROMPT_FIELD_GUIDE,  # prompt quality
                 "fixed_method_categories": sorted({m["method_category_id"] for m in methods}),
                 "fixed_methods": methods,
                 "default_variety_count": requested_varieties,
@@ -361,14 +393,7 @@ def _generate_crops(settings: Settings, input_data: dict[str, Any], openai: Open
         print(f"  - Plant task templates to generate: {len(crop_methods)}", flush=True)
         for method_index, method in enumerate(crop_methods, 1):
             print(f"    * Template {method_index}/{len(crop_methods)}: {method['method_id']}", flush=True)
-            template, trace = _generate_task_template(
-                openai,
-                row,
-                method,
-                crop,
-                progress_label=f"plant task template: {row['plant_name']} / {method['method_id']}",
-            )
-            provenance["traces"].append(trace.redacted())
+            template = build_task_template_from_method(method)  # deterministic template generation
             generated["PlantTaskTemplates"].append({
                 "plant_name": row["plant_name"],
                 "method_id": method["method_id"],
@@ -382,14 +407,7 @@ def _generate_crops(settings: Settings, input_data: dict[str, Any], openai: Open
                 print(f"    * Override {override_index}/{len(overrides)} skipped: unknown method {override.get('method_id')}", flush=True)
                 continue
             print(f"    * Override {override_index}/{len(overrides)}: {override.get('variety_name')} / {override.get('method_id')}", flush=True)
-            template, trace = _generate_task_template(
-                openai,
-                row,
-                method,
-                crop | {"variety_override": override},
-                progress_label=f"variety task template: {row['plant_name']} / {override.get('variety_name')} / {override.get('method_id')}",
-            )
-            provenance["traces"].append(trace.redacted())
+            template = build_task_template_from_method(method)  # deterministic template generation
             generated["VarietyTaskTemplates"].append({
                 "plant_name": row["plant_name"],
                 "variety_name": override["variety_name"],
@@ -463,14 +481,232 @@ def _generate_companions(input_data: dict[str, Any], openai: OpenAIJsonClient, g
                 "required": ["companion", "evidence", "provenance"],
             },
             validator=lambda candidate: _validate_companion_result(candidate, source_values),
-            system="Convert source-backed companion planting evidence into Trellis companion rows. Do not invent unsupported relationships. provenance.field_sources must include a summary entry using an exact supplied source string.",
-            user=json.dumps(item, indent=2),
+            system=(
+                "Convert source-backed companion planting evidence into companion rows. "
+                "Do not invent unsupported relationships or upgrade weak evidence into a stronger claim. "
+                "Use rating -1 for antagonistic, 0 for mixed/unclear/neutral, and 1 for beneficial. "
+                "Use conservative normalized companion_type labels and keep companion_type_id null unless an exact mapping is supplied. "
+                "evidence.summary must be specific, reviewable, and grounded in the supplied source URL or note. "
+                "provenance.field_sources must include a summary entry using an exact supplied source string."
+            ),
+            user=json.dumps({"companion_input": item, "trellis_relationship_guide": COMPANION_PROMPT_GUIDE}, indent=2),  # prompt quality
         )
         provenance["traces"].append(trace.redacted())
         companion = result["companion"]
         evidence = result["evidence"]
         generated["Companions"].append(companion)
         generated["CompanionEvidence"].append({"p1": companion["p1"], "p2": companion["p2"], **evidence})
+
+
+def _generate_sowing_windows(
+    settings: Settings,
+    input_data: dict[str, Any],
+    openai: OpenAIJsonClient,
+    methods: list[dict[str, Any]],
+    generated: dict[str, list[dict[str, Any]]],
+    provenance: dict[str, Any],
+    run_dir: Path,
+) -> None:
+    config = _sowing_window_config(input_data, settings)
+    methods_by_id = {str(method["method_id"]): method for method in methods}
+    plants = _sowing_window_plants(settings, generated, methods_by_id, config)
+    cities = _sowing_window_cities(settings, generated, config)
+    allowed_categories = load_plant_allowed_categories(settings.db_path)
+    allowed_categories.update(_generated_allowed_categories(generated))
+    completed = {
+        (normalize_key(row.get("plant_name")), normalize_key(row.get("city_name")), str(row.get("method_id")), str(row.get("stage")), str(row.get("window_label")))
+        for row in generated.get("PlantingWindowReferences", [])
+    }
+    print(f"Generating sowing-window references for {len(plants)} crop(s)", flush=True)
+    for index, plant in enumerate(plants, 1):
+        plant_name = str(plant.get("plant_name") or "").strip()
+        plant_methods = _sowing_window_methods_for_crop(plant, methods, allowed_categories.get(normalize_key(plant_name), []))
+        if not plant_methods:
+            print(f"  - Skipping {plant_name}: no supported planting methods", flush=True)
+            continue
+        selected_cities = select_cities_for_crop(
+            plant_name,
+            cities,
+            int(config.get("cities_per_crop") or 5),
+            str(config.get("random_seed") or "trellis-sowing-windows"),
+            config.get("city_overrides_by_crop") or {},
+        )
+        if not selected_cities:
+            print(f"  - Skipping {plant_name}: no cities selected", flush=True)
+            continue
+        print(f"  - Sowing windows {index}/{len(plants)}: {plant_name} across {len(selected_cities)} city/cities", flush=True)
+        source_values = _sowing_window_source_values(input_data, plant_name)
+        result, trace = _call_openai_with_retry(
+            openai,
+            schema_name="trellis_sowing_windows",
+            json_schema=OPENAI_SOWING_WINDOW_SCHEMA,
+            validator=lambda candidate, p=plant_name, sv=source_values, ac={city["city_name"] for city in selected_cities}, am={method["method_id"] for method in plant_methods}: _validate_sowing_window_result(candidate, p, sv, ac, am),
+            progress_label=f"sowing windows: {plant_name}",
+            system=(
+                "You are an expert vegetable-garden extension agronomist creating QA reference sowing windows. "
+                "Return conservative, typical, yearless planting windows for the supplied crop, cities, and planting methods. "
+                "These are independent reference windows, not dates copied from a scheduler model. "
+                "Use MM-DD dates, multiple windows when genuinely typical, and only stages 'sow' or 'transplant'. "
+                "Use supplied source URLs/notes when available; otherwise provide a concise source_note naming this as an expert estimate."
+            ),
+            user=json.dumps({
+                "crop": plant,
+                "cities": [_city_window_context(city) for city in selected_cities],
+                "methods": plant_methods,
+                "allowed_city_names": [city["city_name"] for city in selected_cities],
+                "allowed_method_ids": [method["method_id"] for method in plant_methods],
+                "allowed_provenance_references": sorted(source_values),
+                "output_rules": {
+                    "date_format": "MM-DD",
+                    "stage": ["sow", "transplant"],
+                    "confidence": ["low", "medium", "high"],
+                    "summary": "short reason, including climate/method rationale",
+                },
+            }, indent=2),
+        )
+        provenance["traces"].append(trace.redacted())
+        rows = [normalize_window_row(row, plant_name) for row in result.get("windows", [])]
+        for row in rows:
+            key = (normalize_key(row.get("plant_name")), normalize_key(row.get("city_name")), str(row.get("method_id")), str(row.get("stage")), str(row.get("window_label")))
+            if key in completed:
+                continue
+            generated["PlantingWindowReferences"].append(row)
+            completed.add(key)
+        provenance["tables"].setdefault("PlantingWindowReferences", {})[plant_name] = {"cities": [city["city_name"] for city in selected_cities]}
+        _write_generated_checkpoint(run_dir, generated, {"PlantingWindowReferences"})
+        write_json(run_dir / "provenance.json", provenance)
+
+
+def _sowing_window_config(input_data: dict[str, Any], settings: Settings) -> dict[str, Any]:
+    return (settings.data.get("sowing_windows") or {}) | (input_data.get("sowing_windows") or {})
+
+
+def _estimate_sowing_window_calls(input_data: dict[str, Any], settings: Settings, db_path: Path) -> int:
+    config = _sowing_window_config(input_data, settings)
+    if not config.get("enabled"):
+        return 0
+    methods_by_id = {str(method["method_id"]): method for method in load_methods(db_path)}
+    allow = {normalize_key(name) for name in (config.get("crop_allowlist") or [])}
+    plants = [
+        plant for plant in load_plants(db_path)
+        if (not allow or normalize_key(plant.get("plant_name")) in allow)
+        and usable_crop_for_sowing_windows(plant, methods_by_id)
+    ]
+    return len(plants)
+
+
+def _sowing_window_plants(settings: Settings, generated: dict[str, list[dict[str, Any]]], methods_by_id: dict[str, dict[str, Any]], config: dict[str, Any]) -> list[dict[str, Any]]:
+    plants = load_plants(settings.db_path) + list(generated.get("Plants", []))
+    allow = {normalize_key(name) for name in (config.get("crop_allowlist") or [])}
+    out = []
+    seen = set()
+    for plant in plants:
+        name = str(plant.get("plant_name") or "")
+        key = normalize_key(name)
+        if key in seen:
+            continue
+        if allow and key not in allow:
+            continue
+        if not usable_crop_for_sowing_windows(plant, methods_by_id):
+            continue
+        out.append(plant)
+        seen.add(key)
+    return out
+
+
+def _sowing_window_cities(settings: Settings, generated: dict[str, list[dict[str, Any]]], config: dict[str, Any]) -> list[dict[str, Any]]:
+    cities = load_cities(settings.db_path) + list(generated.get("Cities", []))
+    allow = {normalize_key(name) for name in (config.get("city_allowlist") or [])}
+    out = []
+    seen = set()
+    for city in cities:
+        name = str(city.get("city_name") or "")
+        key = normalize_key(name)
+        if key in seen:
+            continue
+        if allow and key not in allow:
+            continue
+        out.append(city)
+        seen.add(key)
+    return out
+
+
+def _generated_allowed_categories(generated: dict[str, list[dict[str, Any]]]) -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for row in generated.get("PlantAllowedMethodCategories", []):
+        grouped.setdefault(normalize_key(row.get("plant_name")), []).append(str(row.get("method_category_id")))
+    return grouped
+
+
+def _sowing_window_methods_for_crop(plant: dict[str, Any], methods: list[dict[str, Any]], categories: list[str]) -> list[dict[str, Any]]:
+    method_by_id = {str(method["method_id"]): method for method in methods}
+    selected: list[dict[str, Any]] = []
+    default_method = str(plant.get("default_planting_method") or "").strip()
+    if default_method in method_by_id:
+        selected.append(method_by_id[default_method])
+    category_set = set(categories)
+    if int(plant.get("direct_sow") or 0):
+        category_set.add("direct_sow")
+    if int(plant.get("transplant") or 0):
+        category_set.add("transplant")
+    for method in methods:
+        if method.get("method_category_id") in category_set and method not in selected:
+            selected.append(method)
+    return selected[:4]
+
+
+def _city_window_context(city: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "city_name": city.get("city_name"),
+        "gdd_annual": city.get("gdd_annual"),
+        "gdd_base_c": city.get("gdd_base_c"),
+        "last_spring_frost_p50_doy": city.get("last_spring_frost_p50_doy") or city.get("last_spring_frost_doy"),
+        "first_fall_frost_p50_doy": city.get("first_fall_frost_p50_doy") or city.get("first_fall_frost_doy"),
+        "monthly_mean_c": {
+            str(month): _monthly_mean(city, month)
+            for month in range(1, 13)
+            if _monthly_mean(city, month) is not None
+        },
+    }
+
+
+def _monthly_mean(city: dict[str, Any], month: int) -> float | None:
+    low = city.get(f"avg_monthly_low_c{month}")
+    high = city.get(f"avg_monthly_high_c{month}")
+    if low is None or high is None:
+        return None
+    return (float(low) + float(high)) / 2
+
+
+def _sowing_window_source_values(input_data: dict[str, Any], plant_name: str) -> set[str]:
+    values = {plant_name, f"crop.name: {plant_name}", "expert estimate"}
+    for crop in input_data.get("crops", []) or []:
+        if normalize_key(crop.get("name") or crop.get("plant_name")) == normalize_key(plant_name):
+            values.update(source_values_from_input(crop))
+    notes = str((input_data.get("sowing_windows") or {}).get("notes") or "").strip()
+    if notes:
+        values.add(notes)
+    return values
+
+
+def _validate_sowing_window_result(result: dict[str, Any], plant_name: str, source_values: set[str], allowed_cities: set[str] | None = None, allowed_methods: set[str] | None = None) -> list[str]:
+    errors: list[str] = []
+    allowed_city_keys = {normalize_key(city) for city in (allowed_cities or set())}
+    allowed_method_ids = {str(method) for method in (allowed_methods or set())}
+    windows = result.get("windows")
+    if not isinstance(windows, list) or not windows:
+        return ["windows must be a non-empty list."]
+    for index, raw in enumerate(windows):
+        row = normalize_window_row(dict(raw or {}), plant_name)
+        report = validate_row("PlantingWindowReferences", row)
+        errors.extend(f"windows[{index}].{error}" for error in report["errors"])
+        if allowed_city_keys and normalize_key(row.get("city_name")) not in allowed_city_keys:
+            errors.append(f"windows[{index}].city_name is outside selected cities: {row.get('city_name')}")
+        if allowed_method_ids and str(row.get("method_id")) not in allowed_method_ids:
+            errors.append(f"windows[{index}].method_id is outside selected methods: {row.get('method_id')}")
+        if row.get("source_url") is None and row.get("source_note") not in source_values and not str(row.get("source_note") or "").strip():
+            errors.append(f"windows[{index}] needs a supplied source or explicit estimate note.")
+    return errors
 
 
 def _call_openai_with_retry(openai: OpenAIJsonClient, validator=None, **kwargs: Any) -> tuple[dict[str, Any], ProviderTrace]:

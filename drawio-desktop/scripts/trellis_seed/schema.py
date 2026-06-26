@@ -12,6 +12,7 @@ GENERATED_TABLES = [
     "CityWeatherForecastDaily",
     "Companions",
     "CompanionEvidence",
+    "PlantingWindowReferences",
     "PlantAllowedMethodCategories",
     "PlantVarieties",
     "PlantTaskTemplates",
@@ -19,6 +20,15 @@ GENERATED_TABLES = [
 ]
 
 WEATHER_TABLES = {"CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily"}
+
+PLANTING_WINDOW_REFERENCE_COLUMNS = {
+    "reference_id", "plant_id", "plant_name", "city_id", "city_name", "method_id",
+    "stage", "window_label", "start_mm_dd", "end_mm_dd", "start_doy", "end_doy",
+    "is_cross_year", "source_url", "source_note", "confidence", "summary",
+}
+
+PLANTING_WINDOW_STAGES = {"sow", "transplant"}
+PLANTING_WINDOW_CONFIDENCE = {"low", "medium", "high"}
 
 PLANT_COLUMNS = {
     "plant_id", "plant_name", "family", "genus", "crop_category", "preferred_soil",
@@ -170,6 +180,38 @@ OPENAI_TEMPLATE_SCHEMA = {
         "provenance": PROVENANCE_SCHEMA,
     },
     "required": ["version", "rules", "provenance"],
+}
+
+OPENAI_SOWING_WINDOW_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "windows": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "city_name": {"type": "string"},
+                    "method_id": {"type": "string"},
+                    "stage": {"type": "string", "enum": sorted(PLANTING_WINDOW_STAGES)},
+                    "window_label": {"type": "string"},
+                    "start_mm_dd": {"type": "string"},
+                    "end_mm_dd": {"type": "string"},
+                    "source_url": {"type": ["string", "null"]},
+                    "source_note": {"type": ["string", "null"]},
+                    "confidence": {"type": "string", "enum": sorted(PLANTING_WINDOW_CONFIDENCE)},
+                    "summary": {"type": "string"},
+                },
+                "required": [
+                    "city_name", "method_id", "stage", "window_label",
+                    "start_mm_dd", "end_mm_dd", "source_url", "source_note",
+                    "confidence", "summary",
+                ],
+            },
+        },
+    },
+    "required": ["windows"],
 }
 
 

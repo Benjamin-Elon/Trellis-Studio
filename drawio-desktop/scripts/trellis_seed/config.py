@@ -20,6 +20,14 @@ DEFAULT_CONFIG = {
     "city_history_years": 15,
     "forecast_days": 16,
     "default_variety_count": 5,
+    "sowing_windows": {
+        "enabled": False,
+        "cities_per_crop": 5,
+        "random_seed": "trellis-sowing-windows",
+        "crop_allowlist": [],
+        "city_allowlist": [],
+        "city_overrides_by_crop": {},
+    },
     "open_meteo": {
         "geocoding_url": "https://geocoding-api.open-meteo.com/v1/search",
         "archive_url": "https://archive-api.open-meteo.com/v1/archive",
@@ -92,6 +100,7 @@ def load_settings(path: Path = DEFAULT_CONFIG_PATH) -> Settings:
     data = DEFAULT_CONFIG | (read_json(path, {}) or {})
     data["open_meteo"] = DEFAULT_CONFIG["open_meteo"] | (data.get("open_meteo") or {})
     data["nasa_power"] = DEFAULT_CONFIG["nasa_power"] | (data.get("nasa_power") or {})
+    data["sowing_windows"] = DEFAULT_CONFIG["sowing_windows"] | (data.get("sowing_windows") or {})
     return Settings(path=path, data=data)
 
 

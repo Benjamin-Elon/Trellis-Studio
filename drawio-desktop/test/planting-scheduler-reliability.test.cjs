@@ -114,6 +114,22 @@ function makeSeasonalCity(monthlyMeans) {
     return new hooks.CityClimate(row);
 }
 
+function makeVancouverCity(overrides = {}) { // ADDED
+    const means = { 1: 4, 2: 5.5, 3: 8, 4: 10, 5: 13, 6: 16, 7: 18.5, 8: 18.5, 9: 14.5, 10: 8.5, 11: 4.5, 12: 4 }; // ADDED
+    const row = { // ADDED
+        city_name: 'Vancouver, BC', // ADDED
+        gdd_annual: 1550, // ADDED
+        gdd_base_c: 5, // ADDED
+        last_spring_frost_doy: 1, // ADDED
+        ...overrides // ADDED
+    }; // ADDED
+    for (let month = 1; month <= 12; month += 1) { // ADDED
+        row[`avg_monthly_high_c${month}`] = means[month] + 2; // ADDED
+        row[`avg_monthly_low_c${month}`] = means[month] - 2; // ADDED
+    } // ADDED
+    return new hooks.CityClimate(row); // ADDED
+} // ADDED
+
 function makePlant(overrides = {}) {
     return new hooks.PlantModel({
         plant_id: 1,
@@ -195,7 +211,8 @@ function makeAutoWindowParams({
     methodCategoryId = 'direct_sow',
     methodId = 'direct_sow.field',
     year = 2026,
-    harvestWindowDays = 7
+    harvestWindowDays = 7,
+    bedProfile = null
 } = {}) {
     const env = plant.cropTempEnvelope();
     return {
@@ -215,7 +232,8 @@ function makeAutoWindowParams({
         useSpringFrostGate: false,
         lastSpringFrostDOY: 1,
         daysTransplant: Number(plant.days_transplant || 0),
-        overwinterAllowed: plant.overwinter_ok === 1
+        overwinterAllowed: plant.overwinter_ok === 1,
+        bedProfile
     };
 }
 
@@ -316,6 +334,105 @@ test('cooling trigger returns null without an observed warm-to-cool transition',
     });
     assert.equal(crossing, null);
 });
+
+test('annual crop cooling threshold does not force a fall-only sowing window', () => {
+    const plant = makePlant({
+        plant_name: 'Beet',
+        days_maturity: 55,
+        gdd_to_maturity: null,
+        start_cooling_threshold_c: 24,
+        overwinter_ok: 0
+    });
+    const result = hooks.computeScheduleResult(makeInputs({
+        plant,
+        city: makeCity(18),
+        startISO: '2026-04-15'
+    }));
+    assert.equal(result.rows[0].sow, '2026-04-15');
+    assert.equal(result.rows[0].harvStart, '2026-06-09');
+}); // FIX
+
+test('bed-aware soil model opens Vancouver sweet corn threshold by early June', () => { // ADDED
+    const city = makeVancouverCity(); // ADDED
+    const monthly = city.calibratedMonthlyMeans(2026); // ADDED
+    const genericReady = hooks.firstSoilReadyDate({ // ADDED
+        thresholdC: 16, // ADDED
+        monthlyAvgTemp: monthly, // ADDED
+        scanStart: new Date('2026-01-01T00:00:00Z'), // ADDED
+        scanEndHard: new Date('2026-12-31T00:00:00Z'), // ADDED
+        bedProfile: null, // ADDED
+        consecutiveDays: 3 // ADDED
+    }); // ADDED
+    assert.ok(genericReady, 'expected generic garden bed to reach sweet corn soil threshold'); // ADDED
+    assert.ok(genericReady >= new Date('2026-05-15T00:00:00Z')); // ADDED
+    assert.ok(genericReady <= new Date('2026-06-10T00:00:00Z')); // ADDED
+}); // ADDED
+
+test('wet shaded high-frost bed delays soil readiness', () => { // ADDED
+    const city = makeVancouverCity(); // ADDED
+    const monthly = city.calibratedMonthlyMeans(2026); // ADDED
+    const genericReady = hooks.firstSoilReadyDate({ // ADDED
+        thresholdC: 16, monthlyAvgTemp: monthly, scanStart: new Date('2026-01-01T00:00:00Z'), scanEndHard: new Date('2026-12-31T00:00:00Z') // ADDED
+    }); // ADDED
+    const coldBedReady = hooks.firstSoilReadyDate({ // ADDED
+        thresholdC: 16, // ADDED
+        monthlyAvgTemp: monthly, // ADDED
+        scanStart: new Date('2026-01-01T00:00:00Z'), // ADDED
+        scanEndHard: new Date('2026-12-31T00:00:00Z'), // ADDED
+        bedProfile: { sunExposure: 'shade', soilMoisture: 'wet', drainage: 'slow', soilTexture: 'clay', windExposure: 'exposed', frostRisk: 'high' } // ADDED
+    }); // ADDED
+    assert.ok(genericReady); // ADDED
+    assert.ok(coldBedReady === null || coldBedReady > genericReady); // ADDED
+}); // ADDED
+
+test('annual GDD calibration matches stored city base GDD and recomputes crop-base heat', () => { // ADDED
+    const city = makeVancouverCity(); // ADDED
+    const calibration = city.gddCalibration(2026); // ADDED
+    assert.equal(calibration.usable, true); // ADDED
+    assert.ok(Math.abs(calibration.calibratedGdd - 1550) < 0.5); // ADDED
+    assert.notEqual(Math.round(calibration.uncalibratedGdd), Math.round(calibration.calibratedGdd)); // ADDED
+    const cropBaseGdd = hooks.annualGddFromMonthlyMeans(city.calibratedMonthlyMeans(2026), 10, 2026); // ADDED
+    assert.ok(cropBaseGdd > 0); // ADDED
+    assert.ok(cropBaseGdd < calibration.calibratedGdd); // ADDED
+}); // ADDED
+
+test('strict GDD maturity remains infeasible when target exceeds calibrated season heat', () => { // ADDED
+    const city = makeVancouverCity(); // ADDED
+    const plant = makePlant({ // ADDED
+        plant_name: 'Sweet Corn', // ADDED
+        days_maturity: 78, // ADDED
+        gdd_to_maturity: 1250, // ADDED
+        tbase_c: 10, // ADDED
+        tmin_c: 8, // ADDED
+        topt_low_c: 18, // ADDED
+        topt_high_c: 30, // ADDED
+        tmax_c: 35, // ADDED
+        soil_temp_min_plant_c: null // ADDED
+    }); // ADDED
+    const planner = new hooks.Planner(makeInputs({ plant, city, startISO: '2026-06-01' })); // ADDED
+    const result = planner.isSowFeasible(new Date('2026-06-01T00:00:00Z')); // ADDED
+    assert.equal(result.ok, false); // ADDED
+    assert.equal(result.reason, 'insufficient_gdd'); // ADDED
+}); // ADDED
+
+test('feasibility diagnostics include soil, bed, calibration, and failing gate summary', async () => { // ADDED
+    const city = makeVancouverCity(); // ADDED
+    const plant = makePlant({ plant_name: 'Sweet Corn', gdd_to_maturity: 1250, days_maturity: 78, tbase_c: 10, soil_temp_min_plant_c: 16 }); // ADDED
+    const policy = new hooks.PolicyFlags({ useSpringFrostGate: false, useSoilTempGate: true, soilGateThresholdC: 16, soilGateConsecutiveDays: 3 }); // ADDED
+    const inputs = new hooks.ScheduleInputs({ // ADDED
+        plant, city, planningMode: 'direct_sow', methodCategoryId: 'direct_sow', methodId: 'direct_sow.field', // ADDED
+        startISO: '2026-01-01', seasonEndISO: '2026-12-31', policy, seasonStartYear: 2026, harvestWindowDays: 7, // ADDED
+        bedProfile: { sunExposure: 'full_sun', soilMoisture: 'moderate', drainage: 'normal', soilTexture: 'loamy', windExposure: 'moderate', frostRisk: 'low' }, // ADDED
+        bedProfileSource: 'garden bed bed1' // ADDED
+    }); // ADDED
+    const rows = await hooks.explainFeasibilityOverSeason(inputs, 220, false); // ADDED
+    const text = hooks.buildFeasibilityDiagnostics(inputs, rows); // ADDED
+    assert.match(text, /Soil threshold: 16\.0 C/); // ADDED
+    assert.match(text, /Bed model: garden bed bed1/); // ADDED
+    assert.match(text, /Temperature calibration offset:/); // ADDED
+    assert.match(text, /Crop-base annual GDD estimate:/); // ADDED
+    assert.match(text, /First failing gate:/); // ADDED
+}); // ADDED
 
 test('overwinter crop can mature in the following year', () => {
     const plant = makePlant({

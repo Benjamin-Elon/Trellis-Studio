@@ -27,7 +27,10 @@
         PolicyFlags,
         ScheduleInputs,
         asCoolingThresholdC,
+        coolingGateThresholdC,
         dateFromDOY,
+        normalizeBedProfile,
+        estimateSoilTempC,
         resolveMethodBehavior,
         validateAutoWindowMethodInputs,
         humanFeasibilityReason
@@ -138,7 +141,7 @@
             }
             const budget = plant.firstHarvestBudget();
             const HW_DAYS = resolveHarvestWindowDays(inputs.harvestWindowDays, plant);
-            const coolingThreshold = asCoolingThresholdC(plant.start_cooling_threshold_c);
+            const coolingThreshold = coolingGateThresholdC(plant); // FIX: only cross-year crops use fall cooling gates
             let coolingCross = null;
             if (coolingThreshold != null) {
                 coolingCross = firstCoolingCrossingDate({ thresholdC: coolingThreshold, monthlyAvgTemp: monthlyAvg, scanStart, scanEndHard });
@@ -163,6 +166,8 @@
                 env,
                 dailyRates,
                 monthlyAvg,
+                bedProfile: normalizeBedProfile(inputs.bedProfile), // ADDED: soil gates depend on garden-bed conditions.
+                bedProfileSource: inputs.bedProfileSource || 'generic garden bed', // ADDED
                 Tbase: env.Tbase,
                 startDate,
                 seasonEnd,
@@ -176,12 +181,10 @@
         withinWindow(d) { return d >= this.ctx.scanStart && d <= this.ctx.scanEndHard; }
         normalizeUtcMidnight(d) { return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); }
         soilGateOK(startDate) {
-            const { soilGateConsecutiveDays, soilGateThresholdC, monthlyAvg } = this.ctx;
+            const { soilGateConsecutiveDays, soilGateThresholdC, monthlyAvg, bedProfile } = this.ctx;
             let cur = new Date(startDate);
             for (let i = 0; i < soilGateConsecutiveDays; i++) {
-                const lagged = this.addDays(cur, -10);
-                const Tair = monthlyAvg[lagged.getUTCMonth() + 1] ?? 0;
-                const Tsoil = 1 * Tair - 1;
+                const Tsoil = estimateSoilTempC(cur, monthlyAvg, bedProfile); // ADDED: interpolate city air and adjust for bed conditions.
                 if (Tsoil < soilGateThresholdC) return false;
                 cur = this.addDays(cur, 1);
             }
@@ -343,7 +346,9 @@
             useSpringFrostGate,
             lastSpringFrostDOY,
             daysTransplant,
-            overwinterAllowed
+            overwinterAllowed,
+            bedProfile = null,
+            bedProfileSource = 'generic garden bed'
         } = params;
 
         const resolvedBehavior = resolveMethodBehavior({ methodCategoryId, methodId });
@@ -382,7 +387,9 @@
             seasonEndISO: scanEndHard.toISOString().slice(0, 10),
             policy,
             seasonStartYear: scanStart.getUTCFullYear(),
-            harvestWindowDays: HW_DAYS
+            harvestWindowDays: HW_DAYS,
+            bedProfile,
+            bedProfileSource
         });
         const planner = new Planner(inputs);
         return { planner, ctx: planner.ctx, resolvedBehavior };
@@ -398,6 +405,8 @@
             lastSpringFrostDOY = null,
             daysTransplant = 0,
             overwinterAllowed = false,
+            bedProfile = null,
+            bedProfileSource = 'generic garden bed'
         } = params;
 
         const resolvedHarvestWindowDays = resolveHarvestWindowDays(HW_DAYS);
@@ -410,7 +419,9 @@
             useSpringFrostGate,
             lastSpringFrostDOY,
             daysTransplant,
-            overwinterAllowed
+            overwinterAllowed,
+            bedProfile,
+            bedProfileSource
         });
         const C = planner.ctx;
         const planningMode = resolvedBehavior.planningMode;
@@ -420,7 +431,7 @@
             const frostDate = dateFromDOY(C.scanStart.getUTCFullYear(), lastSpringFrostDOY);
             if (frostDate > fieldGateStart) fieldGateStart = frostDate;
         }
-        if (Number.isFinite(startCoolingThresholdC)) {
+        if (overwinterAllowed && Number.isFinite(startCoolingThresholdC)) { // FIX: annual heat thresholds are not fall gates
             const cross = firstCoolingCrossingDate({ thresholdC: startCoolingThresholdC, monthlyAvgTemp, scanStart: C.scanStart, scanEndHard: C.scanEndHard });
             if (cross && cross > fieldGateStart) fieldGateStart = cross;
         }

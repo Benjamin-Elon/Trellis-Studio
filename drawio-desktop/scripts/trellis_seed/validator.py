@@ -10,6 +10,9 @@ from .jsonio import read_json, write_json
 from .schema import (
     CITY_COLUMNS,
     GENERATED_TABLES,
+    PLANTING_WINDOW_CONFIDENCE,
+    PLANTING_WINDOW_REFERENCE_COLUMNS,
+    PLANTING_WINDOW_STAGES,
     PLANT_COLUMNS,
     PLANT_FIELD_TYPES,
     PLANT_FLAG_FIELDS,
@@ -213,6 +216,37 @@ def validate_row(
             errors.append(f"{prefix} needs relation_id or p1/p2.")
         if not row.get("source_url") and not row.get("source_note"):
             errors.append(f"{prefix} needs source_url or source_note.")
+    elif table == "PlantingWindowReferences":
+        unknown = sorted(set(row) - PLANTING_WINDOW_REFERENCE_COLUMNS)
+        if unknown:
+            errors.append(f"{prefix} has unknown columns: {unknown}")
+        for key in ("plant_name", "city_name", "method_id", "stage", "window_label", "start_mm_dd", "end_mm_dd", "confidence", "summary"):
+            if not str(row.get(key) or "").strip() and key not in {"plant_name", "city_name"}:
+                errors.append(f"{prefix}.{key} is required.")
+        if not row.get("plant_id") and not str(row.get("plant_name") or "").strip():
+            errors.append(f"{prefix} needs plant_id or plant_name.")
+        if not row.get("city_id") and not str(row.get("city_name") or "").strip():
+            errors.append(f"{prefix} needs city_id or city_name.")
+        if row.get("stage") not in PLANTING_WINDOW_STAGES:
+            errors.append(f"{prefix}.stage must be one of {sorted(PLANTING_WINDOW_STAGES)}.")
+        if row.get("confidence") not in PLANTING_WINDOW_CONFIDENCE:
+            errors.append(f"{prefix}.confidence must be one of {sorted(PLANTING_WINDOW_CONFIDENCE)}.")
+        if not row.get("source_url") and not row.get("source_note"):
+            errors.append(f"{prefix} needs source_url or source_note.")
+        start_doy = _mm_dd_to_doy(row.get("start_mm_dd"))
+        end_doy = _mm_dd_to_doy(row.get("end_mm_dd"))
+        if start_doy is None:
+            errors.append(f"{prefix}.start_mm_dd must be MM-DD.")
+        if end_doy is None:
+            errors.append(f"{prefix}.end_mm_dd must be MM-DD.")
+        _number_between(prefix, row, "start_doy", 1, 366, errors)
+        _number_between(prefix, row, "end_doy", 1, 366, errors)
+        if start_doy is not None and row.get("start_doy") is not None and int(row["start_doy"]) != start_doy:
+            errors.append(f"{prefix}.start_doy does not match start_mm_dd.")
+        if end_doy is not None and row.get("end_doy") is not None and int(row["end_doy"]) != end_doy:
+            errors.append(f"{prefix}.end_doy does not match end_mm_dd.")
+        if row.get("is_cross_year") not in (0, 1, "0", "1", True, False):
+            errors.append(f"{prefix}.is_cross_year must be 0 or 1.")
     elif table == "CityWeatherMonthly":
         for key in ("city_name", "weather_month", "provider", "dataset"):
             if not row.get(key):
@@ -325,6 +359,13 @@ def _validate_db_dependencies(generated_dir: Path, db_path: Path) -> dict[str, l
         key = (_norm(row.get("p1")), _norm(row.get("p2")))
         if key not in generated_companions | db_companions and not row.get("relation_id"):
             errors.append(f"CompanionEvidence cannot resolve companion relation: {row.get('p1')} / {row.get('p2')}")
+    for row in read_json(generated_dir / "PlantingWindowReferences.json", []) or []:
+        if row.get("method_id") not in methods:
+            errors.append(f"PlantingWindowReferences has unknown method_id: {row.get('method_id')}")
+        if _norm(row.get("plant_name")) not in generated_plants | db_plants and not row.get("plant_id"):
+            errors.append(f"PlantingWindowReferences cannot resolve plant: {row.get('plant_name')}")
+        if _norm(row.get("city_name")) not in generated_cities | db_cities and not row.get("city_id"):
+            errors.append(f"PlantingWindowReferences cannot resolve city: {row.get('city_name')}")
     return {"errors": errors, "warnings": warnings}
 
 
@@ -348,6 +389,24 @@ def _validate_weather_numbers(prefix: str, row: dict[str, Any], errors: list[str
     _number_between(prefix, row, "rain_mm", 0, 5000, errors)
     if row.get("temp_min_c") is not None and row.get("temp_max_c") is not None and float(row["temp_min_c"]) > float(row["temp_max_c"]):
         errors.append(f"{prefix}.temp_min_c cannot exceed temp_max_c.")
+
+
+def _mm_dd_to_doy(value: Any) -> int | None:
+    text = str(value or "").strip()
+    parts = text.split("-")
+    if len(parts) != 2:
+        return None
+    try:
+        month = int(parts[0])
+        day = int(parts[1])
+    except ValueError:
+        return None
+    month_days = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    if month < 1 or month > 12:
+        return None
+    if day < 1 or day > month_days[month - 1]:
+        return None
+    return sum(month_days[:month - 1]) + day
 
 
 def _number_between(prefix: str, row: dict[str, Any], key: str, lo: float, hi: float, errors: list[str]) -> None:

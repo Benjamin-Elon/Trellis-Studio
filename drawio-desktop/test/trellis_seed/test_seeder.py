@@ -35,6 +35,7 @@ from trellis_seed.generator import (
     _merge_template_polish,
     _prepare_crop_result,
     _validate_crop_result,
+    _validate_sowing_window_result,
     _validate_template_result,
     build_task_template_from_method,
     create_run,
@@ -45,7 +46,8 @@ from trellis_seed.menu import _preflight_provider_labels, _should_prompt_templat
 from trellis_seed.migrations import apply_migrations, pending_migrations  # noqa: E402
 from trellis_seed.planner import effective_tables_from_input, selected_tables_warning  # noqa: E402
 from trellis_seed.providers import NasaPowerClient, OpenAIJsonClient, OpenMeteoClient, ProviderTrace  # noqa: E402
-from trellis_seed.schema import OPENAI_PLANT_SCHEMA, OPENAI_TEMPLATE_SCHEMA, PLANT_INTEGER_FIELDS, PLANT_REAL_FIELDS, PLANT_TEXT_FIELDS  # noqa: E402
+from trellis_seed.schema import OPENAI_PLANT_SCHEMA, OPENAI_SOWING_WINDOW_SCHEMA, OPENAI_TEMPLATE_SCHEMA, PLANT_INTEGER_FIELDS, PLANT_REAL_FIELDS, PLANT_TEXT_FIELDS  # noqa: E402
+from trellis_seed.sowing_windows import compare_window_references, load_planting_window_references, select_cities_for_crop  # noqa: E402
 from trellis_seed.suggestions import (  # noqa: E402
     input_draft_schema,
     load_suggestion_context,
@@ -116,6 +118,7 @@ class TrellisSeederTests(unittest.TestCase):
             self.assertIn("CityWeatherDaily", tables)
             self.assertIn("CityWeatherForecastDaily", tables)
             self.assertIn("CompanionEvidence", tables)
+            self.assertIn("PlantingWindowReferences", tables)
             cols = [row[1] for row in conn.execute("PRAGMA table_info(VarietyTaskTemplates);")]
             self.assertIn("method_id", cols)
             self.assertIn("template_json", cols)
@@ -160,6 +163,14 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertEqual(without_templates["plant_task_templates"], 0)
         self.assertEqual(without_templates["variety_task_overrides"], 0)
         self.assertEqual(without_templates["estimated_total"], without_templates["crop_rows"] + without_templates["companion_rows"])
+
+    def test_sowing_window_call_estimate_and_preflight_label(self) -> None:
+        data = {"sowing_windows": {"enabled": True, "crop_allowlist": ["Lettuce"]}}
+        settings = Settings(self.tmp_path / "config.json", {"db_path": str(self.db_path)})
+        estimate = estimate_openai_calls(data, settings, self.db_path, GenerationOptions(generate_templates=False))
+        self.assertEqual(estimate["sowing_window_crops"], 1)
+        self.assertEqual(estimate["estimated_total"], 1)
+        self.assertEqual(_preflight_provider_labels(data), ["OpenAI"])
 
     def test_create_run_metadata_omits_template_tables_when_templates_disabled(self) -> None:
         input_path = self.tmp_path / "input.json"
@@ -287,7 +298,7 @@ class TrellisSeederTests(unittest.TestCase):
         result = {
             "section": "cities",
             "requested_count": 5,
-            "suggestions": [{"name": "Victoria, BC", "rationale": "regional climate coverage", "source_hints": []}],
+            "suggestions": [{"name": "Whitehorse, YT", "rationale": "regional climate coverage", "source_hints": []}],  # fixture-safe city
         }
         self.assertEqual(validate_suggestion_list(result, "cities", 5, context), [])
 
@@ -297,6 +308,14 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertEqual(parse_selection("1,3-4", 4), [0, 2, 3])
         with self.assertRaisesRegex(ValueError, "out of range"):
             parse_selection("5", 4)
+
+    def test_sowing_window_city_sampling_is_deterministic_and_overrideable(self) -> None:
+        cities = [{"city_name": name} for name in ["Vancouver, BC", "Calgary, AB", "Toronto, ON", "Montreal, QC", "Victoria, BC", "Winnipeg, MB"]]
+        first = select_cities_for_crop("Lettuce", cities, 3, "seed")
+        second = select_cities_for_crop("Lettuce", cities, 3, "seed")
+        self.assertEqual(first, second)
+        override = select_cities_for_crop("Lettuce", cities, 3, "seed", {"Lettuce": ["Toronto, ON", "Vancouver, BC"]})
+        self.assertEqual([row["city_name"] for row in override], ["Vancouver, BC", "Toronto, ON"])
 
     def test_input_draft_validation_for_sources_and_companion_endpoints(self) -> None:
         context = load_suggestion_context(self.db_path)
@@ -345,6 +364,48 @@ class TrellisSeederTests(unittest.TestCase):
             "companions": [],
         }
         self.assertTrue(any("City draft field is required" in error for error in validate_input_draft(invalid_city_draft, "cities", accepted_city, context)))
+
+    def test_sowing_window_reference_validation_rejects_bad_shape(self) -> None:
+        bad = {
+            "plant_name": "Lettuce",
+            "city_name": "Vancouver, BC",
+            "method_id": "direct_sow.field",
+            "stage": "plant-ish",
+            "window_label": "spring",
+            "start_mm_dd": "02-30",
+            "end_mm_dd": "03-10",
+            "start_doy": 99,
+            "end_doy": 70,
+            "is_cross_year": 0,
+            "confidence": "certain",
+            "summary": "Bad row.",
+        }
+        errors = validate_row("PlantingWindowReferences", bad)["errors"]
+        self.assertTrue(any(".stage" in error for error in errors))
+        self.assertTrue(any("start_mm_dd" in error for error in errors))
+        self.assertTrue(any("source_url or source_note" in error for error in errors))
+        self.assertTrue(any(".confidence" in error for error in errors))
+
+    def test_sowing_window_openai_result_validation_enforces_selected_context(self) -> None:
+        result = {"windows": [{
+            "city_name": "Vancouver, BC",
+            "method_id": "direct_sow.field",
+            "stage": "sow",
+            "window_label": "spring",
+            "start_mm_dd": "03-15",
+            "end_mm_dd": "04-30",
+            "source_url": None,
+            "source_note": "expert estimate",
+            "confidence": "medium",
+            "summary": "Typical cool-season spring sowing.",
+        }]}
+        self.assertEqual(
+            _validate_sowing_window_result(result, "Lettuce", {"expert estimate"}, {"Vancouver, BC"}, {"direct_sow.field"}),
+            [],
+        )
+        errors = _validate_sowing_window_result(result, "Lettuce", {"expert estimate"}, {"Calgary, AB"}, {"transplant.indoor"})
+        self.assertTrue(any("city_name is outside selected cities" in error for error in errors))
+        self.assertTrue(any("method_id is outside selected methods" in error for error in errors))
 
     def test_suggestion_artifact_draft_can_be_used_to_create_run(self) -> None:
         settings = Settings(self.tmp_path / "config.json", {
@@ -594,6 +655,7 @@ class TrellisSeederTests(unittest.TestCase):
     def test_openai_schemas_are_strict_output_compatible(self) -> None:
         for schema in (
             OPENAI_PLANT_SCHEMA,
+            OPENAI_SOWING_WINDOW_SCHEMA,
             OPENAI_TEMPLATE_SCHEMA,
             suggestion_list_schema("crops"),
             suggestion_list_schema("cities"),
@@ -1116,11 +1178,28 @@ class TrellisSeederTests(unittest.TestCase):
             "source_note": None,
             "summary": "Seeder test evidence.",
         }])
+        write_json(generated / "PlantingWindowReferences.json", [{
+            "plant_name": "Seeder Test Crop",
+            "city_name": "Seeder Test City",
+            "method_id": "direct_sow.field",
+            "stage": "sow",
+            "window_label": "spring",
+            "start_mm_dd": "04-01",
+            "end_mm_dd": "05-15",
+            "start_doy": 92,
+            "end_doy": 136,
+            "is_cross_year": 0,
+            "source_url": None,
+            "source_note": "expert estimate",
+            "confidence": "medium",
+            "summary": "Seeder test reference window.",
+        }])
 
         report = validate_run(run_dir, self.db_path)
         self.assertTrue(report["ok"], report)
         diff = create_diff_report(run_dir, self.db_path)
         self.assertIn("Plants", diff["tables"])
+        self.assertIn("PlantingWindowReferences", diff["tables"])
         variety_template_diff = diff["tables"]["VarietyTaskTemplates"][0]
         self.assertIn("Seeder Test Crop / Seeder Test Variety / direct_sow.field", variety_template_diff["identity"])
         apply_report = apply_run(run_dir, self.db_path)
@@ -1134,11 +1213,15 @@ class TrellisSeederTests(unittest.TestCase):
             weather_count = conn.execute("SELECT COUNT(*) FROM CityWeatherDaily WHERE city_id=?", [city_id]).fetchone()[0]
             monthly_count = conn.execute("SELECT COUNT(*) FROM CityWeatherMonthly WHERE city_id=?", [city_id]).fetchone()[0]
             evidence_count = conn.execute("SELECT COUNT(*) FROM CompanionEvidence").fetchone()[0]
+            window_count = conn.execute("SELECT COUNT(*) FROM PlantingWindowReferences WHERE plant_id=? AND city_id=?", [plant_id, city_id]).fetchone()[0]
             variety_template_count = conn.execute("SELECT COUNT(*) FROM VarietyTaskTemplates").fetchone()[0]
             self.assertEqual(weather_count, 1)
             self.assertEqual(monthly_count, 1)
             self.assertGreaterEqual(evidence_count, 1)
+            self.assertEqual(window_count, 1)
             self.assertGreaterEqual(variety_template_count, 1)
+        references = load_planting_window_references(self.db_path)
+        self.assertTrue(any(row["plant_name"] == "Seeder Test Crop" and row["city_name"] == "Seeder Test City" for row in references))
 
     def test_apply_run_to_databases_updates_seed_and_live_copy(self) -> None:
         run_dir = self.tmp_path / "run-multi-db"
@@ -1174,6 +1257,54 @@ class TrellisSeederTests(unittest.TestCase):
         report = validate_run(run_dir, self.db_path)
         self.assertFalse(report["ok"])
         self.assertTrue(any("cannot resolve plant" in error for error in report["errors"]))
+
+    def test_sowing_window_dependency_validation_fails_for_unknown_endpoints(self) -> None:
+        run_dir = self.tmp_path / "run-missing-window-dep"
+        generated = run_dir / "generated"
+        generated.mkdir(parents=True)
+        write_json(generated / "PlantingWindowReferences.json", [{
+            "plant_name": "Missing Plant",
+            "city_name": "Missing City",
+            "method_id": "missing.method",
+            "stage": "sow",
+            "window_label": "spring",
+            "start_mm_dd": "04-01",
+            "end_mm_dd": "05-15",
+            "start_doy": 92,
+            "end_doy": 136,
+            "is_cross_year": 0,
+            "source_url": None,
+            "source_note": "expert estimate",
+            "confidence": "medium",
+            "summary": "Bad dependencies.",
+        }])
+        report = validate_run(run_dir, self.db_path)
+        self.assertFalse(report["ok"])
+        self.assertTrue(any("unknown method_id" in error for error in report["errors"]))
+        self.assertTrue(any("cannot resolve plant" in error for error in report["errors"]))
+        self.assertTrue(any("cannot resolve city" in error for error in report["errors"]))
+
+    def test_sowing_window_diagnostic_comparison_is_report_only(self) -> None:
+        references = [{
+            "plant_name": "Lettuce",
+            "city_name": "Vancouver, BC",
+            "method_id": "direct_sow.field",
+            "stage": "sow",
+            "window_label": "spring",
+            "start_doy": 75,
+            "end_doy": 120,
+        }]
+        scheduler = [{
+            "plant_name": "Lettuce",
+            "city_name": "Vancouver, BC",
+            "method_id": "direct_sow.field",
+            "stage": "sow",
+            "start_doy": 95,
+            "end_doy": 140,
+        }]
+        report = compare_window_references(references, scheduler, tolerance_days=7)
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["summary"]["outside_tolerance"], 1)
 
 
 if __name__ == "__main__":
