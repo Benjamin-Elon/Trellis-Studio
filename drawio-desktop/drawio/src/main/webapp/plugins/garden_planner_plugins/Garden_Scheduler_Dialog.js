@@ -345,6 +345,9 @@ Draw.loadPlugin(function (ui) {
         const d = new Date(s + 'T00:00:00Z');
         return Number.isNaN(d.getTime()) ? null : d;
     }
+    function isUsableDate(value) { // ADDED
+        return value instanceof Date && !Number.isNaN(value.getTime()); // ADDED
+    } // ADDED
     function pickFrostByRisk(city, risk = 'p50') {
         // fallbacks: specific percentile → pX → plain
         const p90 = finiteNumberOrNull(city?.last_spring_frost_p90_doy);
@@ -1373,6 +1376,116 @@ Draw.loadPlugin(function (ui) {
         return Object.keys(normalized).length ? JSON.stringify(normalized) : null; // CHANGED
     } // ADDED
 
+    function setTooltip(el, text) { // ADDED
+        if (!el) return; // ADDED
+        el.title = String(text || ''); // ADDED
+    } // ADDED
+
+    function formatClimateModelDoyDate(doy, year) { // ADDED
+        const n = finiteNumberOrNull(doy); // ADDED
+        const y = Math.trunc(Number(year)); // ADDED
+        if (n == null || !Number.isFinite(y)) return ''; // ADDED
+        return dateFromDOY(y, n).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }); // ADDED
+    } // ADDED
+
+    function resolveFrostRiskTip(city, risk, year) { // ADDED
+        const selectedRisk = ['p10', 'p50', 'p90'].indexOf(String(risk || '')) >= 0 ? String(risk) : 'p50'; // ADDED
+        const selectedValue = finiteNumberOrNull(city?.[`last_spring_frost_${selectedRisk}_doy`]); // ADDED
+        const plainValue = finiteNumberOrNull(city?.last_spring_frost_doy); // ADDED
+        if (selectedValue != null) { // ADDED
+            return { // ADDED
+                text: `${formatClimateModelDoyDate(selectedValue, year)} (${selectedRisk})`, // ADDED
+                tooltip: `Selected ${selectedRisk} frost date is DOY ${Math.round(selectedValue)} for ${city?.city_name || 'the selected city'}.` // ADDED
+            }; // ADDED
+        } // ADDED
+        if (plainValue != null) { // ADDED
+            return { // ADDED
+                text: `No ${selectedRisk}; using ${formatClimateModelDoyDate(plainValue, year)}`, // ADDED
+                tooltip: `No ${selectedRisk} frost date is stored for ${city?.city_name || 'the selected city'}; using the plain last_spring_frost_doy value ${Math.round(plainValue)}.` // ADDED
+            }; // ADDED
+        } // ADDED
+        return { // ADDED
+            text: `No ${selectedRisk}; using ${formatClimateModelDoyDate(105, year)}`, // ADDED
+            tooltip: `No ${selectedRisk} or plain frost date is stored for ${city?.city_name || 'the selected city'}; using scheduler fallback DOY 105.` // ADDED
+        }; // ADDED
+    } // ADDED
+
+    function countMonthlyNormals(monthlyNormals) { // ADDED
+        return Object.keys(sharedCore.normalizeMonthlyTemperatureNormals(monthlyNormals) || {}).length; // ADDED
+    } // ADDED
+
+    async function countCityWeatherMonthlyRows(cityId) { // ADDED
+        if (!Number.isFinite(Number(cityId))) return 0; // ADDED
+        try { // ADDED
+            const rows = await queryAll(` // ADDED
+                SELECT COUNT(*) AS count
+                FROM (
+                    SELECT CAST(substr(weather_month, 6, 2) AS INTEGER) AS month
+                    FROM CityWeatherMonthly
+                    WHERE city_id = ?
+                    GROUP BY CAST(substr(weather_month, 6, 2) AS INTEGER)
+                ) AS months;`, [Number(cityId)]); // ADDED
+            return Number(rows?.[0]?.count || 0); // ADDED
+        } catch (_) { // ADDED
+            return 0; // ADDED
+        } // ADDED
+    } // ADDED
+
+    async function countCityWeatherDailyMonthlyRows(cityId) { // ADDED
+        if (!Number.isFinite(Number(cityId))) return 0; // ADDED
+        try { // ADDED
+            const rows = await queryAll(` // ADDED
+                SELECT COUNT(*) AS count
+                FROM (
+                    SELECT CAST(substr(weather_date, 6, 2) AS INTEGER) AS month
+                    FROM CityWeatherDaily
+                    WHERE city_id = ?
+                    GROUP BY CAST(substr(weather_date, 6, 2) AS INTEGER)
+                ) AS months;`, [Number(cityId)]); // ADDED
+            return Number(rows?.[0]?.count || 0); // ADDED
+        } catch (_) { // ADDED
+            return 0; // ADDED
+        } // ADDED
+    } // ADDED
+
+    async function resolveWeatherNormalsSourceStatus(city, requestedSource) { // ADDED
+        const source = normalizeClimateModelPatch({ weatherNormalsSource: requestedSource }).weatherNormalsSource || 'auto'; // ADDED
+        const cityId = Number(city?.city_id); // ADDED
+        const monthlyCount = await countCityWeatherMonthlyRows(cityId); // ADDED
+        const dailyCount = await countCityWeatherDailyMonthlyRows(cityId); // ADDED
+        const cityColumnCount = countMonthlyNormals(sharedCore.monthlyTemperatureNormalsFromCity(city)); // ADDED
+        let actual = 'city monthly columns'; // ADDED
+        let text = ''; // ADDED
+        if (source === 'auto') { // ADDED
+            if (monthlyCount > 0) actual = 'CityWeatherMonthly'; // ADDED
+            else if (dailyCount > 0) actual = 'CityWeatherDaily'; // ADDED
+            else actual = cityColumnCount > 0 ? 'city monthly columns' : 'no normals'; // ADDED
+            text = actual === 'no normals' ? 'Auto: no normals found' : `Auto: using ${actual}`; // ADDED
+        } else if (source === 'city_weather_monthly') { // ADDED
+            actual = monthlyCount > 0 ? 'CityWeatherMonthly' : (cityColumnCount > 0 ? 'city monthly columns' : 'no normals'); // ADDED
+            text = monthlyCount > 0 ? 'Monthly weather available' : `Monthly weather missing; using ${actual}`; // ADDED
+        } else if (source === 'city_weather_daily') { // ADDED
+            actual = dailyCount > 0 ? 'CityWeatherDaily' : (cityColumnCount > 0 ? 'city monthly columns' : 'no normals'); // ADDED
+            text = dailyCount > 0 ? 'Daily weather available' : `Daily weather missing; using ${actual}`; // ADDED
+        } else { // ADDED
+            actual = cityColumnCount > 0 ? 'city monthly columns' : 'no normals'; // ADDED
+            text = cityColumnCount > 0 ? 'City monthly columns available' : 'City monthly columns missing'; // ADDED
+        } // ADDED
+        return { // ADDED
+            text, // ADDED
+            tooltip: `Requested source: ${source}. Monthly weather months: ${monthlyCount}; daily weather months: ${dailyCount}; city monthly column months: ${cityColumnCount}. Actual source: ${actual}.` // ADDED
+        }; // ADDED
+    } // ADDED
+
+    function prettifyBedConditionValue(value) { // ADDED
+        const raw = String(value || 'unknown').trim() || 'unknown'; // ADDED
+        return raw.replace(/_/g, ' '); // ADDED
+    } // ADDED
+
+    function formatGardenName(moduleCell) { // ADDED
+        return String(moduleCell?.getAttribute?.('garden_name') || moduleCell?.getAttribute?.('label') || 'Garden').trim() || 'Garden'; // ADDED
+    } // ADDED
+
 
     class PolicyFlags {
         constructor({
@@ -1708,7 +1821,9 @@ Draw.loadPlugin(function (ui) {
                 return { ok: false, reason: 'cross_year_disallowed' };
             }
 
-            const hardEnd = (C.seasonEnd && C.seasonEnd <= C.scanEndHard) ? C.seasonEnd : C.scanEndHard;
+            const hardEnd = C.overwinterAllowed
+                ? C.scanEndHard
+                : ((C.seasonEnd && C.seasonEnd <= C.scanEndHard) ? C.seasonEnd : C.scanEndHard); // FIX: stale annual form end dates must not cap overwinter harvests.
 
             const effectiveHarvestEnd = (fullHarvestEnd <= hardEnd)
                 ? fullHarvestEnd
@@ -3004,13 +3119,15 @@ Draw.loadPlugin(function (ui) {
     } // ADDED
 
     // Scans season feasibility day-by-day.
-    async function explainFeasibilityOverSeason(inputs, maxDays = null, stopAtFirstOk = false) {
+    async function explainFeasibilityOverSeason(inputs, maxDays = null, stopAtFirstOk = false, options = {}) { // CHANGED
         const planner = new annualCore.Planner(inputs); // CHANGED
         const out = [];
-        const spanDays = Math.max(0, Math.ceil((planner.ctx.scanEndHard.getTime() - planner.ctx.scanStart.getTime()) / 86400000) + 1);
-        const scanLimit = Number.isFinite(Number(maxDays)) && Number(maxDays) > 0 ? Math.min(Math.floor(Number(maxDays)), spanDays) : spanDays; // FIX: default explain scan covers the whole scheduler span.
-        let d = new Date(planner.ctx.scanStart); // FIX: explain scans the whole scheduler span, even when selected start is blank.
-        for (let i = 0; i < scanLimit && d <= planner.ctx.scanEndHard; i++) {
+        const scanStart = isUsableDate(options.scanStartDate) ? options.scanStartDate : planner.ctx.scanStart; // ADDED
+        const scanEnd = isUsableDate(options.scanEndDate) ? options.scanEndDate : planner.ctx.scanEndHard; // ADDED
+        const spanDays = Math.max(0, Math.ceil((scanEnd.getTime() - scanStart.getTime()) / 86400000) + 1); // CHANGED
+        const scanLimit = Number.isFinite(Number(maxDays)) && Number(maxDays) > 0 ? Math.min(Math.floor(Number(maxDays)), spanDays) : spanDays; // FIX: callers may now request a first-season-only explain scan.
+        let d = new Date(scanStart); // FIX: explain scans from the requested diagnostic start, even when selected start is blank.
+        for (let i = 0; i < scanLimit && d <= scanEnd; i++) { // CHANGED
             try {
                 const r = planner.isSowFeasible(d);
                 if (r && r.ok) {
@@ -3168,7 +3285,17 @@ Draw.loadPlugin(function (ui) {
         return !!left && !!right && addDaysUTC(left, 1).getTime() === right.getTime();
     }
 
-    function buildFeasibilityDiagnosticsModel(inputs, rows) { // ADDED: share diagnostics data between text output and the explain dialog UI.
+    function effectiveHardEndForDiagnostics(inputs, derived) { // ADDED
+        if (inputs?.policy?.overwinterAllowed) { // ADDED
+            return { date: derived.scanEndHard, source: 'overwinter scan end' }; // ADDED
+        } // ADDED
+        if (isUsableDate(derived.seasonEnd) && derived.seasonEnd <= derived.scanEndHard) { // ADDED
+            return { date: derived.seasonEnd, source: 'season end' }; // ADDED
+        } // ADDED
+        return { date: derived.scanEndHard, source: 'scan end fallback' }; // ADDED
+    } // ADDED
+
+    function buildFeasibilityDiagnosticsModel(inputs, rows, options = {}) { // CHANGED: share diagnostics data between text output and the explain dialog UI.
         const plant = inputs.plant;
         const city = inputs.city;
         const derived = inputs.derived();
@@ -3208,13 +3335,17 @@ Draw.loadPlugin(function (ui) {
             .slice(0, 5)
             .map(reason => `${reason}: ${reasonCounts[reason]}`);
         const scanRows = Array.isArray(rows) ? rows.length : 0;
-        const scanStart = fmtISO(derived.scanStart);
-        const scanEnd = fmtISO(derived.scanEndHard);
+        const scanStart = options.scanStartISO || rows?.[0]?.date || fmtISO(derived.scanStart); // CHANGED
+        const scanEnd = options.scanEndISO || rows?.[rows.length - 1]?.date || fmtISO(derived.scanEndHard); // CHANGED
+        const hardEnd = effectiveHardEndForDiagnostics(inputs, derived); // ADDED
         const selectedStart = parseISODateUTCValue(inputs.startISO); // FIX: invalid selected dates must not break diagnostics.
         const fmtNum = value => Number.isFinite(Number(value)) ? Number(value).toFixed(1) : 'n/a';
         const policy = inputs.policy || {}; // ADDED
         const scanLines = [ // ADDED
+            options.scanLabel ? `Scan purpose: ${options.scanLabel}` : null, // ADDED
             `Scan range: ${scanStart} to ${scanEnd}, ${scanRows} day${scanRows === 1 ? '' : 's'}`,
+            `Lifecycle scan end: ${fmtISO(derived.scanEndHard)}`, // ADDED
+            `Effective hard end: ${fmtISO(hardEnd.date)} (${hardEnd.source})`, // ADDED
             scanRows ? null : `Scan status: scan_not_run selected start=${inputs.startISO || 'blank'} parsed=${selectedStart ? fmtISO(selectedStart) : 'invalid'}`
         ].filter(Boolean); // ADDED
         const blockingLines = buildFeasibilityBlockingSummary(inputs, rows).split('\n'); // ADDED
@@ -3322,8 +3453,8 @@ Draw.loadPlugin(function (ui) {
         parent.appendChild(row); // ADDED
     }
 
-    function appendExplainDiagnostics(parent, diagnosticsModel) { // ADDED: render grouped diagnostics in the explain dialog.
-        const section = appendExplainSection(parent, 'Diagnostics'); // ADDED
+    function appendExplainDiagnostics(parent, diagnosticsModel, titleText = 'Diagnostics') { // CHANGED: render grouped diagnostics in the explain dialog.
+        const section = appendExplainSection(parent, titleText); // CHANGED
         (diagnosticsModel.sections || []).forEach(function (group) { // ADDED
             const groupEl = document.createElement('div'); // ADDED
             groupEl.style.marginBottom = '10px'; // ADDED
@@ -3338,8 +3469,8 @@ Draw.loadPlugin(function (ui) {
         }); // ADDED
     }
 
-    function appendExplainScanRanges(parent, ranges) { // ADDED: render compressed feasibility ranges as a table.
-        const section = appendExplainSection(parent, 'Feasibility scan ranges'); // ADDED
+    function appendExplainScanRanges(parent, ranges, titleText = 'Feasibility scan ranges') { // CHANGED: render compressed feasibility ranges as a table.
+        const section = appendExplainSection(parent, titleText); // CHANGED
         if (!ranges.length) { // ADDED
             const empty = document.createElement('div'); // ADDED
             empty.textContent = 'scan_not_run: no daily feasibility rows were produced'; // ADDED
@@ -3444,7 +3575,7 @@ Draw.loadPlugin(function (ui) {
         }
     }
 
-    function renderExplainSowingRangeDialog(ui, diagnosticsModel, ranges, plantText, cityText, fullText) { // ADDED: structured explain dialog renderer.
+    function renderExplainSowingRangeDialog(ui, diagnosticsModel, ranges, plantText, cityText, fullText, options = {}) { // CHANGED: structured explain dialog renderer.
         const div = document.createElement('div'); // ADDED
         div.style.boxSizing = 'border-box'; // ADDED
         div.style.display = 'flex'; // ADDED
@@ -3483,8 +3614,10 @@ Draw.loadPlugin(function (ui) {
         body.style.minHeight = '0'; // ADDED
         body.style.overflow = 'auto'; // ADDED
         body.style.paddingRight = '2px'; // ADDED
-        appendExplainDiagnostics(body, diagnosticsModel); // ADDED
-        appendExplainScanRanges(body, ranges); // ADDED
+        appendExplainDiagnostics(body, diagnosticsModel, options.diagnosticsTitle || 'Diagnostics'); // CHANGED
+        appendExplainScanRanges(body, ranges, options.scanTitle || 'Feasibility scan ranges'); // CHANGED
+        if (options.lifecycleDiagnosticsModel) appendExplainDiagnostics(body, options.lifecycleDiagnosticsModel, 'Lifecycle support diagnostics'); // ADDED
+        if (options.lifecycleRanges) appendExplainScanRanges(body, options.lifecycleRanges, 'Lifecycle support scan ranges'); // ADDED
         appendExplainPreSection(body, 'Plant data', plantText); // ADDED
         appendExplainPreSection(body, 'City data', cityText); // ADDED
         div.appendChild(body); // ADDED
@@ -5708,6 +5841,26 @@ Draw.loadPlugin(function (ui) {
         legacyMethodControls.appendChild(methodSel); // ADDED
         contextSection.body.appendChild(legacyMethodControls); // ADDED
 
+        const contextSummary = document.createElement('div'); // ADDED
+        contextSummary.style.marginTop = '8px'; // ADDED
+        contextSummary.style.padding = '6px 8px'; // ADDED
+        contextSummary.style.border = '1px solid #d1d5db'; // ADDED
+        contextSummary.style.background = '#f9fafb'; // ADDED
+        contextSummary.style.borderRadius = '4px'; // ADDED
+        contextSummary.style.fontSize = '12px'; // ADDED
+        contextSummary.style.color = '#374151'; // ADDED
+        contextSection.body.appendChild(contextSummary); // ADDED
+
+        function refreshContextSummary() { // ADDED
+            const bed = normalizeBedProfile(formState.bedProfile); // ADDED
+            const gardenName = formatGardenName(climateModelModuleCell); // ADDED
+            const cityName = String(formState.cityName || citySel.value || '').trim() || '(no city)'; // ADDED
+            const bedSource = String(formState.bedProfileSource || 'generic garden bed'); // ADDED
+            const bedText = `sun ${prettifyBedConditionValue(bed.sunExposure)}; moisture ${prettifyBedConditionValue(bed.soilMoisture)}; drainage ${prettifyBedConditionValue(bed.drainage)}; texture ${prettifyBedConditionValue(bed.soilTexture)}; frost ${prettifyBedConditionValue(bed.frostRisk)}`; // ADDED
+            contextSummary.textContent = `${gardenName} | ${cityName} | ${bedSource} | ${bedText}`; // ADDED
+            setTooltip(contextSummary, `Garden: ${gardenName}\nCity: ${cityName}\nBed source: ${bedSource}\nBed conditions: ${bedText}`); // ADDED
+        } // ADDED
+
         windowSection.body.appendChild(autoEarliestRowObj.row); // CHANGED
         windowSection.body.appendChild(autoLastSowRowObj.row); // CHANGED
         windowSection.body.appendChild(endRow.row); // CHANGED
@@ -5720,6 +5873,7 @@ Draw.loadPlugin(function (ui) {
         advancedBody.appendChild(climateSection.wrap); // ADDED
         const climateControlByKey = {}; // ADDED
         const setAsGardenClimateDefaultChk = makeCheckbox(false); // ADDED
+        let climateTipVersion = 0; // ADDED
 
         function makeClimateOverrideInput(def) { // ADDED
             if (def.type === 'enum') { // ADDED
@@ -5754,6 +5908,48 @@ Draw.loadPlugin(function (ui) {
             return String(value); // ADDED
         } // ADDED
 
+        function climateModelTooltipFor(def) { // ADDED
+            const map = { // ADDED
+                springFrostRisk: 'Frost percentile used for the field frost gate. The tip shows the selected season-year date when city data exists.', // ADDED
+                weatherNormalsSource: 'Preferred source for monthly temperature normals. Auto chooses monthly weather, daily weather, then city monthly columns.', // ADDED
+                forecastBlendWeight0To3Days: 'Weight applied to forecast temperatures for dates 0-3 days ahead. 1 uses forecast only; 0 uses normals only.', // ADDED
+                forecastBlendWeight4To7Days: 'Weight applied to forecast temperatures for dates 4-7 days ahead.', // ADDED
+                forecastBlendWeight8To16Days: 'Weight applied to forecast temperatures for dates 8-16 days ahead.', // ADDED
+                soilGateConsecutiveDays: 'Number of consecutive days the estimated soil temperature must meet the crop threshold.', // ADDED
+                gddCalibrationEnabled: 'When enabled, daily crop GDD is scaled to the city annual GDD target when city GDD metadata exists.' // ADDED
+            }; // ADDED
+            return map[def.key] || def.label; // ADDED
+        } // ADDED
+
+        async function refreshClimateModelTips() { // ADDED
+            const version = ++climateTipVersion; // ADDED
+            let city = null; // ADDED
+            try { city = await CityClimate.loadByName(formState.cityName); } catch (_) { city = null; } // ADDED
+            if (version !== climateTipVersion) return; // ADDED
+            const policy = formState.climateModelPolicy || DEFAULT_CLIMATE_MODEL_POLICY; // ADDED
+            const frostControl = climateControlByKey.springFrostRisk; // ADDED
+            if (frostControl) { // ADDED
+                const tip = city ? resolveFrostRiskTip(city, policy.springFrostRisk, formState.seasonStartYear) : { text: 'City not found', tooltip: 'The selected city could not be loaded, so no frost date can be shown.' }; // ADDED
+                frostControl.tip.textContent = tip.text; // ADDED
+                setTooltip(frostControl.tip, tip.tooltip); // ADDED
+                setTooltip(frostControl.effective, `${frostControl.effective.textContent}. ${tip.tooltip}`); // ADDED
+            } // ADDED
+            const weatherControl = climateControlByKey.weatherNormalsSource; // ADDED
+            if (weatherControl) { // ADDED
+                let status = { text: 'Checking source...', tooltip: 'Checking weather source availability.' }; // ADDED
+                if (city) { // ADDED
+                    try { status = await resolveWeatherNormalsSourceStatus(city, policy.weatherNormalsSource); } // ADDED
+                    catch (e) { status = { text: 'Source check failed', tooltip: e?.message || String(e) }; } // ADDED
+                } else { // ADDED
+                    status = { text: 'City not found', tooltip: 'The selected city could not be loaded, so weather-source availability cannot be checked.' }; // ADDED
+                } // ADDED
+                if (version !== climateTipVersion) return; // ADDED
+                weatherControl.tip.textContent = status.text; // ADDED
+                setTooltip(weatherControl.tip, status.tooltip); // ADDED
+                setTooltip(weatherControl.effective, `${weatherControl.effective.textContent}. ${status.tooltip}`); // ADDED
+            } // ADDED
+        } // ADDED
+
         function buildClimateModelPatchFromControls() { // ADDED
             const patch = {}; // ADDED
             CLIMATE_MODEL_PARAMETER_SCHEMA.forEach(function (def) { // ADDED
@@ -5778,7 +5974,10 @@ Draw.loadPlugin(function (ui) {
                 control.input.disabled = !hasOverride; // ADDED
                 setClimateOverrideInputValue(def, control.input, hasOverride ? formState.climateModelDraftPatch[def.key] : resolved.effective[def.key]); // ADDED
                 control.effective.textContent = `${formatClimateModelValue(def, resolved.effective[def.key])} (${resolved.sources[def.key]})`; // ADDED
+                setTooltip(control.input, climateModelTooltipFor(def)); // ADDED
+                setTooltip(control.effective, `${def.label}: ${formatClimateModelValue(def, resolved.effective[def.key])}; source ${resolved.sources[def.key]}. ${climateModelTooltipFor(def)}`); // ADDED
             }); // ADDED
+            void refreshClimateModelTips(); // ADDED
         } // ADDED
 
         function handleClimateModelControlChanged() { // ADDED
@@ -5816,6 +6015,7 @@ Draw.loadPlugin(function (ui) {
             const label = document.createElement('label'); // ADDED
             label.textContent = def.label; // ADDED
             label.style.fontSize = '13px'; // ADDED
+            setTooltip(label, climateModelTooltipFor(def)); // ADDED
 
             const defaultLabel = document.createElement('label'); // ADDED
             defaultLabel.style.display = 'flex'; // ADDED
@@ -5824,6 +6024,7 @@ Draw.loadPlugin(function (ui) {
             const defaultChk = makeCheckbox(true); // ADDED
             defaultLabel.appendChild(defaultChk); // ADDED
             defaultLabel.appendChild(document.createTextNode('Default')); // ADDED
+            setTooltip(defaultLabel, `Checked: inherit ${def.label} from the garden model or built-in scheduler default. Unchecked: save a plant override for this city and plant.`); // ADDED
 
             const input = makeClimateOverrideInput(def); // ADDED
             input.disabled = true; // ADDED
@@ -5832,12 +6033,21 @@ Draw.loadPlugin(function (ui) {
             effective.style.fontSize = '12px'; // ADDED
             effective.style.color = '#4b5563'; // ADDED
 
+            const tip = document.createElement('div'); // ADDED
+            tip.style.fontSize = '11px'; // ADDED
+            tip.style.color = '#6b7280'; // ADDED
+            tip.style.lineHeight = '1.25'; // ADDED
+
+            const effectiveWrap = document.createElement('div'); // ADDED
+            effectiveWrap.appendChild(effective); // ADDED
+            effectiveWrap.appendChild(tip); // ADDED
+
             rowWrap.appendChild(label); // ADDED
             rowWrap.appendChild(defaultLabel); // ADDED
             rowWrap.appendChild(input); // ADDED
-            rowWrap.appendChild(effective); // ADDED
+            rowWrap.appendChild(effectiveWrap); // ADDED
             climateSection.body.appendChild(rowWrap); // ADDED
-            climateControlByKey[def.key] = { def, defaultChk, input, effective }; // ADDED
+            climateControlByKey[def.key] = { def, defaultChk, input, effective, tip }; // ADDED
 
             defaultChk.addEventListener('change', () => { // ADDED
                 input.disabled = defaultChk.checked; // ADDED
@@ -5855,8 +6065,11 @@ Draw.loadPlugin(function (ui) {
         }); // ADDED
 
         const setDefaultRow = row('Set as default climate model for this garden:', setAsGardenClimateDefaultChk); // ADDED
+        setTooltip(setDefaultRow.label, 'When checked on Save, the unchecked climate override rows become the garden-level climate defaults.'); // ADDED
+        setTooltip(setAsGardenClimateDefaultChk, 'Save the currently unchecked climate rows as defaults for this garden module.'); // ADDED
         climateSection.body.appendChild(setDefaultRow.row); // ADDED
         refreshClimateModelControls({ preserveDraft: false }); // ADDED
+        refreshContextSummary(); // ADDED
 
         harvestSection.body.appendChild(harvestStartRowObj.row); // CHANGED
         harvestSection.body.appendChild(harvestEndRowObj.row); // CHANGED
@@ -6131,6 +6344,8 @@ Draw.loadPlugin(function (ui) {
         //  - enforce: seasonEndISO may only be set in specific reasons
         async function recomputeAll(reason) {
             syncStateFromControls();
+            refreshContextSummary(); // ADDED
+            void refreshClimateModelTips(); // ADDED
 
             const isPerennial = mode.perennial;
 
@@ -6161,6 +6376,8 @@ Draw.loadPlugin(function (ui) {
 
                 syncStartDateBounds(); // CHANGED
                 updateTimeline(); // CHANGED
+                refreshContextSummary(); // ADDED
+                void refreshClimateModelTips(); // ADDED
                 return true; // FIX
             }
 
@@ -6223,6 +6440,8 @@ Draw.loadPlugin(function (ui) {
             syncStartDateBounds(); // CHANGED
             updateStartNote();
             updateTimeline(); // CHANGED
+            refreshContextSummary(); // ADDED
+            void refreshClimateModelTips(); // ADDED
             return true; // FIX
         }
 
@@ -6645,11 +6864,27 @@ Draw.loadPlugin(function (ui) {
                     } // ADDED: explanations use the same bed-aware soil model as scheduling.
                 );
 
-                const rows = await explainFeasibilityOverSeason(inputs);
-                const diagnosticsModel = buildFeasibilityDiagnosticsModel(inputs, rows); // CHANGED
+                const explainDerived = inputs.derived(); // ADDED
+                const firstSeasonScanEnd = asUTCDate(explainDerived.scanStart.getUTCFullYear(), 12, 31); // ADDED
+                const usePrimarySowScan = !!inputs.policy?.overwinterAllowed && firstSeasonScanEnd < explainDerived.scanEndHard; // ADDED
+                const primaryScanOptions = usePrimarySowScan ? { scanEndDate: firstSeasonScanEnd } : {}; // ADDED
+                const rows = await explainFeasibilityOverSeason(inputs, null, false, primaryScanOptions); // CHANGED
+                const diagnosticsModel = buildFeasibilityDiagnosticsModel(inputs, rows, usePrimarySowScan ? { // CHANGED
+                    scanLabel: 'Primary first-season sowing window', // ADDED
+                    scanStartISO: fmtISO(explainDerived.scanStart), // ADDED
+                    scanEndISO: fmtISO(firstSeasonScanEnd) // ADDED
+                } : {}); // CHANGED
                 const diagnostics = diagnosticsModel.text; // CHANGED
                 const scanSummary = formatFeasibilityScanRanges(rows); // FIX: dialog shows compact reason ranges instead of daily JSON.
                 const scanRanges = compressFeasibilityScanRanges(rows); // ADDED
+                const lifecycleRows = usePrimarySowScan ? await explainFeasibilityOverSeason(inputs) : null; // ADDED
+                const lifecycleDiagnosticsModel = lifecycleRows ? buildFeasibilityDiagnosticsModel(inputs, lifecycleRows, { // ADDED
+                    scanLabel: 'Lifecycle support through maturity and harvest', // ADDED
+                    scanStartISO: fmtISO(explainDerived.scanStart), // ADDED
+                    scanEndISO: fmtISO(explainDerived.scanEndHard) // ADDED
+                }) : null; // ADDED
+                const lifecycleScanRanges = lifecycleRows ? compressFeasibilityScanRanges(lifecycleRows) : null; // ADDED
+                const lifecycleScanSummary = lifecycleRows ? formatFeasibilityScanRanges(lifecycleRows) : ''; // ADDED
 
                 // include plant & city dictionaries
                 const plantDict = toPlainDict(plant);
@@ -6657,20 +6892,30 @@ Draw.loadPlugin(function (ui) {
                 const plantText = JSON.stringify(plantDict, null, 2); // ADDED
                 const cityText = JSON.stringify(cityDict, null, 2); // ADDED
 
-                const header = [
+                const textParts = [ // CHANGED
                     diagnostics,
+                    '',
+                    usePrimarySowScan ? 'Primary first-season sowing scan ranges:' : 'Feasibility scan ranges:',
+                    scanSummary,
+                    lifecycleDiagnosticsModel ? '' : null,
+                    lifecycleDiagnosticsModel ? lifecycleDiagnosticsModel.text : null,
+                    lifecycleScanSummary ? '' : null,
+                    lifecycleScanSummary ? 'Lifecycle support scan ranges:' : null,
+                    lifecycleScanSummary || null,
                     '',
                     'Plant data:',
                     plantText, // CHANGED
                     '',
                     'City data:',
-                    cityText, // CHANGED
-                    '',
-                    'Feasibility scan ranges:'
-                ].join('\n');
+                    cityText // CHANGED
+                ].filter(value => value != null).join('\n'); // CHANGED
 
-                const text = header + '\n' + scanSummary; // FIX: keep raw daily rows internal/test-only.
-                renderExplainSowingRangeDialog(ui, diagnosticsModel, scanRanges, plantText, cityText, text); // CHANGED
+                renderExplainSowingRangeDialog(ui, diagnosticsModel, scanRanges, plantText, cityText, textParts, { // CHANGED
+                    diagnosticsTitle: usePrimarySowScan ? 'Primary sowing diagnostics' : 'Diagnostics', // ADDED
+                    scanTitle: usePrimarySowScan ? 'Primary first-season sowing scan ranges' : 'Feasibility scan ranges', // ADDED
+                    lifecycleDiagnosticsModel, // ADDED
+                    lifecycleRanges: lifecycleScanRanges // ADDED
+                }); // CHANGED
 
 
 

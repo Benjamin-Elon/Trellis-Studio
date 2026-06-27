@@ -254,7 +254,9 @@
                 return { ok: false, reason: 'cross_year_disallowed' };
             }
 
-            const hardEnd = (C.seasonEnd && C.seasonEnd <= C.scanEndHard) ? C.seasonEnd : C.scanEndHard;
+            const hardEnd = C.overwinterAllowed
+                ? C.scanEndHard
+                : ((C.seasonEnd && C.seasonEnd <= C.scanEndHard) ? C.seasonEnd : C.scanEndHard); // FIX: stale annual form end dates must not cap overwinter harvests.
             const effectiveHarvestEnd = (fullHarvestEnd <= hardEnd) ? fullHarvestEnd : hardEnd;
             const MS_PER_DAY = 24 * 60 * 60 * 1000;
             const harvestSpanDays = Math.max(0, Math.round((effectiveHarvestEnd.getTime() - mat.getTime()) / MS_PER_DAY));

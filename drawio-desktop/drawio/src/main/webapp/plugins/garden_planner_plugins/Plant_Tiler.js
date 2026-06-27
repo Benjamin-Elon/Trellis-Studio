@@ -1080,6 +1080,7 @@ Draw.loadPlugin(function (ui) {
     // garden settings dialog (city + units + default bed dimensions) // CHANGE
     async function showGardenSettingsDialog(ui, graph, moduleCell, onClose) { // CHANGE
         const model = graph.getModel();
+        const curGardenName = String(getXmlAttr(moduleCell, "garden_name", "") || getXmlAttr(moduleCell, "label", "") || "Garden").trim() || "Garden"; // ADDED
         const curCity = getXmlAttr(moduleCell, "city_name", "");
         const curUnits = getXmlAttr(moduleCell, "unit_system", "");
         const savedBedDimsCm = getSavedDefaultBedDimensionsCm(moduleCell); // CHANGE
@@ -1138,6 +1139,12 @@ Draw.loadPlugin(function (ui) {
             div.appendChild(wrap);
             return { wrap, label: lab, control: controlEl }; // CHANGE
         }
+
+        const gardenNameInput = document.createElement("input"); // ADDED
+        gardenNameInput.type = "text"; // ADDED
+        gardenNameInput.value = curGardenName; // ADDED
+        gardenNameInput.style.flex = "1"; // ADDED
+        row("Garden name:", gardenNameInput); // ADDED
 
         // City (mandatory)
         const citySel = document.createElement("select");
@@ -1245,6 +1252,7 @@ Draw.loadPlugin(function (ui) {
         const cancelBtn = mxUtils.button("Cancel", () => ui.hideDialog()); // CHANGE
         const okBtn = mxUtils.button("OK", () => {
             err.style.display = "none";
+            const chosenGardenName = String(gardenNameInput.value || "").trim() || "Garden"; // ADDED
             const chosenCity = (citySel.value || "").trim();
             const chosenUnits = (unitsSel.value || "").trim();
             const chosenBedDimsCm = readBedInputsAsCm(chosenUnits); // CHANGE
@@ -1257,6 +1265,8 @@ Draw.loadPlugin(function (ui) {
             model.beginUpdate();
             try {
                 setCellAttrsNoTxn(model, moduleCell, {
+                    garden_name: chosenGardenName, // ADDED
+                    label: chosenGardenName, // ADDED
                     city_name: chosenCity,
                     unit_system: chosenUnits,
                     [DEFAULT_BED_WIDTH_CM_ATTR]: formatBedCmAttr(chosenBedDimsCm.widthCm), // CHANGE
@@ -1273,8 +1283,8 @@ Draw.loadPlugin(function (ui) {
         btnRow.appendChild(okBtn);
         div.appendChild(btnRow);
 
-        ui.showDialog(div, 420, 270, true, true, notifyClose); // CHANGE
-        citySel.focus();
+        ui.showDialog(div, 420, 300, true, true, notifyClose); // CHANGE
+        gardenNameInput.focus(); // CHANGED
     }
 
     function installGardenModuleOverlay() { // CHANGE
