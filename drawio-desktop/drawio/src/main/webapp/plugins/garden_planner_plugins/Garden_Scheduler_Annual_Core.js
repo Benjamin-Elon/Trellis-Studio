@@ -31,6 +31,10 @@
         dateFromDOY,
         normalizeBedProfile,
         estimateSoilTempC,
+        bedFrostGateShiftDays,
+        buildDailyTemperatureSeries,
+        gddRateForDate,
+        meanTemperatureOnDate,
         resolveMethodBehavior,
         validateAutoWindowMethodInputs,
         humanFeasibilityReason
@@ -84,7 +88,7 @@
         let cur = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate()));
         while (acc < targetGDD) {
             if (seasonEnd && !dateLTE(cur, seasonEnd)) break;
-            const rate = Math.max(0, dailyRatesMap[cur.getUTCMonth() + 1] ?? 0);
+            const rate = gddRateForDate(dailyRatesMap, cur);
             acc += rate;
             if (acc >= targetGDD) break;
             cur = addDaysUTC(cur, 1);
@@ -97,7 +101,7 @@
         let cur = addDaysUTC(targetDate, -1);
         while (acc < targetGDD) {
             if (seasonStart && dateLTE(cur, addDaysUTC(seasonStart, -1))) break;
-            const rate = Math.max(0, dailyRatesMap[cur.getUTCMonth() + 1] ?? 0);
+            const rate = gddRateForDate(dailyRatesMap, cur);
             acc += rate;
             cur = addDaysUTC(cur, -1);
         }
@@ -116,15 +120,16 @@
         if (T <= ToptHigh) return 1;
         return (Tmax - T) / Math.max(1e-9, (Tmax - ToptHigh));
     }
-    function weightedMeanTempOverRange(startDate, endDate, monthlyAvgTemp, dailyRatesMap, Tbase = 10) {
+    function weightedMeanTempOverRange(startDate, endDate, monthlyAvgTemp, dailyRatesMap, Tbase = 10, dailyClimate = null) {
         let cur = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate()));
         const sampleEnd = endDate > startDate ? endDate : addDaysUTC(startDate, 1);
         let sum = 0, n = 0;
         while (cur < sampleEnd) {
             const m = cur.getUTCMonth() + 1;
-            let T = monthlyAvgTemp?.[m];
+            let T = dailyClimate ? meanTemperatureOnDate(cur, dailyClimate) : null;
+            if (T == null) T = monthlyAvgTemp?.[m];
             if (T == null) {
-                const gdd = Math.max(0, dailyRatesMap[cur.getUTCMonth() + 1] ?? 0);
+                const gdd = gddRateForDate(dailyRatesMap, cur);
                 T = gdd > 0 ? (Tbase + gdd) : (Tbase - 2);
             }
             sum += T; n += 1; cur = addDaysUTC(cur, 1);
@@ -135,7 +140,7 @@
     class Planner {
         constructor(inputs) {
             const { plant, city, planningMode, methodCategoryId, methodId, policy } = inputs;
-            const { startDate, seasonEnd, env, dailyRates, monthlyAvg, scanStart, scanEndHard } = inputs.derived();
+            const { startDate, seasonEnd, env, dailyRates, monthlyAvg, dailyClimate, scanStart, scanEndHard } = inputs.derived();
             if (isPerennialPlant(plant)) {
                 throw new Error('Perennial schedules use lifespan dates instead of the maturity planner.');
             }
@@ -160,12 +165,14 @@
                 useSpringFrostGate: policy.useSpringFrostGate,
                 springFrostRisk: policy.springFrostRisk,
                 lastSpringFrostDOY: pickFrostByRisk(city, policy.springFrostRisk),
+                springFrostGateShiftDays: bedFrostGateShiftDays(inputs.bedProfile),
                 plant,
                 HW_DAYS,
                 BUDGET: budget,
                 env,
                 dailyRates,
                 monthlyAvg,
+                dailyClimate,
                 bedProfile: normalizeBedProfile(inputs.bedProfile), // ADDED: soil gates depend on garden-bed conditions.
                 bedProfileSource: inputs.bedProfileSource || 'generic garden bed', // ADDED
                 Tbase: env.Tbase,
@@ -176,15 +183,15 @@
             });
         }
 
-        gddRateOn(d) { return (this.ctx.dailyRates[d.getUTCMonth() + 1] ?? 0); }
+        gddRateOn(d) { return gddRateForDate(this.ctx.dailyRates, d); }
         addDays(d, k) { return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + k)); }
         withinWindow(d) { return d >= this.ctx.scanStart && d <= this.ctx.scanEndHard; }
         normalizeUtcMidnight(d) { return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); }
         soilGateOK(startDate) {
-            const { soilGateConsecutiveDays, soilGateThresholdC, monthlyAvg, bedProfile } = this.ctx;
+            const { soilGateConsecutiveDays, soilGateThresholdC, monthlyAvg, dailyClimate, bedProfile } = this.ctx;
             let cur = new Date(startDate);
             for (let i = 0; i < soilGateConsecutiveDays; i++) {
-                const Tsoil = estimateSoilTempC(cur, monthlyAvg, bedProfile); // ADDED: interpolate city air and adjust for bed conditions.
+                const Tsoil = estimateSoilTempC(cur, dailyClimate || monthlyAvg, bedProfile); // ADDED: interpolate city air and adjust for bed conditions.
                 if (Tsoil < soilGateThresholdC) return false;
                 cur = this.addDays(cur, 1);
             }
@@ -194,8 +201,9 @@
             const C = this.ctx;
             if (!C.useSpringFrostGate || !gateDate) return { ok: true };
             const doy = shared.dayOfYear(gateDate);
-            if (doy < Number(C.lastSpringFrostDOY || 0)) {
-                return { ok: false, reason: `spring_frost_gate(doy ${doy} < ${C.lastSpringFrostDOY})` };
+            const gateDOY = Math.max(1, Math.min(366, Number(C.lastSpringFrostDOY || 0) + Number(C.springFrostGateShiftDays || 0)));
+            if (doy < gateDOY) {
+                return { ok: false, reason: `spring_frost_gate(doy ${doy} < ${gateDOY})` };
             }
             return { ok: true };
         }
@@ -253,7 +261,7 @@
             const minHarvestDays = Math.min(C.HW_DAYS, 3);
             if (harvestSpanDays < minHarvestDays) return { ok: false, reason: 'beyond_hard_end' };
 
-            const TmeanHarvest = weightedMeanTempOverRange(mat, effectiveHarvestEnd, C.monthlyAvg, C.dailyRates, C.Tbase);
+            const TmeanHarvest = weightedMeanTempOverRange(mat, effectiveHarvestEnd, C.monthlyAvg, C.dailyRates, C.Tbase, C.dailyClimate);
             const { Tmin, Tmax } = C.env;
             if (TmeanHarvest < Tmin) return { ok: false, reason: `harvest_too_cold(${TmeanHarvest.toFixed(1)}<${Tmin})` };
             if (TmeanHarvest > Tmax) return { ok: false, reason: `harvest_too_hot(${TmeanHarvest.toFixed(1)}>${Tmax})` };
@@ -340,6 +348,7 @@
         const {
             methodId, methodCategoryId, budget, HW_DAYS,
             dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
+            dailyClimate = null,
             scanStart, scanEndHard,
             soilGateThresholdC, soilGateConsecutiveDays,
             startCoolingThresholdC,
@@ -389,7 +398,13 @@
             seasonStartYear: scanStart.getUTCFullYear(),
             harvestWindowDays: HW_DAYS,
             bedProfile,
-            bedProfileSource
+            bedProfileSource,
+            dailyClimate: dailyClimate || buildDailyTemperatureSeries({
+                startDate: scanStart,
+                endDate: scanEndHard,
+                monthlyNormals: monthlyAvgTemp,
+                source: 'legacy monthly mean inputs'
+            })
         });
         const planner = new Planner(inputs);
         return { planner, ctx: planner.ctx, resolvedBehavior };
@@ -398,6 +413,7 @@
         const {
             methodId, methodCategoryId, budget, HW_DAYS,
             dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
+            dailyClimate = null,
             scanStart, scanEndHard,
             soilGateThresholdC = null, soilGateConsecutiveDays = 3,
             startCoolingThresholdC = null,
@@ -413,6 +429,7 @@
         const { planner, resolvedBehavior } = buildAutoWindowPlanner({
             methodId, methodCategoryId, budget, HW_DAYS: resolvedHarvestWindowDays,
             dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
+            dailyClimate,
             scanStart, scanEndHard,
             soilGateThresholdC, soilGateConsecutiveDays,
             startCoolingThresholdC,
@@ -428,7 +445,8 @@
         const sowScanEnd = overwinterAllowed ? asUTCDate(C.scanStart.getUTCFullYear(), 12, 31) : C.scanEndHard;
         let fieldGateStart = new Date(C.scanStart);
         if (useSpringFrostGate && Number.isFinite(lastSpringFrostDOY)) {
-            const frostDate = dateFromDOY(C.scanStart.getUTCFullYear(), lastSpringFrostDOY);
+            const shiftedDOY = Math.max(1, Math.min(366, Number(lastSpringFrostDOY) + Number(C.springFrostGateShiftDays || 0)));
+            const frostDate = dateFromDOY(C.scanStart.getUTCFullYear(), shiftedDOY);
             if (frostDate > fieldGateStart) fieldGateStart = frostDate;
         }
         if (overwinterAllowed && Number.isFinite(startCoolingThresholdC)) { // FIX: annual heat thresholds are not fall gates

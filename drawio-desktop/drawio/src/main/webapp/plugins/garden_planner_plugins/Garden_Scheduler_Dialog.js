@@ -138,6 +138,21 @@ Draw.loadPlugin(function (ui) {
         const n = Number(value);
         return Number.isFinite(n) ? n : null;
     }
+    let sharedCore = null; // CHANGED
+    let annualCore = null; // CHANGED
+    let perennialCore = null; // CHANGED
+    function bindRequiredSchedulerCores() { // CHANGED
+        const scheduler = typeof window !== 'undefined' && window.USL && window.USL.scheduler
+            ? window.USL.scheduler
+            : null;
+        sharedCore = scheduler && scheduler.sharedCore;
+        annualCore = scheduler && scheduler.annualCore;
+        perennialCore = scheduler && scheduler.perennialCore;
+        if (!sharedCore || !annualCore || !perennialCore) {
+            throw new Error('Garden scheduler requires shared, annual, and perennial core modules.');
+        }
+        return { sharedCore, annualCore, perennialCore };
+    }
     function monthlyMeanOnDate(date, monthlyAvgTemp) {
         const year = date.getUTCFullYear();
         const month = date.getUTCMonth() + 1;
@@ -198,7 +213,7 @@ Draw.loadPlugin(function (ui) {
         return Math.max(-1.5, Math.min(5.0, offset));
     }
     function estimateSoilTempC(date, monthlyAvgTemp, bedProfile = null) {
-        const air = monthlyMeanOnDate(date, monthlyAvgTemp);
+        const air = sharedCore.meanTemperatureOnDate(date, monthlyAvgTemp); // CHANGED
         if (air == null) return null;
         return air + bedSoilTemperatureOffsetC(bedProfile); // ADDED: bed-aware soil estimate replaces fixed lagged-air heuristic.
     }
@@ -1188,6 +1203,84 @@ Draw.loadPlugin(function (ui) {
             }
             return daily;
         }
+
+        async loadDailyClimateModel({ scanStart, scanEndHard, todayISO = null } = {}) { // ADDED
+            const start = scanStart || asUTCDate(new Date().getUTCFullYear(), 1, 1); // ADDED
+            const end = scanEndHard || asUTCDate(start.getUTCFullYear(), 12, 31); // ADDED
+            const fallbackNormals = sharedCore.monthlyTemperatureNormalsFromCity(this); // CHANGED
+            let monthlyNormals = fallbackNormals; // ADDED
+            let source = 'city monthly normals'; // ADDED
+            const cityId = Number(this.city_id); // ADDED
+            let forecastRows = []; // ADDED
+
+            if (Number.isFinite(cityId)) { // ADDED
+                try { // ADDED
+                    const monthlyRows = await queryAll(`
+                        SELECT CAST(substr(weather_month, 6, 2) AS INTEGER) AS month,
+                               AVG(temp_min_c) AS min,
+                               AVG(temp_max_c) AS max,
+                               AVG(temp_mean_c) AS mean
+                        FROM CityWeatherMonthly
+                        WHERE city_id = ?
+                        GROUP BY CAST(substr(weather_month, 6, 2) AS INTEGER)
+                        ORDER BY month;
+                    `, [cityId]); // ADDED
+                    const monthlyFromWeather = {}; // ADDED
+                    (monthlyRows || []).forEach(function (row) { // ADDED
+                        const month = Number(row.month); // ADDED
+                        if (month >= 1 && month <= 12) monthlyFromWeather[month] = row; // ADDED
+                    }); // ADDED
+                    if (Object.keys(monthlyFromWeather).length) { // ADDED
+                        monthlyNormals = monthlyFromWeather; // ADDED
+                        source = 'CityWeatherMonthly normals'; // ADDED
+                    } else { // ADDED
+                        const dailyRows = await queryAll(`
+                            SELECT CAST(substr(weather_date, 6, 2) AS INTEGER) AS month,
+                                   AVG(temp_min_c) AS min,
+                                   AVG(temp_max_c) AS max,
+                                   AVG(temp_mean_c) AS mean
+                            FROM CityWeatherDaily
+                            WHERE city_id = ?
+                            GROUP BY CAST(substr(weather_date, 6, 2) AS INTEGER)
+                            ORDER BY month;
+                        `, [cityId]); // ADDED
+                        const monthlyFromDaily = {}; // ADDED
+                        (dailyRows || []).forEach(function (row) { // ADDED
+                            const month = Number(row.month); // ADDED
+                            if (month >= 1 && month <= 12) monthlyFromDaily[month] = row; // ADDED
+                        }); // ADDED
+                        if (Object.keys(monthlyFromDaily).length) { // ADDED
+                            monthlyNormals = monthlyFromDaily; // ADDED
+                            source = 'CityWeatherDaily monthly normals'; // ADDED
+                        } // ADDED
+                    } // ADDED
+                } catch (e) { // ADDED
+                    console.warn('[Scheduler] Weather normals unavailable; using city monthly normals', e?.message || String(e)); // ADDED
+                } // ADDED
+
+                try { // ADDED
+                    forecastRows = await queryAll(`
+                        SELECT forecast_date, temp_min_c, temp_max_c, temp_mean_c, run_timestamp
+                        FROM CityWeatherForecastDaily
+                        WHERE city_id = ?
+                          AND forecast_date BETWEEN ? AND ?
+                        ORDER BY forecast_date, run_timestamp;
+                    `, [cityId, fmtISO(start), fmtISO(end)]); // ADDED
+                } catch (e) { // ADDED
+                    console.warn('[Scheduler] Forecast weather unavailable; using normals only', e?.message || String(e)); // ADDED
+                    forecastRows = []; // ADDED
+                } // ADDED
+            } // ADDED
+
+            return sharedCore.buildDailyTemperatureSeries({ // CHANGED
+                startDate: start, // ADDED
+                endDate: end, // ADDED
+                monthlyNormals, // ADDED
+                forecastRows, // ADDED
+                todayISO, // ADDED
+                source // ADDED
+            }); // ADDED
+        }
     }
 
 
@@ -1304,7 +1397,8 @@ Draw.loadPlugin(function (ui) {
             varietyId = null,
             varietyName = '',
             bedProfile = null,
-            bedProfileSource = 'generic garden bed'
+            bedProfileSource = 'generic garden bed',
+            dailyClimate = null
         }) {
             Object.assign(this, {
                 plant,
@@ -1321,7 +1415,8 @@ Draw.loadPlugin(function (ui) {
                 varietyId: (varietyId != null ? Number(varietyId) : null),
                 varietyName: String(varietyName || ''),
                 bedProfile: normalizeBedProfile(bedProfile), // ADDED: carry bed conditions into soil-temperature gates.
-                bedProfileSource: String(bedProfileSource || 'generic garden bed') // ADDED
+                bedProfileSource: String(bedProfileSource || 'generic garden bed'), // ADDED
+                dailyClimate // ADDED
             });
             Object.freeze(this);
         }
@@ -1338,19 +1433,29 @@ Draw.loadPlugin(function (ui) {
             const scanEndHard = asUTCDate(this.seasonStartYear + scanYears - 1, 12, 31);
 
             const year = scanStart.getUTCFullYear();
-            const dailyRates = this.city.dailyRates(env.Tbase, year);
-            const monthlyAvg = typeof this.city.calibratedMonthlyMeans === 'function'
-                ? this.city.calibratedMonthlyMeans(year)
-                : this.city.monthlyMeans(); // ADDED: use annual-GDD calibrated heat curve when city supports it.
+            const monthlyAvg = this.city.monthlyMeans();
+            const dailyClimate = this.dailyClimate || sharedCore.buildDailyTemperatureSeries({
+                startDate: scanStart,
+                endDate: scanEndHard,
+                monthlyNormals: sharedCore.monthlyTemperatureNormalsFromCity(this.city),
+                source: 'city monthly normals'
+            }); // CHANGED
+            const dailyRates = sharedCore.buildDailyGddMap({
+                dailyClimate,
+                cropTemp: env,
+                bedProfile: this.bedProfile,
+                city: this.city,
+                year
+            }); // CHANGED
 
-            return { startDate, seasonEnd, year, env, dailyRates, monthlyAvg, scanStart, scanEndHard };
+            return { startDate, seasonEnd, year, env, dailyRates, monthlyAvg, dailyClimate, scanStart, scanEndHard }; // CHANGED
         }
     }
 
     class Planner {
         constructor(inputs) {
             const { plant, city, planningMode, methodCategoryId, methodId, policy } = inputs;
-            const { startDate, seasonEnd, env, dailyRates, monthlyAvg, scanStart, scanEndHard } = inputs.derived();
+            const { startDate, seasonEnd, env, dailyRates, monthlyAvg, dailyClimate, scanStart, scanEndHard } = inputs.derived();
             if (isPerennialPlant(plant)) {
                 throw new Error('Perennial schedules use lifespan dates instead of the maturity planner.');
             } // FIX: never request a maturity budget for a perennial
@@ -1385,6 +1490,7 @@ Draw.loadPlugin(function (ui) {
                 useSpringFrostGate: policy.useSpringFrostGate,
                 springFrostRisk: policy.springFrostRisk,
                 lastSpringFrostDOY: pickFrostByRisk(city, policy.springFrostRisk),
+                springFrostGateShiftDays: sharedCore.bedFrostGateShiftDays(inputs.bedProfile), // CHANGED
                 plant,
                 HW_DAYS,
 
@@ -1392,6 +1498,7 @@ Draw.loadPlugin(function (ui) {
                 env,
                 dailyRates,
                 monthlyAvg,
+                dailyClimate, // ADDED
                 bedProfile: normalizeBedProfile(inputs.bedProfile), // ADDED: soil gates depend on garden-bed conditions.
                 bedProfileSource: inputs.bedProfileSource || 'generic garden bed', // ADDED
                 Tbase: env.Tbase,
@@ -1403,7 +1510,7 @@ Draw.loadPlugin(function (ui) {
             });
         }
 
-        gddRateOn(d) { return (this.ctx.dailyRates[d.getUTCMonth() + 1] ?? 0); }
+        gddRateOn(d) { return sharedCore.gddRateForDate(this.ctx.dailyRates, d); } // CHANGED
         addDays(d, k) { return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + k)); }
         withinWindow(d) { return d >= this.ctx.scanStart && d <= this.ctx.scanEndHard; }
 
@@ -1412,11 +1519,11 @@ Draw.loadPlugin(function (ui) {
         }
 
         soilGateOK(startDate) {
-            const { soilGateConsecutiveDays, soilGateThresholdC, monthlyAvg, bedProfile } = this.ctx;
+            const { soilGateConsecutiveDays, soilGateThresholdC, monthlyAvg, dailyClimate, bedProfile } = this.ctx;
 
             let cur = new Date(startDate);
             for (let i = 0; i < soilGateConsecutiveDays; i++) {
-                const Tsoil = estimateSoilTempC(cur, monthlyAvg, bedProfile); // ADDED: interpolate city air and adjust for bed conditions.
+                const Tsoil = estimateSoilTempC(cur, dailyClimate || monthlyAvg, bedProfile); // ADDED: interpolate city air and adjust for bed conditions.
                 if (Tsoil < soilGateThresholdC) return false;
                 cur = this.addDays(cur, 1);
             }
@@ -1427,8 +1534,9 @@ Draw.loadPlugin(function (ui) {
             const C = this.ctx;
             if (!C.useSpringFrostGate || !gateDate) return { ok: true };
             const doy = dayOfYear(gateDate);
-            if (doy < Number(C.lastSpringFrostDOY || 0)) {
-                return { ok: false, reason: `spring_frost_gate(doy ${doy} < ${C.lastSpringFrostDOY})` };
+            const gateDOY = Math.max(1, Math.min(366, Number(C.lastSpringFrostDOY || 0) + Number(C.springFrostGateShiftDays || 0)));
+            if (doy < gateDOY) {
+                return { ok: false, reason: `spring_frost_gate(doy ${doy} < ${gateDOY})` };
             }
             return { ok: true };
         }
@@ -1515,7 +1623,8 @@ Draw.loadPlugin(function (ui) {
                 effectiveHarvestEnd,
                 C.monthlyAvg,
                 C.dailyRates,
-                C.Tbase
+                C.Tbase,
+                C.dailyClimate
             );
 
             const { Tmin, Tmax } = C.env;
@@ -1567,8 +1676,15 @@ Draw.loadPlugin(function (ui) {
         const varietyName = varietyId
             ? await resolveVarietyName(varietyId, options.currentVarieties)
             : '';
+        const scanStart = asUTCDate(Number(formState.seasonStartYear), 1, 1); // ADDED
+        const scanEndHard = asUTCDate(Number(formState.seasonStartYear) + getPlantScanYears(plant) - 1, 12, 31); // ADDED
+        const dailyClimateKey = `${city.city_name || formState.cityName}|${fmtISO(scanStart)}|${fmtISO(scanEndHard)}`; // ADDED
+        const cachedDailyClimate = formState.dailyClimateKey === dailyClimateKey ? formState.dailyClimate : null; // ADDED
+        const dailyClimate = options.dailyClimate || cachedDailyClimate || await city.loadDailyClimateModel({ scanStart, scanEndHard }); // ADDED
+        formState.dailyClimate = dailyClimate; // ADDED
+        formState.dailyClimateKey = dailyClimateKey; // ADDED
 
-        const inputs = new ScheduleInputs({
+        const inputs = new sharedCore.ScheduleInputs({ // CHANGED
             plant,
             city,
             planningMode,
@@ -1583,7 +1699,8 @@ Draw.loadPlugin(function (ui) {
             varietyId,
             varietyName,
             bedProfile: options.bedProfile || formState.bedProfile || null, // ADDED: reuse resolved bed conditions for soil gates.
-            bedProfileSource: options.bedProfileSource || formState.bedProfileSource || 'generic garden bed' // ADDED
+            bedProfileSource: options.bedProfileSource || formState.bedProfileSource || 'generic garden bed', // ADDED
+            dailyClimate // ADDED
         });
 
         return {
@@ -1627,7 +1744,7 @@ Draw.loadPlugin(function (ui) {
             startDate.getUTCDate()));
         while (acc < targetGDD) {
             if (seasonEnd && !dateLTE(cur, seasonEnd)) break;
-            const rate = Math.max(0, dailyRatesMap[cur.getUTCMonth() + 1] ?? 0);
+            const rate = sharedCore.gddRateForDate(dailyRatesMap, cur); // CHANGED
             acc += rate;
             if (acc >= targetGDD) break;
             cur = addDaysUTC(cur, 1);
@@ -1641,7 +1758,7 @@ Draw.loadPlugin(function (ui) {
         let cur = addDaysUTC(targetDate, -1);
         while (acc < targetGDD) {
             if (seasonStart && dateLTE(cur, addDaysUTC(seasonStart, -1))) break;
-            const rate = Math.max(0, dailyRatesMap[cur.getUTCMonth() + 1] ?? 0);
+            const rate = sharedCore.gddRateForDate(dailyRatesMap, cur); // CHANGED
             acc += rate;
             cur = addDaysUTC(cur, -1);
         }
@@ -1664,15 +1781,16 @@ Draw.loadPlugin(function (ui) {
         if (T <= ToptHigh) return 1;
         return (Tmax - T) / Math.max(1e-9, (Tmax - ToptHigh));
     }
-    function weightedMeanTempOverRange(startDate, endDate, monthlyAvgTemp, dailyRatesMap, Tbase = 10) {
+    function weightedMeanTempOverRange(startDate, endDate, monthlyAvgTemp, dailyRatesMap, Tbase = 10, dailyClimate = null) {
         let cur = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate()));
         const sampleEnd = endDate > startDate ? endDate : addDaysUTC(startDate, 1); // FIX: sample maturity day for zero-day windows
         let sum = 0, n = 0;
         while (cur < sampleEnd) {
             const m = cur.getUTCMonth() + 1;
-            let T = monthlyAvgTemp?.[m];
+            let T = dailyClimate ? sharedCore.meanTemperatureOnDate(cur, dailyClimate) : null; // CHANGED
+            if (T == null) T = monthlyAvgTemp?.[m];
             if (T == null) {
-                const gdd = Math.max(0, dailyRatesMap[cur.getUTCMonth() + 1] ?? 0);
+                const gdd = sharedCore.gddRateForDate(dailyRatesMap, cur); // CHANGED
                 T = gdd > 0 ? (Tbase + gdd) : (Tbase - 2);
             }
             sum += T; n += 1; cur = addDaysUTC(cur, 1);
@@ -2025,6 +2143,7 @@ Draw.loadPlugin(function (ui) {
         const {
             methodId, methodCategoryId, budget, HW_DAYS,
             dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
+            dailyClimate = null,
             scanStart, scanEndHard,
             soilGateThresholdC, soilGateConsecutiveDays,
             startCoolingThresholdC,
@@ -2066,7 +2185,7 @@ Draw.loadPlugin(function (ui) {
             springFrostRisk: 'p50'
         });
 
-        const inputs = new ScheduleInputs({
+        const inputs = new sharedCore.ScheduleInputs({ // CHANGED
             plant: fakePlant,
             city: fakeCity,
             planningMode: resolvedBehavior.planningMode,
@@ -2078,10 +2197,16 @@ Draw.loadPlugin(function (ui) {
             seasonStartYear: scanStart.getUTCFullYear(),
             harvestWindowDays: HW_DAYS,
             bedProfile,
-            bedProfileSource
+            bedProfileSource,
+            dailyClimate: dailyClimate || sharedCore.buildDailyTemperatureSeries({
+                startDate: scanStart,
+                endDate: scanEndHard,
+                monthlyNormals: monthlyAvgTemp,
+                source: 'legacy monthly mean inputs'
+            }) // CHANGED
         });
 
-        const planner = new Planner(inputs);
+        const planner = new annualCore.Planner(inputs); // CHANGED
         return { planner, ctx: planner.ctx, resolvedBehavior };
     }
 
@@ -2090,6 +2215,7 @@ Draw.loadPlugin(function (ui) {
         const {
             methodId, methodCategoryId, budget, HW_DAYS, // CHANGED
             dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
+            dailyClimate = null,
             scanStart, scanEndHard,
             // gates
             soilGateThresholdC = null, soilGateConsecutiveDays = 3,
@@ -2107,7 +2233,7 @@ Draw.loadPlugin(function (ui) {
         const resolvedHarvestWindowDays = resolveHarvestWindowDays(HW_DAYS); // FIX: normalize fallback estimates as well as planner feasibility
         const { planner, resolvedBehavior } = buildAutoWindowPlanner({ // CHANGED
             methodId, methodCategoryId, budget, HW_DAYS: resolvedHarvestWindowDays, // FIX: pass the canonical value
-            dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
+            dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp, dailyClimate,
             scanStart, scanEndHard,
             soilGateThresholdC, soilGateConsecutiveDays,
             startCoolingThresholdC,
@@ -2132,7 +2258,8 @@ Draw.loadPlugin(function (ui) {
 
         // spring frost gate
         if (useSpringFrostGate && Number.isFinite(lastSpringFrostDOY)) {
-            const frostDate = dateFromDOY(C.scanStart.getUTCFullYear(), lastSpringFrostDOY);
+            const shiftedDOY = Math.max(1, Math.min(366, Number(lastSpringFrostDOY) + Number(C.springFrostGateShiftDays || 0)));
+            const frostDate = dateFromDOY(C.scanStart.getUTCFullYear(), shiftedDOY);
             if (frostDate > fieldGateStart) fieldGateStart = frostDate;
         }
 
@@ -2764,11 +2891,13 @@ Draw.loadPlugin(function (ui) {
     } // ADDED
 
     // Scans season feasibility day-by-day.
-    async function explainFeasibilityOverSeason(inputs, maxDays = 400, stopAtFirstOk = false) {
-        const planner = new Planner(inputs);
+    async function explainFeasibilityOverSeason(inputs, maxDays = null, stopAtFirstOk = false) {
+        const planner = new annualCore.Planner(inputs); // CHANGED
         const out = [];
-        let d = new Date(Math.max(planner.ctx.startDate, planner.ctx.scanStart));
-        for (let i = 0; i < maxDays && d <= planner.ctx.scanEndHard; i++) {
+        const spanDays = Math.max(0, Math.ceil((planner.ctx.scanEndHard.getTime() - planner.ctx.scanStart.getTime()) / 86400000) + 1);
+        const scanLimit = Number.isFinite(Number(maxDays)) && Number(maxDays) > 0 ? Math.min(Math.floor(Number(maxDays)), spanDays) : spanDays; // FIX: default explain scan covers the whole scheduler span.
+        let d = new Date(planner.ctx.scanStart); // FIX: explain scans the whole scheduler span, even when selected start is blank.
+        for (let i = 0; i < scanLimit && d <= planner.ctx.scanEndHard; i++) {
             try {
                 const r = planner.isSowFeasible(d);
                 if (r && r.ok) {
@@ -2796,6 +2925,136 @@ Draw.loadPlugin(function (ui) {
         return out;
     }
 
+    function compressFeasibilityScanRanges(rows) {
+        const ranges = [];
+        (rows || []).forEach(function (row) {
+            if (!row || !row.date) return;
+            const normalized = normalizeFeasibilityReason(row);
+            const last = ranges[ranges.length - 1];
+            if (last && last.ok === normalized.ok && last.reason === normalized.reason && isNextISODate(last.end, row.date)) {
+                last.end = row.date;
+                last.days += 1;
+                last.last = row;
+                last.lastDetail = normalized.detail;
+                return;
+            }
+            ranges.push({
+                start: row.date,
+                end: row.date,
+                days: 1,
+                ok: normalized.ok,
+                reason: normalized.reason,
+                label: normalized.label,
+                firstDetail: normalized.detail,
+                lastDetail: normalized.detail,
+                first: row,
+                last: row
+            });
+        });
+        return ranges.map(function (range) {
+            const out = {
+                start: range.start,
+                end: range.end,
+                days: range.days,
+                ok: range.ok,
+                reason: range.reason,
+                label: range.label
+            };
+            if (range.firstDetail || range.lastDetail) {
+                out.first_detail = range.firstDetail || '';
+                out.last_detail = range.lastDetail || '';
+                out.detail = range.firstDetail === range.lastDetail
+                    ? (range.firstDetail || '')
+                    : [range.firstDetail, range.lastDetail].filter(Boolean).join(' -> ');
+            }
+            if (range.ok) {
+                out.first_maturity = range.first?.maturity || '';
+                out.last_maturity = range.last?.maturity || '';
+                out.first_harvest_end = range.first?.harvestEnd || '';
+                out.last_harvest_end = range.last?.harvestEnd || '';
+            }
+            return out;
+        });
+    }
+
+    function normalizeFeasibilityReason(row) {
+        if (row && row.ok) return { ok: true, reason: 'ok', detail: '', label: 'Feasible' };
+        const raw = String(row?.reason || 'unknown').trim();
+        const match = raw.match(/^([A-Za-z0-9_]+)\((.*)\)$/);
+        if (match) {
+            return { ok: false, reason: match[1], detail: match[2], label: compactFeasibilityReasonLabel(match[1]) };
+        }
+        if (raw.indexOf('error:') === 0) {
+            return { ok: false, reason: 'error', detail: raw.slice(6).trim(), label: 'The feasibility check failed.' };
+        }
+        return { ok: false, reason: raw || 'unknown', detail: '', label: compactFeasibilityReasonLabel(raw) };
+    }
+
+    function compactFeasibilityReasonLabel(reason) {
+        const raw = String(reason || '').trim();
+        if (raw === 'ok') return 'Feasible';
+        if (raw === 'spring_frost_gate') return 'Before frost-safety date.';
+        if (raw === 'soil_gate') return 'Soil below planting threshold.';
+        if (raw === 'insufficient_gdd') return 'Not enough remaining heat to reach maturity.';
+        if (raw === 'harvest_too_cold') return 'Expected harvest temperatures are too cold.';
+        if (raw === 'harvest_too_hot') return 'Expected harvest temperatures are too hot.';
+        return humanFeasibilityReason(raw);
+    }
+
+    function formatFeasibilityScanRanges(rows) {
+        const ranges = compressFeasibilityScanRanges(rows);
+        if (!ranges.length) return 'scan_not_run: no daily feasibility rows were produced';
+        return ranges.map(function (range) {
+            const dateText = range.start === range.end ? range.start : `${range.start} to ${range.end}`;
+            const parts = [
+                `${dateText} (${range.days} day${range.days === 1 ? '' : 's'})`,
+                range.ok ? 'ok' : range.reason,
+                range.label
+            ];
+            if (range.detail) parts.push(`detail ${range.detail}`);
+            if (range.ok) {
+                parts.push(`maturity ${range.first_maturity || 'n/a'} -> ${range.last_maturity || 'n/a'}`);
+                parts.push(`harvest end ${range.first_harvest_end || 'n/a'} -> ${range.last_harvest_end || 'n/a'}`);
+            }
+            return parts.join(' | ');
+        }).join('\n');
+    }
+
+    function buildFeasibilityBlockingSummary(inputs, rows) {
+        const ranges = compressFeasibilityScanRanges(rows);
+        if (!ranges.length) return 'Blocking sequence:\n- scan_not_run: no daily feasibility rows were produced';
+        const blockers = ranges.filter(range => !range.ok);
+        if (!blockers.length) return 'Feasible sowing range found.\nBlocking sequence:\n- none';
+        const primary = findPrimaryFeasibilityBlocker(blockers);
+        const derived = inputs.derived();
+        const budget = inputs.plant.firstHarvestBudget();
+        const gddDiagnostics = derived.dailyRates?.__diagnostics || {}; // ADDED
+        const cropAnnualGdd = finiteNumberOrNull(gddDiagnostics.scaledCropAnnualGdd) ?? annualGddFromMonthlyMeans(derived.monthlyAvg, derived.env.Tbase, derived.year, 0); // CHANGED
+        const lines = [ranges.some(range => range.ok) ? 'Feasible sowing range found.' : 'No feasible sowing window found.', 'Blocking sequence:'];
+        blockers.forEach(function (range) {
+            const dateText = range.start === range.end ? range.start : `${range.start} to ${range.end}`;
+            lines.push(`- ${dateText}: ${range.reason} (${range.label})`);
+        });
+        if (primary) {
+            lines.push(`Primary blocker after frost/soil readiness: ${primary.reason}`);
+            if (primary.reason === 'insufficient_gdd' && budget.mode === 'gdd') {
+                lines.push(`GDD check: crop needs ${Number(budget.amount).toFixed(1)} GDD; calibrated crop-base estimate is ${Number(cropAnnualGdd).toFixed(1)} GDD.`);
+            }
+        }
+        return lines.join('\n');
+    }
+
+    function findPrimaryFeasibilityBlocker(blockers) {
+        if (!blockers || !blockers.length) return null;
+        return blockers.find(range => !['spring_frost_gate', 'soil_gate'].includes(range.reason)) || blockers[0];
+    }
+
+    function isNextISODate(leftISO, rightISO) {
+        const left = parseISODateUTCValue(leftISO);
+        const right = parseISODateUTCValue(rightISO);
+        return !!left && !!right && addDaysUTC(left, 1).getTime() === right.getTime();
+    }
+
     function buildFeasibilityDiagnostics(inputs, rows) {
         const plant = inputs.plant;
         const city = inputs.city;
@@ -2810,12 +3069,14 @@ Draw.loadPlugin(function (ui) {
                 year: derived.year
             }); // ADDED: diagnostics can explain annual-GDD calibration even outside CityClimate.
         const rawMonthly = city.monthlyMeans();
-        const cropAnnualGdd = annualGddFromMonthlyMeans(derived.monthlyAvg, derived.env.Tbase, derived.year, 0);
-        const uncalibratedCropAnnualGdd = annualGddFromMonthlyMeans(rawMonthly, derived.env.Tbase, derived.year, 0);
+        const gddDiagnostics = derived.dailyRates?.__diagnostics || {}; // ADDED
+        const climateDiagnostics = derived.dailyClimate?.diagnostics || {}; // ADDED
+        const cropAnnualGdd = finiteNumberOrNull(gddDiagnostics.scaledCropAnnualGdd) ?? annualGddFromMonthlyMeans(derived.monthlyAvg, derived.env.Tbase, derived.year, 0); // CHANGED
+        const uncalibratedCropAnnualGdd = finiteNumberOrNull(gddDiagnostics.rawCropAnnualGdd) ?? annualGddFromMonthlyMeans(rawMonthly, derived.env.Tbase, derived.year, 0); // CHANGED
         const soilThreshold = finiteNumberOrNull(inputs.policy?.soilGateThresholdC);
         const firstReady = soilThreshold == null ? null : firstSoilReadyDate({
             thresholdC: soilThreshold,
-            monthlyAvgTemp: derived.monthlyAvg,
+            monthlyAvgTemp: derived.dailyClimate || derived.monthlyAvg, // CHANGED
             scanStart: derived.scanStart,
             scanEndHard: derived.scanEndHard,
             bedProfile: inputs.bedProfile,
@@ -2826,28 +3087,37 @@ Draw.loadPlugin(function (ui) {
         const reasonCounts = {};
         (rows || []).forEach(function (row) {
             if (!row || row.ok) return;
-            const reason = String(row.reason || 'unknown');
+            const reason = normalizeFeasibilityReason(row).reason;
             reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
         });
         const topReasons = Object.keys(reasonCounts)
             .sort((a, b) => reasonCounts[b] - reasonCounts[a])
             .slice(0, 5)
             .map(reason => `${reason}: ${reasonCounts[reason]}`);
+        const scanRows = Array.isArray(rows) ? rows.length : 0;
+        const scanStart = fmtISO(derived.scanStart);
+        const scanEnd = fmtISO(derived.scanEndHard);
+        const selectedStart = parseISODateUTCValue(inputs.startISO); // FIX: invalid selected dates must not break diagnostics.
         const fmtNum = value => Number.isFinite(Number(value)) ? Number(value).toFixed(1) : 'n/a';
         return [
             'Diagnostics:',
+            `Scan range: ${scanStart} to ${scanEnd}, ${scanRows} day${scanRows === 1 ? '' : 's'}`,
+            scanRows ? null : `Scan status: scan_not_run selected start=${inputs.startISO || 'blank'} parsed=${selectedStart ? fmtISO(selectedStart) : 'invalid'}`, // FIX: empty scans are explicit.
+            buildFeasibilityBlockingSummary(inputs, rows),
             `Soil threshold: ${soilThreshold == null ? 'n/a' : fmtNum(soilThreshold) + ' C'}`,
             `Estimated first soil-ready date: ${firstReady ? fmtISO(firstReady) : 'none in scan'}`,
             `Bed model: ${inputs.bedProfileSource || 'generic garden bed'} ${JSON.stringify(normalizeBedProfile(inputs.bedProfile))}`,
+            `Climate model: ${climateDiagnostics.source || 'city monthly normals'}; forecast blend days ${Number(climateDiagnostics.forecastBlendDays || 0)}`, // ADDED
             `City annual GDD: ${fmtNum(calibration.targetGdd)} at base ${fmtNum(calibration.gddBaseC)} C`,
-            `Temperature calibration offset: ${calibration.usable ? fmtNum(calibration.offsetC) + ' C' : 'not used'}`,
-            `City base-GDD check: ${fmtNum(calibration.uncalibratedGdd)} raw -> ${fmtNum(calibration.calibratedGdd)} calibrated`,
+            `Temperature calibration offset: not used; daily GDD is scaled instead`, // CHANGED
+            `GDD calibration scale: ${fmtNum(gddDiagnostics.gddScale || 1)}; city base-GDD ${fmtNum(gddDiagnostics.cityBaseAnnualGdd)} -> target ${fmtNum(gddDiagnostics.targetGdd)}`, // ADDED
+            `Bed frost-gate shift: ${sharedCore.bedFrostGateShiftDays(inputs.bedProfile)} days; bed GDD air shift: ${fmtNum(gddDiagnostics.bedAirOffsetC)} C`, // CHANGED
             `Crop-base annual GDD estimate: ${fmtNum(uncalibratedCropAnnualGdd)} raw -> ${fmtNum(cropAnnualGdd)} calibrated at base ${fmtNum(derived.env.Tbase)} C`,
             `Crop maturity target: ${budget.mode === 'gdd' ? fmtNum(budget.amount) + ' GDD' : String(Math.round(budget.amount)) + ' days'}`,
             `First failing gate: ${firstFailure ? `${firstFailure.date} ${firstFailure.reason} (${humanFeasibilityReason(firstFailure.reason)})` : 'none in scan'}`,
             `First feasible sow date: ${firstOk ? firstOk.date : 'none in scan'}`,
             `Failure summary: ${topReasons.length ? topReasons.join(', ') : 'none'}`
-        ].join('\n'); // ADDED: readable model diagnostics before the raw feasibility scan.
+        ].filter(Boolean).join('\n'); // ADDED: readable model diagnostics before the compressed feasibility scan.
     }
 
     function showCommitDialog(ui, {
@@ -4233,140 +4503,14 @@ Draw.loadPlugin(function (ui) {
 
 
     function computeScheduleResult(inputs) { // ADDED
-        const { plant, methodId } = inputs;
-        const method = methodId;
+        const { plant } = inputs; // CHANGED
         const startDate = parseISODateUTCValue(inputs.startISO); // FIX: perennial results do not initialize GDD-derived state
         if (!startDate) {
             throw new Error('Select a planting date.'); // FIX: empty no-window state must not become an invalid Date
         }
-
-        const schedulerCores = (typeof window !== 'undefined' && window.USL && window.USL.scheduler) || null; // ADDED
-        if (isPerennialPlant(plant) && schedulerCores?.perennialCore?.computePerennialScheduleResult) { // ADDED
-            return schedulerCores.perennialCore.computePerennialScheduleResult(inputs); // ADDED
-        } // ADDED
-        if (!isPerennialPlant(plant) && schedulerCores?.annualCore?.computeAnnualScheduleResult) { // ADDED
-            return schedulerCores.annualCore.computeAnnualScheduleResult(inputs); // ADDED
-        } // ADDED
-
-        if (isPerennialPlant(plant)) { // FIX: lifespan-only perennials do not require maturity or GDD
-            const lifespanYears = requirePerennialLifespanYears(plant);
-            const lifespanStartISO = fmtISO(startDate); // FIX
-            const lifespanEndISO = computePerennialLifespanEndISO(
-                lifespanStartISO,
-                inputs.seasonStartYear,
-                lifespanYears
-            );
-            const timeline = {
-                sow: new Date(startDate),
-                germ: null,
-                transplant: null,
-                maturity: null,
-                harvestStart: null,
-                harvestEnd: null
-            }; // FIX: lifespan-only results carry no annual stage assumptions
-
-            return {
-                kind: 'perennial', // FIX: discriminate lifecycle result shapes
-                harvestEndSemantics: HARVEST_END_SEMANTICS, // FIX
-                plant,
-                method,
-                schedule: [new Date(startDate)],
-                timelines: [timeline],
-                rows: [{
-                    plant: plant.plant_name,
-                    method,
-                    sow: fmtISO(startDate),
-                    germ: fmtISO(timeline.germ),
-                    trans: fmtISO(timeline.transplant),
-                    harvStart: '',
-                    harvEnd: '',
-                    mult: '',
-                    plantsReq: ''
-                }],
-                firstScheduledHarvestISO: null,
-                lastScheduledHarvestEndISO: null,
-                lifespanStartISO,
-                lifespanEndISO
-            }; // FIX
-        }
-
-        const { seasonEnd, env, dailyRates } = inputs.derived(); // FIX: annual-only maturity inputs
-        const planner = new Planner(inputs); // NEW
-        const feasibility = planner.isSowFeasible(startDate); // NEW
-        if (!feasibility.ok) { // NEW
-            throw new Error(`Selected sow date is not feasible: ${humanFeasibilityReason(feasibility.reason)}`); // CHANGED
-        } // NEW
-    
-        const budget = plant.firstHarvestBudget();
-        if (!budget || !Number.isFinite(budget.amount) || budget.amount <= 0) {
-            throw new Error("Invalid maturity budget for " + plant.plant_name);
-        }
-    
-        const schedule = [startDate];
-    
-        const stageDays = {
-            maturityDays: Number.isFinite(Number(plant.days_maturity)) && Number(plant.days_maturity) > 0
-                ? Number(plant.days_maturity)
-                : (budget.mode === "days" ? Number(budget.amount) : 0),
-            transplantDays: Number.isFinite(Number(plant.days_transplant)) ? Number(plant.days_transplant) : 0,
-            germinationDays: finiteNumberOrNull(plant.days_germ), // FIX: preserve missing versus explicit zero days
-            harvest_window_days: resolveHarvestWindowDays(inputs.harvestWindowDays, plant) // FIX: use the canonical fallback
-        };
-    
-        const timelines = computeStageTimelineForSchedule({
-            schedule,
-            budget,
-            stageDays,
-            dailyRatesMap: dailyRates,
-            seasonEnd,
-            planningMode: inputs.planningMode
-        });
-    
-        const authoritativeTimeline = timelines[0];
-        authoritativeTimeline.maturity = new Date(feasibility.maturity);
-        authoritativeTimeline.harvestStart = new Date(feasibility.harvestStart);
-        authoritativeTimeline.harvestEnd = new Date(feasibility.harvestEnd);
-
-        const yieldMultipliers = [
-            thermalYieldFactor(feasibility.TmeanHarvest, env)
-        ];
-
-        const minYieldMultiplier = finiteNumberOrNull(inputs.minYieldMultiplier) ?? 0;
-        if (yieldMultipliers[0] < minYieldMultiplier) {
-            throw new Error(
-                `Selected sow date yield multiplier ${yieldMultipliers[0].toFixed(2)} ` +
-                `is below the minimum ${minYieldMultiplier.toFixed(2)}.`
-            );
-        }
-    
-        const rows = schedule.map((sowDate, idx) => {
-            const tl = timelines[idx] || {};
-            const mult = Number.isFinite(Number(yieldMultipliers[idx])) ? Number(yieldMultipliers[idx]) : 1;
-    
-            return {
-                plant: plant.plant_name,
-                method,
-                sow: fmtISO(sowDate),
-                germ: fmtISO(tl.germ),
-                trans: fmtISO(tl.transplant),
-                harvStart: fmtISO(tl.harvestStart),
-                harvEnd: fmtISO(tl.harvestEnd),
-                mult: mult.toFixed(2),
-                plantsReq: ""
-            };
-        });
-    
-        return {
-            kind: 'annual', // FIX: discriminate lifecycle result shapes
-            harvestEndSemantics: HARVEST_END_SEMANTICS, // FIX
-            plant,
-            method,
-            schedule,
-            timelines,
-            rows,
-            firstScheduledHarvestISO: timelines[0]?.harvestStart ? fmtISO(timelines[0].harvestStart) : null,
-            lastScheduledHarvestEndISO: timelines.length ? fmtISO(timelines[timelines.length - 1]?.harvestEnd) : null
-        };
+        return isPerennialPlant(plant)
+            ? perennialCore.computePerennialScheduleResult(inputs)
+            : annualCore.computeAnnualScheduleResult(inputs); // CHANGED
     }
 
 
@@ -4390,7 +4534,9 @@ Draw.loadPlugin(function (ui) {
             hasPersistedSchedule: initialHasPersistedSchedule = false,
             initialWindowFeasible = false,
             bedProfile: scheduleBedProfile = normalizeBedProfile(null),
-            bedProfileSource: scheduleBedProfileSource = 'generic garden bed'
+            bedProfileSource: scheduleBedProfileSource = 'generic garden bed',
+            dailyClimate: initialDailyClimate = null, // CHANGED
+            dailyClimateKey: initialDailyClimateKey = '' // CHANGED
         } = options || {};
         let hasPersistedSchedule = !!initialHasPersistedSchedule; // FIX: provenance changes after an automatic replacement
 
@@ -5071,7 +5217,9 @@ Draw.loadPlugin(function (ui) {
             lastHarvestISO: initialEndISO,
             lastHarvestSource: 'auto',
             bedProfile: normalizeBedProfile(scheduleBedProfile), // ADDED: keep bed-aware soil modeling stable across form recomputes.
-            bedProfileSource: String(scheduleBedProfileSource || 'generic garden bed') // ADDED
+            bedProfileSource: String(scheduleBedProfileSource || 'generic garden bed'), // ADDED
+            dailyClimate: initialDailyClimate, // ADDED
+            dailyClimateKey: initialDailyClimateKey // CHANGED
         };
 
 
@@ -5278,8 +5426,6 @@ Draw.loadPlugin(function (ui) {
                 const seasonStartYear = formState.seasonStartYear;
 
                 const env = p.cropTempEnvelope();
-                const dailyRates = city.dailyRates(env.Tbase, seasonStartYear);
-                const monthlyAvgTemp = city.calibratedMonthlyMeans(seasonStartYear); // ADDED: auto-window recomputes use annual-GDD calibrated heat curve.
                 const budget = p.firstHarvestBudget();
 
                 const HW_DAYS = resolveHarvestWindowDays(formState.harvestWindowDays, p); // FIX: use the canonical fallback
@@ -5288,6 +5434,11 @@ Draw.loadPlugin(function (ui) {
                 const scanStart = asUTCDate(seasonStartYear, 1, 1);
                 const scanEndYear = seasonStartYear + getPlantScanYears(p) - 1; // FIX: honor biennial and perennial lifespans
                 const scanEndHard = asUTCDate(scanEndYear, 12, 31);
+                const dailyClimate = await city.loadDailyClimateModel({ scanStart, scanEndHard }); // ADDED
+                formState.dailyClimate = dailyClimate; // ADDED
+                formState.dailyClimateKey = `${city.city_name || formState.cityName}|${fmtISO(scanStart)}|${fmtISO(scanEndHard)}`; // ADDED
+                const dailyRates = city.dailyRates(env.Tbase, seasonStartYear);
+                const monthlyAvgTemp = city.monthlyMeans(); // CHANGED: physical temperatures stay unshifted; GDD scaling is in daily climate rates.
 
                 const soilGateThresholdC = (Number.isFinite(Number(p.soil_temp_min_plant_c))
                     ? Number(p.soil_temp_min_plant_c)
@@ -5299,13 +5450,14 @@ Draw.loadPlugin(function (ui) {
 
                 const lsf = pickFrostByRisk(city, 'p50');
 
-                const r = computeAutoStartEndWindowForward({
+                const r = annualCore.computeAutoStartEndWindowForward({ // CHANGED
                     methodCategoryId, // CHANGED
                     methodId, // CHANGED
                     budget,
                     HW_DAYS,
                     dailyRatesMap: dailyRates,
                     monthlyAvgTemp,
+                    dailyClimate, // ADDED
                     Tbase: env.Tbase,
                     cropTemp: env,
                     scanStart,
@@ -5394,6 +5546,7 @@ Draw.loadPlugin(function (ui) {
                     showErrorInline('No feasible window.'); // FIX
                     return false;
                 }
+                clearErrorInline(); // FIX: clear stale no-window warning after feasibility recovers
                 return true; // FIX: allow dependent recomputation only after valid anchors
             } catch (e) {
                 console.warn('recomputeAnchors error:', e);
@@ -5714,15 +5867,15 @@ Draw.loadPlugin(function (ui) {
         }
 
         plantSel.addEventListener('change', () => {
-            handleSchedulePlantChange().catch(e => {
-                showErrorInline('Plant change error: ' + (e?.message || String(e)));
+            void runUiAsync('Plant change error', async () => { // FIX: clear stale inline warnings before crop recompute
+                await handleSchedulePlantChange();
             });
-        }); // FIX: delegate native changes to the awaitable handler
+        }); // FIX: route native crop changes through the shared async boundary
         varietySel.addEventListener('change', () => {
-            handleScheduleVarietyChange().catch(e => {
-                showErrorInline('Variety change error: ' + (e?.message || String(e)));
+            void runUiAsync('Variety change error', async () => { // FIX: clear stale inline warnings before variety recompute
+                await handleScheduleVarietyChange();
             });
-        }); // FIX: delegate native changes to the awaitable handler
+        }); // FIX: route native variety changes through the shared async boundary
 
 
         startInput.addEventListener('input', () => {
@@ -5962,8 +6115,9 @@ Draw.loadPlugin(function (ui) {
                     } // ADDED: explanations use the same bed-aware soil model as scheduling.
                 );
 
-                const rows = await explainFeasibilityOverSeason(inputs, 400, false);
+                const rows = await explainFeasibilityOverSeason(inputs);
                 const diagnostics = buildFeasibilityDiagnostics(inputs, rows); // ADDED
+                const scanSummary = formatFeasibilityScanRanges(rows); // FIX: dialog shows compact reason ranges instead of daily JSON.
 
                 // include plant & city dictionaries
                 const plantDict = toPlainDict(plant);
@@ -5978,11 +6132,10 @@ Draw.loadPlugin(function (ui) {
                     'City data:',
                     JSON.stringify(cityDict, null, 2),
                     '',
-                    'Feasibility scan:'
+                    'Feasibility scan ranges:'
                 ].join('\n');
 
-                const scan = rows.map(r => JSON.stringify(r)).join('\n');
-                const text = header + '\n' + scan;
+                const text = header + '\n' + scanSummary; // FIX: keep raw daily rows internal/test-only.
 
                 const div = document.createElement('div');
                 div.style.whiteSpace = 'pre'; div.style.maxHeight = '70vh'; div.style.overflow = 'auto';
@@ -8502,18 +8655,22 @@ Draw.loadPlugin(function (ui) {
             ))
             : null; // FIX
         let lastHarvestDate = selectedIsPerennial ? climateEndDate : null; // FIX
+        let initialDailyClimate = null; // ADDED
 
         if (!selectedIsPerennial && Number.isFinite(HW_DAYS)) { // FIX
             const env = selectedPlant.cropTempEnvelope(); // FIX: annual-only maturity inputs
+            const dailyClimate = await cityInit.loadDailyClimateModel({ scanStart, scanEndHard }); // ADDED
+            initialDailyClimate = dailyClimate; // ADDED
             const dailyRates = cityInit.dailyRates(env.Tbase, year); // FIX
-            const monthlyAvgTemp = cityInit.calibratedMonthlyMeans(year); // ADDED: auto windows use annual-GDD calibrated heat curve.
-            const initialWindow = computeAutoStartEndWindowForward({ // FIX
+            const monthlyAvgTemp = cityInit.monthlyMeans(); // CHANGED: physical temperatures stay unshifted; GDD scaling is in daily climate rates.
+            const initialWindow = annualCore.computeAutoStartEndWindowForward({ // CHANGED
                 methodCategoryId: initialMethodCategoryId,
                 methodId: initialMethodId,
                 budget: budget,
                 HW_DAYS: HW_DAYS,
                 dailyRatesMap: dailyRates,
                 monthlyAvgTemp: monthlyAvgTemp,
+                dailyClimate: dailyClimate, // ADDED
                 Tbase: env.Tbase,
                 cropTemp: env,
                 scanStart,
@@ -8548,7 +8705,7 @@ Draw.loadPlugin(function (ui) {
         // If we have a finite harvest window, we can run feasibility tweaks.
         // (For perennials / null HW_DAYS we skip this step but still open the dialog.)
         if (!selectedIsPerennial && initialWindowFeasible && Number.isFinite(HW_DAYS) && !hasPersistedSchedule) { // FIX
-            const inputs0 = new ScheduleInputs({
+            const inputs0 = new sharedCore.ScheduleInputs({ // CHANGED
                 plant: selectedPlant,
                 city: cityInit,
                 planningMode: initialResolvedBehavior.planningMode,
@@ -8560,10 +8717,11 @@ Draw.loadPlugin(function (ui) {
                 seasonStartYear: year,
                 harvestWindowDays: HW_DAYS,
                 bedProfile: scheduleBedContext.profile, // ADDED
-                bedProfileSource: scheduleBedContext.source // ADDED
+                bedProfileSource: scheduleBedContext.source, // ADDED
+                dailyClimate: initialDailyClimate // ADDED
             });
 
-            const planner0 = new Planner(inputs0);
+            const planner0 = new annualCore.Planner(inputs0); // CHANGED
             const feasToday = planner0.isSowFeasible(todayUTC);
             const feasStart = planner0.isSowFeasible(previewStart);
 
@@ -8593,7 +8751,9 @@ Draw.loadPlugin(function (ui) {
             hasPersistedSchedule,
             initialWindowFeasible,
             bedProfile: scheduleBedContext.profile, // ADDED
-            bedProfileSource: scheduleBedContext.source // ADDED
+            bedProfileSource: scheduleBedContext.source, // ADDED
+            dailyClimate: initialDailyClimate, // CHANGED
+            dailyClimateKey: initialDailyClimate ? `${cityInit.city_name || citySel.value}|${fmtISO(scanStart)}|${fmtISO(scanEndHard)}` : '' // CHANGED
         });
     }
 
@@ -8743,14 +8903,15 @@ Draw.loadPlugin(function (ui) {
     } // ADDED
 
     if (window.USL_SCHEDULER_TESTING) {
+        bindRequiredSchedulerCores(); // CHANGED
         window.USL.scheduler.__test = {
             PlantModel,
             TaskTemplateModel,
             CityClimate,
             PolicyFlags,
-            ScheduleInputs,
-            Planner,
-            computeAutoStartEndWindowForward,
+            ScheduleInputs: sharedCore.ScheduleInputs, // CHANGED
+            Planner: annualCore.Planner, // CHANGED
+            computeAutoStartEndWindowForward: annualCore.computeAutoStartEndWindowForward, // CHANGED
             getPlantScanYears,
             isCrossYearCrop, // FIX: expose lifecycle behavior to the opt-in regression harness
             resolveHarvestWindowDays, // FIX: expose fallback behavior to the opt-in regression harness
@@ -8886,8 +9047,11 @@ Draw.loadPlugin(function (ui) {
                 const policy = PolicyFlags.fromResolvedBehavior(plant, resolvedBehavior);
 
                 const hw = resolveHarvestWindowDays(req?.harvestWindowDays, plant); // FIX: share the scheduler's 7-day fallback
+                const scanStart = asUTCDate(year, 1, 1); // ADDED
+                const scanEndHard = asUTCDate(year + getPlantScanYears(plant) - 1, 12, 31); // ADDED
+                const dailyClimate = await city.loadDailyClimateModel({ scanStart, scanEndHard }); // ADDED
 
-                const inputs = new ScheduleInputs({
+                const inputs = new sharedCore.ScheduleInputs({ // CHANGED
                     plant,
                     city,
                     planningMode,
@@ -8899,10 +9063,11 @@ Draw.loadPlugin(function (ui) {
                     seasonStartYear: year,
                     harvestWindowDays: hw, // CHANGED
                     varietyId,
-                    varietyName: ""
+                    varietyName: "",
+                    dailyClimate // ADDED
                 });
 
-                const planner = new Planner(inputs);
+                const planner = new annualCore.Planner(inputs); // CHANGED
                 const C = planner.ctx;
 
                 const maxSpanDays = Math.ceil((C.scanEndHard.getTime() - C.scanStart.getTime()) / 86400000) + 2;
@@ -9025,6 +9190,7 @@ Draw.loadPlugin(function (ui) {
             } // ADDED
             try { // ADDED
                 if (typeof loader.validate === 'function') loader.validate(); // ADDED
+                bindRequiredSchedulerCores(); // CHANGED
                 installSchedulerPlugin(ui); // ADDED
             } catch (e) { // ADDED
                 installDisabledSchedulerApi(e); // ADDED
@@ -9033,12 +9199,13 @@ Draw.loadPlugin(function (ui) {
     } // ADDED
 
     if (typeof window !== 'undefined' && window.__TRELLIS_PLANTING_SCHEDULER_TEST__) { // FIX: opt-in test surface only
+        bindRequiredSchedulerCores(); // CHANGED
         window.__TRELLIS_PLANTING_SCHEDULER_TEST_HOOKS__ = {
             PlantModel,
             CityClimate,
             PolicyFlags,
-            ScheduleInputs,
-            Planner,
+            ScheduleInputs: sharedCore.ScheduleInputs, // CHANGED
+            Planner: annualCore.Planner, // CHANGED
             applyPlantOverrides,
             computeScheduleResult,
             computeStageDatesForPlanting,
@@ -9052,7 +9219,7 @@ Draw.loadPlugin(function (ui) {
             TaskTemplateModel, // ADDED
             resolveTaskTemplate,
             runUiAsyncOperation,
-            computeAutoStartEndWindowForward,
+            computeAutoStartEndWindowForward: annualCore.computeAutoStartEndWindowForward, // CHANGED
             normId,
             monthlyMeanOnDate, // ADDED
             normalizeBedProfile, // ADDED
@@ -9061,6 +9228,9 @@ Draw.loadPlugin(function (ui) {
             annualGddFromMonthlyMeans, // ADDED
             solveGddTemperatureOffset, // ADDED
             explainFeasibilityOverSeason, // ADDED
+            compressFeasibilityScanRanges, // ADDED
+            formatFeasibilityScanRanges, // ADDED
+            buildFeasibilityBlockingSummary, // ADDED
             buildFeasibilityDiagnostics, // ADDED
             encodeMethodSelection, // ADDED
             decodeMethodSelection, // ADDED
@@ -9086,9 +9256,9 @@ Draw.loadPlugin(function (ui) {
             applyCellAttributePatch,
             restoreCellAttributeSnapshot,
             runCompensatedSaveSteps,
-            sharedCore: window.USL && window.USL.scheduler ? window.USL.scheduler.sharedCore : null, // ADDED
-            annualCore: window.USL && window.USL.scheduler ? window.USL.scheduler.annualCore : null, // ADDED
-            perennialCore: window.USL && window.USL.scheduler ? window.USL.scheduler.perennialCore : null // ADDED
+            sharedCore, // CHANGED
+            annualCore, // CHANGED
+            perennialCore // CHANGED
         };
         return; // FIX: tests do not install Draw.io menus
     }

@@ -165,7 +165,8 @@ function makeInputs({
     startISO = '2026-04-01',
     seasonEndISO = '2026-12-31',
     seasonStartYear = 2026,
-    harvestWindowDays = 7
+    harvestWindowDays = 7,
+    policy = null
 } = {}) {
     return new hooks.ScheduleInputs({
         plant,
@@ -175,7 +176,7 @@ function makeInputs({
         methodId,
         startISO,
         seasonEndISO,
-        policy: new hooks.PolicyFlags({
+        policy: policy || new hooks.PolicyFlags({
             useSpringFrostGate: false,
             useSoilTempGate: false,
             overwinterAllowed: plant.isBiennial() || plant.isPerennial() || plant.overwinter_ok === 1
@@ -396,6 +397,65 @@ test('annual GDD calibration matches stored city base GDD and recomputes crop-ba
     assert.ok(cropBaseGdd < calibration.calibratedGdd); // ADDED
 }); // ADDED
 
+test('daily climate curves interpolate monthly normals and blend near-term forecasts', () => { // ADDED
+    const shared = hooks.sharedCore; // ADDED
+    const climate = shared.buildDailyTemperatureSeries({ // ADDED
+        startDate: new Date('2026-01-01T00:00:00Z'), // ADDED
+        endDate: new Date('2026-02-28T00:00:00Z'), // ADDED
+        monthlyNormals: { // ADDED
+            1: { min: 0, max: 10, mean: 5 }, // ADDED
+            2: { min: 10, max: 20, mean: 15 }, // ADDED
+            12: { min: -5, max: 5, mean: 0 } // ADDED
+        }, // ADDED
+        forecastRows: [{ forecast_date: '2026-01-02', temp_min_c: 20, temp_max_c: 30, temp_mean_c: 25, run_timestamp: '2026-01-01T00:00:00Z' }], // ADDED
+        todayISO: '2026-01-01', // ADDED
+        source: 'test normals' // ADDED
+    }); // ADDED
+    assert.ok(climate.days['2026-01-15'].mean > 4.5 && climate.days['2026-01-15'].mean < 5.5); // ADDED
+    assert.ok(climate.days['2026-01-31'].mean > climate.days['2026-01-15'].mean); // ADDED
+    assert.equal(climate.days['2026-01-02'].forecastWeight, 0.8); // ADDED
+    assert.ok(climate.days['2026-01-02'].mean > 15); // ADDED
+    assert.equal(climate.diagnostics.forecastBlendDays, 1); // ADDED
+}); // ADDED
+
+test('single-sine GDD respects crop upper cap', () => { // ADDED
+    const shared = hooks.sharedCore; // ADDED
+    const hotDay = { min: 20, max: 40, mean: 30 }; // ADDED
+    const uncapped = shared.singleSineDailyGdd(hotDay, 10, null); // ADDED
+    const capped = shared.singleSineDailyGdd(hotDay, 10, 30); // ADDED
+    assert.ok(uncapped > capped); // ADDED
+    assert.ok(capped > 0); // ADDED
+}); // ADDED
+
+test('daily GDD calibration scales GDD rates without changing climate temperatures', () => { // ADDED
+    const shared = hooks.sharedCore; // ADDED
+    const climate = shared.buildDailyTemperatureSeries({ // ADDED
+        startDate: new Date('2026-01-01T00:00:00Z'), // ADDED
+        endDate: new Date('2026-12-31T00:00:00Z'), // ADDED
+        monthlyNormals: Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, { min: 10, max: 20, mean: 15 }])), // ADDED
+        source: 'constant test normals' // ADDED
+    }); // ADDED
+    const before = climate.days['2026-06-01'].mean; // ADDED
+    const rates = shared.buildDailyGddMap({ // ADDED
+        dailyClimate: climate, // ADDED
+        cropTemp: { Tbase: 5, Tmax: 35 }, // ADDED
+        bedProfile: null, // ADDED
+        city: { gdd_annual: 1000, gdd_base_c: 5 }, // ADDED
+        year: 2026 // ADDED
+    }); // ADDED
+    assert.equal(climate.days['2026-06-01'].mean, before); // ADDED
+    assert.ok(rates.__diagnostics.gddScale > 0); // ADDED
+    assert.ok(Math.abs(rates.__diagnostics.cityBaseAnnualGdd * rates.__diagnostics.gddScale - 1000) < 0.5); // ADDED
+}); // ADDED
+
+test('bed frost risk shifts frost gate independently from soil temperature', () => { // ADDED
+    const shared = hooks.sharedCore; // ADDED
+    assert.equal(shared.bedFrostGateShiftDays({ frostRisk: 'none' }), -3); // ADDED
+    assert.equal(shared.bedFrostGateShiftDays({ frostRisk: 'low' }), 0); // ADDED
+    assert.equal(shared.bedFrostGateShiftDays({ frostRisk: 'medium' }), 5); // ADDED
+    assert.equal(shared.bedFrostGateShiftDays({ frostRisk: 'high' }), 10); // ADDED
+}); // ADDED
+
 test('strict GDD maturity remains infeasible when target exceeds calibrated season heat', () => { // ADDED
     const city = makeVancouverCity(); // ADDED
     const plant = makePlant({ // ADDED
@@ -432,6 +492,114 @@ test('feasibility diagnostics include soil, bed, calibration, and failing gate s
     assert.match(text, /Temperature calibration offset:/); // ADDED
     assert.match(text, /Crop-base annual GDD estimate:/); // ADDED
     assert.match(text, /First failing gate:/); // ADDED
+}); // ADDED
+
+test('explain sowing range scans full scheduler span even with blank selected start', async () => { // ADDED
+    const city = makeVancouverCity(); // ADDED
+    const plant = makePlant({ plant_name: 'Sweet Corn', gdd_to_maturity: 1250, tbase_c: 10, soil_temp_min_plant_c: 16 }); // ADDED
+    const inputs = makeInputs({ // ADDED
+        plant, // ADDED
+        city, // ADDED
+        startISO: '', // ADDED
+        seasonEndISO: '2026-12-31', // ADDED
+        harvestWindowDays: 7 // ADDED
+    }); // ADDED
+    const rows = await hooks.explainFeasibilityOverSeason(inputs, 400, false); // ADDED
+    const text = hooks.buildFeasibilityDiagnostics(inputs, rows); // ADDED
+    assert.equal(rows.length, 365); // ADDED
+    assert.equal(rows[0].date, '2026-01-01'); // ADDED
+    assert.equal(rows[rows.length - 1].date, '2026-12-31'); // ADDED
+    assert.match(text, /Scan range: 2026-01-01 to 2026-12-31, 365 days/); // ADDED
+    assert.doesNotMatch(text, /scan_not_run/); // ADDED
+}); // ADDED
+
+test('feasibility scan ranges compress soil gate and insufficient GDD failures', async () => { // ADDED
+    const city = makeVancouverCity(); // ADDED
+    const plant = makePlant({ plant_name: 'Sweet Corn', gdd_to_maturity: 1250, tbase_c: 10, soil_temp_min_plant_c: 16 }); // ADDED
+    const policy = new hooks.PolicyFlags({ useSpringFrostGate: false, useSoilTempGate: true, soilGateThresholdC: 16, soilGateConsecutiveDays: 3 }); // ADDED
+    const inputs = makeInputs({ plant, city, startISO: '', policy, harvestWindowDays: 7 }); // ADDED
+    const rows = await hooks.explainFeasibilityOverSeason(inputs, 400, false); // ADDED
+    const ranges = hooks.compressFeasibilityScanRanges(rows); // ADDED
+    const formatted = hooks.formatFeasibilityScanRanges(rows); // ADDED
+    assert.ok(ranges.length < rows.length); // ADDED
+    assert.equal(ranges[0].start, '2026-01-01'); // ADDED
+    assert.equal(ranges[0].reason, 'soil_gate'); // ADDED
+    assert.ok(ranges.some(range => range.reason === 'insufficient_gdd')); // ADDED
+    assert.match(formatted, /soil_gate/); // ADDED
+    assert.match(formatted, /insufficient_gdd/); // ADDED
+    assert.doesNotMatch(formatted, /^\{"/m); // ADDED
+}); // ADDED
+
+test('feasibility scan ranges normalize parameterized frost reasons', async () => { // ADDED
+    const city = makeVancouverCity({ last_spring_frost_p50_doy: 105, last_spring_frost_doy: 105 }); // ADDED
+    const plant = makePlant({ plant_name: 'Sweet Corn', gdd_to_maturity: 1250, tbase_c: 10, soil_temp_min_plant_c: 16 }); // ADDED
+    const policy = new hooks.PolicyFlags({ useSpringFrostGate: true, useSoilTempGate: true, soilGateThresholdC: 16, soilGateConsecutiveDays: 3 }); // ADDED
+    const rows = await hooks.explainFeasibilityOverSeason(makeInputs({ plant, city, startISO: '', policy, harvestWindowDays: 7 }), 400, false); // ADDED
+    const ranges = hooks.compressFeasibilityScanRanges(rows); // ADDED
+    const formatted = hooks.formatFeasibilityScanRanges(rows); // ADDED
+    assert.equal(ranges[0].reason, 'spring_frost_gate'); // ADDED
+    assert.equal(ranges[0].start, '2026-01-01'); // ADDED
+    assert.equal(ranges[0].end, '2026-04-14'); // ADDED
+    assert.equal(ranges[0].days, 104); // ADDED
+    assert.equal(ranges[0].detail, 'doy 1 < 105 -> doy 104 < 105'); // ADDED
+    assert.equal(ranges.map(range => range.reason).join(','), 'spring_frost_gate,soil_gate,insufficient_gdd,soil_gate'); // ADDED
+    assert.match(formatted, /2026-01-01 to 2026-04-14 \(104 days\) \| spring_frost_gate/); // ADDED
+    assert.doesNotMatch(formatted, /2026-01-02 \(1 day\) \| spring_frost_gate/); // ADDED
+}); // ADDED
+
+test('feasibility blocking summary identifies primary post-readiness GDD blocker', async () => { // ADDED
+    const city = makeVancouverCity({ last_spring_frost_p50_doy: 105, last_spring_frost_doy: 105 }); // ADDED
+    const plant = makePlant({ plant_name: 'Sweet Corn', gdd_to_maturity: 1250, tbase_c: 10, soil_temp_min_plant_c: 16 }); // ADDED
+    const policy = new hooks.PolicyFlags({ useSpringFrostGate: true, useSoilTempGate: true, soilGateThresholdC: 16, soilGateConsecutiveDays: 3 }); // ADDED
+    const inputs = makeInputs({ plant, city, startISO: '', policy, harvestWindowDays: 7 }); // ADDED
+    const rows = await hooks.explainFeasibilityOverSeason(inputs, 400, false); // ADDED
+    const summary = hooks.buildFeasibilityBlockingSummary(inputs, rows); // ADDED
+    const diagnostics = hooks.buildFeasibilityDiagnostics(inputs, rows); // ADDED
+    assert.match(summary, /No feasible sowing window found\./); // ADDED
+    assert.match(summary, /Primary blocker after frost\/soil readiness: insufficient_gdd/); // ADDED
+    assert.match(summary, /GDD check: crop needs 1250\.0 GDD; calibrated crop-base estimate is/); // ADDED
+    assert.match(diagnostics, /Failure summary: .*soil_gate: \d+/); // ADDED
+    assert.match(diagnostics, /Failure summary: .*insufficient_gdd: \d+/); // ADDED
+    assert.match(diagnostics, /Failure summary: .*spring_frost_gate: \d+/); // ADDED
+}); // ADDED
+
+test('feasibility scan ranges normalize parameterized harvest temperature reasons', () => { // ADDED
+    const rows = [ // ADDED
+        { date: '2026-01-01', ok: false, reason: 'harvest_too_cold(4.0<10)' }, // ADDED
+        { date: '2026-01-02', ok: false, reason: 'harvest_too_cold(4.2<10)' }, // ADDED
+        { date: '2026-01-03', ok: false, reason: 'harvest_too_hot(38.1>35)' }, // ADDED
+        { date: '2026-01-04', ok: false, reason: 'harvest_too_hot(38.4>35)' } // ADDED
+    ]; // ADDED
+    const ranges = hooks.compressFeasibilityScanRanges(rows); // ADDED
+    const formatted = hooks.formatFeasibilityScanRanges(rows); // ADDED
+    assert.equal(ranges.length, 2); // ADDED
+    assert.equal(ranges[0].reason, 'harvest_too_cold'); // ADDED
+    assert.equal(ranges[0].detail, '4.0<10 -> 4.2<10'); // ADDED
+    assert.equal(ranges[1].reason, 'harvest_too_hot'); // ADDED
+    assert.equal(ranges[1].detail, '38.1>35 -> 38.4>35'); // ADDED
+    assert.match(formatted, /harvest_too_cold/); // ADDED
+    assert.match(formatted, /harvest_too_hot/); // ADDED
+}); // ADDED
+
+test('feasible scan ranges include representative maturity and harvest dates', async () => { // ADDED
+    const plant = makePlant({ plant_name: 'Fast Bean', days_maturity: 30, gdd_to_maturity: null }); // ADDED
+    const rows = await hooks.explainFeasibilityOverSeason(makeInputs({ plant, city: makeCity(20), startISO: '' }), 400, false); // ADDED
+    const ranges = hooks.compressFeasibilityScanRanges(rows); // ADDED
+    const okRange = ranges.find(range => range.ok); // ADDED
+    assert.ok(okRange); // ADDED
+    assert.equal(okRange.reason, 'ok'); // ADDED
+    assert.match(okRange.first_maturity, /^2026-/); // ADDED
+    assert.match(okRange.last_harvest_end, /^2026-/); // ADDED
+    assert.match(hooks.formatFeasibilityScanRanges(rows), /maturity .* -> /); // ADDED
+}); // ADDED
+
+test('explain sowing range uses full multi-year scheduler scan span', async () => { // ADDED
+    const plant = makePlant({ plant_name: 'Biennial Test', annual: 0, biennial: 1, perennial: 0, lifespan_years: 2, days_maturity: 60, gdd_to_maturity: null }); // ADDED
+    const rows = await hooks.explainFeasibilityOverSeason(makeInputs({ plant, city: makeCity(18), startISO: '' })); // ADDED
+    const text = hooks.buildFeasibilityDiagnostics(makeInputs({ plant, city: makeCity(18), startISO: '' }), rows); // ADDED
+    assert.equal(rows[0].date, '2026-01-01'); // ADDED
+    assert.equal(rows[rows.length - 1].date, '2027-12-31'); // ADDED
+    assert.match(text, /Scan range: 2026-01-01 to 2027-12-31, 730 days/); // ADDED
 }); // ADDED
 
 test('overwinter crop can mature in the following year', () => {
@@ -1580,4 +1748,20 @@ test('save path passes the in-memory task template and stops after anchor failur
     assert.match(source, /taskTemplate,\s*\/\/ FIX: generate tasks from the in-memory template/);
     assert.match(source, /if\s*\(!await recomputeAnchors\(true,\s*true\)\)\s*return false/);
     assert.match(source, /clearComputedHarvestResult\(\);\s*\/\/ FIX: anchor failure/);
+});
+
+test('scheduler clears stale no-window warning after feasible crop recovery', () => {
+    const source = fs.readFileSync(schedulerPath, 'utf8');
+    const anchorStart = source.indexOf('async function recomputeAnchors');
+    const anchorEnd = source.indexOf('// --- mode switcher', anchorStart);
+    const anchorBody = source.slice(anchorStart, anchorEnd);
+    const noWindowIndex = anchorBody.indexOf("showErrorInline('No feasible window.'); // FIX");
+    const clearRecoveryIndex = anchorBody.indexOf('clearErrorInline(); // FIX: clear stale no-window warning after feasibility recovers');
+    const successReturnIndex = anchorBody.indexOf('return true; // FIX: allow dependent recomputation only after valid anchors');
+
+    assert.ok(noWindowIndex >= 0, 'infeasible anchors should still show the no-window warning');
+    assert.ok(clearRecoveryIndex > noWindowIndex, 'feasible recovery should clear the prior no-window warning');
+    assert.ok(successReturnIndex > clearRecoveryIndex, 'the warning should clear immediately before anchor success');
+    assert.match(source, /plantSel\.addEventListener\('change',\s*\(\)\s*=>\s*\{\s*void runUiAsync\('Plant change error',\s*async \(\)\s*=>\s*\{\s*\/\/ FIX: clear stale inline warnings before crop recompute\s*await handleSchedulePlantChange\(\);\s*\}\);\s*\}\);/s);
+    assert.match(source, /varietySel\.addEventListener\('change',\s*\(\)\s*=>\s*\{\s*void runUiAsync\('Variety change error',\s*async \(\)\s*=>\s*\{\s*\/\/ FIX: clear stale inline warnings before variety recompute\s*await handleScheduleVarietyChange\(\);\s*\}\);\s*\}\);/s);
 });
