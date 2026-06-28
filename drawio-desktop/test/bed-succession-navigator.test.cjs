@@ -175,7 +175,7 @@ function childOrder(parent) { // NEW
 
 test("selected singleton tiler on a garden bed shows only the bed-select control", () => { // NEW
     const { document, getSelected } = makeHarness(); // CHANGE
-    const selectBeds = visibleImageByAlt(document, "Select beds"); // NEW
+    const selectBeds = visibleImageByAlt(document, "Select bed"); // CHANGE
 
     assert.ok(selectBeds, "expected visible bed-select button"); // NEW
     assert.equal(visibleImageByTitle(document, "Previous"), undefined); // NEW
@@ -189,13 +189,13 @@ test("selected singleton tiler on a garden bed shows only the bed-select control
 
 test("selected singleton tiler outside garden beds does not show the bed-select control", () => { // NEW
     const { document } = makeHarness({ tilerOutsideBed: true }); // NEW
-    assert.equal(visibleImageByAlt(document, "Select beds"), undefined); // NEW
+    assert.equal(visibleImageByAlt(document, "Select bed"), undefined); // CHANGE
 }); // NEW
 
 test("two selected tilers in the same garden bed keep succession controls and bed-select", () => { // NEW
     const { document } = makeHarness({ secondTiler: true }); // NEW
 
-    assert.ok(visibleImageByAlt(document, "Select beds"), "expected visible bed-select button"); // NEW
+    assert.ok(visibleImageByAlt(document, "Select bed"), "expected visible bed-select button"); // CHANGE
     assert.ok(visibleImageByAlt(document, "Select"), "expected visible cluster-select button"); // NEW
     assert.ok(visibleImageByTitle(document, "Previous"), "expected visible previous button"); // NEW
     assert.ok(visibleImageByTitle(document, "Next"), "expected visible next button"); // NEW
@@ -203,7 +203,7 @@ test("two selected tilers in the same garden bed keep succession controls and be
 
 test("bed-select returns beds behind tilers after selecting a tiler", () => { // NEW
     const { document, graph, layer, bed, tiler1 } = makeHarness(); // NEW
-    const selectBeds = visibleImageByAlt(document, "Select beds"); // NEW
+    const selectBeds = visibleImageByAlt(document, "Select bed"); // CHANGE
 
     assert.deepEqual(childOrder(layer), ["bed", "tiler1"]); // NEW
     selectBeds.dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true })); // NEW
@@ -214,22 +214,22 @@ test("bed-select returns beds behind tilers after selecting a tiler", () => { //
     assert.deepEqual(Array.from(graph.getSelectionCells(), cell => cell.id), ["tiler1"]); // CHANGE
 }); // NEW
 
-test("multiple selected garden beds remain temporarily in front", () => { // NEW
-    const { document, graph, layer, bed, bed2 } = makeHarness({ secondBed: true, secondTiler: true }); // NEW
-    const selectBeds = visibleImageByAlt(document, "Select beds"); // NEW
+test("selected containing garden bed remains temporarily in front", () => { // CHANGE
+    const { document, graph, layer, bed } = makeHarness({ secondBed: true, secondTiler: true }); // CHANGE
+    const selectBeds = visibleImageByAlt(document, "Select bed"); // CHANGE
 
     selectBeds.dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true })); // NEW
-    assert.deepEqual(Array.from(graph.getSelectionCells(), cell => cell.id), ["bed", "bed2"]); // CHANGE
-    assert.deepEqual(childOrder(layer), ["tiler1", "tiler2", "bed", "bed2"]); // NEW
+    assert.deepEqual(Array.from(graph.getSelectionCells(), cell => cell.id), ["bed"]); // CHANGE
+    assert.deepEqual(childOrder(layer), ["bed2", "tiler1", "tiler2", "bed"]); // CHANGE
 
-    graph.setSelectionCells([bed, bed2]); // NEW
-    assert.deepEqual(childOrder(layer), ["tiler1", "tiler2", "bed", "bed2"]); // NEW
+    graph.setSelectionCells([bed]); // CHANGE
+    assert.deepEqual(childOrder(layer), ["bed2", "tiler1", "tiler2", "bed"]); // CHANGE
 }); // NEW
 
-test("bed-select selects every significantly overlapping bed under the cluster", () => { // NEW
+test("bed-select selects the containing bed when another bed overlaps the cluster", () => { // CHANGE
     const { document, graph } = makeHarness({ secondBed: true, secondTiler: true }); // NEW
-    const selectBeds = visibleImageByAlt(document, "Select beds"); // NEW
+    const selectBeds = visibleImageByAlt(document, "Select bed"); // CHANGE
 
     selectBeds.dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true })); // NEW
-    assert.deepEqual(Array.from(graph.getSelectionCells(), cell => cell.id), ["bed", "bed2"]); // CHANGE
+    assert.deepEqual(Array.from(graph.getSelectionCells(), cell => cell.id), ["bed"]); // CHANGE
 }); // NEW
