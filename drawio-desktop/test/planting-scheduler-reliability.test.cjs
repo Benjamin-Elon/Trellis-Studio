@@ -283,6 +283,16 @@ test('annual direct sow computes maturity and harvest window', () => {
     assert.equal(result.rows[0].harvEnd, '2026-05-08');
 });
 
+test('annual latest harvest display date does not cap feasibility', async () => { // ADDED
+    const plant = makePlant({ days_maturity: 30, gdd_to_maturity: null, harvest_window_days: 7 }); // ADDED
+    const inputs = makeInputs({ plant, city: makeCity(20), startISO: '2026-05-01', seasonEndISO: '2026-05-15' }); // ADDED
+    const result = hooks.computeScheduleResult(inputs); // ADDED
+    assert.equal(result.rows[0].harvEnd, '2026-06-07'); // ADDED
+    const rows = await hooks.explainFeasibilityOverSeason(inputs, 1, false); // ADDED
+    const diagnostics = hooks.buildFeasibilityDiagnostics(inputs, rows); // ADDED
+    assert.match(diagnostics, /Effective hard end: 2026-12-31 \(lifecycle scan end\)/); // ADDED
+}); // ADDED
+
 test('no feasible annual window returns null derived dates', () => {
     const plant = makePlant({
         tmin_c: 50,

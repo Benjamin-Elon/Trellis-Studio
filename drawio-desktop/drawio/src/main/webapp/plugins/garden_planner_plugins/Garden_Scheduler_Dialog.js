@@ -5,7 +5,7 @@
 // - Computes schedule, plants, timelines, and writes attrs
 //
 // Key changes in this version:
-//  * Class-based encapsulation: PlantModel, CityClimate, PolicyFlags, ScheduleInputs
+//  * Dialog facade uses shared scheduler core classes for schedule inputs and planning. // CHANGED
 //  * Overwinter-aware feasibility & scanning
 //  * Yield multipliers computed over HARVEST window
 //  * UI keeps the same behavior (manual/auto dates, minimum yield filter, preview)
@@ -1716,285 +1716,6 @@ Draw.loadPlugin(function (ui) {
 
 
 
-    class ScheduleInputs {
-        constructor({
-            plant,
-            city,
-            planningMode,
-            methodCategoryId = "", // CHANGED
-            methodId = "", // CHANGED
-            startISO,
-            seasonEndISO,
-            policy,
-            seasonStartYear,
-            harvestWindowDays,
-            minYieldMultiplier = 0,
-            varietyId = null,
-            varietyName = '',
-            bedProfile = null,
-            bedProfileSource = 'generic garden bed',
-            dailyClimate = null
-        }) {
-            Object.assign(this, {
-                plant,
-                city,
-                planningMode,
-                methodCategoryId: normId(methodCategoryId), // FIX
-                methodId: normId(methodId), // FIX
-                startISO,
-                seasonEndISO,
-                policy,
-                seasonStartYear: Number(seasonStartYear),
-                harvestWindowDays: (harvestWindowDays == null ? null : Number(harvestWindowDays)),
-                minYieldMultiplier: Number(minYieldMultiplier),
-                varietyId: (varietyId != null ? Number(varietyId) : null),
-                varietyName: String(varietyName || ''),
-                bedProfile: normalizeBedProfile(bedProfile), // ADDED: carry bed conditions into soil-temperature gates.
-                bedProfileSource: String(bedProfileSource || 'generic garden bed'), // ADDED
-                dailyClimate // ADDED
-            });
-            Object.freeze(this);
-        }
-
-        derived() {
-            const startDate = new Date(this.startISO + 'T00:00:00Z');
-            const seasonEnd = new Date(this.seasonEndISO + 'T00:00:00Z');
-
-            const env = this.plant.cropTempEnvelope();
-
-            const scanYears = getPlantScanYears(this.plant); // FIX: use the same lifecycle calculation in every planner entry point
-
-            const scanStart = asUTCDate(this.seasonStartYear, 1, 1);
-            const scanEndHard = asUTCDate(this.seasonStartYear + scanYears - 1, 12, 31);
-
-            const year = scanStart.getUTCFullYear();
-            const monthlyAvg = this.city.monthlyMeans();
-            const dailyClimate = this.dailyClimate || sharedCore.buildDailyTemperatureSeries({
-                startDate: scanStart,
-                endDate: scanEndHard,
-                monthlyNormals: sharedCore.monthlyTemperatureNormalsFromCity(this.city),
-                source: 'city monthly normals'
-            }); // CHANGED
-            const dailyRates = sharedCore.buildDailyGddMap({
-                dailyClimate,
-                cropTemp: env,
-                bedProfile: this.bedProfile,
-                city: this.city,
-                year
-            }); // CHANGED
-
-            return { startDate, seasonEnd, year, env, dailyRates, monthlyAvg, dailyClimate, scanStart, scanEndHard }; // CHANGED
-        }
-    }
-
-    class Planner {
-        constructor(inputs) {
-            const { plant, city, planningMode, methodCategoryId, methodId, policy } = inputs;
-            const { startDate, seasonEnd, env, dailyRates, monthlyAvg, dailyClimate, scanStart, scanEndHard } = inputs.derived();
-            if (isPerennialPlant(plant)) {
-                throw new Error('Perennial schedules use lifespan dates instead of the maturity planner.');
-            } // FIX: never request a maturity budget for a perennial
-            const budget = plant.firstHarvestBudget();
-
-            const HW_DAYS = resolveHarvestWindowDays(inputs.harvestWindowDays, plant); // FIX: use the canonical fallback
-
-            const coolingThreshold = coolingGateThresholdC(plant); // FIX: only cross-year crops use fall cooling gates
-
-            let coolingCross = null;
-            if (coolingThreshold != null) {
-                coolingCross = firstCoolingCrossingDate({
-                    thresholdC: coolingThreshold,
-                    monthlyAvgTemp: monthlyAvg,
-                    scanStart,
-                    scanEndHard
-                });
-            }
-
-            this.ctx = Object.freeze({
-                planningMode,
-                methodCategoryId: normId(methodCategoryId), // FIX
-                methodId: normId(methodId), // FIX
-
-                useCoolingGate: coolingThreshold != null,
-                coolingThresholdC: coolingThreshold,
-                coolingCrossDate: coolingCross,
-                overwinterAllowed: policy.overwinterAllowed,
-                useSoilTempGate: policy.useSoilTempGate,
-                soilGateThresholdC: policy.soilGateThresholdC,
-                soilGateConsecutiveDays: policy.soilGateConsecutiveDays,
-                useSpringFrostGate: policy.useSpringFrostGate,
-                springFrostRisk: policy.springFrostRisk,
-                lastSpringFrostDOY: pickFrostByRisk(city, policy.springFrostRisk),
-                springFrostGateShiftDays: sharedCore.bedFrostGateShiftDays(inputs.bedProfile), // CHANGED
-                plant,
-                HW_DAYS,
-
-                BUDGET: budget,
-                env,
-                dailyRates,
-                monthlyAvg,
-                dailyClimate, // ADDED
-                bedProfile: normalizeBedProfile(inputs.bedProfile), // ADDED: soil gates depend on garden-bed conditions.
-                bedProfileSource: inputs.bedProfileSource || 'generic garden bed', // ADDED
-                Tbase: env.Tbase,
-
-                startDate,
-                seasonEnd,
-                scanStart,
-                scanEndHard,
-            });
-        }
-
-        gddRateOn(d) { return sharedCore.gddRateForDate(this.ctx.dailyRates, d); } // CHANGED
-        addDays(d, k) { return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + k)); }
-        withinWindow(d) { return d >= this.ctx.scanStart && d <= this.ctx.scanEndHard; }
-
-        normalizeUtcMidnight(d) {
-            return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-        }
-
-        soilGateOK(startDate) {
-            const { soilGateConsecutiveDays, soilGateThresholdC, monthlyAvg, dailyClimate, bedProfile } = this.ctx;
-
-            let cur = new Date(startDate);
-            for (let i = 0; i < soilGateConsecutiveDays; i++) {
-                const Tsoil = estimateSoilTempC(cur, dailyClimate || monthlyAvg, bedProfile); // ADDED: interpolate city air and adjust for bed conditions.
-                if (Tsoil < soilGateThresholdC) return false;
-                cur = this.addDays(cur, 1);
-            }
-            return true;
-        }
-
-        checkSpringFrostGate(gateDate) {
-            const C = this.ctx;
-            if (!C.useSpringFrostGate || !gateDate) return { ok: true };
-            const doy = dayOfYear(gateDate);
-            const gateDOY = Math.max(1, Math.min(366, Number(C.lastSpringFrostDOY || 0) + Number(C.springFrostGateShiftDays || 0)));
-            if (doy < gateDOY) {
-                return { ok: false, reason: `spring_frost_gate(doy ${doy} < ${gateDOY})` };
-            }
-            return { ok: true };
-        }
-
-        checkCoolingGate(gateDate) {
-            const C = this.ctx;
-            if (!C.useCoolingGate || !gateDate) return { ok: true };
-            if (!C.coolingCrossDate || gateDate < C.coolingCrossDate) {
-                return { ok: false, reason: 'cooling_gate' };
-            }
-            return { ok: true };
-        }
-
-        checkSoilGate(gateDate) {
-            const C = this.ctx;
-            if (!C.useSoilTempGate) return { ok: true };
-            if (!gateDate) return { ok: false, reason: 'soil_gate_missing_date' };
-            if (!this.soilGateOK(gateDate)) {
-                return { ok: false, reason: 'soil_gate' };
-            }
-            return { ok: true };
-        }
-
-        isSowFeasible(sowDate) {
-            const C = this.ctx;
-
-            if (!this.withinWindow(sowDate)) return { ok: false, reason: 'outside_scan_window' };
-
-            let transplantDate = null;
-            if (C.planningMode === 'transplant_indoor') {
-                const dTrans = Number(C.plant?.days_transplant ?? NaN);
-                const daysTrans = Number.isFinite(dTrans) && dTrans > 0 ? Math.round(dTrans) : 0;
-                transplantDate = this.addDays(sowDate, daysTrans);
-            } else if (C.planningMode === 'transplant_outdoor') {
-                transplantDate = new Date(sowDate);
-            }
-
-            const gateDate = (C.planningMode === 'direct_sow') ? sowDate : transplantDate;
-            if (!gateDate || !this.withinWindow(gateDate)) {
-                return { ok: false, reason: 'gate_outside_scan_window' }; // FIX: field/transplant gates must stay inside the scan
-            }
-
-            const frost = this.checkSpringFrostGate(gateDate);
-            if (!frost.ok) return frost;
-
-            const cooling = this.checkCoolingGate(gateDate);
-            if (!cooling.ok) return cooling;
-
-            const soil = this.checkSoilGate(gateDate);
-            if (!soil.ok) return soil;
-
-            if (C.BUDGET.mode === 'gdd') {
-                const acc = accumulateGDDUntil(sowDate, C.BUDGET.amount, C.dailyRates, C.scanEndHard);
-                if (!acc.reached) {
-                    return { ok: false, reason: 'insufficient_gdd' };
-                }
-            }
-
-            const mat = maturityDateFromBudget(sowDate, C.BUDGET, C.dailyRates, C.scanEndHard);
-            const fullHarvestEnd = this.addDays(mat, C.HW_DAYS);
-
-            if (!C.overwinterAllowed && sowDate.getUTCFullYear() !== fullHarvestEnd.getUTCFullYear()) {
-                return { ok: false, reason: 'cross_year_disallowed' };
-            }
-
-            const hardEnd = C.overwinterAllowed
-                ? C.scanEndHard
-                : ((C.seasonEnd && C.seasonEnd <= C.scanEndHard) ? C.seasonEnd : C.scanEndHard); // FIX: stale annual form end dates must not cap overwinter harvests.
-
-            const effectiveHarvestEnd = (fullHarvestEnd <= hardEnd)
-                ? fullHarvestEnd
-                : hardEnd;
-
-            const MS_PER_DAY = 24 * 60 * 60 * 1000;
-            const harvestSpanDays = Math.max(0, Math.round(
-                (effectiveHarvestEnd.getTime() - mat.getTime()) / MS_PER_DAY
-            ));
-
-            const minHarvestDays = Math.min(C.HW_DAYS, 3);
-            if (harvestSpanDays < minHarvestDays) {
-                return { ok: false, reason: 'beyond_hard_end' };
-            }
-
-            const TmeanHarvest = weightedMeanTempOverRange(
-                mat,
-                effectiveHarvestEnd,
-                C.monthlyAvg,
-                C.dailyRates,
-                C.Tbase,
-                C.dailyClimate
-            );
-
-            const { Tmin, Tmax } = C.env;
-            if (TmeanHarvest < Tmin) return { ok: false, reason: `harvest_too_cold(${TmeanHarvest.toFixed(1)}<${Tmin})` };
-            if (TmeanHarvest > Tmax) return { ok: false, reason: `harvest_too_hot(${TmeanHarvest.toFixed(1)}>${Tmax})` };
-
-            const truncated = fullHarvestEnd.getTime() > effectiveHarvestEnd.getTime();
-            return {
-                ok: true,
-                maturity: mat,
-                harvestStart: mat,
-                harvestEnd: effectiveHarvestEnd,
-                truncated,
-                TmeanHarvest
-            };
-        }
-
-        findNextFeasible(startCandidate, maxDays = 366) {
-            const startMs = Math.max(
-                this.normalizeUtcMidnight(startCandidate).getTime(),
-                this.normalizeUtcMidnight(this.ctx.scanStart).getTime()
-            );
-            let d = new Date(startMs);
-
-            for (let i = 0; i <= maxDays && d <= this.ctx.scanEndHard; i++) {
-                const feas = this.isSowFeasible(d);
-                if (feas.ok) return { date: d, info: feas };
-                d = this.addDays(d, 1);
-            }
-            return { date: null, info: null };
-        }
-    }
-
     async function buildScheduleContextFromForm(formState, selPlant, options = {}) {
         const plant = await resolveEffectivePlant(formState.plantId, formState.varietyId);
         if (!plant) throw new Error('Plant not found for schedule.');
@@ -2027,6 +1748,7 @@ Draw.loadPlugin(function (ui) {
         const dailyClimate = options.dailyClimate || cachedDailyClimate || await city.loadDailyClimateModel({ scanStart, scanEndHard, climatePolicy: climateResolution.effective }); // CHANGED
         formState.dailyClimate = dailyClimate; // ADDED
         formState.dailyClimateKey = dailyClimateKey; // ADDED
+        const scheduleEndISO = resolveScheduleInputEndISO(formState, plant, scanEndHard); // ADDED: annual display harvest dates are not hard caps.
 
         const inputs = new sharedCore.ScheduleInputs({ // CHANGED
             plant,
@@ -2035,7 +1757,7 @@ Draw.loadPlugin(function (ui) {
             methodCategoryId: resolvedBehavior.methodCategoryId, // CHANGED
             methodId: resolvedBehavior.methodId, // CHANGED
             startISO: formState.startISO,
-            seasonEndISO: formState.seasonEndISO,
+            seasonEndISO: scheduleEndISO, // FIX: use lifecycle/lifespan end, not annual latest-harvest display state.
             policy,
             seasonStartYear: formState.seasonStartYear,
             harvestWindowDays: formState.harvestWindowDays,
@@ -2059,90 +1781,10 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
-    function getGateDateForCandidate(planner, sowDate) { // CHANGED
-        const C = planner.ctx; // CHANGED
-        if (C.planningMode === 'direct_sow') return new Date(sowDate); // CHANGED
-        if (C.planningMode === 'transplant_indoor') { // CHANGED
-            const dTrans = Number(C.plant?.days_transplant ?? NaN); // CHANGED
-            const daysTrans = Number.isFinite(dTrans) && dTrans > 0 ? Math.round(dTrans) : 0; // CHANGED
-            return planner.addDays(sowDate, daysTrans); // CHANGED
-        } // CHANGED
-        if (C.planningMode === 'transplant_outdoor') return new Date(sowDate); // CHANGED
-        return new Date(sowDate); // CHANGED
-    } // CHANGED
-
-    function firstNonSoilStart(planner, startD) {
-        const C = planner.ctx;
-        let d = new Date(Math.max(startD.getTime(), C.scanStart.getTime()));        
-        for (; d <= C.scanEndHard; d = planner.addDays(d, 1)) {
-            const gateDate = getGateDateForCandidate(planner, d); // CHANGED
-            if (!C.useSoilTempGate || planner.soilGateOK(gateDate)) return d; // CHANGED
-        }
-        return null;
-    }
-
-    function accumulateGDDUntil(startDate, targetGDD, dailyRatesMap, seasonEnd) {
-        let acc = 0;
-        let cur = new Date(Date.UTC(startDate.getUTCFullYear(),
-            startDate.getUTCMonth(),
-            startDate.getUTCDate()));
-        while (acc < targetGDD) {
-            if (seasonEnd && !dateLTE(cur, seasonEnd)) break;
-            const rate = sharedCore.gddRateForDate(dailyRatesMap, cur); // CHANGED
-            acc += rate;
-            if (acc >= targetGDD) break;
-            cur = addDaysUTC(cur, 1);
-        }
-        const reached = acc >= targetGDD;
-        return { date: cur, gdd: acc, reached };
-    }
-
-    function accumulateGDDBackward(targetDate, targetGDD, dailyRatesMap, seasonStart = null) {
-        let acc = 0;
-        let cur = addDaysUTC(targetDate, -1);
-        while (acc < targetGDD) {
-            if (seasonStart && dateLTE(cur, addDaysUTC(seasonStart, -1))) break;
-            const rate = sharedCore.gddRateForDate(dailyRatesMap, cur); // CHANGED
-            acc += rate;
-            cur = addDaysUTC(cur, -1);
-        }
-        return { date: addDaysUTC(cur, 1), gdd: acc };
-    }
-
-    function maturityDateFromBudget(startDate, budget, dailyRatesMap, seasonEnd) {
-        if (budget.mode === 'days') {
-            return addDaysUTC(startDate, Math.max(0, Math.round(budget.amount)));
-        }
-        return accumulateGDDUntil(startDate, budget.amount, dailyRatesMap, seasonEnd).date;
-    }
-
-    // -------------------- Thermal / yield helpers -----------------------------------------
-
-    function thermalYieldFactor(T, cropTemp) {
-        const { Tmin, ToptLow, ToptHigh, Tmax } = cropTemp;
-        if (T <= Tmin || T >= Tmax) return 0;
-        if (T < ToptLow) return (T - Tmin) / Math.max(1e-9, (ToptLow - Tmin));
-        if (T <= ToptHigh) return 1;
-        return (Tmax - T) / Math.max(1e-9, (Tmax - ToptHigh));
-    }
-    function weightedMeanTempOverRange(startDate, endDate, monthlyAvgTemp, dailyRatesMap, Tbase = 10, dailyClimate = null) {
-        let cur = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate()));
-        const sampleEnd = endDate > startDate ? endDate : addDaysUTC(startDate, 1); // FIX: sample maturity day for zero-day windows
-        let sum = 0, n = 0;
-        while (cur < sampleEnd) {
-            const m = cur.getUTCMonth() + 1;
-            let T = dailyClimate ? sharedCore.meanTemperatureOnDate(cur, dailyClimate) : null; // CHANGED
-            if (T == null) T = monthlyAvgTemp?.[m];
-            if (T == null) {
-                const gdd = sharedCore.gddRateForDate(dailyRatesMap, cur); // CHANGED
-                T = gdd > 0 ? (Tbase + gdd) : (Tbase - 2);
-            }
-            sum += T; n += 1; cur = addDaysUTC(cur, 1);
-        }
-        return n > 0 ? (sum / n) : Tbase;
-    }
-
-    // -------------------- Soil-temperature gate --------------------------------------------
+    function resolveScheduleInputEndISO(formState, plant, scanEndHard) { // ADDED
+        if (isPerennialPlant(plant)) return formState.seasonEndISO || fmtISO(scanEndHard); // ADDED
+        return fmtISO(scanEndHard); // ADDED: annual latest-harvest display state must not constrain feasibility.
+    } // ADDED
 
     // Convert model instance to plain {column: value} dict (primitives only)           
     function toPlainDict(obj) {
@@ -2170,109 +1812,6 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-
-    function monthMeanAt(date, monthlyAvgTemp) {
-        return monthlyAvgTemp?.[date.getUTCMonth() + 1] ?? null;
-    }
-
-    function firstCoolingCrossingDate({ thresholdC, monthlyAvgTemp, scanStart, scanEndHard }) {
-        // Ignore winter cold until the scan has observed a warm month. // FIX
-        let cursor = asUTCDate(scanStart.getUTCFullYear(), scanStart.getUTCMonth() + 1, 1);
-        const end = asUTCDate(scanEndHard.getUTCFullYear(), scanEndHard.getUTCMonth() + 1, 1);
-        let armed = false; // FIX: a cooling trigger requires an earlier warm period in the scan window
-        let previousWarmMonth = null; // FIX: retain only an adjacent warm month for interpolation
-        let previousWarmTemp = null; // FIX
-
-        while (dateLTE(cursor, end)) {
-            const Tcur = monthMeanAt(cursor, monthlyAvgTemp);
-            if (Tcur == null) { // FIX: missing data breaks adjacency and cannot form a crossing
-                armed = false;
-                previousWarmMonth = null;
-                previousWarmTemp = null;
-            } else if (Tcur > thresholdC) {
-                armed = true;
-                previousWarmMonth = new Date(cursor);
-                previousWarmTemp = Number(Tcur);
-            } else if (armed && previousWarmMonth && previousWarmTemp != null) {
-                const expectedNextMonth = asUTCDate(
-                    previousWarmMonth.getUTCFullYear(),
-                    previousWarmMonth.getUTCMonth() + 2,
-                    1
-                );
-                if (expectedNextMonth.getTime() === cursor.getTime()) { // FIX: interpolate only adjacent monthly observations
-                    const dim = daysInMonth(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1);
-                    const frac = Math.min(1, Math.max(
-                        0,
-                        (previousWarmTemp - thresholdC) / Math.max(1e-6, previousWarmTemp - Number(Tcur))
-                    ));
-                    const day = Math.max(1, Math.min(dim, Math.round(frac * dim)));
-                    return asUTCDate(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, day);
-                }
-                armed = false; // FIX
-                previousWarmMonth = null; // FIX
-                previousWarmTemp = null; // FIX
-            }
-            cursor = asUTCDate(cursor.getUTCFullYear(), cursor.getUTCMonth() + 2, 1);
-        }
-
-        return null; // FIX: January cold or a climate without an autumn crossing is not a trigger
-    }
-
-
-    function computeStageDatesForPlanting({ sowDate, budget, stageDays, dailyRatesMap, seasonEnd, planningMode }) {
-        const maturity = maturityDateFromBudget(sowDate, budget, dailyRatesMap, seasonEnd);
-        const harvestDays = resolveHarvestWindowDays(stageDays.harvest_window_days); // FIX: use the canonical fallback
-        const harvestStart = maturity;                          // first harvest
-        const harvestEnd = addDaysUTC(maturity, harvestDays); // window after first harvest
-
-        const rawGerminationDays = stageDays.germinationDays ?? stageDays.days_germ;
-        const germinationDays = finiteNumberOrNull(rawGerminationDays);
-        const germ = germinationDays != null && germinationDays >= 0
-            ? addDaysUTC(sowDate, Math.round(germinationDays))
-            : null; // FIX: germination is calendar days after sowing, independent of maturity
-        let transplant = null;
-        if (planningMode === 'transplant_outdoor') {
-            transplant = new Date(sowDate);
-        } else if (planningMode === 'transplant_indoor') {
-            const daysToTransplant = Number(stageDays.transplantDays);
-            transplant = Number.isFinite(daysToTransplant) && daysToTransplant > 0
-                ? addDaysUTC(sowDate, Math.round(daysToTransplant))
-                : new Date(sowDate);
-        }
-
-        return {
-            sow: sowDate,
-            germ,
-            transplant,
-            maturity,
-            harvestStart,
-            harvestEnd
-        };
-    }
-
-
-    function computeStageTimelineForSchedule({ schedule, budget, stageDays, dailyRatesMap, seasonEnd, planningMode }) {
-
-        if (!budget || !Number.isFinite(budget.amount) || budget.amount <= 0) {
-            throw new Error('Invalid maturity budget');
-        }
-        return (schedule || []).map(sow =>
-            computeStageDatesForPlanting({ sowDate: sow, budget, stageDays, dailyRatesMap, seasonEnd, planningMode })
-        );
-    }
-
-    function classifyIsThermal(reason) {
-        if (!reason) return false;
-        return reason.indexOf('harvest_too_cold') === 0 ||
-            reason.indexOf('harvest_too_hot') === 0 ||
-            reason === 'insufficient_gdd';
-    }
-
-    function impliedHarvestEndForDate(planner, sow, HW_DAYS) {
-        const C = planner.ctx;
-        const mat = maturityDateFromBudget(sow, C.BUDGET, C.dailyRates, C.scanEndHard);
-        return planner.addDays(mat, Math.max(0, HW_DAYS || 0));
-    }
 
     // helper near your other date utils
     function dateFromDOY(year, doy) {
@@ -2482,267 +2021,6 @@ Draw.loadPlugin(function (ui) {
 
 
 
-
-    function buildAutoWindowPlanner(params) {
-        const {
-            methodId, methodCategoryId, budget, HW_DAYS,
-            dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
-            dailyClimate = null,
-            scanStart, scanEndHard,
-            soilGateThresholdC, soilGateConsecutiveDays,
-            startCoolingThresholdC,
-            useSpringFrostGate,
-            lastSpringFrostDOY, // FIX: accept the selected city's frost date
-            daysTransplant,
-            overwinterAllowed,
-            bedProfile = null,
-            bedProfileSource = 'generic garden bed'
-        } = params;
-
-        const resolvedBehavior = resolveMethodBehavior({ methodCategoryId, methodId });
-        validateAutoWindowMethodInputs({ resolvedBehavior, daysTransplant });
-
-        const fakePlant = {
-            start_cooling_threshold_c: startCoolingThresholdC,
-            soil_temp_min_plant_c: soilGateThresholdC,
-            isPerennial: () => false,
-            isBiennial: () => false,
-            overwinter_ok: overwinterAllowed ? 1 : 0,
-            days_transplant: daysTransplant,
-            cropTempEnvelope: () => cropTemp,
-            firstHarvestBudget: () => budget
-        };
-
-        const fakeCity = {
-            dailyRates: (_tbase, _year) => dailyRatesMap,
-            monthlyMeans: () => monthlyAvgTemp,
-            last_spring_frost_p50_doy: lastSpringFrostDOY, // FIX: pass frost data into Planner
-            last_spring_frost_doy: lastSpringFrostDOY // FIX: preserve Planner's plain-column fallback
-        };
-
-        const policy = new PolicyFlags({
-            useSoilTempGate: Number.isFinite(soilGateThresholdC) && resolvedBehavior.usesSoilTempGate,
-            soilGateThresholdC,
-            soilGateConsecutiveDays,
-            overwinterAllowed,
-            useSpringFrostGate: !!useSpringFrostGate, // FIX: keep frost gating independent from overwinter support
-            springFrostRisk: 'p50'
-        });
-
-        const inputs = new sharedCore.ScheduleInputs({ // CHANGED
-            plant: fakePlant,
-            city: fakeCity,
-            planningMode: resolvedBehavior.planningMode,
-            methodCategoryId: resolvedBehavior.methodCategoryId, // CHANGED
-            methodId: resolvedBehavior.methodId, // CHANGED
-            startISO: scanStart.toISOString().slice(0, 10),
-            seasonEndISO: scanEndHard.toISOString().slice(0, 10),
-            policy,
-            seasonStartYear: scanStart.getUTCFullYear(),
-            harvestWindowDays: HW_DAYS,
-            bedProfile,
-            bedProfileSource,
-            dailyClimate: dailyClimate || sharedCore.buildDailyTemperatureSeries({
-                startDate: scanStart,
-                endDate: scanEndHard,
-                monthlyNormals: monthlyAvgTemp,
-                source: 'legacy monthly mean inputs'
-            }) // CHANGED
-        });
-
-        const planner = new annualCore.Planner(inputs); // CHANGED
-        return { planner, ctx: planner.ctx, resolvedBehavior };
-    }
-
-    // -------------------- Feasibility + window (single pure function) --------------------
-    function computeAutoStartEndWindowForward(params) {
-        const {
-            methodId, methodCategoryId, budget, HW_DAYS, // CHANGED
-            dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp,
-            dailyClimate = null,
-            scanStart, scanEndHard,
-            // gates
-            soilGateThresholdC = null, soilGateConsecutiveDays = 3,
-            startCoolingThresholdC = null,
-            useSpringFrostGate = false,
-            lastSpringFrostDOY = null,
-            // transplant specifics
-            daysTransplant = 0,
-            // behavior
-            overwinterAllowed = false,
-            bedProfile = null,
-            bedProfileSource = 'generic garden bed',
-        } = params;
-
-        const resolvedHarvestWindowDays = resolveHarvestWindowDays(HW_DAYS); // FIX: normalize fallback estimates as well as planner feasibility
-        const { planner, resolvedBehavior } = buildAutoWindowPlanner({ // CHANGED
-            methodId, methodCategoryId, budget, HW_DAYS: resolvedHarvestWindowDays, // FIX: pass the canonical value
-            dailyRatesMap, monthlyAvgTemp, Tbase, cropTemp, dailyClimate,
-            scanStart, scanEndHard,
-            soilGateThresholdC, soilGateConsecutiveDays,
-            startCoolingThresholdC,
-            useSpringFrostGate,
-            lastSpringFrostDOY, // FIX: forward the caller's frost date instead of using the default DOY
-            daysTransplant,
-            overwinterAllowed,
-            bedProfile,
-            bedProfileSource
-        });
-
-        const C = planner.ctx;
-        const planningMode = resolvedBehavior.planningMode; // CHANGED
-
-        // Limit sow scanning for overwinter crops to the first season year
-        const sowScanEnd = overwinterAllowed
-            ? asUTCDate(C.scanStart.getUTCFullYear(), 12, 31)
-            : C.scanEndHard;
-
-        // --- Build earliest FIELD date (air-gated date) ---
-        let fieldGateStart = new Date(C.scanStart);
-
-        // spring frost gate
-        if (useSpringFrostGate && Number.isFinite(lastSpringFrostDOY)) {
-            const shiftedDOY = Math.max(1, Math.min(366, Number(lastSpringFrostDOY) + Number(C.springFrostGateShiftDays || 0)));
-            const frostDate = dateFromDOY(C.scanStart.getUTCFullYear(), shiftedDOY);
-            if (frostDate > fieldGateStart) fieldGateStart = frostDate;
-        }
-
-        // cooling gate (air)
-        if (overwinterAllowed && Number.isFinite(startCoolingThresholdC)) { // FIX: annual heat thresholds are not fall gates
-            const cross = firstCoolingCrossingDate({
-                thresholdC: startCoolingThresholdC,
-                monthlyAvgTemp,
-                scanStart: C.scanStart,
-                scanEndHard: C.scanEndHard
-            });
-            if (cross && cross > fieldGateStart) fieldGateStart = cross;
-        }
-
-        // --- Convert fieldGateStart → sow candidate based on method behavior ---
-        let sowCandidate = new Date(fieldGateStart); // CHANGED
-
-        if (resolvedBehavior.leadDaysMode === "days_transplant") { // CHANGED
-            const dt = Math.max(0, Math.round(Number(daysTransplant) || 0)); // CHANGED
-            const indoorSow = planner.addDays(fieldGateStart, -dt); // CHANGED
-            sowCandidate = indoorSow < C.scanStart ? new Date(C.scanStart) : indoorSow; // CHANGED
-        } else { // CHANGED
-            sowCandidate = fieldGateStart; // CHANGED
-        } // CHANGED
-
-        // --- Walk feasibility from that candidate using full planner logic ---
-        const firstNonSoil = resolvedBehavior.usesSoilTempGate // CHANGED
-            ? (firstNonSoilStart(planner, sowCandidate) || sowCandidate) // CHANGED
-            : sowCandidate; // CHANGED
-
-        let firstOkSow = null;
-        let firstOkHarvestStart = null;
-        let firstOkHarvestEnd = null;
-        let lastOkHarvestEnd = null;
-        let lastThermalHarvestEnd = null;
-        let lastOkSow = null;
-
-        for (let d = new Date(firstNonSoil); d <= sowScanEnd; d = planner.addDays(d, 1)) {
-            const r = planner.isSowFeasible(d);
-            if (r.ok) {
-                if (!firstOkSow) {
-                    firstOkSow = new Date(d);
-                    firstOkHarvestStart = r.harvestStart;
-                    firstOkHarvestEnd = r.harvestEnd;
-                }
-
-                lastOkSow = new Date(d);
-
-                const hEnd = r.harvestEnd;
-                if (!lastOkHarvestEnd || hEnd > lastOkHarvestEnd) {
-                    lastOkHarvestEnd = hEnd;
-                }
-            } else {
-                const isThermal = classifyIsThermal(r.reason) ||
-                    r.reason === 'cross_year_disallowed' ||
-                    r.reason === 'beyond_hard_end';
-                if (isThermal) {
-                    let hEnd = impliedHarvestEndForDate(planner, d, resolvedHarvestWindowDays); // FIX: use the canonical value
-                    if (hEnd > C.scanEndHard) hEnd = new Date(C.scanEndHard);
-                    if (!lastThermalHarvestEnd || hEnd > lastThermalHarvestEnd) {
-                        lastThermalHarvestEnd = hEnd;
-                    }
-                }
-            }
-        }
-
-        if (!firstOkSow) {
-            console.log('[autoWindow] scan (no feasible)', {
-                scanStart: C.scanStart.toISOString().slice(0, 10),
-                scanEndHard: C.scanEndHard.toISOString().slice(0, 10),
-                methodCategoryId: resolvedBehavior.methodCategoryId, // CHANGED
-                methodId: resolvedBehavior.methodId, // CHANGED
-                planningMode, // CHANGED
-                firstNonSoil: firstNonSoil ? firstNonSoil.toISOString().slice(0, 10) : null,
-                lastThermalHarvestEnd: lastThermalHarvestEnd
-                    ? lastThermalHarvestEnd.toISOString().slice(0, 10)
-                    : null
-            });
-
-            return {
-                feasible: false, // FIX: absence of a feasible sow date is explicit
-                harvestEndSemantics: HARVEST_END_SEMANTICS, // FIX
-                earliestFeasibleSowDate: null,
-                earliestHarvestStartDate: null,
-                earliestHarvestEndDate: null,
-                lastFeasibleSowDate: null,
-                climateEndDate: null
-            };
-        }
-
-        const earliestFeasibleSow = firstOkSow;
-        const lastFeasibleSow = lastOkSow;
-        const firstFeasibleHarvestStart = firstOkHarvestStart;
-        const firstFeasibleHarvestEnd = firstOkHarvestEnd;
-        const lastFeasibleHarvestEnd = lastOkHarvestEnd;
-
-        const fallbackHarvestEnd = lastFeasibleHarvestEnd ||
-            firstFeasibleHarvestEnd ||
-            lastThermalHarvestEnd ||
-            new Date(C.scanEndHard);
-
-        const earliestHarvestStartDate = firstFeasibleHarvestStart || null;
-        const earliestHarvestEndDate = firstFeasibleHarvestEnd || earliestFeasibleSow;
-
-        let climateEndDate;
-        if (overwinterAllowed) {
-            climateEndDate = lastFeasibleHarvestEnd // FIX: retain the full feasible overwinter harvest window
-                || earliestHarvestEndDate
-                || lastThermalHarvestEnd
-                || new Date(C.scanEndHard);
-        } else {
-            climateEndDate = lastFeasibleHarvestEnd
-                || lastThermalHarvestEnd
-                || earliestHarvestEndDate
-                || new Date(C.scanEndHard);
-        }
-
-        console.log('[autoWindow] RESULT', {
-            earliestFeasibleSowDate: fmtISO(earliestFeasibleSow),
-            earliestHarvestStartDate: earliestHarvestStartDate ? fmtISO(earliestHarvestStartDate) : null,
-            earliestHarvestEndDate: fmtISO(earliestHarvestEndDate),
-            lastFeasibleSowDate: lastFeasibleSow ? fmtISO(lastFeasibleSow) : null,
-            climateEndDate: climateEndDate ? fmtISO(climateEndDate) : null,
-            HW_DAYS: resolvedHarvestWindowDays, // FIX: report the canonical value
-            methodCategoryId: resolvedBehavior.methodCategoryId, // CHANGED
-            methodId: resolvedBehavior.methodId, // CHANGED
-            planningMode // CHANGED
-        });
-
-        return {
-            feasible: true, // FIX
-            harvestEndSemantics: HARVEST_END_SEMANTICS, // FIX
-            earliestFeasibleSowDate: earliestFeasibleSow,
-            earliestHarvestStartDate,
-            earliestHarvestEndDate,
-            lastFeasibleSowDate: lastFeasibleSow,
-            climateEndDate
-        };
-    }
 
 
 
@@ -3653,6 +2931,9 @@ Draw.loadPlugin(function (ui) {
     }
 
     function effectiveHardEndForDiagnostics(inputs, derived) { // ADDED
+        if (!isPerennialPlant(inputs?.plant)) { // ADDED
+            return { date: derived.scanEndHard, source: inputs?.policy?.overwinterAllowed ? 'overwinter scan end' : 'lifecycle scan end' }; // FIX: annual latest-harvest display dates are not hard caps.
+        } // ADDED
         if (inputs?.policy?.overwinterAllowed) { // ADDED
             return { date: derived.scanEndHard, source: 'overwinter scan end' }; // ADDED
         } // ADDED
@@ -5630,6 +4911,8 @@ Draw.loadPlugin(function (ui) {
             selectedPlant: initialPlant,
             earliestFeasibleSowDate,
             lastHarvestDate,
+            latestHarvestEndDate = lastHarvestDate, // ADDED
+            selectedHarvestEndDate = lastHarvestDate, // ADDED
             startNote,
             initialCityId = null, // ADDED
             initialCityName = '',
@@ -6256,7 +5539,8 @@ Draw.loadPlugin(function (ui) {
 
         // Start/End inputs + auto buttons
         const initialStartISO = fmtISO(earliestFeasibleSowDate); // FIX: allow an explicitly empty no-window state
-        const initialEndISO = fmtISO(lastHarvestDate); // FIX
+        const initialLatestHarvestEndISO = fmtISO(latestHarvestEndDate); // ADDED
+        const initialSelectedHarvestEndISO = fmtISO(selectedHarvestEndDate); // ADDED
 
         // User-selectable derived sowing season // ADDED
         const sowingSeasonSel = makeSelect([], ''); // ADDED
@@ -6266,10 +5550,10 @@ Draw.loadPlugin(function (ui) {
         const startInput = makeDate(initialStartISO, false);
 
         // Auto-computed season end constraint (read-only for annuals, editable for perennials)
-        const seasonEndInput = makeDate(initialEndISO, true);
+        const seasonEndInput = makeDate(initialLatestHarvestEndISO, true); // CHANGED
 
         const harvestStartInput = makeDisplayField('', { emphasis: true }); // CHANGED
-        const harvestEndInput = makeDisplayField(initialEndISO); // CHANGED
+        const harvestEndInput = makeDisplayField(initialSelectedHarvestEndISO); // CHANGED
         const daysToFirstHarvestInput = makeDisplayField(''); // CHANGED
         let userEditedStartThisSession = false; // FIX: distinguish session intent from persisted state
 
@@ -6323,7 +5607,8 @@ Draw.loadPlugin(function (ui) {
             methodId: methodSel.value,
 
             startISO: startInput.value,
-            seasonEndISO: seasonEndInput.value,
+            seasonEndISO: mode.perennial ? seasonEndInput.value : '', // CHANGED: reserve seasonEndISO for perennial lifespan end.
+            latestHarvestEndISO: mode.perennial ? '' : initialLatestHarvestEndISO, // ADDED: annual display output is not a scheduling constraint.
             seasonStartYear: Number(seasonYearInput.value || (new Date()).getUTCFullYear()),
             harvestWindowDays: (harvestWindowInput.value === '' ? null : Number(harvestWindowInput.value)),
             minYieldMultiplier: Number(minYieldMultInput.value || 0),
@@ -6331,7 +5616,7 @@ Draw.loadPlugin(function (ui) {
             activeSowingSeasonId: '', // ADDED
             windowFeasible: mode.perennial || !!initialWindowFeasible, // FIX
             firstHarvestISO: null, // CHANGED
-            lastHarvestISO: initialEndISO,
+            lastHarvestISO: mode.perennial ? null : initialSelectedHarvestEndISO, // CHANGED
             lastHarvestSource: 'auto',
             bedProfile: normalizeBedProfile(scheduleBedProfile), // ADDED: keep bed-aware soil modeling stable across form recomputes.
             bedProfileSource: String(scheduleBedProfileSource || 'generic garden bed'), // ADDED
@@ -6355,7 +5640,8 @@ Draw.loadPlugin(function (ui) {
 
             formState.startISO = startInput.value;
             formState.activeSowingSeasonId = sowingSeasonSel.value || formState.activeSowingSeasonId || ''; // ADDED
-            formState.seasonEndISO = seasonEndInput.value;
+            if (mode.perennial) formState.seasonEndISO = seasonEndInput.value; // CHANGED
+            else formState.latestHarvestEndISO = seasonEndInput.value; // ADDED
             formState.seasonStartYear = Number(seasonYearInput.value || (new Date()).getUTCFullYear());
             formState.harvestWindowDays = (harvestWindowInput.value === '' ? null : Number(harvestWindowInput.value));
             formState.minYieldMultiplier = Number(minYieldMultInput.value || 0);
@@ -6367,7 +5653,7 @@ Draw.loadPlugin(function (ui) {
                 startInput.value = formState.startISO || ''; // FIX: clear fabricated or stale auto dates
             }
             if (end) {
-                seasonEndInput.value = formState.seasonEndISO || ''; // FIX
+                seasonEndInput.value = mode.perennial ? (formState.seasonEndISO || '') : (formState.latestHarvestEndISO || ''); // CHANGED
             }
             if (harvest) { // CHANGED
                 if (harvestStartInput) {
@@ -6462,7 +5748,7 @@ Draw.loadPlugin(function (ui) {
         const firstSowRowObj = row('Sow date:', startInput); // CHANGED
         if (startNote) firstSowRowObj.row.appendChild(startNoteSpan); // CHANGED
 
-        const endRow = row('Recommended harvest end:', seasonEndInput); // CHANGED
+        const endRow = row('Latest harvest end:', seasonEndInput); // CHANGED
         const harvestStartRowObj = row('Expected first harvest:', harvestStartInput); // CHANGED
         const harvestEndRowObj = row('Expected harvest end:', harvestEndInput); // CHANGED
         const daysToFirstHarvestRowObj = row('Days to first harvest:', daysToFirstHarvestInput); // CHANGED
@@ -6742,7 +6028,7 @@ Draw.loadPlugin(function (ui) {
                 daysToFirstHarvestRowObj.row.style.display = 'none'; // CHANGED
             } else {
                 firstSowRowObj.label.textContent = 'Sow date:'; // CHANGED
-                endRow.label.textContent = 'Recommended harvest end:'; // CHANGED
+                endRow.label.textContent = 'Latest harvest end:'; // CHANGED
                 harvestStartRowObj.row.style.display = ''; // CHANGED
                 harvestEndRowObj.row.style.display = ''; // CHANGED
                 daysToFirstHarvestRowObj.row.style.display = ''; // CHANGED
@@ -6788,7 +6074,7 @@ Draw.loadPlugin(function (ui) {
         // recomputeAnchors:
         //  - concern: climate feasibility window (earliest sow, last feasible sow, climate last harvest)
         //  - does NOT decide scheduling or yield
-        //  - allowed to change seasonEndISO ONLY when called with forceWriteEnd=true
+        //  - allowed to change latestHarvestEndISO ONLY when called with forceWriteEnd=true
         async function recomputeAnchors(forceWriteStart = false, forceWriteEnd = false) {
             try {
                 if (mode.perennial) return true; // FIX: lifespan dates are recomputed by recomputeAll
@@ -6861,7 +6147,7 @@ Draw.loadPlugin(function (ui) {
                     forceWriteStart,
                     forceWriteEnd,
                     startISO_before: formState.startISO,
-                    seasonEndISO_before: formState.seasonEndISO,
+                    latestHarvestEndISO_before: formState.latestHarvestEndISO, // CHANGED
                     sowingSeasons: r.seasons ? r.seasons.map(season => season.label) : [], // CHANGED
                     climateEndDate: r.climateEndDate ? fmtISO(r.climateEndDate) : null, // CHANGED
                     lastFeasibleSowDate: r.lastFeasibleSowDate ? fmtISO(r.lastFeasibleSowDate) : null
@@ -6908,11 +6194,11 @@ Draw.loadPlugin(function (ui) {
                     userEditedStartThisSession = false; // FIX
                 }
 
-                // let auto window drive season end when requested                      
+                // let auto window drive the annual latest-harvest display date when requested
                 if (windowFeasible && forceWriteEnd && r.climateEndDate instanceof Date) {
-                    formState.seasonEndISO = r.climateEndDate.toISOString().slice(0, 10);
+                    formState.latestHarvestEndISO = r.climateEndDate.toISOString().slice(0, 10); // CHANGED
                 } else if (!windowFeasible) {
-                    formState.seasonEndISO = ''; // FIX: clear derived end state when the window is infeasible
+                    formState.latestHarvestEndISO = ''; // FIX: clear derived annual display end when the window is infeasible
                 }
 
                 refreshSowingSeasonSelector(); // ADDED
@@ -6969,6 +6255,7 @@ Draw.loadPlugin(function (ui) {
 
                 formState.startISO = startInput.value;
                 formState.seasonEndISO = seasonEndInput.value;
+                formState.latestHarvestEndISO = ''; // ADDED: perennial lifespan end is not annual display state.
                 formState.firstHarvestISO = null; // CHANGED
                 formState.lastHarvestISO = null; // FIX: lifespan end is not a harvest date
                 formState.lastScheduleEndISO = formState.seasonEndISO; // CHANGED
@@ -6980,6 +6267,7 @@ Draw.loadPlugin(function (ui) {
             } else {
                 // Non-perennial: reset HW default and clear dirty flag               
                 harvestWindowInput.value = (plant?.defaultHW() ?? '').toString();
+                formState.seasonEndISO = ''; // ADDED: annual schedules use lifecycle scan end internally.
                 syncStateFromControls();
             }
 
@@ -6988,7 +6276,7 @@ Draw.loadPlugin(function (ui) {
 
         // recomputeAll:
         //  - concern: policy: when to let climate auto window override constraint
-        //  - enforce: seasonEndISO may only be set in specific reasons
+        //  - enforce: annual latestHarvestEndISO and perennial seasonEndISO stay separate
         async function recomputeAll(reason) {
             syncStateFromControls();
             refreshContextSummary(); // ADDED
@@ -7005,6 +6293,7 @@ Draw.loadPlugin(function (ui) {
 
                 seasonEndInput.value = endISO;
                 formState.seasonEndISO = endISO;
+                formState.latestHarvestEndISO = ''; // ADDED: perennial lifespan end is not annual display state.
 
                 formState.firstHarvestISO = null; // CHANGED
                 formState.lastHarvestISO = null; // FIX: lifespan-only schedules have no inferred harvest
@@ -7388,6 +6677,7 @@ Draw.loadPlugin(function (ui) {
                         requirePerennialLifespanYears(effectivePlant)
                     );
                     formState.seasonEndISO = seasonEndInput.value;
+                    formState.latestHarvestEndISO = ''; // ADDED
                     updateStartNote();
                 } else {
                     await recomputeAll('startChanged');
@@ -7574,7 +6864,8 @@ Draw.loadPlugin(function (ui) {
                 if (!rows.length || !lastScheduledHarvestEndISO) {
                     console.log('[recomputeLastHarvestFromSchedule] no rows', {
                         startISO: formState.startISO,
-                        seasonEndISO: formState.seasonEndISO,
+                        scheduleEndISO: inputs.seasonEndISO, // CHANGED
+                        latestHarvestEndISO: formState.latestHarvestEndISO, // ADDED
                         harvestWindowDays: formState.harvestWindowDays,
                     });
 
@@ -10272,7 +9563,8 @@ Draw.loadPlugin(function (ui) {
                 perennialLifespanYears
             ))
             : null; // FIX
-        let lastHarvestDate = selectedIsPerennial ? climateEndDate : null; // FIX
+        let latestHarvestEndDate = selectedIsPerennial ? climateEndDate : null; // CHANGED
+        let selectedHarvestEndDate = selectedIsPerennial ? climateEndDate : null; // ADDED
         let initialDailyClimate = null; // ADDED
 
         if (!selectedIsPerennial && Number.isFinite(HW_DAYS)) { // FIX
@@ -10311,14 +9603,15 @@ Draw.loadPlugin(function (ui) {
             initialWindowFeasible = initialWindow.feasible === true; // FIX
             earliestFeasibleSowDate = initialWindow.seasons?.[0]?.startDate || initialWindow.earliestFeasibleSowDate; // CHANGED
             climateEndDate = initialWindow.climateEndDate; // FIX
-            lastHarvestDate = initialWindow.climateEndDate; // FIX: initialize the displayed annual end from the feasible window
+            latestHarvestEndDate = initialWindow.climateEndDate; // FIX: initialize the annual latest-harvest display from the feasible window
+            selectedHarvestEndDate = initialWindow.climateEndDate; // ADDED
         }
 
-        // no stray reassignments like: earliestFeasibleSowDate = a; lastHarvestDate = b;  <-- remove these
+        // no stray reassignments like: earliestFeasibleSowDate = a; selectedHarvestEndDate = b;  <-- remove these
 
         let previewStart = storedSowDate || earliestFeasibleSowDate;
         if (!selectedIsPerennial && storedHarvestEndDate) {
-            lastHarvestDate = storedHarvestEndDate;
+            selectedHarvestEndDate = storedHarvestEndDate; // CHANGED
         }
         let startNote = initialWindowFeasible || selectedIsPerennial ? '' : 'No feasible window.'; // FIX
 
@@ -10332,7 +9625,7 @@ Draw.loadPlugin(function (ui) {
                 methodCategoryId: initialMethodCategoryId,
                 methodId: initialMethodId,
                 startISO: earliestFeasibleSowDate.toISOString().slice(0, 10),
-                seasonEndISO: climateEndDate.toISOString().slice(0, 10),
+                seasonEndISO: fmtISO(scanEndHard), // FIX: initial annual feasibility checks use lifecycle end, not latest harvest display.
                 policy: PolicyFlags.fromResolvedBehavior(selectedPlant, initialResolvedBehavior, initialClimatePolicy), // CHANGED
                 seasonStartYear: year,
                 harvestWindowDays: HW_DAYS,
@@ -10365,7 +9658,9 @@ Draw.loadPlugin(function (ui) {
         await buildScheduleDialog(ui, cell, plants, cities, async (_form) => { /* handled inside builder */ }, {
             selectedPlant,
             earliestFeasibleSowDate: previewStart,
-            lastHarvestDate,
+            lastHarvestDate: selectedHarvestEndDate, // CHANGED: retained for older builder call sites.
+            latestHarvestEndDate, // ADDED
+            selectedHarvestEndDate, // ADDED
             startNote,
             initialCityId, // ADDED
             initialCityName,
@@ -10539,7 +9834,7 @@ Draw.loadPlugin(function (ui) {
             getPlantScanYears,
             isCrossYearCrop, // FIX: expose lifecycle behavior to the opt-in regression harness
             resolveHarvestWindowDays, // FIX: expose fallback behavior to the opt-in regression harness
-            computeStageDatesForPlanting, // FIX: expose calendar-stage behavior to the opt-in regression harness
+            computeStageDatesForPlanting: annualCore.computeStageDatesForPlanting, // CHANGED: expose canonical annual core behavior.
             buildLifecycleTimelineViewModel, // ADDED
             findFirstLifecycleTimelineTaskRule, // ADDED
             normId, // FIX
@@ -10837,9 +10132,9 @@ Draw.loadPlugin(function (ui) {
             Planner: annualCore.Planner, // CHANGED
             applyPlantOverrides,
             computeScheduleResult,
-            computeStageDatesForPlanting,
+            computeStageDatesForPlanting: annualCore.computeStageDatesForPlanting, // CHANGED
             computePerennialLifespanEndISO,
-            firstCoolingCrossingDate,
+            firstCoolingCrossingDate: annualCore.firstCoolingCrossingDate, // CHANGED
             getPlantScanYears,
             resolveHarvestWindowDays,
             resolveInitialMethodSelection,
