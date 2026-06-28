@@ -43,9 +43,62 @@
 
     const MULTI_WINDOW_MAX_MERGE_GAP_DAYS = 7; // ADDED
     const MULTI_WINDOW_MIN_LENGTH_DAYS = 3; // ADDED
+    const DIAGNOSTIC_POLICIES = Object.freeze(new Set(['off', 'warn', 'block'])); // ADDED
 
     function monthMeanAt(date, monthlyAvgTemp) {
         return monthlyAvgTemp?.[date.getUTCMonth() + 1] ?? null;
+    }
+    function clampNumber(value, min, max) { // ADDED
+        if (value == null || value === '') return null; // ADDED
+        const n = Number(value); // ADDED
+        if (!Number.isFinite(n)) return null; // ADDED
+        return Math.max(min, Math.min(max, n)); // ADDED
+    }
+    function normalizeDiagnosticPolicy(value, fallback = 'warn') { // ADDED
+        const raw = String(value || fallback || 'warn').trim().toLowerCase(); // ADDED
+        return DIAGNOSTIC_POLICIES.has(raw) ? raw : fallback; // ADDED
+    }
+    function numberOrNull(value) { // ADDED
+        if (value == null || value === '') return null; // ADDED
+        const n = Number(value); // ADDED
+        return Number.isFinite(n) ? n : null; // ADDED
+    }
+    function policyForFactor(plant, factor, fallback = 'warn') { // ADDED
+        const direct = plant?.[`${factor}_policy`]; // ADDED
+        if (direct != null && String(direct).trim() !== '') return normalizeDiagnosticPolicy(direct, fallback); // ADDED
+        const generic = plant?.diagnostic_policy; // ADDED
+        if (generic != null && String(generic).trim() !== '') return normalizeDiagnosticPolicy(generic, fallback); // ADDED
+        return fallback; // ADDED
+    }
+    function diagnosticLabel(diagnostic) { // ADDED
+        const factor = String(diagnostic?.factor || '').trim(); // ADDED
+        const severity = String(diagnostic?.severity || '').trim(); // ADDED
+        if (factor === 'photoperiod' && severity === 'info') return 'Photoperiod data missing'; // ADDED
+        const factorLabel = ({ // ADDED
+            establishment_heat: 'Establishment heat', // ADDED
+            quality_heat: 'Heat', // ADDED
+            photoperiod: 'Photoperiod', // ADDED
+            chilling: 'Chilling' // ADDED
+        })[factor] || factor.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase()); // ADDED
+        const severityLabel = severity === 'block' ? 'block' : (severity === 'warning' ? 'warning' : severity); // ADDED
+        return [factorLabel, severityLabel].filter(Boolean).join(' '); // ADDED
+    }
+    function supportedPhotoperiodLatitude(latitudeDeg) { // ADDED
+        const lat = numberOrNull(latitudeDeg); // ADDED
+        if (lat == null || lat < -66.5 || lat > 66.5) return null; // ADDED
+        return lat; // ADDED
+    }
+    function dayLengthHours(date, latitudeDeg) { // ADDED
+        const lat = supportedPhotoperiodLatitude(latitudeDeg); // CHANGED
+        if (lat == null) return null; // ADDED
+        const doy = dayOfYear(date); // ADDED
+        const rad = Math.PI / 180; // ADDED
+        const decl = 23.44 * rad * Math.sin((2 * Math.PI / 365) * (doy - 81)); // ADDED
+        const phi = lat * rad; // ADDED
+        const cosHourAngle = -Math.tan(phi) * Math.tan(decl); // ADDED
+        if (cosHourAngle >= 1) return 0; // ADDED
+        if (cosHourAngle <= -1) return 24; // ADDED
+        return (24 / Math.PI) * Math.acos(cosHourAngle); // ADDED
     }
     function daysBetweenInclusive(start, end) { // ADDED
         return Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
@@ -148,6 +201,233 @@
         }
         return n > 0 ? (sum / n) : Tbase;
     }
+    function sampleMeanTempOverDays(startDate, days, ctx) { // ADDED
+        const count = Math.max(1, Math.round(Number(days) || 1)); // ADDED
+        return weightedMeanTempOverRange(startDate, addDaysUTC(startDate, count), ctx.monthlyAvg, ctx.dailyRates, ctx.Tbase, ctx.dailyClimate); // ADDED
+    }
+    function dateForDiagnosticStage(stage, sowDate, feasibleResult, plant) { // ADDED
+        const normalized = String(stage || '').trim().toLowerCase(); // ADDED
+        if (normalized === 'sow' || normalized === 'establishment') return sowDate; // ADDED
+        if (normalized === 'germination' || normalized === 'germ') { // ADDED
+            const germDays = Math.max(0, Math.round(numberOrNull(plant?.days_germ) ?? 0)); // ADDED
+            return addDaysUTC(sowDate, germDays); // ADDED
+        } // ADDED
+        if (normalized === 'harvest' || normalized === 'harvest_start' || normalized === 'harvest_quality' || normalized === 'maturity') return feasibleResult?.maturity || feasibleResult?.harvestStart || sowDate; // ADDED
+        if (normalized === 'harvest_end') return feasibleResult?.harvestEnd || feasibleResult?.maturity || sowDate; // ADDED
+        return feasibleResult?.maturity || sowDate; // ADDED
+    }
+    function makeDiagnostic({ factor, stage, severity, policy, startDate, endDate, threshold = null, observed = null, message }) { // ADDED
+        return Object.freeze({ // ADDED
+            factor, // ADDED
+            stage, // ADDED
+            severity, // ADDED
+            policy, // ADDED
+            startISO: startDate ? fmtISO(startDate) : '', // ADDED
+            endISO: endDate ? fmtISO(endDate) : '', // ADDED
+            threshold, // ADDED
+            observed, // ADDED
+            message // ADDED
+        }); // ADDED
+    }
+    function evaluateScheduleQualityDiagnostics({ sowDate, feasibleResult, planner }) { // ADDED
+        if (!feasibleResult || !feasibleResult.ok) return []; // ADDED
+        const ctx = planner.ctx; // ADDED
+        const plant = ctx.plant || {}; // ADDED
+        const diagnostics = []; // ADDED
+
+        const establishmentMax = numberOrNull(plant.establishment_temp_max_c); // ADDED
+        const establishmentPolicy = policyForFactor(plant, 'establishment_heat', 'warn'); // ADDED
+        if (establishmentMax != null && establishmentPolicy !== 'off') { // ADDED
+            const days = Math.max(1, Math.round(numberOrNull(plant.establishment_heat_window_days) ?? numberOrNull(plant.days_germ) ?? 3)); // ADDED
+            const observed = sampleMeanTempOverDays(sowDate, days, ctx); // ADDED
+            if (observed > establishmentMax) diagnostics.push(makeDiagnostic({ // ADDED
+                factor: 'establishment_heat', // ADDED
+                stage: 'establishment', // ADDED
+                severity: establishmentPolicy === 'block' ? 'block' : 'warning', // ADDED
+                policy: establishmentPolicy, // ADDED
+                startDate: sowDate, // ADDED
+                endDate: addDaysUTC(sowDate, days), // ADDED
+                threshold: establishmentMax, // ADDED
+                observed: Number(observed.toFixed(1)), // ADDED
+                message: `Establishment heat risk: mean temperature ${observed.toFixed(1)} C exceeds ${establishmentMax} C.` // ADDED
+            })); // ADDED
+        } // ADDED
+
+        const qualityMax = numberOrNull(plant.quality_temp_max_c); // ADDED
+        const qualityPolicy = policyForFactor(plant, 'quality_heat', 'warn'); // ADDED
+        if (qualityMax != null && qualityPolicy !== 'off') { // ADDED
+            const stage = String(plant.heat_stress_stage || 'harvest_quality').trim() || 'harvest_quality'; // ADDED
+            const stageDate = dateForDiagnosticStage(stage, sowDate, feasibleResult, plant); // ADDED
+            const observed = sampleMeanTempOverDays(stageDate, Math.max(1, Math.min(ctx.HW_DAYS || 1, 7)), ctx); // ADDED
+            if (observed > qualityMax) diagnostics.push(makeDiagnostic({ // ADDED
+                factor: 'quality_heat', // ADDED
+                stage, // ADDED
+                severity: qualityPolicy === 'block' ? 'block' : 'warning', // ADDED
+                policy: qualityPolicy, // ADDED
+                startDate: stageDate, // ADDED
+                endDate: addDaysUTC(stageDate, Math.max(1, Math.min(ctx.HW_DAYS || 1, 7))), // ADDED
+                threshold: qualityMax, // ADDED
+                observed: Number(observed.toFixed(1)), // ADDED
+                message: `Quality heat risk: mean ${stage} temperature ${observed.toFixed(1)} C exceeds ${qualityMax} C.` // ADDED
+            })); // ADDED
+        } // ADDED
+
+        const criticalDaylength = numberOrNull(plant.critical_daylength_hours); // ADDED
+        const photoperiodResponse = String(plant.photoperiod_response || '').trim().toLowerCase(); // ADDED
+        const photoperiodPolicy = policyForFactor(plant, 'photoperiod', 'warn'); // ADDED
+        if (criticalDaylength != null && photoperiodResponse && photoperiodResponse !== 'day_neutral' && photoperiodPolicy !== 'off') { // ADDED
+            const stage = String(plant.photoperiod_stage || 'maturity').trim() || 'maturity'; // ADDED
+            const stageDate = dateForDiagnosticStage(stage, sowDate, feasibleResult, plant); // ADDED
+            const latitude = numberOrNull(ctx.cityLatitudeDeg); // ADDED
+            const observed = dayLengthHours(stageDate, latitude); // ADDED
+            if (observed == null) { // ADDED
+                diagnostics.push(makeDiagnostic({ // ADDED
+                    factor: 'photoperiod', // ADDED
+                    stage, // ADDED
+                    severity: 'info', // ADDED
+                    policy: photoperiodPolicy, // ADDED
+                    startDate: stageDate, // ADDED
+                    endDate: stageDate, // ADDED
+                    threshold: criticalDaylength, // ADDED
+                    observed: null, // ADDED
+                    message: 'Photoperiod data missing: city latitude is missing or outside the supported -66.5 to 66.5 degree range.' // CHANGED
+                })); // ADDED
+            } else { // ADDED
+                const mismatch = (photoperiodResponse === 'long_day' && observed < criticalDaylength) // ADDED
+                    || (photoperiodResponse === 'short_day' && observed > criticalDaylength); // ADDED
+                if (mismatch) diagnostics.push(makeDiagnostic({ // ADDED
+                    factor: 'photoperiod', // ADDED
+                    stage, // ADDED
+                    severity: photoperiodPolicy === 'block' ? 'block' : 'warning', // ADDED
+                    policy: photoperiodPolicy, // ADDED
+                    startDate: stageDate, // ADDED
+                    endDate: stageDate, // ADDED
+                    threshold: criticalDaylength, // ADDED
+                    observed: Number(observed.toFixed(1)), // ADDED
+                    message: `Photoperiod risk: ${stage} day length ${observed.toFixed(1)} h does not fit ${photoperiodResponse.replace('_', '-')} threshold ${criticalDaylength} h.` // ADDED
+                })); // ADDED
+            } // ADDED
+        } // ADDED
+
+        const chillingRequired = numberOrNull(plant.chilling_required_days) ?? (numberOrNull(plant.chilling_required_hours) != null ? numberOrNull(plant.chilling_required_hours) / 24 : null); // ADDED
+        const chillingMin = numberOrNull(plant.chilling_temp_min_c) ?? -2; // ADDED
+        const chillingMax = numberOrNull(plant.chilling_temp_max_c) ?? 10; // ADDED
+        const chillingPolicy = policyForFactor(plant, 'chilling', 'warn'); // ADDED
+        if (chillingRequired != null && chillingRequired > 0 && chillingPolicy !== 'off') { // ADDED
+            const stage = String(plant.chilling_stage || 'maturity').trim() || 'maturity'; // ADDED
+            const stageDate = dateForDiagnosticStage(stage, sowDate, feasibleResult, plant); // ADDED
+            let count = 0; // ADDED
+            for (let d = new Date(sowDate); d < stageDate; d = addDaysUTC(d, 1)) { // CHANGED
+                const temp = weightedMeanTempOverRange(d, addDaysUTC(d, 1), ctx.monthlyAvg, ctx.dailyRates, ctx.Tbase, ctx.dailyClimate); // ADDED
+                if (temp >= chillingMin && temp <= chillingMax) count += 1; // ADDED
+            } // ADDED
+            if (count < chillingRequired) diagnostics.push(makeDiagnostic({ // ADDED
+                factor: 'chilling', // ADDED
+                stage, // ADDED
+                severity: chillingPolicy === 'block' ? 'block' : 'warning', // ADDED
+                policy: chillingPolicy, // ADDED
+                startDate: sowDate, // CHANGED
+                endDate: stageDate, // ADDED
+                threshold: Number(chillingRequired.toFixed(1)), // ADDED
+                observed: Number(count.toFixed(1)), // ADDED
+                message: `Chilling risk: ${count.toFixed(0)} suitable chilling days before ${stage}, below required ${chillingRequired.toFixed(0)}.` // ADDED
+            })); // ADDED
+        } // ADDED
+
+        return diagnostics; // ADDED
+    }
+    function diagnosticsHaveBlockingPolicy(diagnostics) { // ADDED
+        return (diagnostics || []).some(diagnostic => diagnostic && diagnostic.policy === 'block' && diagnostic.severity === 'block'); // ADDED
+    }
+    function summarizeWindowDiagnostics(diagnostics) { // ADDED
+        const countsByLabel = new Map(); // CHANGED
+        for (const diagnostic of diagnostics || []) { // ADDED
+            const label = diagnosticLabel(diagnostic); // ADDED
+            if (label) countsByLabel.set(label, (countsByLabel.get(label) || 0) + 1); // CHANGED
+        } // ADDED
+        return Array.from(countsByLabel.keys()).sort().map(label => { // CHANGED
+            const count = countsByLabel.get(label) || 0; // ADDED
+            return `${label} (${count} ${count === 1 ? 'date' : 'dates'})`; // ADDED
+        }).join(', '); // CHANGED
+    }
+    function diagnosticRangeKey(diagnostic) { // ADDED
+        return [ // ADDED
+            diagnostic?.factor || '', // ADDED
+            diagnostic?.severity || '', // ADDED
+            diagnostic?.policy || '', // ADDED
+            diagnostic?.stage || '', // ADDED
+            diagnostic?.threshold ?? '' // ADDED
+        ].join('|'); // ADDED
+    }
+    function compressScheduleQualityDiagnosticRanges(rows) { // ADDED
+        const ranges = []; // ADDED
+        const openByKey = new Map(); // ADDED
+        function closeMissingKeys(activeKeys, previousISO) { // ADDED
+            for (const [key, range] of Array.from(openByKey.entries())) { // ADDED
+                if (activeKeys.has(key)) continue; // ADDED
+                range.endISO = previousISO || range.endISO; // ADDED
+                ranges.push(Object.freeze(range)); // ADDED
+                openByKey.delete(key); // ADDED
+            } // ADDED
+        } // ADDED
+        let previousISO = ''; // ADDED
+        for (const row of rows || []) { // ADDED
+            const sowISO = String(row?.sowISO || '').trim(); // ADDED
+            if (!sowISO) continue; // ADDED
+            const diagnostics = Array.isArray(row.diagnostics) ? row.diagnostics : []; // ADDED
+            const activeKeys = new Set(diagnostics.map(diagnosticRangeKey)); // ADDED
+            closeMissingKeys(activeKeys, previousISO); // ADDED
+            for (const diagnostic of diagnostics) { // ADDED
+                const key = diagnosticRangeKey(diagnostic); // ADDED
+                const observed = numberOrNull(diagnostic.observed); // ADDED
+                let range = openByKey.get(key); // ADDED
+                if (!range) { // ADDED
+                    range = { // ADDED
+                        factor: diagnostic.factor, // ADDED
+                        severity: diagnostic.severity, // ADDED
+                        policy: diagnostic.policy, // ADDED
+                        stage: diagnostic.stage, // ADDED
+                        label: diagnosticLabel(diagnostic), // ADDED
+                        startISO: sowISO, // ADDED
+                        endISO: sowISO, // ADDED
+                        threshold: diagnostic.threshold ?? null, // ADDED
+                        observedMin: observed, // ADDED
+                        observedMax: observed, // ADDED
+                        messages: [] // ADDED
+                    }; // ADDED
+                    openByKey.set(key, range); // ADDED
+                } // ADDED
+                range.endISO = sowISO; // ADDED
+                if (observed != null) { // ADDED
+                    range.observedMin = range.observedMin == null ? observed : Math.min(range.observedMin, observed); // ADDED
+                    range.observedMax = range.observedMax == null ? observed : Math.max(range.observedMax, observed); // ADDED
+                } // ADDED
+                if (diagnostic.message && range.messages.indexOf(diagnostic.message) < 0 && range.messages.length < 3) { // ADDED
+                    range.messages.push(diagnostic.message); // ADDED
+                } // ADDED
+            } // ADDED
+            previousISO = sowISO; // ADDED
+        } // ADDED
+        closeMissingKeys(new Set(), previousISO); // ADDED
+        return ranges; // ADDED
+    }
+    function evaluateSowDateDiagnostics(inputs, startISO = inputs?.startISO) { // ADDED
+        const sowDate = parseISODateUTCValue(startISO); // ADDED
+        if (!sowDate) { // ADDED
+            return Object.freeze({ feasible: false, reason: 'invalid_sow_date', diagnostics: Object.freeze([]), blockingDiagnostics: Object.freeze([]) }); // ADDED
+        } // ADDED
+        const planner = new Planner(inputs); // ADDED
+        const feasibleResult = planner.isSowFeasible(sowDate); // ADDED
+        const diagnostics = feasibleResult.ok ? evaluateScheduleQualityDiagnostics({ sowDate, feasibleResult, planner }) : []; // ADDED
+        const blockingDiagnostics = diagnostics.filter(diagnostic => diagnostic?.policy === 'block' && diagnostic?.severity === 'block'); // ADDED
+        return Object.freeze({ // ADDED
+            feasible: !!feasibleResult.ok, // ADDED
+            reason: feasibleResult.reason || '', // ADDED
+            diagnostics: Object.freeze(diagnostics.slice()), // ADDED
+            blockingDiagnostics: Object.freeze(blockingDiagnostics), // ADDED
+            feasibleResult // ADDED
+        }); // ADDED
+    }
 
     class Planner {
         constructor(inputs) {
@@ -188,6 +468,7 @@
                 bedProfile: normalizeBedProfile(inputs.bedProfile), // ADDED: soil gates depend on garden-bed conditions.
                 bedProfileSource: inputs.bedProfileSource || 'generic garden bed', // ADDED
                 Tbase: env.Tbase,
+                cityLatitudeDeg: finiteNumberOrNull(inputs.cityLatitudeDeg ?? city?.latitude_deg ?? city?.latitude ?? city?.lat), // CHANGED
                 startDate,
                 seasonEnd,
                 scanStart,
@@ -356,6 +637,8 @@
                 endISO: fmtISO(win.endDate), // ADDED
                 startDate: new Date(win.startDate), // ADDED
                 endDate: new Date(win.endDate), // ADDED
+                diagnostics: Object.freeze((win.diagnostics || []).slice()), // ADDED
+                riskSummary: summarizeWindowDiagnostics(win.diagnostics || []), // ADDED
                 source: Object.freeze({ // ADDED
                     firstFeasibleISO: fmtISO(win.firstFeasibleDate || win.startDate), // ADDED
                     lastFeasibleISO: fmtISO(win.lastFeasibleDate || win.endDate), // ADDED
@@ -371,7 +654,7 @@
         const merged = []; // ADDED
         for (const range of sorted) { // ADDED
             if (!merged.length) { // ADDED
-                merged.push({ ...range, firstFeasibleDate: range.startDate, lastFeasibleDate: range.endDate, mergedGapDays: 0 }); // ADDED
+                merged.push({ ...range, firstFeasibleDate: range.startDate, lastFeasibleDate: range.endDate, mergedGapDays: 0, diagnostics: (range.diagnostics || []).slice() }); // CHANGED
                 continue; // ADDED
             } // ADDED
             const prev = merged[merged.length - 1]; // ADDED
@@ -380,11 +663,22 @@
                 prev.endDate = new Date(range.endDate); // ADDED
                 prev.lastFeasibleDate = new Date(range.endDate); // ADDED
                 prev.mergedGapDays += gapDays; // ADDED
+                prev.diagnostics = (prev.diagnostics || []).concat(range.diagnostics || []); // ADDED
             } else { // ADDED
-                merged.push({ ...range, firstFeasibleDate: range.startDate, lastFeasibleDate: range.endDate, mergedGapDays: 0 }); // ADDED
+                merged.push({ ...range, firstFeasibleDate: range.startDate, lastFeasibleDate: range.endDate, mergedGapDays: 0, diagnostics: (range.diagnostics || []).slice() }); // CHANGED
             } // ADDED
         } // ADDED
         return merged.filter(range => daysBetweenInclusive(range.startDate, range.endDate) >= minLengthDays); // ADDED
+    }
+    function assignDiagnosticsToSmoothedRanges(ranges, scanRows) { // ADDED
+        return (ranges || []).map(range => { // ADDED
+            const diagnostics = []; // ADDED
+            for (const row of scanRows || []) { // ADDED
+                if (!row?.date || row.date < range.startDate || row.date > range.endDate) continue; // ADDED
+                diagnostics.push(...(row.diagnostics || [])); // ADDED
+            } // ADDED
+            return { ...range, diagnostics }; // ADDED
+        }); // ADDED
     }
     function computeAnnualSowingWindows(params) { // ADDED
         const resolvedHarvestWindowDays = resolveHarvestWindowDays(params.HW_DAYS); // ADDED
@@ -396,13 +690,17 @@
         const seasonScanEnd = asUTCDate(C.scanStart.getUTCFullYear(), 12, 31); // ADDED
         const sowScanEnd = seasonScanEnd < C.scanEndHard ? seasonScanEnd : C.scanEndHard; // ADDED
         const ranges = []; // ADDED
+        const scanRows = []; // ADDED
         let current = null; // ADDED
         let firstHarvestEnd = null; // ADDED
         let lastHarvestEnd = null; // ADDED
         for (let d = new Date(C.scanStart); dateLTE(d, sowScanEnd); d = planner.addDays(d, 1)) { // ADDED
             const r = planner.isSowFeasible(d); // ADDED
-            if (r.ok) { // ADDED
-                if (!current) current = { startDate: new Date(d), endDate: new Date(d) }; // ADDED
+            const diagnostics = r.ok ? evaluateScheduleQualityDiagnostics({ sowDate: d, feasibleResult: r, planner }) : []; // ADDED
+            scanRows.push({ date: new Date(d), diagnostics }); // ADDED
+            const blockedByDiagnostics = diagnosticsHaveBlockingPolicy(diagnostics); // ADDED
+            if (r.ok && !blockedByDiagnostics) { // CHANGED
+                if (!current) current = { startDate: new Date(d), endDate: new Date(d), diagnostics: [] }; // CHANGED
                 current.endDate = new Date(d); // ADDED
                 if (!firstHarvestEnd) firstHarvestEnd = r.harvestEnd; // ADDED
                 if (!lastHarvestEnd || r.harvestEnd > lastHarvestEnd) lastHarvestEnd = r.harvestEnd; // ADDED
@@ -412,7 +710,8 @@
             } // ADDED
         } // ADDED
         if (current) ranges.push(current); // ADDED
-        const windows = labelSowingWindows(smoothFeasibleSowingRanges(ranges, params.windowOptions || {})); // ADDED
+        const smoothedRanges = smoothFeasibleSowingRanges(ranges, params.windowOptions || {}); // ADDED
+        const windows = labelSowingWindows(assignDiagnosticsToSmoothedRanges(smoothedRanges, scanRows)); // CHANGED
         return Object.freeze({ // ADDED
             feasible: windows.length > 0, // ADDED
             harvestEndSemantics: HARVEST_END_SEMANTICS, // ADDED
@@ -426,6 +725,31 @@
             lastFeasibleSowDate: windows.length ? new Date(windows[windows.length - 1].endDate) : null, // ADDED
             climateEndDate: lastHarvestEnd || firstHarvestEnd || null // ADDED
         }); // ADDED
+    }
+    function computeScheduleQualityDiagnosticRangesForPlanner(planner) { // ADDED
+        const C = planner.ctx; // ADDED
+        const seasonScanEnd = asUTCDate(C.scanStart.getUTCFullYear(), 12, 31); // ADDED
+        const sowScanEnd = seasonScanEnd < C.scanEndHard ? seasonScanEnd : C.scanEndHard; // ADDED
+        const rows = []; // ADDED
+        for (let d = new Date(C.scanStart); dateLTE(d, sowScanEnd); d = planner.addDays(d, 1)) { // ADDED
+            const feasibleResult = planner.isSowFeasible(d); // ADDED
+            rows.push({ // ADDED
+                sowISO: fmtISO(d), // ADDED
+                diagnostics: feasibleResult.ok ? evaluateScheduleQualityDiagnostics({ sowDate: d, feasibleResult, planner }) : [] // ADDED
+            }); // ADDED
+        } // ADDED
+        return Object.freeze(compressScheduleQualityDiagnosticRanges(rows)); // ADDED
+    }
+    function computeScheduleQualityDiagnosticRangesForInputs(inputs) { // ADDED
+        return computeScheduleQualityDiagnosticRangesForPlanner(new Planner(inputs)); // ADDED
+    }
+    function computeScheduleQualityDiagnosticRanges(params) { // ADDED
+        const resolvedHarvestWindowDays = resolveHarvestWindowDays(params.HW_DAYS); // ADDED
+        const { planner } = buildAutoWindowPlanner({ // ADDED
+            ...params, // ADDED
+            HW_DAYS: resolvedHarvestWindowDays // ADDED
+        }); // ADDED
+        return computeScheduleQualityDiagnosticRangesForPlanner(planner); // ADDED
     }
     function computeStageDatesForPlanting({ sowDate, budget, stageDays, dailyRatesMap, seasonEnd, planningMode }) {
         const maturity = maturityDateFromBudget(sowDate, budget, dailyRatesMap, seasonEnd);
@@ -468,6 +792,8 @@
             lastSpringFrostDOY,
             daysTransplant,
             overwinterAllowed,
+            plantMetadata = null, // ADDED
+            cityLatitudeDeg = null, // ADDED
             bedProfile = null,
             bedProfileSource = 'generic garden bed'
         } = params;
@@ -481,12 +807,15 @@
             isBiennial: () => false,
             overwinter_ok: overwinterAllowed ? 1 : 0,
             days_transplant: daysTransplant,
+            days_germ: plantMetadata?.days_germ, // ADDED
+            ...(plantMetadata || {}), // ADDED
             cropTempEnvelope: () => cropTemp,
             firstHarvestBudget: () => budget
         };
         const fakeCity = {
             dailyRates: (_tbase, _year) => dailyRatesMap,
             monthlyMeans: () => monthlyAvgTemp,
+            latitude_deg: cityLatitudeDeg, // ADDED
             last_spring_frost_p50_doy: lastSpringFrostDOY,
             last_spring_frost_doy: lastSpringFrostDOY
         };
@@ -708,6 +1037,15 @@
         maturityDateFromBudget,
         thermalYieldFactor,
         weightedMeanTempOverRange,
+        dayLengthHours, // ADDED
+        evaluateScheduleQualityDiagnostics, // ADDED
+        evaluateSowDateDiagnostics, // ADDED
+        diagnosticsHaveBlockingPolicy, // ADDED
+        computeScheduleQualityDiagnosticRanges, // ADDED
+        computeScheduleQualityDiagnosticRangesForInputs, // ADDED
+        computeScheduleQualityDiagnosticRangesForPlanner, // ADDED
+        compressScheduleQualityDiagnosticRanges, // ADDED
+        diagnosticLabel, // ADDED
         firstCoolingCrossingDate,
         getGateDateForCandidate,
         firstNonSoilStart,

@@ -138,6 +138,12 @@ Draw.loadPlugin(function (ui) {
         const n = Number(value);
         return Number.isFinite(n) ? n : null;
     }
+    function normalizeLatitudeDeg(value) { // ADDED
+        const n = finiteNumberOrNull(value); // ADDED
+        if (n == null) return null; // ADDED
+        if (n < -66.5 || n > 66.5) throw new Error('City latitude must be between -66.5 and 66.5 decimal degrees.'); // CHANGED
+        return n; // ADDED
+    }
     let sharedCore = null; // CHANGED
     let annualCore = null; // CHANGED
     let perennialCore = null; // CHANGED
@@ -480,6 +486,45 @@ Draw.loadPlugin(function (ui) {
         }
     }
 
+    const PHYSIOLOGY_PLANT_COLUMNS = Object.freeze({ // ADDED
+        establishment_temp_max_c: 'REAL', // ADDED
+        establishment_heat_window_days: 'INTEGER', // ADDED
+        establishment_heat_policy: 'TEXT', // ADDED
+        quality_temp_max_c: 'REAL', // ADDED
+        heat_stress_stage: 'TEXT', // ADDED
+        quality_heat_policy: 'TEXT', // ADDED
+        photoperiod_response: 'TEXT', // ADDED
+        critical_daylength_hours: 'REAL', // ADDED
+        photoperiod_stage: 'TEXT', // ADDED
+        photoperiod_policy: 'TEXT', // ADDED
+        chilling_required_days: 'REAL', // ADDED
+        chilling_required_hours: 'REAL', // ADDED
+        chilling_temp_min_c: 'REAL', // ADDED
+        chilling_temp_max_c: 'REAL', // ADDED
+        chilling_stage: 'TEXT', // ADDED
+        chilling_policy: 'TEXT', // ADDED
+        diagnostic_policy: 'TEXT' // ADDED
+    }); // ADDED
+    const PHYSIOLOGY_CITY_COLUMNS = Object.freeze({ latitude_deg: 'REAL' }); // ADDED
+    let schedulerPhysiologySchemaEnsured = false; // ADDED
+
+    async function ensureTableColumns(dbId, tableName, columns) { // ADDED
+        const existing = new Set((await queryAllOnDb(dbId, `PRAGMA table_info(${tableName});`, [])).map(row => String(row.name || '').toLowerCase())); // ADDED
+        for (const [column, type] of Object.entries(columns)) { // ADDED
+            if (existing.has(column.toLowerCase())) continue; // ADDED
+            await execRunOnDb(dbId, `ALTER TABLE ${tableName} ADD COLUMN ${column} ${type};`, []); // ADDED
+        } // ADDED
+    }
+
+    async function ensureSchedulerPhysiologySchema() { // ADDED
+        if (schedulerPhysiologySchemaEnsured) return; // ADDED
+        await withDbWrite(async dbId => { // ADDED
+            await ensureTableColumns(dbId, 'Plants', PHYSIOLOGY_PLANT_COLUMNS); // ADDED
+            await ensureTableColumns(dbId, 'Cities', PHYSIOLOGY_CITY_COLUMNS); // ADDED
+        }); // ADDED
+        schedulerPhysiologySchemaEnsured = true; // ADDED
+    }
+
 
     // -------------------- Models ----------------------------------------------------------
     class PlantModel {
@@ -506,6 +551,7 @@ Draw.loadPlugin(function (ui) {
 
 
         static async loadByName(name) {
+            await ensureSchedulerPhysiologySchema(); // ADDED
             const sql = `
           SELECT *,
                  COALESCE(direct_sow,0) AS direct_sow,
@@ -519,6 +565,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         static async loadById(id) {
+            await ensureSchedulerPhysiologySchema(); // ADDED
             const sql = `
           SELECT *,
                  COALESCE(direct_sow,0) AS direct_sow,
@@ -531,12 +578,17 @@ Draw.loadPlugin(function (ui) {
         }
 
         static async listBasic() {
+            await ensureSchedulerPhysiologySchema(); // ADDED
             const sql = `
           SELECT plant_id, plant_name, abbr, yield_per_plant_kg, gdd_to_maturity, 
                  tmin_c, topt_low_c, topt_high_c, tmax_c, tbase_c,
                  harvest_window_days, days_maturity, days_transplant, days_germ,
                  direct_sow, transplant, default_planting_method_category, default_planting_method, overwinter_ok, start_cooling_threshold_c,
-                 soil_temp_min_plant_c, annual, biennial, perennial, lifespan_years, veg_diameter_cm, spacing_cm                                                                  
+                 soil_temp_min_plant_c, annual, biennial, perennial, lifespan_years, veg_diameter_cm, spacing_cm,
+                 establishment_temp_max_c, establishment_heat_window_days, establishment_heat_policy,
+                 quality_temp_max_c, heat_stress_stage, quality_heat_policy,
+                 photoperiod_response, critical_daylength_hours, photoperiod_stage, photoperiod_policy,
+                 chilling_required_days, chilling_required_hours, chilling_temp_min_c, chilling_temp_max_c, chilling_stage, chilling_policy, diagnostic_policy
           FROM Plants
           WHERE abbr IS NOT NULL
           ORDER BY plant_name;`;
@@ -676,6 +728,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         static async create(patch) {
+            await ensureSchedulerPhysiologySchema(); // ADDED
             const cols = [];
             const qs = [];
             const vals = [];
@@ -707,6 +760,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         static async update(plantId, patch) {
+            await ensureSchedulerPhysiologySchema(); // ADDED
             const id = Number(plantId);
             if (!Number.isFinite(id)) throw new Error('Invalid plantId');
 
@@ -732,6 +786,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         static async saveWithAllowedMethodCategories(plantId, patch, methodCategoryIds) { // FIX: save plant and allowed methods together
+            await ensureSchedulerPhysiologySchema(); // ADDED
             const existingId = finiteNumberOrNull(plantId); // FIX: distinguish insert from update without another connection
             const ids = Array.from(new Set((methodCategoryIds || [])
                 .map(normId) // FIX
@@ -1154,15 +1209,30 @@ Draw.loadPlugin(function (ui) {
         }
 
         static async loadAll() {
+            await ensureSchedulerPhysiologySchema(); // ADDED
             const sql = `SELECT * FROM Cities ORDER BY city_name;`;
             const rows = await queryAll(sql, []);
             return rows.map(r => new CityClimate(r));
         }
 
         static async loadByName(name) {
+            await ensureSchedulerPhysiologySchema(); // ADDED
             const sql = `SELECT * FROM Cities WHERE city_name = ? LIMIT 1;`;
             const rows = await queryAll(sql, [name]);
             return rows[0] ? new CityClimate(rows[0]) : null;
+        }
+
+        static async updateLatitude(cityName, latitudeDeg) { // ADDED
+            await ensureSchedulerPhysiologySchema(); // ADDED
+            const name = String(cityName || '').trim(); // ADDED
+            if (!name) throw new Error('Select a city before saving latitude.'); // ADDED
+            const normalized = normalizeLatitudeDeg(latitudeDeg); // ADDED
+            await withDbWrite(async dbId => { // ADDED
+                await execRunOnDb(dbId, 'UPDATE Cities SET latitude_deg = ? WHERE city_name = ?;', [normalized, name]); // ADDED
+                const rows = await queryAllOnDb(dbId, 'SELECT changes() AS changes;', []); // ADDED
+                if (!Number(rows?.[0]?.changes)) throw new Error(`City not found: ${name}`); // ADDED
+            }); // ADDED
+            return normalized; // ADDED
         }
 
         monthlyHighs() {
@@ -1299,6 +1369,16 @@ Draw.loadPlugin(function (ui) {
                 forecastBlendWeights: normalizedPolicy // ADDED
             }); // ADDED
         }
+    }
+
+    async function saveSchedulerCityLatitude({ cityName, latitudeValue, cities, recomputeAll, updateTaskPreview }) { // ADDED
+        const normalized = normalizeLatitudeDeg(latitudeValue); // ADDED
+        await CityClimate.updateLatitude(cityName, normalized); // ADDED
+        const cachedCity = (cities || []).find(city => String(city.city_name || '') === String(cityName || '')); // ADDED
+        if (cachedCity) cachedCity.latitude_deg = normalized; // ADDED
+        if (typeof recomputeAll === 'function') await recomputeAll('cityChanged'); // ADDED
+        if (typeof updateTaskPreview === 'function') await updateTaskPreview(); // ADDED
+        return normalized; // ADDED
     }
 
     const CLIMATE_MODEL_DEFAULTS_ATTR = 'scheduler_climate_model_defaults_json'; // ADDED
@@ -3015,6 +3095,8 @@ Draw.loadPlugin(function (ui) {
             label: String(window.label || '').trim() || `${startISO} to ${endISO}`, // ADDED
             startISO, // ADDED
             endISO, // ADDED
+            diagnostics: Array.isArray(window.diagnostics) ? window.diagnostics.slice() : [], // ADDED
+            riskSummary: String(window.riskSummary || '').trim(), // ADDED
             source: window.source || null // ADDED
         }; // ADDED
     } // ADDED
@@ -3038,7 +3120,11 @@ Draw.loadPlugin(function (ui) {
     function formatSowingWindowsSummary(windows) { // ADDED
         const normalized = normalizeSowingWindows(windows); // ADDED
         if (!normalized.length) return 'No feasible sowing windows.'; // ADDED
-        return normalized.map(window => `${window.label}: ${window.startISO} to ${window.endISO}`).join('\n'); // ADDED
+        return normalized.map(window => { // CHANGED
+            const risk = window.riskSummary ? ` [${window.riskSummary}]` : ''; // ADDED
+            const details = (window.diagnostics || []).slice(0, 6).map(diagnostic => diagnostic?.message).filter(Boolean); // ADDED
+            return `${window.label}: ${window.startISO} to ${window.endISO}${risk}${details.length ? `\n  ${details.join('\n  ')}` : ''}`; // CHANGED
+        }).join('\n'); // CHANGED
     } // ADDED
     function buildSowingWindowSelectorState({ // ADDED
         sowingWindows = [], // ADDED
@@ -3054,7 +3140,7 @@ Draw.loadPlugin(function (ui) {
         if (!windows.length && !options.length) { // CHANGED
             options.push({ value: '', label: 'No feasible sowing window', disabled: false }); // ADDED
         } else { // ADDED
-            windows.forEach(window => options.push({ value: window.id, label: window.label, disabled: false })); // ADDED
+            windows.forEach(window => options.push({ value: window.id, label: window.riskSummary ? `${window.label} - ${window.riskSummary}` : window.label, disabled: false })); // CHANGED
         } // ADDED
         const activeWindow = windows.find(window => window.id === String(activeSowingWindowId || '').trim()) || null; // ADDED
         const selectedValue = options.some(option => option.value === activeSowingWindowId) ? String(activeSowingWindowId || '') : ''; // ADDED
@@ -3110,6 +3196,23 @@ Draw.loadPlugin(function (ui) {
         if (!args?.perennial && classification.status !== 'feasible') throw new Error(classification.label); // ADDED
         return classification; // ADDED
     } // ADDED
+    function describeBlockingScheduleQualityDiagnostics(blockingDiagnostics) { // ADDED
+        const diagnostics = Array.isArray(blockingDiagnostics) ? blockingDiagnostics : []; // ADDED
+        const labels = Array.from(new Set(diagnostics.map(diagnostic => annualCore.diagnosticLabel ? annualCore.diagnosticLabel(diagnostic) : diagnostic.factor).filter(Boolean))); // ADDED
+        const messages = diagnostics.map(diagnostic => diagnostic?.message).filter(Boolean); // ADDED
+        return [ // ADDED
+            labels.length ? `Blocked by ${labels.join(', ')}.` : 'Blocked by schedule quality diagnostics.', // ADDED
+            messages.slice(0, 3).join(' ') // ADDED
+        ].filter(Boolean).join(' '); // ADDED
+    }
+    function requireNoBlockingScheduleQualityDiagnostics(inputs) { // ADDED
+        if (!inputs || isPerennialPlant(inputs.plant)) return null; // ADDED
+        const result = annualCore.evaluateSowDateDiagnostics(inputs, inputs.startISO); // ADDED
+        if (result.blockingDiagnostics && result.blockingDiagnostics.length) { // ADDED
+            throw new Error(describeBlockingScheduleQualityDiagnostics(result.blockingDiagnostics)); // ADDED
+        } // ADDED
+        return result; // ADDED
+    }
 
     function buildScheduleViewState({ // ADDED
         perennial = false, // ADDED
@@ -3629,6 +3732,83 @@ Draw.loadPlugin(function (ui) {
         section.appendChild(wrap); // ADDED
     }
 
+    function formatScheduleQualityDiagnosticRanges(ranges) { // ADDED
+        const normalized = Array.isArray(ranges) ? ranges : []; // ADDED
+        if (!normalized.length) return 'No schedule quality diagnostics.'; // ADDED
+        return normalized.map(range => { // ADDED
+            const observed = range.observedMin == null && range.observedMax == null
+                ? 'n/a'
+                : (range.observedMin === range.observedMax ? String(range.observedMin) : `${range.observedMin} to ${range.observedMax}`); // ADDED
+            const messages = (range.messages || []).filter(Boolean).join(' | '); // ADDED
+            return `${range.label || range.factor}: ${range.startISO} to ${range.endISO}; severity=${range.severity}; policy=${range.policy}; stage=${range.stage}; threshold=${range.threshold ?? 'n/a'}; observed=${observed}${messages ? `; ${messages}` : ''}`; // ADDED
+        }).join('\n'); // ADDED
+    }
+
+    function appendScheduleQualityDiagnosticRanges(parent, ranges) { // ADDED
+        const section = appendExplainSection(parent, 'Schedule quality diagnostic ranges'); // ADDED
+        if (!ranges || !ranges.length) { // ADDED
+            const empty = document.createElement('div'); // ADDED
+            empty.textContent = 'No heat, photoperiod, chilling, or missing-data diagnostics were produced.'; // ADDED
+            empty.style.fontSize = '12px'; // ADDED
+            empty.style.color = '#166534'; // ADDED
+            section.appendChild(empty); // ADDED
+            return; // ADDED
+        } // ADDED
+        const wrap = document.createElement('div'); // ADDED
+        wrap.style.overflowX = 'auto'; // ADDED
+        const table = document.createElement('table'); // ADDED
+        table.style.borderCollapse = 'collapse'; // ADDED
+        table.style.width = '100%'; // ADDED
+        table.style.minWidth = '860px'; // ADDED
+        table.style.fontSize = '12px'; // ADDED
+        const headers = ['Sow date range', 'Risk', 'Severity', 'Policy', 'Stage', 'Threshold', 'Observed', 'Details']; // ADDED
+        const thead = document.createElement('thead'); // ADDED
+        const headRow = document.createElement('tr'); // ADDED
+        headers.forEach(header => { // ADDED
+            const th = document.createElement('th'); // ADDED
+            th.textContent = header; // ADDED
+            th.style.border = '1px solid #ddd'; // ADDED
+            th.style.padding = '6px 8px'; // ADDED
+            th.style.background = '#f3f4f6'; // ADDED
+            th.style.fontWeight = '600'; // ADDED
+            th.style.textAlign = 'left'; // ADDED
+            headRow.appendChild(th); // ADDED
+        }); // ADDED
+        thead.appendChild(headRow); // ADDED
+        table.appendChild(thead); // ADDED
+        const tbody = document.createElement('tbody'); // ADDED
+        ranges.forEach(range => { // ADDED
+            const observed = range.observedMin == null && range.observedMax == null
+                ? ''
+                : (range.observedMin === range.observedMax ? String(range.observedMin) : `${range.observedMin} to ${range.observedMax}`); // ADDED
+            const values = [ // ADDED
+                range.startISO === range.endISO ? range.startISO : `${range.startISO} to ${range.endISO}`, // ADDED
+                range.label || range.factor || '', // ADDED
+                range.severity || '', // ADDED
+                range.policy || '', // ADDED
+                range.stage || '', // ADDED
+                range.threshold == null ? '' : String(range.threshold), // ADDED
+                observed, // ADDED
+                (range.messages || []).join(' | ') // ADDED
+            ]; // ADDED
+            const tr = document.createElement('tr'); // ADDED
+            values.forEach((value, index) => { // ADDED
+                const td = document.createElement('td'); // ADDED
+                td.textContent = value; // ADDED
+                td.style.border = '1px solid #eee'; // ADDED
+                td.style.padding = '6px 8px'; // ADDED
+                td.style.verticalAlign = 'top'; // ADDED
+                td.style.overflowWrap = index === 7 ? 'anywhere' : 'normal'; // ADDED
+                if (index === 2) td.style.color = value === 'block' ? '#b91c1c' : (value === 'warning' ? '#92400e' : '#4b5563'); // ADDED
+                tr.appendChild(td); // ADDED
+            }); // ADDED
+            tbody.appendChild(tr); // ADDED
+        }); // ADDED
+        table.appendChild(tbody); // ADDED
+        wrap.appendChild(table); // ADDED
+        section.appendChild(wrap); // ADDED
+    }
+
     function appendExplainPreSection(parent, title, text) { // ADDED: keep raw plant and city dictionaries available.
         const section = appendExplainSection(parent, title); // ADDED
         const pre = document.createElement('pre'); // ADDED
@@ -3708,6 +3888,7 @@ Draw.loadPlugin(function (ui) {
         body.style.paddingRight = '2px'; // ADDED
         appendExplainDiagnostics(body, diagnosticsModel, options.diagnosticsTitle || 'Diagnostics'); // CHANGED
         if (options.sowingWindowsText) appendExplainPreSection(body, 'Derived sowing windows', options.sowingWindowsText); // ADDED
+        appendScheduleQualityDiagnosticRanges(body, options.scheduleQualityDiagnosticRanges || []); // ADDED
         appendExplainScanRanges(body, ranges, options.scanTitle || 'Feasibility scan ranges'); // CHANGED
         if (options.lifecycleDiagnosticsModel) appendExplainDiagnostics(body, options.lifecycleDiagnosticsModel, 'Lifecycle support diagnostics'); // ADDED
         if (options.lifecycleRanges) appendExplainScanRanges(body, options.lifecycleRanges, 'Lifecycle support scan ranges'); // ADDED
@@ -4396,6 +4577,24 @@ Draw.loadPlugin(function (ui) {
             { key: 'topt_high_c', type: 'nullable_num', step: 0.1 },
             { key: 'tmax_c', type: 'nullable_num', step: 0.1 },
 
+            { key: 'establishment_temp_max_c', type: 'nullable_num', step: 0.1 }, // ADDED
+            { key: 'establishment_heat_window_days', type: 'int_ge0' }, // ADDED
+            { key: 'establishment_heat_policy', type: 'text' }, // ADDED
+            { key: 'quality_temp_max_c', type: 'nullable_num', step: 0.1 }, // ADDED
+            { key: 'heat_stress_stage', type: 'text' }, // ADDED
+            { key: 'quality_heat_policy', type: 'text' }, // ADDED
+            { key: 'photoperiod_response', type: 'text' }, // ADDED
+            { key: 'critical_daylength_hours', type: 'nullable_num', step: 0.1 }, // ADDED
+            { key: 'photoperiod_stage', type: 'text' }, // ADDED
+            { key: 'photoperiod_policy', type: 'text' }, // ADDED
+            { key: 'chilling_required_days', type: 'nullable_num', step: 0.1 }, // ADDED
+            { key: 'chilling_required_hours', type: 'nullable_num', step: 1 }, // ADDED
+            { key: 'chilling_temp_min_c', type: 'nullable_num', step: 0.1 }, // ADDED
+            { key: 'chilling_temp_max_c', type: 'nullable_num', step: 0.1 }, // ADDED
+            { key: 'chilling_stage', type: 'text' }, // ADDED
+            { key: 'chilling_policy', type: 'text' }, // ADDED
+            { key: 'diagnostic_policy', type: 'text' }, // ADDED
+
             { key: 'veg_height_cm', type: 'num_ge0', step: 1 },
             { key: 'veg_diameter_cm', type: 'num_ge0', step: 1 },
             { key: 'spacing_cm', type: 'num_ge0', step: 1 },
@@ -4406,6 +4605,7 @@ Draw.loadPlugin(function (ui) {
             if (def.type === 'int_ge0') return readIntGE0(inputEl);
             if (def.type === 'num_ge0') return readNumGE0(inputEl);
             if (def.type === 'nullable_num') return readNullableNumber(inputEl);
+            if (def.type === 'text') return String(inputEl.value || '').trim() || null; // ADDED
             return null;
         }
 
@@ -4523,6 +4723,97 @@ Draw.loadPlugin(function (ui) {
         leftCol.appendChild(coolThreshRow.row);
         attachInlineOverrideToRow(coolThreshRow, { key: 'start_cooling_threshold_c', type: 'nullable_num', step: 0.1 });
 
+        // --- Heat, light, and chilling diagnostics --- // ADDED
+        const policyOptions = [ // ADDED
+            { value: '', label: '' }, // ADDED
+            { value: 'off', label: 'Off' }, // ADDED
+            { value: 'warn', label: 'Warn' }, // ADDED
+            { value: 'block', label: 'Block' } // ADDED
+        ]; // ADDED
+        const stageOptions = [ // ADDED
+            { value: '', label: '' }, // ADDED
+            { value: 'establishment', label: 'Establishment' }, // ADDED
+            { value: 'germination', label: 'Germination' }, // ADDED
+            { value: 'maturity', label: 'Maturity' }, // ADDED
+            { value: 'harvest_quality', label: 'Harvest quality' }, // ADDED
+            { value: 'harvest_end', label: 'Harvest end' } // ADDED
+        ]; // ADDED
+        const photoperiodResponseOptions = [ // ADDED
+            { value: '', label: '' }, // ADDED
+            { value: 'day_neutral', label: 'Day neutral' }, // ADDED
+            { value: 'long_day', label: 'Long day' }, // ADDED
+            { value: 'short_day', label: 'Short day' } // ADDED
+        ]; // ADDED
+        const establishmentMaxInput = makeNullableNumber(existing?.establishment_temp_max_c ?? null, { step: 0.1 }); // ADDED
+        const establishmentDaysInput = makeNullableNumber(existing?.establishment_heat_window_days ?? null, { min: 0, step: 1 }); // ADDED
+        const establishmentPolicySel = makeSelect(policyOptions, existing?.establishment_heat_policy || ''); // ADDED
+        const qualityMaxInput = makeNullableNumber(existing?.quality_temp_max_c ?? null, { step: 0.1 }); // ADDED
+        const heatStageSel = makeSelect(stageOptions, existing?.heat_stress_stage || ''); // ADDED
+        const qualityPolicySel = makeSelect(policyOptions, existing?.quality_heat_policy || ''); // ADDED
+        const photoperiodResponseSel = makeSelect(photoperiodResponseOptions, existing?.photoperiod_response || ''); // ADDED
+        const criticalDaylengthInput = makeNullableNumber(existing?.critical_daylength_hours ?? null, { min: 0, step: 0.1 }); // ADDED
+        const photoperiodStageSel = makeSelect(stageOptions, existing?.photoperiod_stage || ''); // ADDED
+        const photoperiodPolicySel = makeSelect(policyOptions, existing?.photoperiod_policy || ''); // ADDED
+        const chillingDaysInput = makeNullableNumber(existing?.chilling_required_days ?? null, { min: 0, step: 0.1 }); // ADDED
+        const chillingHoursInput = makeNullableNumber(existing?.chilling_required_hours ?? null, { min: 0, step: 1 }); // ADDED
+        const chillingMinInput = makeNullableNumber(existing?.chilling_temp_min_c ?? null, { step: 0.1 }); // ADDED
+        const chillingMaxInput = makeNullableNumber(existing?.chilling_temp_max_c ?? null, { step: 0.1 }); // ADDED
+        const chillingStageSel = makeSelect(stageOptions, existing?.chilling_stage || ''); // ADDED
+        const chillingPolicySel = makeSelect(policyOptions, existing?.chilling_policy || ''); // ADDED
+        const diagnosticPolicySel = makeSelect(policyOptions, existing?.diagnostic_policy || ''); // ADDED
+
+        const establishmentMaxRow = row('Establishment max temp (C):', establishmentMaxInput); // ADDED
+        rightCol.appendChild(establishmentMaxRow.row); // ADDED
+        attachInlineOverrideToRow(establishmentMaxRow, { key: 'establishment_temp_max_c', type: 'nullable_num', step: 0.1 }); // ADDED
+        const establishmentDaysRow = row('Establishment heat days:', establishmentDaysInput); // ADDED
+        rightCol.appendChild(establishmentDaysRow.row); // ADDED
+        attachInlineOverrideToRow(establishmentDaysRow, { key: 'establishment_heat_window_days', type: 'int_ge0' }); // ADDED
+        const establishmentPolicyRow = row('Establishment heat policy:', establishmentPolicySel); // ADDED
+        rightCol.appendChild(establishmentPolicyRow.row); // ADDED
+        attachInlineOverrideToRow(establishmentPolicyRow, { key: 'establishment_heat_policy', type: 'text' }); // ADDED
+        const qualityMaxRow = row('Quality max temp (C):', qualityMaxInput); // ADDED
+        rightCol.appendChild(qualityMaxRow.row); // ADDED
+        attachInlineOverrideToRow(qualityMaxRow, { key: 'quality_temp_max_c', type: 'nullable_num', step: 0.1 }); // ADDED
+        const heatStageRow = row('Heat stress stage:', heatStageSel); // ADDED
+        rightCol.appendChild(heatStageRow.row); // ADDED
+        attachInlineOverrideToRow(heatStageRow, { key: 'heat_stress_stage', type: 'text' }); // ADDED
+        const qualityPolicyRow = row('Quality heat policy:', qualityPolicySel); // ADDED
+        rightCol.appendChild(qualityPolicyRow.row); // ADDED
+        attachInlineOverrideToRow(qualityPolicyRow, { key: 'quality_heat_policy', type: 'text' }); // ADDED
+        const photoperiodResponseRow = row('Photoperiod response:', photoperiodResponseSel); // ADDED
+        rightCol.appendChild(photoperiodResponseRow.row); // ADDED
+        attachInlineOverrideToRow(photoperiodResponseRow, { key: 'photoperiod_response', type: 'text' }); // ADDED
+        const criticalDaylengthRow = row('Critical daylength (h):', criticalDaylengthInput); // ADDED
+        rightCol.appendChild(criticalDaylengthRow.row); // ADDED
+        attachInlineOverrideToRow(criticalDaylengthRow, { key: 'critical_daylength_hours', type: 'nullable_num', step: 0.1 }); // ADDED
+        const photoperiodStageRow = row('Photoperiod stage:', photoperiodStageSel); // ADDED
+        rightCol.appendChild(photoperiodStageRow.row); // ADDED
+        attachInlineOverrideToRow(photoperiodStageRow, { key: 'photoperiod_stage', type: 'text' }); // ADDED
+        const photoperiodPolicyRow = row('Photoperiod policy:', photoperiodPolicySel); // ADDED
+        rightCol.appendChild(photoperiodPolicyRow.row); // ADDED
+        attachInlineOverrideToRow(photoperiodPolicyRow, { key: 'photoperiod_policy', type: 'text' }); // ADDED
+        const chillingDaysRow = row('Chilling required days:', chillingDaysInput); // ADDED
+        rightCol.appendChild(chillingDaysRow.row); // ADDED
+        attachInlineOverrideToRow(chillingDaysRow, { key: 'chilling_required_days', type: 'nullable_num', step: 0.1 }); // ADDED
+        const chillingHoursRow = row('Chilling required hours:', chillingHoursInput); // ADDED
+        rightCol.appendChild(chillingHoursRow.row); // ADDED
+        attachInlineOverrideToRow(chillingHoursRow, { key: 'chilling_required_hours', type: 'nullable_num', step: 1 }); // ADDED
+        const chillingMinRow = row('Chilling min temp (C):', chillingMinInput); // ADDED
+        rightCol.appendChild(chillingMinRow.row); // ADDED
+        attachInlineOverrideToRow(chillingMinRow, { key: 'chilling_temp_min_c', type: 'nullable_num', step: 0.1 }); // ADDED
+        const chillingMaxRow = row('Chilling max temp (C):', chillingMaxInput); // ADDED
+        rightCol.appendChild(chillingMaxRow.row); // ADDED
+        attachInlineOverrideToRow(chillingMaxRow, { key: 'chilling_temp_max_c', type: 'nullable_num', step: 0.1 }); // ADDED
+        const chillingStageRow = row('Chilling stage:', chillingStageSel); // ADDED
+        rightCol.appendChild(chillingStageRow.row); // ADDED
+        attachInlineOverrideToRow(chillingStageRow, { key: 'chilling_stage', type: 'text' }); // ADDED
+        const chillingPolicyRow = row('Chilling policy:', chillingPolicySel); // ADDED
+        rightCol.appendChild(chillingPolicyRow.row); // ADDED
+        attachInlineOverrideToRow(chillingPolicyRow, { key: 'chilling_policy', type: 'text' }); // ADDED
+        const diagnosticPolicyRow = row('Default diagnostic policy:', diagnosticPolicySel); // ADDED
+        rightCol.appendChild(diagnosticPolicyRow.row); // ADDED
+        attachInlineOverrideToRow(diagnosticPolicyRow, { key: 'diagnostic_policy', type: 'text' }); // ADDED
+
         // --- Vegetative geometry ---
         const vegHeightInput = makeNullableNumber(existing?.veg_height_cm ?? null, { min: 0, step: 1 });
         const vegDiamInput = makeNullableNumber(existing?.veg_diameter_cm ?? null, { min: 0, step: 1 });
@@ -4563,6 +4854,24 @@ Draw.loadPlugin(function (ui) {
 
             { key: 'soil_temp_min_plant_c', input: soilMinInput, kind: 'nullable-number', empty: '' }, // ADDED
             { key: 'start_cooling_threshold_c', input: coolThreshInput, kind: 'nullable-number', empty: '' }, // ADDED
+
+            { key: 'establishment_temp_max_c', input: establishmentMaxInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'establishment_heat_window_days', input: establishmentDaysInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'establishment_heat_policy', input: establishmentPolicySel, kind: 'text', empty: '' }, // ADDED
+            { key: 'quality_temp_max_c', input: qualityMaxInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'heat_stress_stage', input: heatStageSel, kind: 'text', empty: '' }, // ADDED
+            { key: 'quality_heat_policy', input: qualityPolicySel, kind: 'text', empty: '' }, // ADDED
+            { key: 'photoperiod_response', input: photoperiodResponseSel, kind: 'text', empty: '' }, // ADDED
+            { key: 'critical_daylength_hours', input: criticalDaylengthInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'photoperiod_stage', input: photoperiodStageSel, kind: 'text', empty: '' }, // ADDED
+            { key: 'photoperiod_policy', input: photoperiodPolicySel, kind: 'text', empty: '' }, // ADDED
+            { key: 'chilling_required_days', input: chillingDaysInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'chilling_required_hours', input: chillingHoursInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'chilling_temp_min_c', input: chillingMinInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'chilling_temp_max_c', input: chillingMaxInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'chilling_stage', input: chillingStageSel, kind: 'text', empty: '' }, // ADDED
+            { key: 'chilling_policy', input: chillingPolicySel, kind: 'text', empty: '' }, // ADDED
+            { key: 'diagnostic_policy', input: diagnosticPolicySel, kind: 'text', empty: '' }, // ADDED
 
             { key: 'veg_height_cm', input: vegHeightInput, kind: 'nullable-number', empty: '' }, // ADDED
             { key: 'veg_diameter_cm', input: vegDiamInput, kind: 'nullable-number', empty: '' }, // ADDED
@@ -4605,6 +4914,11 @@ Draw.loadPlugin(function (ui) {
                 daysGermInput, daysTransInput, yieldInput, hwInput,
                 tbaseInput, tminInput, toptLowInput, toptHighInput, tmaxInput,
                 soilMinInput, coolThreshInput,
+                establishmentMaxInput, establishmentDaysInput, establishmentPolicySel,
+                qualityMaxInput, heatStageSel, qualityPolicySel,
+                photoperiodResponseSel, criticalDaylengthInput, photoperiodStageSel, photoperiodPolicySel,
+                chillingDaysInput, chillingHoursInput, chillingMinInput, chillingMaxInput, chillingStageSel, chillingPolicySel,
+                diagnosticPolicySel,
                 vegHeightInput, vegDiamInput, spacingInput
             ];
 
@@ -4930,6 +5244,23 @@ Draw.loadPlugin(function (ui) {
                     tmax_c: readNullableNumber(tmaxInput),
                     soil_temp_min_plant_c: readNullableNumber(soilMinInput),
                     start_cooling_threshold_c: readNullableNumber(coolThreshInput),
+                    establishment_temp_max_c: readNullableNumber(establishmentMaxInput), // ADDED
+                    establishment_heat_window_days: (establishmentDaysInput.value === '' ? null : readIntGE0(establishmentDaysInput)), // ADDED
+                    establishment_heat_policy: String(establishmentPolicySel.value || '').trim() || null, // ADDED
+                    quality_temp_max_c: readNullableNumber(qualityMaxInput), // ADDED
+                    heat_stress_stage: String(heatStageSel.value || '').trim() || null, // ADDED
+                    quality_heat_policy: String(qualityPolicySel.value || '').trim() || null, // ADDED
+                    photoperiod_response: String(photoperiodResponseSel.value || '').trim() || null, // ADDED
+                    critical_daylength_hours: readNullableNumber(criticalDaylengthInput), // ADDED
+                    photoperiod_stage: String(photoperiodStageSel.value || '').trim() || null, // ADDED
+                    photoperiod_policy: String(photoperiodPolicySel.value || '').trim() || null, // ADDED
+                    chilling_required_days: readNullableNumber(chillingDaysInput), // ADDED
+                    chilling_required_hours: readNullableNumber(chillingHoursInput), // ADDED
+                    chilling_temp_min_c: readNullableNumber(chillingMinInput), // ADDED
+                    chilling_temp_max_c: readNullableNumber(chillingMaxInput), // ADDED
+                    chilling_stage: String(chillingStageSel.value || '').trim() || null, // ADDED
+                    chilling_policy: String(chillingPolicySel.value || '').trim() || null, // ADDED
+                    diagnostic_policy: String(diagnosticPolicySel.value || '').trim() || null, // ADDED
 
                     veg_height_cm: readNullableNumber(vegHeightInput),
                     veg_diameter_cm: readNullableNumber(vegDiamInput),
@@ -5533,6 +5864,35 @@ Draw.loadPlugin(function (ui) {
             ? initialCityName
             : cityOpts[0]?.value;
         const citySel = makeSelect(cityOpts, cityValue);
+        const cityLatitudeInput = makeNullableNumber('', { min: -66.5, step: 0.0001 }); // CHANGED
+        cityLatitudeInput.max = '66.5'; // CHANGED
+        cityLatitudeInput.placeholder = 'decimal degrees'; // ADDED
+        const saveCityLatitudeBtn = mxUtils.button('Save', async () => { // ADDED
+            await runUiAsync('City latitude save error', async () => { // ADDED
+                syncStateFromControls(); // ADDED
+                await saveSchedulerCityLatitude({ // ADDED
+                    cityName: formState.cityName, // ADDED
+                    latitudeValue: cityLatitudeInput.value, // ADDED
+                    cities, // ADDED
+                    recomputeAll, // ADDED
+                    updateTaskPreview // ADDED
+                }); // ADDED
+                saveCityLatitudeBtn.textContent = 'Saved'; // ADDED
+                setTimeout(() => { saveCityLatitudeBtn.textContent = 'Save'; }, 1200); // ADDED
+            }); // ADDED
+        }); // ADDED
+        saveCityLatitudeBtn.style.marginLeft = '8px'; // ADDED
+        const cityLatitudeControl = document.createElement('div'); // ADDED
+        cityLatitudeControl.style.display = 'flex'; // ADDED
+        cityLatitudeControl.style.alignItems = 'center'; // ADDED
+        cityLatitudeControl.style.gap = '6px'; // ADDED
+        cityLatitudeControl.appendChild(cityLatitudeInput); // ADDED
+        cityLatitudeControl.appendChild(saveCityLatitudeBtn); // ADDED
+        function setCityLatitudeInputFromName(cityName) { // ADDED
+            const city = cities.find(row => String(row.city_name || '') === String(cityName || '')); // ADDED
+            cityLatitudeInput.value = city && finiteNumberOrNull(city.latitude_deg) != null ? String(city.latitude_deg) : ''; // ADDED
+        } // ADDED
+        setCityLatitudeInputFromName(cityValue); // ADDED
 
         // base method select (allowed per plant)
         const methodCategorySel = document.createElement('select');
@@ -5907,6 +6267,7 @@ Draw.loadPlugin(function (ui) {
         const FIELD_SCHEMA = [
             { key: 'seasonStartYear', label: 'Season start year:', control: seasonYearInput },
             { key: 'cityName', label: 'City:', control: citySel },
+            { key: 'cityLatitude', label: 'City latitude:', control: cityLatitudeControl }, // ADDED
             { key: 'methodSelection', label: 'Planting method:', control: combinedMethodSel }, // CHANGED
             { key: 'harvestWindowDays', label: 'Harvest window days:', control: harvestWindowInput },
             { key: 'minYieldMultiplier', label: 'Minimum yield multiplier:', control: minYieldMultInput },
@@ -5947,7 +6308,7 @@ Draw.loadPlugin(function (ui) {
         const harvestEndRowObj = row('Expected harvest end:', harvestEndInput); // CHANGED
         const daysToFirstHarvestRowObj = row('Days to first harvest:', daysToFirstHarvestInput); // CHANGED
 
-        appendFieldRows(contextSection.body, fieldRows, ['seasonStartYear', 'cityName', 'methodSelection']); // CHANGED
+        appendFieldRows(contextSection.body, fieldRows, ['seasonStartYear', 'cityName', 'cityLatitude', 'methodSelection']); // CHANGED
         const legacyMethodControls = document.createElement('div'); // ADDED
         legacyMethodControls.style.display = 'none'; // ADDED
         legacyMethodControls.appendChild(methodCategorySel); // ADDED
@@ -6331,6 +6692,8 @@ Draw.loadPlugin(function (ui) {
                     lastSpringFrostDOY: lsf,
                     daysTransplant,
                     overwinterAllowed,
+                    plantMetadata: p, // ADDED
+                    cityLatitudeDeg: finiteNumberOrNull(city.latitude_deg ?? city.latitude ?? city.lat), // ADDED
                     bedProfile: formState.bedProfile, // ADDED
                     bedProfileSource: formState.bedProfileSource // ADDED
                 });
@@ -6816,6 +7179,7 @@ Draw.loadPlugin(function (ui) {
 
         citySel.addEventListener('change', () => {
             void runUiAsync('City change error', async () => { // FIX
+                setCityLatitudeInputFromName(citySel.value); // ADDED
                 syncStateFromControls(); // ADDED
                 refreshClimateModelControls({ preserveDraft: false }); // ADDED
                 await recomputeAll('cityChanged');
@@ -7019,6 +7383,8 @@ Draw.loadPlugin(function (ui) {
                 const scanSummary = formatFeasibilityScanRanges(rows); // FIX: dialog shows compact reason ranges instead of daily JSON.
                 const scanRanges = compressFeasibilityScanRanges(rows); // ADDED
                 const sowingWindowsText = formatSowingWindowsSummary(formState.sowingWindows); // ADDED
+                const scheduleQualityDiagnosticRanges = annualCore.computeScheduleQualityDiagnosticRangesForInputs(inputs); // ADDED
+                const scheduleQualityDiagnosticsText = formatScheduleQualityDiagnosticRanges(scheduleQualityDiagnosticRanges); // ADDED
                 const lifecycleRows = usePrimarySowScan ? await explainFeasibilityOverSeason(inputs) : null; // ADDED
                 const lifecycleDiagnosticsModel = lifecycleRows ? buildFeasibilityDiagnosticsModel(inputs, lifecycleRows, { // ADDED
                     scanLabel: 'Lifecycle support through maturity and harvest', // ADDED
@@ -7040,6 +7406,9 @@ Draw.loadPlugin(function (ui) {
                     'Derived sowing windows:',
                     sowingWindowsText,
                     '',
+                    'Schedule quality diagnostic ranges:',
+                    scheduleQualityDiagnosticsText,
+                    '',
                     usePrimarySowScan ? 'Primary first-season sowing scan ranges:' : 'Feasibility scan ranges:',
                     scanSummary,
                     lifecycleDiagnosticsModel ? '' : null,
@@ -7059,6 +7428,7 @@ Draw.loadPlugin(function (ui) {
                     diagnosticsTitle: usePrimarySowScan ? 'Primary sowing diagnostics' : 'Diagnostics', // ADDED
                     scanTitle: usePrimarySowScan ? 'Primary first-season sowing scan ranges' : 'Feasibility scan ranges', // ADDED
                     sowingWindowsText, // ADDED
+                    scheduleQualityDiagnosticRanges, // ADDED
                     lifecycleDiagnosticsModel, // ADDED
                     lifecycleRanges: lifecycleScanRanges // ADDED
                 }); // CHANGED
@@ -7091,6 +7461,7 @@ Draw.loadPlugin(function (ui) {
                     selPlant,
                     { currentVarieties }
                 );
+                requireNoBlockingScheduleQualityDiagnostics(inputs); // ADDED
 
                 const result = computeScheduleResult(inputs); // FIX
                 if (result.kind === 'perennial') {
@@ -7117,6 +7488,7 @@ Draw.loadPlugin(function (ui) {
                     selPlant,
                     { currentVarieties }
                 );
+                requireNoBlockingScheduleQualityDiagnostics(inputs); // ADDED
 
                 // Build taskTemplate object from current rules
                 taskTemplate = normalizeTaskTemplate({ // CHANGED
@@ -7482,6 +7854,7 @@ Draw.loadPlugin(function (ui) {
             } // ADDED
             try { // ADDED
                 const { inputs } = await buildScheduleContextFromForm(formState, selPlant, { currentVarieties }); // ADDED
+                requireNoBlockingScheduleQualityDiagnostics(inputs); // ADDED
                 const result = computeScheduleResult(inputs); // ADDED
                 const tasks = await buildTasksForPlan({ // ADDED
                     plant: result.plant, // ADDED
@@ -9643,6 +10016,8 @@ Draw.loadPlugin(function (ui) {
                     ? Number(selectedPlant.days_transplant)
                     : 0,
                 overwinterAllowed: overwinterAllowed0,
+                plantMetadata: selectedPlant, // ADDED
+                cityLatitudeDeg: finiteNumberOrNull(cityInit.latitude_deg ?? cityInit.latitude ?? cityInit.lat), // ADDED
                 bedProfile: scheduleBedContext.profile, // ADDED
                 bedProfileSource: scheduleBedContext.source // ADDED
             });
@@ -10182,6 +10557,11 @@ Draw.loadPlugin(function (ui) {
             runUiAsyncOperation,
             computeAutoStartEndWindowForward: annualCore.computeAutoStartEndWindowForward, // CHANGED
             computeAnnualSowingWindows: annualCore.computeAnnualSowingWindows, // ADDED
+            evaluateSowDateDiagnostics: annualCore.evaluateSowDateDiagnostics, // ADDED
+            computeScheduleQualityDiagnosticRanges: annualCore.computeScheduleQualityDiagnosticRanges, // ADDED
+            computeScheduleQualityDiagnosticRangesForInputs: annualCore.computeScheduleQualityDiagnosticRangesForInputs, // ADDED
+            compressScheduleQualityDiagnosticRanges: annualCore.compressScheduleQualityDiagnosticRanges, // ADDED
+            diagnosticLabel: annualCore.diagnosticLabel, // ADDED
             normId,
             monthlyMeanOnDate, // ADDED
             normalizeBedProfile, // ADDED
@@ -10197,6 +10577,7 @@ Draw.loadPlugin(function (ui) {
             normalizeSowingWindows, // ADDED
             ORPHAN_SOWING_WINDOW_ID, // ADDED
             formatSowingWindowsSummary, // ADDED
+            formatScheduleQualityDiagnosticRanges, // ADDED
             buildSowingWindowSelectorState, // ADDED
             pickDefaultSowingWindowId, // ADDED
             defaultStartForActiveSowingWindow, // ADDED
@@ -10207,6 +10588,10 @@ Draw.loadPlugin(function (ui) {
             humanFeasibilityReason, // ADDED
             classifySelectedSowDate, // ADDED
             requireFeasibleSowingWindowSelection, // ADDED
+            requireNoBlockingScheduleQualityDiagnostics, // ADDED
+            describeBlockingScheduleQualityDiagnostics, // ADDED
+            normalizeLatitudeDeg, // ADDED
+            saveSchedulerCityLatitude, // ADDED
             buildScheduleViewState, // ADDED
             taskRuleLibraryForPlanningMode, // ADDED
             resolveTaskRuleTaskTypeId, // NEW

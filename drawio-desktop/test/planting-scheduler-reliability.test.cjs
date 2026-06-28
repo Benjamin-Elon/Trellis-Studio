@@ -67,7 +67,9 @@ function loadSchedulerHooks() {
     vm.runInContext(fs.readFileSync(schedulerPath, 'utf8'), context, {
         filename: schedulerPath
     });
-    return context.window.__TRELLIS_PLANTING_SCHEDULER_TEST_HOOKS__;
+    const hooks = context.window.__TRELLIS_PLANTING_SCHEDULER_TEST_HOOKS__;
+    hooks.__testWindow = context.window; // ADDED
+    return hooks;
 }
 
 function loadTaskManagerHooks() {
@@ -166,7 +168,8 @@ function makeInputs({
     seasonEndISO = '2026-12-31',
     seasonStartYear = 2026,
     harvestWindowDays = 7,
-    policy = null
+    policy = null,
+    dailyClimate = null
 } = {}) {
     return new hooks.ScheduleInputs({
         plant,
@@ -182,7 +185,8 @@ function makeInputs({
             overwinterAllowed: plant.isBiennial() || plant.isPerennial() || plant.overwinter_ok === 1
         }),
         seasonStartYear,
-        harvestWindowDays
+        harvestWindowDays,
+        dailyClimate
     });
 }
 
@@ -213,7 +217,9 @@ function makeAutoWindowParams({
     methodId = 'direct_sow.field',
     year = 2026,
     harvestWindowDays = 7,
-    bedProfile = null
+    bedProfile = null,
+    dailyClimate = null,
+    windowOptions = null
 } = {}) {
     const env = plant.cropTempEnvelope();
     return {
@@ -234,8 +240,22 @@ function makeAutoWindowParams({
         lastSpringFrostDOY: city.last_spring_frost_p50_doy || city.last_spring_frost_doy || 1, // CHANGED
         daysTransplant: Number(plant.days_transplant || 0),
         overwinterAllowed: plant.overwinter_ok === 1,
-        bedProfile
+        plantMetadata: plant, // ADDED
+        cityLatitudeDeg: Number.isFinite(Number(city.latitude_deg)) ? Number(city.latitude_deg) : null, // ADDED
+        bedProfile,
+        dailyClimate,
+        windowOptions
     };
+}
+
+function makeDailyClimate(year, defaultMeanC, overrides = {}) { // ADDED
+    const days = {}; // ADDED
+    for (let d = new Date(`${year}-01-01T00:00:00Z`); d <= new Date(`${year}-12-31T00:00:00Z`); d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1))) { // ADDED
+        const iso = d.toISOString().slice(0, 10); // ADDED
+        const mean = Number(overrides[iso] ?? defaultMeanC); // ADDED
+        days[iso] = Object.freeze({ min: mean - 1, max: mean + 1, mean }); // ADDED
+    } // ADDED
+    return Object.freeze({ days: Object.freeze(days), diagnostics: Object.freeze({ source: 'test daily climate', forecastBlendDays: 0, missingNormalDays: 0 }) }); // ADDED
 }
 
 function makeAttributeCell(initial = {}) {
@@ -681,6 +701,323 @@ test('overwinter spring sowing belongs to its own season year', () => { // ADDED
     const next = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2027 })); // ADDED
     assert.equal(prior.windows.some(window => window.startISO.startsWith('2027-') || window.endISO.startsWith('2027-')), false); // ADDED
     assert.equal(next.windows[0].startISO, '2027-01-01'); // ADDED
+}); // ADDED
+
+test('cool-season heat above optimum adds diagnostics without blocking by default', () => { // ADDED
+    const plant = makePlant({ // ADDED
+        plant_name: 'Cool Lettuce', // ADDED
+        days_maturity: 20, // ADDED
+        topt_high_c: 18, // ADDED
+        tmax_c: 35, // ADDED
+        quality_temp_max_c: 18, // ADDED
+        heat_stress_stage: 'harvest_quality', // ADDED
+        quality_heat_policy: 'warn' // ADDED
+    }); // ADDED
+    const city = makeCity(22); // ADDED
+    city.latitude_deg = 45; // ADDED
+    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
+    assert.equal(result.feasible, true); // ADDED
+    assert.ok(result.windows.some(window => /Heat warning/.test(window.riskSummary)), JSON.stringify(result.windows)); // CHANGED
+    assert.ok(result.windows.some(window => window.diagnostics.some(diagnostic => diagnostic.factor === 'quality_heat' && diagnostic.severity === 'warning'))); // ADDED
+}); // ADDED
+
+test('establishment heat block policy excludes otherwise feasible sow dates', () => { // ADDED
+    const plant = makePlant({ // ADDED
+        plant_name: 'Heat Blocked Spinach', // ADDED
+        days_maturity: 20, // ADDED
+        tmax_c: 40, // ADDED
+        establishment_temp_max_c: 25, // ADDED
+        establishment_heat_window_days: 3, // ADDED
+        establishment_heat_policy: 'block' // ADDED
+    }); // ADDED
+    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city: makeCity(30), year: 2026 })); // ADDED
+    assert.equal(result.feasible, false); // ADDED
+    assert.equal(result.windows.length, 0); // ADDED
+}); // ADDED
+
+test('photoperiod diagnostics use city latitude and do not block warn-policy windows', () => { // ADDED
+    const plant = makePlant({ // ADDED
+        plant_name: 'Long Day Onion', // ADDED
+        days_maturity: 30, // ADDED
+        photoperiod_response: 'long_day', // ADDED
+        critical_daylength_hours: 14.5, // ADDED
+        photoperiod_stage: 'maturity', // ADDED
+        photoperiod_policy: 'warn' // ADDED
+    }); // ADDED
+    const city = makeCity(16); // ADDED
+    city.latitude_deg = 45; // ADDED
+    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
+    assert.equal(result.feasible, true); // ADDED
+    assert.ok(result.windows.some(window => /Photoperiod warning/.test(window.riskSummary)), JSON.stringify(result.windows)); // CHANGED
+}); // ADDED
+
+test('missing latitude skips photoperiod diagnostics without changing feasible windows', () => { // ADDED
+    const plant = makePlant({ // ADDED
+        photoperiod_response: 'long_day', // ADDED
+        critical_daylength_hours: 14.5, // ADDED
+        photoperiod_stage: 'maturity', // ADDED
+        photoperiod_policy: 'warn' // ADDED
+    }); // ADDED
+    const baseline = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant: makePlant(), city: makeCity(16), year: 2026 })); // ADDED
+    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city: makeCity(16), year: 2026 })); // ADDED
+    assert.equal(result.windows.length, baseline.windows.length); // ADDED
+    assert.ok(result.windows.some(window => /Photoperiod data missing/.test(window.riskSummary)), JSON.stringify(result.windows)); // CHANGED
+    assert.ok(result.windows.some(window => window.diagnostics.some(diagnostic => /latitude is missing/.test(diagnostic.message))), JSON.stringify(result.windows)); // ADDED
+}); // ADDED
+
+test('chilling diagnostics report insufficient vernalization without default blocking', () => { // ADDED
+    const plant = makePlant({ // ADDED
+        plant_name: 'Chill Garlic', // ADDED
+        days_maturity: 60, // ADDED
+        chilling_required_days: 20, // ADDED
+        chilling_temp_min_c: -2, // ADDED
+        chilling_temp_max_c: 5, // ADDED
+        chilling_stage: 'maturity', // ADDED
+        chilling_policy: 'warn' // ADDED
+    }); // ADDED
+    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city: makeCity(15), year: 2026 })); // ADDED
+    assert.equal(result.feasible, true); // ADDED
+    assert.ok(result.windows.some(window => /Chilling warning/.test(window.riskSummary)), JSON.stringify(result.windows)); // CHANGED
+}); // ADDED
+
+test('variety physiology overrides affect diagnostics without mutating base plant', () => { // ADDED
+    const base = makePlant({ plant_name: 'Base Lettuce', days_maturity: 20, tmax_c: 35 }); // ADDED
+    const variety = new hooks.PlantModel(hooks.applyPlantOverrides(base, { // ADDED
+        quality_temp_max_c: 18, // ADDED
+        heat_stress_stage: 'harvest_quality', // ADDED
+        quality_heat_policy: 'warn' // ADDED
+    })); // ADDED
+    const city = makeCity(22); // ADDED
+    const baseResult = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant: base, city, year: 2026 })); // ADDED
+    const varietyResult = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant: variety, city, year: 2026 })); // ADDED
+    assert.equal(base.quality_temp_max_c, undefined); // ADDED
+    assert.equal(baseResult.windows.some(window => /Heat warning/.test(window.riskSummary)), false); // CHANGED
+    assert.equal(varietyResult.windows.some(window => /Heat warning/.test(window.riskSummary)), true); // CHANGED
+}); // ADDED
+
+test('spring-sown chilling does not receive pre-sowing winter credit', () => { // ADDED
+    const plant = makePlant({ // ADDED
+        days_maturity: 30, // ADDED
+        chilling_required_days: 20, // ADDED
+        chilling_temp_min_c: -2, // ADDED
+        chilling_temp_max_c: 5, // ADDED
+        chilling_stage: 'maturity', // ADDED
+        chilling_policy: 'warn' // ADDED
+    }); // ADDED
+    const city = makeSeasonalCity({ 1: 3, 2: 3, 3: 12, 4: 16, 5: 17, 6: 18, 7: 18, 8: 18, 9: 16, 10: 12, 11: 8, 12: 4 }); // ADDED
+    const result = hooks.evaluateSowDateDiagnostics(makeInputs({ plant, city, startISO: '2026-04-01' })); // ADDED
+    const chilling = result.diagnostics.find(diagnostic => diagnostic.factor === 'chilling'); // ADDED
+    assert.ok(chilling, JSON.stringify(result.diagnostics)); // ADDED
+    assert.equal(chilling.startISO, '2026-04-01'); // ADDED
+    assert.equal(chilling.observed, 0); // ADDED
+}); // ADDED
+
+test('fall-sown overwinter crop accumulates chilling after sowing', () => { // ADDED
+    const plant = makePlant({ // ADDED
+        overwinter_ok: 1, // ADDED
+        days_maturity: 80, // ADDED
+        chilling_required_days: 20, // ADDED
+        chilling_temp_min_c: -2, // ADDED
+        chilling_temp_max_c: 6, // ADDED
+        chilling_stage: 'maturity', // ADDED
+        chilling_policy: 'warn' // ADDED
+    }); // ADDED
+    const city = makeSeasonalCity({ 1: 3, 2: 3, 3: 6, 4: 10, 5: 14, 6: 18, 7: 20, 8: 19, 9: 12, 10: 4, 11: 4, 12: 4 }); // ADDED
+    const result = hooks.evaluateSowDateDiagnostics(makeInputs({ plant, city, startISO: '2026-10-01', seasonEndISO: '2026-12-31' })); // ADDED
+    assert.equal(result.diagnostics.some(diagnostic => diagnostic.factor === 'chilling'), false, JSON.stringify(result.diagnostics)); // ADDED
+}); // ADDED
+
+test('chilling required hours use daily-equivalent accumulation', () => { // ADDED
+    const plant = makePlant({ // ADDED
+        days_maturity: 3, // ADDED
+        chilling_required_hours: 96, // ADDED
+        chilling_temp_min_c: -2, // ADDED
+        chilling_temp_max_c: 6, // ADDED
+        chilling_stage: 'maturity', // ADDED
+        chilling_policy: 'warn' // ADDED
+    }); // ADDED
+    const result = hooks.evaluateSowDateDiagnostics(makeInputs({ plant, city: makeCity(4), startISO: '2026-01-01' })); // ADDED
+    const chilling = result.diagnostics.find(diagnostic => diagnostic.factor === 'chilling'); // ADDED
+    assert.ok(chilling, JSON.stringify(result.diagnostics)); // ADDED
+    assert.equal(chilling.threshold, 4); // ADDED
+    assert.equal(chilling.observed, 3); // ADDED
+}); // ADDED
+
+test('smoothed diagnostic block gap remains blocked for the exact selected date', () => { // ADDED
+    const plant = makePlant({ // ADDED
+        days_maturity: 1, // ADDED
+        establishment_temp_max_c: 25, // ADDED
+        establishment_heat_window_days: 1, // ADDED
+        establishment_heat_policy: 'block' // ADDED
+    }); // ADDED
+    const overrides = { // ADDED
+        '2026-03-15': 30, // ADDED
+        '2026-03-16': 30, // ADDED
+        '2026-03-17': 30 // ADDED
+    }; // ADDED
+    const dailyClimate = makeDailyClimate(2026, 20, overrides); // ADDED
+    const windows = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city: makeCity(20), year: 2026, dailyClimate })).windows; // ADDED
+    assert.equal(windows.length, 1, JSON.stringify(windows)); // ADDED
+    assert.equal(windows[0].startISO, '2026-01-01'); // ADDED
+    assert.ok(windows[0].endISO > '2026-03-17', JSON.stringify(windows)); // CHANGED
+    assert.match(windows[0].riskSummary, /Establishment heat block \(3 dates\)/); // CHANGED
+    const inputs = makeInputs({ plant, city: makeCity(20), startISO: '2026-03-15', dailyClimate }); // ADDED
+    const exact = hooks.evaluateSowDateDiagnostics(inputs); // ADDED
+    assert.ok(exact.blockingDiagnostics.some(diagnostic => diagnostic.factor === 'establishment_heat'), JSON.stringify(exact)); // ADDED
+    assert.throws(() => hooks.requireNoBlockingScheduleQualityDiagnostics(inputs), /Establishment heat block/); // ADDED
+}); // ADDED
+
+test('photoperiod block excludes dates when latitude is present and daylength fails', () => { // ADDED
+    const plant = makePlant({ // ADDED
+        photoperiod_response: 'long_day', // ADDED
+        critical_daylength_hours: 14.5, // ADDED
+        photoperiod_stage: 'maturity', // ADDED
+        photoperiod_policy: 'block' // ADDED
+    }); // ADDED
+    const city = makeCity(16); // ADDED
+    city.latitude_deg = 45; // ADDED
+    const exact = hooks.evaluateSowDateDiagnostics(makeInputs({ plant, city, startISO: '2026-01-01' })); // ADDED
+    assert.ok(exact.blockingDiagnostics.some(diagnostic => diagnostic.factor === 'photoperiod'), JSON.stringify(exact)); // ADDED
+    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
+    assert.equal(result.windows.some(window => window.startISO === '2026-01-01'), false, JSON.stringify(result.windows)); // ADDED
+}); // ADDED
+
+test('missing latitude does not block photoperiod block policy and shows data badge', () => { // ADDED
+    const plant = makePlant({ // ADDED
+        photoperiod_response: 'long_day', // ADDED
+        critical_daylength_hours: 14.5, // ADDED
+        photoperiod_stage: 'maturity', // ADDED
+        photoperiod_policy: 'block' // ADDED
+    }); // ADDED
+    const city = makeCity(16); // ADDED
+    const exact = hooks.evaluateSowDateDiagnostics(makeInputs({ plant, city, startISO: '2026-01-01' })); // ADDED
+    assert.equal(exact.blockingDiagnostics.length, 0, JSON.stringify(exact)); // ADDED
+    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
+    assert.equal(result.feasible, true); // ADDED
+    assert.ok(result.windows.some(window => /Photoperiod data missing/.test(window.riskSummary)), JSON.stringify(result.windows)); // ADDED
+}); // ADDED
+
+test('unsupported stored latitude does not silently clamp or block photoperiod policy', () => { // ADDED
+    const plant = makePlant({ // ADDED
+        photoperiod_response: 'long_day', // ADDED
+        critical_daylength_hours: 14.5, // ADDED
+        photoperiod_stage: 'maturity', // ADDED
+        photoperiod_policy: 'block' // ADDED
+    }); // ADDED
+    const city = makeCity(16); // ADDED
+    city.latitude_deg = 70; // ADDED
+    const exact = hooks.evaluateSowDateDiagnostics(makeInputs({ plant, city, startISO: '2026-01-01' })); // ADDED
+    assert.equal(exact.blockingDiagnostics.length, 0, JSON.stringify(exact)); // ADDED
+    assert.ok(exact.diagnostics.some(diagnostic => diagnostic.factor === 'photoperiod' && diagnostic.severity === 'info' && /supported -66\.5 to 66\.5/.test(diagnostic.message)), JSON.stringify(exact)); // ADDED
+    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
+    assert.equal(result.feasible, true); // ADDED
+    assert.ok(result.windows.some(window => /Photoperiod data missing/.test(window.riskSummary)), JSON.stringify(result.windows)); // ADDED
+}); // ADDED
+
+test('diagnostic ranges format the same human risk labels as selector summaries', () => { // ADDED
+    const plant = makePlant({ // ADDED
+        days_maturity: 20, // ADDED
+        quality_temp_max_c: 18, // ADDED
+        heat_stress_stage: 'harvest_quality', // ADDED
+        quality_heat_policy: 'warn' // ADDED
+    }); // ADDED
+    const city = makeCity(22); // ADDED
+    const params = makeAutoWindowParams({ plant, city, year: 2026 }); // ADDED
+    const windows = hooks.computeAnnualSowingWindows(params).windows; // ADDED
+    const ranges = hooks.computeScheduleQualityDiagnosticRanges(params); // ADDED
+    const selector = hooks.buildSowingWindowSelectorState({ sowingWindows: windows, activeSowingWindowId: windows[0]?.id || '', startISO: windows[0]?.startISO || '' }); // ADDED
+    const text = hooks.formatScheduleQualityDiagnosticRanges(ranges); // ADDED
+    assert.ok(selector.options.some(option => /Heat warning \(\d+ dates?\)/.test(option.label)), JSON.stringify(selector)); // CHANGED
+    assert.match(text, /Heat warning/); // ADDED
+}); // ADDED
+
+test('city latitude validation accepts clearing and rejects out-of-range values', () => { // ADDED
+    assert.equal(hooks.normalizeLatitudeDeg(''), null); // ADDED
+    assert.equal(hooks.normalizeLatitudeDeg('45.5'), 45.5); // ADDED
+    assert.equal(hooks.normalizeLatitudeDeg('66.5'), 66.5); // ADDED
+    assert.equal(hooks.normalizeLatitudeDeg('-66.5'), -66.5); // ADDED
+    assert.throws(() => hooks.normalizeLatitudeDeg('66.6'), /between -66\.5 and 66\.5/); // CHANGED
+    assert.throws(() => hooks.normalizeLatitudeDeg('-66.6'), /between -66\.5 and 66\.5/); // CHANGED
+}); // ADDED
+
+test('city latitude update persists to Cities.latitude_deg', async () => { // ADDED
+    const testWindow = hooks.__testWindow; // ADDED
+    const previousBridge = testWindow.dbBridge; // ADDED
+    const updates = []; // ADDED
+    let changes = 0; // ADDED
+    testWindow.dbBridge = { // ADDED
+        async resolvePath() { return { dbPath: 'mock.sqlite' }; }, // ADDED
+        async open() { return { dbId: 'mock-db' }; }, // ADDED
+        async close() {}, // ADDED
+        async query(_dbId, sql) { // ADDED
+            if (/PRAGMA table_info/i.test(sql)) return { rows: [] }; // ADDED
+            if (/SELECT changes\(\)/i.test(sql)) return { rows: [{ changes }] }; // ADDED
+            return { rows: [] }; // ADDED
+        }, // ADDED
+        async exec(_dbId, sql, params) { // ADDED
+            if (/UPDATE Cities SET latitude_deg/i.test(sql)) { // ADDED
+                updates.push(params); // ADDED
+                changes = params[1] === 'Test City' ? 1 : 0; // ADDED
+            } // ADDED
+            return {}; // ADDED
+        } // ADDED
+    }; // ADDED
+    try { // ADDED
+        const saved = await hooks.CityClimate.updateLatitude('Test City', '49.25'); // ADDED
+        assert.equal(saved, 49.25); // ADDED
+        assert.deepEqual(Array.from(updates.at(-1)), [49.25, 'Test City']); // CHANGED
+        const cleared = await hooks.CityClimate.updateLatitude('Test City', ''); // ADDED
+        assert.equal(cleared, null); // ADDED
+        assert.deepEqual(Array.from(updates.at(-1)), [null, 'Test City']); // CHANGED
+        const beforeInvalid = updates.length; // ADDED
+        await assert.rejects(() => hooks.CityClimate.updateLatitude('Test City', '70'), /between -66\.5 and 66\.5/); // ADDED
+        assert.equal(updates.length, beforeInvalid); // ADDED
+    } finally { // ADDED
+        testWindow.dbBridge = previousBridge; // ADDED
+    } // ADDED
+}); // ADDED
+
+test('city latitude save helper persists cache and refreshes annual scheduling state', async () => { // ADDED
+    const testWindow = hooks.__testWindow; // ADDED
+    const previousBridge = testWindow.dbBridge; // ADDED
+    const updates = []; // ADDED
+    let changes = 0; // ADDED
+    testWindow.dbBridge = { // ADDED
+        async resolvePath() { return { dbPath: 'mock.sqlite' }; }, // ADDED
+        async open() { return { dbId: 'mock-db' }; }, // ADDED
+        async close() {}, // ADDED
+        async query(_dbId, sql) { // ADDED
+            if (/PRAGMA table_info/i.test(sql)) return { rows: [] }; // ADDED
+            if (/SELECT changes\(\)/i.test(sql)) return { rows: [{ changes }] }; // ADDED
+            return { rows: [] }; // ADDED
+        }, // ADDED
+        async exec(_dbId, sql, params) { // ADDED
+            if (/UPDATE Cities SET latitude_deg/i.test(sql)) { // ADDED
+                updates.push(params); // ADDED
+                changes = params[1] === 'Test City' ? 1 : 0; // ADDED
+            } // ADDED
+            return {}; // ADDED
+        } // ADDED
+    }; // ADDED
+    const cities = [{ city_name: 'Test City', latitude_deg: null }]; // ADDED
+    const recomputeReasons = []; // ADDED
+    let previewRefreshes = 0; // ADDED
+    try { // ADDED
+        const saved = await hooks.saveSchedulerCityLatitude({ // ADDED
+            cityName: 'Test City', // ADDED
+            latitudeValue: '49.25', // ADDED
+            cities, // ADDED
+            recomputeAll: async reason => { recomputeReasons.push(reason); }, // ADDED
+            updateTaskPreview: async () => { previewRefreshes += 1; } // ADDED
+        }); // ADDED
+        assert.equal(saved, 49.25); // ADDED
+        assert.deepEqual(Array.from(updates.at(-1)), [49.25, 'Test City']); // ADDED
+        assert.equal(cities[0].latitude_deg, 49.25); // ADDED
+        assert.deepEqual(recomputeReasons, ['cityChanged']); // ADDED
+        assert.equal(previewRefreshes, 1); // ADDED
+    } finally { // ADDED
+        testWindow.dbBridge = previousBridge; // ADDED
+    } // ADDED
 }); // ADDED
 
 test('biennial scan window uses its configured lifespan', () => {
