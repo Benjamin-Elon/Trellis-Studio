@@ -285,18 +285,30 @@ Draw.loadPlugin(function (ui) {
         return String(value ?? '').trim().toLowerCase();
     }
 
+    const ORPHAN_SOWING_WINDOW_ID = '__saved_date_outside_windows'; // ADDED
+
+    function isOrphanSowingWindowId(value) { // ADDED
+        return String(value || '') === ORPHAN_SOWING_WINDOW_ID; // ADDED
+    }
+
+    function defaultStartForActiveSowingWindow(activeWindow, todayISO = '') { // ADDED
+        if (!activeWindow) return ''; // ADDED
+        return sowDateInWindow(todayISO, activeWindow) ? String(todayISO) : String(activeWindow.startISO || ''); // ADDED
+    }
+
     function resolveStartAfterWindow({
         currentStartISO,
-        autoStartISO,
+        activeWindow,
         feasible,
         forceWriteStart,
         hasPersistedSchedule,
-        userEditedStartThisSession
-    }) { // FIX: keep persisted and session-edited dates distinct from generated defaults
-        const preserveGenuineStart = !!hasPersistedSchedule || !!userEditedStartThisSession;
-        if (feasible && (forceWriteStart || !preserveGenuineStart)) return String(autoStartISO || '');
-        if (!feasible && !preserveGenuineStart) return '';
-        return String(currentStartISO || '');
+        userEditedStartThisSession,
+        todayISO = ''
+    }) { // CHANGED: active sowing windows own generated defaults
+        const preserveGenuineStart = !!hasPersistedSchedule || !!userEditedStartThisSession; // CHANGED
+        if (feasible && (forceWriteStart || !preserveGenuineStart)) return defaultStartForActiveSowingWindow(activeWindow, todayISO); // CHANGED
+        if (!feasible && !preserveGenuineStart) return ''; // CHANGED
+        return String(currentStartISO || ''); // CHANGED
     }
 
     function isPerennialPlant(plant) { // FIX: keep lifespan-only schedules out of maturity-budget code paths
@@ -2993,30 +3005,110 @@ Draw.loadPlugin(function (ui) {
         return raw.replace(/_/g, ' '); // ADDED
     } // ADDED
 
-    function classifySelectedSowDate({ // ADDED
-        perennial = false, // ADDED
-        windowFeasible = false, // ADDED
-        startISO = '', // ADDED
-        earliestISO = '', // ADDED
-        latestISO = '' // ADDED
-    } = {}) { // ADDED
-        if (perennial) { // ADDED
-            return { status: 'not_applicable', label: 'Not applicable for perennial planting dates.' }; // ADDED
-        } // ADDED
-        if (!windowFeasible) { // ADDED
-            return { status: 'no_window', label: 'No feasible sowing window is available.' }; // ADDED
-        } // ADDED
+    function normalizeSowingWindow(window) { // ADDED
+        if (!window) return null; // ADDED
+        const startISO = String(window.startISO || '').trim(); // ADDED
+        const endISO = String(window.endISO || '').trim(); // ADDED
+        if (!parseISODateUTCValue(startISO) || !parseISODateUTCValue(endISO)) return null; // ADDED
+        return { // ADDED
+            id: String(window.id || '').trim() || `${startISO}_${endISO}`, // ADDED
+            label: String(window.label || '').trim() || `${startISO} to ${endISO}`, // ADDED
+            startISO, // ADDED
+            endISO, // ADDED
+            source: window.source || null // ADDED
+        }; // ADDED
+    } // ADDED
+    function normalizeSowingWindows(windows) { // ADDED
+        return (Array.isArray(windows) ? windows : []).map(normalizeSowingWindow).filter(Boolean); // ADDED
+    } // ADDED
+    function getActiveSowingWindow(formState) { // ADDED
+        const windows = normalizeSowingWindows(formState?.sowingWindows); // ADDED
+        const activeId = String(formState?.activeSowingWindowId || '').trim(); // ADDED
+        return windows.find(window => window.id === activeId) || null; // ADDED
+    } // ADDED
+    function sowDateInWindow(startISO, window) { // ADDED
         const selected = parseISODateUTCValue(startISO); // ADDED
-        if (!selected) return { status: 'missing', label: 'Select a sow date.' }; // ADDED
-        const earliest = parseISODateUTCValue(earliestISO); // ADDED
-        const latest = parseISODateUTCValue(latestISO); // ADDED
-        if (earliest && selected < earliest) { // ADDED
-            return { status: 'early', label: 'The selected sow date is earlier than the feasible window.' }; // ADDED
+        const earliest = parseISODateUTCValue(window?.startISO); // ADDED
+        const latest = parseISODateUTCValue(window?.endISO); // ADDED
+        return !!(selected && earliest && latest && selected >= earliest && selected <= latest); // ADDED
+    } // ADDED
+    function findSowingWindowForDate(windows, startISO) { // ADDED
+        return normalizeSowingWindows(windows).find(window => sowDateInWindow(startISO, window)) || null; // ADDED
+    } // ADDED
+    function formatSowingWindowsSummary(windows) { // ADDED
+        const normalized = normalizeSowingWindows(windows); // ADDED
+        if (!normalized.length) return 'No feasible sowing windows.'; // ADDED
+        return normalized.map(window => `${window.label}: ${window.startISO} to ${window.endISO}`).join('\n'); // ADDED
+    } // ADDED
+    function buildSowingWindowSelectorState({ // ADDED
+        sowingWindows = [], // ADDED
+        activeSowingWindowId = '', // ADDED
+        startISO = '' // ADDED
+    } = {}) { // ADDED
+        const windows = normalizeSowingWindows(sowingWindows); // ADDED
+        const options = []; // ADDED
+        if (isOrphanSowingWindowId(activeSowingWindowId)) { // ADDED
+            const suffix = startISO ? ` (${startISO})` : ''; // ADDED
+            options.push({ value: ORPHAN_SOWING_WINDOW_ID, label: `Saved date outside windows${suffix}`, disabled: true }); // ADDED
         } // ADDED
-        if (latest && selected > latest) { // ADDED
-            return { status: 'late', label: 'The selected sow date is later than the feasible window.' }; // ADDED
+        if (!windows.length && !options.length) { // CHANGED
+            options.push({ value: '', label: 'No feasible sowing window', disabled: false }); // ADDED
+        } else { // ADDED
+            windows.forEach(window => options.push({ value: window.id, label: window.label, disabled: false })); // ADDED
         } // ADDED
-        return { status: 'feasible', label: 'The selected sow date is feasible.' }; // ADDED
+        const activeWindow = windows.find(window => window.id === String(activeSowingWindowId || '').trim()) || null; // ADDED
+        const selectedValue = options.some(option => option.value === activeSowingWindowId) ? String(activeSowingWindowId || '') : ''; // ADDED
+        return { // ADDED
+            options, // ADDED
+            value: selectedValue, // ADDED
+            activeWindow, // ADDED
+            boundsText: activeWindow ? `${activeWindow.startISO} to ${activeWindow.endISO}` : '' // ADDED
+        }; // ADDED
+    } // ADDED
+    function pickDefaultSowingWindowId(windows, { savedStartISO = '', todayISO = '' } = {}) { // ADDED
+        const normalized = normalizeSowingWindows(windows); // ADDED
+        if (!normalized.length) return ''; // ADDED
+        const savedWindow = findSowingWindowForDate(normalized, savedStartISO); // ADDED
+        if (savedWindow) return savedWindow.id; // ADDED
+        const today = parseISODateUTCValue(todayISO); // ADDED
+        if (today) { // ADDED
+            const futureWindow = normalized.find(window => { // ADDED
+                const end = parseISODateUTCValue(window.endISO); // ADDED
+                return end && end >= today; // ADDED
+            }); // ADDED
+            if (futureWindow) return futureWindow.id; // ADDED
+        } // ADDED
+        return normalized[0].id; // ADDED
+    } // ADDED
+    function resolveStartForSowingWindowSwitch(windows, activeSowingWindowId) { // ADDED
+        const activeWindow = normalizeSowingWindows(windows).find(window => window.id === String(activeSowingWindowId || '').trim()); // ADDED
+        return activeWindow ? activeWindow.startISO : ''; // ADDED
+    } // ADDED
+    function classifySelectedSowDate({ // CHANGED
+        perennial = false, // CHANGED
+        windowFeasible = false, // CHANGED
+        startISO = '', // CHANGED
+        sowingWindows = [], // ADDED
+        activeSowingWindowId = '' // ADDED
+    } = {}) { // CHANGED
+        if (perennial) return { status: 'not_applicable', label: 'Not applicable for perennial planting dates.' }; // CHANGED
+        if (!windowFeasible || !normalizeSowingWindows(sowingWindows).length) return { status: 'no_window', label: 'No feasible sowing window is available.' }; // CHANGED
+        const selected = parseISODateUTCValue(startISO); // CHANGED
+        if (!selected) return { status: 'missing', label: 'Select a sow date.' }; // CHANGED
+        if (isOrphanSowingWindowId(activeSowingWindowId)) return { status: 'outside_window', label: 'The saved sow date is outside the selectable sowing windows.' }; // ADDED
+        const activeWindow = normalizeSowingWindows(sowingWindows).find(window => window.id === String(activeSowingWindowId || '').trim()); // ADDED
+        if (!activeWindow) return { status: 'no_active_window', label: 'Select a sowing window.' }; // ADDED
+        if (!sowDateInWindow(startISO, activeWindow)) { // CHANGED
+            const otherWindow = findSowingWindowForDate(sowingWindows, startISO); // ADDED
+            if (otherWindow) return { status: 'window_mismatch', label: `The selected sow date belongs to ${otherWindow.label}, not ${activeWindow.label}.` }; // ADDED
+            return { status: 'outside_window', label: 'The selected sow date is outside the selected sowing window.' }; // CHANGED
+        } // CHANGED
+        return { status: 'feasible', label: `The selected sow date is in ${activeWindow.label}.` }; // CHANGED
+    } // CHANGED
+    function requireFeasibleSowingWindowSelection(args) { // ADDED
+        const classification = classifySelectedSowDate(args); // ADDED
+        if (!args?.perennial && classification.status !== 'feasible') throw new Error(classification.label); // ADDED
+        return classification; // ADDED
     } // ADDED
 
     function buildScheduleViewState({ // ADDED
@@ -3028,8 +3120,8 @@ Draw.loadPlugin(function (ui) {
         seasonStartYear = '', // ADDED
         methodName = '', // ADDED
         startISO = '', // ADDED
-        earliestISO = '', // ADDED
-        latestISO = '', // ADDED
+        sowingWindows = [], // CHANGED
+        activeSowingWindowId = '', // ADDED
         firstHarvestISO = '', // ADDED
         lastHarvestISO = '' // ADDED
     } = {}) { // ADDED
@@ -3037,8 +3129,8 @@ Draw.loadPlugin(function (ui) {
             perennial, // ADDED
             windowFeasible, // ADDED
             startISO, // ADDED
-            earliestISO, // ADDED
-            latestISO // ADDED
+            sowingWindows, // CHANGED
+            activeSowingWindowId // ADDED
         }); // ADDED
         return { // ADDED
             crop: [plantName, varietyName].filter(Boolean).join(' / ') || '(none)', // ADDED
@@ -3615,6 +3707,7 @@ Draw.loadPlugin(function (ui) {
         body.style.overflow = 'auto'; // ADDED
         body.style.paddingRight = '2px'; // ADDED
         appendExplainDiagnostics(body, diagnosticsModel, options.diagnosticsTitle || 'Diagnostics'); // CHANGED
+        if (options.sowingWindowsText) appendExplainPreSection(body, 'Derived sowing windows', options.sowingWindowsText); // ADDED
         appendExplainScanRanges(body, ranges, options.scanTitle || 'Feasibility scan ranges'); // CHANGED
         if (options.lifecycleDiagnosticsModel) appendExplainDiagnostics(body, options.lifecycleDiagnosticsModel, 'Lifecycle support diagnostics'); // ADDED
         if (options.lifecycleRanges) appendExplainScanRanges(body, options.lifecycleRanges, 'Lifecycle support scan ranges'); // ADDED
@@ -5652,9 +5745,9 @@ Draw.loadPlugin(function (ui) {
         const initialStartISO = fmtISO(earliestFeasibleSowDate); // FIX: allow an explicitly empty no-window state
         const initialEndISO = fmtISO(lastHarvestDate); // FIX
 
-        // Read-only auto-computed bounds                                         
-        const autoEarliestInput = makeDisplayField(initialStartISO); // CHANGED
-        const autoLastSowInput = makeDisplayField(initialStartISO); // CHANGED
+        // User-selectable derived sowing window // ADDED
+        const sowingWindowSel = makeSelect([], ''); // ADDED
+        const sowingWindowBoundsInput = makeDisplayField(''); // ADDED
 
         // User-controlled first sow date (used for schedule startISO)                   
         const startInput = makeDate(initialStartISO, false);
@@ -5720,8 +5813,8 @@ Draw.loadPlugin(function (ui) {
             seasonStartYear: Number(seasonYearInput.value || (new Date()).getUTCFullYear()),
             harvestWindowDays: (harvestWindowInput.value === '' ? null : Number(harvestWindowInput.value)),
             minYieldMultiplier: Number(minYieldMultInput.value || 0),
-            autoEarliestISO: initialStartISO,
-            lastFeasibleSowISO: null,
+            sowingWindows: [], // ADDED
+            activeSowingWindowId: '', // ADDED
             windowFeasible: mode.perennial || !!initialWindowFeasible, // FIX
             firstHarvestISO: null, // CHANGED
             lastHarvestISO: initialEndISO,
@@ -5745,6 +5838,7 @@ Draw.loadPlugin(function (ui) {
             formState.methodId = normId(methodSel.value); // FIX
 
             formState.startISO = startInput.value;
+            formState.activeSowingWindowId = sowingWindowSel.value || formState.activeSowingWindowId || ''; // ADDED
             formState.seasonEndISO = seasonEndInput.value;
             formState.seasonStartYear = Number(seasonYearInput.value || (new Date()).getUTCFullYear());
             formState.harvestWindowDays = (harvestWindowInput.value === '' ? null : Number(harvestWindowInput.value));
@@ -5771,10 +5865,29 @@ Draw.loadPlugin(function (ui) {
             updateScheduleSummaryFromState(); // ADDED
         }
 
+        function refreshSowingWindowSelector() { // ADDED
+            const selectorState = buildSowingWindowSelectorState({ // ADDED
+                sowingWindows: formState.sowingWindows, // ADDED
+                activeSowingWindowId: formState.activeSowingWindowId, // ADDED
+                startISO: formState.startISO // ADDED
+            }); // ADDED
+            while (sowingWindowSel.firstChild) sowingWindowSel.removeChild(sowingWindowSel.firstChild); // ADDED
+            selectorState.options.forEach(optionState => { // ADDED
+                const opt = document.createElement('option'); // ADDED
+                opt.value = optionState.value; // ADDED
+                opt.textContent = optionState.label; // ADDED
+                opt.disabled = !!optionState.disabled; // ADDED
+                sowingWindowSel.appendChild(opt); // ADDED
+            }); // ADDED
+            sowingWindowSel.value = selectorState.value; // ADDED
+            setDisplayFieldValue(sowingWindowBoundsInput, selectorState.boundsText); // ADDED
+        } // ADDED
+
         function syncStartDateBounds() { // CHANGED
             if (!startInput) return; // CHANGED
-            startInput.min = formState.autoEarliestISO || ''; // CHANGED
-            startInput.max = formState.lastFeasibleSowISO || ''; // CHANGED
+            const activeWindow = getActiveSowingWindow(formState); // ADDED
+            startInput.min = activeWindow ? activeWindow.startISO : ''; // CHANGED
+            startInput.max = activeWindow ? activeWindow.endISO : ''; // CHANGED
         } // CHANGED
 
         function updateDaysToFirstHarvest() { // CHANGED
@@ -5823,8 +5936,8 @@ Draw.loadPlugin(function (ui) {
         syncCombinedMethodControl(); // ADDED
 
 
-        const autoEarliestRowObj = row('Earliest feasible sow:', autoEarliestInput); // CHANGED
-        const autoLastSowRowObj = row('Latest feasible sow:', autoLastSowInput); // CHANGED
+        const sowingWindowRowObj = row('Sowing window:', sowingWindowSel); // ADDED
+        const sowingWindowBoundsRowObj = row('Window dates:', sowingWindowBoundsInput); // ADDED
 
         const firstSowRowObj = row('Sow date:', startInput); // CHANGED
         if (startNote) firstSowRowObj.row.appendChild(startNoteSpan); // CHANGED
@@ -5861,8 +5974,8 @@ Draw.loadPlugin(function (ui) {
             setTooltip(contextSummary, `Garden: ${gardenName}\nCity: ${cityName}\nBed source: ${bedSource}\nBed conditions: ${bedText}`); // ADDED
         } // ADDED
 
-        windowSection.body.appendChild(autoEarliestRowObj.row); // CHANGED
-        windowSection.body.appendChild(autoLastSowRowObj.row); // CHANGED
+        windowSection.body.appendChild(sowingWindowRowObj.row); // CHANGED
+        windowSection.body.appendChild(sowingWindowBoundsRowObj.row); // CHANGED
         windowSection.body.appendChild(endRow.row); // CHANGED
 
         inputsSection.body.appendChild(firstSowRowObj.row); // CHANGED
@@ -6091,8 +6204,8 @@ Draw.loadPlugin(function (ui) {
                 seasonStartYear: formState.seasonStartYear, // ADDED
                 methodName, // ADDED
                 startISO: formState.startISO, // ADDED
-                earliestISO: formState.autoEarliestISO, // ADDED
-                latestISO: formState.lastFeasibleSowISO, // ADDED
+                sowingWindows: formState.sowingWindows, // CHANGED
+                activeSowingWindowId: formState.activeSowingWindowId, // ADDED
                 firstHarvestISO: formState.firstHarvestISO, // ADDED
                 lastHarvestISO: formState.lastHarvestISO // ADDED
             })); // ADDED
@@ -6115,8 +6228,8 @@ Draw.loadPlugin(function (ui) {
                 daysToFirstHarvestRowObj.row.style.display = ''; // CHANGED
             }
 
-            autoEarliestRowObj.row.style.display = perennial ? 'none' : ''; // CHANGED
-            autoLastSowRowObj.row.style.display = perennial ? 'none' : ''; // CHANGED
+            sowingWindowRowObj.row.style.display = perennial ? 'none' : ''; // CHANGED
+            sowingWindowBoundsRowObj.row.style.display = perennial ? 'none' : ''; // CHANGED
             timelineSection.wrap.style.display = perennial ? 'none' : ''; // CHANGED
             if (windowActions) windowActions.style.display = perennial ? 'none' : ''; // FIX
 
@@ -6131,8 +6244,8 @@ Draw.loadPlugin(function (ui) {
                 perennial: mode.perennial, // CHANGED
                 windowFeasible: formState.windowFeasible, // CHANGED
                 startISO: formState.startISO, // CHANGED
-                earliestISO: formState.autoEarliestISO, // CHANGED
-                latestISO: formState.lastFeasibleSowISO // CHANGED
+                sowingWindows: formState.sowingWindows, // CHANGED
+                activeSowingWindowId: formState.activeSowingWindowId // ADDED
             }); // CHANGED
             const parts = [];
             if (!mode.perennial && classification.status !== 'feasible') parts.push(classification.label); // CHANGED
@@ -6140,6 +6253,16 @@ Draw.loadPlugin(function (ui) {
 
             startNoteSpan.textContent = parts.join(' ');
         }
+
+        function requireSelectedSowingWindowDate() { // ADDED
+            return requireFeasibleSowingWindowSelection({ // ADDED
+                perennial: mode.perennial, // ADDED
+                windowFeasible: formState.windowFeasible, // ADDED
+                startISO: formState.startISO, // ADDED
+                sowingWindows: formState.sowingWindows, // ADDED
+                activeSowingWindowId: formState.activeSowingWindowId // ADDED
+            }); // ADDED
+        } // ADDED
 
 
         // recomputeAnchors:
@@ -6189,7 +6312,7 @@ Draw.loadPlugin(function (ui) {
 
                 const lsf = pickFrostByRisk(city, climatePolicy.springFrostRisk); // CHANGED
 
-                const r = annualCore.computeAutoStartEndWindowForward({ // CHANGED
+                const r = annualCore.computeAnnualSowingWindows({ // CHANGED
                     methodCategoryId, // CHANGED
                     methodId, // CHANGED
                     budget,
@@ -6217,37 +6340,46 @@ Draw.loadPlugin(function (ui) {
                     forceWriteEnd,
                     startISO_before: formState.startISO,
                     seasonEndISO_before: formState.seasonEndISO,
-                    earliestFeasibleSowDate: fmtISO(r.earliestFeasibleSowDate),
+                    sowingWindows: r.windows ? r.windows.map(window => window.label) : [], // CHANGED
                     climateEndDate: r.climateEndDate ? fmtISO(r.climateEndDate) : null, // CHANGED
                     lastFeasibleSowDate: r.lastFeasibleSowDate ? fmtISO(r.lastFeasibleSowDate) : null
                 });
 
-                const windowFeasible = r.feasible === true; // FIX
-                const autoStartISO = windowFeasible
-                    ? r.earliestFeasibleSowDate.toISOString().slice(0, 10)
-                    : null; // FIX
-                const lastSowISO = r.lastFeasibleSowDate ? r.lastFeasibleSowDate.toISOString().slice(0, 10) : null;
+                const windows = normalizeSowingWindows(r.windows); // ADDED
+                const windowFeasible = windows.length > 0; // CHANGED
+                const today = new Date(); // ADDED
+                const todayISO = fmtISO(asUTCDate(today.getUTCFullYear(), today.getUTCMonth() + 1, today.getUTCDate())); // ADDED
+                const currentActive = windows.find(window => window.id === formState.activeSowingWindowId); // ADDED
+                const savedWindow = hasPersistedSchedule && !userEditedStartThisSession
+                    ? findSowingWindowForDate(windows, formState.startISO)
+                    : null; // ADDED
+                const savedDateIsOrphan = hasPersistedSchedule && !userEditedStartThisSession && !!formState.startISO && !savedWindow; // ADDED
+                const nextActiveId = savedWindow
+                    ? savedWindow.id
+                    : (savedDateIsOrphan ? ORPHAN_SOWING_WINDOW_ID : ((!forceWriteStart && currentActive) ? currentActive.id : pickDefaultSowingWindowId(windows, { savedStartISO: hasPersistedSchedule ? formState.startISO : '', todayISO }))); // CHANGED
 
                 const autoHarvestISO = r.climateEndDate
                     ? r.climateEndDate.toISOString().slice(0, 10)
                     : null; // CHANGED
 
-                // Store auto window (for display/guidance)                          
-                formState.autoEarliestISO = autoStartISO;
-                formState.lastFeasibleSowISO = lastSowISO;
-                formState.windowFeasible = windowFeasible; // FIX
+                // Store selectable sowing windows for display/guidance. // CHANGED
+                formState.sowingWindows = windows; // CHANGED
+                formState.activeSowingWindowId = nextActiveId; // ADDED
+                formState.windowFeasible = windowFeasible; // CHANGED
                 formState.firstHarvestISO = null; // CHANGED
                 formState.lastHarvestISO = autoHarvestISO; // ADDED
 
                 // Optionally reset user-chosen first sow date to earliest           
                 const preserveGenuineStart = hasPersistedSchedule || userEditedStartThisSession; // FIX
+                const activeWindow = getActiveSowingWindow(formState); // ADDED
                 formState.startISO = resolveStartAfterWindow({
                     currentStartISO: formState.startISO,
-                    autoStartISO,
+                    activeWindow,
                     feasible: windowFeasible,
                     forceWriteStart,
                     hasPersistedSchedule,
-                    userEditedStartThisSession
+                    userEditedStartThisSession,
+                    todayISO
                 }); // FIX
                 if (windowFeasible && forceWriteStart) {
                     hasPersistedSchedule = false; // FIX: the replacement is generated, not the stored schedule
@@ -6261,16 +6393,7 @@ Draw.loadPlugin(function (ui) {
                     formState.seasonEndISO = ''; // FIX: clear derived end state when the window is infeasible
                 }
 
-                // Push values to the read-only controls                              
-                if (autoEarliestInput) {
-                    setDisplayFieldValue(
-                        autoEarliestInput,
-                        windowFeasible ? formState.autoEarliestISO : 'No feasible window.'
-                    ); // FIX
-                }
-                if (autoLastSowInput) {
-                    setDisplayFieldValue(autoLastSowInput, formState.lastFeasibleSowISO || ''); // CHANGED
-                }
+                refreshSowingWindowSelector(); // ADDED
 
                 syncControlsFromState({
                     start: forceWriteStart || !preserveGenuineStart || !windowFeasible,
@@ -6328,6 +6451,8 @@ Draw.loadPlugin(function (ui) {
                 formState.lastHarvestISO = null; // FIX: lifespan end is not a harvest date
                 formState.lastScheduleEndISO = formState.seasonEndISO; // CHANGED
                 syncStateFromControls();
+                formState.sowingWindows = []; // ADDED
+                formState.activeSowingWindowId = ''; // ADDED
                 formState.windowFeasible = true; // FIX
 
             } else {
@@ -6494,19 +6619,20 @@ Draw.loadPlugin(function (ui) {
         timelineSection.body.appendChild(timelineWrap); // CHANGED
 
         function updateTimeline() { // CHANGED
-            const earliest = parseISODateUTC(formState.autoEarliestISO); // CHANGED
-            const latest = parseISODateUTC(formState.lastFeasibleSowISO); // CHANGED
+            const activeWindow = getActiveSowingWindow(formState); // ADDED
+            const earliest = parseISODateUTC(activeWindow?.startISO); // CHANGED
+            const latest = parseISODateUTC(activeWindow?.endISO); // CHANGED
             const sow = parseISODateUTC(formState.startISO); // CHANGED
             const classification = classifySelectedSowDate({ // ADDED
                 perennial: mode.perennial, // ADDED
                 windowFeasible: formState.windowFeasible, // ADDED
                 startISO: formState.startISO, // ADDED
-                earliestISO: formState.autoEarliestISO, // ADDED
-                latestISO: formState.lastFeasibleSowISO // ADDED
+                sowingWindows: formState.sowingWindows, // CHANGED
+                activeSowingWindowId: formState.activeSowingWindowId // ADDED
             }); // ADDED
 
-            timelineStartLabel.textContent = fmtShortDate(formState.autoEarliestISO); // CHANGED
-            timelineEndLabel.textContent = fmtShortDate(formState.lastFeasibleSowISO); // CHANGED
+            timelineStartLabel.textContent = fmtShortDate(activeWindow?.startISO || ''); // CHANGED
+            timelineEndLabel.textContent = fmtShortDate(activeWindow?.endISO || ''); // CHANGED
 
             if (mode.perennial) { // CHANGED
                 timelineSection.wrap.style.display = 'none'; // CHANGED
@@ -6641,6 +6767,21 @@ Draw.loadPlugin(function (ui) {
                 }
             });
         });
+
+        sowingWindowSel.addEventListener('change', () => { // ADDED
+            void runUiAsync('Sowing window change error', async () => { // ADDED
+                formState.activeSowingWindowId = sowingWindowSel.value || ''; // ADDED
+                formState.startISO = resolveStartForSowingWindowSwitch(formState.sowingWindows, formState.activeSowingWindowId); // CHANGED
+                startInput.value = formState.startISO; // ADDED
+                userEditedStartThisSession = false; // ADDED
+                syncStartDateBounds(); // ADDED
+                refreshSowingWindowSelector(); // ADDED
+                updateStartNote(); // ADDED
+                updateTimeline(); // ADDED
+                await recomputeLastHarvestFromSchedule(); // ADDED
+                await updateTaskPreview(); // ADDED
+            }); // ADDED
+        }); // ADDED
 
 
 
@@ -6877,6 +7018,7 @@ Draw.loadPlugin(function (ui) {
                 const diagnostics = diagnosticsModel.text; // CHANGED
                 const scanSummary = formatFeasibilityScanRanges(rows); // FIX: dialog shows compact reason ranges instead of daily JSON.
                 const scanRanges = compressFeasibilityScanRanges(rows); // ADDED
+                const sowingWindowsText = formatSowingWindowsSummary(formState.sowingWindows); // ADDED
                 const lifecycleRows = usePrimarySowScan ? await explainFeasibilityOverSeason(inputs) : null; // ADDED
                 const lifecycleDiagnosticsModel = lifecycleRows ? buildFeasibilityDiagnosticsModel(inputs, lifecycleRows, { // ADDED
                     scanLabel: 'Lifecycle support through maturity and harvest', // ADDED
@@ -6894,6 +7036,9 @@ Draw.loadPlugin(function (ui) {
 
                 const textParts = [ // CHANGED
                     diagnostics,
+                    '',
+                    'Derived sowing windows:',
+                    sowingWindowsText,
                     '',
                     usePrimarySowScan ? 'Primary first-season sowing scan ranges:' : 'Feasibility scan ranges:',
                     scanSummary,
@@ -6913,6 +7058,7 @@ Draw.loadPlugin(function (ui) {
                 renderExplainSowingRangeDialog(ui, diagnosticsModel, scanRanges, plantText, cityText, textParts, { // CHANGED
                     diagnosticsTitle: usePrimarySowScan ? 'Primary sowing diagnostics' : 'Diagnostics', // ADDED
                     scanTitle: usePrimarySowScan ? 'Primary first-season sowing scan ranges' : 'Feasibility scan ranges', // ADDED
+                    sowingWindowsText, // ADDED
                     lifecycleDiagnosticsModel, // ADDED
                     lifecycleRanges: lifecycleScanRanges // ADDED
                 }); // CHANGED
@@ -6938,6 +7084,7 @@ Draw.loadPlugin(function (ui) {
                 if (!mode.perennial && !formState.windowFeasible) {
                     throw new Error('No feasible window.'); // FIX
                 }
+                requireSelectedSowingWindowDate(); // ADDED
 
                 const { inputs } = await buildScheduleContextFromForm(
                     formState,
@@ -6963,6 +7110,7 @@ Draw.loadPlugin(function (ui) {
                 if (!mode.perennial && !formState.windowFeasible) {
                     throw new Error('No feasible window.'); // FIX
                 }
+                requireSelectedSowingWindowDate(); // ADDED
 
                 const { inputs } = await buildScheduleContextFromForm(
                     formState,
@@ -6978,6 +7126,7 @@ Draw.loadPlugin(function (ui) {
 
                 // Validate the complete schedule before mutating the DB or graph.
                 const scheduleResult = computeScheduleResult(inputs);
+                const activeWindow = getActiveSowingWindow(formState); // ADDED
                 handleClimateModelControlChanged(); // ADDED
                 const climateModelAttributePatch = buildClimateModelModuleAttributePatch(); // ADDED
 
@@ -7009,6 +7158,8 @@ Draw.loadPlugin(function (ui) {
                     result: scheduleResult,
                     taskTemplateJson,
                     taskTemplate, // FIX: generate tasks from the in-memory template saved by this action
+                    sowingWindowId: activeWindow?.id || '', // ADDED
+                    sowingWindowLabel: activeWindow?.label || '', // ADDED
                     extraAttributePatches: climateModelAttributePatch ? [climateModelAttributePatch] : [], // ADDED
                     afterGraphUpdate: persistPlantTaskDefault // FIX: undo graph edits if the database write fails
                 });
@@ -7313,6 +7464,20 @@ Draw.loadPlugin(function (ui) {
                 taskPreviewScheduleRange = null; // ADDED
                 taskPreviewCutoffOmittedRuleKeys = new Set(); // ADDED
                 renderCachedTaskPreview({ error: 'No feasible sowing window is available for task generation.' }); // ADDED
+                return; // ADDED
+            } // ADDED
+            const classification = classifySelectedSowDate({ // ADDED
+                perennial: mode.perennial, // ADDED
+                windowFeasible: formState.windowFeasible, // ADDED
+                startISO: formState.startISO, // ADDED
+                sowingWindows: formState.sowingWindows, // ADDED
+                activeSowingWindowId: formState.activeSowingWindowId // ADDED
+            }); // ADDED
+            if (!mode.perennial && classification.status !== 'feasible') { // ADDED
+                generatedPreviewTasks = []; // ADDED
+                taskPreviewScheduleRange = null; // ADDED
+                taskPreviewCutoffOmittedRuleKeys = new Set(); // ADDED
+                renderCachedTaskPreview({ error: classification.label }); // ADDED
                 return; // ADDED
             } // ADDED
             try { // ADDED
@@ -9108,6 +9273,8 @@ Draw.loadPlugin(function (ui) {
             city_name: String(city.city_name || ''),
             method_category_id: normId(inputs.methodCategoryId),
             method_id: normId(inputs.methodId),
+            sowing_window_id: perennial ? '' : String(options.sowingWindowId || ''), // ADDED
+            sowing_window_label: perennial ? '' : String(options.sowingWindowLabel || ''), // ADDED
             tbase_c: String(env.Tbase),
             sow_date: fmt(sowDate),
             germ_date: perennial ? '' : fmt(timeline.germ),
@@ -9455,7 +9622,7 @@ Draw.loadPlugin(function (ui) {
             initialDailyClimate = dailyClimate; // ADDED
             const dailyRates = cityInit.dailyRates(env.Tbase, year, initialClimatePolicy); // CHANGED
             const monthlyAvgTemp = cityInit.monthlyMeans(); // CHANGED: physical temperatures stay unshifted; GDD scaling is in daily climate rates.
-            const initialWindow = annualCore.computeAutoStartEndWindowForward({ // CHANGED
+            const initialWindow = annualCore.computeAnnualSowingWindows({ // CHANGED
                 methodCategoryId: initialMethodCategoryId,
                 methodId: initialMethodId,
                 budget: budget,
@@ -9481,7 +9648,7 @@ Draw.loadPlugin(function (ui) {
             });
 
             initialWindowFeasible = initialWindow.feasible === true; // FIX
-            earliestFeasibleSowDate = initialWindow.earliestFeasibleSowDate; // FIX
+            earliestFeasibleSowDate = initialWindow.windows?.[0]?.startDate || initialWindow.earliestFeasibleSowDate; // CHANGED
             climateEndDate = initialWindow.climateEndDate; // FIX
             lastHarvestDate = initialWindow.climateEndDate; // FIX: initialize the displayed annual end from the feasible window
         }
@@ -9704,6 +9871,7 @@ Draw.loadPlugin(function (ui) {
             ScheduleInputs: sharedCore.ScheduleInputs, // CHANGED
             Planner: annualCore.Planner, // CHANGED
             computeAutoStartEndWindowForward: annualCore.computeAutoStartEndWindowForward, // CHANGED
+            computeAnnualSowingWindows: annualCore.computeAnnualSowingWindows, // ADDED
             getPlantScanYears,
             isCrossYearCrop, // FIX: expose lifecycle behavior to the opt-in regression harness
             resolveHarvestWindowDays, // FIX: expose fallback behavior to the opt-in regression harness
@@ -10013,6 +10181,7 @@ Draw.loadPlugin(function (ui) {
             resolveTaskTemplate,
             runUiAsyncOperation,
             computeAutoStartEndWindowForward: annualCore.computeAutoStartEndWindowForward, // CHANGED
+            computeAnnualSowingWindows: annualCore.computeAnnualSowingWindows, // ADDED
             normId,
             monthlyMeanOnDate, // ADDED
             normalizeBedProfile, // ADDED
@@ -10025,10 +10194,19 @@ Draw.loadPlugin(function (ui) {
             formatFeasibilityScanRanges, // ADDED
             buildFeasibilityBlockingSummary, // ADDED
             buildFeasibilityDiagnostics, // ADDED
+            normalizeSowingWindows, // ADDED
+            ORPHAN_SOWING_WINDOW_ID, // ADDED
+            formatSowingWindowsSummary, // ADDED
+            buildSowingWindowSelectorState, // ADDED
+            pickDefaultSowingWindowId, // ADDED
+            defaultStartForActiveSowingWindow, // ADDED
+            findSowingWindowForDate, // ADDED
+            resolveStartForSowingWindowSwitch, // ADDED
             encodeMethodSelection, // ADDED
             decodeMethodSelection, // ADDED
             humanFeasibilityReason, // ADDED
             classifySelectedSowDate, // ADDED
+            requireFeasibleSowingWindowSelection, // ADDED
             buildScheduleViewState, // ADDED
             taskRuleLibraryForPlanningMode, // ADDED
             resolveTaskRuleTaskTypeId, // NEW

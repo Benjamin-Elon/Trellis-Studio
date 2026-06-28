@@ -71,8 +71,8 @@ The dialog uses two tabs.
    - Planting method category
    - Planting method
 5. Sowing Window
-   - Earliest feasible date
-   - Latest feasible date
+   - Derived sowing-window selector
+   - Active window date bounds
    - Season end or perennial lifespan end
    - Explain Sowing Range action
 6. Timeline
@@ -142,8 +142,8 @@ does not fully synchronize every editable control.
 
 | Key | Writer |
 | --- | --- |
-| `autoEarliestISO` | `recomputeAnchors()` |
-| `lastFeasibleSowISO` | `recomputeAnchors()` |
+| `sowingWindows` | `recomputeAnchors()` |
+| `activeSowingWindowId` | `recomputeAnchors()` and the window selector |
 | `firstHarvestISO` | Anchor reset, perennial flow, schedule recomputation |
 | `lastHarvestISO` | Anchor calculation, perennial flow, schedule recomputation |
 | `lastScheduleEndISO` | Perennial flow or schedule recomputation |

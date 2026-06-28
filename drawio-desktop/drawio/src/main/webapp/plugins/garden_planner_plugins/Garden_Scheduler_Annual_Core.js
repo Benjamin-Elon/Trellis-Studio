@@ -17,6 +17,7 @@
         addDaysUTC,
         asUTCDate,
         dateLTE,
+        dayOfYear,
         fmtISO,
         finiteNumberOrNull,
         normId,
@@ -40,8 +41,19 @@
         humanFeasibilityReason
     } = shared;
 
+    const MULTI_WINDOW_MAX_MERGE_GAP_DAYS = 7; // ADDED
+    const MULTI_WINDOW_MIN_LENGTH_DAYS = 3; // ADDED
+
     function monthMeanAt(date, monthlyAvgTemp) {
         return monthlyAvgTemp?.[date.getUTCMonth() + 1] ?? null;
+    }
+    function daysBetweenInclusive(start, end) { // ADDED
+        return Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+    }
+    function isOverwinterSpringWindowDate(ctx, gateDate) { // ADDED
+        if (!ctx.overwinterAllowed || !ctx.useCoolingGate || !gateDate) return false; // ADDED
+        const frostDOY = Math.max(1, Math.min(366, Number(ctx.lastSpringFrostDOY || 0) + Number(ctx.springFrostGateShiftDays || 0))); // ADDED
+        return Number.isFinite(frostDOY) && dayOfYear(gateDate) <= frostDOY; // ADDED
     }
     function firstCoolingCrossingDate({ thresholdC, monthlyAvgTemp, scanStart, scanEndHard }) {
         let cursor = asUTCDate(scanStart.getUTCFullYear(), scanStart.getUTCMonth() + 1, 1);
@@ -200,6 +212,7 @@
         checkSpringFrostGate(gateDate) {
             const C = this.ctx;
             if (!C.useSpringFrostGate || !gateDate) return { ok: true };
+            if (isOverwinterSpringWindowDate(C, gateDate)) return { ok: true }; // ADDED
             const doy = shared.dayOfYear(gateDate);
             const gateDOY = Math.max(1, Math.min(366, Number(C.lastSpringFrostDOY || 0) + Number(C.springFrostGateShiftDays || 0)));
             if (doy < gateDOY) {
@@ -210,6 +223,7 @@
         checkCoolingGate(gateDate) {
             const C = this.ctx;
             if (!C.useCoolingGate || !gateDate) return { ok: true };
+            if (isOverwinterSpringWindowDate(C, gateDate)) return { ok: true }; // ADDED
             if (!C.coolingCrossDate || gateDate < C.coolingCrossDate) return { ok: false, reason: 'cooling_gate' };
             return { ok: true };
         }
@@ -316,6 +330,102 @@
         const C = planner.ctx;
         const mat = maturityDateFromBudget(sow, C.BUDGET, C.dailyRates, C.scanEndHard);
         return planner.addDays(mat, Math.max(0, HW_DAYS || 0));
+    }
+    function meteorologicalSeasonName(date) { // ADDED
+        const month = date.getUTCMonth() + 1; // ADDED
+        if (month >= 3 && month <= 5) return 'Spring'; // ADDED
+        if (month >= 6 && month <= 8) return 'Summer'; // ADDED
+        if (month >= 9 && month <= 11) return 'Fall'; // ADDED
+        return 'Winter'; // ADDED
+    }
+    function formatShortMonthDay(date) { // ADDED
+        return date.toLocaleString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' }); // ADDED
+    }
+    function labelSowingWindows(windows) { // ADDED
+        const seasonCounts = Object.create(null); // ADDED
+        return windows.map((win, index) => { // ADDED
+            const mid = addDaysUTC(win.startDate, Math.floor((daysBetweenInclusive(win.startDate, win.endDate) - 1) / 2)); // ADDED
+            const season = meteorologicalSeasonName(mid); // ADDED
+            seasonCounts[season] = (seasonCounts[season] || 0) + 1; // ADDED
+            const suffix = seasonCounts[season] > 1 ? ` ${seasonCounts[season]}` : ''; // ADDED
+            const label = `${season}${suffix} (${formatShortMonthDay(win.startDate)}-${formatShortMonthDay(win.endDate)})`; // ADDED
+            return Object.freeze({ // ADDED
+                id: `window-${index + 1}`, // ADDED
+                label, // ADDED
+                startISO: fmtISO(win.startDate), // ADDED
+                endISO: fmtISO(win.endDate), // ADDED
+                startDate: new Date(win.startDate), // ADDED
+                endDate: new Date(win.endDate), // ADDED
+                source: Object.freeze({ // ADDED
+                    firstFeasibleISO: fmtISO(win.firstFeasibleDate || win.startDate), // ADDED
+                    lastFeasibleISO: fmtISO(win.lastFeasibleDate || win.endDate), // ADDED
+                    mergedGapDays: Number(win.mergedGapDays || 0) // ADDED
+                }) // ADDED
+            }); // ADDED
+        }); // ADDED
+    }
+    function smoothFeasibleSowingRanges(ranges, { maxGapDays = MULTI_WINDOW_MAX_MERGE_GAP_DAYS, minLengthDays = MULTI_WINDOW_MIN_LENGTH_DAYS } = {}) { // ADDED
+        const sorted = (ranges || []) // ADDED
+            .filter(range => range && range.startDate instanceof Date && range.endDate instanceof Date) // ADDED
+            .sort((a, b) => a.startDate - b.startDate); // ADDED
+        const merged = []; // ADDED
+        for (const range of sorted) { // ADDED
+            if (!merged.length) { // ADDED
+                merged.push({ ...range, firstFeasibleDate: range.startDate, lastFeasibleDate: range.endDate, mergedGapDays: 0 }); // ADDED
+                continue; // ADDED
+            } // ADDED
+            const prev = merged[merged.length - 1]; // ADDED
+            const gapDays = Math.max(0, Math.round((range.startDate.getTime() - prev.endDate.getTime()) / 86400000) - 1); // ADDED
+            if (gapDays <= maxGapDays) { // ADDED
+                prev.endDate = new Date(range.endDate); // ADDED
+                prev.lastFeasibleDate = new Date(range.endDate); // ADDED
+                prev.mergedGapDays += gapDays; // ADDED
+            } else { // ADDED
+                merged.push({ ...range, firstFeasibleDate: range.startDate, lastFeasibleDate: range.endDate, mergedGapDays: 0 }); // ADDED
+            } // ADDED
+        } // ADDED
+        return merged.filter(range => daysBetweenInclusive(range.startDate, range.endDate) >= minLengthDays); // ADDED
+    }
+    function computeAnnualSowingWindows(params) { // ADDED
+        const resolvedHarvestWindowDays = resolveHarvestWindowDays(params.HW_DAYS); // ADDED
+        const { planner, resolvedBehavior } = buildAutoWindowPlanner({ // ADDED
+            ...params, // ADDED
+            HW_DAYS: resolvedHarvestWindowDays // ADDED
+        }); // ADDED
+        const C = planner.ctx; // ADDED
+        const seasonScanEnd = asUTCDate(C.scanStart.getUTCFullYear(), 12, 31); // ADDED
+        const sowScanEnd = seasonScanEnd < C.scanEndHard ? seasonScanEnd : C.scanEndHard; // ADDED
+        const ranges = []; // ADDED
+        let current = null; // ADDED
+        let firstHarvestEnd = null; // ADDED
+        let lastHarvestEnd = null; // ADDED
+        for (let d = new Date(C.scanStart); dateLTE(d, sowScanEnd); d = planner.addDays(d, 1)) { // ADDED
+            const r = planner.isSowFeasible(d); // ADDED
+            if (r.ok) { // ADDED
+                if (!current) current = { startDate: new Date(d), endDate: new Date(d) }; // ADDED
+                current.endDate = new Date(d); // ADDED
+                if (!firstHarvestEnd) firstHarvestEnd = r.harvestEnd; // ADDED
+                if (!lastHarvestEnd || r.harvestEnd > lastHarvestEnd) lastHarvestEnd = r.harvestEnd; // ADDED
+            } else if (current) { // ADDED
+                ranges.push(current); // ADDED
+                current = null; // ADDED
+            } // ADDED
+        } // ADDED
+        if (current) ranges.push(current); // ADDED
+        const windows = labelSowingWindows(smoothFeasibleSowingRanges(ranges, params.windowOptions || {})); // ADDED
+        return Object.freeze({ // ADDED
+            feasible: windows.length > 0, // ADDED
+            harvestEndSemantics: HARVEST_END_SEMANTICS, // ADDED
+            windows, // ADDED
+            seasonStartYear: C.scanStart.getUTCFullYear(), // ADDED
+            scanStartISO: fmtISO(C.scanStart), // ADDED
+            scanEndISO: fmtISO(sowScanEnd), // ADDED
+            lifecycleScanEndISO: fmtISO(C.scanEndHard), // ADDED
+            resolvedMethod: resolvedBehavior, // ADDED
+            earliestFeasibleSowDate: windows.length ? new Date(windows[0].startDate) : null, // ADDED
+            lastFeasibleSowDate: windows.length ? new Date(windows[windows.length - 1].endDate) : null, // ADDED
+            climateEndDate: lastHarvestEnd || firstHarvestEnd || null // ADDED
+        }); // ADDED
     }
     function computeStageDatesForPlanting({ sowDate, budget, stageDays, dailyRatesMap, seasonEnd, planningMode }) {
         const maturity = maturityDateFromBudget(sowDate, budget, dailyRatesMap, seasonEnd);
@@ -605,6 +715,7 @@
         computeStageTimelineForSchedule,
         classifyIsThermal,
         impliedHarvestEndForDate,
+        computeAnnualSowingWindows,
         buildAutoWindowPlanner,
         computeAutoStartEndWindowForward,
         computeAnnualScheduleResult

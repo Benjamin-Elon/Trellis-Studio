@@ -226,12 +226,12 @@ function makeAutoWindowParams({
         Tbase: env.Tbase,
         cropTemp: env,
         scanStart: new Date(`${year}-01-01T00:00:00Z`),
-        scanEndHard: new Date(`${year}-12-31T00:00:00Z`),
-        soilGateThresholdC: null,
+        scanEndHard: new Date(`${year + hooks.getPlantScanYears(plant) - 1}-12-31T00:00:00Z`), // CHANGED
+        soilGateThresholdC: Number.isFinite(Number(plant.soil_temp_min_plant_c)) ? Number(plant.soil_temp_min_plant_c) : null, // CHANGED
         soilGateConsecutiveDays: 3,
-        startCoolingThresholdC: null,
+        startCoolingThresholdC: Number.isFinite(Number(plant.start_cooling_threshold_c)) ? Number(plant.start_cooling_threshold_c) : null, // CHANGED
         useSpringFrostGate: false,
-        lastSpringFrostDOY: 1,
+        lastSpringFrostDOY: city.last_spring_frost_p50_doy || city.last_spring_frost_doy || 1, // CHANGED
         daysTransplant: Number(plant.days_transplant || 0),
         overwinterAllowed: plant.overwinter_ok === 1,
         bedProfile
@@ -622,6 +622,67 @@ test('overwinter crop can mature in the following year', () => {
     assert.equal(result.rows[0].harvStart, '2027-06-22');
 });
 
+test('annual sowing windows derive one continuous season-bound window', () => { // ADDED
+    const plant = makePlant({ plant_name: 'Fast Bean', days_maturity: 30, gdd_to_maturity: null }); // ADDED
+    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city: makeCity(20), year: 2026 })); // ADDED
+    assert.equal(result.feasible, true); // ADDED
+    assert.equal(result.windows.length, 1); // ADDED
+    assert.equal(result.windows[0].startISO, '2026-01-01'); // ADDED
+    assert.match(result.windows[0].endISO, /^2026-/); // ADDED
+}); // ADDED
+
+test('hot-climate annual derives separate early and late sowing windows', () => { // ADDED
+    const plant = makePlant({ // ADDED
+        plant_name: 'Heat Sensitive Lettuce', // ADDED
+        days_maturity: 25, // ADDED
+        gdd_to_maturity: null, // ADDED
+        tmin_c: 0, // ADDED
+        topt_low_c: 10, // ADDED
+        topt_high_c: 18, // ADDED
+        tmax_c: 24 // ADDED
+    }); // ADDED
+    const city = makeSeasonalCity({ // ADDED
+        1: 10, 2: 12, 3: 15, 4: 18, 5: 23, 6: 31, // ADDED
+        7: 33, 8: 31, 9: 23, 10: 17, 11: 12, 12: 10 // ADDED
+    }); // ADDED
+    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
+    assert.equal(result.feasible, true); // ADDED
+    assert.ok(result.windows.length >= 2, `expected split windows, got ${JSON.stringify(result.windows)}`); // ADDED
+    assert.equal(result.windows[0].startISO.slice(0, 4), '2026'); // ADDED
+    assert.equal(result.windows[result.windows.length - 1].endISO.slice(0, 4), '2026'); // ADDED
+}); // ADDED
+
+test('overwinter annual derives spring and fall windows inside the selected season year', () => { // ADDED
+    const plant = makePlant({ // ADDED
+        plant_name: 'Garlic', // ADDED
+        days_maturity: 240, // ADDED
+        gdd_to_maturity: null, // ADDED
+        overwinter_ok: 1, // ADDED
+        start_cooling_threshold_c: 12 // ADDED
+    }); // ADDED
+    const city = makeSeasonalCity({ // ADDED
+        1: 2, 2: 3, 3: 8, 4: 12, 5: 18, 6: 22, // ADDED
+        7: 24, 8: 22, 9: 16, 10: 10, 11: 5, 12: 2 // ADDED
+    }); // ADDED
+    city.last_spring_frost_doy = 105; // ADDED
+    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
+    assert.equal(result.feasible, true); // ADDED
+    assert.ok(result.windows.length >= 2, `expected spring and fall windows, got ${JSON.stringify(result.windows)}`); // ADDED
+    assert.equal(result.windows[0].startISO, '2026-01-01'); // ADDED
+    assert.equal(result.windows.every(window => window.startISO.startsWith('2026-') && window.endISO.startsWith('2026-')), true); // ADDED
+    assert.ok(result.windows.some(window => /Fall/.test(window.label)), `expected a fall label, got ${JSON.stringify(result.windows)}`); // ADDED
+}); // ADDED
+
+test('overwinter spring sowing belongs to its own season year', () => { // ADDED
+    const plant = makePlant({ plant_name: 'Garlic', days_maturity: 240, overwinter_ok: 1, start_cooling_threshold_c: 12 }); // ADDED
+    const city = makeSeasonalCity({ 1: 2, 2: 3, 3: 8, 4: 12, 5: 18, 6: 22, 7: 24, 8: 22, 9: 16, 10: 10, 11: 5, 12: 2 }); // ADDED
+    city.last_spring_frost_doy = 105; // ADDED
+    const prior = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
+    const next = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2027 })); // ADDED
+    assert.equal(prior.windows.some(window => window.startISO.startsWith('2027-') || window.endISO.startsWith('2027-')), false); // ADDED
+    assert.equal(next.windows[0].startISO, '2027-01-01'); // ADDED
+}); // ADDED
+
 test('biennial scan window uses its configured lifespan', () => {
     const plant = makePlant({
         annual: 0,
@@ -686,7 +747,7 @@ test('perennial save patch contains lifespan dates and clears annual stages', ()
 test('persisted start is distinct from a session edit and is not auto-overwritten', () => {
     const persisted = hooks.resolveStartAfterWindow({
         currentStartISO: '2026-05-10',
-        autoStartISO: '2026-04-01',
+        activeWindow: { startISO: '2026-04-01' }, // CHANGED
         feasible: true,
         forceWriteStart: false,
         hasPersistedSchedule: true,
@@ -696,7 +757,7 @@ test('persisted start is distinct from a session edit and is not auto-overwritte
 
     const replacedForYearChange = hooks.resolveStartAfterWindow({
         currentStartISO: persisted,
-        autoStartISO: '2027-04-03',
+        activeWindow: { startISO: '2027-04-03' }, // CHANGED
         feasible: true,
         forceWriteStart: true,
         hasPersistedSchedule: true,
@@ -706,7 +767,7 @@ test('persisted start is distinct from a session edit and is not auto-overwritte
 
     const preservedWithoutWindow = hooks.resolveStartAfterWindow({
         currentStartISO: '2026-05-10',
-        autoStartISO: null,
+        activeWindow: null, // CHANGED
         feasible: false,
         forceWriteStart: true,
         hasPersistedSchedule: true,
@@ -714,6 +775,28 @@ test('persisted start is distinct from a session edit and is not auto-overwritte
     });
     assert.equal(preservedWithoutWindow, '2026-05-10');
 });
+
+test('new annual schedule defaults sow date to today inside the active window', () => { // ADDED
+    const activeWindow = { id: 'spring', label: 'Spring (Apr 1-May 1)', startISO: '2026-04-01', endISO: '2026-05-01' }; // ADDED
+    assert.equal(hooks.resolveStartAfterWindow({ // ADDED
+        currentStartISO: '', // ADDED
+        activeWindow, // ADDED
+        feasible: true, // ADDED
+        forceWriteStart: false, // ADDED
+        hasPersistedSchedule: false, // ADDED
+        userEditedStartThisSession: false, // ADDED
+        todayISO: '2026-04-15' // ADDED
+    }), '2026-04-15'); // ADDED
+    assert.equal(hooks.resolveStartAfterWindow({ // ADDED
+        currentStartISO: '', // ADDED
+        activeWindow, // ADDED
+        feasible: true, // ADDED
+        forceWriteStart: false, // ADDED
+        hasPersistedSchedule: false, // ADDED
+        userEditedStartThisSession: false, // ADDED
+        todayISO: '2026-08-15' // ADDED
+    }), '2026-04-01'); // ADDED
+}); // ADDED
 
 test('perennial lifecycle is detected before requesting a maturity budget', () => {
     const plant = makePlant({
@@ -879,28 +962,81 @@ test('combined method selection round-trips delimiter-like identifiers', () => {
 }); // ADDED
 
 test('feasibility helpers classify schedule dates and humanize planner reasons', () => { // ADDED
+    const windows = [{ id: 'spring', label: 'Spring (Apr 1-May 1)', startISO: '2026-04-01', endISO: '2026-05-01' }]; // ADDED
+    const fallWindows = windows.concat([{ id: 'fall', label: 'Fall (Sep 1-Oct 1)', startISO: '2026-09-01', endISO: '2026-10-01' }]); // ADDED
     assert.equal(hooks.humanFeasibilityReason('insufficient_gdd'), 'There is not enough growing-degree accumulation to reach maturity.'); // ADDED
     assert.equal(hooks.classifySelectedSowDate({ perennial: true }).status, 'not_applicable'); // ADDED
     assert.equal(hooks.classifySelectedSowDate({ windowFeasible: false }).status, 'no_window'); // ADDED
-    assert.equal(hooks.classifySelectedSowDate({ windowFeasible: true }).status, 'missing'); // ADDED
+    assert.equal(hooks.classifySelectedSowDate({ windowFeasible: true, sowingWindows: windows, activeSowingWindowId: 'spring' }).status, 'missing'); // CHANGED
     assert.equal(hooks.classifySelectedSowDate({ // ADDED
         windowFeasible: true, // ADDED
         startISO: '2026-03-01', // ADDED
-        earliestISO: '2026-04-01', // ADDED
-        latestISO: '2026-05-01' // ADDED
-    }).status, 'early'); // ADDED
+        sowingWindows: windows, // CHANGED
+        activeSowingWindowId: 'spring' // ADDED
+    }).status, 'outside_window'); // CHANGED
     assert.equal(hooks.classifySelectedSowDate({ // ADDED
         windowFeasible: true, // ADDED
-        startISO: '2026-06-01', // ADDED
-        earliestISO: '2026-04-01', // ADDED
-        latestISO: '2026-05-01' // ADDED
-    }).status, 'late'); // ADDED
+        startISO: '2026-09-15', // CHANGED
+        sowingWindows: fallWindows, // CHANGED
+        activeSowingWindowId: 'spring' // ADDED
+    }).status, 'window_mismatch'); // CHANGED
     assert.equal(hooks.classifySelectedSowDate({ // ADDED
         windowFeasible: true, // ADDED
         startISO: '2026-04-15', // ADDED
-        earliestISO: '2026-04-01', // ADDED
-        latestISO: '2026-05-01' // ADDED
+        sowingWindows: windows, // CHANGED
+        activeSowingWindowId: 'spring' // ADDED
     }).status, 'feasible'); // ADDED
+    assert.equal(hooks.pickDefaultSowingWindowId(fallWindows, { savedStartISO: '2026-09-15', todayISO: '2026-01-01' }), 'fall'); // ADDED
+    assert.equal(hooks.findSowingWindowForDate(fallWindows, '2026-04-15').id, 'spring'); // ADDED
+}); // ADDED
+
+test('orphan saved sow date is visible in selector state and blocks validation', () => { // ADDED
+    const windows = [{ id: 'spring', label: 'Spring (Apr 1-May 1)', startISO: '2026-04-01', endISO: '2026-05-01' }]; // ADDED
+    const selector = hooks.buildSowingWindowSelectorState({ // ADDED
+        sowingWindows: windows, // ADDED
+        activeSowingWindowId: hooks.ORPHAN_SOWING_WINDOW_ID, // ADDED
+        startISO: '2026-06-15' // ADDED
+    }); // ADDED
+    assert.equal(selector.value, hooks.ORPHAN_SOWING_WINDOW_ID); // ADDED
+    assert.equal(selector.options[0].label, 'Saved date outside windows (2026-06-15)'); // ADDED
+    assert.equal(selector.options[0].disabled, true); // ADDED
+    assert.equal(selector.boundsText, ''); // ADDED
+    assert.equal(hooks.classifySelectedSowDate({ // ADDED
+        windowFeasible: true, // ADDED
+        startISO: '2026-06-15', // ADDED
+        sowingWindows: windows, // ADDED
+        activeSowingWindowId: hooks.ORPHAN_SOWING_WINDOW_ID // ADDED
+    }).status, 'outside_window'); // ADDED
+    assert.throws(() => hooks.requireFeasibleSowingWindowSelection({ // ADDED
+        windowFeasible: true, // ADDED
+        startISO: '2026-06-15', // ADDED
+        sowingWindows: windows, // ADDED
+        activeSowingWindowId: hooks.ORPHAN_SOWING_WINDOW_ID // ADDED
+    }), /outside the selectable sowing windows/); // ADDED
+}); // ADDED
+
+test('switching sowing windows resets sow date to the selected window start', () => { // ADDED
+    const windows = [ // ADDED
+        { id: 'spring', label: 'Spring (Apr 1-May 1)', startISO: '2026-04-01', endISO: '2026-05-01' }, // ADDED
+        { id: 'fall', label: 'Fall (Sep 1-Oct 1)', startISO: '2026-09-01', endISO: '2026-10-01' } // ADDED
+    ]; // ADDED
+    assert.equal(hooks.resolveStartForSowingWindowSwitch(windows, 'fall'), '2026-09-01'); // ADDED
+    assert.equal(hooks.resolveStartForSowingWindowSwitch(windows, hooks.ORPHAN_SOWING_WINDOW_ID), ''); // ADDED
+}); // ADDED
+
+test('derived sowing window summary matches selector labels', () => { // ADDED
+    const windows = [ // ADDED
+        { id: 'spring', label: 'Spring (Apr 1-May 1)', startISO: '2026-04-01', endISO: '2026-05-01' }, // ADDED
+        { id: 'fall', label: 'Fall (Sep 1-Oct 1)', startISO: '2026-09-01', endISO: '2026-10-01' } // ADDED
+    ]; // ADDED
+    const selectorLabels = hooks.buildSowingWindowSelectorState({ // ADDED
+        sowingWindows: windows, // ADDED
+        activeSowingWindowId: 'spring', // ADDED
+        startISO: '2026-04-15' // ADDED
+    }).options.map(option => option.label); // ADDED
+    const summary = hooks.formatSowingWindowsSummary(windows); // ADDED
+    assert.equal(JSON.stringify(selectorLabels), JSON.stringify(windows.map(window => window.label))); // CHANGED
+    selectorLabels.forEach(label => assert.match(summary, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))); // ADDED
 }); // ADDED
 
 test('schedule summary state uses perennial and annual harvest semantics', () => { // ADDED
@@ -912,8 +1048,8 @@ test('schedule summary state uses perennial and annual harvest semantics', () =>
         methodName: 'Field direct sow', // ADDED
         windowFeasible: true, // ADDED
         startISO: '2026-04-01', // ADDED
-        earliestISO: '2026-03-20', // ADDED
-        latestISO: '2026-05-01', // ADDED
+        sowingWindows: [{ id: 'spring', label: 'Spring (Mar 20-May 1)', startISO: '2026-03-20', endISO: '2026-05-01' }], // CHANGED
+        activeSowingWindowId: 'spring', // ADDED
         firstHarvestISO: '2026-05-01', // ADDED
         lastHarvestISO: '2026-05-08' // ADDED
     }); // ADDED

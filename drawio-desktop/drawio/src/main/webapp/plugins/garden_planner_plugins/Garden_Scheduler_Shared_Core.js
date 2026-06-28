@@ -707,18 +707,28 @@
         perennial = false,
         windowFeasible = false,
         startISO = '',
-        earliestISO = '',
-        latestISO = ''
+        sowingWindows = [],
+        activeSowingWindowId = ''
     } = {}) {
         if (perennial) return { status: 'not_applicable', label: 'Not applicable for perennial planting dates.' };
-        if (!windowFeasible) return { status: 'no_window', label: 'No feasible sowing window is available.' };
+        const windows = Array.isArray(sowingWindows) ? sowingWindows : []; // CHANGED
+        if (!windowFeasible || !windows.length) return { status: 'no_window', label: 'No feasible sowing window is available.' }; // CHANGED
         const selected = parseISODateUTCValue(startISO);
         if (!selected) return { status: 'missing', label: 'Select a sow date.' };
-        const earliest = parseISODateUTCValue(earliestISO);
-        const latest = parseISODateUTCValue(latestISO);
-        if (earliest && selected < earliest) return { status: 'early', label: 'The selected sow date is earlier than the feasible window.' };
-        if (latest && selected > latest) return { status: 'late', label: 'The selected sow date is later than the feasible window.' };
-        return { status: 'feasible', label: 'The selected sow date is feasible.' };
+        const active = windows.find(window => String(window?.id || '') === String(activeSowingWindowId || '')); // CHANGED
+        if (!active) return { status: 'no_active_window', label: 'Select a sowing window.' }; // ADDED
+        const earliest = parseISODateUTCValue(active.startISO); // CHANGED
+        const latest = parseISODateUTCValue(active.endISO); // CHANGED
+        if (!earliest || !latest || selected < earliest || selected > latest) { // CHANGED
+            const other = windows.find(window => { // ADDED
+                const start = parseISODateUTCValue(window?.startISO); // ADDED
+                const end = parseISODateUTCValue(window?.endISO); // ADDED
+                return start && end && selected >= start && selected <= end; // ADDED
+            }); // ADDED
+            if (other) return { status: 'window_mismatch', label: `The selected sow date belongs to ${other.label || other.id}, not ${active.label || active.id}.` }; // ADDED
+            return { status: 'outside_window', label: 'The selected sow date is outside the selected sowing window.' }; // CHANGED
+        }
+        return { status: 'feasible', label: `The selected sow date is in ${active.label || active.id}.` }; // CHANGED
     }
     function buildScheduleViewState({
         perennial = false,
@@ -729,12 +739,12 @@
         seasonStartYear = '',
         methodName = '',
         startISO = '',
-        earliestISO = '',
-        latestISO = '',
+        sowingWindows = [],
+        activeSowingWindowId = '',
         firstHarvestISO = '',
         lastHarvestISO = ''
     } = {}) {
-        const feasibility = classifySelectedSowDate({ perennial, windowFeasible, startISO, earliestISO, latestISO });
+        const feasibility = classifySelectedSowDate({ perennial, windowFeasible, startISO, sowingWindows, activeSowingWindowId }); // CHANGED
         return {
             crop: [plantName, varietyName].filter(Boolean).join(' / ') || '(none)',
             context: [cityName, seasonStartYear].filter(value => String(value || '').trim()).join(' / ') || '(none)',
