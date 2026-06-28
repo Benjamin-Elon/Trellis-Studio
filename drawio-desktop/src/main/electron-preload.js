@@ -102,6 +102,18 @@ contextBridge.exposeInMainWorld(
 	  }
 	}
   );
+
+contextBridge.exposeInMainWorld('trellisApp', { // NEW
+	getInfo() { // NEW
+		return new Promise((resolve, reject) => { // NEW
+			requestViaIPC( // NEW
+				{ action: 'getTrellisAppInfo' }, // NEW
+				(data) => resolve(data || {}), // NEW
+				(msg) => reject(new Error(msg || 'getTrellisAppInfo failed')) // NEW
+			); // NEW
+		}); // NEW
+	} // NEW
+}); // NEW
   
 
 contextBridge.exposeInMainWorld(
@@ -303,4 +315,3 @@ window.addEventListener('message', (event) => {
   });
 
   console.log('[PreloadBridge] postMessage bridge active');
-

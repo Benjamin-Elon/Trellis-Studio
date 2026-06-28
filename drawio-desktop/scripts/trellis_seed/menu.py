@@ -36,7 +36,7 @@ def run_menu() -> None:
         print("5. Manage run folders")
         print("6. Settings and credentials")
         print("7. Run live tests")
-        print("8. Compare scheduler to sowing-window references")
+        print("8. Compare scheduler to sowing-season references")  # terminology alignment
         print("9. Exit")
         choice = input("Choose an option: ").strip()
         if choice == "1":
@@ -420,8 +420,8 @@ def _sowing_window_diagnostics_flow(settings) -> None:
     except ValueError:
         print("Enter a whole-number tolerance.")
         return
-    report_path = settings.runs_dir / "sowing_window_diagnostics_report.json"
-    script_path = PROJECT_DIR / "scripts" / "trellis_seed_sowing_window_diagnostics.cjs"
+    report_path = settings.runs_dir / "sowing_season_diagnostics_report.json"  # match diagnostics script
+    script_path = PROJECT_DIR / "scripts" / "trellis_seed_sowing_season_diagnostics.cjs"  # existing diagnostics entrypoint
     cmd = [
         "node",
         str(script_path),
@@ -444,9 +444,9 @@ def _sowing_window_diagnostics_flow(settings) -> None:
     if completed.stderr:
         print(completed.stderr.strip())
     if completed.returncode:
-        print(f"Sowing-window diagnostics failed with exit code {completed.returncode}.")
+        print(f"Sowing-season diagnostics failed with exit code {completed.returncode}.")  # terminology alignment
     else:
-        print("Sowing-window diagnostics complete.")
+        print("Sowing-season diagnostics complete.")  # terminology alignment
 
 
 def _choose_run(settings, complete_only: bool = False) -> Path | None:

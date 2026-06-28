@@ -241,7 +241,7 @@ function makeAutoWindowParams({
         daysTransplant: Number(plant.days_transplant || 0),
         overwinterAllowed: plant.overwinter_ok === 1,
         plantMetadata: plant, // ADDED
-        cityLatitudeDeg: Number.isFinite(Number(city.latitude_deg)) ? Number(city.latitude_deg) : null, // ADDED
+        cityLatitudeDeg: Number.isFinite(Number(city.latitude)) ? Number(city.latitude) : null, // ADDED
         bedProfile,
         dailyClimate,
         windowOptions
@@ -312,6 +312,137 @@ test('indoor transplant applies transplant lead time', () => {
     assert.equal(result.timelines[0].transplant.toISOString().slice(0, 10), '2026-04-22');
 });
 
+test('lifecycle timeline shows annual direct sow and harvest milestones', () => { // ADDED
+    const plant = makePlant(); // ADDED
+    const result = hooks.computeScheduleResult(makeInputs({ plant })); // ADDED
+    const model = hooks.buildLifecycleTimelineViewModel({ // ADDED
+        plant, // ADDED
+        seasonStartYear: 2026, // ADDED
+        startISO: '2026-04-01', // ADDED
+        scheduleResult: result, // ADDED
+        sowingSeasons: [{ id: 'spring', label: 'Spring', startISO: '2026-03-01', endISO: '2026-05-15' }], // ADDED
+        todayISO: '2026-04-15' // ADDED
+    }); // ADDED
+    assert.equal(model.hidden, false); // ADDED
+    assert.deepEqual(Array.from(model.visibleMilestones, m => m.stage), ['SOW', 'HARVEST_START', 'HARVEST_END']); // ADDED
+    assert.equal(model.visibleMilestones.find(m => m.stage === 'SOW').iso, '2026-04-01'); // ADDED
+    assert.equal(model.visibleMilestones.find(m => m.stage === 'HARVEST_START').iso, '2026-05-01'); // ADDED
+    assert.equal(model.visibleMilestones.find(m => m.stage === 'HARVEST_END').iso, '2026-05-08'); // ADDED
+}); // ADDED
+
+test('lifecycle timeline includes transplant milestone for transplant schedules', () => { // ADDED
+    const plant = makePlant({ days_transplant: 21 }); // ADDED
+    const result = hooks.computeScheduleResult(makeInputs({ // ADDED
+        plant, // ADDED
+        planningMode: 'transplant_indoor', // ADDED
+        methodCategoryId: 'transplant', // ADDED
+        methodId: 'transplant.indoor' // ADDED
+    })); // ADDED
+    const model = hooks.buildLifecycleTimelineViewModel({ plant, seasonStartYear: 2026, startISO: '2026-04-01', scheduleResult: result }); // ADDED
+    const transplant = model.visibleMilestones.find(m => m.stage === 'TRANSPLANT'); // ADDED
+    assert.ok(transplant); // ADDED
+    assert.equal(transplant.iso, '2026-04-22'); // ADDED
+}); // ADDED
+
+test('lifecycle timeline renders all feasible sowing seasons as bands', () => { // ADDED
+    const plant = makePlant(); // ADDED
+    const model = hooks.buildLifecycleTimelineViewModel({ // ADDED
+        plant, // ADDED
+        seasonStartYear: 2026, // ADDED
+        startISO: '2026-04-01', // ADDED
+        scheduleResult: hooks.computeScheduleResult(makeInputs({ plant })), // ADDED
+        sowingSeasons: [ // ADDED
+            { id: 'spring', label: 'Spring', startISO: '2026-03-01', endISO: '2026-05-15' }, // ADDED
+            { id: 'fall', label: 'Fall', startISO: '2026-08-01', endISO: '2026-09-15' } // ADDED
+        ] // ADDED
+    }); // ADDED
+    assert.equal(model.bands.length, 2); // ADDED
+    assert.deepEqual(model.bands.map(b => b.id), ['spring', 'fall']); // ADDED
+    assert.ok(model.bands.every(b => b.widthPercent > 0)); // ADDED
+}); // ADDED
+
+test('lifecycle timeline uses full multi-year scan bounds', () => { // ADDED
+    const plant = makePlant({ annual: 0, biennial: 1, lifespan_years: 2 }); // ADDED
+    const model = hooks.buildLifecycleTimelineViewModel({ plant, seasonStartYear: 2026, startISO: '2026-04-01' }); // ADDED
+    assert.equal(model.bounds.startISO, '2026-01-01'); // ADDED
+    assert.equal(model.bounds.endISO, '2027-12-31'); // ADDED
+    assert.equal(model.bounds.multiYear, true); // ADDED
+}); // ADDED
+
+test('lifecycle timeline today marker appears only inside range', () => { // ADDED
+    const plant = makePlant(); // ADDED
+    const inside = hooks.buildLifecycleTimelineViewModel({ plant, seasonStartYear: 2026, startISO: '2026-04-01', todayISO: '2026-06-01' }); // ADDED
+    const outside = hooks.buildLifecycleTimelineViewModel({ plant, seasonStartYear: 2026, startISO: '2026-04-01', todayISO: '2027-01-01' }); // ADDED
+    assert.equal(inside.todayISO, '2026-06-01'); // ADDED
+    assert.ok(inside.todayPercent > 0); // ADDED
+    assert.equal(outside.todayISO, null); // ADDED
+    assert.equal(outside.todayPercent, null); // ADDED
+}); // ADDED
+
+test('lifecycle timeline stacks dense labels and keeps exact stage details', () => { // ADDED
+    const plant = makePlant(); // ADDED
+    const scheduleResult = { // ADDED
+        kind: 'annual', // ADDED
+        schedule: [new Date('2026-04-01T00:00:00Z')], // ADDED
+        timelines: [{ // ADDED
+            germ: new Date('2026-04-02T00:00:00Z'), // ADDED
+            transplant: new Date('2026-04-03T00:00:00Z'), // ADDED
+            maturity: new Date('2026-04-04T00:00:00Z'), // ADDED
+            harvestStart: new Date('2026-04-05T00:00:00Z'), // ADDED
+            harvestEnd: new Date('2026-04-06T00:00:00Z') // ADDED
+        }] // ADDED
+    }; // ADDED
+    const model = hooks.buildLifecycleTimelineViewModel({ plant, seasonStartYear: 2026, startISO: '2026-04-01', scheduleResult }); // ADDED
+    assert.ok(model.labelRows.length > 1); // ADDED
+    assert.ok(model.details.includes('Germ: 2026-04-02')); // ADDED
+    assert.ok(model.details.includes('Maturity: 2026-04-04')); // ADDED
+}); // ADDED
+
+test('lifecycle timeline task association uses start anchors only', () => { // ADDED
+    const rules = [ // ADDED
+        makeRepeatRule({ id: 'range', startAnchorStage: 'SOW', endMode: 'anchor_range', endAnchorStage: 'HARVEST_START' }), // ADDED
+        makeRepeatRule({ id: 'harvest', startAnchorStage: 'HARVEST_START' }) // ADDED
+    ]; // ADDED
+    const match = hooks.findFirstLifecycleTimelineTaskRule(rules, 'HARVEST_START'); // ADDED
+    assert.equal(match.originalIndex, 1); // ADDED
+}); // ADDED
+
+test('lifecycle timeline opens first matching task rule by display order', () => { // ADDED
+    const rules = [ // ADDED
+        makeRepeatRule({ id: 'late', startAnchorStage: 'HARVEST_START' }), // ADDED
+        makeRepeatRule({ id: 'early', startAnchorStage: 'HARVEST_START' }) // ADDED
+    ]; // ADDED
+    const generatedTasks = [ // ADDED
+        { previewRuleKey: hooks.getTaskPreviewRuleKey(rules[0], 0), startISO: '2026-05-10' }, // ADDED
+        { previewRuleKey: hooks.getTaskPreviewRuleKey(rules[1], 1), startISO: '2026-05-01' } // ADDED
+    ]; // ADDED
+    const match = hooks.findFirstLifecycleTimelineTaskRule(rules, 'HARVEST_START', generatedTasks); // ADDED
+    assert.equal(match.originalIndex, 1); // ADDED
+}); // ADDED
+
+test('lifecycle timeline milestone task dot follows generated display order', () => { // ADDED
+    const plant = makePlant(); // ADDED
+    const rules = [ // ADDED
+        makeRepeatRule({ id: 'late', startAnchorStage: 'HARVEST_START' }), // ADDED
+        makeRepeatRule({ id: 'early', startAnchorStage: 'HARVEST_START' }) // ADDED
+    ]; // ADDED
+    const generatedTasks = [ // ADDED
+        { previewRuleKey: hooks.getTaskPreviewRuleKey(rules[0], 0), startISO: '2026-05-10' }, // ADDED
+        { previewRuleKey: hooks.getTaskPreviewRuleKey(rules[1], 1), startISO: '2026-05-01' } // ADDED
+    ]; // ADDED
+    const model = hooks.buildLifecycleTimelineViewModel({ // ADDED
+        plant, // ADDED
+        seasonStartYear: 2026, // ADDED
+        startISO: '2026-04-01', // ADDED
+        scheduleResult: hooks.computeScheduleResult(makeInputs({ plant })), // ADDED
+        taskRules: rules, // ADDED
+        generatedTasks // ADDED
+    }); // ADDED
+    const harvestStart = model.visibleMilestones.find(m => m.stage === 'HARVEST_START'); // ADDED
+    assert.equal(harvestStart.hasTaskRule, true); // ADDED
+    assert.equal(harvestStart.taskRuleIndex, 1); // ADDED
+}); // ADDED
+
 test('indoor transplant gate outside scan end is rejected', () => {
     const plant = makePlant({ days_transplant: 20 });
     const planner = new hooks.Planner(makeInputs({
@@ -356,7 +487,7 @@ test('cooling trigger returns null without an observed warm-to-cool transition',
     assert.equal(crossing, null);
 });
 
-test('annual crop cooling threshold does not force a fall-only sowing window', () => {
+test('annual crop cooling threshold does not force a fall-only sowing season', () => {
     const plant = makePlant({
         plant_name: 'Beet',
         days_maturity: 55,
@@ -575,7 +706,7 @@ test('feasibility blocking summary identifies primary post-readiness GDD blocker
     const rows = await hooks.explainFeasibilityOverSeason(inputs, 400, false); // ADDED
     const summary = hooks.buildFeasibilityBlockingSummary(inputs, rows); // ADDED
     const diagnostics = hooks.buildFeasibilityDiagnostics(inputs, rows); // ADDED
-    assert.match(summary, /No feasible sowing window found\./); // ADDED
+    assert.match(summary, /No feasible sowing season found\./); // ADDED
     assert.match(summary, /Primary blocker after frost\/soil readiness: insufficient_gdd/); // ADDED
     assert.match(summary, /GDD check: crop needs 1250\.0 GDD; calibrated crop-base estimate is/); // ADDED
     assert.match(diagnostics, /Failure summary: .*soil_gate: \d+/); // ADDED
@@ -642,16 +773,16 @@ test('overwinter crop can mature in the following year', () => {
     assert.equal(result.rows[0].harvStart, '2027-06-22');
 });
 
-test('annual sowing windows derive one continuous season-bound window', () => { // ADDED
+test('annual sowing seasons derive one continuous season-bound window', () => { // ADDED
     const plant = makePlant({ plant_name: 'Fast Bean', days_maturity: 30, gdd_to_maturity: null }); // ADDED
-    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city: makeCity(20), year: 2026 })); // ADDED
+    const result = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant, city: makeCity(20), year: 2026 })); // ADDED
     assert.equal(result.feasible, true); // ADDED
-    assert.equal(result.windows.length, 1); // ADDED
-    assert.equal(result.windows[0].startISO, '2026-01-01'); // ADDED
-    assert.match(result.windows[0].endISO, /^2026-/); // ADDED
+    assert.equal(result.seasons.length, 1); // ADDED
+    assert.equal(result.seasons[0].startISO, '2026-01-01'); // ADDED
+    assert.match(result.seasons[0].endISO, /^2026-/); // ADDED
 }); // ADDED
 
-test('hot-climate annual derives separate early and late sowing windows', () => { // ADDED
+test('hot-climate annual derives separate early and late sowing seasons', () => { // ADDED
     const plant = makePlant({ // ADDED
         plant_name: 'Heat Sensitive Lettuce', // ADDED
         days_maturity: 25, // ADDED
@@ -665,11 +796,11 @@ test('hot-climate annual derives separate early and late sowing windows', () => 
         1: 10, 2: 12, 3: 15, 4: 18, 5: 23, 6: 31, // ADDED
         7: 33, 8: 31, 9: 23, 10: 17, 11: 12, 12: 10 // ADDED
     }); // ADDED
-    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
+    const result = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
     assert.equal(result.feasible, true); // ADDED
-    assert.ok(result.windows.length >= 2, `expected split windows, got ${JSON.stringify(result.windows)}`); // ADDED
-    assert.equal(result.windows[0].startISO.slice(0, 4), '2026'); // ADDED
-    assert.equal(result.windows[result.windows.length - 1].endISO.slice(0, 4), '2026'); // ADDED
+    assert.ok(result.seasons.length >= 2, `expected split windows, got ${JSON.stringify(result.seasons)}`); // ADDED
+    assert.equal(result.seasons[0].startISO.slice(0, 4), '2026'); // ADDED
+    assert.equal(result.seasons[result.seasons.length - 1].endISO.slice(0, 4), '2026'); // ADDED
 }); // ADDED
 
 test('overwinter annual derives spring and fall windows inside the selected season year', () => { // ADDED
@@ -685,22 +816,22 @@ test('overwinter annual derives spring and fall windows inside the selected seas
         7: 24, 8: 22, 9: 16, 10: 10, 11: 5, 12: 2 // ADDED
     }); // ADDED
     city.last_spring_frost_doy = 105; // ADDED
-    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
+    const result = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
     assert.equal(result.feasible, true); // ADDED
-    assert.ok(result.windows.length >= 2, `expected spring and fall windows, got ${JSON.stringify(result.windows)}`); // ADDED
-    assert.equal(result.windows[0].startISO, '2026-01-01'); // ADDED
-    assert.equal(result.windows.every(window => window.startISO.startsWith('2026-') && window.endISO.startsWith('2026-')), true); // ADDED
-    assert.ok(result.windows.some(window => /Fall/.test(window.label)), `expected a fall label, got ${JSON.stringify(result.windows)}`); // ADDED
+    assert.ok(result.seasons.length >= 2, `expected spring and fall windows, got ${JSON.stringify(result.seasons)}`); // ADDED
+    assert.equal(result.seasons[0].startISO, '2026-01-01'); // ADDED
+    assert.equal(result.seasons.every(window => window.startISO.startsWith('2026-') && window.endISO.startsWith('2026-')), true); // ADDED
+    assert.ok(result.seasons.some(window => /Fall/.test(window.label)), `expected a fall label, got ${JSON.stringify(result.seasons)}`); // ADDED
 }); // ADDED
 
 test('overwinter spring sowing belongs to its own season year', () => { // ADDED
     const plant = makePlant({ plant_name: 'Garlic', days_maturity: 240, overwinter_ok: 1, start_cooling_threshold_c: 12 }); // ADDED
     const city = makeSeasonalCity({ 1: 2, 2: 3, 3: 8, 4: 12, 5: 18, 6: 22, 7: 24, 8: 22, 9: 16, 10: 10, 11: 5, 12: 2 }); // ADDED
     city.last_spring_frost_doy = 105; // ADDED
-    const prior = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
-    const next = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2027 })); // ADDED
-    assert.equal(prior.windows.some(window => window.startISO.startsWith('2027-') || window.endISO.startsWith('2027-')), false); // ADDED
-    assert.equal(next.windows[0].startISO, '2027-01-01'); // ADDED
+    const prior = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
+    const next = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant, city, year: 2027 })); // ADDED
+    assert.equal(prior.seasons.some(window => window.startISO.startsWith('2027-') || window.endISO.startsWith('2027-')), false); // ADDED
+    assert.equal(next.seasons[0].startISO, '2027-01-01'); // ADDED
 }); // ADDED
 
 test('cool-season heat above optimum adds diagnostics without blocking by default', () => { // ADDED
@@ -714,11 +845,11 @@ test('cool-season heat above optimum adds diagnostics without blocking by defaul
         quality_heat_policy: 'warn' // ADDED
     }); // ADDED
     const city = makeCity(22); // ADDED
-    city.latitude_deg = 45; // ADDED
-    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
+    city.latitude = 45; // ADDED
+    const result = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
     assert.equal(result.feasible, true); // ADDED
-    assert.ok(result.windows.some(window => /Heat warning/.test(window.riskSummary)), JSON.stringify(result.windows)); // CHANGED
-    assert.ok(result.windows.some(window => window.diagnostics.some(diagnostic => diagnostic.factor === 'quality_heat' && diagnostic.severity === 'warning'))); // ADDED
+    assert.ok(result.seasons.some(window => /Heat warning/.test(window.riskSummary)), JSON.stringify(result.seasons)); // CHANGED
+    assert.ok(result.seasons.some(window => window.diagnostics.some(diagnostic => diagnostic.factor === 'quality_heat' && diagnostic.severity === 'warning'))); // ADDED
 }); // ADDED
 
 test('establishment heat block policy excludes otherwise feasible sow dates', () => { // ADDED
@@ -730,9 +861,9 @@ test('establishment heat block policy excludes otherwise feasible sow dates', ()
         establishment_heat_window_days: 3, // ADDED
         establishment_heat_policy: 'block' // ADDED
     }); // ADDED
-    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city: makeCity(30), year: 2026 })); // ADDED
+    const result = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant, city: makeCity(30), year: 2026 })); // ADDED
     assert.equal(result.feasible, false); // ADDED
-    assert.equal(result.windows.length, 0); // ADDED
+    assert.equal(result.seasons.length, 0); // ADDED
 }); // ADDED
 
 test('photoperiod diagnostics use city latitude and do not block warn-policy windows', () => { // ADDED
@@ -745,10 +876,10 @@ test('photoperiod diagnostics use city latitude and do not block warn-policy win
         photoperiod_policy: 'warn' // ADDED
     }); // ADDED
     const city = makeCity(16); // ADDED
-    city.latitude_deg = 45; // ADDED
-    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
+    city.latitude = 45; // ADDED
+    const result = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
     assert.equal(result.feasible, true); // ADDED
-    assert.ok(result.windows.some(window => /Photoperiod warning/.test(window.riskSummary)), JSON.stringify(result.windows)); // CHANGED
+    assert.ok(result.seasons.some(window => /Photoperiod warning/.test(window.riskSummary)), JSON.stringify(result.seasons)); // CHANGED
 }); // ADDED
 
 test('missing latitude skips photoperiod diagnostics without changing feasible windows', () => { // ADDED
@@ -758,11 +889,11 @@ test('missing latitude skips photoperiod diagnostics without changing feasible w
         photoperiod_stage: 'maturity', // ADDED
         photoperiod_policy: 'warn' // ADDED
     }); // ADDED
-    const baseline = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant: makePlant(), city: makeCity(16), year: 2026 })); // ADDED
-    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city: makeCity(16), year: 2026 })); // ADDED
-    assert.equal(result.windows.length, baseline.windows.length); // ADDED
-    assert.ok(result.windows.some(window => /Photoperiod data missing/.test(window.riskSummary)), JSON.stringify(result.windows)); // CHANGED
-    assert.ok(result.windows.some(window => window.diagnostics.some(diagnostic => /latitude is missing/.test(diagnostic.message))), JSON.stringify(result.windows)); // ADDED
+    const baseline = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant: makePlant(), city: makeCity(16), year: 2026 })); // ADDED
+    const result = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant, city: makeCity(16), year: 2026 })); // ADDED
+    assert.equal(result.seasons.length, baseline.seasons.length); // ADDED
+    assert.ok(result.seasons.some(window => /Photoperiod data missing/.test(window.riskSummary)), JSON.stringify(result.seasons)); // CHANGED
+    assert.ok(result.seasons.some(window => window.diagnostics.some(diagnostic => /latitude is missing/.test(diagnostic.message))), JSON.stringify(result.seasons)); // ADDED
 }); // ADDED
 
 test('chilling diagnostics report insufficient vernalization without default blocking', () => { // ADDED
@@ -775,9 +906,9 @@ test('chilling diagnostics report insufficient vernalization without default blo
         chilling_stage: 'maturity', // ADDED
         chilling_policy: 'warn' // ADDED
     }); // ADDED
-    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city: makeCity(15), year: 2026 })); // ADDED
+    const result = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant, city: makeCity(15), year: 2026 })); // ADDED
     assert.equal(result.feasible, true); // ADDED
-    assert.ok(result.windows.some(window => /Chilling warning/.test(window.riskSummary)), JSON.stringify(result.windows)); // CHANGED
+    assert.ok(result.seasons.some(window => /Chilling warning/.test(window.riskSummary)), JSON.stringify(result.seasons)); // CHANGED
 }); // ADDED
 
 test('variety physiology overrides affect diagnostics without mutating base plant', () => { // ADDED
@@ -788,11 +919,11 @@ test('variety physiology overrides affect diagnostics without mutating base plan
         quality_heat_policy: 'warn' // ADDED
     })); // ADDED
     const city = makeCity(22); // ADDED
-    const baseResult = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant: base, city, year: 2026 })); // ADDED
-    const varietyResult = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant: variety, city, year: 2026 })); // ADDED
+    const baseResult = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant: base, city, year: 2026 })); // ADDED
+    const varietyResult = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant: variety, city, year: 2026 })); // ADDED
     assert.equal(base.quality_temp_max_c, undefined); // ADDED
-    assert.equal(baseResult.windows.some(window => /Heat warning/.test(window.riskSummary)), false); // CHANGED
-    assert.equal(varietyResult.windows.some(window => /Heat warning/.test(window.riskSummary)), true); // CHANGED
+    assert.equal(baseResult.seasons.some(window => /Heat warning/.test(window.riskSummary)), false); // CHANGED
+    assert.equal(varietyResult.seasons.some(window => /Heat warning/.test(window.riskSummary)), true); // CHANGED
 }); // ADDED
 
 test('spring-sown chilling does not receive pre-sowing winter credit', () => { // ADDED
@@ -856,7 +987,7 @@ test('smoothed diagnostic block gap remains blocked for the exact selected date'
         '2026-03-17': 30 // ADDED
     }; // ADDED
     const dailyClimate = makeDailyClimate(2026, 20, overrides); // ADDED
-    const windows = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city: makeCity(20), year: 2026, dailyClimate })).windows; // ADDED
+    const windows = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant, city: makeCity(20), year: 2026, dailyClimate })).seasons; // ADDED
     assert.equal(windows.length, 1, JSON.stringify(windows)); // ADDED
     assert.equal(windows[0].startISO, '2026-01-01'); // ADDED
     assert.ok(windows[0].endISO > '2026-03-17', JSON.stringify(windows)); // CHANGED
@@ -875,11 +1006,11 @@ test('photoperiod block excludes dates when latitude is present and daylength fa
         photoperiod_policy: 'block' // ADDED
     }); // ADDED
     const city = makeCity(16); // ADDED
-    city.latitude_deg = 45; // ADDED
+    city.latitude = 45; // ADDED
     const exact = hooks.evaluateSowDateDiagnostics(makeInputs({ plant, city, startISO: '2026-01-01' })); // ADDED
     assert.ok(exact.blockingDiagnostics.some(diagnostic => diagnostic.factor === 'photoperiod'), JSON.stringify(exact)); // ADDED
-    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
-    assert.equal(result.windows.some(window => window.startISO === '2026-01-01'), false, JSON.stringify(result.windows)); // ADDED
+    const result = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
+    assert.equal(result.seasons.some(window => window.startISO === '2026-01-01'), false, JSON.stringify(result.seasons)); // ADDED
 }); // ADDED
 
 test('missing latitude does not block photoperiod block policy and shows data badge', () => { // ADDED
@@ -892,9 +1023,9 @@ test('missing latitude does not block photoperiod block policy and shows data ba
     const city = makeCity(16); // ADDED
     const exact = hooks.evaluateSowDateDiagnostics(makeInputs({ plant, city, startISO: '2026-01-01' })); // ADDED
     assert.equal(exact.blockingDiagnostics.length, 0, JSON.stringify(exact)); // ADDED
-    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
+    const result = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
     assert.equal(result.feasible, true); // ADDED
-    assert.ok(result.windows.some(window => /Photoperiod data missing/.test(window.riskSummary)), JSON.stringify(result.windows)); // ADDED
+    assert.ok(result.seasons.some(window => /Photoperiod data missing/.test(window.riskSummary)), JSON.stringify(result.seasons)); // ADDED
 }); // ADDED
 
 test('unsupported stored latitude does not silently clamp or block photoperiod policy', () => { // ADDED
@@ -905,13 +1036,13 @@ test('unsupported stored latitude does not silently clamp or block photoperiod p
         photoperiod_policy: 'block' // ADDED
     }); // ADDED
     const city = makeCity(16); // ADDED
-    city.latitude_deg = 70; // ADDED
+    city.latitude = 70; // ADDED
     const exact = hooks.evaluateSowDateDiagnostics(makeInputs({ plant, city, startISO: '2026-01-01' })); // ADDED
     assert.equal(exact.blockingDiagnostics.length, 0, JSON.stringify(exact)); // ADDED
     assert.ok(exact.diagnostics.some(diagnostic => diagnostic.factor === 'photoperiod' && diagnostic.severity === 'info' && /supported -66\.5 to 66\.5/.test(diagnostic.message)), JSON.stringify(exact)); // ADDED
-    const result = hooks.computeAnnualSowingWindows(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
+    const result = hooks.computeAnnualSowingSeasons(makeAutoWindowParams({ plant, city, year: 2026 })); // ADDED
     assert.equal(result.feasible, true); // ADDED
-    assert.ok(result.windows.some(window => /Photoperiod data missing/.test(window.riskSummary)), JSON.stringify(result.windows)); // ADDED
+    assert.ok(result.seasons.some(window => /Photoperiod data missing/.test(window.riskSummary)), JSON.stringify(result.seasons)); // ADDED
 }); // ADDED
 
 test('diagnostic ranges format the same human risk labels as selector summaries', () => { // ADDED
@@ -923,9 +1054,9 @@ test('diagnostic ranges format the same human risk labels as selector summaries'
     }); // ADDED
     const city = makeCity(22); // ADDED
     const params = makeAutoWindowParams({ plant, city, year: 2026 }); // ADDED
-    const windows = hooks.computeAnnualSowingWindows(params).windows; // ADDED
+    const windows = hooks.computeAnnualSowingSeasons(params).seasons; // ADDED
     const ranges = hooks.computeScheduleQualityDiagnosticRanges(params); // ADDED
-    const selector = hooks.buildSowingWindowSelectorState({ sowingWindows: windows, activeSowingWindowId: windows[0]?.id || '', startISO: windows[0]?.startISO || '' }); // ADDED
+    const selector = hooks.buildSowingSeasonSelectorState({ sowingSeasons: windows, activeSowingSeasonId: windows[0]?.id || '', startISO: windows[0]?.startISO || '' }); // ADDED
     const text = hooks.formatScheduleQualityDiagnosticRanges(ranges); // ADDED
     assert.ok(selector.options.some(option => /Heat warning \(\d+ dates?\)/.test(option.label)), JSON.stringify(selector)); // CHANGED
     assert.match(text, /Heat warning/); // ADDED
@@ -940,7 +1071,7 @@ test('city latitude validation accepts clearing and rejects out-of-range values'
     assert.throws(() => hooks.normalizeLatitudeDeg('-66.6'), /between -66\.5 and 66\.5/); // CHANGED
 }); // ADDED
 
-test('city latitude update persists to Cities.latitude_deg', async () => { // ADDED
+test('city latitude update persists to Cities.latitude', async () => { // ADDED
     const testWindow = hooks.__testWindow; // ADDED
     const previousBridge = testWindow.dbBridge; // ADDED
     const updates = []; // ADDED
@@ -955,7 +1086,7 @@ test('city latitude update persists to Cities.latitude_deg', async () => { // AD
             return { rows: [] }; // ADDED
         }, // ADDED
         async exec(_dbId, sql, params) { // ADDED
-            if (/UPDATE Cities SET latitude_deg/i.test(sql)) { // ADDED
+            if (/UPDATE Cities SET latitude/i.test(sql)) { // CHANGED
                 updates.push(params); // ADDED
                 changes = params[1] === 'Test City' ? 1 : 0; // ADDED
             } // ADDED
@@ -992,14 +1123,14 @@ test('city latitude save helper persists cache and refreshes annual scheduling s
             return { rows: [] }; // ADDED
         }, // ADDED
         async exec(_dbId, sql, params) { // ADDED
-            if (/UPDATE Cities SET latitude_deg/i.test(sql)) { // ADDED
+            if (/UPDATE Cities SET latitude/i.test(sql)) { // CHANGED
                 updates.push(params); // ADDED
                 changes = params[1] === 'Test City' ? 1 : 0; // ADDED
             } // ADDED
             return {}; // ADDED
         } // ADDED
     }; // ADDED
-    const cities = [{ city_name: 'Test City', latitude_deg: null }]; // ADDED
+    const cities = [{ city_name: 'Test City', latitude: null }]; // CHANGED
     const recomputeReasons = []; // ADDED
     let previewRefreshes = 0; // ADDED
     try { // ADDED
@@ -1012,9 +1143,65 @@ test('city latitude save helper persists cache and refreshes annual scheduling s
         }); // ADDED
         assert.equal(saved, 49.25); // ADDED
         assert.deepEqual(Array.from(updates.at(-1)), [49.25, 'Test City']); // ADDED
-        assert.equal(cities[0].latitude_deg, 49.25); // ADDED
+        assert.equal(cities[0].latitude, 49.25); // CHANGED
         assert.deepEqual(recomputeReasons, ['cityChanged']); // ADDED
         assert.equal(previewRefreshes, 1); // ADDED
+    } finally { // ADDED
+        testWindow.dbBridge = previousBridge; // ADDED
+    } // ADDED
+}); // ADDED
+
+test('city climate resolver prefers city_id and falls back to city_name', async () => { // ADDED
+    const testWindow = hooks.__testWindow; // ADDED
+    const previousBridge = testWindow.dbBridge; // ADDED
+    const queries = []; // ADDED
+    testWindow.dbBridge = { // ADDED
+        async resolvePath() { return { dbPath: 'mock.sqlite' }; }, // ADDED
+        async open() { return { dbId: 'mock-db' }; }, // ADDED
+        async close() {}, // ADDED
+        async query(_dbId, sql, params) { // ADDED
+            queries.push({ sql, params }); // ADDED
+            if (/WHERE city_id = \\?/i.test(sql) && Number(params[0]) === 7) return { rows: [{ city_id: 7, city_name: 'Renamed City', latitude: 49 }] }; // ADDED
+            if (/WHERE city_id = \\?/i.test(sql)) return { rows: [] }; // ADDED
+            if (/WHERE city_name = \\?/i.test(sql) && params[0] === 'Fallback City') return { rows: [{ city_id: 8, city_name: 'Fallback City', latitude: 45 }] }; // ADDED
+            return { rows: [] }; // ADDED
+        }, // ADDED
+        async exec() { return {}; } // ADDED
+    }; // ADDED
+    try { // ADDED
+        const byId = await hooks.CityClimate.resolve({ cityId: 7, cityName: 'Old Cached Name' }); // ADDED
+        assert.equal(byId.city_name, 'Renamed City'); // ADDED
+        const byName = await hooks.CityClimate.resolve({ cityId: 999, cityName: 'Fallback City' }); // ADDED
+        assert.equal(byName.city_id, 8); // ADDED
+        assert.ok(queries.some(item => /WHERE city_id = \\?/i.test(item.sql)), 'expected city_id lookup'); // ADDED
+        assert.ok(queries.some(item => /WHERE city_name = \\?/i.test(item.sql)), 'expected name fallback lookup'); // ADDED
+    } finally { // ADDED
+        testWindow.dbBridge = previousBridge; // ADDED
+    } // ADDED
+}); // ADDED
+
+test('city climate unique-name fallback rejects ambiguous legacy names', async () => { // ADDED
+    const testWindow = hooks.__testWindow; // ADDED
+    const previousBridge = testWindow.dbBridge; // ADDED
+    testWindow.dbBridge = { // ADDED
+        async resolvePath() { return { dbPath: 'mock.sqlite' }; }, // ADDED
+        async open() { return { dbId: 'mock-db' }; }, // ADDED
+        async close() {}, // ADDED
+        async query(_dbId, sql, params) { // ADDED
+            if (/WHERE city_id = \?/i.test(sql)) return { rows: [] }; // ADDED
+            if (/WHERE city_name = \?/i.test(sql) && /LIMIT 2/i.test(sql) && params[0] === 'Duplicate City') { // ADDED
+                return { rows: [ // ADDED
+                    { city_id: 10, city_name: 'Duplicate City', latitude: 40 }, // ADDED
+                    { city_id: 11, city_name: 'Duplicate City', latitude: 41 } // ADDED
+                ] }; // ADDED
+            } // ADDED
+            return { rows: [] }; // ADDED
+        }, // ADDED
+        async exec() { return {}; } // ADDED
+    }; // ADDED
+    try { // ADDED
+        const ambiguous = await hooks.CityClimate.resolveUniqueNameFallback({ cityName: 'Duplicate City' }); // ADDED
+        assert.equal(ambiguous, null); // ADDED
     } finally { // ADDED
         testWindow.dbBridge = previousBridge; // ADDED
     } // ADDED
@@ -1080,6 +1267,16 @@ test('perennial save patch contains lifespan dates and clears annual stages', ()
     assert.equal(patch.days_maturity, '');
     assert.equal(patch.gdd_to_maturity, '');
 });
+
+test('schedule save patch clears legacy sowing window attributes', () => { // ADDED
+    const inputs = makeInputs({ startISO: '2026-04-15' }); // ADDED
+    const result = hooks.computeScheduleResult(inputs); // ADDED
+    const patch = hooks.buildScheduleAttributePatch(inputs, result, { sowingSeasonId: 'spring', sowingSeasonLabel: 'Spring' }); // ADDED
+    assert.equal(patch.sowing_season_id, 'spring'); // ADDED
+    assert.equal(patch.sowing_season_label, 'Spring'); // ADDED
+    assert.equal(patch.sowing_window_id, null); // ADDED
+    assert.equal(patch.sowing_window_label, null); // ADDED
+}); // ADDED
 
 test('persisted start is distinct from a session edit and is not auto-overwritten', () => {
     const persisted = hooks.resolveStartAfterWindow({
@@ -1304,74 +1501,74 @@ test('feasibility helpers classify schedule dates and humanize planner reasons',
     assert.equal(hooks.humanFeasibilityReason('insufficient_gdd'), 'There is not enough growing-degree accumulation to reach maturity.'); // ADDED
     assert.equal(hooks.classifySelectedSowDate({ perennial: true }).status, 'not_applicable'); // ADDED
     assert.equal(hooks.classifySelectedSowDate({ windowFeasible: false }).status, 'no_window'); // ADDED
-    assert.equal(hooks.classifySelectedSowDate({ windowFeasible: true, sowingWindows: windows, activeSowingWindowId: 'spring' }).status, 'missing'); // CHANGED
+    assert.equal(hooks.classifySelectedSowDate({ windowFeasible: true, sowingSeasons: windows, activeSowingSeasonId: 'spring' }).status, 'missing'); // CHANGED
     assert.equal(hooks.classifySelectedSowDate({ // ADDED
         windowFeasible: true, // ADDED
         startISO: '2026-03-01', // ADDED
-        sowingWindows: windows, // CHANGED
-        activeSowingWindowId: 'spring' // ADDED
+        sowingSeasons: windows, // CHANGED
+        activeSowingSeasonId: 'spring' // ADDED
     }).status, 'outside_window'); // CHANGED
     assert.equal(hooks.classifySelectedSowDate({ // ADDED
         windowFeasible: true, // ADDED
         startISO: '2026-09-15', // CHANGED
-        sowingWindows: fallWindows, // CHANGED
-        activeSowingWindowId: 'spring' // ADDED
+        sowingSeasons: fallWindows, // CHANGED
+        activeSowingSeasonId: 'spring' // ADDED
     }).status, 'window_mismatch'); // CHANGED
     assert.equal(hooks.classifySelectedSowDate({ // ADDED
         windowFeasible: true, // ADDED
         startISO: '2026-04-15', // ADDED
-        sowingWindows: windows, // CHANGED
-        activeSowingWindowId: 'spring' // ADDED
+        sowingSeasons: windows, // CHANGED
+        activeSowingSeasonId: 'spring' // ADDED
     }).status, 'feasible'); // ADDED
-    assert.equal(hooks.pickDefaultSowingWindowId(fallWindows, { savedStartISO: '2026-09-15', todayISO: '2026-01-01' }), 'fall'); // ADDED
-    assert.equal(hooks.findSowingWindowForDate(fallWindows, '2026-04-15').id, 'spring'); // ADDED
+    assert.equal(hooks.pickDefaultSowingSeasonId(fallWindows, { savedStartISO: '2026-09-15', todayISO: '2026-01-01' }), 'fall'); // ADDED
+    assert.equal(hooks.findSowingSeasonForDate(fallWindows, '2026-04-15').id, 'spring'); // ADDED
 }); // ADDED
 
 test('orphan saved sow date is visible in selector state and blocks validation', () => { // ADDED
     const windows = [{ id: 'spring', label: 'Spring (Apr 1-May 1)', startISO: '2026-04-01', endISO: '2026-05-01' }]; // ADDED
-    const selector = hooks.buildSowingWindowSelectorState({ // ADDED
-        sowingWindows: windows, // ADDED
-        activeSowingWindowId: hooks.ORPHAN_SOWING_WINDOW_ID, // ADDED
+    const selector = hooks.buildSowingSeasonSelectorState({ // ADDED
+        sowingSeasons: windows, // ADDED
+        activeSowingSeasonId: hooks.ORPHAN_SOWING_SEASON_ID, // ADDED
         startISO: '2026-06-15' // ADDED
     }); // ADDED
-    assert.equal(selector.value, hooks.ORPHAN_SOWING_WINDOW_ID); // ADDED
-    assert.equal(selector.options[0].label, 'Saved date outside windows (2026-06-15)'); // ADDED
+    assert.equal(selector.value, hooks.ORPHAN_SOWING_SEASON_ID); // ADDED
+    assert.equal(selector.options[0].label, 'Saved date outside seasons (2026-06-15)'); // ADDED
     assert.equal(selector.options[0].disabled, true); // ADDED
     assert.equal(selector.boundsText, ''); // ADDED
     assert.equal(hooks.classifySelectedSowDate({ // ADDED
         windowFeasible: true, // ADDED
         startISO: '2026-06-15', // ADDED
-        sowingWindows: windows, // ADDED
-        activeSowingWindowId: hooks.ORPHAN_SOWING_WINDOW_ID // ADDED
+        sowingSeasons: windows, // ADDED
+        activeSowingSeasonId: hooks.ORPHAN_SOWING_SEASON_ID // ADDED
     }).status, 'outside_window'); // ADDED
-    assert.throws(() => hooks.requireFeasibleSowingWindowSelection({ // ADDED
+    assert.throws(() => hooks.requireFeasibleSowingSeasonSelection({ // ADDED
         windowFeasible: true, // ADDED
         startISO: '2026-06-15', // ADDED
-        sowingWindows: windows, // ADDED
-        activeSowingWindowId: hooks.ORPHAN_SOWING_WINDOW_ID // ADDED
-    }), /outside the selectable sowing windows/); // ADDED
+        sowingSeasons: windows, // ADDED
+        activeSowingSeasonId: hooks.ORPHAN_SOWING_SEASON_ID // ADDED
+    }), /outside the selectable sowing seasons/); // ADDED
 }); // ADDED
 
-test('switching sowing windows resets sow date to the selected window start', () => { // ADDED
+test('switching sowing seasons resets sow date to the selected window start', () => { // ADDED
     const windows = [ // ADDED
         { id: 'spring', label: 'Spring (Apr 1-May 1)', startISO: '2026-04-01', endISO: '2026-05-01' }, // ADDED
         { id: 'fall', label: 'Fall (Sep 1-Oct 1)', startISO: '2026-09-01', endISO: '2026-10-01' } // ADDED
     ]; // ADDED
-    assert.equal(hooks.resolveStartForSowingWindowSwitch(windows, 'fall'), '2026-09-01'); // ADDED
-    assert.equal(hooks.resolveStartForSowingWindowSwitch(windows, hooks.ORPHAN_SOWING_WINDOW_ID), ''); // ADDED
+    assert.equal(hooks.resolveStartForSowingSeasonSwitch(windows, 'fall'), '2026-09-01'); // ADDED
+    assert.equal(hooks.resolveStartForSowingSeasonSwitch(windows, hooks.ORPHAN_SOWING_SEASON_ID), ''); // ADDED
 }); // ADDED
 
-test('derived sowing window summary matches selector labels', () => { // ADDED
+test('derived sowing season summary matches selector labels', () => { // ADDED
     const windows = [ // ADDED
         { id: 'spring', label: 'Spring (Apr 1-May 1)', startISO: '2026-04-01', endISO: '2026-05-01' }, // ADDED
         { id: 'fall', label: 'Fall (Sep 1-Oct 1)', startISO: '2026-09-01', endISO: '2026-10-01' } // ADDED
     ]; // ADDED
-    const selectorLabels = hooks.buildSowingWindowSelectorState({ // ADDED
-        sowingWindows: windows, // ADDED
-        activeSowingWindowId: 'spring', // ADDED
+    const selectorLabels = hooks.buildSowingSeasonSelectorState({ // ADDED
+        sowingSeasons: windows, // ADDED
+        activeSowingSeasonId: 'spring', // ADDED
         startISO: '2026-04-15' // ADDED
     }).options.map(option => option.label); // ADDED
-    const summary = hooks.formatSowingWindowsSummary(windows); // ADDED
+    const summary = hooks.formatSowingSeasonsSummary(windows); // ADDED
     assert.equal(JSON.stringify(selectorLabels), JSON.stringify(windows.map(window => window.label))); // CHANGED
     selectorLabels.forEach(label => assert.match(summary, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))); // ADDED
 }); // ADDED
@@ -1385,8 +1582,8 @@ test('schedule summary state uses perennial and annual harvest semantics', () =>
         methodName: 'Field direct sow', // ADDED
         windowFeasible: true, // ADDED
         startISO: '2026-04-01', // ADDED
-        sowingWindows: [{ id: 'spring', label: 'Spring (Mar 20-May 1)', startISO: '2026-03-20', endISO: '2026-05-01' }], // CHANGED
-        activeSowingWindowId: 'spring', // ADDED
+        sowingSeasons: [{ id: 'spring', label: 'Spring (Mar 20-May 1)', startISO: '2026-03-20', endISO: '2026-05-01' }], // CHANGED
+        activeSowingSeasonId: 'spring', // ADDED
         firstHarvestISO: '2026-05-01', // ADDED
         lastHarvestISO: '2026-05-08' // ADDED
     }); // ADDED

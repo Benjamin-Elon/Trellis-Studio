@@ -291,13 +291,13 @@ Draw.loadPlugin(function (ui) {
         return String(value ?? '').trim().toLowerCase();
     }
 
-    const ORPHAN_SOWING_WINDOW_ID = '__saved_date_outside_windows'; // ADDED
+    const ORPHAN_SOWING_SEASON_ID = '__saved_date_outside_seasons'; // ADDED
 
-    function isOrphanSowingWindowId(value) { // ADDED
-        return String(value || '') === ORPHAN_SOWING_WINDOW_ID; // ADDED
+    function isOrphanSowingSeasonId(value) { // ADDED
+        return String(value || '') === ORPHAN_SOWING_SEASON_ID; // ADDED
     }
 
-    function defaultStartForActiveSowingWindow(activeWindow, todayISO = '') { // ADDED
+    function defaultStartForActiveSowingSeason(activeWindow, todayISO = '') { // ADDED
         if (!activeWindow) return ''; // ADDED
         return sowDateInWindow(todayISO, activeWindow) ? String(todayISO) : String(activeWindow.startISO || ''); // ADDED
     }
@@ -310,9 +310,9 @@ Draw.loadPlugin(function (ui) {
         hasPersistedSchedule,
         userEditedStartThisSession,
         todayISO = ''
-    }) { // CHANGED: active sowing windows own generated defaults
+    }) { // CHANGED: active sowing seasons own generated defaults
         const preserveGenuineStart = !!hasPersistedSchedule || !!userEditedStartThisSession; // CHANGED
-        if (feasible && (forceWriteStart || !preserveGenuineStart)) return defaultStartForActiveSowingWindow(activeWindow, todayISO); // CHANGED
+        if (feasible && (forceWriteStart || !preserveGenuineStart)) return defaultStartForActiveSowingSeason(activeWindow, todayISO); // CHANGED
         if (!feasible && !preserveGenuineStart) return ''; // CHANGED
         return String(currentStartISO || ''); // CHANGED
     }
@@ -505,7 +505,7 @@ Draw.loadPlugin(function (ui) {
         chilling_policy: 'TEXT', // ADDED
         diagnostic_policy: 'TEXT' // ADDED
     }); // ADDED
-    const PHYSIOLOGY_CITY_COLUMNS = Object.freeze({ latitude_deg: 'REAL' }); // ADDED
+    const PHYSIOLOGY_CITY_COLUMNS = Object.freeze({}); // CHANGED: city latitude now uses the existing Cities.latitude column.
     let schedulerPhysiologySchemaEnsured = false; // ADDED
 
     async function ensureTableColumns(dbId, tableName, columns) { // ADDED
@@ -1222,13 +1222,37 @@ Draw.loadPlugin(function (ui) {
             return rows[0] ? new CityClimate(rows[0]) : null;
         }
 
+        static async loadUniqueByName(name) { // ADDED
+            await ensureSchedulerPhysiologySchema(); // ADDED
+            const trimmed = String(name || '').trim(); // ADDED
+            if (!trimmed) return null; // ADDED
+            const rows = await queryAll(`SELECT * FROM Cities WHERE city_name = ? LIMIT 2;`, [trimmed]); // ADDED
+            return rows.length === 1 ? new CityClimate(rows[0]) : null; // ADDED
+        }
+
+        static async loadById(cityId) { // ADDED
+            await ensureSchedulerPhysiologySchema(); // ADDED
+            const id = Number(cityId); // ADDED
+            if (!Number.isFinite(id)) return null; // ADDED
+            const rows = await queryAll(`SELECT * FROM Cities WHERE city_id = ? LIMIT 1;`, [id]); // ADDED
+            return rows[0] ? new CityClimate(rows[0]) : null; // ADDED
+        }
+
+        static async resolve({ cityId = null, cityName = '' } = {}) { // ADDED
+            return (await CityClimate.loadById(cityId)) || (cityName ? await CityClimate.loadByName(cityName) : null); // ADDED
+        }
+
+        static async resolveUniqueNameFallback({ cityId = null, cityName = '' } = {}) { // ADDED
+            return (await CityClimate.loadById(cityId)) || (cityName ? await CityClimate.loadUniqueByName(cityName) : null); // ADDED
+        }
+
         static async updateLatitude(cityName, latitudeDeg) { // ADDED
             await ensureSchedulerPhysiologySchema(); // ADDED
             const name = String(cityName || '').trim(); // ADDED
             if (!name) throw new Error('Select a city before saving latitude.'); // ADDED
             const normalized = normalizeLatitudeDeg(latitudeDeg); // ADDED
             await withDbWrite(async dbId => { // ADDED
-                await execRunOnDb(dbId, 'UPDATE Cities SET latitude_deg = ? WHERE city_name = ?;', [normalized, name]); // ADDED
+                await execRunOnDb(dbId, 'UPDATE Cities SET latitude = ? WHERE city_name = ?;', [normalized, name]); // CHANGED
                 const rows = await queryAllOnDb(dbId, 'SELECT changes() AS changes;', []); // ADDED
                 if (!Number(rows?.[0]?.changes)) throw new Error(`City not found: ${name}`); // ADDED
             }); // ADDED
@@ -1375,7 +1399,7 @@ Draw.loadPlugin(function (ui) {
         const normalized = normalizeLatitudeDeg(latitudeValue); // ADDED
         await CityClimate.updateLatitude(cityName, normalized); // ADDED
         const cachedCity = (cities || []).find(city => String(city.city_name || '') === String(cityName || '')); // ADDED
-        if (cachedCity) cachedCity.latitude_deg = normalized; // ADDED
+        if (cachedCity) cachedCity.latitude = normalized; // CHANGED
         if (typeof recomputeAll === 'function') await recomputeAll('cityChanged'); // ADDED
         if (typeof updateTaskPreview === 'function') await updateTaskPreview(); // ADDED
         return normalized; // ADDED
@@ -1975,7 +1999,7 @@ Draw.loadPlugin(function (ui) {
         const plant = await resolveEffectivePlant(formState.plantId, formState.varietyId);
         if (!plant) throw new Error('Plant not found for schedule.');
 
-        const city = await CityClimate.loadByName(formState.cityName);
+        const city = await CityClimate.resolve({ cityId: formState.cityId, cityName: formState.cityName }); // CHANGED
         if (!city) throw new Error('City not found for schedule.');
 
         const methodCategoryId = normId(formState.methodCategoryId); // FIX
@@ -3037,6 +3061,7 @@ Draw.loadPlugin(function (ui) {
         const ordered = [];
         schema.forEach(def => {
             const r = rowFactory(def.label, def.control);
+            if (def.tooltip) { setTooltip(r.label, def.tooltip); setTooltip(def.control, def.tooltip); } // ADDED
             fieldRows[def.key] = r;
             ordered.push({ key: def.key, row: r.row, meta: def, view: r });
         });
@@ -3085,7 +3110,7 @@ Draw.loadPlugin(function (ui) {
         return raw.replace(/_/g, ' '); // ADDED
     } // ADDED
 
-    function normalizeSowingWindow(window) { // ADDED
+    function normalizeSowingSeason(window) { // ADDED
         if (!window) return null; // ADDED
         const startISO = String(window.startISO || '').trim(); // ADDED
         const endISO = String(window.endISO || '').trim(); // ADDED
@@ -3100,12 +3125,12 @@ Draw.loadPlugin(function (ui) {
             source: window.source || null // ADDED
         }; // ADDED
     } // ADDED
-    function normalizeSowingWindows(windows) { // ADDED
-        return (Array.isArray(windows) ? windows : []).map(normalizeSowingWindow).filter(Boolean); // ADDED
+    function normalizeSowingSeasons(windows) { // ADDED
+        return (Array.isArray(windows) ? windows : []).map(normalizeSowingSeason).filter(Boolean); // ADDED
     } // ADDED
-    function getActiveSowingWindow(formState) { // ADDED
-        const windows = normalizeSowingWindows(formState?.sowingWindows); // ADDED
-        const activeId = String(formState?.activeSowingWindowId || '').trim(); // ADDED
+    function getActiveSowingSeason(formState) { // ADDED
+        const windows = normalizeSowingSeasons(formState?.sowingSeasons); // ADDED
+        const activeId = String(formState?.activeSowingSeasonId || '').trim(); // ADDED
         return windows.find(window => window.id === activeId) || null; // ADDED
     } // ADDED
     function sowDateInWindow(startISO, window) { // ADDED
@@ -3114,36 +3139,36 @@ Draw.loadPlugin(function (ui) {
         const latest = parseISODateUTCValue(window?.endISO); // ADDED
         return !!(selected && earliest && latest && selected >= earliest && selected <= latest); // ADDED
     } // ADDED
-    function findSowingWindowForDate(windows, startISO) { // ADDED
-        return normalizeSowingWindows(windows).find(window => sowDateInWindow(startISO, window)) || null; // ADDED
+    function findSowingSeasonForDate(windows, startISO) { // ADDED
+        return normalizeSowingSeasons(windows).find(window => sowDateInWindow(startISO, window)) || null; // ADDED
     } // ADDED
-    function formatSowingWindowsSummary(windows) { // ADDED
-        const normalized = normalizeSowingWindows(windows); // ADDED
-        if (!normalized.length) return 'No feasible sowing windows.'; // ADDED
+    function formatSowingSeasonsSummary(windows) { // ADDED
+        const normalized = normalizeSowingSeasons(windows); // ADDED
+        if (!normalized.length) return 'No feasible sowing seasons.'; // ADDED
         return normalized.map(window => { // CHANGED
             const risk = window.riskSummary ? ` [${window.riskSummary}]` : ''; // ADDED
             const details = (window.diagnostics || []).slice(0, 6).map(diagnostic => diagnostic?.message).filter(Boolean); // ADDED
             return `${window.label}: ${window.startISO} to ${window.endISO}${risk}${details.length ? `\n  ${details.join('\n  ')}` : ''}`; // CHANGED
         }).join('\n'); // CHANGED
     } // ADDED
-    function buildSowingWindowSelectorState({ // ADDED
-        sowingWindows = [], // ADDED
-        activeSowingWindowId = '', // ADDED
+    function buildSowingSeasonSelectorState({ // ADDED
+        sowingSeasons = [], // ADDED
+        activeSowingSeasonId = '', // ADDED
         startISO = '' // ADDED
     } = {}) { // ADDED
-        const windows = normalizeSowingWindows(sowingWindows); // ADDED
+        const windows = normalizeSowingSeasons(sowingSeasons); // ADDED
         const options = []; // ADDED
-        if (isOrphanSowingWindowId(activeSowingWindowId)) { // ADDED
+        if (isOrphanSowingSeasonId(activeSowingSeasonId)) { // ADDED
             const suffix = startISO ? ` (${startISO})` : ''; // ADDED
-            options.push({ value: ORPHAN_SOWING_WINDOW_ID, label: `Saved date outside windows${suffix}`, disabled: true }); // ADDED
+            options.push({ value: ORPHAN_SOWING_SEASON_ID, label: `Saved date outside seasons${suffix}`, disabled: true }); // ADDED
         } // ADDED
         if (!windows.length && !options.length) { // CHANGED
-            options.push({ value: '', label: 'No feasible sowing window', disabled: false }); // ADDED
+            options.push({ value: '', label: 'No feasible sowing season', disabled: false }); // ADDED
         } else { // ADDED
             windows.forEach(window => options.push({ value: window.id, label: window.riskSummary ? `${window.label} - ${window.riskSummary}` : window.label, disabled: false })); // CHANGED
         } // ADDED
-        const activeWindow = windows.find(window => window.id === String(activeSowingWindowId || '').trim()) || null; // ADDED
-        const selectedValue = options.some(option => option.value === activeSowingWindowId) ? String(activeSowingWindowId || '') : ''; // ADDED
+        const activeWindow = windows.find(window => window.id === String(activeSowingSeasonId || '').trim()) || null; // ADDED
+        const selectedValue = options.some(option => option.value === activeSowingSeasonId) ? String(activeSowingSeasonId || '') : ''; // ADDED
         return { // ADDED
             options, // ADDED
             value: selectedValue, // ADDED
@@ -3151,10 +3176,10 @@ Draw.loadPlugin(function (ui) {
             boundsText: activeWindow ? `${activeWindow.startISO} to ${activeWindow.endISO}` : '' // ADDED
         }; // ADDED
     } // ADDED
-    function pickDefaultSowingWindowId(windows, { savedStartISO = '', todayISO = '' } = {}) { // ADDED
-        const normalized = normalizeSowingWindows(windows); // ADDED
+    function pickDefaultSowingSeasonId(windows, { savedStartISO = '', todayISO = '' } = {}) { // ADDED
+        const normalized = normalizeSowingSeasons(windows); // ADDED
         if (!normalized.length) return ''; // ADDED
-        const savedWindow = findSowingWindowForDate(normalized, savedStartISO); // ADDED
+        const savedWindow = findSowingSeasonForDate(normalized, savedStartISO); // ADDED
         if (savedWindow) return savedWindow.id; // ADDED
         const today = parseISODateUTCValue(todayISO); // ADDED
         if (today) { // ADDED
@@ -3166,35 +3191,182 @@ Draw.loadPlugin(function (ui) {
         } // ADDED
         return normalized[0].id; // ADDED
     } // ADDED
-    function resolveStartForSowingWindowSwitch(windows, activeSowingWindowId) { // ADDED
-        const activeWindow = normalizeSowingWindows(windows).find(window => window.id === String(activeSowingWindowId || '').trim()); // ADDED
+    function resolveStartForSowingSeasonSwitch(windows, activeSowingSeasonId) { // ADDED
+        const activeWindow = normalizeSowingSeasons(windows).find(window => window.id === String(activeSowingSeasonId || '').trim()); // ADDED
         return activeWindow ? activeWindow.startISO : ''; // ADDED
     } // ADDED
     function classifySelectedSowDate({ // CHANGED
         perennial = false, // CHANGED
         windowFeasible = false, // CHANGED
         startISO = '', // CHANGED
-        sowingWindows = [], // ADDED
-        activeSowingWindowId = '' // ADDED
+        sowingSeasons = [], // ADDED
+        activeSowingSeasonId = '' // ADDED
     } = {}) { // CHANGED
         if (perennial) return { status: 'not_applicable', label: 'Not applicable for perennial planting dates.' }; // CHANGED
-        if (!windowFeasible || !normalizeSowingWindows(sowingWindows).length) return { status: 'no_window', label: 'No feasible sowing window is available.' }; // CHANGED
+        if (!windowFeasible || !normalizeSowingSeasons(sowingSeasons).length) return { status: 'no_window', label: 'No feasible sowing season is available.' }; // CHANGED
         const selected = parseISODateUTCValue(startISO); // CHANGED
         if (!selected) return { status: 'missing', label: 'Select a sow date.' }; // CHANGED
-        if (isOrphanSowingWindowId(activeSowingWindowId)) return { status: 'outside_window', label: 'The saved sow date is outside the selectable sowing windows.' }; // ADDED
-        const activeWindow = normalizeSowingWindows(sowingWindows).find(window => window.id === String(activeSowingWindowId || '').trim()); // ADDED
-        if (!activeWindow) return { status: 'no_active_window', label: 'Select a sowing window.' }; // ADDED
+        if (isOrphanSowingSeasonId(activeSowingSeasonId)) return { status: 'outside_window', label: 'The saved sow date is outside the selectable sowing seasons.' }; // ADDED
+        const activeWindow = normalizeSowingSeasons(sowingSeasons).find(window => window.id === String(activeSowingSeasonId || '').trim()); // ADDED
+        if (!activeWindow) return { status: 'no_active_window', label: 'Select a sowing season.' }; // ADDED
         if (!sowDateInWindow(startISO, activeWindow)) { // CHANGED
-            const otherWindow = findSowingWindowForDate(sowingWindows, startISO); // ADDED
+            const otherWindow = findSowingSeasonForDate(sowingSeasons, startISO); // ADDED
             if (otherWindow) return { status: 'window_mismatch', label: `The selected sow date belongs to ${otherWindow.label}, not ${activeWindow.label}.` }; // ADDED
-            return { status: 'outside_window', label: 'The selected sow date is outside the selected sowing window.' }; // CHANGED
+            return { status: 'outside_window', label: 'The selected sow date is outside the selected sowing season.' }; // CHANGED
         } // CHANGED
         return { status: 'feasible', label: `The selected sow date is in ${activeWindow.label}.` }; // CHANGED
     } // CHANGED
-    function requireFeasibleSowingWindowSelection(args) { // ADDED
+    function requireFeasibleSowingSeasonSelection(args) { // ADDED
         const classification = classifySelectedSowDate(args); // ADDED
         if (!args?.perennial && classification.status !== 'feasible') throw new Error(classification.label); // ADDED
         return classification; // ADDED
+    } // ADDED
+    function clampPercent(value) { // ADDED
+        const n = Number(value); // ADDED
+        if (!Number.isFinite(n)) return 0; // ADDED
+        return Math.max(0, Math.min(100, n)); // ADDED
+    } // ADDED
+    function timelineDaysBetween(start, end) { // ADDED
+        if (!isUsableDate(start) || !isUsableDate(end)) return 0; // ADDED
+        return Math.round((end.getTime() - start.getTime()) / 86400000); // ADDED
+    } // ADDED
+    function timelinePercentForDate(date, rangeStart, totalDays) { // ADDED
+        if (!isUsableDate(date) || !isUsableDate(rangeStart) || !Number.isFinite(totalDays) || totalDays <= 0) return null; // ADDED
+        return clampPercent((timelineDaysBetween(rangeStart, date) / totalDays) * 100); // ADDED
+    } // ADDED
+    function buildLifecycleTimelineBounds({ plant = null, seasonStartYear = null } = {}) { // ADDED
+        const year = Math.round(finiteNumberOrNull(seasonStartYear) ?? new Date().getUTCFullYear()); // ADDED
+        const scanYears = Math.max(1, Math.round(finiteNumberOrNull(plant ? getPlantScanYears(plant) : 1) ?? 1)); // ADDED
+        const start = asUTCDate(year, 1, 1); // ADDED
+        const end = asUTCDate(year + scanYears - 1, 12, 31); // ADDED
+        return { start, end, startISO: fmtISO(start), endISO: fmtISO(end), multiYear: start.getUTCFullYear() !== end.getUTCFullYear() }; // ADDED
+    } // ADDED
+    function lifecycleTimelineLabel(stage) { // ADDED
+        const labels = { // ADDED
+            SOW: 'Sow', // ADDED
+            GERM: 'Germ', // ADDED
+            TRANSPLANT: 'Transplant', // ADDED
+            MATURITY: 'Maturity', // ADDED
+            HARVEST_START: 'First harvest', // ADDED
+            HARVEST_END: 'Harvest end' // ADDED
+        }; // ADDED
+        return labels[stage] || String(stage || 'Milestone'); // ADDED
+    } // ADDED
+    function lifecycleTimelineDateLabel(isoValue, multiYear = false) { // ADDED
+        const d = parseISODateUTCValue(isoValue); // ADDED
+        if (!d) return ''; // ADDED
+        const month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getUTCMonth()]; // ADDED
+        const base = `${month} ${d.getUTCDate()}`; // ADDED
+        return multiYear ? `${base}, ${d.getUTCFullYear()}` : base; // ADDED
+    } // ADDED
+    function buildLifecycleTimelineMilestone(stage, dateValue, options = {}) { // ADDED
+        const date = dateValue instanceof Date ? dateValue : parseISODateUTCValue(dateValue); // ADDED
+        if (!date) return null; // ADDED
+        return { // ADDED
+            stage, // ADDED
+            iso: fmtISO(date), // ADDED
+            label: options.label || lifecycleTimelineLabel(stage), // ADDED
+            visible: options.visible !== false, // ADDED
+            taskStage: options.taskStage || null // ADDED
+        }; // ADDED
+    } // ADDED
+    function assignLifecycleTimelineLabelRows(milestones, minGapPercent = 14, maxRows = 3) { // ADDED
+        const rows = Array.from({ length: Math.max(1, maxRows) }, () => []); // ADDED
+        const sorted = (Array.isArray(milestones) ? milestones : []) // ADDED
+            .filter(milestone => milestone && milestone.visible && Number.isFinite(Number(milestone.percent))) // ADDED
+            .slice() // ADDED
+            .sort((a, b) => a.percent - b.percent); // ADDED
+        sorted.forEach(milestone => { // ADDED
+            let target = rows[0]; // ADDED
+            for (const row of rows) { // ADDED
+                const last = row[row.length - 1]; // ADDED
+                if (!last || Math.abs(milestone.percent - last.percent) >= minGapPercent) { target = row; break; } // ADDED
+            } // ADDED
+            target.push(milestone); // ADDED
+        }); // ADDED
+        return rows.filter(row => row.length); // ADDED
+    } // ADDED
+    function buildLifecycleTimelineViewModel({ // ADDED
+        plant = null, // ADDED
+        perennial = false, // ADDED
+        seasonStartYear = null, // ADDED
+        startISO = '', // ADDED
+        sowingSeasons = [], // ADDED
+        scheduleResult = null, // ADDED
+        todayISO = null, // ADDED
+        taskRules = [], // ADDED
+        generatedTasks = [] // ADDED
+    } = {}) { // ADDED
+        if (perennial) return { hidden: true, reason: 'perennial' }; // ADDED
+        const bounds = buildLifecycleTimelineBounds({ plant, seasonStartYear }); // ADDED
+        const totalDays = Math.max(1, timelineDaysBetween(bounds.start, bounds.end)); // ADDED
+        const bands = normalizeSowingSeasons(sowingSeasons).map(window => { // ADDED
+            const start = parseISODateUTCValue(window.startISO); // ADDED
+            const end = parseISODateUTCValue(window.endISO); // ADDED
+            if (!start || !end || end < bounds.start || start > bounds.end) return null; // ADDED
+            const clippedStart = new Date(Math.max(start.getTime(), bounds.start.getTime())); // ADDED
+            const clippedEnd = new Date(Math.min(end.getTime(), bounds.end.getTime())); // ADDED
+            const left = timelinePercentForDate(clippedStart, bounds.start, totalDays); // ADDED
+            const right = timelinePercentForDate(clippedEnd, bounds.start, totalDays); // ADDED
+            return { // ADDED
+                id: window.id, // ADDED
+                label: window.label, // ADDED
+                startISO: fmtISO(clippedStart), // ADDED
+                endISO: fmtISO(clippedEnd), // ADDED
+                leftPercent: left ?? 0, // ADDED
+                widthPercent: Math.max(0.8, clampPercent((right ?? 0) - (left ?? 0))) // ADDED
+            }; // ADDED
+        }).filter(Boolean); // ADDED
+        const firstTimeline = Array.isArray(scheduleResult?.timelines) ? scheduleResult.timelines[0] : null; // ADDED
+        const sowDate = Array.isArray(scheduleResult?.schedule) ? scheduleResult.schedule[0] : parseISODateUTCValue(startISO); // ADDED
+        const rawMilestones = [ // ADDED
+            buildLifecycleTimelineMilestone('SOW', sowDate || startISO, { taskStage: 'SOW' }), // ADDED
+            buildLifecycleTimelineMilestone('GERM', firstTimeline?.germ, { visible: false, taskStage: 'GERM' }), // ADDED
+            buildLifecycleTimelineMilestone('TRANSPLANT', firstTimeline?.transplant, { taskStage: 'TRANSPLANT' }), // ADDED
+            buildLifecycleTimelineMilestone('MATURITY', firstTimeline?.maturity, { visible: false }), // ADDED
+            buildLifecycleTimelineMilestone('HARVEST_START', firstTimeline?.harvestStart, { taskStage: 'HARVEST_START' }), // ADDED
+            buildLifecycleTimelineMilestone('HARVEST_END', firstTimeline?.harvestEnd, { taskStage: 'HARVEST_END' }) // ADDED
+        ].filter(Boolean); // ADDED
+        const seenStageDates = new Set(); // ADDED
+        const milestones = rawMilestones.filter(milestone => { // ADDED
+            const key = `${milestone.stage}:${milestone.iso}`; // ADDED
+            if (seenStageDates.has(key)) return false; // ADDED
+            seenStageDates.add(key); // ADDED
+            return true; // ADDED
+        }).map(milestone => { // ADDED
+            const percent = timelinePercentForDate(parseISODateUTCValue(milestone.iso), bounds.start, totalDays); // ADDED
+            const taskMatch = milestone.taskStage ? findFirstLifecycleTimelineTaskRule(taskRules, milestone.taskStage, generatedTasks) : null; // ADDED
+            return { // ADDED
+                ...milestone, // ADDED
+                percent, // ADDED
+                dateLabel: lifecycleTimelineDateLabel(milestone.iso, bounds.multiYear), // ADDED
+                hasTaskRule: !!taskMatch, // ADDED
+                taskRuleIndex: taskMatch ? taskMatch.originalIndex : null // ADDED
+            }; // ADDED
+        }).filter(milestone => Number.isFinite(Number(milestone.percent))); // ADDED
+        const visibleMilestones = milestones.filter(milestone => milestone.visible); // ADDED
+        const todayDate = parseISODateUTCValue(todayISO || fmtISO(new Date())); // ADDED
+        const todayPercent = todayDate && todayDate >= bounds.start && todayDate <= bounds.end // ADDED
+            ? timelinePercentForDate(todayDate, bounds.start, totalDays) // ADDED
+            : null; // ADDED
+        return { // ADDED
+            hidden: false, // ADDED
+            bounds, // ADDED
+            totalDays, // ADDED
+            bands, // ADDED
+            milestones, // ADDED
+            visibleMilestones, // ADDED
+            labelRows: assignLifecycleTimelineLabelRows(visibleMilestones), // ADDED
+            details: milestones.map(milestone => `${milestone.label}: ${milestone.iso}`), // ADDED
+            todayISO: todayPercent == null ? null : fmtISO(todayDate), // ADDED
+            todayPercent // ADDED
+        }; // ADDED
+    } // ADDED
+    function findFirstLifecycleTimelineTaskRule(taskRules, stage, generatedTasks = []) { // ADDED
+        const wanted = String(stage || '').trim(); // ADDED
+        if (!wanted) return null; // ADDED
+        const ordered = buildTaskRuleDisplayOrder(taskRules, generatedTasks); // ADDED
+        return ordered.find(entry => normalizeTaskRule(entry.rule).startAnchorStage === wanted) || null; // ADDED
     } // ADDED
     function describeBlockingScheduleQualityDiagnostics(blockingDiagnostics) { // ADDED
         const diagnostics = Array.isArray(blockingDiagnostics) ? blockingDiagnostics : []; // ADDED
@@ -3223,8 +3395,8 @@ Draw.loadPlugin(function (ui) {
         seasonStartYear = '', // ADDED
         methodName = '', // ADDED
         startISO = '', // ADDED
-        sowingWindows = [], // CHANGED
-        activeSowingWindowId = '', // ADDED
+        sowingSeasons = [], // CHANGED
+        activeSowingSeasonId = '', // ADDED
         firstHarvestISO = '', // ADDED
         lastHarvestISO = '' // ADDED
     } = {}) { // ADDED
@@ -3232,8 +3404,8 @@ Draw.loadPlugin(function (ui) {
             perennial, // ADDED
             windowFeasible, // ADDED
             startISO, // ADDED
-            sowingWindows, // CHANGED
-            activeSowingWindowId // ADDED
+            sowingSeasons, // CHANGED
+            activeSowingSeasonId // ADDED
         }); // ADDED
         return { // ADDED
             crop: [plantName, varietyName].filter(Boolean).join(' / ') || '(none)', // ADDED
@@ -3455,7 +3627,7 @@ Draw.loadPlugin(function (ui) {
         const budget = inputs.plant.firstHarvestBudget();
         const gddDiagnostics = derived.dailyRates?.__diagnostics || {}; // ADDED
         const cropAnnualGdd = finiteNumberOrNull(gddDiagnostics.scaledCropAnnualGdd) ?? annualGddFromMonthlyMeans(derived.monthlyAvg, derived.env.Tbase, derived.year, 0); // CHANGED
-        const lines = [ranges.some(range => range.ok) ? 'Feasible sowing range found.' : 'No feasible sowing window found.', 'Blocking sequence:'];
+        const lines = [ranges.some(range => range.ok) ? 'Feasible sowing range found.' : 'No feasible sowing season found.', 'Blocking sequence:'];
         blockers.forEach(function (range) {
             const dateText = range.start === range.end ? range.start : `${range.start} to ${range.end}`;
             lines.push(`- ${dateText}: ${range.reason} (${range.label})`);
@@ -3887,7 +4059,7 @@ Draw.loadPlugin(function (ui) {
         body.style.overflow = 'auto'; // ADDED
         body.style.paddingRight = '2px'; // ADDED
         appendExplainDiagnostics(body, diagnosticsModel, options.diagnosticsTitle || 'Diagnostics'); // CHANGED
-        if (options.sowingWindowsText) appendExplainPreSection(body, 'Derived sowing windows', options.sowingWindowsText); // ADDED
+        if (options.sowingSeasonsText) appendExplainPreSection(body, 'Derived sowing seasons', options.sowingSeasonsText); // ADDED
         appendScheduleQualityDiagnosticRanges(body, options.scheduleQualityDiagnosticRanges || []); // ADDED
         appendExplainScanRanges(body, ranges, options.scanTitle || 'Feasibility scan ranges'); // CHANGED
         if (options.lifecycleDiagnosticsModel) appendExplainDiagnostics(body, options.lifecycleDiagnosticsModel, 'Lifecycle support diagnostics'); // ADDED
@@ -5459,6 +5631,7 @@ Draw.loadPlugin(function (ui) {
             earliestFeasibleSowDate,
             lastHarvestDate,
             startNote,
+            initialCityId = null, // ADDED
             initialCityName = '',
             hasPersistedSchedule: initialHasPersistedSchedule = false,
             initialWindowFeasible = false,
@@ -5859,40 +6032,20 @@ Draw.loadPlugin(function (ui) {
 
 
         // City & Method & Method
-        const cityOpts = cities.map(c => ({ value: c.city_name, label: c.city_name }));
-        const cityValue = cityOpts.some(o => o.value === initialCityName)
-            ? initialCityName
-            : cityOpts[0]?.value;
+        const cityOpts = cities.map(c => ({ value: String(c.city_id ?? c.city_name), label: c.city_name, city: c })); // CHANGED
+        const initialCityKey = initialCityId != null ? String(initialCityId) : ''; // ADDED
+        const cityValue = cityOpts.some(o => o.value === initialCityKey)
+            ? initialCityKey
+            : (cityOpts.find(o => o.label === initialCityName)?.value || cityOpts[0]?.value); // CHANGED
         const citySel = makeSelect(cityOpts, cityValue);
-        const cityLatitudeInput = makeNullableNumber('', { min: -66.5, step: 0.0001 }); // CHANGED
-        cityLatitudeInput.max = '66.5'; // CHANGED
-        cityLatitudeInput.placeholder = 'decimal degrees'; // ADDED
-        const saveCityLatitudeBtn = mxUtils.button('Save', async () => { // ADDED
-            await runUiAsync('City latitude save error', async () => { // ADDED
-                syncStateFromControls(); // ADDED
-                await saveSchedulerCityLatitude({ // ADDED
-                    cityName: formState.cityName, // ADDED
-                    latitudeValue: cityLatitudeInput.value, // ADDED
-                    cities, // ADDED
-                    recomputeAll, // ADDED
-                    updateTaskPreview // ADDED
-                }); // ADDED
-                saveCityLatitudeBtn.textContent = 'Saved'; // ADDED
-                setTimeout(() => { saveCityLatitudeBtn.textContent = 'Save'; }, 1200); // ADDED
-            }); // ADDED
-        }); // ADDED
-        saveCityLatitudeBtn.style.marginLeft = '8px'; // ADDED
-        const cityLatitudeControl = document.createElement('div'); // ADDED
-        cityLatitudeControl.style.display = 'flex'; // ADDED
-        cityLatitudeControl.style.alignItems = 'center'; // ADDED
-        cityLatitudeControl.style.gap = '6px'; // ADDED
-        cityLatitudeControl.appendChild(cityLatitudeInput); // ADDED
-        cityLatitudeControl.appendChild(saveCityLatitudeBtn); // ADDED
-        function setCityLatitudeInputFromName(cityName) { // ADDED
-            const city = cities.find(row => String(row.city_name || '') === String(cityName || '')); // ADDED
-            cityLatitudeInput.value = city && finiteNumberOrNull(city.latitude_deg) != null ? String(city.latitude_deg) : ''; // ADDED
+        setTooltip(citySel, 'City climate is resolved by city_id when available. Edit city latitude and climate data from Garden Settings.'); // ADDED
+        function selectedCityOption() { // ADDED
+            return cityOpts.find(o => String(o.value) === String(citySel.value)) || cityOpts[0] || null; // ADDED
         } // ADDED
-        setCityLatitudeInputFromName(cityValue); // ADDED
+        function selectedCityRow() { // ADDED
+            const opt = selectedCityOption(); // ADDED
+            return opt ? opt.city : null; // ADDED
+        } // ADDED
 
         // base method select (allowed per plant)
         const methodCategorySel = document.createElement('select');
@@ -6105,9 +6258,9 @@ Draw.loadPlugin(function (ui) {
         const initialStartISO = fmtISO(earliestFeasibleSowDate); // FIX: allow an explicitly empty no-window state
         const initialEndISO = fmtISO(lastHarvestDate); // FIX
 
-        // User-selectable derived sowing window // ADDED
-        const sowingWindowSel = makeSelect([], ''); // ADDED
-        const sowingWindowBoundsInput = makeDisplayField(''); // ADDED
+        // User-selectable derived sowing season // ADDED
+        const sowingSeasonSel = makeSelect([], ''); // ADDED
+        const sowingSeasonBoundsInput = makeDisplayField(''); // ADDED
 
         // User-controlled first sow date (used for schedule startISO)                   
         const startInput = makeDate(initialStartISO, false);
@@ -6162,7 +6315,8 @@ Draw.loadPlugin(function (ui) {
         const formState = {
             plantId: initId,
             varietyId: cellVarietyId0,
-            cityName: citySel.value,
+            cityId: finiteNumberOrNull(selectedCityRow()?.city_id), // ADDED
+            cityName: String(selectedCityRow()?.city_name || selectedCityOption()?.label || ''), // CHANGED
 
             // keep both (methodCategoryId is for UI + filtering; methodId is the scheduler “method” everywhere)
             methodCategoryId: methodCategorySel.value,
@@ -6173,8 +6327,8 @@ Draw.loadPlugin(function (ui) {
             seasonStartYear: Number(seasonYearInput.value || (new Date()).getUTCFullYear()),
             harvestWindowDays: (harvestWindowInput.value === '' ? null : Number(harvestWindowInput.value)),
             minYieldMultiplier: Number(minYieldMultInput.value || 0),
-            sowingWindows: [], // ADDED
-            activeSowingWindowId: '', // ADDED
+            sowingSeasons: [], // ADDED
+            activeSowingSeasonId: '', // ADDED
             windowFeasible: mode.perennial || !!initialWindowFeasible, // FIX
             firstHarvestISO: null, // CHANGED
             lastHarvestISO: initialEndISO,
@@ -6192,13 +6346,15 @@ Draw.loadPlugin(function (ui) {
         function syncStateFromControls() {
             formState.plantId = Number(plantSel.value);
             formState.varietyId = (varietySel && varietySel.value) ? Number(varietySel.value) : null;
-            formState.cityName = citySel.value;
+            const selectedCity = selectedCityRow(); // ADDED
+            formState.cityId = finiteNumberOrNull(selectedCity?.city_id); // ADDED
+            formState.cityName = String(selectedCity?.city_name || selectedCityOption()?.label || ''); // CHANGED
 
             formState.methodCategoryId = normId(methodCategorySel.value); // FIX
             formState.methodId = normId(methodSel.value); // FIX
 
             formState.startISO = startInput.value;
-            formState.activeSowingWindowId = sowingWindowSel.value || formState.activeSowingWindowId || ''; // ADDED
+            formState.activeSowingSeasonId = sowingSeasonSel.value || formState.activeSowingSeasonId || ''; // ADDED
             formState.seasonEndISO = seasonEndInput.value;
             formState.seasonStartYear = Number(seasonYearInput.value || (new Date()).getUTCFullYear());
             formState.harvestWindowDays = (harvestWindowInput.value === '' ? null : Number(harvestWindowInput.value));
@@ -6225,27 +6381,27 @@ Draw.loadPlugin(function (ui) {
             updateScheduleSummaryFromState(); // ADDED
         }
 
-        function refreshSowingWindowSelector() { // ADDED
-            const selectorState = buildSowingWindowSelectorState({ // ADDED
-                sowingWindows: formState.sowingWindows, // ADDED
-                activeSowingWindowId: formState.activeSowingWindowId, // ADDED
+        function refreshSowingSeasonSelector() { // ADDED
+            const selectorState = buildSowingSeasonSelectorState({ // ADDED
+                sowingSeasons: formState.sowingSeasons, // ADDED
+                activeSowingSeasonId: formState.activeSowingSeasonId, // ADDED
                 startISO: formState.startISO // ADDED
             }); // ADDED
-            while (sowingWindowSel.firstChild) sowingWindowSel.removeChild(sowingWindowSel.firstChild); // ADDED
+            while (sowingSeasonSel.firstChild) sowingSeasonSel.removeChild(sowingSeasonSel.firstChild); // ADDED
             selectorState.options.forEach(optionState => { // ADDED
                 const opt = document.createElement('option'); // ADDED
                 opt.value = optionState.value; // ADDED
                 opt.textContent = optionState.label; // ADDED
                 opt.disabled = !!optionState.disabled; // ADDED
-                sowingWindowSel.appendChild(opt); // ADDED
+                sowingSeasonSel.appendChild(opt); // ADDED
             }); // ADDED
-            sowingWindowSel.value = selectorState.value; // ADDED
-            setDisplayFieldValue(sowingWindowBoundsInput, selectorState.boundsText); // ADDED
+            sowingSeasonSel.value = selectorState.value; // ADDED
+            setDisplayFieldValue(sowingSeasonBoundsInput, selectorState.boundsText); // ADDED
         } // ADDED
 
         function syncStartDateBounds() { // CHANGED
             if (!startInput) return; // CHANGED
-            const activeWindow = getActiveSowingWindow(formState); // ADDED
+            const activeWindow = getActiveSowingSeason(formState); // ADDED
             startInput.min = activeWindow ? activeWindow.startISO : ''; // CHANGED
             startInput.max = activeWindow ? activeWindow.endISO : ''; // CHANGED
         } // CHANGED
@@ -6266,8 +6422,7 @@ Draw.loadPlugin(function (ui) {
         // -------------------- Form schema for simple labeled fields ---------------- 
         const FIELD_SCHEMA = [
             { key: 'seasonStartYear', label: 'Season start year:', control: seasonYearInput },
-            { key: 'cityName', label: 'City:', control: citySel },
-            { key: 'cityLatitude', label: 'City latitude:', control: cityLatitudeControl }, // ADDED
+            { key: 'cityName', label: 'City:', control: citySel, tooltip: 'City climate is resolved by city_id when available; Garden Settings owns city climate edits.' }, // CHANGED
             { key: 'methodSelection', label: 'Planting method:', control: combinedMethodSel }, // CHANGED
             { key: 'harvestWindowDays', label: 'Harvest window days:', control: harvestWindowInput },
             { key: 'minYieldMultiplier', label: 'Minimum yield multiplier:', control: minYieldMultInput },
@@ -6297,8 +6452,12 @@ Draw.loadPlugin(function (ui) {
         syncCombinedMethodControl(); // ADDED
 
 
-        const sowingWindowRowObj = row('Sowing window:', sowingWindowSel); // ADDED
-        const sowingWindowBoundsRowObj = row('Window dates:', sowingWindowBoundsInput); // ADDED
+        const sowingSeasonRowObj = row('Sowing season:', sowingSeasonSel); // ADDED
+        const sowingSeasonBoundsRowObj = row('Sowing window:', sowingSeasonBoundsInput); // CHANGED
+        setTooltip(sowingSeasonRowObj.label, 'Selectable season generated from the annual scheduler feasibility scan.'); // ADDED
+        setTooltip(sowingSeasonSel, 'Choose the feasible sowing season to schedule within.'); // ADDED
+        setTooltip(sowingSeasonBoundsRowObj.label, 'Date bounds for the selected sowing season.'); // ADDED
+        setTooltip(sowingSeasonBoundsInput, 'Earliest and latest sow dates for the selected sowing season.'); // ADDED
 
         const firstSowRowObj = row('Sow date:', startInput); // CHANGED
         if (startNote) firstSowRowObj.row.appendChild(startNoteSpan); // CHANGED
@@ -6308,7 +6467,7 @@ Draw.loadPlugin(function (ui) {
         const harvestEndRowObj = row('Expected harvest end:', harvestEndInput); // CHANGED
         const daysToFirstHarvestRowObj = row('Days to first harvest:', daysToFirstHarvestInput); // CHANGED
 
-        appendFieldRows(contextSection.body, fieldRows, ['seasonStartYear', 'cityName', 'cityLatitude', 'methodSelection']); // CHANGED
+        appendFieldRows(contextSection.body, fieldRows, ['seasonStartYear', 'cityName', 'methodSelection']); // CHANGED
         const legacyMethodControls = document.createElement('div'); // ADDED
         legacyMethodControls.style.display = 'none'; // ADDED
         legacyMethodControls.appendChild(methodCategorySel); // ADDED
@@ -6335,8 +6494,8 @@ Draw.loadPlugin(function (ui) {
             setTooltip(contextSummary, `Garden: ${gardenName}\nCity: ${cityName}\nBed source: ${bedSource}\nBed conditions: ${bedText}`); // ADDED
         } // ADDED
 
-        windowSection.body.appendChild(sowingWindowRowObj.row); // CHANGED
-        windowSection.body.appendChild(sowingWindowBoundsRowObj.row); // CHANGED
+        windowSection.body.appendChild(sowingSeasonRowObj.row); // CHANGED
+        windowSection.body.appendChild(sowingSeasonBoundsRowObj.row); // CHANGED
         windowSection.body.appendChild(endRow.row); // CHANGED
 
         inputsSection.body.appendChild(firstSowRowObj.row); // CHANGED
@@ -6398,7 +6557,7 @@ Draw.loadPlugin(function (ui) {
         async function refreshClimateModelTips() { // ADDED
             const version = ++climateTipVersion; // ADDED
             let city = null; // ADDED
-            try { city = await CityClimate.loadByName(formState.cityName); } catch (_) { city = null; } // ADDED
+            try { city = await CityClimate.resolve({ cityId: formState.cityId, cityName: formState.cityName }); } catch (_) { city = null; } // CHANGED
             if (version !== climateTipVersion) return; // ADDED
             const policy = formState.climateModelPolicy || DEFAULT_CLIMATE_MODEL_POLICY; // ADDED
             const frostControl = climateControlByKey.springFrostRisk; // ADDED
@@ -6565,8 +6724,8 @@ Draw.loadPlugin(function (ui) {
                 seasonStartYear: formState.seasonStartYear, // ADDED
                 methodName, // ADDED
                 startISO: formState.startISO, // ADDED
-                sowingWindows: formState.sowingWindows, // CHANGED
-                activeSowingWindowId: formState.activeSowingWindowId, // ADDED
+                sowingSeasons: formState.sowingSeasons, // CHANGED
+                activeSowingSeasonId: formState.activeSowingSeasonId, // ADDED
                 firstHarvestISO: formState.firstHarvestISO, // ADDED
                 lastHarvestISO: formState.lastHarvestISO // ADDED
             })); // ADDED
@@ -6589,8 +6748,8 @@ Draw.loadPlugin(function (ui) {
                 daysToFirstHarvestRowObj.row.style.display = ''; // CHANGED
             }
 
-            sowingWindowRowObj.row.style.display = perennial ? 'none' : ''; // CHANGED
-            sowingWindowBoundsRowObj.row.style.display = perennial ? 'none' : ''; // CHANGED
+            sowingSeasonRowObj.row.style.display = perennial ? 'none' : ''; // CHANGED
+            sowingSeasonBoundsRowObj.row.style.display = perennial ? 'none' : ''; // CHANGED
             timelineSection.wrap.style.display = perennial ? 'none' : ''; // CHANGED
             if (windowActions) windowActions.style.display = perennial ? 'none' : ''; // FIX
 
@@ -6605,8 +6764,8 @@ Draw.loadPlugin(function (ui) {
                 perennial: mode.perennial, // CHANGED
                 windowFeasible: formState.windowFeasible, // CHANGED
                 startISO: formState.startISO, // CHANGED
-                sowingWindows: formState.sowingWindows, // CHANGED
-                activeSowingWindowId: formState.activeSowingWindowId // ADDED
+                sowingSeasons: formState.sowingSeasons, // CHANGED
+                activeSowingSeasonId: formState.activeSowingSeasonId // ADDED
             }); // CHANGED
             const parts = [];
             if (!mode.perennial && classification.status !== 'feasible') parts.push(classification.label); // CHANGED
@@ -6615,13 +6774,13 @@ Draw.loadPlugin(function (ui) {
             startNoteSpan.textContent = parts.join(' ');
         }
 
-        function requireSelectedSowingWindowDate() { // ADDED
-            return requireFeasibleSowingWindowSelection({ // ADDED
+        function requireSelectedSowingSeasonDate() { // ADDED
+            return requireFeasibleSowingSeasonSelection({ // ADDED
                 perennial: mode.perennial, // ADDED
                 windowFeasible: formState.windowFeasible, // ADDED
                 startISO: formState.startISO, // ADDED
-                sowingWindows: formState.sowingWindows, // ADDED
-                activeSowingWindowId: formState.activeSowingWindowId // ADDED
+                sowingSeasons: formState.sowingSeasons, // ADDED
+                activeSowingSeasonId: formState.activeSowingSeasonId // ADDED
             }); // ADDED
         } // ADDED
 
@@ -6640,7 +6799,7 @@ Draw.loadPlugin(function (ui) {
                 const p = effectivePlant;
 
 
-                const city = await CityClimate.loadByName(formState.cityName);
+                const city = await CityClimate.resolve({ cityId: formState.cityId, cityName: formState.cityName }); // CHANGED
                 if (!city) throw new Error(`City not found: ${formState.cityName}`); // FIX
 
                 const seasonStartYear = formState.seasonStartYear;
@@ -6673,7 +6832,7 @@ Draw.loadPlugin(function (ui) {
 
                 const lsf = pickFrostByRisk(city, climatePolicy.springFrostRisk); // CHANGED
 
-                const r = annualCore.computeAnnualSowingWindows({ // CHANGED
+                const r = annualCore.computeAnnualSowingSeasons({ // CHANGED
                     methodCategoryId, // CHANGED
                     methodId, // CHANGED
                     budget,
@@ -6693,7 +6852,7 @@ Draw.loadPlugin(function (ui) {
                     daysTransplant,
                     overwinterAllowed,
                     plantMetadata: p, // ADDED
-                    cityLatitudeDeg: finiteNumberOrNull(city.latitude_deg ?? city.latitude ?? city.lat), // ADDED
+                    cityLatitudeDeg: finiteNumberOrNull(city.latitude ?? city.lat), // CHANGED
                     bedProfile: formState.bedProfile, // ADDED
                     bedProfileSource: formState.bedProfileSource // ADDED
                 });
@@ -6703,38 +6862,38 @@ Draw.loadPlugin(function (ui) {
                     forceWriteEnd,
                     startISO_before: formState.startISO,
                     seasonEndISO_before: formState.seasonEndISO,
-                    sowingWindows: r.windows ? r.windows.map(window => window.label) : [], // CHANGED
+                    sowingSeasons: r.seasons ? r.seasons.map(season => season.label) : [], // CHANGED
                     climateEndDate: r.climateEndDate ? fmtISO(r.climateEndDate) : null, // CHANGED
                     lastFeasibleSowDate: r.lastFeasibleSowDate ? fmtISO(r.lastFeasibleSowDate) : null
                 });
 
-                const windows = normalizeSowingWindows(r.windows); // ADDED
+                const windows = normalizeSowingSeasons(r.seasons); // CHANGED
                 const windowFeasible = windows.length > 0; // CHANGED
                 const today = new Date(); // ADDED
                 const todayISO = fmtISO(asUTCDate(today.getUTCFullYear(), today.getUTCMonth() + 1, today.getUTCDate())); // ADDED
-                const currentActive = windows.find(window => window.id === formState.activeSowingWindowId); // ADDED
+                const currentActive = windows.find(window => window.id === formState.activeSowingSeasonId); // ADDED
                 const savedWindow = hasPersistedSchedule && !userEditedStartThisSession
-                    ? findSowingWindowForDate(windows, formState.startISO)
+                    ? findSowingSeasonForDate(windows, formState.startISO)
                     : null; // ADDED
                 const savedDateIsOrphan = hasPersistedSchedule && !userEditedStartThisSession && !!formState.startISO && !savedWindow; // ADDED
                 const nextActiveId = savedWindow
                     ? savedWindow.id
-                    : (savedDateIsOrphan ? ORPHAN_SOWING_WINDOW_ID : ((!forceWriteStart && currentActive) ? currentActive.id : pickDefaultSowingWindowId(windows, { savedStartISO: hasPersistedSchedule ? formState.startISO : '', todayISO }))); // CHANGED
+                    : (savedDateIsOrphan ? ORPHAN_SOWING_SEASON_ID : ((!forceWriteStart && currentActive) ? currentActive.id : pickDefaultSowingSeasonId(windows, { savedStartISO: hasPersistedSchedule ? formState.startISO : '', todayISO }))); // CHANGED
 
                 const autoHarvestISO = r.climateEndDate
                     ? r.climateEndDate.toISOString().slice(0, 10)
                     : null; // CHANGED
 
-                // Store selectable sowing windows for display/guidance. // CHANGED
-                formState.sowingWindows = windows; // CHANGED
-                formState.activeSowingWindowId = nextActiveId; // ADDED
+                // Store selectable sowing seasons for display/guidance. // CHANGED
+                formState.sowingSeasons = windows; // CHANGED
+                formState.activeSowingSeasonId = nextActiveId; // ADDED
                 formState.windowFeasible = windowFeasible; // CHANGED
                 formState.firstHarvestISO = null; // CHANGED
                 formState.lastHarvestISO = autoHarvestISO; // ADDED
 
                 // Optionally reset user-chosen first sow date to earliest           
                 const preserveGenuineStart = hasPersistedSchedule || userEditedStartThisSession; // FIX
-                const activeWindow = getActiveSowingWindow(formState); // ADDED
+                const activeWindow = getActiveSowingSeason(formState); // ADDED
                 formState.startISO = resolveStartAfterWindow({
                     currentStartISO: formState.startISO,
                     activeWindow,
@@ -6756,7 +6915,7 @@ Draw.loadPlugin(function (ui) {
                     formState.seasonEndISO = ''; // FIX: clear derived end state when the window is infeasible
                 }
 
-                refreshSowingWindowSelector(); // ADDED
+                refreshSowingSeasonSelector(); // ADDED
 
                 syncControlsFromState({
                     start: forceWriteStart || !preserveGenuineStart || !windowFeasible,
@@ -6814,8 +6973,8 @@ Draw.loadPlugin(function (ui) {
                 formState.lastHarvestISO = null; // FIX: lifespan end is not a harvest date
                 formState.lastScheduleEndISO = formState.seasonEndISO; // CHANGED
                 syncStateFromControls();
-                formState.sowingWindows = []; // ADDED
-                formState.activeSowingWindowId = ''; // ADDED
+                formState.sowingSeasons = []; // ADDED
+                formState.activeSowingSeasonId = ''; // ADDED
                 formState.windowFeasible = true; // FIX
 
             } else {
@@ -6933,99 +7092,204 @@ Draw.loadPlugin(function (ui) {
             return true; // FIX
         }
 
+        let latestScheduleResult = null; // ADDED
+        let generatedPreviewTasks = []; // CHANGED: lifecycle task dots share the task preview display order.
+
         const timelineWrap = document.createElement('div'); // CHANGED
         timelineWrap.style.display = 'flex'; // CHANGED
         timelineWrap.style.flexDirection = 'column'; // CHANGED
         timelineWrap.style.gap = '6px'; // CHANGED
 
-        const timelineLabels = document.createElement('div'); // CHANGED
-        timelineLabels.style.display = 'flex'; // CHANGED
-        timelineLabels.style.justifyContent = 'space-between'; // CHANGED
-        timelineLabels.style.fontSize = '12px'; // CHANGED
-        timelineLabels.style.color = '#6b7280'; // CHANGED
+        timelineSection.body.appendChild(timelineWrap); // CHANGED: lifecycle renderer owns timeline contents.
 
-        const timelineStartLabel = document.createElement('span'); // CHANGED
-        const timelineEndLabel = document.createElement('span'); // CHANGED
-        timelineLabels.appendChild(timelineStartLabel); // CHANGED
-        timelineLabels.appendChild(timelineEndLabel); // CHANGED
+        function makeTimelineSmallText(text = '') { // ADDED
+            const el = document.createElement('div'); // ADDED
+            el.textContent = text; // ADDED
+            el.style.fontSize = '11px'; // ADDED
+            el.style.color = '#6b7280'; // ADDED
+            el.style.lineHeight = '1.25'; // ADDED
+            return el; // ADDED
+        } // ADDED
 
-        const timelineBarWrap = document.createElement('div'); // CHANGED
-        timelineBarWrap.style.position = 'relative'; // CHANGED
-        timelineBarWrap.style.height = '26px'; // CHANGED
+        function renderLifecycleTimelineTrack(model, classification) { // ADDED
+            const trackWrap = document.createElement('div'); // ADDED
+            trackWrap.style.position = 'relative'; // ADDED
+            trackWrap.style.height = '58px'; // ADDED
+            trackWrap.style.marginTop = '2px'; // ADDED
+            const rail = document.createElement('div'); // ADDED
+            rail.style.position = 'absolute'; // ADDED
+            rail.style.left = '0'; // ADDED
+            rail.style.right = '0'; // ADDED
+            rail.style.top = '24px'; // ADDED
+            rail.style.height = '8px'; // ADDED
+            rail.style.background = classification.status === 'feasible' ? '#e5e7eb' : '#fee2e2'; // ADDED
+            rail.style.borderRadius = '999px'; // ADDED
+            trackWrap.appendChild(rail); // ADDED
 
-        const timelineBar = document.createElement('div'); // CHANGED
-        timelineBar.style.position = 'absolute'; // CHANGED
-        timelineBar.style.left = '0'; // CHANGED
-        timelineBar.style.right = '0'; // CHANGED
-        timelineBar.style.top = '11px'; // CHANGED
-        timelineBar.style.height = '4px'; // CHANGED
-        timelineBar.style.background = '#d1d5db'; // CHANGED
-        timelineBar.style.borderRadius = '999px'; // CHANGED
+            model.bands.forEach(band => { // ADDED
+                const bandEl = document.createElement('div'); // ADDED
+                bandEl.style.position = 'absolute'; // ADDED
+                bandEl.style.left = `${band.leftPercent}%`; // ADDED
+                bandEl.style.width = `${band.widthPercent}%`; // ADDED
+                bandEl.style.top = '20px'; // ADDED
+                bandEl.style.height = '16px'; // ADDED
+                bandEl.style.background = '#bbf7d0'; // ADDED
+                bandEl.style.border = '1px solid #86efac'; // ADDED
+                bandEl.style.borderRadius = '999px'; // ADDED
+                bandEl.style.opacity = '0.78'; // ADDED
+                setTooltip(bandEl, `${band.label}: ${band.startISO} to ${band.endISO}`); // ADDED
+                trackWrap.appendChild(bandEl); // ADDED
+            }); // ADDED
 
-        const timelineMarker = document.createElement('div'); // CHANGED
-        timelineMarker.textContent = '▲'; // CHANGED
-        timelineMarker.style.position = 'absolute'; // CHANGED
-        timelineMarker.style.top = '-2px'; // CHANGED
-        timelineMarker.style.transform = 'translateX(-50%)'; // CHANGED
-        timelineMarker.style.fontSize = '14px'; // CHANGED
-        timelineMarker.style.color = '#111827'; // CHANGED
+            if (model.todayPercent != null) { // ADDED
+                const today = document.createElement('div'); // ADDED
+                today.style.position = 'absolute'; // ADDED
+                today.style.left = `${model.todayPercent}%`; // ADDED
+                today.style.top = '8px'; // ADDED
+                today.style.height = '42px'; // ADDED
+                today.style.borderLeft = '1px dashed #64748b'; // ADDED
+                today.style.transform = 'translateX(-50%)'; // ADDED
+                today.style.opacity = '0.65'; // ADDED
+                setTooltip(today, `Today: ${model.todayISO}`); // ADDED
+                trackWrap.appendChild(today); // ADDED
+            } // ADDED
 
-        const timelineStatus = document.createElement('div'); // CHANGED
-        timelineStatus.style.fontSize = '12px'; // CHANGED
-        timelineStatus.style.color = '#6b7280'; // CHANGED
+            model.visibleMilestones.forEach(milestone => { // ADDED
+                const marker = document.createElement('button'); // ADDED
+                marker.type = 'button'; // ADDED
+                marker.style.position = 'absolute'; // ADDED
+                marker.style.left = `${milestone.percent}%`; // ADDED
+                marker.style.top = '16px'; // ADDED
+                marker.style.width = '22px'; // ADDED
+                marker.style.height = '22px'; // ADDED
+                marker.style.padding = '0'; // ADDED
+                marker.style.borderRadius = '50%'; // ADDED
+                marker.style.border = milestone.stage === 'SOW' ? '2px solid #111827' : '2px solid #2563eb'; // ADDED
+                marker.style.background = '#fff'; // ADDED
+                marker.style.transform = 'translateX(-50%)'; // ADDED
+                marker.style.cursor = 'pointer'; // ADDED
+                marker.style.zIndex = '2'; // ADDED
+                setTooltip(marker, `${milestone.label}: ${milestone.iso}${milestone.stage === 'SOW' ? '\nClick to focus sow date.' : (milestone.hasTaskRule ? '\nClick to edit the first task rule starting here.' : '')}`); // ADDED
+                marker.addEventListener('click', () => { // ADDED
+                    void runUiAsync('Timeline action error', async () => { // ADDED
+                        await handleLifecycleMilestoneClick(milestone); // CHANGED
+                    }); // ADDED
+                }); // ADDED
+                if (milestone.hasTaskRule && milestone.stage !== 'SOW') { // ADDED
+                    const dot = document.createElement('span'); // ADDED
+                    dot.style.position = 'absolute'; // ADDED
+                    dot.style.right = '-2px'; // ADDED
+                    dot.style.top = '-2px'; // ADDED
+                    dot.style.width = '7px'; // ADDED
+                    dot.style.height = '7px'; // ADDED
+                    dot.style.borderRadius = '50%'; // ADDED
+                    dot.style.background = '#f59e0b'; // ADDED
+                    dot.style.border = '1px solid #fff'; // ADDED
+                    marker.appendChild(dot); // ADDED
+                } // ADDED
+                trackWrap.appendChild(marker); // ADDED
+            }); // ADDED
+            return trackWrap; // ADDED
+        } // ADDED
 
-        timelineBarWrap.appendChild(timelineBar); // CHANGED
-        timelineBarWrap.appendChild(timelineMarker); // CHANGED
-        timelineWrap.appendChild(timelineLabels); // CHANGED
-        timelineWrap.appendChild(timelineBarWrap); // CHANGED
-        timelineWrap.appendChild(timelineStatus); // CHANGED
-        timelineSection.body.appendChild(timelineWrap); // CHANGED
+        function renderLifecycleTimelineLabelRows(model) { // ADDED
+            const wrap = document.createElement('div'); // ADDED
+            wrap.style.display = 'flex'; // ADDED
+            wrap.style.flexDirection = 'column'; // ADDED
+            wrap.style.gap = '2px'; // ADDED
+            wrap.style.minHeight = '32px'; // ADDED
+            model.labelRows.slice(0, 3).forEach(row => { // ADDED
+                const rowEl = document.createElement('div'); // ADDED
+                rowEl.style.position = 'relative'; // ADDED
+                rowEl.style.height = '16px'; // ADDED
+                row.forEach(milestone => { // ADDED
+                    const label = document.createElement('div'); // ADDED
+                    label.textContent = `${milestone.label} ${milestone.dateLabel}`; // ADDED
+                    label.style.position = 'absolute'; // ADDED
+                    label.style.left = `${milestone.percent}%`; // ADDED
+                    label.style.transform = 'translateX(-50%)'; // ADDED
+                    label.style.maxWidth = '120px'; // ADDED
+                    label.style.fontSize = '10px'; // ADDED
+                    label.style.lineHeight = '1.15'; // ADDED
+                    label.style.color = '#374151'; // ADDED
+                    label.style.whiteSpace = 'nowrap'; // ADDED
+                    label.style.overflow = 'hidden'; // ADDED
+                    label.style.textOverflow = 'ellipsis'; // ADDED
+                    setTooltip(label, `${milestone.label}: ${milestone.iso}`); // ADDED
+                    rowEl.appendChild(label); // ADDED
+                }); // ADDED
+                wrap.appendChild(rowEl); // ADDED
+            }); // ADDED
+            return wrap; // ADDED
+        } // ADDED
+
+        function renderLifecycleTimelineModel(model, classification) { // ADDED
+            timelineWrap.innerHTML = ''; // ADDED
+            if (!model || model.hidden) { // ADDED
+                timelineSection.wrap.style.display = 'none'; // CHANGED
+                return; // ADDED
+            } // ADDED
+            timelineSection.wrap.style.display = ''; // CHANGED
+            const bounds = document.createElement('div'); // ADDED
+            bounds.style.display = 'flex'; // ADDED
+            bounds.style.justifyContent = 'space-between'; // ADDED
+            bounds.style.gap = '8px'; // ADDED
+            bounds.style.fontSize = '11px'; // ADDED
+            bounds.style.color = '#6b7280'; // ADDED
+            const startLabel = document.createElement('span'); // ADDED
+            const endLabel = document.createElement('span'); // ADDED
+            startLabel.textContent = lifecycleTimelineDateLabel(model.bounds.startISO, true); // ADDED
+            endLabel.textContent = lifecycleTimelineDateLabel(model.bounds.endISO, true); // ADDED
+            bounds.appendChild(startLabel); // ADDED
+            bounds.appendChild(endLabel); // ADDED
+            timelineWrap.appendChild(bounds); // ADDED
+            timelineWrap.appendChild(renderLifecycleTimelineTrack(model, classification)); // ADDED
+            timelineWrap.appendChild(renderLifecycleTimelineLabelRows(model)); // ADDED
+            const details = makeTimelineSmallText(model.details.length ? model.details.join(' | ') : 'No lifecycle milestones are available for the current schedule.'); // ADDED
+            details.style.overflowWrap = 'anywhere'; // ADDED
+            timelineWrap.appendChild(details); // ADDED
+            const status = makeTimelineSmallText(classification.label); // ADDED
+            status.style.color = classification.status === 'feasible' ? '#166534' : '#b91c1c'; // ADDED
+            timelineWrap.appendChild(status); // ADDED
+        } // ADDED
+
+        async function handleLifecycleMilestoneClick(milestone) { // CHANGED
+            if (milestone?.stage === 'SOW') { // ADDED
+                startInput.focus(); // ADDED
+                return; // ADDED
+            } // ADDED
+            if (!milestone?.hasTaskRule || !milestone.taskStage) return; // ADDED
+            await refreshTaskTemplateFromSelection(); // ADDED
+            await refreshTasksTabUI(); // ADDED
+            const match = findFirstLifecycleTimelineTaskRule(taskRules, milestone.taskStage, generatedPreviewTasks); // ADDED
+            if (!match) return; // ADDED
+            tabsBody.innerHTML = ''; // ADDED
+            tabsBody.appendChild(tasksTab); // ADDED
+            setActiveTabButton(tasksTabBtn); // ADDED
+            const taskRowIndex = buildTaskRuleDisplayOrder(taskRules, generatedPreviewTasks).findIndex(entry => entry.originalIndex === match.originalIndex); // ADDED
+            const taskRowEl = taskRowIndex >= 0 ? tasksListDiv.children[taskRowIndex] : null; // ADDED
+            await openTaskEditor(match.rule, match.originalIndex, taskRowEl); // CHANGED
+        } // ADDED
 
         function updateTimeline() { // CHANGED
-            const activeWindow = getActiveSowingWindow(formState); // ADDED
-            const earliest = parseISODateUTC(activeWindow?.startISO); // CHANGED
-            const latest = parseISODateUTC(activeWindow?.endISO); // CHANGED
-            const sow = parseISODateUTC(formState.startISO); // CHANGED
             const classification = classifySelectedSowDate({ // ADDED
                 perennial: mode.perennial, // ADDED
                 windowFeasible: formState.windowFeasible, // ADDED
                 startISO: formState.startISO, // ADDED
-                sowingWindows: formState.sowingWindows, // CHANGED
-                activeSowingWindowId: formState.activeSowingWindowId // ADDED
+                sowingSeasons: formState.sowingSeasons, // CHANGED
+                activeSowingSeasonId: formState.activeSowingSeasonId // ADDED
             }); // ADDED
-
-            timelineStartLabel.textContent = fmtShortDate(activeWindow?.startISO || ''); // CHANGED
-            timelineEndLabel.textContent = fmtShortDate(activeWindow?.endISO || ''); // CHANGED
-
-            if (mode.perennial) { // CHANGED
-                timelineSection.wrap.style.display = 'none'; // CHANGED
-                updateScheduleSummaryFromState(); // ADDED
-                return; // CHANGED
-            } // CHANGED
-
-            timelineSection.wrap.style.display = ''; // CHANGED
-            if (!earliest || !latest || !sow || latest < earliest) { // ADDED
-                timelineLabels.style.display = 'none'; // ADDED
-                timelineBarWrap.style.display = 'none'; // ADDED
-                timelineStatus.style.color = '#b91c1c'; // ADDED
-                timelineStatus.textContent = classification.label; // ADDED
-                updateScheduleSummaryFromState(); // ADDED
-                return; // ADDED
-            } // ADDED
-            timelineLabels.style.display = 'flex'; // ADDED
-            timelineBarWrap.style.display = 'block'; // ADDED
-
-            const totalDays = Math.max(1, daysBetweenUTC(earliest, latest)); // CHANGED
-            const offsetDays = daysBetweenUTC(earliest, sow); // CHANGED
-            const ratio = offsetDays / totalDays; // CHANGED
-            const clampedRatio = Math.max(0, Math.min(1, ratio)); // CHANGED
-
-            timelineMarker.style.left = `${clampedRatio * 100}%`; // CHANGED
-
-            const isInvalid = classification.status !== 'feasible'; // CHANGED
-            timelineMarker.style.color = isInvalid ? '#b91c1c' : '#111827'; // CHANGED
-            timelineStatus.style.color = isInvalid ? '#b91c1c' : '#6b7280'; // CHANGED
-            timelineStatus.textContent = classification.label; // CHANGED
+            const model = buildLifecycleTimelineViewModel({ // ADDED
+                plant: effectivePlant, // ADDED
+                perennial: mode.perennial, // ADDED
+                seasonStartYear: formState.seasonStartYear, // ADDED
+                startISO: formState.startISO, // ADDED
+                sowingSeasons: formState.sowingSeasons, // ADDED
+                scheduleResult: latestScheduleResult, // ADDED
+                taskRules, // ADDED
+                generatedTasks: generatedPreviewTasks // CHANGED
+            }); // ADDED
+            renderLifecycleTimelineModel(model, classification); // ADDED
             updateScheduleSummaryFromState(); // ADDED
         } // CHANGED
 
@@ -7131,14 +7395,14 @@ Draw.loadPlugin(function (ui) {
             });
         });
 
-        sowingWindowSel.addEventListener('change', () => { // ADDED
-            void runUiAsync('Sowing window change error', async () => { // ADDED
-                formState.activeSowingWindowId = sowingWindowSel.value || ''; // ADDED
-                formState.startISO = resolveStartForSowingWindowSwitch(formState.sowingWindows, formState.activeSowingWindowId); // CHANGED
+        sowingSeasonSel.addEventListener('change', () => { // ADDED
+            void runUiAsync('Sowing season change error', async () => { // ADDED
+                formState.activeSowingSeasonId = sowingSeasonSel.value || ''; // ADDED
+                formState.startISO = resolveStartForSowingSeasonSwitch(formState.sowingSeasons, formState.activeSowingSeasonId); // CHANGED
                 startInput.value = formState.startISO; // ADDED
                 userEditedStartThisSession = false; // ADDED
                 syncStartDateBounds(); // ADDED
-                refreshSowingWindowSelector(); // ADDED
+                refreshSowingSeasonSelector(); // ADDED
                 updateStartNote(); // ADDED
                 updateTimeline(); // ADDED
                 await recomputeLastHarvestFromSchedule(); // ADDED
@@ -7179,7 +7443,6 @@ Draw.loadPlugin(function (ui) {
 
         citySel.addEventListener('change', () => {
             void runUiAsync('City change error', async () => { // FIX
-                setCityLatitudeInputFromName(citySel.value); // ADDED
                 syncStateFromControls(); // ADDED
                 refreshClimateModelControls({ preserveDraft: false }); // ADDED
                 await recomputeAll('cityChanged');
@@ -7262,6 +7525,7 @@ Draw.loadPlugin(function (ui) {
         let harvestRecomputeErrorVisible = false; // FIX: track only errors owned by harvest recomputation
 
         function clearComputedHarvestResult() { // FIX: clear all schedule-derived harvest output together
+            latestScheduleResult = null; // ADDED
             formState.firstHarvestISO = null;
             formState.lastHarvestISO = null;
             formState.lastScheduleEndISO = null; // FIX: remove stale schedule-derived harvest state
@@ -7292,11 +7556,13 @@ Draw.loadPlugin(function (ui) {
                 });
 
 
+                const result = await computeScheduleResult(inputs); // CHANGED
+                latestScheduleResult = result; // ADDED
                 const {
                     rows,
                     firstScheduledHarvestISO, // CHANGED
                     lastScheduledHarvestEndISO
-                } = await computeScheduleResult(inputs);
+                } = result; // CHANGED
 
                 console.log('[SCHEDULE RESULT]', {
                     rowsCount: rows?.length,
@@ -7375,14 +7641,14 @@ Draw.loadPlugin(function (ui) {
                 const primaryScanOptions = usePrimarySowScan ? { scanEndDate: firstSeasonScanEnd } : {}; // ADDED
                 const rows = await explainFeasibilityOverSeason(inputs, null, false, primaryScanOptions); // CHANGED
                 const diagnosticsModel = buildFeasibilityDiagnosticsModel(inputs, rows, usePrimarySowScan ? { // CHANGED
-                    scanLabel: 'Primary first-season sowing window', // ADDED
+                    scanLabel: 'Primary first-season sowing season', // ADDED
                     scanStartISO: fmtISO(explainDerived.scanStart), // ADDED
                     scanEndISO: fmtISO(firstSeasonScanEnd) // ADDED
                 } : {}); // CHANGED
                 const diagnostics = diagnosticsModel.text; // CHANGED
                 const scanSummary = formatFeasibilityScanRanges(rows); // FIX: dialog shows compact reason ranges instead of daily JSON.
                 const scanRanges = compressFeasibilityScanRanges(rows); // ADDED
-                const sowingWindowsText = formatSowingWindowsSummary(formState.sowingWindows); // ADDED
+                const sowingSeasonsText = formatSowingSeasonsSummary(formState.sowingSeasons); // ADDED
                 const scheduleQualityDiagnosticRanges = annualCore.computeScheduleQualityDiagnosticRangesForInputs(inputs); // ADDED
                 const scheduleQualityDiagnosticsText = formatScheduleQualityDiagnosticRanges(scheduleQualityDiagnosticRanges); // ADDED
                 const lifecycleRows = usePrimarySowScan ? await explainFeasibilityOverSeason(inputs) : null; // ADDED
@@ -7403,8 +7669,8 @@ Draw.loadPlugin(function (ui) {
                 const textParts = [ // CHANGED
                     diagnostics,
                     '',
-                    'Derived sowing windows:',
-                    sowingWindowsText,
+                    'Derived sowing seasons:',
+                    sowingSeasonsText,
                     '',
                     'Schedule quality diagnostic ranges:',
                     scheduleQualityDiagnosticsText,
@@ -7427,7 +7693,7 @@ Draw.loadPlugin(function (ui) {
                 renderExplainSowingRangeDialog(ui, diagnosticsModel, scanRanges, plantText, cityText, textParts, { // CHANGED
                     diagnosticsTitle: usePrimarySowScan ? 'Primary sowing diagnostics' : 'Diagnostics', // ADDED
                     scanTitle: usePrimarySowScan ? 'Primary first-season sowing scan ranges' : 'Feasibility scan ranges', // ADDED
-                    sowingWindowsText, // ADDED
+                    sowingSeasonsText, // ADDED
                     scheduleQualityDiagnosticRanges, // ADDED
                     lifecycleDiagnosticsModel, // ADDED
                     lifecycleRanges: lifecycleScanRanges // ADDED
@@ -7454,7 +7720,7 @@ Draw.loadPlugin(function (ui) {
                 if (!mode.perennial && !formState.windowFeasible) {
                     throw new Error('No feasible window.'); // FIX
                 }
-                requireSelectedSowingWindowDate(); // ADDED
+                requireSelectedSowingSeasonDate(); // ADDED
 
                 const { inputs } = await buildScheduleContextFromForm(
                     formState,
@@ -7481,7 +7747,7 @@ Draw.loadPlugin(function (ui) {
                 if (!mode.perennial && !formState.windowFeasible) {
                     throw new Error('No feasible window.'); // FIX
                 }
-                requireSelectedSowingWindowDate(); // ADDED
+                requireSelectedSowingSeasonDate(); // ADDED
 
                 const { inputs } = await buildScheduleContextFromForm(
                     formState,
@@ -7498,7 +7764,7 @@ Draw.loadPlugin(function (ui) {
 
                 // Validate the complete schedule before mutating the DB or graph.
                 const scheduleResult = computeScheduleResult(inputs);
-                const activeWindow = getActiveSowingWindow(formState); // ADDED
+                const activeWindow = getActiveSowingSeason(formState); // ADDED
                 handleClimateModelControlChanged(); // ADDED
                 const climateModelAttributePatch = buildClimateModelModuleAttributePatch(); // ADDED
 
@@ -7530,8 +7796,8 @@ Draw.loadPlugin(function (ui) {
                     result: scheduleResult,
                     taskTemplateJson,
                     taskTemplate, // FIX: generate tasks from the in-memory template saved by this action
-                    sowingWindowId: activeWindow?.id || '', // ADDED
-                    sowingWindowLabel: activeWindow?.label || '', // ADDED
+                    sowingSeasonId: activeWindow?.id || '', // ADDED
+                    sowingSeasonLabel: activeWindow?.label || '', // ADDED
                     extraAttributePatches: climateModelAttributePatch ? [climateModelAttributePatch] : [], // ADDED
                     afterGraphUpdate: persistPlantTaskDefault // FIX: undo graph edits if the database write fails
                 });
@@ -7672,7 +7938,6 @@ Draw.loadPlugin(function (ui) {
         // List container
         const tasksListDiv = document.createElement("div");
         const previewRuleSelections = new Map(); // ADDED
-        let generatedPreviewTasks = []; // ADDED
         let taskPreviewScheduleRange = null; // ADDED
         let taskPreviewCutoffOmittedRuleKeys = new Set(); // ADDED
         let taskPreviewVersion = 0; // ADDED
@@ -7835,15 +8100,15 @@ Draw.loadPlugin(function (ui) {
                 generatedPreviewTasks = []; // ADDED
                 taskPreviewScheduleRange = null; // ADDED
                 taskPreviewCutoffOmittedRuleKeys = new Set(); // ADDED
-                renderCachedTaskPreview({ error: 'No feasible sowing window is available for task generation.' }); // ADDED
+                renderCachedTaskPreview({ error: 'No feasible sowing season is available for task generation.' }); // ADDED
                 return; // ADDED
             } // ADDED
             const classification = classifySelectedSowDate({ // ADDED
                 perennial: mode.perennial, // ADDED
                 windowFeasible: formState.windowFeasible, // ADDED
                 startISO: formState.startISO, // ADDED
-                sowingWindows: formState.sowingWindows, // ADDED
-                activeSowingWindowId: formState.activeSowingWindowId // ADDED
+                sowingSeasons: formState.sowingSeasons, // ADDED
+                activeSowingSeasonId: formState.activeSowingSeasonId // ADDED
             }); // ADDED
             if (!mode.perennial && classification.status !== 'feasible') { // ADDED
                 generatedPreviewTasks = []; // ADDED
@@ -7906,6 +8171,7 @@ Draw.loadPlugin(function (ui) {
             }); // ADDED
             await updateTaskPreview(); // ADDED
             renderTasksList(); // CHANGED
+            updateTimeline(); // ADDED
         } // ADDED
 
         async function refreshTaskTemplateFromSelection() {
@@ -9643,11 +9909,14 @@ Draw.loadPlugin(function (ui) {
             plant_id: String(plant.plant_id),
             plant_name: String(plant.plant_name || ''),
             plant_abbr: String(plant.abbr || ''),
+            city_id: city.city_id != null ? String(city.city_id) : '', // ADDED
             city_name: String(city.city_name || ''),
             method_category_id: normId(inputs.methodCategoryId),
             method_id: normId(inputs.methodId),
-            sowing_window_id: perennial ? '' : String(options.sowingWindowId || ''), // ADDED
-            sowing_window_label: perennial ? '' : String(options.sowingWindowLabel || ''), // ADDED
+            sowing_season_id: perennial ? '' : String(options.sowingSeasonId || ''), // ADDED
+            sowing_season_label: perennial ? '' : String(options.sowingSeasonLabel || ''), // ADDED
+            sowing_window_id: null, // CHANGED: remove stale pre-rename scheduler metadata on resave.
+            sowing_window_label: null, // CHANGED: remove stale pre-rename scheduler metadata on resave.
             tbase_c: String(env.Tbase),
             sow_date: fmt(sowDate),
             germ_date: perennial ? '' : fmt(timeline.germ),
@@ -9948,16 +10217,33 @@ Draw.loadPlugin(function (ui) {
             ? Math.trunc(storedSeasonYear)
             : (storedSowDate ? storedSowDate.getUTCFullYear() : currentYear);
         const hasPersistedSchedule = storedSowDate != null; // FIX
-        const groupCityName = (cell && cell.getAttribute && cell.getAttribute('city_name')) || null;
-        const initialCityName = groupCityName || (cities[0].city_name || cities[0]);
+        const groupCityId = finiteNumberOrNull(cell?.getAttribute?.('city_id')) ?? finiteNumberOrNull(climateModelModuleCell?.getAttribute?.('city_id')); // ADDED
+        const groupCityName = (cell && cell.getAttribute && cell.getAttribute('city_name')) || climateModelModuleCell?.getAttribute?.('city_name') || null; // CHANGED
+        const idMatch = cities.find(city => groupCityId != null && Number(city.city_id) === Number(groupCityId)); // ADDED
+        const nameMatches = groupCityName ? cities.filter(city => String(city.city_name || '') === String(groupCityName)) : []; // ADDED
+        if (!idMatch && groupCityName && nameMatches.length > 1) throw new Error(`City name is ambiguous; select a city in Garden Settings: ${groupCityName}`); // ADDED
+        const initialCityRow = idMatch // CHANGED
+            || (nameMatches.length === 1 ? nameMatches[0] : null) // CHANGED: old city_name backfill is safe only when the name is unique.
+            || cities[0]; // ADDED
+        const initialCityId = finiteNumberOrNull(initialCityRow?.city_id); // ADDED
+        const initialCityName = initialCityRow?.city_name || groupCityName || (cities[0].city_name || cities[0]); // CHANGED
 
         const initialMethodSelection = await resolveInitialMethodSelection(cell, selectedPlant);
         const initialMethodCategoryId = initialMethodSelection.methodCategoryId;
         const initialMethodId = initialMethodSelection.methodId;
         const initialResolvedBehavior = initialMethodSelection.resolvedBehavior;
 
-        const cityInit = await CityClimate.loadByName(initialCityName);
+        const cityInit = await CityClimate.resolveUniqueNameFallback({ cityId: initialCityId, cityName: initialCityName }); // CHANGED
         if (!cityInit) throw new Error(`City not found: ${initialCityName}`);
+        if (model && cell && cityInit.city_id != null) { // ADDED
+            model.beginUpdate(); // ADDED
+            try { // ADDED
+                setAttr(cell, 'city_id', String(cityInit.city_id)); // ADDED
+                setAttr(cell, 'city_name', String(cityInit.city_name || initialCityName)); // ADDED
+            } finally { // ADDED
+                model.endUpdate(); // ADDED
+            } // ADDED
+        } // ADDED
         const initialClimateResolution = resolveClimateModelPolicy(climateModelModuleCell, initialCityName, selectedPlant.plant_id, null); // ADDED
         const initialClimatePolicy = initialClimateResolution.effective; // ADDED
 
@@ -9995,7 +10281,7 @@ Draw.loadPlugin(function (ui) {
             initialDailyClimate = dailyClimate; // ADDED
             const dailyRates = cityInit.dailyRates(env.Tbase, year, initialClimatePolicy); // CHANGED
             const monthlyAvgTemp = cityInit.monthlyMeans(); // CHANGED: physical temperatures stay unshifted; GDD scaling is in daily climate rates.
-            const initialWindow = annualCore.computeAnnualSowingWindows({ // CHANGED
+            const initialWindow = annualCore.computeAnnualSowingSeasons({ // CHANGED
                 methodCategoryId: initialMethodCategoryId,
                 methodId: initialMethodId,
                 budget: budget,
@@ -10017,13 +10303,13 @@ Draw.loadPlugin(function (ui) {
                     : 0,
                 overwinterAllowed: overwinterAllowed0,
                 plantMetadata: selectedPlant, // ADDED
-                cityLatitudeDeg: finiteNumberOrNull(cityInit.latitude_deg ?? cityInit.latitude ?? cityInit.lat), // ADDED
+                cityLatitudeDeg: finiteNumberOrNull(cityInit.latitude ?? cityInit.lat), // CHANGED
                 bedProfile: scheduleBedContext.profile, // ADDED
                 bedProfileSource: scheduleBedContext.source // ADDED
             });
 
             initialWindowFeasible = initialWindow.feasible === true; // FIX
-            earliestFeasibleSowDate = initialWindow.windows?.[0]?.startDate || initialWindow.earliestFeasibleSowDate; // CHANGED
+            earliestFeasibleSowDate = initialWindow.seasons?.[0]?.startDate || initialWindow.earliestFeasibleSowDate; // CHANGED
             climateEndDate = initialWindow.climateEndDate; // FIX
             lastHarvestDate = initialWindow.climateEndDate; // FIX: initialize the displayed annual end from the feasible window
         }
@@ -10081,6 +10367,7 @@ Draw.loadPlugin(function (ui) {
             earliestFeasibleSowDate: previewStart,
             lastHarvestDate,
             startNote,
+            initialCityId, // ADDED
             initialCityName,
             hasPersistedSchedule,
             initialWindowFeasible,
@@ -10211,7 +10498,9 @@ Draw.loadPlugin(function (ui) {
             try { // ADDED
                 const gardenParent = findGardenModuleAncestor(model, cell); // ADDED
                 if (gardenParent) { // ADDED
+                    const inheritedCityId = gardenParent.getAttribute('city_id'); // ADDED
                     const inheritedCity = gardenParent.getAttribute('city_name'); // ADDED
+                    if (inheritedCityId) setAttr(cell, 'city_id', inheritedCityId); // ADDED
                     if (inheritedCity) setAttr(cell, 'city_name', inheritedCity); // ADDED
                 } // ADDED
 
@@ -10246,11 +10535,13 @@ Draw.loadPlugin(function (ui) {
             ScheduleInputs: sharedCore.ScheduleInputs, // CHANGED
             Planner: annualCore.Planner, // CHANGED
             computeAutoStartEndWindowForward: annualCore.computeAutoStartEndWindowForward, // CHANGED
-            computeAnnualSowingWindows: annualCore.computeAnnualSowingWindows, // ADDED
+            computeAnnualSowingSeasons: annualCore.computeAnnualSowingSeasons, // ADDED
             getPlantScanYears,
             isCrossYearCrop, // FIX: expose lifecycle behavior to the opt-in regression harness
             resolveHarvestWindowDays, // FIX: expose fallback behavior to the opt-in regression harness
             computeStageDatesForPlanting, // FIX: expose calendar-stage behavior to the opt-in regression harness
+            buildLifecycleTimelineViewModel, // ADDED
+            findFirstLifecycleTimelineTaskRule, // ADDED
             normId, // FIX
             resolveStartAfterWindow // FIX
         }; // FIX: expose pure planner internals only when the regression harness opts in
@@ -10283,18 +10574,19 @@ Draw.loadPlugin(function (ui) {
                 const moduleCell = graph.getModel().getCell(moduleCellId);
                 if (!moduleCell) return;
 
+                const cityId = finiteNumberOrNull(moduleCell.getAttribute?.("city_id")); // ADDED
                 const cityName = String(moduleCell.getAttribute?.("city_name") || "").trim();
-                if (!cityName) {
+                if (cityId == null && !cityName) {
                     emitHarvestWindowsSuggested(moduleCellId, year, crops.map(c => ({
                         cropId: c.cropId, harvestStart: null, harvestEnd: null, shelfLifeDays: null,
-                        reason: "Module city_name not set"
+                        reason: "Module city_id/city_name not set" // CHANGED
                     })));
                     return;
                 }
 
                 const results = [];
                 for (const req of crops) {
-                    results.push(await suggestHarvestWindowForCropReq(req, cityName, year, moduleCell)); // CHANGED
+                    results.push(await suggestHarvestWindowForCropReq(req, { cityId, cityName }, year, moduleCell)); // CHANGED
                 }
                 emitHarvestWindowsSuggested(moduleCellId, year, results);
             });
@@ -10344,7 +10636,7 @@ Draw.loadPlugin(function (ui) {
             return { date: null, info: null };
         }
 
-        async function suggestHarvestWindowForCropReq(req, cityName, year, moduleCell = null) { // CHANGED
+        async function suggestHarvestWindowForCropReq(req, cityRef, year, moduleCell = null) { // CHANGED
             const cropId = String(req?.cropId || "");
             const plantId = (req?.plantId != null) ? Number(req.plantId) : NaN;
             const varietyId = (req?.varietyId != null && req.varietyId !== "") ? Number(req.varietyId) : null;
@@ -10367,8 +10659,9 @@ Draw.loadPlugin(function (ui) {
                     };
                 }
 
-                const city = await CityClimate.loadByName(cityName);
+                const city = await CityClimate.resolve(cityRef || {}); // CHANGED
                 if (!city) return { cropId, harvestStart: null, harvestEnd: null, shelfLifeDays: null, reason: "City not found" };
+                const cityName = String(city.city_name || cityRef?.cityName || ""); // ADDED
 
                 const methodId = normId(req?.methodId); // FIX
                 const methodCategoryId = normId(req?.methodCategoryId); // FIX
@@ -10556,7 +10849,7 @@ Draw.loadPlugin(function (ui) {
             resolveTaskTemplate,
             runUiAsyncOperation,
             computeAutoStartEndWindowForward: annualCore.computeAutoStartEndWindowForward, // CHANGED
-            computeAnnualSowingWindows: annualCore.computeAnnualSowingWindows, // ADDED
+            computeAnnualSowingSeasons: annualCore.computeAnnualSowingSeasons, // ADDED
             evaluateSowDateDiagnostics: annualCore.evaluateSowDateDiagnostics, // ADDED
             computeScheduleQualityDiagnosticRanges: annualCore.computeScheduleQualityDiagnosticRanges, // ADDED
             computeScheduleQualityDiagnosticRangesForInputs: annualCore.computeScheduleQualityDiagnosticRangesForInputs, // ADDED
@@ -10574,25 +10867,27 @@ Draw.loadPlugin(function (ui) {
             formatFeasibilityScanRanges, // ADDED
             buildFeasibilityBlockingSummary, // ADDED
             buildFeasibilityDiagnostics, // ADDED
-            normalizeSowingWindows, // ADDED
-            ORPHAN_SOWING_WINDOW_ID, // ADDED
-            formatSowingWindowsSummary, // ADDED
+            normalizeSowingSeasons, // ADDED
+            ORPHAN_SOWING_SEASON_ID, // ADDED
+            formatSowingSeasonsSummary, // ADDED
             formatScheduleQualityDiagnosticRanges, // ADDED
-            buildSowingWindowSelectorState, // ADDED
-            pickDefaultSowingWindowId, // ADDED
-            defaultStartForActiveSowingWindow, // ADDED
-            findSowingWindowForDate, // ADDED
-            resolveStartForSowingWindowSwitch, // ADDED
+            buildSowingSeasonSelectorState, // ADDED
+            pickDefaultSowingSeasonId, // ADDED
+            defaultStartForActiveSowingSeason, // ADDED
+            findSowingSeasonForDate, // ADDED
+            resolveStartForSowingSeasonSwitch, // ADDED
             encodeMethodSelection, // ADDED
             decodeMethodSelection, // ADDED
             humanFeasibilityReason, // ADDED
             classifySelectedSowDate, // ADDED
-            requireFeasibleSowingWindowSelection, // ADDED
+            requireFeasibleSowingSeasonSelection, // ADDED
             requireNoBlockingScheduleQualityDiagnostics, // ADDED
             describeBlockingScheduleQualityDiagnostics, // ADDED
             normalizeLatitudeDeg, // ADDED
             saveSchedulerCityLatitude, // ADDED
             buildScheduleViewState, // ADDED
+            buildLifecycleTimelineViewModel, // ADDED
+            findFirstLifecycleTimelineTaskRule, // ADDED
             taskRuleLibraryForPlanningMode, // ADDED
             resolveTaskRuleTaskTypeId, // NEW
             normalizeTaskRule, // ADDED

@@ -71,7 +71,7 @@ The dialog uses two tabs.
    - Planting method category
    - Planting method
 5. Sowing Window
-   - Derived sowing-window selector
+   - Derived sowing-season selector
    - Active window date bounds
    - Season end or perennial lifespan end
    - Explain Sowing Range action
@@ -142,8 +142,8 @@ does not fully synchronize every editable control.
 
 | Key | Writer |
 | --- | --- |
-| `sowingWindows` | `recomputeAnchors()` |
-| `activeSowingWindowId` | `recomputeAnchors()` and the window selector |
+| `sowingSeasons` | `recomputeAnchors()` |
+| `activeSowingSeasonId` | `recomputeAnchors()` and the window selector |
 | `firstHarvestISO` | Anchor reset, perennial flow, schedule recomputation |
 | `lastHarvestISO` | Anchor calculation, perennial flow, schedule recomputation |
 | `lastScheduleEndISO` | Perennial flow or schedule recomputation |
@@ -922,6 +922,32 @@ Perennial timelines retain only the planting date. Germination, transplant,
 maturity, and harvest values are null. Perennial persistence writes
 `sow_date`, `lifespan_start`, and `lifespan_end` while clearing annual stage
 attributes. Annual persistence clears stale lifespan attributes.
+
+### Compact lifecycle timeline
+
+The Schedule tab Timeline section renders annual and biennial schedules only.
+Perennial schedules keep the Timeline section hidden because the perennial core
+does not compute germination, transplant, maturity, or harvest milestones.
+
+The compact timeline uses the full lifecycle scan range for the selected season
+year and crop lifecycle. It shows all feasible sowing seasons as background
+bands, a subtle Today marker when today falls inside the range, and visible
+milestones for sowing, transplant when applicable, first harvest, and harvest
+end. Germination and maturity remain available in the exact-date details text
+and marker tooltips so crowded compact layouts do not drop stage dates.
+
+Milestone labels are stacked into a bounded number of rows. This keeps the
+right-column Timeline section stable for short crops and dense milestone dates,
+but close dates can still be visually compressed on the season-scale track. The
+details text is the exact-date fallback.
+
+Clicking the sow milestone focuses the existing sow date field. Non-sow
+milestones with a task rule whose start anchor matches the milestone show a
+small task dot. Clicking one refreshes the Tasks tab and opens the first
+matching rule in the same deterministic display order used by the task list.
+Generated task occurrences are not edited directly from the timeline.
+Task-dot state is recomputed after the task preview refresh so generated
+occurrence dates influence the same deterministic display order. // ADDED
 
 ### Identifier normalization
 

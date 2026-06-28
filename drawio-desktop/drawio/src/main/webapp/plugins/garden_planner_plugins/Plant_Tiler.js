@@ -254,15 +254,45 @@ Draw.loadPlugin(function (ui) {
         }
     }
 
+    async function execAll(sql, params) { // ADDED
+        if (!window.dbBridge || typeof window.dbBridge.open !== "function") { // ADDED
+            throw new Error("dbBridge not available; check preload/main wiring"); // ADDED
+        } // ADDED
+        const dbPath = await getDbPath(); // ADDED
+        const opened = await window.dbBridge.open(dbPath, { readOnly: false }); // ADDED
+        try { // ADDED
+            if (typeof window.dbBridge.exec === "function") return await window.dbBridge.exec(opened.dbId, sql, params || []); // ADDED
+            if (typeof window.dbBridge.run === "function") return await window.dbBridge.run(opened.dbId, sql, params || []); // ADDED
+            throw new Error("dbBridge.exec/run not available"); // ADDED
+        } finally { // ADDED
+            try { await window.dbBridge.close(opened.dbId); } catch (_) { } // ADDED
+        } // ADDED
+    } // ADDED
+
     async function loadCities() {
         const sql = `
-        SELECT city_name
+        SELECT *
         FROM Cities
         ORDER BY city_name;
       `;
         const rows = await queryAll(sql);
-        return rows.map((r) => r.city_name);
+        return rows;
     }
+
+    async function loadCityById(cityId) { // ADDED
+        const id = Number(cityId); // ADDED
+        if (!Number.isFinite(id)) return null; // ADDED
+        const rows = await queryAll("SELECT * FROM Cities WHERE city_id = ? LIMIT 1;", [id]); // ADDED
+        return rows[0] || null; // ADDED
+    } // ADDED
+
+    async function cityNameExists(cityName, excludeCityId) { // ADDED
+        const rows = await queryAll( // ADDED
+            "SELECT city_id FROM Cities WHERE LOWER(TRIM(city_name)) = LOWER(TRIM(?)) AND (? IS NULL OR city_id <> ?) LIMIT 1;", // ADDED
+            [cityName, excludeCityId == null ? null : Number(excludeCityId), excludeCityId == null ? null : Number(excludeCityId)] // ADDED
+        ); // ADDED
+        return rows.length > 0; // ADDED
+    } // ADDED
 
     // ------------------- Layering (garden beds, other, tiler groups) ----------------
 
@@ -1021,6 +1051,66 @@ Draw.loadPlugin(function (ui) {
         model.setValue(cell, clone);
     }
 
+    function finiteNumberOrNull(value) { // ADDED
+        const n = Number(value); // ADDED
+        return Number.isFinite(n) ? n : null; // ADDED
+    } // ADDED
+
+    function cToDisplayTemp(c, units) { // ADDED
+        const n = finiteNumberOrNull(c); // ADDED
+        if (n == null) return ""; // ADDED
+        return units === "imperial" ? String(Math.round((n * 9 / 5 + 32) * 10) / 10) : String(Math.round(n * 10) / 10); // ADDED
+    } // ADDED
+
+    function displayTempToC(value, units) { // ADDED
+        const n = finiteNumberOrNull(value); // ADDED
+        if (n == null) return null; // ADDED
+        return units === "imperial" ? (n - 32) * 5 / 9 : n; // ADDED
+    } // ADDED
+
+    function formatDbNumber(value) { // ADDED
+        const n = finiteNumberOrNull(value); // ADDED
+        return n == null ? null : String(Math.round(n * 1000) / 1000); // ADDED
+    } // ADDED
+
+    function mmDdToDoyNoLeap(value) { // ADDED
+        const match = /^(\d{1,2})-(\d{1,2})$/.exec(String(value || "").trim()); // ADDED
+        if (!match) return null; // ADDED
+        const month = Number(match[1]); // ADDED
+        const day = Number(match[2]); // ADDED
+        const monthDays = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]; // ADDED
+        if (month < 1 || month > 12 || day < 1 || day > monthDays[month - 1]) return null; // ADDED
+        return monthDays.slice(0, month - 1).reduce((sum, item) => sum + item, 0) + day; // ADDED
+    } // ADDED
+
+    function doyToMmDdNoLeap(value) { // ADDED
+        let doy = Number(value); // ADDED
+        if (!Number.isInteger(doy) || doy < 1 || doy > 365) return ""; // ADDED
+        const monthDays = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]; // ADDED
+        let month = 1; // ADDED
+        while (doy > monthDays[month - 1]) { doy -= monthDays[month - 1]; month += 1; } // ADDED
+        return `${String(month).padStart(2, "0")}-${String(doy).padStart(2, "0")}`; // ADDED
+    } // ADDED
+
+    function setTooltip(el, text) { // ADDED
+        if (!el) return; // ADDED
+        el.title = String(text || ""); // ADDED
+        if (el.tagName === "BUTTON") el.setAttribute("aria-label", String(text || el.textContent || "")); // ADDED
+    } // ADDED
+
+    function refreshDiagramCityNameById(model, root, city) { // ADDED
+        if (!model || !root || !city || city.city_id == null) return; // ADDED
+        const cityId = String(city.city_id); // ADDED
+        const nextName = String(city.city_name || ""); // ADDED
+        function visit(cell) { // ADDED
+            if (!cell) return; // ADDED
+            if (String(cell.getAttribute?.("city_id") || "") === cityId) setCellAttrsNoTxn(model, cell, { city_name: nextName }); // ADDED
+            const count = typeof model.getChildCount === "function" ? model.getChildCount(cell) : 0; // ADDED
+            for (let i = 0; i < count; i += 1) visit(model.getChildAt(cell, i)); // ADDED
+        } // ADDED
+        visit(root); // ADDED
+    } // ADDED
+
     // Default bed dimensions are stored in centimeters; dialog units are display-only. // CHANGE
     function positiveFiniteNumber(value) { // CHANGE
         const n = Number(value); // CHANGE
@@ -1071,16 +1161,273 @@ Draw.loadPlugin(function (ui) {
 
     function hasGardenSettingsSet(moduleCell) {
         if (!(moduleCell && moduleCell.getAttribute)) return false;
-        const city = String(moduleCell.getAttribute("city_name") || "").trim();
+        const city = String(moduleCell.getAttribute("city_id") || moduleCell.getAttribute("city_name") || "").trim(); // CHANGED
         const units = String(moduleCell.getAttribute("unit_system") || "").trim();
         return !!(city && units && getSavedDefaultBedDimensionsCm(moduleCell)); // CHANGE
     }
+
+    async function saveCityRecord(row, existingCityId = null) { // ADDED
+        const cityId = Number(row.city_id); // ADDED
+        const cityName = String(row.city_name || "").trim(); // ADDED
+        if (!Number.isInteger(cityId) || cityId <= 0) throw new Error("City ID is required and must be a positive integer."); // ADDED
+        if (!cityName) throw new Error("City name is required."); // ADDED
+        if (await cityNameExists(cityName, existingCityId == null ? null : cityId)) throw new Error("A city with that name already exists."); // ADDED
+        const lat = finiteNumberOrNull(row.latitude); // ADDED
+        const lon = finiteNumberOrNull(row.longitude); // ADDED
+        if (lat == null || lat < -66.5 || lat > 66.5) throw new Error("Latitude is required and must be between -66.5 and 66.5."); // ADDED
+        if (lon == null || lon < -180 || lon > 180) throw new Error("Longitude is required and must be between -180 and 180."); // ADDED
+        if (!String(row.timezone || "").trim()) throw new Error("Timezone is required."); // ADDED
+        if (!Number.isInteger(Number(row.last_spring_frost_p50_doy))) throw new Error("Spring p50 frost date is required."); // ADDED
+        if (!Number.isInteger(Number(row.first_fall_frost_p50_doy))) throw new Error("Fall p50 frost date is required."); // ADDED
+        for (let m = 1; m <= 12; m += 1) { // ADDED
+            if (finiteNumberOrNull(row[`avg_monthly_low_c${m}`]) == null || finiteNumberOrNull(row[`avg_monthly_high_c${m}`]) == null) { // ADDED
+                throw new Error("All monthly low/high normals are required."); // ADDED
+            } // ADDED
+        } // ADDED
+        const columns = [ // ADDED
+            "city_id", "city_name", "latitude", "longitude", "timezone", "gdd_annual", "gdd_base_c", // ADDED
+            "last_spring_frost_doy", "last_spring_frost_p90_doy", "last_spring_frost_p50_doy", "last_spring_frost_p10_doy", // ADDED
+            "first_fall_frost_doy", "first_fall_frost_p90_doy", "first_fall_frost_p50_doy", "first_fall_frost_p10_doy" // ADDED
+        ]; // ADDED
+        for (let m = 1; m <= 12; m += 1) columns.push(`avg_monthly_low_c${m}`, `avg_monthly_high_c${m}`); // ADDED
+        const values = columns.map(col => row[col] == null || row[col] === "" ? null : row[col]); // ADDED
+        const exists = await loadCityById(cityId); // ADDED
+        if (exists && existingCityId == null) throw new Error("A city with that ID already exists."); // ADDED
+        if (exists) { // ADDED
+            const assignments = columns.filter(col => col !== "city_id").map(col => `${col} = ?`).join(", "); // ADDED
+            const updateValues = columns.filter(col => col !== "city_id").map(col => row[col] == null || row[col] === "" ? null : row[col]); // ADDED
+            await execAll(`UPDATE Cities SET ${assignments} WHERE city_id = ?;`, updateValues.concat(cityId)); // ADDED
+        } else { // ADDED
+            await execAll(`INSERT INTO Cities (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")});`, values); // ADDED
+        } // ADDED
+        return await loadCityById(cityId); // ADDED
+    } // ADDED
+
+    async function showCityManagerDialog(ui, graph, selectedCityId, units, onSaved) { // ADDED
+        const model = graph.getModel(); // ADDED
+        let cities = await loadCities(); // ADDED
+        let current = cities.find(city => String(city.city_id) === String(selectedCityId)) || cities[0] || null; // ADDED
+        let editingExistingId = current ? Number(current.city_id) : null; // ADDED
+        const displayUnits = units === "imperial" ? "imperial" : "metric"; // ADDED
+        const tempUnit = displayUnits === "imperial" ? "F" : "C"; // ADDED
+
+        const div = document.createElement("div"); // ADDED
+        div.style.padding = "10px"; // ADDED
+        div.style.width = "760px"; // ADDED
+        div.style.maxHeight = "680px"; // ADDED
+        div.style.overflow = "auto"; // ADDED
+
+        const title = document.createElement("div"); // ADDED
+        title.textContent = "City Manager"; // ADDED
+        title.style.fontWeight = "600"; // ADDED
+        title.style.marginBottom = "8px"; // ADDED
+        div.appendChild(title); // ADDED
+
+        const err = document.createElement("div"); // ADDED
+        err.style.color = "#b91c1c"; // ADDED
+        err.style.fontSize = "12px"; // ADDED
+        err.style.marginBottom = "8px"; // ADDED
+        err.style.display = "none"; // ADDED
+        div.appendChild(err); // ADDED
+
+        function showError(message) { err.textContent = message; err.style.display = "block"; } // ADDED
+        function clearError() { err.textContent = ""; err.style.display = "none"; } // ADDED
+        function input(type = "text", width = "100%") { // ADDED
+            const el = document.createElement("input"); // ADDED
+            el.type = type; // ADDED
+            el.style.width = width; // ADDED
+            el.style.padding = "5px"; // ADDED
+            return el; // ADDED
+        } // ADDED
+        function field(label, el, tooltip) { // ADDED
+            const wrap = document.createElement("div"); // ADDED
+            wrap.style.display = "flex"; // ADDED
+            wrap.style.alignItems = "center"; // ADDED
+            wrap.style.gap = "8px"; // ADDED
+            wrap.style.margin = "6px 0"; // ADDED
+            const lab = document.createElement("label"); // ADDED
+            lab.textContent = label; // ADDED
+            lab.style.minWidth = "150px"; // ADDED
+            setTooltip(lab, tooltip); // ADDED
+            setTooltip(el, tooltip); // ADDED
+            wrap.appendChild(lab); // ADDED
+            wrap.appendChild(el); // ADDED
+            div.appendChild(wrap); // ADDED
+            return el; // ADDED
+        } // ADDED
+
+        const pickerRow = document.createElement("div"); // ADDED
+        pickerRow.style.display = "flex"; // ADDED
+        pickerRow.style.gap = "8px"; // ADDED
+        pickerRow.style.alignItems = "center"; // ADDED
+        pickerRow.style.marginBottom = "8px"; // ADDED
+        const cityPicker = document.createElement("select"); // ADDED
+        cityPicker.style.flex = "1"; // ADDED
+        cityPicker.style.padding = "6px"; // ADDED
+        const newBtn = mxUtils.button("New City", () => { // ADDED
+            const maxId = cities.reduce((max, city) => Math.max(max, Number(city.city_id) || 0), 0); // ADDED
+            editingExistingId = null; // ADDED
+            fillForm({ city_id: maxId + 1, city_name: "", timezone: "America/Los_Angeles" }, false); // ADDED
+        }); // ADDED
+        setTooltip(newBtn, "Create a scheduler-ready city record with required climate fields."); // ADDED
+        pickerRow.appendChild(cityPicker); // ADDED
+        pickerRow.appendChild(newBtn); // ADDED
+        div.appendChild(pickerRow); // ADDED
+
+        const idInput = field("City ID:", input("number"), "Stable city_id used by diagrams; it cannot be changed for existing cities."); // ADDED
+        const nameInput = field("City name:", input("text"), "Required display name. Names must be unique."); // ADDED
+        const latInput = field("Latitude:", input("number"), "Required decimal degrees, -66.5 to 66.5, used for photoperiod checks."); // ADDED
+        const lonInput = field("Longitude:", input("number"), "Required decimal degrees, -180 to 180."); // ADDED
+        const tzInput = field("Timezone:", input("text"), "Required IANA timezone, for example America/Los_Angeles."); // ADDED
+        const gddAnnualInput = field("Annual GDD:", input("number"), "Optional annual growing-degree-days calibration target."); // ADDED
+        const gddBaseInput = field("GDD base C:", input("number"), "Optional Celsius base temperature for city annual GDD calibration."); // ADDED
+        const springP90Input = field("Spring frost p90:", input("text"), "Optional MM-DD last spring frost risk date; Feb 29 is not valid."); // ADDED
+        const springP50Input = field("Spring frost p50:", input("text"), "Required MM-DD last spring frost date; Feb 29 is not valid."); // ADDED
+        const springP10Input = field("Spring frost p10:", input("text"), "Optional MM-DD last spring frost risk date; Feb 29 is not valid."); // ADDED
+        const fallP90Input = field("Fall frost p90:", input("text"), "Optional MM-DD first fall frost risk date; Feb 29 is not valid."); // ADDED
+        const fallP50Input = field("Fall frost p50:", input("text"), "Required MM-DD first fall frost date; Feb 29 is not valid."); // ADDED
+        const fallP10Input = field("Fall frost p10:", input("text"), "Optional MM-DD first fall frost risk date; Feb 29 is not valid."); // ADDED
+
+        const monthTitle = document.createElement("div"); // ADDED
+        monthTitle.textContent = `Monthly normals (${tempUnit})`; // ADDED
+        monthTitle.style.fontWeight = "600"; // ADDED
+        monthTitle.style.margin = "12px 0 6px"; // ADDED
+        div.appendChild(monthTitle); // ADDED
+        const monthGrid = document.createElement("div"); // ADDED
+        monthGrid.style.display = "grid"; // ADDED
+        monthGrid.style.gridTemplateColumns = "70px 1fr 1fr"; // ADDED
+        monthGrid.style.gap = "4px 8px"; // ADDED
+        div.appendChild(monthGrid); // ADDED
+        ["Month", "Low", "High"].forEach(text => { // ADDED
+            const cell = document.createElement("div"); // ADDED
+            cell.textContent = text; // ADDED
+            cell.style.fontWeight = "600"; // ADDED
+            monthGrid.appendChild(cell); // ADDED
+        }); // ADDED
+        const monthInputs = []; // ADDED
+        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]; // ADDED
+        monthNames.forEach((name, index) => { // ADDED
+            const low = input("number"); // ADDED
+            const high = input("number"); // ADDED
+            low.step = high.step = "0.1"; // ADDED
+            setTooltip(low, `Required average monthly low for ${name}, shown in ${tempUnit}.`); // ADDED
+            setTooltip(high, `Required average monthly high for ${name}, shown in ${tempUnit}.`); // ADDED
+            const lab = document.createElement("div"); // ADDED
+            lab.textContent = name; // ADDED
+            monthGrid.appendChild(lab); // ADDED
+            monthGrid.appendChild(low); // ADDED
+            monthGrid.appendChild(high); // ADDED
+            monthInputs[index + 1] = { low, high }; // ADDED
+        }); // ADDED
+
+        function refreshPicker(selectedId) { // ADDED
+            while (cityPicker.firstChild) cityPicker.removeChild(cityPicker.firstChild); // ADDED
+            cities.forEach(city => { // ADDED
+                const opt = document.createElement("option"); // ADDED
+                opt.value = String(city.city_id); // ADDED
+                opt.textContent = `${city.city_name || "(unnamed)"} (#${city.city_id})`; // ADDED
+                cityPicker.appendChild(opt); // ADDED
+            }); // ADDED
+            if (selectedId != null) cityPicker.value = String(selectedId); // ADDED
+        } // ADDED
+
+        function fillForm(city, existing) { // ADDED
+            current = city || {}; // ADDED
+            editingExistingId = existing ? Number(city.city_id) : null; // ADDED
+            idInput.value = current.city_id || ""; // ADDED
+            idInput.disabled = !!existing; // ADDED
+            nameInput.value = current.city_name || ""; // ADDED
+            latInput.value = current.latitude ?? ""; // ADDED
+            lonInput.value = current.longitude ?? ""; // ADDED
+            tzInput.value = current.timezone || ""; // ADDED
+            gddAnnualInput.value = current.gdd_annual ?? ""; // ADDED
+            gddBaseInput.value = current.gdd_base_c ?? ""; // ADDED
+            springP90Input.value = doyToMmDdNoLeap(current.last_spring_frost_p90_doy); // ADDED
+            springP50Input.value = doyToMmDdNoLeap(current.last_spring_frost_p50_doy || current.last_spring_frost_doy); // ADDED
+            springP10Input.value = doyToMmDdNoLeap(current.last_spring_frost_p10_doy); // ADDED
+            fallP90Input.value = doyToMmDdNoLeap(current.first_fall_frost_p90_doy); // ADDED
+            fallP50Input.value = doyToMmDdNoLeap(current.first_fall_frost_p50_doy || current.first_fall_frost_doy); // ADDED
+            fallP10Input.value = doyToMmDdNoLeap(current.first_fall_frost_p10_doy); // ADDED
+            for (let m = 1; m <= 12; m += 1) { // ADDED
+                monthInputs[m].low.value = cToDisplayTemp(current[`avg_monthly_low_c${m}`], displayUnits); // ADDED
+                monthInputs[m].high.value = cToDisplayTemp(current[`avg_monthly_high_c${m}`], displayUnits); // ADDED
+            } // ADDED
+        } // ADDED
+
+        cityPicker.addEventListener("change", () => { // ADDED
+            const next = cities.find(city => String(city.city_id) === String(cityPicker.value)); // ADDED
+            fillForm(next, true); // ADDED
+        }); // ADDED
+
+        function readDate(inputEl, required, label) { // ADDED
+            const raw = String(inputEl.value || "").trim(); // ADDED
+            if (!raw && !required) return null; // ADDED
+            const doy = mmDdToDoyNoLeap(raw); // ADDED
+            if (!doy) throw new Error(`${label} must be an MM-DD date in a non-leap year.`); // ADDED
+            return doy; // ADDED
+        } // ADDED
+
+        function readForm() { // ADDED
+            const row = { // ADDED
+                city_id: Number(idInput.value), // ADDED
+                city_name: String(nameInput.value || "").trim(), // ADDED
+                latitude: finiteNumberOrNull(latInput.value), // ADDED
+                longitude: finiteNumberOrNull(lonInput.value), // ADDED
+                timezone: String(tzInput.value || "").trim(), // ADDED
+                gdd_annual: finiteNumberOrNull(gddAnnualInput.value), // ADDED
+                gdd_base_c: finiteNumberOrNull(gddBaseInput.value), // ADDED
+                last_spring_frost_p90_doy: readDate(springP90Input, false, "Spring frost p90"), // ADDED
+                last_spring_frost_p50_doy: readDate(springP50Input, true, "Spring frost p50"), // ADDED
+                last_spring_frost_p10_doy: readDate(springP10Input, false, "Spring frost p10"), // ADDED
+                first_fall_frost_p90_doy: readDate(fallP90Input, false, "Fall frost p90"), // ADDED
+                first_fall_frost_p50_doy: readDate(fallP50Input, true, "Fall frost p50"), // ADDED
+                first_fall_frost_p10_doy: readDate(fallP10Input, false, "Fall frost p10") // ADDED
+            }; // ADDED
+            row.last_spring_frost_doy = row.last_spring_frost_p50_doy; // ADDED
+            row.first_fall_frost_doy = row.first_fall_frost_p50_doy; // ADDED
+            for (let m = 1; m <= 12; m += 1) { // ADDED
+                row[`avg_monthly_low_c${m}`] = formatDbNumber(displayTempToC(monthInputs[m].low.value, displayUnits)); // ADDED
+                row[`avg_monthly_high_c${m}`] = formatDbNumber(displayTempToC(monthInputs[m].high.value, displayUnits)); // ADDED
+            } // ADDED
+            return row; // ADDED
+        } // ADDED
+
+        const btnRow = document.createElement("div"); // ADDED
+        btnRow.style.display = "flex"; // ADDED
+        btnRow.style.justifyContent = "flex-end"; // ADDED
+        btnRow.style.gap = "8px"; // ADDED
+        btnRow.style.marginTop = "12px"; // ADDED
+        const closeBtn = mxUtils.button("Close", () => ui.hideDialog()); // ADDED
+        const saveBtn = mxUtils.button("Save City", async () => { // ADDED
+            clearError(); // ADDED
+            try { // ADDED
+                const saved = await saveCityRecord(readForm(), editingExistingId); // ADDED
+                cities = await loadCities(); // ADDED
+                refreshPicker(saved.city_id); // ADDED
+                fillForm(saved, true); // ADDED
+                model.beginUpdate(); // ADDED
+                try { refreshDiagramCityNameById(model, model.getRoot(), saved); } finally { model.endUpdate(); } // ADDED
+                if (typeof onSaved === "function") onSaved(saved); // ADDED
+            } catch (e) { // ADDED
+                showError(e && e.message ? e.message : String(e)); // ADDED
+            } // ADDED
+        }); // ADDED
+        setTooltip(saveBtn, "Save the city climate record to the Trellis database."); // ADDED
+        btnRow.appendChild(closeBtn); // ADDED
+        btnRow.appendChild(saveBtn); // ADDED
+        div.appendChild(btnRow); // ADDED
+
+        refreshPicker(current?.city_id); // ADDED
+        fillForm(current || { city_id: 1, timezone: "America/Los_Angeles" }, !!current); // ADDED
+        ui.showDialog(div, 800, 720, true, true); // ADDED
+    } // ADDED
 
 
     // garden settings dialog (city + units + default bed dimensions) // CHANGE
     async function showGardenSettingsDialog(ui, graph, moduleCell, onClose) { // CHANGE
         const model = graph.getModel();
         const curGardenName = String(getXmlAttr(moduleCell, "garden_name", "") || getXmlAttr(moduleCell, "label", "") || "Garden").trim() || "Garden"; // ADDED
+        const curCityId = getXmlAttr(moduleCell, "city_id", ""); // ADDED
         const curCity = getXmlAttr(moduleCell, "city_name", "");
         const curUnits = getXmlAttr(moduleCell, "unit_system", "");
         const savedBedDimsCm = getSavedDefaultBedDimensionsCm(moduleCell); // CHANGE
@@ -1102,11 +1449,7 @@ Draw.loadPlugin(function (ui) {
             notifyClose(); // CHANGE
             return;
         }
-        if (!cities.length) {
-            mxUtils.alert("No cities found in database.");
-            notifyClose(); // CHANGE
-            return;
-        }
+        // Empty city lists are allowed so the City Manager can create the first scheduler-ready city. // CHANGED
 
         const div = document.createElement("div");
         div.style.padding = "10px";
@@ -1150,6 +1493,27 @@ Draw.loadPlugin(function (ui) {
         const citySel = document.createElement("select");
         citySel.style.flex = "1";
 
+        function selectedCityRow() { // ADDED
+            return cities.find(city => String(city.city_id) === String(citySel.value)) || null; // ADDED
+        } // ADDED
+
+        function refreshCityOptions(selectedCityId, selectedCityName) { // ADDED
+            while (citySel.firstChild) citySel.removeChild(citySel.firstChild); // ADDED
+            const cityPlaceholder = document.createElement("option"); // ADDED
+            cityPlaceholder.value = ""; // ADDED
+            cityPlaceholder.textContent = "Select a city..."; // ADDED
+            cityPlaceholder.disabled = true; // ADDED
+            citySel.appendChild(cityPlaceholder); // ADDED
+            cities.forEach((city) => { // ADDED
+                const o = document.createElement("option"); // ADDED
+                o.value = String(city.city_id); // ADDED
+                o.textContent = city.city_name; // ADDED
+                if ((selectedCityId && String(city.city_id) === String(selectedCityId)) || (!selectedCityId && city.city_name === selectedCityName)) o.selected = true; // ADDED
+                citySel.appendChild(o); // ADDED
+            }); // ADDED
+            if (!citySel.value && citySel.options.length > 1) citySel.selectedIndex = 1; // ADDED
+        } // ADDED
+
         const cityPlaceholder = document.createElement("option");
         cityPlaceholder.value = "";
         cityPlaceholder.textContent = "Select a city…";
@@ -1157,14 +1521,22 @@ Draw.loadPlugin(function (ui) {
         cityPlaceholder.selected = !curCity;
         citySel.appendChild(cityPlaceholder);
 
-        cities.forEach((name) => {
-            const o = document.createElement("option");
-            o.value = name;
-            o.textContent = name;
-            if (name === curCity) o.selected = true;
-            citySel.appendChild(o);
-        });
-        row("City:", citySel);
+        refreshCityOptions(curCityId, curCity); // ADDED
+        const cityControl = document.createElement("div"); // ADDED
+        cityControl.style.display = "flex"; // ADDED
+        cityControl.style.gap = "6px"; // ADDED
+        cityControl.style.flex = "1"; // ADDED
+        cityControl.appendChild(citySel); // ADDED
+        const manageCityBtn = mxUtils.button("Manage...", async () => { // ADDED
+            await showCityManagerDialog(ui, graph, citySel.value, unitsSel.value || curUnits || "metric", async saved => { // ADDED
+                cities = await loadCities(); // ADDED
+                refreshCityOptions(saved.city_id, saved.city_name); // ADDED
+            }); // ADDED
+        }); // ADDED
+        setTooltip(citySel, "Select the garden city. City climate data is managed with the adjacent button."); // ADDED
+        setTooltip(manageCityBtn, "Add or edit city latitude, longitude, timezone, frost dates, and monthly normals."); // ADDED
+        cityControl.appendChild(manageCityBtn); // ADDED
+        row("City:", cityControl); // CHANGED
 
         // Units (mandatory)
         const unitsSel = document.createElement("select");
@@ -1253,7 +1625,9 @@ Draw.loadPlugin(function (ui) {
         const okBtn = mxUtils.button("OK", () => {
             err.style.display = "none";
             const chosenGardenName = String(gardenNameInput.value || "").trim() || "Garden"; // ADDED
-            const chosenCity = (citySel.value || "").trim();
+            const chosenCityRow = selectedCityRow(); // ADDED
+            const chosenCity = String(chosenCityRow?.city_name || "").trim(); // CHANGED
+            const chosenCityId = chosenCityRow?.city_id != null ? String(chosenCityRow.city_id) : ""; // ADDED
             const chosenUnits = (unitsSel.value || "").trim();
             const chosenBedDimsCm = readBedInputsAsCm(chosenUnits); // CHANGE
 
@@ -1267,6 +1641,7 @@ Draw.loadPlugin(function (ui) {
                 setCellAttrsNoTxn(model, moduleCell, {
                     garden_name: chosenGardenName, // ADDED
                     label: chosenGardenName, // ADDED
+                    city_id: chosenCityId, // ADDED
                     city_name: chosenCity,
                     unit_system: chosenUnits,
                     [DEFAULT_BED_WIDTH_CM_ATTR]: formatBedCmAttr(chosenBedDimsCm.widthCm), // CHANGE

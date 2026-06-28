@@ -2481,6 +2481,16 @@ function openExternal(url) {
 	return false;
 }
 
+function getTrellisAppInfo() { // NEW
+	return { // NEW
+		productName: app.name, // NEW
+		version: app.getVersion(), // NEW
+		repoUrl: trellisReleaseUrl, // NEW
+		releasesUrl: `${trellisReleaseUrl}/releases`, // NEW
+		issuesUrl: trellisSupportUrl // NEW
+	}; // NEW
+} // NEW
+
 function watchFile(filePath) {
 	let win = BrowserWindow.getFocusedWindow();
 
@@ -2575,6 +2585,9 @@ ipcMain.on("rendererReq", async (event, args) => {
 			case 'openExternal':
 				ret = await openExternal(args.url);
 				break;
+			case 'getTrellisAppInfo': // NEW
+				ret = getTrellisAppInfo(); // NEW
+				break; // NEW
 			case 'watchFile':
 				ret = await watchFile(args.path);
 				break;

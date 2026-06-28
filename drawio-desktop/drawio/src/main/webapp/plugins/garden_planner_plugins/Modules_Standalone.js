@@ -243,7 +243,7 @@ Draw.loadPlugin(function (ui) {
     function hasGardenSettingsSet(cell) {                                                     
         const v = cell && cell.value;                                                         
         if (!(v && v.nodeType === 1)) return false;                                           
-        const city = (v.getAttribute("city_name") || "").trim();                              
+        const city = (v.getAttribute("city_id") || v.getAttribute("city_name") || "").trim(); // CHANGED
         const units = (v.getAttribute("unit_system") || "").trim();                           
         return !!(city && units);                                                             
     }                                                                                         

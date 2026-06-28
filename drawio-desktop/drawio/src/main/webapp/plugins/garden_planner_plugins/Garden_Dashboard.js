@@ -112,7 +112,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function hasCitySet(moduleCell) {
-        return !!(moduleCell && moduleCell.getAttribute && moduleCell.getAttribute("city_name"));
+        return !!(moduleCell && moduleCell.getAttribute && (moduleCell.getAttribute("city_id") || moduleCell.getAttribute("city_name"))); // CHANGED
     }
 
     // -------------------- Germ Rate helpers ------------
@@ -1424,7 +1424,7 @@ Draw.loadPlugin(function (ui) {
 
     function hasGardenSettingsSet(moduleCell) {
         return !!(moduleCell && moduleCell.getAttribute &&
-            moduleCell.getAttribute("city_name") &&
+            (moduleCell.getAttribute("city_id") || moduleCell.getAttribute("city_name")) && // CHANGED
             moduleCell.getAttribute("unit_system"));
     }
 

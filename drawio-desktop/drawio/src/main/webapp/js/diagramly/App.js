@@ -284,7 +284,8 @@ App.startTime = new Date();
  * Defines plugin IDs for loading via p URL parameter. Update the table at
  * https://www.drawio.com/doc/faq/supported-url-parameters
  */
-App.pluginRegistry = {    'trellisContextMenu': 'plugins/garden_planner_plugins/Trellis_Context_Menu.js',              // NEW
+App.pluginRegistry = {    'trellisUpdatesLinks': 'plugins/garden_planner_plugins/Trellis_Updates_Links.js',            // NEW
+    'trellisContextMenu': 'plugins/garden_planner_plugins/Trellis_Context_Menu.js',              // NEW
     'gardenSuccession': 'plugins/garden_planner_plugins/Bed_Succession_Navigator.js',           // CHANGE
     'plantTiler': 'plugins/garden_planner_plugins/Plant_Tiler.js',                               // CHANGE
     'gardenTasks': 'plugins/garden_planner_plugins/Garden_Task_Manager.js',                     // CHANGE
@@ -302,6 +303,7 @@ App.pluginRegistry = {    'trellisContextMenu': 'plugins/garden_planner_plugins/
 	'gardenEquipment': 'plugins/garden_planner_plugins/Garden_Equipment.js' };                              // CHANGE
 
 App.publicPlugin = [
+    'trellisUpdatesLinks',                                  // NEW
     'trellisContextMenu',                                    // NEW
     'gardenSuccession',                                       // CHANGE
     'plantTiler',                                             // CHANGE
@@ -769,6 +771,9 @@ App.main = function(callback, createUi)
 				}
 			}
 			
+			App.initPluginCallback(); // NEW
+			App.loadPlugins(['trellisUpdatesLinks']); // NEW
+
 			// Loads plugins
 			if (urlParams['plugins'] != '0' && urlParams['offline'] != '1')
 			{
@@ -796,7 +801,6 @@ App.main = function(callback, createUi)
 				}
 
 				var temp = urlParams['p'];
-				App.initPluginCallback();
 
 				if (temp != null)
 				{

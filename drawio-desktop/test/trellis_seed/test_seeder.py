@@ -8,7 +8,9 @@ import sys
 import tempfile
 from contextlib import closing, redirect_stdout
 from io import StringIO
+from types import SimpleNamespace  # diagnostics subprocess stub
 import unittest
+from unittest.mock import patch  # focused menu regression mocks
 from pathlib import Path
 
 
@@ -42,7 +44,7 @@ from trellis_seed.generator import (
     estimate_openai_calls,
 )  # noqa: E402
 from trellis_seed.jsonio import write_json  # noqa: E402
-from trellis_seed.menu import _preflight_provider_labels, _should_prompt_template_generation  # noqa: E402
+from trellis_seed.menu import _preflight_provider_labels, _should_prompt_template_generation, _sowing_window_diagnostics_flow  # noqa: E402  # diagnostics command coverage
 from trellis_seed.migrations import apply_migrations, pending_migrations  # noqa: E402
 from trellis_seed.planner import effective_tables_from_input, selected_tables_warning  # noqa: E402
 from trellis_seed.providers import NasaPowerClient, OpenAIJsonClient, OpenMeteoClient, ProviderTrace  # noqa: E402
@@ -146,6 +148,16 @@ class TrellisSeederTests(unittest.TestCase):
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
+
+    def test_sowing_window_diagnostics_flow_uses_existing_season_script(self) -> None:
+        settings = Settings(self.tmp_path / "config.json", {"db_path": str(self.db_path), "runs_dir": str(self.tmp_path / "runs")})
+        completed = SimpleNamespace(stdout="", stderr="", returncode=0)  # subprocess-compatible result
+        with patch("builtins.input", side_effect=["2026", "14"]), patch("trellis_seed.menu.subprocess.run", return_value=completed) as run:
+            with redirect_stdout(StringIO()):
+                _sowing_window_diagnostics_flow(settings)
+        cmd = run.call_args.args[0]  # command passed to Node bridge
+        self.assertIn("trellis_seed_sowing_season_diagnostics.cjs", cmd[1])  # existing script name
+        self.assertIn(str(self.tmp_path / "runs" / "sowing_season_diagnostics_report.json"), cmd)  # report name match
 
     def test_template_generation_option_removes_template_call_estimates(self) -> None:
         data = {

@@ -40,3 +40,9 @@ test('Garden Settings entry points route through the overlay-suppressed opener',
     const directDialogReferences = source.match(/showGardenSettingsDialog\(ui, graph,/g) || []; // NEW
     assert.equal(directDialogReferences.length, 4); // NEW
 }); // NEW
+
+test('Garden Settings can open with an empty city table so City Manager can add the first city', () => { // ADDED
+    const source = readPlantTilerSource(); // ADDED
+    assert.doesNotMatch(source, /No cities found in database/); // ADDED
+    assert.match(source, /Empty city lists are allowed so the City Manager can create the first scheduler-ready city/); // ADDED
+}); // ADDED

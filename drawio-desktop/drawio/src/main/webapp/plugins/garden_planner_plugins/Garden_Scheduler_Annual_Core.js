@@ -468,7 +468,7 @@
                 bedProfile: normalizeBedProfile(inputs.bedProfile), // ADDED: soil gates depend on garden-bed conditions.
                 bedProfileSource: inputs.bedProfileSource || 'generic garden bed', // ADDED
                 Tbase: env.Tbase,
-                cityLatitudeDeg: finiteNumberOrNull(inputs.cityLatitudeDeg ?? city?.latitude_deg ?? city?.latitude ?? city?.lat), // CHANGED
+                cityLatitudeDeg: finiteNumberOrNull(inputs.cityLatitudeDeg ?? city?.latitude ?? city?.lat), // CHANGED: Cities.latitude is canonical.
                 startDate,
                 seasonEnd,
                 scanStart,
@@ -622,7 +622,7 @@
     function formatShortMonthDay(date) { // ADDED
         return date.toLocaleString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' }); // ADDED
     }
-    function labelSowingWindows(windows) { // ADDED
+    function labelSowingSeasons(windows) { // ADDED
         const seasonCounts = Object.create(null); // ADDED
         return windows.map((win, index) => { // ADDED
             const mid = addDaysUTC(win.startDate, Math.floor((daysBetweenInclusive(win.startDate, win.endDate) - 1) / 2)); // ADDED
@@ -680,7 +680,7 @@
             return { ...range, diagnostics }; // ADDED
         }); // ADDED
     }
-    function computeAnnualSowingWindows(params) { // ADDED
+    function computeAnnualSowingSeasons(params) { // ADDED
         const resolvedHarvestWindowDays = resolveHarvestWindowDays(params.HW_DAYS); // ADDED
         const { planner, resolvedBehavior } = buildAutoWindowPlanner({ // ADDED
             ...params, // ADDED
@@ -711,18 +711,18 @@
         } // ADDED
         if (current) ranges.push(current); // ADDED
         const smoothedRanges = smoothFeasibleSowingRanges(ranges, params.windowOptions || {}); // ADDED
-        const windows = labelSowingWindows(assignDiagnosticsToSmoothedRanges(smoothedRanges, scanRows)); // CHANGED
+        const seasons = labelSowingSeasons(assignDiagnosticsToSmoothedRanges(smoothedRanges, scanRows)); // CHANGED
         return Object.freeze({ // ADDED
-            feasible: windows.length > 0, // ADDED
+            feasible: seasons.length > 0, // ADDED
             harvestEndSemantics: HARVEST_END_SEMANTICS, // ADDED
-            windows, // ADDED
+            seasons, // CHANGED: public annual-core result now uses sowing-season terminology.
             seasonStartYear: C.scanStart.getUTCFullYear(), // ADDED
             scanStartISO: fmtISO(C.scanStart), // ADDED
             scanEndISO: fmtISO(sowScanEnd), // ADDED
             lifecycleScanEndISO: fmtISO(C.scanEndHard), // ADDED
             resolvedMethod: resolvedBehavior, // ADDED
-            earliestFeasibleSowDate: windows.length ? new Date(windows[0].startDate) : null, // ADDED
-            lastFeasibleSowDate: windows.length ? new Date(windows[windows.length - 1].endDate) : null, // ADDED
+            earliestFeasibleSowDate: seasons.length ? new Date(seasons[0].startDate) : null, // ADDED
+            lastFeasibleSowDate: seasons.length ? new Date(seasons[seasons.length - 1].endDate) : null, // ADDED
             climateEndDate: lastHarvestEnd || firstHarvestEnd || null // ADDED
         }); // ADDED
     }
@@ -815,7 +815,7 @@
         const fakeCity = {
             dailyRates: (_tbase, _year) => dailyRatesMap,
             monthlyMeans: () => monthlyAvgTemp,
-            latitude_deg: cityLatitudeDeg, // ADDED
+            latitude: cityLatitudeDeg, // CHANGED: align test planner city shape with Cities.latitude.
             last_spring_frost_p50_doy: lastSpringFrostDOY,
             last_spring_frost_doy: lastSpringFrostDOY
         };
@@ -1053,7 +1053,7 @@
         computeStageTimelineForSchedule,
         classifyIsThermal,
         impliedHarvestEndForDate,
-        computeAnnualSowingWindows,
+        computeAnnualSowingSeasons,
         buildAutoWindowPlanner,
         computeAutoStartEndWindowForward,
         computeAnnualScheduleResult
