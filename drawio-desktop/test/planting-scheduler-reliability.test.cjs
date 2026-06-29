@@ -371,6 +371,33 @@ test('lifecycle timeline renders all feasible sowing seasons as bands', () => { 
     assert.ok(model.bands.every(b => b.widthPercent > 0)); // ADDED
 }); // ADDED
 
+test('lifecycle timeline axis renders quarterly months and year marker for annual range', () => { // ADDED
+    const plant = makePlant(); // ADDED
+    const model = hooks.buildLifecycleTimelineViewModel({ plant, seasonStartYear: 2026, startISO: '2026-04-01' }); // ADDED
+    assert.equal(JSON.stringify(model.axis.months.map(marker => marker.label)), JSON.stringify(['Jan', 'Apr', 'Jul', 'Oct'])); // ADDED
+    assert.equal(JSON.stringify(model.axis.years.map(marker => marker.label)), JSON.stringify(['2026'])); // ADDED
+    assert.ok(model.axis.months.concat(model.axis.years).every(marker => marker.percent >= 0 && marker.percent <= 100)); // ADDED
+}); // ADDED
+
+test('lifecycle timeline axis repeats quarterly months and year markers for multi-year range', () => { // ADDED
+    const plant = makePlant({ annual: 0, biennial: 1, lifespan_years: 2 }); // ADDED
+    const model = hooks.buildLifecycleTimelineViewModel({ plant, seasonStartYear: 2026, startISO: '2026-04-01' }); // ADDED
+    assert.equal(JSON.stringify(model.axis.months.map(marker => marker.label)), JSON.stringify(['Jan', 'Apr', 'Jul', 'Oct', 'Jan', 'Apr', 'Jul', 'Oct'])); // ADDED
+    assert.equal(JSON.stringify(model.axis.years.map(marker => marker.label)), JSON.stringify(['2026', '2027'])); // ADDED
+    assert.ok(model.axis.months.concat(model.axis.years).every(marker => marker.percent >= 0 && marker.percent <= 100)); // ADDED
+}); // ADDED
+
+test('lifecycle timeline axis clips markers to custom bounds', () => { // ADDED
+    const bounds = { // ADDED
+        start: new Date('2026-03-15T00:00:00Z'), // ADDED
+        end: new Date('2026-10-15T00:00:00Z') // ADDED
+    }; // ADDED
+    const axis = hooks.buildLifecycleTimelineAxisMarkers(bounds, 214); // ADDED
+    assert.equal(JSON.stringify(axis.months.map(marker => marker.label)), JSON.stringify(['Apr', 'Jul', 'Oct'])); // ADDED
+    assert.equal(JSON.stringify(axis.years.map(marker => marker.label)), JSON.stringify([])); // ADDED
+    assert.ok(axis.months.every(marker => marker.percent >= 0 && marker.percent <= 100)); // ADDED
+}); // ADDED
+
 test('lifecycle timeline uses full multi-year scan bounds', () => { // ADDED
     const plant = makePlant({ annual: 0, biennial: 1, lifespan_years: 2 }); // ADDED
     const model = hooks.buildLifecycleTimelineViewModel({ plant, seasonStartYear: 2026, startISO: '2026-04-01' }); // ADDED

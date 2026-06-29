@@ -1,7 +1,7 @@
 /**
  * Copyright (c) 2006-2020, JGraph Holdings Ltd
  * Copyright (c) 2006-2020, draw.io AG
- * Trellis change: built-in plugin registry includes ordered Trellis context menu dispatcher and corrected tidy menu path. // CHANGE
+ * Trellis changes: built-in plugin registry and default Trellis support plugins. // CHANGE
  */
 
 /**
@@ -285,6 +285,7 @@ App.startTime = new Date();
  * https://www.drawio.com/doc/faq/supported-url-parameters
  */
 App.pluginRegistry = {    'trellisUpdatesLinks': 'plugins/garden_planner_plugins/Trellis_Updates_Links.js',            // NEW
+    'trellisDatabaseTools': 'plugins/garden_planner_plugins/Trellis_Database_Tools.js',          // NEW
     'trellisContextMenu': 'plugins/garden_planner_plugins/Trellis_Context_Menu.js',              // NEW
     'gardenSuccession': 'plugins/garden_planner_plugins/Bed_Succession_Navigator.js',           // CHANGE
     'plantTiler': 'plugins/garden_planner_plugins/Plant_Tiler.js',                               // CHANGE
@@ -304,6 +305,7 @@ App.pluginRegistry = {    'trellisUpdatesLinks': 'plugins/garden_planner_plugins
 
 App.publicPlugin = [
     'trellisUpdatesLinks',                                  // NEW
+    'trellisDatabaseTools',                                  // NEW
     'trellisContextMenu',                                    // NEW
     'gardenSuccession',                                       // CHANGE
     'plantTiler',                                             // CHANGE
@@ -772,7 +774,7 @@ App.main = function(callback, createUi)
 			}
 			
 			App.initPluginCallback(); // NEW
-			App.loadPlugins(['trellisUpdatesLinks']); // NEW
+			App.loadPlugins(['trellisUpdatesLinks', 'trellisDatabaseTools']); // CHANGE
 
 			// Loads plugins
 			if (urlParams['plugins'] != '0' && urlParams['offline'] != '1')

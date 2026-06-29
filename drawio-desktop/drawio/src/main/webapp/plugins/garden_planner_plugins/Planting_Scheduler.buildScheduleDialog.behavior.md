@@ -933,8 +933,9 @@ The compact timeline uses the full lifecycle scan range for the selected season
 year and crop lifecycle. It shows all feasible sowing seasons as background
 bands, a subtle Today marker when today falls inside the range, and visible
 milestones for sowing, transplant when applicable, first harvest, and harvest
-end. Germination and maturity remain available in the exact-date details text
-and marker tooltips so crowded compact layouts do not drop stage dates.
+end. The x-axis shows quarterly month labels and a separate year row below the
+rail. Germination and maturity remain available in the exact-date details text
+and marker tooltips so crowded compact layouts do not drop stage dates. // CHANGED
 
 Milestone labels are stacked into a bounded number of rows. This keeps the
 right-column Timeline section stable for short crops and dense milestone dates,

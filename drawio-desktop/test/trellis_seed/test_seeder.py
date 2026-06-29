@@ -27,12 +27,23 @@ from trellis_seed.artifacts import (  # noqa: E402
     slugify,
     suggestion_summary_slug,
 )
+from trellis_seed.climate_benchmarks import (  # noqa: E402
+    benchmarked_crop_keys,
+    eligible_major_cities_by_band,
+    preflight_climate_benchmark,
+    select_benchmark_cities,
+    select_benchmark_crop,
+)
 from trellis_seed.db import apply_run, apply_run_to_databases, create_diff_report, load_methods, print_diff_report  # noqa: E402
 from trellis_seed.config import Settings, read_openai_api_key  # noqa: E402
 from trellis_seed.generator import (
     GenerationOptions,
     _call_openai_with_retry,
     _crop_source_values,
+    _generate_cities,
+    _generate_companions,
+    _generate_crops,
+    _generate_sowing_windows,
     _generate_task_template,
     _merge_template_polish,
     _prepare_crop_result,
@@ -42,13 +53,14 @@ from trellis_seed.generator import (
     build_task_template_from_method,
     create_run,
     estimate_openai_calls,
+    generate_run,
 )  # noqa: E402
-from trellis_seed.jsonio import write_json  # noqa: E402
+from trellis_seed.jsonio import read_json, write_json  # noqa: E402
 from trellis_seed.menu import _preflight_provider_labels, _should_prompt_template_generation, _sowing_window_diagnostics_flow  # noqa: E402  # diagnostics command coverage
 from trellis_seed.migrations import apply_migrations, pending_migrations  # noqa: E402
 from trellis_seed.planner import effective_tables_from_input, selected_tables_warning  # noqa: E402
 from trellis_seed.providers import NasaPowerClient, OpenAIJsonClient, OpenMeteoClient, ProviderTrace  # noqa: E402
-from trellis_seed.schema import OPENAI_PLANT_SCHEMA, OPENAI_SOWING_WINDOW_SCHEMA, OPENAI_TEMPLATE_SCHEMA, PLANT_INTEGER_FIELDS, PLANT_REAL_FIELDS, PLANT_TEXT_FIELDS  # noqa: E402
+from trellis_seed.schema import OPENAI_CITY_LABEL_SCHEMA, OPENAI_PLANT_SCHEMA, OPENAI_SOWING_WINDOW_SCHEMA, OPENAI_TEMPLATE_SCHEMA, PLANT_INTEGER_FIELDS, PLANT_REAL_FIELDS, PLANT_TEXT_FIELDS  # noqa: E402
 from trellis_seed.sowing_windows import compare_window_references, load_planting_window_references, select_cities_for_crop  # noqa: E402
 from trellis_seed.suggestions import (  # noqa: E402
     input_draft_schema,
@@ -59,7 +71,7 @@ from trellis_seed.suggestions import (  # noqa: E402
     validate_suggestion_list,
     write_suggestion_artifacts,
 )
-from trellis_seed.validator import validate_input, validate_row, validate_run  # noqa: E402
+from trellis_seed.validator import normalize_key, validate_input, validate_row, validate_run  # noqa: E402
 from trellis_seed.weather import summarize_city_monthly_weather  # noqa: E402
 
 
@@ -124,6 +136,9 @@ class TrellisSeederTests(unittest.TestCase):
             cols = [row[1] for row in conn.execute("PRAGMA table_info(VarietyTaskTemplates);")]
             self.assertIn("method_id", cols)
             self.assertIn("template_json", cols)
+            city_cols = [row[1] for row in conn.execute("PRAGMA table_info(Cities);")]
+            self.assertIn("is_major_city", city_cols)
+            self.assertIn("climate_band", city_cols)
 
     def test_input_validation_requires_crop_sources(self) -> None:
         errors = validate_input({"crops": [{"name": "Lettuce"}]})
@@ -271,7 +286,7 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertEqual(artifacts_after_keeping_latest([oldest, newest, middle], 3, runs_dir), [])
 
     def test_menu_preflight_labels_are_section_relevant(self) -> None:
-        self.assertEqual(_preflight_provider_labels({"cities": [{"name": "Vancouver, BC"}]}), ["Open-Meteo", "NASA POWER"])
+        self.assertEqual(_preflight_provider_labels({"cities": [{"name": "Vancouver, BC"}]}), ["OpenAI", "Open-Meteo", "NASA POWER"])  # CHANGED
         self.assertEqual(_preflight_provider_labels({"companions": [{"p1": "Apple", "p2": "Carrot", "sources": ["source"]}]}), ["OpenAI"])
         self.assertEqual(_preflight_provider_labels({"crops": [{"name": "Parsnip", "sources": ["source"]}], "cities": [{"name": "Victoria, BC"}]}), ["OpenAI", "Open-Meteo", "NASA POWER"])
 
@@ -419,6 +434,64 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertTrue(any("city_name is outside selected cities" in error for error in errors))
         self.assertTrue(any("method_id is outside selected methods" in error for error in errors))
 
+    def test_sowing_window_generation_skips_failed_crop_and_continues(self) -> None:
+        class FakeOpenAI:
+            model = "fake"
+            reasoning_effort = "low"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def generate_json(self, **kwargs):
+                self.calls += 1
+                trace = ProviderTrace("fake", {"call": self.calls})
+                if self.calls <= 2:
+                    return {"windows": []}, trace
+                request = json.loads(kwargs["user"])
+                city_name = request["allowed_city_names"][0]
+                method_id = request["allowed_method_ids"][0]
+                return {"windows": [{
+                    "city_name": city_name,
+                    "method_id": method_id,
+                    "stage": "sow",
+                    "window_label": "spring",
+                    "start_mm_dd": "04-01",
+                    "end_mm_dd": "05-15",
+                    "source_url": None,
+                    "source_note": "expert estimate",
+                    "confidence": "medium",
+                    "summary": "Generated reference.",
+                }]}, trace
+
+        run_dir = self.tmp_path / "run-window-continue"
+        (run_dir / "generated").mkdir(parents=True)
+        settings = Settings(self.tmp_path / "config.json", {
+            "db_path": str(self.db_path),
+            "runs_dir": str(self.tmp_path / "runs"),
+            "sowing_windows": {
+                "enabled": True,
+                "crop_allowlist": ["Window Fail Crop", "Window Good Crop"],
+                "cities_per_crop": 1,
+            },
+        })
+        methods = load_methods(self.db_path)
+        generated = {
+            "Plants": [
+                complete_plant_row(plant_name="Window Fail Crop", abbr="WFC"),
+                complete_plant_row(plant_name="Window Good Crop", abbr="WGC"),
+            ],
+            "Cities": [],
+            "PlantAllowedMethodCategories": [],
+            "PlantingWindowReferences": [],
+        }
+        provenance = {"traces": [], "tables": {}}
+
+        _generate_sowing_windows(settings, {"sowing_windows": {"enabled": True}}, FakeOpenAI(), methods, generated, provenance, run_dir)
+
+        self.assertEqual(len(generated["PlantingWindowReferences"]), 1)
+        self.assertEqual(generated["PlantingWindowReferences"][0]["plant_name"], "Window Good Crop")
+        self.assertEqual(provenance["failures"]["sowing_window"][0]["label"], "Window Fail Crop")
+
     def test_suggestion_artifact_draft_can_be_used_to_create_run(self) -> None:
         settings = Settings(self.tmp_path / "config.json", {
             "db_path": str(self.db_path),
@@ -485,8 +558,8 @@ class TrellisSeederTests(unittest.TestCase):
 
     def test_nasa_power_monthly_weather_summarizes_city_and_rows(self) -> None:
         city, rows, provenance = summarize_city_monthly_weather(
-            "Victoria, British Columbia, Canada",
-            {"latitude": 48.4284, "longitude": -123.3656, "timezone": "America/Vancouver"},
+            "Victoria",
+            {"latitude": 48.4284, "longitude": -123.3656, "timezone": "America/Vancouver", "country": "Canada", "country_code": "CA", "admin1": "British Columbia"},
             {
                 "properties": {
                     "parameter": {
@@ -501,11 +574,216 @@ class TrellisSeederTests(unittest.TestCase):
         )
         self.assertEqual(city["avg_monthly_low_c1"], 3)
         self.assertEqual(city["avg_monthly_high_c2"], 10)
+        self.assertEqual(city["country_name"], "Canada")
+        self.assertEqual(city["region_name"], "British Columbia")
+        self.assertEqual(city["region_code"], "BC")
         self.assertIsNone(city["last_spring_frost_doy"])
         self.assertEqual(rows[0]["weather_month"], "2025-01")
         self.assertEqual(rows[0]["provider"], "nasa-power")
         self.assertGreater(city["gdd_annual"], 0)
         self.assertEqual(provenance["provider"], "nasa-power")
+
+    def test_city_generation_checkpoint_distinguishes_duplicate_city_names_by_region(self) -> None:
+        class FakeMeteo:
+            def __init__(self) -> None:
+                self.geocode_calls = 0
+
+            def geocode(self, name, qualifiers):
+                self.geocode_calls += 1
+                region = qualifiers["admin1"]
+                longitude = -89.65 if region == "Illinois" else -93.29
+                return {
+                    "latitude": 39.78 if region == "Illinois" else 37.20,
+                    "longitude": longitude,
+                    "timezone": "America/Chicago",
+                    "country": "United States",
+                    "country_code": "US",
+                    "admin1": region,
+                }, ProviderTrace("fake-meteo", {"name": name, "qualifiers": qualifiers})
+
+            def forecast_daily(self, **kwargs):
+                return {
+                    "timezone": kwargs.get("timezone"),
+                    "daily": {
+                        "time": ["2026-01-01"],
+                        "temperature_2m_min": [1.0],
+                        "temperature_2m_max": [8.0],
+                        "temperature_2m_mean": [4.5],
+                        "precipitation_sum": [0.0],
+                    },
+                }, ProviderTrace("fake-meteo", {"forecast": kwargs})
+
+        class FakeNasa:
+            def monthly_history(self, **kwargs):
+                return {
+                    "properties": {
+                        "parameter": {
+                            "T2M": {"202501": 4.0},
+                            "T2M_MAX": {"202501": 8.0},
+                            "T2M_MIN": {"202501": 0.0},
+                            "PRECTOTCORR": {"202501": 30.0},
+                        }
+                    }
+                }, ProviderTrace("fake-nasa", {"monthly": kwargs})
+
+        class FakeOpenAI:
+            model = "fake-model"
+            reasoning_effort = "low"
+
+            def generate_json(self, **kwargs):
+                return {"is_major_city": 1, "climate_band": "temperate"}, ProviderTrace("fake-openai", {"schema_name": kwargs.get("schema_name")})
+
+        run_dir = self.tmp_path / "run-duplicate-city-generation"
+        (run_dir / "generated").mkdir(parents=True)
+        settings = Settings(self.tmp_path / "config.json", {
+            "db_path": str(self.db_path),
+            "city_history_years": 1,
+            "forecast_days": 1,
+            "gdd_base_c": 5,
+            "open_meteo": {"forecast_model": "best_match"},
+            "nasa_power": {"dataset": "nasa-power-monthly"},
+        })
+        input_data = {
+            "cities": [
+                {"city_name": "Springfield", "admin1": "Illinois", "country": "United States", "country_code": "US"},
+                {"city_name": "Springfield", "admin1": "Missouri", "country": "United States", "country_code": "US"},
+            ]
+        }
+        generated = {"Cities": [], "CityWeatherMonthly": [], "CityWeatherForecastDaily": []}
+        provenance = {"traces": [], "tables": {}}
+        meteo = FakeMeteo()
+
+        _generate_cities(settings, input_data, meteo, FakeNasa(), FakeOpenAI(), generated, provenance, run_dir)
+        _generate_cities(settings, input_data, meteo, FakeNasa(), FakeOpenAI(), generated, provenance, run_dir)
+
+        self.assertEqual(meteo.geocode_calls, 2)
+        self.assertEqual([row["region_name"] for row in generated["Cities"]], ["Illinois", "Missouri"])
+        self.assertEqual([row["is_major_city"] for row in generated["Cities"]], [1, 1])
+        self.assertEqual([row["climate_band"] for row in generated["Cities"]], ["temperate", "temperate"])
+        self.assertEqual([row["region_name"] for row in generated["CityWeatherMonthly"]], ["Illinois", "Missouri"])
+        self.assertEqual([row["region_name"] for row in generated["CityWeatherForecastDaily"]], ["Illinois", "Missouri"])
+
+    def test_city_generation_skips_failed_city_and_continues(self) -> None:
+        class FakeMeteo:
+            def geocode(self, name, qualifiers):
+                if "Vernon" in name:
+                    raise RuntimeError("Open-Meteo did not verify location")
+                return {
+                    "latitude": 50.03,
+                    "longitude": -125.24,
+                    "timezone": "America/Vancouver",
+                    "country": "Canada",
+                    "country_code": "CA",
+                    "admin1": "British Columbia",
+                }, ProviderTrace("fake-meteo", {"name": name, "qualifiers": qualifiers})
+
+            def forecast_daily(self, **kwargs):
+                return {
+                    "timezone": kwargs.get("timezone"),
+                    "daily": {
+                        "time": ["2026-01-01"],
+                        "temperature_2m_min": [2.0],
+                        "temperature_2m_max": [7.0],
+                        "temperature_2m_mean": [4.5],
+                        "precipitation_sum": [1.0],
+                    },
+                }, ProviderTrace("fake-meteo", {"forecast": kwargs})
+
+        class FakeNasa:
+            def monthly_history(self, **kwargs):
+                return {
+                    "properties": {
+                        "parameter": {
+                            "T2M": {"202501": 5.0},
+                            "T2M_MAX": {"202501": 9.0},
+                            "T2M_MIN": {"202501": 1.0},
+                            "PRECTOTCORR": {"202501": 40.0},
+                        }
+                    }
+                }, ProviderTrace("fake-nasa", {"monthly": kwargs})
+
+        class FakeOpenAI:
+            model = "fake-model"
+            reasoning_effort = "low"
+
+            def generate_json(self, **kwargs):
+                return {"is_major_city": 0, "climate_band": "temperate"}, ProviderTrace("fake-openai", {"schema_name": kwargs.get("schema_name")})
+
+        run_dir = self.tmp_path / "run-city-continue"
+        (run_dir / "generated").mkdir(parents=True)
+        settings = Settings(self.tmp_path / "config.json", {
+            "db_path": str(self.db_path),
+            "city_history_years": 1,
+            "forecast_days": 1,
+            "gdd_base_c": 5,
+            "open_meteo": {"forecast_model": "best_match"},
+            "nasa_power": {"dataset": "nasa-power-monthly"},
+        })
+        input_data = {
+            "cities": [
+                {"city_name": "Vernon", "admin1": "British Columbia", "country": "Canada", "country_code": "CA"},
+                {"city_name": "Campbell River", "admin1": "British Columbia", "country": "Canada", "country_code": "CA"},
+            ]
+        }
+        generated = {"Cities": [], "CityWeatherMonthly": [], "CityWeatherForecastDaily": []}
+        provenance = {"traces": [], "tables": {}}
+
+        _generate_cities(settings, input_data, FakeMeteo(), FakeNasa(), FakeOpenAI(), generated, provenance, run_dir)
+
+        self.assertEqual([row["city_name"] for row in generated["Cities"]], ["Campbell River"])
+        self.assertEqual(provenance["failures"]["city"][0]["label"], "Vernon, British Columbia, Canada")
+        metadata = read_json(run_dir / "metadata.json", {})
+        self.assertEqual(metadata["failure_count"], 1)
+        self.assertEqual(metadata["failures"]["city"][0]["scope"], "city")  # ADDED
+
+    def test_generate_run_marks_failed_when_all_items_fail(self) -> None:
+        class FakeMeteo:
+            def __init__(self, _settings):
+                pass
+
+            def geocode(self, *_args, **_kwargs):
+                raise RuntimeError("geocode failed")
+
+        class FakeNasa:
+            def __init__(self, _settings):
+                pass
+
+        class FakeOpenAI:
+            def __init__(self, *_args):
+                pass
+
+        runs_dir = self.tmp_path / "runs"
+        settings = Settings(self.tmp_path / "config.json", {
+            "db_path": str(self.db_path),
+            "runs_dir": str(runs_dir),
+            "openai_model": "fake",
+            "openai_reasoning_effort": "low",
+            "open_meteo": {},  # ADDED
+            "nasa_power": {},  # ADDED
+        })
+        input_path = self.tmp_path / "all-fail-input.json"
+        write_json(input_path, {
+            "cities": [{
+                "name": "Vernon, British Columbia, Canada",
+                "city_name": "Vernon",
+                "admin1": "British Columbia",
+                "country": "Canada",
+                "country_code": "CA",
+            }]
+        })
+
+        with patch("trellis_seed.generator.OpenMeteoClient", FakeMeteo), \
+                patch("trellis_seed.generator.NasaPowerClient", FakeNasa), \
+                patch("trellis_seed.generator.OpenAIJsonClient", FakeOpenAI), \
+                self.assertRaisesRegex(Exception, "All requested generation items failed"):
+            generate_run(settings, input_path, GenerationOptions(generate_templates=False, run_preflight=False))
+
+        run_dirs = [path for path in runs_dir.iterdir() if path.is_dir()]
+        self.assertEqual(len(run_dirs), 1)
+        metadata = read_json(run_dirs[0] / "metadata.json", {})
+        provenance = read_json(run_dirs[0] / "provenance.json", {})
+        self.assertEqual(metadata["status"], "failed")
+        self.assertEqual(provenance["failures"]["city"][0]["label"], "Vernon, British Columbia, Canada")
 
     def test_open_meteo_geocode_handles_region_qualified_city_names(self) -> None:
         class FakeMeteo(OpenMeteoClient):
@@ -664,9 +942,56 @@ class TrellisSeederTests(unittest.TestCase):
             OpenMeteoClient._get_json.__globals__["urllib"].request.urlopen = original_urlopen
             OpenMeteoClient._get_json.__globals__["time"].sleep = original_sleep
 
+    def test_climate_benchmark_preflight_and_city_selection_require_all_bands(self) -> None:
+        settings = Settings(self.tmp_path / "config.json", {
+            "db_path": str(self.db_path),
+            "runs_dir": str(self.tmp_path / "runs"),
+        })
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            with conn:
+                apply_migrations(conn)
+                conn.execute("UPDATE Cities SET is_major_city=1, climate_band='hot' WHERE city_name LIKE 'Toronto%'")  # CHANGED
+                conn.execute("UPDATE Cities SET is_major_city=1, climate_band='temperate' WHERE city_name LIKE 'Vancouver%'")  # CHANGED
+        missing = preflight_climate_benchmark(settings)
+        self.assertFalse(missing["ok"])
+        self.assertIn("cold", missing["missing_bands"])
+
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            with conn:
+                conn.execute("UPDATE Cities SET is_major_city=1, climate_band='cold' WHERE city_name LIKE 'Winnipeg%'")  # CHANGED
+        ready = preflight_climate_benchmark(settings)
+        self.assertTrue(ready["ok"], ready)
+        cities = select_benchmark_cities(settings, "seed")
+        self.assertEqual(set(cities), {"hot", "temperate", "cold"})
+        self.assertTrue(cities["cold"]["city_name"].startswith("Winnipeg"))  # CHANGED
+        self.assertTrue(eligible_major_cities_by_band(settings)["hot"][0]["city_name"].startswith("Toronto"))  # CHANGED
+
+    def test_climate_benchmark_crop_selection_skips_artifact_covered_crops(self) -> None:
+        runs_dir = self.tmp_path / "runs"
+        runs_dir.mkdir()
+        settings = Settings(self.tmp_path / "config.json", {
+            "db_path": str(self.db_path),
+            "runs_dir": str(runs_dir),
+        })
+        annual_names = []
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            for row in conn.execute("SELECT plant_name FROM Plants WHERE annual=1 AND COALESCE(biennial,0)<>1 AND COALESCE(perennial,0)<>1 ORDER BY plant_name"):
+                annual_names.append(row[0])
+        selected_name = "Lettuce" if "Lettuce" in annual_names else annual_names[0]
+        for index, name in enumerate(name for name in annual_names if name != selected_name):
+            artifact_dir = runs_dir / f"climate-benchmark-{index}"
+            artifact_dir.mkdir()
+            write_json(artifact_dir / "climate_benchmark.json", {"crop": {"plant_name": name}})
+
+        covered = benchmarked_crop_keys(runs_dir)
+        self.assertNotIn(normalize_key(selected_name), covered)
+        crop = select_benchmark_crop(settings, "seed")
+        self.assertEqual(crop["plant_name"], selected_name)
+
     def test_openai_schemas_are_strict_output_compatible(self) -> None:
         for schema in (
             OPENAI_PLANT_SCHEMA,
+            OPENAI_CITY_LABEL_SCHEMA,
             OPENAI_SOWING_WINDOW_SCHEMA,
             OPENAI_TEMPLATE_SCHEMA,
             suggestion_list_schema("crops"),
@@ -758,6 +1083,30 @@ class TrellisSeederTests(unittest.TestCase):
 
         bad_flag_report = validate_row("Plants", complete_plant_row(direct_sow=2))
         self.assertTrue(any("direct_sow must be 0 or 1" in error for error in bad_flag_report["errors"]))
+
+    def test_city_validation_accepts_benchmark_labels_and_rejects_bad_values(self) -> None:
+        valid = validate_row("Cities", {
+            "city_name": "Benchmark City",
+            "country_name": "Canada",
+            "region_name": "British Columbia",
+            "latitude": 49.25,
+            "longitude": -123.1,
+            "gdd_annual": 1500,
+            "gdd_base_c": 5,
+            "is_major_city": 1,
+            "climate_band": "temperate",
+        })
+        self.assertEqual(valid["errors"], [])
+
+        invalid = validate_row("Cities", {
+            "city_name": "Benchmark City",
+            "country_name": "Canada",
+            "region_name": "British Columbia",
+            "is_major_city": 2,
+            "climate_band": "humid",
+        })
+        self.assertTrue(any("is_major_city must be 0 or 1" in error for error in invalid["errors"]))
+        self.assertTrue(any("climate_band must be one of" in error for error in invalid["errors"]))
 
     def test_crop_validation_accepts_controlled_input_provenance_references(self) -> None:
         methods = [{
@@ -867,6 +1216,92 @@ class TrellisSeederTests(unittest.TestCase):
                 user="",
                 validator=lambda candidate: _validate_crop_result(_prepare_crop_result(candidate, crop, methods), source_values, methods),
             )
+
+    def test_crop_generation_skips_failed_crop_and_continues(self) -> None:
+        class FakeOpenAI:
+            model = "fake"
+            reasoning_effort = "low"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def generate_json(self, **_kwargs):
+                self.calls += 1
+                trace = ProviderTrace("fake", {"call": self.calls})
+                if self.calls <= 2:
+                    return {
+                        "row": {"plant_name": "Broken Crop", "family": None},
+                        "allowed_method_categories": ["direct_sow"],
+                        "allowed_method_ids": ["direct_sow.field"],
+                        "varieties": [{"variety_name": "Generic", "overrides": [], "sources": []}],
+                        "provenance": {"field_sources": []},
+                    }, trace
+                return {
+                    "row": complete_plant_row(plant_name="Good Crop", abbr="GDC"),
+                    "allowed_method_categories": ["direct_sow"],
+                    "allowed_method_ids": ["direct_sow.field"],
+                    "varieties": [{"variety_name": "Good Crop Select", "overrides": [], "sources": []}],
+                    "provenance": {"field_sources": []},
+                }, trace
+
+        run_dir = self.tmp_path / "run-crop-continue"
+        run_dir.mkdir()
+        settings = Settings(self.tmp_path / "config.json", {"db_path": str(self.db_path), "runs_dir": str(self.tmp_path / "runs")})
+        methods = [{"method_id": "direct_sow.field", "method_category_id": "direct_sow", "method_name": "Direct sow (field)"}]
+        generated = {table: [] for table in ("Plants", "PlantAllowedMethodCategories", "PlantVarieties", "PlantTaskTemplates", "VarietyTaskTemplates")}
+        provenance = {"traces": [], "tables": {}}
+        input_data = {
+            "crops": [
+                {"name": "Broken Crop", "notes": "source"},
+                {"name": "Good Crop", "notes": "source"},
+            ]
+        }
+
+        _generate_crops(settings, input_data, FakeOpenAI(), methods, generated, provenance, run_dir, generate_templates=False)
+
+        self.assertEqual([row["plant_name"] for row in generated["Plants"]], ["Good Crop"])
+        self.assertEqual(provenance["failures"]["crop"][0]["label"], "Broken Crop")
+
+    def test_companion_generation_skips_failed_pair_and_continues(self) -> None:
+        class FakeOpenAI:
+            model = "fake"
+            reasoning_effort = "low"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def generate_json(self, **_kwargs):
+                self.calls += 1
+                trace = ProviderTrace("fake", {"call": self.calls})
+                if self.calls <= 2:
+                    return {"companion": {}, "evidence": {}, "provenance": {"field_sources": []}}, trace
+                return {
+                    "companion": {"p1": "Apple", "p2": "Carrot", "rating": 1, "companion_type": "growth", "companion_type_id": None},
+                    "evidence": {
+                        "evidence_level": "extension",
+                        "review_status": "unreviewed",
+                        "source_url": "https://example.test/apple-carrot",
+                        "source_note": None,
+                        "summary": "Source-backed companion note.",
+                    },
+                    "provenance": {"field_sources": [{"field": "summary", "source": "https://example.test/apple-carrot"}]},
+                }, trace
+
+        run_dir = self.tmp_path / "run-companion-continue"
+        run_dir.mkdir()
+        generated = {"Companions": [], "CompanionEvidence": []}
+        provenance = {"traces": [], "tables": {}}
+        input_data = {
+            "companions": [
+                {"p1": "Bad", "p2": "Pair", "sources": ["https://example.test/bad"]},
+                {"p1": "Apple", "p2": "Carrot", "sources": ["https://example.test/apple-carrot"]},
+            ]
+        }
+
+        _generate_companions(input_data, FakeOpenAI(), generated, provenance, run_dir)
+
+        self.assertEqual([(row["p1"], row["p2"]) for row in generated["Companions"]], [("Apple", "Carrot")])
+        self.assertEqual(provenance["failures"]["companion"][0]["label"], "Bad / Pair")
 
     def test_template_validation_accepts_method_task_json_provenance_reference(self) -> None:
         task_json = '{\n  "prep": { "offsetDays": 5, "offsetDirection": "before" },\n  "sow": { "offsetDays": 0 },\n  "transplant": { "offsetDays": 30, "offsetDirection": "after" },\n  "harvest": true\n}'
@@ -1138,6 +1573,10 @@ class TrellisSeederTests(unittest.TestCase):
         }])
         write_json(generated / "Cities.json", [{
             "city_name": "Seeder Test City",
+            "country_name": "Canada",
+            "country_code": "CA",
+            "region_name": "British Columbia",
+            "region_code": "BC",
             "latitude": 49.0,
             "longitude": -123.0,
             "timezone": "America/Vancouver",
@@ -1235,6 +1674,191 @@ class TrellisSeederTests(unittest.TestCase):
         references = load_planting_window_references(self.db_path)
         self.assertTrue(any(row["plant_name"] == "Seeder Test Crop" and row["city_name"] == "Seeder Test City" for row in references))
 
+    def test_apply_run_resolves_duplicate_city_names_by_geography(self) -> None:
+        run_dir = self.tmp_path / "run-duplicate-city-import"
+        generated = run_dir / "generated"
+        generated.mkdir(parents=True)
+        write_json(generated / "Plants.json", [complete_plant_row(
+            plant_name="Duplicate City Crop",
+            abbr="DCC",
+            transplant=0,
+            yield_unit="kg",
+            yield_per_plant_kg=1.0,
+        )])
+        write_json(generated / "Cities.json", [
+            {
+                "city_name": "Springfield",
+                "country_name": "United States",
+                "country_code": "US",
+                "region_name": "Illinois",
+                "region_code": "IL",
+                "latitude": 39.78,
+                "longitude": -89.65,
+                "timezone": "America/Chicago",
+                "gdd_annual": 1200,
+                "gdd_base_c": 5,
+            },
+            {
+                "city_name": "Springfield",
+                "country_name": "United States",
+                "country_code": "US",
+                "region_name": "Missouri",
+                "region_code": "MO",
+                "latitude": 37.20,
+                "longitude": -93.29,
+                "timezone": "America/Chicago",
+                "gdd_annual": 1500,
+                "gdd_base_c": 5,
+            },
+        ])
+        write_json(generated / "CityWeatherMonthly.json", [
+            {
+                "city_name": "Springfield",
+                "country_name": "United States",
+                "country_code": "US",
+                "region_name": "Illinois",
+                "region_code": "IL",
+                "weather_month": "2025-01",
+                "provider": "nasa-power",
+                "dataset": "nasa-power-monthly",
+                "timezone": "America/Chicago",
+                "temp_min_c": 0.0,
+                "temp_max_c": 8.0,
+                "temp_mean_c": 4.0,
+                "precipitation_mm": 30.0,
+                "gdd_base_5c": 0.0,
+                "fetched_at": "2026-01-01T00:00:00+00:00",
+                "source_url": "https://power.larc.nasa.gov/",
+            },
+            {
+                "city_name": "Springfield",
+                "country_name": "United States",
+                "country_code": "US",
+                "region_name": "Missouri",
+                "region_code": "MO",
+                "weather_month": "2025-01",
+                "provider": "nasa-power",
+                "dataset": "nasa-power-monthly",
+                "timezone": "America/Chicago",
+                "temp_min_c": 2.0,
+                "temp_max_c": 10.0,
+                "temp_mean_c": 6.0,
+                "precipitation_mm": 35.0,
+                "gdd_base_5c": 31.0,
+                "fetched_at": "2026-01-01T00:00:00+00:00",
+                "source_url": "https://power.larc.nasa.gov/",
+            },
+        ])
+        write_json(generated / "PlantingWindowReferences.json", [
+            {
+                "plant_name": "Duplicate City Crop",
+                "city_name": "Springfield",
+                "country_name": "United States",
+                "country_code": "US",
+                "region_name": "Illinois",
+                "region_code": "IL",
+                "method_id": "direct_sow.field",
+                "stage": "sow",
+                "window_label": "spring",
+                "start_mm_dd": "04-01",
+                "end_mm_dd": "05-15",
+                "start_doy": 92,
+                "end_doy": 136,
+                "is_cross_year": 0,
+                "source_url": None,
+                "source_note": "expert estimate",
+                "confidence": "medium",
+                "summary": "Illinois window.",
+            },
+            {
+                "plant_name": "Duplicate City Crop",
+                "city_name": "Springfield",
+                "country_name": "United States",
+                "country_code": "US",
+                "region_name": "Missouri",
+                "region_code": "MO",
+                "method_id": "direct_sow.field",
+                "stage": "sow",
+                "window_label": "spring",
+                "start_mm_dd": "03-15",
+                "end_mm_dd": "05-01",
+                "start_doy": 75,
+                "end_doy": 122,
+                "is_cross_year": 0,
+                "source_url": None,
+                "source_note": "expert estimate",
+                "confidence": "medium",
+                "summary": "Missouri window.",
+            },
+        ])
+
+        report = validate_run(run_dir, self.db_path)
+        self.assertTrue(report["ok"], report)
+        apply_run(run_dir, self.db_path)
+
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            rows = {
+                row[0]: row[1]
+                for row in conn.execute("SELECT region_code, city_id FROM Cities WHERE city_name='Springfield'")
+            }
+            self.assertEqual(set(rows), {"IL", "MO"})
+            il_monthly = conn.execute("SELECT temp_mean_c FROM CityWeatherMonthly WHERE city_id=?", [rows["IL"]]).fetchone()[0]
+            mo_monthly = conn.execute("SELECT temp_mean_c FROM CityWeatherMonthly WHERE city_id=?", [rows["MO"]]).fetchone()[0]
+            self.assertEqual(il_monthly, 4.0)
+            self.assertEqual(mo_monthly, 6.0)
+            il_window = conn.execute("SELECT summary FROM PlantingWindowReferences WHERE city_id=?", [rows["IL"]]).fetchone()[0]
+            mo_window = conn.execute("SELECT summary FROM PlantingWindowReferences WHERE city_id=?", [rows["MO"]]).fetchone()[0]
+            self.assertEqual(il_window, "Illinois window.")
+            self.assertEqual(mo_window, "Missouri window.")
+
+    def test_apply_run_rejects_bare_city_name_when_generated_cities_are_ambiguous(self) -> None:
+        run_dir = self.tmp_path / "run-ambiguous-city-import"
+        generated = run_dir / "generated"
+        generated.mkdir(parents=True)
+        write_json(generated / "Cities.json", [
+            {
+                "city_name": "Springfield",
+                "country_name": "United States",
+                "country_code": "US",
+                "region_name": "Illinois",
+                "region_code": "IL",
+                "latitude": 39.78,
+                "longitude": -89.65,
+                "timezone": "America/Chicago",
+                "gdd_annual": 1200,
+                "gdd_base_c": 5,
+            },
+            {
+                "city_name": "Springfield",
+                "country_name": "United States",
+                "country_code": "US",
+                "region_name": "Missouri",
+                "region_code": "MO",
+                "latitude": 37.20,
+                "longitude": -93.29,
+                "timezone": "America/Chicago",
+                "gdd_annual": 1500,
+                "gdd_base_c": 5,
+            },
+        ])
+        write_json(generated / "CityWeatherMonthly.json", [{
+            "city_name": "Springfield",
+            "weather_month": "2025-01",
+            "provider": "nasa-power",
+            "dataset": "nasa-power-monthly",
+            "timezone": "America/Chicago",
+            "temp_min_c": 0.0,
+            "temp_max_c": 8.0,
+            "temp_mean_c": 4.0,
+            "precipitation_mm": 30.0,
+            "gdd_base_5c": 0.0,
+            "fetched_at": "2026-01-01T00:00:00+00:00",
+            "source_url": "https://power.larc.nasa.gov/",
+        }])
+
+        with self.assertRaisesRegex(RuntimeError, "Ambiguous city name"):
+            apply_run(run_dir, self.db_path)
+
     def test_apply_run_to_databases_updates_seed_and_live_copy(self) -> None:
         run_dir = self.tmp_path / "run-multi-db"
         generated = run_dir / "generated"
@@ -1242,6 +1866,10 @@ class TrellisSeederTests(unittest.TestCase):
         live_db = self.tmp_path / "appdata" / "draw.io" / "trellis_database" / "Trellis_database.sqlite"
         write_json(generated / "Cities.json", [{
             "city_name": "Multi Target City",
+            "country_name": "Canada",
+            "country_code": "CA",
+            "region_name": "British Columbia",
+            "region_code": "BC",
             "latitude": 49.0,
             "longitude": -123.0,
             "timezone": "America/Vancouver",

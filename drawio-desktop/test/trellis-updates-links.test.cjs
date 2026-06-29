@@ -50,13 +50,15 @@ function loadPlugin(options = {}) {
     };
     context.window.trellisApp = {
         getInfo() {
-            return Promise.resolve({
+            return Promise.resolve(Object.assign({ // CHANGE
                 productName: "Trellis for Drawio",
                 version: "1.1.2",
                 repoUrl: "https://github.com/Benjamin-Elon/Trellis-for-Drawio",
                 releasesUrl: "https://github.com/Benjamin-Elon/Trellis-for-Drawio/releases",
-                issuesUrl: "https://github.com/Benjamin-Elon/Trellis-for-Drawio/issues"
-            });
+                issuesUrl: "https://github.com/Benjamin-Elon/Trellis-for-Drawio/issues",
+                isPackaged: true, // NEW
+                canCheckForUpdates: true // NEW
+            }, options.appInfo || {})); // CHANGE
         }
     };
     context.window.open = href => openedLinks.push(href);
@@ -178,6 +180,31 @@ test("Trellis updates plugin registers Help action and opens dialog", async () =
     assert.ok(fetchCalls.some(url => url.includes("per_page=10")));
 });
 
+test("Trellis updates dialog remains visible but disables update checks for developer builds", async () => { // NEW
+    const fakeFetch = async () => ({ // NEW
+        ok: true, // NEW
+        async json() { return []; } // NEW
+    }); // NEW
+    const mxUtils = { // NEW
+        get(url, success) { // NEW
+            success({ getText: () => JSON.stringify({ version: 1, entries: [] }) }); // NEW
+        } // NEW
+    }; // NEW
+    const { callbacks, sentMessages } = loadPlugin({ fetch: fakeFetch, mxUtils, appInfo: { isPackaged: false, canCheckForUpdates: false } }); // NEW
+    const { ui, actions, shown } = createUi(); // NEW
+
+    callbacks.forEach(callback => callback(ui)); // NEW
+    actions.trellisUpdatesLinks.funct(); // NEW
+    await settle(); // NEW
+
+    assert.equal(shown.length, 1); // NEW
+    assert.match(shown[0].node.textContent, /Update checks are disabled in developer builds/); // NEW
+    const updateButton = findButton(shown[0].node, "Check for updates"); // NEW
+    assert.equal(updateButton.disabled, true); // NEW
+    updateButton.click(); // NEW
+    assert.equal(sentMessages.length, 0); // NEW
+}); // NEW
+
 test("Trellis updates dialog shows inline GitHub fallback on fetch failure", async () => {
     const fakeFetch = async url => {
         if (String(url).includes("api.github.com")) throw new Error("offline");
@@ -207,14 +234,15 @@ test("Trellis updates integration is registered, default-loaded, and bridged", (
     const electronSource = readProjectFile("src/main/electron.js");
 
     assert.match(appSource, /'trellisUpdatesLinks': 'plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js'/);
-    assert.match(appSource, /App\.loadPlugins\(\['trellisUpdatesLinks'\]\); \/\/ NEW/);
-    assert.ok(appSource.indexOf("App.loadPlugins(['trellisUpdatesLinks']); // NEW") < appSource.indexOf("if (urlParams['plugins'] != '0' && urlParams['offline'] != '1')"));
+    assert.match(appSource, /App\.loadPlugins\(\['trellisUpdatesLinks', 'trellisDatabaseTools'\]\); \/\/ CHANGE/); // CHANGE
+    assert.ok(appSource.indexOf("App.loadPlugins(['trellisUpdatesLinks', 'trellisDatabaseTools']); // CHANGE") < appSource.indexOf("if (urlParams['plugins'] != '0' && urlParams['offline'] != '1')")); // CHANGE
     assert.match(bundledSource, /'trellisUpdatesLinks': 'plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js'/);
-    assert.match(bundledSource, /App\.loadPlugins\(\["trellisUpdatesLinks"\]\)/);
-    assert.ok(bundledSource.indexOf('App.loadPlugins(["trellisUpdatesLinks"])') < bundledSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)'));
+    assert.match(bundledSource, /App\.loadPlugins\(\["trellisUpdatesLinks","trellisDatabaseTools"\]\)/); // CHANGE
+    assert.ok(bundledSource.indexOf('App.loadPlugins(["trellisUpdatesLinks","trellisDatabaseTools"])') < bundledSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)')); // CHANGE
     assert.match(integrateSource, /trellisUpdatesLinks:"plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js"/);
-    assert.match(integrateSource, /App\.loadPlugins\(\["trellisUpdatesLinks"\]\)/);
-    assert.ok(integrateSource.indexOf('App.loadPlugins(["trellisUpdatesLinks"])') < integrateSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)'));
+    assert.match(integrateSource, /App\.loadPlugins\(\["trellisUpdatesLinks","trellisDatabaseTools"\]\)/); // CHANGE
+    assert.ok(integrateSource.indexOf('App.loadPlugins(["trellisUpdatesLinks","trellisDatabaseTools"])') < integrateSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)')); // CHANGE
     assert.match(preloadSource, /contextBridge\.exposeInMainWorld\('trellisApp'/);
     assert.match(electronSource, /case 'getTrellisAppInfo': \/\/ NEW/);
+    assert.match(electronSource, /canCheckForUpdates: canCheckForUpdates\(\) \/\/ NEW/); // NEW
 });

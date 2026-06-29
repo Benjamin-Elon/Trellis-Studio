@@ -1,4 +1,4 @@
-// This file has been modified to load the file system bridge.
+// Trellis changes: preload file-system bridge and app-info bridge for renderer plugins. // CHANGE
 console.log('[Preload] Script running');
 
 const {
@@ -110,6 +110,15 @@ contextBridge.exposeInMainWorld('trellisApp', { // NEW
 				{ action: 'getTrellisAppInfo' }, // NEW
 				(data) => resolve(data || {}), // NEW
 				(msg) => reject(new Error(msg || 'getTrellisAppInfo failed')) // NEW
+			); // NEW
+		}); // NEW
+	}, // CHANGE
+	restoreBuiltInDatabase() { // NEW
+		return new Promise((resolve, reject) => { // NEW
+			requestViaIPC( // NEW
+				{ action: 'restoreBuiltInTrellisDatabase' }, // NEW
+				(data) => resolve(data || {}), // NEW
+				(msg) => reject(new Error(msg || 'restoreBuiltInTrellisDatabase failed')) // NEW
 			); // NEW
 		}); // NEW
 	} // NEW

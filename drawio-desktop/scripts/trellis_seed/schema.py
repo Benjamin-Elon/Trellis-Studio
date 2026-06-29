@@ -21,10 +21,14 @@ GENERATED_TABLES = [
 
 WEATHER_TABLES = {"CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily"}
 
+CITY_GEO_IDENTITY_COLUMNS = {"country_name", "country_code", "region_name", "region_code"}  # ADDED
+CITY_CLIMATE_BANDS = {"hot", "temperate", "cold"}  # ADDED
+
 PLANTING_WINDOW_REFERENCE_COLUMNS = {
     "reference_id", "plant_id", "plant_name", "city_id", "city_name", "method_id",
     "stage", "window_label", "start_mm_dd", "end_mm_dd", "start_doy", "end_doy",
     "is_cross_year", "source_url", "source_note", "confidence", "summary",
+    *CITY_GEO_IDENTITY_COLUMNS,  # ADDED: resolver-only city identity metadata.
 }
 
 PLANTING_WINDOW_STAGES = {"sow", "transplant"}
@@ -97,13 +101,24 @@ OVERRIDE_ENTRY_SCHEMA = {
 }
 
 CITY_COLUMNS = {
-    "city_id", "city_name", "latitude", "longitude", "timezone", "gdd_annual",
+    "city_id", "city_name", *CITY_GEO_IDENTITY_COLUMNS, "latitude", "longitude", "timezone", "gdd_annual",  # CHANGED
+    "is_major_city", "climate_band",  # ADDED
     "last_spring_frost_doy", "first_fall_frost_doy", "first_fall_frost_p90_doy",
     "first_fall_frost_p50_doy", "first_fall_frost_p10_doy",
     "last_spring_frost_p90_doy", "last_spring_frost_p50_doy",
     "last_spring_frost_p10_doy", "gdd_base_c",
     *{f"avg_monthly_low_c{i}" for i in range(1, 13)},
     *{f"avg_monthly_high_c{i}" for i in range(1, 13)},
+}
+
+OPENAI_CITY_LABEL_SCHEMA = {  # ADDED
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "is_major_city": {"type": "integer", "enum": [0, 1]},
+        "climate_band": {"type": "string", "enum": sorted(CITY_CLIMATE_BANDS)},
+    },
+    "required": ["is_major_city", "climate_band"],
 }
 
 OPENAI_PLANT_SCHEMA = {

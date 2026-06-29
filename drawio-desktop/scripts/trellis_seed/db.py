@@ -196,7 +196,7 @@ def _apply_table(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]
     if table == "Plants":
         return _upsert_named(conn, "Plants", rows, "plant_id", "plant_name", PLANT_COLUMNS)
     if table == "Cities":
-        return _upsert_named(conn, "Cities", rows, "city_id", "city_name", CITY_COLUMNS)
+        return _upsert_cities(conn, rows)  # CHANGED
     if table == "PlantAllowedMethodCategories":
         return _replace_allowed_methods(conn, rows)
     if table == "PlantVarieties":
@@ -237,6 +237,25 @@ def _upsert_named(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any
             conn.execute(f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})", [row[c] for c in cols])
         count += 1
     return count
+
+
+def _upsert_cities(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:  # ADDED
+    count = 0  # ADDED
+    for raw in rows:  # ADDED
+        row = {k: v for k, v in raw.items() if k in CITY_COLUMNS}  # ADDED
+        existing_id = row.get("city_id") or _find_city_id(conn, row)  # ADDED
+        if existing_id:  # ADDED
+            row["city_id"] = existing_id  # ADDED
+            assignments = [c for c in row if c != "city_id"]  # ADDED
+            sql = "UPDATE Cities SET " + ", ".join(f"{c}=?" for c in assignments) + " WHERE city_id=?"  # ADDED
+            conn.execute(sql, [row[c] for c in assignments] + [existing_id])  # ADDED
+        else:  # ADDED
+            if row.get("city_id") is None:  # ADDED
+                row.pop("city_id", None)  # ADDED
+            cols = list(row)  # ADDED
+            conn.execute(f"INSERT INTO Cities ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})", [row[c] for c in cols])  # ADDED
+        count += 1  # ADDED
+    return count  # ADDED
 
 
 def _replace_allowed_methods(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
@@ -417,7 +436,7 @@ def _existing_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> 
             ).fetchone()
         if table == "PlantingWindowReferences":
             plant_id = row.get("plant_id") or _find_id_by_name(conn, "Plants", "plant_id", "plant_name", row.get("plant_name"))
-            city_id = row.get("city_id") or _find_id_by_name(conn, "Cities", "city_id", "city_name", row.get("city_name"))
+            city_id = row.get("city_id") or _find_city_id(conn, row)  # CHANGED
             if not plant_id or not city_id:
                 return None
             return conn.execute(
@@ -437,6 +456,9 @@ def _find_row(conn: sqlite3.Connection, table: str, id_col: str, name_col: str, 
         found = conn.execute(f"SELECT * FROM {table} WHERE {id_col}=?", [row[id_col]]).fetchone()
         if found:
             return found
+    if table == "Cities":  # ADDED
+        row_id = _find_city_id(conn, row)  # ADDED
+        return conn.execute("SELECT * FROM Cities WHERE city_id=?", [row_id]).fetchone() if row_id else None  # ADDED
     row_id = _find_id_by_name(conn, table, id_col, name_col, row.get(name_col))
     return conn.execute(f"SELECT * FROM {table} WHERE {id_col}=?", [row_id]).fetchone() if row_id else None
 
@@ -455,7 +477,7 @@ def _weather_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _load_generated_index(generated_dir: Path) -> dict[str, Any]:
     plants = {normalize_key(row.get("plant_name")): row for row in read_json(generated_dir / "Plants.json", []) or []}
-    cities = {normalize_key(row.get("city_name")): row for row in read_json(generated_dir / "Cities.json", []) or []}
+    cities = {_city_identity_key(row): row for row in read_json(generated_dir / "Cities.json", []) or []}  # CHANGED
     varieties = {(normalize_key(row.get("plant_name")), normalize_key(row.get("variety_name"))): row for row in read_json(generated_dir / "PlantVarieties.json", []) or []}
     companions = {(normalize_key(row.get("p1")), normalize_key(row.get("p2"))): row for row in read_json(generated_dir / "Companions.json", []) or []}
     return {"plants": plants, "cities": cities, "varieties": varieties, "companions": companions}
@@ -479,8 +501,8 @@ def _identity_label(conn: sqlite3.Connection, table: str, row: dict[str, Any], g
     if table == "CompanionEvidence":
         return f"{row.get('p1')} / {row.get('p2')} / {row.get('source_url') or row.get('source_note')}"
     if table == "PlantingWindowReferences":
-        return f"{row.get('plant_name') or _db_plant_name(conn, row.get('plant_id'))} / {row.get('city_name') or _db_city_name(conn, row.get('city_id'))} / {row.get('method_id')} / {row.get('stage')} / {row.get('window_label')}"
-    return str(row.get("plant_name") or row.get("city_name") or row.get("variety_name") or row.get("method_id") or f"{row.get('p1')} / {row.get('p2')}")
+        return f"{row.get('plant_name') or _db_plant_name(conn, row.get('plant_id'))} / {_city_identity_label(row) or _db_city_name(conn, row.get('city_id'))} / {row.get('method_id')} / {row.get('stage')} / {row.get('window_label')}"  # CHANGED
+    return str(row.get("plant_name") or _city_identity_label(row) or row.get("variety_name") or row.get("method_id") or f"{row.get('p1')} / {row.get('p2')}")  # CHANGED
 
 
 def _db_plant_name(conn: sqlite3.Connection, plant_id: Any) -> str:
@@ -505,6 +527,61 @@ def _find_id_by_name(conn: sqlite3.Connection, table: str, id_col: str, name_col
     return None
 
 
+def _norm_city_part(value: Any) -> str:  # ADDED
+    return normalize_key(value)  # ADDED
+
+
+def _city_identity_key(row: dict[str, Any]) -> tuple[str, str, str]:  # ADDED
+    return (  # ADDED
+        _norm_city_part(row.get("city_name")),  # ADDED
+        _norm_city_part(row.get("country_code")) or _norm_city_part(row.get("country_name")),  # CHANGED
+        _norm_city_part(row.get("region_name")) or _norm_city_part(row.get("region_code")),  # CHANGED
+    )  # ADDED
+
+
+def _city_identity_label(row: dict[str, Any]) -> str:  # ADDED
+    city_name = str(row.get("city_name") or "").strip()  # ADDED
+    if not city_name:  # ADDED
+        return ""  # ADDED
+    country = str(row.get("country_name") or row.get("country_code") or "").strip()  # ADDED
+    region = str(row.get("region_name") or row.get("region_code") or "").strip()  # ADDED
+    return " / ".join(part for part in (city_name, country, region) if part)  # ADDED
+
+
+def _city_part_matches(existing: sqlite3.Row, row: dict[str, Any], name_key: str, code_key: str) -> bool:  # ADDED
+    wanted_code = _norm_city_part(row.get(code_key))  # ADDED
+    wanted_name = _norm_city_part(row.get(name_key))  # ADDED
+    if not wanted_code and not wanted_name:  # ADDED
+        return False  # ADDED
+    existing_code = _norm_city_part(existing[code_key])  # ADDED
+    existing_name = _norm_city_part(existing[name_key])  # ADDED
+    return bool((wanted_code and existing_code == wanted_code) or (wanted_name and existing_name == wanted_name))  # ADDED
+
+
+def _find_city_id(conn: sqlite3.Connection, row: dict[str, Any]) -> int | None:  # ADDED
+    if row.get("city_id"):  # ADDED
+        return int(row["city_id"])  # ADDED
+    city_key = _norm_city_part(row.get("city_name"))  # ADDED
+    if not city_key:  # ADDED
+        return None  # ADDED
+    existing_columns = {str(info[1]) for info in conn.execute("PRAGMA table_info(Cities)").fetchall()}  # ADDED
+    select_cols = [column if column in existing_columns else f"NULL AS {column}" for column in ("city_id", "city_name", "country_name", "country_code", "region_name", "region_code")]  # ADDED
+    candidates = [candidate for candidate in conn.execute(f"SELECT {', '.join(select_cols)} FROM Cities") if _norm_city_part(candidate["city_name"]) == city_key]  # CHANGED
+    if not candidates:  # ADDED
+        return None  # ADDED
+    has_geo = any(_norm_city_part(row.get(key)) for key in ("country_name", "country_code", "region_name", "region_code"))  # ADDED
+    if has_geo:  # ADDED
+        matches = [candidate for candidate in candidates if _city_part_matches(candidate, row, "country_name", "country_code") and _city_part_matches(candidate, row, "region_name", "region_code")]  # ADDED
+        if len(matches) == 1:  # ADDED
+            return int(matches[0]["city_id"])  # ADDED
+        if len(matches) > 1:  # ADDED
+            raise RuntimeError(f"Ambiguous city identity: {row}")  # ADDED
+        return None  # ADDED
+    if len(candidates) == 1:  # ADDED
+        return int(candidates[0]["city_id"])  # ADDED
+    raise RuntimeError(f"Ambiguous city name; include country/region or city_id: {row.get('city_name')}")  # ADDED
+
+
 def _resolve_plant_id(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
     plant_id = row.get("plant_id") or _find_id_by_name(conn, "Plants", "plant_id", "plant_name", row.get("plant_name"))
     if not plant_id:
@@ -513,7 +590,7 @@ def _resolve_plant_id(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
 
 
 def _resolve_city_id(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
-    city_id = row.get("city_id") or _find_id_by_name(conn, "Cities", "city_id", "city_name", row.get("city_name"))
+    city_id = row.get("city_id") or _find_city_id(conn, row)  # CHANGED
     if not city_id:
         raise RuntimeError(f"Cannot resolve city row: {row}")
     return int(city_id)

@@ -1,4 +1,4 @@
-// This file has been modified to allow a file system bridge for plugins.
+// Trellis changes: file-system/database bridges, forked support/update URLs, updater guards, app-info metadata. // CHANGE
 /*
  * Trellis update progress change (2026-06-24):
  * Download-only updater progress uses guarded helpers with indeterminate fallback,
@@ -54,6 +54,8 @@ catch (e) {
 
 // (ADD): keep track of open DBs by an id (string)
 const dbRegistry = new Map();
+const dbRegistryPaths = new Map(); // NEW
+const TRELLIS_BUILT_IN_DB_REL_PATH = '../../trellis_database/Trellis_database.sqlite'; // NEW
 /** Generate a simple id; you can replace with something stronger if needed */
 function makeDbId() {
 	return Math.random().toString(36).slice(2);
@@ -79,6 +81,53 @@ function ensureSeededDb(seedRelPath, livePath) {                           // NE
 
 	fs.copyFileSync(seedAbs, livePath);                                      // NEW
 	return livePath;                                                         // NEW
+}                                                                          // NEW  
+
+function compareDbPath(dbPath) {                                           // NEW
+	const resolved = path.resolve(dbPath);                                  // NEW
+	return process.platform === 'win32' ? resolved.toLowerCase() : resolved; // NEW
+}                                                                          // NEW
+
+function closeRegisteredDbsForPath(dbPath) {                               // NEW
+	const wanted = compareDbPath(dbPath);                                   // NEW
+	for (const [dbId, registeredPath] of dbRegistryPaths.entries()) {        // NEW
+		if (compareDbPath(registeredPath) !== wanted) continue;              // NEW
+		const db = dbRegistry.get(dbId);                                     // NEW
+		if (db) db.close();                                                  // NEW
+		dbRegistry.delete(dbId);                                             // NEW
+		dbRegistryPaths.delete(dbId);                                        // NEW
+	}                                                                       // NEW
+}                                                                          // NEW
+
+function trellisDbBackupPath(dbPath) {                                      // NEW
+	const stamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);  // NEW
+	const parsed = path.parse(dbPath);                                       // NEW
+	return path.join(parsed.dir, `${parsed.name}.${stamp}.bak${parsed.ext}`); // NEW
+}                                                                          // NEW
+
+function restoreBuiltInTrellisDatabase(options) {                           // CHANGED
+	options = options || {};                                                // NEW
+	const dbName = String(options.dbName || 'Trellis_database.sqlite');      // NEW
+	const sourceRelPath = String(options.seedRelPath || TRELLIS_BUILT_IN_DB_REL_PATH); // NEW
+	const sourcePath = path.resolve(__dirname, sourceRelPath);               // CHANGED
+	if (!fs.existsSync(sourcePath)) throw new Error(`Built-in Trellis database missing: ${sourcePath}`); // NEW
+	const dbPath = getLiveDbPath(dbName);                                    // CHANGED
+	const parent = path.dirname(dbPath);                                     // NEW
+	if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true });   // NEW
+	closeRegisteredDbsForPath(dbPath);                                      // NEW
+	const backupPath = fs.existsSync(dbPath) ? trellisDbBackupPath(dbPath) : null; // NEW
+	try {                                                                   // NEW
+		if (backupPath) fs.copyFileSync(dbPath, backupPath);                 // NEW
+		fs.copyFileSync(sourcePath, dbPath);                                 // CHANGED
+		return { dbPath, backupPath, sourcePath };                           // NEW
+	} catch (e) {                                                           // NEW
+		try {                                                               // NEW
+			if (backupPath && fs.existsSync(backupPath) && fs.existsSync(dbPath)) { // CHANGED
+				fs.copyFileSync(backupPath, dbPath);                         // NEW
+			}                                                               // NEW
+		} catch (_) { }                                                      // NEW
+		throw e;                                                            // NEW
+	}                                                                       // NEW
 }                                                                          // NEW  
 
 // (ADD): validate DB path and allow read-only open by default
@@ -2487,7 +2536,9 @@ function getTrellisAppInfo() { // NEW
 		version: app.getVersion(), // NEW
 		repoUrl: trellisReleaseUrl, // NEW
 		releasesUrl: `${trellisReleaseUrl}/releases`, // NEW
-		issuesUrl: trellisSupportUrl // NEW
+		issuesUrl: trellisSupportUrl, // CHANGE
+		isPackaged: app.isPackaged, // NEW
+		canCheckForUpdates: canCheckForUpdates() // NEW
 	}; // NEW
 } // NEW
 
@@ -2588,6 +2639,9 @@ ipcMain.on("rendererReq", async (event, args) => {
 			case 'getTrellisAppInfo': // NEW
 				ret = getTrellisAppInfo(); // NEW
 				break; // NEW
+			case 'restoreBuiltInTrellisDatabase': // NEW
+				ret = restoreBuiltInTrellisDatabase(); // NEW
+				break; // NEW
 			case 'watchFile':
 				ret = await watchFile(args.path);
 				break;
@@ -2605,16 +2659,14 @@ ipcMain.on("rendererReq", async (event, args) => {
 				const dbName = String(args.dbName || 'Trellis_database.sqlite');
 				const livePath = getLiveDbPath(dbName);
 			  
-				if (args.reset === true && fs.existsSync(livePath)) {
-				  fs.unlinkSync(livePath);
-				}
-			  
 				const seedRel = String(
 				  args.seedRelPath || '../../trellis_database/Trellis_database.sqlite'
 				);
 				const seedAbs = path.resolve(__dirname, seedRel);
 			  
-				const ensured = ensureSeededDb(seedAbs, livePath);
+				const ensured = args.reset === true
+				  ? restoreBuiltInTrellisDatabase({ dbName, seedRelPath: seedRel }).dbPath // CHANGED
+				  : ensureSeededDb(seedAbs, livePath); // CHANGED
 			  
 				event.reply('mainResp', {
 				  reqId: args.reqId,
@@ -2638,6 +2690,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 				}
 				const dbId = makeDbId();
 				dbRegistry.set(dbId, db);
+				dbRegistryPaths.set(dbId, abs); // NEW
 				// reply with handle
 				event.reply('mainResp', { reqId: args.reqId, data: { dbId } });
 				break;
@@ -2647,6 +2700,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 				// args: { dbId }
 				const db = dbRegistry.get(args.dbId);
 				if (db) { db.close(); dbRegistry.delete(args.dbId); }
+				dbRegistryPaths.delete(args.dbId); // NEW
 				event.reply('mainResp', { reqId: args.reqId, data: true });
 				break;
 			}

@@ -18,7 +18,9 @@
         version: "",
         repoUrl: "https://github.com/Benjamin-Elon/Trellis-for-Drawio",
         releasesUrl: "https://github.com/Benjamin-Elon/Trellis-for-Drawio/releases",
-        issuesUrl: "https://github.com/Benjamin-Elon/Trellis-for-Drawio/issues"
+        issuesUrl: "https://github.com/Benjamin-Elon/Trellis-for-Drawio/issues",
+        isPackaged: false, // NEW
+        canCheckForUpdates: false // NEW
     });
 
     const LINK_CONFIG = Object.freeze({
@@ -234,11 +236,19 @@
         window.open(url, "_blank", "noopener");
     }
 
-    function checkForUpdates() {
+    function checkForUpdates(appInfo) { // CHANGE
+        if (!appInfo || appInfo.canCheckForUpdates !== true) return; // NEW
+
         if (window.electron && typeof window.electron.sendMessage === "function") {
             window.electron.sendMessage("checkForUpdates");
         }
     }
+
+    function getUpdateUnavailableReason(appInfo) { // NEW
+        if (appInfo && appInfo.canCheckForUpdates === true) return ""; // NEW
+        if (appInfo && appInfo.isPackaged === false) return "Update checks are disabled in developer builds."; // NEW
+        return "Update checks are unavailable for this installation."; // NEW
+    } // NEW
 
     function addStyles(root) {
         const style = createEl("style");
@@ -269,12 +279,20 @@
         root.appendChild(style);
     }
 
-    function createButton(label, onClick, primary) {
+    function createButton(label, onClick, primary, options) { // CHANGE
         const button = createEl("button", primary ? "trellis-updates-btn trellis-updates-btn-primary" : "trellis-updates-btn", label);
         button.type = "button";
+        if (options && options.disabled) button.disabled = true; // NEW
+        if (options && options.title) button.title = options.title; // NEW
         button.addEventListener("click", onClick);
         return button;
     }
+
+    function updateCheckButton(button, appInfo) { // NEW
+        const reason = getUpdateUnavailableReason(appInfo); // NEW
+        button.disabled = !!reason; // NEW
+        button.title = reason; // NEW
+    } // NEW
 
     function renderReleaseList(container, releases, appInfo, ui) {
         clearNode(container);
@@ -391,7 +409,8 @@
         const releaseContainer = createEl("div");
         const changelogContainer = createEl("div");
         const actions = createEl("div", "trellis-updates-actions");
-        actions.appendChild(createButton("Check for updates", checkForUpdates, true));
+        const updateButton = createButton("Check for updates", function () { checkForUpdates(state.appInfo); }, true, { disabled: true, title: getUpdateUnavailableReason(state.appInfo) }); // CHANGE
+        actions.appendChild(updateButton); // CHANGE
         actions.appendChild(createButton("Open GitHub releases", function () { openLink(ui, state.appInfo.releasesUrl); }, false));
         actions.appendChild(createButton("Retry GitHub releases", function () { loadLiveReleases(releaseContainer, state.appInfo, ui); }, false));
         updatesPane.appendChild(installed);
@@ -412,6 +431,9 @@
         function updateInstalled(info) {
             clearNode(installed);
             appendText(installed, info.productName + (info.version ? " " + info.version : ""));
+            const reason = getUpdateUnavailableReason(info); // NEW
+            if (reason) appendText(installed, " - " + reason); // NEW
+            updateCheckButton(updateButton, info); // NEW
         }
 
         selectTab("updates");
@@ -478,6 +500,7 @@
             newerThanInstalled: newerThanInstalled,
             requestLocalJson: requestLocalJson,
             buildDialog: buildDialog,
+            getUpdateUnavailableReason: getUpdateUnavailableReason, // NEW
             renderReleaseList: renderReleaseList
         }
     };

@@ -505,7 +505,12 @@ Draw.loadPlugin(function (ui) {
         chilling_policy: 'TEXT', // ADDED
         diagnostic_policy: 'TEXT' // ADDED
     }); // ADDED
-    const PHYSIOLOGY_CITY_COLUMNS = Object.freeze({}); // CHANGED: city latitude now uses the existing Cities.latitude column.
+    const PHYSIOLOGY_CITY_COLUMNS = Object.freeze({ // CHANGED: scheduler owns lightweight city geography columns for grouped city selection.
+        country_name: 'TEXT', // ADDED
+        country_code: 'TEXT', // ADDED
+        region_name: 'TEXT', // ADDED
+        region_code: 'TEXT' // ADDED
+    }); // CHANGED
     let schedulerPhysiologySchemaEnsured = false; // ADDED
 
     async function ensureTableColumns(dbId, tableName, columns) { // ADDED
@@ -2286,6 +2291,176 @@ Draw.loadPlugin(function (ui) {
         if (initialValue != null) sel.value = String(initialValue);
         return sel;
     }
+    function normalizeCityGeoText(value) { // ADDED
+        return String(value == null ? '' : value).trim(); // ADDED
+    } // ADDED
+    function cityCountryLabel(city) { // ADDED
+        return normalizeCityGeoText(city?.country_name) || normalizeCityGeoText(city?.country_code) || 'Uncategorized'; // ADDED
+    } // ADDED
+    function cityRegionLabel(city) { // ADDED
+        const name = normalizeCityGeoText(city?.region_name); // ADDED
+        const code = normalizeCityGeoText(city?.region_code); // ADDED
+        if (name && code && name.toLowerCase() !== code.toLowerCase()) return `${name} (${code})`; // ADDED
+        return name || code || 'Uncategorized'; // ADDED
+    } // ADDED
+    function cityDisplayLabel(city) { // ADDED
+        return normalizeCityGeoText(city?.city_name) || '(unnamed city)'; // ADDED
+    } // ADDED
+    function citySearchText(city) { // ADDED
+        return [cityDisplayLabel(city), cityCountryLabel(city), cityRegionLabel(city), normalizeCityGeoText(city?.country_code), normalizeCityGeoText(city?.region_code)].join(' ').toLowerCase(); // ADDED
+    } // ADDED
+    function sortedCities(cities) { // ADDED
+        return (cities || []).slice().sort((a, b) => { // ADDED
+            const av = [cityCountryLabel(a), cityRegionLabel(a), cityDisplayLabel(a)].join('\u0000').toLowerCase(); // ADDED
+            const bv = [cityCountryLabel(b), cityRegionLabel(b), cityDisplayLabel(b)].join('\u0000').toLowerCase(); // ADDED
+            return av.localeCompare(bv); // ADDED
+        }); // ADDED
+    } // ADDED
+    function makeCityTreePicker(cities, initialValue) { // ADDED
+        let cityRows = sortedCities(cities); // ADDED
+        let currentValue = String(initialValue || (cityRows[0]?.city_id ?? cityRows[0]?.city_name ?? '')); // ADDED
+        let isOpen = false; // ADDED
+        const root = document.createElement('div'); // ADDED
+        root.className = 'usl-city-picker'; // ADDED
+        root.tabIndex = 0; // ADDED
+        root.style.position = 'relative'; // ADDED
+        root.style.width = '100%'; // ADDED
+        root.style.font = '12px Arial,sans-serif'; // ADDED
+        const button = document.createElement('button'); // ADDED
+        button.type = 'button'; // ADDED
+        button.style.width = '100%'; // ADDED
+        button.style.padding = '6px'; // ADDED
+        button.style.border = '1px solid #bbb'; // ADDED
+        button.style.borderRadius = '6px'; // ADDED
+        button.style.background = '#fff'; // ADDED
+        button.style.textAlign = 'left'; // ADDED
+        button.style.font = '12px Arial,sans-serif'; // ADDED
+        const panel = document.createElement('div'); // ADDED
+        panel.style.position = 'absolute'; // ADDED
+        panel.style.zIndex = '10000'; // ADDED
+        panel.style.left = '0'; // ADDED
+        panel.style.right = '0'; // ADDED
+        panel.style.top = '100%'; // ADDED
+        panel.style.marginTop = '3px'; // ADDED
+        panel.style.padding = '6px'; // ADDED
+        panel.style.border = '1px solid #bbb'; // ADDED
+        panel.style.borderRadius = '6px'; // ADDED
+        panel.style.background = '#fff'; // ADDED
+        panel.style.boxShadow = '0 8px 20px rgba(0,0,0,0.18)'; // ADDED
+        panel.style.display = 'none'; // ADDED
+        const search = document.createElement('input'); // ADDED
+        search.type = 'search'; // ADDED
+        search.placeholder = 'Search city, country, or region'; // ADDED
+        search.style.width = '100%'; // ADDED
+        search.style.marginBottom = '6px'; // ADDED
+        const list = document.createElement('div'); // ADDED
+        list.style.maxHeight = '260px'; // ADDED
+        list.style.overflow = 'auto'; // ADDED
+        panel.appendChild(search); // ADDED
+        panel.appendChild(list); // ADDED
+        root.appendChild(button); // ADDED
+        root.appendChild(panel); // ADDED
+
+        function selectedCity() { // ADDED
+            return cityRows.find(city => String(city.city_id ?? city.city_name) === currentValue) || null; // ADDED
+        } // ADDED
+        function updateButton() { // ADDED
+            const city = selectedCity(); // ADDED
+            button.textContent = city ? `${cityDisplayLabel(city)} - ${cityCountryLabel(city)} / ${cityRegionLabel(city)}` : 'Select a city...'; // ADDED
+        } // ADDED
+        function closePicker() { // ADDED
+            isOpen = false; // ADDED
+            panel.style.display = 'none'; // ADDED
+        } // ADDED
+        function openPicker() { // ADDED
+            isOpen = true; // ADDED
+            panel.style.display = 'block'; // ADDED
+            renderList(); // ADDED
+            search.focus(); // ADDED
+        } // ADDED
+        function chooseCity(city) { // ADDED
+            currentValue = String(city.city_id ?? city.city_name); // ADDED
+            updateButton(); // ADDED
+            closePicker(); // ADDED
+            root.dispatchEvent(new Event('change', { bubbles: true })); // ADDED
+        } // ADDED
+        function appendGroupHeader(text, level) { // ADDED
+            const header = document.createElement('div'); // ADDED
+            header.textContent = text; // ADDED
+            header.style.fontWeight = level === 1 ? '700' : '600'; // ADDED
+            header.style.margin = level === 1 ? '8px 0 3px' : '5px 0 2px 12px'; // ADDED
+            header.style.color = '#374151'; // ADDED
+            list.appendChild(header); // ADDED
+        } // ADDED
+        function appendCity(city) { // ADDED
+            const item = document.createElement('button'); // ADDED
+            item.type = 'button'; // ADDED
+            item.textContent = cityDisplayLabel(city); // ADDED
+            item.style.display = 'block'; // ADDED
+            item.style.width = '100%'; // ADDED
+            item.style.margin = '1px 0'; // ADDED
+            item.style.padding = '4px 6px 4px 24px'; // ADDED
+            item.style.border = '0'; // ADDED
+            item.style.borderRadius = '4px'; // ADDED
+            item.style.background = String(city.city_id ?? city.city_name) === currentValue ? '#e5f0ff' : '#fff'; // ADDED
+            item.style.textAlign = 'left'; // ADDED
+            item.style.font = '12px Arial,sans-serif'; // ADDED
+            item.addEventListener('click', () => chooseCity(city)); // ADDED
+            list.appendChild(item); // ADDED
+        } // ADDED
+        function renderList() { // ADDED
+            const filter = String(search.value || '').trim().toLowerCase(); // ADDED
+            const visible = cityRows.filter(city => !filter || citySearchText(city).indexOf(filter) >= 0); // ADDED
+            list.innerHTML = ''; // ADDED
+            if (!visible.length) { // ADDED
+                const empty = document.createElement('div'); // ADDED
+                empty.textContent = 'No matching cities'; // ADDED
+                empty.style.color = '#6b7280'; // ADDED
+                empty.style.padding = '6px'; // ADDED
+                list.appendChild(empty); // ADDED
+                return; // ADDED
+            } // ADDED
+            let lastCountry = null; // ADDED
+            let lastRegion = null; // ADDED
+            visible.forEach(city => { // ADDED
+                const country = cityCountryLabel(city); // ADDED
+                const region = cityRegionLabel(city); // ADDED
+                if (country !== lastCountry) { // ADDED
+                    appendGroupHeader(country, 1); // ADDED
+                    lastCountry = country; // ADDED
+                    lastRegion = null; // ADDED
+                } // ADDED
+                if (region !== lastRegion) { // ADDED
+                    appendGroupHeader(region, 2); // ADDED
+                    lastRegion = region; // ADDED
+                } // ADDED
+                appendCity(city); // ADDED
+            }); // ADDED
+        } // ADDED
+        Object.defineProperty(root, 'value', { // ADDED
+            get() { return currentValue; }, // ADDED
+            set(value) { currentValue = String(value || ''); updateButton(); } // ADDED
+        }); // ADDED
+        root.setCities = function (nextCities, selectedValue) { // ADDED
+            cityRows = sortedCities(nextCities); // ADDED
+            currentValue = String(selectedValue || (cityRows[0]?.city_id ?? cityRows[0]?.city_name ?? '')); // ADDED
+            updateButton(); // ADDED
+            renderList(); // ADDED
+        }; // ADDED
+        button.addEventListener('click', () => { isOpen ? closePicker() : openPicker(); }); // ADDED
+        search.addEventListener('input', renderList); // ADDED
+        search.addEventListener('keydown', evt => { // ADDED
+            if (evt.key === 'Escape') { evt.preventDefault(); closePicker(); button.focus(); } // ADDED
+            if (evt.key === 'Enter') { // ADDED
+                const first = cityRows.find(city => !search.value || citySearchText(city).indexOf(String(search.value).trim().toLowerCase()) >= 0); // ADDED
+                if (first) { evt.preventDefault(); chooseCity(first); } // ADDED
+            } // ADDED
+        }); // ADDED
+        document.addEventListener('mousedown', evt => { if (isOpen && !root.contains(evt.target)) closePicker(); }); // ADDED
+        updateButton(); // ADDED
+        renderList(); // ADDED
+        return root; // ADDED
+    } // ADDED
     function makeNumber(initial, { min = null } = {}) {
         const el = document.createElement('input'); el.type = 'number';
         el.value = String(initial ?? 0); if (min != null) el.min = String(min);
@@ -2537,6 +2712,39 @@ Draw.loadPlugin(function (ui) {
         const base = `${month} ${d.getUTCDate()}`; // ADDED
         return multiYear ? `${base}, ${d.getUTCFullYear()}` : base; // ADDED
     } // ADDED
+    function buildLifecycleTimelineAxisMarkers(bounds, totalDays) { // ADDED
+        const start = bounds?.start; // ADDED
+        const end = bounds?.end; // ADDED
+        if (!isUsableDate(start) || !isUsableDate(end) || end < start) return { months: [], years: [] }; // ADDED
+        const spanDays = Math.max(1, Number.isFinite(Number(totalDays)) ? Number(totalDays) : timelineDaysBetween(start, end)); // ADDED
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; // ADDED
+        const quarterMonthIndexes = new Set([0, 3, 6, 9]); // ADDED
+        const months = []; // ADDED
+        const years = []; // ADDED
+        const startYear = start.getUTCFullYear(); // ADDED
+        const endYear = end.getUTCFullYear(); // ADDED
+        for (let year = startYear; year <= endYear; year += 1) { // ADDED
+            const yearDate = asUTCDate(year, 1, 1); // ADDED
+            if (yearDate >= start && yearDate <= end) { // ADDED
+                years.push({ // ADDED
+                    iso: fmtISO(yearDate), // ADDED
+                    label: String(year), // ADDED
+                    percent: timelinePercentForDate(yearDate, start, spanDays) ?? 0 // ADDED
+                }); // ADDED
+            } // ADDED
+            for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) { // ADDED
+                if (!quarterMonthIndexes.has(monthIndex)) continue; // ADDED
+                const monthDate = asUTCDate(year, monthIndex + 1, 1); // ADDED
+                if (monthDate < start || monthDate > end) continue; // ADDED
+                months.push({ // ADDED
+                    iso: fmtISO(monthDate), // ADDED
+                    label: monthNames[monthIndex], // ADDED
+                    percent: timelinePercentForDate(monthDate, start, spanDays) ?? 0 // ADDED
+                }); // ADDED
+            } // ADDED
+        } // ADDED
+        return { months, years }; // ADDED
+    } // ADDED
     function buildLifecycleTimelineMilestone(stage, dateValue, options = {}) { // ADDED
         const date = dateValue instanceof Date ? dateValue : parseISODateUTCValue(dateValue); // ADDED
         if (!date) return null; // ADDED
@@ -2632,6 +2840,7 @@ Draw.loadPlugin(function (ui) {
             bounds, // ADDED
             totalDays, // ADDED
             bands, // ADDED
+            axis: buildLifecycleTimelineAxisMarkers(bounds, totalDays), // ADDED
             milestones, // ADDED
             visibleMilestones, // ADDED
             labelRows: assignLifecycleTimelineLabelRows(visibleMilestones), // ADDED
@@ -5320,7 +5529,7 @@ Draw.loadPlugin(function (ui) {
         const cityValue = cityOpts.some(o => o.value === initialCityKey)
             ? initialCityKey
             : (cityOpts.find(o => o.label === initialCityName)?.value || cityOpts[0]?.value); // CHANGED
-        const citySel = makeSelect(cityOpts, cityValue);
+        const citySel = makeCityTreePicker(cities, cityValue); // CHANGED
         setTooltip(citySel, 'City climate is resolved by city_id when available. Edit city latitude and climate data from Garden Settings.'); // ADDED
         function selectedCityOption() { // ADDED
             return cityOpts.find(o => String(o.value) === String(citySel.value)) || cityOpts[0] || null; // ADDED
@@ -6481,6 +6690,68 @@ Draw.loadPlugin(function (ui) {
             return trackWrap; // ADDED
         } // ADDED
 
+        function timelineAxisLabelTransform(percent) { // ADDED
+            const n = Number(percent); // ADDED
+            if (Number.isFinite(n) && n <= 1) return 'translateX(0)'; // ADDED
+            if (Number.isFinite(n) && n >= 99) return 'translateX(-100%)'; // ADDED
+            return 'translateX(-50%)'; // ADDED
+        } // ADDED
+
+        function renderLifecycleTimelineAxis(model) { // ADDED
+            const axis = model?.axis || { months: [], years: [] }; // ADDED
+            const wrap = document.createElement('div'); // ADDED
+            wrap.style.position = 'relative'; // ADDED
+            wrap.style.height = '34px'; // ADDED
+            wrap.style.marginTop = '-6px'; // ADDED
+            wrap.style.marginBottom = '2px'; // ADDED
+            const monthRow = document.createElement('div'); // ADDED
+            monthRow.style.position = 'relative'; // ADDED
+            monthRow.style.height = '19px'; // ADDED
+            axis.months.forEach(marker => { // ADDED
+                const tick = document.createElement('div'); // ADDED
+                tick.style.position = 'absolute'; // ADDED
+                tick.style.left = `${marker.percent}%`; // ADDED
+                tick.style.top = '0'; // ADDED
+                tick.style.height = '6px'; // ADDED
+                tick.style.borderLeft = '1px solid #cbd5e1'; // ADDED
+                tick.style.transform = 'translateX(-50%)'; // ADDED
+                monthRow.appendChild(tick); // ADDED
+                const label = document.createElement('div'); // ADDED
+                label.textContent = marker.label; // ADDED
+                label.style.position = 'absolute'; // ADDED
+                label.style.left = `${marker.percent}%`; // ADDED
+                label.style.top = '7px'; // ADDED
+                label.style.transform = timelineAxisLabelTransform(marker.percent); // ADDED
+                label.style.fontSize = '10px'; // ADDED
+                label.style.lineHeight = '1'; // ADDED
+                label.style.color = '#64748b'; // ADDED
+                label.style.whiteSpace = 'nowrap'; // ADDED
+                setTooltip(label, `${marker.label}: ${marker.iso}`); // ADDED
+                monthRow.appendChild(label); // ADDED
+            }); // ADDED
+            const yearRow = document.createElement('div'); // ADDED
+            yearRow.style.position = 'relative'; // ADDED
+            yearRow.style.height = '15px'; // ADDED
+            axis.years.forEach(marker => { // ADDED
+                const label = document.createElement('div'); // ADDED
+                label.textContent = marker.label; // ADDED
+                label.style.position = 'absolute'; // ADDED
+                label.style.left = `${marker.percent}%`; // ADDED
+                label.style.top = '1px'; // ADDED
+                label.style.transform = timelineAxisLabelTransform(marker.percent); // ADDED
+                label.style.fontSize = '10px'; // ADDED
+                label.style.lineHeight = '1'; // ADDED
+                label.style.fontWeight = '600'; // ADDED
+                label.style.color = '#475569'; // ADDED
+                label.style.whiteSpace = 'nowrap'; // ADDED
+                setTooltip(label, `Year ${marker.label}: ${marker.iso}`); // ADDED
+                yearRow.appendChild(label); // ADDED
+            }); // ADDED
+            wrap.appendChild(monthRow); // ADDED
+            wrap.appendChild(yearRow); // ADDED
+            return wrap; // ADDED
+        } // ADDED
+
         function renderLifecycleTimelineLabelRows(model) { // ADDED
             const wrap = document.createElement('div'); // ADDED
             wrap.style.display = 'flex'; // ADDED
@@ -6533,6 +6804,7 @@ Draw.loadPlugin(function (ui) {
             bounds.appendChild(endLabel); // ADDED
             timelineWrap.appendChild(bounds); // ADDED
             timelineWrap.appendChild(renderLifecycleTimelineTrack(model, classification)); // ADDED
+            timelineWrap.appendChild(renderLifecycleTimelineAxis(model)); // ADDED
             timelineWrap.appendChild(renderLifecycleTimelineLabelRows(model)); // ADDED
             const details = makeTimelineSmallText(model.details.length ? model.details.join(' | ') : 'No lifecycle milestones are available for the current schedule.'); // ADDED
             details.style.overflowWrap = 'anywhere'; // ADDED
@@ -9836,6 +10108,7 @@ Draw.loadPlugin(function (ui) {
             resolveHarvestWindowDays, // FIX: expose fallback behavior to the opt-in regression harness
             computeStageDatesForPlanting: annualCore.computeStageDatesForPlanting, // CHANGED: expose canonical annual core behavior.
             buildLifecycleTimelineViewModel, // ADDED
+            buildLifecycleTimelineAxisMarkers, // ADDED
             findFirstLifecycleTimelineTaskRule, // ADDED
             normId, // FIX
             resolveStartAfterWindow // FIX
@@ -10182,6 +10455,7 @@ Draw.loadPlugin(function (ui) {
             saveSchedulerCityLatitude, // ADDED
             buildScheduleViewState, // ADDED
             buildLifecycleTimelineViewModel, // ADDED
+            buildLifecycleTimelineAxisMarkers, // ADDED
             findFirstLifecycleTimelineTaskRule, // ADDED
             taskRuleLibraryForPlanningMode, // ADDED
             resolveTaskRuleTaskTypeId, // NEW

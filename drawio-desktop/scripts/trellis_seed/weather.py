@@ -7,6 +7,52 @@ import calendar
 from statistics import mean
 from typing import Any
 
+REGION_CODE_BY_COUNTRY: dict[str, dict[str, str]] = {  # ADDED
+    "CA": {  # ADDED
+        "alberta": "AB", "british columbia": "BC", "manitoba": "MB", "new brunswick": "NB",  # ADDED
+        "newfoundland and labrador": "NL", "nova scotia": "NS", "ontario": "ON",  # ADDED
+        "prince edward island": "PE", "quebec": "QC", "saskatchewan": "SK",  # ADDED
+        "northwest territories": "NT", "nunavut": "NU", "yukon": "YT",  # ADDED
+    },  # ADDED
+    "US": {  # ADDED
+        "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA", "colorado": "CO",  # ADDED
+        "connecticut": "CT", "delaware": "DE", "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID",  # ADDED
+        "illinois": "IL", "indiana": "IN", "iowa": "IA", "kansas": "KS", "kentucky": "KY", "louisiana": "LA",  # ADDED
+        "maine": "ME", "maryland": "MD", "massachusetts": "MA", "michigan": "MI", "minnesota": "MN",  # ADDED
+        "mississippi": "MS", "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV",  # ADDED
+        "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY", "north carolina": "NC",  # ADDED
+        "north dakota": "ND", "ohio": "OH", "oklahoma": "OK", "oregon": "OR", "pennsylvania": "PA",  # ADDED
+        "rhode island": "RI", "south carolina": "SC", "south dakota": "SD", "tennessee": "TN", "texas": "TX",  # ADDED
+        "utah": "UT", "vermont": "VT", "virginia": "VA", "washington": "WA", "west virginia": "WV",  # ADDED
+        "wisconsin": "WI", "wyoming": "WY", "district of columbia": "DC",  # ADDED
+    },  # ADDED
+}  # ADDED
+
+
+def _clean_text(value: Any) -> str:  # ADDED
+    return str(value or "").strip()  # ADDED
+
+
+def _region_code(country_code: str, region_name: str, explicit_code: Any = None) -> str:  # ADDED
+    explicit = _clean_text(explicit_code).upper()  # ADDED
+    if explicit:
+        return explicit  # ADDED
+    country = _clean_text(country_code).upper()  # ADDED
+    return REGION_CODE_BY_COUNTRY.get(country, {}).get(_clean_text(region_name).lower(), "")  # ADDED
+
+
+def city_geography_fields(geocode: dict[str, Any]) -> dict[str, str]:  # ADDED
+    country_name = _clean_text(geocode.get("country_name") or geocode.get("country"))  # ADDED
+    country_code = _clean_text(geocode.get("country_code")).upper()  # ADDED
+    region_name = _clean_text(geocode.get("region_name") or geocode.get("admin1")) or "Unspecified"  # ADDED
+    region_code = _region_code(country_code, region_name, geocode.get("region_code"))  # ADDED
+    return {  # ADDED
+        "country_name": country_name,  # ADDED
+        "country_code": country_code,  # ADDED
+        "region_name": region_name,  # ADDED
+        "region_code": region_code,  # ADDED
+    }  # ADDED
+
 
 def last_complete_year(today: date | None = None) -> int:
     today = today or date.today()
@@ -32,6 +78,7 @@ def summarize_city_weather(city_name: str, geocode: dict[str, Any], daily_payloa
     provider = "open-meteo"
     dataset = "open-meteo-archive"
     fetched_at = datetime.now(timezone.utc).isoformat()
+    geography = city_geography_fields(geocode)  # ADDED
 
     monthly_lows: dict[int, list[float]] = defaultdict(list)
     monthly_highs: dict[int, list[float]] = defaultdict(list)
@@ -61,6 +108,7 @@ def summarize_city_weather(city_name: str, geocode: dict[str, Any], daily_payloa
                 fall_frosts[day.year].append(day.timetuple().tm_yday)
         weather_rows.append({
             "city_name": city_name,
+            **geography,  # ADDED: resolver-only city identity metadata.
             "weather_date": raw_day,
             "provider": provider,
             "dataset": dataset,
@@ -78,6 +126,7 @@ def summarize_city_weather(city_name: str, geocode: dict[str, Any], daily_payloa
 
     row: dict[str, Any] = {
         "city_name": city_name,
+        **geography,  # CHANGED
         "latitude": round(float(geocode["latitude"]), 4),
         "longitude": round(float(geocode["longitude"]), 4),
         "timezone": timezone_name,
@@ -123,6 +172,7 @@ def summarize_city_monthly_weather(
     timezone_name = str(geocode.get("timezone") or "UTC")
     provider = "nasa-power"
     fetched_at = datetime.now(timezone.utc).isoformat()
+    geography = city_geography_fields(geocode)  # ADDED
 
     monthly_lows: dict[int, list[float]] = defaultdict(list)
     monthly_highs: dict[int, list[float]] = defaultdict(list)
@@ -149,6 +199,7 @@ def summarize_city_monthly_weather(
             monthly_highs[month].append(hi)
         monthly_rows.append({
             "city_name": city_name,
+            **geography,  # ADDED: resolver-only city identity metadata.
             "weather_month": f"{year:04d}-{month:02d}",
             "provider": provider,
             "dataset": dataset,
@@ -164,6 +215,7 @@ def summarize_city_monthly_weather(
 
     row: dict[str, Any] = {
         "city_name": city_name,
+        **geography,  # CHANGED
         "latitude": round(float(geocode["latitude"]), 4),
         "longitude": round(float(geocode["longitude"]), 4),
         "timezone": timezone_name,
@@ -193,14 +245,16 @@ def summarize_city_monthly_weather(
     return row, monthly_rows, provenance
 
 
-def forecast_rows(city_name: str, payload: dict[str, Any], model: str) -> list[dict[str, Any]]:
+def forecast_rows(city_name: str, payload: dict[str, Any], model: str, geocode: dict[str, Any] | None = None) -> list[dict[str, Any]]:  # CHANGED
     daily = payload.get("daily") or {}
     times = daily.get("time") or []
     run_timestamp = datetime.now(timezone.utc).isoformat()
+    geography = city_geography_fields(geocode or payload) if geocode else {}  # ADDED
     rows = []
     for i, raw_day in enumerate(times):
         rows.append({
             "city_name": city_name,
+            **geography,  # ADDED: resolver-only city identity metadata.
             "forecast_date": raw_day,
             "run_timestamp": run_timestamp,
             "provider": "open-meteo",

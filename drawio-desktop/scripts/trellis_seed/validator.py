@@ -8,7 +8,9 @@ from typing import Any
 
 from .jsonio import read_json, write_json
 from .schema import (
+    CITY_CLIMATE_BANDS,
     CITY_COLUMNS,
+    CITY_GEO_IDENTITY_COLUMNS,  # ADDED
     GENERATED_TABLES,
     PLANTING_WINDOW_CONFIDENCE,
     PLANTING_WINDOW_REFERENCE_COLUMNS,
@@ -185,6 +187,10 @@ def validate_row(
     elif table == "Cities":
         if not str(row.get("city_name") or "").strip():
             errors.append(f"{prefix}.city_name is required.")
+        if not str(row.get("country_name") or "").strip():
+            errors.append(f"{prefix}.country_name is required.")  # ADDED
+        if not str(row.get("region_name") or "").strip():
+            errors.append(f"{prefix}.region_name is required.")  # ADDED
         unknown = sorted(set(row) - CITY_COLUMNS)
         if unknown:
             errors.append(f"{prefix} has unknown city columns: {unknown}")
@@ -192,6 +198,10 @@ def validate_row(
         _number_between(prefix, row, "longitude", -180, 180, errors)
         _number_between(prefix, row, "gdd_annual", 0, 20000, errors)
         _number_between(prefix, row, "gdd_base_c", -20, 30, errors)
+        if row.get("is_major_city") is not None and _coerce_integer(row.get("is_major_city")) not in {0, 1}:  # ADDED
+            errors.append(f"{prefix}.is_major_city must be 0 or 1.")  # ADDED
+        if row.get("climate_band") not in (None, "") and str(row.get("climate_band")).strip().casefold() not in CITY_CLIMATE_BANDS:  # ADDED
+            errors.append(f"{prefix}.climate_band must be one of: {', '.join(sorted(CITY_CLIMATE_BANDS))}.")  # ADDED
         for month in range(1, 13):
             low = row.get(f"avg_monthly_low_c{month}")
             high = row.get(f"avg_monthly_high_c{month}")
@@ -327,12 +337,12 @@ def _validate_db_dependencies(generated_dir: Path, db_path: Path) -> dict[str, l
         methods = {row[0] for row in conn.execute("SELECT method_id FROM PlantingMethods")}
         categories = {row[0] for row in conn.execute("SELECT method_category_id FROM PlantingMethodCategories")}
         db_plants = {_norm(row["plant_name"]) for row in conn.execute("SELECT plant_name FROM Plants")}
-        db_cities = {_norm(row["city_name"]) for row in conn.execute("SELECT city_name FROM Cities")}
+        db_cities = _load_db_city_rows(conn)  # CHANGED
         db_varieties = {(_norm(row["plant_name"]), _norm(row["variety_name"])) for row in conn.execute("SELECT p.plant_name, v.variety_name FROM PlantVarieties v JOIN Plants p ON p.plant_id = v.plant_id")}
         db_companions = {(_norm(row["p1"]), _norm(row["p2"])) for row in conn.execute("SELECT p1, p2 FROM Companions")}
 
     generated_plants = {_norm(row.get("plant_name")) for row in read_json(generated_dir / "Plants.json", []) or []}
-    generated_cities = {_norm(row.get("city_name")) for row in read_json(generated_dir / "Cities.json", []) or []}
+    generated_cities = read_json(generated_dir / "Cities.json", []) or []  # CHANGED
     generated_varieties = {(_norm(row.get("plant_name")), _norm(row.get("variety_name"))) for row in read_json(generated_dir / "PlantVarieties.json", []) or []}
     generated_companions = {(_norm(row.get("p1")), _norm(row.get("p2"))) for row in read_json(generated_dir / "Companions.json", []) or []}
 
@@ -353,7 +363,7 @@ def _validate_db_dependencies(generated_dir: Path, db_path: Path) -> dict[str, l
                     errors.append(f"{table} cannot resolve variety: {row.get('plant_name')} / {row.get('variety_name')}")
     for table in ("CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily"):
         for row in read_json(generated_dir / f"{table}.json", []) or []:
-            if _norm(row.get("city_name")) not in generated_cities | db_cities and not row.get("city_id"):
+            if not _city_reference_resolves(row, generated_cities, db_cities):  # CHANGED
                 errors.append(f"{table} cannot resolve city: {row.get('city_name')}")
     for row in read_json(generated_dir / "CompanionEvidence.json", []) or []:
         key = (_norm(row.get("p1")), _norm(row.get("p2")))
@@ -364,9 +374,39 @@ def _validate_db_dependencies(generated_dir: Path, db_path: Path) -> dict[str, l
             errors.append(f"PlantingWindowReferences has unknown method_id: {row.get('method_id')}")
         if _norm(row.get("plant_name")) not in generated_plants | db_plants and not row.get("plant_id"):
             errors.append(f"PlantingWindowReferences cannot resolve plant: {row.get('plant_name')}")
-        if _norm(row.get("city_name")) not in generated_cities | db_cities and not row.get("city_id"):
+        if not _city_reference_resolves(row, generated_cities, db_cities):  # CHANGED
             errors.append(f"PlantingWindowReferences cannot resolve city: {row.get('city_name')}")
     return {"errors": errors, "warnings": warnings}
+
+
+def _load_db_city_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:  # ADDED
+    columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(Cities)").fetchall()}  # ADDED
+    selected = [column if column in columns else f"NULL AS {column}" for column in ("city_id", "city_name", *sorted(CITY_GEO_IDENTITY_COLUMNS))]  # ADDED
+    return [dict(row) for row in conn.execute(f"SELECT {', '.join(selected)} FROM Cities")]  # ADDED
+
+
+def _city_reference_resolves(row: dict[str, Any], generated_cities: list[dict[str, Any]], db_cities: list[dict[str, Any]]) -> bool:  # ADDED
+    if row.get("city_id"):  # ADDED
+        return True  # ADDED
+    city_name = _norm(row.get("city_name"))  # ADDED
+    if not city_name:  # ADDED
+        return False  # ADDED
+    candidates = [city for city in [*generated_cities, *db_cities] if _norm(city.get("city_name")) == city_name]  # ADDED
+    if not candidates:  # ADDED
+        return False  # ADDED
+    if not any(_norm(row.get(field)) for field in CITY_GEO_IDENTITY_COLUMNS):  # ADDED
+        return True  # ADDED
+    return any(_city_geo_matches(city, row, "country_name", "country_code") and _city_geo_matches(city, row, "region_name", "region_code") for city in candidates)  # ADDED
+
+
+def _city_geo_matches(city: dict[str, Any], row: dict[str, Any], name_key: str, code_key: str) -> bool:  # ADDED
+    wanted_name = _norm(row.get(name_key))  # ADDED
+    wanted_code = _norm(row.get(code_key))  # ADDED
+    if not wanted_name and not wanted_code:  # ADDED
+        return False  # ADDED
+    city_name = _norm(city.get(name_key))  # ADDED
+    city_code = _norm(city.get(code_key))  # ADDED
+    return bool((wanted_name and wanted_name == city_name) or (wanted_code and wanted_code == city_code))  # ADDED
 
 
 def _validate_ranges(prefix: str, row: dict[str, Any], ranges: dict[str, tuple[float, float]], out: list[str], hard: bool) -> None:

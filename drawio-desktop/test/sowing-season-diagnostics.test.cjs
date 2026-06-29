@@ -186,6 +186,41 @@ test('sowing-season diagnostic reports scheduler mismatch without failing', () =
     });
 });
 
+test('sowing-season diagnostic can compare benchmark reference JSON', () => {
+    withTempDb((db, dbPath) => {
+        const dir = path.dirname(dbPath);
+        const referencesPath = path.join(dir, 'benchmark_references.json');
+        const plant = db.prepare('SELECT * FROM Plants WHERE plant_id = 1').get();
+        const city = db.prepare('SELECT * FROM Cities WHERE city_id = 1').get();
+        fs.writeFileSync(referencesPath, JSON.stringify([{
+            plant_name: 'Fast Lettuce',
+            city_name: 'Mild City',
+            method_id: 'direct_sow.field',
+            method_category_id: 'direct_sow',
+            method_name: 'Direct sow in field',
+            stage: 'sow',
+            window_label: 'benchmark_late',
+            start_mm_dd: '12-01',
+            end_mm_dd: '12-15',
+            start_doy: mmDdToDoy('12-01'),
+            end_doy: mmDdToDoy('12-15'),
+            is_cross_year: 0,
+            confidence: 'medium',
+            summary: 'Artifact benchmark reference.',
+            plant,
+            city
+        }], null, 2), 'utf8');
+
+        const report = runDiagnostics({ dbPath, referencesPath, year: 2026, projectRoot, toleranceDays: 7 });
+
+        assert.equal(report.ok, true);
+        assert.equal(report.references_path, referencesPath);
+        assert.equal(report.summary.references, 1);
+        assert.equal(report.summary.outside_tolerance, 1);
+        assert.equal(report.rows[0].window_label, 'benchmark_late');
+    });
+});
+
 test('sowing-season diagnostic fails setup for unresolved dependencies', () => {
     withTempDb((db, dbPath) => {
         seedReference(db, { plant_id: 999 });

@@ -269,7 +269,239 @@ Draw.loadPlugin(function (ui) {
         } // ADDED
     } // ADDED
 
+    async function execSchemaStatements(statements) { // ADDED
+        if (!window.dbBridge || typeof window.dbBridge.open !== "function") throw new Error("dbBridge not available; check preload/main wiring"); // ADDED
+        const dbPath = await getDbPath(); // ADDED
+        const opened = await window.dbBridge.open(dbPath, { readOnly: false }); // ADDED
+        try { // ADDED
+            for (const statement of statements) { // ADDED
+                if (typeof window.dbBridge.exec === "function") await window.dbBridge.exec(opened.dbId, statement, []); // ADDED
+                else if (typeof window.dbBridge.run === "function") await window.dbBridge.run(opened.dbId, statement, []); // ADDED
+                else throw new Error("dbBridge.exec/run not available"); // ADDED
+            } // ADDED
+        } finally { // ADDED
+            try { await window.dbBridge.close(opened.dbId); } catch (_) { } // ADDED
+        } // ADDED
+    } // ADDED
+
+    function quoteSqlIdentifier(value) { // ADDED
+        return `"${String(value).replace(/"/g, '""')}"`; // ADDED
+    } // ADDED
+
+    function cityColumnDefinition(column) { // ADDED
+        const parts = [quoteSqlIdentifier(column.name), String(column.type || "TEXT")]; // ADDED
+        if (Number(column.pk || 0)) parts.push("PRIMARY KEY"); // ADDED
+        if (Number(column.notnull || 0) && !Number(column.pk || 0)) parts.push("NOT NULL"); // ADDED
+        if (column.dflt_value != null) parts.push(`DEFAULT ${column.dflt_value}`); // ADDED
+        return parts.join(" "); // ADDED
+    } // ADDED
+
+    async function cityHasUniqueNameConstraint() { // ADDED
+        const indexes = await queryAll("PRAGMA index_list(Cities);", []); // ADDED
+        for (const index of indexes) { // ADDED
+            if (!Number(index.unique || 0)) continue; // ADDED
+            const indexName = String(index.name || ""); // ADDED
+            const columns = (await queryAll(`PRAGMA index_info(${quoteSqlIdentifier(indexName)});`, [])).map(row => String(row.name || "")); // ADDED
+            if (columns.length === 1 && columns[0] === "city_name") return true; // ADDED
+        } // ADDED
+        return false; // ADDED
+    } // ADDED
+
+    async function rebuildCitiesWithoutUniqueName() { // ADDED
+        const columns = await queryAll("PRAGMA table_info(Cities);", []); // ADDED
+        const names = columns.map(column => String(column.name || "")).filter(Boolean); // ADDED
+        const quotedNames = names.map(quoteSqlIdentifier).join(", "); // ADDED
+        await execSchemaStatements([ // ADDED
+            "PRAGMA foreign_keys = OFF;", // ADDED
+            `CREATE TABLE Cities_new (${columns.map(cityColumnDefinition).join(", ")});`, // ADDED
+            `INSERT INTO Cities_new (${quotedNames}) SELECT ${quotedNames} FROM Cities;`, // ADDED
+            "DROP TABLE Cities;", // ADDED
+            "ALTER TABLE Cities_new RENAME TO Cities;", // ADDED
+            "PRAGMA foreign_keys = ON;", // ADDED
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_Cities_city_geo_identity ON Cities(lower(trim(city_name)), lower(trim(coalesce(country_name, ''))), lower(trim(coalesce(country_code, ''))), lower(trim(coalesce(region_name, ''))), lower(trim(coalesce(region_code, ''))));", // ADDED
+            "CREATE INDEX IF NOT EXISTS idx_Cities_city_name ON Cities(city_name);" // ADDED
+        ]); // ADDED
+    } // ADDED
+
+    const CITY_GEO_COLUMNS = Object.freeze({ // ADDED
+        country_name: "TEXT", // ADDED
+        country_code: "TEXT", // ADDED
+        region_name: "TEXT", // ADDED
+        region_code: "TEXT" // ADDED
+    }); // ADDED
+    let cityGeoSchemaEnsured = false; // ADDED
+
+    async function ensureCityGeographySchema() { // ADDED
+        if (cityGeoSchemaEnsured) return; // ADDED
+        const existing = new Set((await queryAll("PRAGMA table_info(Cities);", [])).map(row => String(row.name || "").toLowerCase())); // ADDED
+        for (const [column, type] of Object.entries(CITY_GEO_COLUMNS)) { // ADDED
+            if (!existing.has(column.toLowerCase())) await execAll(`ALTER TABLE Cities ADD COLUMN ${column} ${type};`, []); // ADDED
+        } // ADDED
+        if (await cityHasUniqueNameConstraint()) await rebuildCitiesWithoutUniqueName(); // ADDED
+        cityGeoSchemaEnsured = true; // ADDED
+    } // ADDED
+
+    function normalizeCityGeoText(value) { // ADDED
+        return String(value == null ? "" : value).trim(); // ADDED
+    } // ADDED
+
+    function normalizeCityIdentityText(value) { // ADDED
+        return normalizeCityGeoText(value).toLowerCase(); // ADDED
+    } // ADDED
+
+    function cityCountryLabel(city) { // ADDED
+        return normalizeCityGeoText(city && city.country_name) || normalizeCityGeoText(city && city.country_code) || "Uncategorized"; // ADDED
+    } // ADDED
+
+    function cityRegionLabel(city) { // ADDED
+        const name = normalizeCityGeoText(city && city.region_name); // ADDED
+        const code = normalizeCityGeoText(city && city.region_code); // ADDED
+        if (name && code && name.toLowerCase() !== code.toLowerCase()) return `${name} (${code})`; // ADDED
+        return name || code || "Uncategorized"; // ADDED
+    } // ADDED
+
+    function cityDisplayLabel(city) { // ADDED
+        return normalizeCityGeoText(city && city.city_name) || "(unnamed city)"; // ADDED
+    } // ADDED
+
+    function fullCityLabel(city) { // ADDED
+        return `${cityDisplayLabel(city)} - ${cityCountryLabel(city)} / ${cityRegionLabel(city)}`; // ADDED
+    } // ADDED
+
+    function citySearchText(city) { // ADDED
+        return [cityDisplayLabel(city), cityCountryLabel(city), cityRegionLabel(city), normalizeCityGeoText(city && city.country_code), normalizeCityGeoText(city && city.region_code)].join(" ").toLowerCase(); // ADDED
+    } // ADDED
+
+    function sortedCities(cities) { // ADDED
+        return (cities || []).slice().sort((a, b) => { // ADDED
+            const av = [cityCountryLabel(a), cityRegionLabel(a), cityDisplayLabel(a)].join("\u0000").toLowerCase(); // ADDED
+            const bv = [cityCountryLabel(b), cityRegionLabel(b), cityDisplayLabel(b)].join("\u0000").toLowerCase(); // ADDED
+            return av.localeCompare(bv); // ADDED
+        }); // ADDED
+    } // ADDED
+
+    function makeCityTreePicker(cities, initialValue) { // ADDED
+        let cityRows = sortedCities(cities); // ADDED
+        let currentValue = String(initialValue || (cityRows[0] && cityRows[0].city_id || "")); // ADDED
+        let isOpen = false; // ADDED
+        const root = document.createElement("div"); // ADDED
+        root.tabIndex = 0; // ADDED
+        root.style.position = "relative"; // ADDED
+        root.style.flex = "1"; // ADDED
+        const button = document.createElement("button"); // ADDED
+        button.type = "button"; // ADDED
+        button.style.width = "100%"; // ADDED
+        button.style.padding = "6px"; // ADDED
+        button.style.border = "1px solid #bbb"; // ADDED
+        button.style.borderRadius = "6px"; // ADDED
+        button.style.background = "#fff"; // ADDED
+        button.style.textAlign = "left"; // ADDED
+        const panel = document.createElement("div"); // ADDED
+        panel.style.position = "absolute"; // ADDED
+        panel.style.zIndex = "10000"; // ADDED
+        panel.style.left = "0"; // ADDED
+        panel.style.right = "0"; // ADDED
+        panel.style.top = "100%"; // ADDED
+        panel.style.marginTop = "3px"; // ADDED
+        panel.style.padding = "6px"; // ADDED
+        panel.style.border = "1px solid #bbb"; // ADDED
+        panel.style.borderRadius = "6px"; // ADDED
+        panel.style.background = "#fff"; // ADDED
+        panel.style.boxShadow = "0 8px 20px rgba(0,0,0,0.18)"; // ADDED
+        panel.style.display = "none"; // ADDED
+        const search = document.createElement("input"); // ADDED
+        search.type = "search"; // ADDED
+        search.placeholder = "Search city, country, or region"; // ADDED
+        search.style.width = "100%"; // ADDED
+        search.style.marginBottom = "6px"; // ADDED
+        const list = document.createElement("div"); // ADDED
+        list.style.maxHeight = "260px"; // ADDED
+        list.style.overflow = "auto"; // ADDED
+        panel.appendChild(search); // ADDED
+        panel.appendChild(list); // ADDED
+        root.appendChild(button); // ADDED
+        root.appendChild(panel); // ADDED
+
+        function selectedCity() { return cityRows.find(city => String(city.city_id) === currentValue) || null; } // ADDED
+        function updateButton() { button.textContent = selectedCity() ? fullCityLabel(selectedCity()) : "Select a city..."; } // ADDED
+        function closePicker() { isOpen = false; panel.style.display = "none"; } // ADDED
+        function renderHeader(text, level) { // ADDED
+            const header = document.createElement("div"); // ADDED
+            header.textContent = text; // ADDED
+            header.style.fontWeight = level === 1 ? "700" : "600"; // ADDED
+            header.style.margin = level === 1 ? "8px 0 3px" : "5px 0 2px 12px"; // ADDED
+            header.style.color = "#374151"; // ADDED
+            list.appendChild(header); // ADDED
+        } // ADDED
+        function chooseCity(city) { // ADDED
+            currentValue = String(city.city_id); // ADDED
+            updateButton(); // ADDED
+            closePicker(); // ADDED
+            root.dispatchEvent(new Event("change", { bubbles: true })); // ADDED
+        } // ADDED
+        function renderList() { // ADDED
+            const filter = normalizeCityGeoText(search.value).toLowerCase(); // ADDED
+            const visible = cityRows.filter(city => !filter || citySearchText(city).indexOf(filter) >= 0); // ADDED
+            list.innerHTML = ""; // ADDED
+            let lastCountry = null; // ADDED
+            let lastRegion = null; // ADDED
+            if (!visible.length) { // ADDED
+                const empty = document.createElement("div"); // ADDED
+                empty.textContent = "No matching cities"; // ADDED
+                empty.style.color = "#6b7280"; // ADDED
+                empty.style.padding = "6px"; // ADDED
+                list.appendChild(empty); // ADDED
+                return; // ADDED
+            } // ADDED
+            visible.forEach(city => { // ADDED
+                const country = cityCountryLabel(city); // ADDED
+                const region = cityRegionLabel(city); // ADDED
+                if (country !== lastCountry) { renderHeader(country, 1); lastCountry = country; lastRegion = null; } // ADDED
+                if (region !== lastRegion) { renderHeader(region, 2); lastRegion = region; } // ADDED
+                const item = document.createElement("button"); // ADDED
+                item.type = "button"; // ADDED
+                item.textContent = cityDisplayLabel(city); // ADDED
+                item.style.display = "block"; // ADDED
+                item.style.width = "100%"; // ADDED
+                item.style.margin = "1px 0"; // ADDED
+                item.style.padding = "4px 6px 4px 24px"; // ADDED
+                item.style.border = "0"; // ADDED
+                item.style.borderRadius = "4px"; // ADDED
+                item.style.background = String(city.city_id) === currentValue ? "#e5f0ff" : "#fff"; // ADDED
+                item.style.textAlign = "left"; // ADDED
+                item.addEventListener("click", () => chooseCity(city)); // ADDED
+                list.appendChild(item); // ADDED
+            }); // ADDED
+        } // ADDED
+        function openPicker() { isOpen = true; panel.style.display = "block"; renderList(); search.focus(); } // ADDED
+        Object.defineProperty(root, "value", { // ADDED
+            get() { return currentValue; }, // ADDED
+            set(value) { currentValue = String(value || ""); updateButton(); } // ADDED
+        }); // ADDED
+        root.setCities = function (nextCities, selectedValue) { // ADDED
+            cityRows = sortedCities(nextCities); // ADDED
+            currentValue = String(selectedValue || (cityRows[0] && cityRows[0].city_id || "")); // ADDED
+            updateButton(); // ADDED
+            renderList(); // ADDED
+        }; // ADDED
+        button.addEventListener("click", () => { isOpen ? closePicker() : openPicker(); }); // ADDED
+        search.addEventListener("input", renderList); // ADDED
+        search.addEventListener("keydown", evt => { // ADDED
+            if (evt.key === "Escape") { evt.preventDefault(); closePicker(); button.focus(); } // ADDED
+            if (evt.key === "Enter") { // ADDED
+                const filter = normalizeCityGeoText(search.value).toLowerCase(); // ADDED
+                const first = cityRows.find(city => !filter || citySearchText(city).indexOf(filter) >= 0); // ADDED
+                if (first) { evt.preventDefault(); chooseCity(first); } // ADDED
+            } // ADDED
+        }); // ADDED
+        document.addEventListener("mousedown", evt => { if (isOpen && !root.contains(evt.target)) closePicker(); }); // ADDED
+        updateButton(); // ADDED
+        renderList(); // ADDED
+        return root; // ADDED
+    } // ADDED
+
     async function loadCities() {
+        await ensureCityGeographySchema(); // ADDED
         const sql = `
         SELECT *
         FROM Cities
@@ -280,19 +512,30 @@ Draw.loadPlugin(function (ui) {
     }
 
     async function loadCityById(cityId) { // ADDED
+        await ensureCityGeographySchema(); // ADDED
         const id = Number(cityId); // ADDED
         if (!Number.isFinite(id)) return null; // ADDED
         const rows = await queryAll("SELECT * FROM Cities WHERE city_id = ? LIMIT 1;", [id]); // ADDED
         return rows[0] || null; // ADDED
     } // ADDED
 
-    async function cityNameExists(cityName, excludeCityId) { // ADDED
+    async function cityIdentityExists(row, excludeCityId) { // CHANGED
+        await ensureCityGeographySchema(); // ADDED
+        const cityName = normalizeCityGeoText(row.city_name); // ADDED
         const rows = await queryAll( // ADDED
-            "SELECT city_id FROM Cities WHERE LOWER(TRIM(city_name)) = LOWER(TRIM(?)) AND (? IS NULL OR city_id <> ?) LIMIT 1;", // ADDED
+            "SELECT city_id, city_name, country_name, country_code, region_name, region_code FROM Cities WHERE LOWER(TRIM(city_name)) = LOWER(TRIM(?)) AND (? IS NULL OR city_id <> ?);", // CHANGED
             [cityName, excludeCityId == null ? null : Number(excludeCityId), excludeCityId == null ? null : Number(excludeCityId)] // ADDED
         ); // ADDED
-        return rows.length > 0; // ADDED
-    } // ADDED
+        const countryName = normalizeCityIdentityText(row.country_name); // ADDED
+        const countryCode = normalizeCityIdentityText(row.country_code); // ADDED
+        const regionName = normalizeCityIdentityText(row.region_name); // ADDED
+        const regionCode = normalizeCityIdentityText(row.region_code); // ADDED
+        return rows.some(existing => { // ADDED
+            const sameCountry = (countryCode && normalizeCityIdentityText(existing.country_code) === countryCode) || (countryName && normalizeCityIdentityText(existing.country_name) === countryName); // ADDED
+            const sameRegion = (regionCode && normalizeCityIdentityText(existing.region_code) === regionCode) || (regionName && normalizeCityIdentityText(existing.region_name) === regionName); // ADDED
+            return sameCountry && sameRegion; // ADDED
+        }); // ADDED
+    } // CHANGED
 
     // ------------------- Layering (garden beds, other, tiler groups) ----------------
 
@@ -1167,11 +1410,16 @@ Draw.loadPlugin(function (ui) {
     }
 
     async function saveCityRecord(row, existingCityId = null) { // ADDED
+        await ensureCityGeographySchema(); // ADDED
         const cityId = Number(row.city_id); // ADDED
         const cityName = String(row.city_name || "").trim(); // ADDED
+        const countryName = normalizeCityGeoText(row.country_name); // ADDED
+        const regionName = normalizeCityGeoText(row.region_name); // ADDED
         if (!Number.isInteger(cityId) || cityId <= 0) throw new Error("City ID is required and must be a positive integer."); // ADDED
         if (!cityName) throw new Error("City name is required."); // ADDED
-        if (await cityNameExists(cityName, existingCityId == null ? null : cityId)) throw new Error("A city with that name already exists."); // ADDED
+        if (!countryName) throw new Error("Country is required."); // ADDED
+        if (!regionName) throw new Error("Region/state is required. Use Unspecified when no region applies."); // ADDED
+        if (await cityIdentityExists(row, existingCityId == null ? null : cityId)) throw new Error("A city with that city/country/region already exists."); // CHANGED
         const lat = finiteNumberOrNull(row.latitude); // ADDED
         const lon = finiteNumberOrNull(row.longitude); // ADDED
         if (lat == null || lat < -66.5 || lat > 66.5) throw new Error("Latitude is required and must be between -66.5 and 66.5."); // ADDED
@@ -1185,7 +1433,7 @@ Draw.loadPlugin(function (ui) {
             } // ADDED
         } // ADDED
         const columns = [ // ADDED
-            "city_id", "city_name", "latitude", "longitude", "timezone", "gdd_annual", "gdd_base_c", // ADDED
+            "city_id", "city_name", "country_name", "country_code", "region_name", "region_code", "latitude", "longitude", "timezone", "gdd_annual", "gdd_base_c", // CHANGED
             "last_spring_frost_doy", "last_spring_frost_p90_doy", "last_spring_frost_p50_doy", "last_spring_frost_p10_doy", // ADDED
             "first_fall_frost_doy", "first_fall_frost_p90_doy", "first_fall_frost_p50_doy", "first_fall_frost_p10_doy" // ADDED
         ]; // ADDED
@@ -1267,7 +1515,7 @@ Draw.loadPlugin(function (ui) {
         const newBtn = mxUtils.button("New City", () => { // ADDED
             const maxId = cities.reduce((max, city) => Math.max(max, Number(city.city_id) || 0), 0); // ADDED
             editingExistingId = null; // ADDED
-            fillForm({ city_id: maxId + 1, city_name: "", timezone: "America/Los_Angeles" }, false); // ADDED
+            fillForm({ city_id: maxId + 1, city_name: "", country_name: "", region_name: "Unspecified", timezone: "America/Los_Angeles" }, false); // CHANGED
         }); // ADDED
         setTooltip(newBtn, "Create a scheduler-ready city record with required climate fields."); // ADDED
         pickerRow.appendChild(cityPicker); // ADDED
@@ -1275,7 +1523,11 @@ Draw.loadPlugin(function (ui) {
         div.appendChild(pickerRow); // ADDED
 
         const idInput = field("City ID:", input("number"), "Stable city_id used by diagrams; it cannot be changed for existing cities."); // ADDED
-        const nameInput = field("City name:", input("text"), "Required display name. Names must be unique."); // ADDED
+        const nameInput = field("City name:", input("text"), "Required city-only display name, for example Vancouver."); // CHANGED
+        const countryNameInput = field("Country:", input("text"), "Required country name, for example Canada."); // ADDED
+        const countryCodeInput = field("Country code:", input("text"), "Optional ISO-style country code, for example CA."); // ADDED
+        const regionNameInput = field("Region/state:", input("text"), "Required state, province, or region name. Use Unspecified when no region applies."); // ADDED
+        const regionCodeInput = field("Region code:", input("text"), "Optional compact state/province code, for example BC."); // ADDED
         const latInput = field("Latitude:", input("number"), "Required decimal degrees, -66.5 to 66.5, used for photoperiod checks."); // ADDED
         const lonInput = field("Longitude:", input("number"), "Required decimal degrees, -180 to 180."); // ADDED
         const tzInput = field("Timezone:", input("text"), "Required IANA timezone, for example America/Los_Angeles."); // ADDED
@@ -1322,10 +1574,10 @@ Draw.loadPlugin(function (ui) {
 
         function refreshPicker(selectedId) { // ADDED
             while (cityPicker.firstChild) cityPicker.removeChild(cityPicker.firstChild); // ADDED
-            cities.forEach(city => { // ADDED
+            sortedCities(cities).forEach(city => { // CHANGED
                 const opt = document.createElement("option"); // ADDED
                 opt.value = String(city.city_id); // ADDED
-                opt.textContent = `${city.city_name || "(unnamed)"} (#${city.city_id})`; // ADDED
+                opt.textContent = `${fullCityLabel(city)} (#${city.city_id})`; // CHANGED
                 cityPicker.appendChild(opt); // ADDED
             }); // ADDED
             if (selectedId != null) cityPicker.value = String(selectedId); // ADDED
@@ -1337,6 +1589,10 @@ Draw.loadPlugin(function (ui) {
             idInput.value = current.city_id || ""; // ADDED
             idInput.disabled = !!existing; // ADDED
             nameInput.value = current.city_name || ""; // ADDED
+            countryNameInput.value = current.country_name || ""; // ADDED
+            countryCodeInput.value = current.country_code || ""; // ADDED
+            regionNameInput.value = current.region_name || ""; // ADDED
+            regionCodeInput.value = current.region_code || ""; // ADDED
             latInput.value = current.latitude ?? ""; // ADDED
             lonInput.value = current.longitude ?? ""; // ADDED
             tzInput.value = current.timezone || ""; // ADDED
@@ -1371,6 +1627,10 @@ Draw.loadPlugin(function (ui) {
             const row = { // ADDED
                 city_id: Number(idInput.value), // ADDED
                 city_name: String(nameInput.value || "").trim(), // ADDED
+                country_name: String(countryNameInput.value || "").trim(), // ADDED
+                country_code: String(countryCodeInput.value || "").trim(), // ADDED
+                region_name: String(regionNameInput.value || "").trim(), // ADDED
+                region_code: String(regionCodeInput.value || "").trim(), // ADDED
                 latitude: finiteNumberOrNull(latInput.value), // ADDED
                 longitude: finiteNumberOrNull(lonInput.value), // ADDED
                 timezone: String(tzInput.value || "").trim(), // ADDED
@@ -1490,36 +1750,16 @@ Draw.loadPlugin(function (ui) {
         row("Garden name:", gardenNameInput); // ADDED
 
         // City (mandatory)
-        const citySel = document.createElement("select");
-        citySel.style.flex = "1";
+        const citySel = makeCityTreePicker(cities, curCityId); // CHANGED
 
         function selectedCityRow() { // ADDED
             return cities.find(city => String(city.city_id) === String(citySel.value)) || null; // ADDED
         } // ADDED
 
         function refreshCityOptions(selectedCityId, selectedCityName) { // ADDED
-            while (citySel.firstChild) citySel.removeChild(citySel.firstChild); // ADDED
-            const cityPlaceholder = document.createElement("option"); // ADDED
-            cityPlaceholder.value = ""; // ADDED
-            cityPlaceholder.textContent = "Select a city..."; // ADDED
-            cityPlaceholder.disabled = true; // ADDED
-            citySel.appendChild(cityPlaceholder); // ADDED
-            cities.forEach((city) => { // ADDED
-                const o = document.createElement("option"); // ADDED
-                o.value = String(city.city_id); // ADDED
-                o.textContent = city.city_name; // ADDED
-                if ((selectedCityId && String(city.city_id) === String(selectedCityId)) || (!selectedCityId && city.city_name === selectedCityName)) o.selected = true; // ADDED
-                citySel.appendChild(o); // ADDED
-            }); // ADDED
-            if (!citySel.value && citySel.options.length > 1) citySel.selectedIndex = 1; // ADDED
+            const selected = selectedCityId || (cities.find(city => city.city_name === selectedCityName)?.city_id) || ""; // CHANGED
+            citySel.setCities(cities, selected); // CHANGED
         } // ADDED
-
-        const cityPlaceholder = document.createElement("option");
-        cityPlaceholder.value = "";
-        cityPlaceholder.textContent = "Select a city…";
-        cityPlaceholder.disabled = true;
-        cityPlaceholder.selected = !curCity;
-        citySel.appendChild(cityPlaceholder);
 
         refreshCityOptions(curCityId, curCity); // ADDED
         const cityControl = document.createElement("div"); // ADDED

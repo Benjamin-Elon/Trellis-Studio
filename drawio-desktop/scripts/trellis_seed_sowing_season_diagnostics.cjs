@@ -11,12 +11,14 @@ const DEFAULT_TOLERANCE_DAYS = 14;
 function runDiagnostics(options = {}) {
     const projectRoot = options.projectRoot || PROJECT_ROOT;
     const dbPath = path.resolve(options.dbPath || loadConfiguredDbPath(projectRoot) || DEFAULT_DB_PATH);
+    const referencesPath = options.referencesPath ? path.resolve(options.referencesPath) : null;
     const year = Number(options.year || new Date().getFullYear());
     const toleranceDays = Number(options.toleranceDays ?? DEFAULT_TOLERANCE_DAYS);
     const hooks = options.hooks || loadSchedulerHooks(projectRoot);
     const report = {
         ok: true,
         db_path: dbPath,
+        references_path: referencesPath,
         year,
         tolerance_days: toleranceDays,
         summary: {
@@ -32,14 +34,19 @@ function runDiagnostics(options = {}) {
 
     let db;
     try {
-        db = openDatabase(dbPath, { readonly: true });
-        if (!tableExists(db, 'PlantingWindowReferences')) {
-            report.ok = false;
-            report.errors.push('PlantingWindowReferences table is missing; apply seeder migrations before diagnostics.');
-            report.summary.setup_errors = report.errors.length;
-            return report;
+        let references;
+        if (referencesPath) {
+            references = loadReferenceRowsFromJson(referencesPath);
+        } else {
+            db = openDatabase(dbPath, { readonly: true });
+            if (!tableExists(db, 'PlantingWindowReferences')) {
+                report.ok = false;
+                report.errors.push('PlantingWindowReferences table is missing; apply seeder migrations before diagnostics.');
+                report.summary.setup_errors = report.errors.length;
+                return report;
+            }
+            references = loadReferenceRows(db);
         }
-        const references = loadReferenceRows(db);
         report.summary.references = references.length;
         for (const reference of references) {
             const validationErrors = validateReference(reference);
@@ -114,6 +121,32 @@ function loadReferenceRows(db) {
         ...reference,
         plant: reference.plant_id == null ? null : db.prepare('SELECT * FROM Plants WHERE plant_id = ?').get(reference.plant_id),
         city: reference.city_id == null ? null : db.prepare('SELECT * FROM Cities WHERE city_id = ?').get(reference.city_id)
+    }));
+}
+
+function loadReferenceRowsFromJson(referencesPath) {
+    const parsed = JSON.parse(fs.readFileSync(referencesPath, 'utf8'));
+    const rows = Array.isArray(parsed) ? parsed : (parsed.references || []);
+    return rows.map((row, index) => ({
+        reference_id: row.reference_id ?? `artifact-${index + 1}`,
+        plant_id: row.plant_id ?? row.plant?.plant_id ?? null,
+        city_id: row.city_id ?? row.city?.city_id ?? null,
+        method_id: row.method_id,
+        stage: row.stage,
+        window_label: row.window_label,
+        start_mm_dd: row.start_mm_dd,
+        end_mm_dd: row.end_mm_dd,
+        start_doy: row.start_doy,
+        end_doy: row.end_doy,
+        is_cross_year: row.is_cross_year ?? 0,
+        confidence: row.confidence,
+        reference_summary: row.summary || row.reference_summary || '',
+        plant_name: row.plant_name || row.plant?.plant_name || '',
+        city_name: row.city_name || row.city?.city_name || '',
+        method_category_id: row.method_category_id || row.method?.method_category_id || null,
+        method_name: row.method_name || row.method?.method_name || row.method_id,
+        plant: row.plant || null,
+        city: row.city || null
     }));
 }
 
@@ -345,6 +378,7 @@ function parseArgs(argv) {
         const item = argv[index];
         if (item === '--db') args.dbPath = argv[++index];
         else if (item === '--out') args.outPath = argv[++index];
+        else if (item === '--references') args.referencesPath = argv[++index];
         else if (item === '--year') args.year = Number(argv[++index]);
         else if (item === '--tolerance-days') args.toleranceDays = Number(argv[++index]);
         else if (item === '--help' || item === '-h') args.help = true;
@@ -354,7 +388,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-    console.log('Usage: node ./scripts/trellis_seed_sowing_season_diagnostics.cjs [--db path] [--out path] [--year 2026] [--tolerance-days 14]');
+    console.log('Usage: node ./scripts/trellis_seed_sowing_season_diagnostics.cjs [--db path] [--references path] [--out path] [--year 2026] [--tolerance-days 14]');
 }
 
 function main() {
@@ -386,6 +420,7 @@ module.exports = {
     loadSchedulerHooks,
     compareReferenceToScheduler,
     computeSchedulerWindow,
+    loadReferenceRowsFromJson,
     mmDdToDoy,
     openDatabase
 };
