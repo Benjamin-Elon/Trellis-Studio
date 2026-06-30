@@ -2208,18 +2208,16 @@ Draw.loadPlugin(function (ui) {
             const panelHeight = entry.panel.offsetHeight || 32; // CHANGE
             const visibleRight = (host.scrollLeft || 0) + (host.clientWidth || 0); // CHANGE
             const visibleLeft = host.scrollLeft || 0; // CHANGE
-            const visibleTop = host.scrollTop || 0; // CHANGE
-            const visibleBottom = visibleTop + (host.clientHeight || 0); // CHANGE
-            let left = sourceBounds.x + sourceBounds.w + PANEL_GAP + PANEL_SIDE_OFFSET; // CHANGE
+            const rightLeft = sourceBounds.x + sourceBounds.w + PANEL_GAP + PANEL_SIDE_OFFSET; // CHANGE
+            const leftLeft = sourceBounds.x - PANEL_GAP - PANEL_SIDE_OFFSET - PANEL_WIDTH; // CHANGE
+            const leftFits = leftLeft >= visibleLeft + 4 && leftLeft + PANEL_WIDTH <= visibleRight - 8; // CHANGE
+            let left = rightLeft; // CHANGE
 
-            if (visibleRight && left + PANEL_WIDTH > visibleRight - 8) { // CHANGE
-                left = sourceBounds.x - PANEL_GAP - PANEL_SIDE_OFFSET - PANEL_WIDTH; // CHANGE
+            if (visibleRight && rightLeft + PANEL_WIDTH > visibleRight - 8 && leftFits) { // CHANGE
+                left = leftLeft; // CHANGE
             } // CHANGE
 
-            let top = sourceBounds.y + sourceBounds.h / 2 - panelHeight / 2; // CHANGE
-            if (visibleBottom) top = Math.min(top, visibleBottom - panelHeight - 4); // CHANGE
-            top = Math.max(top, visibleTop + 4); // CHANGE
-            left = Math.max(left, visibleLeft + 4); // CHANGE
+            const top = sourceBounds.y + sourceBounds.h / 2 - panelHeight / 2; // CHANGE
 
             entry.panelLeft = left; // CHANGE
             entry.panelTop = top; // CHANGE
