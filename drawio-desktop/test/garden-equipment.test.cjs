@@ -354,14 +354,29 @@ test("loaded crop and bed checklists drop unmatched legacy tokens on save", asyn
         plantOptions: [{ id: "10", name: "Tomato", annual: 1, biennial: 0, perennial: 0 }] // NEW
     }); // NEW
     api.writeEquipmentInventory(moduleCell, [{ // NEW
-        id: "eq_legacy", name: "Legacy Tool", category: "other", capabilities: [], relevantTaskTypes: [], relevantCropIds: ["10", "missing_crop"], relevantBedConditions: ["sunExposure:full_sun", "legacy_condition"], efficiencyEffects: [] // NEW
+        id: "eq_legacy", name: "Legacy Tool", category: "other", capabilities: [], relevantTaskTypes: [], relevantCropIds: ["10", "missing_crop"], relevantBedConditions: ["sunExposure:full_sun", "seasonExtension:greenhouse", "cropProtection:shade_cloth", "legacy_condition"], efficiencyEffects: [] // CHANGE
     }]); // NEW
     api.openDialog(moduleCell); // NEW
     await flushPromises(); // NEW
     clickButton(document, "Save"); // NEW
     const saved = api.readEquipmentInventory(moduleCell)[0]; // NEW
     assert.deepEqual(Array.from(saved.relevantCropIds), ["10"]); // CHANGE
-    assert.deepEqual(Array.from(saved.relevantBedConditions), ["sunExposure:full_sun"]); // CHANGE
+    assert.deepEqual(Array.from(saved.relevantBedConditions), ["sunExposure:full_sun", "seasonExtension:greenhouse", "cropProtection:shade_cloth"]); // CHANGE
+}); // NEW
+
+test("fallback bed condition groups include greenhouse infrastructure options", () => { // NEW
+    const { api, moduleCell, document } = loadPlugin(); // NEW
+    api.writeEquipmentInventory(moduleCell, [{ id: "eq_greenhouse", name: "Greenhouse Tool", category: "other", capabilities: [], relevantTaskTypes: [], relevantCropIds: [], relevantBedConditions: ["seasonExtension:greenhouse", "cropProtection:shade_cloth"], efficiencyEffects: [] }]); // NEW
+    api.openDialog(moduleCell); // NEW
+    clickText(document, ".trellis-eq-editor-tab", "Capabilities & Tasks"); // NEW
+    const field = fieldElement(document, "Relevant Bed Conditions"); // NEW
+    assert.match(field.textContent, /Season extension/); // NEW
+    assert.match(field.textContent, /Greenhouse/); // NEW
+    assert.match(field.textContent, /Heated greenhouse/); // NEW
+    assert.match(field.textContent, /Crop protection/); // NEW
+    assert.match(field.textContent, /Shade cloth/); // NEW
+    clickButton(document, "Save"); // NEW
+    assert.deepEqual(Array.from(api.readEquipmentInventory(moduleCell)[0].relevantBedConditions), ["seasonExtension:greenhouse", "cropProtection:shade_cloth"]); // NEW
 }); // NEW
 
 test("crop fallback textarea preserves unmatched crop ids when catalog is unavailable", () => { // NEW

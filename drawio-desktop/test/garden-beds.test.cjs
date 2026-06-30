@@ -171,6 +171,8 @@ test("bed conditions persist, mirror, and clear safely", () => { // CHANGE
     assert.equal(bed.getAttribute("sun_exposure"), "part_shade"); // NEW
     assert.equal(bed.getAttribute("irrigation"), "drip"); // NEW
     assert.equal(bed.getAttribute("trellis"), "available"); // NEW
+    assert.equal(bed.getAttribute("season_extension"), "unknown"); // NEW
+    assert.equal(bed.getAttribute("crop_protection"), "unknown"); // NEW
     assert.deepEqual(stored.tags, ["near_path"]); // NEW
 
     const effective = api.getDisplayBedConditions(bed); // CHANGE
@@ -178,10 +180,14 @@ test("bed conditions persist, mirror, and clear safely", () => { // CHANGE
     assert.equal(effective.soilTexture, "unknown"); // CHANGE
     assert.equal(effective.irrigation, "drip"); // NEW
     assert.equal(effective.trellis, "available"); // NEW
+    assert.equal(effective.seasonExtension, "unknown"); // NEW
+    assert.equal(effective.cropProtection, "unknown"); // NEW
 
     api.clearBedConditions(bed); // NEW
     assert.equal(bed.getAttribute("bed_conditions_json"), null); // NEW
     assert.equal(bed.getAttribute("sun_exposure"), null); // NEW
+    assert.equal(bed.getAttribute("season_extension"), null); // NEW
+    assert.equal(bed.getAttribute("crop_protection"), null); // NEW
     assert.equal(bed.getAttribute("label"), "Bed 1"); // NEW
 }); // NEW
 
@@ -282,7 +288,7 @@ test("selected bed overlay opens the bed conditions editor", () => { // NEW
     assert.deepEqual(getDialogButtonLabels(ui), ["Copy", "Paste", "Clear", "Cancel", "Save"]); // CHANGE
 }); // NEW
 
-test("preset identity persists only for matching bed presets", () => { // NEW
+test("preset identity persists as selected baseline until cleared", () => { // CHANGE
     const { api, bed, ui } = loadPlugin(); // CHANGE
 
     api._test.showConditionEditorDialog(bed); // NEW
@@ -295,15 +301,55 @@ test("preset identity persists only for matching bed presets", () => { // NEW
     ui.lastDialog.querySelectorAll("select")[1].value = "shade"; // NEW
     getDialogButton(ui, "Save").click(); // NEW
     stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // NEW
+    assert.equal(stored.presetKey, "sunny_vegetable"); // CHANGE
+
+    api._test.showConditionEditorDialog(bed); // NEW
+    assert.equal(ui.lastDialog.querySelector("select").value, "sunny_vegetable"); // NEW
+    ui.lastDialog.querySelector("select").value = ""; // NEW
+    getDialogButton(ui, "Save").click(); // NEW
+    stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // NEW
     assert.equal(stored.presetKey, undefined); // NEW
 
     api._test.showConditionEditorDialog(bed); // NEW
     chooseDialogPreset(ui, "sunny_vegetable"); // NEW
-    ui.lastDialog.querySelectorAll("select")[8].value = "sheltered"; // NEW
+    ui.lastDialog.querySelectorAll("select")[10].value = "sheltered"; // CHANGE
     getDialogButton(ui, "Save").click(); // NEW
     stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // NEW
     assert.equal(stored.presetKey, "sunny_vegetable"); // NEW
     assert.equal(stored.windExposure, "sheltered"); // NEW
+}); // NEW
+
+test("greenhouse preset persists new infrastructure fields and allows extra protection", () => { // NEW
+    const { api, bed, ui } = loadPlugin(); // NEW
+
+    api._test.showConditionEditorDialog(bed); // NEW
+    chooseDialogPreset(ui, "greenhouse"); // NEW
+    getDialogButton(ui, "Save").click(); // NEW
+    let stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // NEW
+    assert.equal(stored.presetKey, "greenhouse"); // NEW
+    assert.equal(stored.seasonExtension, "greenhouse"); // NEW
+    assert.equal(stored.cropProtection, "unknown"); // NEW
+    assert.equal(stored.bedUse, "seed_starting"); // NEW
+    assert.equal(bed.getAttribute("season_extension"), "greenhouse"); // NEW
+    assert.equal(bed.getAttribute("crop_protection"), "unknown"); // NEW
+
+    api._test.showConditionEditorDialog(bed); // NEW
+    ui.lastDialog.querySelectorAll("select")[9].value = "shade_cloth"; // NEW
+    getDialogButton(ui, "Save").click(); // NEW
+    stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // NEW
+    assert.equal(stored.presetKey, "greenhouse"); // NEW
+    assert.equal(stored.cropProtection, "shade_cloth"); // NEW
+}); // NEW
+
+test("condition option groups expose season extension and crop protection", () => { // NEW
+    const { api } = loadPlugin(); // NEW
+    const groups = api.listConditionOptionGroups(); // NEW
+    const season = groups.find(group => group.id === "seasonExtension"); // NEW
+    const protection = groups.find(group => group.id === "cropProtection"); // NEW
+    assert.ok(season, "missing season extension group"); // NEW
+    assert.ok(protection, "missing crop protection group"); // NEW
+    assert.deepEqual(plainRows(season.options.map(option => option.id)), ["seasonExtension:none", "seasonExtension:row_cover", "seasonExtension:low_tunnel", "seasonExtension:cold_frame", "seasonExtension:greenhouse", "seasonExtension:high_tunnel", "seasonExtension:heated_greenhouse"]); // CHANGE
+    assert.deepEqual(plainRows(protection.options.map(option => option.id)), ["cropProtection:none", "cropProtection:shade_cloth", "cropProtection:insect_netting", "cropProtection:bird_netting", "cropProtection:hail_netting"]); // CHANGE
 }); // NEW
 
 test("overlay summary shows presets, extras, and set values without unknowns", () => { // NEW
@@ -318,13 +364,35 @@ test("overlay summary shows presets, extras, and set values without unknowns", (
         fertility: "high", // NEW
         irrigation: "manual", // NEW
         trellis: "none", // NEW
+        seasonExtension: "none", // NEW
+        cropProtection: "shade_cloth", // NEW
         bedUse: "annuals", // NEW
         windExposure: "exposed" // NEW
     })); // NEW
+    assert.deepEqual(plainRows(rows), [ // CHANGE
+        { label: "Preset", value: "Sunny vegetable bed" }, // NEW
+        { type: "heading", label: "Additional" }, // NEW
+        { label: "Irrigation", value: "Manual" }, // NEW
+        { label: "Crop protection", value: "Shade cloth" }, // NEW
+        { label: "Wind exposure", value: "Exposed" } // NEW
+    ]); // NEW
+
+    rows = api._test.buildOverlayRows(api.writeBedConditions(bed, { // NEW
+        presetKey: "sunny_vegetable", // NEW
+        sunExposure: "shade", // NEW
+        soilMoisture: "moderate", // NEW
+        drainage: "normal", // NEW
+        soilTexture: "loamy", // NEW
+        fertility: "high", // NEW
+        irrigation: "manual", // NEW
+        bedUse: "annuals" // NEW
+    })); // NEW
     assert.deepEqual(plainRows(rows), [ // NEW
         { label: "Preset", value: "Sunny vegetable bed" }, // NEW
-        { label: "Irrigation", value: "Manual" }, // NEW
-        { label: "Wind exposure", value: "Exposed" } // NEW
+        { type: "heading", label: "Preset overrides" }, // NEW
+        { label: "Sun exposure", value: "Shade" }, // NEW
+        { type: "heading", label: "Additional" }, // NEW
+        { label: "Irrigation", value: "Manual" } // NEW
     ]); // NEW
 
     rows = api._test.buildOverlayRows(api.writeBedConditions(bed, { // NEW
@@ -332,6 +400,8 @@ test("overlay summary shows presets, extras, and set values without unknowns", (
         soilMoisture: "unknown", // NEW
         irrigation: "drip", // NEW
         trellis: "none", // NEW
+        seasonExtension: "none", // NEW
+        cropProtection: "none", // NEW
         bedUse: "perennials" // NEW
     })); // NEW
     assert.deepEqual(plainRows(rows), [ // NEW

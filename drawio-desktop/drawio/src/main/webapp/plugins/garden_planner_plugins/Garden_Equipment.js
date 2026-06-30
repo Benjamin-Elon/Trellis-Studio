@@ -444,6 +444,8 @@ Draw.loadPlugin(function (ui) {
         conditionGroup("fertility", "Fertility", [["low", "Low"], ["medium", "Medium"], ["high", "High"]]), // NEW
         conditionGroup("irrigation", "Irrigation", [["none", "None"], ["manual", "Manual"], ["drip", "Drip"], ["sprinkler", "Sprinkler"], ["self_watering", "Self watering"]]), // NEW
         conditionGroup("trellis", "Trellis", [["none", "None"], ["available", "Available"], ["required_structure", "Structure required"]]), // NEW
+        conditionGroup("seasonExtension", "Season extension", [["none", "None"], ["row_cover", "Row cover"], ["low_tunnel", "Low tunnel"], ["cold_frame", "Cold frame"], ["greenhouse", "Greenhouse"], ["high_tunnel", "High tunnel"], ["heated_greenhouse", "Heated greenhouse"]]), // NEW
+        conditionGroup("cropProtection", "Crop protection", [["none", "None"], ["shade_cloth", "Shade cloth"], ["insect_netting", "Insect netting"], ["bird_netting", "Bird netting"], ["hail_netting", "Hail netting"]]), // NEW
         conditionGroup("windExposure", "Wind exposure", [["sheltered", "Sheltered"], ["moderate", "Moderate"], ["exposed", "Exposed"]]), // NEW
         conditionGroup("frostRisk", "Frost risk", [["none", "None"], ["low", "Low"], ["medium", "Medium"], ["high", "High"]]), // NEW
         conditionGroup("bedUse", "Bed use", [["annuals", "Annuals"], ["perennials", "Perennials"], ["nursery", "Nursery"], ["seed_starting", "Seed starting"], ["mixed", "Mixed"], ["resting", "Resting"]]) // NEW

@@ -24,6 +24,8 @@ Draw.loadPlugin(function (ui) { // NEW
         fertility: "fertility", // NEW
         irrigation: "irrigation", // NEW
         trellis: "trellis", // NEW
+        seasonExtension: "season_extension", // NEW
+        cropProtection: "crop_protection", // NEW
         bedUse: "bed_use", // NEW
         windExposure: "wind_exposure", // NEW
         frostRisk: "frost_risk", // CHANGE
@@ -37,6 +39,8 @@ Draw.loadPlugin(function (ui) { // NEW
         { key: "fertility", label: "Fertility", values: ["unknown", "low", "medium", "high"], fallback: "unknown" }, // NEW
         { key: "irrigation", label: "Irrigation", values: ["unknown", "none", "manual", "drip", "sprinkler", "self_watering"], fallback: "unknown" }, // NEW
         { key: "trellis", label: "Trellis", values: ["unknown", "none", "available", "required_structure"], fallback: "unknown" }, // NEW
+        { key: "seasonExtension", label: "Season extension", values: ["unknown", "none", "row_cover", "low_tunnel", "cold_frame", "greenhouse", "high_tunnel", "heated_greenhouse"], fallback: "unknown" }, // NEW
+        { key: "cropProtection", label: "Crop protection", values: ["unknown", "none", "shade_cloth", "insect_netting", "bird_netting", "hail_netting"], fallback: "unknown" }, // NEW
         { key: "windExposure", label: "Wind exposure", values: ["unknown", "sheltered", "moderate", "exposed"], fallback: "unknown" }, // NEW
         { key: "frostRisk", label: "Frost risk", values: ["unknown", "none", "low", "medium", "high"], fallback: "unknown" }, // NEW
         { key: "bedUse", label: "Bed use", values: ["unknown", "annuals", "perennials", "nursery", "seed_starting", "mixed", "resting"], fallback: "unknown" } // NEW
@@ -75,6 +79,16 @@ Draw.loadPlugin(function (ui) { // NEW
         self_watering: "Self watering", // NEW
         available: "Available", // NEW
         required_structure: "Structure required", // NEW
+        row_cover: "Row cover", // NEW
+        low_tunnel: "Low tunnel", // NEW
+        cold_frame: "Cold frame", // NEW
+        greenhouse: "Greenhouse", // NEW
+        high_tunnel: "High tunnel", // NEW
+        heated_greenhouse: "Heated greenhouse", // NEW
+        shade_cloth: "Shade cloth", // NEW
+        insect_netting: "Insect netting", // NEW
+        bird_netting: "Bird netting", // NEW
+        hail_netting: "Hail netting", // NEW
         sheltered: "Sheltered", // NEW
         exposed: "Exposed", // NEW
         annuals: "Annuals", // NEW
@@ -91,6 +105,7 @@ Draw.loadPlugin(function (ui) { // NEW
         dry_herb: { label: "Dry herb bed", values: { sunExposure: "full_sun", soilMoisture: "dry", drainage: "fast", soilTexture: "sandy", fertility: "low", irrigation: "unknown", trellis: "unknown", bedUse: "perennials" } }, // NEW
         wet_moist: { label: "Wet/moist bed", values: { sunExposure: "part_sun", soilMoisture: "moist", drainage: "slow", fertility: "medium", irrigation: "none", trellis: "unknown", bedUse: "unknown" } }, // NEW
         nursery: { label: "Nursery bed", values: { sunExposure: "part_sun", soilMoisture: "moderate", drainage: "normal", fertility: "medium", irrigation: "unknown", trellis: "unknown", bedUse: "nursery" } }, // NEW
+        greenhouse: { label: "Greenhouse bed", values: { sunExposure: "full_sun", soilMoisture: "moderate", drainage: "normal", soilTexture: "amended", fertility: "high", irrigation: "drip", trellis: "unknown", seasonExtension: "greenhouse", cropProtection: "unknown", windExposure: "sheltered", frostRisk: "low", bedUse: "seed_starting" } }, // NEW
         perennial: { label: "Perennial bed", values: { sunExposure: "full_sun", soilMoisture: "moderate", drainage: "normal", fertility: "medium", irrigation: "unknown", trellis: "unknown", bedUse: "perennials" } }, // NEW
         resting: { label: "Resting bed", values: { sunExposure: "unknown", soilMoisture: "unknown", drainage: "unknown", fertility: "low", irrigation: "unknown", trellis: "unknown", bedUse: "resting" } } // NEW
     }; // NEW
@@ -199,7 +214,7 @@ Draw.loadPlugin(function (ui) { // NEW
             out[field.key] = normalizeEnumValue(field.key, source[field.key]); // NEW
         }); // NEW
         const presetKey = String(source.presetKey || "").trim(); // NEW
-        if (options && options.allowPreset && doesProfileMatchPreset(out, presetKey)) out.presetKey = presetKey; // NEW
+        if (options && options.allowPreset && isValidPresetKey(presetKey)) out.presetKey = presetKey; // CHANGE
         out.notes = String(source.notes || "").trim(); // NEW
         out.tags = normalizeTags(source.tags); // NEW
         out.lastUpdated = String(source.lastUpdated || (options && options.keepExistingDate ? "" : nowIso())); // NEW
@@ -263,7 +278,7 @@ Draw.loadPlugin(function (ui) { // NEW
         }); // NEW
         if (bedRecord.profile.notes) out.notes = bedRecord.profile.notes; // NEW
         if (bedRecord.profile.tags && bedRecord.profile.tags.length) out.tags = bedRecord.profile.tags.slice(); // NEW
-        if (bedRecord.profile.presetKey && doesProfileMatchPreset(bedRecord.profile, bedRecord.profile.presetKey)) out.presetKey = bedRecord.profile.presetKey; // NEW
+        if (isValidPresetKey(bedRecord.profile.presetKey)) out.presetKey = bedRecord.profile.presetKey; // CHANGE
         out.lastUpdated = bedRecord.profile.lastUpdated || ""; // NEW
         return out; // NEW
     } // NEW
@@ -366,7 +381,7 @@ Draw.loadPlugin(function (ui) { // NEW
         }); // NEW
 
         const infra = appendSection(div, "Infrastructure"); // NEW
-        ["irrigation", "trellis", "windExposure", "frostRisk"].forEach(function (key) { // NEW
+        ["irrigation", "trellis", "seasonExtension", "cropProtection", "windExposure", "frostRisk"].forEach(function (key) { // CHANGE
             controls[key] = makeSelect(FIELD_BY_KEY[key], current[key]); // NEW
             appendField(infra, FIELD_BY_KEY[key], controls[key]); // NEW
         }); // NEW
@@ -457,19 +472,46 @@ Draw.loadPlugin(function (ui) { // NEW
     function isOverlayDisplayValue(key, value) { // NEW
         if (!value || value === "unknown") return false; // NEW
         if (key === "trellis" && value === "none") return false; // NEW
+        if ((key === "seasonExtension" || key === "cropProtection") && value === "none") return false; // NEW
         return true; // NEW
+    } // NEW
+
+    function addHeadingRow(rows, label) { // NEW
+        rows.push({ type: "heading", label: label }); // NEW
+    } // NEW
+
+    function makeOverlayValueRow(field, value) { // NEW
+        return { label: field.label, value: valueLabel(value) }; // NEW
+    } // NEW
+
+    function isPresetOverride(profile, presetKey, field) { // NEW
+        const preset = isValidPresetKey(presetKey) ? PRESETS[presetKey] : null; // NEW
+        if (!preset || !Object.prototype.hasOwnProperty.call(preset.values || {}, field.key)) return false; // NEW
+        return normalizeEnumValue(field.key, profile && profile[field.key]) !== normalizeEnumValue(field.key, preset.values[field.key]); // NEW
     } // NEW
 
     function buildOverlayRows(profile) { // NEW
         const rows = []; // NEW
-        const presetKey = profile && profile.presetKey && doesProfileMatchPreset(profile, profile.presetKey) ? profile.presetKey : ""; // NEW
+        const presetKey = profile && isValidPresetKey(profile.presetKey) ? profile.presetKey : ""; // CHANGE
         const presetFields = new Set(getPresetFieldKeys(presetKey)); // NEW
         if (presetKey) rows.push({ label: "Preset", value: PRESETS[presetKey].label }); // NEW
+        const presetOverrides = []; // NEW
+        const additional = []; // NEW
         FIELD_DEFS.forEach(function (field) { // NEW
-            if (presetFields.has(field.key)) return; // NEW
             const value = profile && profile[field.key]; // NEW
-            if (isOverlayDisplayValue(field.key, value)) rows.push({ label: field.label, value: valueLabel(value) }); // NEW
+            if (!isOverlayDisplayValue(field.key, value)) return; // NEW
+            if (presetFields.has(field.key)) { // NEW
+                if (isPresetOverride(profile, presetKey, field)) presetOverrides.push(makeOverlayValueRow(field, value)); // NEW
+                return; // NEW
+            } // NEW
+            additional.push(makeOverlayValueRow(field, value)); // NEW
         }); // NEW
+        if (presetOverrides.length) { // NEW
+            addHeadingRow(rows, "Preset overrides"); // NEW
+            Array.prototype.push.apply(rows, presetOverrides); // NEW
+        } // NEW
+        if (presetKey && additional.length) addHeadingRow(rows, "Additional"); // NEW
+        Array.prototype.push.apply(rows, additional); // NEW
         return rows; // NEW
     } // NEW
 
@@ -513,6 +555,17 @@ Draw.loadPlugin(function (ui) { // NEW
             return; // NEW
         } // NEW
         rows.forEach(function (row) { // NEW
+            if (row.type === "heading") { // NEW
+                const heading = document.createElement("div"); // NEW
+                heading.textContent = row.label; // NEW
+                heading.style.marginTop = "6px"; // NEW
+                heading.style.paddingTop = "5px"; // NEW
+                heading.style.borderTop = "1px solid rgba(209, 213, 219, 0.8)"; // NEW
+                heading.style.color = "#374151"; // NEW
+                heading.style.fontWeight = "700"; // NEW
+                entry.div.appendChild(heading); // NEW
+                return; // NEW
+            } // NEW
             const line = document.createElement("div"); // NEW
             line.style.display = "grid"; // NEW
             line.style.gridTemplateColumns = "72px 1fr"; // NEW

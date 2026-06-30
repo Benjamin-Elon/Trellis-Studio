@@ -168,6 +168,7 @@ function makeInputs({
     seasonEndISO = '2026-12-31',
     seasonStartYear = 2026,
     harvestWindowDays = 7,
+    minYieldMultiplier = 0, // ADDED
     policy = null,
     dailyClimate = null
 } = {}) {
@@ -186,6 +187,7 @@ function makeInputs({
         }),
         seasonStartYear,
         harvestWindowDays,
+        minYieldMultiplier, // ADDED
         dailyClimate
     });
 }
@@ -661,6 +663,61 @@ test('strict GDD maturity remains infeasible when target exceeds calibrated seas
     const result = planner.isSowFeasible(new Date('2026-06-01T00:00:00Z')); // ADDED
     assert.equal(result.ok, false); // ADDED
     assert.equal(result.reason, 'insufficient_gdd'); // ADDED
+}); // ADDED
+
+test('warning-tolerant annual schedule uses DTM when GDD is short', () => { // ADDED
+    const plant = makePlant({ gdd_to_maturity: 10000, days_maturity: 42, tbase_c: 5 }); // ADDED
+    const inputs = makeInputs({ plant, city: makeCity(20), startISO: '2026-04-01' }); // ADDED
+    assert.throws(() => hooks.annualCore.computeAnnualScheduleResult(inputs), /growing-degree accumulation/); // ADDED
+    const result = hooks.computeScheduleResult(inputs); // ADDED
+    assert.equal(result.rows[0].harvStart, '2026-05-13'); // ADDED
+    assert.ok(result.warnings.some(warning => warning.type === 'insufficient_gdd_dtm_fallback')); // ADDED
+}); // ADDED
+
+test('warning-tolerant annual schedule scales GDD only within cap', () => { // ADDED
+    const city = makeCity(10); // ADDED
+    city.first_fall_frost_doy = 300; // ADDED
+    const plant = makePlant({ days_maturity: null, gdd_to_maturity: 2200, tbase_c: 5, tmin_c: 0, tmax_c: 40 }); // ADDED
+    const inputs = makeInputs({ plant, city, startISO: '2026-01-01' }); // ADDED
+    assert.throws(() => hooks.annualCore.computeAnnualScheduleResult(inputs), /growing-degree accumulation/); // ADDED
+    const result = hooks.computeScheduleResult(inputs); // ADDED
+    const warning = result.warnings.find(item => item.type === 'insufficient_gdd_scaled_fallback'); // ADDED
+    assert.ok(warning, JSON.stringify(result.warnings)); // ADDED
+    assert.ok(warning.scaleFactor > 1 && warning.scaleFactor <= 2, JSON.stringify(warning)); // ADDED
+    assert.match(warning.message, /scaled GDD/); // ADDED
+}); // ADDED
+
+test('warning-tolerant annual schedule blocks GDD scaling above cap or without heat', () => { // ADDED
+    const scaledCity = makeCity(10); // ADDED
+    scaledCity.first_fall_frost_doy = 300; // ADDED
+    const tooHigh = makePlant({ days_maturity: null, gdd_to_maturity: 4000, tbase_c: 5, tmin_c: 0, tmax_c: 40 }); // ADDED
+    assert.throws(() => hooks.computeScheduleResult(makeInputs({ plant: tooHigh, city: scaledCity, startISO: '2026-01-01' })), /insufficient gdd scale cap/); // CHANGED
+    const noHeat = makePlant({ days_maturity: null, gdd_to_maturity: 100, tbase_c: 50, tmin_c: 0, tmax_c: 60 }); // CHANGED
+    assert.throws(() => hooks.computeScheduleResult(makeInputs({ plant: noHeat, city: makeCity(4), startISO: '2026-01-01' })), /insufficient gdd no heat/); // CHANGED
+}); // ADDED
+
+test('thermal harvest and yield issues are warnings for selected-date schedules', () => { // ADDED
+    const cold = hooks.computeScheduleResult(makeInputs({ plant: makePlant({ tmin_c: 0, tmax_c: 40 }), city: makeCity(-5), startISO: '2026-01-01' })); // ADDED
+    assert.ok(cold.warnings.some(warning => warning.type === 'harvest_too_cold'), JSON.stringify(cold.warnings)); // ADDED
+    const hot = hooks.computeScheduleResult(makeInputs({ plant: makePlant({ tmin_c: 0, tmax_c: 40 }), city: makeCity(50), startISO: '2026-01-01' })); // ADDED
+    assert.ok(hot.warnings.some(warning => warning.type === 'harvest_too_hot'), JSON.stringify(hot.warnings)); // ADDED
+    const lowYieldPlant = makePlant({ tmin_c: 0, topt_low_c: 15, topt_high_c: 20, tmax_c: 40 }); // ADDED
+    const lowYield = hooks.computeScheduleResult(makeInputs({ plant: lowYieldPlant, city: makeCity(39), startISO: '2026-01-01', minYieldMultiplier: 0.5 })); // ADDED
+    assert.ok(lowYield.warnings.some(warning => warning.type === 'yield_multiplier_below_minimum'), JSON.stringify(lowYield.warnings)); // ADDED
+}); // ADDED
+
+test('warning-tolerant annual schedule still blocks non-thermal gates', () => { // ADDED
+    assert.throws(() => hooks.computeScheduleResult(makeInputs({ startISO: '2027-01-01' })), /outside the planning season/); // CHANGED
+    const frostCity = makeCity(20); // ADDED
+    frostCity.last_spring_frost_doy = 100; // ADDED
+    const frostPolicy = new hooks.PolicyFlags({ useSpringFrostGate: true, useSoilTempGate: false }); // ADDED
+    assert.throws(() => hooks.computeScheduleResult(makeInputs({ city: frostCity, startISO: '2026-01-15', policy: frostPolicy })), /frost-safety date/); // CHANGED
+    const soilPlant = makePlant({ soil_temp_min_plant_c: 30 }); // ADDED
+    const soilPolicy = new hooks.PolicyFlags({ useSpringFrostGate: false, useSoilTempGate: true, soilGateThresholdC: 30, soilGateConsecutiveDays: 3 }); // ADDED
+    assert.throws(() => hooks.computeScheduleResult(makeInputs({ plant: soilPlant, city: makeCity(10), startISO: '2026-05-01', policy: soilPolicy })), /soil is expected to be too cold/); // CHANGED
+    const seasonalCity = makeSeasonalCity({ 1: 20, 2: 20, 3: 20, 4: 20, 5: 20, 6: 20, 7: 20, 8: 20, 9: 20, 10: 10, 11: 8, 12: 6 }); // ADDED
+    const coolingPlant = makePlant({ overwinter_ok: 1, start_cooling_threshold_c: 12, days_maturity: 120 }); // ADDED
+    assert.throws(() => hooks.computeScheduleResult(makeInputs({ plant: coolingPlant, city: seasonalCity, startISO: '2026-04-01' })), /seasonal cooling trigger/); // CHANGED
 }); // ADDED
 
 test('feasibility diagnostics include soil, bed, calibration, and failing gate summary', async () => { // ADDED
@@ -1561,7 +1618,7 @@ test('feasibility helpers classify schedule dates and humanize planner reasons',
     assert.equal(hooks.findSowingSeasonForDate(fallWindows, '2026-04-15').id, 'spring'); // ADDED
 }); // ADDED
 
-test('orphan saved sow date is visible in selector state and blocks validation', () => { // ADDED
+test('orphan saved sow date is visible as guidance without blocking validation', () => { // CHANGED
     const windows = [{ id: 'spring', label: 'Spring (Apr 1-May 1)', startISO: '2026-04-01', endISO: '2026-05-01' }]; // ADDED
     const selector = hooks.buildSowingSeasonSelectorState({ // ADDED
         sowingSeasons: windows, // ADDED
@@ -1578,12 +1635,12 @@ test('orphan saved sow date is visible in selector state and blocks validation',
         sowingSeasons: windows, // ADDED
         activeSowingSeasonId: hooks.ORPHAN_SOWING_SEASON_ID // ADDED
     }).status, 'outside_window'); // ADDED
-    assert.throws(() => hooks.requireFeasibleSowingSeasonSelection({ // ADDED
+    assert.equal(hooks.requireFeasibleSowingSeasonSelection({ // CHANGED
         windowFeasible: true, // ADDED
         startISO: '2026-06-15', // ADDED
         sowingSeasons: windows, // ADDED
         activeSowingSeasonId: hooks.ORPHAN_SOWING_SEASON_ID // ADDED
-    }), /outside the selectable sowing seasons/); // ADDED
+    }).status, 'outside_window'); // CHANGED
 }); // ADDED
 
 test('switching sowing seasons preserves an in-window sow date and otherwise defaults to the selected window start', () => { // CHANGED
@@ -1647,6 +1704,20 @@ test('schedule summary state uses perennial and annual harvest semantics', () =>
     const perennial = hooks.buildScheduleViewState({ perennial: true, plantName: 'Asparagus' }); // ADDED
     assert.equal(perennial.feasibility.status, 'not_applicable'); // ADDED
     assert.match(perennial.firstHarvest, /Not calculated/); // ADDED
+}); // ADDED
+
+test('schedule summary state renders thermal warnings as warning status', () => { // ADDED
+    const annual = hooks.buildScheduleViewState({ // ADDED
+        plantName: 'Tomato', // ADDED
+        cityName: 'Test City', // ADDED
+        seasonStartYear: 2026, // ADDED
+        methodName: 'Field direct sow', // ADDED
+        windowFeasible: false, // ADDED
+        startISO: '2026-06-15', // ADDED
+        scheduleWarnings: [{ type: 'harvest_too_hot', message: 'Expected harvest temperature is above the crop maximum.' }] // ADDED
+    }); // ADDED
+    assert.equal(annual.feasibility.status, 'warning'); // ADDED
+    assert.match(annual.feasibility.label, /above the crop maximum/); // ADDED
 }); // ADDED
 
 test('task rule normalization defaults repeat cutoff fields', () => { // ADDED
@@ -2465,12 +2536,10 @@ test('manual date actions still use reflow and edited badge rendering', () => {
     assert.match(source, /const PROTECTED_WORK_LANES = new Set\(\['TODO',\s*'DOING'\]\)/);
 });
 
-test('save path passes the in-memory task template and stops after anchor failure', () => {
+test('save path passes the in-memory task template to graph application', () => { // CHANGED
     const source = fs.readFileSync(schedulerPath, 'utf8');
     assert.match(source, /taskTemplate:\s*options\.taskTemplate\s*\?\?\s*null/);
     assert.match(source, /taskTemplate,\s*\/\/ FIX: generate tasks from the in-memory template/);
-    assert.match(source, /if\s*\(!await recomputeAnchors\(true,\s*true\)\)\s*return false/);
-    assert.match(source, /clearComputedHarvestResult\(\);\s*\/\/ FIX: anchor failure/);
 });
 
 test('scheduler clears stale no-window warning after feasible crop recovery', () => {

@@ -2670,9 +2670,14 @@ Draw.loadPlugin(function (ui) {
         } // CHANGED
         return { status: 'feasible', label: `The selected sow date is in ${activeWindow.label}.` }; // CHANGED
     } // CHANGED
+    function summarizeScheduleWarnings(warnings) { // ADDED
+        const list = Array.isArray(warnings) ? warnings.filter(warning => warning && warning.message) : []; // ADDED
+        if (!list.length) return ''; // ADDED
+        return list.map(warning => String(warning.message || '').trim()).filter(Boolean).join(' '); // ADDED
+    } // ADDED
     function requireFeasibleSowingSeasonSelection(args) { // ADDED
         const classification = classifySelectedSowDate(args); // ADDED
-        if (!args?.perennial && classification.status !== 'feasible') throw new Error(classification.label); // ADDED
+        if (!args?.perennial && classification.status === 'missing') throw new Error(classification.label); // CHANGED
         return classification; // ADDED
     } // ADDED
     function clampPercent(value) { // ADDED
@@ -2886,15 +2891,20 @@ Draw.loadPlugin(function (ui) {
         sowingSeasons = [], // CHANGED
         activeSowingSeasonId = '', // ADDED
         firstHarvestISO = '', // ADDED
-        lastHarvestISO = '' // ADDED
+        lastHarvestISO = '', // CHANGED
+        scheduleWarnings = [] // ADDED
     } = {}) { // ADDED
-        const feasibility = classifySelectedSowDate({ // ADDED
+        let feasibility = classifySelectedSowDate({ // CHANGED
             perennial, // ADDED
             windowFeasible, // ADDED
             startISO, // ADDED
             sowingSeasons, // CHANGED
             activeSowingSeasonId // ADDED
         }); // ADDED
+        const warningText = summarizeScheduleWarnings(scheduleWarnings); // ADDED
+        if (!perennial && warningText) { // ADDED
+            feasibility = { status: 'warning', label: warningText }; // ADDED
+        } // ADDED
         return { // ADDED
             crop: [plantName, varietyName].filter(Boolean).join(' / ') || '(none)', // ADDED
             context: [cityName, seasonStartYear].filter(value => String(value || '').trim()).join(' / ') || '(none)', // ADDED
@@ -2970,7 +2980,7 @@ Draw.loadPlugin(function (ui) {
         summaryView.fields.feasibility.textContent = viewState.feasibility.label; // ADDED
         summaryView.fields.feasibility.style.color = viewState.feasibility.status === 'feasible' // ADDED
             ? '#166534' // ADDED
-            : (viewState.feasibility.status === 'not_applicable' ? '#374151' : '#b91c1c'); // ADDED
+            : (viewState.feasibility.status === 'warning' ? '#92400e' : (viewState.feasibility.status === 'not_applicable' ? '#374151' : '#b91c1c')); // CHANGED
     } // ADDED
 
     // Scans season feasibility day-by-day.
@@ -5102,7 +5112,7 @@ Draw.loadPlugin(function (ui) {
         }
         return isPerennialPlant(plant)
             ? perennialCore.computePerennialScheduleResult(inputs)
-            : annualCore.computeAnnualScheduleResult(inputs); // CHANGED
+            : annualCore.computeAnnualScheduleResult(inputs, { allowThermalWarnings: true }); // CHANGED
     }
 
 
@@ -5835,7 +5845,8 @@ Draw.loadPlugin(function (ui) {
             dailyClimateKey: initialDailyClimateKey, // CHANGED
             climateModelModuleCell, // ADDED
             climateModelDraftPatch: null, // ADDED
-            climateModelPolicy: DEFAULT_CLIMATE_MODEL_POLICY // ADDED
+            climateModelPolicy: DEFAULT_CLIMATE_MODEL_POLICY, // CHANGED
+            scheduleWarnings: [] // ADDED
         };
 
 
@@ -5898,9 +5909,8 @@ Draw.loadPlugin(function (ui) {
 
         function syncStartDateBounds() { // CHANGED
             if (!startInput) return; // CHANGED
-            const activeWindow = getActiveSowingSeason(formState); // ADDED
-            startInput.min = activeWindow ? activeWindow.startISO : ''; // CHANGED
-            startInput.max = activeWindow ? activeWindow.endISO : ''; // CHANGED
+            startInput.min = ''; // CHANGED
+            startInput.max = ''; // CHANGED
         } // CHANGED
 
         function updateDaysToFirstHarvest() { // CHANGED
@@ -6223,7 +6233,8 @@ Draw.loadPlugin(function (ui) {
                 sowingSeasons: formState.sowingSeasons, // CHANGED
                 activeSowingSeasonId: formState.activeSowingSeasonId, // ADDED
                 firstHarvestISO: formState.firstHarvestISO, // ADDED
-                lastHarvestISO: formState.lastHarvestISO // ADDED
+                lastHarvestISO: formState.lastHarvestISO, // CHANGED
+                scheduleWarnings: formState.scheduleWarnings // ADDED
             })); // ADDED
         } // ADDED
 
@@ -6264,20 +6275,27 @@ Draw.loadPlugin(function (ui) {
                 activeSowingSeasonId: formState.activeSowingSeasonId // ADDED
             }); // CHANGED
             const parts = [];
+            const warningText = summarizeScheduleWarnings(formState.scheduleWarnings); // ADDED
+            if (warningText) parts.push(warningText); // ADDED
             if (!mode.perennial && classification.status !== 'feasible') parts.push(classification.label); // CHANGED
             if (baseStartNote && classification.status === 'no_window' && baseStartNote !== 'No feasible window.') parts.push(baseStartNote); // CHANGED
 
             startNoteSpan.textContent = parts.join(' ');
         }
 
-        function requireSelectedSowingSeasonDate() { // ADDED
-            return requireFeasibleSowingSeasonSelection({ // ADDED
-                perennial: mode.perennial, // ADDED
-                windowFeasible: formState.windowFeasible, // ADDED
-                startISO: formState.startISO, // ADDED
-                sowingSeasons: formState.sowingSeasons, // ADDED
-                activeSowingSeasonId: formState.activeSowingSeasonId // ADDED
-            }); // ADDED
+        function syncScheduleWarningState(warnings = []) { // ADDED
+            formState.scheduleWarnings = Array.isArray(warnings) ? Array.from(warnings) : []; // ADDED
+            updateStartNote(); // ADDED
+            updateScheduleSummaryFromState(); // ADDED
+        } // ADDED
+
+        function clearScheduleWarningState() { // ADDED
+            syncScheduleWarningState([]); // ADDED
+        } // ADDED
+
+        function requireSelectedScheduleDate() { // CHANGED
+            if (mode.perennial) return; // CHANGED
+            if (!parseISODateUTCValue(formState.startISO)) throw new Error('Select a sow date.'); // CHANGED
         } // ADDED
 
 
@@ -6290,6 +6308,7 @@ Draw.loadPlugin(function (ui) {
                 if (mode.perennial) return true; // FIX: lifespan dates are recomputed by recomputeAll
 
                 syncStateFromControls();
+                clearScheduleWarningState(); // ADDED
 
                 await refreshEffectivePlant();
                 const p = effectivePlant;
@@ -6468,6 +6487,7 @@ Draw.loadPlugin(function (ui) {
                 formState.latestHarvestEndISO = ''; // ADDED: perennial lifespan end is not annual display state.
                 formState.firstHarvestISO = null; // CHANGED
                 formState.lastHarvestISO = null; // FIX: lifespan end is not a harvest date
+                clearScheduleWarningState(); // CHANGED
                 formState.lastScheduleEndISO = formState.seasonEndISO; // CHANGED
                 syncStateFromControls();
                 formState.sowingSeasons = []; // ADDED
@@ -6507,6 +6527,7 @@ Draw.loadPlugin(function (ui) {
 
                 formState.firstHarvestISO = null; // CHANGED
                 formState.lastHarvestISO = null; // FIX: lifespan-only schedules have no inferred harvest
+                clearScheduleWarningState(); // CHANGED
                 formState.lastScheduleEndISO = endISO; // CHANGED
                 formState.lastHarvestSource = 'user'; // CHANGED
                 formState.windowFeasible = true; // FIX
@@ -6531,14 +6552,14 @@ Draw.loadPlugin(function (ui) {
             switch (reason) {
 
                 case 'varietyChanged': {
-                    if (!await recomputeAnchors(true, true)) return false; // FIX
+                    await recomputeAnchors(true, true); // CHANGED
                     await recomputeLastHarvestFromSchedule();
                     break;
                 }
 
                 case 'yearChanged': {
                     // season → refresh both start and end from feasibility
-                    if (!await recomputeAnchors(true, true)) return false; // FIX
+                    await recomputeAnchors(true, true); // CHANGED
 
                     await recomputeLastHarvestFromSchedule();
                     break;
@@ -6546,7 +6567,7 @@ Draw.loadPlugin(function (ui) {
 
                 case 'plantChanged': {
                     // City/method/plant change → respect user sow date if dirty
-                    if (!await recomputeAnchors(true, true)) return false; // FIX
+                    await recomputeAnchors(true, true); // CHANGED
 
                     await recomputeLastHarvestFromSchedule();
                     break;
@@ -6557,7 +6578,7 @@ Draw.loadPlugin(function (ui) {
                 case 'methodChanged': {
                     // City/method change → keep user sow date if dirty,              
                     // but don't force end update unless you want to:                 
-                    if (!await recomputeAnchors(false, false)) return false; // FIX
+                    await recomputeAnchors(false, false); // CHANGED
 
                     await recomputeLastHarvestFromSchedule();
                     break;
@@ -6565,12 +6586,12 @@ Draw.loadPlugin(function (ui) {
 
                 case 'startChanged':
                     // User explicitly changed first sow; keep it, but recompute schedule 
-                    if (!await recomputeAnchors(false, false)) return false; // FIX
+                    await recomputeAnchors(false, false); // CHANGED
                     await recomputeLastHarvestFromSchedule();
                     break;
 
                 case 'hwChanged': {
-                    if (!await recomputeAnchors(false, false)) return false; // FIX
+                    await recomputeAnchors(false, false); // CHANGED
                     await recomputeLastHarvestFromSchedule();
                     break;
                 }
@@ -7099,6 +7120,7 @@ Draw.loadPlugin(function (ui) {
 
         function showHarvestRecomputeFailure(message) { // FIX: keep failure cleanup and reporting atomic
             clearComputedHarvestResult();
+            clearScheduleWarningState(); // ADDED
             harvestRecomputeErrorVisible = true;
             showErrorInline('Schedule calculation error: ' + String(message || 'No harvest result was produced.')); // FIX: make recompute failures visible
         }
@@ -7120,6 +7142,7 @@ Draw.loadPlugin(function (ui) {
 
                 const result = await computeScheduleResult(inputs); // CHANGED
                 latestScheduleResult = result; // ADDED
+                syncScheduleWarningState(result.warnings || []); // ADDED
                 const {
                     rows,
                     firstScheduledHarvestISO, // CHANGED
@@ -7280,10 +7303,7 @@ Draw.loadPlugin(function (ui) {
         const previewBtn = mxUtils.button('Preview', async () => {
             try {
                 syncStateFromControls();
-                if (!mode.perennial && !formState.windowFeasible) {
-                    throw new Error('No feasible window.'); // FIX
-                }
-                requireSelectedSowingSeasonDate(); // ADDED
+                requireSelectedScheduleDate(); // CHANGED
 
                 const { inputs } = await buildScheduleContextFromForm(
                     formState,
@@ -7293,6 +7313,7 @@ Draw.loadPlugin(function (ui) {
                 requireNoBlockingScheduleQualityDiagnostics(inputs); // ADDED
 
                 const result = computeScheduleResult(inputs); // FIX
+                syncScheduleWarningState(result.warnings || []); // ADDED
                 if (result.kind === 'perennial') {
                     renderPerennialPreview(ui, result); // FIX
                     return;
@@ -7300,17 +7321,14 @@ Draw.loadPlugin(function (ui) {
                 const rows = result.rows;
                 if (!rows.length) { showErrorInline('No feasible planting dates in the chosen season.'); return; }
                 renderPreviewTable(ui, rows);
-            } catch (e) { showErrorInline('Preview error: ' + e.message); }
+            } catch (e) { clearScheduleWarningState(); showErrorInline('Preview error: ' + e.message); } // CHANGED
         });
 
 
         const okBtn = mxUtils.button('Save', async () => { // CHANGED
             try {
                 syncStateFromControls();
-                if (!mode.perennial && !formState.windowFeasible) {
-                    throw new Error('No feasible window.'); // FIX
-                }
-                requireSelectedSowingSeasonDate(); // ADDED
+                requireSelectedScheduleDate(); // CHANGED
 
                 const { inputs } = await buildScheduleContextFromForm(
                     formState,
@@ -7327,6 +7345,7 @@ Draw.loadPlugin(function (ui) {
 
                 // Validate the complete schedule before mutating the DB or graph.
                 const scheduleResult = computeScheduleResult(inputs);
+                syncScheduleWarningState(scheduleResult.warnings || []); // ADDED
                 const activeWindow = getActiveSowingSeason(formState); // ADDED
                 handleClimateModelControlChanged(); // ADDED
                 const climateModelAttributePatch = buildClimateModelModuleAttributePatch(); // ADDED
@@ -7366,6 +7385,7 @@ Draw.loadPlugin(function (ui) {
                 });
                 ui.hideDialog();
             } catch (e) {
+                clearScheduleWarningState(); // ADDED
                 showErrorInline('Scheduling error: ' + e.message);
             }
         });
@@ -7659,31 +7679,19 @@ Draw.loadPlugin(function (ui) {
                 renderCachedTaskPreview({ message: 'No task rules are defined.' }); // ADDED
                 return; // ADDED
             } // ADDED
-            if (!mode.perennial && !formState.windowFeasible) { // ADDED
+            try { requireSelectedScheduleDate(); } catch (e) { // CHANGED
                 generatedPreviewTasks = []; // ADDED
                 taskPreviewScheduleRange = null; // ADDED
                 taskPreviewCutoffOmittedRuleKeys = new Set(); // ADDED
-                renderCachedTaskPreview({ error: 'No feasible sowing season is available for task generation.' }); // ADDED
+                clearScheduleWarningState(); // ADDED
+                renderCachedTaskPreview({ error: e?.message || String(e) }); // CHANGED
                 return; // ADDED
-            } // ADDED
-            const classification = classifySelectedSowDate({ // ADDED
-                perennial: mode.perennial, // ADDED
-                windowFeasible: formState.windowFeasible, // ADDED
-                startISO: formState.startISO, // ADDED
-                sowingSeasons: formState.sowingSeasons, // ADDED
-                activeSowingSeasonId: formState.activeSowingSeasonId // ADDED
-            }); // ADDED
-            if (!mode.perennial && classification.status !== 'feasible') { // ADDED
-                generatedPreviewTasks = []; // ADDED
-                taskPreviewScheduleRange = null; // ADDED
-                taskPreviewCutoffOmittedRuleKeys = new Set(); // ADDED
-                renderCachedTaskPreview({ error: classification.label }); // ADDED
-                return; // ADDED
-            } // ADDED
+            } // CHANGED
             try { // ADDED
                 const { inputs } = await buildScheduleContextFromForm(formState, selPlant, { currentVarieties }); // ADDED
                 requireNoBlockingScheduleQualityDiagnostics(inputs); // ADDED
                 const result = computeScheduleResult(inputs); // ADDED
+                syncScheduleWarningState(result.warnings || []); // ADDED
                 const tasks = await buildTasksForPlan({ // ADDED
                     plant: result.plant, // ADDED
                     schedule: result.schedule, // ADDED
@@ -7718,6 +7726,7 @@ Draw.loadPlugin(function (ui) {
                 generatedPreviewTasks = []; // ADDED
                 taskPreviewScheduleRange = null; // ADDED
                 taskPreviewCutoffOmittedRuleKeys = new Set(); // ADDED
+                clearScheduleWarningState(); // ADDED
                 renderCachedTaskPreview({ error: `Task preview error: ${e?.message || String(e)}` }); // ADDED
             } // ADDED
         } // ADDED
@@ -8982,6 +8991,20 @@ Draw.loadPlugin(function (ui) {
         return { startISO: fmtISO(start), endISO: fmtISO(end) }; // ADDED
     } // ADDED
 
+    function resolveTaskPreviewDisplayRange(scheduleRange, tasks = []) { // NEW
+        let rangeStart = parseISODateUTCValue(scheduleRange?.startISO); // NEW
+        let rangeEnd = parseISODateUTCValue(scheduleRange?.endISO); // NEW
+        if (!rangeStart || !rangeEnd || rangeEnd < rangeStart) return scheduleRange || null; // NEW
+        (Array.isArray(tasks) ? tasks : []).forEach(task => { // NEW
+            const taskStart = parseISODateUTCValue(task?.startISO); // NEW
+            const taskEnd = parseISODateUTCValue(task?.endISO); // NEW
+            if (!taskStart || !taskEnd || taskEnd < taskStart) return; // FIX
+            if (taskStart && taskStart < rangeStart) rangeStart = taskStart; // FIX
+            if (taskEnd && taskEnd > rangeEnd) rangeEnd = taskEnd; // FIX
+        }); // NEW
+        return { startISO: fmtISO(rangeStart), endISO: fmtISO(rangeEnd) }; // NEW
+    } // NEW
+
     function renderTaskTimelinePreview(container, { tasks = [], scheduleRange = null, message = '', error = '' } = {}) { // CHANGED
         container.innerHTML = ''; // ADDED
         if (error || message || !tasks.length) { // ADDED
@@ -9078,7 +9101,8 @@ Draw.loadPlugin(function (ui) {
         error = '' // ADDED
     } = {}) { // ADDED
         const tasks = filterPreviewTasks(generatedTasks, selectedRuleKeys); // CHANGED
-        renderTaskTimelinePreview(container, { tasks, scheduleRange, message, error }); // CHANGED
+        const displayRange = resolveTaskPreviewDisplayRange(scheduleRange, tasks); // FIX
+        renderTaskTimelinePreview(container, { tasks, scheduleRange: displayRange, message, error }); // FIX
         return tasks; // ADDED
     } // ADDED
 
@@ -10471,6 +10495,7 @@ Draw.loadPlugin(function (ui) {
             buildTaskRuleDisplayOrder, // ADDED
             groupPreviewTasksByRule, // ADDED
             resolveTaskPreviewScheduleRange, // ADDED
+            resolveTaskPreviewDisplayRange, // NEW
             resolveStartAfterWindow,
             buildScheduleAttributePatch,
             snapshotCellAttributes,

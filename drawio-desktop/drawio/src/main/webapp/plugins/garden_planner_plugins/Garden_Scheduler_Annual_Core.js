@@ -44,6 +44,7 @@
     const MULTI_WINDOW_MAX_MERGE_GAP_DAYS = 7; // ADDED
     const MULTI_WINDOW_MIN_LENGTH_DAYS = 3; // ADDED
     const DIAGNOSTIC_POLICIES = Object.freeze(new Set(['off', 'warn', 'block'])); // ADDED
+    const THERMAL_GDD_SCALE_CAP = 2; // ADDED
 
     function monthMeanAt(date, monthlyAvgTemp) {
         return monthlyAvgTemp?.[date.getUTCMonth() + 1] ?? null;
@@ -178,6 +179,55 @@
         }
         return accumulateGDDUntil(startDate, budget.amount, dailyRatesMap, seasonEnd).date;
     }
+    function accumulateScaledGDDUntil(startDate, targetGDD, dailyRatesMap, seasonEnd, scaleFactor) { // ADDED
+        let acc = 0; // ADDED
+        let cur = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate())); // ADDED
+        const scale = Number.isFinite(Number(scaleFactor)) && Number(scaleFactor) > 0 ? Number(scaleFactor) : 1; // ADDED
+        while (acc < targetGDD) { // ADDED
+            if (seasonEnd && !dateLTE(cur, seasonEnd)) break; // ADDED
+            acc += gddRateForDate(dailyRatesMap, cur) * scale; // ADDED
+            if (acc >= targetGDD) break; // ADDED
+            cur = addDaysUTC(cur, 1); // ADDED
+        } // ADDED
+        return { date: cur, gdd: acc, reached: acc >= targetGDD, scaleFactor: scale }; // ADDED
+    } // ADDED
+    function pickFallFrostByRisk(city, risk = 'p50') { // ADDED
+        const p90 = finiteNumberOrNull(city?.first_fall_frost_p90_doy); // ADDED
+        const p50 = finiteNumberOrNull(city?.first_fall_frost_p50_doy); // ADDED
+        const p10 = finiteNumberOrNull(city?.first_fall_frost_p10_doy); // ADDED
+        const plain = finiteNumberOrNull(city?.first_fall_frost_doy); // ADDED
+        if (risk === 'p90') return p90 ?? p50 ?? plain ?? null; // ADDED
+        if (risk === 'p10') return p10 ?? p50 ?? plain ?? null; // ADDED
+        return p50 ?? plain ?? p90 ?? p10 ?? null; // ADDED
+    } // ADDED
+    function dateFromDoyAfter(date, doy, scanEndHard) { // ADDED
+        const normalized = Math.max(1, Math.min(366, Math.round(Number(doy)))); // ADDED
+        if (!Number.isFinite(normalized)) return null; // ADDED
+        let candidate = dateFromDOY(date.getUTCFullYear(), normalized); // ADDED
+        if (!candidate || candidate <= date) candidate = dateFromDOY(date.getUTCFullYear() + 1, normalized); // ADDED
+        return candidate && (!scanEndHard || candidate <= scanEndHard) ? candidate : null; // ADDED
+    } // ADDED
+    function firstCropTemperatureDeadlineAfter(ctx, sowDate) { // ADDED
+        const tmin = finiteNumberOrNull(ctx?.env?.Tmin); // ADDED
+        if (tmin == null) return null; // ADDED
+        for (let cur = addDaysUTC(sowDate, 1); cur <= ctx.scanEndHard; cur = addDaysUTC(cur, 1)) { // ADDED
+            const mean = meanTemperatureOnDate(cur, ctx.dailyClimate || ctx.monthlyAvg); // ADDED
+            if (mean != null && mean < tmin) return cur; // ADDED
+        } // ADDED
+        return null; // ADDED
+    } // ADDED
+    function resolveThermalGddDeadline(planner, sowDate) { // ADDED
+        const C = planner.ctx; // ADDED
+        const fallDoy = pickFallFrostByRisk(C.city, C.springFrostRisk); // ADDED
+        const fallDate = fallDoy == null ? null : dateFromDoyAfter(sowDate, fallDoy, C.scanEndHard); // ADDED
+        if (fallDate) return { date: fallDate, source: 'fall frost' }; // ADDED
+        const cropDeadline = firstCropTemperatureDeadlineAfter(C, sowDate); // ADDED
+        if (cropDeadline) return { date: cropDeadline, source: 'crop temperature deadline' }; // ADDED
+        return { date: C.scanEndHard, source: 'scan hard end' }; // ADDED
+    } // ADDED
+    function thermalWarning(type, message, extra = {}) { // ADDED
+        return Object.freeze({ type, severity: 'warning', message, ...extra }); // ADDED
+    } // ADDED
     function thermalYieldFactor(T, cropTemp) {
         const { Tmin, ToptLow, ToptHigh, Tmax } = cropTemp;
         if (T <= Tmin || T >= Tmax) return 0;
@@ -469,6 +519,7 @@
                 bedProfileSource: inputs.bedProfileSource || 'generic garden bed', // ADDED
                 Tbase: env.Tbase,
                 cityLatitudeDeg: finiteNumberOrNull(inputs.cityLatitudeDeg ?? city?.latitude ?? city?.lat), // CHANGED: Cities.latitude is canonical.
+                city, // ADDED
                 startDate,
                 seasonEnd,
                 scanStart,
@@ -516,53 +567,7 @@
             return { ok: true };
         }
         isSowFeasible(sowDate) {
-            const C = this.ctx;
-            if (!this.withinWindow(sowDate)) return { ok: false, reason: 'outside_scan_window' };
-
-            let transplantDate = null;
-            if (C.planningMode === 'transplant_indoor') {
-                const dTrans = Number(C.plant?.days_transplant ?? NaN);
-                const daysTrans = Number.isFinite(dTrans) && dTrans > 0 ? Math.round(dTrans) : 0;
-                transplantDate = this.addDays(sowDate, daysTrans);
-            } else if (C.planningMode === 'transplant_outdoor') {
-                transplantDate = new Date(sowDate);
-            }
-
-            const gateDate = (C.planningMode === 'direct_sow') ? sowDate : transplantDate;
-            if (!gateDate || !this.withinWindow(gateDate)) return { ok: false, reason: 'gate_outside_scan_window' };
-
-            const frost = this.checkSpringFrostGate(gateDate);
-            if (!frost.ok) return frost;
-            const cooling = this.checkCoolingGate(gateDate);
-            if (!cooling.ok) return cooling;
-            const soil = this.checkSoilGate(gateDate);
-            if (!soil.ok) return soil;
-
-            if (C.BUDGET.mode === 'gdd') {
-                const acc = accumulateGDDUntil(sowDate, C.BUDGET.amount, C.dailyRates, C.scanEndHard);
-                if (!acc.reached) return { ok: false, reason: 'insufficient_gdd' };
-            }
-
-            const mat = maturityDateFromBudget(sowDate, C.BUDGET, C.dailyRates, C.scanEndHard);
-            const fullHarvestEnd = this.addDays(mat, C.HW_DAYS);
-            if (!C.overwinterAllowed && sowDate.getUTCFullYear() !== fullHarvestEnd.getUTCFullYear()) {
-                return { ok: false, reason: 'cross_year_disallowed' };
-            }
-
-            const hardEnd = C.scanEndHard; // FIX: annual latest-harvest display dates must not cap lifecycle feasibility.
-            const effectiveHarvestEnd = (fullHarvestEnd <= hardEnd) ? fullHarvestEnd : hardEnd;
-            const MS_PER_DAY = 24 * 60 * 60 * 1000;
-            const harvestSpanDays = Math.max(0, Math.round((effectiveHarvestEnd.getTime() - mat.getTime()) / MS_PER_DAY));
-            const minHarvestDays = Math.min(C.HW_DAYS, 3);
-            if (harvestSpanDays < minHarvestDays) return { ok: false, reason: 'beyond_hard_end' };
-
-            const TmeanHarvest = weightedMeanTempOverRange(mat, effectiveHarvestEnd, C.monthlyAvg, C.dailyRates, C.Tbase, C.dailyClimate);
-            const { Tmin, Tmax } = C.env;
-            if (TmeanHarvest < Tmin) return { ok: false, reason: `harvest_too_cold(${TmeanHarvest.toFixed(1)}<${Tmin})` };
-            if (TmeanHarvest > Tmax) return { ok: false, reason: `harvest_too_hot(${TmeanHarvest.toFixed(1)}>${Tmax})` };
-
-            const truncated = fullHarvestEnd.getTime() > effectiveHarvestEnd.getTime();
-            return { ok: true, maturity: mat, harvestStart: mat, harvestEnd: effectiveHarvestEnd, truncated, TmeanHarvest };
+            return assessSowDateForSchedule(this, sowDate); // CHANGED
         }
         findNextFeasible(startCandidate, maxDays = 366) {
             const startMs = Math.max(
@@ -590,6 +595,81 @@
         if (C.planningMode === 'transplant_outdoor') return new Date(sowDate);
         return new Date(sowDate);
     }
+    function validateNonThermalSowDate(planner, sowDate) { // ADDED
+        if (!planner.withinWindow(sowDate)) return { ok: false, reason: 'outside_scan_window' }; // ADDED
+        const gateDate = getGateDateForCandidate(planner, sowDate); // ADDED
+        if (!gateDate || !planner.withinWindow(gateDate)) return { ok: false, reason: 'gate_outside_scan_window' }; // ADDED
+        const frost = planner.checkSpringFrostGate(gateDate); // ADDED
+        if (!frost.ok) return frost; // ADDED
+        const cooling = planner.checkCoolingGate(gateDate); // ADDED
+        if (!cooling.ok) return cooling; // ADDED
+        const soil = planner.checkSoilGate(gateDate); // ADDED
+        if (!soil.ok) return soil; // ADDED
+        return { ok: true, gateDate }; // ADDED
+    } // ADDED
+    function resolveInsufficientGddMaturity(planner, sowDate, warnings) { // ADDED
+        const C = planner.ctx; // ADDED
+        const daysMaturity = finiteNumberOrNull(C.plant?.days_maturity); // ADDED
+        if (daysMaturity != null && daysMaturity > 0) { // ADDED
+            const maturity = addDaysUTC(sowDate, Math.round(daysMaturity)); // ADDED
+            warnings.push(thermalWarning('insufficient_gdd_dtm_fallback', `There is not enough growing-degree accumulation to reach maturity; using days to maturity (${Math.round(daysMaturity)} days) for schedule anchors.`)); // ADDED
+            return { ok: true, maturity }; // ADDED
+        } // ADDED
+        const deadline = resolveThermalGddDeadline(planner, sowDate); // ADDED
+        const available = accumulateGDDUntil(sowDate, C.BUDGET.amount, C.dailyRates, deadline.date); // ADDED
+        if (!(available.gdd > 0)) { // ADDED
+            return { ok: false, reason: 'insufficient_gdd_no_heat' }; // ADDED
+        } // ADDED
+        const requiredScale = C.BUDGET.amount / available.gdd; // ADDED
+        if (!Number.isFinite(requiredScale) || requiredScale > THERMAL_GDD_SCALE_CAP) { // ADDED
+            return { ok: false, reason: 'insufficient_gdd_scale_cap' }; // ADDED
+        } // ADDED
+        const scaled = accumulateScaledGDDUntil(sowDate, C.BUDGET.amount, C.dailyRates, deadline.date, requiredScale); // ADDED
+        warnings.push(thermalWarning('insufficient_gdd_scaled_fallback', `There is not enough growing-degree accumulation to reach maturity; using ${requiredScale.toFixed(2)}x scaled GDD through the ${deadline.source} for schedule anchors.`, { scaleFactor: requiredScale, deadlineISO: fmtISO(deadline.date), deadlineSource: deadline.source })); // ADDED
+        return { ok: true, maturity: scaled.date, gddScaleFactor: requiredScale, deadline }; // ADDED
+    } // ADDED
+    function assessSowDateForSchedule(planner, sowDate, options = {}) { // ADDED
+        const C = planner.ctx; // ADDED
+        const allowThermalWarnings = options.allowThermalWarnings === true; // ADDED
+        const warnings = []; // ADDED
+        const nonThermal = validateNonThermalSowDate(planner, sowDate); // ADDED
+        if (!nonThermal.ok) return nonThermal; // ADDED
+        let mat = null; // ADDED
+        if (C.BUDGET.mode === 'gdd') { // ADDED
+            const acc = accumulateGDDUntil(sowDate, C.BUDGET.amount, C.dailyRates, C.scanEndHard); // ADDED
+            if (acc.reached) mat = acc.date; // ADDED
+            else if (!allowThermalWarnings) return { ok: false, reason: 'insufficient_gdd' }; // ADDED
+            else { // ADDED
+                const fallback = resolveInsufficientGddMaturity(planner, sowDate, warnings); // ADDED
+                if (!fallback.ok) return fallback; // ADDED
+                mat = fallback.maturity; // ADDED
+            } // ADDED
+        } else { // ADDED
+            mat = maturityDateFromBudget(sowDate, C.BUDGET, C.dailyRates, C.scanEndHard); // ADDED
+        } // ADDED
+        const fullHarvestEnd = planner.addDays(mat, C.HW_DAYS); // ADDED
+        if (!C.overwinterAllowed && sowDate.getUTCFullYear() !== fullHarvestEnd.getUTCFullYear()) { // ADDED
+            return { ok: false, reason: 'cross_year_disallowed' }; // ADDED
+        } // ADDED
+        const hardEnd = C.scanEndHard; // ADDED
+        const effectiveHarvestEnd = (fullHarvestEnd <= hardEnd) ? fullHarvestEnd : hardEnd; // ADDED
+        const MS_PER_DAY = 24 * 60 * 60 * 1000; // ADDED
+        const harvestSpanDays = Math.max(0, Math.round((effectiveHarvestEnd.getTime() - mat.getTime()) / MS_PER_DAY)); // ADDED
+        const minHarvestDays = Math.min(C.HW_DAYS, 3); // ADDED
+        if (harvestSpanDays < minHarvestDays) return { ok: false, reason: 'beyond_hard_end' }; // ADDED
+        const TmeanHarvest = weightedMeanTempOverRange(mat, effectiveHarvestEnd, C.monthlyAvg, C.dailyRates, C.Tbase, C.dailyClimate); // ADDED
+        const { Tmin, Tmax } = C.env; // ADDED
+        if (TmeanHarvest < Tmin) { // ADDED
+            if (!allowThermalWarnings) return { ok: false, reason: `harvest_too_cold(${TmeanHarvest.toFixed(1)}<${Tmin})` }; // ADDED
+            warnings.push(thermalWarning('harvest_too_cold', `Expected harvest temperature ${TmeanHarvest.toFixed(1)} C is below the crop minimum ${Tmin} C.`)); // ADDED
+        } // ADDED
+        if (TmeanHarvest > Tmax) { // ADDED
+            if (!allowThermalWarnings) return { ok: false, reason: `harvest_too_hot(${TmeanHarvest.toFixed(1)}>${Tmax})` }; // ADDED
+            warnings.push(thermalWarning('harvest_too_hot', `Expected harvest temperature ${TmeanHarvest.toFixed(1)} C is above the crop maximum ${Tmax} C.`)); // ADDED
+        } // ADDED
+        const truncated = fullHarvestEnd.getTime() > effectiveHarvestEnd.getTime(); // ADDED
+        return { ok: true, maturity: mat, harvestStart: mat, harvestEnd: effectiveHarvestEnd, truncated, TmeanHarvest, warnings: Object.freeze(warnings) }; // ADDED
+    } // ADDED
     function firstNonSoilStart(planner, startD) {
         const C = planner.ctx;
         let d = new Date(Math.max(startD.getTime(), C.scanStart.getTime()));
@@ -956,17 +1036,18 @@
             climateEndDate
         };
     }
-    function computeAnnualScheduleResult(inputs) {
+    function computeAnnualScheduleResult(inputs, options = {}) { // CHANGED
         const { plant, methodId } = inputs;
         const method = methodId;
         const startDate = parseISODateUTCValue(inputs.startISO);
         if (!startDate) throw new Error('Select a planting date.');
         const { seasonEnd, env, dailyRates } = inputs.derived();
         const planner = new Planner(inputs);
-        const feasibility = planner.isSowFeasible(startDate);
+        const feasibility = assessSowDateForSchedule(planner, startDate, { allowThermalWarnings: options.allowThermalWarnings === true }); // CHANGED
         if (!feasibility.ok) {
             throw new Error(`Selected sow date is not feasible: ${humanFeasibilityReason(feasibility.reason)}`);
         }
+        const warnings = Array.from(feasibility.warnings || []); // ADDED
         const budget = plant.firstHarvestBudget();
         if (!budget || !Number.isFinite(budget.amount) || budget.amount <= 0) {
             throw new Error("Invalid maturity budget for " + plant.plant_name);
@@ -995,10 +1076,9 @@
         const yieldMultipliers = [thermalYieldFactor(feasibility.TmeanHarvest, env)];
         const minYieldMultiplier = finiteNumberOrNull(inputs.minYieldMultiplier) ?? 0;
         if (yieldMultipliers[0] < minYieldMultiplier) {
-            throw new Error(
-                `Selected sow date yield multiplier ${yieldMultipliers[0].toFixed(2)} ` +
-                `is below the minimum ${minYieldMultiplier.toFixed(2)}.`
-            );
+            const message = `Selected sow date yield multiplier ${yieldMultipliers[0].toFixed(2)} is below the minimum ${minYieldMultiplier.toFixed(2)}.`; // ADDED
+            if (options.allowThermalWarnings === true) warnings.push(thermalWarning('yield_multiplier_below_minimum', message)); // ADDED
+            else throw new Error(message); // CHANGED
         }
         const rows = schedule.map((sowDate, idx) => {
             const tl = timelines[idx] || {};
@@ -1024,7 +1104,8 @@
             timelines,
             rows,
             firstScheduledHarvestISO: timelines[0]?.harvestStart ? fmtISO(timelines[0].harvestStart) : null,
-            lastScheduledHarvestEndISO: timelines.length ? fmtISO(timelines[timelines.length - 1]?.harvestEnd) : null
+            lastScheduledHarvestEndISO: timelines.length ? fmtISO(timelines[timelines.length - 1]?.harvestEnd) : null,
+            warnings: Object.freeze(warnings) // ADDED
         };
     }
 
@@ -1054,6 +1135,7 @@
         computeAnnualSowingSeasons,
         buildAutoWindowPlanner,
         computeAutoStartEndWindowForward,
+        assessSowDateForSchedule, // ADDED
         computeAnnualScheduleResult
     });
 })(typeof window !== 'undefined' ? window : globalThis);

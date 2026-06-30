@@ -900,10 +900,14 @@ begins, the operation completes or compensates rather than being canceled.
 - `feasible: false` with every derived date set to `null`.
 - `harvestEndSemantics: "exclusive"` in both cases.
 
-The dialog renders `No feasible window.` for an infeasible annual window. It
+The dialog renders `No feasible window.` for an infeasible annual auto-window. It
 does not place scan-start or scan-end fallback dates into editable schedule
-state. A persisted or session-edited start remains visible for correction, but
-Preview and Save reject the infeasible schedule.
+state. A persisted or session-edited start remains visible for correction, and
+Preview/Save validate the selected date directly. Sowing seasons are guidance
+and defaults, not a hard save boundary. Thermal schedule problems can surface as
+runtime warnings when the selected date passes the non-thermal gates; those
+warnings are recomputed when inputs change and are not persisted as cell
+attributes. // CHANGED
 
 ### Harvest end
 
