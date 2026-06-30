@@ -908,6 +908,8 @@ and defaults, not a hard save boundary. Thermal schedule problems can surface as
 runtime warnings when the selected date passes the non-thermal gates; those
 warnings are recomputed when inputs change and are not persisted as cell
 attributes. // CHANGED
+The Schedule summary renders those runtime warnings as de-duplicated bullet
+points in the Feasibility tile; the inline sow-date note remains compact text. <!-- ADDED -->
 
 ### Harvest end
 

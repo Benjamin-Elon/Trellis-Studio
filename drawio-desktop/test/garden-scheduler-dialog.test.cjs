@@ -9,6 +9,67 @@ const {
 
 const hooks = loadSchedulerHooks();
 
+function makeSummaryViewState(overrides = {}) { // ADDED
+    return hooks.buildScheduleViewState({ // ADDED
+        windowFeasible: true, // ADDED
+        plantName: 'Tomato', // ADDED
+        cityName: 'Test City', // ADDED
+        seasonStartYear: 2026, // ADDED
+        methodName: 'Direct sow', // ADDED
+        startISO: '2026-04-01', // ADDED
+        sowingSeasons: [{ id: 'spring', label: 'Spring', startISO: '2026-03-01', endISO: '2026-05-31' }], // ADDED
+        activeSowingSeasonId: 'spring', // ADDED
+        firstHarvestISO: '2026-06-01', // ADDED
+        lastHarvestISO: '2026-06-08', // ADDED
+        ...overrides // ADDED
+    }); // ADDED
+} // ADDED
+
+test('schedule summary view state de-duplicates warning bullet messages', () => { // ADDED
+    const viewState = makeSummaryViewState({ // ADDED
+        scheduleWarnings: [ // ADDED
+            { message: 'There is not enough growing-degree accumulation to reach maturity.' }, // ADDED
+            { message: 'Selected sow date yield multiplier 0.49 is below the minimum 0.50.' }, // ADDED
+            { message: 'There is not enough growing-degree accumulation to reach maturity.' }, // ADDED
+            { message: '   ' }, // ADDED
+            { type: 'missing_message' } // ADDED
+        ] // ADDED
+    }); // ADDED
+
+    assert.equal(viewState.feasibility.status, 'warning'); // ADDED
+    assert.deepEqual(Array.from(viewState.feasibility.warningMessages), [ // CHANGED
+        'There is not enough growing-degree accumulation to reach maturity.', // ADDED
+        'Selected sow date yield multiplier 0.49 is below the minimum 0.50.' // ADDED
+    ]); // ADDED
+}); // ADDED
+
+test('schedule summary renders warnings as bullet list in double-wide feasibility item', () => { // ADDED
+    const summaryView = hooks.renderScheduleSummary(); // ADDED
+    const viewState = makeSummaryViewState({ // ADDED
+        scheduleWarnings: [ // ADDED
+            { message: 'There is not enough growing-degree accumulation to reach maturity.' }, // ADDED
+            { message: 'Selected sow date yield multiplier 0.49 is below the minimum 0.50.' } // ADDED
+        ] // ADDED
+    }); // ADDED
+
+    hooks.updateScheduleSummary(summaryView, viewState); // ADDED
+
+    const feasibilityItem = summaryView.fields.feasibility.parentElement; // ADDED
+    const warningItems = Array.from(summaryView.fields.feasibility.querySelectorAll('ul.usl-scheduler-summary-warning-list > li'), item => item.textContent); // ADDED
+    assert.equal(feasibilityItem.classList.contains('usl-scheduler-summary-item--wide'), true); // ADDED
+    assert.deepEqual(warningItems, Array.from(viewState.feasibility.warningMessages)); // CHANGED
+}); // ADDED
+
+test('schedule summary keeps non-warning feasibility as plain text', () => { // ADDED
+    const summaryView = hooks.renderScheduleSummary(); // ADDED
+    const viewState = makeSummaryViewState(); // ADDED
+
+    hooks.updateScheduleSummary(summaryView, viewState); // ADDED
+
+    assert.equal(summaryView.fields.feasibility.querySelector('ul'), null); // ADDED
+    assert.equal(summaryView.fields.feasibility.textContent, 'The selected sow date is in Spring.'); // ADDED
+}); // ADDED
+
 test('annual task preview fallback range remains sow through harvest', () => {
     const result = hooks.computeScheduleResult(makeInputs(hooks, { startISO: '2026-04-01' }));
     const range = hooks.resolveTaskPreviewScheduleRange(result);

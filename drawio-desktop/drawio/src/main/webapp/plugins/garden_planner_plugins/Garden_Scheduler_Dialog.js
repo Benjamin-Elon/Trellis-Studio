@@ -2675,6 +2675,17 @@ Draw.loadPlugin(function (ui) {
         if (!list.length) return ''; // ADDED
         return list.map(warning => String(warning.message || '').trim()).filter(Boolean).join(' '); // ADDED
     } // ADDED
+    function normalizeScheduleSummaryWarningMessages(warnings) { // ADDED
+        const messages = []; // ADDED
+        const seen = new Set(); // ADDED
+        (Array.isArray(warnings) ? warnings : []).forEach(warning => { // ADDED
+            const message = String(warning?.message || '').trim(); // ADDED
+            if (!message || seen.has(message)) return; // ADDED
+            seen.add(message); // ADDED
+            messages.push(message); // ADDED
+        }); // ADDED
+        return messages; // ADDED
+    } // ADDED
     function requireFeasibleSowingSeasonSelection(args) { // ADDED
         const classification = classifySelectedSowDate(args); // ADDED
         if (!args?.perennial && classification.status === 'missing') throw new Error(classification.label); // CHANGED
@@ -2901,9 +2912,9 @@ Draw.loadPlugin(function (ui) {
             sowingSeasons, // CHANGED
             activeSowingSeasonId // ADDED
         }); // ADDED
-        const warningText = summarizeScheduleWarnings(scheduleWarnings); // ADDED
-        if (!perennial && warningText) { // ADDED
-            feasibility = { status: 'warning', label: warningText }; // ADDED
+        const warningMessages = normalizeScheduleSummaryWarningMessages(scheduleWarnings); // ADDED
+        if (!perennial && warningMessages.length) { // CHANGED
+            feasibility = { status: 'warning', label: warningMessages.join(' '), warningMessages }; // CHANGED
         } // ADDED
         return { // ADDED
             crop: [plantName, varietyName].filter(Boolean).join(' / ') || '(none)', // ADDED
@@ -2950,7 +2961,7 @@ Draw.loadPlugin(function (ui) {
             ['feasibility', 'Feasibility'] // ADDED
         ].forEach(([key, label]) => { // ADDED
             const item = document.createElement('div'); // ADDED
-            item.className = 'usl-scheduler-summary-item'; // CHANGE
+            item.className = key === 'feasibility' ? 'usl-scheduler-summary-item usl-scheduler-summary-item--wide' : 'usl-scheduler-summary-item'; // CHANGED
             const labelEl = document.createElement('div'); // ADDED
             labelEl.className = 'usl-scheduler-summary-label'; // CHANGE
             labelEl.textContent = label; // ADDED
@@ -2977,8 +2988,21 @@ Draw.loadPlugin(function (ui) {
         summaryView.fields.selectedDate.textContent = viewState.selectedDate; // ADDED
         summaryView.fields.firstHarvest.textContent = viewState.firstHarvest; // ADDED
         summaryView.fields.harvestEnd.textContent = viewState.harvestEnd; // ADDED
-        summaryView.fields.feasibility.textContent = viewState.feasibility.label; // ADDED
-        summaryView.fields.feasibility.style.color = viewState.feasibility.status === 'feasible' // ADDED
+        const feasibilityField = summaryView.fields.feasibility; // ADDED
+        feasibilityField.textContent = ''; // ADDED
+        if (viewState.feasibility.status === 'warning' && Array.isArray(viewState.feasibility.warningMessages) && viewState.feasibility.warningMessages.length) { // ADDED
+            const list = document.createElement('ul'); // ADDED
+            list.className = 'usl-scheduler-summary-warning-list'; // ADDED
+            viewState.feasibility.warningMessages.forEach(message => { // ADDED
+                const item = document.createElement('li'); // ADDED
+                item.textContent = message; // ADDED
+                list.appendChild(item); // ADDED
+            }); // ADDED
+            feasibilityField.appendChild(list); // ADDED
+        } else { // ADDED
+            feasibilityField.textContent = viewState.feasibility.label; // ADDED
+        } // ADDED
+        feasibilityField.style.color = viewState.feasibility.status === 'feasible' // CHANGED
             ? '#166534' // ADDED
             : (viewState.feasibility.status === 'warning' ? '#92400e' : (viewState.feasibility.status === 'not_applicable' ? '#374151' : '#b91c1c')); // CHANGED
     } // ADDED
@@ -8169,8 +8193,11 @@ Draw.loadPlugin(function (ui) {
             .usl-scheduler-summary-title{font-size:16px;font-weight:700!important;color:var(--usl-neutral-900)}
             .usl-scheduler-summary-grid{display:grid!important;grid-template-columns:repeat(4,minmax(120px,1fr))!important;gap:6px!important}
             .usl-scheduler-summary-item{border:1px solid var(--usl-neutral-300);border-radius:6px;background:#fff;padding:6px 7px;min-width:0}
+            .usl-scheduler-summary-item--wide{grid-column:span 2!important} /* ADDED */
             .usl-scheduler-summary-label{color:var(--usl-neutral-700)!important;font-size:10px!important;font-weight:700;text-transform:uppercase}
             .usl-scheduler-summary-value{margin-top:3px;font-size:13px!important;font-weight:700!important;color:var(--usl-neutral-900);white-space:normal;overflow-wrap:anywhere}
+            .usl-scheduler-summary-warning-list{margin:3px 0 0 16px!important;padding:0!important} /* ADDED */
+            .usl-scheduler-summary-warning-list li{margin:0 0 2px 0!important;padding:0!important} /* ADDED */
             .usl-scheduler-dialog details{border:1px solid var(--usl-neutral-300)!important;border-radius:8px;background:#fff;margin-top:12px!important;overflow:hidden}
             .usl-scheduler-dialog summary{padding:9px 10px!important;background:var(--usl-neutral-100);border-bottom:1px solid var(--usl-neutral-300);font-weight:700!important}
             @media (max-width:760px){.usl-scheduler-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}.usl-scheduler-row-label{flex-basis:100%}.usl-scheduler-body{padding:10px}.usl-scheduler-title{white-space:normal}}
@@ -10479,6 +10506,8 @@ Draw.loadPlugin(function (ui) {
             normalizeLatitudeDeg, // ADDED
             saveSchedulerCityLatitude, // ADDED
             buildScheduleViewState, // ADDED
+            renderScheduleSummary, // ADDED
+            updateScheduleSummary, // ADDED
             buildLifecycleTimelineViewModel, // ADDED
             buildLifecycleTimelineAxisMarkers, // ADDED
             findFirstLifecycleTimelineTaskRule, // ADDED
