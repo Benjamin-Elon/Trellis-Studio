@@ -33,6 +33,7 @@
         normalizeBedProfile,
         estimateSoilTempC,
         bedFrostGateShiftDays,
+        bedAdjustedMeanTemperatureOnDate, // ADDED
         buildDailyTemperatureSeries,
         gddRateForDate,
         meanTemperatureOnDate,
@@ -235,14 +236,15 @@
         if (T <= ToptHigh) return 1;
         return (Tmax - T) / Math.max(1e-9, (Tmax - ToptHigh));
     }
-    function weightedMeanTempOverRange(startDate, endDate, monthlyAvgTemp, dailyRatesMap, Tbase = 10, dailyClimate = null) {
+    function weightedMeanTempOverRange(startDate, endDate, monthlyAvgTemp, dailyRatesMap, Tbase = 10, dailyClimate = null, bedProfile = null) { // CHANGED
         let cur = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate()));
         const sampleEnd = endDate > startDate ? endDate : addDaysUTC(startDate, 1);
         let sum = 0, n = 0;
         while (cur < sampleEnd) {
             const m = cur.getUTCMonth() + 1;
-            let T = dailyClimate ? meanTemperatureOnDate(cur, dailyClimate) : null;
-            if (T == null) T = monthlyAvgTemp?.[m];
+            let T = dailyClimate ? bedAdjustedMeanTemperatureOnDate(cur, dailyClimate, bedProfile) : null; // CHANGED
+            if (T == null) T = bedAdjustedMeanTemperatureOnDate(cur, monthlyAvgTemp, bedProfile); // CHANGED
+            if (T == null) T = monthlyAvgTemp?.[m]; // ADDED
             if (T == null) {
                 const gdd = gddRateForDate(dailyRatesMap, cur);
                 T = gdd > 0 ? (Tbase + gdd) : (Tbase - 2);
@@ -253,7 +255,7 @@
     }
     function sampleMeanTempOverDays(startDate, days, ctx) { // ADDED
         const count = Math.max(1, Math.round(Number(days) || 1)); // ADDED
-        return weightedMeanTempOverRange(startDate, addDaysUTC(startDate, count), ctx.monthlyAvg, ctx.dailyRates, ctx.Tbase, ctx.dailyClimate); // ADDED
+        return weightedMeanTempOverRange(startDate, addDaysUTC(startDate, count), ctx.monthlyAvg, ctx.dailyRates, ctx.Tbase, ctx.dailyClimate, ctx.bedProfile); // CHANGED
     }
     function dateForDiagnosticStage(stage, sowDate, feasibleResult, plant) { // ADDED
         const normalized = String(stage || '').trim().toLowerCase(); // ADDED
@@ -368,7 +370,7 @@
             const stageDate = dateForDiagnosticStage(stage, sowDate, feasibleResult, plant); // ADDED
             let count = 0; // ADDED
             for (let d = new Date(sowDate); d < stageDate; d = addDaysUTC(d, 1)) { // CHANGED
-                const temp = weightedMeanTempOverRange(d, addDaysUTC(d, 1), ctx.monthlyAvg, ctx.dailyRates, ctx.Tbase, ctx.dailyClimate); // ADDED
+                const temp = weightedMeanTempOverRange(d, addDaysUTC(d, 1), ctx.monthlyAvg, ctx.dailyRates, ctx.Tbase, ctx.dailyClimate, ctx.bedProfile); // CHANGED
                 if (temp >= chillingMin && temp <= chillingMax) count += 1; // ADDED
             } // ADDED
             if (count < chillingRequired) diagnostics.push(makeDiagnostic({ // ADDED
@@ -501,6 +503,7 @@
                 coolingThresholdC: coolingThreshold,
                 coolingCrossDate: coolingCross,
                 overwinterAllowed: policy.overwinterAllowed,
+                annualCrossYearHarvestAllowed: policy.annualCrossYearHarvestAllowed !== false, // ADDED
                 useSoilTempGate: policy.useSoilTempGate,
                 soilGateThresholdC: policy.soilGateThresholdC,
                 soilGateConsecutiveDays: policy.soilGateConsecutiveDays,
@@ -523,6 +526,7 @@
                 startDate,
                 seasonEnd,
                 scanStart,
+                sowScanEnd: asUTCDate(scanStart.getUTCFullYear(), 12, 31), // ADDED
                 scanEndHard,
             });
         }
@@ -596,7 +600,7 @@
         return new Date(sowDate);
     }
     function validateNonThermalSowDate(planner, sowDate) { // ADDED
-        if (!planner.withinWindow(sowDate)) return { ok: false, reason: 'outside_scan_window' }; // ADDED
+        if (!planner.withinWindow(sowDate) || sowDate > planner.ctx.sowScanEnd) return { ok: false, reason: 'outside_scan_window' }; // CHANGED
         const gateDate = getGateDateForCandidate(planner, sowDate); // ADDED
         if (!gateDate || !planner.withinWindow(gateDate)) return { ok: false, reason: 'gate_outside_scan_window' }; // ADDED
         const frost = planner.checkSpringFrostGate(gateDate); // ADDED
@@ -648,7 +652,7 @@
             mat = maturityDateFromBudget(sowDate, C.BUDGET, C.dailyRates, C.scanEndHard); // ADDED
         } // ADDED
         const fullHarvestEnd = planner.addDays(mat, C.HW_DAYS); // ADDED
-        if (!C.overwinterAllowed && sowDate.getUTCFullYear() !== fullHarvestEnd.getUTCFullYear()) { // ADDED
+        if (!C.overwinterAllowed && !C.annualCrossYearHarvestAllowed && sowDate.getUTCFullYear() !== fullHarvestEnd.getUTCFullYear()) { // CHANGED
             return { ok: false, reason: 'cross_year_disallowed' }; // ADDED
         } // ADDED
         const hardEnd = C.scanEndHard; // ADDED
@@ -657,7 +661,7 @@
         const harvestSpanDays = Math.max(0, Math.round((effectiveHarvestEnd.getTime() - mat.getTime()) / MS_PER_DAY)); // ADDED
         const minHarvestDays = Math.min(C.HW_DAYS, 3); // ADDED
         if (harvestSpanDays < minHarvestDays) return { ok: false, reason: 'beyond_hard_end' }; // ADDED
-        const TmeanHarvest = weightedMeanTempOverRange(mat, effectiveHarvestEnd, C.monthlyAvg, C.dailyRates, C.Tbase, C.dailyClimate); // ADDED
+        const TmeanHarvest = weightedMeanTempOverRange(mat, effectiveHarvestEnd, C.monthlyAvg, C.dailyRates, C.Tbase, C.dailyClimate, C.bedProfile); // CHANGED
         const { Tmin, Tmax } = C.env; // ADDED
         if (TmeanHarvest < Tmin) { // ADDED
             if (!allowThermalWarnings) return { ok: false, reason: `harvest_too_cold(${TmeanHarvest.toFixed(1)}<${Tmin})` }; // ADDED
@@ -668,7 +672,8 @@
             warnings.push(thermalWarning('harvest_too_hot', `Expected harvest temperature ${TmeanHarvest.toFixed(1)} C is above the crop maximum ${Tmax} C.`)); // ADDED
         } // ADDED
         const truncated = fullHarvestEnd.getTime() > effectiveHarvestEnd.getTime(); // ADDED
-        return { ok: true, maturity: mat, harvestStart: mat, harvestEnd: effectiveHarvestEnd, truncated, TmeanHarvest, warnings: Object.freeze(warnings) }; // ADDED
+        const crossYearHarvest = sowDate.getUTCFullYear() !== effectiveHarvestEnd.getUTCFullYear(); // ADDED
+        return { ok: true, maturity: mat, harvestStart: mat, harvestEnd: effectiveHarvestEnd, truncated, crossYearHarvest, TmeanHarvest, warnings: Object.freeze(warnings) }; // CHANGED
     } // ADDED
     function firstNonSoilStart(planner, startD) {
         const C = planner.ctx;
@@ -765,7 +770,7 @@
             HW_DAYS: resolvedHarvestWindowDays // ADDED
         }); // ADDED
         const C = planner.ctx; // ADDED
-        const seasonScanEnd = asUTCDate(C.scanStart.getUTCFullYear(), 12, 31); // ADDED
+        const seasonScanEnd = C.sowScanEnd || asUTCDate(C.scanStart.getUTCFullYear(), 12, 31); // CHANGED
         const sowScanEnd = seasonScanEnd < C.scanEndHard ? seasonScanEnd : C.scanEndHard; // ADDED
         const ranges = []; // ADDED
         const scanRows = []; // ADDED
@@ -878,6 +883,7 @@
 
         const resolvedBehavior = resolveMethodBehavior({ methodCategoryId, methodId });
         validateAutoWindowMethodInputs({ resolvedBehavior, daysTransplant });
+        const effectiveScanEndHard = asUTCDate(Math.max(scanEndHard.getUTCFullYear(), scanStart.getUTCFullYear() + 1), 12, 31); // ADDED
         const fakePlant = {
             start_cooling_threshold_c: startCoolingThresholdC,
             soil_temp_min_plant_c: soilGateThresholdC,
@@ -912,7 +918,7 @@
             methodCategoryId: resolvedBehavior.methodCategoryId,
             methodId: resolvedBehavior.methodId,
             startISO: scanStart.toISOString().slice(0, 10),
-            seasonEndISO: scanEndHard.toISOString().slice(0, 10),
+            seasonEndISO: effectiveScanEndHard.toISOString().slice(0, 10), // CHANGED
             policy,
             seasonStartYear: scanStart.getUTCFullYear(),
             harvestWindowDays: HW_DAYS,
@@ -920,7 +926,7 @@
             bedProfileSource,
             dailyClimate: dailyClimate || buildDailyTemperatureSeries({
                 startDate: scanStart,
-                endDate: scanEndHard,
+                endDate: effectiveScanEndHard, // CHANGED
                 monthlyNormals: monthlyAvgTemp,
                 source: 'legacy monthly mean inputs'
             })
@@ -961,7 +967,7 @@
         });
         const C = planner.ctx;
         const planningMode = resolvedBehavior.planningMode;
-        const sowScanEnd = overwinterAllowed ? asUTCDate(C.scanStart.getUTCFullYear(), 12, 31) : C.scanEndHard;
+        const sowScanEnd = C.sowScanEnd || asUTCDate(C.scanStart.getUTCFullYear(), 12, 31); // CHANGED
         let fieldGateStart = new Date(C.scanStart);
         if (useSpringFrostGate && Number.isFinite(lastSpringFrostDOY)) {
             const shiftedDOY = Math.max(1, Math.min(366, Number(lastSpringFrostDOY) + Number(C.springFrostGateShiftDays || 0)));
@@ -1048,6 +1054,7 @@
             throw new Error(`Selected sow date is not feasible: ${humanFeasibilityReason(feasibility.reason)}`);
         }
         const warnings = Array.from(feasibility.warnings || []); // ADDED
+        if (feasibility.crossYearHarvest) warnings.push(thermalWarning('cross_year_harvest_allowed', 'Climate-based checks allow this annual harvest to continue into the next calendar year.')); // ADDED
         const budget = plant.firstHarvestBudget();
         if (!budget || !Number.isFinite(budget.amount) || budget.amount <= 0) {
             throw new Error("Invalid maturity budget for " + plant.plant_name);

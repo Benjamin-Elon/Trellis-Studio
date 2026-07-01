@@ -682,6 +682,8 @@ Draw.loadPlugin(function (ui) {
             }
 
             const crops = (plan && plan.crops) ? plan.crops : [];
+            const carryoverCrops = Array.isArray(plan && plan.__carryoverCrops) ? plan.__carryoverCrops : []; // ADDED
+            const supplyCrops = crops.concat(carryoverCrops); // ADDED
 
             const demandLineOrder = new Map(); // NEW
             const channelOrder = new Map(((plan && plan.demandChannels) || []).map((channel, index) => [String(channel && channel.id || ""), index])); // NEW
@@ -776,7 +778,7 @@ Draw.loadPlugin(function (ui) {
             }
 
             // supply estimate / actual harvest
-            for (const crop of crops) {
+            for (const crop of supplyCrops) { // CHANGED
                 if (!crop || !crop.id) continue;
 
                 const arr = ensureCropArrays(crop.id); // NEW
@@ -825,7 +827,7 @@ Draw.loadPlugin(function (ui) {
                 );
             }
 
-            for (const crop of crops) { // CHANGE
+            for (const crop of supplyCrops) { // CHANGED
                 if (!crop || !crop.id) continue; // CHANGE
                 const arr = ensureCropArrays(crop.id); // CHANGE
                 arr.availableSupply = Array(n).fill(0); // NEW
@@ -1086,6 +1088,7 @@ Draw.loadPlugin(function (ui) {
         function stripRuntimeFields(plan, options) { // NEW
             const forTemplate = !!(options && options.forTemplate);
             delete plan.cropFilterId;
+            delete plan.__carryoverCrops; // ADDED
             if (!forTemplate) delete plan.templateBaseYear;
 
             for (const crop of (plan.crops || [])) {
@@ -1914,6 +1917,41 @@ Draw.loadPlugin(function (ui) {
             return String(crop.harvestEnd); // CHANGE
         } // CHANGE
 
+        function cropHarvestOverlapsYear(crop, year) { // ADDED
+            if (!crop || !PlanMath.hasYmd(crop.harvestStart) || !PlanMath.hasYmd(crop.harvestEnd)) return false; // ADDED
+            const startMs = PlanMath.parseYmdLocalToMs(crop.harvestStart); // ADDED
+            const endMs = PlanMath.parseYmdLocalToMs(crop.harvestEnd); // ADDED
+            const yearStartMs = PlanMath.parseYmdLocalToMs(`${year}-01-01`); // ADDED
+            const yearEndExMs = PlanMath.parseYmdLocalToMs(`${Number(year) + 1}-01-01`); // ADDED
+            return Number.isFinite(startMs) && Number.isFinite(endMs) && startMs <= endMs && startMs < yearEndExMs && PlanMath.addDaysMs(endMs, 1) > yearStartMs; // ADDED
+        } // ADDED
+
+        function buildCarryoverCrops(moduleCell, year, plan) { // ADDED
+            const priorYear = Number(year) - 1; // ADDED
+            if (!Number.isFinite(priorYear) || priorYear < 1900) return []; // ADDED
+            const prior = PlanRepository.loadPlanForYear(moduleCell, priorYear); // ADDED
+            if (!prior || !Array.isArray(prior.crops)) return []; // ADDED
+            PlanSchema.normalizeForRuntime(prior, priorYear); // ADDED
+            const currentByKey = new Map(); // ADDED
+            for (const crop of (plan.crops || [])) { // ADDED
+                const key = PlanSchema.getCropIdentityKey(crop); // ADDED
+                if (key) currentByKey.set(key, crop); // ADDED
+            } // ADDED
+            const carryovers = []; // ADDED
+            for (const priorCrop of prior.crops || []) { // ADDED
+                if (!cropHarvestOverlapsYear(priorCrop, year)) continue; // ADDED
+                const key = PlanSchema.getCropIdentityKey(priorCrop); // ADDED
+                const currentCrop = key ? currentByKey.get(key) : null; // ADDED
+                const source = PlanSchema.clonePlain(priorCrop); // ADDED
+                source.id = currentCrop ? currentCrop.id : `carryover:${priorYear}:${priorCrop.id || key || carryovers.length}`; // ADDED
+                source.__carryover = true; // ADDED
+                source.__carryoverFromYear = priorYear; // ADDED
+                source.useActualHarvest = false; // ADDED
+                carryovers.push(source); // ADDED
+            } // ADDED
+            return carryovers; // ADDED
+        } // ADDED
+
         function legacyShelfExtendedEndYmd(crop, harvestEnd) { // NEW
             if (!PlanMath.hasYmd(harvestEnd)) return null; // NEW
             const shelfDays = Math.max(0, Math.trunc(Number(crop && crop.shelfLifeDays) || 0)); // NEW
@@ -2040,6 +2078,7 @@ Draw.loadPlugin(function (ui) {
         function recalculate(moduleCell, year, plan) { // NEW
             PlanSchema.normalizeForRuntime(plan, year);
             const selectedYear = Number(plan.year);
+            plan.__carryoverCrops = buildCarryoverCrops(moduleCell, selectedYear, plan); // ADDED
             const weekStartDow = plan.weekStartDow; // CHANGE
             const weekStarts = PlanMath.buildWeekStartsForYearLocal(selectedYear, weekStartDow);
             const kgPerPlantByCropKey = new Map();
@@ -2080,6 +2119,7 @@ Draw.loadPlugin(function (ui) {
             autoFillAndClampCsa(plan);
 
             const warnings = Array.from(diagramFacts.diagnostics || []); // CHANGE
+            if (plan.__carryoverCrops.length) warnings.push(`${plan.__carryoverCrops.length} prior-year harvest window${plan.__carryoverCrops.length === 1 ? '' : 's'} included as carryover supply.`); // ADDED
             const weekly = PlanMath.computePlanWeekly(plan, warnings);
             const cropTotals = PlanMath.computePlanCropTotals(plan, weekly);
             const totalsById = new Map(cropTotals.map(row => [String(row.crop.id), row]));

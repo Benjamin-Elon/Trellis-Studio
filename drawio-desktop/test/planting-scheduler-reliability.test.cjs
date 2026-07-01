@@ -170,6 +170,7 @@ function makeInputs({
     harvestWindowDays = 7,
     minYieldMultiplier = 0, // ADDED
     policy = null,
+    bedProfile = null, // ADDED
     dailyClimate = null
 } = {}) {
     return new hooks.ScheduleInputs({
@@ -188,6 +189,7 @@ function makeInputs({
         seasonStartYear,
         harvestWindowDays,
         minYieldMultiplier, // ADDED
+        bedProfile, // ADDED
         dailyClimate
     });
 }
@@ -292,7 +294,7 @@ test('annual latest harvest display date does not cap feasibility', async () => 
     assert.equal(result.rows[0].harvEnd, '2026-06-07'); // ADDED
     const rows = await hooks.explainFeasibilityOverSeason(inputs, 1, false); // ADDED
     const diagnostics = hooks.buildFeasibilityDiagnostics(inputs, rows); // ADDED
-    assert.match(diagnostics, /Effective hard end: 2026-12-31 \(lifecycle scan end\)/); // ADDED
+    assert.match(diagnostics, /Effective hard end: 2027-12-31 \(lifecycle scan end\)/); // CHANGED
 }); // ADDED
 
 test('no feasible annual window returns null derived dates', () => {
@@ -482,20 +484,38 @@ test('lifecycle timeline milestone task dot follows generated display order', ()
     assert.equal(harvestStart.taskRuleIndex, 1); // ADDED
 }); // ADDED
 
-test('indoor transplant gate outside scan end is rejected', () => {
+test('indoor transplant gate outside scan end is rejected when annual cross-year harvests are disabled', () => { // CHANGED
     const plant = makePlant({ days_transplant: 20 });
+    const policy = new hooks.PolicyFlags({ annualCrossYearHarvestAllowed: false }); // ADDED
     const planner = new hooks.Planner(makeInputs({
         plant,
         planningMode: 'transplant_indoor',
         methodCategoryId: 'transplant',
         methodId: 'transplant.indoor',
         startISO: '2026-12-20',
-        seasonEndISO: '2026-12-31'
+        seasonEndISO: '2026-12-31',
+        policy // ADDED
     }));
     const feasibility = planner.isSowFeasible(new Date('2026-12-20T00:00:00Z'));
     assert.equal(feasibility.ok, false);
     assert.equal(feasibility.reason, 'gate_outside_scan_window');
 });
+
+test('indoor transplant gate may validate into next year when annual cross-year harvests are allowed', () => { // ADDED
+    const plant = makePlant({ days_transplant: 20 }); // ADDED
+    const planner = new hooks.Planner(makeInputs({ // ADDED
+        plant, // ADDED
+        planningMode: 'transplant_indoor', // ADDED
+        methodCategoryId: 'transplant', // ADDED
+        methodId: 'transplant.indoor', // ADDED
+        startISO: '2026-12-20', // ADDED
+        seasonEndISO: '2026-12-31' // ADDED
+    })); // ADDED
+    const feasibility = planner.isSowFeasible(new Date('2026-12-20T00:00:00Z')); // ADDED
+    assert.equal(feasibility.ok, true); // ADDED
+    assert.equal(feasibility.maturity.toISOString().slice(0, 10), '2027-01-19'); // CHANGED
+    assert.equal(feasibility.harvestEnd.toISOString().slice(0, 10), '2027-01-26'); // ADDED
+}); // ADDED
 
 test('cooling trigger ignores January cold and finds autumn crossing', () => {
     const monthlyAvgTemp = {
@@ -646,12 +666,72 @@ test('bed frost risk shifts frost gate independently from soil temperature', () 
     assert.equal(shared.bedFrostGateShiftDays({ frostRisk: 'high' }), 10); // ADDED
 }); // ADDED
 
-test('strict GDD maturity remains infeasible when target exceeds calibrated season heat', () => { // ADDED
+test('annual December sowing can harvest next year without overwinter metadata', () => { // ADDED
+    const plant = makePlant({ days_maturity: 30, overwinter_ok: 0 }); // ADDED
+    const result = hooks.computeScheduleResult(makeInputs({ plant, city: makeCity(20), startISO: '2026-12-15' })); // ADDED
+    assert.equal(result.rows[0].sow, '2026-12-15'); // ADDED
+    assert.equal(result.rows[0].harvStart, '2027-01-14'); // ADDED
+    assert.equal(result.rows[0].harvEnd, '2027-01-21'); // ADDED
+    assert.ok(result.warnings.some(warning => warning.type === 'cross_year_harvest_allowed'), JSON.stringify(result.warnings)); // ADDED
+}); // ADDED
+
+test('tropical open-bed annuals allow cross-year harvests when climate gates pass', () => { // ADDED
+    const plant = makePlant({ days_maturity: 20, tmin_c: 12, tmax_c: 40, overwinter_ok: 0 }); // ADDED
+    const planner = new hooks.Planner(makeInputs({ plant, city: makeCity(26), startISO: '2026-12-20' })); // ADDED
+    const feasibility = planner.isSowFeasible(new Date('2026-12-20T00:00:00Z')); // ADDED
+    assert.equal(feasibility.ok, true); // ADDED
+    assert.equal(feasibility.harvestEnd.toISOString().slice(0, 10), '2027-01-16'); // ADDED
+}); // ADDED
+
+test('cold open-bed annual cross-year harvests remain rejected by harvest temperature gates', () => { // ADDED
+    const plant = makePlant({ days_maturity: 5, tmin_c: 3, tmax_c: 40, overwinter_ok: 0 }); // ADDED
+    const planner = new hooks.Planner(makeInputs({ plant, city: makeCity(-5), startISO: '2026-12-15' })); // ADDED
+    const feasibility = planner.isSowFeasible(new Date('2026-12-15T00:00:00Z')); // ADDED
+    assert.equal(feasibility.ok, false); // ADDED
+    assert.match(feasibility.reason, /^harvest_too_cold/); // ADDED
+}); // ADDED
+
+test('heated greenhouse bed effects can rescue a cold cross-year annual harvest', () => { // ADDED
+    const plant = makePlant({ days_maturity: 5, tmin_c: 3, tmax_c: 40, overwinter_ok: 0 }); // ADDED
+    const bedProfile = { seasonExtension: 'heated_greenhouse' }; // ADDED
+    const planner = new hooks.Planner(makeInputs({ plant, city: makeCity(-5), startISO: '2026-12-15', bedProfile })); // ADDED
+    const feasibility = planner.isSowFeasible(new Date('2026-12-15T00:00:00Z')); // ADDED
+    assert.equal(feasibility.ok, true); // ADDED
+    assert.equal(feasibility.harvestEnd.toISOString().slice(0, 10), '2026-12-27'); // ADDED
+}); // ADDED
+
+test('season extension override values take precedence over preset defaults', () => { // ADDED
+    const shared = hooks.sharedCore; // ADDED
+    const effects = shared.seasonExtensionEffects({ // ADDED
+        seasonExtension: 'heated_greenhouse', // ADDED
+        seasonExtensionAirOffsetC: 1.25, // ADDED
+        seasonExtensionSoilOffsetC: 2.5, // ADDED
+        seasonExtensionFrostShiftDays: -12, // ADDED
+        seasonExtensionMinAirTempC: 4 // ADDED
+    }); // ADDED
+    assert.equal(effects.airOffsetC, 1.25); // ADDED
+    assert.equal(effects.soilOffsetC, 2.5); // ADDED
+    assert.equal(effects.frostShiftDays, -12); // ADDED
+    assert.equal(effects.minAirTempC, 4); // ADDED
+}); // ADDED
+
+test('overwinter metadata still permits cross-year harvests when climate-only cross-year policy is disabled', () => { // ADDED
+    const plant = makePlant({ days_maturity: 30, overwinter_ok: 1 }); // ADDED
+    const blockedPolicy = new hooks.PolicyFlags({ annualCrossYearHarvestAllowed: false, overwinterAllowed: false }); // ADDED
+    const allowedPolicy = new hooks.PolicyFlags({ annualCrossYearHarvestAllowed: false, overwinterAllowed: true }); // ADDED
+    const blocked = new hooks.Planner(makeInputs({ plant, city: makeCity(20), startISO: '2026-12-15', policy: blockedPolicy })).isSowFeasible(new Date('2026-12-15T00:00:00Z')); // ADDED
+    const allowed = new hooks.Planner(makeInputs({ plant, city: makeCity(20), startISO: '2026-12-15', policy: allowedPolicy })).isSowFeasible(new Date('2026-12-15T00:00:00Z')); // ADDED
+    assert.equal(blocked.ok, false); // ADDED
+    assert.equal(blocked.reason, 'cross_year_disallowed'); // ADDED
+    assert.equal(allowed.ok, true); // ADDED
+}); // ADDED
+
+test('strict GDD maturity remains infeasible when target exceeds calibrated cross-year scan heat', () => { // CHANGED
     const city = makeVancouverCity(); // ADDED
     const plant = makePlant({ // ADDED
         plant_name: 'Sweet Corn', // ADDED
         days_maturity: 78, // ADDED
-        gdd_to_maturity: 1250, // ADDED
+        gdd_to_maturity: 4000, // CHANGED
         tbase_c: 10, // ADDED
         tmin_c: 8, // ADDED
         topt_low_c: 18, // ADDED
@@ -678,7 +758,8 @@ test('warning-tolerant annual schedule scales GDD only within cap', () => { // A
     const city = makeCity(10); // ADDED
     city.first_fall_frost_doy = 300; // ADDED
     const plant = makePlant({ days_maturity: null, gdd_to_maturity: 2200, tbase_c: 5, tmin_c: 0, tmax_c: 40 }); // ADDED
-    const inputs = makeInputs({ plant, city, startISO: '2026-01-01' }); // ADDED
+    const policy = new hooks.PolicyFlags({ annualCrossYearHarvestAllowed: false }); // ADDED
+    const inputs = makeInputs({ plant, city, startISO: '2026-01-01', policy }); // CHANGED
     assert.throws(() => hooks.annualCore.computeAnnualScheduleResult(inputs), /growing-degree accumulation/); // ADDED
     const result = hooks.computeScheduleResult(inputs); // ADDED
     const warning = result.warnings.find(item => item.type === 'insufficient_gdd_scaled_fallback'); // ADDED
@@ -787,12 +868,13 @@ test('feasibility scan ranges normalize parameterized frost reasons', async () =
     assert.equal(ranges[0].end, '2026-04-14'); // ADDED
     assert.equal(ranges[0].days, 104); // ADDED
     assert.equal(ranges[0].detail, 'doy 1 < 105 -> doy 104 < 105'); // ADDED
-    assert.equal(ranges.map(range => range.reason).join(','), 'spring_frost_gate,soil_gate,insufficient_gdd,soil_gate'); // ADDED
+    assert.equal(ranges.map(range => range.reason).join(','), 'spring_frost_gate,soil_gate,ok,insufficient_gdd,soil_gate'); // CHANGED
     assert.match(formatted, /2026-01-01 to 2026-04-14 \(104 days\) \| spring_frost_gate/); // ADDED
+    assert.match(formatted, /2026-05-11 to 2026-06-29 .* \| ok/); // ADDED
     assert.doesNotMatch(formatted, /2026-01-02 \(1 day\) \| spring_frost_gate/); // ADDED
 }); // ADDED
 
-test('feasibility blocking summary identifies primary post-readiness GDD blocker', async () => { // ADDED
+test('feasibility blocking summary preserves primary post-readiness GDD blocker with a narrow ok range', async () => { // CHANGED
     const city = makeVancouverCity({ last_spring_frost_p50_doy: 105, last_spring_frost_doy: 105 }); // ADDED
     const plant = makePlant({ plant_name: 'Sweet Corn', gdd_to_maturity: 1250, tbase_c: 10, soil_temp_min_plant_c: 16 }); // ADDED
     const policy = new hooks.PolicyFlags({ useSpringFrostGate: true, useSoilTempGate: true, soilGateThresholdC: 16, soilGateConsecutiveDays: 3 }); // ADDED
@@ -800,7 +882,7 @@ test('feasibility blocking summary identifies primary post-readiness GDD blocker
     const rows = await hooks.explainFeasibilityOverSeason(inputs, 400, false); // ADDED
     const summary = hooks.buildFeasibilityBlockingSummary(inputs, rows); // ADDED
     const diagnostics = hooks.buildFeasibilityDiagnostics(inputs, rows); // ADDED
-    assert.match(summary, /No feasible sowing season found\./); // ADDED
+    assert.match(summary, /Feasible sowing range found\./); // CHANGED
     assert.match(summary, /Primary blocker after frost\/soil readiness: insufficient_gdd/); // ADDED
     assert.match(summary, /GDD check: crop needs 1250\.0 GDD; calibrated crop-base estimate is/); // ADDED
     assert.match(diagnostics, /Failure summary: .*soil_gate: \d+/); // ADDED
@@ -834,7 +916,7 @@ test('feasible scan ranges include representative maturity and harvest dates', a
     assert.ok(okRange); // ADDED
     assert.equal(okRange.reason, 'ok'); // ADDED
     assert.match(okRange.first_maturity, /^2026-/); // ADDED
-    assert.match(okRange.last_harvest_end, /^2026-/); // ADDED
+    assert.match(okRange.last_harvest_end, /^2027-/); // CHANGED
     assert.match(hooks.formatFeasibilityScanRanges(rows), /maturity .* -> /); // ADDED
 }); // ADDED
 

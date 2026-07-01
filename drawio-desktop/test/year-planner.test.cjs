@@ -577,6 +577,33 @@ test("PlanRuntimeService derives actual harvest windows and returns calculation 
     assert.ok(runtime.warnings.some(warning => warning.includes("missing dates")));
 });
 
+test("PlanRuntimeService includes prior-year cross-year harvest as carryover supply without editable crop rows", () => { // NEW
+    const { api, root, addCell, TestCell: Cell } = createHarness(); // NEW
+    const moduleCell = addCell(root, new Cell("module")); // NEW
+    const prior = api.PlanSchema.createEmptyPlan(2026); // NEW
+    prior.crops.push(emptyCrop({ // NEW
+        id: "prior_crop", // NEW
+        actualPlants: 10, // NEW
+        useActualHarvest: false, // NEW
+        harvestStart: "2026-12-29", // NEW
+        harvestEnd: "2027-01-10" // NEW
+    })); // NEW
+    api.PlanRepository.savePlanForYear(moduleCell, 2026, prior); // NEW
+    const current = api.PlanSchema.createEmptyPlan(2027); // NEW
+    current.crops.push(emptyCrop({ id: "crop_1", actualPlants: 0, useActualHarvest: false, harvestStart: "", harvestEnd: "" })); // NEW
+    addDemand(current, { from: "2027-01-04", to: "2027-01-10", qty: 5 }); // NEW
+
+    const runtime = api.PlanRuntimeService.recalculate(moduleCell, 2027, current); // NEW
+    const weekly = runtime.weekly.perCrop.get("crop_1"); // NEW
+
+    assert.equal(current.crops.length, 1); // NEW
+    assert.equal(current.crops[0].id, "crop_1"); // NEW
+    assert.ok(Math.abs(weekly.supply.reduce((sum, value) => sum + value, 0) - (100 / 13)) < 0.0001); // CHANGED
+    assert.equal(weekly.usableSupply.reduce((sum, value) => sum + value, 0), 5); // NEW
+    assert.ok(runtime.warnings.some(warning => warning.includes("carryover supply"))); // NEW
+    assert.equal(api.PlanSchema.stripRuntimeFields(current).__carryoverCrops, undefined); // NEW
+}); // NEW
+
 test("PlanMath inventory uses conservative weekly shelf-life buckets and FIFO consumption", () => { // NEW
     const { api } = createHarness(); // NEW
     const weeks = [{ iso: "2026-01-05" }, { iso: "2026-01-12" }, { iso: "2026-01-19" }, { iso: "2026-01-26" }]; // NEW

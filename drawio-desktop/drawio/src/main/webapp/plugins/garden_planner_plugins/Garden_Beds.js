@@ -29,6 +29,10 @@ Draw.loadPlugin(function (ui) { // NEW
         bedUse: "bed_use", // NEW
         windExposure: "wind_exposure", // NEW
         frostRisk: "frost_risk", // CHANGE
+        seasonExtensionAirOffsetC: "season_extension_air_offset_c", // ADDED
+        seasonExtensionSoilOffsetC: "season_extension_soil_offset_c", // ADDED
+        seasonExtensionFrostShiftDays: "season_extension_frost_shift_days", // ADDED
+        seasonExtensionMinAirTempC: "season_extension_min_air_temp_c" // ADDED
     }; // NEW
 
     const FIELD_DEFS = [ // NEW
@@ -50,6 +54,17 @@ Draw.loadPlugin(function (ui) { // NEW
         out[field.key] = field; // NEW
         return out; // NEW
     }, Object.create(null)); // NEW
+
+    const SEASON_EXTENSION_EFFECTS = Object.freeze({ // ADDED
+        unknown: Object.freeze({ airOffsetC: 0, soilOffsetC: 0, frostShiftDays: 0, minAirTempC: null }), // ADDED
+        none: Object.freeze({ airOffsetC: 0, soilOffsetC: 0, frostShiftDays: 0, minAirTempC: null }), // ADDED
+        row_cover: Object.freeze({ airOffsetC: 0.5, soilOffsetC: 0.5, frostShiftDays: -3, minAirTempC: null }), // ADDED
+        low_tunnel: Object.freeze({ airOffsetC: 1.5, soilOffsetC: 1.0, frostShiftDays: -7, minAirTempC: null }), // ADDED
+        cold_frame: Object.freeze({ airOffsetC: 2.0, soilOffsetC: 1.5, frostShiftDays: -10, minAirTempC: null }), // ADDED
+        greenhouse: Object.freeze({ airOffsetC: 3.0, soilOffsetC: 2.0, frostShiftDays: -21, minAirTempC: null }), // ADDED
+        high_tunnel: Object.freeze({ airOffsetC: 2.5, soilOffsetC: 1.5, frostShiftDays: -14, minAirTempC: null }), // ADDED
+        heated_greenhouse: Object.freeze({ airOffsetC: 5.0, soilOffsetC: 3.0, frostShiftDays: -45, minAirTempC: 5.0 }) // ADDED
+    }); // ADDED
 
     const VALUE_LABELS = { // NEW
         unknown: "Unknown", // NEW
@@ -189,6 +204,35 @@ Draw.loadPlugin(function (ui) { // NEW
         return out; // NEW
     } // NEW
 
+    function finiteNumberOrNull(value) { // ADDED
+        if (value === null || value === undefined || value === "") return null; // ADDED
+        const n = Number(value); // ADDED
+        return Number.isFinite(n) ? n : null; // ADDED
+    } // ADDED
+
+    function normalizeOptionalNumber(value) { // ADDED
+        const n = finiteNumberOrNull(value); // ADDED
+        return n == null ? null : Math.round(n * 100) / 100; // ADDED
+    } // ADDED
+
+    function seasonExtensionDefaults(value) { // ADDED
+        const key = Object.prototype.hasOwnProperty.call(SEASON_EXTENSION_EFFECTS, value) ? value : "unknown"; // ADDED
+        return SEASON_EXTENSION_EFFECTS[key] || SEASON_EXTENSION_EFFECTS.unknown; // ADDED
+    } // ADDED
+
+    function seasonExtensionEffects(profile) { // ADDED
+        const p = profile && typeof profile === "object" ? profile : {}; // ADDED
+        const key = normalizeEnumValue("seasonExtension", p.seasonExtension); // ADDED
+        const defaults = seasonExtensionDefaults(key); // ADDED
+        return { // ADDED
+            seasonExtension: key, // ADDED
+            airOffsetC: normalizeOptionalNumber(p.seasonExtensionAirOffsetC) ?? defaults.airOffsetC, // ADDED
+            soilOffsetC: normalizeOptionalNumber(p.seasonExtensionSoilOffsetC) ?? defaults.soilOffsetC, // ADDED
+            frostShiftDays: normalizeOptionalNumber(p.seasonExtensionFrostShiftDays) ?? defaults.frostShiftDays, // ADDED
+            minAirTempC: key === "heated_greenhouse" ? (normalizeOptionalNumber(p.seasonExtensionMinAirTempC) ?? defaults.minAirTempC) : null // ADDED
+        }; // ADDED
+    } // ADDED
+
     function isValidPresetKey(key) { // NEW
         return !!key && !!PRESETS[key]; // NEW
     } // NEW
@@ -217,6 +261,12 @@ Draw.loadPlugin(function (ui) { // NEW
         if (options && options.allowPreset && isValidPresetKey(presetKey)) out.presetKey = presetKey; // CHANGE
         out.notes = String(source.notes || "").trim(); // NEW
         out.tags = normalizeTags(source.tags); // NEW
+        out.seasonExtensionAirOffsetC = normalizeOptionalNumber(source.seasonExtensionAirOffsetC ?? source.season_extension_air_offset_c); // ADDED
+        out.seasonExtensionSoilOffsetC = normalizeOptionalNumber(source.seasonExtensionSoilOffsetC ?? source.season_extension_soil_offset_c); // ADDED
+        out.seasonExtensionFrostShiftDays = normalizeOptionalNumber(source.seasonExtensionFrostShiftDays ?? source.season_extension_frost_shift_days); // ADDED
+        out.seasonExtensionMinAirTempC = out.seasonExtension === "heated_greenhouse" // ADDED
+            ? normalizeOptionalNumber(source.seasonExtensionMinAirTempC ?? source.season_extension_min_air_temp_c) // ADDED
+            : null; // ADDED
         out.lastUpdated = String(source.lastUpdated || (options && options.keepExistingDate ? "" : nowIso())); // NEW
         return out; // NEW
     } // NEW
@@ -346,6 +396,87 @@ Draw.loadPlugin(function (ui) { // NEW
         section.appendChild(row); // NEW
     } // NEW
 
+    function isGardenModule(cell) { // ADDED
+        return !!cell && cell.getAttribute && cell.getAttribute("garden_module") === "1"; // ADDED
+    } // ADDED
+
+    function findGardenModuleAncestor(cell) { // ADDED
+        for (let cur = cell; cur; cur = model.getParent ? model.getParent(cur) : null) { // ADDED
+            if (isGardenModule(cur)) return cur; // ADDED
+        } // ADDED
+        return null; // ADDED
+    } // ADDED
+
+    function resolveUnitSystem(cell) { // ADDED
+        const moduleCell = findGardenModuleAncestor(cell); // ADDED
+        return String(moduleCell && moduleCell.getAttribute ? moduleCell.getAttribute("unit_system") : "").trim() === "imperial" ? "imperial" : "metric"; // ADDED
+    } // ADDED
+
+    function cToDisplayTemp(c, units) { // ADDED
+        const n = Number(c); // ADDED
+        if (!Number.isFinite(n)) return ""; // ADDED
+        return units === "imperial" ? String(Math.round((n * 9 / 5 + 32) * 10) / 10) : String(Math.round(n * 10) / 10); // ADDED
+    } // ADDED
+
+    function displayTempToC(value, units) { // ADDED
+        const n = finiteNumberOrNull(value); // ADDED
+        if (n == null) return null; // ADDED
+        return units === "imperial" ? Math.round(((n - 32) * 5 / 9) * 100) / 100 : Math.round(n * 100) / 100; // ADDED
+    } // ADDED
+
+    function makeNumberInput(value) { // ADDED
+        const input = document.createElement("input"); // ADDED
+        input.type = "number"; // ADDED
+        input.step = "0.1"; // ADDED
+        input.value = value == null ? "" : String(value); // ADDED
+        input.style.width = "100%"; // ADDED
+        return input; // ADDED
+    } // ADDED
+
+    function formatSigned(value, suffix) { // ADDED
+        const n = Number(value); // ADDED
+        if (!Number.isFinite(n)) return ""; // ADDED
+        return `${n > 0 ? "+" : ""}${Math.round(n * 10) / 10}${suffix || ""}`; // ADDED
+    } // ADDED
+
+    function makeSeasonExtensionAdvancedSection(container, targetCell, current, controls) { // ADDED
+        const units = resolveUnitSystem(targetCell); // ADDED
+        const tempLabel = units === "imperial" ? "F" : "C"; // ADDED
+        const section = appendSection(container, "Advanced season extension"); // ADDED
+        section.setAttribute("data-bed-season-extension-advanced", "1"); // ADDED
+        const defaults = document.createElement("div"); // ADDED
+        defaults.style.gridColumn = "1 / -1"; // ADDED
+        defaults.style.fontSize = "12px"; // ADDED
+        defaults.style.color = "#374151"; // ADDED
+        defaults.style.margin = "2px 0 8px"; // ADDED
+        section.appendChild(defaults); // ADDED
+        const airInput = makeNumberInput(current.seasonExtensionAirOffsetC == null ? "" : cToDisplayTemp(current.seasonExtensionAirOffsetC, units)); // ADDED
+        const soilInput = makeNumberInput(current.seasonExtensionSoilOffsetC == null ? "" : cToDisplayTemp(current.seasonExtensionSoilOffsetC, units)); // ADDED
+        const frostInput = makeNumberInput(current.seasonExtensionFrostShiftDays); // ADDED
+        const minInput = makeNumberInput(current.seasonExtensionMinAirTempC == null ? "" : cToDisplayTemp(current.seasonExtensionMinAirTempC, units)); // ADDED
+        controls.seasonExtensionAirOffsetC = airInput; // ADDED
+        controls.seasonExtensionSoilOffsetC = soilInput; // ADDED
+        controls.seasonExtensionFrostShiftDays = frostInput; // ADDED
+        controls.seasonExtensionMinAirTempC = minInput; // ADDED
+        appendField(section, { label: `Air offset (${tempLabel})` }, airInput); // ADDED
+        appendField(section, { label: `Soil offset (${tempLabel})` }, soilInput); // ADDED
+        appendField(section, { label: "Frost shift (days)" }, frostInput); // ADDED
+        appendField(section, { label: `Min air (${tempLabel})` }, minInput); // ADDED
+        function refresh() { // ADDED
+            const key = controls.seasonExtension.value; // ADDED
+            const show = key && key !== "unknown" && key !== "none"; // ADDED
+            const effect = seasonExtensionDefaults(key); // ADDED
+            section.style.display = show ? "block" : "none"; // ADDED
+            minInput.parentNode.style.display = key === "heated_greenhouse" ? "grid" : "none"; // ADDED
+            defaults.textContent = show // ADDED
+                ? `Defaults: air ${formatSigned(units === "imperial" ? effect.airOffsetC * 9 / 5 : effect.airOffsetC, " " + tempLabel)}, soil ${formatSigned(units === "imperial" ? effect.soilOffsetC * 9 / 5 : effect.soilOffsetC, " " + tempLabel)}, frost ${formatSigned(effect.frostShiftDays, " days")}${key === "heated_greenhouse" ? `, min ${cToDisplayTemp(effect.minAirTempC, units)} ${tempLabel}` : ""}. Blank fields use defaults.` // ADDED
+                : ""; // ADDED
+        } // ADDED
+        controls.seasonExtension.addEventListener("change", refresh); // ADDED
+        refresh(); // ADDED
+        return { units, section, refresh }; // CHANGED
+    } // ADDED
+
     function showConditionEditorDialog(targetCell) { // NEW
         const current = readBedConditions(targetCell); // NEW
         const div = document.createElement("div"); // NEW
@@ -385,6 +516,7 @@ Draw.loadPlugin(function (ui) { // NEW
             controls[key] = makeSelect(FIELD_BY_KEY[key], current[key]); // NEW
             appendField(infra, FIELD_BY_KEY[key], controls[key]); // NEW
         }); // NEW
+        const advancedSeasonExtension = makeSeasonExtensionAdvancedSection(div, targetCell, current, controls); // ADDED
 
         const use = appendSection(div, "Use"); // NEW
         controls.bedUse = makeSelect(FIELD_BY_KEY.bedUse, current.bedUse); // NEW
@@ -407,11 +539,18 @@ Draw.loadPlugin(function (ui) { // NEW
             Object.keys((preset && preset.values) || {}).forEach(function (key) { // NEW
                 if (controls[key]) controls[key].value = preset.values[key]; // NEW
             }); // NEW
+            advancedSeasonExtension.refresh(); // ADDED
         }); // NEW
 
         function readDialogProfile() { // NEW
             const next = {}; // NEW
             FIELD_DEFS.forEach(function (field) { next[field.key] = controls[field.key].value; }); // NEW
+            next.seasonExtensionAirOffsetC = displayTempToC(controls.seasonExtensionAirOffsetC.value, advancedSeasonExtension.units); // ADDED
+            next.seasonExtensionSoilOffsetC = displayTempToC(controls.seasonExtensionSoilOffsetC.value, advancedSeasonExtension.units); // ADDED
+            next.seasonExtensionFrostShiftDays = normalizeOptionalNumber(controls.seasonExtensionFrostShiftDays.value); // ADDED
+            next.seasonExtensionMinAirTempC = next.seasonExtension === "heated_greenhouse" // ADDED
+                ? displayTempToC(controls.seasonExtensionMinAirTempC.value, advancedSeasonExtension.units) // ADDED
+                : null; // ADDED
             next.presetKey = presetSelect.value; // NEW
             next.tags = tagsInput.value; // NEW
             next.notes = notesInput.value; // NEW
@@ -665,9 +804,12 @@ Draw.loadPlugin(function (ui) { // NEW
         isGardenBed: isGardenBed, // NEW
         isBedCompatibleWithCrop: isBedCompatibleWithCrop, // NEW
         scoreBedSuitability: scoreBedSuitability, // NEW
+        seasonExtensionEffects: seasonExtensionEffects, // ADDED
         _test: { // NEW
             buildOverlayRows: buildOverlayRows, // NEW
             normalizeProfile: normalizeProfile, // NEW
+            seasonExtensionEffects: seasonExtensionEffects, // ADDED
+            seasonExtensionDefaults: seasonExtensionDefaults, // ADDED
             listConditionOptionGroups: listConditionOptionGroups, // NEW
             parseProfileRecord: parseProfileRecord, // NEW
             getDisplayBedConditions: getDisplayBedConditions, // CHANGE

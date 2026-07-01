@@ -789,7 +789,7 @@ Draw.loadPlugin(function (ui) {
         <td style="border:1px solid #999; padding:4px; font-weight:700;">Tiler groups in year</td>
         <td style="border:1px solid #999; padding:4px; text-align:right;">${esc(metrics.tilerGroupsInYear)}</td>
         <td style="border:1px solid #999; padding:4px; font-weight:700;">(Filter)</td>
-        <td style="border:1px solid #999; padding:4px;">perennial OR season_start_year == ${esc(year)}</td>
+        <td style="border:1px solid #999; padding:4px;">perennial OR season_start_year == ${esc(year)} OR harvest overlaps ${esc(year)}</td>
       </tr>
 
       <tr>
@@ -871,7 +871,7 @@ Draw.loadPlugin(function (ui) {
         push(["Selected year", String(year)]);
         push(["Total tiler groups", String(metrics.tilerGroupsTotal ?? 0)]);
         push(["Tiler groups in year", String(metrics.tilerGroupsInYear ?? 0)]);
-        push(["Filter", `perennial OR season_start_year == ${year}`]);
+        push(["Filter", `perennial OR season_start_year == ${year} OR harvest overlaps ${year}`]);
 
         push([""]);
         push(["Crop", "Area (m²)", "Plan plants", "Actual plants", "Delta", "Germ", "Plan seeds", "Target (kg)", "Expected (kg)"]);

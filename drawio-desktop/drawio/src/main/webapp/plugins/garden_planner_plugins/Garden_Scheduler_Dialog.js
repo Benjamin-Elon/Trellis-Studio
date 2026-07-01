@@ -185,43 +185,13 @@ Draw.loadPlugin(function (ui) {
         return curMean;
     }
     function normalizeBedProfile(profile) {
-        const source = profile && typeof profile === 'object' ? profile : {};
-        const pick = (key, fallback) => String(source[key] || fallback || 'unknown').trim() || 'unknown';
-        return {
-            sunExposure: pick('sunExposure', 'full_sun'),
-            soilMoisture: pick('soilMoisture', 'moderate'),
-            drainage: pick('drainage', 'normal'),
-            soilTexture: pick('soilTexture', 'loamy'),
-            windExposure: pick('windExposure', 'moderate'),
-            frostRisk: pick('frostRisk', 'low')
-        };
+        return sharedCore.normalizeBedProfile(profile); // CHANGED
     }
     function bedSoilTemperatureOffsetC(profile) {
-        const bed = normalizeBedProfile(profile);
-        let offset = 3.0; // ADDED: generic open vegetable beds warm faster than monthly city-air means.
-        const add = (value) => { offset += value; };
-        if (bed.sunExposure === 'full_sun') add(0.4);
-        else if (bed.sunExposure === 'part_sun') add(0.1);
-        else if (bed.sunExposure === 'part_shade') add(-0.9);
-        else if (bed.sunExposure === 'shade') add(-1.8);
-        if (bed.soilMoisture === 'dry') add(0.4);
-        else if (bed.soilMoisture === 'moist') add(-0.5);
-        else if (bed.soilMoisture === 'wet') add(-1.0);
-        if (bed.drainage === 'fast') add(0.3);
-        else if (bed.drainage === 'slow') add(-0.6);
-        if (bed.soilTexture === 'sandy' || bed.soilTexture === 'amended') add(0.4);
-        else if (bed.soilTexture === 'clay') add(-0.5);
-        if (bed.windExposure === 'sheltered') add(0.2);
-        else if (bed.windExposure === 'exposed') add(-0.5);
-        if (bed.frostRisk === 'none') add(0.2);
-        else if (bed.frostRisk === 'medium') add(-0.3);
-        else if (bed.frostRisk === 'high') add(-0.7);
-        return Math.max(-1.5, Math.min(5.0, offset));
+        return sharedCore.bedSoilTemperatureOffsetC(profile); // CHANGED
     }
     function estimateSoilTempC(date, monthlyAvgTemp, bedProfile = null) {
-        const air = sharedCore.meanTemperatureOnDate(date, monthlyAvgTemp); // CHANGED
-        if (air == null) return null;
-        return air + bedSoilTemperatureOffsetC(bedProfile); // ADDED: bed-aware soil estimate replaces fixed lagged-air heuristic.
+        return sharedCore.estimateSoilTempC(date, monthlyAvgTemp, bedProfile); // CHANGED
     }
     function firstSoilReadyDate({ thresholdC, monthlyAvgTemp, scanStart, scanEndHard, bedProfile = null, consecutiveDays = 3 }) {
         const threshold = finiteNumberOrNull(thresholdC);
@@ -1419,7 +1389,8 @@ Draw.loadPlugin(function (ui) {
         forecastBlendWeight4To7Days: 0.5, // ADDED
         forecastBlendWeight8To16Days: 0.25, // ADDED
         soilGateConsecutiveDays: 3, // ADDED
-        gddCalibrationEnabled: true // ADDED
+        gddCalibrationEnabled: true, // CHANGED
+        annualCrossYearHarvestAllowed: true // ADDED
     }); // ADDED
     const CLIMATE_MODEL_PARAMETER_SCHEMA = Object.freeze([ // ADDED
         Object.freeze({ key: 'springFrostRisk', label: 'Spring frost risk', type: 'enum', options: [['p10', 'p10'], ['p50', 'p50'], ['p90', 'p90']] }), // ADDED
@@ -1443,6 +1414,7 @@ Draw.loadPlugin(function (ui) {
         const soilDays = finiteNumberOrNull(source.soilGateConsecutiveDays); // ADDED
         if (soilDays != null) out.soilGateConsecutiveDays = Math.max(1, Math.min(14, Math.round(soilDays))); // ADDED
         if (source.gddCalibrationEnabled === true || source.gddCalibrationEnabled === false) out.gddCalibrationEnabled = !!source.gddCalibrationEnabled; // ADDED
+        if (source.annualCrossYearHarvestAllowed === true || source.annualCrossYearHarvestAllowed === false) out.annualCrossYearHarvestAllowed = !!source.annualCrossYearHarvestAllowed; // ADDED
         return out; // ADDED
     } // ADDED
 
@@ -1620,6 +1592,7 @@ Draw.loadPlugin(function (ui) {
             soilGateConsecutiveDays = 3,
 
             overwinterAllowed = false,
+            annualCrossYearHarvestAllowed = true, // ADDED
             gddCalibrationEnabled = true, // ADDED
             weatherNormalsSource = 'auto', // ADDED
             forecastBlendWeight0To3Days = 0.8, // ADDED
@@ -1627,6 +1600,7 @@ Draw.loadPlugin(function (ui) {
             forecastBlendWeight8To16Days = 0.25 // ADDED
         } = {}) {
             this.overwinterAllowed = !!overwinterAllowed;
+            this.annualCrossYearHarvestAllowed = annualCrossYearHarvestAllowed !== false; // ADDED
 
             this.useSpringFrostGate = !!useSpringFrostGate; // FIX: overwinter capability does not make early field planting frost-safe
             this.springFrostRisk = ['p10', 'p50', 'p90'].indexOf(String(springFrostRisk || '')) >= 0 ? String(springFrostRisk) : 'p50'; // CHANGED
@@ -1655,6 +1629,7 @@ Draw.loadPlugin(function (ui) {
                 soilGateThresholdC: threshold, // CHANGED
                 soilGateConsecutiveDays: modelPolicy.soilGateConsecutiveDays, // CHANGED
                 overwinterAllowed, // CHANGED
+                annualCrossYearHarvestAllowed: modelPolicy.annualCrossYearHarvestAllowed !== false, // ADDED
                 gddCalibrationEnabled: modelPolicy.gddCalibrationEnabled, // ADDED
                 weatherNormalsSource: modelPolicy.weatherNormalsSource, // ADDED
                 forecastBlendWeight0To3Days: modelPolicy.forecastBlendWeight0To3Days, // ADDED
@@ -1692,6 +1667,11 @@ Draw.loadPlugin(function (ui) {
 
         return 1 + (Number(plant.overwinter_ok) === 1 ? 1 : 0);
     }
+
+    function annualSchedulerScanEndYear(plant, year) { // ADDED
+        const lifecycleEndYear = Number(year) + getPlantScanYears(plant) - 1; // ADDED
+        return isPerennialPlant(plant) ? lifecycleEndYear : Math.max(lifecycleEndYear, Number(year) + 1); // CHANGED
+    } // ADDED
 
 
 
@@ -1747,7 +1727,7 @@ Draw.loadPlugin(function (ui) {
             ? await resolveVarietyName(varietyId, options.currentVarieties)
             : '';
         const scanStart = asUTCDate(Number(formState.seasonStartYear), 1, 1); // ADDED
-        const scanEndHard = asUTCDate(Number(formState.seasonStartYear) + getPlantScanYears(plant) - 1, 12, 31); // ADDED
+        const scanEndHard = asUTCDate(annualSchedulerScanEndYear(plant, Number(formState.seasonStartYear)), 12, 31); // CHANGED
         const dailyClimateKey = `${city.city_name || formState.cityName}|${fmtISO(scanStart)}|${fmtISO(scanEndHard)}|${JSON.stringify(climateResolution.effective)}`; // CHANGED
         const cachedDailyClimate = formState.dailyClimateKey === dailyClimateKey ? formState.dailyClimate : null; // ADDED
         const dailyClimate = options.dailyClimate || cachedDailyClimate || await city.loadDailyClimateModel({ scanStart, scanEndHard, climatePolicy: climateResolution.effective }); // CHANGED
@@ -2801,7 +2781,12 @@ Draw.loadPlugin(function (ui) {
         generatedTasks = [] // ADDED
     } = {}) { // ADDED
         if (perennial) return { hidden: true, reason: 'perennial' }; // ADDED
-        const bounds = buildLifecycleTimelineBounds({ plant, seasonStartYear }); // ADDED
+        let bounds = buildLifecycleTimelineBounds({ plant, seasonStartYear }); // CHANGED
+        const firstTimelineForBounds = Array.isArray(scheduleResult?.timelines) ? scheduleResult.timelines[0] : null; // ADDED
+        const scheduleEndForBounds = parseISODateUTCValue(scheduleResult?.lastScheduledHarvestEndISO) || parseISODateUTCValue(firstTimelineForBounds?.harvestEnd); // ADDED
+        if (scheduleEndForBounds && scheduleEndForBounds > bounds.end) { // ADDED
+            bounds = { ...bounds, end: scheduleEndForBounds, endISO: fmtISO(scheduleEndForBounds), multiYear: true }; // ADDED
+        } // ADDED
         const totalDays = Math.max(1, timelineDaysBetween(bounds.start, bounds.end)); // ADDED
         const bands = normalizeSowingSeasons(sowingSeasons).map(window => { // ADDED
             const start = parseISODateUTCValue(window.startISO); // ADDED
@@ -3012,7 +2997,8 @@ Draw.loadPlugin(function (ui) {
         const planner = new annualCore.Planner(inputs); // CHANGED
         const out = [];
         const scanStart = isUsableDate(options.scanStartDate) ? options.scanStartDate : planner.ctx.scanStart; // ADDED
-        const scanEnd = isUsableDate(options.scanEndDate) ? options.scanEndDate : planner.ctx.scanEndHard; // ADDED
+        const defaultScanEnd = planner.ctx.overwinterAllowed ? planner.ctx.scanEndHard : (planner.ctx.sowScanEnd || planner.ctx.scanEndHard); // ADDED
+        const scanEnd = isUsableDate(options.scanEndDate) ? options.scanEndDate : defaultScanEnd; // CHANGED
         const spanDays = Math.max(0, Math.ceil((scanEnd.getTime() - scanStart.getTime()) / 86400000) + 1); // CHANGED
         const scanLimit = Number.isFinite(Number(maxDays)) && Number(maxDays) > 0 ? Math.min(Math.floor(Number(maxDays)), spanDays) : spanDays; // FIX: callers may now request a first-season-only explain scan.
         let d = new Date(scanStart); // FIX: explain scans from the requested diagnostic start, even when selected start is blank.
@@ -6350,7 +6336,7 @@ Draw.loadPlugin(function (ui) {
 
                 const overwinterAllowed = isCrossYearCrop(p); // FIX: biennials may harvest in a later year
                 const scanStart = asUTCDate(seasonStartYear, 1, 1);
-                const scanEndYear = seasonStartYear + getPlantScanYears(p) - 1; // FIX: honor biennial and perennial lifespans
+                const scanEndYear = annualSchedulerScanEndYear(p, seasonStartYear); // CHANGED
                 const scanEndHard = asUTCDate(scanEndYear, 12, 31);
                 const climateResolution = resolveClimateModelPolicy(climateModelModuleCell, formState.cityName, formState.plantId, formState.climateModelDraftPatch); // ADDED
                 const climatePolicy = climateResolution.effective; // ADDED
@@ -7247,7 +7233,7 @@ Draw.loadPlugin(function (ui) {
 
                 const explainDerived = inputs.derived(); // ADDED
                 const firstSeasonScanEnd = asUTCDate(explainDerived.scanStart.getUTCFullYear(), 12, 31); // ADDED
-                const usePrimarySowScan = !!inputs.policy?.overwinterAllowed && firstSeasonScanEnd < explainDerived.scanEndHard; // ADDED
+                const usePrimarySowScan = inputs.policy?.annualCrossYearHarvestAllowed !== false && firstSeasonScanEnd < explainDerived.scanEndHard; // CHANGED
                 const primaryScanOptions = usePrimarySowScan ? { scanEndDate: firstSeasonScanEnd } : {}; // ADDED
                 const rows = await explainFeasibilityOverSeason(inputs, null, false, primaryScanOptions); // CHANGED
                 const diagnosticsModel = buildFeasibilityDiagnosticsModel(inputs, rows, usePrimarySowScan ? { // CHANGED
@@ -7261,7 +7247,7 @@ Draw.loadPlugin(function (ui) {
                 const sowingSeasonsText = formatSowingSeasonsSummary(formState.sowingSeasons); // ADDED
                 const scheduleQualityDiagnosticRanges = annualCore.computeScheduleQualityDiagnosticRangesForInputs(inputs); // ADDED
                 const scheduleQualityDiagnosticsText = formatScheduleQualityDiagnosticRanges(scheduleQualityDiagnosticRanges); // ADDED
-                const lifecycleRows = usePrimarySowScan ? await explainFeasibilityOverSeason(inputs) : null; // ADDED
+                const lifecycleRows = usePrimarySowScan ? await explainFeasibilityOverSeason(inputs, null, false, { scanEndDate: explainDerived.scanEndHard }) : null; // CHANGED
                 const lifecycleDiagnosticsModel = lifecycleRows ? buildFeasibilityDiagnosticsModel(inputs, lifecycleRows, { // ADDED
                     scanLabel: 'Lifecycle support through maturity and harvest', // ADDED
                     scanStartISO: fmtISO(explainDerived.scanStart), // ADDED
@@ -9871,7 +9857,7 @@ Draw.loadPlugin(function (ui) {
         // --- compute initial auto anchors safely ---
         const overwinterAllowed0 = isCrossYearCrop(selectedPlant); // FIX: biennials may harvest in a later year
         const scanStart = asUTCDate(year, 1, 1);
-        const scanEndHard = asUTCDate(year + getPlantScanYears(selectedPlant) - 1, 12, 31); // FIX: use lifecycle-aware scan bounds
+        const scanEndHard = asUTCDate(annualSchedulerScanEndYear(selectedPlant, year), 12, 31); // CHANGED
 
 
         const HW_DAYS = resolveHarvestWindowDays(null, selectedPlant); // FIX: use the canonical fallback
@@ -10176,12 +10162,8 @@ Draw.loadPlugin(function (ui) {
         // --- Harvest window bridge (installed once) ---
         if (!graph.__uslHarvestWindowsBridgeInstalled) {
             graph.__uslHarvestWindowsBridgeInstalled = true;
-            console.log('[USL][Scheduler] harvest windows bridge installed'); // debug
 
             window.addEventListener("usl:harvestWindowsNeeded", async (ev) => {
-                console.log("[Scheduler] suggest fn head:", String(suggestHarvestWindowForCropReq).slice(0, 120));
-                console.log("[Scheduler] normalize in listener scope:", typeof normalizeUtcMidnight);
-
                 const d = ev?.detail;
                 if (!d) return;
 
@@ -10256,6 +10238,62 @@ Draw.loadPlugin(function (ui) {
             return { date: null, info: null };
         }
 
+        function annualSchedulerScanEndYear(plant, year) { // ADDED
+            const lifecycleEndYear = Number(year) + getPlantScanYears(plant) - 1; // ADDED
+            return isPerennialPlant(plant) ? lifecycleEndYear : Math.max(lifecycleEndYear, Number(year) + 1); // CHANGED
+        } // ADDED
+
+        function isTilerGroupCell(cell) { // ADDED
+            return !!cell && cell.getAttribute && cell.getAttribute('tiler_group') === '1'; // ADDED
+        } // ADDED
+
+        function collectTilerGroupsInModule(moduleCell) { // ADDED
+            const model = graph && graph.getModel ? graph.getModel() : null; // ADDED
+            const out = []; // ADDED
+            function visit(cell) { // ADDED
+                if (!cell) return; // ADDED
+                if (isTilerGroupCell(cell)) out.push(cell); // ADDED
+                const count = model && model.getChildCount ? model.getChildCount(cell) : 0; // ADDED
+                for (let i = 0; i < count; i++) visit(model.getChildAt(cell, i)); // ADDED
+                if (!count && graph.getChildVertices) (graph.getChildVertices(cell) || []).forEach(visit); // ADDED
+            } // ADDED
+            visit(moduleCell); // ADDED
+            return out; // ADDED
+        } // ADDED
+
+        function tilerMatchesHarvestRequest(tiler, req) { // ADDED
+            const plantId = String(req?.plantId ?? '').trim(); // ADDED
+            const varietyId = req?.varietyId == null || req.varietyId === '' ? '' : String(req.varietyId).trim(); // ADDED
+            if (!plantId || String(tiler.getAttribute?.('plant_id') || '').trim() !== plantId) return false; // ADDED
+            const tilerVarietyId = String(tiler.getAttribute?.('variety_id') || '').trim(); // ADDED
+            return !varietyId || !tilerVarietyId || tilerVarietyId === varietyId; // ADDED
+        } // ADDED
+
+        function inferHarvestRequestBedContexts(req, moduleCell) { // ADDED
+            const matches = moduleCell ? collectTilerGroupsInModule(moduleCell).filter(tiler => tilerMatchesHarvestRequest(tiler, req)) : []; // ADDED
+            const contexts = []; // ADDED
+            const seen = new Set(); // ADDED
+            for (const tiler of matches) { // ADDED
+                const ctx = resolveScheduleBedContext(tiler); // ADDED
+                const key = JSON.stringify(ctx.profile); // ADDED
+                if (seen.has(key)) continue; // ADDED
+                seen.add(key); // ADDED
+                contexts.push(ctx); // ADDED
+            } // ADDED
+            return contexts.length ? contexts : [{ profile: normalizeBedProfile(null), source: 'generic garden bed' }]; // ADDED
+        } // ADDED
+
+        function mergeHarvestWindowSuggestions(cropId, results) { // ADDED
+            const ok = (results || []).filter(result => result && result.harvestStart && result.harvestEnd); // ADDED
+            if (!ok.length) return (results && results[0]) || { cropId, harvestStart: null, harvestEnd: null, shelfLifeDays: null, reason: 'No feasible bed-context harvest windows' }; // ADDED
+            const harvestStart = ok.reduce((latest, result) => latest > result.harvestStart ? latest : result.harvestStart, ok[0].harvestStart); // ADDED
+            const harvestEnd = ok.reduce((earliest, result) => earliest < result.harvestEnd ? earliest : result.harvestEnd, ok[0].harvestEnd); // ADDED
+            const shelfLifeDays = ok.find(result => result.shelfLifeDays != null)?.shelfLifeDays ?? null; // ADDED
+            if (harvestStart > harvestEnd) return { cropId, harvestStart: null, harvestEnd: null, shelfLifeDays, reason: 'Matching beds have non-overlapping feasible harvest windows' }; // ADDED
+            const differing = new Set(ok.map(result => `${result.harvestStart}|${result.harvestEnd}`)).size > 1; // ADDED
+            return { cropId, harvestStart, harvestEnd, shelfLifeDays, reason: differing ? 'Conservative intersection across matching bed conditions' : undefined }; // ADDED
+        } // ADDED
+
         async function suggestHarvestWindowForCropReq(req, cityRef, year, moduleCell = null) { // CHANGED
             const cropId = String(req?.cropId || "");
             const plantId = (req?.plantId != null) ? Number(req.plantId) : NaN;
@@ -10266,6 +10304,21 @@ Draw.loadPlugin(function (ui) {
             }
 
             try {
+                const contexts = inferHarvestRequestBedContexts(req, moduleCell); // ADDED
+                const results = []; // ADDED
+                for (const bedContext of contexts) results.push(await suggestHarvestWindowForCropReqInBed(req, cityRef, year, moduleCell, bedContext)); // ADDED
+                return mergeHarvestWindowSuggestions(cropId, results); // ADDED
+            } catch (e) {
+                return { cropId, harvestStart: null, harvestEnd: null, shelfLifeDays: null, reason: String(e?.message || e) };
+            }
+        }
+
+        async function suggestHarvestWindowForCropReqInBed(req, cityRef, year, moduleCell = null, bedContext = null) { // ADDED
+            const cropId = String(req?.cropId || ""); // ADDED
+            const plantId = (req?.plantId != null) ? Number(req.plantId) : NaN; // ADDED
+            const varietyId = (req?.varietyId != null && req.varietyId !== "") ? Number(req.varietyId) : null; // ADDED
+
+            try { // ADDED
                 const plant = await resolveEffectivePlant(plantId, varietyId);
                 if (!plant) return { cropId, harvestStart: null, harvestEnd: null, shelfLifeDays: null, reason: "Plant not found" };
                 if (isPerennialPlant(plant)) { // FIX: harvest suggestions require an explicit maturity model
@@ -10297,7 +10350,7 @@ Draw.loadPlugin(function (ui) {
 
                 const hw = resolveHarvestWindowDays(req?.harvestWindowDays, plant); // FIX: share the scheduler's 7-day fallback
                 const scanStart = asUTCDate(year, 1, 1); // ADDED
-                const scanEndHard = asUTCDate(year + getPlantScanYears(plant) - 1, 12, 31); // ADDED
+                const scanEndHard = asUTCDate(annualSchedulerScanEndYear(plant, year), 12, 31); // CHANGED
                 const dailyClimate = await city.loadDailyClimateModel({ scanStart, scanEndHard, climatePolicy: climateResolution.effective }); // CHANGED
 
                 const inputs = new sharedCore.ScheduleInputs({ // CHANGED
@@ -10307,12 +10360,14 @@ Draw.loadPlugin(function (ui) {
                     methodCategoryId: resolvedBehavior.methodCategoryId, // FIX: preserve the resolved method context
                     methodId: resolvedBehavior.methodId, // FIX: preserve the resolved method context
                     startISO: `${year}-01-01`,
-                    seasonEndISO: `${year + getPlantScanYears(plant) - 1}-12-31`, // FIX: allow overwinter and multi-year harvests
+                    seasonEndISO: fmtISO(scanEndHard), // CHANGED
                     policy,
                     seasonStartYear: year,
                     harvestWindowDays: hw, // CHANGED
                     varietyId,
                     varietyName: "",
+                    bedProfile: bedContext?.profile || normalizeBedProfile(null), // ADDED
+                    bedProfileSource: bedContext?.source || 'generic garden bed', // ADDED
                     dailyClimate // ADDED
                 });
 
@@ -10326,7 +10381,7 @@ Draw.loadPlugin(function (ui) {
                     return { cropId, harvestStart: null, harvestEnd: null, shelfLifeDays: null, reason: "No feasible sow date found in scan window" };
                 }
 
-                const last = findPrevFeasible(planner, C.scanEndHard, maxSpanDays);
+                const last = findPrevFeasible(planner, C.sowScanEnd || asUTCDate(year, 12, 31), maxSpanDays); // CHANGED
 
                 const shelfLifeDays =
                     Number.isFinite(Number(plant.shelf_life_days)) ? Number(plant.shelf_life_days) : null; // CHANGED
@@ -10364,7 +10419,7 @@ Draw.loadPlugin(function (ui) {
             } catch (e) {
                 return { cropId, harvestStart: null, harvestEnd: null, shelfLifeDays: null, reason: String(e?.message || e) };
             }
-        }
+        } // ADDED
 
 
 

@@ -410,3 +410,69 @@ test("overlay summary shows presets, extras, and set values without unknowns", (
         { label: "Bed use", value: "Perennials" } // NEW
     ]); // NEW
 }); // NEW
+
+test("season extension defaults and overrides normalize for scheduler use", () => { // NEW
+    const { api } = loadPlugin(); // NEW
+    assert.deepEqual(plainRows(api._test.seasonExtensionDefaults("greenhouse")), { airOffsetC: 3, soilOffsetC: 2, frostShiftDays: -21, minAirTempC: null }); // CHANGED
+    assert.deepEqual(plainRows(api._test.seasonExtensionEffects({ seasonExtension: "row_cover" })), { seasonExtension: "row_cover", airOffsetC: 0.5, soilOffsetC: 0.5, frostShiftDays: -3, minAirTempC: null }); // CHANGED
+    assert.deepEqual(plainRows(api._test.seasonExtensionEffects({ // CHANGED
+        seasonExtension: "heated_greenhouse", // NEW
+        seasonExtensionAirOffsetC: 4, // NEW
+        seasonExtensionSoilOffsetC: 2.25, // NEW
+        seasonExtensionFrostShiftDays: -30, // NEW
+        seasonExtensionMinAirTempC: 6 // NEW
+    })), { seasonExtension: "heated_greenhouse", airOffsetC: 4, soilOffsetC: 2.25, frostShiftDays: -30, minAirTempC: 6 }); // CHANGED
+    const normalized = api._test.normalizeProfile({ seasonExtension: "greenhouse", season_extension_air_offset_c: "4.5", season_extension_min_air_temp_c: "7" }); // CHANGED
+    assert.equal(normalized.seasonExtension, "greenhouse"); // NEW
+    assert.equal(normalized.seasonExtensionAirOffsetC, 4.5); // NEW
+    assert.equal(normalized.seasonExtensionMinAirTempC, null); // NEW
+}); // NEW
+
+test("advanced season extension UI is conditional and saves metric overrides", () => { // NEW
+    const { api, bed, ui } = loadPlugin(); // NEW
+    api._test.showConditionEditorDialog(bed); // NEW
+    const selects = ui.lastDialog.querySelectorAll("select"); // NEW
+    const advanced = ui.lastDialog.querySelector("[data-bed-season-extension-advanced='1']"); // NEW
+    assert.ok(advanced, "missing advanced season extension section"); // NEW
+    assert.equal(advanced.style.display, "none"); // NEW
+    selects[8].value = "greenhouse"; // NEW
+    selects[8].dispatchEvent(new ui.lastDialog.ownerDocument.defaultView.Event("change")); // NEW
+    assert.equal(advanced.style.display, "block"); // NEW
+    assert.match(advanced.textContent, /Defaults: air \+3 C, soil \+2 C, frost -21 days/); // NEW
+    const inputs = advanced.querySelectorAll("input[type='number']"); // NEW
+    inputs[0].value = "4.5"; // NEW
+    inputs[1].value = "2.25"; // NEW
+    inputs[2].value = "-30"; // NEW
+    inputs[3].value = "6"; // NEW
+    getDialogButton(ui, "Save").click(); // NEW
+    const stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // NEW
+    assert.equal(stored.seasonExtension, "greenhouse"); // NEW
+    assert.equal(stored.seasonExtensionAirOffsetC, 4.5); // NEW
+    assert.equal(stored.seasonExtensionSoilOffsetC, 2.25); // NEW
+    assert.equal(stored.seasonExtensionFrostShiftDays, -30); // NEW
+    assert.equal(stored.seasonExtensionMinAirTempC, null); // NEW
+    assert.equal(bed.getAttribute("season_extension_air_offset_c"), "4.5"); // NEW
+}); // NEW
+
+test("advanced season extension UI converts imperial display temperatures to stored Celsius", () => { // NEW
+    const { api, moduleCell, bed, ui } = loadPlugin(); // NEW
+    moduleCell.value.setAttribute("unit_system", "imperial"); // NEW
+    api._test.showConditionEditorDialog(bed); // NEW
+    const selects = ui.lastDialog.querySelectorAll("select"); // NEW
+    const advanced = ui.lastDialog.querySelector("[data-bed-season-extension-advanced='1']"); // NEW
+    selects[8].value = "heated_greenhouse"; // NEW
+    selects[8].dispatchEvent(new ui.lastDialog.ownerDocument.defaultView.Event("change")); // NEW
+    assert.match(advanced.textContent, /Defaults: air \+9 F, soil \+5\.4 F, frost -45 days, min 41 F/); // NEW
+    const inputs = advanced.querySelectorAll("input[type='number']"); // NEW
+    inputs[0].value = "41"; // NEW
+    inputs[1].value = "37.4"; // NEW
+    inputs[2].value = "-60"; // NEW
+    inputs[3].value = "50"; // NEW
+    getDialogButton(ui, "Save").click(); // NEW
+    const stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // NEW
+    assert.equal(stored.seasonExtension, "heated_greenhouse"); // NEW
+    assert.equal(stored.seasonExtensionAirOffsetC, 5); // NEW
+    assert.equal(stored.seasonExtensionSoilOffsetC, 3); // NEW
+    assert.equal(stored.seasonExtensionFrostShiftDays, -60); // NEW
+    assert.equal(stored.seasonExtensionMinAirTempC, 10); // NEW
+}); // NEW
