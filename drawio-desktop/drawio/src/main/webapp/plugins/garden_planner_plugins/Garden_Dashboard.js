@@ -610,9 +610,16 @@ Draw.loadPlugin(function (ui) {
 
             totalTargetKg,
             totalExpectedKg,
+            irrigation: readIrrigationDashboardSummary(moduleCell), // NEW
             rows
         };
     }
+
+    function readIrrigationDashboardSummary(moduleCell) { // NEW
+        const raw = getCellAttr(moduleCell, "irrigation_dashboard_summary_json", ""); // NEW
+        if (!raw) return null; // NEW
+        try { return JSON.parse(raw); } catch (_) { return null; } // NEW
+    } // NEW
 
 
     // -------------------- year Filtering Helpers --------------------
@@ -748,6 +755,21 @@ Draw.loadPlugin(function (ui) {
         const fmt0 = (n) => (Number.isFinite(n) ? Math.round(n).toString() : "0");
         const esc = (v) => mxUtils.htmlEntities(String(v ?? ""));
         const fmtPct = (n) => (Number.isFinite(n) ? (n * 100).toFixed(0) + "%" : "");
+        const irrigation = metrics.irrigation || null; // NEW
+        const fmtPctWhole = (n) => Number.isFinite(Number(n)) ? Math.round(Number(n)) + "%" : "0%"; // NEW
+        const fmtMoney = (n) => "$" + (Number.isFinite(Number(n)) ? Number(n).toFixed(Number(n) % 1 === 0 ? 0 : 2) : "0"); // NEW
+        const fmtMargin = (n) => Number.isFinite(Number(n)) ? Number(n).toFixed(1) + " psi" : "n/a"; // NEW
+        const irrigationRows = irrigation ? ` 
+      <tr class="trellis-irrigation-dashboard-summary" title="Open Irrigation Planner" style="cursor:pointer;">
+        <td style="border:1px solid #999; padding:4px; font-weight:700;">Irrigation</td>
+        <td colspan="8" style="border:1px solid #999; padding:4px; pointer-events:auto;">
+          ${esc(fmtPctWhole(irrigation.percentIrrigated))} irrigated | ${esc(fmtMoney(irrigation.purchaseNeededCost))} needed | ${esc(irrigation.zoneCount || 0)} zones | ${esc(fmtPctWhole(irrigation.completeness))} complete | ${esc(fmtMargin(irrigation.worstHydraulicMarginPsi))} worst margin | ${esc(irrigation.purchaseNeededCount || 0)} purchase parts | ${esc(irrigation.criticalWarningCount || 0)} critical warnings
+        </td>
+      </tr>` : `
+      <tr class="trellis-irrigation-dashboard-summary" title="Open Irrigation Planner" style="cursor:pointer;">
+        <td style="border:1px solid #999; padding:4px; font-weight:700;">Irrigation</td>
+        <td colspan="8" style="border:1px solid #999; padding:4px; pointer-events:auto;">Not planned</td>
+      </tr>`; // NEW
 
         const cropRows = (metrics.rows || []).map((r) => `
         <tr>
@@ -791,6 +813,7 @@ Draw.loadPlugin(function (ui) {
         <td style="border:1px solid #999; padding:4px; font-weight:700;">(Filter)</td>
         <td style="border:1px solid #999; padding:4px;">perennial OR season_start_year == ${esc(year)} OR harvest overlaps ${esc(year)}</td>
       </tr>
+      ${irrigationRows}
 
       <tr>
 
@@ -911,6 +934,14 @@ Draw.loadPlugin(function (ui) {
 
         return rows.join("\r\n");
     }
+
+    function openIrrigationPlannerForDashboard(dashCell) { // NEW
+        const moduleCell = findModuleAncestor(graph, dashCell); // NEW
+        if (!moduleCell) return; // NEW
+        const plannerApi = graph && graph.__trellisIrrigationPlanner; // NEW
+        if (!plannerApi || typeof plannerApi.openIrrigationMode !== "function") return; // CHANGE
+        plannerApi.openIrrigationMode(moduleCell); // CHANGE
+    } // NEW
 
     // -------------------- DOM overlay (controls + table) --------------------
     const overlayByDashId = new Map();
@@ -1047,6 +1078,18 @@ Draw.loadPlugin(function (ui) {
         equipmentBtn.style.fontSize = "12px"; // NEW
         equipmentBtn.style.pointerEvents = "auto"; // CHANGE
 
+        const irrigationBtn = document.createElement("button"); // NEW
+        irrigationBtn.textContent = "Irrigation"; // NEW
+        irrigationBtn.style.height = BTN_SIZE + "px"; // NEW
+        irrigationBtn.style.border = "1px solid #777"; // NEW
+        irrigationBtn.style.borderRadius = "6px"; // NEW
+        irrigationBtn.style.background = "#fff"; // NEW
+        irrigationBtn.style.cursor = "pointer"; // NEW
+        irrigationBtn.style.padding = "0 8px"; // NEW
+        irrigationBtn.style.fontFamily = "Arial"; // NEW
+        irrigationBtn.style.fontSize = "12px"; // NEW
+        irrigationBtn.style.pointerEvents = "auto"; // NEW
+
         const allocateBtn = document.createElement("button");
         allocateBtn.textContent = "Allocate";
         allocateBtn.style.height = BTN_SIZE + "px";
@@ -1171,6 +1214,12 @@ Draw.loadPlugin(function (ui) {
             equipmentApi.openDialog(moduleCell); // NEW
         }); // NEW
 
+        irrigationBtn.addEventListener("click", (ev) => { // NEW
+            ev.preventDefault(); // NEW
+            ev.stopPropagation(); // NEW
+            openIrrigationPlannerForDashboard(dashCell); // NEW
+        }); // NEW
+
         allocateBtn.addEventListener("click", (ev) => {
             ev.preventDefault();
             ev.stopPropagation();
@@ -1223,6 +1272,7 @@ Draw.loadPlugin(function (ui) {
         // Right: action buttons
         rightBar.appendChild(planBtn);
         rightBar.appendChild(equipmentBtn); // NEW
+        rightBar.appendChild(irrigationBtn); // NEW
         rightBar.appendChild(allocateBtn);
         rightBar.appendChild(exportBtn);
 
@@ -1354,6 +1404,15 @@ Draw.loadPlugin(function (ui) {
         const entry = ensureOverlay(dashCell);
         entry.syncYearLabel();
         entry.content.innerHTML = formatOverlayTableHtml(metrics, year);
+        const irrigationSummary = entry.content.querySelector(".trellis-irrigation-dashboard-summary"); // NEW
+        if (irrigationSummary) { // NEW
+            irrigationSummary.style.pointerEvents = "auto"; // NEW
+            irrigationSummary.addEventListener("click", function (ev) { // NEW
+                ev.preventDefault(); // NEW
+                ev.stopPropagation(); // NEW
+                openIrrigationPlannerForDashboard(dashCell); // NEW
+            }); // NEW
+        } // NEW
         syncDashboardUiNaturalBox(entry); // CHANGE
         if (opts && opts.allowGeometryChange) { // CHANGE
             model.beginUpdate(); // CHANGE

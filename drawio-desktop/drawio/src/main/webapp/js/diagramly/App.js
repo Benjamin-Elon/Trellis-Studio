@@ -301,7 +301,8 @@ App.pluginRegistry = {    'trellisUpdatesLinks': 'plugins/garden_planner_plugins
     'gardenPlanner': 'plugins/garden_planner_plugins/Year_Planner.js',                           // CHANGE
     'gardenScale': 'plugins/garden_planner_plugins/Garden_Scale.js',                             // CHANGE
     'gardenBeds': 'plugins/garden_planner_plugins/Garden_Beds.js',
-	'gardenEquipment': 'plugins/garden_planner_plugins/Garden_Equipment.js' };                              // CHANGE
+	'gardenEquipment': 'plugins/garden_planner_plugins/Garden_Equipment.js',                              // CHANGE
+    'gardenIrrigationPlanner': 'plugins/garden_planner_plugins/Garden_Irrigation_Planner.js' }; // NEW
 
 App.publicPlugin = [
     'trellisUpdatesLinks',                                  // NEW
@@ -321,7 +322,8 @@ App.publicPlugin = [
     'gardenPlanner',                                          // NEW
     'gardenScale',                                            // CHANGE
     'gardenBeds',                                              // CHANGE
-	'gardenEquipment'
+	'gardenEquipment',
+    'gardenIrrigationPlanner'                                  // NEW
 ];
 
 /**
