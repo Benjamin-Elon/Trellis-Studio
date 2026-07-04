@@ -490,13 +490,24 @@ var SplashDialog = function(editorUi)
 		return link; // NEW
 	} // NEW
 
+	function hasTrellisStoredText(value) // NEW
+	{ // NEW
+		return value != null && mxUtils.trim(String(value)) != ''; // NEW
+	} // NEW
+
+	function isTrellisWizardRecordValid(data) // NEW
+	{ // NEW
+		var pathInfo = data != null ? trellisLicensePaths[data.path] : null; // NEW
+		return pathInfo != null && data.version == trellisLicenseVersion && data.contactGuidance === !!pathInfo.contactGuidance && hasTrellisStoredText(data.oathCompletedAt) && hasTrellisStoredText(data.name) && hasTrellisStoredText(data.signature) && hasTrellisStoredText(data.email) && mxUtils.trim(String(data.email)).indexOf('@') >= 0; // NEW
+	} // NEW
+
 	function readTrellisWizardRecord() // CHANGE
 	{ // NEW
 		try // NEW
 		{ // NEW
 			var raw = localStorage.getItem(trellisLicenseKey); // NEW
 			var data = raw != null ? JSON.parse(raw) : null; // NEW
-			return data != null && data.version == trellisLicenseVersion && trellisLicensePaths[data.path] != null && data.oathCompletedAt != null ? data : null; // CHANGE
+			return isTrellisWizardRecordValid(data) ? data : null; // CHANGE
 		} // NEW
 		catch (e) // NEW
 		{ // NEW
@@ -707,6 +718,9 @@ var SplashDialog = function(editorUi)
 			var runawayX = 0; // NEW
 			var runawayY = 0; // NEW
 			var nonPointerRunaways = 0; // NEW
+			var lastPointerRunawayAt = 0; // NEW
+			var pointerRunawayDistance = 120; // NEW
+			var pointerRunawayDelay = 120; // NEW
 			var storageWarning = null; // NEW
 			var section = createTrellisInfoSection('Selected path', pathInfo.label + '. ' + pathInfo.detail); // NEW
 			center.appendChild(section); // NEW
@@ -733,6 +747,7 @@ var SplashDialog = function(editorUi)
 			var nameField = createTrellisInput('Name', 'text'); // NEW
 			var emailField = createTrellisInput('Email', 'email'); // NEW
 			var signatureField = createTrellisInput('Signature', 'text'); // NEW
+			var gateSection = createTrellisElement('div', null); // NEW
 			var formSection = createTrellisInfoSection('Ceremonial paperwork', 'Fill these local-only fields. They are stored in this browser or desktop app profile with the completed oath.'); // NEW
 			formSection.appendChild(nameField.wrap); // NEW
 			formSection.appendChild(emailField.wrap); // NEW
@@ -745,43 +760,42 @@ var SplashDialog = function(editorUi)
 			checkboxWrap.appendChild(oathCheckbox); // NEW
 			checkboxWrap.appendChild(createTrellisElement('span', null, trellisCheckboxText)); // NEW
 			formSection.appendChild(checkboxWrap); // NEW
-			center.appendChild(formSection); // NEW
+			gateSection.appendChild(formSection); // NEW
+			center.appendChild(gateSection); // NEW
 			var buttonRow = createTrellisElement('div', null); // NEW
 			buttonRow.style.cssText = 'margin-top:10px;text-align:center;min-height:44px;'; // NEW
 			var affirmButton = mxUtils.button('I Affirm the Oath', function(evt) // NEW
 			{ // NEW
 				if (!isGateReady()) // NEW
 				{ // NEW
-					runAway(evt, false); // NEW
+					blockAffirmUntilReady(evt); // CHANGE
 					return; // NEW
 				} // NEW
 				completeWizard(); // NEW
 			}); // NEW
 			affirmButton.className = 'geBtn gePrimaryBtn'; // NEW
 			affirmButton.style.cssText = 'position:relative;transition:transform 120ms ease;'; // NEW
-			mxEvent.addListener(affirmButton, 'mousemove', function(evt) // NEW
+			mxEvent.addListener(gateSection, mxClient.IS_POINTER ? 'pointermove' : 'mousemove', function(evt) // NEW
 			{ // NEW
-				if (!oathDone) // NEW
-				{ // NEW
-					runAway(evt, true); // NEW
-				} // NEW
+				runAwayFromPointerProximity(evt); // NEW
 			}); // NEW
 			mxEvent.addListener(affirmButton, 'focus', function(evt) // NEW
 			{ // NEW
-				if (!oathDone && nonPointerRunaways < 3) // NEW
-				{ // NEW
-					runAway(evt, false); // NEW
-				} // NEW
+				tryNonPointerRunAway(evt); // CHANGE
 			}); // NEW
 			mxEvent.addListener(affirmButton, 'touchstart', function(evt) // NEW
 			{ // NEW
-				if (!oathDone && nonPointerRunaways < 3) // NEW
+				tryNonPointerRunAway(evt); // CHANGE
+			}); // NEW
+			mxEvent.addListener(affirmButton, 'keydown', function(evt) // NEW
+			{ // NEW
+				if (!isGateReady() && (evt.key == 'Enter' || evt.key == ' ' || evt.keyCode == 13 || evt.keyCode == 32)) // NEW
 				{ // NEW
-					runAway(evt, false); // NEW
+					blockAffirmUntilReady(evt); // NEW
 				} // NEW
 			}); // NEW
 			buttonRow.appendChild(affirmButton); // NEW
-			center.appendChild(buttonRow); // NEW
+			gateSection.appendChild(buttonRow); // CHANGE
 			var change = mxUtils.button('Change answer', function() // NEW
 			{ // NEW
 				cancelSpeech(); // NEW
@@ -804,15 +818,74 @@ var SplashDialog = function(editorUi)
 				return oathDone && mxUtils.trim(nameField.input.value) != '' && mxUtils.trim(signatureField.input.value) != '' && mxUtils.trim(emailField.input.value).indexOf('@') >= 0 && oathCheckbox.checked; // NEW
 			} // NEW
 
-			function runAway(evt, pointerEvent) // NEW
+			function blockAffirmUntilReady(evt) // NEW
+			{ // NEW
+				if (oathDone) // NEW
+				{ // NEW
+					updateStatus('Complete the fields and checkbox before affirming.'); // NEW
+					if (evt != null) // NEW
+					{ // NEW
+						mxEvent.consume(evt); // NEW
+					} // NEW
+					return; // NEW
+				} // NEW
+				tryNonPointerRunAway(evt); // NEW
+			} // NEW
+
+			function tryNonPointerRunAway(evt) // NEW
 			{ // NEW
 				if (oathDone) // NEW
 				{ // NEW
 					return; // NEW
 				} // NEW
-				if (!pointerEvent) // NEW
+				if (nonPointerRunaways < 3) // NEW
 				{ // NEW
 					nonPointerRunaways++; // NEW
+					runAway(evt); // CHANGE
+				} // NEW
+				else // NEW
+				{ // NEW
+					updateStatus('Placeholder joke: the button is out of hiding places, but the oath still has to be heard.'); // NEW
+					if (evt != null) // NEW
+					{ // NEW
+						mxEvent.consume(evt); // NEW
+					} // NEW
+				} // NEW
+			} // NEW
+
+			function runAwayFromPointerProximity(evt) // NEW
+			{ // NEW
+				if (oathDone || evt == null || evt.clientX == null || evt.clientY == null) // NEW
+				{ // NEW
+					return; // NEW
+				} // NEW
+				var now = new Date().getTime(); // NEW
+				if (now - lastPointerRunawayAt >= pointerRunawayDelay && isPointerNearAffirmButton(evt)) // NEW
+				{ // NEW
+					lastPointerRunawayAt = now; // NEW
+					runAway(evt); // NEW
+				} // NEW
+			} // NEW
+
+			function isPointerNearAffirmButton(evt) // NEW
+			{ // NEW
+				if (affirmButton.getBoundingClientRect == null) // NEW
+				{ // NEW
+					return false; // NEW
+				} // NEW
+				var rect = affirmButton.getBoundingClientRect(); // NEW
+				var nearestX = Math.max(rect.left, Math.min(evt.clientX, rect.right)); // NEW
+				var nearestY = Math.max(rect.top, Math.min(evt.clientY, rect.bottom)); // NEW
+				var dx = evt.clientX - nearestX; // NEW
+				var dy = evt.clientY - nearestY; // NEW
+				return Math.sqrt(dx * dx + dy * dy) <= pointerRunawayDistance; // NEW
+			} // NEW
+
+			function runAway(evt) // CHANGE
+			{ // NEW
+				if (oathDone) // NEW
+				{ // NEW
+					return; // NEW
 				} // NEW
 				runawayX = (runawayX <= 0) ? 90 : -90; // NEW
 				runawayY = (runawayY <= 0) ? 18 : -18; // NEW

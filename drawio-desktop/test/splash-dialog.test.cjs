@@ -124,6 +124,129 @@ function findButton(root, label) {
     return Array.from(root.querySelectorAll("button")).find((button) => button.textContent.includes(label));
 }
 
+function openOath(dialog, pathLabel = "Personal / Noncommercial") {
+    findButton(dialog.container, pathLabel).click();
+    return findButton(dialog.container, "I Affirm the Oath");
+}
+
+function setAffirmButtonRect(button) {
+    button.getBoundingClientRect = () => ({
+        left: 100,
+        top: 100,
+        right: 220,
+        bottom: 140,
+        width: 120,
+        height: 40
+    });
+}
+
+function dispatchMouseMove(dom, target, clientX, clientY) {
+    target.dispatchEvent(new dom.window.MouseEvent("mousemove", {
+        bubbles: true,
+        clientX,
+        clientY
+    }));
+}
+
+function makeSavedRecord(overrides = {}) {
+    return {
+        path: "personal",
+        contactGuidance: false,
+        name: "Saved User",
+        email: "saved@example.com",
+        signature: "Saved User",
+        oathCompletedAt: "2026-07-03T00:00:00.000Z",
+        version: "2",
+        ...overrides
+    };
+}
+
+function loadShowSplashHarness(options = {}) {
+    const appSource = fs.readFileSync(appPath, "utf8");
+    const start = appSource.indexOf("App.prototype.showSplash = function(force)");
+    const end = appSource.indexOf("App.prototype.createFileSystemOptions", start);
+    const calls = {
+        createFile: [],
+        exitRequests: [],
+        exitMessages: 0,
+        windowClosed: 0,
+        showDialog: null
+    };
+
+    assert.notEqual(start, -1);
+    assert.notEqual(end, -1);
+
+    function App() {}
+
+    const splashDialog = {
+        container: { id: "splash" },
+        isTrellisLicenseWizardComplete() {
+            return !!options.complete;
+        },
+        showTrellisExitMessage() {
+            calls.exitMessages++;
+        }
+    };
+    const context = {
+        App,
+        SplashDialog: function () {
+            return splashDialog;
+        },
+        StorageDialog: function () {
+            throw new Error("StorageDialog should not be created for Electron splash tests");
+        },
+        EditorUi: { isElectronApp: options.electronApp !== false },
+        Editor: { useLocalStorage: true },
+        mxClient: { IS_CHROMEAPP: false },
+        mxResources: {
+            get(key) {
+                return key;
+            }
+        },
+        mxUtils: {
+            bind(scope, fn) {
+                return fn.bind(scope);
+            }
+        },
+        urlParams: {},
+        electron: {
+            request(payload) {
+                calls.exitRequests.push(payload);
+            }
+        },
+        window: {
+            close() {
+                calls.windowClosed++;
+            }
+        }
+    };
+
+    vm.runInNewContext(appSource.slice(start, end), context, { filename: appPath });
+
+    const app = Object.create(context.App.prototype);
+    app.defaultFilename = "Untitled Diagram";
+    app.editor = {
+        isChromelessView() {
+            return false;
+        }
+    };
+    app.getServiceCount = () => 1;
+    app.showDialog = function (container, width, height, modal, closable, closeCallback) {
+        calls.showDialog = { container, width, height, modal, closable, closeCallback };
+    };
+    app.createFile = function (...args) {
+        calls.createFile.push(args);
+    };
+    app.handleError = function () {
+        throw new Error("handleError should not be called");
+    };
+
+    app.showSplash();
+    assert.ok(calls.showDialog);
+
+    return { calls, context };
+}
+
 function completeVisibleOath(dom, dialog) {
     const playButton = findButton(dialog.container, "Play Oath Aloud");
 
@@ -168,6 +291,55 @@ test("Commercial path shows contact guidance and the Grand Oath gate", () => {
     assert.match(dialog.container.textContent, /The Grand Oath of Paying Attention/);
     assert.ok(findButton(dialog.container, "Play Oath Aloud"));
     assert.ok(findButton(dialog.container, "I Affirm the Oath"));
+});
+
+test("Affirm button evades pointer proximity only before oath completion", () => {
+    const { dom, dialog } = loadSplashDialog();
+    const affirmButton = openOath(dialog);
+    const gateSection = affirmButton.parentNode.parentNode;
+
+    setAffirmButtonRect(affirmButton);
+    dispatchMouseMove(dom, gateSection, 400, 400);
+    assert.equal(affirmButton.style.transform, "");
+
+    dispatchMouseMove(dom, gateSection, 90, 120);
+    assert.equal(affirmButton.style.transform, "translate(90px,18px)");
+
+    findButton(dialog.container, "Play Oath Aloud").click();
+    findButton(dialog.container, "Play Oath Aloud").click();
+    findButton(dialog.container, "Play Oath Aloud").click();
+    findButton(dialog.container, "Manual audio override").click();
+
+    assert.equal(affirmButton.style.transform, "translate(0,0)");
+    dispatchMouseMove(dom, gateSection, 90, 120);
+    assert.equal(affirmButton.style.transform, "translate(0,0)");
+});
+
+test("Affirm button caps non-pointer evasions before the oath is ready", () => {
+    const { dom, dialog } = loadSplashDialog();
+    const affirmButton = openOath(dialog);
+
+    affirmButton.dispatchEvent(new dom.window.Event("focus", { bubbles: false, cancelable: true }));
+    assert.equal(affirmButton.style.transform, "translate(90px,18px)");
+
+    affirmButton.dispatchEvent(new dom.window.Event("touchstart", { bubbles: true, cancelable: true }));
+    assert.equal(affirmButton.style.transform, "translate(-90px,-18px)");
+
+    affirmButton.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+        keyCode: 13
+    }));
+    const cappedTransform = affirmButton.style.transform;
+    assert.equal(cappedTransform, "translate(90px,18px)");
+
+    affirmButton.click();
+    affirmButton.click();
+
+    assert.equal(affirmButton.style.transform, cappedTransform);
+    assert.match(dialog.container.textContent, /out of hiding places/);
+    assert.equal(dialog.isTrellisLicenseWizardComplete(), false);
 });
 
 test("Oath completion stores the wizard record and reveals actions after two seconds", () => {
@@ -221,6 +393,22 @@ test("Saved wizard records show summary, contact guidance, Change license, and d
     assert.equal(dialog.isTrellisLicenseWizardComplete(), false);
 });
 
+test("Incomplete or corrupt saved wizard records are ignored", () => {
+    const missingSignature = loadSplashDialog({
+        savedRecord: makeSavedRecord({ signature: "" })
+    });
+    assert.match(missingSignature.dialog.container.textContent, /Choose your path/);
+    assert.equal(missingSignature.dialog.isTrellisLicenseWizardComplete(), false);
+    assert.equal(missingSignature.timers.length, 0);
+
+    const mismatchedGuidance = loadSplashDialog({
+        savedRecord: makeSavedRecord({ path: "commercial", contactGuidance: false })
+    });
+    assert.match(mismatchedGuidance.dialog.container.textContent, /Choose your path/);
+    assert.equal(mismatchedGuidance.dialog.isTrellisLicenseWizardComplete(), false);
+    assert.equal(mismatchedGuidance.timers.length, 0);
+});
+
 test("SplashDialog ignores old v1 license acknowledgements", () => {
     const { dialog, timers } = loadSplashDialog({ oldChoice: "community" });
 
@@ -230,17 +418,53 @@ test("SplashDialog ignores old v1 license acknowledgements", () => {
     assert.equal(timers.length, 0);
 });
 
+test("Incomplete splash dismissal requests exit and does not create a blank diagram", () => {
+    const { calls } = loadShowSplashHarness({ complete: false });
+    const result = calls.showDialog.closeCallback(true, false);
+
+    assert.equal(result, false);
+    assert.equal(calls.exitRequests.length, 1);
+    assert.equal(calls.exitRequests[0].action, "exit");
+    assert.equal(calls.windowClosed, 0);
+    assert.equal(calls.exitMessages, 1);
+    assert.equal(calls.createFile.length, 0);
+});
+
+test("Completed splash dismissal preserves blank diagram creation", () => {
+    const { calls, context } = loadShowSplashHarness({ complete: true });
+    const result = calls.showDialog.closeCallback(true, false);
+
+    assert.equal(result, undefined);
+    assert.equal(calls.exitRequests.length, 0);
+    assert.equal(calls.exitMessages, 0);
+    assert.equal(calls.createFile.length, 1);
+    assert.equal(calls.createFile[0][0], "Untitled Diagram.drawio");
+    assert.equal(context.Editor.useLocalStorage, true);
+});
+
 test("SplashDialog source and bundle use oath wizard storage, close hook, and expanded dimensions", () => {
     const appSource = fs.readFileSync(appPath, "utf8");
     const bundledSource = fs.readFileSync(bundledPath, "utf8");
     const dialogSource = fs.readFileSync(dialogsPath, "utf8");
+    const dialogBindingIndex = dialogSource.indexOf("var trellisSplashDialog = this;");
+    const dialogHookIndex = dialogSource.indexOf("trellisSplashDialog.isTrellisLicenseWizardComplete");
+    const bundledBindingIndex = bundledSource.indexOf("var trellisSplashDialog = this;");
+    const bundledHookIndex = bundledSource.indexOf("trellisSplashDialog.isTrellisLicenseWizardComplete");
 
     assert.match(dialogSource, /trellis\.licenseWizard\.v/);
+    assert.ok(dialogBindingIndex >= 0);
+    assert.ok(dialogHookIndex > dialogBindingIndex);
     assert.match(dialogSource, /isTrellisLicenseWizardComplete/);
+    assert.match(dialogSource, /isTrellisWizardRecordValid/);
+    assert.match(dialogSource, /pointerRunawayDistance = 120/);
     assert.match(dialogSource, /I Affirm the Oath/);
     assert.match(appSource, /showDialog\(dlg\.container, 760, 720/);
     assert.match(appSource, /showTrellisExitMessage/);
     assert.match(bundledSource, /trellis\.licenseWizard\.v/);
+    assert.ok(bundledBindingIndex >= 0);
+    assert.ok(bundledHookIndex > bundledBindingIndex);
     assert.match(bundledSource, /isTrellisLicenseWizardComplete/);
+    assert.match(bundledSource, /isTrellisWizardRecordValid/);
+    assert.match(bundledSource, /pointerRunawayDistance = 120/);
     assert.match(bundledSource, /showDialog\(p\.container,760,720/);
 });
