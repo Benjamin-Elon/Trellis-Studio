@@ -280,7 +280,12 @@ test("catalog manager renders category/size group headers, catalog filters, and 
     ui.lastDialog.querySelector(".trellis-irrigation-catalog-connection-filter").dispatchEvent(new ui.lastDialog.ownerDocument.defaultView.Event("change")); // CHANGE
     ui.lastDialog.querySelector("[data-part-id='pipe_cheap']").click(); // CHANGE
     assert.match(ui.lastDialog.textContent, /Unit cost per ft/); // CHANGE
+    assert.match(ui.lastDialog.textContent, /Pipe size/); // NEW
     assert.match(ui.lastDialog.textContent, /Pipe inner diameter/); // CHANGE
+    assert.doesNotMatch(ui.lastDialog.textContent, /Input type/); // NEW
+    assert.doesNotMatch(ui.lastDialog.textContent, /Output type/); // NEW
+    assert.doesNotMatch(ui.lastDialog.textContent, /Inputs/); // NEW
+    assert.doesNotMatch(ui.lastDialog.textContent, /uses pipe/i); // NEW
     const formCategory = Array.from(ui.lastDialog.querySelectorAll(".trellis-irrigation-catalog-form label")).find(label => label.textContent.startsWith("Category")).querySelector("select"); // CHANGE
     formCategory.value = "fitting"; // CHANGE
     formCategory.dispatchEvent(new ui.lastDialog.ownerDocument.defaultView.Event("change")); // CHANGE
@@ -291,6 +296,31 @@ test("catalog manager renders category/size group headers, catalog filters, and 
     assert.equal(changed.category, "fitting"); // CHANGE
     assert.equal(changed.unitCost, null); // CHANGE
     assert.equal(changed.specs.innerDiameterIn, null); // CHANGE
+}); // NEW
+
+test("pipe catalog editor saves one shared size without rejecting old asymmetric pipe data", () => { // NEW
+    const { api, moduleCell, ui } = loadPlugin(); // NEW
+    const legacyPipe = part("legacy_pipe", "Legacy asymmetric pipe", "pipe_tubing", "in_stock", 0, 2, 3, "twist_lock", "1/2", "push_connect", "3/4", { innerDiameterIn: 0.6, hazenWilliamsC: 150 }, 0.4, true); // NEW
+    assert.equal(api.validateCatalogPart(legacyPipe).ok, true); // NEW
+    api.writeCatalog(moduleCell, { items: [legacyPipe] }); // NEW
+    api.openCatalogManager(moduleCell); // NEW
+    ui.lastDialog.querySelector("[data-part-id='legacy_pipe']").click(); // NEW
+    assert.match(ui.lastDialog.textContent, /Pipe size/); // NEW
+    assert.doesNotMatch(ui.lastDialog.textContent, /Input type/); // NEW
+    assert.doesNotMatch(ui.lastDialog.textContent, /Output type/); // NEW
+    assert.doesNotMatch(ui.lastDialog.textContent, /uses pipe/i); // NEW
+    const pipeSize = Array.from(ui.lastDialog.querySelectorAll(".trellis-irrigation-catalog-form label")).find(label => label.textContent.startsWith("Pipe size")).querySelector("select"); // NEW
+    pipeSize.value = "1"; // NEW
+    clickButton(ui.lastDialog, "Save Part"); // NEW
+    const saved = api.readCatalog(moduleCell).items.find(item => item.id === "legacy_pipe"); // NEW
+    assert.equal(saved.connectors.inputs, 1); // NEW
+    assert.equal(saved.connectors.outputs, 1); // NEW
+    assert.equal(saved.connectors.input.type, "barb"); // NEW
+    assert.equal(saved.connectors.output.type, "barb"); // NEW
+    assert.equal(saved.connectors.input.nominalSize, "1"); // NEW
+    assert.equal(saved.connectors.output.nominalSize, "1"); // NEW
+    assert.equal(saved.connectors.input.pipeConnection, true); // NEW
+    assert.equal(saved.connectors.output.pipeConnection, true); // NEW
 }); // NEW
 
 test("starter catalog includes 1 inch and 1/4 inch poly/barb irrigation components", () => { // NEW
@@ -322,29 +352,21 @@ test("starter catalog includes 1 inch and 1/4 inch poly/barb irrigation componen
         "twist_lock_tee_1_2", // NEW
         "twist_lock_elbow_3_4", // NEW
         "twist_lock_end_cap_1", // NEW
-        "twist_lock_adapter_1_4_to_1", // NEW
-        "twist_lock_tubing_1_4", // NEW
-        "twist_lock_tubing_1_2", // NEW
-        "twist_lock_tubing_3_4", // NEW
-        "twist_lock_tubing_1", // NEW
+        "twist_lock_adapter_1_4_to_1", // CHANGE
         "push_connect_coupler_1_4", // NEW
         "push_connect_tee_1_2", // NEW
         "push_connect_elbow_3_4", // NEW
         "push_connect_end_cap_1", // NEW
-        "push_connect_adapter_1_to_1_4", // NEW
-        "push_connect_tubing_1_4", // NEW
-        "push_connect_tubing_1_2", // NEW
-        "push_connect_tubing_3_4", // NEW
-        "push_connect_tubing_1" // NEW
+        "push_connect_adapter_1_to_1_4" // CHANGE
     ].forEach(id => assert.ok(ids.has(id), "Missing starter part " + id)); // NEW
+    ["twist_lock_tubing_1_4", "twist_lock_tubing_1_2", "twist_lock_tubing_3_4", "twist_lock_tubing_1", "push_connect_tubing_1_4", "push_connect_tubing_1_2", "push_connect_tubing_3_4", "push_connect_tubing_1"].forEach(id => assert.equal(ids.has(id), false, "Removed family tubing should be absent: " + id)); // NEW
     assert.equal(catalog.items.some(item => [item.connectors.input, item.connectors.output].some(connector => connector && connector.type === "ght")), false); // NEW
     assert.equal(catalog.items.find(item => item.id === "hose_splitter_2way_3_4_fght_mght").connectors.outputs, 2); // NEW
     assert.equal(catalog.items.find(item => item.id === "hose_splitter_4way_3_4_fght_mght").connectors.outputs, 4); // NEW
     assert.equal(catalog.items.find(item => item.id === "twist_lock_adapter_1_4_to_1").connectors.input.type, "twist_lock"); // CHANGE
     assert.equal(catalog.items.find(item => item.id === "push_connect_adapter_1_to_1_4").connectors.output.type, "push_connect"); // CHANGE
     assert.equal(catalog.items.find(item => item.id === "twist_lock_coupler_1_2").connectors.input.pipeConnection, true); // NEW
-    assert.equal(catalog.items.find(item => item.id === "push_connect_tubing_3_4").connectors.input.type, "push_connect"); // NEW
-    assert.equal(catalog.items.find(item => item.id === "push_connect_tubing_3_4").connectors.input.pipeConnection, true); // NEW
+    assert.equal(catalog.items.some(item => item.id === "push_connect_tubing_3_4"), false); // CHANGE
     assert.equal(catalog.items.some(item => [item.connectors.input, item.connectors.output].some(connector => connector && connector.type === "pipe")), false); // CHANGE
     assert.equal(catalog.items.some(item => [item.connectors.input, item.connectors.output].some(connector => connector && connector.method)), false); // NEW
     assert.equal(catalog.items.find(item => item.id === "poly_mainline_1").specs.hazenWilliamsC, 150); // CHANGE
@@ -356,6 +378,10 @@ test("starter catalog includes 1 inch and 1/4 inch poly/barb irrigation componen
 test("connector compatibility respects GHT and pipe-thread gender", () => { // NEW
     const { api } = loadPlugin(); // NEW
     const c = type => ({ type, nominalSize: "3/4" }); // CHANGE
+    assert.equal(api.__test.normalizeEndpointProfile({ connectorType: "twist" }).connectorType, "twist_lock"); // NEW
+    assert.equal(api.__test.normalizeEndpointProfile({ connectorType: "twist lock" }).connectorType, "twist_lock"); // NEW
+    assert.equal(api.__test.normalizeEndpointProfile({ connectorType: "push connect" }).connectorType, "push_connect"); // NEW
+    assert.equal(api.__test.normalizeEndpointProfile({ connectorType: "push-to-connect" }).connectorType, "push_connect"); // NEW
     assert.equal(api.__test.connectorMatches(c("mght"), c("fght")).ok, true); // NEW
     assert.equal(api.__test.connectorMatches(c("fght"), c("mght")).ok, true); // NEW
     assert.equal(api.__test.connectorMatches(c("mpt"), c("fpt")).ok, true); // NEW
@@ -372,7 +398,7 @@ test("connector compatibility respects GHT and pipe-thread gender", () => { // N
     assert.equal(api.__test.connectorMatches(c("mght"), { type: "fght", nominalSize: "1/2" }).ok, false); // CHANGE
 }); // NEW
 
-test("generated twist-lock and push-connect connectors use family tubing for pipe edges", () => { // NEW
+test("generated twist-lock and push-connect connectors infer pipe edges by size", () => { // CHANGE
     const { api, moduleCell } = loadPlugin(); // NEW
     api.writeCatalog(moduleCell, api.starterCatalog()); // NEW
     const catalog = api.readCatalog(moduleCell); // NEW
@@ -385,17 +411,22 @@ test("generated twist-lock and push-connect connectors use family tubing for pip
     const twistCoupler = api.__test.createPartAssembly(moduleCell, byId("twist_lock_coupler_1_2"), { x: 30, y: 180 }); // NEW
     const twist = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(twistSource.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(twistCoupler.assembly).getId(), role: "input", index: 0 }); // NEW
     assert.equal(twist.ok, true, twist.reason); // NEW
-    assert.equal(twist.edge.getAttribute(api.attrs.PIPE_PART_ID), "twist_lock_tubing_1_2"); // NEW
+    assert.equal(twist.edge.getAttribute(api.attrs.PIPE_PART_ID), "poly_distribution_1_2"); // CHANGE
     const pushSource = api.__test.createSourceAssembly(moduleCell, "Push source", { connectorType: "push_connect", nominalSize: "3/4", pipeConnection: true, usableFlowGpm: 4, staticPressurePsi: 35 }, { x: 340, y: 40 }); // NEW
     const pushCoupler = api.__test.createPartAssembly(moduleCell, byId("push_connect_coupler_3_4"), { x: 340, y: 180 }); // NEW
     const push = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(pushSource.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(pushCoupler.assembly).getId(), role: "input", index: 0 }); // NEW
     assert.equal(push.ok, true, push.reason); // NEW
-    assert.equal(push.edge.getAttribute(api.attrs.PIPE_PART_ID), "push_connect_tubing_3_4"); // NEW
+    assert.equal(push.edge.getAttribute(api.attrs.PIPE_PART_ID), "poly_mainline_3_4"); // CHANGE
     const crossSource = api.__test.createSourceAssembly(moduleCell, "Cross source", { connectorType: "twist_lock", nominalSize: "3/4", pipeConnection: true, usableFlowGpm: 4, staticPressurePsi: 35 }, { x: 650, y: 40 }); // NEW
     const crossTarget = api.__test.createPartAssembly(moduleCell, byId("push_connect_coupler_3_4"), { x: 650, y: 180 }); // NEW
     const cross = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(crossSource.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(crossTarget.assembly).getId(), role: "input", index: 0 }); // NEW
-    assert.equal(cross.ok, false); // NEW
-    assert.match(cross.reason, /Connector type mismatch/); // NEW
+    assert.equal(cross.ok, true, cross.reason); // CHANGE
+    assert.equal(cross.edge.getAttribute(api.attrs.PIPE_PART_ID), "poly_mainline_3_4"); // NEW
+    const mismatchSource = api.__test.createSourceAssembly(moduleCell, "Mismatch source", { connectorType: "twist_lock", nominalSize: "3/4", pipeConnection: true, usableFlowGpm: 4, staticPressurePsi: 35 }, { x: 900, y: 40 }); // NEW
+    const mismatchTarget = api.__test.createPartAssembly(moduleCell, byId("push_connect_coupler_1_2"), { x: 900, y: 180 }); // CHANGE
+    const mismatch = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(mismatchSource.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(mismatchTarget.assembly).getId(), role: "input", index: 0 }); // CHANGE
+    assert.equal(mismatch.ok, false); // NEW
+    assert.match(mismatch.reason, /Pipe Edge size mismatch/); // NEW
 }); // NEW
 
 test("hydraulics use minimum operating psi and warn over maximum operating psi", () => { // CHANGE
@@ -420,14 +451,17 @@ test("starter catalog upgrade merges new parts into existing catalogs without ov
     const { api, moduleCell } = loadPlugin(); // NEW
     api.writeCatalog(moduleCell, { items: [ // NEW
         part("filter", "User Edited Filter", "filter", "in_stock", 99, 1, 1, "barb", "3/4", "barb", "3/4", { pressureLossPsi: 4 }), // NEW
-        part("custom_micro", "Custom micro part", "fitting", "in_stock", 1, 1, 1, "barb", "1/4", "barb", "1/4", { pressureLossPsi: 0.1 }) // NEW
+        part("custom_micro", "Custom micro part", "fitting", "in_stock", 1, 1, 1, "barb", "1/4", "barb", "1/4", { pressureLossPsi: 0.1 }), // CHANGE
+        part("twist_lock_tubing_custom", "Custom twist fitting with obsolete prefix", "fitting", "in_stock", 2, 1, 1, "twist_lock", "1/2", "twist_lock", "1/2", { pressureLossPsi: 0.1 }, undefined, true), // NEW
+        part("twist_lock_tubing_1_2", "Obsolete twist tubing", "pipe_tubing", "in_stock", 0, 1, 1, "twist_lock", "1/2", "twist_lock", "1/2", { innerDiameterIn: 0.6 }, 0.4, true), // NEW
+        part("push_connect_tubing_3_4", "Obsolete push tubing", "pipe_tubing", "in_stock", 0, 1, 1, "push_connect", "3/4", "push_connect", "3/4", { innerDiameterIn: 0.824 }, 0.5, true) // NEW
     ] }); // NEW
     const stored = JSON.parse(moduleCell.getAttribute(api.attrs.CATALOG_JSON)); // NEW
     stored.version = 1; // NEW
     moduleCell.value.setAttribute(api.attrs.CATALOG_JSON, JSON.stringify(stored)); // NEW
     const upgraded = api.seedStarterCatalogIfEmpty(moduleCell); // NEW
     const filter = upgraded.items.find(item => item.id === "filter"); // NEW
-    assert.equal(upgraded.version, 3); // CHANGE
+    assert.equal(upgraded.version, 4); // CHANGE
     assert.equal(filter.name, "User Edited Filter"); // NEW
     assert.equal(filter.cost, 99); // NEW
     assert.ok(upgraded.items.some(item => item.id === "poly_mainline_1")); // NEW
@@ -435,6 +469,9 @@ test("starter catalog upgrade merges new parts into existing catalogs without ov
     assert.ok(upgraded.items.some(item => item.id === "twist_lock_adapter_1_4_to_1")); // NEW
     assert.ok(upgraded.items.some(item => item.id === "push_connect_adapter_1_to_1_4")); // NEW
     assert.ok(upgraded.items.some(item => item.id === "custom_micro")); // NEW
+    assert.ok(upgraded.items.some(item => item.id === "twist_lock_tubing_custom")); // NEW
+    assert.equal(upgraded.items.some(item => item.id === "twist_lock_tubing_1_2"), false); // NEW
+    assert.equal(upgraded.items.some(item => item.id === "push_connect_tubing_3_4"), false); // NEW
 }); // NEW
 
 test("source commit creates a source assembly at the latest click point and HUD follows zoom events", () => { // NEW
@@ -451,7 +488,7 @@ test("source commit creates a source assembly at the latest click point and HUD 
     assert.equal(graph.getSelectionCell(), sourceAssembly); // NEW
     const profile = JSON.parse(api.__test.firstAssemblyPart(sourceAssembly).getAttribute(api.attrs.ENDPOINT_PROFILE_JSON)); // CHANGE
     assert.equal(profile.connectorType, "barb"); // CHANGE
-    assert.equal(profile.pipeConnection, true); // CHANGE
+    assert.equal(profile.pipeConnection, false); // CHANGE
     graph.view.scale = 1.4; // NEW
     graph.view.fire("scale"); // NEW
     assert.ok(graph.container.querySelector(".trellis-irrigation-mode-hud")); // NEW
@@ -567,7 +604,6 @@ test("selected port badges connect with automatic pipe choice and disconnect sel
     assert.equal(edge.getAttribute(api.attrs.PIPE_PART_ID), "pipe_cheap"); // NEW
     graph.setSelectionCells([source.assembly, filter.assembly]); // NEW
     clickPort(graph.container, /Outlet 1 connected/); // NEW
-    clickPort(graph.container, /Inlet 1 connected/); // NEW
     clickButton(graph.container, "Disconnect Parts"); // CHANGE
     assert.equal(api.__test.collectAssemblyEdges(moduleCell).length, 0); // NEW
 }); // NEW
@@ -594,8 +630,6 @@ test("irrigation mode renders global port badges and highlights compatible free 
     assert.ok(portBadgesInState(graph.container, "occupied").length >= 2); // NEW
     assert.equal(portBadgesInState(graph.container, "compatible").length, 0); // NEW
     clickPort(graph.container, /Outlet 1 connected/); // NEW
-    assert.equal(portBadgesInState(graph.container, "compatible").length, 0); // NEW
-    clickPort(graph.container, /Inlet 1 connected/); // NEW
     assert.match(graph.container.textContent, /Disconnect Parts/); // CHANGE
 }); // NEW
 
@@ -732,7 +766,7 @@ test("1/2 inch paths can suggest a 1/4 inch transfer barb into micro emitters", 
     assert.ok(suggestions.some(suggestion => suggestion.partIds.includes("transfer_barb_1_2_to_1_4"))); // NEW
 }); // NEW
 
-test("missing pipe flags create direct assembly merges instead of pipe edges", () => { // NEW
+test("non-pipe connector types create direct assembly merges instead of pipe edges", () => { // CHANGE
     const { api, moduleCell } = loadPlugin(); // NEW
     const catalog = { items: [part("plain_filter", "Plain Filter", "filter", "in_stock", 10, 1, 1, "fpt", "3/4", "mpt", "3/4", { pressureLossPsi: 1 })] }; // CHANGE
     api.writeCatalog(moduleCell, catalog); // NEW
@@ -746,9 +780,12 @@ test("missing pipe flags create direct assembly merges instead of pipe edges", (
     assert.equal(assemblyCells(moduleCell, api).includes(filter.assembly), false); // NEW
 }); // NEW
 
-test("unflagged barb connectors are rejected as non-pipe genderless direct connections", () => { // CHANGE
+test("unflagged barb connectors are rejected even when matching pipe exists", () => { // CHANGE
     const { api, moduleCell } = loadPlugin(); // CHANGE
-    const catalog = { items: [part("plain_barb_filter", "Plain Barb Filter", "filter", "in_stock", 10, 1, 1, "barb", "3/4", "barb", "3/4", { pressureLossPsi: 1 })] }; // CHANGE
+    const catalog = { items: [ // CHANGE
+        part("plain_barb_filter", "Plain Barb Filter", "filter", "in_stock", 10, 1, 1, "barb", "3/4", "barb", "3/4", { pressureLossPsi: 1 }), // CHANGE
+        part("plain_barb_pipe", "Plain Barb Pipe", "pipe_tubing", "in_stock", 0, 1, 1, "barb", "3/4", "barb", "3/4", { innerDiameterIn: 0.824, hazenWilliamsC: 150 }, 0.25) // NEW
+    ] }; // CHANGE
     api.writeCatalog(moduleCell, catalog); // CHANGE
     const source = api.__test.createSourceAssembly(moduleCell, "Plain Barb Source", { connectorType: "barb", nominalSize: "3/4", method: "drip", pipeConnection: false, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // CHANGE
     const filter = api.__test.createPartAssembly(moduleCell, catalog.items[0], { x: 30, y: 180 }); // CHANGE
@@ -881,6 +918,38 @@ test("explicit report sync writes summaries but not the legacy path cache", () =
     assert.ok(moduleCell.getAttribute(api.attrs.DASHBOARD_JSON)); // CHANGE
     assert.equal(moduleCell.getAttribute(api.attrs.PATHS_JSON), null); // CHANGE
 }); // CHANGE
+
+test("internal architecture facades expose domain seams without changing public contracts", () => { // NEW
+    const { api, moduleCell } = loadPlugin(); // NEW
+    assert.equal(api.readCatalog, api.__test.IrrigationCatalog.read); // NEW
+    assert.equal(api.generateReport, api.__test.ReportModel.generate); // NEW
+    assert.equal(api.openIrrigationMode, api.__test.HudController.open); // NEW
+    moduleCell.value.setAttribute(api.attrs.CATALOG_JSON, "{bad json"); // NEW
+    assert.deepEqual(api.__test.GraphStore.readJsonAttr(moduleCell, api.attrs.CATALOG_JSON, { items: [] }), { items: [] }); // NEW
+    const normalized = api.__test.IrrigationCatalog.normalizePart(part("filter", "Filter", "filter", "in_stock", 10, 1, 1, "barb", "3/4", "barb", "3/4", { pressureLossPsi: 1 }, undefined, true)); // NEW
+    assert.equal(api.__test.IrrigationCatalog.validatePart(normalized).ok, true); // NEW
+    assert.equal(api.__test.ConnectorRules.connectorMatches({ type: "mght", nominalSize: "3/4" }, { type: "fght", nominalSize: "3/4" }).ok, true); // NEW
+    assert.equal(api.__test.Hydraulics.estimatePath({ catalog: { items: [] }, sourceProfile: { usableFlowGpm: 1, staticPressurePsi: 30 }, bedDemand: { flowGpm: 1, operatingPressurePsi: 10 } }).ok, true); // NEW
+    assert.equal(api.__test.ZoneModel.normalize({ id: "z", originType: "manual" }).id, "z"); // NEW
+}); // NEW
+
+test("report model builds summaries before explicit persistence", () => { // NEW
+    const { api, model, moduleCell, bed } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "1/2", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 220 }); // NEW
+    api.__test.commitBedTemplate(moduleCell, "bed_one", bed, { templateId: "drip_tape_bed" }); // NEW
+    assert.equal(api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: bedAssembly.assembly.getId(), role: "input", index: 0 }).ok, true); // NEW
+    const writesBeforeBuild = model.valuesWritten; // NEW
+    const paths = api.__test.deriveAssemblyPaths(moduleCell); // NEW
+    const summary = api.__test.ReportModel.buildSummary(moduleCell, { paths }); // NEW
+    assert.equal(model.valuesWritten, writesBeforeBuild); // NEW
+    assert.equal(moduleCell.getAttribute(api.attrs.REPORT_JSON), null); // NEW
+    assert.ok(summary.percentIrrigated > 0); // NEW
+    api.__test.ReportModel.persistSummary(moduleCell, summary); // NEW
+    assert.ok(moduleCell.getAttribute(api.attrs.REPORT_JSON)); // NEW
+    assert.ok(moduleCell.getAttribute(api.attrs.DASHBOARD_JSON)); // NEW
+}); // NEW
 
 test("multi-pipe assembly hydraulics sum per-segment pipe losses", () => { // CHANGE
     const { api, moduleCell, bed } = loadPlugin(); // CHANGE

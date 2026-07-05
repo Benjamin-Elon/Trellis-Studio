@@ -16,7 +16,7 @@ Draw.loadPlugin(function (ui) {
     const model = graph.getModel && graph.getModel();
     if (!model) return;
 
-    const PLUGIN_VERSION = 3; // CHANGE
+    const PLUGIN_VERSION = 4; // CHANGE
     const ACTION_ID = "trellisIrrigationPlanner";
     const CREATE_SOURCE_ACTION_ID = "trellisIrrigationCreateSourceEndpoint";
     const CREATE_BED_ACTION_ID = "trellisIrrigationCreateBedEndpoint";
@@ -190,6 +190,7 @@ Draw.loadPlugin(function (ui) {
     let hudSyncModuleCell = null; // NEW
     let inactiveEntryOverlay = null; // NEW
     let inactiveEntryRefreshTimer = null; // NEW
+    let programmaticEdgeInsertDepth = 0; // FIX
 
     function generateLabelOnlyConnectorParts() { // NEW
         const families = [
@@ -205,7 +206,6 @@ Draw.loadPlugin(function (ui) {
         const parts = []; // NEW
         families.forEach(function (family) { // NEW
             sizes.forEach(function (size) { // NEW
-                parts.push(familyTubingPart(family, size)); // CHANGE
                 parts.push(labelOnlyConnectorPart(family, "coupler", size, size, 1, size.cost, family.label + " " + size.label + " in coupler")); // NEW
                 parts.push(labelOnlyConnectorPart(family, "tee", size, size, 2, size.cost + 0.75, family.label + " " + size.label + " in tee")); // NEW
                 parts.push(labelOnlyConnectorPart(family, "elbow", size, size, 1, size.cost + 0.35, family.label + " " + size.label + " in elbow")); // NEW
@@ -225,11 +225,6 @@ Draw.loadPlugin(function (ui) {
     function labelOnlyConnectorPart(family, kind, inputSize, outputSize, outputs, cost, name) { // NEW
         const id = family.id + "_" + kind + "_" + inputSize.id + (outputSize && outputSize.id !== inputSize.id ? "_to_" + outputSize.id : ""); // NEW
         return starterPart(id, name, "fitting", cost, 1, outputs, input(family.id, inputSize.label, "", true), output(outputSize ? family.id : "", outputSize ? outputSize.label : "", "", null, !!outputSize), { pressureLossPsi: outputs > 0 ? 0.2 : 0 }); // CHANGE
-    } // NEW
-
-    function familyTubingPart(family, size) { // NEW
-        const diameters = { "1_4": 0.170, "1_2": 0.600, "3_4": 0.824, "1": 1.049 }; // NEW
-        return starterPart(family.id + "_tubing_" + size.id, family.label + " " + size.label + " in tubing", "pipe_tubing", 0, 1, 1, input(family.id, size.label, "", true), output(family.id, size.label, "", null, true), { innerDiameterIn: diameters[size.id] || 0.600, hazenWilliamsC: 150 }, Math.max(0.12, size.cost * 0.18)); // NEW
     } // NEW
 
     function safeJsonParse(raw, fallback) {
@@ -333,6 +328,19 @@ Draw.loadPlugin(function (ui) {
         else cell.geometry = next; // NEW
     } // NEW
 
+    const GraphStore = { // NEW
+        getAttr: getCellAttr, // NEW
+        setAttrs: setCellAttrs, // NEW
+        getId: getCellId, // NEW
+        children: getChildCells, // NEW
+        descendants: collectDescendants, // NEW
+        geometry: getGeometry, // NEW
+        setGeometry, // NEW
+        findById: findCellById, // NEW
+        readJsonAttr: function (cell, attr, fallback) { return safeJsonParse(getCellAttr(cell, attr, ""), fallback); }, // NEW
+        writeJsonAttr: function (cell, attr, value) { setCellAttrs(cell, { [attr]: JSON.stringify(value) }); return value; } // NEW
+    }; // NEW
+
     function unitsToCm(units) {
         return Number(units) / (PX_PER_CM * DRAW_SCALE);
     }
@@ -344,7 +352,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function readCatalog(moduleCell) {
-        const parsed = safeJsonParse(getCellAttr(moduleCell, ATTRS.CATALOG_JSON, ""), null);
+        const parsed = GraphStore.readJsonAttr(moduleCell, ATTRS.CATALOG_JSON, null); // CHANGE
         const items = parsed && Array.isArray(parsed.items) ? parsed.items : [];
         const version = parsed && Number.isFinite(Number(parsed.version)) ? Number(parsed.version) : (items.length ? 1 : 0); // NEW
         return {
@@ -357,9 +365,7 @@ Draw.loadPlugin(function (ui) {
         const items = (catalog && Array.isArray(catalog.items) ? catalog.items : catalog || [])
             .map(normalizeCatalogPart)
             .filter(Boolean);
-        setCellAttrs(moduleCell, {
-            [ATTRS.CATALOG_JSON]: JSON.stringify({ version: PLUGIN_VERSION, items })
-        });
+        GraphStore.writeJsonAttr(moduleCell, ATTRS.CATALOG_JSON, { version: PLUGIN_VERSION, items }); // CHANGE
         return { version: PLUGIN_VERSION, items };
     }
 
@@ -403,10 +409,15 @@ Draw.loadPlugin(function (ui) {
             .filter(function (part) { return part && CATALOG_UPGRADE_PART_IDS.has(part.id); }); // NEW
     } // NEW
 
+    function isObsoleteFamilyTubingPart(part) { // NEW
+        const p = normalizeCatalogPart(part); // NEW
+        return !!(p && p.category === "pipe_tubing" && (/^(twist_lock|push_connect)_tubing_/).test(p.id)); // NEW
+    } // NEW
+
     function mergeCatalogUpgradeParts(moduleCell, currentCatalog) { // NEW
         const current = currentCatalog || readCatalog(moduleCell); // NEW
-        const usedIds = new Set((current.items || []).map(function (item) { return item.id; })); // NEW
-        const items = (current.items || []).slice(); // NEW
+        const items = (current.items || []).filter(function (item) { return !isObsoleteFamilyTubingPart(item); }); // CHANGE
+        const usedIds = new Set(items.map(function (item) { return item.id; })); // CHANGE
         starterCatalogUpgradeItems().forEach(function (part) { // NEW
             if (!usedIds.has(part.id)) { // NEW
                 usedIds.add(part.id); // NEW
@@ -416,11 +427,17 @@ Draw.loadPlugin(function (ui) {
         return writeCatalog(moduleCell, { items }); // NEW
     } // NEW
 
+    function pruneObsoleteFamilyTubingParts(moduleCell, currentCatalog) { // NEW
+        const current = currentCatalog || readCatalog(moduleCell); // NEW
+        if (!(current.items || []).some(isObsoleteFamilyTubingPart)) return current; // NEW
+        return writeCatalog(moduleCell, { items: (current.items || []).filter(function (item) { return !isObsoleteFamilyTubingPart(item); }) }); // NEW
+    } // NEW
+
     function seedStarterCatalogIfEmpty(moduleCell) {
         const current = readCatalog(moduleCell);
         if (!moduleCell) return current; // NEW
         if (current.items.length > 0 && current.version < PLUGIN_VERSION) return mergeCatalogUpgradeParts(moduleCell, current); // NEW
-        if (current.items.length > 0) return current; // CHANGE
+        if (current.items.length > 0) return pruneObsoleteFamilyTubingParts(moduleCell, current); // CHANGE
         return writeCatalog(moduleCell, starterCatalog());
     }
 
@@ -450,8 +467,22 @@ Draw.loadPlugin(function (ui) {
     }
 
     function normalizeConnectorType(type) { // CHANGE
-        return String(type || "").trim().toLowerCase(); // CHANGE
+        const normalized = String(type || "").trim().toLowerCase().replace(/[\s-]+/g, "_"); // CHANGE
+        if (normalized === "twist" || normalized === "twistlock") return "twist_lock"; // NEW
+        if (normalized === "push_connect" || normalized === "push_to_connect" || normalized === "pushconnect") return "push_connect"; // NEW
+        return normalized; // CHANGE
     } // CHANGE
+
+    function connectorUsesPipe(connector) { // NEW
+        return !!(connector && (connector.pipeConnection === true || connector.pipeConnection === "true" || connector.pipeConnection === "1")); // CHANGE
+    } // NEW
+
+    function pipeStyleConnectorMatches(source, target) { // NEW
+        if (!source || !target) return { ok: false, reason: "Missing connector." }; // NEW
+        if (!source.nominalSize || !target.nominalSize) return { ok: false, reason: "Missing connector size." }; // NEW
+        if (source.nominalSize !== target.nominalSize) return { ok: false, reason: "Pipe Edge size mismatch." }; // NEW
+        return { ok: true, reason: "" }; // NEW
+    } // NEW
 
     function connectorTypeLabel(type) { // CHANGE
         const normalized = normalizeConnectorType(type); // CHANGE
@@ -584,15 +615,11 @@ Draw.loadPlugin(function (ui) {
     }
 
     function pipeConnectorMatches(source, target) { // NEW
-        if (!source || !target) return { ok: false, reason: "Missing connector." }; // NEW
-        if (String(source.type || "").trim() !== String(target.type || "").trim()) return { ok: false, reason: connectorTypeMismatchReason(source.type, target.type) }; // CHANGE
-        if (!source.nominalSize || !target.nominalSize) return { ok: false, reason: "Missing connector size." }; // NEW
-        if (source.nominalSize !== target.nominalSize) return { ok: false, reason: "Pipe Edge size mismatch." }; // NEW
-        return { ok: true, reason: "" }; // NEW
+        return pipeStyleConnectorMatches(source, target); // CHANGE
     } // NEW
 
     function connectorRecordsRequirePipe(sourceConnector, targetConnector) { // NEW
-        return !!(sourceConnector && sourceConnector.pipeConnection && targetConnector && targetConnector.pipeConnection); // CHANGE
+        return connectorUsesPipe(sourceConnector) && connectorUsesPipe(targetConnector); // CHANGE
     } // NEW
 
     function connectorRecordsMatch(sourceConnector, targetConnector, endpointRequirement) { // NEW
@@ -1093,11 +1120,13 @@ Draw.loadPlugin(function (ui) {
 
     function autoPipePartIdForConnection(moduleCell, sourceConnector, targetConnector) { // NEW
         const catalog = readCatalog(moduleCell); // NEW
+        const pipeSize = sourceConnector && targetConnector && sourceConnector.nominalSize === targetConnector.nominalSize ? sourceConnector.nominalSize : ""; // NEW
         const candidates = catalog.items.filter(function (part) { // NEW
             const p = normalizeCatalogPart(part); // NEW
+            if (!pipeSize) return false; // NEW
             return p && p.category === "pipe_tubing" && validateCatalogPart(p).ok && // NEW
-                pipeConnectorMatches(sourceConnector, p.connectors.input).ok && // CHANGE
-                pipeConnectorMatches(p.connectors.output, targetConnector).ok; // CHANGE
+                p.connectors.input.nominalSize === pipeSize && // CHANGE
+                p.connectors.output.nominalSize === pipeSize; // CHANGE
         }).map(normalizeCatalogPart); // NEW
         candidates.sort(function (a, b) { // NEW
             const stockA = STOCK_AVAILABLE.has(a.stockState) ? 0 : 1; // NEW
@@ -1176,7 +1205,14 @@ Draw.loadPlugin(function (ui) {
         }; // NEW
         if (decision.mode === "pipe") { attrs[ATTRS.PIPE_EDGE] = "1"; attrs[ATTRS.PIPE_PART_ID] = decision.pipePartId; } // NEW
         else attrs[ATTRS.DIRECT_LINK_EDGE] = "1"; // NEW
-        const edge = createEdge(moduleCell, decision.sourceCell, decision.targetCell, "", decision.mode === "pipe" ? "edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#2f80ed;" : "edgeStyle=orthogonalEdgeStyle;rounded=0;dashed=1;html=1;strokeColor=#7c3aed;", attrs); // CHANGE
+        let edge = null; // FIX
+        programmaticEdgeInsertDepth++; // FIX
+        try { // FIX
+            edge = createEdge(moduleCell, decision.sourceCell, decision.targetCell, "", decision.mode === "pipe" ? "edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#2f80ed;" : "edgeStyle=orthogonalEdgeStyle;rounded=0;dashed=1;html=1;strokeColor=#7c3aed;", attrs); // CHANGE
+        } finally { // FIX
+            programmaticEdgeInsertDepth = Math.max(0, programmaticEdgeInsertDepth - 1); // FIX
+        } // FIX
+        if (edge && graph.refresh) graph.refresh(edge); // FIX
         return { ok: true, reason: "", edge, mode: decision.mode }; // CHANGE
     } // NEW
 
@@ -1640,14 +1676,12 @@ Draw.loadPlugin(function (ui) {
     }
 
     function readPaths(moduleCell) {
-        const parsed = safeJsonParse(getCellAttr(moduleCell, ATTRS.PATHS_JSON, ""), null);
+        const parsed = GraphStore.readJsonAttr(moduleCell, ATTRS.PATHS_JSON, null); // CHANGE
         return parsed && Array.isArray(parsed.paths) ? parsed.paths : [];
     }
 
     function writePaths(moduleCell, paths) {
-        setCellAttrs(moduleCell, {
-            [ATTRS.PATHS_JSON]: JSON.stringify({ version: PLUGIN_VERSION, paths: paths || [] })
-        });
+        GraphStore.writeJsonAttr(moduleCell, ATTRS.PATHS_JSON, { version: PLUGIN_VERSION, paths: paths || [] }); // CHANGE
         return paths || [];
     }
 
@@ -2177,9 +2211,13 @@ Draw.loadPlugin(function (ui) {
     }
 
     function generateReport(moduleCell) {
-        const catalog = readCatalog(moduleCell);
-        const paths = deriveAssemblyPaths(moduleCell); // CHANGE
-        const beds = collectGardenBeds(moduleCell);
+        return persistReportSummary(moduleCell, buildReportSummary(moduleCell)); // CHANGE
+    }
+
+    function buildReportSummary(moduleCell, options) { // NEW
+        const catalog = options && options.catalog ? options.catalog : readCatalog(moduleCell); // NEW
+        const paths = options && options.paths ? options.paths : deriveAssemblyPaths(moduleCell); // NEW
+        const beds = options && options.beds ? options.beds : collectGardenBeds(moduleCell); // NEW
         const totalBedAreaM2 = beds.reduce(function (sum, bed) { return sum + bedAreaM2(bed); }, 0);
         const irrigatedBedIds = new Set();
         const completeBedIds = new Set();
@@ -2275,12 +2313,14 @@ Draw.loadPlugin(function (ui) {
             generatedAt: new Date().toISOString()
         };
 
-        setCellAttrs(moduleCell, {
-            [ATTRS.REPORT_JSON]: JSON.stringify({ version: PLUGIN_VERSION, summary }), // CHANGE
-            [ATTRS.DASHBOARD_JSON]: JSON.stringify(summary)
-        });
         return summary;
-    }
+    } // NEW
+
+    function persistReportSummary(moduleCell, summary) { // NEW
+        GraphStore.writeJsonAttr(moduleCell, ATTRS.REPORT_JSON, { version: PLUGIN_VERSION, summary }); // NEW
+        GraphStore.writeJsonAttr(moduleCell, ATTRS.DASHBOARD_JSON, summary); // NEW
+        return summary; // NEW
+    } // NEW
 
     function pathBlockingErrors(path, catalog) {
         const errors = [];
@@ -2298,7 +2338,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function readDashboardSummary(moduleCell) {
-        return safeJsonParse(getCellAttr(moduleCell, ATTRS.DASHBOARD_JSON, ""), null);
+        return GraphStore.readJsonAttr(moduleCell, ATTRS.DASHBOARD_JSON, null); // CHANGE
     }
 
     function normalizeZone(zone) { // NEW
@@ -2324,7 +2364,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function readZoneOverrides(moduleCell) { // CHANGE
-        const parsed = safeJsonParse(getCellAttr(moduleCell, ATTRS.ZONES_JSON, ""), null); // NEW
+        const parsed = GraphStore.readJsonAttr(moduleCell, ATTRS.ZONES_JSON, null); // CHANGE
         const zones = parsed && Array.isArray(parsed.zones) ? parsed.zones : (Array.isArray(parsed) ? parsed : []); // NEW
         return zones.map(normalizeZone).filter(function (zone) { return !!zone.id; }); // NEW
     } // CHANGE
@@ -2335,7 +2375,7 @@ Draw.loadPlugin(function (ui) {
 
     function writeZoneOverrides(moduleCell, zones) { // CHANGE
         const normalized = (zones || []).map(persistedZoneOverrideRecord).filter(function (zone) { return zoneHasPersistedZoneIntent(zone); }); // CHANGE
-        setCellAttrs(moduleCell, { [ATTRS.ZONES_JSON]: JSON.stringify({ version: PLUGIN_VERSION, zones: normalized }) }); // CHANGE
+        GraphStore.writeJsonAttr(moduleCell, ATTRS.ZONES_JSON, { version: PLUGIN_VERSION, zones: normalized }); // CHANGE
         return deriveZones(moduleCell); // CHANGE
     } // CHANGE
 
@@ -2768,6 +2808,11 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
+    function catalogPipeSize(part) { // NEW
+        const p = normalizeCatalogPart(part); // NEW
+        return p && p.connectors && ((p.connectors.input && p.connectors.input.nominalSize) || (p.connectors.output && p.connectors.output.nominalSize)) || "3/4"; // NEW
+    } // NEW
+
     function buildCatalogPartForm(part, moduleCell, onCategoryChange) { // CHANGE
         const node = document.createElement("div");
         node.className = "trellis-irrigation-catalog-form";
@@ -2781,26 +2826,48 @@ Draw.loadPlugin(function (ui) {
         fields.stockState = addSelectField(node, "Stock", VALID_STOCK_STATES, part.stockState);
         fields.cost = addTextField(node, "Cost", part.cost);
         if (unitCostAppliesToCategory(part.category)) fields.unitCost = addTextField(node, "Unit cost per ft", part.unitCost); // CHANGE
-        fields.inputs = addTextField(node, "Inputs", part.connectors.inputs);
-        fields.outputs = addTextField(node, "Outputs", part.connectors.outputs);
-        fields.inputType = addSelectField(node, "Input type", ensureOptionValue(connectorOptions.types, part.connectors.input.type), part.connectors.input.type); // CHANGE
-        fields.inputSize = addSelectField(node, "Input size", ensureOptionValue(connectorOptions.sizes, part.connectors.input.nominalSize), part.connectors.input.nominalSize); // CHANGE
-        fields.inputPipeConnection = addCheckboxField(node, "Input uses pipe", part.connectors.input.pipeConnection); // CHANGE
-        fields.outputType = addSelectField(node, "Output type", ensureOptionValue(connectorOptions.types, part.connectors.output.type), part.connectors.output.type); // CHANGE
-        fields.outputSize = addSelectField(node, "Output size", ensureOptionValue(connectorOptions.sizes, part.connectors.output.nominalSize), part.connectors.output.nominalSize); // CHANGE
-        fields.outputPipeConnection = addCheckboxField(node, "Output uses pipe", part.connectors.output.pipeConnection); // CHANGE
-        fields.maxFlowGpm = addTextField(node, "Max flow gpm", part.connectors.output.maxFlowGpm || part.specs.maxFlowGpm || "");
-        fields.pressureLossPsi = addTextField(node, "Pressure loss psi", part.specs.pressureLossPsi || "");
-        fields.flowGpm = addTextField(node, "Part flow gpm", part.specs.flowGpm || "");
-        fields.minOperatingPressurePsi = addTextField(node, "Min operating psi", part.specs.minOperatingPressurePsi || ""); // CHANGE
-        fields.maxOperatingPressurePsi = addTextField(node, "Max operating psi", part.specs.maxOperatingPressurePsi || ""); // CHANGE
-        if (part.category === "pipe_tubing") fields.innerDiameterIn = addTextField(node, "Pipe inner diameter in", part.specs.innerDiameterIn || ""); // CHANGE
+        if (part.category === "pipe_tubing") { // NEW
+            fields.pipeSize = addSelectField(node, "Pipe size", ensureOptionValue(connectorOptions.sizes, catalogPipeSize(part)), catalogPipeSize(part)); // NEW
+            fields.innerDiameterIn = addTextField(node, "Pipe inner diameter in", part.specs.innerDiameterIn || ""); // CHANGE
+        } else { // NEW
+            fields.inputs = addTextField(node, "Inputs", part.connectors.inputs); // CHANGE
+            fields.outputs = addTextField(node, "Outputs", part.connectors.outputs); // CHANGE
+            fields.inputType = addSelectField(node, "Input type", ensureOptionValue(connectorOptions.types, part.connectors.input.type), part.connectors.input.type); // CHANGE
+            fields.inputSize = addSelectField(node, "Input size", ensureOptionValue(connectorOptions.sizes, part.connectors.input.nominalSize), part.connectors.input.nominalSize); // CHANGE
+            fields.inputPipeConnection = addCheckboxField(node, "Input uses pipe", part.connectors.input.pipeConnection); // CHANGE
+            fields.outputType = addSelectField(node, "Output type", ensureOptionValue(connectorOptions.types, part.connectors.output.type), part.connectors.output.type); // CHANGE
+            fields.outputSize = addSelectField(node, "Output size", ensureOptionValue(connectorOptions.sizes, part.connectors.output.nominalSize), part.connectors.output.nominalSize); // CHANGE
+            fields.outputPipeConnection = addCheckboxField(node, "Output uses pipe", part.connectors.output.pipeConnection); // CHANGE
+            fields.maxFlowGpm = addTextField(node, "Max flow gpm", part.connectors.output.maxFlowGpm || part.specs.maxFlowGpm || ""); // CHANGE
+            fields.pressureLossPsi = addTextField(node, "Pressure loss psi", part.specs.pressureLossPsi || ""); // CHANGE
+            fields.flowGpm = addTextField(node, "Part flow gpm", part.specs.flowGpm || ""); // CHANGE
+            fields.minOperatingPressurePsi = addTextField(node, "Min operating psi", part.specs.minOperatingPressurePsi || ""); // CHANGE
+            fields.maxOperatingPressurePsi = addTextField(node, "Max operating psi", part.specs.maxOperatingPressurePsi || ""); // CHANGE
+        } // NEW
         return { node, fields };
     }
 
     function readCatalogPartForm(form) {
-        const maxFlowGpm = finiteNumber(form.fields.maxFlowGpm.value, null);
+        const maxFlowGpm = form.fields.maxFlowGpm ? finiteNumber(form.fields.maxFlowGpm.value, null) : null; // CHANGE
         const category = form.fields.category.value; // CHANGE
+        if (category === "pipe_tubing") { // NEW
+            const pipeSize = String(form.fields.pipeSize && form.fields.pipeSize.value || form.fields.inputSize && form.fields.inputSize.value || form.fields.outputSize && form.fields.outputSize.value || "3/4").trim(); // NEW
+            return normalizeCatalogPart({ // NEW
+                id: sanitizeId(form.fields.id.value) || "part", // NEW
+                name: form.fields.name.value.trim(), // NEW
+                category, // NEW
+                stockState: form.fields.stockState.value, // NEW
+                cost: finiteNumber(form.fields.cost.value, 0), // NEW
+                unitCost: form.fields.unitCost ? finiteNumber(form.fields.unitCost.value, finiteNumber(form.fields.cost.value, 0)) : finiteNumber(form.fields.cost.value, 0), // NEW
+                connectors: { // NEW
+                    inputs: 1, // NEW
+                    outputs: 1, // NEW
+                    input: { type: "barb", nominalSize: pipeSize, pipeConnection: true }, // NEW
+                    output: { type: "barb", nominalSize: pipeSize, maxFlowGpm: null, pipeConnection: true } // NEW
+                }, // NEW
+                specs: { innerDiameterIn: form.fields.innerDiameterIn ? finiteNumber(form.fields.innerDiameterIn.value, null) : null } // NEW
+            }); // NEW
+        } // NEW
         return normalizeCatalogPart({
             id: sanitizeId(form.fields.id.value) || "part",
             name: form.fields.name.value.trim(),
@@ -2809,18 +2876,18 @@ Draw.loadPlugin(function (ui) {
             cost: finiteNumber(form.fields.cost.value, 0),
             unitCost: unitCostAppliesToCategory(category) && form.fields.unitCost ? finiteNumber(form.fields.unitCost.value, finiteNumber(form.fields.cost.value, 0)) : null, // CHANGE
             connectors: {
-                inputs: finiteNumber(form.fields.inputs.value, 0),
-                outputs: finiteNumber(form.fields.outputs.value, 0),
-                input: { type: form.fields.inputType.value.trim(), nominalSize: form.fields.inputSize.value.trim(), pipeConnection: form.fields.inputPipeConnection.checked }, // CHANGE
-                output: { type: form.fields.outputType.value.trim(), nominalSize: form.fields.outputSize.value.trim(), maxFlowGpm, pipeConnection: form.fields.outputPipeConnection.checked } // CHANGE
+                inputs: form.fields.inputs ? finiteNumber(form.fields.inputs.value, 1) : 1, // CHANGE
+                outputs: form.fields.outputs ? finiteNumber(form.fields.outputs.value, 1) : 1, // CHANGE
+                input: { type: form.fields.inputType ? form.fields.inputType.value.trim() : "barb", nominalSize: form.fields.inputSize ? form.fields.inputSize.value.trim() : (form.fields.pipeSize ? form.fields.pipeSize.value.trim() : "3/4"), pipeConnection: form.fields.inputPipeConnection ? form.fields.inputPipeConnection.checked : true }, // CHANGE
+                output: { type: form.fields.outputType ? form.fields.outputType.value.trim() : "barb", nominalSize: form.fields.outputSize ? form.fields.outputSize.value.trim() : (form.fields.pipeSize ? form.fields.pipeSize.value.trim() : "3/4"), maxFlowGpm, pipeConnection: form.fields.outputPipeConnection ? form.fields.outputPipeConnection.checked : true } // CHANGE
             },
             specs: {
                 maxFlowGpm,
-                pressureLossPsi: finiteNumber(form.fields.pressureLossPsi.value, null),
-                flowGpm: finiteNumber(form.fields.flowGpm.value, null),
-                minOperatingPressurePsi: finiteNumber(form.fields.minOperatingPressurePsi.value, null), // CHANGE
-                maxOperatingPressurePsi: finiteNumber(form.fields.maxOperatingPressurePsi.value, null), // CHANGE
-                innerDiameterIn: category === "pipe_tubing" && form.fields.innerDiameterIn ? finiteNumber(form.fields.innerDiameterIn.value, null) : null // CHANGE
+                pressureLossPsi: form.fields.pressureLossPsi ? finiteNumber(form.fields.pressureLossPsi.value, null) : null, // CHANGE
+                flowGpm: form.fields.flowGpm ? finiteNumber(form.fields.flowGpm.value, null) : null, // CHANGE
+                minOperatingPressurePsi: form.fields.minOperatingPressurePsi ? finiteNumber(form.fields.minOperatingPressurePsi.value, null) : null, // CHANGE
+                maxOperatingPressurePsi: form.fields.maxOperatingPressurePsi ? finiteNumber(form.fields.maxOperatingPressurePsi.value, null) : null, // CHANGE
+                innerDiameterIn: null // CHANGE
             }
         });
     }
@@ -3320,14 +3387,12 @@ Draw.loadPlugin(function (ui) {
         const connectorOptions = catalogConnectorOptions(session.moduleCell); // NEW
         const type = addSelectField(form, "Connector", ensureOptionValue(connectorOptions.types, "barb"), "barb"); // CHANGE
         const size = addSelectField(form, "Size", ensureOptionValue(connectorOptions.sizes, "3/4"), "3/4"); // CHANGE
-        const pipeConnection = addCheckboxField(form, "Uses pipe", true); // CHANGE
         const flow = addTextField(form, "Flow gpm", "5"); // NEW
         const pressure = addTextField(form, "Static psi", "45"); // NEW
         const commit = button("Commit Source", function () { // NEW
             const created = createSourceAssembly(session.moduleCell, label.value.trim() || "Water Source", { // CHANGE
                 connectorType: type.value.trim(), // NEW
                 nominalSize: size.value.trim(), // NEW
-                pipeConnection: pipeConnection.checked, // CHANGE
                 usableFlowGpm: finiteNumber(flow.value, 5), // NEW
                 staticPressurePsi: finiteNumber(pressure.value, 45) // NEW
             }, defaultAssemblyAnchor(session)); // CHANGE
@@ -3610,6 +3675,7 @@ Draw.loadPlugin(function (ui) {
 
     function normalizeAddedIrrigationEdges(session, cells) { // NEW
         if (!session || !Array.isArray(cells)) return; // NEW
+        if (programmaticEdgeInsertDepth > 0) { irrigationDebug("normalizeAddedIrrigationEdges:skip-programmatic", { depth: programmaticEdgeInsertDepth, count: cells.length }); return; } // DIAGNOSTIC
         cells.forEach(function (cell) { normalizeAddedIrrigationEdge(session, cell); }); // NEW
     } // NEW
 
@@ -3831,14 +3897,12 @@ Draw.loadPlugin(function (ui) {
         const connectorOptions = catalogConnectorOptions(session.moduleCell); // NEW
         const connector = addSelectField(form, "Connector", ensureOptionValue(connectorOptions.types, profile.connectorType || "barb"), profile.connectorType || "barb"); // CHANGE
         const size = addSelectField(form, "Size", ensureOptionValue(connectorOptions.sizes, profile.nominalSize || "3/4"), profile.nominalSize || "3/4"); // CHANGE
-        const pipeConnection = addCheckboxField(form, "Uses pipe", profile.pipeConnection); // CHANGE
         const flow = addTextField(form, "Flow gpm", profile.usableFlowGpm == null ? "" : profile.usableFlowGpm); // NEW
         const pressure = addTextField(form, "Static psi", profile.staticPressurePsi == null ? "" : profile.staticPressurePsi); // NEW
         const save = button("Save Source", function () { // NEW
             const next = normalizeEndpointProfile(Object.assign({}, profile, { // NEW
                 connectorType: connector.value.trim(), // NEW
                 nominalSize: size.value.trim(), // NEW
-                pipeConnection: pipeConnection.checked, // CHANGE
                 usableFlowGpm: finiteNumber(flow.value, null), // NEW
                 staticPressurePsi: finiteNumber(pressure.value, null) // NEW
             })); // NEW
@@ -3864,16 +3928,14 @@ Draw.loadPlugin(function (ui) {
         const outputs = addTextField(form, "Outlets", ports.outputs); // NEW
         const inputConnector = addSelectField(form, "Input connector", ensureOptionValue(connectorOptions.types, ports.input.type || "barb"), ports.input.type || "barb"); // CHANGE
         const inputSize = addSelectField(form, "Input size", ensureOptionValue(connectorOptions.sizes, ports.input.nominalSize || "1/2"), ports.input.nominalSize || "1/2"); // CHANGE
-        const inputPipe = addCheckboxField(form, "Input uses pipe", ports.input.pipeConnection); // CHANGE
         const outputConnector = addSelectField(form, "Output connector", ensureOptionValue(connectorOptions.types, ports.output.type || "barb"), ports.output.type || "barb"); // CHANGE
         const outputSize = addSelectField(form, "Output size", ensureOptionValue(connectorOptions.sizes, ports.output.nominalSize || "1/2"), ports.output.nominalSize || "1/2"); // NEW
-        const outputPipe = addCheckboxField(form, "Output uses pipe", ports.output.pipeConnection); // CHANGE
         const templateSelect = addSelectField(form, "Template", BED_TEMPLATES.map(function (entry) { return entry.id; }), saved.templateId || BED_TEMPLATES[0].id); // NEW
         const partSelect = addSelectField(form, "Catalog part", sortCatalogParts(readCatalog(session.moduleCell).items).map(function (item) { return item.id; }), saved.partIds && saved.partIds[0] || ""); // CHANGE
         const rows = addTextField(form, "Rows", saved.spacing && saved.spacing.rows || "2"); // NEW
         const spacing = addTextField(form, "Emitter in", saved.spacing && saved.spacing.emitterInches || "12"); // NEW
         const apply = button("Apply Bed Layout", function () { // NEW
-            writeBedPortConfig(bedCell, { inputs: finiteNumber(inputs.value, 1), outputs: finiteNumber(outputs.value, 1), input: { type: inputConnector.value.trim(), nominalSize: inputSize.value.trim(), pipeConnection: inputPipe.checked }, output: { type: outputConnector.value.trim(), nominalSize: outputSize.value.trim(), pipeConnection: outputPipe.checked } }); // CHANGE
+            writeBedPortConfig(bedCell, { inputs: finiteNumber(inputs.value, 1), outputs: finiteNumber(outputs.value, 1), input: { type: inputConnector.value.trim(), nominalSize: inputSize.value.trim() }, output: { type: outputConnector.value.trim(), nominalSize: outputSize.value.trim() } }); // CHANGE
             const path = firstAssemblyPathForBedAssembly(session.moduleCell, bedAssembly) || { id: "assembly_bed_" + sanitizeId(getCellId(bedCell)), targetBedId: getCellId(bedCell) || "" }; // CHANGE
             commitBedTemplate(session.moduleCell, path.id, bedCell, { // NEW
                 templateId: templateSelect.value, // NEW
@@ -3933,7 +3995,7 @@ Draw.loadPlugin(function (ui) {
         badge.addEventListener("click", function (ev) { // NEW
             if (ev && ev.stopPropagation) ev.stopPropagation(); // NEW
             const boundary = boundaryForPort(session.moduleCell, port); // NEW
-            if (boundary) selectBoundary(session, boundary); // CHANGE
+            if (boundary) toggleSelectedBoundary(session, boundary); // CHANGE
             else toggleSelectedPort(session, port); // CHANGE
             session.bridgePorts = null; // NEW
             selectCell(findAssemblyAncestor(cell) || cell, false); // NEW
@@ -4638,7 +4700,7 @@ Draw.loadPlugin(function (ui) {
 
     function syncHudGraphState(moduleCell) { // NEW
         const paths = deriveAssemblyPaths(moduleCell); // CHANGE
-        generateReport(moduleCell); // NEW
+        ReportModel.syncDashboardState(moduleCell, paths); // CHANGE
         return paths; // NEW
     } // NEW
 
@@ -5004,6 +5066,81 @@ Draw.loadPlugin(function (ui) {
         else if (typeof alert !== "undefined") alert(message);
     }
 
+    const IrrigationCatalog = { // NEW
+        read: readCatalog, // NEW
+        write: writeCatalog, // NEW
+        starter: starterCatalog, // NEW
+        seedIfEmpty: seedStarterCatalogIfEmpty, // NEW
+        upsert: upsertCatalogPart, // NEW
+        deletePart: deleteCatalogPart, // NEW
+        normalizePart: normalizeCatalogPart, // NEW
+        validatePart: validateCatalogPart, // NEW
+        mergeUpgradeParts: mergeCatalogUpgradeParts // NEW
+    }; // NEW
+
+    const ConnectorRules = { // NEW
+        normalizeType: normalizeConnectorType, // NEW
+        normalizeConnector: normalizeConnectorRecord, // NEW
+        connectorMatches, // NEW
+        connectorRecordsMatch, // NEW
+        connectorRecordsRequirePipe, // NEW
+        pipeConnectorMatches, // NEW
+        canConnectParts, // NEW
+        canEndpointConnectToPart, // NEW
+        canPartReachEndpoint, // NEW
+        compatibleFirstParts, // NEW
+        compatibleNextParts, // NEW
+        groupPartsByStock, // NEW
+        healEndpoint, // NEW
+        validatePortConnection, // NEW
+        createAssemblyConnection, // NEW
+        bridgeSuggestionsForPorts, // NEW
+        applyBridgeSuggestion // NEW
+    }; // NEW
+
+    const Hydraulics = { // NEW
+        demandFromPath, // NEW
+        demandFromBedCell, // NEW
+        cumulativeBedDemand, // NEW
+        calculatePath: calculatePathHydraulics, // NEW
+        estimatePath: estimatePathHydraulics, // NEW
+        hazenWilliamsPsiLoss, // NEW
+        pathRouteLengthFeet, // NEW
+        pipeSegmentsForPath, // NEW
+        partCostForReport // NEW
+    }; // NEW
+
+    const ZoneModel = { // NEW
+        normalize: normalizeZone, // NEW
+        read: readZones, // NEW
+        write: writeZones, // NEW
+        sync: syncZones, // NEW
+        deriveInferredTimerZones, // NEW
+        resolveMembership: resolveEffectiveZoneMembership, // NEW
+        summary: zoneSummary, // NEW
+        assignBeds: assignBedsToZone, // NEW
+        resetBedOverrides: resetBedZoneOverrides, // NEW
+        createManual: createManualZone // NEW
+    }; // NEW
+
+    const ReportModel = { // NEW
+        buildSummary: buildReportSummary, // NEW
+        persistSummary: persistReportSummary, // NEW
+        generate: generateReport, // NEW
+        readDashboardSummary, // NEW
+        deriveAssemblyPaths, // NEW
+        syncDashboardState: function (moduleCell, paths) { return persistReportSummary(moduleCell, buildReportSummary(moduleCell, { paths: paths || deriveAssemblyPaths(moduleCell) })); } // NEW
+    }; // NEW
+
+    const HudController = { // NEW
+        open: openIrrigationMode, // NEW
+        close: closeIrrigationMode, // NEW
+        render: renderIrrigationMode, // NEW
+        scheduleSync: scheduleHudGraphStateSync, // NEW
+        flushSync: flushHudGraphStateSync, // NEW
+        syncGraphState: syncHudGraphState // NEW
+    }; // NEW
+
     function addActionAndMenus() {
         if (ui.actions && ui.actions.addAction) {
             ui.actions.addAction(ACTION_ID, function () {
@@ -5036,37 +5173,44 @@ Draw.loadPlugin(function (ui) {
         categories: PART_CATEGORIES.slice(),
         stockStates: VALID_STOCK_STATES.slice(),
         bedTemplates: BED_TEMPLATES.slice(),
-        readCatalog,
-        writeCatalog,
-        starterCatalog,
-        seedStarterCatalogIfEmpty,
-        upsertCatalogPart,
-        deleteCatalogPart,
-        validateCatalogPart,
-        canConnectParts,
-        canPartReachEndpoint,
-        compatibleNextParts,
-        compatibleFirstParts,
-        groupPartsByStock,
-        healEndpoint,
-        generateReport,
-        readDashboardSummary,
-        readZones, // NEW
-        writeZones, // NEW
-        syncZones, // NEW
-        deriveInferredTimerZones, // NEW
-        resolveEffectiveZoneMembership, // NEW
-        zoneSummary, // NEW
-        assignBedsToZone, // NEW
-        resetBedZoneOverrides, // NEW
-        createManualZone, // NEW
-        openIrrigationMode, // NEW
-        closeIrrigationMode, // NEW
+        readCatalog: IrrigationCatalog.read, // CHANGE
+        writeCatalog: IrrigationCatalog.write, // CHANGE
+        starterCatalog: IrrigationCatalog.starter, // CHANGE
+        seedStarterCatalogIfEmpty: IrrigationCatalog.seedIfEmpty, // CHANGE
+        upsertCatalogPart: IrrigationCatalog.upsert, // CHANGE
+        deleteCatalogPart: IrrigationCatalog.deletePart, // CHANGE
+        validateCatalogPart: IrrigationCatalog.validatePart, // CHANGE
+        canConnectParts: ConnectorRules.canConnectParts, // CHANGE
+        canPartReachEndpoint: ConnectorRules.canPartReachEndpoint, // CHANGE
+        compatibleNextParts: ConnectorRules.compatibleNextParts, // CHANGE
+        compatibleFirstParts: ConnectorRules.compatibleFirstParts, // CHANGE
+        groupPartsByStock: ConnectorRules.groupPartsByStock, // CHANGE
+        healEndpoint: ConnectorRules.healEndpoint, // CHANGE
+        generateReport: ReportModel.generate, // CHANGE
+        readDashboardSummary: ReportModel.readDashboardSummary, // CHANGE
+        readZones: ZoneModel.read, // CHANGE
+        writeZones: ZoneModel.write, // CHANGE
+        syncZones: ZoneModel.sync, // CHANGE
+        deriveInferredTimerZones: ZoneModel.deriveInferredTimerZones, // CHANGE
+        resolveEffectiveZoneMembership: ZoneModel.resolveMembership, // CHANGE
+        zoneSummary: ZoneModel.summary, // CHANGE
+        assignBedsToZone: ZoneModel.assignBeds, // CHANGE
+        resetBedZoneOverrides: ZoneModel.resetBedOverrides, // CHANGE
+        createManualZone: ZoneModel.createManual, // CHANGE
+        openIrrigationMode: HudController.open, // CHANGE
+        closeIrrigationMode: HudController.close, // CHANGE
         openCatalogManager,
         __test: {
-            normalizeCatalogPart,
+            GraphStore, // NEW
+            IrrigationCatalog, // NEW
+            ConnectorRules, // NEW
+            Hydraulics, // NEW
+            ZoneModel, // NEW
+            ReportModel, // NEW
+            HudController, // NEW
+            normalizeCatalogPart: IrrigationCatalog.normalizePart, // CHANGE
             normalizeEndpointProfile,
-            connectorMatches, // NEW
+            connectorMatches: ConnectorRules.connectorMatches, // CHANGE
             collectGardenBeds,
             collectEndpoints,
             bedAreaM2,
@@ -5082,29 +5226,31 @@ Draw.loadPlugin(function (ui) {
             stagePath, // CHANGE
             commitStagedPath, // CHANGE
             commitBedTemplate, // CHANGE
-            calculatePathHydraulics, // CHANGE
-            estimatePathHydraulics, // CHANGE
-            hazenWilliamsPsiLoss, // CHANGE
-            pathRouteLengthFeet,
-            partCostForReport,
+            calculatePathHydraulics: Hydraulics.calculatePath, // CHANGE
+            estimatePathHydraulics: Hydraulics.estimatePath, // CHANGE
+            hazenWilliamsPsiLoss: Hydraulics.hazenWilliamsPsiLoss, // CHANGE
+            pathRouteLengthFeet: Hydraulics.pathRouteLengthFeet, // CHANGE
+            partCostForReport: Hydraulics.partCostForReport, // CHANGE
+            buildReportSummary: ReportModel.buildSummary, // NEW
+            persistReportSummary: ReportModel.persistSummary, // NEW
             readPaths,
             writePaths,
-            normalizeZone, // NEW
-            readZones, // NEW
-            writeZones, // NEW
-            syncZones, // NEW
-            deriveInferredTimerZones, // NEW
+            normalizeZone: ZoneModel.normalize, // CHANGE
+            readZones: ZoneModel.read, // CHANGE
+            writeZones: ZoneModel.write, // CHANGE
+            syncZones: ZoneModel.sync, // CHANGE
+            deriveInferredTimerZones: ZoneModel.deriveInferredTimerZones, // CHANGE
             downstreamBedAssemblyIdsFromTimerOutlet, // NEW
-            resolveEffectiveZoneMembership, // NEW
-            zoneSummary, // NEW
-            assignBedsToZone, // NEW
-            resetBedZoneOverrides, // NEW
-            createManualZone, // NEW
+            resolveEffectiveZoneMembership: ZoneModel.resolveMembership, // CHANGE
+            zoneSummary: ZoneModel.summary, // CHANGE
+            assignBedsToZone: ZoneModel.assignBeds, // CHANGE
+            resetBedZoneOverrides: ZoneModel.resetBedOverrides, // CHANGE
+            createManualZone: ZoneModel.createManual, // CHANGE
             createSourceAssembly, // NEW
             createPartAssembly, // NEW
             createBedAssembly, // NEW
-            createAssemblyConnection, // NEW
-            validatePortConnection, // NEW
+            createAssemblyConnection: ConnectorRules.createAssemblyConnection, // CHANGE
+            validatePortConnection: ConnectorRules.validatePortConnection, // CHANGE
             boundaryForPort, // NEW
             internalConnectionBoundariesForSelection, // NEW
             disconnectBoundary, // NEW
@@ -5112,9 +5258,9 @@ Draw.loadPlugin(function (ui) {
             deleteAssemblyPartCell, // NEW
             assemblyCanReverse, // NEW
             positionPortBadge, // NEW
-            bridgeSuggestionsForPorts, // NEW
-            applyBridgeSuggestion, // NEW
-            deriveAssemblyPaths, // NEW
+            bridgeSuggestionsForPorts: ConnectorRules.bridgeSuggestionsForPorts, // CHANGE
+            applyBridgeSuggestion: ConnectorRules.applyBridgeSuggestion, // CHANGE
+            deriveAssemblyPaths: ReportModel.deriveAssemblyPaths, // CHANGE
             firstAssemblyPart, // NEW
             lastAssemblyPart, // NEW
             assemblyPartCells, // NEW
@@ -5123,9 +5269,9 @@ Draw.loadPlugin(function (ui) {
             collectHudEndpoints, // NEW
             collectHudPipeEdges, // NEW
             deriveHudPaths, // NEW
-            syncHudGraphState, // NEW
-            scheduleHudGraphStateSync, // NEW
-            flushHudGraphStateSync, // NEW
+            syncHudGraphState: HudController.syncGraphState, // CHANGE
+            scheduleHudGraphStateSync: HudController.scheduleSync, // CHANGE
+            flushHudGraphStateSync: HudController.flushSync, // CHANGE
             validateHudConnection, // CHANGE
             addPartPickerParts, // NEW
             addPartContextFromPort, // NEW
