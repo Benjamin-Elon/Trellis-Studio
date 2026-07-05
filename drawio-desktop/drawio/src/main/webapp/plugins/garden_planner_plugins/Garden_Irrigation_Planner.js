@@ -100,13 +100,13 @@ Draw.loadPlugin(function (ui) {
     ]; // NEW
 
     const BED_TEMPLATES = [
-        { id: "drip_tape_bed", label: "Drip tape bed", defaultRows: 2, lineKind: "drip_tape", flowGpm: 1.2, pressurePsi: 10 },
-        { id: "dripline_bed", label: "Dripline bed", defaultRows: 2, lineKind: "dripline", flowGpm: 1.0, pressurePsi: 12 },
-        { id: "overhead_sprinkler_block", label: "Overhead sprinkler block", defaultRows: 3, lineKind: "sprinkler", flowGpm: 2.5, pressurePsi: 30 },
-        { id: "nursery_microspray", label: "Nursery/propagation microspray", defaultRows: 3, lineKind: "microspray", flowGpm: 1.5, pressurePsi: 20 },
-        { id: "soaker_row", label: "Soaker row", defaultRows: 2, lineKind: "dripline", flowGpm: 0.8, pressurePsi: 10 },
-        { id: "perennial_bubbler_row", label: "Orchard/perennial bubbler row", defaultRows: 1, lineKind: "bubbler", flowGpm: 1.0, pressurePsi: 15 },
-        { id: "manual_hose_standpipe", label: "Manual hose standpipe", defaultRows: 1, lineKind: "standpipe", flowGpm: 2.0, pressurePsi: 20 }
+        { id: "drip_tape_bed", label: "Drip tape bed", defaultRows: 2, lineKind: "drip_tape", pipePartId: "poly_distribution_1_2", flowGpm: 1.2, pressurePsi: 10 }, // CHANGE
+        { id: "dripline_bed", label: "Dripline bed", defaultRows: 2, lineKind: "dripline", pipePartId: "poly_distribution_1_2", flowGpm: 1.0, pressurePsi: 12 }, // CHANGE
+        { id: "overhead_sprinkler_block", label: "Overhead sprinkler block", defaultRows: 3, lineKind: "sprinkler", pipePartId: "poly_distribution_1_2", flowGpm: 2.5, pressurePsi: 30 }, // CHANGE
+        { id: "nursery_microspray", label: "Nursery/propagation microspray", defaultRows: 3, lineKind: "microspray", pipePartId: "poly_distribution_1_2", flowGpm: 1.5, pressurePsi: 20 }, // CHANGE
+        { id: "soaker_row", label: "Soaker row", defaultRows: 2, lineKind: "dripline", pipePartId: "poly_distribution_1_2", flowGpm: 0.8, pressurePsi: 10 }, // CHANGE
+        { id: "perennial_bubbler_row", label: "Orchard/perennial bubbler row", defaultRows: 1, lineKind: "bubbler", pipePartId: "poly_distribution_1_2", flowGpm: 1.0, pressurePsi: 15 }, // CHANGE
+        { id: "manual_hose_standpipe", label: "Manual hose standpipe", defaultRows: 1, lineKind: "standpipe", pipePartId: "poly_distribution_1_2", flowGpm: 2.0, pressurePsi: 20 } // CHANGE
     ];
 
     const GENERATED_CONNECTOR_CATALOG_ITEMS = generateLabelOnlyConnectorParts(); // NEW
@@ -1006,6 +1006,20 @@ Draw.loadPlugin(function (ui) {
         return findCellById(moduleCell || findGardenModuleAncestor(assembly), linkedId) || findBedAncestor(assembly); // NEW
     } // NEW
 
+    function findBedAssemblyForBed(moduleCell, bedCell) { // NEW
+        const bedId = getCellId(bedCell) || ""; // NEW
+        if (!bedId) return null; // NEW
+        const root = moduleCell || findGardenModuleAncestor(bedCell) || bedCell; // NEW
+        return collectDescendants(root, function (cell) { // NEW
+            return isAssembly(cell) && assemblyType(cell) === "bed" && getCellAttr(cell, ATTRS.LINKED_BED_ID, "") === bedId; // NEW
+        })[0] || null; // NEW
+    } // NEW
+
+    function resolveBedTemplateAssembly(moduleCell, bedCell) { // NEW
+        if (!bedCell) return null; // NEW
+        return isAssembly(bedCell) && assemblyType(bedCell) === "bed" ? bedCell : findBedAssemblyForBed(moduleCell, bedCell) || (createBedAssembly(moduleCell, bedCell).assembly); // NEW
+    } // NEW
+
     function readBedPortConfig(bedCell) { // NEW
         const saved = safeJsonParse(getCellAttr(bedCell, ATTRS.BED_PORTS_JSON, ""), null) || {}; // NEW
         const fallback = defaultBedPortConfig(); // NEW
@@ -1047,14 +1061,64 @@ Draw.loadPlugin(function (ui) {
         return ids; // NEW
     } // NEW
 
-    function bedRolePartOptions(moduleCell, role, selectedPartId) { // NEW
+    function bedTemplateById(templateId) { // NEW
+        return BED_TEMPLATES.find(function (entry) { return entry.id === templateId; }) || BED_TEMPLATES[0]; // NEW
+    } // NEW
+
+    function bedTemplateLabel(templateId) { // NEW
+        const template = bedTemplateById(templateId); // NEW
+        return String(template && template.label || templateId || "").trim(); // NEW
+    } // NEW
+
+    function bedTemplatePipePartId(templateId, savedPipePartId) { // NEW
+        return String(savedPipePartId || (bedTemplateById(templateId) && bedTemplateById(templateId).pipePartId) || ""); // NEW
+    } // NEW
+
+    function bedPipePartOptions(moduleCell, selectedPartId) { // NEW
         const catalog = readCatalog(moduleCell); // NEW
         const selected = selectedPartId ? partById(catalog, selectedPartId) : null; // NEW
         const items = sortCatalogParts(catalog.items).map(normalizeCatalogPart).filter(function (part) { // NEW
-            if (!part || part.category === "pipe_tubing" || !validateCatalogPart(part).ok) return false; // NEW
-            return role === "input" ? part.connectors.inputs > 0 : part.connectors.outputs > 0; // NEW
+            return part && part.category === "pipe_tubing" && validateCatalogPart(part).ok; // NEW
         }); // NEW
-        if (selectedPartId && !items.some(function (part) { return part.id === selectedPartId; })) { // NEW
+        if (selectedPartId && !items.some(function (part) { return part.id === selectedPartId; })) items.unshift(selected || { id: selectedPartId, name: "Missing pipe/tubing (" + selectedPartId + ")" }); // NEW
+        return items; // NEW
+    } // NEW
+
+    function bedTemplateRolePartMatches(templateDef, part) { // NEW
+        if (!part || !templateDef) return false; // NEW
+        return part.category === templateDef.lineKind || part.category === "fitting"; // NEW
+    } // NEW
+
+    function bedRolePartPipeConnector(part, role) { // NEW
+        return role === "input" ? part && part.connectors && part.connectors.output : part && part.connectors && part.connectors.input; // NEW
+    } // NEW
+
+    function bedRolePartHasExternalConnector(part, role) { // NEW
+        if (!part || !part.connectors) return false; // NEW
+        return role === "input" ? part.connectors.inputs > 0 : part.connectors.outputs > 0; // NEW
+    } // NEW
+
+    function bedRolePartCompatibleWithPipe(part, role, pipePart) { // NEW
+        const p = normalizeCatalogPart(part); // NEW
+        const pipe = normalizeCatalogPart(pipePart); // NEW
+        if (!p || !pipe || !validateCatalogPart(p).ok || !validateCatalogPart(pipe).ok) return false; // NEW
+        if (!bedRolePartHasExternalConnector(p, role)) return false; // NEW
+        const partConnector = bedRolePartPipeConnector(p, role); // NEW
+        const pipeConnector = role === "input" ? pipe.connectors.input : pipe.connectors.output; // NEW
+        return ConnectorRules.pipeConnectorMatches(partConnector, pipeConnector).ok; // NEW
+    } // NEW
+
+    function bedRolePartOptions(moduleCell, role, selectedPartId, templateId, pipePartId, preserveSelected) { // CHANGE
+        const catalog = readCatalog(moduleCell); // NEW
+        const templateDef = bedTemplateById(templateId); // NEW
+        const pipePart = partById(catalog, pipePartId); // NEW
+        const selected = selectedPartId ? partById(catalog, selectedPartId) : null; // NEW
+        const items = sortCatalogParts(catalog.items).map(normalizeCatalogPart).filter(function (part) { // NEW
+            if (!part || part.category === "pipe_tubing" || !validateCatalogPart(part).ok) return false; // NEW
+            if (!bedTemplateRolePartMatches(templateDef, part)) return false; // NEW
+            return bedRolePartCompatibleWithPipe(part, role, pipePart); // CHANGE
+        }); // NEW
+        if (preserveSelected !== false && selectedPartId && !items.some(function (part) { return part.id === selectedPartId; })) { // CHANGE
             items.unshift(selected || { id: selectedPartId, name: "Missing part (" + selectedPartId + ")" }); // NEW
         } // NEW
         return items; // NEW
@@ -2029,9 +2093,11 @@ Draw.loadPlugin(function (ui) {
     }
 
     function commitBedTemplate(moduleCell, pathId, bedCell, template) {
-        const bedGeo = getGeometry(bedCell) || { width: 160, height: 80 };
+        const linkedBedCell = isAssembly(bedCell) && assemblyType(bedCell) === "bed" ? bedCellForAssembly(moduleCell, bedCell) : bedCell; // CHANGE
+        const bedGeo = getGeometry(linkedBedCell) || { width: 160, height: 80 }; // CHANGE
         const templateDef = BED_TEMPLATES.find(function (entry) { return entry.id === (template && template.templateId); }) || BED_TEMPLATES[0];
         const roleParts = bedTemplateRolePartIds(template); // NEW
+        const pipePartId = bedTemplatePipePartId(templateDef.id, template && template.pipePartId); // NEW
         const partIds = template && Array.isArray(template.partIds) ? template.partIds.slice() : bedTemplatePartIds(roleParts.inletPartId, roleParts.outletPartId); // CHANGE
         const rowCount = Math.max(1, Math.floor(finiteNumber(template && template.spacing && template.spacing.rows, templateDef.defaultRows)));
         const spacing = Object.assign({ rows: rowCount, emitterInches: 12 }, template && template.spacing || {});
@@ -2043,9 +2109,10 @@ Draw.loadPlugin(function (ui) {
             version: PLUGIN_VERSION,
             pathId,
             templateId: templateDef.id,
-            irrigationType: template && template.irrigationType || templateDef.lineKind,
+            irrigationType: template && template.irrigationType && template.irrigationType !== templateDef.id ? template.irrigationType : templateDef.lineKind, // CHANGE
             inletPartId: roleParts.inletPartId, // NEW
             outletPartId: roleParts.outletPartId, // NEW
+            pipePartId, // NEW
             partIds, // CHANGE
             spacing,
             demand,
@@ -2054,8 +2121,13 @@ Draw.loadPlugin(function (ui) {
 
         model.beginUpdate && model.beginUpdate();
         try {
-            setCellAttrs(bedCell, { [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(record) });
-            createBedTemplateLayoutCells(bedCell, pathId, record, bedGeo);
+            if (!linkedBedCell) return record; // NEW
+            const bedAssembly = resolveBedTemplateAssembly(moduleCell, bedCell); // NEW
+            setCellAttrs(linkedBedCell, { [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(record) }); // CHANGE
+            if (bedAssembly) { // NEW
+                setCellAttrs(bedAssembly, { label: bedTemplateLabel(record.templateId) }); // NEW
+                createBedTemplateLayoutCells(bedAssembly, pathId, record, getGeometry(bedAssembly) || bedGeo); // CHANGE
+            } // NEW
 
         } finally {
             model.endUpdate && model.endUpdate();
@@ -2068,13 +2140,10 @@ Draw.loadPlugin(function (ui) {
         getChildCells(bedCell).filter(function (cell) { return getCellAttr(cell, ATTRS.BED_LAYOUT, "") === "1"; }).forEach(removeCellFromParent); // NEW
         const assemblyParent = isAssembly(bedCell); // NEW
         const inset = assemblyParent ? 8 : 6; // NEW
-        const labelHeight = assemblyParent ? 14 : 18; // NEW
-        const contentTop = assemblyParent ? ASSEMBLY_HEADER_SIZE + 30 : 10; // NEW
+        const contentTop = assemblyParent ? ASSEMBLY_HEADER_SIZE + 18 : 10; // CHANGE
         const parentHeight = Number(bedGeo.height || 80); // NEW
-        const showLabel = !assemblyParent || parentHeight - contentTop >= 28; // NEW
-        const labelY = showLabel ? Math.max(contentTop + 8, parentHeight - labelHeight - 4) : parentHeight - 8; // CHANGE
         const width = Math.max(40, Number(bedGeo.width || 160) - inset * 2); // CHANGE
-        const height = Math.max(8, labelY - contentTop); // CHANGE
+        const height = Math.max(8, parentHeight - contentTop - inset); // CHANGE
         const rows = Math.max(1, Math.floor(finiteNumber(record.spacing && record.spacing.rows, 1)));
         const rowGap = height / (rows + 1);
         for (let i = 0; i < rows; i++) {
@@ -2089,17 +2158,14 @@ Draw.loadPlugin(function (ui) {
                     [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(record)
                 });
         }
-        if (!showLabel) return; // NEW
-        createVertex(bedCell, record.templateId.replace(/_/g, " "), inset, labelY, width, labelHeight, // CHANGE
-            "rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontSize=9;",
-            {
-                label: record.templateId.replace(/_/g, " "),
-                [ATTRS.BED_LAYOUT]: "1",
-                [ATTRS.PATH_ID]: pathId,
-                [ATTRS.GENERATED]: "1",
-                [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(record)
-            });
     }
+
+    function reflowBedTemplateLayout(moduleCell, bedAssembly) { // NEW
+        const bedCell = bedCellForAssembly(moduleCell, bedAssembly); // NEW
+        const record = safeJsonParse(getCellAttr(bedCell, ATTRS.BED_TEMPLATE_JSON, ""), null); // NEW
+        if (!record) return; // NEW
+        createBedTemplateLayoutCells(bedAssembly, record.pathId || ("assembly_bed_" + sanitizeId(getCellId(bedCell))), record, getGeometry(bedAssembly) || getGeometry(bedCell) || { width: 160, height: 80 }); // NEW
+    } // NEW
 
     function findCellById(root, id) {
         if (!id) return null;
@@ -3000,6 +3066,14 @@ Draw.loadPlugin(function (ui) {
         return select; // NEW
     } // NEW
 
+    function setPartSelectOptions(select, parts, value) { // NEW
+        select.innerHTML = ""; // NEW
+        appendSelectOption(select, "", "Choose part"); // NEW
+        (parts || []).forEach(function (part) { appendSelectOption(select, part.id, part.name || part.id); }); // NEW
+        select.value = value || ""; // NEW
+        if (select.value !== (value || "")) select.value = ""; // NEW
+    } // NEW
+
     function catalogConnectorOptions(moduleCell) { // NEW
         const types = new Set(FIXED_CONNECTOR_TYPES); // NEW
         const sizes = new Set(FIXED_CONNECTOR_SIZES); // NEW
@@ -3535,7 +3609,7 @@ Draw.loadPlugin(function (ui) {
         const selected = selectedCells[0]; // NEW
         const rows = []; // NEW
         if (isAssembly(selected)) { // NEW
-            if (assemblyType(selected) === "bed") { appendPortRowSpecs(moduleCell, rows, selected, "input", true); appendPortRowSpecs(moduleCell, rows, selected, "output", true); return rows; } // NEW
+            if (assemblyType(selected) === "bed") return rows; // CHANGE
             const first = firstAssemblyPart(selected); // NEW
             const last = lastAssemblyPart(selected); // NEW
             if (first) appendOccupiedOrFreeBoundaryPortRowSpecs(moduleCell, rows, first, "input"); // CHANGE
@@ -3987,24 +4061,36 @@ Draw.loadPlugin(function (ui) {
         const ports = readBedPortConfig(bedCell); // NEW
         const saved = safeJsonParse(getCellAttr(bedCell, ATTRS.BED_TEMPLATE_JSON, ""), null) || {}; // NEW
         const roleParts = bedTemplateRolePartIds(saved); // NEW
-        const inletOutlet = hudSection("Inlet/Outlet"); // NEW
-        const roleForm = document.createElement("div"); // NEW
-        roleForm.className = "trellis-irrigation-bed-inlet-outlet-form"; // NEW
-        roleForm.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:6px;"; // NEW
-        const inletPart = addPartSelectField(roleForm, "Inlet part", bedRolePartOptions(session.moduleCell, "input", roleParts.inletPartId), roleParts.inletPartId); // NEW
-        const outletPart = addPartSelectField(roleForm, "Outlet part", bedRolePartOptions(session.moduleCell, "output", roleParts.outletPartId), roleParts.outletPartId); // NEW
-        inletOutlet.appendChild(roleForm); // NEW
-        hud.appendChild(inletOutlet); // NEW
+        const savedTemplateId = saved.templateId || BED_TEMPLATES[0].id; // NEW
+        const initialPipePartId = bedTemplatePipePartId(savedTemplateId, saved.pipePartId); // NEW
         const templateSection = hudSection("Irrigation Template"); // NEW
         const form = document.createElement("div"); // CHANGE
         form.className = "trellis-irrigation-bed-inlet-form"; // CHANGE
         form.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:6px;"; // CHANGE
-        const templateSelect = addSelectField(form, "Template", BED_TEMPLATES.map(function (entry) { return entry.id; }), saved.templateId || BED_TEMPLATES[0].id); // NEW
+        const templateSelect = addSelectField(form, "Template", BED_TEMPLATES.map(function (entry) { return entry.id; }), savedTemplateId); // CHANGE
+        const pipePart = addPartSelectField(form, "Pipe/tubing", bedPipePartOptions(session.moduleCell, initialPipePartId), initialPipePartId); // NEW
+        const inletPart = addPartSelectField(form, "Inlet part", bedRolePartOptions(session.moduleCell, "input", roleParts.inletPartId, savedTemplateId, initialPipePartId), roleParts.inletPartId); // CHANGE
+        const outletPart = addPartSelectField(form, "Outlet part", bedRolePartOptions(session.moduleCell, "output", roleParts.outletPartId, savedTemplateId, initialPipePartId), roleParts.outletPartId); // CHANGE
         const rows = addTextField(form, "Rows", saved.spacing && saved.spacing.rows || "2"); // NEW
         const spacing = addTextField(form, "Emitter in", saved.spacing && saved.spacing.emitterInches || "12"); // NEW
+        function refreshRolePartDropdowns() { // NEW
+            const templateId = templateSelect.value; // NEW
+            const pipePartId = pipePart.value; // NEW
+            const inletOptions = bedRolePartOptions(session.moduleCell, "input", inletPart.value, templateId, pipePartId, false); // CHANGE
+            const outletOptions = bedRolePartOptions(session.moduleCell, "output", outletPart.value, templateId, pipePartId, false); // CHANGE
+            setPartSelectOptions(inletPart, inletOptions, inletOptions.some(function (part) { return part.id === inletPart.value; }) ? inletPart.value : ""); // NEW
+            setPartSelectOptions(outletPart, outletOptions, outletOptions.some(function (part) { return part.id === outletPart.value; }) ? outletPart.value : ""); // NEW
+        } // NEW
+        templateSelect.addEventListener("change", function () { // NEW
+            pipePart.value = bedTemplatePipePartId(templateSelect.value, ""); // NEW
+            if (pipePart.value !== bedTemplatePipePartId(templateSelect.value, "")) pipePart.value = ""; // NEW
+            refreshRolePartDropdowns(); // NEW
+        }); // NEW
+        pipePart.addEventListener("change", refreshRolePartDropdowns); // NEW
         const apply = button("Apply Bed Layout", function () { // NEW
             const nextInletPartId = inletPart.value.trim(); // NEW
             const nextOutletPartId = outletPart.value.trim(); // NEW
+            const nextPipePartId = pipePart.value.trim(); // NEW
             writeBedPortConfig(bedCell, bedPortConfigFromRoleParts(readCatalog(session.moduleCell), ports, nextInletPartId, nextOutletPartId)); // CHANGE
             const path = firstAssemblyPathForBedAssembly(session.moduleCell, bedAssembly) || { id: "assembly_bed_" + sanitizeId(getCellId(bedCell)), targetBedId: getCellId(bedCell) || "" }; // CHANGE
             commitBedTemplate(session.moduleCell, path.id, bedCell, { // NEW
@@ -4012,6 +4098,7 @@ Draw.loadPlugin(function (ui) {
                 irrigationType: templateSelect.value, // NEW
                 inletPartId: nextInletPartId, // NEW
                 outletPartId: nextOutletPartId, // NEW
+                pipePartId: nextPipePartId, // NEW
                 partIds: bedTemplatePartIds(nextInletPartId, nextOutletPartId), // CHANGE
                 spacing: { rows: finiteNumber(rows.value, 2), emitterInches: finiteNumber(spacing.value, 12) } // NEW
             }); // NEW
@@ -4021,6 +4108,7 @@ Draw.loadPlugin(function (ui) {
         }); // NEW
         form.appendChild(apply); // NEW
         templateSection.appendChild(form); // NEW
+        if (initialPipePartId && !partById(readCatalog(session.moduleCell), initialPipePartId)) templateSection.appendChild(hudWarning("Template pipe/tubing is missing from the catalog.")); // NEW
         const demand = saved.demand || {}; // NEW
         templateSection.appendChild(hudText("Demand " + finiteNumber(demand.flowGpm, 0) + " gpm, " + finiteNumber(demand.operatingPressurePsi, 0) + " psi.")); // CHANGE
         hud.appendChild(templateSection); // NEW
@@ -4224,6 +4312,7 @@ Draw.loadPlugin(function (ui) {
                 setCellAttrs(assembly, { [ATTRS.ASSEMBLY_EXPANDED]: "1" }); // NEW
                 setGeometry(assembly, { width: finiteNumber(bedGeo.width, ASSEMBLY_DEFAULT_WIDTH), height: finiteNumber(bedGeo.height, ASSEMBLY_CONTRACTED_BED.height) }); // CHANGE
             } // NEW
+            reflowBedTemplateLayout(session.moduleCell, assembly); // NEW
         } finally { model.endUpdate && model.endUpdate(); } // NEW
         scheduleHudGraphStateSync(session.moduleCell); // NEW
         renderIrrigationMode(session); // NEW
