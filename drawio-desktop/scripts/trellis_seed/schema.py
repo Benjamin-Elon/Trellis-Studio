@@ -44,7 +44,7 @@ PLANT_COLUMNS = {
     "planting_depth", "improve_yield", "maintenance_pruning_thinning",
     "harvest_notes", "amount_shade_provides", "general_care", "propagation",
     "storage", "diseases", "pests", "abbr", "tmax_c", "topt_high_c",
-    "topt_low_c", "tmin_c", "tbase_c", "spacing_y_cm", "spacing_x_cm",
+    "topt_low_c", "tmin_c", "tbase_c", "killtemp_c", "spacing_y_cm", "spacing_x_cm",
     "yield_unit", "yield_per_plant_kg", "soil_temp_min_plant_c",
     "harvest_window_days", "days_maturity", "days_transplant", "days_germ",
     "gdd_to_maturity", "direct_sow", "transplant", "succession",
@@ -57,7 +57,7 @@ PLANT_INTEGER_FIELDS = {
 } | PLANT_FLAG_FIELDS
 PLANT_REAL_FIELDS = {
     "soil_ph_range", "root_depth_cm", "root_diam_cm", "veg_height_cm", "veg_diameter_cm",
-    "spacing_cm", "tmax_c", "topt_high_c", "topt_low_c", "tmin_c", "tbase_c",
+    "spacing_cm", "tmax_c", "topt_high_c", "topt_low_c", "tmin_c", "tbase_c", "killtemp_c",
     "spacing_y_cm", "spacing_x_cm", "yield_per_plant_kg", "soil_temp_min_plant_c",
     "gdd_to_maturity", "start_cooling_threshold_c",
 }

@@ -100,6 +100,7 @@ def complete_plant_row(**overrides):
         "days_germ": 7,
         "soil_ph_range": 6.5,
         "tmin_c": 4.0,
+        "killtemp_c": -2.0,
         "tmax_c": 24.0,
         "topt_low_c": 16.0,
         "topt_high_c": 20.0,
@@ -139,6 +140,8 @@ class TrellisSeederTests(unittest.TestCase):
             city_cols = [row[1] for row in conn.execute("PRAGMA table_info(Cities);")]
             self.assertIn("is_major_city", city_cols)
             self.assertIn("climate_band", city_cols)
+            plant_cols = [row[1] for row in conn.execute("PRAGMA table_info(Plants);")]
+            self.assertIn("killtemp_c", plant_cols)
 
     def test_input_validation_requires_crop_sources(self) -> None:
         errors = validate_input({"crops": [{"name": "Lettuce"}]})
@@ -1080,6 +1083,12 @@ class TrellisSeederTests(unittest.TestCase):
 
         invalid_number_report = validate_row("Plants", complete_plant_row(tmin_c="warm"))
         self.assertTrue(any("tmin_c must be numeric" in error for error in invalid_number_report["errors"]))
+
+        invalid_killtemp_report = validate_row("Plants", complete_plant_row(killtemp_c="cold"))
+        self.assertTrue(any("killtemp_c must be numeric" in error for error in invalid_killtemp_report["errors"]))
+
+        out_of_range_killtemp_report = validate_row("Plants", complete_plant_row(killtemp_c=-100))
+        self.assertTrue(any("killtemp_c outside hard bounds" in error for error in out_of_range_killtemp_report["errors"]))
 
         bad_flag_report = validate_row("Plants", complete_plant_row(direct_sow=2))
         self.assertTrue(any("direct_sow must be 0 or 1" in error for error in bad_flag_report["errors"]))

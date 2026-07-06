@@ -42,7 +42,7 @@ CROP_PROMPT_FIELD_GUIDE = {
     "flags": "Flag fields are integers: 1 means true/allowed, 0 means false/not typical.",  # prompt quality
     "lifecycle": "Set annual, biennial, and perennial to a coherent lifecycle; normally exactly one is 1.",  # prompt quality
     "units": "Fields ending _c are Celsius, _cm centimeters, _kg kilograms, and day fields are days.",  # prompt quality
-    "temperature": "Use plausible crop physiology values: tmin_c <= topt_low_c <= topt_high_c <= tmax_c.",  # prompt quality
+    "temperature": "Use plausible crop physiology values: killtemp_c is lethal cold tolerance, and tmin_c <= topt_low_c <= topt_high_c <= tmax_c describes growth.",  # CHANGED
     "start_cooling_threshold_c": "This is a fall/overwinter cooling trigger, not a heat-stress threshold; use 0 for normal spring/summer annual crops.",  # scheduler semantics
     "spacing": "spacing_x_cm and spacing_y_cm should describe in-row and between-row spacing when useful.",  # prompt quality
     "methods": "allowed_method_categories are broad capabilities; allowed_method_ids are concrete fixed_methods that truly fit the crop.",  # prompt quality

@@ -754,8 +754,10 @@
         if (raw === 'soil_gate_missing_date') return 'A soil-temperature check could not be evaluated.';
         if (raw === 'soil_gate') return 'The soil is expected to be too cold on this date.';
         if (raw === 'insufficient_gdd') return 'There is not enough growing-degree accumulation to reach maturity.';
+        if (raw.indexOf('insufficient_gdd_before_cold') === 0) return 'There is not enough heat for this crop to mature before lethal cold.'; // ADDED
         if (raw === 'cross_year_disallowed') return 'This planting would extend into another year.';
         if (raw === 'beyond_hard_end') return 'There is not enough season remaining for the harvest window.';
+        if (raw.indexOf('cold_survival_temp') === 0 || raw.indexOf('winter_survival_temp') === 0) return 'Temperatures are too cold for this crop to survive.'; // CHANGED
         if (raw.indexOf('harvest_too_cold') === 0) return 'Expected harvest temperatures are too cold.';
         if (raw.indexOf('harvest_too_hot') === 0) return 'Expected harvest temperatures are too hot.';
         if (raw.indexOf('error:') === 0) return raw.slice(6).trim() || 'The feasibility check failed.';

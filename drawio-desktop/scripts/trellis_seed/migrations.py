@@ -32,6 +32,8 @@ def pending_migrations(conn: sqlite3.Connection) -> list[str]:
         pending.append("add city geography columns")  # ADDED
     if "Cities" in tables and any(column not in table_columns(conn, "Cities") for column in ("is_major_city", "climate_band")):
         pending.append("add city benchmark label columns")  # ADDED
+    if "Plants" in tables and "killtemp_c" not in table_columns(conn, "Plants"):
+        pending.append("add plant kill temperature column")  # ADDED
     if city_has_unique_name_constraint(conn):  # ADDED
         pending.append("replace city name unique constraint with geography identity")  # ADDED
     if "CityWeatherMonthly" not in tables:
@@ -82,6 +84,9 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
             """
         )  # ADDED
         conn.execute("CREATE INDEX IF NOT EXISTS idx_Cities_city_name ON Cities(city_name);")  # ADDED
+    if "Plants" in tables and "killtemp_c" not in table_columns(conn, "Plants"):
+        conn.execute("ALTER TABLE Plants ADD COLUMN killtemp_c REAL;")  # ADDED
+        applied.append("added Plants.killtemp_c")  # ADDED
     if "VarietyTaskTemplates" in tables and "method_id" not in table_columns(conn, "VarietyTaskTemplates"):
         suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         conn.execute(f"ALTER TABLE VarietyTaskTemplates RENAME TO VarietyTaskTemplates_legacy_{suffix};")

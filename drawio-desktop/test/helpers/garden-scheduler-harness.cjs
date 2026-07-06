@@ -89,6 +89,7 @@ function makePlant(hooks, overrides = {}) {
         topt_low_c: 15,
         topt_high_c: 25,
         tmax_c: 40,
+        killtemp_c: null,
         soil_temp_min_plant_c: null,
         start_cooling_threshold_c: null,
         yield_per_plant_kg: 1,

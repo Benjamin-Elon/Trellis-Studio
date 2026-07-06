@@ -34,6 +34,7 @@ HARD_PLANT_RANGES = {
     "tmin_c": (-80, 80),
     "tmax_c": (-80, 80),
     "tbase_c": (-80, 80),
+    "killtemp_c": (-80, 80),
 }
 
 WARN_PLANT_RANGES = {

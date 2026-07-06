@@ -473,6 +473,7 @@ Draw.loadPlugin(function (ui) {
         chilling_temp_max_c: 'REAL', // ADDED
         chilling_stage: 'TEXT', // ADDED
         chilling_policy: 'TEXT', // ADDED
+        killtemp_c: 'REAL', // ADDED
         diagnostic_policy: 'TEXT' // ADDED
     }); // ADDED
     const PHYSIOLOGY_CITY_COLUMNS = Object.freeze({ // CHANGED: scheduler owns lightweight city geography columns for grouped city selection.
@@ -556,7 +557,7 @@ Draw.loadPlugin(function (ui) {
             await ensureSchedulerPhysiologySchema(); // ADDED
             const sql = `
           SELECT plant_id, plant_name, abbr, yield_per_plant_kg, gdd_to_maturity, 
-                 tmin_c, topt_low_c, topt_high_c, tmax_c, tbase_c,
+                 tmin_c, topt_low_c, topt_high_c, tmax_c, tbase_c, killtemp_c,
                  harvest_window_days, days_maturity, days_transplant, days_germ,
                  direct_sow, transplant, default_planting_method_category, default_planting_method, overwinter_ok, start_cooling_threshold_c,
                  soil_temp_min_plant_c, annual, biennial, perennial, lifespan_years, veg_diameter_cm, spacing_cm,
@@ -2535,8 +2536,10 @@ Draw.loadPlugin(function (ui) {
         if (raw === 'soil_gate_missing_date') return 'A soil-temperature check could not be evaluated.'; // ADDED
         if (raw === 'soil_gate') return 'The soil is expected to be too cold on this date.'; // ADDED
         if (raw === 'insufficient_gdd') return 'There is not enough growing-degree accumulation to reach maturity.'; // ADDED
+        if (raw.indexOf('insufficient_gdd_before_cold') === 0) return 'There is not enough heat for this crop to mature before lethal cold.'; // ADDED
         if (raw === 'cross_year_disallowed') return 'This planting would extend into another year.'; // ADDED
         if (raw === 'beyond_hard_end') return 'There is not enough season remaining for the harvest window.'; // ADDED
+        if (raw.indexOf('cold_survival_temp') === 0 || raw.indexOf('winter_survival_temp') === 0) return 'Temperatures are too cold for this crop to survive.'; // CHANGED
         if (raw.indexOf('harvest_too_cold') === 0) return 'Expected harvest temperatures are too cold.'; // ADDED
         if (raw.indexOf('harvest_too_hot') === 0) return 'Expected harvest temperatures are too hot.'; // ADDED
         if (raw.indexOf('error:') === 0) return raw.slice(6).trim() || 'The feasibility check failed.'; // ADDED
@@ -3101,6 +3104,7 @@ Draw.loadPlugin(function (ui) {
         if (raw === 'spring_frost_gate') return 'Before frost-safety date.';
         if (raw === 'soil_gate') return 'Soil below planting threshold.';
         if (raw === 'insufficient_gdd') return 'Not enough remaining heat to reach maturity.';
+        if (raw.indexOf('insufficient_gdd_before_cold') === 0) return 'Not enough heat before lethal cold.'; // ADDED
         if (raw === 'harvest_too_cold') return 'Expected harvest temperatures are too cold.';
         if (raw === 'harvest_too_hot') return 'Expected harvest temperatures are too hot.';
         return humanFeasibilityReason(raw);
@@ -3125,6 +3129,17 @@ Draw.loadPlugin(function (ui) {
         }).join('\n');
     }
 
+    function bestBeforeColdGddDetail(range) { // ADDED
+        const detail = String(range?.detail || '').trim(); // ADDED
+        const matches = Array.from(detail.matchAll(/gdd\s+([0-9.]+)<([0-9.]+)\s+deadline\s+([0-9-]+)/g)); // ADDED
+        if (!matches.length) return ''; // ADDED
+        const best = matches.reduce((current, match) => { // ADDED
+            const usable = Number(match[1]); // ADDED
+            return !current || usable > current.usable ? { usable, target: Number(match[2]), deadline: match[3] } : current; // ADDED
+        }, null); // ADDED
+        return best ? `best usable GDD ${best.usable.toFixed(1)}<${best.target.toFixed(1)} before ${best.deadline}` : ''; // ADDED
+    } // ADDED
+
     function buildFeasibilityBlockingSummary(inputs, rows) {
         const ranges = compressFeasibilityScanRanges(rows);
         if (!ranges.length) return 'Blocking sequence:\n- scan_not_run: no daily feasibility rows were produced';
@@ -3142,7 +3157,10 @@ Draw.loadPlugin(function (ui) {
         });
         if (primary) {
             lines.push(`Primary blocker after frost/soil readiness: ${primary.reason}`);
-            if (primary.reason === 'insufficient_gdd' && budget.mode === 'gdd') {
+            if (primary.reason === 'insufficient_gdd_before_cold' && budget.mode === 'gdd') { // ADDED
+                const detail = bestBeforeColdGddDetail(primary); // ADDED
+                lines.push(detail ? `GDD check: ${detail}.` : `GDD check: crop needs ${Number(budget.amount).toFixed(1)} GDD before lethal cold.`); // ADDED
+            } else if (primary.reason === 'insufficient_gdd' && budget.mode === 'gdd') { // CHANGED
                 lines.push(`GDD check: crop needs ${Number(budget.amount).toFixed(1)} GDD; calibrated crop-base estimate is ${Number(cropAnnualGdd).toFixed(1)} GDD.`);
             }
         }
@@ -3851,10 +3869,64 @@ Draw.loadPlugin(function (ui) {
         } // ADDED
 
         const div = document.createElement('div');
+        div.className = 'usl-plant-editor'; // ADDED
         div.style.padding = '12px';
-        div.style.width = '640px';
+        div.style.width = '900px'; // CHANGED
+        div.style.maxWidth = 'calc(96vw - 24px)'; // ADDED
+        div.style.boxSizing = 'border-box'; // ADDED
         div.style.maxHeight = '70vh';
         div.style.overflow = 'auto';
+
+        const plantEditorStyle = document.createElement('style'); // ADDED
+        plantEditorStyle.textContent = ` /* ADDED */
+            .usl-plant-editor.usl-plant-editor-variety-mode .usl-plant-editor-override-row{
+                display:grid!important;
+                grid-template-columns:180px minmax(180px,1fr) 250px;
+                gap:8px!important;
+                align-items:center!important;
+                flex-wrap:nowrap!important;
+                margin:6px 0!important;
+            }
+            .usl-plant-editor.usl-plant-editor-variety-mode .usl-plant-editor-override-row > .usl-scheduler-row-label{
+                flex:none!important;
+                min-width:0!important;
+            }
+            .usl-plant-editor.usl-plant-editor-variety-mode .usl-plant-editor-override-row > :not(label):not(.usl-plant-editor-override-controls){
+                min-width:0!important;
+            }
+            .usl-plant-editor.usl-plant-editor-variety-mode .usl-plant-editor-override-row > :not(label):not(.usl-plant-editor-override-controls):not(input[type="checkbox"]){
+                width:100%!important;
+            }
+            .usl-plant-editor.usl-plant-editor-variety-mode .usl-plant-editor-override-controls{
+                flex:0 0 250px!important;
+                min-width:0!important;
+                display:flex;
+                gap:6px;
+                align-items:center;
+                justify-content:flex-end;
+            }
+            .usl-plant-editor.usl-plant-editor-variety-mode .usl-plant-editor-override-controls input:not([type="checkbox"]){
+                flex:0 0 120px;
+                width:120px!important;
+            }
+            .usl-plant-editor.usl-plant-editor-variety-mode .usl-plant-editor-override-base{
+                flex:1 1 auto;
+                min-width:0;
+                overflow:hidden;
+                text-overflow:ellipsis;
+                white-space:nowrap;
+            }
+            @media (max-width:760px){
+                .usl-plant-editor.usl-plant-editor-variety-mode .usl-plant-editor-override-row{
+                    grid-template-columns:minmax(0,1fr);
+                }
+                .usl-plant-editor.usl-plant-editor-variety-mode .usl-plant-editor-override-controls{
+                    justify-content:flex-start;
+                    flex-wrap:wrap;
+                }
+            }
+        `; // ADDED
+        div.appendChild(plantEditorStyle); // ADDED
 
         const title = document.createElement('div');
         title.textContent = isEdit ? 'Edit plant' : 'Add plant';
@@ -4206,6 +4278,7 @@ Draw.loadPlugin(function (ui) {
             });
 
             const baseHint = document.createElement('span');
+            baseHint.className = 'usl-plant-editor-override-base'; // ADDED
             baseHint.textContent = 'Base: ' + fmtBaseVal(def.key);
             baseHint.style.fontSize = '12px';
             baseHint.style.opacity = '0.75';
@@ -4214,12 +4287,14 @@ Draw.loadPlugin(function (ui) {
             wrap.appendChild(chk);
             wrap.appendChild(input);
             wrap.appendChild(baseHint);
+            wrap.classList.add('usl-plant-editor-override-controls'); // ADDED
 
             wrap.style.display = 'none'; // hidden until variety mode
             return { wrap, chk, input, baseHint };
         }
 
         function attachInlineOverrideToRow(rowObj, def) {
+            rowObj.row.classList.add('usl-plant-editor-override-row'); // ADDED
             rowObj.row.style.display = 'flex';
             rowObj.row.style.alignItems = 'center';
             rowObj.row.style.gap = '8px';
@@ -4231,6 +4306,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         function setInlineOverridesVisible(show) {
+            div.classList.toggle('usl-plant-editor-variety-mode', !!show); // ADDED
             for (const key of Object.keys(overrideInlineByKey)) {
                 overrideInlineByKey[key].wrap.style.display = show ? 'flex' : 'none';
             }
@@ -4259,6 +4335,7 @@ Draw.loadPlugin(function (ui) {
             { key: 'topt_low_c', type: 'nullable_num', step: 0.1 },
             { key: 'topt_high_c', type: 'nullable_num', step: 0.1 },
             { key: 'tmax_c', type: 'nullable_num', step: 0.1 },
+            { key: 'killtemp_c', type: 'nullable_num', step: 0.1 }, // ADDED
 
             { key: 'establishment_temp_max_c', type: 'nullable_num', step: 0.1 }, // ADDED
             { key: 'establishment_heat_window_days', type: 'int_ge0' }, // ADDED
@@ -4373,6 +4450,7 @@ Draw.loadPlugin(function (ui) {
         const toptLowInput = makeNullableNumber(existing?.topt_low_c ?? null, { step: 0.1 });
         const toptHighInput = makeNullableNumber(existing?.topt_high_c ?? null, { step: 0.1 });
         const tmaxInput = makeNullableNumber(existing?.tmax_c ?? null, { step: 0.1 });
+        const killTempInput = makeNullableNumber(existing?.killtemp_c ?? null, { step: 0.1 }); // ADDED
 
         const tbaseRow = row('Tbase (C):', tbaseInput);
         leftCol.appendChild(tbaseRow.row);
@@ -4393,6 +4471,10 @@ Draw.loadPlugin(function (ui) {
         const tmaxRow = row('Tmax (C):', tmaxInput);
         leftCol.appendChild(tmaxRow.row);
         attachInlineOverrideToRow(tmaxRow, { key: 'tmax_c', type: 'nullable_num', step: 0.1 });
+
+        const killTempRow = row('Kill temp (C):', killTempInput); // ADDED
+        leftCol.appendChild(killTempRow.row); // ADDED
+        attachInlineOverrideToRow(killTempRow, { key: 'killtemp_c', type: 'nullable_num', step: 0.1 }); // ADDED
 
         // --- Gates ---
         const soilMinInput = makeNullableNumber(existing?.soil_temp_min_plant_c ?? null, { step: 0.1 });
@@ -4534,6 +4616,7 @@ Draw.loadPlugin(function (ui) {
             { key: 'topt_low_c', input: toptLowInput, kind: 'nullable-number', empty: '' }, // ADDED
             { key: 'topt_high_c', input: toptHighInput, kind: 'nullable-number', empty: '' }, // ADDED
             { key: 'tmax_c', input: tmaxInput, kind: 'nullable-number', empty: '' }, // ADDED
+            { key: 'killtemp_c', input: killTempInput, kind: 'nullable-number', empty: '' }, // ADDED
 
             { key: 'soil_temp_min_plant_c', input: soilMinInput, kind: 'nullable-number', empty: '' }, // ADDED
             { key: 'start_cooling_threshold_c', input: coolThreshInput, kind: 'nullable-number', empty: '' }, // ADDED
@@ -4925,6 +5008,7 @@ Draw.loadPlugin(function (ui) {
                     topt_low_c: readNullableNumber(toptLowInput),
                     topt_high_c: readNullableNumber(toptHighInput),
                     tmax_c: readNullableNumber(tmaxInput),
+                    killtemp_c: readNullableNumber(killTempInput), // ADDED
                     soil_temp_min_plant_c: readNullableNumber(soilMinInput),
                     start_cooling_threshold_c: readNullableNumber(coolThreshInput),
                     establishment_temp_max_c: readNullableNumber(establishmentMaxInput), // ADDED
@@ -5059,7 +5143,7 @@ Draw.loadPlugin(function (ui) {
         btns.appendChild(saveBtn);
         div.appendChild(btns);
 
-        return await showCommitDialog(ui, { container: div, width: 680, height: 620, modal: true, closable: true });
+        return await showCommitDialog(ui, { container: div, width: 940, height: 620, modal: true, closable: true }); // CHANGED
     }
 
 
