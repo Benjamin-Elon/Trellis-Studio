@@ -4446,55 +4446,55 @@ Draw.loadPlugin(function (ui) {
         const diagnosticPolicySel = makeSelect(policyOptions, existing?.diagnostic_policy || ''); // ADDED
 
         const establishmentMaxRow = row('Establishment max temp (C):', establishmentMaxInput); // ADDED
-        rightCol.appendChild(establishmentMaxRow.row); // ADDED
+        leftCol.appendChild(establishmentMaxRow.row); // FIX
         attachInlineOverrideToRow(establishmentMaxRow, { key: 'establishment_temp_max_c', type: 'nullable_num', step: 0.1 }); // ADDED
         const establishmentDaysRow = row('Establishment heat days:', establishmentDaysInput); // ADDED
-        rightCol.appendChild(establishmentDaysRow.row); // ADDED
+        leftCol.appendChild(establishmentDaysRow.row); // FIX
         attachInlineOverrideToRow(establishmentDaysRow, { key: 'establishment_heat_window_days', type: 'int_ge0' }); // ADDED
         const establishmentPolicyRow = row('Establishment heat policy:', establishmentPolicySel); // ADDED
-        rightCol.appendChild(establishmentPolicyRow.row); // ADDED
+        leftCol.appendChild(establishmentPolicyRow.row); // FIX
         attachInlineOverrideToRow(establishmentPolicyRow, { key: 'establishment_heat_policy', type: 'text' }); // ADDED
         const qualityMaxRow = row('Quality max temp (C):', qualityMaxInput); // ADDED
-        rightCol.appendChild(qualityMaxRow.row); // ADDED
+        leftCol.appendChild(qualityMaxRow.row); // FIX
         attachInlineOverrideToRow(qualityMaxRow, { key: 'quality_temp_max_c', type: 'nullable_num', step: 0.1 }); // ADDED
         const heatStageRow = row('Heat stress stage:', heatStageSel); // ADDED
-        rightCol.appendChild(heatStageRow.row); // ADDED
+        leftCol.appendChild(heatStageRow.row); // FIX
         attachInlineOverrideToRow(heatStageRow, { key: 'heat_stress_stage', type: 'text' }); // ADDED
         const qualityPolicyRow = row('Quality heat policy:', qualityPolicySel); // ADDED
-        rightCol.appendChild(qualityPolicyRow.row); // ADDED
+        leftCol.appendChild(qualityPolicyRow.row); // FIX
         attachInlineOverrideToRow(qualityPolicyRow, { key: 'quality_heat_policy', type: 'text' }); // ADDED
         const photoperiodResponseRow = row('Photoperiod response:', photoperiodResponseSel); // ADDED
-        rightCol.appendChild(photoperiodResponseRow.row); // ADDED
+        leftCol.appendChild(photoperiodResponseRow.row); // FIX
         attachInlineOverrideToRow(photoperiodResponseRow, { key: 'photoperiod_response', type: 'text' }); // ADDED
         const criticalDaylengthRow = row('Critical daylength (h):', criticalDaylengthInput); // ADDED
-        rightCol.appendChild(criticalDaylengthRow.row); // ADDED
+        leftCol.appendChild(criticalDaylengthRow.row); // FIX
         attachInlineOverrideToRow(criticalDaylengthRow, { key: 'critical_daylength_hours', type: 'nullable_num', step: 0.1 }); // ADDED
         const photoperiodStageRow = row('Photoperiod stage:', photoperiodStageSel); // ADDED
-        rightCol.appendChild(photoperiodStageRow.row); // ADDED
+        leftCol.appendChild(photoperiodStageRow.row); // FIX
         attachInlineOverrideToRow(photoperiodStageRow, { key: 'photoperiod_stage', type: 'text' }); // ADDED
         const photoperiodPolicyRow = row('Photoperiod policy:', photoperiodPolicySel); // ADDED
-        rightCol.appendChild(photoperiodPolicyRow.row); // ADDED
+        leftCol.appendChild(photoperiodPolicyRow.row); // FIX
         attachInlineOverrideToRow(photoperiodPolicyRow, { key: 'photoperiod_policy', type: 'text' }); // ADDED
         const chillingDaysRow = row('Chilling required days:', chillingDaysInput); // ADDED
-        rightCol.appendChild(chillingDaysRow.row); // ADDED
+        leftCol.appendChild(chillingDaysRow.row); // FIX
         attachInlineOverrideToRow(chillingDaysRow, { key: 'chilling_required_days', type: 'nullable_num', step: 0.1 }); // ADDED
         const chillingHoursRow = row('Chilling required hours:', chillingHoursInput); // ADDED
-        rightCol.appendChild(chillingHoursRow.row); // ADDED
+        leftCol.appendChild(chillingHoursRow.row); // FIX
         attachInlineOverrideToRow(chillingHoursRow, { key: 'chilling_required_hours', type: 'nullable_num', step: 1 }); // ADDED
         const chillingMinRow = row('Chilling min temp (C):', chillingMinInput); // ADDED
-        rightCol.appendChild(chillingMinRow.row); // ADDED
+        leftCol.appendChild(chillingMinRow.row); // FIX
         attachInlineOverrideToRow(chillingMinRow, { key: 'chilling_temp_min_c', type: 'nullable_num', step: 0.1 }); // ADDED
         const chillingMaxRow = row('Chilling max temp (C):', chillingMaxInput); // ADDED
-        rightCol.appendChild(chillingMaxRow.row); // ADDED
+        leftCol.appendChild(chillingMaxRow.row); // FIX
         attachInlineOverrideToRow(chillingMaxRow, { key: 'chilling_temp_max_c', type: 'nullable_num', step: 0.1 }); // ADDED
         const chillingStageRow = row('Chilling stage:', chillingStageSel); // ADDED
-        rightCol.appendChild(chillingStageRow.row); // ADDED
+        leftCol.appendChild(chillingStageRow.row); // FIX
         attachInlineOverrideToRow(chillingStageRow, { key: 'chilling_stage', type: 'text' }); // ADDED
         const chillingPolicyRow = row('Chilling policy:', chillingPolicySel); // ADDED
-        rightCol.appendChild(chillingPolicyRow.row); // ADDED
+        leftCol.appendChild(chillingPolicyRow.row); // FIX
         attachInlineOverrideToRow(chillingPolicyRow, { key: 'chilling_policy', type: 'text' }); // ADDED
         const diagnosticPolicyRow = row('Default diagnostic policy:', diagnosticPolicySel); // ADDED
-        rightCol.appendChild(diagnosticPolicyRow.row); // ADDED
+        leftCol.appendChild(diagnosticPolicyRow.row); // FIX
         attachInlineOverrideToRow(diagnosticPolicyRow, { key: 'diagnostic_policy', type: 'text' }); // ADDED
 
         // --- Vegetative geometry ---

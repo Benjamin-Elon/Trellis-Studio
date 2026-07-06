@@ -253,6 +253,14 @@ function addPartPicker(root) { // NEW
     return select; // NEW
 } // NEW
 
+function assertBoundedStyle(node, label) { // NEW
+    assert.ok(node, "Missing styled node: " + label); // NEW
+    const style = node.getAttribute("style") || ""; // NEW
+    assert.match(style, /min-width:\s*0/, label + " should allow grid/flex shrink"); // NEW
+    assert.match(style, /max-width:\s*100%/, label + " should stay inside the HUD"); // NEW
+    assert.match(style, /box-sizing:\s*border-box/, label + " should include borders in width"); // NEW
+} // NEW
+
 function selectByLabel(root, labelText) { // NEW
     const label = Array.from(root.querySelectorAll("label")).find(node => node.textContent.startsWith(labelText)); // NEW
     assert.ok(label, "Missing label: " + labelText); // NEW
@@ -1098,13 +1106,32 @@ test("bed assemblies expand/contract, apply templates, and assembly reports igno
         assert.equal(bedLabels.some(text => text.startsWith(label)), false, "Removed field still rendered: " + label); // NEW
     }); // NEW
     assert.equal(Array.from(graph.container.querySelectorAll("label")).some(label => label.textContent.startsWith("Pipe/tubing")), false); // CHANGE
+    const hud = graph.container.querySelector(".trellis-irrigation-mode-hud"); // NEW
+    const hudStyle = hud.getAttribute("style") || ""; // NEW
+    assert.match(hudStyle, /width:\s*460px/); // NEW
+    assert.match(hudStyle, /max-width:\s*calc\(100vw - 32px\)/); // NEW
+    assert.match(hudStyle, /box-sizing:\s*border-box/); // NEW
+    assert.match(hudStyle, /overflow:\s*hidden/); // NEW
     const bedForm = graph.container.querySelector(".trellis-irrigation-bed-inlet-form"); // NEW
     assert.match(bedForm.getAttribute("style"), /grid-template-columns:\s*minmax\(0,\s*1fr\)/); // CHANGE
-    assert.match(inputByLabel(graph.container, "Rows").getAttribute("style"), /width:\s*100%/); // NEW
-    assert.match(selectByLabel(graph.container, "Template").getAttribute("style"), /box-sizing:\s*border-box/); // NEW
+    assertBoundedStyle(bedForm, "bed template form"); // NEW
+    assertBoundedStyle(graph.container.querySelector(".trellis-irrigation-hud-section"), "HUD section"); // NEW
+    Array.from(bedForm.querySelectorAll("label")).forEach((label, index) => assertBoundedStyle(label, "bed template label " + index)); // NEW
+    Array.from(bedForm.querySelectorAll("input,select")).forEach((control, index) => assertBoundedStyle(control, "bed template control " + index)); // NEW
+    const applyButton = Array.from(graph.container.querySelectorAll("button")).find(button => button.textContent.includes("Apply Bed Layout")); // NEW
+    assert.match(applyButton.getAttribute("style") || "", /max-width:\s*100%/); // NEW
+    assert.match(applyButton.getAttribute("style") || "", /box-sizing:\s*border-box/); // NEW
     assert.ok(selectByLabel(graph.container, "Row orientation")); // NEW
     assert.ok(selectByLabel(graph.container, "Inlet part")); // NEW
     assert.ok(selectByLabel(graph.container, "Outlet part")); // NEW
+    const templateSummary = graph.container.querySelector(".trellis-irrigation-bed-template-summary"); // NEW
+    assert.ok(templateSummary, "Missing bed template summary"); // NEW
+    const templateSummaryLines = templateSummary.textContent.split("\n"); // NEW
+    assert.equal(templateSummaryLines.length, 2); // NEW
+    assert.match(templateSummaryLines[0], /^Rows \d+ x \d+\.\d{2} m = \d+\.\d{2} row m$/); // NEW
+    assert.match(templateSummaryLines[1], /^Demand \d+\.\d{2} gpm, \d+ PSI$/); // CHANGE
+    assert.doesNotMatch(templateSummary.textContent, /Anchor:|BOM:/); // NEW
+    assert.doesNotMatch(graph.container.textContent, /Select inlet\/outlet badges/); // NEW
     inputByLabel(graph.container, "Rows").value = "3"; // NEW
     inputByLabel(graph.container, "Emitter in").value = "8"; // NEW
     selectByLabel(graph.container, "Inlet part").value = "fpt_to_half_barb"; // NEW
@@ -1235,8 +1262,8 @@ test("selected bed assembly ports show contextual Add Part picker and create adj
     assert.equal(graph.container.querySelectorAll(".trellis-irrigation-connection-row").length, 0); // NEW
 
     clickPort(graph.container, /Inlet 1 free/); // NEW
-    clickButton(graph.container, "Add Part"); // NEW
     const inletPicker = addPartPicker(graph.container); // NEW
+    assertBoundedStyle(inletPicker, "bed inlet Add Part picker"); // NEW
     assert.equal(Array.from(inletPicker.options).some(option => option.value === "bed_feed_adapter"), true); // NEW
     assert.equal(Array.from(inletPicker.options).some(option => option.value === "filter"), false); // NEW
     inletPicker.value = "bed_feed_adapter"; // NEW
@@ -1249,10 +1276,15 @@ test("selected bed assembly ports show contextual Add Part picker and create adj
     assert.ok(inletEdge, "Missing part-to-bed inlet edge"); // NEW
     assert.equal(inletEdge.getAttribute(api.attrs.EDGE_TARGET_PORT), "0"); // NEW
 
+    graph.setSelectionCell(bedAssembly.assembly); // NEW
+    clickPort(graph.container, /Inlet 1 connected/); // NEW
+    assert.equal(graph.container.querySelector(".trellis-irrigation-add-part-picker"), null); // NEW
+    assert.ok(Array.from(graph.container.querySelectorAll("button")).some(button => button.textContent.includes("Disconnect Parts"))); // NEW
+
     graph.setSelectionCell(bedAssembly.assembly); // CHANGE
     clickPort(graph.container, /Outlet 1 free/); // NEW
-    clickButton(graph.container, "Add Part"); // NEW
     const outletPicker = addPartPicker(graph.container); // NEW
+    assertBoundedStyle(outletPicker, "bed outlet Add Part picker"); // NEW
     assert.equal(Array.from(outletPicker.options).some(option => option.value === "filter"), true); // NEW
     outletPicker.value = "filter"; // NEW
     clickButton(graph.container, "Add Part"); // NEW

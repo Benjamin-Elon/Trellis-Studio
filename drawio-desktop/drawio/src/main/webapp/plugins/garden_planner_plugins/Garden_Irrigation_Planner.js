@@ -3186,11 +3186,11 @@ Draw.loadPlugin(function (ui) {
 
     function addTextField(parent, label, value) {
         const wrap = document.createElement("label");
-        wrap.style.cssText = "display:flex;flex-direction:column;gap:3px;min-width:0;"; // CHANGE
+        wrap.style.cssText = "display:flex;flex-direction:column;gap:3px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;"; // CHANGE
         wrap.textContent = label;
         const input = document.createElement("input");
         input.value = value == null ? "" : String(value);
-        input.style.cssText = "width:100%;box-sizing:border-box;padding:4px;border:1px solid #aaa;border-radius:4px;"; // CHANGE
+        input.style.cssText = "width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;padding:4px;border:1px solid #aaa;border-radius:4px;"; // CHANGE
         wrap.appendChild(input);
         parent.appendChild(wrap);
         return input;
@@ -3210,7 +3210,7 @@ Draw.loadPlugin(function (ui) {
 
     function addSelectField(parent, label, values, value) {
         const wrap = document.createElement("label");
-        wrap.style.cssText = "display:flex;flex-direction:column;gap:3px;min-width:0;"; // CHANGE
+        wrap.style.cssText = "display:flex;flex-direction:column;gap:3px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;"; // CHANGE
         wrap.textContent = label;
         const select = document.createElement("select");
         values.forEach(function (entry) {
@@ -3220,7 +3220,7 @@ Draw.loadPlugin(function (ui) {
             select.appendChild(option);
         });
         select.value = value;
-        select.style.cssText = "width:100%;box-sizing:border-box;padding:4px;border:1px solid #aaa;border-radius:4px;"; // CHANGE
+        select.style.cssText = "width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;padding:4px;border:1px solid #aaa;border-radius:4px;"; // CHANGE
         wrap.appendChild(select);
         parent.appendChild(wrap);
         return select;
@@ -3228,13 +3228,13 @@ Draw.loadPlugin(function (ui) {
 
     function addPartSelectField(parent, label, parts, value) { // NEW
         const wrap = document.createElement("label"); // NEW
-        wrap.style.cssText = "display:flex;flex-direction:column;gap:3px;min-width:0;"; // CHANGE
+        wrap.style.cssText = "display:flex;flex-direction:column;gap:3px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;"; // CHANGE
         wrap.textContent = label; // NEW
         const select = document.createElement("select"); // NEW
         appendSelectOption(select, "", "Choose part"); // NEW
         (parts || []).forEach(function (part) { appendSelectOption(select, part.id, part.name || part.id); }); // NEW
         select.value = value || ""; // NEW
-        select.style.cssText = "width:100%;box-sizing:border-box;padding:4px;border:1px solid #aaa;border-radius:4px;"; // CHANGE
+        select.style.cssText = "width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;padding:4px;border:1px solid #aaa;border-radius:4px;"; // CHANGE
         wrap.appendChild(select); // NEW
         parent.appendChild(wrap); // NEW
         return select; // NEW
@@ -3592,7 +3592,7 @@ Draw.loadPlugin(function (ui) {
         const assemblySelection = selectedAssemblyContextCells(); // NEW
         const hud = document.createElement("div"); // NEW
         hud.className = "trellis-irrigation-mode-hud"; // NEW
-        hud.style.cssText = "position:absolute;z-index:1000;min-width:220px;max-width:360px;background:#fff;border:1px solid #777;border-radius:6px;box-shadow:0 3px 12px rgba(0,0,0,.22);padding:8px;font:12px Arial,sans-serif;color:#222;display:flex;flex-direction:column;gap:6px;pointer-events:auto;"; // CHANGE
+        hud.style.cssText = "position:absolute;z-index:1000;width:460px;max-width:calc(100vw - 32px);min-width:0;box-sizing:border-box;overflow:hidden;background:#fff;border:1px solid #777;border-radius:6px;box-shadow:0 3px 12px rgba(0,0,0,.22);padding:8px;font:12px Arial,sans-serif;color:#222;display:flex;flex-direction:column;gap:6px;pointer-events:auto;"; // CHANGE
         shieldHudEvents(hud); // NEW
         if (assemblySelection.length) renderLocalIrrigationHud(session, hud, assemblySelection); // CHANGE
         else if (isGardenBed(selected)) renderGardenBedHud(session, hud, selected); // NEW
@@ -3730,12 +3730,12 @@ Draw.loadPlugin(function (ui) {
     function renderAddPartAssemblyForm(session, hud) { // NEW
         const form = document.createElement("div"); // NEW
         form.className = "trellis-irrigation-add-assembly-form"; // NEW
-        form.style.cssText = "display:grid;gap:6px;margin-top:8px;"; // NEW
+        form.style.cssText = "display:grid;gap:6px;margin-top:8px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;"; // CHANGE
         const context = addPartPickerContext(session); // NEW
         form.appendChild(hudText(context ? "Compatible with " + addPartContextLabel(session.moduleCell, context) : "All catalog parts")); // NEW
         const select = document.createElement("select"); // NEW
         select.className = "trellis-irrigation-add-part-picker"; // NEW
-        select.style.cssText = "width:100%;box-sizing:border-box;"; // NEW
+        select.style.cssText = "width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;"; // CHANGE
         appendGroupedPartOptions(select, addPartPickerParts(session, context)); // CHANGE
         form.appendChild(select); // NEW
         form.appendChild(button("Add Part", function () { // NEW
@@ -3757,7 +3757,6 @@ Draw.loadPlugin(function (ui) {
         const ports = selectedValidPorts(session); // NEW
         const selectedBoundaries = selectedOccupiedBoundaries(session, ports); // NEW
         if (!ports.length && !selectedBoundaries.length) { // CHANGE
-            hud.appendChild(hudText("Select inlet/outlet badges or internal connection badges to connect or disconnect assemblies.")); // CHANGE
             return; // NEW
         } // NEW
         const occupied = ports.filter(function (port) { return !!boundaryForPort(session.moduleCell, port); }); // CHANGE
@@ -4274,7 +4273,7 @@ Draw.loadPlugin(function (ui) {
         const templateSection = hudSection("Irrigation Template"); // NEW
         const form = document.createElement("div"); // CHANGE
         form.className = "trellis-irrigation-bed-inlet-form"; // CHANGE
-        form.style.cssText = "display:grid;grid-template-columns:minmax(0,1fr);gap:6px;"; // CHANGE
+        form.style.cssText = "display:grid;grid-template-columns:minmax(0,1fr);gap:6px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;"; // CHANGE
         const templateSelect = addSelectField(form, "Template", BED_TEMPLATES.map(function (entry) { return entry.id; }), savedTemplateId); // CHANGE
         const orientation = addSelectField(form, "Row orientation", BED_TEMPLATE_ROW_ORIENTATIONS, initialRowOrientation); // NEW
         const rows = addTextField(form, "Rows", initialRows); // CHANGE
@@ -4282,14 +4281,12 @@ Draw.loadPlugin(function (ui) {
         const inletPart = addPartSelectField(form, "Inlet part", bedRolePartOptions(session.moduleCell, "input", roleParts.inletPartId, savedTemplateId, initialBom.anchorPartId), roleParts.inletPartId); // CHANGE
         const outletPart = addPartSelectField(form, "Outlet part", bedRolePartOptions(session.moduleCell, "output", roleParts.outletPartId, savedTemplateId, initialBom.anchorPartId), roleParts.outletPartId); // CHANGE
         const summary = hudText(""); // NEW
+        summary.className = "trellis-irrigation-bed-template-summary"; // NEW
         function currentBom() { // NEW
             return computeBedTemplateBom(readCatalog(session.moduleCell), getGeometry(bedAssembly) || getGeometry(bedCell) || {}, templateSelect.value, finiteNumber(rows.value, bedTemplateById(templateSelect.value).defaultRows), orientation.value); // NEW
         } // NEW
         function bomSummaryText(bom) { // NEW
-            const catalog = readCatalog(session.moduleCell); // NEW
-            const anchor = partById(catalog, bom.anchorPartId); // NEW
-            const partText = bom.requiredParts.map(function (entry) { const part = partById(catalog, entry.partId); return (part ? part.name : entry.partId) + " " + finiteNumber(entry.quantityMeters, 0).toFixed(2) + " m"; }).join("; "); // NEW
-            return "Rows " + bom.rowCount + " x " + bom.rowLengthMeters.toFixed(2) + " m = " + bom.totalRowMeters.toFixed(2) + " row m. Anchor: " + (anchor ? anchor.name : "missing") + ". Demand " + bom.demand.flowGpm.toFixed(2) + " gpm, " + bom.demand.operatingPressurePsi.toFixed(0) + " psi. BOM: " + (partText || "none") + "."; // NEW
+            return "Rows " + bom.rowCount + " x " + bom.rowLengthMeters.toFixed(2) + " m = " + bom.totalRowMeters.toFixed(2) + " row m\nDemand " + bom.demand.flowGpm.toFixed(2) + " gpm, " + bom.demand.operatingPressurePsi.toFixed(0) + " PSI"; // CHANGE
         } // NEW
         function refreshTemplatePreview(clearInvalidSelections) { // NEW
             const bom = currentBom(); // NEW
@@ -4339,10 +4336,11 @@ Draw.loadPlugin(function (ui) {
             session.message = "Bed layout updated."; // NEW
             renderIrrigationMode(session); // NEW
         }); // NEW
-        apply.style.cssText = "width:100%;box-sizing:border-box;"; // NEW
+        apply.style.cssText = "width:100%;min-width:0;max-width:100%;box-sizing:border-box;white-space:normal;overflow-wrap:anywhere;"; // CHANGE
         form.appendChild(apply); // NEW
         templateSection.appendChild(form); // NEW
         summary.style.overflowWrap = "anywhere"; // NEW
+        summary.style.whiteSpace = "pre-line"; // NEW
         templateSection.appendChild(summary); // NEW
         if (initialBom.missingPartIds.length) templateSection.appendChild(hudWarning("Required template parts are missing from the catalog: " + initialBom.missingPartIds.join(", ") + ".")); // NEW
         refreshTemplatePreview(false); // NEW
@@ -4391,8 +4389,9 @@ Draw.loadPlugin(function (ui) {
         badge.addEventListener("click", function (ev) { // NEW
             if (ev && ev.stopPropagation) ev.stopPropagation(); // NEW
             const boundary = boundaryForPort(session.moduleCell, port); // NEW
-            if (boundary) toggleSelectedBoundary(session, boundary); // CHANGE
-            else toggleSelectedPort(session, port); // CHANGE
+            const bedPort = isAssembly(cell) && assemblyType(cell) === "bed"; // NEW
+            if (boundary) { toggleSelectedBoundary(session, boundary); if (bedPort) session.partPickerVisible = false; } // CHANGE
+            else { toggleSelectedPort(session, port); if (bedPort) session.partPickerVisible = (session.selectedPorts || []).map(portKey).indexOf(portKey(port)) >= 0 && isPortFree(session.moduleCell, port); } // CHANGE
             session.bridgePorts = null; // NEW
             selectCell(findAssemblyAncestor(cell) || cell, false); // NEW
             renderIrrigationMode(session); // NEW
@@ -4739,10 +4738,10 @@ Draw.loadPlugin(function (ui) {
     function hudSection(titleText) { // NEW
         const section = document.createElement("div"); // NEW
         section.className = "trellis-irrigation-hud-section"; // NEW
-        section.style.cssText = "display:grid;gap:6px;border-top:1px solid #ddd;padding-top:6px;margin-top:6px;"; // NEW
+        section.style.cssText = "display:grid;gap:6px;border-top:1px solid #ddd;padding-top:6px;margin-top:6px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;"; // CHANGE
         const title = document.createElement("div"); // NEW
         title.className = "trellis-irrigation-hud-section-title"; // NEW
-        title.style.cssText = "font-weight:700;"; // NEW
+        title.style.cssText = "font-weight:700;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;"; // CHANGE
         title.textContent = titleText; // NEW
         section.appendChild(title); // NEW
         return section; // NEW
@@ -4750,7 +4749,7 @@ Draw.loadPlugin(function (ui) {
 
     function hudText(text) { // NEW
         const div = document.createElement("div"); // NEW
-        div.style.cssText = "margin:6px 0;color:#333;line-height:1.35;"; // NEW
+        div.style.cssText = "margin:6px 0;color:#333;line-height:1.35;min-width:0;max-width:100%;box-sizing:border-box;overflow-wrap:anywhere;"; // CHANGE
         div.textContent = text; // NEW
         return div; // NEW
     } // NEW
@@ -4758,14 +4757,14 @@ Draw.loadPlugin(function (ui) {
     function hudWarning(text) { // NEW
         const div = document.createElement("div"); // NEW
         div.className = "trellis-irrigation-hud-warning"; // NEW
-        div.style.cssText = "margin:6px 0;color:#8a4b00;line-height:1.35;"; // NEW
+        div.style.cssText = "margin:6px 0;color:#8a4b00;line-height:1.35;min-width:0;max-width:100%;box-sizing:border-box;overflow-wrap:anywhere;"; // CHANGE
         div.textContent = text; // NEW
         return div; // NEW
     } // NEW
 
     function hudActions() { // NEW
         const div = document.createElement("div"); // NEW
-        div.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;"; // NEW
+        div.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;"; // CHANGE
         return div; // NEW
     } // NEW
 
@@ -5453,10 +5452,13 @@ Draw.loadPlugin(function (ui) {
     }
 
     function button(label, fn) {
-        if (typeof mxUtils !== "undefined" && mxUtils.button) return mxUtils.button(label, fn);
-        const b = document.createElement("button");
-        b.textContent = label;
-        b.addEventListener("click", fn);
+        const b = typeof mxUtils !== "undefined" && mxUtils.button ? mxUtils.button(label, fn) : document.createElement("button"); // CHANGE
+        if (!b.textContent) b.textContent = label; // CHANGE
+        if (!(typeof mxUtils !== "undefined" && mxUtils.button)) b.addEventListener("click", fn); // CHANGE
+        b.style.maxWidth = "100%"; // NEW
+        b.style.boxSizing = "border-box"; // NEW
+        b.style.whiteSpace = "normal"; // NEW
+        b.style.overflowWrap = "anywhere"; // NEW
         return b;
     }
 
