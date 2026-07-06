@@ -828,7 +828,10 @@ test("irrigation mode renders global port badges and highlights compatible free 
     assert.ok(portBadgesInState(graph.container, "occupied").length >= 2); // NEW
     assert.equal(portBadgesInState(graph.container, "compatible").length, 0); // NEW
     clickPort(graph.container, /Outlet 1 connected/); // NEW
+    assert.equal(graph.container.querySelectorAll(".trellis-irrigation-selected-pipe-highlight").length, 1); // NEW
     assert.match(graph.container.textContent, /Disconnect Parts/); // CHANGE
+    clickButton(graph.container, "Disconnect Parts"); // NEW
+    assert.equal(graph.container.querySelectorAll(".trellis-irrigation-selected-pipe-highlight").length, 0); // NEW
 }); // NEW
 
 test("multi-output dropdowns create branches and replace reusable branch first parts", () => { // NEW
@@ -1108,8 +1111,8 @@ test("bed assemblies expand/contract, apply templates, and assembly reports igno
     assert.equal(Array.from(graph.container.querySelectorAll("label")).some(label => label.textContent.startsWith("Pipe/tubing")), false); // CHANGE
     const hud = graph.container.querySelector(".trellis-irrigation-mode-hud"); // NEW
     const hudStyle = hud.getAttribute("style") || ""; // NEW
-    assert.match(hudStyle, /width:\s*460px/); // NEW
-    assert.match(hudStyle, /max-width:\s*calc\(100vw - 32px\)/); // NEW
+    assert.match(hudStyle, /width:\s*max-content/); // CHANGE
+    assert.match(hudStyle, /max-width:\s*min\(460px,\s*calc\(100vw - 32px\)\)/); // CHANGE
     assert.match(hudStyle, /box-sizing:\s*border-box/); // NEW
     assert.match(hudStyle, /overflow:\s*hidden/); // NEW
     const bedForm = graph.container.querySelector(".trellis-irrigation-bed-inlet-form"); // NEW

@@ -3592,7 +3592,7 @@ Draw.loadPlugin(function (ui) {
         const assemblySelection = selectedAssemblyContextCells(); // NEW
         const hud = document.createElement("div"); // NEW
         hud.className = "trellis-irrigation-mode-hud"; // NEW
-        hud.style.cssText = "position:absolute;z-index:1000;width:460px;max-width:calc(100vw - 32px);min-width:0;box-sizing:border-box;overflow:hidden;background:#fff;border:1px solid #777;border-radius:6px;box-shadow:0 3px 12px rgba(0,0,0,.22);padding:8px;font:12px Arial,sans-serif;color:#222;display:flex;flex-direction:column;gap:6px;pointer-events:auto;"; // CHANGE
+        hud.style.cssText = "position:absolute;z-index:1000;width:max-content;max-width:min(460px,calc(100vw - 32px));min-width:0;box-sizing:border-box;overflow:hidden;background:#fff;border:1px solid #777;border-radius:6px;box-shadow:0 3px 12px rgba(0,0,0,.22);padding:8px;font:12px Arial,sans-serif;color:#222;display:flex;flex-direction:column;gap:6px;pointer-events:auto;"; // CHANGE
         shieldHudEvents(hud); // NEW
         if (assemblySelection.length) renderLocalIrrigationHud(session, hud, assemblySelection); // CHANGE
         else if (isGardenBed(selected)) renderGardenBedHud(session, hud, selected); // NEW
@@ -3609,6 +3609,7 @@ Draw.loadPlugin(function (ui) {
             overlayHost: debugOverlayHostSummary() // NEW
         }); // NEW
         renderAssemblyPortBadges(session, assemblySelection); // CHANGE
+        renderSelectedExternalPipeHighlights(session); // NEW
         renderZoneBadges(session); // NEW
         if (isHudIrrigationObject(selected)) renderIrrigationNavigator(session, selected); // NEW
         renderIrrigationWarningBadges(session); // NEW
@@ -4475,6 +4476,70 @@ Draw.loadPlugin(function (ui) {
             appendOverlayNode(badge); // NEW
             session.portBadges.push(badge); // NEW
         }); // NEW
+    } // NEW
+
+    function renderSelectedExternalPipeHighlights(session) { // NEW
+        selectedValidBoundaries(session).forEach(function (boundary) { // NEW
+            const edge = boundary.type === "edge" ? findCellById(session.moduleCell, boundary.edgeId) : null; // NEW
+            if (!edge || getCellAttr(edge, ATTRS.PIPE_EDGE, "") !== "1") return; // NEW
+            const highlight = createPipeEdgeHighlight(edge); // NEW
+            if (!highlight) return; // NEW
+            appendOverlayNode(highlight); // NEW
+            session.targetHighlights.push(highlight); // NEW
+        }); // NEW
+    } // NEW
+
+    function createPipeEdgeHighlight(edge) { // NEW
+        const points = edgeAbsolutePoints(edge); // NEW
+        if (points.length >= 2) return createPipePolylineHighlight(edge, points); // NEW
+        return createPipeBoundsHighlight(edge); // NEW
+    } // NEW
+
+    function edgeAbsolutePoints(edge) { // NEW
+        const state = graph.view && graph.view.getState ? graph.view.getState(edge) : null; // NEW
+        const raw = state && Array.isArray(state.absolutePoints) ? state.absolutePoints : []; // NEW
+        return raw.map(function (point) { return point ? { x: finiteNumber(point.x, 0), y: finiteNumber(point.y, 0) } : null; }).filter(Boolean); // NEW
+    } // NEW
+
+    function createPipePolylineHighlight(edge, points) { // NEW
+        const bounds = pointBounds(points, 8); // NEW
+        const svg = document.createElementNS ? document.createElementNS("http://www.w3.org/2000/svg", "svg") : document.createElement("div"); // NEW
+        if (svg.setAttribute) svg.setAttribute("class", "trellis-irrigation-selected-pipe-highlight"); // CHANGE
+        if (svg.setAttribute) svg.setAttribute("data-edge-id", getCellId(edge) || ""); // NEW
+        svg.style.cssText = "position:absolute;z-index:999;left:" + Math.round(bounds.x) + "px;top:" + Math.round(bounds.y) + "px;width:" + Math.round(bounds.width) + "px;height:" + Math.round(bounds.height) + "px;pointer-events:none;overflow:visible;"; // NEW
+        if (!document.createElementNS) return svg; // NEW
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline"); // NEW
+        line.setAttribute("points", points.map(function (point) { return (point.x - bounds.x) + "," + (point.y - bounds.y); }).join(" ")); // NEW
+        line.setAttribute("fill", "none"); // NEW
+        line.setAttribute("stroke", "#f59e0b"); // NEW
+        line.setAttribute("stroke-width", "7"); // NEW
+        line.setAttribute("stroke-linecap", "round"); // NEW
+        line.setAttribute("stroke-linejoin", "round"); // NEW
+        line.setAttribute("opacity", ".72"); // NEW
+        svg.appendChild(line); // NEW
+        return svg; // NEW
+    } // NEW
+
+    function createPipeBoundsHighlight(edge) { // NEW
+        const state = cellState(edge); // NEW
+        const width = Math.max(12, finiteNumber(state.width, 0)); // NEW
+        const height = Math.max(12, finiteNumber(state.height, 0)); // NEW
+        const node = document.createElement("div"); // NEW
+        node.className = "trellis-irrigation-selected-pipe-highlight"; // NEW
+        node.setAttribute("data-edge-id", getCellId(edge) || ""); // NEW
+        node.style.cssText = "position:absolute;z-index:999;left:" + Math.round(finiteNumber(state.x, 0) - 4) + "px;top:" + Math.round(finiteNumber(state.y, 0) - 4) + "px;width:" + Math.round(width + 8) + "px;height:" + Math.round(height + 8) + "px;pointer-events:none;border:3px solid #f59e0b;border-radius:6px;box-shadow:0 0 0 3px rgba(245,158,11,.20);box-sizing:border-box;"; // NEW
+        return node; // NEW
+    } // NEW
+
+    function pointBounds(points, padding) { // NEW
+        const pad = Math.max(0, finiteNumber(padding, 0)); // NEW
+        const xs = points.map(function (point) { return point.x; }); // NEW
+        const ys = points.map(function (point) { return point.y; }); // NEW
+        const minX = Math.min.apply(Math, xs) - pad; // NEW
+        const minY = Math.min.apply(Math, ys) - pad; // NEW
+        const maxX = Math.max.apply(Math, xs) + pad; // NEW
+        const maxY = Math.max.apply(Math, ys) + pad; // NEW
+        return { x: minX, y: minY, width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) }; // NEW
     } // NEW
 
     function internalConnectionBoundariesForSelection(moduleCell, selectedCells) { // NEW
