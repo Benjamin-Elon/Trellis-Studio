@@ -1,4 +1,4 @@
-// Trellis changes: preload file-system bridge and app-info/release bridge for renderer plugins. // CHANGE
+// Trellis changes: preload file-system bridge, file-watch listener cleanup, and app-info/release bridge for renderer plugins. // CHANGE
 console.log('[Preload] Script running');
 
 const {
@@ -43,6 +43,9 @@ function requestViaIPC(msg, callback, error) {
     fileChangedListeners[msg.path] = msg.listener;
     delete msg.listener;
   }
+  else if (msg.action === 'unwatchFile') { // CHANGE
+    delete fileChangedListeners[msg.path]; // CHANGE
+  } // CHANGE
   ipcRenderer.send('rendererReq', msg);
 }
 
@@ -201,6 +204,7 @@ contextBridge.exposeInMainWorld('fsBridge', {
 	  
 	  // ( ADD) keep parity with unwatch
 	  watchFile(absPath, listener) {
+		if (typeof listener !== 'function') return; // CHANGE
 		requestViaIPC({ action: 'watchFile', path: absPath, listener }, () => {}, () => {});
 	  },
     });

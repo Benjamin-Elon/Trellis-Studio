@@ -244,6 +244,12 @@ function setMeasuredEdgeLength(edge, lengthUnits) { // CHANGE
     return edge; // CHANGE
 } // CHANGE
 
+function styleToken(style, key) { // NEW
+    const prefix = key + "="; // NEW
+    const token = String(style || "").split(";").find(part => part.startsWith(prefix)); // NEW
+    return token ? token.slice(prefix.length) : ""; // NEW
+} // NEW
+
 function connectionRow(root, label) { // NEW
     const row = Array.from(root.querySelectorAll(".trellis-irrigation-connection-row")).find(node => node.textContent.includes(label)); // NEW
     assert.ok(row, "Missing connection row: " + label); // NEW
@@ -822,6 +828,53 @@ test("selected port badges connect with automatic pipe choice and disconnect sel
     clickPort(graph.container, /Outlet 1 connected/); // NEW
     clickButton(graph.container, "Disconnect Parts"); // CHANGE
     assert.equal(api.__test.collectAssemblyEdges(moduleCell).length, 0); // NEW
+}); // NEW
+
+test("pipe edge stroke width is proportional to nominal pipe size", () => { // NEW
+    const { api, moduleCell } = loadPlugin(); // NEW
+    const catalog = sampleCatalog(); // NEW
+    catalog.items.push(part("pipe_quarter", "1/4 micro", "pipe_tubing", "in_stock", 0, 1, 1, "barb", "1/4", "barb", "1/4", { innerDiameterIn: 0.17, hazenWilliamsC: 150 }, 0.12, true)); // NEW
+    catalog.items.push(part("pipe_one", "1 inch mainline", "pipe_tubing", "in_stock", 0, 1, 1, "barb", "1", "barb", "1", { innerDiameterIn: 1.049, hazenWilliamsC: 150 }, 0.9, true)); // NEW
+    catalog.items.push(part("filter_quarter", "1/4 filter", "filter", "in_stock", 4, 1, 1, "barb", "1/4", "barb", "1/4", { pressureLossPsi: 0.1 }, undefined, true)); // NEW
+    catalog.items.push(part("filter_half", "1/2 filter", "filter", "in_stock", 4, 1, 1, "barb", "1/2", "barb", "1/2", { pressureLossPsi: 0.1 }, undefined, true)); // NEW
+    catalog.items.push(part("filter_one", "1 inch filter", "filter", "in_stock", 4, 1, 1, "barb", "1", "barb", "1", { pressureLossPsi: 0.1 }, undefined, true)); // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    [["1/4", "filter_quarter", "1"], ["1/2", "filter_half", "2"], ["3/4", "filter", "3"], ["1", "filter_one", "4"]].forEach(([size, filterId, expected], index) => { // NEW
+        const source = api.__test.createSourceAssembly(moduleCell, "Source " + size, { connectorType: "barb", nominalSize: size, pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30 + index * 180, y: 40 }); // NEW
+        const filter = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === filterId), { x: 30 + index * 180, y: 180 }); // NEW
+        const connection = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(filter.assembly).getId(), role: "input", index: 0 }); // NEW
+        assert.equal(connection.ok, true); // NEW
+        assert.equal(styleToken(connection.edge.style, "strokeWidth"), expected); // NEW
+    }); // NEW
+}); // NEW
+
+test("direct link edges do not receive proportional pipe stroke widths", () => { // NEW
+    const { api, moduleCell } = loadPlugin(); // NEW
+    const catalog = { items: [ // NEW
+        part("direct_valve", "Direct Valve", "valve", "in_stock", 10, 1, 2, "fpt", "3/4", "mpt", "3/4", { maxFlowGpm: 8 }), // CHANGE
+        part("direct_filter", "Direct Filter", "filter", "in_stock", 10, 1, 1, "fpt", "3/4", "mpt", "3/4", { pressureLossPsi: 1 }) // NEW
+    ] }; // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    const valve = api.__test.createPartAssembly(moduleCell, catalog.items[0], { x: 30, y: 40 }); // NEW
+    const filter = api.__test.createPartAssembly(moduleCell, catalog.items[1], { x: 30, y: 180 }); // NEW
+    const connection = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(valve.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(filter.assembly).getId(), role: "input", index: 0 }); // NEW
+    assert.equal(connection.ok, true); // NEW
+    assert.equal(connection.edge.getAttribute(api.attrs.DIRECT_LINK_EDGE), "1"); // NEW
+    assert.equal(styleToken(connection.edge.style, "strokeWidth"), ""); // NEW
+}); // NEW
+
+test("reused generated pipe edges are restyled from the current pipe part", () => { // NEW
+    const { api, graph, moduleCell, bed } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const source = api.__test.createSourceEndpoint(moduleCell, "Source", { connectorType: "mght", nominalSize: "1/2", usableFlowGpm: 5, staticPressurePsi: 45 }); // NEW
+    const target = api.__test.createBedEndpoint(bed, "Target", { connectorType: "fght", nominalSize: "1/2" }); // NEW
+    const reusable = graph.insertEdge(moduleCell, "oldGenerated", "", source, target, "edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4d8f6f;strokeWidth=9;"); // NEW
+    api.__test.writePaths(moduleCell, [{ id: "reuse_path", sourceEndpointId: source.getId(), targetEndpointId: target.getId(), pipePartId: "pipe_cheap", pipeEdgeIds: [reusable.getId()], componentCellIds: [] }]); // NEW
+    const staged = api.__test.stagePath({ id: "reuse_path", sourceEndpoint: source, targetEndpoint: target, pipePartId: "pipe_half", bedDemand: { flowGpm: 0, operatingPressurePsi: 0 } }); // NEW
+    const committed = api.__test.commitStagedPath(moduleCell, staged); // NEW
+    assert.equal(committed.blockingErrors, undefined); // NEW
+    assert.equal(committed.pipeEdgeIds[0], reusable.getId()); // NEW
+    assert.equal(styleToken(reusable.style, "strokeWidth"), "2"); // NEW
 }); // NEW
 
 test("irrigation mode renders global port badges and highlights compatible free targets", () => { // NEW

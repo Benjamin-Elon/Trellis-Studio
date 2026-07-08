@@ -1,4 +1,4 @@
-// Trellis changes: desktop plugin filtering and developer-build update gating. // CHANGE
+// Trellis changes: desktop plugin filtering, duplicate file-watch prevention, and developer-build update gating. // CHANGE
 /**
  * Copyright (c) 2020-2025, JGraph Holdings Ltd
  * Copyright (c) 2020-2025, draw.io AG
@@ -1004,16 +1004,19 @@ mxStencilRegistry.allowEval = false;
 	{
 		var newPath = (file != null && file.fileObject != null &&
 			file == this.getCurrentFile()) ? file.fileObject.path : null;
+
+		if (this.watchedPath == newPath) return; // CHANGE
 		
 		if (this.watchedPath != newPath)
 		{
-			this.unwatchPath(this.watchedPath);
+			await this.unwatchPath(this.watchedPath); // CHANGE
 		}
+
+		this.watchedPath = newPath; // CHANGE
 
 		if (newPath != null)
 		{
-			this.watchedPath = newPath;
-			this.watchPath(newPath);
+			await this.watchPath(newPath); // CHANGE
 		}
 	};
 	

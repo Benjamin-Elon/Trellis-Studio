@@ -64,3 +64,15 @@ test('Garden module overlay can route first irrigation source creation through t
     assert.match(helperSource, /const graphModel = graph\.getModel && graph\.getModel\(\);/); // FIX
     assert.doesNotMatch(helperSource, /\bmodel\.getChild(?:Count|At)\b/); // FIX
 }); // NEW
+
+test('Garden module overlay routes module margin editing through the Modules API with event fallback', () => { // NEW
+    const source = readPlantTilerSource(); // NEW
+    assert.match(source, /let marginBtn = null;/); // NEW
+    assert.match(source, /marginBtn = makeButton\("Set Module Margin"\);/); // NEW
+    assert.match(source, /toolbar\.appendChild\(marginBtn\);/); // NEW
+    assert.match(source, /mxEvent\.addListener\(marginBtn, "click", function \(evt\) \{[\s\S]*promptSetModuleMarginForModule\(moduleCell\);/); // NEW
+    assert.match(source, /function promptSetModuleMarginForModule\(moduleCell\) \{[\s\S]*hideToolbar\(\);[\s\S]*modulesApi\.promptSetModuleMargin\(moduleCell\);/); // NEW
+    assert.match(source, /new mxEventObject\("usl:requestPromptSetModuleMargin", "cell", moduleCell\)/); // NEW
+    assert.match(source, /marginBtn\.style\.display = bedMode \? "none" : "";/); // NEW
+    assert.match(source, /if \(!toolbar \|\| !settingsBtn \|\| !addBedBtn \|\| !addGroupBtn \|\| !marginBtn \|\| !irrigationSourceBtn \|\| !moduleCell\) return;/); // NEW
+}); // NEW

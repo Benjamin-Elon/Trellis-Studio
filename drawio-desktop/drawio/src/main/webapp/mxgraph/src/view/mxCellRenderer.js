@@ -1,4 +1,6 @@
 /**
+ * TRELLIS CHANGE: fixed-size fold controls.
+ *
  * Copyright (c) 2006-2017, JGraph Holdings Ltd
  * Copyright (c) 2006-2017, draw.io AG
  */
@@ -1361,6 +1363,10 @@ mxCellRenderer.prototype.getControlBounds = function(state, w, h)
 	if (state.control != null)
 	{
 		var s = state.view.scale;
+		var fixedControlSize = 18; // CHANGE: Keep fold controls usable at every zoom level.
+		var aspect = (h != 0) ? w / h : 1; // CHANGE
+		var controlWidth = (aspect >= 1) ? fixedControlSize : fixedControlSize * aspect; // CHANGE
+		var controlHeight = (aspect >= 1) ? fixedControlSize / aspect : fixedControlSize; // CHANGE
 		var cx = state.getCenterX();
 		var cy = state.getCenterY();
 	
@@ -1403,8 +1409,8 @@ mxCellRenderer.prototype.getControlBounds = function(state, w, h)
 		}
 		
 		return (state.view.graph.getModel().isEdge(state.cell)) ? 
-			new mxRectangle(Math.round(cx - w / 2 * s), Math.round(cy - h / 2 * s), Math.round(w * s), Math.round(h * s))
-			: new mxRectangle(Math.round(cx - w / 2 * s), Math.round(cy - h / 2 * s), Math.round(w * s), Math.round(h * s));
+			new mxRectangle(Math.round(cx - controlWidth / 2), Math.round(cy - controlHeight / 2), Math.round(controlWidth), Math.round(controlHeight))
+			: new mxRectangle(Math.round(cx - controlWidth / 2), Math.round(cy - controlHeight / 2), Math.round(controlWidth), Math.round(controlHeight));
 	}
 	
 	return null;

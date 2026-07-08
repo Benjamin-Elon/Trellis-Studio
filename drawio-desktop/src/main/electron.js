@@ -1,4 +1,4 @@
-// Trellis changes: file-system/database bridges, forked support/update URLs, updater guards, app-info/release metadata. // CHANGE
+// Trellis changes: file-system/database bridges, file-watch lifecycle management, forked support/update URLs, updater guards, app-info/release metadata. // CHANGE
 /*
  * Trellis update progress change (2026-06-24):
  * Download-only updater progress uses guarded helpers with indeterminate fallback,
@@ -25,9 +25,12 @@ import ProgressBar from 'electron-progressbar';
 import contextMenu from 'electron-context-menu';
 import { spawn } from 'child_process';
 import { disableUpdate as disUpPkg } from './disableUpdate.js';
+import { createFileWatchRegistry } from './fileWatchRegistry.js'; // CHANGE
 
 // (ADD): SQLite
 import Database from 'better-sqlite3';
+
+const fileWatchRegistry = createFileWatchRegistry(); // CHANGE
 
 try {
 	const drawioUserDataPath = path.join(app.getPath('appData'), 'draw.io'); // Trellis release: preserve the existing draw.io runtime profile.
@@ -608,6 +611,7 @@ function createWindow(opt = {}) {
 			console.log('Window closed idx:%d', index)
 		}
 
+		fileWatchRegistry.unwatchWindow(mainWindow); // CHANGE
 		windowsRegistry.splice(index, 1)
 	})
 
@@ -2550,25 +2554,16 @@ async function getTrellisReleases() { // NEW
 	} // NEW
 } // NEW
 
-function watchFile(filePath) {
-	let win = BrowserWindow.getFocusedWindow();
-
-	if (win) {
-		fs.watchFile(filePath, (curr, prev) => {
-			try {
-				win.webContents.send('fileChanged', {
-					path: filePath,
-					curr: curr,
-					prev: prev
-				});
-			}
-			catch (e) { } // Ignore
-		});
-	}
+function getRequestWindow(event) { // CHANGE
+	return event != null ? BrowserWindow.fromWebContents(event.sender) : null; // CHANGE
 }
 
-function unwatchFile(filePath) {
-	fs.unwatchFile(filePath);
+function watchFile(filePath, win) { // CHANGE
+	return fileWatchRegistry.watch(filePath, win); // CHANGE
+}
+
+function unwatchFile(filePath, win) { // CHANGE
+	fileWatchRegistry.unwatch(filePath, win); // CHANGE
 }
 
 ipcMain.on("rendererReq", async (event, args) => {
@@ -2654,10 +2649,10 @@ ipcMain.on("rendererReq", async (event, args) => {
 				ret = restoreBuiltInTrellisDatabase(); // NEW
 				break; // NEW
 			case 'watchFile':
-				ret = await watchFile(args.path);
+				ret = await watchFile(args.path, getRequestWindow(event)); // CHANGE
 				break;
 			case 'unwatchFile':
-				ret = await unwatchFile(args.path);
+				ret = await unwatchFile(args.path, getRequestWindow(event)); // CHANGE
 				break;
 			case 'exit':
 				app.quit();

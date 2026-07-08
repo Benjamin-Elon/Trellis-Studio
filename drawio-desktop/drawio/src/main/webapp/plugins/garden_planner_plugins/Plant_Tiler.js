@@ -1915,6 +1915,7 @@ Draw.loadPlugin(function (ui) {
         let settingsBtn = null; // CHANGE
         let addBedBtn = null; // CHANGE
         let addGroupBtn = null; // CHANGE
+        let marginBtn = null; // NEW
         let irrigationSourceBtn = null; // NEW
         let activeModuleCell = null; // CHANGE
         let activeBedCell = null; // CHANGE
@@ -1974,10 +1975,12 @@ Draw.loadPlugin(function (ui) {
             settingsBtn = makeButton("Set Garden Settings"); // CHANGE
             addBedBtn = makeButton("Add Garden Bed"); // CHANGE
             addGroupBtn = makeButton("Add New Plant Group"); // CHANGE
+            marginBtn = makeButton("Set Module Margin"); // NEW
             irrigationSourceBtn = makeButton("Create Irrigation Source"); // NEW
             toolbar.appendChild(settingsBtn); // CHANGE
             toolbar.appendChild(addBedBtn); // CHANGE
             toolbar.appendChild(addGroupBtn); // CHANGE
+            toolbar.appendChild(marginBtn); // NEW
             toolbar.appendChild(irrigationSourceBtn); // NEW
 
             mxEvent.addListener(settingsBtn, "click", async function (evt) { // CHANGE
@@ -2010,6 +2013,13 @@ Draw.loadPlugin(function (ui) {
                 hideToolbar(); // CHANGE
             }); // CHANGE
 
+            mxEvent.addListener(marginBtn, "click", function (evt) { // NEW
+                mxEvent.consume(evt); // NEW
+                const moduleCell = activeModuleCell; // NEW
+                if (!moduleCell || !isGardenModule(moduleCell)) return; // NEW
+                promptSetModuleMarginForModule(moduleCell); // NEW
+            }); // NEW
+
             mxEvent.addListener(irrigationSourceBtn, "click", function (evt) { // NEW
                 mxEvent.consume(evt); // NEW
                 const moduleCell = activeModuleCell; // NEW
@@ -2026,6 +2036,18 @@ Draw.loadPlugin(function (ui) {
         function hideToolbar() { // CHANGE
             if (toolbar) toolbar.style.display = "none"; // CHANGE
         } // CHANGE
+
+        function promptSetModuleMarginForModule(moduleCell) { // NEW
+            hideToolbar(); // NEW
+            const modulesApi = graph.__trellisModules; // NEW
+            if (modulesApi && typeof modulesApi.promptSetModuleMargin === "function") { // NEW
+                modulesApi.promptSetModuleMargin(moduleCell); // NEW
+                return; // NEW
+            } // NEW
+            if (graph.fireEvent && typeof mxEventObject === "function") { // NEW
+                graph.fireEvent(new mxEventObject("usl:requestPromptSetModuleMargin", "cell", moduleCell)); // NEW
+            } // NEW
+        } // NEW
 
         function gardenModuleHasIrrigationSource(moduleCell) { // NEW
             return collectModuleDescendants(moduleCell).some(function (cell) { // NEW
@@ -2179,13 +2201,14 @@ Draw.loadPlugin(function (ui) {
 
         function syncToolbarState() { // CHANGE
             const moduleCell = activeModuleCell; // CHANGE
-            if (!toolbar || !settingsBtn || !addBedBtn || !addGroupBtn || !irrigationSourceBtn || !moduleCell) return; // CHANGE
+            if (!toolbar || !settingsBtn || !addBedBtn || !addGroupBtn || !marginBtn || !irrigationSourceBtn || !moduleCell) return; // CHANGE
             const hasSettings = hasGardenSettingsSet(moduleCell); // CHANGE
             const bedMode = activeOverlayMode === "bed"; // CHANGE
             const showIrrigationSource = !bedMode && !gardenModuleHasIrrigationSource(moduleCell); // NEW
             settingsBtn.style.display = bedMode ? "none" : ""; // CHANGE
             addBedBtn.style.display = bedMode ? "none" : ""; // CHANGE
             addGroupBtn.style.display = ""; // CHANGE
+            marginBtn.style.display = bedMode ? "none" : ""; // NEW
             irrigationSourceBtn.style.display = showIrrigationSource ? "" : "none"; // NEW
             settingsBtn.textContent = hasSettings ? "Edit Garden Settings" : "Set Garden Settings"; // CHANGE
             addBedBtn.disabled = !hasSettings; // CHANGE

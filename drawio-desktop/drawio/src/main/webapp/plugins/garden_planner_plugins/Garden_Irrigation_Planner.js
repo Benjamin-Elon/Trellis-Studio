@@ -71,6 +71,11 @@ Draw.loadPlugin(function (ui) {
     const FIXED_CONNECTOR_TYPES = ["mght", "fght", "mpt", "fpt", "barb", "twist_lock", "push_connect"]; // CHANGE
     const PIPE_CONNECTOR_TYPES = new Set(["barb", "twist_lock", "push_connect"]); // NEW
     const FIXED_CONNECTOR_SIZES = ["1/4", "1/2", "3/4", "1"]; // NEW
+    const PIPE_EDGE_BASE_STYLE = "edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#2f80ed;"; // NEW
+    const GENERATED_PIPE_EDGE_BASE_STYLE = "edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4d8f6f;"; // NEW
+    const DIRECT_LINK_EDGE_STYLE = "edgeStyle=orthogonalEdgeStyle;rounded=0;dashed=1;html=1;strokeColor=#7c3aed;"; // NEW
+    const PIPE_EDGE_STROKE_UNIT_IN = 0.25; // NEW
+    const PIPE_EDGE_MAX_STROKE_WIDTH = 12; // NEW
     const PART_CATEGORIES = [
         "source_adapter",
         "pump",
@@ -327,6 +332,28 @@ Draw.loadPlugin(function (ui) {
         else cell.value = node;
         return true; // NEW
     }
+
+    function setCellStyle(cell, style) { // NEW
+        if (!cell) return false; // NEW
+        const next = String(style || ""); // NEW
+        if (String(cell.style || "") === next) return false; // NEW
+        if (model.setStyle) model.setStyle(cell, next); // NEW
+        else cell.style = next; // NEW
+        return true; // NEW
+    } // NEW
+
+    function styleValue(style, key) { // NEW
+        const prefix = String(key || "") + "="; // NEW
+        const token = String(style || "").split(";").find(function (part) { return part.indexOf(prefix) === 0; }); // NEW
+        return token ? token.slice(prefix.length) : ""; // NEW
+    } // NEW
+
+    function setStyleValue(style, key, value) { // NEW
+        const prefix = String(key || "") + "="; // NEW
+        const parts = String(style || "").split(";").filter(function (part) { return part && part.indexOf(prefix) !== 0; }); // NEW
+        if (value != null && value !== "") parts.push(prefix + value); // NEW
+        return parts.length ? parts.join(";") + ";" : ""; // NEW
+    } // NEW
 
     function getCellAttr(cell, key, fallback) {
         if (!cell || !cell.getAttribute) return fallback || "";
@@ -647,6 +674,30 @@ Draw.loadPlugin(function (ui) {
         const n = Number(value);
         return Number.isFinite(n) ? n : fallback;
     }
+
+    function nominalSizeInchesForPipeStyle(value) { // NEW
+        const text = String(value || "").trim(); // NEW
+        if (!text) return null; // NEW
+        const fraction = text.match(/^([0-9]+(?:\.[0-9]+)?)\/([0-9]+(?:\.[0-9]+)?)$/); // NEW
+        if (fraction) { // NEW
+            const numerator = finiteNumber(fraction[1], null); // NEW
+            const denominator = finiteNumber(fraction[2], null); // NEW
+            return numerator > 0 && denominator > 0 ? numerator / denominator : null; // NEW
+        } // NEW
+        const decimal = finiteNumber(text, null); // NEW
+        return decimal > 0 ? decimal : null; // NEW
+    } // NEW
+
+    function formatStyleNumber(value) { // NEW
+        const rounded = Math.round(finiteNumber(value, 0) * 100) / 100; // NEW
+        return String(rounded).replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1"); // NEW
+    } // NEW
+
+    function pipeEdgeStrokeWidthForSize(value) { // NEW
+        const inches = nominalSizeInchesForPipeStyle(value); // NEW
+        if (!(inches > 0)) return ""; // NEW
+        return formatStyleNumber(Math.min(PIPE_EDGE_MAX_STROKE_WIDTH, Math.max(1, inches / PIPE_EDGE_STROKE_UNIT_IN))); // NEW
+    } // NEW
 
     function sanitizeId(value) {
         return String(value || "")
@@ -1455,7 +1506,7 @@ Draw.loadPlugin(function (ui) {
         let edge = null; // FIX
         programmaticEdgeInsertDepth++; // FIX
         try { // FIX
-            edge = createEdge(moduleCell, decision.sourceCell, decision.targetCell, "", decision.mode === "pipe" ? "edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#2f80ed;" : "edgeStyle=orthogonalEdgeStyle;rounded=0;dashed=1;html=1;strokeColor=#7c3aed;", attrs); // CHANGE
+            edge = createEdge(moduleCell, decision.sourceCell, decision.targetCell, "", decision.mode === "pipe" ? pipeEdgeStyleForPart(moduleCell, decision.pipePartId, PIPE_EDGE_BASE_STYLE) : DIRECT_LINK_EDGE_STYLE, attrs); // CHANGE
         } finally { // FIX
             programmaticEdgeInsertDepth = Math.max(0, programmaticEdgeInsertDepth - 1); // FIX
         } // FIX
@@ -1490,9 +1541,10 @@ Draw.loadPlugin(function (ui) {
             const pipePartId = String(decision.pipePartId || "").trim(); // CHANGE
             if (!pipePartId) return; // CHANGE
             setCellAttrs(edge, { [ATTRS.PIPE_EDGE]: "1", [ATTRS.DIRECT_LINK_EDGE]: "", [ATTRS.PIPE_PART_ID]: pipePartId, [ATTRS.EDGE_SOURCE_PORT]: String(decision.source.index), [ATTRS.EDGE_TARGET_PORT]: String(decision.target.index) }); // CHANGE
+            applyPipeEdgeStyle(edge, findGardenModuleAncestor(edge), pipePartId, PIPE_EDGE_BASE_STYLE); // CHANGE
             return; // CHANGE
         } // CHANGE
-        else setCellAttrs(edge, { [ATTRS.PIPE_EDGE]: "", [ATTRS.DIRECT_LINK_EDGE]: "1", [ATTRS.PIPE_PART_ID]: "", [ATTRS.EDGE_SOURCE_PORT]: String(decision.source.index), [ATTRS.EDGE_TARGET_PORT]: String(decision.target.index) }); // NEW
+        else { setCellAttrs(edge, { [ATTRS.PIPE_EDGE]: "", [ATTRS.DIRECT_LINK_EDGE]: "1", [ATTRS.PIPE_PART_ID]: "", [ATTRS.EDGE_SOURCE_PORT]: String(decision.source.index), [ATTRS.EDGE_TARGET_PORT]: String(decision.target.index) }); applyDirectLinkEdgeStyle(edge); } // CHANGE
     } // NEW
 
     function existingEdgeConnectionDecision(moduleCell, sourcePort, targetPort) { // NEW
@@ -2171,6 +2223,7 @@ Draw.loadPlugin(function (ui) {
             [ATTRS.PATH_ID]: pathId,
             [ATTRS.GENERATED]: "1"
         });
+        applyPipeEdgeStyle(edge, findGardenModuleAncestor(edge), pipePartId || "", GENERATED_PIPE_EDGE_BASE_STYLE); // CHANGE
     }
 
     function commitStagedPath(moduleCell, stagedPath) {
@@ -2213,7 +2266,7 @@ Draw.loadPlugin(function (ui) {
             const chain = [sourceEndpoint].concat(createdComponents).concat([targetEndpoint]).filter(Boolean);
             const reusableEdges = findReusableCells(moduleCell, path.pipeEdgeIds, Math.max(0, chain.length - 1));
             for (let i = 0; i < chain.length - 1; i++) {
-                const edge = reusableEdges[i] || createEdge(parent, chain[i], chain[i + 1], "", "edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4d8f6f;", {});
+                const edge = reusableEdges[i] || createEdge(parent, chain[i], chain[i + 1], "", pipeEdgeStyleForPart(moduleCell, path.pipePartId, GENERATED_PIPE_EDGE_BASE_STYLE), {}); // CHANGE
                 if (edge) {
                     edge.source = chain[i];
                     edge.target = chain[i + 1];
@@ -3190,6 +3243,25 @@ Draw.loadPlugin(function (ui) {
     function catalogPipeSize(part) { // NEW
         const p = normalizeCatalogPart(part); // NEW
         return p && p.connectors && ((p.connectors.input && p.connectors.input.nominalSize) || (p.connectors.output && p.connectors.output.nominalSize)) || "3/4"; // NEW
+    } // NEW
+
+    function pipeVisualNominalSize(part) { // NEW
+        const p = normalizeCatalogPart(part); // NEW
+        return p && p.connectors && ((p.connectors.input && p.connectors.input.nominalSize) || (p.connectors.output && p.connectors.output.nominalSize)) || ""; // NEW
+    } // NEW
+
+    function pipeEdgeStyleForPart(moduleCell, pipePartId, baseStyle) { // NEW
+        const pipe = partById(readCatalog(moduleCell), pipePartId); // NEW
+        const strokeWidth = pipeEdgeStrokeWidthForSize(pipeVisualNominalSize(pipe)); // NEW
+        return strokeWidth ? setStyleValue(baseStyle || PIPE_EDGE_BASE_STYLE, "strokeWidth", strokeWidth) : (baseStyle || PIPE_EDGE_BASE_STYLE); // NEW
+    } // NEW
+
+    function applyPipeEdgeStyle(edge, moduleCell, pipePartId, baseStyle) { // NEW
+        return setCellStyle(edge, pipeEdgeStyleForPart(moduleCell, pipePartId, baseStyle)); // NEW
+    } // NEW
+
+    function applyDirectLinkEdgeStyle(edge) { // NEW
+        return setCellStyle(edge, DIRECT_LINK_EDGE_STYLE); // NEW
     } // NEW
 
     function buildCatalogPartForm(part, moduleCell, onCategoryChange) { // CHANGE
@@ -4588,6 +4660,10 @@ Draw.loadPlugin(function (ui) {
         return createPipeBoundsHighlight(edge); // NEW
     } // NEW
 
+    function pipeHighlightStrokeWidth(edge) { // NEW
+        return Math.max(7, finiteNumber(styleValue(edge && edge.style, "strokeWidth"), 3) + 4); // NEW
+    } // NEW
+
     function edgeAbsolutePoints(edge) { // NEW
         const state = graph.view && graph.view.getState ? graph.view.getState(edge) : null; // NEW
         const raw = state && Array.isArray(state.absolutePoints) ? state.absolutePoints : []; // NEW
@@ -4595,7 +4671,8 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function createPipePolylineHighlight(edge, points) { // NEW
-        const bounds = pointBounds(points, 8); // NEW
+        const highlightWidth = pipeHighlightStrokeWidth(edge); // NEW
+        const bounds = pointBounds(points, highlightWidth + 1); // CHANGE
         const svg = document.createElementNS ? document.createElementNS("http://www.w3.org/2000/svg", "svg") : document.createElement("div"); // NEW
         if (svg.setAttribute) svg.setAttribute("class", "trellis-irrigation-selected-pipe-highlight"); // CHANGE
         if (svg.setAttribute) svg.setAttribute("data-edge-id", getCellId(edge) || ""); // NEW
@@ -4605,7 +4682,7 @@ Draw.loadPlugin(function (ui) {
         line.setAttribute("points", points.map(function (point) { return (point.x - bounds.x) + "," + (point.y - bounds.y); }).join(" ")); // NEW
         line.setAttribute("fill", "none"); // NEW
         line.setAttribute("stroke", "#f59e0b"); // NEW
-        line.setAttribute("stroke-width", "7"); // NEW
+        line.setAttribute("stroke-width", formatStyleNumber(highlightWidth)); // CHANGE
         line.setAttribute("stroke-linecap", "round"); // NEW
         line.setAttribute("stroke-linejoin", "round"); // NEW
         line.setAttribute("opacity", ".72"); // NEW
@@ -4617,10 +4694,11 @@ Draw.loadPlugin(function (ui) {
         const state = cellState(edge); // NEW
         const width = Math.max(12, finiteNumber(state.width, 0)); // NEW
         const height = Math.max(12, finiteNumber(state.height, 0)); // NEW
+        const borderWidth = Math.max(3, Math.ceil(pipeHighlightStrokeWidth(edge) / 2)); // NEW
         const node = document.createElement("div"); // NEW
         node.className = "trellis-irrigation-selected-pipe-highlight"; // NEW
         node.setAttribute("data-edge-id", getCellId(edge) || ""); // NEW
-        node.style.cssText = "position:absolute;z-index:999;left:" + Math.round(finiteNumber(state.x, 0) - 4) + "px;top:" + Math.round(finiteNumber(state.y, 0) - 4) + "px;width:" + Math.round(width + 8) + "px;height:" + Math.round(height + 8) + "px;pointer-events:none;border:3px solid #f59e0b;border-radius:6px;box-shadow:0 0 0 3px rgba(245,158,11,.20);box-sizing:border-box;"; // NEW
+        node.style.cssText = "position:absolute;z-index:999;left:" + Math.round(finiteNumber(state.x, 0) - borderWidth - 1) + "px;top:" + Math.round(finiteNumber(state.y, 0) - borderWidth - 1) + "px;width:" + Math.round(width + (borderWidth + 1) * 2) + "px;height:" + Math.round(height + (borderWidth + 1) * 2) + "px;pointer-events:none;border:" + borderWidth + "px solid #f59e0b;border-radius:6px;box-shadow:0 0 0 3px rgba(245,158,11,.20);box-sizing:border-box;"; // CHANGE
         return node; // NEW
     } // NEW
 
