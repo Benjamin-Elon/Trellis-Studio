@@ -76,3 +76,16 @@ test('Garden module overlay routes module margin editing through the Modules API
     assert.match(source, /marginBtn\.style\.display = bedMode \? "none" : "";/); // NEW
     assert.match(source, /if \(!toolbar \|\| !settingsBtn \|\| !addBedBtn \|\| !addGroupBtn \|\| !marginBtn \|\| !irrigationSourceBtn \|\| !moduleCell\) return;/); // NEW
 }); // NEW
+
+test('Garden module overlay repeated selected-module clicks toggle visibility without changing selection', () => { // NEW
+    const source = readPlantTilerSource(); // NEW
+
+    assert.match(source, /let manuallyHiddenModuleCell = null;/); // NEW
+    assert.match(source, /let pendingSelectedModuleToggle = null;/); // NEW
+    assert.match(source, /function selectedGardenModulePlainClickTarget\(me, evt\) \{[\s\S]*const selectedModule = getSingleSelectedGardenModule\(\);[\s\S]*if \(activeOverlayMode !== "module" \|\| activeModuleCell !== selectedModule\) return null;[\s\S]*return mouseEventCell\(me, evt\) === selectedModule \? selectedModule : null;/); // CHANGE
+    assert.match(source, /function clearHiddenModuleIfTargetChanged\(target\) \{[\s\S]*if \(!target \|\| target\.mode !== "module" \|\| target\.moduleCell !== manuallyHiddenModuleCell\) manuallyHiddenModuleCell = null;/); // NEW
+    assert.match(source, /function toggleHiddenModuleAfterSimpleClick\(evt\) \{[\s\S]*manuallyHiddenModuleCell = manuallyHiddenModuleCell === pending \? null : pending;/); // NEW
+    assert.match(source, /pendingSelectedModuleToggle = selectedGardenModulePlainClickTarget\(me, evt\);/); // NEW
+    assert.match(source, /toggleHiddenModuleAfterSimpleClick\(evt\);/); // NEW
+    assert.match(source, /clearHiddenModuleIfTargetChanged\(target\);[\s\S]*if \(target\.mode === "module" && target\.moduleCell === manuallyHiddenModuleCell\) \{ hideToolbar\(\); return; \}/); // NEW
+}); // NEW

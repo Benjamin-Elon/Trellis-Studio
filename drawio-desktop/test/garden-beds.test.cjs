@@ -135,8 +135,31 @@ function chooseDialogPreset(ui, key) { // NEW
     presetSelect.dispatchEvent(new ui.lastDialog.ownerDocument.defaultView.Event("change")); // NEW
 } // NEW
 
+function getDialogSection(ui, title) { // ADDED
+    const body = ui.lastDialog.querySelector("[data-bed-conditions-dialog-body='1']"); // ADDED
+    assert.ok(body, "missing dialog body"); // ADDED
+    const section = Array.from(body.children).find(child => child.firstChild && child.firstChild.textContent === title); // ADDED
+    assert.ok(section, "missing dialog section " + title); // ADDED
+    return section; // ADDED
+} // ADDED
+
+function getSectionFieldLabels(ui, title) { // ADDED
+    return Array.from(getDialogSection(ui, title).children) // ADDED
+        .filter(child => child.tagName === "LABEL") // ADDED
+        .map(child => child.firstChild.textContent); // ADDED
+} // ADDED
+
+function getDialogFieldControl(ui, labelText) { // ADDED
+    const labels = Array.from(ui.lastDialog.querySelectorAll("label")); // ADDED
+    const label = labels.find(entry => entry.firstChild && entry.firstChild.textContent === labelText); // ADDED
+    assert.ok(label, "missing dialog field " + labelText); // ADDED
+    const control = label.querySelector("select, input, textarea"); // ADDED
+    assert.ok(control, "missing dialog control " + labelText); // ADDED
+    return control; // ADDED
+} // ADDED
+
 function chooseSeasonExtension(ui, value) { // ADDED
-    const seasonSelect = ui.lastDialog.querySelectorAll("select")[8]; // ADDED
+    const seasonSelect = getDialogFieldControl(ui, "Season extension"); // CHANGE
     assert.ok(seasonSelect, "missing season extension select"); // ADDED
     seasonSelect.value = value; // ADDED
     seasonSelect.dispatchEvent(new ui.lastDialog.ownerDocument.defaultView.Event("change")); // ADDED
@@ -181,7 +204,7 @@ test("bed conditions persist, mirror, and clear safely", () => { // CHANGE
     assert.equal(bed.getAttribute("trellis"), "available"); // NEW
     assert.equal(bed.getAttribute("season_extension"), "unknown"); // NEW
     assert.equal(bed.getAttribute("crop_protection"), "unknown"); // NEW
-    assert.deepEqual(stored.tags, ["near_path"]); // NEW
+    assert.equal(Object.prototype.hasOwnProperty.call(stored, "tags"), false); // CHANGE
 
     const effective = api.getDisplayBedConditions(bed); // CHANGE
     assert.equal(effective.sunExposure, "part_shade"); // NEW
@@ -190,6 +213,7 @@ test("bed conditions persist, mirror, and clear safely", () => { // CHANGE
     assert.equal(effective.trellis, "available"); // NEW
     assert.equal(effective.seasonExtension, "unknown"); // NEW
     assert.equal(effective.cropProtection, "unknown"); // NEW
+    assert.equal(Object.prototype.hasOwnProperty.call(effective, "tags"), false); // ADDED
 
     api.clearBedConditions(bed); // NEW
     assert.equal(bed.getAttribute("bed_conditions_json"), null); // NEW
@@ -232,6 +256,17 @@ test("invalid JSON and invalid enum values normalize to non-throwing fallbacks",
     assert.equal(api._test.normalizeProfile({ sunExposure: "lava", trellis: "maybe" }).sunExposure, "unknown"); // NEW
     assert.equal(api._test.normalizeProfile({ sunExposure: "lava", trellis: "maybe" }).trellis, "unknown"); // CHANGE
 }); // NEW
+
+test("legacy tags are tolerated but omitted from normalized bed profiles", () => { // ADDED
+    const { api, bed } = loadPlugin(); // ADDED
+    bed.value.setAttribute("bed_conditions_json", JSON.stringify({ tags: ["near_path"], notes: "Legacy note" })); // ADDED
+
+    assert.equal(api.readBedConditions(bed).notes, "Legacy note"); // ADDED
+    assert.equal(Object.prototype.hasOwnProperty.call(api.readBedConditions(bed), "tags"), false); // ADDED
+    const stored = api.writeBedConditions(bed, api.readBedConditions(bed)); // ADDED
+    assert.equal(Object.prototype.hasOwnProperty.call(stored, "tags"), false); // ADDED
+    assert.equal(Object.prototype.hasOwnProperty.call(JSON.parse(bed.getAttribute("bed_conditions_json")), "tags"), false); // ADDED
+}); // ADDED
 
 test("bed dialog exposes copy, paste, and clear actions", () => { // CHANGE
     const setup = loadPlugin(); // NEW
@@ -306,7 +341,7 @@ test("preset identity persists as selected baseline until cleared", () => { // C
     assert.equal(stored.presetKey, "sunny_vegetable"); // NEW
 
     api._test.showConditionEditorDialog(bed); // NEW
-    ui.lastDialog.querySelectorAll("select")[1].value = "shade"; // NEW
+    getDialogFieldControl(ui, "Sun exposure").value = "shade"; // CHANGE
     getDialogButton(ui, "Save").click(); // NEW
     stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // NEW
     assert.equal(stored.presetKey, "sunny_vegetable"); // CHANGE
@@ -320,7 +355,7 @@ test("preset identity persists as selected baseline until cleared", () => { // C
 
     api._test.showConditionEditorDialog(bed); // NEW
     chooseDialogPreset(ui, "sunny_vegetable"); // NEW
-    ui.lastDialog.querySelectorAll("select")[10].value = "sheltered"; // CHANGE
+    getDialogFieldControl(ui, "Wind exposure").value = "sheltered"; // CHANGE
     getDialogButton(ui, "Save").click(); // NEW
     stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // NEW
     assert.equal(stored.presetKey, "sunny_vegetable"); // NEW
@@ -345,7 +380,7 @@ test("greenhouse preset persists new infrastructure fields and allows extra prot
     assert.equal(bed.getAttribute("crop_protection"), "unknown"); // NEW
 
     api._test.showConditionEditorDialog(bed); // NEW
-    ui.lastDialog.querySelectorAll("select")[9].value = "shade_cloth"; // NEW
+    getDialogFieldControl(ui, "Crop protection").value = "shade_cloth"; // CHANGE
     getDialogButton(ui, "Save").click(); // NEW
     stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // NEW
     assert.equal(stored.presetKey, "greenhouse"); // NEW
@@ -420,7 +455,28 @@ test("overlay summary shows presets, extras, and set values without unknowns", (
         { label: "Irrigation", value: "Drip" }, // NEW
         { label: "Bed use", value: "Perennials" } // NEW
     ]); // NEW
+
+    rows = api._test.buildOverlayRows(api.writeBedConditions(bed, { // ADDED
+        irrigation: "drip", // ADDED
+        notes: "Water deeply after transplanting." // ADDED
+    })); // ADDED
+    assert.deepEqual(plainRows(rows), [ // ADDED
+        { label: "Irrigation", value: "Drip" }, // ADDED
+        { type: "notes", label: "Notes", value: "Water deeply after transplanting." } // ADDED
+    ]); // ADDED
 }); // NEW
+
+test("selected bed overlay renders notes as a labeled bottom block", () => { // ADDED
+    const { api, bed, graph } = loadPlugin(); // ADDED
+    api.writeBedConditions(bed, { irrigation: "drip", notes: "Water deeply after transplanting." }); // ADDED
+
+    graph.getSelectionCells = () => [bed]; // ADDED
+    api._test.syncSelectedBedOverlays(); // ADDED
+    const overlay = getSelectedBedOverlays(graph)[0]; // ADDED
+    const blocks = Array.from(overlay.children).map(child => child.textContent); // ADDED
+    assert.equal(blocks[blocks.length - 1], "NotesWater deeply after transplanting."); // ADDED
+    assert.match(overlay.textContent, /IrrigationDripNotesWater deeply after transplanting\.$/); // ADDED
+}); // ADDED
 
 test("season extension defaults and overrides normalize for scheduler use", () => { // NEW
     const { api } = loadPlugin(); // NEW
@@ -522,6 +578,28 @@ test("advanced season extension controls sit at the bottom of infrastructure", (
     assert.ok(advanced, "missing advanced section"); // ADDED
     assert.equal(advanced.parentNode.firstChild.textContent, "Infrastructure"); // ADDED
     assert.equal(advanced.parentNode.lastElementChild, advanced); // ADDED
+}); // ADDED
+
+test("wind exposure and frost risk live under growing conditions", () => { // ADDED
+    const { api, bed, ui } = loadPlugin(); // ADDED
+    api._test.showConditionEditorDialog(bed); // ADDED
+
+    assert.deepEqual(getSectionFieldLabels(ui, "Growing Conditions"), [ // ADDED
+        "Sun exposure", // ADDED
+        "Wind exposure", // ADDED
+        "Frost risk", // ADDED
+        "Soil moisture", // ADDED
+        "Drainage", // ADDED
+        "Soil texture", // ADDED
+        "Fertility" // ADDED
+    ]); // ADDED
+    assert.deepEqual(getSectionFieldLabels(ui, "Infrastructure"), [ // ADDED
+        "Irrigation", // ADDED
+        "Trellis", // ADDED
+        "Season extension", // ADDED
+        "Crop protection" // ADDED
+    ]); // ADDED
+    assert.deepEqual(getSectionFieldLabels(ui, "Use"), ["Bed use", "Notes"]); // ADDED
 }); // ADDED
 
 test("bed condition dialog caps to viewport and scrolls its body", () => { // ADDED
