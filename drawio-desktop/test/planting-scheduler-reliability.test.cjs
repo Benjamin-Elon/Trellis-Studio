@@ -2900,6 +2900,36 @@ test('card date menu eligibility includes work lanes and excludes completed lane
     immutable.forEach(lane => assert.equal(taskHooks.isEditableCardDateLane(lane), false, String(lane)));
 });
 
+test('kanban parenting policy allows only canonical board lane and lane card structure', () => { // NEW
+    const board = { id: 'board', board_key: 'KANBAN_BOARD' }; // NEW
+    const legacyBoard = { id: 'legacy-board', board_key: 'MAIN_KANBAN_BOARD' }; // NEW
+    const todoLane = { id: 'todo-lane', lane_key: 'TODO' }; // NEW
+    const otherTodoLane = { id: 'other-todo-lane', lane_key: 'TODO' }; // NEW
+    const doingLane = { id: 'doing-lane', lane_key: 'DOING' }; // NEW
+    const unknownLane = { id: 'unknown-lane', lane_key: 'CUSTOM' }; // NEW
+    const card = { id: 'card', kanban_card: '1' }; // NEW
+    const generic = { id: 'shape' }; // NEW
+
+    assert.equal(taskHooks.getKanbanCellType(board), 'board'); // NEW
+    assert.equal(taskHooks.getKanbanCellType(legacyBoard), 'board'); // NEW
+    assert.equal(taskHooks.getKanbanCellType(todoLane), 'lane'); // NEW
+    assert.equal(taskHooks.getKanbanCellType(card), 'card'); // NEW
+    assert.equal(taskHooks.getKanbanCellType(unknownLane), 'other'); // NEW
+
+    assert.equal(taskHooks.canParentKanbanCell(board, todoLane, { siblings: [] }), true); // NEW
+    assert.equal(taskHooks.canParentKanbanCell(board, doingLane, { siblings: [todoLane] }), true); // NEW
+    assert.equal(taskHooks.canParentKanbanCell(board, todoLane, { siblings: [todoLane] }), true); // NEW
+    assert.equal(taskHooks.canParentKanbanCell(board, otherTodoLane, { siblings: [todoLane] }), false); // NEW
+    assert.equal(taskHooks.canParentKanbanCell(board, card, { siblings: [] }), false); // NEW
+    assert.equal(taskHooks.canParentKanbanCell(board, generic, { siblings: [] }), false); // NEW
+    assert.equal(taskHooks.canParentKanbanCell(todoLane, card, { siblings: [] }), true); // NEW
+    assert.equal(taskHooks.canParentKanbanCell(todoLane, generic, { siblings: [] }), false); // NEW
+    assert.equal(taskHooks.canParentKanbanCell(todoLane, doingLane, { siblings: [] }), false); // NEW
+    assert.equal(taskHooks.canParentKanbanCell(generic, card, { siblings: [] }), false); // NEW
+    assert.equal(taskHooks.canParentKanbanCell(generic, todoLane, { siblings: [] }), false); // NEW
+    assert.equal(taskHooks.canParentKanbanCell(generic, board, { siblings: [] }), true); // NEW
+}); // NEW
+
 test('scheduler regeneration creates a fresh baseline without preserving an override', () => {
     const overridden = taskHooks.buildCardDateOverridePatch(
         {
@@ -3000,6 +3030,14 @@ test('manual date actions still use reflow and edited badge rendering', () => {
     assert.match(source, /renderBadge\('Dates',\s*'Edited'\)/);
     assert.match(source, /const PROTECTED_WORK_LANES = new Set\(\['TODO',\s*'DOING'\]\)/);
 });
+
+test('task manager installs kanban parenting drop and move guards', () => { // NEW
+    const source = fs.readFileSync(taskManagerPath, 'utf8'); // NEW
+    assert.match(source, /function installKanbanParentingGuards\(\)/); // NEW
+    assert.match(source, /graph\.isValidDropTarget = function \(target,\s*cells,\s*evt\)/); // NEW
+    assert.match(source, /graph\.moveCells = function \(cells,\s*dx,\s*dy,\s*clone,\s*target,\s*evt,\s*mapping\)/); // NEW
+    assert.match(source, /installKanbanParentingGuards\(\);/); // NEW
+}); // NEW
 
 test('save path passes the in-memory task template to graph application', () => { // CHANGED
     const source = fs.readFileSync(schedulerPath, 'utf8');

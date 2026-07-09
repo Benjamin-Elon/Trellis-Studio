@@ -18,6 +18,24 @@ function applyImmediateTaskReplacement({ targetGroupId, tasks, removeTasks, crea
 const CARD_NOTE_ATTR = 'card_note'; // NEW: user annotation kept separate from scheduler task notes
 const CARD_NOTE_MAX_LENGTH = 40; // NEW
 
+const KANBAN_BOARD_KEY = 'KANBAN_BOARD'; // NEW: shared by runtime guards and pure policy tests
+const LEGACY_KANBAN_BOARD_KEY = 'MAIN_KANBAN_BOARD'; // NEW: preserve recognition of older board cells
+const KANBAN_LANE_DEFS = [ // NEW: canonical lane types used by template creation and parenting policy
+    { key: 'UPCOMING_FUTURE', label: 'UPCOMING (future)' }, // NEW
+    { key: 'UPCOMING_YEAR', label: 'UPCOMING (year)' }, // NEW
+    { key: 'UPCOMING_MONTH', label: 'UPCOMING (month)' }, // NEW
+    { key: 'UPCOMING_WEEK', label: 'UPCOMING (week)' }, // NEW
+    { key: 'TODO_STAGED', label: 'TODO (staged)' }, // NEW
+    { key: 'TODO', label: 'TODO' }, // NEW
+    { key: 'DOING', label: 'DOING' }, // NEW
+    { key: 'DONE', label: 'DONE' }, // NEW
+    { key: 'DONE_WEEK', label: 'DONE (week)' }, // NEW
+    { key: 'DONE_MONTH', label: 'DONE (month)' }, // NEW
+    { key: 'DONE_YEAR', label: 'DONE (year)' }, // NEW
+    { key: 'ARCHIVED', label: 'ARCHIVED' } // NEW
+]; // NEW
+const KANBAN_LANE_KEYS = KANBAN_LANE_DEFS.map(lane => lane.key); // NEW
+
 const EDITABLE_CARD_DATE_LANES = new Set([ // NEW: completed lanes intentionally remain immutable in version one
     'UPCOMING_FUTURE',
     'UPCOMING_YEAR',
@@ -69,6 +87,50 @@ function readAttributeValue(source, key) { // CHANGE: supports XML cells and pla
     if (source && typeof source.getAttribute === 'function') return source.getAttribute(key);
     return source && Object.prototype.hasOwnProperty.call(source, key) ? source[key] : null;
 }
+
+function isKnownKanbanLaneKey(laneKey, laneKeys) { // NEW: policy accepts only canonical lane types
+    const keys = Array.isArray(laneKeys) ? laneKeys : KANBAN_LANE_KEYS; // NEW
+    return keys.includes(String(laneKey || '')); // NEW
+} // NEW
+
+function getKanbanCellType(source, laneKeys) { // NEW: pure classifier for board/lane/card parenting policy
+    const boardKey = String(readAttributeValue(source, 'board_key') || ''); // NEW
+    if (boardKey === KANBAN_BOARD_KEY || boardKey === LEGACY_KANBAN_BOARD_KEY) return 'board'; // NEW
+    if (isKnownKanbanLaneKey(readAttributeValue(source, 'lane_key'), laneKeys)) return 'lane'; // NEW
+    if (String(readAttributeValue(source, 'kanban_card') || '') === '1') return 'card'; // NEW
+    return 'other'; // NEW
+} // NEW
+
+function isSameKanbanPolicyCell(left, right) { // NEW: ignore the moved lane itself when checking duplicates
+    if (left === right) return true; // NEW
+    const leftId = left && left.id != null ? String(left.id) : ''; // NEW
+    const rightId = right && right.id != null ? String(right.id) : ''; // NEW
+    return !!leftId && leftId === rightId; // NEW
+} // NEW
+
+function hasDuplicateKanbanLaneSibling(parent, child, siblings, laneKeys) { // NEW: boards may contain one lane per type
+    const childLaneKey = String(readAttributeValue(child, 'lane_key') || ''); // NEW
+    if (!childLaneKey || !isKnownKanbanLaneKey(childLaneKey, laneKeys)) return false; // NEW
+    return (Array.isArray(siblings) ? siblings : []).some(sibling => // NEW
+        !isSameKanbanPolicyCell(sibling, child) && // NEW
+        getKanbanCellType(sibling, laneKeys) === 'lane' && // NEW
+        String(readAttributeValue(sibling, 'lane_key') || '') === childLaneKey // NEW
+    ); // NEW
+} // NEW
+
+function canParentKanbanCell(parent, child, opts) { // NEW: single source of truth for kanban parent-child legality
+    const laneKeys = opts && opts.laneKeys; // NEW
+    const siblings = opts && opts.siblings; // NEW
+    const parentType = getKanbanCellType(parent, laneKeys); // NEW
+    const childType = getKanbanCellType(child, laneKeys); // NEW
+
+    if (parentType === 'board') { // NEW
+        return childType === 'lane' && !hasDuplicateKanbanLaneSibling(parent, child, siblings, laneKeys); // NEW
+    } // NEW
+    if (parentType === 'lane') return childType === 'card'; // NEW
+    if (childType === 'lane' || childType === 'card') return false; // NEW
+    return true; // NEW
+} // NEW
 
 function normalizeCardNote(value) { // NEW: normalize badge text and truncate by Unicode code point
     const collapsed = String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
@@ -389,7 +451,9 @@ if (typeof globalThis !== 'undefined' && globalThis.__TRELLIS_TASK_MANAGER_TEST_
         buildRepeatSeriesKey, // NEW
         compareRepeatOccurrenceRecords, // NEW
         isCardVisibilityEligible, // NEW
-        planRepeatSeriesVisibility // NEW
+        planRepeatSeriesVisibility, // CHANGE
+        getKanbanCellType, // NEW
+        canParentKanbanCell // NEW
     };
 }
 
@@ -397,7 +461,7 @@ Draw.loadPlugin(function (ui) {
     const graph = ui.editor.graph;
     const model = graph.getModel();
 
-    const BOARD_KEY = 'KANBAN_BOARD';
+    const BOARD_KEY = KANBAN_BOARD_KEY; // CHANGE
     const BOARD_ROLE_ATTR = 'board_role';
     const TG_COMPLETED_ATTR = 'tg_completed';                                            // NEW
 
@@ -434,20 +498,7 @@ Draw.loadPlugin(function (ui) {
     const REPEAT_EXPANDED_ATTR = 'repeat_expanded'; // NEW
     const REPEAT_BADGE_ATTR = 'repeat_badge'; // NEW
 
-    const LANES = [
-        { key: 'UPCOMING_FUTURE', label: 'UPCOMING (future)' }, // NEW
-        { key: 'UPCOMING_YEAR', label: 'UPCOMING (year)' },
-        { key: 'UPCOMING_MONTH', label: 'UPCOMING (month)' },
-        { key: 'UPCOMING_WEEK', label: 'UPCOMING (week)' },
-        { key: 'TODO_STAGED', label: 'TODO (staged)' },
-        { key: 'TODO', label: 'TODO' },
-        { key: 'DOING', label: 'DOING' },
-        { key: 'DONE', label: 'DONE' },
-        { key: 'DONE_WEEK', label: 'DONE (week)' },
-        { key: 'DONE_MONTH', label: 'DONE (month)' },
-        { key: 'DONE_YEAR', label: 'DONE (year)' },
-        { key: 'ARCHIVED', label: 'ARCHIVED' }
-    ];
+    const LANES = KANBAN_LANE_DEFS; // CHANGE: template and policy use the same canonical lane list
 
     // -------------------- Paging icons --------------------                                       
     const ICON_PAGE_UP = 'data:image/svg+xml;utf8,' +
@@ -1483,7 +1534,7 @@ Draw.loadPlugin(function (ui) {
         let cur = cell; // NEW
         while (cur) { // NEW
             const key = getAttr(cur, 'board_key'); // NEW
-            if (key === BOARD_KEY || key === 'MAIN_KANBAN_BOARD') return cur; // NEW
+            if (key === BOARD_KEY || key === LEGACY_KANBAN_BOARD_KEY) return cur; // CHANGE
             cur = model.getParent(cur); // NEW
         } // NEW
         return null; // NEW
@@ -1859,18 +1910,127 @@ Draw.loadPlugin(function (ui) {
         return isKanbanCard(card) && isCardVisibilityEligible(card.value);            // CHANGE
     }                                                                                 // NEW
 
+    function getKanbanChildSiblings(parent) { // NEW: duplicate lane checks need the target board's current children
+        const out = []; // NEW
+        if (!parent) return out; // NEW
+        const count = model.getChildCount(parent); // NEW
+        for (let i = 0; i < count; i++) out.push(model.getChildAt(parent, i)); // NEW
+        return out; // NEW
+    } // NEW
+
+    function canPlaceKanbanChild(parent, child) { // NEW: runtime adapter for the pure kanban parenting policy
+        return canParentKanbanCell(parent, child, { laneKeys: KANBAN_LANE_KEYS, siblings: getKanbanChildSiblings(parent) }); // NEW
+    } // NEW
+
+    function shouldInspectKanbanPlacement(parent, child) { // NEW: limit safety repairs to kanban structures and locked kanban cells
+        const parentType = getKanbanCellType(parent, KANBAN_LANE_KEYS); // NEW
+        const childType = getKanbanCellType(child, KANBAN_LANE_KEYS); // NEW
+        return parentType === 'board' || parentType === 'lane' || childType === 'lane' || childType === 'card'; // NEW
+    } // NEW
+
+    function isInvalidKanbanPlacement(cell) { // NEW: current parent violates the board/lane/card structure
+        const parent = model.getParent(cell); // NEW
+        return !!parent && shouldInspectKanbanPlacement(parent, cell) && !canPlaceKanbanChild(parent, cell); // NEW
+    } // NEW
+
+    function addBoardForKanbanParent(map, parent) { // NEW: board rescans stay scoped to touched kanban structures
+        const board = parent ? findBoardAncestor(parent) : null; // NEW
+        if (board && board.id) map.set(board.id, board); // NEW
+    } // NEW
+
+    function parentAbsoluteOrigin(parent) { // NEW: geometry conversion for preserving position during ejection
+        let x = 0; // NEW
+        let y = 0; // NEW
+        let cur = parent; // NEW
+        while (cur) { // NEW
+            const geo = model.getGeometry(cur); // NEW
+            if (geo) { x += Number(geo.x) || 0; y += Number(geo.y) || 0; } // NEW
+            cur = model.getParent(cur); // NEW
+        } // NEW
+        return { x, y }; // NEW
+    } // NEW
+
+    function moveCellToParentPreservingPosition(cell, parent) { // NEW: safety repair should not visually teleport malformed cells
+        if (!cell || !parent || model.getParent(cell) === parent) return false; // NEW
+        const geo = model.getGeometry(cell); // NEW
+        const currentParent = model.getParent(cell); // NEW
+        const currentOrigin = parentAbsoluteOrigin(currentParent); // NEW
+        const targetOrigin = parentAbsoluteOrigin(parent); // NEW
+        const nextGeo = geo && geo.clone ? geo.clone() : null; // NEW
+        if (nextGeo) { // NEW
+            nextGeo.x = (Number(geo.x) || 0) + currentOrigin.x - targetOrigin.x; // NEW
+            nextGeo.y = (Number(geo.y) || 0) + currentOrigin.y - targetOrigin.y; // NEW
+        } // NEW
+        model.add(parent, cell, model.getChildCount(parent)); // NEW
+        if (nextGeo) model.setGeometry(cell, nextGeo); // NEW
+        return true; // NEW
+    } // NEW
+
+    function nearestNonKanbanParent(cell) { // NEW: fallback quarantine for imported malformed children without a valid origin
+        let cur = model.getParent(model.getParent(cell)); // NEW
+        while (cur) { // NEW
+            const type = getKanbanCellType(cur, KANBAN_LANE_KEYS); // NEW
+            if (type !== 'board' && type !== 'lane') return cur; // NEW
+            cur = model.getParent(cur); // NEW
+        } // NEW
+        return graph.getDefaultParent ? graph.getDefaultParent() : null; // NEW
+    } // NEW
+
+    function safeKanbanRepairParent(cell, previousParent) { // NEW: prefer true drag revert, otherwise eject from the kanban container
+        if (previousParent && canPlaceKanbanChild(previousParent, cell)) return previousParent; // NEW
+        return nearestNonKanbanParent(cell); // NEW
+    } // NEW
+
+    function repairInvalidKanbanPlacements(invalidPlacements, affectedBoards) { // NEW: safety net for malformed/imported structures
+        let changed = false; // NEW
+        (invalidPlacements || []).forEach(entry => { // NEW
+            const cell = entry && entry.cell; // NEW
+            if (!cell || !isInvalidKanbanPlacement(cell)) return; // NEW
+            const currentParent = model.getParent(cell); // NEW
+            const repairParent = safeKanbanRepairParent(cell, entry.previousParent); // NEW
+            if (!repairParent || repairParent === currentParent) return; // NEW
+            addBoardForKanbanParent(affectedBoards, currentParent); // NEW
+            addBoardForKanbanParent(affectedBoards, repairParent); // NEW
+            if (moveCellToParentPreservingPosition(cell, repairParent)) changed = true; // NEW
+        }); // NEW
+        return changed; // NEW
+    } // NEW
+
+    function installKanbanParentingGuards() { // NEW: block invalid drag/drop before draw.io mutates the model
+        if (graph.__trellisKanbanParentingGuardsInstalled) return; // NEW
+        graph.__trellisKanbanParentingGuardsInstalled = true; // NEW
+
+        const originalIsValidDropTarget = graph.isValidDropTarget; // NEW
+        graph.isValidDropTarget = function (target, cells, evt) { // NEW
+            const dragged = Array.isArray(cells) ? cells : []; // NEW
+            if (target && dragged.some(cell => !canPlaceKanbanChild(target, cell))) return false; // NEW
+            return originalIsValidDropTarget ? originalIsValidDropTarget.apply(this, arguments) : true; // NEW
+        }; // NEW
+
+        const originalMoveCells = graph.moveCells; // NEW
+        graph.moveCells = function (cells, dx, dy, clone, target, evt, mapping) { // NEW
+            const moved = Array.isArray(cells) ? cells : []; // NEW
+            if (target && moved.some(cell => !canPlaceKanbanChild(target, cell))) return moved; // NEW
+            return originalMoveCells.apply(this, arguments); // NEW
+        }; // NEW
+    } // NEW
+
+    installKanbanParentingGuards(); // NEW
+
 
 
 
     // -------------------- Auto-status, badges, and DONE autopromotion --------------------
     let pendingRepairCards = new Set(); // NEW
     let pendingRepairBoards = new Set(); // NEW
+    let pendingInvalidKanbanPlacements = new Map(); // NEW
     let repairTimer = null; // NEW
 
     function collectChangedKanbanCards(edit) {
         const out = new Set();
         const boards = new Set(); // NEW
-        if (!edit || !edit.changes) return { cards: out, boards }; // CHANGE
+        const invalidPlacements = new Map(); // NEW
+        if (!edit || !edit.changes) return { cards: out, boards, invalidPlacements }; // CHANGE
 
         for (const ch of edit.changes) {
             let cell = null;
@@ -1882,6 +2042,10 @@ Draw.loadPlugin(function (ui) {
 
                 previousParent = ch.previous; // CHANGE
                 currentParent = model.getParent(cell); // CHANGE
+
+                if (cell && currentParent && shouldInspectKanbanPlacement(currentParent, cell) && !canPlaceKanbanChild(currentParent, cell)) { // NEW
+                    invalidPlacements.set(cell.id || String(invalidPlacements.size), { cell, previousParent }); // NEW
+                } // NEW
 
                 if (previousParent === currentParent) { // CHANGE
                     continue; // CHANGE: skip same-lane reorder while retaining cross-board moves to equivalent lanes
@@ -1904,16 +2068,18 @@ Draw.loadPlugin(function (ui) {
             out.add(cell); // CHANGE
         }
 
-        return { cards: out, boards }; // CHANGE
+        return { cards: out, boards, invalidPlacements }; // CHANGE
     }
 
-    function scheduleKanbanRepair(cards, boards) { // CHANGE
+    function scheduleKanbanRepair(cards, boards, invalidPlacements) { // CHANGE
         const hasCards = cards && cards.size > 0; // NEW
         const hasBoards = boards && boards.size > 0; // NEW
-        if (!hasCards && !hasBoards) return; // CHANGE
+        const hasInvalidPlacements = invalidPlacements && invalidPlacements.size > 0; // NEW
+        if (!hasCards && !hasBoards && !hasInvalidPlacements) return; // CHANGE
 
         if (hasCards) cards.forEach(card => pendingRepairCards.add(card)); // CHANGE
         if (hasBoards) boards.forEach(board => pendingRepairBoards.add(board)); // NEW
+        if (hasInvalidPlacements) invalidPlacements.forEach((entry, key) => pendingInvalidKanbanPlacements.set(key, entry)); // NEW
 
         if (repairTimer != null) return;
 
@@ -1922,15 +2088,17 @@ Draw.loadPlugin(function (ui) {
 
             const cardsToRepair = Array.from(pendingRepairCards);
             const boardsToRepair = Array.from(pendingRepairBoards); // NEW
+            const invalidPlacementsToRepair = Array.from(pendingInvalidKanbanPlacements.values()); // NEW
             pendingRepairCards.clear();
             pendingRepairBoards.clear(); // NEW
+            pendingInvalidKanbanPlacements.clear(); // NEW
 
-            repairChangedCards(cardsToRepair, boardsToRepair); // CHANGE
+            repairChangedCards(cardsToRepair, boardsToRepair, invalidPlacementsToRepair); // CHANGE
         }, 0);
     }
 
-    function repairChangedCards(cards, boards) { // CHANGE
-        if ((!cards || cards.length === 0) && (!boards || boards.length === 0)) return; // CHANGE
+    function repairChangedCards(cards, boards, invalidPlacements) { // CHANGE
+        if ((!cards || cards.length === 0) && (!boards || boards.length === 0) && (!invalidPlacements || invalidPlacements.length === 0)) return; // CHANGE
 
         const affectedBoards = new Map(); // NEW
         const touchedGroups = new Set();
@@ -1940,6 +2108,8 @@ Draw.loadPlugin(function (ui) {
 
         model.beginUpdate();
         try {
+            repairInvalidKanbanPlacements(invalidPlacements, affectedBoards); // NEW
+
             for (const cell of (cards || [])) { // CHANGE
                 if (!cell || !model.isVertex(cell) || !isKanbanCard(cell)) continue;
                 if (isYearHiddenCard(cell)) continue;
@@ -2004,7 +2174,7 @@ Draw.loadPlugin(function (ui) {
     model.addListener(mxEvent.CHANGE, function (_sender, evt) {
         const edit = evt.getProperty('edit');
         const changes = collectChangedKanbanCards(edit); // CHANGE
-        scheduleKanbanRepair(changes.cards, changes.boards); // CHANGE: defer mutation out of CHANGE event
+        scheduleKanbanRepair(changes.cards, changes.boards, changes.invalidPlacements); // CHANGE: defer mutation out of CHANGE event
     });
 
 
