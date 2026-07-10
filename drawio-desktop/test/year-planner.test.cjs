@@ -257,6 +257,25 @@ test("PlanSchema detects duplicate crop identities and validates invalid units",
     assert.ok(errors.some(error => error.includes("does not resolve to kg")));
 });
 
+test("PlanSchema rejects duplicate crop package units", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const crop = emptyCrop({ packages: [ // NEW
+        { unit: "kg", baseType: "kg", baseQty: 1, price: 2 }, // NEW
+        { unit: " KG ", baseType: "kg", baseQty: 2, price: 3 } // NEW
+    ] }); // NEW
+    const errors = Array.from(api.PlanSchema.validateCrop(crop)); // NEW
+    assert.ok(errors.some(error => error.includes('duplicate package unit "KG"'))); // NEW
+}); // NEW
+
+test("PlanSchema strips legacy demand prices from persisted plans", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+    plan.crops.push(emptyCrop()); // NEW
+    addDemand(plan, { price: 7 }); // NEW
+    const serialized = api.PlanSchema.serializeForPersistence(plan); // NEW
+    assert.equal(Object.prototype.hasOwnProperty.call(serialized.demands[0], "price"), false); // NEW
+}); // NEW
+
 test("PlanSchema exposes CSA validation independently from the full plan", () => { // NEW
     const { api } = createHarness(); // NEW
     const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
@@ -652,15 +671,15 @@ test("PlanMath expands daily, weekly, and prorated monthly demand on calendar an
 test("PlanMath allocates CSA first, then priority and channel order, with requested and fulfilled revenue", () => { // NEW
     const { api } = createHarness(); // NEW
     const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
-    const crop = emptyCrop({ actualPlants: 10, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07" }); // NEW
+    const crop = emptyCrop({ actualPlants: 10, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 2 }] }); // CHANGE
     plan.crops.push(crop); // NEW
     plan.csa.enabled = true; // NEW
     plan.csa.boxesPerWeek = 1; // NEW
     plan.csa.start = "2026-06-01"; // NEW
     plan.csa.end = "2026-06-07"; // NEW
     plan.csa.components.push({ cropId: crop.id, qty: 2, unit: "kg", everyNWeeks: 1, start: "", end: "" }); // NEW
-    addDemand(plan, { id: "farm_target", channelId: "farm_store", qty: 6, priority: "target", price: 2 }); // NEW
-    addDemand(plan, { id: "restaurant_committed", channelId: "restaurant_1", qty: 6, priority: "committed", price: 2 }); // NEW
+    addDemand(plan, { id: "farm_target", channelId: "farm_store", qty: 6, priority: "target", price: 99 }); // CHANGE
+    addDemand(plan, { id: "restaurant_committed", channelId: "restaurant_1", qty: 6, priority: "committed", price: 99 }); // CHANGE
 
     const weekly = api.PlanMath.computePlanWeekly(plan, []); // NEW
     const farm = weekly.perDemandLine.get("farm_target"); // NEW
@@ -676,6 +695,33 @@ test("PlanMath allocates CSA first, then priority and channel order, with reques
     assert.equal(dashboard.channelMetricsById.get("restaurant_1").status, "OK"); // NEW
     assert.equal(dashboard.channelMetricsById.get("farm_store").shortKg, 4); // NEW
     assert.equal(dashboard.priorityMetrics.find(metric => metric.priority === "committed").usableSupplyKg, 6); // NEW
+}); // NEW
+
+test("PlanMath prices demand from exact package unit matches only", () => { // NEW
+    const { api } = createHarness(); // NEW
+    const plan = api.PlanSchema.createEmptyPlan(2026); // NEW
+    const crop = emptyCrop({ // NEW
+        actualPlants: 20, // NEW
+        useActualHarvest: false, // NEW
+        harvestStart: "2026-06-01", // NEW
+        harvestEnd: "2026-06-07", // NEW
+        packages: [ // NEW
+            { unit: "kg", baseType: "kg", baseQty: 1, price: 3 }, // NEW
+            { unit: "box", baseType: "kg", baseQty: 2, price: 10 } // NEW
+        ] // NEW
+    }); // NEW
+    plan.crops.push(crop); // NEW
+    addDemand(plan, { id: "kg_line", qty: 4, unit: "kg", price: 100 }); // NEW
+    addDemand(plan, { id: "box_line", qty: 2, unit: "box", price: 100 }); // NEW
+    addDemand(plan, { id: "lb_line", qty: 1, unit: "lb", price: 100 }); // NEW
+    assert.equal(api.PlanMath.resolvePackagePriceForUnit(crop, " KG "), 3); // NEW
+    assert.equal(Number.isFinite(api.PlanMath.resolvePackagePriceForUnit(crop, "lb")), false); // NEW
+
+    const weekly = api.PlanMath.computePlanWeekly(plan, []); // NEW
+    assert.equal(weekly.perDemandLine.get("kg_line").potentialRevenue.reduce((sum, value) => sum + value, 0), 12); // NEW
+    assert.equal(weekly.perDemandLine.get("box_line").potentialRevenue.reduce((sum, value) => sum + value, 0), 20); // NEW
+    assert.equal(weekly.perDemandLine.get("lb_line").potentialRevenue.reduce((sum, value) => sum + value, 0), 0); // NEW
+    assert.equal(weekly.perDemandLine.get("lb_line").fulfilledRevenue.reduce((sum, value) => sum + value, 0), 0); // NEW
 }); // NEW
 
 test("PlanMath breaks equal-priority shortages by stored channel order", () => { // NEW

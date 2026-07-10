@@ -69,8 +69,8 @@ test("irrigation controls render above irrigation annotations and connection ove
     assert.match(source, /return "position:absolute;z-index:" \+ GRAPH_OVERLAY_Z\.CONTROL \+ ";width:" \+ PORT_BADGE_SIZE/); // NEW
     assert.match(source, /nav\.style\.cssText = "position:absolute;z-index:" \+ GRAPH_OVERLAY_Z\.CONTROL/); // NEW
     assert.match(source, /btn\.style\.cssText = "position:absolute;z-index:" \+ GRAPH_OVERLAY_Z\.CONTROL/); // NEW
-    assert.match(source, /appendOverlayNode\(highlight, "connection"\)/); // NEW
-    assert.match(source, /appendOverlayNode\(badge, "annotation"\)/); // NEW
+    assert.match(source, /appendOverlayNode\(highlight, "connection", \{ modelSpace: true \}\)/); // CHANGE
+    assert.match(source, /appendOverlayNode\(badge, "annotation", \{ modelSpace: true \}\)/); // CHANGE
     assert.match(source, /selected-pipe-highlight[\s\S]*z-index:" \+ GRAPH_OVERLAY_Z\.CONNECTION/); // NEW
     assert.match(source, /trellis-irrigation-zone-badge[\s\S]*z-index:" \+ GRAPH_OVERLAY_Z\.ANNOTATION/); // NEW
     assert.match(source, /trellis-irrigation-warning-badge[\s\S]*z-index:" \+ GRAPH_OVERLAY_Z\.ANNOTATION/); // NEW

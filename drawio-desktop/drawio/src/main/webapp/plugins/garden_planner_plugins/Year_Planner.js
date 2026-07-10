@@ -426,6 +426,16 @@ Draw.loadPlugin(function (ui) {
             return NaN;
         }
 
+        function resolvePackagePriceForUnit(crop, unit) { // NEW
+            const u = String(unit || "").trim().toLowerCase(); // NEW
+            if (!u) return NaN; // NEW
+            const packs = Array.isArray(crop && crop.packages) ? crop.packages : []; // NEW
+            const pkg = packs.find(item => String(item && item.unit || "").trim().toLowerCase() === u); // NEW
+            if (!pkg || pkg.price === "" || pkg.price === null || pkg.price === undefined) return NaN; // NEW
+            const price = Number(pkg.price); // NEW
+            return Number.isFinite(price) && price >= 0 ? price : NaN; // NEW
+        } // NEW
+
         function addKgAcrossWeeks(series, weekStarts, fromYmd, toYmd, kgPerWeek) {
             const wr = weekRangeForWindowClamped(weekStarts, fromYmd, toYmd); // CHANGE
             if (!wr) return; // CHANGE
@@ -704,6 +714,7 @@ Draw.loadPlugin(function (ui) {
                 if (line.from > line.to) { pushWarn(warns, `Demand line skipped (start date after end date) for ${crop.plant || crop.id}`); continue; } // NEW
                 const kgPerUnit = resolveUnitToKgPerUnit(crop, line.unit); // NEW
                 if (!Number.isFinite(kgPerUnit)) { pushWarn(warns, `Demand line skipped (unknown unit "${line.unit}") for ${crop.plant || crop.id}`); continue; } // NEW
+                const unitPrice = resolvePackagePriceForUnit(crop, line.unit); // NEW
                 const target = Array(n).fill(0); // NEW
                 if (!addDemandAcrossWeeks(target, weeks, line, kgPerUnit, weekStartDow)) continue; // NEW
                 const result = { // NEW
@@ -712,10 +723,11 @@ Draw.loadPlugin(function (ui) {
                     channelId: String(line.channelId || ""), // NEW
                     priority: String(line.priority || "target"), // NEW
                     kgPerUnit, // NEW
+                    unitPrice, // NEW
                     target, // NEW
                     usableSupply: Array(n).fill(0), // NEW
                     short: Array(n).fill(0), // NEW
-                    potentialRevenue: target.map(value => Number.isFinite(Number(line.price)) ? (value / kgPerUnit) * Math.max(0, Number(line.price)) : 0), // NEW
+                    potentialRevenue: target.map(value => Number.isFinite(unitPrice) ? (value / kgPerUnit) * unitPrice : 0), // CHANGE
                     fulfilledRevenue: Array(n).fill(0) // NEW
                 }; // NEW
                 perDemandLine.set(String(line.id), result); // NEW
@@ -875,8 +887,8 @@ Draw.loadPlugin(function (ui) {
                         const allocation = consume(result.target[weekIndex]); // NEW
                         result.usableSupply[weekIndex] = allocation.used; // NEW
                         result.short[weekIndex] = allocation.short; // NEW
-                        result.fulfilledRevenue[weekIndex] = Number.isFinite(Number(result.line.price)) // NEW
-                            ? (allocation.used / result.kgPerUnit) * Math.max(0, Number(result.line.price)) // NEW
+                        result.fulfilledRevenue[weekIndex] = Number.isFinite(result.unitPrice) // CHANGE
+                            ? (allocation.used / result.kgPerUnit) * result.unitPrice // CHANGE
                             : 0; // NEW
                         arr.usableSupply[weekIndex] += allocation.used; // NEW
                         arr.short[weekIndex] += allocation.short; // NEW
@@ -977,6 +989,7 @@ Draw.loadPlugin(function (ui) {
             weekStartMsForDate, // NEW
             weekOffsetFromWindowStart, // NEW
             findCrop,
+            resolvePackagePriceForUnit, // NEW
             resolveUnitToKgPerUnit,
             addKgAcrossWeeks,
             addDailyDemandAcrossWeeks, // NEW
@@ -1104,6 +1117,7 @@ Draw.loadPlugin(function (ui) {
                 crop.kgPerPlantMode = crop.kgPerPlantMode === "manual" ? "manual" : "auto";
                 delete crop.market; // CHANGE
             }
+            for (const demandLine of (plan.demands || [])) delete demandLine.price; // NEW
             return plan;
         }
 
@@ -1163,11 +1177,15 @@ Draw.loadPlugin(function (ui) {
                 errors.push(`Crop "${crop.plant || crop.id}" harvest start date is after harvest end date.`); // NEW
             } // NEW
 
+            const packageUnitKeys = new Set(); // NEW
             for (const pkg of (crop.packages || [])) {
                 const unit = String(pkg.unit || "").trim();
+                const unitKey = unit.toLowerCase(); // NEW
                 const baseType = String(pkg.baseType || "").trim().toLowerCase();
                 const baseQty = Number(pkg.baseQty);
                 if (!unit) errors.push(`Crop "${crop.plant || crop.id}" has a package with blank unit.`);
+                else if (packageUnitKeys.has(unitKey)) errors.push(`Crop "${crop.plant || crop.id}" has duplicate package unit "${unit}".`); // NEW
+                else packageUnitKeys.add(unitKey); // NEW
                 if (!Number.isFinite(baseQty) || baseQty <= 0) errors.push(`Crop "${crop.plant || crop.id}" package "${unit}" baseQty must be > 0.`);
                 if (baseType !== "kg" && baseType !== "plant" && baseType !== "plants") errors.push(`Crop "${crop.plant || crop.id}" package "${unit}" baseType must be kg or plant.`);
                 if ((baseType === "plant" || baseType === "plants") && !(Number(crop.kgPerPlant) > 0)) {
@@ -1242,7 +1260,6 @@ Draw.loadPlugin(function (ui) {
                 if (!PlanMath.hasYmd(line && line.from) || !PlanMath.hasYmd(line && line.to)) errors.push(`Demand line "${id || "unknown"}" missing dates.`); // NEW
                 if (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to) errors.push(`Demand line "${id || "unknown"}" has start date after end date.`); // NEW
                 if (crop && !Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, line && line.unit))) errors.push(`Demand line "${id || "unknown"}" unit "${line && line.unit}" does not resolve to kg.`); // NEW
-                if (line && line.price !== "" && line.price !== null && line.price !== undefined && (!Number.isFinite(Number(line.price)) || Number(line.price) < 0)) errors.push(`Demand line "${id || "unknown"}" price must be blank or nonnegative.`); // NEW
             } // NEW
             return errors; // NEW
         } // NEW
@@ -3749,7 +3766,6 @@ Draw.loadPlugin(function (ui) {
                     from: crop && crop.harvestStart || "", // NEW
                     to: crop && crop.harvestEnd || "", // NEW
                     priority: "target", // NEW
-                    price: null, // NEW
                     notes: "" // NEW
                 }; // NEW
             } // NEW
@@ -3776,8 +3792,10 @@ Draw.loadPlugin(function (ui) {
                 const from = mkInput("date", line.from || ""); // NEW
                 const to = mkInput("date", line.to || ""); // NEW
                 const priority = mkSelect([{ value: "committed", label: "Committed" }, { value: "target", label: "Target" }, { value: "optional", label: "Optional" }], line.priority || "target"); // NEW
-                const price = mkInput("number", line.price === null || line.price === undefined ? "" : line.price); // NEW
-                price.min = "0"; price.step = "any"; // NEW
+                const unitPrice = PlanMath.resolvePackagePriceForUnit(crop, line.unit); // NEW
+                const price = mkInput("number", Number.isFinite(unitPrice) ? unitPrice : ""); // CHANGE
+                price.min = "0"; price.step = "any"; price.readOnly = true; // CHANGE
+                price.title = "Synced from the matching crop package."; // NEW
                 const notes = document.createElement("textarea"); // NEW
                 notes.value = String(line.notes || ""); // NEW
                 notes.rows = 2; // NEW
@@ -3791,7 +3809,7 @@ Draw.loadPlugin(function (ui) {
                 addField(row, "From", from); // NEW
                 addField(row, "To", to); // NEW
                 addField(row, "Priority", priority); // NEW
-                addField(row, "Price", price, "Per selected unit"); // NEW
+                addField(row, "Price", price, "From matching crop package"); // CHANGE
                 addField(row, "Notes", notes); // NEW
                 addField(row, "Remove", remove); // NEW
                 host.appendChild(row); // NEW
@@ -3801,11 +3819,10 @@ Draw.loadPlugin(function (ui) {
                     refreshDerived(null, { rebuildDemand: true }); // NEW
                 }); // NEW
                 qty.addEventListener("input", () => { line.qty = Math.max(0, Number(qty.value) || 0); debounceRefresh(); }); // NEW
-                unit.addEventListener("change", () => { line.unit = unit.value; refreshDerived(); }); // NEW
+                unit.addEventListener("change", () => { line.unit = unit.value; refreshDerived(null, { rebuildDemand: true }); }); // CHANGE
                 frequency.addEventListener("change", () => { line.frequency = frequency.value; refreshDerived(); }); // NEW
                 every.addEventListener("input", () => { line.everyN = Math.max(1, Math.trunc(Number(every.value) || 1)); debounceRefresh(); }); // NEW
                 priority.addEventListener("change", () => { line.priority = priority.value; refreshDerived(); }); // NEW
-                price.addEventListener("input", () => { line.price = price.value === "" ? null : Math.max(0, Number(price.value) || 0); debounceRefresh(); }); // NEW
                 notes.addEventListener("input", () => { line.notes = notes.value; renderFooter(); }); // NEW
                 bindPairedDateControls(from, to, { // CHANGE
                     diagnostic: `Demand line start date cannot be after end date for "${crop ? cropLabel(crop) : line.cropId}".`, // CHANGE
@@ -3992,7 +4009,7 @@ Draw.loadPlugin(function (ui) {
                         unit.addEventListener("input", () => { pkg.unit = unit.value; debounceRefresh({ rebuildDemand: true, rebuildCsa: true }); }); // CHANGE
                         baseQty.addEventListener("input", () => { pkg.baseQty = Math.max(0, Number(baseQty.value) || 0); debounceRefresh(); }); // NEW
                         baseType.addEventListener("change", () => { pkg.baseType = baseType.value; refreshDerived(); }); // NEW
-                        price.addEventListener("input", () => { pkg.price = price.value === "" ? NaN : Math.max(0, Number(price.value) || 0); renderFooter(); }); // NEW
+                        price.addEventListener("input", () => { pkg.price = price.value === "" ? NaN : Math.max(0, Number(price.value) || 0); debounceRefresh({ rebuildDemand: true }); }); // CHANGE
                         remove.addEventListener("click", () => { crop.packages = crop.packages.filter(item => item !== pkg); renderRows(); refreshDerived(null, { rebuildDemand: true, rebuildCsa: true }); }); // CHANGE
                     } // NEW
                 } // NEW

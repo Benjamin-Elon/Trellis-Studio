@@ -65,6 +65,12 @@ function findCropCard(document, label) { // NEW
     return Array.from(document.querySelectorAll(".yp-crop-card")).find(card => card.textContent.includes(label)) || null; // NEW
 } // NEW
 
+function findDemandPriceInput(document) { // NEW
+    const line = findStripDetails(document, "demand").querySelector("[data-demand-line-id]"); // NEW
+    const label = Array.from(line.querySelectorAll("label")).find(item => item.querySelector("span") && item.querySelector("span").textContent === "Price"); // NEW
+    return label ? label.querySelector('input[type="number"]') : null; // NEW
+} // NEW
+
 function planCheckTotalsCropNames(document) { // NEW
     const table = findStripDetails(document, "plan-check").querySelector("table"); // NEW
     return table ? Array.from(table.querySelectorAll("tbody tr")).map(row => row.cells[0].textContent.trim()) : []; // NEW
@@ -280,7 +286,7 @@ test("debounced Demand typing preserves the focused control", async t => { // NE
 test("Demand channels support editing, collapse state, safe removal, and labeled line controls", async t => { // NEW
     const harness = createYearPlannerHarness(); // NEW
     t.after(() => harness.dom.window.close()); // NEW
-    savePlan(harness, 2026, plan => addDemand(plan, { qty: 5, price: 2 })); // NEW
+    savePlan(harness, 2026, plan => { plan.crops[0].packages[0].price = 2; addDemand(plan, { qty: 5, price: 99 }); }); // CHANGE
     const session = await harness.openModal(2026); // NEW
     const demandDetails = findStripDetails(harness.document, "demand"); // NEW
     let channels = demandDetails.querySelectorAll("[data-demand-channel-id]"); // NEW
@@ -313,6 +319,31 @@ test("Demand channels support editing, collapse state, safe removal, and labeled
     Array.from(added.querySelectorAll("button")).find(button => button.textContent === "Add demand line").click(); // NEW
     assert.equal(session.plan.demands.length, 2); // NEW
     assert.equal(session.plan.demands.at(-1).channelId, session.plan.demandChannels.at(-1).id); // NEW
+}); // NEW
+
+test("Demand price is read-only and follows matching package price edits", async t => { // NEW
+    const harness = createYearPlannerHarness(); // NEW
+    t.after(() => harness.dom.window.close()); // NEW
+    savePlan(harness, 2026, plan => { plan.crops[0].packages[0].price = 2; addDemand(plan, { qty: 5, price: 99 }); }); // NEW
+    const session = await harness.openModal(2026); // NEW
+    let demandPrice = findDemandPriceInput(harness.document); // NEW
+    assert.ok(demandPrice); // NEW
+    assert.equal(demandPrice.readOnly, true); // NEW
+    assert.equal(demandPrice.value, "2"); // NEW
+
+    harness.setControlValue(demandPrice, 123); // NEW
+    await harness.settle(120); // NEW
+    assert.equal(Object.prototype.hasOwnProperty.call(session.plan.demands[0], "price"), false); // CHANGE
+
+    harness.findButton("Packages").click(); // NEW
+    const packageNumbers = findEditorBox(harness).querySelectorAll('input[type="number"]'); // NEW
+    harness.setControlValue(packageNumbers[1], 4); // NEW
+    await harness.settle(130); // NEW
+
+    demandPrice = findDemandPriceInput(harness.document); // NEW
+    assert.equal(demandPrice.readOnly, true); // NEW
+    assert.equal(demandPrice.value, "4"); // NEW
+    assert.match(findStripHeader(harness.document, "demand").textContent, /Potential\s*\$20\.00/); // NEW
 }); // NEW
 
 test("Add crop prioritizes garden crops and groups remaining plants by lifecycle", async t => { // NEW
