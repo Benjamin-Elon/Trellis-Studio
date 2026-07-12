@@ -75,9 +75,26 @@ function makeHarness(options = {}) { // CHANGE
     let lastDialog = null;
 
     const root = new TestCell("root", makeValue(document), new TestGeometry(0, 0, 0, 0));
-    const board = new TestCell("board", makeValue(document, { board_key: "KANBAN_BOARD", board_role: "main" }), new TestGeometry(10, 10, 700, 260));
+    const board = new TestCell("board", makeValue(document, { board_key: "KANBAN_BOARD", board_role: "main", task_view_mode: "WEEK", task_selected_week_start: "2026-07-12", task_selected_day: "2026-07-15" }), new TestGeometry(10, 10, 700, 260)); // CHANGE
+    const stagedLane = new TestCell("staged", makeValue(document, { lane_key: "TODO_STAGED", status: "TODO (staged)" }), new TestGeometry(20, 40, 200, 200)); // NEW
+    const weekWedLane = new TestCell("weekWed", makeValue(document, { lane_key: "WEEK_WED", status: "Wednesday" }), new TestGeometry(460, 40, 200, 200)); // NEW
     const todoLane = new TestCell("todo", makeValue(document, { lane_key: "TODO", status: "TODO" }), new TestGeometry(20, 40, 200, 200));
     const doingLane = new TestCell("doing", makeValue(document, { lane_key: "DOING", status: "DOING" }), new TestGeometry(240, 40, 200, 200));
+    const stagedCard = new TestCell("stagedCard", makeValue(document, { // NEW
+        kanban_card: "1", // NEW
+        title: "Stage compost", // NEW
+        workflow_state: "STAGED", // NEW
+        start: "2026-07-14", // NEW
+        end: "2026-07-14" // NEW
+    }), new TestGeometry(30, 60, 120, 60)); // NEW
+    const weekLaneCard = new TestCell("weekLaneCard", makeValue(document, { // NEW
+        kanban_card: "1", // NEW
+        title: "Week lane task", // NEW
+        workflow_state: "TODO", // NEW
+        assigned_day: "2026-07-15", // NEW
+        start: "2026-07-15", // NEW
+        end: "2026-07-15" // NEW
+    }), new TestGeometry(470, 60, 120, 60)); // NEW
     const card1 = new TestCell("card1", makeValue(document, {
         kanban_card: "1",
         title: "Irrigate",
@@ -116,8 +133,12 @@ function makeHarness(options = {}) { // CHANGE
     }
 
     add(root, board);
+    add(board, stagedLane); // NEW
+    add(board, weekWedLane); // NEW
     add(board, todoLane);
     add(board, doingLane);
+    add(stagedLane, stagedCard); // NEW
+    add(weekWedLane, weekLaneCard); // NEW
     add(todoLane, card1);
     add(todoLane, card2);
 
@@ -247,6 +268,10 @@ function makeHarness(options = {}) { // CHANGE
         document,
         graph,
         board,
+        stagedLane, // NEW
+        weekWedLane, // NEW
+        stagedCard, // NEW
+        weekLaneCard, // NEW
         card1,
         card2,
         states,
@@ -310,6 +335,23 @@ test("task manager DOM overlays avoid SVG overlayPane hosts", async () => { // N
     assert.equal(boardOverlay.parentNode.className, "trellis-task-control-layer"); // CHANGE
     assert.equal(boardOverlay.parentNode.parentNode.id, "graph"); // CHANGE
 });
+
+test("task manager staged due badge follows weekly selection anchor", async () => { // NEW
+    const h = makeHarness(); // NEW
+
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+    assert.match(attr(h.stagedCard, "label"), /Due:/); // NEW
+    assert.match(attr(h.stagedCard, "label"), /Due now/); // NEW
+
+    h.graph.setSelectionCell(h.weekWedLane); // NEW
+    await nextTick(); // NEW
+    assert.match(attr(h.stagedCard, "label"), /1d early/); // NEW
+
+    h.graph.setSelectionCell(h.weekLaneCard); // NEW
+    await nextTick(); // NEW
+    assert.match(attr(h.stagedCard, "label"), /1d early/); // NEW
+}); // NEW
 
 test("task manager multi-card overlay applies workflow, note, date, reset, and clear actions", async () => {
     const h = makeHarness();

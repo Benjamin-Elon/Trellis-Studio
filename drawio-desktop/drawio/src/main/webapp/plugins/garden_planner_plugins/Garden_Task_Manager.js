@@ -314,7 +314,7 @@ function decideTaskViewLaneKey(source, context) { // NEW
 
     if (mode === 'WEEK') { // NEW
         const weekStart = ctx.selectedWeekStart; // NEW
-        if (state === 'STAGED') return isPhysicallyOrManuallyStaged(source, fallbackLaneKey) ? 'TODO_STAGED' : fallbackLaneKey; // NEW
+        if (state === 'STAGED') return 'TODO_STAGED'; // CHANGE
         if (state === 'DONE') return isTaskDateInWeek(completedDay || assignedDay, weekStart) ? 'DONE' : 'DONE_WEEK'; // NEW
         const weekLane = getWeekLaneKeyForDate(assignedDay, weekStart); // NEW
         return weekLane || state; // NEW
@@ -322,7 +322,7 @@ function decideTaskViewLaneKey(source, context) { // NEW
 
     if (mode === 'DAY') { // NEW
         const selectedDay = ctx.selectedDay; // NEW
-        if (state === 'STAGED') return isPhysicallyOrManuallyStaged(source, fallbackLaneKey) ? 'TODO_STAGED' : fallbackLaneKey; // NEW
+        if (state === 'STAGED') return 'TODO_STAGED'; // CHANGE
         if (state === 'DONE') return (completedDay || assignedDay) === selectedDay ? 'DONE' : 'DONE_WEEK'; // NEW
         return assignedDay === selectedDay ? state : (getWeekLaneKeyForDate(assignedDay, getTaskWeekStartISO(assignedDay)) || state); // NEW
     } // NEW
@@ -331,6 +331,80 @@ function decideTaskViewLaneKey(source, context) { // NEW
     if (state === 'DONE') return 'DONE'; // NEW
     if (isPhysicallyOrManuallyStaged(source, fallbackLaneKey)) return 'TODO_STAGED'; // NEW
     return ''; // NEW: Full staged cards keep scheduler horizon classification
+} // NEW
+
+function selectedPeriodStagedSortEnabled(laneKey, context) { // NEW
+    const mode = normalizeTaskViewMode(context && (context.viewMode || context.mode)); // NEW
+    return String(laneKey || '') === 'TODO_STAGED' && (mode === 'WEEK' || mode === 'DAY'); // NEW
+} // NEW
+
+function selectedPeriodStagedTitle(source) { // NEW
+    return String(readAttributeValue(source, 'title') || '').trim().toLowerCase(); // NEW
+} // NEW
+
+function buildSelectedPeriodStagedSortKey(source, context) { // NEW
+    const ctx = context || {}; // NEW
+    const mode = normalizeTaskViewMode(ctx.viewMode || ctx.mode); // NEW
+    const start = parseTaskCalendarISO(readAttributeValue(source, 'start')); // NEW
+    const title = selectedPeriodStagedTitle(source); // NEW
+    if (!start) return { missing: true, group: 2, distance: Number.POSITIVE_INFINITY, direction: 1, startDay: Number.POSITIVE_INFINITY, title }; // NEW
+
+    if (mode === 'WEEK') { // NEW
+        const weekStartISO = getTaskWeekStartISO(ctx.selectedWeekStart); // NEW
+        const weekStart = parseTaskCalendarISO(weekStartISO); // NEW
+        const weekEnd = parseTaskCalendarISO(getTaskWeekEndISO(weekStartISO)); // NEW
+        if (!weekStart || !weekEnd) return { missing: false, group: 1, distance: 0, direction: 0, startDay: start.dayNumber, title }; // NEW
+        const selectedDayISO = parseTaskCalendarISO(ctx.selectedDay) ? clampTaskDayToWeek(ctx.selectedDay, weekStartISO) : weekStartISO; // NEW
+        const selectedDay = parseTaskCalendarISO(selectedDayISO) || weekStart; // NEW
+        if (start.dayNumber >= weekStart.dayNumber && start.dayNumber <= weekEnd.dayNumber) { // NEW
+            return { missing: false, group: 0, distance: Math.abs(start.dayNumber - selectedDay.dayNumber), direction: start.dayNumber <= selectedDay.dayNumber ? 0 : 1, startDay: start.dayNumber, title }; // NEW
+        } // NEW
+        const beforeWeek = start.dayNumber < weekStart.dayNumber; // NEW
+        return { missing: false, group: 1, distance: beforeWeek ? weekStart.dayNumber - start.dayNumber : start.dayNumber - weekEnd.dayNumber, direction: beforeWeek ? 0 : 1, startDay: start.dayNumber, title }; // NEW
+    } // NEW
+
+    const selectedDay = parseTaskCalendarISO(ctx.selectedDay); // NEW
+    if (!selectedDay) return { missing: false, group: 1, distance: 0, direction: 0, startDay: start.dayNumber, title }; // NEW
+    return { missing: false, group: 0, distance: Math.abs(start.dayNumber - selectedDay.dayNumber), direction: start.dayNumber <= selectedDay.dayNumber ? 0 : 1, startDay: start.dayNumber, title }; // NEW
+} // NEW
+
+function compareSelectedPeriodStagedSortKeys(left, right) { // NEW
+    return (Number(left.missing) - Number(right.missing)) || // NEW
+        (left.group - right.group) || // NEW
+        (left.distance - right.distance) || // NEW
+        (left.direction - right.direction) || // NEW
+        (left.startDay - right.startDay) || // NEW
+        left.title.localeCompare(right.title); // NEW
+} // NEW
+
+function compareSelectedPeriodStagedRecords(left, right, context) { // NEW
+    return compareSelectedPeriodStagedSortKeys(buildSelectedPeriodStagedSortKey(left, context), buildSelectedPeriodStagedSortKey(right, context)); // NEW
+} // NEW
+
+function formatSelectedPeriodStagedDueText(dayDelta) { // NEW
+    if (!Number.isFinite(dayDelta)) return ''; // NEW
+    if (dayDelta === 0) return 'Due now'; // NEW
+    return Math.abs(dayDelta) + 'd ' + (dayDelta < 0 ? 'early' : 'late'); // NEW
+} // NEW
+
+function buildSelectedPeriodStagedDueText(source, context) { // NEW
+    const ctx = context || {}; // NEW
+    const mode = normalizeTaskViewMode(ctx.viewMode || ctx.mode); // NEW
+    const start = parseTaskCalendarISO(readAttributeValue(source, 'start')); // NEW
+    if (!start || (mode !== 'WEEK' && mode !== 'DAY')) return ''; // NEW
+
+    if (mode === 'DAY' || ctx.weekBadgeAnchor === 'DAY') { // NEW
+        const selectedDay = parseTaskCalendarISO(ctx.selectedDay); // NEW
+        return selectedDay ? formatSelectedPeriodStagedDueText(start.dayNumber - selectedDay.dayNumber) : ''; // NEW
+    } // NEW
+
+    const weekStartISO = getTaskWeekStartISO(ctx.selectedWeekStart); // NEW
+    const weekStart = parseTaskCalendarISO(weekStartISO); // NEW
+    const weekEnd = parseTaskCalendarISO(getTaskWeekEndISO(weekStartISO)); // NEW
+    if (!weekStart || !weekEnd) return ''; // NEW
+    if (start.dayNumber < weekStart.dayNumber) return formatSelectedPeriodStagedDueText(start.dayNumber - weekStart.dayNumber); // NEW
+    if (start.dayNumber > weekEnd.dayNumber) return formatSelectedPeriodStagedDueText(start.dayNumber - weekEnd.dayNumber); // NEW
+    return 'Due now'; // NEW
 } // NEW
 
 function readAttributeValue(source, key) { // CHANGE: supports XML cells and plain objects in reliability tests
@@ -717,6 +791,10 @@ if (typeof globalThis !== 'undefined' && globalThis.__TRELLIS_TASK_MANAGER_TEST_
         buildWorkflowPatch, // NEW
         buildIncompletePatch, // NEW
         decideTaskViewLaneKey, // NEW
+        selectedPeriodStagedSortEnabled, // NEW
+        buildSelectedPeriodStagedSortKey, // NEW
+        compareSelectedPeriodStagedRecords, // NEW
+        buildSelectedPeriodStagedDueText, // NEW
         getTaskDateRange, // NEW
         buildInitialCardDateAttributes, // NEW
         buildSchedulerTaskMetadataAttributes, // NEW
@@ -1103,6 +1181,36 @@ Draw.loadPlugin(function (ui) {
         return normalizeTaskViewMode(getAttr(board, TASK_VIEW_MODE_ATTR)); // NEW
     } // NEW
 
+    function getBoardSortContext(board) { // NEW
+        return { // NEW
+            viewMode: getBoardViewMode(board), // NEW
+            selectedDay: getSelectedDay(board), // NEW
+            selectedWeekStart: getSelectedWeekStart(board) // NEW
+        }; // NEW
+    } // NEW
+
+    function selectedWeekDayLaneForBoard(board) { // NEW
+        if (!board) return null; // NEW
+        const selected = getSelectionCellsList(); // NEW
+        for (const cell of selected) { // NEW
+            let cur = cell; // NEW
+            while (cur && cur !== board) { // NEW
+                if (isWeekDayLane(getAttr(cur, 'lane_key')) && findBoardAncestor(cur) === board) return cur; // NEW
+                cur = model.getParent(cur); // NEW
+            } // NEW
+        } // NEW
+        return null; // NEW
+    } // NEW
+
+    function getBoardBadgeContext(board) { // NEW
+        const context = getBoardSortContext(board); // NEW
+        if (context.viewMode !== 'WEEK') return context; // NEW
+        const selectedLane = selectedWeekDayLaneForBoard(board); // NEW
+        if (!selectedLane) return Object.assign(context, { weekBadgeAnchor: 'WEEK' }); // NEW
+        const laneDay = getDateForWeekLaneKey(getAttr(selectedLane, 'lane_key'), context.selectedWeekStart); // NEW
+        return Object.assign(context, { weekBadgeAnchor: 'DAY', selectedDay: laneDay || context.selectedDay }); // NEW
+    } // NEW
+
     function ensureBoardPlanningDefaults(board) { // NEW
         if (!board) return; // NEW
         const today = todayISO(); // NEW
@@ -1282,10 +1390,14 @@ Draw.loadPlugin(function (ui) {
         return '<span style="display:inline-block;margin:2px 4px 0 0;border:1px solid #000;padding:0 6px;border-radius:10px;font-size:11px;line-height:16px;vertical-align:middle;"><b>' +
             mxUtils.htmlEntities(label) + ':</b> ' + mxUtils.htmlEntities(String(text)) + '</span>';
     }
-    function computeBadgesFor(card, laneKey) {
+    function computeBadgesFor(card, laneKey, opts) { // CHANGE
         const startISO = getAttr(card, 'start');
         const endISO = getAttr(card, 'end');
         const compISO = getAttr(card, 'completed');
+        if (selectedPeriodStagedSortEnabled(laneKey, opts)) { // CHANGE
+            const dueText = buildSelectedPeriodStagedDueText(card && card.value, opts); // NEW
+            return { primaryText: dueText || '', html: renderBadge('Due', dueText) }; // NEW
+        } // NEW
         if (isUpcomingLane(laneKey)) {
             const dts = computeDaysToStart(startISO);
             return { primaryText: (dts == null ? '' : String(dts)), html: renderBadge('Days to Start', dts) };
@@ -1312,7 +1424,8 @@ Draw.loadPlugin(function (ui) {
         return d ? d.getTime() : null;
     }
 
-    function getLaneSortKey(laneKey, card) {
+    function getLaneSortKey(laneKey, card, opts) { // CHANGE
+        if (selectedPeriodStagedSortEnabled(laneKey, opts)) return buildSelectedPeriodStagedSortKey(card && card.value, opts); // NEW
         if (isUpcomingLane(laneKey)) {
             const dts = computeDaysToStart(getAttr(card, 'start'));
             return (dts == null) ? Number.POSITIVE_INFINITY : dts;
@@ -1337,7 +1450,7 @@ Draw.loadPlugin(function (ui) {
         for (let i = 0; i < n; i++) {
             const c = model.getChildAt(lane, i);
             if (model.isVertex(c) && isRenderableKanbanCard(c)) {                             // CHANGE
-                const key = getLaneSortKey(laneKey, c);
+                const key = getLaneSortKey(laneKey, c, opts); // CHANGE
                 const title = (getAttr(c, 'title') || '').toLowerCase();
                 items.push({ cell: c, key, title });
             }
@@ -1346,7 +1459,9 @@ Draw.loadPlugin(function (ui) {
 
         // Choose comparator                                                                                
         let cmp;
-        if (isDoneLikeLane(laneKey)) {
+        if (selectedPeriodStagedSortEnabled(laneKey, opts)) { // NEW
+            cmp = (a, b) => compareSelectedPeriodStagedSortKeys(a.key, b.key); // NEW
+        } else if (isDoneLikeLane(laneKey)) { // CHANGE
             // Descending by timestamp (recent first). Nulls already mapped to -INF so they end last.       
             cmp = (a, b) => (b.key - a.key) || a.title.localeCompare(b.title);
         } else {
@@ -1534,6 +1649,25 @@ Draw.loadPlugin(function (ui) {
         ensureLanePagingControls(lane, laneKey, countRenderable(sortedCards)); // CHANGE
     }
 
+    function refreshSelectedPeriodStagedBadges(board, opts) { // NEW
+        if (!board) return false; // NEW
+        const lane = boardLanes(board).TODO_STAGED; // NEW
+        if (!lane) return false; // NEW
+        let changed = false; // NEW
+        const insideUpdate = opts && opts.insideUpdate; // NEW
+        if (!insideUpdate) model.beginUpdate(); // NEW
+        try { // NEW
+            snapshotLaneCards(lane).forEach(card => { // NEW
+                if (!isRenderableKanbanCard(card)) return; // NEW
+                changed = updateBadgeForLane(card, 'TODO_STAGED', true) || changed; // NEW
+            }); // NEW
+        } finally { // NEW
+            if (!insideUpdate) model.endUpdate(); // NEW
+        } // NEW
+        if (changed) graph.refresh(lane); // NEW
+        return changed; // NEW
+    } // NEW
+
 
     // Paging controls (overlays) for each lane                                                  
     function ensureLanePagingControls(lane, laneKey, renderableTotal) { // CHANGE
@@ -1625,8 +1759,10 @@ Draw.loadPlugin(function (ui) {
     function updateBadgeForLane(card, laneKey, suppressRefresh) {
         const oldBadge = getAttr(card, 'badge') || '';
         const oldHtml = getAttr(card, 'badges_html') || '';
+        const board = findBoardAncestor(card); // NEW
+        const badgeContext = board ? getBoardBadgeContext(board) : { viewMode: 'FULL' }; // CHANGE
 
-        const badges = computeBadgesFor(card, laneKey);
+        const badges = computeBadgesFor(card, laneKey, badgeContext); // CHANGE
         const newBadge = badges.primaryText || '';
         const newHtml = badges.html || '';
 
@@ -2116,7 +2252,7 @@ Draw.loadPlugin(function (ui) {
     function classifyPlanningViewLane(card, state, mode, selectedDay, selectedWeekStart, laneKey) { // NEW
         const assignedDay = getAttr(card, TASK_ASSIGNED_DAY_ATTR); // NEW
         const completedDay = getAttr(card, 'completed') || assignedDay; // NEW
-        if (state === 'STAGED') return isPhysicallyOrManuallyStaged(card.value, laneKey) ? 'TODO_STAGED' : (isUpcomingLane(laneKey) ? laneKey : decideUpcomingLaneKey(getAttr(card, 'start'))); // NEW
+        if (state === 'STAGED') return 'TODO_STAGED'; // CHANGE
         if (mode === 'WEEK') { // NEW
             if (state === 'DONE') return isTaskDateInWeek(completedDay, selectedWeekStart) ? 'DONE' : 'DONE_WEEK'; // NEW
             return getWeekLaneKeyForDate(assignedDay, selectedWeekStart) || state; // NEW
@@ -2141,6 +2277,7 @@ Draw.loadPlugin(function (ui) {
 
         ensureBoardPlanningDefaults(board); // NEW
         const lanes = boardLanes(board);
+        const sortContext = getBoardSortContext(board); // NEW
         const insideUpdate = opts && opts.insideUpdate;
         const dirtyLanes = new Map(); // CHANGE
         let boardDirty = false;
@@ -2187,7 +2324,7 @@ Draw.loadPlugin(function (ui) {
 
             // Sort/page only after all movements are complete. // CHANGE
             for (const { lane, laneKey } of dirtyLanes.values()) {
-                resortAndPageLane(lane, laneKey, { insideUpdate: true }); // CHANGE
+                resortAndPageLane(lane, laneKey, Object.assign({ insideUpdate: true }, sortContext)); // CHANGE
             }
 
             // Clean paging for untouched lanes without depending on child iteration order. // CHANGE
@@ -2195,6 +2332,11 @@ Draw.loadPlugin(function (ui) {
                 const laneKey = laneDef.key;
                 const lane = lanes[laneKey];
                 if (!lane || dirtyLanes.has(lane.id)) continue;
+
+                if (selectedPeriodStagedSortEnabled(laneKey, sortContext)) { // NEW
+                    resortAndPageLane(lane, laneKey, Object.assign({ insideUpdate: true }, sortContext)); // NEW
+                    continue; // NEW
+                } // NEW
 
                 const cards = getLaneCardsInOrder(lane);
                 applyLanePaging(lane, laneKey, cards);
@@ -2748,7 +2890,9 @@ Draw.loadPlugin(function (ui) {
         const key = getAttr(sel, 'board_key');
         if (key === BOARD_KEY || key === 'MAIN_KANBAN_BOARD') {
             scanAndReflowBoard(sel);
+            return; // NEW
         }
+        refreshSelectedPeriodStagedBadges(findBoardAncestor(sel)); // NEW
     });
 
     function findBoardsIn(parent) {
