@@ -57,6 +57,11 @@ function attr(cell, key) {
     return cell && cell.value && cell.value.getAttribute ? cell.value.getAttribute(key) : null;
 }
 
+function setAttr(cell, key, value) { // NEW
+    if (value == null) cell.value.removeAttribute(key); // NEW
+    else cell.value.setAttribute(key, String(value)); // NEW
+} // NEW
+
 function buttonByText(root, text) {
     return Array.from(root.querySelectorAll("button")).find(button => button.textContent === text);
 }
@@ -249,7 +254,11 @@ function makeHarness(options = {}) { // CHANGE
             isShiftDown() { return false; },
             isPopupTrigger() { return false; }
         },
-        mxCell: TestCell,
+        mxCell: class extends TestCell { // CHANGE: plugin code calls mxCell(value, geometry, style)
+            constructor(value, geometry, style) { // NEW
+                super(`generated-${cellById.size + 1}`, value, geometry, style); // NEW
+            } // NEW
+        }, // CHANGE
         mxGeometry: TestGeometry,
         mxImage: class {},
         mxCellOverlay: class { addListener() {} },
@@ -351,6 +360,60 @@ test("task manager staged due badge follows weekly selection anchor", async () =
     h.graph.setSelectionCell(h.weekLaneCard); // NEW
     await nextTick(); // NEW
     assert.match(attr(h.stagedCard, "label"), /1d early/); // NEW
+}); // NEW
+
+test("task manager week scheduler lays out day heights and selected-lane controls", async () => { // NEW
+    const h = makeHarness(); // NEW
+    h.setState(h.board, { x: 10, y: 10, width: 700, height: 260 }); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+
+    const boardOverlay = h.document.querySelector(".trellis-task-board-header-controls"); // NEW
+    assert.equal(buttonByText(boardOverlay, "Day"), undefined); // NEW
+    assert.equal(h.weekWedLane.geometry.height, 960); // NEW
+    assert.equal(h.stagedLane.geometry.height, 960); // NEW
+    assert.equal(h.board.geometry.height, 998); // NEW
+
+    h.setState(h.weekWedLane, { x: 460, y: 40, width: 200, height: 960 }); // NEW
+    h.graph.setSelectionCell(h.weekWedLane); // NEW
+    await nextTick(); // NEW
+    assert.ok(buttonByText(boardOverlay, "Edit Hours")); // NEW
+    assert.ok(buttonByText(boardOverlay, "Add Break")); // NEW
+    assert.equal(attr(h.board, "task_selected_day"), "2026-07-15"); // NEW
+}); // NEW
+
+test("task manager adds break cards and derives stacked schedule attributes", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const boardOverlay = h.document.querySelector(".trellis-task-board-header-controls"); // NEW
+    h.setState(h.board, { x: 10, y: 10, width: 700, height: 260 }); // NEW
+    h.setState(h.weekWedLane, { x: 460, y: 40, width: 200, height: 960 }); // NEW
+    h.graph.setSelectionCell(h.weekWedLane); // NEW
+    await nextTick(); // NEW
+
+    buttonByText(boardOverlay, "Add Break").click(); // NEW
+    await nextTick(); // NEW
+
+    const breakCard = h.weekWedLane.children.find(cell => attr(cell, "schedule_break") === "1"); // NEW
+    assert.ok(breakCard); // NEW
+    assert.equal(attr(breakCard, "schedule_duration_minutes"), "30"); // NEW
+    assert.equal(attr(h.weekLaneCard, "schedule_start_minute"), "360"); // NEW
+    assert.equal(attr(breakCard, "schedule_start_minute"), "420"); // NEW
+}); // NEW
+
+test("task manager closed week days label closed and clear schedule attributes", async () => { // NEW
+    const h = makeHarness(); // NEW
+    setAttr(h.weekLaneCard, "schedule_start_minute", "360"); // NEW
+    setAttr(h.weekLaneCard, "schedule_duration_minutes", "60"); // NEW
+    setAttr(h.board, "task_work_hours_week_overrides_json", JSON.stringify({ // NEW
+        weeks: { "2026-07-12": { days: [{}, {}, {}, { closed: true }, {}, {}, {}] } } // NEW
+    })); // NEW
+
+    h.graph.setSelectionCell(h.weekWedLane); // NEW
+    await nextTick(); // NEW
+
+    assert.match(attr(h.weekWedLane, "label"), /closed/); // NEW
+    assert.equal(attr(h.weekLaneCard, "schedule_start_minute"), null); // NEW
+    assert.equal(attr(h.weekLaneCard, "schedule_duration_minutes"), null); // NEW
 }); // NEW
 
 test("task manager multi-card overlay applies workflow, note, date, reset, and clear actions", async () => {

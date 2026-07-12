@@ -2693,8 +2693,9 @@ test('task planning date helpers use Sunday weeks and bounded day navigation', (
 }); // NEW
 
 test('task planning view lanes and legacy workflow state are deterministic', () => { // NEW
-    assert.deepEqual(Array.from(taskHooks.getTaskViewLaneKeys('WEEK')), ['TODO_STAGED', 'WEEK_SUN', 'WEEK_MON', 'WEEK_TUE', 'WEEK_WED', 'WEEK_THU', 'WEEK_FRI', 'WEEK_SAT', 'DONE']); // NEW
-    assert.deepEqual(Array.from(taskHooks.getTaskViewLaneKeys('DAY')), ['TODO_STAGED', 'TODO', 'DOING', 'DONE']); // NEW
+    assert.deepEqual(Array.from(taskHooks.getTaskViewLaneKeys('WEEK')), ['TODO_STAGED', 'WEEK_SUN', 'WEEK_MON', 'WEEK_TUE', 'WEEK_WED', 'WEEK_THU', 'WEEK_FRI', 'WEEK_SAT']); // CHANGE
+    assert.deepEqual(Array.from(taskHooks.getTaskViewLaneKeys('DAY')), ['TODO_STAGED', 'WEEK_SUN', 'WEEK_MON', 'WEEK_TUE', 'WEEK_WED', 'WEEK_THU', 'WEEK_FRI', 'WEEK_SAT']); // CHANGE
+    assert.equal(taskHooks.normalizeTaskViewMode('DAY'), 'WEEK'); // NEW
     assert.equal(taskHooks.deriveWorkflowStateFromLaneKey('UPCOMING_MONTH'), 'STAGED'); // NEW
     assert.equal(taskHooks.deriveWorkflowStateFromLaneKey('TODO'), 'TODO'); // NEW
     assert.equal(taskHooks.deriveWorkflowStateFromLaneKey('DOING'), 'DOING'); // NEW
@@ -2731,10 +2732,35 @@ test('task planning mode lane decisions reflow from card attributes', () => { //
     assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'STAGED', manual_staged: '1' }, { mode: 'FULL', laneKey: 'UPCOMING_MONTH' }), 'TODO_STAGED'); // NEW
     assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'STAGED' }, { mode: 'FULL', laneKey: 'UPCOMING_MONTH' }), ''); // NEW
     assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'TODO', assigned_day: '2026-07-14' }, { mode: 'WEEK', selectedWeekStart: '2026-07-12' }), 'WEEK_TUE'); // NEW
-    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'DONE', assigned_day: '2026-07-14', completed: '2026-07-14' }, { mode: 'WEEK', selectedWeekStart: '2026-07-12' }), 'DONE'); // NEW
-    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'DONE', assigned_day: '2026-07-14', completed: '2026-07-14' }, { mode: 'DAY', selectedDay: '2026-07-15' }), 'DONE_WEEK'); // NEW
-    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'DOING', assigned_day: '2026-07-15' }, { mode: 'DAY', selectedDay: '2026-07-15' }), 'DOING'); // NEW
-    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'DOING', assigned_day: '2026-07-16' }, { mode: 'DAY', selectedDay: '2026-07-15' }), 'WEEK_THU'); // NEW
+    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'DONE', assigned_day: '2026-07-14', completed: '2026-07-14' }, { mode: 'WEEK', selectedWeekStart: '2026-07-12' }), 'WEEK_TUE'); // CHANGE
+    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'DONE', assigned_day: '2026-07-14', completed: '2026-07-14' }, { mode: 'WEEK', selectedWeekStart: '2026-07-19' }), 'DONE_WEEK'); // CHANGE
+    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'DOING', assigned_day: '2026-07-15' }, { mode: 'DAY', selectedWeekStart: '2026-07-12', selectedDay: '2026-07-15' }), 'WEEK_WED'); // CHANGE
+    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'DOING', assigned_day: '2026-07-16' }, { mode: 'DAY', selectedWeekStart: '2026-07-12', selectedDay: '2026-07-15' }), 'WEEK_THU'); // CHANGE
+}); // NEW
+
+test('stack scheduler time helpers snap, normalize hours, and pack cumulatively', () => { // NEW
+    assert.equal(taskHooks.scheduleMinutesToPx(60), 80); // NEW
+    assert.equal(taskHooks.schedulePxToMinutes(20), 15); // NEW
+    assert.equal(taskHooks.schedulePxToMinutes(39), 30); // NEW
+    assert.equal(taskHooks.defaultScheduleDurationFromHours('1.25'), 75); // NEW
+    assert.equal(taskHooks.defaultScheduleDurationFromHours(''), 60); // NEW
+
+    const closed = taskHooks.normalizeWorkHourWindow({ closed: true, startMinute: 500, endMinute: 700 }); // NEW
+    assert.equal(closed.closed, true); // NEW
+    const week = taskHooks.resolveWeekWorkHours( // NEW
+        taskHooks.serializeWeekWorkHours([{ startMinute: 360, endMinute: 720 }]), // NEW
+        JSON.stringify({ weeks: { '2026-07-12': { days: [{ closed: true }] } } }), // NEW
+        '2026-07-12' // NEW
+    ); // NEW
+    assert.equal(week[0].closed, true); // NEW
+    assert.equal(week[1].startMinute, 360); // NEW
+
+    const plan = taskHooks.buildStackSchedulePlan([ // NEW
+        { id: 'a', source: { task_estimated_hours: '1.5' }, height: 80 }, // NEW
+        { id: 'b', source: { schedule_duration_minutes: '30' }, height: 40 } // NEW
+    ], { startMinute: 360, endMinute: 450 }); // NEW
+    assert.deepEqual(Array.from(plan.items, item => [item.startMinute, item.durationMinutes, item.height, item.overflow]), [[360, 90, 120, false], [450, 30, 40, true]]); // CHANGE
+    assert.equal(plan.overflowMinutes, 30); // NEW
 }); // NEW
 
 test('selected period staged sort is date relative and sinks missing starts', () => { // NEW
@@ -2745,7 +2771,7 @@ test('selected period staged sort is date relative and sinks missing starts', ()
         { title: 'Selected day', start: '2026-07-15' }, // NEW
         { title: 'Invalid start', start: '2026-02-31' } // NEW
     ]; // NEW
-    const daySorted = records.slice().sort((left, right) => taskHooks.compareSelectedPeriodStagedRecords(left, right, { mode: 'DAY', selectedDay: '2026-07-15' })); // NEW
+    const daySorted = records.slice().sort((left, right) => taskHooks.compareSelectedPeriodStagedRecords(left, right, { mode: 'WEEK', selectedWeekStart: '2026-07-12', selectedDay: '2026-07-15' })); // CHANGE
     assert.deepEqual(daySorted.map(record => record.title), ['Selected day', 'Past tie', 'Future tie', 'Invalid start', 'Missing start']); // NEW
 
     const weekRecords = [ // NEW
@@ -2761,20 +2787,20 @@ test('selected period staged sort is date relative and sinks missing starts', ()
 }); // NEW
 
 test('selected period staged due badge text is explicit and date relative', () => { // NEW
-    assert.equal(taskHooks.buildSelectedPeriodStagedDueText({ start: '2026-07-14' }, { mode: 'DAY', selectedDay: '2026-07-15' }), '1d early'); // NEW
-    assert.equal(taskHooks.buildSelectedPeriodStagedDueText({ start: '2026-07-16' }, { mode: 'DAY', selectedDay: '2026-07-15' }), '1d late'); // NEW
-    assert.equal(taskHooks.buildSelectedPeriodStagedDueText({ start: '2026-07-15' }, { mode: 'DAY', selectedDay: '2026-07-15' }), 'Due now'); // NEW
+    assert.equal(taskHooks.buildSelectedPeriodStagedDueText({ start: '2026-07-14' }, { mode: 'WEEK', selectedDay: '2026-07-15', weekBadgeAnchor: 'DAY' }), '1d early'); // CHANGE
+    assert.equal(taskHooks.buildSelectedPeriodStagedDueText({ start: '2026-07-16' }, { mode: 'WEEK', selectedDay: '2026-07-15', weekBadgeAnchor: 'DAY' }), '1d late'); // CHANGE
+    assert.equal(taskHooks.buildSelectedPeriodStagedDueText({ start: '2026-07-15' }, { mode: 'WEEK', selectedDay: '2026-07-15', weekBadgeAnchor: 'DAY' }), 'Due now'); // CHANGE
     assert.equal(taskHooks.buildSelectedPeriodStagedDueText({ start: '2026-07-11' }, { mode: 'WEEK', selectedWeekStart: '2026-07-12' }), '1d early'); // NEW
     assert.equal(taskHooks.buildSelectedPeriodStagedDueText({ start: '2026-07-19' }, { mode: 'WEEK', selectedWeekStart: '2026-07-12' }), '1d late'); // NEW
     assert.equal(taskHooks.buildSelectedPeriodStagedDueText({ start: '2026-07-17' }, { mode: 'WEEK', selectedWeekStart: '2026-07-12' }), 'Due now'); // NEW
     assert.equal(taskHooks.buildSelectedPeriodStagedDueText({ start: '2026-07-14' }, { mode: 'WEEK', selectedWeekStart: '2026-07-12', selectedDay: '2026-07-15', weekBadgeAnchor: 'DAY' }), '1d early'); // NEW
-    assert.equal(taskHooks.buildSelectedPeriodStagedDueText({ start: '2026-02-31' }, { mode: 'DAY', selectedDay: '2026-07-15' }), ''); // NEW
+    assert.equal(taskHooks.buildSelectedPeriodStagedDueText({ start: '2026-02-31' }, { mode: 'WEEK', selectedDay: '2026-07-15', weekBadgeAnchor: 'DAY' }), ''); // CHANGE
     assert.equal(taskHooks.buildSelectedPeriodStagedDueText({}, { mode: 'WEEK', selectedWeekStart: '2026-07-12' }), ''); // NEW
 }); // NEW
 
 test('selected period staged mode applies only to staged planning views', () => { // CHANGE
     assert.equal(taskHooks.selectedPeriodStagedSortEnabled('TODO_STAGED', { mode: 'WEEK' }), true); // CHANGE
-    assert.equal(taskHooks.selectedPeriodStagedSortEnabled('TODO_STAGED', { mode: 'DAY' }), true); // CHANGE
+    assert.equal(taskHooks.selectedPeriodStagedSortEnabled('TODO_STAGED', { mode: 'DAY' }), true); // CHANGE: legacy DAY normalizes to WEEK
     assert.equal(taskHooks.selectedPeriodStagedSortEnabled('TODO_STAGED', { mode: 'FULL' }), false); // CHANGE
     assert.equal(taskHooks.selectedPeriodStagedSortEnabled('TODO', { mode: 'DAY' }), false); // CHANGE
 }); // NEW
@@ -3195,7 +3221,7 @@ test('task manager installs planning mode header controls and selected-card DOM 
     assert.match(source, /bar\.style\.zIndex = String\(GRAPH_OVERLAY_Z\.CONTROL\)/); // CHANGE
     assert.match(source, /dateInput\.type = 'date'/); // NEW
     assert.match(source, /if \(!value\) \{\s*setBoardPlanningView\(b,\s*'FULL'\)/); // NEW
-    assert.match(source, /setBoardPlanningView\(b,\s*mode === 'FULL' \? 'DAY' : mode,\s*\{\s*\[TASK_SELECTED_WEEK_START_ATTR\]: weekStart,\s*\[TASK_SELECTED_DAY_ATTR\]: value\s*\}\)/); // NEW
+    assert.match(source, /setBoardPlanningView\(b,\s*'WEEK',\s*\{\s*\[TASK_SELECTED_WEEK_START_ATTR\]: weekStart,\s*\[TASK_SELECTED_DAY_ATTR\]: value\s*\}\)/); // CHANGE
     assert.match(source, /positionDomOverlayFromCellState\(bar,\s*board,\s*false,\s*true\)/); // NEW
     assert.match(source, /const left = bounds\.x/); // CHANGE
     assert.match(source, /const topBase = bounds\.y/); // CHANGE
