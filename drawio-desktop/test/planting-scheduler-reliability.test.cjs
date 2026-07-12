@@ -2690,6 +2690,10 @@ test('task planning date helpers use Sunday weeks and bounded day navigation', (
     assert.equal(taskHooks.getDateForWeekLaneKey('WEEK_FRI', '2026-07-12'), '2026-07-17'); // NEW
     assert.equal(taskHooks.shiftTaskDayWithinWeek('2026-07-12', '2026-07-12', -1), '2026-07-12'); // NEW
     assert.equal(taskHooks.shiftTaskDayWithinWeek('2026-07-18', '2026-07-12', 1), '2026-07-18'); // NEW
+    assert.equal(taskHooks.clampTaskStartToVisibleWeek({ start: '2026-07-01' }, '2026-07-12'), '2026-07-12'); // NEW
+    assert.equal(taskHooks.clampTaskStartToVisibleWeek({ start: '2026-07-25' }, '2026-07-12'), '2026-07-18'); // NEW
+    assert.equal(taskHooks.clampTaskStartToVisibleWeek({ start: '2026-07-15' }, '2026-07-12'), '2026-07-15'); // NEW
+    assert.equal(taskHooks.clampTaskStartToVisibleWeek({ start: 'bad-date' }, '2026-07-12'), null); // NEW
 }); // NEW
 
 test('task planning view lanes and legacy workflow state are deterministic', () => { // NEW
@@ -2722,6 +2726,10 @@ test('task planning workflow patches assign and complete from view context', () 
 
     const incomplete = taskHooks.buildIncompletePatch({ workflow_state: 'DOING', assigned_day: '2026-07-16' }, '2026-07-16'); // NEW
     assert.deepEqual({ ...incomplete.attributes }, { workflow_state: 'STAGED', assigned_day: null, scheduler_dates_locked: null, incomplete_day: '2026-07-16', manual_staged: '1', completed: null }); // NEW
+
+    const allocation = taskHooks.buildStagedStartDateAllocationPatch({ start: '2026-07-25', manual_staged: '1' }, { selectedWeekStart: '2026-07-12' }); // NEW
+    assert.deepEqual({ ...allocation.attributes }, { workflow_state: 'TODO', assigned_day: '2026-07-18', scheduler_dates_locked: '1', incomplete_day: null, manual_staged: null, completed: null }); // NEW
+    assert.equal(taskHooks.buildStagedStartDateAllocationPatch({ start: '' }, { selectedWeekStart: '2026-07-12' }), null); // NEW
 }); // NEW
 
 test('task planning mode lane decisions reflow from card attributes', () => { // NEW
@@ -2744,6 +2752,18 @@ test('stack scheduler time helpers snap, normalize hours, and pack cumulatively'
     assert.equal(taskHooks.schedulePxToMinutes(39), 30); // NEW
     assert.equal(taskHooks.defaultScheduleDurationFromHours('1.25'), 75); // NEW
     assert.equal(taskHooks.defaultScheduleDurationFromHours(''), 60); // NEW
+    assert.equal(taskHooks.formatScheduleTimeRange(360, 75), '6:00 AM-7:15 AM'); // NEW
+    assert.equal(taskHooks.formatScheduleTimeRange('', 75), ''); // NEW
+    const laneWidths = taskHooks.normalizeWeekDayLaneWidths(JSON.stringify({ widths: { WEEK_WED: 95, WEEK_THU: 333 } }), 220); // NEW
+    assert.deepEqual({ ...laneWidths }, { // CHANGE
+        WEEK_SUN: 220, // NEW
+        WEEK_MON: 220, // NEW
+        WEEK_TUE: 220, // NEW
+        WEEK_WED: 140, // NEW
+        WEEK_THU: 333, // NEW
+        WEEK_FRI: 220, // NEW
+        WEEK_SAT: 220 // NEW
+    }); // NEW
 
     const closed = taskHooks.normalizeWorkHourWindow({ closed: true, startMinute: 500, endMinute: 700 }); // NEW
     assert.equal(closed.closed, true); // NEW
@@ -3162,7 +3182,7 @@ test('card note patches set or clear only card_note and leave scheduler notes un
 test('card note badge is escaped and ordered between timing and edited-date badges', () => {
     const source = fs.readFileSync(taskManagerPath, 'utf8');
     assert.match(source, /const noteBadge = renderBadge\('Note',\s*getCardNote\(card\)\)/);
-    assert.match(source, /badgesHtml \+ stateBadge \+ missingBadge \+ incompleteBadge \+ repeatBadge \+ noteBadge \+ editedDateBadge \+ linkBadge/); // CHANGE
+    assert.match(source, /scheduleTimeBadge \+ badgesHtml \+ stateBadge \+ missingBadge \+ incompleteBadge \+ repeatBadge \+ noteBadge \+ editedDateBadge \+ linkBadge/); // CHANGE
     assert.match(source, /mxUtils\.htmlEntities\(String\(text\)\)/);
 });
 
@@ -3242,7 +3262,30 @@ test('task manager installs planning mode header controls and selected-card DOM 
     assert.match(source, /graph\.container\.addEventListener\('scroll',\s*refresh,\s*\{\s*passive:\s*true\s*\}\)/); // CHANGE
     assert.match(source, /function createDeferredTaskOverlayRefresh\(refresh\)/); // CHANGE
     assert.match(source, /applyCardWorkflowActions\(cards,\s*'DONE'\)/); // CHANGE
+    assert.match(source, /todoBtn\.style\.display = !single \|\| state !== 'TODO'/); // NEW
+    assert.match(source, /doingBtn\.style\.display = !single \|\| state !== 'DOING'/); // NEW
+    assert.match(source, /Allocate to Start Dates/); // NEW
+    assert.match(source, /buildStagedStartDateAllocationPatch\(card\.value,\s*buildCardWorkflowContext\(board\)\)/); // NEW
     assert.match(source, /menu\.addItem\('Edit Card\.\.\.'/); // NEW
+}); // NEW
+
+test('task manager day-owned breaks use assigned day ownership', () => { // NEW
+    const source = fs.readFileSync(taskManagerPath, 'utf8'); // NEW
+    assert.match(source, /setAttrNoUndo\(card,\s*TASK_ASSIGNED_DAY_ATTR,\s*assignedDay,\s*true\)/); // NEW
+    assert.match(source, /reconcileScheduleBreakOwnership\(board,\s*sourceLaneKey,\s*c\)/); // NEW
+    assert.match(source, /getAttr\(card,\s*TASK_ASSIGNED_DAY_ATTR\) === getVisibleDateForWeekLane\(board,\s*laneKey\)/); // NEW
+}); // NEW
+
+test('task manager dialog calls use Trellis dialog elevation', () => { // NEW
+    const source = fs.readFileSync(taskManagerPath, 'utf8'); // NEW
+    assert.match(source, /const TRELLIS_DIALOG_Z = 2000000000;/); // NEW
+    assert.match(source, /function elevateTaskManagerDialog\(\)/); // NEW
+    assert.match(source, /dlg\.container\.style\.zIndex = String\(TRELLIS_DIALOG_Z\)/); // NEW
+    assert.match(source, /dlg\.bg\.style\.zIndex = String\(TRELLIS_DIALOG_Z - 1\)/); // NEW
+    const directCalls = (source.match(/ui\.showDialog\(/g) || []).length; // NEW
+    const wrapperCalls = (source.match(/showTaskManagerDialog\(/g) || []).length; // NEW
+    assert.equal(directCalls, 1); // NEW
+    assert.ok(wrapperCalls >= 4); // NEW
 }); // NEW
 
 test('task manager isolates no-undo planning view reflow', () => { // NEW

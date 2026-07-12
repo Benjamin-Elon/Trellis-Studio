@@ -29,15 +29,21 @@ const TASK_MANUAL_STAGED_ATTR = 'manual_staged'; // NEW
 const TASK_SCHEDULE_START_MINUTE_ATTR = 'schedule_start_minute'; // NEW: derived from stacked day-lane order
 const TASK_SCHEDULE_DURATION_MINUTES_ATTR = 'schedule_duration_minutes'; // NEW: derived from card height
 const TASK_SCHEDULE_BREAK_ATTR = 'schedule_break'; // NEW: real stacked card that reserves schedule time
+const TASK_SCHEDULE_ORDER_ATTR = 'schedule_order'; // NEW: preserves day stack order across week navigation
+const TASK_SCHEDULE_ORDER_DAY_ATTR = 'schedule_order_day'; // NEW: prevents stale order from applying to another date
 const TASK_WORK_HOURS_DEFAULTS_ATTR = 'task_work_hours_defaults_json'; // NEW
 const TASK_WORK_HOURS_WEEK_OVERRIDES_ATTR = 'task_work_hours_week_overrides_json'; // NEW
+const TASK_DAY_LANE_WIDTHS_ATTR = 'task_day_lane_widths_json'; // NEW: user-resized per-weekday lane widths
 const TASK_VIEW_MODES = ['FULL', 'WEEK']; // CHANGE: Day mode now normalizes to Week
 const TASK_WORKFLOW_STATES = ['STAGED', 'TODO', 'DOING', 'DONE']; // NEW
 const WEEK_DAY_LANE_KEYS = ['WEEK_SUN', 'WEEK_MON', 'WEEK_TUE', 'WEEK_WED', 'WEEK_THU', 'WEEK_FRI', 'WEEK_SAT']; // NEW
 const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // NEW
+const TRELLIS_DIALOG_Z = 2000000000; // NEW: match Draw.io dialog layer ordering
 const SCHEDULE_PX_PER_HOUR = 80; // NEW
 const SCHEDULE_MINUTE_SNAP = 15; // NEW
 const SCHEDULE_MIN_CARD_HEIGHT = 20; // NEW
+const DEFAULT_DAY_LANE_WIDTH = 220; // NEW
+const MIN_DAY_LANE_WIDTH = 140; // NEW
 const DEFAULT_WORK_START_MINUTE = 6 * 60; // NEW
 const DEFAULT_WORK_END_MINUTE = 18 * 60; // NEW
 
@@ -186,6 +192,13 @@ function clampTaskDayToWeek(iso, weekStartISO) { // NEW
     if (date.dayNumber < start.dayNumber) return weekStartISO; // NEW
     if (date.dayNumber > start.dayNumber + 6) return getTaskWeekEndISO(weekStartISO); // NEW
     return iso; // NEW
+} // NEW
+
+function clampTaskStartToVisibleWeek(source, weekStartISO) { // NEW
+    const weekStart = getTaskWeekStartISO(weekStartISO); // NEW
+    const start = readAttributeValue(source, 'start'); // NEW
+    if (!parseTaskCalendarISO(start) || !parseTaskCalendarISO(weekStart)) return null; // NEW
+    return clampTaskDayToWeek(start, weekStart); // NEW
 } // NEW
 
 function shiftTaskDayWithinWeek(iso, weekStartISO, delta) { // NEW
@@ -409,6 +422,23 @@ function buildSelectedPeriodStagedDueText(source, context) { // NEW
     return 'Due now'; // NEW
 } // NEW
 
+function buildStagedStartDateAllocationPatch(source, context) { // NEW
+    const ctx = context || {}; // NEW
+    const weekStart = getTaskWeekStartISO(ctx.selectedWeekStart); // NEW
+    const assignedDay = clampTaskStartToVisibleWeek(source, weekStart); // NEW
+    if (!assignedDay) return null; // NEW
+    return { // NEW
+        attributes: { // NEW
+            [TASK_WORKFLOW_STATE_ATTR]: 'TODO', // NEW
+            [TASK_ASSIGNED_DAY_ATTR]: assignedDay, // NEW
+            [TASK_SCHEDULER_DATES_LOCKED_ATTR]: '1', // NEW
+            [TASK_INCOMPLETE_DAY_ATTR]: null, // NEW
+            [TASK_MANUAL_STAGED_ATTR]: null, // NEW
+            completed: null // NEW
+        } // NEW
+    }; // NEW
+} // NEW
+
 function snapScheduleMinutes(value, fallback) { // NEW
     const numeric = Number(value); // NEW
     const base = Number.isFinite(numeric) ? numeric : fallback; // NEW
@@ -425,6 +455,68 @@ function schedulePxToMinutes(px) { // NEW
     const numeric = Number(px); // NEW
     const minutes = Number.isFinite(numeric) ? (numeric / SCHEDULE_PX_PER_HOUR) * 60 : SCHEDULE_MINUTE_SNAP; // NEW
     return Math.max(SCHEDULE_MINUTE_SNAP, snapScheduleMinutes(minutes, SCHEDULE_MINUTE_SNAP)); // NEW
+} // NEW
+
+function getDateScopedScheduleOrder(source, visibleDay) { // NEW
+    if (!parseTaskCalendarISO(visibleDay)) return null; // NEW
+    const orderDay = String(readAttributeValue(source, TASK_SCHEDULE_ORDER_DAY_ATTR) || '').trim(); // NEW
+    if (orderDay !== visibleDay) return null; // NEW
+    const order = Number(readAttributeValue(source, TASK_SCHEDULE_ORDER_ATTR)); // NEW
+    return Number.isFinite(order) && order >= 0 ? order : null; // NEW
+} // NEW
+
+function compareDateScopedScheduleOrderRecords(left, right, visibleDay) { // NEW
+    const leftOrder = getDateScopedScheduleOrder(left && left.source, visibleDay); // NEW
+    const rightOrder = getDateScopedScheduleOrder(right && right.source, visibleDay); // NEW
+    const leftFallback = Number(left && left.fallbackIndex); // NEW
+    const rightFallback = Number(right && right.fallbackIndex); // NEW
+    const leftResolved = leftOrder != null ? leftOrder : (Number.isFinite(leftFallback) ? leftFallback : 0); // NEW
+    const rightResolved = rightOrder != null ? rightOrder : (Number.isFinite(rightFallback) ? rightFallback : 0); // NEW
+    if (leftResolved !== rightResolved) return leftResolved - rightResolved; // NEW
+    const fallbackDiff = (Number.isFinite(leftFallback) ? leftFallback : 0) - (Number.isFinite(rightFallback) ? rightFallback : 0); // NEW
+    if (fallbackDiff) return fallbackDiff; // NEW
+    return String(left && left.id || '').localeCompare(String(right && right.id || '')); // NEW
+} // NEW
+
+function normalizeWeekDayLaneWidth(value, fallback) { // NEW
+    const numeric = Number(value); // NEW
+    const base = Number.isFinite(numeric) ? numeric : fallback; // NEW
+    return Math.max(MIN_DAY_LANE_WIDTH, Math.round(Number.isFinite(base) ? base : DEFAULT_DAY_LANE_WIDTH)); // NEW
+} // NEW
+
+function normalizeWeekDayLaneWidths(value, fallbackWidth) { // NEW
+    const parsed = typeof value === 'string' ? parseJsonObject(value) : value; // NEW
+    const source = parsed && typeof parsed === 'object' ? parsed : {}; // NEW
+    const rawWidths = source.widths && typeof source.widths === 'object' ? source.widths : source; // NEW
+    const fallback = normalizeWeekDayLaneWidth(fallbackWidth, DEFAULT_DAY_LANE_WIDTH); // NEW
+    const out = {}; // NEW
+    WEEK_DAY_LANE_KEYS.forEach(laneKey => { // NEW
+        out[laneKey] = normalizeWeekDayLaneWidth(rawWidths[laneKey], fallback); // NEW
+    }); // NEW
+    return out; // NEW
+} // NEW
+
+function serializeWeekDayLaneWidths(widths) { // NEW
+    return JSON.stringify({ schemaVersion: 1, widths: normalizeWeekDayLaneWidths(widths, DEFAULT_DAY_LANE_WIDTH) }); // NEW
+} // NEW
+
+function formatScheduleClockMinute(totalMinutes) { // NEW
+    const total = Math.max(0, Math.round(Number(totalMinutes) || 0)); // NEW
+    const dayOffset = Math.floor(total / 1440); // NEW
+    const minuteOfDay = total % 1440; // NEW
+    const hour24 = Math.floor(minuteOfDay / 60); // NEW
+    const minute = minuteOfDay % 60; // NEW
+    const suffix = hour24 >= 12 ? 'PM' : 'AM'; // NEW
+    const hour12 = hour24 % 12 || 12; // NEW
+    return hour12 + ':' + String(minute).padStart(2, '0') + ' ' + suffix + (dayOffset > 0 ? '+' + dayOffset + 'd' : ''); // NEW
+} // NEW
+
+function formatScheduleTimeRange(startMinute, durationMinutes) { // NEW
+    if (startMinute == null || startMinute === '' || durationMinutes == null || durationMinutes === '') return ''; // NEW
+    const start = snapScheduleMinutes(startMinute, null); // NEW
+    const duration = snapScheduleMinutes(durationMinutes, null); // NEW
+    if (start == null || duration == null || duration <= 0) return ''; // NEW
+    return formatScheduleClockMinute(start) + '-' + formatScheduleClockMinute(start + duration); // NEW
 } // NEW
 
 function normalizeWorkHourWindow(day) { // NEW
@@ -889,6 +981,7 @@ if (typeof globalThis !== 'undefined' && globalThis.__TRELLIS_TASK_MANAGER_TEST_
         getWeekLaneKeyForDate, // NEW
         getDateForWeekLaneKey, // NEW
         clampTaskDayToWeek, // NEW
+        clampTaskStartToVisibleWeek, // NEW
         shiftTaskDayWithinWeek, // NEW
         getTaskViewLaneKeys, // NEW
         deriveWorkflowStateFromLaneKey, // NEW
@@ -898,6 +991,7 @@ if (typeof globalThis !== 'undefined' && globalThis.__TRELLIS_TASK_MANAGER_TEST_
         isUserTouchedSchedulerCard, // NEW
         isUserTouchedSchedulerRecord, // NEW
         buildWorkflowPatch, // NEW
+        buildStagedStartDateAllocationPatch, // NEW
         buildIncompletePatch, // NEW
         decideTaskViewLaneKey, // NEW
         selectedPeriodStagedSortEnabled, // NEW
@@ -907,6 +1001,12 @@ if (typeof globalThis !== 'undefined' && globalThis.__TRELLIS_TASK_MANAGER_TEST_
         snapScheduleMinutes, // NEW
         scheduleMinutesToPx, // NEW
         schedulePxToMinutes, // NEW
+        getDateScopedScheduleOrder, // NEW
+        compareDateScopedScheduleOrderRecords, // NEW
+        normalizeWeekDayLaneWidth, // NEW
+        normalizeWeekDayLaneWidths, // NEW
+        serializeWeekDayLaneWidths, // NEW
+        formatScheduleTimeRange, // NEW
         normalizeWorkHourWindow, // NEW
         normalizeWeekWorkHours, // NEW
         defaultWeekWorkHours, // NEW
@@ -982,7 +1082,8 @@ Draw.loadPlugin(function (ui) {
     ];
 
     const BOARD_GEOM = { x: 40, y: 40, w: 2200, h: 760 };
-    const LANE_W = 220, LANE_H = 680, LANE_GAP = 16;
+    const LANE_W = DEFAULT_DAY_LANE_WIDTH, LANE_H = 680, LANE_GAP = 16; // CHANGE
+    const WORKFLOW_CARD_FILL = { TODO: '#F8CECC', DOING: '#FFF2CC', DONE: '#D5E8D4' }; // NEW
 
     const LINK_ATTR = 'linkedTo';
     const REPEAT_HIDDEN_ATTR = 'repeat_hidden'; // NEW
@@ -1094,17 +1195,93 @@ Draw.loadPlugin(function (ui) {
         ); // NEW
     } // NEW
 
+    function getBoardWeekDayLaneWidths(board) { // NEW
+        return normalizeWeekDayLaneWidths(getAttr(board, TASK_DAY_LANE_WIDTHS_ATTR), LANE_W); // NEW
+    } // NEW
+
+    function getWeekDayLaneWidth(board, laneKey) { // NEW
+        if (!isWeekDayLane(laneKey)) return LANE_W; // NEW
+        return getBoardWeekDayLaneWidths(board)[laneKey] || LANE_W; // NEW
+    } // NEW
+
+    function persistWeekDayLaneWidth(board, laneKey, width) { // NEW
+        if (!board || !isWeekDayLane(laneKey)) return false; // NEW
+        const widths = getBoardWeekDayLaneWidths(board); // NEW
+        const nextWidth = normalizeWeekDayLaneWidth(width, LANE_W); // NEW
+        if (widths[laneKey] === nextWidth) return false; // NEW
+        widths[laneKey] = nextWidth; // NEW
+        setAttrNoUndo(board, TASK_DAY_LANE_WIDTHS_ATTR, serializeWeekDayLaneWidths(widths), true); // NEW
+        return true; // NEW
+    } // NEW
+
     function getWeekDayIndexForLaneKey(laneKey) { // NEW
         return WEEK_DAY_LANE_KEYS.indexOf(String(laneKey || '')); // NEW
     } // NEW
 
-    function getLaneScheduleRecords(lane) { // NEW
-        return snapshotLaneCards(lane).map(card => { // NEW
+    function getVisibleDateForWeekLane(board, laneKey) { // NEW
+        return isWeekDayLane(laneKey) ? getDateForWeekLaneKey(laneKey, getSelectedWeekStart(board)) : null; // NEW
+    } // NEW
+
+    function reconcileScheduleBreakOwnership(board, laneKey, card) { // NEW
+        if (!board || !card || !isWeekDayLane(laneKey) || !isScheduleBreakCard(card)) return false; // NEW
+        const visibleDate = getVisibleDateForWeekLane(board, laneKey); // NEW
+        if (!visibleDate) return false; // NEW
+        let changed = false; // NEW
+        const ownerDay = getAttr(card, TASK_ASSIGNED_DAY_ATTR); // NEW
+        if (!parseTaskCalendarISO(ownerDay)) { // NEW
+            setAttrNoUndo(card, TASK_ASSIGNED_DAY_ATTR, visibleDate, true); // NEW
+            changed = true; // NEW
+        } // NEW
+        const active = getAttr(card, TASK_ASSIGNED_DAY_ATTR) === visibleDate; // NEW
+        const curVisible = model.isVisible ? model.isVisible(card) : true; // NEW
+        if (curVisible !== active && model.setVisible) { // NEW
+            model.setVisible(card, active); // NEW
+            changed = true; // NEW
+        } // NEW
+        if (!active) { // NEW
+            changed = setDerivedCardAttribute(card, TASK_SCHEDULE_START_MINUTE_ATTR, null) || changed; // NEW
+            changed = setDerivedCardAttribute(card, TASK_SCHEDULE_DURATION_MINUTES_ATTR, null) || changed; // NEW
+        } // NEW
+        return changed; // NEW
+    } // NEW
+
+    function isActiveScheduleCardForLane(board, laneKey, card) { // NEW
+        if (!isScheduleBreakCard(card)) return true; // NEW
+        return getAttr(card, TASK_ASSIGNED_DAY_ATTR) === getVisibleDateForWeekLane(board, laneKey); // NEW
+    } // NEW
+
+    function markScheduleLaneOrderDirty(lane) { // NEW
+        if (lane && isWeekDayLane(getAttr(lane, 'lane_key'))) lane.__trellisScheduleOrderDirty = true; // NEW
+    } // NEW
+
+    function isScheduleLaneOrderDirty(lane) { // NEW
+        return !!(lane && lane.__trellisScheduleOrderDirty); // NEW
+    } // NEW
+
+    function clearScheduleLaneOrderDirty(lane) { // NEW
+        if (lane) lane.__trellisScheduleOrderDirty = false; // NEW
+    } // NEW
+
+    function getOrderedScheduleLaneCards(board, lane, laneKey) { // NEW
+        const visibleDay = getVisibleDateForWeekLane(board, laneKey); // NEW
+        const records = snapshotLaneCards(lane).map((card, index) => ({ // NEW
+            id: card.id, // NEW
+            cell: card, // NEW
+            source: card.value, // NEW
+            fallbackIndex: index // NEW
+        })).filter(record => isActiveScheduleCardForLane(board, laneKey, record.cell)); // NEW
+        if (!isScheduleLaneOrderDirty(lane)) records.sort((left, right) => compareDateScopedScheduleOrderRecords(left, right, visibleDay)); // NEW
+        return records.map(record => record.cell); // NEW
+    } // NEW
+
+    function getLaneScheduleRecords(board, lane, laneKey) { // CHANGE
+        return getOrderedScheduleLaneCards(board, lane, laneKey).map((card, index) => { // CHANGE
             const geo = model.getGeometry(card); // NEW
             return { // NEW
                 id: card.id, // NEW
                 cell: card, // NEW
                 source: card.value, // NEW
+                fallbackIndex: index, // NEW
                 height: geo ? geo.height : SCHEDULE_MIN_CARD_HEIGHT // NEW
             }; // NEW
         }); // NEW
@@ -1115,7 +1292,7 @@ Draw.loadPlugin(function (ui) {
         const dayIndex = getWeekDayIndexForLaneKey(laneKey); // NEW
         const workHours = getBoardWeekWorkHours(board); // NEW
         const dayWindow = workHours[dayIndex]; // NEW
-        const plan = buildStackSchedulePlan(getLaneScheduleRecords(lanes[laneKey]), dayWindow); // NEW
+        const plan = buildStackSchedulePlan(getLaneScheduleRecords(board, lanes[laneKey], laneKey), dayWindow); // CHANGE
         const scheduledMinutes = Math.max(workWindowDurationMinutes(dayWindow), plan.contentEndMinute - plan.startMinute); // NEW
         return Math.max(SCHEDULE_MIN_CARD_HEIGHT, scheduleMinutesToPx(scheduledMinutes)); // NEW
     } // NEW
@@ -1137,14 +1314,16 @@ Draw.loadPlugin(function (ui) {
         } // NEW
         let x = 10; // NEW
         const y = 28; // NEW
+        let visibleWidthTotal = 0; // NEW
 
         visibleKeys.forEach(laneKey => { // NEW
             const lane = lanes[laneKey]; // NEW
             if (!lane) return; // NEW
+            const laneWidth = mode === 'WEEK' && isWeekDayLane(laneKey) ? getWeekDayLaneWidth(board, laneKey) : LANE_W; // NEW
             const geo = lane.getGeometry() ? lane.getGeometry().clone() : new mxGeometry(x, y, LANE_W, LANE_H); // NEW
             geo.x = x; // NEW
             geo.y = y; // NEW
-            geo.width = LANE_W; // NEW
+            geo.width = laneWidth; // CHANGE
             geo.height = laneHeights[laneKey] || LANE_H; // CHANGE
             model.setGeometry(lane, geo); // NEW
             if (mode === 'WEEK' && isWeekDayLane(laneKey)) { // NEW
@@ -1155,7 +1334,8 @@ Draw.loadPlugin(function (ui) {
             } // NEW
             lane.setStyle(setStyleKey(lane.getStyle(), 'strokeWidth', laneKey === selectedWeekLaneKey ? '3' : '2')); // CHANGE
             if (model.isVisible && model.isVisible(lane) === false) model.setVisible(lane, true); // NEW
-            x += LANE_W + LANE_GAP; // NEW
+            visibleWidthTotal += laneWidth; // NEW
+            x += laneWidth + LANE_GAP; // CHANGE
         }); // NEW
 
         Object.keys(lanes).forEach(laneKey => { // NEW
@@ -1164,7 +1344,7 @@ Draw.loadPlugin(function (ui) {
             if (!visibleSet.has(laneKey) && (!model.isVisible || model.isVisible(lane) !== false)) model.setVisible(lane, false); // NEW
         }); // NEW
 
-        const totalW = 10 + (visibleKeys.length * LANE_W) + (Math.max(0, visibleKeys.length - 1) * LANE_GAP) + 10; // NEW
+        const totalW = 10 + visibleWidthTotal + (Math.max(0, visibleKeys.length - 1) * LANE_GAP) + 10; // CHANGE
         const geo = board.getGeometry().clone(); // NEW
         geo.width = Math.max(totalW, BOARD_GEOM.w); // NEW
         geo.height = mode === 'WEEK' ? y + Math.max(SCHEDULE_MIN_CARD_HEIGHT, maxLaneHeight) + 10 : BOARD_GEOM.h; // CHANGE
@@ -1575,6 +1755,10 @@ Draw.loadPlugin(function (ui) {
         return '<span style="display:inline-block;margin:2px 4px 0 0;border:1px solid #000;padding:0 6px;border-radius:10px;font-size:11px;line-height:16px;vertical-align:middle;"><b>' +
             mxUtils.htmlEntities(label) + ':</b> ' + mxUtils.htmlEntities(String(text)) + '</span>';
     }
+    function renderScheduleTimeBadge(card, laneKey) { // NEW
+        if (!isWeekDayLane(laneKey)) return ''; // CHANGE
+        return renderBadge('Time', formatScheduleTimeRange(getAttr(card, TASK_SCHEDULE_START_MINUTE_ATTR), getAttr(card, TASK_SCHEDULE_DURATION_MINUTES_ATTR))); // NEW
+    } // NEW
     function computeBadgesFor(card, laneKey, opts) { // CHANGE
         const startISO = getAttr(card, 'start');
         const endISO = getAttr(card, 'end');
@@ -1832,13 +2016,18 @@ Draw.loadPlugin(function (ui) {
         return out;
     }
 
+    function getScheduleLaneCardsInOrder(board, lane, laneKey) { // NEW
+        return getLaneCardsInOrder(lane).filter(card => isActiveScheduleCardForLane(board, laneKey, card)); // NEW
+    } // NEW
+
 
     function resortAndPageLane(lane, laneKey, opts) {
         if (isWeekDayLane(laneKey)) { // NEW: manual stack order is schedule order
-            const cards = getLaneCardsInOrder(lane); // NEW
+            const board = (opts && opts.board) || findBoardAncestor(lane); // NEW
+            const cards = getScheduleLaneCardsInOrder(board, lane, laneKey); // CHANGE
             applyLanePaging(lane, laneKey, cards); // NEW
             if (graph.removeCellOverlays) graph.removeCellOverlays(lane); // NEW
-            applySchedulePlanToDayLane((opts && opts.board) || findBoardAncestor(lane), lane, laneKey, { refresh: false }); // NEW
+            applySchedulePlanToDayLane(board, lane, laneKey, { refresh: false }); // CHANGE
             return; // NEW
         } // NEW
         const sortedCards = sortLaneCards(lane, laneKey, opts) || [];
@@ -1930,12 +2119,13 @@ Draw.loadPlugin(function (ui) {
         const noteBadge = renderBadge('Note', getCardNote(card)); // NEW
         const editedDateBadge = hasCardDateOverride(card) ? renderBadge('Dates', 'Edited') : ''; // NEW
         const repeatBadge = renderBadge('Repeat', getAttr(card, REPEAT_BADGE_ATTR)); // NEW
+        const scheduleTimeBadge = renderScheduleTimeBadge(card, laneKey); // NEW
         const stateBadge = viewMode === 'WEEK' && getEffectiveWorkflowState(card.value, laneKey) === 'DOING' ? renderBadge('State', 'DOING') : ''; // NEW
         const missingBadge = viewMode !== 'FULL' && getAttr(card, TASK_SCHEDULER_MISSING_ATTR) === '1' ? renderBadge('Scheduler', 'Missing') : ''; // NEW
         const incompleteBadge = viewMode !== 'FULL' ? renderBadge('Incomplete', getAttr(card, TASK_INCOMPLETE_DAY_ATTR)) : ''; // NEW
 
-        const badgesBlock = (badgesHtml || stateBadge || missingBadge || incompleteBadge || repeatBadge || noteBadge || editedDateBadge || linkBadge) // CHANGE
-            ? ('<br/>' + badgesHtml + stateBadge + missingBadge + incompleteBadge + repeatBadge + noteBadge + editedDateBadge + linkBadge) // CHANGE
+        const badgesBlock = (scheduleTimeBadge || badgesHtml || stateBadge || missingBadge || incompleteBadge || repeatBadge || noteBadge || editedDateBadge || linkBadge) // CHANGE
+            ? ('<br/>' + scheduleTimeBadge + badgesHtml + stateBadge + missingBadge + incompleteBadge + repeatBadge + noteBadge + editedDateBadge + linkBadge) // CHANGE
             : '';
 
         const html = title + badgesBlock;
@@ -2330,25 +2520,48 @@ Draw.loadPlugin(function (ui) {
         return true; // NEW
     } // NEW
 
+    function applyScheduleCardVisualStyle(card, laneKey, overflow) { // NEW
+        if (!card || !isWeekDayLane(laneKey)) return false; // NEW
+        let nextStyle = card.getStyle ? card.getStyle() : card.style || ''; // NEW
+        const before = nextStyle; // NEW
+        if (isScheduleBreakCard(card)) { // NEW
+            nextStyle = setStyleKey(nextStyle, 'fillColor', '#F3F4F6'); // NEW
+            nextStyle = setStyleKey(nextStyle, 'strokeColor', overflow ? '#B91C1C' : '#6B7280'); // NEW
+        } else { // NEW
+            const state = getEffectiveWorkflowState(card.value, laneKey); // NEW
+            nextStyle = setStyleKey(nextStyle, 'fillColor', WORKFLOW_CARD_FILL[state] || WORKFLOW_CARD_FILL.TODO); // NEW
+            nextStyle = setStyleKey(nextStyle, 'strokeColor', overflow ? '#B91C1C' : '#000000'); // NEW
+        } // NEW
+        if (nextStyle === before) return false; // NEW
+        card.setStyle(nextStyle); // NEW
+        return true; // NEW
+    } // NEW
+
     function applySchedulePlanToDayLane(board, lane, laneKey, opts) { // NEW
         if (!board || !lane || !isWeekDayLane(laneKey)) return false; // NEW
         const dayIndex = getWeekDayIndexForLaneKey(laneKey); // NEW
         const dayWindow = getBoardWeekWorkHours(board)[dayIndex]; // NEW
-        const records = getLaneScheduleRecords(lane); // NEW
+        const records = getLaneScheduleRecords(board, lane, laneKey); // CHANGE
         const plan = buildStackSchedulePlan(records, dayWindow); // NEW
         let changed = false; // NEW
         if (plan.closed) { // NEW
             records.forEach(record => { // NEW
-                changed = setDerivedCardAttribute(record.cell, TASK_SCHEDULE_START_MINUTE_ATTR, null) || changed; // NEW
-                changed = setDerivedCardAttribute(record.cell, TASK_SCHEDULE_DURATION_MINUTES_ATTR, null) || changed; // NEW
+                const startChanged = setDerivedCardAttribute(record.cell, TASK_SCHEDULE_START_MINUTE_ATTR, null); // NEW
+                const durationChanged = setDerivedCardAttribute(record.cell, TASK_SCHEDULE_DURATION_MINUTES_ATTR, null); // NEW
+                const scheduleChanged = startChanged || durationChanged; // CHANGE
+                if (scheduleChanged) refreshCardLabel(record.cell, true); // NEW
+                changed = scheduleChanged || changed; // NEW
             }); // NEW
             return changed; // NEW
         } // NEW
         plan.items.forEach((item, index) => { // NEW
             const record = records[index]; // NEW
             if (!record || !record.cell) return; // NEW
-            changed = setDerivedCardAttribute(record.cell, TASK_SCHEDULE_START_MINUTE_ATTR, item.startMinute) || changed; // NEW
-            changed = setDerivedCardAttribute(record.cell, TASK_SCHEDULE_DURATION_MINUTES_ATTR, item.durationMinutes) || changed; // NEW
+            const startChanged = setDerivedCardAttribute(record.cell, TASK_SCHEDULE_START_MINUTE_ATTR, item.startMinute); // NEW
+            const durationChanged = setDerivedCardAttribute(record.cell, TASK_SCHEDULE_DURATION_MINUTES_ATTR, item.durationMinutes); // NEW
+            const scheduleChanged = startChanged || durationChanged; // CHANGE
+            if (scheduleChanged) refreshCardLabel(record.cell, true); // NEW
+            changed = scheduleChanged || changed; // NEW
             const geo = model.getGeometry(record.cell); // NEW
             if (geo && Math.round(Number(geo.height) || 0) !== item.height) { // NEW
                 const nextGeo = geo.clone ? geo.clone() : new mxGeometry(geo.x || 0, geo.y || 0, geo.width || 160, geo.height || item.height); // NEW
@@ -2356,7 +2569,7 @@ Draw.loadPlugin(function (ui) {
                 model.setGeometry(record.cell, nextGeo); // NEW
                 changed = true; // NEW
             } // NEW
-            record.cell.setStyle(setStyleKey(record.cell.getStyle(), 'strokeColor', item.overflow ? '#B91C1C' : (isScheduleBreakCard(record.cell) ? '#6B7280' : '#000000'))); // CHANGE
+            changed = applyScheduleCardVisualStyle(record.cell, laneKey, item.overflow) || changed; // CHANGE
         }); // NEW
         if (changed && (!opts || opts.refresh !== false)) graph.refresh(lane); // NEW
         return changed; // NEW
@@ -2532,6 +2745,9 @@ Draw.loadPlugin(function (ui) {
                     }
 
                     if (isScheduleBreakCard(c)) { // NEW
+                        if (reconcileScheduleBreakOwnership(board, sourceLaneKey, c)) { // NEW
+                            boardDirty = true; // NEW
+                        } // NEW
                         markDirtyLane(dirtyLanes, beforeParent); // NEW
                         continue; // NEW
                     } // NEW
@@ -2856,14 +3072,16 @@ Draw.loadPlugin(function (ui) {
     let pendingRepairCards = new Set(); // NEW
     let pendingRepairBoards = new Set(); // NEW
     let pendingInvalidKanbanPlacements = new Map(); // NEW
+    let pendingWeekLaneWidthChanges = new Map(); // NEW
     let repairTimer = null; // NEW
 
     function collectChangedKanbanCards(edit) {
         const out = new Set();
         const boards = new Set(); // NEW
         const invalidPlacements = new Map(); // NEW
-        if (isKanbanViewReflowing()) return { cards: out, boards, invalidPlacements }; // NEW
-        if (!edit || !edit.changes) return { cards: out, boards, invalidPlacements }; // CHANGE
+        const laneWidthChanges = new Map(); // NEW
+        if (isKanbanViewReflowing()) return { cards: out, boards, invalidPlacements, laneWidthChanges }; // CHANGE
+        if (!edit || !edit.changes) return { cards: out, boards, invalidPlacements, laneWidthChanges }; // CHANGE
 
         for (const ch of edit.changes) {
             let cell = null;
@@ -2890,6 +3108,13 @@ Draw.loadPlugin(function (ui) {
             } else if (ch instanceof mxGeometryChange) {
                 cell = ch.cell; // CHANGE: schedule card height edits commit duration
                 currentParent = model.getParent(cell); // NEW
+                const changedLaneKey = getAttr(cell, 'lane_key'); // NEW
+                if (isWeekDayLane(changedLaneKey) && currentParent && isBoardCell(currentParent)) { // NEW
+                    const geo = model.getGeometry(cell); // NEW
+                    laneWidthChanges.set(cell.id || changedLaneKey, { board: currentParent, laneKey: changedLaneKey, width: geo ? geo.width : null }); // NEW
+                    boards.add(currentParent); // NEW
+                    continue; // NEW
+                } // NEW
                 const laneKey = currentParent ? getAttr(currentParent, 'lane_key') : null; // NEW
                 if (!isWeekDayLane(laneKey)) continue; // NEW
             }
@@ -2904,18 +3129,20 @@ Draw.loadPlugin(function (ui) {
             out.add(cell); // CHANGE
         }
 
-        return { cards: out, boards, invalidPlacements }; // CHANGE
+        return { cards: out, boards, invalidPlacements, laneWidthChanges }; // CHANGE
     }
 
-    function scheduleKanbanRepair(cards, boards, invalidPlacements) { // CHANGE
+    function scheduleKanbanRepair(cards, boards, invalidPlacements, laneWidthChanges) { // CHANGE
         const hasCards = cards && cards.size > 0; // NEW
         const hasBoards = boards && boards.size > 0; // NEW
         const hasInvalidPlacements = invalidPlacements && invalidPlacements.size > 0; // NEW
-        if (!hasCards && !hasBoards && !hasInvalidPlacements) return; // CHANGE
+        const hasLaneWidthChanges = laneWidthChanges && laneWidthChanges.size > 0; // NEW
+        if (!hasCards && !hasBoards && !hasInvalidPlacements && !hasLaneWidthChanges) return; // CHANGE
 
         if (hasCards) cards.forEach(card => pendingRepairCards.add(card)); // CHANGE
         if (hasBoards) boards.forEach(board => pendingRepairBoards.add(board)); // NEW
         if (hasInvalidPlacements) invalidPlacements.forEach((entry, key) => pendingInvalidKanbanPlacements.set(key, entry)); // NEW
+        if (hasLaneWidthChanges) laneWidthChanges.forEach((entry, key) => pendingWeekLaneWidthChanges.set(key, entry)); // NEW
 
         if (repairTimer != null) return;
 
@@ -2925,16 +3152,18 @@ Draw.loadPlugin(function (ui) {
             const cardsToRepair = Array.from(pendingRepairCards);
             const boardsToRepair = Array.from(pendingRepairBoards); // NEW
             const invalidPlacementsToRepair = Array.from(pendingInvalidKanbanPlacements.values()); // NEW
+            const laneWidthChangesToRepair = Array.from(pendingWeekLaneWidthChanges.values()); // NEW
             pendingRepairCards.clear();
             pendingRepairBoards.clear(); // NEW
             pendingInvalidKanbanPlacements.clear(); // NEW
+            pendingWeekLaneWidthChanges.clear(); // NEW
 
-            repairChangedCards(cardsToRepair, boardsToRepair, invalidPlacementsToRepair); // CHANGE
+            repairChangedCards(cardsToRepair, boardsToRepair, invalidPlacementsToRepair, laneWidthChangesToRepair); // CHANGE
         }, 0);
     }
 
-    function repairChangedCards(cards, boards, invalidPlacements) { // CHANGE
-        if ((!cards || cards.length === 0) && (!boards || boards.length === 0) && (!invalidPlacements || invalidPlacements.length === 0)) return; // CHANGE
+    function repairChangedCards(cards, boards, invalidPlacements, laneWidthChanges) { // CHANGE
+        if ((!cards || cards.length === 0) && (!boards || boards.length === 0) && (!invalidPlacements || invalidPlacements.length === 0) && (!laneWidthChanges || laneWidthChanges.length === 0)) return; // CHANGE
 
         const affectedBoards = new Map(); // NEW
         const touchedGroups = new Set();
@@ -2945,6 +3174,11 @@ Draw.loadPlugin(function (ui) {
         model.beginUpdate();
         try {
             repairInvalidKanbanPlacements(invalidPlacements, affectedBoards); // NEW
+
+            (laneWidthChanges || []).forEach(entry => { // NEW
+                if (!entry || !entry.board) return; // NEW
+                if (persistWeekDayLaneWidth(entry.board, entry.laneKey, entry.width)) affectedBoards.set(entry.board.id || entry.laneKey, entry.board); // NEW
+            }); // NEW
 
             for (const cell of (cards || [])) { // CHANGE
                 if (!cell || !model.isVertex(cell) || !isKanbanCard(cell)) continue;
@@ -2982,7 +3216,7 @@ Draw.loadPlugin(function (ui) {
     model.addListener(mxEvent.CHANGE, function (_sender, evt) {
         const edit = evt.getProperty('edit');
         const changes = collectChangedKanbanCards(edit); // CHANGE
-        scheduleKanbanRepair(changes.cards, changes.boards, changes.invalidPlacements); // CHANGE: defer mutation out of CHANGE event
+        scheduleKanbanRepair(changes.cards, changes.boards, changes.invalidPlacements, changes.laneWidthChanges); // CHANGE: defer mutation out of CHANGE event
     });
 
 
@@ -3322,7 +3556,7 @@ Draw.loadPlugin(function (ui) {
             if (evt.key === 'Escape') ui.hideDialog();
         });
 
-        ui.showDialog(div, 420, datesEditableAtOpen ? 310 : 230, true, true); // CHANGE
+        showTaskManagerDialog(div, 420, datesEditableAtOpen ? 310 : 230, true, true); // CHANGE
         noteInput.focus(); // CHANGE
     }
 
@@ -3412,10 +3646,14 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function createBreakCard(parentLane) { // NEW
+        const board = findBoardAncestor(parentLane); // NEW
+        const laneKey = getAttr(parentLane, 'lane_key'); // NEW
+        const assignedDay = board ? getVisibleDateForWeekLane(board, laneKey) : null; // NEW
         const card = createVertex('', 0, 0, 160, scheduleMinutesToPx(30), BREAK_CARD_STYLE); // NEW
         model.add(parentLane, card, model.getChildCount(parentLane)); // NEW
         setAttrNoUndo(card, 'kanban_card', '1', true); // NEW
         setAttrNoUndo(card, TASK_SCHEDULE_BREAK_ATTR, '1', true); // NEW
+        if (assignedDay) setAttrNoUndo(card, TASK_ASSIGNED_DAY_ATTR, assignedDay, true); // NEW
         setAttrNoUndo(card, TASK_SCHEDULE_DURATION_MINUTES_ATTR, '30', true); // NEW
         setAttrNoUndo(card, 'title', 'Break', true); // NEW
         setAttrNoUndo(card, 'status', getAttr(parentLane, 'status') || parentLane.value || '', true); // NEW
@@ -3434,6 +3672,17 @@ Draw.loadPlugin(function (ui) {
             model.endUpdate(); // NEW
         } // NEW
         return true; // NEW
+    } // NEW
+
+    function elevateTaskManagerDialog() { // NEW
+        const dlg = ui && ui.dialog; // NEW
+        if (dlg && dlg.bg && dlg.bg.style) dlg.bg.style.zIndex = String(TRELLIS_DIALOG_Z - 1); // NEW
+        if (dlg && dlg.container && dlg.container.style) dlg.container.style.zIndex = String(TRELLIS_DIALOG_Z); // NEW
+    } // NEW
+
+    function showTaskManagerDialog(node, width, height, modal, closable) { // NEW
+        ui.showDialog(node, width, height, modal, closable); // NEW
+        elevateTaskManagerDialog(); // NEW
     } // NEW
 
     function formatMinuteTimeInput(minutes) { // NEW
@@ -3524,7 +3773,7 @@ Draw.loadPlugin(function (ui) {
         buttons.appendChild(cancel); // NEW
         buttons.appendChild(save); // NEW
         div.appendChild(buttons); // NEW
-        ui.showDialog(div, 520, 560, true, true); // NEW
+        showTaskManagerDialog(div, 520, 560, true, true); // CHANGE
     } // NEW
 
     function endDay(board) { // NEW
@@ -3604,6 +3853,36 @@ Draw.loadPlugin(function (ui) {
                 const board = findBoardAncestor(card); // NEW
                 if (!board) return; // NEW
                 const patch = buildWorkflowPatch(card.value, action, buildCardWorkflowContext(board)); // NEW
+                if (!patch || !patch.attributes) return; // NEW
+                if (applyCardPatchInsideUpdate(card, patch.attributes)) { // NEW
+                    changedCount += 1; // NEW
+                    affectedBoards.set(board.id || board.getId && board.getId() || changedCount, board); // NEW
+                } // NEW
+            }); // NEW
+            affectedBoards.forEach(board => scanAndReflowBoard(board, { insideUpdate: true })); // NEW
+        } finally { // NEW
+            model.endUpdate(); // NEW
+        } // NEW
+        return changedCount; // NEW
+    } // NEW
+
+    function selectionIsOnlyStagedWorkflowCards(cards) { // NEW
+        const raw = getSelectionCellsList(); // NEW
+        if (!cards || !cards.length || raw.length !== cards.length) return false; // NEW
+        return cards.every(card => laneKeyOfCard(card) === 'TODO_STAGED'); // NEW
+    } // NEW
+
+    function applyStagedStartDateAllocation(cards) { // NEW
+        const selected = uniqueKanbanCards(cards).filter(card => laneKeyOfCard(card) === 'TODO_STAGED'); // NEW
+        const affectedBoards = new Map(); // NEW
+        let changedCount = 0; // NEW
+        if (!selected.length) return 0; // NEW
+        model.beginUpdate(); // NEW
+        try { // NEW
+            selected.forEach(card => { // NEW
+                const board = findBoardAncestor(card); // NEW
+                if (!board) return; // NEW
+                const patch = buildStagedStartDateAllocationPatch(card.value, buildCardWorkflowContext(board)); // NEW
                 if (!patch || !patch.attributes) return; // NEW
                 if (applyCardPatchInsideUpdate(card, patch.attributes)) { // NEW
                     changedCount += 1; // NEW
@@ -3990,7 +4269,7 @@ Draw.loadPlugin(function (ui) {
             if (evt.key === 'Enter') saveButton.click(); // NEW
             if (evt.key === 'Escape') ui.hideDialog(); // NEW
         }); // NEW
-        ui.showDialog(div, 460, dateEditable.length ? 260 : 230, true, true); // NEW
+        showTaskManagerDialog(div, 460, dateEditable.length ? 260 : 230, true, true); // CHANGE
         noteInput.focus(); // NEW
     } // NEW
 
@@ -4021,6 +4300,7 @@ Draw.loadPlugin(function (ui) {
         const todoBtn = add('TODO', cards => applyCardWorkflowActions(cards, 'TODO')); // CHANGE
         const doingBtn = add('DOING', cards => applyCardWorkflowActions(cards, 'DOING')); // CHANGE
         const doneBtn = add('DONE', cards => applyCardWorkflowActions(cards, 'DONE')); // CHANGE
+        const allocateBtn = add('Allocate to Start Dates', cards => applyStagedStartDateAllocation(cards)); // NEW
         const resetBtn = add('Reset Dates', cards => cards.length === 1 ? resetCardDates(cards[0]) : resetCardDatesForCards(cards)); // CHANGE
         const clearBtn = add('Clear Note', cards => cards.length === 1 ? clearCardNote(cards[0]) : applyBulkCardEdit(cards, { replaceNote: true, note: '' })); // CHANGE
 
@@ -4034,9 +4314,10 @@ Draw.loadPlugin(function (ui) {
             const state = single ? getEffectiveWorkflowState(card.value, laneKeyOfCard(card)) : null; // CHANGE
             overlay.style.display = 'flex'; // NEW
             editBtn.style.display = ''; // NEW
-            todoBtn.style.display = !single || (state !== 'TODO' && state !== 'DONE') ? '' : 'none'; // CHANGE
-            doingBtn.style.display = !single || (state !== 'DOING' && state !== 'DONE') ? '' : 'none'; // CHANGE
+            todoBtn.style.display = !single || state !== 'TODO' ? '' : 'none'; // CHANGE
+            doingBtn.style.display = !single || state !== 'DOING' ? '' : 'none'; // CHANGE
             doneBtn.style.display = !single || state !== 'DONE' ? '' : 'none'; // CHANGE
+            allocateBtn.style.display = selectionIsOnlyStagedWorkflowCards(cards) ? '' : 'none'; // NEW
             resetBtn.style.display = single ? (canEditCardDates(card) && hasCardDateOverride(card) ? '' : 'none') : (cards.some(hasCardDateOverride) ? '' : 'none'); // CHANGE
             clearBtn.style.display = single ? (getCardNote(card) ? '' : 'none') : (cards.some(getCardNote) ? '' : 'none'); // CHANGE
             if (!positionDomOverlayFromBounds(overlay, bounds, true, false)) overlay.style.display = 'none'; // CHANGE

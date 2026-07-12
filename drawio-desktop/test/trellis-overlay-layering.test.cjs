@@ -108,6 +108,12 @@ test("custom Trellis dialogs render at the Draw.io dialog layer", () => { // NEW
     const elevateCount = (scheduler.match(/elevateTrellisDialog\(ui\)/g) || []).length; // NEW
     assert.ok(showDialogCount > 0, "scheduler should own dialog call sites"); // NEW
     assert.equal(elevateCount, showDialogCount, "scheduler should elevate each owned ui.showDialog call"); // NEW
+    const taskManager = readPlugin("Garden_Task_Manager.js"); // NEW
+    assert.match(taskManager, /const TRELLIS_DIALOG_Z = 2000000000;/); // NEW
+    assert.match(taskManager, /function elevateTaskManagerDialog\(\)/); // NEW
+    assert.match(taskManager, /dlg\.container\.style\.zIndex = String\(TRELLIS_DIALOG_Z\)/); // NEW
+    assert.match(taskManager, /dlg\.bg\.style\.zIndex = String\(TRELLIS_DIALOG_Z - 1\)/); // NEW
+    assert.equal((taskManager.match(/ui\.showDialog\(/g) || []).length, 1); // NEW
 }); // NEW
 
 test("non-control graph overlays stay below controls", () => { // NEW

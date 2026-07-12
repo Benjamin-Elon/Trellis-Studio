@@ -78,11 +78,18 @@ function makeHarness(options = {}) { // CHANGE
     const viewListeners = [];
     let selectedCells = [];
     let lastDialog = null;
+    let currentUi = null; // NEW
 
     const root = new TestCell("root", makeValue(document), new TestGeometry(0, 0, 0, 0));
     const board = new TestCell("board", makeValue(document, { board_key: "KANBAN_BOARD", board_role: "main", task_view_mode: "WEEK", task_selected_week_start: "2026-07-12", task_selected_day: "2026-07-15" }), new TestGeometry(10, 10, 700, 260)); // CHANGE
     const stagedLane = new TestCell("staged", makeValue(document, { lane_key: "TODO_STAGED", status: "TODO (staged)" }), new TestGeometry(20, 40, 200, 200)); // NEW
+    const weekSunLane = new TestCell("weekSun", makeValue(document, { lane_key: "WEEK_SUN", status: "Sunday" }), new TestGeometry(240, 40, 200, 200)); // NEW
+    const weekMonLane = new TestCell("weekMon", makeValue(document, { lane_key: "WEEK_MON", status: "Monday" }), new TestGeometry(460, 40, 200, 200)); // NEW
+    const weekTueLane = new TestCell("weekTue", makeValue(document, { lane_key: "WEEK_TUE", status: "Tuesday" }), new TestGeometry(680, 40, 200, 200)); // NEW
     const weekWedLane = new TestCell("weekWed", makeValue(document, { lane_key: "WEEK_WED", status: "Wednesday" }), new TestGeometry(460, 40, 200, 200)); // NEW
+    const weekThuLane = new TestCell("weekThu", makeValue(document, { lane_key: "WEEK_THU", status: "Thursday" }), new TestGeometry(1120, 40, 200, 200)); // NEW
+    const weekFriLane = new TestCell("weekFri", makeValue(document, { lane_key: "WEEK_FRI", status: "Friday" }), new TestGeometry(1340, 40, 200, 200)); // NEW
+    const weekSatLane = new TestCell("weekSat", makeValue(document, { lane_key: "WEEK_SAT", status: "Saturday" }), new TestGeometry(1560, 40, 200, 200)); // NEW
     const todoLane = new TestCell("todo", makeValue(document, { lane_key: "TODO", status: "TODO" }), new TestGeometry(20, 40, 200, 200));
     const doingLane = new TestCell("doing", makeValue(document, { lane_key: "DOING", status: "DOING" }), new TestGeometry(240, 40, 200, 200));
     const stagedCard = new TestCell("stagedCard", makeValue(document, { // NEW
@@ -92,6 +99,25 @@ function makeHarness(options = {}) { // CHANGE
         start: "2026-07-14", // NEW
         end: "2026-07-14" // NEW
     }), new TestGeometry(30, 60, 120, 60)); // NEW
+    const stagedBeforeCard = new TestCell("stagedBeforeCard", makeValue(document, { // NEW
+        kanban_card: "1", // NEW
+        title: "Before week", // NEW
+        workflow_state: "STAGED", // NEW
+        start: "2026-07-01", // NEW
+        end: "2026-07-01" // NEW
+    }), new TestGeometry(30, 130, 120, 60)); // NEW
+    const stagedAfterCard = new TestCell("stagedAfterCard", makeValue(document, { // NEW
+        kanban_card: "1", // NEW
+        title: "After week", // NEW
+        workflow_state: "STAGED", // NEW
+        start: "2026-07-25", // NEW
+        end: "2026-07-25" // NEW
+    }), new TestGeometry(30, 200, 120, 60)); // NEW
+    const stagedInvalidCard = new TestCell("stagedInvalidCard", makeValue(document, { // NEW
+        kanban_card: "1", // NEW
+        title: "No date", // NEW
+        workflow_state: "STAGED" // NEW
+    }), new TestGeometry(30, 270, 120, 60)); // NEW
     const weekLaneCard = new TestCell("weekLaneCard", makeValue(document, { // NEW
         kanban_card: "1", // NEW
         title: "Week lane task", // NEW
@@ -139,10 +165,19 @@ function makeHarness(options = {}) { // CHANGE
 
     add(root, board);
     add(board, stagedLane); // NEW
+    add(board, weekSunLane); // NEW
+    add(board, weekMonLane); // NEW
+    add(board, weekTueLane); // NEW
     add(board, weekWedLane); // NEW
+    add(board, weekThuLane); // NEW
+    add(board, weekFriLane); // NEW
+    add(board, weekSatLane); // NEW
     add(board, todoLane);
     add(board, doingLane);
     add(stagedLane, stagedCard); // NEW
+    add(stagedLane, stagedBeforeCard); // NEW
+    add(stagedLane, stagedAfterCard); // NEW
+    add(stagedLane, stagedInvalidCard); // NEW
     add(weekWedLane, weekLaneCard); // NEW
     add(todoLane, card1);
     add(todoLane, card2);
@@ -214,17 +249,26 @@ function makeHarness(options = {}) { // CHANGE
         document,
         Draw: {
             loadPlugin(registerPlugin) {
-                registerPlugin({
+                const ui = { // CHANGE
                     editor: { graph, undoManager: { undoableEditHappened() {} } },
                     hideDialog() {
-                        if (lastDialog && lastDialog.parentNode) lastDialog.parentNode.removeChild(lastDialog);
+                        if (currentUi && currentUi.dialog && currentUi.dialog.bg && currentUi.dialog.bg.parentNode) currentUi.dialog.bg.parentNode.removeChild(currentUi.dialog.bg); // NEW
+                        if (currentUi && currentUi.dialog && currentUi.dialog.container && currentUi.dialog.container.parentNode) currentUi.dialog.container.parentNode.removeChild(currentUi.dialog.container); // NEW
                         lastDialog = null;
+                        if (currentUi) currentUi.dialog = null; // NEW
                     },
                     showDialog(node) {
+                        const bg = document.createElement("div"); // NEW
+                        const containerNode = document.createElement("div"); // NEW
                         lastDialog = node;
-                        document.body.appendChild(node);
+                        containerNode.appendChild(node); // NEW
+                        document.body.appendChild(bg); // NEW
+                        document.body.appendChild(containerNode); // NEW
+                        currentUi.dialog = { bg, container: containerNode }; // NEW
                     }
-                });
+                }; // CHANGE
+                currentUi = ui; // NEW
+                registerPlugin(ui); // CHANGE
             }
         },
         mxUtils: {
@@ -268,7 +312,7 @@ function makeHarness(options = {}) { // CHANGE
         mxChildChange: class {},
         mxValueChange: class {},
         mxStyleChange: class {},
-        mxGeometryChange: class {}
+        mxGeometryChange: class { constructor(cell) { this.cell = cell; } } // CHANGE
     });
 
     vm.runInContext(fs.readFileSync(TASK_MANAGER_PATH, "utf8"), context, { filename: TASK_MANAGER_PATH });
@@ -278,19 +322,28 @@ function makeHarness(options = {}) { // CHANGE
         graph,
         board,
         stagedLane, // NEW
+        weekSunLane, // NEW
+        weekTueLane, // NEW
         weekWedLane, // NEW
+        weekSatLane, // NEW
         stagedCard, // NEW
+        stagedBeforeCard, // NEW
+        stagedAfterCard, // NEW
+        stagedInvalidCard, // NEW
         weekLaneCard, // NEW
         card1,
         card2,
         states,
         get lastDialog() { return lastDialog; },
+        get ui() { return currentUi; }, // NEW
+        geometryChange(cell) { return new context.mxGeometryChange(cell); }, // NEW
         setState(cell, state) { states.set(cell, state); },
         fireViewEvent(eventName = "repaint") {
             viewListeners.filter(entry => entry.event === eventName).forEach(entry => entry.listener());
         },
-        fireModelChange() {
-            modelListeners.filter(entry => entry.event === "change").forEach(entry => entry.listener());
+        fireModelChange(edit = null) { // CHANGE
+            const evt = { getProperty(key) { return key === "edit" ? edit : null; } }; // NEW
+            modelListeners.filter(entry => entry.event === "change").forEach(entry => entry.listener(null, evt)); // CHANGE
         }
     };
 }
@@ -382,6 +435,25 @@ test("task manager week scheduler lays out day heights and selected-lane control
     assert.equal(attr(h.board, "task_selected_day"), "2026-07-15"); // NEW
 }); // NEW
 
+test("task manager week day cards show workflow colors and time badge", async () => { // NEW
+    const h = makeHarness(); // NEW
+    h.graph.setSelectionCell(h.weekWedLane); // NEW
+    await nextTick(); // NEW
+
+    assert.match(h.weekLaneCard.style, /fillColor=#F8CECC/); // NEW
+    assert.match(attr(h.weekLaneCard, "label"), /<b>Time:<\/b> 6:00 AM-7:00 AM/); // NEW
+
+    setAttr(h.weekLaneCard, "workflow_state", "DOING"); // NEW
+    h.graph.setSelectionCell(h.weekWedLane); // NEW
+    await nextTick(); // NEW
+    assert.match(h.weekLaneCard.style, /fillColor=#FFF2CC/); // NEW
+
+    setAttr(h.weekLaneCard, "workflow_state", "DONE"); // NEW
+    h.graph.setSelectionCell(h.weekWedLane); // NEW
+    await nextTick(); // NEW
+    assert.match(h.weekLaneCard.style, /fillColor=#D5E8D4/); // NEW
+}); // NEW
+
 test("task manager adds break cards and derives stacked schedule attributes", async () => { // NEW
     const h = makeHarness(); // NEW
     const boardOverlay = h.document.querySelector(".trellis-task-board-header-controls"); // NEW
@@ -395,9 +467,105 @@ test("task manager adds break cards and derives stacked schedule attributes", as
 
     const breakCard = h.weekWedLane.children.find(cell => attr(cell, "schedule_break") === "1"); // NEW
     assert.ok(breakCard); // NEW
+    assert.equal(attr(breakCard, "assigned_day"), "2026-07-15"); // NEW
     assert.equal(attr(breakCard, "schedule_duration_minutes"), "30"); // NEW
     assert.equal(attr(h.weekLaneCard, "schedule_start_minute"), "360"); // NEW
     assert.equal(attr(breakCard, "schedule_start_minute"), "420"); // NEW
+    assert.match(attr(breakCard, "label"), /<b>Time:<\/b> 7:00 AM-7:30 AM/); // NEW
+    assert.match(breakCard.style, /fillColor=#F3F4F6/); // NEW
+    assert.match(breakCard.style, /strokeColor=#6B7280/); // NEW
+}); // NEW
+
+test("task manager hides day-owned breaks outside their visible week", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const boardOverlay = h.document.querySelector(".trellis-task-board-header-controls"); // NEW
+    h.graph.setSelectionCell(h.weekWedLane); // NEW
+    await nextTick(); // NEW
+    buttonByText(boardOverlay, "Add Break").click(); // NEW
+    await nextTick(); // NEW
+    const breakCard = h.weekWedLane.children.find(cell => attr(cell, "schedule_break") === "1"); // NEW
+    assert.equal(attr(breakCard, "assigned_day"), "2026-07-15"); // NEW
+
+    setAttr(h.board, "task_selected_week_start", "2026-07-19"); // NEW
+    setAttr(h.board, "task_selected_day", "2026-07-22"); // NEW
+    h.graph.setSelectionCell(h.weekWedLane); // NEW
+    await nextTick(); // NEW
+
+    assert.equal(breakCard.visible, false); // NEW
+    assert.equal(attr(breakCard, "schedule_start_minute"), null); // NEW
+
+    setAttr(h.board, "task_selected_week_start", "2026-07-12"); // NEW
+    setAttr(h.board, "task_selected_day", "2026-07-15"); // NEW
+    h.graph.setSelectionCell(h.weekWedLane); // NEW
+    await nextTick(); // NEW
+    assert.equal(breakCard.visible, true); // NEW
+    assert.notEqual(attr(breakCard, "schedule_start_minute"), null); // CHANGE
+}); // NEW
+
+test("task manager migrates existing undated breaks to the visible lane date", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const boardOverlay = h.document.querySelector(".trellis-task-board-header-controls"); // NEW
+    h.graph.setSelectionCell(h.weekWedLane); // NEW
+    await nextTick(); // NEW
+    buttonByText(boardOverlay, "Add Break").click(); // NEW
+    await nextTick(); // NEW
+    const breakCard = h.weekWedLane.children.find(cell => attr(cell, "schedule_break") === "1"); // NEW
+    setAttr(breakCard, "assigned_day", null); // NEW
+
+    h.graph.setSelectionCell(h.weekWedLane); // NEW
+    await nextTick(); // NEW
+
+    assert.equal(attr(breakCard, "assigned_day"), "2026-07-15"); // NEW
+    assert.equal(breakCard.visible, true); // NEW
+}); // NEW
+
+test("task manager allocates selected staged cards to clamped start dates", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const overlay = h.document.querySelector(".trellis-task-selected-card-actions"); // NEW
+    [h.stagedCard, h.stagedBeforeCard, h.stagedAfterCard, h.stagedInvalidCard].forEach((card, index) => { // NEW
+        h.setState(card, { x: 30, y: 60 + (index * 70), width: 120, height: 60 }); // NEW
+    }); // NEW
+    h.graph.setSelectionCells([h.stagedCard, h.stagedBeforeCard, h.stagedAfterCard, h.stagedInvalidCard]); // NEW
+    await nextTick(); // NEW
+
+    const allocateButton = buttonByText(overlay, "Allocate to Start Dates"); // NEW
+    assert.ok(allocateButton); // NEW
+    assert.equal(allocateButton.style.display, ""); // NEW
+
+    allocateButton.click(); // NEW
+    await nextTick(); // NEW
+
+    assert.equal(h.weekTueLane.children.includes(h.stagedCard), true); // NEW
+    assert.equal(h.weekSunLane.children.includes(h.stagedBeforeCard), true); // NEW
+    assert.equal(h.weekSatLane.children.includes(h.stagedAfterCard), true); // NEW
+    assert.equal(h.stagedLane.children.includes(h.stagedInvalidCard), true); // NEW
+    assert.equal(attr(h.stagedCard, "workflow_state"), "TODO"); // NEW
+    assert.equal(attr(h.stagedCard, "assigned_day"), "2026-07-14"); // NEW
+    assert.equal(attr(h.stagedBeforeCard, "assigned_day"), "2026-07-12"); // NEW
+    assert.equal(attr(h.stagedAfterCard, "assigned_day"), "2026-07-18"); // NEW
+    assert.equal(attr(h.stagedInvalidCard, "workflow_state"), "STAGED"); // NEW
+
+    h.setState(h.weekLaneCard, { x: 470, y: 60, width: 120, height: 60 }); // NEW
+    h.graph.setSelectionCells([h.stagedInvalidCard, h.weekLaneCard]); // NEW
+    await nextTick(); // NEW
+    assert.equal(buttonByText(overlay, "Allocate to Start Dates").style.display, "none"); // NEW
+}); // NEW
+
+test("task manager direct day-lane resize persists selected weekday width", async () => { // NEW
+    const h = makeHarness(); // NEW
+    h.graph.setSelectionCell(h.weekWedLane); // NEW
+    await nextTick(); // NEW
+
+    h.weekWedLane.geometry.width = 1200; // CHANGE
+    h.fireModelChange({ changes: [h.geometryChange(h.weekWedLane)] }); // NEW
+    await nextTick(); // NEW
+
+    const widths = JSON.parse(attr(h.board, "task_day_lane_widths_json")).widths; // NEW
+    assert.equal(widths.WEEK_WED, 1200); // CHANGE
+    assert.equal(widths.WEEK_TUE, 220); // NEW
+    assert.equal(h.weekWedLane.geometry.width, 1200); // CHANGE
+    assert.equal(h.stagedLane.geometry.width, 220); // NEW
+    assert.equal(h.board.geometry.width, 2872); // CHANGE
 }); // NEW
 
 test("task manager closed week days label closed and clear schedule attributes", async () => { // NEW
@@ -414,6 +582,38 @@ test("task manager closed week days label closed and clear schedule attributes",
     assert.match(attr(h.weekWedLane, "label"), /closed/); // NEW
     assert.equal(attr(h.weekLaneCard, "schedule_start_minute"), null); // NEW
     assert.equal(attr(h.weekLaneCard, "schedule_duration_minutes"), null); // NEW
+}); // NEW
+
+test("task manager edit hours dialog uses Trellis dialog layer", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const boardOverlay = h.document.querySelector(".trellis-task-board-header-controls"); // NEW
+    h.graph.setSelectionCell(h.weekWedLane); // NEW
+    await nextTick(); // NEW
+
+    buttonByText(boardOverlay, "Edit Hours").click(); // NEW
+
+    assert.ok(h.lastDialog); // NEW
+    assert.equal(h.ui.dialog.container.style.zIndex, "2000000000"); // NEW
+    assert.equal(h.ui.dialog.bg.style.zIndex, "1999999999"); // NEW
+}); // NEW
+
+test("task manager single DONE card still offers TODO and DOING actions", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const overlay = h.document.querySelector(".trellis-task-selected-card-actions"); // NEW
+    setAttr(h.weekLaneCard, "workflow_state", "DONE"); // NEW
+    setAttr(h.weekLaneCard, "completed", "2026-07-15"); // NEW
+    h.setState(h.weekLaneCard, { x: 470, y: 60, width: 120, height: 60 }); // NEW
+    h.graph.setSelectionCell(h.weekLaneCard); // NEW
+    await nextTick(); // NEW
+
+    assert.equal(buttonByText(overlay, "TODO").style.display, ""); // NEW
+    assert.equal(buttonByText(overlay, "DOING").style.display, ""); // NEW
+    assert.equal(buttonByText(overlay, "DONE").style.display, "none"); // NEW
+
+    buttonByText(overlay, "TODO").click(); // NEW
+    await nextTick(); // NEW
+    assert.equal(attr(h.weekLaneCard, "workflow_state"), "TODO"); // NEW
+    assert.equal(attr(h.weekLaneCard, "completed"), null); // NEW
 }); // NEW
 
 test("task manager multi-card overlay applies workflow, note, date, reset, and clear actions", async () => {
