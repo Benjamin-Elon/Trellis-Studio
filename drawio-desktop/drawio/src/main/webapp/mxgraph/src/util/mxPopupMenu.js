@@ -56,7 +56,7 @@ mxPopupMenu.prototype.submenuImage = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0i
  * 
  * Specifies the zIndex for the popupmenu and its shadow. Default is 10006.
  */
-mxPopupMenu.prototype.zIndex = 10006;
+mxPopupMenu.prototype.zIndex = 10050;
 
 /**
  * Variable: factoryMethod

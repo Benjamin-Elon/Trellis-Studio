@@ -2681,6 +2681,76 @@ test('differential task sync planner falls back to replacement for unsafe legacy
     assert.equal(taskHooks.planDifferentialTaskSync([makeGeneratedSyncRecord('water::0::0')], [makeGeneratedSyncTask('water::0::0'), makeGeneratedSyncTask('water::0::0')]).legacyReplace, true); // ADDED
 }); // ADDED
 
+test('task planning date helpers use Sunday weeks and bounded day navigation', () => { // NEW
+    assert.equal(taskHooks.getTaskWeekStartISO('2026-07-15'), '2026-07-12'); // NEW
+    assert.equal(taskHooks.getTaskWeekEndISO('2026-07-12'), '2026-07-18'); // NEW
+    assert.equal(taskHooks.isTaskDateInWeek('2026-07-18', '2026-07-12'), true); // NEW
+    assert.equal(taskHooks.isTaskDateInWeek('2026-07-19', '2026-07-12'), false); // NEW
+    assert.equal(taskHooks.getWeekLaneKeyForDate('2026-07-16', '2026-07-12'), 'WEEK_THU'); // NEW
+    assert.equal(taskHooks.getDateForWeekLaneKey('WEEK_FRI', '2026-07-12'), '2026-07-17'); // NEW
+    assert.equal(taskHooks.shiftTaskDayWithinWeek('2026-07-12', '2026-07-12', -1), '2026-07-12'); // NEW
+    assert.equal(taskHooks.shiftTaskDayWithinWeek('2026-07-18', '2026-07-12', 1), '2026-07-18'); // NEW
+}); // NEW
+
+test('task planning view lanes and legacy workflow state are deterministic', () => { // NEW
+    assert.deepEqual(Array.from(taskHooks.getTaskViewLaneKeys('WEEK')), ['TODO_STAGED', 'WEEK_SUN', 'WEEK_MON', 'WEEK_TUE', 'WEEK_WED', 'WEEK_THU', 'WEEK_FRI', 'WEEK_SAT', 'DONE']); // NEW
+    assert.deepEqual(Array.from(taskHooks.getTaskViewLaneKeys('DAY')), ['TODO_STAGED', 'TODO', 'DOING', 'DONE']); // NEW
+    assert.equal(taskHooks.deriveWorkflowStateFromLaneKey('UPCOMING_MONTH'), 'STAGED'); // NEW
+    assert.equal(taskHooks.deriveWorkflowStateFromLaneKey('TODO'), 'TODO'); // NEW
+    assert.equal(taskHooks.deriveWorkflowStateFromLaneKey('DOING'), 'DOING'); // NEW
+    assert.equal(taskHooks.deriveWorkflowStateFromLaneKey('DONE_WEEK'), 'DONE'); // NEW
+    assert.equal(taskHooks.getEffectiveWorkflowState({ workflow_state: 'doing' }, 'TODO'), 'DOING'); // NEW
+}); // NEW
+
+test('task planning workflow patches assign and complete from view context', () => { // NEW
+    const fullTodo = taskHooks.buildWorkflowPatch({}, 'TODO', { mode: 'FULL', today: '2026-07-15' }); // NEW
+    assert.deepEqual({ ...fullTodo.attributes }, { workflow_state: 'TODO', assigned_day: '2026-07-15', scheduler_dates_locked: '1', incomplete_day: null, manual_staged: null, completed: null }); // NEW
+
+    const weekDone = taskHooks.buildWorkflowPatch({}, 'DONE', { mode: 'WEEK', selectedWeekStart: '2026-07-12', today: '2026-07-15' }); // NEW
+    assert.equal(weekDone.attributes.assigned_day, '2026-07-12'); // NEW
+    assert.equal(weekDone.attributes.completed, '2026-07-12'); // NEW
+    assert.equal(weekDone.attributes.manual_staged, null); // NEW
+
+    const dayDone = taskHooks.buildWorkflowPatch({}, 'DONE', { mode: 'DAY', selectedDay: '2026-07-16', selectedWeekStart: '2026-07-12' }); // NEW
+    assert.equal(dayDone.attributes.assigned_day, '2026-07-16'); // NEW
+    assert.equal(dayDone.attributes.completed, '2026-07-16'); // NEW
+    assert.equal(dayDone.attributes.manual_staged, null); // NEW
+
+    const staged = taskHooks.buildWorkflowPatch({ workflow_state: 'TODO', assigned_day: '2026-07-16' }, 'STAGED', { manualStaged: true }); // NEW
+    assert.equal(staged.attributes.manual_staged, '1'); // NEW
+
+    const incomplete = taskHooks.buildIncompletePatch({ workflow_state: 'DOING', assigned_day: '2026-07-16' }, '2026-07-16'); // NEW
+    assert.deepEqual({ ...incomplete.attributes }, { workflow_state: 'STAGED', assigned_day: null, scheduler_dates_locked: null, incomplete_day: '2026-07-16', manual_staged: '1', completed: null }); // NEW
+}); // NEW
+
+test('task planning mode lane decisions reflow from card attributes', () => { // NEW
+    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'STAGED' }, { mode: 'WEEK', laneKey: 'TODO_STAGED', selectedWeekStart: '2026-07-12' }), 'TODO_STAGED'); // NEW
+    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'STAGED', manual_staged: '1' }, { mode: 'DAY', laneKey: 'UPCOMING_MONTH', selectedDay: '2026-07-15' }), 'TODO_STAGED'); // NEW
+    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'STAGED' }, { mode: 'WEEK', laneKey: 'UPCOMING_MONTH', selectedWeekStart: '2026-07-12' }), 'UPCOMING_MONTH'); // NEW
+    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'STAGED', manual_staged: '1' }, { mode: 'FULL', laneKey: 'UPCOMING_MONTH' }), 'TODO_STAGED'); // NEW
+    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'TODO', assigned_day: '2026-07-14' }, { mode: 'WEEK', selectedWeekStart: '2026-07-12' }), 'WEEK_TUE'); // NEW
+    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'DONE', assigned_day: '2026-07-14', completed: '2026-07-14' }, { mode: 'WEEK', selectedWeekStart: '2026-07-12' }), 'DONE'); // NEW
+    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'DONE', assigned_day: '2026-07-14', completed: '2026-07-14' }, { mode: 'DAY', selectedDay: '2026-07-15' }), 'DONE_WEEK'); // NEW
+    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'DOING', assigned_day: '2026-07-15' }, { mode: 'DAY', selectedDay: '2026-07-15' }), 'DOING'); // NEW
+    assert.equal(taskHooks.decideTaskViewLaneKey({ workflow_state: 'DOING', assigned_day: '2026-07-16' }, { mode: 'DAY', selectedDay: '2026-07-15' }), 'WEEK_THU'); // NEW
+}); // NEW
+
+test('scheduler sync respects date locks and preserves touched missing cards', () => { // NEW
+    const lockedAttrs = taskHooks.buildGeneratedTaskSyncAttributesForExisting({ scheduler_dates_locked: '1', start: '2026-07-10' }, makeGeneratedSyncTask('water::0::0', { startISO: '2026-08-01', endISO: '2026-08-02' })); // NEW
+    assert.equal(Object.hasOwn(lockedAttrs, 'start'), false); // NEW
+    assert.equal(lockedAttrs.scheduler_missing, null); // NEW
+
+    const plan = taskHooks.planDifferentialTaskSync( // NEW
+        [makeGeneratedSyncRecord('water::0::0', { workflow_state: 'TODO', assigned_day: '2026-07-15' }), makeGeneratedSyncRecord('water::0::1'), { ...makeGeneratedSyncRecord('water::0::2'), laneKey: 'DOING' }], // NEW
+        [] // NEW
+    ); // NEW
+    assert.deepEqual(Array.from(plan.missing, item => item.key), ['water::0::0', 'water::0::2']); // NEW
+    assert.deepEqual(Array.from(plan.removes, item => item.key), ['water::0::1']); // NEW
+
+    const manuallyStagedPlan = taskHooks.planDifferentialTaskSync([makeGeneratedSyncRecord('water::0::3', { manual_staged: '1' })], []); // NEW
+    assert.deepEqual(Array.from(manuallyStagedPlan.missing, item => item.key), ['water::0::3']); // NEW
+}); // NEW
+
 test('repeat series identity normalizes links and text without using dates', () => { // NEW
     const first = { // NEW
         linkedTo: ' group-b, group-a,group-b ', // NEW
@@ -2892,6 +2962,7 @@ test('legacy card edit captures a reset baseline and reset removes only the over
     assert.equal(reset.start, '2026-04-10');
     assert.equal(reset.end, '2026-04-13');
     assert.equal(reset.date_override, null);
+    assert.equal(reset.manual_staged, null); // NEW
     assert.equal(Object.hasOwn(reset, 'base_start'), false);
     assert.equal(Object.hasOwn(reset, 'base_end'), false);
 });
@@ -2929,6 +3000,7 @@ test('kanban parenting policy allows only canonical board lane and lane card str
     const board = { id: 'board', board_key: 'KANBAN_BOARD' }; // NEW
     const legacyBoard = { id: 'legacy-board', board_key: 'MAIN_KANBAN_BOARD' }; // NEW
     const todoLane = { id: 'todo-lane', lane_key: 'TODO' }; // NEW
+    const weekLane = { id: 'week-lane', lane_key: 'WEEK_SUN' }; // NEW
     const otherTodoLane = { id: 'other-todo-lane', lane_key: 'TODO' }; // NEW
     const doingLane = { id: 'doing-lane', lane_key: 'DOING' }; // NEW
     const unknownLane = { id: 'unknown-lane', lane_key: 'CUSTOM' }; // NEW
@@ -2938,10 +3010,12 @@ test('kanban parenting policy allows only canonical board lane and lane card str
     assert.equal(taskHooks.getKanbanCellType(board), 'board'); // NEW
     assert.equal(taskHooks.getKanbanCellType(legacyBoard), 'board'); // NEW
     assert.equal(taskHooks.getKanbanCellType(todoLane), 'lane'); // NEW
+    assert.equal(taskHooks.getKanbanCellType(weekLane), 'lane'); // NEW
     assert.equal(taskHooks.getKanbanCellType(card), 'card'); // NEW
     assert.equal(taskHooks.getKanbanCellType(unknownLane), 'other'); // NEW
 
     assert.equal(taskHooks.canParentKanbanCell(board, todoLane, { siblings: [] }), true); // NEW
+    assert.equal(taskHooks.canParentKanbanCell(board, weekLane, { siblings: [todoLane] }), true); // NEW
     assert.equal(taskHooks.canParentKanbanCell(board, doingLane, { siblings: [todoLane] }), true); // NEW
     assert.equal(taskHooks.canParentKanbanCell(board, todoLane, { siblings: [todoLane] }), true); // NEW
     assert.equal(taskHooks.canParentKanbanCell(board, otherTodoLane, { siblings: [todoLane] }), false); // NEW
@@ -3018,7 +3092,7 @@ test('card note patches set or clear only card_note and leave scheduler notes un
 test('card note badge is escaped and ordered between timing and edited-date badges', () => {
     const source = fs.readFileSync(taskManagerPath, 'utf8');
     assert.match(source, /const noteBadge = renderBadge\('Note',\s*getCardNote\(card\)\)/);
-    assert.match(source, /badgesHtml \+ repeatBadge \+ noteBadge \+ editedDateBadge \+ linkBadge/); // CHANGE
+    assert.match(source, /badgesHtml \+ stateBadge \+ missingBadge \+ incompleteBadge \+ repeatBadge \+ noteBadge \+ editedDateBadge \+ linkBadge/); // CHANGE
     assert.match(source, /mxUtils\.htmlEntities\(String\(text\)\)/);
 });
 
@@ -3061,7 +3135,50 @@ test('task manager installs kanban parenting drop and move guards', () => { // N
     assert.match(source, /function installKanbanParentingGuards\(\)/); // NEW
     assert.match(source, /graph\.isValidDropTarget = function \(target,\s*cells,\s*evt\)/); // NEW
     assert.match(source, /graph\.moveCells = function \(cells,\s*dx,\s*dy,\s*clone,\s*target,\s*evt,\s*mapping\)/); // NEW
+    assert.match(source, /buildLaneDropWorkflowPatch\(card,\s*targetBoard,\s*targetLaneKey\)/); // NEW
     assert.match(source, /installKanbanParentingGuards\(\);/); // NEW
+}); // NEW
+
+test('task manager installs planning mode header controls and selected-card DOM overlay', () => { // NEW
+    const source = fs.readFileSync(taskManagerPath, 'utf8'); // NEW
+    assert.match(source, /function installBoardHeaderControls\(\)/); // NEW
+    assert.match(source, /function ensureTaskControlOverlayHost\(\)/); // NEW
+    assert.match(source, /const host = graph\.container \|\| null/); // NEW
+    assert.match(source, /if \(style && style\.position === 'static'\) host\.style\.position = 'relative'/); // NEW
+    assert.match(source, /trellis-task-board-header-controls/); // NEW
+    assert.match(source, /bar\.style\.cssText = 'position:absolute;z-index:1005/); // NEW
+    assert.match(source, /dateInput\.type = 'date'/); // NEW
+    assert.match(source, /if \(!value\) \{\s*setBoardPlanningView\(b,\s*'FULL'\)/); // NEW
+    assert.match(source, /setBoardPlanningView\(b,\s*mode === 'FULL' \? 'DAY' : mode,\s*\{\s*\[TASK_SELECTED_WEEK_START_ATTR\]: weekStart,\s*\[TASK_SELECTED_DAY_ATTR\]: value\s*\}\)/); // NEW
+    assert.match(source, /positionDomOverlayFromCellState\(bar,\s*board,\s*false,\s*true\)/); // NEW
+    assert.match(source, /const left = state\.x \+ scrollLeft/); // NEW
+    assert.match(source, /const topBase = state\.y \+ scrollTop/); // NEW
+    assert.match(source, /function getSelectionCellsList\(\)/); // NEW
+    assert.match(source, /if \(isBoardCell\(cell\)\) return cell/); // NEW
+    assert.match(source, /const board = findBoardAncestor\(cell\)/); // NEW
+    assert.match(source, /setBoardPlanningView\(b,\s*'WEEK'\)/); // NEW
+    assert.match(source, /End Day \('/); // NEW
+    assert.match(source, /End Week \('/); // NEW
+    assert.match(source, /function installSelectedCardActionOverlay\(\)/); // NEW
+    assert.match(source, /trellis-task-selected-card-actions/); // NEW
+    assert.match(source, /overlay\.style\.cssText = 'position:absolute;z-index:1006/); // NEW
+    assert.match(source, /for \(const cell of cells\) \{\s*\/\/ NEW\s*if \(cell && model\.isVertex\(cell\) && isKanbanCard\(cell\)\) return cell/s); // NEW
+    assert.match(source, /positionDomOverlayFromCellState\(overlay,\s*card,\s*true,\s*false\)/); // NEW
+    assert.match(source, /graph\.view\.getState\(cell\)/); // NEW
+    assert.match(source, /graph\.view\.addListener\(mxEvent\.REPAINT,\s*refresh\)/); // NEW
+    assert.match(source, /model\.addListener\(mxEvent\.CHANGE,\s*refresh\)/); // NEW
+    assert.match(source, /graph\.container\.addEventListener\('scroll',\s*refresh,\s*\{\s*passive:\s*true\s*\}\)/); // NEW
+    assert.match(source, /applyCardWorkflowAction\(card,\s*'DONE'\)/); // NEW
+    assert.match(source, /menu\.addItem\('Edit Card\.\.\.'/); // NEW
+}); // NEW
+
+test('task manager isolates no-undo planning view reflow', () => { // NEW
+    const source = fs.readFileSync(taskManagerPath, 'utf8'); // NEW
+    assert.match(source, /function runKanbanViewNoUndo\(fn\)/); // NEW
+    assert.match(source, /kanbanViewReflowDepth/); // NEW
+    assert.match(source, /isKanbanViewReflowing\(\)/); // NEW
+    assert.match(source, /undoManager\.history\.splice\(beforeLength\)/); // NEW
+    assert.match(source, /runKanbanViewNoUndo\(function \(\) \{/); // NEW
 }); // NEW
 
 test('save path passes the in-memory task template to graph application', () => { // CHANGED
