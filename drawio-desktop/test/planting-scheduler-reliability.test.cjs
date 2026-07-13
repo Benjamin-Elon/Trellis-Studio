@@ -3266,15 +3266,15 @@ test('task manager installs planning mode header controls and selected-card DOM 
     assert.match(source, /trellis-task-board-header-controls/); // NEW
     assert.match(source, /bar\.style\.zIndex = String\(GRAPH_OVERLAY_Z\.CONTROL\)/); // CHANGE
     assert.match(source, /dateInput\.type = 'date'/); // NEW
-    assert.match(source, /if \(!value\) \{\s*setBoardPlanningView\(b,\s*'FULL'\)/); // NEW
-    assert.match(source, /setBoardPlanningView\(b,\s*'WEEK',\s*\{\s*\[TASK_SELECTED_WEEK_START_ATTR\]: weekStart,\s*\[TASK_SELECTED_DAY_ATTR\]: value\s*\}\)/); // CHANGE
+    assert.match(source, /if \(!value\) \{\s*taskCommands\.setBoardPlanningView\(b,\s*'FULL'\)/); // CHANGE
+    assert.match(source, /taskCommands\.setBoardPlanningView\(b,\s*'WEEK',\s*\{\s*\[TASK_SELECTED_WEEK_START_ATTR\]: weekStart,\s*\[TASK_SELECTED_DAY_ATTR\]: value\s*\}\)/); // CHANGE
     assert.match(source, /positionDomOverlayFromCellState\(bar,\s*board,\s*false,\s*true\)/); // NEW
     assert.match(source, /const left = bounds\.x/); // CHANGE
     assert.match(source, /const topBase = bounds\.y/); // CHANGE
     assert.match(source, /function getSelectionCellsList\(\)/); // NEW
     assert.match(source, /if \(isBoardCell\(cell\)\).*return cell/); // CHANGE
     assert.match(source, /const board = findBoardAncestor\(cell\)/); // NEW
-    assert.match(source, /setBoardPlanningView\(b,\s*'WEEK'\)/); // NEW
+    assert.match(source, /taskCommands\.setBoardPlanningView\(b,\s*'WEEK'\)/); // CHANGE
     assert.match(source, /End Day \('/); // NEW
     assert.match(source, /End Week \('/); // NEW
     assert.match(source, /function installSelectedCardActionOverlay\(\)/); // NEW
@@ -3287,7 +3287,7 @@ test('task manager installs planning mode header controls and selected-card DOM 
     assert.match(source, /model\.addListener\(mxEvent\.CHANGE,\s*refresh\)/); // CHANGE
     assert.match(source, /graph\.container\.addEventListener\('scroll',\s*refresh,\s*\{\s*passive:\s*true\s*\}\)/); // CHANGE
     assert.match(source, /function createDeferredTaskOverlayRefresh\(refresh\)/); // CHANGE
-    assert.match(source, /applyCardWorkflowActions\(cards,\s*'DONE'\)/); // CHANGE
+    assert.match(source, /taskCommands\.applyCardWorkflowActions\(cards,\s*'DONE'\)/); // CHANGE
     assert.match(source, /todoBtn\.style\.display = !single \|\| state !== 'TODO'/); // NEW
     assert.match(source, /doingBtn\.style\.display = !single \|\| state !== 'DOING'/); // NEW
     assert.match(source, /Allocate to Start Dates/); // NEW
@@ -3317,9 +3317,11 @@ test('task manager schedule order is date scoped for tasks and breaks', () => { 
 test('task manager edit hours save reflows the board after persisting hours', () => { // NEW
     const source = fs.readFileSync(taskManagerPath, 'utf8'); // NEW
     const saveBlock = source.slice(source.indexOf("const save = mxUtils.button('Save'"), source.indexOf("buttons.appendChild(cancel)", source.indexOf("const save = mxUtils.button('Save'"))); // NEW
-    assert.match(saveBlock, /setAttrNoUndo\(board,\s*TASK_WORK_HOURS_DEFAULTS_ATTR,\s*serializeWeekWorkHours\(nextDefaults\),\s*true\)/); // NEW
-    assert.match(saveBlock, /setAttrNoUndo\(board,\s*TASK_WORK_HOURS_WEEK_OVERRIDES_ATTR,\s*JSON\.stringify\(\{\s*schemaVersion:\s*1,\s*weeks\s*\}\),\s*true\)/); // NEW
-    assert.match(saveBlock, /scanAndReflowBoard\(board,\s*\{\s*insideUpdate:\s*true\s*\}\)/); // NEW
+    assert.match(saveBlock, /taskCommands\.saveBoardWeekWorkHours\(board,\s*weekStart,\s*weeks,\s*nextDefaults,\s*nextWeek\)/); // CHANGE
+    assert.match(source, /function saveBoardWeekWorkHours\(board,\s*weekStart,\s*weeks,\s*nextDefaults,\s*nextWeek\)/); // CHANGE
+    assert.match(source, /setAttrNoUndo\(board,\s*TASK_WORK_HOURS_DEFAULTS_ATTR,\s*serializeWeekWorkHours\(nextDefaults\),\s*true\)/); // CHANGE
+    assert.match(source, /setAttrNoUndo\(board,\s*TASK_WORK_HOURS_WEEK_OVERRIDES_ATTR,\s*JSON\.stringify\(\{\s*schemaVersion:\s*1,\s*weeks:\s*nextWeeks\s*\}\),\s*true\)/); // CHANGE
+    assert.match(source, /scanAndReflowBoard\(board,\s*\{\s*insideUpdate:\s*true\s*\}\)/); // CHANGE
 }); // NEW
 
 test('task manager dialog calls use Trellis dialog elevation', () => { // NEW
