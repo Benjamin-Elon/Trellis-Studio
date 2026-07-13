@@ -2776,13 +2776,13 @@ test('stack scheduler time helpers snap, normalize hours, and pack cumulatively'
     ]); // NEW
 
     const closed = taskHooks.normalizeWorkHourWindow({ closed: true, startMinute: 500, endMinute: 700 }); // NEW
-    assert.equal(closed.closed, true); // NEW
+    assert.deepEqual(JSON.parse(JSON.stringify(closed)), { closed: true, startMinute: 495, endMinute: 705 }); // CHANGE
     const week = taskHooks.resolveWeekWorkHours( // NEW
         taskHooks.serializeWeekWorkHours([{ startMinute: 360, endMinute: 720 }]), // NEW
         JSON.stringify({ weeks: { '2026-07-12': { days: [{ closed: true }] } } }), // NEW
         '2026-07-12' // NEW
     ); // NEW
-    assert.equal(week[0].closed, true); // NEW
+    assert.deepEqual(JSON.parse(JSON.stringify(week[0])), { closed: true, startMinute: 360, endMinute: 720 }); // CHANGE
     assert.equal(week[1].startMinute, 360); // NEW
     const scale = taskHooks.buildWeekTimeScale(defaults); // NEW
     assert.deepEqual({ active: scale.active, startMinute: scale.startMinute, endMinute: scale.endMinute, durationMinutes: scale.durationMinutes }, { active: true, startMinute: 480, endMinute: 1140, durationMinutes: 660 }); // NEW

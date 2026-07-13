@@ -584,11 +584,10 @@ function formatScheduleTimeRange(startMinute, durationMinutes) { // NEW
 function normalizeWorkHourWindow(day) { // NEW
     const source = day && typeof day === 'object' ? day : {}; // NEW
     const closed = source.closed === true || source.closed === '1' || source.mode === 'closed'; // NEW
-    if (closed) return { closed: true, startMinute: DEFAULT_WORK_START_MINUTE, endMinute: DEFAULT_WORK_START_MINUTE }; // NEW
-    const startMinute = Math.min(1440, snapScheduleMinutes(source.startMinute ?? source.start, DEFAULT_WORK_START_MINUTE)); // NEW
+    const startMinute = Math.min(1440, snapScheduleMinutes(source.startMinute ?? source.start, DEFAULT_WORK_START_MINUTE)); // CHANGE
     const rawEnd = Math.min(1440, snapScheduleMinutes(source.endMinute ?? source.end, DEFAULT_WORK_END_MINUTE)); // NEW
     const endMinute = rawEnd > startMinute ? rawEnd : Math.min(1440, startMinute + 60); // NEW
-    return { closed: false, startMinute, endMinute }; // NEW
+    return { closed, startMinute, endMinute }; // CHANGE
 } // NEW
 
 function normalizeWeekWorkHours(value, fallback) { // NEW
@@ -597,7 +596,9 @@ function normalizeWeekWorkHours(value, fallback) { // NEW
     const rawDays = Array.isArray(source.days) ? source.days : (Array.isArray(value) ? value : []); // NEW
     const days = []; // NEW
     for (let i = 0; i < WEEK_DAY_LANE_KEYS.length; i += 1) { // NEW
-        days.push(normalizeWorkHourWindow(rawDays[i] || (fallbackDays && fallbackDays[i]) || null)); // NEW
+        const fallbackDay = fallbackDays && fallbackDays[i] ? fallbackDays[i] : null; // NEW
+        const rawDay = rawDays[i] && typeof rawDays[i] === 'object' ? rawDays[i] : null; // NEW
+        days.push(normalizeWorkHourWindow(rawDay && fallbackDay ? Object.assign({}, fallbackDay, rawDay) : (rawDay || fallbackDay || null))); // CHANGE
     } // NEW
     return days; // NEW
 } // NEW
@@ -1308,8 +1309,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         'swimlane;fontStyle=2;horizontal=1;startSize=28;collapsible=1;swimlaneFillColor=#F8FAFC;fontFamily=Permanent Marker;fontSize=16;points=[];verticalAlign=top;resizable=1;strokeWidth=2;disableMultiStroke=1;'; // CHANGE: opaque body remains visible below shorter week lanes
     const LANE_STYLE_BASE =
         'swimlane;strokeWidth=2;fontFamily=Permanent Marker;html=0;startSize=1;verticalAlign=bottom;spacingBottom=5;points=[];childLayout=stackLayout;stackBorder=20;stackSpacing=20;resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=1;fillStyle=solid;swimlaneFillColor=default;'; // CHANGE
-    const SCHEDULE_LANE_STYLE_BASE = // NEW: stack order is schedule order, so spacing must not consume time
-        'swimlane;strokeWidth=2;fontFamily=Permanent Marker;html=0;startSize=1;verticalAlign=bottom;spacingBottom=5;points=[];childLayout=stackLayout;stackBorder=0;stackSpacing=0;resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=0;fillStyle=solid;swimlaneFillColor=default;'; // CHANGE
+    const SCHEDULE_LANE_STYLE_BASE = // NEW: plugin-owned schedule geometry prevents Draw.io stack layout from expanding day lanes
+        'swimlane;strokeWidth=2;fontFamily=Permanent Marker;html=0;startSize=1;verticalAlign=bottom;spacingBottom=5;points=[];resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=0;fillStyle=solid;swimlaneFillColor=default;'; // CHANGE
     const CARD_STYLE =
         'whiteSpace=wrap;html=1;strokeWidth=2;fillColor=swimlane;fontStyle=1;spacingTop=0;rounded=1;arcSize=9;points=[];fontFamily=Permanent Marker;hachureGap=8;fillWeight=1;';
     const BREAK_CARD_STYLE = CARD_STYLE + 'dashed=1;fillColor=#F3F4F6;strokeColor=#6B7280;'; // NEW
@@ -1342,6 +1343,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
     const BOARD_LANE_Y = 28, BOARD_BOTTOM_PADDING = 10, FULL_LANE_MIN_H = 126; // NEW: full-mode board resize math
     const WEEK_BOARD_TOP_MARGIN = 20; // NEW: replaces schedule-lane stackBorder so hour origin and resize math match
     const TASK_ACTION_OVERLAY_EXTRA_Y = 15; // CHANGE: nudges selected card/lane action overlays below handles
+    const SCHEDULE_CARD_HORIZONTAL_INSET = 10; // CHANGE: day lanes own card x and width with fixed side gutters
     const WORKFLOW_CARD_FILL = { TODO: '#F8CECC', DOING: '#FFF2CC', DONE: '#D5E8D4' }; // NEW
 
     const LINK_ATTR = 'linkedTo';
@@ -1716,9 +1718,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         const workHours = getBoardWeekWorkHours(board); // NEW
         const dayWindow = workHours[dayIndex]; // NEW
         if (dayWindow && dayWindow.closed) return SCHEDULE_MIN_CARD_HEIGHT; // CHANGE
-        const plan = schedulePolicy.buildStackSchedulePlan(getLaneScheduleRecords(board, lanes[laneKey], laneKey), dayWindow); // CHANGE
-        const scheduledMinutes = Math.max(schedulePolicy.workWindowDurationMinutes(dayWindow), plan.contentEndMinute - plan.startMinute); // CHANGE
-        return Math.max(SCHEDULE_MIN_CARD_HEIGHT, schedulePolicy.scheduleMinutesToPx(scheduledMinutes)); // CHANGE
+        return Math.max(SCHEDULE_MIN_CARD_HEIGHT, schedulePolicy.scheduleMinutesToPx(schedulePolicy.workWindowDurationMinutes(dayWindow))); // CHANGE
     } // NEW
 
     function getCanonicalLaneStyle(laneKey, emphasized) { // NEW: retain card stacking without allowing it to own lane geometry
@@ -3105,6 +3105,22 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         return changed; // NEW
     } // NEW
 
+    function applyScheduleCardGeometry(board, lane, card, item, plan) { // CHANGE: use the same canonical lane width as board layout
+        const currentGeo = model.getGeometry(card); // NEW
+        const laneWidth = getWeekDayLaneWidth(board, getAttr(lane, 'lane_key')); // CHANGE: avoid stale pre-layout lane geometry
+        const nextWidth = Math.max(SCHEDULE_MIN_CARD_HEIGHT, laneWidth - (SCHEDULE_CARD_HORIZONTAL_INSET * 2)); // CHANGE
+        const nextGeo = currentGeo && currentGeo.clone ? currentGeo.clone() : new mxGeometry(SCHEDULE_CARD_HORIZONTAL_INSET, 0, nextWidth, SCHEDULE_MIN_CARD_HEIGHT); // CHANGE
+        nextGeo.x = SCHEDULE_CARD_HORIZONTAL_INSET; // CHANGE
+        nextGeo.width = nextWidth; // CHANGE
+        if (item && plan) { // NEW: closed lanes retain vertical geometry while still matching lane width
+            nextGeo.y = schedulePolicy.scheduleMinuteOffsetToPx(item.startMinute - plan.startMinute); // CHANGE
+            nextGeo.height = item.height; // CHANGE
+        } // NEW
+        if (geometryMatchesRounded(currentGeo, nextGeo)) return false; // NEW
+        model.setGeometry(card, nextGeo); // NEW
+        return true; // NEW
+    } // NEW
+
     function applySchedulePlanToDayLane(board, lane, laneKey, opts) { // NEW
         if (!board || !lane || !isWeekDayLane(laneKey)) return false; // NEW
         bumpTaskReflowTestCounter('schedulePack'); // NEW
@@ -3117,6 +3133,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         changed = persistScheduleLaneOrder(records, visibleDay) || changed; // NEW
         if (plan.closed) { // NEW
             records.forEach(record => { // NEW
+                changed = applyScheduleCardGeometry(board, lane, record.cell, null, null) || changed; // CHANGE: closed day cards still follow lane-owned horizontal geometry
                 const startChanged = setDerivedCardAttribute(record.cell, TASK_SCHEDULE_START_MINUTE_ATTR, null); // NEW
                 const durationChanged = setDerivedCardAttribute(record.cell, TASK_SCHEDULE_DURATION_MINUTES_ATTR, null); // NEW
                 const scheduleChanged = startChanged || durationChanged; // CHANGE
@@ -3134,13 +3151,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             const scheduleChanged = startChanged || durationChanged; // CHANGE
             if (scheduleChanged) refreshCardLabel(record.cell, true); // NEW
             changed = scheduleChanged || changed; // NEW
-            const geo = model.getGeometry(record.cell); // NEW
-            if (geo && Math.round(Number(geo.height) || 0) !== item.height) { // NEW
-                const nextGeo = geo.clone ? geo.clone() : new mxGeometry(geo.x || 0, geo.y || 0, geo.width || 160, geo.height || item.height); // NEW
-                nextGeo.height = item.height; // NEW
-                model.setGeometry(record.cell, nextGeo); // NEW
-                changed = true; // NEW
-            } // NEW
+            changed = applyScheduleCardGeometry(board, lane, record.cell, item, plan) || changed; // CHANGE
             changed = applyScheduleCardVisualStyle(record.cell, laneKey, item.overflow) || changed; // CHANGE
         }); // NEW
         clearScheduleLaneOrderDirty(lane); // NEW
@@ -3769,6 +3780,39 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
     const taskOverlayGestureRefreshers = new Set(); // NEW
     let taskOverlayGestureActive = false; // NEW
     let taskOverlayGestureRefreshScheduled = false; // NEW
+    const userResizedWeekDayLaneKeys = new Set(); // NEW: separates deliberate hour edits from automatic swimlane geometry changes
+
+    function userResizeLaneKey(cell, laneKey) { // NEW
+        return String((cell && (cell.id || (cell.getId && cell.getId()))) || laneKey || ''); // NEW
+    } // NEW
+
+    function markUserResizedWeekDayLanes(cells) { // NEW
+        (Array.isArray(cells) ? cells : []).forEach(cell => { // NEW
+            const laneKey = getAttr(cell, 'lane_key'); // NEW
+            if (!isWeekDayLane(laneKey)) return; // NEW
+            const key = userResizeLaneKey(cell, laneKey); // NEW
+            if (key) userResizedWeekDayLaneKeys.add(key); // NEW
+        }); // NEW
+    } // NEW
+
+    function isUserResizedWeekDayLane(cell, laneKey) { // NEW
+        return userResizedWeekDayLaneKeys.has(userResizeLaneKey(cell, laneKey)); // NEW
+    } // NEW
+
+    function installWeekDayLaneResizeOriginGuard() { // NEW
+        if (graph.__trellisWeekDayLaneResizeOriginGuardInstalled) return; // NEW
+        graph.__trellisWeekDayLaneResizeOriginGuardInstalled = true; // NEW
+        if (typeof graph.resizeCells !== 'function') return; // NEW
+        const originalResizeCells = graph.resizeCells; // NEW
+        graph.resizeCells = function (cells) { // NEW
+            markUserResizedWeekDayLanes(cells); // NEW
+            try { // NEW
+                return originalResizeCells.apply(this, arguments); // NEW
+            } finally { // NEW
+                setTimeout(function () { userResizedWeekDayLaneKeys.clear(); }, 0); // NEW
+            } // NEW
+        }; // NEW
+    } // NEW
 
     function collectChangedKanbanCards(edit) {
         const out = new Set();
@@ -3843,10 +3887,11 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
                         laneWidthChanges.set(cell.id || changedLaneKey, { board: currentParent, laneKey: changedLaneKey, width: geo ? geo.width : null }); // NEW
                         boards.add(currentParent); // NEW
                     } // NEW
-                    if (hoursChanged) { // NEW
+                    if (hoursChanged && isUserResizedWeekDayLane(cell, changedLaneKey)) { // CHANGE
                         laneHourChanges.set(cell.id || changedLaneKey, { board: currentParent, laneKey: changedLaneKey, previousGeo: ch.previous, currentGeo: geo }); // NEW
                         boards.add(currentParent); // NEW
                     } // NEW
+                    if (hoursChanged && !isUserResizedWeekDayLane(cell, changedLaneKey)) boards.add(currentParent); // NEW
                     continue; // NEW
                 } // NEW
                 const laneKey = currentParent ? getAttr(currentParent, 'lane_key') : null; // NEW
@@ -3989,6 +4034,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             model.endUpdate();
         }
     }
+
+    installWeekDayLaneResizeOriginGuard(); // NEW
 
     model.addListener(mxEvent.CHANGE, function (_sender, evt) {
         const edit = evt.getProperty('edit');
@@ -4467,14 +4514,18 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         if (!board || !isWeekDayLane(laneKey)) return false; // NEW
         const dayIndex = getWeekDayIndexForLaneKey(laneKey); // NEW
         const editState = getBoardWeekWorkHourEditState(board); // NEW
-        return saveSelectedWeekDayWorkHours(board, dayIndex, editState.defaults[dayIndex]); // NEW
+        const dayWindow = normalizeWorkHourWindow(editState.week[dayIndex]); // NEW
+        return saveSelectedWeekDayWorkHours(board, dayIndex, Object.assign({}, dayWindow, { closed: false })); // CHANGE
     } // NEW
 
     function closeSelectedWeekDay(board, lane) { // NEW
         if (!board || !lane || selectedWeekDayHasVisibleCards(lane)) return false; // NEW
         const laneKey = getAttr(lane, 'lane_key'); // NEW
         if (!isWeekDayLane(laneKey)) return false; // NEW
-        return saveSelectedWeekDayWorkHours(board, getWeekDayIndexForLaneKey(laneKey), { closed: true }); // NEW
+        const dayIndex = getWeekDayIndexForLaneKey(laneKey); // NEW
+        const editState = getBoardWeekWorkHourEditState(board); // NEW
+        const dayWindow = normalizeWorkHourWindow(editState.week[dayIndex]); // NEW
+        return saveSelectedWeekDayWorkHours(board, dayIndex, Object.assign({}, dayWindow, { closed: true })); // CHANGE
     } // NEW
 
     function elevateTaskManagerDialogImpl() { // CHANGE
