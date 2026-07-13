@@ -630,11 +630,19 @@ test("task manager week scheduler lays out day heights and selected-lane control
     await nextTick(); // NEW
 
     const boardOverlay = h.document.querySelector(".trellis-task-board-header-controls"); // NEW
+    const timeScaleOverlay = h.document.querySelector(".trellis-task-week-time-scale"); // NEW
     assert.equal(buttonByText(boardOverlay, "Day"), undefined); // NEW
+    assert.equal(timeScaleOverlay.style.display, "block"); // NEW
+    assert.equal(timeScaleOverlay.querySelectorAll(".trellis-task-week-time-label").length, 12); // NEW
+    assert.equal(timeScaleOverlay.querySelector(".trellis-task-week-time-label").textContent, "8:00 AM"); // NEW
+    assert.equal(timeScaleOverlay.style.left, "256px"); // NEW
+    assert.equal(timeScaleOverlay.querySelector(".trellis-task-week-time-grid-line").style.left, "72px"); // NEW
+    assert.equal(h.weekSunLane.geometry.y, 28); // NEW
+    assert.equal(h.weekWedLane.geometry.y, 748); // NEW
     assert.equal(h.weekWedLane.geometry.height, 160); // CHANGE
     assert.equal(h.weekSunLane.geometry.height, 320); // NEW
-    assert.equal(h.stagedLane.geometry.height, 320); // CHANGE
-    assert.equal(h.board.geometry.height, 358); // CHANGE
+    assert.equal(h.stagedLane.geometry.height, 880); // CHANGE
+    assert.equal(h.board.geometry.height, 918); // CHANGE
 
     h.setState(h.weekWedLane, { x: 460, y: 40, width: 200, height: 960 }); // NEW
     h.graph.setSelectionCell(h.weekWedLane); // NEW
@@ -947,7 +955,7 @@ test("task manager direct day-lane resize persists selected weekday width", asyn
     assert.equal(widths.WEEK_TUE, 220); // NEW
     assert.equal(h.weekWedLane.geometry.width, 1200); // CHANGE
     assert.equal(h.stagedLane.geometry.width, 220); // NEW
-    assert.equal(h.board.geometry.width, 2872); // CHANGE
+    assert.equal(h.board.geometry.width, 2944); // CHANGE
 }); // NEW
 
 test("task manager ignores week-lane layout geometry when width is unchanged", async () => { // NEW
@@ -1137,7 +1145,7 @@ test("task manager week-mode board height is restored per selected week", async 
     h.graph.setSelectionCell(h.board); // NEW
     await nextTick(); // NEW
     assert.equal(h.board.geometry.height, defaultBoardHeight); // NEW
-    assert.equal(h.stagedLane.geometry.height, h.weekSunLane.geometry.height); // CHANGE
+    assert.equal(h.stagedLane.geometry.height, 880); // CHANGE
 
     setAttr(h.board, "task_selected_week_start", "2026-07-12"); // NEW
     setAttr(h.board, "task_selected_day", "2026-07-12"); // NEW
@@ -1184,6 +1192,24 @@ test("task manager closed week days label closed and clear schedule attributes",
     assert.match(attr(h.weekWedLane, "label"), /closed/); // NEW
     assert.equal(attr(h.weekLaneCard, "schedule_start_minute"), null); // NEW
     assert.equal(attr(h.weekLaneCard, "schedule_duration_minutes"), null); // NEW
+}); // NEW
+
+test("task manager all-closed week hides time scale and keeps day lanes compact", async () => { // NEW
+    const h = makeHarness(); // NEW
+    setAttr(h.board, "task_work_hours_week_overrides_json", JSON.stringify({ // NEW
+        weeks: { "2026-07-12": { days: [{ closed: true }, { closed: true }, { closed: true }, { closed: true }, { closed: true }, { closed: true }, { closed: true }] } } // NEW
+    })); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+
+    const timeScaleOverlay = h.document.querySelector(".trellis-task-week-time-scale"); // NEW
+    assert.equal(timeScaleOverlay.style.display, "none"); // NEW
+    assert.equal(h.weekSunLane.geometry.y, 28); // NEW
+    assert.equal(h.weekWedLane.geometry.y, 28); // NEW
+    assert.equal(h.weekSunLane.geometry.height, 20); // NEW
+    assert.equal(h.weekWedLane.geometry.height, 20); // NEW
+    assert.equal(h.stagedLane.geometry.height, 20); // NEW
+    assert.equal(h.board.geometry.height, 58); // NEW
 }); // NEW
 
 test("task manager edit hours shifts existing day stack and marks overflow", async () => { // NEW

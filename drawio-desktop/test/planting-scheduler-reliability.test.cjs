@@ -2784,6 +2784,14 @@ test('stack scheduler time helpers snap, normalize hours, and pack cumulatively'
     ); // NEW
     assert.equal(week[0].closed, true); // NEW
     assert.equal(week[1].startMinute, 360); // NEW
+    const scale = taskHooks.buildWeekTimeScale(defaults); // NEW
+    assert.deepEqual({ active: scale.active, startMinute: scale.startMinute, endMinute: scale.endMinute, durationMinutes: scale.durationMinutes }, { active: true, startMinute: 480, endMinute: 1140, durationMinutes: 660 }); // NEW
+    assert.equal(taskHooks.getWeekTimeScaleOffsetPx(defaults[1], scale), 720); // NEW
+    const quarterScale = taskHooks.buildWeekTimeScale([{ startMinute: 510, endMinute: 1035 }]); // NEW
+    assert.deepEqual({ startMinute: quarterScale.startMinute, endMinute: quarterScale.endMinute }, { startMinute: 480, endMinute: 1080 }); // NEW
+    assert.equal(taskHooks.getWeekTimeScaleOffsetPx({ startMinute: 510, endMinute: 1035 }, quarterScale), 40); // NEW
+    const closedScale = taskHooks.buildWeekTimeScale([{ closed: true }, { closed: true }, { closed: true }, { closed: true }, { closed: true }, { closed: true }, { closed: true }]); // NEW
+    assert.equal(closedScale.active, false); // NEW
 
     const plan = taskHooks.buildStackSchedulePlan([ // NEW
         { id: 'a', source: { task_estimated_hours: '1.5' }, height: 80 }, // NEW

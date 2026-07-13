@@ -48,6 +48,7 @@ const TRELLIS_DIALOG_Z = 2000000000; // NEW: match Draw.io dialog layer ordering
 const SCHEDULE_PX_PER_HOUR = 80; // NEW
 const SCHEDULE_MINUTE_SNAP = 15; // NEW
 const SCHEDULE_MIN_CARD_HEIGHT = 20; // NEW
+const WEEK_TIME_RULER_WIDTH = 56; // NEW: non-cell gutter used by the week-mode hour guide
 const DEFAULT_TASK_CARD_HEIGHT = 80; // NEW
 const DEFAULT_DAY_LANE_WIDTH = 220; // NEW
 const MIN_DAY_LANE_WIDTH = 140; // NEW
@@ -485,6 +486,11 @@ function schedulePxToMinutes(px) { // NEW
     return Math.max(SCHEDULE_MINUTE_SNAP, snapScheduleMinutes(minutes, SCHEDULE_MINUTE_SNAP)); // NEW
 } // NEW
 
+function scheduleMinuteOffsetToPx(minutes) { // NEW
+    const numeric = Number(minutes); // NEW
+    return Math.max(0, Math.round(((Number.isFinite(numeric) ? numeric : 0) / 60) * SCHEDULE_PX_PER_HOUR)); // NEW
+} // NEW
+
 function getDateScopedScheduleOrder(source, visibleDay) { // NEW
     if (!parseTaskCalendarISO(visibleDay)) return null; // NEW
     const orderDay = String(readAttributeValue(source, TASK_SCHEDULE_ORDER_DAY_ATTR) || '').trim(); // NEW
@@ -619,6 +625,26 @@ function resolveWeekWorkHours(defaultsValue, overridesValue, weekStartISO) { // 
 function workWindowDurationMinutes(dayWindow) { // NEW
     const window = normalizeWorkHourWindow(dayWindow); // NEW
     return window.closed ? 0 : Math.max(0, window.endMinute - window.startMinute); // NEW
+} // NEW
+
+function buildWeekTimeScale(days) { // NEW
+    const sourceDays = Array.isArray(days) ? days : []; // NEW
+    const week = WEEK_DAY_LANE_KEYS.map((_laneKey, index) => sourceDays[index] ? normalizeWorkHourWindow(sourceDays[index]) : { closed: true, startMinute: DEFAULT_WORK_START_MINUTE, endMinute: DEFAULT_WORK_START_MINUTE }); // NEW
+    const openDays = week.filter(day => day && !day.closed); // NEW
+    if (!openDays.length) return { active: false, startMinute: null, endMinute: null, durationMinutes: 0, hourMarks: [] }; // NEW
+    const earliest = openDays.reduce((min, day) => Math.min(min, day.startMinute), 1440); // NEW
+    const latest = openDays.reduce((max, day) => Math.max(max, day.endMinute), 0); // NEW
+    const startMinute = Math.max(0, Math.floor(earliest / 60) * 60); // NEW
+    const endMinute = Math.min(1440, Math.ceil(latest / 60) * 60); // NEW
+    const marks = []; // NEW
+    for (let minute = startMinute; minute <= endMinute; minute += 60) marks.push(minute); // NEW
+    return { active: true, startMinute, endMinute, durationMinutes: Math.max(0, endMinute - startMinute), hourMarks: marks }; // NEW
+} // NEW
+
+function getWeekTimeScaleOffsetPx(dayWindow, timeScale) { // NEW
+    const window = normalizeWorkHourWindow(dayWindow); // NEW
+    if (!timeScale || !timeScale.active || window.closed) return 0; // NEW
+    return scheduleMinuteOffsetToPx(Math.max(0, window.startMinute - timeScale.startMinute)); // NEW
 } // NEW
 
 function defaultScheduleDurationFromHours(value) { // NEW
@@ -1117,6 +1143,7 @@ const SchedulePolicyCore = Object.freeze({ // CHANGE
     snapScheduleMinutes, // CHANGE
     scheduleMinutesToPx, // CHANGE
     schedulePxToMinutes, // CHANGE
+    scheduleMinuteOffsetToPx, // NEW
     getDateScopedScheduleOrder, // CHANGE
     compareDateScopedScheduleOrderRecords, // CHANGE
     normalizeWeekDayLaneWidth, // CHANGE
@@ -1132,6 +1159,8 @@ const SchedulePolicyCore = Object.freeze({ // CHANGE
     serializeWeekWorkHours, // CHANGE
     resolveWeekWorkHours, // CHANGE
     workWindowDurationMinutes, // CHANGE
+    buildWeekTimeScale, // NEW
+    getWeekTimeScaleOffsetPx, // NEW
     defaultScheduleDurationFromHours, // CHANGE
     buildStackSchedulePlan // CHANGE
 }); // CHANGE
@@ -1209,6 +1238,7 @@ if (typeof globalThis !== 'undefined' && globalThis.__TRELLIS_TASK_MANAGER_TEST_
         snapScheduleMinutes: SchedulePolicyCore.snapScheduleMinutes, // CHANGE
         scheduleMinutesToPx: SchedulePolicyCore.scheduleMinutesToPx, // CHANGE
         schedulePxToMinutes: SchedulePolicyCore.schedulePxToMinutes, // CHANGE
+        scheduleMinuteOffsetToPx: SchedulePolicyCore.scheduleMinuteOffsetToPx, // NEW
         getDateScopedScheduleOrder: SchedulePolicyCore.getDateScopedScheduleOrder, // CHANGE
         compareDateScopedScheduleOrderRecords: SchedulePolicyCore.compareDateScopedScheduleOrderRecords, // CHANGE
         normalizeWeekDayLaneWidth: SchedulePolicyCore.normalizeWeekDayLaneWidth, // CHANGE
@@ -1224,6 +1254,8 @@ if (typeof globalThis !== 'undefined' && globalThis.__TRELLIS_TASK_MANAGER_TEST_
         serializeWeekWorkHours: SchedulePolicyCore.serializeWeekWorkHours, // CHANGE
         resolveWeekWorkHours: SchedulePolicyCore.resolveWeekWorkHours, // CHANGE
         workWindowDurationMinutes: SchedulePolicyCore.workWindowDurationMinutes, // CHANGE
+        buildWeekTimeScale: SchedulePolicyCore.buildWeekTimeScale, // NEW
+        getWeekTimeScaleOffsetPx: SchedulePolicyCore.getWeekTimeScaleOffsetPx, // NEW
         defaultScheduleDurationFromHours: SchedulePolicyCore.defaultScheduleDurationFromHours, // CHANGE
         buildStackSchedulePlan: SchedulePolicyCore.buildStackSchedulePlan, // CHANGE
         getTaskDateRange, // NEW
@@ -1614,6 +1646,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         const dayIndex = getWeekDayIndexForLaneKey(laneKey); // NEW
         const workHours = getBoardWeekWorkHours(board); // NEW
         const dayWindow = workHours[dayIndex]; // NEW
+        if (dayWindow && dayWindow.closed) return SCHEDULE_MIN_CARD_HEIGHT; // CHANGE
         const plan = schedulePolicy.buildStackSchedulePlan(getLaneScheduleRecords(board, lanes[laneKey], laneKey), dayWindow); // CHANGE
         const scheduledMinutes = Math.max(schedulePolicy.workWindowDurationMinutes(dayWindow), plan.contentEndMinute - plan.startMinute); // CHANGE
         return Math.max(SCHEDULE_MIN_CARD_HEIGHT, schedulePolicy.scheduleMinutesToPx(scheduledMinutes)); // CHANGE
@@ -1652,27 +1685,35 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         const selectedWeekLaneKey = mode === 'WEEK' ? taskPolicy.getWeekLaneKeyForDate(getSelectedDay(board), getSelectedWeekStart(board)) : null; // CHANGE
         ensureCanonicalLaneStyles(lanes, selectedWeekLaneKey); // NEW
         const laneHeights = {}; // NEW
+        const laneYOffsets = {}; // NEW
         let maxLaneHeight = mode === 'WEEK' ? 0 : getBoardFullLaneHeight(board); // CHANGE
+        let weekTimeScale = null; // NEW
         if (mode === 'WEEK') { // NEW
+            const workHours = getBoardWeekWorkHours(board); // NEW
+            weekTimeScale = schedulePolicy.buildWeekTimeScale(workHours); // NEW
+            const weekScaleHeight = weekTimeScale.active ? schedulePolicy.scheduleMinuteOffsetToPx(weekTimeScale.durationMinutes) : SCHEDULE_MIN_CARD_HEIGHT; // NEW
             WEEK_DAY_LANE_KEYS.forEach(laneKey => { // NEW
+                const dayIndex = getWeekDayIndexForLaneKey(laneKey); // NEW
+                laneYOffsets[laneKey] = schedulePolicy.getWeekTimeScaleOffsetPx(workHours[dayIndex], weekTimeScale); // NEW
                 laneHeights[laneKey] = computeWeekLaneHeight(board, lanes, laneKey); // NEW
-                maxLaneHeight = Math.max(maxLaneHeight, laneHeights[laneKey]); // NEW
+                maxLaneHeight = Math.max(maxLaneHeight, laneYOffsets[laneKey] + laneHeights[laneKey]); // CHANGE
             }); // NEW
             const persistedBoardHeight = getPersistedWeekBoardHeight(board); // NEW
-            const requestedLaneHeight = persistedBoardHeight == null ? maxLaneHeight : persistedBoardHeight - BOARD_LANE_Y - BOARD_BOTTOM_PADDING; // NEW
-            laneHeights.TODO_STAGED = Math.max(SCHEDULE_MIN_CARD_HEIGHT, requestedLaneHeight); // CHANGE
+            const requestedLaneHeight = persistedBoardHeight == null ? 0 : persistedBoardHeight - BOARD_LANE_Y - BOARD_BOTTOM_PADDING; // CHANGE
+            laneHeights.TODO_STAGED = Math.max(SCHEDULE_MIN_CARD_HEIGHT, weekScaleHeight, maxLaneHeight, requestedLaneHeight); // CHANGE
+            maxLaneHeight = Math.max(maxLaneHeight, laneHeights.TODO_STAGED); // NEW
         } // NEW
         let x = 10; // NEW
         const y = BOARD_LANE_Y; // CHANGE
-        let visibleWidthTotal = 0; // NEW
 
         visibleKeys.forEach(laneKey => { // NEW
             const lane = lanes[laneKey]; // NEW
             if (!lane) return; // NEW
+            if (mode === 'WEEK' && laneKey === WEEK_DAY_LANE_KEYS[0]) x += WEEK_TIME_RULER_WIDTH + LANE_GAP; // NEW
             const laneWidth = mode === 'WEEK' && isWeekDayLane(laneKey) ? getWeekDayLaneWidth(board, laneKey) : LANE_W; // NEW
             const geo = lane.getGeometry() ? lane.getGeometry().clone() : new mxGeometry(x, y, LANE_W, LANE_H); // NEW
             geo.x = x; // NEW
-            geo.y = y; // NEW
+            geo.y = y + (mode === 'WEEK' && isWeekDayLane(laneKey) ? (laneYOffsets[laneKey] || 0) : 0); // CHANGE
             geo.width = laneWidth; // CHANGE
             geo.height = laneHeights[laneKey] || maxLaneHeight; // CHANGE
             if (!geometryMatchesRounded(lane.getGeometry && lane.getGeometry(), geo)) model.setGeometry(lane, geo); // CHANGE
@@ -1683,7 +1724,6 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
                 ensureXmlValue(lane).setAttribute('label', label); // NEW
             } // NEW
             if (model.isVisible && model.isVisible(lane) === false) model.setVisible(lane, true); // NEW
-            visibleWidthTotal += laneWidth; // NEW
             x += laneWidth + LANE_GAP; // CHANGE
         }); // NEW
 
@@ -1693,9 +1733,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             if (!visibleSet.has(laneKey) && (!model.isVisible || model.isVisible(lane) !== false)) model.setVisible(lane, false); // NEW
         }); // NEW
 
-        const totalW = 10 + visibleWidthTotal + (Math.max(0, visibleKeys.length - 1) * LANE_GAP) + 10; // CHANGE
+        const totalW = Math.max(BOARD_GEOM.w, x - LANE_GAP + 10); // CHANGE
         const geo = board.getGeometry().clone(); // NEW
-        geo.width = Math.max(totalW, BOARD_GEOM.w); // NEW
+        geo.width = totalW; // CHANGE
         const weekContentHeight = mode === 'WEEK' ? Math.max(SCHEDULE_MIN_CARD_HEIGHT, maxLaneHeight, laneHeights.TODO_STAGED || 0) : maxLaneHeight; // NEW
         geo.height = mode === 'WEEK' ? y + weekContentHeight + BOARD_BOTTOM_PADDING : (getPersistedFullLaneHeight(board) ? y + maxLaneHeight + BOARD_BOTTOM_PADDING : BOARD_GEOM.h); // CHANGE
         if (!geometryMatchesRounded(board.getGeometry && board.getGeometry(), geo)) model.setGeometry(board, geo); // CHANGE
@@ -4744,6 +4784,27 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         return { x: Number(state.x) || 0, y: Number(state.y) || 0, width: Number(state.width) || 0, height: Number(state.height) || 0, source: 'mxCellState' }; // NEW
     } // NEW
 
+    function getCellVisualBounds(cell, host) { // NEW
+        const state = graph.view && graph.view.getState ? graph.view.getState(cell) : null; // NEW
+        const stateBounds = getStateHostBounds(cell, state, host); // NEW
+        if (stateBounds) return stateBounds; // NEW
+        let cur = cell; // NEW
+        let x = 0; // NEW
+        let y = 0; // NEW
+        let width = 0; // NEW
+        let height = 0; // NEW
+        while (cur) { // NEW
+            const geo = model.getGeometry ? model.getGeometry(cur) : (cur.getGeometry ? cur.getGeometry() : null); // NEW
+            if (geo) { // NEW
+                x += Number(geo.x) || 0; // NEW
+                y += Number(geo.y) || 0; // NEW
+                if (cur === cell) { width = Number(geo.width) || 0; height = Number(geo.height) || 0; } // NEW
+            } // NEW
+            cur = model.getParent ? model.getParent(cur) : null; // NEW
+        } // NEW
+        return width > 0 || height > 0 ? { x, y, width, height, source: 'geometry' } : null; // NEW
+    } // NEW
+
     function getCellStateBounds(cells, host) { // CHANGE
         let bounds = null; // NEW
         for (const cell of (cells || [])) { // NEW
@@ -4989,6 +5050,85 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         graph.getSelectionModel().addListener(mxEvent.CHANGE, requestRefresh); // CHANGE
         addGraphViewRefreshListener(requestRefresh); // CHANGE
         requestRefresh(); // CHANGE
+    } // NEW
+
+    function installWeekTimeScaleOverlay() { // NEW
+        if (graph.__trellisTaskWeekTimeScaleInstalled || !document || !document.createElement) return; // NEW
+        graph.__trellisTaskWeekTimeScaleInstalled = true; // NEW
+        const host = ensureTaskControlOverlayHost(); // NEW
+        if (!host) return; // NEW
+        const overlay = document.createElement('div'); // NEW
+        overlay.className = 'trellis-task-week-time-scale'; // NEW
+        overlay.style.cssText = 'position:absolute;display:none;pointer-events:none;font:11px Arial,sans-serif;color:#4B5563;z-index:' + GRAPH_OVERLAY_Z.ANNOTATION + ';'; // NEW
+        host.appendChild(overlay); // NEW
+
+        function selectedBoard() { // NEW
+            const cells = getSelectionCellsList(); // NEW
+            for (const cell of cells) { // NEW
+                if (isBoardCell(cell)) return cell; // NEW
+                const board = findBoardAncestor(cell); // NEW
+                if (board) return board; // NEW
+            } // NEW
+            return null; // NEW
+        } // NEW
+
+        function clearOverlay() { // NEW
+            overlay.style.display = 'none'; // NEW
+            overlay.innerHTML = ''; // NEW
+        } // NEW
+
+        function addHourMark(fragment, labelWidth, gridLeft, gridWidth, y, minute, isBoundary) { // NEW
+            const line = document.createElement('div'); // NEW
+            line.className = 'trellis-task-week-time-grid-line'; // NEW
+            line.style.cssText = 'position:absolute;left:' + Math.round(gridLeft) + 'px;top:' + Math.round(y) + 'px;width:' + Math.round(gridWidth) + 'px;border-top:1px solid ' + (isBoundary ? '#CBD5E1' : '#E5E7EB') + ';height:0;'; // NEW
+            fragment.appendChild(line); // NEW
+            const label = document.createElement('div'); // NEW
+            label.className = 'trellis-task-week-time-label'; // NEW
+            label.textContent = formatScheduleClockMinute(minute); // NEW
+            label.style.cssText = 'position:absolute;left:0;top:' + Math.max(0, Math.round(y - 7)) + 'px;width:' + Math.round(labelWidth) + 'px;text-align:right;white-space:nowrap;'; // NEW
+            fragment.appendChild(label); // NEW
+        } // NEW
+
+        function refresh() { // NEW
+            const board = selectedBoard(); // NEW
+            if (!board || getBoardViewMode(board) !== 'WEEK') { clearOverlay(); return; } // NEW
+            ensureBoardPlanningDefaults(board); // NEW
+            const lanes = boardLanes(board); // NEW
+            const firstLane = lanes[WEEK_DAY_LANE_KEYS[0]]; // NEW
+            const lastLane = lanes[WEEK_DAY_LANE_KEYS[WEEK_DAY_LANE_KEYS.length - 1]]; // NEW
+            if (!firstLane || !lastLane) { clearOverlay(); return; } // NEW
+            const timeScale = schedulePolicy.buildWeekTimeScale(getBoardWeekWorkHours(board)); // NEW
+            if (!timeScale.active) { clearOverlay(); return; } // NEW
+            const boardBounds = getCellVisualBounds(board, host); // NEW
+            const viewScale = graph.view && Number(graph.view.scale) > 0 ? Number(graph.view.scale) : 1; // NEW
+            const firstGeo = model.getGeometry(firstLane); // NEW
+            const lastGeo = model.getGeometry(lastLane); // NEW
+            if (!boardBounds || !firstGeo || !lastGeo) { clearOverlay(); return; } // NEW
+            const labelWidth = WEEK_TIME_RULER_WIDTH * viewScale; // CHANGE
+            const scaledGap = LANE_GAP * viewScale; // NEW
+            const gridLeft = labelWidth + scaledGap; // CHANGE
+            const gridWidth = Math.max(0, ((Number(lastGeo.x) || 0) + (Number(lastGeo.width) || 0) - (Number(firstGeo.x) || 0)) * viewScale); // CHANGE
+            const gridHeight = schedulePolicy.scheduleMinuteOffsetToPx(timeScale.durationMinutes) * viewScale; // CHANGE
+            const overlayLeft = boardBounds.x + ((Number(firstGeo.x) || 0) * viewScale) - labelWidth - scaledGap; // CHANGE
+            const overlayTop = boardBounds.y + (BOARD_LANE_Y * viewScale); // CHANGE
+            overlay.style.left = Math.round(overlayLeft) + 'px'; // NEW
+            overlay.style.top = Math.round(overlayTop) + 'px'; // NEW
+            overlay.style.width = Math.round(labelWidth + LANE_GAP + gridWidth) + 'px'; // NEW
+            overlay.style.height = Math.round(gridHeight + 16) + 'px'; // NEW
+            overlay.style.display = 'block'; // NEW
+            overlay.innerHTML = ''; // NEW
+            const fragment = document.createDocumentFragment(); // NEW
+            timeScale.hourMarks.forEach((minute, index) => { // NEW
+                const y = schedulePolicy.scheduleMinuteOffsetToPx(minute - timeScale.startMinute) * viewScale; // CHANGE
+                addHourMark(fragment, labelWidth, gridLeft, gridWidth, y, minute, index === 0 || index === timeScale.hourMarks.length - 1); // NEW
+            }); // NEW
+            overlay.appendChild(fragment); // NEW
+        } // NEW
+
+        const requestRefresh = createDeferredTaskOverlayRefresh(refresh); // NEW
+        graph.getSelectionModel().addListener(mxEvent.CHANGE, requestRefresh); // NEW
+        addGraphViewRefreshListener(requestRefresh); // NEW
+        requestRefresh(); // NEW
     } // NEW
 
     function showBulkEditCardsDialogImpl(cards) { // CHANGE
@@ -5245,6 +5385,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
     // -------------------- Boot sequence -------------------- // NEW
     installTaskOverlayGestureGate(); // NEW
     installBoardHeaderControls(); // NEW
+    installWeekTimeScaleOverlay(); // NEW
     installSelectedCardActionOverlay(); // NEW
 
     // -------------------- Event bridge installers -------------------- // CHANGE
