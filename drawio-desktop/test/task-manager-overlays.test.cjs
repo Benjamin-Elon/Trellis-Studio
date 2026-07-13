@@ -140,6 +140,9 @@ function makeHarness(options = {}) { // CHANGE
     const weekSatLane = new TestCell("weekSat", makeValue(document, { lane_key: "WEEK_SAT", status: "Saturday" }), new TestGeometry(1560, 40, 200, 200)); // NEW
     const todoLane = new TestCell("todo", makeValue(document, { lane_key: "TODO", status: "TODO" }), new TestGeometry(20, 40, 200, 200));
     const doingLane = new TestCell("doing", makeValue(document, { lane_key: "DOING", status: "DOING" }), new TestGeometry(240, 40, 200, 200));
+    const secondaryBoard = options.secondaryBoard ? new TestCell("secondaryBoard", makeValue(document, { board_key: "KANBAN_BOARD", board_role: "secondary", task_view_mode: "WEEK", task_selected_week_start: "2026-07-12", task_selected_day: "2026-07-15", task_work_hours_defaults_json: TEST_REALISTIC_WEEK_WORK_HOURS_JSON }), new TestGeometry(2500, 10, 700, 260), TEST_LEGACY_BOARD_STYLE) : null; // NEW
+    const secondaryWeekWedLane = secondaryBoard ? new TestCell("secondaryWeekWed", makeValue(document, { lane_key: "WEEK_WED", status: "Wednesday" }), new TestGeometry(460, 40, 200, 200)) : null; // NEW
+    const secondaryWeekWedCard = secondaryWeekWedLane ? new TestCell("secondaryWeekWedCard", makeValue(document, { kanban_card: "1", title: "Secondary Wednesday task", workflow_state: "TODO", assigned_day: "2026-07-15", start: "2026-07-15", end: "2026-07-15" }), new TestGeometry(470, 60, 120, 60)) : null; // NEW
     const stagedCard = new TestCell("stagedCard", makeValue(document, { // NEW
         kanban_card: "1", // NEW
         title: "Stage compost", // NEW
@@ -259,6 +262,11 @@ function makeHarness(options = {}) { // CHANGE
     add(weekWedLane, weekLaneCard); // NEW
     add(todoLane, card1);
     add(todoLane, card2);
+    if (secondaryBoard) { // NEW
+        add(root, secondaryBoard); // NEW
+        add(secondaryBoard, secondaryWeekWedLane); // NEW
+        add(secondaryWeekWedLane, secondaryWeekWedCard); // NEW
+    } // NEW
 
     const states = new Map();
     let geometrySetCount = 0; // NEW
@@ -320,7 +328,16 @@ function makeHarness(options = {}) { // CHANGE
         isCellVisible(cell) { return !cell || cell.visible !== false; },
         isValidDropTarget() { return true; },
         resizeCells(cells) { return cells; }, // NEW
-        moveCells(cells, dx, dy, clone, target) { if (target && !clone) (cells || []).forEach(cell => add(target, cell)); return cells; } // CHANGE
+        moveCells(cells, dx, dy, clone, target) { // CHANGE: model user drag geometry before optional reparenting
+            (cells || []).forEach(cell => { // NEW
+                if (cell && cell.geometry && !clone) { // NEW
+                    cell.geometry.x += Number(dx) || 0; // NEW
+                    cell.geometry.y += Number(dy) || 0; // NEW
+                } // NEW
+                if (target && !clone) add(target, cell); // CHANGE
+            }); // NEW
+            return cells; // NEW
+        } // CHANGE
     };
 
     const context = vm.createContext({
@@ -415,6 +432,9 @@ function makeHarness(options = {}) { // CHANGE
         weekTueLane, // NEW
         weekWedLane, // NEW
         weekSatLane, // NEW
+        secondaryBoard, // NEW
+        secondaryWeekWedLane, // NEW
+        secondaryWeekWedCard, // NEW
         todoLane, // NEW
         doingLane, // NEW
         stagedCard, // NEW
@@ -1113,14 +1133,151 @@ test("task manager same-lane reorder refreshes persisted schedule order", async 
     buttonByText(boardOverlay, "Add Break").click(); // NEW
     await nextTick(); // NEW
     const breakCard = h.weekWedLane.children.find(cell => attr(cell, "schedule_break") === "1"); // NEW
-    h.weekWedLane.children = [breakCard, h.weekLaneCard]; // NEW
-    h.fireModelChange({ changes: [h.childChange(breakCard, h.weekWedLane)] }); // NEW
+    h.graph.moveCells([breakCard], 0, -100, false, null); // CHANGE: reorder through the real same-lane move path
     await nextTick(); // NEW
 
     assert.equal(attr(breakCard, "schedule_start_minute"), "1020"); // CHANGE
     assert.equal(attr(h.weekLaneCard, "schedule_start_minute"), "1050"); // CHANGE
     assert.equal(attr(breakCard, "schedule_order"), "0"); // NEW
     assert.equal(attr(h.weekLaneCard, "schedule_order"), "1"); // NEW
+}); // NEW
+
+test("task manager assigns times from same-lane drop order and recalculates overflow", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const secondCard = addHarnessCard(h, h.weekWedLane, "secondWedCard", { workflow_state: "TODO", assigned_day: "2026-07-15", start: "2026-07-15", end: "2026-07-15" }); // NEW
+    const lastCard = addHarnessCard(h, h.weekWedLane, "lastWedCard", { workflow_state: "TODO", assigned_day: "2026-07-15", start: "2026-07-15", end: "2026-07-15" }); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+
+    h.graph.moveCells([lastCard], 0, -220, false, null); // NEW: cross both stationary midpoints
+    await nextTick(); // NEW
+
+    assert.deepEqual(h.weekWedLane.children.slice(0, 3).map(card => card.id), [lastCard.id, h.weekLaneCard.id, secondCard.id]); // NEW
+    assert.equal(attr(lastCard, "schedule_order"), "0"); // NEW
+    assert.equal(attr(h.weekLaneCard, "schedule_order"), "1"); // NEW
+    assert.equal(attr(secondCard, "schedule_order"), "2"); // NEW
+    assert.equal(attr(lastCard, "schedule_start_minute"), "1020"); // NEW
+    assert.equal(attr(h.weekLaneCard, "schedule_start_minute"), "1080"); // NEW
+    assert.equal(attr(secondCard, "schedule_start_minute"), "1140"); // NEW
+    assert.equal(lastCard.geometry.y, 0); // NEW
+    assert.equal(h.weekLaneCard.geometry.y, 80); // NEW
+    assert.equal(secondCard.geometry.y, 160); // NEW
+    assert.match(attr(lastCard, "label"), /<b>Time:<\/b> 5:00 PM-6:00 PM/); // NEW
+    assert.doesNotMatch(lastCard.style, /strokeColor=#B91C1C/); // NEW
+    assert.match(secondCard.style, /strokeColor=#B91C1C/); // NEW
+
+    setAttr(h.board, "task_selected_week_start", "2026-07-19"); // NEW
+    setAttr(h.board, "task_selected_day", "2026-07-22"); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+    setAttr(h.board, "task_selected_week_start", "2026-07-12"); // NEW
+    setAttr(h.board, "task_selected_day", "2026-07-15"); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+
+    assert.deepEqual(h.weekWedLane.children.slice(0, 3).map(card => card.id), [lastCard.id, h.weekLaneCard.id, secondCard.id]); // NEW
+    assert.equal(attr(lastCard, "schedule_start_minute"), "1020"); // NEW
+}); // NEW
+
+test("task manager midpoint drops support between after-last and unchanged slots", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const secondCard = addHarnessCard(h, h.weekWedLane, "midpointSecond", { workflow_state: "TODO", assigned_day: "2026-07-15", start: "2026-07-15", end: "2026-07-15" }); // NEW
+    const lastCard = addHarnessCard(h, h.weekWedLane, "midpointLast", { workflow_state: "TODO", assigned_day: "2026-07-15", start: "2026-07-15", end: "2026-07-15" }); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+
+    h.graph.moveCells([lastCard], 0, -100, false, null); // NEW: midpoint lands between the first two cards
+    await nextTick(); // NEW
+    assert.deepEqual(h.weekWedLane.children.slice(0, 3).map(card => card.id), [h.weekLaneCard.id, lastCard.id, secondCard.id]); // NEW
+
+    h.graph.moveCells([lastCard], 0, 10, false, null); // NEW: does not cross the following midpoint
+    await nextTick(); // NEW
+    assert.deepEqual(h.weekWedLane.children.slice(0, 3).map(card => card.id), [h.weekLaneCard.id, lastCard.id, secondCard.id]); // NEW
+
+    h.graph.moveCells([lastCard], 0, 200, false, null); // NEW: midpoint crosses the final card
+    await nextTick(); // NEW
+    assert.deepEqual(h.weekWedLane.children.slice(0, 3).map(card => card.id), [h.weekLaneCard.id, secondCard.id, lastCard.id]); // NEW
+}); // NEW
+
+test("task manager inserts cross-day task and break drops by position", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const wedFollower = addHarnessCard(h, h.weekWedLane, "wedFollower", { workflow_state: "TODO", assigned_day: "2026-07-15", start: "2026-07-15", end: "2026-07-15" }); // NEW
+    const boardOverlay = h.document.querySelector(".trellis-task-board-header-controls"); // NEW
+    h.graph.setSelectionCell(h.weekWedLane); // NEW
+    await nextTick(); // NEW
+    buttonByText(boardOverlay, "Add Break").click(); // NEW
+    await nextTick(); // NEW
+    const breakCard = h.weekWedLane.children.find(cell => attr(cell, "schedule_break") === "1"); // NEW
+
+    h.graph.moveCells([h.weekLaneCard], 0, 60, false, h.weekTueLane); // NEW: insert between Tuesday tasks
+    await nextTick(); // NEW
+    assert.deepEqual(h.weekTueLane.children.slice(0, 3).map(card => card.id), [h.weekTueCard.id, h.weekLaneCard.id, h.weekTueCard2.id]); // NEW
+    assert.equal(attr(h.weekLaneCard, "assigned_day"), "2026-07-14"); // NEW
+    assert.equal(attr(h.weekLaneCard, "schedule_start_minute"), "1080"); // NEW
+    assert.equal(attr(wedFollower, "schedule_start_minute"), "1020"); // NEW: source lane closes its gap
+
+    h.graph.moveCells([breakCard], 0, -300, false, h.weekTueLane); // NEW: move the break before every Tuesday task
+    await nextTick(); // NEW
+    assert.equal(h.weekTueLane.children[0], breakCard); // NEW
+    assert.equal(attr(breakCard, "assigned_day"), "2026-07-14"); // NEW
+    assert.equal(attr(breakCard, "schedule_duration_minutes"), "30"); // NEW
+    assert.equal(attr(breakCard, "schedule_start_minute"), "1020"); // NEW
+    assert.equal(attr(h.weekTueCard, "schedule_start_minute"), "1050"); // NEW
+}); // NEW
+
+test("task manager keeps multi-card schedule moves contiguous", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const secondCard = addHarnessCard(h, h.weekWedLane, "blockSecond", { workflow_state: "TODO", assigned_day: "2026-07-15", start: "2026-07-15", end: "2026-07-15" }); // NEW
+    const thirdCard = addHarnessCard(h, h.weekWedLane, "blockThird", { workflow_state: "TODO", assigned_day: "2026-07-15", start: "2026-07-15", end: "2026-07-15" }); // NEW
+    const lastCard = addHarnessCard(h, h.weekWedLane, "blockLast", { workflow_state: "TODO", assigned_day: "2026-07-15", start: "2026-07-15", end: "2026-07-15" }); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+
+    h.graph.moveCells([secondCard, thirdCard], 0, 200, false, null); // NEW
+    await nextTick(); // NEW
+
+    assert.deepEqual(h.weekWedLane.children.slice(0, 4).map(card => card.id), [h.weekLaneCard.id, lastCard.id, secondCard.id, thirdCard.id]); // NEW
+    assert.equal(attr(secondCard, "schedule_order"), "2"); // NEW
+    assert.equal(attr(thirdCard, "schedule_order"), "3"); // NEW
+}); // NEW
+
+test("task manager reflows source and destination schedules across boards", async () => { // NEW
+    const h = makeHarness({ secondaryBoard: true }); // NEW
+    const sourceFollower = addHarnessCard(h, h.weekWedLane, "crossBoardFollower", { workflow_state: "TODO", assigned_day: "2026-07-15", start: "2026-07-15", end: "2026-07-15" }); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+    h.graph.setSelectionCell(h.secondaryBoard); // NEW
+    await nextTick(); // NEW
+
+    h.graph.moveCells([h.weekLaneCard], 0, 60, false, h.secondaryWeekWedLane); // NEW
+    await nextTick(); // NEW
+
+    assert.deepEqual(h.secondaryWeekWedLane.children.slice(0, 2).map(card => card.id), [h.secondaryWeekWedCard.id, h.weekLaneCard.id]); // NEW
+    assert.equal(attr(h.secondaryWeekWedCard, "schedule_start_minute"), "1020"); // NEW
+    assert.equal(attr(h.weekLaneCard, "schedule_start_minute"), "1080"); // NEW
+    assert.equal(attr(sourceFollower, "schedule_start_minute"), "1020"); // NEW
+}); // NEW
+
+test("task manager card resize and horizontal movement do not reorder schedules", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const secondCard = addHarnessCard(h, h.weekWedLane, "resizeOrderSecond", { workflow_state: "TODO", assigned_day: "2026-07-15", start: "2026-07-15", end: "2026-07-15" }); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+    const originalOrder = h.weekWedLane.children.slice(0, 2).map(card => card.id); // NEW
+    const previousResizeGeometry = h.weekLaneCard.geometry.clone(); // NEW
+
+    h.weekLaneCard.geometry.height = 160; // NEW
+    h.fireModelChange({ changes: [h.geometryChange(h.weekLaneCard, previousResizeGeometry)] }); // NEW
+    await nextTick(); // NEW
+    assert.deepEqual(h.weekWedLane.children.slice(0, 2).map(card => card.id), originalOrder); // NEW
+    assert.equal(attr(h.weekLaneCard, "schedule_duration_minutes"), "120"); // NEW
+
+    const previousMoveGeometry = secondCard.geometry.clone(); // NEW
+    h.graph.moveCells([secondCard], 40, 0, false, null); // NEW
+    h.fireModelChange({ changes: [h.geometryChange(secondCard, previousMoveGeometry)] }); // NEW
+    await nextTick(); // NEW
+    assert.deepEqual(h.weekWedLane.children.slice(0, 2).map(card => card.id), originalOrder); // NEW
+    assert.equal(attr(secondCard, "schedule_order"), "1"); // NEW
 }); // NEW
 
 test("task manager migrates existing undated breaks to the visible lane date", async () => { // NEW

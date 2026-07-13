@@ -3649,6 +3649,97 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         return true; // NEW
     } // NEW
 
+    function scheduleCardVerticalMidpoint(card) { // NEW: drop insertion uses visual position, never derived time attributes
+        const geo = card && model.getGeometry(card); // NEW
+        const top = geo ? Number(geo.y) : 0; // NEW
+        const height = geo ? Number(geo.height) : SCHEDULE_MIN_CARD_HEIGHT; // NEW
+        return (Number.isFinite(top) ? top : 0) + ((Number.isFinite(height) ? height : SCHEDULE_MIN_CARD_HEIGHT) / 2); // NEW
+    } // NEW
+
+    function orderMovedScheduleCards(movedCards) { // NEW: preserve schedule order for a block dragged from one day lane
+        const cards = Array.from(new Set((movedCards || []).filter(card => card && isKanbanCard(card)))); // NEW
+        const sourceParents = Array.from(new Set(cards.map(card => model.getParent(card)).filter(Boolean))); // NEW
+        if (sourceParents.length !== 1 || !isWeekDayLane(getAttr(sourceParents[0], 'lane_key'))) return cards; // NEW
+        const sourceLane = sourceParents[0]; // NEW
+        const sourceBoard = findBoardAncestor(sourceLane); // NEW
+        const movedSet = new Set(cards); // NEW
+        const ordered = getOrderedScheduleLaneCards(sourceBoard, sourceLane, getAttr(sourceLane, 'lane_key')).filter(card => movedSet.has(card)); // NEW
+        cards.forEach(card => { if (ordered.indexOf(card) < 0) ordered.push(card); }); // NEW
+        return ordered; // NEW
+    } // NEW
+
+    function resolveScheduleDropLane(movedCards, target, dy) { // NEW: distinguish user moves from resize and internal geometry updates
+        if (target && isWeekDayLane(getAttr(target, 'lane_key'))) return target; // NEW
+        if (target || !Number.isFinite(Number(dy)) || Number(dy) === 0) return null; // NEW
+        const sourceParents = Array.from(new Set((movedCards || []).map(card => model.getParent(card)).filter(Boolean))); // NEW
+        return sourceParents.length === 1 && isWeekDayLane(getAttr(sourceParents[0], 'lane_key')) ? sourceParents[0] : null; // NEW
+    } // NEW
+
+    function createScheduleDropContext(movedCards, target, dy) { // NEW: snapshot stable order before Draw.io mutates parents and geometry
+        const targetLane = resolveScheduleDropLane(movedCards, target, dy); // NEW
+        if (!targetLane) return null; // NEW
+        const targetBoard = findBoardAncestor(targetLane); // NEW
+        if (!targetBoard) return null; // NEW
+        const movedOrder = orderMovedScheduleCards(movedCards); // NEW
+        const allAlreadyInTarget = movedOrder.length > 0 && movedOrder.every(card => model.getParent(card) === targetLane); // NEW
+        if (allAlreadyInTarget && Number(dy) === 0) return null; // NEW
+        const sourceBoards = []; // NEW
+        movedOrder.forEach(card => { // NEW
+            const sourceLane = model.getParent(card); // NEW
+            const sourceBoard = sourceLane && isWeekDayLane(getAttr(sourceLane, 'lane_key')) ? findBoardAncestor(sourceLane) : null; // NEW
+            if (sourceBoard && sourceBoards.indexOf(sourceBoard) < 0) sourceBoards.push(sourceBoard); // NEW
+        }); // NEW
+        return { // NEW
+            targetLane, // NEW
+            targetBoard, // NEW
+            targetLaneKey: getAttr(targetLane, 'lane_key'), // NEW
+            targetOrderBefore: getOrderedScheduleLaneCards(targetBoard, targetLane, getAttr(targetLane, 'lane_key')), // NEW
+            movedOrder, // NEW
+            sourceBoards // NEW
+        }; // NEW
+    } // NEW
+
+    function updateMovedBreakOwnership(context) { // NEW: cross-day break moves transfer the date while retaining duration
+        if (!context) return; // NEW
+        const destinationDay = getVisibleDateForWeekLane(context.targetBoard, context.targetLaneKey); // NEW
+        context.movedOrder.forEach(card => { // NEW
+            if (model.getParent(card) === context.targetLane && isScheduleBreakCard(card)) setAttrNoUndo(card, TASK_ASSIGNED_DAY_ATTR, destinationDay, true); // NEW
+        }); // NEW
+    } // NEW
+
+    function commitScheduleDropOrder(context) { // NEW: turn free-position drop geometry into one canonical schedule sequence
+        if (!context) return false; // NEW
+        const movedCards = context.movedOrder.filter(card => model.getParent(card) === context.targetLane); // NEW
+        if (!movedCards.length) return false; // NEW
+        const movedSet = new Set(movedCards); // NEW
+        const stationaryCards = context.targetOrderBefore.filter(card => !movedSet.has(card) && model.getParent(card) === context.targetLane); // NEW
+        const blockTop = movedCards.reduce((value, card) => { // NEW
+            const geo = model.getGeometry(card); // NEW
+            const top = geo ? Number(geo.y) : 0; // NEW
+            return Math.min(value, Number.isFinite(top) ? top : 0); // NEW
+        }, Infinity); // NEW
+        const blockBottom = movedCards.reduce((value, card) => { // NEW
+            const geo = model.getGeometry(card); // NEW
+            const top = geo ? Number(geo.y) : 0; // NEW
+            const height = geo ? Number(geo.height) : SCHEDULE_MIN_CARD_HEIGHT; // NEW
+            return Math.max(value, (Number.isFinite(top) ? top : 0) + (Number.isFinite(height) ? height : SCHEDULE_MIN_CARD_HEIGHT)); // NEW
+        }, -Infinity); // NEW
+        const blockMidpoint = (blockTop + blockBottom) / 2; // NEW
+        let insertIndex = stationaryCards.findIndex(card => scheduleCardVerticalMidpoint(card) > blockMidpoint); // NEW
+        if (insertIndex < 0) insertIndex = stationaryCards.length; // NEW
+        const nextOrder = stationaryCards.slice(0, insertIndex).concat(movedCards, stationaryCards.slice(insertIndex)); // NEW
+        const changed = syncScheduleLanePhysicalOrder(context.targetLane, nextOrder.map(cell => ({ cell }))); // NEW
+        markScheduleLaneOrderDirty(context.targetLane); // NEW: force the next pack to persist physical order before reading stored order
+        return changed; // NEW
+    } // NEW
+
+    function reflowScheduleDropBoards(context) { // NEW: close source gaps and pack the destination exactly once per board
+        if (!context) return; // NEW
+        const orderedBoards = context.sourceBoards.filter(board => board !== context.targetBoard); // NEW
+        orderedBoards.push(context.targetBoard); // NEW
+        orderedBoards.forEach(board => scanAndReflowBoard(board, { insideUpdate: true, scope: getTaskReflowScopeForCommand('drop') })); // NEW
+    } // NEW
+
     function shouldInspectKanbanPlacement(parent, child) { // NEW: limit safety repairs to kanban structures and locked kanban cells
         const parentType = getKanbanCellType(parent, KANBAN_LANE_KEYS); // NEW
         const childType = getKanbanCellType(child, KANBAN_LANE_KEYS); // NEW
@@ -3742,19 +3833,28 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             const sourceLaneKeys = new Map(movedCards.map((card, index) => [moveCardKey(card, index), laneKeyOfCard(card)])); // NEW
             if (target && moved.some(cell => !canPlaceKanbanChild(target, cell))) return moved; // NEW
             const targetLaneKey = target && getAttr(target, 'lane_key'); // NEW
-            if (!targetLaneKey || clone) return originalMoveCells.apply(this, arguments); // NEW
-            const targetBoard = findBoardAncestor(target); // NEW
+            const scheduleDropContext = !clone ? createScheduleDropContext(movedCards, target, dy) : null; // NEW
+            if ((!targetLaneKey && !scheduleDropContext) || clone) return originalMoveCells.apply(this, arguments); // CHANGE
+            const targetBoard = scheduleDropContext ? scheduleDropContext.targetBoard : findBoardAncestor(target); // CHANGE
             if (!targetBoard || !movedCards.length) return originalMoveCells.apply(this, arguments); // NEW
             let result; // NEW
             model.beginUpdate(); // NEW
             try { // NEW
                 result = originalMoveCells.apply(this, arguments); // NEW
-                movedCards.forEach((card, index) => { // CHANGE
-                    const patch = buildLaneDropWorkflowPatch(card, targetBoard, targetLaneKey); // NEW
-                    if (patch && patch.attributes) applyCardPatchInsideUpdate(card, patch.attributes); // NEW
-                    applyCardHeightForLaneTransition(card, sourceLaneKeys.get(moveCardKey(card, index)), targetLaneKey); // CHANGE
-                }); // NEW
-                scanAndReflowBoard(targetBoard, { insideUpdate: true, scope: getTaskReflowScopeForCommand('drop') }); // CHANGE
+                if (targetLaneKey) { // NEW
+                    movedCards.forEach((card, index) => { // CHANGE
+                        const patch = buildLaneDropWorkflowPatch(card, targetBoard, targetLaneKey); // NEW
+                        if (patch && patch.attributes) applyCardPatchInsideUpdate(card, patch.attributes); // NEW
+                        applyCardHeightForLaneTransition(card, sourceLaneKeys.get(moveCardKey(card, index)), targetLaneKey); // CHANGE
+                    }); // NEW
+                } // NEW
+                if (scheduleDropContext) { // NEW
+                    updateMovedBreakOwnership(scheduleDropContext); // NEW
+                    commitScheduleDropOrder(scheduleDropContext); // NEW
+                    reflowScheduleDropBoards(scheduleDropContext); // NEW
+                } else { // NEW
+                    scanAndReflowBoard(targetBoard, { insideUpdate: true, scope: getTaskReflowScopeForCommand('drop') }); // CHANGE
+                } // NEW
             } finally { // NEW
                 model.endUpdate(); // NEW
             } // NEW
