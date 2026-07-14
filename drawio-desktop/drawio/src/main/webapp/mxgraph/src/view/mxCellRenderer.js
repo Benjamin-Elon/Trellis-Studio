@@ -1362,18 +1362,18 @@ mxCellRenderer.prototype.getControlBounds = function(state, w, h)
 {
 	if (state.control != null)
 	{
-		var s = state.view.scale;
 		var fixedControlSize = 18; // CHANGE: Keep fold controls usable at every zoom level.
 		var aspect = (h != 0) ? w / h : 1; // CHANGE
 		var controlWidth = (aspect >= 1) ? fixedControlSize : fixedControlSize * aspect; // CHANGE
 		var controlHeight = (aspect >= 1) ? fixedControlSize / aspect : fixedControlSize; // CHANGE
+		var controlGap = 2; // CHANGE: Keep fold controls directly above the top-left corner.
 		var cx = state.getCenterX();
 		var cy = state.getCenterY();
 	
 		if (!state.view.graph.getModel().isEdge(state.cell))
 		{
-			cx = state.x + w * s;
-			cy = state.y + h * s;
+			cx = state.x; // CHANGE
+			cy = state.y - controlGap - controlHeight / 2; // CHANGE
 			
 			if (state.shape != null)
 			{

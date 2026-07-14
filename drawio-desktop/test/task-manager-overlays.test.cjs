@@ -2214,7 +2214,23 @@ test("task manager assignment picker groups linked roles, searches, and applies 
     const assign = buttonStartingWith(overlay, "Assign to"); // NEW
     assert.equal(assign.disabled, false); // NEW
     assign.click(); // NEW
-    const picker = h.document.querySelector(".trellis-task-assignee-picker"); // NEW
+    let picker = h.document.querySelector(".trellis-task-assignee-picker"); // CHANGE
+    assert.ok(picker); // NEW
+    assert.equal(overlay.style.display, "none"); // NEW
+    assert.equal(picker.style.left, "30px"); // NEW
+    assert.equal(picker.style.top, "129px"); // NEW
+    buttonByText(picker, "Cancel").click(); // NEW
+    await nextTick(); // NEW
+    assert.equal(overlay.style.display, "flex"); // NEW
+    assign.click(); // NEW
+    picker = h.document.querySelector(".trellis-task-assignee-picker"); // NEW
+    assert.ok(picker); // NEW
+    h.document.body.dispatchEvent(new h.document.defaultView.MouseEvent("mousedown", { bubbles: true })); // NEW
+    await nextTick(); // NEW
+    assert.equal(h.document.querySelector(".trellis-task-assignee-picker"), null); // NEW
+    assert.equal(overlay.style.display, "flex"); // NEW
+    assign.click(); // NEW
+    picker = h.document.querySelector(".trellis-task-assignee-picker"); // NEW
     assert.ok(picker); // NEW
     assert.match(picker.textContent, /Garden Lead/); // CHANGE: Group labels collapse internal whitespace while preserving a representative display case.
     assert.match(picker.textContent, /Unnamed person/); // NEW
@@ -2232,8 +2248,11 @@ test("task manager assignment picker groups linked roles, searches, and applies 
     changeCheckbox(h.document, aliceRow.querySelector("input[type='checkbox']"), true); // NEW
     h.resetCounters(); // NEW
     buttonByText(picker, "Apply").click(); // NEW
+    await nextTick(); // NEW
     assert.deepEqual(JSON.parse(attr(h.stagedCard, "task_assignee_role_ids_json")), ["role-alice"]); // NEW
     assert.equal(h.modelBeginUpdateCount, 1); // NEW
+    assert.equal(h.document.querySelector(".trellis-task-assignee-picker"), null); // NEW
+    assert.equal(overlay.style.display, "flex"); // NEW
 
     h.fireModelChange(); // NEW
     await nextTick(); // NEW
@@ -2275,6 +2294,7 @@ test("task manager bulk assignment uses reversible Existing and All cards contro
     assert.equal(existing.disabled, false); // NEW
     h.resetCounters(); // NEW
     buttonByText(picker, "Apply").click(); // NEW
+    await nextTick(); // NEW
     assert.equal(h.modelBeginUpdateCount, 0); // NEW: reversible no-op produces no undo record
 
     buttonStartingWith(overlay, "Assign to").click(); // NEW
@@ -2284,6 +2304,7 @@ test("task manager bulk assignment uses reversible Existing and All cards contro
     changeCheckbox(h.document, all, true); // NEW
     h.resetCounters(); // NEW
     buttonByText(picker, "Apply").click(); // NEW
+    await nextTick(); // NEW
     assert.deepEqual(JSON.parse(attr(h.weekTueCard2, "task_assignee_role_ids_json")), ["role-bulk"]); // NEW
     assert.equal(h.modelBeginUpdateCount, 1); // NEW
 
@@ -2299,11 +2320,12 @@ test("task manager bulk assignment uses reversible Existing and All cards contro
     assert.equal(all.disabled, true); // NEW
     changeCheckbox(h.document, existing, false); // NEW
     buttonByText(picker, "Apply").click(); // NEW
+    await nextTick(); // NEW
     assert.equal(attr(h.weekTueCard, "task_assignee_role_ids_json"), null); // NEW
     assert.equal(attr(h.weekTueCard2, "task_assignee_role_ids_json"), null); // NEW
 }); // NEW
 
-test("task manager assignee badges cap avatars, show all names, navigate, and clear deleted roles", async () => { // NEW
+test("task manager assignee badges expand to sticky grid, navigate, and clear deleted roles", async () => { // CHANGE
     const h = makeHarness(); // NEW
     const roles = [ // NEW
         addRoleFixture(h, { id: "role-1", name: "A One", roleTitle: "Alpha" }).role, // NEW
@@ -2321,10 +2343,25 @@ test("task manager assignee badges cap avatars, show all names, navigate, and cl
     const overflow = stack.querySelector(".trellis-task-assignee-overflow"); // NEW
     assert.equal(overflow.textContent, "+1"); // NEW
     overflow.click(); // NEW
-    const names = h.document.querySelector(".trellis-task-assignee-names-popover"); // NEW
-    assert.ok(names); // NEW
-    roles.forEach(role => assert.match(names.textContent, new RegExp(role === roles[0] ? "A One" : role === roles[1] ? "B Two" : role === roles[2] ? "C Three" : "D Four"))); // NEW
-    stack.querySelector(".trellis-task-assignee-avatar").click(); // NEW
+    await nextTick(); // NEW
+    assert.equal(h.document.querySelector(".trellis-task-assignee-names-popover"), null); // NEW
+    let expanded = h.document.querySelector(".trellis-task-assignee-stack-expanded"); // NEW
+    assert.ok(expanded); // NEW
+    assert.equal(expanded.style.gridTemplateColumns, "repeat(3,18px)"); // NEW
+    assert.equal(expanded.querySelectorAll(".trellis-task-assignee-avatar").length, 4); // NEW
+    assert.ok(buttonByText(expanded, "Collapse")); // NEW
+    h.fireModelChange(); // NEW
+    await nextTick(); // NEW
+    expanded = h.document.querySelector(".trellis-task-assignee-stack-expanded"); // NEW
+    assert.ok(expanded); // NEW
+    buttonByText(expanded, "Collapse").click(); // NEW
+    await nextTick(); // NEW
+    assert.equal(h.document.querySelector(".trellis-task-assignee-stack-expanded"), null); // NEW
+    assert.equal(h.document.querySelector(".trellis-task-assignee-overflow").textContent, "+1"); // NEW
+    h.document.querySelector(".trellis-task-assignee-overflow").click(); // NEW
+    await nextTick(); // NEW
+    expanded = h.document.querySelector(".trellis-task-assignee-stack-expanded"); // NEW
+    expanded.querySelector(".trellis-task-assignee-avatar").click(); // NEW
     assert.ok(roles.includes(h.graph.getSelectionCell())); // NEW
 
     const team = new TestCell("deleted-team", "Team", new TestGeometry(0, 0, 300, 300), "team_module=1;"); // NEW
@@ -2332,4 +2369,10 @@ test("task manager assignee badges cap avatars, show all names, navigate, and cl
     h.model.remove(team); // NEW
     h.fireGraphEvent("cellsRemoved", { cells: [team] }); // NEW
     assert.deepEqual(JSON.parse(attr(h.weekTueCard, "task_assignee_role_ids_json")), ["role-2", "role-3", "role-4"]); // NEW
+    h.fireModelChange(); // NEW
+    await nextTick(); // NEW
+    expanded = h.document.querySelector(".trellis-task-assignee-stack-expanded"); // NEW
+    assert.ok(expanded); // NEW
+    assert.equal(expanded.querySelectorAll(".trellis-task-assignee-avatar").length, 3); // NEW
+    assert.doesNotMatch(expanded.title, /A One/); // NEW
 }); // NEW

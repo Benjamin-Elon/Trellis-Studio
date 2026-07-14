@@ -22,6 +22,7 @@ class TestGeometry { // NEW
     clone() { // NEW
         const copy = new TestGeometry(this.x, this.y, this.width, this.height); // NEW
         copy.relative = this.relative; // NEW
+        copy.alternateBounds = this.alternateBounds; // NEW
         return copy; // NEW
     } // NEW
 } // NEW
@@ -306,13 +307,20 @@ function styleHas(cell, flag) { // NEW
     return new RegExp("(^|;)" + flag + "(;|$)").test(cell && cell.style || ""); // NEW
 } // NEW
 
+function cellText(cell) { // NEW
+    if (!cell) return ""; // NEW
+    const raw = cell.value && cell.value.getAttribute ? (cell.value.getAttribute("label") || "") : (cell.value == null ? "" : String(cell.value)); // NEW
+    return String(raw).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim(); // NEW
+} // NEW
+
 function createRoleFixture(harness) { // NEW
     const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team"); // NEW
     const role = harness.graph.__trellisModules.createRoleCard(team, 90, 100); // NEW
     const imageRow = role.children.find(child => styleHas(child, "role_imagerow=1")); // NEW
-    const nameRow = role.children.find(child => child.value === "Name"); // NEW
-    const titleRow = role.children.find(child => child.value === "Role/Title"); // NEW
-    return { team, role, imageRow, nameRow, titleRow }; // CHANGE
+    const nameRow = role.children.find(child => styleHas(child, "role_name=1")); // CHANGE
+    const titleRow = role.children.find(child => styleHas(child, "role_title=1")); // CHANGE
+    const fieldLabels = role.children.filter(child => styleHas(child, "role_field_label=1")); // NEW
+    return { team, role, imageRow, nameRow, titleRow, fieldLabels }; // CHANGE
 } // NEW
 
 function runModulesContextMenu(harness, cell) { // NEW
@@ -578,12 +586,59 @@ test("role overlay hides on Escape, outside gesture, model change, and view chan
     assert.equal(overlay.style.display, "none"); // NEW
 }); // NEW
 
-test("new role cards use click-to-add image placeholder text", () => { // NEW
+test("new role cards use v2 compact roster profile geometry", () => { // CHANGE
     const harness = makeHarness(); // NEW
-    const { imageRow, nameRow, titleRow } = createRoleFixture(harness); // CHANGE
+    const { role, imageRow, nameRow, titleRow, fieldLabels } = createRoleFixture(harness); // CHANGE
+    assert.match(role.style, /(?:^|;)role_card=1(?:;|$)/); // NEW
+    assert.match(role.style, /(?:^|;)role_card_version=2(?:;|$)/); // NEW
+    assert.equal(role.geometry.width, 260); // NEW
+    assert.equal(role.geometry.height, 220); // NEW
+    assert.equal(role.geometry.alternateBounds.width, 180); // NEW
+    assert.equal(role.geometry.alternateBounds.height, 64); // NEW
     assert.equal(imageRow.value, "click to add image"); // NEW
+    assert.equal(imageRow.geometry.y, 76); // NEW
+    assert.equal(nameRow.geometry.y, 76); // NEW
+    assert.equal(titleRow.geometry.y, 118); // NEW
     assert.equal(styleHas(nameRow, "role_name=1"), true); // NEW
     assert.equal(styleHas(titleRow, "role_title=1"), true); // NEW
+    assert.equal(nameRow.value, ""); // NEW
+    assert.equal(titleRow.value, ""); // NEW
+    assert.deepEqual(fieldLabels.map(cell => cell.value), ["Photo", "Name", "Role / title", "Description / notes", "Contact info"]); // NEW
+    assert.equal(fieldLabels.every(cell => /(?:^|;)editable=0(?:;|$)/.test(cell.style)), true); // NEW
+    assert.doesNotMatch(String(role.value), /<img/i); // NEW
+    assert.match(role.style, /(?:^|;)image=data:image\/svg\+xml,/); // NEW
+    assert.match(role.style, /(?:^|;)imageWidth=38(?:;|$)/); // NEW
+    assert.match(role.style, /(?:^|;)imageHeight=38(?:;|$)/); // NEW
+    assert.match(role.style, /(?:^|;)imageAlign=left(?:;|$)/); // NEW
+}); // CHANGE
+
+test("v2 role card summary syncs name and role without prefixing value fields", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const { role, nameRow, titleRow } = createRoleFixture(harness); // NEW
+    assert.match(String(role.value), /Unnamed person/); // NEW
+    assert.match(String(role.value), /Unspecified role/); // NEW
+    harness.model.setValue(nameRow, "Bob"); // NEW
+    harness.model.setValue(titleRow, "Lead gardener"); // NEW
+    harness.model.fire("change"); // NEW
+    assert.match(String(role.value), /Bob/); // NEW
+    assert.match(String(role.value), /Lead gardener/); // NEW
+    assert.equal(nameRow.value, "Bob"); // NEW
+    assert.equal(titleRow.value, "Lead gardener"); // NEW
+    assert.doesNotMatch(String(nameRow.value), /^Name:/); // NEW
+    assert.doesNotMatch(String(titleRow.value), /^Role/); // NEW
+}); // NEW
+
+test("legacy role cards are not rewritten by summary sync", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team"); // NEW
+    const role = new TestCell("Legacy Role", new TestGeometry(10, 20, 240, 160), "shape=swimlane;role_card=1;"); // NEW
+    role.vertex = true; // NEW
+    harness.model.add(team, role); // NEW
+    const name = new TestCell("Legacy Name", new TestGeometry(0, 0, 100, 30), "role_name=1;"); // NEW
+    name.vertex = true; // NEW
+    harness.model.add(role, name); // NEW
+    harness.model.fire("change"); // NEW
+    assert.equal(role.value, "Legacy Role"); // NEW
 }); // NEW
 
 test("empty role image slot shows add affordances for role card and image row only", () => { // NEW
@@ -632,11 +687,14 @@ test("role image overlay button invokes insert image and creates the avatar", as
     assert.equal(harness.insertImageCalls, 1); // NEW
     assert.ok(avatar); // NEW
     assert.equal(avatar.parent, imageRow); // NEW
-    assert.equal(avatar.geometry.width, 70); // NEW
-    assert.equal(avatar.geometry.height, 70); // NEW
+    assert.equal(avatar.geometry.width, 40); // CHANGE
+    assert.equal(avatar.geometry.height, 40); // CHANGE
     assert.equal(avatar.geometry.x, 5); // NEW
     assert.equal(avatar.geometry.y, 5); // NEW
     assert.equal(imageRow.value, ""); // NEW
+    assert.doesNotMatch(String(role.value), /<img/i); // CHANGE
+    assert.match(role.style, /(?:^|;)image=data:image\/png;base64,test(?:;|$)/); // CHANGE
+    assert.match(role.style, /(?:^|;)imageWidth=38(?:;|$)/); // NEW
 }); // NEW
 
 test("inserted role image replaces any prior avatar", async () => { // NEW
@@ -652,6 +710,8 @@ test("inserted role image replaces any prior avatar", async () => { // NEW
     assert.equal(avatars.length, 1); // NEW
     assert.notEqual(avatars[0], firstAvatar); // NEW
     assert.equal(firstAvatar.parent, null); // NEW
-    assert.equal(avatars[0].geometry.width, 70); // NEW
-    assert.equal(avatars[0].geometry.height, 70); // NEW
+    assert.equal(avatars[0].geometry.width, 40); // CHANGE
+    assert.equal(avatars[0].geometry.height, 40); // CHANGE
+    assert.match(role.style, /(?:^|;)image=data:image\/png;base64,test(?:;|$)/); // NEW
+    assert.doesNotMatch(String(role.value), /<img/i); // NEW
 }); // NEW

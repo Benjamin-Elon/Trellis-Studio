@@ -358,6 +358,165 @@ Draw.loadPlugin(function (ui) {
         return /(^|;)role_avatar=1(;|$)/.test(getStyle(cell)); // NEW
     } // NEW
 
+    const ROLE_CARD_VERSION = "2"; // NEW
+    const ROLE_EXPANDED_W = 260; // NEW
+    const ROLE_EXPANDED_H = 220; // NEW
+    const ROLE_COLLAPSED_W = 180; // NEW
+    const ROLE_COLLAPSED_H = 64; // NEW
+
+    function styleHasKeyValue(cell, key, value) { // NEW
+        const safeKey = String(key || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); // NEW
+        const safeValue = String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); // NEW
+        return new RegExp("(^|;)" + safeKey + "=" + safeValue + "(;|$)").test(getStyle(cell)); // NEW
+    } // NEW
+
+    function isRoleCardV2(cell) { // NEW
+        return isRoleCard(cell) && styleHasKeyValue(cell, "role_card_version", ROLE_CARD_VERSION); // NEW
+    } // NEW
+
+    function htmlEscape(value) { // NEW
+        return String(value == null ? "" : value)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;"); // NEW
+    } // NEW
+
+    function getCellDisplayText(cell) { // NEW
+        if (!cell) return ""; // NEW
+        const value = cell.value; // NEW
+        const raw = value && value.getAttribute ? (value.getAttribute("label") || "") : (value == null ? "" : String(value)); // NEW
+        if (document && document.createElement) { // NEW
+            const holder = document.createElement("div"); // NEW
+            holder.innerHTML = raw; // NEW
+            return String(holder.textContent || "").replace(/\s+/g, " ").trim(); // NEW
+        } // NEW
+        return String(raw).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim(); // NEW
+    } // NEW
+
+    function getCellRawLabel(cell) { // NEW
+        if (!cell) return ""; // NEW
+        const value = cell.value; // NEW
+        return value && value.getAttribute ? (value.getAttribute("label") || "") : (value == null ? "" : String(value)); // NEW
+    } // NEW
+
+    function getRoleField(roleCard, flag) { // NEW
+        const children = model.getChildren(roleCard) || []; // NEW
+        return children.find(function (child) { return styleHasKeyValue(child, flag, "1"); }) || null; // NEW
+    } // NEW
+
+    function roleFieldDisplayValue(roleCard, flag, fallback) { // NEW
+        const text = getCellDisplayText(getRoleField(roleCard, flag)); // NEW
+        return text || fallback; // NEW
+    } // NEW
+
+    function roleInitials(name) { // NEW
+        const parts = String(name || "").trim().split(/\s+/).filter(Boolean); // NEW
+        if (!parts.length) return "?"; // NEW
+        return (parts[0].charAt(0) + (parts.length > 1 ? parts[parts.length - 1].charAt(0) : "")).toUpperCase(); // NEW
+    } // NEW
+
+    function roleAvatarColor(seed) { // NEW
+        const palette = ["#2563EB", "#047857", "#B45309", "#7C3AED", "#BE123C", "#0F766E"]; // NEW
+        let hash = 0; // NEW
+        String(seed || "").split("").forEach(function (ch) { hash = ((hash * 31) + ch.charCodeAt(0)) | 0; }); // NEW
+        return palette[Math.abs(hash) % palette.length]; // NEW
+    } // NEW
+
+    function getStyleImageSource(cell) { // NEW
+        const match = getStyle(cell).match(/(?:^|;)image=(.*?)(?=;[A-Za-z_][A-Za-z0-9_]*=|;?$)/); // NEW
+        return match ? String(match[1] || "").trim() : ""; // NEW
+    } // NEW
+
+    function removeStyleKey(style, key) { // NEW
+        const safeKey = String(key || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); // NEW
+        const valuePattern = key === "image" ? ".*?(?=;[A-Za-z_][A-Za-z0-9_]*=|;?$)" : "[^;]*"; // NEW
+        return String(style || "")
+            .replace(new RegExp("(?:^|;)" + safeKey + "=" + valuePattern, "g"), "")
+            .replace(/;;+/g, ";")
+            .replace(/^;|;$/g, ""); // NEW
+    } // NEW
+
+    function setStyleValue(style, key, value) { // NEW
+        let next = removeStyleKey(style, key); // NEW
+        next += (next ? ";" : "") + key + "=" + String(value == null ? "" : value); // NEW
+        return next; // NEW
+    } // NEW
+
+    function summaryInitialsImageSource(name, title) { // NEW
+        const initials = htmlEscape(roleInitials(name)); // NEW
+        const fill = roleAvatarColor(name + "|" + title); // NEW
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="38" height="38" viewBox="0 0 38 38">'
+            + '<circle cx="19" cy="19" r="19" fill="' + fill + '"/>'
+            + '<text x="19" y="24" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="700" fill="#ffffff">' + initials + '</text>'
+            + '</svg>'; // NEW
+        return "data:image/svg+xml," + encodeURIComponent(svg); // NEW
+    } // NEW
+
+    function buildRoleSummaryImageSource(roleCard, name, title) { // NEW
+        return getStyleImageSource(getRoleAvatar(roleCard)) || summaryInitialsImageSource(name, title); // NEW
+    } // NEW
+
+    function applyRoleSummaryImageStyle(roleCard, imageSource) { // NEW
+        let st = getStyle(roleCard); // NEW
+        ["image", "imageWidth", "imageHeight", "imageAlign", "imageVerticalAlign", "imageAspect", "spacingLeft", "spacingRight", "align", "verticalAlign"].forEach(function (key) { // NEW
+            st = removeStyleKey(st, key); // NEW
+        }); // NEW
+        st = setStyleValue(st, "image", imageSource); // NEW
+        st = setStyleValue(st, "imageWidth", "38"); // NEW
+        st = setStyleValue(st, "imageHeight", "38"); // NEW
+        st = setStyleValue(st, "imageAlign", "left"); // NEW
+        st = setStyleValue(st, "imageVerticalAlign", "middle"); // NEW
+        st = setStyleValue(st, "imageAspect", "1"); // NEW
+        st = setStyleValue(st, "spacingLeft", "54"); // NEW
+        st = setStyleValue(st, "spacingRight", "8"); // NEW
+        st = setStyleValue(st, "align", "left"); // NEW
+        st = setStyleValue(st, "verticalAlign", "middle"); // NEW
+        if (getStyle(roleCard) !== st) model.setStyle(roleCard, st); // NEW
+    } // NEW
+
+    function buildCollapsedRoleLabel(roleCard) { // NEW
+        const name = roleFieldDisplayValue(roleCard, "role_name", "Unnamed person"); // NEW
+        const title = roleFieldDisplayValue(roleCard, "role_title", "Unspecified role"); // NEW
+        return '<div style="box-sizing:border-box;width:100%;height:100%;padding:6px 8px 5px 0;text-align:left;font-family:Arial,sans-serif;overflow:hidden;line-height:1.15;">'
+            + '<div style="font-size:12px;font-weight:700;color:#1F2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + htmlEscape(name) + '</div>'
+            + '<div style="font-size:10px;color:#4B5563;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">' + htmlEscape(title) + '</div>'
+            + '</div>'; // CHANGE
+    } // NEW
+
+    function syncRoleCardSummary(roleCard) { // NEW
+        if (!isRoleCardV2(roleCard)) return false; // NEW
+        const name = roleFieldDisplayValue(roleCard, "role_name", "Unnamed person"); // NEW
+        const title = roleFieldDisplayValue(roleCard, "role_title", "Unspecified role"); // NEW
+        const nextLabel = buildCollapsedRoleLabel(roleCard); // NEW
+        const imageSource = buildRoleSummaryImageSource(roleCard, name, title); // NEW
+        const labelChanged = getCellRawLabel(roleCard) !== nextLabel; // NEW
+        if (labelChanged) setCellLabel(roleCard, nextLabel); // CHANGE
+        applyRoleSummaryImageStyle(roleCard, imageSource); // NEW
+        return labelChanged; // CHANGE
+    } // NEW
+
+    let syncingRoleCardSummaries = false; // NEW
+
+    function syncAllRoleCardSummaries() { // NEW
+        if (syncingRoleCardSummaries) return; // NEW
+        const cells = model.cells ? Object.values(model.cells) : []; // NEW
+        const roles = cells.filter(isRoleCardV2); // CHANGE
+        if (!roles.length) return; // NEW
+        syncingRoleCardSummaries = true; // NEW
+        model.beginUpdate(); // NEW
+        try { roles.forEach(syncRoleCardSummary); } finally { model.endUpdate(); syncingRoleCardSummaries = false; } // NEW
+    } // NEW
+
+    function makeAlternateBounds(x, y, width, height) { // NEW
+        return (typeof mxRectangle !== "undefined") ? new mxRectangle(x, y, width, height) : new mxGeometry(x, y, width, height); // NEW
+    } // NEW
+
+    if (model.addListener && typeof mxEvent !== "undefined" && mxEvent.CHANGE) { // CHANGE
+        model.addListener(mxEvent.CHANGE, function () { syncAllRoleCardSummaries(); }); // NEW
+    } // NEW
+
     function getRoleImageRow(roleCard) { // NEW
         const children = model.getChildren(roleCard) || []; // NEW
         return children.find(function (child) { return isRoleImageRow(child); }) || null; // NEW
@@ -444,56 +603,68 @@ Draw.loadPlugin(function (ui) {
         removeExistingRoleAvatar(imageRow); // NEW
         setCellLabel(imageRow, ""); // NEW
         const geo = cell.getGeometry().clone(); // NEW
-        geo.width = 70; // NEW
-        geo.height = 70; // NEW
+        geo.width = isRoleCardV2(roleCard) ? 40 : 70; // CHANGE
+        geo.height = isRoleCardV2(roleCard) ? 40 : 70; // CHANGE
         geo.x = 5; // NEW
         geo.y = 5; // NEW
         model.setGeometry(cell, geo); // NEW
         tagRoleAvatar(cell); // NEW
         model.remove(cell); // NEW
         model.add(imageRow, cell); // NEW
+        syncRoleCardSummary(roleCard); // NEW
     } // NEW
 
+
+    function createReadOnlyRoleLabel(text, x, y, width) { // NEW
+        const label = new mxCell(text, new mxGeometry(x, y, width, 14),
+            "shape=rectangle;fillColor=none;strokeColor=none;fontSize=9;fontColor=#6B7280;align=left;verticalAlign=bottom;whiteSpace=wrap;editable=0;movable=0;resizable=0;connectable=0;role_field_label=1;"); // NEW
+        label.vertex = true; // NEW
+        return label; // NEW
+    } // NEW
+
+    function createRoleValueCell(value, x, y, width, height, extraStyle) { // NEW
+        const cell = new mxCell(value, new mxGeometry(x, y, width, height),
+            "shape=rectangle;align=left;verticalAlign=middle;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#CBD5E1;fontSize=12;fontColor=#111827;spacingLeft=6;" + (extraStyle || "")); // NEW
+        cell.vertex = true; // NEW
+        return cell; // NEW
+    } // NEW
 
     function createRoleCard(graph, moduleCell, x, y, opts) { // CHANGE
         const o = opts || {}; // NEW
         const manageUpdate = o.manageUpdate !== false; // NEW
-        const w = 240, h = 160;
+        const w = ROLE_EXPANDED_W, h = ROLE_EXPANDED_H; // CHANGE
         const moduleGeo = graph.getCellGeometry(moduleCell);
 
         const relX = x - moduleGeo.x;
         const relY = y - moduleGeo.y;
 
-        const role = new mxCell("Role", new mxGeometry(relX, relY, w, h),
-            "shape=swimlane;horizontal=1;whiteSpace=wrap;collapsible=1;rounded=1;fillColor=#fff2cc;strokeColor=#d6b656;role_card=1");
+        const roleGeo = new mxGeometry(relX, relY, w, h); // NEW
+        roleGeo.alternateBounds = makeAlternateBounds(relX, relY, ROLE_COLLAPSED_W, ROLE_COLLAPSED_H); // NEW
+        const role = new mxCell("", roleGeo,
+            "shape=swimlane;horizontal=1;whiteSpace=wrap;html=1;collapsible=1;rounded=1;arcSize=8;startSize=54;fillColor=#F8FAFC;swimlaneFillColor=#EEF6EE;strokeColor=#7AA35A;role_card=1;role_card_version=2"); // CHANGE
         role.vertex = true;
 
-        // Avatar placeholder (80px tall gray rectangle)
-        const avatarGeo = new mxGeometry(5, 5, 30, 80);
-        const avatar = new mxCell("click to add image", avatarGeo, // CHANGE
-            "shape=rectangle;align=left;verticalAlign=middle;whiteSpace=wrap;fillColor=#f5f5f5;strokeColor=#999999;role_imagerow=1;");
-        avatar.vertex = true;
+        const photoLabel = createReadOnlyRoleLabel("Photo", 10, 62, 50); // CHANGE
+        const avatar = createRoleValueCell("click to add image", 10, 76, 50, 50,
+            "align=center;verticalAlign=middle;fillColor=#F3F4F6;strokeColor=#94A3B8;fontSize=10;spacingLeft=0;role_imagerow=1;"); // CHANGE
 
-        const name = new mxCell("Name", new mxGeometry(40, 0, w - 40, 30),
-            "shape=rectangle;align=left;verticalAlign=middle;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#d6b656;role_name=1;"); // CHANGE
-        name.vertex = true;
+        const nameLabel = createReadOnlyRoleLabel("Name", 70, 62, 174); // CHANGE
+        const name = createRoleValueCell("", 70, 76, 174, 24, "fontStyle=1;role_name=1;"); // CHANGE
 
-        const title = new mxCell("Role/Title", new mxGeometry(0, 30, w, 30),
-            "shape=rectangle;align=left;verticalAlign=middle;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#d6b656;role_title=1;"); // CHANGE
-        title.vertex = true;
+        const titleLabel = createReadOnlyRoleLabel("Role / title", 70, 104, 174); // CHANGE
+        const title = createRoleValueCell("", 70, 118, 174, 22, "role_title=1;"); // CHANGE
 
-        const notes = new mxCell("Description/Notes", new mxGeometry(0, 60, w, 60),
-            "shape=rectangle;align=left;verticalAlign=top;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#d6b656;");
-        notes.vertex = true;
+        const notesLabel = createReadOnlyRoleLabel("Description / notes", 10, 144, 234); // CHANGE
+        const notes = createRoleValueCell("", 10, 158, 234, 34, "verticalAlign=top;spacingTop=4;"); // CHANGE
 
-        const contact = new mxCell("Contact Info", new mxGeometry(0, 120, w, 30),
-            "shape=rectangle;align=left;verticalAlign=middle;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#d6b656;");
-        contact.vertex = true;
+        const contactLabel = createReadOnlyRoleLabel("Contact info", 10, 190, 234); // CHANGE
+        const contact = createRoleValueCell("", 10, 204, 234, 14, "fontSize=10;"); // CHANGE
 
         if (manageUpdate) model.beginUpdate(); // CHANGE
         try { // CHANGE
             model.add(moduleCell, role);
-            [avatar, name, title, notes, contact].forEach(child => model.add(role, child));
+            [photoLabel, avatar, nameLabel, name, titleLabel, title, notesLabel, notes, contactLabel, contact].forEach(child => model.add(role, child)); // CHANGE
+            syncRoleCardSummary(role); // NEW
         } finally {
             if (manageUpdate) model.endUpdate(); // CHANGE
         }

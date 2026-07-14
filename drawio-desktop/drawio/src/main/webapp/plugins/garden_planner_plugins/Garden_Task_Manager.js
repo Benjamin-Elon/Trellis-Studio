@@ -5874,28 +5874,49 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         graph.__trellisTaskAssigneeBadgesInstalled = true; // NEW
         const host = ensureTaskControlOverlayHost(); // NEW
         if (!host) return; // NEW
+        let expandedAssigneeCardId = ''; // NEW: sticky expanded assignee grid follows the exact rendered card id
         const layer = document.createElement('div'); // NEW
         layer.className = 'trellis-task-assignee-badge-layer'; // NEW
         layer.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:' + GRAPH_OVERLAY_Z.CONTROL + ';'; // NEW
         host.appendChild(layer); // NEW
         registerTaskOverlayGestureElement(layer); // NEW
 
+        function collapseExpandedAssigneeCard(requestRefresh) { // NEW
+            expandedAssigneeCardId = ''; // NEW
+            if (requestRefresh) requestRefresh(); // NEW
+        } // NEW
+
+        function appendAssigneeCollapsePill(stack, requestRefresh) { // NEW
+            const collapse = document.createElement('button'); // NEW
+            collapse.type = 'button'; // NEW
+            collapse.className = 'trellis-task-assignee-collapse'; // NEW
+            collapse.textContent = 'Collapse'; // NEW
+            collapse.setAttribute('aria-label', 'Collapse assignees'); // NEW
+            collapse.style.cssText = 'box-sizing:border-box;height:18px;min-width:48px;border:1px solid #6B7280;border-radius:9px;padding:0 6px;background:#fff;color:#111;font:bold 9px Arial,sans-serif;line-height:16px;cursor:pointer;white-space:nowrap;'; // NEW
+            collapse.addEventListener('mousedown', consumeDomEvent); // NEW
+            collapse.addEventListener('click', function (evt) { consumeDomEvent(evt); collapseExpandedAssigneeCard(requestRefresh); }); // NEW
+            stack.appendChild(collapse); // NEW
+        } // NEW
+
         function renderCardBadge(card, board) { // NEW
             const profiles = resolveCardAssigneeProfiles(card, board); // NEW
-            if (!profiles.length) return; // NEW
+            const cardId = String(card && card.id || ''); // NEW
+            if (!profiles.length || !cardId) { if (expandedAssigneeCardId === cardId) expandedAssigneeCardId = ''; return; } // CHANGE
             const state = graph.view && graph.view.getState ? graph.view.getState(card) : null; // NEW
             const bounds = getStateHostBounds(card, state, host); // NEW
-            if (!bounds || bounds.width <= 0 || bounds.height <= 0) return; // NEW
+            if (!bounds || bounds.width <= 0 || bounds.height <= 0) { if (expandedAssigneeCardId === cardId) expandedAssigneeCardId = ''; return; } // CHANGE
+            const expanded = expandedAssigneeCardId === cardId; // NEW
             const stack = document.createElement('div'); // NEW
-            stack.className = 'trellis-task-assignee-stack'; // NEW
+            stack.className = expanded ? 'trellis-task-assignee-stack trellis-task-assignee-stack-expanded' : 'trellis-task-assignee-stack'; // CHANGE
             stack.title = profiles.map(profile => profile.name + ' — ' + profile.roleTitle + (profile.eligible ? '' : ' (unavailable)')).join('\n'); // NEW
-            stack.style.cssText = 'position:absolute;display:flex;align-items:center;pointer-events:auto;left:' + Math.round(bounds.x + bounds.width - 4) + 'px;top:' + Math.round(bounds.y + 2) + 'px;transform:translateX(-100%);'; // NEW
-            profiles.slice(0, 3).forEach((profile, index) => { // NEW
-                const avatar = makeRoleAvatarNode(profile, 16, navigateToRoleProfile); // NEW
-                if (index) avatar.style.marginLeft = '-4px'; // NEW
+            stack.style.cssText = expanded ? 'position:absolute;display:grid;grid-template-columns:repeat(3,18px);grid-auto-rows:18px;gap:3px;align-items:center;pointer-events:auto;left:' + Math.round(bounds.x + bounds.width - 4) + 'px;top:' + Math.round(bounds.y + 2) + 'px;transform:translateX(-100%);box-sizing:border-box;padding:3px;background:#fff;border:1px solid #6B7280;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.18);z-index:' + GRAPH_OVERLAY_Z.CONTROL_TOP + ';' : 'position:absolute;display:flex;align-items:center;pointer-events:auto;left:' + Math.round(bounds.x + bounds.width - 4) + 'px;top:' + Math.round(bounds.y + 2) + 'px;transform:translateX(-100%);'; // CHANGE
+            profiles.slice(0, expanded ? profiles.length : 3).forEach((profile, index) => { // CHANGE
+                const avatar = makeRoleAvatarNode(profile, expanded ? 18 : 16, navigateToRoleProfile); // CHANGE
+                if (!expanded && index) avatar.style.marginLeft = '-4px'; // CHANGE
                 stack.appendChild(avatar); // NEW
             }); // NEW
-            if (profiles.length > 3) { // NEW
+            if (expanded) appendAssigneeCollapsePill(stack, requestRefresh); // NEW
+            if (!expanded && profiles.length > 3) { // CHANGE
                 const more = document.createElement('button'); // NEW
                 more.type = 'button'; // NEW
                 more.className = 'trellis-task-assignee-overflow'; // NEW
@@ -5903,33 +5924,39 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
                 more.setAttribute('aria-label', 'Show all ' + profiles.length + ' assigned people'); // NEW
                 more.style.cssText = 'box-sizing:border-box;height:16px;min-width:20px;margin-left:2px;border:1px solid #6B7280;border-radius:8px;padding:0 3px;background:#fff;color:#111;font:bold 9px Arial,sans-serif;line-height:14px;cursor:pointer;'; // NEW
                 more.addEventListener('mousedown', consumeDomEvent); // NEW
-                more.addEventListener('click', function (evt) { consumeDomEvent(evt); showAssigneeNamesPopover(more, profiles); }); // NEW
+                more.addEventListener('click', function (evt) { consumeDomEvent(evt); expandedAssigneeCardId = cardId; requestRefresh(); }); // CHANGE
                 stack.appendChild(more); // NEW
             } // NEW
             layer.appendChild(stack); // NEW
         } // NEW
 
         function refresh() { // NEW
-            closeAssigneeNamesPopover(); // NEW
+            const expectedExpandedCardId = expandedAssigneeCardId; // NEW
+            let renderedExpandedCard = false; // NEW
             layer.innerHTML = ''; // NEW
             if (taskOverlayGestureActive) { layer.style.display = 'none'; return; } // NEW
             layer.style.display = 'block'; // NEW
             (function walk(cell) { // NEW
                 if (!cell) return; // NEW
                 if (isBoardCell(cell) && getBoardViewMode(cell) === 'WEEK') { // NEW
-                    collectBoardCards(cell).forEach(entry => { if (!isScheduleBreakCard(entry.card) && getTaskAssigneeRoleIds(entry.card).length) renderCardBadge(entry.card, cell); }); // NEW
+                    collectBoardCards(cell).forEach(entry => { // CHANGE
+                        if (!isScheduleBreakCard(entry.card) && getTaskAssigneeRoleIds(entry.card).length) { // NEW
+                            renderCardBadge(entry.card, cell); // NEW
+                            renderedExpandedCard = renderedExpandedCard || (!!expectedExpandedCardId && String(entry.card && entry.card.id || '') === expectedExpandedCardId); // NEW
+                        } // NEW
+                    }); // CHANGE
                     return; // NEW
                 } // NEW
                 const count = model.getChildCount(cell); // NEW
                 for (let i = 0; i < count; i++) walk(model.getChildAt(cell, i)); // NEW
             })(model.getRoot()); // NEW
+            if (expectedExpandedCardId && !renderedExpandedCard) expandedAssigneeCardId = ''; // NEW
         } // NEW
 
         const requestRefresh = createDeferredTaskOverlayRefresh(refresh); // NEW
         addGraphViewRefreshListener(requestRefresh); // NEW
         graph.addListener('linksChanged', requestRefresh); // NEW
-        document.addEventListener('mousedown', function (evt) { if (assigneeNamesPopover && !assigneeNamesPopover.contains(evt.target)) closeAssigneeNamesPopover(); }, true); // NEW
-        document.addEventListener('keydown', function (evt) { if (assigneeNamesPopover && (evt.key === 'Escape' || evt.keyCode === 27)) { consumeDomEvent(evt); closeAssigneeNamesPopover(); } }); // NEW
+        document.addEventListener('keydown', function (evt) { if (expandedAssigneeCardId && (evt.key === 'Escape' || evt.keyCode === 27)) { consumeDomEvent(evt); collapseExpandedAssigneeCard(requestRefresh); } }); // CHANGE
         requestRefresh(); // NEW
     } // NEW
 
@@ -6363,11 +6390,19 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         let assignmentPicker = null; // NEW
         let assignmentPickerSignature = ''; // NEW
 
-        function closeAssignmentPicker() { // NEW
+        function closeAssignmentPicker(restoreActions) { // CHANGE
             if (assignmentPicker && assignmentPicker.parentNode) assignmentPicker.parentNode.removeChild(assignmentPicker); // NEW
             assignmentPicker = null; // NEW
             assignmentPickerSignature = ''; // NEW
             if (assignBtn) assignBtn.setAttribute('aria-expanded', 'false'); // NEW
+            if (restoreActions !== false) requestRefresh(); // NEW
+        } // NEW
+
+        function positionAssignmentPickerFromBounds(picker, bounds) { // NEW
+            if (!picker || !bounds) return false; // NEW
+            picker.style.left = Math.max(0, Math.round(bounds.x)) + 'px'; // NEW
+            picker.style.top = Math.max(0, Math.round(bounds.y + bounds.height + 6 + TASK_ACTION_OVERLAY_EXTRA_Y)) + 'px'; // NEW
+            return true; // NEW
         } // NEW
 
         function assignmentContextSignature(context) { // NEW: stale drafts never apply to changed graph state
@@ -6423,7 +6458,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             const profileById = new Map(context.roster.map(profile => [profile.id, profile])); // NEW
             context.cards.forEach(card => resolveCardAssigneeProfiles(card, context.board).forEach(profile => profileById.set(profile.id, profile))); // NEW
             if (!profileById.size) return; // NEW
-            closeAssignmentPicker(); // NEW
+            closeAssignmentPicker(false); // CHANGE
             const picker = document.createElement('div'); // NEW
             picker.className = 'trellis-task-assignee-picker'; // NEW
             picker.setAttribute('role', 'dialog'); // NEW
@@ -6542,17 +6577,16 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
                     nextIdsByCard.set(card, Array.from(next)); // NEW
                 }); // NEW
                 applyTaskAssignmentSets(liveContext.cards, nextIdsByCard); // NEW
-                closeAssignmentPicker(); requestRefresh(); // NEW
+                closeAssignmentPicker(); // CHANGE
             }); // NEW
             footer.appendChild(cancel); footer.appendChild(apply); picker.appendChild(footer); // NEW
             host.appendChild(picker); // NEW
-            const hostRect = host.parentNode && host.parentNode.getBoundingClientRect ? host.parentNode.getBoundingClientRect() : { left: 0, top: 0 }; // NEW
-            const buttonRect = assignBtn.getBoundingClientRect ? assignBtn.getBoundingClientRect() : { left: 0, bottom: 0 }; // NEW
-            picker.style.left = Math.max(0, Math.round(buttonRect.left - hostRect.left)) + 'px'; // NEW
-            picker.style.top = Math.max(0, Math.round(buttonRect.bottom - hostRect.top + 4)) + 'px'; // NEW
+            const pickerBounds = getCellStateBounds(context.cards, picker.parentNode); // NEW
+            if (!positionAssignmentPickerFromBounds(picker, pickerBounds)) { picker.parentNode.removeChild(picker); return; } // CHANGE
             assignmentPicker = picker; // NEW
             assignmentPickerSignature = assignmentContextSignature(context); // NEW
             assignBtn.setAttribute('aria-expanded', 'true'); // NEW
+            overlay.style.display = 'none'; // NEW
             search.focus(); // NEW
         } // NEW
 
@@ -6570,10 +6604,15 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         function refresh() { // NEW
             const cards = selectedKanbanCards(); // NEW
             const assignmentContext = getAssignmentSelectionContext(cards); // NEW
-            if (assignmentPicker && assignmentContextSignature(assignmentContext) !== assignmentPickerSignature) closeAssignmentPicker(); // NEW
-            if (!cards.length) { closeAssignmentPicker(); overlay.style.display = 'none'; return; } // CHANGE
+            if (assignmentPicker && assignmentContextSignature(assignmentContext) !== assignmentPickerSignature) closeAssignmentPicker(false); // CHANGE
+            if (!cards.length) { closeAssignmentPicker(false); overlay.style.display = 'none'; return; } // CHANGE
             const bounds = getCellStateBounds(cards, overlay.parentNode); // CHANGE
-            if (!bounds) { overlay.style.display = 'none'; return; } // CHANGE
+            if (!bounds) { closeAssignmentPicker(false); overlay.style.display = 'none'; return; } // CHANGE
+            if (assignmentPicker) { // NEW
+                if (!positionAssignmentPickerFromBounds(assignmentPicker, bounds)) closeAssignmentPicker(false); // NEW
+                overlay.style.display = 'none'; // NEW
+                return; // NEW
+            } // NEW
             const single = cards.length === 1; // NEW
             const card = cards[0]; // NEW
             const state = single ? getEffectiveWorkflowState(card.value, laneKeyOfCard(card)) : null; // CHANGE
