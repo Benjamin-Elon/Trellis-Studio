@@ -9,6 +9,11 @@ const projectRoot = path.resolve(__dirname, "..");
 const dialogsPath = path.join(projectRoot, "drawio/src/main/webapp/js/diagramly/Dialogs.js");
 const appPath = path.join(projectRoot, "drawio/src/main/webapp/js/diagramly/App.js");
 const bundledPath = path.join(projectRoot, "drawio/src/main/webapp/js/app.min.js");
+const enhancementPath = path.join(projectRoot, "drawio/src/main/webapp/js/trellis-splash.js"); // NEW
+const splashCssPath = path.join(projectRoot, "drawio/src/main/webapp/styles/trellis-splash.css"); // NEW
+const bootstrapPath = path.join(projectRoot, "drawio/src/main/webapp/js/bootstrap.js"); // NEW
+const indexPath = path.join(projectRoot, "drawio/src/main/webapp/index.html"); // NEW
+const electronPath = path.join(projectRoot, "src/main/electron.js"); // NEW
 const wizardStorageKey = "trellis.licenseWizard.v2";
 
 function loadSplashDialog(options = {}) {
@@ -36,10 +41,15 @@ function loadSplashDialog(options = {}) {
         dom.window.localStorage.setItem("trellis.licenseNotice.v1", JSON.stringify({ choice: options.oldChoice, version: "1" }));
     }
 
+    let helpCalls = 0; // NEW
     const actions = {
         new: { funct() {} },
         open: { funct() {} }
     };
+
+    if (options.helpAction) { // NEW
+        actions.trellisUpdatesLinks = { funct() { helpCalls++; } }; // NEW
+    } // NEW
     const context = {
         window: dom.window,
         document: dom.window.document,
@@ -105,8 +115,12 @@ function loadSplashDialog(options = {}) {
     vm.runInNewContext(fs.readFileSync(dialogsPath, "utf8"), context, { filename: dialogsPath });
     const editorUi = {
         mode: context.App.MODE_DEVICE,
-        addLanguageMenu() {
-            return null;
+        addLanguageMenu(root) {
+            if (!options.languageControl) return null; // NEW
+            const language = dom.window.document.createElement("div"); // NEW
+            language.className = "geAdaptiveAsset"; // NEW
+            root.appendChild(language); // NEW
+            return language; // NEW
         },
         actions: {
             get(id) {
@@ -116,8 +130,10 @@ function loadSplashDialog(options = {}) {
         hideDialog() {},
         openLink() {}
     };
+    vm.runInNewContext(fs.readFileSync(enhancementPath, "utf8"), context, { filename: enhancementPath }); // NEW
+    context.window.TrellisSplashEnhancements.install(); // NEW
     const dialog = new context.SplashDialog(editorUi);
-    return { dom, dialog, timers };
+    return { dom, dialog, timers, context, editorUi, getHelpCalls: () => helpCalls }; // CHANGE
 }
 
 function findButton(root, label) {
@@ -364,6 +380,37 @@ test("Oath completion stores the wizard record and reveals actions after two sec
     assert.equal(actions.style.display, "");
 });
 
+test("New oath records require a complete email without invalidating legacy records", () => { // NEW
+    const legacy = loadSplashDialog({ // NEW
+        savedRecord: makeSavedRecord({ email: "Barneywilson@gmail." }) // NEW
+    }); // NEW
+    assert.equal(legacy.dialog.isTrellisLicenseWizardComplete(), true); // NEW
+    assert.match(legacy.dialog.container.textContent, /Barneywilson@gmail\./); // NEW
+
+    const { dom, dialog } = loadSplashDialog(); // NEW
+    openOath(dialog); // NEW
+    const playButton = findButton(dialog.container, "Play Oath Aloud"); // NEW
+    playButton.click(); // NEW
+    playButton.click(); // NEW
+    playButton.click(); // NEW
+    findButton(dialog.container, "Manual audio override").click(); // NEW
+    const inputs = dialog.container.querySelectorAll("input"); // NEW
+    inputs[0].value = "New User"; // NEW
+    inputs[1].value = "new@example."; // NEW
+    inputs[2].value = "New User"; // NEW
+    inputs[3].checked = true; // NEW
+    findButton(dialog.container, "I Affirm the Oath").click(); // NEW
+
+    assert.equal(dom.window.localStorage.getItem(wizardStorageKey), null); // NEW
+    assert.match(dialog.container.textContent, /Enter a complete email address/); // NEW
+    assert.equal(dialog.isTrellisLicenseWizardComplete(), false); // NEW
+
+    inputs[1].value = "new@example.com"; // NEW
+    findButton(dialog.container, "I Affirm the Oath").click(); // NEW
+    assert.equal(JSON.parse(dom.window.localStorage.getItem(wizardStorageKey)).email, "new@example.com"); // NEW
+    assert.equal(dialog.isTrellisLicenseWizardComplete(), true); // NEW
+}); // NEW
+
 test("Saved wizard records show summary, contact guidance, Change license, and delayed actions", () => {
     const savedRecord = {
         path: "unsure",
@@ -377,7 +424,7 @@ test("Saved wizard records show summary, contact guidance, Change license, and d
     const { dom, dialog, timers } = loadSplashDialog({ savedRecord });
     const actions = dialog.container.querySelector(".trellis-splash-actions");
 
-    assert.match(dialog.container.textContent, /Saved license path/);
+    assert.match(dialog.container.textContent, /Saved license/); // CHANGE
     assert.match(dialog.container.textContent, /Placeholder Contact Name/);
     assert.equal(dialog.isTrellisLicenseWizardComplete(), true);
     assert.equal(actions.style.display, "none");
@@ -442,7 +489,7 @@ test("Completed splash dismissal preserves blank diagram creation", () => {
     assert.equal(context.Editor.useLocalStorage, true);
 });
 
-test("SplashDialog source and bundle use oath wizard storage, close hook, and expanded dimensions", () => {
+test("SplashDialog source and bundle use oath wizard storage, close hook, validation, and card dimensions", () => { // CHANGE
     const appSource = fs.readFileSync(appPath, "utf8");
     const bundledSource = fs.readFileSync(bundledPath, "utf8");
     const dialogSource = fs.readFileSync(dialogsPath, "utf8");
@@ -456,15 +503,168 @@ test("SplashDialog source and bundle use oath wizard storage, close hook, and ex
     assert.ok(dialogHookIndex > dialogBindingIndex);
     assert.match(dialogSource, /isTrellisLicenseWizardComplete/);
     assert.match(dialogSource, /isTrellisWizardRecordValid/);
+	assert.match(dialogSource, /isTrellisNewEmailValid/); // NEW
     assert.match(dialogSource, /pointerRunawayDistance = 120/);
     assert.match(dialogSource, /I Affirm the Oath/);
-    assert.match(appSource, /showDialog\(dlg\.container, 760, 720/);
+	assert.match(appSource, /showDialog\(dlg\.container, 700, 630/); // CHANGE
     assert.match(appSource, /showTrellisExitMessage/);
     assert.match(bundledSource, /trellis\.licenseWizard\.v/);
     assert.ok(bundledBindingIndex >= 0);
     assert.ok(bundledHookIndex > bundledBindingIndex);
     assert.match(bundledSource, /isTrellisLicenseWizardComplete/);
     assert.match(bundledSource, /isTrellisWizardRecordValid/);
+	assert.match(bundledSource, /isTrellisNewEmailValid/); // NEW
     assert.match(bundledSource, /pointerRunawayDistance = 120/);
-    assert.match(bundledSource, /showDialog\(p\.container,760,720/);
+	assert.match(bundledSource, /showDialog\(p\.container,700,630/); // CHANGE
 });
+
+test("Trellis splash enhancement adds the branded shell, saved-state structure, actions, and Help-only footer", () => { // CHANGE
+    const { dialog, getHelpCalls } = loadSplashDialog({ // NEW
+		savedRecord: makeSavedRecord({ email: "Barneywilson@gmail." }), // CHANGE
+        helpAction: true, // NEW
+        languageControl: true // NEW
+    }); // NEW
+    const createButton = findButton(dialog.container, "Create New Diagram"); // NEW
+    const openButton = findButton(dialog.container, "Open Existing Diagram"); // NEW
+    const helpButton = findButton(dialog.container, "Help"); // NEW
+
+    assert.ok(dialog.container.classList.contains("trellis-splash-root")); // NEW
+    assert.equal(dialog.container.querySelector(".geAdaptiveAsset"), null); // NEW
+    assert.equal(dialog.container.querySelector(".trellis-splash-tagline").textContent, "Build systems that grow."); // NEW
+	assert.match(dialog.container.textContent, /Saved license/); // NEW
+	assert.match(dialog.container.textContent, /Saved User/); // NEW
+	assert.match(dialog.container.textContent, /Barneywilson@gmail\./); // CHANGE
+	assert.ok(dialog.container.classList.contains("trellis-saved-state")); // NEW
+	assert.equal(dialog.container.querySelector(".trellis-splash-state-intro").hidden, true); // NEW
+	assert.equal(dialog.container.querySelector(".trellis-saved-license-path").textContent, "Path: Personal / Noncommercial."); // NEW
+	assert.equal(dialog.container.querySelector(".trellis-saved-license-signer").textContent, "Signed by Saved User using Barneywilson@gmail."); // NEW
+    assert.ok(dialog.container.querySelector(".trellis-saved-license-card .trellis-license-icon")); // NEW
+    assert.ok(createButton.classList.contains("trellis-primary-action")); // NEW
+    assert.ok(openButton.classList.contains("trellis-secondary-action")); // NEW
+    assert.ok(createButton.querySelector("svg")); // NEW
+    assert.ok(openButton.querySelector("svg")); // NEW
+    assert.ok(helpButton); // NEW
+    assert.doesNotMatch(dialog.container.textContent, /Settings|Language/); // NEW
+    helpButton.click(); // NEW
+    assert.equal(getHelpCalls(), 1); // NEW
+}); // NEW
+
+test("Trellis splash outer decoration stays below app chrome and applies a validated background", () => { // NEW
+    const { dom, dialog, context, editorUi } = loadSplashDialog({ savedRecord: makeSavedRecord() }); // NEW
+    const outerContainer = dom.window.document.createElement("div"); // NEW
+    const backdrop = dom.window.document.createElement("div"); // NEW
+    const closeButton = dom.window.document.createElement("div"); // NEW
+    const requests = []; // NEW
+
+    closeButton.className = "geButton"; // NEW
+    outerContainer.appendChild(closeButton); // NEW
+	editorUi.diagramContainer = { // CHANGE
+		getBoundingClientRect() { return { left: 0, top: 98, width: 1536, height: 718 }; } // NEW
+	}; // CHANGE
+    context.electron = { // NEW
+        request(payload, callback) { // NEW
+            requests.push(payload); // NEW
+            callback("garden view.webp"); // NEW
+        } // NEW
+    }; // NEW
+    dom.window.Image = class { // NEW
+        set src(value) { // NEW
+            this.loadedSource = value; // NEW
+            this.onload(); // NEW
+        } // NEW
+    }; // NEW
+
+    context.window.TrellisSplashEnhancements.decorateOuterDialog( // NEW
+        editorUi, dialog, { container: outerContainer, bg: backdrop }); // NEW
+
+    assert.ok(outerContainer.classList.contains("trellis-splash-dialog")); // NEW
+    assert.ok(backdrop.classList.contains("trellis-splash-backdrop")); // NEW
+    assert.ok(backdrop.classList.contains("trellis-splash-has-image")); // NEW
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-workspace-top"), "98px"); // CHANGE
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-workspace-center-x"), "768px"); // NEW
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-workspace-center-y"), "457px"); // NEW
+	assert.equal(outerContainer.classList.contains("trellis-splash-compact"), false); // NEW
+    assert.equal(requests[0].action, "getTrellisSplashBackground"); // NEW
+    assert.match(backdrop.style.getPropertyValue("--trellis-splash-image"), /garden%20view\.webp/); // NEW
+    assert.equal(closeButton.getAttribute("aria-label"), "Continue with a blank diagram"); // NEW
+}); // NEW
+
+test("Trellis splash toggles compact mode from workspace bounds and removes its resize listener", () => { // NEW
+	const { dom, dialog, context, editorUi } = loadSplashDialog({ savedRecord: makeSavedRecord() }); // NEW
+	const outerContainer = dom.window.document.createElement("div"); // NEW
+	const backdrop = dom.window.document.createElement("div"); // NEW
+	let bounds = { left: 0, top: 98, width: 1536, height: 718 }; // NEW
+	let boundsReads = 0; // NEW
+	let closeCalls = 0; // NEW
+	editorUi.diagramContainer = { // NEW
+		getBoundingClientRect() { // NEW
+			boundsReads++; // NEW
+			return bounds; // NEW
+		} // NEW
+	}; // NEW
+	const outerDialog = { // NEW
+		container: outerContainer, // NEW
+		bg: backdrop, // NEW
+		close() { closeCalls++; } // NEW
+	}; // NEW
+
+	context.window.TrellisSplashEnhancements.decorateOuterDialog(editorUi, dialog, outerDialog); // NEW
+	assert.equal(outerContainer.classList.contains("trellis-splash-compact"), false); // NEW
+
+	bounds = { left: 10, top: 110, width: 760, height: 700 }; // NEW
+	dom.window.dispatchEvent(new dom.window.Event("resize")); // NEW
+	assert.equal(outerContainer.classList.contains("trellis-splash-compact"), true); // NEW
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-workspace-left"), "10px"); // NEW
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-workspace-height"), "700px"); // NEW
+
+	bounds = { left: 0, top: 98, width: 1536, height: 718 }; // NEW
+	dom.window.dispatchEvent(new dom.window.Event("resize")); // NEW
+	assert.equal(outerContainer.classList.contains("trellis-splash-compact"), false); // NEW
+
+	outerDialog.close(); // NEW
+	const readsAfterClose = boundsReads; // NEW
+	bounds = { left: 0, top: 98, width: 600, height: 500 }; // NEW
+	dom.window.dispatchEvent(new dom.window.Event("resize")); // NEW
+	assert.equal(boundsReads, readsAfterClose); // NEW
+	assert.equal(closeCalls, 1); // NEW
+}); // NEW
+
+test("Trellis splash rejects unsafe background filenames and keeps the gradient fallback", () => { // NEW
+    const { dom, dialog, context, editorUi } = loadSplashDialog(); // NEW
+    const outerContainer = dom.window.document.createElement("div"); // NEW
+    const backdrop = dom.window.document.createElement("div"); // NEW
+    const closeButton = dom.window.document.createElement("div"); // NEW
+    closeButton.className = "geButton"; // NEW
+    outerContainer.appendChild(closeButton); // NEW
+    context.electron = { request(payload, callback) { callback("../outside.png"); } }; // NEW
+
+    context.window.TrellisSplashEnhancements.decorateOuterDialog( // NEW
+        editorUi, dialog, { container: outerContainer, bg: backdrop }); // NEW
+
+    assert.equal(backdrop.style.getPropertyValue("--trellis-splash-image"), ""); // NEW
+    assert.equal(backdrop.classList.contains("trellis-splash-has-image"), false); // NEW
+    assert.equal(closeButton.getAttribute("aria-label"), "Exit Trellis Studio"); // NEW
+}); // NEW
+
+test("Trellis splash assets and bootstrap wire the same enhancement into packaged runtime", () => { // NEW
+    const enhancementSource = fs.readFileSync(enhancementPath, "utf8"); // NEW
+    const splashCss = fs.readFileSync(splashCssPath, "utf8"); // NEW
+    const bootstrapSource = fs.readFileSync(bootstrapPath, "utf8"); // NEW
+    const indexSource = fs.readFileSync(indexPath, "utf8"); // NEW
+    const electronSource = fs.readFileSync(electronPath, "utf8"); // NEW
+    const enhancementIndex = indexSource.indexOf('src="js/trellis-splash.js"'); // NEW
+    const bootstrapIndex = indexSource.indexOf('src="js/bootstrap.js"'); // NEW
+
+    assert.match(enhancementSource, /Build systems that grow/); // NEW
+    assert.match(enhancementSource, /getTrellisSplashBackground/); // NEW
+	assert.match(splashCss, /trellis-splash-dialog\.trellis-splash-compact/); // CHANGE
+	assert.doesNotMatch(splashCss, /max-height: 820px/); // NEW
+	assert.match(splashCss, /top: var\(--trellis-workspace-top/); // NEW
+	assert.match(splashCss, /height: 690px !important/); // NEW
+	assert.match(splashCss, /trellis-license-status::after/); // NEW
+    assert.match(splashCss, /#fbf8ed/); // NEW
+    assert.match(indexSource, /styles\/trellis-splash\.css/); // NEW
+    assert.ok(enhancementIndex >= 0 && enhancementIndex < bootstrapIndex); // NEW
+    assert.match(bootstrapSource, /TrellisSplashEnhancements\.install\(\)/); // NEW
+    assert.match(electronSource, /case 'getTrellisSplashBackground': \/\/ NEW/); // NEW
+}); // NEW

@@ -26,6 +26,7 @@ import contextMenu from 'electron-context-menu';
 import { spawn } from 'child_process';
 import { disableUpdate as disUpPkg } from './disableUpdate.js';
 import { createFileWatchRegistry } from './fileWatchRegistry.js'; // CHANGE
+import { createTrellisSplashBackgroundSelector } from './trellis-splash-backgrounds.js'; // NEW
 
 // (ADD): SQLite
 import Database from 'better-sqlite3';
@@ -342,6 +343,8 @@ let enableStoreBkp = store != null ? (store.get('enableStoreBkp') != null ? stor
 let dialogOpen = false;
 let enablePlugins = true;
 const codeDir = path.join(__dirname, '/../../drawio/src/main/webapp');
+const getTrellisSplashBackground = createTrellisSplashBackgroundSelector( // NEW
+	path.join(codeDir, 'images', 'trellis-splash')); // NEW
 const codeUrl = url.pathToFileURL(codeDir).href.replace(/\/.\:\//, str => str.toUpperCase()); // Fix for windows drive letter
 // Production app uses asar archive, so we need to go up two more level. It's extra cautious since asar is read-only anyway.
 const appBaseDir = path.join(__dirname, __dirname.endsWith(path.join('resources', 'app.asar', 'src', 'main')) ?
@@ -2644,6 +2647,9 @@ ipcMain.on("rendererReq", async (event, args) => {
 				break; // NEW
 			case 'getTrellisReleases': // NEW
 				ret = await getTrellisReleases(); // NEW
+				break; // NEW
+			case 'getTrellisSplashBackground': // NEW
+				ret = await getTrellisSplashBackground(); // NEW
 				break; // NEW
 			case 'restoreBuiltInTrellisDatabase': // NEW
 				ret = restoreBuiltInTrellisDatabase(); // NEW

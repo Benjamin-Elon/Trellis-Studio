@@ -269,6 +269,11 @@ function installTrellisBranding()
             this.appIcon.setAttribute('aria-label', 'Trellis Studio'); // Trellis change: expose the brand link to assistive technology.
         }
     };
+
+	if (typeof TrellisSplashEnhancements != 'undefined') // NEW
+	{
+		TrellisSplashEnhancements.install(); // NEW
+	}
 };
 
 function checkAllLoaded()

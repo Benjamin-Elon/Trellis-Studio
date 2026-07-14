@@ -1,0 +1,362 @@
+/* Trellis Studio startup presentation. */
+.geBackground.trellis-splash-backdrop { /* NEW */
+	background: transparent !important;
+	opacity: 1 !important;
+	overflow: hidden;
+}
+
+.geBackground.trellis-splash-backdrop::before { /* NEW */
+	background-color: #dfe8d2;
+	background-image:
+		linear-gradient(rgba(250, 247, 237, 0.24), rgba(238, 237, 216, 0.3)),
+		var(--trellis-splash-image,
+			radial-gradient(circle at 18% 25%, rgba(129, 164, 84, 0.7), transparent 32%),
+			radial-gradient(circle at 83% 70%, rgba(69, 112, 58, 0.68), transparent 34%),
+			linear-gradient(135deg, #d7e6cf 0%, #f4edcf 48%, #b9d2a6 100%));
+	background-position: center;
+	background-repeat: no-repeat;
+	background-size: cover;
+	bottom: 0;
+	content: '';
+	left: var(--trellis-workspace-left, 0px);
+	position: absolute;
+	right: auto;
+	top: var(--trellis-workspace-top, 0px);
+	width: var(--trellis-workspace-width, 100%);
+}
+
+.geDialog.trellis-splash-dialog { /* NEW */
+	background: #fbf8ed !important;
+	border: 1px solid rgba(57, 82, 49, 0.24) !important;
+	border-radius: 18px;
+	box-shadow: 0 24px 70px rgba(34, 50, 29, 0.28) !important;
+	color: #253c2d !important;
+	color-scheme: light;
+	height: 690px !important;
+	left: var(--trellis-workspace-center-x, 50%) !important;
+	overflow: hidden !important;
+	top: var(--trellis-workspace-center-y, 50%) !important;
+	width: 760px !important;
+}
+
+.geDialog.trellis-splash-dialog > .geButton { /* NEW */
+	background-image: none !important;
+	color: #264233;
+	font-size: 30px;
+	height: 34px;
+	line-height: 30px;
+	right: 18px !important;
+	text-align: center;
+	top: 16px !important;
+	width: 34px;
+}
+
+.geDialog.trellis-splash-dialog > .geButton::before { /* NEW */
+	content: '\00d7';
+}
+
+.trellis-splash-root { /* NEW */
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+	text-align: center;
+}
+
+.trellis-splash-center { /* NEW */
+	box-sizing: border-box;
+	flex: 1 1 auto;
+	font-size: 14px !important;
+	margin: 0 auto !important;
+	max-width: 660px !important;
+	overflow-x: hidden;
+	overflow-y: auto;
+	padding: 0 6px 10px;
+	width: 100%;
+}
+
+.trellis-splash-center > div:first-child { /* NEW */
+	color: #203d2d !important;
+	font-size: 38px !important;
+	font-weight: 700 !important;
+	letter-spacing: -0.8px;
+	line-height: 1.1;
+	margin: 0 !important;
+	padding-top: 76px;
+	position: relative;
+}
+
+.trellis-splash-center > div:first-child::before { /* NEW */
+	background: url('../images/header-icon.png') center / contain no-repeat;
+	content: '';
+	height: 64px;
+	left: 50%;
+	position: absolute;
+	top: 0;
+	transform: translateX(-50%);
+	width: 64px;
+}
+
+.trellis-splash-tagline { /* NEW */
+	color: #3e7528;
+	font-size: 18px;
+	font-weight: 500;
+	line-height: 1.35;
+	margin: 12px 0 20px;
+}
+
+.trellis-splash-state-intro { /* NEW */
+	color: #59675b !important;
+	font-size: 13px;
+	line-height: 1.45;
+	margin-bottom: 16px !important;
+}
+
+.trellis-saved-state .trellis-splash-state-intro { /* NEW */
+	display: none;
+}
+
+.trellis-splash-section { /* NEW */
+	background: #fffdf6 !important;
+	border: 1px solid #d3dac8 !important;
+	border-radius: 10px !important;
+	box-shadow: 0 3px 12px rgba(53, 72, 42, 0.05);
+	color: #314437;
+	margin-bottom: 12px;
+	padding: 14px 16px !important;
+}
+
+.trellis-saved-license-card { /* NEW */
+	align-items: center;
+	display: grid;
+	grid-template-columns: 52px minmax(0, 1fr) auto;
+	min-height: 78px;
+	text-align: left;
+}
+
+.trellis-saved-license-card .trellis-license-icon { /* NEW */
+	border: 1px solid #bacaab;
+	border-radius: 50%;
+	color: #4e8d2d;
+	grid-column: 1;
+	grid-row: 1 / span 2;
+	height: 40px;
+	padding: 8px;
+	width: 40px;
+}
+
+.trellis-saved-license-card > div { /* NEW */
+	grid-column: 2;
+}
+
+.trellis-saved-license-heading { /* NEW */
+	align-self: end;
+}
+
+.trellis-saved-license-copy { /* NEW */
+	align-self: start;
+}
+
+.trellis-saved-license-path,
+.trellis-saved-license-signer { /* NEW */
+	line-height: 1.45;
+	overflow-wrap: anywhere;
+}
+
+.trellis-saved-license-card > .geBtn { /* NEW */
+	grid-column: 3;
+	grid-row: 1 / span 2;
+	margin: 0 0 0 18px !important;
+}
+
+.trellis-splash-icon { /* NEW */
+	fill: none;
+	flex: 0 0 auto;
+	height: 22px;
+	margin-right: 12px;
+	stroke: currentColor;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	stroke-width: 1.8;
+	width: 22px;
+}
+
+.trellis-license-icon { /* NEW */
+	margin-right: 0;
+}
+
+.trellis-license-choice { /* NEW */
+	background: #fffdf6 !important;
+	border-color: #c9d4bf !important;
+	border-radius: 10px !important;
+	color: #2f4736 !important;
+	transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.trellis-license-choice:hover { /* NEW */
+	border-color: #669b45 !important;
+	box-shadow: 0 4px 14px rgba(73, 113, 51, 0.14);
+	transform: translateY(-1px);
+}
+
+.trellis-splash-center button:focus-visible,
+.trellis-splash-footer button:focus-visible { /* NEW */
+	box-shadow: 0 0 0 3px rgba(77, 132, 48, 0.32) !important;
+	outline: 2px solid #376b25 !important;
+	outline-offset: 2px;
+}
+
+.trellis-splash-buttons { /* NEW */
+	box-sizing: border-box;
+	flex: 0 0 auto;
+	margin: 0 auto !important;
+	max-width: 620px;
+	padding: 8px 0 0 !important;
+	width: 100%;
+}
+
+.trellis-splash-actions { /* NEW */
+	width: 100%;
+}
+
+.trellis-splash-actions br { /* NEW */
+	display: none;
+}
+
+.trellis-splash-actions button { /* NEW */
+	align-items: center;
+	border-radius: 8px !important;
+	box-sizing: border-box;
+	display: flex;
+	font-size: 17px !important;
+	font-weight: 500;
+	justify-content: center;
+	margin: 0 0 10px !important;
+	min-height: 54px;
+	padding: 12px 20px !important;
+	width: 100% !important;
+}
+
+.trellis-splash-actions .trellis-primary-action { /* NEW */
+	background: #4e8f2b !important;
+	border-color: #4e8f2b !important;
+	color: #fff !important;
+}
+
+.trellis-splash-actions .trellis-primary-action:hover { /* NEW */
+	background: #437d25 !important;
+}
+
+.trellis-splash-actions .trellis-secondary-action { /* NEW */
+	background: #fffdf6 !important;
+	border: 1px solid #7ea563 !important;
+	color: #3f7629 !important;
+}
+
+.trellis-license-status { /* NEW */
+	align-items: center;
+	background: #fbf8ed;
+	color: #4f6153 !important;
+	display: flex;
+	font-size: 13px !important;
+	gap: 9px;
+	isolation: isolate;
+	justify-content: center;
+	margin: 18px auto 4px !important;
+	padding: 0 12px;
+	position: relative;
+	width: fit-content;
+}
+
+.trellis-license-status::before { /* NEW */
+	border: 2px solid #5c993b;
+	border-radius: 50%;
+	color: #4d8b2d;
+	content: '\2713';
+	font-size: 11px;
+	font-weight: 700;
+	height: 15px;
+	line-height: 13px;
+	width: 15px;
+}
+
+.trellis-license-status::after { /* NEW */
+	border-top: 1px solid #d8ddcf;
+	content: '';
+	left: 50%;
+	position: absolute;
+	top: 50%;
+	transform: translate(-50%, -50%);
+	width: min(660px, calc(100vw - 80px));
+	z-index: -1;
+}
+
+.trellis-splash-footer { /* NEW */
+	box-sizing: border-box;
+	flex: 0 0 auto;
+	margin: 4px auto 0;
+	max-width: 660px;
+	text-align: left;
+	width: 100%;
+}
+
+.trellis-splash-help { /* NEW */
+	align-items: center;
+	background: transparent;
+	border: 0;
+	color: #4e5d50;
+	cursor: pointer;
+	display: inline-flex;
+	font-size: 14px;
+	padding: 8px 0;
+}
+
+.trellis-splash-help .trellis-splash-icon { /* NEW */
+	height: 21px;
+	margin-right: 8px;
+	width: 21px;
+}
+
+.geDialog.trellis-splash-dialog.trellis-splash-compact { /* NEW */
+		border: 0 !important;
+		border-radius: 0;
+		box-shadow: none !important;
+		height: var(--trellis-workspace-height, 100%) !important;
+		left: var(--trellis-workspace-left, 0px) !important;
+		max-height: none !important;
+		max-width: none !important;
+		padding: 22px !important;
+		top: var(--trellis-workspace-top, 0px) !important;
+		transform: none !important;
+		width: var(--trellis-workspace-width, 100%) !important;
+}
+
+.trellis-splash-compact .trellis-splash-center > div:first-child { /* NEW */
+		font-size: 32px !important;
+		padding-top: 62px;
+}
+
+.trellis-splash-compact .trellis-splash-center > div:first-child::before { /* NEW */
+		height: 52px;
+		width: 52px;
+}
+
+@media (max-width: 620px) { /* NEW */
+	.trellis-saved-license-card {
+		grid-template-columns: 48px minmax(0, 1fr);
+	}
+
+	.trellis-saved-license-card > .geBtn {
+		grid-column: 2;
+		grid-row: 3;
+		justify-self: start;
+		margin: 12px 0 0 !important;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) { /* NEW */
+	.trellis-license-choice {
+		transition: none;
+	}
+}

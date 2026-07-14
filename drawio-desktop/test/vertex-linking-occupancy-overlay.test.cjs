@@ -69,6 +69,16 @@ test("occupancy rows select and reveal their planting group", () => { // NEW
     assert.match(source, /if \(cell && model\.isVertex\(cell\)\) selectAndReveal\(cell\);/); // NEW
 }); // NEW
 
+test("linked task navigation delegates hidden-card paging to the task manager", () => { // NEW
+    const source = readSource(); // NEW
+    const revealSource = sourceBetween(source, "function revealKanbanCardForNavigation", "// Works for arbitrarily nested children"); // NEW
+
+    assert.match(revealSource, /const pagingApi = graph\.__trellisTaskPagingApi;/); // NEW
+    assert.match(revealSource, /pagingApi\.revealCard\(card\)/); // NEW
+    assert.doesNotMatch(revealSource, /setCellAttrUndoable\(lane, 'page_index'/); // NEW
+    assert.doesNotMatch(source, /function getLanePageSizeForReveal/); // NEW
+}); // NEW
+
 test("same-crop sibling task highlights use blue without changing direct link red", () => { // NEW
     const source = readSource(); // NEW
 

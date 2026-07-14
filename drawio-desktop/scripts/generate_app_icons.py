@@ -50,10 +50,16 @@ GENERATED_BRANDING_CACHE_URLS = (
     "images/header-icon.png",
     "images/window-icon.png",
 )
+TRELLIS_SHELL_CACHE_URLS = (  # NEW: keep the Trellis splash shell available through Workbox updates.
+    "index.html",
+    "js/trellis-splash.js",
+    "styles/trellis-splash.css",
+)
 BRANDING_CACHE_URLS = (
     "js/bootstrap.js",
     "styles/grapheditor.css",
     *GENERATED_BRANDING_CACHE_URLS,
+    *TRELLIS_SHELL_CACHE_URLS,  # CHANGE: validate and refresh the complete branded shell.
     "images/manifest.json",
 )
 
@@ -627,7 +633,7 @@ def append_missing_worker_cache_entries(worker_text: str, cache_paths: dict[str,
 
     missing = [
         url
-        for url in GENERATED_BRANDING_CACHE_URLS
+        for url in (*GENERATED_BRANDING_CACHE_URLS, *TRELLIS_SHELL_CACHE_URLS)  # CHANGE: append new shell assets once.
         if f'url:"{url}",revision:"' not in worker_text
     ]
     if not missing:
@@ -648,7 +654,7 @@ def append_missing_source_map_cache_entries(map_text: str, cache_paths: dict[str
 
     missing = [
         url
-        for url in GENERATED_BRANDING_CACHE_URLS
+        for url in (*GENERATED_BRANDING_CACHE_URLS, *TRELLIS_SHELL_CACHE_URLS)  # CHANGE: mirror shell assets in the map.
         if f'\\"url\\": \\"{url}\\"' not in map_text
     ]
     if not missing:

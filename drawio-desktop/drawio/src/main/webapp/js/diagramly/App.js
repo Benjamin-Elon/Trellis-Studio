@@ -3953,7 +3953,7 @@ App.prototype.showSplash = function(force)
 	{
 		var dlg = new SplashDialog(this);
 		
-		this.showDialog(dlg.container, 760, 720, true, true, // CHANGE
+		this.showDialog(dlg.container, 700, 630, true, true, // CHANGE
 			mxUtils.bind(this, function(cancel, isEsc)
 			{
 				if ((cancel || isEsc) && !mxClient.IS_CHROMEAPP)

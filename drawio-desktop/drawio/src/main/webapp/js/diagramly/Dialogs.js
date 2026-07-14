@@ -495,6 +495,12 @@ var SplashDialog = function(editorUi)
 		return value != null && mxUtils.trim(String(value)) != ''; // NEW
 	} // NEW
 
+	function isTrellisNewEmailValid(value) // NEW
+	{ // NEW
+		var email = mxUtils.trim(String(value == null ? '' : value)); // NEW
+		return /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)*\.[^\s@.]{2,}$/.test(email); // NEW
+	} // NEW
+
 	function isTrellisWizardRecordValid(data) // NEW
 	{ // NEW
 		var pathInfo = data != null ? trellisLicensePaths[data.path] : null; // NEW
@@ -815,14 +821,21 @@ var SplashDialog = function(editorUi)
 
 			function isGateReady() // NEW
 			{ // NEW
-				return oathDone && mxUtils.trim(nameField.input.value) != '' && mxUtils.trim(signatureField.input.value) != '' && mxUtils.trim(emailField.input.value).indexOf('@') >= 0 && oathCheckbox.checked; // NEW
+				return oathDone && mxUtils.trim(nameField.input.value) != '' && mxUtils.trim(signatureField.input.value) != '' && isTrellisNewEmailValid(emailField.input.value) && oathCheckbox.checked; // CHANGE
 			} // NEW
 
 			function blockAffirmUntilReady(evt) // NEW
 			{ // NEW
 				if (oathDone) // NEW
 				{ // NEW
-					updateStatus('Complete the fields and checkbox before affirming.'); // NEW
+					if (!isTrellisNewEmailValid(emailField.input.value)) // NEW
+					{ // NEW
+						updateStatus('Enter a complete email address, for example name@example.com.'); // NEW
+					} // NEW
+					else // NEW
+					{ // NEW
+						updateStatus('Complete the fields and checkbox before affirming.'); // NEW
+					} // NEW
 					if (evt != null) // NEW
 					{ // NEW
 						mxEvent.consume(evt); // NEW
