@@ -22,6 +22,24 @@ function nextTick() {
     return new Promise(resolve => setTimeout(resolve, 5));
 }
 
+/** // NEW
+ * Creates a Date constructor whose no-argument clock reads use local noon on a fixed calendar date. // NEW
+ * Calls with arguments retain native Date behavior so plugin parsing and calendar arithmetic stay realistic. // NEW
+ */ // NEW
+function createFixedLocalDateConstructor(localISO) { // NEW
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(localISO || "")); // NEW
+    if (!match) throw new TypeError("Fixed local date must use YYYY-MM-DD format."); // NEW
+    const fixedLocalNoon = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0, 0); // NEW
+    const fixedNow = fixedLocalNoon.getTime(); // NEW
+    return class FixedLocalDate extends Date { // NEW
+        constructor(...args) { // NEW
+            super(...(args.length ? args : [fixedNow])); // NEW: only no-argument construction reads the fixed clock
+        } // NEW
+
+        static now() { return fixedNow; } // NEW
+    }; // NEW
+} // NEW
+
 class TestGeometry {
     constructor(x, y, width, height) {
         this.x = x;
@@ -342,7 +360,7 @@ function makeHarness(options = {}) { // CHANGE
 
     const context = vm.createContext({
         console,
-        Date,
+        Date: options.DateCtor || Date, // CHANGE: tests may freeze local clock reads without changing production code
         Math,
         Promise,
         setTimeout,
@@ -637,22 +655,22 @@ test("task manager non-task mouse interactions do not suppress overlays", async 
 }); // NEW
 
 test("task manager staged start badge uses visible-week weekday wording", async () => { // CHANGE
-    const h = makeHarness(); // NEW
+    const h = makeHarness({ DateCtor: createFixedLocalDateConstructor("2026-07-12") }); // CHANGE: Sunday makes Tuesday render as an exact weekday
 
     h.graph.setSelectionCell(h.board); // NEW
     await nextTick(); // NEW
     assert.match(attr(h.stagedCard, "label"), /Start:/); // CHANGE
-    assert.match(attr(h.stagedCard, "label"), /Start (Tue|tomorrow)/); // CHANGE
+    assert.match(attr(h.stagedCard, "label"), /Start Tue/); // CHANGE
     assert.doesNotMatch(attr(h.stagedCard, "label"), /Due:/); // NEW
 
     h.graph.setSelectionCell(h.weekWedLane); // NEW
     await nextTick(); // NEW
-    assert.match(attr(h.stagedCard, "label"), /Start (Tue|tomorrow)/); // CHANGE
+    assert.match(attr(h.stagedCard, "label"), /Start Tue/); // CHANGE
     assert.doesNotMatch(attr(h.stagedCard, "label"), /early|late/); // CHANGE
 
     h.graph.setSelectionCell(h.weekLaneCard); // NEW
     await nextTick(); // NEW
-    assert.match(attr(h.stagedCard, "label"), /Start (Tue|tomorrow)/); // CHANGE
+    assert.match(attr(h.stagedCard, "label"), /Start Tue/); // CHANGE
     assert.doesNotMatch(attr(h.stagedCard, "label"), /early|late/); // CHANGE
 }); // NEW
 
