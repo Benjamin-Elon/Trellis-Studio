@@ -17,6 +17,7 @@ Draw.loadPlugin(function (ui) {
     const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // CHANGE
     const GRAPH_OVERLAY_LAYER_CLASS = Object.freeze({ annotation: 'trellis-graph-annotation-layer', connection: 'trellis-graph-connection-layer', control: 'trellis-graph-control-layer', controlTop: 'trellis-graph-control-top-layer' }); // NEW
     const GRAPH_OVERLAY_LAYER_Z = Object.freeze({ annotation: GRAPH_OVERLAY_Z.ANNOTATION, connection: GRAPH_OVERLAY_Z.CONNECTION, control: GRAPH_OVERLAY_Z.CONTROL, controlTop: GRAPH_OVERLAY_Z.CONTROL_TOP }); // NEW
+    const LINK_ENDPOINT_CENTER_OFFSET_PX = 5; // NEW
     graph.__ctrlToggleHandled = false;
 
     // -------------------- Helpers --------------------
@@ -815,6 +816,28 @@ Draw.loadPlugin(function (ui) {
         return { x: c.x, y: c.y };
     }
 
+    function sideLengthForAnchor(center, side) { // NEW
+        if (!center) return 0; // NEW
+        return (side === 'left' || side === 'right') ? center.h : center.w; // NEW
+    } // NEW
+
+    function avoidStandardLinkEndpointCenterT(center, side, t, marginPx) { // NEW
+        const sideLenPx = sideLengthForAnchor(center, side); // NEW
+        const baseT = Math.max(0, Math.min(1, t == null ? 0.5 : t)); // NEW
+        if (!Number.isFinite(sideLenPx) || sideLenPx <= 0) return baseT; // NEW
+        const marginT = Math.min(Math.max(0, marginPx || 0) / sideLenPx, 0.49); // NEW
+        const minT = marginT; // NEW
+        const maxT = 1 - marginT; // NEW
+        const clampedT = Math.max(minT, Math.min(maxT, baseT)); // NEW
+        if (Math.abs(clampedT - 0.5) > 0.0001) return clampedT; // NEW
+        const offsetT = Math.max(0, LINK_ENDPOINT_CENTER_OFFSET_PX) / sideLenPx; // NEW
+        return Math.max(minT, Math.min(maxT, 0.5 + offsetT)); // NEW
+    } // NEW
+
+    function anchorStandardLinkEndpointOnSide(center, side, t, marginPx) { // NEW
+        return anchorOnSide(center, side, avoidStandardLinkEndpointCenterT(center, side, t, marginPx)); // NEW
+    } // NEW
+
 
     // ------------------ LANE STATUS EDGE VISIBILITY POLICY ------------------      
 
@@ -1091,14 +1114,14 @@ Draw.loadPlugin(function (ui) {
             let srcPt = null;
             const hint = entry.exitHint;
             if (hint && hint.side) {
-                srcPt = anchorOnSide(srcC, hint.side, hint.t);
+                srcPt = anchorStandardLinkEndpointOnSide(srcC, hint.side, hint.t, 4); // CHANGE
             }
             if (!srcPt) {
                 srcPt = { x: srcC.x, y: srcC.y };
             }
 
             const trgSide = sideToward(dstC, srcC);
-            const trgPt = anchorOnSide(dstC, trgSide, 0.5);
+            const trgPt = anchorStandardLinkEndpointOnSide(dstC, trgSide, 0.5, 4); // CHANGE
             if (!trgPt) return null;
 
             return [

@@ -3,7 +3,7 @@
     <msapplication>
         <tile>
             <square150x150logo src="/images/mstile-150x150.png"/>
-            <TileColor>#d89000</TileColor>
+            <TileColor>#FBFEBD</TileColor><!-- TRELLIS: match the Diagram T integrated background. -->
         </tile>
     </msapplication>
 </browserconfig>

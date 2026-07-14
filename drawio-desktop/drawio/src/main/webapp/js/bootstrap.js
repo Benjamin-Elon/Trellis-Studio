@@ -239,6 +239,38 @@ catch (e)
 
 var mxScriptsLoaded = false, mxWinLoaded = false;
 
+/**
+ * Installs Trellis identity after the App classes load and before App.main.
+ */
+function installTrellisBranding()
+{
+    if (App.prototype.trellisBrandingInstalled)
+    {
+        return;
+    }
+
+    App.prototype.trellisBrandingInstalled = true; // Trellis change: install the identity overrides once in every load mode.
+    Editor.logoImage = IMAGE_PATH + '/header-icon.png'; // Trellis change: use the full Diagram T mark in the application header.
+
+    App.prototype.appIconClicked = function(evt)
+    {
+        this.openLink('https://example.com'); // Trellis change: keep the brand destination independent of storage providers.
+        mxEvent.consume(evt);
+    };
+
+    var updateHeader = App.prototype.updateHeader;
+    App.prototype.updateHeader = function()
+    {
+        updateHeader.apply(this, arguments);
+
+        if (this.appIcon != null)
+        {
+            this.appIcon.setAttribute('title', 'Trellis for Drawio'); // Trellis change: identify the linked mark for pointer users.
+            this.appIcon.setAttribute('aria-label', 'Trellis for Drawio'); // Trellis change: expose the brand link to assistive technology.
+        }
+    };
+};
+
 function checkAllLoaded()
 {
     if (mxScriptsLoaded && mxWinLoaded)
@@ -300,6 +332,7 @@ if (urlParams['dev'] == '1')
     // required in some browsers to make sure mxClient.js (and the files that it
     // loads asynchronously) are available when the code loaded in Devel.js runs.
     mxscript(drawDevUrl + 'js/diagramly/Devel.js');
+    installTrellisBranding(); // Trellis change: override the loaded source classes before App.main runs.
     
     loadElectronDesktopHooks(function()
     {
@@ -320,6 +353,7 @@ else
         {
             mxscript('js/app.min.js', function()
             {
+                installTrellisBranding(); // Trellis change: override the production bundle before App.main runs.
                 loadElectronDesktopHooks(function()
                 {
                     if (mxIsElectron)

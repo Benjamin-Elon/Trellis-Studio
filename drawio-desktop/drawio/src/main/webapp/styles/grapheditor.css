@@ -182,13 +182,13 @@ div[id*="dgeMermaidOutput-"] {
 	width: 32px;
 	height: 36px;
 	border-radius: 4px;
-	background-color: rgb(240, 135, 5);
+	background-color: transparent; /* Trellis change: the integrated icon supplies its own green field. */
 	background-position: center center;
 	background-repeat: no-repeat;
 	transition: 0.1s linear;
 	cursor: pointer;
-	background-size: 100%;
-	opacity: 0.9;
+	background-size: contain; /* Trellis change: preserve the complete Diagram T header mark. */
+	opacity: 1; /* Trellis change: retain the supplied icon colors. */
 }
 
 .geMenubar {

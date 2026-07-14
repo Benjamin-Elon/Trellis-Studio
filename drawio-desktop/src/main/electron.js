@@ -425,7 +425,7 @@ function createWindow(opt = {}) {
 			backgroundColor: '#FFF',
 			width: parseInt(lastWinSize[0]),
 			height: parseInt(lastWinSize[1]),
-			icon: `${codeDir}/images/drawlogo256.png`,
+			icon: `${codeDir}/images/window-icon.png`, // Trellis change: force the small-design mark for title-bar and taskbar placements.
 			webviewTag: false,
 			webSecurity: true,
 			webPreferences: {

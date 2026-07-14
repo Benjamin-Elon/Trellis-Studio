@@ -101,3 +101,25 @@ test("selected linked vertices draw direct connections even when task overlay is
     assert.match(drawDecisionSource, /linkOverlays\.setLinkOverlay\(/); // NEW
     assert.doesNotMatch(drawDecisionSource, /!taskOverlayActive/); // NEW
 }); // NEW
+
+test("standard link endpoints use a five pixel center offset", () => { // NEW
+    const source = readSource(); // NEW
+    const helperSource = sourceBetween(source, "function avoidStandardLinkEndpointCenterT", "function anchorStandardLinkEndpointOnSide"); // NEW
+    const computePointsSource = sourceBetween(source, "function computePointsFor(entry)", "// Create or update text label"); // NEW
+
+    assert.match(source, /const LINK_ENDPOINT_CENTER_OFFSET_PX = 5;/); // NEW
+    assert.match(helperSource, /LINK_ENDPOINT_CENTER_OFFSET_PX/); // NEW
+    assert.match(helperSource, /Math\.abs\(clampedT - 0\.5\)/); // NEW
+    assert.match(computePointsSource, /anchorStandardLinkEndpointOnSide\(srcC, hint\.side, hint\.t, 4\)/); // NEW
+    assert.match(computePointsSource, /anchorStandardLinkEndpointOnSide\(dstC, trgSide, 0\.5, 4\)/); // NEW
+    assert.doesNotMatch(computePointsSource, /anchorOnSide\(dstC, trgSide, 0\.5\)/); // NEW
+}); // NEW
+
+test("task overlay guide lines keep centered anchors", () => { // NEW
+    const source = readSource(); // NEW
+    const taskLineSource = sourceBetween(source, "function createOrUpdateLine(entry, cardId, row)", "function refreshLines(entry)"); // NEW
+
+    assert.match(taskLineSource, /anchorOnSide\(itemC, sideToward\(itemC, dstC\), 0\.5\)/); // NEW
+    assert.match(taskLineSource, /anchorOnSide\(dstC, sideToward\(dstC, itemC\), 0\.5\)/); // NEW
+    assert.doesNotMatch(taskLineSource, /anchorStandardLinkEndpointOnSide/); // NEW
+}); // NEW
