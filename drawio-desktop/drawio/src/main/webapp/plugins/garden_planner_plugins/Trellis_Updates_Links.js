@@ -14,7 +14,7 @@
     const SUMMARY_LIMIT = 220;
 
     const DEFAULT_APP_INFO = Object.freeze({
-        productName: "Trellis for Drawio",
+        productName: "Trellis Studio",
         version: "",
         repoUrl: "https://github.com/Benjamin-Elon/Trellis-for-Drawio",
         releasesUrl: "https://github.com/Benjamin-Elon/Trellis-for-Drawio/releases",

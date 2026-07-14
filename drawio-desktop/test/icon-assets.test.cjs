@@ -159,8 +159,8 @@ test('header and native window placements use their dedicated Trellis assets', (
 	assert.doesNotMatch(bootstrap, /Editor\.logoImage = IMAGE_PATH \+ '\/window-icon\.png'/);
 	assert.match(bootstrap, /this\.openLink\('https:\/\/example\.com'\)/);
 	assert.match(bootstrap, /mxEvent\.consume\(evt\)/);
-	assert.match(bootstrap, /setAttribute\('title', 'Trellis for Drawio'\)/);
-	assert.match(bootstrap, /setAttribute\('aria-label', 'Trellis for Drawio'\)/);
+	assert.match(bootstrap, /setAttribute\('title', 'Trellis Studio'\)/);
+	assert.match(bootstrap, /setAttribute\('aria-label', 'Trellis Studio'\)/);
 	const devLoad = bootstrap.indexOf("mxscript(drawDevUrl + 'js/diagramly/Devel.js');");
 	const devInstall = bootstrap.indexOf('installTrellisBranding();', devLoad);
 	const devHooks = bootstrap.indexOf('loadElectronDesktopHooks(function()', devInstall);
@@ -242,11 +242,11 @@ test('visible install metadata uses Trellis branding without changing compatibil
 	const windows = readJson('electron-builder-win.json');
 	const electronMain = fs.readFileSync(path.join(projectRoot, 'src/main/electron.js'), 'utf8');
 
-	assert.equal(manifest.name, 'Trellis for Drawio');
+	assert.equal(manifest.name, 'Trellis Studio');
 	assert.equal(manifest.short_name, 'Trellis');
 	assert.equal(manifest.background_color, '#FBFEBD');
 	assert.equal(manifest.theme_color, '#5A2F0A');
-	assert.equal(appx.appx.displayName, 'Trellis for Drawio');
+	assert.equal(appx.appx.displayName, 'Trellis Studio');
 	assert.equal(appx.appx.identityName, 'draw.io.draw.ioDiagrams');
 	assert.equal(appx.appId, 'com.benjaminelon.trellisfordrawio');
 	assert.ok(windows.fileAssociations.some((association) => association.ext === 'drawio'));

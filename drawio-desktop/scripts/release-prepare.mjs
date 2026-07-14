@@ -5,7 +5,7 @@ import { createInterface } from 'readline/promises';
 import { fileURLToPath, pathToFileURL } from 'url';
 
 /**
- * Local release-prep CLI for Trellis for Drawio.
+ * Local release-prep CLI for Trellis Studio.
  *
  * This script intentionally stops at pushing a version commit and tag. GitHub
  * Actions owns installer builds and draft-release asset uploads, and humans own
@@ -415,7 +415,7 @@ export async function runReleasePrepare(argv = process.argv.slice(2)) {
 
 	runCommand('git', ['add', paths.packageJsonRepoPath], paths.repoRoot);
 	runCommand('git', ['commit', '-m', `Release ${tag}`], paths.repoRoot);
-	runCommand('git', ['tag', '-a', tag, '-m', `Trellis for Drawio ${version}`], paths.repoRoot);
+	runCommand('git', ['tag', '-a', tag, '-m', `Trellis Studio ${version}`], paths.repoRoot);
 	runCommand('git', ['push', 'origin', `HEAD:${branch}`], paths.repoRoot);
 	runCommand('git', ['push', 'origin', tag], paths.repoRoot);
 

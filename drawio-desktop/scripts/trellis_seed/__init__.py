@@ -1,2 +1,2 @@
-"""Interactive database seeder for Trellis for Drawio."""
+"""Interactive database seeder for Trellis Studio."""
 

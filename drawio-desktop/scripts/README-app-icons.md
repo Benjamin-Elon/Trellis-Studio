@@ -4,7 +4,7 @@ The application identity assets are generated from these canonical RGBA sources:
 
 - `build/branding/trellis-mark-full.png` contains Diagram T for outputs 64 px and larger.
 - `build/branding/trellis-mark-small.png` contains Negative Space T for outputs from 16 px through 48 px.
-- `build/branding/trellis-wordmark-text.png` for the `Trellis for Drawio` wordmark.
+- `build/branding/trellis-wordmark-text.png` for the `Trellis Studio` wordmark.
 
 `drawio/src/main/webapp/images/window-icon.png` is a 256 px high-DPI source
 generated from Negative Space T for Electron title-bar and taskbar placements.

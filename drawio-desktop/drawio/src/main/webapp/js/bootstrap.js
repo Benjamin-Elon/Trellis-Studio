@@ -265,8 +265,8 @@ function installTrellisBranding()
 
         if (this.appIcon != null)
         {
-            this.appIcon.setAttribute('title', 'Trellis for Drawio'); // Trellis change: identify the linked mark for pointer users.
-            this.appIcon.setAttribute('aria-label', 'Trellis for Drawio'); // Trellis change: expose the brand link to assistive technology.
+            this.appIcon.setAttribute('title', 'Trellis Studio'); // Trellis change: identify the linked mark for pointer users.
+            this.appIcon.setAttribute('aria-label', 'Trellis Studio'); // Trellis change: expose the brand link to assistive technology.
         }
     };
 };

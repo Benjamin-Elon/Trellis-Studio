@@ -156,8 +156,8 @@ const trellisReleaseUrl = 'https://github.com/Benjamin-Elon/Trellis-for-Drawio';
 const trellisSupportUrl = `${trellisReleaseUrl}/issues`; // Trellis release: keep support links on the fork.
 const trellisReleasesApiUrl = 'https://api.github.com/repos/Benjamin-Elon/Trellis-for-Drawio/releases?per_page=10'; // NEW
 const trellisReleasesTimeoutMs = 15000; // NEW
-const trellisUpdateProgressTitle = 'Trellis for Drawio Update'; // NEW
-const trellisUpdateProgressText = 'Downloading Trellis for Drawio update...'; // NEW
+const trellisUpdateProgressTitle = 'Trellis Studio Update'; // NEW
+const trellisUpdateProgressText = 'Downloading Trellis Studio update...'; // NEW
 let trellisUpdateDownloadInProgress = false; // NEW
 let trellisUpdateProgressBar = null; // NEW
 let trellisUpdateProgressIsDeterminate = false; // NEW
@@ -257,7 +257,7 @@ function showTrellisUpdateDownloadError(e) { // NEW
 		closable: true, // NEW
 		indeterminate: false, // NEW
 		initialValue: 100, // NEW
-		text: 'Trellis for Drawio update failed.', // NEW
+		text: 'Trellis Studio update failed.', // NEW
 		detail: `Error occurred while downloading update. ${message}`, // NEW
 	}); // NEW
 } // NEW

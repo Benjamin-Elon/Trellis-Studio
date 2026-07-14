@@ -35,7 +35,7 @@ test('Windows installers offer to run Trellis after installation finishes', () =
 	for (const fileName of windowsConfigs) {
 		const config = readBuilderConfig(fileName);
 
-		// Trellis release: NSIS finish pages should offer the checked Run Trellis for Drawio option.
+		// Trellis release: NSIS finish pages should offer the checked Run Trellis Studio option.
 		assert.equal(config.nsis?.runAfterFinish, true, `${fileName} NSIS must run after finish`);
 	}
 

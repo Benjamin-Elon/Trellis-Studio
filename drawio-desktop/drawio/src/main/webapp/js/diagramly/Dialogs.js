@@ -628,7 +628,7 @@ var SplashDialog = function(editorUi)
 
 		function writeHeader(subtitle) // NEW
 		{ // NEW
-			var title = createTrellisElement('div', null, 'Trellis for Drawio'); // NEW
+			var title = createTrellisElement('div', null, 'Trellis Studio'); // NEW
 			title.style.cssText = 'font-size:20px;font-weight:bold;text-align:center;color:#2f3b2f;margin-bottom:4px;'; // NEW
 			center.appendChild(title); // NEW
 			var intro = createTrellisElement('div', null, subtitle); // NEW

@@ -1,6 +1,6 @@
-Trellis for Drawio extends Draw.io with a coordinated suite of plugins that turn diagrams into a spacial garden planning and management system.
+Trellis Studio extends Draw.io with a coordinated suite of plugins that turn diagrams into a spacial garden planning and management system.
 
-**Licensing:** Trellis for Drawio is a mixed-license distribution. Upstream draw.io and third-party material keep their existing notices, while Trellis-owned additions are source-available for community and noncommercial use. Commercial use of Trellis-owned additions requires written approval. See [drawio-desktop/LICENSES.md](drawio-desktop/LICENSES.md).
+**Licensing:** Trellis Studio is a mixed-license distribution. Upstream draw.io and third-party material keep their existing notices, while Trellis-owned additions are source-available for community and noncommercial use. Commercial use of Trellis-owned additions requires written approval. See [drawio-desktop/LICENSES.md](drawio-desktop/LICENSES.md).
 
 **Features:**
 

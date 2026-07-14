@@ -1,4 +1,4 @@
-# Trellis for Drawio Licensing
+# Trellis Studio Licensing
 
 This repository is a mixed-license distribution.
 
@@ -6,7 +6,7 @@ This repository is a mixed-license distribution.
 
 The bundled draw.io code, templates, images, dependencies, and third-party assets remain under their existing notices and licenses. See the existing draw.io license files and third-party notices in this repository for those terms.
 
-Trellis for Drawio does not relicense upstream draw.io code, draw.io trademarks, or third-party material.
+Trellis Studio does not relicense upstream draw.io code, draw.io trademarks, or third-party material.
 
 ## Trellis-Owned Additions
 
@@ -40,4 +40,4 @@ Ideas, issue reports, testing notes, and non-code feedback are welcome through t
 
 ## Contact
 
-Commercial licensing, collaboration, support, and contribution questions should use the public contact links shown in the Trellis for Drawio startup dialog and Updates & Links dialog. Placeholder contact links may appear until the public channels are finalized.
+Commercial licensing, collaboration, support, and contribution questions should use the public contact links shown in the Trellis Studio startup dialog and Updates & Links dialog. Placeholder contact links may appear until the public channels are finalized.

@@ -81,7 +81,7 @@ test('source desktop update menu options are removed while dialog IPC remains', 
 	assert.match(electronSource, /ipcMain\.on\('checkForUpdates', checkForUpdatesFn\)/, 'Dialog update IPC should remain available'); // NEW
 	assert.doesNotMatch(electronSource, /label: 'Check for updates'/, 'Native update menu item should be removed'); // CHANGE
 	assert.doesNotMatch(electronSource, /checkForUpdates,\s*\{ type: 'separator' \}/, 'Native app submenu should not include checkForUpdates'); // NEW
-	assert.doesNotMatch(electronSource, /Update checks are only available in packaged Trellis for Drawio releases/, 'Main process should not show the old packaged-build warning');
+	assert.doesNotMatch(electronSource, /Update checks are only available in packaged Trellis Studio releases/, 'Main process should not show the old packaged-build warning');
 	assert.doesNotMatch(menusSource, /check4Updates/, 'Renderer Help menu should not include check4Updates'); // CHANGE
 	assert.match(electronAppSource, /if \(urlParams\['canCheckForUpdates'\] == '1'\) \/\/ NEW/, 'ElectronApp update method should not send IPC when updates are unavailable');
 });

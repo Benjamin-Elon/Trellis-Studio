@@ -44,7 +44,7 @@ test('desktop updater progress error path avoids private progressbar internals',
 	const source = readElectronMain();
 
 	assert.match(source, /function showTrellisUpdateDownloadError\(e\)/, 'download errors should have a focused error-state helper');
-	assert.match(source, /closable: true, \/\/ NEW[\s\S]*text: 'Trellis for Drawio update failed\.'/, 'download errors should show a closable error dialog');
+	assert.match(source, /closable: true, \/\/ NEW[\s\S]*text: 'Trellis Studio update failed\.'/, 'download errors should show a closable error dialog');
 	assert.match(source, /updateDownload\.catch\(showTrellisUpdateDownloadError\); \/\/ NEW/, 'download promise failures should update the progress dialog error state');
 	assert.doesNotMatch(source, /_window/, 'updater progress should not depend on private electron-progressbar window internals');
 	assert.match(source, /You will be prompted to install the update after download\./, 'initial update copy should match the actual install prompt flow');
