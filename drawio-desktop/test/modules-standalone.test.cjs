@@ -311,7 +311,8 @@ function createRoleFixture(harness) { // NEW
     const role = harness.graph.__trellisModules.createRoleCard(team, 90, 100); // NEW
     const imageRow = role.children.find(child => styleHas(child, "role_imagerow=1")); // NEW
     const nameRow = role.children.find(child => child.value === "Name"); // NEW
-    return { team, role, imageRow, nameRow }; // NEW
+    const titleRow = role.children.find(child => child.value === "Role/Title"); // NEW
+    return { team, role, imageRow, nameRow, titleRow }; // CHANGE
 } // NEW
 
 function runModulesContextMenu(harness, cell) { // NEW
@@ -579,8 +580,10 @@ test("role overlay hides on Escape, outside gesture, model change, and view chan
 
 test("new role cards use click-to-add image placeholder text", () => { // NEW
     const harness = makeHarness(); // NEW
-    const { imageRow } = createRoleFixture(harness); // NEW
+    const { imageRow, nameRow, titleRow } = createRoleFixture(harness); // CHANGE
     assert.equal(imageRow.value, "click to add image"); // NEW
+    assert.equal(styleHas(nameRow, "role_name=1"), true); // NEW
+    assert.equal(styleHas(titleRow, "role_title=1"), true); // NEW
 }); // NEW
 
 test("empty role image slot shows add affordances for role card and image row only", () => { // NEW

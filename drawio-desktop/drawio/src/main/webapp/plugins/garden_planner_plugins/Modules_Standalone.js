@@ -475,11 +475,11 @@ Draw.loadPlugin(function (ui) {
         avatar.vertex = true;
 
         const name = new mxCell("Name", new mxGeometry(40, 0, w - 40, 30),
-            "shape=rectangle;align=left;verticalAlign=middle;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#d6b656;");
+            "shape=rectangle;align=left;verticalAlign=middle;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#d6b656;role_name=1;"); // CHANGE
         name.vertex = true;
 
         const title = new mxCell("Role/Title", new mxGeometry(0, 30, w, 30),
-            "shape=rectangle;align=left;verticalAlign=middle;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#d6b656;");
+            "shape=rectangle;align=left;verticalAlign=middle;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#d6b656;role_title=1;"); // CHANGE
         title.vertex = true;
 
         const notes = new mxCell("Description/Notes", new mxGeometry(0, 60, w, 60),

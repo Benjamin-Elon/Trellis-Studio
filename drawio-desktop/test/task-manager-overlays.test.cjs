@@ -94,6 +94,15 @@ function buttonByText(root, text) {
     return Array.from(root.querySelectorAll("button")).find(button => button.textContent === text);
 }
 
+function buttonStartingWith(root, text) { // NEW
+    return Array.from(root.querySelectorAll("button")).find(button => button.textContent.startsWith(text)); // NEW
+} // NEW
+
+function changeCheckbox(document, checkbox, checked) { // NEW
+    checkbox.checked = checked; // NEW
+    checkbox.dispatchEvent(new document.defaultView.Event("change", { bubbles: true })); // NEW
+} // NEW
+
 function modeToggleButton(root) { // NEW
     return buttonByText(root, "Switch to Full view") || buttonByText(root, "Switch to Week view"); // CHANGE
 } // NEW
@@ -128,6 +137,25 @@ function addHarnessCard(h, lane, id, attrs = {}, height = 60) { // NEW
     card.parent = lane; // NEW
     lane.children.push(card); // NEW
     return card; // NEW
+} // NEW
+
+function addRoleFixture(h, options = {}) { // NEW
+    const id = options.id || `role-${Math.random()}`; // NEW
+    const role = new TestCell(id, makeValue(h.document, { label: options.header || "Role" }), new TestGeometry(0, 0, 240, 160), "shape=swimlane;role_card=1;"); // CHANGE: Role headers need XML values so production-style link metadata can be stored.
+    const imageRow = new TestCell(`${id}-image-row`, "", new TestGeometry(0, 0, 80, 80), "shape=rectangle;role_imagerow=1;"); // NEW
+    const nameRow = new TestCell(`${id}-name`, options.name == null ? "Name" : options.name, new TestGeometry(40, 0, 200, 30), options.legacy ? "shape=rectangle;" : "shape=rectangle;role_name=1;"); // NEW
+    const titleRow = new TestCell(`${id}-title`, options.roleTitle == null ? "Role/Title" : options.roleTitle, new TestGeometry(0, 30, 240, 30), options.legacy ? "shape=rectangle;" : "shape=rectangle;role_title=1;"); // NEW
+    h.addCell(role, imageRow); h.addCell(role, nameRow); h.addCell(role, titleRow); // NEW
+    if (options.image) { // NEW
+        const avatar = new TestCell(`${id}-avatar`, "", new TestGeometry(5, 5, 70, 70), `shape=image;image=${options.image};role_avatar=1;`); // NEW
+        h.addCell(imageRow, avatar); // NEW
+    } // NEW
+    h.addCell(h.root, role); // NEW
+    const boardLinks = new Set(String(attr(h.board, "linkedTo") || "").split(",").filter(Boolean)); // NEW
+    boardLinks.add(id); // NEW
+    setAttr(h.board, "linkedTo", Array.from(boardLinks).join(",")); // NEW
+    if (options.reciprocal !== false) setAttr(role, "linkedTo", h.board.id); // NEW
+    return { role, imageRow, nameRow, titleRow }; // NEW
 } // NEW
 
 function makeHarness(options = {}) { // CHANGE
@@ -236,6 +264,7 @@ function makeHarness(options = {}) { // CHANGE
 
     const cellById = new Map();
     let labelSetCount = 0; // NEW
+    let modelBeginUpdateCount = 0; // NEW
     function instrumentLabelWrites(value) { // NEW
         if (!value || typeof value.setAttribute !== "function" || value.__trellisLabelWritesInstrumented) return value; // NEW
         const originalSetAttribute = value.setAttribute.bind(value); // NEW
@@ -295,7 +324,7 @@ function makeHarness(options = {}) { // CHANGE
         getChildCount(cell) { return cell && cell.children ? cell.children.length : 0; },
         getChildAt(cell, index) { return cell.children[index]; },
         add(parent, child, index) { add(parent, child, index); },
-        beginUpdate() {},
+        beginUpdate() { modelBeginUpdateCount += 1; }, // CHANGE
         endUpdate() {},
         setValue(cell, value) { cell.value = instrumentLabelWrites(value); }, // CHANGE
         setGeometry(cell, geometry) { geometrySetCount++; cell.geometry = geometry; }, // CHANGE
@@ -444,6 +473,9 @@ function makeHarness(options = {}) { // CHANGE
     return {
         document,
         graph,
+        model, // NEW
+        root, // NEW
+        addCell: add, // NEW
         board,
         stagedLane, // NEW
         weekSunLane, // NEW
@@ -467,6 +499,7 @@ function makeHarness(options = {}) { // CHANGE
         states,
         get geometrySetCount() { return geometrySetCount; }, // NEW
         get labelSetCount() { return labelSetCount; }, // NEW
+        get modelBeginUpdateCount() { return modelBeginUpdateCount; }, // NEW
         reflowCounters() { return JSON.parse(JSON.stringify(taskHooks.snapshotTaskReflowTestCounters())); }, // NEW
         get refreshCalls() { return refreshCalls.slice(); }, // NEW
         get lastDialog() { return lastDialog; },
@@ -493,7 +526,7 @@ function makeHarness(options = {}) { // CHANGE
             const me = { getCell() { return cell; }, getEvent() { return {}; } }; // NEW
             mouseListeners.forEach(listener => { if (listener.mouseUp) listener.mouseUp(graph, me); }); // NEW
         }, // NEW
-        resetCounters() { geometrySetCount = 0; labelSetCount = 0; refreshCalls.length = 0; taskHooks.resetTaskReflowTestCounters(); } // CHANGE
+        resetCounters() { geometrySetCount = 0; labelSetCount = 0; modelBeginUpdateCount = 0; refreshCalls.length = 0; taskHooks.resetTaskReflowTestCounters(); } // CHANGE
     };
 }
 
@@ -514,6 +547,36 @@ test("task manager reflow scope policy maps command categories", () => { // NEW
     assert.equal(hooks.getTaskReflowScopeForCommand("boardResize"), "layout"); // NEW
     assert.equal(hooks.getTaskReflowScopeForCommand("selection"), "badges"); // NEW
     assert.equal(hooks.getTaskReflowScopeForCommand("unknown-command"), "full"); // NEW
+}); // NEW
+
+test("task manager normalizes canonical assignee ids and treats assignments as user touches", () => { // NEW
+    const hooks = loadTaskManagerHooks(); // NEW
+    const plain = value => JSON.parse(JSON.stringify(value)); // NEW
+    assert.deepEqual(plain(hooks.normalizeTaskAssigneeRoleIds('["role-b","role-a","role-a",""]')), ["role-a", "role-b"]); // NEW
+    assert.deepEqual(plain(hooks.normalizeTaskAssigneeRoleIds("not json")), []); // NEW
+    assert.equal(hooks.serializeTaskAssigneeRoleIds(["role-b", "role-a"]), '["role-a","role-b"]'); // NEW
+    assert.equal(hooks.serializeTaskAssigneeRoleIds([]), null); // NEW
+    assert.equal(hooks.isUserTouchedSchedulerCard({ workflow_state: "STAGED", task_assignee_role_ids_json: '["role-a"]' }), true); // NEW
+    assert.equal(hooks.isUserTouchedSchedulerRecord({ source: { workflow_state: "STAGED", task_assignee_role_ids_json: "bad" }, laneKey: "TODO_STAGED" }), false); // NEW
+}); // NEW
+
+test("task manager preserves assignments only across unique scheduler keys and retains unsafe occurrences as missing", () => { // NEW
+    const hooks = loadTaskManagerHooks(); // NEW
+    const plain = value => JSON.parse(JSON.stringify(value)); // NEW
+    const assigned = { schedulerTaskKey: "occurrence-a", source: { scheduler_task_key: "occurrence-a", workflow_state: "STAGED", task_assignee_role_ids_json: '["role-b","role-a"]' } }; // NEW
+    const unique = plain(hooks.planTaskAssignmentReplacement([assigned], [{ scheduler_task_key: "occurrence-a" }])); // NEW
+    assert.deepEqual(unique.preserved, [{ key: "occurrence-a", roleIds: ["role-a", "role-b"] }]); // NEW
+    assert.deepEqual(unique.retainMissing, []); // NEW
+
+    const ambiguous = plain(hooks.planTaskAssignmentReplacement([assigned], [{ scheduler_task_key: "occurrence-a" }, { scheduler_task_key: "occurrence-a" }])); // NEW
+    assert.deepEqual(ambiguous.preserved, []); // NEW
+    assert.equal(ambiguous.retainMissing.length, 1); // NEW
+    const removedUpstream = plain(hooks.planTaskAssignmentReplacement([assigned], [])); // NEW
+    assert.equal(removedUpstream.retainMissing.length, 1); // NEW
+
+    const differential = plain(hooks.planDifferentialTaskSync([assigned], [])); // NEW
+    assert.equal(differential.removes.length, 0); // NEW
+    assert.equal(differential.missing.length, 1); // NEW
 }); // NEW
 
 test("task manager selection overlays render above graph and defer until states are available", async () => {
@@ -542,7 +605,7 @@ test("task manager selection overlays render above graph and defer until states 
 
     assert.equal(cardOverlay.style.display, "flex");
     assert.equal(cardOverlay.style.zIndex, "10020");
-    assert.equal(cardOverlay.style.top, "141px"); // CHANGE
+    assert.equal(cardOverlay.style.top, "129px"); // CHANGE
     assert.equal(cardOverlay.style.flexDirection, "column"); // NEW
     assert.equal(cardOverlay.style.alignItems, "stretch"); // NEW
 
@@ -762,7 +825,7 @@ test("task manager day-lane overlay appears only for selected week day lanes", a
     h.graph.setSelectionCell(h.weekSunLane); // NEW
     await nextTick(); // NEW
     assert.equal(overlay.style.display, "flex"); // NEW
-    assert.equal(overlay.style.top, "369px"); // NEW
+    assert.equal(overlay.style.top, "357px"); // CHANGE
     assert.equal(overlay.style.flexDirection, "column"); // NEW
     assert.equal(overlay.style.alignItems, "stretch"); // NEW
     assert.ok(buttonByText(overlay, "Change Hours")); // NEW
@@ -1822,3 +1885,166 @@ test("task manager multi-card overlay applies note, date, reset, and clear actio
     assert.equal(attr(h.card1, "card_note"), null);
     assert.equal(attr(h.card2, "card_note"), null);
 }); // CHANGE
+
+test("task manager assignment control enforces Week-mode single-board task eligibility", async () => { // NEW
+    const h = makeHarness({ secondaryBoard: true }); // NEW
+    const overlay = h.document.querySelector(".trellis-task-selected-card-actions"); // NEW
+    h.setState(h.stagedCard, { x: 30, y: 60, width: 120, height: 60 }); // NEW
+    h.graph.setSelectionCell(h.stagedCard); // NEW
+    await nextTick(); // NEW
+    const emptyAssign = buttonStartingWith(overlay, "Assign to"); // NEW
+    assert.ok(emptyAssign); // NEW
+    assert.equal(emptyAssign.disabled, true); // NEW
+    assert.match(emptyAssign.textContent, /link role cards/i); // NEW
+
+    setAttr(h.board, "task_view_mode", "FULL"); // NEW
+    h.graph.setSelectionCell(h.stagedCard); // NEW
+    await nextTick(); // NEW
+    assert.equal(emptyAssign.style.display, "none"); // NEW
+
+    setAttr(h.board, "task_view_mode", "WEEK"); // NEW
+    h.setState(h.secondaryWeekWedCard, { x: 2970, y: 60, width: 120, height: 60 }); // NEW
+    h.graph.setSelectionCells([h.stagedCard, h.secondaryWeekWedCard]); // NEW
+    await nextTick(); // NEW
+    assert.equal(emptyAssign.style.display, "none"); // NEW
+
+    const breakCard = new TestCell("assignment-break", makeValue(h.document, { kanban_card: "1", schedule_break: "1", title: "Break" }), new TestGeometry(30, 200, 120, 40)); // NEW
+    h.addCell(h.weekTueLane, breakCard); // NEW
+    h.setState(breakCard, { x: 690, y: 200, width: 120, height: 40 }); // NEW
+    h.graph.setSelectionCell(breakCard); // NEW
+    await nextTick(); // NEW
+    assert.equal(emptyAssign.style.display, "none"); // NEW
+}); // NEW
+
+test("task manager assignment picker groups linked roles, searches, and applies a single assignment", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const alice = addRoleFixture(h, { id: "role-alice", name: "Alice", roleTitle: "Garden   Lead", legacy: true, image: "data:image/png;base64,test" }); // NEW
+    addRoleFixture(h, { id: "role-bob", name: "Bob", roleTitle: "garden lead" }); // NEW
+    addRoleFixture(h, { id: "role-empty", name: "", roleTitle: "" }); // NEW
+    addRoleFixture(h, { id: "role-one-way", name: "Ignored", roleTitle: "Observer", reciprocal: false }); // NEW
+    h.setState(h.stagedCard, { x: 30, y: 60, width: 120, height: 60 }); // NEW
+    h.graph.setSelectionCell(h.stagedCard); // NEW
+    await nextTick(); // NEW
+    const overlay = h.document.querySelector(".trellis-task-selected-card-actions"); // NEW
+    const assign = buttonStartingWith(overlay, "Assign to"); // NEW
+    assert.equal(assign.disabled, false); // NEW
+    assign.click(); // NEW
+    const picker = h.document.querySelector(".trellis-task-assignee-picker"); // NEW
+    assert.ok(picker); // NEW
+    assert.match(picker.textContent, /Garden Lead/); // CHANGE: Group labels collapse internal whitespace while preserving a representative display case.
+    assert.match(picker.textContent, /Unnamed person/); // NEW
+    assert.match(picker.textContent, /Unspecified role/); // NEW
+    assert.doesNotMatch(picker.textContent, /Ignored/); // NEW
+    assert.equal(Array.from(picker.querySelectorAll("section")).filter(section => /garden\s+lead/i.test(section.firstChild.textContent)).length, 1); // NEW
+
+    const search = picker.querySelector("input[type='search']"); // NEW
+    search.value = "alice"; // NEW
+    search.dispatchEvent(new h.document.defaultView.Event("input", { bubbles: true })); // NEW
+    const aliceRow = Array.from(picker.querySelectorAll(".trellis-task-assignee-picker-row")).find(row => row.textContent.includes("Alice")); // NEW
+    const bobRow = Array.from(picker.querySelectorAll(".trellis-task-assignee-picker-row")).find(row => row.textContent.includes("Bob")); // NEW
+    assert.equal(aliceRow.style.display, "grid"); // NEW
+    assert.equal(bobRow.style.display, "none"); // NEW
+    changeCheckbox(h.document, aliceRow.querySelector("input[type='checkbox']"), true); // NEW
+    h.resetCounters(); // NEW
+    buttonByText(picker, "Apply").click(); // NEW
+    assert.deepEqual(JSON.parse(attr(h.stagedCard, "task_assignee_role_ids_json")), ["role-alice"]); // NEW
+    assert.equal(h.modelBeginUpdateCount, 1); // NEW
+
+    h.fireModelChange(); // NEW
+    await nextTick(); // NEW
+    const stack = h.document.querySelector(".trellis-task-assignee-stack"); // NEW
+    assert.ok(stack); // NEW
+    const avatar = stack.querySelector(".trellis-task-assignee-avatar"); // NEW
+    assert.equal(avatar.style.width, "16px"); // NEW
+    assert.equal(avatar.querySelector("img").getAttribute("src"), "data:image/png;base64,test"); // NEW
+    avatar.click(); // NEW
+    assert.equal(h.graph.getSelectionCell(), alice.role); // NEW
+
+    setAttr(h.board, "task_view_mode", "FULL"); // NEW
+    h.fireModelChange(); // NEW
+    await nextTick(); // NEW
+    assert.equal(h.document.querySelectorAll(".trellis-task-assignee-stack").length, 0); // NEW
+}); // NEW
+
+test("task manager bulk assignment uses reversible Existing and All cards controls", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const role = addRoleFixture(h, { id: "role-bulk", name: "Morgan", roleTitle: "Watering" }).role; // NEW
+    setAttr(h.weekTueCard, "task_assignee_role_ids_json", '["role-bulk"]'); // NEW
+    h.setState(h.weekTueCard, { x: 690, y: 60, width: 120, height: 60 }); // NEW
+    h.setState(h.weekTueCard2, { x: 690, y: 130, width: 120, height: 60 }); // NEW
+    h.graph.setSelectionCells([h.weekTueCard, h.weekTueCard2]); // NEW
+    await nextTick(); // NEW
+    const overlay = h.document.querySelector(".trellis-task-selected-card-actions"); // NEW
+    buttonStartingWith(overlay, "Assign to").click(); // NEW
+    let picker = h.document.querySelector(".trellis-task-assignee-picker"); // NEW
+    let row = Array.from(picker.querySelectorAll(".trellis-task-assignee-picker-row")).find(candidate => candidate.textContent.includes("Morgan")); // NEW
+    let [existing, all] = row.querySelectorAll("input[type='checkbox']"); // NEW
+    assert.equal(existing.checked, true); // NEW
+    assert.equal(existing.disabled, false); // NEW
+    assert.equal(all.checked, false); // NEW
+    changeCheckbox(h.document, all, true); // NEW
+    assert.equal(existing.checked, true); // NEW
+    assert.equal(existing.disabled, true); // NEW
+    changeCheckbox(h.document, all, false); // NEW
+    assert.equal(existing.checked, true); // NEW
+    assert.equal(existing.disabled, false); // NEW
+    h.resetCounters(); // NEW
+    buttonByText(picker, "Apply").click(); // NEW
+    assert.equal(h.modelBeginUpdateCount, 0); // NEW: reversible no-op produces no undo record
+
+    buttonStartingWith(overlay, "Assign to").click(); // NEW
+    picker = h.document.querySelector(".trellis-task-assignee-picker"); // NEW
+    row = Array.from(picker.querySelectorAll(".trellis-task-assignee-picker-row")).find(candidate => candidate.textContent.includes("Morgan")); // NEW
+    [existing, all] = row.querySelectorAll("input[type='checkbox']"); // NEW
+    changeCheckbox(h.document, all, true); // NEW
+    h.resetCounters(); // NEW
+    buttonByText(picker, "Apply").click(); // NEW
+    assert.deepEqual(JSON.parse(attr(h.weekTueCard2, "task_assignee_role_ids_json")), ["role-bulk"]); // NEW
+    assert.equal(h.modelBeginUpdateCount, 1); // NEW
+
+    setAttr(h.board, "linkedTo", ""); setAttr(role, "linkedTo", ""); // NEW
+    h.graph.setSelectionCells([h.weekTueCard, h.weekTueCard2]); // NEW
+    await nextTick(); // NEW
+    buttonStartingWith(overlay, "Assign to").click(); // NEW
+    picker = h.document.querySelector(".trellis-task-assignee-picker"); // NEW
+    assert.match(picker.textContent, /Unavailable assignments/); // NEW
+    row = picker.querySelector(".trellis-task-assignee-picker-row"); // NEW
+    [existing, all] = row.querySelectorAll("input[type='checkbox']"); // NEW
+    assert.equal(existing.disabled, false); // NEW
+    assert.equal(all.disabled, true); // NEW
+    changeCheckbox(h.document, existing, false); // NEW
+    buttonByText(picker, "Apply").click(); // NEW
+    assert.equal(attr(h.weekTueCard, "task_assignee_role_ids_json"), null); // NEW
+    assert.equal(attr(h.weekTueCard2, "task_assignee_role_ids_json"), null); // NEW
+}); // NEW
+
+test("task manager assignee badges cap avatars, show all names, navigate, and clear deleted roles", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const roles = [ // NEW
+        addRoleFixture(h, { id: "role-1", name: "A One", roleTitle: "Alpha" }).role, // NEW
+        addRoleFixture(h, { id: "role-2", name: "B Two", roleTitle: "Beta" }).role, // NEW
+        addRoleFixture(h, { id: "role-3", name: "C Three", roleTitle: "Gamma" }).role, // NEW
+        addRoleFixture(h, { id: "role-4", name: "D Four", roleTitle: "Delta" }).role // NEW
+    ]; // NEW
+    setAttr(h.weekTueCard, "task_assignee_role_ids_json", JSON.stringify(roles.map(role => role.id))); // NEW
+    h.setState(h.weekTueCard, { x: 690, y: 60, width: 120, height: 60 }); // NEW
+    h.fireModelChange(); // NEW
+    await nextTick(); // NEW
+    const stack = h.document.querySelector(".trellis-task-assignee-stack"); // NEW
+    assert.ok(stack); // NEW
+    assert.equal(stack.querySelectorAll(".trellis-task-assignee-avatar").length, 3); // NEW
+    const overflow = stack.querySelector(".trellis-task-assignee-overflow"); // NEW
+    assert.equal(overflow.textContent, "+1"); // NEW
+    overflow.click(); // NEW
+    const names = h.document.querySelector(".trellis-task-assignee-names-popover"); // NEW
+    assert.ok(names); // NEW
+    roles.forEach(role => assert.match(names.textContent, new RegExp(role === roles[0] ? "A One" : role === roles[1] ? "B Two" : role === roles[2] ? "C Three" : "D Four"))); // NEW
+    stack.querySelector(".trellis-task-assignee-avatar").click(); // NEW
+    assert.ok(roles.includes(h.graph.getSelectionCell())); // NEW
+
+    const team = new TestCell("deleted-team", "Team", new TestGeometry(0, 0, 300, 300), "team_module=1;"); // NEW
+    h.addCell(h.root, team); h.addCell(team, roles[0]); // NEW
+    h.model.remove(team); // NEW
+    h.fireGraphEvent("cellsRemoved", { cells: [team] }); // NEW
+    assert.deepEqual(JSON.parse(attr(h.weekTueCard, "task_assignee_role_ids_json")), ["role-2", "role-3", "role-4"]); // NEW
+}); // NEW
