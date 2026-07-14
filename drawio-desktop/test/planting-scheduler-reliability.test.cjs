@@ -3302,16 +3302,13 @@ test('task manager installs planning mode header controls and selected-card DOM 
     assert.match(source, /function installSelectedCardActionOverlay\(\)/); // NEW
     assert.match(source, /trellis-task-selected-card-actions/); // NEW
     assert.match(source, /overlay\.style\.zIndex = String\(GRAPH_OVERLAY_Z\.CONTROL\)/); // CHANGE
-    assert.match(source, /function selectedKanbanCards\(\)/); // CHANGE
-    assert.match(source, /positionDomOverlayFromBounds\(overlay,\s*bounds,\s*true,\s*false\)/); // CHANGE
+    assert.match(source, /function selectedKanbanCards\(\)/); // CHANGE: placement and workflow visibility are covered behaviorally in task-manager-overlays.test.cjs
     assert.match(source, /graph\.view\.getState\(cell\)/); // NEW
     assert.match(source, /graph\.view\.addListener\(mxEvent\.REPAINT,\s*refresh\)/); // CHANGE
     assert.match(source, /model\.addListener\(mxEvent\.CHANGE,\s*refresh\)/); // CHANGE
     assert.match(source, /graph\.container\.addEventListener\('scroll',\s*refresh,\s*\{\s*passive:\s*true\s*\}\)/); // CHANGE
     assert.match(source, /function createDeferredTaskOverlayRefresh\(refresh\)/); // CHANGE
     assert.match(source, /taskCommands\.applyCardWorkflowActions\(cards,\s*'DONE'\)/); // CHANGE
-    assert.match(source, /todoBtn\.style\.display = !single \|\| state !== 'TODO'/); // NEW
-    assert.match(source, /doingBtn\.style\.display = !single \|\| state !== 'DOING'/); // NEW
     assert.match(source, /Allocate to Start Dates/); // NEW
     assert.match(source, /buildStagedStartDateAllocationPatch\(card\.value,\s*buildCardWorkflowContext\(board\)\)/); // NEW
     assert.match(source, /menu\.addItem\('Edit Card\.\.\.'/); // NEW

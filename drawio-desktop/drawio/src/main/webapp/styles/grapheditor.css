@@ -71,7 +71,7 @@ div[id*="dgeMermaidOutput-"] {
 	grid-column: 1 / -1;
 	grid-row: 1;
 	width: 100%;
-	height: 60px;
+	height: 64px; /* Trellis change: fit the doubled header icon without clipping. */
 	margin-top: 4px;
 }
 
@@ -177,10 +177,10 @@ div[id*="dgeMermaidOutput-"] {
 .geAppIcon {
 	display: block;
 	position: absolute;
-	top: 10px;
+	top: 0;
 	left: 16px;
-	width: 32px;
-	height: 36px;
+	width: 64px; /* Trellis change: display the Diagram T at twice its previous size. */
+	height: 64px; /* Trellis change: keep the header mark square. */
 	border-radius: 4px;
 	background-color: transparent; /* Trellis change: the integrated icon supplies its own green field. */
 	background-position: center center;
@@ -199,13 +199,13 @@ div[id*="dgeMermaidOutput-"] {
 	position: absolute;
 	align-items: center;
 	box-sizing: border-box;
-	padding: 0px 2px 0px 58px;
+	padding: 0px 2px 0px 90px; /* Trellis change: clear the doubled header icon. */
 }
 
 .geFilenameContainer {
 	position: absolute;
 	right: 260px;
-	left: 60px;
+	left: 92px; /* Trellis change: preserve the title gap beside the doubled icon. */
 	top: 4px;
 	height: 26px;
 	display: block;

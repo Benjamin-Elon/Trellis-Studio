@@ -172,6 +172,9 @@ test('header and native window placements use their dedicated Trellis assets', (
 	assert.match(graphEditorCss, /\.geAppIcon\s*\{[^}]*background-color: transparent;/s);
 	assert.match(graphEditorCss, /\.geAppIcon\s*\{[^}]*background-size: contain;/s);
 	assert.match(graphEditorCss, /\.geAppIcon\s*\{[^}]*opacity: 1;/s);
+	assert.match(graphEditorCss, /\.geAppIcon\s*\{[^}]*width: 64px;[^}]*height: 64px;/s); // Trellis change: lock the doubled header mark dimensions.
+	assert.match(graphEditorCss, /\.geMenubar\s*\{[^}]*padding: 0px 2px 0px 90px;/s); // Trellis change: prevent menu overlap with the larger mark.
+	assert.match(graphEditorCss, /\.geFilenameContainer\s*\{[^}]*left: 92px;/s); // Trellis change: prevent title overlap with the larger mark.
 	for (const url of ['js/bootstrap.js', 'styles/grapheditor.css', 'images/header-icon.png', 'images/window-icon.png']) {
 		assert.ok(worker.includes(`url:"${url}",revision:"`));
 	}

@@ -1,7 +1,7 @@
 {
   "name": "trellis-for-drawio",
   "productName": "Trellis for Drawio",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "drawioBaseVersion": "29.0.3",
   "description": "Trellis for Drawio desktop",
   "exports": "./src/main/electron.js",
