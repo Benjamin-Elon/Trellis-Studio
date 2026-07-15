@@ -2325,7 +2325,7 @@ test("task manager bulk assignment uses reversible Existing and All cards contro
     assert.equal(attr(h.weekTueCard2, "task_assignee_role_ids_json"), null); // NEW
 }); // NEW
 
-test("task manager assignee badges expand to sticky grid, navigate, and clear deleted roles", async () => { // CHANGE
+test("task manager assignee badges expand to readable name stack, navigate, and clear deleted roles", async () => { // CHANGE
     const h = makeHarness(); // NEW
     const roles = [ // NEW
         addRoleFixture(h, { id: "role-1", name: "A One", roleTitle: "Alpha" }).role, // NEW
@@ -2347,14 +2347,18 @@ test("task manager assignee badges expand to sticky grid, navigate, and clear de
     assert.equal(h.document.querySelector(".trellis-task-assignee-names-popover"), null); // NEW
     let expanded = h.document.querySelector(".trellis-task-assignee-stack-expanded"); // NEW
     assert.ok(expanded); // NEW
-    assert.equal(expanded.style.gridTemplateColumns, "repeat(3,18px)"); // NEW
+    assert.equal(expanded.style.flexDirection, "column"); // CHANGE
+    assert.equal(expanded.querySelectorAll(".trellis-task-assignee-pill").length, 4); // CHANGE
     assert.equal(expanded.querySelectorAll(".trellis-task-assignee-avatar").length, 4); // NEW
-    assert.ok(buttonByText(expanded, "Collapse")); // NEW
+    assert.deepEqual(Array.from(expanded.querySelectorAll(".trellis-task-assignee-pill-label")).map(label => label.textContent), ["A O.", "B T.", "D F.", "C T."]); // CHANGE
+    const collapse = buttonByText(expanded, "-"); // CHANGE
+    assert.ok(collapse); // CHANGE
+    assert.equal(collapse.getAttribute("aria-label"), "Collapse assignees"); // NEW
     h.fireModelChange(); // NEW
     await nextTick(); // NEW
     expanded = h.document.querySelector(".trellis-task-assignee-stack-expanded"); // NEW
     assert.ok(expanded); // NEW
-    buttonByText(expanded, "Collapse").click(); // NEW
+    buttonByText(expanded, "-").click(); // CHANGE
     await nextTick(); // NEW
     assert.equal(h.document.querySelector(".trellis-task-assignee-stack-expanded"), null); // NEW
     assert.equal(h.document.querySelector(".trellis-task-assignee-overflow").textContent, "+1"); // NEW
@@ -2373,6 +2377,6 @@ test("task manager assignee badges expand to sticky grid, navigate, and clear de
     await nextTick(); // NEW
     expanded = h.document.querySelector(".trellis-task-assignee-stack-expanded"); // NEW
     assert.ok(expanded); // NEW
-    assert.equal(expanded.querySelectorAll(".trellis-task-assignee-avatar").length, 3); // NEW
+    assert.equal(expanded.querySelectorAll(".trellis-task-assignee-pill").length, 3); // CHANGE
     assert.doesNotMatch(expanded.title, /A One/); // NEW
 }); // NEW

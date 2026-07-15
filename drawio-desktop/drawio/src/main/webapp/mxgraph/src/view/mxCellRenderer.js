@@ -1372,8 +1372,8 @@ mxCellRenderer.prototype.getControlBounds = function(state, w, h)
 	
 		if (!state.view.graph.getModel().isEdge(state.cell))
 		{
-			cx = state.x; // CHANGE
-			cy = state.y - controlGap - controlHeight / 2; // CHANGE
+			cx = state.x + 4; // CHANGE: Move fold control 4px right.
+			cy = state.y - controlGap - 2 - controlHeight / 2; // CHANGE: Move fold control 2px up.
 			
 			if (state.shape != null)
 			{

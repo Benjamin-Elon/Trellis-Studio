@@ -320,7 +320,12 @@ function createRoleFixture(harness) { // NEW
     const nameRow = role.children.find(child => styleHas(child, "role_name=1")); // CHANGE
     const titleRow = role.children.find(child => styleHas(child, "role_title=1")); // CHANGE
     const fieldLabels = role.children.filter(child => styleHas(child, "role_field_label=1")); // NEW
-    return { team, role, imageRow, nameRow, titleRow, fieldLabels }; // CHANGE
+    const headerSeparator = role.children.find(child => styleHas(child, "role_header_separator=1")); // NEW
+    const notesLabel = fieldLabels.find(child => child.value === "Description / notes"); // NEW
+    const notesRow = role.children.find(child => notesLabel && child.geometry && child.geometry.x === notesLabel.geometry.x && child.geometry.y > notesLabel.geometry.y && !styleHas(child, "role_field_label=1")); // NEW
+    const contactLabel = fieldLabels.find(child => child.value === "Contact info"); // NEW
+    const contactRow = role.children.find(child => contactLabel && child.geometry && child.geometry.x === contactLabel.geometry.x && child.geometry.y > contactLabel.geometry.y && !styleHas(child, "role_field_label=1")); // NEW
+    return { team, role, imageRow, nameRow, titleRow, fieldLabels, headerSeparator, notesRow, contactRow }; // CHANGE
 } // NEW
 
 function runModulesContextMenu(harness, cell) { // NEW
@@ -588,28 +593,51 @@ test("role overlay hides on Escape, outside gesture, model change, and view chan
 
 test("new role cards use v2 compact roster profile geometry", () => { // CHANGE
     const harness = makeHarness(); // NEW
-    const { role, imageRow, nameRow, titleRow, fieldLabels } = createRoleFixture(harness); // CHANGE
+    const { role, imageRow, nameRow, titleRow, fieldLabels, headerSeparator, notesRow, contactRow } = createRoleFixture(harness); // CHANGE
     assert.match(role.style, /(?:^|;)role_card=1(?:;|$)/); // NEW
     assert.match(role.style, /(?:^|;)role_card_version=2(?:;|$)/); // NEW
+    assert.match(role.style, /(?:^|;)shape=label(?:;|$)/); // NEW
+    assert.match(role.style, /(?:^|;)resizable=0(?:;|$)/); // NEW
+    assert.doesNotMatch(role.style, /(?:^|;)shape=swimlane(?:;|$)/); // NEW
+    assert.doesNotMatch(role.style, /(?:^|;)startSize=/); // NEW
+    assert.doesNotMatch(role.style, /(?:^|;)swimlaneFillColor=/); // NEW
     assert.equal(role.geometry.width, 260); // NEW
-    assert.equal(role.geometry.height, 220); // NEW
+    assert.equal(role.geometry.height, 250); // CHANGE
     assert.equal(role.geometry.alternateBounds.width, 180); // NEW
     assert.equal(role.geometry.alternateBounds.height, 64); // NEW
     assert.equal(imageRow.value, "click to add image"); // NEW
     assert.equal(imageRow.geometry.y, 76); // NEW
     assert.equal(nameRow.geometry.y, 76); // NEW
     assert.equal(titleRow.geometry.y, 118); // NEW
+    assert.ok(notesRow); // NEW
+    assert.ok(contactRow); // NEW
+    assert.equal(contactRow.geometry.y, 208); // NEW
+    assert.equal(contactRow.geometry.height, 32); // NEW
     assert.equal(styleHas(nameRow, "role_name=1"), true); // NEW
     assert.equal(styleHas(titleRow, "role_title=1"), true); // NEW
+    assert.equal(role.children.filter(child => styleHas(child, "role_name=1")).length, 1); // NEW
+    assert.equal(role.children.filter(child => styleHas(child, "role_title=1")).length, 1); // NEW
     assert.equal(nameRow.value, ""); // NEW
     assert.equal(titleRow.value, ""); // NEW
+    [imageRow, nameRow, titleRow, notesRow, contactRow].forEach(cell => { // NEW
+        assert.match(cell.style, /(?:^|;)html=1(?:;|$)/); // NEW
+        assert.match(cell.style, /(?:^|;)whiteSpace=wrap(?:;|$)/); // NEW
+        assert.match(cell.style, /(?:^|;)overflow=hidden(?:;|$)/); // NEW
+    }); // NEW
     assert.deepEqual(fieldLabels.map(cell => cell.value), ["Photo", "Name", "Role / title", "Description / notes", "Contact info"]); // NEW
     assert.equal(fieldLabels.every(cell => /(?:^|;)editable=0(?:;|$)/.test(cell.style)), true); // NEW
+    assert.equal(fieldLabels.some(cell => styleHas(cell, "role_name=1") || styleHas(cell, "role_title=1")), false); // NEW
+    assert.ok(headerSeparator); // NEW
+    assert.equal(headerSeparator.geometry.y, 54); // NEW
+    assert.match(headerSeparator.style, /(?:^|;)editable=0(?:;|$)/); // NEW
     assert.doesNotMatch(String(role.value), /<img/i); // NEW
     assert.match(role.style, /(?:^|;)image=data:image\/svg\+xml,/); // NEW
     assert.match(role.style, /(?:^|;)imageWidth=38(?:;|$)/); // NEW
     assert.match(role.style, /(?:^|;)imageHeight=38(?:;|$)/); // NEW
     assert.match(role.style, /(?:^|;)imageAlign=left(?:;|$)/); // NEW
+    assert.match(role.style, /(?:^|;)imageVerticalAlign=top(?:;|$)/); // NEW
+    assert.match(role.style, /(?:^|;)verticalAlign=top(?:;|$)/); // NEW
+    assert.match(role.style, /(?:^|;)spacingTop=8(?:;|$)/); // NEW
 }); // CHANGE
 
 test("v2 role card summary syncs name and role without prefixing value fields", () => { // NEW

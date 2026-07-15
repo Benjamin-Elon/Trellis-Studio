@@ -5782,6 +5782,14 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         return (words.length === 1 ? words[0].slice(0, 2) : words[0][0] + words[words.length - 1][0]).toUpperCase(); // NEW
     } // NEW
 
+    function roleShortDisplayName(name) { // NEW
+        const trimmed = String(name || '').trim(); // NEW
+        if (!trimmed || trimmed === 'Deleted role') return trimmed || 'Unnamed person'; // NEW
+        const words = trimmed.split(/\s+/).filter(Boolean); // NEW
+        if (words.length === 1) return words[0]; // NEW
+        return words[0] + ' ' + words[words.length - 1][0].toUpperCase() + '.'; // NEW
+    } // NEW
+
     function roleAvatarColor(id) { // NEW: stable initials color without persisted presentation data
         const palette = ['#2563EB', '#7C3AED', '#DB2777', '#059669', '#D97706', '#4F46E5']; // NEW
         let hash = 0; // NEW
@@ -5814,6 +5822,23 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         button.addEventListener('mouseup', consumeDomEvent); // NEW
         button.addEventListener('click', function (evt) { consumeDomEvent(evt); if (profile.cell && onClick) onClick(profile); }); // NEW
         return button; // NEW
+    } // NEW
+
+    function makeRoleAssigneePillNode(profile, onClick) { // NEW
+        const row = document.createElement('div'); // NEW
+        row.className = 'trellis-task-assignee-pill'; // NEW
+        row.title = profile.name + ' - ' + profile.roleTitle + (profile.eligible ? '' : ' (unavailable)'); // NEW
+        row.style.cssText = 'box-sizing:border-box;width:100%;max-width:126px;height:22px;border:1px solid #D1D5DB;border-radius:11px;padding:2px 7px 2px 2px;background:#fff;color:#111;display:flex;align-items:center;gap:5px;font:11px Arial,sans-serif;line-height:1;overflow:hidden;'; // NEW
+        row.appendChild(makeRoleAvatarNode(profile, 16, onClick)); // NEW
+        const label = document.createElement('span'); // NEW
+        label.className = 'trellis-task-assignee-pill-label'; // NEW
+        label.textContent = roleShortDisplayName(profile.name); // NEW
+        label.style.cssText = 'display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:' + (profile.cell ? 'pointer' : 'default') + ';'; // NEW
+        label.addEventListener('mousedown', consumeDomEvent); // NEW
+        label.addEventListener('mouseup', consumeDomEvent); // NEW
+        label.addEventListener('click', function (evt) { consumeDomEvent(evt); if (profile.cell && onClick) onClick(profile); }); // NEW
+        row.appendChild(label); // NEW
+        return row; // NEW
     } // NEW
 
     function navigateToRoleProfile(profile) { // NEW
@@ -5890,9 +5915,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             const collapse = document.createElement('button'); // NEW
             collapse.type = 'button'; // NEW
             collapse.className = 'trellis-task-assignee-collapse'; // NEW
-            collapse.textContent = 'Collapse'; // NEW
+            collapse.textContent = '-'; // CHANGE
             collapse.setAttribute('aria-label', 'Collapse assignees'); // NEW
-            collapse.style.cssText = 'box-sizing:border-box;height:18px;min-width:48px;border:1px solid #6B7280;border-radius:9px;padding:0 6px;background:#fff;color:#111;font:bold 9px Arial,sans-serif;line-height:16px;cursor:pointer;white-space:nowrap;'; // NEW
+            collapse.style.cssText = 'box-sizing:border-box;width:22px;height:18px;border:1px solid #6B7280;border-radius:9px;padding:0;background:#fff;color:#111;font:bold 12px Arial,sans-serif;line-height:16px;cursor:pointer;'; // CHANGE
             collapse.addEventListener('mousedown', consumeDomEvent); // NEW
             collapse.addEventListener('click', function (evt) { consumeDomEvent(evt); collapseExpandedAssigneeCard(requestRefresh); }); // NEW
             stack.appendChild(collapse); // NEW
@@ -5909,9 +5934,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             const stack = document.createElement('div'); // NEW
             stack.className = expanded ? 'trellis-task-assignee-stack trellis-task-assignee-stack-expanded' : 'trellis-task-assignee-stack'; // CHANGE
             stack.title = profiles.map(profile => profile.name + ' — ' + profile.roleTitle + (profile.eligible ? '' : ' (unavailable)')).join('\n'); // NEW
-            stack.style.cssText = expanded ? 'position:absolute;display:grid;grid-template-columns:repeat(3,18px);grid-auto-rows:18px;gap:3px;align-items:center;pointer-events:auto;left:' + Math.round(bounds.x + bounds.width - 4) + 'px;top:' + Math.round(bounds.y + 2) + 'px;transform:translateX(-100%);box-sizing:border-box;padding:3px;background:#fff;border:1px solid #6B7280;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.18);z-index:' + GRAPH_OVERLAY_Z.CONTROL_TOP + ';' : 'position:absolute;display:flex;align-items:center;pointer-events:auto;left:' + Math.round(bounds.x + bounds.width - 4) + 'px;top:' + Math.round(bounds.y + 2) + 'px;transform:translateX(-100%);'; // CHANGE
+            stack.style.cssText = expanded ? 'position:absolute;display:flex;flex-direction:column;gap:3px;align-items:flex-end;pointer-events:auto;left:' + Math.round(bounds.x + bounds.width - 4) + 'px;top:' + Math.round(bounds.y + 2) + 'px;transform:translateX(-100%);box-sizing:border-box;padding:3px;background:#fff;border:1px solid #6B7280;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.18);z-index:' + GRAPH_OVERLAY_Z.CONTROL_TOP + ';' : 'position:absolute;display:flex;align-items:center;pointer-events:auto;left:' + Math.round(bounds.x + bounds.width - 4) + 'px;top:' + Math.round(bounds.y + 2) + 'px;transform:translateX(-100%);'; // CHANGE
             profiles.slice(0, expanded ? profiles.length : 3).forEach((profile, index) => { // CHANGE
-                const avatar = makeRoleAvatarNode(profile, expanded ? 18 : 16, navigateToRoleProfile); // CHANGE
+                const avatar = expanded ? makeRoleAssigneePillNode(profile, navigateToRoleProfile) : makeRoleAvatarNode(profile, 16, navigateToRoleProfile); // CHANGE
                 if (!expanded && index) avatar.style.marginLeft = '-4px'; // CHANGE
                 stack.appendChild(avatar); // NEW
             }); // NEW

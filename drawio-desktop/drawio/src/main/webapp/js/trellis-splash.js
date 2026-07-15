@@ -7,9 +7,15 @@
  */
 (function() { // NEW
 	var installed = false; // NEW
-	var centeredDialogWidth = 760; // NEW
-	var centeredDialogHeight = 690; // NEW
-	var centeredDialogMargin = 12; // NEW
+	var centeredDialogMaxWidth = 760; // CHANGE
+	var centeredDialogMaxHeight = 690; // CHANGE
+	var centeredDialogMinWidth = 760; // NEW
+	var centeredDialogMinHeight = 600; // NEW
+	var preferredHorizontalMarginRatio = 0.12; // NEW
+	var preferredVerticalMarginRatio = 0.08; // NEW
+	var minimumHorizontalMarginRatio = 0.04; // NEW
+	var minimumVerticalMarginRatio = 0.04; // NEW
+	var defaultSplashBackgroundFilename = 'trellis-garden-sunrise.png'; // NEW
 
 	function addClass(element, className) { // NEW
 		if (element == null) return; // NEW
@@ -231,29 +237,86 @@
 			filename == filename.replace(/^.*[\\\\\/]/, '') && /\.(webp|jpe?g|png)$/i.test(filename); // NEW
 	} // NEW
 
-	function applyBackgroundFilename(backdrop, filename) { // NEW
-		if (!isSafeBackgroundFilename(filename) || window.Image == null) return; // NEW
+	function writeSplashLog(method, message, details) { // NEW
+		if (typeof console == 'undefined') return; // NEW
+		var logger = console[method] || console.log; // NEW
+		if (typeof logger != 'function') return; // NEW
+		var text = '[trellis-splash] ' + message; // NEW
+		if (details == null) logger.call(console, text); // NEW
+		else logger.call(console, text, details); // NEW
+	} // NEW
 
-		var backgroundUrl = IMAGE_PATH + '/trellis-splash/' + encodeURIComponent(filename); // NEW
+	function logSplash(message, details) { // NEW
+		writeSplashLog('info', message, details); // NEW
+	} // NEW
+
+	function warnSplash(message, details) { // NEW
+		writeSplashLog('warn', message, details); // NEW
+	} // NEW
+
+	function getSplashImagePath() { // NEW
+		return typeof IMAGE_PATH != 'undefined' && IMAGE_PATH ? IMAGE_PATH : 'images'; // NEW
+	} // NEW
+
+	function applyBackgroundFilename(backdrop, filename) { // NEW
+		logSplash('background filename requested', { filename: filename }); // NEW
+		if (!isSafeBackgroundFilename(filename)) { // CHANGE
+			warnSplash('background filename rejected', { filename: filename }); // NEW
+			return; // NEW
+		} // NEW
+		if (window.Image == null) { // NEW
+			warnSplash('window.Image unavailable; cannot preload background', { filename: filename }); // NEW
+			return; // NEW
+		} // NEW
+
+		var imagePath = getSplashImagePath(); // NEW
+		var backgroundUrl = imagePath + '/trellis-splash/' + encodeURIComponent(filename); // CHANGE
+		logSplash('background URL generated', { imagePath: imagePath, backgroundUrl: backgroundUrl }); // NEW
 		var image = new window.Image(); // NEW
 		image.decoding = 'async'; // NEW
 		image.onload = function() { // NEW
 			backdrop.style.setProperty('--trellis-splash-image', 'url("' + backgroundUrl + '")'); // NEW
 			addClass(backdrop, 'trellis-splash-has-image'); // NEW
+			logSplash('background image loaded', { // NEW
+				backgroundUrl: backgroundUrl, // NEW
+				cssImage: backdrop.style.getPropertyValue('--trellis-splash-image'), // NEW
+				hasImageClass: backdrop.classList != null && backdrop.classList.contains('trellis-splash-has-image') // NEW
+			}); // NEW
 		}; // NEW
-		image.onerror = function() { // NEW
-			backdrop.style.removeProperty('--trellis-splash-image'); // NEW
+		image.onerror = function(event) { // CHANGE
+			warnSplash('background image failed to load', { // NEW
+				backgroundUrl: backgroundUrl, // NEW
+				eventType: event != null ? event.type : null, // NEW
+				existingCssImage: backdrop.style.getPropertyValue('--trellis-splash-image') // NEW
+			}); // NEW
+			if (!backdrop.style.getPropertyValue('--trellis-splash-image')) { // CHANGE
+				backdrop.style.removeProperty('--trellis-splash-image'); // NEW
+				removeClass(backdrop, 'trellis-splash-has-image'); // NEW
+			} // NEW
 		}; // NEW
 		image.src = backgroundUrl; // NEW
 	} // NEW
 
 	function requestBackground(backdrop) { // NEW
-		if (typeof electron == 'undefined' || electron.request == null) return; // NEW
+		logSplash('requesting splash background', { // NEW
+			location: window.location != null ? window.location.href : null, // NEW
+			imagePath: getSplashImagePath(), // NEW
+			defaultFilename: defaultSplashBackgroundFilename // NEW
+		}); // NEW
+		applyBackgroundFilename(backdrop, defaultSplashBackgroundFilename); // NEW
+		if (typeof electron == 'undefined' || electron.request == null) { // CHANGE
+			warnSplash('electron.request unavailable; using renderer default only'); // NEW
+			return; // NEW
+		} // NEW
 
 		electron.request({ action: 'getTrellisSplashBackground' }, function(filename) { // NEW
+			logSplash('electron selected splash background', { filename: filename }); // NEW
 			applyBackgroundFilename(backdrop, filename); // NEW
-		}, function() { // NEW
-			backdrop.style.removeProperty('--trellis-splash-image'); // NEW
+		}, function(error) { // CHANGE
+			warnSplash('electron splash background request failed', { error: error }); // NEW
+			if (!backdrop.style.getPropertyValue('--trellis-splash-image')) { // CHANGE
+				backdrop.style.removeProperty('--trellis-splash-image'); // NEW
+			} // NEW
 		}); // NEW
 	} // NEW
 
@@ -276,10 +339,28 @@
 		return { left: left, top: top, width: width, height: height }; // NEW
 	} // NEW
 
+	function clampSplashSize(preferredSize, minimumSize, maximumSize) { // NEW
+		return Math.max(minimumSize, Math.min(maximumSize, preferredSize)); // NEW
+	} // NEW
+
+	function calculateSplashLayout(bounds) { // NEW
+		var preferredWidth = bounds.width * (1 - preferredHorizontalMarginRatio * 2); // NEW
+		var preferredHeight = bounds.height * (1 - preferredVerticalMarginRatio * 2); // NEW
+		var minimumMarginWidth = bounds.width * minimumHorizontalMarginRatio * 2; // NEW
+		var minimumMarginHeight = bounds.height * minimumVerticalMarginRatio * 2; // NEW
+		var compact = bounds.width - minimumMarginWidth < centeredDialogMinWidth || // NEW
+			bounds.height - minimumMarginHeight < centeredDialogMinHeight; // NEW
+
+		return { // NEW
+			compact: compact, // NEW
+			width: compact ? bounds.width : clampSplashSize(preferredWidth, centeredDialogMinWidth, centeredDialogMaxWidth), // NEW
+			height: compact ? bounds.height : clampSplashSize(preferredHeight, centeredDialogMinHeight, centeredDialogMaxHeight) // NEW
+		}; // NEW
+	} // NEW
+
 	function applyWorkspaceLayout(editorUi, outerDialog) { // NEW
 		var bounds = getWorkspaceBounds(editorUi); // NEW
-		var compact = bounds.width < centeredDialogWidth + centeredDialogMargin * 2 || // NEW
-			bounds.height < centeredDialogHeight + centeredDialogMargin * 2; // NEW
+		var layout = calculateSplashLayout(bounds); // CHANGE
 		var targets = [outerDialog.container, outerDialog.bg]; // NEW
 
 		for (var i = 0; i < targets.length; i++) { // NEW
@@ -290,9 +371,11 @@
 			targets[i].style.setProperty('--trellis-workspace-height', bounds.height + 'px'); // NEW
 			targets[i].style.setProperty('--trellis-workspace-center-x', (bounds.left + bounds.width / 2) + 'px'); // NEW
 			targets[i].style.setProperty('--trellis-workspace-center-y', (bounds.top + bounds.height / 2) + 'px'); // NEW
+			targets[i].style.setProperty('--trellis-splash-dialog-width', layout.width + 'px'); // NEW
+			targets[i].style.setProperty('--trellis-splash-dialog-height', layout.height + 'px'); // NEW
 		} // NEW
 
-		if (compact) addClass(outerDialog.container, 'trellis-splash-compact'); // NEW
+		if (layout.compact) addClass(outerDialog.container, 'trellis-splash-compact'); // CHANGE
 		else removeClass(outerDialog.container, 'trellis-splash-compact'); // NEW
 	} // NEW
 

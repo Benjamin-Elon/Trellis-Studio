@@ -189,6 +189,7 @@ Draw.loadPlugin(function (ui) {
         for (const sourceId of getLinkSet(selectedCard)) { // CHANGE
             const source = model.getCell(sourceId); // CHANGE
             if (!source || !model.isVertex(source)) continue; // CHANGE
+            if (!isTilerGroup(source)) continue; // CHANGE
 
             for (const candidateId of getLinkSet(source)) { // CHANGE
                 const candidate = model.getCell(candidateId); // CHANGE
@@ -204,6 +205,26 @@ Draw.loadPlugin(function (ui) {
         } // CHANGE
 
         return out; // CHANGE
+    } // CHANGE
+
+    function collectLinkedTaskCardSiblingIdsForTiler(selectedTiler, directTargets) { // CHANGE
+        if (!isTilerGroup(selectedTiler)) return new Set(); // CHANGE
+
+        const cards = []; // CHANGE
+        const seen = new Set(); // CHANGE
+
+        for (const target of directTargets || []) { // CHANGE
+            if (!target || !target.id || seen.has(target.id)) continue; // CHANGE
+            if (!model.isVertex(target)) continue; // CHANGE
+            if (!isKanbanCard(target)) continue; // CHANGE
+            if (!findKanbanBoardAncestor(target)) continue; // CHANGE
+
+            seen.add(target.id); // CHANGE
+            cards.push(target); // CHANGE
+        } // CHANGE
+
+        if (cards.length < 2) return new Set(); // CHANGE
+        return new Set(cards.map(card => card.id)); // CHANGE
     } // CHANGE
 
     function collectLinkedKanbanCardsForSource(source) { // CHANGE
@@ -920,6 +941,11 @@ Draw.loadPlugin(function (ui) {
     function isTilerGroup(cell) {
         return !!cell && getAttr(cell, 'tiler_group') === '1';
     }
+
+    function isRoleCard(cell) { // NEW
+        const style = cell && cell.style != null ? String(cell.style) : ''; // NEW
+        return /(?:^|;)role_card=1(?:;|$)/.test(style); // NEW
+    } // NEW
 
     function findTilerGroupAncestor(cell) {
         const m = graph.getModel();
@@ -3173,18 +3199,28 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-    function refreshCurrentHighlight() { // CHANGE
-        const selected = graph.getSelectionCells(); // CHANGE
+    function selectedLinkableVertices() { // NEW
+        return asVertexArray(graph.getSelectionCells && graph.getSelectionCells()); // NEW
+    } // NEW
 
-        if (!selected || selected.length !== 1) { // CHANGE
+    function refreshCurrentHighlight() { // CHANGE
+        const selected = selectedLinkableVertices(); // CHANGE
+
+        if (!selected || selected.length === 0) { // CHANGE
             highlightLinked(null); // CHANGE
             return; // CHANGE
-        }
+        } // CHANGE
 
-        const cell = normalizeForLinkingAndPrimary(selected[0]); // CHANGE
-        if (cell && model.isVertex(cell)) { // CHANGE
-            highlightLinked(cell); // CHANGE
-        } else { // CHANGE
+        if (selected.length === 1) { // CHANGE
+            const cell = selected[0]; // CHANGE
+            if (cell && model.isVertex(cell)) highlightLinked(cell); // CHANGE
+            else highlightLinked(null); // CHANGE
+            return; // CHANGE
+        } // CHANGE
+
+        if (selected.every(isRoleCard)) { // NEW
+            highlightLinkedRoleCards(selected); // NEW
+        } else { // NEW
             highlightLinked(null); // CHANGE
         } // CHANGE
     } // CHANGE
@@ -3214,6 +3250,53 @@ Draw.loadPlugin(function (ui) {
 
     // Config: whether a Primary vertex should be highlighted even without links
     const ALLOW_PRIMARY_WHEN_UNLINKED = true; // set to false to require links
+
+    function highlightLinkedRoleCards(cells) { // NEW
+        const YELLOW = '#ffd400'; // NEW
+        const RED = '#ff0000'; // NEW
+        const selectedRoleCards = (cells || []).filter(cell => cell && model.isVertex(cell) && isRoleCard(cell)); // NEW
+
+        model.beginUpdate(); // NEW
+        try { // NEW
+            clearAllHighlights(); // NEW
+            if (selectedRoleCards.length === 0) return; // NEW
+
+            const visibleLinkOverlayRecords = []; // NEW
+            for (const cell of selectedRoleCards) { // NEW
+                pruneBrokenLinks(cell); // NEW
+                const linkedIds = getLinkSet(cell); // NEW
+                const selIsPrimary = isPrimary(cell); // NEW
+                highlight(cell, selIsPrimary ? YELLOW : RED); // NEW
+                if (linkedIds.size === 0) continue; // NEW
+
+                const targets = []; // NEW
+                for (const id of linkedIds) { // NEW
+                    const other = model.getCell(id); // NEW
+                    if (other && model.isVertex(other)) targets.push(other); // NEW
+                } // NEW
+
+                const exitMap = computeExitParamsForOrigin(cell, targets); // NEW
+                for (const other of targets) { // NEW
+                    const otherIsPrimary = isPrimary(other); // NEW
+                    highlight(other, otherIsPrimary ? YELLOW : RED); // NEW
+                    const laneColor = getLinkLaneColor(cell, other); // NEW
+                    const edgeColor = laneColor ? laneColor : ((selIsPrimary || otherIsPrimary) ? YELLOW : RED); // NEW
+                    const label = getRawTextLabel ? getRawTextLabel(other) : ''; // NEW
+                    const exitHint = exitMap.get(other.id); // NEW
+                    if (shouldShowEdgeInternal(cell, other)) { // NEW
+                        visibleLinkOverlayRecords.push({ source: cell, other, exitHint, edgeColor, label, labelOffset: { x: 0, y: 0 } }); // NEW
+                    } // NEW
+                } // NEW
+            } // NEW
+
+            assignStandardLinkLabelOffsets(visibleLinkOverlayRecords); // NEW
+            for (const record of visibleLinkOverlayRecords) { // NEW
+                linkOverlays.setLinkOverlay(record.source, record.other, record.exitHint, record.edgeColor, record.label, record.labelOffset); // NEW
+            } // NEW
+        } finally { // NEW
+            model.endUpdate(); // NEW
+        } // NEW
+    } // NEW
 
     function highlightLinked(cell) {
         const YELLOW = '#ffd400';
@@ -3254,6 +3337,7 @@ Draw.loadPlugin(function (ui) {
             }
 
             const sameBoardLinkedCards = collectSameBoardLinkedKanbanCards(cell, targets); // CHANGE
+            const selectedTilerTaskSiblingIds = collectLinkedTaskCardSiblingIdsForTiler(cell, targets); // CHANGE
             const linkedTaskCards = collectLinkedKanbanCardsForSource(cell); // CHANGE
             const taskOverlayActive = linkedTaskCards.length > 0 && !isKanbanCard(cell); // CHANGE
             const taskOverlayLinkLabels = new Map(); // CHANGE
@@ -3270,7 +3354,8 @@ Draw.loadPlugin(function (ui) {
 
             for (const other of targets) {
                 const otherIsPrimary = isPrimary(other);
-                highlight(other, otherIsPrimary ? YELLOW : RED);
+                const linkedTargetHighlight = selectedTilerTaskSiblingIds.has(other.id) ? SAME_CROP_HIGHLIGHT : RED; // CHANGE
+                highlight(other, otherIsPrimary ? YELLOW : linkedTargetHighlight); // CHANGE
 
                 // If link touches a Kanban task card, edge color = lane fillColor  
                 const laneColor = getLinkLaneColor(cell, other);
@@ -3470,14 +3555,7 @@ Draw.loadPlugin(function (ui) {
 
     // Selection Highlight Logic
     graph.getSelectionModel().addListener(mxEvent.CHANGE, function () {
-        const selected = graph.getSelectionCells();
-        if (selected.length !== 1) {
-            // clearAllHighlights();  -> one grouped clear step
-            highlightLinked(null);
-            return;
-        }
-        const cell = normalizeForLinkingAndPrimary(selected[0]);
-        if (cell && model.isVertex(cell)) highlightLinked(cell);
+        refreshCurrentHighlight(); // CHANGE
     });
 
 

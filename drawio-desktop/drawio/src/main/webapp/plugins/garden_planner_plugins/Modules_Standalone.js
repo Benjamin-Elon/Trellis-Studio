@@ -360,7 +360,7 @@ Draw.loadPlugin(function (ui) {
 
     const ROLE_CARD_VERSION = "2"; // NEW
     const ROLE_EXPANDED_W = 260; // NEW
-    const ROLE_EXPANDED_H = 220; // NEW
+    const ROLE_EXPANDED_H = 250; // CHANGE
     const ROLE_COLLAPSED_W = 180; // NEW
     const ROLE_COLLAPSED_H = 64; // NEW
 
@@ -460,19 +460,20 @@ Draw.loadPlugin(function (ui) {
 
     function applyRoleSummaryImageStyle(roleCard, imageSource) { // NEW
         let st = getStyle(roleCard); // NEW
-        ["image", "imageWidth", "imageHeight", "imageAlign", "imageVerticalAlign", "imageAspect", "spacingLeft", "spacingRight", "align", "verticalAlign"].forEach(function (key) { // NEW
+        ["image", "imageWidth", "imageHeight", "imageAlign", "imageVerticalAlign", "imageAspect", "spacingLeft", "spacingRight", "spacingTop", "align", "verticalAlign"].forEach(function (key) { // CHANGE
             st = removeStyleKey(st, key); // NEW
         }); // NEW
         st = setStyleValue(st, "image", imageSource); // NEW
         st = setStyleValue(st, "imageWidth", "38"); // NEW
         st = setStyleValue(st, "imageHeight", "38"); // NEW
         st = setStyleValue(st, "imageAlign", "left"); // NEW
-        st = setStyleValue(st, "imageVerticalAlign", "middle"); // NEW
+        st = setStyleValue(st, "imageVerticalAlign", "top"); // CHANGE
         st = setStyleValue(st, "imageAspect", "1"); // NEW
         st = setStyleValue(st, "spacingLeft", "54"); // NEW
         st = setStyleValue(st, "spacingRight", "8"); // NEW
+        st = setStyleValue(st, "spacingTop", "8"); // NEW
         st = setStyleValue(st, "align", "left"); // NEW
-        st = setStyleValue(st, "verticalAlign", "middle"); // NEW
+        st = setStyleValue(st, "verticalAlign", "top"); // CHANGE
         if (getStyle(roleCard) !== st) model.setStyle(roleCard, st); // NEW
     } // NEW
 
@@ -624,9 +625,16 @@ Draw.loadPlugin(function (ui) {
 
     function createRoleValueCell(value, x, y, width, height, extraStyle) { // NEW
         const cell = new mxCell(value, new mxGeometry(x, y, width, height),
-            "shape=rectangle;align=left;verticalAlign=middle;whiteSpace=wrap;html=0;fillColor=#ffffff;strokeColor=#CBD5E1;fontSize=12;fontColor=#111827;spacingLeft=6;" + (extraStyle || "")); // NEW
+            "shape=rectangle;align=left;verticalAlign=middle;whiteSpace=wrap;html=1;overflow=hidden;fillColor=#ffffff;strokeColor=#CBD5E1;fontSize=12;fontColor=#111827;spacingLeft=6;spacingRight=6;" + (extraStyle || "")); // CHANGE
         cell.vertex = true; // NEW
         return cell; // NEW
+    } // NEW
+
+    function createRoleHeaderSeparator(width) { // NEW
+        const separator = new mxCell("", new mxGeometry(0, 54, width, 1),
+            "shape=line;strokeColor=#7AA35A;strokeWidth=1;editable=0;movable=0;resizable=0;connectable=0;role_header_separator=1;"); // NEW
+        separator.vertex = true; // NEW
+        return separator; // NEW
     } // NEW
 
     function createRoleCard(graph, moduleCell, x, y, opts) { // CHANGE
@@ -641,9 +649,10 @@ Draw.loadPlugin(function (ui) {
         const roleGeo = new mxGeometry(relX, relY, w, h); // NEW
         roleGeo.alternateBounds = makeAlternateBounds(relX, relY, ROLE_COLLAPSED_W, ROLE_COLLAPSED_H); // NEW
         const role = new mxCell("", roleGeo,
-            "shape=swimlane;horizontal=1;whiteSpace=wrap;html=1;collapsible=1;rounded=1;arcSize=8;startSize=54;fillColor=#F8FAFC;swimlaneFillColor=#EEF6EE;strokeColor=#7AA35A;role_card=1;role_card_version=2"); // CHANGE
+            "shape=label;whiteSpace=wrap;html=1;collapsible=1;resizable=0;rounded=1;arcSize=8;fillColor=#F8FAFC;strokeColor=#7AA35A;role_card=1;role_card_version=2"); // CHANGE
         role.vertex = true;
 
+        const headerSeparator = createRoleHeaderSeparator(w); // NEW
         const photoLabel = createReadOnlyRoleLabel("Photo", 10, 62, 50); // CHANGE
         const avatar = createRoleValueCell("click to add image", 10, 76, 50, 50,
             "align=center;verticalAlign=middle;fillColor=#F3F4F6;strokeColor=#94A3B8;fontSize=10;spacingLeft=0;role_imagerow=1;"); // CHANGE
@@ -657,13 +666,13 @@ Draw.loadPlugin(function (ui) {
         const notesLabel = createReadOnlyRoleLabel("Description / notes", 10, 144, 234); // CHANGE
         const notes = createRoleValueCell("", 10, 158, 234, 34, "verticalAlign=top;spacingTop=4;"); // CHANGE
 
-        const contactLabel = createReadOnlyRoleLabel("Contact info", 10, 190, 234); // CHANGE
-        const contact = createRoleValueCell("", 10, 204, 234, 14, "fontSize=10;"); // CHANGE
+        const contactLabel = createReadOnlyRoleLabel("Contact info", 10, 194, 234); // CHANGE
+        const contact = createRoleValueCell("", 10, 208, 234, 32, "fontSize=10;verticalAlign=top;spacingTop=4;"); // CHANGE
 
         if (manageUpdate) model.beginUpdate(); // CHANGE
         try { // CHANGE
             model.add(moduleCell, role);
-            [photoLabel, avatar, nameLabel, name, titleLabel, title, notesLabel, notes, contactLabel, contact].forEach(child => model.add(role, child)); // CHANGE
+            [headerSeparator, photoLabel, avatar, nameLabel, name, titleLabel, title, notesLabel, notes, contactLabel, contact].forEach(child => model.add(role, child)); // CHANGE
             syncRoleCardSummary(role); // NEW
         } finally {
             if (manageUpdate) model.endUpdate(); // CHANGE

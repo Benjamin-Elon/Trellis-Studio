@@ -583,13 +583,15 @@ test("Trellis splash outer decoration stays below app chrome and applies a valid
 	assert.equal(outerContainer.style.getPropertyValue("--trellis-workspace-top"), "98px"); // CHANGE
 	assert.equal(outerContainer.style.getPropertyValue("--trellis-workspace-center-x"), "768px"); // NEW
 	assert.equal(outerContainer.style.getPropertyValue("--trellis-workspace-center-y"), "457px"); // NEW
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-splash-dialog-width"), "760px"); // NEW
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-splash-dialog-height"), "603.12px"); // NEW
 	assert.equal(outerContainer.classList.contains("trellis-splash-compact"), false); // NEW
     assert.equal(requests[0].action, "getTrellisSplashBackground"); // NEW
     assert.match(backdrop.style.getPropertyValue("--trellis-splash-image"), /garden%20view\.webp/); // NEW
     assert.equal(closeButton.getAttribute("aria-label"), "Continue with a blank diagram"); // NEW
 }); // NEW
 
-test("Trellis splash toggles compact mode from workspace bounds and removes its resize listener", () => { // NEW
+test("Trellis splash eats percentage margins before compact mode and removes its resize listener", () => { // CHANGE
 	const { dom, dialog, context, editorUi } = loadSplashDialog({ savedRecord: makeSavedRecord() }); // NEW
 	const outerContainer = dom.window.document.createElement("div"); // NEW
 	const backdrop = dom.window.document.createElement("div"); // NEW
@@ -610,16 +612,28 @@ test("Trellis splash toggles compact mode from workspace bounds and removes its 
 
 	context.window.TrellisSplashEnhancements.decorateOuterDialog(editorUi, dialog, outerDialog); // NEW
 	assert.equal(outerContainer.classList.contains("trellis-splash-compact"), false); // NEW
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-splash-dialog-width"), "760px"); // NEW
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-splash-dialog-height"), "603.12px"); // NEW
 
-	bounds = { left: 10, top: 110, width: 760, height: 700 }; // NEW
+	bounds = { left: 0, top: 98, width: 1536, height: 688 }; // NEW
 	dom.window.dispatchEvent(new dom.window.Event("resize")); // NEW
-	assert.equal(outerContainer.classList.contains("trellis-splash-compact"), true); // NEW
-	assert.equal(outerContainer.style.getPropertyValue("--trellis-workspace-left"), "10px"); // NEW
-	assert.equal(outerContainer.style.getPropertyValue("--trellis-workspace-height"), "700px"); // NEW
+	assert.equal(outerContainer.classList.contains("trellis-splash-compact"), false); // CHANGE
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-splash-dialog-width"), "760px"); // NEW
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-splash-dialog-height"), "600px"); // NEW
 
-	bounds = { left: 0, top: 98, width: 1536, height: 718 }; // NEW
+	bounds = { left: 10, top: 110, width: 900, height: 700 }; // NEW
 	dom.window.dispatchEvent(new dom.window.Event("resize")); // NEW
 	assert.equal(outerContainer.classList.contains("trellis-splash-compact"), false); // NEW
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-workspace-left"), "10px"); // NEW
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-workspace-height"), "700px"); // NEW
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-splash-dialog-width"), "760px"); // NEW
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-splash-dialog-height"), "600px"); // NEW
+
+	bounds = { left: 10, top: 110, width: 820, height: 700 }; // NEW
+	dom.window.dispatchEvent(new dom.window.Event("resize")); // NEW
+	assert.equal(outerContainer.classList.contains("trellis-splash-compact"), true); // CHANGE
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-splash-dialog-width"), "820px"); // NEW
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-splash-dialog-height"), "700px"); // NEW
 
 	outerDialog.close(); // NEW
 	const readsAfterClose = boundsReads; // NEW
@@ -646,6 +660,50 @@ test("Trellis splash rejects unsafe background filenames and keeps the gradient 
     assert.equal(closeButton.getAttribute("aria-label"), "Exit Trellis Studio"); // NEW
 }); // NEW
 
+test("Trellis splash tries the packaged default before Electron selection", () => { // NEW
+	const { dom, dialog, context, editorUi } = loadSplashDialog(); // NEW
+	const outerContainer = dom.window.document.createElement("div"); // NEW
+	const backdrop = dom.window.document.createElement("div"); // NEW
+	const requestedSources = []; // NEW
+	const infoLogs = []; // NEW
+	context.electron = { request(payload, callback) { callback(null); } }; // NEW
+	context.console = Object.assign({}, console, { info() { infoLogs.push(Array.from(arguments)); } }); // NEW
+	dom.window.Image = class { // NEW
+		set src(value) { // NEW
+			requestedSources.push(value); // NEW
+			this.onload(); // NEW
+		} // NEW
+	}; // NEW
+
+	context.window.TrellisSplashEnhancements.decorateOuterDialog( // NEW
+		editorUi, dialog, { container: outerContainer, bg: backdrop }); // NEW
+
+	assert.deepEqual(requestedSources, ["images/trellis-splash/trellis-garden-sunrise.png"]); // NEW
+	assert.ok(backdrop.classList.contains("trellis-splash-has-image")); // NEW
+	assert.match(backdrop.style.getPropertyValue("--trellis-splash-image"), /trellis-garden-sunrise\.png/); // NEW
+	assert.ok(infoLogs.some((entry) => String(entry[0]).includes("background image loaded"))); // NEW
+}); // NEW
+
+test("Trellis splash logs image load failures without setting the background", () => { // NEW
+	const { dom, dialog, context, editorUi } = loadSplashDialog(); // NEW
+	const outerContainer = dom.window.document.createElement("div"); // NEW
+	const backdrop = dom.window.document.createElement("div"); // NEW
+	const warnLogs = []; // NEW
+	context.console = Object.assign({}, console, { warn() { warnLogs.push(Array.from(arguments)); } }); // NEW
+	dom.window.Image = class { // NEW
+		set src(_value) { // NEW
+			this.onerror({ type: "error" }); // NEW
+		} // NEW
+	}; // NEW
+
+	context.window.TrellisSplashEnhancements.decorateOuterDialog( // NEW
+		editorUi, dialog, { container: outerContainer, bg: backdrop }); // NEW
+
+	assert.equal(backdrop.style.getPropertyValue("--trellis-splash-image"), ""); // NEW
+	assert.equal(backdrop.classList.contains("trellis-splash-has-image"), false); // NEW
+	assert.ok(warnLogs.some((entry) => String(entry[0]).includes("background image failed to load"))); // NEW
+}); // NEW
+
 test("Trellis splash assets and bootstrap wire the same enhancement into packaged runtime", () => { // NEW
     const enhancementSource = fs.readFileSync(enhancementPath, "utf8"); // NEW
     const splashCss = fs.readFileSync(splashCssPath, "utf8"); // NEW
@@ -658,9 +716,12 @@ test("Trellis splash assets and bootstrap wire the same enhancement into package
     assert.match(enhancementSource, /Build systems that grow/); // NEW
     assert.match(enhancementSource, /getTrellisSplashBackground/); // NEW
 	assert.match(splashCss, /trellis-splash-dialog\.trellis-splash-compact/); // CHANGE
+	assert.doesNotMatch(splashCss, /trellis-splash-backdrop::before/); // NEW
+	assert.match(splashCss, /var\(--trellis-splash-image/); // NEW
+	assert.match(splashCss, /background-size: var\(--trellis-workspace-width, 100%\) var\(--trellis-workspace-height, 100%\) !important/); // NEW
 	assert.doesNotMatch(splashCss, /max-height: 820px/); // NEW
 	assert.match(splashCss, /top: var\(--trellis-workspace-top/); // NEW
-	assert.match(splashCss, /height: 690px !important/); // NEW
+	assert.match(splashCss, /height: var\(--trellis-splash-dialog-height, 690px\) !important/); // CHANGE
 	assert.match(splashCss, /trellis-license-status::after/); // NEW
     assert.match(splashCss, /#fbf8ed/); // NEW
     assert.match(indexSource, /styles\/trellis-splash\.css/); // NEW

@@ -658,8 +658,8 @@ Draw.loadPlugin(function (ui) { // CHANGE
     function positionWorkspaceHandle(handle, cell) { // NEW
         const state = graph.view && graph.view.getState(cell); // NEW
         if (!state) return false; // NEW
-        handle.style.left = Math.round(state.x - WORKSPACE_HANDLE_SIZE - WORKSPACE_HANDLE_GAP) + 'px'; // NEW
-        handle.style.top = Math.round(state.y - WORKSPACE_HANDLE_SIZE - WORKSPACE_HANDLE_GAP) + 'px'; // NEW
+        handle.style.left = Math.round(state.x - WORKSPACE_HANDLE_SIZE - WORKSPACE_HANDLE_GAP - 2) + 'px'; // CHANGE: Move container drag handle 2px left.
+        handle.style.top = Math.round(state.y - WORKSPACE_HANDLE_SIZE - WORKSPACE_HANDLE_GAP - 2) + 'px'; // CHANGE: Move container drag handle 2px up.
         handle.setAttribute('aria-label', workspaceHandleTitle(cell)); // NEW
         handle.setAttribute('title', workspaceHandleTitle(cell)); // NEW
         return true; // NEW

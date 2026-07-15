@@ -69,6 +69,32 @@ test("occupancy rows select and reveal their planting group", () => { // NEW
     assert.match(source, /if \(cell && model\.isVertex\(cell\)\) selectAndReveal\(cell\);/); // NEW
 }); // NEW
 
+test("role-card multi-selection dispatches to the multi-role link renderer", () => { // NEW
+    const source = readSource(); // NEW
+    const refreshSource = sourceBetween(source, "function refreshCurrentHighlight", "function assignStandardLinkLabelOffsets"); // NEW
+    const selectionSource = sourceBetween(source, "graph.getSelectionModel().addListener(mxEvent.CHANGE", "// -------------------- Context Menu Hook"); // NEW
+
+    assert.match(source, /function isRoleCard\(cell\) \{[\s\S]*role_card=1/); // NEW
+    assert.match(refreshSource, /const selected = selectedLinkableVertices\(\);/); // NEW
+    assert.match(refreshSource, /if \(selected\.length === 1\) \{[\s\S]*highlightLinked\(cell\);/); // NEW
+    assert.match(refreshSource, /if \(selected\.every\(isRoleCard\)\) \{[\s\S]*highlightLinkedRoleCards\(selected\);/); // NEW
+    assert.match(selectionSource, /refreshCurrentHighlight\(\);/); // NEW
+}); // NEW
+
+test("multi-selected role cards draw links without opening task overlays", () => { // NEW
+    const source = readSource(); // NEW
+    const multiRoleSource = sourceBetween(source, "function highlightLinkedRoleCards", "function highlightLinked(cell)"); // NEW
+
+    assert.match(multiRoleSource, /clearAllHighlights\(\);/); // NEW
+    assert.match(multiRoleSource, /pruneBrokenLinks\(cell\);/); // NEW
+    assert.match(multiRoleSource, /highlight\(cell, selIsPrimary \? YELLOW : RED\);/); // NEW
+    assert.match(multiRoleSource, /if \(linkedIds\.size === 0\) continue;/); // NEW
+    assert.match(multiRoleSource, /visibleLinkOverlayRecords\.push\(\{ source: cell, other, exitHint, edgeColor, label, labelOffset: \{ x: 0, y: 0 \} \}\);/); // NEW
+    assert.match(multiRoleSource, /linkOverlays\.setLinkOverlay\(record\.source, record\.other, record\.exitHint, record\.edgeColor, record\.label, record\.labelOffset\);/); // NEW
+    assert.doesNotMatch(multiRoleSource, /taskScheduleOverlay\.show/); // NEW
+    assert.doesNotMatch(multiRoleSource, /taskScheduleOverlay\.showScheduleOnly/); // NEW
+}); // NEW
+
 test("linked task navigation delegates hidden-card paging to the task manager", () => { // NEW
     const source = readSource(); // NEW
     const revealSource = sourceBetween(source, "function revealKanbanCardForNavigation", "// Works for arbitrarily nested children"); // NEW
@@ -79,13 +105,24 @@ test("linked task navigation delegates hidden-card paging to the task manager", 
     assert.doesNotMatch(source, /function getLanePageSizeForReveal/); // NEW
 }); // NEW
 
-test("same-crop sibling task highlights use blue without changing direct link red", () => { // NEW
+test("plant-tiler sibling task highlights use blue without changing direct non-task red", () => { // CHANGE
     const source = readSource(); // NEW
+    const cardSiblingSource = sourceBetween(source, "function collectSameBoardLinkedKanbanCards", "function collectLinkedTaskCardSiblingIdsForTiler"); // CHANGE
+    const tilerSiblingSource = sourceBetween(source, "function collectLinkedTaskCardSiblingIdsForTiler", "function collectLinkedKanbanCardsForSource"); // CHANGE
+    const directHighlightSource = sourceBetween(source, "const sameBoardLinkedCards = collectSameBoardLinkedKanbanCards", "// If link touches a Kanban task card"); // CHANGE
 
     assert.match(source, /const RED = '#ff0000';/); // NEW
     assert.match(source, /const SAME_CROP_HIGHLIGHT = '#2563eb';/); // NEW
+    assert.match(cardSiblingSource, /if \(!isTilerGroup\(source\)\) continue;/); // CHANGE
+    assert.match(tilerSiblingSource, /if \(!isTilerGroup\(selectedTiler\)\) return new Set\(\);/); // CHANGE
+    assert.match(tilerSiblingSource, /if \(!isKanbanCard\(target\)\) continue;/); // CHANGE
+    assert.match(tilerSiblingSource, /if \(!findKanbanBoardAncestor\(target\)\) continue;/); // CHANGE
+    assert.match(tilerSiblingSource, /if \(cards\.length < 2\) return new Set\(\);/); // CHANGE
+    assert.match(directHighlightSource, /const selectedTilerTaskSiblingIds = collectLinkedTaskCardSiblingIdsForTiler\(cell, targets\);/); // CHANGE
+    assert.match(directHighlightSource, /const linkedTargetHighlight = selectedTilerTaskSiblingIds\.has\(other\.id\) \? SAME_CROP_HIGHLIGHT : RED;/); // CHANGE
+    assert.match(directHighlightSource, /highlight\(other, otherIsPrimary \? YELLOW : linkedTargetHighlight\);/); // CHANGE
     assert.match(source, /for \(const otherCard of sameBoardLinkedCards\)[\s\S]*highlight\(otherCard, otherIsPrimary \? YELLOW : SAME_CROP_HIGHLIGHT, 1\.5\);/); // NEW
-}); // NEW
+}); // CHANGE
 
 test("standard link overlays use the native draw.io overlay pane", () => { // NEW
     const source = readSource(); // NEW
