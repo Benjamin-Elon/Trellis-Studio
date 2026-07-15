@@ -87,6 +87,13 @@ function ensureSeededDb(seedRelPath, livePath) {                           // NE
 	return livePath;                                                         // NEW
 }                                                                          // NEW  
 
+function ensureCreatedDb(livePath) {                                        // NEW
+	const parent = path.dirname(livePath);                                   // NEW
+	if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true });   // NEW
+	if (!fs.existsSync(livePath)) fs.closeSync(fs.openSync(livePath, 'a'));  // NEW
+	return livePath;                                                         // NEW
+}                                                                          // NEW
+
 function compareDbPath(dbPath) {                                           // NEW
 	const resolved = path.resolve(dbPath);                                  // NEW
 	return process.platform === 'win32' ? resolved.toLowerCase() : resolved; // NEW
@@ -2671,14 +2678,13 @@ ipcMain.on("rendererReq", async (event, args) => {
 				const dbName = String(args.dbName || 'Trellis_database.sqlite');
 				const livePath = getLiveDbPath(dbName);
 			  
-				const seedRel = String(
-				  args.seedRelPath || '../../trellis_database/Trellis_database.sqlite'
-				);
-				const seedAbs = path.resolve(__dirname, seedRel);
+				const seedRel = args.seedRelPath == null ? null : String(args.seedRelPath); // CHANGE
+				const effectiveSeedRel = seedRel || '../../trellis_database/Trellis_database.sqlite'; // NEW
+				const seedAbs = path.resolve(__dirname, effectiveSeedRel); // CHANGE
 			  
 				const ensured = args.reset === true
-				  ? restoreBuiltInTrellisDatabase({ dbName, seedRelPath: seedRel }).dbPath // CHANGED
-				  : ensureSeededDb(seedAbs, livePath); // CHANGED
+				  ? restoreBuiltInTrellisDatabase({ dbName, seedRelPath: effectiveSeedRel }).dbPath // CHANGED
+				  : (args.createIfMissing === true && seedRel == null ? ensureCreatedDb(livePath) : ensureSeededDb(seedAbs, livePath)); // CHANGED
 			  
 				event.reply('mainResp', {
 				  reqId: args.reqId,
@@ -2690,7 +2696,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 			case 'dbOpen': {
 				// args: { dbPath, readOnly?: boolean, pragma?: object }
 				const abs = validateDbPath(args.dbPath);
-				const options = { readonly: !!args.readOnly, fileMustExist: true };
+				const options = { readonly: !!args.readOnly, fileMustExist: args.fileMustExist !== false }; // CHANGE
 				const db = new Database(abs, options);
 
 				// Optional pragmas (e.g., { journal_mode: 'OFF', synchronous: 0 })

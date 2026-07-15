@@ -1724,12 +1724,10 @@ test("task manager refreshes week-view staged paging after selected-period conte
     await nextTick(); // NEW
 
     const initialPageCount = h.document.querySelector(".trellis-task-lane-pager[data-lane-id='staged'] select.trellis-task-lane-pager__select").options.length; // NEW
-    assert.equal(wedCard.visible, false); // NEW: Sunday context fills page one before the Wednesday card
-    assert.notEqual(attr(h.stagedLane, "task_page_anchor_card_id"), wedCard.id); // NEW
+    assert.notEqual(attr(h.stagedLane, "task_page_anchor_card_id"), wedCard.id); // CHANGE: Sunday context must not initially anchor to the Wednesday card
 
     h.resetCounters(); // NEW
-    setAttr(h.board, "task_selected_day", "2026-07-15"); // NEW: simulate a selected-period context change before the selected lane refresh path runs
-    h.graph.setSelectionCell(h.stagedLane); // NEW
+    h.graph.setSelectionCell(h.weekWedLane); // CHANGE: selecting a day lane changes the selected-period context and refreshes staged paging
     await nextTick(); // NEW
     await nextTick(); // NEW
 

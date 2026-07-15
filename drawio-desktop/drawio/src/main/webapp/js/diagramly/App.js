@@ -3985,7 +3985,7 @@ App.prototype.showSplash = function(force)
 						return false; // NEW
 					} // NEW
 				}
-			}), true);
+			}), true, null, null, true); // CHANGE
 	});
 	
 	if (this.editor.isChromelessView())

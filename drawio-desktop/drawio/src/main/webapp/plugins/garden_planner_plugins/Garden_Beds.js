@@ -12,6 +12,7 @@ Draw.loadPlugin(function (ui) { // NEW
     const model = graph.getModel && graph.getModel(); // NEW
     if (!model) return; // NEW
     const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // CHANGE
+    const TRELLIS_DIALOG_Z = 2000000000; // NEW
 
     const ATTRS = { // NEW
         BED_JSON: "bed_conditions_json", // CHANGE
@@ -553,6 +554,12 @@ Draw.loadPlugin(function (ui) { // NEW
         return { units, section, refresh }; // CHANGED
     } // ADDED
 
+    function elevateBedConditionsDialog() { // NEW
+        const dlg = ui && ui.dialog; // NEW
+        if (dlg && dlg.bg && dlg.bg.style) dlg.bg.style.zIndex = String(TRELLIS_DIALOG_Z - 1); // NEW
+        if (dlg && dlg.container && dlg.container.style) dlg.container.style.zIndex = String(TRELLIS_DIALOG_Z); // NEW
+    } // NEW
+
     function showConditionEditorDialog(targetCell) { // NEW
         const current = readBedConditions(targetCell); // NEW
         const dialogHeight = conditionDialogHeight(); // ADDED
@@ -691,6 +698,7 @@ Draw.loadPlugin(function (ui) { // NEW
         footer.appendChild(buttonRow); // CHANGE
         div.appendChild(footer); // ADDED
         ui.showDialog(div, 520, dialogHeight, true, true); // CHANGE
+        elevateBedConditionsDialog(); // NEW
     } // NEW
 
     function isOverlayDisplayValue(key, value) { // NEW

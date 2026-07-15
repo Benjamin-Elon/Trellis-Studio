@@ -208,17 +208,32 @@ Draw.loadPlugin(function (ui) {
 
     installIrrigationUndoRedoReplayGuard(); // NEW
 
+    function runTrellisHistoryTransaction(metadata, operation) { // NEW
+        const history = typeof window !== "undefined" && window.Trellis && window.Trellis.history; // NEW
+        if (history && typeof history.run === "function" && !isTrellisHistoryRestoring()) { // NEW
+            return history.run(metadata, operation); // NEW
+        } // NEW
+        return operation(); // NEW
+    } // NEW
+
+    function isTrellisHistoryRestoring() { // NEW
+        const history = typeof window !== "undefined" && window.Trellis && window.Trellis.history; // NEW
+        return !!(history && typeof history.isRestoring === "function" && history.isRestoring()); // NEW
+    } // NEW
+
     function runIrrigationEdit(label, fn) { // NEW
         if (activeIrrigationEditDepth > 0) return fn(); // NEW
-        activeIrrigationEditDepth++; // NEW
-        model.beginUpdate && model.beginUpdate(); // NEW
-        try { // NEW
-            const result = fn(); // NEW
-            flushQueuedHudGraphStateSync(); // NEW
-            return result; // NEW
-        } finally { // NEW
-            try { model.endUpdate && model.endUpdate(); } finally { activeIrrigationEditDepth = Math.max(0, activeIrrigationEditDepth - 1); } // NEW
-        } // NEW
+        return runTrellisHistoryTransaction({ category: "Irrigation", action: label || "edit", origin: "Garden_Irrigation_Planner", title: "Irrigation: " + (label || "edit") }, function () { // NEW
+            activeIrrigationEditDepth++; // NEW
+            model.beginUpdate && model.beginUpdate(); // NEW
+            try { // NEW
+                const result = fn(); // NEW
+                flushQueuedHudGraphStateSync(); // NEW
+                return result; // NEW
+            } finally { // NEW
+                try { model.endUpdate && model.endUpdate(); } finally { activeIrrigationEditDepth = Math.max(0, activeIrrigationEditDepth - 1); } // NEW
+            } // NEW
+        }); // NEW
     } // NEW
 
     function queueHudGraphStateSync(moduleCell) { // NEW
@@ -227,6 +242,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function flushQueuedHudGraphStateSync() { // NEW
+        if (isTrellisHistoryRestoring()) { pendingHudGraphSyncModuleCells = []; return; } // NEW
         const targets = pendingHudGraphSyncModuleCells.slice(); // NEW
         pendingHudGraphSyncModuleCells = []; // NEW
         targets.forEach(function (moduleCell) { syncHudGraphState(moduleCell); }); // NEW
@@ -5360,6 +5376,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function syncHudGraphState(moduleCell) { // NEW
+        if (isTrellisHistoryRestoring()) return []; // NEW
         if (activeIrrigationEditDepth === 0) return runIrrigationEdit("syncHudGraphState", function () { return syncHudGraphState(moduleCell); }); // NEW
         const paths = ReportModel.deriveAssemblyPaths(moduleCell); // CHANGE
         ReportModel.syncDashboardState(moduleCell, paths); // CHANGE
@@ -5368,6 +5385,7 @@ Draw.loadPlugin(function (ui) {
 
     function scheduleHudGraphStateSync(moduleCell) { // NEW
         if (!moduleCell) return null; // NEW
+        if (isTrellisHistoryRestoring()) return null; // NEW
         if (activeIrrigationEditDepth > 0) { queueHudGraphStateSync(moduleCell); return null; } // NEW
         hudSyncModuleCell = moduleCell; // CHANGE
         if (hudSyncTimer && typeof clearTimeout === "function") clearTimeout(hudSyncTimer); // NEW
@@ -5376,6 +5394,7 @@ Draw.loadPlugin(function (ui) {
             const target = hudSyncModuleCell; // NEW
             hudSyncTimer = null; // NEW
             hudSyncModuleCell = null; // NEW
+            if (isTrellisHistoryRestoring()) return; // NEW
             if (target && activeIrrigationMode && activeIrrigationMode.moduleCell === target) renderIrrigationMode(activeIrrigationMode); // CHANGE
         }, HUD_SYNC_DEBOUNCE_MS); // NEW
         return null; // NEW
@@ -5386,9 +5405,17 @@ Draw.loadPlugin(function (ui) {
         if (hudSyncTimer && typeof clearTimeout === "function") clearTimeout(hudSyncTimer); // NEW
         hudSyncTimer = null; // NEW
         hudSyncModuleCell = null; // NEW
+        if (isTrellisHistoryRestoring()) { pendingHudGraphSyncModuleCells = []; return []; } // NEW
         if (activeIrrigationEditDepth > 0) flushQueuedHudGraphStateSync(); // NEW
         if (target && activeIrrigationMode && activeIrrigationMode.moduleCell === target) renderIrrigationMode(activeIrrigationMode); // NEW
         return []; // CHANGE
+    } // NEW
+
+    function cancelPendingHudGraphStateSync() { // NEW
+        if (hudSyncTimer && typeof clearTimeout === "function") clearTimeout(hudSyncTimer); // NEW
+        hudSyncTimer = null; // NEW
+        hudSyncModuleCell = null; // NEW
+        pendingHudGraphSyncModuleCells = []; // NEW
     } // NEW
 
     function firstPathForBedEndpoint(moduleCell, inletCell) { // NEW
@@ -5982,6 +6009,19 @@ Draw.loadPlugin(function (ui) {
 
     if (typeof window !== "undefined") {
         window.TrellisIrrigationPlanner = graph.__trellisIrrigationPlanner;
+        window.addEventListener('trellisHistoryBeforeRestore', function () { // NEW
+            cancelPendingHudGraphStateSync(); // NEW
+        }); // NEW
+        window.addEventListener('trellisHistoryAfterRestore', function () { // NEW
+            try { refreshInactiveEntryOverlay(); } catch (e) { } // NEW
+            try { // NEW
+                if (!activeIrrigationMode || !activeIrrigationMode.moduleCell) return; // NEW
+                const moduleId = getCellId(activeIrrigationMode.moduleCell); // NEW
+                const restoredModule = moduleId && model.getCell ? model.getCell(moduleId) : null; // NEW
+                if (restoredModule) activeIrrigationMode.moduleCell = restoredModule; // NEW
+                renderIrrigationMode(activeIrrigationMode); // NEW
+            } catch (e) { } // NEW
+        }); // NEW
     }
 
     addActionAndMenus();

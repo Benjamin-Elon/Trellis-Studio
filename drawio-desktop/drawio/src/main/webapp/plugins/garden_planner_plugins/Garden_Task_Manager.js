@@ -2777,7 +2777,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             return; // NEW
         } // NEW
         const sortedCards = sortLaneCards(lane, laneKey, opts) || [];
-        applyLanePaging(lane, laneKey, sortedCards);
+        const pageOptions = {}; // NEW
+        if (opts && opts.resetSelectedPeriodStagedPage && selectedPeriodStagedSortEnabled(laneKey, opts)) pageOptions.anchorCardId = ''; // NEW: selected-period changes start from the newly sorted first page
+        applyLanePaging(lane, laneKey, sortedCards, pageOptions); // CHANGE
     }
 
     function refreshSelectedPeriodStagedBadges(board, opts) { // NEW
@@ -3090,6 +3092,23 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         if (board) affectedBoards.set(board.id, board); // ADDED
     } // ADDED
 
+    function historyCellIds(cells) { // NEW
+        return (cells || []).map(cell => cell && (cell.id || (cell.getId && cell.getId()))).filter(Boolean).map(String); // NEW
+    } // NEW
+
+    function runTrellisHistoryTransaction(metadata, operation) { // NEW
+        const history = typeof window !== "undefined" && window.Trellis && window.Trellis.history; // NEW
+        if (history && typeof history.run === "function" && !isTrellisHistoryRestoring()) { // NEW
+            return history.run(metadata, operation); // NEW
+        } // NEW
+        return operation(); // NEW
+    } // NEW
+
+    function isTrellisHistoryRestoring() { // NEW
+        const history = typeof window !== "undefined" && window.Trellis && window.Trellis.history; // NEW
+        return !!(history && typeof history.isRestoring === "function" && history.isRestoring()); // NEW
+    } // NEW
+
     function buildDifferentialTaskSyncRecords(targetGroupId) { // ADDED
         const grp = targetGroupId ? model.getCell(targetGroupId) : null; // ADDED
         if (!grp) return null; // ADDED
@@ -3102,12 +3121,14 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
 
     function replaceTasksPreservingAssignments(targetGroupId, tasks) { // NEW
         const normalizedTasks = Array.isArray(tasks) ? tasks : []; // NEW
-        const source = buildDifferentialTaskSyncRecords(targetGroupId); // NEW
-        const preservation = planTaskAssignmentReplacement(source && source.records, normalizedTasks); // NEW
-        const assignmentIdsByTaskKey = new Map(preservation.preserved.map(entry => [entry.key, entry.roleIds])); // NEW
-        const preserveCardIds = new Set(preservation.retainMissing.map(record => String(record.card && (record.card.id || (record.card.getId && record.card.getId())) || ''))); // NEW
-        removeTasksLinkedOnlyTo(targetGroupId, { reflow: !normalizedTasks.length, preserveCardIds }); // CHANGE
-        if (normalizedTasks.length) createTasks(normalizedTasks, targetGroupId, { reflow: true, assignmentIdsByTaskKey }); // NEW
+        return runTrellisHistoryTransaction({ category: "Tasks", action: "replace", origin: "Garden_Task_Manager", title: "Replace linked tasks", affectedCellIds: [targetGroupId].filter(Boolean) }, function () { // NEW
+            const source = buildDifferentialTaskSyncRecords(targetGroupId); // NEW
+            const preservation = planTaskAssignmentReplacement(source && source.records, normalizedTasks); // NEW
+            const assignmentIdsByTaskKey = new Map(preservation.preserved.map(entry => [entry.key, entry.roleIds])); // NEW
+            const preserveCardIds = new Set(preservation.retainMissing.map(record => String(record.card && (record.card.id || (record.card.getId && record.card.getId())) || ''))); // NEW
+            removeTasksLinkedOnlyTo(targetGroupId, { reflow: !normalizedTasks.length, preserveCardIds }); // CHANGE
+            if (normalizedTasks.length) createTasks(normalizedTasks, targetGroupId, { reflow: true, assignmentIdsByTaskKey }); // NEW
+        }); // NEW
     } // NEW
 
     function applyGeneratedTaskAttributesToCard(card, task, lanes) { // ADDED
@@ -3650,10 +3671,11 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
     function renderBoardLanes(board, lanes, dirtyLanes, sortContext, opts) { // NEW: lane sorting, schedule packing, paging, and optional board geometry
         bumpTaskReflowTestCounter('lanes'); // NEW
         const laneKeyFilter = normalizeReflowLaneKeySet(opts); // NEW
+        const laneRenderOptions = Object.assign({}, opts || {}, sortContext || {}, { insideUpdate: true }); // NEW: preserve selected-period paging flags while keeping current sort context authoritative
         if (!opts || opts.applyLayout !== false) applyBoardViewLayout(board, lanes); // CHANGE: paging must measure the final lane height
         for (const { lane, laneKey } of dirtyLanes.values()) { // CHANGE
             if (laneKeyFilter && !laneKeyFilter.has(laneKey)) continue; // NEW
-            resortAndPageLane(lane, laneKey, Object.assign({ insideUpdate: true }, sortContext)); // CHANGE
+            resortAndPageLane(lane, laneKey, laneRenderOptions); // CHANGE
         } // CHANGE
 
         // Clean paging for untouched lanes without depending on child iteration order. // CHANGE
@@ -3664,12 +3686,12 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             if (!lane || dirtyLanes.has(lane.id)) continue; // CHANGE
 
             if (isWeekDayLane(laneKey)) { // NEW
-                resortAndPageLane(lane, laneKey, Object.assign({ insideUpdate: true }, sortContext)); // NEW
+                resortAndPageLane(lane, laneKey, laneRenderOptions); // CHANGE
                 continue; // NEW
             } // NEW
 
             if (selectedPeriodStagedSortEnabled(laneKey, sortContext)) { // NEW
-                resortAndPageLane(lane, laneKey, Object.assign({ insideUpdate: true }, sortContext)); // NEW
+                resortAndPageLane(lane, laneKey, laneRenderOptions); // CHANGE
                 continue; // NEW
             } // NEW
 
@@ -4103,6 +4125,18 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
     let taskOverlayGestureRefreshScheduled = false; // NEW
     const userResizedWeekDayLaneKeys = new Set(); // NEW: separates deliberate hour edits from automatic swimlane geometry changes
 
+    function cancelPendingKanbanRepairs() { // NEW
+        if (repairTimer != null && typeof clearTimeout === "function") clearTimeout(repairTimer); // NEW
+        repairTimer = null; // NEW
+        pendingRepairCards.clear(); // NEW
+        pendingRepairBoards.clear(); // NEW
+        pendingInvalidKanbanPlacements.clear(); // NEW
+        pendingWeekLaneWidthChanges.clear(); // NEW
+        pendingWeekLaneHourChanges.clear(); // NEW
+        pendingFullLaneHeightChanges.clear(); // NEW
+        pendingWeekBoardHeightChanges.clear(); // NEW
+    } // NEW
+
     function userResizeLaneKey(cell, laneKey) { // NEW
         return String((cell && (cell.id || (cell.getId && cell.getId()))) || laneKey || ''); // NEW
     } // NEW
@@ -4260,6 +4294,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
     }
 
     function scheduleKanbanRepair(cards, boards, invalidPlacements, laneWidthChanges, laneHourChanges, fullLaneHeightChanges, weekBoardHeightChanges) { // CHANGE
+        if (isTrellisHistoryRestoring()) return; // NEW
         const hasCards = cards && cards.size > 0; // NEW
         const hasBoards = boards && boards.size > 0; // NEW
         const hasInvalidPlacements = invalidPlacements && invalidPlacements.size > 0; // NEW
@@ -4281,6 +4316,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
 
         repairTimer = setTimeout(function () {
             repairTimer = null;
+            if (isTrellisHistoryRestoring()) { cancelPendingKanbanRepairs(); return; } // NEW
 
             const cardsToRepair = Array.from(pendingRepairCards);
             const boardsToRepair = Array.from(pendingRepairBoards); // NEW
@@ -4303,6 +4339,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
 
     function repairChangedCards(cards, boards, invalidPlacements, laneWidthChanges, laneHourChanges, fullLaneHeightChanges, weekBoardHeightChanges) { // CHANGE
         if ((!cards || cards.length === 0) && (!boards || boards.length === 0) && (!invalidPlacements || invalidPlacements.length === 0) && (!laneWidthChanges || laneWidthChanges.length === 0) && (!laneHourChanges || laneHourChanges.length === 0) && (!fullLaneHeightChanges || fullLaneHeightChanges.length === 0) && (!weekBoardHeightChanges || weekBoardHeightChanges.length === 0)) return; // CHANGE
+        if (isTrellisHistoryRestoring()) return; // NEW
 
         const affectedBoards = new Map(); // NEW
         const touchedGroups = new Set();
@@ -4571,7 +4608,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             const day = getDateForWeekLaneKey(getAttr(selectedDayLane, 'lane_key'), getSelectedWeekStart(board)); // NEW
             if (day && day !== getSelectedDay(board)) { taskCommands.setBoardPlanningView(board, 'WEEK', { [TASK_SELECTED_DAY_ATTR]: day }); stagedRefreshCommand = 'selectedPeriodStagedPaging'; } // CHANGE: selected-period changes need staged lane paging parity
         } // NEW
-        taskCommands.scanAndReflowBoard(board, { scope: getTaskReflowScopeForCommand(stagedRefreshCommand), laneKeys: ['TODO_STAGED'] }); // CHANGE
+        taskCommands.scanAndReflowBoard(board, { scope: getTaskReflowScopeForCommand(stagedRefreshCommand), laneKeys: ['TODO_STAGED'], resetSelectedPeriodStagedPage: stagedRefreshCommand === 'selectedPeriodStagedPaging' }); // CHANGE
     });
 
     function findBoardsIn(parent) {
@@ -5168,13 +5205,15 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         const changes = context.cards.map(card => ({ card, serialized: serializeTaskAssigneeRoleIds(nextIdsByCard.get(card)) })) // NEW
             .filter(entry => entry.serialized !== serializeTaskAssigneeRoleIds(getTaskAssigneeRoleIds(entry.card))); // NEW
         if (!changes.length) return 0; // NEW: a no-op draft creates no undo transaction
-        model.beginUpdate(); // NEW
-        try { // NEW
-            changes.forEach(entry => model.setValue(entry.card, cloneCardValueWithAttributes(entry.card, { [TASK_ASSIGNEE_ROLE_IDS_ATTR]: entry.serialized }))); // NEW
-        } finally { // NEW
-            model.endUpdate(); // NEW
-        } // NEW
-        return changes.length; // NEW
+        return runTrellisHistoryTransaction({ category: "Assignments", action: "assign", origin: "Garden_Task_Manager", title: "Update task assignments", affectedCellIds: historyCellIds(changes.map(entry => entry.card)) }, function () { // NEW
+            model.beginUpdate(); // NEW
+            try { // NEW
+                changes.forEach(entry => model.setValue(entry.card, cloneCardValueWithAttributes(entry.card, { [TASK_ASSIGNEE_ROLE_IDS_ATTR]: entry.serialized }))); // NEW
+            } finally { // NEW
+                model.endUpdate(); // NEW
+            } // NEW
+            return changes.length; // NEW
+        }); // NEW
     } // NEW
 
     function applyCardWorkflowActions(cards, action) { // NEW
@@ -5621,6 +5660,19 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         setPagingSelectionCells(selectedCards.filter(isCellModelVisible)); // NEW: hidden siblings outside the revealed page are dropped
     } // NEW
 
+    graph.__trellisTaskPagingApi = { // NEW
+        revealCard(card) { // NEW
+            if (!card || !isRenderableKanbanCard(card)) return false; // NEW
+            if (isCellModelVisible(card)) return true; // NEW
+            const lane = model.getParent(card); // NEW
+            if (!lane) return false; // NEW
+            const laneKey = getAttr(lane, 'lane_key'); // NEW
+            applyLanePaging(lane, laneKey, getLaneCardsInOrder(lane), { anchorCardId: taskCellId(card), skipSelectionRepair: true }); // NEW
+            requestLanePagerOverlayRefresh(); // NEW
+            return isCellModelVisible(card); // NEW
+        } // NEW
+    }; // NEW
+
     function installLanePagerStyles() { // NEW
         const styleId = 'trellis-task-lane-pager-styles'; // NEW
         if (!document || !document.createElement || document.getElementById(styleId)) return; // NEW
@@ -5981,6 +6033,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         const requestRefresh = createDeferredTaskOverlayRefresh(refresh); // NEW
         addGraphViewRefreshListener(requestRefresh); // NEW
         graph.addListener('linksChanged', requestRefresh); // NEW
+        window.addEventListener('trellisHistoryAfterRestore', requestRefresh); // NEW
         document.addEventListener('keydown', function (evt) { if (expandedAssigneeCardId && (evt.key === 'Escape' || evt.keyCode === 27)) { consumeDomEvent(evt); collapseExpandedAssigneeCard(requestRefresh); } }); // CHANGE
         requestRefresh(); // NEW
     } // NEW
@@ -6752,15 +6805,25 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         if ((replacement.mode !== 'replace' && replacement.mode !== 'sync') || !targetGroupId) return; // CHANGED
 
         setTimeout(function () {
-            if (replacement.mode === 'sync') { // ADDED
-                taskCommands.applyDifferentialTaskSync({ targetGroupId, tasks }); // CHANGE
-                return; // ADDED
-            } // ADDED
-            taskCommands.replaceTasks(targetGroupId, tasks); // CHANGE
+            runTrellisHistoryTransaction({ category: replacement.mode === 'sync' ? "Garden scheduling" : "Tasks", action: replacement.mode, origin: "Garden_Task_Manager", title: replacement.mode === 'sync' ? "Synchronize generated tasks" : "Replace generated tasks", affectedCellIds: [targetGroupId] }, function () { // NEW
+                if (replacement.mode === 'sync') { // ADDED
+                    taskCommands.applyDifferentialTaskSync({ targetGroupId, tasks }); // CHANGE
+                    return; // ADDED
+                } // ADDED
+                taskCommands.replaceTasks(targetGroupId, tasks); // CHANGE
+            }); // NEW
         }, 0);
     }
 
     window.addEventListener('tasksCreated', handleTasksCreatedEvent);
+
+    window.addEventListener('trellisHistoryBeforeRestore', function () { // NEW
+        cancelPendingKanbanRepairs(); // NEW
+    }); // NEW
+
+    window.addEventListener('trellisHistoryAfterRestore', function () { // NEW
+        try { taskCommands.scanAllBoards({ insideUpdate: false }); } catch (e) { } // NEW
+    }); // NEW
 
     window.addEventListener("yearFilterChanged", function (ev) {                         // NEW
         try {                                                                           // NEW

@@ -2787,37 +2787,6 @@ Draw.loadPlugin(function (ui) {
         return { P, S };
     }
 
-    function isRenderableTaskForLanePaging(card) { // CHANGE
-        return isKanbanCard(card) && getAttr(card, 'year_hidden') !== '1' && getAttr(card, 'repeat_hidden') !== '1'; // CHANGE
-    } // CHANGE
-
-    function getLaneCardsInCurrentOrder(lane) { // CHANGE
-        const cards = []; // CHANGE
-        if (!lane) return cards; // CHANGE
-        const count = model.getChildCount(lane); // CHANGE
-        for (let i = 0; i < count; i++) { // CHANGE
-            const child = model.getChildAt(lane, i); // CHANGE
-            if (child && model.isVertex(child) && isRenderableTaskForLanePaging(child)) cards.push(child); // CHANGE
-        } // CHANGE
-        return cards; // CHANGE
-    } // CHANGE
-
-    function getLanePageSizeForReveal(lane, cards) { // CHANGE
-        const laneGeo = lane && lane.geometry; // CHANGE
-        const availableHeight = laneGeo && Number.isFinite(Number(laneGeo.height)) ? Number(laneGeo.height) : 0; // CHANGE
-        let totalHeight = 0; // CHANGE
-        let measured = 0; // CHANGE
-        for (const card of cards || []) { // CHANGE
-            const geo = card && card.geometry; // CHANGE
-            const height = geo && Number.isFinite(Number(geo.height)) ? Number(geo.height) : 0; // CHANGE
-            if (height > 0) { totalHeight += height; measured++; } // CHANGE
-        } // CHANGE
-        const avgCardHeight = measured ? totalHeight / measured : 80; // CHANGE
-        const unitHeight = avgCardHeight + 20; // CHANGE
-        if (availableHeight <= 0 || unitHeight <= 0) return Math.max(1, (cards || []).length); // CHANGE
-        return Math.max(1, Math.floor(availableHeight / unitHeight)); // CHANGE
-    } // CHANGE
-
     function dispatchYearFilterChangedForTaskOverlay(card, year) { // CHANGE
         try { // CHANGE
             window.dispatchEvent(new CustomEvent('yearFilterChanged', { // CHANGE
@@ -2830,25 +2799,8 @@ Draw.loadPlugin(function (ui) {
         if (!isKanbanCard(card)) return; // CHANGE
         if (getAttr(card, 'year_hidden') === '1' || getAttr(card, 'repeat_hidden') === '1') return; // CHANGE
         if (!model.isVisible || model.isVisible(card)) return; // CHANGE
-        const lane = findLaneAncestor(card); // CHANGE
-        if (!lane) return; // CHANGE
-        const cards = getLaneCardsInCurrentOrder(lane); // CHANGE
-        const idx = cards.indexOf(card); // CHANGE
-        if (idx < 0) return; // CHANGE
-        const pageSize = getLanePageSizeForReveal(lane, cards); // CHANGE
-        const pageIndex = Math.max(0, Math.floor(idx / pageSize)); // CHANGE
-        model.beginUpdate(); // CHANGE
-        try { // CHANGE
-            setCellAttrUndoable(lane, 'page_index', String(pageIndex)); // CHANGE
-            const start = pageIndex * pageSize; // CHANGE
-            const end = Math.min(start + pageSize, cards.length); // CHANGE
-            for (let i = 0; i < cards.length; i++) { // CHANGE
-                model.setVisible(cards[i], i >= start && i < end); // CHANGE
-            } // CHANGE
-        } finally { // CHANGE
-            model.endUpdate(); // CHANGE
-        } // CHANGE
-        graph.refresh(lane); // CHANGE
+        const pagingApi = graph.__trellisTaskPagingApi; // CHANGE
+        if (pagingApi && typeof pagingApi.revealCard === 'function' && pagingApi.revealCard(card)) { dispatchYearFilterChangedForTaskOverlay(card, null); return; } // CHANGE
         dispatchYearFilterChangedForTaskOverlay(card, null); // CHANGE
     } // CHANGE
 
@@ -2996,7 +2948,20 @@ Draw.loadPlugin(function (ui) {
         return linked;
     }
 
+    function historyCellIds(cells) { // NEW
+        return (cells || []).map(cell => cell && (cell.id || (cell.getId && cell.getId()))).filter(Boolean).map(String); // NEW
+    } // NEW
+
+    function runTrellisHistoryTransaction(metadata, operation) { // NEW
+        const history = typeof window !== "undefined" && window.Trellis && window.Trellis.history; // NEW
+        if (history && typeof history.run === "function" && !(typeof history.isRestoring === "function" && history.isRestoring())) { // NEW
+            return history.run(metadata, operation); // NEW
+        } // NEW
+        return operation(); // NEW
+    } // NEW
+
     function unlinkRespectingPrimaries(verts) {
+        return runTrellisHistoryTransaction({ category: "Data", action: "unlinkVertices", origin: "Vertex_Linking_Standalone", title: "Remove vertex links", affectedCellIds: historyCellIds(verts), tags: ["Links"] }, function () { // NEW
         const pairs = computeApplicablePairsForLinking(verts);
         let removed = 0;
 
@@ -3015,6 +2980,7 @@ Draw.loadPlugin(function (ui) {
             try { graph.fireEvent(new mxEventObject('linksChanged', 'cells', verts)); } catch (_) { }
         }
         return { pairs: pairs.length, removed };
+        }); // NEW
     }
 
 
@@ -3022,6 +2988,7 @@ Draw.loadPlugin(function (ui) {
     // If any primaries, link every Primary ↔ every Secondary only.
     // If no primaries, link all pairs (existing behavior).
     function linkRespectingPrimaries(verts) {
+        return runTrellisHistoryTransaction({ category: "Data", action: "linkVertices", origin: "Vertex_Linking_Standalone", title: "Create vertex links", affectedCellIds: historyCellIds(verts), tags: ["Links"] }, function () { // NEW
         const { P, S } = derivePrimariesAndSecondaries(verts);
         let pairs = 0, changes = 0;
 
@@ -3054,6 +3021,7 @@ Draw.loadPlugin(function (ui) {
             try { graph.fireEvent(new mxEventObject('linksChanged', 'cells', verts)); } catch (_) { }
         }
         return { pairs, changes };
+        }); // NEW
     }
 
 
@@ -3088,6 +3056,7 @@ Draw.loadPlugin(function (ui) {
 
     // Unlink this vertex from every linked partner; returns {checked, removed}
     function unlinkAllFor(cell) {
+        return runTrellisHistoryTransaction({ category: "Data", action: "unlinkAllVertices", origin: "Vertex_Linking_Standalone", title: "Remove all vertex links", affectedCellIds: historyCellIds([cell]), tags: ["Links"] }, function () { // NEW
         const ids = Array.from(getLinkSet(cell));
         let checked = 0, removed = 0;
 
@@ -3112,6 +3081,7 @@ Draw.loadPlugin(function (ui) {
             try { graph.fireEvent(new mxEventObject('linksChanged', 'cells', [cell])); } catch (_) { }
         }
         return { checked, removed };
+        }); // NEW
     }
 
 
@@ -3798,6 +3768,16 @@ Draw.loadPlugin(function (ui) {
         linkOverlays.refreshAll();
         taskScheduleOverlay.refresh(); // CHANGE
     });
+
+    window.addEventListener('trellisHistoryBeforeRestore', function () { // NEW
+        try { clearAllHighlights(); } catch (e) { } // NEW
+    }); // NEW
+
+    window.addEventListener('trellisHistoryAfterRestore', function () { // NEW
+        try { refreshCurrentHighlight(); } catch (e) { } // NEW
+        try { linkOverlays.refreshAll(); } catch (e) { } // NEW
+        try { taskScheduleOverlay.refresh(); } catch (e) { } // NEW
+    }); // NEW
 
 
     vertexLinkLog('[ManualLinker] Plugin loaded.');

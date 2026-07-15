@@ -1,4 +1,6 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs'); // ADDED
+const path = require('node:path'); // ADDED
 const test = require('node:test');
 
 const {
@@ -8,6 +10,120 @@ const {
 } = require('./helpers/garden-scheduler-harness.cjs');
 
 const hooks = loadSchedulerHooks();
+const schedulerSource = fs.readFileSync(path.join(__dirname, '..', 'drawio', 'src', 'main', 'webapp', 'plugins', 'garden_planner_plugins', 'Garden_Scheduler_Dialog.js'), 'utf8'); // ADDED
+
+function makeCrop(overrides = {}) { // ADDED
+    return makePlant(hooks, { // ADDED
+        plant_id: overrides.plant_id ?? 1, // ADDED
+        plant_name: overrides.plant_name || 'Crop', // ADDED
+        abbr: overrides.abbr || '', // ADDED
+        ...overrides // ADDED
+    }); // ADDED
+} // ADDED
+
+test('crop lifecycle classification requires exactly one lifecycle flag', () => { // ADDED
+    assert.equal(hooks.getCropLifecycle(makeCrop({ annual: 1, biennial: 0, perennial: 0 })), 'annual'); // ADDED
+    assert.equal(hooks.getCropLifecycle(makeCrop({ annual: 0, biennial: 1, perennial: 0 })), 'biennial'); // ADDED
+    assert.equal(hooks.getCropLifecycle(makeCrop({ annual: 0, biennial: 0, perennial: 1 })), 'perennial'); // ADDED
+    assert.equal(hooks.getCropLifecycle(makeCrop({ annual: 1, biennial: 1, perennial: 0 })), 'uncategorized'); // ADDED
+    assert.equal(hooks.getCropLifecycle(makeCrop({ annual: 0, biennial: 0, perennial: 0 })), 'uncategorized'); // ADDED
+}); // ADDED
+
+test('lifecycle filter control reads and persists the shared crop filter preference', () => { // ADDED
+    const store = new Map([['trellis.scheduler.cropLifecycleFilter', 'perennial']]); // ADDED
+    hooks.__testWindow.localStorage = { // ADDED
+        getItem: key => store.has(key) ? store.get(key) : null, // ADDED
+        setItem: (key, value) => { store.set(key, value); } // ADDED
+    }; // ADDED
+    const control = hooks.buildLifecycleFilterControl(); // ADDED
+    assert.equal(control.value, 'perennial'); // ADDED
+    control.value = 'annual'; // ADDED
+    control.dispatchEvent(new hooks.__testWindow.document.defaultView.Event('change')); // ADDED
+    assert.equal(store.get('trellis.scheduler.cropLifecycleFilter'), 'annual'); // ADDED
+}); // ADDED
+
+test('grouped crop options filter by lifecycle and auto-show hidden current selection', () => { // ADDED
+    const crops = [ // ADDED
+        makeCrop({ plant_id: 1, plant_name: 'Tomato', annual: 1, biennial: 0, perennial: 0 }), // ADDED
+        makeCrop({ plant_id: 2, plant_name: 'Rhubarb', annual: 0, biennial: 0, perennial: 1 }) // ADDED
+    ]; // ADDED
+    const groups = hooks.buildGroupedCropOptions(hooks.makeCropPickerOptions(crops), { // ADDED
+        filter: 'perennial', // ADDED
+        selectedValue: '1', // ADDED
+        includeSelectedWhenFiltered: true // ADDED
+    }); // ADDED
+    assert.deepEqual(Array.from(groups, group => group.label), ['Current selection', 'Perennial crops']); // ADDED
+    assert.deepEqual(Array.from(groups, group => Array.from(group.options, option => option.label)), [['Tomato'], ['Rhubarb']]); // ADDED
+}); // ADDED
+
+test('empty lifecycle filter renders an explicit disabled placeholder', () => { // ADDED
+    const document = hooks.__testWindow.document; // ADDED
+    const select = document.createElement('select'); // ADDED
+    hooks.renderGroupedCropOptions(select, [], ''); // ADDED
+    assert.equal(select.options.length, 1); // ADDED
+    assert.equal(select.options[0].textContent, 'No crops match this filter'); // ADDED
+    assert.equal(select.options[0].disabled, true); // ADDED
+}); // ADDED
+
+test('sowing-window scoring ranks inside windows before nearest outside windows', () => { // ADDED
+    const windows = [ // ADDED
+        { id: 'spring', label: 'Spring', startISO: '2026-03-01', endISO: '2026-05-31' }, // ADDED
+        { id: 'fall', label: 'Fall', startISO: '2026-08-15', endISO: '2026-09-15' } // ADDED
+    ]; // ADDED
+    const inside = hooks.scoreSowingWindowsForDate(windows, '2026-04-01'); // ADDED
+    const before = hooks.scoreSowingWindowsForDate(windows, '2026-08-01'); // ADDED
+    const after = hooks.scoreSowingWindowsForDate(windows, '2026-09-29'); // ADDED
+    assert.equal(inside.rankClass, 0); // ADDED
+    assert.equal(inside.hint, '66% window left'); // ADDED
+    assert.equal(before.rankClass, 1); // ADDED
+    assert.equal(before.hint, 'Starts in 14d'); // CHANGED
+    assert.equal(after.rankClass, 1); // ADDED
+    assert.equal(after.hint, '14d late'); // ADDED
+}); // ADDED
+
+test('crop option sorting prefers suitability then name within lifecycle groups', () => { // ADDED
+    const crops = [ // ADDED
+        makeCrop({ plant_id: 1, plant_name: 'Late Crop', annual: 1, biennial: 0, perennial: 0 }), // ADDED
+        makeCrop({ plant_id: 2, plant_name: 'Best Crop', annual: 1, biennial: 0, perennial: 0 }), // ADDED
+        makeCrop({ plant_id: 3, plant_name: 'Near Crop', annual: 1, biennial: 0, perennial: 0 }) // ADDED
+    ]; // ADDED
+    const scores = new Map([ // ADDED
+        ['1', { rankClass: 0, percentRemaining: 25, distanceDays: 0, hint: '25% window left' }], // ADDED
+        ['2', { rankClass: 0, percentRemaining: 80, distanceDays: 0, hint: '80% window left' }], // ADDED
+        ['3', { rankClass: 1, percentRemaining: -1, distanceDays: 2, hint: 'Starts in 2d' }] // CHANGED
+    ]); // ADDED
+    const groups = hooks.buildGroupedCropOptions(hooks.makeCropPickerOptions(crops, scores), { filter: 'annual' }); // ADDED
+    assert.deepEqual(Array.from(groups[0].options, option => option.label), ['Best Crop', 'Late Crop', 'Near Crop']); // ADDED
+    assert.equal(groups[0].options[0].displayLabel, 'Best Crop - 80% window left'); // ADDED
+}); // ADDED
+
+test('perennial crop suitability is alphabetic and date-flexible', async () => { // ADDED
+    const perennial = makeCrop({ plant_id: 1, plant_name: 'Rhubarb', annual: 0, biennial: 0, perennial: 1, lifespan_years: 3 }); // ADDED
+    const score = await hooks.scoreCropSuitability(perennial, {}); // ADDED
+    assert.equal(score.hint, 'date-flexible'); // ADDED
+    const groups = hooks.buildGroupedCropOptions(hooks.makeCropPickerOptions([ // ADDED
+        makeCrop({ plant_id: 2, plant_name: 'Z Perennial', annual: 0, biennial: 0, perennial: 1, lifespan_years: 3 }), // ADDED
+        makeCrop({ plant_id: 3, plant_name: 'A Perennial', annual: 0, biennial: 0, perennial: 1, lifespan_years: 3 }) // ADDED
+    ]), { filter: 'perennial' }); // ADDED
+    assert.deepEqual(Array.from(groups[0].options, option => option.label), ['A Perennial', 'Z Perennial']); // ADDED
+}); // ADDED
+
+test('missing city fallback keeps Set Plant style options grouped alphabetically', () => { // ADDED
+    const crops = [ // ADDED
+        makeCrop({ plant_id: 1, plant_name: 'Zucchini', annual: 1, biennial: 0, perennial: 0 }), // ADDED
+        makeCrop({ plant_id: 2, plant_name: 'Arugula', annual: 1, biennial: 0, perennial: 0 }) // ADDED
+    ]; // ADDED
+    const groups = hooks.buildGroupedCropOptions(hooks.makeCropPickerOptions(crops), { filter: 'all' }); // ADDED
+    assert.equal(groups[0].label, 'Annual crops'); // ADDED
+    assert.deepEqual(Array.from(groups[0].options, option => option.label), ['Arugula', 'Zucchini']); // ADDED
+    assert.equal(groups[0].options.some(option => /window/.test(option.displayLabel)), false); // ADDED
+}); // ADDED
+
+test('crop changes preserve the visible selected date before recomputing windows', () => { // ADDED
+    assert.match(schedulerSource, /const preservedPrimaryDateISO = String\(startInput\.value \|\| ''\)\.trim\(\);/); // ADDED
+    assert.match(schedulerSource, /startInput\.value = preservedPrimaryDateISO;[\s\S]*userEditedStartThisSession = true;/); // ADDED
+    assert.match(schedulerSource, /case 'plantChanged': \{[\s\S]*await recomputeAnchors\(false, true\);/); // ADDED
+}); // ADDED
 
 function makeSummaryViewState(overrides = {}) { // ADDED
     return hooks.buildScheduleViewState({ // ADDED

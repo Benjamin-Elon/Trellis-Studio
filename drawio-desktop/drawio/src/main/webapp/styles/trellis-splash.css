@@ -1,17 +1,47 @@
 /* Trellis Studio startup presentation. */
 .geBackground.trellis-splash-backdrop { /* NEW */
-	background-color: #dfe8d2 !important; /* CHANGE */
-	background-image:
-		linear-gradient(rgba(250, 247, 237, 0.24), rgba(238, 237, 216, 0.3)),
-		var(--trellis-splash-image,
-			radial-gradient(circle at 18% 25%, rgba(129, 164, 84, 0.7), transparent 32%),
-			radial-gradient(circle at 83% 70%, rgba(69, 112, 58, 0.68), transparent 34%),
-			linear-gradient(135deg, #d7e6cf 0%, #f4edcf 48%, #b9d2a6 100%)) !important; /* CHANGE */
-	background-position: var(--trellis-workspace-left, 0px) var(--trellis-workspace-top, 0px) !important; /* CHANGE */
-	background-repeat: no-repeat !important; /* CHANGE */
-	background-size: var(--trellis-workspace-width, 100%) var(--trellis-workspace-height, 100%) !important; /* CHANGE */
+	background: transparent !important; /* CHANGE */
 	opacity: 1 !important;
 	overflow: hidden;
+}
+
+.geBackground.trellis-splash-backdrop::before { /* CHANGE */
+	background:
+		linear-gradient(rgba(250, 247, 237, 0.24), rgba(238, 237, 216, 0.3)),
+		radial-gradient(circle at 18% 25%, rgba(129, 164, 84, 0.7), transparent 32%),
+		radial-gradient(circle at 83% 70%, rgba(69, 112, 58, 0.68), transparent 34%),
+		linear-gradient(135deg, #d7e6cf 0%, #f4edcf 48%, #b9d2a6 100%); /* CHANGE */
+	content: '';
+	height: var(--trellis-workspace-height, 100%); /* CHANGE */
+	left: var(--trellis-workspace-left, 0px); /* CHANGE */
+	opacity: 1;
+	pointer-events: none;
+	position: absolute;
+	top: var(--trellis-workspace-top, 0px); /* CHANGE */
+	transition: opacity 160ms ease;
+	width: var(--trellis-workspace-width, 100%); /* CHANGE */
+	z-index: 0;
+}
+
+.geBackground.trellis-splash-backdrop.trellis-splash-has-image::before { /* CHANGE */
+	opacity: 0; /* CHANGE */
+}
+
+.trellis-splash-bg-image { /* NEW */
+	border: 0;
+	display: block !important; /* NEW */
+	height: var(--trellis-workspace-height, 100%); /* NEW */
+	left: var(--trellis-workspace-left, 0px); /* NEW */
+	max-height: none !important; /* NEW */
+	max-width: none !important; /* NEW */
+	object-fit: cover; /* NEW */
+	object-position: center; /* NEW */
+	pointer-events: none;
+	position: absolute; /* NEW */
+	top: var(--trellis-workspace-top, 0px); /* NEW */
+	user-select: none;
+	width: var(--trellis-workspace-width, 100%); /* NEW */
+	z-index: 1; /* NEW */
 }
 
 .geDialog.trellis-splash-dialog { /* NEW */
@@ -93,6 +123,7 @@
 	font-weight: 500;
 	line-height: 1.35;
 	margin: 12px 0 20px;
+	text-align: center; /* CHANGE */
 }
 
 .trellis-splash-state-intro { /* NEW */
@@ -189,8 +220,7 @@
 	transform: translateY(-1px);
 }
 
-.trellis-splash-center button:focus-visible,
-.trellis-splash-footer button:focus-visible { /* NEW */
+.trellis-splash-center button:focus-visible { /* CHANGE */
 	box-shadow: 0 0 0 3px rgba(77, 132, 48, 0.32) !important;
 	outline: 2px solid #376b25 !important;
 	outline-offset: 2px;
@@ -279,32 +309,6 @@
 	transform: translate(-50%, -50%);
 	width: min(660px, calc(100vw - 80px));
 	z-index: -1;
-}
-
-.trellis-splash-footer { /* NEW */
-	box-sizing: border-box;
-	flex: 0 0 auto;
-	margin: 4px auto 0;
-	max-width: 660px;
-	text-align: left;
-	width: 100%;
-}
-
-.trellis-splash-help { /* NEW */
-	align-items: center;
-	background: transparent;
-	border: 0;
-	color: #4e5d50;
-	cursor: pointer;
-	display: inline-flex;
-	font-size: 14px;
-	padding: 8px 0;
-}
-
-.trellis-splash-help .trellis-splash-icon { /* NEW */
-	height: 21px;
-	margin-right: 8px;
-	width: 21px;
 }
 
 .geDialog.trellis-splash-dialog.trellis-splash-compact { /* NEW */

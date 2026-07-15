@@ -226,7 +226,8 @@ contextBridge.exposeInMainWorld('dbBridge', {
 			  action: 'dbResolvePath',
 			  seedRelPath: (opts.seedRelPath == null) ? null : String(opts.seedRelPath), // NEW
 			  dbName: String(opts.dbName || 'Trellis_database.sqlite'),
-			  reset: !!opts.reset
+			  reset: !!opts.reset,
+			  createIfMissing: !!opts.createIfMissing                         // NEW
 			},
 			(data) => resolve({ ok: true, dbPath: data.dbPath }),
 			(msg)  => reject(new Error(msg || 'dbResolvePath failed'))
@@ -238,7 +239,7 @@ contextBridge.exposeInMainWorld('dbBridge', {
 	open(dbPath, opts = {}) {
 	  return new Promise((resolve, reject) => {
 		requestViaIPC(
-		  { action: 'dbOpen', dbPath, readOnly: !!opts.readOnly, pragma: opts.pragma || null },
+		  { action: 'dbOpen', dbPath, readOnly: !!opts.readOnly, fileMustExist: opts.fileMustExist !== false, pragma: opts.pragma || null }, // CHANGE
 		  (data) => resolve({ ok: true, dbId: data.dbId }),
 		  (msg)  => reject(new Error(msg || 'dbOpen failed'))
 		);

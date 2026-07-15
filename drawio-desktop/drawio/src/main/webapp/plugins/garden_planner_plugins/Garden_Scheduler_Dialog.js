@@ -121,6 +121,7 @@ Draw.loadPlugin(function (ui) {
     function daysInMonth(year, month) { return new Date(Date.UTC(year, month, 0)).getUTCDate(); }
     function addDaysUTC(d, days) { return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + days)); }
     function asUTCDate(y, m, d) { return new Date(Date.UTC(y, m - 1, d)); }
+    function daysBetweenUTC(a, b) { return Math.round((b.getTime() - a.getTime()) / (24 * 60 * 60 * 1000)); } // ADDED
     function dateLTE(d1, d2) {
         return d1.getUTCFullYear() < d2.getUTCFullYear() ||
             (d1.getUTCFullYear() === d2.getUTCFullYear() && (
@@ -1778,6 +1779,275 @@ Draw.loadPlugin(function (ui) {
     function annualSchedulerScanEndYear(plant, year) { // ADDED
         const lifecycleEndYear = Number(year) + getPlantScanYears(plant) - 1; // ADDED
         return isPerennialPlant(plant) ? lifecycleEndYear : Math.max(lifecycleEndYear, Number(year) + 1); // CHANGED
+    } // ADDED
+
+    const CROP_LIFECYCLE_FILTER_STORAGE_KEY = 'trellis.scheduler.cropLifecycleFilter'; // ADDED
+    const CROP_LIFECYCLE_ORDER = Object.freeze(['annual', 'biennial', 'perennial', 'uncategorized']); // ADDED
+    const CROP_LIFECYCLE_LABELS = Object.freeze({ // ADDED
+        annual: 'Annual crops', // ADDED
+        biennial: 'Biennial crops', // ADDED
+        perennial: 'Perennial crops', // ADDED
+        uncategorized: 'Uncategorized crops' // ADDED
+    }); // ADDED
+
+    function getCropLifecycle(plant) { // ADDED
+        const flags = [ // ADDED
+            ['annual', Number(plant?.annual) === 1], // ADDED
+            ['biennial', Number(plant?.biennial) === 1], // ADDED
+            ['perennial', Number(plant?.perennial) === 1] // ADDED
+        ].filter(([, enabled]) => enabled); // ADDED
+        return flags.length === 1 ? flags[0][0] : 'uncategorized'; // ADDED
+    } // ADDED
+
+    function normalizeCropLifecycleFilter(value) { // ADDED
+        const normalized = String(value || '').trim().toLowerCase(); // ADDED
+        return normalized === 'all' || CROP_LIFECYCLE_ORDER.indexOf(normalized) >= 0 ? normalized : 'all'; // ADDED
+    } // ADDED
+
+    function readPersistedCropLifecycleFilter() { // ADDED
+        try { // ADDED
+            const storage = typeof window !== 'undefined' ? window.localStorage : null; // ADDED
+            return normalizeCropLifecycleFilter(storage && storage.getItem(CROP_LIFECYCLE_FILTER_STORAGE_KEY)); // ADDED
+        } catch (_) { // ADDED
+            return 'all'; // ADDED
+        } // ADDED
+    } // ADDED
+
+    function persistCropLifecycleFilter(value) { // ADDED
+        const normalized = normalizeCropLifecycleFilter(value); // ADDED
+        try { // ADDED
+            const storage = typeof window !== 'undefined' ? window.localStorage : null; // ADDED
+            if (storage) storage.setItem(CROP_LIFECYCLE_FILTER_STORAGE_KEY, normalized); // ADDED
+        } catch (_) { } // ADDED
+        return normalized; // ADDED
+    } // ADDED
+
+    function buildLifecycleFilterControl(initialValue = null) { // ADDED
+        const sel = document.createElement('select'); // ADDED
+        sel.style.padding = '6px'; // ADDED
+        sel.style.maxWidth = '132px'; // ADDED
+        [ // ADDED
+            ['all', 'All types'], // ADDED
+            ['annual', 'Annual'], // ADDED
+            ['biennial', 'Biennial'], // ADDED
+            ['perennial', 'Perennial'], // ADDED
+            ['uncategorized', 'Uncategorized'] // ADDED
+        ].forEach(([value, label]) => { // ADDED
+            const opt = document.createElement('option'); // ADDED
+            opt.value = value; // ADDED
+            opt.textContent = label; // ADDED
+            sel.appendChild(opt); // ADDED
+        }); // ADDED
+        sel.value = normalizeCropLifecycleFilter(initialValue || readPersistedCropLifecycleFilter()); // ADDED
+        sel.addEventListener('change', () => { persistCropLifecycleFilter(sel.value); }); // ADDED
+        setTooltip(sel, 'Filter crop choices by lifecycle. This preference is shared by Scheduler and Set Plant.'); // ADDED
+        return sel; // ADDED
+    } // ADDED
+
+    function cropPickerBaseLabel(plant) { // ADDED
+        const name = String(plant?.plant_name || plant?.name || plant?.abbr || plant?.plant_id || '').trim(); // ADDED
+        const abbr = String(plant?.abbr || '').trim(); // ADDED
+        return name + (abbr && abbr !== name ? ` (${abbr})` : ''); // ADDED
+    } // ADDED
+
+    function inferMethodCategoryFromMethodId(methodId) { // ADDED
+        const normalized = normId(methodId); // ADDED
+        if (normalized.indexOf('.') > 0) return normalized.split('.')[0]; // ADDED
+        return ''; // ADDED
+    } // ADDED
+
+    function resolveCandidateMethodSelection(plant) { // ADDED
+        const methodId = normId(plant?.default_planting_method || ''); // ADDED
+        const methodCategoryId = normId(plant?.default_planting_method_category || inferMethodCategoryFromMethodId(methodId)); // ADDED
+        const attempts = [ // ADDED
+            { methodCategoryId, methodId }, // ADDED
+            { methodCategoryId: 'direct_sow', methodId: 'direct_sow.field' } // ADDED
+        ]; // ADDED
+        for (const attempt of attempts) { // ADDED
+            try { // ADDED
+                return resolveMethodBehavior(attempt); // ADDED
+            } catch (_) { } // ADDED
+        } // ADDED
+        return null; // ADDED
+    } // ADDED
+
+    function scoreSowingWindowsForDate(windows, selectedISO) { // ADDED
+        const selected = parseISODateUTCValue(selectedISO); // ADDED
+        const normalized = normalizeSowingSeasons(windows); // ADDED
+        if (!selected || !normalized.length) return { rankClass: 3, hint: '', percentRemaining: -1, distanceDays: Infinity, selectedWindow: null }; // ADDED
+        let outside = null; // ADDED
+        for (const windowRow of normalized) { // ADDED
+            const start = parseISODateUTCValue(windowRow.startISO); // ADDED
+            const end = parseISODateUTCValue(windowRow.endISO); // ADDED
+            if (!start || !end) continue; // ADDED
+            if (selected >= start && selected <= end) { // ADDED
+                const totalDays = Math.max(1, daysBetweenUTC(start, end)); // ADDED
+                const remainingDays = Math.max(0, daysBetweenUTC(selected, end)); // ADDED
+                const percentRemaining = Math.max(0, Math.min(100, Math.round((remainingDays / totalDays) * 100))); // ADDED
+                return { rankClass: 0, hint: `${percentRemaining}% window left`, percentRemaining, distanceDays: 0, selectedWindow: windowRow }; // ADDED
+            } // ADDED
+            const beforeDays = Math.abs(daysBetweenUTC(selected, start)); // ADDED
+            const afterDays = Math.abs(daysBetweenUTC(selected, end)); // ADDED
+            const candidate = selected < start // ADDED
+                ? { rankClass: 1, hint: `Starts in ${beforeDays}d`, percentRemaining: -1, distanceDays: beforeDays, selectedWindow: windowRow } // CHANGED
+                : { rankClass: 1, hint: `${afterDays}d late`, percentRemaining: -1, distanceDays: afterDays, selectedWindow: windowRow }; // CHANGED
+            if (!outside || candidate.distanceDays < outside.distanceDays) outside = candidate; // ADDED
+        } // ADDED
+        return outside || { rankClass: 3, hint: '', percentRemaining: -1, distanceDays: Infinity, selectedWindow: null }; // ADDED
+    } // ADDED
+
+    function makeCropSuitabilityCache() { // ADDED
+        return { dailyClimateByKey: new Map() }; // ADDED
+    } // ADDED
+
+    async function loadSuitabilityDailyClimate(city, scanStart, scanEndHard, climatePolicy, cache) { // ADDED
+        const key = `${city?.city_id ?? (city?.city_name || '')}|${fmtISO(scanStart)}|${fmtISO(scanEndHard)}|${JSON.stringify(climatePolicy || {})}`; // ADDED
+        if (cache && cache.dailyClimateByKey.has(key)) return cache.dailyClimateByKey.get(key); // ADDED
+        const dailyClimate = await city.loadDailyClimateModel({ scanStart, scanEndHard, climatePolicy }); // ADDED
+        if (cache) cache.dailyClimateByKey.set(key, dailyClimate); // ADDED
+        return dailyClimate; // ADDED
+    } // ADDED
+
+    async function scoreCropSuitability(plant, context = {}) { // ADDED
+        const lifecycle = getCropLifecycle(plant); // ADDED
+        const label = cropPickerBaseLabel(plant); // ADDED
+        if (lifecycle === 'perennial') return { lifecycle, label, rankClass: 2, hint: 'date-flexible', percentRemaining: -1, distanceDays: Infinity }; // ADDED
+        const city = context.city || null; // ADDED
+        const primaryDateISO = String(context.primaryDateISO || '').trim(); // ADDED
+        if (!city || !primaryDateISO) return { lifecycle, label, rankClass: 3, hint: '', percentRemaining: -1, distanceDays: Infinity }; // ADDED
+        try { // ADDED
+            const method = resolveCandidateMethodSelection(plant); // ADDED
+            if (!method) throw new Error('No supported planting method.'); // ADDED
+            const transplantDays = plantDefaultTransplantDays(plant); // ADDED
+            requireEffectiveTransplantDays(method.methodId, transplantDays); // ADDED
+            const effectivePlant = applyEffectiveTransplantDaysToPlant(plant, transplantDays); // ADDED
+            const selectedSowISO = sowDateFromPrimaryDate(primaryDateISO, method.methodId, transplantDays); // ADDED
+            const selectedDate = parseISODateUTCValue(selectedSowISO); // ADDED
+            const seasonStartYear = Number.isFinite(Number(context.seasonStartYear)) // ADDED
+                ? Math.trunc(Number(context.seasonStartYear)) // ADDED
+                : (selectedDate ? selectedDate.getUTCFullYear() : (new Date()).getUTCFullYear()); // ADDED
+            const scanStart = asUTCDate(seasonStartYear, 1, 1); // ADDED
+            const scanEndHard = asUTCDate(annualSchedulerScanEndYear(effectivePlant, seasonStartYear), 12, 31); // ADDED
+            const climateResolution = resolveClimateModelPolicy(context.climateModelModuleCell || null, city.city_name || context.cityName || '', effectivePlant.plant_id, null); // ADDED
+            const climatePolicy = climateResolution.effective; // ADDED
+            const env = effectivePlant.cropTempEnvelope(); // ADDED
+            const dailyClimate = await loadSuitabilityDailyClimate(city, scanStart, scanEndHard, climatePolicy, context.cache); // ADDED
+            const windows = annualCore.computeAnnualSowingSeasons({ // ADDED
+                methodCategoryId: method.methodCategoryId, // ADDED
+                methodId: method.methodId, // ADDED
+                budget: effectivePlant.firstHarvestBudget(), // ADDED
+                HW_DAYS: resolveHarvestWindowDays(null, effectivePlant), // ADDED
+                dailyRatesMap: city.dailyRates(env.Tbase, seasonStartYear, climatePolicy), // ADDED
+                monthlyAvgTemp: city.monthlyMeans(), // ADDED
+                dailyClimate, // ADDED
+                Tbase: env.Tbase, // ADDED
+                cropTemp: env, // ADDED
+                scanStart, // ADDED
+                scanEndHard, // ADDED
+                soilGateThresholdC: finiteNumberOrNull(effectivePlant.soil_temp_min_plant_c), // ADDED
+                soilGateConsecutiveDays: climatePolicy.soilGateConsecutiveDays, // ADDED
+                startCoolingThresholdC: asCoolingThresholdC(effectivePlant.start_cooling_threshold_c), // ADDED
+                useSpringFrostGate: true, // ADDED
+                lastSpringFrostDOY: pickFrostByRisk(city, climatePolicy.springFrostRisk), // ADDED
+                daysTransplant: transplantDays, // ADDED
+                overwinterAllowed: isCrossYearCrop(effectivePlant), // ADDED
+                plantMetadata: effectivePlant, // ADDED
+                cityLatitudeDeg: finiteNumberOrNull(city.latitude ?? city.lat), // ADDED
+                bedProfile: context.bedProfile || normalizeBedProfile(null), // ADDED
+                bedProfileSource: context.bedProfileSource || 'generic garden bed' // ADDED
+            }).seasons; // ADDED
+            return { lifecycle, label, ...scoreSowingWindowsForDate(windows, selectedSowISO) }; // ADDED
+        } catch (e) { // ADDED
+            return { lifecycle, label, rankClass: 3, hint: '', percentRemaining: -1, distanceDays: Infinity, error: String(e?.message || e) }; // ADDED
+        } // ADDED
+    } // ADDED
+
+    function compareCropPickerOptions(left, right) { // ADDED
+        const lScore = left.score || {}; // ADDED
+        const rScore = right.score || {}; // ADDED
+        const lLifecycle = getCropLifecycle(left.plant); // ADDED
+        const rLifecycle = getCropLifecycle(right.plant); // ADDED
+        if (lLifecycle === 'perennial' || rLifecycle === 'perennial') return String(left.label || '').localeCompare(String(right.label || '')); // ADDED
+        const rankDelta = Number(lScore.rankClass ?? 3) - Number(rScore.rankClass ?? 3); // ADDED
+        if (rankDelta) return rankDelta; // ADDED
+        if (Number(lScore.rankClass) === 0) { // ADDED
+            const percentDelta = Number(rScore.percentRemaining ?? -1) - Number(lScore.percentRemaining ?? -1); // ADDED
+            if (percentDelta) return percentDelta; // ADDED
+        } // ADDED
+        if (Number(lScore.rankClass) === 1) { // ADDED
+            const distanceDelta = Number(lScore.distanceDays ?? Infinity) - Number(rScore.distanceDays ?? Infinity); // ADDED
+            if (distanceDelta) return distanceDelta; // ADDED
+        } // ADDED
+        return String(left.label || '').localeCompare(String(right.label || '')); // ADDED
+    } // ADDED
+
+    function makeCropPickerOptions(plants, scoreByPlantId = new Map()) { // ADDED
+        return (plants || []).map(plant => { // ADDED
+            const label = cropPickerBaseLabel(plant); // ADDED
+            const score = scoreByPlantId.get(String(plant?.plant_id)) || null; // ADDED
+            return { // ADDED
+                value: String(plant?.plant_id), // ADDED
+                label, // ADDED
+                displayLabel: score?.hint ? `${label} - ${score.hint}` : label, // ADDED
+                lifecycle: getCropLifecycle(plant), // ADDED
+                plant, // ADDED
+                score // ADDED
+            }; // ADDED
+        }); // ADDED
+    } // ADDED
+
+    function buildGroupedCropOptions(options, { filter = 'all', selectedValue = '', includeSelectedWhenFiltered = true } = {}) { // ADDED
+        const normalizedFilter = normalizeCropLifecycleFilter(filter); // ADDED
+        const selected = String(selectedValue || ''); // ADDED
+        const byLifecycle = { annual: [], biennial: [], perennial: [], uncategorized: [] }; // ADDED
+        let selectedOption = null; // ADDED
+        (options || []).forEach(option => { // ADDED
+            if (String(option.value) === selected) selectedOption = option; // ADDED
+            if (normalizedFilter !== 'all' && option.lifecycle !== normalizedFilter) return; // ADDED
+            byLifecycle[option.lifecycle || 'uncategorized'].push(option); // ADDED
+        }); // ADDED
+        Object.keys(byLifecycle).forEach(key => byLifecycle[key].sort(compareCropPickerOptions)); // ADDED
+        const groups = []; // ADDED
+        const visibleHasSelected = selected && CROP_LIFECYCLE_ORDER.some(key => byLifecycle[key].some(option => String(option.value) === selected)); // ADDED
+        if (includeSelectedWhenFiltered && selectedOption && !visibleHasSelected) groups.push({ label: 'Current selection', options: [selectedOption] }); // ADDED
+        CROP_LIFECYCLE_ORDER.forEach(key => { // ADDED
+            if (byLifecycle[key].length) groups.push({ label: CROP_LIFECYCLE_LABELS[key], options: byLifecycle[key] }); // ADDED
+        }); // ADDED
+        return groups; // ADDED
+    } // ADDED
+
+    function renderGroupedCropOptions(selectEl, groups, selectedValue = '') { // ADDED
+        selectEl.innerHTML = ''; // ADDED
+        const selected = String(selectedValue || ''); // ADDED
+        if (!(groups || []).some(group => group.options && group.options.length)) { // ADDED
+            const opt = document.createElement('option'); // ADDED
+            opt.value = ''; // ADDED
+            opt.textContent = 'No crops match this filter'; // ADDED
+            opt.disabled = true; // ADDED
+            selectEl.appendChild(opt); // ADDED
+            return; // ADDED
+        } // ADDED
+        (groups || []).forEach(groupSpec => { // ADDED
+            const group = document.createElement('optgroup'); // ADDED
+            group.label = groupSpec.label; // ADDED
+            (groupSpec.options || []).forEach(optionSpec => { // ADDED
+                const opt = document.createElement('option'); // ADDED
+                opt.value = String(optionSpec.value); // ADDED
+                opt.textContent = optionSpec.displayLabel || optionSpec.label; // ADDED
+                group.appendChild(opt); // ADDED
+            }); // ADDED
+            if (group.children.length) selectEl.appendChild(group); // ADDED
+        }); // ADDED
+        if (selected && Array.from(selectEl.options).some(option => option.value === selected)) selectEl.value = selected; // ADDED
+    } // ADDED
+
+    async function scoreCropPickerOptions(plants, context = {}) { // ADDED
+        const cache = context.cache || makeCropSuitabilityCache(); // ADDED
+        const scoreByPlantId = new Map(); // ADDED
+        for (const plant of (plants || [])) { // ADDED
+            scoreByPlantId.set(String(plant?.plant_id), await scoreCropSuitability(plant, { ...context, cache })); // ADDED
+        } // ADDED
+        return makeCropPickerOptions(plants, scoreByPlantId); // ADDED
     } // ADDED
 
 
@@ -5470,13 +5740,9 @@ Draw.loadPlugin(function (ui) {
         async function reloadPlantsList() {
             const prev = plantSel.value;
             plantsLocal = await PlantModel.listBasic();
-            const opts = (plantsLocal || []).map(p => ({
-                value: String(p.plant_id),
-                label: p.plant_name + (p.abbr ? ` (${p.abbr})` : '')
-            }));
-            setSelectOptions(plantSel, opts, prev);
-            if (!findPlantById(Number(plantSel.value)) && opts[0]) {
-                plantSel.value = String(opts[0].value);
+            renderSchedulerCropPicker(makeCropPickerOptions(plantsLocal), prev); // CHANGED
+            if (!findPlantById(Number(plantSel.value)) && plantsLocal[0]) { // CHANGED
+                plantSel.value = String(plantsLocal[0].plant_id); // CHANGED
             }
         }
 
@@ -5636,13 +5902,30 @@ Draw.loadPlugin(function (ui) {
         } // CHANGED
 
         // Plant selector
-        const plantOpts = (plantsLocal || []).map(p => ({ value: String(p.plant_id), label: p.plant_name + (p.abbr ? ` (${p.abbr})` : '') }));
-        const plantSel = makeSelect(plantOpts, plantOpts[0]?.value);
+        let currentCropPickerOptions = makeCropPickerOptions(plantsLocal); // ADDED
+        const lifecycleFilterSel = buildLifecycleFilterControl(); // ADDED
+        const plantSel = document.createElement('select'); // CHANGED
+        plantSel.style.width = '100%'; // ADDED
+        plantSel.style.padding = '6px'; // ADDED
+        plantSel.style.flex = '1'; // ADDED
+
+        function renderSchedulerCropPicker(pickerOptions = currentCropPickerOptions, selectedValue = plantSel.value) { // ADDED
+            currentCropPickerOptions = pickerOptions || []; // ADDED
+            const groups = buildGroupedCropOptions(currentCropPickerOptions, { // ADDED
+                filter: lifecycleFilterSel.value, // ADDED
+                selectedValue, // ADDED
+                includeSelectedWhenFiltered: true // ADDED
+            }); // ADDED
+            renderGroupedCropOptions(plantSel, groups, selectedValue); // ADDED
+        } // ADDED
+
+        renderSchedulerCropPicker(currentCropPickerOptions, String(initialPlant?.plant_id ?? plantsLocal[0]?.plant_id ?? '')); // ADDED
 
         const plantControlsWrap = document.createElement('div');
         plantControlsWrap.style.display = 'flex';
         plantControlsWrap.style.gap = '8px';
         plantControlsWrap.style.alignItems = 'center';
+        plantControlsWrap.appendChild(lifecycleFilterSel); // ADDED
         plantControlsWrap.appendChild(plantSel);
 
         const addPlantBtn = styleCompactActionButton(inlineButton('+', async () => { // CHANGED
@@ -5693,7 +5976,7 @@ Draw.loadPlugin(function (ui) {
 
         const findPlantById = (id) => (plantsLocal || []).find(p => Number(p.plant_id) === Number(id)) || null;
 
-        const fallbackId = (plantOpts[0] ? Number(plantOpts[0].value) : null);
+        const fallbackId = Number.isFinite(Number(plantSel.value)) ? Number(plantSel.value) : (plantsLocal[0] ? Number(plantsLocal[0].plant_id) : null); // CHANGED
         const initId = Number.isFinite(Number(initialPlant?.plant_id))
             ? Number(initialPlant.plant_id)
             : fallbackId;
@@ -6218,6 +6501,43 @@ Draw.loadPlugin(function (ui) {
 
         function displaySowingSeasons() { // ADDED
             return projectSowingSeasonsForPrimaryDate(formState.sowingSeasons, formState.methodId, currentTransplantDaysConfig().effectiveDays); // ADDED
+        } // ADDED
+
+        let schedulerCropPickerRefreshTimer = null; // ADDED
+        let schedulerCropPickerRefreshVersion = 0; // ADDED
+
+        async function refreshSchedulerCropPickerSuitability() { // ADDED
+            const refreshVersion = ++schedulerCropPickerRefreshVersion; // ADDED
+            const selectedValue = plantSel.value; // ADDED
+            try { // ADDED
+                const city = await CityClimate.resolve({ cityId: formState.cityId, cityName: formState.cityName }); // ADDED
+                const context = city ? { // ADDED
+                    city, // ADDED
+                    cityName: formState.cityName, // ADDED
+                    primaryDateISO: startInput.value || displayPrimaryDateISO(formState.startISO), // ADDED
+                    seasonStartYear: formState.seasonStartYear, // ADDED
+                    climateModelModuleCell, // ADDED
+                    bedProfile: formState.bedProfile, // ADDED
+                    bedProfileSource: formState.bedProfileSource, // ADDED
+                    cache: makeCropSuitabilityCache() // ADDED
+                } : null; // ADDED
+                const nextOptions = context // ADDED
+                    ? await scoreCropPickerOptions(plantsLocal, context) // ADDED
+                    : makeCropPickerOptions(plantsLocal); // ADDED
+                if (refreshVersion !== schedulerCropPickerRefreshVersion) return; // ADDED
+                renderSchedulerCropPicker(nextOptions, selectedValue); // ADDED
+            } catch (e) { // ADDED
+                console.warn('[Scheduler] Crop suitability ranking failed; falling back to grouped crop order.', e); // ADDED
+                if (refreshVersion === schedulerCropPickerRefreshVersion) renderSchedulerCropPicker(makeCropPickerOptions(plantsLocal), selectedValue); // ADDED
+            } // ADDED
+        } // ADDED
+
+        function scheduleCropPickerSuitabilityRefresh(delayMs = 160) { // ADDED
+            if (schedulerCropPickerRefreshTimer) clearTimeout(schedulerCropPickerRefreshTimer); // ADDED
+            schedulerCropPickerRefreshTimer = setTimeout(() => { // ADDED
+                schedulerCropPickerRefreshTimer = null; // ADDED
+                void refreshSchedulerCropPickerSuitability(); // ADDED
+            }, Math.max(0, Number(delayMs) || 0)); // ADDED
         } // ADDED
 
         function syncStartInputFromState() { // ADDED
@@ -6965,7 +7285,7 @@ Draw.loadPlugin(function (ui) {
             switch (reason) {
 
                 case 'varietyChanged': {
-                    await recomputeAnchors(true, true); // CHANGED
+                    await recomputeAnchors(false, true); // CHANGED: crop changes preserve the visible selected date.
                     await recomputeLastHarvestFromSchedule();
                     break;
                 }
@@ -6980,7 +7300,7 @@ Draw.loadPlugin(function (ui) {
 
                 case 'plantChanged': {
                     // City/method/plant change → respect user sow date if dirty
-                    await recomputeAnchors(true, true); // CHANGED
+                    await recomputeAnchors(false, true); // CHANGED: crop changes preserve the visible selected date.
 
                     await recomputeLastHarvestFromSchedule();
                     break;
@@ -7284,6 +7604,8 @@ Draw.loadPlugin(function (ui) {
         } // CHANGED
 
         async function handleSchedulePlantChange({ preferVarietyId = null } = {}) { // FIX: provide an awaitable schedule plant workflow
+            const preservedPrimaryDateISO = String(startInput.value || '').trim(); // ADDED
+            const preservePrimaryDate = !!parseISODateUTCValue(preservedPrimaryDateISO); // ADDED
             const newPlant = findPlantById(Number(plantSel.value)); if (!newPlant) return;
             selPlant = newPlant; plantNameSpan.textContent = newPlant.plant_name;
 
@@ -7321,6 +7643,10 @@ Draw.loadPlugin(function (ui) {
             formState.harvestWindowDays = (harvestWindowInput.value === '' ? null : Number(harvestWindowInput.value));
 
 
+            if (preservePrimaryDate) { // ADDED
+                startInput.value = preservedPrimaryDateISO; // ADDED
+                userEditedStartThisSession = true; // ADDED
+            } // ADDED
             syncStateFromControls();
             refreshClimateModelControls({ preserveDraft: false }); // ADDED
 
@@ -7334,6 +7660,7 @@ Draw.loadPlugin(function (ui) {
             // Let the orchestrator recompute feasibility + schedule                      
             await recomputeAll('plantChanged');
             await refreshTaskTemplateFromSelection();
+            scheduleCropPickerSuitabilityRefresh(); // ADDED
         }
 
         async function handleScheduleVarietyChange() { // FIX: provide an awaitable schedule variety workflow
@@ -7353,8 +7680,14 @@ Draw.loadPlugin(function (ui) {
             formState.harvestWindowDays = (harvestWindowInput.value === '' ? null : Number(harvestWindowInput.value));
             await recomputeAll('varietyChanged');
             await refreshTaskTemplateFromSelection();
+            scheduleCropPickerSuitabilityRefresh(); // ADDED
 
         }
+
+        lifecycleFilterSel.addEventListener('change', () => { // ADDED
+            renderSchedulerCropPicker(currentCropPickerOptions, plantSel.value); // ADDED
+            scheduleCropPickerSuitabilityRefresh(0); // ADDED
+        }); // ADDED
 
         plantSel.addEventListener('change', () => {
             void runUiAsync('Plant change error', async () => { // FIX: clear stale inline warnings before crop recompute
@@ -7383,6 +7716,7 @@ Draw.loadPlugin(function (ui) {
                 } else {
                     await recomputeAll('startChanged');
                 }
+                scheduleCropPickerSuitabilityRefresh(); // ADDED
             });
         });
 
@@ -7413,6 +7747,7 @@ Draw.loadPlugin(function (ui) {
         seasonYearInput.addEventListener('input', () => {
             void runUiAsync('Year change error', async () => { // FIX
                 await recomputeAll('yearChanged');
+                scheduleCropPickerSuitabilityRefresh(); // ADDED
             });
         });
 
@@ -7421,6 +7756,7 @@ Draw.loadPlugin(function (ui) {
                 syncStateFromControls();
                 await recomputeAll('hwChanged');
                 await refreshTaskTemplateFromSelection();
+                scheduleCropPickerSuitabilityRefresh(); // ADDED
             });
         });
 
@@ -7439,6 +7775,7 @@ Draw.loadPlugin(function (ui) {
                 updateTransplantDaysControls(); // ADDED
                 await recomputeAll('methodChanged'); // ADDED
                 await refreshTaskTemplateFromSelection(); // ADDED
+                scheduleCropPickerSuitabilityRefresh(); // ADDED
             }); // ADDED
         } // ADDED
 
@@ -7450,6 +7787,7 @@ Draw.loadPlugin(function (ui) {
                 syncStateFromControls(); // ADDED
                 refreshClimateModelControls({ preserveDraft: false }); // ADDED
                 await recomputeAll('cityChanged');
+                scheduleCropPickerSuitabilityRefresh(); // ADDED
             });
         });
 
@@ -7466,6 +7804,7 @@ Draw.loadPlugin(function (ui) {
                 syncStateFromControls(); // ADDED
                 await recomputeAll('methodChanged'); // ADDED
                 await refreshTaskTemplateFromSelection(); // ADDED
+                scheduleCropPickerSuitabilityRefresh(); // ADDED
                 updateTasksHeader({ // ADDED
                     methodCategorySel, // ADDED
                     methodSel, // ADDED
@@ -7491,6 +7830,7 @@ Draw.loadPlugin(function (ui) {
 
                 await recomputeAll('methodChanged');
                 await refreshTaskTemplateFromSelection();
+                scheduleCropPickerSuitabilityRefresh(); // ADDED
                 updateTasksHeader({
                     methodCategorySel, // CHANGED
                     methodSel,
@@ -7511,6 +7851,7 @@ Draw.loadPlugin(function (ui) {
                 syncStateFromControls();
                 await recomputeAll('methodChanged');
                 await refreshTaskTemplateFromSelection();
+                scheduleCropPickerSuitabilityRefresh(); // ADDED
                 updateTasksHeader({
                     methodCategorySel, // CHANGED
                     methodSel,
@@ -8672,6 +9013,7 @@ Draw.loadPlugin(function (ui) {
         // INITIAL RENDER
         renderTasksList();
         setActiveTabButton(scheduleTabBtn); // NEW
+        scheduleCropPickerSuitabilityRefresh(0); // ADDED
 
         ui.showDialog(tabsContainer, 1120, 720, true, true); // CHANGED
         elevateTrellisDialog(ui); // NEW
@@ -10043,6 +10385,14 @@ Draw.loadPlugin(function (ui) {
         const schedule = result.schedule; // NEW
         const timelines = result.timelines; // NEW
 
+        function runTrellisHistoryTransaction(metadata, operation) { // NEW
+            const history = typeof window !== "undefined" && window.Trellis && window.Trellis.history; // NEW
+            if (history && typeof history.run === "function" && !(typeof history.isRestoring === "function" && history.isRestoring())) { // NEW
+                return history.run(metadata, operation); // NEW
+            } // NEW
+            return operation(); // NEW
+        } // NEW
+
         async function emitTasksForPlan({
             method,
             plant,
@@ -10056,38 +10406,40 @@ Draw.loadPlugin(function (ui) {
             methodId = null,
             taskTemplate = null // FIX
         }) {
-            const tasks = await buildTasksForPlan({
-                method,
-                plant,
-                cell,
-                schedule,
-                timelines,
-                taskTemplate,
-                plantId,
-                varietyId,
-                varietyName, // ADDED
-                methodCategoryId,
-                methodId
-            });
+            return runTrellisHistoryTransaction({ category: "Garden scheduling", action: "emitTasks", origin: "Garden_Scheduler_Dialog", title: "Generate schedule tasks", affectedCellIds: [cell && cell.id].filter(Boolean), tags: ["Tasks"] }, async function () { // NEW
+                const tasks = await buildTasksForPlan({
+                    method,
+                    plant,
+                    cell,
+                    schedule,
+                    timelines,
+                    taskTemplate,
+                    plantId,
+                    varietyId,
+                    varietyName, // ADDED
+                    methodCategoryId,
+                    methodId
+                });
 
-        const detail = {
-                mode: options.taskDispatchMode || "replace", // CHANGED
-                tasks,
-                plantName: plant.plant_name,
-                varietyName: String(varietyName || ''), // ADDED
-                targetGroupId: cell.id
-            };
+                const detail = {
+                    mode: options.taskDispatchMode || "replace", // CHANGED
+                    tasks,
+                    plantName: plant.plant_name,
+                    varietyName: String(varietyName || ''), // ADDED
+                    targetGroupId: cell.id
+                };
 
-            if (typeof CustomEvent !== "function") {
-                throw new Error("Cannot emit scheduled tasks: CustomEvent is unavailable."); // FIX: task emission is required for save success
-            }
-            if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") {
-                throw new Error("Cannot emit scheduled tasks: window.dispatchEvent is unavailable."); // FIX: task emission is required for save success
-            }
+                if (typeof CustomEvent !== "function") {
+                    throw new Error("Cannot emit scheduled tasks: CustomEvent is unavailable."); // FIX: task emission is required for save success
+                }
+                if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") {
+                    throw new Error("Cannot emit scheduled tasks: window.dispatchEvent is unavailable."); // FIX: task emission is required for save success
+                }
 
-            window.dispatchEvent(new CustomEvent("tasksCreated", { detail })); // FIX: propagate dispatch failures to the save flow
+                window.dispatchEvent(new CustomEvent("tasksCreated", { detail })); // FIX: propagate dispatch failures to the save flow
 
-            return tasks;
+                return tasks;
+            }); // NEW
         }
 
         const graph = ui.editor.graph;
@@ -10458,6 +10810,25 @@ Draw.loadPlugin(function (ui) {
         const model = graph.getModel(); // ADDED
         const allPlants = await PlantModel.listBasic(); // ADDED
         if (!allPlants.length) { mxUtils.alert('No plants found in database.'); return; } // ADDED
+        const gardenParent = findGardenModuleAncestor(model, cell); // ADDED
+        const today = new Date(); // ADDED
+        const todayISO = fmtISO(asUTCDate(today.getUTCFullYear(), today.getUTCMonth() + 1, today.getUTCDate())); // ADDED
+        const cityId = finiteNumberOrNull(cell?.getAttribute?.('city_id')) ?? finiteNumberOrNull(gardenParent?.getAttribute?.('city_id')); // ADDED
+        const cityName = String(cell?.getAttribute?.('city_name') || gardenParent?.getAttribute?.('city_name') || '').trim(); // ADDED
+        const setPlantCity = (cityId != null || cityName) ? await CityClimate.resolve({ cityId, cityName }) : null; // ADDED
+        const setPlantBedContext = resolveScheduleBedContext(cell); // ADDED
+        let setPlantCropOptions = setPlantCity // ADDED
+            ? await scoreCropPickerOptions(allPlants, { // ADDED
+                city: setPlantCity, // ADDED
+                cityName: setPlantCity.city_name || cityName, // ADDED
+                primaryDateISO: todayISO, // ADDED
+                seasonStartYear: today.getUTCFullYear(), // ADDED
+                climateModelModuleCell: gardenParent, // ADDED
+                bedProfile: setPlantBedContext.profile, // ADDED
+                bedProfileSource: setPlantBedContext.source, // ADDED
+                cache: makeCropSuitabilityCache() // ADDED
+            }) // ADDED
+            : makeCropPickerOptions(allPlants); // ADDED
 
         const div = document.createElement('div'); // ADDED
         div.style.padding = '12px'; // ADDED
@@ -10468,16 +10839,25 @@ Draw.loadPlugin(function (ui) {
         title.style.marginBottom = '8px'; // ADDED
         div.appendChild(title); // ADDED
 
+        const filterSel = buildLifecycleFilterControl(); // ADDED
+        filterSel.style.margin = '8px 0 0 0'; // ADDED
+        div.appendChild(filterSel); // ADDED
+
         const sel = document.createElement('select'); // ADDED
         sel.style.width = '100%'; // ADDED
         sel.style.padding = '6px'; // ADDED
         sel.style.margin = '8px 0'; // ADDED
-        allPlants.forEach(p => { // ADDED
-            const opt = document.createElement('option'); // ADDED
-            opt.value = String(p.plant_id); // ADDED
-            opt.textContent = p.plant_name + (p.abbr ? ` (${p.abbr})` : ''); // ADDED
-            sel.appendChild(opt); // ADDED
-        }); // ADDED
+        function renderSetPlantCropPicker(selectedValue = sel.value) { // ADDED
+            const groups = buildGroupedCropOptions(setPlantCropOptions, { // ADDED
+                filter: filterSel.value, // ADDED
+                selectedValue, // ADDED
+                includeSelectedWhenFiltered: true // ADDED
+            }); // ADDED
+            renderGroupedCropOptions(sel, groups, selectedValue); // ADDED
+        } // ADDED
+        const initialSetPlantId = String(cell?.getAttribute?.('plant_id') || allPlants[0]?.plant_id || ''); // ADDED
+        renderSetPlantCropPicker(initialSetPlantId); // ADDED
+        filterSel.addEventListener('change', () => renderSetPlantCropPicker(sel.value)); // ADDED
         div.appendChild(sel); // ADDED
 
         const btns = document.createElement('div'); // ADDED
@@ -10487,13 +10867,13 @@ Draw.loadPlugin(function (ui) {
 
         const ok = mxUtils.button('OK', async () => { // ADDED
             const id = Number(sel.value); // ADDED
+            if (!Number.isFinite(id)) { mxUtils.alert('Select a plant.'); return; } // ADDED
             const row = await PlantModel.loadById(id); // ADDED
             if (!row) { mxUtils.alert('Plant not found.'); return; } // ADDED
             ui.hideDialog(); // ADDED
 
             model.beginUpdate(); // ADDED
             try { // ADDED
-                const gardenParent = findGardenModuleAncestor(model, cell); // ADDED
                 if (gardenParent) { // ADDED
                     const inheritedCityId = gardenParent.getAttribute('city_id'); // ADDED
                     const inheritedCity = gardenParent.getAttribute('city_name'); // ADDED
@@ -10519,7 +10899,7 @@ Draw.loadPlugin(function (ui) {
         btns.appendChild(ok); // ADDED
         btns.appendChild(cancel); // ADDED
         div.appendChild(btns); // ADDED
-        ui.showDialog(div, 440, 220, true, true); // ADDED
+        ui.showDialog(div, 440, 260, true, true); // CHANGED
         elevateTrellisDialog(ui); // NEW
     } // ADDED
 
@@ -10913,6 +11293,18 @@ Draw.loadPlugin(function (ui) {
             computePerennialLifespanEndISO,
             firstCoolingCrossingDate: annualCore.firstCoolingCrossingDate, // CHANGED
             getPlantScanYears,
+            getCropLifecycle, // ADDED
+            buildLifecycleFilterControl, // ADDED
+            buildGroupedCropOptions, // ADDED
+            renderGroupedCropOptions, // ADDED
+            makeCropPickerOptions, // ADDED
+            scoreSowingWindowsForDate, // ADDED
+            scoreCropSuitability, // ADDED
+            scoreCropPickerOptions, // ADDED
+            compareCropPickerOptions, // ADDED
+            normalizeCropLifecycleFilter, // ADDED
+            persistCropLifecycleFilter, // ADDED
+            readPersistedCropLifecycleFilter, // ADDED
             resolveHarvestWindowDays,
             resolveInitialMethodSelection,
             resolveMethodBehavior,

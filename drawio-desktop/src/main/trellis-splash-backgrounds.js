@@ -6,16 +6,6 @@ const MIN_SPLASH_BACKGROUND_WIDTH = 1000; // NEW
 const MIN_SPLASH_BACKGROUND_HEIGHT = 500; // NEW
 const MIN_SPLASH_BACKGROUND_ASPECT_RATIO = 1.4; // NEW
 
-function logTrellisSplash(message, details) { // NEW
-	if (details == null) console.info('[trellis-splash] ' + message); // NEW
-	else console.info('[trellis-splash] ' + message, details); // NEW
-} // NEW
-
-function warnTrellisSplash(message, details) { // NEW
-	if (details == null) console.warn('[trellis-splash] ' + message); // NEW
-	else console.warn('[trellis-splash] ' + message, details); // NEW
-} // NEW
-
 function readPngSize(buffer) { // NEW
 	if (buffer.length < 24 || buffer.toString('ascii', 1, 4) !== 'PNG') return null; // NEW
 	return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20), format: 'png' }; // NEW
@@ -79,18 +69,10 @@ async function validateSplashBackgroundCandidate(directoryPath, filename) { // N
 		const size = readImageSize(await fs.readFile(filePath)); // NEW
 		const rejectionReason = getSplashBackgroundRejectionReason(size); // NEW
 		if (rejectionReason != null) { // NEW
-			warnTrellisSplash('splash background candidate rejected', { filename, filePath, size, reason: rejectionReason }); // NEW
 			return null; // NEW
 		} // NEW
-		logTrellisSplash('splash background candidate accepted', { filename, filePath, size }); // NEW
 		return filename; // NEW
 	} catch (error) { // NEW
-		warnTrellisSplash('splash background candidate read failed', { // NEW
-			filename, // NEW
-			filePath, // NEW
-			message: error != null ? error.message : String(error), // NEW
-			code: error != null ? error.code : undefined // NEW
-		}); // NEW
 		return null; // NEW
 	} // NEW
 } // NEW
@@ -100,7 +82,6 @@ async function validateSplashBackgroundCandidate(directoryPath, filename) { // N
  * Missing or unreadable directories intentionally behave like an empty gallery.
  */
 export async function listTrellisSplashBackgrounds(directoryPath) { // NEW
-	logTrellisSplash('scanning splash background directory', { directoryPath }); // NEW
 	try { // NEW
 		const entries = await fs.readdir(directoryPath, { withFileTypes: true }); // NEW
 		const supportedFilenames = entries // NEW
@@ -112,19 +93,8 @@ export async function listTrellisSplashBackgrounds(directoryPath) { // NEW
 			validateSplashBackgroundCandidate(directoryPath, filename)))) // NEW
 			.filter((filename) => filename != null); // NEW
 
-		logTrellisSplash('splash background directory listed', { // NEW
-			directoryPath, // NEW
-			entryCount: entries.length, // NEW
-			supportedFilenames, // CHANGE
-			validBackgroundFilenames: filenames // NEW
-		}); // NEW
 		return filenames; // CHANGE
 	} catch (error) { // NEW
-		warnTrellisSplash('splash background directory read failed', { // NEW
-			directoryPath, // NEW
-			message: error != null ? error.message : String(error), // NEW
-			code: error != null ? error.code : undefined // NEW
-		}); // NEW
 		return []; // NEW
 	} // NEW
 } // NEW
@@ -135,13 +105,11 @@ export async function listTrellisSplashBackgrounds(directoryPath) { // NEW
  */
 export function chooseTrellisSplashBackground(filenames, random = Math.random) { // NEW
 	if (!Array.isArray(filenames) || filenames.length === 0) { // CHANGE
-		logTrellisSplash('no supported splash backgrounds available', { filenames }); // NEW
 		return null; // NEW
 	} // NEW
 
 	const sample = Math.max(0, Math.min(0.9999999999999999, Number(random()) || 0)); // NEW
 	const selected = filenames[Math.floor(sample * filenames.length)]; // NEW
-	logTrellisSplash('selected splash background', { filenames, sample, selected }); // NEW
 	return selected; // CHANGE
 } // NEW
 
@@ -154,16 +122,10 @@ export function createTrellisSplashBackgroundSelector(directoryPath, random = Ma
 
 	return function getSelectedTrellisSplashBackground() { // NEW
 		if (selectionPromise == null) { // NEW
-			logTrellisSplash('initializing cached splash background selection', { directoryPath }); // NEW
 			selectionPromise = listTrellisSplashBackgrounds(directoryPath).then((filenames) => // NEW
 				chooseTrellisSplashBackground(filenames, random)); // NEW
-		} else { // NEW
-			logTrellisSplash('using cached splash background selection', { directoryPath }); // NEW
 		} // NEW
 
-		return selectionPromise.then((selected) => { // CHANGE
-			logTrellisSplash('returning splash background selection', { selected }); // NEW
-			return selected; // NEW
-		}); // NEW
+		return selectionPromise; // CHANGE
 	}; // NEW
 } // NEW

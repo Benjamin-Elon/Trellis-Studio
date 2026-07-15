@@ -114,6 +114,12 @@ test("custom Trellis dialogs render at the Draw.io dialog layer", () => { // NEW
     assert.match(taskManager, /dlg\.container\.style\.zIndex = String\(TRELLIS_DIALOG_Z\)/); // NEW
     assert.match(taskManager, /dlg\.bg\.style\.zIndex = String\(TRELLIS_DIALOG_Z - 1\)/); // NEW
     assert.equal((taskManager.match(/ui\.showDialog\(/g) || []).length, 1); // NEW
+    const gardenBeds = readPlugin("Garden_Beds.js"); // NEW
+    assert.match(gardenBeds, /const TRELLIS_DIALOG_Z = 2000000000;/); // NEW
+    assert.match(gardenBeds, /function elevateBedConditionsDialog\(\)/); // NEW
+    assert.match(gardenBeds, /dlg\.container\.style\.zIndex = String\(TRELLIS_DIALOG_Z\)/); // NEW
+    assert.match(gardenBeds, /dlg\.bg\.style\.zIndex = String\(TRELLIS_DIALOG_Z - 1\)/); // NEW
+    assert.equal((gardenBeds.match(/ui\.showDialog\(/g) || []).length, (gardenBeds.match(/elevateBedConditionsDialog\(\)/g) || []).length - 1); // NEW
 }); // NEW
 
 test("non-control graph overlays stay below controls", () => { // NEW

@@ -167,7 +167,9 @@ test("Trellis database restore bridge and default plugin registration are wired"
     assert.doesNotMatch(electronSource, /fs\.unlinkSync\(dbPath\)/);
     assert.doesNotMatch(electronSource, /fs\.renameSync\(tempPath, dbPath\)/);
     assert.doesNotMatch(electronSource, /fs\.unlinkSync\(livePath\)/);
-    assert.match(electronSource, /restoreBuiltInTrellisDatabase\(\{ dbName, seedRelPath: seedRel \}\)\.dbPath/);
+    assert.match(electronSource, /restoreBuiltInTrellisDatabase\(\{ dbName, seedRelPath: effectiveSeedRel \}\)\.dbPath/); // CHANGE
+    assert.match(electronSource, /ensureCreatedDb\(livePath\)/); // NEW
+    assert.match(preloadSource, /createIfMissing: !!opts\.createIfMissing/); // NEW
 
     assert.match(appSource, /'trellisDatabaseTools': 'plugins\/garden_planner_plugins\/Trellis_Database_Tools\.js'/);
     assert.match(appSource, /'trellisUiCleanup': 'plugins\/garden_planner_plugins\/Trellis_UI_Cleanup\.js'/); // NEW
