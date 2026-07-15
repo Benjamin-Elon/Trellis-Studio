@@ -247,8 +247,8 @@ function loadShowSplashHarness(options = {}) {
         }
     };
     app.getServiceCount = () => 1;
-    app.showDialog = function (container, width, height, modal, closable, closeCallback) {
-        calls.showDialog = { container, width, height, modal, closable, closeCallback };
+    app.showDialog = function (container, width, height, modal, closable, closeCallback, noScroll, transparent, minSize, ignoreBgClick) {
+        calls.showDialog = { container, width, height, modal, closable, closeCallback, noScroll, transparent, minSize, ignoreBgClick }; // CHANGE
     };
     app.createFile = function (...args) {
         calls.createFile.push(args);
@@ -469,6 +469,7 @@ test("Incomplete splash dismissal requests exit and does not create a blank diag
     const { calls } = loadShowSplashHarness({ complete: false });
     const result = calls.showDialog.closeCallback(true, false);
 
+    assert.equal(calls.showDialog.ignoreBgClick, true); // NEW
     assert.equal(result, false);
     assert.equal(calls.exitRequests.length, 1);
     assert.equal(calls.exitRequests[0].action, "exit");
@@ -481,6 +482,7 @@ test("Completed splash dismissal preserves blank diagram creation", () => {
     const { calls, context } = loadShowSplashHarness({ complete: true });
     const result = calls.showDialog.closeCallback(true, false);
 
+    assert.equal(calls.showDialog.ignoreBgClick, true); // NEW
     assert.equal(result, undefined);
     assert.equal(calls.exitRequests.length, 0);
     assert.equal(calls.exitMessages, 0);
@@ -506,7 +508,7 @@ test("SplashDialog source and bundle use oath wizard storage, close hook, valida
 	assert.match(dialogSource, /isTrellisNewEmailValid/); // NEW
     assert.match(dialogSource, /pointerRunawayDistance = 120/);
     assert.match(dialogSource, /I Affirm the Oath/);
-	assert.match(appSource, /showDialog\(dlg\.container, 700, 630/); // CHANGE
+	assert.match(appSource, /showDialog\(dlg\.container, 700, 630[\s\S]*true, null, null, true/); // CHANGE
     assert.match(appSource, /showTrellisExitMessage/);
     assert.match(bundledSource, /trellis\.licenseWizard\.v/);
     assert.ok(bundledBindingIndex >= 0);
@@ -515,10 +517,10 @@ test("SplashDialog source and bundle use oath wizard storage, close hook, valida
     assert.match(bundledSource, /isTrellisWizardRecordValid/);
 	assert.match(bundledSource, /isTrellisNewEmailValid/); // NEW
     assert.match(bundledSource, /pointerRunawayDistance = 120/);
-	assert.match(bundledSource, /showDialog\(p\.container,700,630/); // CHANGE
+	assert.match(bundledSource, /showDialog\(p\.container,700,630[\s\S]*!0,null,null,!0/); // CHANGE
 });
 
-test("Trellis splash enhancement adds the branded shell, saved-state structure, actions, and Help-only footer", () => { // CHANGE
+test("Trellis splash enhancement adds the branded shell, saved-state structure, and actions without the Help row", () => { // CHANGE
     const { dialog, getHelpCalls } = loadSplashDialog({ // NEW
 		savedRecord: makeSavedRecord({ email: "Barneywilson@gmail." }), // CHANGE
         helpAction: true, // NEW
@@ -543,10 +545,10 @@ test("Trellis splash enhancement adds the branded shell, saved-state structure, 
     assert.ok(openButton.classList.contains("trellis-secondary-action")); // NEW
     assert.ok(createButton.querySelector("svg")); // NEW
     assert.ok(openButton.querySelector("svg")); // NEW
-    assert.ok(helpButton); // NEW
+    assert.equal(helpButton, undefined); // CHANGE
+    assert.equal(dialog.container.querySelector(".trellis-splash-footer"), null); // NEW
+    assert.equal(getHelpCalls(), 0); // CHANGE
     assert.doesNotMatch(dialog.container.textContent, /Settings|Language/); // NEW
-    helpButton.click(); // NEW
-    assert.equal(getHelpCalls(), 1); // NEW
 }); // NEW
 
 test("Trellis splash outer decoration stays below app chrome and applies a validated background", () => { // NEW
@@ -585,9 +587,10 @@ test("Trellis splash outer decoration stays below app chrome and applies a valid
 	assert.equal(outerContainer.style.getPropertyValue("--trellis-workspace-center-y"), "457px"); // NEW
 	assert.equal(outerContainer.style.getPropertyValue("--trellis-splash-dialog-width"), "760px"); // NEW
 	assert.equal(outerContainer.style.getPropertyValue("--trellis-splash-dialog-height"), "603.12px"); // NEW
-	assert.equal(outerContainer.classList.contains("trellis-splash-compact"), false); // NEW
+    assert.equal(outerContainer.classList.contains("trellis-splash-compact"), false); // NEW
     assert.equal(requests[0].action, "getTrellisSplashBackground"); // NEW
     assert.match(backdrop.style.getPropertyValue("--trellis-splash-image"), /garden%20view\.webp/); // NEW
+    assert.match(backdrop.querySelector(".trellis-splash-bg-image").getAttribute("src"), /garden%20view\.webp/); // NEW
     assert.equal(closeButton.getAttribute("aria-label"), "Continue with a blank diagram"); // NEW
 }); // NEW
 
@@ -665,9 +668,7 @@ test("Trellis splash tries the packaged default before Electron selection", () =
 	const outerContainer = dom.window.document.createElement("div"); // NEW
 	const backdrop = dom.window.document.createElement("div"); // NEW
 	const requestedSources = []; // NEW
-	const infoLogs = []; // NEW
 	context.electron = { request(payload, callback) { callback(null); } }; // NEW
-	context.console = Object.assign({}, console, { info() { infoLogs.push(Array.from(arguments)); } }); // NEW
 	dom.window.Image = class { // NEW
 		set src(value) { // NEW
 			requestedSources.push(value); // NEW
@@ -681,15 +682,13 @@ test("Trellis splash tries the packaged default before Electron selection", () =
 	assert.deepEqual(requestedSources, ["images/trellis-splash/trellis-garden-sunrise.png"]); // NEW
 	assert.ok(backdrop.classList.contains("trellis-splash-has-image")); // NEW
 	assert.match(backdrop.style.getPropertyValue("--trellis-splash-image"), /trellis-garden-sunrise\.png/); // NEW
-	assert.ok(infoLogs.some((entry) => String(entry[0]).includes("background image loaded"))); // NEW
+	assert.match(backdrop.querySelector(".trellis-splash-bg-image").getAttribute("src"), /trellis-garden-sunrise\.png/); // NEW
 }); // NEW
 
-test("Trellis splash logs image load failures without setting the background", () => { // NEW
+test("Trellis splash handles image load failures without setting the background", () => { // CHANGE
 	const { dom, dialog, context, editorUi } = loadSplashDialog(); // NEW
 	const outerContainer = dom.window.document.createElement("div"); // NEW
 	const backdrop = dom.window.document.createElement("div"); // NEW
-	const warnLogs = []; // NEW
-	context.console = Object.assign({}, console, { warn() { warnLogs.push(Array.from(arguments)); } }); // NEW
 	dom.window.Image = class { // NEW
 		set src(_value) { // NEW
 			this.onerror({ type: "error" }); // NEW
@@ -701,7 +700,7 @@ test("Trellis splash logs image load failures without setting the background", (
 
 	assert.equal(backdrop.style.getPropertyValue("--trellis-splash-image"), ""); // NEW
 	assert.equal(backdrop.classList.contains("trellis-splash-has-image"), false); // NEW
-	assert.ok(warnLogs.some((entry) => String(entry[0]).includes("background image failed to load"))); // NEW
+	assert.equal(backdrop.querySelector(".trellis-splash-bg-image"), null); // NEW
 }); // NEW
 
 test("Trellis splash assets and bootstrap wire the same enhancement into packaged runtime", () => { // NEW
@@ -713,12 +712,15 @@ test("Trellis splash assets and bootstrap wire the same enhancement into package
     const enhancementIndex = indexSource.indexOf('src="js/trellis-splash.js"'); // NEW
     const bootstrapIndex = indexSource.indexOf('src="js/bootstrap.js"'); // NEW
 
-    assert.match(enhancementSource, /Build systems that grow/); // NEW
-    assert.match(enhancementSource, /getTrellisSplashBackground/); // NEW
+	assert.match(enhancementSource, /Build systems that grow/); // NEW
+	assert.match(enhancementSource, /getTrellisSplashBackground/); // NEW
 	assert.match(splashCss, /trellis-splash-dialog\.trellis-splash-compact/); // CHANGE
-	assert.doesNotMatch(splashCss, /trellis-splash-backdrop::before/); // NEW
-	assert.match(splashCss, /var\(--trellis-splash-image/); // NEW
-	assert.match(splashCss, /background-size: var\(--trellis-workspace-width, 100%\) var\(--trellis-workspace-height, 100%\) !important/); // NEW
+	assert.match(splashCss, /trellis-splash-backdrop::before/); // CHANGE
+	assert.match(splashCss, /\.trellis-splash-bg-image/); // NEW
+	assert.match(splashCss, /object-fit: cover/); // NEW
+	assert.match(splashCss, /\.trellis-splash-tagline[\s\S]*text-align: center/); // NEW
+	assert.match(splashCss, /width: var\(--trellis-workspace-width, 100%\)/); // CHANGE
+	assert.match(enhancementSource, /trellis-splash-bg-image/); // NEW
 	assert.doesNotMatch(splashCss, /max-height: 820px/); // NEW
 	assert.match(splashCss, /top: var\(--trellis-workspace-top/); // NEW
 	assert.match(splashCss, /height: var\(--trellis-splash-dialog-height, 690px\) !important/); // CHANGE

@@ -46,7 +46,6 @@
 		var paths = { // NEW
 			create: ['M6 3h8l5 5v13H6z', 'M14 3v5h5', 'M12.5 11v6', 'M9.5 14h6'], // NEW
 			open: ['M3 7h7l2 2h9v10H3z', 'M3 7V5h7l2 2'], // NEW
-			help: ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z', 'M9.7 9a2.4 2.4 0 1 1 3.5 2.1c-.9.5-1.2 1-1.2 2', 'M12 17h.01'], // NEW
 			user: ['M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', 'M4 21a8 8 0 0 1 16 0'] // NEW
 		}; // NEW
 
@@ -192,24 +191,6 @@
 		} // NEW
 	} // NEW
 
-	function createHelpFooter(editorUi, container) { // NEW
-		var action = editorUi.actions != null && editorUi.actions.get != null ? // NEW
-			editorUi.actions.get('trellisUpdatesLinks') : null; // NEW
-
-		if (action == null || action.funct == null) return; // NEW
-
-		var footer = container.ownerDocument.createElement('div'); // NEW
-		var helpButton = container.ownerDocument.createElement('button'); // NEW
-		footer.className = 'trellis-splash-footer'; // NEW
-		helpButton.className = 'trellis-splash-help'; // NEW
-		helpButton.setAttribute('type', 'button'); // NEW
-		helpButton.appendChild(createIcon(container.ownerDocument, 'help')); // NEW
-		helpButton.appendChild(container.ownerDocument.createTextNode('Help')); // NEW
-		helpButton.addEventListener('click', function() { action.funct(); }); // NEW
-		footer.appendChild(helpButton); // NEW
-		container.appendChild(footer); // NEW
-	} // NEW
-
 	function removeLanguageControl(container) { // NEW
 		var languageControls = container.querySelectorAll('.geAdaptiveAsset'); // NEW
 
@@ -224,7 +205,6 @@
 		addClass(baseSplashDialog.container, 'trellis-splash-root'); // NEW
 		baseSplashDialog.container.trellisSplashDialog = baseSplashDialog; // NEW
 		removeLanguageControl(baseSplashDialog.container); // NEW
-		createHelpFooter(editorUi, baseSplashDialog.container); // NEW
 		decorateRenderedState(baseSplashDialog); // NEW
 		baseSplashDialog.container.addEventListener('click', function() { // NEW
 			decorateRenderedState(baseSplashDialog); // NEW
@@ -237,83 +217,65 @@
 			filename == filename.replace(/^.*[\\\\\/]/, '') && /\.(webp|jpe?g|png)$/i.test(filename); // NEW
 	} // NEW
 
-	function writeSplashLog(method, message, details) { // NEW
-		if (typeof console == 'undefined') return; // NEW
-		var logger = console[method] || console.log; // NEW
-		if (typeof logger != 'function') return; // NEW
-		var text = '[trellis-splash] ' + message; // NEW
-		if (details == null) logger.call(console, text); // NEW
-		else logger.call(console, text, details); // NEW
-	} // NEW
-
-	function logSplash(message, details) { // NEW
-		writeSplashLog('info', message, details); // NEW
-	} // NEW
-
-	function warnSplash(message, details) { // NEW
-		writeSplashLog('warn', message, details); // NEW
-	} // NEW
-
 	function getSplashImagePath() { // NEW
 		return typeof IMAGE_PATH != 'undefined' && IMAGE_PATH ? IMAGE_PATH : 'images'; // NEW
 	} // NEW
 
+	function getSplashBackgroundLayer(backdrop) { // NEW
+		if (backdrop == null || typeof document == 'undefined' || document.createElement == null) return null; // CHANGE
+		var layer = backdrop.querySelector != null ? backdrop.querySelector('.trellis-splash-bg-image') : null; // NEW
+
+		if (layer == null) { // NEW
+			layer = document.createElement('img'); // NEW
+			layer.className = 'trellis-splash-bg-image'; // NEW
+			layer.alt = ''; // NEW
+			layer.setAttribute('aria-hidden', 'true'); // NEW
+			layer.draggable = false; // NEW
+			if (backdrop.insertBefore != null) backdrop.insertBefore(layer, backdrop.firstChild); // NEW
+			else if (backdrop.appendChild != null) backdrop.appendChild(layer); // NEW
+		} // NEW
+
+		return layer; // NEW
+	} // NEW
+
 	function applyBackgroundFilename(backdrop, filename) { // NEW
-		logSplash('background filename requested', { filename: filename }); // NEW
 		if (!isSafeBackgroundFilename(filename)) { // CHANGE
-			warnSplash('background filename rejected', { filename: filename }); // NEW
 			return; // NEW
 		} // NEW
 		if (window.Image == null) { // NEW
-			warnSplash('window.Image unavailable; cannot preload background', { filename: filename }); // NEW
 			return; // NEW
 		} // NEW
 
 		var imagePath = getSplashImagePath(); // NEW
 		var backgroundUrl = imagePath + '/trellis-splash/' + encodeURIComponent(filename); // CHANGE
-		logSplash('background URL generated', { imagePath: imagePath, backgroundUrl: backgroundUrl }); // NEW
 		var image = new window.Image(); // NEW
 		image.decoding = 'async'; // NEW
 		image.onload = function() { // NEW
+			var layer = getSplashBackgroundLayer(backdrop); // NEW
+			if (layer != null) layer.src = backgroundUrl; // NEW
 			backdrop.style.setProperty('--trellis-splash-image', 'url("' + backgroundUrl + '")'); // NEW
 			addClass(backdrop, 'trellis-splash-has-image'); // NEW
-			logSplash('background image loaded', { // NEW
-				backgroundUrl: backgroundUrl, // NEW
-				cssImage: backdrop.style.getPropertyValue('--trellis-splash-image'), // NEW
-				hasImageClass: backdrop.classList != null && backdrop.classList.contains('trellis-splash-has-image') // NEW
-			}); // NEW
 		}; // NEW
 		image.onerror = function(event) { // CHANGE
-			warnSplash('background image failed to load', { // NEW
-				backgroundUrl: backgroundUrl, // NEW
-				eventType: event != null ? event.type : null, // NEW
-				existingCssImage: backdrop.style.getPropertyValue('--trellis-splash-image') // NEW
-			}); // NEW
 			if (!backdrop.style.getPropertyValue('--trellis-splash-image')) { // CHANGE
 				backdrop.style.removeProperty('--trellis-splash-image'); // NEW
 				removeClass(backdrop, 'trellis-splash-has-image'); // NEW
+				var layer = backdrop.querySelector != null ? backdrop.querySelector('.trellis-splash-bg-image') : null; // NEW
+				if (layer != null) layer.removeAttribute('src'); // NEW
 			} // NEW
 		}; // NEW
 		image.src = backgroundUrl; // NEW
 	} // NEW
 
 	function requestBackground(backdrop) { // NEW
-		logSplash('requesting splash background', { // NEW
-			location: window.location != null ? window.location.href : null, // NEW
-			imagePath: getSplashImagePath(), // NEW
-			defaultFilename: defaultSplashBackgroundFilename // NEW
-		}); // NEW
 		applyBackgroundFilename(backdrop, defaultSplashBackgroundFilename); // NEW
 		if (typeof electron == 'undefined' || electron.request == null) { // CHANGE
-			warnSplash('electron.request unavailable; using renderer default only'); // NEW
 			return; // NEW
 		} // NEW
 
 		electron.request({ action: 'getTrellisSplashBackground' }, function(filename) { // NEW
-			logSplash('electron selected splash background', { filename: filename }); // NEW
 			applyBackgroundFilename(backdrop, filename); // NEW
 		}, function(error) { // CHANGE
-			warnSplash('electron splash background request failed', { error: error }); // NEW
 			if (!backdrop.style.getPropertyValue('--trellis-splash-image')) { // CHANGE
 				backdrop.style.removeProperty('--trellis-splash-image'); // NEW
 			} // NEW
