@@ -5,6 +5,7 @@ const test = require('node:test');
 
 const {
     loadSchedulerHooks,
+    makeCity, // ADDED
     makeInputs,
     makePlant
 } = require('./helpers/garden-scheduler-harness.cjs');
@@ -117,6 +118,107 @@ test('missing city fallback keeps Set Plant style options grouped alphabetically
     assert.equal(groups[0].label, 'Annual crops'); // ADDED
     assert.deepEqual(Array.from(groups[0].options, option => option.label), ['Arugula', 'Zucchini']); // ADDED
     assert.equal(groups[0].options.some(option => /window/.test(option.displayLabel)), false); // ADDED
+}); // ADDED
+
+test('date-only crop-menu scoring reuses cached windows instead of queueing recomputation', async () => { // ADDED
+    const cache = hooks.makeCropSuitabilityCache(); // ADDED
+    hooks.clearCropSuitabilityCache(cache); // ADDED
+    const city = makeCity(hooks); // ADDED
+    const crop = makeCrop({ plant_id: 11, plant_name: 'Cache Crop', annual: 1, biennial: 0, perennial: 0 }); // ADDED
+    const baseContext = { city, cityName: city.city_name, primaryDateISO: '2026-04-01', seasonStartYear: 2026, cache }; // ADDED
+    const first = await hooks.scoreCropSuitability(crop, baseContext); // ADDED
+    assert.equal(first.pending, undefined); // ADDED
+    assert.equal(cache.windowsByKey.size, 1); // ADDED
+    const second = await hooks.scoreCropSuitability(crop, { ...baseContext, primaryDateISO: '2026-04-15', deferMissingWindows: true }); // ADDED
+    assert.equal(second.pending, undefined); // ADDED
+    assert.equal(cache.pendingByKey.size, 0); // ADDED
+    assert.equal(cache.queue.length, 0); // ADDED
+    assert.equal(cache.windowsByKey.size, 1); // ADDED
+}); // ADDED
+
+test('pending annual crop options render calculating hints and remain selectable', async () => { // ADDED
+    const cache = hooks.makeCropSuitabilityCache(); // ADDED
+    hooks.clearCropSuitabilityCache(cache); // ADDED
+    const city = makeCity(hooks); // ADDED
+    const crop = makeCrop({ plant_id: 12, plant_name: 'Pending Crop', annual: 1, biennial: 0, perennial: 0 }); // ADDED
+    const options = await hooks.scoreCropPickerOptions([crop], { // ADDED
+        city, // ADDED
+        cityName: city.city_name, // ADDED
+        primaryDateISO: '2026-04-01', // ADDED
+        seasonStartYear: 2026, // ADDED
+        cache, // ADDED
+        deferMissingWindows: true // ADDED
+    }); // ADDED
+    assert.equal(options[0].displayLabel, 'Pending Crop - calculating'); // ADDED
+    assert.equal(options[0].score.pending, true); // ADDED
+    const groups = hooks.buildGroupedCropOptions(options, { filter: 'annual', selectedValue: '12' }); // ADDED
+    assert.equal(groups[0].options[0].value, '12'); // ADDED
+    assert.equal(cache.pendingByKey.size, 1); // ADDED
+}); // ADDED
+
+test('crop suitability cache key changes with full growing context', () => { // ADDED
+    const city = makeCity(hooks); // ADDED
+    const crop = makeCrop({ plant_id: 13, plant_name: 'Key Crop', annual: 1, biennial: 0, perennial: 0 }); // ADDED
+    const base = { city, cityName: city.city_name, seasonStartYear: 2026, bedProfile: hooks.normalizeBedProfile(null), bedProfileSource: 'generic garden bed' }; // ADDED
+    const same = hooks.makeCropWindowCacheKey(crop, { ...base }); // ADDED
+    const bedChanged = hooks.makeCropWindowCacheKey(crop, { ...base, bedProfile: hooks.normalizeBedProfile({ soil: 'raised' }), bedProfileSource: 'raised bed' }); // ADDED
+    const yearChanged = hooks.makeCropWindowCacheKey(crop, { ...base, seasonStartYear: 2027 }); // ADDED
+    assert.equal(hooks.makeCropWindowCacheKey(crop, { ...base }), same); // ADDED
+    assert.notEqual(bedChanged, same); // ADDED
+    assert.notEqual(yearChanged, same); // ADDED
+}); // ADDED
+
+test('selected-crop date fast path selects containing cached sowing season', () => { // ADDED
+    const state = { // ADDED
+        windowFeasible: true, // ADDED
+        startISO: '2026-03-15', // ADDED
+        activeSowingSeasonId: 'spring', // ADDED
+        sowingSeasons: [ // ADDED
+            { id: 'spring', label: 'Spring', startISO: '2026-03-01', endISO: '2026-05-31' }, // ADDED
+            { id: 'fall', label: 'Fall', startISO: '2026-08-15', endISO: '2026-09-15' } // ADDED
+        ] // ADDED
+    }; // ADDED
+    const result = hooks.applyDateToExistingSowingWindows(state, { startISO: '2026-08-20' }); // ADDED
+    assert.equal(result.applied, true); // ADDED
+    assert.equal(state.activeSowingSeasonId, 'fall'); // ADDED
+    assert.equal(result.classification.status, 'feasible'); // ADDED
+}); // ADDED
+
+test('selected-crop date fast path preserves active season when outside cached windows', () => { // ADDED
+    const state = { // ADDED
+        windowFeasible: true, // ADDED
+        startISO: '2026-03-15', // ADDED
+        activeSowingSeasonId: 'spring', // ADDED
+        sowingSeasons: [ // ADDED
+            { id: 'spring', label: 'Spring', startISO: '2026-03-01', endISO: '2026-05-31' }, // ADDED
+            { id: 'fall', label: 'Fall', startISO: '2026-08-15', endISO: '2026-09-15' } // ADDED
+        ] // ADDED
+    }; // ADDED
+    const result = hooks.applyDateToExistingSowingWindows(state, { startISO: '2026-07-01' }); // ADDED
+    assert.equal(result.applied, true); // ADDED
+    assert.equal(state.activeSowingSeasonId, 'spring'); // ADDED
+    assert.equal(result.classification.status, 'outside_window'); // ADDED
+}); // ADDED
+
+test('missing selected-crop cached windows require anchor recomputation fallback', () => { // ADDED
+    const result = hooks.applyDateToExistingSowingWindows({ windowFeasible: true, sowingSeasons: [], activeSowingSeasonId: '' }, { startISO: '2026-04-01' }); // ADDED
+    assert.equal(result.applied, false); // ADDED
+    assert.equal(result.reason, 'missing cached windows'); // ADDED
+}); // ADDED
+
+test('date and filter handlers use cached fast paths', () => { // ADDED
+    assert.match(schedulerSource, /case 'startChanged':[\s\S]*applySelectedDateOnlyFastPath\(\)[\s\S]*await recomputeAnchors\(false, false\);/); // ADDED
+    assert.ok(schedulerSource.includes('renderSchedulerCropPicker(currentCropPickerOptions, currentCropPickerSelectedValue); // CHANGED')); // CHANGED
+    assert.ok(!schedulerSource.includes("lifecycleFilterSel.addEventListener('change', () => { // ADDED\r\n            renderSchedulerCropPicker(currentCropPickerOptions, plantSel.value); // ADDED\r\n            scheduleCropPickerSuitabilityRefresh(0); // ADDED")); // ADDED
+}); // ADDED
+
+test('crop picker selection stays fresh across async refreshes', () => { // ADDED
+    assert.match(schedulerSource, /let currentCropPickerSelectedValue = String\(initialPlant\?\.plant_id \?\? plantsLocal\[0\]\?\.plant_id \?\? ''\);/); // ADDED
+    assert.match(schedulerSource, /function renderSchedulerCropPicker\(pickerOptions = currentCropPickerOptions, selectedValue = currentCropPickerSelectedValue\)/); // ADDED
+    assert.doesNotMatch(schedulerSource, /async function refreshSchedulerCropPickerSuitability\(\) \{[\s\S]*const selectedValue = plantSel\.value;/); // ADDED
+    assert.match(schedulerSource, /renderSchedulerCropPicker\(nextOptions, currentCropPickerSelectedValue\);/); // ADDED
+    assert.match(schedulerSource, /plantSel\.addEventListener\('change', \(\) => \{[\s\S]*currentCropPickerSelectedValue = String\(plantSel\.value \|\| ''\);[\s\S]*schedulerCropPickerRefreshVersion \+= 1;[\s\S]*renderSchedulerCropPicker\(currentCropPickerOptions, currentCropPickerSelectedValue\);[\s\S]*await handleSchedulePlantChange\(\);/); // ADDED
+    assert.match(schedulerSource, /formState\.plantId = Number\(plantSel\.value\);[\s\S]*currentCropPickerSelectedValue = String\(formState\.plantId \|\| ''\);/); // ADDED
 }); // ADDED
 
 test('crop changes preserve the visible selected date before recomputing windows', () => { // ADDED

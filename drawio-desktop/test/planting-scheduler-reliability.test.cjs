@@ -3396,6 +3396,6 @@ test('scheduler clears stale no-window warning after feasible crop recovery', ()
     assert.ok(noWindowIndex >= 0, 'infeasible anchors should still show the no-window warning');
     assert.ok(clearRecoveryIndex > noWindowIndex, 'feasible recovery should clear the prior no-window warning');
     assert.ok(successReturnIndex > clearRecoveryIndex, 'the warning should clear immediately before anchor success');
-    assert.match(source, /plantSel\.addEventListener\('change',\s*\(\)\s*=>\s*\{\s*void runUiAsync\('Plant change error',\s*async \(\)\s*=>\s*\{\s*\/\/ FIX: clear stale inline warnings before crop recompute\s*await handleSchedulePlantChange\(\);\s*\}\);\s*\}\);/s);
+    assert.match(source, /plantSel\.addEventListener\('change',\s*\(\)\s*=>\s*\{[\s\S]*currentCropPickerSelectedValue = String\(plantSel\.value \|\| ''\);[\s\S]*schedulerCropPickerRefreshVersion \+= 1;[\s\S]*renderSchedulerCropPicker\(currentCropPickerOptions, currentCropPickerSelectedValue\);[\s\S]*void runUiAsync\('Plant change error',\s*async \(\)\s*=>\s*\{\s*\/\/ FIX: clear stale inline warnings before crop recompute\s*await handleSchedulePlantChange\(\);/s); // CHANGED
     assert.match(source, /varietySel\.addEventListener\('change',\s*\(\)\s*=>\s*\{\s*void runUiAsync\('Variety change error',\s*async \(\)\s*=>\s*\{\s*\/\/ FIX: clear stale inline warnings before variety recompute\s*await handleScheduleVarietyChange\(\);\s*\}\);\s*\}\);/s);
 });

@@ -1896,8 +1896,117 @@ Draw.loadPlugin(function (ui) {
         return outside || { rankClass: 3, hint: '', percentRemaining: -1, distanceDays: Infinity, selectedWindow: null }; // ADDED
     } // ADDED
 
-    function makeCropSuitabilityCache() { // ADDED
-        return { dailyClimateByKey: new Map() }; // ADDED
+    const SHARED_CROP_SUITABILITY_CACHE = { // ADDED
+        dailyClimateByKey: new Map(), // ADDED
+        windowsByKey: new Map(), // ADDED
+        pendingByKey: new Map(), // ADDED
+        errorsByKey: new Map(), // ADDED
+        queue: [], // ADDED
+        queueRunning: false, // ADDED
+        listeners: new Set() // ADDED
+    }; // ADDED
+
+    function makeCropSuitabilityCache() { // CHANGED
+        return SHARED_CROP_SUITABILITY_CACHE; // CHANGED
+    } // CHANGED
+
+    function clearCropSuitabilityCache(cache = makeCropSuitabilityCache()) { // ADDED
+        if (!cache) return; // ADDED
+        cache.dailyClimateByKey?.clear?.(); // ADDED
+        cache.windowsByKey?.clear?.(); // ADDED
+        cache.pendingByKey?.clear?.(); // ADDED
+        cache.errorsByKey?.clear?.(); // ADDED
+        if (Array.isArray(cache.queue)) cache.queue.length = 0; // ADDED
+        cache.queueRunning = false; // ADDED
+    } // ADDED
+
+    function stableStringifyCropCacheValue(value) { // ADDED
+        if (value == null || typeof value !== 'object') return JSON.stringify(value); // ADDED
+        if (Array.isArray(value)) return `[${value.map(stableStringifyCropCacheValue).join(',')}]`; // ADDED
+        return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableStringifyCropCacheValue(value[key])}`).join(',')}}`; // ADDED
+    } // ADDED
+
+    function cropSuitabilityPlantSignature(plant) { // ADDED
+        return stableStringifyCropCacheValue({ // ADDED
+            plant_id: plant?.plant_id ?? null, // ADDED
+            annual: Number(plant?.annual) || 0, // ADDED
+            biennial: Number(plant?.biennial) || 0, // ADDED
+            perennial: Number(plant?.perennial) || 0, // ADDED
+            overwinter_ok: Number(plant?.overwinter_ok) || 0, // ADDED
+            default_planting_method: normId(plant?.default_planting_method || ''), // ADDED
+            default_planting_method_category: normId(plant?.default_planting_method_category || ''), // ADDED
+            days_transplant: finiteNumberOrNull(plant?.days_transplant), // ADDED
+            days_maturity: finiteNumberOrNull(plant?.days_maturity), // ADDED
+            gdd_to_maturity: finiteNumberOrNull(plant?.gdd_to_maturity), // ADDED
+            harvest_window_days: finiteNumberOrNull(plant?.harvest_window_days), // ADDED
+            tbase_c: finiteNumberOrNull(plant?.tbase_c), // ADDED
+            tmin_c: finiteNumberOrNull(plant?.tmin_c), // ADDED
+            topt_low_c: finiteNumberOrNull(plant?.topt_low_c), // ADDED
+            topt_high_c: finiteNumberOrNull(plant?.topt_high_c), // ADDED
+            tmax_c: finiteNumberOrNull(plant?.tmax_c), // ADDED
+            killtemp_c: finiteNumberOrNull(plant?.killtemp_c), // ADDED
+            soil_temp_min_plant_c: finiteNumberOrNull(plant?.soil_temp_min_plant_c), // ADDED
+            start_cooling_threshold_c: finiteNumberOrNull(plant?.start_cooling_threshold_c) // ADDED
+        }); // ADDED
+    } // ADDED
+
+    function makeCropSuitabilityContextKey(context = {}) { // ADDED
+        const city = context.city || {}; // ADDED
+        return stableStringifyCropCacheValue({ // ADDED
+            city_id: city.city_id ?? context.cityId ?? null, // ADDED
+            city_name: city.city_name || context.cityName || '', // ADDED
+            latitude: finiteNumberOrNull(city.latitude ?? city.lat), // ADDED
+            seasonStartYear: Number.isFinite(Number(context.seasonStartYear)) ? Math.trunc(Number(context.seasonStartYear)) : null, // ADDED
+            climatePolicy: context.climatePolicy || null, // ADDED
+            bedProfile: context.bedProfile || normalizeBedProfile(null), // ADDED
+            bedProfileSource: context.bedProfileSource || 'generic garden bed' // ADDED
+        }); // ADDED
+    } // ADDED
+
+    function makeCropWindowCacheKey(plant, context = {}) { // ADDED
+        return `${makeCropSuitabilityContextKey(context)}|${cropSuitabilityPlantSignature(plant)}|method:${normId(context.methodId || plant?.default_planting_method || '')}|category:${normId(context.methodCategoryId || plant?.default_planting_method_category || '')}|transplant:${finiteNumberOrNull(context.transplantDays ?? plant?.days_transplant) ?? 0}`; // ADDED
+    } // ADDED
+
+    function pendingCropSuitabilityScore(plant, reason = 'calculating') { // ADDED
+        const lifecycle = getCropLifecycle(plant); // ADDED
+        const label = cropPickerBaseLabel(plant); // ADDED
+        if (lifecycle === 'perennial') return { lifecycle, label, rankClass: 2, hint: 'date-flexible', percentRemaining: -1, distanceDays: Infinity }; // ADDED
+        return { lifecycle, label, rankClass: 3, hint: reason, percentRemaining: -1, distanceDays: Infinity, pending: reason === 'calculating' }; // ADDED
+    } // ADDED
+
+    function emitCropSuitabilityCacheUpdate(cache, detail = {}) { // ADDED
+        if (!cache || !cache.listeners) return; // ADDED
+        cache.listeners.forEach(listener => { try { listener(detail); } catch (e) { console.warn('[Scheduler] Crop suitability cache listener failed:', e); } }); // ADDED
+    } // ADDED
+
+    function subscribeCropSuitabilityCache(cache, listener) { // ADDED
+        if (!cache || typeof listener !== 'function') return function () { }; // ADDED
+        cache.listeners.add(listener); // ADDED
+        return function unsubscribeCropSuitabilityCache() { cache.listeners.delete(listener); }; // ADDED
+    } // ADDED
+
+    function scheduleCropSuitabilityQueuePump(cache) { // ADDED
+        if (!cache || cache.queueRunning) return; // ADDED
+        cache.queueRunning = true; // ADDED
+        const scheduler = (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') // ADDED
+            ? window.requestIdleCallback.bind(window) // ADDED
+            : (fn => setTimeout(fn, 0)); // ADDED
+        scheduler(async () => { // ADDED
+            const task = cache.queue.shift(); // ADDED
+            if (!task) { cache.queueRunning = false; return; } // ADDED
+            try { // ADDED
+                const windows = await computePreparedCropSuitabilityWindows(task.prepared); // ADDED
+                cache.windowsByKey.set(task.key, { windows, contextKey: task.prepared.contextKey }); // ADDED
+                cache.errorsByKey.delete(task.key); // ADDED
+            } catch (e) { // ADDED
+                cache.errorsByKey.set(task.key, String(e?.message || e)); // ADDED
+            } finally { // ADDED
+                cache.pendingByKey.delete(task.key); // ADDED
+                emitCropSuitabilityCacheUpdate(cache, { key: task.key, contextKey: task.prepared.contextKey }); // ADDED
+                cache.queueRunning = false; // ADDED
+                if (cache.queue.length) scheduleCropSuitabilityQueuePump(cache); // ADDED
+            } // ADDED
+        }); // ADDED
     } // ADDED
 
     async function loadSuitabilityDailyClimate(city, scanStart, scanEndHard, climatePolicy, cache) { // ADDED
@@ -1908,59 +2017,126 @@ Draw.loadPlugin(function (ui) {
         return dailyClimate; // ADDED
     } // ADDED
 
-    async function scoreCropSuitability(plant, context = {}) { // ADDED
+    function prepareCropSuitabilityScoring(plant, context = {}) { // ADDED
+        const lifecycle = getCropLifecycle(plant); // ADDED
+        const label = cropPickerBaseLabel(plant); // ADDED
+        if (lifecycle === 'perennial') return { lifecycle, label, perennial: true }; // ADDED
+        const city = context.city || null; // ADDED
+        const primaryDateISO = String(context.primaryDateISO || '').trim(); // ADDED
+        if (!city || !primaryDateISO) return { lifecycle, label, missingContext: true }; // ADDED
+        const method = resolveCandidateMethodSelection(plant); // ADDED
+        if (!method) throw new Error('No supported planting method.'); // ADDED
+        const transplantDays = plantDefaultTransplantDays(plant); // ADDED
+        requireEffectiveTransplantDays(method.methodId, transplantDays); // ADDED
+        const effectivePlant = applyEffectiveTransplantDaysToPlant(plant, transplantDays); // ADDED
+        const selectedSowISO = sowDateFromPrimaryDate(primaryDateISO, method.methodId, transplantDays); // ADDED
+        const selectedDate = parseISODateUTCValue(selectedSowISO); // ADDED
+        const seasonStartYear = Number.isFinite(Number(context.seasonStartYear)) // ADDED
+            ? Math.trunc(Number(context.seasonStartYear)) // ADDED
+            : (selectedDate ? selectedDate.getUTCFullYear() : (new Date()).getUTCFullYear()); // ADDED
+        const scanStart = asUTCDate(seasonStartYear, 1, 1); // ADDED
+        const scanEndHard = asUTCDate(annualSchedulerScanEndYear(effectivePlant, seasonStartYear), 12, 31); // ADDED
+        const climateResolution = resolveClimateModelPolicy(context.climateModelModuleCell || null, city.city_name || context.cityName || '', effectivePlant.plant_id, null); // ADDED
+        const climatePolicy = climateResolution.effective; // ADDED
+        const env = effectivePlant.cropTempEnvelope(); // ADDED
+        const cacheContext = { // ADDED
+            ...context, // ADDED
+            city, // ADDED
+            climatePolicy, // ADDED
+            methodCategoryId: method.methodCategoryId, // ADDED
+            methodId: method.methodId, // ADDED
+            transplantDays // ADDED
+        }; // ADDED
+        return { // ADDED
+            lifecycle, // ADDED
+            label, // ADDED
+            plant, // ADDED
+            effectivePlant, // ADDED
+            city, // ADDED
+            method, // ADDED
+            transplantDays, // ADDED
+            selectedSowISO, // ADDED
+            seasonStartYear, // ADDED
+            scanStart, // ADDED
+            scanEndHard, // ADDED
+            climatePolicy, // ADDED
+            env, // ADDED
+            contextKey: makeCropSuitabilityContextKey(cacheContext), // ADDED
+            cacheKey: makeCropWindowCacheKey(effectivePlant, cacheContext), // ADDED
+            bedProfile: context.bedProfile || normalizeBedProfile(null), // ADDED
+            bedProfileSource: context.bedProfileSource || 'generic garden bed', // ADDED
+            cache: context.cache || makeCropSuitabilityCache() // ADDED
+        }; // ADDED
+    } // ADDED
+
+    async function computePreparedCropSuitabilityWindows(prepared) { // ADDED
+        const dailyClimate = await loadSuitabilityDailyClimate(prepared.city, prepared.scanStart, prepared.scanEndHard, prepared.climatePolicy, prepared.cache); // ADDED
+        return annualCore.computeAnnualSowingSeasons({ // ADDED
+            methodCategoryId: prepared.method.methodCategoryId, // ADDED
+            methodId: prepared.method.methodId, // ADDED
+            budget: prepared.effectivePlant.firstHarvestBudget(), // ADDED
+            HW_DAYS: resolveHarvestWindowDays(null, prepared.effectivePlant), // ADDED
+            dailyRatesMap: prepared.city.dailyRates(prepared.env.Tbase, prepared.seasonStartYear, prepared.climatePolicy), // ADDED
+            monthlyAvgTemp: prepared.city.monthlyMeans(), // ADDED
+            dailyClimate, // ADDED
+            Tbase: prepared.env.Tbase, // ADDED
+            cropTemp: prepared.env, // ADDED
+            scanStart: prepared.scanStart, // ADDED
+            scanEndHard: prepared.scanEndHard, // ADDED
+            soilGateThresholdC: finiteNumberOrNull(prepared.effectivePlant.soil_temp_min_plant_c), // ADDED
+            soilGateConsecutiveDays: prepared.climatePolicy.soilGateConsecutiveDays, // ADDED
+            startCoolingThresholdC: asCoolingThresholdC(prepared.effectivePlant.start_cooling_threshold_c), // ADDED
+            useSpringFrostGate: true, // ADDED
+            lastSpringFrostDOY: pickFrostByRisk(prepared.city, prepared.climatePolicy.springFrostRisk), // ADDED
+            daysTransplant: prepared.transplantDays, // ADDED
+            overwinterAllowed: isCrossYearCrop(prepared.effectivePlant), // ADDED
+            plantMetadata: prepared.effectivePlant, // ADDED
+            cityLatitudeDeg: finiteNumberOrNull(prepared.city.latitude ?? prepared.city.lat), // ADDED
+            bedProfile: prepared.bedProfile, // ADDED
+            bedProfileSource: prepared.bedProfileSource // ADDED
+        }).seasons; // ADDED
+    } // ADDED
+
+    function getOrQueueCropWindowComputation(prepared) { // ADDED
+        const cache = prepared.cache || makeCropSuitabilityCache(); // ADDED
+        if (cache.windowsByKey.has(prepared.cacheKey)) return { state: 'ready', windows: cache.windowsByKey.get(prepared.cacheKey).windows }; // ADDED
+        if (cache.errorsByKey.has(prepared.cacheKey)) return { state: 'error', error: cache.errorsByKey.get(prepared.cacheKey) }; // ADDED
+        if (cache.pendingByKey.has(prepared.cacheKey)) return { state: 'pending' }; // ADDED
+        cache.pendingByKey.set(prepared.cacheKey, { contextKey: prepared.contextKey }); // ADDED
+        cache.queue.push({ key: prepared.cacheKey, prepared }); // ADDED
+        scheduleCropSuitabilityQueuePump(cache); // ADDED
+        return { state: 'pending' }; // ADDED
+    } // ADDED
+
+    function scoreCropFromCachedWindows(plant, windows, selectedSowISO) { // ADDED
+        const lifecycle = getCropLifecycle(plant); // ADDED
+        const label = cropPickerBaseLabel(plant); // ADDED
+        return { lifecycle, label, ...scoreSowingWindowsForDate(windows, selectedSowISO) }; // ADDED
+    } // ADDED
+
+    async function scoreCropSuitability(plant, context = {}) { // CHANGED
         const lifecycle = getCropLifecycle(plant); // ADDED
         const label = cropPickerBaseLabel(plant); // ADDED
         if (lifecycle === 'perennial') return { lifecycle, label, rankClass: 2, hint: 'date-flexible', percentRemaining: -1, distanceDays: Infinity }; // ADDED
-        const city = context.city || null; // ADDED
-        const primaryDateISO = String(context.primaryDateISO || '').trim(); // ADDED
-        if (!city || !primaryDateISO) return { lifecycle, label, rankClass: 3, hint: '', percentRemaining: -1, distanceDays: Infinity }; // ADDED
         try { // ADDED
-            const method = resolveCandidateMethodSelection(plant); // ADDED
-            if (!method) throw new Error('No supported planting method.'); // ADDED
-            const transplantDays = plantDefaultTransplantDays(plant); // ADDED
-            requireEffectiveTransplantDays(method.methodId, transplantDays); // ADDED
-            const effectivePlant = applyEffectiveTransplantDaysToPlant(plant, transplantDays); // ADDED
-            const selectedSowISO = sowDateFromPrimaryDate(primaryDateISO, method.methodId, transplantDays); // ADDED
-            const selectedDate = parseISODateUTCValue(selectedSowISO); // ADDED
-            const seasonStartYear = Number.isFinite(Number(context.seasonStartYear)) // ADDED
-                ? Math.trunc(Number(context.seasonStartYear)) // ADDED
-                : (selectedDate ? selectedDate.getUTCFullYear() : (new Date()).getUTCFullYear()); // ADDED
-            const scanStart = asUTCDate(seasonStartYear, 1, 1); // ADDED
-            const scanEndHard = asUTCDate(annualSchedulerScanEndYear(effectivePlant, seasonStartYear), 12, 31); // ADDED
-            const climateResolution = resolveClimateModelPolicy(context.climateModelModuleCell || null, city.city_name || context.cityName || '', effectivePlant.plant_id, null); // ADDED
-            const climatePolicy = climateResolution.effective; // ADDED
-            const env = effectivePlant.cropTempEnvelope(); // ADDED
-            const dailyClimate = await loadSuitabilityDailyClimate(city, scanStart, scanEndHard, climatePolicy, context.cache); // ADDED
-            const windows = annualCore.computeAnnualSowingSeasons({ // ADDED
-                methodCategoryId: method.methodCategoryId, // ADDED
-                methodId: method.methodId, // ADDED
-                budget: effectivePlant.firstHarvestBudget(), // ADDED
-                HW_DAYS: resolveHarvestWindowDays(null, effectivePlant), // ADDED
-                dailyRatesMap: city.dailyRates(env.Tbase, seasonStartYear, climatePolicy), // ADDED
-                monthlyAvgTemp: city.monthlyMeans(), // ADDED
-                dailyClimate, // ADDED
-                Tbase: env.Tbase, // ADDED
-                cropTemp: env, // ADDED
-                scanStart, // ADDED
-                scanEndHard, // ADDED
-                soilGateThresholdC: finiteNumberOrNull(effectivePlant.soil_temp_min_plant_c), // ADDED
-                soilGateConsecutiveDays: climatePolicy.soilGateConsecutiveDays, // ADDED
-                startCoolingThresholdC: asCoolingThresholdC(effectivePlant.start_cooling_threshold_c), // ADDED
-                useSpringFrostGate: true, // ADDED
-                lastSpringFrostDOY: pickFrostByRisk(city, climatePolicy.springFrostRisk), // ADDED
-                daysTransplant: transplantDays, // ADDED
-                overwinterAllowed: isCrossYearCrop(effectivePlant), // ADDED
-                plantMetadata: effectivePlant, // ADDED
-                cityLatitudeDeg: finiteNumberOrNull(city.latitude ?? city.lat), // ADDED
-                bedProfile: context.bedProfile || normalizeBedProfile(null), // ADDED
-                bedProfileSource: context.bedProfileSource || 'generic garden bed' // ADDED
-            }).seasons; // ADDED
-            return { lifecycle, label, ...scoreSowingWindowsForDate(windows, selectedSowISO) }; // ADDED
+            const prepared = prepareCropSuitabilityScoring(plant, context); // ADDED
+            if (prepared.perennial) return { lifecycle, label, rankClass: 2, hint: 'date-flexible', percentRemaining: -1, distanceDays: Infinity }; // ADDED
+            if (prepared.missingContext) return { lifecycle, label, rankClass: 3, hint: '', percentRemaining: -1, distanceDays: Infinity }; // ADDED
+            const cache = prepared.cache; // ADDED
+            const cached = cache.windowsByKey.get(prepared.cacheKey); // ADDED
+            if (cached) return scoreCropFromCachedWindows(plant, cached.windows, prepared.selectedSowISO); // ADDED
+            if (cache.errorsByKey.has(prepared.cacheKey)) return { lifecycle, label, rankClass: 3, hint: '', percentRemaining: -1, distanceDays: Infinity, error: cache.errorsByKey.get(prepared.cacheKey) }; // ADDED
+            if (context.deferMissingWindows) { // ADDED
+                getOrQueueCropWindowComputation(prepared); // ADDED
+                return pendingCropSuitabilityScore(plant); // ADDED
+            } // ADDED
+            const windows = await computePreparedCropSuitabilityWindows(prepared); // ADDED
+            cache.windowsByKey.set(prepared.cacheKey, { windows, contextKey: prepared.contextKey }); // ADDED
+            return scoreCropFromCachedWindows(plant, windows, prepared.selectedSowISO); // ADDED
         } catch (e) { // ADDED
             return { lifecycle, label, rankClass: 3, hint: '', percentRemaining: -1, distanceDays: Infinity, error: String(e?.message || e) }; // ADDED
         } // ADDED
-    } // ADDED
+    } // CHANGED
 
     function compareCropPickerOptions(left, right) { // ADDED
         const lScore = left.score || {}; // ADDED
@@ -3045,6 +3221,27 @@ Draw.loadPlugin(function (ui) {
         } // CHANGED
         return { status: 'feasible', label: `The selected sow date is in ${activeWindow.label}.` }; // CHANGED
     } // CHANGED
+    function applyDateToExistingSowingWindows(formState, { startISO = '' } = {}) { // ADDED
+        if (!formState || formState.windowFeasible !== true) return { applied: false, reason: 'no feasible cached windows' }; // ADDED
+        const windows = normalizeSowingSeasons(formState.sowingSeasons); // ADDED
+        if (!windows.length) return { applied: false, reason: 'missing cached windows' }; // ADDED
+        const normalizedStartISO = String(startISO || '').trim(); // ADDED
+        if (!parseISODateUTCValue(normalizedStartISO)) return { applied: false, reason: 'invalid selected date' }; // ADDED
+        formState.startISO = normalizedStartISO; // ADDED
+        const containingWindow = findSowingSeasonForDate(windows, normalizedStartISO); // ADDED
+        if (containingWindow) formState.activeSowingSeasonId = containingWindow.id; // ADDED
+        return { // ADDED
+            applied: true, // ADDED
+            activeSowingSeasonId: formState.activeSowingSeasonId, // ADDED
+            classification: classifySelectedSowDate({ // ADDED
+                perennial: false, // ADDED
+                windowFeasible: formState.windowFeasible, // ADDED
+                startISO: formState.startISO, // ADDED
+                sowingSeasons: formState.sowingSeasons, // ADDED
+                activeSowingSeasonId: formState.activeSowingSeasonId // ADDED
+            }) // ADDED
+        }; // ADDED
+    } // ADDED
     function summarizeScheduleWarnings(warnings) { // ADDED
         const list = Array.isArray(warnings) ? warnings.filter(warning => warning && warning.message) : []; // ADDED
         if (!list.length) return ''; // ADDED
@@ -5903,23 +6100,25 @@ Draw.loadPlugin(function (ui) {
 
         // Plant selector
         let currentCropPickerOptions = makeCropPickerOptions(plantsLocal); // ADDED
+        let currentCropPickerSelectedValue = String(initialPlant?.plant_id ?? plantsLocal[0]?.plant_id ?? ''); // ADDED
         const lifecycleFilterSel = buildLifecycleFilterControl(); // ADDED
         const plantSel = document.createElement('select'); // CHANGED
         plantSel.style.width = '100%'; // ADDED
         plantSel.style.padding = '6px'; // ADDED
         plantSel.style.flex = '1'; // ADDED
 
-        function renderSchedulerCropPicker(pickerOptions = currentCropPickerOptions, selectedValue = plantSel.value) { // ADDED
+        function renderSchedulerCropPicker(pickerOptions = currentCropPickerOptions, selectedValue = currentCropPickerSelectedValue) { // CHANGED
             currentCropPickerOptions = pickerOptions || []; // ADDED
+            currentCropPickerSelectedValue = String(selectedValue || currentCropPickerSelectedValue || ''); // ADDED
             const groups = buildGroupedCropOptions(currentCropPickerOptions, { // ADDED
                 filter: lifecycleFilterSel.value, // ADDED
-                selectedValue, // ADDED
+                selectedValue: currentCropPickerSelectedValue, // CHANGED
                 includeSelectedWhenFiltered: true // ADDED
             }); // ADDED
-            renderGroupedCropOptions(plantSel, groups, selectedValue); // ADDED
+            renderGroupedCropOptions(plantSel, groups, currentCropPickerSelectedValue); // CHANGED
         } // ADDED
 
-        renderSchedulerCropPicker(currentCropPickerOptions, String(initialPlant?.plant_id ?? plantsLocal[0]?.plant_id ?? '')); // ADDED
+        renderSchedulerCropPicker(currentCropPickerOptions, currentCropPickerSelectedValue); // CHANGED
 
         const plantControlsWrap = document.createElement('div');
         plantControlsWrap.style.display = 'flex';
@@ -6505,10 +6704,11 @@ Draw.loadPlugin(function (ui) {
 
         let schedulerCropPickerRefreshTimer = null; // ADDED
         let schedulerCropPickerRefreshVersion = 0; // ADDED
+        const schedulerCropSuitabilityCache = makeCropSuitabilityCache(); // ADDED
+        subscribeCropSuitabilityCache(schedulerCropSuitabilityCache, () => { scheduleCropPickerSuitabilityRefresh(0); }); // ADDED
 
         async function refreshSchedulerCropPickerSuitability() { // ADDED
             const refreshVersion = ++schedulerCropPickerRefreshVersion; // ADDED
-            const selectedValue = plantSel.value; // ADDED
             try { // ADDED
                 const city = await CityClimate.resolve({ cityId: formState.cityId, cityName: formState.cityName }); // ADDED
                 const context = city ? { // ADDED
@@ -6519,16 +6719,17 @@ Draw.loadPlugin(function (ui) {
                     climateModelModuleCell, // ADDED
                     bedProfile: formState.bedProfile, // ADDED
                     bedProfileSource: formState.bedProfileSource, // ADDED
-                    cache: makeCropSuitabilityCache() // ADDED
+                    cache: schedulerCropSuitabilityCache, // CHANGED
+                    deferMissingWindows: true // ADDED
                 } : null; // ADDED
                 const nextOptions = context // ADDED
                     ? await scoreCropPickerOptions(plantsLocal, context) // ADDED
                     : makeCropPickerOptions(plantsLocal); // ADDED
                 if (refreshVersion !== schedulerCropPickerRefreshVersion) return; // ADDED
-                renderSchedulerCropPicker(nextOptions, selectedValue); // ADDED
+                renderSchedulerCropPicker(nextOptions, currentCropPickerSelectedValue); // CHANGED
             } catch (e) { // ADDED
                 console.warn('[Scheduler] Crop suitability ranking failed; falling back to grouped crop order.', e); // ADDED
-                if (refreshVersion === schedulerCropPickerRefreshVersion) renderSchedulerCropPicker(makeCropPickerOptions(plantsLocal), selectedValue); // ADDED
+                if (refreshVersion === schedulerCropPickerRefreshVersion) renderSchedulerCropPicker(makeCropPickerOptions(plantsLocal), currentCropPickerSelectedValue); // CHANGED
             } // ADDED
         } // ADDED
 
@@ -7236,6 +7437,16 @@ Draw.loadPlugin(function (ui) {
             applyModeToUI();
         }
 
+        function applySelectedDateOnlyFastPath() { // ADDED
+            if (mode.perennial) return false; // ADDED
+            const result = applyDateToExistingSowingWindows(formState, { startISO: internalSowDateISO(startInput.value) }); // ADDED
+            if (!result.applied) return false; // ADDED
+            refreshSowingSeasonSelector(); // ADDED
+            updateStartNote(); // ADDED
+            syncStartDateBounds(); // ADDED
+            return true; // ADDED
+        } // ADDED
+
         // recomputeAll:
         //  - concern: policy: when to let climate auto window override constraint
         //  - enforce: annual latestHarvestEndISO and perennial seasonEndISO stay separate
@@ -7319,7 +7530,7 @@ Draw.loadPlugin(function (ui) {
 
                 case 'startChanged':
                     // User explicitly changed first sow; keep it, but recompute schedule 
-                    await recomputeAnchors(false, false); // CHANGED
+                    if (!applySelectedDateOnlyFastPath()) await recomputeAnchors(false, false); // CHANGED
                     await recomputeLastHarvestFromSchedule();
                     break;
 
@@ -7612,6 +7823,7 @@ Draw.loadPlugin(function (ui) {
             mode = getModeForPlant(selPlant);
 
             formState.plantId = Number(plantSel.value);
+            currentCropPickerSelectedValue = String(formState.plantId || ''); // ADDED
 
             const preferredVarietyId = Number(preferVarietyId);
             const hasPreferredVariety = Number.isFinite(preferredVarietyId) && preferredVarietyId > 0;
@@ -7685,11 +7897,13 @@ Draw.loadPlugin(function (ui) {
         }
 
         lifecycleFilterSel.addEventListener('change', () => { // ADDED
-            renderSchedulerCropPicker(currentCropPickerOptions, plantSel.value); // ADDED
-            scheduleCropPickerSuitabilityRefresh(0); // ADDED
+            renderSchedulerCropPicker(currentCropPickerOptions, currentCropPickerSelectedValue); // CHANGED
         }); // ADDED
 
         plantSel.addEventListener('change', () => {
+            currentCropPickerSelectedValue = String(plantSel.value || ''); // ADDED
+            schedulerCropPickerRefreshVersion += 1; // ADDED
+            renderSchedulerCropPicker(currentCropPickerOptions, currentCropPickerSelectedValue); // ADDED
             void runUiAsync('Plant change error', async () => { // FIX: clear stale inline warnings before crop recompute
                 await handleSchedulePlantChange();
             });
@@ -10817,17 +11031,20 @@ Draw.loadPlugin(function (ui) {
         const cityName = String(cell?.getAttribute?.('city_name') || gardenParent?.getAttribute?.('city_name') || '').trim(); // ADDED
         const setPlantCity = (cityId != null || cityName) ? await CityClimate.resolve({ cityId, cityName }) : null; // ADDED
         const setPlantBedContext = resolveScheduleBedContext(cell); // ADDED
+        const setPlantCropSuitabilityCache = makeCropSuitabilityCache(); // ADDED
+        const setPlantScoringContext = setPlantCity ? { // ADDED
+            city: setPlantCity, // ADDED
+            cityName: setPlantCity.city_name || cityName, // ADDED
+            primaryDateISO: todayISO, // ADDED
+            seasonStartYear: today.getUTCFullYear(), // ADDED
+            climateModelModuleCell: gardenParent, // ADDED
+            bedProfile: setPlantBedContext.profile, // ADDED
+            bedProfileSource: setPlantBedContext.source, // ADDED
+            cache: setPlantCropSuitabilityCache, // ADDED
+            deferMissingWindows: true // ADDED
+        } : null; // ADDED
         let setPlantCropOptions = setPlantCity // ADDED
-            ? await scoreCropPickerOptions(allPlants, { // ADDED
-                city: setPlantCity, // ADDED
-                cityName: setPlantCity.city_name || cityName, // ADDED
-                primaryDateISO: todayISO, // ADDED
-                seasonStartYear: today.getUTCFullYear(), // ADDED
-                climateModelModuleCell: gardenParent, // ADDED
-                bedProfile: setPlantBedContext.profile, // ADDED
-                bedProfileSource: setPlantBedContext.source, // ADDED
-                cache: makeCropSuitabilityCache() // ADDED
-            }) // ADDED
+            ? await scoreCropPickerOptions(allPlants, setPlantScoringContext) // CHANGED
             : makeCropPickerOptions(allPlants); // ADDED
 
         const div = document.createElement('div'); // ADDED
@@ -10857,6 +11074,12 @@ Draw.loadPlugin(function (ui) {
         } // ADDED
         const initialSetPlantId = String(cell?.getAttribute?.('plant_id') || allPlants[0]?.plant_id || ''); // ADDED
         renderSetPlantCropPicker(initialSetPlantId); // ADDED
+        if (setPlantScoringContext) { // ADDED
+            subscribeCropSuitabilityCache(setPlantCropSuitabilityCache, async () => { // ADDED
+                setPlantCropOptions = await scoreCropPickerOptions(allPlants, setPlantScoringContext); // ADDED
+                renderSetPlantCropPicker(sel.value); // ADDED
+            }); // ADDED
+        } // ADDED
         filterSel.addEventListener('change', () => renderSetPlantCropPicker(sel.value)); // ADDED
         div.appendChild(sel); // ADDED
 
@@ -11302,6 +11525,13 @@ Draw.loadPlugin(function (ui) {
             scoreCropSuitability, // ADDED
             scoreCropPickerOptions, // ADDED
             compareCropPickerOptions, // ADDED
+            makeCropSuitabilityCache, // ADDED
+            clearCropSuitabilityCache, // ADDED
+            makeCropSuitabilityContextKey, // ADDED
+            makeCropWindowCacheKey, // ADDED
+            getOrQueueCropWindowComputation, // ADDED
+            scoreCropFromCachedWindows, // ADDED
+            applyDateToExistingSowingWindows, // ADDED
             normalizeCropLifecycleFilter, // ADDED
             persistCropLifecycleFilter, // ADDED
             readPersistedCropLifecycleFilter, // ADDED
