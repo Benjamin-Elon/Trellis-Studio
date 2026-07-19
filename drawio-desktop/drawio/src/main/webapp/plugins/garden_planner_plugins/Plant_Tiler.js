@@ -1410,6 +1410,40 @@ Draw.loadPlugin(function (ui) {
         return !!(city && units && getSavedDefaultBedDimensionsCm(moduleCell)); // CHANGE
     }
 
+    function getModuleMarginFromStyle(moduleCell, defaultPx = 100) { // NEW
+        const fallback = Number.isInteger(defaultPx) && defaultPx >= 0 ? defaultPx : 100; // NEW
+        const match = getStyleSafe(moduleCell).match(/(?:^|;)module_margin=(\d+)(?=;|$)/); // NEW
+        return match ? parseInt(match[1], 10) : fallback; // NEW
+    } // NEW
+
+    function getGardenModuleMargin(moduleCell) { // NEW
+        const modulesApi = graph.__trellisModules; // NEW
+        if (modulesApi && typeof modulesApi.getModuleMargin === "function") return modulesApi.getModuleMargin(moduleCell, 100); // NEW
+        return getModuleMarginFromStyle(moduleCell, 100); // NEW
+    } // NEW
+
+    function readModuleMarginInput(inputEl) { // NEW
+        const raw = String(inputEl && inputEl.value || "").trim(); // NEW
+        if (!/^\d+$/.test(raw)) return null; // NEW
+        const n = Number(raw); // NEW
+        return Number.isSafeInteger(n) && n >= 0 ? n : null; // NEW
+    } // NEW
+
+    function setGardenModuleMargin(moduleCell, marginPx) { // NEW
+        const modulesApi = graph.__trellisModules; // NEW
+        if (modulesApi && typeof modulesApi.setModuleMargin === "function") { // NEW
+            modulesApi.setModuleMargin(moduleCell, marginPx); // NEW
+            return; // NEW
+        } // NEW
+        const graphModel = graph.getModel && graph.getModel(); // NEW
+        if (graphModel && graphModel.setStyle) graphModel.setStyle(moduleCell, upsertStyleKV(getStyleSafe(moduleCell), "module_margin", String(marginPx))); // NEW
+        if (graph.fireEvent && typeof mxEventObject === "function") { // NEW
+            graph.fireEvent(new mxEventObject("usl:requestApplyModuleMargins", "cell", moduleCell)); // NEW
+        } else if (graph.refresh) { // NEW
+            graph.refresh(moduleCell); // NEW
+        } // NEW
+    } // NEW
+
     async function saveCityRecord(row, existingCityId = null) { // ADDED
         await ensureCityGeographySchema(); // ADDED
         const cityId = Number(row.city_id); // ADDED
@@ -1691,6 +1725,7 @@ Draw.loadPlugin(function (ui) {
         const curCityId = getXmlAttr(moduleCell, "city_id", ""); // ADDED
         const curCity = getXmlAttr(moduleCell, "city_name", "");
         const curUnits = getXmlAttr(moduleCell, "unit_system", "");
+        const curModuleMargin = getGardenModuleMargin(moduleCell); // NEW
         const savedBedDimsCm = getSavedDefaultBedDimensionsCm(moduleCell); // CHANGE
         let activeBedDisplayUnits = curUnits || ""; // CHANGE
         let bedDimensionsEdited = false; // CHANGE
@@ -1816,6 +1851,14 @@ Draw.loadPlugin(function (ui) {
         mxEvent.addListener(bedWidthInput, "input", function () { bedDimensionsEdited = true; }); // CHANGE
         mxEvent.addListener(bedLengthInput, "input", function () { bedDimensionsEdited = true; }); // CHANGE
 
+        const moduleMarginInput = document.createElement("input"); // NEW
+        moduleMarginInput.type = "number"; // NEW
+        moduleMarginInput.step = "1"; // NEW
+        moduleMarginInput.min = "0"; // NEW
+        moduleMarginInput.value = String(curModuleMargin); // NEW
+        moduleMarginInput.style.flex = "1"; // NEW
+        row("Module margin (px):", moduleMarginInput); // NEW
+
         function readBedInputsAsCm(units) { // CHANGE
             if (!units) return null; // CHANGE
             const widthCm = bedDimensionDisplayToCm(bedWidthInput.value, units); // CHANGE
@@ -1871,10 +1914,12 @@ Draw.loadPlugin(function (ui) {
             const chosenCityId = chosenCityRow?.city_id != null ? String(chosenCityRow.city_id) : ""; // ADDED
             const chosenUnits = (unitsSel.value || "").trim();
             const chosenBedDimsCm = readBedInputsAsCm(chosenUnits); // CHANGE
+            const chosenModuleMargin = readModuleMarginInput(moduleMarginInput); // NEW
 
             if (!chosenCity) { showError("City is required."); citySel.focus(); return; }
             if (!chosenUnits) { showError("Units are required."); unitsSel.focus(); return; }
             if (!chosenBedDimsCm) { showError("Default bed width and length must be positive numbers."); bedWidthInput.focus(); return; } // CHANGE
+            if (chosenModuleMargin == null) { showError("Module margin must be a non-negative whole number."); moduleMarginInput.focus(); return; } // NEW
 
             ui.hideDialog();
             model.beginUpdate();
@@ -1888,6 +1933,7 @@ Draw.loadPlugin(function (ui) {
                     [DEFAULT_BED_WIDTH_CM_ATTR]: formatBedCmAttr(chosenBedDimsCm.widthCm), // CHANGE
                     [DEFAULT_BED_LENGTH_CM_ATTR]: formatBedCmAttr(chosenBedDimsCm.lengthCm), // CHANGE
                 });
+                setGardenModuleMargin(moduleCell, chosenModuleMargin); // NEW
             } finally {
                 model.endUpdate();
             }
@@ -1899,7 +1945,7 @@ Draw.loadPlugin(function (ui) {
         btnRow.appendChild(okBtn);
         div.appendChild(btnRow);
 
-        ui.showDialog(div, 420, 300, true, true, notifyClose); // CHANGE
+        ui.showDialog(div, 420, 330, true, true, notifyClose); // CHANGE
         gardenNameInput.focus(); // CHANGED
     }
 
@@ -1916,7 +1962,6 @@ Draw.loadPlugin(function (ui) {
         let settingsBtn = null; // CHANGE
         let addBedBtn = null; // CHANGE
         let addGroupBtn = null; // CHANGE
-        let marginBtn = null; // NEW
         let irrigationSourceBtn = null; // NEW
         let activeModuleCell = null; // CHANGE
         let activeBedCell = null; // CHANGE
@@ -1978,12 +2023,10 @@ Draw.loadPlugin(function (ui) {
             settingsBtn = makeButton("Set Garden Settings"); // CHANGE
             addBedBtn = makeButton("Add Garden Bed"); // CHANGE
             addGroupBtn = makeButton("Add New Plant Group"); // CHANGE
-            marginBtn = makeButton("Set Module Margin"); // NEW
             irrigationSourceBtn = makeButton("Create Irrigation Source"); // NEW
             toolbar.appendChild(settingsBtn); // CHANGE
             toolbar.appendChild(addBedBtn); // CHANGE
             toolbar.appendChild(addGroupBtn); // CHANGE
-            toolbar.appendChild(marginBtn); // NEW
             toolbar.appendChild(irrigationSourceBtn); // NEW
 
             mxEvent.addListener(settingsBtn, "click", async function (evt) { // CHANGE
@@ -2015,13 +2058,6 @@ Draw.loadPlugin(function (ui) {
                 if (activeOverlayMode === "bed" && group) retileAndFitToContainingBed(graph, group, { source: "overlay-bed-add" }); // CHANGE
                 hideToolbar(); // CHANGE
             }); // CHANGE
-
-            mxEvent.addListener(marginBtn, "click", function (evt) { // NEW
-                mxEvent.consume(evt); // NEW
-                const moduleCell = activeModuleCell; // NEW
-                if (!moduleCell || !isGardenModule(moduleCell)) return; // NEW
-                promptSetModuleMarginForModule(moduleCell); // NEW
-            }); // NEW
 
             mxEvent.addListener(irrigationSourceBtn, "click", function (evt) { // NEW
                 mxEvent.consume(evt); // NEW
@@ -2073,18 +2109,6 @@ Draw.loadPlugin(function (ui) {
             if (getSingleSelectedGardenModule() !== pending) return false; // NEW
             manuallyHiddenModuleCell = manuallyHiddenModuleCell === pending ? null : pending; // NEW
             return true; // NEW
-        } // NEW
-
-        function promptSetModuleMarginForModule(moduleCell) { // NEW
-            hideToolbar(); // NEW
-            const modulesApi = graph.__trellisModules; // NEW
-            if (modulesApi && typeof modulesApi.promptSetModuleMargin === "function") { // NEW
-                modulesApi.promptSetModuleMargin(moduleCell); // NEW
-                return; // NEW
-            } // NEW
-            if (graph.fireEvent && typeof mxEventObject === "function") { // NEW
-                graph.fireEvent(new mxEventObject("usl:requestPromptSetModuleMargin", "cell", moduleCell)); // NEW
-            } // NEW
         } // NEW
 
         function gardenModuleHasIrrigationSource(moduleCell) { // NEW
@@ -2239,14 +2263,13 @@ Draw.loadPlugin(function (ui) {
 
         function syncToolbarState() { // CHANGE
             const moduleCell = activeModuleCell; // CHANGE
-            if (!toolbar || !settingsBtn || !addBedBtn || !addGroupBtn || !marginBtn || !irrigationSourceBtn || !moduleCell) return; // CHANGE
+            if (!toolbar || !settingsBtn || !addBedBtn || !addGroupBtn || !irrigationSourceBtn || !moduleCell) return; // CHANGE
             const hasSettings = hasGardenSettingsSet(moduleCell); // CHANGE
             const bedMode = activeOverlayMode === "bed"; // CHANGE
             const showIrrigationSource = !bedMode && !gardenModuleHasIrrigationSource(moduleCell); // NEW
             settingsBtn.style.display = bedMode ? "none" : ""; // CHANGE
             addBedBtn.style.display = bedMode ? "none" : ""; // CHANGE
             addGroupBtn.style.display = ""; // CHANGE
-            marginBtn.style.display = bedMode ? "none" : ""; // NEW
             irrigationSourceBtn.style.display = showIrrigationSource ? "" : "none"; // NEW
             settingsBtn.textContent = hasSettings ? "Edit Garden Settings" : "Set Garden Settings"; // CHANGE
             addBedBtn.disabled = !hasSettings; // CHANGE

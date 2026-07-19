@@ -287,6 +287,7 @@ App.startTime = new Date();
 App.pluginRegistry = {    'trellisUpdatesLinks': 'plugins/garden_planner_plugins/Trellis_Updates_Links.js',            // NEW
     'trellisDatabaseTools': 'plugins/garden_planner_plugins/Trellis_Database_Tools.js',          // NEW
     'trellisUiCleanup': 'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js',                  // NEW
+    'trellisUsers': 'plugins/garden_planner_plugins/Trellis_Users.js',                            // NEW
     'trellisContextMenu': 'plugins/garden_planner_plugins/Trellis_Context_Menu.js',              // NEW
     'gardenSuccession': 'plugins/garden_planner_plugins/Bed_Succession_Navigator.js',           // CHANGE
     'plantTiler': 'plugins/garden_planner_plugins/Plant_Tiler.js',                               // CHANGE
@@ -309,6 +310,7 @@ App.publicPlugin = [
     'trellisUpdatesLinks',                                  // NEW
     'trellisDatabaseTools',                                  // NEW
     'trellisUiCleanup',                                      // NEW
+    'trellisUsers',                                          // NEW
     'trellisContextMenu',                                    // NEW
     'gardenSuccession',                                       // CHANGE
     'plantTiler',                                             // CHANGE
@@ -778,7 +780,7 @@ App.main = function(callback, createUi)
 			}
 			
 			App.initPluginCallback(); // NEW
-			App.loadPlugins(['trellisUpdatesLinks', 'trellisDatabaseTools', 'trellisUiCleanup']); // CHANGE
+			App.loadPlugins(['trellisUpdatesLinks', 'trellisDatabaseTools', 'trellisUiCleanup', 'trellisUsers']); // CHANGE
 
 			// Loads plugins
 			if (urlParams['plugins'] != '0' && urlParams['offline'] != '1')

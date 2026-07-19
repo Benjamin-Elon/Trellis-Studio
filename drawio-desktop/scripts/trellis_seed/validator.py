@@ -19,8 +19,10 @@ from .schema import (
     PLANT_FIELD_TYPES,
     PLANT_FLAG_FIELDS,
     PLANT_INTEGER_FIELDS,
+    PLANT_VARIETY_COLUMNS,  # ADDED
     PLANT_REAL_FIELDS,
     PLANT_TEXT_FIELDS,
+    VARIETY_MATURITY_CLASSES,  # ADDED
 )
 
 
@@ -222,6 +224,17 @@ def validate_row(
     elif table == "Companions":
         if not row.get("p1") or not row.get("p2"):
             errors.append(f"{prefix} needs p1 and p2.")
+    elif table == "PlantVarieties":
+        unknown = sorted(set(row) - PLANT_VARIETY_COLUMNS)  # ADDED
+        if unknown:
+            errors.append(f"{prefix} has unknown columns: {unknown}")  # ADDED
+        if not row.get("plant_id") and not str(row.get("plant_name") or "").strip():
+            errors.append(f"{prefix} needs plant_id or plant_name.")  # ADDED
+        if not str(row.get("variety_name") or "").strip():
+            errors.append(f"{prefix}.variety_name is required.")  # ADDED
+        maturity_class = str(row.get("maturity_class") or "").strip().casefold()  # ADDED
+        if maturity_class and maturity_class not in VARIETY_MATURITY_CLASSES:
+            errors.append(f"{prefix}.maturity_class must be one of: {', '.join(sorted(VARIETY_MATURITY_CLASSES))}.")  # ADDED
     elif table == "CompanionEvidence":
         if not row.get("relation_id") and not (row.get("p1") and row.get("p2")):
             errors.append(f"{prefix} needs relation_id or p1/p2.")
@@ -290,9 +303,13 @@ def validate_source_map(row: dict[str, Any], source_values: set[str], required_f
             errors.append(f"{prefix}.provenance.field_sources.{field} is required.")
             continue
         for ref in refs:
-            if not _source_ref_allowed(str(ref), source_values):
+            if not source_ref_allowed(str(ref), source_values):  # CHANGED
                 errors.append(f"{prefix}.provenance.field_sources.{field} references an input source/note that was not supplied: {ref}")
     return errors
+
+
+def source_ref_allowed(ref: str, source_values: set[str]) -> bool:  # ADDED
+    return _source_ref_allowed(ref, source_values)  # ADDED
 
 
 def _source_ref_allowed(ref: str, source_values: set[str]) -> bool:

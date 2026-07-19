@@ -65,17 +65,21 @@ test('Garden module overlay can route first irrigation source creation through t
     assert.doesNotMatch(helperSource, /\bmodel\.getChild(?:Count|At)\b/); // FIX
 }); // NEW
 
-test('Garden module overlay routes module margin editing through the Modules API with event fallback', () => { // NEW
+test('Garden module margin lives in Garden Settings instead of the overlay', () => { // CHANGE
     const source = readPlantTilerSource(); // NEW
-    assert.match(source, /let marginBtn = null;/); // NEW
-    assert.match(source, /marginBtn = makeButton\("Set Module Margin"\);/); // NEW
-    assert.match(source, /toolbar\.appendChild\(marginBtn\);/); // NEW
-    assert.match(source, /mxEvent\.addListener\(marginBtn, "click", function \(evt\) \{[\s\S]*promptSetModuleMarginForModule\(moduleCell\);/); // NEW
-    assert.match(source, /function promptSetModuleMarginForModule\(moduleCell\) \{[\s\S]*hideToolbar\(\);[\s\S]*modulesApi\.promptSetModuleMargin\(moduleCell\);/); // NEW
-    assert.match(source, /new mxEventObject\("usl:requestPromptSetModuleMargin", "cell", moduleCell\)/); // NEW
-    assert.match(source, /marginBtn\.style\.display = bedMode \? "none" : "";/); // NEW
-    assert.match(source, /if \(!toolbar \|\| !settingsBtn \|\| !addBedBtn \|\| !addGroupBtn \|\| !marginBtn \|\| !irrigationSourceBtn \|\| !moduleCell\) return;/); // NEW
-}); // NEW
+    assert.doesNotMatch(source, /let marginBtn = null;/); // CHANGE
+    assert.doesNotMatch(source, /marginBtn = makeButton\("Set Module Margin"\);/); // CHANGE
+    assert.doesNotMatch(source, /toolbar\.appendChild\(marginBtn\);/); // CHANGE
+    assert.doesNotMatch(source, /mxEvent\.addListener\(marginBtn, "click"/); // CHANGE
+    assert.doesNotMatch(source, /function promptSetModuleMarginForModule\(moduleCell\)/); // CHANGE
+    assert.doesNotMatch(source, /new mxEventObject\("usl:requestPromptSetModuleMargin", "cell", moduleCell\)/); // CHANGE
+    assert.match(source, /row\("Module margin \(px\):", moduleMarginInput\);/); // NEW
+    assert.match(source, /const curModuleMargin = getGardenModuleMargin\(moduleCell\);/); // NEW
+    assert.match(source, /const chosenModuleMargin = readModuleMarginInput\(moduleMarginInput\);/); // NEW
+    assert.match(source, /Module margin must be a non-negative whole number\./); // NEW
+    assert.match(source, /setGardenModuleMargin\(moduleCell, chosenModuleMargin\);/); // NEW
+    assert.match(source, /if \(!toolbar \|\| !settingsBtn \|\| !addBedBtn \|\| !addGroupBtn \|\| !irrigationSourceBtn \|\| !moduleCell\) return;/); // CHANGE
+}); // CHANGE
 
 test('Garden module overlay repeated selected-module clicks toggle visibility without changing selection', () => { // NEW
     const source = readPlantTilerSource(); // NEW

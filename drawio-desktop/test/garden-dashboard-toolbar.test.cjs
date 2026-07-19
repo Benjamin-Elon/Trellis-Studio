@@ -58,6 +58,20 @@ test("garden dashboard toolbar controls use module scoped plugin contracts", () 
     assert.match(text, /downloadCsv\(`\$\{safeName\}_\$\{year\}_dashboard\.csv`, buildDashboardCsvSingleTable\(metrics, year\)\);/); // NEW
 }); // NEW
 
+test("garden dashboard toolbar exposes share only for eligible selected scopes", () => { // NEW
+    const text = viewportToolbarSource(); // NEW
+    assert.match(text, /const shareBtn = createToolbarButton\("Share", "Share selected module\(s\), task board\(s\), or garden bed\(s\)"\);/); // NEW
+    assert.match(text, /controls\.appendChild\(shareBtn\);/); // NEW
+    assert.match(text, /shareBtn\.addEventListener\("click", function \(\) \{ openShareGardenCanvasDialog\(\); \}\);/); // NEW
+    assert.match(text, /function shareSelectionState\(\)/); // NEW
+    assert.match(text, /users\.getEligibleShareScopes\(selectedCellsForShare\(\)\)/); // NEW
+    assert.match(text, /setButtonDisabled\(entry\.shareBtn, !shareState\.ok, shareState\.ok \? "Share selected scope\(s\)" : shareState\.reason\);/); // NEW
+    assert.match(text, /function openEnableUsersForShareDialog\(\)/); // CHANGE
+    assert.match(text, /Create the first admin before sharing selected garden scopes\./); // NEW
+    assert.match(text, /setTimeout\(openShareGardenCanvasDialog, 0\);/); // NEW
+    assert.match(text, /Syncthing sharing is unavailable in this Trellis build\./); // NEW
+}); // NEW
+
 test("garden dashboard table is collapsed by default and session scoped", () => { // NEW
     const text = viewportToolbarSource(); // NEW
     assert.match(text, /const toolbarExpandedByModuleId = new Map\(\);/); // NEW

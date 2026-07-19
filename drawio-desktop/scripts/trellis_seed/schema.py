@@ -23,6 +23,8 @@ WEATHER_TABLES = {"CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecast
 
 CITY_GEO_IDENTITY_COLUMNS = {"country_name", "country_code", "region_name", "region_code"}  # ADDED
 CITY_CLIMATE_BANDS = {"hot", "temperate", "cold"}  # ADDED
+VARIETY_MATURITY_CLASSES = {"early", "mid", "late"}  # ADDED
+PLANT_VARIETY_COLUMNS = {"variety_id", "plant_id", "plant_name", "variety_name", "maturity_class", "overrides", "overrides_json"}  # ADDED
 
 PLANTING_WINDOW_REFERENCE_COLUMNS = {
     "reference_id", "plant_id", "plant_name", "city_id", "city_name", "method_id",
@@ -143,10 +145,11 @@ OPENAI_PLANT_SCHEMA = {
                 "additionalProperties": False,
                 "properties": {
                     "variety_name": {"type": "string"},
+                    "maturity_class": {"type": ["string", "null"], "enum": ["early", "mid", "late", "", None]},  # ADDED
                     "overrides": {"type": "array", "items": OVERRIDE_ENTRY_SCHEMA},
                     "sources": {"type": "array", "items": {"type": "string"}},
                 },
-                "required": ["variety_name", "overrides", "sources"],
+                "required": ["variety_name", "maturity_class", "overrides", "sources"],  # CHANGED
             },
         },
         "provenance": PROVENANCE_SCHEMA,

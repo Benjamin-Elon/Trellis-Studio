@@ -26,7 +26,7 @@ from .schema import (
     compact_json,
 )
 from .sowing_windows import normalize_window_row, select_cities_for_crop, usable_crop_for_sowing_windows
-from .validator import normalize_key, source_values_from_input, validate_input, validate_row, validate_run
+from .validator import normalize_key, source_ref_allowed, source_values_from_input, validate_input, validate_row, validate_run  # CHANGED
 from .weather import forecast_rows, history_window, summarize_city_monthly_weather
 
 
@@ -487,6 +487,7 @@ def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int
                 "Numeric and integer fields must be in the requested units, never text. "
                 "Lifecycle flags must be coherent, method flags must match allowed planting methods, and default_planting_method must be a concrete allowed method. "
                 "Return real named cultivars/varieties only; never placeholders such as '<crop> variety 1', 'generic', 'standard', or crop-name-only varieties. "
+                "Set variety.maturity_class only when a supplied variety source explicitly supports early, mid, or late maturity; otherwise return an empty string. "  # ADDED
                 "Do not include planting methods (such as propagation-by-cutting) unless the crop is normally grown using the method. "
                 "provenance.field_sources must cite exact supplied strings from allowed_provenance_references for required provenance fields; do not cite invented estimate labels."
             ),
@@ -515,11 +516,15 @@ def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int
         varieties = result.get("varieties", [])[:requested_varieties]
         print(f"  - Varieties generated: {len(varieties)}", flush=True)
         for variety in varieties:
-            generated["PlantVarieties"].append({
+            variety_row = {  # CHANGED
                 "plant_name": row["plant_name"],
                 "variety_name": variety["variety_name"],
                 "overrides": _override_pairs_to_dict(variety.get("overrides") or {}),
-            })
+            }  # CHANGED
+            maturity_class = str(variety.get("maturity_class") or "").strip().casefold()  # ADDED
+            if maturity_class and _has_explicit_variety_sources(variety):  # CHANGED
+                variety_row["maturity_class"] = maturity_class  # ADDED
+            generated["PlantVarieties"].append(variety_row)  # CHANGED
         crop_methods = [m for m in methods if m["method_id"] in set(allowed_method_ids)]
         if not generate_templates:
             print("  - Plant task templates skipped; scheduler defaults will be used", flush=True)  # template opt-in
@@ -1347,11 +1352,11 @@ def _validate_crop_result(result: dict[str, Any], source_values: set[str], metho
     if not result.get("allowed_method_categories"):
         errors.append("allowed_method_categories is required.")
     errors.extend(_validate_allowed_method_ids(result, methods or []))
-    errors.extend(_validate_varieties(result.get("varieties"), str(row.get("plant_name") or "")))
+    errors.extend(_validate_varieties(result.get("varieties"), str(row.get("plant_name") or ""), source_values))  # CHANGED
     return errors
 
 
-def _validate_varieties(varieties: Any, plant_name: str) -> list[str]:
+def _validate_varieties(varieties: Any, plant_name: str, source_values: set[str] | None = None) -> list[str]:  # CHANGED
     errors: list[str] = []
     if not isinstance(varieties, list):
         return ["varieties must be a list."]
@@ -1374,7 +1379,29 @@ def _validate_varieties(varieties: Any, plant_name: str) -> list[str]:
             errors.append(f"{prefix}.variety_name must be a real cultivar/variety, not the crop name.")
         if _is_placeholder_variety_name(name, plant_name):
             errors.append(f"{prefix}.variety_name appears to be a placeholder: {name}")
+        maturity_class = str(variety.get("maturity_class") or "").strip().casefold()  # ADDED
+        if maturity_class and maturity_class not in {"early", "mid", "late"}:  # ADDED
+            errors.append(f"{prefix}.maturity_class must be early, mid, or late.")  # ADDED
+        if maturity_class in {"early", "mid", "late"}:  # ADDED
+            errors.extend(_validate_variety_maturity_sources(prefix, variety, source_values))  # ADDED
     return errors
+
+
+def _has_explicit_variety_sources(variety: dict[str, Any]) -> bool:  # ADDED
+    return any(str(source).strip() for source in (variety.get("sources") or []))  # ADDED
+
+
+def _validate_variety_maturity_sources(prefix: str, variety: dict[str, Any], source_values: set[str] | None) -> list[str]:  # ADDED
+    sources = [str(source).strip() for source in (variety.get("sources") or []) if str(source).strip()]  # ADDED
+    if not sources:  # ADDED
+        return [f"{prefix}.maturity_class requires at least one explicit source in {prefix}.sources."]  # ADDED
+    if source_values is None:  # ADDED
+        return []  # ADDED
+    return [  # ADDED
+        f"{prefix}.sources references an input source/note that was not supplied: {source}"  # ADDED
+        for source in sources  # ADDED
+        if not source_ref_allowed(source, source_values)  # ADDED
+    ]  # ADDED
 
 
 def _is_placeholder_variety_name(name: str, plant_name: str) -> bool:

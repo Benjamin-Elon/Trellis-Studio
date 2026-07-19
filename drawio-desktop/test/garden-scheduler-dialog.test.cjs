@@ -109,6 +109,72 @@ test('perennial crop suitability is alphabetic and date-flexible', async () => {
     assert.deepEqual(Array.from(groups[0].options, option => option.label), ['A Perennial', 'Z Perennial']); // ADDED
 }); // ADDED
 
+function makeVariety(overrides = {}) { // ADDED
+    return { // ADDED
+        variety_id: overrides.variety_id ?? 1, // ADDED
+        plant_id: overrides.plant_id ?? 1, // ADDED
+        variety_name: overrides.variety_name || 'Variety', // ADDED
+        maturity_class: overrides.maturity_class ?? '', // ADDED
+        overrides_json: JSON.stringify(overrides.overrides || {}), // ADDED
+        ...overrides // ADDED
+    }; // ADDED
+} // ADDED
+
+test('variety options group by manual class, DTM inference, and GDD fallback', () => { // ADDED
+    const groups = hooks.buildGroupedVarietyOptions([ // ADDED
+        makeVariety({ variety_id: 1, variety_name: 'Quick', overrides: { days_maturity: 45 } }), // ADDED
+        makeVariety({ variety_id: 2, variety_name: 'Middle', overrides: { days_maturity: 60 } }), // ADDED
+        makeVariety({ variety_id: 3, variety_name: 'Slow', overrides: { days_maturity: 80 } }), // ADDED
+        makeVariety({ variety_id: 4, variety_name: 'Curated Late', maturity_class: 'late', overrides: { days_maturity: 40 } }), // ADDED
+        makeVariety({ variety_id: 5, variety_name: 'Heat Only', overrides: { gdd_to_maturity: 900 } }), // ADDED
+        makeVariety({ variety_id: 6, variety_name: 'Heat Mid', overrides: { gdd_to_maturity: 1200 } }), // ADDED
+        makeVariety({ variety_id: 7, variety_name: 'Heat Late', overrides: { gdd_to_maturity: 1500 } }) // ADDED
+    ]); // ADDED
+    assert.deepEqual(Array.from(groups, group => group.label), ['Early varieties', 'Mid varieties', 'Late varieties']); // ADDED
+    assert.deepEqual(Array.from(groups, group => Array.from(group.options, option => option.label)), [ // ADDED
+        ['Quick - 45d', 'Heat Only - 900 GDD'], // ADDED
+        ['Middle - 60d', 'Heat Mid - 1200 GDD'], // ADDED
+        ['Curated Late - 40d', 'Slow - 80d', 'Heat Late - 1500 GDD'] // ADDED
+    ]); // ADDED
+}); // ADDED
+
+test('variety grouping leaves insufficient inferred data uncategorized but honors manual class', () => { // ADDED
+    const groups = hooks.buildGroupedVarietyOptions([ // ADDED
+        makeVariety({ variety_id: 1, variety_name: 'Only One', overrides: { days_maturity: 45 } }), // ADDED
+        makeVariety({ variety_id: 2, variety_name: 'Only Two', overrides: { days_maturity: 55 } }), // ADDED
+        makeVariety({ variety_id: 3, variety_name: 'Manual Early', maturity_class: 'early' }) // ADDED
+    ]); // ADDED
+    assert.deepEqual(Array.from(groups, group => group.label), ['Early varieties', 'Uncategorized']); // ADDED
+    assert.deepEqual(Array.from(groups[0].options, option => option.label), ['Manual Early']); // ADDED
+    assert.deepEqual(Array.from(groups[1].options, option => option.label), ['Only One - 45d', 'Only Two - 55d']); // ADDED
+}); // ADDED
+
+test('rendered variety dropdown keeps base plant first and omits empty optgroups', () => { // ADDED
+    const document = hooks.__testWindow.document; // ADDED
+    const select = document.createElement('select'); // ADDED
+    const groups = hooks.buildGroupedVarietyOptions([ // ADDED
+        makeVariety({ variety_id: 1, variety_name: 'Alpha', maturity_class: 'early' }) // ADDED
+    ]); // ADDED
+    hooks.renderGroupedVarietyOptions(select, groups, '1'); // ADDED
+    assert.equal(select.children[0].tagName, 'OPTION'); // ADDED
+    assert.equal(select.children[0].textContent, '(base plant)'); // ADDED
+    assert.deepEqual(Array.from(select.querySelectorAll('optgroup'), group => group.label), ['Early varieties']); // ADDED
+    assert.equal(select.value, '1'); // ADDED
+}); // ADDED
+
+test('manual variety maturity mismatch warns only when inference is available', () => { // ADDED
+    const rows = [ // ADDED
+        makeVariety({ variety_id: 1, variety_name: 'Fast', maturity_class: 'late', overrides: { days_maturity: 40 } }), // ADDED
+        makeVariety({ variety_id: 2, variety_name: 'Middle', overrides: { days_maturity: 60 } }), // ADDED
+        makeVariety({ variety_id: 3, variety_name: 'Slow', overrides: { days_maturity: 80 } }) // ADDED
+    ]; // ADDED
+    const mismatch = hooks.manualVarietyMaturityMismatch(rows, rows[0]); // ADDED
+    assert.equal(mismatch.manualClass, 'late'); // ADDED
+    assert.equal(mismatch.inferredClass, 'early'); // ADDED
+    assert.equal(mismatch.source, 'days_maturity'); // ADDED
+    assert.equal(hooks.manualVarietyMaturityMismatch(rows.slice(0, 2), rows[0]), null); // ADDED
+}); // ADDED
+
 test('missing city fallback keeps Set Plant style options grouped alphabetically', () => { // ADDED
     const crops = [ // ADDED
         makeCrop({ plant_id: 1, plant_name: 'Zucchini', annual: 1, biennial: 0, perennial: 0 }), // ADDED

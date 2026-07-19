@@ -272,17 +272,20 @@ test("Trellis updates integration is registered, default-loaded, and bridged", (
     const electronSource = readProjectFile("src/main/electron.js");
 
     assert.match(appSource, /'trellisUpdatesLinks': 'plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js'/);
-    assert.match(appSource, /App\.loadPlugins\(\['trellisUpdatesLinks', 'trellisDatabaseTools', 'trellisUiCleanup'\]\); \/\/ CHANGE/); // CHANGE
-    assert.ok(appSource.indexOf("App.loadPlugins(['trellisUpdatesLinks', 'trellisDatabaseTools', 'trellisUiCleanup']); // CHANGE") < appSource.indexOf("if (urlParams['plugins'] != '0' && urlParams['offline'] != '1')")); // CHANGE
+    assert.match(appSource, /App\.loadPlugins\(\['trellisUpdatesLinks', 'trellisDatabaseTools', 'trellisUiCleanup', 'trellisUsers'\]\); \/\/ CHANGE/); // CHANGE
+    assert.ok(appSource.indexOf("App.loadPlugins(['trellisUpdatesLinks', 'trellisDatabaseTools', 'trellisUiCleanup', 'trellisUsers']); // CHANGE") < appSource.indexOf("if (urlParams['plugins'] != '0' && urlParams['offline'] != '1')")); // CHANGE
     assert.match(bundledSource, /'trellisUpdatesLinks': 'plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js'/);
-    assert.match(bundledSource, /App\.loadPlugins\(\["trellisUpdatesLinks","trellisDatabaseTools","trellisUiCleanup"\]\)/); // CHANGE
-    assert.ok(bundledSource.indexOf('App.loadPlugins(["trellisUpdatesLinks","trellisDatabaseTools","trellisUiCleanup"])') < bundledSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)')); // CHANGE
+    assert.match(bundledSource, /App\.loadPlugins\(\["trellisUpdatesLinks","trellisDatabaseTools","trellisUiCleanup","trellisUsers"\]\)/); // CHANGE
+    assert.ok(bundledSource.indexOf('App.loadPlugins(["trellisUpdatesLinks","trellisDatabaseTools","trellisUiCleanup","trellisUsers"])') < bundledSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)')); // CHANGE
     assert.match(integrateSource, /trellisUpdatesLinks:"plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js"/);
-    assert.match(integrateSource, /App\.loadPlugins\(\["trellisUpdatesLinks","trellisDatabaseTools","trellisUiCleanup"\]\)/); // CHANGE
-    assert.ok(integrateSource.indexOf('App.loadPlugins(["trellisUpdatesLinks","trellisDatabaseTools","trellisUiCleanup"])') < integrateSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)')); // CHANGE
+    assert.match(integrateSource, /App\.loadPlugins\(\["trellisUpdatesLinks","trellisDatabaseTools","trellisUiCleanup","trellisUsers"\]\)/); // CHANGE
+    assert.ok(integrateSource.indexOf('App.loadPlugins(["trellisUpdatesLinks","trellisDatabaseTools","trellisUiCleanup","trellisUsers"])') < integrateSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)')); // CHANGE
     assert.match(preloadSource, /contextBridge\.exposeInMainWorld\('trellisApp'/);
     assert.match(preloadSource, /getReleases\(\) \{ \/\/ NEW/); // NEW
     assert.match(preloadSource, /\{ action: 'getTrellisReleases' \}, \/\/ NEW/); // NEW
+    assert.match(preloadSource, /contextBridge\.exposeInMainWorld\('trellisShare'/); // NEW
+    assert.match(preloadSource, /action: 'getTrellisSyncthingShareInfo'/); // NEW
+    assert.match(preloadSource, /action: 'openTrellisEmailDraft'/); // NEW
     assert.match(electronSource, /case 'getTrellisAppInfo': \/\/ NEW/);
     assert.match(electronSource, /const trellisReleasesApiUrl = 'https:\/\/api\.github\.com\/repos\/Benjamin-Elon\/Trellis-for-Drawio\/releases\?per_page=10'; \/\/ NEW/); // NEW
     assert.match(electronSource, /const trellisReleasesTimeoutMs = 15000; \/\/ NEW/); // NEW
@@ -290,5 +293,8 @@ test("Trellis updates integration is registered, default-loaded, and bridged", (
     assert.match(electronSource, /fetch\(trellisReleasesApiUrl/); // NEW
     assert.match(electronSource, /controller\.abort\(\)/); // NEW
     assert.match(electronSource, /case 'getTrellisReleases': \/\/ NEW/); // NEW
+    assert.match(electronSource, /case 'getTrellisSyncthingShareInfo': \/\/ NEW/); // NEW
+    assert.match(electronSource, /case 'openTrellisEmailDraft': \/\/ NEW/); // NEW
+    assert.match(electronSource, /mailto:/); // NEW
     assert.match(electronSource, /canCheckForUpdates: canCheckForUpdates\(\) \/\/ NEW/); // NEW
 });

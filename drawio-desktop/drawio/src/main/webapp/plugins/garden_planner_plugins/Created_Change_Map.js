@@ -30,6 +30,8 @@ Draw.loadPlugin(function (ui) {
   const ATTR_EDITED = 'lastEditedAt';
   const ATTR_ORIG_STYLE = 'origStyle';
   const ATTR_HISTORY_ID = 'trellis_history_id';                              // NEW
+  const ATTR_CREATED_BY = 'createdByUserId';                                  // NEW
+  const ATTR_EDITED_BY = 'lastEditedByUserId';                                // NEW
 
   const MODE_NONE = 'none';
   const MODE_CHANGE = 'changemap';
@@ -116,6 +118,7 @@ Draw.loadPlugin(function (ui) {
   graph.__ccWindowUnit = 'days';    // minutes | hours | days
 
   graph.__ccSortOrder = 'newest'; // newest | oldest
+  graph.__ccUserFilter = 'all';                                               // NEW
   graph.__ccFiltered = [];          // current filtered cells (for navigation)
   graph.__ccNavIndex = 0;
   graph.__ccHistoryRevisions = [];                                           // NEW
@@ -327,6 +330,31 @@ Draw.loadPlugin(function (ui) {
   function modeKey(mode) {
     return mode === MODE_CHANGE ? ATTR_EDITED : ATTR_CREATED;
   }
+
+  function actorKey(mode) {                                                    // NEW
+    return mode === MODE_CHANGE ? ATTR_EDITED_BY : ATTR_CREATED_BY;            // NEW
+  }                                                                            // NEW
+
+  function usersApi() {                                                        // NEW
+    return typeof window !== 'undefined' && window.Trellis && window.Trellis.users; // NEW
+  }                                                                            // NEW
+
+  function actorMetadata(metadata) {                                           // NEW
+    const users = usersApi();                                                   // NEW
+    if (users && typeof users.withActorMetadata === 'function') return users.withActorMetadata(metadata || {}); // NEW
+    return Object.assign({}, metadata || {});                                  // NEW
+  }                                                                            // NEW
+
+  function currentActorUserId() {                                              // NEW
+    const users = usersApi();                                                   // NEW
+    const user = users && typeof users.getCurrentUser === 'function' ? users.getCurrentUser() : null; // NEW
+    return user && user.id ? String(user.id) : '';                              // NEW
+  }                                                                            // NEW
+
+  function stampActor(cell, kind) {                                            // NEW
+    const users = usersApi();                                                   // NEW
+    if (users && typeof users.stampActorOnCell === 'function') users.stampActorOnCell(cell, kind); // NEW
+  }                                                                            // NEW
 
   function isDirectEditChange(ch) {
     const n = ch && ch.constructor && ch.constructor.name;
@@ -770,7 +798,7 @@ Draw.loadPlugin(function (ui) {
     let recording = false;                                                     // NEW
 
     function normalizeMetadata(metadata) {                                     // NEW
-      const meta = metadata || {};                                             // NEW
+      const meta = actorMetadata(metadata || {});                              // CHANGE
       const category = HISTORY_CATEGORIES.indexOf(meta.category) >= 0 ? meta.category : 'Diagram'; // NEW
       return {                                                                 // NEW
         category,                                                              // NEW
@@ -778,6 +806,9 @@ Draw.loadPlugin(function (ui) {
         origin: String(meta.origin || 'drawio'),                               // NEW
         title: String(meta.title || category + ' change'),                     // NEW
         tags: uniqueArray(meta.tags || []),                                    // NEW
+        actorUserId: meta.actorUserId ? String(meta.actorUserId) : '',         // NEW
+        actorName: meta.actorName ? String(meta.actorName) : '',               // NEW
+        actorRole: meta.actorRole ? String(meta.actorRole) : '',               // NEW
         affectedCellIds: uniqueArray(meta.affectedCellIds || []),              // NEW
         changeTypes: uniqueArray(meta.changeTypes || []),                      // NEW
         bounds: normalizeBounds(meta.bounds),                                   // NEW
@@ -797,6 +828,9 @@ Draw.loadPlugin(function (ui) {
         if (pending.action === 'change' && normalized.action !== 'change') pending.action = normalized.action; // NEW
         if (!pending.title || pending.title === 'Diagram change') pending.title = normalized.title; // NEW
         pending.origin = pending.origin === 'drawio' ? normalized.origin : pending.origin; // NEW
+        pending.actorUserId = pending.actorUserId || normalized.actorUserId;   // NEW
+        pending.actorName = pending.actorName || normalized.actorName;         // NEW
+        pending.actorRole = pending.actorRole || normalized.actorRole;         // NEW
         pending.tags = uniqueArray((pending.tags || []).concat(normalized.tags || [], normalized.category)); // NEW
         pending.bounds = unionBounds(pending.bounds, normalized.bounds);        // NEW
         pending.center = normalizeCenter(normalized.center) || pending.center;  // NEW
@@ -810,10 +844,14 @@ Draw.loadPlugin(function (ui) {
       scheduleStableRecord();                                                  // NEW
     }                                                                          // NEW
 
-    function recordModelChange(edit) {                                         // NEW
+    function recordModelChange(edit, capturedMetadata) {                       // CHANGE
       if (graph.__ccMapInternalChange || graph.__ccHistoryRestoring) return;   // NEW
-      const active = activeTransactionMetadata();                              // NEW
+      const active = capturedMetadata || activeTransactionMetadata();           // CHANGE
       mergePending(active || { category: 'Diagram', action: 'change', origin: 'drawio', title: inferTitleFromEdit(edit) }, edit); // NEW
+    }                                                                          // NEW
+
+    function captureActiveTransactionMetadata() {                              // NEW
+      return activeTransactionMetadata();                                      // NEW
     }                                                                          // NEW
 
     function activeTransactionMetadata() {                                      // NEW
@@ -868,6 +906,9 @@ Draw.loadPlugin(function (ui) {
           action: meta.action,                                                 // NEW
           origin: meta.origin,                                                 // NEW
           title: meta.title,                                                   // NEW
+          actorUserId: meta.actorUserId || '',                                 // NEW
+          actorName: meta.actorName || '',                                     // NEW
+          actorRole: meta.actorRole || '',                                     // NEW
           affectedCellIds: uniqueArray(meta.affectedCellIds || []),            // NEW
           changeTypes: uniqueArray(meta.changeTypes || []),                    // NEW
           bounds: viewTarget.bounds,                                           // NEW
@@ -947,7 +988,7 @@ Draw.loadPlugin(function (ui) {
       await recordStableRevision(true);                                        // NEW
     }                                                                          // NEW
 
-    return { initializeBaseline, recordModelChange, run, createCheckpoint, recordRestore, recordStableRevision }; // NEW
+    return { initializeBaseline, recordModelChange, captureActiveTransactionMetadata, run, createCheckpoint, recordRestore, recordStableRevision }; // CHANGE
   }                                                                            // NEW
 
   const historyStore = createHistoryStore();                                   // NEW
@@ -1000,12 +1041,13 @@ Draw.loadPlugin(function (ui) {
 
   function stampCreatedIfMissing(cell, tNow) {
     if (!shouldStyleCell(cell)) return;
-    if (getAttrMs(cell, ATTR_CREATED) == null) setAttrMs(cell, ATTR_CREATED, tNow);
+    if (getAttrMs(cell, ATTR_CREATED) == null) { setAttrMs(cell, ATTR_CREATED, tNow); stampActor(cell, 'created'); } // CHANGE
   }
 
   function stampEdited(cell, tNow) {
     if (!shouldStyleCell(cell)) return;
     setAttrMs(cell, ATTR_EDITED, tNow);
+    stampActor(cell, 'edited');                                                // NEW
   }
 
   function snapshotSelectionIds() {
@@ -1102,6 +1144,7 @@ Draw.loadPlugin(function (ui) {
 
         if (getAttrMs(child, ATTR_CREATED) == null) {
           setAttrMs(child, ATTR_CREATED, tNow);
+          stampActor(child, 'created');                                        // NEW
           did = true;
         }
       }
@@ -1245,6 +1288,38 @@ Draw.loadPlugin(function (ui) {
     return { inRange, tMin, tMax, windowMs: ms };
   }
 
+  function resolveUserFilterId() {                                             // NEW
+    const filter = graph.__ccUserFilter || 'all';                              // NEW
+    if (filter === 'all') return '';                                           // NEW
+    if (filter === 'current') return currentActorUserId();                     // NEW
+    if (filter.indexOf('user:') === 0) return filter.substring(5);             // NEW
+    return '';                                                                 // NEW
+  }                                                                            // NEW
+
+  function filterCellsByUser(cells, mode) {                                    // NEW
+    const userId = resolveUserFilterId();                                      // NEW
+    if (!userId) return cells;                                                 // NEW
+    const key = actorKey(mode);                                                // NEW
+    const fallbackKey = mode === MODE_CHANGE ? ATTR_CREATED_BY : '';           // NEW
+    return (cells || []).filter(function (cell) {                              // NEW
+      return getAttrStr(cell, key) === userId || (!!fallbackKey && getAttrStr(cell, fallbackKey) === userId); // NEW
+    });                                                                        // NEW
+  }                                                                            // NEW
+
+  function recomputeSliceRange(slice, mode) {                                  // NEW
+    let tMin = Infinity;                                                       // NEW
+    let tMax = -Infinity;                                                      // NEW
+    const inRange = (slice && slice.inRange) || [];                            // NEW
+    for (let i = 0; i < inRange.length; i++) {                                 // NEW
+      const ts = getTimestampForMode(inRange[i], mode);                        // NEW
+      if (ts == null) continue;                                                // NEW
+      if (ts < tMin) tMin = ts;                                                // NEW
+      if (ts > tMax) tMax = ts;                                                // NEW
+    }                                                                          // NEW
+    slice.tMin = tMin === Infinity ? null : tMin;                              // NEW
+    slice.tMax = tMax === -Infinity ? null : tMax;                             // NEW
+  }                                                                            // NEW
+
   function positionForTimestamp(ts, tMin, tMax) {
     const span = (tMax - tMin);
     if (span <= 0) return 1;
@@ -1265,7 +1340,11 @@ Draw.loadPlugin(function (ui) {
     const token = ++graph.__ccApplyToken;
 
     const scopeCells = collectScopeCells(graph.__ccScope);
-    const slice = filterCellsByTimeSlice(scopeCells, mode);
+    const userScopedCells = filterCellsByUser(scopeCells, mode);                // NEW
+    const userFilterActive = !!resolveUserFilterId();                           // NEW
+    const userScopedSet = new Set(userScopedCells.map(c => c.id));              // NEW
+    const slice = filterCellsByTimeSlice(userScopedCells, mode);                // CHANGE
+    recomputeSliceRange(slice, mode);                                          // NEW
 
     const inRangeSet = new Set(slice.inRange.map(c => c.id));
     graph.__ccFiltered = buildNavList(slice.inRange, mode);
@@ -1291,6 +1370,18 @@ Draw.loadPlugin(function (ui) {
 
         ensureOrigStyle(cell);
         const base = baseStyleForApply(cell);
+
+        if (userFilterActive && !userScopedSet.has(cell.id)) {                 // NEW
+          const p0 = 0;                                                         // NEW
+          const strokeWidth = widthFromP(cell, p0);                             // NEW
+          model.setStyle(cell, mergeStyle(base, {                               // NEW
+            strokeColor: OUT_OF_RANGE_STYLE.strokeColor,                        // NEW
+            dashed: OUT_OF_RANGE_STYLE.dashed,                                  // NEW
+            strokeOpacity: OUT_OF_RANGE_STYLE.strokeOpacity,                    // NEW
+            strokeWidth: strokeWidth                                            // NEW
+          }));                                                                  // NEW
+          continue;                                                             // NEW
+        }                                                                       // NEW
 
         const ts = getTimestampForMode(cell, mode);
 
@@ -1446,6 +1537,7 @@ Draw.loadPlugin(function (ui) {
   let windowValueInput = null;
   let windowUnitSelect = null;
   let sortSelect = null;
+  let userFilterSelect = null;                                                // NEW
   let infoLabel = null;
   let prevBtn = null;
   let nextBtn = null;
@@ -1593,6 +1685,8 @@ Draw.loadPlugin(function (ui) {
       { value: 'oldest', label: 'Oldest first' }
     ]))));
 
+    panel.appendChild(makeRow('User', (userFilterSelect = makeSelect(userFilterOptions())))); // NEW
+
     const navRow = makeEl('div', { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' });
     prevBtn = makeEl('button', { padding: '4px 8px', cursor: 'pointer' });
     prevBtn.textContent = 'Prev';
@@ -1687,6 +1781,29 @@ Draw.loadPlugin(function (ui) {
     return sel;
   }
 
+  function userFilterOptions() {                                               // NEW
+    const options = [{ value: 'all', label: 'All users' }, { value: 'current', label: 'Current user' }]; // NEW
+    const users = usersApi();                                                  // NEW
+    const list = users && typeof users.listUsers === 'function' ? users.listUsers() : []; // NEW
+    for (let i = 0; i < list.length; i++) {                                    // NEW
+      if (list[i] && list[i].id) options.push({ value: 'user:' + list[i].id, label: list[i].name || list[i].id }); // NEW
+    }                                                                          // NEW
+    return options;                                                            // NEW
+  }                                                                            // NEW
+
+  function refreshSelectOptions(select, options, selectedValue) {              // NEW
+    if (!select) return;                                                       // NEW
+    const value = selectedValue || select.value || 'all';                      // NEW
+    select.innerHTML = '';                                                     // NEW
+    for (let i = 0; i < options.length; i++) {                                 // NEW
+      const opt = document.createElement('option');                            // NEW
+      opt.value = options[i].value;                                            // NEW
+      opt.textContent = options[i].label;                                      // NEW
+      select.appendChild(opt);                                                 // NEW
+    }                                                                          // NEW
+    select.value = options.some(function (option) { return option.value === value; }) ? value : 'all'; // NEW
+  }                                                                            // NEW
+
   function attachPanel() {
     if (!graph.container || !panel) return;
     const parent = graph.container.parentNode || graph.container;
@@ -1721,6 +1838,12 @@ Draw.loadPlugin(function (ui) {
       refreshIfEnabled();
     });
 
+    userFilterSelect.addEventListener('change', function () {                  // NEW
+      graph.__ccUserFilter = userFilterSelect.value || 'all';                  // NEW
+      refreshIfEnabled();                                                      // NEW
+      updateHistoryUI();                                                       // NEW
+    });                                                                        // NEW
+
     prevBtn.addEventListener('click', function () { navPrev(); });
     nextBtn.addEventListener('click', function () { navNext(); });
     historyFilterSelect.addEventListener('change', function () {               // NEW
@@ -1743,6 +1866,8 @@ Draw.loadPlugin(function (ui) {
     windowValueInput.value = String(graph.__ccWindowValue);
     windowUnitSelect.value = graph.__ccWindowUnit;
     sortSelect.value = graph.__ccSortOrder;
+    refreshSelectOptions(userFilterSelect, userFilterOptions(), graph.__ccUserFilter || 'all'); // NEW
+    graph.__ccUserFilter = userFilterSelect ? userFilterSelect.value : (graph.__ccUserFilter || 'all'); // NEW
     if (historyFilterSelect) historyFilterSelect.value = graph.__ccHistoryFilter || 'all'; // NEW
   }
 
@@ -1815,14 +1940,23 @@ Draw.loadPlugin(function (ui) {
     return null;                                                               // NEW
   }                                                                            // NEW
 
+  function revisionMatchesUserFilter(rev) {                                    // NEW
+    const userId = resolveUserFilterId();                                      // NEW
+    if (!userId) return true;                                                  // NEW
+    return !!(rev && rev.actorUserId === userId);                              // NEW
+  }                                                                            // NEW
+
   function updateHistoryUI() {                                                 // NEW
     if (!panel || !historyRailWrap || !historyPreview || !historyStatus) return; // NEW
+    refreshSelectOptions(userFilterSelect, userFilterOptions(), graph.__ccUserFilter || 'all'); // NEW
+    graph.__ccUserFilter = userFilterSelect ? userFilterSelect.value : (graph.__ccUserFilter || 'all'); // NEW
     const warning = graph.__ccHistoryWarning || historyStore.warning || '';    // NEW
     historyStatus.textContent = warning || graph.__ccHistoryRestoreStatus || (historyStore.ready ? 'History is recording stable revisions.' : 'History storage is starting.'); // NEW
     historyRailWrap.innerHTML = '';                                            // NEW
     const filter = graph.__ccHistoryFilter || 'all';                           // NEW
     const all = graph.__ccHistoryRevisions || [];                              // NEW
-    const revisions = filter === 'all' ? all : all.filter(function (rev) { return rev.category === filter || (rev.tags || []).indexOf(filter) >= 0; }); // NEW
+    const categoryFiltered = filter === 'all' ? all : all.filter(function (rev) { return rev.category === filter || (rev.tags || []).indexOf(filter) >= 0; }); // CHANGE
+    const revisions = categoryFiltered.filter(revisionMatchesUserFilter);       // NEW
     if (revisions.length === 0) {                                               // NEW
       const empty = makeEl('div', { color: '#666' });                          // NEW
       empty.textContent = historyStore.ready ? 'No revisions match this filter.' : 'Persistent history unavailable.'; // NEW
@@ -1851,7 +1985,7 @@ Draw.loadPlugin(function (ui) {
     const title = makeEl('div', { fontWeight: active ? '600' : '400', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }); // NEW
     title.textContent = rev.title || rev.action || 'Revision';                 // NEW
     const meta = makeEl('div', { color: '#666', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }); // NEW
-    meta.textContent = rev.category + ' - ' + formatTs(rev.timestamp);         // NEW
+    meta.textContent = rev.category + ' - ' + formatTs(rev.timestamp) + (rev.actorName ? ' - ' + rev.actorName : ''); // CHANGE
     label.appendChild(title);                                                  // NEW
     label.appendChild(meta);                                                   // NEW
     row.appendChild(tick);                                                     // NEW
@@ -1876,7 +2010,7 @@ Draw.loadPlugin(function (ui) {
     const title = makeEl('div', { fontWeight: '600', marginBottom: '4px' });   // NEW
     title.textContent = rev.title || 'Revision';                               // NEW
     const meta = makeEl('div', { color: '#555', fontSize: '11px', marginBottom: '4px' }); // NEW
-    meta.textContent = rev.category + ' - ' + formatTs(rev.timestamp);         // NEW
+    meta.textContent = rev.category + ' - ' + formatTs(rev.timestamp) + (rev.actorName ? ' - ' + rev.actorName : ''); // CHANGE
     const counts = makeEl('div', { color: '#333' });                           // NEW
     counts.textContent = String(affected.length) + ' affected cell' + (affected.length === 1 ? '' : 's') + (rev.restoredFromRevisionId ? ' - branch restore' : ''); // NEW
     historyPreview.appendChild(title);                                         // NEW
@@ -2195,6 +2329,7 @@ Draw.loadPlugin(function (ui) {
         ensureXmlValue(c);
         if (getAttrMs(c, ATTR_CREATED) == null) {
           setAttrMs(c, ATTR_CREATED, tNow);
+          stampActor(c, 'created');                                            // NEW
           did = true;
         }
       }
@@ -2228,17 +2363,26 @@ Draw.loadPlugin(function (ui) {
 
   model.addListener(mxEvent.CHANGE, function (sender, evt) {
     if (graph.__ccMapInternalChange) return;
+    if (graph.__trellisUsersRejecting || graph.__trellisUsersInternalChange) return; // NEW
 
     const edit = evt && evt.getProperty && evt.getProperty('edit');
     if (!edit || !edit.changes) return;
+    if (edit.__trellisUsersRejected) return;                                    // NEW
+    const capturedMetadata = historyRecorder.captureActiveTransactionMetadata(); // NEW
 
-    debugLogEdit(edit, 'CHANGE');
-    historyRecorder.recordModelChange(edit);                                  // NEW
+    Promise.resolve().then(function () {                                        // NEW
+      if (graph.__ccMapInternalChange) return;                                  // NEW
+      if (graph.__trellisUsersRejecting || graph.__trellisUsersInternalChange) return; // NEW
+      if (edit.__trellisUsersRejected) return;                                  // NEW
 
-    const createdStamped = stampCreatedOnInsert(edit);
-    const editedStamped = stampEditedFromSelectedIntersection(edit);
+      debugLogEdit(edit, 'CHANGE');                                             // CHANGE
+      historyRecorder.recordModelChange(edit, capturedMetadata);                // CHANGE
 
-    if (createdStamped || editedStamped) scheduleRefreshIfEnabled();
+      const createdStamped = stampCreatedOnInsert(edit);                        // CHANGE
+      const editedStamped = stampEditedFromSelectedIntersection(edit);           // CHANGE
+
+      if (createdStamped || editedStamped) scheduleRefreshIfEnabled();           // CHANGE
+    });                                                                         // NEW
   });
 
   const selectionModel = graph.getSelectionModel && graph.getSelectionModel();  // NEW
@@ -2297,7 +2441,7 @@ Draw.loadPlugin(function (ui) {
           if (shouldIgnoreBecauseInTilerGroup(c)) continue;
 
           ensureXmlValue(c);
-          if (getAttrMs(c, ATTR_CREATED) == null) setAttrMs(c, ATTR_CREATED, tNow);
+          if (getAttrMs(c, ATTR_CREATED) == null) { setAttrMs(c, ATTR_CREATED, tNow); stampActor(c, 'created'); } // CHANGE
         }
       }
 
@@ -2339,7 +2483,7 @@ Draw.loadPlugin(function (ui) {
           if (shouldIgnoreBecauseInTilerGroup(c)) continue;
 
           ensureXmlValue(c);
-          if (getAttrMs(c, ATTR_CREATED) == null) setAttrMs(c, ATTR_CREATED, tNow);
+          if (getAttrMs(c, ATTR_CREATED) == null) { setAttrMs(c, ATTR_CREATED, tNow); stampActor(c, 'created'); } // CHANGE
         }
       }
 

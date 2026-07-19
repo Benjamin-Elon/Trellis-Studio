@@ -10,7 +10,7 @@ from typing import Any
 
 from .jsonio import read_json, write_json
 from .migrations import apply_migrations, pending_migrations
-from .schema import CITY_COLUMNS, PLANT_COLUMNS, PLANTING_WINDOW_REFERENCE_COLUMNS, WEATHER_TABLES
+from .schema import CITY_COLUMNS, PLANT_COLUMNS, PLANTING_WINDOW_REFERENCE_COLUMNS, VARIETY_MATURITY_CLASSES, WEATHER_TABLES  # CHANGED
 from .validator import normalize_key, validate_run
 from .weather import checksum_rows
 
@@ -275,20 +275,28 @@ def _upsert_varieties(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> i
     for row in rows:
         plant_id = _resolve_plant_id(conn, row)
         variety_id = row.get("variety_id") or _find_variety_id(conn, plant_id, row.get("variety_name"))
+        maturity_class = _normalize_maturity_class(row.get("maturity_class"))  # ADDED
         overrides_json = row.get("overrides_json")
         if overrides_json is None:
             overrides_json = json.dumps(row.get("overrides") or {}, sort_keys=True)
         if variety_id:
             conn.execute(
-                "UPDATE PlantVarieties SET plant_id=?, variety_name=?, overrides_json=?, updated_at=? WHERE variety_id=?",
-                [plant_id, row["variety_name"], overrides_json, now, variety_id],
+                "UPDATE PlantVarieties SET plant_id=?, variety_name=?, maturity_class=?, overrides_json=?, updated_at=? WHERE variety_id=?",
+                [plant_id, row["variety_name"], maturity_class, overrides_json, now, variety_id],
             )
         else:
             conn.execute(
-                "INSERT INTO PlantVarieties (plant_id, variety_name, overrides_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                [plant_id, row["variety_name"], overrides_json, now, now],
+                "INSERT INTO PlantVarieties (plant_id, variety_name, maturity_class, overrides_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                [plant_id, row["variety_name"], maturity_class, overrides_json, now, now],
             )
     return len(rows)
+
+
+def _normalize_maturity_class(value: Any) -> str | None:  # ADDED
+    normalized = str(value or "").strip().casefold()  # ADDED
+    if normalized and normalized not in VARIETY_MATURITY_CLASSES:  # ADDED
+        raise ValueError(f"Invalid PlantVarieties.maturity_class: {value}")  # ADDED
+    return normalized if normalized in VARIETY_MATURITY_CLASSES else None  # ADDED
 
 
 def _upsert_companions(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:

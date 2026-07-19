@@ -135,6 +135,27 @@ contextBridge.exposeInMainWorld('trellisApp', { // NEW
 		}); // NEW
 	} // NEW
 }); // NEW
+
+contextBridge.exposeInMainWorld('trellisShare', { // NEW
+	getSyncthingShareInfo(opts = {}) { // NEW
+		return new Promise((resolve, reject) => { // NEW
+			requestViaIPC( // NEW
+				{ action: 'getTrellisSyncthingShareInfo', diagramPath: opts.diagramPath || null }, // NEW
+				(data) => resolve(data || {}), // NEW
+				(msg) => reject(new Error(msg || 'getTrellisSyncthingShareInfo failed')) // NEW
+			); // NEW
+		}); // NEW
+	}, // NEW
+	openEmailDraft(payload = {}) { // NEW
+		return new Promise((resolve, reject) => { // NEW
+			requestViaIPC( // NEW
+				{ action: 'openTrellisEmailDraft', to: payload.to || '', subject: payload.subject || '', body: payload.body || '' }, // NEW
+				(data) => resolve(data || {}), // NEW
+				(msg) => reject(new Error(msg || 'openTrellisEmailDraft failed')) // NEW
+			); // NEW
+		}); // NEW
+	} // NEW
+}); // NEW
   
 
 contextBridge.exposeInMainWorld(

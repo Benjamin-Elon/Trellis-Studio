@@ -413,6 +413,30 @@ test("module margin prompt can be requested through the fallback graph event", a
     assert.match(mod.style, /(?:^|;)module_margin=30(?:;|$)/); // NEW
 }); // NEW
 
+test("module margin API updates style and reapplies module sizing without prompt", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
+    const child = new TestCell("child", new TestGeometry(20, 30, 220, 80), ""); // NEW
+    child.vertex = true; // NEW
+    harness.model.add(mod, child); // NEW
+    assert.equal(harness.graph.__trellisModules.getModuleMargin(mod, 100), 100); // NEW
+    harness.graph.__trellisModules.setModuleMargin(mod, 35); // NEW
+    assert.equal(harness.promptCalls.length, 0); // NEW
+    assert.equal(harness.graph.__trellisModules.getModuleMargin(mod, 100), 35); // NEW
+    assert.match(mod.style, /(?:^|;)module_margin=35(?:;|$)/); // NEW
+    assert.equal(mod.geometry.width, 275); // NEW
+    assert.equal(mod.geometry.height, 145); // NEW
+}); // NEW
+
+test("module margin can be set through the fallback graph event", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
+    harness.graph.fireEvent(makeEventObject("usl:requestSetModuleMargin", ["cell", mod, "marginPx", 27])); // NEW
+    assert.equal(harness.promptCalls.length, 0); // NEW
+    assert.match(mod.style, /(?:^|;)module_margin=27(?:;|$)/); // NEW
+    assert.equal(harness.graph.__trellisModules.getModuleMargin(mod, 100), 27); // NEW
+}); // NEW
+
 test("empty canvas click renders root module overlay buttons", () => { // NEW
     const harness = makeHarness(); // NEW
     fireGraphClick(harness, { clientX: 120, clientY: 150, graphX: 200, graphY: 230 }); // NEW

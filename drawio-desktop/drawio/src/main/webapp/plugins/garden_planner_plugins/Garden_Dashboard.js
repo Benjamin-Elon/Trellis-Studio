@@ -1036,6 +1036,149 @@ Draw.loadPlugin(function (ui) {
         plannerApi.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
     } // NEW
 
+    function trellisUsersApi() { // NEW
+        return window.Trellis && window.Trellis.users; // NEW
+    } // NEW
+
+    function selectedCellsForShare() { // NEW
+        return graph.getSelectionCells ? (graph.getSelectionCells() || []) : []; // NEW
+    } // NEW
+
+    function shareSelectionState() { // NEW
+        const users = trellisUsersApi(); // NEW
+        if (!users || typeof users.getEligibleShareScopes !== "function") return { ok: false, reason: "Trellis Users is unavailable." }; // NEW
+        return users.getEligibleShareScopes(selectedCellsForShare()); // NEW
+    } // NEW
+
+    function setButtonDisabled(button, disabled, title) { // NEW
+        if (!button) return; // NEW
+        button.disabled = !!disabled; // NEW
+        button.title = title || button.title || ""; // NEW
+        button.style.opacity = disabled ? "0.45" : "1"; // NEW
+        button.style.cursor = disabled ? "not-allowed" : "pointer"; // NEW
+    } // NEW
+
+    function alertShareStatus(message) { // NEW
+        if (ui && typeof ui.alert === "function") ui.alert(String(message || "")); // NEW
+        else window.alert(String(message || "")); // NEW
+    } // NEW
+
+    function closeShareDialog(dialog) { // NEW
+        if (dialog && dialog.parentNode) dialog.parentNode.removeChild(dialog); // NEW
+    } // NEW
+
+    function openShareInviteDialog(scopes, shareInfo) { // NEW
+        const users = trellisUsersApi(); // NEW
+        const overlay = document.createElement("div"); // NEW
+        overlay.style.cssText = "position:fixed;left:0;top:0;right:0;bottom:0;z-index:100040;background:rgba(0,0,0,.24);display:flex;align-items:flex-start;justify-content:center;padding-top:80px;box-sizing:border-box;"; // NEW
+        const box = document.createElement("div"); // NEW
+        box.style.cssText = "width:420px;max-width:calc(100vw - 32px);background:#fff;border:1px solid #111;border-radius:6px;box-shadow:0 10px 28px rgba(0,0,0,.28);padding:14px;font:13px Arial,sans-serif;box-sizing:border-box;"; // NEW
+        const title = document.createElement("div"); // NEW
+        title.textContent = "Share garden canvas"; // NEW
+        title.style.cssText = "font-weight:700;font-size:15px;margin-bottom:8px;"; // NEW
+        const scopeText = document.createElement("div"); // NEW
+        scopeText.style.cssText = "color:#4B5563;margin-bottom:8px;line-height:18px;"; // NEW
+        scopeText.textContent = "Sharing: " + scopes.map(function (scope) { return scope.label; }).join(", "); // NEW
+        const email = document.createElement("input"); // NEW
+        email.type = "email"; // NEW
+        email.placeholder = "Recipient email"; // NEW
+        email.style.cssText = "box-sizing:border-box;width:100%;padding:6px 8px;border:1px solid #D1D5DB;border-radius:4px;font:13px Arial,sans-serif;margin-bottom:10px;"; // NEW
+        const status = document.createElement("div"); // NEW
+        status.style.cssText = "min-height:18px;color:#4B5563;margin-bottom:8px;"; // NEW
+        const buttons = document.createElement("div"); // NEW
+        buttons.style.cssText = "display:flex;justify-content:flex-end;gap:8px;"; // NEW
+        const cancel = createToolbarButton("Cancel", "Close share dialog"); // NEW
+        const send = createToolbarButton("Create Email", "Create invite and open an email draft"); // NEW
+        cancel.addEventListener("click", function () { closeShareDialog(overlay); }); // NEW
+        send.addEventListener("click", function () { // NEW
+            const result = users.createPendingInvite({ email: email.value, scopeCellIds: scopes.map(function (scope) { return scope.id; }), shareInfo }); // NEW
+            if (!result.ok) { status.textContent = result.reason; return; } // NEW
+            const bridge = window.trellisShare; // NEW
+            bridge.openEmailDraft(result.emailDraft).then(function (draftResult) { // NEW
+                if (!draftResult || draftResult.ok === false) { status.textContent = (draftResult && draftResult.reason) || "Email draft could not be opened."; return; } // NEW
+                closeShareDialog(overlay); // NEW
+            }).catch(function (err) { status.textContent = err && err.message ? err.message : String(err); }); // NEW
+        }); // NEW
+        buttons.appendChild(cancel); // NEW
+        buttons.appendChild(send); // NEW
+        box.appendChild(title); // NEW
+        box.appendChild(scopeText); // NEW
+        box.appendChild(email); // NEW
+        box.appendChild(status); // NEW
+        box.appendChild(buttons); // NEW
+        overlay.appendChild(box); // NEW
+        document.body.appendChild(overlay); // NEW
+        email.focus(); // NEW
+    } // NEW
+
+    function openEnableUsersForShareDialog() { // NEW
+        const users = trellisUsersApi(); // NEW
+        const overlay = document.createElement("div"); // NEW
+        overlay.style.cssText = "position:fixed;left:0;top:0;right:0;bottom:0;z-index:100040;background:rgba(0,0,0,.24);display:flex;align-items:flex-start;justify-content:center;padding-top:80px;box-sizing:border-box;"; // NEW
+        const box = document.createElement("div"); // NEW
+        box.style.cssText = "width:380px;max-width:calc(100vw - 32px);background:#fff;border:1px solid #111;border-radius:6px;box-shadow:0 10px 28px rgba(0,0,0,.28);padding:14px;font:13px Arial,sans-serif;box-sizing:border-box;"; // NEW
+        const title = document.createElement("div"); // NEW
+        title.textContent = "Enable users"; // NEW
+        title.style.cssText = "font-weight:700;font-size:15px;margin-bottom:8px;"; // NEW
+        const hint = document.createElement("div"); // NEW
+        hint.textContent = "Create the first admin before sharing selected garden scopes."; // NEW
+        hint.style.cssText = "color:#4B5563;margin-bottom:8px;"; // NEW
+        const name = document.createElement("input"); // NEW
+        name.type = "text"; // NEW
+        name.placeholder = "Admin name"; // NEW
+        const pin = document.createElement("input"); // NEW
+        pin.type = "password"; // NEW
+        pin.placeholder = "PIN"; // NEW
+        [name, pin].forEach(function (input) { input.style.cssText = "box-sizing:border-box;width:100%;padding:6px 8px;border:1px solid #D1D5DB;border-radius:4px;font:13px Arial,sans-serif;margin-bottom:8px;"; }); // NEW
+        const status = document.createElement("div"); // NEW
+        status.style.cssText = "min-height:18px;color:#4B5563;margin-bottom:8px;"; // NEW
+        const buttons = document.createElement("div"); // NEW
+        buttons.style.cssText = "display:flex;justify-content:flex-end;gap:8px;"; // NEW
+        const cancel = createToolbarButton("Cancel", "Close"); // NEW
+        const enable = createToolbarButton("Enable", "Enable users and continue sharing"); // NEW
+        cancel.addEventListener("click", function () { closeShareDialog(overlay); }); // NEW
+        enable.addEventListener("click", function () { // NEW
+            const result = users.enableUsers(name.value, pin.value); // NEW
+            if (!result.ok) { status.textContent = result.reason; return; } // NEW
+            closeShareDialog(overlay); // NEW
+            setTimeout(openShareGardenCanvasDialog, 0); // NEW
+        }); // NEW
+        buttons.appendChild(cancel); // NEW
+        buttons.appendChild(enable); // NEW
+        box.appendChild(title); // NEW
+        box.appendChild(hint); // NEW
+        box.appendChild(name); // NEW
+        box.appendChild(pin); // NEW
+        box.appendChild(status); // NEW
+        box.appendChild(buttons); // NEW
+        overlay.appendChild(box); // NEW
+        document.body.appendChild(overlay); // NEW
+        name.focus(); // NEW
+    } // NEW
+
+    async function openShareGardenCanvasDialog() { // NEW
+        const users = trellisUsersApi(); // NEW
+        const state = shareSelectionState(); // NEW
+        if (!state.ok) { alertShareStatus(state.reason); return; } // NEW
+        if (!users || typeof users.isEnabled !== "function" || !users.isEnabled()) { // NEW
+            openEnableUsersForShareDialog(); // CHANGE
+            return; // NEW
+        } // NEW
+        if (!users.isLoggedIn || !users.isLoggedIn()) { alertShareStatus("Log in before sharing this garden canvas."); return; } // NEW
+        const permission = users.canInviteScopes(state.cells || selectedCellsForShare()); // NEW
+        if (!permission.ok) { alertShareStatus(permission.reason); return; } // NEW
+        const bridge = window.trellisShare; // NEW
+        if (!bridge || typeof bridge.getSyncthingShareInfo !== "function" || typeof bridge.openEmailDraft !== "function") { // NEW
+            alertShareStatus("Syncthing sharing is unavailable in this Trellis build."); // NEW
+            return; // NEW
+        } // NEW
+        let shareInfo; // NEW
+        try { shareInfo = await bridge.getSyncthingShareInfo({}); } catch (err) { shareInfo = { ok: false, reason: err && err.message ? err.message : String(err) }; } // NEW
+        if (!shareInfo || shareInfo.ok === false) { alertShareStatus((shareInfo && shareInfo.reason) || "Syncthing sharing is unavailable."); return; } // NEW
+        if (shareInfo.managed === false) { alertShareStatus(shareInfo.reason || "Move this diagram into a Trellis-managed Syncthing folder before sharing."); return; } // NEW
+        openShareInviteDialog(permission.scopes || state.scopes, shareInfo); // NEW
+    } // NEW
+
     function ensureViewportToolbar() { // NEW
         if (viewportToolbar) return viewportToolbar; // NEW
         const host = ensureViewportToolbarHost(); // NEW
@@ -1095,6 +1238,7 @@ Draw.loadPlugin(function (ui) {
         const irrigationBtn = createToolbarButton("Irrigation", "Open irrigation planner"); // NEW
         const allocateBtn = createToolbarButton("Allocate", "Allocate the current plan"); // NEW
         const exportBtn = createToolbarButton("Export", "Export dashboard CSV"); // NEW
+        const shareBtn = createToolbarButton("Share", "Share selected module(s), task board(s), or garden bed(s)"); // NEW
         const tableBtn = createToolbarButton("Table", "Show dashboard table"); // NEW
 
         const table = document.createElement("div"); // NEW
@@ -1114,13 +1258,14 @@ Draw.loadPlugin(function (ui) {
         controls.appendChild(irrigationBtn); // NEW
         controls.appendChild(allocateBtn); // NEW
         controls.appendChild(exportBtn); // NEW
+        controls.appendChild(shareBtn); // NEW
         controls.appendChild(tableBtn); // NEW
         panel.appendChild(controls); // NEW
         panel.appendChild(table); // NEW
         wrap.appendChild(panel); // NEW
         host.appendChild(wrap); // NEW
 
-        viewportToolbar = { wrap, panel, controls, prev, next, yearLabel, planBtn, equipmentBtn, irrigationBtn, allocateBtn, exportBtn, tableBtn, table }; // NEW
+        viewportToolbar = { wrap, panel, controls, prev, next, yearLabel, planBtn, equipmentBtn, irrigationBtn, allocateBtn, exportBtn, shareBtn, tableBtn, table }; // CHANGE
 
         mxEvent.addListener(wrap, "mousedown", function (evt) { mxEvent.consume(evt); }); // NEW
         mxEvent.addListener(wrap, "click", function (evt) { evt.stopPropagation(); }); // NEW
@@ -1160,6 +1305,7 @@ Draw.loadPlugin(function (ui) {
             const safeName = String(metrics.moduleName || "garden").replace(/[^\w\-]+/g, "_").slice(0, 60); // NEW
             downloadCsv(`${safeName}_${year}_dashboard.csv`, buildDashboardCsvSingleTable(metrics, year)); // NEW
         }); // NEW
+        shareBtn.addEventListener("click", function () { openShareGardenCanvasDialog(); }); // NEW
         tableBtn.addEventListener("click", function () { // NEW
             if (!activeToolbarModule) return; // NEW
             const key = cellId(activeToolbarModule); // NEW
@@ -1187,6 +1333,8 @@ Draw.loadPlugin(function (ui) {
         entry.yearLabel.textContent = String(year); // NEW
         entry.tableBtn.textContent = expanded ? "Hide Table" : "Table"; // NEW
         entry.tableBtn.title = expanded ? "Hide dashboard table" : "Show dashboard table"; // NEW
+        const shareState = shareSelectionState(); // NEW
+        setButtonDisabled(entry.shareBtn, !shareState.ok, shareState.ok ? "Share selected scope(s)" : shareState.reason); // NEW
         entry.table.style.display = expanded ? "block" : "none"; // NEW
         if (expanded) { // NEW
             entry.table.innerHTML = formatOverlayTableHtml(computeModuleMetrics(moduleCell, year), year); // NEW

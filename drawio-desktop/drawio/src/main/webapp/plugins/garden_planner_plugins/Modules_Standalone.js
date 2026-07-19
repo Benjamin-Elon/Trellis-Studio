@@ -157,6 +157,11 @@ Draw.loadPlugin(function (ui) {
         graph.refresh(moduleCell);
     }
 
+    function getModuleMarginValue(moduleCell, defaultPx) { // NEW
+        const fallback = Number.isInteger(defaultPx) && defaultPx >= 0 ? defaultPx : 100; // NEW
+        return getIntStyle(moduleCell, "module_margin", fallback); // NEW
+    } // NEW
+
     function setModuleMarginValue(moduleCell, marginPx) { // NEW
         if (!isModule(moduleCell)) return; // NEW
         const n = Math.max(0, parseInt(marginPx, 10) || 0); // NEW
@@ -1083,6 +1088,7 @@ Draw.loadPlugin(function (ui) {
             mod = createModuleCell(graph, x, y); // NEW
             applyModuleMargins(mod); // NEW
             if (moduleType !== "regular") setModuleType(mod, moduleType); // NEW
+            if (window.Trellis && window.Trellis.users && typeof window.Trellis.users.stampCreatedOwner === "function") window.Trellis.users.stampCreatedOwner(mod); // NEW: modules created by logged-in users become ownership boundaries
             if (mod && graph.setSelectionCell) graph.setSelectionCell(mod); // NEW
         } finally { // NEW
             model.endUpdate(); // NEW
@@ -1759,6 +1765,12 @@ Draw.loadPlugin(function (ui) {
         getGardenModuleMinimumSize: function (moduleCell) { // CHANGE
             return getModuleMinOuterSize(moduleCell); // CHANGE
         }, // CHANGE
+        getModuleMargin: function (moduleCell, defaultPx) { // NEW
+            return getModuleMarginValue(moduleCell, defaultPx); // NEW
+        }, // NEW
+        setModuleMargin: function (moduleCell, marginPx) { // NEW
+            return setModuleMarginValue(moduleCell, marginPx); // NEW
+        }, // NEW
         promptSetModuleMargin: function (moduleCell) { // NEW
             return promptSetModuleMargin(moduleCell); // NEW
         }, // NEW
@@ -1793,6 +1805,13 @@ Draw.loadPlugin(function (ui) {
         const cell = evt && evt.getProperty ? evt.getProperty("cell") : null; // NEW
         if (!cell || !isModule(cell)) return; // NEW
         promptSetModuleMargin(cell); // NEW
+    }); // NEW
+
+    graph.addListener("usl:requestSetModuleMargin", function (_sender, evt) { // NEW
+        const cell = evt && evt.getProperty ? evt.getProperty("cell") : null; // NEW
+        const marginPx = evt && evt.getProperty ? evt.getProperty("marginPx") : null; // NEW
+        if (!cell || !isModule(cell)) return; // NEW
+        setModuleMarginValue(cell, marginPx); // NEW
     }); // NEW
 
     function registerTrellisContextMenuContributor(contributor) { // NEW

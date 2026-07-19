@@ -34,6 +34,8 @@ def pending_migrations(conn: sqlite3.Connection) -> list[str]:
         pending.append("add city benchmark label columns")  # ADDED
     if "Plants" in tables and "killtemp_c" not in table_columns(conn, "Plants"):
         pending.append("add plant kill temperature column")  # ADDED
+    if "PlantVarieties" in tables and "maturity_class" not in table_columns(conn, "PlantVarieties"):
+        pending.append("add variety maturity class column")  # ADDED
     if city_has_unique_name_constraint(conn):  # ADDED
         pending.append("replace city name unique constraint with geography identity")  # ADDED
     if "CityWeatherMonthly" not in tables:
@@ -87,6 +89,9 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
     if "Plants" in tables and "killtemp_c" not in table_columns(conn, "Plants"):
         conn.execute("ALTER TABLE Plants ADD COLUMN killtemp_c REAL;")  # ADDED
         applied.append("added Plants.killtemp_c")  # ADDED
+    if "PlantVarieties" in tables and "maturity_class" not in table_columns(conn, "PlantVarieties"):
+        conn.execute("ALTER TABLE PlantVarieties ADD COLUMN maturity_class TEXT;")  # ADDED
+        applied.append("added PlantVarieties.maturity_class")  # ADDED
     if "VarietyTaskTemplates" in tables and "method_id" not in table_columns(conn, "VarietyTaskTemplates"):
         suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         conn.execute(f"ALTER TABLE VarietyTaskTemplates RENAME TO VarietyTaskTemplates_legacy_{suffix};")

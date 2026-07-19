@@ -132,6 +132,19 @@ test("standard link overlays use the native draw.io overlay pane", () => { // NE
     assert.doesNotMatch(linkOverlaySource, /ensureGraphOverlaySvgLayer\('connection'\)/); // NEW
 }); // NEW
 
+test("standard link overlays navigate on plain left click without a vertex shift fallback", () => { // CHANGE
+    const source = readSource(); // NEW
+    const labelClickSource = sourceBetween(source, "txt.node.__manualLinkMeta = {", "entry.labelElt = txt;"); // NEW
+    const lineClickSource = sourceBetween(source, "poly.node.__manualLinkMeta = {", "entry.poly = poly;"); // NEW
+
+    assert.match(labelClickSource, /mxEvent\.addListener\(txt\.node, 'mousedown', function \(evt\) \{[\s\S]*const isLeft = \(evt\.button === 0\);[\s\S]*if \(isLeft\) \{[\s\S]*navigateOverlayLink\(/); // NEW
+    assert.match(lineClickSource, /mxEvent\.addListener\(poly\.node, 'mousedown', function \(evt\) \{[\s\S]*const isLeft = \(evt\.button === 0\);[\s\S]*if \(isLeft\) \{[\s\S]*navigateOverlayLink\(/); // NEW
+    assert.doesNotMatch(labelClickSource, /isShift|isShiftDown/); // NEW
+    assert.doesNotMatch(lineClickSource, /isShift|isShiftDown/); // NEW
+    assert.doesNotMatch(source, /tryNavigateSingleLinkedSelection|getValidLinkedVertices/); // CHANGE
+    assert.doesNotMatch(source, /Shift\+Click cycles between linked vertices/); // CHANGE
+}); // NEW
+
 test("task overlay guide lines keep the custom connection layer", () => { // NEW
     const source = readSource(); // NEW
     const taskOverlaySource = sourceBetween(source, "const taskScheduleOverlay = (function () {", "function getPanelHost"); // NEW

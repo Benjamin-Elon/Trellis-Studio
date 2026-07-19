@@ -136,6 +136,7 @@ function loadPlugin(options = {}) { // NEW
     }; // NEW
     context.window.dbBridge = dbBridge; // NEW
     context.window.confirm = () => true; // NEW
+    if (options.users) context.window.Trellis = { users: options.users }; // NEW
     vm.runInNewContext(fs.readFileSync(pluginPath, "utf8"), context, { filename: pluginPath }); // NEW
     return { context, document, graph, model, cell, layer, dbBridge, actions, restoredXml: () => restoredXml, setSerialized(xml) { serialized = xml; }, ui }; // NEW
 } // NEW
@@ -179,6 +180,27 @@ test("semantic run records outer category and nested category as a tag", async (
     const metadata = JSON.parse(event.metadata_json); // NEW
     assert.deepEqual(metadata.bounds, { x: 10, y: 20, width: 80, height: 40 }); // NEW
     assert.deepEqual(metadata.center, { x: 50, y: 40 }); // NEW
+}); // NEW
+
+test("history metadata includes the active Trellis user actor", async () => { // NEW
+    const harness = loadPlugin({ // NEW
+        instantTimers: true, // NEW
+        users: { // NEW
+            withActorMetadata(metadata) { return Object.assign({}, metadata, { actorUserId: "user_alice", actorName: "Alice", actorRole: "admin" }); }, // NEW
+            listUsers() { return [{ id: "user_alice", name: "Alice", admin: true }]; } // NEW
+        } // NEW
+    }); // NEW
+    await settle(); // NEW
+    harness.setSerialized("<mxGraphModel><root><mxCell id='0'/><mxCell id='1' parent='0'/><mxCell id='cell-a' parent='1' value='actor'><mxGeometry x='10' y='20' width='80' height='40' as='geometry'/></mxCell></root></mxGraphModel>"); // NEW
+    harness.context.window.Trellis.history.run({ category: "Tasks", action: "actor", title: "Actor change" }, () => { // NEW
+        harness.model.fireChange({ changes: [{ constructor: { name: "mxValueChange" }, cell: harness.cell }] }); // NEW
+    }); // NEW
+    await settle(); // NEW
+    const event = harness.dbBridge.state.events[harness.dbBridge.state.events.length - 1]; // NEW
+    const metadata = JSON.parse(event.metadata_json); // NEW
+    assert.equal(metadata.actorUserId, "user_alice"); // NEW
+    assert.equal(metadata.actorName, "Alice"); // NEW
+    assert.equal(metadata.actorRole, "admin"); // NEW
 }); // NEW
 
 test("history event targets accept explicit semantic bounds and union multi-cell model bounds", async () => { // NEW
@@ -346,6 +368,38 @@ test("history degrades when dbBridge is unavailable", async () => { // NEW
     await settle(); // NEW
     harness.actions.trellisChangeMapHistory.funct(); // NEW
     assert.match(harness.document.body.textContent, /History storage is unavailable/); // NEW
+}); // NEW
+
+test("rejected user edits are not recorded even when rejection is marked by a later listener", async () => { // NEW
+    const harness = loadPlugin({ instantTimers: true }); // NEW
+    await settle(); // NEW
+    const before = harness.dbBridge.state.events.length; // NEW
+    harness.model.addListener("change", (_sender, evt) => { // NEW
+        const edit = evt && evt.getProperty && evt.getProperty("edit"); // NEW
+        if (edit) edit.__trellisUsersRejected = true; // NEW
+    }); // NEW
+    harness.model.fireChange({ changes: [{ constructor: { name: "mxValueChange" }, cell: harness.cell }] }); // NEW
+    await settle(); // NEW
+    assert.equal(harness.dbBridge.state.events.length, before); // NEW
+}); // NEW
+
+test("user map filter dims nonmatching cells when time slicing is disabled", async () => { // NEW
+    const harness = loadPlugin({ instantTimers: true }); // NEW
+    await settle(); // NEW
+    const cellB = appendChild(harness.layer, makeXmlCell(harness.document, "cell-b", { label: "B" })); // NEW
+    cellB.geometry = { x: 120, y: 20, width: 80, height: 40 }; // NEW
+    harness.model.index(cellB); // NEW
+    harness.cell.setAttribute("createdAt", "1000"); // NEW
+    harness.cell.setAttribute("createdByUserId", "alice"); // NEW
+    cellB.setAttribute("createdAt", "2000"); // NEW
+    cellB.setAttribute("createdByUserId", "bob"); // NEW
+    harness.graph.__ccWindowValue = 0; // NEW
+    harness.graph.__ccUserFilter = "user:alice"; // NEW
+    harness.context.window.Trellis.history._test.components.ChangeMapRenderer.enable("createdmap"); // NEW
+    await settle(); // NEW
+    assert.match(harness.cell.style, /strokeOpacity=100/); // NEW
+    assert.match(cellB.style, /strokeColor=#c7c7cc/); // NEW
+    assert.match(cellB.style, /strokeOpacity=25/); // NEW
 }); // NEW
 
 test("domain plugins declare semantic history transactions and restore listeners", () => { // NEW

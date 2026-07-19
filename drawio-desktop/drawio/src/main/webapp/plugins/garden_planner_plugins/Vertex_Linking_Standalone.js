@@ -1,8 +1,8 @@
 /**
- * Draw.io Plugin: Manual Vertex Linker with Highlight and Shift+Click Navigation
+ * Draw.io Plugin: Manual Vertex Linker with Highlight and Overlay Navigation // CHANGE
  * - Right-click to link/unlink selected vertices
  * - Highlights linked vertices and draws dashed edges
- * - Shift+Click cycles between linked vertices
+ * - Left-click a visible link or link label to navigate between linked vertices // CHANGE
  */
 Draw.loadPlugin(function (ui) {
     const graph = ui.editor.graph;
@@ -1247,10 +1247,9 @@ Draw.loadPlugin(function (ui) {
                     };
                     txt.node.style.pointerEvents = 'all';                        // ensure click
                     mxEvent.addListener(txt.node, 'mousedown', function (evt) {
-                        const isShift = mxEvent.isShiftDown(evt);
-                        const isLeft = (evt.button === 0);
+                        const isLeft = (evt.button === 0); // CHANGE
 
-                        if (isShift && isLeft) {
+                        if (isLeft) { // CHANGE
                             navigateOverlayLink(
                                 txt.node.__manualLinkMeta, evt
                             );
@@ -1305,10 +1304,9 @@ Draw.loadPlugin(function (ui) {
                     };
                     poly.node.style.pointerEvents = 'stroke';                     // ensure hit
                     mxEvent.addListener(poly.node, 'mousedown', function (evt) {
-                        const isShift = mxEvent.isShiftDown(evt);
-                        const isLeft = (evt.button === 0);
+                        const isLeft = (evt.button === 0); // CHANGE
 
-                        if (isShift && isLeft) {
+                        if (isLeft) { // CHANGE
                             navigateOverlayLink(
                                 poly.node.__manualLinkMeta, evt
                             );
@@ -2856,37 +2854,6 @@ Draw.loadPlugin(function (ui) {
         }, 0); // CHANGE
     } // CHANGE
 
-    function getValidLinkedVertices(cell) { // CHANGE
-        const linked = []; // CHANGE
-        const seen = new Set(); // CHANGE
-        if (!cell) return linked; // CHANGE
-        for (const id of getLinkSet(cell)) { // CHANGE
-            if (!id || seen.has(id) || id === cell.id) continue; // CHANGE
-            const other = model.getCell(id); // CHANGE
-            if (!other || !model.isVertex(other)) continue; // CHANGE
-            seen.add(id); // CHANGE
-            linked.push(other); // CHANGE
-        } // CHANGE
-        return linked; // CHANGE
-    } // CHANGE
-
-    function tryNavigateSingleLinkedSelection(cell, evt) { // CHANGE
-        if (!cell || !model.isVertex(cell) || !evt || evt.button !== 0) return false; // CHANGE
-        const selected = graph.getSelectionCells(); // CHANGE
-        if (!selected || selected.length !== 1) return false; // CHANGE
-        const clicked = normalizeForLinkingAndPrimary(cell); // CHANGE
-        const selectedCell = normalizeForLinkingAndPrimary(selected[0]); // CHANGE
-        if (!clicked || !selectedCell || clicked !== selectedCell) return false; // CHANGE
-        const linked = getValidLinkedVertices(selectedCell); // CHANGE
-        if (linked.length !== 1) return false; // CHANGE
-        selectAndReveal(linked[0]); // CHANGE
-        refreshAfterLinkNavigation(); // CHANGE
-        mxEvent.consume(evt); // CHANGE
-        if (evt.stopPropagation) evt.stopPropagation(); // CHANGE
-        if (evt.preventDefault) evt.preventDefault(); // CHANGE
-        return true; // CHANGE
-    } // CHANGE
-
     // Navigate between endpoints of an overlay link                        
     function navigateOverlayLink(meta, evt) {
         if (!meta) return;
@@ -3361,7 +3328,7 @@ Draw.loadPlugin(function (ui) {
         }
     }
 
-    // -------------------- Shift/Ctrl Click Handling --------------------
+    // -------------------- Ctrl Click Handling -------------------- // CHANGE
     graph.addMouseListener({
         mouseDown(sender, me) {
             const evt = me.getEvent();
@@ -3384,26 +3351,6 @@ Draw.loadPlugin(function (ui) {
                 }
                 return;
             }
-
-            // Shift+Click:
-            // - If selected vertex has exactly one live link, jump to that linked vertex. // CHANGE
-            // - Otherwise let normal selection or overlay-line navigation continue. // CHANGE
-            if (mxEvent.isShiftDown(evt)) {
-                const cell = me.getCell();
-
-                // If clicking a vertex, try single-link navigation before normal selection. // CHANGE
-                if (cell && model.isVertex(cell)) {
-                    if (tryNavigateSingleLinkedSelection(cell, evt)) { // CHANGE
-                        me.consume(); // CHANGE
-                        return; // CHANGE
-                    } // CHANGE
-                    return; // do not consume; selection proceeds            
-                }
-
-                // Non-vertex with Shift: nothing special now                
-                return;
-            }
-
 
             // Plain clicks fall through to default selection
         },

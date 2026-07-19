@@ -1083,11 +1083,157 @@ Draw.loadPlugin(function (ui) {
     // =====================================================================
     // PlantVarietyModel (JSON overrides)                                    
     // =====================================================================
+    const VARIETY_MATURITY_CLASS_LABELS = Object.freeze({ // ADDED
+        early: 'Early varieties', // ADDED
+        mid: 'Mid varieties', // ADDED
+        late: 'Late varieties', // ADDED
+        uncategorized: 'Uncategorized' // ADDED
+    }); // ADDED
+    const VARIETY_MATURITY_CLASS_ORDER = Object.freeze(['early', 'mid', 'late', 'uncategorized']); // ADDED
+
+    function normalizeVarietyMaturityClass(value) { // ADDED
+        const key = String(value || '').trim().toLowerCase(); // ADDED
+        return key === 'early' || key === 'mid' || key === 'late' ? key : ''; // ADDED
+    } // ADDED
+
+    function varietyOverridesObject(row) { // ADDED
+        if (!row) return {}; // ADDED
+        if (row.overrides && typeof row.overrides === 'object' && !Array.isArray(row.overrides)) return row.overrides; // ADDED
+        return PlantVarietyModel._parseOverrides(row.overrides_json); // ADDED
+    } // ADDED
+
+    function varietyPositiveOverride(row, key) { // ADDED
+        const n = finiteNumberOrNull(varietyOverridesObject(row)[key]); // ADDED
+        return n != null && n > 0 ? n : null; // ADDED
+    } // ADDED
+
+    function varietyMaturitySortName(row) { // ADDED
+        return String(row && (row.variety_name || row.variety_id) || '').trim().toLocaleLowerCase(); // ADDED
+    } // ADDED
+
+    function maturityClassForRank(index, total) { // ADDED
+        if (!Number.isFinite(total) || total < 3) return ''; // ADDED
+        return ['early', 'mid', 'late'][Math.min(2, Math.floor((Math.max(0, index) * 3) / total))] || ''; // ADDED
+    } // ADDED
+
+    function sortMaturityRows(rows, metricKey) { // ADDED
+        return Array.from(rows).sort((a, b) => { // ADDED
+            const av = varietyPositiveOverride(a, metricKey) ?? Number.POSITIVE_INFINITY; // ADDED
+            const bv = varietyPositiveOverride(b, metricKey) ?? Number.POSITIVE_INFINITY; // ADDED
+            if (av !== bv) return av - bv; // ADDED
+            return varietyMaturitySortName(a).localeCompare(varietyMaturitySortName(b)); // ADDED
+        }); // ADDED
+    } // ADDED
+
+    function makeVarietyRowKey(row) { // ADDED
+        const id = row && row.variety_id != null ? String(row.variety_id) : ''; // ADDED
+        return id || `name:${String(row && row.variety_name || '').trim().toLocaleLowerCase()}`; // ADDED
+    } // ADDED
+
+    function inferVarietyMaturityClasses(varieties) { // ADDED
+        const inferred = new Map(); // ADDED
+        const rows = Array.isArray(varieties) ? varieties : []; // ADDED
+        const dtmRows = sortMaturityRows(rows.filter(row => varietyPositiveOverride(row, 'days_maturity') != null), 'days_maturity'); // ADDED
+        if (dtmRows.length >= 3) { // ADDED
+            dtmRows.forEach((row, index) => inferred.set(makeVarietyRowKey(row), { className: maturityClassForRank(index, dtmRows.length), source: 'days_maturity' })); // ADDED
+        } // ADDED
+        const gddRows = sortMaturityRows(rows.filter(row => varietyPositiveOverride(row, 'gdd_to_maturity') != null), 'gdd_to_maturity'); // ADDED
+        if (gddRows.length >= 3) { // ADDED
+            gddRows.forEach((row, index) => { // ADDED
+                if (varietyPositiveOverride(row, 'days_maturity') != null) return; // ADDED
+                inferred.set(makeVarietyRowKey(row), { className: maturityClassForRank(index, gddRows.length), source: 'gdd_to_maturity' }); // ADDED
+            }); // ADDED
+        } // ADDED
+        return inferred; // ADDED
+    } // ADDED
+
+    function formatVarietyMaturitySuffix(row) { // ADDED
+        const dtm = varietyPositiveOverride(row, 'days_maturity'); // ADDED
+        if (dtm != null) return `${Math.round(dtm)}d`; // ADDED
+        const gdd = varietyPositiveOverride(row, 'gdd_to_maturity'); // ADDED
+        if (gdd != null) return `${Math.round(gdd)} GDD`; // ADDED
+        return ''; // ADDED
+    } // ADDED
+
+    function formatVarietyOptionLabel(row) { // ADDED
+        const name = String(row && (row.variety_name || row.variety_id) || '').trim(); // ADDED
+        const suffix = formatVarietyMaturitySuffix(row); // ADDED
+        return suffix ? `${name} - ${suffix}` : name; // ADDED
+    } // ADDED
+
+    function compareVarietyGroupOptions(a, b) { // ADDED
+        const ad = varietyPositiveOverride(a.row, 'days_maturity'); // ADDED
+        const bd = varietyPositiveOverride(b.row, 'days_maturity'); // ADDED
+        if (ad != null || bd != null) { // ADDED
+            if (ad == null) return 1; // ADDED
+            if (bd == null) return -1; // ADDED
+            if (ad !== bd) return ad - bd; // ADDED
+        } // ADDED
+        const ag = varietyPositiveOverride(a.row, 'gdd_to_maturity'); // ADDED
+        const bg = varietyPositiveOverride(b.row, 'gdd_to_maturity'); // ADDED
+        if (ag != null || bg != null) { // ADDED
+            if (ag == null) return 1; // ADDED
+            if (bg == null) return -1; // ADDED
+            if (ag !== bg) return ag - bg; // ADDED
+        } // ADDED
+        return String(a.label || '').localeCompare(String(b.label || '')); // ADDED
+    } // ADDED
+
+    function buildGroupedVarietyOptions(varieties) { // ADDED
+        const inferred = inferVarietyMaturityClasses(varieties); // ADDED
+        const byClass = new Map(VARIETY_MATURITY_CLASS_ORDER.map(key => [key, []])); // ADDED
+        for (const row of Array.isArray(varieties) ? varieties : []) { // ADDED
+            const manual = normalizeVarietyMaturityClass(row && row.maturity_class); // ADDED
+            const inferredClass = inferred.get(makeVarietyRowKey(row))?.className || ''; // ADDED
+            const className = manual || inferredClass || 'uncategorized'; // ADDED
+            byClass.get(className).push({ // ADDED
+                value: String(row.variety_id), // ADDED
+                label: formatVarietyOptionLabel(row), // ADDED
+                row, // ADDED
+                manualClass: manual, // ADDED
+                inferredClass // ADDED
+            }); // ADDED
+        } // ADDED
+        return VARIETY_MATURITY_CLASS_ORDER // ADDED
+            .map(key => ({ key, label: VARIETY_MATURITY_CLASS_LABELS[key], options: byClass.get(key).sort(compareVarietyGroupOptions) })) // ADDED
+            .filter(group => group.options.length > 0); // ADDED
+    } // ADDED
+
+    function renderGroupedVarietyOptions(selectEl, groups, selectedValue = '') { // ADDED
+        selectEl.innerHTML = ''; // ADDED
+        const baseOpt = document.createElement('option'); // ADDED
+        baseOpt.value = ''; // ADDED
+        baseOpt.textContent = '(base plant)'; // ADDED
+        selectEl.appendChild(baseOpt); // ADDED
+        for (const group of groups || []) { // ADDED
+            const optGroup = document.createElement('optgroup'); // ADDED
+            optGroup.label = group.label; // ADDED
+            for (const option of group.options || []) { // ADDED
+                const opt = document.createElement('option'); // ADDED
+                opt.value = String(option.value); // ADDED
+                opt.textContent = option.label; // ADDED
+                optGroup.appendChild(opt); // ADDED
+            } // ADDED
+            selectEl.appendChild(optGroup); // ADDED
+        } // ADDED
+        const valid = new Set(Array.from(selectEl.options).map(option => option.value)); // ADDED
+        selectEl.value = valid.has(String(selectedValue || '')) ? String(selectedValue || '') : ''; // ADDED
+    } // ADDED
+
+    function manualVarietyMaturityMismatch(varieties, varietyRow) { // ADDED
+        const manual = normalizeVarietyMaturityClass(varietyRow && varietyRow.maturity_class); // ADDED
+        if (!manual) return null; // ADDED
+        const inferred = inferVarietyMaturityClasses(varieties).get(makeVarietyRowKey(varietyRow)); // ADDED
+        if (!inferred || !inferred.className || inferred.className === manual) return null; // ADDED
+        return { manualClass: manual, inferredClass: inferred.className, source: inferred.source }; // ADDED
+    } // ADDED
+
     class PlantVarietyModel {
         constructor(row) {
             Object.assign(this, row);
             this.variety_id = Number(this.variety_id);
             this.plant_id = Number(this.plant_id);
+            this.maturity_class = normalizeVarietyMaturityClass(this.maturity_class); // ADDED
         }
 
         static async ensureTable() {
@@ -1096,11 +1242,15 @@ Draw.loadPlugin(function (ui) {
                         variety_id     INTEGER PRIMARY KEY AUTOINCREMENT,
                         plant_id       INTEGER NOT NULL,
                         variety_name   TEXT NOT NULL,
+                        maturity_class TEXT,
                         overrides_json TEXT NOT NULL,
                         created_at     TEXT NOT NULL,
                         updated_at     TEXT NOT NULL
                     );`;
             await execAll(sql, []);
+
+            const columns = new Set((await queryAll(`PRAGMA table_info(PlantVarieties);`, [])).map(row => String(row.name || '').toLowerCase())); // ADDED
+            if (!columns.has('maturity_class')) await execAll(`ALTER TABLE PlantVarieties ADD COLUMN maturity_class TEXT;`, []); // ADDED
 
             await execAll(
                 `CREATE INDEX IF NOT EXISTS idx_PlantVarieties_plant_id
@@ -1136,7 +1286,7 @@ Draw.loadPlugin(function (ui) {
             if (!Number.isFinite(pid)) return [];
 
             const sql = `
-                    SELECT variety_id, plant_id, variety_name, overrides_json, created_at, updated_at
+                    SELECT variety_id, plant_id, variety_name, maturity_class, overrides_json, created_at, updated_at
                     FROM PlantVarieties
                     WHERE plant_id = ?
                     ORDER BY variety_name COLLATE NOCASE;`;
@@ -1150,7 +1300,7 @@ Draw.loadPlugin(function (ui) {
             if (!Number.isFinite(vid)) return null;
 
             const sql = `
-                    SELECT variety_id, plant_id, variety_name, overrides_json, created_at, updated_at
+                    SELECT variety_id, plant_id, variety_name, maturity_class, overrides_json, created_at, updated_at
                     FROM PlantVarieties
                     WHERE variety_id = ?
                     LIMIT 1;`;
@@ -1158,7 +1308,7 @@ Draw.loadPlugin(function (ui) {
             return rows[0] ? new PlantVarietyModel(rows[0]) : null;
         }
 
-        static async create({ plantId, varietyName, overrides }) {
+        static async create({ plantId, varietyName, maturityClass, overrides }) {
             await this.ensureTable();
             const pid = Number(plantId);
             if (!Number.isFinite(pid)) throw new Error('create: invalid plantId');
@@ -1168,16 +1318,17 @@ Draw.loadPlugin(function (ui) {
 
             const obj = (overrides && typeof overrides === 'object') ? overrides : {};
             const json = JSON.stringify(obj);
+            const normalizedMaturityClass = normalizeVarietyMaturityClass(maturityClass) || null; // ADDED
             const now = new Date().toISOString();
 
             const sql = `
-                    INSERT INTO PlantVarieties (plant_id, variety_name, overrides_json, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?);`;
-            await execAll(sql, [pid, name, json, now, now]);
+                    INSERT INTO PlantVarieties (plant_id, variety_name, maturity_class, overrides_json, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?);`;
+            await execAll(sql, [pid, name, normalizedMaturityClass, json, now, now]);
 
             // Return the created row (SQLite last_insert_rowid not exposed here)        
             const rows = await queryAll(
-                `SELECT variety_id, plant_id, variety_name, overrides_json, created_at, updated_at
+                `SELECT variety_id, plant_id, variety_name, maturity_class, overrides_json, created_at, updated_at
                      FROM PlantVarieties
                      WHERE plant_id = ? AND variety_name = ?
                      LIMIT 1;`,
@@ -1186,8 +1337,9 @@ Draw.loadPlugin(function (ui) {
             return rows[0] ? new PlantVarietyModel(rows[0]) : null;
         }
 
-        static async update({ varietyId, varietyName, overrides }) {
+        static async update(payload) {
             await this.ensureTable();
+            const { varietyId, varietyName, overrides } = payload || {}; // ADDED
             const vid = Number(varietyId);
             if (!Number.isFinite(vid)) throw new Error('update: invalid varietyId');
 
@@ -1201,6 +1353,7 @@ Draw.loadPlugin(function (ui) {
             const sets = [];
             const params = [];
             if (name != null) { sets.push('variety_name = ?'); params.push(name); }
+            if (Object.prototype.hasOwnProperty.call(payload || {}, 'maturityClass')) { sets.push('maturity_class = ?'); params.push(normalizeVarietyMaturityClass(payload.maturityClass) || null); } // ADDED
             if (json != null) { sets.push('overrides_json = ?'); params.push(json); }
             sets.push('updated_at = ?'); params.push(now);
             params.push(vid);
@@ -4519,6 +4672,8 @@ Draw.loadPlugin(function (ui) {
                     setPlantControlsEnabled(true);
                     setInlineOverridesVisible(false);
                     varietyNameRow.row.style.display = 'none';
+                    maturityClassRow.row.style.display = 'none'; // ADDED
+                    maturityClassWarning.style.display = 'none'; // ADDED
                     break;
 
                 case DIALOG_MODE.PLANT_EDIT:
@@ -4529,6 +4684,8 @@ Draw.loadPlugin(function (ui) {
                     setPlantControlsEnabled(true);
                     setInlineOverridesVisible(false);
                     varietyNameRow.row.style.display = 'none';
+                    maturityClassRow.row.style.display = 'none'; // ADDED
+                    maturityClassWarning.style.display = 'none'; // ADDED
                     break;
 
                 case DIALOG_MODE.VARIETY_ADD:
@@ -4538,7 +4695,9 @@ Draw.loadPlugin(function (ui) {
                     setPlantControlsEnabled(false);
                     setInlineOverridesVisible(true);
                     varietyNameRow.row.style.display = 'flex';
+                    maturityClassRow.row.style.display = 'flex'; // ADDED
                     refreshInlineBaseHints();
+                    refreshMaturityClassWarning(); // ADDED
                     break;
 
                 case DIALOG_MODE.VARIETY_EDIT:
@@ -4546,7 +4705,9 @@ Draw.loadPlugin(function (ui) {
                     setPlantControlsEnabled(false);
                     setInlineOverridesVisible(true);
                     varietyNameRow.row.style.display = 'flex';
+                    maturityClassRow.row.style.display = 'flex'; // ADDED
                     refreshInlineBaseHints();
+                    refreshMaturityClassWarning(); // ADDED
                     break;
 
                 default:
@@ -4700,9 +4861,10 @@ Draw.loadPlugin(function (ui) {
         }
 
         async function listVarietiesForPlant(pid) {
+            await PlantVarietyModel.ensureTable(); // ADDED
             // ASSUMPTION: table name PlantVarieties; change if your schema differs
             const sql = `
-        SELECT variety_id, variety_name
+        SELECT variety_id, variety_name, maturity_class, overrides_json
         FROM PlantVarieties
         WHERE plant_id = ?
         ORDER BY variety_name;`;
@@ -4784,10 +4946,59 @@ Draw.loadPlugin(function (ui) {
 
         const varietyNameRow = row('Variety name:', varietyNameInput);
         varietyNameRow.row.style.display = 'none';
+        const maturityClassSel = makeSelect([ // ADDED
+            { value: '', label: '' }, // ADDED
+            { value: 'early', label: 'Early' }, // ADDED
+            { value: 'mid', label: 'Mid' }, // ADDED
+            { value: 'late', label: 'Late' } // ADDED
+        ], ''); // ADDED
+        const maturityClassRow = row('Maturity class:', maturityClassSel); // ADDED
+        maturityClassRow.row.style.display = 'none'; // ADDED
+        const maturityClassWarning = document.createElement('div'); // ADDED
+        maturityClassWarning.style.display = 'none'; // ADDED
+        maturityClassWarning.style.fontSize = '12px'; // ADDED
+        maturityClassWarning.style.color = '#92400e'; // ADDED
+        maturityClassWarning.style.margin = '0 0 8px 150px'; // ADDED
 
         leftCol.appendChild(row('Plant name:', nameInput).row);
         leftCol.appendChild(varietyNameRow.row);
+        leftCol.appendChild(maturityClassRow.row); // ADDED
+        leftCol.appendChild(maturityClassWarning); // ADDED
         leftCol.appendChild(row('Abbreviation (abbr):', abbrInput).row);
+
+        function buildDraftVarietyRowForMaturityWarning() { // ADDED
+            return { // ADDED
+                variety_id: currentVarietyId || `draft:${String(varietyNameInput.value || '').trim().toLocaleLowerCase()}`, // ADDED
+                plant_id: currentPlantId, // ADDED
+                variety_name: String(varietyNameInput.value || '').trim(), // ADDED
+                maturity_class: maturityClassSel.value, // ADDED
+                overrides_json: JSON.stringify(buildOverridesFromUI()) // ADDED
+            }; // ADDED
+        } // ADDED
+
+        function varietiesForMaturityWarning(draftRow) { // ADDED
+            const draftKey = makeVarietyRowKey(draftRow); // ADDED
+            const rows = Array.from(varietiesCache || []).filter(row => makeVarietyRowKey(row) !== draftKey); // ADDED
+            rows.push(draftRow); // ADDED
+            return rows; // ADDED
+        } // ADDED
+
+        function refreshMaturityClassWarning() { // ADDED
+            const draftRow = buildDraftVarietyRowForMaturityWarning(); // ADDED
+            const mismatch = manualVarietyMaturityMismatch(varietiesForMaturityWarning(draftRow), draftRow); // ADDED
+            if (!mismatch) { // ADDED
+                maturityClassWarning.style.display = 'none'; // ADDED
+                maturityClassWarning.textContent = ''; // ADDED
+                return; // ADDED
+            } // ADDED
+            const manualLabel = VARIETY_MATURITY_CLASS_LABELS[mismatch.manualClass].replace(' varieties', ''); // ADDED
+            const inferredLabel = VARIETY_MATURITY_CLASS_LABELS[mismatch.inferredClass].replace(' varieties', ''); // ADDED
+            const sourceLabel = mismatch.source === 'days_maturity' ? 'DTM' : 'GDD'; // ADDED
+            maturityClassWarning.textContent = `Manual class is ${manualLabel}, but ${sourceLabel} ranking suggests ${inferredLabel}. Saving is allowed.`; // ADDED
+            maturityClassWarning.style.display = 'block'; // ADDED
+        } // ADDED
+        maturityClassSel.addEventListener('change', refreshMaturityClassWarning); // ADDED
+        varietyNameInput.addEventListener('input', refreshMaturityClassWarning); // ADDED
 
         // --- Lifecycle ---
         const typeSel = makeSelect([
@@ -5098,6 +5309,13 @@ Draw.loadPlugin(function (ui) {
         const daysRow = row('Days to maturity:', daysMatInput);
         leftCol.appendChild(daysRow.row);
         attachInlineOverrideToRow(daysRow, { key: 'days_maturity', type: 'int_ge0' });
+        for (const key of ['days_maturity', 'gdd_to_maturity']) { // ADDED
+            const controls = overrideInlineByKey[key]; // ADDED
+            if (!controls) continue; // ADDED
+            controls.chk.addEventListener('change', refreshMaturityClassWarning); // ADDED
+            controls.input.addEventListener('input', refreshMaturityClassWarning); // ADDED
+            controls.input.addEventListener('change', refreshMaturityClassWarning); // ADDED
+        } // ADDED
 
         function syncBudgetModeUI() {
             const mode = budgetModeSel.value;
@@ -5530,6 +5748,7 @@ Draw.loadPlugin(function (ui) {
 
         function startNewVarietyMode() {
             varietyNameInput.value = '';
+            maturityClassSel.value = ''; // ADDED
             applyOverridesToUI({});
             applyDialogMode(DIALOG_MODE.VARIETY_ADD); // CHANGED
         }
@@ -5558,7 +5777,9 @@ Draw.loadPlugin(function (ui) {
             } catch (_) { overrides = {}; }
 
             varietyNameInput.value = String(currentVarietyRow?.variety_name ?? '');
+            maturityClassSel.value = normalizeVarietyMaturityClass(currentVarietyRow?.maturity_class); // ADDED
             applyOverridesToUI(overrides);
+            refreshMaturityClassWarning(); // ADDED
 
             applyDialogMode(DIALOG_MODE.VARIETY_EDIT); // CHANGED
         }
@@ -5614,12 +5835,14 @@ Draw.loadPlugin(function (ui) {
                         savedVar = await PlantVarietyModel.update({
                             varietyId: vid,
                             varietyName,
+                            maturityClass: maturityClassSel.value, // ADDED
                             overrides
                         });
                     } else {
                         savedVar = await PlantVarietyModel.create({
                             plantId: pid,
                             varietyName,
+                            maturityClass: maturityClassSel.value, // ADDED
                             overrides
                         });
                     }
@@ -6330,13 +6553,8 @@ Draw.loadPlugin(function (ui) {
         let currentVarieties = [];
         async function reloadVarietyOptionsForPlant(plantId, selectedVarietyId = null) {
             currentVarieties = await PlantVarietyModel.listByPlantId(Number(plantId));
-            const opts = [{ value: '', label: '(base plant)' }]
-                .concat(currentVarieties.map(v => ({
-                    value: String(v.variety_id),
-                    label: String(v.variety_name)
-                })));
             const sel = Number.isFinite(Number(selectedVarietyId)) ? String(selectedVarietyId) : '';
-            setSelectOptions(varietySel, opts, sel);
+            renderGroupedVarietyOptions(varietySel, buildGroupedVarietyOptions(currentVarieties), sel); // CHANGED
         }
 
 
@@ -6780,6 +6998,13 @@ Draw.loadPlugin(function (ui) {
             formState.minYieldMultiplier = Number(minYieldMultInput.value || 0);
         }
 
+        function selectedVarietyName() { // ADDED
+            const selectedId = String(varietySel?.value || '').trim(); // ADDED
+            if (!selectedId) return ''; // ADDED
+            const row = currentVarieties.find(item => String(item.variety_id) === selectedId); // ADDED
+            return row ? String(row.variety_name || '').trim() : ''; // ADDED
+        } // ADDED
+
 
         function syncControlsFromState({ start = false, end = false, harvest = false } = {}) { // CHANGED
             if (start) {
@@ -7134,8 +7359,7 @@ Draw.loadPlugin(function (ui) {
         let windowActions = null; // FIX: mode rendering owns perennial-only action visibility
 
         function updateScheduleSummaryFromState() { // ADDED
-            const varietyOption = varietySel?.selectedOptions?.[0]; // ADDED
-            const varietyName = varietySel?.value ? String(varietyOption?.textContent || '').trim() : ''; // ADDED
+            const varietyName = selectedVarietyName(); // CHANGED
             const methodName = String(combinedMethodSel?.selectedOptions?.[0]?.textContent || '').trim(); // ADDED
             updateScheduleSummary(summaryView, buildScheduleViewState({ // ADDED
                 perennial: mode.perennial, // ADDED
@@ -11520,6 +11744,11 @@ Draw.loadPlugin(function (ui) {
             buildLifecycleFilterControl, // ADDED
             buildGroupedCropOptions, // ADDED
             renderGroupedCropOptions, // ADDED
+            buildGroupedVarietyOptions, // ADDED
+            renderGroupedVarietyOptions, // ADDED
+            inferVarietyMaturityClasses, // ADDED
+            manualVarietyMaturityMismatch, // ADDED
+            normalizeVarietyMaturityClass, // ADDED
             makeCropPickerOptions, // ADDED
             scoreSowingWindowsForDate, // ADDED
             scoreCropSuitability, // ADDED

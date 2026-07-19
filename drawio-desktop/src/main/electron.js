@@ -2543,6 +2543,28 @@ function getTrellisAppInfo() { // NEW
 	}; // NEW
 } // NEW
 
+function getTrellisSyncthingShareInfo() { // NEW
+	return { // NEW
+		ok: false, // NEW
+		managed: false, // NEW
+		deviceId: '', // NEW
+		folderId: '', // NEW
+		folderLabel: '', // NEW
+		folderPath: '', // NEW
+		reason: 'Bundled Syncthing sharing is not wired in this Trellis build yet.' // NEW
+	}; // NEW
+} // NEW
+
+function openTrellisEmailDraft(args) { // NEW
+	const source = args || {}; // NEW
+	const to = String(source.to || '').trim(); // NEW
+	const subject = String(source.subject || 'Trellis garden canvas invite'); // NEW
+	const body = String(source.body || ''); // NEW
+	if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return { ok: false, reason: 'A valid recipient email is required.' }; // NEW
+	const url = 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body); // NEW
+	return openExternal(url) ? { ok: true } : { ok: false, reason: 'Email draft could not be opened.' }; // NEW
+} // NEW
+
 async function getTrellisReleases() { // NEW
 	const controller = new AbortController(); // NEW
 	const timeout = setTimeout(() => controller.abort(), trellisReleasesTimeoutMs); // NEW
@@ -2654,6 +2676,12 @@ ipcMain.on("rendererReq", async (event, args) => {
 				break; // NEW
 			case 'getTrellisReleases': // NEW
 				ret = await getTrellisReleases(); // NEW
+				break; // NEW
+			case 'getTrellisSyncthingShareInfo': // NEW
+				ret = getTrellisSyncthingShareInfo(args); // NEW
+				break; // NEW
+			case 'openTrellisEmailDraft': // NEW
+				ret = openTrellisEmailDraft(args); // NEW
 				break; // NEW
 			case 'getTrellisSplashBackground': // NEW
 				ret = await getTrellisSplashBackground(); // NEW
