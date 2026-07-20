@@ -11,9 +11,57 @@ var mxSettings =
 	 * Defines current version of settings.
 	 */
 	currentVersion: 18,
-	
+
 	defaultFormatWidth: (screen.width < 600) ? '0' : '240',
-	
+
+	trellisStartupDefaultsKey: '.trellisStartupDefaults.v1', // NEW
+	trellisDefaultPluginIds: [ // NEW
+		'trellisUpdatesLinks', // NEW
+		'trellisDatabaseTools', // NEW
+		'trellisUiCleanup', // NEW
+		'trellisUsers', // NEW
+		'trellisContextMenu', // NEW
+		'gardenSuccession', // NEW
+		'plantTiler', // NEW
+		'gardenTasks', // NEW
+		'gardenModules', // NEW
+		'gardenParenting', // NEW
+		'gardenScheduler', // NEW
+		'gardenClickThrough', // NEW
+		'gardenLinking', // NEW
+		'tidyContextMenu', // NEW
+		'createdChangeMap', // NEW
+		'gardenDashboard', // NEW
+		'gardenPlanner', // NEW
+		'gardenScale', // NEW
+		'gardenBeds', // NEW
+		'gardenEquipment', // NEW
+		'gardenIrrigationPlanner' // NEW
+	], // NEW
+	trellisDefaultPluginPaths: { // NEW
+		trellisUpdatesLinks: 'plugins/garden_planner_plugins/Trellis_Updates_Links.js', // NEW
+		trellisDatabaseTools: 'plugins/garden_planner_plugins/Trellis_Database_Tools.js', // NEW
+		trellisUiCleanup: 'plugins/garden_planner_plugins/Trellis_UI_Cleanup.js', // NEW
+		trellisUsers: 'plugins/garden_planner_plugins/Trellis_Users.js', // NEW
+		trellisContextMenu: 'plugins/garden_planner_plugins/Trellis_Context_Menu.js', // NEW
+		gardenSuccession: 'plugins/garden_planner_plugins/Bed_Succession_Navigator.js', // NEW
+		plantTiler: 'plugins/garden_planner_plugins/Plant_Tiler.js', // NEW
+		gardenTasks: 'plugins/garden_planner_plugins/Garden_Task_Manager.js', // NEW
+		gardenModules: 'plugins/garden_planner_plugins/Modules_Standalone.js', // NEW
+		gardenParenting: 'plugins/garden_planner_plugins/Planting_Group_Parenting_Controls.js', // NEW
+		gardenScheduler: 'plugins/garden_planner_plugins/Garden_Scheduler_Dialog.js', // NEW
+		gardenClickThrough: 'plugins/garden_planner_plugins/Deep_Click_Through.js', // NEW
+		gardenLinking: 'plugins/garden_planner_plugins/Vertex_Linking_Standalone.js', // NEW
+		tidyContextMenu: 'plugins/garden_planner_plugins/Tidy_Context_Menu.js', // NEW
+		createdChangeMap: 'plugins/garden_planner_plugins/Created_Change_Map.js', // NEW
+		gardenDashboard: 'plugins/garden_planner_plugins/Garden_Dashboard.js', // NEW
+		gardenPlanner: 'plugins/garden_planner_plugins/Year_Planner.js', // NEW
+		gardenScale: 'plugins/garden_planner_plugins/Garden_Scale.js', // NEW
+		gardenBeds: 'plugins/garden_planner_plugins/Garden_Beds.js', // NEW
+		gardenEquipment: 'plugins/garden_planner_plugins/Garden_Equipment.js', // NEW
+		gardenIrrigationPlanner: 'plugins/garden_planner_plugins/Garden_Irrigation_Planner.js' // NEW
+	}, // NEW
+
 	// NOTE: Hardcoded in index.html due to timing of JS loading
 	key: Editor.settingsKey,
 
@@ -129,7 +177,7 @@ var mxSettings =
 	{
 		//Convert from old format to the new one
 		var custFonts = mxSettings.settings.customFonts || [];
-		
+
 		for (var i = 0 ; i < custFonts.length; i++)
 		{
 			if (typeof custFonts[i] === 'string')
@@ -137,7 +185,7 @@ var mxSettings =
 				custFonts[i] = {name: custFonts[i], url: null};
 			}
 		}
-		
+
 		return custFonts;
 	},
 	getLibraries: function()
@@ -152,13 +200,13 @@ var mxSettings =
 	{
 		// Makes sure to update the latest data from the localStorage
 		mxSettings.load();
-		
+
 		//If the setting is incorrect, reset it to an empty array
 		if (!Array.isArray(mxSettings.settings.customLibraries))
 		{
 			mxSettings.settings.customLibraries = [];
 		}
-		
+
 		if (mxUtils.indexOf(mxSettings.settings.customLibraries, id) < 0)
 		{
 			// Makes sure scratchpad is below search in sidebar
@@ -171,7 +219,7 @@ var mxSettings =
 				mxSettings.settings.customLibraries.push(id);
 			}
 		}
-		
+
 		mxSettings.save();
 	},
 	removeCustomLibrary: function(id)
@@ -193,6 +241,54 @@ var mxSettings =
 	{
 		mxSettings.settings.plugins = plugins;
 	},
+	getTrellisDefaultPluginIds: function() // NEW
+	{
+		return mxSettings.trellisDefaultPluginIds.slice(); // NEW
+	}, // NEW
+	getTrellisDefaultPluginPaths: function() // NEW
+	{
+		var result = []; // NEW
+
+		for (var i = 0; i < mxSettings.trellisDefaultPluginIds.length; i++) // NEW
+		{
+			result.push(mxSettings.trellisDefaultPluginPaths[mxSettings.trellisDefaultPluginIds[i]]); // NEW
+		}
+
+		return result; // NEW
+	}, // NEW
+	applyTrellisStartupDefaults: function() // NEW
+	{
+		var changed = false; // NEW
+
+		if (!Array.isArray(mxSettings.settings.plugins) || mxSettings.settings.plugins.length == 0) // NEW
+		{
+			mxSettings.settings.plugins = mxSettings.getTrellisDefaultPluginPaths(); // NEW
+			changed = true; // NEW
+		}
+
+		if (mxSettings.settings.showStartScreen == null) // NEW
+		{
+			mxSettings.settings.showStartScreen = true; // NEW
+			changed = true; // NEW
+		}
+
+		if (mxSettings.settings.autosave == null) // NEW
+		{
+			mxSettings.settings.autosave = true; // NEW
+			changed = true; // NEW
+		}
+		else if (EditorUi.isElectronApp && isLocalStorage && // NEW
+			localStorage.getItem('._autoSaveTrans_') != null && // NEW
+			localStorage.getItem(mxSettings.trellisStartupDefaultsKey) == null && // NEW
+			mxSettings.settings.autosave === false) // NEW
+		{
+			localStorage.setItem(mxSettings.trellisStartupDefaultsKey, '1'); // NEW
+			mxSettings.settings.autosave = true; // NEW
+			changed = true; // NEW
+		}
+
+		return changed; // NEW
+	}, // NEW
 	getRecentColors: function()
 	{
 		return mxSettings.settings.recentColors;
@@ -257,17 +353,17 @@ var mxSettings =
 			customFonts: [],
 			libraries: Sidebar.prototype.defaultEntries,
 			customLibraries: Editor.defaultCustomLibraries,
-			plugins: [],
+			plugins: mxSettings.getTrellisDefaultPluginPaths(), // CHANGE
 			recentColors: [],
 			formatWidth: mxSettings.defaultFormatWidth,
 			createTarget: urlParams['sketch'] == '1',
 			pageFormat: mxGraph.prototype.pageFormat,
 			search: true,
-			showStartScreen: false,
+			showStartScreen: true, // CHANGE
 			gridColor: mxGraphView.prototype.defaultGridColor,
 			darkGridColor: mxGraphView.prototype.defaultDarkGridColor,
 			darkMode: 'auto',
-			autosave: !EditorUi.isElectronApp,
+			autosave: true, // CHANGE
 			resizeImages: null,
 			openCounter: 0,
 			version: mxSettings.currentVersion,
@@ -332,12 +428,12 @@ var mxSettings =
 		else
 		{
 			mxSettings.settings = config;
-			
+
 			if (mxSettings.settings.plugins == null)
 			{
-				mxSettings.settings.plugins = [];
+				mxSettings.settings.plugins = []; // CHANGE
 			}
-			
+
 			if (mxSettings.settings.recentColors == null)
 			{
 				mxSettings.settings.recentColors = [];
@@ -347,52 +443,52 @@ var mxSettings =
 			{
 				mxSettings.settings.customFonts = [];
 			}
-			
+
 			if (mxSettings.settings.libraries == null)
 			{
 				mxSettings.settings.libraries = Sidebar.prototype.defaultEntries;
 			}
-			
+
 			if (mxSettings.settings.customLibraries == null)
 			{
 				mxSettings.settings.customLibraries = Editor.defaultCustomLibraries;
 			}
-			
+
 			if (mxSettings.settings.ui == null)
 			{
 				mxSettings.settings.ui = '';
 			}
-			
+
 			if (mxSettings.settings.formatWidth == null)
 			{
 				mxSettings.settings.formatWidth = mxSettings.defaultFormatWidth;
 			}
-			
+
 			if (mxSettings.settings.lastAlert != null)
 			{
 				delete mxSettings.settings.lastAlert;
 			}
-			
+
 			if (mxSettings.settings.createTarget == null)
 			{
 				mxSettings.settings.createTarget = false;
 			}
-			
+
 			if (mxSettings.settings.pageFormat == null)
 			{
 				mxSettings.settings.pageFormat = mxGraph.prototype.pageFormat;
 			}
-			
+
 			if (mxSettings.settings.search == null)
 			{
 				mxSettings.settings.search = true;
 			}
-			
+
 			if (mxSettings.settings.showStartScreen == null)
 			{
-				mxSettings.settings.showStartScreen = false;
+				mxSettings.settings.showStartScreen = true; // CHANGE
 			}
-			
+
 			if (mxSettings.settings.gridColor == null)
 			{
 				mxSettings.settings.gridColor = mxGraphView.prototype.defaultGridColor;
@@ -402,25 +498,24 @@ var mxSettings =
 			{
 				mxSettings.settings.darkGridColor = mxGraphView.prototype.defaultDarkGridColor;
 			}
-			
+
 			if (mxSettings.settings.autosave == null)
 			{
-				mxSettings.settings.autosave = !EditorUi.isElectronApp;
+				mxSettings.settings.autosave = true; // CHANGE
 			}
-			else if (EditorUi.isElectronApp && localStorage.getItem('._autoSaveTrans_') == null) //Transition to no autosave
-			{
-				localStorage.setItem('._autoSaveTrans_', '1');
-				mxSettings.settings.autosave = false;
-				mxSettings.save();
-			}
-			
+
 			if (mxSettings.settings.scratchpadSeen != null)
 			{
 				delete mxSettings.settings.scratchpadSeen;
 			}
+
+			if (mxSettings.applyTrellisStartupDefaults()) // NEW
+			{
+				mxSettings.save(); // NEW
+			}
 		}
 	},
-	clear: function() 
+	clear: function()
 	{
 		if (isLocalStorage)
 		{
@@ -431,7 +526,7 @@ var mxSettings =
 
 /**
  * Variable: mxLoadSettings
- * 
+ *
  * Optional global config variable to toggle loading the settings. Default is true.
  *
  * (code)

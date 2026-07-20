@@ -73,8 +73,17 @@ Draw.loadPlugin(function (ui) {
         } catch (_) { }
     }
 
+    function bedFitDebugEnabled() { // NEW
+        try { // NEW
+            if (DEBUG_BED_FIT) return true; // NEW
+            if (typeof window !== "undefined" && window.__TRELLIS_BED_FIT_DEBUG__ === true) return true; // NEW
+            if (typeof window !== "undefined" && window.localStorage && window.localStorage.getItem("trellis_bed_fit_debug") === "1") return true; // NEW
+        } catch (_) { } // NEW
+        return false; // NEW
+    } // NEW
+
     function bedFitLog(stage, payload) { // CHANGE
-        if (!DEBUG_BED_FIT || typeof console === "undefined") return; // CHANGE
+        if (!bedFitDebugEnabled() || typeof console === "undefined") return; // CHANGE
         try { // CHANGE
             const data = payload || {}; // CHANGE
             const tables = data.tables || {}; // CHANGE
@@ -93,6 +102,99 @@ Draw.loadPlugin(function (ui) {
             try { console.log("[BedFit] logging failed", stage, e); } catch (_) { } // CHANGE
         } // CHANGE
     } // CHANGE
+
+    function debugLocalStore() { // NEW
+        try { return typeof window !== "undefined" && window.localStorage ? window.localStorage : null; } catch (_) { return null; } // NEW
+    } // NEW
+
+    function debugFlagSnapshot() { // NEW
+        const store = debugLocalStore(); // NEW
+        const win = typeof window !== "undefined" ? window : null; // NEW
+        return { // NEW
+            storage: { // NEW
+                trellis_users_debug: store ? store.getItem("trellis_users_debug") : null, // NEW
+                trellis_bed_fit_debug: store ? store.getItem("trellis_bed_fit_debug") : null // NEW
+            }, // NEW
+            windowFlags: { // NEW
+                users: !!(win && win.__TRELLIS_USERS_DEBUG__ === true), // NEW
+                bedFit: !!(win && win.__TRELLIS_BED_FIT_DEBUG__ === true) // NEW
+            } // NEW
+        }; // NEW
+    } // NEW
+
+    function bedFitStatus() { // NEW
+        const win = typeof window !== "undefined" ? window : null; // NEW
+        const flags = debugFlagSnapshot(); // NEW
+        return { // NEW
+            plugin: "Plant_Tiler.js", // NEW
+            loaded: true, // NEW
+            debugEnabled: bedFitDebugEnabled(), // NEW
+            url: win && win.location ? String(win.location.href || "") : "", // NEW
+            origin: win && win.location ? String(win.location.origin || "") : "", // NEW
+            storage: flags.storage, // NEW
+            windowFlags: flags.windowFlags, // NEW
+            bedFitInProgress: !!bedFitInProgress, // NEW
+            nextTxnId: bedFitTxnSeq + 1, // NEW
+            tilerFitApiPresent: !!(win && win.USL && win.USL.tiler && typeof win.USL.tiler.retileAndFitToContainingBed === "function") // NEW
+        }; // NEW
+    } // NEW
+
+    function debugProbeSnapshot() { // NEW
+        const win = typeof window !== "undefined" ? window : null; // NEW
+        const debug = win && win.Trellis && win.Trellis.debug; // NEW
+        const flags = debugFlagSnapshot(); // NEW
+        return { // NEW
+            url: win && win.location ? String(win.location.href || "") : "", // NEW
+            origin: win && win.location ? String(win.location.origin || "") : "", // NEW
+            usersPluginLoaded: !!(win && win.__TRELLIS_USERS_PLUGIN_LOADED), // NEW
+            bedFitPluginLoaded: !!(win && win.__TRELLIS_BED_FIT_PLUGIN_LOADED), // NEW
+            storage: flags.storage, // NEW
+            windowFlags: flags.windowFlags, // NEW
+            usersApiPresent: !!(win && win.Trellis && win.Trellis.users), // NEW
+            tilerFitApiPresent: !!(win && win.USL && win.USL.tiler && typeof win.USL.tiler.retileAndFitToContainingBed === "function"), // NEW
+            usersStatus: debug && typeof debug.usersStatus === "function" ? debug.usersStatus() : null, // NEW
+            bedFitStatus: debug && typeof debug.bedFitStatus === "function" ? debug.bedFitStatus() : null // NEW
+        }; // NEW
+    } // NEW
+
+    function debugProbe() { // NEW
+        const snapshot = debugProbeSnapshot(); // NEW
+        if (typeof console !== "undefined") { // NEW
+            try { // NEW
+                if (console.groupCollapsed) console.groupCollapsed("[TrellisDebug] probe"); // NEW
+                else if (console.log) console.log("[TrellisDebug] probe"); // NEW
+                if (console.log) console.log(snapshot); // NEW
+            } finally { // NEW
+                try { if (console.groupEnd) console.groupEnd(); } catch (_) { } // NEW
+            } // NEW
+        } // NEW
+        return snapshot; // NEW
+    } // NEW
+
+    function installTrellisDebugSurface() { // NEW
+        const win = typeof window !== "undefined" ? window : null; // NEW
+        if (!win) return null; // NEW
+        win.Trellis = win.Trellis || {}; // NEW
+        const debug = win.Trellis.debug = win.Trellis.debug || {}; // NEW
+        win.__TRELLIS_BED_FIT_PLUGIN_LOADED = true; // NEW
+        debug.bedFitStatus = bedFitStatus; // NEW
+        debug.enable = function () { // NEW
+            const store = debugLocalStore(); // NEW
+            win.__TRELLIS_USERS_DEBUG__ = true; // NEW
+            win.__TRELLIS_BED_FIT_DEBUG__ = true; // NEW
+            if (store) { store.setItem("trellis_users_debug", "1"); store.setItem("trellis_bed_fit_debug", "1"); } // NEW
+            return debugProbeSnapshot(); // NEW
+        }; // NEW
+        debug.disable = function () { // NEW
+            const store = debugLocalStore(); // NEW
+            win.__TRELLIS_USERS_DEBUG__ = false; // NEW
+            win.__TRELLIS_BED_FIT_DEBUG__ = false; // NEW
+            if (store) { store.removeItem("trellis_users_debug"); store.removeItem("trellis_bed_fit_debug"); } // NEW
+            return debugProbeSnapshot(); // NEW
+        }; // NEW
+        debug.probe = debugProbe; // NEW
+        return debug; // NEW
+    } // NEW
 
     function withUndoSuppressed(fn) { // NEW
         if (graph.__withUndoSuppressed) return graph.__withUndoSuppressed(fn); // NEW
@@ -3214,12 +3316,16 @@ Draw.loadPlugin(function (ui) {
         const activeGraph = graphArg || graph; // CHANGE
         const source = (opts && opts.source) || "api-refit"; // CHANGE
         const ownsTransaction = !(opts && opts.inTransaction); // CHANGE
-        const txnId = ++bedFitTxnSeq; // CHANGE
-        if (!activeGraph || !groupCell || !isTilerGroup(groupCell) || bedFitInProgress) return { changed: false, fitted: false, reason: "not-available" }; // CHANGE
+        const txnId = opts && opts.txnId ? opts.txnId : ++bedFitTxnSeq; // CHANGE
+        if (!activeGraph || !groupCell || !isTilerGroup(groupCell) || bedFitInProgress) { // CHANGE
+            bedFitLog("retile-fit-skip", { txnId, source, groupId: bedFitCellId(groupCell), reason: "not-available", hasGraph: !!activeGraph, isTilerGroup: isTilerGroup(groupCell), bedFitInProgress }); // NEW
+            return { changed: false, fitted: false, reason: "not-available" }; // CHANGE
+        } // CHANGE
         const model = activeGraph.getModel(); // CHANGE
         let fitResult = null; // CHANGE
         let trimmed = false; // CHANGE
         let result = { changed: false, fitted: false, reason: "" }; // CHANGE
+        bedFitLog("retile-fit-start", { txnId, source, groupId: bedFitCellId(groupCell), groupGeo: bedFitGeometrySnapshot(groupCell), ownsTransaction }); // NEW
         bedFitInProgress = true; // CHANGE
         if (ownsTransaction) model.beginUpdate(); // CHANGE
         try { // CHANGE
@@ -3227,6 +3333,7 @@ Draw.loadPlugin(function (ui) {
             const parent = model.getParent(groupCell); // CHANGE
             const center = rectCenterModel(getModelRect(groupCell)); // CHANGE
             const bed = findSmallestContainingBedModel(parent, center); // CHANGE
+            bedFitLog("retile-fit-bed-resolve", { txnId, source, groupId: bedFitCellId(groupCell), parentId: bedFitCellId(parent), bedId: bedFitCellId(bed), center: center ? { x: bedFitRound(center.x), y: bedFitRound(center.y) } : null }); // NEW
             if (!bed) { result = { changed: false, fitted: false, reason: "no-containing-bed" }; return result; } // CHANGE
             fitResult = applyBedFitGeometry(groupCell, bed, true, { txnId, source, ignoreBedAutoFit: true }); // CHANGE
             if (!fitResult) { result = { changed: false, fitted: false, reason: "fit-skipped", bed }; return result; } // CHANGE
@@ -3245,6 +3352,7 @@ Draw.loadPlugin(function (ui) {
             bedFitInProgress = false; // CHANGE
             if (fitResult && (trimmed || fitResult.changed)) markBedFitResizeSuppression([{ tg: groupCell }]); // CHANGE
             activeGraph.refresh(groupCell); // CHANGE
+            bedFitLog("retile-fit-end", { txnId, source, groupId: bedFitCellId(groupCell), result, finalGeo: bedFitGeometrySnapshot(groupCell), trimmed, fitChanged: !!(fitResult && fitResult.changed) }); // NEW
         } // CHANGE
     } // CHANGE
 
@@ -3375,26 +3483,49 @@ Draw.loadPlugin(function (ui) {
         for (const c of (cells || [])) graph.refresh(c);
     }
 
-    function notifyTilerGroupCreated(graph, group, source) { // CHANGE
+    function notifyTilerGroupCreated(graph, group, source, debugTxnId) { // CHANGE
         if (!graph || !group) return; // CHANGE
         const groupId = group.id || ""; // CHANGE
+        const txnId = debugTxnId || null; // NEW
+        bedFitLog("created-event-schedule", { txnId, source: source || "", groupId: groupId || bedFitCellId(group) }); // NEW
         setTimeout(function () { // CHANGE
             const model = graph.getModel && graph.getModel(); // CHANGE
             const liveGroup = groupId && model && model.getCell ? model.getCell(groupId) : group; // CHANGE
-            if (!liveGroup || !isTilerGroup(liveGroup)) return; // CHANGE
+            if (!liveGroup || !isTilerGroup(liveGroup)) { // CHANGE
+                bedFitLog("created-event-skip", { txnId, source: source || "", groupId, reason: "missing-live-group" }); // NEW
+                return; // CHANGE
+            } // CHANGE
             try { // CHANGE
+                bedFitLog("created-event-fire", { txnId, source: source || "", groupId: bedFitCellId(liveGroup), groupGeo: bedFitGeometrySnapshot(liveGroup) }); // NEW
                 graph.fireEvent(new mxEventObject(TILER_GROUP_CREATED_EVENT, "cell", liveGroup, "cellId", liveGroup.id || groupId, "source", source || "")); // CHANGE
-            } catch (_) { } // CHANGE
+                bedFitLog("created-event-fired", { txnId, source: source || "", groupId: bedFitCellId(liveGroup) }); // NEW
+            } catch (e) { // CHANGE
+                bedFitLog("created-event-error", { txnId, source: source || "", groupId: bedFitCellId(liveGroup), errorMessage: e && e.message ? e.message : String(e) }); // NEW
+            } // CHANGE
         }, 0); // CHANGE
     } // CHANGE
 
-    function finalizeCreatedTilerGroup(graph, group, parent, source) { // NEW
+    function finalizeCreatedTilerGroup(graph, group, parent, source, debugTxnId) { // CHANGE
         if (!graph || !group) return null; // NEW
         const model = graph.getModel(); // NEW
-        retileAndFitToContainingBed(graph, group, { source: source || "tiler-created", inTransaction: true }); // NEW
-        if (parent && isGardenModule(parent)) reorderModuleChildrenForLayering(model, parent); // NEW
-        graph.setSelectionCell(group); // NEW
-        return group; // NEW
+        const txnId = debugTxnId || ++bedFitTxnSeq; // NEW
+        const debugSource = source || "tiler-created"; // NEW
+        let fitResult = null; // NEW
+        let threw = false; // NEW
+        let errorMessage = ""; // NEW
+        bedFitLog("finalize-created-start", { txnId, source: debugSource, groupId: bedFitCellId(group), parentId: bedFitCellId(parent), parentIsGardenModule: !!(parent && isGardenModule(parent)), groupGeo: bedFitGeometrySnapshot(group) }); // NEW
+        try { // NEW
+            fitResult = retileAndFitToContainingBed(graph, group, { source: debugSource, inTransaction: true, txnId }); // CHANGE
+            if (parent && isGardenModule(parent)) reorderModuleChildrenForLayering(model, parent); // NEW
+            graph.setSelectionCell(group); // NEW
+            return group; // NEW
+        } catch (e) { // NEW
+            threw = true; // NEW
+            errorMessage = e && e.message ? e.message : String(e); // NEW
+            throw e; // NEW
+        } finally { // NEW
+            bedFitLog("finalize-created-end", { txnId, source: debugSource, groupId: bedFitCellId(group), fitResult, threw, errorMessage, finalGeo: bedFitGeometrySnapshot(group) }); // NEW
+        } // NEW
     } // NEW
 
     function createDefaultGardenBed(graph, moduleCell, clickX, clickY) { // CHANGE
@@ -3485,14 +3616,24 @@ Draw.loadPlugin(function (ui) {
 
         const model = graph.getModel();
         const creationSource = (opts && opts.source) || "empty-group"; // NEW
+        const creationTxnId = ++bedFitTxnSeq; // NEW
+        let threw = false; // NEW
+        let errorMessage = ""; // NEW
+        bedFitLog("create-empty-start", { txnId: creationTxnId, source: creationSource, moduleId: bedFitCellId(moduleCell), clickX: bedFitRound(clickX), clickY: bedFitRound(clickY), localX: bedFitRound(localX), localY: bedFitRound(localY), relX: bedFitRound(relX), relY: bedFitRound(relY), groupId: bedFitCellId(group), groupGeo: bedFitGeometrySnapshot(group) }); // NEW
         model.beginUpdate();
         try {
             graph.addCell(group, moduleCell);
-            finalizeCreatedTilerGroup(graph, group, moduleCell, creationSource); // CHANGE
+            finalizeCreatedTilerGroup(graph, group, moduleCell, creationSource, creationTxnId); // CHANGE
+        } catch (e) { // NEW
+            threw = true; // NEW
+            errorMessage = e && e.message ? e.message : String(e); // NEW
+            throw e; // NEW
         } finally {
             model.endUpdate();
+            bedFitLog("create-empty-end", { txnId: creationTxnId, source: creationSource, moduleId: bedFitCellId(moduleCell), groupId: bedFitCellId(group), finalGeo: bedFitGeometrySnapshot(group), threw, errorMessage }); // NEW
         }
-        notifyTilerGroupCreated(graph, group, creationSource); // CHANGE
+        notifyTilerGroupCreated(graph, group, creationSource, creationTxnId); // CHANGE
+        bedFitLog("create-empty-notify-scheduled", { txnId: creationTxnId, source: creationSource, groupId: bedFitCellId(group) }); // NEW
         return group; // CHANGE
     }
 
@@ -5076,6 +5217,8 @@ Draw.loadPlugin(function (ui) {
         retileGroup, // CHANGE
         retileAndFitToContainingBed // CHANGE
     });
+    installTrellisDebugSurface(); // NEW
+    bedFitLog("loaded", bedFitStatus()); // NEW
 
     // -------------------- Boot --------------------
     (async function init() {

@@ -176,10 +176,10 @@ test("Trellis database restore bridge and default plugin registration are wired"
 
     assert.match(appSource, /'trellisDatabaseTools': 'plugins\/garden_planner_plugins\/Trellis_Database_Tools\.js'/);
     assert.match(appSource, /'trellisUiCleanup': 'plugins\/garden_planner_plugins\/Trellis_UI_Cleanup\.js'/); // NEW
-    assert.match(appSource, /App\.loadPlugins\(\['trellisUpdatesLinks', 'trellisDatabaseTools', 'trellisUiCleanup'\]\); \/\/ CHANGE/); // CHANGE
+    assert.match(appSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\); \/\/ CHANGE/); // CHANGE
     assert.match(bundledSource, /'trellisDatabaseTools': 'plugins\/garden_planner_plugins\/Trellis_Database_Tools\.js'/);
     assert.match(bundledSource, /'trellisUiCleanup': 'plugins\/garden_planner_plugins\/Trellis_UI_Cleanup\.js'/); // NEW
-    assert.match(bundledSource, /App\.loadPlugins\(\["trellisUpdatesLinks","trellisDatabaseTools","trellisUiCleanup"\]\)/); // CHANGE
+    assert.match(bundledSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/); // CHANGE
     assert.match(integrateSource, /trellisDatabaseTools:"plugins\/garden_planner_plugins\/Trellis_Database_Tools\.js",trellisUiCleanup:"plugins\/garden_planner_plugins\/Trellis_UI_Cleanup\.js"/); // CHANGE
-    assert.match(integrateSource, /App\.loadPlugins\(\["trellisUpdatesLinks","trellisDatabaseTools","trellisUiCleanup"\]\)/); // CHANGE
+    assert.match(integrateSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/); // CHANGE
 });

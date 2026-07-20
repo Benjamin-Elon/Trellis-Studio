@@ -1769,6 +1769,38 @@ test('new annual schedule defaults sow date to today inside the active window', 
     }), '2026-04-01'); // ADDED
 }); // ADDED
 
+test('new annual schedule startup preview uses today only inside the active sowing season', () => { // ADDED
+    const spring = { id: 'spring', label: 'Spring (Apr 1-May 1)', startISO: '2026-04-01', endISO: '2026-05-01' }; // ADDED
+    const fall = { id: 'fall', label: 'Fall (Sep 1-Oct 1)', startISO: '2026-09-01', endISO: '2026-10-01' }; // ADDED
+    const earliest = new Date(Date.UTC(2026, 3, 1)); // ADDED
+    const persisted = new Date(Date.UTC(2026, 4, 10)); // ADDED
+    assert.equal(hooks.resolveInitialPreviewStartForScheduleDialog({ // ADDED
+        earliestFeasibleSowDate: earliest, // ADDED
+        initialWindowFeasible: true, // ADDED
+        sowingSeasons: [spring, fall], // ADDED
+        todayISO: '2026-04-15' // ADDED
+    }).toISOString().slice(0, 10), '2026-04-15'); // ADDED
+    assert.equal(hooks.resolveInitialPreviewStartForScheduleDialog({ // ADDED
+        earliestFeasibleSowDate: earliest, // ADDED
+        initialWindowFeasible: true, // ADDED
+        sowingSeasons: [spring, fall], // ADDED
+        todayISO: '2026-08-15' // ADDED
+    }).toISOString().slice(0, 10), '2026-09-01'); // ADDED
+    assert.equal(hooks.resolveInitialPreviewStartForScheduleDialog({ // ADDED
+        storedSowDate: persisted, // ADDED
+        earliestFeasibleSowDate: earliest, // ADDED
+        initialWindowFeasible: true, // ADDED
+        sowingSeasons: [spring, fall], // ADDED
+        todayISO: '2026-04-15' // ADDED
+    }).toISOString().slice(0, 10), '2026-05-10'); // ADDED
+    assert.equal(hooks.resolveInitialPreviewStartForScheduleDialog({ // ADDED
+        earliestFeasibleSowDate: null, // ADDED
+        initialWindowFeasible: false, // ADDED
+        sowingSeasons: [], // ADDED
+        todayISO: '2026-07-19' // ADDED
+    }).toISOString().slice(0, 10), '2026-07-19'); // ADDED
+}); // ADDED
+
 test('perennial lifecycle is detected before requesting a maturity budget', () => {
     const plant = makePlant({
         annual: 0,

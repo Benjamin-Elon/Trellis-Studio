@@ -330,6 +330,8 @@ App.publicPlugin = [
     'gardenIrrigationPlanner'                                  // NEW
 ];
 
+App.trellisDefaultPlugins = App.publicPlugin.slice(); // NEW
+
 /**
  * Loads all given scripts and invokes onload after
  * all scripts have finished loading.
@@ -780,7 +782,7 @@ App.main = function(callback, createUi)
 			}
 			
 			App.initPluginCallback(); // NEW
-			App.loadPlugins(['trellisUpdatesLinks', 'trellisDatabaseTools', 'trellisUiCleanup', 'trellisUsers']); // CHANGE
+			App.loadPlugins(App.trellisDefaultPlugins); // CHANGE
 
 			// Loads plugins
 			if (urlParams['plugins'] != '0' && urlParams['offline'] != '1')

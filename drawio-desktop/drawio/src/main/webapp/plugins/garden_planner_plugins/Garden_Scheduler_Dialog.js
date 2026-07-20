@@ -297,6 +297,24 @@ Draw.loadPlugin(function (ui) {
         return String(currentStartISO || ''); // CHANGED
     }
 
+    function resolveInitialPreviewStartForScheduleDialog({ // ADDED
+        storedSowDate, // ADDED
+        earliestFeasibleSowDate, // ADDED
+        selectedIsPerennial = false, // ADDED
+        initialWindowFeasible = false, // ADDED
+        sowingSeasons = [], // ADDED
+        todayISO = '' // ADDED
+    } = {}) { // ADDED
+        if (storedSowDate || selectedIsPerennial) return storedSowDate || earliestFeasibleSowDate || null; // CHANGED
+        if (!initialWindowFeasible) return parseISODateUTCValue(todayISO) || earliestFeasibleSowDate || null; // CHANGED
+        const windows = normalizeSowingSeasons(sowingSeasons); // ADDED
+        if (!windows.length) return earliestFeasibleSowDate || null; // ADDED
+        const activeId = pickDefaultSowingSeasonId(windows, { todayISO }); // ADDED
+        const activeWindow = windows.find(window => window.id === String(activeId || '').trim()) || windows[0]; // ADDED
+        const defaultStartISO = defaultStartForActiveSowingSeason(activeWindow, todayISO); // ADDED
+        return parseISODateUTCValue(defaultStartISO) || earliestFeasibleSowDate || null; // ADDED
+    } // ADDED
+
     const TRANSPLANT_DATE_INPUT_METHOD_IDS = Object.freeze(['transplant.indoor', 'transplant.cutting']); // ADDED
 
     function methodUsesTransplantDateInput(methodIdOrBehavior) { // ADDED
@@ -11058,6 +11076,7 @@ Draw.loadPlugin(function (ui) {
         let latestHarvestEndDate = selectedIsPerennial ? climateEndDate : null; // CHANGED
         let selectedHarvestEndDate = selectedIsPerennial ? climateEndDate : null; // ADDED
         let initialDailyClimate = null; // ADDED
+        let initialSowingSeasons = []; // ADDED
 
         if (!selectedIsPerennial && Number.isFinite(HW_DAYS)) { // FIX
             requireEffectiveTransplantDays(initialMethodId, initialTransplantDaysConfig.effectiveDays); // ADDED
@@ -11092,6 +11111,7 @@ Draw.loadPlugin(function (ui) {
             });
 
             initialWindowFeasible = initialWindow.feasible === true; // FIX
+            initialSowingSeasons = Array.isArray(initialWindow.seasons) ? Array.from(initialWindow.seasons) : []; // ADDED
             earliestFeasibleSowDate = initialWindow.seasons?.[0]?.startDate || initialWindow.earliestFeasibleSowDate; // CHANGED
             climateEndDate = initialWindow.climateEndDate; // FIX
             latestHarvestEndDate = initialWindow.climateEndDate; // FIX: initialize the annual latest-harvest display from the feasible window
@@ -11100,7 +11120,14 @@ Draw.loadPlugin(function (ui) {
 
         // no stray reassignments like: earliestFeasibleSowDate = a; selectedHarvestEndDate = b;  <-- remove these
 
-        let previewStart = storedSowDate || earliestFeasibleSowDate;
+        let previewStart = resolveInitialPreviewStartForScheduleDialog({ // CHANGED
+            storedSowDate, // ADDED
+            earliestFeasibleSowDate, // ADDED
+            selectedIsPerennial, // ADDED
+            initialWindowFeasible, // ADDED
+            sowingSeasons: initialSowingSeasons, // ADDED
+            todayISO: fmtISO(todayUTC) // ADDED
+        }); // CHANGED
         if (!selectedIsPerennial && storedHarvestEndDate) {
             selectedHarvestEndDate = storedHarvestEndDate; // CHANGED
         }
@@ -11108,7 +11135,7 @@ Draw.loadPlugin(function (ui) {
 
         // If we have a finite harvest window, we can run feasibility tweaks.
         // (For perennials / null HW_DAYS we skip this step but still open the dialog.)
-        if (!selectedIsPerennial && initialWindowFeasible && Number.isFinite(HW_DAYS) && !hasPersistedSchedule) { // FIX
+        if (!selectedIsPerennial && initialWindowFeasible && Number.isFinite(HW_DAYS) && !hasPersistedSchedule && !initialSowingSeasons.length) { // CHANGED
             const inputs0 = new sharedCore.ScheduleInputs({ // CHANGED
                 plant: selectedPlantForSchedule,
                 city: cityInit,
@@ -11804,6 +11831,7 @@ Draw.loadPlugin(function (ui) {
             buildSowingSeasonSelectorState, // ADDED
             pickDefaultSowingSeasonId, // ADDED
             defaultStartForActiveSowingSeason, // ADDED
+            resolveInitialPreviewStartForScheduleDialog, // ADDED
             findSowingSeasonForDate, // ADDED
             resolveStartForSowingSeasonSwitch, // ADDED
             encodeMethodSelection, // ADDED

@@ -57,11 +57,16 @@ Draw.loadPlugin(function (ui) {
     let currentUserId = "";
     let panel = null;
     let statusNode = null;
+    let peopleFilterNode = null; // NEW
+    let peopleSearchInput = null; // NEW
+    let peopleTypeFilterSelect = null; // NEW
     let loginNameInput = null;
     let loginPinInput = null;
     let rosterNode = null;
     let accessNode = null;
     let resetPinUserId = ""; // NEW
+    let peopleSearchText = ""; // NEW
+    let peopleTypeFilter = "all"; // NEW
     let authOverlay = null; // NEW
     let authStatusNode = null; // NEW
     let toolbarButton = null; // NEW
@@ -316,6 +321,115 @@ Draw.loadPlugin(function (ui) {
 
     function localStore() { // NEW
         try { return window && window.localStorage ? window.localStorage : null; } catch (e) { return null; } // NEW
+    } // NEW
+
+    function usersDebugEnabled() { // NEW
+        const store = localStore(); // NEW
+        const win = typeof window !== "undefined" ? window : null; // NEW
+        return !!(win && win.__TRELLIS_USERS_DEBUG__ === true) || !!(store && store.getItem("trellis_users_debug") === "1"); // NEW
+    } // NEW
+
+    function consoleGroup(label, payload, body) { // NEW
+        if (!usersDebugEnabled() || typeof console === "undefined") return; // NEW
+        try { // NEW
+            if (console.groupCollapsed) console.groupCollapsed(label, payload || ""); // NEW
+            else if (console.log) console.log(label, payload || ""); // NEW
+            if (body) body(); // NEW
+        } catch (e) { // NEW
+            try { if (console.log) console.log("[TrellisUsers] debug logging failed", e); } catch (_) { } // NEW
+        } finally { // NEW
+            try { if (console.groupEnd) console.groupEnd(); } catch (_) { } // NEW
+        } // NEW
+    } // NEW
+
+    function debugFlagSnapshot() { // NEW
+        const store = localStore(); // NEW
+        const win = typeof window !== "undefined" ? window : null; // NEW
+        return { // NEW
+            storage: { // NEW
+                trellis_users_debug: store ? store.getItem("trellis_users_debug") : null, // NEW
+                trellis_bed_fit_debug: store ? store.getItem("trellis_bed_fit_debug") : null // NEW
+            }, // NEW
+            windowFlags: { // NEW
+                users: !!(win && win.__TRELLIS_USERS_DEBUG__ === true), // NEW
+                bedFit: !!(win && win.__TRELLIS_BED_FIT_DEBUG__ === true) // NEW
+            } // NEW
+        }; // NEW
+    } // NEW
+
+    function usersDebugStatus() { // NEW
+        const win = typeof window !== "undefined" ? window : null; // NEW
+        const user = currentUser(); // NEW
+        const flags = debugFlagSnapshot(); // NEW
+        return { // NEW
+            plugin: "Trellis_Users.js", // NEW
+            loaded: true, // NEW
+            debugEnabled: usersDebugEnabled(), // NEW
+            url: win && win.location ? String(win.location.href || "") : "", // NEW
+            origin: win && win.location ? String(win.location.origin || "") : "", // NEW
+            storage: flags.storage, // NEW
+            windowFlags: flags.windowFlags, // NEW
+            usersApiPresent: !!(win && win.Trellis && win.Trellis.users), // NEW
+            loggedIn: isLoggedIn(), // NEW
+            currentUser: user ? { id: user.id, name: user.name, email: user.email, admin: !!user.admin } : null // NEW
+        }; // NEW
+    } // NEW
+
+    function debugProbeSnapshot() { // NEW
+        const win = typeof window !== "undefined" ? window : null; // NEW
+        const debug = win && win.Trellis && win.Trellis.debug; // NEW
+        const flags = debugFlagSnapshot(); // NEW
+        return { // NEW
+            url: win && win.location ? String(win.location.href || "") : "", // NEW
+            origin: win && win.location ? String(win.location.origin || "") : "", // NEW
+            usersPluginLoaded: !!(win && win.__TRELLIS_USERS_PLUGIN_LOADED), // NEW
+            bedFitPluginLoaded: !!(win && win.__TRELLIS_BED_FIT_PLUGIN_LOADED), // NEW
+            storage: flags.storage, // NEW
+            windowFlags: flags.windowFlags, // NEW
+            usersApiPresent: !!(win && win.Trellis && win.Trellis.users), // NEW
+            tilerFitApiPresent: !!(win && win.USL && win.USL.tiler && typeof win.USL.tiler.retileAndFitToContainingBed === "function"), // NEW
+            usersStatus: debug && typeof debug.usersStatus === "function" ? debug.usersStatus() : null, // NEW
+            bedFitStatus: debug && typeof debug.bedFitStatus === "function" ? debug.bedFitStatus() : null // NEW
+        }; // NEW
+    } // NEW
+
+    function debugProbe() { // NEW
+        const snapshot = debugProbeSnapshot(); // NEW
+        if (typeof console !== "undefined") { // NEW
+            try { // NEW
+                if (console.groupCollapsed) console.groupCollapsed("[TrellisDebug] probe"); // NEW
+                else if (console.log) console.log("[TrellisDebug] probe"); // NEW
+                if (console.log) console.log(snapshot); // NEW
+            } finally { // NEW
+                try { if (console.groupEnd) console.groupEnd(); } catch (_) { } // NEW
+            } // NEW
+        } // NEW
+        return snapshot; // NEW
+    } // NEW
+
+    function installTrellisDebugSurface() { // NEW
+        const win = typeof window !== "undefined" ? window : null; // NEW
+        if (!win) return null; // NEW
+        win.Trellis = win.Trellis || {}; // NEW
+        const debug = win.Trellis.debug = win.Trellis.debug || {}; // NEW
+        win.__TRELLIS_USERS_PLUGIN_LOADED = true; // NEW
+        debug.usersStatus = usersDebugStatus; // NEW
+        debug.enable = function () { // NEW
+            const store = localStore(); // NEW
+            win.__TRELLIS_USERS_DEBUG__ = true; // NEW
+            win.__TRELLIS_BED_FIT_DEBUG__ = true; // NEW
+            if (store) { store.setItem("trellis_users_debug", "1"); store.setItem("trellis_bed_fit_debug", "1"); } // NEW
+            return debugProbeSnapshot(); // NEW
+        }; // NEW
+        debug.disable = function () { // NEW
+            const store = localStore(); // NEW
+            win.__TRELLIS_USERS_DEBUG__ = false; // NEW
+            win.__TRELLIS_BED_FIT_DEBUG__ = false; // NEW
+            if (store) { store.removeItem("trellis_users_debug"); store.removeItem("trellis_bed_fit_debug"); } // NEW
+            return debugProbeSnapshot(); // NEW
+        }; // NEW
+        debug.probe = debugProbe; // NEW
+        return debug; // NEW
     } // NEW
 
     function getDiagramLoginKey(create) { // NEW
@@ -1041,7 +1155,7 @@ Draw.loadPlugin(function (ui) {
             "1. Add the sender in Syncthing using the device and folder details below.", // NEW
             "2. Wait for the sender to approve your Syncthing device/share.", // NEW
             "3. Open the synced diagram in Trellis Studio.", // NEW
-            "4. In Trellis Users, choose Accept Invite and enter your email, invite code, display name, and PIN.", // NEW
+            "4. In People & Access, choose Accept Invite and enter your email, invite code, display name, and PIN.", // CHANGE
             "", // NEW
             "Trellis invite code: " + code, // NEW
             "Invite expires: " + new Date(invite.expiresAt).toLocaleString(), // NEW
@@ -1053,7 +1167,7 @@ Draw.loadPlugin(function (ui) {
             "Syncthing folder label: " + (info.folderLabel || "(unavailable)"), // NEW
             "Syncthing folder path: " + (info.folderPath || "(unavailable)"), // NEW
             "", // NEW
-            "This is a low-security local workflow invite. Access can be revoked from the Trellis Users panel." // NEW
+            "This is a low-security local workflow invite. Access can be revoked from the People & Access panel." // CHANGE
         ]; // NEW
         return { to: invite.email, subject: "Trellis garden canvas invite", body: lines.join("\n") }; // NEW
     } // NEW
@@ -1231,6 +1345,118 @@ Draw.loadPlugin(function (ui) {
         return change && change.previous || null;
     }
 
+    function debugCellId(cell) { // NEW
+        return cell && (cell.id || (typeof cell.getId === "function" && cell.getId())) || null; // NEW
+    } // NEW
+
+    function debugGeometry(cell) { // NEW
+        const g = cell && typeof cell.getGeometry === "function" ? cell.getGeometry() : null; // NEW
+        return g ? { x: g.x, y: g.y, width: g.width, height: g.height } : null; // NEW
+    } // NEW
+
+    function debugCellRef(cell) { // NEW
+        return cell ? { id: debugCellId(cell), label: getAttr(cell, "label") || "", valueName: cell.value && cell.value.nodeName || "", style: getStyle(cell) || "" } : null; // NEW
+    } // NEW
+
+    function debugCellSnapshot(cell) { // NEW
+        if (!cell) return null; // NEW
+        return { // NEW
+            id: debugCellId(cell), // NEW
+            label: getAttr(cell, "label") || "", // NEW
+            valueName: cell.value && cell.value.nodeName || "", // NEW
+            style: getStyle(cell) || "", // NEW
+            geometry: debugGeometry(cell), // NEW
+            attrs: { // NEW
+                tiler_group: getAttr(cell, "tiler_group"), // NEW
+                garden_bed: getAttr(cell, "garden_bed") || getAttr(cell, "gardenBed") || getAttr(cell, "is_garden_bed"), // NEW
+                garden_module: getAttr(cell, "garden_module") || getAttr(cell, "team_module"), // NEW
+                board_key: getAttr(cell, "board_key"), // NEW
+                kanban_card: getAttr(cell, "kanban_card"), // NEW
+                lane_key: getAttr(cell, "lane_key"), // NEW
+                owner: getAttr(cell, ATTR_OWNER), // NEW
+                roleUser: getAttr(cell, ATTR_ROLE_USER) // NEW
+            }, // NEW
+            classification: { // NEW
+                module: isModuleCell(cell), // NEW
+                gardenBed: isGardenBed(cell), // NEW
+                tilerGroup: isTilerGroup(cell), // NEW
+                taskBoard: isTaskBoard(cell), // NEW
+                taskCard: isTaskCard(cell), // NEW
+                roleCard: isRoleCard(cell), // NEW
+                nearestPlanting: debugCellId(nearestPlanting(cell)), // NEW
+                nearestGardenBed: debugCellId(nearestGardenBed(cell)), // NEW
+                nearestTaskBoard: debugCellId(nearestTaskBoard(cell)) // NEW
+            } // NEW
+        }; // NEW
+    } // NEW
+
+    function debugOwnedScope(cell) { // NEW
+        const owner = nearestOwnedAncestor(cell); // NEW
+        return owner ? { cellId: debugCellId(owner.cell), ownerUserId: owner.ownerUserId, accessScope: !isTilerGroup(owner.cell) } : null; // NEW
+    } // NEW
+
+    function debugPermissionSnapshot(change) { // NEW
+        const cell = cellFromChange(change); // NEW
+        const currentParent = currentParentOfChange(change); // NEW
+        const previousParent = previousParentOfChange(change); // NEW
+        const user = currentUser(); // NEW
+        return { // NEW
+            enabled: isEnabled(), // NEW
+            loggedIn: isLoggedIn(), // NEW
+            currentUser: user ? { id: user.id, name: user.name, email: user.email, admin: !!user.admin } : null, // NEW
+            change: { // NEW
+                type: change && change.constructor && change.constructor.name || "", // NEW
+                key: String(change && (change.key || change.attribute || change.name || "") || ""), // NEW
+                changedAttrs: changedAttributeNames(change), // NEW
+                previousParentId: debugCellId(previousParent), // NEW
+                currentParentId: debugCellId(currentParent) // NEW
+            }, // NEW
+            cell: debugCellSnapshot(cell), // NEW
+            currentParent: debugCellRef(currentParent), // NEW
+            previousParent: debugCellRef(previousParent), // NEW
+            nearestOwnedScope: debugOwnedScope(cell), // NEW
+            effectiveCapabilities: cell && user ? effectiveCapabilitiesForCell(cell, user.id) : [], // NEW
+            decisions: { // NEW
+                canCreatePlantingAtCurrentParent: canCreatePlanting(currentParent), // NEW
+                canManagePlanting: canManagePlanting(cell), // NEW
+                canMoveCell: canMoveCell(cell), // NEW
+                canEditCell: canEditCell(cell), // NEW
+                canManageAccess: canManageAccess(cell), // NEW
+                canTransferOwnership: canTransferOwnership(cell) // NEW
+            } // NEW
+        }; // NEW
+    } // NEW
+
+    function debugChangeSummary(change, index) { // NEW
+        const cell = cellFromChange(change); // NEW
+        return { // NEW
+            index, // NEW
+            type: change && change.constructor && change.constructor.name || "", // NEW
+            cellId: debugCellId(cell), // NEW
+            key: String(change && (change.key || change.attribute || change.name || "") || ""), // NEW
+            changedAttrs: changedAttributeNames(change), // NEW
+            currentParentId: debugCellId(currentParentOfChange(change)), // NEW
+            previousParentId: debugCellId(previousParentOfChange(change)), // NEW
+            classification: cell ? { module: isModuleCell(cell), gardenBed: isGardenBed(cell), tilerGroup: isTilerGroup(cell), taskBoard: isTaskBoard(cell), taskCard: isTaskCard(cell), roleCard: isRoleCard(cell), nearestPlanting: debugCellId(nearestPlanting(cell)) } : null // NEW
+        }; // NEW
+    } // NEW
+
+    function logDeniedChange(change, index) { // NEW
+        consoleGroup("[TrellisUsers] denied change", debugChangeSummary(change, index), function () { // NEW
+            const detail = debugPermissionSnapshot(change); // NEW
+            if (console.log) console.log(detail); // NEW
+        }); // NEW
+    } // NEW
+
+    function logRejectedEdit(edit, reason) { // NEW
+        const changes = edit && edit.changes || []; // NEW
+        consoleGroup("[TrellisUsers] rejected edit", { reason: reason || "", changeCount: changes.length }, function () { // NEW
+            const rows = changes.map(function (change, index) { return debugChangeSummary(change, index); }); // NEW
+            if (console.table) console.table(rows); // NEW
+            else if (console.log) console.log(rows); // NEW
+        }); // NEW
+    } // NEW
+
     function stampAllowedCreations(changes) { // NEW
         (changes || []).forEach(function (change) { // NEW
             const name = change && change.constructor && change.constructor.name; // NEW
@@ -1276,6 +1502,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function rejectEdit(edit, reason) {
+        logRejectedEdit(edit, reason); // NEW
         if (edit) edit.__trellisUsersRejected = true; // NEW
         graph[REJECT_FLAG] = true;
         graph[INTERNAL_FLAG] = true;
@@ -1300,6 +1527,7 @@ Draw.loadPlugin(function (ui) {
         if (!isLoggedIn()) { rejectEdit(edit, "Log in before editing this diagram."); return; }
         for (let i = 0; i < changes.length; i++) {
             if (!changeAllowed(changes[i])) {
+                logDeniedChange(changes[i], i); // NEW
                 rejectEdit(edit, "Change rejected by Trellis user permissions.");
                 return;
             }
@@ -1327,6 +1555,63 @@ Draw.loadPlugin(function (ui) {
     function selectedCell() {
         return graph.getSelectionCell ? graph.getSelectionCell() : ((graph.getSelectionCells && graph.getSelectionCells()[0]) || null);
     }
+
+    function activePeopleSearch() { // NEW
+        return String(peopleSearchText || "").trim().toLowerCase(); // NEW
+    } // NEW
+
+    function activePeopleTypeFilter() { // NEW
+        return ["networked", "local"].indexOf(peopleTypeFilter) >= 0 ? peopleTypeFilter : "all"; // NEW
+    } // NEW
+
+    function userIsNetworked(user) { // NEW
+        return !!normalizeEmail(user && user.email); // NEW
+    } // NEW
+
+    function userMatchesPeopleSearch(user) { // NEW
+        const query = activePeopleSearch(); // NEW
+        if (!query) return true; // NEW
+        return String(user && user.name || "").toLowerCase().indexOf(query) >= 0 || normalizeEmail(user && user.email).indexOf(query) >= 0; // NEW
+    } // NEW
+
+    function userMatchesPeopleFilter(user) { // NEW
+        const type = activePeopleTypeFilter(); // NEW
+        if (type === "networked" && !userIsNetworked(user)) return false; // NEW
+        if (type === "local" && userIsNetworked(user)) return false; // NEW
+        return userMatchesPeopleSearch(user); // NEW
+    } // NEW
+
+    function inviteMatchesPeopleFilter(invite) { // NEW
+        if (activePeopleTypeFilter() === "local") return false; // NEW
+        const query = activePeopleSearch(); // NEW
+        return !query || normalizeEmail(invite && invite.email).indexOf(query) >= 0; // NEW
+    } // NEW
+
+    function filteredEmptyText(label) { // NEW
+        return activePeopleSearch() || activePeopleTypeFilter() !== "all" ? "No " + label.toLowerCase() + " match the current filter." : "None"; // NEW
+    } // NEW
+
+    function titleCaseScopeType(type) { // NEW
+        return String(type || "cell").replace(/\b\w/g, function (letter) { return letter.toUpperCase(); }); // NEW
+    } // NEW
+
+    function scopeSummaryForCell(cell) { // NEW
+        if (!cell || cell === model.getRoot()) return null; // NEW
+        const type = eligibleScopeType(cell) || "cell"; // NEW
+        return { id: cell.id || (cell.getId && cell.getId()) || "", type, label: cellLabel(cell) }; // NEW
+    } // NEW
+
+    function selectedScopeSummaries() { // NEW
+        const seen = new Set(); // NEW
+        const summaries = []; // NEW
+        (selectedCells() || []).forEach(function (cell) { // NEW
+            const summary = scopeSummaryForCell(cell); // NEW
+            if (!summary || !summary.id || seen.has(summary.id)) return; // NEW
+            seen.add(summary.id); // NEW
+            summaries.push(summary); // NEW
+        }); // NEW
+        return summaries; // NEW
+    } // NEW
 
     function viewportSize() { // NEW
         const doc = document && document.documentElement; // NEW
@@ -1529,7 +1814,7 @@ Draw.loadPlugin(function (ui) {
         const header = document.createElement("div"); // NEW
         header.style.cssText = "display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:8px;"; // NEW
         const title = document.createElement("div"); // NEW
-        title.textContent = isEnabled() ? "Trellis Login" : "Enable Trellis Users"; // NEW
+        title.textContent = isEnabled() ? "Trellis Login" : "Enable People & Access"; // CHANGE
         title.style.cssText = "font-weight:700;font-size:15px;"; // NEW
         header.appendChild(title); // NEW
         header.appendChild(makeButton(blocking ? "Close Diagram" : "Cancel", function () { // NEW
@@ -1562,7 +1847,7 @@ Draw.loadPlugin(function (ui) {
     function updateToolbarButton() { // NEW
         if (!toolbarButton) return; // NEW
         toolbarButton.textContent = toolbarLabel(); // NEW
-        toolbarButton.title = currentUser() ? "Trellis user account" : (isEnabled() ? "Log in to Trellis Users" : "Enable Trellis Users"); // NEW
+        toolbarButton.title = currentUser() ? "People & Access account" : (isEnabled() ? "Log in to People & Access" : "Enable People & Access"); // CHANGE
     } // NEW
 
     function closeAccountMenu() { // NEW
@@ -1593,7 +1878,7 @@ Draw.loadPlugin(function (ui) {
         accountMenu.appendChild(label); // NEW
         const actions = document.createElement("div"); // NEW
         actions.style.cssText = "display:grid;grid-template-columns:1fr;gap:6px;"; // NEW
-        actions.appendChild(makeButton("Users Panel", function () { closeAccountMenu(); togglePanel(); })); // NEW
+        actions.appendChild(makeButton("People & Access", function () { closeAccountMenu(); togglePanel(); })); // CHANGE
         actions.appendChild(makeButton("Logout", function () { logout(); })); // NEW
         accountMenu.appendChild(actions); // NEW
         host.appendChild(accountMenu); // NEW
@@ -1677,7 +1962,7 @@ Draw.loadPlugin(function (ui) {
         const header = document.createElement("div"); // NEW
         header.style.cssText = "display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:8px;"; // NEW
         const title = document.createElement("div");
-        title.textContent = "Trellis Users";
+        title.textContent = "People & Access"; // CHANGE
         title.style.cssText = "font-weight:700;font-size:14px;"; // CHANGE
         header.appendChild(title); // NEW
         header.appendChild(makeButton("Close", function () { if (panel) panel.style.display = "none"; })); // NEW
@@ -1685,6 +1970,9 @@ Draw.loadPlugin(function (ui) {
         statusNode = document.createElement("div");
         statusNode.style.cssText = "min-height:16px;color:#4B5563;margin-bottom:8px;";
         panel.appendChild(statusNode);
+        peopleFilterNode = document.createElement("div"); // NEW
+        peopleFilterNode.style.cssText = "display:none;margin-bottom:8px;"; // NEW
+        panel.appendChild(peopleFilterNode); // NEW
         loginNameInput = makeInput("text", "Name");
         loginPinInput = makeInput("password", "PIN");
         rosterNode = document.createElement("div");
@@ -1716,6 +2004,42 @@ Draw.loadPlugin(function (ui) {
     function clearNode(node) {
         while (node && node.firstChild) node.removeChild(node.firstChild);
     }
+
+    function ensurePeopleFilterControls() { // NEW
+        if (!peopleFilterNode || peopleSearchInput) return; // NEW
+        const row = document.createElement("div"); // NEW
+        row.style.cssText = "display:grid;grid-template-columns:minmax(130px,1fr) 116px;gap:6px;align-items:center;"; // NEW
+        peopleSearchInput = makeInput("search", "Search name or email"); // NEW
+        peopleSearchInput.value = peopleSearchText; // NEW
+        peopleSearchInput.addEventListener("input", function () { // NEW
+            peopleSearchText = peopleSearchInput.value || ""; // NEW
+            refreshPanel(); // NEW
+        }); // NEW
+        peopleTypeFilterSelect = document.createElement("select"); // NEW
+        peopleTypeFilterSelect.style.cssText = "box-sizing:border-box;width:100%;padding:4px 6px;font:12px Arial,sans-serif;"; // NEW
+        [["all", "All"], ["networked", "Networked"], ["local", "Local"]].forEach(function (entry) { // NEW
+            const option = document.createElement("option"); // NEW
+            option.value = entry[0]; // NEW
+            option.textContent = entry[1]; // NEW
+            peopleTypeFilterSelect.appendChild(option); // NEW
+        }); // NEW
+        peopleTypeFilterSelect.value = activePeopleTypeFilter(); // NEW
+        peopleTypeFilterSelect.addEventListener("change", function () { // NEW
+            peopleTypeFilter = peopleTypeFilterSelect.value; // NEW
+            refreshPanel(); // NEW
+        }); // NEW
+        row.appendChild(peopleSearchInput); // NEW
+        row.appendChild(peopleTypeFilterSelect); // NEW
+        peopleFilterNode.appendChild(row); // NEW
+    } // NEW
+
+    function refreshPeopleFilterControls() { // NEW
+        if (!peopleFilterNode) return; // NEW
+        ensurePeopleFilterControls(); // NEW
+        peopleFilterNode.style.display = isEnabled() && isLoggedIn() ? "" : "none"; // NEW
+        if (peopleSearchInput && peopleSearchInput.value !== peopleSearchText) peopleSearchInput.value = peopleSearchText; // NEW
+        if (peopleTypeFilterSelect && peopleTypeFilterSelect.value !== activePeopleTypeFilter()) peopleTypeFilterSelect.value = activePeopleTypeFilter(); // NEW
+    } // NEW
 
     function appendLoginSection(parent) {
         const row = document.createElement("div");
@@ -1778,7 +2102,7 @@ Draw.loadPlugin(function (ui) {
 
     function appendPendingInvites(parent) { // NEW
         if (!isEnabled() || !isLoggedIn()) return; // NEW
-        const invites = listPendingInvites(); // NEW
+        const invites = listPendingInvites().filter(inviteMatchesPeopleFilter); // CHANGE
         if (!invites.length) return; // NEW
         const box = document.createElement("div"); // NEW
         box.style.cssText = "border-top:1px solid #E5E7EB;padding-top:8px;margin-top:8px;"; // NEW
@@ -1896,7 +2220,7 @@ Draw.loadPlugin(function (ui) {
         else { // NEW
             const empty = document.createElement("div"); // NEW
             empty.style.cssText = "color:#6B7280;padding:3px 0;"; // NEW
-            empty.textContent = "None"; // NEW
+            empty.textContent = filteredEmptyText(titleText); // CHANGE
             group.appendChild(empty); // NEW
         } // NEW
         parent.appendChild(group); // NEW
@@ -1927,10 +2251,12 @@ Draw.loadPlugin(function (ui) {
         title.textContent = "Users"; // CHANGE
         title.style.fontWeight = "700";
         box.appendChild(title);
-        const users = listUsers(); // NEW
-        appendUserGroup(box, "Networked users", users.filter(function (user) { return !!normalizeEmail(user.email); })); // NEW
-        const localGroup = appendUserGroup(box, "Local users", users.filter(function (user) { return !normalizeEmail(user.email); })); // NEW
-        appendLocalUserCreator(localGroup); // NEW
+        const users = listUsers().filter(userMatchesPeopleFilter); // CHANGE
+        if (activePeopleTypeFilter() !== "local") appendUserGroup(box, "Networked users", users.filter(userIsNetworked)); // CHANGE
+        if (activePeopleTypeFilter() !== "networked") { // NEW
+            const localGroup = appendUserGroup(box, "Local users", users.filter(function (user) { return !userIsNetworked(user); })); // CHANGE
+            appendLocalUserCreator(localGroup); // NEW
+        } // NEW
         parent.appendChild(box);
     }
 
@@ -1989,6 +2315,27 @@ Draw.loadPlugin(function (ui) {
         return (summary.directGrants || []).find(function (grant) { return grant.userId === userId; }) || { userId, preset: "viewer", capabilities: [] }; // NEW
     } // NEW
 
+    function appendScopeSummary(parent, summaries) { // NEW
+        const list = Array.isArray(summaries) ? summaries : []; // NEW
+        if (!list.length) return; // NEW
+        const wrap = document.createElement("div"); // NEW
+        wrap.className = "trellis-users-selected-scopes"; // NEW
+        wrap.style.cssText = "color:#374151;margin:4px 0 6px 0;"; // NEW
+        list.forEach(function (scope) { // NEW
+            const line = document.createElement("div"); // NEW
+            line.textContent = titleCaseScopeType(scope.type) + ": " + scope.label; // NEW
+            wrap.appendChild(line); // NEW
+        }); // NEW
+        parent.appendChild(wrap); // NEW
+    } // NEW
+
+    function appendGrantedBadge(parent) { // NEW
+        const badge = document.createElement("span"); // NEW
+        badge.textContent = "Granted"; // NEW
+        badge.style.cssText = "display:inline-block;margin-left:6px;padding:1px 5px;border:1px solid #9CA3AF;border-radius:3px;color:#374151;font-size:10px;line-height:14px;"; // NEW
+        parent.appendChild(badge); // NEW
+    } // NEW
+
     function appendAccessSection(parent) {
         if (!isEnabled()) return; // NEW
         const cell = selectedCell();
@@ -2006,6 +2353,16 @@ Draw.loadPlugin(function (ui) {
         title.textContent = "Selected access";
         title.style.fontWeight = "700";
         box.appendChild(title);
+        const summaries = selectedScopeSummaries(); // NEW
+        appendScopeSummary(box, summaries); // NEW
+        if (summaries.length > 1) { // NEW
+            const multi = document.createElement("div"); // NEW
+            multi.style.cssText = "color:#6B7280;margin:4px 0;"; // NEW
+            multi.textContent = "Access editor is hidden while multiple scopes are selected."; // NEW
+            box.appendChild(multi); // NEW
+            parent.appendChild(box); // NEW
+            return; // NEW
+        } // NEW
         const owner = userById(summary.ownerUserId);
         const ownerText = document.createElement("div");
         ownerText.style.cssText = "color:#4B5563;margin:4px 0;";
@@ -2073,21 +2430,38 @@ Draw.loadPlugin(function (ui) {
             roleDerived.textContent = "Task access also comes from your linked role card."; // NEW
             box.appendChild(roleDerived); // NEW
         } // NEW
-        listUsers().filter(function (user) { return !user.admin && !user.disabled; }).forEach(function (user) { // CHANGE
+        const grantUsers = listUsers().filter(function (user) { return !user.admin && !user.disabled; }); // NEW
+        const visibleGrantUsers = grantUsers.filter(userMatchesPeopleFilter); // NEW
+        const hiddenGrantCount = grantUsers.filter(function (user) { return summary.directUserIds.indexOf(user.id) >= 0 && !userMatchesPeopleFilter(user); }).length; // NEW
+        if (hiddenGrantCount) { // NEW
+            const hidden = document.createElement("div"); // NEW
+            hidden.style.cssText = "color:#92400E;background:#FFFBEB;border:1px solid #FDE68A;border-radius:3px;padding:4px 6px;margin:6px 0;"; // NEW
+            hidden.textContent = hiddenGrantCount + " granted " + (hiddenGrantCount === 1 ? "user is" : "users are") + " hidden by the current filter."; // NEW
+            box.appendChild(hidden); // NEW
+        } // NEW
+        if (!visibleGrantUsers.length) { // NEW
+            const empty = document.createElement("div"); // NEW
+            empty.style.cssText = "color:#6B7280;padding:6px 0;border-top:1px solid #F3F4F6;"; // NEW
+            empty.textContent = "No access rows match the current filter."; // NEW
+            box.appendChild(empty); // NEW
+        } // NEW
+        visibleGrantUsers.forEach(function (user) { // CHANGE
             const grant = grantForUser(summary, user.id); // NEW
+            const directlyGranted = summary.directUserIds.indexOf(user.id) >= 0; // NEW
             const row = document.createElement("div"); // NEW
             row.style.cssText = "border-top:1px solid #F3F4F6;padding:6px 0;"; // NEW
             const head = document.createElement("div"); // NEW
             head.style.cssText = "display:grid;grid-template-columns:minmax(70px,1fr) 130px auto;gap:6px;align-items:center;"; // NEW
             const name = document.createElement("div"); // NEW
             name.textContent = user.name; // NEW
+            if (directlyGranted) appendGrantedBadge(name); // NEW
             head.appendChild(name); // NEW
             head.appendChild(makePresetSelect(grant.preset, function (preset) { // NEW
                 const result = setScopeGrant(cell, { userId: user.id, preset }); // NEW
                 if (!result.ok) showStatus(result.reason); // NEW
             })); // NEW
-            head.appendChild(makeButton(summary.directUserIds.indexOf(user.id) >= 0 ? "Remove" : "Apply", function () { // NEW
-                const result = summary.directUserIds.indexOf(user.id) >= 0 ? removeScopeGrant(cell, user.id) : setScopeGrant(cell, { userId: user.id, preset: grant.preset || "viewer" }); // NEW
+            head.appendChild(makeButton(directlyGranted ? "Remove" : "Apply", function () { // CHANGE
+                const result = directlyGranted ? removeScopeGrant(cell, user.id) : setScopeGrant(cell, { userId: user.id, preset: grant.preset || "viewer" }); // CHANGE
                 if (!result.ok) showStatus(result.reason); // NEW
             })); // NEW
             row.appendChild(head); // NEW
@@ -2102,6 +2476,7 @@ Draw.loadPlugin(function (ui) {
 
     function refreshPanel() {
         if (!panel || !rosterNode || !accessNode) return;
+        refreshPeopleFilterControls(); // NEW
         clearNode(rosterNode);
         clearNode(accessNode);
         if (!isEnabled()) appendEnableSection(rosterNode); // NEW
@@ -2216,8 +2591,11 @@ Draw.loadPlugin(function (ui) {
             changeAllowed,
             composeInviteEmail, // NEW
             getDiagramLoginKey, // NEW
-            applyAuthGateIfNeeded // NEW
+            applyAuthGateIfNeeded, // CHANGE
+            refreshPanel // NEW
         }
     };
     graph.__trellisUsers = window.Trellis.users;
+    installTrellisDebugSurface(); // NEW
+    consoleGroup("[TrellisUsers] loaded", usersDebugStatus()); // NEW
 });

@@ -107,10 +107,22 @@ test('Plant group creation finalizes tiling and bed fit inside the creation tran
     const finalizer = sourceSlice(source, 'function finalizeCreatedTilerGroup', 'function createDefaultGardenBed'); // NEW
     const createEmpty = sourceSlice(source, 'function createEmptyTilerGroup', '// ---------- Debug helpers'); // NEW
 
-    assert.match(finalizer, /retileAndFitToContainingBed\(graph, group, \{ source: source \|\| "tiler-created", inTransaction: true \}\);/); // NEW
-    assert.match(createEmpty, /const creationSource = \(opts && opts\.source\) \|\| "empty-group";[\s\S]*model\.beginUpdate\(\);[\s\S]*graph\.addCell\(group, moduleCell\);[\s\S]*finalizeCreatedTilerGroup\(graph, group, moduleCell, creationSource\);[\s\S]*model\.endUpdate\(\);/); // NEW
-    assert.match(createEmpty, /notifyTilerGroupCreated\(graph, group, creationSource\);/); // NEW
+    assert.match(finalizer, /retileAndFitToContainingBed\(graph, group, \{ source: debugSource, inTransaction: true, txnId \}\);/); // CHANGE
+    assert.match(createEmpty, /const creationSource = \(opts && opts\.source\) \|\| "empty-group";[\s\S]*const creationTxnId = \+\+bedFitTxnSeq;[\s\S]*model\.beginUpdate\(\);[\s\S]*graph\.addCell\(group, moduleCell\);[\s\S]*finalizeCreatedTilerGroup\(graph, group, moduleCell, creationSource, creationTxnId\);[\s\S]*model\.endUpdate\(\);/); // CHANGE
+    assert.match(createEmpty, /notifyTilerGroupCreated\(graph, group, creationSource, creationTxnId\);/); // CHANGE
     assert.doesNotMatch(createEmpty, /retileGroup\(graph, group\);/); // NEW
+}); // NEW
+
+test('Bed fit diagnostics expose a self-verifying debug surface', () => { // NEW
+    const source = readPlantTilerSource(); // NEW
+    assert.match(source, /function bedFitStatus\(\)/); // NEW
+    assert.match(source, /function installTrellisDebugSurface\(\)/); // NEW
+    assert.match(source, /win\.Trellis = win\.Trellis \|\| \{\};/); // NEW
+    assert.match(source, /debug\.bedFitStatus = bedFitStatus;/); // NEW
+    assert.match(source, /debug\.enable = function \(\) \{[\s\S]*trellis_users_debug", "1"[\s\S]*trellis_bed_fit_debug", "1"/); // NEW
+    assert.match(source, /debug\.disable = function \(\) \{[\s\S]*removeItem\("trellis_users_debug"\)[\s\S]*removeItem\("trellis_bed_fit_debug"\)/); // NEW
+    assert.match(source, /debug\.probe = debugProbe;/); // NEW
+    assert.match(source, /installTrellisDebugSurface\(\);[\s\S]*bedFitLog\("loaded", bedFitStatus\(\)\);/); // NEW
 }); // NEW
 
 test('Garden module overlay plant group add no longer runs a second post-creation bed fit', () => { // NEW

@@ -341,7 +341,7 @@ window.uiTheme = window.uiTheme || (function()
 					showSplash = JSON.parse(value).showStartScreen;
 				}
 				
-				if (showSplash == false && urlParams['splash'] == null)
+				if (!window.mxIsElectron && showSplash == false && urlParams['splash'] == null) // CHANGE
 				{
 					urlParams['splash'] = '0';
 				}

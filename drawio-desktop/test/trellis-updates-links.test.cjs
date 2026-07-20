@@ -275,14 +275,17 @@ test("Trellis updates integration is registered, default-loaded, and bridged", (
     const electronSource = readProjectFile("src/main/electron.js");
 
     assert.match(appSource, /'trellisUpdatesLinks': 'plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js'/);
-    assert.match(appSource, /App\.loadPlugins\(\['trellisUpdatesLinks', 'trellisDatabaseTools', 'trellisUiCleanup', 'trellisUsers'\]\); \/\/ CHANGE/); // CHANGE
-    assert.ok(appSource.indexOf("App.loadPlugins(['trellisUpdatesLinks', 'trellisDatabaseTools', 'trellisUiCleanup', 'trellisUsers']); // CHANGE") < appSource.indexOf("if (urlParams['plugins'] != '0' && urlParams['offline'] != '1')")); // CHANGE
+    assert.match(appSource, /App\.trellisDefaultPlugins = App\.publicPlugin\.slice\(\); \/\/ NEW/); // CHANGE
+    assert.match(appSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\); \/\/ CHANGE/); // CHANGE
+    assert.ok(appSource.indexOf("App.loadPlugins(App.trellisDefaultPlugins); // CHANGE") < appSource.indexOf("if (urlParams['plugins'] != '0' && urlParams['offline'] != '1')")); // CHANGE
     assert.match(bundledSource, /'trellisUpdatesLinks': 'plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js'/);
-    assert.match(bundledSource, /App\.loadPlugins\(\["trellisUpdatesLinks","trellisDatabaseTools","trellisUiCleanup","trellisUsers"\]\)/); // CHANGE
-    assert.ok(bundledSource.indexOf('App.loadPlugins(["trellisUpdatesLinks","trellisDatabaseTools","trellisUiCleanup","trellisUsers"])') < bundledSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)')); // CHANGE
+    assert.match(bundledSource, /App\.trellisDefaultPlugins=App\.publicPlugin\.slice\(\)/); // CHANGE
+    assert.match(bundledSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/); // CHANGE
+    assert.ok(bundledSource.indexOf('App.loadPlugins(App.trellisDefaultPlugins)') < bundledSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)')); // CHANGE
     assert.match(integrateSource, /trellisUpdatesLinks:"plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js"/);
-    assert.match(integrateSource, /App\.loadPlugins\(\["trellisUpdatesLinks","trellisDatabaseTools","trellisUiCleanup","trellisUsers"\]\)/); // CHANGE
-    assert.ok(integrateSource.indexOf('App.loadPlugins(["trellisUpdatesLinks","trellisDatabaseTools","trellisUiCleanup","trellisUsers"])') < integrateSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)')); // CHANGE
+    assert.match(integrateSource, /App\.trellisDefaultPlugins=App\.publicPlugin\.slice\(\)/); // CHANGE
+    assert.match(integrateSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/); // CHANGE
+    assert.ok(integrateSource.indexOf('App.loadPlugins(App.trellisDefaultPlugins)') < integrateSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)')); // CHANGE
     assert.match(preloadSource, /contextBridge\.exposeInMainWorld\('trellisApp'/);
     assert.match(preloadSource, /getReleases\(\) \{ \/\/ NEW/); // NEW
     assert.match(preloadSource, /\{ action: 'getTrellisReleases' \}, \/\/ NEW/); // NEW

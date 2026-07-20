@@ -72,9 +72,10 @@ function loadUsersPlugin(options = {}) { // CHANGE
         container: document.getElementById("graph"), // NEW
         getModel() { return model; }, // NEW
         getDefaultParent() { return layer; }, // NEW
-        getSelectionCell() { return graph.selected || null; }, // NEW
-        getSelectionCells() { return graph.selected ? [graph.selected] : []; }, // NEW
-        setSelectionCell(cell) { graph.selected = cell; }, // NEW
+        getSelectionCell() { return graph.selectedCells && graph.selectedCells.length ? graph.selectedCells[0] : (graph.selected || null); }, // CHANGE
+        getSelectionCells() { return graph.selectedCells || (graph.selected ? [graph.selected] : []); }, // CHANGE
+        setSelectionCell(cell) { graph.selected = cell; graph.selectedCells = cell ? [cell] : []; }, // CHANGE
+        setSelectionCells(cells) { graph.selectedCells = (cells || []).filter(Boolean); graph.selected = graph.selectedCells[0] || null; }, // NEW
         getSelectionModel() { return { addListener() {} }; }, // NEW
         addListener(name, fn) { if (!graphListeners.has(name)) graphListeners.set(name, []); graphListeners.get(name).push(fn); }, // NEW
         setEnabled(value) { graph.enabled = value; }, // NEW
@@ -106,8 +107,9 @@ function loadUsersPlugin(options = {}) { // CHANGE
         fileLoaded(file) { ui.loadedFile = file; (editorListeners.get("fileLoaded") || []).forEach(fn => fn()); }, // NEW
         getCurrentFile() { return ui.currentFile || null; } // NEW
     }; // NEW
+    const testConsole = Object.prototype.hasOwnProperty.call(options, "console") ? options.console : console; // NEW
     const context = { // NEW
-        window: dom.window, document, console, Promise, Error, String, Number, Math, Date, Set, Map, JSON, // NEW
+        window: dom.window, document, console: testConsole, Promise, Error, String, Number, Math, Date, Set, Map, JSON, // CHANGE
         setTimeout: fn => { fn(); return 1; }, // NEW
         Draw: { loadPlugin(callback) { callback(ui); } }, // NEW
         mxEvent: { CHANGE: "change" }, // NEW
@@ -129,6 +131,10 @@ function inputByPlaceholder(document, text) { // NEW
 
 function userGroupByTitle(document, title) { // NEW
     return Array.from(document.querySelectorAll(".trellis-users-user-group")).find(group => group.getAttribute("data-trellis-users-group") === title); // NEW
+} // NEW
+
+function selectByOptionText(document, text) { // NEW
+    return Array.from(document.querySelectorAll("select")).find(select => Array.from(select.options || []).some(option => option.textContent === text)); // NEW
 } // NEW
 
 test("disabled diagrams do not prompt or block edits", () => { // CHANGE
@@ -366,6 +372,76 @@ test("admin panel groups networked local and pending users", () => { // NEW
     assert.ok(users.listUsers().find(user => user.name === "Dana" && !user.email)); // NEW
 }); // NEW
 
+test("people access panel title and filters search roster invites and access rows by name or email", () => { // NEW
+    const harness = loadUsersPlugin(); // NEW
+    const users = harness.context.window.Trellis.users; // NEW
+    users.enableUsers("Alice", "1234"); // NEW
+    harness.module.style = "module=1"; // NEW
+    users.stampCreatedOwner(harness.module); // NEW
+    const bobInvite = users.createPendingInvite({ email: "bob@example.com", scopeCellIds: [harness.module.id] }); // NEW
+    users.logout(); // NEW
+    const accepted = users.acceptInvite({ email: "bob@example.com", code: bobInvite.code, name: "Bob", pin: "5678" }); // NEW
+    assert.equal(accepted.ok, true); // NEW
+    users.logout(); // NEW
+    assert.equal(users.login("Alice", "1234").ok, true); // NEW
+    const dana = users.createUser("Dana", "2468", false).user; // NEW
+    assert.equal(users.setScopeGrant(harness.module, { userId: accepted.user.id, preset: "viewer" }).ok, true); // NEW
+    assert.equal(users.setScopeGrant(harness.module, { userId: dana.id, preset: "viewer" }).ok, true); // NEW
+    assert.equal(users.createPendingInvite({ email: "carol@example.com", scopeCellIds: [harness.module.id] }).ok, true); // NEW
+    harness.graph.setSelectionCell(harness.module); // NEW
+    harness.actions.trellisUsers.funct(); // NEW
+    assert.match(harness.document.body.textContent, /People & Access/); // NEW
+    assert.match(harness.document.body.textContent, /Module: Module/); // NEW
+    assert.match(harness.document.body.textContent, /Bob/); // NEW
+    assert.match(harness.document.body.textContent, /Dana/); // NEW
+    const search = inputByPlaceholder(harness.document, "Search name or email"); // NEW
+    search.value = "bob@example"; // NEW
+    search.dispatchEvent(new harness.context.window.Event("input", { bubbles: true })); // NEW
+    assert.match(userGroupByTitle(harness.document, "Networked users").textContent, /Bob/); // NEW
+    assert.doesNotMatch(harness.document.body.textContent, /carol@example\.com/); // NEW
+    assert.doesNotMatch(harness.document.body.textContent, /Dana\s*Viewer/); // NEW
+    assert.match(harness.document.body.textContent, /Granted/); // NEW
+    assert.match(harness.document.body.textContent, /1 granted user is hidden by the current filter/); // NEW
+    const filter = selectByOptionText(harness.document, "Networked"); // NEW
+    search.value = ""; // NEW
+    search.dispatchEvent(new harness.context.window.Event("input", { bubbles: true })); // NEW
+    filter.value = "networked"; // NEW
+    filter.dispatchEvent(new harness.context.window.Event("change", { bubbles: true })); // NEW
+    assert.match(harness.document.body.textContent, /Pending invites/); // NEW
+    assert.match(harness.document.body.textContent, /carol@example\.com/); // NEW
+    assert.equal(userGroupByTitle(harness.document, "Local users"), undefined); // NEW
+    filter.value = "local"; // NEW
+    filter.dispatchEvent(new harness.context.window.Event("change", { bubbles: true })); // NEW
+    assert.equal(userGroupByTitle(harness.document, "Networked users"), undefined); // NEW
+    assert.equal(harness.document.body.textContent.includes("Pending invites"), false); // NEW
+}); // NEW
+
+test("selected access summarizes scope labels and hides editor for multiple selections", () => { // NEW
+    const harness = loadUsersPlugin(); // NEW
+    const users = harness.context.window.Trellis.users; // NEW
+    users.enableUsers("Alice", "1234"); // NEW
+    harness.module.style = "module=1"; // NEW
+    users.stampCreatedOwner(harness.module); // NEW
+    const bed = appendChild(harness.module, makeXmlCell(harness.document, "bed", { garden_bed: "1", label: "North Bed" })); // NEW
+    const board = appendChild(harness.module, makeXmlCell(harness.document, "board", { board_key: "KANBAN_BOARD", label: "Harvest Board" })); // NEW
+    const bob = users.createUser("Bob", "5678", false).user; // NEW
+    assert.equal(users.setScopeGrant(board, { userId: bob.id, preset: "task" }).ok, true); // NEW
+    harness.graph.setSelectionCell(bed); // NEW
+    harness.actions.trellisUsers.funct(); // NEW
+    assert.match(harness.document.body.textContent, /Garden Bed: North Bed/); // NEW
+    harness.graph.setSelectionCell(board); // NEW
+    users._test.refreshPanel(); // NEW
+    assert.match(harness.document.body.textContent, /Task Board: Harvest Board/); // NEW
+    assert.match(harness.document.body.textContent, /Granted/); // NEW
+    harness.graph.setSelectionCells([harness.module, bed, board]); // NEW
+    users._test.refreshPanel(); // NEW
+    assert.match(harness.document.body.textContent, /Module: Module/); // NEW
+    assert.match(harness.document.body.textContent, /Garden Bed: North Bed/); // NEW
+    assert.match(harness.document.body.textContent, /Task Board: Harvest Board/); // NEW
+    assert.match(harness.document.body.textContent, /Access editor is hidden while multiple scopes are selected/); // NEW
+    assert.doesNotMatch(harness.document.body.textContent, /Your effective access/); // NEW
+}); // NEW
+
 test("viewer grant keeps regular users view-only", () => { // CHANGE
     const harness = loadUsersPlugin(); // NEW
     const users = harness.context.window.Trellis.users; // NEW
@@ -380,6 +456,71 @@ test("viewer grant keeps regular users view-only", () => { // CHANGE
     assert.equal(users.canDeleteCell(harness.card), false); // NEW
     assert.equal(users.canManageAccess(harness.module), false); // NEW
     assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: harness.card, attribute: "label" }), false); // NEW
+}); // NEW
+
+test("permission diagnostics stay quiet unless explicitly enabled", () => { // NEW
+    const calls = []; // NEW
+    const fakeConsole = { groupCollapsed() { calls.push("group"); }, log() { calls.push("log"); }, table() { calls.push("table"); }, groupEnd() { calls.push("end"); } }; // NEW
+    const harness = loadUsersPlugin({ console: fakeConsole }); // NEW
+    const users = harness.context.window.Trellis.users; // NEW
+    users.enableUsers("Alice", "1234"); // NEW
+    users.stampCreatedOwner(harness.module); // NEW
+    users.createUser("Bob", "5678", false); // NEW
+    users.logout(); // NEW
+    users.login("Bob", "5678"); // NEW
+    harness.model.fireChange({ changes: [{ constructor: { name: "mxGeometryChange" }, cell: harness.card }], undo() {} }); // NEW
+    assert.equal(calls.length, 0); // NEW
+}); // NEW
+
+test("permission diagnostics do not throw when console is unavailable", () => { // NEW
+    const harness = loadUsersPlugin({ console: undefined }); // NEW
+    const users = harness.context.window.Trellis.users; // NEW
+    users.enableUsers("Alice", "1234"); // NEW
+    users.stampCreatedOwner(harness.module); // NEW
+    users.createUser("Bob", "5678", false); // NEW
+    users.logout(); // NEW
+    users.login("Bob", "5678"); // NEW
+    harness.context.window.localStorage.setItem("trellis_users_debug", "1"); // NEW
+    assert.doesNotThrow(function () { // NEW
+        harness.model.fireChange({ changes: [{ constructor: { name: "mxGeometryChange" }, cell: harness.card }], undo() {} }); // NEW
+    }); // NEW
+}); // NEW
+
+test("trellis debug surface reports users status and toggles debug flags", () => { // NEW
+    const calls = []; // NEW
+    const fakeConsole = { groupCollapsed(label) { calls.push(["group", label]); }, log(value) { calls.push(["log", value]); }, groupEnd() { calls.push(["end"]); } }; // NEW
+    const harness = loadUsersPlugin({ console: fakeConsole }); // NEW
+    const debug = harness.context.window.Trellis.debug; // NEW
+    assert.equal(typeof debug.usersStatus, "function"); // NEW
+    assert.equal(typeof debug.enable, "function"); // NEW
+    assert.equal(typeof debug.disable, "function"); // NEW
+    assert.equal(typeof debug.probe, "function"); // NEW
+    assert.equal(debug.usersStatus().loaded, true); // NEW
+    assert.equal(debug.usersStatus().storage.trellis_users_debug, null); // NEW
+    const probe = debug.probe(); // NEW
+    assert.equal(probe.usersPluginLoaded, true); // NEW
+    assert.equal(probe.bedFitPluginLoaded, false); // NEW
+    assert.ok(calls.some(call => call[0] === "group" && call[1] === "[TrellisDebug] probe")); // NEW
+    const enabled = debug.enable(); // NEW
+    assert.equal(harness.context.window.localStorage.getItem("trellis_users_debug"), "1"); // NEW
+    assert.equal(harness.context.window.localStorage.getItem("trellis_bed_fit_debug"), "1"); // NEW
+    assert.equal(enabled.windowFlags.users, true); // NEW
+    assert.equal(enabled.windowFlags.bedFit, true); // NEW
+    const disabled = debug.disable(); // NEW
+    assert.equal(harness.context.window.localStorage.getItem("trellis_users_debug"), null); // NEW
+    assert.equal(harness.context.window.localStorage.getItem("trellis_bed_fit_debug"), null); // NEW
+    assert.equal(disabled.windowFlags.users, false); // NEW
+    assert.equal(disabled.windowFlags.bedFit, false); // NEW
+}); // NEW
+
+test("admin remains allowed for bed-fit relevant child geometry and style changes", () => { // NEW
+    const harness = loadUsersPlugin(); // NEW
+    const users = harness.context.window.Trellis.users; // NEW
+    users.enableUsers("Alice", "1234"); // NEW
+    const planting = appendChild(harness.module, makeXmlCell(harness.document, "admin-planting", { tiler_group: "1" })); // NEW
+    assert.equal(users._test.changeAllowed({ constructor: { name: "mxChildChange" }, child: planting, parent: harness.module }), true); // NEW
+    assert.equal(users._test.changeAllowed({ constructor: { name: "mxGeometryChange" }, cell: planting }), true); // NEW
+    assert.equal(users._test.changeAllowed({ constructor: { name: "mxStyleChange" }, cell: planting }), true); // NEW
 }); // NEW
 
 test("grower grant creates and manages only owned planting groups", () => { // CHANGE
