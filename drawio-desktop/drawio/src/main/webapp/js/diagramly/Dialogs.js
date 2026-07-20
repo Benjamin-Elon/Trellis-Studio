@@ -432,9 +432,9 @@ var SplashDialog = function(editorUi)
 		phoneNumber: '(000) 000-0000', // NEW
 		phone: 'tel:+10000000000', // NEW
 		patreon: 'https://www.patreon.com/placeholder', // NEW
-		issues: 'https://github.com/Benjamin-Elon/Trellis-for-Drawio/issues', // NEW
-		releases: 'https://github.com/Benjamin-Elon/Trellis-for-Drawio/releases', // NEW
-		repo: 'https://github.com/Benjamin-Elon/Trellis-for-Drawio' // NEW
+		issues: 'https://github.com/Benjamin-Elon/trellis-studio/issues', // CHANGE
+		releases: 'https://github.com/Benjamin-Elon/trellis-studio/releases', // CHANGE
+		repo: 'https://github.com/Benjamin-Elon/trellis-studio' // CHANGE
 	}; // NEW
 
 	var trellisLicenseVersion = '2'; // CHANGE

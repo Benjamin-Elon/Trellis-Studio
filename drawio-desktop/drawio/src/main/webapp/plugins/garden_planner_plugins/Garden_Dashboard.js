@@ -1084,6 +1084,39 @@ Draw.loadPlugin(function (ui) {
         email.type = "email"; // NEW
         email.placeholder = "Recipient email"; // NEW
         email.style.cssText = "box-sizing:border-box;width:100%;padding:6px 8px;border:1px solid #D1D5DB;border-radius:4px;font:13px Arial,sans-serif;margin-bottom:10px;"; // NEW
+        const preset = document.createElement("select"); // NEW
+        preset.style.cssText = "box-sizing:border-box;width:100%;padding:6px 8px;border:1px solid #D1D5DB;border-radius:4px;font:13px Arial,sans-serif;margin-bottom:8px;"; // NEW
+        ["viewer", "grower", "task", "manager"].forEach(function (value) { // NEW
+            const option = document.createElement("option"); // NEW
+            option.value = value; // NEW
+            option.textContent = value.charAt(0).toUpperCase() + value.slice(1); // NEW
+            preset.appendChild(option); // NEW
+        }); // NEW
+        preset.value = "viewer"; // NEW
+        const presetCaps = { viewer: [], grower: ["create_plantings", "manage_own_plantings"], task: ["move_tasks", "edit_task_details"], manager: ["create_plantings", "manage_own_plantings", "move_tasks", "edit_task_details", "manage_scope_content", "manage_access"] }; // NEW
+        const capabilityLabels = { create_plantings: "Create plantings", manage_own_plantings: "Manage own plantings", move_tasks: "Move tasks", edit_task_details: "Edit task details", manage_scope_content: "Manage scope content", manage_access: "Manage access" }; // NEW
+        const capabilityWrap = document.createElement("div"); // NEW
+        capabilityWrap.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;margin-bottom:10px;color:#374151;"; // NEW
+        function selectedInviteCapabilities() { // NEW
+            return Array.from(capabilityWrap.querySelectorAll("input[type='checkbox']")).filter(function (input) { return input.checked; }).map(function (input) { return input.value; }).sort(); // NEW
+        } // NEW
+        function renderInviteCapabilities() { // NEW
+            capabilityWrap.innerHTML = ""; // NEW
+            const active = new Set(presetCaps[preset.value] || []); // NEW
+            Object.keys(capabilityLabels).forEach(function (capability) { // NEW
+                const label = document.createElement("label"); // NEW
+                label.style.cssText = "display:flex;gap:4px;align-items:center;font-size:12px;"; // NEW
+                const input = document.createElement("input"); // NEW
+                input.type = "checkbox"; // NEW
+                input.value = capability; // NEW
+                input.checked = active.has(capability); // NEW
+                label.appendChild(input); // NEW
+                label.appendChild(document.createTextNode(capabilityLabels[capability])); // NEW
+                capabilityWrap.appendChild(label); // NEW
+            }); // NEW
+        } // NEW
+        preset.addEventListener("change", renderInviteCapabilities); // NEW
+        renderInviteCapabilities(); // NEW
         const status = document.createElement("div"); // NEW
         status.style.cssText = "min-height:18px;color:#4B5563;margin-bottom:8px;"; // NEW
         const buttons = document.createElement("div"); // NEW
@@ -1092,7 +1125,7 @@ Draw.loadPlugin(function (ui) {
         const send = createToolbarButton("Create Email", "Create invite and open an email draft"); // NEW
         cancel.addEventListener("click", function () { closeShareDialog(overlay); }); // NEW
         send.addEventListener("click", function () { // NEW
-            const result = users.createPendingInvite({ email: email.value, scopeCellIds: scopes.map(function (scope) { return scope.id; }), shareInfo }); // NEW
+            const result = users.createPendingInvite({ email: email.value, scopeCellIds: scopes.map(function (scope) { return scope.id; }), preset: preset.value, capabilities: selectedInviteCapabilities(), shareInfo }); // CHANGE
             if (!result.ok) { status.textContent = result.reason; return; } // NEW
             const bridge = window.trellisShare; // NEW
             bridge.openEmailDraft(result.emailDraft).then(function (draftResult) { // NEW
@@ -1105,6 +1138,8 @@ Draw.loadPlugin(function (ui) {
         box.appendChild(title); // NEW
         box.appendChild(scopeText); // NEW
         box.appendChild(email); // NEW
+        box.appendChild(preset); // NEW
+        box.appendChild(capabilityWrap); // NEW
         box.appendChild(status); // NEW
         box.appendChild(buttons); // NEW
         overlay.appendChild(box); // NEW

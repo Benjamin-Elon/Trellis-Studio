@@ -54,9 +54,9 @@ function loadPlugin(options = {}) {
             return Promise.resolve(Object.assign({ // CHANGE
                 productName: "Trellis Studio",
                 version: "1.1.2",
-                repoUrl: "https://github.com/Benjamin-Elon/Trellis-for-Drawio",
-                releasesUrl: "https://github.com/Benjamin-Elon/Trellis-for-Drawio/releases",
-                issuesUrl: "https://github.com/Benjamin-Elon/Trellis-for-Drawio/issues",
+                repoUrl: "https://github.com/Benjamin-Elon/trellis-studio",
+                releasesUrl: "https://github.com/Benjamin-Elon/trellis-studio/releases",
+                issuesUrl: "https://github.com/Benjamin-Elon/trellis-studio/issues",
                 isPackaged: true, // NEW
                 canCheckForUpdates: true // NEW
             }, options.appInfo || {})); // CHANGE
@@ -149,7 +149,7 @@ test("Trellis updates plugin registers Help action and opens dialog", async () =
         tag_name: "v1.1.3", // NEW
         name: "Trellis 1.1.3", // NEW
         published_at: "2026-06-27T00:00:00Z", // NEW
-        html_url: "https://github.com/Benjamin-Elon/Trellis-for-Drawio/releases/tag/v1.1.3", // NEW
+        html_url: "https://github.com/Benjamin-Elon/trellis-studio/releases/tag/v1.1.3", // CHANGE
         body: "One useful change for gardeners." // NEW
     }]; // NEW
     const mxUtils = {
@@ -290,7 +290,7 @@ test("Trellis updates integration is registered, default-loaded, and bridged", (
     assert.match(preloadSource, /action: 'getTrellisSyncthingShareInfo'/); // NEW
     assert.match(preloadSource, /action: 'openTrellisEmailDraft'/); // NEW
     assert.match(electronSource, /case 'getTrellisAppInfo': \/\/ NEW/);
-    assert.match(electronSource, /const trellisReleasesApiUrl = 'https:\/\/api\.github\.com\/repos\/Benjamin-Elon\/Trellis-for-Drawio\/releases\?per_page=10'; \/\/ NEW/); // NEW
+    assert.match(electronSource, /const trellisReleasesApiUrl = 'https:\/\/api\.github\.com\/repos\/Benjamin-Elon\/trellis-studio\/releases\?per_page=10'; \/\/ CHANGE/); // CHANGE
     assert.match(electronSource, /const trellisReleasesTimeoutMs = 15000; \/\/ NEW/); // NEW
     assert.match(electronSource, /async function getTrellisReleases\(\) \{ \/\/ NEW/); // NEW
     assert.match(electronSource, /fetch\(trellisReleasesApiUrl/); // NEW

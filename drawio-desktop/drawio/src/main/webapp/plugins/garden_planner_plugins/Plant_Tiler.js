@@ -2063,8 +2063,7 @@ Draw.loadPlugin(function (ui) {
                 const moduleCell = activeModuleCell; // CHANGE
                 const pt = anchorModelPoint; // CHANGE
                 if (!moduleCell || !pt || !hasGardenSettingsSet(moduleCell)) return; // CHANGE
-                const group = createEmptyTilerGroup(graph, moduleCell, pt.x, pt.y); // CHANGE
-                if (activeOverlayMode === "bed" && group) retileAndFitToContainingBed(graph, group, { source: "overlay-bed-add" }); // CHANGE
+                createEmptyTilerGroup(graph, moduleCell, pt.x, pt.y, { source: activeOverlayMode === "bed" ? "overlay-bed-add" : "overlay-module-add" }); // CHANGE
                 hideToolbar(); // CHANGE
             }); // CHANGE
 
@@ -3389,6 +3388,15 @@ Draw.loadPlugin(function (ui) {
         }, 0); // CHANGE
     } // CHANGE
 
+    function finalizeCreatedTilerGroup(graph, group, parent, source) { // NEW
+        if (!graph || !group) return null; // NEW
+        const model = graph.getModel(); // NEW
+        retileAndFitToContainingBed(graph, group, { source: source || "tiler-created", inTransaction: true }); // NEW
+        if (parent && isGardenModule(parent)) reorderModuleChildrenForLayering(model, parent); // NEW
+        graph.setSelectionCell(group); // NEW
+        return group; // NEW
+    } // NEW
+
     function createDefaultGardenBed(graph, moduleCell, clickX, clickY) { // CHANGE
         const dimsCm = getDefaultBedDimensionsCm(moduleCell); // CHANGE
         if (!dimsCm) throw new Error("Default bed dimensions are not set."); // CHANGE
@@ -3429,7 +3437,7 @@ Draw.loadPlugin(function (ui) {
      * - Defaults spacing to 30 cm (both axes).
      * - Centers a 240x240 group within the module bounds.
      */
-    function createEmptyTilerGroup(graph, moduleCell, clickX, clickY) {
+    function createEmptyTilerGroup(graph, moduleCell, clickX, clickY, opts = {}) { // CHANGE
         const DEFAULT_GROUP_PX = 240;
         const spacingCm = 30;
 
@@ -3476,18 +3484,15 @@ Draw.loadPlugin(function (ui) {
         group.setCollapsed(false);
 
         const model = graph.getModel();
+        const creationSource = (opts && opts.source) || "empty-group"; // NEW
         model.beginUpdate();
         try {
             graph.addCell(group, moduleCell);
-            graph.setSelectionCell(group);
-
-            retileGroup(graph, group);
-
-            reorderModuleChildrenForLayering(model, moduleCell);
+            finalizeCreatedTilerGroup(graph, group, moduleCell, creationSource); // CHANGE
         } finally {
             model.endUpdate();
         }
-        notifyTilerGroupCreated(graph, group, "empty-group"); // CHANGE
+        notifyTilerGroupCreated(graph, group, creationSource); // CHANGE
         return group; // CHANGE
     }
 
@@ -4184,29 +4189,26 @@ Draw.loadPlugin(function (ui) {
         group.setConnectable(false);
         group.setCollapsed(false);
 
-        graph.addCell(group, parent);
+        model.beginUpdate(); // NEW
+        try { // NEW
+            graph.addCell(group, parent); // CHANGE
 
-        // Move circles into group; convert to GROUP-RELATIVE coordinates                                  
-        for (const c of circleCells) {
-            const cg = c.getGeometry();
-            if (!cg) continue;
+            // Move circles into group; convert to GROUP-RELATIVE coordinates                               // CHANGE
+            for (const c of circleCells) { // CHANGE
+                const cg = c.getGeometry(); // CHANGE
+                if (!cg) continue; // CHANGE
 
-            const local = cg.clone();
-            local.x = cg.x - groupX;
-            local.y = (cg.y - groupY) + bandPx;
+                const local = cg.clone(); // CHANGE
+                local.x = cg.x - groupX; // CHANGE
+                local.y = (cg.y - groupY) + bandPx; // CHANGE
 
-            c.setGeometry(local);
-            graph.addCell(c, group);
-        }
-
-        // Retile group after it has children (will honor LOD, count, etc.)                                 
-        retileGroup(graph, group);
-
-        if (parent && isGardenModule(parent)) {
-            reorderModuleChildrenForLayering(model, parent);
-        }
-
-        graph.setSelectionCell(group);
+                model.setGeometry(c, local); // CHANGE
+                graph.addCell(c, group); // CHANGE
+            } // CHANGE
+            finalizeCreatedTilerGroup(graph, group, parent, "plant-circle-wrap"); // CHANGE
+        } finally { // NEW
+            model.endUpdate(); // NEW
+        } // NEW
         notifyTilerGroupCreated(graph, group, "plant-circle-wrap"); // CHANGE
         return group;
     }

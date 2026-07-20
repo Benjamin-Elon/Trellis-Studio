@@ -9,7 +9,7 @@
 
     const ACTION_ID = "trellisUpdatesLinks";
     const ACTION_LABEL = "Trellis Updates & Links";
-    const RELEASES_API_URL = "https://api.github.com/repos/Benjamin-Elon/Trellis-for-Drawio/releases?per_page=10";
+    const RELEASES_API_URL = "https://api.github.com/repos/Benjamin-Elon/trellis-studio/releases?per_page=10"; // CHANGE
     const CHANGELOG_URL = "plugins/garden_planner_plugins/trellis_changelog.json";
     const SUMMARY_LIMIT = 220;
     const TRELLIS_DIALOG_Z = 2000000000; // NEW
@@ -17,9 +17,9 @@
     const DEFAULT_APP_INFO = Object.freeze({
         productName: "Trellis Studio",
         version: "",
-        repoUrl: "https://github.com/Benjamin-Elon/Trellis-for-Drawio",
-        releasesUrl: "https://github.com/Benjamin-Elon/Trellis-for-Drawio/releases",
-        issuesUrl: "https://github.com/Benjamin-Elon/Trellis-for-Drawio/issues",
+        repoUrl: "https://github.com/Benjamin-Elon/trellis-studio", // CHANGE
+        releasesUrl: "https://github.com/Benjamin-Elon/trellis-studio/releases", // CHANGE
+        issuesUrl: "https://github.com/Benjamin-Elon/trellis-studio/issues", // CHANGE
         isPackaged: false, // NEW
         canCheckForUpdates: false // NEW
     });

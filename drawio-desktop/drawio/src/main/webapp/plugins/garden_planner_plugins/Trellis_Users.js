@@ -15,7 +15,9 @@ Draw.loadPlugin(function (ui) {
     const ATTR_STORE = "trellis_users_json";
     const ATTR_OWNER = "trellis_owner_user_id";
     const ATTR_ACCESS_USERS = "trellis_access_user_ids_json";
+    const ATTR_ACCESS_GRANTS = "trellis_access_grants_json"; // NEW
     const ATTR_ACCESS_OPEN = "trellis_access_open";
+    const ATTR_ROLE_USER = "trellis_role_user_id"; // NEW
     const ATTR_CREATED_BY = "createdByUserId";
     const ATTR_EDITED_BY = "lastEditedByUserId";
     const ATTR_ACTOR_NAME = "trellis_actor_name";
@@ -23,7 +25,23 @@ Draw.loadPlugin(function (ui) {
     const ATTR_REMEMBER_DIAGRAM_ID = "trellis_users_diagram_id"; // NEW
     const ATTR_HISTORY_ID = "trellis_history_id"; // NEW
 
-    const PROTECTED_ATTRS = new Set([ATTR_STORE, ATTR_OWNER, ATTR_ACCESS_USERS, ATTR_ACCESS_OPEN]);
+    const PROTECTED_ATTRS = new Set([ATTR_STORE, ATTR_OWNER, ATTR_ACCESS_USERS, ATTR_ACCESS_GRANTS, ATTR_ACCESS_OPEN, ATTR_ROLE_USER]); // CHANGE
+    const ACCESS_PRESETS = ["viewer", "grower", "task", "manager"]; // NEW
+    const CAP_CREATE_PLANTINGS = "create_plantings"; // NEW
+    const CAP_MANAGE_OWN_PLANTINGS = "manage_own_plantings"; // NEW
+    const CAP_MOVE_TASKS = "move_tasks"; // NEW
+    const CAP_EDIT_TASK_DETAILS = "edit_task_details"; // NEW
+    const CAP_MANAGE_SCOPE_CONTENT = "manage_scope_content"; // NEW
+    const CAP_MANAGE_ACCESS = "manage_access"; // NEW
+    const DOMAIN_CAPABILITIES = [CAP_CREATE_PLANTINGS, CAP_MANAGE_OWN_PLANTINGS, CAP_MOVE_TASKS, CAP_EDIT_TASK_DETAILS, CAP_MANAGE_SCOPE_CONTENT, CAP_MANAGE_ACCESS]; // NEW
+    const PRESET_CAPABILITIES = { // NEW
+        viewer: [], // NEW
+        grower: [CAP_CREATE_PLANTINGS, CAP_MANAGE_OWN_PLANTINGS], // NEW
+        task: [CAP_MOVE_TASKS, CAP_EDIT_TASK_DETAILS], // NEW
+        manager: [CAP_CREATE_PLANTINGS, CAP_MANAGE_OWN_PLANTINGS, CAP_MOVE_TASKS, CAP_EDIT_TASK_DETAILS, CAP_MANAGE_SCOPE_CONTENT, CAP_MANAGE_ACCESS] // NEW
+    }; // NEW
+    const TASK_DETAIL_ATTRS = new Set(["label", "title", "notes", "card_note", "start", "end", "due", "assigned_day", "task_estimated_hours", "scheduler_dates_locked"]); // NEW
+    const TASK_ASSIGNMENT_ATTRS = new Set(["task_assignee_role_ids_json"]); // NEW
     const USER_ID_PREFIX = "user_";
     const PIN_SALT_PREFIX = "salt_";
     const DIAGRAM_ID_PREFIX = "diagram_users_"; // NEW
@@ -43,6 +61,7 @@ Draw.loadPlugin(function (ui) {
     let loginPinInput = null;
     let rosterNode = null;
     let accessNode = null;
+    let resetPinUserId = ""; // NEW
     let authOverlay = null; // NEW
     let authStatusNode = null; // NEW
     let toolbarButton = null; // NEW
@@ -134,6 +153,8 @@ Draw.loadPlugin(function (ui) {
             codeHash: String(source.codeHash || ""), // NEW
             scopeCellIds: Array.isArray(source.scopeCellIds) ? Array.from(new Set(source.scopeCellIds.map(String).filter(Boolean))).sort() : [], // NEW
             scopeLabels: Array.isArray(source.scopeLabels) ? source.scopeLabels.map(String).filter(Boolean) : [], // NEW
+            preset: normalizePreset(source.preset), // NEW
+            capabilities: normalizeCapabilities(source.capabilities, source.preset), // NEW
             createdBy: String(source.createdBy || ""), // NEW
             createdAt: Number(source.createdAt) || nowMs(), // NEW
             expiresAt: Number(source.expiresAt) || (nowMs() + INVITE_EXPIRY_MS), // NEW
@@ -233,11 +254,59 @@ Draw.loadPlugin(function (ui) {
             pendingUserId: invite.pendingUserId, // NEW
             scopeCellIds: (invite.scopeCellIds || []).slice(), // NEW
             scopeLabels: (invite.scopeLabels || []).slice(), // NEW
+            preset: normalizePreset(invite.preset), // NEW
+            capabilities: normalizeCapabilities(invite.capabilities, invite.preset), // NEW
             createdBy: invite.createdBy || "", // NEW
             createdAt: invite.createdAt || 0, // NEW
             expiresAt: invite.expiresAt || 0, // NEW
             status: expired ? "expired" : invite.status // NEW
         }; // NEW
+    } // NEW
+
+    function normalizePreset(value) { // NEW
+        const preset = String(value || "viewer").trim().toLowerCase(); // NEW
+        return ACCESS_PRESETS.indexOf(preset) >= 0 ? preset : "viewer"; // NEW
+    } // NEW
+
+    function normalizeCapabilities(capabilities, preset) { // NEW
+        const base = Array.isArray(capabilities) ? capabilities : PRESET_CAPABILITIES[normalizePreset(preset)]; // NEW
+        const allowed = new Set(DOMAIN_CAPABILITIES); // NEW
+        return Array.from(new Set((base || []).map(String).filter(function (capability) { return allowed.has(capability); }))).sort(); // NEW
+    } // NEW
+
+    function normalizeGrant(grant) { // NEW
+        const source = grant || {}; // NEW
+        const userId = String(source.userId || source.id || "").trim(); // NEW
+        if (!userId) return null; // NEW
+        const preset = normalizePreset(source.preset); // NEW
+        return { userId, preset, capabilities: normalizeCapabilities(source.capabilities, preset) }; // NEW
+    } // NEW
+
+    function grantsFromAttr(cell) { // NEW
+        const parsed = parseJson(getAttr(cell, ATTR_ACCESS_GRANTS), []); // NEW
+        if (!Array.isArray(parsed)) return []; // NEW
+        const byUserId = new Map(); // NEW
+        parsed.map(normalizeGrant).filter(Boolean).forEach(function (grant) { byUserId.set(grant.userId, grant); }); // NEW
+        return Array.from(byUserId.values()).sort(function (left, right) { return left.userId.localeCompare(right.userId); }); // NEW
+    } // NEW
+
+    function setGrantsAttr(cell, grants) { // NEW
+        const normalized = (grants || []).map(normalizeGrant).filter(Boolean).sort(function (left, right) { return left.userId.localeCompare(right.userId); }); // NEW
+        setAttr(cell, ATTR_ACCESS_GRANTS, normalized.length ? JSON.stringify(normalized) : ""); // NEW
+    } // NEW
+
+    function publicGrant(grant) { // NEW
+        const normalized = normalizeGrant(grant); // NEW
+        return normalized ? { userId: normalized.userId, preset: normalized.preset, capabilities: normalized.capabilities.slice() } : null; // NEW
+    } // NEW
+
+    function getScopeGrants(cell) { // NEW
+        return grantsFromAttr(cell).map(publicGrant).filter(Boolean); // NEW
+    } // NEW
+
+    function storedOrPendingUserById(id) { // NEW
+        const store = readStore(); // NEW
+        return store.users.find(function (user) { return user.id === id && !user.disabled; }) || store.pendingUsers.find(function (user) { return user.id === id && !user.disabled; }) || null; // NEW
     } // NEW
 
     function listPendingInvites() { // NEW
@@ -468,13 +537,128 @@ Draw.loadPlugin(function (ui) {
         setAttr(cell, ATTR_ACCESS_USERS, next.length ? JSON.stringify(next) : "");
     }
 
-    function grantUserToScopes(userId, scopeCellIds) { // NEW
+    function traverseCells(cell, visit) { // NEW
+        if (!cell || !visit) return; // NEW
+        visit(cell); // NEW
+        const count = model.getChildCount ? model.getChildCount(cell) : ((cell.children || []).length); // NEW
+        for (let i = 0; i < count; i++) traverseCells(model.getChildAt ? model.getChildAt(cell, i) : cell.children[i], visit); // NEW
+    } // NEW
+
+    function getStyle(cell) { // NEW
+        return cell && typeof cell.getStyle === "function" ? (cell.getStyle() || "") : ((cell && cell.style) || ""); // NEW
+    } // NEW
+
+    function styleFlag(cell, key) { // NEW
+        return new RegExp("(?:^|;)" + key + "=1(?:;|$)").test(getStyle(cell)); // NEW
+    } // NEW
+
+    function isModuleCell(cell) { // NEW
+        return !!cell && (styleFlag(cell, "module") || getAttr(cell, "garden_module") === "1" || getAttr(cell, "team_module") === "1"); // NEW
+    } // NEW
+
+    function isGardenBed(cell) { // NEW
+        return !!cell && (getAttr(cell, "garden_bed") === "1" || getAttr(cell, "gardenBed") === "1" || getAttr(cell, "is_garden_bed") === "1"); // NEW
+    } // NEW
+
+    function isTilerGroup(cell) { // NEW
+        return !!cell && (getAttr(cell, "tiler_group") === "1" || styleFlag(cell, "tiler_group")); // NEW
+    } // NEW
+
+    function isTaskBoard(cell) { // NEW
+        const key = String(getAttr(cell, "board_key") || ""); // NEW
+        return key === "KANBAN_BOARD" || key === "MAIN_KANBAN_BOARD"; // NEW
+    } // NEW
+
+    function isTaskCard(cell) { // NEW
+        return !!cell && (getAttr(cell, "kanban_card") === "1" || styleFlag(cell, "kanban_card")); // NEW
+    } // NEW
+
+    function isRoleCard(cell) { // NEW
+        return !!cell && styleFlag(cell, "role_card"); // NEW
+    } // NEW
+
+    function hasLink(cell, id) { // NEW
+        const target = String(id || ""); // NEW
+        if (!cell || !target) return false; // NEW
+        return String(getAttr(cell, "linkedTo") || "").split(",").map(function (part) { return part.trim(); }).filter(Boolean).indexOf(target) >= 0; // NEW
+    } // NEW
+
+    function nearestAncestorMatching(cell, predicate) { // NEW
+        let cursor = cell; // NEW
+        while (cursor) { // NEW
+            if (predicate(cursor)) return cursor; // NEW
+            cursor = parentOf(cursor); // NEW
+        } // NEW
+        return null; // NEW
+    } // NEW
+
+    function nearestPlanting(cell) { return nearestAncestorMatching(cell, isTilerGroup); } // NEW
+
+    function nearestGardenBed(cell) { return nearestAncestorMatching(cell, isGardenBed); } // NEW
+
+    function nearestTaskBoard(cell) { return nearestAncestorMatching(cell, isTaskBoard); } // NEW
+
+    function directCapabilitiesForCell(cell, userId) { // NEW
+        const caps = new Set(); // NEW
+        let cursor = cell; // NEW
+        while (cursor) { // NEW
+            grantsFromAttr(cursor).forEach(function (grant) { // NEW
+                if (grant.userId === userId) grant.capabilities.forEach(function (capability) { caps.add(capability); }); // NEW
+            }); // NEW
+            cursor = parentOf(cursor); // NEW
+        } // NEW
+        return caps; // NEW
+    } // NEW
+
+    function roleCardsForUser(userId) { // NEW
+        const matches = []; // NEW
+        const root = model.getRoot && model.getRoot(); // NEW
+        traverseCells(root, function (cell) { if (isRoleCard(cell) && getAttr(cell, ATTR_ROLE_USER) === userId) matches.push(cell); }); // NEW
+        return matches; // NEW
+    } // NEW
+
+    function roleLinkedBoardGrantsForUser(userId, targetCell) { // NEW
+        const roleCards = roleCardsForUser(userId); // NEW
+        if (roleCards.length !== 1) return []; // NEW
+        const roleCard = roleCards[0]; // NEW
+        const boards = []; // NEW
+        const root = model.getRoot && model.getRoot(); // NEW
+        traverseCells(root, function (cell) { // NEW
+            if (isTaskBoard(cell) && hasLink(cell, roleCard.id || (roleCard.getId && roleCard.getId())) && hasLink(roleCard, cell.id || (cell.getId && cell.getId()))) boards.push(cell); // NEW
+        }); // NEW
+        if (!targetCell) return boards; // NEW
+        return boards.filter(function (board) { // NEW
+            let cursor = targetCell; // NEW
+            while (cursor) { if (cursor === board) return true; cursor = parentOf(cursor); } // NEW
+            return false; // NEW
+        }); // NEW
+    } // NEW
+
+    function effectiveCapabilitiesForCell(cell, userId) { // NEW
+        const user = userId ? userById(userId) : currentUser(); // NEW
+        const caps = new Set(); // NEW
+        if (!isEnabled()) DOMAIN_CAPABILITIES.forEach(function (capability) { caps.add(capability); }); // NEW
+        if (user && user.admin) DOMAIN_CAPABILITIES.forEach(function (capability) { caps.add(capability); }); // NEW
+        if (user && isOwnerOfNearestAccessScope(cell, user.id)) DOMAIN_CAPABILITIES.forEach(function (capability) { caps.add(capability); }); // CHANGE
+        if (user) directCapabilitiesForCell(cell, user.id).forEach(function (capability) { caps.add(capability); }); // NEW
+        if (user && roleLinkedBoardGrantsForUser(user.id, cell).length) PRESET_CAPABILITIES.task.forEach(function (capability) { caps.add(capability); }); // NEW
+        return Array.from(caps).sort(); // NEW
+    } // NEW
+
+    function hasCapability(cell, capability) { // NEW
+        const user = currentUser(); // NEW
+        if (!isEnabled()) return true; // NEW
+        if (!user || !cell) return false; // NEW
+        if (user.admin || isOwnerOfNearestAccessScope(cell, user.id)) return true; // CHANGE
+        return effectiveCapabilitiesForCell(cell, user.id).indexOf(capability) >= 0; // NEW
+    } // NEW
+
+    function grantUserToScopes(userId, scopeCellIds, grantOptions) { // CHANGE
+        const source = grantOptions || {}; // NEW
         (scopeCellIds || []).forEach(function (cellId) { // NEW
             const cell = model.getCell && model.getCell(cellId); // NEW
             if (!cell) return; // NEW
-            const ids = new Set(userIdsFromAttr(cell)); // NEW
-            ids.add(userId); // NEW
-            setUserIdsAttr(cell, Array.from(ids)); // NEW
+            setScopeGrantInternal(cell, { userId, preset: source.preset || "viewer", capabilities: source.capabilities }); // CHANGE
         }); // NEW
     } // NEW
 
@@ -485,7 +669,7 @@ Draw.loadPlugin(function (ui) {
             (scopeCellIds || []).forEach(function (cellId) { // NEW
                 const cell = model.getCell && model.getCell(cellId); // NEW
                 if (!cell) return; // NEW
-                setUserIdsAttr(cell, userIdsFromAttr(cell).filter(function (id) { return id !== userId; })); // NEW
+                setGrantsAttr(cell, grantsFromAttr(cell).filter(function (grant) { return grant.userId !== userId; })); // CHANGE
             }); // NEW
         } finally { // NEW
             model.endUpdate(); // NEW
@@ -493,17 +677,46 @@ Draw.loadPlugin(function (ui) {
         } // NEW
     } // NEW
 
-    function writeStoreAndGrant(store, userId, scopeCellIds) { // NEW
+    function writeStoreAndGrant(store, userId, scopeCellIds, grantOptions) { // CHANGE
         graph[INTERNAL_FLAG] = true; // NEW
         model.beginUpdate(); // NEW
         try { // NEW
-            grantUserToScopes(userId, scopeCellIds); // NEW
+            grantUserToScopes(userId, scopeCellIds, grantOptions); // CHANGE
             setAttr(metadataCell(), ATTR_STORE, JSON.stringify(normalizeStore(store))); // NEW
         } finally { // NEW
             model.endUpdate(); // NEW
             graph[INTERNAL_FLAG] = false; // NEW
         } // NEW
         refreshPanel(); // NEW
+    } // NEW
+
+    function setScopeGrantInternal(cell, grant) { // NEW
+        const normalized = normalizeGrant(grant); // NEW
+        if (!cell || !normalized) return false; // NEW
+        const grants = grantsFromAttr(cell).filter(function (entry) { return entry.userId !== normalized.userId; }); // NEW
+        grants.push(normalized); // NEW
+        setGrantsAttr(cell, grants); // NEW
+        return true; // NEW
+    } // NEW
+
+    function setScopeGrant(cell, grant) { // NEW
+        if (!cell || !canManageAccess(cell)) return { ok: false, reason: "You cannot manage access for this cell." }; // NEW
+        const normalized = normalizeGrant(grant); // NEW
+        if (!normalized || !storedOrPendingUserById(normalized.userId)) return { ok: false, reason: "Unknown user." }; // NEW
+        graph[INTERNAL_FLAG] = true; // NEW
+        model.beginUpdate(); // NEW
+        try { setScopeGrantInternal(cell, normalized); } finally { model.endUpdate(); graph[INTERNAL_FLAG] = false; } // NEW
+        refreshPanel(); // NEW
+        return { ok: true, grant: publicGrant(normalized) }; // NEW
+    } // NEW
+
+    function removeScopeGrant(cell, userId) { // NEW
+        if (!cell || !canManageAccess(cell)) return { ok: false, reason: "You cannot manage access for this cell." }; // NEW
+        graph[INTERNAL_FLAG] = true; // NEW
+        model.beginUpdate(); // NEW
+        try { setGrantsAttr(cell, grantsFromAttr(cell).filter(function (grant) { return grant.userId !== userId; })); } finally { model.endUpdate(); graph[INTERNAL_FLAG] = false; } // NEW
+        refreshPanel(); // NEW
+        return { ok: true }; // NEW
     } // NEW
 
     function parentOf(cell) {
@@ -523,8 +736,8 @@ Draw.loadPlugin(function (ui) {
     function nearestAccessGrant(cell, userId) {
         let cursor = cell;
         while (cursor) {
-            if (getAttr(cursor, ATTR_ACCESS_OPEN) === "1") return { cell: cursor, open: true };
-            if (userId && userIdsFromAttr(cursor).indexOf(userId) >= 0) return { cell: cursor, open: false };
+            const grant = userId ? grantsFromAttr(cursor).find(function (entry) { return entry.userId === userId; }) : null; // CHANGE
+            if (grant) return { cell: cursor, grant }; // CHANGE
             cursor = parentOf(cursor);
         }
         return null;
@@ -535,13 +748,21 @@ Draw.loadPlugin(function (ui) {
         return !!(owner && owner.ownerUserId === userId);
     }
 
+    function isOwnerOfNearestAccessScope(cell, userId) { // NEW
+        const owner = nearestOwnedAncestor(cell); // NEW
+        return !!(owner && owner.ownerUserId === userId && !isTilerGroup(owner.cell)); // NEW
+    } // NEW
+
     function canEditCell(cell) {
         if (!isEnabled()) return true; // NEW
         const user = currentUser();
         if (!user || !cell || cell === model.getRoot()) return false;
         if (user.admin) return true;
         if (isOwnerOfNearestScope(cell, user.id)) return true;
-        return !!nearestAccessGrant(cell, user.id);
+        if (isTaskCard(cell) || nearestTaskBoard(cell)) return hasCapability(cell, CAP_EDIT_TASK_DETAILS); // CHANGE
+        const planting = nearestPlanting(cell); // NEW
+        if (planting) return canManagePlanting(planting); // NEW
+        return hasCapability(cell, CAP_MANAGE_SCOPE_CONTENT); // CHANGE
     }
 
     function canAddCell(parent) {
@@ -550,7 +771,7 @@ Draw.loadPlugin(function (ui) {
         if (!user) return false;
         if (user.admin) return true;
         if (!parent || parent === model.getRoot() || parent === graph.getDefaultParent()) return true;
-        return isOwnerOfNearestScope(parent, user.id);
+        return isOwnerOfNearestScope(parent, user.id) || hasCapability(parent, CAP_MANAGE_SCOPE_CONTENT); // CHANGE
     }
 
     function canDeleteCell(cell) {
@@ -558,7 +779,7 @@ Draw.loadPlugin(function (ui) {
         const user = currentUser();
         if (!user || !cell || cell === model.getRoot() || cell === graph.getDefaultParent()) return false;
         if (user.admin) return true;
-        return isOwnerOfNearestScope(cell, user.id);
+        return isOwnerOfNearestScope(cell, user.id) || canManagePlanting(cell) || hasCapability(cell, CAP_MANAGE_SCOPE_CONTENT); // CHANGE
     }
 
     function canDeleteFromPreviousParent(cell, previousParent) { // NEW
@@ -567,6 +788,7 @@ Draw.loadPlugin(function (ui) {
         if (!user || !cell || cell === model.getRoot() || cell === graph.getDefaultParent()) return false; // NEW
         if (user.admin) return true; // NEW
         if (isOwnerOfNearestScope(cell, user.id)) return true; // NEW
+        if (canManagePlanting(cell)) return true; // NEW
         return !!(previousParent && isOwnerOfNearestScope(previousParent, user.id)); // NEW
     } // NEW
 
@@ -575,7 +797,41 @@ Draw.loadPlugin(function (ui) {
         const user = currentUser(); // NEW
         if (!user || !cell || cell === model.getRoot() || cell === graph.getDefaultParent()) return false; // NEW
         if (user.admin) return true; // NEW
-        return isOwnerOfNearestScope(cell, user.id); // NEW
+        if (isOwnerOfNearestScope(cell, user.id)) return true; // CHANGE
+        if (isTaskCard(cell)) return canMoveTask(cell); // NEW
+        if (nearestPlanting(cell)) return canManagePlanting(cell); // NEW
+        return hasCapability(cell, CAP_MANAGE_SCOPE_CONTENT); // CHANGE
+    } // NEW
+
+    function canCreatePlanting(parent) { // NEW
+        if (!isEnabled()) return true; // NEW
+        const user = currentUser(); // NEW
+        if (!user || !parent) return false; // NEW
+        if (user.admin || isOwnerOfNearestScope(parent, user.id)) return true; // NEW
+        const bed = nearestGardenBed(parent); // NEW
+        const scope = bed || parent; // NEW
+        return hasCapability(scope, CAP_CREATE_PLANTINGS); // NEW
+    } // NEW
+
+    function canManagePlanting(cell) { // NEW
+        if (!isEnabled()) return true; // NEW
+        const user = currentUser(); // NEW
+        const planting = nearestPlanting(cell); // NEW
+        if (!user || !planting) return false; // NEW
+        if (user.admin || isOwnerOfNearestScope(planting, user.id)) return true; // NEW
+        return getAttr(planting, ATTR_OWNER) === user.id && hasCapability(planting, CAP_MANAGE_OWN_PLANTINGS); // NEW
+    } // NEW
+
+    function canMoveTask(cell) { // NEW
+        if (!isEnabled()) return true; // NEW
+        const board = nearestTaskBoard(cell); // NEW
+        return !!board && hasCapability(board, CAP_MOVE_TASKS); // NEW
+    } // NEW
+
+    function canEditTaskDetails(cell) { // NEW
+        if (!isEnabled()) return true; // NEW
+        const board = nearestTaskBoard(cell); // NEW
+        return !!board && hasCapability(board, CAP_EDIT_TASK_DETAILS); // NEW
     } // NEW
 
     function canManageAccess(cell) {
@@ -583,23 +839,21 @@ Draw.loadPlugin(function (ui) {
         const user = currentUser();
         if (!user || !cell || cell === model.getRoot()) return false;
         if (user.admin) return true;
-        return isOwnerOfNearestScope(cell, user.id);
+        return isOwnerOfNearestAccessScope(cell, user.id) || hasCapability(cell, CAP_MANAGE_ACCESS); // CHANGE
     }
 
-    function getStyle(cell) { // NEW
-        return cell && typeof cell.getStyle === "function" ? (cell.getStyle() || "") : ((cell && cell.style) || ""); // NEW
-    } // NEW
-
-    function styleFlag(cell, key) { // NEW
-        return new RegExp("(?:^|;)" + key + "=1(?:;|$)").test(getStyle(cell)); // NEW
+    function canTransferOwnership(cell) { // NEW
+        if (!isEnabled()) return false; // NEW
+        const user = currentUser(); // NEW
+        if (!user || !cell || cell === model.getRoot()) return false; // NEW
+        return user.admin || isOwnerOfNearestAccessScope(cell, user.id); // NEW
     } // NEW
 
     function eligibleScopeType(cell) { // NEW
         if (!cell || cell === model.getRoot() || cell === graph.getDefaultParent()) return ""; // NEW
-        if (styleFlag(cell, "module") || getAttr(cell, "garden_module") === "1" || getAttr(cell, "team_module") === "1") return "module"; // NEW
-        const boardKey = String(getAttr(cell, "board_key") || ""); // NEW
-        if (boardKey === "KANBAN_BOARD" || boardKey === "MAIN_KANBAN_BOARD") return "task board"; // NEW
-        if (getAttr(cell, "garden_bed") === "1" || getAttr(cell, "gardenBed") === "1" || getAttr(cell, "is_garden_bed") === "1") return "garden bed"; // NEW
+        if (isModuleCell(cell)) return "module"; // CHANGE
+        if (isTaskBoard(cell)) return "task board"; // CHANGE
+        if (isGardenBed(cell)) return "garden bed"; // CHANGE
         return ""; // NEW
     } // NEW
 
@@ -653,17 +907,22 @@ Draw.loadPlugin(function (ui) {
 
     function getAccessSummary(cell) {
         const owner = nearestOwnedAncestor(cell);
-        const grants = userIdsFromAttr(cell);
+        const grants = getScopeGrants(cell); // CHANGE
+        const current = currentUser(); // NEW
         return {
             ownerUserId: owner && owner.ownerUserId || "",
             ownerCellId: owner && owner.cell && owner.cell.id || "",
             directOpen: getAttr(cell, ATTR_ACCESS_OPEN) === "1",
-            directUserIds: grants,
+            directUserIds: grants.map(function (grant) { return grant.userId; }), // CHANGE
+            directGrants: grants, // NEW
+            roleDerivedTask: !!(current && roleLinkedBoardGrantsForUser(current.id, cell).length), // NEW
+            effectiveCapabilities: current ? effectiveCapabilitiesForCell(cell, current.id) : [], // NEW
             effectiveOpen: !!nearestAccessGrant(cell, null),
             canEdit: canEditCell(cell),
             canAdd: canAddCell(cell),
             canDelete: canDeleteCell(cell),
-            canManageAccess: canManageAccess(cell)
+            canManageAccess: canManageAccess(cell),
+            canTransferOwnership: canTransferOwnership(cell) // NEW
         };
     }
 
@@ -718,8 +977,9 @@ Draw.loadPlugin(function (ui) {
         graph[INTERNAL_FLAG] = true;
         model.beginUpdate();
         try {
-            setAttr(cell, ATTR_ACCESS_OPEN, source.open ? "1" : "");
-            setUserIdsAttr(cell, (source.userIds || []).filter(function (id) { return !!userById(id); })); // CHANGE
+            setAttr(cell, ATTR_ACCESS_OPEN, ""); // CHANGE
+            const grants = (source.userIds || []).filter(function (id) { return !!storedOrPendingUserById(id); }).map(function (userId) { return normalizeGrant({ userId, preset: source.preset || "viewer", capabilities: source.capabilities }); }); // CHANGE
+            setGrantsAttr(cell, grants); // CHANGE
         } finally {
             model.endUpdate();
             graph[INTERNAL_FLAG] = false;
@@ -729,7 +989,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function setOwner(cell, userId) {
-        if (!cell || !canManageAccess(cell)) return { ok: false, reason: "You cannot change ownership for this cell." };
+        if (!cell || !canTransferOwnership(cell)) return { ok: false, reason: "You cannot change ownership for this cell." }; // CHANGE
         if (!userById(userId)) return { ok: false, reason: "Unknown owner." };
         graph[INTERNAL_FLAG] = true;
         model.beginUpdate();
@@ -737,6 +997,41 @@ Draw.loadPlugin(function (ui) {
         refreshPanel();
         return { ok: true };
     }
+
+    function getUserRoleCard(userId) { // NEW
+        const matches = roleCardsForUser(String(userId || "")); // NEW
+        if (matches.length !== 1) return null; // NEW
+        const cell = matches[0]; // NEW
+        return { id: cell.id || (cell.getId && cell.getId()) || "", cell, label: cellLabel(cell) }; // NEW
+    } // NEW
+
+    function listRoleCards() { // NEW
+        const cards = []; // NEW
+        traverseCells(model.getRoot && model.getRoot(), function (cell) { // NEW
+            if (isRoleCard(cell)) cards.push({ id: cell.id || (cell.getId && cell.getId()) || "", cell, label: cellLabel(cell), userId: getAttr(cell, ATTR_ROLE_USER) || "" }); // NEW
+        }); // NEW
+        return cards.sort(function (left, right) { return left.label.localeCompare(right.label, undefined, { sensitivity: "base" }) || left.id.localeCompare(right.id); }); // NEW
+    } // NEW
+
+    function setUserRoleCard(userId, roleCard) { // NEW
+        const cleanUserId = String(userId || "").trim(); // NEW
+        if (!roleCard || !isRoleCard(roleCard)) return { ok: false, reason: "Select a role card." }; // NEW
+        if (!canTransferOwnership(roleCard)) return { ok: false, reason: "Only admins or owners can link users to role cards." }; // NEW
+        if (cleanUserId && !userById(cleanUserId)) return { ok: false, reason: "Unknown user." }; // NEW
+        graph[INTERNAL_FLAG] = true; // NEW
+        model.beginUpdate(); // NEW
+        try { // NEW
+            traverseCells(model.getRoot && model.getRoot(), function (cell) { // NEW
+                if (isRoleCard(cell) && cleanUserId && getAttr(cell, ATTR_ROLE_USER) === cleanUserId && cell !== roleCard) setAttr(cell, ATTR_ROLE_USER, ""); // NEW
+            }); // NEW
+            setAttr(roleCard, ATTR_ROLE_USER, cleanUserId); // NEW
+        } finally { // NEW
+            model.endUpdate(); // NEW
+            graph[INTERNAL_FLAG] = false; // NEW
+        } // NEW
+        refreshPanel(); // NEW
+        return { ok: true, roleCard: cleanUserId ? getUserRoleCard(cleanUserId) : null }; // NEW
+    } // NEW
 
     function composeInviteEmail(invite, code, shareInfo) { // NEW
         const info = shareInfo || {}; // NEW
@@ -774,6 +1069,8 @@ Draw.loadPlugin(function (ui) {
         if (emailExists(store, email)) return { ok: false, reason: "That email is already invited or already belongs to a user." }; // NEW
         const scopeCheck = canInviteScopes(source.scopeCellIds || source.cells || []); // NEW
         if (!scopeCheck.ok) return { ok: false, reason: scopeCheck.reason }; // NEW
+        const preset = normalizePreset(source.preset || "viewer"); // NEW
+        const capabilities = normalizeCapabilities(source.capabilities, preset); // NEW
         const code = makeInviteCode(); // NEW
         const codeSalt = makeId(INVITE_CODE_SALT_PREFIX); // NEW
         const pendingUser = { id: makeId(USER_ID_PREFIX), email, invitedBy: actor.id, invitedAt: nowMs(), disabled: false }; // NEW
@@ -785,6 +1082,8 @@ Draw.loadPlugin(function (ui) {
             codeHash: hashInviteCode(code, codeSalt), // NEW
             scopeCellIds: scopeCheck.scopes.map(function (scope) { return scope.id; }), // NEW
             scopeLabels: scopeCheck.scopes.map(function (scope) { return scope.label; }), // NEW
+            preset, // NEW
+            capabilities, // NEW
             createdBy: actor.id, // NEW
             createdAt: nowMs(), // NEW
             expiresAt: nowMs() + INVITE_EXPIRY_MS, // NEW
@@ -792,7 +1091,7 @@ Draw.loadPlugin(function (ui) {
         }; // NEW
         store.pendingUsers.push(pendingUser); // NEW
         store.invites.push(invite); // NEW
-        writeStoreAndGrant(store, pendingUser.id, invite.scopeCellIds); // NEW
+        writeStoreAndGrant(store, pendingUser.id, invite.scopeCellIds, { preset, capabilities }); // CHANGE
         const emailDraft = composeInviteEmail(invite, code, source.shareInfo || {}); // NEW
         showStatus("Invite created for " + email + ". Review and send the email draft."); // NEW
         return { ok: true, invite: publicInvite(invite), code, emailDraft }; // NEW
@@ -883,6 +1182,42 @@ Draw.loadPlugin(function (ui) {
         return false;
     }
 
+    function roleUserLinkChanged(change) { // NEW
+        if (!change) return false; // NEW
+        const directKey = String(change.key || change.attribute || change.name || ""); // NEW
+        if (directKey === ATTR_ROLE_USER) return true; // NEW
+        const before = allValueAttrSnapshot(change.previous); // NEW
+        const after = allValueAttrSnapshot(change.value || (change.cell && change.cell.value)); // NEW
+        return (before[ATTR_ROLE_USER] || "") !== (after[ATTR_ROLE_USER] || ""); // NEW
+    } // NEW
+
+    function allValueAttrSnapshot(value) { // NEW
+        const out = {}; // NEW
+        if (!value || typeof value !== "object" || value.nodeType !== 1 || !value.attributes) return out; // NEW
+        for (let i = 0; i < value.attributes.length; i++) { // NEW
+            const attr = value.attributes[i]; // NEW
+            if (attr) out[attr.name] = attr.value; // NEW
+        } // NEW
+        return out; // NEW
+    } // NEW
+
+    function changedAttributeNames(change) { // NEW
+        const direct = String(change && (change.key || change.attribute || change.name || "") || ""); // NEW
+        if (direct) return [direct]; // NEW
+        const names = new Set(); // NEW
+        const before = allValueAttrSnapshot(change && change.previous); // NEW
+        const after = allValueAttrSnapshot(change && (change.value || (change.cell && change.cell.value))); // NEW
+        Object.keys(before).forEach(function (key) { if ((before[key] || "") !== (after[key] || "")) names.add(key); }); // NEW
+        Object.keys(after).forEach(function (key) { if ((before[key] || "") !== (after[key] || "")) names.add(key); }); // NEW
+        return Array.from(names); // NEW
+    } // NEW
+
+    function isTaskDetailOnlyChange(change) { // NEW
+        const names = changedAttributeNames(change); // NEW
+        if (!names.length) return true; // NEW
+        return names.every(function (name) { return TASK_DETAIL_ATTRS.has(name) && !TASK_ASSIGNMENT_ATTRS.has(name); }); // NEW
+    } // NEW
+
     function cellFromChange(change) {
         return change && (change.cell || change.child || change.terminal || null);
     }
@@ -896,23 +1231,45 @@ Draw.loadPlugin(function (ui) {
         return change && change.previous || null;
     }
 
+    function stampAllowedCreations(changes) { // NEW
+        (changes || []).forEach(function (change) { // NEW
+            const name = change && change.constructor && change.constructor.name; // NEW
+            if (name !== "mxChildChange") return; // NEW
+            const cell = cellFromChange(change); // NEW
+            if (cell && currentParentOfChange(change) && !previousParentOfChange(change) && isTilerGroup(cell)) stampCreatedOwner(cell); // NEW
+        }); // NEW
+    } // NEW
+
     function changeAllowed(change) {
         const name = change && change.constructor && change.constructor.name;
         const cell = cellFromChange(change);
         if (!name || !cell) return true;
+        if (roleUserLinkChanged(change)) return canTransferOwnership(cell); // NEW
         if (PROTECTED_ATTRS.has(String(change.key || "")) && !canManageAccess(cell)) return false;
         if (protectedAttrsChanged(change) && !canManageAccess(cell)) return false; // NEW
         if (name === "mxChildChange") {
             const currentParent = currentParentOfChange(change);
             const previousParent = previousParentOfChange(change);
+            if (currentParent && !previousParent && isTilerGroup(cell)) return canCreatePlanting(currentParent); // NEW
+            if (currentParent && previousParent && currentParent !== previousParent && isTaskCard(cell)) return canMoveTask(cell); // NEW
+            if (currentParent && previousParent && currentParent === previousParent && isTaskCard(cell)) return canMoveTask(cell); // NEW
             if (currentParent && !canAddCell(currentParent)) return false;
             if (!currentParent && previousParent) return canDeleteFromPreviousParent(cell, previousParent); // CHANGE
             if (currentParent && previousParent && currentParent !== previousParent && !canDeleteFromPreviousParent(cell, previousParent)) return false; // CHANGE
             return !!currentParent;
         }
         if (name === "mxValueChange" && protectedAttrsChanged(change)) return canManageAccess(cell);
+        if ((name === "mxCellAttributeChange" || name === "mxValueChange") && isTaskCard(cell)) { // NEW
+            if (changedAttributeNames(change).some(function (attr) { return TASK_ASSIGNMENT_ATTRS.has(attr); })) return hasCapability(cell, CAP_MANAGE_SCOPE_CONTENT); // NEW
+            return isTaskDetailOnlyChange(change) ? canEditTaskDetails(cell) : hasCapability(cell, CAP_MANAGE_SCOPE_CONTENT); // NEW
+        } // NEW
+        if (name === "mxCellAttributeChange") { // NEW
+            if (nearestPlanting(cell)) return canManagePlanting(cell); // NEW
+            return hasCapability(cell, CAP_MANAGE_SCOPE_CONTENT); // NEW
+        } // NEW
         if (name === "mxGeometryChange") return canMoveCell(cell); // NEW
         if (name === "mxStyleChange" || name === "mxValueChange" || name === "mxTerminalChange" || name === "mxCollapseChange" || name === "mxVisibleChange") { // CHANGE
+            if (nearestPlanting(cell)) return canManagePlanting(cell); // NEW
             return canEditCell(cell);
         }
         return true;
@@ -947,6 +1304,7 @@ Draw.loadPlugin(function (ui) {
                 return;
             }
         }
+        stampAllowedCreations(changes); // NEW
     }
 
     function makeButton(label, onClick) {
@@ -988,6 +1346,18 @@ Draw.loadPlugin(function (ui) {
             left: Math.max(margin, Math.min(x, size.width - width - margin)), // NEW
             top: Math.max(margin, Math.min(y, size.height - Math.min(height, size.height - margin * 2) - margin)) // NEW
         }; // NEW
+    } // NEW
+
+    function positionPanelNearButton() { // NEW
+        if (!panel) return; // NEW
+        const width = 400; // NEW
+        const height = Math.min(420, viewportSize().height - 16); // NEW
+        const pos = fixedPositionNearButton(width, height, 4); // NEW
+        panel.style.left = pos.left + "px"; // NEW
+        panel.style.top = pos.top + "px"; // NEW
+        panel.style.right = "auto"; // NEW
+        panel.style.width = width + "px"; // NEW
+        panel.style.maxHeight = "calc(100vh - " + Math.max(16, pos.top + 8) + "px)"; // NEW
     } // NEW
 
     function showStatus(message) {
@@ -1250,7 +1620,7 @@ Draw.loadPlugin(function (ui) {
         toolbarButton.style.cssText = "margin:2px 4px;padding:3px 8px;cursor:pointer;"; // NEW
         toolbarButton.addEventListener("click", function (evt) { // NEW
             if (evt) evt.stopPropagation(); // NEW
-            if (isLoggedIn()) openAccountMenu(); // NEW
+            if (isLoggedIn()) togglePanel(); // CHANGE
             else showAuthDialog({ blocking: false, message: isEnabled() ? "Log in to this diagram." : "Enable users for this diagram." }); // NEW
         }); // NEW
         const historyButton = host.querySelector && host.querySelector(".trellis-changemap-history-button"); // NEW
@@ -1302,12 +1672,16 @@ Draw.loadPlugin(function (ui) {
         const host = document.body; // CHANGE
         if (!host) return;
         panel = document.createElement("div");
-        panel.style.cssText = "position:fixed;top:36px;right:12px;z-index:" + USERS_UI_LAYER_Z + ";background:#fff;border:1px solid #111;border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,.22);width:320px;max-height:calc(100vh - 72px);overflow:auto;padding:10px;font:12px Arial,sans-serif;display:none;box-sizing:border-box;"; // CHANGE
+        panel.style.cssText = "position:fixed;top:36px;right:12px;z-index:" + USERS_UI_LAYER_Z + ";background:#fff;border:1px solid #111;border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,.22);width:400px;max-height:calc(100vh - 72px);overflow:auto;padding:10px;font:12px Arial,sans-serif;display:none;box-sizing:border-box;"; // CHANGE
         panel.addEventListener("mousedown", function (evt) { evt.stopPropagation(); });
+        const header = document.createElement("div"); // NEW
+        header.style.cssText = "display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:8px;"; // NEW
         const title = document.createElement("div");
         title.textContent = "Trellis Users";
-        title.style.cssText = "font-weight:700;font-size:14px;margin-bottom:8px;";
-        panel.appendChild(title);
+        title.style.cssText = "font-weight:700;font-size:14px;"; // CHANGE
+        header.appendChild(title); // NEW
+        header.appendChild(makeButton("Close", function () { if (panel) panel.style.display = "none"; })); // NEW
+        panel.appendChild(header); // NEW
         statusNode = document.createElement("div");
         statusNode.style.cssText = "min-height:16px;color:#4B5563;margin-bottom:8px;";
         panel.appendChild(statusNode);
@@ -1325,7 +1699,9 @@ Draw.loadPlugin(function (ui) {
     function togglePanel() {
         createPanel();
         if (!panel) return;
-        panel.style.display = panel.style.display === "none" ? "" : "none";
+        const opening = panel.style.display === "none"; // NEW
+        panel.style.display = opening ? "" : "none"; // CHANGE
+        if (opening) positionPanelNearButton(); // NEW
         refreshPanel();
     }
 
@@ -1442,52 +1818,176 @@ Draw.loadPlugin(function (ui) {
         parent.appendChild(row);
     }
 
+    function appendResetPinRow(parent, user) { // NEW
+        const resetRow = document.createElement("div"); // NEW
+        resetRow.style.cssText = "display:grid;grid-template-columns:1fr auto auto;gap:6px;align-items:center;padding:0 0 6px 0;margin-left:12px;"; // NEW
+        const pinInput = makeInput("password", "New PIN"); // NEW
+        resetRow.appendChild(pinInput); // NEW
+        resetRow.appendChild(makeButton("Save", function () { // NEW
+            const result = resetUserPin(user.id, pinInput.value); // NEW
+            if (!result.ok) { showStatus(result.reason); return; } // NEW
+            pinInput.value = ""; // NEW
+            resetPinUserId = ""; // NEW
+            showStatus("PIN reset for " + user.name + "."); // NEW
+            refreshPanel(); // NEW
+        })); // NEW
+        resetRow.appendChild(makeButton("Cancel", function () { // NEW
+            resetPinUserId = ""; // NEW
+            refreshPanel(); // NEW
+        })); // NEW
+        parent.appendChild(resetRow); // NEW
+        setTimeout(function () { if (pinInput && typeof pinInput.focus === "function") pinInput.focus(); }, 0); // NEW
+    } // NEW
+
+    function appendAdminUserRow(parent, user) { // NEW
+        const row = document.createElement("div"); // NEW
+        row.style.cssText = "display:grid;grid-template-columns:minmax(80px,1fr) minmax(120px,160px) auto auto auto;gap:6px;align-items:center;padding:3px 0;"; // CHANGE
+        row.appendChild(document.createTextNode(user.name + (user.admin ? " - admin" : "") + (user.disabled ? " - disabled" : ""))); // NEW
+        const roleSelect = document.createElement("select"); // NEW
+        roleSelect.style.cssText = "box-sizing:border-box;width:100%;padding:3px 5px;font:12px Arial,sans-serif;"; // NEW
+        const none = document.createElement("option"); // NEW
+        none.value = ""; // NEW
+        none.textContent = "No role card"; // NEW
+        roleSelect.appendChild(none); // NEW
+        listRoleCards().forEach(function (role) { // NEW
+            const option = document.createElement("option"); // NEW
+            option.value = role.id; // NEW
+            option.textContent = role.label + (role.userId && role.userId !== user.id ? " (linked)" : ""); // NEW
+            roleSelect.appendChild(option); // NEW
+        }); // NEW
+        const linked = getUserRoleCard(user.id); // NEW
+        roleSelect.value = linked ? linked.id : ""; // NEW
+        roleSelect.addEventListener("change", function () { // NEW
+            const role = roleSelect.value ? (model.getCell && model.getCell(roleSelect.value)) : (linked && linked.cell); // NEW
+            if (!role) return; // NEW
+            const result = setUserRoleCard(roleSelect.value ? user.id : "", role); // NEW
+            if (!result.ok) showStatus(result.reason); // NEW
+        }); // NEW
+        row.appendChild(roleSelect); // NEW
+        const adminToggle = makeButton(user.admin ? "Regular" : "Admin", function () { // NEW
+            const result = setUserAdmin(user.id, !user.admin); // NEW
+            if (!result.ok) showStatus(result.reason); // NEW
+        }); // NEW
+        const disableToggle = makeButton(user.disabled ? "Reactivate" : "Disable", function () { // NEW
+            const result = setUserDisabled(user.id, !user.disabled); // NEW
+            if (!result.ok) showStatus(result.reason); // NEW
+        }); // NEW
+        const resetPin = makeButton("PIN", function () { // NEW
+            resetPinUserId = resetPinUserId === user.id ? "" : user.id; // NEW
+            refreshPanel(); // NEW
+        }); // NEW
+        row.appendChild(adminToggle); // NEW
+        row.appendChild(disableToggle); // NEW
+        row.appendChild(resetPin); // NEW
+        parent.appendChild(row); // NEW
+        if (resetPinUserId === user.id) appendResetPinRow(parent, user); // NEW
+    } // NEW
+
+    function appendUserGroup(parent, titleText, users) { // NEW
+        const group = document.createElement("div"); // NEW
+        group.className = "trellis-users-user-group"; // NEW
+        group.setAttribute("data-trellis-users-group", titleText); // NEW
+        group.style.cssText = "margin-top:8px;"; // NEW
+        const title = document.createElement("div"); // NEW
+        title.textContent = titleText; // NEW
+        title.style.cssText = "font-weight:700;color:#111827;"; // NEW
+        group.appendChild(title); // NEW
+        if (users.length) users.forEach(function (user) { appendAdminUserRow(group, user); }); // NEW
+        else { // NEW
+            const empty = document.createElement("div"); // NEW
+            empty.style.cssText = "color:#6B7280;padding:3px 0;"; // NEW
+            empty.textContent = "None"; // NEW
+            group.appendChild(empty); // NEW
+        } // NEW
+        parent.appendChild(group); // NEW
+        return group; // NEW
+    } // NEW
+
+    function appendLocalUserCreator(parent) { // NEW
+        const addRow = document.createElement("div"); // NEW
+        addRow.style.cssText = "display:grid;grid-template-columns:1fr 72px auto;gap:6px;margin-top:6px;"; // NEW
+        const name = makeInput("text", "Local user"); // NEW
+        const pin = makeInput("password", "PIN"); // NEW
+        addRow.appendChild(name); // NEW
+        addRow.appendChild(pin); // NEW
+        addRow.appendChild(makeButton("Add local user", function () { // NEW
+            const result = createUser(name.value, pin.value, false); // NEW
+            if (!result.ok) showStatus(result.reason); // NEW
+            name.value = ""; // NEW
+            pin.value = ""; // NEW
+        })); // NEW
+        parent.appendChild(addRow); // NEW
+    } // NEW
+
     function appendAdminRoster(parent) {
         if (!isEnabled() || !isAdmin()) return; // CHANGE
         const box = document.createElement("div");
         box.style.cssText = "border-top:1px solid #E5E7EB;padding-top:8px;margin-top:8px;";
         const title = document.createElement("div");
-        title.textContent = "Users";
+        title.textContent = "Users"; // CHANGE
         title.style.fontWeight = "700";
         box.appendChild(title);
-        listUsers().forEach(function (user) {
-            const row = document.createElement("div");
-            row.style.cssText = "display:grid;grid-template-columns:minmax(80px,1fr) auto auto auto;gap:6px;align-items:center;padding:3px 0;"; // CHANGE
-            row.appendChild(document.createTextNode(user.name + (user.admin ? " - admin" : "") + (user.disabled ? " - disabled" : ""))); // CHANGE
-            const adminToggle = makeButton(user.admin ? "Regular" : "Admin", function () { // NEW
-                const result = setUserAdmin(user.id, !user.admin); // NEW
-                if (!result.ok) showStatus(result.reason); // NEW
-            }); // NEW
-            const disableToggle = makeButton(user.disabled ? "Reactivate" : "Disable", function () { // NEW
-                const result = setUserDisabled(user.id, !user.disabled); // NEW
-                if (!result.ok) showStatus(result.reason); // NEW
-            }); // NEW
-            const resetPin = makeButton("PIN", function () { // NEW
-                const pin = window.prompt ? window.prompt("New PIN for " + user.name + ":") : ""; // NEW
-                if (pin == null) return; // NEW
-                const result = resetUserPin(user.id, pin); // NEW
-                if (!result.ok) showStatus(result.reason); // NEW
-            }); // NEW
-            row.appendChild(adminToggle); // NEW
-            row.appendChild(disableToggle); // NEW
-            row.appendChild(resetPin); // NEW
-            box.appendChild(row);
-        });
-        const addRow = document.createElement("div");
-        addRow.style.cssText = "display:grid;grid-template-columns:1fr 72px 52px;gap:6px;margin-top:6px;";
-        const name = makeInput("text", "New user");
-        const pin = makeInput("password", "PIN");
-        addRow.appendChild(name);
-        addRow.appendChild(pin);
-        addRow.appendChild(makeButton("Add", function () {
-            const result = createUser(name.value, pin.value, false);
-            if (!result.ok) showStatus(result.reason);
-            name.value = "";
-            pin.value = "";
-        }));
-        box.appendChild(addRow);
+        const users = listUsers(); // NEW
+        appendUserGroup(box, "Networked users", users.filter(function (user) { return !!normalizeEmail(user.email); })); // NEW
+        const localGroup = appendUserGroup(box, "Local users", users.filter(function (user) { return !normalizeEmail(user.email); })); // NEW
+        appendLocalUserCreator(localGroup); // NEW
         parent.appendChild(box);
     }
+
+    function presetLabel(preset) { // NEW
+        const normalized = normalizePreset(preset); // NEW
+        return normalized.charAt(0).toUpperCase() + normalized.slice(1); // NEW
+    } // NEW
+
+    function capabilityLabel(capability) { // NEW
+        return ({ // NEW
+            create_plantings: "Create plantings", // NEW
+            manage_own_plantings: "Manage own plantings", // NEW
+            move_tasks: "Move tasks", // NEW
+            edit_task_details: "Edit task details", // NEW
+            manage_scope_content: "Manage scope content", // NEW
+            manage_access: "Manage access" // NEW
+        })[capability] || capability; // NEW
+    } // NEW
+
+    function makePresetSelect(value, onChange) { // NEW
+        const select = document.createElement("select"); // NEW
+        select.style.cssText = "box-sizing:border-box;width:100%;padding:4px 6px;font:12px Arial,sans-serif;"; // NEW
+        ACCESS_PRESETS.forEach(function (preset) { // NEW
+            const option = document.createElement("option"); // NEW
+            option.value = preset; // NEW
+            option.textContent = presetLabel(preset); // NEW
+            select.appendChild(option); // NEW
+        }); // NEW
+        select.value = normalizePreset(value); // NEW
+        select.addEventListener("change", function () { onChange(select.value); }); // NEW
+        return select; // NEW
+    } // NEW
+
+    function appendCapabilityCheckboxes(parent, grant, onChange) { // NEW
+        const selected = new Set(normalizeCapabilities(grant && grant.capabilities, grant && grant.preset)); // NEW
+        const wrap = document.createElement("div"); // NEW
+        wrap.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:3px 8px;margin-top:4px;color:#374151;"; // NEW
+        DOMAIN_CAPABILITIES.forEach(function (capability) { // NEW
+            const label = document.createElement("label"); // NEW
+            label.style.cssText = "display:flex;gap:4px;align-items:center;font-size:11px;"; // NEW
+            const input = document.createElement("input"); // NEW
+            input.type = "checkbox"; // NEW
+            input.checked = selected.has(capability); // NEW
+            input.addEventListener("change", function () { // NEW
+                if (input.checked) selected.add(capability); else selected.delete(capability); // NEW
+                onChange(Array.from(selected).sort()); // NEW
+            }); // NEW
+            label.appendChild(input); // NEW
+            label.appendChild(document.createTextNode(capabilityLabel(capability))); // NEW
+            wrap.appendChild(label); // NEW
+        }); // NEW
+        parent.appendChild(wrap); // NEW
+    } // NEW
+
+    function grantForUser(summary, userId) { // NEW
+        return (summary.directGrants || []).find(function (grant) { return grant.userId === userId; }) || { userId, preset: "viewer", capabilities: [] }; // NEW
+    } // NEW
 
     function appendAccessSection(parent) {
         if (!isEnabled()) return; // NEW
@@ -1519,47 +2019,83 @@ Draw.loadPlugin(function (ui) {
             parent.appendChild(box);
             return;
         }
-        const ownerSelect = document.createElement("select"); // NEW
-        ownerSelect.style.cssText = "box-sizing:border-box;width:100%;margin:4px 0 6px 0;padding:4px 6px;font:12px Arial,sans-serif;"; // NEW
-        listUsers().filter(function (user) { return !user.disabled; }).forEach(function (user) { // NEW
-            const option = document.createElement("option"); // NEW
-            option.value = user.id; // NEW
-            option.textContent = user.name + (user.admin ? " (admin)" : ""); // NEW
-            ownerSelect.appendChild(option); // NEW
-        }); // NEW
-        ownerSelect.value = summary.ownerUserId || ""; // NEW
-        ownerSelect.addEventListener("change", function () { // NEW
-            const result = setOwner(cell, ownerSelect.value); // NEW
-            if (!result.ok) showStatus(result.reason); // NEW
-        }); // NEW
-        box.appendChild(ownerSelect); // NEW
-        const openLabel = document.createElement("label");
-        openLabel.style.cssText = "display:flex;gap:6px;align-items:center;margin:6px 0;";
-        const open = document.createElement("input");
-        open.type = "checkbox";
-        open.checked = summary.directOpen;
-        open.addEventListener("change", function () {
-            setAccess(cell, { open: open.checked, userIds: userIdsFromAttr(cell) });
-        });
-        openLabel.appendChild(open);
-        openLabel.appendChild(document.createTextNode("Open to all logged-in users"));
-        box.appendChild(openLabel);
+        if (summary.canTransferOwnership) { // NEW
+            const ownerSelect = document.createElement("select"); // NEW
+            ownerSelect.style.cssText = "box-sizing:border-box;width:100%;margin:4px 0 6px 0;padding:4px 6px;font:12px Arial,sans-serif;"; // NEW
+            listUsers().filter(function (user) { return !user.disabled; }).forEach(function (user) { // NEW
+                const option = document.createElement("option"); // NEW
+                option.value = user.id; // NEW
+                option.textContent = user.name + (user.admin ? " (admin)" : ""); // NEW
+                ownerSelect.appendChild(option); // NEW
+            }); // NEW
+            ownerSelect.value = summary.ownerUserId || ""; // NEW
+            ownerSelect.addEventListener("change", function () { // NEW
+                const result = setOwner(cell, ownerSelect.value); // NEW
+                if (!result.ok) showStatus(result.reason); // NEW
+            }); // NEW
+            box.appendChild(ownerSelect); // NEW
+        } // NEW
+        if (isRoleCard(cell)) { // NEW
+            const roleLink = document.createElement("div"); // NEW
+            roleLink.style.cssText = "border:1px solid #E5E7EB;border-radius:4px;padding:6px;margin:6px 0;"; // NEW
+            const label = document.createElement("div"); // NEW
+            label.textContent = "Linked Trellis user"; // NEW
+            label.style.cssText = "font-weight:700;margin-bottom:4px;"; // NEW
+            roleLink.appendChild(label); // NEW
+            const select = document.createElement("select"); // NEW
+            select.style.cssText = "box-sizing:border-box;width:100%;padding:4px 6px;font:12px Arial,sans-serif;"; // NEW
+            const none = document.createElement("option"); // NEW
+            none.value = ""; // NEW
+            none.textContent = "No linked user"; // NEW
+            select.appendChild(none); // NEW
+            listUsers().filter(function (user) { return !user.disabled; }).forEach(function (user) { // NEW
+                const option = document.createElement("option"); // NEW
+                option.value = user.id; // NEW
+                option.textContent = user.name + (user.admin ? " (admin)" : ""); // NEW
+                select.appendChild(option); // NEW
+            }); // NEW
+            select.value = getAttr(cell, ATTR_ROLE_USER) || ""; // NEW
+            select.disabled = !summary.canTransferOwnership; // NEW
+            select.addEventListener("change", function () { // NEW
+                const result = setUserRoleCard(select.value, cell); // NEW
+                if (!result.ok) showStatus(result.reason); // NEW
+            }); // NEW
+            roleLink.appendChild(select); // NEW
+            box.appendChild(roleLink); // NEW
+        } // NEW
+        const caps = document.createElement("div"); // NEW
+        caps.style.cssText = "color:#4B5563;margin:4px 0;"; // NEW
+        caps.textContent = "Your effective access: " + (summary.effectiveCapabilities.length ? summary.effectiveCapabilities.map(capabilityLabel).join(", ") : "Viewer"); // NEW
+        box.appendChild(caps); // NEW
+        if (summary.roleDerivedTask) { // NEW
+            const roleDerived = document.createElement("div"); // NEW
+            roleDerived.style.cssText = "color:#2563EB;margin:4px 0;"; // NEW
+            roleDerived.textContent = "Task access also comes from your linked role card."; // NEW
+            box.appendChild(roleDerived); // NEW
+        } // NEW
         listUsers().filter(function (user) { return !user.admin && !user.disabled; }).forEach(function (user) { // CHANGE
-            const label = document.createElement("label");
-            label.style.cssText = "display:flex;gap:6px;align-items:center;margin:4px 0;";
-            const input = document.createElement("input");
-            input.type = "checkbox";
-            input.checked = summary.directUserIds.indexOf(user.id) >= 0;
-            input.addEventListener("change", function () {
-                const ids = userIdsFromAttr(cell);
-                const next = new Set(ids);
-                if (input.checked) next.add(user.id);
-                else next.delete(user.id);
-                setAccess(cell, { open: getAttr(cell, ATTR_ACCESS_OPEN) === "1", userIds: Array.from(next) });
-            });
-            label.appendChild(input);
-            label.appendChild(document.createTextNode(user.name));
-            box.appendChild(label);
+            const grant = grantForUser(summary, user.id); // NEW
+            const row = document.createElement("div"); // NEW
+            row.style.cssText = "border-top:1px solid #F3F4F6;padding:6px 0;"; // NEW
+            const head = document.createElement("div"); // NEW
+            head.style.cssText = "display:grid;grid-template-columns:minmax(70px,1fr) 130px auto;gap:6px;align-items:center;"; // NEW
+            const name = document.createElement("div"); // NEW
+            name.textContent = user.name; // NEW
+            head.appendChild(name); // NEW
+            head.appendChild(makePresetSelect(grant.preset, function (preset) { // NEW
+                const result = setScopeGrant(cell, { userId: user.id, preset }); // NEW
+                if (!result.ok) showStatus(result.reason); // NEW
+            })); // NEW
+            head.appendChild(makeButton(summary.directUserIds.indexOf(user.id) >= 0 ? "Remove" : "Apply", function () { // NEW
+                const result = summary.directUserIds.indexOf(user.id) >= 0 ? removeScopeGrant(cell, user.id) : setScopeGrant(cell, { userId: user.id, preset: grant.preset || "viewer" }); // NEW
+                if (!result.ok) showStatus(result.reason); // NEW
+            })); // NEW
+            row.appendChild(head); // NEW
+            appendCapabilityCheckboxes(row, grant, function (capabilities) { // NEW
+                const result = setScopeGrant(cell, { userId: user.id, preset: grant.preset || "viewer", capabilities }); // NEW
+                if (!result.ok) showStatus(result.reason); // NEW
+            }); // NEW
+            box.appendChild(row); // NEW
         });
         parent.appendChild(box);
     }
@@ -1616,6 +2152,11 @@ Draw.loadPlugin(function (ui) {
         canAddCell,
         canDeleteCell,
         canManageAccess,
+        canCreatePlanting, // NEW
+        canManagePlanting, // NEW
+        canMoveTask, // NEW
+        canEditTaskDetails, // NEW
+        effectiveCapabilitiesForCell, // NEW
         getAccessSummary,
         withActorMetadata,
         listUsers,
@@ -1637,6 +2178,12 @@ Draw.loadPlugin(function (ui) {
         listPendingInvites, // NEW
         canInviteScopes, // NEW
         getEligibleShareScopes, // NEW
+        getScopeGrants, // NEW
+        setScopeGrant, // NEW
+        removeScopeGrant, // NEW
+        listRoleCards, // NEW
+        getUserRoleCard, // NEW
+        setUserRoleCard, // NEW
         setAccess,
         setOwner,
         stampCreatedOwner,
@@ -1644,10 +2191,20 @@ Draw.loadPlugin(function (ui) {
         attrs: {
             owner: ATTR_OWNER,
             accessUsers: ATTR_ACCESS_USERS,
+            accessGrants: ATTR_ACCESS_GRANTS, // NEW
             accessOpen: ATTR_ACCESS_OPEN,
+            roleUser: ATTR_ROLE_USER, // NEW
             createdBy: ATTR_CREATED_BY,
             editedBy: ATTR_EDITED_BY
         },
+        capabilities: { // NEW
+            createPlantings: CAP_CREATE_PLANTINGS, // NEW
+            manageOwnPlantings: CAP_MANAGE_OWN_PLANTINGS, // NEW
+            moveTasks: CAP_MOVE_TASKS, // NEW
+            editTaskDetails: CAP_EDIT_TASK_DETAILS, // NEW
+            manageScopeContent: CAP_MANAGE_SCOPE_CONTENT, // NEW
+            manageAccess: CAP_MANAGE_ACCESS // NEW
+        }, // NEW
         _test: {
             readStore,
             writeStore,
@@ -1655,6 +2212,7 @@ Draw.loadPlugin(function (ui) {
             hashInviteCode, // NEW
             nearestOwnedAncestor,
             nearestAccessGrant,
+            roleLinkedBoardGrantsForUser, // NEW
             changeAllowed,
             composeInviteEmail, // NEW
             getDiagramLoginKey, // NEW

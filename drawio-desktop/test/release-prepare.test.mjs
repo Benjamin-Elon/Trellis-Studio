@@ -119,14 +119,14 @@ test('parses release CLI arguments', () => {
 
 test('normalizes supported GitHub remotes', () => {
 	assert.equal(
-		normalizeRemoteUrl('git+https://github.com/Benjamin-Elon/Trellis-for-Drawio.git'),
-		'github.com/benjamin-elon/trellis-for-drawio',
+		normalizeRemoteUrl('git+https://github.com/Benjamin-Elon/trellis-studio.git'),
+		'github.com/benjamin-elon/trellis-studio',
 	);
 	assert.equal(
-		normalizeRemoteUrl('git@github.com:Benjamin-Elon/Trellis-for-Drawio.git'),
-		'github.com/benjamin-elon/trellis-for-drawio',
+		normalizeRemoteUrl('git@github.com:Benjamin-Elon/trellis-studio.git'),
+		'github.com/benjamin-elon/trellis-studio',
 	);
-	assert.equal(isExpectedRemote('https://github.com/Benjamin-Elon/Trellis-for-Drawio.git'), true);
+	assert.equal(isExpectedRemote('https://github.com/Benjamin-Elon/trellis-studio.git'), true);
 	assert.equal(isExpectedRemote('https://github.com/jgraph/drawio-desktop.git'), false);
 });
 

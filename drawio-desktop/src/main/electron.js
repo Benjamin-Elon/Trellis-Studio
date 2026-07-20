@@ -160,9 +160,9 @@ autoUpdater.logger.transports.file.level = 'error'
 autoUpdater.logger.transports.console.level = 'error'
 autoUpdater.autoDownload = silentUpdate
 autoUpdater.autoInstallOnAppQuit = silentUpdate
-const trellisReleaseUrl = 'https://github.com/Benjamin-Elon/Trellis-for-Drawio'; // Trellis release: single source for public release links.
+const trellisReleaseUrl = 'https://github.com/Benjamin-Elon/trellis-studio'; // Trellis release: single source for public release links.
 const trellisSupportUrl = `${trellisReleaseUrl}/issues`; // Trellis release: keep support links on the fork.
-const trellisReleasesApiUrl = 'https://api.github.com/repos/Benjamin-Elon/Trellis-for-Drawio/releases?per_page=10'; // NEW
+const trellisReleasesApiUrl = 'https://api.github.com/repos/Benjamin-Elon/trellis-studio/releases?per_page=10'; // CHANGE
 const trellisReleasesTimeoutMs = 15000; // NEW
 const trellisUpdateProgressTitle = 'Trellis Studio Update'; // NEW
 const trellisUpdateProgressText = 'Downloading Trellis Studio update...'; // NEW

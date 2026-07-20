@@ -19,6 +19,14 @@ function readPlantTilerSource() { // NEW
     return fs.readFileSync(plantTilerPath, 'utf8'); // NEW
 } // NEW
 
+function sourceSlice(source, startNeedle, endNeedle) { // NEW
+    const start = source.indexOf(startNeedle); // NEW
+    assert.notEqual(start, -1); // NEW
+    const end = source.indexOf(endNeedle, start); // NEW
+    assert.notEqual(end, -1); // NEW
+    return source.slice(start, end); // NEW
+} // NEW
+
 test('Garden Settings suppresses the garden options overlay while the dialog is open', () => { // NEW
     const source = readPlantTilerSource(); // NEW
 
@@ -92,4 +100,34 @@ test('Garden module overlay repeated selected-module clicks toggle visibility wi
     assert.match(source, /pendingSelectedModuleToggle = selectedGardenModulePlainClickTarget\(me, evt\);/); // NEW
     assert.match(source, /toggleHiddenModuleAfterSimpleClick\(evt\);/); // NEW
     assert.match(source, /clearHiddenModuleIfTargetChanged\(target\);[\s\S]*if \(target\.mode === "module" && target\.moduleCell === manuallyHiddenModuleCell\) \{ hideToolbar\(\); return; \}/); // NEW
+}); // NEW
+
+test('Plant group creation finalizes tiling and bed fit inside the creation transaction', () => { // NEW
+    const source = readPlantTilerSource(); // NEW
+    const finalizer = sourceSlice(source, 'function finalizeCreatedTilerGroup', 'function createDefaultGardenBed'); // NEW
+    const createEmpty = sourceSlice(source, 'function createEmptyTilerGroup', '// ---------- Debug helpers'); // NEW
+
+    assert.match(finalizer, /retileAndFitToContainingBed\(graph, group, \{ source: source \|\| "tiler-created", inTransaction: true \}\);/); // NEW
+    assert.match(createEmpty, /const creationSource = \(opts && opts\.source\) \|\| "empty-group";[\s\S]*model\.beginUpdate\(\);[\s\S]*graph\.addCell\(group, moduleCell\);[\s\S]*finalizeCreatedTilerGroup\(graph, group, moduleCell, creationSource\);[\s\S]*model\.endUpdate\(\);/); // NEW
+    assert.match(createEmpty, /notifyTilerGroupCreated\(graph, group, creationSource\);/); // NEW
+    assert.doesNotMatch(createEmpty, /retileGroup\(graph, group\);/); // NEW
+}); // NEW
+
+test('Garden module overlay plant group add no longer runs a second post-creation bed fit', () => { // NEW
+    const source = readPlantTilerSource(); // NEW
+    const overlayAdd = sourceSlice(source, 'mxEvent.addListener(addGroupBtn, "click"', 'mxEvent.addListener(irrigationSourceBtn, "click"'); // NEW
+
+    assert.match(overlayAdd, /createEmptyTilerGroup\(graph, moduleCell, pt\.x, pt\.y, \{ source: activeOverlayMode === "bed" \? "overlay-bed-add" : "overlay-module-add" \}\);/); // NEW
+    assert.doesNotMatch(overlayAdd, /retileAndFitToContainingBed\(graph, group/); // NEW
+}); // NEW
+
+test('Context menu and plant-circle wrap use the shared plant group finalizer', () => { // NEW
+    const source = readPlantTilerSource(); // NEW
+    const contextMenu = sourceSlice(source, 'menu.addItem("Add New Plant Group"', 'log("[module] empty tiler group created"'); // NEW
+    const wrapCreate = sourceSlice(source, 'function createTilerGroupFromCircle', 'function computeGridStatsXY'); // NEW
+
+    assert.match(contextMenu, /createEmptyTilerGroup\(graph, targetMod, pt\.x, pt\.y\);/); // NEW
+    assert.match(wrapCreate, /model\.beginUpdate\(\);[\s\S]*graph\.addCell\(group, parent\);[\s\S]*finalizeCreatedTilerGroup\(graph, group, parent, "plant-circle-wrap"\);[\s\S]*model\.endUpdate\(\);/); // NEW
+    assert.match(wrapCreate, /model\.setGeometry\(c, local\);/); // NEW
+    assert.doesNotMatch(wrapCreate, /retileGroup\(graph, group\);/); // NEW
 }); // NEW

@@ -44,3 +44,19 @@ test('Windows installers offer to run Trellis after installation finishes', () =
 	// Trellis release: the x64 MSI also supports electron-builder's finish-page run option.
 	assert.equal(winConfig.msi?.runAfterFinish, true, 'electron-builder-win.json MSI must run after finish');
 });
+
+test('Electron Builder configs expose Trellis Studio labels while preserving compatibility IDs', () => {
+	for (const fileName of getBuilderConfigNames()) {
+		const config = readBuilderConfig(fileName);
+		const drawioAssociation = config.fileAssociations?.find((association) => association.ext === 'drawio');
+
+		assert.equal(config.appId, 'com.benjaminelon.trellisfordrawio', `${fileName} appId must remain compatible`); // CHANGE
+		assert.equal(drawioAssociation?.name, 'Trellis Studio Diagram', `${fileName} drawio association name must be branded`); // CHANGE
+		assert.equal(drawioAssociation?.description, 'Trellis Studio Diagram', `${fileName} drawio association description must be branded`); // CHANGE
+		assert.equal(drawioAssociation?.mimeType, 'application/vnd.jgraph.mxfile', `${fileName} drawio MIME type must remain compatible`); // CHANGE
+	}
+
+	assert.equal(readBuilderConfig('electron-builder-appx.json').appx.identityName, 'draw.io.draw.ioDiagrams'); // CHANGE
+	assert.equal(readBuilderConfig('electron-builder-linux-mac.json').linux.executableName, 'trellis-studio'); // CHANGE
+	assert.equal(readBuilderConfig('electron-builder-snap.json').linux.executableName, 'trellis-studio'); // CHANGE
+});

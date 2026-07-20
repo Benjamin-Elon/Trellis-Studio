@@ -35,7 +35,7 @@
   "dmg": {
   },
   "linux": {
-  	"executableName": "trellis-for-drawio",
+    "executableName": "trellis-studio",
     "category": "Graphics",
     "maintainer": "Benjamin Elon",
     "icon": "./build",
@@ -66,8 +66,8 @@
   "fileAssociations": [
 	  {
 	  	"ext": "drawio",
-	  	"name": "draw.io Diagram",
-	  	"description": "draw.io Diagram",
+      "name": "Trellis Studio Diagram",
+      "description": "Trellis Studio Diagram",
 	  	"mimeType": "application/vnd.jgraph.mxfile",
 	  	"role": "Editor"
 	  },

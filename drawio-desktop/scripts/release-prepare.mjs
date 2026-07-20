@@ -12,9 +12,9 @@ import { fileURLToPath, pathToFileURL } from 'url';
  * final publication while builds are unsigned.
  */
 export const RELEASE_VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
-export const EXPECTED_REMOTE = 'github.com/benjamin-elon/trellis-for-drawio';
-export const ACTIONS_URL = 'https://github.com/Benjamin-Elon/Trellis-for-Drawio/actions/workflows/release.yml';
-export const RELEASE_URL_BASE = 'https://github.com/Benjamin-Elon/Trellis-for-Drawio/releases/tag';
+export const EXPECTED_REMOTE = 'github.com/benjamin-elon/trellis-studio';
+export const ACTIONS_URL = 'https://github.com/Benjamin-Elon/trellis-studio/actions/workflows/release.yml';
+export const RELEASE_URL_BASE = 'https://github.com/Benjamin-Elon/trellis-studio/releases/tag';
 
 function usage() {
 	return `Usage:
@@ -293,7 +293,7 @@ function requireExpectedRemote(repoRoot) {
 	const remote = captureCommand('git', ['remote', 'get-url', 'origin'], repoRoot).stdout.trim();
 
 	if (!isExpectedRemote(remote)) {
-		throw new Error(`origin must point to Benjamin-Elon/Trellis-for-Drawio. Found: ${remote}`);
+		throw new Error(`origin must point to Benjamin-Elon/trellis-studio. Found: ${remote}`);
 	}
 
 	return remote;

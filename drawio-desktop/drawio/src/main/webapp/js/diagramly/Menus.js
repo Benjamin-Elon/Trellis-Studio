@@ -832,7 +832,7 @@
 		{
 			if (EditorUi.isElectronApp)
 			{
-				editorUi.openLink('https://github.com/Benjamin-Elon/Trellis-for-Drawio/issues'); // Trellis release: support belongs to this fork.
+				editorUi.openLink('https://github.com/Benjamin-Elon/trellis-studio/issues'); // CHANGE
 			}
 			else
 			{
