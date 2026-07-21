@@ -87,6 +87,10 @@ jobs:
         working-directory: drawio-desktop
         run: yarn install --frozen-lockfile
 
+      - name: Install icon test Python dependencies
+        working-directory: drawio-desktop
+        run: python -m pip install -r requirements-icons.txt
+
       - name: Run tests
         working-directory: drawio-desktop
         run: yarn test
