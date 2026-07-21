@@ -374,10 +374,15 @@ test("Oath completion stores the wizard record and reveals actions after two sec
     assert.equal(record.version, "2");
     assert.equal(dialog.isTrellisLicenseWizardComplete(), true);
     assert.equal(actions.style.display, "none");
+	const status = dialog.container.querySelector(".trellis-license-status"); // NEW
+	assert.equal(status.textContent, "Diagram options will be ready shortly."); // CHANGE
     assert.equal(timers.at(-1).delay, 2000);
 
     timers.at(-1).callback();
     assert.equal(actions.style.display, "");
+	assert.equal(status.style.display, "none"); // NEW
+	assert.equal(status.textContent, ""); // NEW
+    assert.doesNotMatch(dialog.container.textContent, /Diagram options are ready/); // NEW
 });
 
 test("New oath records require a complete email without invalidating legacy records", () => { // NEW
@@ -426,12 +431,20 @@ test("Saved wizard records show summary, contact guidance, Change license, and d
 
     assert.match(dialog.container.textContent, /Saved license/); // CHANGE
     assert.match(dialog.container.textContent, /Placeholder Contact Name/);
+    assert.doesNotMatch(dialog.container.textContent, /License oath completed/); // NEW
+    assert.doesNotMatch(dialog.container.textContent, /Diagram options are ready/); // NEW
+    const status = dialog.container.querySelector(".trellis-license-status"); // CHANGE
+    assert.equal(status.textContent, "Diagram options will be ready shortly."); // CHANGE
+    assert.equal(status.style.display, ""); // NEW
     assert.equal(dialog.isTrellisLicenseWizardComplete(), true);
     assert.equal(actions.style.display, "none");
     assert.equal(timers[0].delay, 2000);
 
     timers[0].callback();
     assert.equal(actions.style.display, "");
+    assert.equal(status.style.display, "none"); // NEW
+    assert.equal(status.textContent, ""); // NEW
+    assert.doesNotMatch(dialog.container.textContent, /Diagram options are ready/); // NEW
 
     findButton(dialog.container, "Change license").click();
     assert.equal(dom.window.localStorage.getItem(wizardStorageKey), null);
@@ -505,23 +518,29 @@ test("SplashDialog source and bundle use oath wizard storage, close hook, valida
     assert.ok(dialogHookIndex > dialogBindingIndex);
     assert.match(dialogSource, /isTrellisLicenseWizardComplete/);
     assert.match(dialogSource, /isTrellisWizardRecordValid/);
-	assert.match(dialogSource, /isTrellisNewEmailValid/); // NEW
+    assert.match(dialogSource, /isTrellisNewEmailValid/); // NEW
     assert.match(dialogSource, /pointerRunawayDistance = 120/);
     assert.match(dialogSource, /I Affirm the Oath/);
-	assert.match(appSource, /showDialog\(dlg\.container, 700, 630[\s\S]*true, null, null, true/); // CHANGE
+    assert.doesNotMatch(dialogSource, /License oath completed/); // NEW
+    assert.doesNotMatch(dialogSource, /Diagram options are ready/); // NEW
+    assert.match(dialogSource, /Diagram options will be ready shortly/); // NEW
+    assert.match(appSource, /showDialog\(dlg\.container, 700, 630[\s\S]*true, null, null, true/); // CHANGE
     assert.match(appSource, /showTrellisExitMessage/);
     assert.match(bundledSource, /trellis\.licenseWizard\.v/);
     assert.ok(bundledBindingIndex >= 0);
     assert.ok(bundledHookIndex > bundledBindingIndex);
     assert.match(bundledSource, /isTrellisLicenseWizardComplete/);
     assert.match(bundledSource, /isTrellisWizardRecordValid/);
-	assert.match(bundledSource, /isTrellisNewEmailValid/); // NEW
+    assert.match(bundledSource, /isTrellisNewEmailValid/); // NEW
     assert.match(bundledSource, /pointerRunawayDistance = 120/);
-	assert.match(bundledSource, /showDialog\(p\.container,700,630[\s\S]*!0,null,null,!0/); // CHANGE
+    assert.doesNotMatch(bundledSource, /License oath completed/); // NEW
+    assert.doesNotMatch(bundledSource, /Diagram options are ready/); // NEW
+    assert.match(bundledSource, /Diagram options will be ready shortly/); // NEW
+    assert.match(bundledSource, /showDialog\(p\.container,700,630[\s\S]*!0,null,null,!0/); // CHANGE
 });
 
 test("Trellis splash enhancement adds the branded shell, saved-state structure, and actions without the Help row", () => { // CHANGE
-    const { dialog, getHelpCalls } = loadSplashDialog({ // NEW
+    const { dom, dialog, getHelpCalls } = loadSplashDialog({ // CHANGE
 		savedRecord: makeSavedRecord({ email: "Barneywilson@gmail." }), // CHANGE
         helpAction: true, // NEW
         languageControl: true // NEW
@@ -533,11 +552,12 @@ test("Trellis splash enhancement adds the branded shell, saved-state structure, 
     assert.ok(dialog.container.classList.contains("trellis-splash-root")); // NEW
     assert.equal(dialog.container.querySelector(".geAdaptiveAsset"), null); // NEW
     assert.equal(dialog.container.querySelector(".trellis-splash-tagline").textContent, "Build systems that grow."); // NEW
+	assert.ok(dialog.container.querySelector(".trellis-splash-tagline").compareDocumentPosition(dialog.container.querySelector(".trellis-saved-license-card")) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING); // NEW
 	assert.match(dialog.container.textContent, /Saved license/); // NEW
 	assert.match(dialog.container.textContent, /Saved User/); // NEW
 	assert.match(dialog.container.textContent, /Barneywilson@gmail\./); // CHANGE
 	assert.ok(dialog.container.classList.contains("trellis-saved-state")); // NEW
-	assert.equal(dialog.container.querySelector(".trellis-splash-state-intro").hidden, true); // NEW
+	assert.equal(dialog.container.querySelector(".trellis-splash-state-intro"), null); // CHANGE
 	assert.equal(dialog.container.querySelector(".trellis-saved-license-path").textContent, "Path: Personal / Noncommercial."); // NEW
 	assert.equal(dialog.container.querySelector(".trellis-saved-license-signer").textContent, "Signed by Saved User using Barneywilson@gmail."); // NEW
     assert.ok(dialog.container.querySelector(".trellis-saved-license-card .trellis-license-icon")); // NEW

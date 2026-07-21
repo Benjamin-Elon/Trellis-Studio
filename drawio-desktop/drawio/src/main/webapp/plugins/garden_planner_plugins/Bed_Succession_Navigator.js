@@ -77,7 +77,7 @@ Draw.loadPlugin(function (ui) {
     const TIME_ATTRS_ASC = ['transplant_date', 'sow_date'];
     const EPS = 0; // inclusive AABB; set >0 to treat near-miss as overlap
 
-    const OVERLAP_MIN_PCT = 0.40;
+    const OVERLAP_MIN_PCT = 0.05; // CHANGE
     const OVERLAP_PCT_MODE = 'smaller';
     const BED_COVERAGE_MIN_PCT = 0.95; // NEW
     const COVERED_TARGET_MIN_PCT = 0.80; // NEW
@@ -891,23 +891,8 @@ Draw.loadPlugin(function (ui) {
         }; // NEW
     } // NEW
 
-    function classifyTilerGroupsForBeds(nodes, beds) { // NEW
-        const out = new Map(); // NEW
-        for (const node of nodes) out.set(node.id, classifyTilerGroupForBeds(node, beds)); // NEW
-        return out; // NEW
-    } // NEW
-
-    function shouldClusterTilerGroups(a, b, metaA, metaB) { // NEW
-        if (!metaA || !metaB) return false; // NEW
-        if (metaA.type === 'contained' || metaB.type === 'contained') { // NEW
-            return metaA.type === 'contained' && metaB.type === 'contained' && metaA.bedId && metaA.bedId === metaB.bedId; // NEW
-        } // NEW
-
-        const sameCoveredSet = metaA.type === 'outside-covered' && // NEW
-            metaB.type === 'outside-covered' && // NEW
-            metaA.coveredSetKey && // NEW
-            metaA.coveredSetKey === metaB.coveredSetKey; // NEW
-        return sameCoveredSet || significantOverlapCells(a, b); // NEW
+    function shouldClusterTilerGroups(a, b) { // CHANGE
+        return significantOverlapCells(a, b); // CHANGE
     } // NEW
 
     function buildAllComponentsInParent(parent) {
@@ -915,15 +900,11 @@ Draw.loadPlugin(function (ui) {
         const n = nodes.length;
         if (n < 1) return []; // CHANGE
 
-        const sibVerts = graph.getChildVertices(parent) || [];
-        const beds = sibVerts.filter(isGardenBed); // CHANGE
-        const groupBedMeta = classifyTilerGroupsForBeds(nodes, beds); // NEW
-
         const adj = Array.from({ length: n }, () => []);
 
         for (let i = 0; i < n; i++) {
             for (let j = i + 1; j < n; j++) {
-                if (shouldClusterTilerGroups(nodes[i], nodes[j], groupBedMeta.get(nodes[i].id), groupBedMeta.get(nodes[j].id))) { // CHANGE
+                if (shouldClusterTilerGroups(nodes[i], nodes[j])) { // CHANGE
                     adj[i].push(j);
                     adj[j].push(i);
                 }

@@ -480,13 +480,34 @@ Draw.loadPlugin(function (ui) { // CHANGE
         return null; // CHANGE
     } // CHANGE
 
+    function selectedTilerDragTargetForEvent(graph, me, fallback) { // NEW
+        if (!graph || !me || !graph.view) return null; // NEW
+        const evt = me.getEvent ? me.getEvent() : null; // NEW
+        const pt = eventPointInGraphContainer(evt) || { x: me.getX(), y: me.getY() }; // NEW
+        const selected = graph.getSelectionCells ? (graph.getSelectionCells() || []) : []; // NEW
+        const candidates = []; // NEW
+        if (fallback && selected.indexOf(fallback) >= 0) candidates.push(fallback); // NEW
+        for (let i = 0; i < selected.length; i++) { // NEW
+            if (candidates.indexOf(selected[i]) < 0) candidates.push(selected[i]); // NEW
+        } // NEW
+        for (let i = 0; i < candidates.length; i++) { // NEW
+            const cell = candidates[i]; // NEW
+            if (!isTilerGroup(cell)) continue; // NEW
+            const state = graph.view.getState(cell); // NEW
+            if (state && cellStateContainsPoint(graph, state, pt.x, pt.y)) return cell; // NEW
+        } // NEW
+        return null; // NEW
+    } // NEW
+
     function getDragInitialCellForEvent(graph, me, fallback, handler) { // CHANGE
-        const deepest = getDeepestCellForMouseEvent(graph, me, fallback); // CHANGE
-        const dragTarget = getPlantSelectionTargetForEvent(graph, deepest, me && me.getEvent ? me.getEvent() : null); // CHANGE
         if (handler) { // CHANGE
             handler.__manualLinkerLockedDragSource = null; // CHANGE
             handler.__manualLinkerLockedDragParent = null; // CHANGE
         } // CHANGE
+        const selectedTilerTarget = selectedTilerDragTargetForEvent(graph, me, fallback); // NEW
+        if (selectedTilerTarget) return selectedTilerTarget; // NEW
+        const deepest = getDeepestCellForMouseEvent(graph, me, fallback); // CHANGE
+        const dragTarget = getPlantSelectionTargetForEvent(graph, deepest, me && me.getEvent ? me.getEvent() : null); // CHANGE
         if (!graph || !dragTarget || !graph.getModel().isVertex(dragTarget)) return dragTarget; // CHANGE
         if (graph.isCellMovable(dragTarget)) return dragTarget; // CHANGE
 

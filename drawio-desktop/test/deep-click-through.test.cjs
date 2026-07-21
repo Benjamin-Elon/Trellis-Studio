@@ -103,6 +103,7 @@ function makeHarness() { // NEW
         addListener() {}, // NEW
         addMouseListener(listener) { graph.__mouseListener = listener; } // NEW
     }; // NEW
+    graph.__stateMap = stateMap; // NEW
     const context = { // NEW
         window: dom.window, // NEW
         document, // NEW
@@ -247,6 +248,28 @@ test("plain second-click on garden objects other than modules stays selected", (
     plainClick(graph, tilerGroup); // NEW
     assert.deepEqual(getSelected(), [tilerGroup]); // NEW
     assert.deepEqual(closeCalls, []); // NEW
+}); // NEW
+
+test("selected tiler drag over a garden bed keeps the tiler as initial drag cell", () => { // NEW
+    const { graph, Handler, bed, tilerGroup } = makeHarness(); // NEW
+    graph.__stateMap.set(tilerGroup, { cell: tilerGroup, x: 40, y: 130, width: 80, height: 40 }); // NEW
+    graph.setSelectionCell(tilerGroup); // NEW
+    graph.__hitCell = tilerGroup; // NEW
+    const handler = new Handler(); // NEW
+    handler.graph = graph; // NEW
+
+    assert.equal(handler.getInitialCellForEvent(makeMouseEvent(bed, 50, 140)), tilerGroup); // NEW
+}); // NEW
+
+test("plain click through selected tiler over a garden bed still selects the bed", () => { // NEW
+    const { graph, bed, tilerGroup, getSelected } = makeHarness(); // NEW
+    graph.__stateMap.set(tilerGroup, { cell: tilerGroup, x: 40, y: 130, width: 80, height: 40 }); // NEW
+    graph.setSelectionCell(tilerGroup); // NEW
+    graph.__hitCell = tilerGroup; // NEW
+
+    graph.selectCellForEvent(tilerGroup, { detail: 1, clientX: 50, clientY: 140, button: 0 }); // NEW
+
+    assert.deepEqual(getSelected(), [bed]); // NEW
 }); // NEW
 
 test("ctrl-click selection toggle remains unchanged", () => { // NEW

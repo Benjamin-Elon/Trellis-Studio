@@ -164,12 +164,14 @@
 			center.firstElementChild.setAttribute('aria-level', '1'); // NEW
 
 			if (center.querySelector('.trellis-splash-tagline') == null) { // NEW
-				var stateIntro = center.children.length > 1 ? center.children[1] : null; // NEW
+				var insertBeforeNode = center.children.length > 1 ? center.children[1] : null; // CHANGE
+				var stateIntro = insertBeforeNode; // CHANGE
+				if (stateIntro != null && (' ' + stateIntro.className + ' ').indexOf(' trellis-splash-section ') >= 0) stateIntro = null; // NEW
 				var tagline = container.ownerDocument.createElement('div'); // NEW
 				tagline.className = 'trellis-splash-tagline'; // NEW
 				tagline.textContent = 'Build systems that grow.'; // NEW
 				if (stateIntro != null) addClass(stateIntro, 'trellis-splash-state-intro'); // NEW
-				center.insertBefore(tagline, stateIntro); // NEW
+				center.insertBefore(tagline, insertBeforeNode); // CHANGE
 			} // NEW
 		} // NEW
 

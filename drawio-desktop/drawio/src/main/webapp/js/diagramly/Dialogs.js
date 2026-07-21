@@ -554,7 +554,7 @@ var SplashDialog = function(editorUi)
 			if (status != null) // NEW
 			{ // NEW
 				status.innerHTML = ''; // NEW
-				mxUtils.write(status, 'Diagram options are ready.'); // CHANGE
+				status.style.display = 'none'; // NEW
 			} // NEW
 		} // NEW
 	} // NEW
@@ -563,8 +563,12 @@ var SplashDialog = function(editorUi)
 	{ // NEW
 		if (trellisRevealTimer == null) // NEW
 		{ // NEW
-			status.innerHTML = ''; // NEW
-			mxUtils.write(status, 'Diagram options will appear in 2 seconds.'); // CHANGE
+			if (status != null) // NEW
+			{ // NEW
+				status.innerHTML = ''; // NEW
+				status.style.display = ''; // NEW
+				mxUtils.write(status, 'Diagram options will be ready shortly.'); // CHANGE
+			} // NEW
 			trellisRevealTimer = window.setTimeout(function() // NEW
 			{ // NEW
 				revealTrellisActions(status); // NEW
@@ -637,15 +641,18 @@ var SplashDialog = function(editorUi)
 			var title = createTrellisElement('div', null, 'Trellis Studio'); // NEW
 			title.style.cssText = 'font-size:20px;font-weight:bold;text-align:center;color:#2f3b2f;margin-bottom:4px;'; // NEW
 			center.appendChild(title); // NEW
-			var intro = createTrellisElement('div', null, subtitle); // NEW
-			intro.style.cssText = 'text-align:center;color:#5f6a5f;margin-bottom:10px;'; // NEW
-			center.appendChild(intro); // NEW
+			if (subtitle != null && subtitle != '') // NEW
+			{ // NEW
+				var intro = createTrellisElement('div', null, subtitle); // NEW
+				intro.style.cssText = 'text-align:center;color:#5f6a5f;margin-bottom:10px;'; // NEW
+				center.appendChild(intro); // NEW
+			} // NEW
 		} // NEW
 
 		function renderSaved() // NEW
 		{ // NEW
 			center.innerHTML = ''; // NEW
-			writeHeader('License oath completed. Diagram options will appear after a brief pause.'); // NEW
+			writeHeader(); // CHANGE
 			var summary = createTrellisInfoSection('Saved license path', 'Path: ' + getTrellisPathLabel(trellisSavedWizard.path) + '. Signed by ' + trellisSavedWizard.name + ' using ' + trellisSavedWizard.email + '.'); // NEW
 			var change = mxUtils.button('Change license', function() // NEW
 			{ // NEW
@@ -664,11 +671,11 @@ var SplashDialog = function(editorUi)
 			{ // NEW
 				appendTrellisContactGuidance(center); // NEW
 			} // NEW
-			var status = createTrellisElement('div', 'trellis-license-status', 'Diagram options will appear in 2 seconds.'); // NEW
+			var status = createTrellisElement('div', 'trellis-license-status', 'Diagram options will be ready shortly.'); // CHANGE
 			status.style.cssText = 'margin-top:8px;color:#5f6a5f;font-size:12px;text-align:center;'; // NEW
-			trellisExitStatus = status; // NEW
+			trellisExitStatus = status; // CHANGE
 			center.appendChild(status); // NEW
-			scheduleTrellisActionReveal(status); // NEW
+			scheduleTrellisActionReveal(status); // CHANGE
 		} // NEW
 
 		function renderUsage() // NEW
@@ -1013,7 +1020,7 @@ var SplashDialog = function(editorUi)
 				{ // NEW
 					storageWarning = ' The oath is accepted for this session, but local storage failed, so it may be requested again next launch.'; // NEW
 				} // NEW
-				updateStatus('Oath accepted.' + (storageWarning || '') + ' Diagram options will appear in 2 seconds.'); // NEW
+				updateStatus('Oath accepted.' + (storageWarning || '') + ' Diagram options will be ready shortly.'); // CHANGE
 				scheduleTrellisActionReveal(status); // NEW
 			} // NEW
 		} // NEW

@@ -98,12 +98,12 @@ function makeHarness(options = {}) { // NEW
         }; // NEW
     } // NEW
     const states = new Map([ // NEW
-        [bed, { x: 0, y: 0, width: 100, height: 100 }], // NEW
-        [tiler1, options.tilerOutsideBed ? { x: 130, y: 20, width: 20, height: 20 } : { x: 10, y: 10, width: 20, height: 20 }] // NEW
+        [bed, options.bedState || { x: 0, y: 0, width: 100, height: 100 }], // CHANGE
+        [tiler1, options.tiler1State || (options.tilerOutsideBed ? { x: 130, y: 20, width: 20, height: 20 } : { x: 10, y: 10, width: 20, height: 20 })] // CHANGE
     ]); // NEW
 
-    if (extraBeds[0]) states.set(extraBeds[0], { x: 40, y: 40, width: 100, height: 100 }); // NEW
-    if (extraCells[0]) states.set(extraCells[0], { x: 50, y: 50, width: 20, height: 20 }); // NEW
+    if (extraBeds[0]) states.set(extraBeds[0], options.bed2State || { x: 40, y: 40, width: 100, height: 100 }); // CHANGE
+    if (extraCells[0]) states.set(extraCells[0], options.tiler2State || { x: 50, y: 50, width: 20, height: 20 }); // CHANGE
     states.forEach((state, cell) => { cell.geometry = makeGeometry(state); }); // NEW
 
     const graph = { // NEW
@@ -198,18 +198,46 @@ test("selected singleton tiler outside garden beds does not show the bed-select 
     assert.equal(visibleImageByAlt(document, "Select bed"), undefined); // CHANGE
 }); // NEW
 
-test("two selected tilers in the same garden bed keep succession controls and bed-select", () => { // NEW
+test("two selected tilers in the same garden bed do not cluster unless they overlap", () => { // CHANGE
     const { document } = makeHarness({ secondTiler: true }); // NEW
 
     assert.ok(visibleImageByAlt(document, "Select bed"), "expected visible bed-select button"); // CHANGE
+    assert.equal(visibleImageByAlt(document, "Select"), undefined); // CHANGE
+    assert.equal(visibleImageByTitle(document, "Previous"), undefined); // CHANGE
+    assert.equal(visibleImageByTitle(document, "Next"), undefined); // CHANGE
+}); // NEW
+
+test("two selected tilers with five-percent overlap show succession controls and bed-select", () => { // CHANGE
+    const { document } = makeHarness({ secondTiler: true, tiler2State: { x: 29, y: 10, width: 20, height: 20 } }); // CHANGE
+
+    assert.ok(visibleImageByAlt(document, "Select bed"), "expected visible bed-select button"); // NEW
     assert.ok(visibleImageByAlt(document, "Select"), "expected visible cluster-select button"); // NEW
     assert.ok(visibleImageByTitle(document, "Previous"), "expected visible previous button"); // NEW
     assert.ok(visibleImageByTitle(document, "Next"), "expected visible next button"); // NEW
 }); // NEW
 
+test("same-bed tilers touching edges do not cluster", () => { // NEW
+    const { document } = makeHarness({ secondTiler: true, tiler2State: { x: 30, y: 10, width: 20, height: 20 } }); // NEW
+
+    assert.ok(visibleImageByAlt(document, "Select bed"), "expected visible bed-select button"); // NEW
+    assert.equal(visibleImageByAlt(document, "Select"), undefined); // NEW
+    assert.equal(visibleImageByTitle(document, "Previous"), undefined); // NEW
+    assert.equal(visibleImageByTitle(document, "Next"), undefined); // NEW
+}); // NEW
+
+test("same-bed tilers below five-percent overlap do not cluster", () => { // CHANGE
+    const { document } = makeHarness({ secondTiler: true, tiler2State: { x: 29.25, y: 10, width: 20, height: 20 } }); // CHANGE
+
+    assert.ok(visibleImageByAlt(document, "Select bed"), "expected visible bed-select button"); // NEW
+    assert.equal(visibleImageByAlt(document, "Select"), undefined); // NEW
+    assert.equal(visibleImageByTitle(document, "Previous"), undefined); // NEW
+    assert.equal(visibleImageByTitle(document, "Next"), undefined); // NEW
+}); // NEW
+
 test("selected cluster occupancy API returns schedule-ordered windows", () => { // NEW
     const { graph, tiler1 } = makeHarness({ // NEW
         secondTiler: true, // NEW
+        tiler2State: { x: 29, y: 10, width: 20, height: 20 }, // CHANGE
         tiler1Attrs: { plant_name: "Tomato", sow_date: "2026-03-01", transplant_date: "2026-05-01", harvest_end: "2026-09-15" }, // NEW
         tiler2Attrs: { plant_name: "Lettuce", sow_date: "2026-02-10", harvest_end: "2026-04-10" } // NEW
     }); // NEW
