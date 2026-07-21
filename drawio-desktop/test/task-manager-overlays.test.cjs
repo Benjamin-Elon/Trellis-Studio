@@ -628,7 +628,7 @@ test("task manager selection overlays render above graph and defer until states 
 
     assert.equal(boardOverlay.style.display, "flex");
     assert.equal(boardOverlay.style.zIndex, "10020");
-    assert.equal(boardOverlay.style.left, "10px");
+    assert.equal(boardOverlay.style.left, "30px"); // CHANGE
     assert.equal(cardOverlay.style.display, "none");
     assert.equal(dayLaneOverlay.style.display, "none"); // NEW
 
@@ -2250,7 +2250,7 @@ test("task manager assignment picker groups linked roles, searches, and applies 
     let picker = h.document.querySelector(".trellis-task-assignee-picker"); // CHANGE
     assert.ok(picker); // NEW
     assert.equal(overlay.style.display, "none"); // NEW
-    assert.equal(picker.style.left, "30px"); // NEW
+    assert.equal(picker.style.left, "50px"); // CHANGE
     assert.equal(picker.style.top, "129px"); // NEW
     buttonByText(picker, "Cancel").click(); // NEW
     await nextTick(); // NEW

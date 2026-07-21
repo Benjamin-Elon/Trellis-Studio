@@ -3318,7 +3318,7 @@ test('task manager installs planning mode header controls and selected-card DOM 
     assert.match(source, /dateInput\.type = 'date'/); // NEW
     assert.match(source, /if \(!value\) \{\s*taskCommands\.setBoardPlanningView\(b,\s*'FULL'\)/); // CHANGE
     assert.match(source, /taskCommands\.setBoardPlanningView\(b,\s*'WEEK',\s*\{\s*\[TASK_SELECTED_WEEK_START_ATTR\]: weekStart,\s*\[TASK_SELECTED_DAY_ATTR\]: value\s*\}\)/); // CHANGE
-    assert.match(source, /positionDomOverlayFromCellState\(bar,\s*board,\s*false,\s*true\)/); // NEW
+    assert.match(source, /positionDomOverlayFromCellState\(bar,\s*board,\s*false,\s*true,\s*0,\s*TASK_BOARD_HEADER_OVERLAY_EXTRA_X\)/); // CHANGE
     assert.match(source, /const left = bounds\.x/); // CHANGE
     assert.match(source, /const topBase = bounds\.y/); // CHANGE
     assert.match(source, /function getSelectionCellsList\(\)/); // NEW

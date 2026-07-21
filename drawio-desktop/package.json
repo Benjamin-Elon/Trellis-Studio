@@ -11,8 +11,8 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "test": "npm run test:plugins && npm run test:icons",
-    "test:plugins": "node --test ./test/created-change-map-history.test.cjs ./test/garden-scheduler-dialog.test.cjs ./test/planting-scheduler-reliability.test.cjs ./test/task-manager-overlays.test.cjs ./test/sowing-season-diagnostics.test.cjs ./test/year-planner.test.cjs ./test/year-planner-dom.test.cjs ./test/trellis-context-menu.test.cjs ./test/trellis-updates-links.test.cjs ./test/trellis-startup-defaults.test.cjs ./test/trellis-splash-backgrounds.test.mjs ./test/tidy-context-menu.test.cjs ./test/modules-standalone.test.cjs ./test/garden-beds.test.cjs ./test/garden-equipment.test.cjs ./test/garden-irrigation-planner.test.cjs ./test/garden-dashboard-toolbar.test.cjs ./test/bed-succession-navigator.test.cjs ./test/deep-click-through.test.cjs ./test/plant-tiler-overlay.test.cjs ./test/fold-control-renderer.test.cjs ./test/splash-dialog.test.cjs ./test/file-watch-registry.test.mjs ./test/release-prepare.test.mjs ./test/electron-builder-config.test.cjs ./test/updater-progress.test.cjs ./test/bundled-update-menu.test.cjs",
+    "test": "npm run test:plugins",
+    "test:plugins": "node --test \"./test/*.test.cjs\" \"./test/*.test.mjs\"",
     "test:task-manager": "node --test ./test/task-manager-overlays.test.cjs ./test/planting-scheduler-reliability.test.cjs ./test/trellis-overlay-layering.test.cjs",
     "test:release-prepare": "node --test ./test/release-prepare.test.mjs",
     "start": "electron .",
