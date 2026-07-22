@@ -138,15 +138,19 @@ function selectByOptionText(document, text) { // NEW
 } // NEW
 
 function checkboxByLabel(document, text) { // NEW
-    return Array.from(document.querySelectorAll("label")).find(label => label.textContent.trim() === text)?.querySelector("input[type='checkbox']") || null; // NEW
+    return labelByText(document, text)?.querySelector("input[type='checkbox']") || null; // CHANGE
 } // NEW
 
 function accessRowByUserId(document, userId) { // NEW
     return document.querySelector('.trellis-users-access-row[data-trellis-users-user-id="' + userId + '"]'); // NEW
 } // NEW
 
+function labelByText(root, text) { // NEW
+    return Array.from(root.querySelectorAll("label")).find(label => label.textContent.trim() === text) || null; // NEW
+} // NEW
+
 function checkboxByLabelIn(root, text) { // NEW
-    return Array.from(root.querySelectorAll("label")).find(label => label.textContent.trim() === text)?.querySelector("input[type='checkbox']") || null; // NEW
+    return labelByText(root, text)?.querySelector("input[type='checkbox']") || null; // CHANGE
 } // NEW
 
 test("disabled diagrams do not prompt or block edits", () => { // CHANGE
@@ -613,16 +617,22 @@ test("admin planting creation allows generated plant tile churn in the same edit
 test("grower grant creates and manages only owned planting groups", () => { // CHANGE
     const harness = loadUsersPlugin(); // NEW
     const users = harness.context.window.Trellis.users; // NEW
+    assert.deepEqual(Array.from(users._test.normalizeCapabilities(null, "grower")), ["create_plantings", "edit_task_details", "manage_own_plantings", "move_tasks"]); // CHANGE
     users.enableUsers("Alice", "1234"); // NEW
     harness.module.style = "module=1"; // NEW
     users.stampCreatedOwner(harness.module); // NEW
     const bed = appendChild(harness.module, makeXmlCell(harness.document, "bed", { garden_bed: "1" })); // NEW
+    const board = appendChild(harness.module, makeXmlCell(harness.document, "grower-board", { board_key: "KANBAN_BOARD" })); // NEW
+    const lane = appendChild(board, makeXmlCell(harness.document, "grower-lane", { lane_key: "TODO" })); // NEW
+    const taskCard = appendChild(lane, makeXmlCell(harness.document, "grower-task", { kanban_card: "1", title: "Water" })); // NEW
     const alicePlanting = appendChild(bed, makeXmlCell(harness.document, "alice-planting", { tiler_group: "1", [users.attrs.owner]: users.getCurrentUser().id })); // NEW
     const bob = users.createUser("Bob", "5678", false).user; // NEW
     assert.equal(users.setScopeGrant(harness.module, { userId: bob.id, preset: "grower" }).ok, true); // NEW
     users.logout(); // NEW
     users.login("Bob", "5678"); // NEW
     assert.equal(users.canCreatePlanting(bed), true); // NEW
+    assert.equal(users.canMoveTask(taskCard), true); // NEW
+    assert.equal(users.canEditTaskDetails(taskCard), true); // NEW
     assert.equal(users.canEditCell(bed), false); // NEW
     assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: bed, attribute: "garden_bed" }), false); // NEW
     assert.equal(users._test.changeAllowed({ constructor: { name: "mxCellAttributeChange" }, cell: harness.module, attribute: "label" }), false); // NEW
@@ -634,6 +644,7 @@ test("grower grant creates and manages only owned planting groups", () => { // C
     assert.equal(bobPlanting.getAttribute(users.attrs.owner), bob.id); // NEW
     assert.equal(users.canManagePlanting(bobPlanting), true); // NEW
     assert.equal(users.canManageAccess(bobPlanting), false); // NEW
+    assert.equal(users.setOwner(bed, bob.id).ok, false); // NEW
 }); // NEW
 
 test("grower planting creation allows initialization edits and generated plant tile churn", () => { // CHANGE
@@ -903,6 +914,9 @@ test("manage scope content implies content capabilities but not access managemen
     users.logout(); // NEW
     assert.equal(users.login("Bob", "5678").ok, true); // NEW
     assert.equal(users.canCreatePlanting(harness.module), true); // NEW
+    const alicePlanting = appendChild(harness.module, makeXmlCell(harness.document, "scope-content-alice-planting", { tiler_group: "1", [users.attrs.owner]: users.listUsers().find(user => user.name === "Alice").id })); // NEW
+    assert.equal(users.canManagePlanting(alicePlanting), true); // NEW
+    assert.equal(users._test.changeAllowed({ constructor: { name: "mxGeometryChange" }, cell: alicePlanting }), true); // NEW
     assert.equal(users.canManagePlanting(appendChild(harness.module, makeXmlCell(harness.document, "scope-content-planting", { tiler_group: "1", [users.attrs.owner]: bob.id }))), true); // NEW
     assert.equal(users.canMoveTask(card), true); // NEW
     assert.equal(users.canEditTaskDetails(card), true); // NEW
@@ -920,6 +934,19 @@ test("manage scope content checkbox auto-checks implied capabilities", () => { /
     harness.actions.trellisUsers.funct(); // NEW
     const manageScope = checkboxByLabel(harness.document, "Manage scope content"); // NEW
     assert.ok(manageScope); // NEW
+    [ // NEW
+        ["Create plantings", "Create new planting groups in granted garden beds/modules."], // NEW
+        ["Manage own plantings", "Edit, move, resize, schedule, and delete planting groups the user owns."], // NEW
+        ["Move tasks", "Move task cards between lanes/days and reorder task schedules in granted task boards."], // NEW
+        ["Edit task details", "Edit task titles, notes, dates, estimates, and other non-assignment task details."], // NEW
+        ["Manage scope content", "Manage all non-access content in the scope, including plantings and task content."], // NEW
+        ["Manage access", "Invite users and change grants for the scope; ownership transfer remains owner/admin-only."] // NEW
+    ].forEach(function (entry) { // NEW
+        const label = labelByText(harness.document, entry[0]); // NEW
+        assert.ok(label); // NEW
+        assert.equal(label.title, entry[1]); // NEW
+        assert.equal(label.querySelector("input[type='checkbox']").title, entry[1]); // NEW
+    }); // NEW
     manageScope.checked = true; // NEW
     manageScope.dispatchEvent(new harness.context.window.Event("change", { bubbles: true })); // NEW
     assert.equal(checkboxByLabel(harness.document, "Create plantings").checked, true); // NEW
@@ -1088,8 +1115,8 @@ test("pending invite stores selected preset capabilities", () => { // NEW
     const invite = users.createPendingInvite({ email: "grower@example.com", scopeCellIds: [harness.module.id], preset: "grower" }); // NEW
     assert.equal(invite.ok, true); // NEW
     assert.equal(invite.invite.preset, "grower"); // NEW
-    assert.deepEqual(Array.from(invite.invite.capabilities), ["create_plantings", "manage_own_plantings"]); // CHANGE
-    assert.deepEqual(JSON.parse(harness.module.getAttribute(users.attrs.accessGrants))[0].capabilities, ["create_plantings", "manage_own_plantings"]); // NEW
+    assert.deepEqual(Array.from(invite.invite.capabilities), ["create_plantings", "edit_task_details", "manage_own_plantings", "move_tasks"]); // CHANGE
+    assert.deepEqual(JSON.parse(harness.module.getAttribute(users.attrs.accessGrants))[0].capabilities, ["create_plantings", "edit_task_details", "manage_own_plantings", "move_tasks"]); // CHANGE
 }); // NEW
 
 test("accept invite activates pending regular user and prevents token reuse", () => { // NEW

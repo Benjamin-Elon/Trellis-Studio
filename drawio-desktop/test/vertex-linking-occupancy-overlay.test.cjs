@@ -45,6 +45,19 @@ test("schedule-only planting overlays expose Occupancy without linked tasks", ()
     assert.match(source, /if \(activeMode === MODE_OCCUPANCY\) \{[\s\S]*renderOccupancyView\(entry, body\);[\s\S]*\}/); // NEW
 }); // NEW
 
+test("schedule action button mirrors Trellis user planting permissions", () => { // NEW
+    const source = readSource(); // NEW
+    const helperSource = sourceBetween(source, "function canScheduleTilerGroup", "function getOccupancyNavigatorApi"); // NEW
+    const buttonSource = sourceBetween(source, "function createScheduleActionButton", "function createSetPlantActionButton"); // NEW
+
+    assert.match(helperSource, /window\.Trellis && window\.Trellis\.users/); // NEW
+    assert.match(helperSource, /users\.isEnabled\(\)[\s\S]*users\.canManagePlanting\(cell\)/); // NEW
+    assert.match(buttonSource, /const allowed = canScheduleTilerGroup\(source\);/); // NEW
+    assert.match(buttonSource, /button\.title = !allowed \? 'You do not have permission to schedule this planting group\.'/); // NEW
+    assert.match(buttonSource, /button\.disabled = !opener \|\| !allowed;/); // NEW
+    assert.match(buttonSource, /if \(!canScheduleTilerGroup\(liveSource\)\) return;/); // NEW
+}); // NEW
+
 test("occupancy uses navigator API with selected-group fallback", () => { // NEW
     const source = readSource(); // NEW
 

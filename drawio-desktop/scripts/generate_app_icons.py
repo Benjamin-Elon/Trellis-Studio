@@ -18,6 +18,7 @@ import re
 import struct
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -62,6 +63,9 @@ BRANDING_CACHE_URLS = (
     *TRELLIS_SHELL_CACHE_URLS,  # CHANGE: validate and refresh the complete branded shell.
     "images/manifest.json",
 )
+TEXT_CACHE_SUFFIXES = (".css", ".html", ".js", ".json", ".svg")  # CHANGE: Workbox revisions must match Git-normalized text bytes.
+PIXEL_COMPARED_SUFFIXES = (".gif", ".icns", ".png")  # CHANGE: generated image containers can vary while pixels remain stable.
+SVG_COMPARED_SUFFIXES = (".svg",)  # CHANGE: embedded raster SVGs are checked by structure and decoded pixels.
 
 
 @dataclass(frozen=True)
@@ -613,10 +617,25 @@ def generate_all(output_root: Path) -> list[str]:
     return generated
 
 
-def md5_hex(path: Path) -> str:
+def md5_hex(data: bytes) -> str:
     """Return the revision format already used by the Workbox manifest."""
 
-    return hashlib.md5(path.read_bytes()).hexdigest()
+    return hashlib.md5(data).hexdigest()
+
+
+def normalize_text_cache_bytes(data: bytes) -> bytes:
+    """Return bytes as they are stored in Git for text cache revision checks."""
+
+    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def workbox_revision(url: str, path: Path) -> str:
+    """Return a Workbox revision that is stable across checkout line endings."""
+
+    data = path.read_bytes()
+    if url.endswith(TEXT_CACHE_SUFFIXES):
+        data = normalize_text_cache_bytes(data)
+    return md5_hex(data)
 
 
 def service_worker_url(relative_path: str) -> str | None:
@@ -643,7 +662,7 @@ def append_missing_worker_cache_entries(worker_text: str, cache_paths: dict[str,
     if marker not in worker_text:
         raise ValueError("Workbox precache manifest terminator was not found")
     entries = "".join(
-        f',{{url:"{url}",revision:"{md5_hex(cache_paths[url])}"}}'
+        f',{{url:"{url}",revision:"{workbox_revision(url, cache_paths[url])}"}}'
         for url in missing
     )
     return worker_text.replace(marker, entries + marker, 1)
@@ -666,7 +685,7 @@ def append_missing_source_map_cache_entries(map_text: str, cache_paths: dict[str
     entries = "".join(
         ',\\n  {\\n'
         f'    \\"url\\": \\"{url}\\",\\n'
-        f'    \\"revision\\": \\"{md5_hex(cache_paths[url])}\\"\\n'
+        f'    \\"revision\\": \\"{workbox_revision(url, cache_paths[url])}\\"\\n'
         '  }'
         for url in missing
     )
@@ -690,7 +709,7 @@ def refresh_service_worker_revisions(generated: list[str]) -> None:
     worker_text = append_missing_worker_cache_entries(worker_text, cache_paths)
 
     for url, actual_path in cache_paths.items():
-        revision = md5_hex(actual_path)
+        revision = workbox_revision(url, actual_path)
         pattern = re.compile(
             rf'(url:"{re.escape(url)}",revision:")(?P<revision>[0-9a-f]{{32}})(")'
         )
@@ -729,20 +748,106 @@ def validate_service_worker_revisions(generated: list[str]) -> list[str]:
             if url in BRANDING_CACHE_URLS:
                 stale.append(url)
             continue
-        revision = md5_hex(path)
+        revision = workbox_revision(url, path)
         if f'url:"{url}",revision:"{revision}"' not in worker_text:
             stale.append(url)
     return stale
 
 
+def image_pixels(path: Path) -> tuple[str, str, tuple[int, int], bytes]:
+    """Decode an image to the semantic pixels generated assets are meant to preserve."""
+
+    with Image.open(path) as image:
+        rgba = image.convert("RGBA")
+        return image.format or "", rgba.mode, rgba.size, rgba.tobytes()
+
+
+def image_assets_match(expected: Path, actual: Path) -> bool:
+    """Compare generated image outputs by decoded pixels instead of container bytes."""
+
+    return image_pixels(expected) == image_pixels(actual)
+
+
+def ico_frames(path: Path) -> dict[int, tuple[str, str, tuple[int, int], bytes]]:
+    """Decode every PNG-backed ICO frame into comparable semantic image data."""
+
+    buffer = path.read_bytes()
+    if len(buffer) < 6 or buffer[:4] != b"\x00\x00\x01\x00":
+        raise ValueError(f"{path} is not a valid ICO file")
+
+    count = struct.unpack_from("<H", buffer, 4)[0]
+    frames: dict[int, tuple[str, tuple[int, int], bytes]] = {}
+    for index in range(count):
+        entry_offset = 6 + index * 16
+        width = buffer[entry_offset] or 256
+        byte_length = struct.unpack_from("<I", buffer, entry_offset + 8)[0]
+        image_offset = struct.unpack_from("<I", buffer, entry_offset + 12)[0]
+        with Image.open(io.BytesIO(buffer[image_offset : image_offset + byte_length])) as image:
+            rgba = image.convert("RGBA")
+            frames[width] = (image.format or "", rgba.mode, rgba.size, rgba.tobytes())
+    return frames
+
+
+def ico_assets_match(expected: Path, actual: Path) -> bool:
+    """Compare ICO files by frame sizes and decoded frame pixels."""
+
+    return ico_frames(expected) == ico_frames(actual)
+
+
+def embedded_svg_image(path: Path) -> tuple[dict[str, str], tuple[str, str, tuple[int, int], bytes]]:
+    """Return a stable SVG wrapper summary and the decoded embedded PNG."""
+
+    root = ET.fromstring(path.read_text(encoding="utf-8"))
+    namespace = "{http://www.w3.org/2000/svg}"
+    image_node = root.find(f"{namespace}image")
+    if image_node is None:
+        raise ValueError(f"{path} does not contain an embedded image")
+
+    href = image_node.attrib.get("href") or image_node.attrib.get("{http://www.w3.org/1999/xlink}href")
+    prefix = "data:image/png;base64,"
+    if href is None or not href.startswith(prefix):
+        raise ValueError(f"{path} does not contain an embedded PNG data URI")
+
+    wrapper = {
+        "tag": root.tag,
+        "width": root.attrib.get("width", ""),
+        "height": root.attrib.get("height", ""),
+        "viewBox": root.attrib.get("viewBox", ""),
+        "image_width": image_node.attrib.get("width", ""),
+        "image_height": image_node.attrib.get("height", ""),
+    }
+    with Image.open(io.BytesIO(base64.b64decode(href[len(prefix) :]))) as image:
+        rgba = image.convert("RGBA")
+        return wrapper, (image.format or "", rgba.mode, rgba.size, rgba.tobytes())
+
+
+def svg_assets_match(expected: Path, actual: Path) -> bool:
+    """Compare generated SVG raster containers by wrapper metadata and embedded pixels."""
+
+    return embedded_svg_image(expected) == embedded_svg_image(actual)
+
+
+def generated_assets_match(expected: Path, actual: Path) -> bool:
+    """Return whether a generated output matches, using the right comparator for its format."""
+
+    suffix = expected.suffix.lower()
+    if suffix in PIXEL_COMPARED_SUFFIXES:
+        return image_assets_match(expected, actual)
+    if suffix == ".ico":
+        return ico_assets_match(expected, actual)
+    if suffix in SVG_COMPARED_SUFFIXES:
+        return svg_assets_match(expected, actual)
+    return expected.read_bytes() == actual.read_bytes()
+
+
 def compare_generated_assets(expected_root: Path, generated: list[str]) -> list[str]:
-    """Compare staged outputs byte-for-byte with checked-in generated files."""
+    """Compare staged outputs with checked-in generated files."""
 
     mismatches: list[str] = []
     for relative in generated:
         expected = expected_root / relative
         actual = ROOT / relative
-        if not actual.exists() or actual.read_bytes() != expected.read_bytes():
+        if not actual.exists() or not generated_assets_match(expected, actual):
             mismatches.append(relative)
     return mismatches
 

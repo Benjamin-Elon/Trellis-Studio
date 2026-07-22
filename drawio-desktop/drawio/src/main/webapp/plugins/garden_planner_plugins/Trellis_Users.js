@@ -36,7 +36,7 @@ Draw.loadPlugin(function (ui) {
     const DOMAIN_CAPABILITIES = [CAP_CREATE_PLANTINGS, CAP_MANAGE_OWN_PLANTINGS, CAP_MOVE_TASKS, CAP_EDIT_TASK_DETAILS, CAP_MANAGE_SCOPE_CONTENT, CAP_MANAGE_ACCESS]; // NEW
     const PRESET_CAPABILITIES = { // NEW
         viewer: [], // NEW
-        grower: [CAP_CREATE_PLANTINGS, CAP_MANAGE_OWN_PLANTINGS], // NEW
+        grower: [CAP_CREATE_PLANTINGS, CAP_MANAGE_OWN_PLANTINGS, CAP_MOVE_TASKS, CAP_EDIT_TASK_DETAILS], // CHANGE
         task: [CAP_MOVE_TASKS, CAP_EDIT_TASK_DETAILS], // NEW
         manager: [CAP_CREATE_PLANTINGS, CAP_MANAGE_OWN_PLANTINGS, CAP_MOVE_TASKS, CAP_EDIT_TASK_DETAILS, CAP_MANAGE_SCOPE_CONTENT, CAP_MANAGE_ACCESS] // NEW
     }; // NEW
@@ -982,6 +982,7 @@ Draw.loadPlugin(function (ui) {
         const planting = nearestPlanting(cell); // NEW
         if (!user || !planting) return false; // NEW
         if (user.admin || isOwnerOfNearestScope(planting, user.id)) return true; // NEW
+        if (hasCapability(planting, CAP_MANAGE_SCOPE_CONTENT)) return true; // CHANGE
         return getAttr(planting, ATTR_OWNER) === user.id && hasCapability(planting, CAP_MANAGE_OWN_PLANTINGS); // NEW
     } // NEW
 
@@ -1646,8 +1647,8 @@ Draw.loadPlugin(function (ui) {
         const cell = cellFromChange(change);
         if (!name || !cell) return true;
         if (roleUserLinkChanged(change)) return canTransferOwnership(cell); // NEW
-        if (PROTECTED_ATTRS.has(String(change.key || "")) && !canManageAccess(cell)) return false;
-        if (protectedAttrsChanged(change) && !canManageAccess(cell)) return false; // NEW
+        if ((name === "mxCellAttributeChange" || name === "mxValueChange") && PROTECTED_ATTRS.has(String(change.key || "")) && !canManageAccess(cell)) return false; // CHANGE
+        if ((name === "mxCellAttributeChange" || name === "mxValueChange") && protectedAttrsChanged(change) && !canManageAccess(cell)) return false; // CHANGE
         if (name === "mxChildChange") {
             const currentParent = currentParentOfChange(change);
             const previousParent = previousParentOfChange(change);
@@ -2457,6 +2458,17 @@ Draw.loadPlugin(function (ui) {
         })[capability] || capability; // NEW
     } // NEW
 
+    function capabilityDescription(capability) { // NEW
+        return ({ // NEW
+            create_plantings: "Create new planting groups in granted garden beds/modules.", // NEW
+            manage_own_plantings: "Edit, move, resize, schedule, and delete planting groups the user owns.", // NEW
+            move_tasks: "Move task cards between lanes/days and reorder task schedules in granted task boards.", // NEW
+            edit_task_details: "Edit task titles, notes, dates, estimates, and other non-assignment task details.", // NEW
+            manage_scope_content: "Manage all non-access content in the scope, including plantings and task content.", // NEW
+            manage_access: "Invite users and change grants for the scope; ownership transfer remains owner/admin-only." // NEW
+        })[capability] || capabilityLabel(capability); // NEW
+    } // NEW
+
     function makePresetSelect(value, onChange) { // NEW
         const select = document.createElement("select"); // NEW
         select.style.cssText = "box-sizing:border-box;width:100%;padding:4px 6px;font:12px Arial,sans-serif;"; // NEW
@@ -2483,8 +2495,10 @@ Draw.loadPlugin(function (ui) {
         DOMAIN_CAPABILITIES.forEach(function (capability) { // NEW
             const label = document.createElement("label"); // NEW
             label.style.cssText = "display:flex;gap:4px;align-items:center;font-size:11px;"; // NEW
+            label.title = capabilityDescription(capability); // NEW
             const input = document.createElement("input"); // NEW
             input.type = "checkbox"; // NEW
+            input.title = label.title; // NEW
             input.checked = selected.has(capability); // NEW
             inputsByCapability[capability] = input; // NEW
             input.addEventListener("change", function () { // NEW

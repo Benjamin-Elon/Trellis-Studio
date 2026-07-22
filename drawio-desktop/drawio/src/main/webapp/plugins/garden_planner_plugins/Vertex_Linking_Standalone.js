@@ -1516,6 +1516,13 @@ Draw.loadPlugin(function (ui) {
             return start != null && String(start).trim() !== ''; // ADDED
         } // ADDED
 
+        function canScheduleTilerGroup(cell) { // NEW
+            if (!isTilerGroup(cell)) return false; // NEW
+            const users = window.Trellis && window.Trellis.users; // NEW
+            if (users && typeof users.isEnabled === 'function' && users.isEnabled() && typeof users.canManagePlanting === 'function') return users.canManagePlanting(cell); // NEW
+            return true; // NEW
+        } // NEW
+
         function getOccupancyNavigatorApi() { // NEW
             return graph && graph.__trellisBedSuccessionNavigator && typeof graph.__trellisBedSuccessionNavigator.getSelectedClusterOccupancy === 'function' // NEW
                 ? graph.__trellisBedSuccessionNavigator // NEW
@@ -1661,16 +1668,17 @@ Draw.loadPlugin(function (ui) {
             const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null; // ADDED
             if (!isTilerGroup(source)) return null; // ADDED
             const opener = getScheduleDialogOpener(); // ADDED
+            const allowed = canScheduleTilerGroup(source); // NEW
             const button = document.createElement('button'); // ADDED
             button.type = 'button'; // ADDED
             button.textContent = hasTilerSchedule(source) ? 'Edit schedule' : 'Set schedule'; // ADDED
-            button.title = opener ? button.textContent : 'Scheduler plugin is unavailable.'; // ADDED
-            button.disabled = !opener; // ADDED
+            button.title = !allowed ? 'You do not have permission to schedule this planting group.' : (opener ? button.textContent : 'Scheduler plugin is unavailable.'); // CHANGE
+            button.disabled = !opener || !allowed; // CHANGE
             button.style.border = '1px solid #2563eb'; // ADDED
             button.style.borderRadius = '5px'; // ADDED
-            button.style.background = opener ? '#ffffff' : '#f1f3f4'; // ADDED
-            button.style.color = opener ? '#1d4ed8' : '#9aa0a6'; // ADDED
-            button.style.cursor = opener ? 'pointer' : 'default'; // ADDED
+            button.style.background = opener && allowed ? '#ffffff' : '#f1f3f4'; // CHANGE
+            button.style.color = opener && allowed ? '#1d4ed8' : '#9aa0a6'; // CHANGE
+            button.style.cursor = opener && allowed ? 'pointer' : 'default'; // CHANGE
             button.style.fontSize = '10px'; // ADDED
             button.style.fontWeight = 'bold'; // ADDED
             button.style.padding = '4px 7px'; // ADDED
@@ -1682,6 +1690,7 @@ Draw.loadPlugin(function (ui) {
                 if (!opener) return; // ADDED
                 const liveSource = model.getCell(entry.sourceId); // ADDED
                 if (!isTilerGroup(liveSource)) return; // ADDED
+                if (!canScheduleTilerGroup(liveSource)) return; // NEW
                 try { // ADDED
                     await opener(ui, liveSource); // ADDED
                     setTimeout(refresh, 0); // ADDED

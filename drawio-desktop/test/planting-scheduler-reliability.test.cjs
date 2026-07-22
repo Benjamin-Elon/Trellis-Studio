@@ -297,6 +297,12 @@ function makeAttributeCell(initial = {}) {
     };
 }
 
+function makeSchedulerGuardCell(attrs = {}) { // NEW
+    return { // NEW
+        getAttribute(key) { return Object.prototype.hasOwnProperty.call(attrs, key) ? attrs[key] : null; } // NEW
+    }; // NEW
+} // NEW
+
 test('annual direct sow computes maturity and harvest window', () => {
     const result = hooks.computeScheduleResult(makeInputs());
     assert.equal(result.kind, 'annual');
@@ -2583,6 +2589,32 @@ test('task dispatch failure restores snapshotted graph attributes', async () => 
     assert.equal(cell.getAttribute('harvest_end'), '2026-06-01');
     assert.equal(cell.value.hasAttribute('lifespan_start'), false);
 });
+
+test('scheduler permission guard blocks unauthorized planting groups', () => { // NEW
+    const tiler = makeSchedulerGuardCell({ tiler_group: '1' }); // NEW
+    assert.doesNotThrow(() => hooks.requireCanSchedulePlantingGroup(tiler)); // NEW
+    hooks.__testWindow.Trellis = { users: { isEnabled: () => true, canManagePlanting: () => false } }; // NEW
+    try { // NEW
+        assert.throws(() => hooks.requireCanSchedulePlantingGroup(tiler), /permission to schedule this planting group/); // NEW
+        assert.throws(() => hooks.requireCanSchedulePlantingGroup(makeSchedulerGuardCell()), /Scheduler requires a planting group/); // NEW
+        hooks.__testWindow.Trellis.users.canManagePlanting = () => true; // NEW
+        assert.doesNotThrow(() => hooks.requireCanSchedulePlantingGroup(tiler)); // NEW
+    } finally { // NEW
+        delete hooks.__testWindow.Trellis; // NEW
+    } // NEW
+}); // NEW
+
+test('scheduler open and save preflight permissions before side effects', () => { // NEW
+    const schedulerSource = fs.readFileSync(schedulerPath, 'utf8'); // NEW
+    const openStart = schedulerSource.indexOf('async function openScheduleDialog(ui, cell)'); // NEW
+    const openLoad = schedulerSource.indexOf('const plants = await PlantModel.listBasic();', openStart); // NEW
+    const openGuard = schedulerSource.indexOf('requireCanSchedulePlantingGroup(cell); // NEW', openStart); // NEW
+    assert.ok(openStart >= 0 && openGuard > openStart && openGuard < openLoad); // NEW
+    const saveStart = schedulerSource.indexOf('async function applyScheduleToGraph(ui, cell, inputs, options = {})'); // NEW
+    const savePatch = schedulerSource.indexOf('const attributePatch = buildScheduleAttributePatch(inputs, result, options);', saveStart); // NEW
+    const saveGuard = schedulerSource.indexOf('requireCanSchedulePlantingGroup(cell); // NEW', saveStart); // NEW
+    assert.ok(saveStart >= 0 && saveGuard > saveStart && saveGuard < savePatch); // NEW
+}); // NEW
 
 test('async UI boundary reports labeled rejection', async () => {
     let reported = '';

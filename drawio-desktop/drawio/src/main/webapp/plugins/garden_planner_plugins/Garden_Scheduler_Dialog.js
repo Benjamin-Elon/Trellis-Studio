@@ -2792,6 +2792,14 @@ Draw.loadPlugin(function (ui) {
     }
     function getAttr(cell, k) { return cell && cell.getAttribute ? cell.getAttribute(k) : null; }
     function isTilerGroup(cell) { return !!cell && cell.getAttribute && cell.getAttribute('tiler_group') === '1'; }
+
+    function requireCanSchedulePlantingGroup(cell) { // NEW
+        if (!isTilerGroup(cell)) throw new Error('Scheduler requires a planting group.'); // NEW
+        const users = typeof window !== 'undefined' && window.Trellis && window.Trellis.users; // NEW
+        if (users && typeof users.isEnabled === 'function' && users.isEnabled() && typeof users.canManagePlanting === 'function' && !users.canManagePlanting(cell)) { // NEW
+            throw new Error('You do not have permission to schedule this planting group.'); // NEW
+        } // NEW
+    } // NEW
     function isGardenBedCell(cell) {
         return !!cell && cell.getAttribute && (
             cell.getAttribute('garden_bed') === '1' ||
@@ -10834,6 +10842,7 @@ Draw.loadPlugin(function (ui) {
 
 
     async function applyScheduleToGraph(ui, cell, inputs, options = {}) {
+        requireCanSchedulePlantingGroup(cell); // NEW
         const { plant, city } = inputs;
         const method = normId(inputs.methodId); // FIX
     
@@ -10973,6 +10982,7 @@ Draw.loadPlugin(function (ui) {
 
     // -------------------- Orchestrator: open schedule dialog --------------------------------
     async function openScheduleDialog(ui, cell) {
+        requireCanSchedulePlantingGroup(cell); // NEW
         // 1) Load reference data
         const plants = await PlantModel.listBasic();
         const cities = await CityClimate.loadAll();
@@ -11868,6 +11878,7 @@ Draw.loadPlugin(function (ui) {
             resolveTaskPreviewScheduleRange, // ADDED
             resolveTaskPreviewDisplayRange, // NEW
             resolveStartAfterWindow,
+            requireCanSchedulePlantingGroup, // NEW
             buildScheduleAttributePatch,
             snapshotCellAttributes,
             applyCellAttributePatch,
