@@ -2656,22 +2656,30 @@ Draw.loadPlugin(function (ui) {
         return { rows, weekCenters, plotLeft: padLeft, plotRight, step, maxValue }; // CHANGE
     } // CHANGE
 
-    function renderHarvestDots(hostEl, weekStarts, weeklyKg) { // NEW
+    function renderActualHarvestTimeline(hostEl, weekStarts, weeklyKg) { // CHANGE
         if (!hostEl) return; // NEW
         const weeks = Array.isArray(weekStarts) ? weekStarts : []; // NEW
         const series = Array.isArray(weeklyKg) ? weeklyKg : []; // NEW
         const maxValue = Math.max(0, ...series.map(value => Number(value) || 0)); // NEW
         hostEl.innerHTML = ""; // NEW
-        hostEl.style.cssText = "display:flex;flex-wrap:wrap;gap:2px;align-items:center;margin-top:6px;"; // NEW
+        hostEl.className = "yp-harvest-timeline"; // ADDED
+        hostEl.style.gridTemplateColumns = `repeat(${Math.max(1, weeks.length)}, minmax(4px, 1fr))`; // ADDED
+        if (maxValue <= 0) { // ADDED
+            hostEl.className = "yp-harvest-empty"; // ADDED
+            hostEl.textContent = "No actual harvest recorded for this crop/year."; // ADDED
+            return; // ADDED
+        } // ADDED
         for (let index = 0; index < weeks.length; index++) { // NEW
             const value = Math.max(0, Number(series[index]) || 0); // NEW
             const intensity = maxValue > 0 ? Math.min(1, value / maxValue) : 0; // NEW
-            const dot = document.createElement("div"); // NEW
-            dot.style.cssText = `width:7px;height:7px;border-radius:999px;border:1px solid rgba(0,0,0,.25);background:rgba(0,0,0,${0.05 + 0.85 * intensity});`; // NEW
-            dot.title = `${weeks[index] && weeks[index].iso || ""} - ${value.toFixed(2)} kg/week`; // NEW
-            hostEl.appendChild(dot); // NEW
+            const bar = document.createElement("div"); // CHANGE
+            bar.className = "yp-harvest-bar"; // ADDED
+            bar.style.height = `${Math.max(3, Math.round(4 + 30 * intensity))}px`; // ADDED
+            bar.style.background = `rgba(48,105,64,${0.14 + 0.76 * intensity})`; // ADDED
+            bar.title = `${weeks[index] && weeks[index].iso || ""} - ${value.toFixed(2)} kg actual harvest`; // CHANGE
+            hostEl.appendChild(bar); // CHANGE
         } // NEW
-    } // NEW
+    } // CHANGE
 
     // ------------ openPlanModal --------------
     // -------------------- Dashboard modal controller -------------------- // NEW
@@ -2714,9 +2722,21 @@ Draw.loadPlugin(function (ui) {
                 .yp-strip-toggle{flex:0 0 auto;color:#333}
                 .yp-strip-details{padding:10px;border-top:1px solid var(--yp-neutral-300)}
                 .yp-field-grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:10px}
+                .yp-derived-totals{display:grid;grid-template-columns:repeat(3,minmax(110px,1fr));gap:8px;margin-top:12px} /* ADDED */
+                .yp-derived-tile{border:1px solid var(--yp-neutral-300);border-radius:7px;background:var(--yp-neutral-100);padding:8px;min-width:0} /* ADDED */
+                .yp-derived-label{font-size:11px;color:var(--yp-neutral-700);font-weight:700;overflow-wrap:anywhere} /* ADDED */
+                .yp-derived-value{font-size:17px;font-weight:700;color:var(--yp-neutral-900);margin-top:3px} /* ADDED */
+                .yp-harvest-timeline-section{margin-top:14px;border-top:1px solid var(--yp-neutral-300);padding-top:10px} /* ADDED */
+                .yp-harvest-timeline-title{font-weight:700;margin-bottom:7px} /* ADDED */
+                .yp-harvest-timeline{display:grid;grid-template-columns:repeat(52,minmax(4px,1fr));gap:2px;align-items:end;min-height:34px} /* ADDED */
+                .yp-harvest-bar{height:24px;min-width:4px;border:1px solid rgba(0,0,0,.16);border-radius:2px 2px 0 0;background:rgba(48,105,64,.14)} /* ADDED */
+                .yp-harvest-empty{color:var(--yp-neutral-700);font-size:11px} /* ADDED */
+                .yp-yield-hint{display:flex;gap:6px;align-items:center;flex-wrap:wrap;color:#666;font-size:11px;margin-top:4px} /* ADDED */
+                .yp-package-row{display:grid;grid-template-columns:repeat(4,minmax(88px,1fr)) auto;gap:8px;align-items:end;padding:8px;border:1px solid #e1e1e1;border-radius:7px;background:#fcfcfc} /* ADDED */
+                .yp-package-field{display:flex;flex-direction:column;gap:4px;min-width:0} /* ADDED */
+                .yp-package-title{font-weight:700;color:#555} /* ADDED */
                 .yp-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
                 .yp-line{display:grid;grid-template-columns:minmax(70px,1fr) 120px 150px 150px auto;gap:8px;align-items:center}
-                .yp-package-line{display:grid;grid-template-columns:32px minmax(90px,1fr) 26px 100px 100px 90px auto;gap:8px;align-items:center}
                 .yp-demand-channel{border:1px solid #d5d5d5;border-radius:7px;background:#fff;overflow:hidden}
                 .yp-demand-channel-header{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px;background:#f8f8f8}
                 .yp-demand-channel-summary{flex:1 1 360px;color:var(--yp-neutral-700);overflow-wrap:anywhere}
@@ -2764,8 +2784,8 @@ Draw.loadPlugin(function (ui) {
                 @media(max-width:850px){
                     .yp-dashboard-grid{grid-template-columns:1fr}
                     .yp-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
-                    .yp-field-grid{grid-template-columns:1fr}
-                    .yp-line,.yp-package-line{display:flex;flex-wrap:wrap}
+                    .yp-field-grid,.yp-derived-totals,.yp-package-row{grid-template-columns:1fr} /* CHANGE */
+                    .yp-line{display:flex;flex-wrap:wrap} /* CHANGE */
                     .yp-demand-line{grid-template-columns:1fr}
                     .yp-plan-check-grid{grid-template-columns:1fr!important}
                 }`; // NEW
@@ -3164,6 +3184,54 @@ Draw.loadPlugin(function (ui) {
                 return field; // NEW
             } // NEW
 
+            function addPackageField(host, label, control) { // ADDED
+                const field = document.createElement("label"); // ADDED
+                field.className = "yp-package-field"; // ADDED
+                const title = document.createElement("span"); // ADDED
+                title.className = "yp-package-title"; // ADDED
+                title.textContent = label; // ADDED
+                if (control && !control.style.width) control.style.width = "100%"; // ADDED
+                field.appendChild(title); // ADDED
+                field.appendChild(control); // ADDED
+                host.appendChild(field); // ADDED
+                return field; // ADDED
+            } // ADDED
+
+            function createDerivedTile(label, help) { // ADDED
+                const tile = document.createElement("div"); // ADDED
+                tile.className = "yp-derived-tile"; // ADDED
+                if (help) tile.title = help; // ADDED
+                const labelEl = document.createElement("div"); // ADDED
+                labelEl.className = "yp-derived-label"; // ADDED
+                labelEl.textContent = label; // ADDED
+                const valueEl = document.createElement("div"); // ADDED
+                valueEl.className = "yp-derived-value"; // ADDED
+                valueEl.textContent = "0"; // ADDED
+                tile.appendChild(labelEl); // ADDED
+                tile.appendChild(valueEl); // ADDED
+                return { tile, valueEl }; // ADDED
+            } // ADDED
+
+            function resolveDefaultKgPerPlant(crop) { // ADDED
+                let nextYield = Number(crop && crop.baseKgPerPlant); // ADDED
+                const rows = varietyCache.get(String(crop && crop.plantId || "")) || []; // ADDED
+                const row = rows.find(item => String(item.variety_id) === String((crop && crop.varietyId) ?? "")); // ADDED
+                const overrides = row ? Env.safeJsonStringParse(row.overrides_json, null) : null; // ADDED
+                const overrideYield = Number(overrides && (overrides.yield_per_plant_kg ?? overrides.overrides?.yield_per_plant_kg)); // ADDED
+                if (Number.isFinite(overrideYield) && overrideYield > 0) nextYield = overrideYield; // ADDED
+                return Number.isFinite(nextYield) && nextYield > 0 ? nextYield : null; // ADDED
+            } // ADDED
+
+            function updateYieldHint(crop, hint, resetYield) { // ADDED
+                if (!hint) return; // ADDED
+                const defaultYield = resolveDefaultKgPerPlant(crop); // ADDED
+                const defaultText = Number.isFinite(defaultYield) ? `${defaultYield} kg/plant default` : "No default yield available"; // ADDED
+                hint.textContent = crop && crop.kgPerPlantMode === "manual" // ADDED
+                    ? `Manual override; ${defaultText}` // ADDED
+                    : `Using ${defaultText}`; // ADDED
+                if (resetYield) resetYield.style.display = crop && crop.kgPerPlantMode === "manual" ? "" : "none"; // ADDED
+            } // ADDED
+
             /**
              * Keeps one editable date pair valid without rewriting the opposite endpoint. // NEW
              */ // NEW
@@ -3371,15 +3439,16 @@ Draw.loadPlugin(function (ui) {
                 const crop = selectedCrop(); // NEW
                 if (!crop || !dashboard) return; // NEW
                 const metric = dashboard.cropMetricsById.get(String(crop.id)); // NEW
-                if (editorRefs.actual) editorRefs.actual.value = String(Math.max(0, Math.trunc(Number(crop.actualPlants) || 0))); // NEW
-                if (editorRefs.required) editorRefs.required.value = String(metric && Number.isFinite(metric.plantsReq) && metric.plantsReq > 0 ? Math.ceil(metric.plantsReq) : 0); // NEW
-                if (editorRefs.seeds) editorRefs.seeds.value = String(metric && Number.isFinite(metric.seedsReq) && metric.seedsReq > 0 ? Math.ceil(metric.seedsReq) : 0); // NEW
+                if (editorRefs.actual) editorRefs.actual.textContent = String(Math.max(0, Math.trunc(Number(crop.actualPlants) || 0))); // CHANGE
+                if (editorRefs.required) editorRefs.required.textContent = String(metric && Number.isFinite(metric.plantsReq) && metric.plantsReq > 0 ? Math.ceil(metric.plantsReq) : 0); // CHANGE
+                if (editorRefs.seeds) editorRefs.seeds.textContent = String(metric && Number.isFinite(metric.seedsReq) && metric.seedsReq > 0 ? Math.ceil(metric.seedsReq) : 0); // CHANGE
                 if (editorRefs.harvestStart) editorRefs.harvestStart.value = PlanMath.hasYmd(crop.harvestStart) ? crop.harvestStart : ""; // NEW
                 if (editorRefs.harvestEnd) editorRefs.harvestEnd.value = PlanMath.hasYmd(crop.harvestEnd) ? crop.harvestEnd : ""; // NEW
                 if (editorRefs.harvestStart && editorRefs.harvestStart.__syncPairedDateState) editorRefs.harvestStart.__syncPairedDateState(); // NEW
-                if (editorRefs.harvestDots && runtime) { // NEW
+                if (editorRefs.yieldHint) updateYieldHint(crop, editorRefs.yieldHint, editorRefs.resetYield); // ADDED
+                if (editorRefs.harvestTimeline && runtime) { // CHANGE
                     const derived = runtime.derivedByCropId.get(String(crop.id)); // NEW
-                    renderHarvestDots(editorRefs.harvestDots, runtime.weekStarts, derived ? derived.actualHarvestWeeklyKg : []); // NEW
+                    renderActualHarvestTimeline(editorRefs.harvestTimeline, runtime.weekStarts, derived ? derived.actualHarvestWeeklyKg : []); // CHANGE
                 } // NEW
             } // NEW
 
@@ -3645,40 +3714,68 @@ Draw.loadPlugin(function (ui) {
                 varietyRow.appendChild(addVariety); // NEW
                 const kg = mkInput("number", crop.kgPerPlant ?? ""); // NEW
                 kg.min = "0"; // NEW
+                const kgHost = document.createElement("div"); // ADDED
+                const yieldMeta = document.createElement("div"); // ADDED
+                yieldMeta.className = "yp-yield-hint"; // ADDED
+                const yieldHint = document.createElement("span"); // ADDED
+                const resetYield = mkBtn("Reset", "secondary"); // ADDED
+                yieldMeta.appendChild(yieldHint); yieldMeta.appendChild(resetYield); // ADDED
+                kgHost.appendChild(kg); kgHost.appendChild(yieldMeta); // ADDED
                 const germ = mkInput("number", crop.germRate ?? 1); // NEW
                 germ.min = "0.01"; germ.max = "1"; germ.step = "0.01"; // NEW
                 const harvestStart = mkInput("date", crop.harvestStart || ""); // NEW
                 const harvestEnd = mkInput("date", crop.harvestEnd || ""); // NEW
                 const shelf = mkInput("number", crop.shelfLifeDays ?? 0); // NEW
                 shelf.min = "0"; // NEW
-                const actual = mkInput("number", crop.actualPlants ?? 0); // NEW
-                const required = mkInput("number", crop.plantsReq ?? 0); // NEW
-                const seeds = mkInput("number", crop.seedsReq ?? 0); // NEW
-                actual.disabled = required.disabled = seeds.disabled = true; // NEW
+                const method = document.createElement("select"); // ADDED
+                method.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;width:100%;"; // ADDED
+                const methodDiagnostic = document.createElement("div"); // ADDED
+                methodDiagnostic.style.cssText = `color:${YP_COLORS.danger};font-size:11px;margin-top:4px;`; // ADDED
+                const methodHost = document.createElement("div"); // ADDED
+                methodHost.appendChild(method); methodHost.appendChild(methodDiagnostic); // ADDED
                 const useActual = document.createElement("input"); // NEW
                 useActual.type = "checkbox"; useActual.checked = crop.useActualHarvest !== false; // NEW
                 const syncAvailability = document.createElement("input"); // NEW
                 syncAvailability.type = "checkbox"; syncAvailability.checked = !!crop.syncharvest; // NEW
                 const useActualLabel = document.createElement("label"); // NEW
                 useActualLabel.className = "yp-row"; useActualLabel.appendChild(useActual); useActualLabel.appendChild(document.createTextNode("Use actual harvest")); // NEW
+                useActualLabel.title = "Use diagram actual harvest records for this crop when available; harvest dates become diagram-driven."; // ADDED
+                useActual.title = useActualLabel.title; // ADDED
                 const syncLabel = document.createElement("label"); // NEW
                 syncLabel.className = "yp-row"; syncLabel.appendChild(syncAvailability); syncLabel.appendChild(document.createTextNode("Sync demand to harvest window")); // CHANGE
+                syncLabel.title = "When the crop harvest window changes, update matching demand and CSA dates to stay inside that window."; // ADDED
+                syncAvailability.title = syncLabel.title; // ADDED
                 harvestStart.disabled = harvestEnd.disabled = useActual.checked; // NEW
                 addField(grid, "Plant", plant); // NEW
                 addField(grid, "Variety", varietyRow); // NEW
-                addField(grid, "kg/plant", kg, crop.kgPerPlantMode === "manual" ? "Manual override" : "Using plant or variety default"); // NEW
+                addField(grid, "Planting method", methodHost); // ADDED
+                addField(grid, "kg/plant", kgHost); // CHANGE
                 addField(grid, "Germination rate", germ, "Value from 0.01 through 1.00"); // NEW
                 addField(grid, "Harvest start", harvestStart); // NEW
                 addField(grid, "Harvest end", harvestEnd); // NEW
                 addField(grid, "Shelf life (days)", shelf); // NEW
-                addField(grid, "Actual plants", actual, "Read from diagram planting groups"); // NEW
-                addField(grid, "Plants required", required, "Calculated from target and yield"); // NEW
-                addField(grid, "Seeds required", seeds, "Calculated from plants required and germination"); // NEW
                 grid.appendChild(useActualLabel); // NEW
                 grid.appendChild(syncLabel); // NEW
                 content.appendChild(grid); // NEW
-                editorRefs = { ...editorRefs, variety, actual, required, seeds, harvestStart, harvestEnd }; // NEW
+                const totals = document.createElement("div"); // ADDED
+                totals.className = "yp-derived-totals"; // ADDED
+                const actualTile = createDerivedTile("Actual plants", "Read from diagram planting groups"); // ADDED
+                const requiredTile = createDerivedTile("Plants required", "Calculated from target and yield"); // ADDED
+                const seedsTile = createDerivedTile("Seeds required", "Calculated from plants required and germination"); // ADDED
+                totals.appendChild(actualTile.tile); totals.appendChild(requiredTile.tile); totals.appendChild(seedsTile.tile); // ADDED
+                content.appendChild(totals); // ADDED
+                const timelineSection = document.createElement("div"); // ADDED
+                timelineSection.className = "yp-harvest-timeline-section"; // ADDED
+                const timelineTitle = document.createElement("div"); // ADDED
+                timelineTitle.className = "yp-harvest-timeline-title"; // ADDED
+                timelineTitle.textContent = "Actual harvest by week"; // ADDED
+                const timeline = document.createElement("div"); // ADDED
+                timelineSection.appendChild(timelineTitle); timelineSection.appendChild(timeline); // ADDED
+                content.appendChild(timelineSection); // ADDED
+                editorRefs = { ...editorRefs, variety, actual: actualTile.valueEl, required: requiredTile.valueEl, seeds: seedsTile.valueEl, harvestStart, harvestEnd, method, yieldHint, resetYield, harvestTimeline: timeline }; // CHANGE
                 loadVarieties(crop, variety); // NEW
+                loadMethods(crop, method, methodDiagnostic); // ADDED
+                updateYieldHint(crop, yieldHint, resetYield); // ADDED
 
                 variety.addEventListener("change", () => { // NEW
                     const next = String(variety.value || ""); // NEW
@@ -3707,8 +3804,16 @@ Draw.loadPlugin(function (ui) {
                 addVariety.addEventListener("click", () => { // NEW
                     graph.fireEvent(new mxEventObject("usl:openVarietyEditor", "cropId", String(crop.id), "plantId", Number(crop.plantId), "varietyId", crop.varietyId == null ? null : Number(crop.varietyId))); // NEW
                 }); // NEW
-                kg.addEventListener("input", () => { crop.kgPerPlant = Number(kg.value); crop.kgPerPlantMode = "manual"; debounceRefresh(); }); // NEW
+                kg.addEventListener("input", () => { crop.kgPerPlant = Number(kg.value); crop.kgPerPlantMode = "manual"; updateYieldHint(crop, yieldHint, resetYield); debounceRefresh(); }); // CHANGE
                 germ.addEventListener("input", () => { crop.germRate = Math.max(0.01, Math.min(1, Number(germ.value) || 1)); debounceRefresh(); }); // NEW
+                method.addEventListener("change", () => { crop.method = method.value; refreshDerived(); }); // ADDED
+                resetYield.addEventListener("click", () => { // ADDED
+                    const defaultYield = resolveDefaultKgPerPlant(crop); // ADDED
+                    crop.kgPerPlantMode = "auto"; // ADDED
+                    if (Number.isFinite(defaultYield) && defaultYield > 0) crop.kgPerPlant = defaultYield; // ADDED
+                    renderSelectedEditor(); // ADDED
+                    refreshDerived(); // ADDED
+                }); // ADDED
                 useActual.addEventListener("change", () => { crop.useActualHarvest = useActual.checked; harvestStart.disabled = harvestEnd.disabled = useActual.checked; refreshDerived(); }); // NEW
                 syncAvailability.addEventListener("change", () => { // NEW
                     const beforeDateRanges = captureDateRangeSnapshot(); // NEW
@@ -3987,24 +4092,22 @@ Draw.loadPlugin(function (ui) {
                 content.appendChild(add); // NEW
                 saveDefault.addEventListener("change", () => { crop.savePackagesAsDefault = saveDefault.checked; renderFooter(); }); // NEW
 
-                const columns = document.createElement("div"); // NEW
-                columns.className = "yp-package-line"; // NEW
-                columns.style.cssText += ";font-weight:700;color:#555;"; // NEW
-                for (const label of ["", "Unit", "", "Quantity", "Base", "Price", ""]) columns.appendChild(document.createTextNode(label)); // NEW
-
                 function renderRows() { // NEW
                     rowsHost.innerHTML = ""; // NEW
-                    rowsHost.appendChild(columns); // NEW
                     crop.packages = Array.isArray(crop.packages) ? crop.packages : []; // NEW
                     for (const pkg of crop.packages) { // NEW
                         const row = document.createElement("div"); // NEW
-                        row.className = "yp-package-line"; // NEW
+                        row.className = "yp-package-row"; // CHANGE
                         const unit = mkInput("text", pkg.unit || ""); // NEW
                         const baseQty = mkInput("number", pkg.baseQty ?? 1); // NEW
                         const baseType = mkSelect([{ value: "kg", label: "kg" }, { value: "plant", label: "plant" }], pkg.baseType || "kg"); // NEW
                         const price = mkInput("number", Number.isFinite(Number(pkg.price)) ? pkg.price : ""); // NEW
                         const remove = mkBtn("Remove", "danger"); // CHANGE
-                        row.appendChild(document.createTextNode("1")); row.appendChild(unit); row.appendChild(document.createTextNode("=")); row.appendChild(baseQty); row.appendChild(baseType); row.appendChild(price); row.appendChild(remove); // NEW
+                        addPackageField(row, "Unit", unit); // ADDED
+                        addPackageField(row, "Quantity", baseQty); // ADDED
+                        addPackageField(row, "Base", baseType); // ADDED
+                        addPackageField(row, "Price", price); // ADDED
+                        row.appendChild(remove); // CHANGE
                         rowsHost.appendChild(row); // NEW
                         unit.addEventListener("input", () => { pkg.unit = unit.value; debounceRefresh({ rebuildDemand: true, rebuildCsa: true }); }); // CHANGE
                         baseQty.addEventListener("input", () => { pkg.baseQty = Math.max(0, Number(baseQty.value) || 0); debounceRefresh(); }); // NEW
@@ -4016,53 +4119,6 @@ Draw.loadPlugin(function (ui) {
 
                 add.addEventListener("click", () => { crop.packages.push({ unit: "kg", baseType: "kg", baseQty: 1, price: NaN }); renderRows(); refreshDerived(null, { rebuildDemand: true, rebuildCsa: true }); }); // CHANGE
                 renderRows(); // NEW
-            } // NEW
-
-            function renderAdvanced(crop, content) { // NEW
-                const grid = document.createElement("div"); // NEW
-                grid.className = "yp-field-grid"; // NEW
-                const method = document.createElement("select"); // NEW
-                method.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;width:100%;"; // NEW
-                const methodDiagnostic = document.createElement("div"); // NEW
-                methodDiagnostic.style.cssText = `color:${YP_COLORS.danger};font-size:11px;margin-top:4px;`; // CHANGE
-                const methodHost = document.createElement("div"); // NEW
-                methodHost.appendChild(method); methodHost.appendChild(methodDiagnostic); // NEW
-                const cropId = mkInput("text", crop.id || ""); cropId.disabled = true; // NEW
-                const plantId = mkInput("text", crop.plantId || ""); plantId.disabled = true; // NEW
-                const varietyId = mkInput("text", crop.varietyId == null ? "" : crop.varietyId); varietyId.disabled = true; // NEW
-                const modeHost = document.createElement("div"); // NEW
-                modeHost.className = "yp-row"; // NEW
-                const mode = document.createElement("span"); // NEW
-                mode.textContent = crop.kgPerPlantMode === "manual" ? "Manual override" : "Automatic"; // NEW
-                const resetYield = mkBtn("Reset to default", "secondary"); // CHANGE
-                modeHost.appendChild(mode); modeHost.appendChild(resetYield); // NEW
-                addField(grid, "Planting method", methodHost); // NEW
-                addField(grid, "Yield override state", modeHost); // NEW
-                addField(grid, "Crop ID", cropId); // NEW
-                addField(grid, "Plant ID", plantId); // NEW
-                addField(grid, "Variety ID", varietyId); // NEW
-                content.appendChild(grid); // NEW
-                const dotsTitle = document.createElement("div"); // NEW
-                dotsTitle.style.cssText = "font-weight:700;margin-top:14px;"; // NEW
-                dotsTitle.textContent = "Actual harvest by week"; // NEW
-                const dots = document.createElement("div"); // NEW
-                content.appendChild(dotsTitle); content.appendChild(dots); // NEW
-                editorRefs.method = method; // NEW
-                editorRefs.harvestDots = dots; // NEW
-                loadMethods(crop, method, methodDiagnostic); // NEW
-                method.addEventListener("change", () => { crop.method = method.value; refreshDerived(); }); // NEW
-                resetYield.addEventListener("click", () => { // NEW
-                    crop.kgPerPlantMode = "auto"; // NEW
-                    let nextYield = Number(crop.baseKgPerPlant); // NEW
-                    const rows = varietyCache.get(String(crop.plantId || "")) || []; // NEW
-                    const row = rows.find(item => String(item.variety_id) === String(crop.varietyId ?? "")); // NEW
-                    const overrides = row ? Env.safeJsonStringParse(row.overrides_json, null) : null; // NEW
-                    const overrideYield = Number(overrides && (overrides.yield_per_plant_kg ?? overrides.overrides?.yield_per_plant_kg)); // NEW
-                    if (Number.isFinite(overrideYield) && overrideYield > 0) nextYield = overrideYield; // NEW
-                    if (Number.isFinite(nextYield) && nextYield > 0) crop.kgPerPlant = nextYield; // NEW
-                    renderSelectedEditor(); // NEW
-                    refreshDerived(); // NEW
-                }); // NEW
             } // NEW
 
             function renderSelectedEditor() { // NEW
@@ -4087,14 +4143,13 @@ Draw.loadPlugin(function (ui) {
                 tabs.style.cssText = "display:flex;gap:4px;padding:8px 10px 0;flex-wrap:wrap;"; // NEW
                 const content = document.createElement("div"); // NEW
                 content.style.padding = "12px"; // NEW
-                for (const tab of [{ id: "basics", label: "Basics" }, { id: "packages", label: "Packages" }, { id: "advanced", label: "Advanced" }]) { // CHANGE
+                for (const tab of [{ id: "basics", label: "Basics" }, { id: "packages", label: "Packages" }]) { // CHANGE
                     const button = mkBtn(tab.label, state.activeTab === tab.id ? "primary" : "neutral"); // CHANGE
                     button.addEventListener("click", () => { state.activeTab = tab.id; renderSelectedEditor(); syncEditorDerived(); }); // NEW
                     tabs.appendChild(button); // NEW
                 } // NEW
                 editorBox.appendChild(head); editorBox.appendChild(tabs); editorBox.appendChild(content); // NEW
                 if (state.activeTab === "packages") renderPackages(crop, content); // CHANGE
-                else if (state.activeTab === "advanced") renderAdvanced(crop, content); // NEW
                 else renderBasics(crop, content); // NEW
                 remove.addEventListener("click", () => { // NEW
                     const index = plan.crops.indexOf(crop); // NEW

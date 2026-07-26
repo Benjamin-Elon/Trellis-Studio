@@ -89,6 +89,14 @@ function findEditorBox(harness) { // NEW
     return removeCrop ? removeCrop.parentElement.parentElement : null; // NEW
 } // NEW
 
+function findEditorField(harness, labelText) { // ADDED
+    const editor = findEditorBox(harness); // ADDED
+    return Array.from(editor.querySelectorAll("label")).find(label => { // ADDED
+        const title = label.querySelector("span"); // ADDED
+        return title && title.textContent.trim() === labelText; // ADDED
+    }) || null; // ADDED
+} // ADDED
+
 function chartLegendButtons(document) { // NEW
     return Array.from(document.querySelectorAll(".yp-chart-legend-item")); // NEW
 } // NEW
@@ -139,7 +147,7 @@ test("modal renders four ordered strips with the expected defaults and crop tabs
     const tabLabels = Array.from(harness.document.querySelectorAll("button"))
         .map(button => button.textContent.trim())
         .filter(label => ["Basics", "Packages", "Advanced"].includes(label)); // CHANGE
-    assert.deepEqual(tabLabels, ["Basics", "Packages", "Advanced"]); // CHANGE
+    assert.deepEqual(tabLabels, ["Basics", "Packages"]); // CHANGE
     const strips = Array.from(harness.document.querySelectorAll("[data-year-plan-strip]")); // NEW
     assert.deepEqual(strips.map(strip => strip.dataset.yearPlanStrip), ["crop-plan", "demand", "csa", "plan-check"]); // CHANGE
     assert.deepEqual(strips.map(strip => strip.querySelector(".yp-strip-title").textContent), ["Crop Plan", "Demand", "CSA", "Plan Check"]); // CHANGE
@@ -154,6 +162,86 @@ test("modal renders four ordered strips with the expected defaults and crop tabs
     assert.equal(findStripHeader(harness.document, "plan-check").getAttribute("aria-expanded"), "false"); // NEW
     assert.equal(harness.findButton("Add component"), null);
 });
+
+test("Crop Plan Basics separates editable controls, derived totals, tooltips, and yield reset", async t => { // ADDED
+    const harness = createYearPlannerHarness({ // ADDED
+        methods: [ // ADDED
+            { method_id: "direct_sow.field", method_name: "Direct sow", method_category_id: "direct_sow" }, // ADDED
+            { method_id: "transplant.field", method_name: "Transplant", method_category_id: "transplant" } // ADDED
+        ] // ADDED
+    }); // ADDED
+    t.after(() => harness.dom.window.close()); // ADDED
+    savePlan(harness, 2026, plan => { addDemand(plan, { qty: 5 }); }); // ADDED
+    const session = await harness.openModal(2026); // ADDED
+    await harness.settle(10); // ADDED
+
+    let editor = findEditorBox(harness); // ADDED
+    assert.equal(harness.findButton("Advanced"), null); // ADDED
+    assert.doesNotMatch(editor.textContent, /Crop ID|Plant ID|Variety ID|Yield override state/); // ADDED
+    assert.ok(findEditorField(harness, "Planting method")); // ADDED
+
+    const useActual = Array.from(editor.querySelectorAll("label.yp-row")).find(label => label.textContent.includes("Use actual harvest")); // ADDED
+    const syncHarvest = Array.from(editor.querySelectorAll("label.yp-row")).find(label => label.textContent.includes("Sync demand to harvest window")); // ADDED
+    assert.match(useActual.title, /actual harvest records/); // ADDED
+    assert.match(syncHarvest.title, /matching demand and CSA dates/); // ADDED
+
+    const method = findEditorField(harness, "Planting method").querySelector("select"); // ADDED
+    assert.equal(method.value, "direct_sow.field"); // ADDED
+    method.value = "transplant.field"; // ADDED
+    method.dispatchEvent(new harness.window.Event("change", { bubbles: true })); // ADDED
+    assert.equal(session.plan.crops[0].method, "transplant.field"); // ADDED
+
+    const totals = editor.querySelector(".yp-derived-totals"); // ADDED
+    assert.ok(totals); // ADDED
+    assert.deepEqual(Array.from(totals.querySelectorAll(".yp-derived-label")).map(label => label.textContent), ["Actual plants", "Plants required", "Seeds required"]); // ADDED
+    assert.deepEqual(Array.from(totals.querySelectorAll(".yp-derived-value")).map(value => value.textContent), ["0", "5", "7"]); // ADDED
+    assert.match(editor.querySelector(".yp-harvest-empty").textContent, /No actual harvest recorded/); // ADDED
+
+    let kgField = findEditorField(harness, "kg/plant"); // ADDED
+    assert.match(kgField.querySelector(".yp-yield-hint").textContent, /Using 1 kg\/plant default/); // ADDED
+    harness.setControlValue(kgField.querySelector('input[type="number"]'), 2); // ADDED
+    await harness.settle(130); // ADDED
+    editor = findEditorBox(harness); // ADDED
+    assert.deepEqual(Array.from(editor.querySelectorAll(".yp-derived-value")).map(value => value.textContent), ["0", "3", "4"]); // ADDED
+    kgField = findEditorField(harness, "kg/plant"); // ADDED
+    assert.match(kgField.querySelector(".yp-yield-hint").textContent, /Manual override/); // ADDED
+    kgField.querySelector("button").click(); // ADDED
+    await harness.settle(10); // ADDED
+    kgField = findEditorField(harness, "kg/plant"); // ADDED
+    assert.equal(kgField.querySelector('input[type="number"]').value, "1"); // ADDED
+    assert.match(kgField.querySelector(".yp-yield-hint").textContent, /Using 1 kg\/plant default/); // ADDED
+}); // ADDED
+
+test("Basics actual harvest timeline renders diagram-backed weekly harvest", async t => { // ADDED
+    const harness = createYearPlannerHarness(); // ADDED
+    t.after(() => harness.dom.window.close()); // ADDED
+    harness.addCell(harness.moduleCell, new harness.TestCell("actual-harvest", { tiler_group: "1", plant_id: "1", plant_name: "Tomato", plant_count: "12", season_start_year: "2026", harvest_start: "2026-07-01", harvest_end: "2026-07-21" })); // ADDED
+    savePlan(harness, 2026, plan => { plan.crops[0].useActualHarvest = true; }); // ADDED
+    await harness.openModal(2026); // ADDED
+    await harness.settle(10); // ADDED
+
+    const editor = findEditorBox(harness); // ADDED
+    const totals = editor.querySelector(".yp-derived-totals"); // ADDED
+    assert.equal(Array.from(totals.querySelectorAll(".yp-derived-value"))[0].textContent, "12"); // ADDED
+    const timeline = editor.querySelector(".yp-harvest-timeline"); // ADDED
+    assert.ok(timeline); // ADDED
+    assert.ok(timeline.querySelectorAll(".yp-harvest-bar").length >= 52); // ADDED
+    assert.ok(Array.from(timeline.querySelectorAll(".yp-harvest-bar")).some(bar => /kg actual harvest/.test(bar.title) && !/0\.00 kg/.test(bar.title))); // ADDED
+}); // ADDED
+
+test("Packages render labeled compact package rows", async t => { // ADDED
+    const harness = createYearPlannerHarness(); // ADDED
+    t.after(() => harness.dom.window.close()); // ADDED
+    savePlan(harness, 2026); // ADDED
+    await harness.openModal(2026); // ADDED
+    harness.findButton("Packages").click(); // ADDED
+
+    const editor = findEditorBox(harness); // ADDED
+    const row = editor.querySelector(".yp-package-row"); // ADDED
+    assert.ok(row); // ADDED
+    assert.deepEqual(Array.from(row.querySelectorAll(".yp-package-title")).map(title => title.textContent), ["Unit", "Quantity", "Base", "Price"]); // ADDED
+    assert.equal(editor.querySelector(".yp-package-line"), null); // ADDED
+}); // ADDED
 
 test("empty plans show Demand and Crop Plan guidance", async t => { // NEW
     const harness = createYearPlannerHarness(); // NEW
