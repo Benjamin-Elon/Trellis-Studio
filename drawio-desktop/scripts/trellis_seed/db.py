@@ -10,7 +10,7 @@ from typing import Any
 
 from .jsonio import read_json, write_json
 from .migrations import apply_migrations, pending_migrations
-from .schema import CITY_COLUMNS, COMPANION_COLUMNS, COMPANION_LAYOUT_TEMPLATES, PLANT_COLUMNS, PLANTING_WINDOW_REFERENCE_COLUMNS, VARIETY_MATURITY_CLASSES, WEATHER_TABLES  # CHANGED
+from .schema import CITY_COLUMNS, COMPANION_COLUMNS, COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS, COMPANION_LAYOUT_TEMPLATES, PLANT_COLUMNS, PLANTING_WINDOW_REFERENCE_COLUMNS, VARIETY_MATURITY_CLASSES, WEATHER_TABLES  # CHANGED
 from .validator import normalize_key, validate_run
 from .weather import checksum_rows
 
@@ -187,7 +187,7 @@ def _unique_paths(paths: list[Path]) -> list[Path]:
 def _apply_order() -> list[str]:
     return [
         "Plants", "Cities", "PlantAllowedMethodCategories", "PlantVarieties",
-        "Companions", "CompanionEvidence", "PlantTaskTemplates",
+        "Companions", "CompanionLayoutGroupDefaults", "CompanionEvidence", "PlantTaskTemplates",  # CHANGED
         "VarietyTaskTemplates", "PlantingWindowReferences", "CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily",
     ]
 
@@ -203,6 +203,8 @@ def _apply_table(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]
         return _upsert_varieties(conn, rows)
     if table == "Companions":
         return _upsert_companions(conn, rows)
+    if table == "CompanionLayoutGroupDefaults":  # ADDED
+        return _upsert_companion_layout_group_defaults(conn, rows)  # ADDED
     if table == "CompanionEvidence":
         return _upsert_evidence(conn, rows)
     if table == "PlantTaskTemplates":
@@ -315,6 +317,33 @@ def _upsert_companions(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> 
     return len(rows)
 
 
+def _upsert_companion_layout_group_defaults(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:  # ADDED
+    columns = set(_table_columns(conn, "CompanionLayoutGroupDefaults"))  # ADDED
+    writable_columns = [column for column in ("plant_set_key", "anchor_plant_id", "layout_json", "updated_at") if column in columns]  # ADDED
+    now = datetime.now(timezone.utc).isoformat()  # ADDED
+    count = 0  # ADDED
+    for raw in rows:  # ADDED
+        row = {column: raw.get(column) for column in COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS if column in raw}  # ADDED
+        layout_json = row.get("layout_json")  # ADDED
+        if not isinstance(layout_json, str):  # ADDED
+            layout_json = json.dumps(layout_json or {}, sort_keys=True)  # ADDED
+        normalized = {  # ADDED
+            "plant_set_key": str(row.get("plant_set_key") or "").strip(),  # ADDED
+            "anchor_plant_id": _optional_int(row.get("anchor_plant_id")),  # ADDED
+            "layout_json": layout_json,  # ADDED
+            "updated_at": row.get("updated_at") or now,  # ADDED
+        }  # ADDED
+        values = [normalized.get(column) for column in writable_columns]  # ADDED
+        assignments = [column for column in writable_columns if column not in {"plant_set_key", "anchor_plant_id"}]  # ADDED
+        sql = (  # ADDED
+            f"INSERT INTO CompanionLayoutGroupDefaults ({', '.join(writable_columns)}) VALUES ({', '.join('?' for _ in writable_columns)}) "  # ADDED
+            "ON CONFLICT(plant_set_key, anchor_plant_id) DO UPDATE SET " + ", ".join(f"{column}=excluded.{column}" for column in assignments)  # ADDED
+        )  # ADDED
+        conn.execute(sql, values)  # ADDED
+        count += 1  # ADDED
+    return count  # ADDED
+
+
 def _upsert_evidence(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
     now = datetime.now(timezone.utc).isoformat()
     for row in rows:
@@ -423,6 +452,12 @@ def _existing_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> 
         if table == "Companions":
             relation_id = row.get("relation_id") or _find_companion_id(conn, row.get("p1"), row.get("p2"))
             return conn.execute("SELECT * FROM Companions WHERE relation_id=?", [relation_id]).fetchone() if relation_id else None
+        if table == "CompanionLayoutGroupDefaults":  # ADDED
+            plant_set_key = str(row.get("plant_set_key") or "").strip()  # ADDED
+            anchor_plant_id = row.get("anchor_plant_id")  # ADDED
+            if not plant_set_key or not anchor_plant_id:  # ADDED
+                return None  # ADDED
+            return conn.execute("SELECT * FROM CompanionLayoutGroupDefaults WHERE plant_set_key=? AND anchor_plant_id=?", [plant_set_key, anchor_plant_id]).fetchone()  # ADDED
         if table == "PlantVarieties":
             plant_id = row.get("plant_id") or _find_id_by_name(conn, "Plants", "plant_id", "plant_name", row.get("plant_name"))
             variety_id = row.get("variety_id") or (_find_variety_id(conn, int(plant_id), row.get("variety_name")) if plant_id else None)
@@ -513,6 +548,8 @@ def _identity_label(conn: sqlite3.Connection, table: str, row: dict[str, Any], g
         return f"{plant_name or row.get('plant_id')} / {variety_name or row.get('variety_id')} / {row.get('method_id')}"
     if table == "CompanionEvidence":
         return f"{row.get('p1')} / {row.get('p2')} / {row.get('source_url') or row.get('source_note')}"
+    if table == "CompanionLayoutGroupDefaults":  # ADDED
+        return f"{row.get('plant_set_key')} / anchor {row.get('anchor_plant_id')}"  # ADDED
     if table == "PlantingWindowReferences":
         return f"{row.get('plant_name') or _db_plant_name(conn, row.get('plant_id'))} / {_city_identity_label(row) or _db_city_name(conn, row.get('city_id'))} / {row.get('method_id')} / {row.get('stage')} / {row.get('window_label')}"  # CHANGED
     return str(row.get("plant_name") or _city_identity_label(row) or row.get("variety_name") or row.get("method_id") or f"{row.get('p1')} / {row.get('p2')}")  # CHANGED

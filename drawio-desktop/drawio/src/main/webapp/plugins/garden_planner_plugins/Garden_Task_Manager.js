@@ -2972,6 +2972,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         const reflow = !opts || opts.reflow !== false;
         const assignmentIdsByTaskKey = opts && opts.assignmentIdsByTaskKey; // NEW
         const insideUpdate = !!(opts && opts.insideUpdate); // NEW
+        const focusCreated = !opts || opts.focusCreated !== false; // NEW: scheduler saves can create cards without stealing graph focus
 
         let gardenModule = null;
         const grp = model.getCell(targetGroupId);
@@ -3021,7 +3022,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             if (!insideUpdate) model.endUpdate(); // CHANGE
         }
 
-        if (out.length) {
+        if (focusCreated && out.length) { // CHANGE: preserve existing manual-create focus unless callers explicitly suppress it
             const last = out // CHANGE: never select a newly collapsed or paged-out repeat occurrence
                 .slice() // NEW
                 .reverse() // NEW
@@ -3132,7 +3133,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             const assignmentIdsByTaskKey = new Map(preservation.preserved.map(entry => [entry.key, entry.roleIds])); // NEW
             const preserveCardIds = new Set(preservation.retainMissing.map(record => String(record.card && (record.card.id || (record.card.getId && record.card.getId())) || ''))); // NEW
             removeTasksLinkedOnlyTo(targetGroupId, { reflow: !normalizedTasks.length, preserveCardIds, insideUpdate: !!options.insideUpdate }); // CHANGE
-            return normalizedTasks.length ? createTasks(normalizedTasks, targetGroupId, { reflow: true, assignmentIdsByTaskKey, insideUpdate: !!options.insideUpdate }) : []; // CHANGE
+            return normalizedTasks.length ? createTasks(normalizedTasks, targetGroupId, { reflow: true, assignmentIdsByTaskKey, insideUpdate: !!options.insideUpdate, focusCreated: options.focusCreated !== false }) : []; // CHANGE
         }; // NEW
         if (options.insideUpdate) return operation(); // NEW
         return runTrellisHistoryTransaction({ category: "Tasks", action: "replace", origin: "Garden_Task_Manager", title: "Replace linked tasks", affectedCellIds: [targetGroupId].filter(Boolean) }, operation); // CHANGE
@@ -3172,14 +3173,15 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         const targetGroupId = opts.targetGroupId; // ADDED
         const tasks = Array.isArray(opts.tasks) ? opts.tasks : []; // CHANGE: the sync command owns its input guard and does not depend on an undefined global normalizer
         const insideUpdate = !!opts.insideUpdate; // NEW
+        const focusCreated = opts.focusCreated !== false; // NEW: sync callers choose whether generated creations should steal focus
         const syncSource = buildDifferentialTaskSyncRecords(targetGroupId); // ADDED
         if (!syncSource) return []; // ADDED
         const plan = planDifferentialTaskSync(syncSource.records, tasks); // ADDED
         if (plan.legacyReplace) { // ADDED
-            return replaceTasksPreservingAssignments(targetGroupId, tasks, { insideUpdate }); // CHANGE
+            return replaceTasksPreservingAssignments(targetGroupId, tasks, { insideUpdate, focusCreated }); // CHANGE
         } // ADDED
         if (!plan.updates.length && !plan.removes.length && !plan.missing.length) { // CHANGE
-            if (plan.creates.length) createTasks(plan.creates.map(item => item.task), targetGroupId, { reflow: true, insideUpdate }); // CHANGE
+            if (plan.creates.length) createTasks(plan.creates.map(item => item.task), targetGroupId, { reflow: true, insideUpdate, focusCreated }); // CHANGE
             return plan; // ADDED
         } // ADDED
 
@@ -3203,7 +3205,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             if (!insideUpdate) model.endUpdate(); // CHANGE
         } // ADDED
 
-        if (plan.creates.length) createTasks(plan.creates.map(item => item.task), targetGroupId, { reflow: true, insideUpdate }); // CHANGE
+        if (plan.creates.length) createTasks(plan.creates.map(item => item.task), targetGroupId, { reflow: true, insideUpdate, focusCreated }); // CHANGE
         affectedBoards.forEach(board => scanAndReflowBoard(board, { skipPurge: true, insideUpdate })); // CHANGE
         return plan; // ADDED
     } // ADDED
@@ -5363,9 +5365,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         function applySchedulerTaskReplacement(detail, opts) { // NEW
             const replacement = normalizeTaskReplacementDetail(detail); // NEW
             const options = opts || {}; // NEW
+            const focusCreated = options.focusCreated === true; // NEW: scheduler-origin replacements preserve the current viewport by default
             if ((replacement.mode !== 'replace' && replacement.mode !== 'sync') || !replacement.targetGroupId) return null; // NEW
-            if (replacement.mode === 'sync') return applyDifferentialTaskSync({ targetGroupId: replacement.targetGroupId, tasks: replacement.tasks, insideUpdate: !!options.insideUpdate }); // NEW
-            return replaceTasks(replacement.targetGroupId, replacement.tasks, { insideUpdate: !!options.insideUpdate }); // NEW
+            if (replacement.mode === 'sync') return applyDifferentialTaskSync({ targetGroupId: replacement.targetGroupId, tasks: replacement.tasks, insideUpdate: !!options.insideUpdate, focusCreated }); // CHANGE
+            return replaceTasks(replacement.targetGroupId, replacement.tasks, { insideUpdate: !!options.insideUpdate, focusCreated }); // CHANGE
         } // CHANGE
 
         function ensureBoardTemplateInUpdate(containerVertex) { // CHANGE
@@ -5416,6 +5419,14 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         schedulePolicy, // CHANGE
         transactions: taskTransactions // CHANGE
     }); // CHANGE
+
+    if (typeof globalThis !== 'undefined' && globalThis.__TRELLIS_TASK_MANAGER_TEST__) { // NEW
+        globalThis.__TRELLIS_TASK_MANAGER_RUNTIME_TEST_HOOKS__ = Object.freeze({ // NEW
+            createTasks: taskCommands.createTasks, // NEW
+            replaceTasks: taskCommands.replaceTasks, // NEW
+            applyDifferentialTaskSync: taskCommands.applyDifferentialTaskSync // NEW
+        }); // NEW
+    } // NEW
 
     window.USL = window.USL || {}; // NEW
     window.USL.tasks = Object.assign({}, window.USL.tasks, { // NEW

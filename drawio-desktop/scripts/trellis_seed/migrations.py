@@ -46,6 +46,8 @@ def pending_migrations(conn: sqlite3.Connection) -> list[str]:
         pending.append("create CityWeatherForecastDaily")
     if "CompanionEvidence" not in tables:
         pending.append("create CompanionEvidence")
+    if "CompanionLayoutGroupDefaults" not in tables:  # ADDED
+        pending.append("create CompanionLayoutGroupDefaults")  # ADDED
     if "Companions" in tables and any(column not in table_columns(conn, "Companions") for column in ("source_plant_id", "companion_plant_id", "start_offset_days", "layout_template", "layout_spacing_x_cm", "layout_spacing_y_cm", "layout_offset_x_cm", "layout_offset_y_cm")):
         pending.append("add companion timing and layout columns")  # CHANGED
     if "PlantingWindowReferences" not in tables:
@@ -183,6 +185,17 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
         CREATE INDEX IF NOT EXISTS idx_CompanionEvidence_relation
             ON CompanionEvidence(relation_id);
 
+        CREATE TABLE IF NOT EXISTS CompanionLayoutGroupDefaults (
+            group_default_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plant_set_key TEXT NOT NULL,
+            anchor_plant_id INTEGER NOT NULL REFERENCES Plants(plant_id) ON DELETE CASCADE,
+            layout_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE (plant_set_key, anchor_plant_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_CompanionLayoutGroupDefaults_anchor
+            ON CompanionLayoutGroupDefaults(anchor_plant_id);
+
         CREATE TABLE IF NOT EXISTS PlantingWindowReferences (
             reference_id INTEGER PRIMARY KEY AUTOINCREMENT,
             plant_id INTEGER NOT NULL REFERENCES Plants(plant_id) ON DELETE CASCADE,
@@ -213,7 +226,7 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
         );
         """
     )
-    for label in ("CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily", "CompanionEvidence", "PlantingWindowReferences", "VarietyTaskTemplates"):
+    for label in ("CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily", "CompanionEvidence", "CompanionLayoutGroupDefaults", "PlantingWindowReferences", "VarietyTaskTemplates"):  # CHANGED
         if label not in tables or label == "VarietyTaskTemplates":
             applied.append(f"ensured {label}")
     return applied

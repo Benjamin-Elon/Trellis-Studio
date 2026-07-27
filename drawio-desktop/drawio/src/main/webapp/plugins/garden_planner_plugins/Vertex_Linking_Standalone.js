@@ -10,6 +10,7 @@ Draw.loadPlugin(function (ui) {
 
     const LINK_ATTR = 'linkedTo';
     const TILER_GROUP_CREATED_EVENT = 'usl:tilerGroupCreated'; // CHANGE
+    const TRELLIS_SELECTION_VISUALS_REFRESH_EVENT = 'trellisSelectionVisualsRefresh'; // NEW
     const HL_TAG_KEY = 'manualLinkHL';
     const HL_OLD_COLOR = 'manualLinkOldColor';
     const HL_OLD_WIDTH = 'manualLinkOldWidth';
@@ -3615,6 +3616,10 @@ Draw.loadPlugin(function (ui) {
     graph.getSelectionModel().addListener(mxEvent.CHANGE, function () {
         refreshCurrentHighlight(); // CHANGE
     });
+    graph.addListener(TRELLIS_SELECTION_VISUALS_REFRESH_EVENT, function () { // NEW
+        refreshCurrentHighlight(); // NEW
+        taskScheduleOverlay.refresh(); // NEW
+    }); // NEW
 
 
     // -------------------- Context Menu Hook --------------------

@@ -706,7 +706,8 @@ Draw.loadPlugin(function (ui) { // CHANGE
     } // NEW
 
     function workspaceHandleTitle(cell) { // NEW
-        if (isOccupiedBedHandleCell(cell)) return 'Move garden bed and planting groups'; // NEW
+        const unit = isOccupiedBedHandleCell(cell) ? getOccupiedBedMoveUnit(cell) : null; // NEW
+        if (unit) return unit.bedAssemblies && unit.bedAssemblies.length ? 'Move garden bed, irrigation assembly, and planting groups' : 'Move garden bed and planting groups'; // CHANGE
         return getWorkspaceContainerType(cell) === 'lane' ? 'Move lane' : 'Move module'; // NEW
     } // NEW
 

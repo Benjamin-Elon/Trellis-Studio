@@ -649,9 +649,13 @@ Draw.loadPlugin(function (ui) {
         }); // ADDED
     } // CHANGED
 
-    // ------------------- Layering (garden beds, other, tiler groups) ----------------
+    // ------------------- Layering (garden beds, bed assemblies, other, tiler groups) ----------------
 
     let __REORDERING = false;
+
+    function isIrrigationBedAssembly(cell) { // NEW
+        return !!cell && cell.getAttribute && cell.getAttribute("irrigation_assembly") === "1" && cell.getAttribute("irrigation_assembly_type") === "bed"; // NEW
+    } // NEW
 
     function reorderModuleChildrenForLayering(model, moduleCell) {
         if (!model || !moduleCell || !isGardenModule(moduleCell)) return;
@@ -670,25 +674,18 @@ Draw.loadPlugin(function (ui) {
 
         // Partition while preserving relative order within each bucket
         const beds = [];
+        const bedAssemblies = []; // NEW
         const groups = [];
         const others = [];
 
         for (const ch of children) {
             if (isGardenBed(ch)) beds.push(ch);
+            else if (isIrrigationBedAssembly(ch)) bedAssemblies.push(ch); // NEW
             else if (isTilerGroup(ch)) groups.push(ch);
             else others.push(ch);
         }
 
-        // Fast check: already valid (no bed after any group)
-        let seenGroup = false;
-        let ok = true;
-        for (const ch of children) {
-            if (isTilerGroup(ch)) seenGroup = true;
-            else if (isGardenBed(ch) && seenGroup) { ok = false; break; }
-        }
-        if (ok) return;
-
-        const ordered = beds.concat(others, groups);
+        const ordered = beds.concat(bedAssemblies, others, groups); // CHANGE
 
         // If it’s the same order, do nothing (prevents redundant undo edits)
         let same = (ordered.length === children.length);
@@ -2308,6 +2305,11 @@ Draw.loadPlugin(function (ui) {
             return isGardenModule(cells[0]) ? cells[0] : null; // CHANGE
         } // CHANGE
 
+        function isIrrigationModeActiveForOverlay() { // NEW
+            const planner = graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner); // NEW
+            return !!(planner && typeof planner.isIrrigationModeActive === "function" && planner.isIrrigationModeActive()); // NEW
+        } // NEW
+
         function getSingleSelectedOverlayTarget() { // CHANGE
             const cells = graph.getSelectionCells ? (graph.getSelectionCells() || []) : []; // CHANGE
             if (cells.length !== 1) return null; // CHANGE
@@ -2391,6 +2393,7 @@ Draw.loadPlugin(function (ui) {
 
         function positionToolbar() { // CHANGE
             if (gardenSettingsOverlaySuppressed) { hideToolbar(); return; } // NEW
+            if (isIrrigationModeActiveForOverlay()) { hideToolbar(); return; } // NEW
             if (!toolbar || !activeModuleCell || !anchorModelPoint) return; // CHANGE
             const host = ensureOverlayHost(); // CHANGE
             if (host && toolbar.parentNode !== host) host.appendChild(toolbar); // CHANGE
@@ -2428,6 +2431,10 @@ Draw.loadPlugin(function (ui) {
         function refreshForSelection() { // CHANGE
             refreshTimer = null; // CHANGE
             if (gardenSettingsOverlaySuppressed) { // NEW
+                hideToolbar(); // NEW
+                return; // NEW
+            } // NEW
+            if (isIrrigationModeActiveForOverlay()) { // NEW
                 hideToolbar(); // NEW
                 return; // NEW
             } // NEW
@@ -2497,6 +2504,7 @@ Draw.loadPlugin(function (ui) {
         graph.getModel().addListener(mxEvent.UNDO, scheduleRefresh); // CHANGE
         graph.getModel().addListener(mxEvent.REDO, scheduleRefresh); // CHANGE
         mxEvent.addListener(window, "resize", scheduleRefresh); // CHANGE
+        mxEvent.addListener(window, "trellisIrrigationModeChanged", scheduleRefresh); // NEW
         setTimeout(scheduleRefresh, 0); // CHANGE
     } // CHANGE
 
@@ -2742,6 +2750,7 @@ Draw.loadPlugin(function (ui) {
         bedFitSuppressResizeIds = new Set(); // CHANGE
         for (const item of (items || [])) { // CHANGE
             if (item && item.tg && item.tg.id) bedFitSuppressResizeIds.add(item.tg.id); // CHANGE
+            else if (item && item.assembly && item.assembly.id) bedFitSuppressResizeIds.add(item.assembly.id); // NEW
         } // CHANGE
         bedFitSuppressResizeUntil = bedFitSuppressResizeIds.size ? Date.now() + BED_FIT_RESIZE_SUPPRESS_MS : 0; // CHANGE
     } // CHANGE
@@ -2754,7 +2763,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function writeBedFitAxesNoTxn(model, groupCell, fitWidth, fitHeight) { // NEW
-        if (!model || !groupCell || !isTilerGroup(groupCell)) return; // NEW
+        if (!model || !groupCell || !(isTilerGroup(groupCell) || isIrrigationBedAssembly(groupCell))) return; // CHANGE
         setCellAttrsNoTxn(model, groupCell, { // NEW
             [BED_FIT_WIDTH_ATTR]: fitWidth ? "1" : "0", // NEW
             [BED_FIT_HEIGHT_ATTR]: fitHeight ? "1" : "0" // NEW
@@ -2832,6 +2841,75 @@ Draw.loadPlugin(function (ui) {
         } // MOVED
         return chosen; // MOVED
     } // MOVED
+
+    function findBedAssemblyAncestor(cell) { // NEW
+        let cur = cell; // NEW
+        while (cur) { // NEW
+            if (isIrrigationBedAssembly(cur)) return cur; // NEW
+            cur = graph.getModel().getParent(cur); // NEW
+        } // NEW
+        return null; // NEW
+    } // NEW
+
+    function getBedAssembliesFromEventCells(cells) { // NEW
+        const out = new Map(); // NEW
+        const moved = (cells || []).filter(Boolean); // NEW
+        for (const cell of moved) { // NEW
+            const assembly = isIrrigationBedAssembly(cell) ? cell : findBedAssemblyAncestor(cell); // NEW
+            if (assembly && assembly.id && !out.has(assembly.id)) out.set(assembly.id, assembly); // NEW
+        } // NEW
+        if (!moved.length) { // NEW
+            const selected = graph.getSelectionCells ? graph.getSelectionCells() : [graph.getSelectionCell()]; // NEW
+            for (const cell of (selected || [])) { // NEW
+                const assembly = isIrrigationBedAssembly(cell) ? cell : findBedAssemblyAncestor(cell); // NEW
+                if (assembly && assembly.id && !out.has(assembly.id)) out.set(assembly.id, assembly); // NEW
+            } // NEW
+        } // NEW
+        return Array.from(out.values()); // NEW
+    } // NEW
+
+    function bedFitAxisClose(value, target) { // NEW
+        const t = Math.max(1, Number(target) || 1); // NEW
+        return Math.abs((Number(value) || 0) - t) <= t * BED_FIT_TOLERANCE; // NEW
+    } // NEW
+
+    function inferBedAssemblyFitAxes(assembly, bed) { // NEW
+        const assemblyRect = getModelRect(assembly); // NEW
+        const bedRect = getModelRect(bed); // NEW
+        return { // NEW
+            fitWidth: !!(assemblyRect && bedRect && bedFitAxisClose(assemblyRect.w, bedRect.w)), // NEW
+            fitHeight: !!(assemblyRect && bedRect && bedFitAxisClose(assemblyRect.h, bedRect.h)) // NEW
+        }; // NEW
+    } // NEW
+
+    function bedFitAxesForBedAssembly(assembly, bed) { // NEW
+        const inferred = inferBedAssemblyFitAxes(assembly, bed); // NEW
+        const widthAttr = assembly && assembly.getAttribute ? assembly.getAttribute(BED_FIT_WIDTH_ATTR) : null; // NEW
+        const heightAttr = assembly && assembly.getAttribute ? assembly.getAttribute(BED_FIT_HEIGHT_ATTR) : null; // NEW
+        return { // NEW
+            fitWidth: widthAttr == null ? inferred.fitWidth : widthAttr === "1", // NEW
+            fitHeight: heightAttr == null ? inferred.fitHeight : heightAttr === "1" // NEW
+        }; // NEW
+    } // NEW
+
+    function resolveBedForAssemblyGeometry(parent, assembly, fallbackBed) { // NEW
+        const center = rectCenterModel(getModelRect(assembly)); // NEW
+        return findSmallestContainingBedModel(parent, center) || fallbackBed || null; // NEW
+    } // NEW
+
+    function irrigationPlannerForBedFit() { // NEW
+        return graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner); // NEW
+    } // NEW
+
+    function syncBedAssemblyFitToBed(parent, assembly, bed, axes, opts) { // NEW
+        const planner = irrigationPlannerForBedFit(); // NEW
+        if (!planner || typeof planner.syncLinkedBedAssemblyToBed !== "function") return false; // NEW
+        return !!planner.syncLinkedBedAssemblyToBed(parent, assembly, bed, { // NEW
+            inTransaction: !!(opts && opts.inTransaction), // NEW
+            fitWidth: !!(axes && axes.fitWidth), // NEW
+            fitHeight: !!(axes && axes.fitHeight) // NEW
+        }); // NEW
+    } // NEW
 
     function largestChildPlantCircleDiameter(tg) { // MOVED
         const model = graph.getModel(); // MOVED
@@ -3405,6 +3483,51 @@ Draw.loadPlugin(function (ui) {
         }); // CHANGE
         return changed.length; // MOVED
     } // MOVED
+
+    function normalizeMovedBedAssembliesToBeds(cells, opts) { // NEW
+        const txnId = ++bedFitTxnSeq; // NEW
+        const source = (opts && opts.source) || "unknown"; // NEW
+        const assemblies = getBedAssembliesFromEventCells(cells); // NEW
+        if (!assemblies.length || bedFitInProgress || shouldSuppressBedFitResize(source, assemblies.map(function (assembly) { return { id: assembly.id }; }))) return 0; // NEW
+        const model = graph.getModel(); // NEW
+        const fitOnDrag = !!(opts && opts.fitOnDrag); // NEW
+        const skipSameBedMoveFit = !!(opts && opts.skipSameBedMoveFit); // NEW
+        const persistAxisIntent = !!(opts && opts.persistAxisIntent); // NEW
+        const clearFitAxisIntentOnNoBed = !!(opts && opts.clearFitAxisIntentOnNoBed); // NEW
+        const moveDx = finiteMoveDelta(opts && opts.moveDx); // NEW
+        const moveDy = finiteMoveDelta(opts && opts.moveDy); // NEW
+        const changed = []; // NEW
+        bedFitInProgress = true; // NEW
+        model.beginUpdate(); // NEW
+        try { // NEW
+            for (const assembly of assemblies) { // NEW
+                if (!assembly || assembly.getAttribute(BED_AUTO_FIT_ATTR) === "0") continue; // NEW
+                const parent = model.getParent(assembly); // NEW
+                const bed = resolveBedForAssemblyGeometry(parent, assembly, null); // NEW
+                const center = rectCenterModel(getModelRect(assembly)); // NEW
+                const previousCenter = center && moveDx != null && moveDy != null ? { x: center.x - moveDx, y: center.y - moveDy } : null; // NEW
+                const previousBed = previousCenter ? findSmallestContainingBedModel(parent, previousCenter) : null; // NEW
+                if (skipSameBedMoveFit && bed && previousBed && previousBed.id === bed.id) continue; // NEW
+                if (!bed) { // NEW
+                    if (persistAxisIntent && clearFitAxisIntentOnNoBed) writeBedFitAxesNoTxn(model, assembly, false, false); // NEW
+                    continue; // NEW
+                } // NEW
+                const axes = fitOnDrag ? { fitWidth: true, fitHeight: true } : inferBedAssemblyFitAxes(assembly, bed); // NEW
+                if (persistAxisIntent && !axes.fitWidth && !axes.fitHeight) { // NEW
+                    if (syncBedAssemblyFitToBed(parent, assembly, bed, axes, { inTransaction: true })) changed.push({ assembly }); // CHANGE
+                    continue; // NEW
+                } // NEW
+                if (!axes.fitWidth && !axes.fitHeight) continue; // NEW
+                if (syncBedAssemblyFitToBed(parent, assembly, bed, axes, { inTransaction: true })) changed.push({ assembly }); // NEW
+            } // NEW
+        } finally { // NEW
+            model.endUpdate(); // NEW
+            bedFitInProgress = false; // NEW
+        } // NEW
+        if (changed.length) markBedFitResizeSuppression(changed); // NEW
+        for (const item of changed) graph.refresh(item.assembly); // NEW
+        return changed.length; // NEW
+    } // NEW
 
     function retileAndFitToContainingBed(graphArg, groupCell, opts) { // CHANGE
         const activeGraph = graphArg || graph; // CHANGE
@@ -4826,7 +4949,7 @@ Draw.loadPlugin(function (ui) {
             const p = model.getParent(c);
             if (!p || !isGardenModule(p)) continue;
 
-            if (isGardenBed(c) || isTilerGroup(c)) {
+            if (isGardenBed(c) || isIrrigationBedAssembly(c) || isTilerGroup(c)) { // CHANGE
                 modulesToFix.set(p.id, p);
             }
         }
@@ -4894,11 +5017,13 @@ Draw.loadPlugin(function (ui) {
                 moveDx: evt.getProperty("dx"), // MOVED
                 moveDy: evt.getProperty("dy") // MOVED
             }); // MOVED
+            normalizeMovedBedAssembliesToBeds(cells, { source: "cells-moved", fitOnDrag: true, skipSameBedMoveFit: true, persistAxisIntent: true, moveDx: evt.getProperty("dx"), moveDy: evt.getProperty("dy") }); // CHANGE
         }); // MOVED
 
         graph.addListener(mxEvent.CELLS_RESIZED, function (_sender, evt) { // MOVED
             const cells = evt.getProperty("cells"); // MOVED
             normalizeMovedTilerGroupsToBeds(cells, { source: "cells-resized", allowDragIntoBedFit: false, persistAxisIntent: true, clearFitAxisIntentOnNoBed: true }); // CHANGE
+            normalizeMovedBedAssembliesToBeds(cells, { source: "cells-resized", fitOnDrag: false, persistAxisIntent: true, clearFitAxisIntentOnNoBed: true }); // NEW
         }); // MOVED
     })(); // MOVED
 
@@ -5241,8 +5366,19 @@ Draw.loadPlugin(function (ui) {
         const previousRotatedRect = rotatedRectForModelRect(bed, previousRect); // NEW
         if (!parent || !previousRect || !previousRotatedRect) return null; // NEW
         const targets = []; // NEW
+        const assemblyTargets = []; // NEW
+        const bedId = bed.id || (bed.getId && bed.getId()) || ""; // NEW
         const children = graph.getChildVertices(parent) || []; // NEW
         for (const child of children) { // NEW
+            if (isIrrigationBedAssembly(child) && child.getAttribute(BED_AUTO_FIT_ATTR) !== "0") { // CHANGE
+                const geometryBed = resolveBedForAssemblyGeometry(parent, child, null); // NEW
+                const ownsByGeometry = !!(geometryBed && geometryBed.id === bedId); // NEW
+                const ownsByCachedLink = !geometryBed && child.getAttribute("irrigation_linked_bed_id") === bedId; // NEW
+                if (ownsByGeometry || ownsByCachedLink) { // NEW
+                    const axes = bedFitAxesForBedAssembly(child, bed); // NEW
+                    if (axes.fitWidth || axes.fitHeight) assemblyTargets.push({ assembly: child, axes }); // CHANGE
+                } // NEW
+            } // NEW
             if (!child || !isTilerGroup(child) || child.getAttribute(BED_AUTO_FIT_ATTR) === "0") continue; // NEW
             const axes = bedFitAxesForGroup(child); // NEW
             if (!axes.fitWidth && !axes.fitHeight) continue; // NEW
@@ -5250,7 +5386,7 @@ Draw.loadPlugin(function (ui) {
             if (!pointInRotatedRectModel(center, previousRotatedRect)) continue; // NEW
             targets.push({ tg: child, axes }); // NEW
         } // NEW
-        return { bed, parent, previousRect, previousRotatedRect, previousArea: rectAreaModel(previousRect), targets }; // NEW
+        return { bed, parent, previousRect, previousRotatedRect, previousArea: rectAreaModel(previousRect), targets, assemblyTargets }; // CHANGE
     } // NEW
 
     function collectBedResizeSnapshots(cells) { // NEW
@@ -5261,6 +5397,18 @@ Draw.loadPlugin(function (ui) {
             if (snapshot) snapshots.set(cell.id, snapshot); // NEW
         } // NEW
         return snapshots; // NEW
+    } // NEW
+
+    function syncIrrigationBedAssembliesForSnapshot(snapshot, opts) { // NEW
+        const planner = (graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner)); // NEW
+        if (!planner || typeof planner.syncLinkedBedAssemblyToBed !== "function") return []; // NEW
+        const changed = []; // NEW
+        for (const target of (snapshot && snapshot.assemblyTargets || [])) { // CHANGE
+            const assembly = target && target.assembly ? target.assembly : target; // NEW
+            const axes = target && target.axes ? target.axes : { fitWidth: true, fitHeight: true }; // NEW
+            if (planner.syncLinkedBedAssemblyToBed(snapshot.parent, assembly, snapshot.bed, { inTransaction: !!(opts && opts.inTransaction), fitWidth: !!axes.fitWidth, fitHeight: !!axes.fitHeight })) changed.push(assembly); // CHANGE
+        } // NEW
+        return changed; // NEW
     } // NEW
 
     function refitGroupsForResizedBeds(bedSnapshots, opts) { // NEW
@@ -5274,7 +5422,9 @@ Draw.loadPlugin(function (ui) {
         } // NEW
         const model = graph.getModel(); // NEW
         const targetByGroupId = new Map(); // NEW
+        const syncedAssemblies = []; // NEW
         for (const snap of snapshots) { // NEW
+            Array.prototype.push.apply(syncedAssemblies, syncIrrigationBedAssembliesForSnapshot(snap, { inTransaction: !ownsTransaction })); // NEW
             for (const target of (snap.targets || [])) { // NEW
                 const tg = target && target.tg; // NEW
                 if (!tg || !tg.id || !isTilerGroup(tg)) continue; // NEW
@@ -5282,13 +5432,13 @@ Draw.loadPlugin(function (ui) {
                 if (!previous || snap.previousArea < previous.previousArea) targetByGroupId.set(tg.id, { tg, bed: snap.bed, axes: target.axes, previousArea: snap.previousArea }); // NEW
             } // NEW
         } // NEW
-        if (!targetByGroupId.size) { // NEW
+        if (!targetByGroupId.size && !syncedAssemblies.length) { // CHANGE
             bedFitLog("bed-resize-skip", { txnId, source, reason: "no-fitted-groups", bedIds: snapshots.map(snap => bedFitCellId(snap.bed)) }); // NEW
             return { changed: [], trimmed: false }; // NEW
         } // NEW
         const changed = []; // NEW
         let trimmed = false; // NEW
-        bedFitLog("bed-resize-start", { txnId, source, bedIds: snapshots.map(snap => bedFitCellId(snap.bed)), groupIds: Array.from(targetByGroupId.values()).map(item => bedFitCellId(item.tg)) }); // NEW
+        bedFitLog("bed-resize-start", { txnId, source, bedIds: snapshots.map(snap => bedFitCellId(snap.bed)), groupIds: Array.from(targetByGroupId.values()).map(item => bedFitCellId(item.tg)), assemblyIds: syncedAssemblies.map(bedFitCellId) }); // CHANGE
         bedFitInProgress = true; // NEW
         if (ownsTransaction) model.beginUpdate(); // NEW
         try { // NEW
@@ -5325,8 +5475,8 @@ Draw.loadPlugin(function (ui) {
             bedFitInProgress = false; // NEW
         } // NEW
         if (trimmed || changed.some(item => item.bedFitChanged)) markBedFitResizeSuppression(changed); // NEW
-        bedFitLog("bed-resize-end", { txnId, source, changedCount: changed.length, trimmed }); // NEW
-        return { changed, trimmed }; // NEW
+        bedFitLog("bed-resize-end", { txnId, source, changedCount: changed.length, assemblyCount: syncedAssemblies.length, trimmed }); // CHANGE
+        return { changed, syncedAssemblies, trimmed }; // CHANGE
     } // NEW
 
 
@@ -5452,6 +5602,7 @@ Draw.loadPlugin(function (ui) {
                 if (hasResizedBeds) { // NEW
                     const bedFitResult = refitGroupsForResizedBeds(bedSnapshots, { source: "bed-resized", inTransaction: true, txnId: bedResizeTxnId }); // NEW
                     for (const item of bedFitResult.changed || []) groupsNeedingRefresh.push(item.tg); // NEW
+                    for (const assembly of bedFitResult.syncedAssemblies || []) groupsNeedingRefresh.push(assembly); // NEW
                 } // NEW
             } finally {
                 model.endUpdate();                                                           // CHANGED
@@ -5469,7 +5620,8 @@ Draw.loadPlugin(function (ui) {
     window.USL.tiler = Object.assign({}, window.USL.tiler, {
         retileGroup, // CHANGE
         retileAndFitToContainingBed, // CHANGE
-        createSiblingTilerGroupFromSource // ADDED
+        createSiblingTilerGroupFromSource, // ADDED
+        reorderModuleChildrenForLayering // NEW
     });
     installTrellisDebugSurface(); // NEW
     bedFitLog("loaded", bedFitStatus()); // NEW

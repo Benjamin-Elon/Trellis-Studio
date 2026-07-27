@@ -12,6 +12,7 @@ from .schema import (
     CITY_COLUMNS,
     CITY_GEO_IDENTITY_COLUMNS,  # ADDED
     COMPANION_COLUMNS,  # ADDED
+    COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS,  # ADDED
     COMPANION_LAYOUT_TEMPLATES,  # ADDED
     GENERATED_TABLES,
     PLANTING_WINDOW_CONFIDENCE,
@@ -245,6 +246,26 @@ def validate_row(
                 float(row.get(key))
             except (TypeError, ValueError):
                 errors.append(f"{prefix}.{key} must be a number when provided.")  # ADDED
+    elif table == "CompanionLayoutGroupDefaults":  # ADDED
+        unknown = sorted(set(row) - COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS)  # ADDED
+        if unknown:  # ADDED
+            errors.append(f"{prefix} has unknown columns: {unknown}")  # ADDED
+        plant_set_key = str(row.get("plant_set_key") or "").strip()  # ADDED
+        if not plant_set_key:  # ADDED
+            errors.append(f"{prefix}.plant_set_key is required.")  # ADDED
+        elif not all(part.isdigit() for part in plant_set_key.split("+")):  # ADDED
+            errors.append(f"{prefix}.plant_set_key must be sorted plant ids joined by '+'.")  # ADDED
+        elif plant_set_key.split("+") != sorted(plant_set_key.split("+"), key=int):  # ADDED
+            errors.append(f"{prefix}.plant_set_key must be sorted plant ids joined by '+'.")  # ADDED
+        try:  # ADDED
+            anchor_plant_id = int(row.get("anchor_plant_id"))  # ADDED
+        except (TypeError, ValueError):  # ADDED
+            anchor_plant_id = None  # ADDED
+            errors.append(f"{prefix}.anchor_plant_id must be an integer.")  # ADDED
+        else:  # ADDED
+            if plant_set_key and str(anchor_plant_id) not in plant_set_key.split("+"):  # ADDED
+                errors.append(f"{prefix}.anchor_plant_id must be part of plant_set_key.")  # ADDED
+        errors.extend(_validate_companion_group_layout_json(prefix, row.get("layout_json"), plant_set_key))  # ADDED
     elif table == "PlantVarieties":
         unknown = sorted(set(row) - PLANT_VARIETY_COLUMNS)  # ADDED
         if unknown:
@@ -312,6 +333,55 @@ def validate_row(
     if source_values is not None:
         errors.extend(validate_source_map(row, source_values, required_source_fields or set(), prefix))
     return {"errors": errors, "warnings": warnings}
+
+
+def _validate_companion_group_layout_json(prefix: str, raw: Any, plant_set_key: str) -> list[str]:  # ADDED
+    errors: list[str] = []  # ADDED
+    try:  # ADDED
+        layout = json.loads(raw if isinstance(raw, str) else json.dumps(raw))  # ADDED
+    except (TypeError, ValueError):  # ADDED
+        return [f"{prefix}.layout_json must be valid JSON."]  # ADDED
+    if not isinstance(layout, dict):  # ADDED
+        return [f"{prefix}.layout_json must be an object."]  # ADDED
+    rows = layout.get("rows")  # ADDED
+    if not isinstance(rows, list) or not rows:  # ADDED
+        errors.append(f"{prefix}.layout_json.rows must be a non-empty list.")  # ADDED
+        return errors  # ADDED
+    row_plant_ids: set[str] = set()  # ADDED
+    anchor_count = 0  # ADDED
+    for index, item in enumerate(rows):  # ADDED
+        row_prefix = f"{prefix}.layout_json.rows[{index}]"  # ADDED
+        if not isinstance(item, dict):  # ADDED
+            errors.append(f"{row_prefix} must be an object.")  # ADDED
+            continue  # ADDED
+        role = item.get("role")  # ADDED
+        if role not in {"anchor", "companion"}:  # ADDED
+            errors.append(f"{row_prefix}.role must be anchor or companion.")  # ADDED
+        elif role == "anchor":  # ADDED
+            anchor_count += 1  # ADDED
+        try:  # ADDED
+            plant_id = int(item.get("plantId"))  # ADDED
+        except (TypeError, ValueError):  # ADDED
+            errors.append(f"{row_prefix}.plantId must be an integer.")  # ADDED
+        else:  # ADDED
+            row_plant_ids.add(str(plant_id))  # ADDED
+        template = str(item.get("template") or "").strip().casefold()  # ADDED
+        if role == "companion" and template not in COMPANION_LAYOUT_TEMPLATES:  # ADDED
+            errors.append(f"{row_prefix}.template must be one of {sorted(COMPANION_LAYOUT_TEMPLATES)}.")  # ADDED
+        for key in ("spacingXCm", "spacingYCm", "vegDiameterCm", "offsetXCm", "offsetYCm"):  # ADDED
+            value = item.get(key)  # ADDED
+            if value in (None, ""):  # ADDED
+                continue  # ADDED
+            try:  # ADDED
+                float(value)  # ADDED
+            except (TypeError, ValueError):  # ADDED
+                errors.append(f"{row_prefix}.{key} must be numeric when provided.")  # ADDED
+    expected = set(filter(None, plant_set_key.split("+")))  # ADDED
+    if expected and row_plant_ids and row_plant_ids != expected:  # ADDED
+        errors.append(f"{prefix}.layout_json rows must match plant_set_key.")  # ADDED
+    if anchor_count != 1:  # ADDED
+        errors.append(f"{prefix}.layout_json.rows must contain exactly one anchor row.")  # ADDED
+    return errors  # ADDED
 
 
 def validate_source_map(row: dict[str, Any], source_values: set[str], required_fields: set[str], prefix: str) -> list[str]:

@@ -49,6 +49,8 @@ Draw.loadPlugin(function (ui) {
 
     const PLAN_YEAR_EVENT = "usl:planYearRequested";
     const ALLOCATE_PLAN_EVENT = "usl:allocatePlanRequested";
+    const IRRIGATION_MODE_CHANGED_EVENT = "trellisIrrigationModeChanged"; // NEW
+    const IRRIGATION_ACTIVE_BLUE = "#2563eb"; // NEW
 
     const GROUP_LABEL_FONT_PX = 12;
     const GROUP_LABEL_LINE_HEIGHT = 1.25;
@@ -1030,12 +1032,35 @@ Draw.loadPlugin(function (ui) {
         return btn; // NEW
     } // NEW
 
+    function activeIrrigationModuleMatches(moduleCell) { // NEW
+        const plannerApi = graph && graph.__trellisIrrigationPlanner; // NEW
+        return !!(plannerApi && typeof plannerApi.isIrrigationModeActive === "function" && plannerApi.isIrrigationModeActive(moduleCell)); // NEW
+    } // NEW
+
+    function applyToolbarActiveButtonState(btn, active) { // NEW
+        if (!btn) return; // NEW
+        btn.style.background = active ? IRRIGATION_ACTIVE_BLUE : "#fff"; // NEW
+        btn.style.borderColor = active ? IRRIGATION_ACTIVE_BLUE : "#777"; // NEW
+        btn.style.color = active ? "#fff" : "#000"; // NEW
+    } // NEW
+
     function openIrrigationPlannerForModule(moduleCell) { // NEW
         if (!moduleCell) return; // NEW
         const plannerApi = graph && graph.__trellisIrrigationPlanner; // NEW
         if (!plannerApi || typeof plannerApi.openIrrigationMode !== "function") return; // NEW
         plannerApi.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
     } // NEW
+
+    function toggleIrrigationPlannerForModule(moduleCell) { // CHANGE
+        if (!moduleCell) return; // CHANGE
+        const plannerApi = graph && graph.__trellisIrrigationPlanner; // CHANGE
+        if (!plannerApi || typeof plannerApi.openIrrigationMode !== "function") return; // CHANGE
+        if (typeof plannerApi.isIrrigationModeActive === "function" && plannerApi.isIrrigationModeActive(moduleCell) && typeof plannerApi.closeIrrigationMode === "function") { // CHANGE
+            plannerApi.closeIrrigationMode(); // CHANGE
+            return; // CHANGE
+        } // CHANGE
+        plannerApi.openIrrigationMode(moduleCell, { preserveViewport: true }); // CHANGE
+    } // CHANGE
 
     function trellisUsersApi() { // NEW
         return window.Trellis && window.Trellis.users; // NEW
@@ -1373,7 +1398,7 @@ Draw.loadPlugin(function (ui) {
             const equipmentApi = graph && graph.__trellisEquipment; // NEW
             if (equipmentApi && typeof equipmentApi.openDialog === "function") equipmentApi.openDialog(activeToolbarModule); // NEW
         }); // NEW
-        irrigationBtn.addEventListener("click", function () { openIrrigationPlannerForModule(activeToolbarModule); }); // NEW
+        irrigationBtn.addEventListener("click", function () { toggleIrrigationPlannerForModule(activeToolbarModule); }); // CHANGE
         allocateBtn.addEventListener("click", function () { // NEW
             if (!activeToolbarModule) return; // NEW
             const year = getToolbarYear(activeToolbarModule); // NEW
@@ -1418,6 +1443,7 @@ Draw.loadPlugin(function (ui) {
         entry.messagesBtn.title = "Review access requests"; // NEW
         entry.tableBtn.textContent = expanded ? "Hide Table" : "Table"; // NEW
         entry.tableBtn.title = expanded ? "Hide dashboard table" : "Show dashboard table"; // NEW
+        applyToolbarActiveButtonState(entry.irrigationBtn, activeIrrigationModuleMatches(moduleCell)); // NEW
         const shareState = shareSelectionState(); // NEW
         setButtonDisabled(entry.shareBtn, !shareState.ok, shareState.ok ? "Share selected scope(s)" : shareState.reason); // NEW
         entry.table.style.display = expanded ? "block" : "none"; // NEW
@@ -1463,6 +1489,11 @@ Draw.loadPlugin(function (ui) {
         if (!plannerApi || typeof plannerApi.openIrrigationMode !== "function") return; // CHANGE
         plannerApi.openIrrigationMode(moduleCell, { preserveViewport: true }); // CHANGE
     } // NEW
+
+    function toggleIrrigationPlannerForDashboard(dashCell) { // CHANGE
+        const moduleCell = findModuleAncestor(graph, dashCell); // CHANGE
+        toggleIrrigationPlannerForModule(moduleCell); // CHANGE
+    } // CHANGE
 
     // -------------------- DOM overlay (controls + table) --------------------
     const overlayByDashId = new Map();
@@ -1738,7 +1769,7 @@ Draw.loadPlugin(function (ui) {
         irrigationBtn.addEventListener("click", (ev) => { // NEW
             ev.preventDefault(); // NEW
             ev.stopPropagation(); // NEW
-            openIrrigationPlannerForDashboard(dashCell); // NEW
+            toggleIrrigationPlannerForDashboard(dashCell); // CHANGE
         }); // NEW
 
         allocateBtn.addEventListener("click", (ev) => {
@@ -2214,6 +2245,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
     window.addEventListener("resize", scheduleViewportToolbarRefresh); // NEW
     window.addEventListener("trellisUsersStoreChanged", scheduleViewportToolbarRefresh); // NEW
+    window.addEventListener(IRRIGATION_MODE_CHANGED_EVENT, scheduleViewportToolbarRefresh); // NEW
     const viewportToolbarHost = getViewportToolbarContainer(); // CHANGE
     if (viewportToolbarHost && viewportToolbarHost.addEventListener) { // NEW
         viewportToolbarHost.addEventListener("scroll", scheduleViewportToolbarRefresh); // NEW

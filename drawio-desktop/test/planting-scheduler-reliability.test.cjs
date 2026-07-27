@@ -3449,6 +3449,13 @@ test('save path passes the in-memory task template to graph application', () => 
     assert.match(source, /taskTemplate,\s*\/\/ FIX: generate tasks from the in-memory template/);
 });
 
+test('schedule save requests selection overlay refresh after final graph refresh', () => { // NEW
+    const source = fs.readFileSync(schedulerPath, 'utf8'); // NEW
+    assert.match(source, /function requestSelectionVisualsRefresh\(graph, cell\)/); // NEW
+    assert.match(source, /new mxEventObject\('trellisSelectionVisualsRefresh', 'cell', cell\)/); // NEW
+    assert.match(source, /finalizeGraph:\s*async \(\) => \{[\s\S]*graph\.refresh\(cell\);[\s\S]*requestSelectionVisualsRefresh\(graph, cell\);/); // NEW
+}); // NEW
+
 test('scheduler clears stale no-window warning after feasible crop recovery', () => {
     const source = fs.readFileSync(schedulerPath, 'utf8');
     const anchorStart = source.indexOf('async function recomputeAnchors');

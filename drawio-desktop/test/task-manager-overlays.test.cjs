@@ -318,6 +318,8 @@ function makeHarness(options = {}) { // CHANGE
 
     const states = new Map();
     let geometrySetCount = 0; // NEW
+    let scrollCellToVisibleCalls = 0; // NEW
+    let lastScrollCell = null; // NEW
     const refreshCalls = []; // NEW
     const model = {
         isVertex(cell) { return !!(cell && cell.vertex); },
@@ -372,7 +374,7 @@ function makeHarness(options = {}) { // CHANGE
         addMouseListener(listener) { mouseListeners.push(listener); }, // NEW
         fireEvent() {},
         getEdges() { return []; },
-        scrollCellToVisible() {},
+        scrollCellToVisible(cell) { scrollCellToVisibleCalls += 1; lastScrollCell = cell || null; }, // CHANGE
         isCellVisible(cell) { return !cell || cell.visible !== false; },
         isValidDropTarget() { return true; },
         resizeCells(cells) { return cells; }, // NEW
@@ -470,6 +472,7 @@ function makeHarness(options = {}) { // CHANGE
 
     vm.runInContext(fs.readFileSync(TASK_MANAGER_PATH, "utf8"), context, { filename: TASK_MANAGER_PATH });
     const taskHooks = context.globalThis.__TRELLIS_TASK_MANAGER_TEST_HOOKS__; // NEW
+    const runtimeHooks = context.globalThis.__TRELLIS_TASK_MANAGER_RUNTIME_TEST_HOOKS__; // NEW
 
     return {
         document,
@@ -499,9 +502,14 @@ function makeHarness(options = {}) { // CHANGE
         card1,
         card2,
         states,
+        runtimeHooks, // NEW
         get geometrySetCount() { return geometrySetCount; }, // NEW
         get labelSetCount() { return labelSetCount; }, // NEW
         get modelBeginUpdateCount() { return modelBeginUpdateCount; }, // NEW
+        get selectedCell() { return selectedCells[0] || null; }, // NEW
+        get selectedCells() { return selectedCells.slice(); }, // NEW
+        get scrollCellToVisibleCalls() { return scrollCellToVisibleCalls; }, // NEW
+        get lastScrollCell() { return lastScrollCell; }, // NEW
         reflowCounters() { return JSON.parse(JSON.stringify(taskHooks.snapshotTaskReflowTestCounters())); }, // NEW
         get refreshCalls() { return refreshCalls.slice(); }, // NEW
         get lastDialog() { return lastDialog; },
@@ -528,7 +536,7 @@ function makeHarness(options = {}) { // CHANGE
             const me = { getCell() { return cell; }, getEvent() { return {}; } }; // NEW
             mouseListeners.forEach(listener => { if (listener.mouseUp) listener.mouseUp(graph, me); }); // NEW
         }, // NEW
-        resetCounters() { geometrySetCount = 0; labelSetCount = 0; modelBeginUpdateCount = 0; refreshCalls.length = 0; taskHooks.resetTaskReflowTestCounters(); } // CHANGE
+        resetCounters() { geometrySetCount = 0; labelSetCount = 0; modelBeginUpdateCount = 0; scrollCellToVisibleCalls = 0; lastScrollCell = null; refreshCalls.length = 0; taskHooks.resetTaskReflowTestCounters(); } // CHANGE
     };
 }
 
@@ -815,6 +823,7 @@ test("scheduler task replacement API joins caller update when requested", () => 
     h.addCell(h.root, group); // NEW
     let historyRunCount = 0; // NEW
     h.window.Trellis = { history: { run(_metadata, operation) { historyRunCount += 1; return operation(); }, isRestoring() { return false; } } }; // NEW
+    h.graph.setSelectionCell(group); // NEW
     h.resetCounters(); // NEW
 
     const result = h.window.USL.tasks.applySchedulerTaskReplacement({ // NEW
@@ -827,8 +836,54 @@ test("scheduler task replacement API joins caller update when requested", () => 
     assert.ok(created); // NEW
     assert.equal(attr(group, "linkedTo"), created.id); // NEW
     assert.equal(attr(created, "linkedTo"), group.id); // NEW
+    assert.equal(h.selectedCell, group); // NEW
+    assert.equal(h.scrollCellToVisibleCalls, 0); // NEW
     assert.ok(h.modelBeginUpdateCount <= 1); // CHANGE: low-level reflow may touch mx, but the replacement wrapper stays joinable
     assert.equal(historyRunCount, 0); // NEW
+}); // NEW
+
+test("scheduler sync-created tasks preserve selection and viewport", () => { // NEW
+    const h = makeHarness(); // NEW
+    const group = new TestCell("sync-schedule-group", makeValue(h.document, { tiler_group: "1", linkedTo: h.card1.id }), new TestGeometry(0, 0, 120, 80), "tiler_group=1;"); // NEW
+    h.addCell(h.root, group); // NEW
+    setAttr(h.card1, "linkedTo", group.id); // NEW
+    setAttr(h.card1, "scheduler_task_key", "water::0::0"); // NEW
+    h.graph.setSelectionCell(group); // NEW
+    h.resetCounters(); // NEW
+
+    const plan = h.window.USL.tasks.applySchedulerTaskReplacement({ // NEW
+        mode: "sync", // NEW
+        targetGroupId: group.id, // NEW
+        tasks: [ // NEW
+            { title: "Water Crop", startISO: "2026-07-20", endISO: "2026-07-20", scheduler_task_key: "water::0::0" }, // NEW
+            { title: "Fertilize Crop", startISO: "2026-07-21", endISO: "2026-07-21", scheduler_task_key: "fertilize::0" } // NEW
+        ] // NEW
+    }, { insideUpdate: true }); // NEW
+
+    const linkedIds = String(attr(group, "linkedTo") || "").split(",").filter(Boolean); // NEW
+    const created = linkedIds.map(id => h.model.getCell(id)).find(cell => attr(cell, "scheduler_task_key") === "fertilize::0"); // NEW
+    assert.equal(plan.creates.length, 1); // NEW
+    assert.ok(created); // NEW
+    assert.equal(h.selectedCell, group); // NEW
+    assert.equal(h.scrollCellToVisibleCalls, 0); // NEW
+}); // NEW
+
+test("direct task replacement focuses generated cards by default", () => { // NEW
+    const h = makeHarness(); // NEW
+    const group = new TestCell("manual-schedule-group", makeValue(h.document, { tiler_group: "1" }), new TestGeometry(0, 0, 120, 80), "tiler_group=1;"); // NEW
+    h.addCell(h.root, group); // NEW
+    h.graph.setSelectionCell(group); // NEW
+    h.resetCounters(); // NEW
+
+    const result = h.runtimeHooks.replaceTasks(group.id, [ // NEW
+        { title: "Manual Water Crop", startISO: "2026-07-22", endISO: "2026-07-22", scheduler_task_key: "manual::0" } // NEW
+    ], { insideUpdate: true }); // NEW
+
+    const created = h.model.getCell(result && result[0] && result[0].cellId); // NEW
+    assert.ok(created); // NEW
+    assert.equal(h.selectedCell, created); // NEW
+    assert.equal(h.scrollCellToVisibleCalls, 1); // NEW
+    assert.equal(h.lastScrollCell, created); // NEW
 }); // NEW
 
 test("legacy tasksCreated event still performs standalone replacement", async () => { // NEW

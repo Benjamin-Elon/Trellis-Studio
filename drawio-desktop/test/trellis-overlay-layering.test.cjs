@@ -100,13 +100,12 @@ test("graph-local Trellis controls use control layers", () => { // NEW
 
 test("custom Trellis dialogs render at the Draw.io dialog layer", () => { // NEW
     const users = readPlugin("Trellis_Users.js"); // NEW
-    assert.match(users, /const TRELLIS_DIALOG_Z = 2000000000;/); // NEW
     assert.match(users, /const USERS_UI_LAYER_Z = 2000000000;/); // NEW
     assert.match(users, /const AUTH_OVERLAY_Z = 2147483000;/); // NEW
-    assert.match(users, /function elevateTrellisDialog\(\)/); // NEW
-    assert.match(users, /dlg\.container\.style\.zIndex = String\(TRELLIS_DIALOG_Z\)/); // NEW
-    assert.match(users, /dlg\.bg\.style\.zIndex = String\(TRELLIS_DIALOG_Z - 1\)/); // NEW
-    assert.match(users, /ui\.showDialog\(buildChangeRejectedDialog\(message\), 420, 190, true, true\);[\s\S]*elevateTrellisDialog\(\);/); // NEW
+    assert.match(users, /trellis-users-rejected-edit-popover[\s\S]*z-index:" \+ USERS_UI_LAYER_Z/); // CHANGE
+    assert.match(users, /trellis-users-access-dialog[\s\S]*z-index:" \+ USERS_UI_LAYER_Z/); // CHANGE
+    assert.match(users, /trellis-users-auth-overlay[\s\S]*z-index:" \+ AUTH_OVERLAY_Z/); // CHANGE
+    assert.doesNotMatch(users, /ui\.showDialog\(buildChangeRejectedDialog/); // CHANGE
     assert.match(users, /accountMenu\.style\.cssText = "position:fixed[\s\S]*z-index:" \+ USERS_UI_LAYER_Z/); // NEW
     assert.match(users, /const host = document\.body; \/\/ CHANGE[\s\S]*panel\.style\.cssText = "position:fixed[\s\S]*z-index:" \+ USERS_UI_LAYER_Z/); // NEW
     const yearPlanner = readPlugin("Year_Planner.js"); // NEW

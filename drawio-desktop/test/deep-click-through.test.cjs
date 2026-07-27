@@ -45,7 +45,7 @@ function appendChild(parent, child) { // NEW
     return child; // NEW
 } // NEW
 
-function makeHarness() { // NEW
+function makeHarness(options = {}) { // CHANGE
     const dom = new JSDOM("<!doctype html><body><div id='graph'></div></body>"); // NEW
     const document = dom.window.document; // NEW
     const root = new TestCell("root"); // NEW
@@ -55,6 +55,7 @@ function makeHarness() { // NEW
     const teamModule = appendChild(root, new TestCell("team", { team_module: "1" }, "swimlane;module=1")); // NEW
     const bed = appendChild(gardenModule, new TestCell("bed", { garden_bed: "1" })); // NEW
     const emptyBed = appendChild(gardenModule, new TestCell("emptyBed", { garden_bed: "1" })); // NEW
+    const bedAssembly = options.bedAssembly ? appendChild(gardenModule, new TestCell("bedAssembly", { irrigation_assembly: "1", irrigation_assembly_type: "bed" })) : null; // NEW
     const tilerGroup = appendChild(gardenModule, new TestCell("tiler", { tiler_group: "1" })); // NEW
     const occupiedTiler = appendChild(gardenModule, new TestCell("occupiedTiler", { tiler_group: "1" })); // NEW
     const lane = appendChild(gardenModule, new TestCell("lane", { lane_key: "TODO" }, "swimlane;")); // NEW
@@ -79,6 +80,7 @@ function makeHarness() { // NEW
     stateMap.set(kanbanCard, { cell: kanbanCard, x: 790, y: 70, width: 80, height: 40 }); // CHANGE
     stateMap.set(bed, { cell: bed, x: 40, y: 130, width: 80, height: 40 }); // NEW
     stateMap.set(emptyBed, { cell: emptyBed, x: 230, y: 130, width: 80, height: 40 }); // NEW
+    if (bedAssembly) stateMap.set(bedAssembly, { cell: bedAssembly, x: 88, y: 138, width: 24, height: 20 }); // NEW
     stateMap.set(tilerGroup, { cell: tilerGroup, x: 150, y: 130, width: 80, height: 40 }); // NEW
     stateMap.set(occupiedTiler, { cell: occupiedTiler, x: 60, y: 140, width: 20, height: 20 }); // NEW
     stateMap.set(regularChild, { cell: regularChild, x: 40, y: 360, width: 80, height: 40 }); // NEW
@@ -112,11 +114,13 @@ function makeHarness() { // NEW
         resolveOccupiedBedMoveUnit(cell) { // NEW
             const beds = [bed, emptyBed]; // NEW
             const groups = [tilerGroup, occupiedTiler]; // NEW
-            if (!isHarnessBed(cell) && !isHarnessTilerGroup(cell)) return null; // NEW
-            const anchor = isHarnessBed(cell) ? cell : containingHarnessBedForCell(cell, beds, stateMap); // NEW
+            const assemblies = [bedAssembly].filter(Boolean); // NEW
+            if (!isHarnessBed(cell) && !isHarnessTilerGroup(cell) && !isHarnessBedAssembly(cell)) return null; // CHANGE
+            const anchor = isHarnessBed(cell) ? cell : containingHarnessBedForCell(cell, beds, stateMap); // CHANGE
             if (!anchor) return null; // NEW
             const contained = groups.filter(group => containingHarnessBedForCell(group, beds, stateMap) === anchor); // NEW
-            return contained.length ? { bed: anchor, cells: [anchor].concat(contained) } : null; // NEW
+            const containedAssemblies = assemblies.filter(assembly => containingHarnessBedForCell(assembly, beds, stateMap) === anchor); // NEW
+            return contained.length || containedAssemblies.length ? { bed: anchor, bedAssemblies: containedAssemblies, plantingGroups: contained, cells: [anchor].concat(containedAssemblies, contained) } : null; // CHANGE
         } // NEW
     }; // NEW
     const context = { // NEW
@@ -159,7 +163,7 @@ function makeHarness() { // NEW
     const graphHandler = new context.mxGraphHandler(); // NEW
     graphHandler.graph = graph; // NEW
     graph.graphHandler = graphHandler; // NEW
-    return { graph, window: dom.window, Handler: context.mxGraphHandler, gardenModule, legacyGardenModule, regularModule, teamModule, regularChild, teamRole, bed, emptyBed, tilerGroup, occupiedTiler, lane, card, kanbanBoard, kanbanLane, kanbanCard, movableCells, getSelected: () => selectedCells.slice() }; // CHANGE
+    return { graph, window: dom.window, Handler: context.mxGraphHandler, gardenModule, legacyGardenModule, regularModule, teamModule, regularChild, teamRole, bed, emptyBed, bedAssembly, tilerGroup, occupiedTiler, lane, card, kanbanBoard, kanbanLane, kanbanCard, movableCells, getSelected: () => selectedCells.slice() }; // CHANGE
 } // NEW
 
 function isHarnessBed(cell) { // NEW
@@ -168,6 +172,10 @@ function isHarnessBed(cell) { // NEW
 
 function isHarnessTilerGroup(cell) { // NEW
     return !!cell && cell.getAttribute && cell.getAttribute("tiler_group") === "1"; // NEW
+} // NEW
+
+function isHarnessBedAssembly(cell) { // NEW
+    return !!cell && cell.getAttribute && cell.getAttribute("irrigation_assembly") === "1" && cell.getAttribute("irrigation_assembly_type") === "bed"; // NEW
 } // NEW
 
 function harnessCenter(cell, stateMap) { // NEW
@@ -411,6 +419,21 @@ test("planting group selection shows its containing occupied bed handle", () => 
     graph.setSelectionCell(occupiedTiler); // NEW
     assert.deepEqual(ids(api.getHandleCells()), ["bed"]); // NEW
     assert.deepEqual(ids(api.getHandleDragCellsForTests(api.getHandleCells()[0])), ["bed", "occupiedTiler"]); // NEW
+}); // NEW
+
+test("bed assembly selection shows occupied bed handle and drags the whole bed unit", () => { // NEW
+    const { graph, bed, bedAssembly, occupiedTiler, getSelected } = makeHarness({ bedAssembly: true }); // NEW
+    const api = graph.__trellisWorkspaceDragPolicy; // NEW
+    graph.setSelectionCell(bedAssembly); // NEW
+    assert.deepEqual(ids(api.getHandleCells()), ["bed"]); // NEW
+    api.refreshHandles(); // NEW
+    const handle = graph.container.querySelector("[data-trellis-workspace-drag-handle='1']"); // NEW
+    assert.ok(handle, "expected occupied bed handle for bed assembly selection"); // NEW
+    assert.equal(handle.title, "Move garden bed, irrigation assembly, and planting groups"); // NEW
+    assert.deepEqual(ids(api.getHandleDragCellsForTests(bed)), ["bed", "bedAssembly", "occupiedTiler"]); // NEW
+    api.beginHandleDragForTests(bed, { button: 0, clientX: 40, clientY: 130, preventDefault() {} }); // NEW
+    assert.deepEqual(ids(getSelected()), ["bed", "bedAssembly", "occupiedTiler"]); // NEW
+    assert.deepEqual(ids(graph.graphHandler.__trellisWorkspaceHandleDragCells), ["bed", "bedAssembly", "occupiedTiler"]); // NEW
 }); // NEW
 
 test("empty beds and outside-bed planting groups do not show occupied bed handles", () => { // NEW

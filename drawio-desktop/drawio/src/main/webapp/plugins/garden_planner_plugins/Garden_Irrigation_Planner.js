@@ -21,6 +21,7 @@ Draw.loadPlugin(function (ui) {
     const CREATE_SOURCE_ACTION_ID = "trellisIrrigationCreateSourceEndpoint";
     const CREATE_BED_ACTION_ID = "trellisIrrigationCreateBedEndpoint";
     const CREATE_BRANCH_ACTION_ID = "trellisIrrigationCreateBranchpointEndpoint";
+    const MODE_CHANGED_EVENT = "trellisIrrigationModeChanged"; // NEW
     const PX_PER_CM = 5;
     const DRAW_SCALE = 0.18;
     const CM_PER_FOOT = 30.48;
@@ -46,7 +47,6 @@ Draw.loadPlugin(function (ui) {
         PIPE_PART_ID: "irrigation_pipe_part_id",
         ASSEMBLY: "irrigation_assembly", // NEW
         ASSEMBLY_TYPE: "irrigation_assembly_type", // NEW
-        ASSEMBLY_EXPANDED: "irrigation_assembly_expanded", // NEW
         LINKED_BED_ID: "irrigation_linked_bed_id", // NEW
         BED_PORTS_JSON: "irrigation_bed_ports_json", // NEW
         EDGE_SOURCE_PORT: "irrigation_edge_source_port", // NEW
@@ -993,8 +993,10 @@ Draw.loadPlugin(function (ui) {
             });
     }
 
-    function createAssemblyLane(moduleCell, label, x, y, type, attrs) { // NEW
-        return createVertex(moduleCell, label || "Assembly", x, y, ASSEMBLY_DEFAULT_WIDTH, ASSEMBLY_HEADER_SIZE + ASSEMBLY_PART_HEIGHT + ASSEMBLY_PART_GAP * 2, // NEW
+    function createAssemblyLane(moduleCell, label, x, y, type, attrs, size) { // CHANGE
+        const laneWidth = size && size.width != null ? size.width : ASSEMBLY_DEFAULT_WIDTH; // NEW
+        const laneHeight = size && size.height != null ? size.height : ASSEMBLY_HEADER_SIZE + ASSEMBLY_PART_HEIGHT + ASSEMBLY_PART_GAP * 2; // NEW
+        return createVertex(moduleCell, label || "Assembly", x, y, laneWidth, laneHeight, // CHANGE
             "swimlane;whiteSpace=wrap;html=1;startSize=" + ASSEMBLY_HEADER_SIZE + ";horizontal=1;childLayout=stackLayout;horizontalStack=0;resizeParent=0;resizeLast=0;collapsible=1;rounded=1;fillColor=#ffffff;strokeColor=#666666;fontStyle=1;", // NEW
             Object.assign({ // NEW
                 label: label || "Assembly", // NEW
@@ -1066,28 +1068,21 @@ Draw.loadPlugin(function (ui) {
 
     function createBedAssembly(moduleCell, bedCell, anchor) { // CHANGE
         if (activeIrrigationEditDepth === 0) return runIrrigationEdit("createBedAssembly", function () { return createBedAssembly(moduleCell, bedCell, anchor); }); // NEW
-        const bedGeo = getGeometry(bedCell) || { width: ASSEMBLY_CONTRACTED_BED.width, height: ASSEMBLY_CONTRACTED_BED.height }; // NEW
-        const point = bedAssemblyOverlayPoint(bedGeo); // CHANGE
-        const size = bedAssemblyOverlaySize(bedGeo); // NEW
+        const parent = moduleCell || findGardenModuleAncestor(bedCell); // CHANGE
+        const bedGeo = bedSyncedAssemblyGeometry(bedCell); // CHANGE
         const label = (getCellAttr(bedCell, "label", "Bed") || "Bed") + " Assembly"; // NEW
         if (!getCellAttr(bedCell, ATTRS.BED_PORTS_JSON, "")) writeBedPortConfig(bedCell, defaultBedPortConfig()); // NEW
-        const assembly = createAssemblyLane(bedCell, label, point.x, point.y, "bed", { // CHANGE
-            [ATTRS.ASSEMBLY_EXPANDED]: "1", // NEW
-            [ATTRS.LINKED_BED_ID]: getCellId(bedCell) || "" // NEW
-        }); // NEW
-        setGeometry(assembly, { width: size.width, height: size.height }); // CHANGE
-        setGeometry(assembly, { width: size.width, height: size.height }); // CHANGE
+        const assembly = createAssemblyLane(parent, label, bedGeo.x, bedGeo.y, "bed", { // CHANGE
+            [ATTRS.LINKED_BED_ID]: getCellId(bedCell) || "", // CHANGE
+            bed_fit_width: "1", // NEW
+            bed_fit_height: "1" // NEW
+        }, { width: bedGeo.width, height: bedGeo.height }); // CHANGE
         return { assembly, endpoint: assembly }; // CHANGE
     } // NEW
 
-    function bedAssemblyOverlayPoint(bedGeo) { // NEW
-        return { x: 8, y: 8 }; // NEW
-    } // NEW
-
-    function bedAssemblyOverlaySize(bedGeo) { // NEW
-        const width = Math.max(120, Math.min(ASSEMBLY_DEFAULT_WIDTH, finiteNumber(bedGeo && bedGeo.width, ASSEMBLY_DEFAULT_WIDTH) - 16)); // NEW
-        const height = Math.max(70, Math.min(ASSEMBLY_CONTRACTED_BED.height, finiteNumber(bedGeo && bedGeo.height, ASSEMBLY_CONTRACTED_BED.height) - 16)); // NEW
-        return { width, height }; // NEW
+    function bedSyncedAssemblyGeometry(bedCell) { // NEW
+        const geo = getGeometry(bedCell) || {}; // NEW
+        return { x: finiteNumber(geo.x, 0), y: finiteNumber(geo.y, 0), width: finiteNumber(geo.width, ASSEMBLY_CONTRACTED_BED.width), height: finiteNumber(geo.height, ASSEMBLY_CONTRACTED_BED.height) }; // NEW
     } // NEW
 
     function isEndpoint(cell) {
@@ -1100,6 +1095,10 @@ Draw.loadPlugin(function (ui) {
 
     function assemblyType(cell) { // NEW
         return getCellAttr(cell, ATTRS.ASSEMBLY_TYPE, "parts"); // NEW
+    } // NEW
+
+    function isBedAssembly(cell) { // NEW
+        return isAssembly(cell) && assemblyType(cell) === "bed"; // NEW
     } // NEW
 
     function findAssemblyAncestor(cell) { // NEW
@@ -2411,6 +2410,35 @@ Draw.loadPlugin(function (ui) {
         createBedTemplateLayoutCells(bedAssembly, record.pathId || ("assembly_bed_" + sanitizeId(getCellId(bedCell))), record, getGeometry(bedAssembly) || getGeometry(bedCell) || { width: 160, height: 80 }); // NEW
     } // NEW
 
+    function syncLinkedBedAssemblyToBed(moduleCell, assembly, bedCell, opts) { // NEW
+        if (!isBedAssembly(assembly)) return false; // NEW
+        const linkedBed = bedCell || bedCellForAssembly(moduleCell, assembly); // NEW
+        if (!linkedBed) return false; // NEW
+        const fitWidth = !opts || opts.fitWidth !== false; // CHANGE
+        const fitHeight = !opts || opts.fitHeight !== false; // NEW
+        const current = getGeometry(assembly) || {}; // NEW
+        const bedGeo = bedSyncedAssemblyGeometry(linkedBed); // CHANGE
+        const next = Object.assign({}, current); // NEW
+        if (fitWidth) { next.x = bedGeo.x; next.width = bedGeo.width; } // NEW
+        if (fitHeight) { next.y = bedGeo.y; next.height = bedGeo.height; } // NEW
+        const ownsTransaction = !(opts && opts.inTransaction); // NEW
+        let changed = false; // NEW
+        if (ownsTransaction && model.beginUpdate) model.beginUpdate(); // NEW
+        try { // NEW
+            if (fitWidth || fitHeight) changed = !!setGeometry(assembly, next); // CHANGE
+            changed = setCellAttrs(assembly, { [ATTRS.LINKED_BED_ID]: getCellId(linkedBed) || "", bed_fit_width: fitWidth ? "1" : "0", bed_fit_height: fitHeight ? "1" : "0" }) || changed; // NEW
+            changed = syncBedAssemblyRotation(assembly, linkedBed) || changed; // NEW
+            reflowBedTemplateLayout(moduleCell || findGardenModuleAncestor(assembly), assembly); // NEW
+        } finally { if (ownsTransaction && model.endUpdate) model.endUpdate(); } // NEW
+        if (graph.refresh) graph.refresh(assembly); // NEW
+        return changed; // NEW
+    } // NEW
+
+    function syncBedAssemblyRotation(assembly, bedCell) { // NEW
+        const rotation = styleValue(bedCell && bedCell.style, "rotation"); // NEW
+        return setCellStyle(assembly, setStyleValue(assembly && assembly.style, "rotation", rotation)); // NEW
+    } // NEW
+
     function findCellById(root, id) {
         if (!id) return null;
         if (getCellId(root) === id) return root;
@@ -3599,10 +3627,13 @@ Draw.loadPlugin(function (ui) {
             bedAssemblyPickerVisible: false, // NEW
             sourceFormVisible: !!(options && options.sourceForm), // NEW
             message: "", // NEW
+            frontedBedAssemblyId: "", // NEW
+            selectionLayeringGuard: false, // NEW
             listeners: [] // NEW
         }; // NEW
         installIrrigationModeListeners(activeIrrigationMode); // NEW
-        if (options && options.selectCell) selectCell(options.selectCell, false); // NEW
+        const entrySelection = irrigationModeEntrySelection(activeIrrigationMode, selection, options); // NEW
+        if (entrySelection) selectCell(entrySelection, false); // CHANGE
         if (options && options.message) activeIrrigationMode.message = options.message; // NEW
         if (options && options.preserveViewport) irrigationDebug("openIrrigationMode:preserve-viewport", { targetModule: debugCellSummary(targetModule) }); // NEW
         else { // NEW
@@ -3613,6 +3644,7 @@ Draw.loadPlugin(function (ui) {
             } // NEW
         } // CHANGE
         renderIrrigationMode(activeIrrigationMode); // NEW
+        dispatchIrrigationModeChanged(); // NEW
         scheduleIrrigationDebugSnapshot(activeIrrigationMode, "openIrrigationMode:post-render-async"); // NEW
         return activeIrrigationMode; // NEW
     } // NEW
@@ -3630,6 +3662,12 @@ Draw.loadPlugin(function (ui) {
         removeIrrigationModeListeners(session); // NEW
         activeIrrigationMode = null; // NEW
         scheduleInactiveEntryOverlayRefresh(); // NEW
+        dispatchIrrigationModeChanged(); // NEW
+    } // NEW
+
+    function irrigationModeEntrySelection(session, selection, options) { // NEW
+        if (options && options.selectCell && isIrrigationHudSelectionTarget(session, options.selectCell)) return options.selectCell; // NEW
+        return isIrrigationHudSelectionTarget(session, selection) ? selection : session.moduleCell; // NEW
     } // NEW
 
     function closeWizardSessionForModeSwitch() { // NEW
@@ -3639,7 +3677,7 @@ Draw.loadPlugin(function (ui) {
     function installIrrigationModeListeners(session) { // NEW
         const selectionModel = graph.getSelectionModel && graph.getSelectionModel(); // NEW
         if (selectionModel && selectionModel.addListener && typeof mxEvent !== "undefined") { // NEW
-            const listener = function () { renderIrrigationMode(session); }; // NEW
+            const listener = function () { syncSelectedBedAssemblyLayering(session); renderIrrigationMode(session); }; // CHANGE
             selectionModel.addListener(mxEvent.CHANGE, listener); // NEW
             session.listeners.push({ target: selectionModel, event: mxEvent.CHANGE, listener }); // NEW
         } // NEW
@@ -3757,6 +3795,40 @@ Draw.loadPlugin(function (ui) {
         return graph.getSelectionCells ? (graph.getSelectionCells() || []) : (graph.getSelectionCell && graph.getSelectionCell() ? [graph.getSelectionCell()] : []); // NEW
     } // NEW
 
+    function getActiveIrrigationModule() { // NEW
+        return activeIrrigationMode && activeIrrigationMode.moduleCell || null; // NEW
+    } // NEW
+
+    function isIrrigationModeActive(moduleCell) { // NEW
+        if (!activeIrrigationMode) return false; // NEW
+        return !moduleCell || activeIrrigationMode.moduleCell === moduleCell || getCellId(activeIrrigationMode.moduleCell) === getCellId(moduleCell); // NEW
+    } // NEW
+
+    function dispatchIrrigationModeChanged() { // NEW
+        if (typeof window === "undefined" || !window.dispatchEvent) return; // NEW
+        try { // NEW
+            const detail = { active: !!activeIrrigationMode, moduleCellId: getCellId(getActiveIrrigationModule()) || "" }; // NEW
+            const EventCtor = window.CustomEvent || window.Event; // NEW
+            if (EventCtor) window.dispatchEvent(new EventCtor(MODE_CHANGED_EVENT, { detail })); // NEW
+        } catch (_) { } // NEW
+    } // NEW
+
+    function cellBelongsToIrrigationSession(session, cell) { // NEW
+        if (!session || !cell) return false; // NEW
+        if (cell === session.moduleCell || getCellId(cell) === getCellId(session.moduleCell)) return true; // NEW
+        return findGardenModuleAncestor(cell) === session.moduleCell || getCellId(findGardenModuleAncestor(cell)) === getCellId(session.moduleCell); // NEW
+    } // NEW
+
+    function isIrrigationHudSelectionTarget(session, cell) { // NEW
+        if (!session || !cell || !cellBelongsToIrrigationSession(session, cell)) return false; // NEW
+        return isGardenModule(cell) || isGardenBed(cell) || isAssemblyModeObject(cell) || isHudIrrigationObject(cell) || isHudPipeEdge(cell); // NEW
+    } // NEW
+
+    function currentSelectionIsIrrigationHudEligible(session) { // NEW
+        const cells = currentSelectionCells(); // NEW
+        return cells.length > 0 && cells.every(function (cell) { return isIrrigationHudSelectionTarget(session, cell); }); // NEW
+    } // NEW
+
     function selectedAssemblyContextCells() { // NEW
         const seen = new Set(); // NEW
         const out = []; // NEW
@@ -3768,6 +3840,29 @@ Draw.loadPlugin(function (ui) {
             out.push(cell); // NEW
         }); // NEW
         return out; // NEW
+    } // NEW
+
+    function reorderIrrigationModuleLayering(moduleCell) { // NEW
+        const tiler = typeof window !== "undefined" && window.USL && window.USL.tiler; // NEW
+        if (!tiler || typeof tiler.reorderModuleChildrenForLayering !== "function") return; // NEW
+        const run = function () { tiler.reorderModuleChildrenForLayering(model, moduleCell); }; // NEW
+        (graph.__withUndoSuppressed || function (fn) { return fn(); }).call(graph, run); // CHANGE
+    } // NEW
+
+    function syncSelectedBedAssemblyLayering(session) { // NEW
+        if (!session || session.selectionLayeringGuard) return; // NEW
+        const selected = graph.getSelectionCell && graph.getSelectionCell(); // NEW
+        const selectedBedAssembly = isBedAssembly(selected) ? selected : null; // NEW
+        const selectedId = getCellId(selectedBedAssembly) || ""; // NEW
+        if (session.frontedBedAssemblyId === selectedId) return; // NEW
+        session.selectionLayeringGuard = true; // NEW
+        try { // NEW
+            if (session.frontedBedAssemblyId) reorderIrrigationModuleLayering(session.moduleCell); // NEW
+            session.frontedBedAssemblyId = ""; // NEW
+            if (!selectedBedAssembly || !graph.orderCells) return; // NEW
+            (graph.__withUndoSuppressed || function (fn) { return fn(); }).call(graph, function () { graph.orderCells(false, [selectedBedAssembly]); }); // CHANGE
+            session.frontedBedAssemblyId = selectedId; // NEW
+        } finally { session.selectionLayeringGuard = false; } // NEW
     } // NEW
 
     function shieldHudEvents(hud) { // NEW
@@ -3784,6 +3879,7 @@ Draw.loadPlugin(function (ui) {
         removeNodeList(session.warningBadges); // NEW
         removeNodeList(session.portBadges); // NEW
         removeNodeList(session.zoneBadges); // NEW
+        if (!currentSelectionIsIrrigationHudEligible(session)) return; // NEW
 
         const selected = graph.getSelectionCell && graph.getSelectionCell(); // NEW
         const assemblySelection = selectedAssemblyContextCells(); // NEW
@@ -4548,7 +4644,6 @@ Draw.loadPlugin(function (ui) {
     function renderAssemblyPortBadges(session, selectedCells) { // CHANGE
         allAssemblyBoundaryPortSpecs(session.moduleCell).forEach(function (spec) { renderPortBadge(session, spec.cell, spec.role, spec.index); }); // CHANGE
         renderInternalConnectionBadges(session, selectedCells); // NEW
-        renderBedAssemblyResizeBadges(session, selectedCells); // NEW
     } // NEW
 
     function allAssemblyBoundaryPortSpecs(moduleCell) { // CHANGE
@@ -4781,46 +4876,6 @@ Draw.loadPlugin(function (ui) {
         const y = (up.y + up.height + down.y) / 2 - PORT_BADGE_SIZE / 2; // NEW
         node.style.left = Math.round(x) + "px"; // NEW
         node.style.top = Math.round(y) + "px"; // NEW
-    } // NEW
-
-    function renderBedAssemblyResizeBadges(session, selectedCells) { // NEW
-        (selectedCells || []).forEach(function (cell) { // NEW
-            const assembly = isAssembly(cell) ? cell : findAssemblyAncestor(cell); // NEW
-            if (!assembly || assemblyType(assembly) !== "bed") return; // NEW
-            const badge = document.createElement("button"); // NEW
-            badge.type = "button"; // NEW
-            const expanded = getCellAttr(assembly, ATTRS.ASSEMBLY_EXPANDED, "") === "1"; // NEW
-            badge.textContent = expanded ? "-" : "+"; // NEW
-            badge.title = expanded ? "Contract bed assembly" : "Expand to linked bed size"; // NEW
-            badge.style.cssText = "position:absolute;z-index:1002;width:22px;height:22px;padding:0;border:1px solid #555;border-radius:4px;background:#fff;font:bold 12px Arial,sans-serif;cursor:pointer;"; // NEW
-            positionNavigatorButton(badge, assembly, -26, -26); // NEW
-            badge.addEventListener("click", function (ev) { // NEW
-                if (ev && ev.stopPropagation) ev.stopPropagation(); // NEW
-                toggleBedAssemblyExpanded(session, assembly); // NEW
-            }); // NEW
-            appendOverlayNode(badge); // NEW
-            session.portBadges.push(badge); // NEW
-        }); // NEW
-    } // NEW
-
-    function toggleBedAssemblyExpanded(session, assembly) { // NEW
-        if (activeIrrigationEditDepth === 0) return runIrrigationEdit("toggleBedAssemblyExpanded", function () { return toggleBedAssemblyExpanded(session, assembly); }); // NEW
-        const expanded = getCellAttr(assembly, ATTRS.ASSEMBLY_EXPANDED, "") === "1"; // NEW
-        model.beginUpdate && model.beginUpdate(); // NEW
-        try { // NEW
-            if (expanded) { // NEW
-                setCellAttrs(assembly, { [ATTRS.ASSEMBLY_EXPANDED]: "0" }); // NEW
-                setGeometry(assembly, { width: ASSEMBLY_CONTRACTED_BED.width, height: ASSEMBLY_CONTRACTED_BED.height }); // NEW
-            } else { // NEW
-                const bed = findCellById(session.moduleCell, getCellAttr(assembly, ATTRS.LINKED_BED_ID, "")); // NEW
-                const bedGeo = getGeometry(bed) || ASSEMBLY_CONTRACTED_BED; // NEW
-                setCellAttrs(assembly, { [ATTRS.ASSEMBLY_EXPANDED]: "1" }); // NEW
-                setGeometry(assembly, { width: finiteNumber(bedGeo.width, ASSEMBLY_DEFAULT_WIDTH), height: finiteNumber(bedGeo.height, ASSEMBLY_CONTRACTED_BED.height) }); // CHANGE
-            } // NEW
-            reflowBedTemplateLayout(session.moduleCell, assembly); // NEW
-        } finally { model.endUpdate && model.endUpdate(); } // NEW
-        scheduleHudGraphStateSync(session.moduleCell); // NEW
-        renderIrrigationMode(session); // NEW
     } // NEW
 
     function reverseAssembly(assembly) { // NEW
@@ -5923,6 +5978,10 @@ Draw.loadPlugin(function (ui) {
         createManualZone: ZoneModel.createManual, // CHANGE
         openIrrigationMode: HudController.open, // CHANGE
         closeIrrigationMode: HudController.close, // CHANGE
+        isIrrigationModeActive, // NEW
+        getActiveIrrigationModule, // NEW
+        isBedAssembly, // NEW
+        syncLinkedBedAssemblyToBed, // NEW
         openCatalogManager,
         __test: {
             GraphStore, // NEW
@@ -5980,6 +6039,8 @@ Draw.loadPlugin(function (ui) {
             createSourceAssembly, // NEW
             createPartAssembly, // NEW
             createBedAssembly, // NEW
+            isBedAssembly, // NEW
+            syncLinkedBedAssemblyToBed, // NEW
             createAssemblyConnection: ConnectorRules.createAssemblyConnection, // CHANGE
             validatePortConnection: ConnectorRules.validatePortConnection, // CHANGE
             portConnectorForCell: ConnectorRules.portConnectorForCell, // NEW
@@ -6008,6 +6069,9 @@ Draw.loadPlugin(function (ui) {
             syncHudGraphState: HudController.syncGraphState, // CHANGE
             scheduleHudGraphStateSync: HudController.scheduleSync, // CHANGE
             flushHudGraphStateSync: HudController.flushSync, // CHANGE
+            isIrrigationModeActive, // NEW
+            getActiveIrrigationModule, // NEW
+            isIrrigationHudSelectionTarget, // NEW
             validateHudConnection, // CHANGE
             addPartPickerParts, // NEW
             addPartContextFromPort, // NEW

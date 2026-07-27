@@ -320,6 +320,19 @@ test("selected bed overlays render for garden-bed-only selections", () => { // N
     assert.equal(getSelectedBedOverlays(graph).length, 0); // NEW
 }); // NEW
 
+test("selected bed overlays are suppressed while irrigation mode is active", () => { // NEW
+    const { api, bed, graph } = loadPlugin(); // NEW
+    const pluginWindow = graph.container.ownerDocument.defaultView; // NEW
+    api.writeBedConditions(bed, { sunExposure: "full_sun", irrigation: "drip" }); // NEW
+    graph.getSelectionCells = () => [bed]; // NEW
+    pluginWindow.TrellisIrrigationPlanner = { isIrrigationModeActive() { return false; } }; // NEW
+    api._test.syncSelectedBedOverlays(); // NEW
+    assert.equal(getSelectedBedOverlays(graph).length, 1); // NEW
+    pluginWindow.TrellisIrrigationPlanner = { isIrrigationModeActive() { return true; } }; // NEW
+    api._test.syncSelectedBedOverlays(); // NEW
+    assert.equal(getSelectedBedOverlays(graph).length, 0); // NEW
+}); // NEW
+
 test("selected bed overlay opens the bed conditions editor", () => { // NEW
     const { api, bed, graph, ui } = loadPlugin(); // NEW
     graph.getSelectionCells = () => [bed]; // NEW

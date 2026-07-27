@@ -131,6 +131,8 @@ function loadPlugin(options = {}) { // NEW
             (graphListeners.get("removeCells") || []).forEach(listener => listener(this, { getProperty(key) { return key === "cells" ? cells : null; } })); // NEW
         }, // NEW
         getCellAt() { return null; }, // NEW
+        __withUndoSuppressed(fn) { this.undoSuppressedCalls = (this.undoSuppressedCalls || 0) + 1; return fn(); }, // NEW
+        orderCells(_back, cells) { this.orderedCells = (this.orderedCells || []).concat(cells || []); }, // NEW
         insertVertex(parent, id, label, x, y, width, height, style) { const cell = appendChild(parent, new TestCell(id || "v" + nextId++, label || "", { x, y, width, height }, style || "")); model.recordChange("insertVertex"); return cell; }, // CHANGE
         insertEdge(parent, id, label, source, target, style) { // NEW
             const edge = appendChild(parent, new TestCell(id || "e" + nextId++, label || "", { points: [] }, style || "")); // NEW
@@ -723,6 +725,46 @@ test("source commit creates one undoable edit at the latest click point and HUD 
     assert.equal(model.valuesWritten, writesAfterCommit); // NEW
 }); // NEW
 
+test("irrigation mode exposes active state and normalizes invalid entry selection", () => { // NEW
+    const { api, graph, moduleCell, document } = loadPlugin(); // NEW
+    const group = appendChild(moduleCell, makeXmlCell(document, "plantGroup", { tiler_group: "1", label: "Lettuce" }, { x: 40, y: 40, width: 90, height: 60 })); // NEW
+    graph.setSelectionCell(group); // NEW
+    assert.equal(api.isIrrigationModeActive(), false); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    assert.equal(api.isIrrigationModeActive(), true); // NEW
+    assert.equal(api.isIrrigationModeActive(moduleCell), true); // NEW
+    assert.equal(api.getActiveIrrigationModule(), moduleCell); // NEW
+    assert.equal(graph.getSelectionCell(), moduleCell); // NEW
+    assert.match(graph.container.querySelector(".trellis-irrigation-mode-hud").textContent, /Irrigation Mode/); // NEW
+    api.closeIrrigationMode(); // NEW
+    assert.equal(api.isIrrigationModeActive(), false); // NEW
+    assert.equal(api.getActiveIrrigationModule(), null); // NEW
+    assert.equal(graph.container.querySelector(".trellis-irrigation-mode-hud"), null); // NEW
+}); // NEW
+
+test("irrigation mode HUD renders only for active-module irrigation selections", () => { // NEW
+    const { api, graph, moduleCell, bed, root, document } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const otherModule = appendChild(root, makeXmlCell(document, "otherModule", { garden_module: "1", label: "Other" }, { x: 900, y: 0, width: 300, height: 220 })); // NEW
+    const plantGroup = appendChild(moduleCell, makeXmlCell(document, "plantGroup", { tiler_group: "1", label: "Lettuce" }, { x: 40, y: 40, width: 90, height: 60 })); // NEW
+    const assembly = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 30, y: 40 }).assembly; // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "3/4", usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 180 }); // NEW
+    const connection = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(assembly).getId(), role: "input", index: 0 }); // NEW
+    assert.equal(connection.ok, true, connection.reason); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    assert.match(graph.container.querySelector(".trellis-irrigation-mode-hud").textContent, /Irrigation Mode/); // NEW
+    graph.setSelectionCell(bed); // NEW
+    assert.match(graph.container.querySelector(".trellis-irrigation-mode-hud").textContent, /Garden Bed/); // NEW
+    graph.setSelectionCell(assembly); // NEW
+    assert.ok(graph.container.querySelector(".trellis-irrigation-local-hud")); // NEW
+    graph.setSelectionCell(connection.edge); // NEW
+    assert.ok(graph.container.querySelector(".trellis-irrigation-mode-hud")); // NEW
+    graph.setSelectionCell(plantGroup); // NEW
+    assert.equal(graph.container.querySelector(".trellis-irrigation-mode-hud"), null); // NEW
+    graph.setSelectionCell(otherModule); // NEW
+    assert.equal(graph.container.querySelector(".trellis-irrigation-mode-hud"), null); // NEW
+}); // NEW
+
 test("Add Part groups global options and creates one undoable unconnected assembly without context", () => { // CHANGE
     const { api, graph, model, moduleCell, actions } = loadPlugin(); // CHANGE
     api.writeCatalog(moduleCell, sampleCatalog()); // NEW
@@ -1237,11 +1279,19 @@ test("Suggest Connection renders stock-grouped suggestions and applies a bridge 
     assert.equal(api.__test.collectAssemblyEdges(moduleCell).length, 0); // CHANGE
 }); // NEW
 
-test("bed assemblies expand/contract, apply templates, and assembly reports ignore legacy objects", () => { // NEW
+test("bed assemblies sync to linked beds, apply templates, and assembly reports ignore legacy objects", () => { // CHANGE
     const { api, graph, moduleCell, bed, bed2, document, model } = loadPlugin(); // CHANGE
     api.writeCatalog(moduleCell, addDripTapeBomParts(sampleCatalog())); // CHANGE
     const source = api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "1/2", method: "drip", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // CHANGE
+    const originalBedGeometry = Object.assign({}, bed.geometry); // NEW
     const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 220 }); // NEW
+    assert.equal(bedAssembly.assembly.parent, moduleCell); // NEW
+    assert.deepEqual(bed.geometry, originalBedGeometry); // NEW
+    assert.deepEqual(bedAssembly.assembly.geometry, originalBedGeometry); // NEW
+    assert.equal(bedAssembly.assembly.getAttribute("irrigation_linked_bed_id"), bed.getId()); // NEW
+    assert.equal(bedAssembly.assembly.getAttribute("bed_fit_width"), "1"); // NEW
+    assert.equal(bedAssembly.assembly.getAttribute("bed_fit_height"), "1"); // NEW
+    assert.equal(api.__test.isBedAssembly(bedAssembly.assembly), true); // NEW
     const legacy = api.__test.createBedEndpoint(bed2, "Legacy inlet", { connectorType: "barb", nominalSize: "3/4", method: "drip" }); // NEW
     legacy.value.setAttribute(api.attrs.GENERATED, "1"); // NEW
     const legacyLayout = appendChild(bed, makeXmlCell(document, "legacy_layout", { [api.attrs.BED_LAYOUT]: "1", label: "Legacy template label" }, { x: 8, y: 8, width: 80, height: 16 })); // NEW
@@ -1249,6 +1299,8 @@ test("bed assemblies expand/contract, apply templates, and assembly reports igno
     assert.equal(connection.ok, true, connection.reason); // NEW
     api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
     graph.setSelectionCell(bedAssembly.assembly); // NEW
+    assert.equal(graph.orderedCells.includes(bedAssembly.assembly), true); // NEW
+    assert.ok(graph.undoSuppressedCalls > 0); // NEW
     assert.deepEqual(hudSectionTitles(graph.container).slice(0, 2), ["Irrigation Template", "Zone"]); // CHANGE
     assert.equal(hudSectionTitles(graph.container).includes("Inlet/Outlet"), false); // NEW
     assert.equal(graph.container.querySelectorAll(".trellis-irrigation-connection-row").length, 0); // NEW
@@ -1304,28 +1356,29 @@ test("bed assemblies expand/contract, apply templates, and assembly reports igno
     assert.equal(legacyLayout.parent, bed); // NEW
     assert.equal(bed.children.includes(legacyLayout), true); // NEW
     assert.equal(model.removedCells.includes(legacyLayout), false); // NEW
-    const contract = Array.from(graph.container.querySelectorAll("button")).find(button => button.title === "Contract bed assembly"); // NEW
-    assert.ok(contract); // NEW
+    assert.equal(Array.from(graph.container.querySelectorAll("button")).some(button => /Contract bed assembly|Expand to linked bed size/.test(button.title)), false); // CHANGE
+    const prePartialSyncGeometry = Object.assign({}, bedAssembly.assembly.geometry); // NEW
+    bed.geometry = { x: 140, y: 130, width: 180, height: 96 }; // NEW
     model.completedEdits = []; // NEW
-    contract.click(); // NEW
+    api.__test.syncLinkedBedAssemblyToBed(moduleCell, bedAssembly.assembly, bed, { fitWidth: true, fitHeight: false }); // CHANGE
     assert.equal(model.completedEdits.length, 1); // NEW
-    assert.equal(bedAssembly.assembly.geometry.width, 220); // NEW
-    const contractedRows = descendants(bedAssembly.assembly, cell => cell.getAttribute && cell.getAttribute(api.attrs.BED_LAYOUT) === "1"); // NEW
-    assert.equal(contractedRows.length, 3); // CHANGE
-    assert.equal(contractedRows[0].geometry.width, 204); // NEW
-    const expand = Array.from(graph.container.querySelectorAll("button")).find(button => button.title === "Expand to linked bed size"); // NEW
-    assert.ok(expand); // NEW
+    assert.equal(JSON.stringify(bedAssembly.assembly.geometry), JSON.stringify({ x: bed.geometry.x, y: prePartialSyncGeometry.y, width: bed.geometry.width, height: prePartialSyncGeometry.height })); // CHANGE
+    assert.equal(bedAssembly.assembly.getAttribute("bed_fit_width"), "1"); // NEW
+    assert.equal(bedAssembly.assembly.getAttribute("bed_fit_height"), "0"); // NEW
+    assert.equal(descendants(bedAssembly.assembly, cell => cell.getAttribute && cell.getAttribute(api.attrs.BED_LAYOUT) === "1").length, 3); // NEW
     model.completedEdits = []; // NEW
-    expand.click(); // NEW
+    api.__test.syncLinkedBedAssemblyToBed(moduleCell, bedAssembly.assembly, bed, { fitWidth: true, fitHeight: true }); // NEW
     assert.equal(model.completedEdits.length, 1); // NEW
-    assert.equal(bedAssembly.assembly.geometry.width, bed.geometry.width); // NEW
+    assert.equal(JSON.stringify(bedAssembly.assembly.geometry), JSON.stringify(bed.geometry)); // CHANGE
+    assert.equal(bedAssembly.assembly.getAttribute("bed_fit_width"), "1"); // NEW
+    assert.equal(bedAssembly.assembly.getAttribute("bed_fit_height"), "1"); // NEW
     assert.equal(descendants(bedAssembly.assembly, cell => cell.getAttribute && cell.getAttribute(api.attrs.BED_LAYOUT) === "1").length, 3); // CHANGE
     const paths = api.__test.syncHudGraphState(moduleCell); // NEW
     assert.equal(paths.length, 1); // NEW
     assert.equal(paths[0].targetBedId, bed.getId()); // NEW
     assert.equal(moduleCell.getAttribute(api.attrs.PATHS_JSON), null); // CHANGE
     const summary = JSON.parse(moduleCell.getAttribute(api.attrs.REPORT_JSON)).summary; // NEW
-    assert.equal(Math.round(summary.percentIrrigated), 50); // NEW
+    assert.equal(Math.round(summary.percentIrrigated), 71); // CHANGE
 }); // NEW
 
 test("direct bed template commits create assembly-owned visual rows", () => { // NEW
@@ -1334,7 +1387,8 @@ test("direct bed template commits create assembly-owned visual rows", () => { //
     const bedAssemblies = assemblyCells(moduleCell, api).filter(cell => cell.getAttribute(api.attrs.ASSEMBLY_TYPE) === "bed"); // NEW
     assert.equal(bedAssemblies.length, 1); // NEW
     const assembly = bedAssemblies[0]; // NEW
-    assert.equal(assembly.parent, bed); // NEW
+    assert.equal(assembly.parent, moduleCell); // CHANGE
+    assert.deepEqual(assembly.geometry, bed.geometry); // NEW
     assert.equal(assembly.getAttribute("label"), "Overhead sprinkler block"); // NEW
     assert.ok(bed.getAttribute(api.attrs.BED_TEMPLATE_JSON)); // NEW
     assert.equal(api.__test.assemblyPartCells(assembly).length, 0); // NEW

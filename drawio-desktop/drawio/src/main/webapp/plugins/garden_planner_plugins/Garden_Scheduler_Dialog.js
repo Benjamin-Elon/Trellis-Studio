@@ -3480,21 +3480,32 @@ Draw.loadPlugin(function (ui) {
         const sourceCell = sourceId ? graphCellById(activeGraph, sourceId) : null; // ADDED
         return sourceCell && isTilerGroup(sourceCell) ? sourceCell : selectedCell; // ADDED
     } // ADDED
-    function collectLinkedCompanionLayoutCells(activeGraph, selectedCell) { // ADDED
+    function companionLayoutClusterForSelection(activeGraph, selectedCell) { // ADDED
         const model = activeGraph && typeof activeGraph.getModel === 'function' ? activeGraph.getModel() : null; // ADDED
-        const anchor = resolveCompanionLayoutAnchorCell(activeGraph, selectedCell); // ADDED
-        if (!model || !anchor || !isTilerGroup(anchor)) return { anchor: null, companions: [], bed: null }; // ADDED
-        const bed = findContainingBedForScheduleCell(anchor); // ADDED
+        const root = resolveCompanionLayoutAnchorCell(activeGraph, selectedCell); // CHANGED
+        if (!model || !root || !isTilerGroup(root)) return { root: null, members: [], bed: null }; // CHANGED
+        const bed = findContainingBedForScheduleCell(root); // CHANGED
         const bedId = String(bed?.id || ''); // ADDED
-        const parent = model.getParent(anchor); // ADDED
+        const parent = model.getParent(root); // CHANGED
         const siblings = parent && activeGraph && typeof activeGraph.getChildVertices === 'function' ? activeGraph.getChildVertices(parent) : []; // ADDED
         const companions = (siblings || []).filter(candidate => { // ADDED
-            if (!candidate || candidate === anchor || !isTilerGroup(candidate)) return false; // ADDED
-            if (companionSourceGroupId(candidate) !== String(anchor.id || '')) return false; // ADDED
+            if (!candidate || candidate === root || !isTilerGroup(candidate)) return false; // CHANGED
+            if (companionSourceGroupId(candidate) !== String(root.id || '')) return false; // CHANGED
             if (!bed) return true; // ADDED
             return String(findContainingBedForScheduleCell(candidate)?.id || '') === bedId; // ADDED
         }); // ADDED
-        return { anchor, companions, bed }; // ADDED
+        return { root, members: [root].concat(companions), bed }; // CHANGED
+    } // ADDED
+    function selectCompanionLayoutAnchorFromSet(cells, savedDefault, fallbackAnchor) { // ADDED
+        const savedAnchorPlantId = finiteNumberOrNull(savedDefault?.anchorPlantId); // ADDED
+        if (savedAnchorPlantId == null) return fallbackAnchor || cells?.[0] || null; // ADDED
+        return (cells || []).find(candidate => cellPlantId(candidate) === savedAnchorPlantId) || fallbackAnchor || cells?.[0] || null; // ADDED
+    } // ADDED
+    function collectLinkedCompanionLayoutCells(activeGraph, selectedCell, savedDefault = null) { // CHANGED
+        const cluster = companionLayoutClusterForSelection(activeGraph, selectedCell); // ADDED
+        const anchor = selectCompanionLayoutAnchorFromSet(cluster.members, savedDefault, cluster.root); // ADDED
+        const companions = (cluster.members || []).filter(candidate => candidate && candidate !== anchor); // ADDED
+        return { anchor, companions, bed: cluster.bed, members: cluster.members, root: cluster.root }; // CHANGED
     } // ADDED
     function computePreviewPlantCircles(groupRect, spacingXCm, spacingYCm, opts = {}) { // ADDED
         const pxPerCm = 5 * 0.18; // ADDED
@@ -3511,7 +3522,9 @@ Draw.loadPlugin(function (ui) {
             const c = i % cols; // ADDED
             circles.push({ // ADDED
                 x: groupRect.x + spacingX / 2 + c * spacingX, // ADDED
-                y: groupRect.y + spacingY / 2 + r * spacingY // ADDED
+                y: groupRect.y + spacingY / 2 + r * spacingY, // CHANGED
+                row: r, // ADDED
+                col: c // ADDED
             }); // ADDED
         } // ADDED
         return { circles, total, summarized: total > count }; // ADDED
@@ -3585,10 +3598,15 @@ Draw.loadPlugin(function (ui) {
         const pxPerCm = 5 * 0.18; // ADDED
         const dx = (layoutNumberOrNull(anchorSpacing.spacingXCm) ?? spacingX) * pxPerCm / 2; // ADDED
         const dy = (layoutNumberOrNull(anchorSpacing.spacingYCm) ?? spacingY) * pxPerCm / 2; // ADDED
-        dots.circles = dots.circles.map((p, index) => ({ // ADDED
-            x: Math.min(rect.x + rect.width - 2, p.x + (index % 2 === 0 ? dx : 0)), // ADDED
-            y: Math.min(rect.y + rect.height - 2, p.y + (index % 2 === 0 ? dy : 0)) // ADDED
-        })); // ADDED
+        dots.circles = dots.circles.map(p => { // CHANGED
+            const offset = ((Number(p.row) || 0) + (Number(p.col) || 0)) % 2 === 0; // ADDED
+            return { // ADDED
+                x: Math.min(rect.x + rect.width - 2, p.x + (offset ? dx : 0)), // CHANGED
+                y: Math.min(rect.y + rect.height - 2, p.y + (offset ? dy : 0)), // CHANGED
+                row: p.row, // ADDED
+                col: p.col // ADDED
+            }; // ADDED
+        }); // CHANGED
         return dots; // ADDED
     } // ADDED
     function buildCompanionLayoutPreviewModel({ bedRect = null, anchorRow = null, companionRows = [], requireRealBed = true } = {}) { // ADDED
@@ -3749,6 +3767,11 @@ Draw.loadPlugin(function (ui) {
         if (retile) retile(graph, groupCell); // CHANGE
         return null; // CHANGE
     } // CHANGE
+
+    function requestSelectionVisualsRefresh(graph, cell) { // NEW
+        if (!graph || typeof graph.fireEvent !== 'function') return; // NEW
+        try { graph.fireEvent(new mxEventObject('trellisSelectionVisualsRefresh', 'cell', cell)); } catch (_) { } // NEW
+    } // NEW
 
 
 
@@ -6434,20 +6457,6 @@ Draw.loadPlugin(function (ui) {
         leftCol.appendChild(spacingYRow.row); // ADDED
         attachInlineOverrideToRow(spacingYRow, { key: 'spacing_y_cm', type: 'num_ge0', step: 1 }); // ADDED
 
-        const plantLayoutPanel = document.createElement('div'); // ADDED
-        plantLayoutPanel.className = 'usl-plant-editor-layout-panel'; // ADDED
-        const plantLayoutHeading = document.createElement('div'); // ADDED
-        plantLayoutHeading.className = 'usl-plant-editor-layout-heading'; // ADDED
-        plantLayoutHeading.textContent = 'Layout'; // ADDED
-        plantLayoutPanel.appendChild(plantLayoutHeading); // ADDED
-        const plantLayoutPreview = document.createElement('div'); // ADDED
-        plantLayoutPreview.className = 'usl-layout-preview'; // ADDED
-        const plantLayoutStatus = document.createElement('div'); // ADDED
-        plantLayoutStatus.className = 'usl-layout-status'; // ADDED
-        plantLayoutPanel.appendChild(plantLayoutPreview); // ADDED
-        plantLayoutPanel.appendChild(plantLayoutStatus); // ADDED
-        leftCol.appendChild(plantLayoutPanel); // ADDED
-
         const companionLayoutPanel = document.createElement('div'); // ADDED
         companionLayoutPanel.className = 'usl-plant-editor-layout-panel'; // ADDED
         const companionLayoutHeading = document.createElement('div'); // ADDED
@@ -6487,8 +6496,6 @@ Draw.loadPlugin(function (ui) {
         }); // ADDED
         companionLayoutActions.appendChild(companionLayoutSaveBtn); // ADDED
         companionLayoutPanel.appendChild(companionLayoutActions); // ADDED
-        const companionLayoutPreview = document.createElement('div'); // ADDED
-        companionLayoutPreview.className = 'usl-layout-preview'; // ADDED
         const companionLayoutStatus = document.createElement('div'); // ADDED
         companionLayoutStatus.className = 'usl-layout-status'; // ADDED
         const companionGroupDefaultsList = document.createElement('div'); // ADDED
@@ -6508,16 +6515,7 @@ Draw.loadPlugin(function (ui) {
             }; // ADDED
         } // ADDED
         function refreshPlantEditorLayoutPreview() { // ADDED
-            const spacing = plantEditorSpacingDraft(); // ADDED
-            const model = buildLayoutPreviewModel({ // ADDED
-                sourceSpacing: spacing, // ADDED
-                layout: { spacingXCm: spacing.spacingXCm, spacingYCm: spacing.spacingYCm, offsetXCm: 0, offsetYCm: 0 }, // ADDED
-                sourceLabel: String(nameInput.value || currentPlantRow?.plant_name || 'Plant'), // ADDED
-                requireRealBed: false, // ADDED
-                showCompanion: false // ADDED
-            }); // ADDED
-            renderLayoutPreviewSvg(plantLayoutPreview, model); // ADDED
-            plantLayoutStatus.textContent = model.sourceCircles?.summarized ? 'Dense layout summarized.' : 'Generic sample bed preview.'; // ADDED
+            return; // CHANGED
         } // ADDED
         function selectedCompanionLayoutRelationship() { // ADDED
             const key = String(companionLayoutRelSel.value || ''); // ADDED
@@ -8320,7 +8318,13 @@ Draw.loadPlugin(function (ui) {
         async function rebuildCompanionGroupLayoutEditor() { // ADDED
             const token = ++companionLayoutEditorLoadToken; // ADDED
             const activeGraph = ui?.editor?.graph; // ADDED
-            const linked = collectLinkedCompanionLayoutCells(activeGraph, cell); // ADDED
+            const initialLinked = collectLinkedCompanionLayoutCells(activeGraph, cell); // CHANGED
+            const initialPlantIds = (initialLinked.members || []).map(member => cellPlantId(member)); // ADDED
+            const saved = initialPlantIds.length // ADDED
+                ? await CompanionLayoutGroupDefaultModel.load(initialPlantIds, cellPlantId(initialLinked.anchor)) || await CompanionLayoutGroupDefaultModel.load(initialPlantIds, null) // ADDED
+                : null; // ADDED
+            if (token !== companionLayoutEditorLoadToken) return; // ADDED
+            const linked = collectLinkedCompanionLayoutCells(activeGraph, cell, saved); // CHANGED
             const hasEditor = derivedContext?.mode === 'companion' && linked.anchor && linked.companions.length > 0; // ADDED
             companionLayoutEditorState = hasEditor ? { active: true, anchor: linked.anchor, companions: linked.companions, bed: linked.bed, rows: [] } : null; // ADDED
             if (singleLayoutSectionWrap) singleLayoutSectionWrap.style.display = hasEditor ? 'none' : ''; // ADDED
@@ -8333,9 +8337,6 @@ Draw.loadPlugin(function (ui) {
             layoutGroupEditor.appendChild(header); // ADDED
             const anchorRow = readAnchorLayoutRow(linked.anchor); // ADDED
             const companionRows = linked.companions.map(companionCell => readCompanionLayoutRow(linked.anchor, companionCell)); // ADDED
-            const plantIds = [anchorRow.plantId].concat(companionRows.map(row => row.plantId)); // ADDED
-            const saved = await CompanionLayoutGroupDefaultModel.load(plantIds, anchorRow.plantId) || await CompanionLayoutGroupDefaultModel.load(plantIds, null); // ADDED
-            if (token !== companionLayoutEditorLoadToken) return; // ADDED
             applySavedGroupDefaultToRows(anchorRow, companionRows, saved); // ADDED
             companionLayoutEditorState.savedDefault = saved; // ADDED
             companionLayoutEditorState.rows = [anchorRow].concat(companionRows); // ADDED
@@ -12709,6 +12710,7 @@ Draw.loadPlugin(function (ui) {
             persist: options.afterGraphUpdate,
             finalizeGraph: async () => {
                 graph.refresh(cell);
+                requestSelectionVisualsRefresh(graph, cell); // NEW
             },
             restoreGraphPatch
         });
@@ -13568,6 +13570,7 @@ Draw.loadPlugin(function (ui) {
             buildLayoutPreviewModel, // ADDED
             buildCompanionLayoutPreviewModel, // ADDED
             computeActiveCompanionPlacement, // ADDED
+            selectCompanionLayoutAnchorFromSet, // ADDED
             computePreviewPlantCircles, // ADDED
             normId, // FIX
             resolveStartAfterWindow // FIX
@@ -14067,6 +14070,7 @@ Draw.loadPlugin(function (ui) {
             buildLayoutPreviewModel, // ADDED
             buildCompanionLayoutPreviewModel, // ADDED
             computeActiveCompanionPlacement, // ADDED
+            selectCompanionLayoutAnchorFromSet, // ADDED
             computePreviewPlantCircles, // ADDED
             companionRatingLabel, // ADDED
             formatSignedDays, // ADDED

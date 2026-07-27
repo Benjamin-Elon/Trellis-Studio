@@ -353,6 +353,35 @@ test('multi-companion preview model renders anchor and all companions with warni
     assert.match(model.warning, /Tomato: Clamped inside bed/); // ADDED
 }); // ADDED
 
+test('saved plant-set defaults select their saved anchor when opened from another set member', () => { // ADDED
+    const selected = { id: 'lettuce', getAttribute: key => key === 'plant_id' ? '2' : '' }; // ADDED
+    const savedAnchor = { id: 'carrot', getAttribute: key => key === 'plant_id' ? '1' : '' }; // ADDED
+    const tomato = { id: 'tomato', getAttribute: key => key === 'plant_id' ? '3' : '' }; // ADDED
+    const anchor = hooks.selectCompanionLayoutAnchorFromSet([selected, savedAnchor, tomato], { anchorPlantId: 1 }, selected); // ADDED
+    assert.equal(anchor.id, 'carrot'); // ADDED
+    const fallback = hooks.selectCompanionLayoutAnchorFromSet([selected, tomato], { anchorPlantId: 9 }, selected); // ADDED
+    assert.equal(fallback.id, 'lettuce'); // ADDED
+}); // ADDED
+
+test('interplant preview offsets alternating row and column parity like the tiler', () => { // ADDED
+    const model = hooks.buildCompanionLayoutPreviewModel({ // ADDED
+        bedRect: { x: 0, y: 0, width: 160, height: 120 }, // ADDED
+        anchorRow: { plantId: 1, label: 'Carrot', rect: { x: 0, y: 0, width: 100, height: 100 }, spacingXCm: 20, spacingYCm: 20 }, // ADDED
+        companionRows: [{ plantId: 2, label: 'Lettuce', rect: { x: 0, y: 0, width: 100, height: 100 }, template: 'interplant', spacingXCm: 20, spacingYCm: 20, offsetXCm: 0, offsetYCm: 0 }], // ADDED
+        requireRealBed: true // ADDED
+    }); // ADDED
+    const companionDots = model.rows.find(row => row.role === 'companion').dots.circles; // ADDED
+    const row0col0 = companionDots.find(dot => dot.row === 0 && dot.col === 0); // ADDED
+    const row0col1 = companionDots.find(dot => dot.row === 0 && dot.col === 1); // ADDED
+    const row1col0 = companionDots.find(dot => dot.row === 1 && dot.col === 0); // ADDED
+    assert.equal(row0col0.x, 18); // ADDED
+    assert.equal(row0col0.y, 18); // ADDED
+    assert.equal(row0col1.x, 27); // ADDED
+    assert.equal(row0col1.y, 9); // ADDED
+    assert.equal(row1col0.x, 9); // ADDED
+    assert.equal(row1col0.y, 27); // ADDED
+}); // ADDED
+
 test('graph-created companion pairs get an in-memory relationship before DB default save', () => { // ADDED
     const sourcePlant = makeCrop({ plant_id: 11, plant_name: 'Tomato' }); // ADDED
     const companionPlant = makeCrop({ plant_id: 22, plant_name: 'Basil' }); // ADDED
@@ -432,13 +461,13 @@ test('scheduler layout tab wires live SVG preview and context-aware default savi
     assert.match(schedulerSource, /CompanionLayoutGroupDefaultModel\.save/); // ADDED
 }); // ADDED
 
-test('plant editor exposes plant layout spacing x and y defaults', () => { // ADDED
+test('plant editor exposes layout defaults without a diagram preview', () => { // CHANGED
     assert.match(schedulerSource, /const spacingXInput = makeNullableNumber\(existing\?\.spacing_x_cm/); // ADDED
     assert.match(schedulerSource, /const spacingYInput = makeNullableNumber\(existing\?\.spacing_y_cm/); // ADDED
     assert.match(schedulerSource, /spacing_x_cm: readNullableNumber\(spacingXInput\)/); // ADDED
     assert.match(schedulerSource, /spacing_y_cm: readNullableNumber\(spacingYInput\)/); // ADDED
-    assert.match(schedulerSource, /plantLayoutHeading\.textContent = 'Layout'/); // ADDED
-    assert.match(schedulerSource, /refreshPlantEditorLayoutPreview\(\)/); // ADDED
+    assert.doesNotMatch(schedulerSource, /plantLayoutHeading\.textContent = 'Layout'/); // CHANGED
+    assert.doesNotMatch(schedulerSource, /plantLayoutPreview/); // ADDED
     assert.match(schedulerSource, /Companion pair layout defaults/); // ADDED
     assert.match(schedulerSource, /CompanionRelationshipModel\.saveLayoutDefaults\(relationship\.relationId, readCompanionLayoutDraft\(\), relationship\)/); // ADDED
 }); // ADDED

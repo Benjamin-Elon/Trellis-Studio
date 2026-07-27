@@ -110,6 +110,31 @@ test("garden dashboard toolbar groups tools left and messages export share table
     assert.match(text, /controls\.appendChild\(leftControls\);[\s\S]*controls\.appendChild\(rightActions\);/); // NEW
 }); // NEW
 
+test("garden dashboard toolbar marks Irrigation active with existing blue", () => { // NEW
+    const text = viewportToolbarSource(); // NEW
+    const fullSource = source(); // NEW
+    assert.match(fullSource, /const IRRIGATION_MODE_CHANGED_EVENT = "trellisIrrigationModeChanged";/); // NEW
+    assert.match(fullSource, /const IRRIGATION_ACTIVE_BLUE = "#2563eb";/); // NEW
+    assert.match(text, /function activeIrrigationModuleMatches\(moduleCell\)/); // NEW
+    assert.match(text, /plannerApi\.isIrrigationModeActive\(moduleCell\)/); // NEW
+    assert.match(text, /function applyToolbarActiveButtonState\(btn, active\)/); // NEW
+    assert.match(text, /btn\.style\.background = active \? IRRIGATION_ACTIVE_BLUE : "#fff";/); // NEW
+    assert.match(text, /btn\.style\.borderColor = active \? IRRIGATION_ACTIVE_BLUE : "#777";/); // NEW
+    assert.match(text, /btn\.style\.color = active \? "#fff" : "#000";/); // NEW
+    assert.match(text, /applyToolbarActiveButtonState\(entry\.irrigationBtn, activeIrrigationModuleMatches\(moduleCell\)\);/); // NEW
+    assert.match(fullSource, /window\.addEventListener\(IRRIGATION_MODE_CHANGED_EVENT, scheduleViewportToolbarRefresh\);/); // NEW
+}); // NEW
+
+test("garden dashboard irrigation buttons close active irrigation mode", () => { // CHANGE
+    const text = viewportToolbarSource(); // CHANGE
+    const fullSource = source(); // CHANGE
+    assert.match(text, /function toggleIrrigationPlannerForModule\(moduleCell\)/); // CHANGE
+    assert.match(text, /plannerApi\.isIrrigationModeActive\(moduleCell\)[\s\S]*plannerApi\.closeIrrigationMode\(\);[\s\S]*return;/); // CHANGE
+    assert.match(text, /irrigationBtn\.addEventListener\("click", function \(\) \{ toggleIrrigationPlannerForModule\(activeToolbarModule\); \}\);/); // CHANGE
+    assert.match(fullSource, /function toggleIrrigationPlannerForDashboard\(dashCell\)[\s\S]*toggleIrrigationPlannerForModule\(moduleCell\);/); // CHANGE
+    assert.match(fullSource, /irrigationBtn\.addEventListener\("click", \(ev\) => \{[\s\S]*toggleIrrigationPlannerForDashboard\(dashCell\);/); // CHANGE
+}); // CHANGE
+
 test("garden dashboard messages button calls users API for active module and prompts auth", () => { // NEW
     const text = viewportToolbarSource(); // NEW
     assert.match(text, /const messagesBtn = createToolbarButton\("Messages", "Review access requests"\);/); // NEW

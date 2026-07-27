@@ -10,6 +10,8 @@ Draw.loadPlugin(function (ui) {
     const graph = ui.editor.graph;
     const model = graph.getModel();
 
+    const TRELLIS_SELECTION_VISUALS_REFRESH_EVENT = 'trellisSelectionVisualsRefresh'; // NEW
+
     if (graph.__tilerOverlapNavClustersInstalled) return;
     graph.__tilerOverlapNavClustersInstalled = true;
 
@@ -75,6 +77,15 @@ Draw.loadPlugin(function (ui) {
         '<path d="M7 9 H15 M7 11 H15 M7 13 H15" stroke="black" stroke-width="1"/>' +
         '</svg>'
     );
+
+    const ICON_SELECT_ASSEMBLY = 'data:image/svg+xml;utf8,' + encodeURIComponent( // NEW
+        '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">' + // NEW
+        '<circle cx="11" cy="11" r="10" fill="white" stroke="black" stroke-width="1"/>' + // NEW
+        '<rect x="6" y="6" width="5" height="5" rx="1" fill="none" stroke="black" stroke-width="1.2"/>' + // NEW
+        '<rect x="11" y="11" width="5" height="5" rx="1" fill="none" stroke="black" stroke-width="1.2"/>' + // NEW
+        '<path d="M10.6 10.6 L11.4 11.4" stroke="black" stroke-width="1.2" stroke-linecap="round"/>' + // NEW
+        '</svg>' // NEW
+    ); // NEW
 
     const TIME_ATTRS_ASC = ['transplant_date', 'sow_date'];
     const EPS = 0; // inclusive AABB; set >0 to treat near-miss as overlap
@@ -589,6 +600,19 @@ Draw.loadPlugin(function (ui) {
             cell.getAttribute('is_garden_bed') === '1';
     }
 
+    function isIrrigationBedAssembly(cell) { // NEW
+        return !!cell && !!cell.getAttribute && cell.getAttribute('irrigation_assembly') === '1' && cell.getAttribute('irrigation_assembly_type') === 'bed'; // NEW
+    } // NEW
+
+    function findIrrigationBedAssemblyAncestor(cell) { // NEW
+        let cur = cell; // NEW
+        while (cur) { // NEW
+            if (isIrrigationBedAssembly(cur)) return cur; // NEW
+            cur = model.getParent(cur); // NEW
+        } // NEW
+        return null; // NEW
+    } // NEW
+
     function rectContainsPoint(r, px, py) {
         if (!r) return false;
         return px >= r.x && px <= (r.x + r.w) && py >= r.y && py <= (r.y + r.h);
@@ -853,6 +877,7 @@ Draw.loadPlugin(function (ui) {
     // -------------------- Multi-cluster state --------------------
     // key -> { order: mxCell[], currentIdx: number, anchorId: string, btnPrev, btnNext, badge, dimmed:Set<mxCell> }
     const clusterStates = new Map();
+    const bedUnitSelectorState = { btnSelectBed: null, btnSelectPlantings: null, btnSelectBedAssembly: null, unit: null }; // NEW
 
     function clusterKeyOf(members) {
         const ids = members.map(c => c.id || '').sort();
@@ -1078,6 +1103,109 @@ Draw.loadPlugin(function (ui) {
         return !!btn && btn.dataset.navEnabled === '1';
     }
 
+    function currentSelectionCells() { // NEW
+        return graph.getSelectionCells ? (graph.getSelectionCells() || []) : (graph.getSelectionCell && graph.getSelectionCell() ? [graph.getSelectionCell()] : []); // NEW
+    } // NEW
+
+    function sameCellSet(a, b) { // NEW
+        const left = (a || []).map(c => c && c.id).filter(Boolean).sort(); // NEW
+        const right = (b || []).map(c => c && c.id).filter(Boolean).sort(); // NEW
+        if (left.length !== right.length) return false; // NEW
+        for (let i = 0; i < left.length; i++) if (left[i] !== right[i]) return false; // NEW
+        return true; // NEW
+    } // NEW
+
+    function bedUnitSelectorButton(name, src, alt, title) { // CHANGE
+        const host = getHost(); // NEW
+        let b = bedUnitSelectorState[name]; // NEW
+        if (!b) { // NEW
+            b = document.createElement('img'); // NEW
+            styleSelectBtn(b); // NEW
+            b.draggable = false; // NEW
+            b.addEventListener('pointerdown', consumeEvt, { passive: false }); // NEW
+            b.addEventListener('mousedown', consumeEvt, { passive: false }); // NEW
+            b.addEventListener('click', function (evt) { consumeEvt(evt); selectBedUnitTarget(name); }); // CHANGE
+            bedUnitSelectorState[name] = b; // NEW
+        } // NEW
+        b.src = src; // NEW
+        b.alt = alt; // NEW
+        b.title = title; // NEW
+        if (b.parentNode !== host) host.appendChild(b); // NEW
+        return b; // NEW
+    } // NEW
+
+    function hideBedUnitSelectors() { // NEW
+        ['btnSelectBed', 'btnSelectPlantings', 'btnSelectBedAssembly'].forEach(name => { // NEW
+            const b = bedUnitSelectorState[name]; // NEW
+            if (b) b.style.display = 'none'; // NEW
+        }); // NEW
+        bedUnitSelectorState.unit = null; // NEW
+    } // NEW
+
+    function visibleBedUnitSelectorCount() { // NEW
+        return ['btnSelectBed', 'btnSelectPlantings', 'btnSelectBedAssembly'].reduce((count, name) => { // NEW
+            const b = bedUnitSelectorState[name]; // NEW
+            return count + (b && b.style.display !== 'none' ? 1 : 0); // NEW
+        }, 0); // NEW
+    } // NEW
+
+    function selectBedUnitCells(cells, bringToFront) { // NEW
+        const selected = (cells || []).filter(Boolean); // NEW
+        if (!selected.length) return; // NEW
+        const parent = model.getParent(selected[0]); // NEW
+        if (bringToFront) bringCellsToFrontTemporarilyInParent(parent, selected); // NEW
+        graph.setSelectionCells(selected); // NEW
+        if (parent) graph.refresh(parent); else graph.refresh(); // NEW
+        hideBedUnitSelectors(); // NEW
+    } // NEW
+
+    function bedUnitTargetCells(name) { // NEW
+        const unit = bedUnitSelectorState.unit; // NEW
+        if (!unit) return []; // NEW
+        if (name === 'btnSelectBed') return unit.bed ? [unit.bed] : []; // NEW
+        if (name === 'btnSelectPlantings') return unit.plantingGroups || []; // NEW
+        if (name === 'btnSelectBedAssembly') return unit.bedAssemblies || []; // NEW
+        return []; // NEW
+    } // NEW
+
+    function selectBedUnitTarget(name) { // NEW
+        selectBedUnitCells(bedUnitTargetCells(name), name === 'btnSelectBed'); // NEW
+    } // NEW
+
+    function updateBedUnitSelectorButton(name, targetCells, src, alt, title) { // CHANGE
+        const target = (targetCells || []).filter(Boolean); // NEW
+        const b = bedUnitSelectorButton(name, src, alt, title); // CHANGE
+        b.style.display = target.length && !sameCellSet(currentSelectionCells(), target) ? '' : 'none'; // NEW
+        return b; // NEW
+    } // NEW
+
+    function renderBedUnitSelectors(unit) { // NEW
+        hideBedUnitSelectors(); // NEW
+        if (!unit || !unit.bed || !unit.cells || unit.cells.length < 2) return; // NEW
+        bedUnitSelectorState.unit = unit; // NEW
+        updateBedUnitSelectorButton('btnSelectBed', [unit.bed], ICON_SELECT_BEDS, 'Select bed', 'Select containing garden bed'); // CHANGE
+        updateBedUnitSelectorButton('btnSelectPlantings', unit.plantingGroups, ICON_SELECT, 'Select plantings', 'Select planting groups in this bed'); // CHANGE
+        updateBedUnitSelectorButton('btnSelectBedAssembly', unit.bedAssemblies, ICON_SELECT_ASSEMBLY, 'Select irrigation assembly', 'Select bed irrigation assembly'); // CHANGE
+        positionBedUnitSelectors(); // NEW
+    } // NEW
+
+    function bedUnitPlantingsMatchCluster(members) { // NEW
+        return sameCellSet(members, bedUnitTargetCells('btnSelectPlantings')); // NEW
+    } // NEW
+
+    function positionBedUnitSelectors() { // NEW
+        const unit = bedUnitSelectorState.unit; // NEW
+        const box = unit && viewBBoxForCells(unit.cells); // NEW
+        if (!box) { hideBedUnitSelectors(); return; } // NEW
+        const visible = ['btnSelectBed', 'btnSelectPlantings', 'btnSelectBedAssembly'].map(name => bedUnitSelectorState[name]).filter(b => b && b.style.display !== 'none'); // NEW
+        const baseX = Math.max(0, Math.round(box.x - BTN_SIZE - BTN_INSET + SELECT_BUTTON_DRAG_HANDLE_SLOT)); // CHANGE
+        const y = Math.round(box.y - BTN_SIZE - BTN_INSET); // NEW
+        visible.forEach((b, index) => { // NEW
+            b.style.left = Math.round(baseX + index * (BTN_SIZE + SELECT_BUTTON_GAP)) + 'px'; // NEW
+            b.style.top = y + 'px'; // NEW
+        }); // NEW
+    } // NEW
+
 
     function ensureButtonsFor(key) {
         const host = getHost();
@@ -1255,6 +1383,8 @@ Draw.loadPlugin(function (ui) {
     function resolveOccupiedBedAnchor(cell) { // NEW
         if (!cell || !model.isVertex(cell)) return null; // NEW
         if (isGardenBed(cell)) return cell; // NEW
+        const assembly = findIrrigationBedAssemblyAncestor(cell); // NEW
+        if (assembly) return containingBedForIrrigationAssembly(assembly); // NEW
         const group = findTilerGroupSelection(cell); // NEW
         if (!group) return null; // NEW
         const parent = model.getParent(group); // NEW
@@ -1263,6 +1393,17 @@ Draw.loadPlugin(function (ui) {
         const meta = classifyTilerGroupForBeds(group, beds); // NEW
         if (meta.type !== 'contained' || !meta.bedId) return null; // NEW
         const bed = model.getCell(meta.bedId); // NEW
+        return bed && model.isVertex(bed) && isGardenBed(bed) ? bed : null; // NEW
+    } // NEW
+
+    function containingBedForIrrigationAssembly(assembly) { // NEW
+        const directParent = model.getParent(assembly); // NEW
+        if (directParent && isGardenBed(directParent)) return directParent; // NEW
+        const parent = directParent || graph.getDefaultParent && graph.getDefaultParent(); // NEW
+        if (!parent) return null; // NEW
+        const beds = (graph.getChildVertices(parent) || []).filter(isGardenBed); // NEW
+        const rect = getRotatedRectModel(assembly); // NEW
+        const bed = rect ? findSmallestContainingBed(beds, [], rect.center) : null; // NEW
         return bed && model.isVertex(bed) && isGardenBed(bed) ? bed : null; // NEW
     } // NEW
 
@@ -1277,12 +1418,33 @@ Draw.loadPlugin(function (ui) {
         }); // NEW
     } // NEW
 
+    function uniqueCells(cells) { // NEW
+        const seen = new Set(); // NEW
+        const out = []; // NEW
+        for (const cell of (cells || [])) { // NEW
+            const id = cell && cell.id; // NEW
+            if (!id || seen.has(id)) continue; // NEW
+            seen.add(id); // NEW
+            out.push(cell); // NEW
+        } // NEW
+        return out; // NEW
+    } // NEW
+
+    function containedBedAssembliesForBed(bed) { // NEW
+        const parent = bed && model.getParent(bed); // NEW
+        const candidates = []; // NEW
+        if (parent) candidates.push(...(graph.getChildVertices(parent) || []).filter(isIrrigationBedAssembly)); // NEW
+        candidates.push(...(graph.getChildVertices(bed) || []).filter(isIrrigationBedAssembly)); // NEW
+        return uniqueCells(candidates).filter(assembly => containingBedForIrrigationAssembly(assembly) === bed); // NEW
+    } // NEW
+
     function resolveOccupiedBedMoveUnit(cell) { // NEW
         const bed = resolveOccupiedBedAnchor(cell); // NEW
         if (!bed) return null; // NEW
-        const groups = containedPlantingGroupsForBed(bed); // NEW
-        if (!groups.length) return null; // NEW
-        return { bed, cells: [bed].concat(groups) }; // NEW
+        const bedAssemblies = containedBedAssembliesForBed(bed); // NEW
+        const plantingGroups = containedPlantingGroupsForBed(bed); // CHANGE
+        if (!bedAssemblies.length && !plantingGroups.length) return null; // CHANGE
+        return { bed, bedAssemblies, plantingGroups, cells: [bed].concat(bedAssemblies, plantingGroups) }; // CHANGE
     } // NEW
 
     function makeCoveredPlantTarget(component, coverKey, coverCells) { // NEW
@@ -1398,6 +1560,8 @@ Draw.loadPlugin(function (ui) {
         if (st.badge) st.badge.style.display = 'none';
         if (st.btnSelectAll) st.btnSelectAll.style.display = 'none';
         if (st.btnSelectBed) st.btnSelectBed.style.display = 'none'; // NEW
+        if (st.btnSelectPlantings) st.btnSelectPlantings.style.display = 'none'; // NEW
+        if (st.btnSelectBedAssembly) st.btnSelectBedAssembly.style.display = 'none'; // NEW
         removeCoveredTargetSelectorsFor(key); // CHANGE
 
     }
@@ -1471,7 +1635,8 @@ Draw.loadPlugin(function (ui) {
                 st.btnSelectBed.style.top = y + 'px'; // NEW
             } // NEW
             if (st.btnSelectAll) {
-                const x2 = baseX + (st.btnSelectBed && st.btnSelectBed.style.display !== 'none' ? (BTN_SIZE + SELECT_BUTTON_GAP) : 0); // CHANGE
+                const unitOffset = visibleBedUnitSelectorCount() * (BTN_SIZE + SELECT_BUTTON_GAP); // NEW
+                const x2 = baseX + unitOffset + (st.btnSelectBed && st.btnSelectBed.style.display !== 'none' ? (BTN_SIZE + SELECT_BUTTON_GAP) : 0); // CHANGE
                 st.btnSelectAll.style.left = x2 + 'px'; // CHANGE
                 st.btnSelectAll.style.top = y + 'px';
             }
@@ -1661,9 +1826,9 @@ Draw.loadPlugin(function (ui) {
             if (members.length >= 2) { // NEW
                 ensureButtonsFor(key); // CHANGE
                 ensureBadgeFor(key); // CHANGE
-                ensureSelectAllFor(key); // CHANGE
+                if (bedUnitPlantingsMatchCluster(members)) { if (clusterStates.get(key).btnSelectAll) clusterStates.get(key).btnSelectAll.style.display = 'none'; } // NEW
+                else ensureSelectAllFor(key); // CHANGE
             } // NEW
-            ensureContainedBedSelectorFor(key); // NEW
             updateControlsVisibilityFor(key);
             positionUIFor(key);
             applyVisibilityFor(key);
@@ -1730,6 +1895,7 @@ Draw.loadPlugin(function (ui) {
 
     function refreshAllForSelectionOrAnchor() {
         const sel = graph.getSelectionCell();
+        renderBedUnitSelectors(resolveOccupiedBedMoveUnit(sel)); // NEW
         const selectedTilerGroup = findTilerGroupSelection(sel); // CHANGE
         const preferred = selectedTilerGroup ? selectedTilerGroup.id : null; // CHANGE
         lastSelectedTGId = preferred || null;
@@ -1788,6 +1954,7 @@ Draw.loadPlugin(function (ui) {
             if (!hasVisibleUI) continue; // CHANGE
             positionUIFor(key);
         }
+        positionBedUnitSelectors(); // NEW
     }
 
 
@@ -1826,6 +1993,7 @@ Draw.loadPlugin(function (ui) {
 
         rafDebounce(refreshAllForSelectionOrAnchor);
     });
+    graph.addListener(TRELLIS_SELECTION_VISUALS_REFRESH_EVENT, function () { rafDebounce(refreshAllForSelectionOrAnchor); }); // NEW
 
     graph.addListener(mxEvent.ADD_CELLS, function () { rafDebounce(refreshAllForSelectionOrAnchor); });
     graph.addListener(mxEvent.REMOVE_CELLS, function () { rafDebounce(refreshAllForSelectionOrAnchor); });

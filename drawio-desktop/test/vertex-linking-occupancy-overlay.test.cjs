@@ -142,6 +142,14 @@ test("role-card multi-selection dispatches to the multi-role link renderer", () 
     assert.match(selectionSource, /refreshCurrentHighlight\(\);/); // NEW
 }); // NEW
 
+test("selection visual refresh event rebuilds link and schedule overlays", () => { // NEW
+    const source = readSource(); // NEW
+    const selectionSource = sourceBetween(source, "graph.getSelectionModel().addListener(mxEvent.CHANGE", "// -------------------- Context Menu Hook"); // NEW
+
+    assert.match(source, /const TRELLIS_SELECTION_VISUALS_REFRESH_EVENT = 'trellisSelectionVisualsRefresh';/); // NEW
+    assert.match(selectionSource, /graph\.addListener\(TRELLIS_SELECTION_VISUALS_REFRESH_EVENT,\s*function \(\) \{[\s\S]*refreshCurrentHighlight\(\);[\s\S]*taskScheduleOverlay\.refresh\(\);/); // NEW
+}); // NEW
+
 test("multi-selected role cards draw links without opening task overlays", () => { // NEW
     const source = readSource(); // NEW
     const multiRoleSource = sourceBetween(source, "function highlightLinkedRoleCards", "function highlightLinked(cell)"); // NEW

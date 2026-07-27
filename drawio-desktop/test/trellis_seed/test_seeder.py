@@ -134,6 +134,7 @@ class TrellisSeederTests(unittest.TestCase):
             self.assertIn("CityWeatherDaily", tables)
             self.assertIn("CityWeatherForecastDaily", tables)
             self.assertIn("CompanionEvidence", tables)
+            self.assertIn("CompanionLayoutGroupDefaults", tables)  # ADDED
             self.assertIn("PlantingWindowReferences", tables)
             cols = [row[1] for row in conn.execute("PRAGMA table_info(VarietyTaskTemplates);")]
             self.assertIn("method_id", cols)
@@ -154,11 +155,15 @@ class TrellisSeederTests(unittest.TestCase):
             self.assertIn("layout_spacing_y_cm", companion_cols)  # ADDED
             self.assertIn("layout_offset_x_cm", companion_cols)  # ADDED
             self.assertIn("layout_offset_y_cm", companion_cols)  # ADDED
+            group_default_cols = [row[1] for row in conn.execute("PRAGMA table_info(CompanionLayoutGroupDefaults);")]  # ADDED
+            self.assertIn("plant_set_key", group_default_cols)  # ADDED
+            self.assertIn("anchor_plant_id", group_default_cols)  # ADDED
+            self.assertIn("layout_json", group_default_cols)  # ADDED
 
     def test_companion_migration_adds_directional_timing_and_nullable_id_backfill(self) -> None:  # ADDED
         with closing(sqlite3.connect(":memory:")) as conn:  # ADDED
             conn.row_factory = sqlite3.Row  # ADDED
-            conn.executescript(""" 
+            conn.executescript("""
                 CREATE TABLE Plants (plant_id INTEGER PRIMARY KEY, plant_name TEXT NOT NULL);
                 CREATE TABLE Companions (
                     relation_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -213,10 +218,38 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertTrue(any("layout_template" in error for error in invalid["errors"]))  # ADDED
         self.assertTrue(any("layout_spacing_x_cm" in error for error in invalid["errors"]))  # ADDED
 
+    def test_companion_layout_group_default_validation_requires_matching_set_and_anchor(self) -> None:  # ADDED
+        layout = {  # ADDED
+            "rows": [  # ADDED
+                {"role": "anchor", "plantId": 1, "spacingXCm": 20, "spacingYCm": 20, "vegDiameterCm": 18},  # ADDED
+                {"role": "companion", "plantId": 2, "template": "interplant", "spacingXCm": 15, "spacingYCm": 15, "vegDiameterCm": 12, "offsetXCm": 5, "offsetYCm": -5},  # ADDED
+            ]  # ADDED
+        }  # ADDED
+        valid = validate_row("CompanionLayoutGroupDefaults", {  # ADDED
+            "plant_set_key": "1+2",  # ADDED
+            "anchor_plant_id": 1,  # ADDED
+            "layout_json": json.dumps(layout),  # ADDED
+        })  # ADDED
+        self.assertEqual(valid["errors"], [])  # ADDED
+        invalid = validate_row("CompanionLayoutGroupDefaults", {  # ADDED
+            "plant_set_key": "1+2",  # ADDED
+            "anchor_plant_id": 3,  # ADDED
+            "layout_json": {"rows": [{"role": "companion", "plantId": 2, "template": "diagonal"}]},  # ADDED
+        })  # ADDED
+        self.assertTrue(any("anchor_plant_id" in error for error in invalid["errors"]))  # ADDED
+        self.assertTrue(any("template" in error for error in invalid["errors"]))  # ADDED
+        self.assertTrue(any("exactly one anchor" in error for error in invalid["errors"]))  # ADDED
+        unsorted = validate_row("CompanionLayoutGroupDefaults", {  # ADDED
+            "plant_set_key": "2+1",  # ADDED
+            "anchor_plant_id": 1,  # ADDED
+            "layout_json": json.dumps(layout),  # ADDED
+        })  # ADDED
+        self.assertTrue(any("plant_set_key" in error for error in unsorted["errors"]))  # ADDED
+
     def test_companion_upsert_preserves_directional_ids_timing_and_evidence(self) -> None:  # ADDED
         with closing(sqlite3.connect(":memory:")) as conn:  # ADDED
             conn.row_factory = sqlite3.Row  # ADDED
-            conn.executescript(""" 
+            conn.executescript("""
                 CREATE TABLE Plants (plant_id INTEGER PRIMARY KEY, plant_name TEXT NOT NULL);
                 CREATE TABLE Companions (
                     relation_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -272,6 +305,40 @@ class TrellisSeederTests(unittest.TestCase):
             self.assertEqual((row["layout_template"], row["layout_spacing_x_cm"], row["layout_spacing_y_cm"], row["layout_offset_x_cm"], row["layout_offset_y_cm"]), ("interplant", 22.5, 30.0, 12.0, -4.0))  # ADDED
             evidence = conn.execute("SELECT summary FROM CompanionEvidence WHERE relation_id=10").fetchone()  # ADDED
             self.assertEqual(evidence["summary"], "Keep this evidence.")  # ADDED
+
+    def test_companion_layout_group_defaults_upsert_by_set_and_anchor(self) -> None:  # ADDED
+        with closing(sqlite3.connect(":memory:")) as conn:  # ADDED
+            conn.row_factory = sqlite3.Row  # ADDED
+            conn.executescript("""
+                CREATE TABLE Plants (plant_id INTEGER PRIMARY KEY, plant_name TEXT NOT NULL);
+                CREATE TABLE CompanionLayoutGroupDefaults (
+                    group_default_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plant_set_key TEXT NOT NULL,
+                    anchor_plant_id INTEGER NOT NULL,
+                    layout_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE (plant_set_key, anchor_plant_id)
+                );
+                INSERT INTO Plants (plant_id, plant_name) VALUES (1, 'Carrot'), (2, 'Lettuce');
+            """)  # ADDED
+            first_layout = {"rows": [{"role": "anchor", "plantId": 1}, {"role": "companion", "plantId": 2, "template": "beside"}]}  # ADDED
+            second_layout = {"rows": [{"role": "anchor", "plantId": 1}, {"role": "companion", "plantId": 2, "template": "interplant"}]}  # ADDED
+            seed_db._upsert_companion_layout_group_defaults(conn, [{  # ADDED
+                "plant_set_key": "1+2",  # ADDED
+                "anchor_plant_id": 1,  # ADDED
+                "layout_json": first_layout,  # ADDED
+            }])  # ADDED
+            seed_db._upsert_companion_layout_group_defaults(conn, [{  # ADDED
+                "plant_set_key": "1+2",  # ADDED
+                "anchor_plant_id": 1,  # ADDED
+                "layout_json": second_layout,  # ADDED
+                "updated_at": "2026-07-26T00:00:00+00:00",  # ADDED
+            }])  # ADDED
+            rows = list(conn.execute("SELECT plant_set_key, anchor_plant_id, layout_json, updated_at FROM CompanionLayoutGroupDefaults"))  # ADDED
+            self.assertEqual(len(rows), 1)  # ADDED
+            self.assertEqual((rows[0]["plant_set_key"], rows[0]["anchor_plant_id"]), ("1+2", 1))  # ADDED
+            self.assertEqual(json.loads(rows[0]["layout_json"])["rows"][1]["template"], "interplant")  # ADDED
+            self.assertEqual(rows[0]["updated_at"], "2026-07-26T00:00:00+00:00")  # ADDED
 
     def test_plant_variety_validation_accepts_only_known_maturity_classes(self) -> None:  # ADDED
         valid = validate_row("PlantVarieties", {  # ADDED

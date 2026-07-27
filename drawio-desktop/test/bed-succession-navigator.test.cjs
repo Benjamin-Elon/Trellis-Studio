@@ -76,6 +76,10 @@ function makeHarness(options = {}) { // NEW
     if (options.secondBed) extraBeds.push(appendChild(layer, new TestCell("bed2", { garden_bed: "1" }))); // NEW
     const tiler1 = appendChild(layer, new TestCell("tiler1", { tiler_group: "1", ...(options.tiler1Attrs || {}) })); // CHANGE
     const extraCells = []; // NEW
+    const bedAssemblies = []; // NEW
+    if (options.bedAssembly) bedAssemblies.push(appendChild(layer, new TestCell("bedAssembly", { irrigation_assembly: "1", irrigation_assembly_type: "bed" }))); // NEW
+    if (options.secondBedAssembly) bedAssemblies.push(appendChild(layer, new TestCell("bedAssembly2", { irrigation_assembly: "1", irrigation_assembly_type: "bed" }))); // NEW
+    if (options.outsideBedAssembly) bedAssemblies.push(appendChild(layer, new TestCell("outsideBedAssembly", { irrigation_assembly: "1", irrigation_assembly_type: "bed" }))); // NEW
 
     if (options.secondTiler) { // NEW
         extraCells.push(appendChild(layer, new TestCell("tiler2", { tiler_group: "1", ...(options.tiler2Attrs || {}) }))); // CHANGE
@@ -104,6 +108,9 @@ function makeHarness(options = {}) { // NEW
 
     if (extraBeds[0]) states.set(extraBeds[0], options.bed2State || { x: 40, y: 40, width: 100, height: 100 }); // CHANGE
     if (extraCells[0]) states.set(extraCells[0], options.tiler2State || { x: 50, y: 50, width: 20, height: 20 }); // CHANGE
+    if (bedAssemblies[0]) states.set(bedAssemblies[0], options.bedAssemblyState || { x: 20, y: 20, width: 30, height: 20 }); // NEW
+    if (bedAssemblies[1]) states.set(bedAssemblies[1], options.bedAssembly2State || { x: 60, y: 20, width: 24, height: 20 }); // NEW
+    if (bedAssemblies[2]) states.set(bedAssemblies[2], options.outsideBedAssemblyState || { x: 140, y: 20, width: 24, height: 20 }); // NEW
     states.forEach((state, cell) => { cell.geometry = makeGeometry(state); }); // NEW
 
     const graph = { // NEW
@@ -154,7 +161,7 @@ function makeHarness(options = {}) { // NEW
     }; // NEW
 
     vm.runInNewContext(fs.readFileSync(PLUGIN_PATH, "utf8"), context, { filename: PLUGIN_PATH }); // NEW
-    return { document, graph, layer, bed, bed2: extraBeds[0] || null, tiler1, tiler2: extraCells[0] || null, getSelected: () => selectedCells.slice() }; // CHANGE
+    return { document, graph, layer, bed, bed2: extraBeds[0] || null, tiler1, tiler2: extraCells[0] || null, bedAssembly: bedAssemblies[0] || null, bedAssembly2: bedAssemblies[1] || null, outsideBedAssembly: bedAssemblies[2] || null, getSelected: () => selectedCells.slice() }; // CHANGE
 } // NEW
 
 function visibleControls(document) { // NEW
@@ -179,12 +186,18 @@ test("navigator source no longer contains day-count overlap badge machinery", ()
     assert.doesNotMatch(source, /OVERLAP_BADGE|inclusiveOverlapDays/); // NEW
 }); // NEW
 
+test("selection visual refresh event refreshes selected planting overlays", () => { // NEW
+    const source = fs.readFileSync(PLUGIN_PATH, "utf8"); // NEW
+    assert.match(source, /const TRELLIS_SELECTION_VISUALS_REFRESH_EVENT = 'trellisSelectionVisualsRefresh';/); // NEW
+    assert.match(source, /graph\.addListener\(TRELLIS_SELECTION_VISUALS_REFRESH_EVENT,\s*function \(\) \{ rafDebounce\(refreshAllForSelectionOrAnchor\); \}\);/); // NEW
+}); // NEW
+
 test("selected singleton tiler on a garden bed shows only the bed-select control", () => { // NEW
     const { document, getSelected } = makeHarness(); // CHANGE
     const selectBeds = visibleImageByAlt(document, "Select bed"); // CHANGE
 
     assert.ok(selectBeds, "expected visible bed-select button"); // NEW
-    assert.equal(selectBeds.style.left, "8px"); // CHANGE
+    assert.equal(selectBeds.style.left, "0px"); // CHANGE
     assert.equal(visibleImageByTitle(document, "Previous"), undefined); // NEW
     assert.equal(visibleImageByTitle(document, "Next"), undefined); // NEW
     assert.equal(visibleImageByAlt(document, "Select"), undefined); // NEW
@@ -204,6 +217,74 @@ test("occupied bed move unit resolves bed plus contained planting groups", () =>
     assert.equal(api.resolveOccupiedBedMoveUnit(bed2), null); // NEW
 }); // NEW
 
+test("occupied bed move unit includes centered bed irrigation assemblies", () => { // NEW
+    const { graph, bed, tiler1, bedAssembly, bedAssembly2, outsideBedAssembly } = makeHarness({ bedAssembly: true, secondBedAssembly: true, outsideBedAssembly: true }); // NEW
+    const api = graph.__trellisBedSuccessionNavigator; // NEW
+    const expected = ["bed", "bedAssembly", "bedAssembly2", "tiler1"]; // NEW
+    const unitFromBed = api.resolveOccupiedBedMoveUnit(bed); // NEW
+    const unitFromGroup = api.resolveOccupiedBedMoveUnit(tiler1); // NEW
+    const unitFromAssembly = api.resolveOccupiedBedMoveUnit(bedAssembly); // NEW
+    assert.deepEqual(JSON.parse(JSON.stringify(unitFromBed.cells.map(cell => cell.id))), expected); // CHANGE
+    assert.deepEqual(JSON.parse(JSON.stringify(unitFromGroup.cells.map(cell => cell.id))), expected); // CHANGE
+    assert.deepEqual(JSON.parse(JSON.stringify(unitFromAssembly.cells.map(cell => cell.id))), expected); // CHANGE
+    assert.deepEqual(JSON.parse(JSON.stringify(unitFromBed.bedAssemblies.map(cell => cell.id))), ["bedAssembly", "bedAssembly2"]); // CHANGE
+    assert.deepEqual(JSON.parse(JSON.stringify(unitFromBed.plantingGroups.map(cell => cell.id))), ["tiler1"]); // CHANGE
+    assert.equal(api.resolveOccupiedBedMoveUnit(outsideBedAssembly), null); // NEW
+}); // NEW
+
+test("bed unit selectors select bed, plantings, and irrigation assemblies", () => { // NEW
+    const { document, graph, bed, tiler1, tiler2, bedAssembly, bedAssembly2, getSelected } = makeHarness({ secondTiler: true, bedAssembly: true, secondBedAssembly: true }); // NEW
+    graph.setSelectionCell(tiler1); // NEW
+
+    const selectBed = visibleImageByAlt(document, "Select bed"); // CHANGE
+    const selectPlantings = visibleImageByAlt(document, "Select plantings"); // NEW
+    const selectAssembly = visibleImageByAlt(document, "Select irrigation assembly"); // NEW
+    assert.ok(selectBed, "expected bed selector"); // NEW
+    assert.ok(selectPlantings, "expected plantings selector"); // NEW
+    assert.ok(selectAssembly, "expected irrigation assembly selector"); // NEW
+    assert.notEqual(selectAssembly.src, selectPlantings.src); // NEW
+
+    selectPlantings.dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true })); // NEW
+    assert.deepEqual(JSON.parse(JSON.stringify(getSelected().map(cell => cell.id))), ["tiler1", "tiler2"]); // CHANGE
+
+    graph.setSelectionCell(tiler1); // NEW
+    visibleImageByAlt(document, "Select irrigation assembly").dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true })); // NEW
+    assert.deepEqual(JSON.parse(JSON.stringify(getSelected().map(cell => cell.id))), ["bedAssembly", "bedAssembly2"]); // CHANGE
+
+    graph.setSelectionCell(bedAssembly); // NEW
+    visibleImageByAlt(document, "Select bed").dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true })); // NEW
+    assert.deepEqual(JSON.parse(JSON.stringify(getSelected().map(cell => cell.id))), ["bed"]); // CHANGE
+
+    const singleton = makeHarness({ bedAssembly: true }); // NEW
+    singleton.graph.setSelectionCell(singleton.bedAssembly); // NEW
+    assert.equal(visibleImageByAlt(singleton.document, "Select irrigation assembly"), undefined); // NEW
+}); // NEW
+
+test("bed unit selectors update click targets after switching beds", () => { // NEW
+    const { document, graph, bed2, tiler1, tiler2, bedAssembly2, getSelected } = makeHarness({ // NEW
+        secondBed: true, // NEW
+        secondTiler: true, // NEW
+        bedAssembly: true, // NEW
+        secondBedAssembly: true, // NEW
+        bed2State: { x: 200, y: 0, width: 90, height: 90 }, // NEW
+        tiler2State: { x: 210, y: 10, width: 20, height: 20 }, // NEW
+        bedAssemblyState: { x: 130, y: 20, width: 24, height: 20 }, // NEW
+        bedAssembly2State: { x: 230, y: 20, width: 24, height: 20 } // NEW
+    }); // NEW
+    graph.setSelectionCell(tiler1); // NEW
+    assert.equal(visibleImageByAlt(document, "Select irrigation assembly"), undefined); // NEW
+
+    graph.setSelectionCell(tiler2); // NEW
+    visibleImageByAlt(document, "Select bed").dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true })); // NEW
+    assert.deepEqual(JSON.parse(JSON.stringify(getSelected().map(cell => cell.id))), ["bed2"]); // NEW
+
+    graph.setSelectionCell(tiler2); // NEW
+    visibleImageByAlt(document, "Select irrigation assembly").dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true })); // NEW
+    assert.deepEqual(JSON.parse(JSON.stringify(getSelected().map(cell => cell.id))), ["bedAssembly2"]); // NEW
+    assert.equal(getSelected()[0], bedAssembly2); // NEW
+    assert.equal(bed2.getAttribute("garden_bed"), "1"); // NEW
+}); // NEW
+
 test("selected singleton tiler outside garden beds does not show the bed-select control", () => { // NEW
     const { document } = makeHarness({ tilerOutsideBed: true }); // NEW
     assert.equal(visibleImageByAlt(document, "Select bed"), undefined); // CHANGE
@@ -218,17 +299,19 @@ test("two selected tilers in the same garden bed do not cluster unless they over
     assert.equal(visibleImageByTitle(document, "Next"), undefined); // CHANGE
 }); // NEW
 
-test("two selected tilers with five-percent overlap show succession controls and bed-select", () => { // CHANGE
+test("two selected tilers with five-percent overlap hide duplicate cluster select", () => { // CHANGE
     const { document } = makeHarness({ secondTiler: true, tiler2State: { x: 29, y: 10, width: 20, height: 20 } }); // CHANGE
 
     const selectBeds = visibleImageByAlt(document, "Select bed"); // NEW
     const selectCluster = visibleImageByAlt(document, "Select"); // NEW
+    const selectPlantings = visibleImageByAlt(document, "Select plantings"); // NEW
     assert.ok(selectBeds, "expected visible bed-select button"); // CHANGE
-    assert.ok(selectCluster, "expected visible cluster-select button"); // CHANGE
-    assert.equal(selectBeds.style.left, "8px"); // NEW
-    assert.equal(selectCluster.style.left, "34px"); // NEW
-    assert.equal(selectBeds.style.top, selectCluster.style.top); // NEW
-    assert.ok(parseInt(selectCluster.style.left, 10) >= parseInt(selectBeds.style.left, 10) + 26); // NEW
+    assert.ok(selectPlantings, "expected visible plantings selector"); // NEW
+    assert.equal(selectCluster, undefined); // CHANGE
+    assert.equal(selectBeds.style.left, "0px"); // CHANGE
+    assert.equal(selectPlantings.style.left, "26px"); // CHANGE
+    assert.equal(selectBeds.style.top, "-28px"); // CHANGE
+    assert.equal(selectPlantings.style.top, "-28px"); // CHANGE
     assert.ok(visibleImageByTitle(document, "Previous"), "expected visible previous button"); // NEW
     assert.ok(visibleImageByTitle(document, "Next"), "expected visible next button"); // NEW
 }); // NEW

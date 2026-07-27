@@ -164,6 +164,14 @@ function addDemand(plan, overrides = {}) { // NEW
     return line; // NEW
 } // NEW
 
+function codes(results) { // CHANGE
+    return Array.from(results || []).map(error => error && error.code); // CHANGE
+} // CHANGE
+
+function messages(results) { // CHANGE
+    return Array.from(results || []).map(error => String(error && error.message || "")); // CHANGE
+} // CHANGE
+
 test("PlanSchema normalizes legacy yield fields and strips runtime-only persistence fields", () => {
     const { api } = createHarness();
     const plan = {
@@ -210,7 +218,7 @@ test("PlanSchema normalizes legacy yield fields and strips runtime-only persiste
             { id: "wholesale", label: "Wholesale", type: "wholesale" } // NEW
         ], // NEW
         demands: [], // NEW
-        csa: { enabled: false, boxesPerWeek: 0, start: "", end: "", components: [] }
+        csa: { enabled: false, boxesPerWeek: 0, start: "", end: "", salePricePerBox: null, salePriceMode: "auto", components: [] } // CHANGE
     });
 });
 
@@ -253,8 +261,8 @@ test("PlanSchema detects duplicate crop identities and validates invalid units",
     plan.crops[1].varietyId = 9;
     addDemand(plan, { unit: "crate", from: "", to: "" }); // CHANGE
     const errors = Array.from(api.PlanSchema.validate(plan));
-    assert.ok(errors.some(error => error.includes("missing dates"))); // CHANGE
-    assert.ok(errors.some(error => error.includes("does not resolve to kg")));
+    assert.ok(codes(errors).includes("demand.line_missing_dates")); // CHANGE
+    assert.ok(codes(errors).includes("demand.line_unresolved_unit")); // CHANGE
 });
 
 test("PlanSchema rejects duplicate crop package units", () => { // NEW
@@ -264,7 +272,8 @@ test("PlanSchema rejects duplicate crop package units", () => { // NEW
         { unit: " KG ", baseType: "kg", baseQty: 2, price: 3 } // NEW
     ] }); // NEW
     const errors = Array.from(api.PlanSchema.validateCrop(crop)); // NEW
-    assert.ok(errors.some(error => error.includes('duplicate package unit "KG"'))); // NEW
+    assert.ok(codes(errors).includes("crop.package_duplicate_unit")); // CHANGE
+    assert.ok(messages(errors).some(message => message.includes("unique package unit"))); // CHANGE
 }); // NEW
 
 test("PlanSchema strips legacy demand prices from persisted plans", () => { // NEW
@@ -283,9 +292,9 @@ test("PlanSchema exposes CSA validation independently from the full plan", () =>
     plan.csa.enabled = true; // NEW
     plan.csa.components.push({ cropId: "crop_1", qty: 1, unit: "crate", start: "", end: "" }); // NEW
     const csaErrors = Array.from(api.PlanSchema.validateCsa(plan)); // NEW
-    assert.ok(csaErrors.some(error => error.includes("boxes/week"))); // NEW
-    assert.ok(csaErrors.some(error => error.includes("missing dates"))); // NEW
-    assert.ok(csaErrors.some(error => error.includes("does not resolve to kg"))); // NEW
+    assert.ok(codes(csaErrors).includes("csa.invalid_boxes_per_week")); // CHANGE
+    assert.ok(codes(csaErrors).includes("csa.component_missing_dates")); // CHANGE
+    assert.ok(codes(csaErrors).includes("csa.component_unresolved_unit")); // CHANGE
     assert.ok(Array.from(api.PlanSchema.validate(plan)).length >= csaErrors.length); // NEW
 }); // NEW
 
@@ -303,9 +312,9 @@ test("PlanSchema rejects reversed demand and effective CSA date ranges", () => {
 
     const demandErrors = Array.from(api.PlanSchema.validateDemand(plan)); // CHANGE
     const csaErrors = Array.from(api.PlanSchema.validateCsa(plan)); // NEW
-    assert.ok(demandErrors.some(error => error.includes("start date after end date"))); // CHANGE
-    assert.ok(csaErrors.some(error => error === "CSA start date is after CSA end date.")); // NEW
-    assert.ok(csaErrors.some(error => error.includes("has start date after end date"))); // NEW
+    assert.ok(codes(demandErrors).includes("demand.line_reversed_dates")); // CHANGE
+    assert.ok(codes(csaErrors).includes("csa.reversed_date_range")); // CHANGE
+    assert.ok(codes(csaErrors).includes("csa.component_reversed_dates")); // CHANGE
 }); // NEW
 
 test("PlanMath excludes reversed demand ranges while retaining explicit valid CSA components", () => { // NEW
@@ -341,7 +350,7 @@ test("PlanMath rejects reversed manual harvest windows without producing supply"
     const weekly = api.PlanMath.computePlanWeekly(plan, warnings); // NEW
     assert.equal(weekly.supplyTotal.reduce((sum, value) => sum + value, 0), 0); // NEW
     assert.ok(warnings.some(warning => warning.includes("harvest start date after end date"))); // NEW
-    assert.ok(api.PlanSchema.validateCrop(crop).some(error => error.includes("harvest start date is after harvest end date"))); // NEW
+    assert.ok(codes(api.PlanSchema.validateCrop(crop)).includes("crop.reversed_harvest_window")); // CHANGE
 }); // NEW
 
 test("PlanRepository round-trips plans, templates, defaults, and leap-day shifts", () => {
@@ -692,10 +701,65 @@ test("PlanMath allocates CSA first, then priority and channel order, with reques
     const dashboard = api.YearPlanDashboard.compute(plan, { weekly, cropTotals: api.PlanMath.computePlanCropTotals(plan, weekly), warnings: [] }); // NEW
     assert.equal(dashboard.potentialRevenue, 24); // NEW
     assert.equal(dashboard.fulfilledRevenue, 16); // NEW
+    assert.equal(dashboard.csaMetric.potentialRevenue, 4); // ADDED
+    assert.equal(dashboard.csaMetric.fulfilledRevenue, 4); // ADDED
+    assert.equal(dashboard.totalPotentialRevenue, 28); // ADDED
+    assert.equal(dashboard.totalFulfilledRevenue, 20); // ADDED
     assert.equal(dashboard.channelMetricsById.get("restaurant_1").status, "OK"); // NEW
     assert.equal(dashboard.channelMetricsById.get("farm_store").shortKg, 4); // NEW
     assert.equal(dashboard.priorityMetrics.find(metric => metric.priority === "committed").usableSupplyKg, 6); // NEW
 }); // NEW
+
+test("PlanMath derives CSA box value and prorates CSA revenue by component fulfillment", () => { // ADDED
+    const { api } = createHarness(); // ADDED
+    const plan = api.PlanSchema.createEmptyPlan(2026); // ADDED
+    plan.crops.push(emptyCrop({ id: "tomato", plantId: "1", plant: "Tomato", actualPlants: 10, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 5 }] })); // ADDED
+    plan.crops.push(emptyCrop({ id: "lettuce", plantId: "2", plant: "Lettuce", actualPlants: 1, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 3 }] })); // ADDED
+    plan.csa.enabled = true; // ADDED
+    plan.csa.boxesPerWeek = 2; // ADDED
+    plan.csa.start = "2026-06-01"; // ADDED
+    plan.csa.end = "2026-06-07"; // ADDED
+    plan.csa.components = [ // ADDED
+        { cropId: "tomato", qty: 1, unit: "kg", everyNWeeks: 1, start: "", end: "" }, // ADDED
+        { cropId: "lettuce", qty: 1, unit: "kg", everyNWeeks: 1, start: "", end: "" } // ADDED
+    ]; // ADDED
+    addDemand(plan, { cropId: "tomato", qty: 10, unit: "kg" }); // ADDED
+
+    const warnings = []; // ADDED
+    const weekly = api.PlanMath.computePlanWeekly(plan, warnings); // ADDED
+    const dashboard = api.YearPlanDashboard.compute(plan, { weekly, cropTotals: api.PlanMath.computePlanCropTotals(plan, weekly), warnings }); // ADDED
+
+    assert.equal(weekly.csa.componentValuePerBox, 8); // ADDED
+    assert.equal(weekly.csa.salePricePerBox, 8); // ADDED
+    assert.equal(weekly.csa.boxFillRatio.reduce((max, value) => Math.max(max, value), 0), 0.5); // ADDED
+    assert.equal(dashboard.csaMetric.potentialRevenue, 16); // ADDED
+    assert.equal(dashboard.csaMetric.fulfilledRevenue, 8); // ADDED
+    assert.equal(weekly.csa.potentialRevenueByCropId.get("tomato").reduce((sum, value) => sum + value, 0), 10); // ADDED
+    assert.equal(weekly.csa.fulfilledRevenueByCropId.get("tomato").reduce((sum, value) => sum + value, 0), 5); // ADDED
+    assert.equal(weekly.csa.potentialRevenueByCropId.get("lettuce").reduce((sum, value) => sum + value, 0), 6); // ADDED
+    assert.equal(weekly.csa.fulfilledRevenueByCropId.get("lettuce").reduce((sum, value) => sum + value, 0), 3); // ADDED
+    assert.equal(dashboard.fulfilledRevenue, 40); // ADDED
+    assert.equal(dashboard.totalFulfilledRevenue, 48); // ADDED
+}); // ADDED
+
+test("PlanMath counts missing CSA component prices as zero with a non-blocking warning", () => { // ADDED
+    const { api } = createHarness(); // ADDED
+    const plan = api.PlanSchema.createEmptyPlan(2026); // ADDED
+    plan.crops.push(emptyCrop({ actualPlants: 2, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: null }] })); // ADDED
+    plan.csa.enabled = true; // ADDED
+    plan.csa.boxesPerWeek = 1; // ADDED
+    plan.csa.start = "2026-06-01"; // ADDED
+    plan.csa.end = "2026-06-07"; // ADDED
+    plan.csa.components = [{ cropId: "crop_1", qty: 1, unit: "kg", everyNWeeks: 1, start: "", end: "" }]; // ADDED
+
+    const warnings = []; // ADDED
+    const weekly = api.PlanMath.computePlanWeekly(plan, warnings); // ADDED
+
+    assert.equal(weekly.csa.componentValuePerBox, 0); // ADDED
+    assert.equal(weekly.csa.potentialRevenue.reduce((sum, value) => sum + value, 0), 0); // ADDED
+    assert.ok(warnings.some(warning => /counted as \$0/.test(warning))); // ADDED
+    assert.equal(api.PlanSchema.validateCsa(plan).some(error => /price/i.test(error.message)), false); // ADDED
+}); // ADDED
 
 test("PlanMath prices demand from exact package unit matches only", () => { // NEW
     const { api } = createHarness(); // NEW
@@ -906,7 +970,7 @@ test("YearPlanDashboard treats zero supply as a full shortage and validation err
     const valid = emptyCrop({ id: "valid", useActualHarvest: true, harvestStart: "2026-06-01", harvestEnd: "2026-06-30" }); // NEW
     const invalid = emptyCrop({ id: "invalid", plantId: "2", plant: "Bad", kgPerPlant: null, harvestStart: "2026-06-01", harvestEnd: "2026-06-30" }); // NEW
     plan.crops.push(valid, invalid); // NEW
-    const repeatedError = 'Crop "Bad" missing valid kg/plant.'; // NEW
+    const repeatedError = "Enter kg/plant greater than 0 for Bad."; // CHANGE
     const runtime = { // NEW
         warnings: [repeatedError, repeatedError],
         cropTotals: [
@@ -919,8 +983,8 @@ test("YearPlanDashboard treats zero supply as a full shortage and validation err
     assert.equal(dashboard.cropMetricsById.get("valid").status, "Short"); // NEW
     assert.equal(dashboard.cropMetricsById.get("valid").shortKg, 7); // NEW
     assert.equal(dashboard.cropMetricsById.get("invalid").status, "Missing data"); // NEW
-    assert.equal(dashboard.warningCount, 1); // NEW
-    assert.deepEqual(Array.from(dashboard.diagnostics), [repeatedError]); // NEW
+    assert.equal(dashboard.warningCount, 1); // CHANGE
+    assert.deepEqual(Array.from(dashboard.diagnostics), [repeatedError]); // CHANGE
 }); // NEW
 
 test("YearPlanDashboard promotes a missing harvest window to missing data when demand exists", () => { // NEW
@@ -933,7 +997,7 @@ test("YearPlanDashboard promotes a missing harvest window to missing data when d
         cropTotals: [{ crop, targetKg: 3, supplyKg: 0, plantsReq: 3, seedsReq: 4 }]
     }); // NEW
     assert.equal(dashboard.cropMetricsById.get("window").status, "Missing data"); // NEW
-    assert.ok(dashboard.validationErrors.some(error => error.includes("missing harvest window"))); // NEW
+    assert.ok(codes(dashboard.validationErrors).includes("crop.missing_harvest_window")); // CHANGE
 }); // NEW
 
 test("YearPlanDashboard dirty snapshots ignore runtime fields and update after save baselines", () => { // NEW

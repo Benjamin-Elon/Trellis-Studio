@@ -11,6 +11,7 @@ GENERATED_TABLES = [
     "CityWeatherDaily",
     "CityWeatherForecastDaily",
     "Companions",
+    "CompanionLayoutGroupDefaults",  # ADDED
     "CompanionEvidence",
     "PlantingWindowReferences",
     "PlantAllowedMethodCategories",
@@ -28,6 +29,7 @@ PLANT_VARIETY_COLUMNS = {"variety_id", "plant_id", "plant_name", "variety_name",
 COMPANION_LAYOUT_COLUMNS = {"layout_template", "layout_spacing_x_cm", "layout_spacing_y_cm", "layout_offset_x_cm", "layout_offset_y_cm"}  # ADDED
 COMPANION_LAYOUT_TEMPLATES = {"beside", "interplant", "staggered"}  # ADDED
 COMPANION_COLUMNS = {"relation_id", "p1", "p2", "rating", "companion_type", "companion_type_id", "source_plant_id", "companion_plant_id", "start_offset_days", *COMPANION_LAYOUT_COLUMNS}  # CHANGED
+COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS = {"group_default_id", "plant_set_key", "anchor_plant_id", "layout_json", "updated_at"}  # ADDED
 
 PLANTING_WINDOW_REFERENCE_COLUMNS = {
     "reference_id", "plant_id", "plant_name", "city_id", "city_name", "method_id",
