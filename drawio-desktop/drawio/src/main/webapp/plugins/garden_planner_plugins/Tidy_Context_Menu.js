@@ -105,7 +105,12 @@ Draw.loadPlugin(function (ui) {
             'tiler_group', // NEW
             'plant_tiler', // NEW
             'kanban_card', // NEW
-            'garden_dashboard' // NEW
+            'garden_dashboard', // CHANGE
+            'irrigation_generated', // CHANGE: suppress irrigation metadata hover tooltips
+            'irrigation_assembly', // CHANGE: suppress irrigation metadata hover tooltips
+            'irrigation_pipe_edge', // CHANGE: suppress irrigation metadata hover tooltips
+            'irrigation_direct_link_edge', // CHANGE: suppress irrigation metadata hover tooltips
+            'irrigation_component' // CHANGE: suppress irrigation metadata hover tooltips
         ]; // NEW
 
         for (let i = 0; i < trellisFlags.length; i++) { // NEW

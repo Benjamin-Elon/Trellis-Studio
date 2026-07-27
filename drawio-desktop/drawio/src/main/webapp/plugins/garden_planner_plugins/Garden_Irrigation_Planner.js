@@ -69,12 +69,14 @@ Draw.loadPlugin(function (ui) {
     const ASSEMBLY_DEFAULT_WIDTH = 210; // NEW
     const ASSEMBLY_CONTRACTED_BED = { width: 220, height: 120 }; // NEW
     const PORT_BADGE_SIZE = 22; // NEW
+    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // NEW
     const FIXED_CONNECTOR_TYPES = ["mght", "fght", "mpt", "fpt", "barb", "twist_lock", "push_connect"]; // CHANGE
     const PIPE_CONNECTOR_TYPES = new Set(["barb", "twist_lock", "push_connect"]); // NEW
     const FIXED_CONNECTOR_SIZES = ["1/4", "1/2", "3/4", "1"]; // NEW
     const PIPE_EDGE_BASE_STYLE = "edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#2f80ed;"; // NEW
     const GENERATED_PIPE_EDGE_BASE_STYLE = "edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4d8f6f;"; // NEW
     const DIRECT_LINK_EDGE_STYLE = "edgeStyle=orthogonalEdgeStyle;rounded=0;dashed=1;html=1;strokeColor=#7c3aed;"; // NEW
+    const CONNECTION_COMBOBOX_COLLAPSED_STORAGE_KEY = "trellis.irrigation.connectionCombobox.collapsed.v1"; // NEW
     const PIPE_EDGE_STROKE_UNIT_IN = 0.25; // NEW
     const PIPE_EDGE_MAX_STROKE_WIDTH = 12; // NEW
     const PART_CATEGORIES = [
@@ -200,6 +202,7 @@ Draw.loadPlugin(function (ui) {
     let activeIrrigationMode = null; // NEW
     let hudSyncTimer = null; // NEW
     let hudSyncModuleCell = null; // NEW
+    let activeConnectionComboboxClose = null; // NEW
     let inactiveEntryOverlay = null; // NEW
     let inactiveEntryRefreshTimer = null; // NEW
     let programmaticEdgeInsertDepth = 0; // FIX
@@ -1005,6 +1008,18 @@ Draw.loadPlugin(function (ui) {
             }, attrs || {})); // NEW
     } // NEW
 
+    function createBedAssemblyContainer(moduleCell, label, x, y, attrs, size) { // NEW
+        const width = size && size.width != null ? size.width : ASSEMBLY_CONTRACTED_BED.width; // NEW
+        const height = size && size.height != null ? size.height : ASSEMBLY_CONTRACTED_BED.height; // NEW
+        return createVertex(moduleCell, label || "Bed Assembly", x, y, width, height, // NEW
+            "rounded=1;whiteSpace=wrap;html=1;container=1;recursiveResize=0;collapsible=0;editable=0;fillColor=none;strokeColor=#666666;fontStyle=1;fontSize=14;align=center;verticalAlign=top;spacingTop=6;spacingLeft=6;spacingRight=6;labelBackgroundColor=#ffffff;", // CHANGE
+            Object.assign({ // NEW
+                label: label || "Bed Assembly", // NEW
+                [ATTRS.ASSEMBLY]: "1", // NEW
+                [ATTRS.ASSEMBLY_TYPE]: "bed" // NEW
+            }, attrs || {})); // NEW
+    } // NEW
+
     function resizeAssemblyToChildren(assembly) { // NEW
         const parts = assemblyPartCells(assembly); // NEW
         const minHeight = ASSEMBLY_HEADER_SIZE + ASSEMBLY_PART_GAP + ASSEMBLY_PART_HEIGHT + ASSEMBLY_PART_GAP; // NEW
@@ -1072,7 +1087,7 @@ Draw.loadPlugin(function (ui) {
         const bedGeo = bedSyncedAssemblyGeometry(bedCell); // CHANGE
         const label = (getCellAttr(bedCell, "label", "Bed") || "Bed") + " Assembly"; // NEW
         if (!getCellAttr(bedCell, ATTRS.BED_PORTS_JSON, "")) writeBedPortConfig(bedCell, defaultBedPortConfig()); // NEW
-        const assembly = createAssemblyLane(parent, label, bedGeo.x, bedGeo.y, "bed", { // CHANGE
+        const assembly = createBedAssemblyContainer(parent, label, bedGeo.x, bedGeo.y, { // CHANGE
             [ATTRS.LINKED_BED_ID]: getCellId(bedCell) || "", // CHANGE
             bed_fit_width: "1", // NEW
             bed_fit_height: "1" // NEW
@@ -1100,6 +1115,81 @@ Draw.loadPlugin(function (ui) {
     function isBedAssembly(cell) { // NEW
         return isAssembly(cell) && assemblyType(cell) === "bed"; // NEW
     } // NEW
+
+    function linkedBedModuleForAssembly(assembly) { // NEW
+        const linkedId = getCellAttr(assembly, ATTRS.LINKED_BED_ID, ""); // NEW
+        const root = (graph.getDefaultParent && graph.getDefaultParent()) || (model.getRoot && model.getRoot()) || null; // NEW
+        const linkedBed = linkedId && root ? findCellById(root, linkedId) : null; // NEW
+        return linkedBed ? findGardenModuleAncestor(linkedBed) : null; // NEW
+    } // NEW
+
+    function gardenModuleForBedAssembly(assembly) { // NEW
+        return findGardenModuleAncestor(assembly) || linkedBedModuleForAssembly(assembly); // NEW
+    } // NEW
+
+    function safeParentForBedAssembly(assembly) { // NEW
+        return gardenModuleForBedAssembly(assembly) || (graph.getDefaultParent && graph.getDefaultParent()) || (model.getRoot && model.getRoot()) || null; // NEW
+    } // NEW
+
+    function isAllowedBedAssemblyParent(parent, assembly) { // NEW
+        if (!parent || !assembly) return false; // NEW
+        const moduleCell = gardenModuleForBedAssembly(assembly); // NEW
+        if (moduleCell) return parent === moduleCell; // NEW
+        const defaultParent = graph.getDefaultParent && graph.getDefaultParent(); // NEW
+        return !defaultParent || parent === defaultParent; // NEW
+    } // NEW
+
+    function preserveAbsoluteGeometryForParent(cell, nextParent) { // NEW
+        const geo = getGeometry(cell); // NEW
+        if (!geo || !nextParent) return null; // NEW
+        const absolute = cellBoundsInModel(cell); // NEW
+        const parentBounds = cellBoundsInModel(nextParent) || { x: 0, y: 0 }; // NEW
+        const nextGeo = geo.clone ? geo.clone() : Object.assign({}, geo); // NEW
+        nextGeo.x = finiteNumber(absolute && absolute.x, finiteNumber(geo.x, 0)) - finiteNumber(parentBounds.x, 0); // NEW
+        nextGeo.y = finiteNumber(absolute && absolute.y, finiteNumber(geo.y, 0)) - finiteNumber(parentBounds.y, 0); // NEW
+        return nextGeo; // NEW
+    } // NEW
+
+    function repairBedAssemblyParenting(cells) { // NEW
+        const moved = (cells || []).filter(isBedAssembly); // NEW
+        if (!moved.length) return false; // NEW
+        let changed = false; // NEW
+        (graph.__withUndoSuppressed || function (fn) { return fn(); }).call(graph, function () { // NEW
+            model.beginUpdate && model.beginUpdate(); // NEW
+            try { // NEW
+                moved.forEach(function (assembly) { // NEW
+                    const parent = model.getParent ? model.getParent(assembly) : assembly.parent; // NEW
+                    if (isAllowedBedAssemblyParent(parent, assembly)) return; // NEW
+                    const safeParent = safeParentForBedAssembly(assembly); // NEW
+                    if (!safeParent || safeParent === parent) return; // NEW
+                    const nextGeo = preserveAbsoluteGeometryForParent(assembly, safeParent); // NEW
+                    moveCellToParent(assembly, safeParent); // NEW
+                    if (nextGeo) setGeometry(assembly, nextGeo); // NEW
+                    changed = true; // NEW
+                }); // NEW
+            } finally { // NEW
+                model.endUpdate && model.endUpdate(); // NEW
+            } // NEW
+        }); // NEW
+        if (changed && graph.refresh) graph.refresh(); // NEW
+        return changed; // NEW
+    } // NEW
+
+    function installBedAssemblyParentingGuard() { // NEW
+        if (graph.__trellisBedAssemblyParentGuardInstalled) return; // NEW
+        graph.__trellisBedAssemblyParentGuardInstalled = true; // NEW
+        const originalIsValidDropTarget = graph.isValidDropTarget; // NEW
+        graph.isValidDropTarget = function (target, cells, evt) { // NEW
+            const bedAssemblies = (cells || []).filter(isBedAssembly); // NEW
+            if (bedAssemblies.length && target && !bedAssemblies.every(function (assembly) { return isAllowedBedAssemblyParent(target, assembly); })) return false; // NEW
+            return originalIsValidDropTarget ? originalIsValidDropTarget.apply(this, arguments) : true; // NEW
+        }; // NEW
+        if (graph.addListener && typeof mxEvent !== "undefined" && mxEvent.CELLS_MOVED) { // NEW
+            graph.addListener(mxEvent.CELLS_MOVED, function (_, evt) { repairBedAssemblyParenting(evt && evt.getProperty && evt.getProperty("cells") || []); }); // NEW
+        } // NEW
+    } // NEW
+
+    installBedAssemblyParentingGuard(); // NEW
 
     function findAssemblyAncestor(cell) { // NEW
         let cur = cell; // NEW
@@ -1208,6 +1298,12 @@ Draw.loadPlugin(function (ui) {
     function bedTemplateLabel(templateId) { // NEW
         const template = bedTemplateById(templateId); // NEW
         return String(template && template.label || templateId || "").trim(); // NEW
+    } // NEW
+
+    function bedTemplateRowDisplayLabel(irrigationType) { // NEW
+        const labels = { drip_tape: "Drip line", dripline: "Drip line", sprinkler: "Sprinkler line", microspray: "Microspray line", bubbler: "Bubbler line", standpipe: "Standpipe" }; // NEW
+        const key = String(irrigationType || "").trim(); // NEW
+        return labels[key] || "Irrigation line"; // NEW
     } // NEW
 
     function bedTemplatePipePartId(templateId, savedPipePartId) { // NEW
@@ -1712,6 +1808,91 @@ Draw.loadPlugin(function (ui) {
         return uniqueBoundaries(boundaries); // NEW
     } // NEW
 
+    function resolveSelectedConnectionContext(session) { // NEW
+        const anchorPort = normalizePort(session && session.inlineActionAnchorPort || {}); // NEW
+        const anchorEdge = anchorPort.cellId ? edgesForPort(session.moduleCell, anchorPort)[0] : null; // NEW
+        const anchorContext = anchorEdge && managedConnectionEdge(anchorEdge) ? externalConnectionContextForEdge(session.moduleCell, anchorEdge, edgeBoundary(anchorEdge)) : null; // NEW
+        if (anchorContext && currentSelectionCells().some(function (cell) { return connectionContextTouchesCell(anchorContext, cell); })) return anchorContext; // NEW
+        const focusedBoundary = normalizeBoundary(session && session.focusedConnectionBoundary || {}); // NEW
+        const focusedContext = boundaryKey(focusedBoundary) ? connectionContextForBoundary(session.moduleCell, focusedBoundary) : null; // NEW
+        const selectedBoundaryCount = selectedValidBoundaries(session).length; // NEW
+        if (focusedContext && selectedBoundaryCount <= 1 && currentSelectionCells().some(function (cell) { return connectionContextTouchesCell(focusedContext, cell); })) return focusedContext; // NEW
+        const selectedEdges = uniqueBoundaries(currentSelectionCells().map(edgeBoundary).filter(Boolean)); // CHANGE
+        if (selectedEdges.length === 1) return connectionContextForBoundary(session.moduleCell, selectedEdges[0]); // NEW
+        if (selectedEdges.length > 1) return null; // NEW
+        const boundaries = uniqueBoundaries(selectedValidBoundaries(session).filter(function (boundary) { return boundaryTouchesCurrentSelection(session.moduleCell, boundary); })); // NEW
+        if (boundaries.length !== 1) return null; // NEW
+        return connectionContextForBoundary(session.moduleCell, boundaries[0]); // NEW
+    } // NEW
+
+    function boundaryTouchesCurrentSelection(moduleCell, boundary) { // NEW
+        const cells = currentSelectionCells(); // NEW
+        if (!cells.length) return false; // NEW
+        const context = connectionContextForBoundary(moduleCell, boundary); // NEW
+        if (!context) return false; // NEW
+        return cells.some(function (cell) { return connectionContextTouchesCell(context, cell); }); // NEW
+    } // NEW
+
+    function connectionContextTouchesCell(context, cell) { // NEW
+        if (!context || !cell) return false; // NEW
+        if (context.edge && cell === context.edge) return true; // NEW
+        if (cell === context.sourceCell || cell === context.targetCell || cell === context.assembly) return true; // NEW
+        if (isAssembly(cell)) return findAssemblyAncestor(context.sourceCell) === cell || findAssemblyAncestor(context.targetCell) === cell; // NEW
+        const selectedAssembly = findAssemblyAncestor(cell); // NEW
+        return selectedAssembly && (selectedAssembly === findAssemblyAncestor(context.sourceCell) || selectedAssembly === findAssemblyAncestor(context.targetCell)); // NEW
+    } // NEW
+
+    function connectionContextForBoundary(moduleCell, boundary) { // NEW
+        const b = normalizeBoundary(boundary); // NEW
+        if (b.type === "edge") return externalConnectionContext(moduleCell, b); // NEW
+        if (b.type === "internal") return internalConnectionContext(moduleCell, b); // NEW
+        return null; // NEW
+    } // NEW
+
+    function externalConnectionContext(moduleCell, boundary) { // NEW
+        const edge = findCellById(moduleCell, boundary.edgeId); // NEW
+        if (!edge) return null; // NEW
+        return externalConnectionContextForEdge(moduleCell, edge, boundary); // NEW
+    } // NEW
+
+    function externalConnectionContextForEdge(moduleCell, edge, boundary) { // NEW
+        const sourceCell = edge.source || (model.getTerminal && model.getTerminal(edge, true)); // NEW
+        const targetCell = edge.target || (model.getTerminal && model.getTerminal(edge, false)); // NEW
+        if (!sourceCell || !targetCell) return null; // NEW
+        const mode = getCellAttr(edge, ATTRS.DIRECT_LINK_EDGE, "") === "1" ? "direct" : "pipe"; // NEW
+        return { // NEW
+            kind: "external", // NEW
+            mode, // NEW
+            boundary, // NEW
+            edge, // NEW
+            sourceCell, // NEW
+            targetCell, // NEW
+            sourcePort: portForConnectionEdge(edge, true), // NEW
+            targetPort: portForConnectionEdge(edge, false), // NEW
+            pipePartId: getCellAttr(edge, ATTRS.PIPE_PART_ID, ""), // NEW
+            lengthFt: mode === "pipe" ? measuredEdgeLengthFeet(edge) : 0 // NEW
+        }; // NEW
+    } // NEW
+
+    function internalConnectionContext(moduleCell, boundary) { // NEW
+        const assembly = findCellById(moduleCell, boundary.assemblyId); // NEW
+        const sourceCell = findCellById(moduleCell, boundary.upstreamId); // NEW
+        const targetCell = findCellById(moduleCell, boundary.downstreamId); // NEW
+        if (!assembly || !sourceCell || !targetCell || !boundaryExists(moduleCell, boundary)) return null; // NEW
+        return { // NEW
+            kind: "internal", // NEW
+            mode: "internal", // NEW
+            boundary, // NEW
+            assembly, // NEW
+            sourceCell, // NEW
+            targetCell, // NEW
+            sourcePort: { cellId: getCellId(sourceCell), role: "output", index: 0 }, // NEW
+            targetPort: { cellId: getCellId(targetCell), role: "input", index: 0 }, // NEW
+            pipePartId: "", // NEW
+            lengthFt: 0 // NEW
+        }; // NEW
+    } // NEW
+
     function clearSelectedExternalPortBoundaries(session) { // NEW
         session.selectedBoundaries = (session.selectedBoundaries || []).filter(function (boundary) { return normalizeBoundary(boundary).type !== "edge"; }); // NEW
     } // NEW
@@ -1721,10 +1902,13 @@ Draw.loadPlugin(function (ui) {
         const key = boundaryKey(normalized); // NEW
         if (!key) return; // NEW
         const current = selectedValidBoundaries(session); // NEW
-        const internal = current.filter(function (entry) { return normalizeBoundary(entry).type !== "edge"; }); // NEW
         const selected = current.map(boundaryKey).indexOf(key) >= 0; // CHANGE
-        if (!selected) { session.selectedPorts = []; internal.push(normalized); } // CHANGE
-        session.selectedBoundaries = internal; // CHANGE
+        session.selectedPorts = []; // CHANGE
+        if (selected) { // NEW
+            if (boundaryKey(session.focusedConnectionBoundary) === key) session.focusedConnectionBoundary = null; // NEW
+            if (boundaryKey(boundaryForPort(session.moduleCell, session.inlineActionAnchorPort)) === key) session.inlineActionAnchorPort = null; // NEW
+            session.selectedBoundaries = current.filter(function (entry) { return boundaryKey(entry) !== key; }); // CHANGE
+        } else session.selectedBoundaries = [normalized]; // CHANGE
     } // NEW
 
     function toggleSelectedBoundary(session, boundary) { // NEW
@@ -2376,7 +2560,6 @@ Draw.loadPlugin(function (ui) {
     }
 
     function createBedTemplateLayoutCells(bedCell, pathId, record, bedGeo) {
-        getChildCells(bedCell).filter(function (cell) { return getCellAttr(cell, ATTRS.BED_LAYOUT, "") === "1"; }).forEach(removeCellFromParent); // NEW
         const assemblyParent = isAssembly(bedCell); // NEW
         const inset = assemblyParent ? 8 : 6; // NEW
         const contentTop = assemblyParent ? ASSEMBLY_HEADER_SIZE + 18 : 10; // CHANGE
@@ -2386,34 +2569,76 @@ Draw.loadPlugin(function (ui) {
         const rows = Math.max(1, Math.floor(finiteNumber(record.spacing && record.spacing.rows, 1)));
         const rowOrientation = normalizeBedRowOrientation(record.rowOrientation, bedTemplateById(record.templateId)); // NEW
         const rowGap = (rowOrientation === "height" ? width : height) / (rows + 1); // CHANGE
+        const existingRows = getChildCells(bedCell).filter(function (cell) { return getCellAttr(cell, ATTRS.BED_LAYOUT, "") === "1"; }); // NEW
+        const rowStyle = "rounded=0;whiteSpace=wrap;html=1;fillColor=#e1f5fe;strokeColor=#0288d1;fontSize=8;"; // NEW
+        let changed = false; // NEW
         for (let i = 0; i < rows; i++) {
             const x = rowOrientation === "height" ? Math.round(inset + rowGap * (i + 1)) : inset; // NEW
             const y = rowOrientation === "height" ? contentTop : Math.round(contentTop + rowGap * (i + 1)); // CHANGE
             const w = rowOrientation === "height" ? 6 : width; // NEW
             const h = rowOrientation === "height" ? height : 6; // NEW
-            createVertex(bedCell, record.irrigationType + " row " + (i + 1), x, y, w, h, // CHANGE
-                "rounded=0;whiteSpace=wrap;html=1;fillColor=#e1f5fe;strokeColor=#0288d1;fontSize=8;",
-                {
-                    label: record.irrigationType + " row " + (i + 1),
-                    [ATTRS.BED_LAYOUT]: "1",
-                    [ATTRS.PATH_ID]: pathId,
-                    [ATTRS.GENERATED]: "1",
-                    [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(record)
-                });
+            const attrs = { label: bedTemplateRowDisplayLabel(record.irrigationType), [ATTRS.BED_LAYOUT]: "1", [ATTRS.PATH_ID]: pathId, [ATTRS.GENERATED]: "1", [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(record) }; // CHANGE
+            const row = existingRows[i] || createVertex(bedCell, attrs.label, x, y, w, h, rowStyle, attrs); // CHANGE
+            if (!existingRows[i]) { changed = true; continue; } // NEW
+            changed = setGeometry(row, { x, y, width: w, height: h }) || changed; // NEW
+            changed = setCellStyle(row, rowStyle) || changed; // NEW
+            changed = setCellAttrs(row, attrs) || changed; // NEW
         }
+        existingRows.slice(rows).forEach(function (cell) { removeCellFromParent(cell); changed = true; }); // NEW
+        return changed; // NEW
     }
 
     function reflowBedTemplateLayout(moduleCell, bedAssembly) { // NEW
         const bedCell = bedCellForAssembly(moduleCell, bedAssembly); // NEW
         const record = safeJsonParse(getCellAttr(bedCell, ATTRS.BED_TEMPLATE_JSON, ""), null); // NEW
         if (!record) return; // NEW
-        createBedTemplateLayoutCells(bedAssembly, record.pathId || ("assembly_bed_" + sanitizeId(getCellId(bedCell))), record, getGeometry(bedAssembly) || getGeometry(bedCell) || { width: 160, height: 80 }); // NEW
+        return refreshBedAssemblyRowsFromTemplate(moduleCell, bedAssembly, bedCell, record); // CHANGE
+    } // NEW
+
+    function rowMetricRecordForGeometry(moduleCell, record, bedGeo) { // NEW
+        if (!record || record.templateModel !== BED_TEMPLATE_MODEL_BOM) return { record, recomputed: false }; // NEW
+        const catalog = readCatalog(moduleCell); // NEW
+        const bom = computeBedTemplateBom(catalog, bedGeo || {}, record.templateId, record.spacing && record.spacing.rows, record.rowOrientation); // NEW
+        if (bom.missingPartIds.length || !bom.anchorPartId) return { record, recomputed: false, missingPartIds: bom.missingPartIds }; // NEW
+        return { // NEW
+            record: Object.assign({}, record, { // NEW
+                rowOrientation: bom.rowOrientation, // NEW
+                rowLengthMeters: bom.rowLengthMeters, // NEW
+                totalRowMeters: bom.totalRowMeters, // NEW
+                requiredParts: bom.requiredParts, // NEW
+                anchorPartId: bom.anchorPartId, // NEW
+                demand: bom.demand, // NEW
+                spacing: Object.assign({}, record.spacing || {}, { rows: bom.rowCount }) // NEW
+            }), // NEW
+            recomputed: true // NEW
+        }; // NEW
+    } // NEW
+
+    function refreshBedAssemblyRowsFromTemplate(moduleCell, bedAssembly, bedCell, record) { // NEW
+        if (!bedAssembly || !record) return false; // NEW
+        const geometry = getGeometry(bedAssembly) || getGeometry(bedCell) || { width: 160, height: 80 }; // NEW
+        const refreshed = rowMetricRecordForGeometry(moduleCell, record, geometry); // NEW
+        const nextRecord = refreshed.record || record; // NEW
+        let changed = false; // NEW
+        if (bedCell && refreshed.recomputed && JSON.stringify(nextRecord) !== JSON.stringify(record)) { // NEW
+            changed = setCellAttrs(bedCell, { [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(nextRecord) }) || changed; // NEW
+        } // NEW
+        changed = setCellAttrs(bedAssembly, { label: bedTemplateLabel(nextRecord.templateId) }) || changed; // NEW
+        changed = createBedTemplateLayoutCells(bedAssembly, nextRecord.pathId || ("assembly_bed_" + sanitizeId(getCellId(bedCell))), nextRecord, geometry) || changed; // NEW
+        return changed; // NEW
     } // NEW
 
     function syncLinkedBedAssemblyToBed(moduleCell, assembly, bedCell, opts) { // NEW
         if (!isBedAssembly(assembly)) return false; // NEW
         const linkedBed = bedCell || bedCellForAssembly(moduleCell, assembly); // NEW
         if (!linkedBed) return false; // NEW
+        moduleCell = moduleCell || findGardenModuleAncestor(assembly) || findGardenModuleAncestor(linkedBed); // CHANGE
+        const previousLinkedBed = bedCellForAssembly(moduleCell, assembly); // NEW
+        const previousBedId = getCellId(previousLinkedBed) || ""; // NEW
+        const linkedBedId = getCellId(linkedBed) || ""; // NEW
+        const changingLinkedBed = !!(previousBedId && linkedBedId && previousBedId !== linkedBedId); // NEW
+        const movingTemplate = changingLinkedBed ? readBedAssemblyTemplateRecord(moduleCell, assembly) : null; // NEW
+        const movingPorts = changingLinkedBed && previousLinkedBed ? readBedPortConfig(previousLinkedBed) : null; // NEW
         const fitWidth = !opts || opts.fitWidth !== false; // CHANGE
         const fitHeight = !opts || opts.fitHeight !== false; // NEW
         const current = getGeometry(assembly) || {}; // NEW
@@ -2425,14 +2650,162 @@ Draw.loadPlugin(function (ui) {
         let changed = false; // NEW
         if (ownsTransaction && model.beginUpdate) model.beginUpdate(); // NEW
         try { // NEW
+            if (movingTemplate) changed = setCellAttrs(linkedBed, { [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(movingTemplate) }) || changed; // NEW
+            if (movingPorts) writeBedPortConfig(linkedBed, movingPorts); // NEW
             if (fitWidth || fitHeight) changed = !!setGeometry(assembly, next); // CHANGE
             changed = setCellAttrs(assembly, { [ATTRS.LINKED_BED_ID]: getCellId(linkedBed) || "", bed_fit_width: fitWidth ? "1" : "0", bed_fit_height: fitHeight ? "1" : "0" }) || changed; // NEW
             changed = syncBedAssemblyRotation(assembly, linkedBed) || changed; // NEW
             reflowBedTemplateLayout(moduleCell || findGardenModuleAncestor(assembly), assembly); // NEW
+            if (changingLinkedBed) changed = clearBedTemplateDataIfUnused(moduleCell, previousLinkedBed, assembly) || changed; // NEW
         } finally { if (ownsTransaction && model.endUpdate) model.endUpdate(); } // NEW
         if (graph.refresh) graph.refresh(assembly); // NEW
         return changed; // NEW
     } // NEW
+
+    function bedAssemblyFitAxes(assembly) { // NEW
+        return { // NEW
+            fitWidth: getCellAttr(assembly, "bed_fit_width", "1") !== "0", // NEW
+            fitHeight: getCellAttr(assembly, "bed_fit_height", "1") !== "0" // NEW
+        }; // NEW
+    } // NEW
+
+    function linkedBedAssembliesForBed(moduleCell, bedCell) { // NEW
+        const bedId = getCellId(bedCell) || ""; // NEW
+        if (!moduleCell || !bedId) return []; // NEW
+        return collectDescendants(moduleCell, function (cell) { return isBedAssembly(cell) && getCellAttr(cell, ATTRS.LINKED_BED_ID, "") === bedId; }); // NEW
+    } // NEW
+
+    function readBedTemplateRecord(bedCell) { // NEW
+        return safeJsonParse(getCellAttr(bedCell, ATTRS.BED_TEMPLATE_JSON, ""), null); // NEW
+    } // NEW
+
+    function readBedAssemblyTemplateRecord(moduleCell, assembly) { // NEW
+        const linkedBed = bedCellForAssembly(moduleCell, assembly); // NEW
+        return readBedTemplateRecord(linkedBed) || safeJsonParse(getCellAttr(bedLayoutRowsForAssembly(assembly)[0], ATTRS.BED_TEMPLATE_JSON, ""), null); // NEW
+    } // NEW
+
+    function bedLayoutRowsForAssembly(assembly) { // NEW
+        return getChildCells(assembly).filter(function (cell) { return getCellAttr(cell, ATTRS.BED_LAYOUT, "") === "1"; }); // NEW
+    } // NEW
+
+    function clearBedTemplateDataIfUnused(moduleCell, bedCell, movedAssembly) { // NEW
+        if (!bedCell || !moduleCell) return false; // NEW
+        const bedId = getCellId(bedCell) || ""; // NEW
+        const stillUsed = collectDescendants(moduleCell, function (cell) { // NEW
+            return cell !== movedAssembly && isBedAssembly(cell) && getCellAttr(cell, ATTRS.LINKED_BED_ID, "") === bedId; // NEW
+        }).length > 0; // NEW
+        if (stillUsed) return false; // NEW
+        return setCellAttrs(bedCell, { [ATTRS.BED_TEMPLATE_JSON]: "", [ATTRS.BED_PORTS_JSON]: "" }); // NEW
+    } // NEW
+
+    function relinkBedAssemblyToBed(moduleCell, assembly, targetBed, opts) { // NEW
+        if (!moduleCell || !isBedAssembly(assembly) || !isGardenBed(targetBed)) return false; // NEW
+        const previousBed = bedCellForAssembly(moduleCell, assembly); // NEW
+        const previousBedId = getCellId(previousBed) || ""; // NEW
+        const targetBedId = getCellId(targetBed) || ""; // NEW
+        const sameBed = previousBedId && previousBedId === targetBedId; // NEW
+        const templateRecord = readBedAssemblyTemplateRecord(moduleCell, assembly) || readBedTemplateRecord(targetBed); // NEW
+        const portSource = previousBed || targetBed; // NEW
+        const portConfig = portSource ? readBedPortConfig(portSource) : null; // NEW
+        const axes = opts && opts.axes ? opts.axes : bedAssemblyFitAxes(assembly); // NEW
+        let changed = false; // NEW
+        if (!sameBed && templateRecord) changed = setCellAttrs(targetBed, { [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(templateRecord) }) || changed; // NEW
+        if (!sameBed && portConfig) writeBedPortConfig(targetBed, portConfig); // NEW
+        changed = syncLinkedBedAssemblyToBed(moduleCell, assembly, targetBed, { inTransaction: true, fitWidth: !!axes.fitWidth, fitHeight: !!axes.fitHeight }) || changed; // NEW
+        const targetRecord = readBedTemplateRecord(targetBed) || templateRecord; // NEW
+        if (targetRecord) changed = refreshBedAssemblyRowsFromTemplate(moduleCell, assembly, targetBed, targetRecord) || changed; // NEW
+        if (!sameBed && previousBed) changed = clearBedTemplateDataIfUnused(moduleCell, previousBed, assembly) || changed; // NEW
+        return changed; // NEW
+    } // NEW
+
+    function rectCenter(bounds) { // NEW
+        return bounds ? { x: finiteNumber(bounds.x, 0) + finiteNumber(bounds.width, 0) / 2, y: finiteNumber(bounds.y, 0) + finiteNumber(bounds.height, 0) / 2 } : null; // NEW
+    } // NEW
+
+    function rotateModelPoint(point, center, angleDeg) { // NEW
+        const rad = finiteNumber(angleDeg, 0) * Math.PI / 180; // NEW
+        const cos = Math.cos(rad); // NEW
+        const sin = Math.sin(rad); // NEW
+        const dx = finiteNumber(point && point.x, 0) - finiteNumber(center && center.x, 0); // NEW
+        const dy = finiteNumber(point && point.y, 0) - finiteNumber(center && center.y, 0); // NEW
+        return { x: finiteNumber(center && center.x, 0) + dx * cos - dy * sin, y: finiteNumber(center && center.y, 0) + dx * sin + dy * cos }; // NEW
+    } // NEW
+
+    function cellRotationDeg(cell) { // NEW
+        const styleRotation = styleValue(cell && cell.style, "rotation"); // NEW
+        return finiteNumber(styleRotation, 0); // NEW
+    } // NEW
+
+    function pointInsideBedBounds(point, bed) { // NEW
+        const bounds = cellBoundsInModel(bed); // NEW
+        if (!point || !bounds) return false; // NEW
+        const center = rectCenter(bounds); // NEW
+        const local = rotateModelPoint(point, center, -cellRotationDeg(bed)); // NEW
+        return local.x >= bounds.x - 1 && local.x <= bounds.x + bounds.width + 1 && local.y >= bounds.y - 1 && local.y <= bounds.y + bounds.height + 1; // NEW
+    } // NEW
+
+    function containingGardenBedForAssembly(moduleCell, assembly) { // NEW
+        const center = rectCenter(cellBoundsInModel(assembly)); // NEW
+        if (!moduleCell || !center) return null; // NEW
+        let chosen = null; // NEW
+        let chosenArea = Infinity; // NEW
+        collectGardenBeds(moduleCell).forEach(function (bed) { // NEW
+            const bounds = cellBoundsInModel(bed); // NEW
+            const area = bounds ? finiteNumber(bounds.width, 0) * finiteNumber(bounds.height, 0) : 0; // NEW
+            if (area > 0 && area < chosenArea && pointInsideBedBounds(center, bed)) { chosen = bed; chosenArea = area; } // NEW
+        }); // NEW
+        return chosen; // NEW
+    } // NEW
+
+    function syncBedAssembliesForMovedOrResizedBeds(cells) { // NEW
+        const beds = (cells || []).filter(isGardenBed); // NEW
+        if (!beds.length) return false; // NEW
+        let changed = false; // NEW
+        beds.forEach(function (bed) { // NEW
+            const moduleCell = findGardenModuleAncestor(bed); // NEW
+            linkedBedAssembliesForBed(moduleCell, bed).forEach(function (assembly) { // NEW
+                const axes = bedAssemblyFitAxes(assembly); // NEW
+                changed = syncLinkedBedAssemblyToBed(moduleCell, assembly, bed, { inTransaction: true, fitWidth: axes.fitWidth, fitHeight: axes.fitHeight }) || changed; // NEW
+            }); // NEW
+        }); // NEW
+        return changed; // NEW
+    } // NEW
+
+    function syncMovedOrResizedBedAssemblies(cells, opts) { // NEW
+        const assemblies = (cells || []).filter(isBedAssembly); // NEW
+        if (!assemblies.length) return false; // NEW
+        let changed = false; // NEW
+        assemblies.forEach(function (assembly) { // NEW
+            const moduleCell = findGardenModuleAncestor(assembly) || gardenModuleForBedAssembly(assembly); // NEW
+            const targetBed = containingGardenBedForAssembly(moduleCell, assembly); // NEW
+            if (!targetBed) return; // NEW
+            const currentBed = bedCellForAssembly(moduleCell, assembly); // NEW
+            const sameBed = currentBed && getCellId(currentBed) === getCellId(targetBed); // NEW
+            if (sameBed && opts && opts.source === "cells-moved") return; // NEW
+            const axes = sameBed ? bedAssemblyFitAxes(assembly) : { fitWidth: true, fitHeight: true }; // NEW
+            changed = relinkBedAssemblyToBed(moduleCell, assembly, targetBed, { axes }) || changed; // NEW
+        }); // NEW
+        return changed; // NEW
+    } // NEW
+
+    function installBedAssemblyGeometryRefreshListeners() { // NEW
+        if (graph.__trellisBedAssemblyGeometryRefreshInstalled || !graph.addListener || typeof mxEvent === "undefined") return; // NEW
+        graph.__trellisBedAssemblyGeometryRefreshInstalled = true; // NEW
+        function handleCells(sender, evt, source) { // NEW
+            const cells = evt && evt.getProperty && evt.getProperty("cells") || []; // NEW
+            if (!cells.length) return; // NEW
+            if (!cells.some(function (cell) { return isGardenBed(cell) || isBedAssembly(cell); })) return; // NEW
+            runIrrigationEdit("refreshBedLayout", function () { // NEW
+                const changedBeds = syncBedAssembliesForMovedOrResizedBeds(cells); // NEW
+                const changedAssemblies = syncMovedOrResizedBedAssemblies(cells, { source }); // NEW
+                if ((changedBeds || changedAssemblies) && activeIrrigationMode) renderIrrigationMode(activeIrrigationMode); // NEW
+            }); // NEW
+        } // NEW
+        if (mxEvent.CELLS_MOVED) graph.addListener(mxEvent.CELLS_MOVED, function (sender, evt) { handleCells(sender, evt, "cells-moved"); }); // NEW
+        if (mxEvent.CELLS_RESIZED) graph.addListener(mxEvent.CELLS_RESIZED, function (sender, evt) { handleCells(sender, evt, "cells-resized"); }); // NEW
+    } // NEW
+
+    installBedAssemblyGeometryRefreshListeners(); // NEW
 
     function syncBedAssemblyRotation(assembly, bedCell) { // NEW
         const rotation = styleValue(bedCell && bedCell.style, "rotation"); // NEW
@@ -3413,6 +3786,15 @@ Draw.loadPlugin(function (ui) {
         return input;
     }
 
+    function addNumericField(parent, label, value, options) { // NEW
+        const input = addTextField(parent, label, value); // NEW
+        input.type = "number"; // NEW
+        input.min = String(options && options.min != null ? options.min : 1); // NEW
+        input.step = String(options && options.step != null ? options.step : 1); // NEW
+        input.inputMode = options && options.inputMode || "decimal"; // NEW
+        return input; // NEW
+    } // NEW
+
     function addCheckboxField(parent, label, value) { // NEW
         const wrap = document.createElement("label"); // NEW
         wrap.style.cssText = "display:flex;align-items:center;gap:6px;"; // NEW
@@ -3619,9 +4001,12 @@ Draw.loadPlugin(function (ui) {
             targetHighlights: [], // NEW
             warningBadges: [], // NEW
             portBadges: [], // NEW
+            portBadgeNodeByKey: new Map(), // NEW
+            inlineActionNodes: [], // NEW
             zoneBadges: [], // NEW
             selectedPorts: [], // NEW
             selectedBoundaries: [], // NEW
+            inlineActionAnchorPort: null, // NEW
             lastModelPoint: null, // NEW
             partPickerVisible: false, // NEW
             bedAssemblyPickerVisible: false, // NEW
@@ -3658,6 +4043,7 @@ Draw.loadPlugin(function (ui) {
         removeNodeList(session.targetHighlights); // NEW
         removeNodeList(session.warningBadges); // NEW
         removeNodeList(session.portBadges); // NEW
+        removeNodeList(session.inlineActionNodes); // NEW
         removeNodeList(session.zoneBadges); // NEW
         removeIrrigationModeListeners(session); // NEW
         activeIrrigationMode = null; // NEW
@@ -3866,46 +4252,56 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function shieldHudEvents(hud) { // NEW
-        ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "dblclick", "wheel", "keydown", "keyup"].forEach(function (eventName) { // NEW
+        ["pointerdown", "pointerup", "mousedown", "mouseup", "click", "dblclick", "wheel", "keydown", "keypress", "keyup", "beforeinput", "input", "compositionstart", "compositionupdate", "compositionend"].forEach(function (eventName) { // CHANGE
             hud.addEventListener(eventName, function (ev) { if (ev && ev.stopPropagation) ev.stopPropagation(); }); // NEW
         }); // NEW
     } // NEW
 
     function renderIrrigationMode(session) { // NEW
         if (!session || activeIrrigationMode !== session) return; // NEW
+        if (activeConnectionComboboxClose) activeConnectionComboboxClose(false); // NEW
         removeHudNode(session.hud); // NEW
         removeNodeList(session.navigator); // NEW
         removeNodeList(session.targetHighlights); // NEW
         removeNodeList(session.warningBadges); // NEW
         removeNodeList(session.portBadges); // NEW
+        removeNodeList(session.inlineActionNodes); // NEW
         removeNodeList(session.zoneBadges); // NEW
-        if (!currentSelectionIsIrrigationHudEligible(session)) return; // NEW
+        session.portBadgeNodeByKey = new Map(); // NEW
 
         const selected = graph.getSelectionCell && graph.getSelectionCell(); // NEW
         const assemblySelection = selectedAssemblyContextCells(); // NEW
-        const hud = document.createElement("div"); // NEW
-        hud.className = "trellis-irrigation-mode-hud"; // NEW
-        hud.style.cssText = "position:absolute;z-index:1005;width:max-content;max-width:min(460px,calc(100vw - 32px));min-width:0;box-sizing:border-box;overflow:hidden;background:#fff;border:1px solid #777;border-radius:6px;box-shadow:0 3px 12px rgba(0,0,0,.22);padding:8px;font:12px Arial,sans-serif;color:#222;display:flex;flex-direction:column;gap:6px;pointer-events:auto;"; // CHANGE
-        shieldHudEvents(hud); // NEW
-        if (assemblySelection.length) renderLocalIrrigationHud(session, hud, assemblySelection); // CHANGE
-        else if (isGardenBed(selected)) renderGardenBedHud(session, hud, selected); // NEW
-        else renderModuleIrrigationHud(session, hud); // NEW
-        appendOverlayNode(hud); // NEW
-        session.hud = hud; // NEW
-        positionHudForSelection(hud, selected, session); // CHANGE
-        irrigationDebug("renderIrrigationMode:hud", { // NEW
-            selected: debugCellSummary(selected), // NEW
-            isLocal: !!assemblySelection.length || isGardenBed(selected), // CHANGE
-            className: hud.className, // NEW
-            left: hud.style.left, // NEW
-            top: hud.style.top, // NEW
-            overlayHost: debugOverlayHostSummary() // NEW
-        }); // NEW
+        const inlineAction = resolveInlineConnectionAction(session); // CHANGE
+        const hudEligible = currentSelectionIsIrrigationHudEligible(session); // NEW
+        if (!hudEligible && !inlineAction) return; // CHANGE
+        const connectionContext = inlineAction ? null : resolveSelectedConnectionContext(session); // CHANGE
+        if (!inlineAction && hudEligible) { // CHANGE
+            const hud = document.createElement("div"); // NEW
+            hud.className = "trellis-irrigation-mode-hud"; // NEW
+            hud.style.cssText = "position:absolute;z-index:1005;width:max-content;max-width:min(460px,calc(100vw - 32px));min-width:0;box-sizing:border-box;overflow:hidden;background:#fff;border:1px solid #777;border-radius:6px;box-shadow:0 3px 12px rgba(0,0,0,.22);padding:8px;font:12px Arial,sans-serif;color:#222;display:flex;flex-direction:column;gap:6px;pointer-events:auto;"; // CHANGE
+            shieldHudEvents(hud); // NEW
+            if (connectionContext) renderConnectionHud(session, hud, connectionContext); // NEW
+            else if (assemblySelection.length) renderLocalIrrigationHud(session, hud, assemblySelection); // CHANGE
+            else if (isGardenBed(selected)) renderGardenBedHud(session, hud, selected); // NEW
+            else renderModuleIrrigationHud(session, hud); // NEW
+            appendOverlayNode(hud); // NEW
+            session.hud = hud; // NEW
+            positionHudForSelection(hud, selected, session); // CHANGE
+            irrigationDebug("renderIrrigationMode:hud", { // NEW
+                selected: debugCellSummary(selected), // NEW
+                isLocal: !!assemblySelection.length || isGardenBed(selected), // CHANGE
+                className: hud.className, // NEW
+                left: hud.style.left, // NEW
+                top: hud.style.top, // NEW
+                overlayHost: debugOverlayHostSummary() // NEW
+            }); // NEW
+        } else session.hud = null; // NEW
         renderAssemblyPortBadges(session, assemblySelection); // CHANGE
         renderSelectedExternalPipeHighlights(session); // NEW
         renderZoneBadges(session); // NEW
         if (isHudIrrigationObject(selected)) renderIrrigationNavigator(session, selected); // NEW
         renderIrrigationWarningBadges(session); // NEW
+        renderInlineConnectionAction(session, inlineAction); // NEW
     } // NEW
 
     function renderModuleIrrigationHud(session, hud) { // NEW
@@ -3966,6 +4362,58 @@ Draw.loadPlugin(function (ui) {
         actions.appendChild(button("Catalog", function () { openCatalogManager(session.moduleCell); })); // NEW
         actions.appendChild(button("Exit", closeIrrigationMode)); // NEW
         hud.appendChild(actions); // NEW
+    } // NEW
+
+    function renderConnectionHud(session, hud, context) { // NEW
+        hud.className += " trellis-irrigation-connection-hud"; // NEW
+        hud.appendChild(hudTitle("Connection")); // NEW
+        appendHudStatus(hud, session); // NEW
+        const route = hudText(connectionRouteLabel(context)); // NEW
+        route.style.fontWeight = "700"; // NEW
+        route.style.overflowWrap = "anywhere"; // NEW
+        hud.appendChild(route); // NEW
+        hud.appendChild(hudText(connectionSummaryLabel(session.moduleCell, context))); // NEW
+        hud.appendChild(hudText(connectionPortsLabel(context))); // NEW
+        const actions = hudActions(); // NEW
+        actions.appendChild(button("Disconnect", function () { disconnectSelectedConnections(session, [context.boundary]); })); // NEW
+        actions.appendChild(button("Select Upstream", function () { selectConnectionEndpoint(session, context.sourceCell); })); // NEW
+        actions.appendChild(button("Select Downstream", function () { selectConnectionEndpoint(session, context.targetCell); })); // NEW
+        actions.appendChild(button("Exit", closeIrrigationMode)); // NEW
+        hud.appendChild(actions); // NEW
+    } // NEW
+
+    function selectConnectionEndpoint(session, cell) { // NEW
+        session.selectedPorts = []; // NEW
+        session.selectedBoundaries = []; // NEW
+        session.inlineActionAnchorPort = null; // NEW
+        session.focusedConnectionBoundary = null; // NEW
+        selectCell(cell, false); // NEW
+        renderIrrigationMode(session); // NEW
+    } // NEW
+
+    function connectionRouteLabel(context) { // NEW
+        return irrigationCellLabel(context && context.sourceCell) + " -> " + irrigationCellLabel(context && context.targetCell); // NEW
+    } // NEW
+
+    function connectionPortsLabel(context) { // NEW
+        const source = normalizePort(context && context.sourcePort); // NEW
+        const target = normalizePort(context && context.targetPort); // NEW
+        return "Outlet " + (source.index + 1) + " -> Inlet " + (target.index + 1); // NEW
+    } // NEW
+
+    function connectionSummaryLabel(moduleCell, context) { // NEW
+        if (!context) return "Connection"; // NEW
+        if (context.kind === "internal") return "Internal connection"; // NEW
+        if (context.mode === "direct") return "Direct link"; // NEW
+        const pipe = partById(readCatalog(moduleCell), context.pipePartId); // NEW
+        const length = context.lengthFt > 0 ? ", " + formatFeet(context.lengthFt) : ""; // NEW
+        return "Pipe: " + (pipe ? pipe.name : "auto pipe") + length; // NEW
+    } // NEW
+
+    function formatFeet(value) { // NEW
+        const n = finiteNumber(value, 0); // NEW
+        if (!(n > 0)) return ""; // NEW
+        return n.toFixed(n >= 10 ? 1 : 2).replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1") + " ft"; // NEW
     } // NEW
 
     function renderLocalIrrigationHud(session, hud, cells) { // CHANGE
@@ -4053,13 +4501,12 @@ Draw.loadPlugin(function (ui) {
         const occupied = ports.filter(function (port) { return !!boundaryForPort(session.moduleCell, port); }); // CHANGE
         const free = ports.filter(function (port) { return isPortFree(session.moduleCell, port); }); // NEW
         const actions = hudActions(); // NEW
-        if (selectedBoundaries.length || occupied.length) actions.appendChild(button("Disconnect Parts", function () { disconnectSelectedConnections(session, selectedBoundaries); })); // CHANGE
+        if (selectedBoundaries.length > 1 || occupied.length > 1) actions.appendChild(button("Disconnect Parts", function () { disconnectSelectedConnections(session, selectedBoundaries); })); // CHANGE
         if (free.length === 2) { // NEW
             const ordered = orderedConnectionPorts(free); // NEW
             if (ordered) { // NEW
                 const direct = validatePortConnection(session.moduleCell, ordered.source, ordered.target); // NEW
-                if (direct.ok) actions.appendChild(button("Connect", function () { connectSelectedPorts(session, ordered.source, ordered.target); })); // NEW
-                else actions.appendChild(button("Suggest Connection", function () { session.bridgePorts = ordered; renderIrrigationMode(session); })); // CHANGE
+                if (!direct.ok) actions.appendChild(button("Suggest Connection", function () { session.bridgePorts = ordered; renderIrrigationMode(session); })); // CHANGE
             } // NEW
         } // NEW
         if (actions.childNodes.length) hud.appendChild(actions); // NEW
@@ -4119,36 +4566,233 @@ Draw.loadPlugin(function (ui) {
         line.appendChild(label); // NEW
         const controls = document.createElement("div"); // NEW
         controls.style.cssText = "display:flex;flex-direction:column;gap:3px;min-width:0;"; // NEW
-        controls.appendChild(renderConnectionDropdown(session, row)); // NEW
         const edge = edgesForPort(session.moduleCell, port)[0]; // NEW
+        const neighbor = internalNeighborForPort(row.cell, row.role); // NEW
+        if (edge || neighbor) controls.appendChild(renderConnectionStatus(session, row, edge, neighbor)); // NEW
+        else controls.appendChild(renderConnectionDropdown(session, row)); // CHANGE
         const pipe = document.createElement("div"); // NEW
         pipe.className = "trellis-irrigation-pipe-row"; // NEW
         pipe.style.cssText = "font-size:11px;color:#4b5563;white-space:normal;"; // NEW
-        pipe.textContent = pipeEdgeLabel(session.moduleCell, edge, port); // NEW
+        pipe.textContent = connectionRowDetailLabel(session.moduleCell, row, edge, neighbor); // CHANGE
         controls.appendChild(pipe); // NEW
         line.appendChild(controls); // NEW
         wrap.appendChild(line); // NEW
     } // NEW
 
     function renderConnectionDropdown(session, row) { // NEW
-        const select = document.createElement("select"); // NEW
-        select.className = "trellis-irrigation-connection-dropdown"; // NEW
-        select.style.cssText = "min-width:0;width:100%;padding:3px;border:1px solid #aaa;border-radius:4px;"; // NEW
         const current = connectionRowCurrentLabel(session.moduleCell, row); // NEW
-        appendSelectOption(select, "", current || "No change"); // NEW
-        select.options[0].disabled = true; // NEW
-        select.selectedIndex = 0; // NEW
         const groups = connectionDropdownGroups(session.moduleCell, row); // NEW
-        appendConnectionOptionGroup(select, "Keeps connection", groups.keep); // NEW
-        appendConnectionOptionGroup(select, "Disconnects existing connection", groups.disconnect); // NEW
-        if (!groups.keep.length && !groups.disconnect.length) { // NEW
-            select.disabled = true; // NEW
-            select.options[0].textContent = "No compatible parts"; // NEW
+        const safetyGroups = connectionComboboxSafetyGroups(groups); // NEW
+        const hasParts = safetyGroups.some(function (group) { return group.parts.length > 0; }); // NEW
+        const root = document.createElement("div"); // NEW
+        root.className = "trellis-irrigation-connection-combobox trellis-irrigation-connection-dropdown"; // CHANGE
+        root.style.cssText = "position:relative;min-width:0;width:100%;max-width:100%;box-sizing:border-box;"; // NEW
+        const trigger = document.createElement("button"); // NEW
+        trigger.type = "button"; // NEW
+        trigger.className = "trellis-irrigation-connection-combobox-trigger"; // NEW
+        trigger.style.cssText = "min-width:0;width:100%;max-width:100%;padding:4px 22px 4px 6px;border:1px solid #aaa;border-radius:4px;background:#fff;color:#111827;text-align:left;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;position:relative;"; // NEW
+        trigger.textContent = hasParts ? (current || "No change") : "No compatible parts"; // NEW
+        trigger.setAttribute("aria-haspopup", "listbox"); // NEW
+        trigger.setAttribute("aria-expanded", "false"); // NEW
+        trigger.disabled = !hasParts; // NEW
+        const chevron = document.createElement("span"); // NEW
+        chevron.textContent = "v"; // NEW
+        chevron.setAttribute("aria-hidden", "true"); // NEW
+        chevron.style.cssText = "position:absolute;right:7px;top:50%;transform:translateY(-50%);font-size:10px;color:#4b5563;"; // NEW
+        trigger.appendChild(chevron); // NEW
+        root.appendChild(trigger); // NEW
+        const state = { open: false, query: "", panel: null, search: null, list: null, activeIndex: -1, outsideListener: null, resizeListener: null, blurTimer: null }; // CHANGE
+        function closeMenu(focusTrigger) { // NEW
+            if (!state.open) return; // NEW
+            state.open = false; // NEW
+            trigger.setAttribute("aria-expanded", "false"); // NEW
+            root.classList.remove("trellis-irrigation-connection-combobox-open"); // NEW
+            if (state.panel && state.panel.parentNode) state.panel.parentNode.removeChild(state.panel); // NEW
+            state.panel = state.search = state.list = null; // NEW
+            if (state.outsideListener) document.removeEventListener("mousedown", state.outsideListener); // NEW
+            if (state.resizeListener && typeof window !== "undefined" && window.removeEventListener) { window.removeEventListener("resize", state.resizeListener); window.removeEventListener("scroll", state.resizeListener, true); } // NEW
+            state.outsideListener = null; // NEW
+            state.resizeListener = null; // NEW
+            if (state.blurTimer) clearTimeout(state.blurTimer); // NEW
+            state.blurTimer = null; // NEW
+            if (activeConnectionComboboxClose === closeMenu) activeConnectionComboboxClose = null; // NEW
+            if (focusTrigger && trigger.focus) trigger.focus(); // NEW
         } // NEW
-        select.addEventListener("change", function () { // NEW
-            applyConnectionDropdownSelection(session, row, select.value); // NEW
+        function menuContainsNode(node) { // NEW
+            return !!(node && (root.contains(node) || state.panel && state.panel.contains(node))); // NEW
+        } // NEW
+        function clearFocusLossClose() { // NEW
+            if (state.blurTimer) clearTimeout(state.blurTimer); // NEW
+            state.blurTimer = null; // NEW
+        } // NEW
+        function closeAfterFocusLoss() { // NEW
+            clearFocusLossClose(); // CHANGE
+            state.blurTimer = setTimeout(function () { if (!menuContainsNode(document.activeElement)) closeMenu(false); }, 0); // NEW
+        } // NEW
+        function optionButtons() { // NEW
+            return state.panel ? Array.from(state.panel.querySelectorAll(".trellis-irrigation-connection-combobox-option")) : []; // NEW
+        } // NEW
+        function focusOption(index) { // NEW
+            const options = optionButtons(); // NEW
+            if (!options.length) return; // NEW
+            state.activeIndex = Math.max(0, Math.min(index, options.length - 1)); // NEW
+            options[state.activeIndex].focus(); // NEW
+        } // NEW
+        function moveOption(delta) { // NEW
+            const options = optionButtons(); // NEW
+            if (!options.length) return; // NEW
+            const next = state.activeIndex < 0 ? (delta > 0 ? 0 : options.length - 1) : (state.activeIndex + delta + options.length) % options.length; // NEW
+            focusOption(next); // NEW
+        } // NEW
+        function choosePart(partId) { // NEW
+            closeMenu(false); // NEW
+            applyConnectionDropdownSelection(session, row, partId); // NEW
+        } // NEW
+        function focusCategoryButton(categoryKey) { // NEW
+            if (!state.list || !categoryKey) return; // NEW
+            const buttons = Array.from(state.list.querySelectorAll(".trellis-irrigation-connection-combobox-category")); // NEW
+            const button = buttons.find(function (node) { return node.getAttribute("data-category-key") === categoryKey; }); // NEW
+            if (button && button.focus) button.focus(); // NEW
+        } // NEW
+        function renderList(focusCategoryKey) { // CHANGE
+            if (!state.list) return; // NEW
+            state.list.innerHTML = ""; // NEW
+            const query = normalizeSearchText(state.query); // NEW
+            let renderedParts = 0; // NEW
+            safetyGroups.forEach(function (group) { // NEW
+                const categories = connectionComboboxCategoryGroups(group.parts, query); // NEW
+                if (!categories.length) return; // NEW
+                const groupNode = document.createElement("div"); // NEW
+                groupNode.className = "trellis-irrigation-connection-combobox-safety-group trellis-irrigation-connection-combobox-safety-" + group.id; // NEW
+                const groupLabel = document.createElement("div"); // NEW
+                groupLabel.className = "trellis-irrigation-connection-combobox-safety-label"; // NEW
+                groupLabel.style.cssText = "padding:5px 7px;font-weight:700;color:" + (group.id === "disconnect" ? "#7f1d1d" : "#14532d") + ";background:" + (group.id === "disconnect" ? "#fee2e2" : "#dcfce7") + ";border-top:1px solid #e5e7eb;"; // NEW
+                groupLabel.textContent = group.label; // NEW
+                groupNode.appendChild(groupLabel); // NEW
+                categories.forEach(function (category, categoryIndex) { // NEW
+                    const categoryKey = connectionComboboxCategoryKey(group.id, category.category); // NEW
+                    const collapsed = query ? false : connectionComboboxCategoryCollapsed(categoryKey, categoryIndex !== 0); // NEW
+                    const categoryButton = document.createElement("button"); // NEW
+                    categoryButton.type = "button"; // NEW
+                    categoryButton.className = "trellis-irrigation-connection-combobox-category"; // NEW
+                    categoryButton.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;padding:5px 7px;border:0;border-top:1px solid #e5e7eb;background:#f9fafb;color:#374151;font-weight:700;text-align:left;box-sizing:border-box;cursor:pointer;"; // NEW
+                    categoryButton.setAttribute("data-category-key", categoryKey); // NEW
+                    categoryButton.setAttribute("aria-expanded", collapsed ? "false" : "true"); // NEW
+                    categoryButton.textContent = (collapsed ? "> " : "v ") + catalogCategoryLabel(category.category) + " (" + category.parts.length + ")"; // NEW
+                    categoryButton.addEventListener("click", function () { // NEW
+                        clearFocusLossClose(); // NEW
+                        connectionComboboxSetCategoryCollapsed(categoryKey, !collapsed); // NEW
+                        renderList(categoryKey); // CHANGE
+                    }); // NEW
+                    categoryButton.addEventListener("keydown", function (ev) { // NEW
+                        if (ev.key === "ArrowDown") { ev.preventDefault(); focusOption(0); } // NEW
+                        else if (ev.key === "Escape") { ev.preventDefault(); closeMenu(true); } // NEW
+                    }); // NEW
+                    groupNode.appendChild(categoryButton); // NEW
+                    if (!collapsed) { // NEW
+                        category.parts.forEach(function (part) { // NEW
+                            renderedParts++; // NEW
+                            const option = document.createElement("button"); // NEW
+                            option.type = "button"; // NEW
+                            option.className = "trellis-irrigation-connection-combobox-option"; // NEW
+                            option.setAttribute("role", "option"); // NEW
+                            option.setAttribute("data-part-id", part.id); // NEW
+                            option.style.cssText = "display:flex;flex-direction:column;gap:1px;width:100%;padding:5px 8px 5px 18px;border:0;border-top:1px solid #f3f4f6;background:#fff;color:#111827;text-align:left;box-sizing:border-box;cursor:pointer;"; // NEW
+                            const name = document.createElement("span"); // NEW
+                            name.textContent = part.name || part.id; // NEW
+                            const detail = document.createElement("span"); // NEW
+                            detail.style.cssText = "font-size:11px;color:#6b7280;"; // NEW
+                            detail.textContent = connectionComboboxPartDetail(part); // NEW
+                            option.appendChild(name); // NEW
+                            option.appendChild(detail); // NEW
+                            option.addEventListener("click", function () { choosePart(part.id); }); // NEW
+                            option.addEventListener("keydown", function (ev) { // NEW
+                                if (ev.key === "ArrowDown") { ev.preventDefault(); moveOption(1); } // NEW
+                                else if (ev.key === "ArrowUp") { ev.preventDefault(); moveOption(-1); } // NEW
+                                else if (ev.key === "Enter") { ev.preventDefault(); choosePart(part.id); } // NEW
+                                else if (ev.key === "Escape") { ev.preventDefault(); closeMenu(true); } // NEW
+                            }); // NEW
+                            groupNode.appendChild(option); // NEW
+                        }); // NEW
+                    } // NEW
+                }); // NEW
+                state.list.appendChild(groupNode); // NEW
+            }); // NEW
+            if (!renderedParts && query) { // NEW
+                const empty = document.createElement("div"); // NEW
+                empty.className = "trellis-irrigation-connection-combobox-empty"; // NEW
+                empty.style.cssText = "padding:7px;color:#6b7280;"; // NEW
+                empty.textContent = "No matching parts"; // NEW
+                state.list.appendChild(empty); // NEW
+            } // NEW
+            state.activeIndex = -1; // NEW
+            focusCategoryButton(focusCategoryKey); // NEW
+        } // NEW
+        function openMenu(focusSearch) { // NEW
+            if (state.open || !hasParts) return; // NEW
+            if (activeConnectionComboboxClose) activeConnectionComboboxClose(false); // NEW
+            state.open = true; // NEW
+            activeConnectionComboboxClose = closeMenu; // NEW
+            trigger.setAttribute("aria-expanded", "true"); // NEW
+            root.classList.add("trellis-irrigation-connection-combobox-open"); // NEW
+            const panel = document.createElement("div"); // NEW
+            panel.className = "trellis-irrigation-connection-combobox-panel"; // NEW
+            panel.style.cssText = "position:fixed;z-index:2000;border:1px solid #9ca3af;border-radius:4px;background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.25);overflow:auto;box-sizing:border-box;"; // CHANGE
+            const search = document.createElement("input"); // NEW
+            search.className = "trellis-irrigation-connection-combobox-search"; // NEW
+            search.type = "search"; // NEW
+            search.placeholder = "Search parts"; // NEW
+            search.value = state.query; // NEW
+            search.style.cssText = "position:sticky;top:0;z-index:1;width:100%;min-width:0;box-sizing:border-box;padding:6px 7px;border:0;border-bottom:1px solid #d1d5db;outline:none;"; // NEW
+            const list = document.createElement("div"); // NEW
+            list.className = "trellis-irrigation-connection-combobox-list"; // NEW
+            list.setAttribute("role", "listbox"); // NEW
+            panel.appendChild(search); // NEW
+            panel.appendChild(list); // NEW
+            connectionComboboxPanelHost().appendChild(panel); // CHANGE
+            state.panel = panel; // NEW
+            state.search = search; // NEW
+            state.list = list; // NEW
+            shieldHudEvents(panel); // NEW
+            search.addEventListener("input", function () { state.query = search.value; renderList(); }); // NEW
+            search.addEventListener("keydown", function (ev) { // NEW
+                if (ev.key === "ArrowDown") { ev.preventDefault(); focusOption(0); } // NEW
+                else if (ev.key === "ArrowUp") { ev.preventDefault(); focusOption(optionButtons().length - 1); } // NEW
+                else if (ev.key === "Escape") { ev.preventDefault(); closeMenu(true); } // NEW
+                else if (ev.key === "Enter") { const options = optionButtons(); if (options.length) { ev.preventDefault(); options[0].click(); } } // NEW
+            }); // NEW
+            panel.addEventListener("mousedown", function (ev) { if (ev.stopPropagation) ev.stopPropagation(); }); // NEW
+            panel.addEventListener("focusout", closeAfterFocusLoss); // NEW
+            state.outsideListener = function (ev) { if (!menuContainsNode(ev.target)) closeMenu(false); }; // CHANGE
+            state.resizeListener = function () { positionConnectionComboboxPanel(root, trigger, panel); }; // NEW
+            document.addEventListener("mousedown", state.outsideListener); // NEW
+            if (typeof window !== "undefined" && window.addEventListener) { window.addEventListener("resize", state.resizeListener); window.addEventListener("scroll", state.resizeListener, true); } // NEW
+            renderList(); // NEW
+            positionConnectionComboboxPanel(root, trigger, panel); // NEW
+            if (focusSearch && search.focus) search.focus(); // NEW
+        } // NEW
+        root.addEventListener("focusout", closeAfterFocusLoss); // NEW
+        trigger.addEventListener("click", function () { state.open ? closeMenu(false) : openMenu(true); }); // NEW
+        trigger.addEventListener("keydown", function (ev) { // NEW
+            if (ev.key === "ArrowDown" || ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openMenu(true); } // NEW
+            else if (ev.key === "Escape") { ev.preventDefault(); closeMenu(true); } // NEW
         }); // NEW
-        return select; // NEW
+        return root; // NEW
+    } // NEW
+
+    function renderConnectionStatus(session, row, edge, neighbor) { // NEW
+        const status = document.createElement("div"); // NEW
+        status.className = "trellis-irrigation-connection-status"; // NEW
+        status.style.cssText = "min-width:0;width:100%;padding:3px 4px;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;color:#374151;box-sizing:border-box;overflow-wrap:anywhere;"; // NEW
+        status.textContent = connectionRowCurrentLabel(session.moduleCell, row); // NEW
+        status.title = edge || neighbor ? "Connected. Disconnect before changing this connection." : ""; // NEW
+        return status; // NEW
+    } // NEW
+
+    function connectionRowDetailLabel(moduleCell, row, edge, neighbor) { // NEW
+        if (edge) return pipeEdgeLabel(moduleCell, edge, { cellId: getCellId(row.cell), role: row.role, index: row.index }); // NEW
+        if (neighbor) return "Internal connection"; // NEW
+        return pipeEdgeLabel(moduleCell, null, { cellId: getCellId(row.cell), role: row.role, index: row.index }); // NEW
     } // NEW
 
     function appendConnectionOptionGroup(select, label, parts) { // NEW
@@ -4157,6 +4801,129 @@ Draw.loadPlugin(function (ui) {
         group.label = label; // NEW
         parts.forEach(function (part) { appendSelectOption(group, part.id, part.name); }); // NEW
         select.appendChild(group); // NEW
+    } // NEW
+
+    function connectionComboboxSafetyGroups(groups) { // NEW
+        return [ // NEW
+            { id: "keep", label: "Keeps connection", parts: sortConnectionComboboxParts(groups.keep || []) }, // NEW
+            { id: "disconnect", label: "Disconnects existing connection", parts: sortConnectionComboboxParts(groups.disconnect || []) } // NEW
+        ]; // NEW
+    } // NEW
+
+    function connectionComboboxPanelHost() { // NEW
+        return document && document.body ? document.body : graph.container; // NEW
+    } // NEW
+
+    function positionConnectionComboboxPanel(root, trigger, panel) { // NEW
+        if (!root || !trigger || !panel || !panel.parentNode) return; // NEW
+        const viewportWidth = typeof window !== "undefined" && window.innerWidth || document.documentElement && document.documentElement.clientWidth || graph.container && graph.container.clientWidth || 1000; // NEW
+        const viewportHeight = typeof window !== "undefined" && window.innerHeight || document.documentElement && document.documentElement.clientHeight || graph.container && graph.container.clientHeight || 700; // NEW
+        const margin = 8; // NEW
+        const triggerRect = trigger.getBoundingClientRect ? trigger.getBoundingClientRect() : { left: 0, right: 320, top: 0, bottom: 24, width: 320 }; // NEW
+        const hud = root.closest && root.closest(".trellis-irrigation-mode-hud"); // NEW
+        const hudRect = hud && hud.getBoundingClientRect ? hud.getBoundingClientRect() : null; // NEW
+        const rawLeft = hudRect && hudRect.width > triggerRect.width ? hudRect.left : triggerRect.left; // NEW
+        const rawWidth = Math.max(triggerRect.width || 0, hudRect && hudRect.width || 0, 360); // NEW
+        const width = Math.max(180, Math.min(rawWidth, viewportWidth - margin * 2)); // NEW
+        const left = Math.max(margin, Math.min(rawLeft || margin, viewportWidth - width - margin)); // NEW
+        const below = viewportHeight - (triggerRect.bottom || 0) - margin; // NEW
+        const above = (triggerRect.top || 0) - margin; // NEW
+        const openUp = below < 180 && above > below; // NEW
+        const maxHeight = Math.max(120, Math.min(320, openUp ? above : below)); // NEW
+        const top = openUp ? Math.max(margin, (triggerRect.top || margin) - maxHeight - 2) : Math.min(viewportHeight - margin - 120, (triggerRect.bottom || 0) + 2); // NEW
+        panel.style.left = Math.round(left) + "px"; // NEW
+        panel.style.top = Math.round(Math.max(margin, top)) + "px"; // NEW
+        panel.style.width = Math.round(width) + "px"; // NEW
+        panel.style.maxHeight = Math.round(maxHeight) + "px"; // NEW
+    } // NEW
+
+    function connectionComboboxCategoryGroups(parts, query) { // NEW
+        const grouped = new Map(); // NEW
+        sortConnectionComboboxParts(parts).forEach(function (part) { // NEW
+            const p = normalizeCatalogPart(part); // NEW
+            if (!p || query && !connectionComboboxPartMatches(p, query)) return; // NEW
+            const category = p.category || "uncategorized"; // NEW
+            if (!grouped.has(category)) grouped.set(category, []); // NEW
+            grouped.get(category).push(p); // NEW
+        }); // NEW
+        return Array.from(grouped.keys()).sort(compareCatalogCategories).map(function (category) { return { category, parts: grouped.get(category) }; }); // NEW
+    } // NEW
+
+    function sortConnectionComboboxParts(parts) { // NEW
+        return (parts || []).map(normalizeCatalogPart).filter(Boolean).sort(function (a, b) { // NEW
+            const ka = catalogPartSortKey(a); // NEW
+            const kb = catalogPartSortKey(b); // NEW
+            return compareCatalogCategories(ka.category, kb.category) || compareNominalSize(ka.size, kb.size) || ka.name.localeCompare(kb.name); // NEW
+        }); // NEW
+    } // NEW
+
+    function compareCatalogCategories(a, b) { // NEW
+        const indexA = PART_CATEGORIES.indexOf(a); // NEW
+        const indexB = PART_CATEGORIES.indexOf(b); // NEW
+        const sortA = indexA < 0 ? PART_CATEGORIES.length : indexA; // NEW
+        const sortB = indexB < 0 ? PART_CATEGORIES.length : indexB; // NEW
+        return (sortA - sortB) || String(a || "").localeCompare(String(b || "")); // NEW
+    } // NEW
+
+    function catalogCategoryLabel(category) { // NEW
+        return String(category || "uncategorized").replace(/_/g, " "); // NEW
+    } // NEW
+
+    function normalizeSearchText(value) { // NEW
+        return String(value || "").trim().toLowerCase(); // NEW
+    } // NEW
+
+    function connectionComboboxPartMatches(part, query) { // NEW
+        if (!query) return true; // NEW
+        return connectionComboboxPartSearchText(part).indexOf(query) >= 0; // NEW
+    } // NEW
+
+    function connectionComboboxPartSearchText(part) { // NEW
+        const p = normalizeCatalogPart(part); // NEW
+        return normalizeSearchText([ // NEW
+            p && p.id, // NEW
+            p && p.name, // NEW
+            p && p.category, // NEW
+            catalogCategoryLabel(p && p.category), // NEW
+            catalogPartSizeLabel(p), // NEW
+            catalogPartConnectorTypeLabel(p) // NEW
+        ].filter(Boolean).join(" ")); // NEW
+    } // NEW
+
+    function connectionComboboxPartDetail(part) { // NEW
+        return [catalogCategoryLabel(part.category), catalogPartSizeLabel(part), catalogPartConnectorTypeLabel(part)].filter(Boolean).join(" | "); // NEW
+    } // NEW
+
+    function connectionComboboxCategoryKey(groupId, category) { // NEW
+        return String(groupId || "group") + ":" + String(category || "uncategorized"); // NEW
+    } // NEW
+
+    function connectionComboboxCollapsedState() { // NEW
+        const storage = connectionComboboxStorage(); // NEW
+        if (!storage) return {}; // NEW
+        try { // NEW
+            const parsed = JSON.parse(storage.getItem(CONNECTION_COMBOBOX_COLLAPSED_STORAGE_KEY) || "{}"); // NEW
+            return parsed && typeof parsed === "object" ? parsed : {}; // NEW
+        } catch (_) { return {}; } // NEW
+    } // NEW
+
+    function connectionComboboxCategoryCollapsed(key, defaultCollapsed) { // NEW
+        const state = connectionComboboxCollapsedState(); // NEW
+        return Object.prototype.hasOwnProperty.call(state, key) ? state[key] === true : !!defaultCollapsed; // NEW
+    } // NEW
+
+    function connectionComboboxSetCategoryCollapsed(key, collapsed) { // NEW
+        const storage = connectionComboboxStorage(); // NEW
+        if (!storage) return; // NEW
+        const state = connectionComboboxCollapsedState(); // NEW
+        state[key] = collapsed === true; // NEW
+        try { storage.setItem(CONNECTION_COMBOBOX_COLLAPSED_STORAGE_KEY, JSON.stringify(state)); } catch (_) {} // NEW
+    } // NEW
+
+    function connectionComboboxStorage() { // NEW
+        try { // NEW
+            return typeof window !== "undefined" && window.localStorage ? window.localStorage : null; // NEW
+        } catch (_) { return null; } // NEW
     } // NEW
 
     function connectionRowCurrentLabel(moduleCell, row) { // NEW
@@ -4412,8 +5179,146 @@ Draw.loadPlugin(function (ui) {
         const disconnected = runIrrigationEdit("disconnectSelectedConnections", function () { let count = 0; model.beginUpdate && model.beginUpdate(); try { count = disconnectBoundaries(session.moduleCell, selected); } finally { model.endUpdate && model.endUpdate(); } scheduleHudGraphStateSync(session.moduleCell); return count; }); // CHANGE
         session.selectedPorts = []; // NEW
         session.selectedBoundaries = []; // NEW
+        session.focusedConnectionBoundary = null; // NEW
         session.message = disconnected ? "Disconnected " + disconnected + (disconnected === 1 ? " connection." : " connections.") : "No selected connections were occupied."; // CHANGE
         renderIrrigationMode(session); // NEW
+    } // NEW
+
+    function resolveInlineConnectionAction(session) { // NEW
+        const ports = selectedValidPorts(session); // NEW
+        const selectedBoundaries = selectedValidBoundaries(session); // NEW
+        const anchorPort = normalizePort(session && session.inlineActionAnchorPort || {}); // NEW
+        const anchorBoundary = anchorPort.cellId ? boundaryForPort(session.moduleCell, anchorPort) : null; // NEW
+        const selectedKeys = selectedBoundaries.map(boundaryKey); // NEW
+        const disconnectBoundary = anchorBoundary && selectedKeys.indexOf(boundaryKey(anchorBoundary)) >= 0 ? anchorBoundary : null; // NEW
+        if (disconnectBoundary && boundaryExists(session.moduleCell, disconnectBoundary)) return { type: "disconnect", label: "Disconnect", title: "Disconnect selected irrigation connection", boundary: disconnectBoundary, boundaries: [disconnectBoundary], anchorPort }; // NEW
+        if (ports.length === 2 && selectedBoundaries.length === 0) { // NEW
+            const free = ports.filter(function (port) { return isPortFree(session.moduleCell, port); }); // NEW
+            const ordered = free.length === 2 ? orderedConnectionPorts(free) : null; // NEW
+            const direct = ordered ? validatePortConnection(session.moduleCell, ordered.source, ordered.target) : { ok: false }; // NEW
+            if (direct.ok) return { type: "connect", label: "Connect", title: "Connect selected irrigation ports", source: ordered.source, target: ordered.target, anchorPort: ports[ports.length - 1] }; // NEW
+        } // NEW
+        return null; // NEW
+    } // NEW
+
+    function renderInlineConnectionAction(session, action) { // NEW
+        if (!action) return; // NEW
+        const anchor = inlineConnectionActionAnchorNode(session, action) || inlineConnectionActionAnchorBounds(session, action); // CHANGE
+        if (!anchor) return; // NEW
+        const btn = button(action.label, function (ev) { // NEW
+            if (ev && ev.stopPropagation) ev.stopPropagation(); // NEW
+            if (action.type === "connect") connectSelectedPorts(session, action.source, action.target); // NEW
+            else disconnectSelectedConnections(session, action.boundaries); // NEW
+        }); // NEW
+        btn.className = "trellis-irrigation-inline-connection-action trellis-irrigation-inline-connection-action-" + action.type; // NEW
+        btn.title = action.title; // NEW
+        btn.style.cssText = inlineConnectionActionStyle(action.type); // NEW
+        shieldHudEvents(btn); // NEW
+        const layer = appendIrrigationControlNode(btn); // CHANGE
+        if (!layer) return; // NEW
+        positionInlineConnectionAction(btn, anchor, layer.parentNode || graph.container); // CHANGE
+        session.inlineActionNodes.push(btn); // NEW
+    } // NEW
+
+    function inlineConnectionActionStyle(type) { // NEW
+        const disconnect = type === "disconnect"; // NEW
+        const border = disconnect ? "#b91c1c" : "#15803d"; // NEW
+        const background = disconnect ? "#fee2e2" : "#dcfce7"; // NEW
+        const color = disconnect ? "#7f1d1d" : "#14532d"; // NEW
+        return "position:absolute;z-index:" + GRAPH_OVERLAY_Z.CONTROL_TOP + ";padding:5px 8px;border:1px solid " + border + ";border-radius:4px;background:" + background + ";color:" + color + ";box-shadow:0 2px 8px rgba(0,0,0,.20);font:bold 12px Arial,sans-serif;cursor:pointer;white-space:nowrap;box-sizing:border-box;max-width:160px;pointer-events:auto;"; // CHANGE
+    } // NEW
+
+    function inlineConnectionActionAnchorBounds(session, action) { // NEW
+        if (action.type === "connect") return portBadgeBounds(session, action.anchorPort); // NEW
+        return boundaryActionAnchorBounds(session, action.boundary); // NEW
+    } // NEW
+
+    function inlineConnectionActionAnchorNode(session, action) { // NEW
+        if (!session || !action) return null; // NEW
+        if (action.type === "connect") return portBadgeNodeForPort(session, action.anchorPort); // NEW
+        const anchorPort = normalizePort(session.inlineActionAnchorPort || {}); // NEW
+        if (anchorPort.cellId) return portBadgeNodeForPort(session, anchorPort); // NEW
+        return null; // NEW
+    } // NEW
+
+    function portBadgeNodeForPort(session, port) { // NEW
+        const normalized = normalizePort(port); // NEW
+        if (!normalized.cellId || !session.portBadgeNodeByKey) return null; // NEW
+        return session.portBadgeNodeByKey.get(portKey(normalized)) || null; // NEW
+    } // NEW
+
+    function boundaryActionAnchorBounds(session, boundary) { // NEW
+        const normalized = normalizeBoundary(boundary); // NEW
+        const anchorPort = normalizePort(session.inlineActionAnchorPort || {}); // NEW
+        if (anchorPort.cellId && boundaryKey(boundaryForPort(session.moduleCell, anchorPort)) === boundaryKey(normalized)) return portBadgeBounds(session, anchorPort); // NEW
+        if (normalized.type === "internal") { // NEW
+            const upstream = findCellById(session.moduleCell, normalized.upstreamId); // NEW
+            const downstream = findCellById(session.moduleCell, normalized.downstreamId); // NEW
+            return upstream && downstream ? internalConnectionBadgeBounds(upstream, downstream) : null; // NEW
+        } // NEW
+        const edge = normalized.type === "edge" ? findCellById(session.moduleCell, normalized.edgeId) : null; // NEW
+        const sourcePort = edge ? portForConnectionEdge(edge, true) : null; // NEW
+        const targetPort = edge ? portForConnectionEdge(edge, false) : null; // NEW
+        return portBadgeBounds(session, sourcePort) || portBadgeBounds(session, targetPort); // NEW
+    } // NEW
+
+    function portForConnectionEdge(edge, source) { // NEW
+        const terminal = source ? edge && edge.source : edge && edge.target; // NEW
+        if (!terminal) return null; // NEW
+        return { cellId: getCellId(terminal), role: source ? "output" : "input", index: finiteNumber(getCellAttr(edge, source ? ATTRS.EDGE_SOURCE_PORT : ATTRS.EDGE_TARGET_PORT, 0), 0) }; // NEW
+    } // NEW
+
+    function portBadgeBounds(session, port) { // NEW
+        const normalized = normalizePort(port); // NEW
+        const cell = portCell(session.moduleCell, normalized); // NEW
+        if (!cell) return null; // NEW
+        const state = cellState(cell); // NEW
+        const total = Math.max(1, Math.floor(finiteNumber(portCapacityForCell(session.moduleCell, cell, normalized.role), 1))); // NEW
+        const slot = (normalized.index + 1) / (total + 1); // NEW
+        return { x: state.x + state.width * slot - PORT_BADGE_SIZE / 2, y: normalized.role === "input" ? state.y - PORT_BADGE_SIZE - 4 : state.y + state.height + 4, width: PORT_BADGE_SIZE, height: PORT_BADGE_SIZE }; // NEW
+    } // NEW
+
+    function internalConnectionBadgeBounds(upstream, downstream) { // NEW
+        const up = cellState(upstream); // NEW
+        const down = cellState(downstream); // NEW
+        return { x: Math.min(up.x, down.x) + Math.max(up.width, down.width) / 2 - PORT_BADGE_SIZE / 2, y: (up.y + up.height + down.y) / 2 - PORT_BADGE_SIZE / 2, width: PORT_BADGE_SIZE, height: PORT_BADGE_SIZE }; // NEW
+    } // NEW
+
+    function positionInlineConnectionAction(node, anchor, host) { // CHANGE
+        const hostNode = host && host.namespaceURI !== "http://www.w3.org/2000/svg" ? host : graph.container; // NEW
+        const bounds = inlineActionAnchorBoundsInHost(anchor, hostNode); // NEW
+        if (!bounds) return; // NEW
+        const gap = 6; // NEW
+        const width = node.offsetWidth || node.clientWidth || 96; // NEW
+        const height = node.offsetHeight || node.clientHeight || 28; // NEW
+        const scrollLeft = finiteNumber(hostNode && hostNode.scrollLeft, 0); // NEW
+        const scrollTop = finiteNumber(hostNode && hostNode.scrollTop, 0); // NEW
+        const viewportWidth = hostNode && hostNode.clientWidth ? hostNode.clientWidth : graph.container && graph.container.clientWidth ? graph.container.clientWidth : 10000; // CHANGE
+        const viewportHeight = hostNode && hostNode.clientHeight ? hostNode.clientHeight : graph.container && graph.container.clientHeight ? graph.container.clientHeight : 10000; // CHANGE
+        const minLeft = scrollLeft + gap; // NEW
+        const minTop = scrollTop + gap; // NEW
+        const maxLeft = scrollLeft + viewportWidth - width - gap; // NEW
+        const maxTop = scrollTop + viewportHeight - height - gap; // NEW
+        let left = finiteNumber(bounds.x, 0) + finiteNumber(bounds.width, PORT_BADGE_SIZE) + gap; // CHANGE
+        if (left + width > scrollLeft + viewportWidth - gap) left = finiteNumber(bounds.x, 0) - width - gap; // CHANGE
+        const top = finiteNumber(bounds.y, 0) + finiteNumber(bounds.height, PORT_BADGE_SIZE) / 2 - height / 2; // CHANGE
+        node.style.left = Math.round(Math.max(minLeft, Math.min(left, maxLeft))) + "px"; // CHANGE
+        node.style.top = Math.round(Math.max(minTop, Math.min(top, maxTop))) + "px"; // CHANGE
+    } // NEW
+
+    function inlineActionAnchorBoundsInHost(anchor, host) { // NEW
+        if (!anchor) return null; // NEW
+        if (anchor.getBoundingClientRect && host && host.getBoundingClientRect) { // NEW
+            const rect = anchor.getBoundingClientRect(); // NEW
+            const hostRect = host.getBoundingClientRect(); // NEW
+            return { // NEW
+                x: finiteNumber(rect.left, 0) - finiteNumber(hostRect.left, 0) + finiteNumber(host.scrollLeft, 0), // NEW
+                y: finiteNumber(rect.top, 0) - finiteNumber(hostRect.top, 0) + finiteNumber(host.scrollTop, 0), // NEW
+                width: finiteNumber(rect.width, finiteNumber(rect.right, 0) - finiteNumber(rect.left, 0)), // NEW
+                height: finiteNumber(rect.height, finiteNumber(rect.bottom, 0) - finiteNumber(rect.top, 0)) // NEW
+            }; // NEW
+        } // NEW
+        return anchor.x !== undefined || anchor.y !== undefined ? anchor : null; // NEW
     } // NEW
 
     function renderBridgeSuggestions(session, hud, orderedPorts) { // NEW
@@ -4569,69 +5474,114 @@ Draw.loadPlugin(function (ui) {
         form.style.cssText = "display:grid;grid-template-columns:minmax(0,1fr);gap:6px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;"; // CHANGE
         const templateSelect = addSelectField(form, "Template", BED_TEMPLATES.map(function (entry) { return entry.id; }), savedTemplateId); // CHANGE
         const orientation = addSelectField(form, "Row orientation", BED_TEMPLATE_ROW_ORIENTATIONS, initialRowOrientation); // NEW
-        const rows = addTextField(form, "Rows", initialRows); // CHANGE
-        const spacing = addTextField(form, "Emitter in", saved.spacing && saved.spacing.emitterInches || "12"); // NEW
+        const rows = addNumericField(form, "Rows", initialRows, { min: 1, step: 1, inputMode: "numeric" }); // CHANGE
+        const spacing = addNumericField(form, "Emitter in", saved.spacing && saved.spacing.emitterInches || "12", { min: 1, step: 1, inputMode: "decimal" }); // CHANGE
         const inletPart = addPartSelectField(form, "Inlet part", bedRolePartOptions(session.moduleCell, "input", roleParts.inletPartId, savedTemplateId, initialBom.anchorPartId), roleParts.inletPartId); // CHANGE
         const outletPart = addPartSelectField(form, "Outlet part", bedRolePartOptions(session.moduleCell, "output", roleParts.outletPartId, savedTemplateId, initialBom.anchorPartId), roleParts.outletPartId); // CHANGE
         const summary = hudText(""); // NEW
         summary.className = "trellis-irrigation-bed-template-summary"; // NEW
-        function currentBom() { // NEW
-            return computeBedTemplateBom(readCatalog(session.moduleCell), getGeometry(bedAssembly) || getGeometry(bedCell) || {}, templateSelect.value, finiteNumber(rows.value, bedTemplateById(templateSelect.value).defaultRows), orientation.value); // NEW
+        let draftDirty = false; // NEW
+        function currentDraft() { // NEW
+            const templateDef = bedTemplateById(templateSelect.value); // NEW
+            const rowCount = Math.max(1, Math.floor(finiteNumber(rows.value, templateDef.defaultRows))); // CHANGE
+            const catalog = readCatalog(session.moduleCell); // NEW
+            const bom = computeBedTemplateBom(catalog, getGeometry(bedAssembly) || getGeometry(bedCell) || {}, templateSelect.value, rowCount, orientation.value); // CHANGE
+            return { // NEW
+                catalog, // CHANGE
+                bom, // NEW
+                templateId: templateSelect.value, // NEW
+                inletPartId: String(inletPart.value || "").trim(), // NEW
+                outletPartId: String(outletPart.value || "").trim(), // NEW
+                emitterInches: finiteNumber(spacing.value, 12) // NEW
+            }; // NEW
         } // NEW
         function bomSummaryText(bom) { // NEW
             return "Rows " + bom.rowCount + " x " + bom.rowLengthMeters.toFixed(2) + " m = " + bom.totalRowMeters.toFixed(2) + " row m\nDemand " + bom.demand.flowGpm.toFixed(2) + " gpm, " + bom.demand.operatingPressurePsi.toFixed(0) + " PSI"; // CHANGE
         } // NEW
         function refreshTemplatePreview(clearInvalidSelections) { // NEW
-            const bom = currentBom(); // NEW
+            const draft = currentDraft(); // NEW
+            const bom = draft.bom; // NEW
             const inletOptions = bedRolePartOptions(session.moduleCell, "input", inletPart.value, templateSelect.value, bom.anchorPartId, !clearInvalidSelections); // CHANGE
             const outletOptions = bedRolePartOptions(session.moduleCell, "output", outletPart.value, templateSelect.value, bom.anchorPartId, !clearInvalidSelections); // CHANGE
             setPartSelectOptions(inletPart, inletOptions, inletOptions.some(function (part) { return part.id === inletPart.value; }) ? inletPart.value : ""); // NEW
             setPartSelectOptions(outletPart, outletOptions, outletOptions.some(function (part) { return part.id === outletPart.value; }) ? outletPart.value : ""); // NEW
             summary.textContent = bomSummaryText(bom); // NEW
             summary.style.color = bom.missingPartIds.length ? "#8a4b00" : "#333"; // NEW
+            return draft; // NEW
+        } // NEW
+        function validateBedTemplateDraft(draft) { // NEW
+            const catalog = draft.catalog; // NEW
+            const bom = draft.bom; // NEW
+            const anchorPart = partById(catalog, bom.anchorPartId); // NEW
+            if (bom.missingPartIds.length) return { ok: false, message: "Cannot apply template. Missing required parts: " + bom.missingPartIds.join(", ") + "." }; // NEW
+            if (!anchorPart) return { ok: false, message: "Cannot apply template. No compatible row-line anchor part was found." }; // NEW
+            if (!draft.inletPartId) return { ok: false, message: "Select an inlet part before applying the bed layout." }; // NEW
+            if (!boundaryMatchForAnchor(partById(catalog, draft.inletPartId), anchorPart)) return { ok: false, message: "Selected inlet part is not compatible with the template anchor." }; // NEW
+            if (draft.outletPartId && !boundaryMatchForAnchor(partById(catalog, draft.outletPartId), anchorPart)) return { ok: false, message: "Selected outlet part is not compatible with the template anchor." }; // NEW
+            return { ok: true, message: "" }; // NEW
+        } // NEW
+        function commitBedTemplateDraft() { // NEW
+            if (!draftDirty) return false; // NEW
+            const draft = currentDraft(); // NEW
+            const validation = validateBedTemplateDraft(draft); // NEW
+            if (!validation.ok) { session.message = validation.message; renderIrrigationMode(session); return false; } // NEW
+            const bom = draft.bom; // NEW
+            rows.value = String(bom.rowCount); // NEW
+            spacing.value = String(draft.emitterInches); // NEW
+            runIrrigationEdit("applyBedLayout", function () { // CHANGE
+                writeBedPortConfig(bedCell, bedPortConfigFromRoleParts(draft.catalog, ports, draft.inletPartId, draft.outletPartId, bom.anchorPartId)); // CHANGE
+                const path = firstAssemblyPathForBedAssembly(session.moduleCell, bedAssembly) || { id: "assembly_bed_" + sanitizeId(getCellId(bedCell)), targetBedId: getCellId(bedCell) || "" }; // CHANGE
+                commitBedTemplate(session.moduleCell, path.id, bedCell, { // NEW
+                    templateId: draft.templateId, // NEW
+                    templateModel: BED_TEMPLATE_MODEL_BOM, // NEW
+                    irrigationType: bom.templateDef.lineKind, // CHANGE
+                    inletPartId: draft.inletPartId, // NEW
+                    outletPartId: draft.outletPartId, // NEW
+                    partIds: bedTemplatePartIds(draft.inletPartId, draft.outletPartId), // CHANGE
+                    rowOrientation: bom.rowOrientation, // NEW
+                    rowLengthMeters: bom.rowLengthMeters, // NEW
+                    totalRowMeters: bom.totalRowMeters, // NEW
+                    requiredParts: bom.requiredParts, // NEW
+                    anchorPartId: bom.anchorPartId, // NEW
+                    demand: bom.demand, // NEW
+                    spacing: { rows: bom.rowCount, emitterInches: draft.emitterInches } // CHANGE
+                }); // NEW
+                scheduleHudGraphStateSync(session.moduleCell); // CHANGE
+            }); // NEW
+            draftDirty = false; // NEW
+            session.message = "Bed layout updated."; // NEW
+            renderIrrigationMode(session); // NEW
+            return true; // NEW
+        } // NEW
+        function markDraftAndRefresh(clearInvalidSelections) { // NEW
+            draftDirty = true; // NEW
+            refreshTemplatePreview(clearInvalidSelections); // NEW
+        } // NEW
+        function commitChangedSelect(clearInvalidSelections) { // NEW
+            markDraftAndRefresh(clearInvalidSelections); // NEW
+            commitBedTemplateDraft(); // NEW
+        } // NEW
+        function commitTextFieldOnEnter(ev) { // NEW
+            if (!ev || ev.key !== "Enter") return; // NEW
+            if (ev.preventDefault) ev.preventDefault(); // NEW
+            draftDirty = true; // NEW
+            refreshTemplatePreview(false); // NEW
+            commitBedTemplateDraft(); // NEW
         } // NEW
         templateSelect.addEventListener("change", function () { // NEW
             orientation.value = normalizeBedRowOrientation("", bedTemplateById(templateSelect.value)); // NEW
             rows.value = bedTemplateById(templateSelect.value).defaultRows || 1; // NEW
-            refreshTemplatePreview(true); // CHANGE
+            commitChangedSelect(true); // CHANGE
         }); // NEW
-        orientation.addEventListener("change", function () { refreshTemplatePreview(false); }); // NEW
-        rows.addEventListener("input", function () { refreshTemplatePreview(false); }); // NEW
-        const apply = button("Apply Bed Layout", function () { // NEW
-            const catalog = readCatalog(session.moduleCell); // NEW
-            const bom = currentBom(); // NEW
-            const nextInletPartId = inletPart.value.trim(); // NEW
-            const nextOutletPartId = outletPart.value.trim(); // NEW
-            const anchorPart = partById(catalog, bom.anchorPartId); // NEW
-            if (bom.missingPartIds.length) { session.message = "Cannot apply template. Missing required parts: " + bom.missingPartIds.join(", ") + "."; renderIrrigationMode(session); return; } // NEW
-            if (!anchorPart) { session.message = "Cannot apply template. No compatible row-line anchor part was found."; renderIrrigationMode(session); return; } // NEW
-            if (!nextInletPartId) { session.message = "Select an inlet part before applying the bed layout."; renderIrrigationMode(session); return; } // NEW
-            if (!boundaryMatchForAnchor(partById(catalog, nextInletPartId), anchorPart)) { session.message = "Selected inlet part is not compatible with the template anchor."; renderIrrigationMode(session); return; } // NEW
-            if (nextOutletPartId && !boundaryMatchForAnchor(partById(catalog, nextOutletPartId), anchorPart)) { session.message = "Selected outlet part is not compatible with the template anchor."; renderIrrigationMode(session); return; } // NEW
-            runIrrigationEdit("applyBedLayout", function () { writeBedPortConfig(bedCell, bedPortConfigFromRoleParts(catalog, ports, nextInletPartId, nextOutletPartId, bom.anchorPartId)); // CHANGE
-            const path = firstAssemblyPathForBedAssembly(session.moduleCell, bedAssembly) || { id: "assembly_bed_" + sanitizeId(getCellId(bedCell)), targetBedId: getCellId(bedCell) || "" }; // CHANGE
-            commitBedTemplate(session.moduleCell, path.id, bedCell, { // NEW
-                templateId: templateSelect.value, // NEW
-                templateModel: BED_TEMPLATE_MODEL_BOM, // NEW
-                irrigationType: bom.templateDef.lineKind, // CHANGE
-                inletPartId: nextInletPartId, // NEW
-                outletPartId: nextOutletPartId, // NEW
-                partIds: bedTemplatePartIds(nextInletPartId, nextOutletPartId), // CHANGE
-                rowOrientation: bom.rowOrientation, // NEW
-                rowLengthMeters: bom.rowLengthMeters, // NEW
-                totalRowMeters: bom.totalRowMeters, // NEW
-                requiredParts: bom.requiredParts, // NEW
-                anchorPartId: bom.anchorPartId, // NEW
-                demand: bom.demand, // NEW
-                spacing: { rows: bom.rowCount, emitterInches: finiteNumber(spacing.value, 12) } // CHANGE
-            }); // NEW
-            scheduleHudGraphStateSync(session.moduleCell); // CHANGE
-            }); // NEW
-            session.message = "Bed layout updated."; // NEW
-            renderIrrigationMode(session); // NEW
-        }); // NEW
-        apply.style.cssText = "width:100%;min-width:0;max-width:100%;box-sizing:border-box;white-space:normal;overflow-wrap:anywhere;"; // CHANGE
-        form.appendChild(apply); // NEW
+        orientation.addEventListener("change", function () { commitChangedSelect(false); }); // CHANGE
+        inletPart.addEventListener("change", function () { commitChangedSelect(false); }); // NEW
+        outletPart.addEventListener("change", function () { commitChangedSelect(false); }); // NEW
+        rows.addEventListener("input", function () { markDraftAndRefresh(false); }); // CHANGE
+        spacing.addEventListener("input", function () { markDraftAndRefresh(false); }); // NEW
+        rows.addEventListener("blur", commitBedTemplateDraft); // NEW
+        spacing.addEventListener("blur", commitBedTemplateDraft); // NEW
+        rows.addEventListener("keydown", commitTextFieldOnEnter); // NEW
+        spacing.addEventListener("keydown", commitTextFieldOnEnter); // NEW
         templateSection.appendChild(form); // NEW
         summary.style.overflowWrap = "anywhere"; // NEW
         summary.style.whiteSpace = "pre-line"; // NEW
@@ -4683,14 +5633,15 @@ Draw.loadPlugin(function (ui) {
             if (ev && ev.stopPropagation) ev.stopPropagation(); // NEW
             const boundary = boundaryForPort(session.moduleCell, port); // NEW
             const bedPort = isAssembly(cell) && assemblyType(cell) === "bed"; // NEW
-            if (boundary) { toggleSelectedPortBoundary(session, boundary); if (bedPort) session.partPickerVisible = false; } // CHANGE
-            else { toggleSelectedPort(session, port); if (bedPort) session.partPickerVisible = (session.selectedPorts || []).map(portKey).indexOf(portKey(port)) >= 0 && isPortFree(session.moduleCell, port); } // CHANGE
+            if (boundary) { session.inlineActionAnchorPort = normalizePort(port); session.focusedConnectionBoundary = boundary; toggleSelectedPortBoundary(session, boundary); if (bedPort) session.partPickerVisible = false; } // CHANGE
+            else { session.inlineActionAnchorPort = null; session.focusedConnectionBoundary = null; toggleSelectedPort(session, port); if (bedPort) session.partPickerVisible = (session.selectedPorts || []).map(portKey).indexOf(portKey(port)) >= 0 && isPortFree(session.moduleCell, port); } // CHANGE
             session.bridgePorts = null; // NEW
             selectCell(findAssemblyAncestor(cell) || cell, false); // NEW
             renderIrrigationMode(session); // NEW
         }); // NEW
         appendOverlayNode(badge); // NEW
         session.portBadges.push(badge); // NEW
+        if (session.portBadgeNodeByKey) session.portBadgeNodeByKey.set(portKey(port), badge); // NEW
     } // NEW
 
     function portBadgeVisualState(session, port) { // NEW
@@ -4762,6 +5713,8 @@ Draw.loadPlugin(function (ui) {
             positionInternalConnectionBadge(badge, entry.upstream, entry.downstream); // NEW
             badge.addEventListener("click", function (ev) { // NEW
                 if (ev && ev.stopPropagation) ev.stopPropagation(); // NEW
+                session.inlineActionAnchorPort = null; // NEW
+                session.focusedConnectionBoundary = selected ? null : entry.boundary; // NEW
                 toggleSelectedBoundary(session, entry.boundary); // NEW
                 session.bridgePorts = null; // NEW
                 selectCell(entry.assembly, false); // NEW
@@ -5511,10 +6464,35 @@ Draw.loadPlugin(function (ui) {
         else irrigationDebug("appendOverlayNode:no-host", { nodeClass: node && node.className }); // NEW
     } // NEW
 
+    function appendIrrigationControlNode(node) { // NEW
+        const host = ensureIrrigationControlLayer(); // NEW
+        if (host) { host.appendChild(node); return host; } // CHANGE
+        else irrigationDebug("appendIrrigationControlNode:no-host", { nodeClass: node && node.className }); // NEW
+        return null; // NEW
+    } // NEW
+
     function overlayHost() { // NEW
         const pane = graph.view && graph.view.overlayPane ? graph.view.overlayPane : null; // NEW
         if (pane && pane.namespaceURI !== "http://www.w3.org/2000/svg") return pane; // CHANGE
         return graph.container || pane; // CHANGE
+    } // NEW
+
+    function ensureIrrigationControlLayer() { // NEW
+        const pane = graph.view && graph.view.overlayPane ? graph.view.overlayPane : null; // NEW
+        const paneIsSvg = !!(pane && pane.namespaceURI === "http://www.w3.org/2000/svg"); // NEW
+        const baseHost = graph.container || (pane && !paneIsSvg ? pane : null); // CHANGE
+        if (!baseHost || baseHost.namespaceURI === "http://www.w3.org/2000/svg") return null; // NEW
+        const style = typeof window !== "undefined" && window.getComputedStyle ? window.getComputedStyle(baseHost) : null; // NEW
+        if (style && style.position === "static") baseHost.style.position = "relative"; // NEW
+        let layer = graph.__trellisIrrigationControlLayer && graph.__trellisIrrigationControlLayer.parentNode === baseHost ? graph.__trellisIrrigationControlLayer : null; // NEW
+        if (!layer && typeof document !== "undefined" && document.createElement) { // NEW
+            layer = document.createElement("div"); // NEW
+            layer.className = "trellis-irrigation-control-layer"; // NEW
+            layer.style.cssText = "position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:" + GRAPH_OVERLAY_Z.CONTROL + ";"; // NEW
+            baseHost.appendChild(layer); // NEW
+            graph.__trellisIrrigationControlLayer = layer; // NEW
+        } // NEW
+        return layer; // NEW
     } // NEW
 
     function removeHudNode(node) { // NEW

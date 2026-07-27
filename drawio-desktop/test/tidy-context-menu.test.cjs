@@ -201,5 +201,10 @@ test("tidy menu still suppresses Trellis tooltips without suppressing regular ce
 
     assert.equal(graph.getTooltipForCell(new TestCell({ garden_bed: "1" })), ""); // NEW
     assert.equal(graph.getTooltipForCell(new TestCell({ lane_key: "TODO" })), ""); // NEW
+    assert.equal(graph.getTooltipForCell(new TestCell({ irrigation_generated: "1" })), ""); // CHANGE
+    assert.equal(graph.getTooltipForCell(new TestCell({ irrigation_assembly: "1" })), ""); // CHANGE
+    assert.equal(graph.getTooltipForCell(new TestCell({ irrigation_pipe_edge: "1" })), ""); // CHANGE
+    assert.equal(graph.getTooltipForCell(new TestCell({ irrigation_direct_link_edge: "1" })), ""); // CHANGE
+    assert.equal(graph.getTooltipForCell(new TestCell({ irrigation_component: "1" })), ""); // CHANGE
     assert.equal(graph.getTooltipForCell(new TestCell()), "tooltip"); // NEW
 }); // NEW

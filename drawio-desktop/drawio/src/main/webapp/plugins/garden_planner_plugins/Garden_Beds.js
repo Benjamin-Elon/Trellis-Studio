@@ -13,6 +13,13 @@ Draw.loadPlugin(function (ui) { // NEW
     if (!model) return; // NEW
     const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // CHANGE
     const TRELLIS_DIALOG_Z = 2000000000; // NEW
+    const BED_NAME_FALLBACK = "Garden Bed"; // ADDED
+    const OVERLAY_MIN_WIDTH = 190; // ADDED
+    const OVERLAY_PADDING_X = 16; // ADDED
+    const OVERLAY_ROW_GAP = 6; // ADDED
+    const OVERLAY_MIN_LABEL_WIDTH = 72; // ADDED
+    const OVERLAY_AVG_CHAR_WIDTH = 7; // ADDED
+    const OVERLAY_CONTROL_CHROME_WIDTH = 24; // ADDED
 
     const ATTRS = { // NEW
         BED_JSON: "bed_conditions_json", // CHANGE
@@ -142,6 +149,18 @@ Draw.loadPlugin(function (ui) { // NEW
         return value == null ? (fallback || "") : String(value); // NEW
     } // NEW
 
+    function normalizeBedName(value) { // ADDED
+        const trimmed = String(value == null ? "" : value).trim(); // ADDED
+        return trimmed || BED_NAME_FALLBACK; // ADDED
+    } // ADDED
+
+    function getBedName(cell) { // ADDED
+        if (!cell) return BED_NAME_FALLBACK; // ADDED
+        const value = cell.value; // ADDED
+        if (value && value.nodeType === 1) return normalizeBedName(value.getAttribute("label") || value.getAttribute("name")); // ADDED
+        return normalizeBedName(value); // ADDED
+    } // ADDED
+
     function createXmlDocument() { // NEW
         if (typeof mxUtils !== "undefined" && mxUtils.createXmlDocument) return mxUtils.createXmlDocument(); // NEW
         return document.implementation.createDocument("", "", null); // NEW
@@ -166,6 +185,15 @@ Draw.loadPlugin(function (ui) { // NEW
         }); // NEW
         if (model.setValue) model.setValue(cell, node); // NEW
     } // NEW
+
+    function writeBedName(bedCell, name) { // ADDED
+        if (!isGardenBed(bedCell)) return BED_NAME_FALLBACK; // ADDED
+        const next = normalizeBedName(name); // ADDED
+        if (getBedName(bedCell) === next) return next; // ADDED
+        setCellAttrs(bedCell, { label: next }); // ADDED
+        refreshSelectedBedOverlaysSoon(); // ADDED
+        return next; // ADDED
+    } // ADDED
 
     function nowIso() { // NEW
         return new Date().toISOString(); // NEW
@@ -748,6 +776,45 @@ Draw.loadPlugin(function (ui) { // NEW
         return rows; // NEW
     } // NEW
 
+    function stopGraphDomEvent(evt) { // ADDED
+        if (evt && evt.stopPropagation) evt.stopPropagation(); // ADDED
+    } // ADDED
+
+    function stopAndPreventGraphDomEvent(evt) { // ADDED
+        stopGraphDomEvent(evt); // ADDED
+        if (evt && evt.preventDefault) evt.preventDefault(); // ADDED
+    } // ADDED
+
+    function estimateOverlayTextWidth(value) { // ADDED
+        const lines = String(value == null ? "" : value).split(/\r?\n/); // ADDED
+        return lines.reduce(function (max, line) { return Math.max(max, line.length * OVERLAY_AVG_CHAR_WIDTH); }, 0); // ADDED
+    } // ADDED
+
+    function estimateSelectedBedOverlayLayout(rows) { // ADDED
+        let width = OVERLAY_MIN_WIDTH; // ADDED
+        let labelColumnWidth = OVERLAY_MIN_LABEL_WIDTH; // ADDED
+        const sourceRows = rows || []; // ADDED
+        function includeContentWidth(contentWidth) { width = Math.max(width, Math.ceil(OVERLAY_PADDING_X + contentWidth)); } // ADDED
+        includeContentWidth(estimateOverlayTextWidth("Set Bed Conditions") + OVERLAY_CONTROL_CHROME_WIDTH); // ADDED
+        if (!sourceRows.length) includeContentWidth(estimateOverlayTextWidth("No set conditions")); // ADDED
+        sourceRows.forEach(function (row) { // ADDED
+            if (row.type === "heading") { // ADDED
+                includeContentWidth(estimateOverlayTextWidth(row.label)); // ADDED
+                return; // ADDED
+            } // ADDED
+            if (row.type === "notes") { // ADDED
+                includeContentWidth(Math.max(estimateOverlayTextWidth(row.label), estimateOverlayTextWidth(row.value))); // ADDED
+                return; // ADDED
+            } // ADDED
+            labelColumnWidth = Math.max(labelColumnWidth, estimateOverlayTextWidth(row.label)); // ADDED
+        }); // ADDED
+        sourceRows.forEach(function (row) { // ADDED
+            if (row.type === "heading" || row.type === "notes") return; // ADDED
+            includeContentWidth(labelColumnWidth + OVERLAY_ROW_GAP + estimateOverlayTextWidth(row.value)); // ADDED
+        }); // ADDED
+        return { width: Math.ceil(width), labelColumnWidth: Math.ceil(labelColumnWidth) }; // ADDED
+    } // ADDED
+
     function createSelectedBedOverlay() { // NEW
         const div = document.createElement("div"); // NEW
         div.className = "trellis-bed-conditions-overlay"; // NEW
@@ -755,7 +822,7 @@ Draw.loadPlugin(function (ui) { // NEW
         div.style.pointerEvents = "auto"; // NEW
         div.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL); // CHANGE
         div.style.boxSizing = "border-box"; // NEW
-        div.style.width = "190px"; // NEW
+        div.style.minWidth = OVERLAY_MIN_WIDTH + "px"; // CHANGE
         div.style.padding = "8px"; // NEW
         div.style.borderRadius = "6px"; // NEW
         div.style.fontSize = "12px"; // NEW
@@ -767,6 +834,42 @@ Draw.loadPlugin(function (ui) { // NEW
         return div; // NEW
     } // NEW
 
+    function createBedNameInput(entry) { // ADDED
+        const initialName = getBedName(entry.cell); // ADDED
+        const input = document.createElement("input"); // ADDED
+        input.type = "text"; // ADDED
+        input.value = initialName; // ADDED
+        input.setAttribute("aria-label", "Bed name"); // ADDED
+        input.style.boxSizing = "border-box"; // ADDED
+        input.style.display = "block"; // ADDED
+        input.style.width = "100%"; // ADDED
+        input.style.minWidth = "0"; // ADDED
+        input.style.marginBottom = "6px"; // ADDED
+        input.style.fontWeight = "600"; // ADDED
+        input.style.border = "1px solid rgba(75, 85, 99, 0.35)"; // ADDED
+        input.style.borderRadius = "4px"; // ADDED
+        input.style.padding = "3px 5px"; // ADDED
+        input.style.fontSize = "12px"; // ADDED
+        input.style.lineHeight = "16px"; // ADDED
+        ["mousedown", "mouseup", "click", "dblclick", "pointerdown", "pointerup"].forEach(function (type) { // ADDED
+            input.addEventListener(type, stopGraphDomEvent); // ADDED
+        }); // ADDED
+        input.addEventListener("keydown", function (evt) { // ADDED
+            stopGraphDomEvent(evt); // ADDED
+            if (evt.key === "Enter") { // ADDED
+                input.value = writeBedName(entry.cell, input.value); // ADDED
+                if (input.blur) input.blur(); // ADDED
+                stopAndPreventGraphDomEvent(evt); // ADDED
+            } else if (evt.key === "Escape") { // ADDED
+                input.value = initialName; // ADDED
+                stopAndPreventGraphDomEvent(evt); // ADDED
+            } // ADDED
+        }); // ADDED
+        ["keypress", "keyup"].forEach(function (type) { input.addEventListener(type, stopGraphDomEvent); }); // ADDED
+        input.addEventListener("blur", function () { input.value = writeBedName(entry.cell, input.value); }); // ADDED
+        return input; // ADDED
+    } // ADDED
+
     function ensureOverlayContainer() { // NEW
         if (!graph.container) return; // NEW
         const style = window.getComputedStyle ? window.getComputedStyle(graph.container) : null; // NEW
@@ -775,11 +878,15 @@ Draw.loadPlugin(function (ui) { // NEW
 
     function renderSelectedBedOverlay(entry) { // NEW
         entry.div.innerHTML = ""; // NEW
+        const rows = buildOverlayRows(getDisplayBedConditions(entry.cell)); // CHANGE
+        const layout = estimateSelectedBedOverlayLayout(rows); // ADDED
+        entry.div.style.width = layout.width + "px"; // ADDED
+        entry.div.appendChild(createBedNameInput(entry)); // ADDED
         const button = mxUtils.button("Set Bed Conditions", function () { showConditionEditorDialog(entry.cell); }); // NEW
+        button.style.display = "block"; // ADDED
         button.style.width = "100%"; // NEW
         button.style.marginBottom = "6px"; // NEW
         entry.div.appendChild(button); // NEW
-        const rows = buildOverlayRows(getDisplayBedConditions(entry.cell)); // CHANGE
         if (!rows.length) { // NEW
             const empty = document.createElement("div"); // NEW
             empty.textContent = "No set conditions"; // NEW
@@ -820,25 +927,33 @@ Draw.loadPlugin(function (ui) { // NEW
             } // ADDED
             const line = document.createElement("div"); // NEW
             line.style.display = "grid"; // NEW
-            line.style.gridTemplateColumns = "72px 1fr"; // NEW
+            line.style.gridTemplateColumns = layout.labelColumnWidth + "px 1fr"; // CHANGE
             line.style.gap = "6px"; // NEW
             line.style.marginTop = "3px"; // NEW
             const label = document.createElement("span"); // NEW
             label.textContent = row.label; // NEW
             label.style.color = "#4b5563"; // NEW
+            label.style.whiteSpace = "nowrap"; // ADDED
             const value = document.createElement("span"); // NEW
             value.textContent = row.value; // NEW
             value.style.fontWeight = "600"; // NEW
+            value.style.whiteSpace = "nowrap"; // ADDED
             line.appendChild(label); // NEW
             line.appendChild(value); // NEW
             entry.div.appendChild(line); // NEW
         }); // NEW
     } // NEW
 
+    function selectedBedOverlayWidth(entry) { // ADDED
+        const styledWidth = Number.parseFloat(entry && entry.div && entry.div.style ? entry.div.style.width : ""); // ADDED
+        if (Number.isFinite(styledWidth) && styledWidth > 0) return styledWidth; // ADDED
+        return (entry && entry.div && entry.div.offsetWidth) || OVERLAY_MIN_WIDTH; // ADDED
+    } // ADDED
+
     function positionSelectedBedOverlay(entry) { // NEW
         const state = graph.view && graph.view.getState ? graph.view.getState(entry.cell) : null; // NEW
         if (!state) return false; // NEW
-        const width = 190; // NEW
+        const width = selectedBedOverlayWidth(entry); // CHANGE
         const gap = 8; // CHANGE
         const overlayHeight = entry.div.offsetHeight || 0; // CHANGE
         const left = Math.max(0, Math.round(state.x - width - gap)); // CHANGE
@@ -933,6 +1048,9 @@ Draw.loadPlugin(function (ui) { // NEW
             listConditionOptionGroups: listConditionOptionGroups, // NEW
             parseProfileRecord: parseProfileRecord, // NEW
             getDisplayBedConditions: getDisplayBedConditions, // CHANGE
+            getBedName: getBedName, // ADDED
+            writeBedName: writeBedName, // ADDED
+            estimateSelectedBedOverlayLayout: estimateSelectedBedOverlayLayout, // ADDED
             showConditionEditorDialog: showConditionEditorDialog, // NEW
             syncSelectedBedOverlays: syncSelectedBedOverlays, // NEW
             collectSelectedBeds: collectSelectedBeds // NEW

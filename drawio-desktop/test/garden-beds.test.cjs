@@ -173,6 +173,16 @@ function overlayText(overlays) { // NEW
     return overlays.map(overlay => overlay.textContent).join("\n"); // NEW
 } // NEW
 
+function getOverlayNameInput(overlay) { // ADDED
+    const input = overlay.querySelector("input[aria-label='Bed name']"); // ADDED
+    assert.ok(input, "missing overlay bed name input"); // ADDED
+    return input; // ADDED
+} // ADDED
+
+function dispatchInputKey(input, key) { // ADDED
+    input.dispatchEvent(new input.ownerDocument.defaultView.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); // ADDED
+} // ADDED
+
 function plainRows(rows) { // NEW
     return JSON.parse(JSON.stringify(rows)); // NEW
 } // NEW
@@ -300,6 +310,13 @@ test("selected bed overlays render for garden-bed-only selections", () => { // N
     api._test.syncSelectedBedOverlays(); // NEW
     let overlays = getSelectedBedOverlays(graph); // NEW
     assert.equal(overlays.length, 1); // NEW
+    assert.equal(overlays[0].children[0], getOverlayNameInput(overlays[0])); // ADDED
+    assert.equal(overlays[0].children[1].textContent, "Set Bed Conditions"); // ADDED
+    assert.equal(overlays[0].children[0].style.display, "block"); // ADDED
+    assert.equal(overlays[0].children[1].style.display, "block"); // ADDED
+    assert.equal(overlays[0].children[0].style.width, "100%"); // ADDED
+    assert.equal(overlays[0].children[1].style.width, "100%"); // ADDED
+    assert.equal(getOverlayNameInput(overlays[0]).value, "Bed 1"); // ADDED
     assert.match(overlays[0].textContent, /Set Bed Conditions/); // NEW
     assert.match(overlays[0].textContent, /Sun exposureFull sun/); // NEW
     assert.equal(overlays[0].style.left, "0px"); // NEW
@@ -343,6 +360,72 @@ test("selected bed overlay opens the bed conditions editor", () => { // NEW
     button.click(); // NEW
     assert.deepEqual(getDialogButtonLabels(ui), ["Set as defaults", "Copy", "Paste", "Clear", "Cancel", "Save"]); // CHANGE
 }); // NEW
+
+test("selected bed overlay edits bed labels without changing conditions", () => { // ADDED
+    const { api, bed, graph } = loadPlugin(); // ADDED
+    api.writeBedConditions(bed, { irrigation: "drip", notes: "Keep watered." }); // ADDED
+    graph.getSelectionCells = () => [bed]; // ADDED
+    api._test.syncSelectedBedOverlays(); // ADDED
+    const input = getOverlayNameInput(getSelectedBedOverlays(graph)[0]); // ADDED
+
+    input.value = "East Bed"; // ADDED
+    input.dispatchEvent(new input.ownerDocument.defaultView.Event("blur")); // ADDED
+    assert.equal(bed.getAttribute("label"), "East Bed"); // ADDED
+    let stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // ADDED
+    assert.equal(stored.irrigation, "drip"); // ADDED
+    assert.equal(stored.notes, "Keep watered."); // ADDED
+
+    api._test.syncSelectedBedOverlays(); // ADDED
+    const enterInput = getOverlayNameInput(getSelectedBedOverlays(graph)[0]); // ADDED
+    enterInput.value = "West Bed"; // ADDED
+    dispatchInputKey(enterInput, "Enter"); // ADDED
+    assert.equal(bed.getAttribute("label"), "West Bed"); // ADDED
+    stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // ADDED
+    assert.equal(stored.irrigation, "drip"); // ADDED
+}); // ADDED
+
+test("selected bed overlay escape reverts and blank names use fallback", () => { // ADDED
+    const { api, bed, graph } = loadPlugin(); // ADDED
+    graph.getSelectionCells = () => [bed]; // ADDED
+    api._test.syncSelectedBedOverlays(); // ADDED
+    let input = getOverlayNameInput(getSelectedBedOverlays(graph)[0]); // ADDED
+
+    input.value = "Draft Bed"; // ADDED
+    dispatchInputKey(input, "Escape"); // ADDED
+    assert.equal(input.value, "Bed 1"); // ADDED
+    assert.equal(bed.getAttribute("label"), "Bed 1"); // ADDED
+
+    input.value = "   "; // ADDED
+    input.dispatchEvent(new input.ownerDocument.defaultView.Event("blur")); // ADDED
+    assert.equal(bed.getAttribute("label"), "Garden Bed"); // ADDED
+    api._test.syncSelectedBedOverlays(); // ADDED
+    input = getOverlayNameInput(getSelectedBedOverlays(graph)[0]); // ADDED
+    assert.equal(input.value, "Garden Bed"); // ADDED
+}); // ADDED
+
+test("selected bed overlay autosizes from conditions but not bed names", () => { // ADDED
+    const { api, bed, graph } = loadPlugin(); // ADDED
+    graph.__states.set(bed, { x: 420, y: 20, width: 100, height: 60 }); // ADDED
+    api.writeBedConditions(bed, { irrigation: "drip" }); // ADDED
+    graph.getSelectionCells = () => [bed]; // ADDED
+    api._test.syncSelectedBedOverlays(); // ADDED
+    let overlay = getSelectedBedOverlays(graph)[0]; // ADDED
+    const shortWidth = Number.parseInt(overlay.style.width, 10); // ADDED
+    assert.equal(shortWidth, 190); // ADDED
+
+    getOverlayNameInput(overlay).value = "A very long bed name that should not control the overlay width"; // ADDED
+    getOverlayNameInput(overlay).dispatchEvent(new overlay.ownerDocument.defaultView.Event("blur")); // ADDED
+    api._test.syncSelectedBedOverlays(); // ADDED
+    overlay = getSelectedBedOverlays(graph)[0]; // ADDED
+    assert.equal(Number.parseInt(overlay.style.width, 10), shortWidth); // ADDED
+
+    api.writeBedConditions(bed, { irrigation: "self_watering", notes: "This condition note is intentionally long enough to widen the overlay panel." }); // ADDED
+    api._test.syncSelectedBedOverlays(); // ADDED
+    overlay = getSelectedBedOverlays(graph)[0]; // ADDED
+    const wideWidth = Number.parseInt(overlay.style.width, 10); // ADDED
+    assert.equal(wideWidth > shortWidth, true); // ADDED
+    assert.equal(overlay.style.left, Math.max(0, Math.round(420 - wideWidth - 8)) + "px"); // ADDED
+}); // ADDED
 
 test("preset identity persists as selected baseline until cleared", () => { // CHANGE
     const { api, bed, ui } = loadPlugin(); // CHANGE

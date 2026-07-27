@@ -46,6 +46,7 @@ test("graph overlay plugins share a dialog-safe layer contract", () => { // NEW
         "Garden_Beds.js", // NEW
         "Garden_Dashboard.js", // NEW
         "Garden_Task_Manager.js", // NEW
+        "Garden_Irrigation_Planner.js", // NEW
         "Garden_Scale.js", // NEW
         "Deep_Click_Through.js", // NEW
         "Vertex_Linking_Standalone.js", // NEW
@@ -63,6 +64,9 @@ test("irrigation controls render above irrigation annotations and connection ove
     assert.match(source, /function overlayHost\(\)/); // CHANGE
     assert.match(source, /const pane = graph\.view && graph\.view\.overlayPane \? graph\.view\.overlayPane : null/); // CHANGE
     assert.match(source, /function appendOverlayNode\(node\)[\s\S]*host\.appendChild\(node\)/); // CHANGE
+    assert.match(source, /function ensureIrrigationControlLayer\(\)[\s\S]*trellis-irrigation-control-layer/); // NEW
+    assert.match(source, /const baseHost = graph\.container \|\| \(pane && !paneIsSvg \? pane : null\)/); // NEW
+    assert.match(source, /function inlineConnectionActionStyle[\s\S]*GRAPH_OVERLAY_Z\.CONTROL_TOP/); // NEW
     assert.match(source, /trellis-irrigation-mode-hud[\s\S]*z-index:1005/); // CHANGE
     assert.match(source, /trellis-irrigation-enter-mode[\s\S]*z-index:1005/); // CHANGE
     assert.match(source, /function portBadgeStyle[\s\S]*z-index:1002/); // CHANGE
