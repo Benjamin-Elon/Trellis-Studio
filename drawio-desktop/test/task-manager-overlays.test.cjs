@@ -71,6 +71,7 @@ class TestCell {
     setConnectable() {}
     getStyle() { return this.style; }
     setStyle(style) { this.style = style; }
+    setCollapsed(collapsed) { this.collapsed = !!collapsed; } // NEW
 }
 
 function makeValue(document, attrs = {}) {
@@ -101,6 +102,27 @@ function buttonStartingWith(root, text) { // NEW
 function changeCheckbox(document, checkbox, checked) { // NEW
     checkbox.checked = checked; // NEW
     checkbox.dispatchEvent(new document.defaultView.Event("change", { bubbles: true })); // NEW
+} // NEW
+
+function laneToggleInput(root, laneKey) { // NEW
+    return root.querySelector(`.trellis-task-board-lane-toggle[data-lane-key="${laneKey}"] input[type="checkbox"]`); // NEW
+} // NEW
+
+function laneToggleKeys(root) { // NEW
+    return Array.from(root.querySelectorAll(".trellis-task-board-lane-toggle")).map(label => label.getAttribute("data-lane-key")); // NEW
+} // NEW
+
+function columnsToggleButton(root) { // NEW
+    return buttonByText(root, "Hide/Show columns"); // NEW
+} // NEW
+
+function laneTogglePanel(root) { // NEW
+    return root.querySelector(".trellis-task-board-column-panel"); // NEW
+} // NEW
+
+function showLaneToggles(root) { // NEW
+    const toggle = columnsToggleButton(root); // NEW
+    if (toggle && toggle.getAttribute("aria-expanded") !== "true") toggle.click(); // NEW
 } // NEW
 
 function modeToggleButton(root) { // NEW
@@ -376,6 +398,8 @@ function makeHarness(options = {}) { // CHANGE
         getEdges() { return []; },
         scrollCellToVisible(cell) { scrollCellToVisibleCalls += 1; lastScrollCell = cell || null; }, // CHANGE
         isCellVisible(cell) { return !cell || cell.visible !== false; },
+        isCellCollapsed(cell) { return !!(cell && cell.collapsed); }, // NEW
+        foldCells(collapse, _recurse, cells) { (cells || []).forEach(cell => { if (cell) cell.collapsed = !!collapse; }); }, // NEW
         isValidDropTarget() { return true; },
         resizeCells(cells) { return cells; }, // NEW
         moveCells(cells, dx, dy, clone, target) { // CHANGE: model user drag geometry before optional reparenting
@@ -929,6 +953,30 @@ test("task manager keeps week time scale visible for the last active board", asy
     assert.equal(boardOverlay.style.display, "none"); // NEW: scheduler commands remain selection-scoped
 }); // NEW
 
+test("task manager week board shrinks to visible day lanes and aligns time scale", async () => { // NEW
+    const h = makeHarness(); // NEW
+    h.setState(h.board, { x: 10, y: 10, width: 700, height: 260 }); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+
+    const boardOverlay = h.document.querySelector(".trellis-task-board-header-controls"); // NEW
+    const timeScaleOverlay = h.document.querySelector(".trellis-task-week-time-scale"); // NEW
+    showLaneToggles(boardOverlay); // NEW
+    await nextTick(); // NEW
+    changeCheckbox(h.document, laneToggleInput(boardOverlay, "WEEK_SUN"), false); // NEW
+    await nextTick(); // NEW
+    changeCheckbox(h.document, laneToggleInput(boardOverlay, "WEEK_SAT"), false); // NEW
+    await nextTick(); // NEW
+
+    assert.equal(h.weekSunLane.visible, false); // NEW
+    assert.equal(h.weekSatLane.visible, false); // NEW
+    assert.equal(h.model.getCell("weekMon").geometry.x, 318); // CHANGE
+    assert.equal(h.board.geometry.width, 1492); // NEW
+    assert.equal(timeScaleOverlay.style.display, "block"); // NEW
+    assert.equal(timeScaleOverlay.style.left, "256px"); // NEW
+    assert.equal(timeScaleOverlay.style.width, "1236px"); // NEW
+}); // NEW
+
 test("task manager hides remembered week time scale when another task board becomes active in full view", async () => { // NEW
     const h = makeHarness({ secondaryBoard: true }); // NEW
     h.setState(h.board, { x: 10, y: 10, width: 700, height: 260 }); // NEW
@@ -1300,6 +1348,126 @@ test("task manager toggles destination view labels, arrows, and board selection"
     assert.equal(modeToggleButton(boardOverlay).textContent, "Switch to Week view"); // CHANGE
 }); // NEW
 
+test("task manager board controls show current-mode lane toggles and apply visibility", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const boardOverlay = h.document.querySelector(".trellis-task-board-header-controls"); // NEW
+    h.setState(h.board, { x: 10, y: 10, width: 900, height: 260 }); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+
+    assert.equal(laneTogglePanel(boardOverlay).style.display, "none"); // NEW
+    assert.equal(columnsToggleButton(boardOverlay).getAttribute("aria-expanded"), "false"); // NEW
+    showLaneToggles(boardOverlay); // NEW
+    await nextTick(); // NEW
+    assert.equal(laneTogglePanel(boardOverlay).style.display, "block"); // NEW
+    assert.equal(columnsToggleButton(boardOverlay).getAttribute("aria-expanded"), "true"); // NEW
+    assert.equal(boardOverlay.querySelector(".trellis-task-board-lane-toggles").style.flexWrap, "nowrap"); // NEW
+    assert.deepEqual(laneToggleKeys(boardOverlay), ["TODO_STAGED", "WEEK_SUN", "WEEK_MON", "WEEK_TUE", "WEEK_WED", "WEEK_THU", "WEEK_FRI", "WEEK_SAT"]); // NEW
+    assert.equal(laneToggleInput(boardOverlay, "TODO"), null); // NEW
+
+    modeToggleButton(boardOverlay).click(); // NEW
+    await nextTick(); // NEW
+
+    assert.equal(attr(h.board, "task_view_mode"), "FULL"); // NEW
+    assert.equal(laneTogglePanel(boardOverlay).style.display, "none"); // NEW
+    showLaneToggles(boardOverlay); // NEW
+    await nextTick(); // NEW
+    assert.ok(laneToggleInput(boardOverlay, "TODO")); // NEW
+    assert.equal(laneToggleInput(boardOverlay, "WEEK_WED"), null); // NEW
+    assert.equal(h.todoLane.visible, true); // NEW
+    assert.equal(h.board.geometry.width, 2836); // NEW
+
+    changeCheckbox(h.document, laneToggleInput(boardOverlay, "TODO"), false); // NEW
+    await nextTick(); // NEW
+
+    const hiddenTodoState = JSON.parse(attr(h.board, "task_visible_lane_keys_json")); // NEW
+    assert.equal(h.todoLane.visible, false); // NEW
+    assert.equal(h.doingLane.visible, true); // NEW
+    assert.equal(h.board.geometry.width, 2600); // CHANGE
+    assert.equal(hiddenTodoState.FULL.includes("TODO"), false); // NEW
+    assert.equal(hiddenTodoState.WEEK.includes("WEEK_WED"), true); // NEW
+    assert.equal(h.graph.getSelectionCell(), h.board); // NEW
+
+    changeCheckbox(h.document, laneToggleInput(boardOverlay, "TODO"), true); // NEW
+    await nextTick(); // NEW
+
+    const restoredTodoState = JSON.parse(attr(h.board, "task_visible_lane_keys_json")); // NEW
+    assert.equal(h.todoLane.visible, true); // NEW
+    assert.equal(h.board.geometry.width, 2836); // CHANGE
+    assert.equal(restoredTodoState.FULL.includes("TODO"), true); // NEW
+}); // NEW
+
+test("task manager lane toggles keep full and week selections independent", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const boardOverlay = h.document.querySelector(".trellis-task-board-header-controls"); // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+
+    modeToggleButton(boardOverlay).click(); // NEW
+    await nextTick(); // NEW
+    showLaneToggles(boardOverlay); // NEW
+    await nextTick(); // NEW
+    changeCheckbox(h.document, laneToggleInput(boardOverlay, "TODO"), false); // NEW
+    await nextTick(); // NEW
+
+    modeToggleButton(boardOverlay).click(); // NEW
+    await nextTick(); // NEW
+    showLaneToggles(boardOverlay); // NEW
+    await nextTick(); // NEW
+    changeCheckbox(h.document, laneToggleInput(boardOverlay, "WEEK_WED"), false); // NEW
+    await nextTick(); // NEW
+
+    let state = JSON.parse(attr(h.board, "task_visible_lane_keys_json")); // NEW
+    assert.equal(state.FULL.includes("TODO"), false); // NEW
+    assert.equal(state.WEEK.includes("WEEK_WED"), false); // NEW
+    assert.equal(h.weekWedLane.visible, false); // NEW
+    assert.equal(h.weekTueLane.visible, true); // NEW
+
+    modeToggleButton(boardOverlay).click(); // NEW
+    await nextTick(); // NEW
+    showLaneToggles(boardOverlay); // NEW
+    await nextTick(); // NEW
+    assert.equal(laneToggleInput(boardOverlay, "TODO").checked, false); // NEW
+    assert.equal(h.todoLane.visible, false); // NEW
+
+    modeToggleButton(boardOverlay).click(); // NEW
+    await nextTick(); // NEW
+    showLaneToggles(boardOverlay); // NEW
+    await nextTick(); // NEW
+    assert.equal(laneToggleInput(boardOverlay, "WEEK_WED").checked, false); // NEW
+    assert.equal(h.weekWedLane.visible, false); // NEW
+    state = JSON.parse(attr(h.board, "task_visible_lane_keys_json")); // NEW
+    assert.deepEqual(state.WEEK.filter(key => key === "WEEK_WED"), []); // NEW
+}); // NEW
+
+test("task manager lane toggles keep at least one lane visible and expand legacy folded lanes", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const boardOverlay = h.document.querySelector(".trellis-task-board-header-controls"); // NEW
+    setAttr(h.board, "task_view_mode", "FULL"); // NEW
+    setAttr(h.board, "task_visible_lane_keys_json", JSON.stringify({ schemaVersion: 1, FULL: ["TODO"], WEEK: ["TODO_STAGED"] })); // NEW
+    h.todoLane.collapsed = true; // NEW
+    h.graph.setSelectionCell(h.board); // NEW
+    await nextTick(); // NEW
+    showLaneToggles(boardOverlay); // NEW
+    await nextTick(); // NEW
+
+    const todoToggle = laneToggleInput(boardOverlay, "TODO"); // NEW
+    assert.equal(todoToggle.checked, true); // NEW
+    assert.equal(todoToggle.disabled, true); // NEW
+    assert.equal(h.todoLane.visible, true); // NEW
+    assert.equal(h.doingLane.visible, false); // NEW
+    assert.equal(h.todoLane.collapsed, false); // NEW
+
+    changeCheckbox(h.document, todoToggle, false); // NEW
+    await nextTick(); // NEW
+
+    const state = JSON.parse(attr(h.board, "task_visible_lane_keys_json")); // NEW
+    assert.equal(laneToggleInput(boardOverlay, "TODO").checked, true); // NEW
+    assert.equal(laneToggleInput(boardOverlay, "TODO").disabled, true); // NEW
+    assert.deepEqual(state.FULL, ["TODO"]); // NEW
+    assert.equal(h.todoLane.visible, true); // NEW
+}); // NEW
+
 test("task manager week day cards show workflow colors and time badge", async () => { // NEW
     const h = makeHarness(); // NEW
     h.graph.setSelectionCell(h.weekWedLane); // NEW
@@ -1667,8 +1835,8 @@ test("task manager replaces legacy board layout ownership with canonical managed
     }); // NEW
     assert.match(h.weekSunLane.style, /(?:^|;)collapsible=0(?:;|$)/); // NEW
     assert.match(h.weekWedLane.style, /(?:^|;)collapsible=0(?:;|$)/); // NEW
-    assert.match(h.stagedLane.style, /(?:^|;)collapsible=1(?:;|$)/); // NEW
-    assert.match(h.todoLane.style, /(?:^|;)collapsible=1(?:;|$)/); // NEW
+    assert.match(h.stagedLane.style, /(?:^|;)collapsible=0(?:;|$)/); // CHANGE
+    assert.match(h.todoLane.style, /(?:^|;)collapsible=0(?:;|$)/); // CHANGE
 }); // NEW
 
 test("task manager full-mode board resize persists lane height and refreshes paging", async () => { // NEW
@@ -1745,7 +1913,7 @@ test("task manager direct full-mode lane width resize persists per non-day lane 
     assert.ok(h.reflowCounters().boardLayout > 0); // NEW
 }); // NEW
 
-test("task manager narrower non-day lane widths persist without shrinking board below default", async () => { // NEW
+test("task manager narrower non-day lane widths persist and shrink board to content", async () => { // CHANGE
     const h = makeHarness(); // NEW
     setAttr(h.board, "task_view_mode", "FULL"); // NEW
     h.graph.setSelectionCell(h.board); // NEW
@@ -1760,7 +1928,7 @@ test("task manager narrower non-day lane widths persist without shrinking board 
     assert.equal(widths.TODO, 160); // NEW
     assert.equal(h.todoLane.geometry.width, 160); // NEW
     assert.equal(h.doingLane.geometry.x, 422); // NEW
-    assert.equal(h.board.geometry.width, 2200); // NEW: existing board-width minimum remains in effect
+    assert.equal(h.board.geometry.width, 652); // CHANGE
 }); // NEW
 
 test("task manager renders retained Trellis pager controls and repairs hidden-card selection", async () => { // NEW

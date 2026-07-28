@@ -41,6 +41,7 @@ const TASK_DAY_LANE_WIDTHS_ATTR = 'task_day_lane_widths_json'; // NEW: user-resi
 const TASK_NON_DAY_LANE_WIDTHS_ATTR = 'task_non_day_lane_widths_json'; // NEW: user-resized per-lane widths for non-day lanes
 const TASK_FULL_LANE_HEIGHT_ATTR = 'task_full_lane_height'; // NEW: user-resized full-mode lane height
 const TASK_WEEK_BOARD_HEIGHTS_ATTR = 'task_week_board_heights_json'; // NEW: user-resized week-mode board heights keyed by week start
+const TASK_VISIBLE_LANE_KEYS_ATTR = 'task_visible_lane_keys_json'; // NEW: per-board lane visibility, scoped by task view mode
 const TASK_ASSIGNEE_ROLE_IDS_ATTR = 'task_assignee_role_ids_json'; // NEW: canonical role-card ids assigned to a task
 const TASK_PAGE_ANCHOR_ATTR = 'task_page_anchor_card_id'; // NEW: authoritative persisted page position for non-day lanes
 const TASK_VIEW_MODES = ['FULL', 'WEEK']; // CHANGE: Day mode now normalizes to Week
@@ -235,6 +236,37 @@ function getTaskViewLaneKeys(mode) { // NEW
     const normalized = normalizeTaskViewMode(mode); // NEW
     if (normalized === 'WEEK') return WEEK_VIEW_LANE_KEYS.slice(); // NEW
     return FULL_VIEW_LANE_KEYS.slice(); // NEW
+} // NEW
+
+function normalizeTaskVisibleLaneKeyList(keys, allowedKeys) { // NEW
+    const allowed = Array.isArray(allowedKeys) ? allowedKeys.map(key => String(key || '')) : []; // NEW
+    const allowedSet = new Set(allowed); // NEW
+    const out = []; // NEW
+    (Array.isArray(keys) ? keys : []).forEach(key => { // NEW
+        const normalized = String(key || ''); // NEW
+        if (allowedSet.has(normalized) && out.indexOf(normalized) < 0) out.push(normalized); // NEW
+    }); // NEW
+    return out.length ? out : allowed.slice(); // NEW
+} // NEW
+
+function normalizeTaskVisibleLaneKeys(value) { // NEW
+    const parsed = typeof value === 'string' ? parseJsonObject(value) : value; // NEW
+    const source = parsed && typeof parsed === 'object' ? parsed : {}; // NEW
+    const out = {}; // NEW
+    TASK_VIEW_MODES.forEach(mode => { // NEW
+        const raw = Array.isArray(source[mode]) ? source[mode] : []; // NEW
+        out[mode] = normalizeTaskVisibleLaneKeyList(raw, getTaskViewLaneKeys(mode)); // NEW
+    }); // NEW
+    return out; // NEW
+} // NEW
+
+function serializeTaskVisibleLaneKeys(value) { // NEW
+    const normalized = normalizeTaskVisibleLaneKeys(value); // NEW
+    return JSON.stringify({ schemaVersion: 1, FULL: normalized.FULL, WEEK: normalized.WEEK }); // NEW
+} // NEW
+
+function getTaskVisibleLaneKeysForMode(value, mode) { // NEW
+    return normalizeTaskVisibleLaneKeys(value)[normalizeTaskViewMode(mode)] || getTaskViewLaneKeys(mode); // NEW
 } // NEW
 
 function deriveWorkflowStateFromLaneKey(laneKey) { // NEW
@@ -1253,6 +1285,9 @@ const TaskPolicyCore = Object.freeze({ // CHANGE
     clampTaskStartToVisibleWeek, // CHANGE
     shiftTaskDayWithinWeek, // CHANGE
     getTaskViewLaneKeys, // CHANGE
+    normalizeTaskVisibleLaneKeys, // NEW
+    serializeTaskVisibleLaneKeys, // NEW
+    getTaskVisibleLaneKeysForMode, // NEW
     deriveWorkflowStateFromLaneKey, // CHANGE
     getEffectiveWorkflowState, // CHANGE
     isManualStagedSource, // CHANGE
@@ -1353,6 +1388,9 @@ if (typeof globalThis !== 'undefined' && globalThis.__TRELLIS_TASK_MANAGER_TEST_
         clampTaskStartToVisibleWeek: TaskPolicyCore.clampTaskStartToVisibleWeek, // CHANGE
         shiftTaskDayWithinWeek: TaskPolicyCore.shiftTaskDayWithinWeek, // CHANGE
         getTaskViewLaneKeys: TaskPolicyCore.getTaskViewLaneKeys, // CHANGE
+        normalizeTaskVisibleLaneKeys: TaskPolicyCore.normalizeTaskVisibleLaneKeys, // NEW
+        serializeTaskVisibleLaneKeys: TaskPolicyCore.serializeTaskVisibleLaneKeys, // NEW
+        getTaskVisibleLaneKeysForMode: TaskPolicyCore.getTaskVisibleLaneKeysForMode, // NEW
         deriveWorkflowStateFromLaneKey: TaskPolicyCore.deriveWorkflowStateFromLaneKey, // CHANGE
         getEffectiveWorkflowState: TaskPolicyCore.getEffectiveWorkflowState, // CHANGE
         isManualStagedSource: TaskPolicyCore.isManualStagedSource, // CHANGE
@@ -1442,7 +1480,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
     const BOARD_STYLE = // CHANGE: task layout owns board-child geometry instead of Draw.io stack fill
         'swimlane;fontStyle=2;horizontal=1;startSize=28;collapsible=1;swimlaneFillColor=#F8FAFC;fontFamily=Permanent Marker;fontSize=16;points=[];verticalAlign=top;resizable=1;strokeWidth=2;disableMultiStroke=1;'; // CHANGE: opaque body remains visible below shorter week lanes
     const LANE_STYLE_BASE =
-        'swimlane;strokeWidth=2;fontFamily=Permanent Marker;fontSize=12;html=0;startSize=40;align=center;verticalAlign=middle;whiteSpace=wrap;spacingBottom=5;points=[];childLayout=stackLayout;stackBorder=20;stackSpacing=20;marginTop=0;resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=1;fillStyle=solid;swimlaneFillColor=default;'; // CHANGE: real title band plus pager-safe vertical margin
+        'swimlane;strokeWidth=2;fontFamily=Permanent Marker;fontSize=12;html=0;startSize=40;align=center;verticalAlign=middle;whiteSpace=wrap;spacingBottom=5;points=[];childLayout=stackLayout;stackBorder=20;stackSpacing=20;marginTop=0;resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=0;fillStyle=solid;swimlaneFillColor=default;'; // CHANGE: lane visibility is controlled by board toggles, not draw.io collapse handles
     const SCHEDULE_LANE_STYLE_BASE = // NEW: plugin-owned schedule geometry prevents Draw.io stack layout from expanding day lanes
         'swimlane;strokeWidth=2;fontFamily=Permanent Marker;html=0;startSize=1;verticalAlign=bottom;spacingBottom=5;points=[];resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=0;fillStyle=solid;swimlaneFillColor=default;'; // CHANGE
     const CARD_STYLE =
@@ -1973,10 +2011,17 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         return true; // NEW
     } // NEW
 
+    function ensureLaneExpanded(lane) { // NEW
+        if (!lane || !graph.isCellCollapsed || !graph.isCellCollapsed(lane)) return; // NEW
+        if (lane.setCollapsed) lane.setCollapsed(false); // NEW
+        else if (graph.foldCells) graph.foldCells(false, false, [lane]); // NEW
+    } // NEW
+
     function ensureCanonicalLaneStyles(lanes, selectedWeekLaneKey) { // NEW: migrate legacy resizeParent lane styles on every layout
         Object.keys(lanes || {}).forEach(laneKey => { // NEW
             const lane = lanes[laneKey]; // NEW
             if (!lane) return; // NEW
+            ensureLaneExpanded(lane); // NEW: unfold legacy collapsed lanes before toggle-driven visibility applies
             const style = getCanonicalLaneStyle(laneKey, laneKey === selectedWeekLaneKey, !!getAttr(lane, TASK_PAGE_ANCHOR_ATTR)); // CHANGE
             if (lane.getStyle() !== style) lane.setStyle(style); // NEW
         }); // NEW
@@ -1987,8 +2032,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         ensureCanonicalBoardStyle(board); // NEW
         ensureBoardPlanningDefaults(board); // NEW
         const mode = getBoardViewMode(board); // NEW
-        const visibleKeys = taskPolicy.getTaskViewLaneKeys(mode); // CHANGE
+        const visibleKeys = taskPolicy.getTaskVisibleLaneKeysForMode(getAttr(board, TASK_VISIBLE_LANE_KEYS_ATTR), mode); // CHANGE
         const visibleSet = new Set(visibleKeys); // NEW
+        const firstVisibleWeekDayKey = mode === 'WEEK' ? visibleKeys.find(laneKey => isWeekDayLane(laneKey) && lanes[laneKey]) : null; // NEW
         const selectedWeekLaneKey = mode === 'WEEK' ? taskPolicy.getWeekLaneKeyForDate(getSelectedDay(board), getSelectedWeekStart(board)) : null; // CHANGE
         ensureCanonicalLaneStyles(lanes, selectedWeekLaneKey); // NEW
         const laneHeights = {}; // NEW
@@ -2012,11 +2058,12 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             maxLaneHeight = Math.max(maxLaneHeight, laneHeights.TODO_STAGED); // NEW
         } // NEW
         let x = 10; // NEW
+        let laidOutLaneCount = 0; // NEW
 
         visibleKeys.forEach(laneKey => { // NEW
             const lane = lanes[laneKey]; // NEW
             if (!lane) return; // NEW
-            if (mode === 'WEEK' && laneKey === WEEK_DAY_LANE_KEYS[0]) x += WEEK_TIME_RULER_WIDTH + LANE_GAP; // NEW
+            if (mode === 'WEEK' && laneKey === firstVisibleWeekDayKey) x += WEEK_TIME_RULER_WIDTH + LANE_GAP; // CHANGE
             const laneWidth = getBoardLayoutLaneWidth(board, laneKey); // CHANGE: non-day lanes persist widths by lane key; day lanes keep existing behavior
             const geo = lane.getGeometry() ? lane.getGeometry().clone() : new mxGeometry(x, y, LANE_W, LANE_H); // NEW
             geo.x = x; // NEW
@@ -2032,6 +2079,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             } // NEW
             if (model.isVisible && model.isVisible(lane) === false) model.setVisible(lane, true); // NEW
             x += laneWidth + LANE_GAP; // CHANGE
+            laidOutLaneCount += 1; // NEW
         }); // NEW
 
         Object.keys(lanes).forEach(laneKey => { // NEW
@@ -2040,7 +2088,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             if (!visibleSet.has(laneKey) && (!model.isVisible || model.isVisible(lane) !== false)) model.setVisible(lane, false); // NEW
         }); // NEW
 
-        const totalW = Math.max(BOARD_GEOM.w, x - LANE_GAP + 10); // CHANGE
+        const totalW = laidOutLaneCount ? x - LANE_GAP + 10 : 20; // CHANGE
         const geo = board.getGeometry().clone(); // NEW
         geo.width = totalW; // CHANGE
         const weekContentHeight = mode === 'WEEK' ? Math.max(SCHEDULE_MIN_CARD_HEIGHT, maxLaneHeight, laneHeights.TODO_STAGED || 0) : maxLaneHeight; // NEW
@@ -2267,6 +2315,37 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
 
     function getBoardViewMode(board) { // NEW
         return normalizeTaskViewMode(getAttr(board, TASK_VIEW_MODE_ATTR)); // NEW
+    } // NEW
+
+    function getBoardVisibleLaneKeys(board, mode) { // NEW
+        return taskPolicy.getTaskVisibleLaneKeysForMode(getAttr(board, TASK_VISIBLE_LANE_KEYS_ATTR), mode || getBoardViewMode(board)); // NEW
+    } // NEW
+
+    function setBoardLaneVisible(board, laneKey, visible) { // NEW
+        if (!board || !laneKey) return false; // NEW
+        const mode = getBoardViewMode(board); // NEW
+        const allowedKeys = taskPolicy.getTaskViewLaneKeys(mode); // NEW
+        if (allowedKeys.indexOf(laneKey) < 0) return false; // NEW
+        const state = taskPolicy.normalizeTaskVisibleLaneKeys(getAttr(board, TASK_VISIBLE_LANE_KEYS_ATTR)); // NEW
+        const selected = new Set(state[mode] || allowedKeys); // NEW
+        if (visible) selected.add(laneKey); // NEW
+        else { // NEW
+            if (!selected.has(laneKey)) return false; // NEW
+            if (selected.size <= 1) return false; // NEW
+            selected.delete(laneKey); // NEW
+        } // NEW
+        state[mode] = allowedKeys.filter(key => selected.has(key)); // NEW
+        runKanbanViewNoUndo(function () { // NEW
+            model.beginUpdate(); // NEW
+            try { // NEW
+                setAttrNoUndo(board, TASK_VISIBLE_LANE_KEYS_ATTR, taskPolicy.serializeTaskVisibleLaneKeys(state), true); // NEW
+                scanAndReflowBoard(board, { insideUpdate: true, scope: getTaskReflowScopeForCommand('boardNavigation') }); // NEW
+            } finally { // NEW
+                model.endUpdate(); // NEW
+            } // NEW
+        }); // NEW
+        scheduleTaskOverlayGestureRefresh(); // NEW
+        return true; // NEW
     } // NEW
 
     function getBoardSortContext(board) { // NEW
@@ -6089,8 +6168,18 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         dateInput.style.cssText = 'font:12px Arial,sans-serif;width:132px;'; // NEW
         bar.appendChild(dateInput); // NEW
         const row = document.createElement('div'); // NEW
-        row.style.cssText = 'display:flex;gap:4px;align-items:center;'; // NEW
+        row.style.cssText = 'display:flex;gap:4px;align-items:center;white-space:nowrap;'; // CHANGE
         bar.appendChild(row); // NEW
+        const columnsPanel = document.createElement('div'); // NEW
+        columnsPanel.className = 'trellis-task-board-column-panel'; // NEW
+        columnsPanel.style.cssText = 'display:none;padding-top:2px;overflow:visible;'; // NEW
+        bar.appendChild(columnsPanel); // NEW
+        const laneToggleRow = document.createElement('div'); // NEW
+        laneToggleRow.className = 'trellis-task-board-lane-toggles'; // NEW
+        laneToggleRow.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:nowrap;white-space:nowrap;'; // CHANGE
+        columnsPanel.appendChild(laneToggleRow); // CHANGE
+        let columnsExpanded = false; // NEW
+        let columnsContextKey = null; // NEW
 
         function button(label, fn) { // NEW
             const btn = document.createElement('button'); // NEW
@@ -6137,7 +6226,43 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             restoreBoardSelectionIfNeeded(b); // NEW
         } // NEW
 
+        function renderLaneVisibilityControls(board, mode) { // NEW
+            laneToggleRow.innerHTML = ''; // NEW
+            const visibleKeys = getBoardVisibleLaneKeys(board, mode); // NEW
+            const visibleSet = new Set(visibleKeys); // NEW
+            const laneDefs = LANES.filter(lane => taskPolicy.getTaskViewLaneKeys(mode).indexOf(lane.key) >= 0); // NEW
+            laneDefs.forEach(lane => { // NEW
+                const label = document.createElement('label'); // NEW
+                label.className = 'trellis-task-board-lane-toggle'; // NEW
+                label.style.cssText = 'display:inline-flex;align-items:center;gap:3px;font:11px Arial,sans-serif;line-height:14px;white-space:nowrap;'; // NEW
+                label.setAttribute('data-lane-key', lane.key); // NEW
+                const input = document.createElement('input'); // NEW
+                input.type = 'checkbox'; // NEW
+                input.checked = visibleSet.has(lane.key); // NEW
+                input.disabled = input.checked && visibleKeys.length <= 1; // NEW
+                input.style.cssText = 'margin:0;'; // NEW
+                input.addEventListener('mousedown', stopDomPropagation); // NEW
+                input.addEventListener('mouseup', stopDomPropagation); // NEW
+                input.addEventListener('click', stopDomPropagation); // NEW
+                input.addEventListener('change', function (evt) { // NEW
+                    stopDomPropagation(evt); // NEW
+                    const b = selectedBoard(); // NEW
+                    if (!b) return; // NEW
+                    const changed = setBoardLaneVisible(b, lane.key, input.checked); // NEW
+                    if (!changed) input.checked = true; // NEW
+                    restoreBoardSelectionIfNeeded(b); // NEW
+                    requestRefresh(); // NEW
+                }); // NEW
+                const text = document.createElement('span'); // NEW
+                text.textContent = lane.label; // NEW
+                label.appendChild(input); // NEW
+                label.appendChild(text); // NEW
+                laneToggleRow.appendChild(label); // NEW
+            }); // NEW
+        } // NEW
+
         const modeToggle = button('Switch to Week view', toggleBoardPlanningView); // CHANGE
+        const columnsToggle = button('Hide/Show columns', () => { columnsExpanded = !columnsExpanded; }); // NEW
         const prev = button('<', () => { const b = selectedBoard(); if (!b) return; const mode = getBoardViewMode(b); if (mode === 'WEEK') taskCommands.setBoardPlanningView(b, null, { [TASK_SELECTED_WEEK_START_ATTR]: shiftTaskCalendarISO(getSelectedWeekStart(b), -7), [TASK_SELECTED_DAY_ATTR]: shiftTaskCalendarISO(getSelectedWeekStart(b), -7) }); }); // CHANGE
         const next = button('>', () => { const b = selectedBoard(); if (!b) return; const mode = getBoardViewMode(b); if (mode === 'WEEK') taskCommands.setBoardPlanningView(b, null, { [TASK_SELECTED_WEEK_START_ATTR]: shiftTaskCalendarISO(getSelectedWeekStart(b), 7), [TASK_SELECTED_DAY_ATTR]: shiftTaskCalendarISO(getSelectedWeekStart(b), 7) }); }); // CHANGE
         const todayBtn = button('Today', () => { const b = selectedBoard(); if (!b) return; const today = todayISO(); taskCommands.setBoardPlanningView(b, null, { [TASK_SELECTED_WEEK_START_ATTR]: getTaskWeekStartISO(today), [TASK_SELECTED_DAY_ATTR]: today }); }); // CHANGE
@@ -6162,18 +6287,23 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
 
         function refresh() { // NEW
             const board = selectedBoard(); // NEW
-            if (!board) { bar.style.display = 'none'; return; } // CHANGE
+            if (!board) { bar.style.display = 'none'; columnsExpanded = false; columnsContextKey = null; return; } // CHANGE
             ensureBoardPlanningDefaults(board); // NEW
             const mode = getBoardViewMode(board); // NEW
+            const nextColumnsContextKey = taskCellId(board) + ':' + mode; // NEW
+            if (columnsContextKey !== nextColumnsContextKey) { columnsExpanded = false; columnsContextKey = nextColumnsContextKey; } // NEW
             bar.style.display = 'flex'; // NEW
             dateInput.value = mode === 'FULL' ? '' : getSelectedDay(board); // NEW
             modeLabel.textContent = mode === 'WEEK' ? 'Mode: Week' : 'Mode: Full'; // NEW
             modeToggle.textContent = mode === 'WEEK' ? 'Switch to Full view' : 'Switch to Week view'; // CHANGE
             modeToggle.setAttribute('aria-pressed', mode === 'WEEK' ? 'true' : 'false'); // CHANGE
+            columnsToggle.setAttribute('aria-expanded', columnsExpanded ? 'true' : 'false'); // NEW
+            columnsPanel.style.display = columnsExpanded ? 'block' : 'none'; // NEW
             prev.style.display = mode === 'WEEK' ? '' : 'none'; // CHANGE
             next.style.display = mode === 'WEEK' ? '' : 'none'; // CHANGE
             todayBtn.textContent = mode === 'WEEK' ? 'This Week' : 'Today'; // NEW
             todayBtn.style.display = mode === 'WEEK' ? '' : 'none'; // NEW
+            renderLaneVisibilityControls(board, mode); // NEW
             endDayBtn.textContent = 'End Day (' + countEndDayCards(board) + ')'; // NEW
             endWeekBtn.textContent = 'End Week (' + countEndWeekCards(board) + ')'; // NEW
             const selectedScheduleLane = mode === 'WEEK' ? selectedScheduleLaneForBoard(board) : null; // NEW
@@ -6252,8 +6382,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             if (!isRenderableActiveBoard(board) || getBoardViewMode(board) !== 'WEEK') { clearOverlay(); return; } // CHANGE
             ensureBoardPlanningDefaults(board); // NEW
             const lanes = boardLanes(board); // NEW
-            const firstLane = lanes[WEEK_DAY_LANE_KEYS[0]]; // NEW
-            const lastLane = lanes[WEEK_DAY_LANE_KEYS[WEEK_DAY_LANE_KEYS.length - 1]]; // NEW
+            const visibleDayKeys = getBoardVisibleLaneKeys(board, 'WEEK').filter(laneKey => isWeekDayLane(laneKey) && lanes[laneKey]); // NEW
+            const firstLane = visibleDayKeys.length ? lanes[visibleDayKeys[0]] : null; // CHANGE
+            const lastLane = visibleDayKeys.length ? lanes[visibleDayKeys[visibleDayKeys.length - 1]] : null; // CHANGE
             if (!firstLane || !lastLane) { clearOverlay(); return; } // NEW
             const timeScale = schedulePolicy.buildWeekTimeScale(getBoardWeekWorkHours(board)); // NEW
             if (!timeScale.active) { clearOverlay(); return; } // NEW

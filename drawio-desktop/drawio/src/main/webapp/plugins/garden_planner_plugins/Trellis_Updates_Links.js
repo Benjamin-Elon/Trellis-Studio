@@ -26,11 +26,11 @@
 
     const LINK_CONFIG = Object.freeze({
         name: "Benjamin Elon",
-        patreon: "https://www.patreon.com/placeholder",
+        patreon: "https://www.patreon.com/c/Benjamin980",
         youtube: "https://www.youtube.com/@placeholder",
         website: "https://example.com",
-        email: "mailto:contact@example.com",
-        phone: "tel:+10000000000"
+        email: "Benjaminyelon@gmail.com",
+        phone: "tel:+1 (236) 878 7411"
     });
 
     function text(value) {
