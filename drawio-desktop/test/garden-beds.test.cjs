@@ -90,6 +90,7 @@ function loadPlugin(options = {}) { // NEW
         }, // NEW
         addListener() {} // NEW
     }; // NEW
+    if (options.irrigationMethods) graph.__trellisIrrigationPlanner = { getBedIrrigationMethods() { return options.irrigationMethods; } }; // NEW
     const ui = { // NEW
         editor: { graph }, // NEW
         alert(message) { ui.lastAlert = message; }, // NEW
@@ -210,7 +211,7 @@ test("bed conditions persist, mirror, and clear safely", () => { // CHANGE
     assert.equal(bed.getAttribute("label"), "Bed 1"); // NEW
     assert.equal(stored.soilMoisture, "unknown"); // NEW
     assert.equal(bed.getAttribute("sun_exposure"), "part_shade"); // NEW
-    assert.equal(bed.getAttribute("irrigation"), "drip"); // NEW
+    assert.equal(bed.getAttribute("irrigation"), "unknown"); // CHANGE
     assert.equal(bed.getAttribute("trellis"), "available"); // NEW
     assert.equal(bed.getAttribute("season_extension"), "unknown"); // NEW
     assert.equal(bed.getAttribute("crop_protection"), "unknown"); // NEW
@@ -219,7 +220,7 @@ test("bed conditions persist, mirror, and clear safely", () => { // CHANGE
     const effective = api.getDisplayBedConditions(bed); // CHANGE
     assert.equal(effective.sunExposure, "part_shade"); // NEW
     assert.equal(effective.soilTexture, "unknown"); // CHANGE
-    assert.equal(effective.irrigation, "drip"); // NEW
+    assert.equal(effective.irrigation, "unknown"); // CHANGE
     assert.equal(effective.trellis, "available"); // NEW
     assert.equal(effective.seasonExtension, "unknown"); // NEW
     assert.equal(effective.cropProtection, "unknown"); // NEW
@@ -257,6 +258,37 @@ test("legacy module default attributes are ignored", () => { // CHANGE
     assert.equal(effective.irrigation, "unknown"); // NEW
 }); // NEW
 
+test("irrigation is read-only and derived from irrigation bed assemblies", () => { // NEW
+    const { api, bed, graph, ui } = loadPlugin({ irrigationMethods: [{ id: "drip_tape", label: "Drip tape" }, { id: "microspray", label: "Microspray" }] }); // NEW
+    api.writeBedConditions(bed, { irrigation: "drip" }); // NEW
+
+    const effective = api.getDisplayBedConditions(bed); // NEW
+    assert.equal(JSON.parse(bed.getAttribute("bed_conditions_json")).irrigation, "unknown"); // NEW
+    assert.equal(effective.irrigation, "Drip tape, Microspray"); // NEW
+
+    api._test.showConditionEditorDialog(bed); // NEW
+    const readOnly = ui.lastDialog.querySelector("[data-bed-derived-irrigation='1']"); // NEW
+    assert.ok(readOnly, "missing read-only derived irrigation field"); // NEW
+    assert.equal(readOnly.textContent, "Drip tape, Microspray"); // NEW
+    assert.equal(Array.from(ui.lastDialog.querySelectorAll("label")).find(label => label.firstChild && label.firstChild.textContent === "Irrigation").querySelector("select"), null); // NEW
+
+    graph.getSelectionCells = () => [bed]; // NEW
+    api._test.syncSelectedBedOverlays(); // NEW
+    assert.match(getSelectedBedOverlays(graph)[0].textContent, /IrrigationDrip tape, Microspray/); // NEW
+}); // NEW
+
+test("derived irrigation shows unknown in the editor and stays hidden in overlays when no assemblies exist", () => { // NEW
+    const { api, bed, graph, ui } = loadPlugin({ irrigationMethods: [] }); // NEW
+    api.writeBedConditions(bed, { irrigation: "drip" }); // NEW
+
+    api._test.showConditionEditorDialog(bed); // NEW
+    assert.equal(ui.lastDialog.querySelector("[data-bed-derived-irrigation='1']").textContent, "Unknown"); // NEW
+
+    graph.getSelectionCells = () => [bed]; // NEW
+    api._test.syncSelectedBedOverlays(); // NEW
+    assert.doesNotMatch(getSelectedBedOverlays(graph)[0].textContent, /Irrigation/); // NEW
+}); // NEW
+
 test("invalid JSON and invalid enum values normalize to non-throwing fallbacks", () => { // CHANGE
     const { api, bed } = loadPlugin(); // NEW
     bed.value.setAttribute("bed_conditions_json", "{not-json"); // NEW
@@ -292,7 +324,7 @@ test("bed dialog exposes copy, paste, and clear actions", () => { // CHANGE
     getDialogButton(ui, "Paste").click(); // CHANGE
 
     assert.equal(bed2.getAttribute("sun_exposure"), "full_sun"); // NEW
-    assert.equal(bed2.getAttribute("irrigation"), "drip"); // NEW
+    assert.equal(bed2.getAttribute("irrigation"), "unknown"); // CHANGE
     assert.equal(bed2.getAttribute("trellis"), "available"); // NEW
 
     setup.graph.getSelectionCells = () => [bed2]; // NEW
@@ -372,7 +404,7 @@ test("selected bed overlay edits bed labels without changing conditions", () => 
     input.dispatchEvent(new input.ownerDocument.defaultView.Event("blur")); // ADDED
     assert.equal(bed.getAttribute("label"), "East Bed"); // ADDED
     let stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // ADDED
-    assert.equal(stored.irrigation, "drip"); // ADDED
+    assert.equal(stored.irrigation, "unknown"); // CHANGE
     assert.equal(stored.notes, "Keep watered."); // ADDED
 
     api._test.syncSelectedBedOverlays(); // ADDED
@@ -381,7 +413,7 @@ test("selected bed overlay edits bed labels without changing conditions", () => 
     dispatchInputKey(enterInput, "Enter"); // ADDED
     assert.equal(bed.getAttribute("label"), "West Bed"); // ADDED
     stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // ADDED
-    assert.equal(stored.irrigation, "drip"); // ADDED
+    assert.equal(stored.irrigation, "unknown"); // CHANGE
 }); // ADDED
 
 test("selected bed overlay escape reverts and blank names use fallback", () => { // ADDED
@@ -488,6 +520,7 @@ test("condition option groups expose season extension and crop protection", () =
     const groups = api.listConditionOptionGroups(); // NEW
     const season = groups.find(group => group.id === "seasonExtension"); // NEW
     const protection = groups.find(group => group.id === "cropProtection"); // NEW
+    assert.equal(groups.find(group => group.id === "irrigation"), undefined); // NEW
     assert.ok(season, "missing season extension group"); // NEW
     assert.ok(protection, "missing crop protection group"); // NEW
     assert.deepEqual(plainRows(season.options.map(option => option.id)), ["seasonExtension:none", "seasonExtension:row_cover", "seasonExtension:low_tunnel", "seasonExtension:cold_frame", "seasonExtension:greenhouse", "seasonExtension:high_tunnel", "seasonExtension:heated_greenhouse"]); // CHANGE
@@ -514,7 +547,6 @@ test("overlay summary shows presets, extras, and set values without unknowns", (
     assert.deepEqual(plainRows(rows), [ // CHANGE
         { label: "Preset", value: "Sunny vegetable bed" }, // NEW
         { type: "heading", label: "Additional" }, // NEW
-        { label: "Irrigation", value: "Manual" }, // NEW
         { label: "Crop protection", value: "Shade cloth" }, // NEW
         { label: "Wind exposure", value: "Exposed" } // NEW
     ]); // NEW
@@ -532,9 +564,7 @@ test("overlay summary shows presets, extras, and set values without unknowns", (
     assert.deepEqual(plainRows(rows), [ // NEW
         { label: "Preset", value: "Sunny vegetable bed" }, // NEW
         { type: "heading", label: "Preset overrides" }, // NEW
-        { label: "Sun exposure", value: "Shade" }, // NEW
-        { type: "heading", label: "Additional" }, // NEW
-        { label: "Irrigation", value: "Manual" } // NEW
+        { label: "Sun exposure", value: "Shade" } // NEW
     ]); // NEW
 
     rows = api._test.buildOverlayRows(api.writeBedConditions(bed, { // NEW
@@ -548,7 +578,6 @@ test("overlay summary shows presets, extras, and set values without unknowns", (
     })); // NEW
     assert.deepEqual(plainRows(rows), [ // NEW
         { label: "Sun exposure", value: "Part shade" }, // NEW
-        { label: "Irrigation", value: "Drip" }, // NEW
         { label: "Bed use", value: "Perennials" } // NEW
     ]); // NEW
 
@@ -557,7 +586,6 @@ test("overlay summary shows presets, extras, and set values without unknowns", (
         notes: "Water deeply after transplanting." // ADDED
     })); // ADDED
     assert.deepEqual(plainRows(rows), [ // ADDED
-        { label: "Irrigation", value: "Drip" }, // ADDED
         { type: "notes", label: "Notes", value: "Water deeply after transplanting." } // ADDED
     ]); // ADDED
 }); // NEW
@@ -571,7 +599,7 @@ test("selected bed overlay renders notes as a labeled bottom block", () => { // 
     const overlay = getSelectedBedOverlays(graph)[0]; // ADDED
     const blocks = Array.from(overlay.children).map(child => child.textContent); // ADDED
     assert.equal(blocks[blocks.length - 1], "NotesWater deeply after transplanting."); // ADDED
-    assert.match(overlay.textContent, /IrrigationDripNotesWater deeply after transplanting\.$/); // ADDED
+    assert.match(overlay.textContent, /NotesWater deeply after transplanting\.$/); // CHANGE
 }); // ADDED
 
 test("season extension defaults and overrides normalize for scheduler use", () => { // NEW

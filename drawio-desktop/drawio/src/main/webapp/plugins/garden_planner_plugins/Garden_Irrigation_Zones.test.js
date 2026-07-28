@@ -88,7 +88,7 @@ function installPlugin(moduleCell) { // NEW
         insertVertex(parent, id, label, x, y, width, height) { return addChild(parent, makeCell(id || "v" + nextId++, { label: label || "" }, { x, y, width, height })); }, // NEW
         insertEdge(parent, id, label, source, target) { return addChild(parent, edge(id || "e" + nextId++, source, target, { label: label || "" })); } // NEW
     }; // NEW
-    global.window = { TrellisIrrigationPlanner: null }; // NEW
+    global.window = { TrellisIrrigationPlanner: null, addEventListener() {}, removeEventListener() {} }; // FIX
     global.document = { // NEW
         createElement() { return { style: {}, children: [], childNodes: [], appendChild(child) { this.children.push(child); this.childNodes.push(child); }, addEventListener() {}, setAttribute() {}, textContent: "", className: "" }; }, // NEW
         createTextNode(text) { return { textContent: text }; }, // NEW
@@ -131,9 +131,20 @@ function partCatalog() { // NEW
         { id: "filter", name: "Filter", category: "filter", stockState: "in_stock", connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "3/4" }, output: { type: "barb", nominalSize: "3/4" } }, specs: {} }, // NEW
         { id: "regulator", name: "Regulator", category: "regulator", stockState: "in_stock", connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "3/4" }, output: { type: "barb", nominalSize: "3/4" } }, specs: {} }, // NEW
         { id: "timer_multi", name: "Multi Timer", category: "controller_timer", stockState: "in_stock", connectors: { inputs: 1, outputs: 3, input: { type: "barb", nominalSize: "3/4" }, output: { type: "barb", nominalSize: "3/4" } }, specs: {} }, // NEW
-        { id: "pipe", name: "Pipe", category: "pipe_tubing", stockState: "in_stock", connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "3/4", pipeConnection: true }, output: { type: "barb", nominalSize: "3/4", pipeConnection: true } }, specs: {} } // NEW
+        { id: "pipe", name: "Pipe", category: "pipe_tubing", stockState: "in_stock", connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "3/4", pipeConnection: true }, output: { type: "barb", nominalSize: "3/4", pipeConnection: true } }, specs: { innerDiameterIn: 0.824 } } // FIX
     ] }; // NEW
 } // NEW
+
+function directCatalog() { // FIX
+    return { items: [ // FIX
+        { id: "direct_source", name: "Direct Source", category: "valve", stockState: "in_stock", connectors: { inputs: 1, outputs: 1, input: { type: "fght", nominalSize: "3/4" }, output: { type: "mght", nominalSize: "3/4" } }, specs: {} }, // FIX
+        { id: "direct_insert", name: "Direct Insert", category: "filter", stockState: "in_stock", connectors: { inputs: 1, outputs: 1, input: { type: "fght", nominalSize: "3/4" }, output: { type: "mght", nominalSize: "3/4" } }, specs: {} } // FIX
+    ] }; // FIX
+} // FIX
+
+function catalogPart(catalog, id) { // FIX
+    return catalog.items.find(part => part.id === id); // FIX
+} // FIX
 
 function partCell(id, partId, label, y) { // NEW
     return makeCell(id, { irrigation_component: "1", irrigation_component_type: partId === "timer_multi" ? "controller_timer" : partId, irrigation_catalog_part_id: partId, label }, { x: 20, y, width: 150, height: 34 }); // NEW
@@ -149,6 +160,15 @@ function buildInternalAssemblyFixture() { // NEW
     installed.api.writeCatalog(moduleCell, partCatalog()); // NEW
     return Object.assign({ moduleCell, assembly, a, b, c }, installed); // NEW
 } // NEW
+
+function buildSinglePartAssemblyFixture() { // FIX
+    const moduleCell = makeCell("module_single", { garden_module: "1" }); // FIX
+    const assembly = addChild(moduleCell, makeCell("assembly_single", { irrigation_assembly: "1", irrigation_assembly_type: "parts", label: "Assembly" }, { x: 40, y: 50, width: 210, height: 78 })); // FIX
+    const a = addChild(assembly, partCell("singlePart", "valve", "Valve", 44)); // FIX
+    const installed = installPlugin(moduleCell); // FIX
+    installed.api.writeCatalog(moduleCell, partCatalog()); // FIX
+    return Object.assign({ moduleCell, assembly, a }, installed); // FIX
+} // FIX
 
 function runZoneTests() { // NEW
     const { moduleCell, api, paths } = buildZoneFixture(); // CHANGE
@@ -238,13 +258,82 @@ function runReverseAndBadgeLayoutTests() { // NEW
     assert.strictEqual(installed.api.__test.assemblyCanReverse(moduleCell, assembly), true); // NEW
     const outputNode = { style: {} }; // NEW
     installed.api.__test.positionPortBadge(outputNode, single, "output", 0, 3); // NEW
-    assert.strictEqual(outputNode.style.left, "57px"); // CHANGE
+    assert.strictEqual(outputNode.style.left, "53px"); // FIX
     assert.strictEqual(outputNode.style.top, "102px"); // NEW
     const inputNode = { style: {} }; // NEW
     installed.api.__test.positionPortBadge(inputNode, single, "input", 2, 3); // NEW
-    assert.strictEqual(inputNode.style.left, "132px"); // CHANGE
+    assert.strictEqual(inputNode.style.left, "128px"); // FIX
     assert.strictEqual(inputNode.style.top, "38px"); // CHANGE
 } // NEW
+
+function runDropdownPipeOutputCreatesExternalAssemblyTest() { // FIX
+    const { moduleCell, api, assembly, a } = buildSinglePartAssemblyFixture(); // FIX
+    const result = api.__test.applyConnectionPartChoice(moduleCell, { cell: a, role: "output", index: 0 }, catalogPart(partCatalog(), "filter")); // FIX
+    const createdAssembly = result.cell; // FIX
+    assert.ok(createdAssembly && createdAssembly !== assembly); // FIX
+    assert.deepStrictEqual(api.__test.assemblyPartCells(assembly).map(cell => cell.id), ["singlePart"]); // FIX
+    assert.deepStrictEqual(api.__test.assemblyPartCells(createdAssembly).map(cell => cell.getAttribute("irrigation_catalog_part_id")), ["filter"]); // FIX
+    const pipeEdge = moduleCell.children.find(cell => cell.getAttribute("irrigation_pipe_edge") === "1"); // FIX
+    assert.ok(pipeEdge); // FIX
+    assert.strictEqual(pipeEdge.source, a); // FIX
+    assert.strictEqual(pipeEdge.target, api.__test.firstAssemblyPart(createdAssembly)); // FIX
+} // FIX
+
+function runDropdownPipeInputCreatesExternalAssemblyTest() { // FIX
+    const { moduleCell, api, assembly, a } = buildInternalAssemblyFixture(); // FIX
+    const result = api.__test.applyConnectionPartChoice(moduleCell, { cell: a, role: "input", index: 0 }, catalogPart(partCatalog(), "filter")); // FIX
+    const createdAssembly = result.cell; // FIX
+    assert.ok(createdAssembly && createdAssembly !== assembly); // FIX
+    assert.deepStrictEqual(api.__test.assemblyPartCells(assembly).map(cell => cell.id), ["partA", "partB", "partC"]); // FIX
+    const createdPart = api.__test.firstAssemblyPart(createdAssembly); // FIX
+    const pipeEdge = moduleCell.children.find(cell => cell.getAttribute("irrigation_pipe_edge") === "1"); // FIX
+    assert.ok(pipeEdge); // FIX
+    assert.strictEqual(pipeEdge.source, createdPart); // FIX
+    assert.strictEqual(pipeEdge.target, a); // FIX
+} // FIX
+
+function runDropdownDirectConnectorStillInsertsInlineTest() { // FIX
+    const moduleCell = makeCell("module_dropdown_direct", { garden_module: "1" }); // FIX
+    const assembly = addChild(moduleCell, makeCell("assembly_direct", { irrigation_assembly: "1", irrigation_assembly_type: "parts", label: "Assembly" }, { x: 40, y: 50, width: 210, height: 78 })); // FIX
+    const direct = addChild(assembly, partCell("directPart", "direct_source", "Direct Source", 44)); // FIX
+    const installed = installPlugin(moduleCell); // FIX
+    const catalog = directCatalog(); // FIX
+    installed.api.writeCatalog(moduleCell, catalog); // FIX
+    const result = installed.api.__test.applyConnectionPartChoice(moduleCell, { cell: direct, role: "output", index: 0 }, catalogPart(catalog, "direct_insert")); // FIX
+    assert.strictEqual(result.cell.parent, assembly); // FIX
+    assert.deepStrictEqual(installed.api.__test.assemblyPartCells(assembly).map(cell => cell.getAttribute("irrigation_catalog_part_id")), ["direct_source", "direct_insert"]); // FIX
+    assert.strictEqual(moduleCell.children.filter(cell => cell.getAttribute("irrigation_assembly") === "1").length, 1); // FIX
+    assert.strictEqual(moduleCell.children.some(cell => cell.getAttribute("irrigation_pipe_edge") === "1"), false); // FIX
+} // FIX
+
+function runExistingAssemblyPipeConnectionStillCreatesPipeEdgeTest() { // FIX
+    const moduleCell = makeCell("module_existing_pipe", { garden_module: "1" }); // FIX
+    const upstream = addChild(moduleCell, makeCell("upstream", { irrigation_assembly: "1", irrigation_assembly_type: "parts", label: "Upstream" }, { x: 40, y: 50, width: 210, height: 78 })); // FIX
+    const downstream = addChild(moduleCell, makeCell("downstream", { irrigation_assembly: "1", irrigation_assembly_type: "parts", label: "Downstream" }, { x: 40, y: 170, width: 210, height: 78 })); // FIX
+    const source = addChild(upstream, partCell("sourceExisting", "valve", "Valve", 44)); // FIX
+    const target = addChild(downstream, partCell("targetExisting", "filter", "Filter", 44)); // FIX
+    const installed = installPlugin(moduleCell); // FIX
+    installed.api.writeCatalog(moduleCell, partCatalog()); // FIX
+    const result = installed.api.__test.createAssemblyConnection(moduleCell, { cellId: source.id, role: "output", index: 0 }, { cellId: target.id, role: "input", index: 0 }); // FIX
+    assert.strictEqual(result.ok, true); // FIX
+    assert.strictEqual(result.mode, "pipe"); // FIX
+    assert.strictEqual(result.edge.getAttribute("irrigation_pipe_edge"), "1"); // FIX
+    assert.strictEqual(source.parent, upstream); // FIX
+    assert.strictEqual(target.parent, downstream); // FIX
+} // FIX
+
+function runDropdownPipeFailureDoesNotLeaveAssemblyTest() { // FIX
+    const { moduleCell, api, assembly, a } = buildSinglePartAssemblyFixture(); // FIX
+    const noPipeCatalog = partCatalog(); // FIX
+    noPipeCatalog.items = noPipeCatalog.items.filter(part => part.category !== "pipe_tubing"); // FIX
+    api.writeCatalog(moduleCell, noPipeCatalog); // FIX
+    const result = api.__test.applyConnectionPartChoice(moduleCell, { cell: a, role: "output", index: 0 }, catalogPart(noPipeCatalog, "filter")); // FIX
+    assert.strictEqual(result.cell, null); // FIX
+    assert.match(result.message, /No compatible pipe part/); // FIX
+    assert.deepStrictEqual(api.__test.assemblyPartCells(assembly).map(cell => cell.id), ["singlePart"]); // FIX
+    assert.strictEqual(moduleCell.children.filter(cell => cell.getAttribute("irrigation_assembly") === "1").length, 1); // FIX
+    assert.strictEqual(moduleCell.children.some(cell => cell.getAttribute("irrigation_pipe_edge") === "1"), false); // FIX
+} // FIX
 
 function run() { // NEW
     runZoneTests(); // CHANGE
@@ -253,6 +342,11 @@ function run() { // NEW
     runDeletePartTests(); // NEW
     runExternalEdgePathTests(); // NEW
     runReverseAndBadgeLayoutTests(); // NEW
+    runDropdownPipeOutputCreatesExternalAssemblyTest(); // FIX
+    runDropdownPipeInputCreatesExternalAssemblyTest(); // FIX
+    runDropdownDirectConnectorStillInsertsInlineTest(); // FIX
+    runExistingAssemblyPipeConnectionStillCreatesPipeEdgeTest(); // FIX
+    runDropdownPipeFailureDoesNotLeaveAssemblyTest(); // FIX
 } // NEW
 
 run(); // NEW

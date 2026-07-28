@@ -376,15 +376,25 @@ Draw.loadPlugin(function (ui) { // CHANGE
         return false; // CHANGE
     } // CHANGE
 
-    function filterWorkspaceDescendantSelection(graph, container, cells) { // NEW
+    function filterWorkspaceDescendantSelection(graph, container, cells) { // CHANGE
         const model = graph && graph.getModel ? graph.getModel() : null; // NEW
         if (!model || !container) return []; // NEW
         const out = []; // NEW
         for (let i = 0; i < (cells || []).length; i++) { // NEW
             const cell = cells[i]; // NEW
-            if (cell && cell !== container && isStrictAncestorOf(model, container, cell)) out.push(cell); // NEW
+            if (!cell || isWorkspaceContainer(cell)) continue; // NEW
+            if (hasWorkspaceContainerAncestor(model, cell) && out.indexOf(cell) < 0) out.push(cell); // CHANGE
         } // NEW
         return out; // NEW
+    } // CHANGE
+
+    function hasWorkspaceContainerAncestor(model, cell) { // NEW
+        let cur = model && cell ? model.getParent(cell) : null; // NEW
+        while (cur) { // NEW
+            if (isWorkspaceContainer(cur)) return true; // NEW
+            cur = model.getParent(cur); // NEW
+        } // NEW
+        return false; // NEW
     } // NEW
 
     function hasSelectedAncestor(graph, cell) { // CHANGE

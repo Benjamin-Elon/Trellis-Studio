@@ -60,11 +60,14 @@ function makeHarness(options = {}) { // CHANGE
     const occupiedTiler = appendChild(gardenModule, new TestCell("occupiedTiler", { tiler_group: "1" })); // NEW
     const lane = appendChild(gardenModule, new TestCell("lane", { lane_key: "TODO" }, "swimlane;")); // NEW
     const card = appendChild(lane, new TestCell("card", { kanban_card: "1" })); // NEW
+    const siblingLane = appendChild(gardenModule, new TestCell("siblingLane", { lane_key: "DOING" }, "swimlane;")); // NEW
+    const siblingCard = appendChild(siblingLane, new TestCell("siblingCard", { kanban_card: "1" })); // NEW
     const kanbanBoard = appendChild(root, new TestCell("kanbanBoard", { board_key: "KANBAN_BOARD" }, "swimlane;")); // CHANGE
     const kanbanLane = appendChild(kanbanBoard, new TestCell("kanbanLane", { lane_key: "TODO" }, "swimlane;")); // NEW
     const kanbanCard = appendChild(kanbanLane, new TestCell("kanbanCard", { kanban_card: "1" })); // NEW
     const regularChild = appendChild(regularModule, new TestCell("regularChild", {})); // NEW
     const teamRole = appendChild(teamModule, new TestCell("teamRole", {}, "shape=swimlane;role_card=1")); // NEW
+    const plainTop = appendChild(root, new TestCell("plainTop", {})); // NEW
     const model = new TestModel(root); // NEW
     let selectedCells = []; // NEW
     const movableCells = new Map(); // NEW
@@ -83,8 +86,11 @@ function makeHarness(options = {}) { // CHANGE
     if (bedAssembly) stateMap.set(bedAssembly, { cell: bedAssembly, x: 88, y: 138, width: 24, height: 20 }); // NEW
     stateMap.set(tilerGroup, { cell: tilerGroup, x: 150, y: 130, width: 80, height: 40 }); // NEW
     stateMap.set(occupiedTiler, { cell: occupiedTiler, x: 60, y: 140, width: 20, height: 20 }); // NEW
+    stateMap.set(siblingLane, { cell: siblingLane, x: 170, y: 175, width: 120, height: 55 }); // NEW
+    stateMap.set(siblingCard, { cell: siblingCard, x: 180, y: 188, width: 80, height: 28 }); // NEW
     stateMap.set(regularChild, { cell: regularChild, x: 40, y: 360, width: 80, height: 40 }); // NEW
     stateMap.set(teamRole, { cell: teamRole, x: 430, y: 360, width: 80, height: 40 }); // NEW
+    stateMap.set(plainTop, { cell: plainTop, x: 720, y: 360, width: 80, height: 40 }); // NEW
     const graph = { // NEW
         model, // NEW
         container: document.getElementById("graph"), // NEW
@@ -163,7 +169,7 @@ function makeHarness(options = {}) { // CHANGE
     const graphHandler = new context.mxGraphHandler(); // NEW
     graphHandler.graph = graph; // NEW
     graph.graphHandler = graphHandler; // NEW
-    return { graph, window: dom.window, Handler: context.mxGraphHandler, gardenModule, legacyGardenModule, regularModule, teamModule, regularChild, teamRole, bed, emptyBed, bedAssembly, tilerGroup, occupiedTiler, lane, card, kanbanBoard, kanbanLane, kanbanCard, movableCells, getSelected: () => selectedCells.slice() }; // CHANGE
+    return { graph, window: dom.window, Handler: context.mxGraphHandler, gardenModule, legacyGardenModule, regularModule, teamModule, regularChild, teamRole, plainTop, bed, emptyBed, bedAssembly, tilerGroup, occupiedTiler, lane, card, siblingLane, siblingCard, kanbanBoard, kanbanLane, kanbanCard, movableCells, getSelected: () => selectedCells.slice() }; // CHANGE
 } // NEW
 
 function isHarnessBed(cell) { // NEW
@@ -370,22 +376,31 @@ test("workspace classifier recognizes all Trellis modules and lane_key lanes", (
     assert.equal(api.isWorkspaceContainer(bed), false); // NEW
 }); // NEW
 
-test("workspace descendant marquee filters out container and unrelated cells", () => { // NEW
-    const { graph, gardenModule, regularModule, bed, tilerGroup, lane, card, getSelected } = makeHarness(); // NEW
-    graph.__regionCells = [gardenModule, bed, tilerGroup, lane, card, regularModule]; // NEW
+test("workspace marquee selects descendants across intersected containers", () => { // CHANGE
+    const { graph, gardenModule, regularModule, teamModule, bed, tilerGroup, lane, card, regularChild, teamRole, plainTop, getSelected } = makeHarness(); // CHANGE
+    graph.__regionCells = [gardenModule, bed, tilerGroup, lane, card, regularModule, regularChild, teamModule, teamRole, plainTop]; // CHANGE
     graph.__trellisWorkspaceMarqueeContainer = gardenModule; // NEW
     const selected = graph.selectRegion({ x: 0, y: 0, width: 500, height: 500 }, { button: 0 }); // NEW
-    assert.deepEqual(ids(selected), ["bed", "tiler", "lane", "card"]); // NEW
-    assert.deepEqual(ids(getSelected()), ["bed", "tiler", "lane", "card"]); // NEW
-}); // NEW
+    assert.deepEqual(ids(selected), ["bed", "tiler", "card", "regularChild", "teamRole"]); // CHANGE
+    assert.deepEqual(ids(getSelected()), ["bed", "tiler", "card", "regularChild", "teamRole"]); // CHANGE
+}); // CHANGE
 
-test("lane scoped marquee keeps only lane descendants", () => { // NEW
-    const { graph, gardenModule, bed, lane, card, getSelected } = makeHarness(); // NEW
-    graph.__regionCells = [gardenModule, bed, lane, card]; // NEW
+test("lane-start marquee selects descendants in other intersected containers", () => { // CHANGE
+    const { graph, bed, lane, card, siblingCard, regularChild, plainTop, getSelected } = makeHarness(); // CHANGE
+    graph.__regionCells = [bed, lane, card, siblingCard, regularChild, plainTop]; // CHANGE
     graph.__trellisWorkspaceMarqueeContainer = lane; // NEW
     const selected = graph.selectRegion({ x: 0, y: 0, width: 500, height: 500 }, { button: 0 }); // NEW
-    assert.deepEqual(ids(selected), ["card"]); // NEW
-    assert.deepEqual(ids(getSelected()), ["card"]); // NEW
+    assert.deepEqual(ids(selected), ["bed", "card", "siblingCard", "regularChild"]); // CHANGE
+    assert.deepEqual(ids(getSelected()), ["bed", "card", "siblingCard", "regularChild"]); // CHANGE
+}); // CHANGE
+
+test("lane-to-lane marquee does not require sibling lane surface in region cells", () => { // NEW
+    const { graph, lane, card, siblingCard, plainTop, getSelected } = makeHarness(); // NEW
+    graph.__regionCells = [card, siblingCard, plainTop]; // NEW
+    graph.__trellisWorkspaceMarqueeContainer = lane; // NEW
+    const selected = graph.selectRegion({ x: 0, y: 0, width: 500, height: 500 }, { button: 0 }); // NEW
+    assert.deepEqual(ids(selected), ["card", "siblingCard"]); // NEW
+    assert.deepEqual(ids(getSelected()), ["card", "siblingCard"]); // NEW
 }); // NEW
 
 test("workspace handles include selected containers and hovered container", () => { // NEW

@@ -204,7 +204,7 @@ Draw.loadPlugin(function (ui) { // NEW
     } // NEW
 
     function listConditionOptionGroups() { // NEW
-        return FIELD_DEFS.map(function (field) { // NEW
+        return FIELD_DEFS.filter(function (field) { return field.key !== "irrigation"; }).map(function (field) { // CHANGE
             return { // NEW
                 id: field.key, // NEW
                 name: field.label, // NEW
@@ -325,6 +325,7 @@ Draw.loadPlugin(function (ui) { // NEW
         FIELD_DEFS.forEach(function (field) { // NEW
             out[field.key] = normalizeEnumValue(field.key, source[field.key]); // NEW
         }); // NEW
+        out.irrigation = "unknown"; // NEW
         const presetKey = String(source.presetKey || "").trim(); // NEW
         if (options && options.allowPreset && isValidPresetKey(presetKey)) out.presetKey = presetKey; // CHANGE
         out.notes = String(source.notes || "").trim(); // NEW
@@ -382,17 +383,29 @@ Draw.loadPlugin(function (ui) { // NEW
     } // NEW
 
     function isMeaningfulOverride(key, value) { // NEW
+        if (key === "irrigation") return !!value && value !== "unknown"; // NEW
         if (key === "trellis") return value === "none" || value === "available" || value === "required_structure"; // NEW
         return !!value && value !== "unknown"; // NEW
+    } // NEW
+
+    function derivedIrrigationDisplayValue(bedCell) { // NEW
+        const moduleCell = findGardenModuleAncestor(bedCell); // NEW
+        const planner = graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner); // NEW
+        if (!planner || typeof planner.getBedIrrigationMethods !== "function") return "unknown"; // NEW
+        const methods = planner.getBedIrrigationMethods(moduleCell, bedCell) || []; // NEW
+        const labels = methods.map(function (method) { return String(method && method.label || "").trim(); }).filter(Boolean); // NEW
+        return labels.length ? labels.join(", ") : "unknown"; // NEW
     } // NEW
 
     function getDisplayBedConditions(bedCell) { // CHANGE
         const bedRecord = parseProfileRecord(bedCell, ATTRS.BED_JSON); // NEW
         const out = normalizeProfile({}, { keepExistingDate: true }); // NEW
         FIELD_DEFS.forEach(function (field) { // NEW
+            if (field.key === "irrigation") return; // NEW
             const value = bedRecord.profile[field.key]; // NEW
             if (isMeaningfulOverride(field.key, value)) out[field.key] = value; // NEW
         }); // NEW
+        out.irrigation = derivedIrrigationDisplayValue(bedCell); // NEW
         if (bedRecord.profile.notes) out.notes = bedRecord.profile.notes; // NEW
         if (isValidPresetKey(bedRecord.profile.presetKey)) out.presetKey = bedRecord.profile.presetKey; // CHANGE
         out.lastUpdated = bedRecord.profile.lastUpdated || ""; // NEW
@@ -432,6 +445,17 @@ Draw.loadPlugin(function (ui) { // NEW
         }); // NEW
         select.value = normalizeEnumValue(field.key, value); // NEW
         return select; // NEW
+    } // NEW
+
+    function makeReadOnlyText(value) { // NEW
+        const span = document.createElement("span"); // NEW
+        span.textContent = valueLabel(value); // NEW
+        span.setAttribute("data-bed-derived-irrigation", "1"); // NEW
+        span.style.display = "block"; // NEW
+        span.style.padding = "3px 0"; // NEW
+        span.style.color = "#374151"; // NEW
+        span.style.fontWeight = "600"; // NEW
+        return span; // NEW
     } // NEW
 
     function appendSection(container, title) { // NEW
@@ -634,7 +658,8 @@ Draw.loadPlugin(function (ui) { // NEW
         }); // NEW
 
         const infra = appendSection(body, "Infrastructure"); // CHANGE
-        ["irrigation", "trellis", "seasonExtension", "cropProtection"].forEach(function (key) { // CHANGE
+        appendField(infra, FIELD_BY_KEY.irrigation, makeReadOnlyText(derivedIrrigationDisplayValue(targetCell))); // NEW
+        ["trellis", "seasonExtension", "cropProtection"].forEach(function (key) { // CHANGE
             controls[key] = makeSelect(FIELD_BY_KEY[key], current[key]); // NEW
             appendField(infra, FIELD_BY_KEY[key], controls[key]); // NEW
         }); // NEW
@@ -661,7 +686,7 @@ Draw.loadPlugin(function (ui) { // NEW
 
         function readDialogProfile() { // NEW
             const next = {}; // NEW
-            FIELD_DEFS.forEach(function (field) { next[field.key] = controls[field.key].value; }); // NEW
+            FIELD_DEFS.forEach(function (field) { next[field.key] = controls[field.key] ? controls[field.key].value : "unknown"; }); // CHANGE
             next.seasonExtensionAirOffsetC = displayTempToC(controls.seasonExtensionAirOffsetC.value, advancedSeasonExtension.units); // ADDED
             next.seasonExtensionSoilOffsetC = displayTempToC(controls.seasonExtensionSoilOffsetC.value, advancedSeasonExtension.units); // ADDED
             next.seasonExtensionFrostShiftDays = normalizeOptionalNumber(controls.seasonExtensionFrostShiftDays.value); // ADDED

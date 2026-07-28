@@ -59,6 +59,7 @@ Draw.loadPlugin(function (ui) {
     const PURCHASE_NEEDED = new Set(["out_of_stock", "unknown"]);
     const BRANCH_CATEGORIES = new Set(["valve", "manifold", "controller_timer"]);
     const BRANCH_SINGLETON_CATEGORIES = new Set(["backflow", "filter", "regulator", "controller_timer"]); // NEW
+    const BRIDGE_SUGGESTION_CATEGORIES = new Set(["fitting", "source_adapter"]); // NEW
     const ZONE_ORIGIN_TIMER_OUTLET = "timer_outlet"; // NEW
     const ZONE_ORIGIN_MANUAL = "manual"; // NEW
     const VALID_STOCK_STATES = ["in_stock", "low_stock", "out_of_stock", "unknown"];
@@ -69,6 +70,9 @@ Draw.loadPlugin(function (ui) {
     const ASSEMBLY_DEFAULT_WIDTH = 210; // NEW
     const ASSEMBLY_CONTRACTED_BED = { width: 220, height: 120 }; // NEW
     const PORT_BADGE_SIZE = 22; // NEW
+    const PORT_BADGE_MIN_WIDTH = 30; // NEW
+    const PORT_BADGE_MAX_WIDTH = 78; // NEW
+    const PORT_BADGE_ARROW_SIZE = 6; // NEW
     const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // NEW
     const FIXED_CONNECTOR_TYPES = ["mght", "fght", "mpt", "fpt", "barb", "twist_lock", "push_connect"]; // CHANGE
     const PIPE_CONNECTOR_TYPES = new Set(["barb", "twist_lock", "push_connect"]); // NEW
@@ -612,6 +616,24 @@ Draw.loadPlugin(function (ui) {
         return normalized.replace(/_/g, " "); // CHANGE
     } // CHANGE
 
+    function connectorTypeDisplayLabel(type) { // NEW
+        const normalized = normalizeConnectorType(type); // NEW
+        return normalized ? normalized.toUpperCase().replace(/_/g, " ") : "connector?"; // NEW
+    } // NEW
+
+    function connectorDisplayLabel(connector) { // NEW
+        const c = normalizeConnectorRecord(connector); // NEW
+        const size = c.nominalSize || "size?"; // NEW
+        if (isPipeConnectorType(c.type)) return size; // NEW
+        return size + " " + connectorTypeDisplayLabel(c.type); // NEW
+    } // NEW
+
+    function connectionDisplayLabel(sourceConnector, targetConnector) { // NEW
+        const sourceLabel = connectorDisplayLabel(sourceConnector); // NEW
+        const targetLabel = connectorDisplayLabel(targetConnector); // NEW
+        return sourceLabel === targetLabel ? sourceLabel : sourceLabel + " -> " + targetLabel; // NEW
+    } // NEW
+
     function normalizeOperatingPressureSpecs(specs) { // CHANGE
         const source = specs || {}; // CHANGE
         const legacy = finiteNumber(source.operatingPressurePsi, null); // CHANGE
@@ -1038,7 +1060,7 @@ Draw.loadPlugin(function (ui) {
     function createAssemblyPartCell(assembly, label, attrs, index) { // NEW
         const y = index == null ? nextAssemblyPartY(assembly) : ASSEMBLY_HEADER_SIZE + ASSEMBLY_PART_GAP + index * (ASSEMBLY_PART_HEIGHT + ASSEMBLY_PART_GAP); // NEW
         const cell = createVertex(assembly, label || "Irrigation part", 20, y, ASSEMBLY_PART_WIDTH, ASSEMBLY_PART_HEIGHT, // NEW
-            "rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;", // NEW
+            "rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;editable=0;deletable=0;resizable=0;connectable=0;", // CHANGE
             attrs || {}); // NEW
         resizeAssemblyToChildren(assembly); // NEW
         return cell; // NEW
@@ -1116,6 +1138,36 @@ Draw.loadPlugin(function (ui) {
         return isAssembly(cell) && assemblyType(cell) === "bed"; // NEW
     } // NEW
 
+    function cellStyleText(cell) { // NEW
+        return String(cell && (cell.getStyle ? cell.getStyle() : cell.style) || ""); // NEW
+    } // NEW
+
+    function isCenterStableFoldAssembly(cell) { // NEW
+        return isAssembly(cell) && !isBedAssembly(cell) && styleValue(cellStyleText(cell), "collapsible") !== "0"; // NEW
+    } // NEW
+
+    function centerAlternateBoundsOnGeometry(geo) { // NEW
+        if (!geo || !geo.alternateBounds) return false; // NEW
+        const centerX = finiteNumber(geo.x, 0) + finiteNumber(geo.width, 0) / 2; // NEW
+        const centerY = finiteNumber(geo.y, 0) + finiteNumber(geo.height, 0) / 2; // NEW
+        geo.alternateBounds.x = centerX - finiteNumber(geo.alternateBounds.width, 0) / 2; // NEW
+        geo.alternateBounds.y = centerY - finiteNumber(geo.alternateBounds.height, 0) / 2; // NEW
+        return true; // NEW
+    } // NEW
+
+    function installCenterStableAssemblyFolding() { // NEW
+        if (graph.__trellisCenterStableIrrigationAssemblyFoldingInstalled || typeof graph.updateAlternateBounds !== "function") return; // NEW
+        graph.__trellisCenterStableIrrigationAssemblyFoldingInstalled = true; // NEW
+        const originalUpdateAlternateBounds = graph.updateAlternateBounds; // NEW
+        graph.updateAlternateBounds = function (cell, geo, willCollapse) { // NEW
+            const result = originalUpdateAlternateBounds.apply(this, arguments); // NEW
+            if (isCenterStableFoldAssembly(cell)) centerAlternateBoundsOnGeometry(geo); // NEW
+            return result; // NEW
+        }; // NEW
+    } // NEW
+
+    installCenterStableAssemblyFolding(); // NEW
+
     function linkedBedModuleForAssembly(assembly) { // NEW
         const linkedId = getCellAttr(assembly, ATTRS.LINKED_BED_ID, ""); // NEW
         const root = (graph.getDefaultParent && graph.getDefaultParent()) || (model.getRoot && model.getRoot()) || null; // NEW
@@ -1190,6 +1242,24 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     installBedAssemblyParentingGuard(); // NEW
+
+    function installAssemblyPartMoveGuard() { // NEW
+        if (graph.__trellisAssemblyPartMoveGuardInstalled || typeof graph.moveCells !== "function") return; // NEW
+        graph.__trellisAssemblyPartMoveGuardInstalled = true; // NEW
+        const originalMoveCells = graph.moveCells; // NEW
+        graph.moveCells = function (cells) { // NEW
+            if (activeIrrigationEditDepth > 0) return originalMoveCells.apply(this, arguments); // NEW
+            const requested = Array.isArray(cells) ? cells : []; // NEW
+            const movableCells = requested.filter(function (cell) { return !isAssemblyPartCell(cell); }); // NEW
+            if (movableCells.length === requested.length) return originalMoveCells.apply(this, arguments); // NEW
+            if (!movableCells.length) return requested; // NEW
+            const args = Array.prototype.slice.call(arguments); // NEW
+            args[0] = movableCells; // NEW
+            return originalMoveCells.apply(this, args); // NEW
+        }; // NEW
+    } // NEW
+
+    installAssemblyPartMoveGuard(); // NEW
 
     function findAssemblyAncestor(cell) { // NEW
         let cur = cell; // NEW
@@ -1304,6 +1374,12 @@ Draw.loadPlugin(function (ui) {
         const labels = { drip_tape: "Drip line", dripline: "Drip line", sprinkler: "Sprinkler line", microspray: "Microspray line", bubbler: "Bubbler line", standpipe: "Standpipe" }; // NEW
         const key = String(irrigationType || "").trim(); // NEW
         return labels[key] || "Irrigation line"; // NEW
+    } // NEW
+
+    function bedIrrigationMethodLabel(irrigationType) { // NEW
+        const labels = { drip_tape: "Drip tape", dripline: "Dripline", emitter: "Emitter", sprinkler: "Sprinkler", microspray: "Microspray", bubbler: "Bubbler", standpipe: "Standpipe" }; // NEW
+        const key = String(irrigationType || "").trim(); // NEW
+        return labels[key] || ""; // NEW
     } // NEW
 
     function bedTemplatePipePartId(templateId, savedPipePartId) { // NEW
@@ -1599,6 +1675,15 @@ Draw.loadPlugin(function (ui) {
         return Object.assign({}, structure, { mode: compatibility.mode === "pipe" ? "pipe" : (canMerge ? "merge" : "direct"), pipePartId: compatibility.pipePartId || "" }); // CHANGE
     } // NEW
 
+    function bridgeSuggestionEligibility(moduleCell, sourcePort, targetPort) { // NEW
+        const structure = ConnectorRules.validatePortConnectionStructure(moduleCell, sourcePort, targetPort); // NEW
+        if (!structure.ok) return Object.assign({}, structure, { bridgeable: false }); // NEW
+        const sourceConnector = ConnectorRules.portConnectorForCell(moduleCell, structure.sourceCell, "output"); // NEW
+        const targetConnector = ConnectorRules.portConnectorForCell(moduleCell, structure.targetCell, "input"); // NEW
+        const compatibility = ConnectorRules.connectionMode(moduleCell, sourceConnector, targetConnector); // NEW
+        return compatibility.ok ? Object.assign({}, structure, { ok: false, bridgeable: false, reason: "Selected ports can connect directly." }) : Object.assign({}, structure, { ok: true, bridgeable: true, reason: compatibility.reason, sourceConnector, targetConnector }); // NEW
+    } // NEW
+
     function validatePortConnection(moduleCell, sourcePort, targetPort) { // NEW
         const decision = ConnectorRules.connectionDecision(moduleCell, sourcePort, targetPort); // CHANGE
         return decision.ok ? { ok: true, reason: "", mode: decision.mode } : { ok: false, reason: decision.reason }; // CHANGE
@@ -1615,10 +1700,12 @@ Draw.loadPlugin(function (ui) {
         }; // NEW
         if (decision.mode === "pipe") { attrs[ATTRS.PIPE_EDGE] = "1"; attrs[ATTRS.PIPE_PART_ID] = decision.pipePartId; } // NEW
         else attrs[ATTRS.DIRECT_LINK_EDGE] = "1"; // NEW
+        const edgeLabel = connectionEdgeDisplayLabelForDecision(moduleCell, decision); // NEW
+        attrs.label = edgeLabel; // NEW
         let edge = null; // FIX
         programmaticEdgeInsertDepth++; // FIX
         try { // FIX
-            edge = createEdge(moduleCell, decision.sourceCell, decision.targetCell, "", decision.mode === "pipe" ? pipeEdgeStyleForPart(moduleCell, decision.pipePartId, PIPE_EDGE_BASE_STYLE) : DIRECT_LINK_EDGE_STYLE, attrs); // CHANGE
+            edge = createEdge(moduleCell, decision.sourceCell, decision.targetCell, edgeLabel, decision.mode === "pipe" ? pipeEdgeStyleForPart(moduleCell, decision.pipePartId, PIPE_EDGE_BASE_STYLE) : DIRECT_LINK_EDGE_STYLE, attrs); // CHANGE
         } finally { // FIX
             programmaticEdgeInsertDepth = Math.max(0, programmaticEdgeInsertDepth - 1); // FIX
         } // FIX
@@ -1654,9 +1741,10 @@ Draw.loadPlugin(function (ui) {
             if (!pipePartId) return; // CHANGE
             setCellAttrs(edge, { [ATTRS.PIPE_EDGE]: "1", [ATTRS.DIRECT_LINK_EDGE]: "", [ATTRS.PIPE_PART_ID]: pipePartId, [ATTRS.EDGE_SOURCE_PORT]: String(decision.source.index), [ATTRS.EDGE_TARGET_PORT]: String(decision.target.index) }); // CHANGE
             applyPipeEdgeStyle(edge, findGardenModuleAncestor(edge), pipePartId, PIPE_EDGE_BASE_STYLE); // CHANGE
+            syncConnectionEdgeDisplayLabel(findGardenModuleAncestor(edge), edge); // NEW
             return; // CHANGE
         } // CHANGE
-        else { setCellAttrs(edge, { [ATTRS.PIPE_EDGE]: "", [ATTRS.DIRECT_LINK_EDGE]: "1", [ATTRS.PIPE_PART_ID]: "", [ATTRS.EDGE_SOURCE_PORT]: String(decision.source.index), [ATTRS.EDGE_TARGET_PORT]: String(decision.target.index) }); applyDirectLinkEdgeStyle(edge); } // CHANGE
+        else { setCellAttrs(edge, { [ATTRS.PIPE_EDGE]: "", [ATTRS.DIRECT_LINK_EDGE]: "1", [ATTRS.PIPE_PART_ID]: "", [ATTRS.EDGE_SOURCE_PORT]: String(decision.source.index), [ATTRS.EDGE_TARGET_PORT]: String(decision.target.index) }); applyDirectLinkEdgeStyle(edge); syncConnectionEdgeDisplayLabel(findGardenModuleAncestor(edge), edge); } // CHANGE
     } // NEW
 
     function existingEdgeConnectionDecision(moduleCell, sourcePort, targetPort) { // NEW
@@ -1897,6 +1985,12 @@ Draw.loadPlugin(function (ui) {
         session.selectedBoundaries = (session.selectedBoundaries || []).filter(function (boundary) { return normalizeBoundary(boundary).type !== "edge"; }); // NEW
     } // NEW
 
+    function clearSelectedConnectionBoundaries(session) { // NEW
+        session.selectedBoundaries = []; // NEW
+        session.focusedConnectionBoundary = null; // NEW
+        session.inlineActionAnchorPort = null; // NEW
+    } // NEW
+
     function toggleSelectedPortBoundary(session, boundary) { // NEW
         const normalized = normalizeBoundary(boundary); // NEW
         const key = boundaryKey(normalized); // NEW
@@ -1915,11 +2009,10 @@ Draw.loadPlugin(function (ui) {
         const normalized = normalizeBoundary(boundary); // NEW
         const key = boundaryKey(normalized); // NEW
         if (!key) return; // NEW
-        const current = session.selectedBoundaries || []; // NEW
-        const index = current.map(boundaryKey).indexOf(key); // NEW
-        if (index >= 0) current.splice(index, 1); // NEW
-        else current.push(normalized); // NEW
-        session.selectedBoundaries = current; // NEW
+        const selected = selectedValidBoundaries(session).map(boundaryKey).indexOf(key) >= 0; // CHANGE
+        session.selectedPorts = []; // NEW
+        if (selected) clearSelectedConnectionBoundaries(session); // CHANGE
+        else session.selectedBoundaries = [normalized]; // CHANGE
     } // NEW
 
     function selectBoundary(session, boundary) { // NEW
@@ -2124,11 +2217,28 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function pipeEdgeLabel(moduleCell, edge, port) { // NEW
-        if (!edge) return normalizePort(port).role === "output" ? "Available: no downstream pipe" : "Available: no upstream pipe"; // CHANGE
-        if (getCellAttr(edge, ATTRS.DIRECT_LINK_EDGE, "") === "1") return "Direct: " + irrigationCellLabel(normalizePort(port).role === "output" ? edge.target : edge.source); // NEW
+        if (!edge) return normalizePort(port).role === "output" ? "Available: " + portDisplayLabel(moduleCell, port) + " downstream connection" : "Available: " + portDisplayLabel(moduleCell, port) + " upstream connection"; // CHANGE
+        if (getCellAttr(edge, ATTRS.DIRECT_LINK_EDGE, "") === "1") return "Direct: " + edgeConnectionDisplayLabel(moduleCell, edge) + " to " + irrigationCellLabel(normalizePort(port).role === "output" ? edge.target : edge.source); // CHANGE
         const pipe = partById(readCatalog(moduleCell), getCellAttr(edge, ATTRS.PIPE_PART_ID, "")); // NEW
         const other = normalizePort(port).role === "output" ? edge.target : edge.source; // NEW
-        return "Pipe: " + (pipe ? pipe.name : "auto pipe") + " -> " + irrigationCellLabel(other); // NEW
+        return "Pipe: " + edgeConnectionDisplayLabel(moduleCell, edge) + " " + (pipe ? pipe.name : "auto pipe") + " -> " + irrigationCellLabel(other); // CHANGE
+    } // NEW
+
+    function portDisplayLabel(moduleCell, port) { // NEW
+        const normalized = normalizePort(port); // NEW
+        return connectorDisplayLabel(ConnectorRules.portConnectorForCell(moduleCell, portCell(moduleCell, normalized), normalized.role)); // NEW
+    } // NEW
+
+    function cellPortDisplayLabel(moduleCell, cell, role) { // NEW
+        return connectorDisplayLabel(ConnectorRules.portConnectorForCell(moduleCell, cell, role)); // NEW
+    } // NEW
+
+    function edgeConnectionDisplayLabel(moduleCell, edge) { // NEW
+        return connectionEdgeDisplayLabel(moduleCell, edge, ConnectorRules.portConnectorForCell(moduleCell, edge && edge.source, "output"), ConnectorRules.portConnectorForCell(moduleCell, edge && edge.target, "input")); // NEW
+    } // NEW
+
+    function internalConnectionDisplayLabel(moduleCell, upstream, downstream) { // NEW
+        return connectionDisplayLabel(ConnectorRules.portConnectorForCell(moduleCell, upstream, "output"), ConnectorRules.portConnectorForCell(moduleCell, downstream, "input")); // NEW
     } // NEW
 
     function endpointType(cell) {
@@ -2285,8 +2395,8 @@ Draw.loadPlugin(function (ui) {
         return { flowGpm: 0, operatingPressurePsi: 0 }; // CHANGE
     }
 
-    function demandFromBedCell(bedCell) { // NEW
-        const template = safeJsonParse(getCellAttr(bedCell, ATTRS.BED_TEMPLATE_JSON, ""), null) || {}; // NEW
+    function demandFromBedAssembly(moduleCell, bedAssembly) { // NEW
+        const template = readBedAssemblyTemplateRecord(moduleCell, bedAssembly) || {}; // CHANGE
         const demand = template.demand || {}; // NEW
         return { flowGpm: finiteNumber(demand.flowGpm, 0), operatingPressurePsi: finiteNumber(demand.operatingPressurePsi, 0) }; // NEW
     } // NEW
@@ -2297,7 +2407,7 @@ Draw.loadPlugin(function (ui) {
             const id = getCellId(assembly); // NEW
             if (!id || seen.has(id)) return { flowGpm: 0, operatingPressurePsi: 0 }; // NEW
             seen.add(id); // NEW
-            const own = demandFromBedCell(bedCellForAssembly(moduleCell, assembly)); // NEW
+            const own = demandFromBedAssembly(moduleCell, assembly); // CHANGE
             return outgoingAssemblyEdges(moduleCell, assembly).reduce(function (total, edge) { // NEW
                 if (!edge || !edge.target || !isAssembly(edge.target) || assemblyType(edge.target) !== "bed") return total; // NEW
                 const downstream = visit(edge.target); // NEW
@@ -2432,13 +2542,15 @@ Draw.loadPlugin(function (ui) {
 
     function updateGeneratedPipeEdge(edge, pipePartId, pathId) {
         if (!edge) return;
+        const moduleCell = findGardenModuleAncestor(edge); // NEW
         setCellAttrs(edge, {
+            label: pipeEdgeDisplayLabelForPart(moduleCell, pipePartId || "", ConnectorRules.portConnectorForCell(moduleCell, edge.source, "output"), ConnectorRules.portConnectorForCell(moduleCell, edge.target, "input")), // NEW
             [ATTRS.PIPE_EDGE]: "1",
             [ATTRS.PIPE_PART_ID]: pipePartId || "",
             [ATTRS.PATH_ID]: pathId,
             [ATTRS.GENERATED]: "1"
         });
-        applyPipeEdgeStyle(edge, findGardenModuleAncestor(edge), pipePartId || "", GENERATED_PIPE_EDGE_BASE_STYLE); // CHANGE
+        applyPipeEdgeStyle(edge, moduleCell, pipePartId || "", GENERATED_PIPE_EDGE_BASE_STYLE); // CHANGE
     }
 
     function commitStagedPath(moduleCell, stagedPath) {
@@ -2481,7 +2593,8 @@ Draw.loadPlugin(function (ui) {
             const chain = [sourceEndpoint].concat(createdComponents).concat([targetEndpoint]).filter(Boolean);
             const reusableEdges = findReusableCells(moduleCell, path.pipeEdgeIds, Math.max(0, chain.length - 1));
             for (let i = 0; i < chain.length - 1; i++) {
-                const edge = reusableEdges[i] || createEdge(parent, chain[i], chain[i + 1], "", pipeEdgeStyleForPart(moduleCell, path.pipePartId, GENERATED_PIPE_EDGE_BASE_STYLE), {}); // CHANGE
+                const edgeLabel = pipeEdgeDisplayLabelForPart(moduleCell, path.pipePartId, ConnectorRules.portConnectorForCell(moduleCell, chain[i], "output"), ConnectorRules.portConnectorForCell(moduleCell, chain[i + 1], "input")); // NEW
+                const edge = reusableEdges[i] || createEdge(parent, chain[i], chain[i + 1], edgeLabel, pipeEdgeStyleForPart(moduleCell, path.pipePartId, GENERATED_PIPE_EDGE_BASE_STYLE), { label: edgeLabel }); // CHANGE
                 if (edge) {
                     edge.source = chain[i];
                     edge.target = chain[i + 1];
@@ -2506,7 +2619,8 @@ Draw.loadPlugin(function (ui) {
     function commitBedTemplate(moduleCell, pathId, bedCell, template) {
         if (activeIrrigationEditDepth === 0) return runIrrigationEdit("commitBedTemplate", function () { return commitBedTemplate(moduleCell, pathId, bedCell, template); }); // NEW
         const linkedBedCell = isAssembly(bedCell) && assemblyType(bedCell) === "bed" ? bedCellForAssembly(moduleCell, bedCell) : bedCell; // CHANGE
-        const bedGeo = getGeometry(linkedBedCell) || { width: 160, height: 80 }; // CHANGE
+        const bedAssembly = isAssembly(bedCell) && assemblyType(bedCell) === "bed" ? bedCell : resolveBedTemplateAssembly(moduleCell, bedCell); // CHANGE
+        const bedGeo = getGeometry(bedAssembly) || getGeometry(linkedBedCell) || { width: 160, height: 80 }; // CHANGE
         const templateDef = BED_TEMPLATES.find(function (entry) { return entry.id === (template && template.templateId); }) || BED_TEMPLATES[0];
         const roleParts = bedTemplateRolePartIds(template); // NEW
         const templateModel = template && template.templateModel === BED_TEMPLATE_MODEL_BOM ? BED_TEMPLATE_MODEL_BOM : ""; // NEW
@@ -2544,11 +2658,9 @@ Draw.loadPlugin(function (ui) {
 
         model.beginUpdate && model.beginUpdate();
         try {
-            if (!linkedBedCell) return record; // NEW
-            const bedAssembly = resolveBedTemplateAssembly(moduleCell, bedCell); // NEW
-            setCellAttrs(linkedBedCell, { [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(record) }); // CHANGE
+            if (!bedAssembly) return record; // CHANGE
             if (bedAssembly) { // NEW
-                setCellAttrs(bedAssembly, { label: bedTemplateLabel(record.templateId) }); // NEW
+                setCellAttrs(bedAssembly, { label: bedTemplateLabel(record.templateId), [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(record) }); // CHANGE
                 createBedTemplateLayoutCells(bedAssembly, pathId, record, getGeometry(bedAssembly) || bedGeo); // CHANGE
             } // NEW
 
@@ -2590,7 +2702,7 @@ Draw.loadPlugin(function (ui) {
 
     function reflowBedTemplateLayout(moduleCell, bedAssembly) { // NEW
         const bedCell = bedCellForAssembly(moduleCell, bedAssembly); // NEW
-        const record = safeJsonParse(getCellAttr(bedCell, ATTRS.BED_TEMPLATE_JSON, ""), null); // NEW
+        const record = readBedAssemblyTemplateRecord(moduleCell, bedAssembly); // CHANGE
         if (!record) return; // NEW
         return refreshBedAssemblyRowsFromTemplate(moduleCell, bedAssembly, bedCell, record); // CHANGE
     } // NEW
@@ -2620,8 +2732,8 @@ Draw.loadPlugin(function (ui) {
         const refreshed = rowMetricRecordForGeometry(moduleCell, record, geometry); // NEW
         const nextRecord = refreshed.record || record; // NEW
         let changed = false; // NEW
-        if (bedCell && refreshed.recomputed && JSON.stringify(nextRecord) !== JSON.stringify(record)) { // NEW
-            changed = setCellAttrs(bedCell, { [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(nextRecord) }) || changed; // NEW
+        if (refreshed.recomputed && JSON.stringify(nextRecord) !== JSON.stringify(record)) { // CHANGE
+            changed = setCellAttrs(bedAssembly, { [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(nextRecord) }) || changed; // CHANGE
         } // NEW
         changed = setCellAttrs(bedAssembly, { label: bedTemplateLabel(nextRecord.templateId) }) || changed; // NEW
         changed = createBedTemplateLayoutCells(bedAssembly, nextRecord.pathId || ("assembly_bed_" + sanitizeId(getCellId(bedCell))), nextRecord, geometry) || changed; // NEW
@@ -2637,7 +2749,6 @@ Draw.loadPlugin(function (ui) {
         const previousBedId = getCellId(previousLinkedBed) || ""; // NEW
         const linkedBedId = getCellId(linkedBed) || ""; // NEW
         const changingLinkedBed = !!(previousBedId && linkedBedId && previousBedId !== linkedBedId); // NEW
-        const movingTemplate = changingLinkedBed ? readBedAssemblyTemplateRecord(moduleCell, assembly) : null; // NEW
         const movingPorts = changingLinkedBed && previousLinkedBed ? readBedPortConfig(previousLinkedBed) : null; // NEW
         const fitWidth = !opts || opts.fitWidth !== false; // CHANGE
         const fitHeight = !opts || opts.fitHeight !== false; // NEW
@@ -2650,7 +2761,6 @@ Draw.loadPlugin(function (ui) {
         let changed = false; // NEW
         if (ownsTransaction && model.beginUpdate) model.beginUpdate(); // NEW
         try { // NEW
-            if (movingTemplate) changed = setCellAttrs(linkedBed, { [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(movingTemplate) }) || changed; // NEW
             if (movingPorts) writeBedPortConfig(linkedBed, movingPorts); // NEW
             if (fitWidth || fitHeight) changed = !!setGeometry(assembly, next); // CHANGE
             changed = setCellAttrs(assembly, { [ATTRS.LINKED_BED_ID]: getCellId(linkedBed) || "", bed_fit_width: fitWidth ? "1" : "0", bed_fit_height: fitHeight ? "1" : "0" }) || changed; // NEW
@@ -2675,13 +2785,32 @@ Draw.loadPlugin(function (ui) {
         return collectDescendants(moduleCell, function (cell) { return isBedAssembly(cell) && getCellAttr(cell, ATTRS.LINKED_BED_ID, "") === bedId; }); // NEW
     } // NEW
 
-    function readBedTemplateRecord(bedCell) { // NEW
-        return safeJsonParse(getCellAttr(bedCell, ATTRS.BED_TEMPLATE_JSON, ""), null); // NEW
+    function normalizeBedIrrigationMethodId(record) { // NEW
+        const template = bedTemplateById(record && record.templateId); // NEW
+        return String(record && record.irrigationType || template && template.lineKind || "").trim(); // NEW
+    } // NEW
+
+    function getBedIrrigationMethods(moduleCell, bedCell) { // NEW
+        const root = moduleCell || findGardenModuleAncestor(bedCell); // NEW
+        const seen = new Set(); // NEW
+        const methods = []; // NEW
+        linkedBedAssembliesForBed(root, bedCell).forEach(function (assembly) { // NEW
+            const record = readBedAssemblyTemplateRecord(root, assembly); // NEW
+            const id = normalizeBedIrrigationMethodId(record); // NEW
+            const label = bedIrrigationMethodLabel(id); // NEW
+            if (!id || !label || seen.has(id)) return; // NEW
+            seen.add(id); // NEW
+            methods.push({ id, label }); // NEW
+        }); // NEW
+        return methods; // NEW
+    } // NEW
+
+    function readBedTemplateRecord(bedAssembly) { // NEW
+        return safeJsonParse(getCellAttr(bedAssembly, ATTRS.BED_TEMPLATE_JSON, ""), null); // CHANGE
     } // NEW
 
     function readBedAssemblyTemplateRecord(moduleCell, assembly) { // NEW
-        const linkedBed = bedCellForAssembly(moduleCell, assembly); // NEW
-        return readBedTemplateRecord(linkedBed) || safeJsonParse(getCellAttr(bedLayoutRowsForAssembly(assembly)[0], ATTRS.BED_TEMPLATE_JSON, ""), null); // NEW
+        return readBedTemplateRecord(assembly) || safeJsonParse(getCellAttr(bedLayoutRowsForAssembly(assembly)[0], ATTRS.BED_TEMPLATE_JSON, ""), null); // CHANGE
     } // NEW
 
     function bedLayoutRowsForAssembly(assembly) { // NEW
@@ -2695,7 +2824,7 @@ Draw.loadPlugin(function (ui) {
             return cell !== movedAssembly && isBedAssembly(cell) && getCellAttr(cell, ATTRS.LINKED_BED_ID, "") === bedId; // NEW
         }).length > 0; // NEW
         if (stillUsed) return false; // NEW
-        return setCellAttrs(bedCell, { [ATTRS.BED_TEMPLATE_JSON]: "", [ATTRS.BED_PORTS_JSON]: "" }); // NEW
+        return setCellAttrs(bedCell, { [ATTRS.BED_PORTS_JSON]: "" }); // CHANGE
     } // NEW
 
     function relinkBedAssemblyToBed(moduleCell, assembly, targetBed, opts) { // NEW
@@ -2704,16 +2833,14 @@ Draw.loadPlugin(function (ui) {
         const previousBedId = getCellId(previousBed) || ""; // NEW
         const targetBedId = getCellId(targetBed) || ""; // NEW
         const sameBed = previousBedId && previousBedId === targetBedId; // NEW
-        const templateRecord = readBedAssemblyTemplateRecord(moduleCell, assembly) || readBedTemplateRecord(targetBed); // NEW
+        const templateRecord = readBedAssemblyTemplateRecord(moduleCell, assembly); // CHANGE
         const portSource = previousBed || targetBed; // NEW
         const portConfig = portSource ? readBedPortConfig(portSource) : null; // NEW
         const axes = opts && opts.axes ? opts.axes : bedAssemblyFitAxes(assembly); // NEW
         let changed = false; // NEW
-        if (!sameBed && templateRecord) changed = setCellAttrs(targetBed, { [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(templateRecord) }) || changed; // NEW
         if (!sameBed && portConfig) writeBedPortConfig(targetBed, portConfig); // NEW
         changed = syncLinkedBedAssemblyToBed(moduleCell, assembly, targetBed, { inTransaction: true, fitWidth: !!axes.fitWidth, fitHeight: !!axes.fitHeight }) || changed; // NEW
-        const targetRecord = readBedTemplateRecord(targetBed) || templateRecord; // NEW
-        if (targetRecord) changed = refreshBedAssemblyRowsFromTemplate(moduleCell, assembly, targetBed, targetRecord) || changed; // NEW
+        if (templateRecord) changed = refreshBedAssemblyRowsFromTemplate(moduleCell, assembly, targetBed, templateRecord) || changed; // CHANGE
         if (!sameBed && previousBed) changed = clearBedTemplateDataIfUnused(moduleCell, previousBed, assembly) || changed; // NEW
         return changed; // NEW
     } // NEW
@@ -3465,8 +3592,7 @@ Draw.loadPlugin(function (ui) {
     } // CHANGE
 
     function bedAssemblyCatalogPartIds(moduleCell, assembly) { // NEW
-        const bedCell = bedCellForAssembly(moduleCell, assembly); // NEW
-        const template = safeJsonParse(getCellAttr(bedCell, ATTRS.BED_TEMPLATE_JSON, ""), null); // NEW
+        const template = readBedAssemblyTemplateRecord(moduleCell, assembly); // CHANGE
         if (!template) return []; // NEW
         const ids = []; // NEW
         pushCatalogPartId(ids, template.inletPartId); // NEW
@@ -3681,6 +3807,38 @@ Draw.loadPlugin(function (ui) {
     function pipeVisualNominalSize(part) { // NEW
         const p = normalizeCatalogPart(part); // NEW
         return p && p.connectors && ((p.connectors.input && p.connectors.input.nominalSize) || (p.connectors.output && p.connectors.output.nominalSize)) || ""; // NEW
+    } // NEW
+
+    function pipeEdgeDisplayLabelForPart(moduleCell, pipePartId, sourceConnector, targetConnector) { // NEW
+        const pipe = partById(readCatalog(moduleCell), pipePartId || ""); // NEW
+        const pipeSize = pipeVisualNominalSize(pipe); // NEW
+        if (pipeSize) return pipeSize; // NEW
+        const sourceSize = normalizeConnectorRecord(sourceConnector).nominalSize; // NEW
+        const targetSize = normalizeConnectorRecord(targetConnector).nominalSize; // NEW
+        return sourceSize && sourceSize === targetSize ? sourceSize : (sourceSize || targetSize || "size?"); // NEW
+    } // NEW
+
+    function pipeEdgeDisplayLabel(moduleCell, edge, sourceConnector, targetConnector) { // NEW
+        return pipeEdgeDisplayLabelForPart(moduleCell, getCellAttr(edge, ATTRS.PIPE_PART_ID, ""), sourceConnector, targetConnector); // NEW
+    } // NEW
+
+    function connectionEdgeDisplayLabel(moduleCell, edge, sourceConnector, targetConnector) { // NEW
+        if (getCellAttr(edge, ATTRS.PIPE_EDGE, "") === "1") return pipeEdgeDisplayLabel(moduleCell, edge, sourceConnector, targetConnector); // NEW
+        return connectionDisplayLabel(sourceConnector, targetConnector); // NEW
+    } // NEW
+
+    function connectionEdgeDisplayLabelForDecision(moduleCell, decision) { // NEW
+        const sourceConnector = ConnectorRules.portConnectorForCell(moduleCell, decision && decision.sourceCell, "output"); // NEW
+        const targetConnector = ConnectorRules.portConnectorForCell(moduleCell, decision && decision.targetCell, "input"); // NEW
+        if (decision && decision.mode === "pipe") return pipeEdgeDisplayLabelForPart(moduleCell, decision.pipePartId || "", sourceConnector, targetConnector); // NEW
+        return connectionDisplayLabel(sourceConnector, targetConnector); // NEW
+    } // NEW
+
+    function syncConnectionEdgeDisplayLabel(moduleCell, edge) { // NEW
+        if (!edge) return false; // NEW
+        const sourceConnector = ConnectorRules.portConnectorForCell(moduleCell, edge.source, "output"); // NEW
+        const targetConnector = ConnectorRules.portConnectorForCell(moduleCell, edge.target, "input"); // NEW
+        return setCellAttrs(edge, { label: connectionEdgeDisplayLabel(moduleCell, edge, sourceConnector, targetConnector) }); // NEW
     } // NEW
 
     function pipeEdgeStyleForPart(moduleCell, pipePartId, baseStyle) { // NEW
@@ -4002,6 +4160,7 @@ Draw.loadPlugin(function (ui) {
             warningBadges: [], // NEW
             portBadges: [], // NEW
             portBadgeNodeByKey: new Map(), // NEW
+            connectionBadgeNodeByKey: new Map(), // NEW
             inlineActionNodes: [], // NEW
             zoneBadges: [], // NEW
             selectedPorts: [], // NEW
@@ -4045,6 +4204,7 @@ Draw.loadPlugin(function (ui) {
         removeNodeList(session.portBadges); // NEW
         removeNodeList(session.inlineActionNodes); // NEW
         removeNodeList(session.zoneBadges); // NEW
+        if (session.frontedBedAssemblyId) { reorderIrrigationModuleLayering(session.moduleCell); session.frontedBedAssemblyId = ""; } // NEW
         removeIrrigationModeListeners(session); // NEW
         activeIrrigationMode = null; // NEW
         scheduleInactiveEntryOverlayRefresh(); // NEW
@@ -4268,6 +4428,7 @@ Draw.loadPlugin(function (ui) {
         removeNodeList(session.inlineActionNodes); // NEW
         removeNodeList(session.zoneBadges); // NEW
         session.portBadgeNodeByKey = new Map(); // NEW
+        session.connectionBadgeNodeByKey = new Map(); // NEW
 
         const selected = graph.getSelectionCell && graph.getSelectionCell(); // NEW
         const assemblySelection = selectedAssemblyContextCells(); // NEW
@@ -4432,11 +4593,14 @@ Draw.loadPlugin(function (ui) {
         renderSelectedConnectionActions(session, hud); // CHANGE
         if (session.partPickerVisible) renderAddPartAssemblyForm(session, hud); // NEW
         const actions = hudActions(); // NEW
+        const selectedParts = selectedAssemblyPartCells(selected); // NEW
+        const selectedAssemblies = selected.filter(isAssembly); // NEW
         actions.appendChild(button("Add Part", function () { session.partPickerVisible = !session.partPickerVisible; renderIrrigationMode(session); })); // NEW
+        if (selectedParts.length) actions.appendChild(button("Delete Part", function () { deleteAssemblySelection(session, selectedParts); })); // NEW
         if (primaryAssembly && assemblyCanReverse(session.moduleCell, primaryAssembly)) actions.appendChild(button("Reverse Assembly", function () { reverseAssembly(primaryAssembly); renderIrrigationMode(session); })); // CHANGE
         actions.appendChild(button("Zones", function () { openZoneManager(session.moduleCell, session); })); // NEW
         actions.appendChild(button("Catalog", function () { openCatalogManager(session.moduleCell); })); // NEW
-        actions.appendChild(button("Delete", function () { deleteAssemblySelection(session, selected); })); // CHANGE
+        if (!selectedParts.length || selectedAssemblies.length) actions.appendChild(button("Delete", function () { deleteAssemblySelection(session, selectedAssemblies.length ? selectedAssemblies : selected); })); // CHANGE
         actions.appendChild(button("Exit", closeIrrigationMode)); // NEW
         hud.appendChild(actions); // NEW
     } // NEW
@@ -4505,8 +4669,8 @@ Draw.loadPlugin(function (ui) {
         if (free.length === 2) { // NEW
             const ordered = orderedConnectionPorts(free); // NEW
             if (ordered) { // NEW
-                const direct = validatePortConnection(session.moduleCell, ordered.source, ordered.target); // NEW
-                if (!direct.ok) actions.appendChild(button("Suggest Connection", function () { session.bridgePorts = ordered; renderIrrigationMode(session); })); // CHANGE
+                const bridge = ConnectorRules.bridgeSuggestionEligibility(session.moduleCell, ordered.source, ordered.target); // CHANGE
+                if (bridge.ok) actions.appendChild(button("Suggest Connection", function () { session.bridgePorts = ordered; renderIrrigationMode(session); })); // CHANGE
             } // NEW
         } // NEW
         if (actions.childNodes.length) hud.appendChild(actions); // NEW
@@ -4791,7 +4955,7 @@ Draw.loadPlugin(function (ui) {
 
     function connectionRowDetailLabel(moduleCell, row, edge, neighbor) { // NEW
         if (edge) return pipeEdgeLabel(moduleCell, edge, { cellId: getCellId(row.cell), role: row.role, index: row.index }); // NEW
-        if (neighbor) return "Internal connection"; // NEW
+        if (neighbor) return "Internal connection: " + internalConnectionDisplayLabel(moduleCell, row.role === "output" ? row.cell : neighbor, row.role === "output" ? neighbor : row.cell); // CHANGE
         return pipeEdgeLabel(moduleCell, null, { cellId: getCellId(row.cell), role: row.role, index: row.index }); // NEW
     } // NEW
 
@@ -4929,9 +5093,9 @@ Draw.loadPlugin(function (ui) {
     function connectionRowCurrentLabel(moduleCell, row) { // NEW
         const port = { cellId: getCellId(row.cell), role: row.role, index: row.index }; // NEW
         const edge = edgesForPort(moduleCell, port)[0]; // NEW
-        if (edge) return "Connected: " + irrigationCellLabel(row.role === "output" ? edge.target : edge.source); // NEW
+        if (edge) return edgeConnectionDisplayLabel(moduleCell, edge) + " connected: " + irrigationCellLabel(row.role === "output" ? edge.target : edge.source); // CHANGE
         const neighbor = internalNeighborForPort(row.cell, row.role); // NEW
-        return neighbor ? "Connected: " + irrigationCellLabel(neighbor) : "No change"; // NEW
+        return neighbor ? internalConnectionDisplayLabel(moduleCell, row.role === "output" ? row.cell : neighbor, row.role === "output" ? neighbor : row.cell) + " connected: " + irrigationCellLabel(neighbor) : "No change"; // CHANGE
     } // NEW
 
     function connectionDropdownGroups(moduleCell, row) { // NEW
@@ -4977,12 +5141,19 @@ Draw.loadPlugin(function (ui) {
     function applyBedPortPartChoice(session, row, part) { // NEW
         const port = { cellId: getCellId(row.cell), role: row.role, index: row.index }; // NEW
         if (!isPortFree(session.moduleCell, port)) return { cell: null, message: "Selected bed port is already connected." }; // NEW
+        const decision = dropdownPartConnectionDecision(session.moduleCell, row, part); // NEW
+        if (!decision.ok) return { cell: null, message: decision.reason || "Part could not be connected to the selected bed port." }; // NEW
         const created = createPartAssembly(session.moduleCell, part, bedPortPartAnchor(row.cell, row.role, row.index)); // NEW
         const partCell = created && created.partCell; // NEW
-        const source = row.role === "input" ? { cellId: getCellId(partCell), role: "output", index: 0 } : port; // NEW
-        const target = row.role === "input" ? port : { cellId: getCellId(partCell), role: "input", index: 0 }; // NEW
-        const result = partCell ? ConnectorRules.createAssemblyConnection(session.moduleCell, source, target) : { ok: false, reason: "Part could not be created." }; // NEW
-        if (!result.ok) { removeCellFromParent(created.assembly); return { cell: null, message: result.reason || "Part could not be connected to the selected bed port." }; } // NEW
+        if (!partCell) return { cell: null, message: "Part could not be created." }; // NEW
+        const sourceCell = row.role === "input" ? partCell : row.cell; // NEW
+        const targetCell = row.role === "input" ? row.cell : partCell; // NEW
+        const sourceIndex = row.role === "input" ? 0 : row.index; // NEW
+        const targetIndex = row.role === "input" ? row.index : 0; // NEW
+        let edge = null; // NEW
+        try { edge = ConnectionChainPlanner.createEdge(session.moduleCell, sourceCell, targetCell, decision, sourceIndex, targetIndex); } // NEW
+        catch (err) { edge = null; } // NEW
+        if (!edge) { removeCellFromParent(created.assembly); return { cell: null, message: "Part could not be connected to the selected bed port." }; } // NEW
         session.selectedPorts = []; // NEW
         session.selectedBoundaries = []; // NEW
         return { cell: created.assembly, message: "Part added to bed " + (row.role === "input" ? "inlet." : "outlet.") }; // NEW
@@ -5004,6 +5175,10 @@ Draw.loadPlugin(function (ui) {
         if (!assembly || index < 0) return { message: "Selected part is no longer available." }; // NEW
         const edge = edgesForPort(moduleCell, { cellId: getCellId(row.cell), role: row.role, index: row.index })[0]; // NEW
         const neighbor = internalNeighborForPort(row.cell, row.role); // NEW
+        if (!edge && !neighbor) { // FIX: free pipe-compatible dropdown choices must create a separate assembly connected by a pipe edge.
+            const external = applyExternalPipeDropdownChoice(moduleCell, row, part); // FIX
+            if (external) return external; // FIX
+        } // FIX
         model.beginUpdate && model.beginUpdate(); // NEW
         try { // NEW
             if (neighbor) { // CHANGE
@@ -5016,6 +5191,31 @@ Draw.loadPlugin(function (ui) {
             return { cell: inserted, message: neighbor ? "Connection changed; previous chain segment was split into a disconnected swimlane." : "Part added to connection." }; // NEW
         } finally { model.endUpdate && model.endUpdate(); } // NEW
     } // NEW
+
+    function applyExternalPipeDropdownChoice(moduleCell, row, part) { // FIX
+        return ConnectionChainPlanner.applyExternalPart(moduleCell, row, part); // CHANGE
+    } // FIX
+
+    function dropdownPartConnectionDecision(moduleCell, row, part) { // FIX
+        const p = normalizeCatalogPart(part); // FIX
+        if (!p) return { ok: false, reason: "Selected part is no longer available." }; // FIX
+        const rowConnector = ConnectorRules.portConnectorForCell(moduleCell, row.cell, row.role); // FIX
+        const partConnector = row.role === "input" ? p.connectors.output : p.connectors.input; // FIX
+        if (!partConnector) return { ok: false, reason: "Selected part does not have a compatible connector." }; // FIX
+        const sourceConnector = row.role === "input" ? partConnector : rowConnector; // FIX
+        const targetConnector = row.role === "input" ? rowConnector : partConnector; // FIX
+        return Object.assign({ pipeRequired: ConnectorRules.connectorsRequirePipe(sourceConnector, targetConnector), sourceConnector, targetConnector }, ConnectorRules.connectionMode(moduleCell, sourceConnector, targetConnector)); // CHANGE
+    } // FIX
+
+    function linearDropdownPartAnchor(row) { // FIX
+        const assembly = findAssemblyAncestor(row.cell); // FIX
+        const geo = getGeometry(assembly) || getGeometry(row.cell) || {}; // FIX
+        const x = finiteNumber(geo.x, 24); // FIX
+        const y = finiteNumber(geo.y, 72); // FIX
+        const height = finiteNumber(geo.height, ASSEMBLY_HEADER_SIZE + ASSEMBLY_PART_HEIGHT + ASSEMBLY_PART_GAP * 2); // FIX
+        const slotOffset = Math.max(0, Math.floor(finiteNumber(row.index, 0))) * 28; // FIX
+        return row.role === "input" ? { x, y: Math.max(24, y - ASSEMBLY_HEADER_SIZE - ASSEMBLY_PART_HEIGHT - ASSEMBLY_PART_GAP - 40 - slotOffset) } : { x, y: y + height + 40 + slotOffset }; // FIX
+    } // FIX
 
     function retargetLinearConnectionEdgeAfterInsert(moduleCell, edge, row, inserted) { // CHANGE
         if (row.role === "input") { // NEW
@@ -5189,9 +5389,12 @@ Draw.loadPlugin(function (ui) {
         const selectedBoundaries = selectedValidBoundaries(session); // NEW
         const anchorPort = normalizePort(session && session.inlineActionAnchorPort || {}); // NEW
         const anchorBoundary = anchorPort.cellId ? boundaryForPort(session.moduleCell, anchorPort) : null; // NEW
+        const focusedBoundary = normalizeBoundary(session && session.focusedConnectionBoundary || {}); // NEW
         const selectedKeys = selectedBoundaries.map(boundaryKey); // NEW
         const disconnectBoundary = anchorBoundary && selectedKeys.indexOf(boundaryKey(anchorBoundary)) >= 0 ? anchorBoundary : null; // NEW
         if (disconnectBoundary && boundaryExists(session.moduleCell, disconnectBoundary)) return { type: "disconnect", label: "Disconnect", title: "Disconnect selected irrigation connection", boundary: disconnectBoundary, boundaries: [disconnectBoundary], anchorPort }; // NEW
+        const focusedDisconnectBoundary = boundaryKey(focusedBoundary) && selectedKeys.indexOf(boundaryKey(focusedBoundary)) >= 0 ? focusedBoundary : null; // NEW
+        if (focusedDisconnectBoundary && boundaryExists(session.moduleCell, focusedDisconnectBoundary)) return { type: "disconnect", label: "Disconnect", title: "Disconnect selected irrigation connection", boundary: focusedDisconnectBoundary, boundaries: [focusedDisconnectBoundary] }; // NEW
         if (ports.length === 2 && selectedBoundaries.length === 0) { // NEW
             const free = ports.filter(function (port) { return isPortFree(session.moduleCell, port); }); // NEW
             const ordered = free.length === 2 ? orderedConnectionPorts(free) : null; // NEW
@@ -5238,6 +5441,7 @@ Draw.loadPlugin(function (ui) {
         if (action.type === "connect") return portBadgeNodeForPort(session, action.anchorPort); // NEW
         const anchorPort = normalizePort(session.inlineActionAnchorPort || {}); // NEW
         if (anchorPort.cellId) return portBadgeNodeForPort(session, anchorPort); // NEW
+        if (action.type === "disconnect") return connectionBadgeNodeForBoundary(session, action.boundary); // NEW
         return null; // NEW
     } // NEW
 
@@ -5245,6 +5449,12 @@ Draw.loadPlugin(function (ui) {
         const normalized = normalizePort(port); // NEW
         if (!normalized.cellId || !session.portBadgeNodeByKey) return null; // NEW
         return session.portBadgeNodeByKey.get(portKey(normalized)) || null; // NEW
+    } // NEW
+
+    function connectionBadgeNodeForBoundary(session, boundary) { // NEW
+        const key = boundaryKey(boundary); // NEW
+        if (!key || !session.connectionBadgeNodeByKey) return null; // NEW
+        return session.connectionBadgeNodeByKey.get(key) || null; // NEW
     } // NEW
 
     function boundaryActionAnchorBounds(session, boundary) { // NEW
@@ -5275,13 +5485,16 @@ Draw.loadPlugin(function (ui) {
         const state = cellState(cell); // NEW
         const total = Math.max(1, Math.floor(finiteNumber(portCapacityForCell(session.moduleCell, cell, normalized.role), 1))); // NEW
         const slot = (normalized.index + 1) / (total + 1); // NEW
-        return { x: state.x + state.width * slot - PORT_BADGE_SIZE / 2, y: normalized.role === "input" ? state.y - PORT_BADGE_SIZE - 4 : state.y + state.height + 4, width: PORT_BADGE_SIZE, height: PORT_BADGE_SIZE }; // NEW
+        const width = portBadgeWidthForLabel(portDisplayLabel(session.moduleCell, normalized)); // NEW
+        return { x: state.x + state.width * slot - width / 2, y: normalized.role === "input" ? state.y - PORT_BADGE_SIZE - 4 : state.y + state.height + 4, width, height: PORT_BADGE_SIZE }; // CHANGE
     } // NEW
 
     function internalConnectionBadgeBounds(upstream, downstream) { // NEW
         const up = cellState(upstream); // NEW
         const down = cellState(downstream); // NEW
-        return { x: Math.min(up.x, down.x) + Math.max(up.width, down.width) / 2 - PORT_BADGE_SIZE / 2, y: (up.y + up.height + down.y) / 2 - PORT_BADGE_SIZE / 2, width: PORT_BADGE_SIZE, height: PORT_BADGE_SIZE }; // NEW
+        const width = portBadgeWidthForLabel("C"); // CHANGE
+        const right = Math.max(finiteNumber(up.x, 0) + finiteNumber(up.width, 0), finiteNumber(down.x, 0) + finiteNumber(down.width, 0)); // NEW
+        return { x: right + 4, y: (up.y + up.height + down.y) / 2 - PORT_BADGE_SIZE / 2, width, height: PORT_BADGE_SIZE }; // CHANGE
     } // NEW
 
     function positionInlineConnectionAction(node, anchor, host) { // CHANGE
@@ -5347,15 +5560,14 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function bridgeSuggestionsForPorts(moduleCell, sourcePort, targetPort) { // NEW
-        const sourceCell = portCell(moduleCell, sourcePort); // NEW
-        const targetCell = portCell(moduleCell, targetPort); // NEW
-        const sourceConnector = ConnectorRules.portConnectorForCell(moduleCell, sourceCell, "output"); // CHANGE
-        const targetConnector = ConnectorRules.portConnectorForCell(moduleCell, targetCell, "input"); // CHANGE
-        if (!sourceConnector || !targetConnector) return []; // NEW
+        const bridge = ConnectorRules.bridgeSuggestionEligibility(moduleCell, sourcePort, targetPort); // NEW
+        if (!bridge.ok) return []; // NEW
+        const sourceConnector = bridge.sourceConnector; // CHANGE
+        const targetConnector = bridge.targetConnector; // CHANGE
         const catalog = readCatalog(moduleCell); // NEW
         const sourcePart = { id: "source_port", name: "Selected outlet", category: "source_adapter", stockState: "in_stock", cost: 0, connectors: { inputs: 0, outputs: 1, output: sourceConnector }, specs: {} }; // NEW
         const targetRequirement = { connectorType: targetConnector.type, nominalSize: targetConnector.nominalSize, pipeType: targetConnector.pipeType || "", pipeConnection: !!targetConnector.pipeConnection }; // CHANGE
-        const items = sortCatalogParts(catalog.items).map(normalizeCatalogPart).filter(function (part) { return part && part.category !== "pipe_tubing" && validateCatalogPart(part).ok; }); // NEW
+        const items = sortCatalogParts(catalog.items).map(normalizeCatalogPart).filter(function (part) { return part && bridgeSuggestionPartAllowed(part) && validateCatalogPart(part).ok; }); // CHANGE
         const queue = [{ last: sourcePart, parts: [], seen: new Set(["source_port"]) }]; // NEW
         const results = []; // NEW
         while (queue.length && results.length < 40) { // NEW
@@ -5387,20 +5599,210 @@ Draw.loadPlugin(function (ui) {
         const targetAssembly = findAssemblyAncestor(targetCell); // NEW
         if (!sourceCell || !targetCell || !targetAssembly) { session.message = "Bridge endpoints are no longer available."; renderIrrigationMode(session); return; } // NEW
         const parts = (suggestion.partIds || []).map(function (partId) { return partById(readCatalog(session.moduleCell), partId); }).filter(Boolean); // NEW
-        const inserted = insertBridgePartsBefore(session.moduleCell, targetAssembly, targetCell, parts); // NEW
-        moveBridgeAssemblies(sourceCell, targetCell); // NEW
-        const chain = [sourceCell].concat(inserted).concat([targetCell]); // NEW
-        let ok = true; // NEW
-        for (let i = 0; i < chain.length - 1; i++) { // NEW
-            if (findAssemblyAncestor(chain[i]) === findAssemblyAncestor(chain[i + 1]) && internalNeighborForPort(chain[i], "output") === chain[i + 1]) continue; // NEW
-            const source = { cellId: getCellId(chain[i]), role: "output", index: 0 }; // NEW
-            const target = { cellId: getCellId(chain[i + 1]), role: "input", index: 0 }; // NEW
-            const result = createAssemblyConnection(session.moduleCell, source, target); // NEW
-            if (!result.ok) { ok = false; session.message = result.reason; break; } // NEW
-        } // NEW
+        const plan = ConnectionChainPlanner.planBridge(session.moduleCell, sourcePort, targetPort, parts); // NEW
+        const result = plan.ok ? ConnectionChainPlanner.applyBridge(session.moduleCell, plan) : plan; // NEW
+        const ok = !!(result && result.ok); // NEW
+        if (!ok) session.message = result && result.reason || "Bridge connection could not be applied."; // CHANGE
         if (ok) { session.message = "Bridge connection applied."; session.selectedPorts = []; session.selectedBoundaries = []; session.bridgePorts = null; } // CHANGE
         scheduleHudGraphStateSync(session.moduleCell); // NEW
         renderIrrigationMode(session); // NEW
+    } // NEW
+
+    function bridgeSuggestionPartAllowed(part) { // NEW
+        const p = normalizeCatalogPart(part); // NEW
+        return !!(p && BRIDGE_SUGGESTION_CATEGORIES.has(p.category) && p.connectors.inputs === 1 && p.connectors.outputs === 1); // NEW
+    } // NEW
+
+    function planBridgeConnectionChain(moduleCell, sourcePort, targetPort, parts) { // NEW
+        const bridge = ConnectorRules.bridgeSuggestionEligibility(moduleCell, sourcePort, targetPort); // NEW
+        if (!bridge.ok) return Object.assign({}, bridge, { ok: false }); // NEW
+        const normalizedParts = (parts || []).map(normalizeCatalogPart).filter(Boolean); // NEW
+        if (!normalizedParts.length) return { ok: false, reason: "No bridge parts selected." }; // NEW
+        if (!normalizedParts.every(bridgeSuggestionPartAllowed)) return { ok: false, reason: "Bridge suggestions must use one-inlet, one-outlet adapters or fittings." }; // NEW
+        const nodes = [{ kind: "existing", cell: bridge.sourceCell, port: normalizePort(sourcePort), outputIndex: bridge.source.index }].concat(normalizedParts.map(function (part, index) { return { kind: "part", part, partIndex: index, inputIndex: 0, outputIndex: 0 }; })).concat([{ kind: "existing", cell: bridge.targetCell, port: normalizePort(targetPort), inputIndex: bridge.target.index }]); // NEW
+        const hops = []; // NEW
+        for (let i = 0; i < nodes.length - 1; i++) { // NEW
+            const sourceConnector = chainNodeOutputConnector(moduleCell, nodes[i]); // NEW
+            const targetConnector = chainNodeInputConnector(moduleCell, nodes[i + 1]); // NEW
+            const compatibility = ConnectorRules.connectionMode(moduleCell, sourceConnector, targetConnector); // NEW
+            if (!compatibility.ok) return { ok: false, reason: compatibility.reason || "Bridge parts are not compatible." }; // NEW
+            hops.push(Object.assign({}, compatibility, { sourceNode: nodes[i], targetNode: nodes[i + 1], sourceConnector, targetConnector })); // NEW
+        } // NEW
+        return { ok: true, sourcePort: normalizePort(sourcePort), targetPort: normalizePort(targetPort), sourceCell: bridge.sourceCell, targetCell: bridge.targetCell, parts: normalizedParts, nodes, hops, hasPipe: hops.some(function (hop) { return hop.mode === "pipe"; }) }; // NEW
+    } // NEW
+
+    function chainNodeInputConnector(moduleCell, node) { // NEW
+        if (!node) return null; // NEW
+        if (node.kind === "existing") return ConnectorRules.portConnectorForCell(moduleCell, node.cell, "input"); // NEW
+        return node.part && node.part.connectors && node.part.connectors.input; // NEW
+    } // NEW
+
+    function chainNodeOutputConnector(moduleCell, node) { // NEW
+        if (!node) return null; // NEW
+        if (node.kind === "existing") return ConnectorRules.portConnectorForCell(moduleCell, node.cell, "output"); // NEW
+        return node.part && node.part.connectors && node.part.connectors.output; // NEW
+    } // NEW
+
+    function applyBridgeConnectionChain(moduleCell, plan) { // NEW
+        if (!plan || !plan.ok) return plan || { ok: false, reason: "Bridge plan is unavailable." }; // NEW
+        const current = ConnectorRules.bridgeSuggestionEligibility(moduleCell, plan.sourcePort, plan.targetPort); // NEW
+        if (!current.ok) return { ok: false, reason: current.reason || "Bridge endpoints are no longer available." }; // NEW
+        if (!plan.hasPipe) return applyInlineBridgeConnectionChain(moduleCell, plan); // NEW
+        return applyExternalBridgeConnectionChain(moduleCell, plan); // NEW
+    } // NEW
+
+    function applyExternalPartConnection(moduleCell, row, part) { // NEW
+        const decision = dropdownPartConnectionDecision(moduleCell, row, part); // NEW
+        if (!decision || !decision.pipeRequired) return null; // NEW
+        if (!decision.ok || decision.mode !== "pipe") return { cell: null, message: decision.reason || "Part could not be connected with pipe." }; // NEW
+        const createdAssemblies = []; // NEW
+        const createdEdges = []; // NEW
+        try { // NEW
+            const created = createPartAssembly(moduleCell, part, linearDropdownPartAnchor(row)); // NEW
+            if (!created || !created.assembly || !created.partCell) throw new Error("Part could not be created."); // NEW
+            createdAssemblies.push(created.assembly); // NEW
+            const sourceCell = row.role === "input" ? created.partCell : row.cell; // NEW
+            const targetCell = row.role === "input" ? row.cell : created.partCell; // NEW
+            const sourceIndex = row.role === "input" ? 0 : row.index; // NEW
+            const targetIndex = row.role === "input" ? row.index : 0; // NEW
+            const edge = createPlannedConnectionEdge(moduleCell, sourceCell, targetCell, decision, sourceIndex, targetIndex); // NEW
+            if (!edge) throw new Error("Part could not be connected as a separate assembly."); // NEW
+            createdEdges.push(edge); // NEW
+            return { cell: created.assembly, message: "Part assembly connected with pipe." }; // NEW
+        } catch (err) { // NEW
+            createdEdges.forEach(removeCellFromParent); // NEW
+            createdAssemblies.forEach(removeCellFromParent); // NEW
+            return { cell: null, message: err && err.message || "Part could not be connected as a separate assembly." }; // NEW
+        } // NEW
+    } // NEW
+
+    function applyInlineBridgeConnectionChain(moduleCell, plan) { // NEW
+        const targetAssembly = findAssemblyAncestor(plan.targetCell); // NEW
+        if (!targetAssembly) return { ok: false, reason: "Bridge target assembly is unavailable." }; // NEW
+        const previousRows = assemblyPartCells(targetAssembly).map(function (cell) { return { cell, geometry: Object.assign({}, getGeometry(cell) || {}) }; }); // NEW
+        const previousAssemblyGeometry = Object.assign({}, getGeometry(targetAssembly) || {}); // NEW
+        const inserted = insertBridgePartsBefore(moduleCell, targetAssembly, plan.targetCell, plan.parts); // NEW
+        moveBridgeAssemblies(plan.sourceCell, plan.targetCell); // NEW
+        const chain = [plan.sourceCell].concat(inserted).concat([plan.targetCell]); // NEW
+        for (let i = 0; i < chain.length - 1; i++) { // NEW
+            if (findAssemblyAncestor(chain[i]) === findAssemblyAncestor(chain[i + 1]) && internalNeighborForPort(chain[i], "output") === chain[i + 1]) continue; // NEW
+            const result = createAssemblyConnection(moduleCell, { cellId: getCellId(chain[i]), role: "output", index: 0 }, { cellId: getCellId(chain[i + 1]), role: "input", index: 0 }); // NEW
+            if (!result.ok) { // NEW
+                inserted.forEach(removeCellFromParent); // NEW
+                previousRows.forEach(function (row) { if (row.cell && row.cell.geometry) row.cell.geometry = Object.assign({}, row.geometry); }); // NEW
+                if (targetAssembly.geometry) targetAssembly.geometry = previousAssemblyGeometry; // NEW
+                return { ok: false, reason: result.reason }; // NEW
+            } // NEW
+        } // NEW
+        return { ok: true, createdAssemblies: [], createdEdges: [] }; // NEW
+    } // NEW
+
+    function applyExternalBridgeConnectionChain(moduleCell, plan) { // NEW
+        const sourceAssembly = findAssemblyAncestor(plan.sourceCell); // NEW
+        const prefixCount = sourceDirectBridgePrefixCount(plan, sourceAssembly); // NEW
+        const previousSourceRows = sourceAssembly ? assemblyPartCells(sourceAssembly).map(function (cell) { return { cell, geometry: Object.assign({}, getGeometry(cell) || {}) }; }) : []; // NEW
+        const previousSourceGeometry = sourceAssembly ? Object.assign({}, getGeometry(sourceAssembly) || {}) : null; // NEW
+        const appendedPrefix = []; // NEW
+        const createdAssemblies = []; // NEW
+        const createdEdges = []; // NEW
+        try { // NEW
+            const cellsByPartIndex = new Map(); // NEW
+            appendSourceBridgePrefix(sourceAssembly, plan, prefixCount).forEach(function (cell, index) { // NEW
+                appendedPrefix.push(cell); // NEW
+                cellsByPartIndex.set(index, cell); // NEW
+            }); // NEW
+            const groups = bridgePartGroupsForPlan(plan, prefixCount); // CHANGE
+            groups.forEach(function (group, groupIndex) { // NEW
+                const created = createBridgePartAssembly(moduleCell, group.parts, bridgeGroupAnchor(plan.sourceCell, plan.targetCell, groupIndex, groups.length)); // NEW
+                createdAssemblies.push(created.assembly); // NEW
+                group.partIndexes.forEach(function (partIndex, index) { cellsByPartIndex.set(partIndex, created.parts[index]); }); // NEW
+            }); // NEW
+            const resolvedNodes = plan.nodes.map(function (node) { // NEW
+                if (node.kind === "existing") return Object.assign({}, node); // NEW
+                return Object.assign({}, node, { cell: cellsByPartIndex.get(node.partIndex) }); // NEW
+            }); // NEW
+            for (let i = 0; i < plan.hops.length; i++) { // NEW
+                const sourceNode = resolvedNodes[i]; // NEW
+                const targetNode = resolvedNodes[i + 1]; // NEW
+                if (!sourceNode.cell || !targetNode.cell) throw new Error("Bridge part could not be created."); // NEW
+                if (findAssemblyAncestor(sourceNode.cell) === findAssemblyAncestor(targetNode.cell) && internalNeighborForPort(sourceNode.cell, "output") === targetNode.cell) continue; // NEW
+                const edge = createPlannedConnectionEdge(moduleCell, sourceNode.cell, targetNode.cell, plan.hops[i], sourceNode.outputIndex || 0, targetNode.inputIndex || 0); // NEW
+                if (!edge) throw new Error("Bridge connection edge could not be created."); // NEW
+                createdEdges.push(edge); // NEW
+            } // NEW
+            return { ok: true, createdAssemblies, createdEdges }; // NEW
+        } catch (err) { // NEW
+            createdEdges.forEach(removeCellFromParent); // NEW
+            createdAssemblies.forEach(removeCellFromParent); // NEW
+            appendedPrefix.forEach(removeCellFromParent); // NEW
+            previousSourceRows.forEach(function (row) { if (row.cell && row.cell.geometry) row.cell.geometry = Object.assign({}, row.geometry); }); // NEW
+            if (sourceAssembly && sourceAssembly.geometry && previousSourceGeometry) sourceAssembly.geometry = previousSourceGeometry; // NEW
+            return { ok: false, reason: err && err.message || "Bridge connection could not be applied." }; // NEW
+        } // NEW
+    } // NEW
+
+    function sourceDirectBridgePrefixCount(plan, sourceAssembly) { // NEW
+        if (!plan || !sourceAssembly || assemblyType(sourceAssembly) === "bed") return 0; // NEW
+        let count = 0; // NEW
+        while (count < plan.parts.length && plan.hops[count] && plan.hops[count].mode === "direct") count++; // NEW
+        return count; // NEW
+    } // NEW
+
+    function appendSourceBridgePrefix(sourceAssembly, plan, count) { // NEW
+        if (!sourceAssembly || count <= 0) return []; // NEW
+        const sourceIndex = assemblyPartCells(sourceAssembly).indexOf(plan.sourceCell); // NEW
+        const insertAt = sourceIndex < 0 ? assemblyPartCells(sourceAssembly).length : sourceIndex + 1; // NEW
+        const inserted = []; // NEW
+        for (let i = 0; i < count; i++) inserted.push(insertAssemblyPartAt(sourceAssembly, plan.parts[i], insertAt + i)); // NEW
+        return inserted; // NEW
+    } // NEW
+
+    function bridgePartGroupsForPlan(plan, startIndex) { // CHANGE
+        const groups = []; // NEW
+        let current = null; // NEW
+        plan.parts.forEach(function (part, index) { // NEW
+            if (index < Math.max(0, Math.floor(finiteNumber(startIndex, 0)))) return; // NEW
+            const hopBefore = plan.hops[index]; // NEW
+            if (!current || hopBefore.mode === "pipe") { current = { parts: [], partIndexes: [] }; groups.push(current); } // NEW
+            current.parts.push(part); // NEW
+            current.partIndexes.push(index); // NEW
+        }); // NEW
+        return groups; // NEW
+    } // NEW
+
+    function createBridgePartAssembly(moduleCell, parts, anchor) { // NEW
+        const created = createPartAssembly(moduleCell, parts[0], anchor); // NEW
+        const cells = [created.partCell]; // NEW
+        for (let i = 1; i < parts.length; i++) cells.push(insertAssemblyPartAt(created.assembly, parts[i], assemblyPartCells(created.assembly).length)); // NEW
+        return { assembly: created.assembly, parts: cells }; // NEW
+    } // NEW
+
+    function bridgeGroupAnchor(sourceCell, targetCell, index, count) { // NEW
+        const sourceAssembly = findAssemblyAncestor(sourceCell) || sourceCell; // NEW
+        const targetAssembly = findAssemblyAncestor(targetCell) || targetCell; // NEW
+        const sourceGeo = getGeometry(sourceAssembly) || {}; // NEW
+        const targetGeo = getGeometry(targetAssembly) || {}; // NEW
+        const slot = (index + 1) / (Math.max(1, count) + 1); // NEW
+        const sourceX = finiteNumber(sourceGeo.x, 24); // NEW
+        const sourceY = finiteNumber(sourceGeo.y, 72); // NEW
+        const targetX = finiteNumber(targetGeo.x, sourceX); // NEW
+        const targetY = finiteNumber(targetGeo.y, sourceY + 160); // NEW
+        return { x: Math.round(sourceX + (targetX - sourceX) * slot), y: Math.round(sourceY + (targetY - sourceY) * slot) }; // NEW
+    } // NEW
+
+    function createPlannedConnectionEdge(moduleCell, sourceCell, targetCell, hop, sourceIndex, targetIndex) { // NEW
+        const attrs = { [ATTRS.EDGE_SOURCE_PORT]: String(sourceIndex || 0), [ATTRS.EDGE_TARGET_PORT]: String(targetIndex || 0) }; // NEW
+        let style = DIRECT_LINK_EDGE_STYLE; // NEW
+        if (hop.mode === "pipe") { attrs[ATTRS.PIPE_EDGE] = "1"; attrs[ATTRS.DIRECT_LINK_EDGE] = ""; attrs[ATTRS.PIPE_PART_ID] = hop.pipePartId || ""; style = pipeEdgeStyleForPart(moduleCell, hop.pipePartId || "", PIPE_EDGE_BASE_STYLE); } // CHANGE
+        else { attrs[ATTRS.PIPE_EDGE] = ""; attrs[ATTRS.DIRECT_LINK_EDGE] = "1"; attrs[ATTRS.PIPE_PART_ID] = ""; } // CHANGE
+        const label = connectionDisplayLabel(hop.sourceConnector, hop.targetConnector); // NEW
+        attrs.label = label; // NEW
+        let edge = null; // NEW
+        programmaticEdgeInsertDepth++; // NEW
+        try { edge = createEdge(moduleCell, sourceCell, targetCell, label, style, attrs); } // NEW
+        finally { programmaticEdgeInsertDepth = Math.max(0, programmaticEdgeInsertDepth - 1); } // NEW
+        if (edge && graph.refresh) graph.refresh(edge); // NEW
+        return edge; // NEW
     } // NEW
 
     function insertBridgePartsBefore(moduleCell, assembly, beforeCell, parts) { // NEW
@@ -5461,7 +5863,7 @@ Draw.loadPlugin(function (ui) {
         const bedCell = bedCellForAssembly(session.moduleCell, bedAssembly); // CHANGE
         if (!bedAssembly || !bedCell) return; // CHANGE
         const ports = readBedPortConfig(bedCell); // NEW
-        const saved = safeJsonParse(getCellAttr(bedCell, ATTRS.BED_TEMPLATE_JSON, ""), null) || {}; // NEW
+        const saved = readBedAssemblyTemplateRecord(session.moduleCell, bedAssembly) || {}; // CHANGE
         const roleParts = bedTemplateRolePartIds(saved); // NEW
         const savedTemplateId = saved.templateId || BED_TEMPLATES[0].id; // NEW
         const savedTemplateDef = bedTemplateById(savedTemplateId); // NEW
@@ -5531,7 +5933,7 @@ Draw.loadPlugin(function (ui) {
             runIrrigationEdit("applyBedLayout", function () { // CHANGE
                 writeBedPortConfig(bedCell, bedPortConfigFromRoleParts(draft.catalog, ports, draft.inletPartId, draft.outletPartId, bom.anchorPartId)); // CHANGE
                 const path = firstAssemblyPathForBedAssembly(session.moduleCell, bedAssembly) || { id: "assembly_bed_" + sanitizeId(getCellId(bedCell)), targetBedId: getCellId(bedCell) || "" }; // CHANGE
-                commitBedTemplate(session.moduleCell, path.id, bedCell, { // NEW
+                commitBedTemplate(session.moduleCell, path.id, bedAssembly, { // CHANGE
                     templateId: draft.templateId, // NEW
                     templateModel: BED_TEMPLATE_MODEL_BOM, // NEW
                     irrigationType: bom.templateDef.lineKind, // CHANGE
@@ -5622,13 +6024,14 @@ Draw.loadPlugin(function (ui) {
     function renderPortBadge(session, cell, role, index) { // NEW
         const port = { cellId: getCellId(cell), role, index }; // NEW
         const visual = portBadgeVisualState(session, port); // NEW
+        const label = cellPortDisplayLabel(session.moduleCell, cell, role); // NEW
         const badge = document.createElement("button"); // NEW
         badge.type = "button"; // NEW
         badge.className = "trellis-irrigation-port-badge trellis-irrigation-port-badge-" + visual.state; // CHANGE
-        badge.textContent = (role === "input" ? "I" : "O") + (index + 1); // NEW
-        badge.title = (role === "input" ? "Inlet" : "Outlet") + " " + (index + 1) + visual.titleSuffix; // CHANGE
-        badge.style.cssText = portBadgeStyle(visual); // CHANGE
-        positionPortBadge(badge, cell, role, index, portCapacityForCell(session.moduleCell, cell, role)); // CHANGE
+        renderPortBadgeContent(badge, label, role, visual); // NEW
+        badge.title = (role === "input" ? "Inlet" : "Outlet") + " " + (index + 1) + visual.titleSuffix + " (" + label + ")"; // CHANGE
+        badge.style.cssText = portBadgeStyle(visual, label); // CHANGE
+        positionPortBadge(badge, cell, role, index, portCapacityForCell(session.moduleCell, cell, role), label); // CHANGE
         badge.addEventListener("click", function (ev) { // NEW
             if (ev && ev.stopPropagation) ev.stopPropagation(); // NEW
             const boundary = boundaryForPort(session.moduleCell, port); // NEW
@@ -5671,7 +6074,30 @@ Draw.loadPlugin(function (ui) {
         return validation.ok; // NEW
     } // NEW
 
-    function portBadgeStyle(visual) { // NEW
+    function renderPortBadgeContent(badge, label, role, visual) { // NEW
+        const text = document.createElement("span"); // NEW
+        text.className = "trellis-irrigation-port-badge-label"; // NEW
+        text.textContent = label; // NEW
+        text.style.cssText = "display:block;line-height:" + PORT_BADGE_SIZE + "px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"; // NEW
+        const cue = document.createElement("span"); // NEW
+        cue.className = "trellis-irrigation-port-badge-arrow trellis-irrigation-port-badge-arrow-" + role; // NEW
+        cue.setAttribute("aria-hidden", "true"); // NEW
+        cue.style.cssText = portBadgeArrowStyle(role, visual); // NEW
+        badge.appendChild(text); // NEW
+        badge.appendChild(cue); // NEW
+    } // NEW
+
+    function portBadgeWidthForLabel(label) { // NEW
+        return Math.max(PORT_BADGE_MIN_WIDTH, Math.min(PORT_BADGE_MAX_WIDTH, String(label || "").length * 6 + 14)); // NEW
+    } // NEW
+
+    function portBadgeArrowStyle(role, visual) { // NEW
+        const color = visual && visual.state === "compatible" ? "#16a34a" : visual && visual.state === "selected" ? "#1d4ed8" : "#475569"; // NEW
+        const base = "position:absolute;left:50%;width:0;height:0;margin-left:-" + PORT_BADGE_ARROW_SIZE + "px;border-left:" + PORT_BADGE_ARROW_SIZE + "px solid transparent;border-right:" + PORT_BADGE_ARROW_SIZE + "px solid transparent;pointer-events:none;"; // NEW
+        return role === "input" ? base + "bottom:-" + PORT_BADGE_ARROW_SIZE + "px;border-top:" + PORT_BADGE_ARROW_SIZE + "px solid " + color + ";" : base + "top:-" + PORT_BADGE_ARROW_SIZE + "px;border-bottom:" + PORT_BADGE_ARROW_SIZE + "px solid " + color + ";"; // NEW
+    } // NEW
+
+    function portBadgeStyle(visual, label) { // NEW
         const styles = { // NEW
             selected: { border: "3px solid #1d4ed8", background: "#dbeafe", shadow: "0 0 0 3px rgba(29,78,216,.22),0 2px 7px rgba(0,0,0,.24)", color: "#0f172a" }, // NEW
             compatible: { border: "2px solid #16a34a", background: "#dcfce7", shadow: "0 0 0 3px rgba(22,163,74,.20),0 1px 5px rgba(0,0,0,.18)", color: "#14532d" }, // NEW
@@ -5679,14 +6105,14 @@ Draw.loadPlugin(function (ui) {
             normal: { border: "1px solid #555", background: "#fff", shadow: "0 1px 4px rgba(0,0,0,.18)", color: "#111" } // NEW
         }; // NEW
         const s = styles[visual.state] || styles.normal; // NEW
-        return "position:absolute;z-index:1002;width:" + PORT_BADGE_SIZE + "px;height:" + PORT_BADGE_SIZE + "px;padding:0;border:" + s.border + ";border-radius:4px;background:" + s.background + ";box-shadow:" + s.shadow + ";color:" + s.color + ";font:bold 10px Arial,sans-serif;cursor:pointer;box-sizing:border-box;"; // NEW
+        return "position:absolute;z-index:1002;width:" + portBadgeWidthForLabel(label) + "px;height:" + PORT_BADGE_SIZE + "px;padding:0 5px;border:" + s.border + ";border-radius:4px;background:" + s.background + ";box-shadow:" + s.shadow + ";color:" + s.color + ";font:bold 10px Arial,sans-serif;cursor:pointer;box-sizing:border-box;overflow:visible;"; // CHANGE
     } // NEW
 
-    function positionPortBadge(node, cell, role, index, count) { // CHANGE
+    function positionPortBadge(node, cell, role, index, count, label) { // CHANGE
         const state = cellState(cell); // NEW
         const total = Math.max(1, Math.floor(finiteNumber(count, 1))); // NEW
         const slot = (index + 1) / (total + 1); // NEW
-        const x = state.x + state.width * slot - PORT_BADGE_SIZE / 2; // CHANGE
+        const x = state.x + state.width * slot - portBadgeWidthForLabel(label) / 2; // CHANGE
         const y = role === "input" ? state.y - PORT_BADGE_SIZE - 4 : state.y + state.height + 4; // CHANGE
         node.style.left = Math.round(x) + "px"; // NEW
         node.style.top = Math.round(y) + "px"; // NEW
@@ -5697,7 +6123,7 @@ Draw.loadPlugin(function (ui) {
         const current = selectedValidPorts(session); // CHANGE
         const existing = current.map(portKey).indexOf(key); // CHANGE
         if (existing >= 0) current.splice(existing, 1); // CHANGE
-        else { clearSelectedExternalPortBoundaries(session); while (current.length >= 2) current.shift(); current.push(normalizePort(port)); } // CHANGE
+        else { clearSelectedConnectionBoundaries(session); while (current.length >= 2) current.shift(); current.push(normalizePort(port)); } // CHANGE
         session.selectedPorts = current; // NEW
     } // NEW
 
@@ -5705,12 +6131,13 @@ Draw.loadPlugin(function (ui) {
         internalConnectionBoundariesForSelection(session.moduleCell, selectedCells).forEach(function (entry) { // NEW
             const badge = document.createElement("button"); // NEW
             const selected = selectedValidBoundaries(session).map(boundaryKey).indexOf(boundaryKey(entry.boundary)) >= 0; // NEW
+            const label = internalConnectionDisplayLabel(session.moduleCell, entry.upstream, entry.downstream); // NEW
             badge.type = "button"; // NEW
             badge.className = "trellis-irrigation-internal-connection-badge" + (selected ? " trellis-irrigation-internal-connection-badge-selected" : ""); // NEW
-            badge.textContent = "OK"; // CHANGE
-            badge.title = "Internal connection: " + irrigationCellLabel(entry.upstream) + " to " + irrigationCellLabel(entry.downstream); // NEW
-            badge.style.cssText = internalConnectionBadgeStyle(selected); // NEW
-            positionInternalConnectionBadge(badge, entry.upstream, entry.downstream); // NEW
+            badge.textContent = "C"; // CHANGE
+            badge.title = "Internal connection " + label + ": " + irrigationCellLabel(entry.upstream) + " to " + irrigationCellLabel(entry.downstream); // CHANGE
+            badge.style.cssText = internalConnectionBadgeStyle(selected); // CHANGE
+            positionInternalConnectionBadge(badge, entry.upstream, entry.downstream); // CHANGE
             badge.addEventListener("click", function (ev) { // NEW
                 if (ev && ev.stopPropagation) ev.stopPropagation(); // NEW
                 session.inlineActionAnchorPort = null; // NEW
@@ -5722,6 +6149,7 @@ Draw.loadPlugin(function (ui) {
             }); // NEW
             appendOverlayNode(badge); // NEW
             session.portBadges.push(badge); // NEW
+            if (session.connectionBadgeNodeByKey) session.connectionBadgeNodeByKey.set(boundaryKey(entry.boundary), badge); // NEW
         }); // NEW
     } // NEW
 
@@ -5819,13 +6247,13 @@ Draw.loadPlugin(function (ui) {
         const border = selected ? "3px solid #1d4ed8" : "1px solid #7c3aed"; // NEW
         const background = selected ? "#dbeafe" : "#f3e8ff"; // NEW
         const shadow = selected ? "0 0 0 3px rgba(29,78,216,.22),0 2px 7px rgba(0,0,0,.24)" : "0 1px 4px rgba(0,0,0,.18)"; // NEW
-        return "position:absolute;z-index:1003;width:" + PORT_BADGE_SIZE + "px;height:" + PORT_BADGE_SIZE + "px;padding:0;border:" + border + ";border-radius:4px;background:" + background + ";box-shadow:" + shadow + ";color:#3b0764;font:bold 10px Arial,sans-serif;cursor:pointer;box-sizing:border-box;"; // NEW
+        return "position:absolute;z-index:1003;width:" + portBadgeWidthForLabel("C") + "px;height:" + PORT_BADGE_SIZE + "px;padding:0 5px;border:" + border + ";border-radius:4px;background:" + background + ";box-shadow:" + shadow + ";color:#3b0764;font:bold 10px/" + PORT_BADGE_SIZE + "px Arial,sans-serif;cursor:pointer;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"; // CHANGE
     } // NEW
 
     function positionInternalConnectionBadge(node, upstream, downstream) { // NEW
         const up = cellState(upstream); // NEW
         const down = cellState(downstream); // NEW
-        const x = Math.min(up.x, down.x) + Math.max(up.width, down.width) / 2 - PORT_BADGE_SIZE / 2; // NEW
+        const x = Math.max(finiteNumber(up.x, 0) + finiteNumber(up.width, 0), finiteNumber(down.x, 0) + finiteNumber(down.width, 0)) + 4; // CHANGE
         const y = (up.y + up.height + down.y) / 2 - PORT_BADGE_SIZE / 2; // NEW
         node.style.left = Math.round(x) + "px"; // NEW
         node.style.top = Math.round(y) + "px"; // NEW
@@ -5848,6 +6276,19 @@ Draw.loadPlugin(function (ui) {
         if (!assembly || connectedAssembly(assembly)) return false; // NEW
         const cells = assemblyType(assembly) === "bed" ? [assembly] : assemblyPartCells(assembly); // NEW
         return !cells.some(function (cell) { return portCapacityForCell(moduleCell, cell, "output") > 1; }); // NEW
+    } // NEW
+
+    function selectedAssemblyPartCells(selected) { // NEW
+        const seen = new Set(); // NEW
+        const out = []; // NEW
+        (selected || []).forEach(function (cell) { // NEW
+            if (!isAssemblyPartCell(cell)) return; // NEW
+            const id = getCellId(cell); // NEW
+            if (id && seen.has(id)) return; // NEW
+            if (id) seen.add(id); // NEW
+            out.push(cell); // NEW
+        }); // NEW
+        return out; // NEW
     } // NEW
 
     function deleteAssemblySelection(session, selected) { // NEW
@@ -6293,12 +6734,6 @@ Draw.loadPlugin(function (ui) {
                 return cell && getCellAttr(cell, ATTRS.COMPONENT, "") === "1"; // NEW
             }); // NEW
             path.pipeEdgeIds = pipeIds; // NEW
-            const template = safeJsonParse(getCellAttr(bedCell, ATTRS.BED_TEMPLATE_JSON, ""), null); // NEW
-            if (template) { // NEW
-                path.bedTemplateCommitted = true; // NEW
-                path.bedTemplate = template; // NEW
-                path.bedDemand = template.demand || null; // CHANGE
-            } // NEW
             path.hydraulic = Hydraulics.calculatePath(moduleCell, path); // CHANGE
             paths.push(path); // NEW
         }); // NEW
@@ -6354,7 +6789,7 @@ Draw.loadPlugin(function (ui) {
             }); // NEW
             path.pipeEdgeIds = pipeIds; // NEW
             path.pipePartIds = pipePartIds; // NEW
-            const template = safeJsonParse(getCellAttr(bedCell, ATTRS.BED_TEMPLATE_JSON, ""), null); // CHANGE
+            const template = readBedAssemblyTemplateRecord(moduleCell, bedAssembly); // CHANGE
             if (template) { // NEW
                 path.bedTemplateCommitted = true; // NEW
                 path.bedTemplate = template; // NEW
@@ -6833,6 +7268,7 @@ Draw.loadPlugin(function (ui) {
         connectionMode: connectorConnectionMode, // NEW
         validatePortConnectionStructure, // NEW
         connectionDecision: connectionDecisionForPorts, // NEW
+        bridgeSuggestionEligibility, // NEW
         canConnectParts, // NEW
         canEndpointConnectToPart, // NEW
         canPartReachEndpoint, // NEW
@@ -6846,9 +7282,16 @@ Draw.loadPlugin(function (ui) {
         applyBridgeSuggestion // NEW
     }; // NEW
 
+    const ConnectionChainPlanner = { // NEW
+        planBridge: planBridgeConnectionChain, // NEW
+        applyBridge: applyBridgeConnectionChain, // NEW
+        applyExternalPart: applyExternalPartConnection, // NEW
+        createEdge: createPlannedConnectionEdge // NEW
+    }; // NEW
+
     const Hydraulics = { // NEW
         demandFromPath, // NEW
-        demandFromBedCell, // NEW
+        demandFromBedAssembly, // CHANGE
         cumulativeBedDemand, // NEW
         calculatePath: calculatePathHydraulics, // NEW
         estimatePath: estimatePathHydraulics, // NEW
@@ -6959,12 +7402,14 @@ Draw.loadPlugin(function (ui) {
         isIrrigationModeActive, // NEW
         getActiveIrrigationModule, // NEW
         isBedAssembly, // NEW
+        getBedIrrigationMethods, // NEW
         syncLinkedBedAssemblyToBed, // NEW
         openCatalogManager,
         __test: {
             GraphStore, // NEW
             IrrigationCatalog, // NEW
             ConnectorRules, // NEW
+            ConnectionChainPlanner, // NEW
             Hydraulics, // NEW
             ZoneModel, // NEW
             ReportModel, // NEW
@@ -7018,6 +7463,10 @@ Draw.loadPlugin(function (ui) {
             createPartAssembly, // NEW
             createBedAssembly, // NEW
             isBedAssembly, // NEW
+            isCenterStableFoldAssembly, // NEW
+            centerAlternateBoundsOnGeometry, // NEW
+            getBedIrrigationMethods, // NEW
+            readBedAssemblyTemplateRecord, // NEW
             syncLinkedBedAssemblyToBed, // NEW
             createAssemblyConnection: ConnectorRules.createAssemblyConnection, // CHANGE
             validatePortConnection: ConnectorRules.validatePortConnection, // CHANGE
@@ -7026,6 +7475,9 @@ Draw.loadPlugin(function (ui) {
             connectionModeForConnectors: ConnectorRules.connectionMode, // NEW
             validatePortConnectionStructure: ConnectorRules.validatePortConnectionStructure, // NEW
             connectionDecisionForPorts: ConnectorRules.connectionDecision, // NEW
+            bridgeSuggestionEligibility: ConnectorRules.bridgeSuggestionEligibility, // NEW
+            applyConnectionPartChoice, // FIX
+            dropdownPartConnectionDecision, // FIX
             boundaryForPort, // NEW
             internalConnectionBoundariesForSelection, // NEW
             disconnectBoundary, // NEW

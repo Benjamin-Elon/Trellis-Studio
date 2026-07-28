@@ -151,6 +151,39 @@ function loadPlugin(options = {}) { // NEW
         }, // NEW
         getCellAt() { return null; }, // NEW
         isValidDropTarget() { return true; }, // NEW
+        moveCells(cells, dx = 0, dy = 0, _clone = false, target = null) { // NEW
+            const moved = cells || []; // NEW
+            moved.forEach(cell => { // NEW
+                if (target) model.add(target, cell); // NEW
+                if (cell && cell.geometry) cell.geometry = Object.assign({}, cell.geometry, { x: Number(cell.geometry.x || 0) + dx, y: Number(cell.geometry.y || 0) + dy }); // NEW
+            }); // NEW
+            this.movedCells = (this.movedCells || []).concat(moved); // NEW
+            if (moved.length) this.fireCellsMoved(moved, dx, dy); // NEW
+            return moved; // NEW
+        }, // NEW
+        updateAlternateBounds(_cell, geo) { // NEW
+            if (!geo) return; // NEW
+            if (!geo.alternateBounds) geo.alternateBounds = { x: 0, y: 0, width: 80, height: 30 }; // NEW
+            geo.alternateBounds.x = Number(geo.x || 0); // NEW
+            geo.alternateBounds.y = Number(geo.y || 0); // NEW
+        }, // NEW
+        foldCells(collapse, _recurse, cells) { // NEW
+            (cells || []).forEach(cell => { // NEW
+                if (!cell || !cell.geometry) return; // NEW
+                const geo = cloneGeometry(cell.geometry); // NEW
+                this.updateAlternateBounds(cell, geo, collapse); // NEW
+                const actual = { x: Number(geo.x || 0), y: Number(geo.y || 0), width: Number(geo.width || 0), height: Number(geo.height || 0) }; // NEW
+                const alternate = geo.alternateBounds || actual; // NEW
+                geo.x = Number(alternate.x || 0); // NEW
+                geo.y = Number(alternate.y || 0); // NEW
+                geo.width = Number(alternate.width || 0); // NEW
+                geo.height = Number(alternate.height || 0); // NEW
+                geo.alternateBounds = actual; // NEW
+                model.setGeometry(cell, geo); // NEW
+                cell.collapsed = !!collapse; // NEW
+            }); // NEW
+            return cells || []; // NEW
+        }, // NEW
         __withUndoSuppressed(fn) { this.undoSuppressedCalls = (this.undoSuppressedCalls || 0) + 1; return fn(); }, // NEW
         orderCells(_back, cells) { this.orderedCells = (this.orderedCells || []).concat(cells || []); }, // NEW
         insertVertex(parent, id, label, x, y, width, height, style) { const cell = appendChild(parent, new TestCell(id || "v" + nextId++, label || "", { x, y, width, height }, style || "")); model.recordChange("insertVertex"); return cell; }, // CHANGE
@@ -203,6 +236,12 @@ function absoluteGeometry(cell) { // NEW
         parent = parent.parent; // NEW
     } // NEW
     return { x, y, width: Number(geo.width || 0), height: Number(geo.height || 0) }; // NEW
+} // NEW
+
+function cloneGeometry(geo) { // NEW
+    const copy = Object.assign({}, geo || {}); // NEW
+    if (geo && geo.alternateBounds) copy.alternateBounds = Object.assign({}, geo.alternateBounds); // NEW
+    return copy; // NEW
 } // NEW
 
 function part(id, name, category, stockState, cost, inputs, outputs, inputType, inputSize, outputType, outputSize, specs = {}, unitCost, pipeConnection = false) { // CHANGE
@@ -281,6 +320,10 @@ function internalConnectionBadges(root) { // NEW
     return Array.from(root.querySelectorAll(".trellis-irrigation-internal-connection-badge")); // NEW
 } // NEW
 
+function selectedInternalConnectionBadges(root) { // NEW
+    return internalConnectionBadges(root).filter(node => node.classList.contains("trellis-irrigation-internal-connection-badge-selected")); // NEW
+} // NEW
+
 function selectedPortBadgeLabels(root) { // NEW
     return portBadgesInState(root, "selected").map(node => node.textContent).sort(); // NEW
 } // NEW
@@ -316,6 +359,20 @@ function assertSwimlaneAssemblyStyle(assembly) { // NEW
     assert.match(style, /(?:^|;)swimlane(?:;|$)/, "source and part assemblies should remain swimlanes"); // NEW
     assert.equal(styleToken(style, "childLayout"), "stackLayout", "source and part assemblies should keep ordered stack layout"); // NEW
     assert.equal(styleToken(style, "horizontalStack"), "0", "source and part assemblies should keep vertical stacking"); // NEW
+} // NEW
+
+function assertAssemblyPartPlannerManagedStyle(partCell) { // CHANGE
+    const style = String(partCell && partCell.style || ""); // NEW
+    assert.equal(styleToken(style, "editable"), "0", "assembly parts should not be label-editable on the canvas"); // NEW
+    assert.equal(styleToken(style, "movable"), "", "assembly parts should stay movable for compact draw.io stack layout"); // CHANGE
+    assert.equal(styleToken(style, "selectable"), "", "assembly parts should remain selectable by default"); // NEW
+    assert.equal(styleToken(style, "deletable"), "0", "assembly parts should be deleted through planner controls"); // NEW
+    assert.equal(styleToken(style, "resizable"), "0", "assembly parts should not be manually resized"); // NEW
+    assert.equal(styleToken(style, "connectable"), "0", "assembly parts should not expose raw draw.io connectors"); // NEW
+} // NEW
+
+function geometryCenter(geo) { // NEW
+    return { x: Number(geo.x || 0) + Number(geo.width || 0) / 2, y: Number(geo.y || 0) + Number(geo.height || 0) / 2 }; // NEW
 } // NEW
 
 function connectionRow(root, label) { // NEW
@@ -444,6 +501,50 @@ function createCommittedDripTapeBedAssembly(harness, bedCell) { // NEW
 function hudSectionTitles(root) { // NEW
     return Array.from(root.querySelectorAll(".trellis-irrigation-hud-section-title")).map(node => node.textContent); // NEW
 } // NEW
+
+test("already-foldable irrigation assemblies collapse around their geometry center", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const assembly = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 30, y: 40 }).assembly; // NEW
+    const beforeCenter = geometryCenter(assembly.geometry); // NEW
+
+    assert.equal(api.__test.isCenterStableFoldAssembly(assembly), true); // NEW
+    graph.foldCells(true, false, [assembly]); // NEW
+
+    assert.deepEqual(geometryCenter(assembly.geometry), beforeCenter); // NEW
+    assert.equal(assembly.geometry.width, 80); // NEW
+    assert.equal(assembly.geometry.height, 30); // NEW
+    assert.notEqual(assembly.geometry.x, 30); // NEW
+}); // NEW
+
+test("moved collapsed irrigation assemblies expand around their moved center", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const assembly = api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "3/4" }, { x: 30, y: 40 }).assembly; // NEW
+
+    graph.foldCells(true, false, [assembly]); // NEW
+    graph.moveCells([assembly], 42, 18); // NEW
+    const movedCollapsedCenter = geometryCenter(assembly.geometry); // NEW
+    graph.foldCells(false, false, [assembly]); // NEW
+
+    assert.deepEqual(geometryCenter(assembly.geometry), movedCollapsedCenter); // NEW
+    assert.equal(assembly.geometry.width, 210); // NEW
+}); // NEW
+
+test("center-stable folding excludes bed assemblies, modules, and generic cells", () => { // NEW
+    const { api, graph, moduleCell, bed, document } = loadPlugin(); // NEW
+    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 220 }).assembly; // NEW
+    const generic = appendChild(moduleCell, makeXmlCell(document, "generic", { label: "Generic" }, { x: 300, y: 40, width: 160, height: 90 })); // NEW
+
+    assert.equal(api.__test.isCenterStableFoldAssembly(bedAssembly), false); // NEW
+    assert.equal(api.__test.isCenterStableFoldAssembly(moduleCell), false); // NEW
+    assert.equal(api.__test.isCenterStableFoldAssembly(generic), false); // NEW
+
+    const genericTopLeft = { x: generic.geometry.x, y: generic.geometry.y }; // NEW
+    graph.foldCells(true, false, [generic]); // NEW
+    assert.deepEqual({ x: generic.geometry.x, y: generic.geometry.y }, genericTopLeft); // NEW
+    assert.equal(styleToken(bedAssembly.style, "collapsible"), "0"); // NEW
+}); // NEW
 
 function nextTick() { // NEW
     return new Promise(resolve => setTimeout(resolve, 0)); // NEW
@@ -626,7 +727,7 @@ test("catalog manager deduplicates bed assembly role template and pipe part ids"
     const catalog = addDripTapeBomParts(sampleCatalog()); // NEW
     api.writeCatalog(moduleCell, catalog); // NEW
     const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 220 }); // NEW
-    bed.value.setAttribute(api.attrs.BED_TEMPLATE_JSON, JSON.stringify({ // NEW
+    bedAssembly.assembly.value.setAttribute(api.attrs.BED_TEMPLATE_JSON, JSON.stringify({ // CHANGE
         inletPartId: "drip_tape_8mil_12in", // NEW
         partIds: ["drip_tape_8mil_12in"], // NEW
         requiredParts: [{ partId: "drip_tape_8mil_12in" }], // NEW
@@ -643,7 +744,7 @@ test("catalog manager falls back when selected bed assembly BOM parts are missin
     const { api, graph, moduleCell, bed, ui } = loadPlugin(); // NEW
     api.writeCatalog(moduleCell, sampleCatalog()); // NEW
     const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 220 }); // NEW
-    bed.value.setAttribute(api.attrs.BED_TEMPLATE_JSON, JSON.stringify({ // NEW
+    bedAssembly.assembly.value.setAttribute(api.attrs.BED_TEMPLATE_JSON, JSON.stringify({ // CHANGE
         inletPartId: "missing_inlet", // NEW
         outletPartId: "missing_outlet", // NEW
         partIds: ["missing_inlet", "missing_outlet"], // NEW
@@ -854,7 +955,9 @@ test("source commit creates one undoable edit at the latest click point and HUD 
     assert.equal(sourceAssembly.geometry.x, 310); // NEW
     assert.equal(sourceAssembly.geometry.y, 180); // NEW
     assert.equal(graph.getSelectionCell(), sourceAssembly); // NEW
-    const profile = JSON.parse(api.__test.firstAssemblyPart(sourceAssembly).getAttribute(api.attrs.ENDPOINT_PROFILE_JSON)); // CHANGE
+    const sourcePart = api.__test.firstAssemblyPart(sourceAssembly); // NEW
+    assertAssemblyPartPlannerManagedStyle(sourcePart); // CHANGE
+    const profile = JSON.parse(sourcePart.getAttribute(api.attrs.ENDPOINT_PROFILE_JSON)); // CHANGE
     assert.equal(profile.connectorType, "barb"); // CHANGE
     assert.equal(profile.pipeConnection, false); // CHANGE
     graph.view.scale = 1.4; // NEW
@@ -926,10 +1029,88 @@ test("Add Part groups global options and creates one undoable unconnected assemb
     const partAssembly = assemblyCells(moduleCell, api)[0]; // NEW
     assert.equal(model.completedEdits.length, 1); // NEW
     assert.equal(partAssembly.getAttribute(api.attrs.ASSEMBLY_TYPE), "parts"); // NEW
-    assert.equal(api.__test.firstAssemblyPart(partAssembly).getAttribute(api.attrs.CATALOG_PART_ID), "filter"); // NEW
+    const createdPart = api.__test.firstAssemblyPart(partAssembly); // NEW
+    assert.equal(createdPart.getAttribute(api.attrs.CATALOG_PART_ID), "filter"); // CHANGE
+    assertAssemblyPartPlannerManagedStyle(createdPart); // CHANGE
+    assert.equal(createdPart.geometry.y, 44); // NEW
     assert.equal(partAssembly.geometry.x, 360); // NEW
     assert.doesNotMatch(graph.container.textContent, /Create Source/); // NEW
     assert.match(graph.container.textContent, /Add Part/); // CHANGE
+}); // NEW
+
+test("selected inner assembly parts expose Delete Part without replacing assembly Delete", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const assembly = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 30, y: 40 }).assembly; // NEW
+    const partCell = api.__test.firstAssemblyPart(assembly); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(assembly); // NEW
+    assert.equal(buttonTexts(graph.container).includes("Delete Part"), false); // NEW
+    assert.equal(buttonTexts(graph.container).includes("Delete"), true); // NEW
+    graph.setSelectionCell(partCell); // NEW
+    const buttons = buttonTexts(graph.container); // NEW
+    assert.equal(buttons.includes("Delete Part"), true); // NEW
+    assert.equal(buttons.includes("Delete"), false); // CHANGE
+    assert.equal(buttons.indexOf("Delete Part"), buttons.indexOf("Add Part") + 1); // NEW
+}); // NEW
+
+test("inner assembly parts remain selectable while native moves are guarded", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const assembly = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 30, y: 40 }).assembly; // NEW
+    const partCell = api.__test.firstAssemblyPart(assembly); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(partCell); // NEW
+    assert.equal(graph.getSelectionCell(), partCell); // NEW
+    assert.equal(buttonTexts(graph.container).includes("Delete Part"), true); // NEW
+    const partGeometry = Object.assign({}, partCell.geometry); // NEW
+    const childOrder = assembly.children.map(cell => cell.getId()); // NEW
+    assert.deepEqual(graph.moveCells([partCell], 0, 80, false, null), [partCell]); // NEW
+    assert.deepEqual(partCell.geometry, partGeometry); // NEW
+    assert.deepEqual(assembly.children.map(cell => cell.getId()), childOrder); // NEW
+    assert.equal(graph.movedCells, undefined); // NEW
+    const assemblyGeometry = Object.assign({}, assembly.geometry); // NEW
+    assert.deepEqual(graph.moveCells([assembly], 12, 18, false, null), [assembly]); // NEW
+    assert.equal(assembly.geometry.x, assemblyGeometry.x + 12); // NEW
+    assert.equal(assembly.geometry.y, assemblyGeometry.y + 18); // NEW
+    const guardedPartGeometry = Object.assign({}, partCell.geometry); // NEW
+    const movedAssemblyGeometry = Object.assign({}, assembly.geometry); // NEW
+    assert.deepEqual(graph.moveCells([partCell, assembly], 7, 11, false, null), [assembly]); // NEW
+    assert.deepEqual(partCell.geometry, guardedPartGeometry); // NEW
+    assert.equal(assembly.geometry.x, movedAssemblyGeometry.x + 7); // NEW
+    assert.equal(assembly.geometry.y, movedAssemblyGeometry.y + 11); // NEW
+    assert.deepEqual(graph.movedCells.slice(-1), [assembly]); // NEW
+}); // NEW
+
+test("Delete Part splits downstream assembly and updates reports in one redoable edit", () => { // NEW
+    const { api, graph, model, moduleCell, bed } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const catalog = api.readCatalog(moduleCell); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Half inch source", { connectorType: "barb", nominalSize: "1/2", method: "drip", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    const assembly = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "pipe_half"), { x: 30, y: 160 }).assembly; // NEW
+    const first = api.__test.firstAssemblyPart(assembly); // NEW
+    const middleCreated = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "pipe_half"), { x: 260, y: 160 }); // NEW
+    const lastCreated = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "pipe_half"), { x: 490, y: 160 }); // NEW
+    const middle = middleCreated.partCell; // NEW
+    const last = lastCreated.partCell; // NEW
+    appendChild(assembly, middle); middle.parent = assembly; model.remove(middleCreated.assembly); // NEW
+    appendChild(assembly, last); last.parent = assembly; model.remove(lastCreated.assembly); // NEW
+    first.geometry.y = 44; middle.geometry.y = 94; last.geometry.y = 144; // NEW
+    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 360 }); // NEW
+    assert.equal(api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: first.getId(), role: "input", index: 0 }).ok, true); // NEW
+    assert.equal(api.__test.createAssemblyConnection(moduleCell, { cellId: last.getId(), role: "output", index: 0 }, { cellId: bedAssembly.assembly.getId(), role: "input", index: 0 }).ok, true); // NEW
+    assert.equal(api.__test.syncHudGraphState(moduleCell).length, 1); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(middle); // NEW
+    model.completedEdits = []; // NEW
+    clickButton(graph.container, "Delete Part"); // NEW
+    assert.equal(model.completedEdits.length, 1); // NEW
+    assert.equal(JSON.stringify(api.__test.assemblyPartCells(assembly).map(cell => cell.getId())), JSON.stringify([first.getId()])); // CHANGE
+    const disconnected = assemblyCells(moduleCell, api).find(cell => cell !== assembly && api.__test.assemblyPartCells(cell).some(partCell => partCell === last)); // NEW
+    assert.ok(disconnected, "expected downstream parts to move into a disconnected assembly"); // NEW
+    assert.equal(JSON.stringify(api.__test.assemblyPartCells(disconnected).map(cell => cell.getId())), JSON.stringify([last.getId()])); // CHANGE
+    assert.equal(api.__test.syncHudGraphState(moduleCell).length, 0); // NEW
+    assert.ok(moduleCell.getAttribute(api.attrs.REPORT_JSON)); // NEW
 }); // NEW
 
 test("context Add Part suppresses upstream singleton categories only after a source route exists", () => { // NEW
@@ -1078,18 +1259,25 @@ test("connection combobox keyboard, focus loss, and outside-click interactions d
     assert.equal(model.valuesWritten > writesBeforeOpen, true); // NEW
 }); // NEW
 
-test("connection dropdown inserts free same-lane parts and makes occupied internal chains read-only", () => { // CHANGE
+test("connection dropdown creates external pipe assemblies and makes occupied pipe rows read-only", () => { // FIX
     const { api, graph, moduleCell } = loadPlugin(); // NEW
     api.writeCatalog(moduleCell, sampleCatalog()); // NEW
     const assembly = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 30, y: 40 }).assembly; // NEW
     api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
     graph.setSelectionCell(api.__test.firstAssemblyPart(assembly)); // NEW
     chooseConnectionPart(graph.container, "Outlet 1", "regulator"); // NEW
-    assert.equal(JSON.stringify(api.__test.assemblyPartCells(assembly).map(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID))), JSON.stringify(["filter", "regulator"])); // CHANGE
+    assert.equal(JSON.stringify(api.__test.assemblyPartCells(assembly).map(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID))), JSON.stringify(["filter"])); // FIX
+    const downstream = assemblyCells(moduleCell, api).find(cell => cell !== assembly && api.__test.firstAssemblyPart(cell).getAttribute(api.attrs.CATALOG_PART_ID) === "regulator"); // FIX
+    assert.ok(downstream); // FIX
+    const edge = api.__test.collectAssemblyEdges(moduleCell)[0]; // FIX
+    assert.ok(edge); // FIX
+    assert.equal(edge.getAttribute(api.attrs.PIPE_EDGE), "1"); // FIX
+    assert.equal(edge.source, api.__test.firstAssemblyPart(assembly)); // FIX
+    assert.equal(edge.target, api.__test.firstAssemblyPart(downstream)); // FIX
     graph.setSelectionCell(api.__test.firstAssemblyPart(assembly)); // NEW
     assertConnectionRowReadOnly(graph.container, "Outlet 1"); // CHANGE
-    assert.equal(JSON.stringify(api.__test.assemblyPartCells(assembly).map(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID))), JSON.stringify(["filter", "regulator"])); // CHANGE
-    assert.equal(assemblyCells(moduleCell, api).filter(cell => cell.getAttribute(api.attrs.ASSEMBLY_TYPE) === "parts").length, 1); // CHANGE
+    assert.equal(JSON.stringify(api.__test.assemblyPartCells(assembly).map(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID))), JSON.stringify(["filter"])); // FIX
+    assert.equal(assemblyCells(moduleCell, api).filter(cell => cell.getAttribute(api.attrs.ASSEMBLY_TYPE) === "parts").length, 2); // FIX
 }); // NEW
 
 test("selected port badges connect with automatic pipe choice and disconnect selected connections", () => { // NEW
@@ -1110,8 +1298,9 @@ test("selected port badges connect with automatic pipe choice and disconnect sel
     const edge = api.__test.collectAssemblyEdges(moduleCell)[0]; // NEW
     assert.ok(edge); // NEW
     assert.equal(edge.getAttribute(api.attrs.PIPE_PART_ID), "pipe_cheap"); // NEW
+    assert.equal(edge.getAttribute("label"), "3/4"); // NEW
     graph.setSelectionCell(edge); // NEW
-    assertConnectionHud(graph.container, /Pipe:/); // NEW
+    assertConnectionHud(graph.container, /Pipe:\s*3\/4/); // CHANGE
     assert.equal(inlineConnectionActions(graph.container).length, 0); // NEW
     graph.setSelectionCells([source.assembly, filter.assembly]); // NEW
     clickPort(graph.container, /Outlet 1 connected/); // NEW
@@ -1163,24 +1352,45 @@ test("inline port action controls anchor to port badge DOM rect with graph scrol
     } // NEW
 }); // NEW
 
-test("multiple selected internal connection boundaries keep the bulk disconnect HUD action", () => { // NEW
+test("internal connection badge selection shows only inline disconnect and stays mutually exclusive", () => { // CHANGE
     const { api, graph, moduleCell } = loadPlugin(); // NEW
-    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
-    const assembly = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 30, y: 40 }).assembly; // NEW
+    const catalog = sampleCatalog(); // FIX
+    catalog.items.push(part("direct_a", "Direct A", "fitting", "in_stock", 1, 1, 1, "barb", "3/4", "mght", "3/4", { pressureLossPsi: 0.1 }, undefined, true)); // FIX
+    catalog.items.push(part("direct_b", "Direct B", "fitting", "in_stock", 1, 1, 1, "fght", "3/4", "mght", "3/4")); // FIX
+    catalog.items.push(part("direct_c", "Direct C", "fitting", "in_stock", 1, 1, 1, "fght", "3/4", "mght", "3/4")); // FIX
+    api.writeCatalog(moduleCell, catalog); // FIX
+    const assembly = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "direct_a"), { x: 30, y: 40 }).assembly; // FIX
+    const source = api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "3/4", method: "drip", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 320, y: 40 }); // NEW
     api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
     graph.setSelectionCell(api.__test.firstAssemblyPart(assembly)); // NEW
-    chooseConnectionPart(graph.container, "Outlet 1", "regulator"); // NEW
+    chooseConnectionPart(graph.container, "Outlet 1", "direct_b"); // FIX
     graph.setSelectionCell(api.__test.lastAssemblyPart(assembly)); // NEW
-    chooseConnectionPart(graph.container, "Outlet 1", "valve"); // NEW
-    graph.setSelectionCell(assembly); // NEW
+    chooseConnectionPart(graph.container, "Outlet 1", "direct_c"); // FIX
+    assert.equal(api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(assembly).getId(), role: "input", index: 0 }).ok, true); // NEW
+    graph.setSelectionCells([source.assembly, assembly]); // CHANGE
     assert.equal(internalConnectionBadges(graph.container).length, 2); // NEW
     internalConnectionBadges(graph.container)[0].click(); // NEW
-    assertConnectionHud(graph.container, /Internal connection/); // CHANGE
-    assert.equal(inlineConnectionActions(graph.container).length, 0); // CHANGE
+    assert.equal(selectedInternalConnectionBadges(graph.container).length, 1); // NEW
+    assertInlineConnectionAction(graph.container, "Disconnect"); // CHANGE
+    assert.equal(buttonTexts(graph.container).includes("Disconnect Parts"), false); // CHANGE
     internalConnectionBadges(graph.container)[1].click(); // NEW
+    assert.equal(selectedInternalConnectionBadges(graph.container).length, 1); // CHANGE
+    assertInlineConnectionAction(graph.container, "Disconnect"); // CHANGE
+    assert.equal(buttonTexts(graph.container).includes("Disconnect Parts"), false); // CHANGE
+    selectedInternalConnectionBadges(graph.container)[0].click(); // NEW
     assert.ok(graph.container.querySelector(".trellis-irrigation-local-hud")); // NEW
     assert.equal(inlineConnectionActions(graph.container).length, 0); // NEW
-    assert.ok(buttonTexts(graph.container).includes("Disconnect Parts")); // NEW
+    internalConnectionBadges(graph.container)[0].click(); // NEW
+    assert.equal(selectedInternalConnectionBadges(graph.container).length, 1); // NEW
+    clickPort(graph.container, /Outlet 1 connected/); // NEW
+    assert.equal(selectedInternalConnectionBadges(graph.container).length, 0); // NEW
+    assert.equal(graph.container.querySelectorAll(".trellis-irrigation-selected-pipe-highlight").length, 1); // NEW
+    assertInlineConnectionAction(graph.container, "Disconnect"); // NEW
+    graph.setSelectionCell(assembly); // NEW
+    internalConnectionBadges(graph.container)[0].click(); // NEW
+    assert.equal(graph.container.querySelectorAll(".trellis-irrigation-selected-pipe-highlight").length, 0); // NEW
+    assert.equal(selectedInternalConnectionBadges(graph.container).length, 1); // NEW
+    assertInlineConnectionAction(graph.container, "Disconnect"); // NEW
 }); // NEW
 
 test("free selected port badges are capped with FIFO order", () => { // NEW
@@ -1192,11 +1402,24 @@ test("free selected port badges are capped with FIFO order", () => { // NEW
     graph.setSelectionCells([source.assembly, valve.assembly]); // NEW
     clickPort(graph.container, /Outlet 1 free/); // NEW
     clickPort(graph.container, /Inlet 1 free/); // NEW
-    assert.deepEqual(selectedPortBadgeLabels(graph.container), ["I1", "O1"]); // NEW
+    assert.deepEqual(selectedPortBadgeLabels(graph.container), ["3/4", "3/4"]); // CHANGE
     clickPort(graph.container, /Outlet 2 free/); // NEW
-    assert.deepEqual(selectedPortBadgeLabels(graph.container), ["I1", "O2"]); // NEW
+    assert.deepEqual(selectedPortBadgeLabels(graph.container), ["3/4", "3/4"]); // CHANGE
     clickPort(graph.container, /Outlet 2 free selected/); // NEW
-    assert.deepEqual(selectedPortBadgeLabels(graph.container), ["I1"]); // NEW
+    assert.deepEqual(selectedPortBadgeLabels(graph.container), ["3/4"]); // CHANGE
+}); // NEW
+
+test("port badges show size-only pipe labels and size-plus-type threaded labels", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "3/4", method: "drip", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "fght_to_mpt"), { x: 280, y: 40 }); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    const labels = portBadges(graph.container).map(node => node.textContent.trim()).sort(); // NEW
+    assert.ok(labels.includes("3/4"), "pipe-style barb badge should show size only"); // NEW
+    assert.ok(labels.includes("3/4 FGHT"), "threaded inlet badge should include connector type"); // NEW
+    assert.ok(labels.includes("3/4 MPT"), "threaded outlet badge should include connector type"); // NEW
+    assert.equal(labels.some(label => /^I\d|O\d$/.test(label)), false); // NEW
 }); // NEW
 
 test("selecting a free port clears the selected occupied edge port pair", () => { // NEW
@@ -1339,6 +1562,7 @@ test("occupied direct branch rows stay read-only without reclassifying links", (
     assert.equal(edge.getAttribute(api.attrs.DIRECT_LINK_EDGE), "1"); // NEW
     assert.notEqual(edge.getAttribute(api.attrs.PIPE_EDGE), "1"); // CHANGE
     assert.equal(edge.getAttribute(api.attrs.PIPE_PART_ID) || "", ""); // CHANGE
+    assert.equal(edge.getAttribute("label"), "3/4 MPT -> 3/4 FPT"); // NEW
     graph.setSelectionCell(valve); // NEW
     assertConnectionRowReadOnly(graph.container, "Outlet 2"); // CHANGE
     const edges = api.__test.collectAssemblyEdges(moduleCell); // NEW
@@ -1348,6 +1572,30 @@ test("occupied direct branch rows stay read-only without reclassifying links", (
     assert.equal(edge.getAttribute(api.attrs.DIRECT_LINK_EDGE), "1"); // NEW
     assert.notEqual(edge.getAttribute(api.attrs.PIPE_EDGE), "1"); // CHANGE
     assert.equal(edge.getAttribute(api.attrs.PIPE_PART_ID) || "", ""); // CHANGE
+    assert.equal(edge.getAttribute("label"), "3/4 MPT -> 3/4 FPT"); // NEW
+}); // NEW
+
+test("internal connection badges show compact right-side connectors with detailed titles", () => { // CHANGE
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    const catalog = { items: [ // NEW
+        part("direct_filter", "Direct Filter", "filter", "in_stock", 10, 1, 1, "fpt", "3/4", "mpt", "3/4", { pressureLossPsi: 1 }), // NEW
+        part("direct_regulator", "Direct Regulator", "regulator", "in_stock", 10, 1, 1, "fpt", "3/4", "mpt", "3/4", { pressureLossPsi: 1 }) // NEW
+    ] }; // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    const assembly = api.__test.createPartAssembly(moduleCell, catalog.items[0], { x: 30, y: 40 }).assembly; // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(api.__test.firstAssemblyPart(assembly)); // NEW
+    chooseConnectionPart(graph.container, "Outlet 1", "direct_regulator"); // NEW
+    graph.setSelectionCell(assembly); // NEW
+    const badge = internalConnectionBadges(graph.container)[0]; // NEW
+    assert.equal(badge.textContent.trim(), "C"); // CHANGE
+    assert.match(badge.title, /3\/4 MPT -> 3\/4 FPT/); // NEW
+    const parts = api.__test.assemblyPartCells(assembly); // NEW
+    const assemblyGeo = assembly.geometry; // NEW
+    const up = parts[0].geometry; // NEW
+    const down = parts[1].geometry; // NEW
+    assert.equal(badge.style.left, Math.round(assemblyGeo.x + Math.max(up.x + up.width, down.x + down.width) + 4) + "px"); // CHANGE
+    assert.equal(badge.style.top, Math.round(assemblyGeo.y + (up.y + up.height + down.y) / 2 - 11) + "px"); // CHANGE
 }); // NEW
 
 test("occupied pipe branch rows stay read-only when matching tubing is unavailable", () => { // CHANGE
@@ -1469,6 +1717,28 @@ test("1/2 inch paths can suggest a 1/4 inch transfer barb into micro emitters", 
     assert.ok(suggestions.some(suggestion => suggestion.partIds.includes("transfer_barb_1_2_to_1_4"))); // NEW
 }); // NEW
 
+test("Suggest Connection only proposes neutral adapter and fitting bridge parts", () => { // NEW
+    const { api, moduleCell } = loadPlugin(); // NEW
+    const catalog = { items: [ // NEW
+        part("bridge_adapter", "Bridge Adapter", "fitting", "in_stock", 5, 1, 1, "fght", "3/4", "fpt", "3/4", { pressureLossPsi: 0.1 }), // NEW
+        part("bridge_source_adapter", "Bridge Source Adapter", "source_adapter", "in_stock", 4, 1, 1, "fght", "3/4", "fpt", "3/4", { pressureLossPsi: 0.1 }), // NEW
+        part("bridge_multi_output_tee", "Bridge Multi Output Tee", "fitting", "in_stock", 6, 1, 2, "fght", "3/4", "fpt", "3/4", { pressureLossPsi: 0.1 }), // NEW
+        part("functional_filter", "Functional Filter", "filter", "in_stock", 20, 1, 1, "fght", "3/4", "fpt", "3/4", { pressureLossPsi: 1 }), // NEW
+        part("functional_regulator", "Functional Regulator", "regulator", "in_stock", 18, 1, 1, "fght", "3/4", "fpt", "3/4", { pressureLossPsi: 1 }), // NEW
+        part("functional_valve", "Functional Valve", "valve", "in_stock", 26, 1, 1, "fght", "3/4", "fpt", "3/4", { pressureLossPsi: 1, maxFlowGpm: 8 }), // NEW
+        part("functional_emitter", "Functional Emitter", "emitter", "in_stock", 3, 1, 1, "fght", "3/4", "fpt", "3/4", { flowGpm: 0.5 }), // NEW
+        part("functional_drip_tape", "Functional Drip Tape", "drip_tape", "in_stock", 0, 1, 1, "fght", "3/4", "fpt", "3/4", { flowGpm: 1.2 }, 0.4), // NEW
+        part("target_threaded", "Target Threaded", "fitting", "in_stock", 4, 1, 1, "mpt", "3/4", "mpt", "3/4", { pressureLossPsi: 0.1 }) // NEW
+    ] }; // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Hose", { connectorType: "mght", nominalSize: "3/4", method: "drip", usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    const target = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "target_threaded"), { x: 30, y: 180 }); // NEW
+    const suggestions = api.__test.bridgeSuggestionsForPorts(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(target.assembly).getId(), role: "input", index: 0 }); // NEW
+    const suggestedIds = suggestions.flatMap(suggestion => suggestion.partIds); // NEW
+    assert.ok(suggestedIds.includes("bridge_adapter") || suggestedIds.includes("bridge_source_adapter")); // NEW
+    ["bridge_multi_output_tee", "functional_filter", "functional_regulator", "functional_valve", "functional_emitter", "functional_drip_tape"].forEach(id => assert.equal(suggestedIds.includes(id), false, id)); // CHANGE
+}); // NEW
+
 test("non-pipe connector types create direct assembly merges instead of pipe edges", () => { // CHANGE
     const { api, moduleCell } = loadPlugin(); // NEW
     const catalog = { items: [part("plain_filter", "Plain Filter", "filter", "in_stock", 10, 1, 1, "fpt", "3/4", "mpt", "3/4", { pressureLossPsi: 1 })] }; // CHANGE
@@ -1537,6 +1807,63 @@ test("ConnectorRules facade preserves connection decision rejection contracts", 
     assert.match(cycle.reason, /must remain a tree/); // NEW
 }); // NEW
 
+test("Suggest Connection eligibility rejects structural failures before connector search", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    const catalog = { items: [ // NEW
+        part("multi_input_a", "Multi Input A", "fitting", "in_stock", 5, 2, 1, "barb", "3/4", "barb", "3/4", { pressureLossPsi: 0.1 }, undefined, true), // NEW
+        part("multi_input_b", "Multi Input B", "fitting", "in_stock", 5, 2, 1, "barb", "3/4", "barb", "3/4", { pressureLossPsi: 0.1 }, undefined, true), // NEW
+        part("multi_pipe", "Multi Pipe", "pipe_tubing", "in_stock", 0, 1, 1, "barb", "3/4", "barb", "3/4", { innerDiameterIn: 0.824 }, 0.25, true), // NEW
+        part("fght_to_barb", "FGHT to barb", "fitting", "in_stock", 5, 1, 1, "fght", "3/4", "barb", "3/4", { pressureLossPsi: 0.1 }, undefined, true) // NEW
+    ] }; // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Hose", { connectorType: "mght", nominalSize: "3/4", method: "drip", usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    const same = api.__test.createPartAssembly(moduleCell, catalog.items[0], { x: 30, y: 180 }).assembly; // NEW
+    const downstream = api.__test.createPartAssembly(moduleCell, catalog.items[1], { x: 300, y: 180 }).assembly; // NEW
+    const samePart = api.__test.firstAssemblyPart(same); // NEW
+    const downstreamPart = api.__test.firstAssemblyPart(downstream); // NEW
+    const sameCell = api.__test.bridgeSuggestionEligibility(moduleCell, { cellId: samePart.getId(), role: "output", index: 0 }, { cellId: samePart.getId(), role: "input", index: 0 }); // NEW
+    assert.equal(sameCell.ok, false); // NEW
+    assert.match(sameCell.reason, /cannot connect to itself/); // NEW
+    const connected = api.__test.createAssemblyConnection(moduleCell, { cellId: samePart.getId(), role: "output", index: 0 }, { cellId: downstreamPart.getId(), role: "input", index: 0 }); // NEW
+    assert.equal(connected.ok, true, connected.reason); // NEW
+    const occupied = api.__test.bridgeSuggestionEligibility(moduleCell, { cellId: samePart.getId(), role: "output", index: 0 }, { cellId: downstreamPart.getId(), role: "input", index: 1 }); // NEW
+    assert.equal(occupied.ok, false); // NEW
+    assert.match(occupied.reason, /already connected/); // NEW
+    const cycle = api.__test.bridgeSuggestionEligibility(moduleCell, { cellId: downstreamPart.getId(), role: "output", index: 0 }, { cellId: samePart.getId(), role: "input", index: 1 }); // NEW
+    assert.equal(cycle.ok, false); // NEW
+    assert.match(cycle.reason, /must remain a tree/); // NEW
+    const bridgeable = api.__test.bridgeSuggestionEligibility(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: samePart.getId(), role: "input", index: 1 }); // NEW
+    assert.equal(bridgeable.ok, true, bridgeable.reason); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(same.assembly || same); // NEW
+    clickPort(graph.container, /Outlet 1 connected/); // NEW
+    assert.equal(buttonTexts(graph.container).includes("Suggest Connection"), false); // NEW
+}); // NEW
+
+test("Suggest Connection is hidden for non-boundary assembly part selections", () => { // NEW
+    const { api, moduleCell } = loadPlugin(); // NEW
+    const catalog = sampleCatalog(); // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    const upstream = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "filter"), { x: 30, y: 40 }); // NEW
+    const upstreamSecond = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "regulator"), { x: 30, y: 160 }).partCell; // NEW
+    appendChild(upstream.assembly, upstreamSecond); // NEW
+    upstreamSecond.parent = upstream.assembly; // NEW
+    upstreamSecond.geometry.y = 94; // NEW
+    const downstream = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "valve"), { x: 300, y: 40 }); // NEW
+    const downstreamSecond = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "regulator"), { x: 300, y: 160 }).partCell; // NEW
+    appendChild(downstream.assembly, downstreamSecond); // NEW
+    downstreamSecond.parent = downstream.assembly; // NEW
+    downstreamSecond.geometry.y = 94; // NEW
+    const firstUpstreamPart = api.__test.firstAssemblyPart(upstream.assembly); // NEW
+    const lastDownstreamPart = api.__test.lastAssemblyPart(downstream.assembly); // NEW
+    const sourceNotLast = api.__test.bridgeSuggestionEligibility(moduleCell, { cellId: firstUpstreamPart.getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(downstream.assembly).getId(), role: "input", index: 0 }); // NEW
+    assert.equal(sourceNotLast.ok, false); // NEW
+    assert.match(sourceNotLast.reason, /last part/); // NEW
+    const targetNotFirst = api.__test.bridgeSuggestionEligibility(moduleCell, { cellId: api.__test.lastAssemblyPart(upstream.assembly).getId(), role: "output", index: 0 }, { cellId: lastDownstreamPart.getId(), role: "input", index: 0 }); // NEW
+    assert.equal(targetNotFirst.ok, false); // NEW
+    assert.match(targetNotFirst.reason, /first part/); // NEW
+}); // NEW
+
 test("branch direct connections and bed direct connections use direct-link edges", () => { // NEW
     const { api, moduleCell, bed } = loadPlugin(); // NEW
     const catalog = { items: [ // NEW
@@ -1572,7 +1899,7 @@ test("drag-created incompatible irrigation edges are removed with a warning", ()
     assert.match(graph.container.textContent, /Connection removed/); // CHANGE
 }); // NEW
 
-test("Suggest Connection renders stock-grouped suggestions and applies a bridge into the downstream assembly", () => { // CHANGE
+test("Suggest Connection appends direct source prefix before pipe bridge boundaries", () => { // CHANGE
     const { api, graph, moduleCell } = loadPlugin(); // NEW
     api.writeCatalog(moduleCell, sampleCatalog()); // NEW
     const source = api.__test.createSourceAssembly(moduleCell, "Hose", { connectorType: "mght", nominalSize: "3/4", method: "drip", usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // CHANGE
@@ -1592,9 +1919,112 @@ test("Suggest Connection renders stock-grouped suggestions and applies a bridge 
     assert.match(graph.container.textContent, /In stock/); // NEW
     assert.match(graph.container.textContent, /Needs purchase/); // NEW
     clickButton(graph.container, "FGHT to MPT adapter"); // CHANGE
-    const partIds = api.__test.assemblyPartCells(source.assembly).map(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID)).filter(Boolean); // CHANGE
-    assert.equal(JSON.stringify(partIds.slice(0, 3)), JSON.stringify(["fght_to_mpt", "fpt_to_barb", "drip_tape"])); // CHANGE
-    assert.equal(api.__test.collectAssemblyEdges(moduleCell).length, 0); // CHANGE
+    const sourcePartIds = api.__test.assemblyPartCells(source.assembly).map(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID)).filter(Boolean); // CHANGE
+    const targetPartIds = api.__test.assemblyPartCells(target.assembly).map(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID)).filter(Boolean); // CHANGE
+    assert.equal(JSON.stringify(sourcePartIds), JSON.stringify(["fght_to_mpt", "fpt_to_barb"])); // CHANGE
+    assert.equal(JSON.stringify(targetPartIds), JSON.stringify(["drip_tape"])); // CHANGE
+    assert.equal(assemblyCells(moduleCell, api).filter(cell => ![source.assembly, target.assembly].includes(cell)).length, 0); // CHANGE
+    const edges = api.__test.collectAssemblyEdges(moduleCell); // CHANGE
+    assert.equal(edges.length, 1); // CHANGE
+    assert.equal(edges[0].getAttribute(api.attrs.PIPE_EDGE), "1"); // CHANGE
+}); // NEW
+
+test("Suggest Connection keeps bridge parts after the first pipe boundary external", () => { // NEW
+    const { api, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, api.starterCatalog()); // NEW
+    const catalog = api.readCatalog(moduleCell); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Hose", { connectorType: "mght", nominalSize: "3/4", method: "drip", usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    const target = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "drip_tape_8mil_12in"), { x: 30, y: 360 }); // NEW
+    const sourcePort = { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }; // NEW
+    const targetPort = { cellId: api.__test.firstAssemblyPart(target.assembly).getId(), role: "input", index: 0 }; // NEW
+    const partIds = ["fght_to_3_4_barb_adapter", "reducer_3_4_to_1_2_barb"]; // NEW
+    const plan = api.__test.ConnectionChainPlanner.planBridge(moduleCell, sourcePort, targetPort, partIds.map(id => catalog.items.find(item => item.id === id))); // NEW
+    assert.equal(plan.ok, true, plan.reason); // NEW
+    assert.equal(JSON.stringify(plan.hops.map(hop => hop.mode)), JSON.stringify(["direct", "pipe", "pipe"])); // NEW
+    const applied = api.__test.ConnectionChainPlanner.applyBridge(moduleCell, plan); // NEW
+    assert.equal(applied.ok, true, applied.reason); // NEW
+    assert.equal(JSON.stringify(api.__test.assemblyPartCells(source.assembly).map(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID)).filter(Boolean)), JSON.stringify(["fght_to_3_4_barb_adapter"])); // NEW
+    assert.equal(JSON.stringify(api.__test.assemblyPartCells(target.assembly).map(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID))), JSON.stringify(["drip_tape_8mil_12in"])); // NEW
+    const external = assemblyCells(moduleCell, api).filter(cell => ![source.assembly, target.assembly].includes(cell)); // NEW
+    assert.equal(external.length, 1); // NEW
+    assert.equal(external[0].getAttribute("label"), "Assembly"); // NEW
+    assert.equal(JSON.stringify(api.__test.assemblyPartCells(external[0]).map(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID))), JSON.stringify(["reducer_3_4_to_1_2_barb"])); // NEW
+    const edges = api.__test.collectAssemblyEdges(moduleCell); // NEW
+    assert.equal(edges.length, 2); // NEW
+    assert.equal(JSON.stringify(edges.map(edge => edge.getAttribute(api.attrs.PIPE_EDGE))), JSON.stringify(["1", "1"])); // NEW
+}); // NEW
+
+test("Suggest Connection applies all-pipe barb bridge chains as separate assemblies and pipe edges", () => { // NEW
+    const { api, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, api.starterCatalog()); // NEW
+    const catalog = api.readCatalog(moduleCell); // NEW
+    const source = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "barb_tee_3_4"), { x: 30, y: 40 }); // NEW
+    const target = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "micro_emitter_1_0_gph"), { x: 30, y: 360 }); // NEW
+    const sourcePort = { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }; // NEW
+    const targetPort = { cellId: api.__test.firstAssemblyPart(target.assembly).getId(), role: "input", index: 0 }; // NEW
+    const suggestion = api.__test.bridgeSuggestionsForPorts(moduleCell, sourcePort, targetPort).find(entry => JSON.stringify(entry.partIds) === JSON.stringify(["reducer_3_4_to_1_2_barb", "transfer_barb_1_2_to_1_4"])); // NEW
+    assert.ok(suggestion, "expected reducer plus transfer barb suggestion"); // NEW
+    const plan = api.__test.ConnectionChainPlanner.planBridge(moduleCell, sourcePort, targetPort, suggestion.partIds.map(id => catalog.items.find(item => item.id === id))); // NEW
+    assert.equal(plan.ok, true, plan.reason); // NEW
+    assert.equal(JSON.stringify(plan.hops.map(hop => hop.mode)), JSON.stringify(["pipe", "pipe", "pipe"])); // CHANGE
+    const applied = api.__test.ConnectionChainPlanner.applyBridge(moduleCell, plan); // NEW
+    assert.equal(applied.ok, true, applied.reason); // NEW
+    assert.equal(JSON.stringify(api.__test.assemblyPartCells(source.assembly).map(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID))), JSON.stringify(["barb_tee_3_4"])); // CHANGE
+    assert.equal(JSON.stringify(api.__test.assemblyPartCells(target.assembly).map(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID))), JSON.stringify(["micro_emitter_1_0_gph"])); // CHANGE
+    const bridgePartAssemblies = assemblyCells(moduleCell, api).filter(cell => ![source.assembly, target.assembly].includes(cell)).map(cell => api.__test.assemblyPartCells(cell).map(partCell => partCell.getAttribute(api.attrs.CATALOG_PART_ID))); // NEW
+    assert.equal(JSON.stringify(bridgePartAssemblies), JSON.stringify([["reducer_3_4_to_1_2_barb"], ["transfer_barb_1_2_to_1_4"]])); // CHANGE
+    assert.equal(JSON.stringify(assemblyCells(moduleCell, api).filter(cell => ![source.assembly, target.assembly].includes(cell)).map(cell => cell.getAttribute("label"))), JSON.stringify(["Assembly", "Assembly"])); // NEW
+    const edges = api.__test.collectAssemblyEdges(moduleCell); // NEW
+    assert.equal(edges.length, 3); // NEW
+    assert.equal(JSON.stringify(edges.map(edge => edge.getAttribute(api.attrs.PIPE_EDGE))), JSON.stringify(["1", "1", "1"])); // CHANGE
+    assert.equal(JSON.stringify(edges.map(edge => edge.getAttribute(api.attrs.PIPE_PART_ID))), JSON.stringify(["poly_mainline_3_4", "poly_distribution_1_2", "micro_tubing_1_4"])); // CHANGE
+}); // NEW
+
+test("direct-only Suggest Connection still merges through the downstream assembly", () => { // NEW
+    const { api, moduleCell } = loadPlugin(); // NEW
+    const catalog = { items: [ // NEW
+        part("fght_to_mpt_direct_bridge", "FGHT to MPT direct bridge", "source_adapter", "in_stock", 5, 1, 1, "fght", "3/4", "mpt", "3/4", { pressureLossPsi: 0.1 }), // NEW
+        part("fpt_target", "FPT target", "fitting", "in_stock", 4, 1, 1, "fpt", "3/4", "mpt", "3/4", { pressureLossPsi: 0.1 }) // NEW
+    ] }; // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Hose", { connectorType: "mght", nominalSize: "3/4", method: "drip", usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    const target = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "fpt_target"), { x: 30, y: 220 }); // NEW
+    const sourcePort = { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }; // NEW
+    const targetPort = { cellId: api.__test.firstAssemblyPart(target.assembly).getId(), role: "input", index: 0 }; // NEW
+    const suggestion = api.__test.bridgeSuggestionsForPorts(moduleCell, sourcePort, targetPort)[0]; // NEW
+    assert.equal(JSON.stringify(suggestion.partIds), JSON.stringify(["fght_to_mpt_direct_bridge"])); // CHANGE
+    const plan = api.__test.ConnectionChainPlanner.planBridge(moduleCell, sourcePort, targetPort, [catalog.items[0]]); // NEW
+    assert.equal(plan.ok, true, plan.reason); // NEW
+    assert.equal(plan.hasPipe, false); // NEW
+    const applied = api.__test.ConnectionChainPlanner.applyBridge(moduleCell, plan); // NEW
+    assert.equal(applied.ok, true, applied.reason); // NEW
+    assert.equal(api.__test.collectAssemblyEdges(moduleCell).length, 0); // NEW
+    assert.equal(JSON.stringify(api.__test.assemblyPartCells(source.assembly).map(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID)).filter(Boolean)), JSON.stringify(["fght_to_mpt_direct_bridge", "fpt_target"])); // CHANGE
+    assert.equal(assemblyCells(moduleCell, api).includes(target.assembly), false); // NEW
+}); // NEW
+
+test("stale bridge plans fail before creating partial bridge assemblies or edges", () => { // NEW
+    const { api, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, api.starterCatalog()); // NEW
+    const catalog = api.readCatalog(moduleCell); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Three quarter source", { connectorType: "barb", nominalSize: "3/4", method: "drip", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    const target = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "micro_emitter_1_0_gph"), { x: 30, y: 360 }); // NEW
+    const sourcePort = { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }; // NEW
+    const targetPort = { cellId: api.__test.firstAssemblyPart(target.assembly).getId(), role: "input", index: 0 }; // NEW
+    const parts = ["reducer_3_4_to_1_2_barb", "transfer_barb_1_2_to_1_4"].map(id => catalog.items.find(item => item.id === id)); // NEW
+    const plan = api.__test.ConnectionChainPlanner.planBridge(moduleCell, sourcePort, targetPort, parts); // NEW
+    assert.equal(plan.ok, true, plan.reason); // NEW
+    const occupier = api.__test.createSourceAssembly(moduleCell, "Quarter inch source", { connectorType: "barb", nominalSize: "1/4", method: "drip", pipeConnection: true, usableFlowGpm: 1, staticPressurePsi: 30 }, { x: 360, y: 40 }); // NEW
+    const occupied = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(occupier.assembly).getId(), role: "output", index: 0 }, targetPort); // NEW
+    assert.equal(occupied.ok, true, occupied.reason); // NEW
+    const assemblyCount = assemblyCells(moduleCell, api).length; // NEW
+    const edgeCount = api.__test.collectAssemblyEdges(moduleCell).length; // NEW
+    const applied = api.__test.ConnectionChainPlanner.applyBridge(moduleCell, plan); // NEW
+    assert.equal(applied.ok, false); // NEW
+    assert.match(applied.reason, /already connected/); // NEW
+    assert.equal(assemblyCells(moduleCell, api).length, assemblyCount); // NEW
+    assert.equal(api.__test.collectAssemblyEdges(moduleCell).length, edgeCount); // NEW
+    assert.equal(assemblyCells(moduleCell, api).some(cell => /Bridge/.test(cell.getAttribute("label") || "")), false); // NEW
 }); // NEW
 
 test("bed assemblies sync to linked beds, apply templates, and assembly reports ignore legacy objects", () => { // CHANGE
@@ -1680,13 +2110,13 @@ test("bed assemblies sync to linked beds, apply templates, and assembly reports 
     blurInput(emitterInput); // NEW
     assert.equal(bedAssembly.assembly.getAttribute("label"), "Drip tape bed"); // NEW
     assert.equal(bed.getAttribute("label"), "Bed 1"); // NEW
-    const template = JSON.parse(bed.getAttribute(api.attrs.BED_TEMPLATE_JSON)); // NEW
+    const template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly); // CHANGE
     assert.equal(template.templateModel, "bom"); // NEW
     assert.equal(template.spacing.rows, 3); // NEW
     assert.equal(template.spacing.emitterInches, 8); // NEW
     assert.equal(template.anchorPartId, "drip_tape_8mil_12in"); // NEW
     assert.equal(template.inletPartId, "fpt_to_half_barb"); // NEW
-    assert.deepEqual(template.partIds, ["fpt_to_half_barb"]); // NEW
+    assert.deepEqual(Array.from(template.partIds), ["fpt_to_half_barb"]); // CHANGE
     assert.equal(template.requiredParts[0].partId, "drip_tape_8mil_12in"); // NEW
     assert.ok(template.requiredParts[0].quantityMeters > 0); // NEW
     const assemblyRows = bedLayoutRows(bedAssembly.assembly, api); // CHANGE
@@ -1730,10 +2160,25 @@ test("direct bed template commits create assembly-owned visual rows", () => { //
     assert.equal(JSON.stringify(assembly.geometry), JSON.stringify(bed.geometry)); // CHANGE
     assert.equal(assembly.getAttribute("label"), "Overhead sprinkler block"); // NEW
     assertRegularBedAssemblyStyle(assembly); // NEW
-    assert.ok(bed.getAttribute(api.attrs.BED_TEMPLATE_JSON)); // NEW
+    assert.ok(assembly.getAttribute(api.attrs.BED_TEMPLATE_JSON)); // CHANGE
     assert.equal(api.__test.assemblyPartCells(assembly).length, 0); // NEW
     const rows = descendants(assembly, cell => cell.getAttribute && cell.getAttribute(api.attrs.BED_LAYOUT) === "1"); // NEW
     assert.deepEqual(rows.map(cell => cell.getAttribute("label")), ["Sprinkler line", "Sprinkler line", "Sprinkler line"]); // CHANGE
+}); // NEW
+
+test("multiple bed assemblies on one bed own independent templates and derive method labels", () => { // NEW
+    const { api, moduleCell, bed } = loadPlugin(); // NEW
+    const dripAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 220 }).assembly; // NEW
+    const sprayAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 360 }).assembly; // NEW
+    api.__test.commitBedTemplate(moduleCell, "drip_path", dripAssembly, { templateId: "drip_tape_bed" }); // NEW
+    api.__test.commitBedTemplate(moduleCell, "spray_path", sprayAssembly, { templateId: "nursery_microspray" }); // NEW
+
+    const dripTemplate = api.__test.readBedAssemblyTemplateRecord(moduleCell, dripAssembly); // NEW
+    const sprayTemplate = api.__test.readBedAssemblyTemplateRecord(moduleCell, sprayAssembly); // NEW
+    assert.equal(bed.getAttribute(api.attrs.BED_TEMPLATE_JSON), null); // NEW
+    assert.equal(dripTemplate.templateId, "drip_tape_bed"); // NEW
+    assert.equal(sprayTemplate.templateId, "nursery_microspray"); // NEW
+    assert.deepEqual(Array.from(api.__test.getBedIrrigationMethods(moduleCell, bed).map(method => method.label)), ["Drip tape", "Microspray"]); // CHANGE
 }); // NEW
 
 test("bed assemblies reject child drops and moved assemblies are lifted back to the module", () => { // NEW
@@ -1764,13 +2209,13 @@ test("linked bed geometry events refresh bed assembly rows and saved template me
     const harness = loadPlugin(); // NEW
     const { api, graph, moduleCell, bed } = harness; // NEW
     const assembly = createCommittedDripTapeBedAssembly(harness, bed); // NEW
-    const beforeTemplate = JSON.parse(bed.getAttribute(api.attrs.BED_TEMPLATE_JSON)); // NEW
+    const beforeTemplate = api.__test.readBedAssemblyTemplateRecord(moduleCell, assembly); // CHANGE
     const beforeRows = bedLayoutRows(assembly, api); // NEW
     const beforeFirstRow = beforeRows[0]; // NEW
     const beforeFirstGeometry = Object.assign({}, beforeFirstRow.geometry); // NEW
     bed.geometry = { x: 140, y: 130, width: 180, height: 120 }; // NEW
     graph.fireCellsResized([bed]); // NEW
-    const afterTemplate = JSON.parse(bed.getAttribute(api.attrs.BED_TEMPLATE_JSON)); // NEW
+    const afterTemplate = api.__test.readBedAssemblyTemplateRecord(moduleCell, assembly); // CHANGE
     const afterRows = bedLayoutRows(assembly, api); // NEW
     assert.equal(JSON.stringify(assembly.geometry), JSON.stringify(bed.geometry)); // CHANGE
     assert.equal(afterRows.length, beforeRows.length); // NEW
@@ -1792,25 +2237,25 @@ test("moving a bed assembly to another bed relinks and carries template data", (
     const harness = loadPlugin(); // NEW
     const { api, graph, moduleCell, bed, bed2 } = harness; // NEW
     const assembly = createCommittedDripTapeBedAssembly(harness, bed); // NEW
-    const originalTemplate = JSON.parse(bed.getAttribute(api.attrs.BED_TEMPLATE_JSON)); // NEW
+    const originalTemplate = api.__test.readBedAssemblyTemplateRecord(moduleCell, assembly); // CHANGE
     const originalPorts = JSON.parse(bed.getAttribute(api.attrs.BED_PORTS_JSON)); // NEW
     assembly.geometry = Object.assign({}, bed2.geometry); // NEW
     graph.fireCellsMoved([assembly], bed2.geometry.x - bed.geometry.x, bed2.geometry.y - bed.geometry.y); // NEW
     assert.equal(assembly.getAttribute(api.attrs.LINKED_BED_ID), bed2.getId()); // NEW
     assert.equal(bed.getAttribute(api.attrs.BED_TEMPLATE_JSON), null); // NEW
     assert.equal(bed.getAttribute(api.attrs.BED_PORTS_JSON), null); // NEW
-    const movedTemplate = JSON.parse(bed2.getAttribute(api.attrs.BED_TEMPLATE_JSON)); // NEW
+    const movedTemplate = api.__test.readBedAssemblyTemplateRecord(moduleCell, assembly); // CHANGE
     const movedPorts = JSON.parse(bed2.getAttribute(api.attrs.BED_PORTS_JSON)); // NEW
     assert.equal(movedTemplate.templateId, originalTemplate.templateId); // NEW
     assert.equal(movedTemplate.inletPartId, originalTemplate.inletPartId); // NEW
     assert.deepEqual(movedPorts.input, originalPorts.input); // NEW
     assert.equal(JSON.stringify(assembly.geometry), JSON.stringify(bed2.geometry)); // CHANGE
     bedLayoutRows(assembly, api).forEach(row => assert.equal(row.parent, assembly)); // NEW
-    const savedAfterRelink = bed2.getAttribute(api.attrs.BED_TEMPLATE_JSON); // NEW
+    const savedAfterRelink = assembly.getAttribute(api.attrs.BED_TEMPLATE_JSON); // CHANGE
     assembly.geometry = { x: 520, y: 360, width: 120, height: 60 }; // NEW
     graph.fireCellsMoved([assembly], 240, 240); // NEW
     assert.equal(assembly.getAttribute(api.attrs.LINKED_BED_ID), bed2.getId()); // NEW
-    assert.equal(bed2.getAttribute(api.attrs.BED_TEMPLATE_JSON), savedAfterRelink); // NEW
+    assert.equal(assembly.getAttribute(api.attrs.BED_TEMPLATE_JSON), savedAfterRelink); // CHANGE
 }); // NEW
 
 test("relinking preserves old bed template while another assembly still uses it", () => { // NEW
@@ -1819,23 +2264,23 @@ test("relinking preserves old bed template while another assembly still uses it"
     const firstAssembly = createCommittedDripTapeBedAssembly(harness, bed); // NEW
     const secondAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 320 }).assembly; // NEW
     assert.equal(secondAssembly.getAttribute(api.attrs.LINKED_BED_ID), bed.getId()); // NEW
-    const savedTemplate = bed.getAttribute(api.attrs.BED_TEMPLATE_JSON); // NEW
+    const savedTemplate = firstAssembly.getAttribute(api.attrs.BED_TEMPLATE_JSON); // CHANGE
     firstAssembly.geometry = Object.assign({}, bed2.geometry); // NEW
     graph.fireCellsMoved([firstAssembly], bed2.geometry.x - bed.geometry.x, bed2.geometry.y - bed.geometry.y); // NEW
     assert.equal(firstAssembly.getAttribute(api.attrs.LINKED_BED_ID), bed2.getId()); // NEW
-    assert.equal(bed.getAttribute(api.attrs.BED_TEMPLATE_JSON), savedTemplate); // NEW
+    assert.equal(firstAssembly.getAttribute(api.attrs.BED_TEMPLATE_JSON), savedTemplate); // CHANGE
 }); // NEW
 
 test("missing required catalog parts preserve saved metrics while refreshing row geometry", () => { // NEW
     const harness = loadPlugin(); // NEW
     const { api, graph, moduleCell, bed } = harness; // NEW
     const assembly = createCommittedDripTapeBedAssembly(harness, bed); // NEW
-    const beforeTemplate = JSON.parse(bed.getAttribute(api.attrs.BED_TEMPLATE_JSON)); // NEW
+    const beforeTemplate = api.__test.readBedAssemblyTemplateRecord(moduleCell, assembly); // CHANGE
     const beforeRowGeometry = Object.assign({}, bedLayoutRows(assembly, api)[0].geometry); // NEW
     api.writeCatalog(moduleCell, sampleCatalog()); // NEW
     bed.geometry = { x: 120, y: 120, width: 220, height: 120 }; // NEW
     graph.fireCellsResized([bed]); // NEW
-    const afterTemplate = JSON.parse(bed.getAttribute(api.attrs.BED_TEMPLATE_JSON)); // NEW
+    const afterTemplate = api.__test.readBedAssemblyTemplateRecord(moduleCell, assembly); // CHANGE
     assert.equal(afterTemplate.totalRowMeters, beforeTemplate.totalRowMeters); // NEW
     assert.equal(afterTemplate.requiredParts[0].quantityMeters, beforeTemplate.requiredParts[0].quantityMeters); // NEW
     const afterRowGeometry = bedLayoutRows(assembly, api)[0].geometry; // NEW
@@ -1878,14 +2323,14 @@ test("bed assembly BOM parts persist and drive inlet/outlet connector compatibil
     changeSelectByLabel(graph.container, "Inlet part", "fpt_to_half_barb"); // CHANGE
     changeSelectByLabel(graph.container, "Outlet part", "half_barb_to_3_4_barb"); // CHANGE
     changeSelectByLabel(graph.container, "Row orientation", "height"); // CHANGE
-    const template = JSON.parse(bed.getAttribute(api.attrs.BED_TEMPLATE_JSON)); // NEW
+    const template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly); // CHANGE
     assert.equal(template.templateModel, "bom"); // NEW
     assert.equal(template.inletPartId, "fpt_to_half_barb"); // CHANGE
     assert.equal(template.outletPartId, "half_barb_to_3_4_barb"); // CHANGE
     assert.equal(template.pipePartId, ""); // CHANGE
     assert.equal(template.anchorPartId, "drip_tape_8mil_12in"); // NEW
     assert.equal(template.rowOrientation, "height"); // CHANGE
-    assert.deepEqual(template.partIds, ["fpt_to_half_barb", "half_barb_to_3_4_barb"]); // CHANGE
+    assert.deepEqual(Array.from(template.partIds), ["fpt_to_half_barb", "half_barb_to_3_4_barb"]); // CHANGE
     assert.equal(template.requiredParts[0].partId, "drip_tape_8mil_12in"); // NEW
     assert.ok(template.requiredParts[0].quantityMeters > 0); // NEW
     assert.ok(template.demand.flowGpm > 1.2); // NEW
@@ -2009,14 +2454,14 @@ test("invalid bed template auto-apply preserves the previous saved layout", () =
     api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
     graph.setSelectionCell(bedAssembly.assembly); // NEW
     changeSelectByLabel(graph.container, "Inlet part", "fpt_to_half_barb"); // NEW
-    assert.equal(JSON.parse(bed.getAttribute(api.attrs.BED_TEMPLATE_JSON)).spacing.rows, 2); // NEW
+    assert.equal(api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly).spacing.rows, 2); // CHANGE
     assert.equal(bedLayoutRows(bedAssembly.assembly, api).length, 2); // NEW
     api.writeCatalog(moduleCell, sampleCatalog()); // NEW
     graph.setSelectionCell(bedAssembly.assembly); // NEW
     const rowInput = inputTextByLabel(graph.container, "Rows", "4"); // NEW
     blurInput(rowInput); // NEW
     assert.match(graph.container.textContent, /Missing required parts: drip_tape_8mil_12in/); // NEW
-    assert.equal(JSON.parse(bed.getAttribute(api.attrs.BED_TEMPLATE_JSON)).spacing.rows, 2); // NEW
+    assert.equal(api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly).spacing.rows, 2); // CHANGE
     assert.equal(bedLayoutRows(bedAssembly.assembly, api).length, 2); // NEW
 }); // NEW
 

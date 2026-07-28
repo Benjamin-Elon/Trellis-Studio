@@ -642,11 +642,6 @@ Draw.loadPlugin(function (ui) {
         return chosen; // NEW
     } // NEW
 
-    function selectionIsOnlyGardenBeds(cells) { // NEW
-        const selected = (cells || []).filter(Boolean); // NEW
-        return selected.length > 0 && selected.every(c => model.isVertex(c) && isGardenBed(c)); // NEW
-    } // NEW
-
     function significantOverlap(a, b) {
         if (!a || !b) return false;
         const ia = rectIntersectionArea(a, b);
@@ -1169,7 +1164,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function selectBedUnitTarget(name) { // NEW
-        selectBedUnitCells(bedUnitTargetCells(name), name === 'btnSelectBed'); // NEW
+        selectBedUnitCells(bedUnitTargetCells(name), name === 'btnSelectBed' || name === 'btnSelectBedAssembly'); // CHANGE
     } // NEW
 
     function updateBedUnitSelectorButton(name, targetCells, src, alt, title) { // CHANGE
@@ -1711,9 +1706,10 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-    // -------------------- NEW: temporary bed front-ordering --------------------
+    // -------------------- NEW: temporary bed-unit front-ordering -------------------- // CHANGE
     const parentOrderSnapshots = new Map(); // parentId -> [childId,...]               
-    let lastSelectedBedParent = null;
+    let temporaryFrontedParent = null; // CHANGE
+    let temporaryFrontedCellIds = []; // NEW
 
     function snapshotChildOrder(parent) {
         if (!parent || !parent.id) return;
@@ -1754,6 +1750,8 @@ Draw.loadPlugin(function (ui) {
     function bringCellsToFrontTemporarilyInParent(parent, cells) {
         if (!parent || !cells || !cells.length) return;
 
+        if (temporaryFrontedParent && temporaryFrontedParent !== parent) restoreTemporaryFrontedOrder(); // NEW
+
         // Snapshot once, then move target cells to the end in their current order
         snapshotChildOrder(parent);
 
@@ -1766,6 +1764,7 @@ Draw.loadPlugin(function (ui) {
             if (c && set.has(c.id)) order.push(c);
         }
         if (!order.length) return;
+        temporaryFrontedCellIds = order.map(c => c && c.id).filter(Boolean); // NEW
         withUndoSuppressed(() => {
             model.beginUpdate();
             try {
@@ -1773,10 +1772,25 @@ Draw.loadPlugin(function (ui) {
             } finally {
                 model.endUpdate();
             }
-            lastSelectedBedParent = parent;
+            temporaryFrontedParent = parent; // CHANGE
             graph.refresh(parent);
         });
     }
+
+    function selectionMatchesTemporaryFrontedCells(cells) { // NEW
+        const selectedIds = (cells || []).map(c => c && c.id).filter(Boolean).sort(); // NEW
+        const frontedIds = (temporaryFrontedCellIds || []).slice().sort(); // NEW
+        if (!frontedIds.length || selectedIds.length !== frontedIds.length) return false; // NEW
+        for (let i = 0; i < frontedIds.length; i++) if (frontedIds[i] !== selectedIds[i]) return false; // NEW
+        return true; // NEW
+    } // NEW
+
+    function restoreTemporaryFrontedOrder() { // NEW
+        const parent = temporaryFrontedParent; // NEW
+        temporaryFrontedParent = null; // NEW
+        temporaryFrontedCellIds = []; // NEW
+        if (parent) restoreChildOrder(parent); // NEW
+    } // NEW
 
 
     function bringToFrontAndSelect(cell) {
@@ -1966,12 +1980,8 @@ Draw.loadPlugin(function (ui) {
         const sel = graph.getSelectionCell();
         const selectedCells = graph.getSelectionCells ? graph.getSelectionCells() : (sel ? [sel] : []); // NEW
 
-        //if we previously brought beds to front, restore when leaving bed selection
-        const selectionOnlyBeds = selectionIsOnlyGardenBeds(selectedCells); // CHANGE
-        if (lastSelectedBedParent && !selectionOnlyBeds) { // CHANGE
-            restoreChildOrder(lastSelectedBedParent);
-            lastSelectedBedParent = null;
-        }
+        // If we previously brought a bed or bed assembly to front, restore when leaving that exact selection. // CHANGE
+        if (temporaryFrontedParent && !selectionMatchesTemporaryFrontedCells(selectedCells)) restoreTemporaryFrontedOrder(); // CHANGE
 
         const selIsPlanting = sel && model.isVertex(sel) && isPlantingCell(sel);
 
