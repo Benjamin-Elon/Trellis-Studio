@@ -130,7 +130,7 @@ function getDialogButtonLabels(ui) { // NEW
 } // NEW
 
 function chooseDialogPreset(ui, key) { // NEW
-    const presetSelect = ui.lastDialog.querySelector("select"); // NEW
+    const presetSelect = getDialogFieldControl(ui, "Preset"); // CHANGE
     assert.ok(presetSelect, "missing preset select"); // NEW
     presetSelect.value = key; // NEW
     presetSelect.dispatchEvent(new ui.lastDialog.ownerDocument.defaultView.Event("change")); // NEW
@@ -175,7 +175,7 @@ function overlayText(overlays) { // NEW
 } // NEW
 
 function getOverlayNameInput(overlay) { // ADDED
-    const input = overlay.querySelector("input[aria-label='Bed name']"); // ADDED
+    const input = overlay.querySelector("input[aria-label='User name']"); // CHANGE
     assert.ok(input, "missing overlay bed name input"); // ADDED
     return input; // ADDED
 } // ADDED
@@ -233,6 +233,66 @@ test("bed conditions persist, mirror, and clear safely", () => { // CHANGE
     assert.equal(bed.getAttribute("crop_protection"), null); // NEW
     assert.equal(bed.getAttribute("label"), "Bed 1"); // NEW
 }); // NEW
+
+test("bed identity persists separately and generates the visible label", () => { // ADDED
+    const { api, bed } = loadPlugin(); // ADDED
+    api.writeBedConditions(bed, { bedType: "raised_bed", bedHeightCm: 45.72, userBedName: "East tomatoes", sunExposure: "full_sun" }); // ADDED
+
+    const stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // ADDED
+    assert.equal(stored.bedType, "raised_bed"); // ADDED
+    assert.equal(stored.bedHeightCm, 45.72); // ADDED
+    assert.equal(stored.userBedName, "East tomatoes"); // ADDED
+    assert.equal(bed.getAttribute("bed_type"), "raised_bed"); // ADDED
+    assert.equal(bed.getAttribute("bed_height_cm"), "45.72"); // ADDED
+    assert.equal(bed.getAttribute("user_bed_name"), "East tomatoes"); // ADDED
+    assert.equal(bed.getAttribute("label"), "Raised bed (45.7 cm) - East tomatoes"); // ADDED
+    assert.deepEqual(plainRows(api._test.buildOverlayRows(api.getDisplayBedConditions(bed))), [{ label: "Sun exposure", value: "Full sun" }]); // ADDED
+}); // ADDED
+
+test("bed identity dialog saves metric height and user name", () => { // ADDED
+    const { api, bed, ui } = loadPlugin(); // ADDED
+    api._test.showConditionEditorDialog(bed); // ADDED
+
+    assert.deepEqual(getSectionFieldLabels(ui, "Bed Identity"), ["Bed type", "Height (cm)", "User name"]); // ADDED
+    getDialogFieldControl(ui, "Bed type").value = "hugelkultur"; // ADDED
+    getDialogFieldControl(ui, "Height (cm)").value = "60"; // ADDED
+    getDialogFieldControl(ui, "User name").value = "North berm"; // ADDED
+    getDialogButton(ui, "Save").click(); // ADDED
+
+    const stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // ADDED
+    assert.equal(stored.bedType, "hugelkultur"); // ADDED
+    assert.equal(stored.bedHeightCm, 60); // ADDED
+    assert.equal(stored.userBedName, "North berm"); // ADDED
+    assert.equal(bed.getAttribute("label"), "Hugelkultur (60 cm) - North berm"); // ADDED
+}); // ADDED
+
+test("bed identity follows imperial module units without changing stored centimeters", () => { // ADDED
+    const { api, moduleCell, bed, model, ui } = loadPlugin(); // ADDED
+    moduleCell.value.setAttribute("unit_system", "imperial"); // ADDED
+    api.writeBedConditions(bed, { bedType: "raised_bed", bedHeightCm: 45.72, userBedName: "East tomatoes" }); // ADDED
+    assert.equal(bed.getAttribute("label"), "Raised bed (18 in) - East tomatoes"); // ADDED
+
+    api._test.showConditionEditorDialog(bed); // ADDED
+    assert.equal(getDialogFieldControl(ui, "Height (in)").value, "18"); // ADDED
+    getDialogFieldControl(ui, "Height (in)").value = "24"; // ADDED
+    getDialogButton(ui, "Save").click(); // ADDED
+    assert.equal(JSON.parse(bed.getAttribute("bed_conditions_json")).bedHeightCm, 60.96); // ADDED
+    assert.equal(bed.getAttribute("label"), "Raised bed (24 in) - East tomatoes"); // ADDED
+
+    moduleCell.value.setAttribute("unit_system", "metric"); // ADDED
+    model.fire("change"); // ADDED
+    assert.equal(JSON.parse(bed.getAttribute("bed_conditions_json")).bedHeightCm, 60.96); // ADDED
+    assert.equal(bed.getAttribute("label"), "Raised bed (61 cm) - East tomatoes"); // ADDED
+}); // ADDED
+
+test("existing labels are not migrated into bed identity by default", () => { // ADDED
+    const { api, bed } = loadPlugin(); // ADDED
+    assert.equal(api.readBedConditions(bed).userBedName, ""); // ADDED
+    api.writeBedConditions(bed, { sunExposure: "shade" }); // ADDED
+    assert.equal(bed.getAttribute("label"), "Bed 1"); // ADDED
+    api.writeBedConditions(bed, { bedType: "field" }); // ADDED
+    assert.equal(bed.getAttribute("label"), "Field"); // ADDED
+}); // ADDED
 
 test("legacy module default attributes are ignored", () => { // CHANGE
     const { api, moduleCell, bed, model, document } = loadPlugin(); // CHANGE
@@ -313,7 +373,7 @@ test("legacy tags are tolerated but omitted from normalized bed profiles", () =>
 test("bed dialog exposes copy, paste, and clear actions", () => { // CHANGE
     const setup = loadPlugin(); // NEW
     const { api, bed, bed2, ui } = setup; // CHANGE
-    api.writeBedConditions(bed, { sunExposure: "full_sun", irrigation: "drip", trellis: "available" }); // NEW
+    api.writeBedConditions(bed, { bedType: "raised_bed", bedHeightCm: 30, userBedName: "Cloned name", sunExposure: "full_sun", irrigation: "drip", trellis: "available" }); // CHANGE
 
     api._test.showConditionEditorDialog(bed); // CHANGE
     assert.deepEqual(getDialogButtonLabels(ui), ["Set as defaults", "Copy", "Paste", "Clear", "Cancel", "Save"]); // CHANGE
@@ -326,11 +386,18 @@ test("bed dialog exposes copy, paste, and clear actions", () => { // CHANGE
     assert.equal(bed2.getAttribute("sun_exposure"), "full_sun"); // NEW
     assert.equal(bed2.getAttribute("irrigation"), "unknown"); // CHANGE
     assert.equal(bed2.getAttribute("trellis"), "available"); // NEW
+    assert.equal(bed2.getAttribute("bed_type"), "raised_bed"); // ADDED
+    assert.equal(bed2.getAttribute("user_bed_name"), "Cloned name"); // ADDED
+    assert.equal(bed2.getAttribute("label"), "Raised bed (30 cm) - Cloned name"); // ADDED
 
     setup.graph.getSelectionCells = () => [bed2]; // NEW
     api._test.showConditionEditorDialog(bed2); // CHANGE
     getDialogButton(ui, "Clear").click(); // CHANGE
-    assert.equal(bed2.getAttribute("bed_conditions_json"), null); // NEW
+    assert.equal(JSON.parse(bed2.getAttribute("bed_conditions_json")).sunExposure, "unknown"); // CHANGE
+    assert.equal(bed2.getAttribute("sun_exposure"), null); // ADDED
+    assert.equal(bed2.getAttribute("bed_type"), "raised_bed"); // ADDED
+    assert.equal(bed2.getAttribute("user_bed_name"), "Cloned name"); // ADDED
+    assert.equal(bed2.getAttribute("label"), "Raised bed (30 cm) - Cloned name"); // ADDED
 }); // NEW
 
 test("selected bed overlays render for garden-bed-only selections", () => { // NEW
@@ -348,7 +415,7 @@ test("selected bed overlays render for garden-bed-only selections", () => { // N
     assert.equal(overlays[0].children[1].style.display, "block"); // ADDED
     assert.equal(overlays[0].children[0].style.width, "100%"); // ADDED
     assert.equal(overlays[0].children[1].style.width, "100%"); // ADDED
-    assert.equal(getOverlayNameInput(overlays[0]).value, "Bed 1"); // ADDED
+    assert.equal(getOverlayNameInput(overlays[0]).value, ""); // CHANGE
     assert.match(overlays[0].textContent, /Set Bed Conditions/); // NEW
     assert.match(overlays[0].textContent, /Sun exposureFull sun/); // NEW
     assert.equal(overlays[0].style.left, "-188px"); // CHANGE
@@ -393,17 +460,18 @@ test("selected bed overlay opens the bed conditions editor", () => { // NEW
     assert.deepEqual(getDialogButtonLabels(ui), ["Set as defaults", "Copy", "Paste", "Clear", "Cancel", "Save"]); // CHANGE
 }); // NEW
 
-test("selected bed overlay edits bed labels without changing conditions", () => { // ADDED
+test("selected bed overlay edits user names without changing conditions", () => { // CHANGE
     const { api, bed, graph } = loadPlugin(); // ADDED
-    api.writeBedConditions(bed, { irrigation: "drip", notes: "Keep watered." }); // ADDED
+    api.writeBedConditions(bed, { bedType: "raised_bed", bedHeightCm: 45.72, irrigation: "drip", notes: "Keep watered." }); // CHANGE
     graph.getSelectionCells = () => [bed]; // ADDED
     api._test.syncSelectedBedOverlays(); // ADDED
     const input = getOverlayNameInput(getSelectedBedOverlays(graph)[0]); // ADDED
 
     input.value = "East Bed"; // ADDED
     input.dispatchEvent(new input.ownerDocument.defaultView.Event("blur")); // ADDED
-    assert.equal(bed.getAttribute("label"), "East Bed"); // ADDED
+    assert.equal(bed.getAttribute("label"), "Raised bed (45.7 cm) - East Bed"); // CHANGE
     let stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // ADDED
+    assert.equal(stored.userBedName, "East Bed"); // ADDED
     assert.equal(stored.irrigation, "unknown"); // CHANGE
     assert.equal(stored.notes, "Keep watered."); // ADDED
 
@@ -411,28 +479,30 @@ test("selected bed overlay edits bed labels without changing conditions", () => 
     const enterInput = getOverlayNameInput(getSelectedBedOverlays(graph)[0]); // ADDED
     enterInput.value = "West Bed"; // ADDED
     dispatchInputKey(enterInput, "Enter"); // ADDED
-    assert.equal(bed.getAttribute("label"), "West Bed"); // ADDED
+    assert.equal(bed.getAttribute("label"), "Raised bed (45.7 cm) - West Bed"); // CHANGE
     stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // ADDED
+    assert.equal(stored.userBedName, "West Bed"); // ADDED
     assert.equal(stored.irrigation, "unknown"); // CHANGE
 }); // ADDED
 
-test("selected bed overlay escape reverts and blank names use fallback", () => { // ADDED
+test("selected bed overlay escape reverts and blank user names keep prefix only", () => { // CHANGE
     const { api, bed, graph } = loadPlugin(); // ADDED
+    api.writeBedConditions(bed, { bedType: "raised_bed", bedHeightCm: 45.72, userBedName: "Initial" }); // ADDED
     graph.getSelectionCells = () => [bed]; // ADDED
     api._test.syncSelectedBedOverlays(); // ADDED
     let input = getOverlayNameInput(getSelectedBedOverlays(graph)[0]); // ADDED
 
     input.value = "Draft Bed"; // ADDED
     dispatchInputKey(input, "Escape"); // ADDED
-    assert.equal(input.value, "Bed 1"); // ADDED
-    assert.equal(bed.getAttribute("label"), "Bed 1"); // ADDED
+    assert.equal(input.value, "Initial"); // CHANGE
+    assert.equal(bed.getAttribute("label"), "Raised bed (45.7 cm) - Initial"); // CHANGE
 
     input.value = "   "; // ADDED
     input.dispatchEvent(new input.ownerDocument.defaultView.Event("blur")); // ADDED
-    assert.equal(bed.getAttribute("label"), "Garden Bed"); // ADDED
+    assert.equal(bed.getAttribute("label"), "Raised bed (45.7 cm)"); // CHANGE
     api._test.syncSelectedBedOverlays(); // ADDED
     input = getOverlayNameInput(getSelectedBedOverlays(graph)[0]); // ADDED
-    assert.equal(input.value, "Garden Bed"); // ADDED
+    assert.equal(input.value, ""); // CHANGE
 }); // ADDED
 
 test("selected bed overlay position is not clamped to the viewport", () => { // ADDED
@@ -485,8 +555,8 @@ test("preset identity persists as selected baseline until cleared", () => { // C
     assert.equal(stored.presetKey, "sunny_vegetable"); // CHANGE
 
     api._test.showConditionEditorDialog(bed); // NEW
-    assert.equal(ui.lastDialog.querySelector("select").value, "sunny_vegetable"); // NEW
-    ui.lastDialog.querySelector("select").value = ""; // NEW
+    assert.equal(getDialogFieldControl(ui, "Preset").value, "sunny_vegetable"); // CHANGE
+    getDialogFieldControl(ui, "Preset").value = ""; // CHANGE
     getDialogButton(ui, "Save").click(); // NEW
     stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // NEW
     assert.equal(stored.presetKey, undefined); // NEW
@@ -508,6 +578,9 @@ test("greenhouse preset persists new infrastructure fields and allows extra prot
     getDialogButton(ui, "Save").click(); // NEW
     let stored = JSON.parse(bed.getAttribute("bed_conditions_json")); // NEW
     assert.equal(stored.presetKey, "greenhouse"); // NEW
+    assert.equal(stored.bedType, "unknown"); // ADDED
+    assert.equal(stored.bedHeightCm, null); // ADDED
+    assert.equal(stored.userBedName, ""); // ADDED
     assert.equal(stored.seasonExtension, "greenhouse"); // NEW
     assert.equal(stored.seasonExtensionAirOffsetC, 3); // ADDED
     assert.equal(stored.seasonExtensionSoilOffsetC, 2); // ADDED

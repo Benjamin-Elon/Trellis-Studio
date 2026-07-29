@@ -20,11 +20,18 @@ Draw.loadPlugin(function (ui) { // NEW
     const OVERLAY_MIN_LABEL_WIDTH = 72; // ADDED
     const OVERLAY_AVG_CHAR_WIDTH = 7; // ADDED
     const OVERLAY_CONTROL_CHROME_WIDTH = 24; // ADDED
+    const CM_PER_INCH = 2.54; // ADDED
 
     const ATTRS = { // NEW
         BED_JSON: "bed_conditions_json", // CHANGE
         SEASON_EXTENSION_DEFAULTS_JSON: "season_extension_defaults_json" // ADDED
     }; // NEW
+
+    const IDENTITY_MIRROR_ATTRS = { // ADDED
+        bedType: "bed_type", // ADDED
+        bedHeightCm: "bed_height_cm", // ADDED
+        userBedName: "user_bed_name" // ADDED
+    }; // ADDED
 
     const MIRROR_ATTRS = { // NEW
         sunExposure: "sun_exposure", // NEW
@@ -59,6 +66,8 @@ Draw.loadPlugin(function (ui) { // NEW
         { key: "frostRisk", label: "Frost risk", values: ["unknown", "none", "low", "medium", "high"], fallback: "unknown" }, // NEW
         { key: "bedUse", label: "Bed use", values: ["unknown", "annuals", "perennials", "nursery", "seed_starting", "mixed", "resting"], fallback: "unknown" } // NEW
     ]; // NEW
+
+    const BED_TYPE_FIELD = { key: "bedType", label: "Bed type", values: ["unknown", "field", "raised_bed", "hugelkultur", "container", "greenhouse_bench", "wicking_bed"], fallback: "unknown" }; // ADDED
 
     const FIELD_BY_KEY = FIELD_DEFS.reduce(function (out, field) { // NEW
         out[field.key] = field; // NEW
@@ -120,7 +129,13 @@ Draw.loadPlugin(function (ui) { // NEW
         perennials: "Perennials", // NEW
         nursery: "Nursery", // NEW
         seed_starting: "Seed starting", // NEW
-        resting: "Resting" // NEW
+        resting: "Resting", // CHANGE
+        field: "Field", // ADDED
+        raised_bed: "Raised bed", // ADDED
+        hugelkultur: "Hugelkultur", // ADDED
+        container: "Container", // ADDED
+        greenhouse_bench: "Greenhouse bench", // ADDED
+        wicking_bed: "Wicking bed" // ADDED
     }; // NEW
 
     const PRESETS = { // NEW
@@ -152,6 +167,10 @@ Draw.loadPlugin(function (ui) { // NEW
     function normalizeBedName(value) { // ADDED
         const trimmed = String(value == null ? "" : value).trim(); // ADDED
         return trimmed || BED_NAME_FALLBACK; // ADDED
+    } // ADDED
+
+    function normalizeUserBedName(value) { // ADDED
+        return String(value == null ? "" : value).trim(); // ADDED
     } // ADDED
 
     function getBedName(cell) { // ADDED
@@ -187,12 +206,13 @@ Draw.loadPlugin(function (ui) { // NEW
     } // NEW
 
     function writeBedName(bedCell, name) { // ADDED
-        if (!isGardenBed(bedCell)) return BED_NAME_FALLBACK; // ADDED
-        const next = normalizeBedName(name); // ADDED
-        if (getBedName(bedCell) === next) return next; // ADDED
-        setCellAttrs(bedCell, { label: next }); // ADDED
-        refreshSelectedBedOverlaysSoon(); // ADDED
-        return next; // ADDED
+        if (!isGardenBed(bedCell)) return ""; // CHANGE
+        const next = normalizeUserBedName(name); // CHANGE
+        const current = readBedConditions(bedCell); // ADDED
+        if (current.userBedName === next && getBedName(bedCell) === buildGeneratedBedLabel(current, bedCell)) return next; // CHANGE
+        current.userBedName = next; // ADDED
+        writeBedConditions(bedCell, current, { writeIdentityLabel: true }); // CHANGE
+        return next; // CHANGE
     } // ADDED
 
     function nowIso() { // NEW
@@ -216,7 +236,7 @@ Draw.loadPlugin(function (ui) { // NEW
     } // NEW
 
     function normalizeEnumValue(key, value) { // NEW
-        const field = FIELD_BY_KEY[key]; // NEW
+        const field = key === "bedType" ? BED_TYPE_FIELD : FIELD_BY_KEY[key]; // CHANGE
         const raw = String(value == null ? "" : value).trim(); // NEW
         if (!field || field.values.indexOf(raw) < 0) return field ? field.fallback : ""; // NEW
         return raw; // NEW
@@ -228,9 +248,28 @@ Draw.loadPlugin(function (ui) { // NEW
         return Number.isFinite(n) ? n : null; // ADDED
     } // ADDED
 
+    function normalizePositiveOptionalNumber(value) { // ADDED
+        const n = finiteNumberOrNull(value); // ADDED
+        return n != null && n > 0 ? Math.round(n * 100) / 100 : null; // ADDED
+    } // ADDED
+
     function normalizeOptionalNumber(value) { // ADDED
         const n = finiteNumberOrNull(value); // ADDED
         return n == null ? null : Math.round(n * 100) / 100; // ADDED
+    } // ADDED
+
+    function profileHasOwnIdentity(profile) { // ADDED
+        const source = profile && typeof profile === "object" ? profile : {}; // ADDED
+        return Object.prototype.hasOwnProperty.call(source, "bedType") || Object.prototype.hasOwnProperty.call(source, "bed_type") || // ADDED
+            Object.prototype.hasOwnProperty.call(source, "bedHeightCm") || Object.prototype.hasOwnProperty.call(source, "bed_height_cm") || // ADDED
+            Object.prototype.hasOwnProperty.call(source, "userBedName") || Object.prototype.hasOwnProperty.call(source, "user_bed_name"); // ADDED
+    } // ADDED
+
+    function profileHasMeaningfulIdentity(profile) { // ADDED
+        const source = profile && typeof profile === "object" ? profile : {}; // ADDED
+        return normalizeEnumValue("bedType", source.bedType ?? source.bed_type) !== "unknown" || // ADDED
+            normalizePositiveOptionalNumber(source.bedHeightCm ?? source.bed_height_cm) != null || // ADDED
+            !!normalizeUserBedName(source.userBedName ?? source.user_bed_name); // ADDED
     } // ADDED
 
     function seasonExtensionDefaults(value) { // ADDED
@@ -301,6 +340,27 @@ Draw.loadPlugin(function (ui) { // NEW
         }; // ADDED
     } // ADDED
 
+    function mergeIdentityAttrsIntoProfile(cell, source) { // ADDED
+        const out = Object.assign({}, source || {}); // ADDED
+        if (!profileHasOwnIdentity(out) && cell && cell.getAttribute) { // ADDED
+            const bedType = getCellAttr(cell, IDENTITY_MIRROR_ATTRS.bedType, ""); // ADDED
+            const bedHeightCm = getCellAttr(cell, IDENTITY_MIRROR_ATTRS.bedHeightCm, ""); // ADDED
+            const userBedName = getCellAttr(cell, IDENTITY_MIRROR_ATTRS.userBedName, ""); // ADDED
+            if (bedType) out.bed_type = bedType; // ADDED
+            if (bedHeightCm) out.bed_height_cm = bedHeightCm; // ADDED
+            if (userBedName) out.user_bed_name = userBedName; // ADDED
+        } // ADDED
+        return out; // ADDED
+    } // ADDED
+
+    function cellHasIdentityAttrs(cell) { // ADDED
+        return !!(cell && cell.getAttribute && ( // ADDED
+            getCellAttr(cell, IDENTITY_MIRROR_ATTRS.bedType, "") || // ADDED
+            getCellAttr(cell, IDENTITY_MIRROR_ATTRS.bedHeightCm, "") || // ADDED
+            getCellAttr(cell, IDENTITY_MIRROR_ATTRS.userBedName, "") // ADDED
+        )); // ADDED
+    } // ADDED
+
     function isValidPresetKey(key) { // NEW
         return !!key && !!PRESETS[key]; // NEW
     } // NEW
@@ -322,6 +382,9 @@ Draw.loadPlugin(function (ui) { // NEW
     function normalizeProfile(profile, options) { // NEW
         const source = profile && typeof profile === "object" ? profile : {}; // NEW
         const out = { schemaVersion: 1 }; // NEW
+        out.bedType = normalizeEnumValue("bedType", source.bedType ?? source.bed_type); // ADDED
+        out.bedHeightCm = normalizePositiveOptionalNumber(source.bedHeightCm ?? source.bed_height_cm); // ADDED
+        out.userBedName = normalizeUserBedName(source.userBedName ?? source.user_bed_name); // ADDED
         FIELD_DEFS.forEach(function (field) { // NEW
             out[field.key] = normalizeEnumValue(field.key, source[field.key]); // NEW
         }); // NEW
@@ -342,11 +405,11 @@ Draw.loadPlugin(function (ui) { // NEW
     function parseProfileRecord(cell, attrName) { // NEW
         const options = { keepExistingDate: true, allowPreset: attrName === ATTRS.BED_JSON }; // NEW
         const raw = getCellAttr(cell, attrName, ""); // NEW
-        if (!raw) return { raw: "", invalid: false, profile: normalizeProfile({}, options) }; // NEW
+        if (!raw) return { raw: "", invalid: false, profile: normalizeProfile(mergeIdentityAttrsIntoProfile(cell, {}), options) }; // CHANGE
         try { // NEW
-            return { raw: raw, invalid: false, profile: normalizeProfile(JSON.parse(raw), options) }; // NEW
+            return { raw: raw, invalid: false, profile: normalizeProfile(mergeIdentityAttrsIntoProfile(cell, JSON.parse(raw)), options) }; // CHANGE
         } catch (e) { // NEW
-            return { raw: raw, invalid: true, profile: normalizeProfile({}, options) }; // NEW
+            return { raw: raw, invalid: true, profile: normalizeProfile(mergeIdentityAttrsIntoProfile(cell, {}), options) }; // CHANGE
         } // NEW
     } // NEW
 
@@ -362,11 +425,66 @@ Draw.loadPlugin(function (ui) { // NEW
         return attrs; // NEW
     } // NEW
 
-    function writeBedConditions(bedCell, profile) { // NEW
+    function buildIdentityMirrorAttrs(profile) { // ADDED
+        const attrs = {}; // ADDED
+        attrs[IDENTITY_MIRROR_ATTRS.bedType] = profile.bedType === "unknown" ? null : profile.bedType; // ADDED
+        attrs[IDENTITY_MIRROR_ATTRS.bedHeightCm] = profile.bedHeightCm == null ? null : profile.bedHeightCm; // ADDED
+        attrs[IDENTITY_MIRROR_ATTRS.userBedName] = profile.userBedName || null; // ADDED
+        return attrs; // ADDED
+    } // ADDED
+
+    function formatDisplayNumber(value) { // ADDED
+        const n = Number(value); // ADDED
+        if (!Number.isFinite(n)) return ""; // ADDED
+        const rounded = Math.round(n * 10) / 10; // ADDED
+        return Number.isInteger(rounded) ? String(rounded) : String(rounded); // ADDED
+    } // ADDED
+
+    function heightCmToDisplayValue(cm, units) { // ADDED
+        const n = normalizePositiveOptionalNumber(cm); // ADDED
+        if (n == null) return ""; // ADDED
+        return units === "imperial" ? formatDisplayNumber(n / CM_PER_INCH) : formatDisplayNumber(n); // ADDED
+    } // ADDED
+
+    function displayHeightToCm(value, units) { // ADDED
+        const n = finiteNumberOrNull(value); // ADDED
+        if (n == null || n <= 0) return null; // ADDED
+        return Math.round((units === "imperial" ? n * CM_PER_INCH : n) * 100) / 100; // ADDED
+    } // ADDED
+
+    function formatBedHeight(cm, units) { // ADDED
+        const value = heightCmToDisplayValue(cm, units); // ADDED
+        if (!value) return ""; // ADDED
+        return value + " " + (units === "imperial" ? "in" : "cm"); // ADDED
+    } // ADDED
+
+    function buildGeneratedBedLabel(profile, bedCell) { // ADDED
+        const normalized = normalizeProfile(profile, { keepExistingDate: true, allowPreset: true }); // ADDED
+        const parts = []; // ADDED
+        if (normalized.bedType !== "unknown") { // ADDED
+            let prefix = valueLabel(normalized.bedType); // ADDED
+            const height = formatBedHeight(normalized.bedHeightCm, resolveUnitSystem(bedCell)); // ADDED
+            if (height) prefix += " (" + height + ")"; // ADDED
+            parts.push(prefix); // ADDED
+        } // ADDED
+        if (normalized.userBedName) parts.push(normalized.userBedName); // ADDED
+        return parts.length ? parts.join(" - ") : BED_NAME_FALLBACK; // ADDED
+    } // ADDED
+
+    function shouldWriteGeneratedLabel(bedCell, sourceProfile, normalizedProfile, options) { // ADDED
+        if (options && options.writeIdentityLabel) return true; // ADDED
+        if (profileHasMeaningfulIdentity(sourceProfile) || profileHasMeaningfulIdentity(normalizedProfile)) return true; // ADDED
+        return cellHasIdentityAttrs(bedCell); // ADDED
+    } // ADDED
+
+    function writeBedConditions(bedCell, profile, options) { // CHANGE
         if (!isGardenBed(bedCell)) return null; // NEW
-        const normalized = normalizeProfile(profile, { allowPreset: true }); // NEW
+        const source = mergeIdentityAttrsIntoProfile(bedCell, profile); // ADDED
+        const normalized = normalizeProfile(source, { allowPreset: true }); // CHANGE
         const attrs = buildMirrorAttrs(normalized); // NEW
+        Object.assign(attrs, buildIdentityMirrorAttrs(normalized)); // ADDED
         attrs[ATTRS.BED_JSON] = JSON.stringify(normalized); // NEW
+        if (shouldWriteGeneratedLabel(bedCell, source, normalized, options)) attrs.label = buildGeneratedBedLabel(normalized, bedCell); // CHANGE
         setCellAttrs(bedCell, attrs); // NEW
         refreshSelectedBedOverlaysSoon(); // NEW
         return normalized; // NEW
@@ -374,10 +492,17 @@ Draw.loadPlugin(function (ui) { // NEW
 
     function clearBedConditions(bedCell) { // NEW
         if (!isGardenBed(bedCell)) return; // NEW
-        const attrs = { [ATTRS.BED_JSON]: null }; // NEW
+        const current = readBedConditions(bedCell); // ADDED
+        const keepIdentity = profileHasMeaningfulIdentity(current) || cellHasIdentityAttrs(bedCell); // ADDED
+        const identityOnly = keepIdentity ? normalizeProfile({ bedType: current.bedType, bedHeightCm: current.bedHeightCm, userBedName: current.userBedName }, { allowPreset: true }) : null; // ADDED
+        const attrs = { [ATTRS.BED_JSON]: keepIdentity ? JSON.stringify(identityOnly) : null }; // CHANGE
         Object.keys(MIRROR_ATTRS).forEach(function (key) { // NEW
             attrs[MIRROR_ATTRS[key]] = null; // NEW
         }); // NEW
+        if (keepIdentity) { // ADDED
+            Object.assign(attrs, buildIdentityMirrorAttrs(identityOnly)); // ADDED
+            attrs.label = buildGeneratedBedLabel(identityOnly, bedCell); // ADDED
+        } // ADDED
         setCellAttrs(bedCell, attrs); // NEW
         refreshSelectedBedOverlaysSoon(); // NEW
     } // NEW
@@ -633,6 +758,21 @@ Draw.loadPlugin(function (ui) { // NEW
         title.style.margin = "0 0 10px"; // NEW
         body.appendChild(title); // CHANGE
 
+        const controls = Object.create(null); // CHANGE
+        const identityUnits = resolveUnitSystem(targetCell); // ADDED
+        const identity = appendSection(body, "Bed Identity"); // ADDED
+        controls.bedType = makeSelect(BED_TYPE_FIELD, current.bedType); // ADDED
+        appendField(identity, BED_TYPE_FIELD, controls.bedType); // ADDED
+        controls.bedHeight = makeNumberInput(heightCmToDisplayValue(current.bedHeightCm, identityUnits)); // ADDED
+        controls.bedHeight.step = identityUnits === "imperial" ? "0.5" : "1"; // ADDED
+        controls.bedHeight.min = "0"; // ADDED
+        appendField(identity, { label: "Height (" + (identityUnits === "imperial" ? "in" : "cm") + ")" }, controls.bedHeight); // ADDED
+        controls.userBedName = document.createElement("input"); // ADDED
+        controls.userBedName.type = "text"; // ADDED
+        controls.userBedName.value = current.userBedName || ""; // ADDED
+        controls.userBedName.style.width = "100%"; // ADDED
+        appendField(identity, { label: "User name" }, controls.userBedName); // ADDED
+
         const presetRow = document.createElement("label"); // NEW
         presetRow.style.display = "grid"; // NEW
         presetRow.style.gridTemplateColumns = "130px 1fr"; // NEW
@@ -650,7 +790,6 @@ Draw.loadPlugin(function (ui) { // NEW
         presetRow.appendChild(presetSelect); // NEW
         body.appendChild(presetRow); // CHANGE
 
-        const controls = Object.create(null); // NEW
         const growing = appendSection(body, "Growing Conditions"); // CHANGE
         ["sunExposure", "windExposure", "frostRisk", "soilMoisture", "drainage", "soilTexture", "fertility"].forEach(function (key) { // CHANGE
             controls[key] = makeSelect(FIELD_BY_KEY[key], current[key]); // NEW
@@ -686,6 +825,9 @@ Draw.loadPlugin(function (ui) { // NEW
 
         function readDialogProfile() { // NEW
             const next = {}; // NEW
+            next.bedType = controls.bedType.value; // ADDED
+            next.bedHeightCm = displayHeightToCm(controls.bedHeight.value, identityUnits); // ADDED
+            next.userBedName = controls.userBedName.value; // ADDED
             FIELD_DEFS.forEach(function (field) { next[field.key] = controls[field.key] ? controls[field.key].value : "unknown"; }); // CHANGE
             next.seasonExtensionAirOffsetC = displayTempToC(controls.seasonExtensionAirOffsetC.value, advancedSeasonExtension.units); // ADDED
             next.seasonExtensionSoilOffsetC = displayTempToC(controls.seasonExtensionSoilOffsetC.value, advancedSeasonExtension.units); // ADDED
@@ -713,12 +855,12 @@ Draw.loadPlugin(function (ui) { // NEW
         secondaryButtons.style.display = "flex"; // NEW
         secondaryButtons.style.gap = "8px"; // NEW
         actionRow.appendChild(document.createElement("span")); // NEW
-        secondaryButtons.appendChild(mxUtils.button("Copy", function () { copiedProfile = normalizeProfile(readDialogProfile(), { allowPreset: true }); })); // NEW
+        secondaryButtons.appendChild(mxUtils.button("Copy", function () { copiedProfile = normalizeProfile(readDialogProfile(), { allowPreset: true }); })); // CHANGE
         secondaryButtons.appendChild(mxUtils.button("Paste", function () { // NEW
             if (!copiedProfile) { ui.alert("No copied bed conditions are available."); return; } // NEW
             const targets = collectSelectedBeds(targetCell); // NEW
             model.beginUpdate(); // NEW
-            try { targets.forEach(function (target) { writeBedConditions(target, copiedProfile); }); } // NEW
+            try { targets.forEach(function (target) { writeBedConditions(target, copiedProfile, { writeIdentityLabel: true }); }); } // CHANGE
             finally { model.endUpdate(); } // NEW
             ui.hideDialog(); // NEW
         })); // NEW
@@ -740,9 +882,10 @@ Draw.loadPlugin(function (ui) { // NEW
         buttonRow.style.marginTop = "12px"; // NEW
         buttonRow.appendChild(mxUtils.button("Cancel", function () { ui.hideDialog(); })); // NEW
         buttonRow.appendChild(mxUtils.button("Save", function () { // NEW
+            if (String(controls.bedHeight.value || "").trim() && displayHeightToCm(controls.bedHeight.value, identityUnits) == null) { ui.alert("Bed height must be greater than 0."); controls.bedHeight.focus(); return; } // ADDED
             model.beginUpdate(); // NEW
             try { // NEW
-                writeBedConditions(targetCell, readDialogProfile()); // CHANGE
+                writeBedConditions(targetCell, readDialogProfile(), { writeIdentityLabel: true }); // CHANGE
             } finally { // NEW
                 model.endUpdate(); // NEW
             } // NEW
@@ -860,11 +1003,11 @@ Draw.loadPlugin(function (ui) { // NEW
     } // NEW
 
     function createBedNameInput(entry) { // ADDED
-        const initialName = getBedName(entry.cell); // ADDED
+        const initialName = readBedConditions(entry.cell).userBedName || ""; // CHANGE
         const input = document.createElement("input"); // ADDED
         input.type = "text"; // ADDED
         input.value = initialName; // ADDED
-        input.setAttribute("aria-label", "Bed name"); // ADDED
+        input.setAttribute("aria-label", "User name"); // CHANGE
         input.style.boxSizing = "border-box"; // ADDED
         input.style.display = "block"; // ADDED
         input.style.width = "100%"; // ADDED
@@ -999,6 +1142,30 @@ Draw.loadPlugin(function (ui) { // NEW
         Array.from(selectedBedOverlays.keys()).forEach(removeSelectedBedOverlay); // NEW
     } // NEW
 
+    function visitModelCells(cell, visitor) { // ADDED
+        if (!cell || !visitor) return; // ADDED
+        visitor(cell); // ADDED
+        const count = model.getChildCount ? model.getChildCount(cell) : 0; // ADDED
+        for (let i = 0; i < count; i++) visitModelCells(model.getChildAt(cell, i), visitor); // ADDED
+    } // ADDED
+
+    function syncGeneratedBedLabels() { // ADDED
+        if (syncGeneratedBedLabels.running || !model.getRoot) return; // ADDED
+        const updates = []; // ADDED
+        visitModelCells(model.getRoot(), function (cell) { // ADDED
+            if (!isGardenBed(cell)) return; // CHANGE
+            const profile = readBedConditions(cell); // ADDED
+            if (!cellHasIdentityAttrs(cell) && !profileHasMeaningfulIdentity(profile)) return; // ADDED
+            const nextLabel = buildGeneratedBedLabel(profile, cell); // ADDED
+            if (getBedName(cell) !== nextLabel) updates.push({ cell: cell, label: nextLabel }); // ADDED
+        }); // ADDED
+        if (!updates.length) return; // ADDED
+        syncGeneratedBedLabels.running = true; // ADDED
+        model.beginUpdate && model.beginUpdate(); // ADDED
+        try { updates.forEach(function (entry) { setCellAttrs(entry.cell, { label: entry.label }); }); } // ADDED
+        finally { if (model.endUpdate) model.endUpdate(); syncGeneratedBedLabels.running = false; } // ADDED
+    } // ADDED
+
     function isIrrigationModeActiveForBedOverlay() { // NEW
         const planner = graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner); // NEW
         return !!(planner && typeof planner.isIrrigationModeActive === "function" && planner.isIrrigationModeActive()); // NEW
@@ -1040,7 +1207,7 @@ Draw.loadPlugin(function (ui) { // NEW
     function refreshSelectedBedOverlaysSoon() { // NEW
         if (refreshSelectedBedOverlaysSoon.pending) return; // CHANGE
         refreshSelectedBedOverlaysSoon.pending = true; // CHANGE
-        setTimeout(function () { refreshSelectedBedOverlaysSoon.pending = false; syncSelectedBedOverlays(); }, 0); // CHANGE
+        setTimeout(function () { refreshSelectedBedOverlaysSoon.pending = false; syncGeneratedBedLabels(); syncSelectedBedOverlays(); }, 0); // CHANGE
     } // NEW
 
     const selectionModel = graph.getSelectionModel ? graph.getSelectionModel() : null; // NEW
@@ -1075,9 +1242,13 @@ Draw.loadPlugin(function (ui) { // NEW
             getDisplayBedConditions: getDisplayBedConditions, // CHANGE
             getBedName: getBedName, // ADDED
             writeBedName: writeBedName, // ADDED
+            buildGeneratedBedLabel: buildGeneratedBedLabel, // ADDED
+            heightCmToDisplayValue: heightCmToDisplayValue, // ADDED
+            displayHeightToCm: displayHeightToCm, // ADDED
             estimateSelectedBedOverlayLayout: estimateSelectedBedOverlayLayout, // ADDED
             showConditionEditorDialog: showConditionEditorDialog, // NEW
             syncSelectedBedOverlays: syncSelectedBedOverlays, // NEW
+            syncGeneratedBedLabels: syncGeneratedBedLabels, // ADDED
             collectSelectedBeds: collectSelectedBeds // NEW
         } // NEW
     }; // NEW

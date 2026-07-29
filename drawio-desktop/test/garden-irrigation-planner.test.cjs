@@ -498,6 +498,24 @@ function createCommittedDripTapeBedAssembly(harness, bedCell) { // NEW
     return created.assembly; // NEW
 } // NEW
 
+function createLifecycleBomFixture() { // NEW
+    const harness = loadPlugin(); // NEW
+    const { api, moduleCell, bed } = harness; // NEW
+    const catalog = addDripTapeBomParts(sampleCatalog()); // NEW
+    catalog.items.push(part("filter_half_lifecycle", "1/2 lifecycle filter", "filter", "out_of_stock", 20, 1, 1, "barb", "1/2", "barb", "1/2", { pressureLossPsi: 1 }, undefined, true)); // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Half Source", { connectorType: "barb", nominalSize: "1/2", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    const filter = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "filter_half_lifecycle"), { x: 30, y: 170 }); // NEW
+    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 320 }); // NEW
+    const bom = api.__test.computeBedTemplateBom(catalog, bedAssembly.assembly.geometry, "drip_tape_bed", 2, "width"); // NEW
+    api.__test.commitBedTemplate(moduleCell, "bed_lifecycle", bedAssembly.assembly, { templateId: "drip_tape_bed", templateModel: "bom", irrigationType: bom.templateDef.lineKind, rowOrientation: bom.rowOrientation, rowLengthMeters: bom.rowLengthMeters, rowSpacingCm: bom.rowSpacingCm, totalRowMeters: bom.totalRowMeters, requiredParts: bom.requiredParts, anchorPartId: bom.anchorPartId, demand: bom.demand, spacing: { rows: bom.rowCount, emitterInches: 12, rowSpacingCm: bom.rowSpacingCm } }); // NEW
+    assert.equal(api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(filter.assembly).getId(), role: "input", index: 0 }).ok, true); // NEW
+    assert.equal(api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(filter.assembly).getId(), role: "output", index: 0 }, { cellId: bedAssembly.assembly.getId(), role: "input", index: 0 }).ok, true); // NEW
+    const edges = api.__test.collectAssemblyEdges(moduleCell).filter(edge => edge.getAttribute(api.attrs.PIPE_EDGE) === "1"); // NEW
+    edges.forEach(edge => setMeasuredEdgeLength(edge, 120)); // NEW
+    return Object.assign(harness, { catalog, source, filter, filterPart: api.__test.firstAssemblyPart(filter.assembly), bedAssembly: bedAssembly.assembly, pipeEdges: edges }); // NEW
+} // NEW
+
 function hudSectionTitles(root) { // NEW
     return Array.from(root.querySelectorAll(".trellis-irrigation-hud-section-title")).map(node => node.textContent); // NEW
 } // NEW
@@ -2580,6 +2598,56 @@ test("report model builds summaries before explicit persistence", () => { // NEW
     assert.ok(moduleCell.getAttribute(api.attrs.DASHBOARD_JSON)); // NEW
     assert.equal(moduleCell.getAttribute(api.attrs.PATHS_JSON), null); // NEW
     assert.equal(moduleCell.getAttribute(api.attrs.ZONES_JSON), null); // NEW
+}); // NEW
+
+test("irrigation part lifecycle defaults legacy BOM parts to planned", () => { // NEW
+    const { api, moduleCell, filterPart, bedAssembly, pipeEdges } = createLifecycleBomFixture(); // NEW
+    filterPart.value.removeAttribute(api.attrs.PART_STATE); // NEW
+    pipeEdges[0].value.removeAttribute(api.attrs.PART_STATE); // NEW
+    const template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly); // NEW
+    delete template.partState; // NEW
+    bedAssembly.value.setAttribute(api.attrs.BED_TEMPLATE_JSON, JSON.stringify(template)); // NEW
+    const rows = api.__test.buildBomRows(moduleCell); // NEW
+    assert.equal(api.__test.partStateForCell(filterPart), api.__test.partStates.planned); // NEW
+    assert.ok(rows.rows.some(row => row.partId === "filter_half_lifecycle")); // NEW
+    assert.ok(rows.rows.some(row => row.partId === "drip_tape_8mil_12in")); // NEW
+    assert.ok(rows.rows.some(row => row.partId === "pipe_half")); // NEW
+    assert.equal(rows.completedRows.length, 0); // NEW
+}); // NEW
+
+test("completed irrigation parts move to completed BOM rows and preserve total design value", () => { // NEW
+    const { api, moduleCell, filterPart, bedAssembly, pipeEdges } = createLifecycleBomFixture(); // NEW
+    api.__test.setPartCellState(filterPart, api.__test.partStates.completed); // NEW
+    api.__test.setPipeEdgeState(pipeEdges[0], api.__test.partStates.completed); // NEW
+    api.__test.setBedTemplatePartState(moduleCell, bedAssembly, api.__test.partStates.completed); // NEW
+    const rows = api.__test.buildBomRows(moduleCell); // NEW
+    assert.equal(rows.rows.some(row => row.partId === "filter_half_lifecycle"), false); // NEW
+    assert.equal(rows.rows.some(row => row.partId === "drip_tape_8mil_12in"), false); // NEW
+    assert.ok(rows.rows.some(row => row.partId === "pipe_half"), "The uncompleted pipe edge should remain planned."); // NEW
+    assert.ok(rows.completedRows.some(row => row.partId === "filter_half_lifecycle")); // NEW
+    assert.ok(rows.completedRows.some(row => row.partId === "drip_tape_8mil_12in")); // NEW
+    assert.ok(rows.completedRows.some(row => row.partId === "pipe_half")); // NEW
+    const summary = api.__test.ReportModel.buildSummary(moduleCell, { paths: api.__test.deriveAssemblyPaths(moduleCell) }); // NEW
+    assert.equal(summary.purchaseNeededCount, rows.rows.filter(row => row.shortageQuantity > 0).length); // NEW
+    assert.equal(summary.completedPartCount, rows.completedRows.length); // NEW
+    assert.ok(summary.completedDesignValue > 0); // NEW
+    assert.equal(summary.totalDesignValue, summary.plannedDesignValue + summary.completedDesignValue); // NEW
+    assert.equal(summary.completedParts.some(row => row.partId === "filter_half_lifecycle"), true); // NEW
+}); // NEW
+
+test("HUD lifecycle actions mark selected assemblies completed and planned", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const assembly = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 30, y: 40 }).assembly; // NEW
+    const partCell = api.__test.firstAssemblyPart(assembly); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(assembly); // NEW
+    clickButton(graph.container, "Mark Completed"); // NEW
+    assert.equal(partCell.getAttribute(api.attrs.PART_STATE), api.__test.partStates.completed); // NEW
+    assert.equal(styleToken(partCell.style, "fillColor"), "#e8f5e9"); // NEW
+    clickButton(graph.container, "Mark Planned"); // NEW
+    assert.equal(partCell.getAttribute(api.attrs.PART_STATE), api.__test.partStates.planned); // NEW
+    assert.equal(styleToken(partCell.style, "fillColor"), "#ffffff"); // NEW
 }); // NEW
 
 test("multi-pipe assembly hydraulics sum per-segment pipe losses", () => { // CHANGE
