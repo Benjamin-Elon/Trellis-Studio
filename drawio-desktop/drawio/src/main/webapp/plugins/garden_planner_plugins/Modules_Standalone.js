@@ -4,6 +4,10 @@ Draw.loadPlugin(function (ui) {
     const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // CHANGE
     const ATTR_GARDEN_TEAM_MODULE = "trellis_team_module_id"; // NEW
     const ATTR_TEAM_GARDEN_MODULE = "trellis_garden_module_id"; // NEW
+    const ATTR_GARDEN_TASK_MODULE = "trellis_task_module_id"; // NEW
+    const ATTR_TASK_GARDEN_MODULE = "trellis_garden_module_id"; // NEW
+    const ATTR_OWNER = "trellis_owner_user_id"; // NEW
+    const ATTR_ACCESS_GRANTS = "trellis_access_grants_json"; // NEW
     const LINK_ATTR = "linkedTo"; // NEW
     const COMPANION_TEAM_GAP = 40; // NEW
 
@@ -207,6 +211,10 @@ Draw.loadPlugin(function (ui) {
         return !!cell && getXmlFlag(cell, "team_module");
     }
 
+    function isTaskModule(cell) { // NEW
+        return !!cell && getXmlFlag(cell, "task_module"); // NEW
+    } // NEW
+
     function isGardenDashboardCell(cell) { // CHANGE
         return !!cell && cell.getAttribute && cell.getAttribute("garden_dashboard") === "1"; // CHANGE
     } // CHANGE
@@ -307,6 +315,74 @@ Draw.loadPlugin(function (ui) {
         return stripped || fallback || "Garden"; // NEW
     } // NEW
 
+    function companionModuleLabelFallback(cell) { // NEW
+        if (isTeamModule(cell)) return "Team Module"; // NEW
+        if (isTaskModule(cell)) return "Task Module"; // NEW
+        if (isGardenModule(cell)) return "Garden Module"; // CHANGE
+        return "Module"; // NEW
+    } // NEW
+
+    function normalizeModuleLabel(cell, label) { // NEW
+        const trimmed = String(label == null ? "" : label).trim(); // NEW
+        return trimmed || companionModuleLabelFallback(cell); // NEW
+    } // NEW
+
+    function getModuleLabel(cell, fallback) { // NEW
+        return plainCellLabel(cell, fallback || companionModuleLabelFallback(cell)); // NEW
+    } // NEW
+
+    function buildModuleLabelXmlValueForEdit(cell) { // NEW
+        if (!cell) return null; // NEW
+        const value = cell.value; // NEW
+        if (value && value.nodeType === 1) return value.cloneNode(true); // NEW
+        const doc = mxUtils.createXmlDocument(); // NEW
+        const node = doc.createElement("obj"); // NEW
+        if (typeof value === "string" && value) node.setAttribute("label", value); // NEW
+        return node; // NEW
+    } // NEW
+
+    function setModuleLabelUndoable(cell, label) { // NEW
+        const node = buildModuleLabelXmlValueForEdit(cell); // NEW
+        if (!node) return; // NEW
+        const next = label == null || label === "" ? "" : String(label); // NEW
+        if (next) node.setAttribute("label", next); // NEW
+        else node.removeAttribute("label"); // NEW
+        model.beginUpdate(); // NEW
+        try { // NEW
+            model.setValue(cell, node); // NEW
+        } finally { // NEW
+            model.endUpdate(); // NEW
+        } // NEW
+    } // NEW
+
+    function writeModuleLabel(cell, label) { // NEW
+        const next = normalizeModuleLabel(cell, label); // NEW
+        if (getModuleLabel(cell) === next) return next; // NEW
+        setModuleLabelUndoable(cell, next); // CHANGE
+        if (graph.refresh) graph.refresh(cell); // NEW
+        return next; // NEW
+    } // NEW
+
+    function linkedGardenModuleForCompanion(cell) { // NEW
+        const gardenId = getValueAttr(cell, ATTR_TEAM_GARDEN_MODULE) || getValueAttr(cell, ATTR_TASK_GARDEN_MODULE); // NEW
+        const garden = gardenId && model.getCell ? model.getCell(gardenId) : null; // NEW
+        return isGardenModule(garden) ? garden : null; // NEW
+    } // NEW
+
+    function linkedGardenLabelForCompanion(cell) { // NEW
+        const garden = linkedGardenModuleForCompanion(cell); // NEW
+        return garden ? getModuleLabel(garden, "Garden") : ""; // NEW
+    } // NEW
+
+    function stopModuleOverlayDomEvent(evt) { // NEW
+        if (evt && evt.stopPropagation) evt.stopPropagation(); // NEW
+    } // NEW
+
+    function stopAndPreventModuleOverlayDomEvent(evt) { // NEW
+        stopModuleOverlayDomEvent(evt); // NEW
+        if (evt && evt.preventDefault) evt.preventDefault(); // NEW
+    } // NEW
+
     function setCellLabel(cell, label) { // NEW
         setStringValueAttr(cell, "label", label || ""); // NEW
     } // NEW
@@ -362,6 +438,7 @@ Draw.loadPlugin(function (ui) {
             ensureXmlValue(cell);
             setXmlFlag(cell, "garden_module", false);
             setXmlFlag(cell, "team_module", false);
+            setXmlFlag(cell, "task_module", false); // NEW
 
             // Set the desired flag
             if (type === "garden") {
@@ -369,6 +446,8 @@ Draw.loadPlugin(function (ui) {
                 becameGarden = true;                                                        
             } else if (type === "team") {
                 setXmlFlag(cell, "team_module", true);
+            } else if (type === "task") { // NEW
+                setXmlFlag(cell, "task_module", true); // NEW
             }
 
             let st = getStyle(cell) || "";
@@ -379,6 +458,8 @@ Draw.loadPlugin(function (ui) {
                 st += (st ? ";" : "") + "swimlaneFillColor=#B9E0A5";
             } else if (type === "team") {
                 st += (st ? ";" : "") + "swimlaneFillColor=#FFF2CC";
+            } else if (type === "task") { // NEW
+                st += (st ? ";" : "") + "swimlaneFillColor=#E0F2FE"; // NEW
             } else {
                 st += (st ? ";" : "") + "swimlaneFillColor=default";
             }
@@ -395,6 +476,7 @@ Draw.loadPlugin(function (ui) {
                 enforceGardenModuleMinimum(cell);                                            // CHANGE
                 applyModuleMargins(cell, { allowShrink: false });                            // CHANGE
                 ensureGardenTeamModule(cell, { insideUpdate: true });                        // NEW
+                ensureGardenTaskModule(cell, { insideUpdate: true, createMainBoard: true }); // CHANGE
             } finally {                                                                      // CHANGE
                 model.endUpdate();                                                           // CHANGE
             }                                                                                // CHANGE
@@ -1183,8 +1265,16 @@ Draw.loadPlugin(function (ui) {
         return plainCellLabel(gardenCell, "Garden") + " Team"; // NEW
     } // NEW
 
+    function companionTaskLabel(gardenCell) { // NEW
+        return plainCellLabel(gardenCell, "Garden") + " Tasks"; // NEW
+    } // NEW
+
     function validCompanionTeam(gardenCell, teamCell) { // NEW
         return !!(gardenCell && teamCell && isTeamModule(teamCell) && getValueAttr(teamCell, ATTR_TEAM_GARDEN_MODULE) === cellId(gardenCell)); // NEW
+    } // NEW
+
+    function validCompanionTask(gardenCell, taskCell) { // NEW
+        return !!(gardenCell && taskCell && isTaskModule(taskCell) && getValueAttr(taskCell, ATTR_TASK_GARDEN_MODULE) === cellId(gardenCell)); // NEW
     } // NEW
 
     function findExistingCompanionTeam(gardenCell) { // NEW
@@ -1199,9 +1289,39 @@ Draw.loadPlugin(function (ui) {
         return pool.find(function (cell) { return validCompanionTeam(gardenCell, cell); }) || null; // NEW
     } // NEW
 
+    function findExistingCompanionTask(gardenCell) { // NEW
+        const expectedGardenId = cellId(gardenCell); // NEW
+        if (!expectedGardenId) return null; // NEW
+        const typedId = getValueAttr(gardenCell, ATTR_GARDEN_TASK_MODULE); // NEW
+        const typed = typedId && model.getCell ? model.getCell(typedId) : null; // NEW
+        if (validCompanionTask(gardenCell, typed)) return typed; // NEW
+        const root = model.getRoot && model.getRoot(); // NEW
+        const cells = model.cells ? Object.values(model.cells) : []; // NEW
+        const pool = cells.length ? cells : (model.getChildren(root) || []); // NEW
+        return pool.find(function (cell) { return validCompanionTask(gardenCell, cell); }) || null; // NEW
+    } // NEW
+
     function companionTeamPoint(gardenCell) { // NEW
         const g = graph.getCellGeometry(gardenCell) || { x: 0, y: 0, width: 160 }; // NEW
         return { x: (Number(g.x) || 0) + (Number(g.width) || 160) + COMPANION_TEAM_GAP, y: Number(g.y) || 0 }; // NEW
+    } // NEW
+
+    function companionTaskPoint(gardenCell, teamCell) { // NEW
+        const gardenGeo = graph.getCellGeometry(gardenCell) || { x: 0, y: 0, width: 160, height: 100 }; // NEW
+        const teamGeo = teamCell ? graph.getCellGeometry(teamCell) : null; // NEW
+        const x = teamGeo ? Number(teamGeo.x) || 0 : (Number(gardenGeo.x) || 0) + (Number(gardenGeo.width) || 160) + COMPANION_TEAM_GAP; // NEW
+        const y = teamGeo ? (Number(teamGeo.y) || 0) + (Number(teamGeo.height) || 100) + COMPANION_TEAM_GAP : (Number(gardenGeo.y) || 0) + (Number(gardenGeo.height) || 100) + COMPANION_TEAM_GAP; // NEW
+        return { x, y }; // NEW
+    } // NEW
+
+    function syncCompanionModuleAccess(gardenCell, companionCell) { // NEW
+        if (!gardenCell || !companionCell) return false; // NEW
+        let changed = false; // NEW
+        const owner = getValueAttr(gardenCell, ATTR_OWNER); // NEW
+        if (owner !== getValueAttr(companionCell, ATTR_OWNER)) { setStringValueAttr(companionCell, ATTR_OWNER, owner); changed = true; } // NEW
+        const grants = getValueAttr(gardenCell, ATTR_ACCESS_GRANTS); // NEW
+        if (grants !== getValueAttr(companionCell, ATTR_ACCESS_GRANTS)) { setStringValueAttr(companionCell, ATTR_ACCESS_GRANTS, grants); changed = true; } // NEW
+        return changed; // NEW
     } // NEW
 
     function ensureGardenTeamModule(gardenCell, opts) { // NEW
@@ -1217,8 +1337,7 @@ Draw.loadPlugin(function (ui) {
                 setModuleType(team, "team"); // NEW
                 setCellLabel(team, companionTeamLabel(gardenCell)); // NEW
             } // NEW
-            const owner = getValueAttr(gardenCell, "trellis_owner_user_id"); // NEW
-            if (owner && !getValueAttr(team, "trellis_owner_user_id")) setStringValueAttr(team, "trellis_owner_user_id", owner); // NEW
+            syncCompanionModuleAccess(gardenCell, team); // CHANGE
             setStringValueAttr(gardenCell, ATTR_GARDEN_TEAM_MODULE, cellId(team)); // NEW
             setStringValueAttr(team, ATTR_TEAM_GARDEN_MODULE, cellId(gardenCell)); // NEW
             addReciprocalLink(gardenCell, team); // NEW
@@ -1230,8 +1349,37 @@ Draw.loadPlugin(function (ui) {
         return team; // NEW
     } // NEW
 
+    function ensureGardenTaskModule(gardenCell, opts) { // NEW
+        if (!isGardenModule(gardenCell)) return null; // NEW
+        const o = opts || {}; // NEW
+        let task = findExistingCompanionTask(gardenCell); // NEW
+        const manageUpdate = !o.insideUpdate; // NEW
+        if (manageUpdate) model.beginUpdate(); // NEW
+        try { // NEW
+            const team = ensureGardenTeamModule(gardenCell, { insideUpdate: true }); // NEW
+            if (!task) { // NEW
+                const pt = companionTaskPoint(gardenCell, team); // NEW
+                task = createSiblingModuleCell(gardenCell, pt.x, pt.y); // NEW
+                setModuleType(task, "task"); // NEW
+                setCellLabel(task, companionTaskLabel(gardenCell)); // NEW
+            } // NEW
+            syncCompanionModuleAccess(gardenCell, task); // NEW
+            setStringValueAttr(gardenCell, ATTR_GARDEN_TASK_MODULE, cellId(task)); // NEW
+            setStringValueAttr(task, ATTR_TASK_GARDEN_MODULE, cellId(gardenCell)); // NEW
+            addReciprocalLink(gardenCell, task); // NEW
+            applyModuleMargins(task, { allowShrink: false, manageUpdate: false }); // NEW
+        } finally { // NEW
+            if (manageUpdate) model.endUpdate(); // NEW
+        } // NEW
+        try { graph.fireEvent(new mxEventObject("linksChanged", "cells", [gardenCell, task])); } catch (_) { } // NEW
+        try { graph.fireEvent(new mxEventObject("usl:taskModuleReady", "gardenCell", gardenCell, "taskModule", task, "createMainBoard", !!o.createMainBoard)); } catch (_) { } // CHANGE
+        const taskApi = graph.__trellisTaskManager; // NEW
+        if (o.createMainBoard && taskApi && typeof taskApi.ensureMainBoardInTaskModule === "function") taskApi.ensureMainBoardInTaskModule(task); // CHANGE
+        return task; // NEW
+    } // NEW
+
     function normalizeRootModuleType(type) { // NEW
-        return type === "garden" || type === "team" ? type : "regular"; // NEW
+        return type === "garden" || type === "team" || type === "task" ? type : "regular"; // CHANGE
     } // NEW
 
     function createModuleAtPoint(point, type) { // NEW
@@ -1245,7 +1393,7 @@ Draw.loadPlugin(function (ui) {
             applyModuleMargins(mod); // NEW
             if (moduleType !== "regular") setModuleType(mod, moduleType); // NEW
             if (window.Trellis && window.Trellis.users && typeof window.Trellis.users.stampCreatedOwner === "function") window.Trellis.users.stampCreatedOwner(mod); // NEW: modules created by logged-in users become ownership boundaries
-            if (moduleType === "garden") ensureGardenTeamModule(mod, { insideUpdate: true }); // NEW
+            if (moduleType === "garden") { ensureGardenTeamModule(mod, { insideUpdate: true }); ensureGardenTaskModule(mod, { insideUpdate: true, createMainBoard: true }); } // CHANGE
             if (mod && graph.setSelectionCell) graph.setSelectionCell(mod); // NEW
         } finally { // NEW
             model.endUpdate(); // NEW
@@ -1387,6 +1535,7 @@ Draw.loadPlugin(function (ui) {
             overlay.appendChild(makeOverlayButton("Add Module", "regular")); // NEW
             overlay.appendChild(makeOverlayButton("Add Garden Module", "garden")); // NEW
             overlay.appendChild(makeOverlayButton("Add Team Module", "team")); // NEW
+            overlay.appendChild(makeOverlayButton("Add Task Module", "task")); // NEW
             const host = ensureOverlayHost(); // NEW
             if (host) host.appendChild(overlay); // NEW
             return overlay; // NEW
@@ -1494,6 +1643,7 @@ Draw.loadPlugin(function (ui) {
         let dismissOnlyClick = false; // NEW
         let recentlyDismissedCell = null; // NEW
         let recentlyDismissedAt = 0; // NEW
+        let labelControls = null; // NEW
 
         function overlayHost() { // NEW
             return graph.container || null; // NEW
@@ -1626,14 +1776,8 @@ Draw.loadPlugin(function (ui) {
             div.style.left = "0px"; // NEW
             div.style.top = "0px"; // NEW
             const point = anchor.container; // NEW
-            const width = div.offsetWidth || 110; // NEW
-            const height = div.offsetHeight || 30; // NEW
-            const scrollLeft = host.scrollLeft || 0; // NEW
-            const scrollTop = host.scrollTop || 0; // NEW
-            const maxLeft = scrollLeft + Math.max(0, (host.clientWidth || width) - width - OFFSET_PX); // NEW
-            const maxTop = scrollTop + Math.max(0, (host.clientHeight || height) - height - OFFSET_PX); // NEW
-            const left = Math.max(scrollLeft, Math.min(maxLeft, Math.round(point.x + OFFSET_PX))); // CHANGE
-            const top = Math.max(scrollTop, Math.min(maxTop, Math.round(point.y + OFFSET_PX))); // CHANGE
+            const left = Math.round(point.x + OFFSET_PX); // CHANGE: selected team module overlays intentionally do not clamp to the viewport
+            const top = Math.round(point.y + OFFSET_PX); // CHANGE: selected team module overlays intentionally do not clamp to the viewport
             div.style.left = left + "px"; // NEW
             div.style.top = top + "px"; // NEW
         } // NEW
@@ -1671,6 +1815,47 @@ Draw.loadPlugin(function (ui) {
             return btn; // NEW
         } // NEW
 
+        function makeModuleLabelInput(moduleCell, ariaLabel) { // NEW
+            const initialLabel = getModuleLabel(moduleCell); // NEW
+            const input = document.createElement("input"); // NEW
+            input.type = "text"; // NEW
+            input.value = initialLabel; // NEW
+            input.setAttribute("aria-label", ariaLabel); // NEW
+            input.style.display = "block"; // CHANGE
+            input.style.boxSizing = "border-box"; // NEW
+            input.style.width = "100%"; // NEW
+            input.style.minWidth = "0"; // NEW
+            input.style.marginBottom = "2px"; // CHANGE
+            input.style.border = "1px solid rgba(75, 85, 99, 0.35)"; // NEW
+            input.style.borderRadius = "4px"; // NEW
+            input.style.padding = "3px 5px"; // NEW
+            input.style.font = "12px Arial, sans-serif"; // NEW
+            input.style.fontWeight = "600"; // NEW
+            ["mousedown", "mouseup", "click", "dblclick", "pointerdown", "pointerup"].forEach(function (type) { // NEW
+                input.addEventListener(type, stopModuleOverlayDomEvent); // NEW
+            }); // NEW
+            input.addEventListener("keydown", function (evt) { // NEW
+                stopModuleOverlayDomEvent(evt); // NEW
+                if (evt.key === "Enter") { // NEW
+                    input.value = writeModuleLabel(moduleCell, input.value); // NEW
+                    if (input.blur) input.blur(); // NEW
+                    stopAndPreventModuleOverlayDomEvent(evt); // NEW
+                } else if (evt.key === "Escape") { // NEW
+                    input.value = initialLabel; // NEW
+                    stopAndPreventModuleOverlayDomEvent(evt); // NEW
+                } // NEW
+            }); // NEW
+            ["keypress", "keyup"].forEach(function (type) { input.addEventListener(type, stopModuleOverlayDomEvent); }); // NEW
+            input.addEventListener("blur", function () { input.value = writeModuleLabel(moduleCell, input.value); }); // NEW
+            return input; // NEW
+        } // NEW
+
+        function renderTeamModuleLabelControls(moduleCell) { // NEW
+            if (!labelControls) return; // NEW
+            labelControls.innerHTML = ""; // NEW
+            labelControls.appendChild(makeModuleLabelInput(moduleCell, "Team label")); // CHANGE
+        } // NEW
+
         function ensureOverlay() { // NEW
             if (overlay) return overlay; // NEW
             overlay = document.createElement("div"); // NEW
@@ -1689,6 +1874,14 @@ Draw.loadPlugin(function (ui) {
             overlay.style.pointerEvents = "auto"; // NEW
             mxEvent.addListener(overlay, "mousedown", function (evt) { mxEvent.consume(evt); }); // NEW
             mxEvent.addListener(overlay, "click", function (evt) { mxEvent.consume(evt); }); // NEW
+            labelControls = document.createElement("div"); // NEW
+            labelControls.className = "trellis-team-module-label-controls"; // NEW
+            labelControls.style.display = "flex"; // NEW
+            labelControls.style.flexDirection = "column"; // NEW
+            labelControls.style.gap = "4px"; // NEW
+            labelControls.style.padding = "2px 2px 4px"; // NEW
+            labelControls.style.borderBottom = "1px solid #e5e7eb"; // NEW
+            overlay.appendChild(labelControls); // NEW
             overlay.appendChild(makeOverlayButton("Add Role Card", addRoleCardFromOverlay)); // CHANGE
             overlay.appendChild(makeOverlayButton("Set Module Margin", promptModuleMarginFromOverlay)); // NEW
             const host = ensureOverlayHost(); // NEW
@@ -1698,6 +1891,8 @@ Draw.loadPlugin(function (ui) {
 
         function showOverlay(cell, anchor) { // CHANGE
             currentTeamModule = cell; // NEW
+            ensureOverlay(); // NEW
+            renderTeamModuleLabelControls(cell); // NEW
             positionOverlay(anchor || moduleOverlayAnchor(cell)); // CHANGE
         } // NEW
 
@@ -1940,6 +2135,30 @@ Draw.loadPlugin(function (ui) {
         ensureGardenTeamModule: function (gardenCell) { // NEW
             return ensureGardenTeamModule(gardenCell); // NEW
         }, // NEW
+        findExistingCompanionTeam: function (gardenCell) { // NEW
+            return findExistingCompanionTeam(gardenCell); // NEW
+        }, // NEW
+        ensureGardenTaskModule: function (gardenCell, opts) { // CHANGE
+            return ensureGardenTaskModule(gardenCell, opts); // CHANGE
+        }, // NEW
+        findExistingCompanionTask: function (gardenCell) { // NEW
+            return findExistingCompanionTask(gardenCell); // NEW
+        }, // NEW
+        syncCompanionModuleAccess: function (gardenCell, companionCell) { // NEW
+            return syncCompanionModuleAccess(gardenCell, companionCell); // NEW
+        }, // NEW
+        getModuleLabel: function (moduleCell, fallback) { // NEW
+            return getModuleLabel(moduleCell, fallback); // NEW
+        }, // NEW
+        writeModuleLabel: function (moduleCell, label) { // NEW
+            return writeModuleLabel(moduleCell, label); // NEW
+        }, // NEW
+        linkedGardenModuleForCompanion: function (moduleCell) { // NEW
+            return linkedGardenModuleForCompanion(moduleCell); // NEW
+        }, // NEW
+        linkedGardenLabelForCompanion: function (moduleCell) { // NEW
+            return linkedGardenLabelForCompanion(moduleCell); // NEW
+        }, // NEW
         addReciprocalLink: function (left, right) { // NEW
             return addReciprocalLink(left, right); // NEW
         }, // NEW
@@ -2015,15 +2234,19 @@ Draw.loadPlugin(function (ui) {
         if (cell && isModule(cell)) {
             const isGarden = isGardenModule(cell);
             const isTeam = isTeamModule(cell);
+            const isTask = isTaskModule(cell); // NEW
 
             // Toggle options based on current type                                       
-            if (!isGarden && !isTeam) {
+            if (!isGarden && !isTeam && !isTask) { // CHANGE
                 menu.addItem("Set as Garden Module", null, function () {
                     setModuleType(cell, "garden");
                 });
                 menu.addItem("Set as Team Module", null, function () {
                     setModuleType(cell, "team");
                 });
+                menu.addItem("Set as Task Module", null, function () { // NEW
+                    setModuleType(cell, "task"); // NEW
+                }); // NEW
             } else {
                 menu.addItem("Set as Regular Module", null, function () {
                     setModuleType(cell, "regular");

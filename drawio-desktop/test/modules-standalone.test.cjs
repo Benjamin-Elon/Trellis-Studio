@@ -52,6 +52,7 @@ class TestModel { // NEW
         this.listeners = new Map(); // NEW
         this.updateLevel = 0; // NEW
         this.topLevelUpdateCount = 0; // NEW
+        this.valueWrites = []; // NEW
         this.register(root); // NEW
     } // NEW
 
@@ -90,7 +91,7 @@ class TestModel { // NEW
 
     setGeometry(cell, geometry) { if (cell) cell.geometry = geometry; } // NEW
     setStyle(cell, style) { if (cell) cell.style = style || ""; } // NEW
-    setValue(cell, value) { if (cell) cell.value = value; } // NEW
+    setValue(cell, value) { if (cell) { this.valueWrites.push({ cell, oldValue: cell.value, newValue: value }); cell.value = value; } } // CHANGE
 
     addListener(eventName, listener) { // NEW
         if (!this.listeners.has(eventName)) this.listeners.set(eventName, []); // NEW
@@ -228,7 +229,7 @@ function makeHarness() { // NEW
     }; // NEW
 
     vm.runInNewContext(fs.readFileSync(PLUGIN_PATH, "utf8"), context, { filename: PLUGIN_PATH }); // NEW
-    return { dom, document, graph, model, root, mouseListeners, graphListeners, viewListeners, selectionListeners, firedEvents, contextMenuContributors, promptCalls, setPromptValue(value) { promptValue = value; }, get insertImageCalls() { return insertImageCalls; }, get selectedCell() { return selectedCells[0] || null; } }; // CHANGE
+    return { dom, document, graph, model, root, mouseListeners, graphListeners, viewListeners, selectionListeners, firedEvents, contextMenuContributors, promptCalls, setPromptValue(value) { promptValue = value; }, clearValueWrites() { model.valueWrites.length = 0; }, get valueWrites() { return model.valueWrites.slice(); }, get insertImageCalls() { return insertImageCalls; }, get selectedCell() { return selectedCells[0] || null; } }; // CHANGE
 } // NEW
 
 function makeMouseEvent(window, type, opts) { // NEW
@@ -274,6 +275,16 @@ function roleOverlay(document) { // NEW
 
 function roleOverlayButtons(document) { // NEW
     return Array.from(document.querySelectorAll(".trellis-team-role-overlay button")); // NEW
+} // NEW
+
+function roleOverlayInput(document, ariaLabel) { // NEW
+    const input = document.querySelector(`.trellis-team-role-overlay input[aria-label='${ariaLabel}']`); // NEW
+    assert.ok(input, "missing team overlay input " + ariaLabel); // NEW
+    return input; // NEW
+} // NEW
+
+function dispatchInputKey(input, key) { // NEW
+    input.dispatchEvent(new input.ownerDocument.defaultView.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); // NEW
 } // NEW
 
 function roleImageOverlay(document) { // NEW
@@ -363,16 +374,25 @@ test("createModuleAtPoint creates a regular module at requested coordinates", ()
 
 test("createModuleAtPoint creates garden module with settings-needed event", async () => { // NEW
     const harness = makeHarness(); // NEW
+    let ensuredTaskBoard = null; // NEW
+    harness.graph.__trellisTaskManager = { ensureMainBoardInTaskModule(taskModule) { ensuredTaskBoard = taskModule; } }; // NEW
     const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
     await new Promise(resolve => setTimeout(resolve, 5)); // NEW
     const team = harness.root.children.find(child => child !== mod && child.getAttribute("team_module") === "1"); // NEW
+    const task = harness.root.children.find(child => child !== mod && child.getAttribute("task_module") === "1"); // NEW
     assert.equal(mod.getAttribute("garden_module"), "1"); // NEW
     assert.equal(mod.getAttribute("team_module"), null); // NEW
     assert.ok(team); // NEW
+    assert.ok(task); // NEW
     assert.equal(mod.getAttribute("trellis_team_module_id"), team.id); // NEW
     assert.equal(team.getAttribute("trellis_garden_module_id"), mod.id); // NEW
+    assert.equal(mod.getAttribute("trellis_task_module_id"), task.id); // NEW
+    assert.equal(task.getAttribute("trellis_garden_module_id"), mod.id); // NEW
     assert.match(mod.getAttribute("linkedTo") || "", new RegExp(team.id)); // NEW
     assert.match(team.getAttribute("linkedTo") || "", new RegExp(mod.id)); // NEW
+    assert.match(mod.getAttribute("linkedTo") || "", new RegExp(task.id)); // NEW
+    assert.match(task.getAttribute("linkedTo") || "", new RegExp(mod.id)); // NEW
+    assert.equal(ensuredTaskBoard, task); // NEW
     assert.match(mod.style, /swimlaneFillColor=#B9E0A5/); // NEW
     assert.equal(mod.geometry.width, 440); // NEW
     assert.equal(mod.geometry.height, 340); // NEW
@@ -391,6 +411,16 @@ test("createModuleAtPoint creates team module", () => { // NEW
     assert.equal(harness.selectedCell, mod); // NEW
 }); // NEW
 
+test("createModuleAtPoint creates task module", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "task"); // NEW
+    assert.equal(mod.getAttribute("task_module"), "1"); // NEW
+    assert.equal(mod.getAttribute("garden_module"), null); // NEW
+    assert.equal(mod.getAttribute("team_module"), null); // NEW
+    assert.match(mod.style, /swimlaneFillColor=#E0F2FE/); // NEW
+    assert.equal(harness.selectedCell, mod); // NEW
+}); // NEW
+
 test("garden companion team repair reuses typed team module", () => { // NEW
     const harness = makeHarness(); // NEW
     const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
@@ -398,6 +428,28 @@ test("garden companion team repair reuses typed team module", () => { // NEW
     const repaired = harness.graph.__trellisModules.ensureGardenTeamModule(garden); // NEW
     assert.equal(repaired, team); // NEW
     assert.equal(harness.root.children.filter(child => child.getAttribute("team_module") === "1").length, 1); // NEW
+}); // NEW
+
+test("garden companion task repair reuses typed task module and mirrors access", () => { // NEW
+    const harness = makeHarness(); // NEW
+    let ensuredTaskBoard = null; // NEW
+    harness.graph.__trellisTaskManager = { ensureMainBoardInTaskModule(taskModule) { ensuredTaskBoard = taskModule; } }; // NEW
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
+    garden.value.setAttribute("trellis_owner_user_id", "owner-1"); // NEW
+    garden.value.setAttribute("trellis_access_grants_json", "[{\"userId\":\"u1\",\"preset\":\"gardener\",\"capabilities\":[]}]"); // NEW
+    ensuredTaskBoard = null; // NEW
+    const repaired = harness.graph.__trellisModules.ensureGardenTaskModule(garden); // NEW
+    const team = harness.model.getCell(garden.getAttribute("trellis_team_module_id")); // NEW
+    assert.equal(repaired.getAttribute("task_module"), "1"); // NEW
+    assert.equal(repaired.getAttribute("trellis_garden_module_id"), garden.id); // NEW
+    assert.equal(repaired.getAttribute("trellis_owner_user_id"), "owner-1"); // NEW
+    assert.equal(repaired.getAttribute("trellis_access_grants_json"), garden.getAttribute("trellis_access_grants_json")); // NEW
+    assert.equal(team.getAttribute("trellis_owner_user_id"), "owner-1"); // NEW
+    assert.equal(harness.root.children.filter(child => child.getAttribute("task_module") === "1").length, 1); // NEW
+    assert.ok(repaired.geometry.y > team.geometry.y); // NEW
+    assert.equal(ensuredTaskBoard, null); // NEW
+    harness.graph.__trellisModules.ensureGardenTaskModule(garden, { createMainBoard: true }); // NEW
+    assert.equal(ensuredTaskBoard, repaired); // NEW
 }); // NEW
 
 test("module cells cannot be dropped under non-module parents", () => { // NEW
@@ -468,7 +520,7 @@ test("empty canvas click renders root module overlay buttons", () => { // NEW
     const harness = makeHarness(); // NEW
     fireGraphClick(harness, { clientX: 120, clientY: 150, graphX: 200, graphY: 230 }); // NEW
     const buttons = overlayButtons(harness.document); // NEW
-    assert.deepEqual(buttons.map(button => button.textContent), ["Add Module", "Add Garden Module", "Add Team Module"]); // NEW
+    assert.deepEqual(buttons.map(button => button.textContent), ["Add Module", "Add Garden Module", "Add Team Module", "Add Task Module"]); // CHANGE
     assert.equal(harness.document.querySelector(".trellis-root-module-overlay").style.display, "flex"); // NEW
 }); // NEW
 
@@ -522,9 +574,101 @@ test("selecting one team module renders the add role card overlay", () => { // N
     const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team"); // NEW
     const buttons = roleOverlayButtons(harness.document); // NEW
     assert.deepEqual(buttons.map(button => button.textContent), ["Add Role Card", "Set Module Margin"]); // CHANGE
+    assert.equal(roleOverlayInput(harness.document, "Team label").value, "Team Module"); // NEW
+    assert.equal(roleOverlay(harness.document).querySelectorAll(".trellis-team-module-label-controls input").length, 1); // CHANGE
+    assert.equal(roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls").textContent.includes("Garden label"), false); // NEW
+    assert.equal(roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls").textContent.includes("Team label"), false); // NEW
     assert.equal(roleOverlay(harness.document).style.display, "flex"); // NEW
     assert.equal(roleOverlay(harness.document).style.left, "58px"); // NEW
     assert.equal(roleOverlay(harness.document).style.top, "68px"); // NEW
+    assert.equal(harness.selectedCell, team); // NEW
+}); // NEW
+
+test("team module overlay edits labels without graph action side effects", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team"); // NEW
+    harness.clearValueWrites(); // NEW
+    const oldTeamValue = team.value; // NEW
+    const oldTeamLabel = oldTeamValue.getAttribute("label"); // NEW
+    let input = roleOverlayInput(harness.document, "Team label"); // NEW
+    input.value = "Harvest Crew"; // NEW
+    input.dispatchEvent(new harness.dom.window.Event("blur")); // NEW
+    assert.equal(team.getAttribute("label"), "Harvest Crew"); // NEW
+    assert.equal(harness.valueWrites.length, 1); // NEW
+    assert.equal(harness.valueWrites[0].oldValue, oldTeamValue); // NEW
+    assert.notEqual(harness.valueWrites[0].newValue, oldTeamValue); // NEW
+    assert.equal(oldTeamValue.getAttribute("label"), oldTeamLabel); // CHANGE
+
+    harness.graph.setSelectionCell(team); // NEW
+    harness.clearValueWrites(); // NEW
+    input = roleOverlayInput(harness.document, "Team label"); // NEW
+    input.value = "Draft Crew"; // NEW
+    dispatchInputKey(input, "Escape"); // NEW
+    assert.equal(input.value, "Harvest Crew"); // NEW
+    assert.equal(team.getAttribute("label"), "Harvest Crew"); // NEW
+    assert.equal(harness.valueWrites.length, 0); // NEW
+
+    input.value = "   "; // NEW
+    dispatchInputKey(input, "Enter"); // NEW
+    assert.equal(team.getAttribute("label"), "Team Module"); // NEW
+}); // NEW
+
+test("module label API writes garden and team labels with clone-backed undo values", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
+    const team = harness.model.getCell(garden.getAttribute("trellis_team_module_id")); // NEW
+
+    harness.clearValueWrites(); // NEW
+    const oldGardenValue = garden.value; // NEW
+    const oldGardenLabel = oldGardenValue.getAttribute("label"); // NEW
+    assert.equal(harness.graph.__trellisModules.writeModuleLabel(garden, "Kitchen Garden"), "Kitchen Garden"); // NEW
+    assert.equal(harness.valueWrites.length, 1); // NEW
+    assert.equal(harness.valueWrites[0].cell, garden); // NEW
+    assert.equal(harness.valueWrites[0].oldValue, oldGardenValue); // NEW
+    assert.notEqual(harness.valueWrites[0].newValue, oldGardenValue); // NEW
+    assert.equal(oldGardenValue.getAttribute("label"), oldGardenLabel); // CHANGE
+    assert.equal(garden.getAttribute("label"), "Kitchen Garden"); // NEW
+
+    harness.clearValueWrites(); // NEW
+    assert.equal(harness.graph.__trellisModules.writeModuleLabel(garden, "Kitchen Garden"), "Kitchen Garden"); // NEW
+    assert.equal(harness.valueWrites.length, 0); // NEW
+
+    harness.clearValueWrites(); // NEW
+    const oldTeamValue = team.value; // NEW
+    const oldTeamLabel = oldTeamValue.getAttribute("label"); // NEW
+    assert.equal(harness.graph.__trellisModules.writeModuleLabel(team, "Harvest Crew"), "Harvest Crew"); // NEW
+    assert.equal(harness.valueWrites.length, 1); // NEW
+    assert.equal(harness.valueWrites[0].cell, team); // NEW
+    assert.equal(harness.valueWrites[0].oldValue, oldTeamValue); // NEW
+    assert.notEqual(harness.valueWrites[0].newValue, oldTeamValue); // NEW
+    assert.equal(oldTeamValue.getAttribute("label"), oldTeamLabel); // CHANGE
+    assert.equal(team.getAttribute("label"), "Harvest Crew"); // NEW
+}); // NEW
+
+test("linked team module overlay uses a single editable team label field", () => { // CHANGE
+    const harness = makeHarness(); // NEW
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
+    const team = harness.model.getCell(garden.getAttribute("trellis_team_module_id")); // NEW
+    harness.graph.__trellisModules.writeModuleLabel(garden, "Kitchen Garden"); // NEW
+    harness.graph.setSelectionCell(team); // NEW
+    const controls = roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls"); // CHANGE
+    assert.equal(controls.querySelectorAll("input[aria-label='Team label']").length, 1); // CHANGE
+    assert.equal(controls.textContent.includes("Garden label"), false); // CHANGE
+    assert.equal(controls.textContent.includes("Team label"), false); // NEW
+    assert.equal(roleOverlayInput(harness.document, "Team label").value, "Garden Team"); // NEW
+
+    garden.value.setAttribute("label", "Market Garden"); // NEW
+    harness.graph.setSelectionCell(team); // NEW
+    assert.equal(roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls").textContent.includes("Market Garden"), false); // CHANGE
+}); // NEW
+
+test("team module overlay position is not clamped to the viewport", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: -40, y: -50 }, "team"); // NEW
+    const overlay = roleOverlay(harness.document); // NEW
+    assert.equal(overlay.style.display, "flex"); // NEW
+    assert.equal(overlay.style.left, "-32px"); // NEW
+    assert.equal(overlay.style.top, "-42px"); // NEW
     assert.equal(harness.selectedCell, team); // NEW
 }); // NEW
 

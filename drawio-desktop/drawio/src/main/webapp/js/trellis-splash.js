@@ -46,6 +46,7 @@
 		var paths = { // NEW
 			create: ['M6 3h8l5 5v13H6z', 'M14 3v5h5', 'M12.5 11v6', 'M9.5 14h6'], // NEW
 			open: ['M3 7h7l2 2h9v10H3z', 'M3 7V5h7l2 2'], // NEW
+			support: ['M12 21s-7-4.6-7-10a4 4 0 0 1 7-2.7A4 4 0 0 1 19 11c0 5.4-7 10-7 10z'], // NEW
 			user: ['M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', 'M4 21a8 8 0 0 1 16 0'] // NEW
 		}; // NEW
 
@@ -92,7 +93,7 @@
 	} // NEW
 
 	function decorateSavedLicenseCard(container) { // NEW
-		var sections = container.querySelectorAll('.trellis-splash-section'); // NEW
+		var sections = container.querySelectorAll('.trellis-splash-section, .trellis-saved-license-card'); // CHANGE
 		var foundSavedCard = false; // NEW
 
 		for (var i = 0; i < sections.length; i++) { // NEW
@@ -143,7 +144,10 @@
 		for (var i = 0; i < buttons.length; i++) { // NEW
 			buttons[i].setAttribute('type', 'button'); // NEW
 
-			if (buttons[i].textContent.indexOf('Create New Diagram') >= 0) { // NEW
+			if (buttons[i].textContent.indexOf('Explore & Support My Projects') >= 0) { // NEW
+				addClass(buttons[i], 'trellis-support-action'); // NEW
+				prependButtonIcon(buttons[i], 'support'); // NEW
+			} else if (buttons[i].textContent.indexOf('Create New Diagram') >= 0) { // NEW
 				addClass(buttons[i], 'trellis-primary-action'); // NEW
 				prependButtonIcon(buttons[i], 'create'); // NEW
 			} else if (buttons[i].textContent.indexOf('Open Existing Diagram') >= 0) { // NEW
@@ -166,7 +170,7 @@
 			if (center.querySelector('.trellis-splash-tagline') == null) { // NEW
 				var insertBeforeNode = center.children.length > 1 ? center.children[1] : null; // CHANGE
 				var stateIntro = insertBeforeNode; // CHANGE
-				if (stateIntro != null && (' ' + stateIntro.className + ' ').indexOf(' trellis-splash-section ') >= 0) stateIntro = null; // NEW
+				if (stateIntro != null && ((' ' + stateIntro.className + ' ').indexOf(' trellis-splash-section ') >= 0 || (' ' + stateIntro.className + ' ').indexOf(' trellis-license-contact-panel ') >= 0 || (' ' + stateIntro.className + ' ').indexOf(' trellis-saved-license-card ') >= 0)) stateIntro = null; // CHANGE
 				var tagline = container.ownerDocument.createElement('div'); // NEW
 				tagline.className = 'trellis-splash-tagline'; // NEW
 				tagline.textContent = 'Build systems that grow.'; // NEW

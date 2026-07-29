@@ -123,6 +123,10 @@ class TrellisSeederTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def test_packaged_seed_database_has_no_pending_migrations(self) -> None:  # ADDED
+        with closing(sqlite3.connect(ROOT / "trellis_database" / "Trellis_database.sqlite")) as conn:  # ADDED
+            self.assertEqual(pending_migrations(conn), [])  # ADDED
+
     def test_migrations_create_weather_evidence_and_repair_variety_templates(self) -> None:
         with closing(sqlite3.connect(self.db_path)) as conn:
             with conn:

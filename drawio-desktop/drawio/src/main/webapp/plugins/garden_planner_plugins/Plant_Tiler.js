@@ -2096,6 +2096,7 @@ Draw.loadPlugin(function (ui) {
         const SIMPLE_CLICK_MAX_MOVE_PX = 4; // CHANGE
         const MOUSE_ANCHOR_MAX_AGE_MS = 1000; // CHANGE
         let toolbar = null; // CHANGE
+        let labelInputWrap = null; // NEW
         let settingsBtn = null; // CHANGE
         let addBedBtn = null; // CHANGE
         let addGroupBtn = null; // CHANGE
@@ -2139,6 +2140,84 @@ Draw.loadPlugin(function (ui) {
             return btn; // CHANGE
         } // CHANGE
 
+        function gardenModuleLabelApi() { // NEW
+            return graph && graph.__trellisModules ? graph.__trellisModules : {}; // NEW
+        } // NEW
+
+        function plainGardenModuleLabel(moduleCell) { // NEW
+            const api = gardenModuleLabelApi(); // NEW
+            if (typeof api.getModuleLabel === "function") return api.getModuleLabel(moduleCell, "Garden Module"); // NEW
+            const raw = getXmlAttr(moduleCell, "label", "") || (typeof (moduleCell && moduleCell.value) === "string" ? moduleCell.value : ""); // NEW
+            if (document && document.createElement) { // NEW
+                const holder = document.createElement("div"); // NEW
+                holder.innerHTML = raw; // NEW
+                const text = String(holder.textContent || "").replace(/\s+/g, " ").trim(); // NEW
+                if (text) return text; // NEW
+            } // NEW
+            const stripped = String(raw || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim(); // NEW
+            return stripped || "Garden Module"; // NEW
+        } // NEW
+
+        function writeGardenModuleLabel(moduleCell, label) { // NEW
+            const api = gardenModuleLabelApi(); // NEW
+            if (typeof api.writeModuleLabel === "function") return api.writeModuleLabel(moduleCell, label); // NEW
+            const next = String(label == null ? "" : label).trim() || "Garden Module"; // NEW
+            if (plainGardenModuleLabel(moduleCell) !== next) { // NEW
+                const graphModel = graph.getModel && graph.getModel(); // NEW
+                if (graphModel) { // NEW
+                    graphModel.beginUpdate(); // NEW
+                    try { // NEW
+                        setCellAttrsNoTxn(graphModel, moduleCell, { label: next }); // NEW
+                    } finally { // NEW
+                        graphModel.endUpdate(); // NEW
+                    } // NEW
+                } // NEW
+                if (graph.refresh) graph.refresh(moduleCell); // NEW
+            } // NEW
+            return next; // NEW
+        } // NEW
+
+        function stopGardenLabelEvent(evt) { // NEW
+            if (evt && evt.stopPropagation) evt.stopPropagation(); // NEW
+        } // NEW
+
+        function consumeGardenLabelEvent(evt) { // NEW
+            stopGardenLabelEvent(evt); // NEW
+            if (evt && evt.preventDefault) evt.preventDefault(); // NEW
+        } // NEW
+
+        function makeGardenModuleLabelInput(moduleCell) { // NEW
+            const initialLabel = plainGardenModuleLabel(moduleCell); // NEW
+            const input = document.createElement("input"); // NEW
+            input.type = "text"; // NEW
+            input.value = initialLabel; // NEW
+            input.setAttribute("aria-label", "Garden label"); // NEW
+            input.style.cssText = "display:block;box-sizing:border-box;width:100%;min-width:0;margin-bottom:2px;border:1px solid rgba(75,85,99,0.35);border-radius:4px;padding:3px 5px;font:12px Arial,sans-serif;font-weight:600;"; // NEW
+            ["mousedown", "mouseup", "click", "dblclick", "pointerdown", "pointerup"].forEach(function (type) { // NEW
+                input.addEventListener(type, stopGardenLabelEvent); // NEW
+            }); // NEW
+            input.addEventListener("keydown", function (evt) { // NEW
+                stopGardenLabelEvent(evt); // NEW
+                if (evt.key === "Enter") { // NEW
+                    input.value = writeGardenModuleLabel(moduleCell, input.value); // NEW
+                    if (input.blur) input.blur(); // NEW
+                    consumeGardenLabelEvent(evt); // NEW
+                } else if (evt.key === "Escape") { // NEW
+                    input.value = initialLabel; // NEW
+                    consumeGardenLabelEvent(evt); // NEW
+                } // NEW
+            }); // NEW
+            ["keypress", "keyup"].forEach(function (type) { input.addEventListener(type, stopGardenLabelEvent); }); // NEW
+            input.addEventListener("blur", function () { input.value = writeGardenModuleLabel(moduleCell, input.value); }); // NEW
+            return input; // NEW
+        } // NEW
+
+        function renderGardenModuleLabelInput(moduleCell) { // NEW
+            if (!labelInputWrap) return; // NEW
+            labelInputWrap.innerHTML = ""; // NEW
+            if (moduleCell && isGardenModule(moduleCell)) labelInputWrap.appendChild(makeGardenModuleLabelInput(moduleCell)); // NEW
+        } // NEW
+
         function ensureToolbar() { // CHANGE
             if (toolbar) return toolbar; // CHANGE
             toolbar = document.createElement("div"); // CHANGE
@@ -2157,10 +2236,14 @@ Draw.loadPlugin(function (ui) {
             mxEvent.addListener(toolbar, "mousedown", function (evt) { mxEvent.consume(evt); }); // CHANGE
             mxEvent.addListener(toolbar, "click", function (evt) { evt.stopPropagation(); }); // CHANGE
 
+            labelInputWrap = document.createElement("div"); // NEW
+            labelInputWrap.className = "trellis-garden-module-label-controls"; // NEW
+            labelInputWrap.style.cssText = "display:flex;flex-direction:column;gap:4px;padding:2px 2px 4px;border-bottom:1px solid #e5e7eb;"; // NEW
             settingsBtn = makeButton("Set Garden Settings"); // CHANGE
             addBedBtn = makeButton("Add Garden Bed"); // CHANGE
             addGroupBtn = makeButton("Add New Plant Group"); // CHANGE
             irrigationSourceBtn = makeButton("Create Irrigation Source"); // NEW
+            toolbar.appendChild(labelInputWrap); // NEW
             toolbar.appendChild(settingsBtn); // CHANGE
             toolbar.appendChild(addBedBtn); // CHANGE
             toolbar.appendChild(addGroupBtn); // CHANGE
@@ -2405,10 +2488,12 @@ Draw.loadPlugin(function (ui) {
 
         function syncToolbarState() { // CHANGE
             const moduleCell = activeModuleCell; // CHANGE
-            if (!toolbar || !settingsBtn || !addBedBtn || !addGroupBtn || !irrigationSourceBtn || !moduleCell) return; // CHANGE
+            if (!toolbar || !labelInputWrap || !settingsBtn || !addBedBtn || !addGroupBtn || !irrigationSourceBtn || !moduleCell) return; // CHANGE
             const hasSettings = hasGardenSettingsSet(moduleCell); // CHANGE
             const bedMode = activeOverlayMode === "bed"; // CHANGE
             const showIrrigationSource = !bedMode && !gardenModuleHasIrrigationSource(moduleCell); // NEW
+            labelInputWrap.style.display = bedMode ? "none" : "flex"; // NEW
+            if (!bedMode) renderGardenModuleLabelInput(moduleCell); // NEW
             settingsBtn.style.display = bedMode ? "none" : ""; // CHANGE
             addBedBtn.style.display = bedMode ? "none" : ""; // CHANGE
             addGroupBtn.style.display = ""; // CHANGE

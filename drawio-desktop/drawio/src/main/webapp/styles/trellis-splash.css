@@ -153,12 +153,62 @@
 	padding: 14px 16px !important;
 }
 
+.trellis-license-contact-panel { /* NEW */
+	background: #fffdf6 !important;
+	border: 1px solid #d3dac8 !important;
+	border-radius: 10px !important;
+	box-shadow: 0 3px 12px rgba(53, 72, 42, 0.05);
+	box-sizing: border-box;
+	color: #314437;
+	display: grid;
+	gap: 12px 18px;
+	grid-template-columns: minmax(0, 1.15fr) minmax(210px, 0.85fr);
+	margin-bottom: 12px;
+	padding: 14px 16px !important;
+	text-align: left;
+}
+
+.trellis-license-contact-panel > .trellis-splash-section { /* NEW */
+	background: transparent !important;
+	border: 0 !important;
+	box-shadow: none;
+	margin: 0;
+	padding: 0 !important;
+}
+
+.trellis-license-panel-column,
+.trellis-contact-column,
+.trellis-commercial-permission-notice { /* NEW */
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.trellis-contact-column a { /* NEW */
+	display: block;
+	margin-right: 0 !important;
+}
+
+.trellis-commercial-permission-notice { /* NEW */
+	border-top: 1px solid #e0e4d7;
+	grid-column: 1 / -1;
+	padding-top: 10px;
+}
+
 .trellis-saved-license-card { /* NEW */
 	align-items: center;
 	display: grid;
 	grid-template-columns: 52px minmax(0, 1fr) auto;
 	min-height: 78px;
 	text-align: left;
+}
+
+.trellis-splash-center > .trellis-saved-license-card { /* NEW */
+	background: #fffdf6 !important;
+	border: 1px solid #d3dac8 !important;
+	border-radius: 10px !important;
+	box-shadow: 0 3px 12px rgba(53, 72, 42, 0.05);
+	margin-bottom: 12px;
+	padding: 14px 16px !important;
 }
 
 .trellis-saved-license-card .trellis-license-icon { /* NEW */
@@ -273,6 +323,17 @@
 	background: #437d25 !important;
 }
 
+.trellis-splash-actions .trellis-support-action { /* NEW */
+	background: #f5dc89 !important;
+	border: 1px solid #d3ad45 !important;
+	color: #435322 !important;
+	font-weight: 500;
+}
+
+.trellis-splash-actions .trellis-support-action:hover { /* NEW */
+	background: #efd072 !important;
+}
+
 .trellis-splash-actions .trellis-secondary-action { /* NEW */
 	background: #fffdf6 !important;
 	border: 1px solid #7ea563 !important;
@@ -342,6 +403,14 @@
 }
 
 @media (max-width: 620px) { /* NEW */
+	.trellis-license-contact-panel {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.trellis-commercial-permission-notice {
+		grid-column: 1;
+	}
+
 	.trellis-saved-license-card {
 		grid-template-columns: 48px minmax(0, 1fr);
 	}

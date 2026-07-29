@@ -86,8 +86,28 @@ test('Garden module margin lives in Garden Settings instead of the overlay', () 
     assert.match(source, /const chosenModuleMargin = readModuleMarginInput\(moduleMarginInput\);/); // NEW
     assert.match(source, /Module margin must be a non-negative whole number\./); // NEW
     assert.match(source, /setGardenModuleMargin\(moduleCell, chosenModuleMargin\);/); // NEW
-    assert.match(source, /if \(!toolbar \|\| !settingsBtn \|\| !addBedBtn \|\| !addGroupBtn \|\| !irrigationSourceBtn \|\| !moduleCell\) return;/); // CHANGE
+    assert.match(source, /if \(!toolbar \|\| !labelInputWrap \|\| !settingsBtn \|\| !addBedBtn \|\| !addGroupBtn \|\| !irrigationSourceBtn \|\| !moduleCell\) return;/); // CHANGE
 }); // CHANGE
+
+test('Garden module overlay uses a single editable bed-style label input', () => { // NEW
+    const source = readPlantTilerSource(); // NEW
+    const toolbarSource = sourceSlice(source, 'function makeGardenModuleLabelInput', 'function ensureToolbar'); // NEW
+    const labelWriterSource = sourceSlice(source, 'function writeGardenModuleLabel', 'function stopGardenLabelEvent'); // NEW
+    const attrWriterSource = sourceSlice(source, 'function setCellAttrsNoTxn', 'function cloneXmlValueWithAttrs'); // CHANGE
+
+    assert.match(source, /let labelInputWrap = null;/); // NEW
+    assert.match(source, /labelInputWrap = document\.createElement\("div"\);/); // NEW
+    assert.match(source, /labelInputWrap\.className = "trellis-garden-module-label-controls";/); // NEW
+    assert.match(source, /toolbar\.appendChild\(labelInputWrap\);[\s\S]*toolbar\.appendChild\(settingsBtn\);/); // NEW
+    assert.match(toolbarSource, /input\.setAttribute\("aria-label", "Garden label"\);/); // NEW
+    assert.match(toolbarSource, /display:block;box-sizing:border-box;width:100%;min-width:0;margin-bottom:2px;border:1px solid rgba\(75,85,99,0\.35\);border-radius:4px;padding:3px 5px;font:12px Arial,sans-serif;font-weight:600;/); // NEW
+    assert.match(toolbarSource, /if \(evt\.key === "Enter"\) \{[\s\S]*writeGardenModuleLabel\(moduleCell, input\.value\)[\s\S]*input\.blur/); // NEW
+    assert.match(toolbarSource, /else if \(evt\.key === "Escape"\) \{[\s\S]*input\.value = initialLabel;/); // NEW
+    assert.match(labelWriterSource, /setCellAttrsNoTxn\(graphModel, moduleCell, \{ label: next \}\);/); // CHANGE
+    assert.match(attrWriterSource, /const clone = base\.cloneNode\(true\);[\s\S]*model\.setValue\(cell, clone\);/); // NEW
+    assert.match(source, /labelInputWrap\.style\.display = bedMode \? "none" : "flex";/); // NEW
+    assert.match(source, /if \(!bedMode\) renderGardenModuleLabelInput\(moduleCell\);/); // NEW
+}); // NEW
 
 test('Garden module overlay repeated selected-module clicks toggle visibility without changing selection', () => { // NEW
     const source = readPlantTilerSource(); // NEW

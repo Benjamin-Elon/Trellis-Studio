@@ -25,6 +25,7 @@ Draw.loadPlugin(function (ui) {
     const PX_PER_CM = 5;
     const DRAW_SCALE = 0.18;
     const CM_PER_FOOT = 30.48;
+    const CM_PER_INCH = 2.54; // NEW
     const HUD_SYNC_DEBOUNCE_MS = 200; // NEW
     const TRELLIS_DIALOG_Z = 2000000000; // NEW
 
@@ -112,6 +113,7 @@ Draw.loadPlugin(function (ui) {
     ]; // NEW
 
     const BED_TEMPLATE_MODEL_BOM = "bom"; // NEW
+    const BED_ASSEMBLY_LABEL_HIDDEN = "hidden"; // NEW
     const METERS_PER_FOOT = CM_PER_FOOT / 100; // NEW
     const BED_TEMPLATE_ROW_ORIENTATIONS = ["width", "height"]; // NEW
     const BED_TEMPLATE_ANCHOR_CATEGORIES = new Set(["pipe_tubing", "drip_tape", "dripline"]); // NEW
@@ -670,11 +672,13 @@ Draw.loadPlugin(function (ui) {
     function normalizeCatalogPart(part) {
         if (!part || typeof part !== "object") return null;
         const connectors = part.connectors || {};
+        const stockQuantity = Math.max(0, finiteNumber(part.stockQuantity, 0)); // NEW
         return {
             id: String(part.id || "").trim(),
             name: String(part.name || "").trim(),
             category: String(part.category || "").trim(),
             stockState: VALID_STOCK_STATES.includes(part.stockState) ? part.stockState : "unknown",
+            stockQuantity, // NEW
             cost: finiteNumber(part.cost, 0),
             unitCost: unitCostAppliesToCategory(part.category) ? finiteNumber(part.unitCost, finiteNumber(part.cost, 0)) : null, // CHANGE
             connectors: {
@@ -700,6 +704,10 @@ Draw.loadPlugin(function (ui) {
         if (p && requiresHydraulicSpecs(p) && !hasHydraulicSpecs(p)) errors.push("Hydraulic specs are required for this part.");
         return { ok: errors.length === 0, errors, part: p };
     }
+
+    function stockStateForQuantity(quantity) { // NEW
+        return finiteNumber(quantity, 0) > 0 ? "in_stock" : "out_of_stock"; // NEW
+    } // NEW
 
     function requiresHydraulicSpecs(part) {
         return ["pipe_tubing", "drip_tape", "dripline", "emitter", "sprinkler", "microspray", "bubbler", "valve", "manifold", "regulator", "filter"].indexOf(part.category) >= 0;
@@ -1397,10 +1405,61 @@ Draw.loadPlugin(function (ui) {
         return BED_TEMPLATE_ROW_ORIENTATIONS.indexOf(selected) >= 0 ? selected : (BED_TEMPLATE_ROW_ORIENTATIONS.indexOf(fallback) >= 0 ? fallback : "width"); // NEW
     } // NEW
 
+    function normalizeUnitSystem(value) { // NEW
+        return String(value || "").trim() === "imperial" ? "imperial" : "metric"; // NEW
+    } // NEW
+
+    function resolveModuleUnitSystem(moduleCell) { // NEW
+        return normalizeUnitSystem(moduleCell && moduleCell.getAttribute ? moduleCell.getAttribute("unit_system") : ""); // NEW
+    } // NEW
+
+    function rowSpacingDisplayUnit(moduleCell) { // NEW
+        return resolveModuleUnitSystem(moduleCell) === "imperial" ? "in" : "cm"; // NEW
+    } // NEW
+
+    function rowSpacingCmToDisplayValue(cm, moduleCell) { // NEW
+        const value = Math.max(0, finiteNumber(cm, 0)); // NEW
+        return resolveModuleUnitSystem(moduleCell) === "imperial" ? value / CM_PER_INCH : value; // NEW
+    } // NEW
+
+    function rowSpacingDisplayValueToCm(value, moduleCell) { // NEW
+        const n = finiteNumber(value, 0); // NEW
+        return resolveModuleUnitSystem(moduleCell) === "imperial" ? n * CM_PER_INCH : n; // NEW
+    } // NEW
+
+    function formatRowSpacingDisplayValue(cm, moduleCell) { // NEW
+        const value = rowSpacingCmToDisplayValue(cm, moduleCell); // NEW
+        return String(Math.max(0, Math.round(value))); // CHANGE
+    } // NEW
+
     function rowLengthMetersForBedGeometry(bedGeo, orientation) { // NEW
         const geo = bedGeo || {}; // NEW
         const units = normalizeBedRowOrientation(orientation) === "height" ? geo.height : geo.width; // NEW
         return Math.max(0, unitsToCm(finiteNumber(units, 0)) / 100); // NEW
+    } // NEW
+
+    function rowSpacingSpanUnitsForBedGeometry(bedGeo, orientation) { // NEW
+        const geo = bedGeo || {}; // NEW
+        return Math.max(0, finiteNumber(normalizeBedRowOrientation(orientation) === "height" ? geo.width : geo.height, 0)); // NEW
+    } // NEW
+
+    function rowSpacingSpanCmForBedGeometry(bedGeo, orientation) { // NEW
+        return unitsToCm(rowSpacingSpanUnitsForBedGeometry(bedGeo, orientation)); // NEW
+    } // NEW
+
+    function rowSpacingCmForRows(bedGeo, rows, orientation) { // NEW
+        const rowCount = Math.max(0, Math.floor(finiteNumber(rows, 0))); // CHANGE
+        if (rowCount === 0) return 0; // NEW
+        return Math.max(0, rowSpacingSpanCmForBedGeometry(bedGeo, orientation) / rowCount); // NEW
+    } // NEW
+
+    function rowsForRowSpacingCm(bedGeo, spacingCm, orientation, fallbackRows) { // NEW
+        const fallback = Math.max(0, Math.floor(finiteNumber(fallbackRows, 0))); // CHANGE
+        const spanCm = rowSpacingSpanCmForBedGeometry(bedGeo, orientation); // NEW
+        const spacing = finiteNumber(spacingCm, 0); // NEW
+        if (!(spacing > 0)) return 0; // CHANGE
+        if (!(spanCm > 0)) return fallback; // NEW
+        return Math.max(1, Math.round(spanCm / spacing)); // NEW
     } // NEW
 
     function normalizeTemplateRequiredParts(templateDef) { // NEW
@@ -1427,25 +1486,26 @@ Draw.loadPlugin(function (ui) {
 
     function computeBedTemplateBom(catalog, bedGeo, templateId, rows, orientation) { // NEW
         const templateDef = bedTemplateById(templateId); // NEW
-        const rowCount = Math.max(1, Math.floor(finiteNumber(rows, templateDef.defaultRows))); // NEW
+        const rowCount = Math.max(0, Math.floor(finiteNumber(rows, templateDef.defaultRows))); // CHANGE
         const rowOrientation = normalizeBedRowOrientation(orientation, templateDef); // NEW
         const rowLengthMeters = rowLengthMetersForBedGeometry(bedGeo, rowOrientation); // NEW
+        const rowSpacingCm = rowSpacingCmForRows(bedGeo, rowCount, rowOrientation); // NEW
         const totalRowMeters = rowCount * rowLengthMeters; // NEW
         const required = normalizeTemplateRequiredParts(templateDef); // NEW
         const requiredParts = required.map(function (entry) { // NEW
-            return Object.assign({}, entry, { quantityMeters: entry.quantityPerRowMeter * totalRowMeters, unit: "m" }); // NEW
+            return Object.assign({}, entry, { quantityMeters: rowCount > 0 ? entry.quantityPerRowMeter * totalRowMeters : 0, unit: "m" }); // CHANGE
         }); // NEW
-        const missingPartIds = requiredParts.filter(function (entry) { return !partById(catalog, entry.partId); }).map(function (entry) { return entry.partId; }); // NEW
-        const anchorPart = resolveTemplateAnchorPart(catalog, requiredParts); // NEW
+        const missingPartIds = rowCount > 0 ? requiredParts.filter(function (entry) { return !partById(catalog, entry.partId); }).map(function (entry) { return entry.partId; }) : []; // CHANGE
+        const anchorPart = rowCount > 0 ? resolveTemplateAnchorPart(catalog, requiredParts) : null; // CHANGE
         const demand = requiredParts.reduce(function (out, entry) { // NEW
             const part = partById(catalog, entry.partId); // NEW
             out.flowGpm += finiteNumber(part && part.specs && part.specs.flowGpmPerMeter, 0) * finiteNumber(entry.quantityMeters, 0); // NEW
             out.operatingPressurePsi = Math.max(out.operatingPressurePsi, finiteNumber(part && part.specs && part.specs.minOperatingPressurePsi, finiteNumber(part && part.specs && part.specs.operatingPressurePsi, 0))); // CHANGE
             return out; // NEW
         }, { flowGpm: 0, operatingPressurePsi: 0 }); // NEW
-        if (!(demand.flowGpm > 0)) demand.flowGpm = finiteNumber(templateDef.flowGpm, 0); // NEW
-        if (!(demand.operatingPressurePsi > 0)) demand.operatingPressurePsi = finiteNumber(templateDef.pressurePsi, 0); // NEW
-        return { templateDef, rowCount, rowOrientation, rowLengthMeters, totalRowMeters, requiredParts, missingPartIds, anchorPartId: anchorPart ? anchorPart.id : "", demand }; // NEW
+        if (rowCount > 0 && !(demand.flowGpm > 0)) demand.flowGpm = finiteNumber(templateDef.flowGpm, 0); // CHANGE
+        if (rowCount > 0 && !(demand.operatingPressurePsi > 0)) demand.operatingPressurePsi = finiteNumber(templateDef.pressurePsi, 0); // CHANGE
+        return { templateDef, rowCount, rowOrientation, rowLengthMeters, rowSpacingCm, totalRowMeters, requiredParts, missingPartIds, anchorPartId: anchorPart ? anchorPart.id : "", demand }; // NEW
     } // NEW
 
     function connectorForPartSide(part, side) { // NEW
@@ -2626,11 +2686,13 @@ Draw.loadPlugin(function (ui) {
         const templateModel = template && template.templateModel === BED_TEMPLATE_MODEL_BOM ? BED_TEMPLATE_MODEL_BOM : ""; // NEW
         const pipePartId = templateModel === BED_TEMPLATE_MODEL_BOM ? "" : bedTemplatePipePartId(templateDef.id, template && template.pipePartId); // CHANGE
         const partIds = template && Array.isArray(template.partIds) ? template.partIds.slice() : bedTemplatePartIds(roleParts.inletPartId, roleParts.outletPartId); // CHANGE
-        const rowCount = Math.max(1, Math.floor(finiteNumber(template && template.spacing && template.spacing.rows, templateDef.defaultRows)));
-        const spacing = Object.assign({ rows: rowCount, emitterInches: 12 }, template && template.spacing || {});
+        const rowCount = Math.max(0, Math.floor(finiteNumber(template && template.spacing && template.spacing.rows, templateDef.defaultRows))); // CHANGE
+        const rowOrientation = normalizeBedRowOrientation(template && template.rowOrientation, templateDef); // NEW
+        const spacing = Object.assign({ rows: rowCount, emitterInches: 12, rowSpacingCm: rowSpacingCmForRows(bedGeo, rowCount, rowOrientation) }, template && template.spacing || {}); // CHANGE
+        spacing.rowSpacingCm = rowSpacingCmForRows(bedGeo, rowCount, rowOrientation); // NEW
         const demand = {
-            flowGpm: finiteNumber(template && template.demand && template.demand.flowGpm, templateDef.flowGpm),
-            operatingPressurePsi: finiteNumber(template && template.demand && template.demand.operatingPressurePsi, templateDef.pressurePsi)
+            flowGpm: rowCount > 0 ? finiteNumber(template && template.demand && template.demand.flowGpm, templateDef.flowGpm) : 0, // CHANGE
+            operatingPressurePsi: rowCount > 0 ? finiteNumber(template && template.demand && template.demand.operatingPressurePsi, templateDef.pressurePsi) : 0 // CHANGE
         };
         const record = {
             version: PLUGIN_VERSION,
@@ -2643,12 +2705,14 @@ Draw.loadPlugin(function (ui) {
             partIds, // CHANGE
             spacing,
             demand,
+            assemblyLabelMode: String(template && template.assemblyLabelMode || BED_ASSEMBLY_LABEL_HIDDEN), // NEW
             committedAt: new Date().toISOString()
         };
         if (templateModel === BED_TEMPLATE_MODEL_BOM) { // NEW
             record.templateModel = BED_TEMPLATE_MODEL_BOM; // NEW
-            record.rowOrientation = normalizeBedRowOrientation(template && template.rowOrientation, templateDef); // NEW
+            record.rowOrientation = rowOrientation; // CHANGE
             record.rowLengthMeters = finiteNumber(template && template.rowLengthMeters, rowLengthMetersForBedGeometry(bedGeo, record.rowOrientation)); // NEW
+            record.rowSpacingCm = finiteNumber(template && template.rowSpacingCm, spacing.rowSpacingCm); // NEW
             record.totalRowMeters = finiteNumber(template && template.totalRowMeters, record.rowLengthMeters * rowCount); // NEW
             record.requiredParts = (template && Array.isArray(template.requiredParts) ? template.requiredParts : []).map(function (entry) { // NEW
                 return { partId: String(entry && entry.partId || "").trim(), quantityPerRowMeter: finiteNumber(entry && entry.quantityPerRowMeter, 0), quantityMeters: finiteNumber(entry && entry.quantityMeters, 0), unit: "m" }; // NEW
@@ -2660,7 +2724,7 @@ Draw.loadPlugin(function (ui) {
         try {
             if (!bedAssembly) return record; // CHANGE
             if (bedAssembly) { // NEW
-                setCellAttrs(bedAssembly, { label: bedTemplateLabel(record.templateId), [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(record) }); // CHANGE
+                setCellAttrs(bedAssembly, { label: assemblyLabelForTemplateRecord(record), [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(record) }); // CHANGE
                 createBedTemplateLayoutCells(bedAssembly, pathId, record, getGeometry(bedAssembly) || bedGeo); // CHANGE
             } // NEW
 
@@ -2671,22 +2735,28 @@ Draw.loadPlugin(function (ui) {
         return record;
     }
 
+    function assemblyLabelForTemplateRecord(record) { // NEW
+        return record && record.assemblyLabelMode === BED_ASSEMBLY_LABEL_HIDDEN ? "" : bedTemplateLabel(record && record.templateId); // NEW
+    } // NEW
+
     function createBedTemplateLayoutCells(bedCell, pathId, record, bedGeo) {
         const assemblyParent = isAssembly(bedCell); // NEW
         const inset = assemblyParent ? 8 : 6; // NEW
-        const contentTop = assemblyParent ? ASSEMBLY_HEADER_SIZE + 18 : 10; // CHANGE
+        const contentTop = 0; // CHANGE
         const parentHeight = Number(bedGeo.height || 80); // NEW
         const width = Math.max(40, Number(bedGeo.width || 160) - inset * 2); // CHANGE
-        const height = Math.max(8, parentHeight - contentTop - inset); // CHANGE
-        const rows = Math.max(1, Math.floor(finiteNumber(record.spacing && record.spacing.rows, 1)));
+        const height = Math.max(8, parentHeight - inset * 2); // CHANGE
+        const rows = Math.max(0, Math.floor(finiteNumber(record.spacing && record.spacing.rows, 0))); // CHANGE
         const rowOrientation = normalizeBedRowOrientation(record.rowOrientation, bedTemplateById(record.templateId)); // NEW
-        const rowGap = (rowOrientation === "height" ? width : height) / (rows + 1); // CHANGE
         const existingRows = getChildCells(bedCell).filter(function (cell) { return getCellAttr(cell, ATTRS.BED_LAYOUT, "") === "1"; }); // NEW
         const rowStyle = "rounded=0;whiteSpace=wrap;html=1;fillColor=#e1f5fe;strokeColor=#0288d1;fontSize=8;"; // NEW
         let changed = false; // NEW
+        if (rows === 0) { existingRows.forEach(function (cell) { removeCellFromParent(cell); changed = true; }); return changed; } // NEW
+        const rowGap = Math.max(0, rowSpacingSpanUnitsForBedGeometry(bedGeo, rowOrientation) / rows); // CHANGE
         for (let i = 0; i < rows; i++) {
-            const x = rowOrientation === "height" ? Math.round(inset + rowGap * (i + 1)) : inset; // NEW
-            const y = rowOrientation === "height" ? contentTop : Math.round(contentTop + rowGap * (i + 1)); // CHANGE
+            const center = rowGap * (i + 0.5); // NEW
+            const x = rowOrientation === "height" ? center - 3 : inset; // CHANGE
+            const y = rowOrientation === "height" ? inset : contentTop + center - 3; // CHANGE
             const w = rowOrientation === "height" ? 6 : width; // NEW
             const h = rowOrientation === "height" ? height : 6; // NEW
             const attrs = { label: bedTemplateRowDisplayLabel(record.irrigationType), [ATTRS.BED_LAYOUT]: "1", [ATTRS.PATH_ID]: pathId, [ATTRS.GENERATED]: "1", [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(record) }; // CHANGE
@@ -2711,16 +2781,17 @@ Draw.loadPlugin(function (ui) {
         if (!record || record.templateModel !== BED_TEMPLATE_MODEL_BOM) return { record, recomputed: false }; // NEW
         const catalog = readCatalog(moduleCell); // NEW
         const bom = computeBedTemplateBom(catalog, bedGeo || {}, record.templateId, record.spacing && record.spacing.rows, record.rowOrientation); // NEW
-        if (bom.missingPartIds.length || !bom.anchorPartId) return { record, recomputed: false, missingPartIds: bom.missingPartIds }; // NEW
+        if (bom.rowCount > 0 && (bom.missingPartIds.length || !bom.anchorPartId)) return { record, recomputed: false, missingPartIds: bom.missingPartIds }; // CHANGE
         return { // NEW
             record: Object.assign({}, record, { // NEW
                 rowOrientation: bom.rowOrientation, // NEW
                 rowLengthMeters: bom.rowLengthMeters, // NEW
+                rowSpacingCm: bom.rowSpacingCm, // NEW
                 totalRowMeters: bom.totalRowMeters, // NEW
                 requiredParts: bom.requiredParts, // NEW
                 anchorPartId: bom.anchorPartId, // NEW
                 demand: bom.demand, // NEW
-                spacing: Object.assign({}, record.spacing || {}, { rows: bom.rowCount }) // NEW
+                spacing: Object.assign({}, record.spacing || {}, { rows: bom.rowCount, rowSpacingCm: bom.rowSpacingCm }) // CHANGE
             }), // NEW
             recomputed: true // NEW
         }; // NEW
@@ -2735,7 +2806,7 @@ Draw.loadPlugin(function (ui) {
         if (refreshed.recomputed && JSON.stringify(nextRecord) !== JSON.stringify(record)) { // CHANGE
             changed = setCellAttrs(bedAssembly, { [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(nextRecord) }) || changed; // CHANGE
         } // NEW
-        changed = setCellAttrs(bedAssembly, { label: bedTemplateLabel(nextRecord.templateId) }) || changed; // NEW
+        if (nextRecord.assemblyLabelMode === BED_ASSEMBLY_LABEL_HIDDEN) changed = setCellAttrs(bedAssembly, { label: assemblyLabelForTemplateRecord(nextRecord) }) || changed; // CHANGE
         changed = createBedTemplateLayoutCells(bedAssembly, nextRecord.pathId || ("assembly_bed_" + sanitizeId(getCellId(bedCell))), nextRecord, geometry) || changed; // NEW
         return changed; // NEW
     } // NEW
@@ -3098,6 +3169,146 @@ Draw.loadPlugin(function (ui) {
         return Hydraulics.pathRouteLengthFeet(moduleCell, path); // CHANGE
     } // CHANGE
 
+    function isLinearCatalogPart(part) { // NEW
+        const p = normalizeCatalogPart(part); // NEW
+        return !!(p && unitCostAppliesToCategory(p.category)); // NEW
+    } // NEW
+
+    function bomDisplayLengthUnit(moduleCell) { // NEW
+        return resolveModuleUnitSystem(moduleCell) === "imperial" ? "ft" : "m"; // NEW
+    } // NEW
+
+    function bomCanonicalQuantityToDisplay(quantity, part, moduleCell) { // NEW
+        const q = Math.max(0, finiteNumber(quantity, 0)); // NEW
+        return isLinearCatalogPart(part) && bomDisplayLengthUnit(moduleCell) === "m" ? q * METERS_PER_FOOT : q; // NEW
+    } // NEW
+
+    function bomInputQuantityToCanonical(value, part, moduleCell) { // NEW
+        const q = Math.max(0, finiteNumber(value, 0)); // NEW
+        return isLinearCatalogPart(part) && bomDisplayLengthUnit(moduleCell) === "m" ? q / METERS_PER_FOOT : q; // NEW
+    } // NEW
+
+    function bomCanonicalUnitLabel(part, moduleCell) { // NEW
+        return isLinearCatalogPart(part) ? bomDisplayLengthUnit(moduleCell) : "ea"; // NEW
+    } // NEW
+
+    function bomDisplayUnitCost(part, moduleCell) { // NEW
+        const p = normalizeCatalogPart(part); // NEW
+        if (!p) return 0; // NEW
+        const base = isLinearCatalogPart(p) ? finiteNumber(p.unitCost, p.cost || 0) : finiteNumber(p.cost || p.unitCost, 0); // NEW
+        return isLinearCatalogPart(p) && bomDisplayLengthUnit(moduleCell) === "m" ? base / METERS_PER_FOOT : base; // NEW
+    } // NEW
+
+    function bomInputUnitCostToCanonical(value, part, moduleCell) { // NEW
+        const cost = Math.max(0, finiteNumber(value, 0)); // NEW
+        return isLinearCatalogPart(part) && bomDisplayLengthUnit(moduleCell) === "m" ? cost * METERS_PER_FOOT : cost; // NEW
+    } // NEW
+
+    function formatBomNumber(value, decimals) { // NEW
+        const n = finiteNumber(value, 0); // NEW
+        const places = decimals == null ? (Math.abs(n) >= 10 || Math.abs(n - Math.round(n)) < 0.005 ? 1 : 2) : decimals; // NEW
+        return n.toFixed(places).replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1"); // NEW
+    } // NEW
+
+    function bomDisplayQuantityValue(quantity, part, moduleCell) { // NEW
+        return formatBomNumber(bomCanonicalQuantityToDisplay(quantity, part, moduleCell)); // NEW
+    } // NEW
+
+    function formatBomCanonicalQuantity(quantity, part, moduleCell) { // NEW
+        return bomDisplayQuantityValue(quantity, part, moduleCell) + " " + bomCanonicalUnitLabel(part, moduleCell); // NEW
+    } // NEW
+
+    function bomLineUnitCost(part, moduleCell) { // NEW
+        return formatMoney(bomDisplayUnitCost(part, moduleCell)) + "/" + bomCanonicalUnitLabel(part, moduleCell); // NEW
+    } // NEW
+
+    function createBomAccumulator(catalog) { // NEW
+        return { catalog, rowsByPartId: new Map() }; // NEW
+    } // NEW
+
+    function addBomRequirement(acc, partId, quantity) { // NEW
+        const part = partById(acc.catalog, partId); // NEW
+        if (!part) return; // NEW
+        const id = part.id; // NEW
+        const row = acc.rowsByPartId.get(id) || { part, partId: id, requiredQuantity: 0, useCount: 0 }; // NEW
+        row.requiredQuantity += Math.max(0, finiteNumber(quantity, 0)); // NEW
+        row.useCount += 1; // NEW
+        acc.rowsByPartId.set(id, row); // NEW
+    } // NEW
+
+    function addBomPartEach(acc, partId) { // NEW
+        addBomRequirement(acc, partId, 1); // NEW
+    } // NEW
+
+    function addBomLinearFeet(acc, partId, lengthFt) { // NEW
+        addBomRequirement(acc, partId, Math.max(0, finiteNumber(lengthFt, 0))); // NEW
+    } // NEW
+
+    function addBomTemplateRequirement(acc, partId, quantityMeters) { // NEW
+        const part = partById(acc.catalog, partId); // NEW
+        if (!part) return; // NEW
+        const qty = isLinearCatalogPart(part) ? finiteNumber(quantityMeters, 0) / METERS_PER_FOOT : finiteNumber(quantityMeters, 0); // NEW
+        addBomRequirement(acc, partId, qty); // NEW
+    } // NEW
+
+    function collectPathBomUsage(moduleCell, catalog, path, acc) { // NEW
+        (path.partIds || []).forEach(function (partId) { addBomPartEach(acc, partId); }); // NEW
+        if (path.pipeSegments && path.pipeSegments.length) { // NEW
+            (path.pipeSegments || []).forEach(function (segment) { addBomLinearFeet(acc, segment.pipePartId, segment.lengthFt); }); // NEW
+        } else if (path.pipePartIds && path.pipePartIds.length) { // NEW
+            (path.pipePartIds || []).forEach(function (pipePartId) { addBomLinearFeet(acc, pipePartId, Hydraulics.pipeSegmentLengthForPart(moduleCell, path, pipePartId)); }); // NEW
+        } else if (path.pipePartId) { // NEW
+            addBomLinearFeet(acc, path.pipePartId, Hydraulics.pipeSegmentLengthForPart(moduleCell, path, path.pipePartId)); // NEW
+        } // NEW
+        if (path.bedTemplate && path.bedTemplate.templateModel === BED_TEMPLATE_MODEL_BOM && Array.isArray(path.bedTemplate.requiredParts)) { // NEW
+            path.bedTemplate.requiredParts.forEach(function (entry) { addBomTemplateRequirement(acc, entry.partId, entry.quantityMeters); }); // NEW
+        } // NEW
+        if (path.bedTemplate && Array.isArray(path.bedTemplate.partIds)) { // NEW
+            path.bedTemplate.partIds.forEach(function (partId) { addBomPartEach(acc, partId); }); // NEW
+        } // NEW
+    } // NEW
+
+    function finalizeBomRows(moduleCell, catalog, rows) { // NEW
+        return rows.map(function (row) { // NEW
+            const part = normalizeCatalogPart(row.part); // NEW
+            const unitCost = isLinearCatalogPart(part) ? finiteNumber(part.unitCost, part.cost || 0) : finiteNumber(part.cost || part.unitCost, 0); // NEW
+            const requiredQuantity = Math.max(0, finiteNumber(row.requiredQuantity, 0)); // NEW
+            const onHandQuantity = Math.max(0, finiteNumber(part.stockQuantity, 0)); // NEW
+            const shortageQuantity = Math.max(0, requiredQuantity - onHandQuantity); // NEW
+            return Object.assign({}, row, { // NEW
+                part, // NEW
+                requiredQuantity, // NEW
+                onHandQuantity, // NEW
+                shortageQuantity, // NEW
+                unitCost, // NEW
+                totalCost: requiredQuantity * unitCost, // NEW
+                purchaseCost: shortageQuantity * unitCost, // NEW
+                stockState: stockStateForQuantity(onHandQuantity), // NEW
+                displayUnit: bomCanonicalUnitLabel(part, moduleCell) // NEW
+            }); // NEW
+        }).filter(function (row) { return row.requiredQuantity > 0; }).sort(compareBomRows); // NEW
+    } // NEW
+
+    function compareBomRows(a, b) { // NEW
+        const ka = catalogPartSortKey(a.part); // NEW
+        const kb = catalogPartSortKey(b.part); // NEW
+        return ka.category.localeCompare(kb.category) || compareNominalSize(ka.size, kb.size) || ka.name.localeCompare(kb.name); // NEW
+    } // NEW
+
+    function buildBomRows(moduleCell, options) { // NEW
+        const catalog = options && options.catalog ? options.catalog : IrrigationCatalog.read(moduleCell); // NEW
+        const paths = options && options.paths ? options.paths : ReportModel.deriveAssemblyPaths(moduleCell); // NEW
+        const acc = createBomAccumulator(catalog); // NEW
+        paths.forEach(function (path) { collectPathBomUsage(moduleCell, catalog, path, acc); }); // NEW
+        let rows = finalizeBomRows(moduleCell, catalog, Array.from(acc.rowsByPartId.values())); // NEW
+        const selectedPartIds = uniqueStrings(options && options.selectedPartIds || []); // NEW
+        if (selectedPartIds.length) { // NEW
+            const selected = new Set(selectedPartIds); // NEW
+            rows = rows.filter(function (row) { return selected.has(row.partId); }); // NEW
+        } // NEW
+        return { version: PLUGIN_VERSION, rows, catalog, paths, selectedPartIds }; // NEW
+    } // NEW
+
     function collectGardenBeds(moduleCell) {
         return collectDescendants(moduleCell, isGardenBed);
     }
@@ -3182,17 +3393,10 @@ Draw.loadPlugin(function (ui) {
         const irrigatedAreaM2 = beds
             .filter(function (bed) { return irrigatedBedIds.has(getCellId(bed)); })
             .reduce(function (sum, bed) { return sum + bedAreaM2(bed); }, 0);
-        const purchasePartIds = usage.partIds.filter(function (partId) { // CHANGE
-            const part = partById(catalog, partId);
-            return part && PURCHASE_NEEDED.has(part.stockState);
-        });
-        const purchaseNeededCost = usage.partCosts.reduce(function (sum, entry) { // CHANGE
-            const part = partById(catalog, entry.partId);
-            return PURCHASE_NEEDED.has(part && part.stockState) ? sum + finiteNumber(entry.cost, 0) : sum;
-        }, 0);
-        const totalDesignValue = usage.partCosts.reduce(function (sum, entry) { // CHANGE
-            return sum + finiteNumber(entry.cost, 0);
-        }, 0);
+        const bomRows = buildBomRows(moduleCell, { catalog, paths }).rows; // NEW
+        const purchaseRows = bomRows.filter(function (row) { return row.shortageQuantity > 0; }); // NEW
+        const purchaseNeededCost = purchaseRows.reduce(function (sum, row) { return sum + finiteNumber(row.purchaseCost, 0); }, 0); // CHANGE
+        const totalDesignValue = bomRows.reduce(function (sum, row) { return sum + finiteNumber(row.totalCost, 0); }, 0); // CHANGE
         const zones = ZoneModel.read(moduleCell); // CHANGE
         const zoneReport = ZoneModel.summary(moduleCell, zones, paths); // CHANGE
         const zoneWarningCount = zoneReport.zones.reduce(function (sum, zone) { return sum + (zone.warnings || []).length; }, 0) + zoneReport.unzonedBedCount + zoneReport.ambiguousBedIds.length; // NEW
@@ -3212,7 +3416,7 @@ Draw.loadPlugin(function (ui) {
             ambiguousZoneBedIds: zoneReport.ambiguousBedIds, // NEW
             completeness: beds.length > 0 ? (completeBedIds.size / beds.length) * 100 : 0,
             worstHydraulicMarginPsi,
-            purchaseNeededCount: purchasePartIds.length,
+            purchaseNeededCount: purchaseRows.length, // CHANGE
             criticalWarningCount: criticalWarnings.length,
             criticalWarnings // CHANGE
         };
@@ -3556,6 +3760,312 @@ Draw.loadPlugin(function (ui) {
         return "$" + n.toFixed(n % 1 === 0 ? 0 : 2);
     }
 
+    function openBomDialog(moduleCell, options) { // NEW
+        seedStarterCatalogIfEmpty(moduleCell); // NEW
+        const catalog = readCatalog(moduleCell); // NEW
+        const selectedPartIds = validSelectedScopePartIds(catalog, { selectedPartIds: options && options.selectedPartIds || [] }); // NEW
+        const state = { // NEW
+            selectedScopeActive: selectedPartIds.length > 0, // NEW
+            selectedPartIds, // NEW
+            search: "", // NEW
+            statusFilter: "", // NEW
+            broadCategoryFilter: "", // NEW
+            categoryFilter: "", // NEW
+            sizeFilter: "", // NEW
+            rowDrafts: {}, // NEW
+            allowClose: false, // NEW
+            restoreHideDialog: null // NEW
+        }; // NEW
+        const div = document.createElement("div"); // NEW
+        div.className = "trellis-irrigation-bom-dialog"; // NEW
+        div.style.cssText = "width:960px;max-width:96vw;max-height:84vh;overflow:auto;font:12px Arial,sans-serif;padding:12px;box-sizing:border-box;"; // NEW
+        showDialog(div, 980, 640); // NEW
+        installBomDialogCloseGuard(state); // NEW
+        renderBomDialog(div, moduleCell, state); // NEW
+    } // NEW
+
+    function renderBomDialog(container, moduleCell, state) { // NEW
+        const catalog = readCatalog(moduleCell); // NEW
+        const selectedScopePartIds = validSelectedScopePartIds(catalog, state); // NEW
+        if (state.selectedScopeActive && selectedScopePartIds.length === 0) state.selectedScopeActive = false; // NEW
+        const bom = ReportModel.buildBomRows(moduleCell, { catalog, selectedPartIds: state.selectedScopeActive ? selectedScopePartIds : [] }); // NEW
+        const visibleRows = bomVisibleRows(bom.rows, state, moduleCell); // NEW
+        const totals = bomTotals(visibleRows); // NEW
+        const filterOptions = catalogFilterOptions({ items: bom.rows.map(function (row) { return row.part; }) }); // NEW
+        container.innerHTML = ""; // NEW
+
+        const titleRow = document.createElement("div"); // NEW
+        titleRow.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 10px;"; // NEW
+        const title = document.createElement("h2"); // NEW
+        title.textContent = "Irrigation BOM"; // NEW
+        title.style.cssText = "font-size:16px;margin:0;"; // NEW
+        const totalText = document.createElement("div"); // NEW
+        totalText.style.cssText = "font-weight:700;color:#1f2937;"; // NEW
+        totalText.textContent = "Required " + formatMoney(totals.totalCost) + " | Purchase " + formatMoney(totals.purchaseCost); // NEW
+        titleRow.appendChild(title); // NEW
+        titleRow.appendChild(totalText); // NEW
+        container.appendChild(titleRow); // NEW
+
+        if (state.selectedScopeActive) { // NEW
+            const selectedScopeNotice = document.createElement("div"); // NEW
+            selectedScopeNotice.className = "trellis-irrigation-selected-bom-scope"; // NEW
+            selectedScopeNotice.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 10px;padding:7px 8px;border:1px solid #b6c7e6;background:#eef5ff;color:#1f3b64;"; // NEW
+            const label = document.createElement("span"); // NEW
+            label.textContent = "Showing BOM for " + selectedScopePartIds.length + " selected catalog part" + (selectedScopePartIds.length === 1 ? "" : "s") + "."; // NEW
+            selectedScopeNotice.appendChild(label); // NEW
+            selectedScopeNotice.appendChild(button("Show All", function () { state.selectedScopeActive = false; state.selectedPartIds = []; renderBomDialog(container, moduleCell, state); })); // NEW
+            container.appendChild(selectedScopeNotice); // NEW
+        } // NEW
+
+        const filterRow = document.createElement("div"); // NEW
+        filterRow.style.cssText = "display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;"; // NEW
+        const search = document.createElement("input"); // NEW
+        search.type = "search"; // NEW
+        search.placeholder = "Search BOM"; // NEW
+        search.value = state.search || ""; // NEW
+        search.style.cssText = "min-width:160px;padding:4px;border:1px solid #aaa;border-radius:4px;"; // NEW
+        search.addEventListener("input", function () { state.search = search.value; renderBomDialog(container, moduleCell, state); }); // NEW
+        filterRow.appendChild(search); // NEW
+        const statusFilter = document.createElement("select"); // NEW
+        appendSelectOption(statusFilter, "", "All stock"); // NEW
+        appendSelectOption(statusFilter, "in_stock", "In stock"); // NEW
+        appendSelectOption(statusFilter, "shortage", "Needs purchase"); // NEW
+        statusFilter.value = state.statusFilter || ""; // NEW
+        statusFilter.addEventListener("change", function () { state.statusFilter = statusFilter.value; renderBomDialog(container, moduleCell, state); }); // NEW
+        filterRow.appendChild(statusFilter); // NEW
+        const broadFilter = document.createElement("select"); // NEW
+        appendSelectOption(broadFilter, "", "All broad categories"); // NEW
+        filterOptions.broadCategories.forEach(function (entry) { appendSelectOption(broadFilter, entry.id, entry.label); }); // NEW
+        broadFilter.value = state.broadCategoryFilter || ""; // NEW
+        broadFilter.addEventListener("change", function () { state.broadCategoryFilter = broadFilter.value; renderBomDialog(container, moduleCell, state); }); // NEW
+        filterRow.appendChild(broadFilter); // NEW
+        const categoryFilter = document.createElement("select"); // NEW
+        appendSelectOption(categoryFilter, "", "All categories"); // NEW
+        PART_CATEGORIES.forEach(function (category) { appendSelectOption(categoryFilter, category, category.replace(/_/g, " ")); }); // NEW
+        categoryFilter.value = state.categoryFilter || ""; // NEW
+        categoryFilter.addEventListener("change", function () { state.categoryFilter = categoryFilter.value; renderBomDialog(container, moduleCell, state); }); // NEW
+        filterRow.appendChild(categoryFilter); // NEW
+        const sizeFilter = document.createElement("select"); // NEW
+        appendSelectOption(sizeFilter, "", "All sizes"); // NEW
+        filterOptions.sizes.forEach(function (size) { appendSelectOption(sizeFilter, size, size); }); // NEW
+        sizeFilter.value = state.sizeFilter || ""; // NEW
+        sizeFilter.addEventListener("change", function () { state.sizeFilter = sizeFilter.value; renderBomDialog(container, moduleCell, state); }); // NEW
+        filterRow.appendChild(sizeFilter); // NEW
+        container.appendChild(filterRow); // NEW
+
+        const tableWrap = document.createElement("div"); // NEW
+        tableWrap.style.cssText = "overflow:auto;border:1px solid #d1d5db;"; // NEW
+        const table = document.createElement("table"); // NEW
+        table.style.cssText = "width:100%;border-collapse:collapse;min-width:980px;"; // NEW
+        table.innerHTML = "<thead><tr><th>Part</th><th>Category</th><th>Size</th><th>Stock</th><th>Required</th><th>On hand</th><th>Shortage</th><th>Unit cost</th><th>Total required</th><th>Purchase</th><th>Actions</th></tr></thead>"; // NEW
+        const tbody = document.createElement("tbody"); // NEW
+        let lastGroup = ""; // NEW
+        visibleRows.forEach(function (row) { // NEW
+            const group = catalogGroupLabel(row.part); // NEW
+            if (group !== lastGroup) { // NEW
+                lastGroup = group; // NEW
+                const groupRow = document.createElement("tr"); // NEW
+                groupRow.className = "trellis-irrigation-bom-group"; // NEW
+                groupRow.innerHTML = "<td colspan=\"11\">" + html(group) + "</td>"; // NEW
+                groupRow.children[0].style.cssText = "border-bottom:1px solid #d1d5db;padding:6px;background:#eef2f7;font-weight:700;color:#1f2937;"; // NEW
+                tbody.appendChild(groupRow); // NEW
+            } // NEW
+            tbody.appendChild(renderBomRow(container, moduleCell, state, row)); // NEW
+        }); // NEW
+        if (!visibleRows.length) { // NEW
+            const emptyRow = document.createElement("tr"); // NEW
+            emptyRow.innerHTML = "<td colspan=\"11\">No BOM rows match the current scope and filters.</td>"; // NEW
+            emptyRow.children[0].style.cssText = "padding:10px;color:#6b7280;font-style:italic;"; // NEW
+            tbody.appendChild(emptyRow); // NEW
+        } // NEW
+        table.appendChild(tbody); // NEW
+        tableWrap.appendChild(table); // NEW
+        container.appendChild(tableWrap); // NEW
+
+        const controls = document.createElement("div"); // NEW
+        controls.style.cssText = "display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;justify-content:flex-end;"; // NEW
+        controls.appendChild(button("Export CSV", function () { downloadBomCsv(moduleCell, visibleRows, state); })); // NEW
+        controls.appendChild(button("Close", function () { closeBomDialog(state); })); // NEW
+        container.appendChild(controls); // NEW
+    } // NEW
+
+    function renderBomRow(container, moduleCell, state, row) { // NEW
+        const draft = state.rowDrafts[row.partId] || bomDraftFromRow(row, moduleCell); // NEW
+        const tr = document.createElement("tr"); // NEW
+        tr.className = "trellis-irrigation-bom-row"; // NEW
+        const onHand = bomCellInput(draft.stockQuantity); // NEW
+        const unitCost = bomCellInput(draft.unitCost); // NEW
+        const save = button("Save", function () { saveBomRowDraft(container, moduleCell, state, row, onHand.value, unitCost.value); }); // NEW
+        const undo = button("Undo", function () { delete state.rowDrafts[row.partId]; renderBomDialog(container, moduleCell, state); }); // NEW
+        const dirty = !!state.rowDrafts[row.partId]; // NEW
+        save.style.display = dirty ? "" : "none"; // NEW
+        undo.style.display = dirty ? "" : "none"; // NEW
+        function markDirty() { // NEW
+            state.rowDrafts[row.partId] = { stockQuantity: onHand.value, unitCost: unitCost.value }; // NEW
+            save.style.display = ""; // NEW
+            undo.style.display = ""; // NEW
+        } // NEW
+        onHand.addEventListener("input", markDirty); // NEW
+        unitCost.addEventListener("input", markDirty); // NEW
+        appendBomCell(tr, row.part.name || row.partId); // NEW
+        appendBomCell(tr, row.part.category); // NEW
+        appendBomCell(tr, catalogPartSizeLabel(row.part)); // NEW
+        appendBomCell(tr, row.stockState); // NEW
+        appendBomCell(tr, formatBomCanonicalQuantity(row.requiredQuantity, row.part, moduleCell)); // NEW
+        appendBomInputCell(tr, onHand); // NEW
+        appendBomCell(tr, formatBomCanonicalQuantity(row.shortageQuantity, row.part, moduleCell)); // NEW
+        appendBomInputCell(tr, unitCost, "/" + bomCanonicalUnitLabel(row.part, moduleCell)); // NEW
+        appendBomCell(tr, formatMoney(row.totalCost)); // NEW
+        appendBomCell(tr, formatMoney(row.purchaseCost)); // NEW
+        const actions = document.createElement("td"); // NEW
+        actions.style.cssText = "border-bottom:1px solid #e5e7eb;padding:5px;vertical-align:top;display:flex;gap:5px;"; // NEW
+        actions.appendChild(save); // NEW
+        actions.appendChild(undo); // NEW
+        tr.appendChild(actions); // NEW
+        return tr; // NEW
+    } // NEW
+
+    function bomCellInput(value) { // NEW
+        const input = document.createElement("input"); // NEW
+        input.type = "number"; // NEW
+        input.min = "0"; // NEW
+        input.step = "0.01"; // NEW
+        input.value = value == null ? "" : String(value); // NEW
+        input.style.cssText = "width:86px;box-sizing:border-box;padding:3px;border:1px solid #aaa;border-radius:4px;"; // NEW
+        return input; // NEW
+    } // NEW
+
+    function appendBomCell(row, text) { // NEW
+        const td = document.createElement("td"); // NEW
+        td.textContent = text == null ? "" : String(text); // NEW
+        td.style.cssText = "border-bottom:1px solid #e5e7eb;padding:5px;vertical-align:top;"; // NEW
+        row.appendChild(td); // NEW
+        return td; // NEW
+    } // NEW
+
+    function appendBomInputCell(row, input, suffix) { // NEW
+        const td = appendBomCell(row, ""); // NEW
+        td.appendChild(input); // NEW
+        if (suffix) td.appendChild(document.createTextNode(" " + suffix)); // NEW
+        return td; // NEW
+    } // NEW
+
+    function bomDraftFromRow(row, moduleCell) { // NEW
+        return { // NEW
+            stockQuantity: bomDisplayQuantityValue(row.onHandQuantity, row.part, moduleCell), // NEW
+            unitCost: formatBomNumber(bomDisplayUnitCost(row.part, moduleCell), 2) // NEW
+        }; // NEW
+    } // NEW
+
+    function saveBomRowDraft(container, moduleCell, state, row, stockQuantityValue, unitCostValue) { // NEW
+        const quantity = bomInputQuantityToCanonical(stockQuantityValue, row.part, moduleCell); // NEW
+        const next = Object.assign({}, row.part, { // NEW
+            stockQuantity: quantity, // NEW
+            stockState: stockStateForQuantity(quantity) // NEW
+        }); // NEW
+        if (isLinearCatalogPart(next)) next.unitCost = bomInputUnitCostToCanonical(unitCostValue, next, moduleCell); // NEW
+        else next.cost = Math.max(0, finiteNumber(unitCostValue, 0)); // NEW
+        runIrrigationEdit("saveBomRow", function () { // NEW
+            upsertCatalogPart(moduleCell, next); // NEW
+            ReportModel.syncDashboardState(moduleCell); // NEW
+        }); // NEW
+        delete state.rowDrafts[row.partId]; // NEW
+        renderBomDialog(container, moduleCell, state); // NEW
+        if (activeIrrigationMode && activeIrrigationMode.moduleCell === moduleCell) renderIrrigationMode(activeIrrigationMode); // NEW
+    } // NEW
+
+    function bomVisibleRows(rows, state, moduleCell) { // NEW
+        return (rows || []).filter(function (row) { return bomRowMatchesFilters(row, state, moduleCell); }); // NEW
+    } // NEW
+
+    function bomRowMatchesFilters(row, state) { // NEW
+        const part = row.part; // NEW
+        const search = String(state.search || "").trim().toLowerCase(); // NEW
+        if (search && (String(part.name || "").toLowerCase().indexOf(search) < 0 && String(part.id || "").toLowerCase().indexOf(search) < 0 && String(part.category || "").toLowerCase().indexOf(search) < 0)) return false; // NEW
+        if (state.statusFilter === "in_stock" && row.onHandQuantity <= 0) return false; // NEW
+        if (state.statusFilter === "shortage" && row.shortageQuantity <= 0) return false; // NEW
+        if (state.categoryFilter && part.category !== state.categoryFilter) return false; // NEW
+        if (state.broadCategoryFilter && broadCategoryForCatalogCategory(part.category).id !== state.broadCategoryFilter) return false; // NEW
+        if (state.sizeFilter && catalogPartSizes(part).indexOf(state.sizeFilter) < 0) return false; // NEW
+        return true; // NEW
+    } // NEW
+
+    function bomTotals(rows) { // NEW
+        return (rows || []).reduce(function (totals, row) { // NEW
+            totals.totalCost += finiteNumber(row.totalCost, 0); // NEW
+            totals.purchaseCost += finiteNumber(row.purchaseCost, 0); // NEW
+            return totals; // NEW
+        }, { totalCost: 0, purchaseCost: 0 }); // NEW
+    } // NEW
+
+    function bomHasUnsavedDrafts(state) { // NEW
+        return !!(state && state.rowDrafts && Object.keys(state.rowDrafts).length); // NEW
+    } // NEW
+
+    function closeBomDialog(state) { // NEW
+        if (bomHasUnsavedDrafts(state) && typeof confirm === "function" && !confirm("Discard unsaved BOM edits?")) return; // NEW
+        if (state) state.allowClose = true; // NEW
+        hideDialog(); // NEW
+    } // NEW
+
+    function installBomDialogCloseGuard(state) { // NEW
+        if (!ui || !ui.hideDialog || ui.__trellisBomHideGuard) return; // NEW
+        const original = ui.hideDialog; // NEW
+        ui.__trellisBomHideGuard = true; // NEW
+        state.restoreHideDialog = function () { ui.hideDialog = original; ui.__trellisBomHideGuard = false; }; // NEW
+        ui.hideDialog = function () { // NEW
+            if (!state.allowClose && bomHasUnsavedDrafts(state) && typeof confirm === "function" && !confirm("Discard unsaved BOM edits?")) return; // NEW
+            if (state.restoreHideDialog) state.restoreHideDialog(); // NEW
+            return original.apply(ui, arguments); // NEW
+        }; // NEW
+    } // NEW
+
+    function csvEscape(value) { // NEW
+        const str = String(value == null ? "" : value); // NEW
+        const escaped = str.replace(/"/g, "\"\""); // NEW
+        return /[",\n\r]/.test(str) ? "\"" + escaped + "\"" : escaped; // NEW
+    } // NEW
+
+    function buildBomCsv(moduleCell, rows) { // NEW
+        const csvRows = []; // NEW
+        function push(values) { csvRows.push(values.map(csvEscape).join(",")); } // NEW
+        push(["Part", "Category", "Size", "Stock", "Required", "On hand", "Shortage", "Unit cost", "Total required", "Purchase"]); // NEW
+        (rows || []).forEach(function (row) { // NEW
+            push([ // NEW
+                row.part.name || row.partId, // NEW
+                row.part.category, // NEW
+                catalogPartSizeLabel(row.part), // NEW
+                row.stockState, // NEW
+                formatBomCanonicalQuantity(row.requiredQuantity, row.part, moduleCell), // NEW
+                formatBomCanonicalQuantity(row.onHandQuantity, row.part, moduleCell), // NEW
+                formatBomCanonicalQuantity(row.shortageQuantity, row.part, moduleCell), // NEW
+                bomLineUnitCost(row.part, moduleCell), // NEW
+                formatMoney(row.totalCost), // NEW
+                formatMoney(row.purchaseCost) // NEW
+            ]); // NEW
+        }); // NEW
+        return csvRows.join("\n"); // NEW
+    } // NEW
+
+    function downloadBomCsv(moduleCell, rows, state) { // NEW
+        const name = sanitizeId(getCellAttr(moduleCell, "label", "") || getCellId(moduleCell) || "garden"); // NEW
+        const suffix = state && state.selectedScopeActive ? "selected" : "all"; // NEW
+        downloadCsv(name + "_irrigation_bom_" + suffix + ".csv", buildBomCsv(moduleCell, rows)); // NEW
+    } // NEW
+
+    function downloadCsv(filename, csvText) { // NEW
+        if (typeof Blob === "undefined" || typeof URL === "undefined" || !document || !document.createElement) return; // NEW
+        const blob = new Blob([csvText], { type: "text/csv;charset=utf-8" }); // NEW
+        const url = URL.createObjectURL(blob); // NEW
+        const a = document.createElement("a"); // NEW
+        a.href = url; // NEW
+        a.download = filename; // NEW
+        if (document.body) document.body.appendChild(a); // NEW
+        if (a.click) a.click(); // NEW
+        if (a.remove) a.remove(); // NEW
+        URL.revokeObjectURL(url); // NEW
+    } // NEW
+
     function openCatalogManager(moduleCell) {
         seedStarterCatalogIfEmpty(moduleCell);
         const catalog = readCatalog(moduleCell); // NEW
@@ -3704,7 +4214,7 @@ Draw.loadPlugin(function (ui) {
         const tableWrap = document.createElement("div");
         const table = document.createElement("table");
         table.style.cssText = "width:100%;border-collapse:collapse;";
-        table.innerHTML = "<thead><tr><th>Name</th><th>Broad</th><th>Category</th><th>Size</th><th>Connections</th><th>Stock</th><th>Status</th></tr></thead>"; // CHANGE
+        table.innerHTML = "<thead><tr><th>Name</th><th>Broad</th><th>Category</th><th>Size</th><th>Connections</th><th>Stock</th><th>On hand</th><th>Status</th></tr></thead>"; // CHANGE
         const tbody = document.createElement("tbody");
         let lastCatalogGroup = ""; // NEW
         visibleItems.forEach(function (part) { // CHANGE
@@ -3713,7 +4223,7 @@ Draw.loadPlugin(function (ui) {
                 lastCatalogGroup = group; // NEW
                 const groupRow = document.createElement("tr"); // NEW
                 groupRow.className = "trellis-irrigation-catalog-group"; // NEW
-                groupRow.innerHTML = "<td colspan=\"7\">" + html(group) + "</td>"; // CHANGE
+                groupRow.innerHTML = "<td colspan=\"8\">" + html(group) + "</td>"; // CHANGE
                 groupRow.children[0].style.cssText = "border:1px solid #bbb;padding:5px 6px;background:#eef2f7;font-weight:700;color:#1f2937;"; // NEW
                 tbody.appendChild(groupRow); // NEW
             } // NEW
@@ -3722,7 +4232,7 @@ Draw.loadPlugin(function (ui) {
             tr.style.cursor = "pointer";
             tr.dataset.partId = part.id;
             if (part.id === state.selectedId) tr.style.background = "#e8f1ff";
-            tr.innerHTML = "<td>" + html(part.name || part.id) + "</td><td>" + html(catalogBroadCategoryLabel(part)) + "</td><td>" + html(part.category) + "</td><td>" + html(catalogPartSizeLabel(part)) + "</td><td>" + html(catalogConnectionLabel(part)) + "</td><td>" + html(part.stockState) + "</td><td>" + html(validation.ok ? "Ready" : "Needs data") + "</td>"; // CHANGE
+            tr.innerHTML = "<td>" + html(part.name || part.id) + "</td><td>" + html(catalogBroadCategoryLabel(part)) + "</td><td>" + html(part.category) + "</td><td>" + html(catalogPartSizeLabel(part)) + "</td><td>" + html(catalogConnectionLabel(part)) + "</td><td>" + html(stockStateForQuantity(part.stockQuantity)) + "</td><td>" + html(formatBomCanonicalQuantity(part.stockQuantity, part, moduleCell)) + "</td><td>" + html(validation.ok ? "Ready" : "Needs data") + "</td>"; // CHANGE
             Array.from(tr.children).forEach(function (td) { td.style.cssText = "border:1px solid #ccc;padding:4px;vertical-align:top;"; });
             tr.addEventListener("click", function () {
                 state.selectedId = part.id;
@@ -3734,7 +4244,7 @@ Draw.loadPlugin(function (ui) {
         if (visibleItems.length === 0) { // NEW
             const emptyRow = document.createElement("tr"); // NEW
             emptyRow.className = "trellis-irrigation-catalog-empty"; // NEW
-            emptyRow.innerHTML = "<td colspan=\"7\">No catalogue parts match the current filters.</td>"; // NEW
+            emptyRow.innerHTML = "<td colspan=\"8\">No catalogue parts match the current filters.</td>"; // CHANGE
             emptyRow.children[0].style.cssText = "border:1px solid #ccc;padding:8px;color:#6b7280;font-style:italic;"; // NEW
             tbody.appendChild(emptyRow); // NEW
         } // NEW
@@ -3787,6 +4297,7 @@ Draw.loadPlugin(function (ui) {
             name: "New irrigation part",
             category: "pipe_tubing",
             stockState: "unknown",
+            stockQuantity: 0, // NEW
             cost: 1,
             unitCost: 1,
             connectors: {
@@ -3860,12 +4371,15 @@ Draw.loadPlugin(function (ui) {
         node.className = "trellis-irrigation-catalog-form";
         node.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:8px;";
         const fields = {};
+        fields.moduleCell = moduleCell; // NEW
         const connectorOptions = catalogConnectorOptions(moduleCell); // NEW
         fields.id = { value: part.id }; // CHANGE
         fields.name = addTextField(node, "Name", part.name);
         fields.category = addSelectField(node, "Category", PART_CATEGORIES, part.category);
         fields.category.addEventListener("change", function () { if (onCategoryChange) onCategoryChange(readCatalogPartForm({ fields })); }); // CHANGE
-        fields.stockState = addSelectField(node, "Stock", VALID_STOCK_STATES, part.stockState);
+        fields.stockState = addSelectField(node, "Stock", VALID_STOCK_STATES, stockStateForQuantity(part.stockQuantity)); // CHANGE
+        fields.stockState.disabled = true; // NEW
+        fields.stockQuantity = addTextField(node, "Quantity on hand", bomDisplayQuantityValue(part.stockQuantity, part, moduleCell)); // NEW
         fields.cost = addTextField(node, "Cost", part.cost);
         if (unitCostAppliesToCategory(part.category)) fields.unitCost = addTextField(node, "Unit cost per ft", part.unitCost); // CHANGE
         if (part.category === "pipe_tubing") { // NEW
@@ -3896,7 +4410,8 @@ Draw.loadPlugin(function (ui) {
                 id: sanitizeId(form.fields.id.value) || "part", // NEW
                 name: form.fields.name.value.trim(), // NEW
                 category, // NEW
-                stockState: form.fields.stockState.value, // NEW
+                stockState: stockStateForQuantity(bomInputQuantityToCanonical(form.fields.stockQuantity && form.fields.stockQuantity.value, { category }, form.fields.moduleCell)), // CHANGE
+                stockQuantity: bomInputQuantityToCanonical(form.fields.stockQuantity && form.fields.stockQuantity.value, { category }, form.fields.moduleCell), // NEW
                 cost: finiteNumber(form.fields.cost.value, 0), // NEW
                 unitCost: form.fields.unitCost ? finiteNumber(form.fields.unitCost.value, finiteNumber(form.fields.cost.value, 0)) : finiteNumber(form.fields.cost.value, 0), // NEW
                 connectors: { // NEW
@@ -3912,7 +4427,8 @@ Draw.loadPlugin(function (ui) {
             id: sanitizeId(form.fields.id.value) || "part",
             name: form.fields.name.value.trim(),
             category, // CHANGE
-            stockState: form.fields.stockState.value,
+            stockState: stockStateForQuantity(bomInputQuantityToCanonical(form.fields.stockQuantity && form.fields.stockQuantity.value, { category }, form.fields.moduleCell)), // CHANGE
+            stockQuantity: bomInputQuantityToCanonical(form.fields.stockQuantity && form.fields.stockQuantity.value, { category }, form.fields.moduleCell), // NEW
             cost: finiteNumber(form.fields.cost.value, 0),
             unitCost: unitCostAppliesToCategory(category) && form.fields.unitCost ? finiteNumber(form.fields.unitCost.value, finiteNumber(form.fields.cost.value, 0)) : null, // CHANGE
             connectors: {
@@ -4482,7 +4998,7 @@ Draw.loadPlugin(function (ui) {
         })); // NEW
         actions.appendChild(button("Zones", function () { openZoneManager(session.moduleCell, session); })); // NEW
         actions.appendChild(button("Catalog", function () { openCatalogManager(session.moduleCell); })); // NEW
-        actions.appendChild(button("Report", function () { runIrrigationEdit("reportSync", function () { syncHudGraphState(session.moduleCell); }); session.message = "Report updated."; renderIrrigationMode(session); })); // CHANGE
+        actions.appendChild(button("BOM", function () { runIrrigationEdit("bomSync", function () { syncHudGraphState(session.moduleCell); }); openBomDialog(session.moduleCell, { selectedPartIds: [] }); })); // CHANGE
         actions.appendChild(button("Exit", closeIrrigationMode)); // NEW
         hud.appendChild(actions); // NEW
         if (session.sourceFormVisible) renderSourceForm(session, hud); // NEW
@@ -4539,6 +5055,7 @@ Draw.loadPlugin(function (ui) {
         actions.appendChild(button("Disconnect", function () { disconnectSelectedConnections(session, [context.boundary]); })); // NEW
         actions.appendChild(button("Select Upstream", function () { selectConnectionEndpoint(session, context.sourceCell); })); // NEW
         actions.appendChild(button("Select Downstream", function () { selectConnectionEndpoint(session, context.targetCell); })); // NEW
+        if (context.pipePartId) actions.appendChild(button("BOM", function () { openBomDialog(session.moduleCell, { selectedPartIds: [context.pipePartId] }); })); // NEW
         actions.appendChild(button("Exit", closeIrrigationMode)); // NEW
         hud.appendChild(actions); // NEW
     } // NEW
@@ -4600,6 +5117,8 @@ Draw.loadPlugin(function (ui) {
         if (primaryAssembly && assemblyCanReverse(session.moduleCell, primaryAssembly)) actions.appendChild(button("Reverse Assembly", function () { reverseAssembly(primaryAssembly); renderIrrigationMode(session); })); // CHANGE
         actions.appendChild(button("Zones", function () { openZoneManager(session.moduleCell, session); })); // NEW
         actions.appendChild(button("Catalog", function () { openCatalogManager(session.moduleCell); })); // NEW
+        const selectedBomPartIds = selectedCatalogPartIdsFromGraphSelection(session.moduleCell, readCatalog(session.moduleCell)); // NEW
+        if (selectedBomPartIds.length) actions.appendChild(button("BOM", function () { openBomDialog(session.moduleCell, { selectedPartIds: selectedBomPartIds }); })); // NEW
         if (!selectedParts.length || selectedAssemblies.length) actions.appendChild(button("Delete", function () { deleteAssemblySelection(session, selectedAssemblies.length ? selectedAssemblies : selected); })); // CHANGE
         actions.appendChild(button("Exit", closeIrrigationMode)); // NEW
         hud.appendChild(actions); // NEW
@@ -5868,37 +6387,58 @@ Draw.loadPlugin(function (ui) {
         const savedTemplateId = saved.templateId || BED_TEMPLATES[0].id; // NEW
         const savedTemplateDef = bedTemplateById(savedTemplateId); // NEW
         const initialRowOrientation = normalizeBedRowOrientation(saved.rowOrientation, savedTemplateDef); // NEW
-        const initialRows = saved.spacing && saved.spacing.rows || savedTemplateDef.defaultRows || 2; // NEW
+        const initialRows = saved.spacing && saved.spacing.rows != null ? saved.spacing.rows : (savedTemplateDef.defaultRows || 2); // CHANGE
         const initialBom = computeBedTemplateBom(readCatalog(session.moduleCell), getGeometry(bedAssembly) || getGeometry(bedCell) || {}, savedTemplateId, initialRows, initialRowOrientation); // NEW
+        const rowSpacingUnit = rowSpacingDisplayUnit(session.moduleCell); // NEW
+        const initialRowSpacingCm = finiteNumber(saved.spacing && saved.spacing.rowSpacingCm, initialBom.rowSpacingCm); // NEW
         const templateSection = hudSection("Irrigation Template"); // NEW
         const form = document.createElement("div"); // CHANGE
         form.className = "trellis-irrigation-bed-inlet-form"; // CHANGE
         form.style.cssText = "display:grid;grid-template-columns:minmax(0,1fr);gap:6px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;"; // CHANGE
         const templateSelect = addSelectField(form, "Template", BED_TEMPLATES.map(function (entry) { return entry.id; }), savedTemplateId); // CHANGE
         const orientation = addSelectField(form, "Row orientation", BED_TEMPLATE_ROW_ORIENTATIONS, initialRowOrientation); // NEW
-        const rows = addNumericField(form, "Rows", initialRows, { min: 1, step: 1, inputMode: "numeric" }); // CHANGE
+        const rows = addNumericField(form, "Rows", initialRows, { min: 0, step: 1, inputMode: "numeric" }); // CHANGE
+        const rowSpacing = addNumericField(form, "Row spacing " + rowSpacingUnit, formatRowSpacingDisplayValue(initialRowSpacingCm, session.moduleCell), { min: 0, step: 1, inputMode: "numeric" }); // CHANGE
         const spacing = addNumericField(form, "Emitter in", saved.spacing && saved.spacing.emitterInches || "12", { min: 1, step: 1, inputMode: "decimal" }); // CHANGE
         const inletPart = addPartSelectField(form, "Inlet part", bedRolePartOptions(session.moduleCell, "input", roleParts.inletPartId, savedTemplateId, initialBom.anchorPartId), roleParts.inletPartId); // CHANGE
         const outletPart = addPartSelectField(form, "Outlet part", bedRolePartOptions(session.moduleCell, "output", roleParts.outletPartId, savedTemplateId, initialBom.anchorPartId), roleParts.outletPartId); // CHANGE
         const summary = hudText(""); // NEW
         summary.className = "trellis-irrigation-bed-template-summary"; // NEW
         let draftDirty = false; // NEW
+        function currentBedTemplateGeometry() { // NEW
+            return getGeometry(bedAssembly) || getGeometry(bedCell) || {}; // NEW
+        } // NEW
+        function syncRowSpacingFromRows() { // NEW
+            const templateDef = bedTemplateById(templateSelect.value); // NEW
+            const rowCount = Math.max(0, Math.floor(finiteNumber(rows.value, templateDef.defaultRows))); // CHANGE
+            const rowOrientation = normalizeBedRowOrientation(orientation.value, templateDef); // NEW
+            rowSpacing.value = formatRowSpacingDisplayValue(rowSpacingCmForRows(currentBedTemplateGeometry(), rowCount, rowOrientation), session.moduleCell); // NEW
+        } // NEW
+        function syncRowsFromRowSpacing() { // NEW
+            const templateDef = bedTemplateById(templateSelect.value); // NEW
+            const fallback = Math.max(0, Math.floor(finiteNumber(rows.value, templateDef.defaultRows))); // CHANGE
+            const rowOrientation = normalizeBedRowOrientation(orientation.value, templateDef); // NEW
+            const rowCount = rowsForRowSpacingCm(currentBedTemplateGeometry(), rowSpacingDisplayValueToCm(rowSpacing.value, session.moduleCell), rowOrientation, fallback); // NEW
+            rows.value = String(rowCount); // NEW
+            rowSpacing.value = formatRowSpacingDisplayValue(rowSpacingCmForRows(currentBedTemplateGeometry(), rowCount, rowOrientation), session.moduleCell); // NEW
+        } // NEW
         function currentDraft() { // NEW
             const templateDef = bedTemplateById(templateSelect.value); // NEW
-            const rowCount = Math.max(1, Math.floor(finiteNumber(rows.value, templateDef.defaultRows))); // CHANGE
+            const rowCount = Math.max(0, Math.floor(finiteNumber(rows.value, templateDef.defaultRows))); // CHANGE
             const catalog = readCatalog(session.moduleCell); // NEW
-            const bom = computeBedTemplateBom(catalog, getGeometry(bedAssembly) || getGeometry(bedCell) || {}, templateSelect.value, rowCount, orientation.value); // CHANGE
+            const bom = computeBedTemplateBom(catalog, currentBedTemplateGeometry(), templateSelect.value, rowCount, orientation.value); // CHANGE
             return { // NEW
                 catalog, // CHANGE
                 bom, // NEW
                 templateId: templateSelect.value, // NEW
                 inletPartId: String(inletPart.value || "").trim(), // NEW
                 outletPartId: String(outletPart.value || "").trim(), // NEW
+                rowSpacingCm: bom.rowSpacingCm, // NEW
                 emitterInches: finiteNumber(spacing.value, 12) // NEW
             }; // NEW
         } // NEW
         function bomSummaryText(bom) { // NEW
-            return "Rows " + bom.rowCount + " x " + bom.rowLengthMeters.toFixed(2) + " m = " + bom.totalRowMeters.toFixed(2) + " row m\nDemand " + bom.demand.flowGpm.toFixed(2) + " gpm, " + bom.demand.operatingPressurePsi.toFixed(0) + " PSI"; // CHANGE
+            return "Rows " + bom.rowCount + ", spacing " + formatRowSpacingDisplayValue(bom.rowSpacingCm, session.moduleCell) + " " + rowSpacingUnit + "\nLength " + bom.rowCount + " x " + bom.rowLengthMeters.toFixed(2) + " m = " + bom.totalRowMeters.toFixed(2) + " row m\nDemand " + bom.demand.flowGpm.toFixed(2) + " gpm, " + bom.demand.operatingPressurePsi.toFixed(0) + " PSI"; // CHANGE
         } // NEW
         function refreshTemplatePreview(clearInvalidSelections) { // NEW
             const draft = currentDraft(); // NEW
@@ -5915,6 +6455,7 @@ Draw.loadPlugin(function (ui) {
             const catalog = draft.catalog; // NEW
             const bom = draft.bom; // NEW
             const anchorPart = partById(catalog, bom.anchorPartId); // NEW
+            if (bom.rowCount === 0) return { ok: true, message: "" }; // NEW
             if (bom.missingPartIds.length) return { ok: false, message: "Cannot apply template. Missing required parts: " + bom.missingPartIds.join(", ") + "." }; // NEW
             if (!anchorPart) return { ok: false, message: "Cannot apply template. No compatible row-line anchor part was found." }; // NEW
             if (!draft.inletPartId) return { ok: false, message: "Select an inlet part before applying the bed layout." }; // NEW
@@ -5929,9 +6470,10 @@ Draw.loadPlugin(function (ui) {
             if (!validation.ok) { session.message = validation.message; renderIrrigationMode(session); return false; } // NEW
             const bom = draft.bom; // NEW
             rows.value = String(bom.rowCount); // NEW
+            rowSpacing.value = formatRowSpacingDisplayValue(draft.rowSpacingCm, session.moduleCell); // NEW
             spacing.value = String(draft.emitterInches); // NEW
             runIrrigationEdit("applyBedLayout", function () { // CHANGE
-                writeBedPortConfig(bedCell, bedPortConfigFromRoleParts(draft.catalog, ports, draft.inletPartId, draft.outletPartId, bom.anchorPartId)); // CHANGE
+                if (bom.rowCount > 0) writeBedPortConfig(bedCell, bedPortConfigFromRoleParts(draft.catalog, ports, draft.inletPartId, draft.outletPartId, bom.anchorPartId)); // CHANGE
                 const path = firstAssemblyPathForBedAssembly(session.moduleCell, bedAssembly) || { id: "assembly_bed_" + sanitizeId(getCellId(bedCell)), targetBedId: getCellId(bedCell) || "" }; // CHANGE
                 commitBedTemplate(session.moduleCell, path.id, bedAssembly, { // CHANGE
                     templateId: draft.templateId, // NEW
@@ -5942,11 +6484,13 @@ Draw.loadPlugin(function (ui) {
                     partIds: bedTemplatePartIds(draft.inletPartId, draft.outletPartId), // CHANGE
                     rowOrientation: bom.rowOrientation, // NEW
                     rowLengthMeters: bom.rowLengthMeters, // NEW
+                    rowSpacingCm: draft.rowSpacingCm, // NEW
                     totalRowMeters: bom.totalRowMeters, // NEW
                     requiredParts: bom.requiredParts, // NEW
                     anchorPartId: bom.anchorPartId, // NEW
                     demand: bom.demand, // NEW
-                    spacing: { rows: bom.rowCount, emitterInches: draft.emitterInches } // CHANGE
+                    assemblyLabelMode: BED_ASSEMBLY_LABEL_HIDDEN, // NEW
+                    spacing: { rows: bom.rowCount, emitterInches: draft.emitterInches, rowSpacingCm: draft.rowSpacingCm } // CHANGE
                 }); // NEW
                 scheduleHudGraphStateSync(session.moduleCell); // CHANGE
             }); // NEW
@@ -5973,16 +6517,20 @@ Draw.loadPlugin(function (ui) {
         templateSelect.addEventListener("change", function () { // NEW
             orientation.value = normalizeBedRowOrientation("", bedTemplateById(templateSelect.value)); // NEW
             rows.value = bedTemplateById(templateSelect.value).defaultRows || 1; // NEW
+            syncRowSpacingFromRows(); // NEW
             commitChangedSelect(true); // CHANGE
         }); // NEW
-        orientation.addEventListener("change", function () { commitChangedSelect(false); }); // CHANGE
+        orientation.addEventListener("change", function () { syncRowSpacingFromRows(); commitChangedSelect(false); }); // CHANGE
         inletPart.addEventListener("change", function () { commitChangedSelect(false); }); // NEW
         outletPart.addEventListener("change", function () { commitChangedSelect(false); }); // NEW
-        rows.addEventListener("input", function () { markDraftAndRefresh(false); }); // CHANGE
+        rows.addEventListener("input", function () { syncRowSpacingFromRows(); markDraftAndRefresh(false); }); // CHANGE
+        rowSpacing.addEventListener("input", function () { syncRowsFromRowSpacing(); markDraftAndRefresh(false); }); // NEW
         spacing.addEventListener("input", function () { markDraftAndRefresh(false); }); // NEW
         rows.addEventListener("blur", commitBedTemplateDraft); // NEW
+        rowSpacing.addEventListener("blur", function () { syncRowsFromRowSpacing(); commitBedTemplateDraft(); }); // NEW
         spacing.addEventListener("blur", commitBedTemplateDraft); // NEW
         rows.addEventListener("keydown", commitTextFieldOnEnter); // NEW
+        rowSpacing.addEventListener("keydown", function (ev) { if (ev && ev.key === "Enter") syncRowsFromRowSpacing(); commitTextFieldOnEnter(ev); }); // NEW
         spacing.addEventListener("keydown", commitTextFieldOnEnter); // NEW
         templateSection.appendChild(form); // NEW
         summary.style.overflowWrap = "anywhere"; // NEW
@@ -7328,6 +7876,7 @@ Draw.loadPlugin(function (ui) {
         persistSummary: persistReportSummary, // NEW
         generate: generateReport, // NEW
         readDashboardSummary, // NEW
+        buildBomRows, // NEW
         deriveAssemblyPaths, // NEW
         syncDashboardState: function (moduleCell, paths) { return persistReportSummary(moduleCell, buildReportSummary(moduleCell, { paths: paths || deriveAssemblyPaths(moduleCell) })); } // NEW
     }; // NEW
@@ -7394,6 +7943,7 @@ Draw.loadPlugin(function (ui) {
         deriveInferredTimerZones: ZoneModel.deriveInferredTimerZones, // CHANGE
         resolveEffectiveZoneMembership: ZoneModel.resolveMembership, // CHANGE
         zoneSummary: ZoneModel.summary, // CHANGE
+        buildBomRows: ReportModel.buildBomRows, // NEW
         assignBedsToZone: ZoneModel.assignBeds, // CHANGE
         resetBedZoneOverrides: ZoneModel.resetBedOverrides, // CHANGE
         createManualZone: ZoneModel.createManual, // CHANGE
@@ -7405,6 +7955,7 @@ Draw.loadPlugin(function (ui) {
         getBedIrrigationMethods, // NEW
         syncLinkedBedAssemblyToBed, // NEW
         openCatalogManager,
+        openBomDialog, // NEW
         __test: {
             GraphStore, // NEW
             IrrigationCatalog, // NEW
@@ -7442,6 +7993,19 @@ Draw.loadPlugin(function (ui) {
             partCostForReport: Hydraulics.partCostForReport, // CHANGE
             partCostForRequiredMeters: Hydraulics.partCostForRequiredMeters, // NEW
             computeBedTemplateBom, // NEW
+            buildBomRows: ReportModel.buildBomRows, // NEW
+            bomCanonicalQuantityToDisplay, // NEW
+            bomInputQuantityToCanonical, // NEW
+            bomDisplayUnitCost, // NEW
+            bomInputUnitCostToCanonical, // NEW
+            stockStateForQuantity, // NEW
+            selectedCatalogPartIdsForSelection, // NEW
+            createBedTemplateLayoutCells, // NEW
+            rowSpacingSpanCmForBedGeometry, // NEW
+            rowSpacingCmForRows, // NEW
+            rowsForRowSpacingCm, // NEW
+            rowSpacingDisplayValueToCm, // NEW
+            rowSpacingCmToDisplayValue, // NEW
             resolveTemplateAnchorPart, // NEW
             boundaryMatchForAnchor, // NEW
             buildReportSummary: ReportModel.buildSummary, // NEW

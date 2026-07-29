@@ -1473,6 +1473,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
     // -------------------- Runtime constants and plugin-local attributes -------------------- // NEW
     const BOARD_KEY = KANBAN_BOARD_KEY; // CHANGE
     const BOARD_ROLE_ATTR = 'board_role';
+    const TASK_SEEN_CREATED_ATTR = 'task_seen_created_json'; // NEW
     const TG_COMPLETED_ATTR = 'tg_completed';                                            // NEW
 
 
@@ -1529,6 +1530,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
     const lanePagingStates = new Map(); // NEW: current plans drive DOM rendering without a public API
     let requestLanePagerOverlayRefresh = function () {}; // NEW: installed after the shared overlay host exists
     let taskPagingSelectionGuard = false; // NEW: prevents selection repair and reveal loops
+    let activeDashboardTaskContext = null; // NEW
+    let suppressDashboardSeenSelection = false; // NEW
+    const transientUnseenHighlightOverlays = new Map(); // CHANGE
+    let missingTaskModuleWarningShown = false; // NEW
 
 
     // -------------------- Draw.io adapter factory: values, cells, and model writes -------------------- // CHANGE
@@ -1558,7 +1563,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
 
         function getAttr(cell, k) { // CHANGE
             const v = cell && cell.value;
-            return (v && v.getAttribute) ? v.getAttribute(k) : null;
+            if (!(v && v.getAttribute)) return null; // CHANGE
+            const exact = v.getAttribute(k); // NEW
+            if ((exact === null || exact === undefined) && /[A-Z]/.test(k)) return v.getAttribute(String(k).toLowerCase()); // NEW
+            return exact; // NEW
         }
 
         function createVertex(label, x, y, w, h, style) { // CHANGE
@@ -1711,6 +1719,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
 
     // Garden-module helpers
     function isGardenModule(cell) { return getAttr(cell, 'garden_module') === '1'; }
+    function isTaskModule(cell) { return getAttr(cell, 'task_module') === '1'; } // NEW
     function findGardenModuleAncestor(cell) {
         if (!cell) return null;
         let cur = cell;
@@ -1721,10 +1730,39 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         return null;
     }
 
+    function taskModulesApi() { // NEW
+        return graph && graph.__trellisModules; // NEW
+    } // NEW
+
+    function ensureTaskModuleForGarden(gardenModule) { // NEW
+        const modules = taskModulesApi(); // NEW
+        if (!gardenModule || !isGardenModule(gardenModule) || !modules || typeof modules.ensureGardenTaskModule !== 'function') { // CHANGE
+            if (gardenModule && isGardenModule(gardenModule) && !missingTaskModuleWarningShown) { // NEW
+                missingTaskModuleWarningShown = true; // NEW
+                try { console.warn('[TaskManager] Cannot create a Kanban board for a garden without the Trellis Modules companion Task Module API.'); } catch (_) { } // NEW
+            } // NEW
+            return null; // CHANGE
+        } // CHANGE
+        return modules.ensureGardenTaskModule(gardenModule); // NEW
+    } // NEW
+
+    function taskModuleForGarden(gardenModule) { // NEW
+        const modules = taskModulesApi(); // NEW
+        if (!gardenModule || !isGardenModule(gardenModule) || !modules) return null; // NEW
+        if (typeof modules.findExistingCompanionTask === 'function') return modules.findExistingCompanionTask(gardenModule); // NEW
+        return null; // NEW
+    } // NEW
+
+    function boardContainerForGarden(gardenModule) { // NEW
+        return taskModuleForGarden(gardenModule); // CHANGE: normal task paths only use existing companion Task Modules
+    } // NEW
+
     // -------------------- Board and lane template commands -------------------- // NEW
     function ensureBoardTemplateIn(containerVertex, opts) {                                  // CHANGE
-        const parent = containerVertex || graph.getDefaultParent();
+        const parent = isGardenModule(containerVertex) ? boardContainerForGarden(containerVertex) : (containerVertex || graph.getDefaultParent()); // CHANGE
+        if (!parent) return { parent: null, board: null, lanes: {} }; // NEW
         let { main } = findBoardsIn(parent);
+        if (isGardenModule(containerVertex) && !main && !(opts && opts.createMainBoard)) return { parent, board: null, lanes: {} }; // CHANGE
 
         return taskTransactions.runModelUpdate(opts, function () {                           // CHANGE
             let board = main;
@@ -1742,6 +1780,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
     }
 
     function createSecondaryBoardIn(parent) {
+        parent = isGardenModule(parent) ? boardContainerForGarden(parent) : parent; // CHANGE
+        if (!parent) return null; // NEW
         const board = createVertex('Kanban', BOARD_GEOM.x, BOARD_GEOM.y, BOARD_GEOM.w, BOARD_GEOM.h, BOARD_STYLE);
         model.add(parent, board, model.getChildCount(parent));
         setAttrNoUndo(board, 'board_key', BOARD_KEY);
@@ -3064,7 +3104,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
 
         if (!insideUpdate) model.beginUpdate(); // CHANGE
         try {
-            const { board, lanes } = boardLayoutService.ensureBoardTemplateIn(gardenModule, { insideUpdate: true });   // CHANGE
+            const { board, lanes } = boardLayoutService.ensureBoardTemplateIn(gardenModule, { insideUpdate: true, createMainBoard: true });   // CHANGE
+            if (!board) return out; // NEW
 
             for (const t of tasks) {
                 const laneKey = decideUpcomingLaneKey(t.startISO);
@@ -3268,7 +3309,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         const gardenModule = findGardenModuleAncestor(syncSource.group); // ADDED
         if (!insideUpdate) model.beginUpdate(); // CHANGE
         try { // ADDED
-            const template = boardLayoutService.ensureBoardTemplateIn(gardenModule, { insideUpdate: true }); // CHANGE
+            const template = boardLayoutService.ensureBoardTemplateIn(gardenModule, { insideUpdate: true, createMainBoard: true }); // CHANGE
+            if (!template || !template.board) return plan; // NEW
             plan.updates.forEach(item => { // ADDED
                 rememberBoardForTaskSync(affectedBoards, item.record.card); // ADDED
                 applyGeneratedTaskAttributesToCard(item.record.card, item.task, template.lanes); // ADDED
@@ -4683,14 +4725,17 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
 
     // -------------------- Board discovery and dialogs -------------------- // CHANGE
     graph.getSelectionModel().addListener(mxEvent.CHANGE, function () {
+        clearTransientUnseenHighlights(); // NEW
         const sel = graph.getSelectionCell();
         if (!sel || !model.isVertex(sel)) return;
         const key = getAttr(sel, 'board_key');
         if (key === BOARD_KEY || key === 'MAIN_KANBAN_BOARD') {
+            if (!suppressDashboardSeenSelection && activeDashboardTaskContext && String(activeDashboardTaskContext.year || '') && markBoardYearViewed(sel, activeDashboardTaskContext.gardenModule, activeDashboardTaskContext.year)) window.dispatchEvent(new CustomEvent('trellisTaskBoardSeenStateChanged', { detail: { gardenModuleId: cellId(activeDashboardTaskContext.gardenModule), boardId: cellId(sel), year: activeDashboardTaskContext.year } })); // CHANGE
             taskCommands.scanAndReflowBoard(sel, { scope: getTaskReflowScopeForCommand('boardNavigation') }); // CHANGE
             return; // NEW
         }
         const board = findBoardAncestor(sel); // NEW
+        if (board && !suppressDashboardSeenSelection && activeDashboardTaskContext && String(activeDashboardTaskContext.year || '') && markBoardYearViewed(board, activeDashboardTaskContext.gardenModule, activeDashboardTaskContext.year)) window.dispatchEvent(new CustomEvent('trellisTaskBoardSeenStateChanged', { detail: { gardenModuleId: cellId(activeDashboardTaskContext.gardenModule), boardId: cellId(board), year: activeDashboardTaskContext.year } })); // CHANGE
         const selectedDayLane = board && weekDayLaneAncestorForCell(sel, board); // NEW
         let stagedRefreshCommand = 'selection'; // NEW
         if (board && selectedDayLane && getBoardViewMode(board) === 'WEEK') { // NEW
@@ -4716,6 +4761,198 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         }
         return out;
     }
+
+    function cellId(cell) { // NEW
+        return String(cell && (cell.id || (cell.getId && cell.getId())) || ''); // NEW
+    } // NEW
+
+    function readJsonAttr(cell, key, fallback) { // NEW
+        try { // NEW
+            const parsed = JSON.parse(getAttr(cell, key) || ''); // NEW
+            return parsed && typeof parsed === 'object' ? parsed : fallback; // NEW
+        } catch (_) { // NEW
+            return fallback; // NEW
+        } // NEW
+    } // NEW
+
+    function writeJsonAttr(cell, key, value) { // NEW
+        setAttrNoUndo(cell, key, JSON.stringify(value || {}), true); // NEW
+    } // NEW
+
+    function boardDisplayName(board) { // NEW
+        const raw = getAttr(board, 'label') || (typeof (board && board.value) === 'string' ? board.value : '') || 'Kanban'; // NEW
+        const holder = document && document.createElement ? document.createElement('div') : null; // NEW
+        if (holder) { holder.innerHTML = raw; return String(holder.textContent || '').replace(/\s+/g, ' ').trim() || 'Kanban'; } // NEW
+        return String(raw || 'Kanban').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() || 'Kanban'; // NEW
+    } // NEW
+
+    function listBoardsInTaskModule(taskModule) { // NEW
+        const boards = findBoardsIn(taskModule); // NEW
+        return (boards.main ? [boards.main] : []).concat(boards.secondary || []); // NEW
+    } // NEW
+
+    function listBoardsForGarden(gardenModule, opts) { // NEW
+        const taskModule = taskModuleForGarden(gardenModule); // CHANGE
+        return taskModule ? listBoardsInTaskModule(taskModule) : []; // NEW
+    } // NEW
+
+    function userStateKeyForTaskCounts(gardenModule) { // NEW
+        const users = window.Trellis && window.Trellis.users; // NEW
+        if (!users || typeof users.isEnabled !== 'function' || !users.isEnabled()) return 'shared'; // NEW
+        const current = typeof users.getCurrentUser === 'function' ? users.getCurrentUser() : null; // NEW
+        if (!current || !current.id) return null; // NEW
+        if (typeof users.getAccessSummary === 'function') { // NEW
+            const summary = users.getAccessSummary(gardenModule); // NEW
+            const direct = summary && Array.isArray(summary.directUserIds) && summary.directUserIds.indexOf(current.id) >= 0; // NEW
+            const inherited = !!(summary && summary.inheritedAccessGrant); // NEW
+            const owner = !!(summary && summary.ownerUserId === current.id); // NEW
+            if (!current.admin && !owner && !direct && !inherited) return null; // NEW
+        } // NEW
+        return 'user:' + current.id; // NEW
+    } // NEW
+
+    function taskStartYear(card) { // NEW
+        const parsed = taskPolicy.parseTaskCalendarISO(getAttr(card, 'start') || getAttr(card, 'assigned_day') || ''); // NEW
+        return parsed ? String(parsed.year) : 'unscheduled'; // NEW
+    } // NEW
+
+    function collectBoardCards(board) { // NEW
+        const out = []; // NEW
+        function visit(cell) { // NEW
+            immediateChildren(cell).forEach(child => { // NEW
+                if (isKanbanCard(child)) out.push(child); // NEW
+                visit(child); // NEW
+            }); // NEW
+        } // NEW
+        if (board) visit(board); // NEW
+        return out; // NEW
+    } // NEW
+
+    function seenCutoffsForBoard(board, viewerKey) { // NEW
+        const state = readJsonAttr(board, TASK_SEEN_CREATED_ATTR, {}); // NEW
+        const viewer = state && state[viewerKey] && typeof state[viewerKey] === 'object' ? state[viewerKey] : {}; // NEW
+        return viewer; // NEW
+    } // NEW
+
+    function unseenSummaryForBoard(board, viewerKey) { // NEW
+        const cutoffs = seenCutoffsForBoard(board, viewerKey); // NEW
+        const years = new Map(); // NEW
+        let total = 0; // NEW
+        collectBoardCards(board).forEach(card => { // NEW
+            const createdAt = Number(getAttr(card, 'createdAt')) || 0; // NEW
+            if (!createdAt) return; // NEW
+            const year = taskStartYear(card); // NEW
+            const cutoff = Number(cutoffs[year]) || 0; // NEW
+            if (createdAt <= cutoff) return; // NEW
+            total += 1; // NEW
+            years.set(year, (years.get(year) || 0) + 1); // NEW
+        }); // NEW
+        return { total, years }; // NEW
+    } // NEW
+
+    function taskBoardUnseenSummaryForGarden(gardenModule) { // NEW
+        const viewerKey = userStateKeyForTaskCounts(gardenModule); // NEW
+        if (!viewerKey) return { hidden: true, total: 0, boards: [] }; // NEW
+        const boards = listBoardsForGarden(gardenModule, { ensure: false }); // NEW
+        let total = 0; // NEW
+        const summaries = boards.map(board => { // NEW
+            const summary = unseenSummaryForBoard(board, viewerKey); // NEW
+            total += summary.total; // NEW
+            const visibleYears = Array.from(summary.years.keys()).filter(year => year !== 'unscheduled').sort(); // NEW
+            return { board, boardId: cellId(board), name: boardDisplayName(board), count: summary.total, years: visibleYears }; // NEW
+        }); // NEW
+        return { hidden: false, total, boards: summaries }; // NEW
+    } // NEW
+
+    function clearTransientUnseenHighlights() { // NEW
+        transientUnseenHighlightOverlays.forEach(overlay => { if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay); }); // CHANGE
+        transientUnseenHighlightOverlays.clear(); // CHANGE
+    } // NEW
+
+    function positionUnseenHighlightOverlay(card, overlay) { // NEW
+        const host = overlay && overlay.parentNode; // NEW
+        const bounds = getCellVisualBounds(card, host); // NEW
+        if (!bounds) return false; // NEW
+        overlay.style.left = Math.max(0, Math.round(bounds.x - 3)) + 'px'; // NEW
+        overlay.style.top = Math.max(0, Math.round(bounds.y - 3)) + 'px'; // NEW
+        overlay.style.width = Math.max(0, Math.round(bounds.width + 6)) + 'px'; // NEW
+        overlay.style.height = Math.max(0, Math.round(bounds.height + 6)) + 'px'; // NEW
+        return true; // NEW
+    } // NEW
+
+    function addUnseenHighlightOverlay(card) { // NEW
+        const host = ensureTaskControlOverlayHost(); // NEW
+        if (!host || !document || !document.createElement) return; // NEW
+        const overlay = document.createElement('div'); // NEW
+        overlay.className = 'trellis-task-unseen-created-highlight'; // NEW
+        overlay.style.cssText = 'position:absolute;box-sizing:border-box;border:4px solid #FACC15;border-radius:6px;pointer-events:none;background:transparent;z-index:' + GRAPH_OVERLAY_Z.ANNOTATION + ';'; // NEW
+        host.appendChild(overlay); // NEW
+        if (!positionUnseenHighlightOverlay(card, overlay)) { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); return; } // NEW
+        transientUnseenHighlightOverlays.set(card, overlay); // NEW
+    } // NEW
+
+    function refreshTransientUnseenHighlightPositions() { // NEW
+        transientUnseenHighlightOverlays.forEach((overlay, card) => { // NEW
+            if (!positionUnseenHighlightOverlay(card, overlay) && overlay && overlay.parentNode) { overlay.parentNode.removeChild(overlay); transientUnseenHighlightOverlays.delete(card); } // NEW
+        }); // NEW
+    } // NEW
+
+    function highlightUnseenCards(board, viewerKey, year) { // NEW
+        clearTransientUnseenHighlights(); // NEW
+        if (!board || !viewerKey) return; // NEW
+        const cutoffs = seenCutoffsForBoard(board, viewerKey); // NEW
+        const targetYear = String(year || ''); // NEW
+        collectBoardCards(board).forEach(card => { // NEW
+            const cardYear = taskStartYear(card); // NEW
+            if (cardYear !== targetYear && cardYear !== 'unscheduled') return; // NEW
+            const createdAt = Number(getAttr(card, 'createdAt')) || 0; // NEW
+            if (!createdAt || createdAt <= (Number(cutoffs[cardYear]) || 0)) return; // NEW
+            addUnseenHighlightOverlay(card); // CHANGE
+        }); // NEW
+    } // NEW
+
+    function markBoardYearViewed(board, gardenModule, year) { // NEW
+        const viewerKey = userStateKeyForTaskCounts(gardenModule); // NEW
+        if (!board || !viewerKey) return false; // NEW
+        const y = String(year || '').trim(); // NEW
+        if (!y) return false; // NEW
+        const state = readJsonAttr(board, TASK_SEEN_CREATED_ATTR, {}); // NEW
+        const viewer = state[viewerKey] && typeof state[viewerKey] === 'object' ? state[viewerKey] : {}; // NEW
+        viewer[y] = Date.now(); // NEW
+        viewer.unscheduled = Date.now(); // NEW
+        state[viewerKey] = viewer; // NEW
+        writeJsonAttr(board, TASK_SEEN_CREATED_ATTR, state); // NEW
+        return true; // NEW
+    } // NEW
+
+    function fitBoardInViewport(board) { // NEW
+        if (!board) return; // NEW
+        if (graph.setSelectionCell) { // CHANGE
+            suppressDashboardSeenSelection = true; // NEW
+            try { graph.setSelectionCell(board); } finally { suppressDashboardSeenSelection = false; } // NEW
+        } // CHANGE
+        const geo = model.getGeometry(board); // NEW
+        if (geo && typeof graph.fitWindow === 'function') { graph.fitWindow({ x: geo.x, y: geo.y, width: geo.width, height: geo.height }, 24); return; } // NEW
+        if (geo && typeof graph.scrollRectToVisible === 'function') { graph.scrollRectToVisible({ x: geo.x, y: geo.y, width: geo.width, height: geo.height }); return; } // NEW
+        if (typeof graph.fit === 'function') graph.fit(48); // NEW
+        if (graph.scrollCellToVisible) graph.scrollCellToVisible(board, true); // NEW
+    } // NEW
+
+    function openBoardForGarden(gardenModule, boardId, year) { // NEW
+        const taskModule = taskModuleForGarden(gardenModule); // CHANGE
+        const boards = taskModule ? listBoardsInTaskModule(taskModule) : []; // NEW
+        const board = boards.find(candidate => cellId(candidate) === String(boardId || '')) || boards[0] || null; // CHANGE
+        const viewerKey = userStateKeyForTaskCounts(gardenModule); // NEW
+        fitBoardInViewport(board); // NEW
+        if (viewerKey) highlightUnseenCards(board, viewerKey, String(year || '')); // NEW
+        if (board) markBoardYearViewed(board, gardenModule, year); // NEW
+        try { window.dispatchEvent(new CustomEvent('trellisTaskBoardSeenStateChanged', { detail: { gardenModuleId: cellId(gardenModule), boardId: cellId(board), year } })); } catch (_) { } // NEW
+        return board; // NEW
+    } // NEW
+
+    function taskUnseenHighlightCountForTests() { // NEW
+        return transientUnseenHighlightOverlays.size; // NEW
+    } // NEW
 
     // -------------------- Dialog commands -------------------- // NEW
     function showEditCardDialogImpl(card) { // CHANGE: notes are editable on every Kanban card
@@ -5503,13 +5740,39 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         globalThis.__TRELLIS_TASK_MANAGER_RUNTIME_TEST_HOOKS__ = Object.freeze({ // NEW
             createTasks: taskCommands.createTasks, // NEW
             replaceTasks: taskCommands.replaceTasks, // NEW
-            applyDifferentialTaskSync: taskCommands.applyDifferentialTaskSync // NEW
+            applyDifferentialTaskSync: taskCommands.applyDifferentialTaskSync, // CHANGE
+            unseenHighlightCount: taskUnseenHighlightCountForTests // CHANGE
         }); // NEW
     } // NEW
 
     window.USL = window.USL || {}; // NEW
     window.USL.tasks = Object.assign({}, window.USL.tasks, { // NEW
         applySchedulerTaskReplacement: taskCommands.applySchedulerTaskReplacement // NEW
+    }); // NEW
+
+    graph.__trellisTaskManager = Object.assign({}, graph.__trellisTaskManager || {}, { // NEW
+        ensureMainBoardInTaskModule: function (taskModule) { // NEW
+            return taskCommands.ensureBoardTemplateInUpdate(taskModule); // NEW
+        }, // NEW
+        listBoardsForGarden: function (gardenModule) { // NEW
+            return listBoardsForGarden(gardenModule); // CHANGE
+        }, // NEW
+        createSecondaryBoardInTaskModule: function (taskModule) { // NEW
+            return taskCommands.runModelUpdate({}, function () { return createSecondaryBoardIn(taskModule); }); // NEW
+        }, // NEW
+        openBoardForGarden: function (gardenModule, boardId, year) { // NEW
+            return openBoardForGarden(gardenModule, boardId, year); // NEW
+        }, // NEW
+        unseenCreatedSummaryForGarden: function (gardenModule) { // NEW
+            return taskBoardUnseenSummaryForGarden(gardenModule); // NEW
+        }, // NEW
+        markBoardYearViewed: function (gardenModule, board, year) { // NEW
+            return markBoardYearViewed(board, gardenModule, year); // NEW
+        }, // NEW
+        setActiveDashboardContext: function (gardenModule, year) { // NEW
+            activeDashboardTaskContext = gardenModule && year ? { gardenModule, year: String(year) } : null; // NEW
+        }, // NEW
+        clearTransientUnseenHighlights: clearTransientUnseenHighlights // NEW
     }); // NEW
 
     // -------------------- DOM overlay host and installers -------------------- // NEW
@@ -5617,6 +5880,71 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         const state = graph.view && graph.view.getState ? graph.view.getState(cell) : null; // NEW
         const hostBounds = getStateHostBounds(cell, state, element && element.parentNode); // NEW
         return positionDomOverlayFromBounds(element, hostBounds, below, above, extraY, extraX); // CHANGE
+    } // NEW
+
+    function positionDomOverlayFromCellStateUnclamped(element, cell, below, above, extraY, extraX) { // NEW
+        const state = graph.view && graph.view.getState ? graph.view.getState(cell) : null; // NEW
+        const bounds = getStateHostBounds(cell, state, element && element.parentNode); // NEW
+        if (!element || !bounds || !element.parentNode) return false; // NEW
+        const yOffset = Number.isFinite(Number(extraY)) ? Number(extraY) : 0; // NEW
+        const xOffset = Number.isFinite(Number(extraX)) ? Number(extraX) : 0; // NEW
+        element.style.left = Math.round((Number(bounds.x) || 0) + xOffset) + 'px'; // NEW: selected task module overlays intentionally do not clamp to the viewport
+        if (below) element.style.top = Math.round((Number(bounds.y) || 0) + (Number(bounds.height) || 0) + 6 + yOffset) + 'px'; // NEW
+        else if (above) element.style.top = Math.round((Number(bounds.y) || 0) - element.offsetHeight - 6 - yOffset) + 'px'; // NEW
+        else element.style.top = Math.round((Number(bounds.y) || 0) + yOffset) + 'px'; // NEW
+        return true; // NEW
+    } // NEW
+
+    function taskModuleLabelApi() { // NEW
+        return graph && graph.__trellisModules ? graph.__trellisModules : {}; // NEW
+    } // NEW
+
+    function plainModuleLabelFallback(cell, fallback) { // NEW
+        const raw = getAttr(cell, 'label') || (typeof (cell && cell.value) === 'string' ? cell.value : ''); // NEW
+        if (document && document.createElement) { // NEW
+            const holder = document.createElement('div'); // NEW
+            holder.innerHTML = raw; // NEW
+            const text = String(holder.textContent || '').replace(/\s+/g, ' ').trim(); // NEW
+            if (text) return text; // NEW
+        } // NEW
+        const stripped = String(raw || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(); // NEW
+        return stripped || fallback || 'Task Module'; // NEW
+    } // NEW
+
+    function getTaskModuleOverlayLabel(taskModule) { // NEW
+        const api = taskModuleLabelApi(); // NEW
+        return typeof api.getModuleLabel === 'function' ? api.getModuleLabel(taskModule, 'Task Module') : plainModuleLabelFallback(taskModule, 'Task Module'); // NEW
+    } // NEW
+
+    function buildTaskModuleLabelXmlValueForEdit(taskModule) { // NEW
+        if (!taskModule) return null; // NEW
+        const value = taskModule.value; // NEW
+        if (value && value.nodeType === 1) return value.cloneNode(true); // NEW
+        const doc = mxUtils.createXmlDocument ? mxUtils.createXmlDocument() : document.implementation.createDocument('', '', null); // NEW
+        const node = doc.createElement('object'); // NEW
+        if (typeof value === 'string' && value) node.setAttribute('label', value); // NEW
+        return node; // NEW
+    } // NEW
+
+    function writeTaskModuleOverlayLabelUndoable(taskModule, label) { // NEW
+        const node = buildTaskModuleLabelXmlValueForEdit(taskModule); // NEW
+        if (!node) return; // NEW
+        node.setAttribute('label', label); // NEW
+        model.beginUpdate(); // NEW
+        try { // NEW
+            model.setValue(taskModule, node); // NEW
+        } finally { // NEW
+            model.endUpdate(); // NEW
+        } // NEW
+        if (graph.refresh) graph.refresh(taskModule); // NEW
+    } // NEW
+
+    function writeTaskModuleOverlayLabel(taskModule, label) { // NEW
+        const api = taskModuleLabelApi(); // NEW
+        if (typeof api.writeModuleLabel === 'function') return api.writeModuleLabel(taskModule, label); // NEW
+        const next = String(label == null ? '' : label).trim() || 'Task Module'; // NEW
+        if (plainModuleLabelFallback(taskModule, 'Task Module') !== next) writeTaskModuleOverlayLabelUndoable(taskModule, next); // CHANGE
+        return next; // NEW
     } // NEW
 
     function registerTaskOverlayGestureElement(element) { // NEW
@@ -6620,6 +6948,185 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         requestRefresh(); // NEW
     } // NEW
 
+    function installSelectedTaskModuleBoardOverlay() { // NEW
+        if (graph.__trellisSelectedTaskModuleBoardOverlayInstalled || !document || !document.createElement) return; // NEW
+        graph.__trellisSelectedTaskModuleBoardOverlayInstalled = true; // NEW
+        const host = ensureTaskControlOverlayHost(); // NEW
+        if (!host) return; // NEW
+        const overlay = document.createElement('div'); // NEW
+        overlay.className = 'trellis-task-module-board-overlay'; // NEW
+        overlay.style.cssText = 'position:absolute;display:none;flex-direction:column;align-items:stretch;gap:4px;background:#fff;border:1px solid #111;padding:4px;font:12px Arial,sans-serif;pointer-events:auto;'; // NEW
+        overlay.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL); // NEW
+        host.appendChild(overlay); // NEW
+        registerTaskOverlayGestureElement(overlay); // NEW
+        mxEvent.addListener(overlay, 'mousedown', evt => mxEvent.consume(evt)); // NEW
+        mxEvent.addListener(overlay, 'mouseup', evt => mxEvent.consume(evt)); // NEW
+        const labelControls = document.createElement('div'); // NEW
+        labelControls.className = 'trellis-task-module-label-controls'; // NEW
+        labelControls.style.cssText = 'display:flex;flex-direction:column;gap:4px;padding:2px 2px 4px;border-bottom:1px solid #e5e7eb;'; // NEW
+        overlay.appendChild(labelControls); // NEW
+        const addBoardBtn = document.createElement('button'); // NEW
+        addBoardBtn.type = 'button'; // NEW
+        addBoardBtn.textContent = 'Add Kanban Board'; // NEW
+        addBoardBtn.style.cssText = 'font:12px Arial,sans-serif;padding:3px 6px;'; // NEW
+        overlay.appendChild(addBoardBtn); // NEW
+        let currentTaskModule = null; // NEW
+        let pendingClickAnchor = null; // NEW
+        let lastClickAnchor = null; // NEW
+        let pendingToggleCell = null; // NEW
+        let manuallyHiddenTaskModule = null; // NEW
+
+        function selectedTaskModule() { // NEW
+            const cells = getSelectionCellsList(); // NEW
+            return cells.length === 1 && isTaskModule(cells[0]) ? cells[0] : null; // NEW
+        } // NEW
+
+        function makeTaskModuleLabelInput(taskModule) { // NEW
+            const initialLabel = getTaskModuleOverlayLabel(taskModule); // NEW
+            const input = document.createElement('input'); // NEW
+            input.type = 'text'; // NEW
+            input.value = initialLabel; // NEW
+            input.setAttribute('aria-label', 'Task label'); // NEW
+            input.style.cssText = 'display:block;box-sizing:border-box;width:100%;min-width:0;margin-bottom:2px;border:1px solid rgba(75,85,99,0.35);border-radius:4px;padding:3px 5px;font:12px Arial,sans-serif;font-weight:600;'; // CHANGE
+            ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup'].forEach(type => input.addEventListener(type, function (evt) { if (evt && evt.stopPropagation) evt.stopPropagation(); })); // NEW
+            input.addEventListener('keydown', function (evt) { // NEW
+                if (evt && evt.stopPropagation) evt.stopPropagation(); // NEW
+                if (evt.key === 'Enter') { // NEW
+                    input.value = writeTaskModuleOverlayLabel(taskModule, input.value); // NEW
+                    if (input.blur) input.blur(); // NEW
+                    consumeDomEvent(evt); // NEW
+                } else if (evt.key === 'Escape') { // NEW
+                    input.value = initialLabel; // NEW
+                    consumeDomEvent(evt); // NEW
+                } // NEW
+            }); // NEW
+            ['keypress', 'keyup'].forEach(type => input.addEventListener(type, function (evt) { if (evt && evt.stopPropagation) evt.stopPropagation(); })); // NEW
+            input.addEventListener('blur', function () { input.value = writeTaskModuleOverlayLabel(taskModule, input.value); }); // NEW
+            return input; // NEW
+        } // NEW
+
+        function renderTaskModuleLabelControls(taskModule) { // NEW
+            labelControls.innerHTML = ''; // NEW
+            labelControls.appendChild(makeTaskModuleLabelInput(taskModule)); // CHANGE
+        } // NEW
+
+        function taskModuleContainsPoint(taskModule, point) { // NEW
+            if (!taskModule || !point) return false; // NEW
+            const geo = graph.getCellGeometry ? graph.getCellGeometry(taskModule) : (model.getGeometry ? model.getGeometry(taskModule) : null); // NEW
+            if (!geo) return true; // NEW
+            return point.x >= geo.x && point.y >= geo.y && point.x <= geo.x + geo.width && point.y <= geo.y + geo.height; // NEW
+        } // NEW
+
+        function taskMouseEventCell(me, evt) { // NEW
+            const cell = me && typeof me.getCell === 'function' ? me.getCell() : null; // NEW
+            if (cell || !evt || !graph.getCellAt || !graph.getPointForEvent) return cell; // NEW
+            const point = graph.getPointForEvent(evt, false); // NEW
+            return point ? graph.getCellAt(point.x, point.y) : null; // NEW
+        } // NEW
+
+        function isPlainPrimaryMouseEvent(evt) { // NEW
+            if (!evt) return false; // NEW
+            if ((mxEvent.isPopupTrigger && mxEvent.isPopupTrigger(evt)) || evt.button === 2) return false; // NEW
+            return !mxEvent.isControlDown(evt) && !mxEvent.isMetaDown(evt) && !mxEvent.isShiftDown(evt) && Number(evt.detail || 1) <= 1; // NEW
+        } // NEW
+
+        function mouseAnchorForEvent(me, evt) { // NEW
+            const graphX = me && typeof me.getGraphX === 'function' ? me.getGraphX() : (evt && evt.graphX != null ? evt.graphX : null); // NEW
+            const graphY = me && typeof me.getGraphY === 'function' ? me.getGraphY() : (evt && evt.graphY != null ? evt.graphY : null); // NEW
+            const clientX = evt && evt.clientX != null ? evt.clientX : graphX; // NEW
+            const clientY = evt && evt.clientY != null ? evt.clientY : graphY; // NEW
+            if (graphX == null || graphY == null || clientX == null || clientY == null) return null; // NEW
+            return { model: { x: Number(graphX) || 0, y: Number(graphY) || 0 }, container: { x: Number(clientX) || 0, y: Number(clientY) || 0 } }; // NEW
+        } // NEW
+
+        function fallbackAnchorForTaskModule(taskModule) { // NEW
+            const state = graph.view && graph.view.getState ? graph.view.getState(taskModule) : null; // NEW
+            if (state) return { model: { x: state.x, y: state.y }, container: { x: state.x, y: state.y } }; // NEW
+            const geo = graph.getCellGeometry ? graph.getCellGeometry(taskModule) : (model.getGeometry ? model.getGeometry(taskModule) : null); // NEW
+            return { model: { x: geo ? geo.x : 0, y: geo ? geo.y : 0 }, container: { x: geo ? geo.x : 0, y: geo ? geo.y : 0 } }; // NEW
+        } // NEW
+
+        function overlayAnchorForTaskModule(taskModule) { // NEW
+            if (pendingClickAnchor && taskModuleContainsPoint(taskModule, pendingClickAnchor.model)) return pendingClickAnchor; // NEW
+            if (lastClickAnchor && taskModuleContainsPoint(taskModule, lastClickAnchor.model)) return lastClickAnchor; // NEW
+            return fallbackAnchorForTaskModule(taskModule); // NEW
+        } // NEW
+
+        function positionTaskModuleOverlay(taskModule, anchor) { // NEW
+            if (anchor && anchor.container) { // NEW
+                overlay.style.left = Math.round(anchor.container.x + TASK_ACTION_OVERLAY_EXTRA_X) + 'px'; // NEW: selected task module overlays intentionally do not clamp to the viewport
+                overlay.style.top = Math.round(anchor.container.y + TASK_ACTION_OVERLAY_EXTRA_Y) + 'px'; // NEW: selected task module overlays intentionally do not clamp to the viewport
+                return true; // NEW
+            } // NEW
+            return positionDomOverlayFromCellStateUnclamped(overlay, taskModule, true, false, TASK_ACTION_OVERLAY_EXTRA_Y, TASK_ACTION_OVERLAY_EXTRA_X); // NEW
+        } // NEW
+
+        function hideOverlay() { // NEW
+            overlay.style.display = 'none'; // NEW
+        } // NEW
+
+        function showOverlay(taskModule, anchor) { // NEW
+            currentTaskModule = taskModule; // NEW
+            renderTaskModuleLabelControls(taskModule); // NEW
+            overlay.style.display = 'flex'; // NEW
+            if (!positionTaskModuleOverlay(taskModule, anchor || fallbackAnchorForTaskModule(taskModule))) hideOverlay(); // NEW
+        } // NEW
+
+        mxEvent.addListener(addBoardBtn, 'click', function (evt) { // NEW
+            mxEvent.consume(evt); // NEW
+            const taskModule = selectedTaskModule(); // NEW
+            if (!taskModule) return; // NEW
+            const board = taskCommands.runModelUpdate({}, function () { return createSecondaryBoardIn(taskModule); }); // NEW
+            if (board && graph.setSelectionCell) graph.setSelectionCell(board); // NEW
+            if (board && graph.scrollCellToVisible) graph.scrollCellToVisible(board, true); // NEW
+            overlay.style.display = 'none'; // NEW
+        }); // NEW
+
+        function refresh() { // NEW
+            const taskModule = selectedTaskModule(); // NEW
+            if (!taskModule) { currentTaskModule = null; manuallyHiddenTaskModule = null; hideOverlay(); return; } // CHANGE
+            if (manuallyHiddenTaskModule && manuallyHiddenTaskModule !== taskModule) manuallyHiddenTaskModule = null; // NEW
+            if (manuallyHiddenTaskModule === taskModule) { currentTaskModule = taskModule; hideOverlay(); return; } // NEW
+            showOverlay(taskModule, overlayAnchorForTaskModule(taskModule)); // CHANGE
+            pendingClickAnchor = null; // NEW
+        } // NEW
+
+        function onMouseDown(_sender, me) { // NEW
+            const evt = me && me.getEvent ? me.getEvent() : null; // NEW
+            if (evt && overlay.contains(mxEvent.getSource ? mxEvent.getSource(evt) : evt.target)) return; // NEW
+            pendingToggleCell = null; // NEW
+            pendingClickAnchor = null; // NEW
+            if (!isPlainPrimaryMouseEvent(evt)) return; // NEW
+            const selected = selectedTaskModule(); // NEW
+            const cell = taskMouseEventCell(me, evt); // NEW
+            if (!isTaskModule(cell)) return; // CHANGE
+            pendingClickAnchor = mouseAnchorForEvent(me, evt); // CHANGE
+            if (selected && cell === selected) pendingToggleCell = selected; // CHANGE
+        } // NEW
+
+        function onMouseUp(_sender, me) { // NEW
+            const evt = me && me.getEvent ? me.getEvent() : null; // NEW
+            const selected = selectedTaskModule(); // NEW
+            const toggleCell = pendingToggleCell; // NEW
+            const anchor = pendingClickAnchor || mouseAnchorForEvent(me, evt); // NEW
+            pendingToggleCell = null; // NEW
+            if (!toggleCell || selected !== toggleCell || !isPlainPrimaryMouseEvent(evt)) return; // NEW
+            lastClickAnchor = anchor || lastClickAnchor; // NEW
+            manuallyHiddenTaskModule = overlay.style.display !== 'none' && currentTaskModule === toggleCell ? toggleCell : null; // NEW
+            if (manuallyHiddenTaskModule) hideOverlay(); // NEW
+            else { pendingClickAnchor = lastClickAnchor; showOverlay(toggleCell, lastClickAnchor); pendingClickAnchor = null; } // NEW
+        } // NEW
+
+        if (graph.addMouseListener) { // NEW
+            graph.addMouseListener({ mouseDown: onMouseDown, mouseMove() {}, mouseUp: onMouseUp }); // NEW
+        } // NEW
+
+        const requestRefresh = createDeferredTaskOverlayRefresh(refresh); // NEW
+        graph.getSelectionModel().addListener(mxEvent.CHANGE, requestRefresh); // NEW
+        addGraphViewRefreshListener(requestRefresh); // NEW
+        requestRefresh(); // NEW
+    } // NEW
+
     function installSelectedCardActionOverlay() { // NEW
         if (graph.__trellisTaskCardOverlayInstalled || !document || !document.createElement) return; // NEW
         graph.__trellisTaskCardOverlayInstalled = true; // NEW
@@ -6953,12 +7460,12 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
                 } // NEW
             } // NEW
 
-            const gm = cell && model.isVertex(cell) && isGardenModule(cell) ? cell : null;           // CHANGE
-            if (!gm) return;                                                                         // CHANGE
+            const taskModule = cell && model.isVertex(cell) && isTaskModule(cell) ? cell : null;     // CHANGE
+            if (!taskModule) return;                                                                 // CHANGE
 
             menu.addSeparator();                                                                     // CHANGE
             menu.addItem('Add Kanban Board', null, function () {
-                taskCommands.ensureBoardTemplateInUpdate(gm); // CHANGE
+                taskCommands.runModelUpdate({}, function () { createSecondaryBoardIn(taskModule); }); // CHANGE
             });
             } // CHANGE
         }); // CHANGE
@@ -6967,10 +7474,13 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
     // -------------------- Boot sequence -------------------- // NEW
     installTaskOverlayGestureGate(); // NEW
     installLanePagerOverlay(); // NEW
+    addGraphViewRefreshListener(refreshTransientUnseenHighlightPositions); // NEW
+    if (model.addListener) model.addListener(mxEvent.CHANGE, clearTransientUnseenHighlights); // NEW
     initializeLanePagingFromModel(); // NEW
     installWeekAssigneeBadgeLayer(); // NEW
     installBoardHeaderControls(); // NEW
     installWeekTimeScaleOverlay(); // NEW
+    installSelectedTaskModuleBoardOverlay(); // NEW
     installSelectedDayLaneActionOverlay(); // NEW
     installSelectedCardActionOverlay(); // NEW
 
@@ -7009,31 +7519,19 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
 
     console.log('[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).');
 
-    // -------------------- Auto-create board on garden settings event --------------------  // NEW
+    // -------------------- Garden-creation task board hook --------------------  // CHANGE
     if (!graph.__uslKanbanGardenEventInstalled) {                                            // NEW
         graph.__uslKanbanGardenEventInstalled = true;                                        // NEW
 
-        graph.addListener("usl:gardenModuleNeedsSettings", function (_sender, evt) {         // NEW
-            const moduleCell = evt && typeof evt.getProperty === "function"                  // NEW
-                ? evt.getProperty("cell")                                                    // NEW
-                : null;                                                                      // NEW
-
-            if (!moduleCell || !model.isVertex(moduleCell)) return;                          // NEW
-            if (!isGardenModule(moduleCell)) return;                                         // NEW
-
-            const boards = findBoardsIn(moduleCell);                                         // NEW
-            if (boards && boards.main) return;                                               // NEW (already has a board)
-
-            // Defer to avoid running inside someone else's model.beginUpdate()               // NEW
-            setTimeout(function () {                                                         // NEW
-                const again = findBoardsIn(moduleCell);                                      // NEW
-                if (again && again.main) return;                                             // NEW
-                taskCommands.ensureBoardTemplateInUpdate(moduleCell);                        // CHANGE
-                graph.refresh(moduleCell);
-                graph.fireEvent(new mxEventObject("usl:requestApplyModuleMargins", "cell", moduleCell));// NEW
-                // NEW
-            }, 0);                                                                           // NEW
-        });                                                                                  // NEW
+        graph.addListener("usl:taskModuleReady", function (_sender, evt) {                    // NEW
+            const taskModule = evt && typeof evt.getProperty === "function"                   // NEW
+                ? evt.getProperty("taskModule")                                               // NEW
+                : null;                                                                       // NEW
+            const createMainBoard = !!(evt && typeof evt.getProperty === "function" && evt.getProperty("createMainBoard")); // NEW
+            if (!createMainBoard) return;                                                     // NEW
+            if (!taskModule || !model.isVertex(taskModule) || !isTaskModule(taskModule)) return; // NEW
+            setTimeout(function () { taskCommands.ensureBoardTemplateInUpdate(taskModule); }, 0); // NEW
+        });                                                                                   // NEW
     }                                                                                        // NEW
 
         } // CHANGE

@@ -277,10 +277,27 @@ Draw.loadPlugin(function (ui) {
         return String(value || '') === ORPHAN_SOWING_SEASON_ID; // ADDED
     }
 
+    function localTodayISO(now = new Date()) { // ADDED
+        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`; // ADDED
+    } // ADDED
+
     function defaultStartForActiveSowingSeason(activeWindow, todayISO = '') { // ADDED
         if (!activeWindow) return ''; // ADDED
         return sowDateInWindow(todayISO, activeWindow) ? String(todayISO) : String(activeWindow.startISO || ''); // ADDED
     }
+
+    function defaultStartForSowingSeasons(windows, todayISO = '') { // ADDED
+        const normalized = normalizeSowingSeasons(windows); // ADDED
+        if (!normalized.length) return ''; // ADDED
+        const activeId = pickDefaultSowingSeasonId(normalized, { todayISO }); // ADDED
+        const activeWindow = normalized.find(window => window.id === String(activeId || '').trim()) || normalized[0]; // ADDED
+        return defaultStartForActiveSowingSeason(activeWindow, todayISO); // ADDED
+    } // ADDED
+
+    function defaultPrimaryStartForSowingSeasons(windows, { todayISO = '', methodId = '', effectiveTransplantDays = 0 } = {}) { // ADDED
+        const visibleWindows = projectSowingSeasonsForPrimaryDate(windows, methodId, effectiveTransplantDays); // ADDED
+        return defaultStartForSowingSeasons(visibleWindows, todayISO); // ADDED
+    } // ADDED
 
     function resolveStartAfterWindow({
         currentStartISO,
@@ -289,10 +306,11 @@ Draw.loadPlugin(function (ui) {
         forceWriteStart,
         hasPersistedSchedule,
         userEditedStartThisSession,
-        todayISO = ''
+        todayISO = '',
+        generatedStartISO = ''
     }) { // CHANGED: active sowing seasons own generated defaults
         const preserveGenuineStart = !!hasPersistedSchedule || !!userEditedStartThisSession; // CHANGED
-        if (feasible && (forceWriteStart || !preserveGenuineStart)) return defaultStartForActiveSowingSeason(activeWindow, todayISO); // CHANGED
+        if (feasible && (forceWriteStart || !preserveGenuineStart)) return String(generatedStartISO || '') || defaultStartForActiveSowingSeason(activeWindow, todayISO); // CHANGED
         if (!feasible && !preserveGenuineStart) return ''; // CHANGED
         return String(currentStartISO || ''); // CHANGED
     }
@@ -303,15 +321,16 @@ Draw.loadPlugin(function (ui) {
         selectedIsPerennial = false, // ADDED
         initialWindowFeasible = false, // ADDED
         sowingSeasons = [], // ADDED
-        todayISO = '' // ADDED
+        todayISO = '', // ADDED
+        methodId = '', // ADDED
+        effectiveTransplantDays = 0 // ADDED
     } = {}) { // ADDED
         if (storedSowDate || selectedIsPerennial) return storedSowDate || earliestFeasibleSowDate || null; // CHANGED
         if (!initialWindowFeasible) return parseISODateUTCValue(todayISO) || earliestFeasibleSowDate || null; // CHANGED
         const windows = normalizeSowingSeasons(sowingSeasons); // ADDED
         if (!windows.length) return earliestFeasibleSowDate || null; // ADDED
-        const activeId = pickDefaultSowingSeasonId(windows, { todayISO }); // ADDED
-        const activeWindow = windows.find(window => window.id === String(activeId || '').trim()) || windows[0]; // ADDED
-        const defaultStartISO = defaultStartForActiveSowingSeason(activeWindow, todayISO); // ADDED
+        const defaultPrimaryStartISO = defaultPrimaryStartForSowingSeasons(windows, { todayISO, methodId, effectiveTransplantDays }); // ADDED
+        const defaultStartISO = sowDateFromPrimaryDate(defaultPrimaryStartISO, methodId, effectiveTransplantDays); // ADDED
         return parseISODateUTCValue(defaultStartISO) || earliestFeasibleSowDate || null; // ADDED
     } // ADDED
 
@@ -7927,6 +7946,7 @@ Draw.loadPlugin(function (ui) {
         const harvestEndInput = makeDisplayField(initialSelectedHarvestEndISO); // CHANGED
         const daysToFirstHarvestInput = makeDisplayField(''); // CHANGED
         let userEditedStartThisSession = false; // FIX: distinguish session intent from persisted state
+        let generatedStartThisSession = !hasPersistedSchedule && !mode.perennial && !!initialInternalStartISO; // ADDED
         let latestScheduleResult = null; // ADDED
 
         const startNoteSpan = document.createElement('span');
@@ -9175,16 +9195,21 @@ Draw.loadPlugin(function (ui) {
 
                 const windows = normalizeSowingSeasons(r.seasons); // CHANGED
                 const windowFeasible = windows.length > 0; // CHANGED
-                const today = new Date(); // ADDED
-                const todayISO = fmtISO(asUTCDate(today.getUTCFullYear(), today.getUTCMonth() + 1, today.getUTCDate())); // ADDED
+                const todayISO = localTodayISO(); // CHANGED
                 const currentActive = windows.find(window => window.id === formState.activeSowingSeasonId); // ADDED
                 const savedWindow = hasPersistedSchedule && !userEditedStartThisSession
                     ? findSowingSeasonForDate(windows, formState.startISO)
                     : null; // ADDED
                 const savedDateIsOrphan = hasPersistedSchedule && !userEditedStartThisSession && !!formState.startISO && !savedWindow; // ADDED
+                const defaultVisibleWindows = projectSowingSeasonsForPrimaryDate(windows, formState.methodId, currentTransplantDaysConfig().effectiveDays); // ADDED
                 const nextActiveId = savedWindow
                     ? savedWindow.id
-                    : (savedDateIsOrphan ? ORPHAN_SOWING_SEASON_ID : ((!forceWriteStart && currentActive) ? currentActive.id : pickDefaultSowingSeasonId(windows, { savedStartISO: hasPersistedSchedule ? formState.startISO : '', todayISO }))); // CHANGED
+                    : (savedDateIsOrphan ? ORPHAN_SOWING_SEASON_ID : ((!forceWriteStart && currentActive) ? currentActive.id : pickDefaultSowingSeasonId(defaultVisibleWindows, { savedStartISO: hasPersistedSchedule ? displayPrimaryDateISO(formState.startISO) : '', todayISO }))); // CHANGED
+                const defaultVisibleWindow = defaultVisibleWindows.find(window => window.id === String(nextActiveId || '').trim()) || null; // ADDED
+                const defaultPrimaryStartISO = defaultVisibleWindow // ADDED
+                    ? defaultStartForActiveSowingSeason(defaultVisibleWindow, todayISO) // ADDED
+                    : defaultPrimaryStartForSowingSeasons(windows, { todayISO, methodId: formState.methodId, effectiveTransplantDays: currentTransplantDaysConfig().effectiveDays }); // ADDED
+                const defaultInternalStartISO = sowDateFromPrimaryDate(defaultPrimaryStartISO, formState.methodId, currentTransplantDaysConfig().effectiveDays); // ADDED
 
                 const autoHarvestISO = r.climateEndDate
                     ? r.climateEndDate.toISOString().slice(0, 10)
@@ -9207,11 +9232,14 @@ Draw.loadPlugin(function (ui) {
                     forceWriteStart,
                     hasPersistedSchedule,
                     userEditedStartThisSession,
-                    todayISO
+                    todayISO,
+                    generatedStartISO: defaultInternalStartISO
                 }); // FIX
+                generatedStartThisSession = windowFeasible && !preserveGenuineStart && !!formState.startISO; // ADDED
                 if (windowFeasible && forceWriteStart) {
                     hasPersistedSchedule = false; // FIX: the replacement is generated, not the stored schedule
                     userEditedStartThisSession = false; // FIX
+                    generatedStartThisSession = !!formState.startISO; // ADDED
                 }
 
                 // let auto window drive the annual latest-harvest display date when requested
@@ -9675,7 +9703,8 @@ Draw.loadPlugin(function (ui) {
         async function handleSchedulePlantChange({ preferVarietyId = null } = {}) { // FIX: provide an awaitable schedule plant workflow
             const preservedPrimaryDateISO = String(startInput.value || '').trim(); // ADDED
             const applyDerivedCompanionDefault = derivedContext?.mode === 'companion' && !userEditedStartThisSession; // ADDED
-            const preservePrimaryDate = !!parseISODateUTCValue(preservedPrimaryDateISO) && !applyDerivedCompanionDefault; // CHANGED
+            const preserveDerivedGeneratedDate = !!derivedContext?.mode && derivedContext.mode !== 'companion' && !hasPersistedSchedule && !userEditedStartThisSession; // CHANGED
+            const preservePrimaryDate = !!parseISODateUTCValue(preservedPrimaryDateISO) && !applyDerivedCompanionDefault && (hasPersistedSchedule || userEditedStartThisSession || preserveDerivedGeneratedDate); // CHANGED
             const newPlant = findPlantById(Number(plantSel.value)); if (!newPlant) return;
             selPlant = newPlant; plantNameSpan.textContent = newPlant.plant_name;
 
@@ -9716,12 +9745,22 @@ Draw.loadPlugin(function (ui) {
 
             if (preservePrimaryDate) { // ADDED
                 startInput.value = preservedPrimaryDateISO; // ADDED
-                userEditedStartThisSession = true; // ADDED
+                userEditedStartThisSession = !hasPersistedSchedule; // CHANGED
+                generatedStartThisSession = preserveDerivedGeneratedDate; // ADDED
             } else if (applyDerivedCompanionDefault) { // ADDED
                 const rel = derivedContext.relationshipByPlantId?.get?.(String(formState.plantId)); // ADDED
                 const recommended = Number(rel?.recommendedStartOffsetDays ?? 0); // ADDED
                 startInput.value = shiftISODate(derivedContext.sourceOccupancy.startISO, recommended); // ADDED
+                userEditedStartThisSession = false; // ADDED
+                generatedStartThisSession = true; // ADDED
                 updateCompanionTimingHelp(); // CHANGED
+            } else if (generatedStartThisSession) { // ADDED
+                startInput.value = ''; // ADDED
+                sowingSeasonSel.value = ''; // ADDED
+                formState.startISO = ''; // ADDED
+                formState.activeSowingSeasonId = ''; // ADDED
+                userEditedStartThisSession = false; // ADDED
+                generatedStartThisSession = false; // ADDED
             } // ADDED
             updateCompanionTimingHelp(); // ADDED
             writeLayoutControlsFromSelection(); // ADDED
@@ -9787,6 +9826,7 @@ Draw.loadPlugin(function (ui) {
         startInput.addEventListener('input', () => {
             void runUiAsync('Date change error', async () => { // FIX
                 userEditedStartThisSession = true; // FIX
+                generatedStartThisSession = false; // ADDED
                 syncStateFromControls();
                 updateCompanionTimingHelp(); // ADDED
                 refreshLayoutPreview(); // ADDED
@@ -9810,7 +9850,8 @@ Draw.loadPlugin(function (ui) {
                 formState.activeSowingSeasonId = sowingSeasonSel.value || ''; // ADDED
                 formState.startISO = resolveStartForSowingSeasonSwitch(formState.sowingSeasons, formState.activeSowingSeasonId, formState.startISO); // CHANGED
                 syncStartInputFromState(); // CHANGED
-                userEditedStartThisSession = true; // CHANGED
+                userEditedStartThisSession = false; // CHANGED
+                generatedStartThisSession = !hasPersistedSchedule && !mode.perennial && !!formState.startISO; // CHANGED
                 syncStartDateBounds(); // ADDED
                 refreshSowingSeasonSelector(); // ADDED
                 updateStartNote(); // ADDED
@@ -13126,8 +13167,9 @@ Draw.loadPlugin(function (ui) {
 
         // 3) Initial city & method
         const now = new Date();
-        const currentYear = now.getUTCFullYear();
-        const todayUTC = new Date(Date.UTC(currentYear, now.getUTCMonth(), now.getUTCDate()));
+        const currentYear = now.getFullYear(); // CHANGED
+        const todayISO = localTodayISO(now); // ADDED
+        const todayUTC = parseISODateUTCValue(todayISO); // CHANGED
         const storedSowDate = parseISODateUTCValue(cell?.getAttribute?.('sow_date'));
         const storedHarvestEndDate = parseISODateUTCValue(cell?.getAttribute?.('harvest_end'));
         const storedSeasonYear = finiteNumberOrNull(cell?.getAttribute?.('season_start_year'));
@@ -13281,7 +13323,9 @@ Draw.loadPlugin(function (ui) {
             selectedIsPerennial, // ADDED
             initialWindowFeasible, // ADDED
             sowingSeasons: initialSowingSeasons, // ADDED
-            todayISO: fmtISO(todayUTC) // ADDED
+            todayISO, // CHANGED
+            methodId: initialMethodId, // ADDED
+            effectiveTransplantDays: initialTransplantDaysConfig.effectiveDays // ADDED
         }); // CHANGED
         if (!selectedIsPerennial && storedHarvestEndDate) {
             selectedHarvestEndDate = storedHarvestEndDate; // CHANGED
@@ -13440,7 +13484,7 @@ Draw.loadPlugin(function (ui) {
         if (!allPlants.length) { mxUtils.alert('No plants found in database.'); return; } // ADDED
         const gardenParent = findGardenModuleAncestor(model, cell); // ADDED
         const today = new Date(); // ADDED
-        const todayISO = fmtISO(asUTCDate(today.getUTCFullYear(), today.getUTCMonth() + 1, today.getUTCDate())); // ADDED
+        const todayISO = localTodayISO(today); // CHANGED
         const cityId = finiteNumberOrNull(cell?.getAttribute?.('city_id')) ?? finiteNumberOrNull(gardenParent?.getAttribute?.('city_id')); // ADDED
         const cityName = String(cell?.getAttribute?.('city_name') || gardenParent?.getAttribute?.('city_name') || '').trim(); // ADDED
         const setPlantCity = (cityId != null || cityName) ? await CityClimate.resolve({ cityId, cityName }) : null; // ADDED
@@ -13450,7 +13494,7 @@ Draw.loadPlugin(function (ui) {
             city: setPlantCity, // ADDED
             cityName: setPlantCity.city_name || cityName, // ADDED
             primaryDateISO: todayISO, // ADDED
-            seasonStartYear: today.getUTCFullYear(), // ADDED
+            seasonStartYear: today.getFullYear(), // CHANGED
             climateModelModuleCell: gardenParent, // ADDED
             bedProfile: setPlantBedContext.profile, // ADDED
             bedProfileSource: setPlantBedContext.source, // ADDED
@@ -14005,6 +14049,7 @@ Draw.loadPlugin(function (ui) {
             formatScheduleQualityDiagnosticRanges, // ADDED
             buildSowingSeasonSelectorState, // ADDED
             pickDefaultSowingSeasonId, // ADDED
+            defaultPrimaryStartForSowingSeasons, // ADDED
             defaultStartForActiveSowingSeason, // ADDED
             resolveInitialPreviewStartForScheduleDialog, // ADDED
             findSowingSeasonForDate, // ADDED

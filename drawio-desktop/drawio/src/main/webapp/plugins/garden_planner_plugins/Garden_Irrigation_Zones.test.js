@@ -6,6 +6,17 @@ import { fileURLToPath } from "url"; // NEW
 
 const __filename = fileURLToPath(import.meta.url); // NEW
 const __dirname = path.dirname(__filename); // NEW
+const PX_PER_CM = 5; // NEW
+const DRAW_SCALE = 0.18; // NEW
+const CM_PER_INCH = 2.54; // NEW
+
+function cmToUnits(cm) { // NEW
+    return Number(cm || 0) * PX_PER_CM * DRAW_SCALE; // NEW
+} // NEW
+
+function inchesToUnits(inches) { // NEW
+    return cmToUnits(Number(inches || 0) * CM_PER_INCH); // NEW
+} // NEW
 
 function makeXmlNode(attrs) { // NEW
     return { // NEW
@@ -266,6 +277,62 @@ function runReverseAndBadgeLayoutTests() { // NEW
     assert.strictEqual(inputNode.style.top, "38px"); // CHANGE
 } // NEW
 
+function irrigationLayoutRows(assembly) { // NEW
+    return assembly.children.filter(cell => cell.getAttribute("irrigation_bed_layout") === "1"); // NEW
+} // NEW
+
+function rowCenterInches(row, axis) { // NEW
+    const geo = row.geometry || {}; // NEW
+    const units = axis === "x" ? Number(geo.x || 0) + Number(geo.width || 0) / 2 : Number(geo.y || 0) + Number(geo.height || 0) / 2; // NEW
+    return units / (PX_PER_CM * DRAW_SCALE) / CM_PER_INCH; // NEW
+} // NEW
+
+function runBedRowSpacingGeometryTests() { // NEW
+    const moduleCell = makeCell("module_spacing", { garden_module: "1", unit_system: "imperial" }); // NEW
+    const installed = installPlugin(moduleCell); // NEW
+    const assembly = addChild(moduleCell, makeCell("assembly_spacing", { irrigation_assembly: "1", irrigation_assembly_type: "bed", label: "Legacy Label" }, { x: 0, y: 0, width: inchesToUnits(48), height: inchesToUnits(30) })); // NEW
+    const record = { templateId: "overhead_sprinkler_block", irrigationType: "sprinkler", rowOrientation: "width", spacing: { rows: 2, emitterInches: 12, rowSpacingCm: 15 * CM_PER_INCH } }; // NEW
+    installed.api.__test.createBedTemplateLayoutCells(assembly, "path_spacing", record, assembly.geometry); // NEW
+    const rows = irrigationLayoutRows(assembly); // NEW
+    assert.strictEqual(rows.length, 2); // NEW
+    assert.strictEqual(Math.round(installed.api.__test.rowSpacingCmForRows(assembly.geometry, 2, "width") / CM_PER_INCH), 15); // NEW
+    assert.strictEqual(Math.round(rowCenterInches(rows[0], "y") * 10) / 10, 7.5); // NEW
+    assert.strictEqual(Math.round(rowCenterInches(rows[1], "y") * 10) / 10, 22.5); // NEW
+    assert.strictEqual(installed.api.__test.rowsForRowSpacingCm(assembly.geometry, 12 * CM_PER_INCH, "width", 2), 3); // NEW
+    assert.strictEqual(Math.round(installed.api.__test.rowSpacingCmForRows(assembly.geometry, 3, "width") / CM_PER_INCH), 10); // NEW
+    assert.strictEqual(Math.round(installed.api.__test.rowSpacingCmForRows(assembly.geometry, 2, "height") / CM_PER_INCH), 24); // NEW
+    assert.strictEqual(installed.api.__test.rowsForRowSpacingCm(assembly.geometry, 0, "width", 2), 0); // NEW
+    assert.strictEqual(installed.api.__test.rowSpacingCmForRows(assembly.geometry, 0, "width"), 0); // NEW
+    const zeroBom = installed.api.__test.computeBedTemplateBom({ items: [] }, assembly.geometry, "overhead_sprinkler_block", 0, "width"); // NEW
+    assert.strictEqual(zeroBom.rowCount, 0); // NEW
+    assert.strictEqual(zeroBom.totalRowMeters, 0); // NEW
+    assert.strictEqual(zeroBom.demand.flowGpm, 0); // NEW
+    assert.strictEqual(zeroBom.demand.operatingPressurePsi, 0); // NEW
+    assert.deepStrictEqual(zeroBom.missingPartIds, []); // NEW
+    assert.ok(zeroBom.requiredParts.every(part => part.quantityMeters === 0)); // NEW
+    installed.api.__test.createBedTemplateLayoutCells(assembly, "path_spacing", { templateId: "overhead_sprinkler_block", irrigationType: "sprinkler", rowOrientation: "width", spacing: { rows: 0, emitterInches: 12, rowSpacingCm: 0 } }, assembly.geometry); // NEW
+    assert.strictEqual(irrigationLayoutRows(assembly).length, 0); // NEW
+    const zeroCommit = installed.api.__test.commitBedTemplate(moduleCell, "path_zero_commit", assembly, { templateId: "overhead_sprinkler_block", templateModel: "bom", irrigationType: "sprinkler", rowOrientation: "width", spacing: { rows: 0, emitterInches: 12 } }); // NEW
+    assert.strictEqual(zeroCommit.spacing.rows, 0); // NEW
+    assert.strictEqual(zeroCommit.spacing.rowSpacingCm, 0); // NEW
+    assert.strictEqual(zeroCommit.demand.flowGpm, 0); // NEW
+    assert.strictEqual(zeroCommit.demand.operatingPressurePsi, 0); // NEW
+    assert.strictEqual(irrigationLayoutRows(assembly).length, 0); // NEW
+} // NEW
+
+function runBedAssemblyLabelModeTests() { // NEW
+    const moduleCell = makeCell("module_label_mode", { garden_module: "1" }); // NEW
+    const bed = addChild(moduleCell, makeCell("bed_label_mode", { garden_bed: "1", label: "Bed" }, { x: 0, y: 0, width: inchesToUnits(48), height: inchesToUnits(30) })); // NEW
+    const hiddenAssembly = addChild(moduleCell, makeCell("assembly_hidden_label", { irrigation_assembly: "1", irrigation_assembly_type: "bed", irrigation_linked_bed_id: "bed_label_mode", label: "Overhead sprinkler block" }, { x: 0, y: 0, width: inchesToUnits(48), height: inchesToUnits(30) })); // NEW
+    const installed = installPlugin(moduleCell); // NEW
+    installed.api.__test.commitBedTemplate(moduleCell, "path_hidden_label", hiddenAssembly, { templateId: "overhead_sprinkler_block", templateModel: "bom", irrigationType: "sprinkler", rowOrientation: "width", spacing: { rows: 2, emitterInches: 12 } }); // NEW
+    assert.strictEqual(hiddenAssembly.getAttribute("label"), undefined); // NEW
+    const oldRecord = { templateId: "overhead_sprinkler_block", templateModel: "bom", irrigationType: "sprinkler", rowOrientation: "width", spacing: { rows: 2, emitterInches: 12 } }; // NEW
+    const legacyAssembly = addChild(moduleCell, makeCell("assembly_legacy_label", { irrigation_assembly: "1", irrigation_assembly_type: "bed", irrigation_linked_bed_id: "bed_label_mode", label: "Legacy sprinkler label", irrigation_bed_template_json: JSON.stringify(oldRecord) }, { x: 0, y: 0, width: inchesToUnits(48), height: inchesToUnits(30) })); // NEW
+    installed.api.__test.syncLinkedBedAssemblyToBed(moduleCell, legacyAssembly, bed, { inTransaction: true }); // NEW
+    assert.strictEqual(legacyAssembly.getAttribute("label"), "Legacy sprinkler label"); // NEW
+} // NEW
+
 function runDropdownPipeOutputCreatesExternalAssemblyTest() { // FIX
     const { moduleCell, api, assembly, a } = buildSinglePartAssemblyFixture(); // FIX
     const result = api.__test.applyConnectionPartChoice(moduleCell, { cell: a, role: "output", index: 0 }, catalogPart(partCatalog(), "filter")); // FIX
@@ -335,6 +402,68 @@ function runDropdownPipeFailureDoesNotLeaveAssemblyTest() { // FIX
     assert.strictEqual(moduleCell.children.some(cell => cell.getAttribute("irrigation_pipe_edge") === "1"), false); // FIX
 } // FIX
 
+function bomCatalog() { // NEW
+    return { items: [ // NEW
+        { id: "valve_bom", name: "Valve BOM", category: "valve", stockState: "in_stock", stockQuantity: 1, cost: 10, connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "3/4" }, output: { type: "barb", nominalSize: "3/4" } }, specs: {} }, // NEW
+        { id: "filter_bom", name: "Filter BOM", category: "filter", stockState: "out_of_stock", stockQuantity: 0, cost: 5, connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "3/4" }, output: { type: "barb", nominalSize: "3/4" } }, specs: {} }, // NEW
+        { id: "pipe_bom", name: "Pipe BOM", category: "pipe_tubing", stockState: "in_stock", stockQuantity: 3, cost: 2, unitCost: 2, connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "3/4", pipeConnection: true }, output: { type: "barb", nominalSize: "3/4", pipeConnection: true } }, specs: { innerDiameterIn: 0.824 } }, // NEW
+        { id: "drip_bom", name: "Drip BOM", category: "dripline", stockState: "out_of_stock", stockQuantity: 0, cost: 1, unitCost: 1, connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "1/2", pipeConnection: true }, output: { type: "barb", nominalSize: "1/2", pipeConnection: true } }, specs: { flowGpm: 0 } } // NEW
+    ] }; // NEW
+} // NEW
+
+function bomPaths() { // NEW
+    return [{ // NEW
+        id: "bom_path", // NEW
+        partIds: ["valve_bom", "filter_bom"], // NEW
+        pipeSegments: [{ pipePartId: "pipe_bom", lengthFt: 10 }], // NEW
+        bedTemplate: { templateModel: "bom", requiredParts: [{ partId: "drip_bom", quantityMeters: 3.048 }], partIds: ["filter_bom"] } // NEW
+    }]; // NEW
+} // NEW
+
+function findBomRow(rows, partId) { // NEW
+    return rows.find(row => row.partId === partId); // NEW
+} // NEW
+
+function runBomAggregationTests() { // NEW
+    const moduleCell = makeCell("module_bom", { garden_module: "1", unit_system: "imperial" }); // NEW
+    const installed = installPlugin(moduleCell); // NEW
+    const bom = installed.api.__test.buildBomRows(moduleCell, { catalog: bomCatalog(), paths: bomPaths() }); // NEW
+    assert.strictEqual(findBomRow(bom.rows, "valve_bom").requiredQuantity, 1); // NEW
+    assert.strictEqual(findBomRow(bom.rows, "filter_bom").requiredQuantity, 2); // NEW
+    assert.strictEqual(findBomRow(bom.rows, "pipe_bom").requiredQuantity, 10); // NEW
+    assert.strictEqual(Math.round(findBomRow(bom.rows, "drip_bom").requiredQuantity), 10); // NEW
+    assert.strictEqual(findBomRow(bom.rows, "pipe_bom").shortageQuantity, 7); // NEW
+    assert.strictEqual(findBomRow(bom.rows, "filter_bom").purchaseCost, 10); // NEW
+} // NEW
+
+function runBomSelectionAndMetricTests() { // NEW
+    const moduleCell = makeCell("module_bom_metric", { garden_module: "1", unit_system: "metric" }); // NEW
+    const assembly = addChild(moduleCell, makeCell("assembly_bom", { irrigation_assembly: "1", irrigation_assembly_type: "parts" })); // NEW
+    addChild(assembly, partCell("bomValveCell", "valve_bom", "Valve BOM", 20)); // NEW
+    const installed = installPlugin(moduleCell); // NEW
+    const catalog = bomCatalog(); // NEW
+    const selected = installed.api.__test.buildBomRows(moduleCell, { catalog, paths: bomPaths(), selectedPartIds: ["filter_bom"] }); // NEW
+    assert.deepStrictEqual(selected.rows.map(row => row.partId), ["filter_bom"]); // NEW
+    assert.deepStrictEqual(installed.api.__test.selectedCatalogPartIdsForSelection(moduleCell, makeCell("outside", {})), []); // NEW
+    assert.deepStrictEqual(installed.api.__test.selectedCatalogPartIdsForSelection(moduleCell, assembly), ["valve_bom"]); // NEW
+    const pipe = catalog.items.find(part => part.id === "pipe_bom"); // NEW
+    assert.strictEqual(Math.round(installed.api.__test.bomCanonicalQuantityToDisplay(10, pipe, moduleCell) * 1000), 3048); // NEW
+    assert.strictEqual(Math.round(installed.api.__test.bomDisplayUnitCost(pipe, moduleCell) * 100), 656); // NEW
+} // NEW
+
+function runBomStockAndSummaryTests() { // NEW
+    const moduleCell = makeCell("module_bom_summary", { garden_module: "1", unit_system: "imperial" }); // NEW
+    const installed = installPlugin(moduleCell); // NEW
+    const normalized = installed.api.__test.normalizeCatalogPart({ id: "legacy", name: "Legacy", category: "filter", stockState: "unknown", connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "3/4" }, output: { type: "barb", nominalSize: "3/4" } }, specs: {} }); // NEW
+    assert.strictEqual(normalized.stockQuantity, 0); // NEW
+    assert.strictEqual(installed.api.__test.stockStateForQuantity(0), "out_of_stock"); // NEW
+    assert.strictEqual(installed.api.__test.stockStateForQuantity(2), "in_stock"); // NEW
+    const summary = installed.api.__test.buildReportSummary(moduleCell, { catalog: bomCatalog(), paths: bomPaths(), beds: [] }); // NEW
+    assert.strictEqual(summary.purchaseNeededCost, 34); // NEW
+    assert.strictEqual(summary.purchaseNeededCount, 3); // NEW
+    assert.strictEqual(summary.totalDesignValue, 50); // CHANGE
+} // NEW
+
 function run() { // NEW
     runZoneTests(); // CHANGE
     runBoundaryDisconnectTests(); // NEW
@@ -342,11 +471,16 @@ function run() { // NEW
     runDeletePartTests(); // NEW
     runExternalEdgePathTests(); // NEW
     runReverseAndBadgeLayoutTests(); // NEW
+    runBedRowSpacingGeometryTests(); // NEW
+    runBedAssemblyLabelModeTests(); // NEW
     runDropdownPipeOutputCreatesExternalAssemblyTest(); // FIX
     runDropdownPipeInputCreatesExternalAssemblyTest(); // FIX
     runDropdownDirectConnectorStillInsertsInlineTest(); // FIX
     runExistingAssemblyPipeConnectionStillCreatesPipeEdgeTest(); // FIX
     runDropdownPipeFailureDoesNotLeaveAssemblyTest(); // FIX
+    runBomAggregationTests(); // NEW
+    runBomSelectionAndMetricTests(); // NEW
+    runBomStockAndSummaryTests(); // NEW
 } // NEW
 
 run(); // NEW

@@ -120,10 +120,54 @@ function laneTogglePanel(root) { // NEW
     return root.querySelector(".trellis-task-board-column-panel"); // NEW
 } // NEW
 
+function taskModuleOverlay(document) { // NEW
+    return document.querySelector(".trellis-task-module-board-overlay"); // NEW
+} // NEW
+
+function taskModuleOverlayInput(document) { // NEW
+    const input = document.querySelector(".trellis-task-module-board-overlay input[aria-label='Task label']"); // NEW
+    assert.ok(input, "missing task module label input"); // NEW
+    return input; // NEW
+} // NEW
+
 function showLaneToggles(root) { // NEW
     const toggle = columnsToggleButton(root); // NEW
     if (toggle && toggle.getAttribute("aria-expanded") !== "true") toggle.click(); // NEW
 } // NEW
+
+test("task manager routes garden board creation through companion Task Modules", () => { // NEW
+    const text = taskManagerSource(); // NEW
+    assert.match(text, /function isTaskModule\(cell\)/); // NEW
+    assert.match(text, /function ensureTaskModuleForGarden\(gardenModule\)/); // NEW
+    assert.match(text, /const parent = isGardenModule\(containerVertex\) \? boardContainerForGarden\(containerVertex\)/); // NEW
+    assert.match(text, /const taskModule = cell && model\.isVertex\(cell\) && isTaskModule\(cell\) \? cell : null;/); // NEW
+    assert.match(text, /menu\.addItem\('Add Kanban Board'[\s\S]*createSecondaryBoardIn\(taskModule\)/); // NEW
+    assert.match(text, /const createMainBoard = !!\(evt[\s\S]*evt\.getProperty\("createMainBoard"\)\);/); // CHANGE
+    assert.doesNotMatch(text, /function repairExistingCompanionTaskBoards\(\)/); // CHANGE
+    assert.doesNotMatch(text, /setTimeout\(repairExistingCompanionTaskBoards, 0\);/); // CHANGE
+    assert.doesNotMatch(text, /const gm = cell && model\.isVertex\(cell\) && isGardenModule\(cell\) \? cell : null;[\s\S]{0,200}Add Kanban Board/); // NEW
+}); // NEW
+
+test("task manager exposes dashboard board APIs and unseen-created state", () => { // NEW
+    const text = taskManagerSource(); // NEW
+    assert.match(text, /graph\.__trellisTaskManager = Object\.assign/); // NEW
+    assert.match(text, /listBoardsForGarden: function \(gardenModule\)/); // NEW
+    assert.match(text, /openBoardForGarden: function \(gardenModule, boardId, year\)/); // NEW
+    assert.match(text, /unseenCreatedSummaryForGarden: function \(gardenModule\)/); // NEW
+    assert.match(text, /const TASK_SEEN_CREATED_ATTR = 'task_seen_created_json';/); // NEW
+    assert.match(text, /function taskBoardUnseenSummaryForGarden\(gardenModule\)/); // NEW
+    assert.match(text, /createdAt <= cutoff/); // NEW
+    assert.match(text, /viewer\.unscheduled = Date\.now\(\);/); // NEW
+}); // NEW
+
+test("task manager installs a selected Task Module add-board overlay", () => { // NEW
+    const text = taskManagerSource(); // NEW
+    assert.match(text, /function installSelectedTaskModuleBoardOverlay\(\)/); // NEW
+    assert.match(text, /trellis-task-module-board-overlay/); // NEW
+    assert.match(text, /addBoardBtn\.textContent = 'Add Kanban Board';/); // NEW
+    assert.match(text, /createSecondaryBoardIn\(taskModule\)/); // NEW
+    assert.match(text, /installSelectedTaskModuleBoardOverlay\(\);/); // NEW
+}); // NEW
 
 function modeToggleButton(root) { // NEW
     return buttonByText(root, "Switch to Full view") || buttonByText(root, "Switch to Week view"); // CHANGE
@@ -137,6 +181,10 @@ function loadTaskManagerHooks() { // NEW
     }); // NEW
     vm.runInContext(fs.readFileSync(TASK_MANAGER_PATH, "utf8"), context, { filename: TASK_MANAGER_PATH }); // NEW
     return context.globalThis.__TRELLIS_TASK_MANAGER_TEST_HOOKS__; // NEW
+} // NEW
+
+function taskManagerSource() { // NEW
+    return fs.readFileSync(TASK_MANAGER_PATH, "utf8"); // NEW
 } // NEW
 
 function saveSelectedWeekDayHours(h, dayIndex, startValue, endValue) { // NEW
@@ -343,6 +391,7 @@ function makeHarness(options = {}) { // CHANGE
     let scrollCellToVisibleCalls = 0; // NEW
     let lastScrollCell = null; // NEW
     const refreshCalls = []; // NEW
+    const valueWrites = []; // NEW
     const model = {
         isVertex(cell) { return !!(cell && cell.vertex); },
         getParent(cell) { return cell ? cell.parent : null; },
@@ -351,7 +400,7 @@ function makeHarness(options = {}) { // CHANGE
         add(parent, child, index) { add(parent, child, index); },
         beginUpdate() { modelBeginUpdateCount += 1; }, // CHANGE
         endUpdate() {},
-        setValue(cell, value) { cell.value = instrumentLabelWrites(value); }, // CHANGE
+        setValue(cell, value) { valueWrites.push({ cell, oldValue: cell.value, newValue: value }); cell.value = instrumentLabelWrites(value); }, // CHANGE
         setGeometry(cell, geometry) { geometrySetCount++; cell.geometry = geometry; }, // CHANGE
         getGeometry(cell) { return cell ? cell.geometry : null; },
         setVisible(cell, visible) { cell.visible = !!visible; },
@@ -536,6 +585,8 @@ function makeHarness(options = {}) { // CHANGE
         get lastScrollCell() { return lastScrollCell; }, // NEW
         reflowCounters() { return JSON.parse(JSON.stringify(taskHooks.snapshotTaskReflowTestCounters())); }, // NEW
         get refreshCalls() { return refreshCalls.slice(); }, // NEW
+        clearValueWrites() { valueWrites.length = 0; }, // NEW
+        get valueWrites() { return valueWrites.slice(); }, // NEW
         get lastDialog() { return lastDialog; },
         get ui() { return currentUi; }, // NEW
         geometryChange(cell, previous) { return new context.mxGeometryChange(cell, previous); }, // CHANGE
@@ -552,17 +603,234 @@ function makeHarness(options = {}) { // CHANGE
             const evt = { getProperty(key) { return key === "edit" ? edit : null; } }; // NEW
             modelListeners.filter(entry => entry.event === "change").forEach(entry => entry.listener(null, evt)); // CHANGE
         },
-        mouseDown(cell = null) { // NEW
-            const me = { getCell() { return cell; }, getEvent() { return {}; } }; // NEW
+        mouseDown(cell = null, opts = {}) { // CHANGE
+            const event = new dom.window.MouseEvent("mousedown", { bubbles: true, button: opts.button || 0, detail: opts.detail == null ? 1 : opts.detail, clientX: opts.clientX == null ? 100 : opts.clientX, clientY: opts.clientY == null ? 120 : opts.clientY }); // NEW
+            Object.defineProperty(event, "graphX", { value: opts.graphX == null ? event.clientX : opts.graphX }); // NEW
+            Object.defineProperty(event, "graphY", { value: opts.graphY == null ? event.clientY : opts.graphY }); // NEW
+            const me = { getCell() { return cell; }, getEvent() { return event; }, getGraphX() { return event.graphX; }, getGraphY() { return event.graphY; } }; // CHANGE
             mouseListeners.forEach(listener => { if (listener.mouseDown) listener.mouseDown(graph, me); }); // NEW
         }, // NEW
-        mouseUp(cell = null) { // NEW
-            const me = { getCell() { return cell; }, getEvent() { return {}; } }; // NEW
+        mouseUp(cell = null, opts = {}) { // CHANGE
+            const event = new dom.window.MouseEvent("mouseup", { bubbles: true, button: opts.button || 0, detail: opts.detail == null ? 1 : opts.detail, clientX: opts.clientX == null ? 100 : opts.clientX, clientY: opts.clientY == null ? 120 : opts.clientY }); // NEW
+            Object.defineProperty(event, "graphX", { value: opts.graphX == null ? event.clientX : opts.graphX }); // NEW
+            Object.defineProperty(event, "graphY", { value: opts.graphY == null ? event.clientY : opts.graphY }); // NEW
+            const me = { getCell() { return cell; }, getEvent() { return event; }, getGraphX() { return event.graphX; }, getGraphY() { return event.graphY; } }; // CHANGE
             mouseListeners.forEach(listener => { if (listener.mouseUp) listener.mouseUp(graph, me); }); // NEW
         }, // NEW
         resetCounters() { geometrySetCount = 0; labelSetCount = 0; modelBeginUpdateCount = 0; scrollCellToVisibleCalls = 0; lastScrollCell = null; refreshCalls.length = 0; taskHooks.resetTaskReflowTestCounters(); } // CHANGE
     };
 }
+
+function attachCompanionTaskFixture(h) { // NEW
+    const garden = new TestCell("garden", makeValue(h.document, { garden_module: "1", label: "Kitchen Garden" }), new TestGeometry(0, 0, 500, 360), "shape=swimlane;"); // NEW
+    const taskModule = new TestCell("taskModule", makeValue(h.document, { task_module: "1", trellis_garden_module_id: "garden", label: "Kitchen Garden Tasks" }), new TestGeometry(540, 180, 500, 360), "shape=swimlane;"); // NEW
+    h.addCell(h.root, garden); // NEW
+    h.addCell(h.root, taskModule); // NEW
+    setAttr(garden, "trellis_task_module_id", taskModule.id); // NEW
+    h.graph.__trellisModules = { // NEW
+        ensureGardenTaskModule(cell) { return cell === garden ? taskModule : null; }, // NEW
+        findExistingCompanionTask(cell) { return cell === garden ? taskModule : null; } // NEW
+    }; // NEW
+    return { garden, taskModule }; // NEW
+} // NEW
+
+function boardCellsUnder(cell) { // NEW
+    return (cell.children || []).filter(child => attr(child, "board_key") === "KANBAN_BOARD" || attr(child, "board_key") === "MAIN_KANBAN_BOARD"); // NEW
+} // NEW
+
+test("task manager fails closed instead of creating garden-contained boards without Modules API", () => { // NEW
+    const h = makeHarness(); // NEW
+    const garden = new TestCell("standaloneGarden", makeValue(h.document, { garden_module: "1" }), new TestGeometry(0, 0, 500, 360), "shape=swimlane;"); // NEW
+    h.addCell(h.root, garden); // NEW
+    const boards = h.graph.__trellisTaskManager.listBoardsForGarden(garden); // NEW
+    assert.equal(boards.length, 0); // CHANGE
+    assert.equal(boardCellsUnder(garden).length, 0); // NEW
+}); // NEW
+
+test("task manager list open and scheduler do not create missing companion Task Modules", () => { // NEW
+    const h = makeHarness(); // NEW
+    const garden = new TestCell("missingCompanionGarden", makeValue(h.document, { garden_module: "1" }), new TestGeometry(0, 0, 500, 360), "shape=swimlane;"); // NEW
+    const group = new TestCell("missingCompanionGroup", makeValue(h.document), new TestGeometry(20, 40, 120, 80), "shape=rectangle;"); // NEW
+    h.addCell(h.root, garden); // NEW
+    h.addCell(garden, group); // NEW
+    let ensureCalls = 0; // NEW
+    h.graph.__trellisModules = { // NEW
+        findExistingCompanionTask() { return null; }, // NEW
+        ensureGardenTaskModule() { ensureCalls += 1; return null; } // NEW
+    }; // NEW
+    assert.equal(h.graph.__trellisTaskManager.listBoardsForGarden(garden).length, 0); // NEW
+    assert.equal(h.graph.__trellisTaskManager.openBoardForGarden(garden, "", "2026"), null); // NEW
+    assert.equal(h.runtimeHooks.createTasks([{ title: "No board", startISO: "2026-01-01", endISO: "2026-01-01" }], group.id, { focusCreated: false }).length, 0); // CHANGE
+    assert.equal(ensureCalls, 0); // NEW
+    assert.equal(boardCellsUnder(garden).length, 0); // NEW
+}); // NEW
+
+test("task manager source keeps dashboard open highlights before seen marking", () => { // NEW
+    const text = taskManagerSource(); // NEW
+    assert.match(text, /let suppressDashboardSeenSelection = false;/); // NEW
+    assert.match(text, /if \(!suppressDashboardSeenSelection && activeDashboardTaskContext[\s\S]*markBoardYearViewed\(sel, activeDashboardTaskContext\.gardenModule, activeDashboardTaskContext\.year\)/); // NEW
+    assert.match(text, /suppressDashboardSeenSelection = true;[\s\S]*graph\.setSelectionCell\(board\);[\s\S]*suppressDashboardSeenSelection = false;/); // NEW
+    assert.match(text, /fitBoardInViewport\(board\);[\s\S]*highlightUnseenCards\(board, viewerKey, String\(year \|\| ''\)\);[\s\S]*markBoardYearViewed\(board, gardenModule, year\);/); // NEW
+    assert.match(text, /trellis-task-unseen-created-highlight/); // NEW
+    assert.doesNotMatch(text, /__trellisUnseenOriginalStyle/); // NEW
+    assert.doesNotMatch(text, /card\.style \+= .*strokeColor=#FACC15/); // NEW
+}); // NEW
+
+test("task manager source clears manual selection by active dashboard year only", () => { // NEW
+    const h = makeHarness(); // NEW
+    const text = taskManagerSource(); // CHANGE
+    assert.match(text, /activeDashboardTaskContext = gardenModule && year \? \{ gardenModule, year: String\(year\) \} : null;/); // NEW
+    assert.match(text, /markBoardYearViewed\(board, activeDashboardTaskContext\.gardenModule, activeDashboardTaskContext\.year\)/); // NEW
+    assert.match(text, /viewer\[y\] = Date\.now\(\);[\s\S]*viewer\.unscheduled = Date\.now\(\);/); // NEW
+    assert.ok(h.graph.__trellisTaskManager); // NEW
+}); // NEW
+
+test("task manager scheduler emissions may create a missing main board in an existing Task Module", () => { // NEW
+    const text = taskManagerSource(); // NEW
+    assert.match(text, /boardLayoutService\.ensureBoardTemplateIn\(gardenModule, \{ insideUpdate: true, createMainBoard: true \}\)/); // NEW
+    assert.match(text, /if \(isGardenModule\(containerVertex\) && !main && !\(opts && opts\.createMainBoard\)\) return \{ parent, board: null, lanes: \{\} \};/); // NEW
+    assert.doesNotMatch(text, /taskModuleForGarden[\s\S]{0,260}ensureGardenTaskModule\(gardenModule\)/); // NEW
+}); // NEW
+
+test("scheduler sync-created tasks target the companion Task Module main board", () => { // NEW
+    const h = makeHarness(); // NEW
+    const { garden, taskModule } = attachCompanionTaskFixture(h); // NEW
+    const group = new TestCell("plantingGroup", makeValue(h.document), new TestGeometry(20, 40, 120, 80), "shape=rectangle;"); // NEW
+    h.addCell(garden, group); // NEW
+    const result = h.runtimeHooks.createTasks([{ title: "Sow peas", startISO: "2026-03-01", endISO: "2026-03-01" }], group.id, { focusCreated: false }); // NEW
+    assert.equal(result.length, 1); // NEW
+    assert.equal(boardCellsUnder(garden).length, 0); // NEW
+    const boards = boardCellsUnder(taskModule); // NEW
+    assert.equal(boards.length, 1); // NEW
+    assert.ok(boards[0].children.some(lane => (lane.children || []).some(card => attr(card, "title") === "Sow peas"))); // NEW
+}); // NEW
+
+test("task module overlay edits labels with one bed-style field and no clamping", async () => { // CHANGE
+    const h = makeHarness(); // NEW
+    const { garden, taskModule } = attachCompanionTaskFixture(h); // NEW
+    h.setState(taskModule, { x: -60, y: -500, width: 500, height: 360 }); // NEW
+    h.graph.setSelectionCell(taskModule); // NEW
+    await nextTick(); // NEW
+
+    const overlay = taskModuleOverlay(h.document); // NEW
+    assert.equal(overlay.style.display, "flex"); // NEW
+    assert.equal(overlay.style.left, "-40px"); // NEW
+    assert.equal(overlay.style.top, "-497px"); // CHANGE
+    assert.equal(overlay.querySelectorAll("input[aria-label='Task label']").length, 1); // CHANGE
+    assert.equal(overlay.textContent.includes("Garden label"), false); // CHANGE
+    assert.equal(overlay.textContent.includes("Task label"), false); // NEW
+    assert.ok(buttonByText(overlay, "Add Kanban Board")); // NEW
+    let input = taskModuleOverlayInput(h.document); // CHANGE
+    assert.equal(input.value, "Kitchen Garden Tasks"); // NEW
+
+    h.clearValueWrites(); // NEW
+    const oldTaskValue = taskModule.value; // NEW
+    input.value = "Weekly Work"; // NEW
+    input.dispatchEvent(new h.window.Event("blur")); // NEW
+    assert.equal(attr(taskModule, "label"), "Weekly Work"); // NEW
+    assert.equal(h.valueWrites.length, 1); // NEW
+    assert.equal(h.valueWrites[0].cell, taskModule); // NEW
+    assert.equal(h.valueWrites[0].oldValue, oldTaskValue); // NEW
+    assert.notEqual(h.valueWrites[0].newValue, oldTaskValue); // NEW
+    assert.equal(oldTaskValue.getAttribute("label"), "Kitchen Garden Tasks"); // NEW
+
+    h.graph.setSelectionCell(taskModule); // NEW
+    await nextTick(); // NEW
+    h.clearValueWrites(); // NEW
+    input = taskModuleOverlayInput(h.document); // NEW
+    input.value = "Draft Work"; // NEW
+    input.dispatchEvent(new h.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); // NEW
+    assert.equal(input.value, "Weekly Work"); // NEW
+    assert.equal(attr(taskModule, "label"), "Weekly Work"); // NEW
+    assert.equal(h.valueWrites.length, 0); // NEW
+
+    input.value = "   "; // NEW
+    input.dispatchEvent(new h.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); // NEW
+    assert.equal(attr(taskModule, "label"), "Task Module"); // NEW
+
+    setAttr(garden, "label", "Market Garden"); // NEW
+    h.graph.setSelectionCell(taskModule); // NEW
+    await nextTick(); // NEW
+    assert.equal(taskModuleOverlay(h.document).textContent.includes("Market Garden"), false); // CHANGE
+}); // NEW
+
+test("task module overlay delegates label writes to the Modules API when available", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const taskModule = new TestCell("apiTaskModule", makeValue(h.document, { task_module: "1", label: "API Tasks" }), new TestGeometry(40, 50, 300, 120), "shape=swimlane;"); // NEW
+    h.addCell(h.root, taskModule); // NEW
+    h.setState(taskModule, { x: 40, y: 50, width: 300, height: 120 }); // NEW
+    let writeCalls = 0; // NEW
+    h.graph.__trellisModules = { // NEW
+        getModuleLabel(cell, fallback) { return attr(cell, "label") || fallback; }, // NEW
+        writeModuleLabel(cell, label) { // NEW
+            writeCalls += 1; // NEW
+            const next = String(label == null ? "" : label).trim() || "Task Module"; // NEW
+            const clone = cell.value.cloneNode(true); // NEW
+            clone.setAttribute("label", next); // NEW
+            h.model.beginUpdate(); // NEW
+            try { h.model.setValue(cell, clone); } finally { h.model.endUpdate(); } // NEW
+            return next; // NEW
+        } // NEW
+    }; // NEW
+    h.graph.setSelectionCell(taskModule); // NEW
+    await nextTick(); // NEW
+    h.clearValueWrites(); // NEW
+    const oldValue = taskModule.value; // NEW
+    const input = taskModuleOverlayInput(h.document); // NEW
+    input.value = "API Work"; // NEW
+    input.dispatchEvent(new h.window.Event("blur")); // NEW
+    assert.equal(writeCalls, 1); // NEW
+    assert.equal(attr(taskModule, "label"), "API Work"); // NEW
+    assert.equal(h.valueWrites.length, 1); // NEW
+    assert.equal(h.valueWrites[0].oldValue, oldValue); // NEW
+    assert.notEqual(h.valueWrites[0].newValue, oldValue); // NEW
+    assert.equal(oldValue.getAttribute("label"), "API Tasks"); // NEW
+}); // NEW
+
+test("unlinked task module overlay only shows the editable label input", async () => { // CHANGE
+    const h = makeHarness(); // NEW
+    const taskModule = new TestCell("unlinkedTaskModule", makeValue(h.document, { task_module: "1" }), new TestGeometry(-80, -240, 300, 120), "shape=swimlane;"); // NEW
+    h.addCell(h.root, taskModule); // NEW
+    h.setState(taskModule, { x: -80, y: -240, width: 300, height: 120 }); // NEW
+    h.graph.setSelectionCell(taskModule); // NEW
+    await nextTick(); // NEW
+
+    const overlay = taskModuleOverlay(h.document); // NEW
+    assert.equal(overlay.style.display, "flex"); // NEW
+    assert.equal(overlay.textContent.includes("Garden label"), false); // NEW
+    assert.equal(overlay.textContent.includes("Task label"), false); // NEW
+    assert.equal(taskModuleOverlayInput(h.document).value, "Task Module"); // NEW
+    assert.equal(overlay.style.left, "-60px"); // NEW
+    assert.equal(overlay.style.top, "-237px"); // CHANGE
+}); // NEW
+
+test("task module overlay follows the cursor and alternates show and hide", async () => { // NEW
+    const h = makeHarness(); // NEW
+    const taskModule = new TestCell("clickTaskModule", makeValue(h.document, { task_module: "1", label: "Click Tasks" }), new TestGeometry(80, 90, 300, 120), "shape=swimlane;"); // NEW
+    h.addCell(h.root, taskModule); // NEW
+    h.setState(taskModule, { x: 80, y: 90, width: 300, height: 120 }); // NEW
+
+    h.mouseDown(taskModule, { clientX: 180, clientY: 220, graphX: 120, graphY: 130 }); // NEW
+    h.graph.setSelectionCell(taskModule); // NEW
+    await nextTick(); // NEW
+    let overlay = taskModuleOverlay(h.document); // NEW
+    assert.equal(overlay.style.display, "flex"); // NEW
+    assert.equal(overlay.style.left, "200px"); // NEW
+    assert.equal(overlay.style.top, "223px"); // NEW
+    h.mouseUp(taskModule, { clientX: 180, clientY: 220, graphX: 120, graphY: 130 }); // NEW
+    assert.equal(taskModuleOverlay(h.document).style.display, "flex"); // NEW
+
+    h.mouseDown(taskModule, { clientX: 200, clientY: 240, graphX: 140, graphY: 150 }); // NEW
+    h.mouseUp(taskModule, { clientX: 200, clientY: 240, graphX: 140, graphY: 150 }); // NEW
+    assert.equal(taskModuleOverlay(h.document).style.display, "none"); // NEW
+
+    h.mouseDown(taskModule, { clientX: 210, clientY: 250, graphX: 150, graphY: 160 }); // NEW
+    h.mouseUp(taskModule, { clientX: 210, clientY: 250, graphX: 150, graphY: 160 }); // NEW
+    overlay = taskModuleOverlay(h.document); // NEW
+    assert.equal(overlay.style.display, "flex"); // NEW
+    assert.equal(overlay.style.left, "230px"); // NEW
+    assert.equal(overlay.style.top, "253px"); // NEW
+}); // NEW
 
 test("task manager reflow scope policy maps command categories", () => { // NEW
     const hooks = loadTaskManagerHooks(); // NEW

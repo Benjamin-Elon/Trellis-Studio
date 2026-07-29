@@ -105,9 +105,47 @@ test("garden dashboard toolbar groups tools left and messages export share table
     const text = viewportToolbarSource(); // NEW
     assert.match(text, /leftControls\.className = "trellis-garden-dashboard-toolbar-left"/); // NEW
     assert.match(text, /rightActions\.className = "trellis-garden-dashboard-toolbar-right"/); // NEW
-    assert.match(text, /leftControls\.appendChild\(prev\);[\s\S]*leftControls\.appendChild\(yearLabel\);[\s\S]*leftControls\.appendChild\(next\);[\s\S]*leftControls\.appendChild\(planBtn\);[\s\S]*leftControls\.appendChild\(equipmentBtn\);[\s\S]*leftControls\.appendChild\(irrigationBtn\);[\s\S]*leftControls\.appendChild\(allocateBtn\);/); // NEW
+    assert.match(text, /leftControls\.appendChild\(prev\);[\s\S]*leftControls\.appendChild\(yearLabel\);[\s\S]*leftControls\.appendChild\(next\);[\s\S]*leftControls\.appendChild\(planBtn\);[\s\S]*leftControls\.appendChild\(equipmentBtn\);[\s\S]*leftControls\.appendChild\(irrigationBtn\);[\s\S]*leftControls\.appendChild\(allocateBtn\);[\s\S]*leftControls\.appendChild\(taskBoardBtn\);[\s\S]*leftControls\.appendChild\(taskBoardSelect\);/); // CHANGE
     assert.match(text, /rightActions\.appendChild\(messagesBtn\);[\s\S]*rightActions\.appendChild\(exportBtn\);[\s\S]*rightActions\.appendChild\(shareBtn\);[\s\S]*rightActions\.appendChild\(tableBtn\);/); // NEW
     assert.match(text, /controls\.appendChild\(leftControls\);[\s\S]*controls\.appendChild\(rightActions\);/); // NEW
+}); // NEW
+
+test("garden dashboard toolbar exposes Task Board button badge and selector", () => { // NEW
+    const text = viewportToolbarSource(); // NEW
+    const fullSource = source(); // NEW
+    assert.match(text, /const taskBoardBtn = createTaskBoardButton\(\);/); // NEW
+    assert.match(text, /const taskBoardSelect = createTaskBoardSelect\(\);/); // NEW
+    assert.match(fullSource, /function createTaskBoardButton\(\)/); // NEW
+    assert.match(fullSource, /trellis-task-board-toolbar-badge/); // NEW
+    assert.match(fullSource, /function taskBoardOptionLabel\(boardSummary\)/); // NEW
+    assert.match(fullSource, /count \? " \(" \+ count \+ "\)" : ""/); // CHANGE
+    assert.match(fullSource, /years\.length \? " " \+ years\.join\(", "\) : ""/); // NEW
+    assert.match(text, /taskBoardBtn\.addEventListener\("click", function \(\) \{ openToolbarTaskBoard\(activeToolbarModule, taskBoardSelect\.value\); \}\);/); // NEW
+    assert.match(text, /taskBoardSelect\.addEventListener\("change", function \(\) \{ if \(activeToolbarModule && taskBoardSelect\.value\) taskBoardSelectionByModuleId\.set\(cellId\(activeToolbarModule\), taskBoardSelect\.value\); \}\);/); // CHANGE
+    assert.doesNotMatch(text, /taskBoardSelect\.addEventListener\("change", function \(\) \{ openToolbarTaskBoard/); // NEW
+}); // NEW
+
+test("garden dashboard toolbar uses task manager API for boards and unseen counts", () => { // NEW
+    const text = viewportToolbarSource(); // NEW
+    const fullSource = source(); // NEW
+    assert.match(fullSource, /function taskManagerApi\(\)/); // NEW
+    assert.match(fullSource, /const requestedBoardId = boardId \|\| taskBoardSelectionByModuleId\.get\(moduleId\) \|\| "";/); // CHANGE
+    assert.match(fullSource, /const openedBoard = api\.openBoardForGarden\(moduleCell, requestedBoardId, year\);/); // CHANGE
+    assert.match(text, /taskApi\.setActiveDashboardContext\(moduleCell, year\);/); // NEW
+    assert.match(text, /taskApi\.listBoardsForGarden\(moduleCell\)/); // NEW
+    assert.match(text, /taskApi\.unseenCreatedSummaryForGarden\(moduleCell\)/); // NEW
+    assert.match(text, /badge\.style\.display = badgeTotal > 0 \? "" : "none";/); // NEW
+    assert.match(fullSource, /window\.addEventListener\("trellisTaskBoardSeenStateChanged", scheduleViewportToolbarRefresh\);/); // NEW
+}); // NEW
+
+test("garden dashboard toolbar preserves the current task board across refresh", () => { // NEW
+    const text = viewportToolbarSource(); // NEW
+    assert.match(text, /const taskBoardSelectionByModuleId = new Map\(\);/); // NEW
+    assert.match(text, /if \(requestedBoardId\) taskBoardSelectionByModuleId\.set\(moduleId, requestedBoardId\);/); // NEW
+    assert.match(text, /if \(openedBoardId\) taskBoardSelectionByModuleId\.set\(moduleId, openedBoardId\);/); // NEW
+    assert.match(text, /const preferredBoardId = taskBoardSelectionByModuleId\.get\(moduleId\) \|\| entry\.taskBoardSelect\.value \|\| "";/); // NEW
+    assert.match(text, /if \(id && id === preferredBoardId\) selectedBoardId = id;/); // NEW
+    assert.match(text, /if \(selectedBoardId\) \{ entry\.taskBoardSelect\.value = selectedBoardId; taskBoardSelectionByModuleId\.set\(moduleId, selectedBoardId\); \}/); // NEW
 }); // NEW
 
 test("garden dashboard toolbar marks Irrigation active with existing blue", () => { // NEW

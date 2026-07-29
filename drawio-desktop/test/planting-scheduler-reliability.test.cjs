@@ -1753,6 +1753,38 @@ test('persisted start is distinct from a session edit and is not auto-overwritte
     assert.equal(preservedWithoutWindow, '2026-05-10');
 });
 
+test('generated start can replace stale unscheduled date while persisted and edited dates stay fixed', () => { // ADDED
+    const activeWindow = { id: 'spring', label: 'Spring (Apr 1-May 1)', startISO: '2026-04-01', endISO: '2026-05-01' }; // ADDED
+    assert.equal(hooks.resolveStartAfterWindow({ // ADDED
+        currentStartISO: '2026-03-01', // ADDED
+        activeWindow, // ADDED
+        feasible: true, // ADDED
+        forceWriteStart: false, // ADDED
+        hasPersistedSchedule: false, // ADDED
+        userEditedStartThisSession: false, // ADDED
+        todayISO: '2026-04-15', // ADDED
+        generatedStartISO: '2026-04-15' // ADDED
+    }), '2026-04-15'); // ADDED
+    assert.equal(hooks.resolveStartAfterWindow({ // ADDED
+        currentStartISO: '2026-03-01', // ADDED
+        activeWindow, // ADDED
+        feasible: true, // ADDED
+        forceWriteStart: false, // ADDED
+        hasPersistedSchedule: true, // ADDED
+        userEditedStartThisSession: false, // ADDED
+        generatedStartISO: '2026-04-15' // ADDED
+    }), '2026-03-01'); // ADDED
+    assert.equal(hooks.resolveStartAfterWindow({ // ADDED
+        currentStartISO: '2026-03-02', // ADDED
+        activeWindow, // ADDED
+        feasible: true, // ADDED
+        forceWriteStart: false, // ADDED
+        hasPersistedSchedule: false, // ADDED
+        userEditedStartThisSession: true, // ADDED
+        generatedStartISO: '2026-04-15' // ADDED
+    }), '2026-03-02'); // ADDED
+}); // ADDED
+
 test('new annual schedule defaults sow date to today inside the active window', () => { // ADDED
     const activeWindow = { id: 'spring', label: 'Spring (Apr 1-May 1)', startISO: '2026-04-01', endISO: '2026-05-01' }; // ADDED
     assert.equal(hooks.resolveStartAfterWindow({ // ADDED
@@ -1793,6 +1825,12 @@ test('new annual schedule startup preview uses today only inside the active sowi
         todayISO: '2026-08-15' // ADDED
     }).toISOString().slice(0, 10), '2026-09-01'); // ADDED
     assert.equal(hooks.resolveInitialPreviewStartForScheduleDialog({ // ADDED
+        earliestFeasibleSowDate: earliest, // ADDED
+        initialWindowFeasible: true, // ADDED
+        sowingSeasons: [spring, fall], // ADDED
+        todayISO: '2026-11-15' // ADDED
+    }).toISOString().slice(0, 10), '2026-04-01'); // ADDED
+    assert.equal(hooks.resolveInitialPreviewStartForScheduleDialog({ // ADDED
         storedSowDate: persisted, // ADDED
         earliestFeasibleSowDate: earliest, // ADDED
         initialWindowFeasible: true, // ADDED
@@ -1805,6 +1843,30 @@ test('new annual schedule startup preview uses today only inside the active sowi
         sowingSeasons: [], // ADDED
         todayISO: '2026-07-19' // ADDED
     }).toISOString().slice(0, 10), '2026-07-19'); // ADDED
+}); // ADDED
+
+test('new transplant schedule startup preview defaults from projected visible windows', () => { // ADDED
+    const spring = { id: 'spring', label: 'Spring (Apr 1-May 1)', startISO: '2026-04-01', endISO: '2026-05-01' }; // ADDED
+    const fall = { id: 'fall', label: 'Fall (Sep 1-Oct 1)', startISO: '2026-09-01', endISO: '2026-10-01' }; // ADDED
+    const earliest = new Date(Date.UTC(2026, 3, 1)); // ADDED
+    const methodId = 'transplant.indoor'; // ADDED
+    const effectiveTransplantDays = 21; // ADDED
+    const previewISO = todayISO => hooks.resolveInitialPreviewStartForScheduleDialog({ // ADDED
+        earliestFeasibleSowDate: earliest, // ADDED
+        initialWindowFeasible: true, // ADDED
+        sowingSeasons: [spring, fall], // ADDED
+        todayISO, // ADDED
+        methodId, // ADDED
+        effectiveTransplantDays // ADDED
+    }).toISOString().slice(0, 10); // ADDED
+    const visibleISO = sowISO => hooks.primaryDateFromSowDate(sowISO, methodId, effectiveTransplantDays); // ADDED
+
+    assert.equal(previewISO('2026-04-30'), '2026-04-09'); // ADDED
+    assert.equal(visibleISO(previewISO('2026-04-30')), '2026-04-30'); // ADDED
+    assert.equal(previewISO('2026-08-15'), '2026-09-01'); // ADDED
+    assert.equal(visibleISO(previewISO('2026-08-15')), '2026-09-22'); // ADDED
+    assert.equal(previewISO('2026-11-15'), '2026-04-01'); // ADDED
+    assert.equal(visibleISO(previewISO('2026-11-15')), '2026-04-22'); // ADDED
 }); // ADDED
 
 test('perennial lifecycle is detected before requesting a maturity budget', () => {
@@ -2047,7 +2109,8 @@ test('sowing season change refreshes derived UI after harvest recomputation', ()
     assert.ok(refreshIndex > harvestIndex, 'task/timeline refresh should run after harvest recomputation'); // ADDED
     assert.equal(handlerBody.includes('await updateTaskPreview()'), false, 'season change should use shared task/timeline refresh orchestration'); // ADDED
     assert.equal(handlerBody.includes('updateTimeline()'), false, 'season change should not render timeline before latestScheduleResult is refreshed'); // ADDED
-    assert.match(handlerBody, /userEditedStartThisSession\s*=\s*true/, 'season selection should be treated as a user-selected schedule anchor'); // ADDED
+    assert.match(handlerBody, /userEditedStartThisSession\s*=\s*false/, 'season selection should remain a generated schedule anchor'); // CHANGED
+    assert.match(handlerBody, /generatedStartThisSession\s*=\s*!hasPersistedSchedule && !mode\.perennial && !!formState\.startISO/, 'season selection should keep unscheduled annual dates replaceable on plant change'); // ADDED
 }); // ADDED
 
 test('derived sowing season summary matches selector labels', () => { // ADDED

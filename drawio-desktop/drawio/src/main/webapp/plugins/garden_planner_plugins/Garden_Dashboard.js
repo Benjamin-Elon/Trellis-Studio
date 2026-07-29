@@ -77,6 +77,10 @@ Draw.loadPlugin(function (ui) {
         );
     }
 
+    function isTaskModule(cell) { // NEW
+        return !!(cell && cell.getAttribute && cell.getAttribute("task_module") === "1"); // NEW
+    } // NEW
+
     function findModuleAncestor(graph, cell) {
         const m = graph.getModel();
         let cur = cell;
@@ -95,6 +99,22 @@ Draw.loadPlugin(function (ui) {
             cur = m.getParent(cur); // NEW
         } // NEW
         return null; // NEW
+    } // NEW
+
+    function findTaskModuleAncestor(graph, cell) { // NEW
+        const m = graph.getModel(); // NEW
+        let cur = cell; // NEW
+        while (cur) { // NEW
+            if (isTaskModule(cur)) return cur; // NEW
+            cur = m.getParent(cur); // NEW
+        } // NEW
+        return null; // NEW
+    } // NEW
+
+    function gardenForTaskModule(taskModule) { // NEW
+        const gardenId = taskModule && taskModule.getAttribute ? taskModule.getAttribute("trellis_garden_module_id") : ""; // NEW
+        const garden = gardenId && model.getCell ? model.getCell(gardenId) : null; // NEW
+        return isGardenModule(garden) ? garden : null; // NEW
     } // NEW
 
     function findDashboardAncestor(cell) {
@@ -937,6 +957,7 @@ Draw.loadPlugin(function (ui) {
 
     // -------------------- Viewport toolbar (active dashboard UI) -------------------- // NEW
     const toolbarExpandedByModuleId = new Map(); // NEW
+    const taskBoardSelectionByModuleId = new Map(); // NEW
     let viewportToolbar = null; // NEW
     let activeToolbarModule = null; // NEW
     let toolbarRefreshTimer = null; // NEW
@@ -1003,6 +1024,8 @@ Draw.loadPlugin(function (ui) {
         for (const cell of selected) { // NEW
             const moduleCell = isGardenModule(cell) ? cell : findGardenModuleAncestor(graph, cell); // NEW
             if (moduleCell) return moduleCell; // NEW
+            const taskGarden = gardenForTaskModule(isTaskModule(cell) ? cell : findTaskModuleAncestor(graph, cell)); // NEW
+            if (taskGarden) return taskGarden; // NEW
         } // NEW
         return null; // NEW
     } // NEW
@@ -1030,6 +1053,57 @@ Draw.loadPlugin(function (ui) {
         btn.style.width = BTN_SIZE + "px"; // NEW
         btn.style.padding = "0"; // NEW
         return btn; // NEW
+    } // NEW
+
+    function createTaskBoardButton() { // NEW
+        const btn = createToolbarButton("Task Board", "Open the current task board"); // NEW
+        btn.style.position = "relative"; // NEW
+        const badge = document.createElement("span"); // NEW
+        badge.className = "trellis-task-board-toolbar-badge"; // NEW
+        badge.style.cssText = "display:none;position:absolute;right:-7px;top:-7px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:#dc2626;color:#fff;font:10px Arial,sans-serif;line-height:16px;text-align:center;box-sizing:border-box;"; // NEW
+        btn.appendChild(badge); // NEW
+        btn.__trellisTaskBadge = badge; // NEW
+        return btn; // NEW
+    } // NEW
+
+    function createTaskBoardSelect() { // NEW
+        const select = document.createElement("select"); // NEW
+        select.className = "trellis-task-board-toolbar-selector"; // NEW
+        select.title = "Open a task board"; // NEW
+        select.style.height = BTN_SIZE + "px"; // NEW
+        select.style.border = "1px solid #777"; // NEW
+        select.style.borderRadius = "6px"; // NEW
+        select.style.background = "#fff"; // NEW
+        select.style.fontFamily = "Arial"; // NEW
+        select.style.fontSize = "12px"; // NEW
+        select.style.boxSizing = "border-box"; // NEW
+        select.style.maxWidth = "210px"; // NEW
+        return select; // NEW
+    } // NEW
+
+    function taskManagerApi() { // NEW
+        return graph && graph.__trellisTaskManager; // NEW
+    } // NEW
+
+    function taskBoardOptionLabel(boardSummary) { // NEW
+        const count = Number(boardSummary && boardSummary.count) || 0; // NEW
+        const years = Array.isArray(boardSummary && boardSummary.years) ? boardSummary.years : []; // NEW
+        return String(boardSummary && boardSummary.name || "Kanban") + (count ? " (" + count + ")" : "") + (years.length ? " " + years.join(", ") : ""); // NEW
+    } // NEW
+
+    function openToolbarTaskBoard(moduleCell, boardId) { // NEW
+        if (!moduleCell) return; // NEW
+        const api = taskManagerApi(); // NEW
+        if (!api || typeof api.openBoardForGarden !== "function") return; // NEW
+        const year = getToolbarYear(moduleCell); // NEW
+        const moduleId = cellId(moduleCell); // NEW
+        const requestedBoardId = boardId || taskBoardSelectionByModuleId.get(moduleId) || ""; // NEW
+        if (requestedBoardId) taskBoardSelectionByModuleId.set(moduleId, requestedBoardId); // NEW
+        const openedBoard = api.openBoardForGarden(moduleCell, requestedBoardId, year); // CHANGE
+        const openedBoardId = cellId(openedBoard); // NEW
+        if (openedBoardId) taskBoardSelectionByModuleId.set(moduleId, openedBoardId); // NEW
+        if (typeof api.setActiveDashboardContext === "function") api.setActiveDashboardContext(moduleCell, year); // NEW
+        renderViewportToolbar(moduleCell); // NEW
     } // NEW
 
     function activeIrrigationModuleMatches(moduleCell) { // NEW
@@ -1340,6 +1414,8 @@ Draw.loadPlugin(function (ui) {
         const equipmentBtn = createToolbarButton("Equipment", "Open garden equipment"); // NEW
         const irrigationBtn = createToolbarButton("Irrigation", "Open irrigation planner"); // NEW
         const allocateBtn = createToolbarButton("Allocate", "Allocate the current plan"); // NEW
+        const taskBoardBtn = createTaskBoardButton(); // NEW
+        const taskBoardSelect = createTaskBoardSelect(); // NEW
         const messagesBtn = createToolbarButton("Messages", "Review access requests"); // NEW
         const exportBtn = createToolbarButton("Export", "Export dashboard CSV"); // NEW
         const shareBtn = createToolbarButton("Share", "Share selected module(s), task board(s), or garden bed(s)"); // NEW
@@ -1361,6 +1437,8 @@ Draw.loadPlugin(function (ui) {
         leftControls.appendChild(equipmentBtn); // NEW
         leftControls.appendChild(irrigationBtn); // NEW
         leftControls.appendChild(allocateBtn); // NEW
+        leftControls.appendChild(taskBoardBtn); // NEW
+        leftControls.appendChild(taskBoardSelect); // NEW
         rightActions.appendChild(messagesBtn); // NEW
         rightActions.appendChild(exportBtn); // NEW
         rightActions.appendChild(shareBtn); // NEW
@@ -1372,7 +1450,7 @@ Draw.loadPlugin(function (ui) {
         wrap.appendChild(panel); // NEW
         host.appendChild(wrap); // NEW
 
-        viewportToolbar = { wrap, panel, controls, leftControls, rightActions, prev, next, yearLabel, planBtn, equipmentBtn, irrigationBtn, allocateBtn, messagesBtn, exportBtn, shareBtn, tableBtn, table }; // CHANGE
+        viewportToolbar = { wrap, panel, controls, leftControls, rightActions, prev, next, yearLabel, planBtn, equipmentBtn, irrigationBtn, allocateBtn, taskBoardBtn, taskBoardSelect, messagesBtn, exportBtn, shareBtn, tableBtn, table }; // CHANGE
 
         mxEvent.addListener(wrap, "mousedown", function (evt) { mxEvent.consume(evt); }); // NEW
         mxEvent.addListener(wrap, "click", function (evt) { evt.stopPropagation(); }); // NEW
@@ -1405,6 +1483,8 @@ Draw.loadPlugin(function (ui) {
             setToolbarYear(activeToolbarModule, year); // NEW
             try { window.dispatchEvent(new CustomEvent(ALLOCATE_PLAN_EVENT, { detail: { moduleCellId: cellId(activeToolbarModule), year } })); } catch (_) { } // NEW
         }); // NEW
+        taskBoardBtn.addEventListener("click", function () { openToolbarTaskBoard(activeToolbarModule, taskBoardSelect.value); }); // NEW
+        taskBoardSelect.addEventListener("change", function () { if (activeToolbarModule && taskBoardSelect.value) taskBoardSelectionByModuleId.set(cellId(activeToolbarModule), taskBoardSelect.value); }); // CHANGE
         exportBtn.addEventListener("click", function () { // NEW
             if (!activeToolbarModule) return; // NEW
             const year = getToolbarYear(activeToolbarModule); // NEW
@@ -1438,7 +1518,33 @@ Draw.loadPlugin(function (ui) {
         if (!entry || !moduleCell) return; // NEW
         const year = getToolbarYear(moduleCell); // NEW
         const expanded = toolbarExpandedByModuleId.get(cellId(moduleCell)) === true; // NEW
+        const taskApi = taskManagerApi(); // NEW
+        if (taskApi && typeof taskApi.setActiveDashboardContext === "function") taskApi.setActiveDashboardContext(moduleCell, year); // NEW
+        const taskBoards = taskApi && typeof taskApi.listBoardsForGarden === "function" ? (taskApi.listBoardsForGarden(moduleCell) || []) : []; // NEW
+        const taskSummary = taskApi && typeof taskApi.unseenCreatedSummaryForGarden === "function" ? taskApi.unseenCreatedSummaryForGarden(moduleCell) : { hidden: true, total: 0, boards: [] }; // NEW
+        const summaryByBoardId = new Map((taskSummary.boards || []).map(function (entry) { return [String(entry.boardId || ""), entry]; })); // NEW
+        const moduleId = cellId(moduleCell); // NEW
+        const preferredBoardId = taskBoardSelectionByModuleId.get(moduleId) || entry.taskBoardSelect.value || ""; // NEW
+        let selectedBoardId = ""; // NEW
         entry.yearLabel.textContent = String(year); // NEW
+        entry.taskBoardSelect.innerHTML = ""; // NEW
+        taskBoards.forEach(function (board) { // NEW
+            const id = cellId(board); // NEW
+            const summary = summaryByBoardId.get(id) || { boardId: id, name: getCellAttr(board, "label", "") || "Kanban", count: 0, years: [] }; // NEW
+            const option = document.createElement("option"); // NEW
+            option.value = id; // NEW
+            option.textContent = taskBoardOptionLabel(summary); // NEW
+            if (id && id === preferredBoardId) selectedBoardId = id; // NEW
+            entry.taskBoardSelect.appendChild(option); // NEW
+        }); // NEW
+        if (!selectedBoardId && taskBoards.length) selectedBoardId = cellId(taskBoards[0]); // NEW
+        if (selectedBoardId) { entry.taskBoardSelect.value = selectedBoardId; taskBoardSelectionByModuleId.set(moduleId, selectedBoardId); } // NEW
+        entry.taskBoardSelect.disabled = !taskApi || !taskBoards.length; // NEW
+        entry.taskBoardBtn.disabled = !taskApi || !taskBoards.length; // CHANGE
+        const badge = entry.taskBoardBtn.__trellisTaskBadge; // NEW
+        const badgeTotal = taskSummary.hidden ? 0 : (Number(taskSummary.total) || 0); // NEW
+        if (badge) { badge.style.display = badgeTotal > 0 ? "" : "none"; badge.textContent = String(badgeTotal); } // NEW
+        entry.taskBoardBtn.title = taskApi ? (taskBoards.length ? "Open the selected task board" : "No companion task board exists for this garden") : "Task manager is unavailable"; // CHANGE
         entry.messagesBtn.textContent = messagesButtonLabel(moduleCell); // NEW
         entry.messagesBtn.title = "Review access requests"; // NEW
         entry.tableBtn.textContent = expanded ? "Hide Table" : "Table"; // NEW
@@ -2245,6 +2351,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
     window.addEventListener("resize", scheduleViewportToolbarRefresh); // NEW
     window.addEventListener("trellisUsersStoreChanged", scheduleViewportToolbarRefresh); // NEW
+    window.addEventListener("trellisTaskBoardSeenStateChanged", scheduleViewportToolbarRefresh); // NEW
     window.addEventListener(IRRIGATION_MODE_CHANGED_EVENT, scheduleViewportToolbarRefresh); // NEW
     const viewportToolbarHost = getViewportToolbarContainer(); // CHANGE
     if (viewportToolbarHost && viewportToolbarHost.addEventListener) { // NEW

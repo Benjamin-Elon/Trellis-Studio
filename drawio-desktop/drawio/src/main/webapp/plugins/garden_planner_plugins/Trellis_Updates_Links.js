@@ -26,7 +26,7 @@
 
     const LINK_CONFIG = Object.freeze({
         name: "Benjamin Elon",
-        patreon: "https://www.patreon.com/c/Benjamin980",
+        patreon: "https://patreon.com/Benjamin980?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink",
         youtube: "https://www.youtube.com/@placeholder",
         website: "https://example.com",
         email: "Benjaminyelon@gmail.com",

@@ -981,8 +981,8 @@ Draw.loadPlugin(function (ui) { // NEW
         const width = selectedBedOverlayWidth(entry); // CHANGE
         const gap = 8; // CHANGE
         const overlayHeight = entry.div.offsetHeight || 0; // CHANGE
-        const left = Math.max(0, Math.round(state.x - width - gap)); // CHANGE
-        const top = Math.max(0, Math.round(state.y + ((state.height || 0) - overlayHeight) / 2)); // CHANGE
+        const left = Math.round(state.x - width - gap); // CHANGE: selected bed overlays intentionally do not clamp to the viewport
+        const top = Math.round(state.y + ((state.height || 0) - overlayHeight) / 2); // CHANGE: selected bed overlays intentionally do not clamp to the viewport
         entry.div.style.left = left + "px"; // NEW
         entry.div.style.top = top + "px"; // CHANGE
         return true; // NEW

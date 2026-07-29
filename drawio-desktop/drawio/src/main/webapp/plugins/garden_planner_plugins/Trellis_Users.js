@@ -24,6 +24,8 @@ Draw.loadPlugin(function (ui) {
     const ATTR_ROLE_INACTIVE = "trellis_role_inactive"; // NEW
     const ATTR_GARDEN_TEAM_MODULE = "trellis_team_module_id"; // NEW
     const ATTR_TEAM_GARDEN_MODULE = "trellis_garden_module_id"; // NEW
+    const ATTR_GARDEN_TASK_MODULE = "trellis_task_module_id"; // NEW
+    const ATTR_TASK_GARDEN_MODULE = "trellis_garden_module_id"; // NEW
     const ATTR_TEAM_ROLE_ARCHIVE = "trellis_team_role_archive_json"; // NEW
     const ATTR_CREATED_BY = "createdByUserId";
     const ATTR_EDITED_BY = "lastEditedByUserId";
@@ -854,7 +856,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function isModuleCell(cell) { // NEW
-        return !!cell && (styleFlag(cell, "module") || getAttr(cell, "garden_module") === "1" || getAttr(cell, "team_module") === "1"); // NEW
+        return !!cell && (styleFlag(cell, "module") || getAttr(cell, "garden_module") === "1" || getAttr(cell, "team_module") === "1" || getAttr(cell, "task_module") === "1"); // CHANGE
     } // NEW
 
     function isGardenModule(cell) { // NEW
@@ -1350,6 +1352,16 @@ Draw.loadPlugin(function (ui) {
         return true; // NEW
     } // NEW
 
+    function syncCompanionAccessIfGarden(cell) { // NEW
+        if (!isGardenModule(cell)) return; // NEW
+        const modules = graph && graph.__trellisModules; // NEW
+        if (!modules) return; // NEW
+        const team = typeof modules.findExistingCompanionTeam === "function" ? modules.findExistingCompanionTeam(cell) : null; // CHANGE
+        const task = typeof modules.findExistingCompanionTask === "function" ? modules.findExistingCompanionTask(cell) : null; // CHANGE
+        if (team && typeof modules.syncCompanionModuleAccess === "function") modules.syncCompanionModuleAccess(cell, team); // NEW
+        if (task && typeof modules.syncCompanionModuleAccess === "function") modules.syncCompanionModuleAccess(cell, task); // NEW
+    } // NEW
+
     function setScopeGrant(cell, grant) { // NEW
         if (!cell || !canManageScopeGrants(cell)) return { ok: false, reason: "Select a module, garden bed, or task board to manage access." }; // CHANGE
         const normalized = normalizeGrant(grant); // NEW
@@ -1357,7 +1369,7 @@ Draw.loadPlugin(function (ui) {
         const previousGrants = grantsFromAttr(cell); // NEW
         graph[INTERNAL_FLAG] = true; // NEW
         model.beginUpdate(); // NEW
-        try { setScopeGrantInternal(cell, normalized); syncGardenRoleCardsForGrantChange(cell, previousGrants, grantsFromAttr(cell)); } finally { model.endUpdate(); graph[INTERNAL_FLAG] = false; } // CHANGE
+        try { setScopeGrantInternal(cell, normalized); syncGardenRoleCardsForGrantChange(cell, previousGrants, grantsFromAttr(cell)); syncCompanionAccessIfGarden(cell); } finally { model.endUpdate(); graph[INTERNAL_FLAG] = false; } // CHANGE
         refreshPanel(); // NEW
         return { ok: true, grant: publicGrant(normalized) }; // NEW
     } // NEW
@@ -1367,7 +1379,7 @@ Draw.loadPlugin(function (ui) {
         const previousGrants = grantsFromAttr(cell); // NEW
         graph[INTERNAL_FLAG] = true; // NEW
         model.beginUpdate(); // NEW
-        try { setGrantsAttr(cell, grantsFromAttr(cell).filter(function (grant) { return grant.userId !== userId; })); syncGardenRoleCardsForGrantChange(cell, previousGrants, grantsFromAttr(cell)); } finally { model.endUpdate(); graph[INTERNAL_FLAG] = false; } // CHANGE
+        try { setGrantsAttr(cell, grantsFromAttr(cell).filter(function (grant) { return grant.userId !== userId; })); syncGardenRoleCardsForGrantChange(cell, previousGrants, grantsFromAttr(cell)); syncCompanionAccessIfGarden(cell); } finally { model.endUpdate(); graph[INTERNAL_FLAG] = false; } // CHANGE
         refreshPanel(); // NEW
         return { ok: true }; // NEW
     } // NEW
@@ -1968,6 +1980,7 @@ Draw.loadPlugin(function (ui) {
             const grants = (source.userIds || []).filter(function (id) { return !!storedOrPendingUserById(id); }).map(function (userId) { return normalizeGrant({ userId, preset: source.preset || "visitor", capabilities: source.capabilities }); }); // CHANGE
             setGrantsAttr(cell, grants); // CHANGE
             syncGardenRoleCardsForGrantChange(cell, previousGrants, grantsFromAttr(cell)); // NEW
+            syncCompanionAccessIfGarden(cell); // NEW
         } finally {
             model.endUpdate();
             graph[INTERNAL_FLAG] = false;
@@ -1981,7 +1994,7 @@ Draw.loadPlugin(function (ui) {
         if (!userById(userId)) return { ok: false, reason: "Unknown owner." };
         graph[INTERNAL_FLAG] = true;
         model.beginUpdate();
-        try { setAttr(cell, ATTR_OWNER, userId); } finally { model.endUpdate(); graph[INTERNAL_FLAG] = false; }
+        try { setAttr(cell, ATTR_OWNER, userId); syncCompanionAccessIfGarden(cell); } finally { model.endUpdate(); graph[INTERNAL_FLAG] = false; } // CHANGE
         refreshPanel();
         return { ok: true };
     }
@@ -4086,6 +4099,8 @@ Draw.loadPlugin(function (ui) {
             roleTeamModule: ATTR_ROLE_TEAM_MODULE, // NEW
             gardenTeamModule: ATTR_GARDEN_TEAM_MODULE, // NEW
             teamGardenModule: ATTR_TEAM_GARDEN_MODULE, // NEW
+            gardenTaskModule: ATTR_GARDEN_TASK_MODULE, // NEW
+            taskGardenModule: ATTR_TASK_GARDEN_MODULE, // NEW
             teamRoleArchive: ATTR_TEAM_ROLE_ARCHIVE, // NEW
             createdBy: ATTR_CREATED_BY,
             editedBy: ATTR_EDITED_BY

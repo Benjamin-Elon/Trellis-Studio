@@ -351,7 +351,7 @@ test("selected bed overlays render for garden-bed-only selections", () => { // N
     assert.equal(getOverlayNameInput(overlays[0]).value, "Bed 1"); // ADDED
     assert.match(overlays[0].textContent, /Set Bed Conditions/); // NEW
     assert.match(overlays[0].textContent, /Sun exposureFull sun/); // NEW
-    assert.equal(overlays[0].style.left, "0px"); // NEW
+    assert.equal(overlays[0].style.left, "-188px"); // CHANGE
     assert.equal(Number.parseInt(overlays[0].style.top, 10) >= 20, true); // CHANGE
 
     graph.getSelectionCells = () => [bed, bed2]; // NEW
@@ -435,6 +435,16 @@ test("selected bed overlay escape reverts and blank names use fallback", () => {
     assert.equal(input.value, "Garden Bed"); // ADDED
 }); // ADDED
 
+test("selected bed overlay position is not clamped to the viewport", () => { // ADDED
+    const { api, bed, graph } = loadPlugin(); // ADDED
+    graph.__states.set(bed, { x: 5, y: -80, width: 100, height: 60 }); // ADDED
+    graph.getSelectionCells = () => [bed]; // ADDED
+    api._test.syncSelectedBedOverlays(); // ADDED
+    const overlay = getSelectedBedOverlays(graph)[0]; // ADDED
+    assert.ok(Number.parseFloat(overlay.style.left) < 0); // ADDED
+    assert.ok(Number.parseFloat(overlay.style.top) < 0); // ADDED
+}); // ADDED
+
 test("selected bed overlay autosizes from conditions but not bed names", () => { // ADDED
     const { api, bed, graph } = loadPlugin(); // ADDED
     graph.__states.set(bed, { x: 420, y: 20, width: 100, height: 60 }); // ADDED
@@ -456,7 +466,7 @@ test("selected bed overlay autosizes from conditions but not bed names", () => {
     overlay = getSelectedBedOverlays(graph)[0]; // ADDED
     const wideWidth = Number.parseInt(overlay.style.width, 10); // ADDED
     assert.equal(wideWidth > shortWidth, true); // ADDED
-    assert.equal(overlay.style.left, Math.max(0, Math.round(420 - wideWidth - 8)) + "px"); // ADDED
+    assert.equal(overlay.style.left, Math.round(420 - wideWidth - 8) + "px"); // CHANGE
 }); // ADDED
 
 test("preset identity persists as selected baseline until cleared", () => { // CHANGE

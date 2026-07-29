@@ -693,11 +693,14 @@ test('crop picker selection stays fresh across async refreshes', () => { // ADDE
     assert.match(schedulerSource, /formState\.plantId = Number\(plantSel\.value\);[\s\S]*currentCropPickerSelectedValue = String\(formState\.plantId \|\| ''\);/); // ADDED
 }); // ADDED
 
-test('crop changes preserve the visible selected date before recomputing windows', () => { // ADDED
+test('crop changes preserve only genuine selected dates before recomputing windows', () => { // CHANGED
     assert.match(schedulerSource, /const preservedPrimaryDateISO = String\(startInput\.value \|\| ''\)\.trim\(\);/); // ADDED
-    assert.match(schedulerSource, /startInput\.value = preservedPrimaryDateISO;[\s\S]*userEditedStartThisSession = true;/); // ADDED
+    assert.match(schedulerSource, /const preservePrimaryDate = .*hasPersistedSchedule \|\| userEditedStartThisSession \|\| preserveDerivedGeneratedDate/); // ADDED
+    assert.match(schedulerSource, /else if \(generatedStartThisSession\) \{[\s\S]*startInput\.value = '';[\s\S]*sowingSeasonSel\.value = '';[\s\S]*formState\.activeSowingSeasonId = '';/); // ADDED
+    assert.match(schedulerSource, /startInput\.addEventListener\('input'[\s\S]*userEditedStartThisSession = true;[\s\S]*generatedStartThisSession = false;/); // ADDED
+    assert.match(schedulerSource, /sowingSeasonSel\.addEventListener\('change'[\s\S]*userEditedStartThisSession = false;[\s\S]*generatedStartThisSession = !hasPersistedSchedule && !mode\.perennial && !!formState\.startISO;/); // ADDED
     assert.match(schedulerSource, /case 'plantChanged': \{[\s\S]*await recomputeAnchors\(false, true\);/); // ADDED
-}); // ADDED
+}); // CHANGED
 
 function makeSummaryViewState(overrides = {}) { // ADDED
     return hooks.buildScheduleViewState({ // ADDED
