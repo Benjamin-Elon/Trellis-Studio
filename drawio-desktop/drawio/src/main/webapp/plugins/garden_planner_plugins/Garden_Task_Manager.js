@@ -1517,6 +1517,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
     const WEEK_BOARD_TOP_MARGIN = 20; // NEW: replaces schedule-lane stackBorder so hour origin and resize math match
     const TASK_ACTION_OVERLAY_EXTRA_Y = 3; // CHANGE: nudges selected card/lane action overlays below handles
     const TASK_ACTION_OVERLAY_EXTRA_X = 20; // CHANGE: shifts selected task action overlays 10 px to the right
+    const TASK_MODULE_CURSOR_OVERLAY_OFFSET_X = 8; // NEW: match selected team module cursor overlay offset
+    const TASK_MODULE_CURSOR_OVERLAY_OFFSET_Y = 8; // NEW: match selected team module cursor overlay offset
     const TASK_BOARD_HEADER_OVERLAY_EXTRA_X = 20; // CHANGE: shifts the board-level task controls 10 px right
     const SCHEDULE_CARD_HORIZONTAL_INSET = 10; // CHANGE: day lanes own card x and width with fixed side gutters
     const WORKFLOW_CARD_FILL = { TODO: '#F8CECC', DOING: '#FFF2CC', DONE: '#D5E8D4' }; // NEW
@@ -7030,13 +7032,24 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             return !mxEvent.isControlDown(evt) && !mxEvent.isMetaDown(evt) && !mxEvent.isShiftDown(evt) && Number(evt.detail || 1) <= 1; // NEW
         } // NEW
 
+        function taskContainerPointForEvent(evt, fallbackX, fallbackY) { // NEW
+            const rawX = evt && evt.clientX != null ? evt.clientX : fallbackX; // NEW
+            const rawY = evt && evt.clientY != null ? evt.clientY : fallbackY; // NEW
+            if (rawX == null || rawY == null) return null; // NEW
+            const anchorHost = graph.container || host || (overlay && overlay.parentNode) || null; // NEW
+            const rect = anchorHost && anchorHost.getBoundingClientRect ? anchorHost.getBoundingClientRect() : { left: 0, top: 0 }; // NEW
+            return { // NEW
+                x: (Number(rawX) || 0) - (Number(rect.left) || 0) + (anchorHost ? Number(anchorHost.scrollLeft) || 0 : 0), // NEW
+                y: (Number(rawY) || 0) - (Number(rect.top) || 0) + (anchorHost ? Number(anchorHost.scrollTop) || 0 : 0) // NEW
+            }; // NEW
+        } // NEW
+
         function mouseAnchorForEvent(me, evt) { // NEW
             const graphX = me && typeof me.getGraphX === 'function' ? me.getGraphX() : (evt && evt.graphX != null ? evt.graphX : null); // NEW
             const graphY = me && typeof me.getGraphY === 'function' ? me.getGraphY() : (evt && evt.graphY != null ? evt.graphY : null); // NEW
-            const clientX = evt && evt.clientX != null ? evt.clientX : graphX; // NEW
-            const clientY = evt && evt.clientY != null ? evt.clientY : graphY; // NEW
-            if (graphX == null || graphY == null || clientX == null || clientY == null) return null; // NEW
-            return { model: { x: Number(graphX) || 0, y: Number(graphY) || 0 }, container: { x: Number(clientX) || 0, y: Number(clientY) || 0 } }; // NEW
+            const containerPoint = taskContainerPointForEvent(evt, graphX, graphY); // CHANGE
+            if (graphX == null || graphY == null || !containerPoint) return null; // CHANGE
+            return { model: { x: Number(graphX) || 0, y: Number(graphY) || 0 }, container: containerPoint, source: 'cursor' }; // CHANGE
         } // NEW
 
         function fallbackAnchorForTaskModule(taskModule) { // NEW
@@ -7054,11 +7067,19 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
 
         function positionTaskModuleOverlay(taskModule, anchor) { // NEW
             if (anchor && anchor.container) { // NEW
-                overlay.style.left = Math.round(anchor.container.x + TASK_ACTION_OVERLAY_EXTRA_X) + 'px'; // NEW: selected task module overlays intentionally do not clamp to the viewport
-                overlay.style.top = Math.round(anchor.container.y + TASK_ACTION_OVERLAY_EXTRA_Y) + 'px'; // NEW: selected task module overlays intentionally do not clamp to the viewport
+                const offsetX = anchor.source === 'cursor' ? TASK_MODULE_CURSOR_OVERLAY_OFFSET_X : TASK_ACTION_OVERLAY_EXTRA_X; // CHANGE
+                const offsetY = anchor.source === 'cursor' ? TASK_MODULE_CURSOR_OVERLAY_OFFSET_Y : TASK_ACTION_OVERLAY_EXTRA_Y; // CHANGE
+                overlay.style.left = Math.round(anchor.container.x + offsetX) + 'px'; // CHANGE: selected task module overlays intentionally do not clamp to the viewport
+                overlay.style.top = Math.round(anchor.container.y + offsetY) + 'px'; // CHANGE: selected task module overlays intentionally do not clamp to the viewport
                 return true; // NEW
             } // NEW
             return positionDomOverlayFromCellStateUnclamped(overlay, taskModule, true, false, TASK_ACTION_OVERLAY_EXTRA_Y, TASK_ACTION_OVERLAY_EXTRA_X); // NEW
+        } // NEW
+
+        function rememberTaskModuleCursorAnchor(taskModule, anchor) { // NEW
+            if (!anchor || anchor.source !== 'cursor' || !taskModuleContainsPoint(taskModule, anchor.model)) return null; // NEW
+            lastClickAnchor = { model: { x: anchor.model.x, y: anchor.model.y }, container: { x: anchor.container.x, y: anchor.container.y }, source: 'cursor' }; // NEW
+            return lastClickAnchor; // NEW
         } // NEW
 
         function hideOverlay() { // NEW
@@ -7087,7 +7108,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             if (!taskModule) { currentTaskModule = null; manuallyHiddenTaskModule = null; hideOverlay(); return; } // CHANGE
             if (manuallyHiddenTaskModule && manuallyHiddenTaskModule !== taskModule) manuallyHiddenTaskModule = null; // NEW
             if (manuallyHiddenTaskModule === taskModule) { currentTaskModule = taskModule; hideOverlay(); return; } // NEW
-            showOverlay(taskModule, overlayAnchorForTaskModule(taskModule)); // CHANGE
+            const rememberedAnchor = rememberTaskModuleCursorAnchor(taskModule, pendingClickAnchor); // NEW
+            showOverlay(taskModule, rememberedAnchor || overlayAnchorForTaskModule(taskModule)); // CHANGE
             pendingClickAnchor = null; // NEW
         } // NEW
 
@@ -7111,7 +7133,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             const anchor = pendingClickAnchor || mouseAnchorForEvent(me, evt); // NEW
             pendingToggleCell = null; // NEW
             if (!toggleCell || selected !== toggleCell || !isPlainPrimaryMouseEvent(evt)) return; // NEW
-            lastClickAnchor = anchor || lastClickAnchor; // NEW
+            lastClickAnchor = rememberTaskModuleCursorAnchor(toggleCell, anchor) || anchor || lastClickAnchor; // CHANGE
             manuallyHiddenTaskModule = overlay.style.display !== 'none' && currentTaskModule === toggleCell ? toggleCell : null; // NEW
             if (manuallyHiddenTaskModule) hideOverlay(); // NEW
             else { pendingClickAnchor = lastClickAnchor; showOverlay(toggleCell, lastClickAnchor); pendingClickAnchor = null; } // NEW

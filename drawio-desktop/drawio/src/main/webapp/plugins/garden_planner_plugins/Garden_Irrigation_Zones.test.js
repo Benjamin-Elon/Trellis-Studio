@@ -253,7 +253,11 @@ function runExternalEdgePathTests() { // NEW
     assert.strictEqual(api.__test.disconnectBoundary(moduleCell, boundary), true); // NEW
     assert.strictEqual(bedC.parent, moduleCell); // NEW
     assert.strictEqual(bedC.geometry.y || 0, bedCY); // NEW
-    assert.strictEqual(api.__test.deriveAssemblyPaths(moduleCell).some(pathItem => pathItem.targetEndpointId === "bedC"), false); // NEW
+    const disconnectedPath = api.__test.deriveAssemblyPaths(moduleCell).find(pathItem => pathItem.targetEndpointId === "bedC"); // CHANGE
+    assert.ok(disconnectedPath); // NEW
+    assert.strictEqual(disconnectedPath.sourceEndpointId, ""); // NEW
+    assert.strictEqual(disconnectedPath.disconnectedFromSource, true); // NEW
+    assert.deepStrictEqual(disconnectedPath.hydraulic.warnings, ["Irrigation tree is disconnected from a source."]); // NEW
 } // NEW
 
 function runReverseAndBadgeLayoutTests() { // NEW
@@ -366,9 +370,9 @@ function runDropdownDirectConnectorStillInsertsInlineTest() { // FIX
     const installed = installPlugin(moduleCell); // FIX
     const catalog = directCatalog(); // FIX
     installed.api.writeCatalog(moduleCell, catalog); // FIX
-    const result = installed.api.__test.applyConnectionPartChoice(moduleCell, { cell: direct, role: "output", index: 0 }, catalogPart(catalog, "direct_insert")); // FIX
+    const result = installed.api.__test.applyConnectionPartChoice(moduleCell, { cell: direct, role: "input", index: 0 }, catalogPart(catalog, "direct_insert")); // CHANGE
     assert.strictEqual(result.cell.parent, assembly); // FIX
-    assert.deepStrictEqual(installed.api.__test.assemblyPartCells(assembly).map(cell => cell.getAttribute("irrigation_catalog_part_id")), ["direct_source", "direct_insert"]); // FIX
+    assert.deepStrictEqual(installed.api.__test.assemblyPartCells(assembly).map(cell => cell.getAttribute("irrigation_catalog_part_id")), ["direct_insert", "direct_source"]); // CHANGE
     assert.strictEqual(moduleCell.children.filter(cell => cell.getAttribute("irrigation_assembly") === "1").length, 1); // FIX
     assert.strictEqual(moduleCell.children.some(cell => cell.getAttribute("irrigation_pipe_edge") === "1"), false); // FIX
 } // FIX
@@ -407,7 +411,8 @@ function bomCatalog() { // NEW
         { id: "valve_bom", name: "Valve BOM", category: "valve", stockState: "in_stock", stockQuantity: 1, cost: 10, connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "3/4" }, output: { type: "barb", nominalSize: "3/4" } }, specs: {} }, // NEW
         { id: "filter_bom", name: "Filter BOM", category: "filter", stockState: "out_of_stock", stockQuantity: 0, cost: 5, connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "3/4" }, output: { type: "barb", nominalSize: "3/4" } }, specs: {} }, // NEW
         { id: "pipe_bom", name: "Pipe BOM", category: "pipe_tubing", stockState: "in_stock", stockQuantity: 3, cost: 2, unitCost: 2, connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "3/4", pipeConnection: true }, output: { type: "barb", nominalSize: "3/4", pipeConnection: true } }, specs: { innerDiameterIn: 0.824 } }, // NEW
-        { id: "drip_bom", name: "Drip BOM", category: "dripline", stockState: "out_of_stock", stockQuantity: 0, cost: 1, unitCost: 1, connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "1/2", pipeConnection: true }, output: { type: "barb", nominalSize: "1/2", pipeConnection: true } }, specs: { flowGpm: 0 } } // NEW
+        { id: "drip_bom", name: "Drip BOM", category: "dripline", stockState: "out_of_stock", stockQuantity: 0, cost: 1, unitCost: 1, connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "1/2", pipeConnection: true }, output: { type: "barb", nominalSize: "1/2", pipeConnection: true } }, specs: { flowGpm: 0 } }, // CHANGE
+        { id: "emitter_bom", name: "Emitter BOM", category: "emitter", stockState: "out_of_stock", stockQuantity: 0, cost: 3, connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "3/4" }, output: { type: "barb", nominalSize: "3/4" } }, specs: {} } // NEW
     ] }; // NEW
 } // NEW
 
@@ -422,6 +427,24 @@ function bomPaths() { // NEW
 
 function findBomRow(rows, partId) { // NEW
     return rows.find(row => row.partId === partId); // NEW
+} // NEW
+
+function feetToUnits(feet) { // NEW
+    return cmToUnits(Number(feet || 0) * 30.48); // NEW
+} // NEW
+
+function setPipeLength(edgeCell, feet) { // NEW
+    edgeCell.geometry = { points: [{ x: 0, y: 0 }, { x: feetToUnits(feet), y: 0 }] }; // NEW
+    return edgeCell; // NEW
+} // NEW
+
+function bedTemplateRecord(quantityMeters) { // NEW
+    return { templateModel: "bom", requiredParts: [{ partId: "drip_bom", quantityMeters }], partIds: [] }; // NEW
+} // NEW
+
+function writeBedTemplate(assembly, record) { // NEW
+    assembly.value.setAttribute("irrigation_bed_template_json", JSON.stringify(record)); // NEW
+    return assembly; // NEW
 } // NEW
 
 function runBomAggregationTests() { // NEW
@@ -464,6 +487,55 @@ function runBomStockAndSummaryTests() { // NEW
     assert.strictEqual(summary.totalDesignValue, 50); // CHANGE
 } // NEW
 
+function runDisconnectedComponentBomTests() { // NEW
+    const moduleCell = makeCell("module_disconnected_component", { garden_module: "1", unit_system: "imperial" }); // NEW
+    const upstream = addChild(moduleCell, makeCell("upstream_component", { irrigation_assembly: "1", irrigation_assembly_type: "parts" })); // NEW
+    const valve = addChild(upstream, partCell("componentValve", "valve_bom", "Valve", 20)); // NEW
+    const filter = addChild(upstream, partCell("componentFilter", "filter_bom", "Filter", 70)); // NEW
+    const bed = writeBedTemplate(addChild(moduleCell, makeCell("componentBed", { irrigation_assembly: "1", irrigation_assembly_type: "bed", label: "Bed" }, { width: 100, height: 50 })), bedTemplateRecord(3.048)); // NEW
+    const downstream = addChild(moduleCell, makeCell("downstream_component", { irrigation_assembly: "1", irrigation_assembly_type: "parts" })); // NEW
+    const emitter = addChild(downstream, partCell("componentEmitter", "emitter_bom", "Emitter", 20)); // NEW
+    setPipeLength(addChild(moduleCell, edge("componentFilterBed", filter, bed, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_bom", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 10); // NEW
+    setPipeLength(addChild(moduleCell, edge("componentBedEmitter", bed, emitter, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_bom", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 5); // NEW
+    const installed = installPlugin(moduleCell); // NEW
+    installed.api.writeCatalog(moduleCell, bomCatalog()); // NEW
+    const components = installed.api.__test.deriveBomComponents(moduleCell); // NEW
+    assert.strictEqual(components.length, 1); // NEW
+    assert.strictEqual(components[0].disconnectedFromSource, true); // NEW
+    assert.deepStrictEqual(components[0].cellIds.sort(), ["componentBed", "componentEmitter", "componentFilter", "componentValve"].sort()); // NEW
+    const bom = installed.api.__test.buildBomRows(moduleCell, { catalog: bomCatalog() }); // NEW
+    assert.strictEqual(findBomRow(bom.rows, "valve_bom").requiredQuantity, 1); // NEW
+    assert.strictEqual(findBomRow(bom.rows, "filter_bom").requiredQuantity, 1); // NEW
+    assert.strictEqual(findBomRow(bom.rows, "emitter_bom").requiredQuantity, 1); // NEW
+    assert.strictEqual(Math.round(findBomRow(bom.rows, "pipe_bom").requiredQuantity), 15); // NEW
+    assert.strictEqual(Math.round(findBomRow(bom.rows, "drip_bom").requiredQuantity), 10); // NEW
+    assert.strictEqual(bom.disconnectedTreeCount, 1); // NEW
+    const summary = installed.api.__test.buildReportSummary(moduleCell, { catalog: bomCatalog(), beds: [bed] }); // NEW
+    assert.strictEqual(summary.disconnectedTreeCount, 1); // NEW
+    assert.strictEqual(summary.criticalWarnings.includes("Irrigation tree is disconnected from a source."), true); // NEW
+    assert.strictEqual(summary.completeness, 0); // NEW
+} // NEW
+
+function runSharedTrunkComponentBomTests() { // NEW
+    const moduleCell = makeCell("module_shared_component", { garden_module: "1", unit_system: "imperial" }); // NEW
+    const source = addChild(moduleCell, makeCell("sharedSource", { irrigation_endpoint: "1", irrigation_endpoint_type: "source", irrigation_endpoint_profile_json: JSON.stringify({ usableFlowGpm: 5, staticPressurePsi: 45, connectorType: "barb", nominalSize: "3/4", pipeConnection: true }), label: "Source" })); // NEW
+    const trunk = addChild(moduleCell, makeCell("shared_trunk", { irrigation_assembly: "1", irrigation_assembly_type: "parts" })); // NEW
+    const valve = addChild(trunk, partCell("sharedValve", "valve_bom", "Valve", 20)); // NEW
+    const bedA = writeBedTemplate(addChild(moduleCell, makeCell("sharedBedA", { irrigation_assembly: "1", irrigation_assembly_type: "bed", label: "Bed A" }, { width: 100, height: 50 })), bedTemplateRecord(3.048)); // NEW
+    const bedB = writeBedTemplate(addChild(moduleCell, makeCell("sharedBedB", { irrigation_assembly: "1", irrigation_assembly_type: "bed", label: "Bed B" }, { width: 100, height: 50 })), bedTemplateRecord(3.048)); // NEW
+    setPipeLength(addChild(moduleCell, edge("sharedSourceValve", source, valve, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_bom", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 4); // NEW
+    setPipeLength(addChild(moduleCell, edge("sharedValveBedA", valve, bedA, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_bom", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 6); // NEW
+    setPipeLength(addChild(moduleCell, edge("sharedValveBedB", valve, bedB, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_bom", irrigation_edge_source_port: "1", irrigation_edge_target_port: "0" })), 8); // NEW
+    const installed = installPlugin(moduleCell); // NEW
+    installed.api.writeCatalog(moduleCell, bomCatalog()); // NEW
+    const bom = installed.api.__test.buildBomRows(moduleCell, { catalog: bomCatalog() }); // NEW
+    assert.strictEqual(bom.components.length, 1); // NEW
+    assert.strictEqual(bom.disconnectedTreeCount, 0); // NEW
+    assert.strictEqual(findBomRow(bom.rows, "valve_bom").requiredQuantity, 1); // NEW
+    assert.strictEqual(Math.round(findBomRow(bom.rows, "pipe_bom").requiredQuantity), 18); // NEW
+    assert.strictEqual(Math.round(findBomRow(bom.rows, "drip_bom").requiredQuantity), 20); // NEW
+} // NEW
+
 function run() { // NEW
     runZoneTests(); // CHANGE
     runBoundaryDisconnectTests(); // NEW
@@ -481,6 +553,8 @@ function run() { // NEW
     runBomAggregationTests(); // NEW
     runBomSelectionAndMetricTests(); // NEW
     runBomStockAndSummaryTests(); // NEW
+    runDisconnectedComponentBomTests(); // NEW
+    runSharedTrunkComponentBomTests(); // NEW
 } // NEW
 
 run(); // NEW

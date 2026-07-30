@@ -806,6 +806,7 @@ test("unlinked task module overlay only shows the editable label input", async (
 
 test("task module overlay follows the cursor and alternates show and hide", async () => { // NEW
     const h = makeHarness(); // NEW
+    h.graph.container.getBoundingClientRect = () => ({ left: 10, top: 20, width: 800, height: 600, right: 810, bottom: 620 }); // NEW
     const taskModule = new TestCell("clickTaskModule", makeValue(h.document, { task_module: "1", label: "Click Tasks" }), new TestGeometry(80, 90, 300, 120), "shape=swimlane;"); // NEW
     h.addCell(h.root, taskModule); // NEW
     h.setState(taskModule, { x: 80, y: 90, width: 300, height: 120 }); // NEW
@@ -815,8 +816,12 @@ test("task module overlay follows the cursor and alternates show and hide", asyn
     await nextTick(); // NEW
     let overlay = taskModuleOverlay(h.document); // NEW
     assert.equal(overlay.style.display, "flex"); // NEW
-    assert.equal(overlay.style.left, "200px"); // NEW
-    assert.equal(overlay.style.top, "223px"); // NEW
+    assert.equal(overlay.style.left, "178px"); // CHANGE
+    assert.equal(overlay.style.top, "208px"); // CHANGE
+    h.fireViewEvent(); // NEW
+    await nextTick(); // NEW
+    assert.equal(overlay.style.left, "178px"); // NEW
+    assert.equal(overlay.style.top, "208px"); // NEW
     h.mouseUp(taskModule, { clientX: 180, clientY: 220, graphX: 120, graphY: 130 }); // NEW
     assert.equal(taskModuleOverlay(h.document).style.display, "flex"); // NEW
 
@@ -828,8 +833,8 @@ test("task module overlay follows the cursor and alternates show and hide", asyn
     h.mouseUp(taskModule, { clientX: 210, clientY: 250, graphX: 150, graphY: 160 }); // NEW
     overlay = taskModuleOverlay(h.document); // NEW
     assert.equal(overlay.style.display, "flex"); // NEW
-    assert.equal(overlay.style.left, "230px"); // NEW
-    assert.equal(overlay.style.top, "253px"); // NEW
+    assert.equal(overlay.style.left, "208px"); // CHANGE
+    assert.equal(overlay.style.top, "238px"); // CHANGE
 }); // NEW
 
 test("task manager reflow scope policy maps command categories", () => { // NEW
