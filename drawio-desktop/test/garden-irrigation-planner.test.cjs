@@ -99,6 +99,7 @@ function loadPlugin(options = {}) { // NEW
         scrolledCells: [], // NEW
         fittedWindows: [], // NEW
         scrolledRects: [], // NEW
+        foldCalls: [], // NEW
         container, // NEW
         view: { // NEW
             overlayPane, // CHANGE
@@ -167,7 +168,9 @@ function loadPlugin(options = {}) { // NEW
             geo.alternateBounds.x = Number(geo.x || 0); // NEW
             geo.alternateBounds.y = Number(geo.y || 0); // NEW
         }, // NEW
+        isCellCollapsed(cell) { return !!(cell && cell.collapsed); }, // NEW
         foldCells(collapse, _recurse, cells) { // NEW
+            this.foldCalls.push({ collapse: !!collapse, cells: cells || [] }); // NEW
             (cells || []).forEach(cell => { // NEW
                 if (!cell || !cell.geometry) return; // NEW
                 const geo = cloneGeometry(cell.geometry); // NEW
@@ -267,6 +270,14 @@ function sampleCatalog() { // NEW
     ] }; // NEW
 } // NEW
 
+function flipConnectCatalog() { // NEW
+    return { items: [ // NEW
+        part("male_out_fit", "Male outlet fitting", "fitting", "in_stock", 4, 1, 1, "fght", "3/4", "mght", "3/4", { pressureLossPsi: 0.1 }), // NEW
+        part("female_out_fit", "Female outlet fitting", "fitting", "in_stock", 4, 1, 1, "fght", "3/4", "fght", "3/4", { pressureLossPsi: 0.1 }), // NEW
+        part("female_out_filter", "Female outlet filter", "filter", "in_stock", 8, 1, 1, "fght", "3/4", "fght", "3/4", { pressureLossPsi: 0.2 }) // NEW
+    ] }; // NEW
+} // NEW
+
 function addDripTapeBomParts(catalog) { // NEW
     catalog.items.push(part("poly_distribution_1_2", "1/2 in distribution tubing", "pipe_tubing", "in_stock", 0, 1, 1, "barb", "1/2", "barb", "1/2", { innerDiameterIn: 0.600, hazenWilliamsC: 150 }, 0.32, true)); // NEW
     catalog.items.push(part("poly_mainline_3_4", "3/4 in poly mainline tubing", "pipe_tubing", "in_stock", 0, 1, 1, "barb", "3/4", "barb", "3/4", { innerDiameterIn: 0.824, hazenWilliamsC: 150 }, 0.65, true)); // NEW
@@ -282,6 +293,13 @@ function addDripTapeBomParts(catalog) { // NEW
 function clickButton(root, text) { // NEW
     const button = Array.from(root.querySelectorAll("button")).find(node => node.textContent.includes(text)); // NEW
     assert.ok(button, "Missing button: " + text); // NEW
+    button.click(); // NEW
+    return button; // NEW
+} // NEW
+
+function clickExactButton(root, text) { // NEW
+    const button = Array.from(root.querySelectorAll("button")).find(node => node.textContent.trim() === text); // NEW
+    assert.ok(button, "Missing exact button: " + text); // NEW
     button.click(); // NEW
     return button; // NEW
 } // NEW
@@ -302,6 +320,12 @@ function assertNoActiveIrrigationOverlays(root) { // NEW
 
 function buttonTexts(root) { // NEW
     return Array.from(root.querySelectorAll("button")).map(node => node.textContent.trim()).filter(Boolean); // NEW
+} // NEW
+
+function buttonByText(root, text) { // NEW
+    const button = Array.from(root.querySelectorAll("button")).find(node => node.textContent.trim() === text); // NEW
+    assert.ok(button, "Missing button: " + text); // NEW
+    return button; // NEW
 } // NEW
 
 function clickPort(root, titlePattern) { // NEW
@@ -344,6 +368,10 @@ function selectedInternalConnectionBadges(root) { // NEW
 
 function selectedPortBadgeLabels(root) { // NEW
     return portBadgesInState(root, "selected").map(node => node.textContent).sort(); // NEW
+} // NEW
+
+function selectedPortKeys(api, session) { // NEW
+    return api.__test.selectedValidPorts(session).map(port => [port.cellId, port.role, String(port.index)].join(":")).sort(); // NEW
 } // NEW
 
 function assemblyCells(moduleCell, api) { // NEW
@@ -454,12 +482,6 @@ function assertConnectionHud(root, summaryPattern) { // NEW
     return hud; // NEW
 } // NEW
 
-function addPartPicker(root) { // NEW
-    const select = root.querySelector(".trellis-irrigation-add-part-picker"); // NEW
-    assert.ok(select, "Missing Add Part picker"); // NEW
-    return select; // NEW
-} // NEW
-
 function assertBoundedStyle(node, label) { // NEW
     assert.ok(node, "Missing styled node: " + label); // NEW
     const style = node.getAttribute("style") || ""; // NEW
@@ -484,6 +506,10 @@ function inputByLabel(root, labelText) { // NEW
     return input; // NEW
 } // NEW
 
+function labelCaption(label) { // NEW
+    return Array.from(label.childNodes).filter(node => node.nodeType === 3).map(node => node.textContent).join("").trim(); // NEW
+} // NEW
+
 function changeSelectByLabel(root, labelText, value) { // NEW
     const select = selectByLabel(root, labelText); // NEW
     select.value = value; // NEW
@@ -502,6 +528,15 @@ function blurInput(input) { // NEW
     input.dispatchEvent(new input.ownerDocument.defaultView.Event("blur", { bubbles: false })); // NEW
 } // NEW
 
+function createConfiguredDripTapeBedAssembly(api, graph, moduleCell, bed, anchor) { // NEW
+    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, anchor || { x: 240, y: 120 }).assembly; // NEW
+    graph.setSelectionCell(bedAssembly); // NEW
+    changeSelectByLabel(graph.container, "Inlet part", "fpt_to_half_barb"); // NEW
+    changeSelectByLabel(graph.container, "Outlet part", "half_barb_to_3_4_barb"); // NEW
+    graph.setSelectionCell(bedAssembly); // NEW
+    return bedAssembly; // NEW
+} // NEW
+
 function bedLayoutRows(assembly, api) { // NEW
     return descendants(assembly, cell => cell.getAttribute && cell.getAttribute(api.attrs.BED_LAYOUT) === "1"); // NEW
 } // NEW
@@ -518,6 +553,7 @@ function createCommittedDripTapeBedAssembly(harness, bedCell) { // NEW
     api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
     graph.setSelectionCell(created.assembly); // NEW
     changeSelectByLabel(graph.container, "Inlet part", "fpt_to_half_barb"); // NEW
+    changeSelectByLabel(graph.container, "Header end cap", "end_cap_1_2_barb"); // NEW
     return created.assembly; // NEW
 } // NEW
 
@@ -579,6 +615,25 @@ function lifecycleToggle(root) { // NEW
     return toggle; // NEW
 } // NEW
 
+function assemblyFoldToggle(root) { // NEW
+    const toggle = root.querySelector(".trellis-irrigation-assembly-fold-toggle"); // NEW
+    assert.ok(toggle, "Missing assembly fold toggle"); // NEW
+    return toggle; // NEW
+} // NEW
+
+function assertNoAssemblyFoldToggle(root) { // NEW
+    assert.equal(root.querySelector(".trellis-irrigation-assembly-fold-toggle"), null); // NEW
+} // NEW
+
+function styleHasColor(node, hex, rgb) { // NEW
+    const style = node && node.getAttribute("style") || ""; // NEW
+    return style.indexOf(hex) >= 0 || style.indexOf(rgb) >= 0; // NEW
+} // NEW
+
+function activeOutlineStyleMatches(node) { // NEW
+    return styleHasColor(node, "#d6b656", "rgb(214, 182, 86)"); // NEW
+} // NEW
+
 test("already-foldable irrigation assemblies collapse around their geometry center", () => { // NEW
     const { api, graph, moduleCell } = loadPlugin(); // NEW
     api.writeCatalog(moduleCell, sampleCatalog()); // NEW
@@ -621,6 +676,81 @@ test("center-stable folding excludes bed assemblies, modules, and generic cells"
     graph.foldCells(true, false, [generic]); // NEW
     assert.deepEqual({ x: generic.geometry.x, y: generic.geometry.y }, genericTopLeft); // NEW
     assert.equal(styleToken(bedAssembly.style, "collapsible"), "0"); // NEW
+}); // NEW
+
+test("selected irrigation assembly shows bottom collapse and expand controls", () => { // CHANGE
+    const { api, graph, moduleCell } = loadPlugin(); // CHANGE
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const assembly = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 30, y: 40 }).assembly; // CHANGE
+    const beforeCenter = geometryCenter(assembly.geometry); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(assembly); // NEW
+
+    assert.ok(hudSectionTitles(graph.container).includes("Assemblies")); // NEW
+    assert.deepEqual(buttonTexts(assemblyFoldToggle(graph.container)), ["Collapse Assembly"]); // NEW
+    clickExactButton(assemblyFoldToggle(graph.container), "Collapse Assembly"); // CHANGE
+    assert.equal(graph.foldCalls.at(-1).collapse, true); // NEW
+    assert.equal(api.__test.isAssemblyCollapsed(assembly), true); // CHANGE
+    assert.deepEqual(geometryCenter(assembly.geometry), beforeCenter); // NEW
+    assert.deepEqual(buttonTexts(assemblyFoldToggle(graph.container)), ["Expand Assembly"]); // CHANGE
+
+    clickExactButton(assemblyFoldToggle(graph.container), "Expand Assembly"); // CHANGE
+    assert.equal(graph.foldCalls.at(-1).collapse, false); // NEW
+    assert.equal(api.__test.isAssemblyCollapsed(assembly), false); // CHANGE
+    assert.deepEqual(geometryCenter(assembly.geometry), beforeCenter); // NEW
+}); // NEW
+
+test("selected inner part resolves assembly collapse controls to its parent assembly", () => { // CHANGE
+    const { api, graph, moduleCell } = loadPlugin(); // CHANGE
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const assembly = api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "3/4" }, { x: 30, y: 40 }).assembly; // CHANGE
+    const sourcePart = api.__test.firstAssemblyPart(assembly); // CHANGE
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(sourcePart); // NEW
+
+    assert.equal(api.__test.selectedFoldableAssemblies([sourcePart]).map(cell => cell.getId()).join(","), assembly.getId()); // CHANGE
+    assert.deepEqual(buttonTexts(assemblyFoldToggle(graph.container)), ["Collapse Assembly"]); // NEW
+    clickExactButton(assemblyFoldToggle(graph.container), "Collapse Assembly"); // NEW
+    assert.equal(api.__test.isAssemblyCollapsed(assembly), true); // NEW
+}); // NEW
+
+test("mixed selected assembly fold states show both bottom controls", () => { // CHANGE
+    const { api, graph, moduleCell } = loadPlugin(); // CHANGE
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const expanded = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 30, y: 40 }).assembly; // CHANGE
+    const collapsed = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "regulator"), { x: 260, y: 40 }).assembly; // CHANGE
+    graph.foldCells(true, false, [collapsed]); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCells([expanded, collapsed]); // NEW
+
+    assert.deepEqual(buttonTexts(assemblyFoldToggle(graph.container)), ["Collapse Assemblies", "Expand Assemblies"]); // CHANGE
+    clickExactButton(assemblyFoldToggle(graph.container), "Collapse Assemblies"); // CHANGE
+    assert.equal(api.__test.isAssemblyCollapsed(expanded), true); // CHANGE
+    assert.equal(api.__test.isAssemblyCollapsed(collapsed), true); // CHANGE
+    assert.deepEqual(buttonTexts(assemblyFoldToggle(graph.container)), ["Expand Assemblies"]); // NEW
+}); // NEW
+
+test("assembly fold controls exclude bed module generic and pipe-only selections", () => { // NEW
+    const { api, graph, moduleCell, bed, document } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "3/4", pipeConnection: true }, { x: 30, y: 40 }); // NEW
+    const filter = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 260, y: 40 }); // NEW
+    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 220 }).assembly; // NEW
+    const generic = appendChild(moduleCell, makeXmlCell(document, "generic_fold_control", { label: "Generic" }, { x: 460, y: 40, width: 120, height: 60 })); // NEW
+    const connection = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(filter.assembly).getId(), role: "input", index: 0 }); // NEW
+    assert.equal(connection.ok, true, connection.reason); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+
+    graph.setSelectionCell(bedAssembly); // NEW
+    assertNoAssemblyFoldToggle(graph.container); // NEW
+    graph.setSelectionCell(bed); // NEW
+    assertNoAssemblyFoldToggle(graph.container); // NEW
+    graph.setSelectionCell(moduleCell); // NEW
+    assertNoAssemblyFoldToggle(graph.container); // NEW
+    graph.setSelectionCell(connection.edge); // NEW
+    assertNoAssemblyFoldToggle(graph.container); // NEW
+    graph.setSelectionCell(generic); // NEW
+    assert.equal(graph.container.querySelector(".trellis-irrigation-mode-hud"), null); // NEW
 }); // NEW
 
 function nextTick() { // NEW
@@ -916,6 +1046,7 @@ test("starter catalog includes 1 inch and 1/4 inch poly/barb irrigation componen
 test("connector compatibility respects GHT and pipe-thread gender", () => { // NEW
     const { api } = loadPlugin(); // NEW
     const c = type => ({ type, nominalSize: "3/4" }); // CHANGE
+    assert.equal(api.__test.shortCatalogPartName({ name: "3/4 in poly mainline tubing" }), "poly mainline tubing"); // NEW
     assert.equal(api.__test.normalizeEndpointProfile({ connectorType: "twist" }).connectorType, "twist_lock"); // NEW
     assert.equal(api.__test.normalizeEndpointProfile({ connectorType: "twist lock" }).connectorType, "twist_lock"); // NEW
     assert.equal(api.__test.normalizeEndpointProfile({ connectorType: "push connect" }).connectorType, "push_connect"); // NEW
@@ -1022,8 +1153,10 @@ test("source commit creates one undoable edit at the latest click point and HUD 
     const { api, graph, model, moduleCell, actions } = loadPlugin(); // CHANGE
     api.writeCatalog(moduleCell, sampleCatalog()); // NEW
     actions.get("trellisIrrigationPlanner").funct(); // NEW
+    assert.equal(graph.container.querySelector(".trellis-irrigation-source-form"), null); // NEW
     graph.fireMouseMove(310, 180); // NEW
     clickButton(graph.container, "Create Source"); // NEW
+    assert.ok(graph.container.querySelector(".trellis-irrigation-source-form")); // NEW
     model.completedEdits = []; // NEW
     clickButton(graph.container, "Commit Source"); // NEW
     const sourceAssembly = assemblyCells(moduleCell, api)[0]; // NEW
@@ -1087,35 +1220,20 @@ test("irrigation mode HUD renders only for active-module irrigation selections",
     assert.equal(graph.container.querySelector(".trellis-irrigation-mode-hud"), null); // NEW
 }); // NEW
 
-test("Add Part groups global options and creates one undoable unconnected assembly without context", () => { // CHANGE
-    const { api, graph, model, moduleCell, actions } = loadPlugin(); // CHANGE
+test("irrigation HUD no longer exposes Add Part placement controls", () => { // CHANGE
+    const { api, graph, moduleCell, actions } = loadPlugin(); // CHANGE
     api.writeCatalog(moduleCell, sampleCatalog()); // NEW
     actions.get("trellisIrrigationPlanner").funct(); // NEW
-    assert.match(graph.container.textContent, /Add Part/); // NEW
     const header = irrigationHeader(graph.container); // NEW
     assert.deepEqual(buttonTexts(header), ["BOM", "Catalog", "Exit"]); // NEW
+    assert.match(buttonByText(header, "BOM").getAttribute("style"), /border:\s*1px solid (?:#2563eb|rgb\(37,\s*99,\s*235\))/); // CHANGE
+    assert.match(buttonByText(header, "Catalog").getAttribute("style"), /border:\s*1px solid (?:#2563eb|rgb\(37,\s*99,\s*235\))/); // CHANGE
     assert.equal(hudSectionTitles(graph.container).includes("Tools"), false); // NEW
     graph.fireMouseMove(360, 220); // NEW
-    clickButton(graph.container, "Add Part"); // NEW
-    const form = graph.container.querySelector(".trellis-irrigation-add-assembly-form"); // NEW
-    const select = form.querySelector("select"); // CHANGE
-    const groups = Array.from(select.querySelectorAll("optgroup")).map(group => group.label); // NEW
-    assert.ok(groups.includes("In stock / Control & protection")); // NEW
-    assert.ok(groups.includes("In stock / Distribution")); // NEW
-    assert.ok(groups.includes("Needs purchase / Water application")); // NEW
-    select.value = "filter"; // NEW
-    model.completedEdits = []; // NEW
-    clickButton(form, "Add Part"); // CHANGE
-    const partAssembly = assemblyCells(moduleCell, api)[0]; // NEW
-    assert.equal(model.completedEdits.length, 1); // NEW
-    assert.equal(partAssembly.getAttribute(api.attrs.ASSEMBLY_TYPE), "parts"); // NEW
-    const createdPart = api.__test.firstAssemblyPart(partAssembly); // NEW
-    assert.equal(createdPart.getAttribute(api.attrs.CATALOG_PART_ID), "filter"); // CHANGE
-    assertAssemblyPartPlannerManagedStyle(createdPart); // CHANGE
-    assert.equal(createdPart.geometry.y, 44); // NEW
-    assert.equal(partAssembly.geometry.x, 360); // NEW
-    assert.doesNotMatch(graph.container.textContent, /Create Source/); // NEW
+    assert.equal(graph.container.querySelector(".trellis-irrigation-add-assembly-form"), null); // NEW
+    assert.equal(graph.container.querySelector(".trellis-irrigation-add-part-picker"), null); // NEW
     assert.doesNotMatch(graph.container.textContent, /Add Part/); // CHANGE
+    assert.match(graph.container.textContent, /Create Source/); // CHANGE
 }); // NEW
 
 test("selected inner assembly parts expose contextual bottom delete action", () => { // CHANGE
@@ -1137,20 +1255,67 @@ test("selected inner assembly parts expose contextual bottom delete action", () 
 }); // NEW
 
 test("water source overlay title edits source and assembly labels", () => { // NEW
-    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    const { api, graph, moduleCell, document } = loadPlugin(); // CHANGE
     api.writeCatalog(moduleCell, sampleCatalog()); // NEW
     const source = api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "3/4", usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
     api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
     graph.setSelectionCell(source.assembly); // NEW
-    const title = graph.container.querySelector(".trellis-irrigation-source-title-input"); // NEW
+    let title = graph.container.querySelector(".trellis-irrigation-source-title-input"); // CHANGE
     assert.ok(title, "Missing editable water source title"); // NEW
     assert.ok(irrigationHeader(graph.container).contains(title)); // NEW
+    assert.ok(graph.container.querySelector(".trellis-irrigation-source-edit")); // NEW
     assert.equal(buttonTexts(graph.container).includes("Add Part"), false); // NEW
+    assert.match(buttonByText(graph.container, "Save Source").getAttribute("style"), /#188038|rgb\(24,\s*128,\s*56\)/); // CHANGE
+
+    graph.setSelectionCell(source.source); // NEW
+    title = graph.container.querySelector(".trellis-irrigation-source-title-input"); // NEW
+    assert.ok(title, "Missing editable water source title for selected source endpoint"); // NEW
+    assert.ok(graph.container.querySelector(".trellis-irrigation-source-edit")); // NEW
+
+    const inlineAdapter = appendChild(source.assembly, makeXmlCell(document, "source_inline_adapter", { [api.attrs.COMPONENT]: "1", [api.attrs.COMPONENT_TYPE]: "fitting", [api.attrs.CATALOG_PART_ID]: "fpt_to_barb", label: "Inline adapter" }, { x: 20, y: 90, width: 150, height: 34 })); // NEW
+    graph.setSelectionCell(inlineAdapter); // NEW
+    assert.equal(graph.container.querySelector(".trellis-irrigation-source-title-input"), null); // NEW
+    assert.equal(graph.container.querySelector(".trellis-irrigation-source-edit"), null); // NEW
+    assert.match(irrigationHeader(graph.container).textContent, /Inline adapter/); // NEW
+    assert.equal(buttonTexts(graph.container).includes("Delete Part"), true); // NEW
+
+    graph.setSelectionCell(source.source); // NEW
+    title = graph.container.querySelector(".trellis-irrigation-source-title-input"); // NEW
     title.value = "Main Water"; // NEW
     blurInput(title); // NEW
     assert.equal(source.assembly.getAttribute("label"), "Main Water"); // NEW
     assert.equal(source.source.getAttribute("label"), "Main Water"); // NEW
     assert.equal(JSON.parse(source.source.getAttribute(api.attrs.ENDPOINT_PROFILE_JSON)).label, "Main Water"); // NEW
+}); // NEW
+
+test("water source connector fields lock after downstream assembly connection", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "3/4", usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(source.assembly); // NEW
+    assert.equal(selectByLabel(graph.container, "Connector").disabled, false); // NEW
+    assert.equal(selectByLabel(graph.container, "Size").disabled, false); // NEW
+
+    const filter = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 260, y: 40 }); // NEW
+    const connection = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(filter.assembly).getId(), role: "input", index: 0 }); // NEW
+    assert.equal(connection.ok, true, connection.reason); // NEW
+    graph.setSelectionCell(source.assembly); // NEW
+    assert.equal(selectByLabel(graph.container, "Connector").disabled, true); // NEW
+    assert.equal(selectByLabel(graph.container, "Size").disabled, true); // NEW
+    assert.equal(inputByLabel(graph.container, "Flow gpm").disabled, false); // NEW
+    assert.equal(inputByLabel(graph.container, "Static psi").disabled, false); // NEW
+}); // NEW
+
+test("water source connector fields lock when source assembly contains downstream parts", () => { // NEW
+    const { api, graph, moduleCell, document } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "3/4", usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    appendChild(source.assembly, makeXmlCell(document, "source_inline_adapter", { [api.attrs.COMPONENT]: "1", [api.attrs.COMPONENT_TYPE]: "fitting", [api.attrs.CATALOG_PART_ID]: "fpt_to_barb", label: "Inline adapter" }, { x: 20, y: 90, width: 150, height: 34 })); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(source.assembly); // NEW
+    assert.equal(selectByLabel(graph.container, "Connector").disabled, true); // NEW
+    assert.equal(selectByLabel(graph.container, "Size").disabled, true); // NEW
 }); // NEW
 
 test("inner assembly parts remain selectable while native moves are guarded", () => { // NEW
@@ -1480,6 +1645,10 @@ test("selected port badges connect with automatic pipe choice and disconnect sel
     assert.ok(edge); // NEW
     assert.equal(edge.getAttribute(api.attrs.PIPE_PART_ID), "pipe_cheap"); // NEW
     assert.equal(edge.getAttribute("label"), "3/4"); // NEW
+    graph.setSelectionCell(source.assembly); // NEW
+    const outletRow = assertConnectionRowReadOnly(graph.container, "Outlet 1"); // NEW
+    assert.equal(outletRow.querySelector(".trellis-irrigation-pipe-row"), null); // NEW
+    assert.doesNotMatch(outletRow.textContent, /Pipe:|cheap poly|planned|completed|Part added/i); // NEW
     graph.setSelectionCell(edge); // NEW
     assertConnectionHud(graph.container, /Pipe:\s*3\/4/); // CHANGE
     assert.equal(inlineConnectionActions(graph.container).length, 0); // NEW
@@ -1490,6 +1659,168 @@ test("selected port badges connect with automatic pipe choice and disconnect sel
     assert.equal(buttonTexts(graph.container).includes("Disconnect Parts"), false); // NEW
     clickButton(graph.container, "Disconnect"); // CHANGE
     assert.equal(api.__test.collectAssemblyEdges(moduleCell).length, 0); // NEW
+}); // NEW
+
+test("same-role free badges show Flip and Connect and flip the lower disconnected fitting", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    const catalog = flipConnectCatalog(); // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    const upper = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "male_out_fit"), { x: 30, y: 40 }); // NEW
+    const lower = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "female_out_fit"), { x: 30, y: 180 }); // NEW
+    const upperPart = api.__test.firstAssemblyPart(upper.assembly); // NEW
+    const lowerPart = api.__test.firstAssemblyPart(lower.assembly); // NEW
+    assert.equal(api.__test.connectionDecisionForPorts(moduleCell, { cellId: upperPart.getId(), role: "output", index: 0 }, { cellId: lowerPart.getId(), role: "output", index: 0 }).ok, false); // NEW
+    assert.equal(api.__test.flipConnectPlanForPorts(moduleCell, [{ cellId: upperPart.getId(), role: "output", index: 0 }, { cellId: lowerPart.getId(), role: "output", index: 0 }]).flipCell, lowerPart); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCells([upper.assembly, lower.assembly]); // NEW
+    clickPort(graph.container, /Outlet 1 free.*MGHT/); // NEW
+    assert.equal(portBadgesInState(graph.container, "compatible").some(node => /Outlet 1 free compatible.*FGHT/.test(node.title)), true); // NEW
+    clickPort(graph.container, /Outlet 1 free.*FGHT/); // NEW
+    assert.equal(buttonTexts(graph.container).filter(text => text === "Connect").length, 0); // NEW
+    assertInlineConnectionAction(graph.container, "Flip and Connect"); // NEW
+    clickButton(graph.container, "Flip and Connect"); // NEW
+    assert.equal(api.__test.isPartCellFlipped(lowerPart), true); // NEW
+    assert.equal(api.__test.isPartCellFlipped(upperPart), false); // NEW
+    assert.equal(lowerPart.parent, upper.assembly); // NEW
+}); // NEW
+
+test("Flip and Connect flips the disconnected other fitting when one selected part is connected", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    const catalog = flipConnectCatalog(); // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Hose", { connectorType: "mght", nominalSize: "3/4", usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    const upper = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "male_out_fit"), { x: 30, y: 180 }); // NEW
+    const upperPart = api.__test.firstAssemblyPart(upper.assembly); // NEW
+    assert.equal(api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: upperPart.getId(), role: "input", index: 0 }).ok, true); // NEW
+    const lower = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "female_out_fit"), { x: 300, y: 180 }); // NEW
+    const lowerPart = api.__test.firstAssemblyPart(lower.assembly); // NEW
+    const plan = api.__test.flipConnectPlanForPorts(moduleCell, [{ cellId: upperPart.getId(), role: "output", index: 0 }, { cellId: lowerPart.getId(), role: "output", index: 0 }]); // NEW
+    assert.equal(plan.ok, true, plan.reason); // NEW
+    assert.equal(plan.flipCell, lowerPart); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCells([source.assembly, lower.assembly]); // NEW
+    clickPort(graph.container, /Outlet 1 free.*MGHT/); // NEW
+    clickPort(graph.container, /Outlet 1 free.*FGHT/); // NEW
+    clickButton(graph.container, "Flip and Connect"); // NEW
+    assert.equal(api.__test.isPartCellFlipped(lowerPart), true); // NEW
+    assert.equal(api.__test.isPartCellFlipped(upperPart), false); // NEW
+    assert.equal(lowerPart.parent, source.assembly); // NEW
+}); // NEW
+
+test("Flip and Connect is hidden when both selected parts already have any connection", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    const catalog = flipConnectCatalog(); // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    const sourceA = api.__test.createSourceAssembly(moduleCell, "Hose A", { connectorType: "mght", nominalSize: "3/4", usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    const sourceB = api.__test.createSourceAssembly(moduleCell, "Hose B", { connectorType: "mght", nominalSize: "3/4", usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 300, y: 40 }); // NEW
+    const upper = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "male_out_fit"), { x: 30, y: 180 }); // NEW
+    const lower = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "female_out_fit"), { x: 300, y: 180 }); // NEW
+    const upperPart = api.__test.firstAssemblyPart(upper.assembly); // NEW
+    const lowerPart = api.__test.firstAssemblyPart(lower.assembly); // NEW
+    assert.equal(api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(sourceA.assembly).getId(), role: "output", index: 0 }, { cellId: upperPart.getId(), role: "input", index: 0 }).ok, true); // NEW
+    assert.equal(api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(sourceB.assembly).getId(), role: "output", index: 0 }, { cellId: lowerPart.getId(), role: "input", index: 0 }).ok, true); // NEW
+    const plan = api.__test.flipConnectPlanForPorts(moduleCell, [{ cellId: upperPart.getId(), role: "output", index: 0 }, { cellId: lowerPart.getId(), role: "output", index: 0 }]); // NEW
+    assert.equal(plan.ok, false); // NEW
+    assert.match(plan.reason, /Both selected parts/); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCells([sourceA.assembly, sourceB.assembly]); // NEW
+    clickPort(graph.container, /Outlet 1 free.*MGHT/); // NEW
+    clickPort(graph.container, /Outlet 1 free.*FGHT/); // NEW
+    assert.equal(buttonTexts(graph.container).includes("Flip and Connect"), false); // NEW
+    assert.equal(buttonTexts(graph.container).filter(text => text === "Connect").length, 0); // NEW
+}); // NEW
+
+test("Flip and Connect falls back to the only flippable fitting when the lower preferred part is not reversible", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    const catalog = flipConnectCatalog(); // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    const upper = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "male_out_fit"), { x: 30, y: 40 }); // NEW
+    const lower = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "female_out_filter"), { x: 30, y: 220 }); // NEW
+    const upperPart = api.__test.firstAssemblyPart(upper.assembly); // NEW
+    const lowerPart = api.__test.firstAssemblyPart(lower.assembly); // NEW
+    const plan = api.__test.flipConnectPlanForPorts(moduleCell, [{ cellId: upperPart.getId(), role: "output", index: 0 }, { cellId: lowerPart.getId(), role: "output", index: 0 }]); // NEW
+    assert.equal(plan.ok, true, plan.reason); // NEW
+    assert.equal(plan.flipCell, upperPart); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCells([upper.assembly, lower.assembly]); // NEW
+    clickPort(graph.container, /Outlet 1 free.*MGHT/); // NEW
+    clickPort(graph.container, /Outlet 1 free.*FGHT/); // NEW
+    clickButton(graph.container, "Flip and Connect"); // NEW
+    assert.equal(api.__test.isPartCellFlipped(upperPart), true); // NEW
+    assert.equal(api.__test.isPartCellFlipped(lowerPart), false); // NEW
+    assert.equal(upperPart.parent, lower.assembly); // NEW
+}); // NEW
+
+test("only one-inlet one-outlet fittings are reversible for flip and connect", () => { // NEW
+    const { api, moduleCell } = loadPlugin(); // NEW
+    const catalog = flipConnectCatalog(); // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    assert.equal(api.__test.isReversibleFittingPart(catalog.items.find(item => item.id === "male_out_fit")), true); // NEW
+    assert.equal(api.__test.isReversibleFittingPart(catalog.items.find(item => item.id === "female_out_filter")), false); // NEW
+    const first = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "female_out_filter"), { x: 30, y: 40 }); // NEW
+    const second = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "female_out_filter"), { x: 30, y: 180 }); // NEW
+    const firstPart = api.__test.firstAssemblyPart(first.assembly); // NEW
+    const secondPart = api.__test.firstAssemblyPart(second.assembly); // NEW
+    const plan = api.__test.flipConnectPlanForPorts(moduleCell, [{ cellId: firstPart.getId(), role: "output", index: 0 }, { cellId: secondPart.getId(), role: "output", index: 0 }]); // NEW
+    assert.equal(plan.ok, false); // NEW
+    assert.match(plan.reason, /No reversible fitting/); // NEW
+}); // NEW
+
+test("flipped fitting instances swap connector roles and vertical badge positions", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    const catalog = flipConnectCatalog(); // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    const assembly = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "male_out_fit"), { x: 30, y: 120 }); // NEW
+    const partCell = api.__test.firstAssemblyPart(assembly.assembly); // NEW
+    assert.equal(api.__test.portConnectorForCell(moduleCell, partCell, "input").type, "fght"); // NEW
+    assert.equal(api.__test.portConnectorForCell(moduleCell, partCell, "output").type, "mght"); // NEW
+    api.__test.setPartCellFlipped(partCell, true); // NEW
+    assert.equal(api.__test.portConnectorForCell(moduleCell, partCell, "input").type, "mght"); // NEW
+    assert.equal(api.__test.portConnectorForCell(moduleCell, partCell, "output").type, "fght"); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(assembly.assembly); // NEW
+    const inlet = portBadges(graph.container).find(node => /Inlet 1 free/.test(node.title)); // NEW
+    const outlet = portBadges(graph.container).find(node => /Outlet 1 free/.test(node.title)); // NEW
+    assert.ok(inlet, "expected inlet badge"); // NEW
+    assert.ok(outlet, "expected outlet badge"); // NEW
+    assert.ok(parseInt(inlet.style.top, 10) > parseInt(outlet.style.top, 10), "flipped inlet badge should render below flipped outlet badge"); // NEW
+}); // NEW
+
+test("connection HUD hides port row and updates pipe edge style", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "3/4", method: "drip", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    const filter = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 30, y: 180 }); // NEW
+    const connection = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(filter.assembly).getId(), role: "input", index: 0 }); // NEW
+    assert.equal(connection.ok, true, connection.reason); // NEW
+    const edge = connection.edge; // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(edge); // NEW
+    let hud = assertConnectionHud(graph.container, /Pipe:\s*3\/4/); // NEW
+    assert.doesNotMatch(hud.textContent, /Outlet 1\s*->\s*Inlet 1/); // NEW
+    assert.ok(buttonTexts(hud).includes("Straight")); // NEW
+    assert.ok(buttonTexts(hud).includes("Curved")); // NEW
+    assert.equal(Array.from(hud.querySelectorAll("button")).find(node => node.textContent.trim() === "Straight").getAttribute("aria-pressed"), "true"); // CHANGE
+    assert.equal(api.__test.pipeEdgeStyleMode(edge), "straight"); // NEW
+
+    clickExactButton(hud, "Curved"); // NEW
+    assert.equal(edge.getAttribute(api.attrs.PIPE_EDGE), "1"); // NEW
+    assert.equal(edge.getAttribute(api.attrs.PIPE_PART_ID), "pipe_cheap"); // NEW
+    assert.equal(api.__test.pipeEdgeStyleMode(edge), "curved"); // NEW
+    assert.equal(styleToken(edge.style, "curved"), "1"); // NEW
+    api.__test.setPipeEdgeState(edge, api.__test.partStates.completed); // NEW
+    assert.equal(api.__test.pipeEdgeStyleMode(edge), "curved"); // NEW
+    assert.equal(styleToken(edge.style, "strokeColor"), "#82b366"); // NEW
+    assert.equal(styleToken(edge.style, "dashed"), "1"); // NEW
+
+    graph.setSelectionCell(edge); // NEW
+    hud = assertConnectionHud(graph.container, /Pipe:\s*3\/4/); // NEW
+    assert.equal(Array.from(hud.querySelectorAll("button")).find(node => node.textContent.trim() === "Curved").getAttribute("aria-pressed"), "true"); // CHANGE
+    clickExactButton(hud, "Straight"); // NEW
+    assert.equal(api.__test.pipeEdgeStyleMode(edge), "straight"); // NEW
+    assert.equal(styleToken(edge.style, "curved"), ""); // NEW
+    assert.equal(edge.getAttribute(api.attrs.PIPE_EDGE), "1"); // NEW
+    assert.equal(edge.getAttribute(api.attrs.PIPE_PART_ID), "pipe_cheap"); // NEW
 }); // NEW
 
 test("inline port action controls avoid SVG overlay panes", () => { // NEW
@@ -1572,7 +1903,7 @@ test("internal connection badge selection shows only inline disconnect and stays
     assertInlineConnectionAction(graph.container, "Disconnect"); // NEW
 }); // NEW
 
-test("free selected port badges are capped with FIFO order", () => { // NEW
+test("free selected port badges keep one port per part while allowing same-role selections", () => { // CHANGE
     const { api, graph, moduleCell } = loadPlugin(); // NEW
     api.writeCatalog(moduleCell, sampleCatalog()); // NEW
     const source = api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "3/4", method: "drip", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
@@ -1586,6 +1917,27 @@ test("free selected port badges are capped with FIFO order", () => { // NEW
     assert.deepEqual(selectedPortBadgeLabels(graph.container), ["3/4", "3/4"]); // CHANGE
     clickPort(graph.container, /Outlet 2 free selected/); // NEW
     assert.deepEqual(selectedPortBadgeLabels(graph.container), ["3/4"]); // CHANGE
+}); // NEW
+
+test("free port selection keeps at most two ports and one port per part", () => { // CHANGE
+    const { api, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const upstream = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "valve"), { x: 30, y: 40 }); // NEW
+    const alternateUpstream = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "valve"), { x: 260, y: 40 }); // NEW
+    const downstream = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 30, y: 180 }); // NEW
+    const upstreamPart = api.__test.firstAssemblyPart(upstream.assembly); // NEW
+    const alternatePart = api.__test.firstAssemblyPart(alternateUpstream.assembly); // NEW
+    const downstreamPart = api.__test.firstAssemblyPart(downstream.assembly); // NEW
+    const session = { moduleCell, selectedPorts: [], selectedBoundaries: [] }; // NEW
+    api.__test.toggleSelectedPort(session, { cellId: downstreamPart.getId(), role: "input", index: 0 }); // NEW
+    api.__test.toggleSelectedPort(session, { cellId: upstreamPart.getId(), role: "output", index: 0 }); // NEW
+    assert.deepEqual(selectedPortKeys(api, session), [downstreamPart.getId() + ":input:0", upstreamPart.getId() + ":output:0"].sort()); // NEW
+    api.__test.toggleSelectedPort(session, { cellId: upstreamPart.getId(), role: "output", index: 1 }); // NEW
+    assert.deepEqual(selectedPortKeys(api, session), [downstreamPart.getId() + ":input:0", upstreamPart.getId() + ":output:1"].sort()); // NEW
+    api.__test.toggleSelectedPort(session, { cellId: alternatePart.getId(), role: "output", index: 0 }); // NEW
+    assert.deepEqual(selectedPortKeys(api, session), [alternatePart.getId() + ":output:0", upstreamPart.getId() + ":output:1"].sort()); // CHANGE
+    api.__test.toggleSelectedPort(session, { cellId: alternatePart.getId(), role: "input", index: 0 }); // NEW
+    assert.deepEqual(selectedPortKeys(api, session), [alternatePart.getId() + ":input:0", upstreamPart.getId() + ":output:1"].sort()); // CHANGE
 }); // NEW
 
 test("port badges show size-only pipe labels and size-plus-type threaded labels", () => { // NEW
@@ -2094,9 +2446,10 @@ test("Suggest Connection appends direct source prefix before pipe bridge boundar
     assert.ok(graph.container.querySelector(".trellis-irrigation-mode-hud")); // NEW
     assert.equal(inlineConnectionActions(graph.container).length, 0); // NEW
     assert.equal(buttonTexts(graph.container).includes("Connect"), false); // NEW
-    assert.ok(buttonTexts(graph.container).includes("Suggest Connection")); // NEW
     assert.match(graph.container.textContent, /Suggest Connection/); // CHANGE
-    clickButton(graph.container, "Suggest Connection"); // CHANGE
+    assert.equal(graph.container.querySelectorAll(".trellis-irrigation-connection-row").length, 0); // NEW
+    assert.equal(graph.container.querySelector(".trellis-irrigation-zone-controls"), null); // NEW
+    assert.equal(graph.container.querySelector(".trellis-irrigation-source-edit"), null); // NEW
     assert.match(graph.container.textContent, /In stock/); // NEW
     assert.match(graph.container.textContent, /Needs purchase/); // NEW
     clickButton(graph.container, "FGHT to MPT adapter"); // CHANGE
@@ -2247,6 +2600,8 @@ test("bed assemblies sync to linked beds, apply templates, and assembly reports 
     const zoneSection = Array.from(graph.container.querySelectorAll(".trellis-irrigation-hud-section")).find(section => (section.querySelector(".trellis-irrigation-hud-section-title") || {}).textContent === "Zone"); // NEW
     assert.ok(zoneSection, "Missing Zone section"); // NEW
     assert.deepEqual(buttonTexts(zoneSection), ["Edit Zones", "Reset Zone"]); // NEW
+    assert.match(Array.from(zoneSection.querySelectorAll("button")).find(button => button.textContent === "Edit Zones").getAttribute("style") || "", /border:\s*1px solid (?:#2563eb|rgb\(37,\s*99,\s*235\))/); // CHANGE
+    assert.match(buttonByText(zoneSection, "Reset Zone").getAttribute("style") || "", /border:\s*1px solid (?:#b91c1c|rgb\(185,\s*28,\s*28\))/); // NEW
     assert.equal(Array.from(zoneSection.querySelectorAll(".trellis-irrigation-hud-section-title")).some(node => node.textContent === "Manage"), false); // NEW
     assert.equal(graph.container.querySelectorAll(".trellis-irrigation-connection-row").length, 0); // NEW
     const bedLabels = Array.from(graph.container.querySelectorAll("label")).map(label => label.textContent); // NEW
@@ -2264,6 +2619,7 @@ test("bed assemblies sync to linked beds, apply templates, and assembly reports 
     assert.match(bedForm.getAttribute("style"), /grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(0,\s*1fr\)/); // CHANGE
     assert.ok(bedForm.querySelector(".trellis-irrigation-bed-template-layout-column")); // NEW
     assert.ok(bedForm.querySelector(".trellis-irrigation-bed-template-parts-column")); // NEW
+    assert.deepEqual(Array.from(bedForm.querySelector(".trellis-irrigation-bed-template-parts-column").querySelectorAll("label")).map(labelCaption), ["Inlet part", "Row takeoff part", "Row part", "Emitter/device part", "Row end cap", "Header end cap", "Outlet part"]); // NEW
     assertBoundedStyle(bedForm, "bed template form"); // NEW
     assertBoundedStyle(graph.container.querySelector(".trellis-irrigation-hud-section"), "HUD section"); // NEW
     Array.from(bedForm.querySelectorAll("label")).forEach((label, index) => assertBoundedStyle(label, "bed template label " + index)); // NEW
@@ -2290,6 +2646,7 @@ test("bed assemblies sync to linked beds, apply templates, and assembly reports 
     assert.doesNotMatch(templateSummary.textContent, /Anchor:|BOM:/); // NEW
     assert.doesNotMatch(graph.container.textContent, /Select inlet\/outlet badges/); // NEW
     changeSelectByLabel(graph.container, "Inlet part", "fpt_to_half_barb"); // CHANGE
+    changeSelectByLabel(graph.container, "Header end cap", "end_cap_1_2_barb"); // NEW
     assert.equal(bedLayoutRows(bedAssembly.assembly, api).length, 2); // NEW
     let leakedKeypress = false; // NEW
     graph.container.addEventListener("keypress", function () { leakedKeypress = true; bedAssembly.assembly.value.setAttribute("label", "3"); }); // NEW
@@ -2558,6 +2915,60 @@ test("bed assembly BOM parts persist and drive inlet/outlet connector compatibil
     assert.equal(outletConnection.edge.getAttribute(api.attrs.PIPE_PART_ID), "pipe_cheap"); // NEW
 }); // NEW
 
+test("connected bed assembly inlet and outlet part selectors lock by connected port", () => { // NEW
+    const { api, graph, moduleCell, bed, bed2 } = loadPlugin(); // NEW
+    const catalog = addDripTapeBomParts(sampleCatalog()); // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+
+    const inletLockedBed = createConfiguredDripTapeBedAssembly(api, graph, moduleCell, bed, { x: 240, y: 120 }); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Hose", { connectorType: "mpt", nominalSize: "3/4", usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    const inletConnection = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: inletLockedBed.getId(), role: "input", index: 0 }); // NEW
+    assert.equal(inletConnection.ok, true, inletConnection.reason); // NEW
+    graph.setSelectionCell(inletLockedBed); // NEW
+    assert.equal(selectByLabel(graph.container, "Inlet part").disabled, true); // NEW
+    assert.equal(selectByLabel(graph.container, "Outlet part").disabled, false); // NEW
+
+    const outletOnlyBed = createConfiguredDripTapeBedAssembly(api, graph, moduleCell, bed2, { x: 440, y: 120 }); // NEW
+    const outletFilter = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "filter"), { x: 650, y: 120 }); // NEW
+    const outletOnlyConnection = api.__test.createAssemblyConnection(moduleCell, { cellId: outletOnlyBed.getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(outletFilter.assembly).getId(), role: "input", index: 0 }); // NEW
+    assert.equal(outletOnlyConnection.ok, true, outletOnlyConnection.reason); // NEW
+    graph.setSelectionCell(outletOnlyBed); // NEW
+    assert.equal(selectByLabel(graph.container, "Inlet part").disabled, false); // NEW
+    assert.equal(selectByLabel(graph.container, "Outlet part").disabled, true); // NEW
+
+    const downstreamFilter = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "filter"), { x: 460, y: 320 }); // NEW
+    const outletConnection = api.__test.createAssemblyConnection(moduleCell, { cellId: inletLockedBed.getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(downstreamFilter.assembly).getId(), role: "input", index: 0 }); // NEW
+    assert.equal(outletConnection.ok, true, outletConnection.reason); // NEW
+    graph.setSelectionCell(inletLockedBed); // NEW
+    assert.equal(selectByLabel(graph.container, "Inlet part").disabled, true); // NEW
+    assert.equal(selectByLabel(graph.container, "Outlet part").disabled, true); // NEW
+}); // NEW
+
+test("locked bed assembly part selectors preserve values during template refresh", () => { // NEW
+    const { api, graph, moduleCell, bed } = loadPlugin(); // NEW
+    const catalog = addDripTapeBomParts(sampleCatalog()); // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    const bedAssembly = createConfiguredDripTapeBedAssembly(api, graph, moduleCell, bed, { x: 240, y: 120 }); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Hose", { connectorType: "mpt", nominalSize: "3/4", usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    const inletConnection = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: bedAssembly.getId(), role: "input", index: 0 }); // NEW
+    assert.equal(inletConnection.ok, true, inletConnection.reason); // NEW
+    const filter = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "filter"), { x: 460, y: 120 }); // NEW
+    const outletConnection = api.__test.createAssemblyConnection(moduleCell, { cellId: bedAssembly.getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(filter.assembly).getId(), role: "input", index: 0 }); // NEW
+    assert.equal(outletConnection.ok, true, outletConnection.reason); // NEW
+    graph.setSelectionCell(bedAssembly); // NEW
+    assert.equal(selectByLabel(graph.container, "Inlet part").value, "fpt_to_half_barb"); // NEW
+    assert.equal(selectByLabel(graph.container, "Outlet part").value, "half_barb_to_3_4_barb"); // NEW
+
+    changeSelectByLabel(graph.container, "Row orientation", "height"); // NEW
+    graph.setSelectionCell(bedAssembly); // NEW
+    assert.equal(selectByLabel(graph.container, "Inlet part").disabled, true); // NEW
+    assert.equal(selectByLabel(graph.container, "Outlet part").disabled, true); // NEW
+    assert.equal(selectByLabel(graph.container, "Inlet part").value, "fpt_to_half_barb"); // NEW
+    assert.equal(selectByLabel(graph.container, "Outlet part").value, "half_barb_to_3_4_barb"); // NEW
+}); // NEW
+
 test("bed inlet role uses the selected non-pipe part upstream side", () => { // NEW
     const { api, graph, moduleCell, bed } = loadPlugin(); // NEW
     const catalog = addDripTapeBomParts(sampleCatalog()); // NEW
@@ -2573,13 +2984,14 @@ test("bed inlet role uses the selected non-pipe part upstream side", () => { // 
     api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
     graph.setSelectionCell(bedAssembly.assembly); // NEW
     changeSelectByLabel(graph.container, "Inlet part", "threaded_inline"); // NEW
+    changeSelectByLabel(graph.container, "Header end cap", "barb_header_cap_3_4"); // NEW
     const ports = JSON.parse(bed.getAttribute(api.attrs.BED_PORTS_JSON)); // NEW
     assert.equal(ports.input.type, "fght"); // NEW
     assert.equal(ports.input.nominalSize, "3/4"); // NEW
     assert.equal(ports.outputs, 0); // NEW
 }); // NEW
 
-test("selected bed assembly ports show contextual Add Part picker and create adjacent part assemblies", () => { // NEW
+test("selected bed assembly ports do not show Add Part placement UI", () => { // CHANGE
     const { api, graph, moduleCell, bed } = loadPlugin(); // CHANGE
     const catalog = addDripTapeBomParts(sampleCatalog()); // NEW
     catalog.items.push(part("bed_feed_adapter", "Bed feed adapter", "fitting", "in_stock", 6, 1, 1, "fght", "3/4", "mpt", "3/4", { pressureLossPsi: 0.2 })); // CHANGE
@@ -2593,64 +3005,16 @@ test("selected bed assembly ports show contextual Add Part picker and create adj
     assert.equal(graph.container.querySelectorAll(".trellis-irrigation-connection-row").length, 0); // NEW
 
     clickPort(graph.container, /Inlet 1 free/); // NEW
-    const inletPicker = addPartPicker(graph.container); // NEW
-    assertBoundedStyle(inletPicker, "bed inlet Add Part picker"); // NEW
-    assert.equal(Array.from(inletPicker.options).some(option => option.value === "bed_feed_adapter"), true); // NEW
-    assert.equal(Array.from(inletPicker.options).some(option => option.value === "pipe_cheap"), false); // CHANGE
-    inletPicker.value = "bed_feed_adapter"; // NEW
-    clickButton(graph.container, "Add Part"); // NEW
-    const inletAssembly = graph.getSelectionCell(); // NEW
-    assert.equal(inletAssembly.getAttribute(api.attrs.ASSEMBLY_TYPE), "parts"); // NEW
-    assert.notEqual(inletAssembly.parent, bedAssembly.assembly); // NEW
-    const inletPart = api.__test.firstAssemblyPart(inletAssembly); // NEW
-    const inletEdge = api.__test.collectAssemblyEdges(moduleCell).find(edge => edge.source === inletPart && edge.target === bedAssembly.assembly); // NEW
-    assert.ok(inletEdge, "Missing part-to-bed inlet edge"); // NEW
-    assert.equal(inletEdge.getAttribute(api.attrs.EDGE_TARGET_PORT), "0"); // NEW
-    assert.equal(inletEdge.getAttribute(api.attrs.DIRECT_LINK_EDGE), "1"); // NEW
-
-    graph.setSelectionCell(bedAssembly.assembly); // NEW
-    clickPort(graph.container, /Inlet 1 connected/); // NEW
-    assert.equal(graph.container.querySelector(".trellis-irrigation-add-part-picker"), null); // NEW
-    assert.ok(portBadgesInState(graph.container, "selected").length >= 2); // CHANGE
-    assertInlineConnectionAction(graph.container, "Disconnect"); // CHANGE
+    assert.equal(graph.container.querySelector(".trellis-irrigation-add-part-picker"), null); // CHANGE
+    assert.equal(buttonTexts(graph.container).includes("Add Part"), false); // NEW
+    assert.equal(api.__test.collectAssemblyEdges(moduleCell).length, 0); // NEW
+    assert.ok(portBadgesInState(graph.container, "selected").length >= 1); // CHANGE
 
     graph.setSelectionCell(bedAssembly.assembly); // CHANGE
     clickPort(graph.container, /Outlet 1 free/); // NEW
-    const outletPicker = addPartPicker(graph.container); // NEW
-    assertBoundedStyle(outletPicker, "bed outlet Add Part picker"); // NEW
-    assert.equal(Array.from(outletPicker.options).some(option => option.value === "filter"), true); // NEW
-    outletPicker.value = "filter"; // NEW
-    clickButton(graph.container, "Add Part"); // NEW
-    const outletAssembly = graph.getSelectionCell(); // NEW
-    const outletPart = api.__test.firstAssemblyPart(outletAssembly); // NEW
-    const outletEdge = api.__test.collectAssemblyEdges(moduleCell).find(edge => edge.source === bedAssembly.assembly && edge.target === outletPart); // CHANGE
-    assert.ok(outletEdge, "Missing bed outlet-to-part edge"); // NEW
-    assert.equal(outletEdge.getAttribute(api.attrs.EDGE_SOURCE_PORT), "0"); // NEW
-}); // NEW
-
-test("selected bed assembly inlet pipe Add Part creates an adjacent pipe-connected assembly", () => { // NEW
-    const { api, graph, moduleCell, bed } = loadPlugin(); // CHANGE
-    const catalog = { items: [ // NEW
-        part("bed_pipe_feed", "Bed pipe feed", "fitting", "in_stock", 6, 1, 1, "barb", "1/2", "barb", "1/2", { pressureLossPsi: 0.2 }, undefined, true), // NEW
-        part("pipe_half", "1/2 poly", "pipe_tubing", "in_stock", 0, 1, 1, "barb", "1/2", "barb", "1/2", { innerDiameterIn: 0.600, hazenWilliamsC: 150 }, 0.32, true) // NEW
-    ] }; // NEW
-    api.writeCatalog(moduleCell, catalog); // NEW
-    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 240, y: 120 }); // NEW
-    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
-    graph.setSelectionCell(bedAssembly.assembly); // NEW
-    clickPort(graph.container, /Inlet 1 free/); // NEW
-    const picker = addPartPicker(graph.container); // NEW
-    assert.equal(Array.from(picker.options).some(option => option.value === "bed_pipe_feed"), true); // NEW
-    picker.value = "bed_pipe_feed"; // NEW
-    clickButton(graph.container, "Add Part"); // NEW
-    const inletAssembly = graph.getSelectionCell(); // NEW
-    assert.equal(inletAssembly.getAttribute(api.attrs.ASSEMBLY_TYPE), "parts"); // NEW
-    assert.notEqual(inletAssembly, bedAssembly.assembly); // NEW
-    const inletPart = api.__test.firstAssemblyPart(inletAssembly); // NEW
-    const edge = api.__test.collectAssemblyEdges(moduleCell).find(edge => edge.source === inletPart && edge.target === bedAssembly.assembly); // NEW
-    assert.ok(edge, "Missing pipe edge from upstream part to bed inlet"); // NEW
-    assert.equal(edge.getAttribute(api.attrs.PIPE_EDGE), "1"); // NEW
-    assert.equal(edge.getAttribute(api.attrs.PIPE_PART_ID), "pipe_half"); // NEW
+    assert.equal(graph.container.querySelector(".trellis-irrigation-add-part-picker"), null); // CHANGE
+    assert.equal(buttonTexts(graph.container).includes("Add Part"), false); // NEW
+    assert.equal(api.__test.collectAssemblyEdges(moduleCell).length, 0); // NEW
 }); // NEW
 
 test("bed template anchor selection uses largest pipe-like required part deterministically", () => { // NEW
@@ -2693,9 +3057,44 @@ test("bed recipe UI toggles self-emitting and device row controls", () => { // N
     assert.equal(inputByLabel(graph.container, "Emitter spacing in").disabled, true); // NEW
     changeSelectByLabel(graph.container, "Inlet part", "fpt_to_half_barb"); // NEW
     assert.match(selectByLabel(graph.container, "Outlet part").parentNode.getAttribute("style") || "", /display:\s*flex/); // CHANGE
+    assert.match(selectByLabel(graph.container, "Header end cap").parentNode.getAttribute("style") || "", /display:\s*flex/); // NEW
+    changeSelectByLabel(graph.container, "Header end cap", "end_cap_1_2_barb"); // NEW
+    assert.equal(selectByLabel(graph.container, "Outlet part").value, ""); // NEW
+    assert.match(selectByLabel(graph.container, "Outlet part").parentNode.getAttribute("style") || "", /display:\s*none/); // NEW
+    let template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly); // NEW
+    assert.equal(template.headerEndCapPartId, "end_cap_1_2_barb"); // NEW
+    assert.equal(template.outletPartId, ""); // NEW
+    changeSelectByLabel(graph.container, "Header end cap", ""); // NEW
+    assert.match(selectByLabel(graph.container, "Header end cap").parentNode.getAttribute("style") || "", /display:\s*flex/); // NEW
+    assert.match(selectByLabel(graph.container, "Outlet part").parentNode.getAttribute("style") || "", /display:\s*flex/); // NEW
+    changeSelectByLabel(graph.container, "Outlet part", "half_barb_to_3_4_barb"); // NEW
+    assert.equal(selectByLabel(graph.container, "Header end cap").value, ""); // NEW
+    assert.match(selectByLabel(graph.container, "Header end cap").parentNode.getAttribute("style") || "", /display:\s*none/); // NEW
+    template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly); // NEW
+    assert.equal(template.headerEndCapPartId, ""); // NEW
+    assert.equal(template.outletPartId, "half_barb_to_3_4_barb"); // NEW
     changeSelectByLabel(graph.container, "Template", "overhead_sprinkler_block"); // NEW
     assert.match(selectByLabel(graph.container, "Emitter/device part").parentNode.getAttribute("style") || "", /display:\s*flex/); // CHANGE
     assert.equal(inputByLabel(graph.container, "Emitter spacing in").disabled, false); // NEW
+}); // NEW
+
+test("legacy bed terminal choices prefer outlet and clear header on next commit", () => { // NEW
+    const { api, graph, moduleCell, bed } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, addDripTapeBomParts(sampleCatalog())); // NEW
+    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 240, y: 120 }).assembly; // NEW
+    const legacyTemplate = { templateModel: "bom", recipeVersion: 1, templateId: "drip_tape_bed", irrigationType: "drip_tape", inletPartId: "fpt_to_half_barb", outletPartId: "half_barb_to_3_4_barb", rowPartId: "drip_tape_8mil_12in", emitterPartId: "", rowTakeoffPartId: "barb_tee_1_2", rowEndCapPartId: "end_cap_1_2_barb", headerEndCapPartId: "end_cap_1_2_barb", supplyPipePartId: "poly_distribution_1_2", spacing: { rows: 2, emitterInches: 12, rowSpacingCm: 100 }, requiredParts: [], resolvedBomParts: [], partIds: ["fpt_to_half_barb", "half_barb_to_3_4_barb", "drip_tape_8mil_12in", "barb_tee_1_2", "end_cap_1_2_barb", "poly_distribution_1_2"] }; // NEW
+    bedAssembly.value.setAttribute(api.attrs.BED_TEMPLATE_JSON, JSON.stringify(legacyTemplate)); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(bedAssembly); // NEW
+    assert.equal(selectByLabel(graph.container, "Outlet part").value, "half_barb_to_3_4_barb"); // NEW
+    assert.equal(selectByLabel(graph.container, "Header end cap").value, ""); // NEW
+    assert.match(selectByLabel(graph.container, "Header end cap").parentNode.getAttribute("style") || "", /display:\s*none/); // NEW
+    assert.equal(JSON.parse(bedAssembly.getAttribute(api.attrs.BED_TEMPLATE_JSON)).headerEndCapPartId, "end_cap_1_2_barb"); // NEW
+    const rows = inputTextByLabel(graph.container, "Rows", "3"); // NEW
+    blurInput(rows); // NEW
+    const template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly); // NEW
+    assert.equal(template.outletPartId, "half_barb_to_3_4_barb"); // NEW
+    assert.equal(template.headerEndCapPartId, ""); // NEW
 }); // NEW
 
 test("overhead sprinkler bed recipe resolves precise BOM roles", () => { // NEW
@@ -2746,14 +3145,14 @@ test("bed assembly Exit closes before recipe field blur can rerender overlays", 
     assertNoActiveIrrigationOverlays(graph.container); // NEW
 }); // NEW
 
-test("bed assembly Exit clears selected port overlays and add-part UI", () => { // NEW
+test("bed assembly Exit clears selected port overlays without add-part UI", () => { // CHANGE
     const { api, graph, moduleCell, bed } = loadPlugin(); // NEW
     api.writeCatalog(moduleCell, addDripTapeBomParts(sampleCatalog())); // NEW
     const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 240, y: 120 }); // NEW
     api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
     graph.setSelectionCell(bedAssembly.assembly); // NEW
     clickPort(graph.container, /Inlet 1 free/); // NEW
-    assert.ok(graph.container.querySelector(".trellis-irrigation-add-part-picker")); // NEW
+    assert.equal(graph.container.querySelector(".trellis-irrigation-add-part-picker"), null); // CHANGE
     assert.ok(portBadgesInState(graph.container, "selected").length >= 1); // NEW
     const exit = Array.from(graph.container.querySelectorAll("button")).find(node => node.textContent.trim() === "Exit"); // NEW
     assert.ok(exit, "Missing Exit button"); // NEW
@@ -2788,6 +3187,7 @@ test("invalid bed template auto-apply preserves the previous saved layout", () =
     api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
     graph.setSelectionCell(bedAssembly.assembly); // NEW
     changeSelectByLabel(graph.container, "Inlet part", "fpt_to_half_barb"); // NEW
+    changeSelectByLabel(graph.container, "Header end cap", "end_cap_1_2_barb"); // NEW
     assert.equal(api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly).spacing.rows, 2); // CHANGE
     assert.equal(bedLayoutRows(bedAssembly.assembly, api).length, 2); // NEW
     api.writeCatalog(moduleCell, sampleCatalog()); // NEW
@@ -2966,10 +3366,12 @@ test("HUD lifecycle actions mark selected assemblies completed and planned", () 
     clickButton(lifecycleToggle(graph.container), "Completed"); // CHANGE
     assert.equal(partCell.getAttribute(api.attrs.PART_STATE), api.__test.partStates.completed); // NEW
     assert.equal(styleToken(partCell.style, "fillColor"), "#e8f5e9"); // NEW
+    assert.equal(styleToken(assembly.style, "fillColor"), "#e8f5e9"); // NEW
     assert.equal(lifecycleToggle(graph.container).querySelector('[aria-pressed="true"]').textContent, "Completed"); // CHANGE
     clickButton(lifecycleToggle(graph.container), "Planned"); // CHANGE
     assert.equal(partCell.getAttribute(api.attrs.PART_STATE), api.__test.partStates.planned); // NEW
     assert.equal(styleToken(partCell.style, "fillColor"), "#ffffff"); // NEW
+    assert.equal(styleToken(assembly.style, "fillColor"), "#ffffff"); // NEW
 }); // NEW
 
 test("HUD lifecycle actions mark standalone branchpoint catalog endpoints completed", () => { // NEW
@@ -3088,25 +3490,6 @@ test("daisy-chained bed assemblies use cumulative downstream demand", () => { //
     const pathTwo = paths.find(path => path.targetBedId === bed2.getId()); // NEW
     assert.equal(pathOne.hydraulic.flowGpm, 2.4); // NEW
     assert.equal(pathTwo.hydraulic.flowGpm, 1.2); // NEW
-}); // NEW
-
-test("reverse assembly remains a hidden helper and is not exposed in overlays", () => { // CHANGE
-    const { api, graph, moduleCell } = loadPlugin(); // CHANGE
-    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
-    const assembly = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 30, y: 40 }).assembly; // NEW
-    const second = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "regulator"), { x: 30, y: 160 }).assembly; // NEW
-    const extra = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "drip_tape"), { x: 30, y: 260 }).partCell; // CHANGE
-    appendChild(assembly, extra); // NEW
-    extra.parent = assembly; // NEW
-    extra.geometry.y = 94; // NEW
-    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
-    graph.setSelectionCell(assembly); // NEW
-    assert.equal(api.__test.assemblyCanReverse(moduleCell, assembly), true); // NEW
-    assert.doesNotMatch(graph.container.textContent, /Reverse Assembly/); // CHANGE
-    api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.lastAssemblyPart(assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(second).getId(), role: "input", index: 0 }); // NEW
-    graph.setSelectionCell(assembly); // NEW
-    assert.equal(api.__test.assemblyCanReverse(moduleCell, assembly), false); // NEW
-    assert.doesNotMatch(graph.container.textContent, /Reverse Assembly/); // NEW
 }); // NEW
 
 test("public API is mode-focused while legacy path helpers remain isolated under __test", () => { // NEW
