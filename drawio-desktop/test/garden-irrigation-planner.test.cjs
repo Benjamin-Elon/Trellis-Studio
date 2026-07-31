@@ -77,6 +77,7 @@ function descendants(cell, predicate, out = []) { // NEW
 function loadPlugin(options = {}) { // NEW
     const dom = new JSDOM(options.svgOverlayPane ? "<!doctype html><body><div id='graph'><svg><g id='overlay'></g></svg></div></body>" : "<!doctype html><body><div id='graph'></div></body>", { url: options.url || "https://trellis.test/" }); // CHANGE
     const document = dom.window.document; // NEW
+    const consoleLogs = options.consoleLogs || []; // DIAGNOSTIC
     const root = new TestCell("root"); // NEW
     const moduleCell = appendChild(root, makeXmlCell(document, "module", { garden_module: "1", label: "Garden" }, { x: 0, y: 0, width: 720, height: 520 })); // NEW
     const bed = appendChild(moduleCell, makeXmlCell(document, "bed", { garden_bed: "1", label: "Bed 1" }, { x: 120, y: 120, width: 120, height: 60 })); // NEW
@@ -209,7 +210,7 @@ function loadPlugin(options = {}) { // NEW
     const context = { // NEW
         window: dom.window, // NEW
         document, // NEW
-        console: { log() {} }, // NEW
+        console: { log(...args) { consoleLogs.push(args); } }, // DIAGNOSTIC
         Date, // NEW
         setTimeout, // NEW
         clearTimeout, // NEW
@@ -224,7 +225,7 @@ function loadPlugin(options = {}) { // NEW
         } // NEW
     }; // NEW
     vm.runInNewContext(fs.readFileSync(PLUGIN_PATH, "utf8"), context, { filename: PLUGIN_PATH }); // NEW
-    return { api: graph.__trellisIrrigationPlanner, graph, model, root, moduleCell, bed, bed2, document, ui, actions, undoManager }; // CHANGE
+    return { api: graph.__trellisIrrigationPlanner, graph, model, root, moduleCell, bed, bed2, document, ui, actions, undoManager, consoleLogs }; // CHANGE
 } // NEW
 
 function absoluteGeometry(cell) { // NEW
@@ -373,6 +374,13 @@ function selectedPortBadgeLabels(root) { // NEW
 function selectedPortKeys(api, session) { // NEW
     return api.__test.selectedValidPorts(session).map(port => [port.cellId, port.role, String(port.index)].join(":")).sort(); // NEW
 } // NEW
+function irrigationLogLabels(logs) { // DIAGNOSTIC
+    return (logs || []).map(args => String(args && args[0] || "")); // DIAGNOSTIC
+} // DIAGNOSTIC
+function irrigationLogsWithLabel(logs, label) { // DIAGNOSTIC
+    const prefix = "[Trellis Irrigation] " + label; // DIAGNOSTIC
+    return (logs || []).filter(args => String(args && args[0] || "") === prefix); // DIAGNOSTIC
+} // DIAGNOSTIC
 
 function assemblyCells(moduleCell, api) { // NEW
     return descendants(moduleCell, cell => cell.getAttribute && cell.getAttribute(api.attrs.ASSEMBLY) === "1"); // NEW
@@ -2051,6 +2059,64 @@ test("irrigation mode renders global port badges and highlights compatible free 
     clickButton(graph.container, "Disconnect"); // CHANGE
     assert.equal(graph.container.querySelectorAll(".trellis-irrigation-selected-pipe-highlight").length, 0); // NEW
 }); // NEW
+
+test("single selected port compatibility scan stays quiet while highlighting targets", () => { // DIAGNOSTIC
+    const consoleLogs = []; // DIAGNOSTIC
+    const { api, graph, moduleCell } = loadPlugin({ consoleLogs }); // DIAGNOSTIC
+    api.writeCatalog(moduleCell, sampleCatalog()); // DIAGNOSTIC
+    api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "3/4", method: "drip", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // DIAGNOSTIC
+    api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 280, y: 40 }); // DIAGNOSTIC
+    api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "fght_to_mpt"), { x: 520, y: 40 }); // DIAGNOSTIC
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // DIAGNOSTIC
+    consoleLogs.length = 0; // DIAGNOSTIC
+    clickPort(graph.container, /Outlet 1 free/); // DIAGNOSTIC
+    assert.equal(portBadgesInState(graph.container, "selected").length, 1); // DIAGNOSTIC
+    assert.equal(portBadgesInState(graph.container, "compatible").length, 1); // DIAGNOSTIC
+    const labels = irrigationLogLabels(consoleLogs); // DIAGNOSTIC
+    assert.equal(labels.some(label => /flipConnectPlan:/.test(label)), false); // DIAGNOSTIC
+    assert.equal(labels.some(label => label === "[Trellis Irrigation] connectorConnectionMode:rejected"), false); // DIAGNOSTIC
+}); // DIAGNOSTIC
+
+test("direct compatible reversible ports prefer Connect over Flip and Connect", () => { // DIAGNOSTIC
+    const { api, graph, moduleCell } = loadPlugin(); // DIAGNOSTIC
+    const catalog = flipConnectCatalog(); // DIAGNOSTIC
+    api.writeCatalog(moduleCell, catalog); // DIAGNOSTIC
+    const upper = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "male_out_fit"), { x: 30, y: 40 }); // DIAGNOSTIC
+    const lower = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "female_out_fit"), { x: 30, y: 180 }); // DIAGNOSTIC
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // DIAGNOSTIC
+    graph.setSelectionCells([upper.assembly, lower.assembly]); // DIAGNOSTIC
+    clickPort(graph.container, /Outlet 1 free.*MGHT/); // DIAGNOSTIC
+    const compatibleInlet = portBadgesInState(graph.container, "compatible").find(node => /Inlet 1 free compatible.*FGHT/.test(node.title)); // DIAGNOSTIC
+    assert.ok(compatibleInlet, "expected compatible reversible inlet"); // DIAGNOSTIC
+    compatibleInlet.click(); // DIAGNOSTIC
+    assertInlineConnectionAction(graph.container, "Connect"); // DIAGNOSTIC
+    assert.equal(buttonTexts(graph.container).includes("Flip and Connect"), false); // DIAGNOSTIC
+}); // DIAGNOSTIC
+
+test("same-role reversible pipe size mismatch shows no action and logs one size summary", () => { // DIAGNOSTIC
+    const consoleLogs = []; // DIAGNOSTIC
+    const { api, graph, moduleCell } = loadPlugin({ consoleLogs }); // DIAGNOSTIC
+    const catalog = { items: [ // DIAGNOSTIC
+        part("upper_pipe_fit", "Upper pipe fitting", "fitting", "in_stock", 4, 1, 1, "barb", "3/4", "barb", "1/2", { pressureLossPsi: 0.1 }, undefined, true), // DIAGNOSTIC
+        part("lower_pipe_fit", "Lower pipe fitting", "fitting", "in_stock", 4, 1, 1, "barb", "3/4", "barb", "1/4", { pressureLossPsi: 0.1 }, undefined, true) // DIAGNOSTIC
+    ] }; // DIAGNOSTIC
+    api.writeCatalog(moduleCell, catalog); // DIAGNOSTIC
+    const upper = api.__test.createPartAssembly(moduleCell, catalog.items[0], { x: 30, y: 40 }); // DIAGNOSTIC
+    const lower = api.__test.createPartAssembly(moduleCell, catalog.items[1], { x: 30, y: 180 }); // DIAGNOSTIC
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // DIAGNOSTIC
+    graph.setSelectionCells([upper.assembly, lower.assembly]); // DIAGNOSTIC
+    clickPort(graph.container, /Outlet 1 free.*1\/2/); // DIAGNOSTIC
+    consoleLogs.length = 0; // DIAGNOSTIC
+    clickPort(graph.container, /Outlet 1 free.*1\/4/); // DIAGNOSTIC
+    assert.equal(inlineConnectionActions(graph.container).length, 0); // DIAGNOSTIC
+    assert.equal(buttonTexts(graph.container).includes("Connect"), false); // DIAGNOSTIC
+    assert.equal(buttonTexts(graph.container).includes("Flip and Connect"), false); // DIAGNOSTIC
+    const summaries = irrigationLogsWithLabel(consoleLogs, "inlineConnectionAction:flip-size-mismatch"); // DIAGNOSTIC
+    assert.equal(summaries.length, 1); // DIAGNOSTIC
+    assert.equal(summaries[0][1].attempts.length, 2); // DIAGNOSTIC
+    const sizes = JSON.parse(JSON.stringify(summaries[0][1].attempts.map(attempt => [attempt.sourceConnector.nominalSize, attempt.targetConnector.nominalSize]).sort())); // DIAGNOSTIC
+    assert.deepEqual(sizes, [["1/2", "1/4"], ["1/4", "1/2"]]); // DIAGNOSTIC
+}); // DIAGNOSTIC
 
 test("multi-output dropdowns create branches and make occupied branch rows read-only", () => { // CHANGE
     const { api, graph, moduleCell } = loadPlugin(); // NEW

@@ -5,6 +5,100 @@
  * less common commands behind explicit overflow submenus.
  */
 
+(function () { // NEW
+    if (typeof window === 'undefined') return; // NEW
+
+    window.Trellis = window.Trellis || {}; // NEW
+    window.Trellis.ui = window.Trellis.ui || {}; // NEW
+
+    const BUTTON_TOKENS = Object.freeze({ // NEW
+        open: { border: '#2563eb', color: '#1d4ed8', background: '#fff', hoverBackground: '#eff6ff' }, // NEW
+        add: { border: '#188038', color: '#166534', background: '#fff', hoverBackground: '#f0fdf4' }, // NEW
+        danger: { border: '#b91c1c', color: '#b91c1c', background: '#fff', hoverBackground: '#fef2f2' }, // NEW
+        neutral: { border: '#6b7280', color: '#111827', background: '#fff', hoverBackground: '#f9fafb' }, // NEW
+        focus: 'rgba(37, 99, 235, 0.28)', // NEW
+        disabledOpacity: '0.55' // NEW
+    }); // NEW
+
+    function normalizeButtonVariant(variant) { // NEW
+        return BUTTON_TOKENS[variant] ? variant : 'neutral'; // NEW
+    } // NEW
+
+    function classForVariant(variant) { // NEW
+        return 'trellis-button trellis-button-' + normalizeButtonVariant(variant); // NEW
+    } // NEW
+
+    function ensureButtonStyles(doc) { // NEW
+        const owner = doc || (typeof document !== 'undefined' ? document : null); // NEW
+        if (!owner || owner.getElementById('trellis-shared-button-styles')) return; // NEW
+
+        const style = owner.createElement('style'); // NEW
+        style.id = 'trellis-shared-button-styles'; // NEW
+        style.textContent = [ // NEW
+            '.trellis-button{box-sizing:border-box;border-radius:6px;cursor:pointer;font:12px Arial,sans-serif;padding:6px 10px;background:#fff;transition:background-color 120ms ease,border-color 120ms ease,color 120ms ease}', // NEW
+            '.trellis-button-open{border:1px solid #2563eb;color:#1d4ed8}', // NEW
+            '.trellis-button-open:hover{background:#eff6ff}', // NEW
+            '.trellis-button-add{border:1px solid #188038;color:#166534}', // NEW
+            '.trellis-button-add:hover{background:#f0fdf4}', // NEW
+            '.trellis-button-add.trellis-button-filled{background:#188038;color:#fff}', // NEW
+            '.trellis-button-add.trellis-button-filled:hover{background:#166534}', // NEW
+            '.trellis-button-danger{border:1px solid #b91c1c;color:#b91c1c}', // NEW
+            '.trellis-button-danger:hover{background:#fef2f2}', // NEW
+            '.trellis-button-neutral{border:1px solid #6b7280;color:#111827}', // NEW
+            '.trellis-button-neutral:hover{background:#f9fafb}', // NEW
+            '.trellis-button-compact{padding:3px 6px;font-size:12px}', // NEW
+            '.trellis-button:disabled,.trellis-button[aria-disabled="true"]{opacity:.55;cursor:not-allowed}', // NEW
+            '.trellis-button:focus-visible{outline:2px solid #2563eb;outline-offset:2px;box-shadow:0 0 0 3px rgba(37,99,235,.28)}' // NEW
+        ].join('\n'); // NEW
+        (owner.head || owner.documentElement || owner.body).appendChild(style); // NEW
+    } // NEW
+
+    function applyButtonStyle(button, variant, options) { // NEW
+        if (!button || !button.style) return button; // NEW
+        const opts = options || {}; // NEW
+        const normalized = normalizeButtonVariant(variant); // NEW
+        const tokens = BUTTON_TOKENS[normalized]; // NEW
+        ensureButtonStyles(button.ownerDocument); // NEW
+
+        ['trellis-button', 'trellis-button-open', 'trellis-button-add', 'trellis-button-danger', 'trellis-button-neutral', 'trellis-button-compact', 'trellis-button-filled'].forEach(function (className) { // NEW
+            if (button.classList) button.classList.remove(className); // NEW
+        }); // NEW
+        if (button.classList) { // NEW
+            button.classList.add('trellis-button', 'trellis-button-' + normalized); // NEW
+            if (opts.compact) button.classList.add('trellis-button-compact'); // NEW
+            if (opts.filled) button.classList.add('trellis-button-filled'); // NEW
+        } // NEW
+        button.setAttribute('data-trellis-button-variant', normalized); // NEW
+        button.type = button.type || 'button'; // NEW
+        button.style.border = '1px solid ' + tokens.border; // NEW
+        button.style.borderRadius = opts.radius || '6px'; // NEW
+        button.style.background = opts.filled && normalized === 'add' ? tokens.border : tokens.background; // NEW
+        button.style.color = opts.filled && normalized === 'add' ? '#fff' : tokens.color; // NEW
+        button.style.cursor = button.disabled ? 'not-allowed' : 'pointer'; // NEW
+        button.style.font = opts.font || '12px Arial, sans-serif'; // NEW
+        button.style.padding = opts.compact ? '3px 6px' : (opts.padding || '6px 10px'); // NEW
+        button.style.boxSizing = 'border-box'; // NEW
+        return button; // NEW
+    } // NEW
+
+    function button(label, variant, onClick, options) { // NEW
+        const b = document.createElement('button'); // NEW
+        b.type = 'button'; // NEW
+        b.textContent = String(label == null ? '' : label); // NEW
+        applyButtonStyle(b, variant, options); // NEW
+        if (options && options.title != null) b.title = String(options.title); // NEW
+        if (options && options.ariaLabel != null) b.setAttribute('aria-label', String(options.ariaLabel)); // NEW
+        if (typeof onClick === 'function') b.addEventListener('click', onClick); // NEW
+        return b; // NEW
+    } // NEW
+
+    window.Trellis.ui.buttonTokens = BUTTON_TOKENS; // NEW
+    window.Trellis.ui.applyButtonStyle = window.Trellis.ui.applyButtonStyle || applyButtonStyle; // NEW
+    window.Trellis.ui.button = window.Trellis.ui.button || button; // NEW
+    window.Trellis.ui.classForVariant = window.Trellis.ui.classForVariant || classForVariant; // NEW
+    window.Trellis.ui.ensureButtonStyles = window.Trellis.ui.ensureButtonStyles || ensureButtonStyles; // NEW
+})(); // NEW
+
 Draw.loadPlugin(function (ui) {
     if (!ui || ui.__trellisUiCleanupInstalled) {
         return;

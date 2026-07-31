@@ -57,7 +57,7 @@ test('Garden Settings can open with an empty city table so City Manager can add 
 
 test('Garden module overlay can route first irrigation source creation through the irrigation planner', () => { // NEW
     const source = readPlantTilerSource(); // NEW
-    assert.match(source, /irrigationSourceBtn = makeButton\("Create Irrigation Source"\);/); // NEW
+    assert.match(source, /irrigationSourceBtn = makeButton\("Create Irrigation Source", "add"\);/); // CHANGE
     assert.match(source, /function gardenModuleHasIrrigationSource\(moduleCell\)/); // NEW
     assert.match(source, /getXmlAttr\(cell, "irrigation_endpoint_type", ""\) === "source"/); // NEW
     assert.match(source, /window\.TrellisIrrigationPlanner\.openIrrigationMode\(moduleCell, \{ sourceForm: true, preserveViewport: true \}\);/); // NEW

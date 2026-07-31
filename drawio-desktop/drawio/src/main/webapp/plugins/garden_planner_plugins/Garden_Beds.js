@@ -22,6 +22,19 @@ Draw.loadPlugin(function (ui) { // NEW
     const OVERLAY_CONTROL_CHROME_WIDTH = 24; // ADDED
     const CM_PER_INCH = 2.54; // ADDED
 
+    function applyBedButtonStyle(button, variant, options) { // NEW
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") { // NEW
+            window.Trellis.ui.applyButtonStyle(button, variant, options); // NEW
+        } else if (button) { // NEW
+            button.setAttribute("data-trellis-button-variant", variant || "neutral"); // NEW
+        } // NEW
+        return button; // NEW
+    } // NEW
+
+    function bedButton(label, onClick, variant, options) { // NEW
+        return applyBedButtonStyle(mxUtils.button(label, onClick), variant || "neutral", options); // NEW
+    } // NEW
+
     const ATTRS = { // NEW
         BED_JSON: "bed_conditions_json", // CHANGE
         SEASON_EXTENSION_DEFAULTS_JSON: "season_extension_defaults_json" // ADDED
@@ -679,7 +692,7 @@ Draw.loadPlugin(function (ui) { // NEW
         const soilInput = makeNumberInput(current.seasonExtensionSoilOffsetC == null ? "" : cToDisplayTemp(current.seasonExtensionSoilOffsetC, units)); // ADDED
         const frostInput = makeNumberInput(current.seasonExtensionFrostShiftDays); // ADDED
         const minInput = makeNumberInput(current.seasonExtensionMinAirTempC == null ? "" : cToDisplayTemp(current.seasonExtensionMinAirTempC, units)); // ADDED
-        const saveDefaultsButton = mxUtils.button("Set as defaults", function () { // ADDED
+        const saveDefaultsButton = bedButton("Set as defaults", function () { // CHANGE
             const key = controls.seasonExtension.value; // ADDED
             const effect = readInputsAsEffect(key, resolveSeasonExtensionDefault(targetCell, key)); // ADDED
             model.beginUpdate(); // ADDED
@@ -855,22 +868,22 @@ Draw.loadPlugin(function (ui) { // NEW
         secondaryButtons.style.display = "flex"; // NEW
         secondaryButtons.style.gap = "8px"; // NEW
         actionRow.appendChild(document.createElement("span")); // NEW
-        secondaryButtons.appendChild(mxUtils.button("Copy", function () { copiedProfile = normalizeProfile(readDialogProfile(), { allowPreset: true }); })); // CHANGE
-        secondaryButtons.appendChild(mxUtils.button("Paste", function () { // NEW
+        secondaryButtons.appendChild(bedButton("Copy", function () { copiedProfile = normalizeProfile(readDialogProfile(), { allowPreset: true }); }, "neutral")); // CHANGE
+        secondaryButtons.appendChild(bedButton("Paste", function () { // CHANGE
             if (!copiedProfile) { ui.alert("No copied bed conditions are available."); return; } // NEW
             const targets = collectSelectedBeds(targetCell); // NEW
             model.beginUpdate(); // NEW
             try { targets.forEach(function (target) { writeBedConditions(target, copiedProfile, { writeIdentityLabel: true }); }); } // CHANGE
             finally { model.endUpdate(); } // NEW
             ui.hideDialog(); // NEW
-        })); // NEW
-        secondaryButtons.appendChild(mxUtils.button("Clear", function () { // CHANGE
+        }, "add")); // CHANGE
+        secondaryButtons.appendChild(bedButton("Clear", function () { // CHANGE
             const targets = collectSelectedBeds(targetCell); // NEW
             model.beginUpdate(); // NEW
             try { targets.forEach(clearBedConditions); } // NEW
             finally { model.endUpdate(); } // NEW
             ui.hideDialog(); // NEW
-        })); // NEW
+        }, "danger")); // CHANGE
 
         actionRow.appendChild(secondaryButtons); // NEW
         footer.appendChild(actionRow); // CHANGE
@@ -880,8 +893,8 @@ Draw.loadPlugin(function (ui) { // NEW
         buttonRow.style.justifyContent = "flex-end"; // NEW
         buttonRow.style.gap = "8px"; // NEW
         buttonRow.style.marginTop = "12px"; // NEW
-        buttonRow.appendChild(mxUtils.button("Cancel", function () { ui.hideDialog(); })); // NEW
-        buttonRow.appendChild(mxUtils.button("Save", function () { // NEW
+        buttonRow.appendChild(bedButton("Cancel", function () { ui.hideDialog(); }, "neutral")); // CHANGE
+        buttonRow.appendChild(bedButton("Save", function () { // CHANGE
             if (String(controls.bedHeight.value || "").trim() && displayHeightToCm(controls.bedHeight.value, identityUnits) == null) { ui.alert("Bed height must be greater than 0."); controls.bedHeight.focus(); return; } // ADDED
             model.beginUpdate(); // NEW
             try { // NEW
@@ -890,7 +903,7 @@ Draw.loadPlugin(function (ui) { // NEW
                 model.endUpdate(); // NEW
             } // NEW
             ui.hideDialog(); // NEW
-        })); // NEW
+        }, "add")); // CHANGE
         footer.appendChild(buttonRow); // CHANGE
         div.appendChild(footer); // ADDED
         ui.showDialog(div, 520, dialogHeight, true, true); // CHANGE
@@ -975,7 +988,7 @@ Draw.loadPlugin(function (ui) { // NEW
                 return; // ADDED
             } // ADDED
             labelColumnWidth = Math.max(labelColumnWidth, estimateOverlayTextWidth(row.label)); // ADDED
-        }); // ADDED
+        }, "neutral"); // CHANGE
         sourceRows.forEach(function (row) { // ADDED
             if (row.type === "heading" || row.type === "notes") return; // ADDED
             includeContentWidth(labelColumnWidth + OVERLAY_ROW_GAP + estimateOverlayTextWidth(row.value)); // ADDED
@@ -1050,7 +1063,7 @@ Draw.loadPlugin(function (ui) { // NEW
         const layout = estimateSelectedBedOverlayLayout(rows); // ADDED
         entry.div.style.width = layout.width + "px"; // ADDED
         entry.div.appendChild(createBedNameInput(entry)); // ADDED
-        const button = mxUtils.button("Set Bed Conditions", function () { showConditionEditorDialog(entry.cell); }); // NEW
+        const button = bedButton("Set Bed Conditions", function () { showConditionEditorDialog(entry.cell); }, "open"); // CHANGE
         button.style.display = "block"; // ADDED
         button.style.width = "100%"; // NEW
         button.style.marginBottom = "6px"; // NEW

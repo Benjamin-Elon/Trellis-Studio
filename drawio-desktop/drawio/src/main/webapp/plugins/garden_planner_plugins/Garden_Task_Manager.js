@@ -49,6 +49,18 @@ const TASK_WORKFLOW_STATES = ['STAGED', 'TODO', 'DOING', 'DONE']; // NEW
 const WEEK_DAY_LANE_KEYS = ['WEEK_SUN', 'WEEK_MON', 'WEEK_TUE', 'WEEK_WED', 'WEEK_THU', 'WEEK_FRI', 'WEEK_SAT']; // NEW
 const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // NEW
 const TRELLIS_DIALOG_Z = 2000000000; // NEW: match Draw.io dialog layer ordering
+
+function applyTaskButtonStyle(button, variant, options) { // NEW
+    const semanticVariant = variant || 'neutral'; // NEW
+    if (!button) return button; // NEW
+    if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === 'function') { // NEW
+        window.Trellis.ui.applyButtonStyle(button, semanticVariant, options || {}); // NEW
+    } else if (button.setAttribute) { // NEW
+        button.setAttribute('data-trellis-button-variant', semanticVariant); // NEW
+    } // NEW
+    return button; // NEW
+} // NEW
+
 const SCHEDULE_PX_PER_HOUR = 80; // NEW
 const SCHEDULE_MINUTE_SNAP = 15; // NEW
 const SCHEDULE_MIN_CARD_HEIGHT = 20; // NEW
@@ -5062,6 +5074,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         const cancelButton = mxUtils.button('Cancel', function () {
             ui.hideDialog();
         });
+        applyTaskButtonStyle(cancelButton, 'neutral'); // NEW
         const saveButton = mxUtils.button('Save', async function () { // CHANGED
             const attributes = {}; // NEW
             const notePatch = buildCardNotePatch(card.value, noteInput.value); // NEW
@@ -5103,6 +5116,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             ui.hideDialog();
         });
 
+        applyTaskButtonStyle(saveButton, 'add'); // CHANGE
         buttons.appendChild(cancelButton);
         buttons.appendChild(saveButton);
         div.appendChild(buttons);
@@ -5373,6 +5387,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             taskCommands.saveBoardWeekWorkHours(board, weekStart, weeks, nextDefaults, nextWeek); // CHANGE
             ui.hideDialog(); // NEW
         }); // NEW
+        applyTaskButtonStyle(cancel, 'neutral'); // NEW
+        applyTaskButtonStyle(save, 'add'); // CHANGE
         buttons.appendChild(cancel); // NEW
         buttons.appendChild(save); // NEW
         div.appendChild(buttons); // NEW
@@ -5434,6 +5450,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             taskCommands.saveSelectedWeekDayWorkHours(board, dayIndex, normalizeWorkHourWindow({ closed: closed.checked, startMinute, endMinute })); // NEW
             ui.hideDialog(); // NEW
         }); // NEW
+        applyTaskButtonStyle(cancel, 'neutral'); // NEW
+        applyTaskButtonStyle(save, 'add'); // CHANGE
         buttons.appendChild(cancel); // NEW
         buttons.appendChild(save); // NEW
         div.appendChild(buttons); // NEW
@@ -6162,6 +6180,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         const previous = document.createElement('button'); // NEW
         previous.type = 'button'; // NEW
         previous.className = 'trellis-task-lane-pager__button trellis-task-lane-pager__previous'; // NEW
+        applyTaskButtonStyle(previous, 'neutral', { compact: true }); // NEW
         previous.setAttribute('aria-label', 'Previous page'); // CHANGE: accessible name remains without a browser title tooltip
         previous.appendChild(createLanePagerChevron(-1)); // NEW
         const selector = document.createElement('select'); // NEW
@@ -6169,6 +6188,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         const next = document.createElement('button'); // NEW
         next.type = 'button'; // NEW
         next.className = 'trellis-task-lane-pager__button trellis-task-lane-pager__next'; // NEW
+        applyTaskButtonStyle(next, 'neutral', { compact: true }); // NEW
         next.setAttribute('aria-label', 'Next page'); // CHANGE: accessible name remains without a browser title tooltip
         next.appendChild(createLanePagerChevron(1)); // NEW
         [previous, selector, next].forEach(control => { // NEW
@@ -6511,11 +6531,12 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         let columnsExpanded = false; // NEW
         let columnsContextKey = null; // NEW
 
-        function button(label, fn) { // NEW
+        function button(label, fn, variant) { // CHANGE
             const btn = document.createElement('button'); // NEW
             btn.type = 'button'; // NEW
             btn.textContent = label; // NEW
             btn.style.cssText = 'font:12px Arial,sans-serif;padding:3px 6px;'; // NEW
+            applyTaskButtonStyle(btn, variant || 'neutral', { compact: true }); // NEW
             mxEvent.addListener(btn, 'mousedown', evt => mxEvent.consume(evt)); // NEW
             mxEvent.addListener(btn, 'click', function (evt) { mxEvent.consume(evt); fn(); requestRefresh(); }); // CHANGE
             row.appendChild(btn); // NEW
@@ -6598,8 +6619,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         const todayBtn = button('Today', () => { const b = selectedBoard(); if (!b) return; const today = todayISO(); taskCommands.setBoardPlanningView(b, null, { [TASK_SELECTED_WEEK_START_ATTR]: getTaskWeekStartISO(today), [TASK_SELECTED_DAY_ATTR]: today }); }); // CHANGE
         const endDayBtn = button('End Day', () => { const b = selectedBoard(); if (b) taskCommands.endDay(b); }); // CHANGE
         const endWeekBtn = button('End Week', () => { const b = selectedBoard(); if (b) taskCommands.endWeek(b); }); // CHANGE
-        const editHoursBtn = button('Edit Hours', () => { const b = selectedBoard(); if (b) taskDialogs.showEditHoursDialog(b); }); // CHANGE
-        const addBreakBtn = button('Add Break', () => { const b = selectedBoard(); if (b) taskCommands.addBreakToSelectedDay(b); }); // CHANGE
+        const editHoursBtn = button('Edit Hours', () => { const b = selectedBoard(); if (b) taskDialogs.showEditHoursDialog(b); }, 'open'); // CHANGE
+        const addBreakBtn = button('Add Break', () => { const b = selectedBoard(); if (b) taskCommands.addBreakToSelectedDay(b); }, 'add'); // CHANGE
         dateInput.addEventListener('mousedown', evt => evt.stopPropagation()); // NEW
         dateInput.addEventListener('click', evt => evt.stopPropagation()); // NEW
         mxEvent.addListener(dateInput, 'change', function (evt) { // NEW
@@ -6846,6 +6867,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             } // NEW
             ui.hideDialog(); // NEW
         }); // NEW
+        applyTaskButtonStyle(cancelButton, 'neutral'); // NEW
+        applyTaskButtonStyle(saveButton, 'add'); // CHANGE
         buttons.appendChild(cancelButton); // NEW
         buttons.appendChild(saveButton); // NEW
         div.appendChild(buttons); // NEW
@@ -6910,11 +6933,12 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             return { board, lane, laneKey, dayIndex, dayWindow: normalizeWorkHourWindow(dayWindow) }; // NEW
         } // NEW
 
-        function add(label, fn) { // NEW
+        function add(label, fn, variant) { // CHANGE
             const btn = document.createElement('button'); // NEW
             btn.type = 'button'; // NEW
             btn.textContent = label; // NEW
             btn.style.cssText = 'font:12px Arial,sans-serif;padding:3px 6px;'; // NEW
+            applyTaskButtonStyle(btn, variant || 'neutral', { compact: true }); // NEW
             mxEvent.addListener(btn, 'click', function (evt) { // NEW
                 mxEvent.consume(evt); // NEW
                 const ctx = selectedDayLaneContext(); // NEW
@@ -6925,10 +6949,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             return btn; // NEW
         } // NEW
 
-        const changeHoursBtn = add('Change Hours', ctx => taskDialogs.showEditDayHoursDialog(ctx.board, ctx.laneKey)); // NEW
-        const addBreakBtn = add('Add Break', ctx => taskCommands.addBreakToSelectedDay(ctx.board)); // NEW
-        const openDayBtn = add('Open Day', ctx => taskCommands.openSelectedWeekDayFromDefaults(ctx.board, ctx.laneKey)); // NEW
-        const closeDayBtn = add('Close Day', ctx => taskCommands.closeSelectedWeekDay(ctx.board, ctx.lane)); // NEW
+        const changeHoursBtn = add('Change Hours', ctx => taskDialogs.showEditDayHoursDialog(ctx.board, ctx.laneKey), 'open'); // CHANGE
+        const addBreakBtn = add('Add Break', ctx => taskCommands.addBreakToSelectedDay(ctx.board), 'add'); // CHANGE
+        const openDayBtn = add('Open Day', ctx => taskCommands.openSelectedWeekDayFromDefaults(ctx.board, ctx.laneKey), 'open'); // CHANGE
+        const closeDayBtn = add('Close Day', ctx => taskCommands.closeSelectedWeekDay(ctx.board, ctx.lane), 'danger'); // CHANGE
 
         function refresh() { // NEW
             const ctx = selectedDayLaneContext(); // NEW
@@ -6971,6 +6995,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         addBoardBtn.type = 'button'; // NEW
         addBoardBtn.textContent = 'Add Kanban Board'; // NEW
         addBoardBtn.style.cssText = 'font:12px Arial,sans-serif;padding:3px 6px;'; // NEW
+        applyTaskButtonStyle(addBoardBtn, 'add', { compact: true }); // NEW
         overlay.appendChild(addBoardBtn); // NEW
         let currentTaskModule = null; // NEW
         let pendingClickAnchor = null; // NEW
@@ -7163,11 +7188,12 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
         mxEvent.addListener(overlay, 'mousedown', evt => mxEvent.consume(evt)); // NEW
         mxEvent.addListener(overlay, 'mouseup', evt => mxEvent.consume(evt)); // NEW
 
-        function add(label, fn) { // NEW
+        function add(label, fn, variant) { // CHANGE
             const btn = document.createElement('button'); // NEW
             btn.type = 'button'; // NEW
             btn.textContent = label; // NEW
             btn.style.cssText = 'font:12px Arial,sans-serif;padding:3px 6px;'; // NEW
+            applyTaskButtonStyle(btn, variant || 'neutral', { compact: true }); // NEW
             mxEvent.addListener(btn, 'click', function (evt) { mxEvent.consume(evt); const cards = selectedKanbanCards(); if (cards.length) fn(cards); requestRefresh(); }); // CHANGE
             overlay.appendChild(btn); // NEW
             return btn; // NEW
@@ -7344,8 +7370,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
 
             const footer = document.createElement('div'); // NEW
             footer.style.cssText = 'display:flex;justify-content:flex-end;gap:6px;margin-top:6px;padding-top:5px;border-top:1px solid #D1D5DB;'; // NEW
-            const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel'; // NEW
-            const apply = document.createElement('button'); apply.type = 'button'; apply.textContent = 'Apply'; // NEW
+            const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel'; applyTaskButtonStyle(cancel, 'neutral', { compact: true }); // CHANGE
+            const apply = document.createElement('button'); apply.type = 'button'; apply.textContent = 'Apply'; applyTaskButtonStyle(apply, 'neutral', { compact: true }); // CHANGE
             cancel.addEventListener('click', function (evt) { consumeDomEvent(evt); closeAssignmentPicker(); }); // NEW
             apply.addEventListener('click', function (evt) { // NEW
                 consumeDomEvent(evt); // NEW
@@ -7376,16 +7402,16 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) { //
             search.focus(); // NEW
         } // NEW
 
-        const editBtn = add('Edit', cards => cards.length === 1 ? taskDialogs.showEditCardDialog(cards[0]) : taskDialogs.showBulkEditCardsDialog(cards)); // CHANGE
-        const assignBtn = add('Assign to', openAssignmentPicker); // NEW
+        const editBtn = add('Edit', cards => cards.length === 1 ? taskDialogs.showEditCardDialog(cards[0]) : taskDialogs.showBulkEditCardsDialog(cards), 'open'); // CHANGE
+        const assignBtn = add('Assign to', openAssignmentPicker, 'open'); // CHANGE
         assignBtn.setAttribute('aria-haspopup', 'dialog'); // NEW
         assignBtn.setAttribute('aria-expanded', 'false'); // NEW
         const todoBtn = add('TODO', cards => taskCommands.applyCardWorkflowActions(cards, 'TODO')); // CHANGE
         const doingBtn = add('DOING', cards => taskCommands.applyCardWorkflowActions(cards, 'DOING')); // CHANGE
         const doneBtn = add('DONE', cards => taskCommands.applyCardWorkflowActions(cards, 'DONE')); // CHANGE
-        const allocateBtn = add('Allocate to Start Dates', cards => taskCommands.applyStagedStartDateAllocation(cards)); // CHANGE
-        const resetBtn = add('Reset Dates', cards => cards.length === 1 ? taskCommands.resetCardDates(cards[0]) : taskCommands.resetCardDatesForCards(cards)); // CHANGE
-        const clearBtn = add('Clear Note', cards => cards.length === 1 ? taskCommands.clearCardNote(cards[0]) : taskCommands.applyBulkCardEdit(cards, { replaceNote: true, note: '' })); // CHANGE
+        const allocateBtn = add('Allocate to Start Dates', cards => taskCommands.applyStagedStartDateAllocation(cards), 'add'); // CHANGE
+        const resetBtn = add('Reset Dates', cards => cards.length === 1 ? taskCommands.resetCardDates(cards[0]) : taskCommands.resetCardDatesForCards(cards), 'danger'); // CHANGE
+        const clearBtn = add('Clear Note', cards => cards.length === 1 ? taskCommands.clearCardNote(cards[0]) : taskCommands.applyBulkCardEdit(cards, { replaceNote: true, note: '' }), 'danger'); // CHANGE
 
         function refresh() { // NEW
             const cards = selectedKanbanCards(); // NEW

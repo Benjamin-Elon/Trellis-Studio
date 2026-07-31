@@ -1030,21 +1030,26 @@ Draw.loadPlugin(function (ui) {
         return null; // NEW
     } // NEW
 
-    function createToolbarButton(label, title) { // NEW
+    function createToolbarButton(label, title, variant) { // CHANGE
         const btn = document.createElement("button"); // NEW
         btn.type = "button"; // NEW
         btn.textContent = label; // NEW
         btn.title = title || label; // NEW
+        const semanticVariant = variant || "neutral"; // NEW
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") window.Trellis.ui.applyButtonStyle(btn, semanticVariant, { compact: true, padding: "0 8px" }); // NEW
+        const fallbackColors = { open: "#2563eb", add: "#188038", danger: "#b91c1c", neutral: "#777" }; // NEW
         btn.style.height = BTN_SIZE + "px"; // NEW
-        btn.style.border = "1px solid #777"; // NEW
+        if (!btn.getAttribute("data-trellis-button-variant")) btn.style.border = "1px solid " + (fallbackColors[semanticVariant] || fallbackColors.neutral); // CHANGE
         btn.style.borderRadius = "6px"; // NEW
-        btn.style.background = "#fff"; // NEW
+        if (!btn.getAttribute("data-trellis-button-variant")) btn.style.background = "#fff"; // CHANGE
+        if (!btn.getAttribute("data-trellis-button-variant")) btn.style.color = semanticVariant === "open" ? "#1d4ed8" : (semanticVariant === "add" ? "#166534" : (semanticVariant === "danger" ? "#b91c1c" : "#000")); // NEW
         btn.style.cursor = "pointer"; // NEW
         btn.style.padding = "0 8px"; // NEW
         btn.style.fontFamily = "Arial"; // NEW
         btn.style.fontSize = "12px"; // NEW
         btn.style.whiteSpace = "nowrap"; // NEW
         btn.style.boxSizing = "border-box"; // NEW
+        if (!btn.getAttribute("data-trellis-button-variant")) btn.setAttribute("data-trellis-button-variant", semanticVariant); // NEW
         return btn; // NEW
     } // NEW
 
@@ -1056,7 +1061,7 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function createTaskBoardButton() { // NEW
-        const btn = createToolbarButton("Task Board", "Open the current task board"); // NEW
+        const btn = createToolbarButton("Task Board", "Open the current task board", "open"); // CHANGE
         btn.style.position = "relative"; // NEW
         const badge = document.createElement("span"); // NEW
         badge.className = "trellis-task-board-toolbar-badge"; // NEW
@@ -1114,8 +1119,8 @@ Draw.loadPlugin(function (ui) {
     function applyToolbarActiveButtonState(btn, active) { // NEW
         if (!btn) return; // NEW
         btn.style.background = active ? IRRIGATION_ACTIVE_BLUE : "#fff"; // NEW
-        btn.style.borderColor = active ? IRRIGATION_ACTIVE_BLUE : "#777"; // NEW
-        btn.style.color = active ? "#fff" : "#000"; // NEW
+        btn.style.borderColor = active ? IRRIGATION_ACTIVE_BLUE : "#2563eb"; // CHANGE
+        btn.style.color = active ? "#fff" : "#1d4ed8"; // CHANGE
     } // NEW
 
     function openIrrigationPlannerForModule(moduleCell) { // NEW
@@ -1244,8 +1249,8 @@ Draw.loadPlugin(function (ui) {
         status.style.cssText = "min-height:18px;color:#4B5563;margin-bottom:8px;"; // NEW
         const buttons = document.createElement("div"); // NEW
         buttons.style.cssText = "display:flex;justify-content:flex-end;gap:8px;"; // NEW
-        const cancel = createToolbarButton("Cancel", "Close share dialog"); // NEW
-        const send = createToolbarButton("Create Email", "Create invite and open an email draft"); // NEW
+        const cancel = createToolbarButton("Cancel", "Close share dialog", "neutral"); // CHANGE
+        const send = createToolbarButton("Create Email", "Create invite and open an email draft", "open"); // CHANGE
         cancel.addEventListener("click", function () { closeShareDialog(overlay); }); // NEW
         send.addEventListener("click", function () { // NEW
             const result = users.createPendingInvite({ email: email.value, scopeCellIds: scopes.map(function (scope) { return scope.id; }), preset: preset.value, capabilities: selectedInviteCapabilities(), shareInfo }); // CHANGE
@@ -1293,8 +1298,8 @@ Draw.loadPlugin(function (ui) {
         status.style.cssText = "min-height:18px;color:#4B5563;margin-bottom:8px;"; // NEW
         const buttons = document.createElement("div"); // NEW
         buttons.style.cssText = "display:flex;justify-content:flex-end;gap:8px;"; // NEW
-        const cancel = createToolbarButton("Cancel", "Close"); // NEW
-        const enable = createToolbarButton("Enable", "Enable users and continue sharing"); // NEW
+        const cancel = createToolbarButton("Cancel", "Close", "neutral"); // CHANGE
+        const enable = createToolbarButton("Enable", "Enable users and continue sharing", "add"); // CHANGE
         cancel.addEventListener("click", function () { closeShareDialog(overlay); }); // NEW
         enable.addEventListener("click", function () { // NEW
             const result = users.enableUsers(name.value, pin.value); // NEW
@@ -1410,16 +1415,16 @@ Draw.loadPlugin(function (ui) {
         yearLabel.style.background = "#fff"; // NEW
         yearLabel.style.boxSizing = "border-box"; // NEW
 
-        const planBtn = createToolbarButton("Plan", "Open the year planner"); // NEW
-        const equipmentBtn = createToolbarButton("Equipment", "Open garden equipment"); // NEW
-        const irrigationBtn = createToolbarButton("Irrigation", "Open irrigation planner"); // NEW
-        const allocateBtn = createToolbarButton("Allocate", "Allocate the current plan"); // NEW
+        const planBtn = createToolbarButton("Plan", "Open the year planner", "open"); // CHANGE
+        const equipmentBtn = createToolbarButton("Equipment", "Open garden equipment", "open"); // CHANGE
+        const irrigationBtn = createToolbarButton("Irrigation", "Open irrigation planner", "open"); // CHANGE
+        const allocateBtn = createToolbarButton("Allocate", "Allocate the current plan", "add"); // CHANGE
         const taskBoardBtn = createTaskBoardButton(); // NEW
         const taskBoardSelect = createTaskBoardSelect(); // NEW
-        const messagesBtn = createToolbarButton("Messages", "Review access requests"); // NEW
-        const exportBtn = createToolbarButton("Export", "Export dashboard CSV"); // NEW
-        const shareBtn = createToolbarButton("Share", "Share selected module(s), task board(s), or garden bed(s)"); // NEW
-        const tableBtn = createToolbarButton("Table", "Show dashboard table"); // NEW
+        const messagesBtn = createToolbarButton("Messages", "Review access requests", "open"); // CHANGE
+        const exportBtn = createToolbarButton("Export", "Export dashboard CSV", "neutral"); // CHANGE
+        const shareBtn = createToolbarButton("Share", "Share selected module(s), task board(s), or garden bed(s)", "open"); // CHANGE
+        const tableBtn = createToolbarButton("Table", "Show dashboard table", "open"); // CHANGE
 
         const table = document.createElement("div"); // NEW
         table.className = "trellis-garden-dashboard-table"; // NEW
@@ -1686,11 +1691,12 @@ Draw.loadPlugin(function (ui) {
         const mkBtn = (txt) => {
             const b = document.createElement("button");
             b.textContent = txt;
+            if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") window.Trellis.ui.applyButtonStyle(b, "neutral", { compact: true }); // NEW
             b.style.width = BTN_SIZE + "px";
             b.style.height = BTN_SIZE + "px";
-            b.style.border = "1px solid #777";
+            if (!b.getAttribute("data-trellis-button-variant")) b.style.border = "1px solid #777"; // CHANGE
             b.style.borderRadius = "6px";
-            b.style.background = "#fff";
+            if (!b.getAttribute("data-trellis-button-variant")) b.style.background = "#fff"; // CHANGE
             b.style.cursor = "pointer";
             b.style.padding = "0";
             b.style.lineHeight = "1";
@@ -1712,64 +1718,19 @@ Draw.loadPlugin(function (ui) {
         yearLabel.style.borderRadius = "6px";
         yearLabel.style.background = "#fff";
 
-        const planBtn = document.createElement("button");
-        planBtn.textContent = "Plan";
-        planBtn.style.height = BTN_SIZE + "px";
-        planBtn.style.border = "1px solid #777";
-        planBtn.style.borderRadius = "6px";
-        planBtn.style.background = "#fff";
-        planBtn.style.cursor = "pointer";
-        planBtn.style.padding = "0 8px";
-        planBtn.style.fontFamily = "Arial";
-        planBtn.style.fontSize = "12px";
+        const planBtn = createToolbarButton("Plan", "Open the year planner", "open"); // CHANGE
         planBtn.style.pointerEvents = "auto"; // CHANGE
 
-        const equipmentBtn = document.createElement("button"); // NEW
-        equipmentBtn.textContent = "Equipment"; // NEW
-        equipmentBtn.style.height = BTN_SIZE + "px"; // NEW
-        equipmentBtn.style.border = "1px solid #777"; // NEW
-        equipmentBtn.style.borderRadius = "6px"; // NEW
-        equipmentBtn.style.background = "#fff"; // NEW
-        equipmentBtn.style.cursor = "pointer"; // NEW
-        equipmentBtn.style.padding = "0 8px"; // NEW
-        equipmentBtn.style.fontFamily = "Arial"; // NEW
-        equipmentBtn.style.fontSize = "12px"; // NEW
+        const equipmentBtn = createToolbarButton("Equipment", "Open garden equipment", "open"); // CHANGE
         equipmentBtn.style.pointerEvents = "auto"; // CHANGE
 
-        const irrigationBtn = document.createElement("button"); // NEW
-        irrigationBtn.textContent = "Irrigation"; // NEW
-        irrigationBtn.style.height = BTN_SIZE + "px"; // NEW
-        irrigationBtn.style.border = "1px solid #777"; // NEW
-        irrigationBtn.style.borderRadius = "6px"; // NEW
-        irrigationBtn.style.background = "#fff"; // NEW
-        irrigationBtn.style.cursor = "pointer"; // NEW
-        irrigationBtn.style.padding = "0 8px"; // NEW
-        irrigationBtn.style.fontFamily = "Arial"; // NEW
-        irrigationBtn.style.fontSize = "12px"; // NEW
+        const irrigationBtn = createToolbarButton("Irrigation", "Open irrigation planner", "open"); // CHANGE
         irrigationBtn.style.pointerEvents = "auto"; // NEW
 
-        const allocateBtn = document.createElement("button");
-        allocateBtn.textContent = "Allocate";
-        allocateBtn.style.height = BTN_SIZE + "px";
-        allocateBtn.style.border = "1px solid #777";
-        allocateBtn.style.borderRadius = "6px";
-        allocateBtn.style.background = "#fff";
-        allocateBtn.style.cursor = "pointer";
-        allocateBtn.style.padding = "0 8px";
-        allocateBtn.style.fontFamily = "Arial";
-        allocateBtn.style.fontSize = "12px";
+        const allocateBtn = createToolbarButton("Allocate", "Allocate the current plan", "add"); // CHANGE
         allocateBtn.style.pointerEvents = "auto"; // CHANGE
 
-        const exportBtn = document.createElement("button");
-        exportBtn.textContent = "Export";
-        exportBtn.style.height = BTN_SIZE + "px";
-        exportBtn.style.border = "1px solid #777";
-        exportBtn.style.borderRadius = "6px";
-        exportBtn.style.background = "#fff";
-        exportBtn.style.cursor = "pointer";
-        exportBtn.style.padding = "0 8px";
-        exportBtn.style.fontFamily = "Arial";
-        exportBtn.style.fontSize = "12px";
+        const exportBtn = createToolbarButton("Export", "Export dashboard CSV", "neutral"); // CHANGE
         exportBtn.style.pointerEvents = "auto"; // CHANGE
 
         // Content area 

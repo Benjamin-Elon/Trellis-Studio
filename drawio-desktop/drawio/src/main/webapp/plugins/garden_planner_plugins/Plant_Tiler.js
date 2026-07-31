@@ -20,6 +20,19 @@ Draw.loadPlugin(function (ui) {
     const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // CHANGE
     const TRELLIS_DIALOG_Z = 2000000000; // NEW
 
+    function applyTilerButtonStyle(button, variant, options) { // NEW
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") { // NEW
+            window.Trellis.ui.applyButtonStyle(button, variant, options); // NEW
+        } else if (button) { // NEW
+            button.setAttribute("data-trellis-button-variant", variant || "neutral"); // NEW
+        } // NEW
+        return button; // NEW
+    } // NEW
+
+    function tilerButton(label, onClick, variant, options) { // NEW
+        return applyTilerButtonStyle(mxUtils.button(label, onClick), variant || "neutral", options); // NEW
+    } // NEW
+
     const GROUP_LABEL_FONT_PX = 12;
     const GROUP_LABEL_LINE_HEIGHT = 1.25;
     const GROUP_LABEL_BAND_PAD_PX = 6;
@@ -508,6 +521,7 @@ Draw.loadPlugin(function (ui) {
         button.style.borderRadius = "6px"; // ADDED
         button.style.background = "#fff"; // ADDED
         button.style.textAlign = "left"; // ADDED
+        applyTilerButtonStyle(button, "open", { compact: true }); // NEW
         const panel = document.createElement("div"); // ADDED
         panel.style.position = "absolute"; // ADDED
         panel.style.zIndex = "10000"; // ADDED
@@ -1682,11 +1696,11 @@ Draw.loadPlugin(function (ui) {
         const cityPicker = document.createElement("select"); // ADDED
         cityPicker.style.flex = "1"; // ADDED
         cityPicker.style.padding = "6px"; // ADDED
-        const newBtn = mxUtils.button("New City", () => { // ADDED
+        const newBtn = tilerButton("New City", () => { // CHANGE
             const maxId = cities.reduce((max, city) => Math.max(max, Number(city.city_id) || 0), 0); // ADDED
             editingExistingId = null; // ADDED
             fillForm({ city_id: maxId + 1, city_name: "", country_name: "", region_name: "Unspecified", timezone: "America/Los_Angeles" }, false); // CHANGED
-        }); // ADDED
+        }, "add"); // CHANGE
         setTooltip(newBtn, "Create a scheduler-ready city record with required climate fields."); // ADDED
         pickerRow.appendChild(cityPicker); // ADDED
         pickerRow.appendChild(newBtn); // ADDED
@@ -1827,8 +1841,8 @@ Draw.loadPlugin(function (ui) {
         btnRow.style.justifyContent = "flex-end"; // ADDED
         btnRow.style.gap = "8px"; // ADDED
         btnRow.style.marginTop = "12px"; // ADDED
-        const closeBtn = mxUtils.button("Close", () => ui.hideDialog()); // ADDED
-        const saveBtn = mxUtils.button("Save City", async () => { // ADDED
+        const closeBtn = tilerButton("Close", () => ui.hideDialog(), "neutral"); // CHANGE
+        const saveBtn = tilerButton("Save City", async () => { // CHANGE
             clearError(); // ADDED
             try { // ADDED
                 const saved = await saveCityRecord(readForm(), editingExistingId); // ADDED
@@ -1841,7 +1855,7 @@ Draw.loadPlugin(function (ui) {
             } catch (e) { // ADDED
                 showError(e && e.message ? e.message : String(e)); // ADDED
             } // ADDED
-        }); // ADDED
+        }, "add"); // CHANGE
         setTooltip(saveBtn, "Save the city climate record to the Trellis database."); // ADDED
         btnRow.appendChild(closeBtn); // ADDED
         btnRow.appendChild(saveBtn); // ADDED
@@ -1939,12 +1953,12 @@ Draw.loadPlugin(function (ui) {
         cityControl.style.gap = "6px"; // ADDED
         cityControl.style.flex = "1"; // ADDED
         cityControl.appendChild(citySel); // ADDED
-        const manageCityBtn = mxUtils.button("Manage...", async () => { // ADDED
+        const manageCityBtn = tilerButton("Manage...", async () => { // CHANGE
             await showCityManagerDialog(ui, graph, citySel.value, unitsSel.value || curUnits || "metric", async saved => { // ADDED
                 cities = await loadCities(); // ADDED
                 refreshCityOptions(saved.city_id, saved.city_name); // ADDED
             }); // ADDED
-        }); // ADDED
+        }, "open"); // CHANGE
         setTooltip(citySel, "Select the garden city. City climate data is managed with the adjacent button."); // ADDED
         setTooltip(manageCityBtn, "Add or edit city latitude, longitude, timezone, frost dates, and monthly normals."); // ADDED
         cityControl.appendChild(manageCityBtn); // ADDED
@@ -2041,8 +2055,8 @@ Draw.loadPlugin(function (ui) {
         btnRow.style.gap = "8px";
         btnRow.style.marginTop = "12px";
 
-        const cancelBtn = mxUtils.button("Cancel", () => ui.hideDialog()); // CHANGE
-        const okBtn = mxUtils.button("OK", () => {
+        const cancelBtn = tilerButton("Cancel", () => ui.hideDialog(), "neutral"); // CHANGE
+        const okBtn = tilerButton("OK", () => { // CHANGE
             err.style.display = "none";
             const chosenGardenName = String(gardenNameInput.value || "").trim() || "Garden"; // ADDED
             const chosenCityRow = selectedCityRow(); // ADDED
@@ -2075,7 +2089,7 @@ Draw.loadPlugin(function (ui) {
             }
             graph.refresh(moduleCell);
 
-        });
+        }, "add"); // CHANGE
 
         btnRow.appendChild(cancelBtn);
         btnRow.appendChild(okBtn);
@@ -2124,7 +2138,7 @@ Draw.loadPlugin(function (ui) {
             return host; // CHANGE
         } // CHANGE
 
-        function makeButton(text) { // CHANGE
+        function makeButton(text, variant) { // CHANGE
             const btn = document.createElement("button"); // CHANGE
             btn.type = "button"; // CHANGE
             btn.textContent = text; // CHANGE
@@ -2137,6 +2151,7 @@ Draw.loadPlugin(function (ui) {
             btn.style.padding = "5px 8px"; // CHANGE
             btn.style.textAlign = "left"; // CHANGE
             btn.style.whiteSpace = "nowrap"; // CHANGE
+            applyTilerButtonStyle(btn, variant || "neutral", { compact: true }); // NEW
             return btn; // CHANGE
         } // CHANGE
 
@@ -2239,10 +2254,10 @@ Draw.loadPlugin(function (ui) {
             labelInputWrap = document.createElement("div"); // NEW
             labelInputWrap.className = "trellis-garden-module-label-controls"; // NEW
             labelInputWrap.style.cssText = "display:flex;flex-direction:column;gap:4px;padding:2px 2px 4px;border-bottom:1px solid #e5e7eb;"; // NEW
-            settingsBtn = makeButton("Set Garden Settings"); // CHANGE
-            addBedBtn = makeButton("Add Garden Bed"); // CHANGE
-            addGroupBtn = makeButton("Add New Plant Group"); // CHANGE
-            irrigationSourceBtn = makeButton("Create Irrigation Source"); // NEW
+            settingsBtn = makeButton("Set Garden Settings", "open"); // CHANGE
+            addBedBtn = makeButton("Add Garden Bed", "add"); // CHANGE
+            addGroupBtn = makeButton("Add New Plant Group", "add"); // CHANGE
+            irrigationSourceBtn = makeButton("Create Irrigation Source", "add"); // CHANGE
             toolbar.appendChild(labelInputWrap); // NEW
             toolbar.appendChild(settingsBtn); // CHANGE
             toolbar.appendChild(addBedBtn); // CHANGE
@@ -4006,7 +4021,7 @@ Draw.loadPlugin(function (ui) {
         btnRow.style.justifyContent = "flex-end";
         btnRow.style.gap = "8px";
 
-        const okBtn = mxUtils.button("OK", function () {
+        const okBtn = tilerButton("OK", function () { // CHANGE
             const x = Number(inputX.value),
                 y = Number(inputY.value);
             if (!isFinite(x) || !isFinite(y) || x <= 0 || y <= 0) {
@@ -4015,10 +4030,10 @@ Draw.loadPlugin(function (ui) {
             }
             ui.hideDialog();
             onOk(x, y);
-        });
-        const cancelBtn = mxUtils.button("Cancel", function () {
+        }, "neutral"); // CHANGE
+        const cancelBtn = tilerButton("Cancel", function () { // CHANGE
             ui.hideDialog();
-        });
+        }, "neutral"); // CHANGE
         btnRow.appendChild(cancelBtn);
         btnRow.appendChild(okBtn);
         div.appendChild(btnRow);

@@ -34,6 +34,15 @@ Draw.loadPlugin(function (ui) {
   const ATTR_EDITED_BY = 'lastEditedByUserId';                                // NEW
   const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // NEW
 
+  function applyChangeMapButtonStyle(button, variant, options) {              // NEW
+    if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === 'function') { // NEW
+      window.Trellis.ui.applyButtonStyle(button, variant, options);           // NEW
+    } else if (button) {                                                       // NEW
+      button.setAttribute('data-trellis-button-variant', variant || 'neutral'); // NEW
+    }                                                                         // NEW
+    return button;                                                            // NEW
+  }                                                                           // NEW
+
   const MODE_NONE = 'none';
   const MODE_CHANGE = 'changemap';
   const MODE_CREATE = 'createdmap';
@@ -2681,6 +2690,7 @@ Draw.loadPlugin(function (ui) {
     button.title = 'ChangeMap History';                                         // NEW
     button.textContent = 'History';                                             // NEW
     button.style.cssText = 'margin:2px 4px;padding:3px 8px;cursor:pointer;';    // NEW
+    applyChangeMapButtonStyle(button, 'open', { compact: true });               // NEW
     button.addEventListener('click', function () { togglePanel(); });           // NEW
     host.appendChild(button);                                                   // NEW
   }                                                                            // NEW

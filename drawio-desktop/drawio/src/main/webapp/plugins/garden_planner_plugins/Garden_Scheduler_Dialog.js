@@ -107,6 +107,17 @@ Draw.loadPlugin(function (ui) {
 
     const TRELLIS_DIALOG_Z = 2000000000; // NEW
 
+    function applySharedButtonStyle(button, variant, options) { // NEW
+        const semanticVariant = variant || 'neutral'; // NEW
+        if (!button) return button; // NEW
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === 'function') { // NEW
+            window.Trellis.ui.applyButtonStyle(button, semanticVariant, options || {}); // NEW
+        } else if (button.setAttribute) { // NEW
+            button.setAttribute('data-trellis-button-variant', semanticVariant); // NEW
+        } // NEW
+        return button; // NEW
+    } // NEW
+
     // -------------------- Logging ---------------------------------------------------------
     function log() { try { mxLog.debug.apply(mxLog, ["[USL-Schedule]"].concat([].slice.call(arguments))); } catch (_) {/*noop*/ } }
 
@@ -5320,6 +5331,7 @@ Draw.loadPlugin(function (ui) {
                 setTimeout(() => { copyBtn.textContent = 'Copy Text'; }, 1600); // ADDED
             }
         }); // ADDED
+        applySharedButtonStyle(copyBtn, 'neutral'); // NEW
         header.appendChild(copyBtn); // ADDED
         div.appendChild(header); // ADDED
 
@@ -5449,6 +5461,7 @@ Draw.loadPlugin(function (ui) {
         btns.style.marginTop = '12px';
         btns.style.textAlign = 'right';
         const closeBtn = mxUtils.button('Close', () => ui.hideDialog());
+        applySharedButtonStyle(closeBtn, 'neutral'); // NEW
         btns.appendChild(closeBtn);
         div.appendChild(btns);
 
@@ -5476,7 +5489,9 @@ Draw.loadPlugin(function (ui) {
         const btns = document.createElement('div');
         btns.style.marginTop = '12px';
         btns.style.textAlign = 'right';
-        btns.appendChild(mxUtils.button('Close', () => ui.hideDialog()));
+        const closeBtn = mxUtils.button('Close', () => ui.hideDialog()); // CHANGE
+        applySharedButtonStyle(closeBtn, 'neutral'); // NEW
+        btns.appendChild(closeBtn); // CHANGE
         div.appendChild(btns);
         ui.showDialog(div, 440, 240, true, true); // CHANGE
         elevateTrellisDialog(ui); // NEW
@@ -5865,6 +5880,7 @@ Draw.loadPlugin(function (ui) {
                 showErrorInline('Add plant error: ' + (e?.message || String(e)));
             }
         });
+        applySharedButtonStyle(addPlantBtn, 'add'); // NEW
 
         const addVarBtn = mxUtils.button('Add variety', async () => {
             try {
@@ -6513,6 +6529,7 @@ Draw.loadPlugin(function (ui) {
                 companionLayoutStatus.textContent = 'Save error: ' + (e?.message || String(e)); // ADDED
             } // ADDED
         }); // ADDED
+        applySharedButtonStyle(companionLayoutSaveBtn, 'add'); // CHANGE
         companionLayoutActions.appendChild(companionLayoutSaveBtn); // ADDED
         companionLayoutPanel.appendChild(companionLayoutActions); // ADDED
         const companionLayoutStatus = document.createElement('div'); // ADDED
@@ -6945,6 +6962,7 @@ Draw.loadPlugin(function (ui) {
         btns.style.gap = '8px';
 
         const cancelBtn = mxUtils.button('Cancel', () => div.__cancel());
+        applySharedButtonStyle(cancelBtn, 'neutral'); // NEW
 
         const saveBtn = mxUtils.button('Save', async () => {
             try {
@@ -7103,6 +7121,7 @@ Draw.loadPlugin(function (ui) {
                 showErrorInline('Save error: ' + (e?.message || String(e)));
             }
         });
+        applySharedButtonStyle(saveBtn, 'add'); // NEW
 
         function syncSaveButtonLabel() {
             if (!saveBtn) return;
@@ -7339,8 +7358,13 @@ Draw.loadPlugin(function (ui) {
             }); // FIX
         }
 
-        const inlineButton = (label, onClick) => {
+        function styleTrellisButton(button, variant, options) { // NEW
+            return applySharedButtonStyle(button, variant || 'neutral', options || {}); // CHANGE
+        } // NEW
+
+        const inlineButton = (label, onClick, variant) => { // CHANGE
             const b = mxUtils.button(label, async () => { clearErrorInline(); await onClick(); });
+            styleTrellisButton(b, variant || 'neutral', { compact: true }); // NEW
             b.style.marginLeft = '8px';
             return b;
         };
@@ -7383,7 +7407,8 @@ Draw.loadPlugin(function (ui) {
         advancedDetails.appendChild(advancedBody); // ADDED
         div.appendChild(advancedDetails); // ADDED
 
-        function styleCompactActionButton(btn) { // CHANGED
+        function styleCompactActionButton(btn, variant) { // CHANGED
+            styleTrellisButton(btn, variant || 'neutral', { compact: true }); // NEW
             btn.style.marginLeft = '0'; // CHANGED
             btn.style.minWidth = '28px'; // CHANGED
             btn.style.padding = '4px 8px'; // CHANGED
@@ -7497,7 +7522,7 @@ Draw.loadPlugin(function (ui) {
             } catch (e) {
                 showErrorInline('Add plant error: ' + (e?.message || String(e)));
             }
-        })); // CHANGED
+        }, 'add'), 'add'); // CHANGE
 
         const editPlantBtn = styleCompactActionButton(inlineButton('Edit', async () => { // CHANGED
             try {
@@ -7524,7 +7549,7 @@ Draw.loadPlugin(function (ui) {
             } catch (e) {
                 showErrorInline('Edit plant error: ' + (e?.message || String(e)));
             }
-        })); // CHANGED
+        }, 'open'), 'open'); // CHANGE
 
         addPlantBtn.classList.add('usl-scheduler-crop-action'); // ADDED
         editPlantBtn.classList.add('usl-scheduler-crop-action'); // ADDED
@@ -7634,7 +7659,7 @@ Draw.loadPlugin(function (ui) {
             } catch (e) {
                 showErrorInline('Add variety error: ' + (e?.message || String(e)));
             }
-        })); // CHANGED
+        }, 'add'), 'add'); // CHANGE
 
         varietyControlsWrap.appendChild(addVarietyBtn);
 
@@ -7665,7 +7690,7 @@ Draw.loadPlugin(function (ui) {
             } catch (e) {
                 setVarietyStatus('Edit variety error: ' + (e?.message || String(e)));
             }
-        })); // CHANGED
+        }, 'open'), 'open'); // CHANGE
 
         varietyControlsWrap.appendChild(editVarietyBtn);
 
@@ -8088,6 +8113,8 @@ Draw.loadPlugin(function (ui) {
         layoutGroupEditor.className = 'usl-companion-layout-editor'; // ADDED
         const applyGroupLayoutBtn = mxUtils.button('Apply layout', () => runUiAsyncOperation('Apply layout', applyCompanionGroupLayoutToGraph, showErrorInline)); // ADDED
         const saveGroupLayoutDefaultBtn = mxUtils.button('Save changed defaults', () => runUiAsyncOperation('Save group layout defaults', saveCompanionGroupLayoutDefaults, showErrorInline)); // ADDED
+        applySharedButtonStyle(applyGroupLayoutBtn, 'neutral'); // NEW
+        applySharedButtonStyle(saveGroupLayoutDefaultBtn, 'add'); // CHANGE
         let singleLayoutSectionWrap = null; // ADDED
         let groupLayoutSectionWrap = null; // ADDED
         let companionLayoutEditorState = null; // ADDED
@@ -9084,7 +9111,7 @@ Draw.loadPlugin(function (ui) {
                 startISO: formState.startISO, // CHANGED
                 sowingSeasons: formState.sowingSeasons, // CHANGED
                 activeSowingSeasonId: formState.activeSowingSeasonId // ADDED
-            })); // CHANGED
+        }, 'open'), 'open'); // CHANGE
             const parts = [];
             const warningText = summarizeScheduleWarnings(formState.scheduleWarnings); // ADDED
             if (warningText) parts.push(warningText); // ADDED
@@ -10180,6 +10207,8 @@ Draw.loadPlugin(function (ui) {
             } catch (e) { showErrorInline('Explain error: ' + e.message); }
         });
 
+        applySharedButtonStyle(explainBtn, 'open'); // NEW
+
         const rightBtns = document.createElement('div'); // CHANGED
         rightBtns.className = 'usl-scheduler-action-row'; // CHANGE
         rightBtns.style.display = 'flex'; // CHANGED
@@ -10214,6 +10243,8 @@ Draw.loadPlugin(function (ui) {
             } catch (e) { clearScheduleWarningState(); showErrorInline('Preview error: ' + e.message); } // CHANGED
         });
 
+
+        applySharedButtonStyle(previewBtn, 'neutral'); // NEW
 
         const okBtn = mxUtils.button('Save', async () => { // CHANGED
             try {
@@ -10347,7 +10378,10 @@ Draw.loadPlugin(function (ui) {
             }
         });
 
+        applySharedButtonStyle(okBtn, 'add'); // CHANGE
+
         const cancelBtn = mxUtils.button('Cancel', () => ui.hideDialog());
+        applySharedButtonStyle(cancelBtn, 'neutral'); // NEW
         [previewBtn, okBtn, cancelBtn].forEach(b => rightBtns.appendChild(b));
         btns.appendChild(rightBtns); // CHANGE
 
@@ -10472,6 +10506,7 @@ Draw.loadPlugin(function (ui) {
 
         // "Add Task" button
         const addTaskBtn = mxUtils.button("Add Task", () => openTaskEditor(null, null, addTaskBtn)); // CHANGED
+        applySharedButtonStyle(addTaskBtn, 'add'); // NEW
         addTaskBtn.style.marginTop = "12px";
         tasksTab.appendChild(addTaskBtn);
 
@@ -10549,6 +10584,8 @@ Draw.loadPlugin(function (ui) {
                     void refreshTasksTabUI(); // CHANGED
                     restoreFocus(addTaskBtn);
                 });
+                applySharedButtonStyle(editBtn, 'open'); // NEW
+                applySharedButtonStyle(delBtn, 'danger'); // NEW
 
                 btnWrap.appendChild(editBtn);
                 btnWrap.appendChild(delBtn);
@@ -11040,6 +11077,8 @@ Draw.loadPlugin(function (ui) {
             const cancelBtn = mxUtils.button("Cancel", () => {
                 taskEditorDiv.innerHTML = "";
             });
+            applySharedButtonStyle(saveBtn, 'add'); // CHANGE
+            applySharedButtonStyle(cancelBtn, 'neutral'); // NEW
 
             btnWrap.appendChild(saveBtn);
             btnWrap.appendChild(cancelBtn);
@@ -11109,14 +11148,20 @@ Draw.loadPlugin(function (ui) {
             .usl-scheduler-title{font-weight:700;font-size:15px;white-space:nowrap;color:var(--usl-neutral-900)}
             .usl-scheduler-subtitle{color:var(--usl-neutral-700);font-weight:700;overflow-wrap:anywhere}
             .usl-scheduler-tabs{padding:7px 12px;border-bottom:1px solid var(--usl-neutral-300);display:flex!important;gap:8px!important;align-items:center;flex-wrap:wrap;background:var(--usl-neutral-100);margin-bottom:0!important}
-            .usl-scheduler-tab{border:1px solid var(--usl-primary)!important;background:#fff!important;color:var(--usl-primary)!important;border-radius:6px!important;cursor:pointer!important;padding:6px 10px!important;font:12px Arial,sans-serif!important;min-width:100px!important}
-            .usl-scheduler-tab[data-active="true"]{background:var(--usl-primary)!important;color:#fff!important}
+            .usl-scheduler-tab{border:1px solid var(--usl-neutral-500)!important;background:#fff!important;color:var(--usl-neutral-900)!important;border-radius:6px!important;cursor:pointer!important;padding:6px 10px!important;font:12px Arial,sans-serif!important;min-width:100px!important} /* CHANGE */
+            .usl-scheduler-tab[data-active="true"]{background:var(--usl-neutral-100)!important;color:var(--usl-neutral-900)!important;box-shadow:inset 0 -2px 0 var(--usl-neutral-900)!important} /* CHANGE */
             .usl-scheduler-body{flex:1 1 0!important;min-height:0;overflow-y:auto!important;overflow-x:hidden;padding:12px;overscroll-behavior:contain;background:#fff}
             .usl-scheduler-footer{padding:9px 12px;border-top:1px solid #ccc;background:#fff;display:flex;justify-content:flex-end;align-items:center;gap:10px;flex-wrap:wrap}
             .usl-scheduler-footer-actions{margin-top:0!important;display:flex!important;justify-content:flex-end!important;gap:8px;flex-wrap:wrap}
             .usl-scheduler-action-row{display:flex!important;gap:8px!important;flex-wrap:wrap;justify-content:flex-end}
             .usl-scheduler-dialog button{border:1px solid var(--usl-neutral-500);background:#fff;color:var(--usl-neutral-900);border-radius:6px;cursor:pointer;padding:6px 10px;font:12px Arial,sans-serif}
-            .usl-scheduler-dialog button:hover{border-color:var(--usl-primary);color:var(--usl-primary)}
+            .usl-scheduler-dialog button[data-trellis-button-variant="open"]{border-color:var(--usl-primary);color:var(--usl-primary-dark)} /* NEW */
+            .usl-scheduler-dialog button[data-trellis-button-variant="add"]{border-color:var(--usl-success);color:var(--usl-success)} /* NEW */
+            .usl-scheduler-dialog button[data-trellis-button-variant="danger"]{border-color:var(--usl-danger);color:var(--usl-danger)} /* NEW */
+            .usl-scheduler-dialog button:hover{background:var(--usl-neutral-100)}
+            .usl-scheduler-dialog button[data-trellis-button-variant="open"]:hover{background:var(--usl-primary-bg)} /* NEW */
+            .usl-scheduler-dialog button[data-trellis-button-variant="add"]:hover{background:var(--usl-success-bg)} /* NEW */
+            .usl-scheduler-dialog button[data-trellis-button-variant="danger"]:hover{background:var(--usl-danger-bg)} /* NEW */
             .usl-scheduler-dialog input,.usl-scheduler-dialog select,.usl-scheduler-dialog textarea{padding:5px 6px;border:1px solid #bbb;border-radius:6px;box-sizing:border-box;font:12px Arial,sans-serif;max-width:100%}
             .usl-scheduler-dialog input[type="checkbox"]{width:auto;padding:0;border:0}
             .usl-scheduler-row > input[type="checkbox"]{flex:0 0 auto}
@@ -11219,6 +11264,7 @@ Draw.loadPlugin(function (ui) {
                 setActiveTabButton(b); // NEW
             }); // CHANGE
             b.className = "usl-scheduler-tab"; // NEW
+            applySharedButtonStyle(b, 'neutral'); // NEW
             b.style.minWidth = "100px";
             return b;
         }
@@ -11232,7 +11278,9 @@ Draw.loadPlugin(function (ui) {
             tabsBody.appendChild(tasksTab);
             setActiveTabButton(tasksTabBtn); // NEW
         });
+        applySharedButtonStyle(saveBtn, 'add'); // CHANGE
         tasksTabBtn.className = "usl-scheduler-tab"; // NEW
+        applySharedButtonStyle(tasksTabBtn, 'neutral'); // NEW
         tasksTabBtn.style.minWidth = "100px";
         const layoutTabBtn = mxUtils.button("Layout", () => { // ADDED
             writeLayoutControlsFromSelection(); // ADDED
@@ -11242,6 +11290,7 @@ Draw.loadPlugin(function (ui) {
             setActiveTabButton(layoutTabBtn); // ADDED
         }); // ADDED
         layoutTabBtn.className = "usl-scheduler-tab"; // ADDED
+        applySharedButtonStyle(layoutTabBtn, 'neutral'); // NEW
         layoutTabBtn.style.minWidth = "100px"; // ADDED
 
         tabsHeader.appendChild(scheduleTabBtn);
@@ -12755,6 +12804,9 @@ Draw.loadPlugin(function (ui) {
             },
             restoreGraphPatch
         });
+        applySharedButtonStyle(resetTasksBtn, 'danger'); // NEW
+        applySharedButtonStyle(restoreBuiltinsBtn, 'neutral'); // NEW
+        applySharedButtonStyle(addVarBtn, 'add'); // NEW
     }
 
     function readGraphCellAttribute(cell, key) { // ADDED
@@ -13122,6 +13174,7 @@ Draw.loadPlugin(function (ui) {
         actions.style.textAlign = 'right'; // ADDED
         actions.style.marginTop = '16px'; // ADDED
         const closeBtn = mxUtils.button('Close', () => ui.hideDialog()); // ADDED
+        applySharedButtonStyle(closeBtn, 'neutral'); // NEW
         actions.appendChild(closeBtn); // ADDED
         root.appendChild(title); // ADDED
         root.appendChild(body); // ADDED
@@ -13577,6 +13630,8 @@ Draw.loadPlugin(function (ui) {
             } // ADDED
         }); // ADDED
         const cancel = mxUtils.button('Cancel', () => ui.hideDialog()); // ADDED
+        applySharedButtonStyle(ok, 'add'); // NEW
+        applySharedButtonStyle(cancel, 'neutral'); // NEW
         btns.appendChild(ok); // ADDED
         btns.appendChild(cancel); // ADDED
         div.appendChild(btns); // ADDED

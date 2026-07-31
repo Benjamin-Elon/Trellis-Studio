@@ -533,7 +533,7 @@ test("SplashDialog source and bundle use oath wizard storage, close hook, valida
     assert.match(dialogSource, /Diagram options will be ready shortly/); // NEW
     assert.match(dialogSource, /createTrellisLicenseContactPanel/); // NEW
     assert.match(dialogSource, /Explore & Support My Projects/); // NEW
-    assert.match(dialogSource, /https:\/\/www\.patreon\.com\/c\/Benjamin980/); // NEW
+    assert.match(dialogSource, /https:\/\/patreon\.com\/Benjamin980/); // CHANGE
     assert.doesNotMatch(dialogSource, /Placeholder Contact Name|patreon: 'https:\/\/www\.patreon\.com\/placeholder'|appendTrellisContactGuidance/); // CHANGE
     assert.match(appSource, /showDialog\(dlg\.container, 700, 630[\s\S]*true, null, null, true/); // CHANGE
     assert.match(appSource, /showTrellisExitMessage/);
@@ -549,7 +549,7 @@ test("SplashDialog source and bundle use oath wizard storage, close hook, valida
     assert.match(bundledSource, /Diagram options will be ready shortly/); // NEW
     assert.match(bundledSource, /createTrellisLicenseContactPanel/); // NEW
     assert.match(bundledSource, /Explore & Support My Projects/); // NEW
-    assert.match(bundledSource, /https:\/\/www\.patreon\.com\/c\/Benjamin980/); // NEW
+    assert.match(bundledSource, /https:\/\/patreon\.com\/Benjamin980/); // CHANGE
     assert.doesNotMatch(bundledSource, /Placeholder Contact Name|patreon: 'https:\/\/www\.patreon\.com\/placeholder'|appendTrellisContactGuidance/); // CHANGE
     assert.match(bundledSource, /showDialog\(p\.container,700,630[\s\S]*!0,null,null,!0/); // CHANGE
 });
@@ -578,9 +578,12 @@ test("Trellis splash enhancement adds the branded shell, saved-state structure, 
 	assert.equal(dialog.container.querySelector(".trellis-saved-license-signer").textContent, "Signed by Saved User using Barneywilson@gmail."); // NEW
     assert.ok(dialog.container.querySelector(".trellis-saved-license-card .trellis-license-icon")); // NEW
     assert.ok(supportButton.classList.contains("trellis-support-action")); // NEW
+    assert.equal(supportButton.classList.contains("trellis-button-open"), false); // NEW
     assert.equal(supportButton.getAttribute("data-trellis-url"), "https://patreon.com/Benjamin980?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink"); // NEW
     assert.ok(createButton.classList.contains("trellis-primary-action")); // NEW
+    assert.ok(createButton.classList.contains("trellis-button-add")); // NEW
     assert.ok(openButton.classList.contains("trellis-secondary-action")); // NEW
+    assert.ok(openButton.classList.contains("trellis-button-open")); // NEW
     assert.ok(supportButton.compareDocumentPosition(createButton) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING); // NEW
     assert.ok(supportButton.querySelector("svg")); // NEW
     assert.ok(createButton.querySelector("svg")); // NEW

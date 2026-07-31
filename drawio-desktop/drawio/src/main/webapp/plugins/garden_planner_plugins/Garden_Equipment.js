@@ -37,6 +37,15 @@ Draw.loadPlugin(function (ui) {
     const ACTION_ID = "trellisGardenEquipment";
     const TRELLIS_DIALOG_Z = 2000000000; // NEW
 
+    function applyEquipmentButtonStyle(button, variant, options) { // NEW
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") { // NEW
+            window.Trellis.ui.applyButtonStyle(button, variant, options); // NEW
+        } else if (button) { // NEW
+            button.setAttribute("data-trellis-button-variant", variant || "neutral"); // NEW
+        } // NEW
+        return button; // NEW
+    } // NEW
+
     const ATTRS = {
         EQUIPMENT_INVENTORY_JSON: "equipment_inventory_json",
         TASK_TYPE_REGISTRY_JSON: "task_type_registry_json",
@@ -819,7 +828,7 @@ Draw.loadPlugin(function (ui) {
             if (!id) pushValidation(report, "error", `${label} has a blank ID.`); // NEW
             else if (seen.has(id)) pushValidation(report, "error", `${label} '${id}' is duplicated.`); // NEW
             seen.add(id); // NEW
-        }); // NEW
+        }, null, "add"); // CHANGE
     } // NEW
 
     function validateNumberMap(map, owner, report) { // NEW
@@ -1489,8 +1498,8 @@ Draw.loadPlugin(function (ui) {
 .trellis-eq-toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
 .trellis-eq-btn { border: 1px solid #d5dcd5; background: #fff; color: #172018; border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 13px; }
 .trellis-eq-btn:hover { background: #f5f7f5; }
-.trellis-eq-btn.primary { background: #168c42; color: #fff; border-color: #168c42; }
-.trellis-eq-btn.danger { color: #9b1c1c; }
+.trellis-eq-btn.primary { background: #fff; color: #166534; border-color: #188038; } /* CHANGE */
+.trellis-eq-btn.danger { background: #fff; color: #b91c1c; border-color: #b91c1c; } /* CHANGE */
 .trellis-eq-search { flex: 1; min-width: 160px; border: 1px solid #d5dcd5; border-radius: 6px; height: 34px; padding: 0 9px; }
 .trellis-eq-table-wrap { overflow: auto; border: 1px solid #e0e5e0; border-radius: 7px; }
 .trellis-eq-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -1782,7 +1791,7 @@ Draw.loadPlugin(function (ui) {
             state.inventory.push(item);
             state.selectedEquipmentId = item.id;
             render();
-        }));
+        }, null, "add")); // CHANGE
         toolbar.appendChild(buttonEl("Duplicate", "trellis-eq-btn", function () {
             const selected = state.inventory.find(function (eq) { return eq.id === state.selectedEquipmentId; });
             if (!selected) return;
@@ -1793,14 +1802,14 @@ Draw.loadPlugin(function (ui) {
             state.inventory.push(copy);
             state.selectedEquipmentId = copy.id;
             render();
-        }));
+        }, null, "neutral")); // CHANGE
         toolbar.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () {
             if (!state.selectedEquipmentId) return;
             if (!confirm("Delete this equipment item?")) return;
             state.inventory = state.inventory.filter(function (eq) { return eq.id !== state.selectedEquipmentId; });
             state.selectedEquipmentId = state.inventory[0] && state.inventory[0].id || null;
             render();
-        }));
+        }, null, "danger")); // CHANGE
         const search = document.createElement("input");
         search.className = "trellis-eq-search";
         search.placeholder = "Search equipment...";
@@ -1916,7 +1925,7 @@ Draw.loadPlugin(function (ui) {
                 notes: "" // NEW
             })); // NEW
             render(); // NEW
-        }); // NEW
+        }, null, "add"); // CHANGE
         body.appendChild(addBtn); // NEW
 
         const editor = div("trellis-eq-row-editor"); // NEW
@@ -1929,7 +1938,7 @@ Draw.loadPlugin(function (ui) {
             row.appendChild(rowField("Minimum", numberInput(eff.minimumScale.value, function (e) { eff.minimumScale.value = coerceNumber(e.target.value, 0); }))); // NEW
             row.appendChild(rowField("Unit", selectInput(QUANTITY_BASES.map(optPair), eff.minimumScale.unit, function (e) { eff.minimumScale.unit = e.target.value; render(); }))); // NEW
             row.appendChild(rowField("Stack", checkboxInput(eff.stackable, function (e) { eff.stackable = e.target.checked; }))); // NEW
-            row.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () { eq.efficiencyEffects.splice(index, 1); render(); })); // NEW
+            row.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () { eq.efficiencyEffects.splice(index, 1); render(); }, null, "danger")); // CHANGE
             editor.appendChild(row); // NEW
 
             const notesRow = div("trellis-eq-row compact"); // NEW
@@ -1985,15 +1994,15 @@ Draw.loadPlugin(function (ui) {
             state.taskTypes.push(tt);
             state.selectedTaskTypeId = tt.id;
             render();
-        }));
+        }, null, "add")); // CHANGE
         toolbar.appendChild(buttonEl("Restore Defaults", "trellis-eq-btn", function () {
             state.taskTypes = mergeDefaults(state.taskTypes, DEFAULT_TASK_TYPES, normalizeTaskType);
             render();
-        }));
+        }, null, "danger")); // CHANGE
         toolbar.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () {
             if (!state.selectedTaskTypeId) return;
             if (deleteTaskTypeId(state, state.selectedTaskTypeId)) render(); // CHANGE
-        }));
+        }, null, "danger")); // CHANGE
         listPanel.appendChild(toolbar);
         listPanel.appendChild(renderTaskTypeTable(state, render));
 
@@ -2080,15 +2089,15 @@ Draw.loadPlugin(function (ui) {
             state.capabilities.push(c);
             state.selectedCapabilityId = c.id;
             render();
-        }));
+        }, null, "add")); // CHANGE
         toolbar.appendChild(buttonEl("Restore Defaults", "trellis-eq-btn", function () {
             state.capabilities = mergeDefaults(state.capabilities, DEFAULT_CAPABILITIES, normalizeCapability);
             render();
-        }));
+        }, null, "danger")); // CHANGE
         toolbar.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () {
             if (!state.selectedCapabilityId) return;
             if (deleteCapabilityId(state, state.selectedCapabilityId)) render(); // CHANGE
-        }));
+        }, null, "danger")); // CHANGE
         listPanel.appendChild(toolbar);
         listPanel.appendChild(renderCapabilitiesTable(state, render));
 
@@ -2234,17 +2243,17 @@ Draw.loadPlugin(function (ui) {
             state.taskTypes = mergeDefaults(state.taskTypes, DEFAULT_TASK_TYPES, normalizeTaskType);
             state.capabilities = mergeDefaults(state.capabilities, DEFAULT_CAPABILITIES, normalizeCapability);
             render();
-        }));
+        }, null, "danger")); // CHANGE
 
         right.appendChild(buttonEl("Export…", "trellis-eq-btn", function () {
             exportJson(state);
-        }));
+        }, null, "neutral")); // CHANGE
         right.appendChild(buttonEl("Import…", "trellis-eq-btn", function () {
             importJson(state, render);
-        }));
-        right.appendChild(buttonEl("Save", "trellis-eq-btn", saveAll, "Save equipment changes to the selected garden module.")); // CHANGE
-        right.appendChild(buttonEl("Save & Close", "trellis-eq-btn primary", saveAndClose, "Save changes and close the equipment dialog.")); // CHANGE
-        right.appendChild(buttonEl("Cancel", "trellis-eq-btn", close, "Close without saving unsaved changes.")); // CHANGE
+        }, null, "open")); // CHANGE
+        right.appendChild(buttonEl("Save", "trellis-eq-btn", saveAll, "Save equipment changes to the selected garden module.", "add")); // CHANGE
+        right.appendChild(buttonEl("Save & Close", "trellis-eq-btn", saveAndClose, "Save changes and close the equipment dialog.", "add")); // CHANGE
+        right.appendChild(buttonEl("Cancel", "trellis-eq-btn", close, "Close without saving unsaved changes.", "neutral")); // CHANGE
 
         footer.appendChild(left);
         footer.appendChild(right);
@@ -2369,7 +2378,7 @@ Draw.loadPlugin(function (ui) {
         return p;
     }
 
-    function buttonEl(text, className, onClick, tooltip) { // CHANGE
+    function buttonEl(text, className, onClick, tooltip, variant) { // CHANGE
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = className || "trellis-eq-btn";
@@ -2377,6 +2386,9 @@ Draw.loadPlugin(function (ui) {
         btn.onclick = onClick;
         applyTooltip(btn, tooltip || trim(text)); // NEW
         btn.setAttribute("aria-label", tooltip || trim(text)); // NEW
+        if ((btn.className || "").indexOf("trellis-eq-close") < 0) { // NEW
+            applyEquipmentButtonStyle(btn, variant || ((btn.className || "").indexOf("danger") >= 0 ? "danger" : ((btn.className || "").indexOf("primary") >= 0 ? "add" : "neutral"))); // NEW
+        } // NEW
         return btn;
     }
 
@@ -2593,7 +2605,7 @@ Draw.loadPlugin(function (ui) {
             const row = div("trellis-eq-row compact"); // NEW
             row.appendChild(rowField("Key", textDiv("trellis-eq-id-code", key))); // NEW
             row.appendChild(rowField("Value", numberInput(map[key], function (e) { onValue(key, e.target.value); }))); // NEW
-            row.appendChild(onDelete && !requiredKeys.has(key) ? buttonEl("Delete", "trellis-eq-btn danger", function () { onDelete(key); }) : textDiv("", "")); // CHANGE
+            row.appendChild(onDelete && !requiredKeys.has(key) ? buttonEl("Delete", "trellis-eq-btn danger", function () { onDelete(key); }, null, "danger") : textDiv("", "")); // CHANGE
             editor.appendChild(row); // NEW
         }); // NEW
         return editor; // NEW
@@ -2602,7 +2614,7 @@ Draw.loadPlugin(function (ui) {
     function renderIdControl(id, onRename) { // NEW
         const wrap = div("trellis-eq-id-row"); // NEW
         wrap.appendChild(applyTooltip(textDiv("trellis-eq-id-code", id), "Stable internal ID used by saved links and cross-plugin references.")); // CHANGE
-        wrap.appendChild(buttonEl("Rename", "trellis-eq-btn", onRename, "Rename this internal ID and update dependent references.")); // CHANGE
+        wrap.appendChild(buttonEl("Rename", "trellis-eq-btn", onRename, "Rename this internal ID and update dependent references.", "neutral")); // CHANGE
         return wrap; // NEW
     } // NEW
 

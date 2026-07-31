@@ -66,6 +66,15 @@ Draw.loadPlugin(function (ui) {
     const INTERNAL_FLAG = "__trellisUsersInternalChange";
     const REJECT_FLAG = "__trellisUsersRejecting";
 
+    function applyUsersButtonStyle(button, variant, options) { // NEW
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") { // NEW
+            window.Trellis.ui.applyButtonStyle(button, variant, options); // NEW
+        } else if (button) { // NEW
+            button.setAttribute("data-trellis-button-variant", variant || "neutral"); // NEW
+        } // NEW
+        return button; // NEW
+    } // NEW
+
     let currentUserId = "";
     let panel = null;
     let statusNode = null;
@@ -2545,11 +2554,12 @@ Draw.loadPlugin(function (ui) {
         stampAcceptedActorMetadata(edit, changes); // CHANGE
     }
 
-    function makeButton(label, onClick) {
+    function makeButton(label, onClick, variant) { // CHANGE
         const button = document.createElement("button");
         button.type = "button";
         button.textContent = label;
         button.style.cssText = "padding:4px 8px;border:1px solid #9CA3AF;border-radius:4px;background:#fff;cursor:pointer;font:12px Arial,sans-serif;";
+        applyUsersButtonStyle(button, variant || "neutral", { compact: true }); // NEW
         button.addEventListener("click", function (evt) { if (evt) evt.stopPropagation(); onClick(evt); });
         return button;
     }
@@ -2746,8 +2756,8 @@ Draw.loadPlugin(function (ui) {
         if (action) { // NEW
             const actions = document.createElement("div"); // NEW
             actions.style.cssText = "display:flex;justify-content:flex-end;margin-top:8px;"; // NEW
-            const button = makeButton(action.label, function () { closeRejectedEditPopover(); action.run(); }); // NEW
-            button.className = action.label === "Request Access" ? "trellis-users-rejected-edit-request-access-button" : "trellis-users-rejected-edit-login-button"; // NEW
+            const button = makeButton(action.label, function () { closeRejectedEditPopover(); action.run(); }, "open"); // CHANGE
+            button.className = (button.className || "") + (action.label === "Request Access" ? " trellis-users-rejected-edit-request-access-button" : " trellis-users-rejected-edit-login-button"); // CHANGE
             actions.appendChild(button); // NEW
             root.appendChild(actions); // NEW
         } // NEW
@@ -2858,12 +2868,12 @@ Draw.loadPlugin(function (ui) {
         parent.appendChild(row); // NEW
         const keep = authKeepRow(); // NEW
         parent.appendChild(keep.row); // NEW
-        const action = makeButton(canBootstrapAdmin() ? "Create Admin" : "Login", function () { // NEW
+        const action = makeButton(canBootstrapAdmin() ? "Create Admin" : "Login", function () { // CHANGE
             const result = loginState(name.value, pin.value); // CHANGE
             pin.value = ""; // NEW
             if (!result.ok) { showAuthStatus(result.reason); return; } // NEW
             finishAuthSuccess(keep.checkbox.checked); // CHANGE
-        }); // NEW
+        }, canBootstrapAdmin() ? "add" : "open"); // CHANGE
         parent.appendChild(action); // NEW
     } // NEW
 
@@ -2881,12 +2891,12 @@ Draw.loadPlugin(function (ui) {
         parent.appendChild(row); // NEW
         const keep = authKeepRow(); // NEW
         parent.appendChild(keep.row); // NEW
-        parent.appendChild(makeButton("Enable Users", function () { // NEW
+        parent.appendChild(makeButton("Enable Users", function () { // CHANGE
             const result = enableUsersState(name.value, pin.value); // CHANGE
             pin.value = ""; // NEW
             if (!result.ok) { showAuthStatus(result.reason); return; } // NEW
             finishAuthSuccess(keep.checkbox.checked); // CHANGE
-        })); // NEW
+        }, "add")); // CHANGE
     } // NEW
 
     function appendAuthInviteForm(parent) { // NEW
@@ -2909,12 +2919,12 @@ Draw.loadPlugin(function (ui) {
         box.appendChild(row); // NEW
         const keep = authKeepRow(); // NEW
         box.appendChild(keep.row); // NEW
-        box.appendChild(makeButton("Accept Invite", function () { // NEW
+        box.appendChild(makeButton("Accept Invite", function () { // CHANGE
             const result = acceptInviteState({ email: email.value, code: code.value, name: name.value, pin: pin.value }); // CHANGE
             pin.value = ""; // NEW
             if (!result.ok) { showAuthStatus(result.reason); return; } // NEW
             finishAuthSuccess(keep.checkbox.checked); // CHANGE
-        })); // NEW
+        }, "add")); // CHANGE
         parent.appendChild(box); // NEW
     } // NEW
 
@@ -2943,10 +2953,10 @@ Draw.loadPlugin(function (ui) {
         title.textContent = isEnabled() ? "Trellis Login" : "Enable People & Access"; // CHANGE
         title.style.cssText = "font-weight:700;font-size:15px;"; // NEW
         header.appendChild(title); // NEW
-        header.appendChild(makeButton(blocking ? "Close Diagram" : "Cancel", function () { // NEW
+        header.appendChild(makeButton(blocking ? "Close Diagram" : "Cancel", function () { // CHANGE
             if (blocking) closeCurrentDiagramFromAuth(); // NEW
             else closeAuthOverlay(true); // NEW
-        })); // NEW
+        }, "add")); // CHANGE
         card.appendChild(header); // NEW
         authStatusNode = document.createElement("div"); // NEW
         authStatusNode.style.cssText = "min-height:16px;color:#4B5563;margin-bottom:8px;"; // NEW
@@ -3004,8 +3014,8 @@ Draw.loadPlugin(function (ui) {
         accountMenu.appendChild(label); // NEW
         const actions = document.createElement("div"); // NEW
         actions.style.cssText = "display:grid;grid-template-columns:1fr;gap:6px;"; // NEW
-        actions.appendChild(makeButton("People & Access", function () { closeAccountMenu(); togglePanel(); })); // CHANGE
-        actions.appendChild(makeButton("Logout", function () { logout(); })); // NEW
+        actions.appendChild(makeButton("People & Access", function () { closeAccountMenu(); togglePanel(); }, "open")); // CHANGE
+        actions.appendChild(makeButton("Logout", function () { logout(); }, "neutral")); // CHANGE
         accountMenu.appendChild(actions); // NEW
         host.appendChild(accountMenu); // NEW
         accountMenuOutsideHandler = function (evt) { // NEW
@@ -3029,6 +3039,7 @@ Draw.loadPlugin(function (ui) {
         toolbarButton.type = "button"; // NEW
         toolbarButton.className = "geButton trellis-users-login-button"; // NEW
         toolbarButton.style.cssText = "margin:2px 4px;padding:3px 8px;cursor:pointer;"; // NEW
+        applyUsersButtonStyle(toolbarButton, "open", { compact: true }); // NEW
         toolbarButton.addEventListener("click", function (evt) { // NEW
             if (evt) evt.stopPropagation(); // NEW
             if (isLoggedIn()) togglePanel(); // CHANGE
@@ -3091,7 +3102,7 @@ Draw.loadPlugin(function (ui) {
         title.textContent = "People & Access"; // CHANGE
         title.style.cssText = "font-weight:700;font-size:14px;"; // CHANGE
         header.appendChild(title); // NEW
-        header.appendChild(makeButton("Close", function () { if (panel) panel.style.display = "none"; })); // NEW
+        header.appendChild(makeButton("Close", function () { if (panel) panel.style.display = "none"; }, "neutral")); // CHANGE
         panel.appendChild(header); // NEW
         statusNode = document.createElement("div");
         statusNode.style.cssText = "min-height:16px;color:#4B5563;margin-bottom:8px;";
@@ -3173,11 +3184,11 @@ Draw.loadPlugin(function (ui) {
         row.style.cssText = "display:grid;grid-template-columns:1fr 1fr auto;gap:6px;align-items:center;margin-bottom:10px;";
         row.appendChild(loginNameInput);
         row.appendChild(loginPinInput);
-        row.appendChild(makeButton(canBootstrapAdmin() ? "Create admin" : "Login", function () {
+        row.appendChild(makeButton(canBootstrapAdmin() ? "Create admin" : "Login", function () { // CHANGE
             const result = login(loginNameInput.value, loginPinInput.value);
             if (!result.ok) showStatus(result.reason);
             loginPinInput.value = "";
-        }));
+        }, canBootstrapAdmin() ? "add" : "open")); // CHANGE
         parent.appendChild(row);
     }
 
@@ -3201,11 +3212,11 @@ Draw.loadPlugin(function (ui) {
         box.appendChild(row); // NEW
         const actions = document.createElement("div"); // NEW
         actions.style.cssText = "display:flex;justify-content:flex-end;margin-top:6px;"; // NEW
-        actions.appendChild(makeButton("Accept Invite", function () { // NEW
+        actions.appendChild(makeButton("Accept Invite", function () { // CHANGE
             const result = acceptInvite({ email: email.value, code: code.value, name: name.value, pin: pin.value }); // NEW
             if (!result.ok) showStatus(result.reason); // NEW
             pin.value = ""; // NEW
-        })); // NEW
+        }, "add")); // CHANGE
         box.appendChild(actions); // NEW
         parent.appendChild(box); // NEW
     } // NEW
@@ -3219,11 +3230,11 @@ Draw.loadPlugin(function (ui) {
         row.style.cssText = "display:grid;grid-template-columns:1fr 1fr auto;gap:6px;align-items:center;margin-bottom:10px;"; // NEW
         row.appendChild(loginNameInput); // NEW
         row.appendChild(loginPinInput); // NEW
-        row.appendChild(makeButton("Enable", function () { // NEW
+        row.appendChild(makeButton("Enable", function () { // CHANGE
             const result = enableUsers(loginNameInput.value, loginPinInput.value); // NEW
             if (!result.ok) showStatus(result.reason); // NEW
             loginPinInput.value = ""; // NEW
-        })); // NEW
+        }, "add")); // CHANGE
         parent.appendChild(row); // NEW
     } // NEW
 
@@ -3244,15 +3255,15 @@ Draw.loadPlugin(function (ui) {
             label.textContent = invite.email + " - expires " + new Date(invite.expiresAt).toLocaleDateString(); // NEW
             label.title = (invite.scopeLabels || []).join(", "); // NEW
             row.appendChild(label); // NEW
-            row.appendChild(makeButton("Resend", function () { // NEW
+            row.appendChild(makeButton("Resend", function () { // CHANGE
                 const result = resendInvite(invite.id, {}); // NEW
                 if (!result.ok) { showStatus(result.reason); return; } // NEW
                 openEmailDraft(result.emailDraft); // NEW
-            })); // NEW
-            row.appendChild(makeButton("Revoke", function () { // NEW
+            }, "open")); // CHANGE
+            row.appendChild(makeButton("Revoke", function () { // CHANGE
                 const result = revokeInvite(invite.id); // NEW
                 if (!result.ok) showStatus(result.reason); // NEW
-            })); // NEW
+            }, "danger")); // CHANGE
             box.appendChild(row); // NEW
         }); // NEW
         parent.appendChild(box); // NEW
@@ -3265,7 +3276,7 @@ Draw.loadPlugin(function (ui) {
         const text = document.createElement("div");
         text.textContent = user ? user.name + " (" + (user.admin ? "admin" : "regular") + ")" : "Not logged in";
         row.appendChild(text);
-        row.appendChild(makeButton("Logout", logout));
+        row.appendChild(makeButton("Logout", logout, "neutral")); // CHANGE
         parent.appendChild(row);
     }
 
@@ -3274,18 +3285,18 @@ Draw.loadPlugin(function (ui) {
         resetRow.style.cssText = "display:grid;grid-template-columns:1fr auto auto;gap:6px;align-items:center;padding:0 0 6px 0;margin-left:12px;"; // NEW
         const pinInput = makeInput("password", "New PIN"); // NEW
         resetRow.appendChild(pinInput); // NEW
-        resetRow.appendChild(makeButton("Save", function () { // NEW
+        resetRow.appendChild(makeButton("Save", function () { // CHANGE
             const result = resetUserPin(user.id, pinInput.value); // NEW
             if (!result.ok) { showStatus(result.reason); return; } // NEW
             pinInput.value = ""; // NEW
             resetPinUserId = ""; // NEW
             showStatus("PIN reset for " + user.name + "."); // NEW
             refreshPanel(); // NEW
-        })); // NEW
-        resetRow.appendChild(makeButton("Cancel", function () { // NEW
+        }, "add")); // CHANGE
+        resetRow.appendChild(makeButton("Cancel", function () { // CHANGE
             resetPinUserId = ""; // NEW
             refreshPanel(); // NEW
-        })); // NEW
+        }, "neutral")); // CHANGE
         parent.appendChild(resetRow); // NEW
         setTimeout(function () { if (pinInput && typeof pinInput.focus === "function") pinInput.focus(); }, 0); // NEW
     } // NEW
@@ -3294,18 +3305,18 @@ Draw.loadPlugin(function (ui) {
         const row = document.createElement("div"); // NEW
         row.style.cssText = "display:grid;grid-template-columns:minmax(80px,1fr) auto auto auto;gap:6px;align-items:center;padding:3px 0;"; // CHANGE
         row.appendChild(document.createTextNode(user.name + (user.admin ? " - admin" : "") + (user.disabled ? " - disabled" : ""))); // NEW
-        const adminToggle = makeButton(user.admin ? "Regular" : "Admin", function () { // NEW
+        const adminToggle = makeButton(user.admin ? "Regular" : "Admin", function () { // CHANGE
             const result = setUserAdmin(user.id, !user.admin); // NEW
             if (!result.ok) showStatus(result.reason); // NEW
-        }); // NEW
-        const disableToggle = makeButton(user.disabled ? "Reactivate" : "Disable", function () { // NEW
+        }, "neutral"); // CHANGE
+        const disableToggle = makeButton(user.disabled ? "Reactivate" : "Disable", function () { // CHANGE
             const result = setUserDisabled(user.id, !user.disabled); // NEW
             if (!result.ok) showStatus(result.reason); // NEW
-        }); // NEW
-        const resetPin = makeButton("PIN", function () { // NEW
+        }, user.disabled ? "neutral" : "danger"); // CHANGE
+        const resetPin = makeButton("PIN", function () { // CHANGE
             resetPinUserId = resetPinUserId === user.id ? "" : user.id; // NEW
             refreshPanel(); // NEW
-        }); // NEW
+        }, "open"); // CHANGE
         row.appendChild(adminToggle); // NEW
         row.appendChild(disableToggle); // NEW
         row.appendChild(resetPin); // NEW
@@ -3372,10 +3383,10 @@ Draw.loadPlugin(function (ui) {
         dropdown.className = "trellis-users-garden-access-dropdown"; // NEW
         dropdown.setAttribute("data-trellis-users-user-id", user.id); // NEW
         dropdown.style.cssText = "position:relative;margin-left:12px;padding:2px 0 4px 0;color:#374151;"; // CHANGE
-        const button = makeButton("Garden access (" + activeCount + ")", function () { // NEW
+        const button = makeButton("Garden access (" + activeCount + ")", function () { // CHANGE
             openGardenAccessUserId = isOpen ? "" : user.id; // NEW
             refreshPanel(); // NEW
-        }); // NEW
+        }, "open"); // CHANGE
         button.className = (button.className || "") + " trellis-users-garden-access-button"; // NEW
         button.setAttribute("aria-haspopup", "dialog"); // NEW
         button.setAttribute("aria-expanded", isOpen ? "true" : "false"); // NEW
@@ -3465,12 +3476,12 @@ Draw.loadPlugin(function (ui) {
         const pin = makeInput("password", "PIN"); // NEW
         addRow.appendChild(name); // NEW
         addRow.appendChild(pin); // NEW
-        addRow.appendChild(makeButton("Add local user", function () { // NEW
+        addRow.appendChild(makeButton("Add local user", function () { // CHANGE
             const result = createUser(name.value, pin.value, false); // NEW
             if (!result.ok) showStatus(result.reason); // NEW
             name.value = ""; // NEW
             pin.value = ""; // NEW
-        })); // NEW
+        }, "add")); // CHANGE
         parent.appendChild(addRow); // NEW
     } // NEW
 
@@ -3609,7 +3620,7 @@ Draw.loadPlugin(function (ui) {
         title.textContent = titleText; // NEW
         title.style.cssText = "font-weight:700;font-size:15px;"; // NEW
         header.appendChild(title); // NEW
-        header.appendChild(makeButton("Close", function () { closeAccessDialog(overlay); })); // NEW
+        header.appendChild(makeButton("Close", function () { closeAccessDialog(overlay); }, "neutral")); // CHANGE
         box.appendChild(header); // NEW
         overlay.appendChild(box); // NEW
         return { overlay, box }; // NEW
@@ -3644,12 +3655,12 @@ Draw.loadPlugin(function (ui) {
         status.style.cssText = "min-height:18px;color:#4B5563;margin:8px 0;"; // NEW
         const actions = document.createElement("div"); // NEW
         actions.style.cssText = "display:flex;justify-content:flex-end;gap:8px;"; // NEW
-        actions.appendChild(makeButton("Cancel", function () { closeAccessDialog(shell.overlay); })); // NEW
-        actions.appendChild(makeButton("Send Request", function () { // NEW
+        actions.appendChild(makeButton("Cancel", function () { closeAccessDialog(shell.overlay); }, "neutral")); // CHANGE
+        actions.appendChild(makeButton("Send Request", function () { // CHANGE
             const result = requestAccess(cell, { requestedPreset: preset.value, note: note.value }); // NEW
             if (!result.ok) { status.textContent = result.reason; return; } // NEW
             closeAccessDialog(shell.overlay); // NEW
-        })); // NEW
+        }, "add")); // CHANGE
         shell.box.appendChild(scopeText); // NEW
         shell.box.appendChild(preset); // NEW
         shell.box.appendChild(note); // NEW
@@ -3742,16 +3753,16 @@ Draw.loadPlugin(function (ui) {
                     const actions = document.createElement("div"); // NEW
                     actions.style.cssText = "display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:start;"; // NEW
                     actions.appendChild(preset); // NEW
-                    actions.appendChild(makeButton("Approve", function () { // NEW
+                    actions.appendChild(makeButton("Approve", function () { // CHANGE
                         const result = approveAccessRequest(request.id, { preset: preset.value, decisionNote: decisionNote.value }); // CHANGE
                         if (!result.ok) { status.textContent = result.reason; return; } // NEW
                         render(); // NEW
-                    })); // NEW
-                    actions.appendChild(makeButton("Deny", function () { // NEW
+                    }, "add")); // CHANGE
+                    actions.appendChild(makeButton("Deny", function () { // CHANGE
                         const result = denyAccessRequest(request.id, decisionNote.value); // NEW
                         if (!result.ok) { status.textContent = result.reason; return; } // NEW
                         render(); // NEW
-                    })); // NEW
+                    }, "danger")); // CHANGE
                     row.appendChild(head); // NEW
                     row.appendChild(scope); // NEW
                     row.appendChild(note); // NEW
@@ -3787,17 +3798,17 @@ Draw.loadPlugin(function (ui) {
                     const actions = document.createElement("div"); // NEW
                     actions.style.cssText = "display:flex;justify-content:flex-end;gap:8px;"; // NEW
                     if (message.unread) { // NEW
-                        actions.appendChild(makeButton("Mark read", function () { // NEW
+                        actions.appendChild(makeButton("Mark read", function () { // CHANGE
                             const result = markAccessMessageRead(message.id); // NEW
                             if (!result.ok) { showStatus(result.reason); return; } // NEW
                             render(); // NEW
-                        })); // NEW
+                        }, "neutral")); // CHANGE
                     } // NEW
-                    actions.appendChild(makeButton("Dismiss", function () { // NEW
+                    actions.appendChild(makeButton("Dismiss", function () { // CHANGE
                         const result = dismissAccessMessage(message.id); // NEW
                         if (!result.ok) { showStatus(result.reason); return; } // NEW
                         render(); // NEW
-                    })); // NEW
+                    }, "neutral")); // CHANGE
                     row.appendChild(head); // NEW
                     row.appendChild(scope); // NEW
                     row.appendChild(reviewer); // NEW
@@ -3863,8 +3874,8 @@ Draw.loadPlugin(function (ui) {
             box.appendChild(denied);
             if (!summary.canEdit) { // NEW
                 appendRequesterAccessRequestStatus(box, cell, decisionStatusVisible); // CHANGE
-                const requestButton = makeButton(hasEffectiveAccessForSummary(summary) ? "Request More Access" : "Request Access", function () { openAccessRequestDialog(cell); }); // CHANGE
-                requestButton.className = "trellis-users-request-access-button"; // NEW
+                const requestButton = makeButton(hasEffectiveAccessForSummary(summary) ? "Request More Access" : "Request Access", function () { openAccessRequestDialog(cell); }, "open"); // CHANGE
+                requestButton.className = (requestButton.className || "") + " trellis-users-request-access-button"; // CHANGE
                 box.appendChild(requestButton); // NEW
             } // NEW
             parent.appendChild(box);
@@ -3961,7 +3972,7 @@ Draw.loadPlugin(function (ui) {
             head.appendChild(makeButton(directlyGranted ? "Remove" : "Apply", function () { // CHANGE
                 const result = directlyGranted ? removeScopeGrant(cell, user.id) : setScopeGrant(cell, { userId: user.id, preset: grant.preset || "visitor" }); // CHANGE
                 if (!result.ok) showStatus(result.reason); // NEW
-            })); // NEW
+            }, directlyGranted ? "danger" : "neutral")); // CHANGE
             row.appendChild(head); // NEW
             box.appendChild(row); // NEW
         });

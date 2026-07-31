@@ -22,6 +22,15 @@ Draw.loadPlugin(function (ui) {
     const LINK_LABEL_STAGGER_PX = 15; // NEW
     graph.__ctrlToggleHandled = false;
 
+    function applyVertexButtonStyle(button, variant, options) { // NEW
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === 'function') { // NEW
+            window.Trellis.ui.applyButtonStyle(button, variant, options); // NEW
+        } else if (button) { // NEW
+            button.setAttribute('data-trellis-button-variant', variant || 'neutral'); // NEW
+        } // NEW
+        return button; // NEW
+    } // NEW
+
     // -------------------- Helpers --------------------
 
     function vertexLinkLog() { // CHANGE
@@ -1589,6 +1598,7 @@ Draw.loadPlugin(function (ui) {
         } // ADDED
 
         function styleDerivedActionButton(button, enabled, color) { // ADDED
+            applyVertexButtonStyle(button, 'add', { compact: true }); // NEW
             button.style.border = '1px solid ' + color; // ADDED
             button.style.borderRadius = '5px'; // ADDED
             button.style.background = enabled ? '#ffffff' : '#f1f3f4'; // ADDED
@@ -1613,7 +1623,7 @@ Draw.loadPlugin(function (ui) {
             button.textContent = mode === 'turnover' ? 'Add Turnover' : 'Add Companion'; // ADDED
             button.disabled = !enabled; // ADDED
             button.title = !opener ? 'Scheduler plugin is unavailable.' : (!allowed ? 'You do not have permission to schedule this planting group.' : (!hasDates ? 'Source occupancy dates are required.' : (!annualOk ? 'Turnover is available only for annual source groups.' : button.textContent))); // ADDED
-            styleDerivedActionButton(button, enabled, mode === 'turnover' ? '#92400e' : '#166534'); // ADDED
+            styleDerivedActionButton(button, enabled, '#166534'); // CHANGE
             mxEvent.addListener(button, 'mousedown', consumeOverlayControlEvent); // ADDED
             mxEvent.addListener(button, 'dblclick', consumeOverlayControlEvent); // ADDED
             mxEvent.addListener(button, 'click', async function (evt) { // ADDED
@@ -1758,6 +1768,7 @@ Draw.loadPlugin(function (ui) {
             button.textContent = scheduleActionButtonLabelFor(source); // CHANGED
             button.title = scheduleActionButtonTitleFor(source, opener, allowed); // CHANGED
             button.disabled = !opener || !allowed; // CHANGE
+            applyVertexButtonStyle(button, 'open', { compact: true }); // NEW
             button.style.border = '1px solid #2563eb'; // ADDED
             button.style.borderRadius = '5px'; // ADDED
             button.style.background = opener && allowed ? '#ffffff' : '#f1f3f4'; // CHANGE
@@ -1794,6 +1805,7 @@ Draw.loadPlugin(function (ui) {
             button.textContent = 'Set plant'; // ADDED
             button.title = opener ? 'Set plant' : 'Scheduler plant picker is unavailable.'; // ADDED
             button.disabled = !opener; // ADDED
+            applyVertexButtonStyle(button, 'add', { compact: true }); // NEW
             button.style.border = '1px solid #188038'; // ADDED
             button.style.borderRadius = '5px'; // ADDED
             button.style.background = opener ? '#ffffff' : '#f1f3f4'; // ADDED

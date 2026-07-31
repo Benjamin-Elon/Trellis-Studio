@@ -11,6 +11,15 @@ Draw.loadPlugin(function (ui) {
     const LINK_ATTR = "linkedTo"; // NEW
     const COMPANION_TEAM_GAP = 40; // NEW
 
+    function applyTrellisButtonStyle(button, variant, options) { // NEW
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") { // NEW
+            window.Trellis.ui.applyButtonStyle(button, variant, options); // NEW
+        } else if (button) { // NEW
+            button.setAttribute("data-trellis-button-variant", variant || "neutral"); // NEW
+        } // NEW
+        return button; // NEW
+    } // NEW
+
     // Override resizeChildCells so modules do not resize children
     const originalResizeChildCells = graph.resizeChildCells;
 
@@ -1505,6 +1514,7 @@ Draw.loadPlugin(function (ui) {
             btn.style.padding = "5px 8px"; // NEW
             btn.style.textAlign = "left"; // NEW
             btn.style.whiteSpace = "nowrap"; // NEW
+            applyTrellisButtonStyle(btn, "add", { compact: true }); // NEW
             mxEvent.addListener(btn, "click", function (evt) { // NEW
                 mxEvent.consume(evt); // NEW
                 const point = overlay && overlay.__trellisModulePoint; // NEW
@@ -1799,7 +1809,7 @@ Draw.loadPlugin(function (ui) {
             promptSetModuleMargin(moduleCell); // NEW
         } // NEW
 
-        function makeOverlayButton(label, onClick) { // CHANGE
+        function makeOverlayButton(label, onClick, variant) { // CHANGE
             const btn = document.createElement("button"); // NEW
             btn.type = "button"; // NEW
             btn.textContent = label; // CHANGE
@@ -1811,6 +1821,7 @@ Draw.loadPlugin(function (ui) {
             btn.style.font = "12px Arial, sans-serif"; // NEW
             btn.style.padding = "5px 8px"; // NEW
             btn.style.whiteSpace = "nowrap"; // NEW
+            applyTrellisButtonStyle(btn, variant || "neutral", { compact: true }); // NEW
             mxEvent.addListener(btn, "click", onClick); // CHANGE
             return btn; // NEW
         } // NEW
@@ -1882,8 +1893,8 @@ Draw.loadPlugin(function (ui) {
             labelControls.style.padding = "2px 2px 4px"; // NEW
             labelControls.style.borderBottom = "1px solid #e5e7eb"; // NEW
             overlay.appendChild(labelControls); // NEW
-            overlay.appendChild(makeOverlayButton("Add Role Card", addRoleCardFromOverlay)); // CHANGE
-            overlay.appendChild(makeOverlayButton("Set Module Margin", promptModuleMarginFromOverlay)); // NEW
+            overlay.appendChild(makeOverlayButton("Add Role Card", addRoleCardFromOverlay, "add")); // CHANGE
+            overlay.appendChild(makeOverlayButton("Set Module Margin", promptModuleMarginFromOverlay, "open")); // CHANGE
             const host = ensureOverlayHost(); // NEW
             if (host) host.appendChild(overlay); // NEW
             return overlay; // NEW
@@ -2024,6 +2035,7 @@ Draw.loadPlugin(function (ui) {
             btn.style.font = "12px Arial, sans-serif"; // NEW
             btn.style.padding = "5px 8px"; // NEW
             btn.style.whiteSpace = "nowrap"; // NEW
+            applyTrellisButtonStyle(btn, "open", { compact: true }); // NEW
             mxEvent.addListener(btn, "click", invokeRoleImageAction); // NEW
             return btn; // NEW
         } // NEW

@@ -284,6 +284,34 @@ test("startup collapses header row, sidebars, and prunes toolbar controls", () =
     assert.deepEqual(Array.from(toolbarEnd.children).map(node => node.textContent), ["Format", "Compact"]);
 });
 
+test("shared Trellis button helper applies semantic variants and preserves button state", () => { // NEW
+    const { document } = createHarness(); // NEW
+    const shared = document.defaultView.Trellis.ui; // NEW
+    const button = document.createElement("button"); // NEW
+    button.className = "custom-class"; // NEW
+    button.disabled = true; // NEW
+
+    assert.equal(shared.classForVariant("open"), "trellis-button trellis-button-open"); // NEW
+    shared.applyButtonStyle(button, "open", { compact: true }); // NEW
+    assert.ok(button.classList.contains("custom-class")); // NEW
+    assert.ok(button.classList.contains("trellis-button-open")); // NEW
+    assert.ok(button.classList.contains("trellis-button-compact")); // NEW
+    assert.equal(button.getAttribute("data-trellis-button-variant"), "open"); // NEW
+    assert.equal(button.disabled, true); // NEW
+
+    shared.applyButtonStyle(button, "danger"); // NEW
+    assert.equal(button.classList.contains("trellis-button-open"), false); // NEW
+    assert.equal(button.classList.contains("trellis-button-compact"), false); // NEW
+    assert.ok(button.classList.contains("trellis-button-danger")); // NEW
+    assert.equal(button.getAttribute("data-trellis-button-variant"), "danger"); // NEW
+
+    const made = shared.button("Save", "add", () => {}, { title: "Save changes" }); // NEW
+    assert.equal(made.textContent, "Save"); // NEW
+    assert.equal(made.title, "Save changes"); // NEW
+    assert.ok(made.classList.contains("trellis-button-add")); // NEW
+    assert.equal(made.getAttribute("data-trellis-button-variant"), "add"); // NEW
+}); // NEW
+
 test("File keeps normal entries and moves only named draw.io entries to overflow", () => {
     const { document, menuEntries } = createHarness();
     const menu = new TestMenu(document);

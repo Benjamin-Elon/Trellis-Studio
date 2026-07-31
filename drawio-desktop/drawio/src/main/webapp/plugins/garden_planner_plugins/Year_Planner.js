@@ -3121,13 +3121,19 @@ Draw.loadPlugin(function (ui) {
                 const button = document.createElement("button"); // NEW
                 button.type = "button"; // NEW
                 button.textContent = label; // NEW
-                const styles = { // NEW
-                    primary: "border:1px solid var(--yp-primary);background:var(--yp-primary);color:#fff;", // NEW
-                    secondary: "border:1px solid var(--yp-primary);background:#fff;color:var(--yp-primary);", // NEW
-                    neutral: "border:1px solid var(--yp-neutral-500);background:#fff;color:var(--yp-neutral-900);", // NEW
-                    danger: "border:1px solid var(--yp-danger);background:#fff;color:var(--yp-danger);" // NEW
-                }; // NEW
-                button.style.cssText = `${styles[variant || "neutral"] || styles.neutral}border-radius:6px;cursor:pointer;padding:6px 10px;font:12px Arial,sans-serif;`; // CHANGE
+                const semanticVariant = variant === "primary" ? "add" : (variant === "secondary" ? "open" : (variant || "neutral")); // CHANGE
+                if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") { // NEW
+                    window.Trellis.ui.applyButtonStyle(button, semanticVariant); // NEW
+                } else { // NEW
+                    const styles = { // NEW
+                        add: "border:1px solid var(--yp-success);background:#fff;color:var(--yp-success);", // NEW
+                        open: "border:1px solid var(--yp-primary);background:#fff;color:var(--yp-primary);", // NEW
+                        neutral: "border:1px solid var(--yp-neutral-500);background:#fff;color:var(--yp-neutral-900);", // NEW
+                        danger: "border:1px solid var(--yp-danger);background:#fff;color:var(--yp-danger);" // NEW
+                    }; // NEW
+                    button.style.cssText = `${styles[semanticVariant] || styles.neutral}border-radius:6px;cursor:pointer;padding:6px 10px;font:12px Arial,sans-serif;`; // CHANGE
+                    button.setAttribute("data-trellis-button-variant", semanticVariant); // NEW
+                } // NEW
                 return button; // NEW
             } // NEW
 
@@ -4053,7 +4059,7 @@ Draw.loadPlugin(function (ui) {
                 const variety = document.createElement("select"); // NEW
                 variety.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;flex:1 1 180px;"; // NEW
                 setYearPlanField(variety, "varietyId", { cropId: crop.id }); // CHANGE
-                const addVariety = mkBtn("+", "secondary"); // CHANGE
+                const addVariety = mkBtn("+", "add"); // CHANGE
                 varietyRow.appendChild(variety); // NEW
                 varietyRow.appendChild(addVariety); // NEW
                 const kg = mkInput("number", crop.kgPerPlant ?? ""); // NEW
@@ -4063,7 +4069,7 @@ Draw.loadPlugin(function (ui) {
                 const yieldMeta = document.createElement("div"); // ADDED
                 yieldMeta.className = "yp-yield-hint"; // ADDED
                 const yieldHint = document.createElement("span"); // ADDED
-                const resetYield = mkBtn("Reset", "secondary"); // ADDED
+                const resetYield = mkBtn("Reset", "danger"); // CHANGE
                 yieldMeta.appendChild(yieldHint); yieldMeta.appendChild(resetYield); // ADDED
                 kgHost.appendChild(kg); kgHost.appendChild(yieldMeta); // ADDED
                 const germ = mkInput("number", crop.germRate ?? 1); // NEW
@@ -4336,7 +4342,7 @@ Draw.loadPlugin(function (ui) {
                     empty.textContent = "No demand lines in this channel."; // NEW
                     rows.appendChild(empty); // NEW
                 } // NEW
-                const add = mkBtn("Add demand line", "secondary"); // CHANGE
+                const add = mkBtn("Add demand line", "add"); // CHANGE
                 add.style.marginTop = "8px"; // NEW
                 add.disabled = !(plan.crops || []).length; // NEW
                 add.addEventListener("click", () => addDemandLine(channelId)); // NEW
@@ -4363,10 +4369,10 @@ Draw.loadPlugin(function (ui) {
                 const toolbar = document.createElement("div"); // NEW
                 toolbar.className = "yp-row"; // NEW
                 toolbar.style.marginBottom = "9px"; // NEW
-                const addChannel = mkBtn("Add channel", "secondary"); // CHANGE
+                const addChannel = mkBtn("Add channel", "add"); // CHANGE
                 const channelSelect = mkSelect((plan.demandChannels || []).map(channel => ({ value: channel.id, label: channel.label || channel.id })), plan.demandChannels && plan.demandChannels[0] ? plan.demandChannels[0].id : "", 180); // NEW
                 channelSelect.setAttribute("aria-label", "Demand line channel"); // NEW
-                const addLine = mkBtn("Add demand line", "secondary"); // CHANGE
+                const addLine = mkBtn("Add demand line", "add"); // CHANGE
                 addLine.disabled = !(plan.crops || []).length || !(plan.demandChannels || []).length; // NEW
                 toolbar.appendChild(addChannel); toolbar.appendChild(channelSelect); toolbar.appendChild(addLine); // NEW
                 const channelsHost = document.createElement("div"); // NEW
@@ -4440,7 +4446,7 @@ Draw.loadPlugin(function (ui) {
                 const rowsHost = document.createElement("div"); // NEW
                 rowsHost.style.cssText = "display:flex;flex-direction:column;gap:7px;margin-top:10px;"; // NEW
                 content.appendChild(rowsHost); // NEW
-                const add = mkBtn("Add package", "secondary"); // CHANGE
+                const add = mkBtn("Add package", "add"); // CHANGE
                 add.style.marginTop = "8px"; // NEW
                 content.appendChild(add); // NEW
                 saveDefault.addEventListener("change", () => { crop.savePackagesAsDefault = saveDefault.checked; renderFooter(); }); // NEW
@@ -4503,7 +4509,7 @@ Draw.loadPlugin(function (ui) {
                 const content = document.createElement("div"); // NEW
                 content.style.padding = "12px"; // NEW
                 for (const tab of [{ id: "basics", label: "Basics" }, { id: "packages", label: "Packages" }]) { // CHANGE
-                    const button = mkBtn(tab.label, state.activeTab === tab.id ? "primary" : "neutral"); // CHANGE
+                    const button = mkBtn(tab.label, "neutral"); // CHANGE
                     button.addEventListener("click", () => { state.activeTab = tab.id; renderSelectedEditor(); syncEditorDerived(); }); // NEW
                     tabs.appendChild(button); // NEW
                 } // NEW
@@ -4565,7 +4571,7 @@ Draw.loadPlugin(function (ui) {
                 const salePrice = mkInput("number", Math.max(0, Number(plan.csa.salePricePerBox) || 0).toFixed(2), 110); // ADDED
                 salePrice.min = "0"; salePrice.step = "any"; // ADDED
                 salePrice.title = "Whole-box CSA sale value. Editing makes it manual."; // ADDED
-                const resetSale = mkBtn("Reset", "secondary"); // ADDED
+                const resetSale = mkBtn("Reset", "danger"); // CHANGE
                 resetSale.title = "Reset sale value to the derived component value."; // ADDED
                 setYearPlanField(enabled, "enabled"); // CHANGE
                 setYearPlanField(boxes, "boxesPerWeek"); // CHANGE
@@ -4577,7 +4583,7 @@ Draw.loadPlugin(function (ui) {
                 pricingControls.appendChild(document.createTextNode("Component value / box")); pricingControls.appendChild(componentValue); pricingControls.appendChild(document.createTextNode("Sale value / box")); pricingControls.appendChild(salePrice); pricingControls.appendChild(resetSale); // ADDED
                 const rowsHost = document.createElement("div"); // NEW
                 rowsHost.style.cssText = "display:flex;flex-direction:column;gap:7px;margin-top:10px;"; // NEW
-                const add = mkBtn("Add component", "secondary"); // CHANGE
+                const add = mkBtn("Add component", "add"); // CHANGE
                 add.style.marginTop = "8px"; // NEW
                 details.appendChild(controls); details.appendChild(pricingControls); details.appendChild(rowsHost); details.appendChild(add); // CHANGE
                 csaRefs = { componentValue, salePrice, resetSale }; // ADDED
@@ -4691,15 +4697,15 @@ Draw.loadPlugin(function (ui) {
             templateSel.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;min-width:190px;"; // NEW
             const templateNameInput = mkInput("text", "", 170); // NEW
             templateNameInput.placeholder = "Template name"; // NEW
-            const applyTemplate = mkBtn("Apply template", "secondary"); // CHANGE
-            const saveTemplate = mkBtn("Save template", "secondary"); // CHANGE
+            const applyTemplate = mkBtn("Apply template", "neutral"); // CHANGE
+            const saveTemplate = mkBtn("Save template", "add"); // CHANGE
             const deleteTemplate = mkBtn("Delete template", "danger"); // CHANGE
-            const save = mkBtn("Save", "primary"); // CHANGE
-            const saveClose = mkBtn("Save & Close", "secondary"); // CHANGE
+            const save = mkBtn("Save", "add"); // CHANGE
+            const saveClose = mkBtn("Save & Close", "add"); // CHANGE
             const close = mkBtn("Close", "neutral"); // CHANGE
             const exportButton = mkBtn("Export", "neutral"); // CHANGE
             const reset = mkBtn(loadedExistingForCurrentYear ? "Reset" : "Clear", "danger"); // CHANGE
-            const promptSave = mkBtn("Save and Close", "primary"); // CHANGE
+            const promptSave = mkBtn("Save and Close", "add"); // CHANGE
             const promptDiscard = mkBtn("Discard", "danger"); // CHANGE
             const promptCancel = mkBtn("Cancel", "neutral"); // CHANGE
             titleEl.textContent = `Plan Year ${currentYear}`; // CHANGE
@@ -4712,7 +4718,7 @@ Draw.loadPlugin(function (ui) {
 
             const plantSelect = document.createElement("select"); // NEW
             plantSelect.style.cssText = "padding:6px;border:1px solid #bbb;border-radius:6px;min-width:260px;flex:1 1 260px;"; // NEW
-            const addCrop = mkBtn("Add crop", "primary"); // CHANGE
+            const addCrop = mkBtn("Add crop", "add"); // CHANGE
             const reloadPlants = mkBtn("Reload crops", "neutral"); // CHANGE
             const plantMessage = document.createElement("span"); // NEW
             plantMessage.style.color = "#666"; // NEW

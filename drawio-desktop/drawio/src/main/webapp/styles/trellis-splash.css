@@ -314,30 +314,34 @@
 }
 
 .trellis-splash-actions .trellis-primary-action { /* NEW */
-	background: #4e8f2b !important;
-	border-color: #4e8f2b !important;
+	background: #188038 !important; /* CHANGE */
+	border-color: #188038 !important; /* CHANGE */
 	color: #fff !important;
 }
 
 .trellis-splash-actions .trellis-primary-action:hover { /* NEW */
-	background: #437d25 !important;
+	background: #166534 !important; /* CHANGE */
 }
 
 .trellis-splash-actions .trellis-support-action { /* NEW */
-	background: #f5dc89 !important;
-	border: 1px solid #d3ad45 !important;
-	color: #435322 !important;
+	background: #f5dc89 !important; /* CHANGE */
+	border: 1px solid #d3ad45 !important; /* CHANGE */
+	color: #435322 !important; /* CHANGE */
 	font-weight: 500;
 }
 
 .trellis-splash-actions .trellis-support-action:hover { /* NEW */
-	background: #efd072 !important;
+	background: #efd072 !important; /* CHANGE */
 }
 
 .trellis-splash-actions .trellis-secondary-action { /* NEW */
-	background: #fffdf6 !important;
-	border: 1px solid #7ea563 !important;
-	color: #3f7629 !important;
+	background: #fff !important; /* CHANGE */
+	border: 1px solid #2563eb !important; /* CHANGE */
+	color: #1d4ed8 !important; /* CHANGE */
+}
+
+.trellis-splash-actions .trellis-secondary-action:hover { /* NEW */
+	background: #eff6ff !important; /* NEW */
 }
 
 .trellis-license-status { /* NEW */

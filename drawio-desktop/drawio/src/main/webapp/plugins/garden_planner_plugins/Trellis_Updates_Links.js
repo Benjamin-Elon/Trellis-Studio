@@ -275,8 +275,10 @@
             ".trellis-updates-pane-title{font-size:15px;font-weight:700;margin:0 0 8px}",
             ".trellis-updates-section-title{font-size:13px;font-weight:700;margin:12px 0 6px}",
             ".trellis-updates-actions{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 12px}",
-            ".trellis-updates-btn{border:1px solid #9fb0c2;background:#fff;padding:7px 10px;border-radius:4px;cursor:pointer}",
-            ".trellis-updates-btn-primary{background:#2563eb;color:#fff;border-color:#2563eb}",
+            ".trellis-updates-btn{border:1px solid #6b7280;background:#fff;color:#111827;padding:7px 10px;border-radius:4px;cursor:pointer}", // CHANGE
+            ".trellis-updates-btn-open{border-color:#2563eb;color:#1d4ed8}", // NEW
+            ".trellis-updates-btn-open:hover{background:#eff6ff}", // NEW
+            ".trellis-updates-btn-neutral:hover{background:#f9fafb}", // NEW
             ".trellis-updates-btn:disabled{opacity:.55;cursor:default}",
             ".trellis-updates-status{padding:8px 10px;background:#f5f7fa;border:1px solid #d7dde5;border-radius:4px;margin:8px 0}",
             ".trellis-release-list{max-height:210px;overflow:auto;border:1px solid #d7dde5;border-radius:4px;background:#fff}",
@@ -297,9 +299,11 @@
         root.appendChild(style);
     }
 
-    function createButton(label, onClick, primary, options) { // CHANGE
-        const button = createEl("button", primary ? "trellis-updates-btn trellis-updates-btn-primary" : "trellis-updates-btn", label);
+    function createButton(label, onClick, variant, options) { // CHANGE
+        const semanticVariant = variant === true ? "open" : (variant || "neutral"); // CHANGE
+        const button = createEl("button", "trellis-updates-btn trellis-updates-btn-" + semanticVariant, label); // CHANGE
         button.type = "button";
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") window.Trellis.ui.applyButtonStyle(button, semanticVariant); // NEW
         if (options && options.disabled) button.disabled = true; // NEW
         if (options && options.title) button.title = options.title; // NEW
         button.addEventListener("click", onClick);
@@ -343,7 +347,7 @@
             item.appendChild(createEl("div", "trellis-release-meta", [release.tag, formatDate(release.publishedAt)].filter(Boolean).join(" - ")));
             item.appendChild(createEl("div", "trellis-release-summary", release.summary || "No summary available."));
             if (release.url) {
-                item.appendChild(createButton("Full notes", function () { openLink(ui, release.url); }, false));
+                item.appendChild(createButton("Full notes", function () { openLink(ui, release.url); }, "open")); // CHANGE
             }
             list.appendChild(item);
         });
@@ -395,7 +399,7 @@
                 content.appendChild(createEl("div", "trellis-link-title", entry[0])); // NEW
                 content.appendChild(createEl("div", "trellis-link-value", entry[1])); // NEW
                 row.appendChild(content); // NEW
-                row.appendChild(createButton("Open", function () { openLink(ui, entry[1]); }, false)); // NEW
+                row.appendChild(createButton("Open", function () { openLink(ui, entry[1]); }, "open")); // CHANGE
                 groupEl.appendChild(row); // NEW
             }); // NEW
             container.appendChild(groupEl); // NEW
@@ -419,10 +423,10 @@
         const releaseContainer = createEl("div");
         const changelogContainer = createEl("div");
         const actions = createEl("div", "trellis-updates-actions");
-        const updateButton = createButton("Check for updates", function () { checkForUpdates(state.appInfo); }, true, { disabled: true, title: getUpdateUnavailableReason(state.appInfo) }); // CHANGE
+        const updateButton = createButton("Check for updates", function () { checkForUpdates(state.appInfo); }, "open", { disabled: true, title: getUpdateUnavailableReason(state.appInfo) }); // CHANGE
         updatesPane.appendChild(createEl("div", "trellis-updates-pane-title", "Updates")); // NEW
         actions.appendChild(updateButton); // CHANGE
-        actions.appendChild(createButton("Open GitHub releases", function () { openLink(ui, state.appInfo.releasesUrl); }, false));
+        actions.appendChild(createButton("Open GitHub releases", function () { openLink(ui, state.appInfo.releasesUrl); }, "open")); // CHANGE
         updatesPane.appendChild(installed);
         updatesPane.appendChild(actions);
         updatesPane.appendChild(createEl("div", "trellis-updates-section-title", "GitHub releases")); // CHANGE
@@ -460,8 +464,8 @@
         }).catch(function () {
             clearNode(container);
             const fallback = createEl("div", "trellis-updates-status", "Live GitHub releases are unavailable right now."); // CHANGE
-            fallback.appendChild(createButton("Open GitHub releases", function () { openLink(ui, appInfo.releasesUrl); }, false));
-            fallback.appendChild(createButton("Retry", function () { loadLiveReleases(container, appInfo, ui); }, false));
+            fallback.appendChild(createButton("Open GitHub releases", function () { openLink(ui, appInfo.releasesUrl); }, "open")); // CHANGE
+            fallback.appendChild(createButton("Retry", function () { loadLiveReleases(container, appInfo, ui); }, "neutral")); // CHANGE
             container.appendChild(fallback);
         });
     }

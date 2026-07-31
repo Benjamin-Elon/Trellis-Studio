@@ -149,12 +149,16 @@
 				prependButtonIcon(buttons[i], 'support'); // NEW
 			} else if (buttons[i].textContent.indexOf('Create New Diagram') >= 0) { // NEW
 				addClass(buttons[i], 'trellis-primary-action'); // NEW
+				addClass(buttons[i], 'trellis-button-add'); // NEW
+				addClass(buttons[i], 'trellis-button-filled'); // NEW
 				prependButtonIcon(buttons[i], 'create'); // NEW
 			} else if (buttons[i].textContent.indexOf('Open Existing Diagram') >= 0) { // NEW
 				addClass(buttons[i], 'trellis-secondary-action'); // NEW
+				addClass(buttons[i], 'trellis-button-open'); // NEW
 				prependButtonIcon(buttons[i], 'open'); // NEW
 			} else if (buttons[i].textContent.indexOf('Change license') >= 0) { // NEW
 				addClass(buttons[i], 'trellis-change-license'); // NEW
+				addClass(buttons[i], 'trellis-button-neutral'); // NEW
 			} // NEW
 		} // NEW
 	} // NEW

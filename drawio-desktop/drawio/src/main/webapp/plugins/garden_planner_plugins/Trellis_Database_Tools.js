@@ -36,16 +36,20 @@
             ".trellis-db-tools-error{background:#fef2f2;border-color:#ef4444}",
             ".trellis-db-tools-paths{font-size:12px;line-height:1.45;word-break:break-all}",
             ".trellis-db-tools-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:auto}",
-            ".trellis-db-tools-btn{border:1px solid #9fb0c2;background:#fff;padding:7px 10px;border-radius:4px;cursor:pointer}",
-            ".trellis-db-tools-btn-primary{background:#b91c1c;color:#fff;border-color:#b91c1c}",
+            ".trellis-db-tools-btn{border:1px solid #6b7280;background:#fff;color:#111827;padding:7px 10px;border-radius:4px;cursor:pointer}", // CHANGE
+            ".trellis-db-tools-btn-danger{border-color:#b91c1c;color:#b91c1c}", // NEW
+            ".trellis-db-tools-btn-danger:hover{background:#fef2f2}", // NEW
+            ".trellis-db-tools-btn-neutral:hover{background:#f9fafb}", // NEW
             ".trellis-db-tools-btn:disabled{opacity:.65;cursor:default}"
         ].join("\n"); // NEW
         root.appendChild(style); // NEW
     } // NEW
 
-    function createButton(label, onClick, primary) { // NEW
-        const button = createEl("button", primary ? "trellis-db-tools-btn trellis-db-tools-btn-primary" : "trellis-db-tools-btn", label); // NEW
+    function createButton(label, onClick, variant) { // CHANGE
+        const semanticVariant = variant || "neutral"; // NEW
+        const button = createEl("button", "trellis-db-tools-btn trellis-db-tools-btn-" + semanticVariant, label); // CHANGE
         button.type = "button"; // NEW
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") window.Trellis.ui.applyButtonStyle(button, semanticVariant); // NEW
         button.addEventListener("click", onClick); // NEW
         return button; // NEW
     } // NEW
@@ -84,7 +88,7 @@
         root.appendChild(createEl("div", "trellis-db-tools-status", "This does not reload the current diagram. Reopen any active Trellis dialogs after the restore completes.")); // NEW
 
         const actions = createEl("div", "trellis-db-tools-actions"); // NEW
-        const cancel = createButton("Cancel", function () { closeDialog(ui); }, false); // NEW
+        const cancel = createButton("Cancel", function () { closeDialog(ui); }, "neutral"); // CHANGE
         const restore = createButton("Restore built-in database", function () { // NEW
             restore.disabled = true; // NEW
             cancel.disabled = true; // NEW
@@ -98,7 +102,7 @@
             }).catch(function (error) { // NEW
                 renderError(root, error); // NEW
             }); // NEW
-        }, true); // NEW
+        }, "danger"); // CHANGE
         actions.appendChild(cancel); // NEW
         actions.appendChild(restore); // NEW
         root.appendChild(actions); // NEW

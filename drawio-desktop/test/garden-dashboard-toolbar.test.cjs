@@ -89,7 +89,7 @@ test("garden dashboard toolbar controls use module scoped plugin contracts", () 
 
 test("garden dashboard toolbar exposes share only for eligible selected scopes", () => { // NEW
     const text = viewportToolbarSource(); // NEW
-    assert.match(text, /const shareBtn = createToolbarButton\("Share", "Share selected module\(s\), task board\(s\), or garden bed\(s\)"\);/); // NEW
+    assert.match(text, /const shareBtn = createToolbarButton\("Share", "Share selected module\(s\), task board\(s\), or garden bed\(s\)", "open"\);/); // CHANGE
     assert.match(text, /rightActions\.appendChild\(shareBtn\);/); // CHANGE
     assert.match(text, /shareBtn\.addEventListener\("click", function \(\) \{ openShareGardenCanvasDialog\(\); \}\);/); // NEW
     assert.match(text, /function shareSelectionState\(\)/); // NEW
@@ -157,8 +157,8 @@ test("garden dashboard toolbar marks Irrigation active with existing blue", () =
     assert.match(text, /plannerApi\.isIrrigationModeActive\(moduleCell\)/); // NEW
     assert.match(text, /function applyToolbarActiveButtonState\(btn, active\)/); // NEW
     assert.match(text, /btn\.style\.background = active \? IRRIGATION_ACTIVE_BLUE : "#fff";/); // NEW
-    assert.match(text, /btn\.style\.borderColor = active \? IRRIGATION_ACTIVE_BLUE : "#777";/); // NEW
-    assert.match(text, /btn\.style\.color = active \? "#fff" : "#000";/); // NEW
+    assert.match(text, /btn\.style\.borderColor = active \? IRRIGATION_ACTIVE_BLUE : "#2563eb";/); // CHANGE
+    assert.match(text, /btn\.style\.color = active \? "#fff" : "#1d4ed8";/); // CHANGE
     assert.match(text, /applyToolbarActiveButtonState\(entry\.irrigationBtn, activeIrrigationModuleMatches\(moduleCell\)\);/); // NEW
     assert.match(fullSource, /window\.addEventListener\(IRRIGATION_MODE_CHANGED_EVENT, scheduleViewportToolbarRefresh\);/); // NEW
 }); // NEW
@@ -175,7 +175,7 @@ test("garden dashboard irrigation buttons close active irrigation mode", () => {
 
 test("garden dashboard messages button calls users API for active module and prompts auth", () => { // NEW
     const text = viewportToolbarSource(); // NEW
-    assert.match(text, /const messagesBtn = createToolbarButton\("Messages", "Review access requests"\);/); // NEW
+    assert.match(text, /const messagesBtn = createToolbarButton\("Messages", "Review access requests", "open"\);/); // CHANGE
     assert.match(text, /users\.incomingAccessRequestCount\(\{ scopeCell: moduleCell \}\)/); // NEW
     assert.match(text, /users\.unreadAccessMessageCount\(\{ scopeCell: moduleCell \}\)/); // NEW
     assert.match(text, /return incoming \+ unread;/); // NEW
