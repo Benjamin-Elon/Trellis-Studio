@@ -26,7 +26,7 @@ from .schema import (
     compact_json,
 )
 from .sowing_windows import normalize_window_row, select_cities_for_crop, usable_crop_for_sowing_windows
-from .validator import normalize_key, source_ref_allowed, source_values_from_input, validate_input, validate_row, validate_run  # CHANGED
+from .validator import normalize_key, source_ref_allowed, source_values_from_input, validate_input, validate_row, validate_run
 from .weather import forecast_rows, history_window, summarize_city_monthly_weather
 
 
@@ -42,7 +42,7 @@ CROP_PROMPT_FIELD_GUIDE = {
     "flags": "Flag fields are integers: 1 means true/allowed, 0 means false/not typical.",  # prompt quality
     "lifecycle": "Set annual, biennial, and perennial to a coherent lifecycle; normally exactly one is 1.",  # prompt quality
     "units": "Fields ending _c are Celsius, _cm centimeters, _kg kilograms, and day fields are days.",  # prompt quality
-    "temperature": "Use plausible crop physiology values: killtemp_c is lethal cold tolerance, and tmin_c <= topt_low_c <= topt_high_c <= tmax_c describes growth.",  # CHANGED
+    "temperature": "Use plausible crop physiology values: killtemp_c is lethal cold tolerance, and tmin_c <= topt_low_c <= topt_high_c <= tmax_c describes growth.",
     "start_cooling_threshold_c": "This is a fall/overwinter cooling trigger, not a heat-stress threshold; use 0 for normal spring/summer annual crops.",  # scheduler semantics
     "spacing": "spacing_x_cm and spacing_y_cm should describe in-row and between-row spacing when useful.",  # prompt quality
     "methods": "allowed_method_categories are broad capabilities; allowed_method_ids are concrete fixed_methods that truly fit the crop.",  # prompt quality
@@ -135,7 +135,7 @@ def estimate_openai_calls(input_data: dict[str, Any], settings: Settings, db_pat
     methods = load_methods(db_path)
     categories = load_method_categories(db_path)
     crop_count = len(input_data.get("crops") or [])
-    city_label_count = len(input_data.get("cities") or [])  # ADDED
+    city_label_count = len(input_data.get("cities") or [])
     companion_count = len(input_data.get("companions") or [])
     sowing_window_count = _estimate_sowing_window_calls(input_data, settings, db_path)
     template_count = 0
@@ -149,7 +149,7 @@ def estimate_openai_calls(input_data: dict[str, Any], settings: Settings, db_pat
             variety_override_count += len(crop.get("variety_task_overrides") or [])
     return {
         "crop_rows": crop_count,
-        "city_labels": city_label_count,  # ADDED
+        "city_labels": city_label_count,
         "companion_rows": companion_count,
         "plant_task_templates": template_count,
         "variety_task_overrides": variety_override_count,
@@ -160,7 +160,7 @@ def estimate_openai_calls(input_data: dict[str, Any], settings: Settings, db_pat
 
 def preflight(settings: Settings, input_data: dict[str, Any]) -> list[ProviderTrace]:
     traces = []
-    if input_data.get("crops") or input_data.get("cities") or input_data.get("companions") or (input_data.get("sowing_windows") or {}).get("enabled"):  # CHANGED
+    if input_data.get("crops") or input_data.get("cities") or input_data.get("companions") or (input_data.get("sowing_windows") or {}).get("enabled"):
         traces.append(OpenAIJsonClient(read_openai_api_key(), settings.openai_model, settings.openai_reasoning_effort).preflight())
     if input_data.get("cities"):
         traces.append(OpenMeteoClient(settings.data["open_meteo"]).preflight())
@@ -199,23 +199,23 @@ def generate_run(settings: Settings, input_path: Path, options: GenerationOption
         methods = load_methods(settings.db_path)
 
         if input_data.get("cities"):
-            _generate_cities(settings, input_data, meteo, nasa, openai, generated, provenance, run_dir)  # CHANGED
+            _generate_cities(settings, input_data, meteo, nasa, openai, generated, provenance, run_dir)
         if input_data.get("crops"):
-            _generate_crops(settings, input_data, openai, methods, generated, provenance, run_dir, generate_templates=options.generate_templates)  # CHANGED
+            _generate_crops(settings, input_data, openai, methods, generated, provenance, run_dir, generate_templates=options.generate_templates)
         if input_data.get("companions"):
-            _generate_companions(input_data, openai, generated, provenance, run_dir)  # CHANGED
+            _generate_companions(input_data, openai, generated, provenance, run_dir)
         if (input_data.get("sowing_windows") or {}).get("enabled"):
             _generate_sowing_windows(settings, input_data, openai, methods, generated, provenance, run_dir)
 
         _write_generated_checkpoint(run_dir, generated)
         write_json(run_dir / "provenance.json", provenance)
         validate_run(run_dir, settings.db_path)
-        has_rows = any(rows for rows in generated.values())  # ADDED
-        has_failures = bool(provenance.get("failures"))  # ADDED
-        if has_failures and not has_rows:  # ADDED
-            _update_run_metadata(run_dir, {"status": "failed", "error": "All requested generation items failed."})  # ADDED
-            raise ProviderError("All requested generation items failed.")  # ADDED
-        _update_run_metadata(run_dir, {"status": "complete_with_failures" if has_failures else "complete", "error": None})  # CHANGED
+        has_rows = any(rows for rows in generated.values())
+        has_failures = bool(provenance.get("failures"))
+        if has_failures and not has_rows:
+            _update_run_metadata(run_dir, {"status": "failed", "error": "All requested generation items failed."})
+            raise ProviderError("All requested generation items failed.")
+        _update_run_metadata(run_dir, {"status": "complete_with_failures" if has_failures else "complete", "error": None})
         return run_dir
     except Exception as exc:
         _update_run_metadata(run_dir, {"status": "failed", "error": str(exc)})
@@ -228,25 +228,25 @@ def _update_run_metadata(run_dir: Path, updates: dict[str, Any]) -> None:
     write_json(run_dir / "metadata.json", metadata)
 
 
-def _record_generation_failure(run_dir: Path, provenance: dict[str, Any], scope: str, label: str, exc: Exception) -> None:  # ADDED
-    failure = {"scope": scope, "label": label, "error": str(exc)}  # ADDED
-    provenance.setdefault("failures", {}).setdefault(scope, []).append(failure)  # ADDED
-    _update_run_metadata(run_dir, {"last_failure": failure, "failure_count": _failure_count(provenance), "failures": provenance["failures"]})  # CHANGED
-    print(f"Skipping {scope} {label} after generation error: {exc}", flush=True)  # ADDED
+def _record_generation_failure(run_dir: Path, provenance: dict[str, Any], scope: str, label: str, exc: Exception) -> None:
+    failure = {"scope": scope, "label": label, "error": str(exc)}
+    provenance.setdefault("failures", {}).setdefault(scope, []).append(failure)
+    _update_run_metadata(run_dir, {"last_failure": failure, "failure_count": _failure_count(provenance), "failures": provenance["failures"]})
+    print(f"Skipping {scope} {label} after generation error: {exc}", flush=True)
 
 
-def _failure_count(provenance: dict[str, Any]) -> int:  # ADDED
-    failures = provenance.get("failures") or {}  # ADDED
-    return sum(len(items) for items in failures.values() if isinstance(items, list))  # ADDED
+def _failure_count(provenance: dict[str, Any]) -> int:
+    failures = provenance.get("failures") or {}
+    return sum(len(items) for items in failures.values() if isinstance(items, list))
 
 
-def _generated_lengths(generated: dict[str, list[dict[str, Any]]]) -> dict[str, int]:  # ADDED
-    return {table: len(rows) for table, rows in generated.items()}  # ADDED
+def _generated_lengths(generated: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
+    return {table: len(rows) for table, rows in generated.items()}
 
 
-def _restore_generated_lengths(generated: dict[str, list[dict[str, Any]]], lengths: dict[str, int]) -> None:  # ADDED
-    for table, original_length in lengths.items():  # ADDED
-        del generated[table][original_length:]  # ADDED
+def _restore_generated_lengths(generated: dict[str, list[dict[str, Any]]], lengths: dict[str, int]) -> None:
+    for table, original_length in lengths.items():
+        del generated[table][original_length:]
 
 
 def _find_resume_run(settings: Settings, input_path: Path, normalized_input: dict[str, Any]) -> Path | None:
@@ -282,30 +282,30 @@ def _write_generated_checkpoint(run_dir: Path, generated: dict[str, list[dict[st
 
 def _generate_cities(settings: Settings, input_data: dict[str, Any], meteo: OpenMeteoClient, nasa: NasaPowerClient, openai: OpenAIJsonClient, generated: dict[str, list[dict[str, Any]]], provenance: dict[str, Any], run_dir: Path) -> None:
     _start_date, _end_date, start_year, end_year = history_window(int(settings.data.get("city_history_years", 15)))
-    completed_cities = {_city_identity_key(row) for row in generated.get("Cities", [])}  # CHANGED
-    completed_city_names = [normalize_key(row.get("city_name")) for row in generated.get("Cities", [])]  # ADDED
+    completed_cities = {_city_identity_key(row) for row in generated.get("Cities", [])}
+    completed_city_names = [normalize_key(row.get("city_name")) for row in generated.get("Cities", [])]
     for city in input_data.get("cities", []) or []:
-        display_name = _city_display_name(city)  # CHANGED
-        name = _city_storage_name(city, display_name)  # CHANGED
-        input_identity = _city_identity_key(_city_input_identity_row(city, name))  # ADDED
-        legacy_unique_completed = not _city_has_geography(input_identity) and completed_city_names.count(normalize_key(name)) == 1  # ADDED
-        if input_identity in completed_cities or legacy_unique_completed:  # CHANGED
-            print(f"Skipping city weather already checkpointed: {display_name}", flush=True)  # CHANGED
+        display_name = _city_display_name(city)
+        name = _city_storage_name(city, display_name)
+        input_identity = _city_identity_key(_city_input_identity_row(city, name))
+        legacy_unique_completed = not _city_has_geography(input_identity) and completed_city_names.count(normalize_key(name)) == 1
+        if input_identity in completed_cities or legacy_unique_completed:
+            print(f"Skipping city weather already checkpointed: {display_name}", flush=True)
             continue
-        geocode_query = str(city.get("name") or display_name).strip()  # CHANGED
-        geocode_qualifiers = _city_geocode_qualifiers(city, display_name)  # CHANGED
-        generated_lengths = _generated_lengths(generated)  # ADDED
+        geocode_query = str(city.get("name") or display_name).strip()
+        geocode_qualifiers = _city_geocode_qualifiers(city, display_name)
+        generated_lengths = _generated_lengths(generated)
         try:
-            print(f"Generating city weather: {display_name}", flush=True)  # CHANGED
+            print(f"Generating city weather: {display_name}", flush=True)
             print("  - Geocoding city", flush=True)
             geo, trace = meteo.geocode(geocode_query, geocode_qualifiers)
             provenance["traces"].append(trace.redacted())
             timezone_name = str(city.get("timezone") or geo.get("timezone") or "UTC")
             geo["timezone"] = timezone_name
-            geo["country_name"] = str(city.get("country_name") or city.get("country") or geo.get("country") or "").strip()  # ADDED
-            geo["country_code"] = str(city.get("country_code") or geo.get("country_code") or "").strip()  # ADDED
-            geo["region_name"] = str(city.get("region_name") or city.get("admin1") or geo.get("admin1") or "Unspecified").strip()  # ADDED
-            geo["region_code"] = str(city.get("region_code") or "").strip()  # ADDED
+            geo["country_name"] = str(city.get("country_name") or city.get("country") or geo.get("country") or "").strip()
+            geo["country_code"] = str(city.get("country_code") or geo.get("country_code") or "").strip()
+            geo["region_name"] = str(city.get("region_name") or city.get("admin1") or geo.get("admin1") or "Unspecified").strip()
+            geo["region_code"] = str(city.get("region_code") or "").strip()
             print(f"  - Fetching NASA POWER monthly history: {start_year} to {end_year}", flush=True)
             monthly, trace = nasa.monthly_history(
                 latitude=float(geo["latitude"]),
@@ -323,10 +323,10 @@ def _generate_cities(settings: Settings, input_data: dict[str, Any], meteo: Open
             )
             if not weather_rows:
                 raise ProviderError(f"NASA POWER returned no monthly weather rows for {name}.")
-            print("  - Labeling city for climate benchmark eligibility", flush=True)  # ADDED
-            city_labels, trace = _label_city_for_benchmark(openai, city_row)  # ADDED
-            provenance["traces"].append(trace.redacted())  # ADDED
-            city_row.update(city_labels)  # ADDED
+            print("  - Labeling city for climate benchmark eligibility", flush=True)
+            city_labels, trace = _label_city_for_benchmark(openai, city_row)
+            provenance["traces"].append(trace.redacted())
+            city_row.update(city_labels)
             generated["Cities"].append(city_row)
             generated["CityWeatherMonthly"].extend(weather_rows)
             print(f"  - Monthly history rows: {len(weather_rows)}", flush=True)
@@ -339,59 +339,59 @@ def _generate_cities(settings: Settings, input_data: dict[str, Any], meteo: Open
             )
             provenance["traces"].append(trace.redacted())
             generated["CityWeatherForecastDaily"].extend(
-                forecast_rows(name, forecast, str(settings.data["open_meteo"].get("forecast_model", "best_match")), geo)  # CHANGED
+                forecast_rows(name, forecast, str(settings.data["open_meteo"].get("forecast_model", "best_match")), geo)
             )
             print("  - City weather complete", flush=True)
-            identity_label = _city_identity_label(city_row)  # ADDED
-            provenance["tables"].setdefault("Cities", {})[identity_label] = city_provenance | {"history_start_year": start_year, "history_end_year": end_year}  # CHANGED
-            completed_cities.add(_city_identity_key(city_row))  # CHANGED
-            completed_city_names.append(normalize_key(name))  # ADDED
+            identity_label = _city_identity_label(city_row)
+            provenance["tables"].setdefault("Cities", {})[identity_label] = city_provenance | {"history_start_year": start_year, "history_end_year": end_year}
+            completed_cities.add(_city_identity_key(city_row))
+            completed_city_names.append(normalize_key(name))
             _write_generated_checkpoint(run_dir, generated, {"Cities", "CityWeatherMonthly", "CityWeatherForecastDaily"})
             write_json(run_dir / "provenance.json", provenance)
         except Exception as exc:
-            _restore_generated_lengths(generated, generated_lengths)  # ADDED
-            _record_generation_failure(run_dir, provenance, "city", display_name, exc)  # CHANGED
-            write_json(run_dir / "provenance.json", provenance)  # ADDED
-            continue  # ADDED
+            _restore_generated_lengths(generated, generated_lengths)
+            _record_generation_failure(run_dir, provenance, "city", display_name, exc)
+            write_json(run_dir / "provenance.json", provenance)
+            continue
 
 
-def _label_city_for_benchmark(openai: OpenAIJsonClient, city_row: dict[str, Any]) -> tuple[dict[str, Any], ProviderTrace]:  # ADDED
-    result, trace = _call_openai_with_retry(  # ADDED
-        openai,  # ADDED
-        schema_name="trellis_city_benchmark_label",  # ADDED
-        json_schema=OPENAI_CITY_LABEL_SCHEMA,  # ADDED
-        validator=_validate_city_label_result,  # ADDED
-        progress_label=f"city labels: {_city_identity_label(city_row)}",  # ADDED
-        system=(  # ADDED
-            "You classify cities for Trellis crop-model benchmark selection. "  # ADDED
-            "Return whether the city is a major city and one broad agricultural climate band. "  # ADDED
-            "Use major city to mean a nationally or regionally important population center likely to have reliable weather and agronomic reference data."  # ADDED
-        ),  # ADDED
-        user=json.dumps({  # ADDED
-            "city": _city_window_context(city_row),  # ADDED
-            "rules": {  # ADDED
-                "is_major_city": "1 for major city, otherwise 0",  # ADDED
-                "climate_band": ["hot", "temperate", "cold"],  # ADDED
-                "labels_only": True,  # ADDED
-            },  # ADDED
-        }, indent=2),  # ADDED
-    )  # ADDED
-    return {"is_major_city": int(result["is_major_city"]), "climate_band": str(result["climate_band"]).strip().casefold()}, trace  # ADDED
+def _label_city_for_benchmark(openai: OpenAIJsonClient, city_row: dict[str, Any]) -> tuple[dict[str, Any], ProviderTrace]:
+    result, trace = _call_openai_with_retry(
+        openai,
+        schema_name="trellis_city_benchmark_label",
+        json_schema=OPENAI_CITY_LABEL_SCHEMA,
+        validator=_validate_city_label_result,
+        progress_label=f"city labels: {_city_identity_label(city_row)}",
+        system=(
+            "You classify cities for Trellis crop-model benchmark selection. "
+            "Return whether the city is a major city and one broad agricultural climate band. "
+            "Use major city to mean a nationally or regionally important population center likely to have reliable weather and agronomic reference data."
+        ),
+        user=json.dumps({
+            "city": _city_window_context(city_row),
+            "rules": {
+                "is_major_city": "1 for major city, otherwise 0",
+                "climate_band": ["hot", "temperate", "cold"],
+                "labels_only": True,
+            },
+        }, indent=2),
+    )
+    return {"is_major_city": int(result["is_major_city"]), "climate_band": str(result["climate_band"]).strip().casefold()}, trace
 
 
-def _validate_city_label_result(result: dict[str, Any]) -> list[str]:  # ADDED
-    report = validate_row("Cities", {  # ADDED
-        "city_name": "Label Check",  # ADDED
-        "country_name": "Label Country",  # ADDED
-        "region_name": "Label Region",  # ADDED
-        "latitude": 0,  # ADDED
-        "longitude": 0,  # ADDED
-        "gdd_annual": 0,  # ADDED
-        "gdd_base_c": 5,  # ADDED
-        "is_major_city": result.get("is_major_city"),  # ADDED
-        "climate_band": result.get("climate_band"),  # ADDED
-    })  # ADDED
-    return report["errors"]  # ADDED
+def _validate_city_label_result(result: dict[str, Any]) -> list[str]:
+    report = validate_row("Cities", {
+        "city_name": "Label Check",
+        "country_name": "Label Country",
+        "region_name": "Label Region",
+        "latitude": 0,
+        "longitude": 0,
+        "gdd_annual": 0,
+        "gdd_base_c": 5,
+        "is_major_city": result.get("is_major_city"),
+        "climate_band": result.get("climate_band"),
+    })
+    return report["errors"]
 
 
 def _city_display_name(city: dict[str, Any]) -> str:
@@ -402,44 +402,44 @@ def _city_display_name(city: dict[str, Any]) -> str:
     return ", ".join(part for part in parts if part)
 
 
-def _city_storage_name(city: dict[str, Any], display_name: str) -> str:  # ADDED
-    explicit_city = str(city.get("city_name") or "").strip()  # ADDED
-    if explicit_city:  # ADDED
-        return explicit_city  # ADDED
-    return str(display_name or "").split(",", 1)[0].strip()  # ADDED
+def _city_storage_name(city: dict[str, Any], display_name: str) -> str:
+    explicit_city = str(city.get("city_name") or "").strip()
+    if explicit_city:
+        return explicit_city
+    return str(display_name or "").split(",", 1)[0].strip()
 
 
-def _city_input_identity_row(city: dict[str, Any], city_name: str) -> dict[str, Any]:  # ADDED
-    return {  # ADDED
-        "city_name": city_name,  # ADDED
-        "country_name": city.get("country_name") or city.get("country"),  # ADDED
-        "country_code": city.get("country_code"),  # ADDED
-        "region_name": city.get("region_name") or city.get("admin1"),  # ADDED
-        "region_code": city.get("region_code"),  # ADDED
-    }  # ADDED
+def _city_input_identity_row(city: dict[str, Any], city_name: str) -> dict[str, Any]:
+    return {
+        "city_name": city_name,
+        "country_name": city.get("country_name") or city.get("country"),
+        "country_code": city.get("country_code"),
+        "region_name": city.get("region_name") or city.get("admin1"),
+        "region_code": city.get("region_code"),
+    }
 
 
-def _city_identity_key(city: dict[str, Any]) -> tuple[str, str, str]:  # ADDED
-    return (  # ADDED
-        normalize_key(city.get("city_name")),  # ADDED
-        normalize_key(city.get("country_code")) or normalize_key(city.get("country_name")),  # CHANGED
-        normalize_key(city.get("region_name")) or normalize_key(city.get("region_code")),  # CHANGED
-    )  # ADDED
+def _city_identity_key(city: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        normalize_key(city.get("city_name")),
+        normalize_key(city.get("country_code")) or normalize_key(city.get("country_name")),
+        normalize_key(city.get("region_name")) or normalize_key(city.get("region_code")),
+    )
 
 
-def _city_has_geography(identity: tuple[str, str, str]) -> bool:  # ADDED
-    return any(identity[1:])  # ADDED
+def _city_has_geography(identity: tuple[str, str, str]) -> bool:
+    return any(identity[1:])
 
 
-def _city_identity_label(city: dict[str, Any]) -> str:  # ADDED
-    name = str(city.get("city_name") or "").strip()  # ADDED
-    country = str(city.get("country_name") or city.get("country_code") or "").strip()  # ADDED
-    region = str(city.get("region_name") or city.get("region_code") or "").strip()  # ADDED
-    return " / ".join(part for part in (name, country, region) if part) or name  # ADDED
+def _city_identity_label(city: dict[str, Any]) -> str:
+    name = str(city.get("city_name") or "").strip()
+    country = str(city.get("country_name") or city.get("country_code") or "").strip()
+    region = str(city.get("region_name") or city.get("region_code") or "").strip()
+    return " / ".join(part for part in (name, country, region) if part) or name
 
 
-def _city_geography_fields(city: dict[str, Any]) -> dict[str, Any]:  # ADDED
-    return {field: city.get(field) for field in CITY_GEO_IDENTITY_COLUMNS if city.get(field) not in (None, "")}  # ADDED
+def _city_geography_fields(city: dict[str, Any]) -> dict[str, Any]:
+    return {field: city.get(field) for field in CITY_GEO_IDENTITY_COLUMNS if city.get(field) not in (None, "")}
 
 
 def _city_geocode_qualifiers(city: dict[str, Any], display_name: str) -> dict[str, str]:
@@ -451,22 +451,22 @@ def _city_geocode_qualifiers(city: dict[str, Any], display_name: str) -> dict[st
     }
 
 
-def _generate_crops(settings: Settings, input_data: dict[str, Any], openai: OpenAIJsonClient, methods: list[dict[str, Any]], generated: dict[str, list[dict[str, Any]]], provenance: dict[str, Any], run_dir: Path, generate_templates: bool) -> None:  # CHANGED
+def _generate_crops(settings: Settings, input_data: dict[str, Any], openai: OpenAIJsonClient, methods: list[dict[str, Any]], generated: dict[str, list[dict[str, Any]]], provenance: dict[str, Any], run_dir: Path, generate_templates: bool) -> None:
     default_variety_count = int(input_data.get("settings", {}).get("variety_count", settings.data.get("default_variety_count", 5)))
     crops = input_data.get("crops", []) or []
     for crop_index, crop in enumerate(crops, 1):
         name = str(crop.get("plant_name") or crop.get("name")).strip()
-        generated_lengths = _generated_lengths(generated)  # ADDED
-        try:  # ADDED
-            _generate_one_crop(settings, crop, crop_index, len(crops), default_variety_count, openai, methods, generated, provenance, generate_templates)  # ADDED
-        except Exception as exc:  # ADDED
-            _restore_generated_lengths(generated, generated_lengths)  # ADDED
-            _record_generation_failure(run_dir, provenance, "crop", name, exc)  # CHANGED
-            write_json(run_dir / "provenance.json", provenance)  # ADDED
-            continue  # ADDED
+        generated_lengths = _generated_lengths(generated)
+        try:
+            _generate_one_crop(settings, crop, crop_index, len(crops), default_variety_count, openai, methods, generated, provenance, generate_templates)
+        except Exception as exc:
+            _restore_generated_lengths(generated, generated_lengths)
+            _record_generation_failure(run_dir, provenance, "crop", name, exc)
+            write_json(run_dir / "provenance.json", provenance)
+            continue
 
 
-def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int, crop_count: int, default_variety_count: int, openai: OpenAIJsonClient, methods: list[dict[str, Any]], generated: dict[str, list[dict[str, Any]]], provenance: dict[str, Any], generate_templates: bool) -> None:  # ADDED
+def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int, crop_count: int, default_variety_count: int, openai: OpenAIJsonClient, methods: list[dict[str, Any]], generated: dict[str, list[dict[str, Any]]], provenance: dict[str, Any], generate_templates: bool) -> None:
         name = str(crop.get("plant_name") or crop.get("name")).strip()
         requested_varieties = int(crop.get("variety_count") or default_variety_count)
         print(f"Generating crop {crop_index}/{crop_count}: {name}", flush=True)
@@ -487,7 +487,7 @@ def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int
                 "Numeric and integer fields must be in the requested units, never text. "
                 "Lifecycle flags must be coherent, method flags must match allowed planting methods, and default_planting_method must be a concrete allowed method. "
                 "Return real named cultivars/varieties only; never placeholders such as '<crop> variety 1', 'generic', 'standard', or crop-name-only varieties. "
-                "Set variety.maturity_class only when a supplied variety source explicitly supports early, mid, or late maturity; otherwise return an empty string. "  # ADDED
+                "Set variety.maturity_class only when a supplied variety source explicitly supports early, mid, or late maturity; otherwise return an empty string. "
                 "Do not include planting methods (such as propagation-by-cutting) unless the crop is normally grown using the method. "
                 "provenance.field_sources must cite exact supplied strings from allowed_provenance_references for required provenance fields; do not cite invented estimate labels."
             ),
@@ -516,15 +516,15 @@ def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int
         varieties = result.get("varieties", [])[:requested_varieties]
         print(f"  - Varieties generated: {len(varieties)}", flush=True)
         for variety in varieties:
-            variety_row = {  # CHANGED
+            variety_row = {
                 "plant_name": row["plant_name"],
                 "variety_name": variety["variety_name"],
                 "overrides": _override_pairs_to_dict(variety.get("overrides") or {}),
-            }  # CHANGED
-            maturity_class = str(variety.get("maturity_class") or "").strip().casefold()  # ADDED
-            if maturity_class and _has_explicit_variety_sources(variety):  # CHANGED
-                variety_row["maturity_class"] = maturity_class  # ADDED
-            generated["PlantVarieties"].append(variety_row)  # CHANGED
+            }
+            maturity_class = str(variety.get("maturity_class") or "").strip().casefold()
+            if maturity_class and _has_explicit_variety_sources(variety):
+                variety_row["maturity_class"] = maturity_class
+            generated["PlantVarieties"].append(variety_row)
         crop_methods = [m for m in methods if m["method_id"] in set(allowed_method_ids)]
         if not generate_templates:
             print("  - Plant task templates skipped; scheduler defaults will be used", flush=True)  # template opt-in
@@ -582,13 +582,13 @@ def _generate_task_template(openai: OpenAIJsonClient, plant_row: dict[str, Any],
     return _merge_template_polish(skeleton, result), trace
 
 
-def _generate_companions(input_data: dict[str, Any], openai: OpenAIJsonClient, generated: dict[str, list[dict[str, Any]]], provenance: dict[str, Any], run_dir: Path) -> None:  # CHANGED
+def _generate_companions(input_data: dict[str, Any], openai: OpenAIJsonClient, generated: dict[str, list[dict[str, Any]]], provenance: dict[str, Any], run_dir: Path) -> None:
     for item in input_data.get("companions", []) or []:
         p1 = str(item["p1"]).strip()
         p2 = str(item["p2"]).strip()
-        label = f"{p1} / {p2}"  # ADDED
-        generated_lengths = _generated_lengths(generated)  # ADDED
-        try:  # ADDED
+        label = f"{p1} / {p2}"
+        generated_lengths = _generated_lengths(generated)
+        try:
             print(f"Generating companion evidence: {p1} / {p2}")
             source_values = source_values_from_input(item)
             result, trace = _call_openai_with_retry(
@@ -642,11 +642,11 @@ def _generate_companions(input_data: dict[str, Any], openai: OpenAIJsonClient, g
             evidence = result["evidence"]
             generated["Companions"].append(companion)
             generated["CompanionEvidence"].append({"p1": companion["p1"], "p2": companion["p2"], **evidence})
-        except Exception as exc:  # ADDED
-            _restore_generated_lengths(generated, generated_lengths)  # ADDED
-            _record_generation_failure(run_dir, provenance, "companion", label, exc)  # ADDED
-            write_json(run_dir / "provenance.json", provenance)  # ADDED
-            continue  # ADDED
+        except Exception as exc:
+            _restore_generated_lengths(generated, generated_lengths)
+            _record_generation_failure(run_dir, provenance, "companion", label, exc)
+            write_json(run_dir / "provenance.json", provenance)
+            continue
 
 
 def _generate_sowing_windows(
@@ -665,7 +665,7 @@ def _generate_sowing_windows(
     allowed_categories = load_plant_allowed_categories(settings.db_path)
     allowed_categories.update(_generated_allowed_categories(generated))
     completed = {
-        _sowing_window_identity_key(row)  # CHANGED
+        _sowing_window_identity_key(row)
         for row in generated.get("PlantingWindowReferences", [])
     }
     print(f"Generating sowing-window references for {len(plants)} crop(s)", flush=True)
@@ -686,8 +686,8 @@ def _generate_sowing_windows(
             print(f"  - Skipping {plant_name}: no cities selected", flush=True)
             continue
         print(f"  - Sowing windows {index}/{len(plants)}: {plant_name} across {len(selected_cities)} city/cities", flush=True)
-        generated_lengths = _generated_lengths(generated)  # ADDED
-        try:  # ADDED
+        generated_lengths = _generated_lengths(generated)
+        try:
             source_values = _sowing_window_source_values(input_data, plant_name)
             result, trace = _call_openai_with_retry(
                 openai,
@@ -718,22 +718,22 @@ def _generate_sowing_windows(
                 }, indent=2),
             )
             provenance["traces"].append(trace.redacted())
-            city_by_name = _unique_cities_by_name(selected_cities)  # ADDED
-            rows = [_attach_window_city_geography(normalize_window_row(row, plant_name), city_by_name) for row in result.get("windows", [])]  # CHANGED
+            city_by_name = _unique_cities_by_name(selected_cities)
+            rows = [_attach_window_city_geography(normalize_window_row(row, plant_name), city_by_name) for row in result.get("windows", [])]
             for row in rows:
-                key = _sowing_window_identity_key(row)  # CHANGED
+                key = _sowing_window_identity_key(row)
                 if key in completed:
                     continue
                 generated["PlantingWindowReferences"].append(row)
                 completed.add(key)
-            provenance["tables"].setdefault("PlantingWindowReferences", {})[plant_name] = {"cities": [_city_identity_label(city) for city in selected_cities]}  # CHANGED
+            provenance["tables"].setdefault("PlantingWindowReferences", {})[plant_name] = {"cities": [_city_identity_label(city) for city in selected_cities]}
             _write_generated_checkpoint(run_dir, generated, {"PlantingWindowReferences"})
             write_json(run_dir / "provenance.json", provenance)
-        except Exception as exc:  # ADDED
-            _restore_generated_lengths(generated, generated_lengths)  # ADDED
-            _record_generation_failure(run_dir, provenance, "sowing_window", plant_name, exc)  # ADDED
-            write_json(run_dir / "provenance.json", provenance)  # ADDED
-            continue  # ADDED
+        except Exception as exc:
+            _restore_generated_lengths(generated, generated_lengths)
+            _record_generation_failure(run_dir, provenance, "sowing_window", plant_name, exc)
+            write_json(run_dir / "provenance.json", provenance)
+            continue
 
 
 def _sowing_window_config(input_data: dict[str, Any], settings: Settings) -> dict[str, Any]:
@@ -764,7 +764,7 @@ def _sowing_window_plants(settings: Settings, generated: dict[str, list[dict[str
         key = normalize_key(name)
         if key in seen:
             continue
-        if allow and normalize_key(name) not in allow:  # CHANGED
+        if allow and normalize_key(name) not in allow:
             continue
         if not usable_crop_for_sowing_windows(plant, methods_by_id):
             continue
@@ -780,7 +780,7 @@ def _sowing_window_cities(settings: Settings, generated: dict[str, list[dict[str
     seen = set()
     for city in cities:
         name = str(city.get("city_name") or "")
-        key = _city_identity_key(city)  # CHANGED
+        key = _city_identity_key(city)
         if key in seen:
             continue
         if allow and key not in allow:
@@ -817,7 +817,7 @@ def _sowing_window_methods_for_crop(plant: dict[str, Any], methods: list[dict[st
 def _city_window_context(city: dict[str, Any]) -> dict[str, Any]:
     return {
         "city_name": city.get("city_name"),
-        **_city_geography_fields(city),  # ADDED
+        **_city_geography_fields(city),
         "gdd_annual": city.get("gdd_annual"),
         "gdd_base_c": city.get("gdd_base_c"),
         "last_spring_frost_p50_doy": city.get("last_spring_frost_p50_doy") or city.get("last_spring_frost_doy"),
@@ -830,28 +830,28 @@ def _city_window_context(city: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _unique_cities_by_name(cities: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:  # ADDED
-    grouped: dict[str, list[dict[str, Any]]] = {}  # ADDED
-    for city in cities:  # ADDED
-        grouped.setdefault(normalize_key(city.get("city_name")), []).append(city)  # ADDED
-    return {key: rows[0] for key, rows in grouped.items() if len(rows) == 1}  # ADDED
+def _unique_cities_by_name(cities: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for city in cities:
+        grouped.setdefault(normalize_key(city.get("city_name")), []).append(city)
+    return {key: rows[0] for key, rows in grouped.items() if len(rows) == 1}
 
 
-def _attach_window_city_geography(row: dict[str, Any], city_by_name: dict[str, dict[str, Any]]) -> dict[str, Any]:  # ADDED
-    city = city_by_name.get(normalize_key(row.get("city_name")))  # ADDED
-    if city:  # ADDED
-        row.update(_city_geography_fields(city))  # ADDED
-    return row  # ADDED
+def _attach_window_city_geography(row: dict[str, Any], city_by_name: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    city = city_by_name.get(normalize_key(row.get("city_name")))
+    if city:
+        row.update(_city_geography_fields(city))
+    return row
 
 
-def _sowing_window_identity_key(row: dict[str, Any]) -> tuple[Any, ...]:  # ADDED
-    return (  # ADDED
-        normalize_key(row.get("plant_name")),  # ADDED
-        *_city_identity_key(row),  # ADDED
-        str(row.get("method_id")),  # ADDED
-        str(row.get("stage")),  # ADDED
-        str(row.get("window_label")),  # ADDED
-    )  # ADDED
+def _sowing_window_identity_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        normalize_key(row.get("plant_name")),
+        *_city_identity_key(row),
+        str(row.get("method_id")),
+        str(row.get("stage")),
+        str(row.get("window_label")),
+    )
 
 
 def _monthly_mean(city: dict[str, Any], month: int) -> float | None:
@@ -1352,11 +1352,11 @@ def _validate_crop_result(result: dict[str, Any], source_values: set[str], metho
     if not result.get("allowed_method_categories"):
         errors.append("allowed_method_categories is required.")
     errors.extend(_validate_allowed_method_ids(result, methods or []))
-    errors.extend(_validate_varieties(result.get("varieties"), str(row.get("plant_name") or ""), source_values))  # CHANGED
+    errors.extend(_validate_varieties(result.get("varieties"), str(row.get("plant_name") or ""), source_values))
     return errors
 
 
-def _validate_varieties(varieties: Any, plant_name: str, source_values: set[str] | None = None) -> list[str]:  # CHANGED
+def _validate_varieties(varieties: Any, plant_name: str, source_values: set[str] | None = None) -> list[str]:
     errors: list[str] = []
     if not isinstance(varieties, list):
         return ["varieties must be a list."]
@@ -1379,29 +1379,29 @@ def _validate_varieties(varieties: Any, plant_name: str, source_values: set[str]
             errors.append(f"{prefix}.variety_name must be a real cultivar/variety, not the crop name.")
         if _is_placeholder_variety_name(name, plant_name):
             errors.append(f"{prefix}.variety_name appears to be a placeholder: {name}")
-        maturity_class = str(variety.get("maturity_class") or "").strip().casefold()  # ADDED
-        if maturity_class and maturity_class not in {"early", "mid", "late"}:  # ADDED
-            errors.append(f"{prefix}.maturity_class must be early, mid, or late.")  # ADDED
-        if maturity_class in {"early", "mid", "late"}:  # ADDED
-            errors.extend(_validate_variety_maturity_sources(prefix, variety, source_values))  # ADDED
+        maturity_class = str(variety.get("maturity_class") or "").strip().casefold()
+        if maturity_class and maturity_class not in {"early", "mid", "late"}:
+            errors.append(f"{prefix}.maturity_class must be early, mid, or late.")
+        if maturity_class in {"early", "mid", "late"}:
+            errors.extend(_validate_variety_maturity_sources(prefix, variety, source_values))
     return errors
 
 
-def _has_explicit_variety_sources(variety: dict[str, Any]) -> bool:  # ADDED
-    return any(str(source).strip() for source in (variety.get("sources") or []))  # ADDED
+def _has_explicit_variety_sources(variety: dict[str, Any]) -> bool:
+    return any(str(source).strip() for source in (variety.get("sources") or []))
 
 
-def _validate_variety_maturity_sources(prefix: str, variety: dict[str, Any], source_values: set[str] | None) -> list[str]:  # ADDED
-    sources = [str(source).strip() for source in (variety.get("sources") or []) if str(source).strip()]  # ADDED
-    if not sources:  # ADDED
-        return [f"{prefix}.maturity_class requires at least one explicit source in {prefix}.sources."]  # ADDED
-    if source_values is None:  # ADDED
-        return []  # ADDED
-    return [  # ADDED
-        f"{prefix}.sources references an input source/note that was not supplied: {source}"  # ADDED
-        for source in sources  # ADDED
-        if not source_ref_allowed(source, source_values)  # ADDED
-    ]  # ADDED
+def _validate_variety_maturity_sources(prefix: str, variety: dict[str, Any], source_values: set[str] | None) -> list[str]:
+    sources = [str(source).strip() for source in (variety.get("sources") or []) if str(source).strip()]
+    if not sources:
+        return [f"{prefix}.maturity_class requires at least one explicit source in {prefix}.sources."]
+    if source_values is None:
+        return []
+    return [
+        f"{prefix}.sources references an input source/note that was not supplied: {source}"
+        for source in sources
+        if not source_ref_allowed(source, source_values)
+    ]
 
 
 def _is_placeholder_variety_name(name: str, plant_name: str) -> bool:

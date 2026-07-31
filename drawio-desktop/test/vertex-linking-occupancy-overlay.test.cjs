@@ -1,278 +1,278 @@
-const assert = require("node:assert/strict"); // NEW
-const fs = require("node:fs"); // NEW
-const path = require("node:path"); // NEW
-const test = require("node:test"); // NEW
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const test = require("node:test");
 
-const PLUGIN_PATH = path.join( // NEW
-    __dirname, // NEW
-    "..", // NEW
-    "drawio", // NEW
-    "src", // NEW
-    "main", // NEW
-    "webapp", // NEW
-    "plugins", // NEW
-    "garden_planner_plugins", // NEW
-    "Vertex_Linking_Standalone.js" // NEW
-); // NEW
+const PLUGIN_PATH = path.join(
+    __dirname,
+    "..",
+    "drawio",
+    "src",
+    "main",
+    "webapp",
+    "plugins",
+    "garden_planner_plugins",
+    "Vertex_Linking_Standalone.js"
+);
 
-function readSource() { // NEW
-    return fs.readFileSync(PLUGIN_PATH, "utf8"); // NEW
-} // NEW
+function readSource() {
+    return fs.readFileSync(PLUGIN_PATH, "utf8");
+}
 
-function sourceBetween(source, startMarker, endMarker) { // NEW
-    const startIndex = source.indexOf(startMarker); // NEW
-    assert.notEqual(startIndex, -1, "Missing start marker: " + startMarker); // NEW
-    const endIndex = source.indexOf(endMarker, startIndex); // NEW
-    assert.notEqual(endIndex, -1, "Missing end marker: " + endMarker); // NEW
-    return source.slice(startIndex, endIndex); // NEW
-} // NEW
+function sourceBetween(source, startMarker, endMarker) {
+    const startIndex = source.indexOf(startMarker);
+    assert.notEqual(startIndex, -1, "Missing start marker: " + startMarker);
+    const endIndex = source.indexOf(endMarker, startIndex);
+    assert.notEqual(endIndex, -1, "Missing end marker: " + endMarker);
+    return source.slice(startIndex, endIndex);
+}
 
-test("lane overlay headers do not use browser title tooltips", () => { // NEW
-    const source = readSource(); // NEW
-    const headerSource = sourceBetween(source, "function createLaneHeader", "function renderCardView"); // NEW
+test("lane overlay headers do not use browser title tooltips", () => {
+    const source = readSource();
+    const headerSource = sourceBetween(source, "function createLaneHeader", "function renderCardView");
 
-    assert.doesNotMatch(headerSource, /setAttribute\('title'|\.title\s*=/); // NEW
-    assert.match(headerSource, /toggle\.textContent = collapsed \? '\+' : '-'/); // NEW
-    assert.match(headerSource, /setLaneGroupCollapsed\(group, !isLaneGroupCollapsed\(group\)\)/); // NEW
-}); // NEW
+    assert.doesNotMatch(headerSource, /setAttribute\('title'|\.title\s*=/);
+    assert.match(headerSource, /toggle\.textContent = collapsed \? '\+' : '-'/);
+    assert.match(headerSource, /setLaneGroupCollapsed\(group, !isLaneGroupCollapsed\(group\)\)/);
+});
 
-test("planting overlay has Cards, Schedule, and Occupancy modes", () => { // NEW
-    const source = readSource(); // NEW
+test("planting overlay has Cards, Schedule, and Occupancy modes", () => {
+    const source = readSource();
 
-    assert.match(source, /const MODE_OCCUPANCY = 'occupancy';/); // NEW
-    assert.match(source, /createModeButton\(entry, 'Cards', MODE_CARDS\)/); // NEW
-    assert.match(source, /createModeButton\(entry, 'Schedule', MODE_SCHEDULE\)/); // NEW
-    assert.match(source, /createModeButton\(entry, 'Occupancy', MODE_OCCUPANCY\)/); // NEW
-    assert.match(source, /activeMode = mode === MODE_OCCUPANCY \? MODE_OCCUPANCY : \(mode === MODE_SCHEDULE \? MODE_SCHEDULE : MODE_CARDS\)/); // NEW
-}); // NEW
+    assert.match(source, /const MODE_OCCUPANCY = 'occupancy';/);
+    assert.match(source, /createModeButton\(entry, 'Cards', MODE_CARDS\)/);
+    assert.match(source, /createModeButton\(entry, 'Schedule', MODE_SCHEDULE\)/);
+    assert.match(source, /createModeButton\(entry, 'Occupancy', MODE_OCCUPANCY\)/);
+    assert.match(source, /activeMode = mode === MODE_OCCUPANCY \? MODE_OCCUPANCY : \(mode === MODE_SCHEDULE \? MODE_SCHEDULE : MODE_CARDS\)/);
+});
 
-test("schedule-only planting overlays expose Occupancy without linked tasks", () => { // NEW
-    const source = readSource(); // NEW
+test("schedule-only planting overlays expose Occupancy without linked tasks", () => {
+    const source = readSource();
 
-    assert.match(source, /function createScheduleOnlyHeader\(entry\)[\s\S]*createModeButton\(entry, 'Schedule', MODE_SCHEDULE, effectiveMode\)/); // NEW
-    assert.match(source, /function createScheduleOnlyHeader\(entry\)[\s\S]*createModeButton\(entry, 'Occupancy', MODE_OCCUPANCY, effectiveMode\)/); // NEW
-    assert.match(source, /if \(activeMode === MODE_OCCUPANCY\) \{[\s\S]*renderOccupancyView\(entry, body\);[\s\S]*\}/); // NEW
-}); // NEW
+    assert.match(source, /function createScheduleOnlyHeader\(entry\)[\s\S]*createModeButton\(entry, 'Schedule', MODE_SCHEDULE, effectiveMode\)/);
+    assert.match(source, /function createScheduleOnlyHeader\(entry\)[\s\S]*createModeButton\(entry, 'Occupancy', MODE_OCCUPANCY, effectiveMode\)/);
+    assert.match(source, /if \(activeMode === MODE_OCCUPANCY\) \{[\s\S]*renderOccupancyView\(entry, body\);[\s\S]*\}/);
+});
 
-test("schedule action button mirrors Trellis user planting permissions", () => { // NEW
-    const source = readSource(); // NEW
-    const helperSource = sourceBetween(source, "function canScheduleTilerGroup", "function getOccupancyNavigatorApi"); // NEW
-    const buttonSource = sourceBetween(source, "function createScheduleActionButton", "function createSetPlantActionButton"); // NEW
+test("schedule action button mirrors Trellis user planting permissions", () => {
+    const source = readSource();
+    const helperSource = sourceBetween(source, "function canScheduleTilerGroup", "function getOccupancyNavigatorApi");
+    const buttonSource = sourceBetween(source, "function createScheduleActionButton", "function createSetPlantActionButton");
 
-    assert.match(helperSource, /window\.Trellis && window\.Trellis\.users/); // NEW
-    assert.match(helperSource, /users\.isEnabled\(\)[\s\S]*users\.canManagePlanting\(cell\)/); // NEW
-    assert.match(buttonSource, /const allowed = canScheduleTilerGroup\(source\);/); // NEW
-    assert.match(buttonSource, /button\.title = scheduleActionButtonTitleFor\(source, opener, allowed\);/); // CHANGED
-    assert.match(buttonSource, /button\.disabled = !opener \|\| !allowed;/); // NEW
-    assert.match(buttonSource, /if \(!canScheduleTilerGroup\(liveSource\)\) return;/); // NEW
-}); // NEW
+    assert.match(helperSource, /window\.Trellis && window\.Trellis\.users/);
+    assert.match(helperSource, /users\.isEnabled\(\)[\s\S]*users\.canManagePlanting\(cell\)/);
+    assert.match(buttonSource, /const allowed = canScheduleTilerGroup\(source\);/);
+    assert.match(buttonSource, /button\.title = scheduleActionButtonTitleFor\(source, opener, allowed\);/);
+    assert.match(buttonSource, /button\.disabled = !opener \|\| !allowed;/);
+    assert.match(buttonSource, /if \(!canScheduleTilerGroup\(liveSource\)\) return;/);
+});
 
-test("schedule action button label reflects companion edit mode", () => { // ADDED
-    const source = readSource(); // ADDED
-    const helperSource = sourceBetween(source, "function existingCompanionSourceCell", "function createScheduleActionButton"); // ADDED
-    const buttonSource = sourceBetween(source, "function createScheduleActionButton", "function createSetPlantActionButton"); // ADDED
-    assert.match(helperSource, /String\(getAttr\(cell, 'derived_mode'\) \|\| ''\)\.trim\(\)\.toLowerCase\(\) !== 'companion'/); // ADDED
-    assert.match(helperSource, /const source = model\.getCell\(sourceId\);/); // ADDED
-    assert.match(helperSource, /return isTilerGroup\(source\) \? source : null;/); // ADDED
-    assert.match(helperSource, /if \(hasTilerSchedule\(source\) && existingCompanionSourceCell\(source\)\) return 'Edit companion';/); // ADDED
-    assert.match(helperSource, /return hasTilerSchedule\(source\) \? 'Edit schedule' : 'Set schedule';/); // ADDED
-    assert.match(helperSource, /return 'Opens companion scheduling for this derived companion\.';/); // ADDED
-    assert.match(buttonSource, /button\.textContent = scheduleActionButtonLabelFor\(source\);/); // ADDED
-}); // ADDED
+test("schedule action button label reflects companion edit mode", () => {
+    const source = readSource();
+    const helperSource = sourceBetween(source, "function existingCompanionSourceCell", "function createScheduleActionButton");
+    const buttonSource = sourceBetween(source, "function createScheduleActionButton", "function createSetPlantActionButton");
+    assert.match(helperSource, /String\(getAttr\(cell, 'derived_mode'\) \|\| ''\)\.trim\(\)\.toLowerCase\(\) !== 'companion'/);
+    assert.match(helperSource, /const source = model\.getCell\(sourceId\);/);
+    assert.match(helperSource, /return isTilerGroup\(source\) \? source : null;/);
+    assert.match(helperSource, /if \(hasTilerSchedule\(source\) && existingCompanionSourceCell\(source\)\) return 'Edit companion';/);
+    assert.match(helperSource, /return hasTilerSchedule\(source\) \? 'Edit schedule' : 'Set schedule';/);
+    assert.match(helperSource, /return 'Opens companion scheduling for this derived companion\.';/);
+    assert.match(buttonSource, /button\.textContent = scheduleActionButtonLabelFor\(source\);/);
+});
 
-test("occupancy uses navigator API with selected-group fallback", () => { // NEW
-    const source = readSource(); // NEW
+test("occupancy uses navigator API with selected-group fallback", () => {
+    const source = readSource();
 
-    assert.match(source, /graph\.__trellisBedSuccessionNavigator\.getSelectedClusterOccupancy/); // NEW
-    assert.match(source, /const result = api\.getSelectedClusterOccupancy\(source\);/); // NEW
-    assert.match(source, /return fallbackOccupancyForSource\(source\);/); // NEW
-}); // NEW
+    assert.match(source, /graph\.__trellisBedSuccessionNavigator\.getSelectedClusterOccupancy/);
+    assert.match(source, /const result = api\.getSelectedClusterOccupancy\(source\);/);
+    assert.match(source, /return fallbackOccupancyForSource\(source\);/);
+});
 
-test("occupancy interval prefers transplant date, then sow date, and requires harvest end", () => { // NEW
-    const source = readSource(); // NEW
+test("occupancy interval prefers transplant date, then sow date, and requires harvest end", () => {
+    const source = readSource();
 
-    assert.match(source, /parseTaskOverlayDate\(getAttr\(cell, 'transplant_date'\)\) \|\| parseTaskOverlayDate\(getAttr\(cell, 'sow_date'\)\)/); // NEW
-    assert.match(source, /parseTaskOverlayDate\(getAttr\(cell, 'harvest_end'\)\)/); // NEW
-    assert.match(source, /parseTaskOverlayDate\(getAttr\(cell, 'lifespan_start'\)\)/); // ADDED
-    assert.match(source, /parseTaskOverlayDate\(getAttr\(cell, 'lifespan_end'\)\)/); // ADDED
-    assert.match(source, /if \(!start \|\| !end \|\| end\.dayNumber < start\.dayNumber\) return \{ startISO: null, endISO: null \};/); // NEW
-    assert.match(source, /renderOccupancyUnscheduledSection\(entry, body, unscheduledItems\);/); // NEW
-}); // NEW
+    assert.match(source, /parseTaskOverlayDate\(getAttr\(cell, 'transplant_date'\)\) \|\| parseTaskOverlayDate\(getAttr\(cell, 'sow_date'\)\)/);
+    assert.match(source, /parseTaskOverlayDate\(getAttr\(cell, 'harvest_end'\)\)/);
+    assert.match(source, /parseTaskOverlayDate\(getAttr\(cell, 'lifespan_start'\)\)/);
+    assert.match(source, /parseTaskOverlayDate\(getAttr\(cell, 'lifespan_end'\)\)/);
+    assert.match(source, /if \(!start \|\| !end \|\| end\.dayNumber < start\.dayNumber\) return \{ startISO: null, endISO: null \};/);
+    assert.match(source, /renderOccupancyUnscheduledSection\(entry, body, unscheduledItems\);/);
+});
 
-test("derived schedule actions are gated by schedule dates and annual turnover", () => { // ADDED
-    const source = readSource(); // ADDED
-    const helperSource = sourceBetween(source, "function createDerivedScheduleActionButton", "function hasAssignedPlant"); // ADDED
-    assert.match(helperSource, /button\.textContent = mode === 'turnover' \? 'Add Turnover' : 'Add Companion';/); // ADDED
-    assert.match(helperSource, /const hasDates = sourceOccupancyCompleteForDerived\(source\);/); // ADDED
-    assert.match(helperSource, /const annualOk = mode !== 'turnover' \|\| sourceIsAnnual\(source\);/); // ADDED
-    assert.match(helperSource, /await opener\(ui, liveSource, \{ mode \}\);/); // ADDED
-}); // ADDED
+test("derived schedule actions are gated by schedule dates and annual turnover", () => {
+    const source = readSource();
+    const helperSource = sourceBetween(source, "function createDerivedScheduleActionButton", "function hasAssignedPlant");
+    assert.match(helperSource, /button\.textContent = mode === 'turnover' \? 'Add Turnover' : 'Add Companion';/);
+    assert.match(helperSource, /const hasDates = sourceOccupancyCompleteForDerived\(source\);/);
+    assert.match(helperSource, /const annualOk = mode !== 'turnover' \|\| sourceIsAnnual\(source\);/);
+    assert.match(helperSource, /await opener\(ui, liveSource, \{ mode \}\);/);
+});
 
-test("occupancy relationship badges require companion overlap and expose turnover gaps by tooltip", () => { // CHANGED
-    const source = readSource(); // ADDED
-    const badgeSource = sourceBetween(source, "function renderOccupancyRelationshipBadges", "function renderOccupancyRow"); // ADDED
-    assert.match(badgeSource, /if \(rel\.mode === 'companion'\) \{/); // ADDED
-    assert.match(badgeSource, /if \(!occupancyRangesOverlap\(sourceRange, range\)\) return '';/); // CHANGED
-    assert.match(badgeSource, /makeRelationshipBadge\('companion ' \+ offset, '#166534'\)/); // ADDED
-    assert.match(badgeSource, /rel\.gapDays !== '' \? rel\.gapDays \+ 'd gap' : 'turnover'/); // ADDED
-    assert.match(badgeSource, /return 'Turnover relationship: ' \+ gap \+ '\.';/); // ADDED
-    assert.doesNotMatch(badgeSource, /makeRelationshipBadge\(gap, '#92400e'\)/); // ADDED
-    const rowSource = sourceBetween(source, "function renderOccupancyRow", "function renderScheduleRow"); // ADDED
-    assert.match(rowSource, /const relationshipTooltip = renderOccupancyRelationshipBadges\(entry, labelCell, item, range\);/); // ADDED
-    assert.match(rowSource, /row\.title = relationshipTooltip;/); // ADDED
-    assert.match(rowSource, /track\.title = relationshipTooltip;/); // ADDED
-}); // ADDED
+test("occupancy relationship badges require companion overlap and expose turnover gaps by tooltip", () => {
+    const source = readSource();
+    const badgeSource = sourceBetween(source, "function renderOccupancyRelationshipBadges", "function renderOccupancyRow");
+    assert.match(badgeSource, /if \(rel\.mode === 'companion'\) \{/);
+    assert.match(badgeSource, /if \(!occupancyRangesOverlap\(sourceRange, range\)\) return '';/);
+    assert.match(badgeSource, /makeRelationshipBadge\('companion ' \+ offset, '#166534'\)/);
+    assert.match(badgeSource, /rel\.gapDays !== '' \? rel\.gapDays \+ 'd gap' : 'turnover'/);
+    assert.match(badgeSource, /return 'Turnover relationship: ' \+ gap \+ '\.';/);
+    assert.doesNotMatch(badgeSource, /makeRelationshipBadge\(gap, '#92400e'\)/);
+    const rowSource = sourceBetween(source, "function renderOccupancyRow", "function renderScheduleRow");
+    assert.match(rowSource, /const relationshipTooltip = renderOccupancyRelationshipBadges\(entry, labelCell, item, range\);/);
+    assert.match(rowSource, /row\.title = relationshipTooltip;/);
+    assert.match(rowSource, /track\.title = relationshipTooltip;/);
+});
 
-test("occupancy rows select and reveal their planting group", () => { // NEW
-    const source = readSource(); // NEW
+test("occupancy rows select and reveal their planting group", () => {
+    const source = readSource();
 
-    assert.match(source, /function makeOccupancyRow\(entry, item\)[\s\S]*const cell = item && item\.cellId \? model\.getCell\(item\.cellId\) : null;/); // NEW
-    assert.match(source, /if \(cell && model\.isVertex\(cell\)\) selectAndReveal\(cell\);/); // NEW
-}); // NEW
+    assert.match(source, /function makeOccupancyRow\(entry, item\)[\s\S]*const cell = item && item\.cellId \? model\.getCell\(item\.cellId\) : null;/);
+    assert.match(source, /if \(cell && model\.isVertex\(cell\)\) selectAndReveal\(cell\);/);
+});
 
-test("role-card multi-selection dispatches to the multi-role link renderer", () => { // NEW
-    const source = readSource(); // NEW
-    const refreshSource = sourceBetween(source, "function refreshCurrentHighlight", "function assignStandardLinkLabelOffsets"); // NEW
-    const selectionSource = sourceBetween(source, "graph.getSelectionModel().addListener(mxEvent.CHANGE", "// -------------------- Context Menu Hook"); // NEW
+test("role-card multi-selection dispatches to the multi-role link renderer", () => {
+    const source = readSource();
+    const refreshSource = sourceBetween(source, "function refreshCurrentHighlight", "function assignStandardLinkLabelOffsets");
+    const selectionSource = sourceBetween(source, "graph.getSelectionModel().addListener(mxEvent.CHANGE", "// -------------------- Context Menu Hook");
 
-    assert.match(source, /function isRoleCard\(cell\) \{[\s\S]*role_card=1/); // NEW
-    assert.match(refreshSource, /const selected = selectedLinkableVertices\(\);/); // NEW
-    assert.match(refreshSource, /if \(selected\.length === 1\) \{[\s\S]*highlightLinked\(cell\);/); // NEW
-    assert.match(refreshSource, /if \(selected\.every\(isRoleCard\)\) \{[\s\S]*highlightLinkedRoleCards\(selected\);/); // NEW
-    assert.match(selectionSource, /refreshCurrentHighlight\(\);/); // NEW
-}); // NEW
+    assert.match(source, /function isRoleCard\(cell\) \{[\s\S]*role_card=1/);
+    assert.match(refreshSource, /const selected = selectedLinkableVertices\(\);/);
+    assert.match(refreshSource, /if \(selected\.length === 1\) \{[\s\S]*highlightLinked\(cell\);/);
+    assert.match(refreshSource, /if \(selected\.every\(isRoleCard\)\) \{[\s\S]*highlightLinkedRoleCards\(selected\);/);
+    assert.match(selectionSource, /refreshCurrentHighlight\(\);/);
+});
 
-test("selection visual refresh event rebuilds link and schedule overlays", () => { // NEW
-    const source = readSource(); // NEW
-    const selectionSource = sourceBetween(source, "graph.getSelectionModel().addListener(mxEvent.CHANGE", "// -------------------- Context Menu Hook"); // NEW
+test("selection visual refresh event rebuilds link and schedule overlays", () => {
+    const source = readSource();
+    const selectionSource = sourceBetween(source, "graph.getSelectionModel().addListener(mxEvent.CHANGE", "// -------------------- Context Menu Hook");
 
-    assert.match(source, /const TRELLIS_SELECTION_VISUALS_REFRESH_EVENT = 'trellisSelectionVisualsRefresh';/); // NEW
-    assert.match(selectionSource, /graph\.addListener\(TRELLIS_SELECTION_VISUALS_REFRESH_EVENT,\s*function \(\) \{[\s\S]*refreshCurrentHighlight\(\);[\s\S]*taskScheduleOverlay\.refresh\(\);/); // NEW
-}); // NEW
+    assert.match(source, /const TRELLIS_SELECTION_VISUALS_REFRESH_EVENT = 'trellisSelectionVisualsRefresh';/);
+    assert.match(selectionSource, /graph\.addListener\(TRELLIS_SELECTION_VISUALS_REFRESH_EVENT,\s*function \(\) \{[\s\S]*refreshCurrentHighlight\(\);[\s\S]*taskScheduleOverlay\.refresh\(\);/);
+});
 
-test("multi-selected role cards draw links without opening task overlays", () => { // NEW
-    const source = readSource(); // NEW
-    const multiRoleSource = sourceBetween(source, "function highlightLinkedRoleCards", "function highlightLinked(cell)"); // NEW
+test("multi-selected role cards draw links without opening task overlays", () => {
+    const source = readSource();
+    const multiRoleSource = sourceBetween(source, "function highlightLinkedRoleCards", "function highlightLinked(cell)");
 
-    assert.match(multiRoleSource, /clearAllHighlights\(\);/); // NEW
-    assert.match(multiRoleSource, /pruneBrokenLinks\(cell\);/); // NEW
-    assert.match(multiRoleSource, /highlight\(cell, selIsPrimary \? YELLOW : RED\);/); // NEW
-    assert.match(multiRoleSource, /if \(linkedIds\.size === 0\) continue;/); // NEW
-    assert.match(multiRoleSource, /visibleLinkOverlayRecords\.push\(\{ source: cell, other, exitHint, edgeColor, label, labelOffset: \{ x: 0, y: 0 \} \}\);/); // NEW
-    assert.match(multiRoleSource, /linkOverlays\.setLinkOverlay\(record\.source, record\.other, record\.exitHint, record\.edgeColor, record\.label, record\.labelOffset\);/); // NEW
-    assert.doesNotMatch(multiRoleSource, /taskScheduleOverlay\.show/); // NEW
-    assert.doesNotMatch(multiRoleSource, /taskScheduleOverlay\.showScheduleOnly/); // NEW
-}); // NEW
+    assert.match(multiRoleSource, /clearAllHighlights\(\);/);
+    assert.match(multiRoleSource, /pruneBrokenLinks\(cell\);/);
+    assert.match(multiRoleSource, /highlight\(cell, selIsPrimary \? YELLOW : RED\);/);
+    assert.match(multiRoleSource, /if \(linkedIds\.size === 0\) continue;/);
+    assert.match(multiRoleSource, /visibleLinkOverlayRecords\.push\(\{ source: cell, other, exitHint, edgeColor, label, labelOffset: \{ x: 0, y: 0 \} \}\);/);
+    assert.match(multiRoleSource, /linkOverlays\.setLinkOverlay\(record\.source, record\.other, record\.exitHint, record\.edgeColor, record\.label, record\.labelOffset\);/);
+    assert.doesNotMatch(multiRoleSource, /taskScheduleOverlay\.show/);
+    assert.doesNotMatch(multiRoleSource, /taskScheduleOverlay\.showScheduleOnly/);
+});
 
-test("linked task navigation delegates hidden-card paging to the task manager", () => { // NEW
-    const source = readSource(); // NEW
-    const revealSource = sourceBetween(source, "function revealKanbanCardForNavigation", "// Works for arbitrarily nested children"); // NEW
+test("linked task navigation delegates hidden-card paging to the task manager", () => {
+    const source = readSource();
+    const revealSource = sourceBetween(source, "function revealKanbanCardForNavigation", "// Works for arbitrarily nested children");
 
-    assert.match(revealSource, /const pagingApi = graph\.__trellisTaskPagingApi;/); // NEW
-    assert.match(revealSource, /pagingApi\.revealCard\(card\)/); // NEW
-    assert.doesNotMatch(revealSource, /setCellAttrUndoable\(lane, 'page_index'/); // NEW
-    assert.doesNotMatch(source, /function getLanePageSizeForReveal/); // NEW
-}); // NEW
+    assert.match(revealSource, /const pagingApi = graph\.__trellisTaskPagingApi;/);
+    assert.match(revealSource, /pagingApi\.revealCard\(card\)/);
+    assert.doesNotMatch(revealSource, /setCellAttrUndoable\(lane, 'page_index'/);
+    assert.doesNotMatch(source, /function getLanePageSizeForReveal/);
+});
 
-test("plant-tiler sibling task highlights use blue without changing direct non-task red", () => { // CHANGE
-    const source = readSource(); // NEW
-    const cardSiblingSource = sourceBetween(source, "function collectSameBoardLinkedKanbanCards", "function collectLinkedTaskCardSiblingIdsForTiler"); // CHANGE
-    const tilerSiblingSource = sourceBetween(source, "function collectLinkedTaskCardSiblingIdsForTiler", "function collectLinkedKanbanCardsForSource"); // CHANGE
-    const directHighlightSource = sourceBetween(source, "const sameBoardLinkedCards = collectSameBoardLinkedKanbanCards", "// If link touches a Kanban task card"); // CHANGE
+test("plant-tiler sibling task highlights use blue without changing direct non-task red", () => {
+    const source = readSource();
+    const cardSiblingSource = sourceBetween(source, "function collectSameBoardLinkedKanbanCards", "function collectLinkedTaskCardSiblingIdsForTiler");
+    const tilerSiblingSource = sourceBetween(source, "function collectLinkedTaskCardSiblingIdsForTiler", "function collectLinkedKanbanCardsForSource");
+    const directHighlightSource = sourceBetween(source, "const sameBoardLinkedCards = collectSameBoardLinkedKanbanCards", "// If link touches a Kanban task card");
 
-    assert.match(source, /const RED = '#ff0000';/); // NEW
-    assert.match(source, /const SAME_CROP_HIGHLIGHT = '#2563eb';/); // NEW
-    assert.match(cardSiblingSource, /if \(!isTilerGroup\(source\)\) continue;/); // CHANGE
-    assert.match(tilerSiblingSource, /if \(!isTilerGroup\(selectedTiler\)\) return new Set\(\);/); // CHANGE
-    assert.match(tilerSiblingSource, /if \(!isKanbanCard\(target\)\) continue;/); // CHANGE
-    assert.match(tilerSiblingSource, /if \(!findKanbanBoardAncestor\(target\)\) continue;/); // CHANGE
-    assert.match(tilerSiblingSource, /if \(cards\.length < 2\) return new Set\(\);/); // CHANGE
-    assert.match(directHighlightSource, /const selectedTilerTaskSiblingIds = collectLinkedTaskCardSiblingIdsForTiler\(cell, targets\);/); // CHANGE
-    assert.match(directHighlightSource, /const linkedTargetHighlight = selectedTilerTaskSiblingIds\.has\(other\.id\) \? SAME_CROP_HIGHLIGHT : RED;/); // CHANGE
-    assert.match(directHighlightSource, /highlight\(other, otherIsPrimary \? YELLOW : linkedTargetHighlight\);/); // CHANGE
-    assert.match(source, /for \(const otherCard of sameBoardLinkedCards\)[\s\S]*highlight\(otherCard, otherIsPrimary \? YELLOW : SAME_CROP_HIGHLIGHT, 1\.5\);/); // NEW
-}); // CHANGE
+    assert.match(source, /const RED = '#ff0000';/);
+    assert.match(source, /const SAME_CROP_HIGHLIGHT = '#2563eb';/);
+    assert.match(cardSiblingSource, /if \(!isTilerGroup\(source\)\) continue;/);
+    assert.match(tilerSiblingSource, /if \(!isTilerGroup\(selectedTiler\)\) return new Set\(\);/);
+    assert.match(tilerSiblingSource, /if \(!isKanbanCard\(target\)\) continue;/);
+    assert.match(tilerSiblingSource, /if \(!findKanbanBoardAncestor\(target\)\) continue;/);
+    assert.match(tilerSiblingSource, /if \(cards\.length < 2\) return new Set\(\);/);
+    assert.match(directHighlightSource, /const selectedTilerTaskSiblingIds = collectLinkedTaskCardSiblingIdsForTiler\(cell, targets\);/);
+    assert.match(directHighlightSource, /const linkedTargetHighlight = selectedTilerTaskSiblingIds\.has\(other\.id\) \? SAME_CROP_HIGHLIGHT : RED;/);
+    assert.match(directHighlightSource, /highlight\(other, otherIsPrimary \? YELLOW : linkedTargetHighlight\);/);
+    assert.match(source, /for \(const otherCard of sameBoardLinkedCards\)[\s\S]*highlight\(otherCard, otherIsPrimary \? YELLOW : SAME_CROP_HIGHLIGHT, 1\.5\);/);
+});
 
-test("standard link overlays use the native draw.io overlay pane", () => { // NEW
-    const source = readSource(); // NEW
-    const linkOverlaySource = sourceBetween(source, "const linkOverlays = (function () {", "function formatLinkOverlayBadgeLabel"); // NEW
+test("standard link overlays use the native draw.io overlay pane", () => {
+    const source = readSource();
+    const linkOverlaySource = sourceBetween(source, "const linkOverlays = (function () {", "function formatLinkOverlayBadgeLabel");
 
-    assert.match(linkOverlaySource, /function getOverlayPane\(\) \{[\s\S]*const view = graph\.getView && graph\.getView\(\);[\s\S]*return view && view\.getOverlayPane \? view\.getOverlayPane\(\) : null;/); // NEW
-    assert.doesNotMatch(linkOverlaySource, /ensureGraphOverlaySvgLayer\('connection'\)/); // NEW
-}); // NEW
+    assert.match(linkOverlaySource, /function getOverlayPane\(\) \{[\s\S]*const view = graph\.getView && graph\.getView\(\);[\s\S]*return view && view\.getOverlayPane \? view\.getOverlayPane\(\) : null;/);
+    assert.doesNotMatch(linkOverlaySource, /ensureGraphOverlaySvgLayer\('connection'\)/);
+});
 
-test("standard link overlays navigate on plain left click without a vertex shift fallback", () => { // CHANGE
-    const source = readSource(); // NEW
-    const labelClickSource = sourceBetween(source, "txt.node.__manualLinkMeta = {", "entry.labelElt = txt;"); // NEW
-    const lineClickSource = sourceBetween(source, "poly.node.__manualLinkMeta = {", "entry.poly = poly;"); // NEW
+test("standard link overlays navigate on plain left click without a vertex shift fallback", () => {
+    const source = readSource();
+    const labelClickSource = sourceBetween(source, "txt.node.__manualLinkMeta = {", "entry.labelElt = txt;");
+    const lineClickSource = sourceBetween(source, "poly.node.__manualLinkMeta = {", "entry.poly = poly;");
 
-    assert.match(labelClickSource, /mxEvent\.addListener\(txt\.node, 'mousedown', function \(evt\) \{[\s\S]*const isLeft = \(evt\.button === 0\);[\s\S]*if \(isLeft\) \{[\s\S]*navigateOverlayLink\(/); // NEW
-    assert.match(lineClickSource, /mxEvent\.addListener\(poly\.node, 'mousedown', function \(evt\) \{[\s\S]*const isLeft = \(evt\.button === 0\);[\s\S]*if \(isLeft\) \{[\s\S]*navigateOverlayLink\(/); // NEW
-    assert.doesNotMatch(labelClickSource, /isShift|isShiftDown/); // NEW
-    assert.doesNotMatch(lineClickSource, /isShift|isShiftDown/); // NEW
-    assert.doesNotMatch(source, /tryNavigateSingleLinkedSelection|getValidLinkedVertices/); // CHANGE
-    assert.doesNotMatch(source, /Shift\+Click cycles between linked vertices/); // CHANGE
-}); // NEW
+    assert.match(labelClickSource, /mxEvent\.addListener\(txt\.node, 'mousedown', function \(evt\) \{[\s\S]*const isLeft = \(evt\.button === 0\);[\s\S]*if \(isLeft\) \{[\s\S]*navigateOverlayLink\(/);
+    assert.match(lineClickSource, /mxEvent\.addListener\(poly\.node, 'mousedown', function \(evt\) \{[\s\S]*const isLeft = \(evt\.button === 0\);[\s\S]*if \(isLeft\) \{[\s\S]*navigateOverlayLink\(/);
+    assert.doesNotMatch(labelClickSource, /isShift|isShiftDown/);
+    assert.doesNotMatch(lineClickSource, /isShift|isShiftDown/);
+    assert.doesNotMatch(source, /tryNavigateSingleLinkedSelection|getValidLinkedVertices/);
+    assert.doesNotMatch(source, /Shift\+Click cycles between linked vertices/);
+});
 
-test("task overlay guide lines keep the custom connection layer", () => { // NEW
-    const source = readSource(); // NEW
-    const taskOverlaySource = sourceBetween(source, "const taskScheduleOverlay = (function () {", "function getPanelHost"); // NEW
+test("task overlay guide lines keep the custom connection layer", () => {
+    const source = readSource();
+    const taskOverlaySource = sourceBetween(source, "const taskScheduleOverlay = (function () {", "function getPanelHost");
 
-    assert.match(taskOverlaySource, /ensureGraphOverlaySvgLayer\('connection'\)/); // NEW
-}); // NEW
+    assert.match(taskOverlaySource, /ensureGraphOverlaySvgLayer\('connection'\)/);
+});
 
-test("selected linked vertices draw direct connections even when task overlay is active", () => { // NEW
-    const source = readSource(); // NEW
-    const drawDecisionSource = sourceBetween(source, "// Decide visibility using internal lane-based policy", "for (const otherCard of sameBoardLinkedCards)"); // NEW
+test("selected linked vertices draw direct connections even when task overlay is active", () => {
+    const source = readSource();
+    const drawDecisionSource = sourceBetween(source, "// Decide visibility using internal lane-based policy", "for (const otherCard of sameBoardLinkedCards)");
 
-    assert.match(drawDecisionSource, /const shouldShow = shouldShowEdgeInternal\(cell, other\);/); // NEW
-    assert.match(drawDecisionSource, /if \(shouldShow\) \{/); // NEW
-    assert.match(drawDecisionSource, /linkOverlays\.setLinkOverlay\(/); // NEW
-    assert.doesNotMatch(drawDecisionSource, /!taskOverlayActive/); // NEW
-}); // NEW
+    assert.match(drawDecisionSource, /const shouldShow = shouldShowEdgeInternal\(cell, other\);/);
+    assert.match(drawDecisionSource, /if \(shouldShow\) \{/);
+    assert.match(drawDecisionSource, /linkOverlays\.setLinkOverlay\(/);
+    assert.doesNotMatch(drawDecisionSource, /!taskOverlayActive/);
+});
 
-test("standard link endpoints use a five pixel center offset", () => { // NEW
-    const source = readSource(); // NEW
-    const helperSource = sourceBetween(source, "function avoidStandardLinkEndpointCenterT", "function anchorStandardLinkEndpointOnSide"); // NEW
-    const computePointsSource = sourceBetween(source, "function computePointsFor(entry)", "// Create or update text label"); // NEW
+test("standard link endpoints use a five pixel center offset", () => {
+    const source = readSource();
+    const helperSource = sourceBetween(source, "function avoidStandardLinkEndpointCenterT", "function anchorStandardLinkEndpointOnSide");
+    const computePointsSource = sourceBetween(source, "function computePointsFor(entry)", "// Create or update text label");
 
-    assert.match(source, /const LINK_ENDPOINT_CENTER_OFFSET_PX = 5;/); // NEW
-    assert.match(helperSource, /LINK_ENDPOINT_CENTER_OFFSET_PX/); // NEW
-    assert.match(helperSource, /Math\.abs\(clampedT - 0\.5\)/); // NEW
-    assert.match(computePointsSource, /anchorStandardLinkEndpointOnSide\(srcC, hint\.side, hint\.t, 4\)/); // NEW
-    assert.match(computePointsSource, /anchorStandardLinkEndpointOnSide\(dstC, trgSide, 0\.5, 4\)/); // NEW
-    assert.doesNotMatch(computePointsSource, /anchorOnSide\(dstC, trgSide, 0\.5\)/); // NEW
-}); // NEW
+    assert.match(source, /const LINK_ENDPOINT_CENTER_OFFSET_PX = 5;/);
+    assert.match(helperSource, /LINK_ENDPOINT_CENTER_OFFSET_PX/);
+    assert.match(helperSource, /Math\.abs\(clampedT - 0\.5\)/);
+    assert.match(computePointsSource, /anchorStandardLinkEndpointOnSide\(srcC, hint\.side, hint\.t, 4\)/);
+    assert.match(computePointsSource, /anchorStandardLinkEndpointOnSide\(dstC, trgSide, 0\.5, 4\)/);
+    assert.doesNotMatch(computePointsSource, /anchorOnSide\(dstC, trgSide, 0\.5\)/);
+});
 
-test("standard link labels stagger visible same-side labels by fifteen pixels", () => { // NEW
-    const source = readSource(); // NEW
-    const labelSource = sourceBetween(source, "function createOrUpdateLabel(entry, pts)", "function createOrUpdatePolyline(entry)"); // NEW
-    const setOverlaySource = sourceBetween(source, "function setLinkOverlay(a, b, exitHint, color, label, labelOffset)", "function clearAll()"); // NEW
-    const staggerSource = sourceBetween(source, "function assignStandardLinkLabelOffsets(records)", "// Config: whether a Primary vertex should be highlighted even without links"); // NEW
-    const drawSource = sourceBetween(source, "const exitMap = computeExitParamsForOrigin(cell, targets);", "for (const otherCard of sameBoardLinkedCards)"); // NEW
+test("standard link labels stagger visible same-side labels by fifteen pixels", () => {
+    const source = readSource();
+    const labelSource = sourceBetween(source, "function createOrUpdateLabel(entry, pts)", "function createOrUpdatePolyline(entry)");
+    const setOverlaySource = sourceBetween(source, "function setLinkOverlay(a, b, exitHint, color, label, labelOffset)", "function clearAll()");
+    const staggerSource = sourceBetween(source, "function assignStandardLinkLabelOffsets(records)", "// Config: whether a Primary vertex should be highlighted even without links");
+    const drawSource = sourceBetween(source, "const exitMap = computeExitParamsForOrigin(cell, targets);", "for (const otherCard of sameBoardLinkedCards)");
 
-    assert.match(source, /const LINK_LABEL_STAGGER_PX = 15;/); // NEW
-    assert.match(staggerSource, /const groups = \{ left: \[\], right: \[\], top: \[\], bottom: \[\] \};/); // NEW
-    assert.match(staggerSource, /const offsetPx = i \* LINK_LABEL_STAGGER_PX;/); // NEW
-    assert.match(staggerSource, /\? \{ x: 0, y: offsetPx \}/); // NEW
-    assert.match(staggerSource, /: \{ x: offsetPx, y: 0 \};/); // NEW
-    assert.match(drawSource, /const visibleLinkOverlayRecords = \[\];/); // NEW
-    assert.match(drawSource, /visibleLinkOverlayRecords\.push\(\{ other, exitHint, edgeColor, label, labelOffset: \{ x: 0, y: 0 \} \}\);/); // NEW
-    assert.match(drawSource, /assignStandardLinkLabelOffsets\(visibleLinkOverlayRecords\);/); // NEW
-    assert.match(drawSource, /cell, record\.other, record\.exitHint, record\.edgeColor, record\.label, record\.labelOffset/); // NEW
-    assert.match(setOverlaySource, /labelOffset: normalizeLabelOffset\(labelOffset\)/); // NEW
-    assert.match(setOverlaySource, /entry\.labelOffset = normalizeLabelOffset\(labelOffset\);/); // NEW
-    assert.match(labelSource, /const labelOffset = normalizeLabelOffset\(entry\.labelOffset\);/); // NEW
-    assert.match(labelSource, /entry\.labelElt\.bounds\.x = labelX;/); // NEW
-    assert.match(labelSource, /entry\.labelElt\.bounds\.y = labelY;/); // NEW
-    assert.match(labelSource, /new mxRectangle\(labelX, labelY, 1, 1\)/); // NEW
-}); // NEW
+    assert.match(source, /const LINK_LABEL_STAGGER_PX = 15;/);
+    assert.match(staggerSource, /const groups = \{ left: \[\], right: \[\], top: \[\], bottom: \[\] \};/);
+    assert.match(staggerSource, /const offsetPx = i \* LINK_LABEL_STAGGER_PX;/);
+    assert.match(staggerSource, /\? \{ x: 0, y: offsetPx \}/);
+    assert.match(staggerSource, /: \{ x: offsetPx, y: 0 \};/);
+    assert.match(drawSource, /const visibleLinkOverlayRecords = \[\];/);
+    assert.match(drawSource, /visibleLinkOverlayRecords\.push\(\{ other, exitHint, edgeColor, label, labelOffset: \{ x: 0, y: 0 \} \}\);/);
+    assert.match(drawSource, /assignStandardLinkLabelOffsets\(visibleLinkOverlayRecords\);/);
+    assert.match(drawSource, /cell, record\.other, record\.exitHint, record\.edgeColor, record\.label, record\.labelOffset/);
+    assert.match(setOverlaySource, /labelOffset: normalizeLabelOffset\(labelOffset\)/);
+    assert.match(setOverlaySource, /entry\.labelOffset = normalizeLabelOffset\(labelOffset\);/);
+    assert.match(labelSource, /const labelOffset = normalizeLabelOffset\(entry\.labelOffset\);/);
+    assert.match(labelSource, /entry\.labelElt\.bounds\.x = labelX;/);
+    assert.match(labelSource, /entry\.labelElt\.bounds\.y = labelY;/);
+    assert.match(labelSource, /new mxRectangle\(labelX, labelY, 1, 1\)/);
+});
 
-test("task overlay guide lines keep centered anchors", () => { // NEW
-    const source = readSource(); // NEW
-    const taskLineSource = sourceBetween(source, "function createOrUpdateLine(entry, cardId, row)", "function refreshLines(entry)"); // NEW
+test("task overlay guide lines keep centered anchors", () => {
+    const source = readSource();
+    const taskLineSource = sourceBetween(source, "function createOrUpdateLine(entry, cardId, row)", "function refreshLines(entry)");
 
-    assert.match(taskLineSource, /anchorOnSide\(itemC, sideToward\(itemC, dstC\), 0\.5\)/); // NEW
-    assert.match(taskLineSource, /anchorOnSide\(dstC, sideToward\(dstC, itemC\), 0\.5\)/); // NEW
-    assert.doesNotMatch(taskLineSource, /anchorStandardLinkEndpointOnSide/); // NEW
-}); // NEW
+    assert.match(taskLineSource, /anchorOnSide\(itemC, sideToward\(itemC, dstC\), 0\.5\)/);
+    assert.match(taskLineSource, /anchorOnSide\(dstC, sideToward\(dstC, itemC\), 0\.5\)/);
+    assert.doesNotMatch(taskLineSource, /anchorStandardLinkEndpointOnSide/);
+});

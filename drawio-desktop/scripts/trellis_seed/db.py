@@ -10,7 +10,7 @@ from typing import Any
 
 from .jsonio import read_json, write_json
 from .migrations import apply_migrations, pending_migrations
-from .schema import CITY_COLUMNS, COMPANION_COLUMNS, COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS, COMPANION_LAYOUT_TEMPLATES, PLANT_COLUMNS, PLANTING_WINDOW_REFERENCE_COLUMNS, VARIETY_MATURITY_CLASSES, WEATHER_TABLES  # CHANGED
+from .schema import CITY_COLUMNS, COMPANION_COLUMNS, COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS, COMPANION_LAYOUT_TEMPLATES, PLANT_COLUMNS, PLANTING_WINDOW_REFERENCE_COLUMNS, VARIETY_MATURITY_CLASSES, WEATHER_TABLES
 from .validator import normalize_key, validate_run
 from .weather import checksum_rows
 
@@ -187,7 +187,7 @@ def _unique_paths(paths: list[Path]) -> list[Path]:
 def _apply_order() -> list[str]:
     return [
         "Plants", "Cities", "PlantAllowedMethodCategories", "PlantVarieties",
-        "Companions", "CompanionLayoutGroupDefaults", "CompanionEvidence", "PlantTaskTemplates",  # CHANGED
+        "Companions", "CompanionLayoutGroupDefaults", "CompanionEvidence", "PlantTaskTemplates",
         "VarietyTaskTemplates", "PlantingWindowReferences", "CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily",
     ]
 
@@ -196,15 +196,15 @@ def _apply_table(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]
     if table == "Plants":
         return _upsert_named(conn, "Plants", rows, "plant_id", "plant_name", PLANT_COLUMNS)
     if table == "Cities":
-        return _upsert_cities(conn, rows)  # CHANGED
+        return _upsert_cities(conn, rows)
     if table == "PlantAllowedMethodCategories":
         return _replace_allowed_methods(conn, rows)
     if table == "PlantVarieties":
         return _upsert_varieties(conn, rows)
     if table == "Companions":
         return _upsert_companions(conn, rows)
-    if table == "CompanionLayoutGroupDefaults":  # ADDED
-        return _upsert_companion_layout_group_defaults(conn, rows)  # ADDED
+    if table == "CompanionLayoutGroupDefaults":
+        return _upsert_companion_layout_group_defaults(conn, rows)
     if table == "CompanionEvidence":
         return _upsert_evidence(conn, rows)
     if table == "PlantTaskTemplates":
@@ -241,23 +241,23 @@ def _upsert_named(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any
     return count
 
 
-def _upsert_cities(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:  # ADDED
-    count = 0  # ADDED
-    for raw in rows:  # ADDED
-        row = {k: v for k, v in raw.items() if k in CITY_COLUMNS}  # ADDED
-        existing_id = row.get("city_id") or _find_city_id(conn, row)  # ADDED
-        if existing_id:  # ADDED
-            row["city_id"] = existing_id  # ADDED
-            assignments = [c for c in row if c != "city_id"]  # ADDED
-            sql = "UPDATE Cities SET " + ", ".join(f"{c}=?" for c in assignments) + " WHERE city_id=?"  # ADDED
-            conn.execute(sql, [row[c] for c in assignments] + [existing_id])  # ADDED
-        else:  # ADDED
-            if row.get("city_id") is None:  # ADDED
-                row.pop("city_id", None)  # ADDED
-            cols = list(row)  # ADDED
-            conn.execute(f"INSERT INTO Cities ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})", [row[c] for c in cols])  # ADDED
-        count += 1  # ADDED
-    return count  # ADDED
+def _upsert_cities(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
+    count = 0
+    for raw in rows:
+        row = {k: v for k, v in raw.items() if k in CITY_COLUMNS}
+        existing_id = row.get("city_id") or _find_city_id(conn, row)
+        if existing_id:
+            row["city_id"] = existing_id
+            assignments = [c for c in row if c != "city_id"]
+            sql = "UPDATE Cities SET " + ", ".join(f"{c}=?" for c in assignments) + " WHERE city_id=?"
+            conn.execute(sql, [row[c] for c in assignments] + [existing_id])
+        else:
+            if row.get("city_id") is None:
+                row.pop("city_id", None)
+            cols = list(row)
+            conn.execute(f"INSERT INTO Cities ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})", [row[c] for c in cols])
+        count += 1
+    return count
 
 
 def _replace_allowed_methods(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
@@ -277,7 +277,7 @@ def _upsert_varieties(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> i
     for row in rows:
         plant_id = _resolve_plant_id(conn, row)
         variety_id = row.get("variety_id") or _find_variety_id(conn, plant_id, row.get("variety_name"))
-        maturity_class = _normalize_maturity_class(row.get("maturity_class"))  # ADDED
+        maturity_class = _normalize_maturity_class(row.get("maturity_class"))
         overrides_json = row.get("overrides_json")
         if overrides_json is None:
             overrides_json = json.dumps(row.get("overrides") or {}, sort_keys=True)
@@ -294,54 +294,54 @@ def _upsert_varieties(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> i
     return len(rows)
 
 
-def _normalize_maturity_class(value: Any) -> str | None:  # ADDED
-    normalized = str(value or "").strip().casefold()  # ADDED
-    if normalized and normalized not in VARIETY_MATURITY_CLASSES:  # ADDED
-        raise ValueError(f"Invalid PlantVarieties.maturity_class: {value}")  # ADDED
-    return normalized if normalized in VARIETY_MATURITY_CLASSES else None  # ADDED
+def _normalize_maturity_class(value: Any) -> str | None:
+    normalized = str(value or "").strip().casefold()
+    if normalized and normalized not in VARIETY_MATURITY_CLASSES:
+        raise ValueError(f"Invalid PlantVarieties.maturity_class: {value}")
+    return normalized if normalized in VARIETY_MATURITY_CLASSES else None
 
 
 def _upsert_companions(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
-    companion_columns = set(_table_columns(conn, "Companions"))  # ADDED
-    writable_columns = [column for column in ("p1", "p2", "rating", "companion_type", "companion_type_id", "source_plant_id", "companion_plant_id", "start_offset_days", "layout_template", "layout_spacing_x_cm", "layout_spacing_y_cm", "layout_offset_x_cm", "layout_offset_y_cm") if column in companion_columns]  # CHANGED
+    companion_columns = set(_table_columns(conn, "Companions"))
+    writable_columns = [column for column in ("p1", "p2", "rating", "companion_type", "companion_type_id", "source_plant_id", "companion_plant_id", "start_offset_days", "layout_template", "layout_spacing_x_cm", "layout_spacing_y_cm", "layout_offset_x_cm", "layout_offset_y_cm") if column in companion_columns]
     for row in rows:
         relation_id = row.get("relation_id") or _find_companion_id(conn, row.get("p1"), row.get("p2"))
-        normalized = _normalize_companion_row(conn, row, companion_columns)  # ADDED
-        values = [normalized.get(column) for column in writable_columns]  # CHANGED
+        normalized = _normalize_companion_row(conn, row, companion_columns)
+        values = [normalized.get(column) for column in writable_columns]
         if relation_id:
-            sets = ", ".join(f"{column}=?" for column in writable_columns)  # ADDED
-            conn.execute(f"UPDATE Companions SET {sets} WHERE relation_id=?", values + [relation_id])  # CHANGED
+            sets = ", ".join(f"{column}=?" for column in writable_columns)
+            conn.execute(f"UPDATE Companions SET {sets} WHERE relation_id=?", values + [relation_id])
         else:
-            placeholders = ", ".join("?" for _ in writable_columns)  # ADDED
-            conn.execute(f"INSERT OR IGNORE INTO Companions ({', '.join(writable_columns)}) VALUES ({placeholders})", values)  # CHANGED
+            placeholders = ", ".join("?" for _ in writable_columns)
+            conn.execute(f"INSERT OR IGNORE INTO Companions ({', '.join(writable_columns)}) VALUES ({placeholders})", values)
     return len(rows)
 
 
-def _upsert_companion_layout_group_defaults(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:  # ADDED
-    columns = set(_table_columns(conn, "CompanionLayoutGroupDefaults"))  # ADDED
-    writable_columns = [column for column in ("plant_set_key", "anchor_plant_id", "layout_json", "updated_at") if column in columns]  # ADDED
-    now = datetime.now(timezone.utc).isoformat()  # ADDED
-    count = 0  # ADDED
-    for raw in rows:  # ADDED
-        row = {column: raw.get(column) for column in COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS if column in raw}  # ADDED
-        layout_json = row.get("layout_json")  # ADDED
-        if not isinstance(layout_json, str):  # ADDED
-            layout_json = json.dumps(layout_json or {}, sort_keys=True)  # ADDED
-        normalized = {  # ADDED
-            "plant_set_key": str(row.get("plant_set_key") or "").strip(),  # ADDED
-            "anchor_plant_id": _optional_int(row.get("anchor_plant_id")),  # ADDED
-            "layout_json": layout_json,  # ADDED
-            "updated_at": row.get("updated_at") or now,  # ADDED
-        }  # ADDED
-        values = [normalized.get(column) for column in writable_columns]  # ADDED
-        assignments = [column for column in writable_columns if column not in {"plant_set_key", "anchor_plant_id"}]  # ADDED
-        sql = (  # ADDED
-            f"INSERT INTO CompanionLayoutGroupDefaults ({', '.join(writable_columns)}) VALUES ({', '.join('?' for _ in writable_columns)}) "  # ADDED
-            "ON CONFLICT(plant_set_key, anchor_plant_id) DO UPDATE SET " + ", ".join(f"{column}=excluded.{column}" for column in assignments)  # ADDED
-        )  # ADDED
-        conn.execute(sql, values)  # ADDED
-        count += 1  # ADDED
-    return count  # ADDED
+def _upsert_companion_layout_group_defaults(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
+    columns = set(_table_columns(conn, "CompanionLayoutGroupDefaults"))
+    writable_columns = [column for column in ("plant_set_key", "anchor_plant_id", "layout_json", "updated_at") if column in columns]
+    now = datetime.now(timezone.utc).isoformat()
+    count = 0
+    for raw in rows:
+        row = {column: raw.get(column) for column in COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS if column in raw}
+        layout_json = row.get("layout_json")
+        if not isinstance(layout_json, str):
+            layout_json = json.dumps(layout_json or {}, sort_keys=True)
+        normalized = {
+            "plant_set_key": str(row.get("plant_set_key") or "").strip(),
+            "anchor_plant_id": _optional_int(row.get("anchor_plant_id")),
+            "layout_json": layout_json,
+            "updated_at": row.get("updated_at") or now,
+        }
+        values = [normalized.get(column) for column in writable_columns]
+        assignments = [column for column in writable_columns if column not in {"plant_set_key", "anchor_plant_id"}]
+        sql = (
+            f"INSERT INTO CompanionLayoutGroupDefaults ({', '.join(writable_columns)}) VALUES ({', '.join('?' for _ in writable_columns)}) "
+            "ON CONFLICT(plant_set_key, anchor_plant_id) DO UPDATE SET " + ", ".join(f"{column}=excluded.{column}" for column in assignments)
+        )
+        conn.execute(sql, values)
+        count += 1
+    return count
 
 
 def _upsert_evidence(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
@@ -452,12 +452,12 @@ def _existing_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> 
         if table == "Companions":
             relation_id = row.get("relation_id") or _find_companion_id(conn, row.get("p1"), row.get("p2"))
             return conn.execute("SELECT * FROM Companions WHERE relation_id=?", [relation_id]).fetchone() if relation_id else None
-        if table == "CompanionLayoutGroupDefaults":  # ADDED
-            plant_set_key = str(row.get("plant_set_key") or "").strip()  # ADDED
-            anchor_plant_id = row.get("anchor_plant_id")  # ADDED
-            if not plant_set_key or not anchor_plant_id:  # ADDED
-                return None  # ADDED
-            return conn.execute("SELECT * FROM CompanionLayoutGroupDefaults WHERE plant_set_key=? AND anchor_plant_id=?", [plant_set_key, anchor_plant_id]).fetchone()  # ADDED
+        if table == "CompanionLayoutGroupDefaults":
+            plant_set_key = str(row.get("plant_set_key") or "").strip()
+            anchor_plant_id = row.get("anchor_plant_id")
+            if not plant_set_key or not anchor_plant_id:
+                return None
+            return conn.execute("SELECT * FROM CompanionLayoutGroupDefaults WHERE plant_set_key=? AND anchor_plant_id=?", [plant_set_key, anchor_plant_id]).fetchone()
         if table == "PlantVarieties":
             plant_id = row.get("plant_id") or _find_id_by_name(conn, "Plants", "plant_id", "plant_name", row.get("plant_name"))
             variety_id = row.get("variety_id") or (_find_variety_id(conn, int(plant_id), row.get("variety_name")) if plant_id else None)
@@ -484,7 +484,7 @@ def _existing_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> 
             ).fetchone()
         if table == "PlantingWindowReferences":
             plant_id = row.get("plant_id") or _find_id_by_name(conn, "Plants", "plant_id", "plant_name", row.get("plant_name"))
-            city_id = row.get("city_id") or _find_city_id(conn, row)  # CHANGED
+            city_id = row.get("city_id") or _find_city_id(conn, row)
             if not plant_id or not city_id:
                 return None
             return conn.execute(
@@ -504,9 +504,9 @@ def _find_row(conn: sqlite3.Connection, table: str, id_col: str, name_col: str, 
         found = conn.execute(f"SELECT * FROM {table} WHERE {id_col}=?", [row[id_col]]).fetchone()
         if found:
             return found
-    if table == "Cities":  # ADDED
-        row_id = _find_city_id(conn, row)  # ADDED
-        return conn.execute("SELECT * FROM Cities WHERE city_id=?", [row_id]).fetchone() if row_id else None  # ADDED
+    if table == "Cities":
+        row_id = _find_city_id(conn, row)
+        return conn.execute("SELECT * FROM Cities WHERE city_id=?", [row_id]).fetchone() if row_id else None
     row_id = _find_id_by_name(conn, table, id_col, name_col, row.get(name_col))
     return conn.execute(f"SELECT * FROM {table} WHERE {id_col}=?", [row_id]).fetchone() if row_id else None
 
@@ -525,7 +525,7 @@ def _weather_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _load_generated_index(generated_dir: Path) -> dict[str, Any]:
     plants = {normalize_key(row.get("plant_name")): row for row in read_json(generated_dir / "Plants.json", []) or []}
-    cities = {_city_identity_key(row): row for row in read_json(generated_dir / "Cities.json", []) or []}  # CHANGED
+    cities = {_city_identity_key(row): row for row in read_json(generated_dir / "Cities.json", []) or []}
     varieties = {(normalize_key(row.get("plant_name")), normalize_key(row.get("variety_name"))): row for row in read_json(generated_dir / "PlantVarieties.json", []) or []}
     companions = {(normalize_key(row.get("p1")), normalize_key(row.get("p2"))): row for row in read_json(generated_dir / "Companions.json", []) or []}
     return {"plants": plants, "cities": cities, "varieties": varieties, "companions": companions}
@@ -548,11 +548,11 @@ def _identity_label(conn: sqlite3.Connection, table: str, row: dict[str, Any], g
         return f"{plant_name or row.get('plant_id')} / {variety_name or row.get('variety_id')} / {row.get('method_id')}"
     if table == "CompanionEvidence":
         return f"{row.get('p1')} / {row.get('p2')} / {row.get('source_url') or row.get('source_note')}"
-    if table == "CompanionLayoutGroupDefaults":  # ADDED
-        return f"{row.get('plant_set_key')} / anchor {row.get('anchor_plant_id')}"  # ADDED
+    if table == "CompanionLayoutGroupDefaults":
+        return f"{row.get('plant_set_key')} / anchor {row.get('anchor_plant_id')}"
     if table == "PlantingWindowReferences":
-        return f"{row.get('plant_name') or _db_plant_name(conn, row.get('plant_id'))} / {_city_identity_label(row) or _db_city_name(conn, row.get('city_id'))} / {row.get('method_id')} / {row.get('stage')} / {row.get('window_label')}"  # CHANGED
-    return str(row.get("plant_name") or _city_identity_label(row) or row.get("variety_name") or row.get("method_id") or f"{row.get('p1')} / {row.get('p2')}")  # CHANGED
+        return f"{row.get('plant_name') or _db_plant_name(conn, row.get('plant_id'))} / {_city_identity_label(row) or _db_city_name(conn, row.get('city_id'))} / {row.get('method_id')} / {row.get('stage')} / {row.get('window_label')}"
+    return str(row.get("plant_name") or _city_identity_label(row) or row.get("variety_name") or row.get("method_id") or f"{row.get('p1')} / {row.get('p2')}")
 
 
 def _db_plant_name(conn: sqlite3.Connection, plant_id: Any) -> str:
@@ -577,59 +577,59 @@ def _find_id_by_name(conn: sqlite3.Connection, table: str, id_col: str, name_col
     return None
 
 
-def _norm_city_part(value: Any) -> str:  # ADDED
-    return normalize_key(value)  # ADDED
+def _norm_city_part(value: Any) -> str:
+    return normalize_key(value)
 
 
-def _city_identity_key(row: dict[str, Any]) -> tuple[str, str, str]:  # ADDED
-    return (  # ADDED
-        _norm_city_part(row.get("city_name")),  # ADDED
-        _norm_city_part(row.get("country_code")) or _norm_city_part(row.get("country_name")),  # CHANGED
-        _norm_city_part(row.get("region_name")) or _norm_city_part(row.get("region_code")),  # CHANGED
-    )  # ADDED
+def _city_identity_key(row: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        _norm_city_part(row.get("city_name")),
+        _norm_city_part(row.get("country_code")) or _norm_city_part(row.get("country_name")),
+        _norm_city_part(row.get("region_name")) or _norm_city_part(row.get("region_code")),
+    )
 
 
-def _city_identity_label(row: dict[str, Any]) -> str:  # ADDED
-    city_name = str(row.get("city_name") or "").strip()  # ADDED
-    if not city_name:  # ADDED
-        return ""  # ADDED
-    country = str(row.get("country_name") or row.get("country_code") or "").strip()  # ADDED
-    region = str(row.get("region_name") or row.get("region_code") or "").strip()  # ADDED
-    return " / ".join(part for part in (city_name, country, region) if part)  # ADDED
+def _city_identity_label(row: dict[str, Any]) -> str:
+    city_name = str(row.get("city_name") or "").strip()
+    if not city_name:
+        return ""
+    country = str(row.get("country_name") or row.get("country_code") or "").strip()
+    region = str(row.get("region_name") or row.get("region_code") or "").strip()
+    return " / ".join(part for part in (city_name, country, region) if part)
 
 
-def _city_part_matches(existing: sqlite3.Row, row: dict[str, Any], name_key: str, code_key: str) -> bool:  # ADDED
-    wanted_code = _norm_city_part(row.get(code_key))  # ADDED
-    wanted_name = _norm_city_part(row.get(name_key))  # ADDED
-    if not wanted_code and not wanted_name:  # ADDED
-        return False  # ADDED
-    existing_code = _norm_city_part(existing[code_key])  # ADDED
-    existing_name = _norm_city_part(existing[name_key])  # ADDED
-    return bool((wanted_code and existing_code == wanted_code) or (wanted_name and existing_name == wanted_name))  # ADDED
+def _city_part_matches(existing: sqlite3.Row, row: dict[str, Any], name_key: str, code_key: str) -> bool:
+    wanted_code = _norm_city_part(row.get(code_key))
+    wanted_name = _norm_city_part(row.get(name_key))
+    if not wanted_code and not wanted_name:
+        return False
+    existing_code = _norm_city_part(existing[code_key])
+    existing_name = _norm_city_part(existing[name_key])
+    return bool((wanted_code and existing_code == wanted_code) or (wanted_name and existing_name == wanted_name))
 
 
-def _find_city_id(conn: sqlite3.Connection, row: dict[str, Any]) -> int | None:  # ADDED
-    if row.get("city_id"):  # ADDED
-        return int(row["city_id"])  # ADDED
-    city_key = _norm_city_part(row.get("city_name"))  # ADDED
-    if not city_key:  # ADDED
-        return None  # ADDED
-    existing_columns = {str(info[1]) for info in conn.execute("PRAGMA table_info(Cities)").fetchall()}  # ADDED
-    select_cols = [column if column in existing_columns else f"NULL AS {column}" for column in ("city_id", "city_name", "country_name", "country_code", "region_name", "region_code")]  # ADDED
-    candidates = [candidate for candidate in conn.execute(f"SELECT {', '.join(select_cols)} FROM Cities") if _norm_city_part(candidate["city_name"]) == city_key]  # CHANGED
-    if not candidates:  # ADDED
-        return None  # ADDED
-    has_geo = any(_norm_city_part(row.get(key)) for key in ("country_name", "country_code", "region_name", "region_code"))  # ADDED
-    if has_geo:  # ADDED
-        matches = [candidate for candidate in candidates if _city_part_matches(candidate, row, "country_name", "country_code") and _city_part_matches(candidate, row, "region_name", "region_code")]  # ADDED
-        if len(matches) == 1:  # ADDED
-            return int(matches[0]["city_id"])  # ADDED
-        if len(matches) > 1:  # ADDED
-            raise RuntimeError(f"Ambiguous city identity: {row}")  # ADDED
-        return None  # ADDED
-    if len(candidates) == 1:  # ADDED
-        return int(candidates[0]["city_id"])  # ADDED
-    raise RuntimeError(f"Ambiguous city name; include country/region or city_id: {row.get('city_name')}")  # ADDED
+def _find_city_id(conn: sqlite3.Connection, row: dict[str, Any]) -> int | None:
+    if row.get("city_id"):
+        return int(row["city_id"])
+    city_key = _norm_city_part(row.get("city_name"))
+    if not city_key:
+        return None
+    existing_columns = {str(info[1]) for info in conn.execute("PRAGMA table_info(Cities)").fetchall()}
+    select_cols = [column if column in existing_columns else f"NULL AS {column}" for column in ("city_id", "city_name", "country_name", "country_code", "region_name", "region_code")]
+    candidates = [candidate for candidate in conn.execute(f"SELECT {', '.join(select_cols)} FROM Cities") if _norm_city_part(candidate["city_name"]) == city_key]
+    if not candidates:
+        return None
+    has_geo = any(_norm_city_part(row.get(key)) for key in ("country_name", "country_code", "region_name", "region_code"))
+    if has_geo:
+        matches = [candidate for candidate in candidates if _city_part_matches(candidate, row, "country_name", "country_code") and _city_part_matches(candidate, row, "region_name", "region_code")]
+        if len(matches) == 1:
+            return int(matches[0]["city_id"])
+        if len(matches) > 1:
+            raise RuntimeError(f"Ambiguous city identity: {row}")
+        return None
+    if len(candidates) == 1:
+        return int(candidates[0]["city_id"])
+    raise RuntimeError(f"Ambiguous city name; include country/region or city_id: {row.get('city_name')}")
 
 
 def _resolve_plant_id(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
@@ -640,44 +640,44 @@ def _resolve_plant_id(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
 
 
 def _resolve_city_id(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
-    city_id = row.get("city_id") or _find_city_id(conn, row)  # CHANGED
+    city_id = row.get("city_id") or _find_city_id(conn, row)
     if not city_id:
         raise RuntimeError(f"Cannot resolve city row: {row}")
     return int(city_id)
 
 
-def _table_columns(conn: sqlite3.Connection, table: str) -> list[str]:  # ADDED
-    return [str(info[1]) for info in conn.execute(f"PRAGMA table_info({table})").fetchall()]  # ADDED
+def _table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
+    return [str(info[1]) for info in conn.execute(f"PRAGMA table_info({table})").fetchall()]
 
 
-def _optional_int(value: Any) -> int | None:  # ADDED
-    if value in (None, ""):  # ADDED
-        return None  # ADDED
-    return int(value)  # ADDED
+def _optional_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(value)
 
 
-def _optional_float(value: Any) -> float | None:  # ADDED
-    if value in (None, ""):  # ADDED
-        return None  # ADDED
-    return float(value)  # ADDED
+def _optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    return float(value)
 
 
-def _normalize_companion_row(conn: sqlite3.Connection, row: dict[str, Any], existing_columns: set[str] | None = None) -> dict[str, Any]:  # ADDED
-    columns = existing_columns or set(_table_columns(conn, "Companions"))  # ADDED
-    normalized = {column: row.get(column) for column in COMPANION_COLUMNS if column in row}  # ADDED
-    if "source_plant_id" in columns:  # ADDED
-        normalized["source_plant_id"] = _optional_int(row.get("source_plant_id")) or _find_id_by_name(conn, "Plants", "plant_id", "plant_name", row.get("p1"))  # ADDED
-    if "companion_plant_id" in columns:  # ADDED
-        normalized["companion_plant_id"] = _optional_int(row.get("companion_plant_id")) or _find_id_by_name(conn, "Plants", "plant_id", "plant_name", row.get("p2"))  # ADDED
-    if "start_offset_days" in columns:  # ADDED
-        normalized["start_offset_days"] = _optional_int(row.get("start_offset_days"))  # ADDED
-    if "layout_template" in columns:  # ADDED
-        template = str(row.get("layout_template") or "").strip().casefold()  # ADDED
-        normalized["layout_template"] = template if template in COMPANION_LAYOUT_TEMPLATES else None  # ADDED
-    for key in ("layout_spacing_x_cm", "layout_spacing_y_cm", "layout_offset_x_cm", "layout_offset_y_cm"):  # ADDED
-        if key in columns:  # ADDED
-            normalized[key] = _optional_float(row.get(key))  # ADDED
-    return normalized  # ADDED
+def _normalize_companion_row(conn: sqlite3.Connection, row: dict[str, Any], existing_columns: set[str] | None = None) -> dict[str, Any]:
+    columns = existing_columns or set(_table_columns(conn, "Companions"))
+    normalized = {column: row.get(column) for column in COMPANION_COLUMNS if column in row}
+    if "source_plant_id" in columns:
+        normalized["source_plant_id"] = _optional_int(row.get("source_plant_id")) or _find_id_by_name(conn, "Plants", "plant_id", "plant_name", row.get("p1"))
+    if "companion_plant_id" in columns:
+        normalized["companion_plant_id"] = _optional_int(row.get("companion_plant_id")) or _find_id_by_name(conn, "Plants", "plant_id", "plant_name", row.get("p2"))
+    if "start_offset_days" in columns:
+        normalized["start_offset_days"] = _optional_int(row.get("start_offset_days"))
+    if "layout_template" in columns:
+        template = str(row.get("layout_template") or "").strip().casefold()
+        normalized["layout_template"] = template if template in COMPANION_LAYOUT_TEMPLATES else None
+    for key in ("layout_spacing_x_cm", "layout_spacing_y_cm", "layout_offset_x_cm", "layout_offset_y_cm"):
+        if key in columns:
+            normalized[key] = _optional_float(row.get(key))
+    return normalized
 
 
 def _find_variety_id(conn: sqlite3.Connection, plant_id: int, variety_name: Any) -> int | None:

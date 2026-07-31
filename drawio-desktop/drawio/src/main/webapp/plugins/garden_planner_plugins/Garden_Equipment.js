@@ -35,16 +35,16 @@ Draw.loadPlugin(function (ui) {
     const PLUGIN_VERSION = 1;
     const STYLE_ID = "trellis-garden-equipment-style";
     const ACTION_ID = "trellisGardenEquipment";
-    const TRELLIS_DIALOG_Z = 2000000000; // NEW
+    const TRELLIS_DIALOG_Z = 2000000000;
 
-    function applyEquipmentButtonStyle(button, variant, options) { // NEW
-        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") { // NEW
-            window.Trellis.ui.applyButtonStyle(button, variant, options); // NEW
-        } else if (button) { // NEW
-            button.setAttribute("data-trellis-button-variant", variant || "neutral"); // NEW
-        } // NEW
-        return button; // NEW
-    } // NEW
+    function applyEquipmentButtonStyle(button, variant, options) {
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") {
+            window.Trellis.ui.applyButtonStyle(button, variant, options);
+        } else if (button) {
+            button.setAttribute("data-trellis-button-variant", variant || "neutral");
+        }
+        return button;
+    }
 
     const ATTRS = {
         EQUIPMENT_INVENTORY_JSON: "equipment_inventory_json",
@@ -109,34 +109,34 @@ Draw.loadPlugin(function (ui) {
         "irrigation_zones"
     ];
 
-    const EFFECT_TYPES = ["hours_multiplier"]; // NEW
-    const COMPLEXITY_KEYS = ["simple", "normal", "difficult", "restoration"]; // NEW
-    const FIELD_TOOLTIPS = { // NEW
-        "Purchase Cost ($)": "Original purchase price for reference; it is not included in the yearly replacement reserve.", // NEW
-        "Rental Cost / Day ($)": "Daily rental price for rented equipment; it is not included in the yearly replacement reserve.", // NEW
-        "Replacement Cost ($)": "Gross future cost to replace this item; used in yearly replacement reserve estimates.", // NEW
-        "Expected Lifespan (years)": "Expected service life in whole years. Replacement reserve is zero when this is zero.", // NEW
-        "Purchase Date": "Optional purchase date used to calculate the replacement date.", // NEW
-        "Override Replacement Date": "Enable this to manually set replacement date instead of calculating it from purchase date and lifespan.", // NEW
-        "Replacement Date": "Calculated from purchase date and lifespan unless override is enabled.", // NEW
-        "Maintenance Basis": "How recurring maintenance is scheduled for this item.", // NEW
-        "Maintenance Every": "Frequency interval for the selected maintenance basis.", // NEW
-        "Maintenance Time (hours)": "Labor required each maintenance interval.", // NEW
-        "Maintenance Cost ($)": "Recurring maintenance cost each interval; separate from replacement reserve.", // NEW
-        "ID": "Stable internal ID used by saved equipment links and cross-plugin references." // NEW
-    }; // NEW
-    const ROW_FIELD_TOOLTIPS = { // NEW
-        "Task Type": "Task type this efficiency rule applies to.", // NEW
-        "Type": "Efficiency effect type. Equipment currently supports hours multipliers.", // NEW
-        "Multiplier": "Task hours multiplier. Values below 1 reduce estimated hours; values above 1 increase them.", // NEW
-        "Minimum": "Minimum task scale before this efficiency rule applies.", // NEW
-        "Unit": "Quantity unit for the minimum scale.", // NEW
-        "Stack": "Allow this effect to stack with the best non-stackable equipment effect.", // NEW
-        "Maximum Scale": "Optional maximum task scale for this rule. Leave zero for no maximum.", // NEW
-        "Max Unit": "Quantity unit for the maximum scale.", // NEW
-        "Key": "Quantity basis key for this task type.", // NEW
-        "Value": "Hours value for this quantity basis." // NEW
-    }; // NEW
+    const EFFECT_TYPES = ["hours_multiplier"];
+    const COMPLEXITY_KEYS = ["simple", "normal", "difficult", "restoration"];
+    const FIELD_TOOLTIPS = {
+        "Purchase Cost ($)": "Original purchase price for reference; it is not included in the yearly replacement reserve.",
+        "Rental Cost / Day ($)": "Daily rental price for rented equipment; it is not included in the yearly replacement reserve.",
+        "Replacement Cost ($)": "Gross future cost to replace this item; used in yearly replacement reserve estimates.",
+        "Expected Lifespan (years)": "Expected service life in whole years. Replacement reserve is zero when this is zero.",
+        "Purchase Date": "Optional purchase date used to calculate the replacement date.",
+        "Override Replacement Date": "Enable this to manually set replacement date instead of calculating it from purchase date and lifespan.",
+        "Replacement Date": "Calculated from purchase date and lifespan unless override is enabled.",
+        "Maintenance Basis": "How recurring maintenance is scheduled for this item.",
+        "Maintenance Every": "Frequency interval for the selected maintenance basis.",
+        "Maintenance Time (hours)": "Labor required each maintenance interval.",
+        "Maintenance Cost ($)": "Recurring maintenance cost each interval; separate from replacement reserve.",
+        "ID": "Stable internal ID used by saved equipment links and cross-plugin references."
+    };
+    const ROW_FIELD_TOOLTIPS = {
+        "Task Type": "Task type this efficiency rule applies to.",
+        "Type": "Efficiency effect type. Equipment currently supports hours multipliers.",
+        "Multiplier": "Task hours multiplier. Values below 1 reduce estimated hours; values above 1 increase them.",
+        "Minimum": "Minimum task scale before this efficiency rule applies.",
+        "Unit": "Quantity unit for the minimum scale.",
+        "Stack": "Allow this effect to stack with the best non-stackable equipment effect.",
+        "Maximum Scale": "Optional maximum task scale for this rule. Leave zero for no maximum.",
+        "Max Unit": "Quantity unit for the maximum scale.",
+        "Key": "Quantity basis key for this task type.",
+        "Value": "Hours value for this quantity basis."
+    };
 
     const DEFAULT_CAPABILITIES = [
         cap("pruning_hand", "Hand Pruning", "pruning", "Cutting and pruning small stems, vines, herbs, and vegetables."),
@@ -444,22 +444,22 @@ Draw.loadPlugin(function (ui) {
         })
     ];
 
-    const CANONICAL_TASK_TYPE_IDS = new Set(DEFAULT_TASK_TYPES.map(function (tt) { return tt.id; })); // NEW
+    const CANONICAL_TASK_TYPE_IDS = new Set(DEFAULT_TASK_TYPES.map(function (tt) { return tt.id; }));
 
-    const FALLBACK_BED_CONDITION_GROUPS = [ // NEW
-        conditionGroup("sunExposure", "Sun exposure", [["full_sun", "Full sun"], ["part_sun", "Part sun"], ["part_shade", "Part shade"], ["shade", "Shade"]]), // NEW
-        conditionGroup("soilMoisture", "Soil moisture", [["dry", "Dry"], ["moderate", "Moderate"], ["moist", "Moist"], ["wet", "Wet"]]), // NEW
-        conditionGroup("drainage", "Drainage", [["fast", "Fast drainage"], ["normal", "Normal drainage"], ["slow", "Slow drainage"]]), // NEW
-        conditionGroup("soilTexture", "Soil texture", [["sandy", "Sandy"], ["loamy", "Loamy"], ["clay", "Clay"], ["mixed", "Mixed"], ["amended", "Amended"]]), // NEW
-        conditionGroup("fertility", "Fertility", [["low", "Low"], ["medium", "Medium"], ["high", "High"]]), // NEW
-        conditionGroup("irrigation", "Irrigation", [["none", "None"], ["manual", "Manual"], ["drip", "Drip"], ["sprinkler", "Sprinkler"], ["self_watering", "Self watering"]]), // NEW
-        conditionGroup("trellis", "Trellis", [["none", "None"], ["available", "Available"], ["required_structure", "Structure required"]]), // NEW
-        conditionGroup("seasonExtension", "Season extension", [["none", "None"], ["row_cover", "Row cover"], ["low_tunnel", "Low tunnel"], ["cold_frame", "Cold frame"], ["greenhouse", "Greenhouse"], ["high_tunnel", "High tunnel"], ["heated_greenhouse", "Heated greenhouse"]]), // NEW
-        conditionGroup("cropProtection", "Crop protection", [["none", "None"], ["shade_cloth", "Shade cloth"], ["insect_netting", "Insect netting"], ["bird_netting", "Bird netting"], ["hail_netting", "Hail netting"]]), // NEW
-        conditionGroup("windExposure", "Wind exposure", [["sheltered", "Sheltered"], ["moderate", "Moderate"], ["exposed", "Exposed"]]), // NEW
-        conditionGroup("frostRisk", "Frost risk", [["none", "None"], ["low", "Low"], ["medium", "Medium"], ["high", "High"]]), // NEW
-        conditionGroup("bedUse", "Bed use", [["annuals", "Annuals"], ["perennials", "Perennials"], ["nursery", "Nursery"], ["seed_starting", "Seed starting"], ["mixed", "Mixed"], ["resting", "Resting"]]) // NEW
-    ]; // NEW
+    const FALLBACK_BED_CONDITION_GROUPS = [
+        conditionGroup("sunExposure", "Sun exposure", [["full_sun", "Full sun"], ["part_sun", "Part sun"], ["part_shade", "Part shade"], ["shade", "Shade"]]),
+        conditionGroup("soilMoisture", "Soil moisture", [["dry", "Dry"], ["moderate", "Moderate"], ["moist", "Moist"], ["wet", "Wet"]]),
+        conditionGroup("drainage", "Drainage", [["fast", "Fast drainage"], ["normal", "Normal drainage"], ["slow", "Slow drainage"]]),
+        conditionGroup("soilTexture", "Soil texture", [["sandy", "Sandy"], ["loamy", "Loamy"], ["clay", "Clay"], ["mixed", "Mixed"], ["amended", "Amended"]]),
+        conditionGroup("fertility", "Fertility", [["low", "Low"], ["medium", "Medium"], ["high", "High"]]),
+        conditionGroup("irrigation", "Irrigation", [["none", "None"], ["manual", "Manual"], ["drip", "Drip"], ["sprinkler", "Sprinkler"], ["self_watering", "Self watering"]]),
+        conditionGroup("trellis", "Trellis", [["none", "None"], ["available", "Available"], ["required_structure", "Structure required"]]),
+        conditionGroup("seasonExtension", "Season extension", [["none", "None"], ["row_cover", "Row cover"], ["low_tunnel", "Low tunnel"], ["cold_frame", "Cold frame"], ["greenhouse", "Greenhouse"], ["high_tunnel", "High tunnel"], ["heated_greenhouse", "Heated greenhouse"]]),
+        conditionGroup("cropProtection", "Crop protection", [["none", "None"], ["shade_cloth", "Shade cloth"], ["insect_netting", "Insect netting"], ["bird_netting", "Bird netting"], ["hail_netting", "Hail netting"]]),
+        conditionGroup("windExposure", "Wind exposure", [["sheltered", "Sheltered"], ["moderate", "Moderate"], ["exposed", "Exposed"]]),
+        conditionGroup("frostRisk", "Frost risk", [["none", "None"], ["low", "Low"], ["medium", "Medium"], ["high", "High"]]),
+        conditionGroup("bedUse", "Bed use", [["annuals", "Annuals"], ["perennials", "Perennials"], ["nursery", "Nursery"], ["seed_starting", "Seed starting"], ["mixed", "Mixed"], ["resting", "Resting"]])
+    ];
 
     // -------------------------------------------------------------------------
     // Default factories
@@ -540,15 +540,15 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
-    function conditionGroup(fieldKey, label, options) { // NEW
-        return { // NEW
-            id: fieldKey, // NEW
-            name: label, // NEW
-            options: (options || []).map(function (pair) { // NEW
-                return { id: fieldKey + ":" + pair[0], fieldKey: fieldKey, value: pair[0], name: pair[1], category: label }; // NEW
-            }) // NEW
-        }; // NEW
-    } // NEW
+    function conditionGroup(fieldKey, label, options) {
+        return {
+            id: fieldKey,
+            name: label,
+            options: (options || []).map(function (pair) {
+                return { id: fieldKey + ":" + pair[0], fieldKey: fieldKey, value: pair[0], name: pair[1], category: label };
+            })
+        };
+    }
 
     // -------------------------------------------------------------------------
     // Cell attribute and JSON persistence helpers
@@ -619,44 +619,44 @@ Draw.loadPlugin(function (ui) {
         return Number.isFinite(n) ? n : fallback;
     }
 
-    function coerceWholeYears(value, fallback) { // NEW
-        return Math.max(0, Math.round(coerceNumber(value, fallback))); // NEW
-    } // NEW
+    function coerceWholeYears(value, fallback) {
+        return Math.max(0, Math.round(coerceNumber(value, fallback)));
+    }
 
-    function isIsoDate(value) { // NEW
-        const text = trim(value); // NEW
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false; // NEW
-        const parts = text.split("-").map(Number); // NEW
-        const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2])); // NEW
-        return date.getUTCFullYear() === parts[0] && date.getUTCMonth() === parts[1] - 1 && date.getUTCDate() === parts[2]; // NEW
-    } // NEW
+    function isIsoDate(value) {
+        const text = trim(value);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+        const parts = text.split("-").map(Number);
+        const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+        return date.getUTCFullYear() === parts[0] && date.getUTCMonth() === parts[1] - 1 && date.getUTCDate() === parts[2];
+    }
 
-    function daysInMonth(year, monthOneBased) { // NEW
-        return new Date(Date.UTC(year, monthOneBased, 0)).getUTCDate(); // NEW
-    } // NEW
+    function daysInMonth(year, monthOneBased) {
+        return new Date(Date.UTC(year, monthOneBased, 0)).getUTCDate();
+    }
 
-    function formatIsoDate(year, monthOneBased, day) { // NEW
-        return [ // NEW
-            String(year).padStart(4, "0"), // NEW
-            String(monthOneBased).padStart(2, "0"), // NEW
-            String(day).padStart(2, "0") // NEW
-        ].join("-"); // NEW
-    } // NEW
+    function formatIsoDate(year, monthOneBased, day) {
+        return [
+            String(year).padStart(4, "0"),
+            String(monthOneBased).padStart(2, "0"),
+            String(day).padStart(2, "0")
+        ].join("-");
+    }
 
-    function calculateReplacementDate(purchaseDate, expectedLifespanYears) { // NEW
-        if (!isIsoDate(purchaseDate)) return ""; // NEW
-        const years = coerceWholeYears(expectedLifespanYears, 0); // NEW
-        if (years <= 0) return ""; // NEW
-        const parts = trim(purchaseDate).split("-").map(Number); // NEW
-        const targetYear = parts[0] + years; // NEW
-        const targetDay = Math.min(parts[2], daysInMonth(targetYear, parts[1])); // NEW
-        return formatIsoDate(targetYear, parts[1], targetDay); // NEW
-    } // NEW
+    function calculateReplacementDate(purchaseDate, expectedLifespanYears) {
+        if (!isIsoDate(purchaseDate)) return "";
+        const years = coerceWholeYears(expectedLifespanYears, 0);
+        if (years <= 0) return "";
+        const parts = trim(purchaseDate).split("-").map(Number);
+        const targetYear = parts[0] + years;
+        const targetDay = Math.min(parts[2], daysInMonth(targetYear, parts[1]));
+        return formatIsoDate(targetYear, parts[1], targetDay);
+    }
 
-    function syncCalculatedReplacementDate(eq) { // NEW
-        if (!eq || eq.replacementDateOverride) return; // NEW
-        eq.replacementDate = calculateReplacementDate(eq.purchaseDate, eq.expectedLifespanYears); // NEW
-    } // NEW
+    function syncCalculatedReplacementDate(eq) {
+        if (!eq || eq.replacementDateOverride) return;
+        eq.replacementDate = calculateReplacementDate(eq.purchaseDate, eq.expectedLifespanYears);
+    }
 
     function splitCsv(value) {
         if (Array.isArray(value)) return value.map(String).map(trim).filter(Boolean);
@@ -705,7 +705,7 @@ Draw.loadPlugin(function (ui) {
         out.rentalCostPerDay = coerceNumber(out.rentalCostPerDay, 0);
         out.replacementCost = coerceNumber(out.replacementCost, out.purchaseCost || 0);
         out.resaleValue = coerceNumber(out.resaleValue, 0);
-        out.expectedLifespanYears = coerceWholeYears(out.expectedLifespanYears, 0); // CHANGE
+        out.expectedLifespanYears = coerceWholeYears(out.expectedLifespanYears, 0);
         out.maintenanceFrequency = Object.assign({ basis: "year", every: 1 }, out.maintenanceFrequency || {});
         out.maintenanceFrequency.basis = trim(out.maintenanceFrequency.basis) || "year";
         out.maintenanceFrequency.every = coerceNumber(out.maintenanceFrequency.every, 1);
@@ -727,14 +727,14 @@ Draw.loadPlugin(function (ui) {
         out.skillLevelRequired = SKILL_LEVELS.indexOf(out.skillLevelRequired) >= 0 ? out.skillLevelRequired : "basic";
         out.availability = Object.assign({ mode: "always", from: "", to: "" }, out.availability || {});
         out.usesConsumables = Array.isArray(out.usesConsumables) ? out.usesConsumables : [];
-        out.purchaseDate = trim(out.purchaseDate); // CHANGE
-        out.replacementDate = trim(out.replacementDate); // CHANGE
-        const hadReplacementOverride = Object.prototype.hasOwnProperty.call(record || {}, "replacementDateOverride"); // NEW
-        const calculatedReplacementDate = calculateReplacementDate(out.purchaseDate, out.expectedLifespanYears); // NEW
-        out.replacementDateOverride = hadReplacementOverride // NEW
-            ? !!out.replacementDateOverride // NEW
-            : !!out.replacementDate && (!calculatedReplacementDate || out.replacementDate !== calculatedReplacementDate); // NEW
-        syncCalculatedReplacementDate(out); // NEW
+        out.purchaseDate = trim(out.purchaseDate);
+        out.replacementDate = trim(out.replacementDate);
+        const hadReplacementOverride = Object.prototype.hasOwnProperty.call(record || {}, "replacementDateOverride");
+        const calculatedReplacementDate = calculateReplacementDate(out.purchaseDate, out.expectedLifespanYears);
+        out.replacementDateOverride = hadReplacementOverride
+            ? !!out.replacementDateOverride
+            : !!out.replacementDate && (!calculatedReplacementDate || out.replacementDate !== calculatedReplacementDate);
+        syncCalculatedReplacementDate(out);
         out.storageNotes = trim(out.storageNotes);
         out.notes = trim(out.notes);
         return out;
@@ -743,9 +743,9 @@ Draw.loadPlugin(function (ui) {
     function normalizeEffect(record) {
         const out = Object.assign({}, record || {});
         out.taskTypeId = trim(out.taskTypeId);
-        const incomingType = trim(out.effectType) || "hours_multiplier"; // NEW
-        out.effectType = incomingType === "frequency_multiplier" ? "hours_multiplier" : incomingType; // CHANGE
-        if (EFFECT_TYPES.indexOf(out.effectType) < 0) out.effectType = "hours_multiplier"; // NEW
+        const incomingType = trim(out.effectType) || "hours_multiplier";
+        out.effectType = incomingType === "frequency_multiplier" ? "hours_multiplier" : incomingType;
+        if (EFFECT_TYPES.indexOf(out.effectType) < 0) out.effectType = "hours_multiplier";
         out.multiplier = coerceNumber(out.multiplier, 1);
         out.minimumScale = Object.assign({ value: 0, unit: "tasks" }, out.minimumScale || {});
         out.maximumScale = out.maximumScale ? Object.assign({ value: 0, unit: "tasks" }, out.maximumScale) : null;
@@ -753,9 +753,9 @@ Draw.loadPlugin(function (ui) {
         if (out.maximumScale) out.maximumScale.value = coerceNumber(out.maximumScale.value, 0);
         out.stackable = !!out.stackable;
         out.notes = trim(out.notes);
-        if (incomingType === "frequency_multiplier" && out.notes.indexOf("Converted from frequency_multiplier.") < 0) { // NEW
-            out.notes = trim("Converted from frequency_multiplier. " + out.notes); // NEW
-        } // NEW
+        if (incomingType === "frequency_multiplier" && out.notes.indexOf("Converted from frequency_multiplier.") < 0) {
+            out.notes = trim("Converted from frequency_multiplier. " + out.notes);
+        }
         return out;
     }
 
@@ -811,189 +811,189 @@ Draw.loadPlugin(function (ui) {
         return Array.from(byId.values()).sort(byName);
     }
 
-    function buildRegistrySet(items) { // NEW
-        return new Set((items || []).map(function (item) { return item && item.id; }).filter(Boolean)); // NEW
-    } // NEW
+    function buildRegistrySet(items) {
+        return new Set((items || []).map(function (item) { return item && item.id; }).filter(Boolean));
+    }
 
-    function pushValidation(report, severity, message) { // NEW
-        report.items.push({ severity, message }); // NEW
-        if (severity === "error") report.errors += 1; // NEW
-        else report.warnings += 1; // NEW
-    } // NEW
+    function pushValidation(report, severity, message) {
+        report.items.push({ severity, message });
+        if (severity === "error") report.errors += 1;
+        else report.warnings += 1;
+    }
 
-    function validateUniqueIds(records, label, report) { // NEW
-        const seen = new Set(); // NEW
-        (records || []).forEach(function (record) { // NEW
-            const id = trim(record && record.id); // NEW
-            if (!id) pushValidation(report, "error", `${label} has a blank ID.`); // NEW
-            else if (seen.has(id)) pushValidation(report, "error", `${label} '${id}' is duplicated.`); // NEW
-            seen.add(id); // NEW
-        }, null, "add"); // CHANGE
-    } // NEW
+    function validateUniqueIds(records, label, report) {
+        const seen = new Set();
+        (records || []).forEach(function (record) {
+            const id = trim(record && record.id);
+            if (!id) pushValidation(report, "error", `${label} has a blank ID.`);
+            else if (seen.has(id)) pushValidation(report, "error", `${label} '${id}' is duplicated.`);
+            seen.add(id);
+        }, null, "add");
+    }
 
-    function validateNumberMap(map, owner, report) { // NEW
-        Object.keys(map || {}).forEach(function (key) { // NEW
-            if (!key) pushValidation(report, "error", `${owner} has a blank rate key.`); // NEW
-            if (!Number.isFinite(Number(map[key]))) pushValidation(report, "error", `${owner} has an invalid number for '${key}'.`); // NEW
-        }); // NEW
-    } // NEW
+    function validateNumberMap(map, owner, report) {
+        Object.keys(map || {}).forEach(function (key) {
+            if (!key) pushValidation(report, "error", `${owner} has a blank rate key.`);
+            if (!Number.isFinite(Number(map[key]))) pushValidation(report, "error", `${owner} has an invalid number for '${key}'.`);
+        });
+    }
 
-    function validateEquipmentState(inventory, taskTypes, capabilities) { // NEW
-        const report = { errors: 0, warnings: 0, items: [] }; // NEW
-        const taskIds = buildRegistrySet(taskTypes); // NEW
-        const capabilityIds = buildRegistrySet(capabilities); // NEW
-        validateUniqueIds(inventory, "Equipment", report); // NEW
-        validateUniqueIds(taskTypes, "Task type", report); // NEW
-        validateUniqueIds(capabilities, "Capability", report); // NEW
+    function validateEquipmentState(inventory, taskTypes, capabilities) {
+        const report = { errors: 0, warnings: 0, items: [] };
+        const taskIds = buildRegistrySet(taskTypes);
+        const capabilityIds = buildRegistrySet(capabilities);
+        validateUniqueIds(inventory, "Equipment", report);
+        validateUniqueIds(taskTypes, "Task type", report);
+        validateUniqueIds(capabilities, "Capability", report);
 
-        (inventory || []).forEach(function (eq) { // NEW
-            if (eq.purchaseDate && !isIsoDate(eq.purchaseDate)) pushValidation(report, "error", `${eq.name} has an invalid purchase date.`); // NEW
-            if (eq.replacementDate && !isIsoDate(eq.replacementDate)) pushValidation(report, "error", `${eq.name} has an invalid replacement date.`); // NEW
-            (eq.capabilities || []).forEach(function (id) { // NEW
-                if (!capabilityIds.has(id)) pushValidation(report, "error", `${eq.name} references missing capability '${id}'.`); // NEW
-            }); // NEW
-            (eq.relevantTaskTypes || []).forEach(function (id) { // NEW
-                if (!taskIds.has(id)) pushValidation(report, "error", `${eq.name} references missing task type '${id}'.`); // NEW
-            }); // NEW
-            (eq.efficiencyEffects || []).forEach(function (eff, index) { // NEW
-                if (!taskIds.has(eff.taskTypeId)) pushValidation(report, "error", `${eq.name} effect ${index + 1} references missing task type '${eff.taskTypeId}'.`); // NEW
-                if (EFFECT_TYPES.indexOf(eff.effectType) < 0) pushValidation(report, "error", `${eq.name} effect ${index + 1} has unsupported type '${eff.effectType}'.`); // NEW
-                if (!Number.isFinite(Number(eff.multiplier)) || Number(eff.multiplier) <= 0) pushValidation(report, "error", `${eq.name} effect ${index + 1} needs a positive multiplier.`); // NEW
-                if (!eff.minimumScale || QUANTITY_BASES.indexOf(eff.minimumScale.unit) < 0) pushValidation(report, "error", `${eq.name} effect ${index + 1} has an invalid minimum scale unit.`); // NEW
-                if (eff.maximumScale && eff.maximumScale.value > 0 && QUANTITY_BASES.indexOf(eff.maximumScale.unit) < 0) pushValidation(report, "error", `${eq.name} effect ${index + 1} has an invalid maximum scale unit.`); // NEW
-            }); // NEW
-        }); // NEW
+        (inventory || []).forEach(function (eq) {
+            if (eq.purchaseDate && !isIsoDate(eq.purchaseDate)) pushValidation(report, "error", `${eq.name} has an invalid purchase date.`);
+            if (eq.replacementDate && !isIsoDate(eq.replacementDate)) pushValidation(report, "error", `${eq.name} has an invalid replacement date.`);
+            (eq.capabilities || []).forEach(function (id) {
+                if (!capabilityIds.has(id)) pushValidation(report, "error", `${eq.name} references missing capability '${id}'.`);
+            });
+            (eq.relevantTaskTypes || []).forEach(function (id) {
+                if (!taskIds.has(id)) pushValidation(report, "error", `${eq.name} references missing task type '${id}'.`);
+            });
+            (eq.efficiencyEffects || []).forEach(function (eff, index) {
+                if (!taskIds.has(eff.taskTypeId)) pushValidation(report, "error", `${eq.name} effect ${index + 1} references missing task type '${eff.taskTypeId}'.`);
+                if (EFFECT_TYPES.indexOf(eff.effectType) < 0) pushValidation(report, "error", `${eq.name} effect ${index + 1} has unsupported type '${eff.effectType}'.`);
+                if (!Number.isFinite(Number(eff.multiplier)) || Number(eff.multiplier) <= 0) pushValidation(report, "error", `${eq.name} effect ${index + 1} needs a positive multiplier.`);
+                if (!eff.minimumScale || QUANTITY_BASES.indexOf(eff.minimumScale.unit) < 0) pushValidation(report, "error", `${eq.name} effect ${index + 1} has an invalid minimum scale unit.`);
+                if (eff.maximumScale && eff.maximumScale.value > 0 && QUANTITY_BASES.indexOf(eff.maximumScale.unit) < 0) pushValidation(report, "error", `${eq.name} effect ${index + 1} has an invalid maximum scale unit.`);
+            });
+        });
 
-        (taskTypes || []).forEach(function (tt) { // NEW
-            if ((tt.allowedQuantityBases || []).indexOf(tt.defaultQuantityBasis) < 0) pushValidation(report, "error", `${tt.name} default quantity basis is not allowed.`); // NEW
-            validateNumberMap(tt.baseHoursPerUnit, `${tt.name} base hours`, report); // NEW
-            validateNumberMap(tt.complexityModifiers, `${tt.name} complexity`, report); // NEW
-            ["requiredCapabilities", "optionalCapabilities", "recommendedCapabilities"].forEach(function (fieldName) { // NEW
-                (tt[fieldName] || []).forEach(function (id) { // NEW
-                    if (!capabilityIds.has(id)) pushValidation(report, "error", `${tt.name} ${fieldName} references missing capability '${id}'.`); // NEW
-                }); // NEW
-            }); // NEW
-        }); // NEW
+        (taskTypes || []).forEach(function (tt) {
+            if ((tt.allowedQuantityBases || []).indexOf(tt.defaultQuantityBasis) < 0) pushValidation(report, "error", `${tt.name} default quantity basis is not allowed.`);
+            validateNumberMap(tt.baseHoursPerUnit, `${tt.name} base hours`, report);
+            validateNumberMap(tt.complexityModifiers, `${tt.name} complexity`, report);
+            ["requiredCapabilities", "optionalCapabilities", "recommendedCapabilities"].forEach(function (fieldName) {
+                (tt[fieldName] || []).forEach(function (id) {
+                    if (!capabilityIds.has(id)) pushValidation(report, "error", `${tt.name} ${fieldName} references missing capability '${id}'.`);
+                });
+            });
+        });
 
-        return report; // NEW
-    } // NEW
+        return report;
+    }
 
-    function validateState(state) { // NEW
-        return validateEquipmentState(state.inventory, state.taskTypes, state.capabilities); // NEW
-    } // NEW
+    function validateState(state) {
+        return validateEquipmentState(state.inventory, state.taskTypes, state.capabilities);
+    }
 
-    function canSaveState(state) { // NEW
-        const report = validateState(state); // NEW
-        state.validationReport = report; // NEW
-        return report.errors === 0; // NEW
-    } // NEW
+    function canSaveState(state) {
+        const report = validateState(state);
+        state.validationReport = report;
+        return report.errors === 0;
+    }
 
-    function replaceListId(list, oldId, newId) { // NEW
-        return uniqueStrings((list || []).map(function (id) { return id === oldId ? newId : id; })); // NEW
-    } // NEW
+    function replaceListId(list, oldId, newId) {
+        return uniqueStrings((list || []).map(function (id) { return id === oldId ? newId : id; }));
+    }
 
-    function removeListId(list, removedId) { // NEW
-        return (list || []).filter(function (id) { return id !== removedId; }); // NEW
-    } // NEW
+    function removeListId(list, removedId) {
+        return (list || []).filter(function (id) { return id !== removedId; });
+    }
 
-    function uniqueStrings(list) { // NEW
-        const seen = new Set(); // NEW
-        const out = []; // NEW
-        (list || []).forEach(function (value) { // NEW
-            const id = trim(value); // NEW
-            if (!id || seen.has(id)) return; // NEW
-            seen.add(id); // NEW
-            out.push(id); // NEW
-        }); // NEW
-        return out; // NEW
-    } // NEW
+    function uniqueStrings(list) {
+        const seen = new Set();
+        const out = [];
+        (list || []).forEach(function (value) {
+            const id = trim(value);
+            if (!id || seen.has(id)) return;
+            seen.add(id);
+            out.push(id);
+        });
+        return out;
+    }
 
-    function describeCapabilityReferences(state, capabilityId) { // NEW
-        const refs = []; // NEW
-        (state.inventory || []).forEach(function (eq) { // NEW
-            if ((eq.capabilities || []).indexOf(capabilityId) >= 0) refs.push(`${eq.name} equipment capability`); // NEW
-        }); // NEW
-        (state.taskTypes || []).forEach(function (tt) { // NEW
-            ["requiredCapabilities", "optionalCapabilities", "recommendedCapabilities"].forEach(function (fieldName) { // NEW
-                if ((tt[fieldName] || []).indexOf(capabilityId) >= 0) refs.push(`${tt.name} ${labelize(fieldName)}`); // NEW
-            }); // NEW
-        }); // NEW
-        return refs; // NEW
-    } // NEW
+    function describeCapabilityReferences(state, capabilityId) {
+        const refs = [];
+        (state.inventory || []).forEach(function (eq) {
+            if ((eq.capabilities || []).indexOf(capabilityId) >= 0) refs.push(`${eq.name} equipment capability`);
+        });
+        (state.taskTypes || []).forEach(function (tt) {
+            ["requiredCapabilities", "optionalCapabilities", "recommendedCapabilities"].forEach(function (fieldName) {
+                if ((tt[fieldName] || []).indexOf(capabilityId) >= 0) refs.push(`${tt.name} ${labelize(fieldName)}`);
+            });
+        });
+        return refs;
+    }
 
-    function describeTaskTypeReferences(state, taskTypeId) { // NEW
-        const refs = []; // NEW
-        (state.inventory || []).forEach(function (eq) { // NEW
-            if ((eq.relevantTaskTypes || []).indexOf(taskTypeId) >= 0) refs.push(`${eq.name} relevant task type`); // NEW
-            (eq.efficiencyEffects || []).forEach(function (eff) { // NEW
-                if (eff.taskTypeId === taskTypeId) refs.push(`${eq.name} efficiency effect`); // NEW
-            }); // NEW
-        }); // NEW
-        return refs; // NEW
-    } // NEW
+    function describeTaskTypeReferences(state, taskTypeId) {
+        const refs = [];
+        (state.inventory || []).forEach(function (eq) {
+            if ((eq.relevantTaskTypes || []).indexOf(taskTypeId) >= 0) refs.push(`${eq.name} relevant task type`);
+            (eq.efficiencyEffects || []).forEach(function (eff) {
+                if (eff.taskTypeId === taskTypeId) refs.push(`${eq.name} efficiency effect`);
+            });
+        });
+        return refs;
+    }
 
-    function previewReferenceMessage(action, id, refs) { // NEW
-        if (!refs.length) return `${action} '${id}'?`; // NEW
-        return `${action} '${id}' and update ${refs.length} reference(s)?\n\n` + refs.slice(0, 12).join("\n") + (refs.length > 12 ? "\n..." : ""); // NEW
-    } // NEW
+    function previewReferenceMessage(action, id, refs) {
+        if (!refs.length) return `${action} '${id}'?`;
+        return `${action} '${id}' and update ${refs.length} reference(s)?\n\n` + refs.slice(0, 12).join("\n") + (refs.length > 12 ? "\n..." : "");
+    }
 
-    function renameCapabilityId(state, oldId, newId) { // NEW
-        newId = sanitizeId(newId); // NEW
-        if (!newId || newId === oldId) return false; // NEW
-        if ((state.capabilities || []).some(function (c) { return c.id === newId; })) { alert("A capability with that ID already exists."); return false; } // NEW
-        const refs = describeCapabilityReferences(state, oldId); // NEW
-        if (!confirm(previewReferenceMessage("Rename capability", oldId, refs))) return false; // NEW
-        state.capabilities.forEach(function (c) { if (c.id === oldId) c.id = newId; }); // NEW
-        state.inventory.forEach(function (eq) { eq.capabilities = replaceListId(eq.capabilities, oldId, newId); }); // NEW
-        state.taskTypes.forEach(function (tt) { // NEW
-            tt.requiredCapabilities = replaceListId(tt.requiredCapabilities, oldId, newId); // NEW
-            tt.optionalCapabilities = replaceListId(tt.optionalCapabilities, oldId, newId); // NEW
-            tt.recommendedCapabilities = replaceListId(tt.recommendedCapabilities, oldId, newId); // NEW
-        }); // NEW
-        state.selectedCapabilityId = newId; // NEW
-        return true; // NEW
-    } // NEW
+    function renameCapabilityId(state, oldId, newId) {
+        newId = sanitizeId(newId);
+        if (!newId || newId === oldId) return false;
+        if ((state.capabilities || []).some(function (c) { return c.id === newId; })) { alert("A capability with that ID already exists."); return false; }
+        const refs = describeCapabilityReferences(state, oldId);
+        if (!confirm(previewReferenceMessage("Rename capability", oldId, refs))) return false;
+        state.capabilities.forEach(function (c) { if (c.id === oldId) c.id = newId; });
+        state.inventory.forEach(function (eq) { eq.capabilities = replaceListId(eq.capabilities, oldId, newId); });
+        state.taskTypes.forEach(function (tt) {
+            tt.requiredCapabilities = replaceListId(tt.requiredCapabilities, oldId, newId);
+            tt.optionalCapabilities = replaceListId(tt.optionalCapabilities, oldId, newId);
+            tt.recommendedCapabilities = replaceListId(tt.recommendedCapabilities, oldId, newId);
+        });
+        state.selectedCapabilityId = newId;
+        return true;
+    }
 
-    function deleteCapabilityId(state, capabilityId) { // NEW
-        const refs = describeCapabilityReferences(state, capabilityId); // NEW
-        if (!confirm(previewReferenceMessage("Delete capability", capabilityId, refs))) return false; // NEW
-        state.capabilities = state.capabilities.filter(function (c) { return c.id !== capabilityId; }); // NEW
-        state.inventory.forEach(function (eq) { eq.capabilities = removeListId(eq.capabilities, capabilityId); }); // NEW
-        state.taskTypes.forEach(function (tt) { // NEW
-            tt.requiredCapabilities = removeListId(tt.requiredCapabilities, capabilityId); // NEW
-            tt.optionalCapabilities = removeListId(tt.optionalCapabilities, capabilityId); // NEW
-            tt.recommendedCapabilities = removeListId(tt.recommendedCapabilities, capabilityId); // NEW
-        }); // NEW
-        state.selectedCapabilityId = state.capabilities[0] && state.capabilities[0].id || null; // NEW
-        return true; // NEW
-    } // NEW
+    function deleteCapabilityId(state, capabilityId) {
+        const refs = describeCapabilityReferences(state, capabilityId);
+        if (!confirm(previewReferenceMessage("Delete capability", capabilityId, refs))) return false;
+        state.capabilities = state.capabilities.filter(function (c) { return c.id !== capabilityId; });
+        state.inventory.forEach(function (eq) { eq.capabilities = removeListId(eq.capabilities, capabilityId); });
+        state.taskTypes.forEach(function (tt) {
+            tt.requiredCapabilities = removeListId(tt.requiredCapabilities, capabilityId);
+            tt.optionalCapabilities = removeListId(tt.optionalCapabilities, capabilityId);
+            tt.recommendedCapabilities = removeListId(tt.recommendedCapabilities, capabilityId);
+        });
+        state.selectedCapabilityId = state.capabilities[0] && state.capabilities[0].id || null;
+        return true;
+    }
 
-    function renameTaskTypeId(state, oldId, newId) { // NEW
-        newId = sanitizeId(newId); // NEW
-        if (!newId || newId === oldId) return false; // NEW
-        if ((state.taskTypes || []).some(function (tt) { return tt.id === newId; })) { alert("A task type with that ID already exists."); return false; } // NEW
-        const refs = describeTaskTypeReferences(state, oldId); // NEW
-        if (!confirm(previewReferenceMessage("Rename task type", oldId, refs))) return false; // NEW
-        state.taskTypes.forEach(function (tt) { if (tt.id === oldId) tt.id = newId; }); // NEW
-        state.inventory.forEach(function (eq) { // NEW
-            eq.relevantTaskTypes = replaceListId(eq.relevantTaskTypes, oldId, newId); // NEW
-            (eq.efficiencyEffects || []).forEach(function (eff) { if (eff.taskTypeId === oldId) eff.taskTypeId = newId; }); // NEW
-        }); // NEW
-        state.selectedTaskTypeId = newId; // NEW
-        return true; // NEW
-    } // NEW
+    function renameTaskTypeId(state, oldId, newId) {
+        newId = sanitizeId(newId);
+        if (!newId || newId === oldId) return false;
+        if ((state.taskTypes || []).some(function (tt) { return tt.id === newId; })) { alert("A task type with that ID already exists."); return false; }
+        const refs = describeTaskTypeReferences(state, oldId);
+        if (!confirm(previewReferenceMessage("Rename task type", oldId, refs))) return false;
+        state.taskTypes.forEach(function (tt) { if (tt.id === oldId) tt.id = newId; });
+        state.inventory.forEach(function (eq) {
+            eq.relevantTaskTypes = replaceListId(eq.relevantTaskTypes, oldId, newId);
+            (eq.efficiencyEffects || []).forEach(function (eff) { if (eff.taskTypeId === oldId) eff.taskTypeId = newId; });
+        });
+        state.selectedTaskTypeId = newId;
+        return true;
+    }
 
-    function deleteTaskTypeId(state, taskTypeId) { // NEW
-        const refs = describeTaskTypeReferences(state, taskTypeId); // NEW
-        if (!confirm(previewReferenceMessage("Delete task type", taskTypeId, refs))) return false; // NEW
-        state.taskTypes = state.taskTypes.filter(function (tt) { return tt.id !== taskTypeId; }); // NEW
-        state.inventory.forEach(function (eq) { // NEW
-            eq.relevantTaskTypes = removeListId(eq.relevantTaskTypes, taskTypeId); // NEW
-            eq.efficiencyEffects = (eq.efficiencyEffects || []).filter(function (eff) { return eff.taskTypeId !== taskTypeId; }); // NEW
-        }); // NEW
-        state.selectedTaskTypeId = state.taskTypes[0] && state.taskTypes[0].id || null; // NEW
-        return true; // NEW
-    } // NEW
+    function deleteTaskTypeId(state, taskTypeId) {
+        const refs = describeTaskTypeReferences(state, taskTypeId);
+        if (!confirm(previewReferenceMessage("Delete task type", taskTypeId, refs))) return false;
+        state.taskTypes = state.taskTypes.filter(function (tt) { return tt.id !== taskTypeId; });
+        state.inventory.forEach(function (eq) {
+            eq.relevantTaskTypes = removeListId(eq.relevantTaskTypes, taskTypeId);
+            eq.efficiencyEffects = (eq.efficiencyEffects || []).filter(function (eff) { return eff.taskTypeId !== taskTypeId; });
+        });
+        state.selectedTaskTypeId = state.taskTypes[0] && state.taskTypes[0].id || null;
+        return true;
+    }
 
     function readEquipmentInventory(moduleCell) {
         const raw = readJsonAttr(moduleCell, ATTRS.EQUIPMENT_INVENTORY_JSON, null);
@@ -1155,7 +1155,7 @@ Draw.loadPlugin(function (ui) {
     function buildTaskEquipmentWarnings(taskCell, moduleCell) {
         const inventory = readEquipmentInventory(moduleCell);
         const taskTypes = readTaskTypeRegistry(moduleCell);
-        const capabilityNames = registryNameMap(readCapabilityRegistry(moduleCell)); // NEW
+        const capabilityNames = registryNameMap(readCapabilityRegistry(moduleCell));
         const taskTypeId = getCellAttr(taskCell, TASK_ATTRS.TASK_TYPE_ID);
         const taskType = taskTypes.find(function (tt) { return tt.id === taskTypeId; });
         const warnings = [];
@@ -1190,7 +1190,7 @@ Draw.loadPlugin(function (ui) {
                 taskCell,
                 taskTypeId,
                 capabilityId: m.capabilityId,
-                message: `${taskType.name} requires ${lookupName(capabilityNames, m.capabilityId)}, but no available equipment provides it.` // CHANGE
+                message: `${taskType.name} requires ${lookupName(capabilityNames, m.capabilityId)}, but no available equipment provides it.`
             });
         });
 
@@ -1202,7 +1202,7 @@ Draw.loadPlugin(function (ui) {
                 taskTypeId,
                 capabilityId: m.capabilityId,
                 equipmentIds: m.equipment.map(function (eq) { return eq.id; }),
-                message: `${taskType.name} can use optional equipment for ${lookupName(capabilityNames, m.capabilityId)}: ${m.equipment.map(function (eq) { return eq.name; }).join(", ")}.` // CHANGE
+                message: `${taskType.name} can use optional equipment for ${lookupName(capabilityNames, m.capabilityId)}: ${m.equipment.map(function (eq) { return eq.name; }).join(", ")}.`
             });
         });
 
@@ -1213,7 +1213,7 @@ Draw.loadPlugin(function (ui) {
                 taskCell,
                 taskTypeId,
                 capabilityId: m.capabilityId,
-                message: `${taskType.name} would likely improve with ${lookupName(capabilityNames, m.capabilityId)}, but no available equipment provides it.` // CHANGE
+                message: `${taskType.name} would likely improve with ${lookupName(capabilityNames, m.capabilityId)}, but no available equipment provides it.`
             });
         });
 
@@ -1377,7 +1377,7 @@ Draw.loadPlugin(function (ui) {
 
         container.innerHTML = "";
         container.appendChild(fieldLabel("Task Type"));
-        const taskSel = selectInput(groupedTaskTypeSelectOptions(taskTypes, "", selectedTaskTypeId), selectedTaskTypeId, function () { // CHANGE
+        const taskSel = selectInput(groupedTaskTypeSelectOptions(taskTypes, "", selectedTaskTypeId), selectedTaskTypeId, function () {
             const taskType = taskTypes.find(function (tt) { return tt.id === taskSel.value; });
             const attrs = { [TASK_ATTRS.TASK_TYPE_ID]: taskSel.value };
             if (taskType && !getCellAttr(taskCell, TASK_ATTRS.TASK_QUANTITY_BASIS)) attrs[TASK_ATTRS.TASK_QUANTITY_BASIS] = taskType.defaultQuantityBasis;
@@ -1409,62 +1409,62 @@ Draw.loadPlugin(function (ui) {
         container.appendChild(complexitySel);
     }
 
-    function requestCropOptions(state, render) { // NEW
-        const scheduler = typeof window !== "undefined" && window.USL && window.USL.scheduler; // NEW
-        if (!scheduler || typeof scheduler.listPlantOptions !== "function") { // NEW
-            state.cropOptionsStatus = "failed"; // NEW
-            state.cropOptionsError = "Plant catalog is not available."; // NEW
-            return; // NEW
-        } // NEW
-        state.cropOptionsStatus = "loading"; // NEW
-        Promise.resolve() // NEW
-            .then(function () { return scheduler.listPlantOptions(); }) // NEW
-            .then(function (rows) { // NEW
-                state.cropOptions = normalizeCropOptions(rows); // NEW
-                state.cropOptionsStatus = "loaded"; // NEW
-                state.cropOptionsError = ""; // NEW
-                render(); // NEW
-            }) // NEW
-            .catch(function (err) { // NEW
-                state.cropOptions = []; // NEW
-                state.cropOptionsStatus = "failed"; // NEW
-                state.cropOptionsError = err && err.message ? err.message : "Plant catalog failed to load."; // NEW
-                render(); // NEW
-            }); // NEW
-    } // NEW
+    function requestCropOptions(state, render) {
+        const scheduler = typeof window !== "undefined" && window.USL && window.USL.scheduler;
+        if (!scheduler || typeof scheduler.listPlantOptions !== "function") {
+            state.cropOptionsStatus = "failed";
+            state.cropOptionsError = "Plant catalog is not available.";
+            return;
+        }
+        state.cropOptionsStatus = "loading";
+        Promise.resolve()
+            .then(function () { return scheduler.listPlantOptions(); })
+            .then(function (rows) {
+                state.cropOptions = normalizeCropOptions(rows);
+                state.cropOptionsStatus = "loaded";
+                state.cropOptionsError = "";
+                render();
+            })
+            .catch(function (err) {
+                state.cropOptions = [];
+                state.cropOptionsStatus = "failed";
+                state.cropOptionsError = err && err.message ? err.message : "Plant catalog failed to load.";
+                render();
+            });
+    }
 
-    function normalizeCropOptions(rows) { // NEW
-        return (Array.isArray(rows) ? rows : []).map(function (row) { // NEW
-            const id = trim(row && (row.id != null ? row.id : row.plant_id)); // NEW
-            const name = trim(row && (row.name || row.plant_name || row.abbr || id)); // NEW
-            if (!id || !name) return null; // NEW
-            return { id: id, name: name, category: cropLifecycleGroup(row) }; // NEW
-        }).filter(Boolean).sort(byName); // NEW
-    } // NEW
+    function normalizeCropOptions(rows) {
+        return (Array.isArray(rows) ? rows : []).map(function (row) {
+            const id = trim(row && (row.id != null ? row.id : row.plant_id));
+            const name = trim(row && (row.name || row.plant_name || row.abbr || id));
+            if (!id || !name) return null;
+            return { id: id, name: name, category: cropLifecycleGroup(row) };
+        }).filter(Boolean).sort(byName);
+    }
 
-    function cropLifecycleGroup(row) { // NEW
-        if (Number(row && row.perennial) === 1) return "Perennials"; // NEW
-        if (Number(row && row.biennial) === 1) return "Biennials"; // NEW
-        if (Number(row && row.annual) === 1) return "Annuals"; // NEW
-        return "Uncategorized"; // NEW
-    } // NEW
+    function cropLifecycleGroup(row) {
+        if (Number(row && row.perennial) === 1) return "Perennials";
+        if (Number(row && row.biennial) === 1) return "Biennials";
+        if (Number(row && row.annual) === 1) return "Annuals";
+        return "Uncategorized";
+    }
 
-    function getBedConditionOptionGroups() { // NEW
-        const api = typeof window !== "undefined" && window.TrellisGardenBeds; // NEW
-        if (api && typeof api.listConditionOptionGroups === "function") { // NEW
-            return normalizeOptionGroups(api.listConditionOptionGroups()); // NEW
-        } // NEW
-        return clone(FALLBACK_BED_CONDITION_GROUPS); // NEW
-    } // NEW
+    function getBedConditionOptionGroups() {
+        const api = typeof window !== "undefined" && window.TrellisGardenBeds;
+        if (api && typeof api.listConditionOptionGroups === "function") {
+            return normalizeOptionGroups(api.listConditionOptionGroups());
+        }
+        return clone(FALLBACK_BED_CONDITION_GROUPS);
+    }
 
-    function sanitizeChecklistBackedSelections(state) { // NEW
-        const cropIds = state.cropOptionsStatus === "loaded" ? new Set(state.cropOptions.map(function (item) { return item.id; })) : null; // NEW
-        const conditionIds = new Set(flattenOptionGroups(state.bedConditionGroups).map(function (item) { return item.id; })); // NEW
-        (state.inventory || []).forEach(function (eq) { // NEW
-            if (cropIds) eq.relevantCropIds = (eq.relevantCropIds || []).filter(function (id) { return cropIds.has(id); }); // NEW
-            eq.relevantBedConditions = (eq.relevantBedConditions || []).filter(function (id) { return conditionIds.has(id); }); // NEW
-        }); // NEW
-    } // NEW
+    function sanitizeChecklistBackedSelections(state) {
+        const cropIds = state.cropOptionsStatus === "loaded" ? new Set(state.cropOptions.map(function (item) { return item.id; })) : null;
+        const conditionIds = new Set(flattenOptionGroups(state.bedConditionGroups).map(function (item) { return item.id; }));
+        (state.inventory || []).forEach(function (eq) {
+            if (cropIds) eq.relevantCropIds = (eq.relevantCropIds || []).filter(function (id) { return cropIds.has(id); });
+            eq.relevantBedConditions = (eq.relevantBedConditions || []).filter(function (id) { return conditionIds.has(id); });
+        });
+    }
 
     // -------------------------------------------------------------------------
     // UI
@@ -1475,12 +1475,12 @@ Draw.loadPlugin(function (ui) {
         const style = document.createElement("style");
         style.id = STYLE_ID;
         style.textContent = `
-.trellis-eq-overlay { position: fixed; inset: 0; z-index: ${TRELLIS_DIALOG_Z}; background: rgba(0,0,0,0.28); display: flex; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; } /* CHANGE */
+.trellis-eq-overlay { position: fixed; inset: 0; z-index: ${TRELLIS_DIALOG_Z}; background: rgba(0,0,0,0.28); display: flex; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 .trellis-eq-dialog { width: min(1480px, calc(100vw - 52px)); height: min(920px, calc(100vh - 52px)); background: #fff; color: #172018; border-radius: 9px; box-shadow: 0 18px 50px rgba(0,0,0,.32); overflow: hidden; display: flex; flex-direction: column; }
 .trellis-eq-header { height: 54px; background: linear-gradient(90deg,#0f3f25,#0b2d1b); color: #fff; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; }
 .trellis-eq-title { font-size: 18px; font-weight: 650; }
 .trellis-eq-close { border: 0; background: transparent; color: #fff; font-size: 24px; cursor: pointer; line-height: 1; }
-.trellis-eq-top { padding: 14px 20px; display: grid; grid-template-columns: 320px repeat(6, 1fr); gap: 14px; border-bottom: 1px solid #e6e9e6; background: #fafbfa; } /* CHANGE */
+.trellis-eq-top { padding: 14px 20px; display: grid; grid-template-columns: 320px repeat(6, 1fr); gap: 14px; border-bottom: 1px solid #e6e9e6; background: #fafbfa; }
 .trellis-eq-module-label { font-size: 12px; color: #526052; margin-bottom: 6px; }
 .trellis-eq-module-box { height: 36px; border: 1px solid #d8ded8; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; background: #fff; font-size: 14px; }
 .trellis-eq-tile { border: 1px solid #e0e4e0; border-radius: 7px; background: #fff; padding: 10px 12px; display: flex; gap: 10px; align-items: center; min-width: 0; }
@@ -1498,8 +1498,8 @@ Draw.loadPlugin(function (ui) {
 .trellis-eq-toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
 .trellis-eq-btn { border: 1px solid #d5dcd5; background: #fff; color: #172018; border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 13px; }
 .trellis-eq-btn:hover { background: #f5f7f5; }
-.trellis-eq-btn.primary { background: #fff; color: #166534; border-color: #188038; } /* CHANGE */
-.trellis-eq-btn.danger { background: #fff; color: #b91c1c; border-color: #b91c1c; } /* CHANGE */
+.trellis-eq-btn.primary { background: #fff; color: #166534; border-color: #188038; }
+.trellis-eq-btn.danger { background: #fff; color: #b91c1c; border-color: #b91c1c; }
 .trellis-eq-search { flex: 1; min-width: 160px; border: 1px solid #d5dcd5; border-radius: 6px; height: 34px; padding: 0 9px; }
 .trellis-eq-table-wrap { overflow: auto; border: 1px solid #e0e5e0; border-radius: 7px; }
 .trellis-eq-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -1531,29 +1531,29 @@ Draw.loadPlugin(function (ui) {
 .trellis-eq-warning.error { border-color: #f0b4b4; background: #fff8f8; }
 .trellis-eq-warning.warning { border-color: #f0d59d; background: #fffaf0; }
 .trellis-eq-small-muted { font-size: 12px; color: #667066; }
-.trellis-eq-validation { margin: 12px 18px 0; border: 1px solid #f0d59d; background: #fffaf0; color: #5c3b00; border-radius: 7px; padding: 9px 12px; font-size: 12px; } /* NEW */
-.trellis-eq-validation.error { border-color: #f0b4b4; background: #fff8f8; color: #7a1717; } /* NEW */
-.trellis-eq-validation-title { font-weight: 650; margin-bottom: 4px; } /* NEW */
-.trellis-eq-validation ul { margin: 5px 0 0 18px; padding: 0; } /* NEW */
-.trellis-eq-row-editor { border: 1px solid #e0e5e0; border-radius: 7px; overflow: hidden; margin-top: 10px; } /* NEW */
-.trellis-eq-row { display: grid; grid-template-columns: repeat(6, minmax(100px, 1fr)) 70px; gap: 8px; align-items: end; padding: 10px; border-bottom: 1px solid #edf0ed; } /* NEW */
-.trellis-eq-row:last-child { border-bottom: 0; } /* NEW */
-.trellis-eq-row.compact { grid-template-columns: minmax(160px, 1.2fr) minmax(90px, .8fr) 70px; } /* NEW */
-.trellis-eq-row label { display: block; font-size: 11px; color: #445044; margin-bottom: 4px; } /* NEW */
-.trellis-eq-row input, .trellis-eq-row select, .trellis-eq-row textarea { width: 100%; box-sizing: border-box; border: 1px solid #d5dcd5; border-radius: 6px; padding: 7px 8px; font: inherit; font-size: 12px; } /* NEW */
-.trellis-eq-checklist { border: 1px solid #dce2dc; border-radius: 7px; padding: 9px; background: #fff; max-height: 240px; overflow: auto; } /* NEW */
-.trellis-eq-checklist-search { width: 100%; box-sizing: border-box; border: 1px solid #d5dcd5; border-radius: 6px; height: 30px; padding: 0 8px; margin-bottom: 8px; } /* NEW */
-.trellis-eq-check-group { border-top: 1px solid #edf0ed; padding-top: 7px; margin-top: 7px; } /* NEW */
-.trellis-eq-check-group:first-of-type { border-top: 0; padding-top: 0; } /* NEW */
-.trellis-eq-check-group-head { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 650; color: #283428; padding: 4px 2px; } /* NEW */
-.trellis-eq-check-group-head input { width: auto; } /* NEW */
-.trellis-eq-check-group-empty { display: none; color: #778177; font-size: 12px; padding: 5px 2px; } /* NEW */
-.trellis-eq-check-option { display: flex; align-items: flex-start; gap: 7px; padding: 5px 2px; font-size: 12px; } /* NEW */
-.trellis-eq-check-option input { width: auto; margin-top: 2px; } /* NEW */
-.trellis-eq-table-group td { background: #f6f8f6; color: #314031; font-weight: 650; } /* NEW */
-.trellis-eq-table-subgroup td { background: #fbfcfb; color: #5f695f; font-size: 12px; font-weight: 650; } /* NEW */
-.trellis-eq-id-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; } /* NEW */
-.trellis-eq-id-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f3f5f3; border: 1px solid #dbe1db; border-radius: 5px; padding: 6px 8px; } /* NEW */
+.trellis-eq-validation { margin: 12px 18px 0; border: 1px solid #f0d59d; background: #fffaf0; color: #5c3b00; border-radius: 7px; padding: 9px 12px; font-size: 12px; }
+.trellis-eq-validation.error { border-color: #f0b4b4; background: #fff8f8; color: #7a1717; }
+.trellis-eq-validation-title { font-weight: 650; margin-bottom: 4px; }
+.trellis-eq-validation ul { margin: 5px 0 0 18px; padding: 0; }
+.trellis-eq-row-editor { border: 1px solid #e0e5e0; border-radius: 7px; overflow: hidden; margin-top: 10px; }
+.trellis-eq-row { display: grid; grid-template-columns: repeat(6, minmax(100px, 1fr)) 70px; gap: 8px; align-items: end; padding: 10px; border-bottom: 1px solid #edf0ed; }
+.trellis-eq-row:last-child { border-bottom: 0; }
+.trellis-eq-row.compact { grid-template-columns: minmax(160px, 1.2fr) minmax(90px, .8fr) 70px; }
+.trellis-eq-row label { display: block; font-size: 11px; color: #445044; margin-bottom: 4px; }
+.trellis-eq-row input, .trellis-eq-row select, .trellis-eq-row textarea { width: 100%; box-sizing: border-box; border: 1px solid #d5dcd5; border-radius: 6px; padding: 7px 8px; font: inherit; font-size: 12px; }
+.trellis-eq-checklist { border: 1px solid #dce2dc; border-radius: 7px; padding: 9px; background: #fff; max-height: 240px; overflow: auto; }
+.trellis-eq-checklist-search { width: 100%; box-sizing: border-box; border: 1px solid #d5dcd5; border-radius: 6px; height: 30px; padding: 0 8px; margin-bottom: 8px; }
+.trellis-eq-check-group { border-top: 1px solid #edf0ed; padding-top: 7px; margin-top: 7px; }
+.trellis-eq-check-group:first-of-type { border-top: 0; padding-top: 0; }
+.trellis-eq-check-group-head { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 650; color: #283428; padding: 4px 2px; }
+.trellis-eq-check-group-head input { width: auto; }
+.trellis-eq-check-group-empty { display: none; color: #778177; font-size: 12px; padding: 5px 2px; }
+.trellis-eq-check-option { display: flex; align-items: flex-start; gap: 7px; padding: 5px 2px; font-size: 12px; }
+.trellis-eq-check-option input { width: auto; margin-top: 2px; }
+.trellis-eq-table-group td { background: #f6f8f6; color: #314031; font-weight: 650; }
+.trellis-eq-table-subgroup td { background: #fbfcfb; color: #5f695f; font-size: 12px; font-weight: 650; }
+.trellis-eq-id-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.trellis-eq-id-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f3f5f3; border: 1px solid #dbe1db; border-radius: 5px; padding: 6px 8px; }
 @media (max-width: 1120px) { .trellis-eq-top { grid-template-columns: 1fr 1fr; } .trellis-eq-pane { flex-direction: column; } .trellis-eq-list-panel { width: auto; height: 42%; border-right: 0; border-bottom: 1px solid #e3e7e3; } }
 `;
         document.head.appendChild(style);
@@ -1579,16 +1579,16 @@ Draw.loadPlugin(function (ui) {
             selectedEquipmentId: null,
             selectedTaskTypeId: null,
             selectedCapabilityId: null,
-            filter: "", // CHANGE
-            capabilityFilter: "", // NEW
-            taskTypeFilter: "", // NEW
-            cropFilter: "", // NEW
-            bedConditionFilter: "", // NEW
-            cropOptions: [], // NEW
-            cropOptionsStatus: "loading", // NEW
-            cropOptionsError: "", // NEW
-            bedConditionGroups: getBedConditionOptionGroups(), // NEW
-            validationReport: null // NEW
+            filter: "",
+            capabilityFilter: "",
+            taskTypeFilter: "",
+            cropFilter: "",
+            bedConditionFilter: "",
+            cropOptions: [],
+            cropOptionsStatus: "loading",
+            cropOptionsError: "",
+            bedConditionGroups: getBedConditionOptionGroups(),
+            validationReport: null
         };
 
         if (state.inventory.length) state.selectedEquipmentId = state.inventory[0].id;
@@ -1604,21 +1604,21 @@ Draw.loadPlugin(function (ui) {
         }
 
         function saveAll() {
-            sanitizeChecklistBackedSelections(state); // NEW
-            if (!canSaveState(state)) { // NEW
-                render(); // NEW
-                alert("Fix equipment validation errors before saving."); // NEW
-                return false; // NEW
-            } // NEW
+            sanitizeChecklistBackedSelections(state);
+            if (!canSaveState(state)) {
+                render();
+                alert("Fix equipment validation errors before saving.");
+                return false;
+            }
             writeEquipmentInventory(state.moduleCell, state.inventory);
             writeTaskTypeRegistry(state.moduleCell, state.taskTypes);
             writeCapabilityRegistry(state.moduleCell, state.capabilities);
-            state.validationReport = null; // NEW
-            return true; // NEW
+            state.validationReport = null;
+            return true;
         }
 
         function saveAndClose() {
-            if (saveAll()) close(); // CHANGE
+            if (saveAll()) close();
         }
 
         function render() {
@@ -1629,7 +1629,7 @@ Draw.loadPlugin(function (ui) {
             dialog.appendChild(renderHeader(close));
             dialog.appendChild(renderTopSummary(state));
             dialog.appendChild(renderMainTabs(state, render));
-            dialog.appendChild(renderValidationPanel(state)); // NEW
+            dialog.appendChild(renderValidationPanel(state));
 
             const body = div("trellis-eq-body");
             dialog.appendChild(body);
@@ -1644,7 +1644,7 @@ Draw.loadPlugin(function (ui) {
             dialog.appendChild(renderFooter(state, render, saveAll, saveAndClose, close));
         }
 
-        requestCropOptions(state, render); // NEW
+        requestCropOptions(state, render);
         render();
     }
 
@@ -1669,8 +1669,8 @@ Draw.loadPlugin(function (ui) {
         top.appendChild(summaryTile("⚠️", String(summary.missingRequiredCount), "Missing Required", "Capabilities"));
         top.appendChild(summaryTile("★", String(summary.recommendedMissingCount), "Recommended", "Opportunities"));
         top.appendChild(summaryTile("🔧", formatHours(summary.annualMaintenanceHours), "Annual Maintenance", "Estimate"));
-        top.appendChild(summaryTile("$", "$" + summary.annualMaintenanceCost.toFixed(0), "Annual Maintenance", "Estimate", "Estimated yearly recurring maintenance cost from maintenance settings.")); // CHANGE
-        top.appendChild(summaryTile("$", "$" + summary.yearlyReplacementReserve.toFixed(0), "Yearly Replacement", "Reserve Estimate", "Estimated yearly reserve to replace owned equipment: replacement cost divided by expected lifespan.")); // NEW
+        top.appendChild(summaryTile("$", "$" + summary.annualMaintenanceCost.toFixed(0), "Annual Maintenance", "Estimate", "Estimated yearly recurring maintenance cost from maintenance settings."));
+        top.appendChild(summaryTile("$", "$" + summary.yearlyReplacementReserve.toFixed(0), "Yearly Replacement", "Reserve Estimate", "Estimated yearly reserve to replace owned equipment: replacement cost divided by expected lifespan."));
         return top;
     }
 
@@ -1682,8 +1682,8 @@ Draw.loadPlugin(function (ui) {
             missingRequiredCount: warnings.filter(function (w) { return w.type === "missing_required_equipment"; }).length,
             recommendedMissingCount: warnings.filter(function (w) { return w.type === "recommended_equipment_missing"; }).length,
             annualMaintenanceHours: state.inventory.reduce(function (sum, eq) { return sum + annualMaintenanceHours(eq); }, 0),
-            annualMaintenanceCost: state.inventory.reduce(function (sum, eq) { return sum + annualMaintenanceCost(eq); }, 0), // CHANGE
-            yearlyReplacementReserve: state.inventory.reduce(function (sum, eq) { return sum + yearlyReplacementReserve(eq); }, 0) // NEW
+            annualMaintenanceCost: state.inventory.reduce(function (sum, eq) { return sum + annualMaintenanceCost(eq); }, 0),
+            yearlyReplacementReserve: state.inventory.reduce(function (sum, eq) { return sum + yearlyReplacementReserve(eq); }, 0)
         };
     }
 
@@ -1701,24 +1701,24 @@ Draw.loadPlugin(function (ui) {
         return coerceNumber(eq.maintenanceCost, 0) / every;
     }
 
-    function yearlyReplacementReserve(eq) { // NEW
-        if (!eq || (eq.status !== "owned" && eq.status !== "needs_repair")) return 0; // NEW
-        const lifespan = coerceWholeYears(eq.expectedLifespanYears, 0); // NEW
-        if (lifespan <= 0) return 0; // NEW
-        return Math.max(0, coerceNumber(eq.replacementCost, 0)) / lifespan; // NEW
-    } // NEW
+    function yearlyReplacementReserve(eq) {
+        if (!eq || (eq.status !== "owned" && eq.status !== "needs_repair")) return 0;
+        const lifespan = coerceWholeYears(eq.expectedLifespanYears, 0);
+        if (lifespan <= 0) return 0;
+        return Math.max(0, coerceNumber(eq.replacementCost, 0)) / lifespan;
+    }
 
-    function summaryTile(icon, main, line1, line2, tooltip) { // CHANGE
+    function summaryTile(icon, main, line1, line2, tooltip) {
         const tile = div("trellis-eq-tile");
-        const help = tooltip || `${line1} ${line2}`; // NEW
-        applyTooltip(tile, help); // CHANGE
+        const help = tooltip || `${line1} ${line2}`;
+        applyTooltip(tile, help);
         tile.appendChild(textDiv("trellis-eq-tile-icon", icon));
         const text = div("");
         text.appendChild(textDiv("trellis-eq-tile-main", main));
         text.appendChild(textDiv("trellis-eq-tile-sub", line1));
         text.appendChild(textDiv("trellis-eq-tile-sub", line2));
         tile.appendChild(text);
-        tile.setAttribute("aria-label", `${main} ${line1} ${line2}. ${help}`); // CHANGE
+        tile.setAttribute("aria-label", `${main} ${line1} ${line2}. ${help}`);
         return tile;
     }
 
@@ -1733,9 +1733,9 @@ Draw.loadPlugin(function (ui) {
             ["warnings", "⚠", "Warnings"]
         ].forEach(function (tab) {
             const t = textDiv("trellis-eq-tab" + (state.activeTab === tab[0] ? " active" : ""), `${tab[1]}  ${tab[2]}`);
-            applyTooltip(t, `Open ${tab[2]} tab.`); // NEW
-            t.setAttribute("role", "button"); // NEW
-            t.setAttribute("aria-label", `Open ${tab[2]} tab.`); // NEW
+            applyTooltip(t, `Open ${tab[2]} tab.`);
+            t.setAttribute("role", "button");
+            t.setAttribute("aria-label", `Open ${tab[2]} tab.`);
             t.onclick = function () {
                 state.activeTab = tab[0];
                 render();
@@ -1745,28 +1745,28 @@ Draw.loadPlugin(function (ui) {
         return tabs;
     }
 
-    function renderValidationPanel(state) { // NEW
-        const report = state.validationReport; // NEW
-        const panel = div("trellis-eq-validation" + (report && report.errors ? " error" : "")); // NEW
-        if (!report || (!report.errors && !report.warnings)) { // NEW
-            panel.style.display = "none"; // NEW
-            return panel; // NEW
-        } // NEW
-        panel.appendChild(textDiv("trellis-eq-validation-title", `${report.errors} error(s), ${report.warnings} warning(s)`)); // NEW
-        const list = document.createElement("ul"); // NEW
-        report.items.slice(0, 8).forEach(function (item) { // NEW
-            const li = document.createElement("li"); // NEW
-            li.textContent = item.message; // NEW
-            list.appendChild(li); // NEW
-        }); // NEW
-        if (report.items.length > 8) { // NEW
-            const li = document.createElement("li"); // NEW
-            li.textContent = `${report.items.length - 8} more issue(s).`; // NEW
-            list.appendChild(li); // NEW
-        } // NEW
-        panel.appendChild(list); // NEW
-        return panel; // NEW
-    } // NEW
+    function renderValidationPanel(state) {
+        const report = state.validationReport;
+        const panel = div("trellis-eq-validation" + (report && report.errors ? " error" : ""));
+        if (!report || (!report.errors && !report.warnings)) {
+            panel.style.display = "none";
+            return panel;
+        }
+        panel.appendChild(textDiv("trellis-eq-validation-title", `${report.errors} error(s), ${report.warnings} warning(s)`));
+        const list = document.createElement("ul");
+        report.items.slice(0, 8).forEach(function (item) {
+            const li = document.createElement("li");
+            li.textContent = item.message;
+            list.appendChild(li);
+        });
+        if (report.items.length > 8) {
+            const li = document.createElement("li");
+            li.textContent = `${report.items.length - 8} more issue(s).`;
+            list.appendChild(li);
+        }
+        panel.appendChild(list);
+        return panel;
+    }
 
     function renderInventoryPane(state, render) {
         const pane = div("trellis-eq-pane");
@@ -1791,7 +1791,7 @@ Draw.loadPlugin(function (ui) {
             state.inventory.push(item);
             state.selectedEquipmentId = item.id;
             render();
-        }, null, "add")); // CHANGE
+        }, null, "add"));
         toolbar.appendChild(buttonEl("Duplicate", "trellis-eq-btn", function () {
             const selected = state.inventory.find(function (eq) { return eq.id === state.selectedEquipmentId; });
             if (!selected) return;
@@ -1802,20 +1802,20 @@ Draw.loadPlugin(function (ui) {
             state.inventory.push(copy);
             state.selectedEquipmentId = copy.id;
             render();
-        }, null, "neutral")); // CHANGE
+        }, null, "neutral"));
         toolbar.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () {
             if (!state.selectedEquipmentId) return;
             if (!confirm("Delete this equipment item?")) return;
             state.inventory = state.inventory.filter(function (eq) { return eq.id !== state.selectedEquipmentId; });
             state.selectedEquipmentId = state.inventory[0] && state.inventory[0].id || null;
             render();
-        }, null, "danger")); // CHANGE
+        }, null, "danger"));
         const search = document.createElement("input");
         search.className = "trellis-eq-search";
         search.placeholder = "Search equipment...";
-        applyTooltip(search, "Filter equipment by name, category, status, capability, or task type."); // NEW
+        applyTooltip(search, "Filter equipment by name, category, status, capability, or task type.");
         search.value = state.filter;
-        search.oninput = function () { state.filter = search.value; filterEquipmentRows(search); }; // CHANGE
+        search.oninput = function () { state.filter = search.value; filterEquipmentRows(search); };
         toolbar.appendChild(search);
         return toolbar;
     }
@@ -1831,19 +1831,19 @@ Draw.loadPlugin(function (ui) {
         state.inventory
             .filter(function (eq) {
                 if (!q) return true;
-                return [eq.name, eq.category, eq.status, eq.capabilities.map(function (id) { return capabilityDisplayName(state, id); }).join(" "), eq.relevantTaskTypes.map(function (id) { return taskTypeDisplayName(state, id); }).join(" ")] // CHANGE
+                return [eq.name, eq.category, eq.status, eq.capabilities.map(function (id) { return capabilityDisplayName(state, id); }).join(" "), eq.relevantTaskTypes.map(function (id) { return taskTypeDisplayName(state, id); }).join(" ")]
                     .join(" ").toLowerCase().indexOf(q) >= 0;
             })
             .sort(byName)
             .forEach(function (eq) {
                 const tr = document.createElement("tr");
-                tr.setAttribute("data-filter-text", [eq.name, eq.category, eq.status, eq.capabilities.map(function (id) { return capabilityDisplayName(state, id); }).join(" "), eq.relevantTaskTypes.map(function (id) { return taskTypeDisplayName(state, id); }).join(" ")].join(" ").toLowerCase()); // CHANGE
+                tr.setAttribute("data-filter-text", [eq.name, eq.category, eq.status, eq.capabilities.map(function (id) { return capabilityDisplayName(state, id); }).join(" "), eq.relevantTaskTypes.map(function (id) { return taskTypeDisplayName(state, id); }).join(" ")].join(" ").toLowerCase());
                 if (eq.id === state.selectedEquipmentId) tr.className = "selected";
                 tr.onclick = function () { state.selectedEquipmentId = eq.id; render(); };
                 tr.appendChild(td(eq.name));
                 tr.appendChild(td(labelize(eq.category)));
                 tr.appendChild(tdBadge(eq.status, eq.status === "owned" || eq.status === "borrowed" ? "" : eq.status === "unavailable" || eq.status === "needs_repair" ? "gray" : "warn"));
-                tr.appendChild(td(eq.capabilities.slice(0, 3).map(function (id) { return capabilityDisplayName(state, id); }).join(", ") || "—")); // CHANGE
+                tr.appendChild(td(eq.capabilities.slice(0, 3).map(function (id) { return capabilityDisplayName(state, id); }).join(", ") || "—"));
                 tbody.appendChild(tr);
             });
 
@@ -1872,7 +1872,7 @@ Draw.loadPlugin(function (ui) {
 
         if (state.activeEquipmentEditorTab === "general") renderEquipmentGeneral(body, selected, render);
         else if (state.activeEquipmentEditorTab === "links") renderEquipmentLinks(body, selected, state, render);
-        else if (state.activeEquipmentEditorTab === "effects") renderEquipmentEffects(body, selected, state, render); // CHANGE
+        else if (state.activeEquipmentEditorTab === "effects") renderEquipmentEffects(body, selected, state, render);
         else if (state.activeEquipmentEditorTab === "maintenance") renderEquipmentMaintenance(body, selected, render);
         else if (state.activeEquipmentEditorTab === "notes") renderEquipmentNotes(body, selected, render);
 
@@ -1881,8 +1881,8 @@ Draw.loadPlugin(function (ui) {
 
     function renderEquipmentGeneral(body, eq, render) {
         const grid = div("trellis-eq-form-grid");
-        grid.appendChild(field("Name", textInput(eq.name, function (e) { eq.name = e.target.value; }, render))); // CHANGE
-        grid.appendChild(field("Primary Category", selectInput(EQUIPMENT_CATEGORIES.map(optPair), eq.category, function (e) { eq.category = e.target.value; render(); }))); // CHANGE
+        grid.appendChild(field("Name", textInput(eq.name, function (e) { eq.name = e.target.value; }, render)));
+        grid.appendChild(field("Primary Category", selectInput(EQUIPMENT_CATEGORIES.map(optPair), eq.category, function (e) { eq.category = e.target.value; render(); })));
         grid.appendChild(field("Status", selectInput(EQUIPMENT_STATUSES.map(optPair), eq.status, function (e) { eq.status = e.target.value; render(); })));
         grid.appendChild(field("Skill Level Required", selectInput(SKILL_LEVELS.map(optPair), eq.skillLevelRequired, function (e) { eq.skillLevelRequired = e.target.value; render(); })));
         grid.appendChild(field("Setup Time (hours)", numberInput(eq.setupTimeHours, function (e) { eq.setupTimeHours = coerceNumber(e.target.value, 0); })));
@@ -1898,10 +1898,10 @@ Draw.loadPlugin(function (ui) {
 
     function renderEquipmentLinks(body, eq, state, render) {
         const grid = div("trellis-eq-form-grid");
-        grid.appendChild(field("Capabilities", renderGroupedChecklist(groupedOptions(state.capabilities, eq.capabilities, eq.category), eq.capabilities, state.capabilityFilter, function (value) { state.capabilityFilter = value; }, function (id, checked) { eq.capabilities = updateCheckedList(eq.capabilities, id, checked); render(); }, function (ids, checked) { eq.capabilities = updateCheckedLists(eq.capabilities, ids, checked); render(); }))); // CHANGE
-        grid.appendChild(field("Relevant Task Types", renderGroupedChecklist(groupedTaskTypeOptions(state.taskTypes, eq.relevantTaskTypes, eq.category), eq.relevantTaskTypes, state.taskTypeFilter, function (value) { state.taskTypeFilter = value; }, function (id, checked) { eq.relevantTaskTypes = updateCheckedList(eq.relevantTaskTypes, id, checked); render(); }, function (ids, checked) { eq.relevantTaskTypes = updateCheckedLists(eq.relevantTaskTypes, ids, checked); render(); }))); // CHANGE
-        grid.appendChild(field("Relevant Crops", renderRelevantCropsControl(eq, state, render))); // CHANGE
-        grid.appendChild(field("Relevant Bed Conditions", renderGroupedChecklist(state.bedConditionGroups, eq.relevantBedConditions, state.bedConditionFilter, function (value) { state.bedConditionFilter = value; }, function (id, checked) { eq.relevantBedConditions = updateCheckedList(eq.relevantBedConditions, id, checked); render(); }, function (ids, checked) { eq.relevantBedConditions = updateCheckedLists(eq.relevantBedConditions, ids, checked); render(); }))); // CHANGE
+        grid.appendChild(field("Capabilities", renderGroupedChecklist(groupedOptions(state.capabilities, eq.capabilities, eq.category), eq.capabilities, state.capabilityFilter, function (value) { state.capabilityFilter = value; }, function (id, checked) { eq.capabilities = updateCheckedList(eq.capabilities, id, checked); render(); }, function (ids, checked) { eq.capabilities = updateCheckedLists(eq.capabilities, ids, checked); render(); })));
+        grid.appendChild(field("Relevant Task Types", renderGroupedChecklist(groupedTaskTypeOptions(state.taskTypes, eq.relevantTaskTypes, eq.category), eq.relevantTaskTypes, state.taskTypeFilter, function (value) { state.taskTypeFilter = value; }, function (id, checked) { eq.relevantTaskTypes = updateCheckedList(eq.relevantTaskTypes, id, checked); render(); }, function (ids, checked) { eq.relevantTaskTypes = updateCheckedLists(eq.relevantTaskTypes, ids, checked); render(); })));
+        grid.appendChild(field("Relevant Crops", renderRelevantCropsControl(eq, state, render)));
+        grid.appendChild(field("Relevant Bed Conditions", renderGroupedChecklist(state.bedConditionGroups, eq.relevantBedConditions, state.bedConditionFilter, function (value) { state.bedConditionFilter = value; }, function (id, checked) { eq.relevantBedConditions = updateCheckedList(eq.relevantBedConditions, id, checked); render(); }, function (ids, checked) { eq.relevantBedConditions = updateCheckedLists(eq.relevantBedConditions, ids, checked); render(); })));
         body.appendChild(grid);
 
         const hint = div("trellis-eq-small-muted");
@@ -1909,63 +1909,63 @@ Draw.loadPlugin(function (ui) {
         body.appendChild(hint);
     }
 
-    function renderEquipmentEffects(body, eq, state, render) { // CHANGE
+    function renderEquipmentEffects(body, eq, state, render) {
         const explanation = div("trellis-eq-small-muted");
-        explanation.textContent = "Effects reduce or increase task hours. Only hours multipliers are supported in this standalone editor."; // CHANGE
+        explanation.textContent = "Effects reduce or increase task hours. Only hours multipliers are supported in this standalone editor.";
         body.appendChild(explanation);
 
-        const addBtn = buttonEl("Add Effect", "trellis-eq-btn primary", function () { // NEW
-            eq.efficiencyEffects.push(normalizeEffect({ // NEW
-                taskTypeId: state.taskTypes[0] && state.taskTypes[0].id || "", // NEW
-                effectType: "hours_multiplier", // NEW
-                multiplier: 1, // NEW
-                minimumScale: { value: 0, unit: "tasks" }, // NEW
-                maximumScale: null, // NEW
-                stackable: false, // NEW
-                notes: "" // NEW
-            })); // NEW
-            render(); // NEW
-        }, null, "add"); // CHANGE
-        body.appendChild(addBtn); // NEW
+        const addBtn = buttonEl("Add Effect", "trellis-eq-btn primary", function () {
+            eq.efficiencyEffects.push(normalizeEffect({
+                taskTypeId: state.taskTypes[0] && state.taskTypes[0].id || "",
+                effectType: "hours_multiplier",
+                multiplier: 1,
+                minimumScale: { value: 0, unit: "tasks" },
+                maximumScale: null,
+                stackable: false,
+                notes: ""
+            }));
+            render();
+        }, null, "add");
+        body.appendChild(addBtn);
 
-        const editor = div("trellis-eq-row-editor"); // NEW
-        if (!eq.efficiencyEffects.length) editor.appendChild(textDiv("trellis-eq-empty", "No efficiency effects defined.")); // NEW
-        eq.efficiencyEffects.forEach(function (eff, index) { // NEW
-            const row = div("trellis-eq-row"); // NEW
-            row.appendChild(rowField("Task Type", selectInput(groupedTaskTypeSelectOptions(state.taskTypes, eq.category, eff.taskTypeId), eff.taskTypeId, function (e) { eff.taskTypeId = e.target.value; render(); }))); // CHANGE
-            row.appendChild(rowField("Type", selectInput([["hours_multiplier", "Hours Multiplier"]], eff.effectType, function () { eff.effectType = "hours_multiplier"; }))); // NEW
-            row.appendChild(rowField("Multiplier", numberInput(eff.multiplier, function (e) { eff.multiplier = coerceNumber(e.target.value, 1); }))); // NEW
-            row.appendChild(rowField("Minimum", numberInput(eff.minimumScale.value, function (e) { eff.minimumScale.value = coerceNumber(e.target.value, 0); }))); // NEW
-            row.appendChild(rowField("Unit", selectInput(QUANTITY_BASES.map(optPair), eff.minimumScale.unit, function (e) { eff.minimumScale.unit = e.target.value; render(); }))); // NEW
-            row.appendChild(rowField("Stack", checkboxInput(eff.stackable, function (e) { eff.stackable = e.target.checked; }))); // NEW
-            row.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () { eq.efficiencyEffects.splice(index, 1); render(); }, null, "danger")); // CHANGE
-            editor.appendChild(row); // NEW
+        const editor = div("trellis-eq-row-editor");
+        if (!eq.efficiencyEffects.length) editor.appendChild(textDiv("trellis-eq-empty", "No efficiency effects defined."));
+        eq.efficiencyEffects.forEach(function (eff, index) {
+            const row = div("trellis-eq-row");
+            row.appendChild(rowField("Task Type", selectInput(groupedTaskTypeSelectOptions(state.taskTypes, eq.category, eff.taskTypeId), eff.taskTypeId, function (e) { eff.taskTypeId = e.target.value; render(); })));
+            row.appendChild(rowField("Type", selectInput([["hours_multiplier", "Hours Multiplier"]], eff.effectType, function () { eff.effectType = "hours_multiplier"; })));
+            row.appendChild(rowField("Multiplier", numberInput(eff.multiplier, function (e) { eff.multiplier = coerceNumber(e.target.value, 1); })));
+            row.appendChild(rowField("Minimum", numberInput(eff.minimumScale.value, function (e) { eff.minimumScale.value = coerceNumber(e.target.value, 0); })));
+            row.appendChild(rowField("Unit", selectInput(QUANTITY_BASES.map(optPair), eff.minimumScale.unit, function (e) { eff.minimumScale.unit = e.target.value; render(); })));
+            row.appendChild(rowField("Stack", checkboxInput(eff.stackable, function (e) { eff.stackable = e.target.checked; })));
+            row.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () { eq.efficiencyEffects.splice(index, 1); render(); }, null, "danger"));
+            editor.appendChild(row);
 
-            const notesRow = div("trellis-eq-row compact"); // NEW
-            notesRow.appendChild(rowField("Notes", textInput(eff.notes, function (e) { eff.notes = e.target.value; }))); // NEW
-            notesRow.appendChild(rowField("Maximum Scale", numberInput(eff.maximumScale ? eff.maximumScale.value : 0, function (e) { setEffectMaximumScale(eff, e.target.value, eff.maximumScale && eff.maximumScale.unit || eff.minimumScale.unit); }))); // NEW
-            notesRow.appendChild(rowField("Max Unit", selectInput(QUANTITY_BASES.map(optPair), eff.maximumScale && eff.maximumScale.unit || eff.minimumScale.unit, function (e) { setEffectMaximumScale(eff, eff.maximumScale && eff.maximumScale.value || 0, e.target.value); render(); }))); // NEW
-            editor.appendChild(notesRow); // NEW
-        }); // NEW
-        body.appendChild(editor); // NEW
+            const notesRow = div("trellis-eq-row compact");
+            notesRow.appendChild(rowField("Notes", textInput(eff.notes, function (e) { eff.notes = e.target.value; })));
+            notesRow.appendChild(rowField("Maximum Scale", numberInput(eff.maximumScale ? eff.maximumScale.value : 0, function (e) { setEffectMaximumScale(eff, e.target.value, eff.maximumScale && eff.maximumScale.unit || eff.minimumScale.unit); })));
+            notesRow.appendChild(rowField("Max Unit", selectInput(QUANTITY_BASES.map(optPair), eff.maximumScale && eff.maximumScale.unit || eff.minimumScale.unit, function (e) { setEffectMaximumScale(eff, eff.maximumScale && eff.maximumScale.value || 0, e.target.value); render(); })));
+            editor.appendChild(notesRow);
+        });
+        body.appendChild(editor);
     }
 
     function renderEquipmentMaintenance(body, eq, render) {
         const grid = div("trellis-eq-form-grid");
-        let replacementDateControl = null; // NEW
-        function refreshReplacementDateControl() { // NEW
-            if (!replacementDateControl) return; // NEW
-            replacementDateControl.value = isIsoDate(eq.replacementDate) ? eq.replacementDate : ""; // NEW
-            replacementDateControl.disabled = !eq.replacementDateOverride; // NEW
-        } // NEW
+        let replacementDateControl = null;
+        function refreshReplacementDateControl() {
+            if (!replacementDateControl) return;
+            replacementDateControl.value = isIsoDate(eq.replacementDate) ? eq.replacementDate : "";
+            replacementDateControl.disabled = !eq.replacementDateOverride;
+        }
         grid.appendChild(field("Purchase Cost ($)", numberInput(eq.purchaseCost, function (e) { eq.purchaseCost = coerceNumber(e.target.value, 0); })));
         grid.appendChild(field("Rental Cost / Day ($)", numberInput(eq.rentalCostPerDay, function (e) { eq.rentalCostPerDay = coerceNumber(e.target.value, 0); })));
         grid.appendChild(field("Replacement Cost ($)", numberInput(eq.replacementCost, function (e) { eq.replacementCost = coerceNumber(e.target.value, 0); })));
-        grid.appendChild(field("Expected Lifespan (years)", wholeNumberInput(eq.expectedLifespanYears, function (e) { eq.expectedLifespanYears = coerceWholeYears(e.target.value, 0); syncCalculatedReplacementDate(eq); refreshReplacementDateControl(); }))); // CHANGE
-        grid.appendChild(field("Purchase Date", dateInput(eq.purchaseDate, function (e) { eq.purchaseDate = e.target.value; syncCalculatedReplacementDate(eq); refreshReplacementDateControl(); }))); // CHANGE
-        grid.appendChild(field("Override Replacement Date", checkboxInput(eq.replacementDateOverride, function (e) { eq.replacementDateOverride = e.target.checked; syncCalculatedReplacementDate(eq); refreshReplacementDateControl(); }))); // NEW
-        replacementDateControl = dateInput(eq.replacementDate, function (e) { eq.replacementDate = e.target.value; }, null, !eq.replacementDateOverride); // NEW
-        grid.appendChild(field("Replacement Date", replacementDateControl)); // CHANGE
+        grid.appendChild(field("Expected Lifespan (years)", wholeNumberInput(eq.expectedLifespanYears, function (e) { eq.expectedLifespanYears = coerceWholeYears(e.target.value, 0); syncCalculatedReplacementDate(eq); refreshReplacementDateControl(); })));
+        grid.appendChild(field("Purchase Date", dateInput(eq.purchaseDate, function (e) { eq.purchaseDate = e.target.value; syncCalculatedReplacementDate(eq); refreshReplacementDateControl(); })));
+        grid.appendChild(field("Override Replacement Date", checkboxInput(eq.replacementDateOverride, function (e) { eq.replacementDateOverride = e.target.checked; syncCalculatedReplacementDate(eq); refreshReplacementDateControl(); })));
+        replacementDateControl = dateInput(eq.replacementDate, function (e) { eq.replacementDate = e.target.value; }, null, !eq.replacementDateOverride);
+        grid.appendChild(field("Replacement Date", replacementDateControl));
         grid.appendChild(field("Maintenance Basis", selectInput(["year", "hours_used", "task_count", "season"].map(optPair), eq.maintenanceFrequency.basis, function (e) { eq.maintenanceFrequency.basis = e.target.value; render(); })));
         grid.appendChild(field("Maintenance Every", numberInput(eq.maintenanceFrequency.every, function (e) { eq.maintenanceFrequency.every = coerceNumber(e.target.value, 1); })));
         grid.appendChild(field("Maintenance Time (hours)", numberInput(eq.maintenanceTimeHours, function (e) { eq.maintenanceTimeHours = coerceNumber(e.target.value, 0); })));
@@ -1994,15 +1994,15 @@ Draw.loadPlugin(function (ui) {
             state.taskTypes.push(tt);
             state.selectedTaskTypeId = tt.id;
             render();
-        }, null, "add")); // CHANGE
+        }, null, "add"));
         toolbar.appendChild(buttonEl("Restore Defaults", "trellis-eq-btn", function () {
             state.taskTypes = mergeDefaults(state.taskTypes, DEFAULT_TASK_TYPES, normalizeTaskType);
             render();
-        }, null, "danger")); // CHANGE
+        }, null, "danger"));
         toolbar.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () {
             if (!state.selectedTaskTypeId) return;
-            if (deleteTaskTypeId(state, state.selectedTaskTypeId)) render(); // CHANGE
-        }, null, "danger")); // CHANGE
+            if (deleteTaskTypeId(state, state.selectedTaskTypeId)) render();
+        }, null, "danger"));
         listPanel.appendChild(toolbar);
         listPanel.appendChild(renderTaskTypeTable(state, render));
 
@@ -2017,30 +2017,30 @@ Draw.loadPlugin(function (ui) {
         table.className = "trellis-eq-table";
         table.innerHTML = "<thead><tr><th>Name</th><th>Category</th><th>Quantity</th><th>Required</th></tr></thead>";
         const tbody = document.createElement("tbody");
-        groupedTaskTypesForRegistry(state.taskTypes).forEach(function (group) { // CHANGE
-            tbody.appendChild(tableGroupRow(group.name, 4)); // NEW
-            appendTaskTypeRegistryRows(tbody, state, render, group.canonical, "Canonical Tasks"); // NEW
-            appendTaskTypeRegistryRows(tbody, state, render, group.other, "Other Tasks"); // NEW
-        }); // CHANGE
+        groupedTaskTypesForRegistry(state.taskTypes).forEach(function (group) {
+            tbody.appendChild(tableGroupRow(group.name, 4));
+            appendTaskTypeRegistryRows(tbody, state, render, group.canonical, "Canonical Tasks");
+            appendTaskTypeRegistryRows(tbody, state, render, group.other, "Other Tasks");
+        });
         table.appendChild(tbody);
         wrap.appendChild(table);
         return wrap;
     }
 
-    function appendTaskTypeRegistryRows(tbody, state, render, items, label) { // NEW
-        if (!items.length) return; // NEW
-        tbody.appendChild(tableSubgroupRow(label, 4)); // NEW
-        items.forEach(function (tt) { // NEW
-            const tr = document.createElement("tr"); // NEW
-            if (tt.id === state.selectedTaskTypeId) tr.className = "selected"; // NEW
-            tr.onclick = function () { state.selectedTaskTypeId = tt.id; render(); }; // NEW
-            tr.appendChild(td(tt.name)); // NEW
-            tr.appendChild(td(labelize(tt.category))); // NEW
-            tr.appendChild(td(tt.defaultQuantityBasis)); // NEW
-            tr.appendChild(td(tt.requiredCapabilities.map(function (id) { return capabilityDisplayName(state, id); }).join(", ") || "—")); // NEW
-            tbody.appendChild(tr); // NEW
-        }); // NEW
-    } // NEW
+    function appendTaskTypeRegistryRows(tbody, state, render, items, label) {
+        if (!items.length) return;
+        tbody.appendChild(tableSubgroupRow(label, 4));
+        items.forEach(function (tt) {
+            const tr = document.createElement("tr");
+            if (tt.id === state.selectedTaskTypeId) tr.className = "selected";
+            tr.onclick = function () { state.selectedTaskTypeId = tt.id; render(); };
+            tr.appendChild(td(tt.name));
+            tr.appendChild(td(labelize(tt.category)));
+            tr.appendChild(td(tt.defaultQuantityBasis));
+            tr.appendChild(td(tt.requiredCapabilities.map(function (id) { return capabilityDisplayName(state, id); }).join(", ") || "—"));
+            tbody.appendChild(tr);
+        });
+    }
 
     function renderTaskTypeEditor(state, tt, render) {
         if (!tt) return textDiv("trellis-eq-empty", "No task type selected.");
@@ -2054,19 +2054,19 @@ Draw.loadPlugin(function (ui) {
 
         if (state.activeTaskTypeEditorTab === "general") {
             const grid = div("trellis-eq-form-grid");
-            grid.appendChild(field("ID", renderIdControl(tt.id, function () { const next = prompt("New task type ID:", tt.id); if (next != null && renameTaskTypeId(state, tt.id, next)) render(); }))); // CHANGE
-            grid.appendChild(field("Name", textInput(tt.name, function (e) { tt.name = e.target.value; }, render))); // CHANGE
+            grid.appendChild(field("ID", renderIdControl(tt.id, function () { const next = prompt("New task type ID:", tt.id); if (next != null && renameTaskTypeId(state, tt.id, next)) render(); })));
+            grid.appendChild(field("Name", textInput(tt.name, function (e) { tt.name = e.target.value; }, render)));
             grid.appendChild(field("Category", textInput(tt.category, function (e) { tt.category = sanitizeId(e.target.value); })));
             grid.appendChild(field("Default Quantity Basis", selectInput(QUANTITY_BASES.map(optPair), tt.defaultQuantityBasis, function (e) { tt.defaultQuantityBasis = e.target.value; render(); })));
-            grid.appendChild(field("Allowed Quantity Bases", renderQuantityBasisChecklist(tt.allowedQuantityBases, function (id, checked) { tt.allowedQuantityBases = updateCheckedList(tt.allowedQuantityBases, id, checked); if (tt.allowedQuantityBases.indexOf(tt.defaultQuantityBasis) < 0) tt.defaultQuantityBasis = tt.allowedQuantityBases[0] || "tasks"; render(); }))); // CHANGE
-            grid.appendChild(field("Base Hours Per Unit", renderNumberMapEditor(tt.baseHoursPerUnit, tt.allowedQuantityBases, function (key, value) { tt.baseHoursPerUnit[key] = coerceNumber(value, 0); }, function (key) { delete tt.baseHoursPerUnit[key]; render(); }))); // CHANGE
+            grid.appendChild(field("Allowed Quantity Bases", renderQuantityBasisChecklist(tt.allowedQuantityBases, function (id, checked) { tt.allowedQuantityBases = updateCheckedList(tt.allowedQuantityBases, id, checked); if (tt.allowedQuantityBases.indexOf(tt.defaultQuantityBasis) < 0) tt.defaultQuantityBasis = tt.allowedQuantityBases[0] || "tasks"; render(); })));
+            grid.appendChild(field("Base Hours Per Unit", renderNumberMapEditor(tt.baseHoursPerUnit, tt.allowedQuantityBases, function (key, value) { tt.baseHoursPerUnit[key] = coerceNumber(value, 0); }, function (key) { delete tt.baseHoursPerUnit[key]; render(); })));
             body.appendChild(grid);
         } else {
             const grid = div("trellis-eq-form-grid");
-            grid.appendChild(field("Required Capabilities", renderGroupedChecklist(groupedOptions(state.capabilities, tt.requiredCapabilities, tt.category), tt.requiredCapabilities, state.capabilityFilter, function (value) { state.capabilityFilter = value; }, function (id, checked) { tt.requiredCapabilities = updateCheckedList(tt.requiredCapabilities, id, checked); render(); }, function (ids, checked) { tt.requiredCapabilities = updateCheckedLists(tt.requiredCapabilities, ids, checked); render(); }))); // CHANGE
-            grid.appendChild(field("Optional Capabilities", renderGroupedChecklist(groupedOptions(state.capabilities, tt.optionalCapabilities, tt.category), tt.optionalCapabilities, state.capabilityFilter, function (value) { state.capabilityFilter = value; }, function (id, checked) { tt.optionalCapabilities = updateCheckedList(tt.optionalCapabilities, id, checked); render(); }, function (ids, checked) { tt.optionalCapabilities = updateCheckedLists(tt.optionalCapabilities, ids, checked); render(); }))); // CHANGE
-            grid.appendChild(field("Recommended Capabilities", renderGroupedChecklist(groupedOptions(state.capabilities, tt.recommendedCapabilities, tt.category), tt.recommendedCapabilities, state.capabilityFilter, function (value) { state.capabilityFilter = value; }, function (id, checked) { tt.recommendedCapabilities = updateCheckedList(tt.recommendedCapabilities, id, checked); render(); }, function (ids, checked) { tt.recommendedCapabilities = updateCheckedLists(tt.recommendedCapabilities, ids, checked); render(); }))); // CHANGE
-            grid.appendChild(field("Complexity Modifiers", renderNumberMapEditor(tt.complexityModifiers, COMPLEXITY_KEYS, function (key, value) { tt.complexityModifiers[key] = coerceNumber(value, 1); }, null))); // CHANGE
+            grid.appendChild(field("Required Capabilities", renderGroupedChecklist(groupedOptions(state.capabilities, tt.requiredCapabilities, tt.category), tt.requiredCapabilities, state.capabilityFilter, function (value) { state.capabilityFilter = value; }, function (id, checked) { tt.requiredCapabilities = updateCheckedList(tt.requiredCapabilities, id, checked); render(); }, function (ids, checked) { tt.requiredCapabilities = updateCheckedLists(tt.requiredCapabilities, ids, checked); render(); })));
+            grid.appendChild(field("Optional Capabilities", renderGroupedChecklist(groupedOptions(state.capabilities, tt.optionalCapabilities, tt.category), tt.optionalCapabilities, state.capabilityFilter, function (value) { state.capabilityFilter = value; }, function (id, checked) { tt.optionalCapabilities = updateCheckedList(tt.optionalCapabilities, id, checked); render(); }, function (ids, checked) { tt.optionalCapabilities = updateCheckedLists(tt.optionalCapabilities, ids, checked); render(); })));
+            grid.appendChild(field("Recommended Capabilities", renderGroupedChecklist(groupedOptions(state.capabilities, tt.recommendedCapabilities, tt.category), tt.recommendedCapabilities, state.capabilityFilter, function (value) { state.capabilityFilter = value; }, function (id, checked) { tt.recommendedCapabilities = updateCheckedList(tt.recommendedCapabilities, id, checked); render(); }, function (ids, checked) { tt.recommendedCapabilities = updateCheckedLists(tt.recommendedCapabilities, ids, checked); render(); })));
+            grid.appendChild(field("Complexity Modifiers", renderNumberMapEditor(tt.complexityModifiers, COMPLEXITY_KEYS, function (key, value) { tt.complexityModifiers[key] = coerceNumber(value, 1); }, null)));
             grid.appendChild(field("Default Setup Time", numberInput(tt.defaultSetupTimeHours, function (e) { tt.defaultSetupTimeHours = coerceNumber(e.target.value, 0); })));
             grid.appendChild(field("Default Cleanup Time", numberInput(tt.defaultCleanupTimeHours, function (e) { tt.defaultCleanupTimeHours = coerceNumber(e.target.value, 0); })));
             grid.appendChild(field("Notes", textareaInput(tt.notes, function (e) { tt.notes = e.target.value; }, false)));
@@ -2089,20 +2089,20 @@ Draw.loadPlugin(function (ui) {
             state.capabilities.push(c);
             state.selectedCapabilityId = c.id;
             render();
-        }, null, "add")); // CHANGE
+        }, null, "add"));
         toolbar.appendChild(buttonEl("Restore Defaults", "trellis-eq-btn", function () {
             state.capabilities = mergeDefaults(state.capabilities, DEFAULT_CAPABILITIES, normalizeCapability);
             render();
-        }, null, "danger")); // CHANGE
+        }, null, "danger"));
         toolbar.appendChild(buttonEl("Delete", "trellis-eq-btn danger", function () {
             if (!state.selectedCapabilityId) return;
-            if (deleteCapabilityId(state, state.selectedCapabilityId)) render(); // CHANGE
-        }, null, "danger")); // CHANGE
+            if (deleteCapabilityId(state, state.selectedCapabilityId)) render();
+        }, null, "danger"));
         listPanel.appendChild(toolbar);
         listPanel.appendChild(renderCapabilitiesTable(state, render));
 
         const selected = state.capabilities.find(function (c) { return c.id === state.selectedCapabilityId; });
-        editorPanel.appendChild(renderCapabilityEditor(state, selected, render)); // CHANGE
+        editorPanel.appendChild(renderCapabilityEditor(state, selected, render));
         return pane;
     }
 
@@ -2110,15 +2110,15 @@ Draw.loadPlugin(function (ui) {
         const wrap = div("trellis-eq-table-wrap");
         const table = document.createElement("table");
         table.className = "trellis-eq-table";
-        table.innerHTML = "<thead><tr><th>Name</th><th>Category</th><th>Description</th></tr></thead>"; // CHANGE
+        table.innerHTML = "<thead><tr><th>Name</th><th>Category</th><th>Description</th></tr></thead>";
         const tbody = document.createElement("tbody");
         state.capabilities.sort(byName).forEach(function (c) {
             const tr = document.createElement("tr");
             if (c.id === state.selectedCapabilityId) tr.className = "selected";
             tr.onclick = function () { state.selectedCapabilityId = c.id; render(); };
             tr.appendChild(td(c.name));
-            tr.appendChild(td(labelize(c.category))); // CHANGE
-            tr.appendChild(td(c.description || "—")); // CHANGE
+            tr.appendChild(td(labelize(c.category)));
+            tr.appendChild(td(c.description || "—"));
             tbody.appendChild(tr);
         });
         table.appendChild(tbody);
@@ -2126,7 +2126,7 @@ Draw.loadPlugin(function (ui) {
         return wrap;
     }
 
-    function renderCapabilityEditor(state, c, render) { // CHANGE
+    function renderCapabilityEditor(state, c, render) {
         if (!c) return textDiv("trellis-eq-empty", "No capability selected.");
         const card = div("trellis-eq-card");
         const head = div("trellis-eq-card-head");
@@ -2134,8 +2134,8 @@ Draw.loadPlugin(function (ui) {
         card.appendChild(head);
         const body = div("trellis-eq-card-body");
         const grid = div("trellis-eq-form-grid");
-        grid.appendChild(field("ID", renderIdControl(c.id, function () { const next = prompt("New capability ID:", c.id); if (next != null && renameCapabilityId(state, c.id, next)) render(); }))); // CHANGE
-        grid.appendChild(field("Name", textInput(c.name, function (e) { c.name = e.target.value; }, render))); // CHANGE
+        grid.appendChild(field("ID", renderIdControl(c.id, function () { const next = prompt("New capability ID:", c.id); if (next != null && renameCapabilityId(state, c.id, next)) render(); })));
+        grid.appendChild(field("Name", textInput(c.name, function (e) { c.name = e.target.value; }, render)));
         grid.appendChild(field("Category", textInput(c.category, function (e) { c.category = sanitizeId(e.target.value); })));
         grid.appendChild(field("Description", textareaInput(c.description, function (e) { c.description = e.target.value; }, false)));
         body.appendChild(grid);
@@ -2147,10 +2147,10 @@ Draw.loadPlugin(function (ui) {
         const pane = div("trellis-eq-warning-list");
         pane.appendChild(textDiv("trellis-eq-section-title", "Efficiency Rules"));
         const note = div("trellis-eq-card");
-        note.appendChild(textDiv("trellis-eq-card-head", "How equipment efficiency is applied")); // CHANGE
+        note.appendChild(textDiv("trellis-eq-card-head", "How equipment efficiency is applied"));
         const body = div("trellis-eq-card-body");
-        body.appendChild(paragraph("Efficiency rules live inside each equipment item and use hours multipliers only. The workload helper chooses the best non-stackable multiplier for a task type, then applies explicitly stackable effects.")); // CHANGE
-        body.appendChild(paragraph("Legacy frequency multipliers are converted to hours multipliers during normalization and import so older saved data remains usable.")); // CHANGE
+        body.appendChild(paragraph("Efficiency rules live inside each equipment item and use hours multipliers only. The workload helper chooses the best non-stackable multiplier for a task type, then applies explicitly stackable effects."));
+        body.appendChild(paragraph("Legacy frequency multipliers are converted to hours multipliers during normalization and import so older saved data remains usable."));
         note.appendChild(body);
         pane.appendChild(note);
 
@@ -2163,8 +2163,8 @@ Draw.loadPlugin(function (ui) {
             (eq.efficiencyEffects || []).forEach(function (eff) {
                 const tr = document.createElement("tr");
                 tr.appendChild(td(eq.name));
-                tr.appendChild(td(taskTypeDisplayName(state, eff.taskTypeId) || "—")); // CHANGE
-                tr.appendChild(td(labelize(eff.effectType || "hours_multiplier"))); // CHANGE
+                tr.appendChild(td(taskTypeDisplayName(state, eff.taskTypeId) || "—"));
+                tr.appendChild(td(labelize(eff.effectType || "hours_multiplier")));
                 tr.appendChild(td(String(eff.multiplier)));
                 tr.appendChild(td(eff.minimumScale ? `${eff.minimumScale.value} ${eff.minimumScale.unit}+` : "—"));
                 tbody.appendChild(tr);
@@ -2223,9 +2223,9 @@ Draw.loadPlugin(function (ui) {
         const wrap = div("trellis-eq-editor-tabs");
         tabs.forEach(function (tab) {
             const item = textDiv("trellis-eq-editor-tab" + (state[key] === tab[0] ? " active" : ""), tab[1]);
-            applyTooltip(item, `Open ${tab[1]} editor section.`); // NEW
-            item.setAttribute("role", "button"); // NEW
-            item.setAttribute("aria-label", `Open ${tab[1]} editor section.`); // NEW
+            applyTooltip(item, `Open ${tab[1]} editor section.`);
+            item.setAttribute("role", "button");
+            item.setAttribute("aria-label", `Open ${tab[1]} editor section.`);
             item.onclick = function () { state[key] = tab[0]; render(); };
             wrap.appendChild(item);
         });
@@ -2243,17 +2243,17 @@ Draw.loadPlugin(function (ui) {
             state.taskTypes = mergeDefaults(state.taskTypes, DEFAULT_TASK_TYPES, normalizeTaskType);
             state.capabilities = mergeDefaults(state.capabilities, DEFAULT_CAPABILITIES, normalizeCapability);
             render();
-        }, null, "danger")); // CHANGE
+        }, null, "danger"));
 
         right.appendChild(buttonEl("Export…", "trellis-eq-btn", function () {
             exportJson(state);
-        }, null, "neutral")); // CHANGE
+        }, null, "neutral"));
         right.appendChild(buttonEl("Import…", "trellis-eq-btn", function () {
             importJson(state, render);
-        }, null, "open")); // CHANGE
-        right.appendChild(buttonEl("Save", "trellis-eq-btn", saveAll, "Save equipment changes to the selected garden module.", "add")); // CHANGE
-        right.appendChild(buttonEl("Save & Close", "trellis-eq-btn", saveAndClose, "Save changes and close the equipment dialog.", "add")); // CHANGE
-        right.appendChild(buttonEl("Cancel", "trellis-eq-btn", close, "Close without saving unsaved changes.", "neutral")); // CHANGE
+        }, null, "open"));
+        right.appendChild(buttonEl("Save", "trellis-eq-btn", saveAll, "Save equipment changes to the selected garden module.", "add"));
+        right.appendChild(buttonEl("Save & Close", "trellis-eq-btn", saveAndClose, "Save changes and close the equipment dialog.", "add"));
+        right.appendChild(buttonEl("Cancel", "trellis-eq-btn", close, "Close without saving unsaved changes.", "neutral"));
 
         footer.appendChild(left);
         footer.appendChild(right);
@@ -2292,22 +2292,22 @@ Draw.loadPlugin(function (ui) {
             const reader = new FileReader();
             reader.onload = function () {
                 try {
-                    const parsed = JSON.parse(String(reader.result || "{}")); // CHANGE
-                    const preview = buildImportPreview(state, parsed); // NEW
-                    if (preview.report.errors) { // NEW
-                        state.validationReport = preview.report; // NEW
-                        render(); // NEW
-                        alert("Import blocked by validation errors."); // NEW
-                        return; // NEW
-                    } // NEW
-                    if (!confirm(preview.message)) return; // NEW
-                    state.inventory = preview.inventory; // CHANGE
-                    state.taskTypes = preview.taskTypes; // CHANGE
-                    state.capabilities = preview.capabilities; // CHANGE
-                    state.selectedEquipmentId = state.inventory[0] && state.inventory[0].id || null; // CHANGE
-                    state.selectedTaskTypeId = state.taskTypes[0] && state.taskTypes[0].id || null; // CHANGE
-                    state.selectedCapabilityId = state.capabilities[0] && state.capabilities[0].id || null; // CHANGE
-                    state.validationReport = preview.report.warnings ? preview.report : null; // NEW
+                    const parsed = JSON.parse(String(reader.result || "{}"));
+                    const preview = buildImportPreview(state, parsed);
+                    if (preview.report.errors) {
+                        state.validationReport = preview.report;
+                        render();
+                        alert("Import blocked by validation errors.");
+                        return;
+                    }
+                    if (!confirm(preview.message)) return;
+                    state.inventory = preview.inventory;
+                    state.taskTypes = preview.taskTypes;
+                    state.capabilities = preview.capabilities;
+                    state.selectedEquipmentId = state.inventory[0] && state.inventory[0].id || null;
+                    state.selectedTaskTypeId = state.taskTypes[0] && state.taskTypes[0].id || null;
+                    state.selectedCapabilityId = state.capabilities[0] && state.capabilities[0].id || null;
+                    state.validationReport = preview.report.warnings ? preview.report : null;
                     render();
                 } catch (err) {
                     alert("Could not import JSON: " + err.message);
@@ -2318,32 +2318,32 @@ Draw.loadPlugin(function (ui) {
         input.click();
     }
 
-    function mergeImportedById(existing, imported, normalizer) { // NEW
-        const byId = new Map(); // NEW
-        (existing || []).forEach(function (item) { byId.set(item.id, normalizer(item)); }); // NEW
-        (imported || []).forEach(function (item) { const normalized = normalizer(item); byId.set(normalized.id, normalized); }); // NEW
-        return Array.from(byId.values()).sort(byName); // NEW
-    } // NEW
+    function mergeImportedById(existing, imported, normalizer) {
+        const byId = new Map();
+        (existing || []).forEach(function (item) { byId.set(item.id, normalizer(item)); });
+        (imported || []).forEach(function (item) { const normalized = normalizer(item); byId.set(normalized.id, normalized); });
+        return Array.from(byId.values()).sort(byName);
+    }
 
-    function buildImportPreview(state, parsed) { // NEW
-        const importedEquipment = Array.isArray(parsed.equipment) ? parsed.equipment.map(normalizeEquipment) : []; // NEW
-        const importedTaskTypes = Array.isArray(parsed.taskTypes) ? parsed.taskTypes.map(normalizeTaskType) : []; // NEW
-        const importedCapabilities = Array.isArray(parsed.capabilities) ? parsed.capabilities.map(normalizeCapability) : []; // NEW
-        const inventory = importedEquipment.length ? mergeImportedById(state.inventory, importedEquipment, normalizeEquipment) : state.inventory.map(normalizeEquipment); // NEW
-        const taskTypes = importedTaskTypes.length ? mergeImportedById(state.taskTypes, importedTaskTypes, normalizeTaskType) : state.taskTypes.map(normalizeTaskType); // NEW
-        const capabilities = importedCapabilities.length ? mergeImportedById(state.capabilities, importedCapabilities, normalizeCapability) : state.capabilities.map(normalizeCapability); // NEW
-        const report = validateEquipmentState(inventory, taskTypes, capabilities); // NEW
-        const message = [ // NEW
-            "Import and merge these records?", // NEW
-            "", // NEW
-            `${importedEquipment.length} equipment item(s)`, // NEW
-            `${importedTaskTypes.length} task type(s)`, // NEW
-            `${importedCapabilities.length} capability record(s)`, // NEW
-            "", // NEW
-            "Imported records replace existing records with the same ID." // NEW
-        ].join("\n"); // NEW
-        return { inventory, taskTypes, capabilities, report, message }; // NEW
-    } // NEW
+    function buildImportPreview(state, parsed) {
+        const importedEquipment = Array.isArray(parsed.equipment) ? parsed.equipment.map(normalizeEquipment) : [];
+        const importedTaskTypes = Array.isArray(parsed.taskTypes) ? parsed.taskTypes.map(normalizeTaskType) : [];
+        const importedCapabilities = Array.isArray(parsed.capabilities) ? parsed.capabilities.map(normalizeCapability) : [];
+        const inventory = importedEquipment.length ? mergeImportedById(state.inventory, importedEquipment, normalizeEquipment) : state.inventory.map(normalizeEquipment);
+        const taskTypes = importedTaskTypes.length ? mergeImportedById(state.taskTypes, importedTaskTypes, normalizeTaskType) : state.taskTypes.map(normalizeTaskType);
+        const capabilities = importedCapabilities.length ? mergeImportedById(state.capabilities, importedCapabilities, normalizeCapability) : state.capabilities.map(normalizeCapability);
+        const report = validateEquipmentState(inventory, taskTypes, capabilities);
+        const message = [
+            "Import and merge these records?",
+            "",
+            `${importedEquipment.length} equipment item(s)`,
+            `${importedTaskTypes.length} task type(s)`,
+            `${importedCapabilities.length} capability record(s)`,
+            "",
+            "Imported records replace existing records with the same ID."
+        ].join("\n");
+        return { inventory, taskTypes, capabilities, report, message };
+    }
 
     // -------------------------------------------------------------------------
     // Tiny DOM helpers
@@ -2361,12 +2361,12 @@ Draw.loadPlugin(function (ui) {
         return el;
     }
 
-    function applyTooltip(el, tooltip) { // NEW
-        const text = trim(tooltip); // NEW
-        if (!el || !text) return el; // NEW
-        el.title = text; // NEW
-        return el; // NEW
-    } // NEW
+    function applyTooltip(el, tooltip) {
+        const text = trim(tooltip);
+        if (!el || !text) return el;
+        el.title = text;
+        return el;
+    }
 
     function textNode(text) {
         return document.createTextNode(text);
@@ -2378,287 +2378,287 @@ Draw.loadPlugin(function (ui) {
         return p;
     }
 
-    function buttonEl(text, className, onClick, tooltip, variant) { // CHANGE
+    function buttonEl(text, className, onClick, tooltip, variant) {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = className || "trellis-eq-btn";
         btn.textContent = text;
         btn.onclick = onClick;
-        applyTooltip(btn, tooltip || trim(text)); // NEW
-        btn.setAttribute("aria-label", tooltip || trim(text)); // NEW
-        if ((btn.className || "").indexOf("trellis-eq-close") < 0) { // NEW
-            applyEquipmentButtonStyle(btn, variant || ((btn.className || "").indexOf("danger") >= 0 ? "danger" : ((btn.className || "").indexOf("primary") >= 0 ? "add" : "neutral"))); // NEW
-        } // NEW
+        applyTooltip(btn, tooltip || trim(text));
+        btn.setAttribute("aria-label", tooltip || trim(text));
+        if ((btn.className || "").indexOf("trellis-eq-close") < 0) {
+            applyEquipmentButtonStyle(btn, variant || ((btn.className || "").indexOf("danger") >= 0 ? "danger" : ((btn.className || "").indexOf("primary") >= 0 ? "add" : "neutral")));
+        }
         return btn;
     }
 
-    function checkboxInput(checked, onChange) { // NEW
-        const input = document.createElement("input"); // NEW
-        input.type = "checkbox"; // NEW
-        input.checked = !!checked; // NEW
-        input.onchange = onChange; // NEW
-        return input; // NEW
-    } // NEW
+    function checkboxInput(checked, onChange) {
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = !!checked;
+        input.onchange = onChange;
+        return input;
+    }
 
-    function rowField(label, input, tooltip) { // CHANGE
-        const wrap = div(""); // NEW
-        const lbl = document.createElement("label"); // NEW
-        lbl.textContent = label; // NEW
-        const help = tooltip || ROW_FIELD_TOOLTIPS[label]; // NEW
-        applyTooltip(wrap, help); // NEW
-        applyTooltip(lbl, help); // NEW
-        applyTooltip(input, help); // NEW
-        wrap.appendChild(lbl); // NEW
-        wrap.appendChild(input); // NEW
-        return wrap; // NEW
-    } // NEW
+    function rowField(label, input, tooltip) {
+        const wrap = div("");
+        const lbl = document.createElement("label");
+        lbl.textContent = label;
+        const help = tooltip || ROW_FIELD_TOOLTIPS[label];
+        applyTooltip(wrap, help);
+        applyTooltip(lbl, help);
+        applyTooltip(input, help);
+        wrap.appendChild(lbl);
+        wrap.appendChild(input);
+        return wrap;
+    }
 
-    function registryNameMap(items) { // NEW
-        const out = Object.create(null); // NEW
-        (items || []).forEach(function (item) { if (item && item.id) out[item.id] = item.name || item.id; }); // NEW
-        return out; // NEW
-    } // NEW
+    function registryNameMap(items) {
+        const out = Object.create(null);
+        (items || []).forEach(function (item) { if (item && item.id) out[item.id] = item.name || item.id; });
+        return out;
+    }
 
-    function lookupName(map, id) { // NEW
-        return map && map[id] ? map[id] : id; // NEW
-    } // NEW
+    function lookupName(map, id) {
+        return map && map[id] ? map[id] : id;
+    }
 
-    function capabilityDisplayName(state, id) { // NEW
-        const item = (state.capabilities || []).find(function (capability) { return capability.id === id; }); // NEW
-        return item ? item.name : id; // NEW
-    } // NEW
+    function capabilityDisplayName(state, id) {
+        const item = (state.capabilities || []).find(function (capability) { return capability.id === id; });
+        return item ? item.name : id;
+    }
 
-    function taskTypeDisplayName(state, id) { // NEW
-        const item = (state.taskTypes || []).find(function (taskTypeRecord) { return taskTypeRecord.id === id; }); // NEW
-        return item ? item.name : id; // NEW
-    } // NEW
+    function taskTypeDisplayName(state, id) {
+        const item = (state.taskTypes || []).find(function (taskTypeRecord) { return taskTypeRecord.id === id; });
+        return item ? item.name : id;
+    }
 
-    function normalizeOptionGroups(groups) { // NEW
-        return (groups || []).map(function (group) { // NEW
-            if (group && Array.isArray(group.options)) { // NEW
-                return { id: group.id || group.name || "other", name: group.name || labelize(group.id || "other"), options: (group.options || []).map(normalizeOptionItem).filter(Boolean).sort(byName) }; // NEW
-            } // NEW
-            return null; // NEW
-        }).filter(function (group) { return group && group.options.length; }); // NEW
-    } // NEW
+    function normalizeOptionGroups(groups) {
+        return (groups || []).map(function (group) {
+            if (group && Array.isArray(group.options)) {
+                return { id: group.id || group.name || "other", name: group.name || labelize(group.id || "other"), options: (group.options || []).map(normalizeOptionItem).filter(Boolean).sort(byName) };
+            }
+            return null;
+        }).filter(function (group) { return group && group.options.length; });
+    }
 
-    function normalizeOptionItem(item) { // NEW
-        if (!item) return null; // NEW
-        const id = trim(item.id); // NEW
-        if (!id) return null; // NEW
-        return Object.assign({}, item, { id: id, name: trim(item.name) || id, category: trim(item.category) || "general" }); // NEW
-    } // NEW
+    function normalizeOptionItem(item) {
+        if (!item) return null;
+        const id = trim(item.id);
+        if (!id) return null;
+        return Object.assign({}, item, { id: id, name: trim(item.name) || id, category: trim(item.category) || "general" });
+    }
 
-    function flattenOptionGroups(groups) { // NEW
-        const out = []; // NEW
-        normalizeOptionGroups(groups).forEach(function (group) { out.push.apply(out, group.options); }); // NEW
-        return out; // NEW
-    } // NEW
+    function flattenOptionGroups(groups) {
+        const out = [];
+        normalizeOptionGroups(groups).forEach(function (group) { out.push.apply(out, group.options); });
+        return out;
+    }
 
-    function groupedOptions(options, selectedIds, primaryCategory) { // NEW
-        const selected = new Set(selectedIds || []); // NEW
-        const byCategory = new Map(); // NEW
-        (options || []).map(normalizeOptionItem).filter(Boolean).forEach(function (item) { // NEW
-            const category = trim(item.category) || "general"; // NEW
-            if (!byCategory.has(category)) byCategory.set(category, []); // NEW
-            byCategory.get(category).push(item); // NEW
-        }); // NEW
-        return orderCategoryKeys(Array.from(byCategory.keys()), primaryCategory, selectedCategories(byCategory, selected)).map(function (category) { // NEW
-            return { id: category, name: groupLabel(category), options: byCategory.get(category).sort(byName) }; // NEW
-        }); // NEW
-    } // NEW
+    function groupedOptions(options, selectedIds, primaryCategory) {
+        const selected = new Set(selectedIds || []);
+        const byCategory = new Map();
+        (options || []).map(normalizeOptionItem).filter(Boolean).forEach(function (item) {
+            const category = trim(item.category) || "general";
+            if (!byCategory.has(category)) byCategory.set(category, []);
+            byCategory.get(category).push(item);
+        });
+        return orderCategoryKeys(Array.from(byCategory.keys()), primaryCategory, selectedCategories(byCategory, selected)).map(function (category) {
+            return { id: category, name: groupLabel(category), options: byCategory.get(category).sort(byName) };
+        });
+    }
 
-    function groupedTaskTypeOptions(taskTypes, selectedIds, primaryCategory) { // NEW
-        const groups = groupedOptions(taskTypes, selectedIds, primaryCategory); // NEW
-        groups.forEach(function (group) { group.options = sortTaskTypeOptions(group.options); }); // NEW
-        return groups; // NEW
-    } // NEW
+    function groupedTaskTypeOptions(taskTypes, selectedIds, primaryCategory) {
+        const groups = groupedOptions(taskTypes, selectedIds, primaryCategory);
+        groups.forEach(function (group) { group.options = sortTaskTypeOptions(group.options); });
+        return groups;
+    }
 
-    function groupedTaskTypeSelectOptions(taskTypes, primaryCategory, selectedId) { // NEW
-        return groupedTaskTypeOptions(taskTypes, selectedId ? [selectedId] : [], primaryCategory); // NEW
-    } // NEW
+    function groupedTaskTypeSelectOptions(taskTypes, primaryCategory, selectedId) {
+        return groupedTaskTypeOptions(taskTypes, selectedId ? [selectedId] : [], primaryCategory);
+    }
 
-    function sortTaskTypeOptions(items) { // NEW
-        return (items || []).slice().sort(function (a, b) { // NEW
-            const aCanonical = CANONICAL_TASK_TYPE_IDS.has(a.id) ? 0 : 1; // NEW
-            const bCanonical = CANONICAL_TASK_TYPE_IDS.has(b.id) ? 0 : 1; // NEW
-            if (aCanonical !== bCanonical) return aCanonical - bCanonical; // NEW
-            return byName(a, b); // NEW
-        }); // NEW
-    } // NEW
+    function sortTaskTypeOptions(items) {
+        return (items || []).slice().sort(function (a, b) {
+            const aCanonical = CANONICAL_TASK_TYPE_IDS.has(a.id) ? 0 : 1;
+            const bCanonical = CANONICAL_TASK_TYPE_IDS.has(b.id) ? 0 : 1;
+            if (aCanonical !== bCanonical) return aCanonical - bCanonical;
+            return byName(a, b);
+        });
+    }
 
-    function selectedCategories(byCategory, selected) { // NEW
-        const out = []; // NEW
-        byCategory.forEach(function (items, category) { // NEW
-            if (items.some(function (item) { return selected.has(item.id); })) out.push(category); // NEW
-        }); // NEW
-        return out; // NEW
-    } // NEW
+    function selectedCategories(byCategory, selected) {
+        const out = [];
+        byCategory.forEach(function (items, category) {
+            if (items.some(function (item) { return selected.has(item.id); })) out.push(category);
+        });
+        return out;
+    }
 
-    function orderCategoryKeys(keys, primaryCategory, selectedCategoryKeys) { // NEW
-        const present = new Set(keys || []); // NEW
-        const out = []; // NEW
-        function add(category) { if (category && present.has(category) && out.indexOf(category) < 0) out.push(category); } // NEW
-        add(trim(primaryCategory)); // NEW
-        add("general"); // NEW
-        (selectedCategoryKeys || []).sort(categoryCompare).forEach(add); // NEW
-        keys.slice().sort(categoryCompare).forEach(add); // NEW
-        return out; // NEW
-    } // NEW
+    function orderCategoryKeys(keys, primaryCategory, selectedCategoryKeys) {
+        const present = new Set(keys || []);
+        const out = [];
+        function add(category) { if (category && present.has(category) && out.indexOf(category) < 0) out.push(category); }
+        add(trim(primaryCategory));
+        add("general");
+        (selectedCategoryKeys || []).sort(categoryCompare).forEach(add);
+        keys.slice().sort(categoryCompare).forEach(add);
+        return out;
+    }
 
-    function categoryCompare(a, b) { // NEW
-        return groupLabel(a).localeCompare(groupLabel(b)); // NEW
-    } // NEW
+    function categoryCompare(a, b) {
+        return groupLabel(a).localeCompare(groupLabel(b));
+    }
 
-    function groupLabel(category) { // NEW
-        const value = trim(category) || "general"; // NEW
-        return /[\s]/.test(value) ? value : labelize(value); // NEW
-    } // NEW
+    function groupLabel(category) {
+        const value = trim(category) || "general";
+        return /[\s]/.test(value) ? value : labelize(value);
+    }
 
-    function groupedTaskTypesForRegistry(taskTypes) { // NEW
-        const byCategory = new Map(); // NEW
-        (taskTypes || []).forEach(function (tt) { // NEW
-            const category = trim(tt.category) || "general"; // NEW
-            if (!byCategory.has(category)) byCategory.set(category, { id: category, name: groupLabel(category), canonical: [], other: [] }); // NEW
-            byCategory.get(category)[CANONICAL_TASK_TYPE_IDS.has(tt.id) ? "canonical" : "other"].push(tt); // NEW
-        }); // NEW
-        return Array.from(byCategory.values()).sort(function (a, b) { return a.name.localeCompare(b.name); }).map(function (group) { // NEW
-            group.canonical.sort(byName); // NEW
-            group.other.sort(byName); // NEW
-            return group; // NEW
-        }); // NEW
-    } // NEW
+    function groupedTaskTypesForRegistry(taskTypes) {
+        const byCategory = new Map();
+        (taskTypes || []).forEach(function (tt) {
+            const category = trim(tt.category) || "general";
+            if (!byCategory.has(category)) byCategory.set(category, { id: category, name: groupLabel(category), canonical: [], other: [] });
+            byCategory.get(category)[CANONICAL_TASK_TYPE_IDS.has(tt.id) ? "canonical" : "other"].push(tt);
+        });
+        return Array.from(byCategory.values()).sort(function (a, b) { return a.name.localeCompare(b.name); }).map(function (group) {
+            group.canonical.sort(byName);
+            group.other.sort(byName);
+            return group;
+        });
+    }
 
-    function renderRelevantCropsControl(eq, state, render) { // NEW
-        if (state.cropOptionsStatus === "loading") return textDiv("trellis-eq-empty", "Loading crop catalog..."); // NEW
-        if (state.cropOptionsStatus !== "loaded") { // NEW
-            const wrap = div(""); // NEW
-            wrap.appendChild(textDiv("trellis-eq-small-muted", state.cropOptionsError || "Crop catalog is unavailable; edit stored crop IDs directly.")); // NEW
-            wrap.appendChild(textareaInput(eq.relevantCropIds.join(", "), function (e) { eq.relevantCropIds = splitCsv(e.target.value); }, false)); // NEW
-            return wrap; // NEW
-        } // NEW
-        return renderGroupedChecklist(groupedOptions(state.cropOptions, eq.relevantCropIds, ""), eq.relevantCropIds, state.cropFilter, function (value) { state.cropFilter = value; }, function (id, checked) { eq.relevantCropIds = updateCheckedList(eq.relevantCropIds, id, checked); render(); }, function (ids, checked) { eq.relevantCropIds = updateCheckedLists(eq.relevantCropIds, ids, checked); render(); }); // NEW
-    } // NEW
+    function renderRelevantCropsControl(eq, state, render) {
+        if (state.cropOptionsStatus === "loading") return textDiv("trellis-eq-empty", "Loading crop catalog...");
+        if (state.cropOptionsStatus !== "loaded") {
+            const wrap = div("");
+            wrap.appendChild(textDiv("trellis-eq-small-muted", state.cropOptionsError || "Crop catalog is unavailable; edit stored crop IDs directly."));
+            wrap.appendChild(textareaInput(eq.relevantCropIds.join(", "), function (e) { eq.relevantCropIds = splitCsv(e.target.value); }, false));
+            return wrap;
+        }
+        return renderGroupedChecklist(groupedOptions(state.cropOptions, eq.relevantCropIds, ""), eq.relevantCropIds, state.cropFilter, function (value) { state.cropFilter = value; }, function (id, checked) { eq.relevantCropIds = updateCheckedList(eq.relevantCropIds, id, checked); render(); }, function (ids, checked) { eq.relevantCropIds = updateCheckedLists(eq.relevantCropIds, ids, checked); render(); });
+    }
 
-    function renderChecklist(options, selectedIds, filterValue, onFilter, onToggle) { // NEW
-        return renderGroupedChecklist(groupedOptions(options, selectedIds, ""), selectedIds, filterValue, onFilter, onToggle, function (ids, checked) { // CHANGE
-            ids.forEach(function (id) { onToggle(id, checked); }); // CHANGE
-        }); // NEW
-    } // NEW
+    function renderChecklist(options, selectedIds, filterValue, onFilter, onToggle) {
+        return renderGroupedChecklist(groupedOptions(options, selectedIds, ""), selectedIds, filterValue, onFilter, onToggle, function (ids, checked) {
+            ids.forEach(function (id) { onToggle(id, checked); });
+        });
+    }
 
-    function renderGroupedChecklist(groups, selectedIds, filterValue, onFilter, onToggle, onToggleGroup) { // NEW
-        const wrap = div("trellis-eq-checklist"); // NEW
-        const search = document.createElement("input"); // NEW
-        search.className = "trellis-eq-checklist-search"; // NEW
-        search.placeholder = "Search..."; // NEW
-        applyTooltip(search, "Search visible options by display name."); // NEW
-        search.value = filterValue || ""; // NEW
-        search.oninput = function () { onFilter(search.value); filterChecklistOptions(wrap, search.value); }; // CHANGE
-        wrap.appendChild(search); // NEW
-        const selected = new Set(selectedIds || []); // NEW
-        normalizeOptionGroups(groups).forEach(function (group) { // NEW
-            const groupEl = div("trellis-eq-check-group"); // NEW
-            groupEl.setAttribute("data-group-name", String(group.name || group.id || "")); // NEW
-            const ids = group.options.map(function (item) { return item.id; }); // NEW
-            const checkedCount = ids.filter(function (id) { return selected.has(id); }).length; // NEW
-            const head = document.createElement("label"); // NEW
-            head.className = "trellis-eq-check-group-head"; // NEW
-            const groupInput = checkboxInput(ids.length > 0 && checkedCount === ids.length, function (e) { onToggleGroup(ids, e.target.checked); }); // NEW
-            groupInput.indeterminate = checkedCount > 0 && checkedCount < ids.length; // NEW
-            applyTooltip(groupInput, `Select or clear all ${group.name || group.id || "group"} options.`); // NEW
-            groupInput.setAttribute("aria-label", `Select or clear all ${group.name || group.id || "group"} options.`); // NEW
-            const groupText = document.createElement("span"); // NEW
-            groupText.textContent = group.name || group.id || "Other"; // NEW
-            head.appendChild(groupInput); // NEW
-            head.appendChild(groupText); // NEW
-            groupEl.appendChild(head); // NEW
-            group.options.forEach(function (item) { // NEW
-                const label = document.createElement("label"); // NEW
-                label.className = "trellis-eq-check-option"; // NEW
-                label.setAttribute("data-filter-text", String(item.name || "").toLowerCase()); // CHANGE
-                const input = checkboxInput(selected.has(item.id), function (e) { onToggle(item.id, e.target.checked); }); // NEW
-                const text = document.createElement("span"); // NEW
-                text.textContent = item.name || item.id; // CHANGE
-                label.appendChild(input); // NEW
-                label.appendChild(text); // NEW
-                groupEl.appendChild(label); // NEW
-            }); // NEW
-            groupEl.appendChild(textDiv("trellis-eq-check-group-empty", "No matches")); // NEW
-            wrap.appendChild(groupEl); // NEW
-        }); // NEW
-        filterChecklistOptions(wrap, filterValue); // NEW
-        return wrap; // NEW
-    } // NEW
+    function renderGroupedChecklist(groups, selectedIds, filterValue, onFilter, onToggle, onToggleGroup) {
+        const wrap = div("trellis-eq-checklist");
+        const search = document.createElement("input");
+        search.className = "trellis-eq-checklist-search";
+        search.placeholder = "Search...";
+        applyTooltip(search, "Search visible options by display name.");
+        search.value = filterValue || "";
+        search.oninput = function () { onFilter(search.value); filterChecklistOptions(wrap, search.value); };
+        wrap.appendChild(search);
+        const selected = new Set(selectedIds || []);
+        normalizeOptionGroups(groups).forEach(function (group) {
+            const groupEl = div("trellis-eq-check-group");
+            groupEl.setAttribute("data-group-name", String(group.name || group.id || ""));
+            const ids = group.options.map(function (item) { return item.id; });
+            const checkedCount = ids.filter(function (id) { return selected.has(id); }).length;
+            const head = document.createElement("label");
+            head.className = "trellis-eq-check-group-head";
+            const groupInput = checkboxInput(ids.length > 0 && checkedCount === ids.length, function (e) { onToggleGroup(ids, e.target.checked); });
+            groupInput.indeterminate = checkedCount > 0 && checkedCount < ids.length;
+            applyTooltip(groupInput, `Select or clear all ${group.name || group.id || "group"} options.`);
+            groupInput.setAttribute("aria-label", `Select or clear all ${group.name || group.id || "group"} options.`);
+            const groupText = document.createElement("span");
+            groupText.textContent = group.name || group.id || "Other";
+            head.appendChild(groupInput);
+            head.appendChild(groupText);
+            groupEl.appendChild(head);
+            group.options.forEach(function (item) {
+                const label = document.createElement("label");
+                label.className = "trellis-eq-check-option";
+                label.setAttribute("data-filter-text", String(item.name || "").toLowerCase());
+                const input = checkboxInput(selected.has(item.id), function (e) { onToggle(item.id, e.target.checked); });
+                const text = document.createElement("span");
+                text.textContent = item.name || item.id;
+                label.appendChild(input);
+                label.appendChild(text);
+                groupEl.appendChild(label);
+            });
+            groupEl.appendChild(textDiv("trellis-eq-check-group-empty", "No matches"));
+            wrap.appendChild(groupEl);
+        });
+        filterChecklistOptions(wrap, filterValue);
+        return wrap;
+    }
 
-    function renderQuantityBasisChecklist(selectedIds, onToggle) { // NEW
-        const options = QUANTITY_BASES.map(function (id) { return { id, name: labelize(id), category: "quantity" }; }); // NEW
-        return renderChecklist(options, selectedIds, "", function () {}, onToggle); // NEW
-    } // NEW
+    function renderQuantityBasisChecklist(selectedIds, onToggle) {
+        const options = QUANTITY_BASES.map(function (id) { return { id, name: labelize(id), category: "quantity" }; });
+        return renderChecklist(options, selectedIds, "", function () {}, onToggle);
+    }
 
-    function renderNumberMapEditor(map, orderedKeys, onValue, onDelete) { // NEW
-        const editor = div("trellis-eq-row-editor"); // NEW
-        const requiredKeys = new Set(orderedKeys || []); // NEW
-        const keys = uniqueStrings((orderedKeys || []).concat(Object.keys(map || {}))); // NEW
-        if (!keys.length) editor.appendChild(textDiv("trellis-eq-empty", "No rows available.")); // NEW
-        keys.forEach(function (key) { // NEW
-            if (map[key] == null) map[key] = 0; // NEW
-            const row = div("trellis-eq-row compact"); // NEW
-            row.appendChild(rowField("Key", textDiv("trellis-eq-id-code", key))); // NEW
-            row.appendChild(rowField("Value", numberInput(map[key], function (e) { onValue(key, e.target.value); }))); // NEW
-            row.appendChild(onDelete && !requiredKeys.has(key) ? buttonEl("Delete", "trellis-eq-btn danger", function () { onDelete(key); }, null, "danger") : textDiv("", "")); // CHANGE
-            editor.appendChild(row); // NEW
-        }); // NEW
-        return editor; // NEW
-    } // NEW
+    function renderNumberMapEditor(map, orderedKeys, onValue, onDelete) {
+        const editor = div("trellis-eq-row-editor");
+        const requiredKeys = new Set(orderedKeys || []);
+        const keys = uniqueStrings((orderedKeys || []).concat(Object.keys(map || {})));
+        if (!keys.length) editor.appendChild(textDiv("trellis-eq-empty", "No rows available."));
+        keys.forEach(function (key) {
+            if (map[key] == null) map[key] = 0;
+            const row = div("trellis-eq-row compact");
+            row.appendChild(rowField("Key", textDiv("trellis-eq-id-code", key)));
+            row.appendChild(rowField("Value", numberInput(map[key], function (e) { onValue(key, e.target.value); })));
+            row.appendChild(onDelete && !requiredKeys.has(key) ? buttonEl("Delete", "trellis-eq-btn danger", function () { onDelete(key); }, null, "danger") : textDiv("", ""));
+            editor.appendChild(row);
+        });
+        return editor;
+    }
 
-    function renderIdControl(id, onRename) { // NEW
-        const wrap = div("trellis-eq-id-row"); // NEW
-        wrap.appendChild(applyTooltip(textDiv("trellis-eq-id-code", id), "Stable internal ID used by saved links and cross-plugin references.")); // CHANGE
-        wrap.appendChild(buttonEl("Rename", "trellis-eq-btn", onRename, "Rename this internal ID and update dependent references.", "neutral")); // CHANGE
-        return wrap; // NEW
-    } // NEW
+    function renderIdControl(id, onRename) {
+        const wrap = div("trellis-eq-id-row");
+        wrap.appendChild(applyTooltip(textDiv("trellis-eq-id-code", id), "Stable internal ID used by saved links and cross-plugin references."));
+        wrap.appendChild(buttonEl("Rename", "trellis-eq-btn", onRename, "Rename this internal ID and update dependent references.", "neutral"));
+        return wrap;
+    }
 
-    function updateCheckedList(list, id, checked) { // NEW
-        const set = new Set(list || []); // NEW
-        if (checked) set.add(id); // NEW
-        else set.delete(id); // NEW
-        return Array.from(set).sort(); // NEW
-    } // NEW
+    function updateCheckedList(list, id, checked) {
+        const set = new Set(list || []);
+        if (checked) set.add(id);
+        else set.delete(id);
+        return Array.from(set).sort();
+    }
 
-    function updateCheckedLists(list, ids, checked) { // NEW
-        const set = new Set(list || []); // NEW
-        (ids || []).forEach(function (id) { // NEW
-            if (checked) set.add(id); // NEW
-            else set.delete(id); // NEW
-        }); // NEW
-        return Array.from(set).sort(); // NEW
-    } // NEW
+    function updateCheckedLists(list, ids, checked) {
+        const set = new Set(list || []);
+        (ids || []).forEach(function (id) {
+            if (checked) set.add(id);
+            else set.delete(id);
+        });
+        return Array.from(set).sort();
+    }
 
-    function filterChecklistOptions(container, value) { // NEW
-        const q = trim(value).toLowerCase(); // NEW
-        Array.from(container.querySelectorAll(".trellis-eq-check-option")).forEach(function (option) { // NEW
-            const text = option.getAttribute("data-filter-text") || ""; // NEW
-            option.style.display = !q || text.indexOf(q) >= 0 ? "" : "none"; // NEW
-        }); // NEW
-        Array.from(container.querySelectorAll(".trellis-eq-check-group")).forEach(function (group) { // NEW
-            const visible = Array.from(group.querySelectorAll(".trellis-eq-check-option")).some(function (option) { return option.style.display !== "none"; }); // NEW
-            group.style.display = visible ? "" : "none"; // NEW
-        }); // NEW
-    } // NEW
+    function filterChecklistOptions(container, value) {
+        const q = trim(value).toLowerCase();
+        Array.from(container.querySelectorAll(".trellis-eq-check-option")).forEach(function (option) {
+            const text = option.getAttribute("data-filter-text") || "";
+            option.style.display = !q || text.indexOf(q) >= 0 ? "" : "none";
+        });
+        Array.from(container.querySelectorAll(".trellis-eq-check-group")).forEach(function (group) {
+            const visible = Array.from(group.querySelectorAll(".trellis-eq-check-option")).some(function (option) { return option.style.display !== "none"; });
+            group.style.display = visible ? "" : "none";
+        });
+    }
 
-    function filterEquipmentRows(searchInput) { // NEW
-        const q = trim(searchInput && searchInput.value).toLowerCase(); // NEW
-        const panel = searchInput && searchInput.closest(".trellis-eq-list-panel"); // NEW
-        Array.from(panel ? panel.querySelectorAll("tbody tr") : []).forEach(function (row) { // NEW
-            const text = row.getAttribute("data-filter-text") || ""; // NEW
-            row.style.display = !q || text.indexOf(q) >= 0 ? "" : "none"; // NEW
-        }); // NEW
-    } // NEW
+    function filterEquipmentRows(searchInput) {
+        const q = trim(searchInput && searchInput.value).toLowerCase();
+        const panel = searchInput && searchInput.closest(".trellis-eq-list-panel");
+        Array.from(panel ? panel.querySelectorAll("tbody tr") : []).forEach(function (row) {
+            const text = row.getAttribute("data-filter-text") || "";
+            row.style.display = !q || text.indexOf(q) >= 0 ? "" : "none";
+        });
+    }
 
-    function setEffectMaximumScale(effectRecord, value, unit) { // NEW
-        const numeric = coerceNumber(value, 0); // NEW
-        effectRecord.maximumScale = numeric > 0 ? { value: numeric, unit: unit || "tasks" } : null; // NEW
-    } // NEW
+    function setEffectMaximumScale(effectRecord, value, unit) {
+        const numeric = coerceNumber(value, 0);
+        effectRecord.maximumScale = numeric > 0 ? { value: numeric, unit: unit || "tasks" } : null;
+    }
 
     function td(text) {
         const cell = document.createElement("td");
@@ -2666,23 +2666,23 @@ Draw.loadPlugin(function (ui) {
         return cell;
     }
 
-    function tableGroupRow(label, colspan) { // NEW
-        const tr = document.createElement("tr"); // NEW
-        tr.className = "trellis-eq-table-group"; // NEW
-        const cell = td(label); // NEW
-        cell.colSpan = colspan; // NEW
-        tr.appendChild(cell); // NEW
-        return tr; // NEW
-    } // NEW
+    function tableGroupRow(label, colspan) {
+        const tr = document.createElement("tr");
+        tr.className = "trellis-eq-table-group";
+        const cell = td(label);
+        cell.colSpan = colspan;
+        tr.appendChild(cell);
+        return tr;
+    }
 
-    function tableSubgroupRow(label, colspan) { // NEW
-        const tr = document.createElement("tr"); // NEW
-        tr.className = "trellis-eq-table-subgroup"; // NEW
-        const cell = td(label); // NEW
-        cell.colSpan = colspan; // NEW
-        tr.appendChild(cell); // NEW
-        return tr; // NEW
-    } // NEW
+    function tableSubgroupRow(label, colspan) {
+        const tr = document.createElement("tr");
+        tr.className = "trellis-eq-table-subgroup";
+        const cell = td(label);
+        cell.colSpan = colspan;
+        tr.appendChild(cell);
+        return tr;
+    }
 
     function tdBadge(text, kind) {
         const cell = document.createElement("td");
@@ -2693,14 +2693,14 @@ Draw.loadPlugin(function (ui) {
         return cell;
     }
 
-    function field(label, input, tooltip) { // CHANGE
+    function field(label, input, tooltip) {
         const wrap = div("trellis-eq-field");
         const lbl = document.createElement("label");
         lbl.textContent = label;
-        const help = tooltip || FIELD_TOOLTIPS[label]; // NEW
-        applyTooltip(wrap, help); // NEW
-        applyTooltip(lbl, help); // NEW
-        applyTooltip(input, help); // NEW
+        const help = tooltip || FIELD_TOOLTIPS[label];
+        applyTooltip(wrap, help);
+        applyTooltip(lbl, help);
+        applyTooltip(input, help);
         wrap.appendChild(lbl);
         wrap.appendChild(input);
         return wrap;
@@ -2716,12 +2716,12 @@ Draw.loadPlugin(function (ui) {
         return label;
     }
 
-    function textInput(value, onInput, onBlur) { // CHANGE
+    function textInput(value, onInput, onBlur) {
         const input = document.createElement("input");
         input.type = "text";
         input.value = value == null ? "" : String(value);
         input.oninput = onInput;
-        if (onBlur) input.onblur = onBlur; // NEW
+        if (onBlur) input.onblur = onBlur;
         return input;
     }
 
@@ -2734,22 +2734,22 @@ Draw.loadPlugin(function (ui) {
         return input;
     }
 
-    function wholeNumberInput(value, onInput) { // NEW
-        const input = numberInput(value, onInput); // NEW
-        input.step = "1"; // NEW
-        input.min = "0"; // NEW
-        return input; // NEW
-    } // NEW
+    function wholeNumberInput(value, onInput) {
+        const input = numberInput(value, onInput);
+        input.step = "1";
+        input.min = "0";
+        return input;
+    }
 
-    function dateInput(value, onInput, onBlur, disabled) { // NEW
-        const input = document.createElement("input"); // NEW
-        input.type = "date"; // NEW
-        input.value = isIsoDate(value) ? value : ""; // NEW
-        input.oninput = onInput; // NEW
-        if (onBlur) input.onblur = onBlur; // NEW
-        input.disabled = !!disabled; // NEW
-        return input; // NEW
-    } // NEW
+    function dateInput(value, onInput, onBlur, disabled) {
+        const input = document.createElement("input");
+        input.type = "date";
+        input.value = isIsoDate(value) ? value : "";
+        input.oninput = onInput;
+        if (onBlur) input.onblur = onBlur;
+        input.disabled = !!disabled;
+        return input;
+    }
 
     function textareaInput(value, onInput, mono) {
         const input = document.createElement("textarea");
@@ -2762,28 +2762,28 @@ Draw.loadPlugin(function (ui) {
     function selectInput(options, selectedValue, onChange) {
         const select = document.createElement("select");
         (options || []).forEach(function (pair) {
-            if (pair && Array.isArray(pair.options)) { // NEW
-                const group = document.createElement("optgroup"); // NEW
-                group.label = pair.name || pair.label || pair.id || "Other"; // NEW
-                pair.options.forEach(function (item) { appendSelectOption(group, item, selectedValue); }); // NEW
-                select.appendChild(group); // NEW
-            } else { // NEW
-                appendSelectOption(select, pair, selectedValue); // CHANGE
-            } // NEW
+            if (pair && Array.isArray(pair.options)) {
+                const group = document.createElement("optgroup");
+                group.label = pair.name || pair.label || pair.id || "Other";
+                pair.options.forEach(function (item) { appendSelectOption(group, item, selectedValue); });
+                select.appendChild(group);
+            } else {
+                appendSelectOption(select, pair, selectedValue);
+            }
         });
         select.onchange = onChange;
         return select;
     }
 
-    function appendSelectOption(parent, pair, selectedValue) { // NEW
-        const option = document.createElement("option"); // NEW
-        const value = Array.isArray(pair) ? pair[0] : pair && pair.id; // NEW
-        const label = Array.isArray(pair) ? pair[1] : pair && pair.name; // NEW
-        option.value = value; // NEW
-        option.textContent = label || value; // NEW
-        if (value === selectedValue) option.selected = true; // NEW
-        parent.appendChild(option); // NEW
-    } // NEW
+    function appendSelectOption(parent, pair, selectedValue) {
+        const option = document.createElement("option");
+        const value = Array.isArray(pair) ? pair[0] : pair && pair.id;
+        const label = Array.isArray(pair) ? pair[1] : pair && pair.name;
+        option.value = value;
+        option.textContent = label || value;
+        if (value === selectedValue) option.selected = true;
+        parent.appendChild(option);
+    }
 
     function optPair(value) {
         return [value, labelize(value)];
@@ -2887,21 +2887,21 @@ Draw.loadPlugin(function (ui) {
         buildAllWarnings: buildAllWarnings,
         estimateTaskHours: estimateTaskHours,
         renderTaskTypeControls: renderTaskTypeControls,
-        __test: { // NEW
-            normalizeEquipment: normalizeEquipment, // NEW
-            normalizeTaskType: normalizeTaskType, // NEW
-            normalizeCapability: normalizeCapability, // NEW
-            normalizeEffect: normalizeEffect, // NEW
-            validateEquipmentState: validateEquipmentState, // NEW
-            buildImportPreview: buildImportPreview, // NEW
-            renameCapabilityId: renameCapabilityId, // NEW
-            renameTaskTypeId: renameTaskTypeId, // NEW
-            deleteCapabilityId: deleteCapabilityId, // NEW
-            deleteTaskTypeId: deleteTaskTypeId, // CHANGE
-            calculateReplacementDate: calculateReplacementDate, // NEW
-            isIsoDate: isIsoDate, // CHANGE
-            yearlyReplacementReserve: yearlyReplacementReserve // NEW
-        }, // NEW
+        __test: {
+            normalizeEquipment: normalizeEquipment,
+            normalizeTaskType: normalizeTaskType,
+            normalizeCapability: normalizeCapability,
+            normalizeEffect: normalizeEffect,
+            validateEquipmentState: validateEquipmentState,
+            buildImportPreview: buildImportPreview,
+            renameCapabilityId: renameCapabilityId,
+            renameTaskTypeId: renameTaskTypeId,
+            deleteCapabilityId: deleteCapabilityId,
+            deleteTaskTypeId: deleteTaskTypeId,
+            calculateReplacementDate: calculateReplacementDate,
+            isIsoDate: isIsoDate,
+            yearlyReplacementReserve: yearlyReplacementReserve
+        },
         defaults: {
             equipment: clone(DEFAULT_EQUIPMENT),
             taskTypes: clone(DEFAULT_TASK_TYPES),

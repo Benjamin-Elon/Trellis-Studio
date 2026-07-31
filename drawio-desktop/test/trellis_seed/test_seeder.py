@@ -35,7 +35,7 @@ from trellis_seed.climate_benchmarks import (  # noqa: E402
     select_benchmark_crop,
 )
 from trellis_seed.db import apply_run, apply_run_to_databases, create_diff_report, load_methods, print_diff_report  # noqa: E402
-from trellis_seed import db as seed_db  # noqa: E402  # ADDED
+from trellis_seed import db as seed_db  # noqa: E402
 from trellis_seed.config import Settings, read_openai_api_key  # noqa: E402
 from trellis_seed.generator import (
     GenerationOptions,
@@ -123,9 +123,9 @@ class TrellisSeederTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_packaged_seed_database_has_no_pending_migrations(self) -> None:  # ADDED
-        with closing(sqlite3.connect(ROOT / "trellis_database" / "Trellis_database.sqlite")) as conn:  # ADDED
-            self.assertEqual(pending_migrations(conn), [])  # ADDED
+    def test_packaged_seed_database_has_no_pending_migrations(self) -> None:
+        with closing(sqlite3.connect(ROOT / "trellis_database" / "Trellis_database.sqlite")) as conn:
+            self.assertEqual(pending_migrations(conn), [])
 
     def test_migrations_create_weather_evidence_and_repair_variety_templates(self) -> None:
         with closing(sqlite3.connect(self.db_path)) as conn:
@@ -138,7 +138,7 @@ class TrellisSeederTests(unittest.TestCase):
             self.assertIn("CityWeatherDaily", tables)
             self.assertIn("CityWeatherForecastDaily", tables)
             self.assertIn("CompanionEvidence", tables)
-            self.assertIn("CompanionLayoutGroupDefaults", tables)  # ADDED
+            self.assertIn("CompanionLayoutGroupDefaults", tables)
             self.assertIn("PlantingWindowReferences", tables)
             cols = [row[1] for row in conn.execute("PRAGMA table_info(VarietyTaskTemplates);")]
             self.assertIn("method_id", cols)
@@ -148,25 +148,25 @@ class TrellisSeederTests(unittest.TestCase):
             self.assertIn("climate_band", city_cols)
             plant_cols = [row[1] for row in conn.execute("PRAGMA table_info(Plants);")]
             self.assertIn("killtemp_c", plant_cols)
-            variety_cols = [row[1] for row in conn.execute("PRAGMA table_info(PlantVarieties);")]  # ADDED
-            self.assertIn("maturity_class", variety_cols)  # ADDED
-            companion_cols = [row[1] for row in conn.execute("PRAGMA table_info(Companions);")]  # ADDED
-            self.assertIn("source_plant_id", companion_cols)  # ADDED
-            self.assertIn("companion_plant_id", companion_cols)  # ADDED
-            self.assertIn("start_offset_days", companion_cols)  # ADDED
-            self.assertIn("layout_template", companion_cols)  # ADDED
-            self.assertIn("layout_spacing_x_cm", companion_cols)  # ADDED
-            self.assertIn("layout_spacing_y_cm", companion_cols)  # ADDED
-            self.assertIn("layout_offset_x_cm", companion_cols)  # ADDED
-            self.assertIn("layout_offset_y_cm", companion_cols)  # ADDED
-            group_default_cols = [row[1] for row in conn.execute("PRAGMA table_info(CompanionLayoutGroupDefaults);")]  # ADDED
-            self.assertIn("plant_set_key", group_default_cols)  # ADDED
-            self.assertIn("anchor_plant_id", group_default_cols)  # ADDED
-            self.assertIn("layout_json", group_default_cols)  # ADDED
+            variety_cols = [row[1] for row in conn.execute("PRAGMA table_info(PlantVarieties);")]
+            self.assertIn("maturity_class", variety_cols)
+            companion_cols = [row[1] for row in conn.execute("PRAGMA table_info(Companions);")]
+            self.assertIn("source_plant_id", companion_cols)
+            self.assertIn("companion_plant_id", companion_cols)
+            self.assertIn("start_offset_days", companion_cols)
+            self.assertIn("layout_template", companion_cols)
+            self.assertIn("layout_spacing_x_cm", companion_cols)
+            self.assertIn("layout_spacing_y_cm", companion_cols)
+            self.assertIn("layout_offset_x_cm", companion_cols)
+            self.assertIn("layout_offset_y_cm", companion_cols)
+            group_default_cols = [row[1] for row in conn.execute("PRAGMA table_info(CompanionLayoutGroupDefaults);")]
+            self.assertIn("plant_set_key", group_default_cols)
+            self.assertIn("anchor_plant_id", group_default_cols)
+            self.assertIn("layout_json", group_default_cols)
 
-    def test_companion_migration_adds_directional_timing_and_nullable_id_backfill(self) -> None:  # ADDED
-        with closing(sqlite3.connect(":memory:")) as conn:  # ADDED
-            conn.row_factory = sqlite3.Row  # ADDED
+    def test_companion_migration_adds_directional_timing_and_nullable_id_backfill(self) -> None:
+        with closing(sqlite3.connect(":memory:")) as conn:
+            conn.row_factory = sqlite3.Row
             conn.executescript("""
                 CREATE TABLE Plants (plant_id INTEGER PRIMARY KEY, plant_name TEXT NOT NULL);
                 CREATE TABLE Companions (
@@ -181,78 +181,78 @@ class TrellisSeederTests(unittest.TestCase):
                 INSERT INTO Companions (p1, p2, rating, companion_type) VALUES
                     ('Tomato', 'Basil', 1, 'interplant'),
                     ('Unknown', 'Basil', 0, 'neutral');
-            """)  # ADDED
-            with conn:  # ADDED
-                apply_migrations(conn)  # ADDED
-            cols = [row[1] for row in conn.execute("PRAGMA table_info(Companions);")]  # ADDED
-            self.assertIn("source_plant_id", cols)  # ADDED
-            self.assertIn("companion_plant_id", cols)  # ADDED
-            self.assertIn("start_offset_days", cols)  # ADDED
-            self.assertIn("layout_template", cols)  # ADDED
-            self.assertIn("layout_offset_x_cm", cols)  # ADDED
-            rows = list(conn.execute("SELECT p1, p2, source_plant_id, companion_plant_id, start_offset_days FROM Companions ORDER BY relation_id"))  # ADDED
-            self.assertEqual((rows[0]["source_plant_id"], rows[0]["companion_plant_id"], rows[0]["start_offset_days"]), (1, 2, None))  # ADDED
-            self.assertEqual((rows[1]["source_plant_id"], rows[1]["companion_plant_id"]), (None, 2))  # ADDED
+            """)
+            with conn:
+                apply_migrations(conn)
+            cols = [row[1] for row in conn.execute("PRAGMA table_info(Companions);")]
+            self.assertIn("source_plant_id", cols)
+            self.assertIn("companion_plant_id", cols)
+            self.assertIn("start_offset_days", cols)
+            self.assertIn("layout_template", cols)
+            self.assertIn("layout_offset_x_cm", cols)
+            rows = list(conn.execute("SELECT p1, p2, source_plant_id, companion_plant_id, start_offset_days FROM Companions ORDER BY relation_id"))
+            self.assertEqual((rows[0]["source_plant_id"], rows[0]["companion_plant_id"], rows[0]["start_offset_days"]), (1, 2, None))
+            self.assertEqual((rows[1]["source_plant_id"], rows[1]["companion_plant_id"]), (None, 2))
 
     def test_input_validation_requires_crop_sources(self) -> None:
         errors = validate_input({"crops": [{"name": "Lettuce"}]})
         self.assertTrue(any("needs at least one source" in error for error in errors))
 
-    def test_companion_validation_accepts_directional_ids_and_timing(self) -> None:  # ADDED
-        valid = validate_row("Companions", {  # ADDED
-            "p1": "Tomato",  # ADDED
-            "p2": "Basil",  # ADDED
-            "source_plant_id": 1,  # ADDED
-            "companion_plant_id": 2,  # ADDED
-            "start_offset_days": -7,  # ADDED
-            "layout_template": "staggered",  # ADDED
-            "layout_spacing_x_cm": 20.0,  # ADDED
-            "layout_spacing_y_cm": 25.0,  # ADDED
-            "layout_offset_x_cm": 10.0,  # ADDED
-        })  # ADDED
-        self.assertEqual(valid["errors"], [])  # ADDED
-        invalid = validate_row("Companions", {  # ADDED
-            "p1": "Tomato",  # ADDED
-            "p2": "Basil",  # ADDED
-            "start_offset_days": "soon",  # ADDED
-            "layout_template": "diagonal",  # ADDED
-            "layout_spacing_x_cm": "wide",  # ADDED
-        })  # ADDED
-        self.assertTrue(any("start_offset_days" in error for error in invalid["errors"]))  # ADDED
-        self.assertTrue(any("layout_template" in error for error in invalid["errors"]))  # ADDED
-        self.assertTrue(any("layout_spacing_x_cm" in error for error in invalid["errors"]))  # ADDED
+    def test_companion_validation_accepts_directional_ids_and_timing(self) -> None:
+        valid = validate_row("Companions", {
+            "p1": "Tomato",
+            "p2": "Basil",
+            "source_plant_id": 1,
+            "companion_plant_id": 2,
+            "start_offset_days": -7,
+            "layout_template": "staggered",
+            "layout_spacing_x_cm": 20.0,
+            "layout_spacing_y_cm": 25.0,
+            "layout_offset_x_cm": 10.0,
+        })
+        self.assertEqual(valid["errors"], [])
+        invalid = validate_row("Companions", {
+            "p1": "Tomato",
+            "p2": "Basil",
+            "start_offset_days": "soon",
+            "layout_template": "diagonal",
+            "layout_spacing_x_cm": "wide",
+        })
+        self.assertTrue(any("start_offset_days" in error for error in invalid["errors"]))
+        self.assertTrue(any("layout_template" in error for error in invalid["errors"]))
+        self.assertTrue(any("layout_spacing_x_cm" in error for error in invalid["errors"]))
 
-    def test_companion_layout_group_default_validation_requires_matching_set_and_anchor(self) -> None:  # ADDED
-        layout = {  # ADDED
-            "rows": [  # ADDED
-                {"role": "anchor", "plantId": 1, "spacingXCm": 20, "spacingYCm": 20, "vegDiameterCm": 18},  # ADDED
-                {"role": "companion", "plantId": 2, "template": "interplant", "spacingXCm": 15, "spacingYCm": 15, "vegDiameterCm": 12, "offsetXCm": 5, "offsetYCm": -5},  # ADDED
-            ]  # ADDED
-        }  # ADDED
-        valid = validate_row("CompanionLayoutGroupDefaults", {  # ADDED
-            "plant_set_key": "1+2",  # ADDED
-            "anchor_plant_id": 1,  # ADDED
-            "layout_json": json.dumps(layout),  # ADDED
-        })  # ADDED
-        self.assertEqual(valid["errors"], [])  # ADDED
-        invalid = validate_row("CompanionLayoutGroupDefaults", {  # ADDED
-            "plant_set_key": "1+2",  # ADDED
-            "anchor_plant_id": 3,  # ADDED
-            "layout_json": {"rows": [{"role": "companion", "plantId": 2, "template": "diagonal"}]},  # ADDED
-        })  # ADDED
-        self.assertTrue(any("anchor_plant_id" in error for error in invalid["errors"]))  # ADDED
-        self.assertTrue(any("template" in error for error in invalid["errors"]))  # ADDED
-        self.assertTrue(any("exactly one anchor" in error for error in invalid["errors"]))  # ADDED
-        unsorted = validate_row("CompanionLayoutGroupDefaults", {  # ADDED
-            "plant_set_key": "2+1",  # ADDED
-            "anchor_plant_id": 1,  # ADDED
-            "layout_json": json.dumps(layout),  # ADDED
-        })  # ADDED
-        self.assertTrue(any("plant_set_key" in error for error in unsorted["errors"]))  # ADDED
+    def test_companion_layout_group_default_validation_requires_matching_set_and_anchor(self) -> None:
+        layout = {
+            "rows": [
+                {"role": "anchor", "plantId": 1, "spacingXCm": 20, "spacingYCm": 20, "vegDiameterCm": 18},
+                {"role": "companion", "plantId": 2, "template": "interplant", "spacingXCm": 15, "spacingYCm": 15, "vegDiameterCm": 12, "offsetXCm": 5, "offsetYCm": -5},
+            ]
+        }
+        valid = validate_row("CompanionLayoutGroupDefaults", {
+            "plant_set_key": "1+2",
+            "anchor_plant_id": 1,
+            "layout_json": json.dumps(layout),
+        })
+        self.assertEqual(valid["errors"], [])
+        invalid = validate_row("CompanionLayoutGroupDefaults", {
+            "plant_set_key": "1+2",
+            "anchor_plant_id": 3,
+            "layout_json": {"rows": [{"role": "companion", "plantId": 2, "template": "diagonal"}]},
+        })
+        self.assertTrue(any("anchor_plant_id" in error for error in invalid["errors"]))
+        self.assertTrue(any("template" in error for error in invalid["errors"]))
+        self.assertTrue(any("exactly one anchor" in error for error in invalid["errors"]))
+        unsorted = validate_row("CompanionLayoutGroupDefaults", {
+            "plant_set_key": "2+1",
+            "anchor_plant_id": 1,
+            "layout_json": json.dumps(layout),
+        })
+        self.assertTrue(any("plant_set_key" in error for error in unsorted["errors"]))
 
-    def test_companion_upsert_preserves_directional_ids_timing_and_evidence(self) -> None:  # ADDED
-        with closing(sqlite3.connect(":memory:")) as conn:  # ADDED
-            conn.row_factory = sqlite3.Row  # ADDED
+    def test_companion_upsert_preserves_directional_ids_timing_and_evidence(self) -> None:
+        with closing(sqlite3.connect(":memory:")) as conn:
+            conn.row_factory = sqlite3.Row
             conn.executescript("""
                 CREATE TABLE Plants (plant_id INTEGER PRIMARY KEY, plant_name TEXT NOT NULL);
                 CREATE TABLE Companions (
@@ -288,31 +288,31 @@ class TrellisSeederTests(unittest.TestCase):
                     VALUES (10, 'Tomato', 'Basil', 1, 'interplant', 1, 2, 3);
                 INSERT INTO CompanionEvidence (relation_id, evidence_level, source_url, summary)
                     VALUES (10, 'extension', 'https://example.test/source', 'Keep this evidence.');
-            """)  # ADDED
-            seed_db._upsert_companions(conn, [{  # ADDED
-                "relation_id": 10,  # ADDED
-                "p1": "Tomato",  # ADDED
-                "p2": "Basil",  # ADDED
-                "rating": 1,  # ADDED
-                "companion_type": "interplant",  # ADDED
-                "source_plant_id": 1,  # ADDED
-                "companion_plant_id": 2,  # ADDED
-                "start_offset_days": -5,  # ADDED
-                "layout_template": "interplant",  # ADDED
-                "layout_spacing_x_cm": 22.5,  # ADDED
-                "layout_spacing_y_cm": 30,  # ADDED
-                "layout_offset_x_cm": 12,  # ADDED
-                "layout_offset_y_cm": -4,  # ADDED
-            }])  # ADDED
-            row = conn.execute("SELECT source_plant_id, companion_plant_id, start_offset_days, layout_template, layout_spacing_x_cm, layout_spacing_y_cm, layout_offset_x_cm, layout_offset_y_cm FROM Companions WHERE relation_id=10").fetchone()  # CHANGED
-            self.assertEqual((row["source_plant_id"], row["companion_plant_id"], row["start_offset_days"]), (1, 2, -5))  # ADDED
-            self.assertEqual((row["layout_template"], row["layout_spacing_x_cm"], row["layout_spacing_y_cm"], row["layout_offset_x_cm"], row["layout_offset_y_cm"]), ("interplant", 22.5, 30.0, 12.0, -4.0))  # ADDED
-            evidence = conn.execute("SELECT summary FROM CompanionEvidence WHERE relation_id=10").fetchone()  # ADDED
-            self.assertEqual(evidence["summary"], "Keep this evidence.")  # ADDED
+            """)
+            seed_db._upsert_companions(conn, [{
+                "relation_id": 10,
+                "p1": "Tomato",
+                "p2": "Basil",
+                "rating": 1,
+                "companion_type": "interplant",
+                "source_plant_id": 1,
+                "companion_plant_id": 2,
+                "start_offset_days": -5,
+                "layout_template": "interplant",
+                "layout_spacing_x_cm": 22.5,
+                "layout_spacing_y_cm": 30,
+                "layout_offset_x_cm": 12,
+                "layout_offset_y_cm": -4,
+            }])
+            row = conn.execute("SELECT source_plant_id, companion_plant_id, start_offset_days, layout_template, layout_spacing_x_cm, layout_spacing_y_cm, layout_offset_x_cm, layout_offset_y_cm FROM Companions WHERE relation_id=10").fetchone()
+            self.assertEqual((row["source_plant_id"], row["companion_plant_id"], row["start_offset_days"]), (1, 2, -5))
+            self.assertEqual((row["layout_template"], row["layout_spacing_x_cm"], row["layout_spacing_y_cm"], row["layout_offset_x_cm"], row["layout_offset_y_cm"]), ("interplant", 22.5, 30.0, 12.0, -4.0))
+            evidence = conn.execute("SELECT summary FROM CompanionEvidence WHERE relation_id=10").fetchone()
+            self.assertEqual(evidence["summary"], "Keep this evidence.")
 
-    def test_companion_layout_group_defaults_upsert_by_set_and_anchor(self) -> None:  # ADDED
-        with closing(sqlite3.connect(":memory:")) as conn:  # ADDED
-            conn.row_factory = sqlite3.Row  # ADDED
+    def test_companion_layout_group_defaults_upsert_by_set_and_anchor(self) -> None:
+        with closing(sqlite3.connect(":memory:")) as conn:
+            conn.row_factory = sqlite3.Row
             conn.executescript("""
                 CREATE TABLE Plants (plant_id INTEGER PRIMARY KEY, plant_name TEXT NOT NULL);
                 CREATE TABLE CompanionLayoutGroupDefaults (
@@ -324,41 +324,41 @@ class TrellisSeederTests(unittest.TestCase):
                     UNIQUE (plant_set_key, anchor_plant_id)
                 );
                 INSERT INTO Plants (plant_id, plant_name) VALUES (1, 'Carrot'), (2, 'Lettuce');
-            """)  # ADDED
-            first_layout = {"rows": [{"role": "anchor", "plantId": 1}, {"role": "companion", "plantId": 2, "template": "beside"}]}  # ADDED
-            second_layout = {"rows": [{"role": "anchor", "plantId": 1}, {"role": "companion", "plantId": 2, "template": "interplant"}]}  # ADDED
-            seed_db._upsert_companion_layout_group_defaults(conn, [{  # ADDED
-                "plant_set_key": "1+2",  # ADDED
-                "anchor_plant_id": 1,  # ADDED
-                "layout_json": first_layout,  # ADDED
-            }])  # ADDED
-            seed_db._upsert_companion_layout_group_defaults(conn, [{  # ADDED
-                "plant_set_key": "1+2",  # ADDED
-                "anchor_plant_id": 1,  # ADDED
-                "layout_json": second_layout,  # ADDED
-                "updated_at": "2026-07-26T00:00:00+00:00",  # ADDED
-            }])  # ADDED
-            rows = list(conn.execute("SELECT plant_set_key, anchor_plant_id, layout_json, updated_at FROM CompanionLayoutGroupDefaults"))  # ADDED
-            self.assertEqual(len(rows), 1)  # ADDED
-            self.assertEqual((rows[0]["plant_set_key"], rows[0]["anchor_plant_id"]), ("1+2", 1))  # ADDED
-            self.assertEqual(json.loads(rows[0]["layout_json"])["rows"][1]["template"], "interplant")  # ADDED
-            self.assertEqual(rows[0]["updated_at"], "2026-07-26T00:00:00+00:00")  # ADDED
+            """)
+            first_layout = {"rows": [{"role": "anchor", "plantId": 1}, {"role": "companion", "plantId": 2, "template": "beside"}]}
+            second_layout = {"rows": [{"role": "anchor", "plantId": 1}, {"role": "companion", "plantId": 2, "template": "interplant"}]}
+            seed_db._upsert_companion_layout_group_defaults(conn, [{
+                "plant_set_key": "1+2",
+                "anchor_plant_id": 1,
+                "layout_json": first_layout,
+            }])
+            seed_db._upsert_companion_layout_group_defaults(conn, [{
+                "plant_set_key": "1+2",
+                "anchor_plant_id": 1,
+                "layout_json": second_layout,
+                "updated_at": "2026-07-26T00:00:00+00:00",
+            }])
+            rows = list(conn.execute("SELECT plant_set_key, anchor_plant_id, layout_json, updated_at FROM CompanionLayoutGroupDefaults"))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual((rows[0]["plant_set_key"], rows[0]["anchor_plant_id"]), ("1+2", 1))
+            self.assertEqual(json.loads(rows[0]["layout_json"])["rows"][1]["template"], "interplant")
+            self.assertEqual(rows[0]["updated_at"], "2026-07-26T00:00:00+00:00")
 
-    def test_plant_variety_validation_accepts_only_known_maturity_classes(self) -> None:  # ADDED
-        valid = validate_row("PlantVarieties", {  # ADDED
-            "plant_name": "Lettuce",  # ADDED
-            "variety_name": "Buttercrunch",  # ADDED
-            "maturity_class": "early",  # ADDED
-            "overrides": {"days_maturity": 45},  # ADDED
-        })  # ADDED
-        self.assertEqual(valid["errors"], [])  # ADDED
-        invalid = validate_row("PlantVarieties", {  # ADDED
-            "plant_name": "Lettuce",  # ADDED
-            "variety_name": "Buttercrunch",  # ADDED
-            "maturity_class": "extra late",  # ADDED
-            "overrides": {"days_maturity": 45},  # ADDED
-        })  # ADDED
-        self.assertTrue(any("maturity_class" in error for error in invalid["errors"]))  # ADDED
+    def test_plant_variety_validation_accepts_only_known_maturity_classes(self) -> None:
+        valid = validate_row("PlantVarieties", {
+            "plant_name": "Lettuce",
+            "variety_name": "Buttercrunch",
+            "maturity_class": "early",
+            "overrides": {"days_maturity": 45},
+        })
+        self.assertEqual(valid["errors"], [])
+        invalid = validate_row("PlantVarieties", {
+            "plant_name": "Lettuce",
+            "variety_name": "Buttercrunch",
+            "maturity_class": "extra late",
+            "overrides": {"days_maturity": 45},
+        })
+        self.assertTrue(any("maturity_class" in error for error in invalid["errors"]))
 
     def test_openai_settings_come_from_environment(self) -> None:
         original = {key: os.environ.get(key) for key in ("OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_REASONING_EFFORT")}
@@ -408,7 +408,7 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertEqual(without_templates["estimated_total"], without_templates["crop_rows"] + without_templates["companion_rows"])
 
     def test_sowing_window_call_estimate_and_preflight_label(self) -> None:
-        data = {"sowing_windows": {"enabled": True, "crop_allowlist": ["Apple"]}}  # CHANGED
+        data = {"sowing_windows": {"enabled": True, "crop_allowlist": ["Apple"]}}
         settings = Settings(self.tmp_path / "config.json", {"db_path": str(self.db_path)})
         estimate = estimate_openai_calls(data, settings, self.db_path, GenerationOptions(generate_templates=False))
         self.assertEqual(estimate["sowing_window_crops"], 1)
@@ -502,7 +502,7 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertEqual(artifacts_after_keeping_latest([oldest, newest, middle], 3, runs_dir), [])
 
     def test_menu_preflight_labels_are_section_relevant(self) -> None:
-        self.assertEqual(_preflight_provider_labels({"cities": [{"name": "Vancouver, BC"}]}), ["OpenAI", "Open-Meteo", "NASA POWER"])  # CHANGED
+        self.assertEqual(_preflight_provider_labels({"cities": [{"name": "Vancouver, BC"}]}), ["OpenAI", "Open-Meteo", "NASA POWER"])
         self.assertEqual(_preflight_provider_labels({"companions": [{"p1": "Apple", "p2": "Carrot", "sources": ["source"]}]}), ["OpenAI"])
         self.assertEqual(_preflight_provider_labels({"crops": [{"name": "Parsnip", "sources": ["source"]}], "cities": [{"name": "Victoria, BC"}]}), ["OpenAI", "Open-Meteo", "NASA POWER"])
 
@@ -513,8 +513,8 @@ class TrellisSeederTests(unittest.TestCase):
 
     def test_suggestion_context_extracts_normalized_existing_db_values(self) -> None:
         context = load_suggestion_context(self.db_path)
-        self.assertIn("apple", context["plant_keys"])  # CHANGED
-        self.assertIn("vancouver", context["city_keys"])  # CHANGED
+        self.assertIn("apple", context["plant_keys"])
+        self.assertIn("vancouver", context["city_keys"])
         self.assertTrue(context["companion_pair_keys"])
 
     def test_suggestion_validation_rejects_duplicates_and_bad_companion_endpoints(self) -> None:
@@ -523,7 +523,7 @@ class TrellisSeederTests(unittest.TestCase):
             "section": "crops",
             "requested_count": 2,
             "suggestions": [
-                {"name": "Apple", "rationale": "already exists", "source_hints": ["source"]},  # CHANGED
+                {"name": "Apple", "rationale": "already exists", "source_hints": ["source"]},
                 {"name": "Parsnip", "rationale": "new root crop", "source_hints": ["source"]},
             ],
         }
@@ -532,7 +532,7 @@ class TrellisSeederTests(unittest.TestCase):
         companion_result = {
             "section": "companions",
             "requested_count": 1,
-            "suggestions": [{"p1": "Apple", "p2": "Missing Plant", "rationale": "bad endpoint", "source_hints": ["source"]}],  # CHANGED
+            "suggestions": [{"p1": "Apple", "p2": "Missing Plant", "rationale": "bad endpoint", "source_hints": ["source"]}],
         }
         self.assertTrue(any("must already exist" in error for error in validate_suggestion_list(companion_result, "companions", 1, context)))
 
@@ -577,11 +577,11 @@ class TrellisSeederTests(unittest.TestCase):
         }
         self.assertTrue(any("needs at least one source" in error for error in validate_input_draft(invalid_crop_draft, "crops", accepted_crop, context)))
 
-        accepted_companion = [{"p1": "Apple", "p2": "Beet", "rationale": "existing endpoints", "source_hints": ["source"]}]  # CHANGED
+        accepted_companion = [{"p1": "Apple", "p2": "Beet", "rationale": "existing endpoints", "source_hints": ["source"]}]
         companion_draft = {
             "crops": [],
             "cities": [],
-            "companions": [{"p1": "Apple", "p2": "Beet", "sources": ["https://example.test/apple-beet"], "notes": ""}],  # CHANGED
+            "companions": [{"p1": "Apple", "p2": "Beet", "sources": ["https://example.test/apple-beet"], "notes": ""}],
         }
         self.assertEqual(validate_input_draft(companion_draft, "companions", accepted_companion, context), [])
 
@@ -950,7 +950,7 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertEqual(provenance["failures"]["city"][0]["label"], "Vernon, British Columbia, Canada")
         metadata = read_json(run_dir / "metadata.json", {})
         self.assertEqual(metadata["failure_count"], 1)
-        self.assertEqual(metadata["failures"]["city"][0]["scope"], "city")  # ADDED
+        self.assertEqual(metadata["failures"]["city"][0]["scope"], "city")
 
     def test_generate_run_marks_failed_when_all_items_fail(self) -> None:
         class FakeMeteo:
@@ -974,8 +974,8 @@ class TrellisSeederTests(unittest.TestCase):
             "runs_dir": str(runs_dir),
             "openai_model": "fake",
             "openai_reasoning_effort": "low",
-            "open_meteo": {},  # ADDED
-            "nasa_power": {},  # ADDED
+            "open_meteo": {},
+            "nasa_power": {},
         })
         input_path = self.tmp_path / "all-fail-input.json"
         write_json(input_path, {
@@ -1166,22 +1166,22 @@ class TrellisSeederTests(unittest.TestCase):
         with closing(sqlite3.connect(self.db_path)) as conn:
             with conn:
                 apply_migrations(conn)
-                conn.execute("UPDATE Cities SET is_major_city=NULL, climate_band=NULL")  # CHANGED
-                conn.execute("UPDATE Cities SET is_major_city=1, climate_band='hot' WHERE city_name LIKE 'Toronto%'")  # CHANGED
-                conn.execute("UPDATE Cities SET is_major_city=1, climate_band='temperate' WHERE city_name LIKE 'Vancouver%'")  # CHANGED
+                conn.execute("UPDATE Cities SET is_major_city=NULL, climate_band=NULL")
+                conn.execute("UPDATE Cities SET is_major_city=1, climate_band='hot' WHERE city_name LIKE 'Toronto%'")
+                conn.execute("UPDATE Cities SET is_major_city=1, climate_band='temperate' WHERE city_name LIKE 'Vancouver%'")
         missing = preflight_climate_benchmark(settings)
         self.assertFalse(missing["ok"])
         self.assertIn("cold", missing["missing_bands"])
 
         with closing(sqlite3.connect(self.db_path)) as conn:
             with conn:
-                conn.execute("UPDATE Cities SET is_major_city=1, climate_band='cold' WHERE city_name LIKE 'Winnipeg%'")  # CHANGED
+                conn.execute("UPDATE Cities SET is_major_city=1, climate_band='cold' WHERE city_name LIKE 'Winnipeg%'")
         ready = preflight_climate_benchmark(settings)
         self.assertTrue(ready["ok"], ready)
         cities = select_benchmark_cities(settings, "seed")
         self.assertEqual(set(cities), {"hot", "temperate", "cold"})
-        self.assertTrue(cities["cold"]["city_name"].startswith("Winnipeg"))  # CHANGED
-        self.assertTrue(eligible_major_cities_by_band(settings)["hot"][0]["city_name"].startswith("Toronto"))  # CHANGED
+        self.assertTrue(cities["cold"]["city_name"].startswith("Winnipeg"))
+        self.assertTrue(eligible_major_cities_by_band(settings)["hot"][0]["city_name"].startswith("Toronto"))
 
     def test_climate_benchmark_crop_selection_skips_artifact_covered_crops(self) -> None:
         runs_dir = self.tmp_path / "runs"
@@ -1232,11 +1232,11 @@ class TrellisSeederTests(unittest.TestCase):
         for field_schema in row_schema.values():
             self.assertNotIn("null", field_schema.get("type") if isinstance(field_schema.get("type"), list) else [field_schema.get("type")])
 
-    def test_openai_plant_schema_declares_variety_maturity_class_enum(self) -> None:  # ADDED
-        variety_schema = OPENAI_PLANT_SCHEMA["properties"]["varieties"]["items"]  # ADDED
-        maturity_schema = variety_schema["properties"]["maturity_class"]  # ADDED
-        self.assertIn("maturity_class", variety_schema["required"])  # ADDED
-        self.assertEqual(maturity_schema["enum"], ["early", "mid", "late", "", None])  # ADDED
+    def test_openai_plant_schema_declares_variety_maturity_class_enum(self) -> None:
+        variety_schema = OPENAI_PLANT_SCHEMA["properties"]["varieties"]["items"]
+        maturity_schema = variety_schema["properties"]["maturity_class"]
+        self.assertIn("maturity_class", variety_schema["required"])
+        self.assertEqual(maturity_schema["enum"], ["early", "mid", "late", "", None])
 
     def test_openai_client_does_not_mask_responses_api_errors(self) -> None:
         class FakeResponses:
@@ -1360,33 +1360,33 @@ class TrellisSeederTests(unittest.TestCase):
         }
         self.assertEqual(_validate_crop_result(result, source_values), [])
 
-    def test_crop_validation_requires_sourced_variety_maturity_class(self) -> None:  # ADDED
-        methods = [{  # ADDED
-            "method_id": "direct_sow.field",  # ADDED
-            "method_category_id": "direct_sow",  # ADDED
-            "method_name": "Direct sow (field)",  # ADDED
-        }]  # ADDED
-        crop = {"name": "Lettuce", "sources": ["https://example.test/lettuce"]}  # ADDED
-        source_values = _crop_source_values(crop, methods)  # ADDED
+    def test_crop_validation_requires_sourced_variety_maturity_class(self) -> None:
+        methods = [{
+            "method_id": "direct_sow.field",
+            "method_category_id": "direct_sow",
+            "method_name": "Direct sow (field)",
+        }]
+        crop = {"name": "Lettuce", "sources": ["https://example.test/lettuce"]}
+        source_values = _crop_source_values(crop, methods)
 
-        def errors_for(variety: dict[str, object]) -> list[str]:  # ADDED
-            result = {  # ADDED
-                "row": complete_plant_row(),  # ADDED
-                "allowed_method_categories": ["direct_sow"],  # ADDED
-                "allowed_method_ids": ["direct_sow.field"],  # ADDED
-                "varieties": [variety],  # ADDED
-                "provenance": {"field_sources": []},  # ADDED
-            }  # ADDED
-            prepared = _prepare_crop_result(result, crop, methods)  # ADDED
-            return _validate_crop_result(prepared, source_values, methods)  # ADDED
+        def errors_for(variety: dict[str, object]) -> list[str]:
+            result = {
+                "row": complete_plant_row(),
+                "allowed_method_categories": ["direct_sow"],
+                "allowed_method_ids": ["direct_sow.field"],
+                "varieties": [variety],
+                "provenance": {"field_sources": []},
+            }
+            prepared = _prepare_crop_result(result, crop, methods)
+            return _validate_crop_result(prepared, source_values, methods)
 
-        unsourced = errors_for({"variety_name": "Buttercrunch", "maturity_class": "early", "overrides": [], "sources": []})  # ADDED
-        self.assertTrue(any("maturity_class requires at least one explicit source" in error for error in unsourced))  # ADDED
-        unknown_source = errors_for({"variety_name": "Romaine", "maturity_class": "mid", "overrides": [], "sources": ["https://example.test/other"]})  # ADDED
-        self.assertTrue(any("was not supplied" in error for error in unknown_source))  # ADDED
-        invalid_class = errors_for({"variety_name": "Looseleaf", "maturity_class": "extra late", "overrides": [], "sources": ["https://example.test/lettuce"]})  # ADDED
-        self.assertTrue(any("maturity_class must be early, mid, or late" in error for error in invalid_class))  # ADDED
-        self.assertEqual(errors_for({"variety_name": "Oakleaf", "maturity_class": "late", "overrides": [], "sources": ["https://example.test/lettuce"]}), [])  # ADDED
+        unsourced = errors_for({"variety_name": "Buttercrunch", "maturity_class": "early", "overrides": [], "sources": []})
+        self.assertTrue(any("maturity_class requires at least one explicit source" in error for error in unsourced))
+        unknown_source = errors_for({"variety_name": "Romaine", "maturity_class": "mid", "overrides": [], "sources": ["https://example.test/other"]})
+        self.assertTrue(any("was not supplied" in error for error in unknown_source))
+        invalid_class = errors_for({"variety_name": "Looseleaf", "maturity_class": "extra late", "overrides": [], "sources": ["https://example.test/lettuce"]})
+        self.assertTrue(any("maturity_class must be early, mid, or late" in error for error in invalid_class))
+        self.assertEqual(errors_for({"variety_name": "Oakleaf", "maturity_class": "late", "overrides": [], "sources": ["https://example.test/lettuce"]}), [])
 
     def test_crop_validation_rejects_placeholder_varieties(self) -> None:
         result = {
@@ -1519,38 +1519,38 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertEqual([row["plant_name"] for row in generated["Plants"]], ["Good Crop"])
         self.assertEqual(provenance["failures"]["crop"][0]["label"], "Broken Crop")
 
-    def test_crop_generation_emits_only_explicit_sourced_maturity_classes(self) -> None:  # ADDED
-        class FakeOpenAI:  # ADDED
-            model = "fake"  # ADDED
-            reasoning_effort = "low"  # ADDED
+    def test_crop_generation_emits_only_explicit_sourced_maturity_classes(self) -> None:
+        class FakeOpenAI:
+            model = "fake"
+            reasoning_effort = "low"
 
-            def generate_json(self, **_kwargs):  # ADDED
-                return {  # ADDED
-                    "row": complete_plant_row(),  # ADDED
-                    "allowed_method_categories": ["direct_sow"],  # ADDED
-                    "allowed_method_ids": ["direct_sow.field"],  # ADDED
-                    "varieties": [  # ADDED
-                        {"variety_name": "Buttercrunch", "maturity_class": "early", "overrides": [], "sources": ["https://example.test/lettuce"]},  # ADDED
-                        {"variety_name": "Romaine", "maturity_class": "", "overrides": [], "sources": ["https://example.test/lettuce"]},  # ADDED
-                        {"variety_name": "Oakleaf", "overrides": [], "sources": []},  # ADDED
-                    ],  # ADDED
-                    "provenance": {"field_sources": []},  # ADDED
-                }, ProviderTrace("fake", {})  # ADDED
+            def generate_json(self, **_kwargs):
+                return {
+                    "row": complete_plant_row(),
+                    "allowed_method_categories": ["direct_sow"],
+                    "allowed_method_ids": ["direct_sow.field"],
+                    "varieties": [
+                        {"variety_name": "Buttercrunch", "maturity_class": "early", "overrides": [], "sources": ["https://example.test/lettuce"]},
+                        {"variety_name": "Romaine", "maturity_class": "", "overrides": [], "sources": ["https://example.test/lettuce"]},
+                        {"variety_name": "Oakleaf", "overrides": [], "sources": []},
+                    ],
+                    "provenance": {"field_sources": []},
+                }, ProviderTrace("fake", {})
 
-        run_dir = self.tmp_path / "run-crop-maturity-class"  # ADDED
-        run_dir.mkdir()  # ADDED
-        settings = Settings(self.tmp_path / "config.json", {"db_path": str(self.db_path), "runs_dir": str(self.tmp_path / "runs")})  # ADDED
-        methods = [{"method_id": "direct_sow.field", "method_category_id": "direct_sow", "method_name": "Direct sow (field)"}]  # ADDED
-        generated = {table: [] for table in ("Plants", "PlantAllowedMethodCategories", "PlantVarieties", "PlantTaskTemplates", "VarietyTaskTemplates")}  # ADDED
-        provenance = {"traces": [], "tables": {}}  # ADDED
-        input_data = {"crops": [{"name": "Lettuce", "sources": ["https://example.test/lettuce"], "variety_count": 3}]}  # ADDED
+        run_dir = self.tmp_path / "run-crop-maturity-class"
+        run_dir.mkdir()
+        settings = Settings(self.tmp_path / "config.json", {"db_path": str(self.db_path), "runs_dir": str(self.tmp_path / "runs")})
+        methods = [{"method_id": "direct_sow.field", "method_category_id": "direct_sow", "method_name": "Direct sow (field)"}]
+        generated = {table: [] for table in ("Plants", "PlantAllowedMethodCategories", "PlantVarieties", "PlantTaskTemplates", "VarietyTaskTemplates")}
+        provenance = {"traces": [], "tables": {}}
+        input_data = {"crops": [{"name": "Lettuce", "sources": ["https://example.test/lettuce"], "variety_count": 3}]}
 
-        _generate_crops(settings, input_data, FakeOpenAI(), methods, generated, provenance, run_dir, generate_templates=False)  # ADDED
+        _generate_crops(settings, input_data, FakeOpenAI(), methods, generated, provenance, run_dir, generate_templates=False)
 
-        varieties = {row["variety_name"]: row for row in generated["PlantVarieties"]}  # ADDED
-        self.assertEqual(varieties["Buttercrunch"]["maturity_class"], "early")  # ADDED
-        self.assertNotIn("maturity_class", varieties["Romaine"])  # ADDED
-        self.assertNotIn("maturity_class", varieties["Oakleaf"])  # ADDED
+        varieties = {row["variety_name"]: row for row in generated["PlantVarieties"]}
+        self.assertEqual(varieties["Buttercrunch"]["maturity_class"], "early")
+        self.assertNotIn("maturity_class", varieties["Romaine"])
+        self.assertNotIn("maturity_class", varieties["Oakleaf"])
 
     def test_companion_generation_skips_failed_pair_and_continues(self) -> None:
         class FakeOpenAI:
@@ -1848,7 +1848,7 @@ class TrellisSeederTests(unittest.TestCase):
         write_json(generated / "PlantVarieties.json", [{
             "plant_name": "Seeder Test Crop",
             "variety_name": "Seeder Test Variety",
-            "maturity_class": "early",  # ADDED
+            "maturity_class": "early",
             "overrides": {"days_maturity": 30},
         }])
         write_json(generated / "PlantTaskTemplates.json", [{
@@ -1956,13 +1956,13 @@ class TrellisSeederTests(unittest.TestCase):
             monthly_count = conn.execute("SELECT COUNT(*) FROM CityWeatherMonthly WHERE city_id=?", [city_id]).fetchone()[0]
             evidence_count = conn.execute("SELECT COUNT(*) FROM CompanionEvidence").fetchone()[0]
             window_count = conn.execute("SELECT COUNT(*) FROM PlantingWindowReferences WHERE plant_id=? AND city_id=?", [plant_id, city_id]).fetchone()[0]
-            variety_class = conn.execute("SELECT maturity_class FROM PlantVarieties WHERE plant_id=? AND variety_name='Seeder Test Variety'", [plant_id]).fetchone()[0]  # ADDED
+            variety_class = conn.execute("SELECT maturity_class FROM PlantVarieties WHERE plant_id=? AND variety_name='Seeder Test Variety'", [plant_id]).fetchone()[0]
             variety_template_count = conn.execute("SELECT COUNT(*) FROM VarietyTaskTemplates").fetchone()[0]
             self.assertEqual(weather_count, 1)
             self.assertEqual(monthly_count, 1)
             self.assertGreaterEqual(evidence_count, 1)
             self.assertEqual(window_count, 1)
-            self.assertEqual(variety_class, "early")  # ADDED
+            self.assertEqual(variety_class, "early")
             self.assertGreaterEqual(variety_template_count, 1)
         references = load_planting_window_references(self.db_path)
         self.assertTrue(any(row["plant_name"] == "Seeder Test Crop" and row["city_name"] == "Seeder Test City" for row in references))
@@ -2095,8 +2095,8 @@ class TrellisSeederTests(unittest.TestCase):
                 for row in conn.execute("SELECT region_code, city_id FROM Cities WHERE city_name='Springfield'")
             }
             self.assertEqual(set(rows), {"IL", "MO"})
-            il_monthly = conn.execute("SELECT temp_mean_c FROM CityWeatherMonthly WHERE city_id=? AND weather_month='2025-01' AND provider='nasa-power' AND dataset='nasa-power-monthly'", [rows["IL"]]).fetchone()[0]  # CHANGED
-            mo_monthly = conn.execute("SELECT temp_mean_c FROM CityWeatherMonthly WHERE city_id=? AND weather_month='2025-01' AND provider='nasa-power' AND dataset='nasa-power-monthly'", [rows["MO"]]).fetchone()[0]  # CHANGED
+            il_monthly = conn.execute("SELECT temp_mean_c FROM CityWeatherMonthly WHERE city_id=? AND weather_month='2025-01' AND provider='nasa-power' AND dataset='nasa-power-monthly'", [rows["IL"]]).fetchone()[0]
+            mo_monthly = conn.execute("SELECT temp_mean_c FROM CityWeatherMonthly WHERE city_id=? AND weather_month='2025-01' AND provider='nasa-power' AND dataset='nasa-power-monthly'", [rows["MO"]]).fetchone()[0]
             self.assertEqual(il_monthly, 4.0)
             self.assertEqual(mo_monthly, 6.0)
             il_window = conn.execute("SELECT summary FROM PlantingWindowReferences WHERE city_id=?", [rows["IL"]]).fetchone()[0]

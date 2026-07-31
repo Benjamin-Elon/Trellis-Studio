@@ -4,1268 +4,1268 @@
  * Stores growing-condition metadata on Trellis garden beds,
  * then renders selected-bed overlays from that saved metadata.
  */
-Draw.loadPlugin(function (ui) { // NEW
-    const graph = ui && ui.editor && ui.editor.graph; // NEW
-    if (!graph || graph.__gardenBedsInstalled) return; // CHANGE
-    graph.__gardenBedsInstalled = true; // CHANGE
-
-    const model = graph.getModel && graph.getModel(); // NEW
-    if (!model) return; // NEW
-    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // CHANGE
-    const TRELLIS_DIALOG_Z = 2000000000; // NEW
-    const BED_NAME_FALLBACK = "Garden Bed"; // ADDED
-    const OVERLAY_MIN_WIDTH = 190; // ADDED
-    const OVERLAY_PADDING_X = 16; // ADDED
-    const OVERLAY_ROW_GAP = 6; // ADDED
-    const OVERLAY_MIN_LABEL_WIDTH = 72; // ADDED
-    const OVERLAY_AVG_CHAR_WIDTH = 7; // ADDED
-    const OVERLAY_CONTROL_CHROME_WIDTH = 24; // ADDED
-    const CM_PER_INCH = 2.54; // ADDED
-
-    function applyBedButtonStyle(button, variant, options) { // NEW
-        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") { // NEW
-            window.Trellis.ui.applyButtonStyle(button, variant, options); // NEW
-        } else if (button) { // NEW
-            button.setAttribute("data-trellis-button-variant", variant || "neutral"); // NEW
-        } // NEW
-        return button; // NEW
-    } // NEW
-
-    function bedButton(label, onClick, variant, options) { // NEW
-        return applyBedButtonStyle(mxUtils.button(label, onClick), variant || "neutral", options); // NEW
-    } // NEW
-
-    const ATTRS = { // NEW
-        BED_JSON: "bed_conditions_json", // CHANGE
-        SEASON_EXTENSION_DEFAULTS_JSON: "season_extension_defaults_json" // ADDED
-    }; // NEW
-
-    const IDENTITY_MIRROR_ATTRS = { // ADDED
-        bedType: "bed_type", // ADDED
-        bedHeightCm: "bed_height_cm", // ADDED
-        userBedName: "user_bed_name" // ADDED
-    }; // ADDED
-
-    const MIRROR_ATTRS = { // NEW
-        sunExposure: "sun_exposure", // NEW
-        soilMoisture: "soil_moisture", // NEW
-        drainage: "drainage", // NEW
-        soilTexture: "soil_texture", // NEW
-        fertility: "fertility", // NEW
-        irrigation: "irrigation", // NEW
-        trellis: "trellis", // NEW
-        seasonExtension: "season_extension", // NEW
-        cropProtection: "crop_protection", // NEW
-        bedUse: "bed_use", // NEW
-        windExposure: "wind_exposure", // NEW
-        frostRisk: "frost_risk", // CHANGE
-        seasonExtensionAirOffsetC: "season_extension_air_offset_c", // ADDED
-        seasonExtensionSoilOffsetC: "season_extension_soil_offset_c", // ADDED
-        seasonExtensionFrostShiftDays: "season_extension_frost_shift_days", // ADDED
-        seasonExtensionMinAirTempC: "season_extension_min_air_temp_c" // ADDED
-    }; // NEW
-
-    const FIELD_DEFS = [ // NEW
-        { key: "sunExposure", label: "Sun exposure", values: ["unknown", "full_sun", "part_sun", "part_shade", "shade"], fallback: "unknown" }, // NEW
-        { key: "soilMoisture", label: "Soil moisture", values: ["unknown", "dry", "moderate", "moist", "wet"], fallback: "unknown" }, // NEW
-        { key: "drainage", label: "Drainage", values: ["unknown", "fast", "normal", "slow"], fallback: "unknown" }, // NEW
-        { key: "soilTexture", label: "Soil texture", values: ["unknown", "sandy", "loamy", "clay", "mixed", "amended"], fallback: "unknown" }, // NEW
-        { key: "fertility", label: "Fertility", values: ["unknown", "low", "medium", "high"], fallback: "unknown" }, // NEW
-        { key: "irrigation", label: "Irrigation", values: ["unknown", "none", "manual", "drip", "sprinkler", "self_watering"], fallback: "unknown" }, // NEW
-        { key: "trellis", label: "Trellis", values: ["unknown", "none", "available", "required_structure"], fallback: "unknown" }, // NEW
-        { key: "seasonExtension", label: "Season extension", values: ["unknown", "none", "row_cover", "low_tunnel", "cold_frame", "greenhouse", "high_tunnel", "heated_greenhouse"], fallback: "unknown" }, // NEW
-        { key: "cropProtection", label: "Crop protection", values: ["unknown", "none", "shade_cloth", "insect_netting", "bird_netting", "hail_netting"], fallback: "unknown" }, // NEW
-        { key: "windExposure", label: "Wind exposure", values: ["unknown", "sheltered", "moderate", "exposed"], fallback: "unknown" }, // NEW
-        { key: "frostRisk", label: "Frost risk", values: ["unknown", "none", "low", "medium", "high"], fallback: "unknown" }, // NEW
-        { key: "bedUse", label: "Bed use", values: ["unknown", "annuals", "perennials", "nursery", "seed_starting", "mixed", "resting"], fallback: "unknown" } // NEW
-    ]; // NEW
-
-    const BED_TYPE_FIELD = { key: "bedType", label: "Bed type", values: ["unknown", "field", "raised_bed", "hugelkultur", "container", "greenhouse_bench", "wicking_bed"], fallback: "unknown" }; // ADDED
-
-    const FIELD_BY_KEY = FIELD_DEFS.reduce(function (out, field) { // NEW
-        out[field.key] = field; // NEW
-        return out; // NEW
-    }, Object.create(null)); // NEW
-
-    const SEASON_EXTENSION_EFFECTS = Object.freeze({ // ADDED
-        unknown: Object.freeze({ airOffsetC: 0, soilOffsetC: 0, frostShiftDays: 0, minAirTempC: null }), // ADDED
-        none: Object.freeze({ airOffsetC: 0, soilOffsetC: 0, frostShiftDays: 0, minAirTempC: null }), // ADDED
-        row_cover: Object.freeze({ airOffsetC: 0.5, soilOffsetC: 0.5, frostShiftDays: -3, minAirTempC: null }), // ADDED
-        low_tunnel: Object.freeze({ airOffsetC: 1.5, soilOffsetC: 1.0, frostShiftDays: -7, minAirTempC: null }), // ADDED
-        cold_frame: Object.freeze({ airOffsetC: 2.0, soilOffsetC: 1.5, frostShiftDays: -10, minAirTempC: null }), // ADDED
-        greenhouse: Object.freeze({ airOffsetC: 3.0, soilOffsetC: 2.0, frostShiftDays: -21, minAirTempC: null }), // ADDED
-        high_tunnel: Object.freeze({ airOffsetC: 2.5, soilOffsetC: 1.5, frostShiftDays: -14, minAirTempC: null }), // ADDED
-        heated_greenhouse: Object.freeze({ airOffsetC: 5.0, soilOffsetC: 3.0, frostShiftDays: -45, minAirTempC: 5.0 }) // ADDED
-    }); // ADDED
-
-    const VALUE_LABELS = { // NEW
-        unknown: "Unknown", // NEW
-        full_sun: "Full sun", // NEW
-        part_sun: "Part sun", // NEW
-        part_shade: "Part shade", // NEW
-        shade: "Shade", // NEW
-        dry: "Dry", // NEW
-        moderate: "Moderate", // NEW
-        moist: "Moist", // NEW
-        wet: "Wet", // NEW
-        fast: "Fast drainage", // NEW
-        normal: "Normal drainage", // NEW
-        slow: "Slow drainage", // NEW
-        sandy: "Sandy", // NEW
-        loamy: "Loamy", // NEW
-        clay: "Clay", // NEW
-        mixed: "Mixed", // NEW
-        amended: "Amended", // NEW
-        low: "Low", // NEW
-        medium: "Medium", // NEW
-        high: "High", // NEW
-        none: "None", // NEW
-        manual: "Manual", // NEW
-        drip: "Drip", // NEW
-        sprinkler: "Sprinkler", // NEW
-        self_watering: "Self watering", // NEW
-        available: "Available", // NEW
-        required_structure: "Structure required", // NEW
-        row_cover: "Row cover", // NEW
-        low_tunnel: "Low tunnel", // NEW
-        cold_frame: "Cold frame", // NEW
-        greenhouse: "Greenhouse", // NEW
-        high_tunnel: "High tunnel", // NEW
-        heated_greenhouse: "Heated greenhouse", // NEW
-        shade_cloth: "Shade cloth", // NEW
-        insect_netting: "Insect netting", // NEW
-        bird_netting: "Bird netting", // NEW
-        hail_netting: "Hail netting", // NEW
-        sheltered: "Sheltered", // NEW
-        exposed: "Exposed", // NEW
-        annuals: "Annuals", // NEW
-        perennials: "Perennials", // NEW
-        nursery: "Nursery", // NEW
-        seed_starting: "Seed starting", // NEW
-        resting: "Resting", // CHANGE
-        field: "Field", // ADDED
-        raised_bed: "Raised bed", // ADDED
-        hugelkultur: "Hugelkultur", // ADDED
-        container: "Container", // ADDED
-        greenhouse_bench: "Greenhouse bench", // ADDED
-        wicking_bed: "Wicking bed" // ADDED
-    }; // NEW
-
-    const PRESETS = { // NEW
-        "": { label: "Choose preset", values: {} }, // NEW
-        sunny_vegetable: { label: "Sunny vegetable bed", values: { sunExposure: "full_sun", soilMoisture: "moderate", drainage: "normal", soilTexture: "loamy", fertility: "high", irrigation: "unknown", trellis: "unknown", bedUse: "annuals" } }, // NEW
-        shady_greens: { label: "Shady greens bed", values: { sunExposure: "part_shade", soilMoisture: "moist", drainage: "normal", fertility: "medium", irrigation: "unknown", trellis: "unknown", bedUse: "annuals" } }, // NEW
-        dry_herb: { label: "Dry herb bed", values: { sunExposure: "full_sun", soilMoisture: "dry", drainage: "fast", soilTexture: "sandy", fertility: "low", irrigation: "unknown", trellis: "unknown", bedUse: "perennials" } }, // NEW
-        wet_moist: { label: "Wet/moist bed", values: { sunExposure: "part_sun", soilMoisture: "moist", drainage: "slow", fertility: "medium", irrigation: "none", trellis: "unknown", bedUse: "unknown" } }, // NEW
-        nursery: { label: "Nursery bed", values: { sunExposure: "part_sun", soilMoisture: "moderate", drainage: "normal", fertility: "medium", irrigation: "unknown", trellis: "unknown", bedUse: "nursery" } }, // NEW
-        greenhouse: { label: "Greenhouse bed", values: { sunExposure: "full_sun", soilMoisture: "moderate", drainage: "normal", soilTexture: "amended", fertility: "high", irrigation: "drip", trellis: "unknown", seasonExtension: "greenhouse", cropProtection: "unknown", windExposure: "sheltered", frostRisk: "low", bedUse: "seed_starting" } }, // NEW
-        perennial: { label: "Perennial bed", values: { sunExposure: "full_sun", soilMoisture: "moderate", drainage: "normal", fertility: "medium", irrigation: "unknown", trellis: "unknown", bedUse: "perennials" } }, // NEW
-        resting: { label: "Resting bed", values: { sunExposure: "unknown", soilMoisture: "unknown", drainage: "unknown", fertility: "low", irrigation: "unknown", trellis: "unknown", bedUse: "resting" } } // NEW
-    }; // NEW
-
-    let copiedProfile = null; // NEW
-    const selectedBedOverlays = new Map(); // NEW
-
-    function isGardenBed(cell) { // NEW
-        if (!cell || !cell.getAttribute) return false; // CHANGE
-        return cell.getAttribute("garden_bed") === "1" || cell.getAttribute("gardenBed") === "1" || cell.getAttribute("is_garden_bed") === "1"; // CHANGE
-    } // NEW
-
-    function getCellAttr(cell, key, fallback) { // NEW
-        if (!cell || !cell.getAttribute) return fallback || ""; // NEW
-        const value = cell.getAttribute(key); // NEW
-        return value == null ? (fallback || "") : String(value); // NEW
-    } // NEW
-
-    function normalizeBedName(value) { // ADDED
-        const trimmed = String(value == null ? "" : value).trim(); // ADDED
-        return trimmed || BED_NAME_FALLBACK; // ADDED
-    } // ADDED
-
-    function normalizeUserBedName(value) { // ADDED
-        return String(value == null ? "" : value).trim(); // ADDED
-    } // ADDED
-
-    function getBedName(cell) { // ADDED
-        if (!cell) return BED_NAME_FALLBACK; // ADDED
-        const value = cell.value; // ADDED
-        if (value && value.nodeType === 1) return normalizeBedName(value.getAttribute("label") || value.getAttribute("name")); // ADDED
-        return normalizeBedName(value); // ADDED
-    } // ADDED
-
-    function createXmlDocument() { // NEW
-        if (typeof mxUtils !== "undefined" && mxUtils.createXmlDocument) return mxUtils.createXmlDocument(); // NEW
-        return document.implementation.createDocument("", "", null); // NEW
-    } // NEW
-
-    function buildXmlValueForEdit(cell) { // CHANGE
-        if (!cell) return null; // NEW
-        const value = cell.value; // NEW
-        if (value && value.nodeType === 1) return value.cloneNode(true); // CHANGE
-        const node = createXmlDocument().createElement("object"); // NEW
-        if (typeof value === "string" && value) node.setAttribute("label", value); // NEW
-        return node; // NEW
-    } // NEW
-
-    function setCellAttrs(cell, attrs) { // NEW
-        const node = buildXmlValueForEdit(cell); // CHANGE
-        if (!node) return; // NEW
-        Object.keys(attrs || {}).forEach(function (key) { // NEW
-            const value = attrs[key]; // NEW
-            if (value == null || value === "") node.removeAttribute(key); // NEW
-            else node.setAttribute(key, String(value)); // NEW
-        }); // NEW
-        if (model.setValue) model.setValue(cell, node); // NEW
-    } // NEW
-
-    function writeBedName(bedCell, name) { // ADDED
-        if (!isGardenBed(bedCell)) return ""; // CHANGE
-        const next = normalizeUserBedName(name); // CHANGE
-        const current = readBedConditions(bedCell); // ADDED
-        if (current.userBedName === next && getBedName(bedCell) === buildGeneratedBedLabel(current, bedCell)) return next; // CHANGE
-        current.userBedName = next; // ADDED
-        writeBedConditions(bedCell, current, { writeIdentityLabel: true }); // CHANGE
-        return next; // CHANGE
-    } // ADDED
-
-    function nowIso() { // NEW
-        return new Date().toISOString(); // NEW
-    } // NEW
-
-    function valueLabel(value) { // NEW
-        return VALUE_LABELS[value] || String(value || "").replace(/_/g, " "); // NEW
-    } // NEW
-
-    function listConditionOptionGroups() { // NEW
-        return FIELD_DEFS.filter(function (field) { return field.key !== "irrigation"; }).map(function (field) { // CHANGE
-            return { // NEW
-                id: field.key, // NEW
-                name: field.label, // NEW
-                options: field.values.filter(function (value) { return value !== "unknown"; }).map(function (value) { // NEW
-                    return { id: field.key + ":" + value, fieldKey: field.key, value: value, name: valueLabel(value), category: field.label }; // NEW
-                }) // NEW
-            }; // NEW
-        }).filter(function (group) { return group.options.length > 0; }); // NEW
-    } // NEW
-
-    function normalizeEnumValue(key, value) { // NEW
-        const field = key === "bedType" ? BED_TYPE_FIELD : FIELD_BY_KEY[key]; // CHANGE
-        const raw = String(value == null ? "" : value).trim(); // NEW
-        if (!field || field.values.indexOf(raw) < 0) return field ? field.fallback : ""; // NEW
-        return raw; // NEW
-    } // NEW
-
-    function finiteNumberOrNull(value) { // ADDED
-        if (value === null || value === undefined || value === "") return null; // ADDED
-        const n = Number(value); // ADDED
-        return Number.isFinite(n) ? n : null; // ADDED
-    } // ADDED
-
-    function normalizePositiveOptionalNumber(value) { // ADDED
-        const n = finiteNumberOrNull(value); // ADDED
-        return n != null && n > 0 ? Math.round(n * 100) / 100 : null; // ADDED
-    } // ADDED
-
-    function normalizeOptionalNumber(value) { // ADDED
-        const n = finiteNumberOrNull(value); // ADDED
-        return n == null ? null : Math.round(n * 100) / 100; // ADDED
-    } // ADDED
-
-    function profileHasOwnIdentity(profile) { // ADDED
-        const source = profile && typeof profile === "object" ? profile : {}; // ADDED
-        return Object.prototype.hasOwnProperty.call(source, "bedType") || Object.prototype.hasOwnProperty.call(source, "bed_type") || // ADDED
-            Object.prototype.hasOwnProperty.call(source, "bedHeightCm") || Object.prototype.hasOwnProperty.call(source, "bed_height_cm") || // ADDED
-            Object.prototype.hasOwnProperty.call(source, "userBedName") || Object.prototype.hasOwnProperty.call(source, "user_bed_name"); // ADDED
-    } // ADDED
-
-    function profileHasMeaningfulIdentity(profile) { // ADDED
-        const source = profile && typeof profile === "object" ? profile : {}; // ADDED
-        return normalizeEnumValue("bedType", source.bedType ?? source.bed_type) !== "unknown" || // ADDED
-            normalizePositiveOptionalNumber(source.bedHeightCm ?? source.bed_height_cm) != null || // ADDED
-            !!normalizeUserBedName(source.userBedName ?? source.user_bed_name); // ADDED
-    } // ADDED
-
-    function seasonExtensionDefaults(value) { // ADDED
-        const key = Object.prototype.hasOwnProperty.call(SEASON_EXTENSION_EFFECTS, value) ? value : "unknown"; // ADDED
-        return SEASON_EXTENSION_EFFECTS[key] || SEASON_EXTENSION_EFFECTS.unknown; // ADDED
-    } // ADDED
-
-    function normalizeSeasonExtensionDefault(key, source) { // ADDED
-        const defaults = seasonExtensionDefaults(key); // ADDED
-        const p = source && typeof source === "object" ? source : {}; // ADDED
-        return { // ADDED
-            airOffsetC: normalizeOptionalNumber(p.airOffsetC) ?? defaults.airOffsetC, // ADDED
-            soilOffsetC: normalizeOptionalNumber(p.soilOffsetC) ?? defaults.soilOffsetC, // ADDED
-            frostShiftDays: normalizeOptionalNumber(p.frostShiftDays) ?? defaults.frostShiftDays, // ADDED
-            minAirTempC: key === "heated_greenhouse" ? (normalizeOptionalNumber(p.minAirTempC) ?? defaults.minAirTempC) : null // ADDED
-        }; // ADDED
-    } // ADDED
-
-    function parseSeasonExtensionDefaults(raw) { // ADDED
-        if (!raw) return {}; // ADDED
-        try { // ADDED
-            const parsed = JSON.parse(raw); // ADDED
-            const source = parsed && typeof parsed === "object" && parsed.defaults && typeof parsed.defaults === "object" ? parsed.defaults : parsed; // ADDED
-            const out = {}; // ADDED
-            FIELD_BY_KEY.seasonExtension.values.forEach(function (key) { // ADDED
-                if (key === "unknown" || key === "none" || !source || typeof source[key] !== "object") return; // ADDED
-                out[key] = normalizeSeasonExtensionDefault(key, source[key]); // ADDED
-            }); // ADDED
-            return out; // ADDED
-        } catch (e) { // ADDED
-            return {}; // ADDED
-        } // ADDED
-    } // ADDED
-
-    function readModuleSeasonExtensionDefaults(moduleCell) { // ADDED
-        return parseSeasonExtensionDefaults(getCellAttr(moduleCell, ATTRS.SEASON_EXTENSION_DEFAULTS_JSON, "")); // ADDED
-    } // ADDED
-
-    function resolveSeasonExtensionDefault(targetCell, key) { // ADDED
-        const normalizedKey = normalizeEnumValue("seasonExtension", key); // ADDED
-        const moduleCell = findGardenModuleAncestor(targetCell); // ADDED
-        const moduleDefaults = readModuleSeasonExtensionDefaults(moduleCell); // ADDED
-        return moduleDefaults[normalizedKey] || seasonExtensionDefaults(normalizedKey); // ADDED
-    } // ADDED
-
-    function writeModuleSeasonExtensionDefault(targetCell, key, effect) { // ADDED
-        const normalizedKey = normalizeEnumValue("seasonExtension", key); // ADDED
-        const moduleCell = findGardenModuleAncestor(targetCell); // ADDED
-        if (!moduleCell || normalizedKey === "unknown" || normalizedKey === "none") return null; // ADDED
-        const moduleDefaults = readModuleSeasonExtensionDefaults(moduleCell); // ADDED
-        moduleDefaults[normalizedKey] = normalizeSeasonExtensionDefault(normalizedKey, effect); // ADDED
-        const attrs = {}; // ADDED
-        attrs[ATTRS.SEASON_EXTENSION_DEFAULTS_JSON] = JSON.stringify({ schemaVersion: 1, defaults: moduleDefaults }); // ADDED
-        setCellAttrs(moduleCell, attrs); // ADDED
-        return moduleDefaults[normalizedKey]; // ADDED
-    } // ADDED
-
-    function seasonExtensionEffects(profile) { // ADDED
-        const p = profile && typeof profile === "object" ? profile : {}; // ADDED
-        const key = normalizeEnumValue("seasonExtension", p.seasonExtension); // ADDED
-        const defaults = seasonExtensionDefaults(key); // ADDED
-        return { // ADDED
-            seasonExtension: key, // ADDED
-            airOffsetC: normalizeOptionalNumber(p.seasonExtensionAirOffsetC) ?? defaults.airOffsetC, // ADDED
-            soilOffsetC: normalizeOptionalNumber(p.seasonExtensionSoilOffsetC) ?? defaults.soilOffsetC, // ADDED
-            frostShiftDays: normalizeOptionalNumber(p.seasonExtensionFrostShiftDays) ?? defaults.frostShiftDays, // ADDED
-            minAirTempC: key === "heated_greenhouse" ? (normalizeOptionalNumber(p.seasonExtensionMinAirTempC) ?? defaults.minAirTempC) : null // ADDED
-        }; // ADDED
-    } // ADDED
-
-    function mergeIdentityAttrsIntoProfile(cell, source) { // ADDED
-        const out = Object.assign({}, source || {}); // ADDED
-        if (!profileHasOwnIdentity(out) && cell && cell.getAttribute) { // ADDED
-            const bedType = getCellAttr(cell, IDENTITY_MIRROR_ATTRS.bedType, ""); // ADDED
-            const bedHeightCm = getCellAttr(cell, IDENTITY_MIRROR_ATTRS.bedHeightCm, ""); // ADDED
-            const userBedName = getCellAttr(cell, IDENTITY_MIRROR_ATTRS.userBedName, ""); // ADDED
-            if (bedType) out.bed_type = bedType; // ADDED
-            if (bedHeightCm) out.bed_height_cm = bedHeightCm; // ADDED
-            if (userBedName) out.user_bed_name = userBedName; // ADDED
-        } // ADDED
-        return out; // ADDED
-    } // ADDED
-
-    function cellHasIdentityAttrs(cell) { // ADDED
-        return !!(cell && cell.getAttribute && ( // ADDED
-            getCellAttr(cell, IDENTITY_MIRROR_ATTRS.bedType, "") || // ADDED
-            getCellAttr(cell, IDENTITY_MIRROR_ATTRS.bedHeightCm, "") || // ADDED
-            getCellAttr(cell, IDENTITY_MIRROR_ATTRS.userBedName, "") // ADDED
-        )); // ADDED
-    } // ADDED
-
-    function isValidPresetKey(key) { // NEW
-        return !!key && !!PRESETS[key]; // NEW
-    } // NEW
-
-    function getPresetFieldKeys(presetKey) { // NEW
-        const preset = isValidPresetKey(presetKey) ? PRESETS[presetKey] : null; // NEW
-        const values = (preset && preset.values) || {}; // NEW
-        return Object.keys(values).filter(function (key) { return values[key] !== "unknown"; }); // NEW
-    } // NEW
-
-    function doesProfileMatchPreset(profile, presetKey) { // NEW
-        if (!isValidPresetKey(presetKey)) return false; // NEW
-        const values = PRESETS[presetKey].values || {}; // NEW
-        return getPresetFieldKeys(presetKey).every(function (key) { // NEW
-            return normalizeEnumValue(key, profile[key]) === normalizeEnumValue(key, values[key]); // NEW
-        }); // NEW
-    } // NEW
-
-    function normalizeProfile(profile, options) { // NEW
-        const source = profile && typeof profile === "object" ? profile : {}; // NEW
-        const out = { schemaVersion: 1 }; // NEW
-        out.bedType = normalizeEnumValue("bedType", source.bedType ?? source.bed_type); // ADDED
-        out.bedHeightCm = normalizePositiveOptionalNumber(source.bedHeightCm ?? source.bed_height_cm); // ADDED
-        out.userBedName = normalizeUserBedName(source.userBedName ?? source.user_bed_name); // ADDED
-        FIELD_DEFS.forEach(function (field) { // NEW
-            out[field.key] = normalizeEnumValue(field.key, source[field.key]); // NEW
-        }); // NEW
-        out.irrigation = "unknown"; // NEW
-        const presetKey = String(source.presetKey || "").trim(); // NEW
-        if (options && options.allowPreset && isValidPresetKey(presetKey)) out.presetKey = presetKey; // CHANGE
-        out.notes = String(source.notes || "").trim(); // NEW
-        out.seasonExtensionAirOffsetC = normalizeOptionalNumber(source.seasonExtensionAirOffsetC ?? source.season_extension_air_offset_c); // ADDED
-        out.seasonExtensionSoilOffsetC = normalizeOptionalNumber(source.seasonExtensionSoilOffsetC ?? source.season_extension_soil_offset_c); // ADDED
-        out.seasonExtensionFrostShiftDays = normalizeOptionalNumber(source.seasonExtensionFrostShiftDays ?? source.season_extension_frost_shift_days); // ADDED
-        out.seasonExtensionMinAirTempC = out.seasonExtension === "heated_greenhouse" // ADDED
-            ? normalizeOptionalNumber(source.seasonExtensionMinAirTempC ?? source.season_extension_min_air_temp_c) // ADDED
-            : null; // ADDED
-        out.lastUpdated = String(source.lastUpdated || (options && options.keepExistingDate ? "" : nowIso())); // NEW
-        return out; // NEW
-    } // NEW
-
-    function parseProfileRecord(cell, attrName) { // NEW
-        const options = { keepExistingDate: true, allowPreset: attrName === ATTRS.BED_JSON }; // NEW
-        const raw = getCellAttr(cell, attrName, ""); // NEW
-        if (!raw) return { raw: "", invalid: false, profile: normalizeProfile(mergeIdentityAttrsIntoProfile(cell, {}), options) }; // CHANGE
-        try { // NEW
-            return { raw: raw, invalid: false, profile: normalizeProfile(mergeIdentityAttrsIntoProfile(cell, JSON.parse(raw)), options) }; // CHANGE
-        } catch (e) { // NEW
-            return { raw: raw, invalid: true, profile: normalizeProfile(mergeIdentityAttrsIntoProfile(cell, {}), options) }; // CHANGE
-        } // NEW
-    } // NEW
-
-    function readBedConditions(bedCell) { // NEW
-        return parseProfileRecord(bedCell, ATTRS.BED_JSON).profile; // NEW
-    } // NEW
-
-    function buildMirrorAttrs(profile) { // NEW
-        const attrs = {}; // NEW
-        Object.keys(MIRROR_ATTRS).forEach(function (key) { // NEW
-            attrs[MIRROR_ATTRS[key]] = profile[key]; // NEW
-        }); // NEW
-        return attrs; // NEW
-    } // NEW
-
-    function buildIdentityMirrorAttrs(profile) { // ADDED
-        const attrs = {}; // ADDED
-        attrs[IDENTITY_MIRROR_ATTRS.bedType] = profile.bedType === "unknown" ? null : profile.bedType; // ADDED
-        attrs[IDENTITY_MIRROR_ATTRS.bedHeightCm] = profile.bedHeightCm == null ? null : profile.bedHeightCm; // ADDED
-        attrs[IDENTITY_MIRROR_ATTRS.userBedName] = profile.userBedName || null; // ADDED
-        return attrs; // ADDED
-    } // ADDED
-
-    function formatDisplayNumber(value) { // ADDED
-        const n = Number(value); // ADDED
-        if (!Number.isFinite(n)) return ""; // ADDED
-        const rounded = Math.round(n * 10) / 10; // ADDED
-        return Number.isInteger(rounded) ? String(rounded) : String(rounded); // ADDED
-    } // ADDED
-
-    function heightCmToDisplayValue(cm, units) { // ADDED
-        const n = normalizePositiveOptionalNumber(cm); // ADDED
-        if (n == null) return ""; // ADDED
-        return units === "imperial" ? formatDisplayNumber(n / CM_PER_INCH) : formatDisplayNumber(n); // ADDED
-    } // ADDED
-
-    function displayHeightToCm(value, units) { // ADDED
-        const n = finiteNumberOrNull(value); // ADDED
-        if (n == null || n <= 0) return null; // ADDED
-        return Math.round((units === "imperial" ? n * CM_PER_INCH : n) * 100) / 100; // ADDED
-    } // ADDED
-
-    function formatBedHeight(cm, units) { // ADDED
-        const value = heightCmToDisplayValue(cm, units); // ADDED
-        if (!value) return ""; // ADDED
-        return value + " " + (units === "imperial" ? "in" : "cm"); // ADDED
-    } // ADDED
-
-    function buildGeneratedBedLabel(profile, bedCell) { // ADDED
-        const normalized = normalizeProfile(profile, { keepExistingDate: true, allowPreset: true }); // ADDED
-        const parts = []; // ADDED
-        if (normalized.bedType !== "unknown") { // ADDED
-            let prefix = valueLabel(normalized.bedType); // ADDED
-            const height = formatBedHeight(normalized.bedHeightCm, resolveUnitSystem(bedCell)); // ADDED
-            if (height) prefix += " (" + height + ")"; // ADDED
-            parts.push(prefix); // ADDED
-        } // ADDED
-        if (normalized.userBedName) parts.push(normalized.userBedName); // ADDED
-        return parts.length ? parts.join(" - ") : BED_NAME_FALLBACK; // ADDED
-    } // ADDED
-
-    function shouldWriteGeneratedLabel(bedCell, sourceProfile, normalizedProfile, options) { // ADDED
-        if (options && options.writeIdentityLabel) return true; // ADDED
-        if (profileHasMeaningfulIdentity(sourceProfile) || profileHasMeaningfulIdentity(normalizedProfile)) return true; // ADDED
-        return cellHasIdentityAttrs(bedCell); // ADDED
-    } // ADDED
-
-    function writeBedConditions(bedCell, profile, options) { // CHANGE
-        if (!isGardenBed(bedCell)) return null; // NEW
-        const source = mergeIdentityAttrsIntoProfile(bedCell, profile); // ADDED
-        const normalized = normalizeProfile(source, { allowPreset: true }); // CHANGE
-        const attrs = buildMirrorAttrs(normalized); // NEW
-        Object.assign(attrs, buildIdentityMirrorAttrs(normalized)); // ADDED
-        attrs[ATTRS.BED_JSON] = JSON.stringify(normalized); // NEW
-        if (shouldWriteGeneratedLabel(bedCell, source, normalized, options)) attrs.label = buildGeneratedBedLabel(normalized, bedCell); // CHANGE
-        setCellAttrs(bedCell, attrs); // NEW
-        refreshSelectedBedOverlaysSoon(); // NEW
-        return normalized; // NEW
-    } // NEW
-
-    function clearBedConditions(bedCell) { // NEW
-        if (!isGardenBed(bedCell)) return; // NEW
-        const current = readBedConditions(bedCell); // ADDED
-        const keepIdentity = profileHasMeaningfulIdentity(current) || cellHasIdentityAttrs(bedCell); // ADDED
-        const identityOnly = keepIdentity ? normalizeProfile({ bedType: current.bedType, bedHeightCm: current.bedHeightCm, userBedName: current.userBedName }, { allowPreset: true }) : null; // ADDED
-        const attrs = { [ATTRS.BED_JSON]: keepIdentity ? JSON.stringify(identityOnly) : null }; // CHANGE
-        Object.keys(MIRROR_ATTRS).forEach(function (key) { // NEW
-            attrs[MIRROR_ATTRS[key]] = null; // NEW
-        }); // NEW
-        if (keepIdentity) { // ADDED
-            Object.assign(attrs, buildIdentityMirrorAttrs(identityOnly)); // ADDED
-            attrs.label = buildGeneratedBedLabel(identityOnly, bedCell); // ADDED
-        } // ADDED
-        setCellAttrs(bedCell, attrs); // NEW
-        refreshSelectedBedOverlaysSoon(); // NEW
-    } // NEW
-
-    function isMeaningfulOverride(key, value) { // NEW
-        if (key === "irrigation") return !!value && value !== "unknown"; // NEW
-        if (key === "trellis") return value === "none" || value === "available" || value === "required_structure"; // NEW
-        return !!value && value !== "unknown"; // NEW
-    } // NEW
-
-    function derivedIrrigationDisplayValue(bedCell) { // NEW
-        const moduleCell = findGardenModuleAncestor(bedCell); // NEW
-        const planner = graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner); // NEW
-        if (!planner || typeof planner.getBedIrrigationMethods !== "function") return "unknown"; // NEW
-        const methods = planner.getBedIrrigationMethods(moduleCell, bedCell) || []; // NEW
-        const labels = methods.map(function (method) { return String(method && method.label || "").trim(); }).filter(Boolean); // NEW
-        return labels.length ? labels.join(", ") : "unknown"; // NEW
-    } // NEW
-
-    function getDisplayBedConditions(bedCell) { // CHANGE
-        const bedRecord = parseProfileRecord(bedCell, ATTRS.BED_JSON); // NEW
-        const out = normalizeProfile({}, { keepExistingDate: true }); // NEW
-        FIELD_DEFS.forEach(function (field) { // NEW
-            if (field.key === "irrigation") return; // NEW
-            const value = bedRecord.profile[field.key]; // NEW
-            if (isMeaningfulOverride(field.key, value)) out[field.key] = value; // NEW
-        }); // NEW
-        out.irrigation = derivedIrrigationDisplayValue(bedCell); // NEW
-        if (bedRecord.profile.notes) out.notes = bedRecord.profile.notes; // NEW
-        if (isValidPresetKey(bedRecord.profile.presetKey)) out.presetKey = bedRecord.profile.presetKey; // CHANGE
-        out.lastUpdated = bedRecord.profile.lastUpdated || ""; // NEW
-        return out; // NEW
-    } // NEW
-
-    function isBedCompatibleWithCrop() { // NEW
-        return { compatible: true, hardFailures: [], warnings: [] }; // NEW
-    } // NEW
-
-    function scoreBedSuitability() { // NEW
-        return { score: 0, reasons: [] }; // NEW
-    } // NEW
-
-    function getCellId(cell) { // NEW
-        return cell && cell.getId ? cell.getId() : (cell && cell.id); // NEW
-    } // NEW
-
-    function collectSelectedBeds(fallbackBed) { // NEW
-        const cells = graph.getSelectionCells ? (graph.getSelectionCells() || []) : []; // NEW
-        const byId = new Map(); // NEW
-        cells.forEach(function (cell) { // NEW
-            if (isGardenBed(cell)) byId.set(getCellId(cell), cell); // NEW
-        }); // NEW
-        if (!byId.size && fallbackBed) byId.set(getCellId(fallbackBed), fallbackBed); // NEW
-        return Array.from(byId.values()); // NEW
-    } // NEW
-
-    function makeSelect(field, value) { // NEW
-        const select = document.createElement("select"); // NEW
-        select.style.width = "100%"; // NEW
-        field.values.forEach(function (optionValue) { // NEW
-            const option = document.createElement("option"); // NEW
-            option.value = optionValue; // NEW
-            option.textContent = valueLabel(optionValue); // NEW
-            select.appendChild(option); // NEW
-        }); // NEW
-        select.value = normalizeEnumValue(field.key, value); // NEW
-        return select; // NEW
-    } // NEW
-
-    function makeReadOnlyText(value) { // NEW
-        const span = document.createElement("span"); // NEW
-        span.textContent = valueLabel(value); // NEW
-        span.setAttribute("data-bed-derived-irrigation", "1"); // NEW
-        span.style.display = "block"; // NEW
-        span.style.padding = "3px 0"; // NEW
-        span.style.color = "#374151"; // NEW
-        span.style.fontWeight = "600"; // NEW
-        return span; // NEW
-    } // NEW
-
-    function appendSection(container, title) { // NEW
-        const section = document.createElement("div"); // NEW
-        section.style.borderTop = "1px solid #e5e7eb"; // NEW
-        section.style.paddingTop = "8px"; // NEW
-        section.style.marginTop = "8px"; // NEW
-        const label = document.createElement("div"); // NEW
-        label.textContent = title; // NEW
-        label.style.fontWeight = "bold"; // NEW
-        label.style.marginBottom = "6px"; // NEW
-        section.appendChild(label); // NEW
-        container.appendChild(section); // NEW
-        return section; // NEW
-    } // NEW
-
-    function appendField(section, field, input) { // NEW
-        const row = document.createElement("label"); // NEW
-        row.style.display = "grid"; // NEW
-        row.style.gridTemplateColumns = "130px 1fr"; // NEW
-        row.style.alignItems = "center"; // NEW
-        row.style.gap = "8px"; // NEW
-        row.style.marginBottom = "6px"; // NEW
-        const text = document.createElement("span"); // NEW
-        text.textContent = field.label; // NEW
-        row.appendChild(text); // NEW
-        row.appendChild(input); // NEW
-        section.appendChild(row); // NEW
-    } // NEW
-
-    function isGardenModule(cell) { // ADDED
-        return !!cell && cell.getAttribute && cell.getAttribute("garden_module") === "1"; // ADDED
-    } // ADDED
-
-    function findGardenModuleAncestor(cell) { // ADDED
-        for (let cur = cell; cur; cur = model.getParent ? model.getParent(cur) : null) { // ADDED
-            if (isGardenModule(cur)) return cur; // ADDED
-        } // ADDED
-        return null; // ADDED
-    } // ADDED
-
-    function resolveUnitSystem(cell) { // ADDED
-        const moduleCell = findGardenModuleAncestor(cell); // ADDED
-        return String(moduleCell && moduleCell.getAttribute ? moduleCell.getAttribute("unit_system") : "").trim() === "imperial" ? "imperial" : "metric"; // ADDED
-    } // ADDED
-
-    function cToDisplayTemp(c, units) { // ADDED
-        const n = Number(c); // ADDED
-        if (!Number.isFinite(n)) return ""; // ADDED
-        return units === "imperial" ? String(Math.round((n * 9 / 5 + 32) * 100) / 100) : String(Math.round(n * 100) / 100); // CHANGE
-    } // ADDED
-
-    function displayTempToC(value, units) { // ADDED
-        const n = finiteNumberOrNull(value); // ADDED
-        if (n == null) return null; // ADDED
-        return units === "imperial" ? Math.round(((n - 32) * 5 / 9) * 100) / 100 : Math.round(n * 100) / 100; // ADDED
-    } // ADDED
-
-    function makeNumberInput(value) { // ADDED
-        const input = document.createElement("input"); // ADDED
-        input.type = "number"; // ADDED
-        input.step = "0.1"; // ADDED
-        input.value = value == null ? "" : String(value); // ADDED
-        input.style.width = "100%"; // ADDED
-        return input; // ADDED
-    } // ADDED
-
-    function formatSigned(value, suffix) { // ADDED
-        const n = Number(value); // ADDED
-        if (!Number.isFinite(n)) return ""; // ADDED
-        return `${n > 0 ? "+" : ""}${Math.round(n * 100) / 100}${suffix || ""}`; // CHANGE
-    } // ADDED
-
-    function conditionDialogHeight() { // ADDED
-        const viewportHeight = typeof window !== "undefined" && Number.isFinite(Number(window.innerHeight)) ? Number(window.innerHeight) : 730; // ADDED
-        return Math.max(360, Math.min(650, viewportHeight - 80)); // ADDED
-    } // ADDED
-
-    function makeSeasonExtensionAdvancedSection(container, targetCell, current, controls) { // ADDED
-        const units = resolveUnitSystem(targetCell); // ADDED
-        const tempLabel = units === "imperial" ? "F" : "C"; // ADDED
-        const section = appendSection(container, "Advanced season extension"); // ADDED
-        section.setAttribute("data-bed-season-extension-advanced", "1"); // ADDED
-        const defaultsRow = document.createElement("div"); // ADDED
-        defaultsRow.style.display = "flex"; // ADDED
-        defaultsRow.style.alignItems = "center"; // ADDED
-        defaultsRow.style.justifyContent = "space-between"; // ADDED
-        defaultsRow.style.gap = "8px"; // ADDED
-        defaultsRow.style.margin = "2px 0 8px"; // ADDED
-        const defaults = document.createElement("div"); // ADDED
-        defaults.style.flex = "1 1 auto"; // ADDED
-        defaults.style.fontSize = "12px"; // ADDED
-        defaults.style.color = "#374151"; // ADDED
-        defaultsRow.appendChild(defaults); // ADDED
-        const airInput = makeNumberInput(current.seasonExtensionAirOffsetC == null ? "" : cToDisplayTemp(current.seasonExtensionAirOffsetC, units)); // ADDED
-        const soilInput = makeNumberInput(current.seasonExtensionSoilOffsetC == null ? "" : cToDisplayTemp(current.seasonExtensionSoilOffsetC, units)); // ADDED
-        const frostInput = makeNumberInput(current.seasonExtensionFrostShiftDays); // ADDED
-        const minInput = makeNumberInput(current.seasonExtensionMinAirTempC == null ? "" : cToDisplayTemp(current.seasonExtensionMinAirTempC, units)); // ADDED
-        const saveDefaultsButton = bedButton("Set as defaults", function () { // CHANGE
-            const key = controls.seasonExtension.value; // ADDED
-            const effect = readInputsAsEffect(key, resolveSeasonExtensionDefault(targetCell, key)); // ADDED
-            model.beginUpdate(); // ADDED
-            try { // ADDED
-                writeModuleSeasonExtensionDefault(targetCell, key, effect); // ADDED
-            } finally { // ADDED
-                model.endUpdate(); // ADDED
-            } // ADDED
-            refresh(); // ADDED
-        }); // ADDED
-        defaultsRow.appendChild(saveDefaultsButton); // ADDED
-        section.appendChild(defaultsRow); // ADDED
-        controls.seasonExtensionAirOffsetC = airInput; // ADDED
-        controls.seasonExtensionSoilOffsetC = soilInput; // ADDED
-        controls.seasonExtensionFrostShiftDays = frostInput; // ADDED
-        controls.seasonExtensionMinAirTempC = minInput; // ADDED
-        appendField(section, { label: `Air offset (${tempLabel})` }, airInput); // ADDED
-        appendField(section, { label: `Soil offset (${tempLabel})` }, soilInput); // ADDED
-        appendField(section, { label: "Frost shift (days)" }, frostInput); // ADDED
-        appendField(section, { label: `Min air (${tempLabel})` }, minInput); // ADDED
-        function setInputsFromEffect(effect) { // ADDED
-            airInput.value = cToDisplayTemp(effect.airOffsetC, units); // ADDED
-            soilInput.value = cToDisplayTemp(effect.soilOffsetC, units); // ADDED
-            frostInput.value = effect.frostShiftDays == null ? "" : String(effect.frostShiftDays); // ADDED
-            minInput.value = effect.minAirTempC == null ? "" : cToDisplayTemp(effect.minAirTempC, units); // ADDED
-        } // ADDED
-        function readInputsAsEffect(key, fallback) { // ADDED
-            return { // ADDED
-                airOffsetC: displayTempToC(airInput.value, units) ?? fallback.airOffsetC, // ADDED
-                soilOffsetC: displayTempToC(soilInput.value, units) ?? fallback.soilOffsetC, // ADDED
-                frostShiftDays: normalizeOptionalNumber(frostInput.value) ?? fallback.frostShiftDays, // ADDED
-                minAirTempC: key === "heated_greenhouse" ? (displayTempToC(minInput.value, units) ?? fallback.minAirTempC) : null // ADDED
-            }; // ADDED
-        } // ADDED
-        function refresh(options) { // ADDED
-            const key = controls.seasonExtension.value; // ADDED
-            const show = key && key !== "unknown" && key !== "none"; // ADDED
-            const effect = resolveSeasonExtensionDefault(targetCell, key); // CHANGE
-            if (options && options.resetValues) setInputsFromEffect(effect); // ADDED
-            section.style.display = show ? "block" : "none"; // ADDED
-            saveDefaultsButton.style.display = show ? "" : "none"; // ADDED
-            minInput.parentNode.style.display = key === "heated_greenhouse" ? "grid" : "none"; // ADDED
-            defaults.textContent = show // ADDED
-                ? `Defaults: air ${formatSigned(units === "imperial" ? effect.airOffsetC * 9 / 5 : effect.airOffsetC, " " + tempLabel)}, soil ${formatSigned(units === "imperial" ? effect.soilOffsetC * 9 / 5 : effect.soilOffsetC, " " + tempLabel)}, frost ${formatSigned(effect.frostShiftDays, " days")}${key === "heated_greenhouse" ? `, min ${cToDisplayTemp(effect.minAirTempC, units)} ${tempLabel}` : ""}. Blank fields use defaults.` // ADDED
-                : ""; // ADDED
-        } // ADDED
-        controls.seasonExtension.addEventListener("change", function () { refresh({ resetValues: true }); }); // CHANGE
-        refresh(); // ADDED
-        return { units, section, refresh }; // CHANGED
-    } // ADDED
-
-    function elevateBedConditionsDialog() { // NEW
-        const dlg = ui && ui.dialog; // NEW
-        if (dlg && dlg.bg && dlg.bg.style) dlg.bg.style.zIndex = String(TRELLIS_DIALOG_Z - 1); // NEW
-        if (dlg && dlg.container && dlg.container.style) dlg.container.style.zIndex = String(TRELLIS_DIALOG_Z); // NEW
-    } // NEW
-
-    function showConditionEditorDialog(targetCell) { // NEW
-        const current = readBedConditions(targetCell); // NEW
-        const dialogHeight = conditionDialogHeight(); // ADDED
-        const div = document.createElement("div"); // NEW
-        div.style.fontSize = "13px"; // NEW
-        div.style.display = "flex"; // ADDED
-        div.style.flexDirection = "column"; // ADDED
-        div.style.height = "100%"; // ADDED
-        div.style.maxHeight = dialogHeight + "px"; // ADDED
-        const body = document.createElement("div"); // ADDED
-        body.setAttribute("data-bed-conditions-dialog-body", "1"); // ADDED
-        body.style.flex = "1 1 auto"; // ADDED
-        body.style.minHeight = "0px"; // CHANGE
-        body.style.overflowY = "auto"; // ADDED
-        body.style.padding = "14px"; // ADDED
-        div.appendChild(body); // ADDED
-        const title = document.createElement("h3"); // NEW
-        title.textContent = "Bed Conditions"; // NEW
-        title.style.margin = "0 0 10px"; // NEW
-        body.appendChild(title); // CHANGE
-
-        const controls = Object.create(null); // CHANGE
-        const identityUnits = resolveUnitSystem(targetCell); // ADDED
-        const identity = appendSection(body, "Bed Identity"); // ADDED
-        controls.bedType = makeSelect(BED_TYPE_FIELD, current.bedType); // ADDED
-        appendField(identity, BED_TYPE_FIELD, controls.bedType); // ADDED
-        controls.bedHeight = makeNumberInput(heightCmToDisplayValue(current.bedHeightCm, identityUnits)); // ADDED
-        controls.bedHeight.step = identityUnits === "imperial" ? "0.5" : "1"; // ADDED
-        controls.bedHeight.min = "0"; // ADDED
-        appendField(identity, { label: "Height (" + (identityUnits === "imperial" ? "in" : "cm") + ")" }, controls.bedHeight); // ADDED
-        controls.userBedName = document.createElement("input"); // ADDED
-        controls.userBedName.type = "text"; // ADDED
-        controls.userBedName.value = current.userBedName || ""; // ADDED
-        controls.userBedName.style.width = "100%"; // ADDED
-        appendField(identity, { label: "User name" }, controls.userBedName); // ADDED
-
-        const presetRow = document.createElement("label"); // NEW
-        presetRow.style.display = "grid"; // NEW
-        presetRow.style.gridTemplateColumns = "130px 1fr"; // NEW
-        presetRow.style.alignItems = "center"; // NEW
-        presetRow.style.gap = "8px"; // NEW
-        const presetSelect = document.createElement("select"); // NEW
-        Object.keys(PRESETS).forEach(function (key) { // NEW
-            const option = document.createElement("option"); // NEW
-            option.value = key; // NEW
-            option.textContent = PRESETS[key].label; // NEW
-            presetSelect.appendChild(option); // NEW
-        }); // NEW
-        if (current.presetKey) presetSelect.value = current.presetKey; // NEW
-        presetRow.appendChild(document.createTextNode("Preset")); // NEW
-        presetRow.appendChild(presetSelect); // NEW
-        body.appendChild(presetRow); // CHANGE
-
-        const growing = appendSection(body, "Growing Conditions"); // CHANGE
-        ["sunExposure", "windExposure", "frostRisk", "soilMoisture", "drainage", "soilTexture", "fertility"].forEach(function (key) { // CHANGE
-            controls[key] = makeSelect(FIELD_BY_KEY[key], current[key]); // NEW
-            appendField(growing, FIELD_BY_KEY[key], controls[key]); // NEW
-        }); // NEW
-
-        const infra = appendSection(body, "Infrastructure"); // CHANGE
-        appendField(infra, FIELD_BY_KEY.irrigation, makeReadOnlyText(derivedIrrigationDisplayValue(targetCell))); // NEW
-        ["trellis", "seasonExtension", "cropProtection"].forEach(function (key) { // CHANGE
-            controls[key] = makeSelect(FIELD_BY_KEY[key], current[key]); // NEW
-            appendField(infra, FIELD_BY_KEY[key], controls[key]); // NEW
-        }); // NEW
-        const advancedSeasonExtension = makeSeasonExtensionAdvancedSection(infra, targetCell, current, controls); // CHANGE
-
-        const use = appendSection(body, "Use"); // CHANGE
-        controls.bedUse = makeSelect(FIELD_BY_KEY.bedUse, current.bedUse); // NEW
-        appendField(use, FIELD_BY_KEY.bedUse, controls.bedUse); // NEW
-
-        const notesInput = document.createElement("textarea"); // NEW
-        notesInput.value = current.notes || ""; // NEW
-        notesInput.rows = 3; // NEW
-        notesInput.style.width = "100%"; // NEW
-        appendField(use, { label: "Notes" }, notesInput); // NEW
-
-        presetSelect.addEventListener("change", function () { // NEW
-            const preset = PRESETS[presetSelect.value]; // NEW
-            const presetValues = (preset && preset.values) || {}; // ADDED
-            Object.keys(presetValues).forEach(function (key) { // CHANGE
-                if (controls[key]) controls[key].value = presetValues[key]; // CHANGE
-            }); // NEW
-            advancedSeasonExtension.refresh({ resetValues: Object.prototype.hasOwnProperty.call(presetValues, "seasonExtension") }); // CHANGE
-        }); // NEW
-
-        function readDialogProfile() { // NEW
-            const next = {}; // NEW
-            next.bedType = controls.bedType.value; // ADDED
-            next.bedHeightCm = displayHeightToCm(controls.bedHeight.value, identityUnits); // ADDED
-            next.userBedName = controls.userBedName.value; // ADDED
-            FIELD_DEFS.forEach(function (field) { next[field.key] = controls[field.key] ? controls[field.key].value : "unknown"; }); // CHANGE
-            next.seasonExtensionAirOffsetC = displayTempToC(controls.seasonExtensionAirOffsetC.value, advancedSeasonExtension.units); // ADDED
-            next.seasonExtensionSoilOffsetC = displayTempToC(controls.seasonExtensionSoilOffsetC.value, advancedSeasonExtension.units); // ADDED
-            next.seasonExtensionFrostShiftDays = normalizeOptionalNumber(controls.seasonExtensionFrostShiftDays.value); // ADDED
-            next.seasonExtensionMinAirTempC = next.seasonExtension === "heated_greenhouse" // ADDED
-                ? displayTempToC(controls.seasonExtensionMinAirTempC.value, advancedSeasonExtension.units) // ADDED
-                : null; // ADDED
-            next.presetKey = presetSelect.value; // NEW
-            next.notes = notesInput.value; // NEW
-            return next; // NEW
-        } // NEW
-
-        const footer = document.createElement("div"); // ADDED
-        footer.style.flex = "0 0 auto"; // ADDED
-        footer.style.padding = "0 14px 14px"; // ADDED
-        const actionRow = document.createElement("div"); // NEW
-        actionRow.style.display = "flex"; // NEW
-        actionRow.style.justifyContent = "space-between"; // NEW
-        actionRow.style.alignItems = "center"; // NEW
-        actionRow.style.gap = "8px"; // NEW
-        actionRow.style.marginTop = "12px"; // NEW
-        actionRow.style.paddingTop = "10px"; // NEW
-        actionRow.style.borderTop = "1px solid #e5e7eb"; // NEW
-        const secondaryButtons = document.createElement("div"); // NEW
-        secondaryButtons.style.display = "flex"; // NEW
-        secondaryButtons.style.gap = "8px"; // NEW
-        actionRow.appendChild(document.createElement("span")); // NEW
-        secondaryButtons.appendChild(bedButton("Copy", function () { copiedProfile = normalizeProfile(readDialogProfile(), { allowPreset: true }); }, "neutral")); // CHANGE
-        secondaryButtons.appendChild(bedButton("Paste", function () { // CHANGE
-            if (!copiedProfile) { ui.alert("No copied bed conditions are available."); return; } // NEW
-            const targets = collectSelectedBeds(targetCell); // NEW
-            model.beginUpdate(); // NEW
-            try { targets.forEach(function (target) { writeBedConditions(target, copiedProfile, { writeIdentityLabel: true }); }); } // CHANGE
-            finally { model.endUpdate(); } // NEW
-            ui.hideDialog(); // NEW
-        }, "add")); // CHANGE
-        secondaryButtons.appendChild(bedButton("Clear", function () { // CHANGE
-            const targets = collectSelectedBeds(targetCell); // NEW
-            model.beginUpdate(); // NEW
-            try { targets.forEach(clearBedConditions); } // NEW
-            finally { model.endUpdate(); } // NEW
-            ui.hideDialog(); // NEW
-        }, "danger")); // CHANGE
-
-        actionRow.appendChild(secondaryButtons); // NEW
-        footer.appendChild(actionRow); // CHANGE
-
-        const buttonRow = document.createElement("div"); // NEW
-        buttonRow.style.display = "flex"; // NEW
-        buttonRow.style.justifyContent = "flex-end"; // NEW
-        buttonRow.style.gap = "8px"; // NEW
-        buttonRow.style.marginTop = "12px"; // NEW
-        buttonRow.appendChild(bedButton("Cancel", function () { ui.hideDialog(); }, "neutral")); // CHANGE
-        buttonRow.appendChild(bedButton("Save", function () { // CHANGE
-            if (String(controls.bedHeight.value || "").trim() && displayHeightToCm(controls.bedHeight.value, identityUnits) == null) { ui.alert("Bed height must be greater than 0."); controls.bedHeight.focus(); return; } // ADDED
-            model.beginUpdate(); // NEW
-            try { // NEW
-                writeBedConditions(targetCell, readDialogProfile(), { writeIdentityLabel: true }); // CHANGE
-            } finally { // NEW
-                model.endUpdate(); // NEW
-            } // NEW
-            ui.hideDialog(); // NEW
-        }, "add")); // CHANGE
-        footer.appendChild(buttonRow); // CHANGE
-        div.appendChild(footer); // ADDED
-        ui.showDialog(div, 520, dialogHeight, true, true); // CHANGE
-        elevateBedConditionsDialog(); // NEW
-    } // NEW
-
-    function isOverlayDisplayValue(key, value) { // NEW
-        if (!value || value === "unknown") return false; // NEW
-        if (key === "trellis" && value === "none") return false; // NEW
-        if ((key === "seasonExtension" || key === "cropProtection") && value === "none") return false; // NEW
-        return true; // NEW
-    } // NEW
-
-    function addHeadingRow(rows, label) { // NEW
-        rows.push({ type: "heading", label: label }); // NEW
-    } // NEW
-
-    function makeOverlayValueRow(field, value) { // NEW
-        return { label: field.label, value: valueLabel(value) }; // NEW
-    } // NEW
-
-    function isPresetOverride(profile, presetKey, field) { // NEW
-        const preset = isValidPresetKey(presetKey) ? PRESETS[presetKey] : null; // NEW
-        if (!preset || !Object.prototype.hasOwnProperty.call(preset.values || {}, field.key)) return false; // NEW
-        return normalizeEnumValue(field.key, profile && profile[field.key]) !== normalizeEnumValue(field.key, preset.values[field.key]); // NEW
-    } // NEW
-
-    function buildOverlayRows(profile) { // NEW
-        const rows = []; // NEW
-        const presetKey = profile && isValidPresetKey(profile.presetKey) ? profile.presetKey : ""; // CHANGE
-        const presetFields = new Set(getPresetFieldKeys(presetKey)); // NEW
-        if (presetKey) rows.push({ label: "Preset", value: PRESETS[presetKey].label }); // NEW
-        const presetOverrides = []; // NEW
-        const additional = []; // NEW
-        FIELD_DEFS.forEach(function (field) { // NEW
-            const value = profile && profile[field.key]; // NEW
-            if (!isOverlayDisplayValue(field.key, value)) return; // NEW
-            if (presetFields.has(field.key)) { // NEW
-                if (isPresetOverride(profile, presetKey, field)) presetOverrides.push(makeOverlayValueRow(field, value)); // NEW
-                return; // NEW
-            } // NEW
-            additional.push(makeOverlayValueRow(field, value)); // NEW
-        }); // NEW
-        if (presetOverrides.length) { // NEW
-            addHeadingRow(rows, "Preset overrides"); // NEW
-            Array.prototype.push.apply(rows, presetOverrides); // NEW
-        } // NEW
-        if (presetKey && additional.length) addHeadingRow(rows, "Additional"); // NEW
-        Array.prototype.push.apply(rows, additional); // NEW
-        if (profile && profile.notes) rows.push({ type: "notes", label: "Notes", value: profile.notes }); // ADDED
-        return rows; // NEW
-    } // NEW
-
-    function stopGraphDomEvent(evt) { // ADDED
-        if (evt && evt.stopPropagation) evt.stopPropagation(); // ADDED
-    } // ADDED
-
-    function stopAndPreventGraphDomEvent(evt) { // ADDED
-        stopGraphDomEvent(evt); // ADDED
-        if (evt && evt.preventDefault) evt.preventDefault(); // ADDED
-    } // ADDED
-
-    function estimateOverlayTextWidth(value) { // ADDED
-        const lines = String(value == null ? "" : value).split(/\r?\n/); // ADDED
-        return lines.reduce(function (max, line) { return Math.max(max, line.length * OVERLAY_AVG_CHAR_WIDTH); }, 0); // ADDED
-    } // ADDED
-
-    function estimateSelectedBedOverlayLayout(rows) { // ADDED
-        let width = OVERLAY_MIN_WIDTH; // ADDED
-        let labelColumnWidth = OVERLAY_MIN_LABEL_WIDTH; // ADDED
-        const sourceRows = rows || []; // ADDED
-        function includeContentWidth(contentWidth) { width = Math.max(width, Math.ceil(OVERLAY_PADDING_X + contentWidth)); } // ADDED
-        includeContentWidth(estimateOverlayTextWidth("Set Bed Conditions") + OVERLAY_CONTROL_CHROME_WIDTH); // ADDED
-        if (!sourceRows.length) includeContentWidth(estimateOverlayTextWidth("No set conditions")); // ADDED
-        sourceRows.forEach(function (row) { // ADDED
-            if (row.type === "heading") { // ADDED
-                includeContentWidth(estimateOverlayTextWidth(row.label)); // ADDED
-                return; // ADDED
-            } // ADDED
-            if (row.type === "notes") { // ADDED
-                includeContentWidth(Math.max(estimateOverlayTextWidth(row.label), estimateOverlayTextWidth(row.value))); // ADDED
-                return; // ADDED
-            } // ADDED
-            labelColumnWidth = Math.max(labelColumnWidth, estimateOverlayTextWidth(row.label)); // ADDED
-        }, "neutral"); // CHANGE
-        sourceRows.forEach(function (row) { // ADDED
-            if (row.type === "heading" || row.type === "notes") return; // ADDED
-            includeContentWidth(labelColumnWidth + OVERLAY_ROW_GAP + estimateOverlayTextWidth(row.value)); // ADDED
-        }); // ADDED
-        return { width: Math.ceil(width), labelColumnWidth: Math.ceil(labelColumnWidth) }; // ADDED
-    } // ADDED
-
-    function createSelectedBedOverlay() { // NEW
-        const div = document.createElement("div"); // NEW
-        div.className = "trellis-bed-conditions-overlay"; // NEW
-        div.style.position = "absolute"; // NEW
-        div.style.pointerEvents = "auto"; // NEW
-        div.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL); // CHANGE
-        div.style.boxSizing = "border-box"; // NEW
-        div.style.minWidth = OVERLAY_MIN_WIDTH + "px"; // CHANGE
-        div.style.padding = "8px"; // NEW
-        div.style.borderRadius = "6px"; // NEW
-        div.style.fontSize = "12px"; // NEW
-        div.style.lineHeight = "16px"; // NEW
-        div.style.color = "#111827"; // NEW
-        div.style.background = "rgba(255, 255, 255, 0.96)"; // NEW
-        div.style.border = "1px solid rgba(75, 85, 99, 0.45)"; // NEW
-        div.style.boxShadow = "0 2px 7px rgba(0,0,0,0.18)"; // NEW
-        return div; // NEW
-    } // NEW
-
-    function createBedNameInput(entry) { // ADDED
-        const initialName = readBedConditions(entry.cell).userBedName || ""; // CHANGE
-        const input = document.createElement("input"); // ADDED
-        input.type = "text"; // ADDED
-        input.value = initialName; // ADDED
-        input.setAttribute("aria-label", "User name"); // CHANGE
-        input.style.boxSizing = "border-box"; // ADDED
-        input.style.display = "block"; // ADDED
-        input.style.width = "100%"; // ADDED
-        input.style.minWidth = "0"; // ADDED
-        input.style.marginBottom = "6px"; // ADDED
-        input.style.fontWeight = "600"; // ADDED
-        input.style.border = "1px solid rgba(75, 85, 99, 0.35)"; // ADDED
-        input.style.borderRadius = "4px"; // ADDED
-        input.style.padding = "3px 5px"; // ADDED
-        input.style.fontSize = "12px"; // ADDED
-        input.style.lineHeight = "16px"; // ADDED
-        ["mousedown", "mouseup", "click", "dblclick", "pointerdown", "pointerup"].forEach(function (type) { // ADDED
-            input.addEventListener(type, stopGraphDomEvent); // ADDED
-        }); // ADDED
-        input.addEventListener("keydown", function (evt) { // ADDED
-            stopGraphDomEvent(evt); // ADDED
-            if (evt.key === "Enter") { // ADDED
-                input.value = writeBedName(entry.cell, input.value); // ADDED
-                if (input.blur) input.blur(); // ADDED
-                stopAndPreventGraphDomEvent(evt); // ADDED
-            } else if (evt.key === "Escape") { // ADDED
-                input.value = initialName; // ADDED
-                stopAndPreventGraphDomEvent(evt); // ADDED
-            } // ADDED
-        }); // ADDED
-        ["keypress", "keyup"].forEach(function (type) { input.addEventListener(type, stopGraphDomEvent); }); // ADDED
-        input.addEventListener("blur", function () { input.value = writeBedName(entry.cell, input.value); }); // ADDED
-        return input; // ADDED
-    } // ADDED
-
-    function ensureOverlayContainer() { // NEW
-        if (!graph.container) return; // NEW
-        const style = window.getComputedStyle ? window.getComputedStyle(graph.container) : null; // NEW
-        if (style && style.position === "static") graph.container.style.position = "relative"; // NEW
-    } // NEW
-
-    function renderSelectedBedOverlay(entry) { // NEW
-        entry.div.innerHTML = ""; // NEW
-        const rows = buildOverlayRows(getDisplayBedConditions(entry.cell)); // CHANGE
-        const layout = estimateSelectedBedOverlayLayout(rows); // ADDED
-        entry.div.style.width = layout.width + "px"; // ADDED
-        entry.div.appendChild(createBedNameInput(entry)); // ADDED
-        const button = bedButton("Set Bed Conditions", function () { showConditionEditorDialog(entry.cell); }, "open"); // CHANGE
-        button.style.display = "block"; // ADDED
-        button.style.width = "100%"; // NEW
-        button.style.marginBottom = "6px"; // NEW
-        entry.div.appendChild(button); // NEW
-        if (!rows.length) { // NEW
-            const empty = document.createElement("div"); // NEW
-            empty.textContent = "No set conditions"; // NEW
-            empty.style.color = "#6b7280"; // NEW
-            entry.div.appendChild(empty); // NEW
-            return; // NEW
-        } // NEW
-        rows.forEach(function (row) { // NEW
-            if (row.type === "heading") { // NEW
-                const heading = document.createElement("div"); // NEW
-                heading.textContent = row.label; // NEW
-                heading.style.marginTop = "6px"; // NEW
-                heading.style.paddingTop = "5px"; // NEW
-                heading.style.borderTop = "1px solid rgba(209, 213, 219, 0.8)"; // NEW
-                heading.style.color = "#374151"; // NEW
-                heading.style.fontWeight = "700"; // NEW
-                entry.div.appendChild(heading); // NEW
-                return; // NEW
-            } // NEW
-            if (row.type === "notes") { // ADDED
-                const notes = document.createElement("div"); // ADDED
-                notes.style.marginTop = "8px"; // ADDED
-                notes.style.paddingTop = "6px"; // ADDED
-                notes.style.borderTop = "1px solid rgba(209, 213, 219, 0.8)"; // ADDED
-                const notesLabel = document.createElement("div"); // ADDED
-                notesLabel.textContent = row.label; // ADDED
-                notesLabel.style.color = "#374151"; // ADDED
-                notesLabel.style.fontWeight = "700"; // ADDED
-                const notesValue = document.createElement("div"); // ADDED
-                notesValue.textContent = row.value; // ADDED
-                notesValue.style.marginTop = "3px"; // ADDED
-                notesValue.style.whiteSpace = "pre-wrap"; // ADDED
-                notesValue.style.wordBreak = "break-word"; // ADDED
-                notes.appendChild(notesLabel); // ADDED
-                notes.appendChild(notesValue); // ADDED
-                entry.div.appendChild(notes); // ADDED
-                return; // ADDED
-            } // ADDED
-            const line = document.createElement("div"); // NEW
-            line.style.display = "grid"; // NEW
-            line.style.gridTemplateColumns = layout.labelColumnWidth + "px 1fr"; // CHANGE
-            line.style.gap = "6px"; // NEW
-            line.style.marginTop = "3px"; // NEW
-            const label = document.createElement("span"); // NEW
-            label.textContent = row.label; // NEW
-            label.style.color = "#4b5563"; // NEW
-            label.style.whiteSpace = "nowrap"; // ADDED
-            const value = document.createElement("span"); // NEW
-            value.textContent = row.value; // NEW
-            value.style.fontWeight = "600"; // NEW
-            value.style.whiteSpace = "nowrap"; // ADDED
-            line.appendChild(label); // NEW
-            line.appendChild(value); // NEW
-            entry.div.appendChild(line); // NEW
-        }); // NEW
-    } // NEW
-
-    function selectedBedOverlayWidth(entry) { // ADDED
-        const styledWidth = Number.parseFloat(entry && entry.div && entry.div.style ? entry.div.style.width : ""); // ADDED
-        if (Number.isFinite(styledWidth) && styledWidth > 0) return styledWidth; // ADDED
-        return (entry && entry.div && entry.div.offsetWidth) || OVERLAY_MIN_WIDTH; // ADDED
-    } // ADDED
-
-    function positionSelectedBedOverlay(entry) { // NEW
-        const state = graph.view && graph.view.getState ? graph.view.getState(entry.cell) : null; // NEW
-        if (!state) return false; // NEW
-        const width = selectedBedOverlayWidth(entry); // CHANGE
-        const gap = 8; // CHANGE
-        const overlayHeight = entry.div.offsetHeight || 0; // CHANGE
+Draw.loadPlugin(function (ui) {
+    const graph = ui && ui.editor && ui.editor.graph;
+    if (!graph || graph.__gardenBedsInstalled) return;
+    graph.__gardenBedsInstalled = true;
+
+    const model = graph.getModel && graph.getModel();
+    if (!model) return;
+    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 });
+    const TRELLIS_DIALOG_Z = 2000000000;
+    const BED_NAME_FALLBACK = "Garden Bed";
+    const OVERLAY_MIN_WIDTH = 190;
+    const OVERLAY_PADDING_X = 16;
+    const OVERLAY_ROW_GAP = 6;
+    const OVERLAY_MIN_LABEL_WIDTH = 72;
+    const OVERLAY_AVG_CHAR_WIDTH = 7;
+    const OVERLAY_CONTROL_CHROME_WIDTH = 24;
+    const CM_PER_INCH = 2.54;
+
+    function applyBedButtonStyle(button, variant, options) {
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") {
+            window.Trellis.ui.applyButtonStyle(button, variant, options);
+        } else if (button) {
+            button.setAttribute("data-trellis-button-variant", variant || "neutral");
+        }
+        return button;
+    }
+
+    function bedButton(label, onClick, variant, options) {
+        return applyBedButtonStyle(mxUtils.button(label, onClick), variant || "neutral", options);
+    }
+
+    const ATTRS = {
+        BED_JSON: "bed_conditions_json",
+        SEASON_EXTENSION_DEFAULTS_JSON: "season_extension_defaults_json"
+    };
+
+    const IDENTITY_MIRROR_ATTRS = {
+        bedType: "bed_type",
+        bedHeightCm: "bed_height_cm",
+        userBedName: "user_bed_name"
+    };
+
+    const MIRROR_ATTRS = {
+        sunExposure: "sun_exposure",
+        soilMoisture: "soil_moisture",
+        drainage: "drainage",
+        soilTexture: "soil_texture",
+        fertility: "fertility",
+        irrigation: "irrigation",
+        trellis: "trellis",
+        seasonExtension: "season_extension",
+        cropProtection: "crop_protection",
+        bedUse: "bed_use",
+        windExposure: "wind_exposure",
+        frostRisk: "frost_risk",
+        seasonExtensionAirOffsetC: "season_extension_air_offset_c",
+        seasonExtensionSoilOffsetC: "season_extension_soil_offset_c",
+        seasonExtensionFrostShiftDays: "season_extension_frost_shift_days",
+        seasonExtensionMinAirTempC: "season_extension_min_air_temp_c"
+    };
+
+    const FIELD_DEFS = [
+        { key: "sunExposure", label: "Sun exposure", values: ["unknown", "full_sun", "part_sun", "part_shade", "shade"], fallback: "unknown" },
+        { key: "soilMoisture", label: "Soil moisture", values: ["unknown", "dry", "moderate", "moist", "wet"], fallback: "unknown" },
+        { key: "drainage", label: "Drainage", values: ["unknown", "fast", "normal", "slow"], fallback: "unknown" },
+        { key: "soilTexture", label: "Soil texture", values: ["unknown", "sandy", "loamy", "clay", "mixed", "amended"], fallback: "unknown" },
+        { key: "fertility", label: "Fertility", values: ["unknown", "low", "medium", "high"], fallback: "unknown" },
+        { key: "irrigation", label: "Irrigation", values: ["unknown", "none", "manual", "drip", "sprinkler", "self_watering"], fallback: "unknown" },
+        { key: "trellis", label: "Trellis", values: ["unknown", "none", "available", "required_structure"], fallback: "unknown" },
+        { key: "seasonExtension", label: "Season extension", values: ["unknown", "none", "row_cover", "low_tunnel", "cold_frame", "greenhouse", "high_tunnel", "heated_greenhouse"], fallback: "unknown" },
+        { key: "cropProtection", label: "Crop protection", values: ["unknown", "none", "shade_cloth", "insect_netting", "bird_netting", "hail_netting"], fallback: "unknown" },
+        { key: "windExposure", label: "Wind exposure", values: ["unknown", "sheltered", "moderate", "exposed"], fallback: "unknown" },
+        { key: "frostRisk", label: "Frost risk", values: ["unknown", "none", "low", "medium", "high"], fallback: "unknown" },
+        { key: "bedUse", label: "Bed use", values: ["unknown", "annuals", "perennials", "nursery", "seed_starting", "mixed", "resting"], fallback: "unknown" }
+    ];
+
+    const BED_TYPE_FIELD = { key: "bedType", label: "Bed type", values: ["unknown", "field", "raised_bed", "hugelkultur", "container", "greenhouse_bench", "wicking_bed"], fallback: "unknown" };
+
+    const FIELD_BY_KEY = FIELD_DEFS.reduce(function (out, field) {
+        out[field.key] = field;
+        return out;
+    }, Object.create(null));
+
+    const SEASON_EXTENSION_EFFECTS = Object.freeze({
+        unknown: Object.freeze({ airOffsetC: 0, soilOffsetC: 0, frostShiftDays: 0, minAirTempC: null }),
+        none: Object.freeze({ airOffsetC: 0, soilOffsetC: 0, frostShiftDays: 0, minAirTempC: null }),
+        row_cover: Object.freeze({ airOffsetC: 0.5, soilOffsetC: 0.5, frostShiftDays: -3, minAirTempC: null }),
+        low_tunnel: Object.freeze({ airOffsetC: 1.5, soilOffsetC: 1.0, frostShiftDays: -7, minAirTempC: null }),
+        cold_frame: Object.freeze({ airOffsetC: 2.0, soilOffsetC: 1.5, frostShiftDays: -10, minAirTempC: null }),
+        greenhouse: Object.freeze({ airOffsetC: 3.0, soilOffsetC: 2.0, frostShiftDays: -21, minAirTempC: null }),
+        high_tunnel: Object.freeze({ airOffsetC: 2.5, soilOffsetC: 1.5, frostShiftDays: -14, minAirTempC: null }),
+        heated_greenhouse: Object.freeze({ airOffsetC: 5.0, soilOffsetC: 3.0, frostShiftDays: -45, minAirTempC: 5.0 })
+    });
+
+    const VALUE_LABELS = {
+        unknown: "Unknown",
+        full_sun: "Full sun",
+        part_sun: "Part sun",
+        part_shade: "Part shade",
+        shade: "Shade",
+        dry: "Dry",
+        moderate: "Moderate",
+        moist: "Moist",
+        wet: "Wet",
+        fast: "Fast drainage",
+        normal: "Normal drainage",
+        slow: "Slow drainage",
+        sandy: "Sandy",
+        loamy: "Loamy",
+        clay: "Clay",
+        mixed: "Mixed",
+        amended: "Amended",
+        low: "Low",
+        medium: "Medium",
+        high: "High",
+        none: "None",
+        manual: "Manual",
+        drip: "Drip",
+        sprinkler: "Sprinkler",
+        self_watering: "Self watering",
+        available: "Available",
+        required_structure: "Structure required",
+        row_cover: "Row cover",
+        low_tunnel: "Low tunnel",
+        cold_frame: "Cold frame",
+        greenhouse: "Greenhouse",
+        high_tunnel: "High tunnel",
+        heated_greenhouse: "Heated greenhouse",
+        shade_cloth: "Shade cloth",
+        insect_netting: "Insect netting",
+        bird_netting: "Bird netting",
+        hail_netting: "Hail netting",
+        sheltered: "Sheltered",
+        exposed: "Exposed",
+        annuals: "Annuals",
+        perennials: "Perennials",
+        nursery: "Nursery",
+        seed_starting: "Seed starting",
+        resting: "Resting",
+        field: "Field",
+        raised_bed: "Raised bed",
+        hugelkultur: "Hugelkultur",
+        container: "Container",
+        greenhouse_bench: "Greenhouse bench",
+        wicking_bed: "Wicking bed"
+    };
+
+    const PRESETS = {
+        "": { label: "Choose preset", values: {} },
+        sunny_vegetable: { label: "Sunny vegetable bed", values: { sunExposure: "full_sun", soilMoisture: "moderate", drainage: "normal", soilTexture: "loamy", fertility: "high", irrigation: "unknown", trellis: "unknown", bedUse: "annuals" } },
+        shady_greens: { label: "Shady greens bed", values: { sunExposure: "part_shade", soilMoisture: "moist", drainage: "normal", fertility: "medium", irrigation: "unknown", trellis: "unknown", bedUse: "annuals" } },
+        dry_herb: { label: "Dry herb bed", values: { sunExposure: "full_sun", soilMoisture: "dry", drainage: "fast", soilTexture: "sandy", fertility: "low", irrigation: "unknown", trellis: "unknown", bedUse: "perennials" } },
+        wet_moist: { label: "Wet/moist bed", values: { sunExposure: "part_sun", soilMoisture: "moist", drainage: "slow", fertility: "medium", irrigation: "none", trellis: "unknown", bedUse: "unknown" } },
+        nursery: { label: "Nursery bed", values: { sunExposure: "part_sun", soilMoisture: "moderate", drainage: "normal", fertility: "medium", irrigation: "unknown", trellis: "unknown", bedUse: "nursery" } },
+        greenhouse: { label: "Greenhouse bed", values: { sunExposure: "full_sun", soilMoisture: "moderate", drainage: "normal", soilTexture: "amended", fertility: "high", irrigation: "drip", trellis: "unknown", seasonExtension: "greenhouse", cropProtection: "unknown", windExposure: "sheltered", frostRisk: "low", bedUse: "seed_starting" } },
+        perennial: { label: "Perennial bed", values: { sunExposure: "full_sun", soilMoisture: "moderate", drainage: "normal", fertility: "medium", irrigation: "unknown", trellis: "unknown", bedUse: "perennials" } },
+        resting: { label: "Resting bed", values: { sunExposure: "unknown", soilMoisture: "unknown", drainage: "unknown", fertility: "low", irrigation: "unknown", trellis: "unknown", bedUse: "resting" } }
+    };
+
+    let copiedProfile = null;
+    const selectedBedOverlays = new Map();
+
+    function isGardenBed(cell) {
+        if (!cell || !cell.getAttribute) return false;
+        return cell.getAttribute("garden_bed") === "1" || cell.getAttribute("gardenBed") === "1" || cell.getAttribute("is_garden_bed") === "1";
+    }
+
+    function getCellAttr(cell, key, fallback) {
+        if (!cell || !cell.getAttribute) return fallback || "";
+        const value = cell.getAttribute(key);
+        return value == null ? (fallback || "") : String(value);
+    }
+
+    function normalizeBedName(value) {
+        const trimmed = String(value == null ? "" : value).trim();
+        return trimmed || BED_NAME_FALLBACK;
+    }
+
+    function normalizeUserBedName(value) {
+        return String(value == null ? "" : value).trim();
+    }
+
+    function getBedName(cell) {
+        if (!cell) return BED_NAME_FALLBACK;
+        const value = cell.value;
+        if (value && value.nodeType === 1) return normalizeBedName(value.getAttribute("label") || value.getAttribute("name"));
+        return normalizeBedName(value);
+    }
+
+    function createXmlDocument() {
+        if (typeof mxUtils !== "undefined" && mxUtils.createXmlDocument) return mxUtils.createXmlDocument();
+        return document.implementation.createDocument("", "", null);
+    }
+
+    function buildXmlValueForEdit(cell) {
+        if (!cell) return null;
+        const value = cell.value;
+        if (value && value.nodeType === 1) return value.cloneNode(true);
+        const node = createXmlDocument().createElement("object");
+        if (typeof value === "string" && value) node.setAttribute("label", value);
+        return node;
+    }
+
+    function setCellAttrs(cell, attrs) {
+        const node = buildXmlValueForEdit(cell);
+        if (!node) return;
+        Object.keys(attrs || {}).forEach(function (key) {
+            const value = attrs[key];
+            if (value == null || value === "") node.removeAttribute(key);
+            else node.setAttribute(key, String(value));
+        });
+        if (model.setValue) model.setValue(cell, node);
+    }
+
+    function writeBedName(bedCell, name) {
+        if (!isGardenBed(bedCell)) return "";
+        const next = normalizeUserBedName(name);
+        const current = readBedConditions(bedCell);
+        if (current.userBedName === next && getBedName(bedCell) === buildGeneratedBedLabel(current, bedCell)) return next;
+        current.userBedName = next;
+        writeBedConditions(bedCell, current, { writeIdentityLabel: true });
+        return next;
+    }
+
+    function nowIso() {
+        return new Date().toISOString();
+    }
+
+    function valueLabel(value) {
+        return VALUE_LABELS[value] || String(value || "").replace(/_/g, " ");
+    }
+
+    function listConditionOptionGroups() {
+        return FIELD_DEFS.filter(function (field) { return field.key !== "irrigation"; }).map(function (field) {
+            return {
+                id: field.key,
+                name: field.label,
+                options: field.values.filter(function (value) { return value !== "unknown"; }).map(function (value) {
+                    return { id: field.key + ":" + value, fieldKey: field.key, value: value, name: valueLabel(value), category: field.label };
+                })
+            };
+        }).filter(function (group) { return group.options.length > 0; });
+    }
+
+    function normalizeEnumValue(key, value) {
+        const field = key === "bedType" ? BED_TYPE_FIELD : FIELD_BY_KEY[key];
+        const raw = String(value == null ? "" : value).trim();
+        if (!field || field.values.indexOf(raw) < 0) return field ? field.fallback : "";
+        return raw;
+    }
+
+    function finiteNumberOrNull(value) {
+        if (value === null || value === undefined || value === "") return null;
+        const n = Number(value);
+        return Number.isFinite(n) ? n : null;
+    }
+
+    function normalizePositiveOptionalNumber(value) {
+        const n = finiteNumberOrNull(value);
+        return n != null && n > 0 ? Math.round(n * 100) / 100 : null;
+    }
+
+    function normalizeOptionalNumber(value) {
+        const n = finiteNumberOrNull(value);
+        return n == null ? null : Math.round(n * 100) / 100;
+    }
+
+    function profileHasOwnIdentity(profile) {
+        const source = profile && typeof profile === "object" ? profile : {};
+        return Object.prototype.hasOwnProperty.call(source, "bedType") || Object.prototype.hasOwnProperty.call(source, "bed_type") ||
+            Object.prototype.hasOwnProperty.call(source, "bedHeightCm") || Object.prototype.hasOwnProperty.call(source, "bed_height_cm") ||
+            Object.prototype.hasOwnProperty.call(source, "userBedName") || Object.prototype.hasOwnProperty.call(source, "user_bed_name");
+    }
+
+    function profileHasMeaningfulIdentity(profile) {
+        const source = profile && typeof profile === "object" ? profile : {};
+        return normalizeEnumValue("bedType", source.bedType ?? source.bed_type) !== "unknown" ||
+            normalizePositiveOptionalNumber(source.bedHeightCm ?? source.bed_height_cm) != null ||
+            !!normalizeUserBedName(source.userBedName ?? source.user_bed_name);
+    }
+
+    function seasonExtensionDefaults(value) {
+        const key = Object.prototype.hasOwnProperty.call(SEASON_EXTENSION_EFFECTS, value) ? value : "unknown";
+        return SEASON_EXTENSION_EFFECTS[key] || SEASON_EXTENSION_EFFECTS.unknown;
+    }
+
+    function normalizeSeasonExtensionDefault(key, source) {
+        const defaults = seasonExtensionDefaults(key);
+        const p = source && typeof source === "object" ? source : {};
+        return {
+            airOffsetC: normalizeOptionalNumber(p.airOffsetC) ?? defaults.airOffsetC,
+            soilOffsetC: normalizeOptionalNumber(p.soilOffsetC) ?? defaults.soilOffsetC,
+            frostShiftDays: normalizeOptionalNumber(p.frostShiftDays) ?? defaults.frostShiftDays,
+            minAirTempC: key === "heated_greenhouse" ? (normalizeOptionalNumber(p.minAirTempC) ?? defaults.minAirTempC) : null
+        };
+    }
+
+    function parseSeasonExtensionDefaults(raw) {
+        if (!raw) return {};
+        try {
+            const parsed = JSON.parse(raw);
+            const source = parsed && typeof parsed === "object" && parsed.defaults && typeof parsed.defaults === "object" ? parsed.defaults : parsed;
+            const out = {};
+            FIELD_BY_KEY.seasonExtension.values.forEach(function (key) {
+                if (key === "unknown" || key === "none" || !source || typeof source[key] !== "object") return;
+                out[key] = normalizeSeasonExtensionDefault(key, source[key]);
+            });
+            return out;
+        } catch (e) {
+            return {};
+        }
+    }
+
+    function readModuleSeasonExtensionDefaults(moduleCell) {
+        return parseSeasonExtensionDefaults(getCellAttr(moduleCell, ATTRS.SEASON_EXTENSION_DEFAULTS_JSON, ""));
+    }
+
+    function resolveSeasonExtensionDefault(targetCell, key) {
+        const normalizedKey = normalizeEnumValue("seasonExtension", key);
+        const moduleCell = findGardenModuleAncestor(targetCell);
+        const moduleDefaults = readModuleSeasonExtensionDefaults(moduleCell);
+        return moduleDefaults[normalizedKey] || seasonExtensionDefaults(normalizedKey);
+    }
+
+    function writeModuleSeasonExtensionDefault(targetCell, key, effect) {
+        const normalizedKey = normalizeEnumValue("seasonExtension", key);
+        const moduleCell = findGardenModuleAncestor(targetCell);
+        if (!moduleCell || normalizedKey === "unknown" || normalizedKey === "none") return null;
+        const moduleDefaults = readModuleSeasonExtensionDefaults(moduleCell);
+        moduleDefaults[normalizedKey] = normalizeSeasonExtensionDefault(normalizedKey, effect);
+        const attrs = {};
+        attrs[ATTRS.SEASON_EXTENSION_DEFAULTS_JSON] = JSON.stringify({ schemaVersion: 1, defaults: moduleDefaults });
+        setCellAttrs(moduleCell, attrs);
+        return moduleDefaults[normalizedKey];
+    }
+
+    function seasonExtensionEffects(profile) {
+        const p = profile && typeof profile === "object" ? profile : {};
+        const key = normalizeEnumValue("seasonExtension", p.seasonExtension);
+        const defaults = seasonExtensionDefaults(key);
+        return {
+            seasonExtension: key,
+            airOffsetC: normalizeOptionalNumber(p.seasonExtensionAirOffsetC) ?? defaults.airOffsetC,
+            soilOffsetC: normalizeOptionalNumber(p.seasonExtensionSoilOffsetC) ?? defaults.soilOffsetC,
+            frostShiftDays: normalizeOptionalNumber(p.seasonExtensionFrostShiftDays) ?? defaults.frostShiftDays,
+            minAirTempC: key === "heated_greenhouse" ? (normalizeOptionalNumber(p.seasonExtensionMinAirTempC) ?? defaults.minAirTempC) : null
+        };
+    }
+
+    function mergeIdentityAttrsIntoProfile(cell, source) {
+        const out = Object.assign({}, source || {});
+        if (!profileHasOwnIdentity(out) && cell && cell.getAttribute) {
+            const bedType = getCellAttr(cell, IDENTITY_MIRROR_ATTRS.bedType, "");
+            const bedHeightCm = getCellAttr(cell, IDENTITY_MIRROR_ATTRS.bedHeightCm, "");
+            const userBedName = getCellAttr(cell, IDENTITY_MIRROR_ATTRS.userBedName, "");
+            if (bedType) out.bed_type = bedType;
+            if (bedHeightCm) out.bed_height_cm = bedHeightCm;
+            if (userBedName) out.user_bed_name = userBedName;
+        }
+        return out;
+    }
+
+    function cellHasIdentityAttrs(cell) {
+        return !!(cell && cell.getAttribute && (
+            getCellAttr(cell, IDENTITY_MIRROR_ATTRS.bedType, "") ||
+            getCellAttr(cell, IDENTITY_MIRROR_ATTRS.bedHeightCm, "") ||
+            getCellAttr(cell, IDENTITY_MIRROR_ATTRS.userBedName, "")
+        ));
+    }
+
+    function isValidPresetKey(key) {
+        return !!key && !!PRESETS[key];
+    }
+
+    function getPresetFieldKeys(presetKey) {
+        const preset = isValidPresetKey(presetKey) ? PRESETS[presetKey] : null;
+        const values = (preset && preset.values) || {};
+        return Object.keys(values).filter(function (key) { return values[key] !== "unknown"; });
+    }
+
+    function doesProfileMatchPreset(profile, presetKey) {
+        if (!isValidPresetKey(presetKey)) return false;
+        const values = PRESETS[presetKey].values || {};
+        return getPresetFieldKeys(presetKey).every(function (key) {
+            return normalizeEnumValue(key, profile[key]) === normalizeEnumValue(key, values[key]);
+        });
+    }
+
+    function normalizeProfile(profile, options) {
+        const source = profile && typeof profile === "object" ? profile : {};
+        const out = { schemaVersion: 1 };
+        out.bedType = normalizeEnumValue("bedType", source.bedType ?? source.bed_type);
+        out.bedHeightCm = normalizePositiveOptionalNumber(source.bedHeightCm ?? source.bed_height_cm);
+        out.userBedName = normalizeUserBedName(source.userBedName ?? source.user_bed_name);
+        FIELD_DEFS.forEach(function (field) {
+            out[field.key] = normalizeEnumValue(field.key, source[field.key]);
+        });
+        out.irrigation = "unknown";
+        const presetKey = String(source.presetKey || "").trim();
+        if (options && options.allowPreset && isValidPresetKey(presetKey)) out.presetKey = presetKey;
+        out.notes = String(source.notes || "").trim();
+        out.seasonExtensionAirOffsetC = normalizeOptionalNumber(source.seasonExtensionAirOffsetC ?? source.season_extension_air_offset_c);
+        out.seasonExtensionSoilOffsetC = normalizeOptionalNumber(source.seasonExtensionSoilOffsetC ?? source.season_extension_soil_offset_c);
+        out.seasonExtensionFrostShiftDays = normalizeOptionalNumber(source.seasonExtensionFrostShiftDays ?? source.season_extension_frost_shift_days);
+        out.seasonExtensionMinAirTempC = out.seasonExtension === "heated_greenhouse"
+            ? normalizeOptionalNumber(source.seasonExtensionMinAirTempC ?? source.season_extension_min_air_temp_c)
+            : null;
+        out.lastUpdated = String(source.lastUpdated || (options && options.keepExistingDate ? "" : nowIso()));
+        return out;
+    }
+
+    function parseProfileRecord(cell, attrName) {
+        const options = { keepExistingDate: true, allowPreset: attrName === ATTRS.BED_JSON };
+        const raw = getCellAttr(cell, attrName, "");
+        if (!raw) return { raw: "", invalid: false, profile: normalizeProfile(mergeIdentityAttrsIntoProfile(cell, {}), options) };
+        try {
+            return { raw: raw, invalid: false, profile: normalizeProfile(mergeIdentityAttrsIntoProfile(cell, JSON.parse(raw)), options) };
+        } catch (e) {
+            return { raw: raw, invalid: true, profile: normalizeProfile(mergeIdentityAttrsIntoProfile(cell, {}), options) };
+        }
+    }
+
+    function readBedConditions(bedCell) {
+        return parseProfileRecord(bedCell, ATTRS.BED_JSON).profile;
+    }
+
+    function buildMirrorAttrs(profile) {
+        const attrs = {};
+        Object.keys(MIRROR_ATTRS).forEach(function (key) {
+            attrs[MIRROR_ATTRS[key]] = profile[key];
+        });
+        return attrs;
+    }
+
+    function buildIdentityMirrorAttrs(profile) {
+        const attrs = {};
+        attrs[IDENTITY_MIRROR_ATTRS.bedType] = profile.bedType === "unknown" ? null : profile.bedType;
+        attrs[IDENTITY_MIRROR_ATTRS.bedHeightCm] = profile.bedHeightCm == null ? null : profile.bedHeightCm;
+        attrs[IDENTITY_MIRROR_ATTRS.userBedName] = profile.userBedName || null;
+        return attrs;
+    }
+
+    function formatDisplayNumber(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return "";
+        const rounded = Math.round(n * 10) / 10;
+        return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+    }
+
+    function heightCmToDisplayValue(cm, units) {
+        const n = normalizePositiveOptionalNumber(cm);
+        if (n == null) return "";
+        return units === "imperial" ? formatDisplayNumber(n / CM_PER_INCH) : formatDisplayNumber(n);
+    }
+
+    function displayHeightToCm(value, units) {
+        const n = finiteNumberOrNull(value);
+        if (n == null || n <= 0) return null;
+        return Math.round((units === "imperial" ? n * CM_PER_INCH : n) * 100) / 100;
+    }
+
+    function formatBedHeight(cm, units) {
+        const value = heightCmToDisplayValue(cm, units);
+        if (!value) return "";
+        return value + " " + (units === "imperial" ? "in" : "cm");
+    }
+
+    function buildGeneratedBedLabel(profile, bedCell) {
+        const normalized = normalizeProfile(profile, { keepExistingDate: true, allowPreset: true });
+        const parts = [];
+        if (normalized.bedType !== "unknown") {
+            let prefix = valueLabel(normalized.bedType);
+            const height = formatBedHeight(normalized.bedHeightCm, resolveUnitSystem(bedCell));
+            if (height) prefix += " (" + height + ")";
+            parts.push(prefix);
+        }
+        if (normalized.userBedName) parts.push(normalized.userBedName);
+        return parts.length ? parts.join(" - ") : BED_NAME_FALLBACK;
+    }
+
+    function shouldWriteGeneratedLabel(bedCell, sourceProfile, normalizedProfile, options) {
+        if (options && options.writeIdentityLabel) return true;
+        if (profileHasMeaningfulIdentity(sourceProfile) || profileHasMeaningfulIdentity(normalizedProfile)) return true;
+        return cellHasIdentityAttrs(bedCell);
+    }
+
+    function writeBedConditions(bedCell, profile, options) {
+        if (!isGardenBed(bedCell)) return null;
+        const source = mergeIdentityAttrsIntoProfile(bedCell, profile);
+        const normalized = normalizeProfile(source, { allowPreset: true });
+        const attrs = buildMirrorAttrs(normalized);
+        Object.assign(attrs, buildIdentityMirrorAttrs(normalized));
+        attrs[ATTRS.BED_JSON] = JSON.stringify(normalized);
+        if (shouldWriteGeneratedLabel(bedCell, source, normalized, options)) attrs.label = buildGeneratedBedLabel(normalized, bedCell);
+        setCellAttrs(bedCell, attrs);
+        refreshSelectedBedOverlaysSoon();
+        return normalized;
+    }
+
+    function clearBedConditions(bedCell) {
+        if (!isGardenBed(bedCell)) return;
+        const current = readBedConditions(bedCell);
+        const keepIdentity = profileHasMeaningfulIdentity(current) || cellHasIdentityAttrs(bedCell);
+        const identityOnly = keepIdentity ? normalizeProfile({ bedType: current.bedType, bedHeightCm: current.bedHeightCm, userBedName: current.userBedName }, { allowPreset: true }) : null;
+        const attrs = { [ATTRS.BED_JSON]: keepIdentity ? JSON.stringify(identityOnly) : null };
+        Object.keys(MIRROR_ATTRS).forEach(function (key) {
+            attrs[MIRROR_ATTRS[key]] = null;
+        });
+        if (keepIdentity) {
+            Object.assign(attrs, buildIdentityMirrorAttrs(identityOnly));
+            attrs.label = buildGeneratedBedLabel(identityOnly, bedCell);
+        }
+        setCellAttrs(bedCell, attrs);
+        refreshSelectedBedOverlaysSoon();
+    }
+
+    function isMeaningfulOverride(key, value) {
+        if (key === "irrigation") return !!value && value !== "unknown";
+        if (key === "trellis") return value === "none" || value === "available" || value === "required_structure";
+        return !!value && value !== "unknown";
+    }
+
+    function derivedIrrigationDisplayValue(bedCell) {
+        const moduleCell = findGardenModuleAncestor(bedCell);
+        const planner = graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner);
+        if (!planner || typeof planner.getBedIrrigationMethods !== "function") return "unknown";
+        const methods = planner.getBedIrrigationMethods(moduleCell, bedCell) || [];
+        const labels = methods.map(function (method) { return String(method && method.label || "").trim(); }).filter(Boolean);
+        return labels.length ? labels.join(", ") : "unknown";
+    }
+
+    function getDisplayBedConditions(bedCell) {
+        const bedRecord = parseProfileRecord(bedCell, ATTRS.BED_JSON);
+        const out = normalizeProfile({}, { keepExistingDate: true });
+        FIELD_DEFS.forEach(function (field) {
+            if (field.key === "irrigation") return;
+            const value = bedRecord.profile[field.key];
+            if (isMeaningfulOverride(field.key, value)) out[field.key] = value;
+        });
+        out.irrigation = derivedIrrigationDisplayValue(bedCell);
+        if (bedRecord.profile.notes) out.notes = bedRecord.profile.notes;
+        if (isValidPresetKey(bedRecord.profile.presetKey)) out.presetKey = bedRecord.profile.presetKey;
+        out.lastUpdated = bedRecord.profile.lastUpdated || "";
+        return out;
+    }
+
+    function isBedCompatibleWithCrop() {
+        return { compatible: true, hardFailures: [], warnings: [] };
+    }
+
+    function scoreBedSuitability() {
+        return { score: 0, reasons: [] };
+    }
+
+    function getCellId(cell) {
+        return cell && cell.getId ? cell.getId() : (cell && cell.id);
+    }
+
+    function collectSelectedBeds(fallbackBed) {
+        const cells = graph.getSelectionCells ? (graph.getSelectionCells() || []) : [];
+        const byId = new Map();
+        cells.forEach(function (cell) {
+            if (isGardenBed(cell)) byId.set(getCellId(cell), cell);
+        });
+        if (!byId.size && fallbackBed) byId.set(getCellId(fallbackBed), fallbackBed);
+        return Array.from(byId.values());
+    }
+
+    function makeSelect(field, value) {
+        const select = document.createElement("select");
+        select.style.width = "100%";
+        field.values.forEach(function (optionValue) {
+            const option = document.createElement("option");
+            option.value = optionValue;
+            option.textContent = valueLabel(optionValue);
+            select.appendChild(option);
+        });
+        select.value = normalizeEnumValue(field.key, value);
+        return select;
+    }
+
+    function makeReadOnlyText(value) {
+        const span = document.createElement("span");
+        span.textContent = valueLabel(value);
+        span.setAttribute("data-bed-derived-irrigation", "1");
+        span.style.display = "block";
+        span.style.padding = "3px 0";
+        span.style.color = "#374151";
+        span.style.fontWeight = "600";
+        return span;
+    }
+
+    function appendSection(container, title) {
+        const section = document.createElement("div");
+        section.style.borderTop = "1px solid #e5e7eb";
+        section.style.paddingTop = "8px";
+        section.style.marginTop = "8px";
+        const label = document.createElement("div");
+        label.textContent = title;
+        label.style.fontWeight = "bold";
+        label.style.marginBottom = "6px";
+        section.appendChild(label);
+        container.appendChild(section);
+        return section;
+    }
+
+    function appendField(section, field, input) {
+        const row = document.createElement("label");
+        row.style.display = "grid";
+        row.style.gridTemplateColumns = "130px 1fr";
+        row.style.alignItems = "center";
+        row.style.gap = "8px";
+        row.style.marginBottom = "6px";
+        const text = document.createElement("span");
+        text.textContent = field.label;
+        row.appendChild(text);
+        row.appendChild(input);
+        section.appendChild(row);
+    }
+
+    function isGardenModule(cell) {
+        return !!cell && cell.getAttribute && cell.getAttribute("garden_module") === "1";
+    }
+
+    function findGardenModuleAncestor(cell) {
+        for (let cur = cell; cur; cur = model.getParent ? model.getParent(cur) : null) {
+            if (isGardenModule(cur)) return cur;
+        }
+        return null;
+    }
+
+    function resolveUnitSystem(cell) {
+        const moduleCell = findGardenModuleAncestor(cell);
+        return String(moduleCell && moduleCell.getAttribute ? moduleCell.getAttribute("unit_system") : "").trim() === "imperial" ? "imperial" : "metric";
+    }
+
+    function cToDisplayTemp(c, units) {
+        const n = Number(c);
+        if (!Number.isFinite(n)) return "";
+        return units === "imperial" ? String(Math.round((n * 9 / 5 + 32) * 100) / 100) : String(Math.round(n * 100) / 100);
+    }
+
+    function displayTempToC(value, units) {
+        const n = finiteNumberOrNull(value);
+        if (n == null) return null;
+        return units === "imperial" ? Math.round(((n - 32) * 5 / 9) * 100) / 100 : Math.round(n * 100) / 100;
+    }
+
+    function makeNumberInput(value) {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.step = "0.1";
+        input.value = value == null ? "" : String(value);
+        input.style.width = "100%";
+        return input;
+    }
+
+    function formatSigned(value, suffix) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return "";
+        return `${n > 0 ? "+" : ""}${Math.round(n * 100) / 100}${suffix || ""}`;
+    }
+
+    function conditionDialogHeight() {
+        const viewportHeight = typeof window !== "undefined" && Number.isFinite(Number(window.innerHeight)) ? Number(window.innerHeight) : 730;
+        return Math.max(360, Math.min(650, viewportHeight - 80));
+    }
+
+    function makeSeasonExtensionAdvancedSection(container, targetCell, current, controls) {
+        const units = resolveUnitSystem(targetCell);
+        const tempLabel = units === "imperial" ? "F" : "C";
+        const section = appendSection(container, "Advanced season extension");
+        section.setAttribute("data-bed-season-extension-advanced", "1");
+        const defaultsRow = document.createElement("div");
+        defaultsRow.style.display = "flex";
+        defaultsRow.style.alignItems = "center";
+        defaultsRow.style.justifyContent = "space-between";
+        defaultsRow.style.gap = "8px";
+        defaultsRow.style.margin = "2px 0 8px";
+        const defaults = document.createElement("div");
+        defaults.style.flex = "1 1 auto";
+        defaults.style.fontSize = "12px";
+        defaults.style.color = "#374151";
+        defaultsRow.appendChild(defaults);
+        const airInput = makeNumberInput(current.seasonExtensionAirOffsetC == null ? "" : cToDisplayTemp(current.seasonExtensionAirOffsetC, units));
+        const soilInput = makeNumberInput(current.seasonExtensionSoilOffsetC == null ? "" : cToDisplayTemp(current.seasonExtensionSoilOffsetC, units));
+        const frostInput = makeNumberInput(current.seasonExtensionFrostShiftDays);
+        const minInput = makeNumberInput(current.seasonExtensionMinAirTempC == null ? "" : cToDisplayTemp(current.seasonExtensionMinAirTempC, units));
+        const saveDefaultsButton = bedButton("Set as defaults", function () {
+            const key = controls.seasonExtension.value;
+            const effect = readInputsAsEffect(key, resolveSeasonExtensionDefault(targetCell, key));
+            model.beginUpdate();
+            try {
+                writeModuleSeasonExtensionDefault(targetCell, key, effect);
+            } finally {
+                model.endUpdate();
+            }
+            refresh();
+        });
+        defaultsRow.appendChild(saveDefaultsButton);
+        section.appendChild(defaultsRow);
+        controls.seasonExtensionAirOffsetC = airInput;
+        controls.seasonExtensionSoilOffsetC = soilInput;
+        controls.seasonExtensionFrostShiftDays = frostInput;
+        controls.seasonExtensionMinAirTempC = minInput;
+        appendField(section, { label: `Air offset (${tempLabel})` }, airInput);
+        appendField(section, { label: `Soil offset (${tempLabel})` }, soilInput);
+        appendField(section, { label: "Frost shift (days)" }, frostInput);
+        appendField(section, { label: `Min air (${tempLabel})` }, minInput);
+        function setInputsFromEffect(effect) {
+            airInput.value = cToDisplayTemp(effect.airOffsetC, units);
+            soilInput.value = cToDisplayTemp(effect.soilOffsetC, units);
+            frostInput.value = effect.frostShiftDays == null ? "" : String(effect.frostShiftDays);
+            minInput.value = effect.minAirTempC == null ? "" : cToDisplayTemp(effect.minAirTempC, units);
+        }
+        function readInputsAsEffect(key, fallback) {
+            return {
+                airOffsetC: displayTempToC(airInput.value, units) ?? fallback.airOffsetC,
+                soilOffsetC: displayTempToC(soilInput.value, units) ?? fallback.soilOffsetC,
+                frostShiftDays: normalizeOptionalNumber(frostInput.value) ?? fallback.frostShiftDays,
+                minAirTempC: key === "heated_greenhouse" ? (displayTempToC(minInput.value, units) ?? fallback.minAirTempC) : null
+            };
+        }
+        function refresh(options) {
+            const key = controls.seasonExtension.value;
+            const show = key && key !== "unknown" && key !== "none";
+            const effect = resolveSeasonExtensionDefault(targetCell, key);
+            if (options && options.resetValues) setInputsFromEffect(effect);
+            section.style.display = show ? "block" : "none";
+            saveDefaultsButton.style.display = show ? "" : "none";
+            minInput.parentNode.style.display = key === "heated_greenhouse" ? "grid" : "none";
+            defaults.textContent = show
+                ? `Defaults: air ${formatSigned(units === "imperial" ? effect.airOffsetC * 9 / 5 : effect.airOffsetC, " " + tempLabel)}, soil ${formatSigned(units === "imperial" ? effect.soilOffsetC * 9 / 5 : effect.soilOffsetC, " " + tempLabel)}, frost ${formatSigned(effect.frostShiftDays, " days")}${key === "heated_greenhouse" ? `, min ${cToDisplayTemp(effect.minAirTempC, units)} ${tempLabel}` : ""}. Blank fields use defaults.`
+                : "";
+        }
+        controls.seasonExtension.addEventListener("change", function () { refresh({ resetValues: true }); });
+        refresh();
+        return { units, section, refresh };
+    }
+
+    function elevateBedConditionsDialog() {
+        const dlg = ui && ui.dialog;
+        if (dlg && dlg.bg && dlg.bg.style) dlg.bg.style.zIndex = String(TRELLIS_DIALOG_Z - 1);
+        if (dlg && dlg.container && dlg.container.style) dlg.container.style.zIndex = String(TRELLIS_DIALOG_Z);
+    }
+
+    function showConditionEditorDialog(targetCell) {
+        const current = readBedConditions(targetCell);
+        const dialogHeight = conditionDialogHeight();
+        const div = document.createElement("div");
+        div.style.fontSize = "13px";
+        div.style.display = "flex";
+        div.style.flexDirection = "column";
+        div.style.height = "100%";
+        div.style.maxHeight = dialogHeight + "px";
+        const body = document.createElement("div");
+        body.setAttribute("data-bed-conditions-dialog-body", "1");
+        body.style.flex = "1 1 auto";
+        body.style.minHeight = "0px";
+        body.style.overflowY = "auto";
+        body.style.padding = "14px";
+        div.appendChild(body);
+        const title = document.createElement("h3");
+        title.textContent = "Bed Conditions";
+        title.style.margin = "0 0 10px";
+        body.appendChild(title);
+
+        const controls = Object.create(null);
+        const identityUnits = resolveUnitSystem(targetCell);
+        const identity = appendSection(body, "Bed Identity");
+        controls.bedType = makeSelect(BED_TYPE_FIELD, current.bedType);
+        appendField(identity, BED_TYPE_FIELD, controls.bedType);
+        controls.bedHeight = makeNumberInput(heightCmToDisplayValue(current.bedHeightCm, identityUnits));
+        controls.bedHeight.step = identityUnits === "imperial" ? "0.5" : "1";
+        controls.bedHeight.min = "0";
+        appendField(identity, { label: "Height (" + (identityUnits === "imperial" ? "in" : "cm") + ")" }, controls.bedHeight);
+        controls.userBedName = document.createElement("input");
+        controls.userBedName.type = "text";
+        controls.userBedName.value = current.userBedName || "";
+        controls.userBedName.style.width = "100%";
+        appendField(identity, { label: "User name" }, controls.userBedName);
+
+        const presetRow = document.createElement("label");
+        presetRow.style.display = "grid";
+        presetRow.style.gridTemplateColumns = "130px 1fr";
+        presetRow.style.alignItems = "center";
+        presetRow.style.gap = "8px";
+        const presetSelect = document.createElement("select");
+        Object.keys(PRESETS).forEach(function (key) {
+            const option = document.createElement("option");
+            option.value = key;
+            option.textContent = PRESETS[key].label;
+            presetSelect.appendChild(option);
+        });
+        if (current.presetKey) presetSelect.value = current.presetKey;
+        presetRow.appendChild(document.createTextNode("Preset"));
+        presetRow.appendChild(presetSelect);
+        body.appendChild(presetRow);
+
+        const growing = appendSection(body, "Growing Conditions");
+        ["sunExposure", "windExposure", "frostRisk", "soilMoisture", "drainage", "soilTexture", "fertility"].forEach(function (key) {
+            controls[key] = makeSelect(FIELD_BY_KEY[key], current[key]);
+            appendField(growing, FIELD_BY_KEY[key], controls[key]);
+        });
+
+        const infra = appendSection(body, "Infrastructure");
+        appendField(infra, FIELD_BY_KEY.irrigation, makeReadOnlyText(derivedIrrigationDisplayValue(targetCell)));
+        ["trellis", "seasonExtension", "cropProtection"].forEach(function (key) {
+            controls[key] = makeSelect(FIELD_BY_KEY[key], current[key]);
+            appendField(infra, FIELD_BY_KEY[key], controls[key]);
+        });
+        const advancedSeasonExtension = makeSeasonExtensionAdvancedSection(infra, targetCell, current, controls);
+
+        const use = appendSection(body, "Use");
+        controls.bedUse = makeSelect(FIELD_BY_KEY.bedUse, current.bedUse);
+        appendField(use, FIELD_BY_KEY.bedUse, controls.bedUse);
+
+        const notesInput = document.createElement("textarea");
+        notesInput.value = current.notes || "";
+        notesInput.rows = 3;
+        notesInput.style.width = "100%";
+        appendField(use, { label: "Notes" }, notesInput);
+
+        presetSelect.addEventListener("change", function () {
+            const preset = PRESETS[presetSelect.value];
+            const presetValues = (preset && preset.values) || {};
+            Object.keys(presetValues).forEach(function (key) {
+                if (controls[key]) controls[key].value = presetValues[key];
+            });
+            advancedSeasonExtension.refresh({ resetValues: Object.prototype.hasOwnProperty.call(presetValues, "seasonExtension") });
+        });
+
+        function readDialogProfile() {
+            const next = {};
+            next.bedType = controls.bedType.value;
+            next.bedHeightCm = displayHeightToCm(controls.bedHeight.value, identityUnits);
+            next.userBedName = controls.userBedName.value;
+            FIELD_DEFS.forEach(function (field) { next[field.key] = controls[field.key] ? controls[field.key].value : "unknown"; });
+            next.seasonExtensionAirOffsetC = displayTempToC(controls.seasonExtensionAirOffsetC.value, advancedSeasonExtension.units);
+            next.seasonExtensionSoilOffsetC = displayTempToC(controls.seasonExtensionSoilOffsetC.value, advancedSeasonExtension.units);
+            next.seasonExtensionFrostShiftDays = normalizeOptionalNumber(controls.seasonExtensionFrostShiftDays.value);
+            next.seasonExtensionMinAirTempC = next.seasonExtension === "heated_greenhouse"
+                ? displayTempToC(controls.seasonExtensionMinAirTempC.value, advancedSeasonExtension.units)
+                : null;
+            next.presetKey = presetSelect.value;
+            next.notes = notesInput.value;
+            return next;
+        }
+
+        const footer = document.createElement("div");
+        footer.style.flex = "0 0 auto";
+        footer.style.padding = "0 14px 14px";
+        const actionRow = document.createElement("div");
+        actionRow.style.display = "flex";
+        actionRow.style.justifyContent = "space-between";
+        actionRow.style.alignItems = "center";
+        actionRow.style.gap = "8px";
+        actionRow.style.marginTop = "12px";
+        actionRow.style.paddingTop = "10px";
+        actionRow.style.borderTop = "1px solid #e5e7eb";
+        const secondaryButtons = document.createElement("div");
+        secondaryButtons.style.display = "flex";
+        secondaryButtons.style.gap = "8px";
+        actionRow.appendChild(document.createElement("span"));
+        secondaryButtons.appendChild(bedButton("Copy", function () { copiedProfile = normalizeProfile(readDialogProfile(), { allowPreset: true }); }, "neutral"));
+        secondaryButtons.appendChild(bedButton("Paste", function () {
+            if (!copiedProfile) { ui.alert("No copied bed conditions are available."); return; }
+            const targets = collectSelectedBeds(targetCell);
+            model.beginUpdate();
+            try { targets.forEach(function (target) { writeBedConditions(target, copiedProfile, { writeIdentityLabel: true }); }); }
+            finally { model.endUpdate(); }
+            ui.hideDialog();
+        }, "add"));
+        secondaryButtons.appendChild(bedButton("Clear", function () {
+            const targets = collectSelectedBeds(targetCell);
+            model.beginUpdate();
+            try { targets.forEach(clearBedConditions); }
+            finally { model.endUpdate(); }
+            ui.hideDialog();
+        }, "danger"));
+
+        actionRow.appendChild(secondaryButtons);
+        footer.appendChild(actionRow);
+
+        const buttonRow = document.createElement("div");
+        buttonRow.style.display = "flex";
+        buttonRow.style.justifyContent = "flex-end";
+        buttonRow.style.gap = "8px";
+        buttonRow.style.marginTop = "12px";
+        buttonRow.appendChild(bedButton("Cancel", function () { ui.hideDialog(); }, "neutral"));
+        buttonRow.appendChild(bedButton("Save", function () {
+            if (String(controls.bedHeight.value || "").trim() && displayHeightToCm(controls.bedHeight.value, identityUnits) == null) { ui.alert("Bed height must be greater than 0."); controls.bedHeight.focus(); return; }
+            model.beginUpdate();
+            try {
+                writeBedConditions(targetCell, readDialogProfile(), { writeIdentityLabel: true });
+            } finally {
+                model.endUpdate();
+            }
+            ui.hideDialog();
+        }, "add"));
+        footer.appendChild(buttonRow);
+        div.appendChild(footer);
+        ui.showDialog(div, 520, dialogHeight, true, true);
+        elevateBedConditionsDialog();
+    }
+
+    function isOverlayDisplayValue(key, value) {
+        if (!value || value === "unknown") return false;
+        if (key === "trellis" && value === "none") return false;
+        if ((key === "seasonExtension" || key === "cropProtection") && value === "none") return false;
+        return true;
+    }
+
+    function addHeadingRow(rows, label) {
+        rows.push({ type: "heading", label: label });
+    }
+
+    function makeOverlayValueRow(field, value) {
+        return { label: field.label, value: valueLabel(value) };
+    }
+
+    function isPresetOverride(profile, presetKey, field) {
+        const preset = isValidPresetKey(presetKey) ? PRESETS[presetKey] : null;
+        if (!preset || !Object.prototype.hasOwnProperty.call(preset.values || {}, field.key)) return false;
+        return normalizeEnumValue(field.key, profile && profile[field.key]) !== normalizeEnumValue(field.key, preset.values[field.key]);
+    }
+
+    function buildOverlayRows(profile) {
+        const rows = [];
+        const presetKey = profile && isValidPresetKey(profile.presetKey) ? profile.presetKey : "";
+        const presetFields = new Set(getPresetFieldKeys(presetKey));
+        if (presetKey) rows.push({ label: "Preset", value: PRESETS[presetKey].label });
+        const presetOverrides = [];
+        const additional = [];
+        FIELD_DEFS.forEach(function (field) {
+            const value = profile && profile[field.key];
+            if (!isOverlayDisplayValue(field.key, value)) return;
+            if (presetFields.has(field.key)) {
+                if (isPresetOverride(profile, presetKey, field)) presetOverrides.push(makeOverlayValueRow(field, value));
+                return;
+            }
+            additional.push(makeOverlayValueRow(field, value));
+        });
+        if (presetOverrides.length) {
+            addHeadingRow(rows, "Preset overrides");
+            Array.prototype.push.apply(rows, presetOverrides);
+        }
+        if (presetKey && additional.length) addHeadingRow(rows, "Additional");
+        Array.prototype.push.apply(rows, additional);
+        if (profile && profile.notes) rows.push({ type: "notes", label: "Notes", value: profile.notes });
+        return rows;
+    }
+
+    function stopGraphDomEvent(evt) {
+        if (evt && evt.stopPropagation) evt.stopPropagation();
+    }
+
+    function stopAndPreventGraphDomEvent(evt) {
+        stopGraphDomEvent(evt);
+        if (evt && evt.preventDefault) evt.preventDefault();
+    }
+
+    function estimateOverlayTextWidth(value) {
+        const lines = String(value == null ? "" : value).split(/\r?\n/);
+        return lines.reduce(function (max, line) { return Math.max(max, line.length * OVERLAY_AVG_CHAR_WIDTH); }, 0);
+    }
+
+    function estimateSelectedBedOverlayLayout(rows) {
+        let width = OVERLAY_MIN_WIDTH;
+        let labelColumnWidth = OVERLAY_MIN_LABEL_WIDTH;
+        const sourceRows = rows || [];
+        function includeContentWidth(contentWidth) { width = Math.max(width, Math.ceil(OVERLAY_PADDING_X + contentWidth)); }
+        includeContentWidth(estimateOverlayTextWidth("Set Bed Conditions") + OVERLAY_CONTROL_CHROME_WIDTH);
+        if (!sourceRows.length) includeContentWidth(estimateOverlayTextWidth("No set conditions"));
+        sourceRows.forEach(function (row) {
+            if (row.type === "heading") {
+                includeContentWidth(estimateOverlayTextWidth(row.label));
+                return;
+            }
+            if (row.type === "notes") {
+                includeContentWidth(Math.max(estimateOverlayTextWidth(row.label), estimateOverlayTextWidth(row.value)));
+                return;
+            }
+            labelColumnWidth = Math.max(labelColumnWidth, estimateOverlayTextWidth(row.label));
+        }, "neutral");
+        sourceRows.forEach(function (row) {
+            if (row.type === "heading" || row.type === "notes") return;
+            includeContentWidth(labelColumnWidth + OVERLAY_ROW_GAP + estimateOverlayTextWidth(row.value));
+        });
+        return { width: Math.ceil(width), labelColumnWidth: Math.ceil(labelColumnWidth) };
+    }
+
+    function createSelectedBedOverlay() {
+        const div = document.createElement("div");
+        div.className = "trellis-bed-conditions-overlay";
+        div.style.position = "absolute";
+        div.style.pointerEvents = "auto";
+        div.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL);
+        div.style.boxSizing = "border-box";
+        div.style.minWidth = OVERLAY_MIN_WIDTH + "px";
+        div.style.padding = "8px";
+        div.style.borderRadius = "6px";
+        div.style.fontSize = "12px";
+        div.style.lineHeight = "16px";
+        div.style.color = "#111827";
+        div.style.background = "rgba(255, 255, 255, 0.96)";
+        div.style.border = "1px solid rgba(75, 85, 99, 0.45)";
+        div.style.boxShadow = "0 2px 7px rgba(0,0,0,0.18)";
+        return div;
+    }
+
+    function createBedNameInput(entry) {
+        const initialName = readBedConditions(entry.cell).userBedName || "";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = initialName;
+        input.setAttribute("aria-label", "User name");
+        input.style.boxSizing = "border-box";
+        input.style.display = "block";
+        input.style.width = "100%";
+        input.style.minWidth = "0";
+        input.style.marginBottom = "6px";
+        input.style.fontWeight = "600";
+        input.style.border = "1px solid rgba(75, 85, 99, 0.35)";
+        input.style.borderRadius = "4px";
+        input.style.padding = "3px 5px";
+        input.style.fontSize = "12px";
+        input.style.lineHeight = "16px";
+        ["mousedown", "mouseup", "click", "dblclick", "pointerdown", "pointerup"].forEach(function (type) {
+            input.addEventListener(type, stopGraphDomEvent);
+        });
+        input.addEventListener("keydown", function (evt) {
+            stopGraphDomEvent(evt);
+            if (evt.key === "Enter") {
+                input.value = writeBedName(entry.cell, input.value);
+                if (input.blur) input.blur();
+                stopAndPreventGraphDomEvent(evt);
+            } else if (evt.key === "Escape") {
+                input.value = initialName;
+                stopAndPreventGraphDomEvent(evt);
+            }
+        });
+        ["keypress", "keyup"].forEach(function (type) { input.addEventListener(type, stopGraphDomEvent); });
+        input.addEventListener("blur", function () { input.value = writeBedName(entry.cell, input.value); });
+        return input;
+    }
+
+    function ensureOverlayContainer() {
+        if (!graph.container) return;
+        const style = window.getComputedStyle ? window.getComputedStyle(graph.container) : null;
+        if (style && style.position === "static") graph.container.style.position = "relative";
+    }
+
+    function renderSelectedBedOverlay(entry) {
+        entry.div.innerHTML = "";
+        const rows = buildOverlayRows(getDisplayBedConditions(entry.cell));
+        const layout = estimateSelectedBedOverlayLayout(rows);
+        entry.div.style.width = layout.width + "px";
+        entry.div.appendChild(createBedNameInput(entry));
+        const button = bedButton("Set Bed Conditions", function () { showConditionEditorDialog(entry.cell); }, "open");
+        button.style.display = "block";
+        button.style.width = "100%";
+        button.style.marginBottom = "6px";
+        entry.div.appendChild(button);
+        if (!rows.length) {
+            const empty = document.createElement("div");
+            empty.textContent = "No set conditions";
+            empty.style.color = "#6b7280";
+            entry.div.appendChild(empty);
+            return;
+        }
+        rows.forEach(function (row) {
+            if (row.type === "heading") {
+                const heading = document.createElement("div");
+                heading.textContent = row.label;
+                heading.style.marginTop = "6px";
+                heading.style.paddingTop = "5px";
+                heading.style.borderTop = "1px solid rgba(209, 213, 219, 0.8)";
+                heading.style.color = "#374151";
+                heading.style.fontWeight = "700";
+                entry.div.appendChild(heading);
+                return;
+            }
+            if (row.type === "notes") {
+                const notes = document.createElement("div");
+                notes.style.marginTop = "8px";
+                notes.style.paddingTop = "6px";
+                notes.style.borderTop = "1px solid rgba(209, 213, 219, 0.8)";
+                const notesLabel = document.createElement("div");
+                notesLabel.textContent = row.label;
+                notesLabel.style.color = "#374151";
+                notesLabel.style.fontWeight = "700";
+                const notesValue = document.createElement("div");
+                notesValue.textContent = row.value;
+                notesValue.style.marginTop = "3px";
+                notesValue.style.whiteSpace = "pre-wrap";
+                notesValue.style.wordBreak = "break-word";
+                notes.appendChild(notesLabel);
+                notes.appendChild(notesValue);
+                entry.div.appendChild(notes);
+                return;
+            }
+            const line = document.createElement("div");
+            line.style.display = "grid";
+            line.style.gridTemplateColumns = layout.labelColumnWidth + "px 1fr";
+            line.style.gap = "6px";
+            line.style.marginTop = "3px";
+            const label = document.createElement("span");
+            label.textContent = row.label;
+            label.style.color = "#4b5563";
+            label.style.whiteSpace = "nowrap";
+            const value = document.createElement("span");
+            value.textContent = row.value;
+            value.style.fontWeight = "600";
+            value.style.whiteSpace = "nowrap";
+            line.appendChild(label);
+            line.appendChild(value);
+            entry.div.appendChild(line);
+        });
+    }
+
+    function selectedBedOverlayWidth(entry) {
+        const styledWidth = Number.parseFloat(entry && entry.div && entry.div.style ? entry.div.style.width : "");
+        if (Number.isFinite(styledWidth) && styledWidth > 0) return styledWidth;
+        return (entry && entry.div && entry.div.offsetWidth) || OVERLAY_MIN_WIDTH;
+    }
+
+    function positionSelectedBedOverlay(entry) {
+        const state = graph.view && graph.view.getState ? graph.view.getState(entry.cell) : null;
+        if (!state) return false;
+        const width = selectedBedOverlayWidth(entry);
+        const gap = 8;
+        const overlayHeight = entry.div.offsetHeight || 0;
         const left = Math.round(state.x - width - gap); // CHANGE: selected bed overlays intentionally do not clamp to the viewport
         const top = Math.round(state.y + ((state.height || 0) - overlayHeight) / 2); // CHANGE: selected bed overlays intentionally do not clamp to the viewport
-        entry.div.style.left = left + "px"; // NEW
-        entry.div.style.top = top + "px"; // CHANGE
-        return true; // NEW
-    } // NEW
+        entry.div.style.left = left + "px";
+        entry.div.style.top = top + "px";
+        return true;
+    }
 
-    function removeSelectedBedOverlay(cellId) { // NEW
-        const entry = selectedBedOverlays.get(cellId); // NEW
-        if (!entry) return; // NEW
-        if (entry.div && entry.div.parentNode) entry.div.parentNode.removeChild(entry.div); // NEW
-        selectedBedOverlays.delete(cellId); // NEW
-    } // NEW
+    function removeSelectedBedOverlay(cellId) {
+        const entry = selectedBedOverlays.get(cellId);
+        if (!entry) return;
+        if (entry.div && entry.div.parentNode) entry.div.parentNode.removeChild(entry.div);
+        selectedBedOverlays.delete(cellId);
+    }
 
-    function clearSelectedBedOverlays() { // NEW
-        Array.from(selectedBedOverlays.keys()).forEach(removeSelectedBedOverlay); // NEW
-    } // NEW
+    function clearSelectedBedOverlays() {
+        Array.from(selectedBedOverlays.keys()).forEach(removeSelectedBedOverlay);
+    }
 
-    function visitModelCells(cell, visitor) { // ADDED
-        if (!cell || !visitor) return; // ADDED
-        visitor(cell); // ADDED
-        const count = model.getChildCount ? model.getChildCount(cell) : 0; // ADDED
-        for (let i = 0; i < count; i++) visitModelCells(model.getChildAt(cell, i), visitor); // ADDED
-    } // ADDED
+    function visitModelCells(cell, visitor) {
+        if (!cell || !visitor) return;
+        visitor(cell);
+        const count = model.getChildCount ? model.getChildCount(cell) : 0;
+        for (let i = 0; i < count; i++) visitModelCells(model.getChildAt(cell, i), visitor);
+    }
 
-    function syncGeneratedBedLabels() { // ADDED
-        if (syncGeneratedBedLabels.running || !model.getRoot) return; // ADDED
-        const updates = []; // ADDED
-        visitModelCells(model.getRoot(), function (cell) { // ADDED
-            if (!isGardenBed(cell)) return; // CHANGE
-            const profile = readBedConditions(cell); // ADDED
-            if (!cellHasIdentityAttrs(cell) && !profileHasMeaningfulIdentity(profile)) return; // ADDED
-            const nextLabel = buildGeneratedBedLabel(profile, cell); // ADDED
-            if (getBedName(cell) !== nextLabel) updates.push({ cell: cell, label: nextLabel }); // ADDED
-        }); // ADDED
-        if (!updates.length) return; // ADDED
-        syncGeneratedBedLabels.running = true; // ADDED
-        model.beginUpdate && model.beginUpdate(); // ADDED
-        try { updates.forEach(function (entry) { setCellAttrs(entry.cell, { label: entry.label }); }); } // ADDED
-        finally { if (model.endUpdate) model.endUpdate(); syncGeneratedBedLabels.running = false; } // ADDED
-    } // ADDED
+    function syncGeneratedBedLabels() {
+        if (syncGeneratedBedLabels.running || !model.getRoot) return;
+        const updates = [];
+        visitModelCells(model.getRoot(), function (cell) {
+            if (!isGardenBed(cell)) return;
+            const profile = readBedConditions(cell);
+            if (!cellHasIdentityAttrs(cell) && !profileHasMeaningfulIdentity(profile)) return;
+            const nextLabel = buildGeneratedBedLabel(profile, cell);
+            if (getBedName(cell) !== nextLabel) updates.push({ cell: cell, label: nextLabel });
+        });
+        if (!updates.length) return;
+        syncGeneratedBedLabels.running = true;
+        model.beginUpdate && model.beginUpdate();
+        try { updates.forEach(function (entry) { setCellAttrs(entry.cell, { label: entry.label }); }); }
+        finally { if (model.endUpdate) model.endUpdate(); syncGeneratedBedLabels.running = false; }
+    }
 
-    function isIrrigationModeActiveForBedOverlay() { // NEW
-        const planner = graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner); // NEW
-        return !!(planner && typeof planner.isIrrigationModeActive === "function" && planner.isIrrigationModeActive()); // NEW
-    } // NEW
+    function isIrrigationModeActiveForBedOverlay() {
+        const planner = graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner);
+        return !!(planner && typeof planner.isIrrigationModeActive === "function" && planner.isIrrigationModeActive());
+    }
 
-    function getSelectedGardenBedsForOverlay() { // NEW
-        const cells = graph.getSelectionCells ? (graph.getSelectionCells() || []) : []; // NEW
-        if (!cells.length || cells.some(function (cell) { return !isGardenBed(cell); })) return []; // NEW
-        const byId = new Map(); // NEW
-        cells.forEach(function (cell) { byId.set(getCellId(cell), cell); }); // NEW
-        return Array.from(byId.values()); // NEW
-    } // NEW
+    function getSelectedGardenBedsForOverlay() {
+        const cells = graph.getSelectionCells ? (graph.getSelectionCells() || []) : [];
+        if (!cells.length || cells.some(function (cell) { return !isGardenBed(cell); })) return [];
+        const byId = new Map();
+        cells.forEach(function (cell) { byId.set(getCellId(cell), cell); });
+        return Array.from(byId.values());
+    }
 
-    function syncSelectedBedOverlays() { // NEW
-        ensureOverlayContainer(); // NEW
-        if (!graph.container) return; // NEW
-        if (isIrrigationModeActiveForBedOverlay()) { clearSelectedBedOverlays(); return; } // NEW
-        const beds = getSelectedGardenBedsForOverlay(); // NEW
-        const keep = new Set(); // NEW
-        beds.forEach(function (bed) { // NEW
-            const id = getCellId(bed); // NEW
-            if (!id) return; // NEW
-            keep.add(id); // NEW
-            let entry = selectedBedOverlays.get(id); // NEW
-            if (!entry) { // NEW
-                entry = { cell: bed, div: createSelectedBedOverlay() }; // NEW
-                graph.container.appendChild(entry.div); // NEW
-                selectedBedOverlays.set(id, entry); // NEW
-            } // NEW
-            entry.cell = bed; // NEW
-            renderSelectedBedOverlay(entry); // NEW
-            if (!positionSelectedBedOverlay(entry)) removeSelectedBedOverlay(id); // NEW
-        }); // NEW
-        Array.from(selectedBedOverlays.keys()).forEach(function (id) { // NEW
-            if (!keep.has(id)) removeSelectedBedOverlay(id); // NEW
-        }); // NEW
-    } // NEW
+    function syncSelectedBedOverlays() {
+        ensureOverlayContainer();
+        if (!graph.container) return;
+        if (isIrrigationModeActiveForBedOverlay()) { clearSelectedBedOverlays(); return; }
+        const beds = getSelectedGardenBedsForOverlay();
+        const keep = new Set();
+        beds.forEach(function (bed) {
+            const id = getCellId(bed);
+            if (!id) return;
+            keep.add(id);
+            let entry = selectedBedOverlays.get(id);
+            if (!entry) {
+                entry = { cell: bed, div: createSelectedBedOverlay() };
+                graph.container.appendChild(entry.div);
+                selectedBedOverlays.set(id, entry);
+            }
+            entry.cell = bed;
+            renderSelectedBedOverlay(entry);
+            if (!positionSelectedBedOverlay(entry)) removeSelectedBedOverlay(id);
+        });
+        Array.from(selectedBedOverlays.keys()).forEach(function (id) {
+            if (!keep.has(id)) removeSelectedBedOverlay(id);
+        });
+    }
 
-    function refreshSelectedBedOverlaysSoon() { // NEW
-        if (refreshSelectedBedOverlaysSoon.pending) return; // CHANGE
-        refreshSelectedBedOverlaysSoon.pending = true; // CHANGE
-        setTimeout(function () { refreshSelectedBedOverlaysSoon.pending = false; syncGeneratedBedLabels(); syncSelectedBedOverlays(); }, 0); // CHANGE
-    } // NEW
+    function refreshSelectedBedOverlaysSoon() {
+        if (refreshSelectedBedOverlaysSoon.pending) return;
+        refreshSelectedBedOverlaysSoon.pending = true;
+        setTimeout(function () { refreshSelectedBedOverlaysSoon.pending = false; syncGeneratedBedLabels(); syncSelectedBedOverlays(); }, 0);
+    }
 
-    const selectionModel = graph.getSelectionModel ? graph.getSelectionModel() : null; // NEW
-    model.addListener && model.addListener(mxEvent.CHANGE, refreshSelectedBedOverlaysSoon); // CHANGE
-    if (selectionModel && selectionModel.addListener) selectionModel.addListener(mxEvent.CHANGE, refreshSelectedBedOverlaysSoon); // NEW
-    if (graph.view && graph.view.addListener) { // NEW
-        graph.view.addListener(mxEvent.SCALE, refreshSelectedBedOverlaysSoon); // NEW
-        graph.view.addListener(mxEvent.TRANSLATE, refreshSelectedBedOverlaysSoon); // NEW
-        graph.view.addListener(mxEvent.SCALE_AND_TRANSLATE, refreshSelectedBedOverlaysSoon); // NEW
-    } // NEW
-    if (graph.container && graph.container.addEventListener) graph.container.addEventListener("scroll", refreshSelectedBedOverlaysSoon, { passive: true }); // NEW
-    if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("trellisIrrigationModeChanged", refreshSelectedBedOverlaysSoon); // NEW
-    graph.addListener && graph.addListener(mxEvent.DESTROY, clearSelectedBedOverlays); // NEW
+    const selectionModel = graph.getSelectionModel ? graph.getSelectionModel() : null;
+    model.addListener && model.addListener(mxEvent.CHANGE, refreshSelectedBedOverlaysSoon);
+    if (selectionModel && selectionModel.addListener) selectionModel.addListener(mxEvent.CHANGE, refreshSelectedBedOverlaysSoon);
+    if (graph.view && graph.view.addListener) {
+        graph.view.addListener(mxEvent.SCALE, refreshSelectedBedOverlaysSoon);
+        graph.view.addListener(mxEvent.TRANSLATE, refreshSelectedBedOverlaysSoon);
+        graph.view.addListener(mxEvent.SCALE_AND_TRANSLATE, refreshSelectedBedOverlaysSoon);
+    }
+    if (graph.container && graph.container.addEventListener) graph.container.addEventListener("scroll", refreshSelectedBedOverlaysSoon, { passive: true });
+    if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("trellisIrrigationModeChanged", refreshSelectedBedOverlaysSoon);
+    graph.addListener && graph.addListener(mxEvent.DESTROY, clearSelectedBedOverlays);
 
-    window.TrellisGardenBeds = { // CHANGE
-        getDisplayBedConditions: getDisplayBedConditions, // CHANGE
-        readBedConditions: readBedConditions, // NEW
-        writeBedConditions: writeBedConditions, // NEW
-        clearBedConditions: clearBedConditions, // NEW
-        listConditionOptionGroups: listConditionOptionGroups, // NEW
-        isGardenBed: isGardenBed, // NEW
-        isBedCompatibleWithCrop: isBedCompatibleWithCrop, // NEW
-        scoreBedSuitability: scoreBedSuitability, // NEW
-        seasonExtensionEffects: seasonExtensionEffects, // ADDED
-        _test: { // NEW
-            buildOverlayRows: buildOverlayRows, // NEW
-            normalizeProfile: normalizeProfile, // NEW
-            seasonExtensionEffects: seasonExtensionEffects, // ADDED
-            seasonExtensionDefaults: seasonExtensionDefaults, // ADDED
-            listConditionOptionGroups: listConditionOptionGroups, // NEW
-            parseProfileRecord: parseProfileRecord, // NEW
-            getDisplayBedConditions: getDisplayBedConditions, // CHANGE
-            getBedName: getBedName, // ADDED
-            writeBedName: writeBedName, // ADDED
-            buildGeneratedBedLabel: buildGeneratedBedLabel, // ADDED
-            heightCmToDisplayValue: heightCmToDisplayValue, // ADDED
-            displayHeightToCm: displayHeightToCm, // ADDED
-            estimateSelectedBedOverlayLayout: estimateSelectedBedOverlayLayout, // ADDED
-            showConditionEditorDialog: showConditionEditorDialog, // NEW
-            syncSelectedBedOverlays: syncSelectedBedOverlays, // NEW
-            syncGeneratedBedLabels: syncGeneratedBedLabels, // ADDED
-            collectSelectedBeds: collectSelectedBeds // NEW
-        } // NEW
-    }; // NEW
-    window.TrellisBedConditions = window.TrellisGardenBeds; // NEW
+    window.TrellisGardenBeds = {
+        getDisplayBedConditions: getDisplayBedConditions,
+        readBedConditions: readBedConditions,
+        writeBedConditions: writeBedConditions,
+        clearBedConditions: clearBedConditions,
+        listConditionOptionGroups: listConditionOptionGroups,
+        isGardenBed: isGardenBed,
+        isBedCompatibleWithCrop: isBedCompatibleWithCrop,
+        scoreBedSuitability: scoreBedSuitability,
+        seasonExtensionEffects: seasonExtensionEffects,
+        _test: {
+            buildOverlayRows: buildOverlayRows,
+            normalizeProfile: normalizeProfile,
+            seasonExtensionEffects: seasonExtensionEffects,
+            seasonExtensionDefaults: seasonExtensionDefaults,
+            listConditionOptionGroups: listConditionOptionGroups,
+            parseProfileRecord: parseProfileRecord,
+            getDisplayBedConditions: getDisplayBedConditions,
+            getBedName: getBedName,
+            writeBedName: writeBedName,
+            buildGeneratedBedLabel: buildGeneratedBedLabel,
+            heightCmToDisplayValue: heightCmToDisplayValue,
+            displayHeightToCm: displayHeightToCm,
+            estimateSelectedBedOverlayLayout: estimateSelectedBedOverlayLayout,
+            showConditionEditorDialog: showConditionEditorDialog,
+            syncSelectedBedOverlays: syncSelectedBedOverlays,
+            syncGeneratedBedLabels: syncGeneratedBedLabels,
+            collectSelectedBeds: collectSelectedBeds
+        }
+    };
+    window.TrellisBedConditions = window.TrellisGardenBeds;
 
-    refreshSelectedBedOverlaysSoon(); // NEW
-}); // NEW
+    refreshSelectedBedOverlaysSoon();
+});

@@ -29,19 +29,19 @@ Draw.loadPlugin(function (ui) {
   const ATTR_CREATED = 'createdAt';
   const ATTR_EDITED = 'lastEditedAt';
   const ATTR_ORIG_STYLE = 'origStyle';
-  const ATTR_HISTORY_ID = 'trellis_history_id';                              // NEW
-  const ATTR_CREATED_BY = 'createdByUserId';                                  // NEW
-  const ATTR_EDITED_BY = 'lastEditedByUserId';                                // NEW
-  const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // NEW
+  const ATTR_HISTORY_ID = 'trellis_history_id';
+  const ATTR_CREATED_BY = 'createdByUserId';
+  const ATTR_EDITED_BY = 'lastEditedByUserId';
+  const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 });
 
-  function applyChangeMapButtonStyle(button, variant, options) {              // NEW
-    if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === 'function') { // NEW
-      window.Trellis.ui.applyButtonStyle(button, variant, options);           // NEW
-    } else if (button) {                                                       // NEW
-      button.setAttribute('data-trellis-button-variant', variant || 'neutral'); // NEW
-    }                                                                         // NEW
-    return button;                                                            // NEW
-  }                                                                           // NEW
+  function applyChangeMapButtonStyle(button, variant, options) {
+    if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === 'function') {
+      window.Trellis.ui.applyButtonStyle(button, variant, options);
+    } else if (button) {
+      button.setAttribute('data-trellis-button-variant', variant || 'neutral');
+    }
+    return button;
+  }
 
   const MODE_NONE = 'none';
   const MODE_CHANGE = 'changemap';
@@ -86,18 +86,18 @@ Draw.loadPlugin(function (ui) {
   // List size for click-to-navigate
   const NAV_LIST_MAX = 200;
 
-  const HISTORY_DB_NAME = 'Trellis_history.sqlite';                          // NEW
-  const HISTORY_SETTLE_MS = 2500;                                             // NEW
-  const HISTORY_RETENTION_BYTES = 500 * 1024 * 1024;                          // NEW
-  const HISTORY_SCHEMA_VERSION = 1;                                           // NEW
-  const HISTORY_EVENT_BEFORE_RESTORE = 'trellisHistoryBeforeRestore';          // NEW
-  const HISTORY_EVENT_AFTER_RESTORE = 'trellisHistoryAfterRestore';            // NEW
-  const HISTORY_EVENT_COMPARE_CLEARED = 'trellisHistoryCompareCleared';        // NEW
-  const HISTORY_CATEGORIES = [                                                // NEW
-    'Diagram', 'Content', 'Planning', 'Garden scheduling', 'Assignments',      // NEW
-    'Tasks', 'Conditions', 'Irrigation', 'Resources', 'Data', 'History',       // NEW
-    'System'                                                                  // NEW
-  ];                                                                          // NEW
+  const HISTORY_DB_NAME = 'Trellis_history.sqlite';
+  const HISTORY_SETTLE_MS = 2500;
+  const HISTORY_RETENTION_BYTES = 500 * 1024 * 1024;
+  const HISTORY_SCHEMA_VERSION = 1;
+  const HISTORY_EVENT_BEFORE_RESTORE = 'trellisHistoryBeforeRestore';
+  const HISTORY_EVENT_AFTER_RESTORE = 'trellisHistoryAfterRestore';
+  const HISTORY_EVENT_COMPARE_CLEARED = 'trellisHistoryCompareCleared';
+  const HISTORY_CATEGORIES = [
+    'Diagram', 'Content', 'Planning', 'Garden scheduling', 'Assignments',
+    'Tasks', 'Conditions', 'Irrigation', 'Resources', 'Data', 'History',
+    'System'
+  ];
 
 
   // -------------------- Responsive apply scheduler --------------------  
@@ -128,17 +128,17 @@ Draw.loadPlugin(function (ui) {
   graph.__ccWindowUnit = 'days';    // minutes | hours | days
 
   graph.__ccSortOrder = 'newest'; // newest | oldest
-  graph.__ccUserFilter = 'all';                                               // NEW
+  graph.__ccUserFilter = 'all';
   graph.__ccFiltered = [];          // current filtered cells (for navigation)
   graph.__ccNavIndex = 0;
-  graph.__ccHistoryRevisions = [];                                           // NEW
-  graph.__ccHistorySelectedId = null;                                         // NEW
-  graph.__ccHistoryFilter = 'all';                                           // NEW
-  graph.__ccHistoryPreviewMode = false;                                      // NEW
-  graph.__ccHistoryCompareOverlays = [];                                     // NEW
-  graph.__ccHistoryRestoring = false;                                        // NEW
-  graph.__ccHistoryLastRestoreAudit = null;                                  // NEW
-  graph.__ccHistoryRestoreStatus = '';                                       // NEW
+  graph.__ccHistoryRevisions = [];
+  graph.__ccHistorySelectedId = null;
+  graph.__ccHistoryFilter = 'all';
+  graph.__ccHistoryPreviewMode = false;
+  graph.__ccHistoryCompareOverlays = [];
+  graph.__ccHistoryRestoring = false;
+  graph.__ccHistoryLastRestoreAudit = null;
+  graph.__ccHistoryRestoreStatus = '';
 
 
   // -------------------- Zoom-aware stroke width --------------------     
@@ -341,31 +341,31 @@ Draw.loadPlugin(function (ui) {
     return mode === MODE_CHANGE ? ATTR_EDITED : ATTR_CREATED;
   }
 
-  function actorKey(mode) {                                                    // NEW
-    return mode === MODE_CHANGE ? ATTR_EDITED_BY : ATTR_CREATED_BY;            // NEW
-  }                                                                            // NEW
+  function actorKey(mode) {
+    return mode === MODE_CHANGE ? ATTR_EDITED_BY : ATTR_CREATED_BY;
+  }
 
-  function usersApi() {                                                        // NEW
-    return typeof window !== 'undefined' && window.Trellis && window.Trellis.users; // NEW
-  }                                                                            // NEW
+  function usersApi() {
+    return typeof window !== 'undefined' && window.Trellis && window.Trellis.users;
+  }
 
-  function actorMetadata(metadata) {                                           // NEW
-    const users = usersApi();                                                   // NEW
-    if (users && typeof users.withActorMetadata === 'function') return users.withActorMetadata(metadata || {}); // NEW
-    return Object.assign({}, metadata || {});                                  // NEW
-  }                                                                            // NEW
+  function actorMetadata(metadata) {
+    const users = usersApi();
+    if (users && typeof users.withActorMetadata === 'function') return users.withActorMetadata(metadata || {});
+    return Object.assign({}, metadata || {});
+  }
 
-  function currentActorUserId() {                                              // NEW
-    const users = usersApi();                                                   // NEW
-    const user = users && typeof users.getCurrentUser === 'function' ? users.getCurrentUser() : null; // NEW
-    return user && user.id ? String(user.id) : '';                              // NEW
-  }                                                                            // NEW
+  function currentActorUserId() {
+    const users = usersApi();
+    const user = users && typeof users.getCurrentUser === 'function' ? users.getCurrentUser() : null;
+    return user && user.id ? String(user.id) : '';
+  }
 
-  function stampActor(cell, kind, edit) {                                      // CHANGE
-    const users = usersApi();                                                   // NEW
-    if (users && edit && typeof users.stampActorIntoEdit === 'function') users.stampActorIntoEdit(edit, cell, kind); // NEW
-    else if (users && typeof users.stampActorOnCell === 'function') users.stampActorOnCell(cell, kind); // CHANGE
-  }                                                                            // NEW
+  function stampActor(cell, kind, edit) {
+    const users = usersApi();
+    if (users && edit && typeof users.stampActorIntoEdit === 'function') users.stampActorIntoEdit(edit, cell, kind);
+    else if (users && typeof users.stampActorOnCell === 'function') users.stampActorOnCell(cell, kind);
+  }
 
   function isDirectEditChange(ch) {
     const n = ch && ch.constructor && ch.constructor.name;
@@ -377,633 +377,633 @@ Draw.loadPlugin(function (ui) {
       n === 'mxVisibleChange';
   }
 
-  // -------------------- History identity + serialization -------------------- // NEW
+  // -------------------- History identity + serialization --------------------
 
-  function makeHistoryId(prefix) {                                             // NEW
-    const rand = Math.random().toString(36).slice(2, 10);                      // NEW
-    return prefix + '_' + Date.now().toString(36) + '_' + rand;                // NEW
-  }                                                                            // NEW
+  function makeHistoryId(prefix) {
+    const rand = Math.random().toString(36).slice(2, 10);
+    return prefix + '_' + Date.now().toString(36) + '_' + rand;
+  }
 
-  function hashString(text) {                                                  // NEW
-    const s = String(text == null ? '' : text);                                // NEW
-    let h1 = 0x811c9dc5;                                                       // NEW
-    let h2 = 0x01000193;                                                       // NEW
-    for (let i = 0; i < s.length; i++) {                                       // NEW
-      const c = s.charCodeAt(i);                                               // NEW
-      h1 ^= c;                                                                 // NEW
-      h1 = Math.imul(h1, 0x01000193);                                          // NEW
-      h2 = Math.imul(h2 ^ c, 0x85ebca6b);                                      // NEW
-    }                                                                          // NEW
-    return ((h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0')); // NEW
-  }                                                                            // NEW
+  function hashString(text) {
+    const s = String(text == null ? '' : text);
+    let h1 = 0x811c9dc5;
+    let h2 = 0x01000193;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      h1 ^= c;
+      h1 = Math.imul(h1, 0x01000193);
+      h2 = Math.imul(h2 ^ c, 0x85ebca6b);
+    }
+    return ((h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0'));
+  }
 
-  function uniqueArray(values) {                                               // NEW
-    const out = [];                                                            // NEW
-    const seen = new Set();                                                    // NEW
-    for (let i = 0; i < (values || []).length; i++) {                          // NEW
-      const v = values[i];                                                     // NEW
-      if (v == null || v === '' || seen.has(v)) continue;                      // NEW
-      seen.add(v);                                                             // NEW
-      out.push(v);                                                             // NEW
-    }                                                                          // NEW
-    return out;                                                                // NEW
-  }                                                                            // NEW
+  function uniqueArray(values) {
+    const out = [];
+    const seen = new Set();
+    for (let i = 0; i < (values || []).length; i++) {
+      const v = values[i];
+      if (v == null || v === '' || seen.has(v)) continue;
+      seen.add(v);
+      out.push(v);
+    }
+    return out;
+  }
 
-  function finiteNumberOrNull(value) {                                         // NEW
-    const n = Number(value);                                                    // NEW
-    return Number.isFinite(n) ? n : null;                                       // NEW
-  }                                                                            // NEW
+  function finiteNumberOrNull(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
 
-  function normalizeBounds(bounds) {                                           // NEW
-    if (!bounds) return null;                                                   // NEW
-    const x = finiteNumberOrNull(bounds.x);                                     // NEW
-    const y = finiteNumberOrNull(bounds.y);                                     // NEW
-    const width = finiteNumberOrNull(bounds.width != null ? bounds.width : bounds.w); // NEW
-    const height = finiteNumberOrNull(bounds.height != null ? bounds.height : bounds.h); // NEW
-    if (x == null || y == null || width == null || height == null) return null; // NEW
-    return { x, y, width: Math.max(1, width), height: Math.max(1, height) };    // NEW
-  }                                                                            // NEW
+  function normalizeBounds(bounds) {
+    if (!bounds) return null;
+    const x = finiteNumberOrNull(bounds.x);
+    const y = finiteNumberOrNull(bounds.y);
+    const width = finiteNumberOrNull(bounds.width != null ? bounds.width : bounds.w);
+    const height = finiteNumberOrNull(bounds.height != null ? bounds.height : bounds.h);
+    if (x == null || y == null || width == null || height == null) return null;
+    return { x, y, width: Math.max(1, width), height: Math.max(1, height) };
+  }
 
-  function unionBounds(a, b) {                                                  // NEW
-    const left = normalizeBounds(a);                                            // NEW
-    const right = normalizeBounds(b);                                           // NEW
-    if (!left) return right;                                                    // NEW
-    if (!right) return left;                                                    // NEW
-    const x1 = Math.min(left.x, right.x);                                       // NEW
-    const y1 = Math.min(left.y, right.y);                                       // NEW
-    const x2 = Math.max(left.x + left.width, right.x + right.width);            // NEW
-    const y2 = Math.max(left.y + left.height, right.y + right.height);          // NEW
-    return { x: x1, y: y1, width: Math.max(1, x2 - x1), height: Math.max(1, y2 - y1) }; // NEW
-  }                                                                            // NEW
+  function unionBounds(a, b) {
+    const left = normalizeBounds(a);
+    const right = normalizeBounds(b);
+    if (!left) return right;
+    if (!right) return left;
+    const x1 = Math.min(left.x, right.x);
+    const y1 = Math.min(left.y, right.y);
+    const x2 = Math.max(left.x + left.width, right.x + right.width);
+    const y2 = Math.max(left.y + left.height, right.y + right.height);
+    return { x: x1, y: y1, width: Math.max(1, x2 - x1), height: Math.max(1, y2 - y1) };
+  }
 
-  function centerOfBounds(bounds) {                                             // NEW
-    const b = normalizeBounds(bounds);                                          // NEW
-    return b ? { x: b.x + b.width / 2, y: b.y + b.height / 2 } : null;          // NEW
-  }                                                                            // NEW
+  function centerOfBounds(bounds) {
+    const b = normalizeBounds(bounds);
+    return b ? { x: b.x + b.width / 2, y: b.y + b.height / 2 } : null;
+  }
 
-  function normalizeCenter(center) {                                            // NEW
-    if (!center) return null;                                                   // NEW
-    const x = finiteNumberOrNull(center.x);                                     // NEW
-    const y = finiteNumberOrNull(center.y);                                     // NEW
-    return x == null || y == null ? null : { x, y };                            // NEW
-  }                                                                            // NEW
+  function normalizeCenter(center) {
+    if (!center) return null;
+    const x = finiteNumberOrNull(center.x);
+    const y = finiteNumberOrNull(center.y);
+    return x == null || y == null ? null : { x, y };
+  }
 
-  function normalizeViewport(viewport) {                                        // NEW
-    if (!viewport) return null;                                                 // NEW
-    const x = finiteNumberOrNull(viewport.x);                                   // NEW
-    const y = finiteNumberOrNull(viewport.y);                                   // NEW
-    const scale = finiteNumberOrNull(viewport.scale);                           // NEW
-    if (x == null || y == null) return null;                                    // NEW
-    return scale == null ? { x, y } : { x, y, scale };                          // NEW
-  }                                                                            // NEW
+  function normalizeViewport(viewport) {
+    if (!viewport) return null;
+    const x = finiteNumberOrNull(viewport.x);
+    const y = finiteNumberOrNull(viewport.y);
+    const scale = finiteNumberOrNull(viewport.scale);
+    if (x == null || y == null) return null;
+    return scale == null ? { x, y } : { x, y, scale };
+  }
 
-  function captureViewportContext() {                                          // NEW
-    const view = graph.view || {};                                              // NEW
-    const scale = finiteNumberOrNull(view.scale) || 1;                          // NEW
-    const tr = view.translate || { x: 0, y: 0 };                                // NEW
-    const container = graph.container || {};                                    // NEW
-    const scrollLeft = finiteNumberOrNull(container.scrollLeft) || 0;           // NEW
-    const scrollTop = finiteNumberOrNull(container.scrollTop) || 0;             // NEW
-    return { x: scrollLeft / scale - (Number(tr.x) || 0), y: scrollTop / scale - (Number(tr.y) || 0), scale }; // NEW
-  }                                                                            // NEW
+  function captureViewportContext() {
+    const view = graph.view || {};
+    const scale = finiteNumberOrNull(view.scale) || 1;
+    const tr = view.translate || { x: 0, y: 0 };
+    const container = graph.container || {};
+    const scrollLeft = finiteNumberOrNull(container.scrollLeft) || 0;
+    const scrollTop = finiteNumberOrNull(container.scrollTop) || 0;
+    return { x: scrollLeft / scale - (Number(tr.x) || 0), y: scrollTop / scale - (Number(tr.y) || 0), scale };
+  }
 
-  function cellModelBounds(cell) {                                              // NEW
-    if (!cell || cell === model.getRoot()) return null;                         // NEW
-    const geo = cell.getGeometry ? cell.getGeometry() : cell.geometry;          // NEW
-    if (!geo) return null;                                                      // NEW
-    let x = finiteNumberOrNull(geo.x);                                          // NEW
-    let y = finiteNumberOrNull(geo.y);                                          // NEW
-    const width = finiteNumberOrNull(geo.width);                                // NEW
-    const height = finiteNumberOrNull(geo.height);                              // NEW
-    if (x == null || y == null || width == null || height == null) return null; // NEW
-    let parent = model.getParent && model.getParent(cell);                      // NEW
-    while (parent && parent !== model.getRoot()) {                              // NEW
-      const pGeo = parent.getGeometry ? parent.getGeometry() : parent.geometry; // NEW
-      if (pGeo) {                                                               // NEW
-        x += finiteNumberOrNull(pGeo.x) || 0;                                   // NEW
-        y += finiteNumberOrNull(pGeo.y) || 0;                                   // NEW
-      }                                                                        // NEW
-      parent = model.getParent && model.getParent(parent);                      // NEW
-    }                                                                          // NEW
-    return normalizeBounds({ x, y, width, height });                            // NEW
-  }                                                                            // NEW
+  function cellModelBounds(cell) {
+    if (!cell || cell === model.getRoot()) return null;
+    const geo = cell.getGeometry ? cell.getGeometry() : cell.geometry;
+    if (!geo) return null;
+    let x = finiteNumberOrNull(geo.x);
+    let y = finiteNumberOrNull(geo.y);
+    const width = finiteNumberOrNull(geo.width);
+    const height = finiteNumberOrNull(geo.height);
+    if (x == null || y == null || width == null || height == null) return null;
+    let parent = model.getParent && model.getParent(cell);
+    while (parent && parent !== model.getRoot()) {
+      const pGeo = parent.getGeometry ? parent.getGeometry() : parent.geometry;
+      if (pGeo) {
+        x += finiteNumberOrNull(pGeo.x) || 0;
+        y += finiteNumberOrNull(pGeo.y) || 0;
+      }
+      parent = model.getParent && model.getParent(parent);
+    }
+    return normalizeBounds({ x, y, width, height });
+  }
 
-  function boundsForCells(cells) {                                              // NEW
-    let out = null;                                                             // NEW
-    for (let i = 0; i < (cells || []).length; i++) out = unionBounds(out, cellModelBounds(cells[i])); // NEW
-    return out;                                                                // NEW
-  }                                                                            // NEW
+  function boundsForCells(cells) {
+    let out = null;
+    for (let i = 0; i < (cells || []).length; i++) out = unionBounds(out, cellModelBounds(cells[i]));
+    return out;
+  }
 
-  function boundsForCellIds(ids) {                                              // NEW
-    const cells = [];                                                           // NEW
-    for (let i = 0; i < (ids || []).length; i++) {                              // NEW
-      const cell = model.getCell && model.getCell(ids[i]);                      // NEW
-      if (cell) cells.push(cell);                                               // NEW
-    }                                                                          // NEW
-    return boundsForCells(cells);                                               // NEW
-  }                                                                            // NEW
+  function boundsForCellIds(ids) {
+    const cells = [];
+    for (let i = 0; i < (ids || []).length; i++) {
+      const cell = model.getCell && model.getCell(ids[i]);
+      if (cell) cells.push(cell);
+    }
+    return boundsForCells(cells);
+  }
 
-  function activeDiagramModelBounds() {                                         // NEW
-    let out = null;                                                             // NEW
-    iterAllCells(function (cell) { out = unionBounds(out, cellModelBounds(cell)); }); // NEW
-    return out;                                                                // NEW
-  }                                                                            // NEW
+  function activeDiagramModelBounds() {
+    let out = null;
+    iterAllCells(function (cell) { out = unionBounds(out, cellModelBounds(cell)); });
+    return out;
+  }
 
-  function fireHistoryLifecycleEvent(name, detail) {                           // NEW
-    const payload = Object.assign({ graph, history: window.Trellis && window.Trellis.history }, detail || {}); // NEW
-    try {                                                                      // NEW
-      if (typeof mxEventObject !== 'undefined' && graph.fireEvent) graph.fireEvent(new mxEventObject(name, 'detail', payload)); // NEW
-    } catch (e) { }                                                            // NEW
-    try {                                                                      // NEW
-      if (window && typeof window.dispatchEvent === 'function' && typeof window.CustomEvent === 'function') window.dispatchEvent(new window.CustomEvent(name, { detail: payload })); // NEW
-    } catch (e) { }                                                            // NEW
-  }                                                                            // NEW
+  function fireHistoryLifecycleEvent(name, detail) {
+    const payload = Object.assign({ graph, history: window.Trellis && window.Trellis.history }, detail || {});
+    try {
+      if (typeof mxEventObject !== 'undefined' && graph.fireEvent) graph.fireEvent(new mxEventObject(name, 'detail', payload));
+    } catch (e) { }
+    try {
+      if (window && typeof window.dispatchEvent === 'function' && typeof window.CustomEvent === 'function') window.dispatchEvent(new window.CustomEvent(name, { detail: payload }));
+    } catch (e) { }
+  }
 
-  function cloneRestoreAudit(audit) {                                          // NEW
-    if (!audit) return null;                                                    // NEW
-    return safeParseJson(JSON.stringify(audit), null);                          // NEW
-  }                                                                            // NEW
+  function cloneRestoreAudit(audit) {
+    if (!audit) return null;
+    return safeParseJson(JSON.stringify(audit), null);
+  }
 
-  function createRestoreAudit(rev, beforeHash) {                               // NEW
-    const now = nowMs();                                                        // NEW
-    return {                                                                    // NEW
-      restoreId: makeHistoryId('restore'),                                      // NEW
-      sourceRevisionId: rev && rev.id || null,                                  // NEW
-      beforeHash: beforeHash || null,                                           // NEW
-      loadedHash: null,                                                         // NEW
-      afterRehydrateHash: null,                                                 // NEW
-      startedAt: now,                                                           // NEW
-      loadedAt: null,                                                           // NEW
-      rehydratedAt: null,                                                       // NEW
-      completedAt: null,                                                        // NEW
-      warnings: []                                                              // NEW
-    };                                                                          // NEW
-  }                                                                            // NEW
+  function createRestoreAudit(rev, beforeHash) {
+    const now = nowMs();
+    return {
+      restoreId: makeHistoryId('restore'),
+      sourceRevisionId: rev && rev.id || null,
+      beforeHash: beforeHash || null,
+      loadedHash: null,
+      afterRehydrateHash: null,
+      startedAt: now,
+      loadedAt: null,
+      rehydratedAt: null,
+      completedAt: null,
+      warnings: []
+    };
+  }
 
-  function addRestoreAuditWarning(audit, code, message) {                       // NEW
-    if (!audit) return;                                                         // NEW
-    audit.warnings = audit.warnings || [];                                      // NEW
-    audit.warnings.push({ code: String(code || 'restoreWarning'), message: String(message || 'Restore warning') }); // NEW
-  }                                                                            // NEW
+  function addRestoreAuditWarning(audit, code, message) {
+    if (!audit) return;
+    audit.warnings = audit.warnings || [];
+    audit.warnings.push({ code: String(code || 'restoreWarning'), message: String(message || 'Restore warning') });
+  }
 
-  function waitForHistoryRehydrateTick() {                                      // NEW
-    if (typeof setTimeout !== 'function') return Promise.resolve();             // NEW
-    return new Promise(function (resolve) { setTimeout(resolve, 0); });          // NEW
-  }                                                                            // NEW
+  function waitForHistoryRehydrateTick() {
+    if (typeof setTimeout !== 'function') return Promise.resolve();
+    return new Promise(function (resolve) { setTimeout(resolve, 0); });
+  }
 
-  function getHistoryIdentityCell() {                                          // NEW
-    const defaultParent = graph.getDefaultParent && graph.getDefaultParent();  // NEW
-    return defaultParent || model.getRoot();                                   // NEW
-  }                                                                            // NEW
+  function getHistoryIdentityCell() {
+    const defaultParent = graph.getDefaultParent && graph.getDefaultParent();
+    return defaultParent || model.getRoot();
+  }
 
-  function getDiagramHistoryId() {                                             // NEW
-    const cell = getHistoryIdentityCell();                                     // NEW
-    let id = cell && cell !== model.getRoot() ? getAttrStr(cell, ATTR_HISTORY_ID) : null; // NEW
-    if (!id && graph.__ccDiagramHistoryId) id = graph.__ccDiagramHistoryId;    // NEW
-    if (!id) id = makeHistoryId('diagram');                                    // NEW
-    graph.__ccDiagramHistoryId = id;                                           // NEW
-    if (cell && cell !== model.getRoot() && getAttrStr(cell, ATTR_HISTORY_ID) == null) { // NEW
-      try { ensureXmlValue(cell); cell.setAttribute(ATTR_HISTORY_ID, id); } catch (e) { } // NEW
-    }                                                                          // NEW
-    return id;                                                                 // NEW
-  }                                                                            // NEW
+  function getDiagramHistoryId() {
+    const cell = getHistoryIdentityCell();
+    let id = cell && cell !== model.getRoot() ? getAttrStr(cell, ATTR_HISTORY_ID) : null;
+    if (!id && graph.__ccDiagramHistoryId) id = graph.__ccDiagramHistoryId;
+    if (!id) id = makeHistoryId('diagram');
+    graph.__ccDiagramHistoryId = id;
+    if (cell && cell !== model.getRoot() && getAttrStr(cell, ATTR_HISTORY_ID) == null) {
+      try { ensureXmlValue(cell); cell.setAttribute(ATTR_HISTORY_ID, id); } catch (e) { }
+    }
+    return id;
+  }
 
-  function serializeActivePageXml() {                                          // NEW
-    if (typeof graph.__trellisHistoryTestSerialize === 'function') {           // NEW
-      return String(graph.__trellisHistoryTestSerialize());                    // NEW
-    }                                                                          // NEW
-    if (typeof mxCodec !== 'undefined' && typeof mxUtils !== 'undefined' && mxUtils.getXml) { // NEW
-      const enc = new mxCodec();                                               // NEW
-      return mxUtils.getXml(enc.encode(model));                                // NEW
-    }                                                                          // NEW
-    throw new Error('Diagram XML serialization is unavailable.');              // NEW
-  }                                                                            // NEW
+  function serializeActivePageXml() {
+    if (typeof graph.__trellisHistoryTestSerialize === 'function') {
+      return String(graph.__trellisHistoryTestSerialize());
+    }
+    if (typeof mxCodec !== 'undefined' && typeof mxUtils !== 'undefined' && mxUtils.getXml) {
+      const enc = new mxCodec();
+      return mxUtils.getXml(enc.encode(model));
+    }
+    throw new Error('Diagram XML serialization is unavailable.');
+  }
 
-  function compressSnapshotXml(xml) {                                          // NEW
-    if (typeof Graph !== 'undefined' && Graph && typeof Graph.compress === 'function') { // NEW
-      try { return { compressed: Graph.compress(xml), compressedKind: 'graph-compress' }; } catch (e) { } // NEW
-    }                                                                          // NEW
-    return { compressed: xml, compressedKind: 'plain' };                       // NEW
-  }                                                                            // NEW
+  function compressSnapshotXml(xml) {
+    if (typeof Graph !== 'undefined' && Graph && typeof Graph.compress === 'function') {
+      try { return { compressed: Graph.compress(xml), compressedKind: 'graph-compress' }; } catch (e) { }
+    }
+    return { compressed: xml, compressedKind: 'plain' };
+  }
 
-  function decompressSnapshotXml(snapshot) {                                   // NEW
-    const raw = snapshot && (snapshot.compressed_xml || snapshot.xml || snapshot.compressedXml); // NEW
-    if (snapshot && snapshot.compressed_kind === 'graph-compress' && typeof Graph !== 'undefined' && Graph && typeof Graph.decompress === 'function') { // NEW
-      try { return Graph.decompress(raw); } catch (e) { return null; }          // NEW
-    }                                                                          // NEW
-    return raw;                                                                // NEW
-  }                                                                            // NEW
+  function decompressSnapshotXml(snapshot) {
+    const raw = snapshot && (snapshot.compressed_xml || snapshot.xml || snapshot.compressedXml);
+    if (snapshot && snapshot.compressed_kind === 'graph-compress' && typeof Graph !== 'undefined' && Graph && typeof Graph.decompress === 'function') {
+      try { return Graph.decompress(raw); } catch (e) { return null; }
+    }
+    return raw;
+  }
 
-  function restoreActivePageXml(xml) {                                         // NEW
-    if (typeof graph.__trellisHistoryTestRestore === 'function') {             // NEW
-      graph.__trellisHistoryTestRestore(xml);                                  // NEW
-      return;                                                                  // NEW
-    }                                                                          // NEW
-    const doc = mxUtils.parseXml(xml);                                         // NEW
-    const node = doc.documentElement;                                          // NEW
-    if (ui.editor && typeof ui.editor.setGraphXml === 'function') {            // NEW
-      ui.editor.setGraphXml(node);                                             // NEW
-      return;                                                                  // NEW
-    }                                                                          // NEW
-    if (typeof mxCodec !== 'undefined' && typeof mxGraphModel !== 'undefined') { // NEW
-      const nextModel = new mxGraphModel();                                    // NEW
-      new mxCodec(node.ownerDocument).decode(node, nextModel);                 // NEW
-      if (typeof model.setRoot === 'function') model.setRoot(nextModel.getRoot()); // NEW
-    }                                                                          // NEW
-  }                                                                            // NEW
+  function restoreActivePageXml(xml) {
+    if (typeof graph.__trellisHistoryTestRestore === 'function') {
+      graph.__trellisHistoryTestRestore(xml);
+      return;
+    }
+    const doc = mxUtils.parseXml(xml);
+    const node = doc.documentElement;
+    if (ui.editor && typeof ui.editor.setGraphXml === 'function') {
+      ui.editor.setGraphXml(node);
+      return;
+    }
+    if (typeof mxCodec !== 'undefined' && typeof mxGraphModel !== 'undefined') {
+      const nextModel = new mxGraphModel();
+      new mxCodec(node.ownerDocument).decode(node, nextModel);
+      if (typeof model.setRoot === 'function') model.setRoot(nextModel.getRoot());
+    }
+  }
 
-  function boundsFromXmlCellMap(map, ids) {                                    // NEW
-    let out = null;                                                             // NEW
-    const idList = Array.isArray(ids) ? ids : null;                             // NEW
-    if (idList) {                                                               // NEW
-      for (let i = 0; i < idList.length; i++) {                                 // NEW
-        const entry = map && map.get && map.get(idList[i]);                     // NEW
-        out = unionBounds(out, entry && entry.bounds);                          // NEW
-      }                                                                        // NEW
-      return out;                                                              // NEW
-    }                                                                          // NEW
-    if (map && typeof map.forEach === 'function') {                             // NEW
-      map.forEach(function (entry, id) {                                        // NEW
-        if (id === '0' || id === '1') return;                                   // NEW
-        out = unionBounds(out, entry && entry.bounds);                          // NEW
-      });                                                                      // NEW
-    }                                                                          // NEW
-    return out;                                                                // NEW
-  }                                                                            // NEW
+  function boundsFromXmlCellMap(map, ids) {
+    let out = null;
+    const idList = Array.isArray(ids) ? ids : null;
+    if (idList) {
+      for (let i = 0; i < idList.length; i++) {
+        const entry = map && map.get && map.get(idList[i]);
+        out = unionBounds(out, entry && entry.bounds);
+      }
+      return out;
+    }
+    if (map && typeof map.forEach === 'function') {
+      map.forEach(function (entry, id) {
+        if (id === '0' || id === '1') return;
+        out = unionBounds(out, entry && entry.bounds);
+      });
+    }
+    return out;
+  }
 
-  function boundsFromSnapshotDiff(previousXml, currentXml) {                   // NEW
-    if (!previousXml || !currentXml) return null;                               // NEW
-    const diff = diffSnapshotWithCurrent(previousXml, currentXml);              // NEW
-    const current = parseXmlCellMap(currentXml);                                // NEW
-    let out = null;                                                             // NEW
-    for (let i = 0; i < diff.added.length; i++) out = unionBounds(out, current.get(diff.added[i]) && current.get(diff.added[i]).bounds); // NEW
-    for (let i = 0; i < diff.changed.length; i++) out = unionBounds(out, current.get(diff.changed[i]) && current.get(diff.changed[i]).bounds); // NEW
-    for (let i = 0; i < diff.deleted.length; i++) out = unionBounds(out, diff.deleted[i] && diff.deleted[i].bounds); // NEW
-    return out;                                                                // NEW
-  }                                                                            // NEW
+  function boundsFromSnapshotDiff(previousXml, currentXml) {
+    if (!previousXml || !currentXml) return null;
+    const diff = diffSnapshotWithCurrent(previousXml, currentXml);
+    const current = parseXmlCellMap(currentXml);
+    let out = null;
+    for (let i = 0; i < diff.added.length; i++) out = unionBounds(out, current.get(diff.added[i]) && current.get(diff.added[i]).bounds);
+    for (let i = 0; i < diff.changed.length; i++) out = unionBounds(out, current.get(diff.changed[i]) && current.get(diff.changed[i]).bounds);
+    for (let i = 0; i < diff.deleted.length; i++) out = unionBounds(out, diff.deleted[i] && diff.deleted[i].bounds);
+    return out;
+  }
 
-  function computeHistoryViewTarget(meta, currentXml, previousXml) {           // NEW
-    const affectedIds = uniqueArray(meta && meta.affectedCellIds || []);        // NEW
-    let bounds = normalizeBounds(meta && meta.bounds);                          // NEW
-    if (!bounds) bounds = boundsForCellIds(affectedIds);                        // NEW
-    if (!bounds && previousXml && affectedIds.length) bounds = boundsFromXmlCellMap(parseXmlCellMap(previousXml), affectedIds); // NEW
-    if (!bounds) bounds = boundsFromSnapshotDiff(previousXml, currentXml);      // NEW
-    if (!bounds) bounds = activeDiagramModelBounds();                           // NEW
-    if (!bounds) bounds = boundsFromXmlCellMap(parseXmlCellMap(currentXml));    // NEW
-    bounds = normalizeBounds(bounds);                                           // NEW
-    const center = normalizeCenter(meta && meta.center) || centerOfBounds(bounds); // NEW
-    const viewport = normalizeViewport(meta && meta.viewport) || captureViewportContext(); // NEW
-    return { bounds, center, viewport };                                        // NEW
-  }                                                                            // NEW
+  function computeHistoryViewTarget(meta, currentXml, previousXml) {
+    const affectedIds = uniqueArray(meta && meta.affectedCellIds || []);
+    let bounds = normalizeBounds(meta && meta.bounds);
+    if (!bounds) bounds = boundsForCellIds(affectedIds);
+    if (!bounds && previousXml && affectedIds.length) bounds = boundsFromXmlCellMap(parseXmlCellMap(previousXml), affectedIds);
+    if (!bounds) bounds = boundsFromSnapshotDiff(previousXml, currentXml);
+    if (!bounds) bounds = activeDiagramModelBounds();
+    if (!bounds) bounds = boundsFromXmlCellMap(parseXmlCellMap(currentXml));
+    bounds = normalizeBounds(bounds);
+    const center = normalizeCenter(meta && meta.center) || centerOfBounds(bounds);
+    const viewport = normalizeViewport(meta && meta.viewport) || captureViewportContext();
+    return { bounds, center, viewport };
+  }
 
-  function extractAffectedCellIds(edit) {                                      // NEW
-    const ids = [];                                                            // NEW
-    const changes = (edit && edit.changes) || [];                              // NEW
-    for (let i = 0; i < changes.length; i++) {                                 // NEW
-      const ch = changes[i];                                                   // NEW
-      const cell = ch && (ch.cell || ch.child || ch.previous || ch.terminal || null); // NEW
-      if (cell && cell.id) ids.push(cell.id);                                  // NEW
-    }                                                                          // NEW
-    return uniqueArray(ids);                                                   // NEW
-  }                                                                            // NEW
+  function extractAffectedCellIds(edit) {
+    const ids = [];
+    const changes = (edit && edit.changes) || [];
+    for (let i = 0; i < changes.length; i++) {
+      const ch = changes[i];
+      const cell = ch && (ch.cell || ch.child || ch.previous || ch.terminal || null);
+      if (cell && cell.id) ids.push(cell.id);
+    }
+    return uniqueArray(ids);
+  }
 
-  function extractChangeTypes(edit) {                                          // NEW
-    const out = [];                                                            // NEW
-    const changes = (edit && edit.changes) || [];                              // NEW
-    for (let i = 0; i < changes.length; i++) {                                 // NEW
-      const ch = changes[i];                                                   // NEW
-      const name = ch && ch.constructor && ch.constructor.name;                // NEW
-      if (name) out.push(name);                                                // NEW
-    }                                                                          // NEW
-    return uniqueArray(out);                                                   // NEW
-  }                                                                            // NEW
+  function extractChangeTypes(edit) {
+    const out = [];
+    const changes = (edit && edit.changes) || [];
+    for (let i = 0; i < changes.length; i++) {
+      const ch = changes[i];
+      const name = ch && ch.constructor && ch.constructor.name;
+      if (name) out.push(name);
+    }
+    return uniqueArray(out);
+  }
 
-  // -------------------- HistoryStore -------------------- // NEW
+  // -------------------- HistoryStore --------------------
 
-  function createHistoryStore() {                                              // NEW
-    const bridge = (typeof window !== 'undefined') ? window.dbBridge : null;   // NEW
-    const store = { ready: false, disabled: false, warning: '', dbId: null };  // NEW
+  function createHistoryStore() {
+    const bridge = (typeof window !== 'undefined') ? window.dbBridge : null;
+    const store = { ready: false, disabled: false, warning: '', dbId: null };
 
-    async function exec(sql, params) {                                         // NEW
-      return bridge.exec(store.dbId, sql, params || []);                      // NEW
-    }                                                                          // NEW
+    async function exec(sql, params) {
+      return bridge.exec(store.dbId, sql, params || []);
+    }
 
-    async function query(sql, params) {                                        // NEW
-      const res = await bridge.query(store.dbId, sql, params || []);           // NEW
-      return (res && res.rows) || [];                                          // NEW
-    }                                                                          // NEW
+    async function query(sql, params) {
+      const res = await bridge.query(store.dbId, sql, params || []);
+      return (res && res.rows) || [];
+    }
 
-    async function init() {                                                    // NEW
-      if (!bridge || typeof bridge.resolvePath !== 'function' || typeof bridge.open !== 'function') { // NEW
-        store.disabled = true;                                                 // NEW
-        store.warning = 'History storage is unavailable in this environment.'; // NEW
-        return store;                                                          // NEW
-      }                                                                        // NEW
-      try {                                                                    // NEW
-        const resolved = await bridge.resolvePath({ dbName: HISTORY_DB_NAME, seedRelPath: null, createIfMissing: true }); // NEW
-        const opened = await bridge.open(resolved.dbPath, { readOnly: false, fileMustExist: false, pragma: { journal_mode: 'WAL', synchronous: 'NORMAL' } }); // NEW
-        store.dbId = opened.dbId;                                              // NEW
-        await exec('CREATE TABLE IF NOT EXISTS history_snapshots (snapshot_id TEXT PRIMARY KEY, diagram_id TEXT NOT NULL, hash TEXT NOT NULL, compressed_kind TEXT NOT NULL, compressed_xml TEXT NOT NULL, byte_size INTEGER NOT NULL, checksum TEXT NOT NULL, created_at INTEGER NOT NULL, snapshot_kind TEXT NOT NULL DEFAULT "full")'); // NEW
-        await exec('CREATE TABLE IF NOT EXISTS history_events (id TEXT PRIMARY KEY, diagram_id TEXT NOT NULL, timestamp INTEGER NOT NULL, category TEXT NOT NULL, action TEXT NOT NULL, origin TEXT NOT NULL, title TEXT NOT NULL, affected_cell_ids TEXT NOT NULL, change_types TEXT NOT NULL, counts_json TEXT NOT NULL, snapshot_id TEXT NOT NULL, parent_revision_id TEXT, restored_from_revision_id TEXT, tags_json TEXT NOT NULL, metadata_json TEXT NOT NULL, checkpoint INTEGER NOT NULL DEFAULT 0, diagram_hash TEXT NOT NULL, schema_version INTEGER NOT NULL)'); // NEW
-        await exec('CREATE INDEX IF NOT EXISTS idx_history_events_diagram_time ON history_events(diagram_id, timestamp)'); // NEW
-        await exec('CREATE INDEX IF NOT EXISTS idx_history_snapshots_diagram_hash ON history_snapshots(diagram_id, hash)'); // NEW
-        store.ready = true;                                                    // NEW
-      } catch (e) {                                                            // NEW
-        store.disabled = true;                                                 // NEW
-        store.warning = 'History storage failed: ' + (e && e.message ? e.message : String(e)); // NEW
-      }                                                                        // NEW
-      return store;                                                            // NEW
-    }                                                                          // NEW
+    async function init() {
+      if (!bridge || typeof bridge.resolvePath !== 'function' || typeof bridge.open !== 'function') {
+        store.disabled = true;
+        store.warning = 'History storage is unavailable in this environment.';
+        return store;
+      }
+      try {
+        const resolved = await bridge.resolvePath({ dbName: HISTORY_DB_NAME, seedRelPath: null, createIfMissing: true });
+        const opened = await bridge.open(resolved.dbPath, { readOnly: false, fileMustExist: false, pragma: { journal_mode: 'WAL', synchronous: 'NORMAL' } });
+        store.dbId = opened.dbId;
+        await exec('CREATE TABLE IF NOT EXISTS history_snapshots (snapshot_id TEXT PRIMARY KEY, diagram_id TEXT NOT NULL, hash TEXT NOT NULL, compressed_kind TEXT NOT NULL, compressed_xml TEXT NOT NULL, byte_size INTEGER NOT NULL, checksum TEXT NOT NULL, created_at INTEGER NOT NULL, snapshot_kind TEXT NOT NULL DEFAULT "full")');
+        await exec('CREATE TABLE IF NOT EXISTS history_events (id TEXT PRIMARY KEY, diagram_id TEXT NOT NULL, timestamp INTEGER NOT NULL, category TEXT NOT NULL, action TEXT NOT NULL, origin TEXT NOT NULL, title TEXT NOT NULL, affected_cell_ids TEXT NOT NULL, change_types TEXT NOT NULL, counts_json TEXT NOT NULL, snapshot_id TEXT NOT NULL, parent_revision_id TEXT, restored_from_revision_id TEXT, tags_json TEXT NOT NULL, metadata_json TEXT NOT NULL, checkpoint INTEGER NOT NULL DEFAULT 0, diagram_hash TEXT NOT NULL, schema_version INTEGER NOT NULL)');
+        await exec('CREATE INDEX IF NOT EXISTS idx_history_events_diagram_time ON history_events(diagram_id, timestamp)');
+        await exec('CREATE INDEX IF NOT EXISTS idx_history_snapshots_diagram_hash ON history_snapshots(diagram_id, hash)');
+        store.ready = true;
+      } catch (e) {
+        store.disabled = true;
+        store.warning = 'History storage failed: ' + (e && e.message ? e.message : String(e));
+      }
+      return store;
+    }
 
-    async function getLatestRevision(diagramId) {                              // NEW
-      if (!store.ready) return null;                                           // NEW
-      const rows = await query('SELECT * FROM history_events WHERE diagram_id = ? ORDER BY timestamp DESC LIMIT 1', [diagramId]); // NEW
-      return rows[0] || null;                                                  // NEW
-    }                                                                          // NEW
+    async function getLatestRevision(diagramId) {
+      if (!store.ready) return null;
+      const rows = await query('SELECT * FROM history_events WHERE diagram_id = ? ORDER BY timestamp DESC LIMIT 1', [diagramId]);
+      return rows[0] || null;
+    }
 
-    async function listRevisions(diagramId) {                                  // NEW
-      if (!store.ready) return [];                                             // NEW
-      const rows = await query('SELECT * FROM history_events WHERE diagram_id = ? ORDER BY timestamp ASC', [diagramId]); // NEW
-      return rows.map(rowToRevision);                                          // NEW
-    }                                                                          // NEW
+    async function listRevisions(diagramId) {
+      if (!store.ready) return [];
+      const rows = await query('SELECT * FROM history_events WHERE diagram_id = ? ORDER BY timestamp ASC', [diagramId]);
+      return rows.map(rowToRevision);
+    }
 
-    async function loadSnapshot(snapshotId) {                                  // NEW
-      if (!store.ready || !snapshotId) return null;                            // NEW
-      const rows = await query('SELECT * FROM history_snapshots WHERE snapshot_id = ? LIMIT 1', [snapshotId]); // NEW
-      return rows[0] || null;                                                  // NEW
-    }                                                                          // NEW
+    async function loadSnapshot(snapshotId) {
+      if (!store.ready || !snapshotId) return null;
+      const rows = await query('SELECT * FROM history_snapshots WHERE snapshot_id = ? LIMIT 1', [snapshotId]);
+      return rows[0] || null;
+    }
 
-    async function recordRevision(revision, snapshot) {                        // NEW
-      if (!store.ready) return false;                                          // NEW
-      await exec('INSERT OR IGNORE INTO history_snapshots (snapshot_id, diagram_id, hash, compressed_kind, compressed_xml, byte_size, checksum, created_at, snapshot_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [snapshot.snapshotId, revision.diagramHistoryId, revision.diagramHash, snapshot.compressedKind, snapshot.compressedXml, snapshot.byteSize, snapshot.checksum, revision.timestamp, 'full']); // NEW
-      await exec('INSERT INTO history_events (id, diagram_id, timestamp, category, action, origin, title, affected_cell_ids, change_types, counts_json, snapshot_id, parent_revision_id, restored_from_revision_id, tags_json, metadata_json, checkpoint, diagram_hash, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [revision.id, revision.diagramHistoryId, revision.timestamp, revision.category, revision.action, revision.origin, revision.title, JSON.stringify(revision.affectedCellIds || []), JSON.stringify(revision.changeTypes || []), JSON.stringify(revision.counts || {}), revision.snapshotId, revision.parentRevisionId || null, revision.restoredFromRevisionId || null, JSON.stringify(revision.tags || []), JSON.stringify(revision), revision.checkpoint ? 1 : 0, revision.diagramHash, HISTORY_SCHEMA_VERSION]); // NEW
-      await thinHistoryIfNeeded(revision.diagramHistoryId);                    // NEW
-      return true;                                                             // NEW
-    }                                                                          // NEW
+    async function recordRevision(revision, snapshot) {
+      if (!store.ready) return false;
+      await exec('INSERT OR IGNORE INTO history_snapshots (snapshot_id, diagram_id, hash, compressed_kind, compressed_xml, byte_size, checksum, created_at, snapshot_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [snapshot.snapshotId, revision.diagramHistoryId, revision.diagramHash, snapshot.compressedKind, snapshot.compressedXml, snapshot.byteSize, snapshot.checksum, revision.timestamp, 'full']);
+      await exec('INSERT INTO history_events (id, diagram_id, timestamp, category, action, origin, title, affected_cell_ids, change_types, counts_json, snapshot_id, parent_revision_id, restored_from_revision_id, tags_json, metadata_json, checkpoint, diagram_hash, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [revision.id, revision.diagramHistoryId, revision.timestamp, revision.category, revision.action, revision.origin, revision.title, JSON.stringify(revision.affectedCellIds || []), JSON.stringify(revision.changeTypes || []), JSON.stringify(revision.counts || {}), revision.snapshotId, revision.parentRevisionId || null, revision.restoredFromRevisionId || null, JSON.stringify(revision.tags || []), JSON.stringify(revision), revision.checkpoint ? 1 : 0, revision.diagramHash, HISTORY_SCHEMA_VERSION]);
+      await thinHistoryIfNeeded(revision.diagramHistoryId);
+      return true;
+    }
 
-    async function thinHistoryIfNeeded(diagramId) {                            // NEW
-      const rows = await query('SELECT e.id, e.snapshot_id, e.checkpoint, e.category, e.action, s.byte_size FROM history_events e JOIN history_snapshots s ON e.snapshot_id = s.snapshot_id WHERE e.diagram_id = ? ORDER BY e.timestamp ASC', [diagramId]); // NEW
-      let total = rows.reduce(function (sum, row) { return sum + Number(row.byte_size || 0); }, 0); // NEW
-      if (total <= HISTORY_RETENTION_BYTES) return;                            // NEW
-      const protectedIds = new Set();                                          // NEW
-      for (let i = Math.max(0, rows.length - 100); i < rows.length; i++) protectedIds.add(rows[i].id); // NEW
-      if (rows[0]) protectedIds.add(rows[0].id);                               // NEW
-      if (rows[rows.length - 1]) protectedIds.add(rows[rows.length - 1].id);   // NEW
-      for (let i = 0; i < rows.length; i++) {                                  // NEW
-        const row = rows[i];                                                   // NEW
-        if (row.checkpoint || row.category !== 'Diagram' || row.action === 'restore') protectedIds.add(row.id); // NEW
-      }                                                                        // NEW
-      for (let i = 0; i < rows.length && total > HISTORY_RETENTION_BYTES; i++) { // NEW
-        const row = rows[i];                                                   // NEW
-        if (protectedIds.has(row.id)) continue;                                // NEW
-        await exec('DELETE FROM history_events WHERE id = ?', [row.id]);       // NEW
-        await exec('DELETE FROM history_snapshots WHERE snapshot_id = ? AND NOT EXISTS (SELECT 1 FROM history_events WHERE snapshot_id = ?)', [row.snapshot_id, row.snapshot_id]); // NEW
-        total -= Number(row.byte_size || 0);                                   // NEW
-      }                                                                        // NEW
-    }                                                                          // NEW
+    async function thinHistoryIfNeeded(diagramId) {
+      const rows = await query('SELECT e.id, e.snapshot_id, e.checkpoint, e.category, e.action, s.byte_size FROM history_events e JOIN history_snapshots s ON e.snapshot_id = s.snapshot_id WHERE e.diagram_id = ? ORDER BY e.timestamp ASC', [diagramId]);
+      let total = rows.reduce(function (sum, row) { return sum + Number(row.byte_size || 0); }, 0);
+      if (total <= HISTORY_RETENTION_BYTES) return;
+      const protectedIds = new Set();
+      for (let i = Math.max(0, rows.length - 100); i < rows.length; i++) protectedIds.add(rows[i].id);
+      if (rows[0]) protectedIds.add(rows[0].id);
+      if (rows[rows.length - 1]) protectedIds.add(rows[rows.length - 1].id);
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        if (row.checkpoint || row.category !== 'Diagram' || row.action === 'restore') protectedIds.add(row.id);
+      }
+      for (let i = 0; i < rows.length && total > HISTORY_RETENTION_BYTES; i++) {
+        const row = rows[i];
+        if (protectedIds.has(row.id)) continue;
+        await exec('DELETE FROM history_events WHERE id = ?', [row.id]);
+        await exec('DELETE FROM history_snapshots WHERE snapshot_id = ? AND NOT EXISTS (SELECT 1 FROM history_events WHERE snapshot_id = ?)', [row.snapshot_id, row.snapshot_id]);
+        total -= Number(row.byte_size || 0);
+      }
+    }
 
-    function rowToRevision(row) {                                              // NEW
-      const metadata = safeParseJson(row.metadata_json, {});                   // NEW
-      metadata.id = row.id;                                                    // NEW
-      metadata.timestamp = Number(row.timestamp);                              // NEW
-      metadata.category = row.category;                                        // NEW
-      metadata.action = row.action;                                            // NEW
-      metadata.origin = row.origin;                                            // NEW
-      metadata.title = row.title;                                              // NEW
-      metadata.snapshotId = row.snapshot_id;                                   // NEW
-      metadata.parentRevisionId = row.parent_revision_id || null;              // NEW
-      metadata.restoredFromRevisionId = row.restored_from_revision_id || null; // NEW
-      metadata.affectedCellIds = safeParseJson(row.affected_cell_ids, []);     // NEW
-      metadata.changeTypes = safeParseJson(row.change_types, []);              // NEW
-      metadata.tags = safeParseJson(row.tags_json, []);                        // NEW
-      metadata.checkpoint = Number(row.checkpoint) === 1;                      // NEW
-      metadata.diagramHash = row.diagram_hash;                                 // NEW
-      return metadata;                                                         // NEW
-    }                                                                          // NEW
+    function rowToRevision(row) {
+      const metadata = safeParseJson(row.metadata_json, {});
+      metadata.id = row.id;
+      metadata.timestamp = Number(row.timestamp);
+      metadata.category = row.category;
+      metadata.action = row.action;
+      metadata.origin = row.origin;
+      metadata.title = row.title;
+      metadata.snapshotId = row.snapshot_id;
+      metadata.parentRevisionId = row.parent_revision_id || null;
+      metadata.restoredFromRevisionId = row.restored_from_revision_id || null;
+      metadata.affectedCellIds = safeParseJson(row.affected_cell_ids, []);
+      metadata.changeTypes = safeParseJson(row.change_types, []);
+      metadata.tags = safeParseJson(row.tags_json, []);
+      metadata.checkpoint = Number(row.checkpoint) === 1;
+      metadata.diagramHash = row.diagram_hash;
+      return metadata;
+    }
 
-    return {                                                                   // NEW
-      init,                                                                    // NEW
-      getLatestRevision,                                                       // NEW
-      listRevisions,                                                           // NEW
-      loadSnapshot,                                                            // NEW
-      recordRevision,                                                          // NEW
-      get ready() { return store.ready; },                                     // NEW
-      get disabled() { return store.disabled; },                               // NEW
-      get warning() { return store.warning; }                                  // NEW
-    };                                                                         // NEW
-  }                                                                            // NEW
+    return {
+      init,
+      getLatestRevision,
+      listRevisions,
+      loadSnapshot,
+      recordRevision,
+      get ready() { return store.ready; },
+      get disabled() { return store.disabled; },
+      get warning() { return store.warning; }
+    };
+  }
 
-  function safeParseJson(text, fallback) {                                     // NEW
-    try { return JSON.parse(text); } catch (e) { return fallback; }            // NEW
-  }                                                                            // NEW
+  function safeParseJson(text, fallback) {
+    try { return JSON.parse(text); } catch (e) { return fallback; }
+  }
 
-  // -------------------- HistoryRecorder -------------------- // NEW
+  // -------------------- HistoryRecorder --------------------
 
-  function createHistoryRecorder(store) {                                      // NEW
-    const txStack = [];                                                        // NEW
-    let pending = null;                                                        // NEW
-    let settleTimer = null;                                                    // NEW
-    let latestHash = null;                                                     // NEW
-    let latestXml = null;                                                       // NEW
-    let latestRevisionId = null;                                               // NEW
-    let recording = false;                                                     // NEW
+  function createHistoryRecorder(store) {
+    const txStack = [];
+    let pending = null;
+    let settleTimer = null;
+    let latestHash = null;
+    let latestXml = null;
+    let latestRevisionId = null;
+    let recording = false;
 
-    function normalizeMetadata(metadata) {                                     // NEW
-      const meta = actorMetadata(metadata || {});                              // CHANGE
-      const category = HISTORY_CATEGORIES.indexOf(meta.category) >= 0 ? meta.category : 'Diagram'; // NEW
-      return {                                                                 // NEW
-        category,                                                              // NEW
-        action: String(meta.action || 'change'),                               // NEW
-        origin: String(meta.origin || 'drawio'),                               // NEW
-        title: String(meta.title || category + ' change'),                     // NEW
-        tags: uniqueArray(meta.tags || []),                                    // NEW
-        actorUserId: meta.actorUserId ? String(meta.actorUserId) : '',         // NEW
-        actorName: meta.actorName ? String(meta.actorName) : '',               // NEW
-        actorRole: meta.actorRole ? String(meta.actorRole) : '',               // NEW
-        affectedCellIds: uniqueArray(meta.affectedCellIds || []),              // NEW
-        changeTypes: uniqueArray(meta.changeTypes || []),                      // NEW
-        bounds: normalizeBounds(meta.bounds),                                   // NEW
-        center: normalizeCenter(meta.center),                                   // NEW
-        viewport: normalizeViewport(meta.viewport),                             // NEW
-        checkpoint: !!meta.checkpoint,                                         // NEW
-        restoredFromRevisionId: meta.restoredFromRevisionId || null,           // NEW
-        restoreAudit: meta.restoreAudit || null                                // NEW
-      };                                                                       // NEW
-    }                                                                          // NEW
+    function normalizeMetadata(metadata) {
+      const meta = actorMetadata(metadata || {});
+      const category = HISTORY_CATEGORIES.indexOf(meta.category) >= 0 ? meta.category : 'Diagram';
+      return {
+        category,
+        action: String(meta.action || 'change'),
+        origin: String(meta.origin || 'drawio'),
+        title: String(meta.title || category + ' change'),
+        tags: uniqueArray(meta.tags || []),
+        actorUserId: meta.actorUserId ? String(meta.actorUserId) : '',
+        actorName: meta.actorName ? String(meta.actorName) : '',
+        actorRole: meta.actorRole ? String(meta.actorRole) : '',
+        affectedCellIds: uniqueArray(meta.affectedCellIds || []),
+        changeTypes: uniqueArray(meta.changeTypes || []),
+        bounds: normalizeBounds(meta.bounds),
+        center: normalizeCenter(meta.center),
+        viewport: normalizeViewport(meta.viewport),
+        checkpoint: !!meta.checkpoint,
+        restoredFromRevisionId: meta.restoredFromRevisionId || null,
+        restoreAudit: meta.restoreAudit || null
+      };
+    }
 
-    function mergePending(meta, edit) {                                        // NEW
-      const normalized = normalizeMetadata(meta);                              // NEW
-      if (!pending) pending = normalized;                                      // NEW
-      else {                                                                   // NEW
-        if (pending.category === 'Diagram' && normalized.category !== 'Diagram') pending.category = normalized.category; // NEW
-        if (pending.action === 'change' && normalized.action !== 'change') pending.action = normalized.action; // NEW
-        if (!pending.title || pending.title === 'Diagram change') pending.title = normalized.title; // NEW
-        pending.origin = pending.origin === 'drawio' ? normalized.origin : pending.origin; // NEW
-        pending.actorUserId = pending.actorUserId || normalized.actorUserId;   // NEW
-        pending.actorName = pending.actorName || normalized.actorName;         // NEW
-        pending.actorRole = pending.actorRole || normalized.actorRole;         // NEW
-        pending.tags = uniqueArray((pending.tags || []).concat(normalized.tags || [], normalized.category)); // NEW
-        pending.bounds = unionBounds(pending.bounds, normalized.bounds);        // NEW
-        pending.center = normalizeCenter(normalized.center) || pending.center;  // NEW
-        pending.viewport = normalizeViewport(normalized.viewport) || pending.viewport; // NEW
-        pending.checkpoint = pending.checkpoint || normalized.checkpoint;       // NEW
-        pending.restoredFromRevisionId = pending.restoredFromRevisionId || normalized.restoredFromRevisionId; // NEW
-        pending.restoreAudit = pending.restoreAudit || normalized.restoreAudit; // NEW
-      }                                                                        // NEW
-      pending.affectedCellIds = uniqueArray((pending.affectedCellIds || []).concat(normalized.affectedCellIds || [], extractAffectedCellIds(edit))); // NEW
-      pending.changeTypes = uniqueArray((pending.changeTypes || []).concat(normalized.changeTypes || [], extractChangeTypes(edit))); // NEW
-      scheduleStableRecord();                                                  // NEW
-    }                                                                          // NEW
+    function mergePending(meta, edit) {
+      const normalized = normalizeMetadata(meta);
+      if (!pending) pending = normalized;
+      else {
+        if (pending.category === 'Diagram' && normalized.category !== 'Diagram') pending.category = normalized.category;
+        if (pending.action === 'change' && normalized.action !== 'change') pending.action = normalized.action;
+        if (!pending.title || pending.title === 'Diagram change') pending.title = normalized.title;
+        pending.origin = pending.origin === 'drawio' ? normalized.origin : pending.origin;
+        pending.actorUserId = pending.actorUserId || normalized.actorUserId;
+        pending.actorName = pending.actorName || normalized.actorName;
+        pending.actorRole = pending.actorRole || normalized.actorRole;
+        pending.tags = uniqueArray((pending.tags || []).concat(normalized.tags || [], normalized.category));
+        pending.bounds = unionBounds(pending.bounds, normalized.bounds);
+        pending.center = normalizeCenter(normalized.center) || pending.center;
+        pending.viewport = normalizeViewport(normalized.viewport) || pending.viewport;
+        pending.checkpoint = pending.checkpoint || normalized.checkpoint;
+        pending.restoredFromRevisionId = pending.restoredFromRevisionId || normalized.restoredFromRevisionId;
+        pending.restoreAudit = pending.restoreAudit || normalized.restoreAudit;
+      }
+      pending.affectedCellIds = uniqueArray((pending.affectedCellIds || []).concat(normalized.affectedCellIds || [], extractAffectedCellIds(edit)));
+      pending.changeTypes = uniqueArray((pending.changeTypes || []).concat(normalized.changeTypes || [], extractChangeTypes(edit)));
+      scheduleStableRecord();
+    }
 
-    function recordModelChange(edit, capturedMetadata) {                       // CHANGE
-      if (graph.__ccMapInternalChange || graph.__ccHistoryRestoring) return;   // NEW
-      const active = capturedMetadata || activeTransactionMetadata();           // CHANGE
-      mergePending(active || { category: 'Diagram', action: 'change', origin: 'drawio', title: inferTitleFromEdit(edit) }, edit); // NEW
-    }                                                                          // NEW
+    function recordModelChange(edit, capturedMetadata) {
+      if (graph.__ccMapInternalChange || graph.__ccHistoryRestoring) return;
+      const active = capturedMetadata || activeTransactionMetadata();
+      mergePending(active || { category: 'Diagram', action: 'change', origin: 'drawio', title: inferTitleFromEdit(edit) }, edit);
+    }
 
-    function captureActiveTransactionMetadata() {                              // NEW
-      return activeTransactionMetadata();                                      // NEW
-    }                                                                          // NEW
+    function captureActiveTransactionMetadata() {
+      return activeTransactionMetadata();
+    }
 
-    function activeTransactionMetadata() {                                      // NEW
-      if (!txStack.length) return null;                                        // NEW
-      const outer = Object.assign({}, txStack[0]);                             // NEW
-      for (let i = 1; i < txStack.length; i++) {                               // NEW
-        outer.tags = uniqueArray((outer.tags || []).concat(txStack[i].tags || [], txStack[i].category)); // NEW
-        outer.affectedCellIds = uniqueArray((outer.affectedCellIds || []).concat(txStack[i].affectedCellIds || [])); // NEW
-        outer.changeTypes = uniqueArray((outer.changeTypes || []).concat(txStack[i].changeTypes || [])); // NEW
-        outer.bounds = unionBounds(outer.bounds, txStack[i].bounds);            // NEW
-        outer.center = normalizeCenter(txStack[i].center) || outer.center;      // NEW
-        outer.viewport = normalizeViewport(txStack[i].viewport) || outer.viewport; // NEW
-      }                                                                        // NEW
-      return outer;                                                            // NEW
-    }                                                                          // NEW
+    function activeTransactionMetadata() {
+      if (!txStack.length) return null;
+      const outer = Object.assign({}, txStack[0]);
+      for (let i = 1; i < txStack.length; i++) {
+        outer.tags = uniqueArray((outer.tags || []).concat(txStack[i].tags || [], txStack[i].category));
+        outer.affectedCellIds = uniqueArray((outer.affectedCellIds || []).concat(txStack[i].affectedCellIds || []));
+        outer.changeTypes = uniqueArray((outer.changeTypes || []).concat(txStack[i].changeTypes || []));
+        outer.bounds = unionBounds(outer.bounds, txStack[i].bounds);
+        outer.center = normalizeCenter(txStack[i].center) || outer.center;
+        outer.viewport = normalizeViewport(txStack[i].viewport) || outer.viewport;
+      }
+      return outer;
+    }
 
-    function inferTitleFromEdit(edit) {                                        // NEW
-      const types = extractChangeTypes(edit);                                  // NEW
-      if (types.indexOf('mxChildChange') >= 0) return 'Diagram structure changed'; // NEW
-      if (types.indexOf('mxGeometryChange') >= 0) return 'Diagram layout changed'; // NEW
-      if (types.indexOf('mxStyleChange') >= 0) return 'Diagram style changed'; // NEW
-      if (types.indexOf('mxValueChange') >= 0) return 'Content changed';       // NEW
-      return 'Diagram changed';                                                // NEW
-    }                                                                          // NEW
+    function inferTitleFromEdit(edit) {
+      const types = extractChangeTypes(edit);
+      if (types.indexOf('mxChildChange') >= 0) return 'Diagram structure changed';
+      if (types.indexOf('mxGeometryChange') >= 0) return 'Diagram layout changed';
+      if (types.indexOf('mxStyleChange') >= 0) return 'Diagram style changed';
+      if (types.indexOf('mxValueChange') >= 0) return 'Content changed';
+      return 'Diagram changed';
+    }
 
-    function scheduleStableRecord() {                                          // NEW
-      if (settleTimer) clearTimeout(settleTimer);                              // NEW
-      settleTimer = setTimeout(function () {                                   // NEW
-        settleTimer = null;                                                    // NEW
-        recordStableRevision(false);                                           // NEW
-      }, HISTORY_SETTLE_MS);                                                   // NEW
-    }                                                                          // NEW
+    function scheduleStableRecord() {
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(function () {
+        settleTimer = null;
+        recordStableRevision(false);
+      }, HISTORY_SETTLE_MS);
+    }
 
-    async function recordStableRevision(force) {                               // NEW
-      if (recording) return;                                                   // NEW
-      const meta = pending || normalizeMetadata({ category: 'System', action: 'baseline', origin: 'history', title: 'Opened diagram baseline' }); // NEW
-      pending = null;                                                          // NEW
-      recording = true;                                                        // NEW
-      try {                                                                    // NEW
-        const xml = serializeActivePageXml();                                  // NEW
-        const hash = hashString(xml);                                          // NEW
-        if (!force && latestHash === hash && !meta.checkpoint) return;         // NEW
-        const compressed = compressSnapshotXml(xml);                           // NEW
-        const diagramId = getDiagramHistoryId();                               // NEW
-        const snapshotId = makeHistoryId('snap');                              // NEW
-        const viewTarget = computeHistoryViewTarget(meta, xml, latestXml);      // NEW
-        const revision = {                                                     // NEW
-          id: makeHistoryId('rev'),                                            // NEW
-          timestamp: nowMs(),                                                  // NEW
-          category: meta.category,                                             // NEW
-          tags: uniqueArray(meta.tags || []),                                  // NEW
-          action: meta.action,                                                 // NEW
-          origin: meta.origin,                                                 // NEW
-          title: meta.title,                                                   // NEW
-          actorUserId: meta.actorUserId || '',                                 // NEW
-          actorName: meta.actorName || '',                                     // NEW
-          actorRole: meta.actorRole || '',                                     // NEW
-          affectedCellIds: uniqueArray(meta.affectedCellIds || []),            // NEW
-          changeTypes: uniqueArray(meta.changeTypes || []),                    // NEW
-          bounds: viewTarget.bounds,                                           // NEW
-          center: viewTarget.center,                                           // NEW
-          viewport: viewTarget.viewport,                                       // NEW
-          counts: { affectedCells: uniqueArray(meta.affectedCellIds || []).length, changeTypes: uniqueArray(meta.changeTypes || []).length }, // NEW
-          snapshotId,                                                          // NEW
-          parentRevisionId: latestRevisionId,                                  // NEW
-          restoredFromRevisionId: meta.restoredFromRevisionId || null,         // NEW
-          restoreAudit: meta.restoreAudit || null,                             // NEW
-          diagramHistoryId: diagramId,                                         // NEW
-          diagramHash: hash,                                                   // NEW
-          trellisVersion: '2.3.1',                                             // NEW
-          pluginVersion: 'history-mvp',                                        // NEW
-          schemaVersion: HISTORY_SCHEMA_VERSION,                               // NEW
-          checkpoint: !!meta.checkpoint                                        // NEW
-        };                                                                     // NEW
-        const snapshot = { snapshotId, compressedXml: compressed.compressed, compressedKind: compressed.compressedKind, byteSize: String(compressed.compressed).length, checksum: hashString(compressed.compressed) }; // NEW
-        const saved = await store.recordRevision(revision, snapshot);          // NEW
-        if (saved) {                                                           // NEW
-          latestHash = hash;                                                   // NEW
-          latestXml = xml;                                                     // NEW
-          latestRevisionId = revision.id;                                      // NEW
-          await refreshHistoryRevisions();                                     // NEW
-        }                                                                      // NEW
-      } catch (e) {                                                            // NEW
-        graph.__ccHistoryWarning = 'History record failed: ' + (e && e.message ? e.message : String(e)); // NEW
-        updateHistoryUI();                                                     // NEW
-      } finally {                                                              // NEW
-        recording = false;                                                     // NEW
-      }                                                                        // NEW
-    }                                                                          // NEW
+    async function recordStableRevision(force) {
+      if (recording) return;
+      const meta = pending || normalizeMetadata({ category: 'System', action: 'baseline', origin: 'history', title: 'Opened diagram baseline' });
+      pending = null;
+      recording = true;
+      try {
+        const xml = serializeActivePageXml();
+        const hash = hashString(xml);
+        if (!force && latestHash === hash && !meta.checkpoint) return;
+        const compressed = compressSnapshotXml(xml);
+        const diagramId = getDiagramHistoryId();
+        const snapshotId = makeHistoryId('snap');
+        const viewTarget = computeHistoryViewTarget(meta, xml, latestXml);
+        const revision = {
+          id: makeHistoryId('rev'),
+          timestamp: nowMs(),
+          category: meta.category,
+          tags: uniqueArray(meta.tags || []),
+          action: meta.action,
+          origin: meta.origin,
+          title: meta.title,
+          actorUserId: meta.actorUserId || '',
+          actorName: meta.actorName || '',
+          actorRole: meta.actorRole || '',
+          affectedCellIds: uniqueArray(meta.affectedCellIds || []),
+          changeTypes: uniqueArray(meta.changeTypes || []),
+          bounds: viewTarget.bounds,
+          center: viewTarget.center,
+          viewport: viewTarget.viewport,
+          counts: { affectedCells: uniqueArray(meta.affectedCellIds || []).length, changeTypes: uniqueArray(meta.changeTypes || []).length },
+          snapshotId,
+          parentRevisionId: latestRevisionId,
+          restoredFromRevisionId: meta.restoredFromRevisionId || null,
+          restoreAudit: meta.restoreAudit || null,
+          diagramHistoryId: diagramId,
+          diagramHash: hash,
+          trellisVersion: '2.3.1',
+          pluginVersion: 'history-mvp',
+          schemaVersion: HISTORY_SCHEMA_VERSION,
+          checkpoint: !!meta.checkpoint
+        };
+        const snapshot = { snapshotId, compressedXml: compressed.compressed, compressedKind: compressed.compressedKind, byteSize: String(compressed.compressed).length, checksum: hashString(compressed.compressed) };
+        const saved = await store.recordRevision(revision, snapshot);
+        if (saved) {
+          latestHash = hash;
+          latestXml = xml;
+          latestRevisionId = revision.id;
+          await refreshHistoryRevisions();
+        }
+      } catch (e) {
+        graph.__ccHistoryWarning = 'History record failed: ' + (e && e.message ? e.message : String(e));
+        updateHistoryUI();
+      } finally {
+        recording = false;
+      }
+    }
 
-    function run(metadata, operation) {                                        // NEW
-      const normalized = normalizeMetadata(metadata);                          // NEW
-      txStack.push(normalized);                                                // NEW
-      let result;                                                              // NEW
-      try {                                                                    // NEW
-        result = typeof operation === 'function' ? operation() : undefined;    // NEW
-      } catch (e) {                                                            // NEW
-        txStack.pop();                                                         // NEW
-        throw e;                                                               // NEW
-      }                                                                        // NEW
-      if (result && typeof result.then === 'function') {                       // NEW
-        return result.finally(function () { txStack.pop(); });                 // NEW
-      }                                                                        // NEW
-      txStack.pop();                                                           // NEW
-      return result;                                                           // NEW
-    }                                                                          // NEW
+    function run(metadata, operation) {
+      const normalized = normalizeMetadata(metadata);
+      txStack.push(normalized);
+      let result;
+      try {
+        result = typeof operation === 'function' ? operation() : undefined;
+      } catch (e) {
+        txStack.pop();
+        throw e;
+      }
+      if (result && typeof result.then === 'function') {
+        return result.finally(function () { txStack.pop(); });
+      }
+      txStack.pop();
+      return result;
+    }
 
-    async function initializeBaseline() {                                      // NEW
-      await store.init();                                                      // NEW
-      if (!store.ready) { updateHistoryUI(); return; }                         // NEW
-      const diagramId = getDiagramHistoryId();                                 // NEW
-      const latest = await store.getLatestRevision(diagramId);                 // NEW
-      if (latest) {                                                            // NEW
-        latestHash = latest.diagram_hash;                                      // NEW
-        latestRevisionId = latest.id;                                          // NEW
-        try {                                                                  // NEW
-          const snapshot = await store.loadSnapshot(latest.snapshot_id);        // NEW
-          latestXml = decompressSnapshotXml(snapshot);                          // NEW
-        } catch (e) { latestXml = null; }                                      // NEW
-        await refreshHistoryRevisions();                                       // NEW
-        return;                                                                // NEW
-      }                                                                        // NEW
-      pending = normalizeMetadata({ category: 'System', action: 'baseline', origin: 'history', title: 'Opened diagram baseline' }); // NEW
-      await recordStableRevision(true);                                        // NEW
-    }                                                                          // NEW
+    async function initializeBaseline() {
+      await store.init();
+      if (!store.ready) { updateHistoryUI(); return; }
+      const diagramId = getDiagramHistoryId();
+      const latest = await store.getLatestRevision(diagramId);
+      if (latest) {
+        latestHash = latest.diagram_hash;
+        latestRevisionId = latest.id;
+        try {
+          const snapshot = await store.loadSnapshot(latest.snapshot_id);
+          latestXml = decompressSnapshotXml(snapshot);
+        } catch (e) { latestXml = null; }
+        await refreshHistoryRevisions();
+        return;
+      }
+      pending = normalizeMetadata({ category: 'System', action: 'baseline', origin: 'history', title: 'Opened diagram baseline' });
+      await recordStableRevision(true);
+    }
 
-    function createCheckpoint(title) {                                         // NEW
-      pending = normalizeMetadata({ category: 'History', action: 'checkpoint', origin: 'history', title: title || 'Named checkpoint', checkpoint: true }); // NEW
-      return recordStableRevision(true);                                       // NEW
-    }                                                                          // NEW
+    function createCheckpoint(title) {
+      pending = normalizeMetadata({ category: 'History', action: 'checkpoint', origin: 'history', title: title || 'Named checkpoint', checkpoint: true });
+      return recordStableRevision(true);
+    }
 
-    async function recordRestore(restoredFromRevisionId, audit) {              // NEW
-      pending = normalizeMetadata({ category: 'History', action: 'restore', origin: 'history', title: 'Restored historical revision', restoredFromRevisionId, restoreAudit: cloneRestoreAudit(audit) }); // NEW
-      await recordStableRevision(true);                                        // NEW
-    }                                                                          // NEW
+    async function recordRestore(restoredFromRevisionId, audit) {
+      pending = normalizeMetadata({ category: 'History', action: 'restore', origin: 'history', title: 'Restored historical revision', restoredFromRevisionId, restoreAudit: cloneRestoreAudit(audit) });
+      await recordStableRevision(true);
+    }
 
-    return { initializeBaseline, recordModelChange, captureActiveTransactionMetadata, run, createCheckpoint, recordRestore, recordStableRevision }; // CHANGE
-  }                                                                            // NEW
+    return { initializeBaseline, recordModelChange, captureActiveTransactionMetadata, run, createCheckpoint, recordRestore, recordStableRevision };
+  }
 
-  const historyStore = createHistoryStore();                                   // NEW
-  const historyRecorder = createHistoryRecorder(historyStore);                 // NEW
+  const historyStore = createHistoryStore();
+  const historyRecorder = createHistoryRecorder(historyStore);
 
   // -------------------- Tiler-group ignore --------------------
 
@@ -1050,15 +1050,15 @@ Draw.loadPlugin(function (ui) {
 
   // -------------------- Timestamp stamping --------------------
 
-  function stampCreatedIfMissing(cell, tNow, edit) {                           // CHANGE
+  function stampCreatedIfMissing(cell, tNow, edit) {
     if (!shouldStyleCell(cell)) return;
-    if (getAttrMs(cell, ATTR_CREATED) == null) { setAttrMs(cell, ATTR_CREATED, tNow); stampActor(cell, 'created', edit); } // CHANGE
+    if (getAttrMs(cell, ATTR_CREATED) == null) { setAttrMs(cell, ATTR_CREATED, tNow); stampActor(cell, 'created', edit); }
   }
 
-  function stampEdited(cell, tNow, edit) {                                     // CHANGE
+  function stampEdited(cell, tNow, edit) {
     if (!shouldStyleCell(cell)) return;
     setAttrMs(cell, ATTR_EDITED, tNow);
-    stampActor(cell, 'edited', edit);                                          // CHANGE
+    stampActor(cell, 'edited', edit);
   }
 
   function snapshotSelectionIds() {
@@ -1120,8 +1120,8 @@ Draw.loadPlugin(function (ui) {
     model.beginUpdate();
     try {
       for (const cell of touched.values()) {
-        stampCreatedIfMissing(cell, tNow, edit);                                           // CHANGE
-        stampEdited(cell, tNow, edit);                                                     // CHANGE
+        stampCreatedIfMissing(cell, tNow, edit);
+        stampEdited(cell, tNow, edit);
         did = true;
       }
     } finally {
@@ -1155,7 +1155,7 @@ Draw.loadPlugin(function (ui) {
 
         if (getAttrMs(child, ATTR_CREATED) == null) {
           setAttrMs(child, ATTR_CREATED, tNow);
-          stampActor(child, 'created', edit);                                  // CHANGE
+          stampActor(child, 'created', edit);
           did = true;
         }
       }
@@ -1174,10 +1174,10 @@ Draw.loadPlugin(function (ui) {
     graph.container.addEventListener('touchend', beginUserActionWindow, true);
   }
 
-  window.addEventListener('resize', function () {                          // NEW
-    if (!panel) return;                                                    // NEW
+  window.addEventListener('resize', function () {
+    if (!panel) return;
     if (!isPanelVisible()) return;                                         // NEW (avoid 0x0 rect when hidden)
-    readAndStorePanelSize();                                               // NEW
+    readAndStorePanelSize();
   }, true);
 
 
@@ -1299,37 +1299,37 @@ Draw.loadPlugin(function (ui) {
     return { inRange, tMin, tMax, windowMs: ms };
   }
 
-  function resolveUserFilterId() {                                             // NEW
-    const filter = graph.__ccUserFilter || 'all';                              // NEW
-    if (filter === 'all') return '';                                           // NEW
-    if (filter === 'current') return currentActorUserId();                     // NEW
-    if (filter.indexOf('user:') === 0) return filter.substring(5);             // NEW
-    return '';                                                                 // NEW
-  }                                                                            // NEW
+  function resolveUserFilterId() {
+    const filter = graph.__ccUserFilter || 'all';
+    if (filter === 'all') return '';
+    if (filter === 'current') return currentActorUserId();
+    if (filter.indexOf('user:') === 0) return filter.substring(5);
+    return '';
+  }
 
-  function filterCellsByUser(cells, mode) {                                    // NEW
-    const userId = resolveUserFilterId();                                      // NEW
-    if (!userId) return cells;                                                 // NEW
-    const key = actorKey(mode);                                                // NEW
-    const fallbackKey = mode === MODE_CHANGE ? ATTR_CREATED_BY : '';           // NEW
-    return (cells || []).filter(function (cell) {                              // NEW
-      return getAttrStr(cell, key) === userId || (!!fallbackKey && getAttrStr(cell, fallbackKey) === userId); // NEW
-    });                                                                        // NEW
-  }                                                                            // NEW
+  function filterCellsByUser(cells, mode) {
+    const userId = resolveUserFilterId();
+    if (!userId) return cells;
+    const key = actorKey(mode);
+    const fallbackKey = mode === MODE_CHANGE ? ATTR_CREATED_BY : '';
+    return (cells || []).filter(function (cell) {
+      return getAttrStr(cell, key) === userId || (!!fallbackKey && getAttrStr(cell, fallbackKey) === userId);
+    });
+  }
 
-  function recomputeSliceRange(slice, mode) {                                  // NEW
-    let tMin = Infinity;                                                       // NEW
-    let tMax = -Infinity;                                                      // NEW
-    const inRange = (slice && slice.inRange) || [];                            // NEW
-    for (let i = 0; i < inRange.length; i++) {                                 // NEW
-      const ts = getTimestampForMode(inRange[i], mode);                        // NEW
-      if (ts == null) continue;                                                // NEW
-      if (ts < tMin) tMin = ts;                                                // NEW
-      if (ts > tMax) tMax = ts;                                                // NEW
-    }                                                                          // NEW
-    slice.tMin = tMin === Infinity ? null : tMin;                              // NEW
-    slice.tMax = tMax === -Infinity ? null : tMax;                             // NEW
-  }                                                                            // NEW
+  function recomputeSliceRange(slice, mode) {
+    let tMin = Infinity;
+    let tMax = -Infinity;
+    const inRange = (slice && slice.inRange) || [];
+    for (let i = 0; i < inRange.length; i++) {
+      const ts = getTimestampForMode(inRange[i], mode);
+      if (ts == null) continue;
+      if (ts < tMin) tMin = ts;
+      if (ts > tMax) tMax = ts;
+    }
+    slice.tMin = tMin === Infinity ? null : tMin;
+    slice.tMax = tMax === -Infinity ? null : tMax;
+  }
 
   function positionForTimestamp(ts, tMin, tMax) {
     const span = (tMax - tMin);
@@ -1351,11 +1351,11 @@ Draw.loadPlugin(function (ui) {
     const token = ++graph.__ccApplyToken;
 
     const scopeCells = collectScopeCells(graph.__ccScope);
-    const userScopedCells = filterCellsByUser(scopeCells, mode);                // NEW
-    const userFilterActive = !!resolveUserFilterId();                           // NEW
-    const userScopedSet = new Set(userScopedCells.map(c => c.id));              // NEW
-    const slice = filterCellsByTimeSlice(userScopedCells, mode);                // CHANGE
-    recomputeSliceRange(slice, mode);                                          // NEW
+    const userScopedCells = filterCellsByUser(scopeCells, mode);
+    const userFilterActive = !!resolveUserFilterId();
+    const userScopedSet = new Set(userScopedCells.map(c => c.id));
+    const slice = filterCellsByTimeSlice(userScopedCells, mode);
+    recomputeSliceRange(slice, mode);
 
     const inRangeSet = new Set(slice.inRange.map(c => c.id));
     graph.__ccFiltered = buildNavList(slice.inRange, mode);
@@ -1382,17 +1382,17 @@ Draw.loadPlugin(function (ui) {
         ensureOrigStyle(cell);
         const base = baseStyleForApply(cell);
 
-        if (userFilterActive && !userScopedSet.has(cell.id)) {                 // NEW
-          const p0 = 0;                                                         // NEW
-          const strokeWidth = widthFromP(cell, p0);                             // NEW
-          model.setStyle(cell, mergeStyle(base, {                               // NEW
-            strokeColor: OUT_OF_RANGE_STYLE.strokeColor,                        // NEW
-            dashed: OUT_OF_RANGE_STYLE.dashed,                                  // NEW
-            strokeOpacity: OUT_OF_RANGE_STYLE.strokeOpacity,                    // NEW
-            strokeWidth: strokeWidth                                            // NEW
-          }));                                                                  // NEW
-          continue;                                                             // NEW
-        }                                                                       // NEW
+        if (userFilterActive && !userScopedSet.has(cell.id)) {
+          const p0 = 0;
+          const strokeWidth = widthFromP(cell, p0);
+          model.setStyle(cell, mergeStyle(base, {
+            strokeColor: OUT_OF_RANGE_STYLE.strokeColor,
+            dashed: OUT_OF_RANGE_STYLE.dashed,
+            strokeOpacity: OUT_OF_RANGE_STYLE.strokeOpacity,
+            strokeWidth: strokeWidth
+          }));
+          continue;
+        }
 
         const ts = getTimestampForMode(cell, mode);
 
@@ -1548,32 +1548,32 @@ Draw.loadPlugin(function (ui) {
   let windowValueInput = null;
   let windowUnitSelect = null;
   let sortSelect = null;
-  let userFilterSelect = null;                                                // NEW
+  let userFilterSelect = null;
   let infoLabel = null;
   let prevBtn = null;
   let nextBtn = null;
   let listWrap = null;
-  let historyFilterSelect = null;                                             // NEW
-  let historyRailWrap = null;                                                 // NEW
-  let historyPreview = null;                                                  // NEW
-  let historyStatus = null;                                                   // NEW
-  let returnLatestBtn = null;                                                 // NEW
-  let compareBtn = null;                                                       // NEW
-  let restoreBtn = null;                                                       // NEW
-  let checkpointBtn = null;                                                    // NEW
-  let formatPanelState = null;                                                 // NEW
-  let nativeFormatState = null;                                                // NEW
+  let historyFilterSelect = null;
+  let historyRailWrap = null;
+  let historyPreview = null;
+  let historyStatus = null;
+  let returnLatestBtn = null;
+  let compareBtn = null;
+  let restoreBtn = null;
+  let checkpointBtn = null;
+  let formatPanelState = null;
+  let nativeFormatState = null;
 
   graph.__ccPanelVisible = false;
 
-  graph.__ccPanelW = 340;                                                  // (px) // CHANGE
+  graph.__ccPanelW = 340;                                                  // (px)
   graph.__ccPanelH = 320;                                                  // (px)
 
   function applyPanelSize() {
     if (!panel) return;
-    panel.style.width = '100%';                                                 // CHANGE
-    panel.style.height = '100%';                                               // CHANGE
-    if (formatPanelState) refreshChangeMapSidebarLayout();                      // NEW
+    panel.style.width = '100%';
+    panel.style.height = '100%';
+    if (formatPanelState) refreshChangeMapSidebarLayout();
   }
 
   function clamp(n, a, b) {
@@ -1589,71 +1589,71 @@ Draw.loadPlugin(function (ui) {
     const maxW = Math.max(280, (window.innerWidth || 1200) - 40);
     const maxH = Math.max(220, (window.innerHeight || 800) - 40);
 
-    graph.__ccPanelW = clamp(r.width, 320, maxW);                              // CHANGE
+    graph.__ccPanelW = clamp(r.width, 320, maxW);
     graph.__ccPanelH = clamp(r.height, 200, maxH);
 
     // Re-apply clamped values so it doesn't drift beyond bounds
     applyPanelSize();
   }
 
-  function fireFormatWidthChanged() {                                          // NEW
-    if (!ui || typeof ui.fireEvent !== 'function') return false;               // CHANGE
-    if (typeof mxEventObject === 'undefined') return false;                    // CHANGE
-    ui.fireEvent(new mxEventObject('formatWidthChanged'));                     // NEW
-    return true;                                                               // NEW
-  }                                                                            // NEW
+  function fireFormatWidthChanged() {
+    if (!ui || typeof ui.fireEvent !== 'function') return false;
+    if (typeof mxEventObject === 'undefined') return false;
+    ui.fireEvent(new mxEventObject('formatWidthChanged'));
+    return true;
+  }
 
-  function suspendNativeFormatRefresh() {                                      // NEW
-    if (nativeFormatState) return;                                             // NEW
-    const nativeFormat = ui && ui.format && !ui.formatWindow ? ui.format : null; // NEW
-    if (!nativeFormat) return;                                                 // NEW
-    nativeFormatState = {                                                      // NEW
-      format: nativeFormat,                                                    // NEW
-      refresh: nativeFormat.refresh,                                           // NEW
-      immediateRefresh: nativeFormat.immediateRefresh,                         // NEW
-      clear: nativeFormat.clear                                                // NEW
-    };                                                                         // NEW
-    if (typeof nativeFormat.refresh === 'function') nativeFormat.refresh = function () { }; // NEW
-    if (typeof nativeFormat.immediateRefresh === 'function') nativeFormat.immediateRefresh = function () { }; // NEW
-    if (typeof nativeFormat.clear === 'function') nativeFormat.clear = function () { }; // NEW
-  }                                                                            // NEW
+  function suspendNativeFormatRefresh() {
+    if (nativeFormatState) return;
+    const nativeFormat = ui && ui.format && !ui.formatWindow ? ui.format : null;
+    if (!nativeFormat) return;
+    nativeFormatState = {
+      format: nativeFormat,
+      refresh: nativeFormat.refresh,
+      immediateRefresh: nativeFormat.immediateRefresh,
+      clear: nativeFormat.clear
+    };
+    if (typeof nativeFormat.refresh === 'function') nativeFormat.refresh = function () { };
+    if (typeof nativeFormat.immediateRefresh === 'function') nativeFormat.immediateRefresh = function () { };
+    if (typeof nativeFormat.clear === 'function') nativeFormat.clear = function () { };
+  }
 
-  function restoreNativeFormatRefresh() {                                      // NEW
-    if (!nativeFormatState) return null;                                       // NEW
-    const state = nativeFormatState;                                           // NEW
-    nativeFormatState = null;                                                  // NEW
-    state.format.refresh = state.refresh;                                      // NEW
-    state.format.immediateRefresh = state.immediateRefresh;                    // NEW
-    state.format.clear = state.clear;                                          // NEW
-    return state.format;                                                       // NEW
-  }                                                                            // NEW
+  function restoreNativeFormatRefresh() {
+    if (!nativeFormatState) return null;
+    const state = nativeFormatState;
+    nativeFormatState = null;
+    state.format.refresh = state.refresh;
+    state.format.immediateRefresh = state.immediateRefresh;
+    state.format.clear = state.clear;
+    return state.format;
+  }
 
-  function refreshChangeMapSidebarLayout() {                                   // NEW
-    const container = formatPanelState && formatPanelState.container;          // NEW
-    if (!container) return;                                                    // NEW
-    const width = clamp(graph.__ccPanelW || 340, 320, Math.max(320, (window.innerWidth || 1200) - 40)); // NEW
-    graph.__ccPanelW = width;                                                  // NEW
-    if (typeof ui.formatWidth !== 'undefined') ui.formatWidth = width;         // NEW
-    if (typeof ui.refresh === 'function') ui.refresh(true);                    // NEW
-    container.style.width = String(width) + 'px';                              // NEW
-    if (graph && typeof graph.sizeDidChange === 'function') graph.sizeDidChange(); // NEW
-    fireFormatWidthChanged();                                                  // NEW
-  }                                                                            // NEW
+  function refreshChangeMapSidebarLayout() {
+    const container = formatPanelState && formatPanelState.container;
+    if (!container) return;
+    const width = clamp(graph.__ccPanelW || 340, 320, Math.max(320, (window.innerWidth || 1200) - 40));
+    graph.__ccPanelW = width;
+    if (typeof ui.formatWidth !== 'undefined') ui.formatWidth = width;
+    if (typeof ui.refresh === 'function') ui.refresh(true);
+    container.style.width = String(width) + 'px';
+    if (graph && typeof graph.sizeDidChange === 'function') graph.sizeDidChange();
+    fireFormatWidthChanged();
+  }
 
-  function restoreFormatPanel() {                                              // NEW
-    if (!formatPanelState) return;                                             // NEW
-    const state = formatPanelState;                                            // NEW
-    formatPanelState = null;                                                   // NEW
-    const nativeFormat = restoreNativeFormatRefresh();                         // NEW
-    if (panel && panel.parentNode === state.container) panel.parentNode.removeChild(panel); // NEW
-    while (state.container.firstChild) state.container.removeChild(state.container.firstChild); // NEW
-    state.container.appendChild(state.fragment);                               // NEW
-    if (typeof ui.formatWidth !== 'undefined') ui.formatWidth = state.formatWidth; // NEW
-    state.container.style.cssText = state.cssText;                             // NEW
-    if (typeof ui.refresh === 'function') ui.refresh(true);                    // NEW
-    if (graph && typeof graph.sizeDidChange === 'function') graph.sizeDidChange(); // NEW
-    if (!fireFormatWidthChanged() && nativeFormat && typeof nativeFormat.refresh === 'function') nativeFormat.refresh(); // CHANGE
-  }                                                                            // NEW
+  function restoreFormatPanel() {
+    if (!formatPanelState) return;
+    const state = formatPanelState;
+    formatPanelState = null;
+    const nativeFormat = restoreNativeFormatRefresh();
+    if (panel && panel.parentNode === state.container) panel.parentNode.removeChild(panel);
+    while (state.container.firstChild) state.container.removeChild(state.container.firstChild);
+    state.container.appendChild(state.fragment);
+    if (typeof ui.formatWidth !== 'undefined') ui.formatWidth = state.formatWidth;
+    state.container.style.cssText = state.cssText;
+    if (typeof ui.refresh === 'function') ui.refresh(true);
+    if (graph && typeof graph.sizeDidChange === 'function') graph.sizeDidChange();
+    if (!fireFormatWidthChanged() && nativeFormat && typeof nativeFormat.refresh === 'function') nativeFormat.refresh();
+  }
 
 
   function isPanelVisible() {
@@ -1663,38 +1663,38 @@ Draw.loadPlugin(function (ui) {
   function showPanel() {
     createPanel();
     if (!panel) return;
-    attachPanel();                                                             // NEW
+    attachPanel();
     panel.style.display = '';
     graph.__ccPanelVisible = true;
     syncPanelFromState();
     updateNavUI();
-    updateHistoryUI();                                                         // NEW
+    updateHistoryUI();
   }
 
   function hidePanel() {
     if (!panel) return;
     panel.style.display = 'none';
     graph.__ccPanelVisible = false;
-    clearHistoryCompareOverlays();                                             // NEW
-    restoreFormatPanel();                                                      // NEW
+    clearHistoryCompareOverlays();
+    restoreFormatPanel();
   }
 
-  function turnOffChangeMapForFileBoundary() {                                  // NEW
-    const shouldRestorePanel = !!(panel && (graph.__ccPanelVisible || formatPanelState)); // NEW
-    if (graph.__ccApplyTimer) { clearTimeout(graph.__ccApplyTimer); graph.__ccApplyTimer = null; } // NEW
-    graph.__ccApplyToken++;                                                     // NEW
-    graph.__ccApplyQueued = false;                                               // NEW
-    graph.__ccHistorySelectedId = null;                                          // NEW
-    graph.__ccFiltered = [];                                                     // NEW
-    graph.__ccNavIndex = 0;                                                      // NEW
-    if (graph.__ccMode !== MODE_NONE) clearMap();                                // NEW
-    if (shouldRestorePanel) hidePanel();                                         // CHANGE
-    else clearHistoryCompareOverlays();                                          // NEW
-    graph.__ccPanelVisible = false;                                              // NEW
-    if (modeSelect) modeSelect.value = MODE_NONE;                                // NEW
-    updateNavUI();                                                               // NEW
-    updateHistoryUI();                                                           // NEW
-  }                                                                              // NEW
+  function turnOffChangeMapForFileBoundary() {
+    const shouldRestorePanel = !!(panel && (graph.__ccPanelVisible || formatPanelState));
+    if (graph.__ccApplyTimer) { clearTimeout(graph.__ccApplyTimer); graph.__ccApplyTimer = null; }
+    graph.__ccApplyToken++;
+    graph.__ccApplyQueued = false;
+    graph.__ccHistorySelectedId = null;
+    graph.__ccFiltered = [];
+    graph.__ccNavIndex = 0;
+    if (graph.__ccMode !== MODE_NONE) clearMap();
+    if (shouldRestorePanel) hidePanel();
+    else clearHistoryCompareOverlays();
+    graph.__ccPanelVisible = false;
+    if (modeSelect) modeSelect.value = MODE_NONE;
+    updateNavUI();
+    updateHistoryUI();
+  }
 
   function togglePanel() {
     if (isPanelVisible()) hidePanel();
@@ -1711,25 +1711,25 @@ Draw.loadPlugin(function (ui) {
     if (panel) return;
 
     panel = makeEl('div', {
-      position: 'relative',                                                    // CHANGE
-      background: '#ffffff',                                                   // CHANGE
-      borderLeft: '1px solid #c7c7cc',                                         // CHANGE
+      position: 'relative',
+      background: '#ffffff',
+      borderLeft: '1px solid #c7c7cc',
       padding: '10px',
       fontFamily: 'Arial, sans-serif',
       fontSize: '12px',
-      minWidth: '320px',                                                       // CHANGE
-      boxShadow: '-2px 0 8px rgba(0,0,0,0.10)',                                // CHANGE
+      minWidth: '320px',
+      boxShadow: '-2px 0 8px rgba(0,0,0,0.10)',
       display: 'flex',              // ← ADD HERE
       flexDirection: 'column',      // ← ADD HERE
       gap: '6px',
-      resize: 'horizontal',                                                    // CHANGE
-      overflow: 'auto',                                                        // CHANGE
-      boxSizing: 'border-box',                                             // NEW
+      resize: 'horizontal',
+      overflow: 'auto',
+      boxSizing: 'border-box',
       minHeight: '200px',                                                  // NEW (recommended)
     });
 
     const title = makeEl('div', { fontWeight: '600', marginBottom: '8px' });
-    title.textContent = 'ChangeMap History';                                  // CHANGE
+    title.textContent = 'ChangeMap History';
     panel.appendChild(title);
 
     panel.appendChild(makeRow('Mode', (modeSelect = makeSelect([
@@ -1773,7 +1773,7 @@ Draw.loadPlugin(function (ui) {
       { value: 'oldest', label: 'Oldest first' }
     ]))));
 
-    panel.appendChild(makeRow('User', (userFilterSelect = makeSelect(userFilterOptions())))); // NEW
+    panel.appendChild(makeRow('User', (userFilterSelect = makeSelect(userFilterOptions()))));
 
     const navRow = makeEl('div', { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' });
     prevBtn = makeEl('button', { padding: '4px 8px', cursor: 'pointer' });
@@ -1789,54 +1789,54 @@ Draw.loadPlugin(function (ui) {
     listWrap = makeEl('div', {
       borderTop: '1px solid #ddd',
       paddingTop: '6px',
-      flex: '0 0 auto',                                                        // CHANGE
+      flex: '0 0 auto',
       overflow: 'auto',
-      maxHeight: '150px',                                                      // NEW
-      minHeight: '70px'                                                        // CHANGE
+      maxHeight: '150px',
+      minHeight: '70px'
     });
     panel.appendChild(listWrap);
 
-    const historyTitle = makeEl('div', { fontWeight: '600', marginTop: '10px', borderTop: '1px solid #ddd', paddingTop: '8px' }); // NEW
-    historyTitle.textContent = 'Persistent History';                           // NEW
-    panel.appendChild(historyTitle);                                           // NEW
+    const historyTitle = makeEl('div', { fontWeight: '600', marginTop: '10px', borderTop: '1px solid #ddd', paddingTop: '8px' });
+    historyTitle.textContent = 'Persistent History';
+    panel.appendChild(historyTitle);
 
-    historyStatus = makeEl('div', { color: '#666', fontSize: '11px', minHeight: '16px' }); // NEW
-    panel.appendChild(historyStatus);                                          // NEW
+    historyStatus = makeEl('div', { color: '#666', fontSize: '11px', minHeight: '16px' });
+    panel.appendChild(historyStatus);
 
-    panel.appendChild(makeRow('Filter', (historyFilterSelect = makeSelect([{ value: 'all', label: 'All categories' }].concat(HISTORY_CATEGORIES.map(function (category) { return { value: category, label: category }; })))))); // NEW
+    panel.appendChild(makeRow('Filter', (historyFilterSelect = makeSelect([{ value: 'all', label: 'All categories' }].concat(HISTORY_CATEGORIES.map(function (category) { return { value: category, label: category }; }))))));
 
-    historyRailWrap = makeEl('div', {                                          // NEW
-      border: '1px solid #ddd',                                                // NEW
-      minHeight: '220px',                                                      // NEW
-      flex: '1 1 auto',                                                        // NEW
-      overflow: 'auto',                                                        // NEW
-      padding: '8px',                                                          // NEW
-      background: '#fafafa'                                                    // NEW
-    });                                                                        // NEW
-    panel.appendChild(historyRailWrap);                                        // NEW
+    historyRailWrap = makeEl('div', {
+      border: '1px solid #ddd',
+      minHeight: '220px',
+      flex: '1 1 auto',
+      overflow: 'auto',
+      padding: '8px',
+      background: '#fafafa'
+    });
+    panel.appendChild(historyRailWrap);
 
-    historyPreview = makeEl('div', { borderTop: '1px solid #ddd', paddingTop: '8px', minHeight: '90px', color: '#333' }); // NEW
-    panel.appendChild(historyPreview);                                         // NEW
+    historyPreview = makeEl('div', { borderTop: '1px solid #ddd', paddingTop: '8px', minHeight: '90px', color: '#333' });
+    panel.appendChild(historyPreview);
 
-    const historyActions = makeEl('div', { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }); // NEW
-    returnLatestBtn = makeEl('button', { padding: '5px 8px', cursor: 'pointer' }); // NEW
-    returnLatestBtn.textContent = 'Return latest';                             // NEW
-    compareBtn = makeEl('button', { padding: '5px 8px', cursor: 'pointer' });  // NEW
-    compareBtn.textContent = 'Compare';                                        // NEW
-    restoreBtn = makeEl('button', { padding: '5px 8px', cursor: 'pointer' });  // NEW
-    restoreBtn.textContent = 'Restore';                                        // NEW
-    checkpointBtn = makeEl('button', { padding: '5px 8px', cursor: 'pointer' }); // NEW
-    checkpointBtn.textContent = 'Checkpoint';                                  // NEW
-    historyActions.appendChild(returnLatestBtn);                               // NEW
-    historyActions.appendChild(compareBtn);                                    // NEW
-    historyActions.appendChild(restoreBtn);                                    // NEW
-    historyActions.appendChild(checkpointBtn);                                 // NEW
-    panel.appendChild(historyActions);                                         // NEW
+    const historyActions = makeEl('div', { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' });
+    returnLatestBtn = makeEl('button', { padding: '5px 8px', cursor: 'pointer' });
+    returnLatestBtn.textContent = 'Return latest';
+    compareBtn = makeEl('button', { padding: '5px 8px', cursor: 'pointer' });
+    compareBtn.textContent = 'Compare';
+    restoreBtn = makeEl('button', { padding: '5px 8px', cursor: 'pointer' });
+    restoreBtn.textContent = 'Restore';
+    checkpointBtn = makeEl('button', { padding: '5px 8px', cursor: 'pointer' });
+    checkpointBtn.textContent = 'Checkpoint';
+    historyActions.appendChild(returnLatestBtn);
+    historyActions.appendChild(compareBtn);
+    historyActions.appendChild(restoreBtn);
+    historyActions.appendChild(checkpointBtn);
+    panel.appendChild(historyActions);
 
     wirePanelEvents();
     // Persist size after user finishes resizing (mouse/touch release)
-    panel.addEventListener('mouseup', readAndStorePanelSize, true);        // NEW
-    panel.addEventListener('touchend', readAndStorePanelSize, true);       // NEW
+    panel.addEventListener('mouseup', readAndStorePanelSize, true);
+    panel.addEventListener('touchend', readAndStorePanelSize, true);
 
     attachPanel();
     panel.style.display = graph.__ccPanelVisible ? '' : 'none';
@@ -1845,7 +1845,7 @@ Draw.loadPlugin(function (ui) {
 
     syncPanelFromState();
     updateNavUI();
-    updateHistoryUI();                                                         // NEW
+    updateHistoryUI();
   }
 
   function makeRow(label, control) {
@@ -1869,55 +1869,55 @@ Draw.loadPlugin(function (ui) {
     return sel;
   }
 
-  function userFilterOptions() {                                               // NEW
-    const options = [{ value: 'all', label: 'All users' }, { value: 'current', label: 'Current user' }]; // NEW
-    const users = usersApi();                                                  // NEW
-    const list = users && typeof users.listUsers === 'function' ? users.listUsers() : []; // NEW
-    for (let i = 0; i < list.length; i++) {                                    // NEW
-      if (list[i] && list[i].id) options.push({ value: 'user:' + list[i].id, label: list[i].name || list[i].id }); // NEW
-    }                                                                          // NEW
-    return options;                                                            // NEW
-  }                                                                            // NEW
+  function userFilterOptions() {
+    const options = [{ value: 'all', label: 'All users' }, { value: 'current', label: 'Current user' }];
+    const users = usersApi();
+    const list = users && typeof users.listUsers === 'function' ? users.listUsers() : [];
+    for (let i = 0; i < list.length; i++) {
+      if (list[i] && list[i].id) options.push({ value: 'user:' + list[i].id, label: list[i].name || list[i].id });
+    }
+    return options;
+  }
 
-  function refreshSelectOptions(select, options, selectedValue) {              // NEW
-    if (!select) return;                                                       // NEW
-    const value = selectedValue || select.value || 'all';                      // NEW
-    select.innerHTML = '';                                                     // NEW
-    for (let i = 0; i < options.length; i++) {                                 // NEW
-      const opt = document.createElement('option');                            // NEW
-      opt.value = options[i].value;                                            // NEW
-      opt.textContent = options[i].label;                                      // NEW
-      select.appendChild(opt);                                                 // NEW
-    }                                                                          // NEW
-    select.value = options.some(function (option) { return option.value === value; }) ? value : 'all'; // NEW
-  }                                                                            // NEW
+  function refreshSelectOptions(select, options, selectedValue) {
+    if (!select) return;
+    const value = selectedValue || select.value || 'all';
+    select.innerHTML = '';
+    for (let i = 0; i < options.length; i++) {
+      const opt = document.createElement('option');
+      opt.value = options[i].value;
+      opt.textContent = options[i].label;
+      select.appendChild(opt);
+    }
+    select.value = options.some(function (option) { return option.value === value; }) ? value : 'all';
+  }
 
   function attachPanel() {
     if (!graph.container || !panel) return;
-    const formatContainer = ui && ui.formatContainer && !ui.formatWindow ? ui.formatContainer : null; // NEW
-    if (formatContainer) {                                                     // NEW
-      if (panel.parentNode === formatContainer && formatPanelState) { refreshChangeMapSidebarLayout(); return; } // NEW
-      if (!formatPanelState) {                                                 // NEW
-        const fragment = document.createDocumentFragment();                    // NEW
-        while (formatContainer.firstChild) fragment.appendChild(formatContainer.firstChild); // NEW
-        formatPanelState = { container: formatContainer, fragment, cssText: formatContainer.style.cssText, formatWidth: ui.formatWidth }; // NEW
-      }                                                                        // NEW
-      suspendNativeFormatRefresh();                                            // NEW
-      if (panel.parentNode && panel.parentNode !== formatContainer) panel.parentNode.removeChild(panel); // NEW
-      panel.style.position = 'relative';                                       // NEW
-      panel.style.top = '';                                                    // NEW
-      panel.style.right = '';                                                  // NEW
-      panel.style.zIndex = '';                                                 // NEW
-      formatContainer.appendChild(panel);                                      // NEW
-      refreshChangeMapSidebarLayout();                                         // NEW
-      return;                                                                  // NEW
-    }                                                                          // NEW
+    const formatContainer = ui && ui.formatContainer && !ui.formatWindow ? ui.formatContainer : null;
+    if (formatContainer) {
+      if (panel.parentNode === formatContainer && formatPanelState) { refreshChangeMapSidebarLayout(); return; }
+      if (!formatPanelState) {
+        const fragment = document.createDocumentFragment();
+        while (formatContainer.firstChild) fragment.appendChild(formatContainer.firstChild);
+        formatPanelState = { container: formatContainer, fragment, cssText: formatContainer.style.cssText, formatWidth: ui.formatWidth };
+      }
+      suspendNativeFormatRefresh();
+      if (panel.parentNode && panel.parentNode !== formatContainer) panel.parentNode.removeChild(panel);
+      panel.style.position = 'relative';
+      panel.style.top = '';
+      panel.style.right = '';
+      panel.style.zIndex = '';
+      formatContainer.appendChild(panel);
+      refreshChangeMapSidebarLayout();
+      return;
+    }
     const parent = graph.container.parentNode || graph.container;
-    if (parent && parent.style && (!parent.style.position || parent.style.position === 'static')) parent.style.position = 'relative'; // NEW
-    panel.style.position = 'absolute';                                         // NEW
-    panel.style.top = '0';                                                     // NEW
-    panel.style.right = '0';                                                   // NEW
-    panel.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL);                      // NEW
+    if (parent && parent.style && (!parent.style.position || parent.style.position === 'static')) parent.style.position = 'relative';
+    panel.style.position = 'absolute';
+    panel.style.top = '0';
+    panel.style.right = '0';
+    panel.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL);
     if (panel.parentNode !== parent) parent.appendChild(panel);
   }
 
@@ -1948,26 +1948,26 @@ Draw.loadPlugin(function (ui) {
       refreshIfEnabled();
     });
 
-    userFilterSelect.addEventListener('change', function () {                  // NEW
-      graph.__ccUserFilter = userFilterSelect.value || 'all';                  // NEW
-      refreshIfEnabled();                                                      // NEW
-      updateHistoryUI();                                                       // NEW
-    });                                                                        // NEW
+    userFilterSelect.addEventListener('change', function () {
+      graph.__ccUserFilter = userFilterSelect.value || 'all';
+      refreshIfEnabled();
+      updateHistoryUI();
+    });
 
     prevBtn.addEventListener('click', function () { navPrev(); });
     nextBtn.addEventListener('click', function () { navNext(); });
-    historyFilterSelect.addEventListener('change', function () {               // NEW
-      graph.__ccHistoryFilter = historyFilterSelect.value;                     // NEW
-      updateHistoryUI();                                                       // NEW
-    });                                                                        // NEW
-    returnLatestBtn.addEventListener('click', function () {                    // NEW
-      graph.__ccHistorySelectedId = null;                                      // NEW
-      clearHistoryCompareOverlays();                                           // NEW
-      updateHistoryUI();                                                       // NEW
-    });                                                                        // NEW
-    compareBtn.addEventListener('click', function () { compareSelectedRevision(); }); // NEW
-    restoreBtn.addEventListener('click', function () { confirmRestoreSelectedRevision(); }); // NEW
-    checkpointBtn.addEventListener('click', function () { historyRecorder.createCheckpoint('Manual checkpoint'); }); // NEW
+    historyFilterSelect.addEventListener('change', function () {
+      graph.__ccHistoryFilter = historyFilterSelect.value;
+      updateHistoryUI();
+    });
+    returnLatestBtn.addEventListener('click', function () {
+      graph.__ccHistorySelectedId = null;
+      clearHistoryCompareOverlays();
+      updateHistoryUI();
+    });
+    compareBtn.addEventListener('click', function () { compareSelectedRevision(); });
+    restoreBtn.addEventListener('click', function () { confirmRestoreSelectedRevision(); });
+    checkpointBtn.addEventListener('click', function () { historyRecorder.createCheckpoint('Manual checkpoint'); });
   }
 
   function syncPanelFromState() {
@@ -1976,9 +1976,9 @@ Draw.loadPlugin(function (ui) {
     windowValueInput.value = String(graph.__ccWindowValue);
     windowUnitSelect.value = graph.__ccWindowUnit;
     sortSelect.value = graph.__ccSortOrder;
-    refreshSelectOptions(userFilterSelect, userFilterOptions(), graph.__ccUserFilter || 'all'); // NEW
-    graph.__ccUserFilter = userFilterSelect ? userFilterSelect.value : (graph.__ccUserFilter || 'all'); // NEW
-    if (historyFilterSelect) historyFilterSelect.value = graph.__ccHistoryFilter || 'all'; // NEW
+    refreshSelectOptions(userFilterSelect, userFilterOptions(), graph.__ccUserFilter || 'all');
+    graph.__ccUserFilter = userFilterSelect ? userFilterSelect.value : (graph.__ccUserFilter || 'all');
+    if (historyFilterSelect) historyFilterSelect.value = graph.__ccHistoryFilter || 'all';
   }
 
   function formatTs(ts) {
@@ -2032,342 +2032,342 @@ Draw.loadPlugin(function (ui) {
     }
   }
 
-  async function refreshHistoryRevisions() {                                  // NEW
-    try {                                                                      // NEW
-      if (!historyStore.ready) return;                                         // NEW
-      graph.__ccHistoryRevisions = await historyStore.listRevisions(getDiagramHistoryId()); // NEW
-      updateHistoryUI();                                                       // NEW
-    } catch (e) {                                                              // NEW
-      graph.__ccHistoryWarning = 'History refresh failed: ' + (e && e.message ? e.message : String(e)); // NEW
-      updateHistoryUI();                                                       // NEW
-    }                                                                          // NEW
-  }                                                                            // NEW
+  async function refreshHistoryRevisions() {
+    try {
+      if (!historyStore.ready) return;
+      graph.__ccHistoryRevisions = await historyStore.listRevisions(getDiagramHistoryId());
+      updateHistoryUI();
+    } catch (e) {
+      graph.__ccHistoryWarning = 'History refresh failed: ' + (e && e.message ? e.message : String(e));
+      updateHistoryUI();
+    }
+  }
 
-  function selectedHistoryRevision() {                                         // NEW
-    const id = graph.__ccHistorySelectedId;                                    // NEW
-    const list = graph.__ccHistoryRevisions || [];                             // NEW
-    for (let i = 0; i < list.length; i++) if (list[i].id === id) return list[i]; // NEW
-    return null;                                                               // NEW
-  }                                                                            // NEW
+  function selectedHistoryRevision() {
+    const id = graph.__ccHistorySelectedId;
+    const list = graph.__ccHistoryRevisions || [];
+    for (let i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
 
-  function revisionMatchesUserFilter(rev) {                                    // NEW
-    const userId = resolveUserFilterId();                                      // NEW
-    if (!userId) return true;                                                  // NEW
-    return !!(rev && rev.actorUserId === userId);                              // NEW
-  }                                                                            // NEW
+  function revisionMatchesUserFilter(rev) {
+    const userId = resolveUserFilterId();
+    if (!userId) return true;
+    return !!(rev && rev.actorUserId === userId);
+  }
 
-  function updateHistoryUI() {                                                 // NEW
-    if (!panel || !historyRailWrap || !historyPreview || !historyStatus) return; // NEW
-    refreshSelectOptions(userFilterSelect, userFilterOptions(), graph.__ccUserFilter || 'all'); // NEW
-    graph.__ccUserFilter = userFilterSelect ? userFilterSelect.value : (graph.__ccUserFilter || 'all'); // NEW
-    const warning = graph.__ccHistoryWarning || historyStore.warning || '';    // NEW
-    historyStatus.textContent = warning || graph.__ccHistoryRestoreStatus || (historyStore.ready ? 'History is recording stable revisions.' : 'History storage is starting.'); // NEW
-    historyRailWrap.innerHTML = '';                                            // NEW
-    const filter = graph.__ccHistoryFilter || 'all';                           // NEW
-    const all = graph.__ccHistoryRevisions || [];                              // NEW
-    const categoryFiltered = filter === 'all' ? all : all.filter(function (rev) { return rev.category === filter || (rev.tags || []).indexOf(filter) >= 0; }); // CHANGE
-    const revisions = categoryFiltered.filter(revisionMatchesUserFilter);       // NEW
-    if (revisions.length === 0) {                                               // NEW
-      const empty = makeEl('div', { color: '#666' });                          // NEW
-      empty.textContent = historyStore.ready ? 'No revisions match this filter.' : 'Persistent history unavailable.'; // NEW
-      historyRailWrap.appendChild(empty);                                      // NEW
-    }                                                                          // NEW
-    for (let i = 0; i < revisions.length; i++) {                               // NEW
-      historyRailWrap.appendChild(createHistoryRevisionRow(revisions[i], i, revisions.length)); // NEW
-    }                                                                          // NEW
-    updateHistoryPreview();                                                    // NEW
-  }                                                                            // NEW
+  function updateHistoryUI() {
+    if (!panel || !historyRailWrap || !historyPreview || !historyStatus) return;
+    refreshSelectOptions(userFilterSelect, userFilterOptions(), graph.__ccUserFilter || 'all');
+    graph.__ccUserFilter = userFilterSelect ? userFilterSelect.value : (graph.__ccUserFilter || 'all');
+    const warning = graph.__ccHistoryWarning || historyStore.warning || '';
+    historyStatus.textContent = warning || graph.__ccHistoryRestoreStatus || (historyStore.ready ? 'History is recording stable revisions.' : 'History storage is starting.');
+    historyRailWrap.innerHTML = '';
+    const filter = graph.__ccHistoryFilter || 'all';
+    const all = graph.__ccHistoryRevisions || [];
+    const categoryFiltered = filter === 'all' ? all : all.filter(function (rev) { return rev.category === filter || (rev.tags || []).indexOf(filter) >= 0; });
+    const revisions = categoryFiltered.filter(revisionMatchesUserFilter);
+    if (revisions.length === 0) {
+      const empty = makeEl('div', { color: '#666' });
+      empty.textContent = historyStore.ready ? 'No revisions match this filter.' : 'Persistent history unavailable.';
+      historyRailWrap.appendChild(empty);
+    }
+    for (let i = 0; i < revisions.length; i++) {
+      historyRailWrap.appendChild(createHistoryRevisionRow(revisions[i], i, revisions.length));
+    }
+    updateHistoryPreview();
+  }
 
-  function createHistoryRevisionRow(rev, index, total) {                       // NEW
-    const active = rev.id === graph.__ccHistorySelectedId;                     // NEW
-    const row = makeEl('div', {                                                // NEW
-      display: 'grid',                                                         // NEW
-      gridTemplateColumns: '18px 1fr',                                         // NEW
-      columnGap: '7px',                                                        // NEW
-      alignItems: 'start',                                                     // NEW
-      cursor: 'pointer',                                                       // NEW
-      padding: '4px',                                                          // NEW
-      background: active ? 'rgba(26,115,232,0.10)' : 'transparent',            // NEW
-      borderRadius: '4px'                                                      // NEW
-    });                                                                        // NEW
-    const tick = makeEl('div', { width: '10px', height: '10px', borderRadius: '5px', marginTop: '4px', background: rev.checkpoint ? '#f9ab00' : (rev.category === 'History' ? '#1a73e8' : '#5f6368') }); // NEW
-    const label = makeEl('div', { overflow: 'hidden' });                       // NEW
-    const title = makeEl('div', { fontWeight: active ? '600' : '400', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }); // NEW
-    title.textContent = rev.title || rev.action || 'Revision';                 // NEW
-    const meta = makeEl('div', { color: '#666', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }); // NEW
-    meta.textContent = rev.category + ' - ' + formatTs(rev.timestamp) + (rev.actorName ? ' - ' + rev.actorName : ''); // CHANGE
-    label.appendChild(title);                                                  // NEW
-    label.appendChild(meta);                                                   // NEW
-    row.appendChild(tick);                                                     // NEW
-    row.appendChild(label);                                                    // NEW
-    row.title = (index + 1) + ' / ' + total + ' - ' + rev.category;             // NEW
-    row.addEventListener('click', function () { selectHistoryRevision(rev.id); }); // NEW
-    return row;                                                                // NEW
-  }                                                                            // NEW
+  function createHistoryRevisionRow(rev, index, total) {
+    const active = rev.id === graph.__ccHistorySelectedId;
+    const row = makeEl('div', {
+      display: 'grid',
+      gridTemplateColumns: '18px 1fr',
+      columnGap: '7px',
+      alignItems: 'start',
+      cursor: 'pointer',
+      padding: '4px',
+      background: active ? 'rgba(26,115,232,0.10)' : 'transparent',
+      borderRadius: '4px'
+    });
+    const tick = makeEl('div', { width: '10px', height: '10px', borderRadius: '5px', marginTop: '4px', background: rev.checkpoint ? '#f9ab00' : (rev.category === 'History' ? '#1a73e8' : '#5f6368') });
+    const label = makeEl('div', { overflow: 'hidden' });
+    const title = makeEl('div', { fontWeight: active ? '600' : '400', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' });
+    title.textContent = rev.title || rev.action || 'Revision';
+    const meta = makeEl('div', { color: '#666', fontSize: '11px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' });
+    meta.textContent = rev.category + ' - ' + formatTs(rev.timestamp) + (rev.actorName ? ' - ' + rev.actorName : '');
+    label.appendChild(title);
+    label.appendChild(meta);
+    row.appendChild(tick);
+    row.appendChild(label);
+    row.title = (index + 1) + ' / ' + total + ' - ' + rev.category;
+    row.addEventListener('click', function () { selectHistoryRevision(rev.id); });
+    return row;
+  }
 
-  function updateHistoryPreview() {                                            // NEW
-    const rev = selectedHistoryRevision();                                     // NEW
-    if (!rev) {                                                                // NEW
-      historyPreview.textContent = 'Select a revision to preview affected cells, compare, or restore.'; // NEW
-      compareBtn.disabled = true;                                              // NEW
-      restoreBtn.disabled = true;                                              // NEW
-      return;                                                                  // NEW
-    }                                                                          // NEW
-    compareBtn.disabled = false;                                               // NEW
-    restoreBtn.disabled = false;                                               // NEW
-    const affected = rev.affectedCellIds || [];                                // NEW
-    historyPreview.innerHTML = '';                                             // NEW
-    const title = makeEl('div', { fontWeight: '600', marginBottom: '4px' });   // NEW
-    title.textContent = rev.title || 'Revision';                               // NEW
-    const meta = makeEl('div', { color: '#555', fontSize: '11px', marginBottom: '4px' }); // NEW
-    meta.textContent = rev.category + ' - ' + formatTs(rev.timestamp) + (rev.actorName ? ' - ' + rev.actorName : ''); // CHANGE
-    const counts = makeEl('div', { color: '#333' });                           // NEW
-    counts.textContent = String(affected.length) + ' affected cell' + (affected.length === 1 ? '' : 's') + (rev.restoredFromRevisionId ? ' - branch restore' : ''); // NEW
-    historyPreview.appendChild(title);                                         // NEW
-    historyPreview.appendChild(meta);                                          // NEW
-    historyPreview.appendChild(counts);                                        // NEW
-    const compareSummary = graph.__ccHistoryCompareSummary;                    // NEW
-    if (compareSummary && compareSummary.revisionId === rev.id) {              // NEW
-      const diff = makeEl('div', { color: '#333', marginTop: '4px' });          // NEW
-      diff.textContent = 'Compare: ' + compareSummary.added + ' added, ' + compareSummary.changed + ' changed, ' + compareSummary.deleted + ' deleted'; // NEW
-      historyPreview.appendChild(diff);                                        // NEW
-    }                                                                          // NEW
-    const audit = graph.__ccHistoryLastRestoreAudit;                           // NEW
-    if (audit && audit.sourceRevisionId === rev.id) {                          // NEW
-      const status = makeEl('div', { color: audit.warnings && audit.warnings.length ? '#b06000' : '#188038', marginTop: '4px' }); // NEW
-      status.textContent = audit.warnings && audit.warnings.length ? 'Restore warning: ' + audit.warnings.map(function (entry) { return entry.message; }).join(' ') : 'Graph restored. External Trellis data was not rolled back.'; // NEW
-      historyPreview.appendChild(status);                                      // NEW
-    }                                                                          // NEW
-  }                                                                            // NEW
+  function updateHistoryPreview() {
+    const rev = selectedHistoryRevision();
+    if (!rev) {
+      historyPreview.textContent = 'Select a revision to preview affected cells, compare, or restore.';
+      compareBtn.disabled = true;
+      restoreBtn.disabled = true;
+      return;
+    }
+    compareBtn.disabled = false;
+    restoreBtn.disabled = false;
+    const affected = rev.affectedCellIds || [];
+    historyPreview.innerHTML = '';
+    const title = makeEl('div', { fontWeight: '600', marginBottom: '4px' });
+    title.textContent = rev.title || 'Revision';
+    const meta = makeEl('div', { color: '#555', fontSize: '11px', marginBottom: '4px' });
+    meta.textContent = rev.category + ' - ' + formatTs(rev.timestamp) + (rev.actorName ? ' - ' + rev.actorName : '');
+    const counts = makeEl('div', { color: '#333' });
+    counts.textContent = String(affected.length) + ' affected cell' + (affected.length === 1 ? '' : 's') + (rev.restoredFromRevisionId ? ' - branch restore' : '');
+    historyPreview.appendChild(title);
+    historyPreview.appendChild(meta);
+    historyPreview.appendChild(counts);
+    const compareSummary = graph.__ccHistoryCompareSummary;
+    if (compareSummary && compareSummary.revisionId === rev.id) {
+      const diff = makeEl('div', { color: '#333', marginTop: '4px' });
+      diff.textContent = 'Compare: ' + compareSummary.added + ' added, ' + compareSummary.changed + ' changed, ' + compareSummary.deleted + ' deleted';
+      historyPreview.appendChild(diff);
+    }
+    const audit = graph.__ccHistoryLastRestoreAudit;
+    if (audit && audit.sourceRevisionId === rev.id) {
+      const status = makeEl('div', { color: audit.warnings && audit.warnings.length ? '#b06000' : '#188038', marginTop: '4px' });
+      status.textContent = audit.warnings && audit.warnings.length ? 'Restore warning: ' + audit.warnings.map(function (entry) { return entry.message; }).join(' ') : 'Graph restored. External Trellis data was not rolled back.';
+      historyPreview.appendChild(status);
+    }
+  }
 
-  function historyBoundsAsRect(bounds) {                                       // NEW
-    const b = normalizeBounds(bounds);                                          // NEW
-    if (!b) return null;                                                        // NEW
-    return (typeof mxRectangle !== 'undefined') ? new mxRectangle(b.x, b.y, b.width, b.height) : b; // NEW
-  }                                                                            // NEW
+  function historyBoundsAsRect(bounds) {
+    const b = normalizeBounds(bounds);
+    if (!b) return null;
+    return (typeof mxRectangle !== 'undefined') ? new mxRectangle(b.x, b.y, b.width, b.height) : b;
+  }
 
-  function fitHistoryRevisionTarget(rev, cells) {                              // NEW
-    const bounds = normalizeBounds(rev && rev.bounds) || boundsForCells(cells); // NEW
-    const rect = historyBoundsAsRect(bounds);                                   // NEW
-    if (rect && typeof graph.fitWindow === 'function') { graph.fitWindow(rect, 16); return true; } // NEW
-    if (rect && typeof graph.scrollRectToVisible === 'function') { graph.scrollRectToVisible(rect); return true; } // NEW
-    if (cells && cells.length && graph.scrollCellToVisible) { graph.scrollCellToVisible(cells[0], true); return true; } // NEW
-    return false;                                                              // NEW
-  }                                                                            // NEW
+  function fitHistoryRevisionTarget(rev, cells) {
+    const bounds = normalizeBounds(rev && rev.bounds) || boundsForCells(cells);
+    const rect = historyBoundsAsRect(bounds);
+    if (rect && typeof graph.fitWindow === 'function') { graph.fitWindow(rect, 16); return true; }
+    if (rect && typeof graph.scrollRectToVisible === 'function') { graph.scrollRectToVisible(rect); return true; }
+    if (cells && cells.length && graph.scrollCellToVisible) { graph.scrollCellToVisible(cells[0], true); return true; }
+    return false;
+  }
 
-  function selectHistoryRevision(id) {                                         // NEW
-    graph.__ccHistorySelectedId = id;                                          // NEW
-    clearHistoryCompareOverlays();                                             // NEW
-    const rev = selectedHistoryRevision();                                     // NEW
-    const ids = (rev && rev.affectedCellIds) || [];                            // NEW
-    const cells = ids.map(function (cellId) { return model.getCell && model.getCell(cellId); }).filter(Boolean); // NEW
-    if (cells.length && graph.setSelectionCells) graph.setSelectionCells(cells); // NEW
-    fitHistoryRevisionTarget(rev, cells);                                      // NEW
-    updateHistoryUI();                                                         // NEW
-  }                                                                            // NEW
+  function selectHistoryRevision(id) {
+    graph.__ccHistorySelectedId = id;
+    clearHistoryCompareOverlays();
+    const rev = selectedHistoryRevision();
+    const ids = (rev && rev.affectedCellIds) || [];
+    const cells = ids.map(function (cellId) { return model.getCell && model.getCell(cellId); }).filter(Boolean);
+    if (cells.length && graph.setSelectionCells) graph.setSelectionCells(cells);
+    fitHistoryRevisionTarget(rev, cells);
+    updateHistoryUI();
+  }
 
-  function clearHistoryCompareOverlays() {                                     // NEW
-    const overlays = graph.__ccHistoryCompareOverlays || [];                   // NEW
-    for (let i = 0; i < overlays.length; i++) {                                // NEW
-      const node = overlays[i];                                                // NEW
-      if (node && node.parentNode) node.parentNode.removeChild(node);          // NEW
-    }                                                                          // NEW
-    graph.__ccHistoryCompareOverlays = [];                                     // NEW
-    graph.__ccHistoryCompareSummary = null;                                    // NEW
-    fireHistoryLifecycleEvent(HISTORY_EVENT_COMPARE_CLEARED, {});              // NEW
-  }                                                                            // NEW
+  function clearHistoryCompareOverlays() {
+    const overlays = graph.__ccHistoryCompareOverlays || [];
+    for (let i = 0; i < overlays.length; i++) {
+      const node = overlays[i];
+      if (node && node.parentNode) node.parentNode.removeChild(node);
+    }
+    graph.__ccHistoryCompareOverlays = [];
+    graph.__ccHistoryCompareSummary = null;
+    fireHistoryLifecycleEvent(HISTORY_EVENT_COMPARE_CLEARED, {});
+  }
 
-  function overlayHost() {                                                     // NEW
-    return (graph.container && graph.container.parentNode) || graph.container || document.body; // NEW
-  }                                                                            // NEW
+  function overlayHost() {
+    return (graph.container && graph.container.parentNode) || graph.container || document.body;
+  }
 
-  function addCompareOverlay(bounds, label, color, dashed) {                   // NEW
-    if (!bounds) return;                                                       // NEW
-    const div = makeEl('div', {                                                // NEW
-      position: 'absolute',                                                    // NEW
-      left: String(Math.round(bounds.x)) + 'px',                               // NEW
-      top: String(Math.round(bounds.y)) + 'px',                                // NEW
-      width: String(Math.max(8, Math.round(bounds.width))) + 'px',             // NEW
-      height: String(Math.max(8, Math.round(bounds.height))) + 'px',           // NEW
-      border: '2px ' + (dashed ? 'dashed' : 'solid') + ' ' + color,            // NEW
-      background: dashed ? 'rgba(217,48,37,0.08)' : 'rgba(26,115,232,0.08)',   // NEW
-      pointerEvents: 'none',                                                   // NEW
-      zIndex: String(GRAPH_OVERLAY_Z.ANNOTATION),                              // CHANGE
-      boxSizing: 'border-box'                                                  // NEW
-    });                                                                        // NEW
-    if (label) div.title = label;                                              // NEW
-    overlayHost().appendChild(div);                                            // NEW
-    graph.__ccHistoryCompareOverlays.push(div);                                // NEW
-  }                                                                            // NEW
+  function addCompareOverlay(bounds, label, color, dashed) {
+    if (!bounds) return;
+    const div = makeEl('div', {
+      position: 'absolute',
+      left: String(Math.round(bounds.x)) + 'px',
+      top: String(Math.round(bounds.y)) + 'px',
+      width: String(Math.max(8, Math.round(bounds.width))) + 'px',
+      height: String(Math.max(8, Math.round(bounds.height))) + 'px',
+      border: '2px ' + (dashed ? 'dashed' : 'solid') + ' ' + color,
+      background: dashed ? 'rgba(217,48,37,0.08)' : 'rgba(26,115,232,0.08)',
+      pointerEvents: 'none',
+      zIndex: String(GRAPH_OVERLAY_Z.ANNOTATION),
+      boxSizing: 'border-box'
+    });
+    if (label) div.title = label;
+    overlayHost().appendChild(div);
+    graph.__ccHistoryCompareOverlays.push(div);
+  }
 
-  function cellBoundsForOverlay(cell) {                                        // NEW
-    const state = graph.view && graph.view.getState && graph.view.getState(cell); // NEW
-    if (state) return { x: state.x, y: state.y, width: state.width, height: state.height }; // NEW
-    const geo = cell && cell.geometry;                                         // NEW
-    if (!geo) return null;                                                     // NEW
-    return { x: geo.x || 0, y: geo.y || 0, width: geo.width || 40, height: geo.height || 24 }; // NEW
-  }                                                                            // NEW
+  function cellBoundsForOverlay(cell) {
+    const state = graph.view && graph.view.getState && graph.view.getState(cell);
+    if (state) return { x: state.x, y: state.y, width: state.width, height: state.height };
+    const geo = cell && cell.geometry;
+    if (!geo) return null;
+    return { x: geo.x || 0, y: geo.y || 0, width: geo.width || 40, height: geo.height || 24 };
+  }
 
-  async function compareSelectedRevision() {                                  // NEW
-    const rev = selectedHistoryRevision();                                     // NEW
-    if (!rev) return;                                                          // NEW
-    clearHistoryCompareOverlays();                                             // NEW
-    const snapshot = await historyStore.loadSnapshot(rev.snapshotId);          // NEW
-    if (!snapshot) return;                                                     // NEW
-    const historicalXml = decompressSnapshotXml(snapshot);                     // NEW
-    if (!historicalXml) { graph.__ccHistoryWarning = 'History snapshot is unreadable.'; updateHistoryUI(); return; } // NEW
-    const diff = diffSnapshotWithCurrent(historicalXml, serializeActivePageXml()); // NEW
-    graph.__ccHistoryCompareSummary = { revisionId: rev.id, added: diff.added.length, changed: diff.changed.length, deleted: diff.deleted.length }; // NEW
-    for (let i = 0; i < diff.added.length; i++) {                              // NEW
-      const cell = model.getCell && model.getCell(diff.added[i]);              // NEW
-      if (cell) addCompareOverlay(cellBoundsForOverlay(cell), 'Added: ' + diff.added[i], '#188038', false); // NEW
-    }                                                                          // NEW
-    for (let i = 0; i < diff.changed.length; i++) {                            // NEW
-      const cell = model.getCell && model.getCell(diff.changed[i]);            // NEW
-      if (cell) addCompareOverlay(cellBoundsForOverlay(cell), 'Changed: ' + diff.changed[i], '#1a73e8', false); // NEW
-    }                                                                          // NEW
-    for (let i = 0; i < diff.deleted.length; i++) {                            // NEW
-      const ghost = diff.deleted[i];                                           // NEW
-      addCompareOverlay(ghost.bounds, 'Deleted: ' + ghost.id, '#d93025', true); // NEW
-    }                                                                          // NEW
-    updateHistoryPreview();                                                    // NEW
-  }                                                                            // NEW
+  async function compareSelectedRevision() {
+    const rev = selectedHistoryRevision();
+    if (!rev) return;
+    clearHistoryCompareOverlays();
+    const snapshot = await historyStore.loadSnapshot(rev.snapshotId);
+    if (!snapshot) return;
+    const historicalXml = decompressSnapshotXml(snapshot);
+    if (!historicalXml) { graph.__ccHistoryWarning = 'History snapshot is unreadable.'; updateHistoryUI(); return; }
+    const diff = diffSnapshotWithCurrent(historicalXml, serializeActivePageXml());
+    graph.__ccHistoryCompareSummary = { revisionId: rev.id, added: diff.added.length, changed: diff.changed.length, deleted: diff.deleted.length };
+    for (let i = 0; i < diff.added.length; i++) {
+      const cell = model.getCell && model.getCell(diff.added[i]);
+      if (cell) addCompareOverlay(cellBoundsForOverlay(cell), 'Added: ' + diff.added[i], '#188038', false);
+    }
+    for (let i = 0; i < diff.changed.length; i++) {
+      const cell = model.getCell && model.getCell(diff.changed[i]);
+      if (cell) addCompareOverlay(cellBoundsForOverlay(cell), 'Changed: ' + diff.changed[i], '#1a73e8', false);
+    }
+    for (let i = 0; i < diff.deleted.length; i++) {
+      const ghost = diff.deleted[i];
+      addCompareOverlay(ghost.bounds, 'Deleted: ' + ghost.id, '#d93025', true);
+    }
+    updateHistoryPreview();
+  }
 
-  function diffSnapshotWithCurrent(historicalXml, currentXml) {                // NEW
-    const historical = parseXmlCellMap(historicalXml);                         // NEW
-    const current = parseXmlCellMap(currentXml);                               // NEW
-    const added = [];                                                          // NEW
-    const changed = [];                                                        // NEW
-    const deleted = [];                                                        // NEW
-    historical.forEach(function (oldEntry, id) {                               // NEW
-      if (id === '0' || id === '1') return;                                    // NEW
-      const cur = current.get(id);                                             // NEW
-      if (!cur) deleted.push({ id, bounds: oldEntry.bounds });                 // NEW
-      else if (oldEntry.signature !== cur.signature) changed.push(id);         // NEW
-    });                                                                        // NEW
-    current.forEach(function (_entry, id) {                                     // NEW
-      if (id === '0' || id === '1') return;                                    // NEW
-      if (!historical.has(id)) added.push(id);                                  // NEW
-    });                                                                        // NEW
-    return { added, changed, deleted };                                        // NEW
-  }                                                                            // NEW
+  function diffSnapshotWithCurrent(historicalXml, currentXml) {
+    const historical = parseXmlCellMap(historicalXml);
+    const current = parseXmlCellMap(currentXml);
+    const added = [];
+    const changed = [];
+    const deleted = [];
+    historical.forEach(function (oldEntry, id) {
+      if (id === '0' || id === '1') return;
+      const cur = current.get(id);
+      if (!cur) deleted.push({ id, bounds: oldEntry.bounds });
+      else if (oldEntry.signature !== cur.signature) changed.push(id);
+    });
+    current.forEach(function (_entry, id) {
+      if (id === '0' || id === '1') return;
+      if (!historical.has(id)) added.push(id);
+    });
+    return { added, changed, deleted };
+  }
 
-  function parseXmlCellMap(xml) {                                              // NEW
-    const out = new Map();                                                     // NEW
-    try {                                                                      // NEW
-      const doc = mxUtils.parseXml(xml);                                       // NEW
-      const cells = doc.getElementsByTagName('mxCell');                        // NEW
-      for (let i = 0; i < cells.length; i++) {                                 // NEW
-        const cell = cells[i];                                                 // NEW
-        const id = cell.getAttribute('id');                                    // NEW
-        if (!id) continue;                                                     // NEW
-        const geo = cell.getElementsByTagName('mxGeometry')[0];                // NEW
-        const localBounds = geo ? normalizeBounds({ x: geo.getAttribute('x') || 0, y: geo.getAttribute('y') || 0, width: geo.getAttribute('width') || 40, height: geo.getAttribute('height') || 24 }) : null; // NEW
-        out.set(id, { id, parentId: cell.getAttribute('parent') || null, signature: cell.outerHTML || mxUtils.getXml(cell), localBounds, bounds: localBounds }); // NEW
-      }                                                                        // NEW
-      const offsets = new Map();                                                // NEW
-      function offsetFor(id) {                                                  // NEW
-        if (!id || offsets.has(id)) return offsets.get(id) || { x: 0, y: 0 };   // NEW
-        const entry = out.get(id);                                              // NEW
-        if (!entry) return { x: 0, y: 0 };                                      // NEW
-        const parentOffset = offsetFor(entry.parentId);                         // NEW
-        const local = normalizeBounds(entry.localBounds);                       // NEW
-        const offset = { x: parentOffset.x + (local ? local.x : 0), y: parentOffset.y + (local ? local.y : 0) }; // NEW
-        offsets.set(id, offset);                                                // NEW
-        return offset;                                                          // NEW
-      }                                                                         // NEW
-      out.forEach(function (entry) {                                            // NEW
-        const local = normalizeBounds(entry.localBounds);                       // NEW
-        if (!local) { entry.bounds = null; return; }                            // NEW
-        const parentOffset = offsetFor(entry.parentId);                         // NEW
-        entry.bounds = normalizeBounds({ x: parentOffset.x + local.x, y: parentOffset.y + local.y, width: local.width, height: local.height }); // NEW
-      });                                                                       // NEW
-    } catch (e) { }                                                            // NEW
-    return out;                                                                // NEW
-  }                                                                            // NEW
+  function parseXmlCellMap(xml) {
+    const out = new Map();
+    try {
+      const doc = mxUtils.parseXml(xml);
+      const cells = doc.getElementsByTagName('mxCell');
+      for (let i = 0; i < cells.length; i++) {
+        const cell = cells[i];
+        const id = cell.getAttribute('id');
+        if (!id) continue;
+        const geo = cell.getElementsByTagName('mxGeometry')[0];
+        const localBounds = geo ? normalizeBounds({ x: geo.getAttribute('x') || 0, y: geo.getAttribute('y') || 0, width: geo.getAttribute('width') || 40, height: geo.getAttribute('height') || 24 }) : null;
+        out.set(id, { id, parentId: cell.getAttribute('parent') || null, signature: cell.outerHTML || mxUtils.getXml(cell), localBounds, bounds: localBounds });
+      }
+      const offsets = new Map();
+      function offsetFor(id) {
+        if (!id || offsets.has(id)) return offsets.get(id) || { x: 0, y: 0 };
+        const entry = out.get(id);
+        if (!entry) return { x: 0, y: 0 };
+        const parentOffset = offsetFor(entry.parentId);
+        const local = normalizeBounds(entry.localBounds);
+        const offset = { x: parentOffset.x + (local ? local.x : 0), y: parentOffset.y + (local ? local.y : 0) };
+        offsets.set(id, offset);
+        return offset;
+      }
+      out.forEach(function (entry) {
+        const local = normalizeBounds(entry.localBounds);
+        if (!local) { entry.bounds = null; return; }
+        const parentOffset = offsetFor(entry.parentId);
+        entry.bounds = normalizeBounds({ x: parentOffset.x + local.x, y: parentOffset.y + local.y, width: local.width, height: local.height });
+      });
+    } catch (e) { }
+    return out;
+  }
 
-  function confirmRestoreSelectedRevision() {                                 // NEW
-    const rev = selectedHistoryRevision();                                     // NEW
-    if (!rev) return;                                                          // NEW
-    const message = 'Restore "' + (rev.title || rev.id) + '" from ' + formatTs(rev.timestamp) + '?\n\nThe current state will be saved first and native undo/redo will be cleared.'; // NEW
-    if (typeof window.confirm === 'function' && !window.confirm(message)) return; // NEW
-    restoreSelectedRevision(rev);                                              // NEW
-  }                                                                            // NEW
+  function confirmRestoreSelectedRevision() {
+    const rev = selectedHistoryRevision();
+    if (!rev) return;
+    const message = 'Restore "' + (rev.title || rev.id) + '" from ' + formatTs(rev.timestamp) + '?\n\nThe current state will be saved first and native undo/redo will be cleared.';
+    if (typeof window.confirm === 'function' && !window.confirm(message)) return;
+    restoreSelectedRevision(rev);
+  }
 
-  async function restoreSelectedRevision(rev) {                                // NEW
-    const snapshot = await historyStore.loadSnapshot(rev.snapshotId);          // NEW
-    clearHistoryCompareOverlays();                                             // NEW
-    graph.__ccHistoryWarning = '';                                             // NEW
-    graph.__ccHistoryRestoreStatus = '';                                       // NEW
-    const beforeXml = serializeActivePageXml();                                // NEW
-    const audit = createRestoreAudit(rev, hashString(beforeXml));              // NEW
-    graph.__ccHistoryLastRestoreAudit = audit;                                 // NEW
-    if (!snapshot) {                                                           // NEW
-      addRestoreAuditWarning(audit, 'missingSnapshot', 'History snapshot is missing.'); // NEW
-      audit.completedAt = nowMs();                                             // NEW
-      graph.__ccHistoryWarning = 'History snapshot is missing.';               // NEW
-      updateHistoryUI();                                                       // NEW
-      return false;                                                            // NEW
-    }                                                                          // NEW
-    const xml = decompressSnapshotXml(snapshot);                               // NEW
-    if (!xml) {                                                                // NEW
-      addRestoreAuditWarning(audit, 'unreadableSnapshot', 'History snapshot is unreadable.'); // NEW
-      audit.completedAt = nowMs();                                             // NEW
-      graph.__ccHistoryWarning = 'History snapshot is unreadable.';            // NEW
-      updateHistoryUI();                                                       // NEW
-      return false;                                                            // NEW
-    }                                                                          // NEW
-    await historyRecorder.recordStableRevision(true);                          // NEW
-    graph.__ccHistoryRestoring = true;                                         // NEW
-    fireHistoryLifecycleEvent(HISTORY_EVENT_BEFORE_RESTORE, { revision: rev, audit }); // NEW
-    try {                                                                      // NEW
-      restoreActivePageXml(xml);                                               // NEW
-      audit.loadedHash = hashString(serializeActivePageXml());                 // NEW
-      audit.loadedAt = nowMs();                                                // NEW
-      const undoManager = ui && ui.editor && ui.editor.undoManager;            // NEW
-      if (undoManager && typeof undoManager.clear === 'function') undoManager.clear(); // NEW
-      else if (undoManager && Array.isArray(undoManager.history)) { undoManager.history.length = 0; undoManager.indexOfNextAdd = 0; } // NEW
-      if (typeof graph.refresh === 'function') graph.refresh();                // NEW
-      fireHistoryLifecycleEvent(HISTORY_EVENT_AFTER_RESTORE, { revision: rev, audit }); // NEW
-      await waitForHistoryRehydrateTick();                                     // NEW
-      audit.afterRehydrateHash = hashString(serializeActivePageXml());         // NEW
-      audit.rehydratedAt = nowMs();                                            // NEW
-      if (audit.loadedHash && audit.afterRehydrateHash && audit.loadedHash !== audit.afterRehydrateHash) { // NEW
-        addRestoreAuditWarning(audit, 'rehydrationMutatedGraph', 'Plugin rehydration changed the graph after restore.'); // NEW
-      }                                                                        // NEW
-      audit.completedAt = nowMs();                                             // NEW
-      graph.__ccHistoryRestoreStatus = 'Graph restored. External Trellis data was not rolled back.'; // NEW
-      if (audit.warnings && audit.warnings.length) graph.__ccHistoryWarning = audit.warnings.map(function (entry) { return entry.message; }).join(' '); // NEW
-      await historyRecorder.recordRestore(rev.id, audit);                      // NEW
-      updateHistoryUI();                                                       // NEW
-      return true;                                                             // NEW
-    } catch (e) {                                                              // NEW
-      addRestoreAuditWarning(audit, 'restoreFailed', e && e.message ? e.message : String(e)); // NEW
-      audit.completedAt = nowMs();                                             // NEW
-      graph.__ccHistoryWarning = 'History restore failed: ' + (e && e.message ? e.message : String(e)); // NEW
-      clearHistoryCompareOverlays();                                           // NEW
-      updateHistoryUI();                                                       // NEW
-      return false;                                                            // NEW
-    } finally {                                                                // NEW
-      graph.__ccHistoryRestoring = false;                                      // NEW
-    }                                                                          // NEW
-  }                                                                            // NEW
+  async function restoreSelectedRevision(rev) {
+    const snapshot = await historyStore.loadSnapshot(rev.snapshotId);
+    clearHistoryCompareOverlays();
+    graph.__ccHistoryWarning = '';
+    graph.__ccHistoryRestoreStatus = '';
+    const beforeXml = serializeActivePageXml();
+    const audit = createRestoreAudit(rev, hashString(beforeXml));
+    graph.__ccHistoryLastRestoreAudit = audit;
+    if (!snapshot) {
+      addRestoreAuditWarning(audit, 'missingSnapshot', 'History snapshot is missing.');
+      audit.completedAt = nowMs();
+      graph.__ccHistoryWarning = 'History snapshot is missing.';
+      updateHistoryUI();
+      return false;
+    }
+    const xml = decompressSnapshotXml(snapshot);
+    if (!xml) {
+      addRestoreAuditWarning(audit, 'unreadableSnapshot', 'History snapshot is unreadable.');
+      audit.completedAt = nowMs();
+      graph.__ccHistoryWarning = 'History snapshot is unreadable.';
+      updateHistoryUI();
+      return false;
+    }
+    await historyRecorder.recordStableRevision(true);
+    graph.__ccHistoryRestoring = true;
+    fireHistoryLifecycleEvent(HISTORY_EVENT_BEFORE_RESTORE, { revision: rev, audit });
+    try {
+      restoreActivePageXml(xml);
+      audit.loadedHash = hashString(serializeActivePageXml());
+      audit.loadedAt = nowMs();
+      const undoManager = ui && ui.editor && ui.editor.undoManager;
+      if (undoManager && typeof undoManager.clear === 'function') undoManager.clear();
+      else if (undoManager && Array.isArray(undoManager.history)) { undoManager.history.length = 0; undoManager.indexOfNextAdd = 0; }
+      if (typeof graph.refresh === 'function') graph.refresh();
+      fireHistoryLifecycleEvent(HISTORY_EVENT_AFTER_RESTORE, { revision: rev, audit });
+      await waitForHistoryRehydrateTick();
+      audit.afterRehydrateHash = hashString(serializeActivePageXml());
+      audit.rehydratedAt = nowMs();
+      if (audit.loadedHash && audit.afterRehydrateHash && audit.loadedHash !== audit.afterRehydrateHash) {
+        addRestoreAuditWarning(audit, 'rehydrationMutatedGraph', 'Plugin rehydration changed the graph after restore.');
+      }
+      audit.completedAt = nowMs();
+      graph.__ccHistoryRestoreStatus = 'Graph restored. External Trellis data was not rolled back.';
+      if (audit.warnings && audit.warnings.length) graph.__ccHistoryWarning = audit.warnings.map(function (entry) { return entry.message; }).join(' ');
+      await historyRecorder.recordRestore(rev.id, audit);
+      updateHistoryUI();
+      return true;
+    } catch (e) {
+      addRestoreAuditWarning(audit, 'restoreFailed', e && e.message ? e.message : String(e));
+      audit.completedAt = nowMs();
+      graph.__ccHistoryWarning = 'History restore failed: ' + (e && e.message ? e.message : String(e));
+      clearHistoryCompareOverlays();
+      updateHistoryUI();
+      return false;
+    } finally {
+      graph.__ccHistoryRestoring = false;
+    }
+  }
 
-  const ChangeMapRenderer = {                                                  // NEW
-    enable: enableMode,                                                        // NEW
-    clear: clearMap,                                                           // NEW
-    refresh: refreshIfEnabled,                                                 // NEW
-    compare: compareSelectedRevision,                                          // NEW
-    clearCompare: clearHistoryCompareOverlays                                  // NEW
-  };                                                                           // NEW
+  const ChangeMapRenderer = {
+    enable: enableMode,
+    clear: clearMap,
+    refresh: refreshIfEnabled,
+    compare: compareSelectedRevision,
+    clearCompare: clearHistoryCompareOverlays
+  };
 
-  const HistoryRail = {                                                        // NEW
-    show: showPanel,                                                           // NEW
-    hide: hidePanel,                                                           // NEW
-    toggle: togglePanel,                                                       // NEW
-    select: selectHistoryRevision,                                             // NEW
-    update: updateHistoryUI                                                    // NEW
-  };                                                                           // NEW
+  const HistoryRail = {
+    show: showPanel,
+    hide: hidePanel,
+    toggle: togglePanel,
+    select: selectHistoryRevision,
+    update: updateHistoryUI
+  };
 
   function dedupeTimestampsOnPaste(cells) {
     if (!Array.isArray(cells) || cells.length === 0) return false;
@@ -2439,7 +2439,7 @@ Draw.loadPlugin(function (ui) {
         ensureXmlValue(c);
         if (getAttrMs(c, ATTR_CREATED) == null) {
           setAttrMs(c, ATTR_CREATED, tNow);
-          stampActor(c, 'created');                                            // NEW
+          stampActor(c, 'created');
           did = true;
         }
       }
@@ -2451,10 +2451,10 @@ Draw.loadPlugin(function (ui) {
   }
 
   // -------------------- Listen for model changes --------------------
-  const DEBUG_CCMAP_CONSOLE = false; // CHANGE
+  const DEBUG_CCMAP_CONSOLE = false;
 
   function debugLogEdit(edit, label) {
-    if (!DEBUG_CCMAP_CONSOLE) return; // CHANGE
+    if (!DEBUG_CCMAP_CONSOLE) return;
     try {
       const changes = (edit && edit.changes) || [];
       console.log(`[CCMap] ${label}: ${changes.length} change(s)`);
@@ -2473,65 +2473,65 @@ Draw.loadPlugin(function (ui) {
 
   model.addListener(mxEvent.CHANGE, function (sender, evt) {
     if (graph.__ccMapInternalChange) return;
-    if (graph.__trellisUsersRejecting || graph.__trellisUsersInternalChange) return; // NEW
+    if (graph.__trellisUsersRejecting || graph.__trellisUsersInternalChange) return;
 
     const edit = evt && evt.getProperty && evt.getProperty('edit');
     if (!edit || !edit.changes) return;
-    if (edit.__trellisUsersRejected) return;                                    // NEW
-    const capturedMetadata = historyRecorder.captureActiveTransactionMetadata(); // NEW
-    const createdStamped = stampCreatedOnInsert(edit);                          // CHANGE
-    const editedStamped = stampEditedFromSelectedIntersection(edit);             // CHANGE
-    if (createdStamped || editedStamped) scheduleRefreshIfEnabled();             // CHANGE
+    if (edit.__trellisUsersRejected) return;
+    const capturedMetadata = historyRecorder.captureActiveTransactionMetadata();
+    const createdStamped = stampCreatedOnInsert(edit);
+    const editedStamped = stampEditedFromSelectedIntersection(edit);
+    if (createdStamped || editedStamped) scheduleRefreshIfEnabled();
 
-    Promise.resolve().then(function () {                                        // NEW
-      if (graph.__ccMapInternalChange) return;                                  // NEW
-      if (graph.__trellisUsersRejecting || graph.__trellisUsersInternalChange) return; // NEW
-      if (edit.__trellisUsersRejected) return;                                  // NEW
+    Promise.resolve().then(function () {
+      if (graph.__ccMapInternalChange) return;
+      if (graph.__trellisUsersRejecting || graph.__trellisUsersInternalChange) return;
+      if (edit.__trellisUsersRejected) return;
 
-      debugLogEdit(edit, 'CHANGE');                                             // CHANGE
-      historyRecorder.recordModelChange(edit, capturedMetadata);                // CHANGE
-    });                                                                         // NEW
+      debugLogEdit(edit, 'CHANGE');
+      historyRecorder.recordModelChange(edit, capturedMetadata);
+    });
   });
 
-  const selectionModel = graph.getSelectionModel && graph.getSelectionModel();  // NEW
-  if (selectionModel && typeof selectionModel.addListener === 'function') {     // NEW
-    selectionModel.addListener(mxEvent.CHANGE, function () { clearHistoryCompareOverlays(); }); // NEW
-  }                                                                            // NEW
+  const selectionModel = graph.getSelectionModel && graph.getSelectionModel();
+  if (selectionModel && typeof selectionModel.addListener === 'function') {
+    selectionModel.addListener(mxEvent.CHANGE, function () { clearHistoryCompareOverlays(); });
+  }
 
-  function installHistoryPublicApi() {                                         // NEW
-    window.Trellis = window.Trellis || {};                                     // NEW
-    window.Trellis.history = window.Trellis.history || {};                     // NEW
-    window.Trellis.history.run = historyRecorder.run;                          // NEW
-    window.Trellis.history.createCheckpoint = historyRecorder.createCheckpoint; // NEW
-    window.Trellis.history.list = function () { return (graph.__ccHistoryRevisions || []).slice(); }; // NEW
-    window.Trellis.history.isRestoring = function () { return !!graph.__ccHistoryRestoring; }; // NEW
-    window.Trellis.history.getLastRestoreAudit = function () { return cloneRestoreAudit(graph.__ccHistoryLastRestoreAudit); }; // NEW
-    window.Trellis.history.restore = function (revisionId) {                   // NEW
-      const rev = (graph.__ccHistoryRevisions || []).find(function (entry) { return entry.id === revisionId; }); // NEW
-      return rev ? restoreSelectedRevision(rev) : Promise.resolve(false);      // NEW
-    };                                                                         // NEW
-    window.Trellis.history.events = {                                          // NEW
-      beforeRestore: HISTORY_EVENT_BEFORE_RESTORE,                             // NEW
-      afterRestore: HISTORY_EVENT_AFTER_RESTORE,                               // NEW
-      compareCleared: HISTORY_EVENT_COMPARE_CLEARED                            // NEW
-    };                                                                         // NEW
-    window.Trellis.history._test = {                                           // NEW
-      getDiagramHistoryId,                                                     // NEW
-      serializeActivePageXml,                                                  // NEW
-      hashString,                                                              // NEW
-      diffSnapshotWithCurrent,                                                 // NEW
-      computeHistoryViewTarget,                                                // NEW
-      fitHistoryRevisionTarget,                                                // NEW
-      recordStableRevision: historyRecorder.recordStableRevision,              // NEW
-      components: {                                                            // NEW
-        ChangeMapRenderer,                                                     // NEW
-        HistoryRecorder: historyRecorder,                                      // NEW
-        HistoryStore: historyStore,                                            // NEW
-        HistoryRail                                                            // NEW
-      }                                                                        // NEW
-    };                                                                         // NEW
-    graph.__trellisHistory = window.Trellis.history;                           // NEW
-  }                                                                            // NEW
+  function installHistoryPublicApi() {
+    window.Trellis = window.Trellis || {};
+    window.Trellis.history = window.Trellis.history || {};
+    window.Trellis.history.run = historyRecorder.run;
+    window.Trellis.history.createCheckpoint = historyRecorder.createCheckpoint;
+    window.Trellis.history.list = function () { return (graph.__ccHistoryRevisions || []).slice(); };
+    window.Trellis.history.isRestoring = function () { return !!graph.__ccHistoryRestoring; };
+    window.Trellis.history.getLastRestoreAudit = function () { return cloneRestoreAudit(graph.__ccHistoryLastRestoreAudit); };
+    window.Trellis.history.restore = function (revisionId) {
+      const rev = (graph.__ccHistoryRevisions || []).find(function (entry) { return entry.id === revisionId; });
+      return rev ? restoreSelectedRevision(rev) : Promise.resolve(false);
+    };
+    window.Trellis.history.events = {
+      beforeRestore: HISTORY_EVENT_BEFORE_RESTORE,
+      afterRestore: HISTORY_EVENT_AFTER_RESTORE,
+      compareCleared: HISTORY_EVENT_COMPARE_CLEARED
+    };
+    window.Trellis.history._test = {
+      getDiagramHistoryId,
+      serializeActivePageXml,
+      hashString,
+      diffSnapshotWithCurrent,
+      computeHistoryViewTarget,
+      fitHistoryRevisionTarget,
+      recordStableRevision: historyRecorder.recordStableRevision,
+      components: {
+        ChangeMapRenderer,
+        HistoryRecorder: historyRecorder,
+        HistoryStore: historyStore,
+        HistoryRail
+      }
+    };
+    graph.__trellisHistory = window.Trellis.history;
+  }
 
 
   const originalAddCells = graph.addCells;
@@ -2549,7 +2549,7 @@ Draw.loadPlugin(function (ui) {
           if (shouldIgnoreBecauseInTilerGroup(c)) continue;
 
           ensureXmlValue(c);
-          if (getAttrMs(c, ATTR_CREATED) == null) { setAttrMs(c, ATTR_CREATED, tNow); stampActor(c, 'created'); } // CHANGE
+          if (getAttrMs(c, ATTR_CREATED) == null) { setAttrMs(c, ATTR_CREATED, tNow); stampActor(c, 'created'); }
         }
       }
 
@@ -2591,7 +2591,7 @@ Draw.loadPlugin(function (ui) {
           if (shouldIgnoreBecauseInTilerGroup(c)) continue;
 
           ensureXmlValue(c);
-          if (getAttrMs(c, ATTR_CREATED) == null) { setAttrMs(c, ATTR_CREATED, tNow); stampActor(c, 'created'); } // CHANGE
+          if (getAttrMs(c, ATTR_CREATED) == null) { setAttrMs(c, ATTR_CREATED, tNow); stampActor(c, 'created'); }
         }
       }
 
@@ -2621,126 +2621,126 @@ Draw.loadPlugin(function (ui) {
 
 
 
-  // -------------------- Context eligibility -------------------- // NEW
+  // -------------------- Context eligibility --------------------
 
-  const MODULE_STYLE_KEYS = ['garden_module']; // NEW
+  const MODULE_STYLE_KEYS = ['garden_module'];
 
-  function hasStyleFlag(cell, key, expected) { // NEW
-    if (!cell || !key) return false; // NEW
-    const st = getStoredStyle(cell); // NEW
-    const re = new RegExp('(?:^|;)' + key + '=' + expected + '(?:;|$)'); // NEW
-    return re.test(st); // NEW
-  } // NEW
+  function hasStyleFlag(cell, key, expected) {
+    if (!cell || !key) return false;
+    const st = getStoredStyle(cell);
+    const re = new RegExp('(?:^|;)' + key + '=' + expected + '(?:;|$)');
+    return re.test(st);
+  }
 
-  function hasAttrOrStyleFlag(cell, key, expected) { // NEW
-    return getAttrStr(cell, key) === expected || hasStyleFlag(cell, key, expected); // NEW
-  } // NEW
+  function hasAttrOrStyleFlag(cell, key, expected) {
+    return getAttrStr(cell, key) === expected || hasStyleFlag(cell, key, expected);
+  }
 
-  function isModuleCell(cell) { // NEW
-    if (!cell) return false; // NEW
+  function isModuleCell(cell) {
+    if (!cell) return false;
 
-    for (let i = 0; i < MODULE_STYLE_KEYS.length; i++) { // NEW
-      if (hasAttrOrStyleFlag(cell, MODULE_STYLE_KEYS[i], '1')) return true; // NEW
-    } // NEW
+    for (let i = 0; i < MODULE_STYLE_KEYS.length; i++) {
+      if (hasAttrOrStyleFlag(cell, MODULE_STYLE_KEYS[i], '1')) return true;
+    }
 
-    return false; // NEW
-  } // NEW
+    return false;
+  }
 
-  function isDiagramRootContext(cell) { // NEW
+  function isDiagramRootContext(cell) {
     if (!cell) return true; // NEW blank-canvas right click
     if (cell === model.getRoot()) return true; // NEW actual mxGraph model root
 
     const defaultParent = graph.getDefaultParent && graph.getDefaultParent(); // NEW usually the current page/layer
-    if (cell === defaultParent) return true; // NEW
+    if (cell === defaultParent) return true;
 
-    return false; // NEW
-  } // NEW
+    return false;
+  }
 
-  function shouldShowCcMapContext(cell) { // NEW
-    return isDiagramRootContext(cell) || isModuleCell(cell); // NEW
-  } // NEW
+  function shouldShowCcMapContext(cell) {
+    return isDiagramRootContext(cell) || isModuleCell(cell);
+  }
 
-  function installHistoryAction() {                                            // NEW
-    if (!ui || !ui.actions || typeof ui.actions.addAction !== 'function') return; // NEW
-    if (ui.__trellisChangeMapHistoryActionInstalled) return;                   // NEW
-    ui.__trellisChangeMapHistoryActionInstalled = true;                        // NEW
-    ui.actions.addAction('trellisChangeMapHistory', function () { togglePanel(); }); // NEW
-    const menus = ui.menus;                                                    // NEW
-    if (menus && typeof menus.get === 'function' && typeof menus.addMenuItems === 'function') { // NEW
-      const viewMenu = menus.get('view') || menus.get('extras');               // NEW
-      if (viewMenu && !viewMenu.__trellisChangeMapHistoryPatched) {            // NEW
-        const oldFunct = viewMenu.funct;                                       // NEW
-        viewMenu.funct = function (menu, parent) {                             // NEW
-          if (typeof oldFunct === 'function') oldFunct.apply(this, arguments); // NEW
-          menus.addMenuItems(menu, ['-', 'trellisChangeMapHistory'], parent);  // NEW
-        };                                                                     // NEW
-        viewMenu.__trellisChangeMapHistoryPatched = true;                      // NEW
-      }                                                                        // NEW
-    }                                                                          // NEW
-  }                                                                            // NEW
+  function installHistoryAction() {
+    if (!ui || !ui.actions || typeof ui.actions.addAction !== 'function') return;
+    if (ui.__trellisChangeMapHistoryActionInstalled) return;
+    ui.__trellisChangeMapHistoryActionInstalled = true;
+    ui.actions.addAction('trellisChangeMapHistory', function () { togglePanel(); });
+    const menus = ui.menus;
+    if (menus && typeof menus.get === 'function' && typeof menus.addMenuItems === 'function') {
+      const viewMenu = menus.get('view') || menus.get('extras');
+      if (viewMenu && !viewMenu.__trellisChangeMapHistoryPatched) {
+        const oldFunct = viewMenu.funct;
+        viewMenu.funct = function (menu, parent) {
+          if (typeof oldFunct === 'function') oldFunct.apply(this, arguments);
+          menus.addMenuItems(menu, ['-', 'trellisChangeMapHistory'], parent);
+        };
+        viewMenu.__trellisChangeMapHistoryPatched = true;
+      }
+    }
+  }
 
-  function installHistoryToolbarButton() {                                     // NEW
-    if (ui.__trellisChangeMapHistoryButtonInstalled || typeof document === 'undefined') return; // NEW
-    const host = ui.toolbarContainer || ui.menubarContainer || ui.container || (graph.container && graph.container.parentNode); // NEW
-    if (!host || typeof host.appendChild !== 'function') return;               // NEW
-    ui.__trellisChangeMapHistoryButtonInstalled = true;                        // NEW
-    const button = document.createElement('button');                            // NEW
-    button.type = 'button';                                                     // NEW
-    button.className = 'geButton trellis-changemap-history-button';             // NEW
-    button.title = 'ChangeMap History';                                         // NEW
-    button.textContent = 'History';                                             // NEW
-    button.style.cssText = 'margin:2px 4px;padding:3px 8px;cursor:pointer;';    // NEW
-    applyChangeMapButtonStyle(button, 'open', { compact: true });               // NEW
-    button.addEventListener('click', function () { togglePanel(); });           // NEW
-    host.appendChild(button);                                                   // NEW
-  }                                                                            // NEW
+  function installHistoryToolbarButton() {
+    if (ui.__trellisChangeMapHistoryButtonInstalled || typeof document === 'undefined') return;
+    const host = ui.toolbarContainer || ui.menubarContainer || ui.container || (graph.container && graph.container.parentNode);
+    if (!host || typeof host.appendChild !== 'function') return;
+    ui.__trellisChangeMapHistoryButtonInstalled = true;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'geButton trellis-changemap-history-button';
+    button.title = 'ChangeMap History';
+    button.textContent = 'History';
+    button.style.cssText = 'margin:2px 4px;padding:3px 8px;cursor:pointer;';
+    applyChangeMapButtonStyle(button, 'open', { compact: true });
+    button.addEventListener('click', function () { togglePanel(); });
+    host.appendChild(button);
+  }
 
-  function installDiagramBoundaryReset() {                                      // NEW
-    const editor = ui && ui.editor;                                             // NEW
-    if (!editor || typeof editor.addListener !== 'function') return;            // NEW
-    if (ui.__trellisChangeMapFileBoundaryResetInstalled) return;                // NEW
-    ui.__trellisChangeMapFileBoundaryResetInstalled = true;                     // NEW
-    editor.addListener('fileLoaded', function () {                              // NEW
-      turnOffChangeMapForFileBoundary();                                        // NEW
-    });                                                                         // NEW
-  }                                                                            // NEW
+  function installDiagramBoundaryReset() {
+    const editor = ui && ui.editor;
+    if (!editor || typeof editor.addListener !== 'function') return;
+    if (ui.__trellisChangeMapFileBoundaryResetInstalled) return;
+    ui.__trellisChangeMapFileBoundaryResetInstalled = true;
+    editor.addListener('fileLoaded', function () {
+      turnOffChangeMapForFileBoundary();
+    });
+  }
 
 
 
   // -------------------- Context menu --------------------
 
-  function registerTrellisContextMenuContributor(contributor) { // NEW
-    function finishRegistration() { // NEW
-      if (!window.TrellisContextMenu) return; // NEW
-      window.TrellisContextMenu.install(ui); // NEW
-      window.TrellisContextMenu.register(contributor); // NEW
-    } // NEW
+  function registerTrellisContextMenuContributor(contributor) {
+    function finishRegistration() {
+      if (!window.TrellisContextMenu) return;
+      window.TrellisContextMenu.install(ui);
+      window.TrellisContextMenu.register(contributor);
+    }
 
-    if (window.TrellisContextMenu) { // NEW
-      finishRegistration(); // NEW
-    } else if (typeof mxscript === "function") { // NEW
-      mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration); // NEW
-    } // NEW
-  } // NEW
+    if (window.TrellisContextMenu) {
+      finishRegistration();
+    } else if (typeof mxscript === "function") {
+      mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration);
+    }
+  }
 
-  registerTrellisContextMenuContributor({ // CHANGE
-    id: "createdChangeMap", // NEW
-    priority: 700, // NEW
-    addItems: function (menu, cell, evt) { // CHANGE
+  registerTrellisContextMenuContributor({
+    id: "createdChangeMap",
+    priority: 700,
+    addItems: function (menu, cell, evt) {
 
-    if (!shouldShowCcMapContext(cell)) return; // CHANGE
+    if (!shouldShowCcMapContext(cell)) return;
 
-    const panelLabel = isPanelVisible() ? 'Hide ChangeMap History' : 'Show ChangeMap History'; // CHANGE
+    const panelLabel = isPanelVisible() ? 'Hide ChangeMap History' : 'Show ChangeMap History';
     menu.addItem(panelLabel, null, function () {
       togglePanel();
     });
-    } // CHANGE
-  }); // CHANGE
+    }
+  });
 
-  installHistoryPublicApi();                                                   // NEW
-  installHistoryAction();                                                      // NEW
-  installHistoryToolbarButton();                                               // NEW
-  installDiagramBoundaryReset();                                                // NEW
-  historyRecorder.initializeBaseline();                                        // NEW
+  installHistoryPublicApi();
+  installHistoryAction();
+  installHistoryToolbarButton();
+  installDiagramBoundaryReset();
+  historyRecorder.initializeBaseline();
 
 });

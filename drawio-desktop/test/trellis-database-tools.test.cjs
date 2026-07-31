@@ -59,7 +59,7 @@ function createUi() {
     return {
         shown,
         ui: {
-            dialog: { bg: { style: {} }, container: { style: {} } }, // NEW
+            dialog: { bg: { style: {} }, container: { style: {} } },
             actions: {
                 addAction(id, funct) {
                     actions[id] = { funct };
@@ -109,8 +109,8 @@ test("Trellis database tools registers Extras restore action and confirms before
 
     actions.trellisRestoreBuiltInDatabase.funct();
     assert.equal(shown.length, 1);
-    assert.equal(ui.dialog.container.style.zIndex, "2000000000"); // NEW
-    assert.equal(ui.dialog.bg.style.zIndex, "1999999999"); // NEW
+    assert.equal(ui.dialog.container.style.zIndex, "2000000000");
+    assert.equal(ui.dialog.bg.style.zIndex, "1999999999");
     assert.match(shown[0].node.textContent, /replace the local AppData Trellis database/);
     assert.equal(harness.restoreCalls(), 0);
 
@@ -170,16 +170,16 @@ test("Trellis database restore bridge and default plugin registration are wired"
     assert.doesNotMatch(electronSource, /fs\.unlinkSync\(dbPath\)/);
     assert.doesNotMatch(electronSource, /fs\.renameSync\(tempPath, dbPath\)/);
     assert.doesNotMatch(electronSource, /fs\.unlinkSync\(livePath\)/);
-    assert.match(electronSource, /restoreBuiltInTrellisDatabase\(\{ dbName, seedRelPath: effectiveSeedRel \}\)\.dbPath/); // CHANGE
-    assert.match(electronSource, /ensureCreatedDb\(livePath\)/); // NEW
-    assert.match(preloadSource, /createIfMissing: !!opts\.createIfMissing/); // NEW
+    assert.match(electronSource, /restoreBuiltInTrellisDatabase\(\{ dbName, seedRelPath: effectiveSeedRel \}\)\.dbPath/);
+    assert.match(electronSource, /ensureCreatedDb\(livePath\)/);
+    assert.match(preloadSource, /createIfMissing: !!opts\.createIfMissing/);
 
     assert.match(appSource, /'trellisDatabaseTools': 'plugins\/garden_planner_plugins\/Trellis_Database_Tools\.js'/);
-    assert.match(appSource, /'trellisUiCleanup': 'plugins\/garden_planner_plugins\/Trellis_UI_Cleanup\.js'/); // NEW
-    assert.match(appSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\); \/\/ CHANGE/); // CHANGE
+    assert.match(appSource, /'trellisUiCleanup': 'plugins\/garden_planner_plugins\/Trellis_UI_Cleanup\.js'/);
+    assert.match(appSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\); \/\/ CHANGE/);
     assert.match(bundledSource, /'trellisDatabaseTools': 'plugins\/garden_planner_plugins\/Trellis_Database_Tools\.js'/);
-    assert.match(bundledSource, /'trellisUiCleanup': 'plugins\/garden_planner_plugins\/Trellis_UI_Cleanup\.js'/); // NEW
-    assert.match(bundledSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/); // CHANGE
-    assert.match(integrateSource, /trellisDatabaseTools:"plugins\/garden_planner_plugins\/Trellis_Database_Tools\.js",trellisUiCleanup:"plugins\/garden_planner_plugins\/Trellis_UI_Cleanup\.js"/); // CHANGE
-    assert.match(integrateSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/); // CHANGE
+    assert.match(bundledSource, /'trellisUiCleanup': 'plugins\/garden_planner_plugins\/Trellis_UI_Cleanup\.js'/);
+    assert.match(bundledSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/);
+    assert.match(integrateSource, /trellisDatabaseTools:"plugins\/garden_planner_plugins\/Trellis_Database_Tools\.js",trellisUiCleanup:"plugins\/garden_planner_plugins\/Trellis_UI_Cleanup\.js"/);
+    assert.match(integrateSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/);
 });

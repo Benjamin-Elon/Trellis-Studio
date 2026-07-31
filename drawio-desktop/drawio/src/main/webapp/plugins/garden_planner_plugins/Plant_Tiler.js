@@ -13,42 +13,42 @@ Draw.loadPlugin(function (ui) {
     const MAX_ICON_DIAM_PX = 28;
     const GROUP_PADDING_PX = 4;
     const MAX_TILES = 1000; // hard cap to avoid freezes
-    const RESIZE_DEBOUNCE_MS = 120; // debounce tiling during resize // RESTORE
-    const ROTATION_RETILE_DEBOUNCE_MS = 150; // CHANGE
-    const DEBUG_PLANT_TILER = false; // CHANGE
-    const DEBUG_BED_FIT = false; // CHANGE
-    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // CHANGE
-    const TRELLIS_DIALOG_Z = 2000000000; // NEW
+    const RESIZE_DEBOUNCE_MS = 120; // debounce tiling during resize
+    const ROTATION_RETILE_DEBOUNCE_MS = 150;
+    const DEBUG_PLANT_TILER = false;
+    const DEBUG_BED_FIT = false;
+    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 });
+    const TRELLIS_DIALOG_Z = 2000000000;
 
-    function applyTilerButtonStyle(button, variant, options) { // NEW
-        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") { // NEW
-            window.Trellis.ui.applyButtonStyle(button, variant, options); // NEW
-        } else if (button) { // NEW
-            button.setAttribute("data-trellis-button-variant", variant || "neutral"); // NEW
-        } // NEW
-        return button; // NEW
-    } // NEW
+    function applyTilerButtonStyle(button, variant, options) {
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") {
+            window.Trellis.ui.applyButtonStyle(button, variant, options);
+        } else if (button) {
+            button.setAttribute("data-trellis-button-variant", variant || "neutral");
+        }
+        return button;
+    }
 
-    function tilerButton(label, onClick, variant, options) { // NEW
-        return applyTilerButtonStyle(mxUtils.button(label, onClick), variant || "neutral", options); // NEW
-    } // NEW
+    function tilerButton(label, onClick, variant, options) {
+        return applyTilerButtonStyle(mxUtils.button(label, onClick), variant || "neutral", options);
+    }
 
     const GROUP_LABEL_FONT_PX = 12;
     const GROUP_LABEL_LINE_HEIGHT = 1.25;
     const GROUP_LABEL_BAND_PAD_PX = 6;
     const GROUP_LABEL_BAND_PX = Math.ceil(GROUP_LABEL_FONT_PX * GROUP_LABEL_LINE_HEIGHT + GROUP_LABEL_BAND_PAD_PX);
 
-    const MODULE_CURRENT_YEAR_ATTR = "current_year"; // NEW
-    const SEASON_START_YEAR_ATTR = "season_start_year"; // NEW
-    const DEFAULT_BED_WIDTH_CM_ATTR = "default_bed_width_cm"; // CHANGE
-    const DEFAULT_BED_LENGTH_CM_ATTR = "default_bed_length_cm"; // CHANGE
-    const CM_PER_METER = 100; // CHANGE
-    const CM_PER_FOOT = 30.48; // CHANGE
-    const DEFAULT_METRIC_BED_WIDTH_CM = 100; // CHANGE
-    const DEFAULT_METRIC_BED_LENGTH_CM = 200; // CHANGE
-    const DEFAULT_IMPERIAL_BED_WIDTH_CM = 4 * CM_PER_FOOT; // CHANGE
-    const DEFAULT_IMPERIAL_BED_LENGTH_CM = 8 * CM_PER_FOOT; // CHANGE
-    const TILER_GROUP_CREATED_EVENT = "usl:tilerGroupCreated"; // CHANGE
+    const MODULE_CURRENT_YEAR_ATTR = "current_year";
+    const SEASON_START_YEAR_ATTR = "season_start_year";
+    const DEFAULT_BED_WIDTH_CM_ATTR = "default_bed_width_cm";
+    const DEFAULT_BED_LENGTH_CM_ATTR = "default_bed_length_cm";
+    const CM_PER_METER = 100;
+    const CM_PER_FOOT = 30.48;
+    const DEFAULT_METRIC_BED_WIDTH_CM = 100;
+    const DEFAULT_METRIC_BED_LENGTH_CM = 200;
+    const DEFAULT_IMPERIAL_BED_WIDTH_CM = 4 * CM_PER_FOOT;
+    const DEFAULT_IMPERIAL_BED_LENGTH_CM = 8 * CM_PER_FOOT;
+    const TILER_GROUP_CREATED_EVENT = "usl:tilerGroupCreated";
 
     // ---------- LOD settings ----------
     const LOD_TILE_THRESHOLD = 300; // collapse if rows*cols > this
@@ -57,7 +57,7 @@ Draw.loadPlugin(function (ui) {
     // ----------- Yield ---------------
     const YIELD_UNIT = "kg"; // default display unit
     const ATTR_YIELD_EXPECTED = "planting_expected_yield_kg";
-    const ATTR_YIELD_ACTUAL = "planting_actual_yield_kg"; // RESTORE
+    const ATTR_YIELD_ACTUAL = "planting_actual_yield_kg";
 
     const SHOW_YIELD_IN_GROUP_LABEL = false; // update group title with total yield
     const SHOW_YIELD_IN_SUMMARY = true; // append total yield in summary label
@@ -71,165 +71,165 @@ Draw.loadPlugin(function (ui) {
     // --------------- Tiler group scaling font size -----------------
     const GROUP_BASE_AREA_PX2 = 240 * 240;
     const GROUP_LABEL_FONT_MIN_PX = 10;
-    const GROUP_LABEL_FONT_MAX_PX = 18; // CHANGE
-    const BED_FIT_TOLERANCE = 0.25; // MOVED
-    const BED_FIT_RESIZE_SUPPRESS_MS = 250; // CHANGE
-    const EDGE_CIRCLE_CENTER_CONTAINED_PCT = 0.40; // MOVED
-    const BED_AUTO_FIT_ATTR = "bed_auto_fit"; // MOVED
-    const BED_FIT_WIDTH_ATTR = "bed_fit_width"; // NEW
-    const BED_FIT_HEIGHT_ATTR = "bed_fit_height"; // NEW
+    const GROUP_LABEL_FONT_MAX_PX = 18;
+    const BED_FIT_TOLERANCE = 0.25;
+    const BED_FIT_RESIZE_SUPPRESS_MS = 250;
+    const EDGE_CIRCLE_CENTER_CONTAINED_PCT = 0.40;
+    const BED_AUTO_FIT_ATTR = "bed_auto_fit";
+    const BED_FIT_WIDTH_ATTR = "bed_fit_width";
+    const BED_FIT_HEIGHT_ATTR = "bed_fit_height";
 
 
     // -------------------- Debug helper ------------------
     function log(...args) {
-        if (!DEBUG_PLANT_TILER) return; // CHANGE
+        if (!DEBUG_PLANT_TILER) return;
         try {
             mxLog.debug("[PlantTiler]", ...args);
         } catch (_) { }
     }
 
-    function bedFitDebugEnabled() { // NEW
-        try { // NEW
-            if (DEBUG_BED_FIT) return true; // NEW
-            if (typeof window !== "undefined" && window.__TRELLIS_BED_FIT_DEBUG__ === true) return true; // NEW
-            if (typeof window !== "undefined" && window.localStorage && window.localStorage.getItem("trellis_bed_fit_debug") === "1") return true; // NEW
-        } catch (_) { } // NEW
-        return false; // NEW
-    } // NEW
+    function bedFitDebugEnabled() {
+        try {
+            if (DEBUG_BED_FIT) return true;
+            if (typeof window !== "undefined" && window.__TRELLIS_BED_FIT_DEBUG__ === true) return true;
+            if (typeof window !== "undefined" && window.localStorage && window.localStorage.getItem("trellis_bed_fit_debug") === "1") return true;
+        } catch (_) { }
+        return false;
+    }
 
-    function bedFitLog(stage, payload) { // CHANGE
-        if (!bedFitDebugEnabled() || typeof console === "undefined") return; // CHANGE
-        try { // CHANGE
-            const data = payload || {}; // CHANGE
-            const tables = data.tables || {}; // CHANGE
-            const scalar = Object.assign({}, data); // CHANGE
-            delete scalar.tables; // CHANGE
-            if (console.groupCollapsed) console.groupCollapsed("[BedFit]", stage, scalar.txnId != null ? "txn=" + scalar.txnId : ""); // CHANGE
-            else console.log("[BedFit]", stage, scalar); // CHANGE
-            console.log(scalar); // CHANGE
-            for (const key of Object.keys(tables)) { // CHANGE
-                console.log(key); // CHANGE
-                if (console.table) console.table(tables[key]); // CHANGE
-                else console.log(tables[key]); // CHANGE
-            } // CHANGE
-            if (console.groupEnd) console.groupEnd(); // CHANGE
-        } catch (e) { // CHANGE
-            try { console.log("[BedFit] logging failed", stage, e); } catch (_) { } // CHANGE
-        } // CHANGE
-    } // CHANGE
+    function bedFitLog(stage, payload) {
+        if (!bedFitDebugEnabled() || typeof console === "undefined") return;
+        try {
+            const data = payload || {};
+            const tables = data.tables || {};
+            const scalar = Object.assign({}, data);
+            delete scalar.tables;
+            if (console.groupCollapsed) console.groupCollapsed("[BedFit]", stage, scalar.txnId != null ? "txn=" + scalar.txnId : "");
+            else console.log("[BedFit]", stage, scalar);
+            console.log(scalar);
+            for (const key of Object.keys(tables)) {
+                console.log(key);
+                if (console.table) console.table(tables[key]);
+                else console.log(tables[key]);
+            }
+            if (console.groupEnd) console.groupEnd();
+        } catch (e) {
+            try { console.log("[BedFit] logging failed", stage, e); } catch (_) { }
+        }
+    }
 
-    function debugLocalStore() { // NEW
-        try { return typeof window !== "undefined" && window.localStorage ? window.localStorage : null; } catch (_) { return null; } // NEW
-    } // NEW
+    function debugLocalStore() {
+        try { return typeof window !== "undefined" && window.localStorage ? window.localStorage : null; } catch (_) { return null; }
+    }
 
-    function debugFlagSnapshot() { // NEW
-        const store = debugLocalStore(); // NEW
-        const win = typeof window !== "undefined" ? window : null; // NEW
-        return { // NEW
-            storage: { // NEW
-                trellis_users_debug: store ? store.getItem("trellis_users_debug") : null, // NEW
-                trellis_bed_fit_debug: store ? store.getItem("trellis_bed_fit_debug") : null // NEW
-            }, // NEW
-            windowFlags: { // NEW
-                users: !!(win && win.__TRELLIS_USERS_DEBUG__ === true), // NEW
-                bedFit: !!(win && win.__TRELLIS_BED_FIT_DEBUG__ === true) // NEW
-            } // NEW
-        }; // NEW
-    } // NEW
+    function debugFlagSnapshot() {
+        const store = debugLocalStore();
+        const win = typeof window !== "undefined" ? window : null;
+        return {
+            storage: {
+                trellis_users_debug: store ? store.getItem("trellis_users_debug") : null,
+                trellis_bed_fit_debug: store ? store.getItem("trellis_bed_fit_debug") : null
+            },
+            windowFlags: {
+                users: !!(win && win.__TRELLIS_USERS_DEBUG__ === true),
+                bedFit: !!(win && win.__TRELLIS_BED_FIT_DEBUG__ === true)
+            }
+        };
+    }
 
-    function bedFitStatus() { // NEW
-        const win = typeof window !== "undefined" ? window : null; // NEW
-        const flags = debugFlagSnapshot(); // NEW
-        return { // NEW
-            plugin: "Plant_Tiler.js", // NEW
-            loaded: true, // NEW
-            debugEnabled: bedFitDebugEnabled(), // NEW
-            url: win && win.location ? String(win.location.href || "") : "", // NEW
-            origin: win && win.location ? String(win.location.origin || "") : "", // NEW
-            storage: flags.storage, // NEW
-            windowFlags: flags.windowFlags, // NEW
-            bedFitInProgress: !!bedFitInProgress, // NEW
-            nextTxnId: bedFitTxnSeq + 1, // NEW
-            tilerFitApiPresent: !!(win && win.USL && win.USL.tiler && typeof win.USL.tiler.retileAndFitToContainingBed === "function") // NEW
-        }; // NEW
-    } // NEW
+    function bedFitStatus() {
+        const win = typeof window !== "undefined" ? window : null;
+        const flags = debugFlagSnapshot();
+        return {
+            plugin: "Plant_Tiler.js",
+            loaded: true,
+            debugEnabled: bedFitDebugEnabled(),
+            url: win && win.location ? String(win.location.href || "") : "",
+            origin: win && win.location ? String(win.location.origin || "") : "",
+            storage: flags.storage,
+            windowFlags: flags.windowFlags,
+            bedFitInProgress: !!bedFitInProgress,
+            nextTxnId: bedFitTxnSeq + 1,
+            tilerFitApiPresent: !!(win && win.USL && win.USL.tiler && typeof win.USL.tiler.retileAndFitToContainingBed === "function")
+        };
+    }
 
-    function debugProbeSnapshot() { // NEW
-        const win = typeof window !== "undefined" ? window : null; // NEW
-        const debug = win && win.Trellis && win.Trellis.debug; // NEW
-        const flags = debugFlagSnapshot(); // NEW
-        return { // NEW
-            url: win && win.location ? String(win.location.href || "") : "", // NEW
-            origin: win && win.location ? String(win.location.origin || "") : "", // NEW
-            usersPluginLoaded: !!(win && win.__TRELLIS_USERS_PLUGIN_LOADED), // NEW
-            bedFitPluginLoaded: !!(win && win.__TRELLIS_BED_FIT_PLUGIN_LOADED), // NEW
-            storage: flags.storage, // NEW
-            windowFlags: flags.windowFlags, // NEW
-            usersApiPresent: !!(win && win.Trellis && win.Trellis.users), // NEW
-            tilerFitApiPresent: !!(win && win.USL && win.USL.tiler && typeof win.USL.tiler.retileAndFitToContainingBed === "function"), // NEW
-            usersStatus: debug && typeof debug.usersStatus === "function" ? debug.usersStatus() : null, // NEW
-            bedFitStatus: debug && typeof debug.bedFitStatus === "function" ? debug.bedFitStatus() : null // NEW
-        }; // NEW
-    } // NEW
+    function debugProbeSnapshot() {
+        const win = typeof window !== "undefined" ? window : null;
+        const debug = win && win.Trellis && win.Trellis.debug;
+        const flags = debugFlagSnapshot();
+        return {
+            url: win && win.location ? String(win.location.href || "") : "",
+            origin: win && win.location ? String(win.location.origin || "") : "",
+            usersPluginLoaded: !!(win && win.__TRELLIS_USERS_PLUGIN_LOADED),
+            bedFitPluginLoaded: !!(win && win.__TRELLIS_BED_FIT_PLUGIN_LOADED),
+            storage: flags.storage,
+            windowFlags: flags.windowFlags,
+            usersApiPresent: !!(win && win.Trellis && win.Trellis.users),
+            tilerFitApiPresent: !!(win && win.USL && win.USL.tiler && typeof win.USL.tiler.retileAndFitToContainingBed === "function"),
+            usersStatus: debug && typeof debug.usersStatus === "function" ? debug.usersStatus() : null,
+            bedFitStatus: debug && typeof debug.bedFitStatus === "function" ? debug.bedFitStatus() : null
+        };
+    }
 
-    function debugProbe() { // NEW
-        const snapshot = debugProbeSnapshot(); // NEW
-        if (typeof console !== "undefined") { // NEW
-            try { // NEW
-                if (console.groupCollapsed) console.groupCollapsed("[TrellisDebug] probe"); // NEW
-                else if (console.log) console.log("[TrellisDebug] probe"); // NEW
-                if (console.log) console.log(snapshot); // NEW
-            } finally { // NEW
-                try { if (console.groupEnd) console.groupEnd(); } catch (_) { } // NEW
-            } // NEW
-        } // NEW
-        return snapshot; // NEW
-    } // NEW
+    function debugProbe() {
+        const snapshot = debugProbeSnapshot();
+        if (typeof console !== "undefined") {
+            try {
+                if (console.groupCollapsed) console.groupCollapsed("[TrellisDebug] probe");
+                else if (console.log) console.log("[TrellisDebug] probe");
+                if (console.log) console.log(snapshot);
+            } finally {
+                try { if (console.groupEnd) console.groupEnd(); } catch (_) { }
+            }
+        }
+        return snapshot;
+    }
 
-    function installTrellisDebugSurface() { // NEW
-        const win = typeof window !== "undefined" ? window : null; // NEW
-        if (!win) return null; // NEW
-        win.Trellis = win.Trellis || {}; // NEW
-        const debug = win.Trellis.debug = win.Trellis.debug || {}; // NEW
-        win.__TRELLIS_BED_FIT_PLUGIN_LOADED = true; // NEW
-        debug.bedFitStatus = bedFitStatus; // NEW
-        debug.enable = function () { // NEW
-            const store = debugLocalStore(); // NEW
-            win.__TRELLIS_USERS_DEBUG__ = true; // NEW
-            win.__TRELLIS_BED_FIT_DEBUG__ = true; // NEW
-            if (store) { store.setItem("trellis_users_debug", "1"); store.setItem("trellis_bed_fit_debug", "1"); } // NEW
-            return debugProbeSnapshot(); // NEW
-        }; // NEW
-        debug.disable = function () { // NEW
-            const store = debugLocalStore(); // NEW
-            win.__TRELLIS_USERS_DEBUG__ = false; // NEW
-            win.__TRELLIS_BED_FIT_DEBUG__ = false; // NEW
-            if (store) { store.removeItem("trellis_users_debug"); store.removeItem("trellis_bed_fit_debug"); } // NEW
-            return debugProbeSnapshot(); // NEW
-        }; // NEW
-        debug.probe = debugProbe; // NEW
-        return debug; // NEW
-    } // NEW
+    function installTrellisDebugSurface() {
+        const win = typeof window !== "undefined" ? window : null;
+        if (!win) return null;
+        win.Trellis = win.Trellis || {};
+        const debug = win.Trellis.debug = win.Trellis.debug || {};
+        win.__TRELLIS_BED_FIT_PLUGIN_LOADED = true;
+        debug.bedFitStatus = bedFitStatus;
+        debug.enable = function () {
+            const store = debugLocalStore();
+            win.__TRELLIS_USERS_DEBUG__ = true;
+            win.__TRELLIS_BED_FIT_DEBUG__ = true;
+            if (store) { store.setItem("trellis_users_debug", "1"); store.setItem("trellis_bed_fit_debug", "1"); }
+            return debugProbeSnapshot();
+        };
+        debug.disable = function () {
+            const store = debugLocalStore();
+            win.__TRELLIS_USERS_DEBUG__ = false;
+            win.__TRELLIS_BED_FIT_DEBUG__ = false;
+            if (store) { store.removeItem("trellis_users_debug"); store.removeItem("trellis_bed_fit_debug"); }
+            return debugProbeSnapshot();
+        };
+        debug.probe = debugProbe;
+        return debug;
+    }
 
-    function withUndoSuppressed(fn) { // NEW
-        if (graph.__withUndoSuppressed) return graph.__withUndoSuppressed(fn); // NEW
-        const um = ui && ui.editor && ui.editor.undoManager; // NEW
-        if (!um || typeof um.undoableEditHappened !== "function") return fn(); // NEW
+    function withUndoSuppressed(fn) {
+        if (graph.__withUndoSuppressed) return graph.__withUndoSuppressed(fn);
+        const um = ui && ui.editor && ui.editor.undoManager;
+        if (!um || typeof um.undoableEditHappened !== "function") return fn();
 
-        if (!graph.__plantTilerUndoSuppressInstalled) { // NEW
-            const oldUndoableEditHappened = um.undoableEditHappened.bind(um); // NEW
-            graph.__plantTilerUndoSuppressDepth = graph.__plantTilerUndoSuppressDepth || 0; // NEW
-            um.undoableEditHappened = function (edit) { // NEW
-                if (graph.__plantTilerUndoSuppressDepth > 0) return; // NEW
-                return oldUndoableEditHappened(edit); // NEW
-            }; // NEW
-            graph.__plantTilerUndoSuppressInstalled = true; // NEW
-        } // NEW
+        if (!graph.__plantTilerUndoSuppressInstalled) {
+            const oldUndoableEditHappened = um.undoableEditHappened.bind(um);
+            graph.__plantTilerUndoSuppressDepth = graph.__plantTilerUndoSuppressDepth || 0;
+            um.undoableEditHappened = function (edit) {
+                if (graph.__plantTilerUndoSuppressDepth > 0) return;
+                return oldUndoableEditHappened(edit);
+            };
+            graph.__plantTilerUndoSuppressInstalled = true;
+        }
 
-        graph.__plantTilerUndoSuppressDepth++; // NEW
-        try { return fn(); } // NEW
-        finally { graph.__plantTilerUndoSuppressDepth--; } // NEW
-    } // NEW
+        graph.__plantTilerUndoSuppressDepth++;
+        try { return fn(); }
+        finally { graph.__plantTilerUndoSuppressDepth--; }
+    }
 
     // -------------------- Utils & Styles --------------------
     function toPx(cm) {
@@ -373,261 +373,261 @@ Draw.loadPlugin(function (ui) {
         }
     }
 
-    function elevateTrellisDialog() { // NEW
-        const dlg = ui && ui.dialog; // NEW
-        if (dlg && dlg.bg && dlg.bg.style) dlg.bg.style.zIndex = String(TRELLIS_DIALOG_Z - 1); // NEW
-        if (dlg && dlg.container && dlg.container.style) dlg.container.style.zIndex = String(TRELLIS_DIALOG_Z); // NEW
-    } // NEW
+    function elevateTrellisDialog() {
+        const dlg = ui && ui.dialog;
+        if (dlg && dlg.bg && dlg.bg.style) dlg.bg.style.zIndex = String(TRELLIS_DIALOG_Z - 1);
+        if (dlg && dlg.container && dlg.container.style) dlg.container.style.zIndex = String(TRELLIS_DIALOG_Z);
+    }
 
-    async function execAll(sql, params) { // ADDED
-        if (!window.dbBridge || typeof window.dbBridge.open !== "function") { // ADDED
-            throw new Error("dbBridge not available; check preload/main wiring"); // ADDED
-        } // ADDED
-        const dbPath = await getDbPath(); // ADDED
-        const opened = await window.dbBridge.open(dbPath, { readOnly: false }); // ADDED
-        try { // ADDED
-            if (typeof window.dbBridge.exec === "function") return await window.dbBridge.exec(opened.dbId, sql, params || []); // ADDED
-            if (typeof window.dbBridge.run === "function") return await window.dbBridge.run(opened.dbId, sql, params || []); // ADDED
-            throw new Error("dbBridge.exec/run not available"); // ADDED
-        } finally { // ADDED
-            try { await window.dbBridge.close(opened.dbId); } catch (_) { } // ADDED
-        } // ADDED
-    } // ADDED
+    async function execAll(sql, params) {
+        if (!window.dbBridge || typeof window.dbBridge.open !== "function") {
+            throw new Error("dbBridge not available; check preload/main wiring");
+        }
+        const dbPath = await getDbPath();
+        const opened = await window.dbBridge.open(dbPath, { readOnly: false });
+        try {
+            if (typeof window.dbBridge.exec === "function") return await window.dbBridge.exec(opened.dbId, sql, params || []);
+            if (typeof window.dbBridge.run === "function") return await window.dbBridge.run(opened.dbId, sql, params || []);
+            throw new Error("dbBridge.exec/run not available");
+        } finally {
+            try { await window.dbBridge.close(opened.dbId); } catch (_) { }
+        }
+    }
 
-    async function execSchemaStatements(statements) { // ADDED
-        if (!window.dbBridge || typeof window.dbBridge.open !== "function") throw new Error("dbBridge not available; check preload/main wiring"); // ADDED
-        const dbPath = await getDbPath(); // ADDED
-        const opened = await window.dbBridge.open(dbPath, { readOnly: false }); // ADDED
-        try { // ADDED
-            for (const statement of statements) { // ADDED
-                if (typeof window.dbBridge.exec === "function") await window.dbBridge.exec(opened.dbId, statement, []); // ADDED
-                else if (typeof window.dbBridge.run === "function") await window.dbBridge.run(opened.dbId, statement, []); // ADDED
-                else throw new Error("dbBridge.exec/run not available"); // ADDED
-            } // ADDED
-        } finally { // ADDED
-            try { await window.dbBridge.close(opened.dbId); } catch (_) { } // ADDED
-        } // ADDED
-    } // ADDED
+    async function execSchemaStatements(statements) {
+        if (!window.dbBridge || typeof window.dbBridge.open !== "function") throw new Error("dbBridge not available; check preload/main wiring");
+        const dbPath = await getDbPath();
+        const opened = await window.dbBridge.open(dbPath, { readOnly: false });
+        try {
+            for (const statement of statements) {
+                if (typeof window.dbBridge.exec === "function") await window.dbBridge.exec(opened.dbId, statement, []);
+                else if (typeof window.dbBridge.run === "function") await window.dbBridge.run(opened.dbId, statement, []);
+                else throw new Error("dbBridge.exec/run not available");
+            }
+        } finally {
+            try { await window.dbBridge.close(opened.dbId); } catch (_) { }
+        }
+    }
 
-    function quoteSqlIdentifier(value) { // ADDED
-        return `"${String(value).replace(/"/g, '""')}"`; // ADDED
-    } // ADDED
+    function quoteSqlIdentifier(value) {
+        return `"${String(value).replace(/"/g, '""')}"`;
+    }
 
-    function cityColumnDefinition(column) { // ADDED
-        const parts = [quoteSqlIdentifier(column.name), String(column.type || "TEXT")]; // ADDED
-        if (Number(column.pk || 0)) parts.push("PRIMARY KEY"); // ADDED
-        if (Number(column.notnull || 0) && !Number(column.pk || 0)) parts.push("NOT NULL"); // ADDED
-        if (column.dflt_value != null) parts.push(`DEFAULT ${column.dflt_value}`); // ADDED
-        return parts.join(" "); // ADDED
-    } // ADDED
+    function cityColumnDefinition(column) {
+        const parts = [quoteSqlIdentifier(column.name), String(column.type || "TEXT")];
+        if (Number(column.pk || 0)) parts.push("PRIMARY KEY");
+        if (Number(column.notnull || 0) && !Number(column.pk || 0)) parts.push("NOT NULL");
+        if (column.dflt_value != null) parts.push(`DEFAULT ${column.dflt_value}`);
+        return parts.join(" ");
+    }
 
-    async function cityHasUniqueNameConstraint() { // ADDED
-        const indexes = await queryAll("PRAGMA index_list(Cities);", []); // ADDED
-        for (const index of indexes) { // ADDED
-            if (!Number(index.unique || 0)) continue; // ADDED
-            const indexName = String(index.name || ""); // ADDED
-            const columns = (await queryAll(`PRAGMA index_info(${quoteSqlIdentifier(indexName)});`, [])).map(row => String(row.name || "")); // ADDED
-            if (columns.length === 1 && columns[0] === "city_name") return true; // ADDED
-        } // ADDED
-        return false; // ADDED
-    } // ADDED
+    async function cityHasUniqueNameConstraint() {
+        const indexes = await queryAll("PRAGMA index_list(Cities);", []);
+        for (const index of indexes) {
+            if (!Number(index.unique || 0)) continue;
+            const indexName = String(index.name || "");
+            const columns = (await queryAll(`PRAGMA index_info(${quoteSqlIdentifier(indexName)});`, [])).map(row => String(row.name || ""));
+            if (columns.length === 1 && columns[0] === "city_name") return true;
+        }
+        return false;
+    }
 
-    async function rebuildCitiesWithoutUniqueName() { // ADDED
-        const columns = await queryAll("PRAGMA table_info(Cities);", []); // ADDED
-        const names = columns.map(column => String(column.name || "")).filter(Boolean); // ADDED
-        const quotedNames = names.map(quoteSqlIdentifier).join(", "); // ADDED
-        await execSchemaStatements([ // ADDED
-            "PRAGMA foreign_keys = OFF;", // ADDED
-            `CREATE TABLE Cities_new (${columns.map(cityColumnDefinition).join(", ")});`, // ADDED
-            `INSERT INTO Cities_new (${quotedNames}) SELECT ${quotedNames} FROM Cities;`, // ADDED
-            "DROP TABLE Cities;", // ADDED
-            "ALTER TABLE Cities_new RENAME TO Cities;", // ADDED
-            "PRAGMA foreign_keys = ON;", // ADDED
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_Cities_city_geo_identity ON Cities(lower(trim(city_name)), lower(trim(coalesce(country_name, ''))), lower(trim(coalesce(country_code, ''))), lower(trim(coalesce(region_name, ''))), lower(trim(coalesce(region_code, ''))));", // ADDED
-            "CREATE INDEX IF NOT EXISTS idx_Cities_city_name ON Cities(city_name);" // ADDED
-        ]); // ADDED
-    } // ADDED
+    async function rebuildCitiesWithoutUniqueName() {
+        const columns = await queryAll("PRAGMA table_info(Cities);", []);
+        const names = columns.map(column => String(column.name || "")).filter(Boolean);
+        const quotedNames = names.map(quoteSqlIdentifier).join(", ");
+        await execSchemaStatements([
+            "PRAGMA foreign_keys = OFF;",
+            `CREATE TABLE Cities_new (${columns.map(cityColumnDefinition).join(", ")});`,
+            `INSERT INTO Cities_new (${quotedNames}) SELECT ${quotedNames} FROM Cities;`,
+            "DROP TABLE Cities;",
+            "ALTER TABLE Cities_new RENAME TO Cities;",
+            "PRAGMA foreign_keys = ON;",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_Cities_city_geo_identity ON Cities(lower(trim(city_name)), lower(trim(coalesce(country_name, ''))), lower(trim(coalesce(country_code, ''))), lower(trim(coalesce(region_name, ''))), lower(trim(coalesce(region_code, ''))));",
+            "CREATE INDEX IF NOT EXISTS idx_Cities_city_name ON Cities(city_name);"
+        ]);
+    }
 
-    const CITY_GEO_COLUMNS = Object.freeze({ // ADDED
-        country_name: "TEXT", // ADDED
-        country_code: "TEXT", // ADDED
-        region_name: "TEXT", // ADDED
-        region_code: "TEXT" // ADDED
-    }); // ADDED
-    let cityGeoSchemaEnsured = false; // ADDED
+    const CITY_GEO_COLUMNS = Object.freeze({
+        country_name: "TEXT",
+        country_code: "TEXT",
+        region_name: "TEXT",
+        region_code: "TEXT"
+    });
+    let cityGeoSchemaEnsured = false;
 
-    async function ensureCityGeographySchema() { // ADDED
-        if (cityGeoSchemaEnsured) return; // ADDED
-        const existing = new Set((await queryAll("PRAGMA table_info(Cities);", [])).map(row => String(row.name || "").toLowerCase())); // ADDED
-        for (const [column, type] of Object.entries(CITY_GEO_COLUMNS)) { // ADDED
-            if (!existing.has(column.toLowerCase())) await execAll(`ALTER TABLE Cities ADD COLUMN ${column} ${type};`, []); // ADDED
-        } // ADDED
-        if (await cityHasUniqueNameConstraint()) await rebuildCitiesWithoutUniqueName(); // ADDED
-        cityGeoSchemaEnsured = true; // ADDED
-    } // ADDED
+    async function ensureCityGeographySchema() {
+        if (cityGeoSchemaEnsured) return;
+        const existing = new Set((await queryAll("PRAGMA table_info(Cities);", [])).map(row => String(row.name || "").toLowerCase()));
+        for (const [column, type] of Object.entries(CITY_GEO_COLUMNS)) {
+            if (!existing.has(column.toLowerCase())) await execAll(`ALTER TABLE Cities ADD COLUMN ${column} ${type};`, []);
+        }
+        if (await cityHasUniqueNameConstraint()) await rebuildCitiesWithoutUniqueName();
+        cityGeoSchemaEnsured = true;
+    }
 
-    function normalizeCityGeoText(value) { // ADDED
-        return String(value == null ? "" : value).trim(); // ADDED
-    } // ADDED
+    function normalizeCityGeoText(value) {
+        return String(value == null ? "" : value).trim();
+    }
 
-    function normalizeCityIdentityText(value) { // ADDED
-        return normalizeCityGeoText(value).toLowerCase(); // ADDED
-    } // ADDED
+    function normalizeCityIdentityText(value) {
+        return normalizeCityGeoText(value).toLowerCase();
+    }
 
-    function cityCountryLabel(city) { // ADDED
-        return normalizeCityGeoText(city && city.country_name) || normalizeCityGeoText(city && city.country_code) || "Uncategorized"; // ADDED
-    } // ADDED
+    function cityCountryLabel(city) {
+        return normalizeCityGeoText(city && city.country_name) || normalizeCityGeoText(city && city.country_code) || "Uncategorized";
+    }
 
-    function cityRegionLabel(city) { // ADDED
-        const name = normalizeCityGeoText(city && city.region_name); // ADDED
-        const code = normalizeCityGeoText(city && city.region_code); // ADDED
-        if (name && code && name.toLowerCase() !== code.toLowerCase()) return `${name} (${code})`; // ADDED
-        return name || code || "Uncategorized"; // ADDED
-    } // ADDED
+    function cityRegionLabel(city) {
+        const name = normalizeCityGeoText(city && city.region_name);
+        const code = normalizeCityGeoText(city && city.region_code);
+        if (name && code && name.toLowerCase() !== code.toLowerCase()) return `${name} (${code})`;
+        return name || code || "Uncategorized";
+    }
 
-    function cityDisplayLabel(city) { // ADDED
-        return normalizeCityGeoText(city && city.city_name) || "(unnamed city)"; // ADDED
-    } // ADDED
+    function cityDisplayLabel(city) {
+        return normalizeCityGeoText(city && city.city_name) || "(unnamed city)";
+    }
 
-    function fullCityLabel(city) { // ADDED
-        return `${cityDisplayLabel(city)} - ${cityCountryLabel(city)} / ${cityRegionLabel(city)}`; // ADDED
-    } // ADDED
+    function fullCityLabel(city) {
+        return `${cityDisplayLabel(city)} - ${cityCountryLabel(city)} / ${cityRegionLabel(city)}`;
+    }
 
-    function citySearchText(city) { // ADDED
-        return [cityDisplayLabel(city), cityCountryLabel(city), cityRegionLabel(city), normalizeCityGeoText(city && city.country_code), normalizeCityGeoText(city && city.region_code)].join(" ").toLowerCase(); // ADDED
-    } // ADDED
+    function citySearchText(city) {
+        return [cityDisplayLabel(city), cityCountryLabel(city), cityRegionLabel(city), normalizeCityGeoText(city && city.country_code), normalizeCityGeoText(city && city.region_code)].join(" ").toLowerCase();
+    }
 
-    function sortedCities(cities) { // ADDED
-        return (cities || []).slice().sort((a, b) => { // ADDED
-            const av = [cityCountryLabel(a), cityRegionLabel(a), cityDisplayLabel(a)].join("\u0000").toLowerCase(); // ADDED
-            const bv = [cityCountryLabel(b), cityRegionLabel(b), cityDisplayLabel(b)].join("\u0000").toLowerCase(); // ADDED
-            return av.localeCompare(bv); // ADDED
-        }); // ADDED
-    } // ADDED
+    function sortedCities(cities) {
+        return (cities || []).slice().sort((a, b) => {
+            const av = [cityCountryLabel(a), cityRegionLabel(a), cityDisplayLabel(a)].join("\u0000").toLowerCase();
+            const bv = [cityCountryLabel(b), cityRegionLabel(b), cityDisplayLabel(b)].join("\u0000").toLowerCase();
+            return av.localeCompare(bv);
+        });
+    }
 
-    function makeCityTreePicker(cities, initialValue) { // ADDED
-        let cityRows = sortedCities(cities); // ADDED
-        let currentValue = String(initialValue || (cityRows[0] && cityRows[0].city_id || "")); // ADDED
-        let isOpen = false; // ADDED
-        const root = document.createElement("div"); // ADDED
-        root.tabIndex = 0; // ADDED
-        root.style.position = "relative"; // ADDED
-        root.style.flex = "1"; // ADDED
-        const button = document.createElement("button"); // ADDED
-        button.type = "button"; // ADDED
-        button.style.width = "100%"; // ADDED
-        button.style.padding = "6px"; // ADDED
-        button.style.border = "1px solid #bbb"; // ADDED
-        button.style.borderRadius = "6px"; // ADDED
-        button.style.background = "#fff"; // ADDED
-        button.style.textAlign = "left"; // ADDED
-        applyTilerButtonStyle(button, "open", { compact: true }); // NEW
-        const panel = document.createElement("div"); // ADDED
-        panel.style.position = "absolute"; // ADDED
-        panel.style.zIndex = "10000"; // ADDED
-        panel.style.left = "0"; // ADDED
-        panel.style.right = "0"; // ADDED
-        panel.style.top = "100%"; // ADDED
-        panel.style.marginTop = "3px"; // ADDED
-        panel.style.padding = "6px"; // ADDED
-        panel.style.border = "1px solid #bbb"; // ADDED
-        panel.style.borderRadius = "6px"; // ADDED
-        panel.style.background = "#fff"; // ADDED
-        panel.style.boxShadow = "0 8px 20px rgba(0,0,0,0.18)"; // ADDED
-        panel.style.display = "none"; // ADDED
-        const search = document.createElement("input"); // ADDED
-        search.type = "search"; // ADDED
-        search.placeholder = "Search city, country, or region"; // ADDED
-        search.style.width = "100%"; // ADDED
-        search.style.marginBottom = "6px"; // ADDED
-        const list = document.createElement("div"); // ADDED
-        list.style.maxHeight = "260px"; // ADDED
-        list.style.overflow = "auto"; // ADDED
-        panel.appendChild(search); // ADDED
-        panel.appendChild(list); // ADDED
-        root.appendChild(button); // ADDED
-        root.appendChild(panel); // ADDED
+    function makeCityTreePicker(cities, initialValue) {
+        let cityRows = sortedCities(cities);
+        let currentValue = String(initialValue || (cityRows[0] && cityRows[0].city_id || ""));
+        let isOpen = false;
+        const root = document.createElement("div");
+        root.tabIndex = 0;
+        root.style.position = "relative";
+        root.style.flex = "1";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.style.width = "100%";
+        button.style.padding = "6px";
+        button.style.border = "1px solid #bbb";
+        button.style.borderRadius = "6px";
+        button.style.background = "#fff";
+        button.style.textAlign = "left";
+        applyTilerButtonStyle(button, "open", { compact: true });
+        const panel = document.createElement("div");
+        panel.style.position = "absolute";
+        panel.style.zIndex = "10000";
+        panel.style.left = "0";
+        panel.style.right = "0";
+        panel.style.top = "100%";
+        panel.style.marginTop = "3px";
+        panel.style.padding = "6px";
+        panel.style.border = "1px solid #bbb";
+        panel.style.borderRadius = "6px";
+        panel.style.background = "#fff";
+        panel.style.boxShadow = "0 8px 20px rgba(0,0,0,0.18)";
+        panel.style.display = "none";
+        const search = document.createElement("input");
+        search.type = "search";
+        search.placeholder = "Search city, country, or region";
+        search.style.width = "100%";
+        search.style.marginBottom = "6px";
+        const list = document.createElement("div");
+        list.style.maxHeight = "260px";
+        list.style.overflow = "auto";
+        panel.appendChild(search);
+        panel.appendChild(list);
+        root.appendChild(button);
+        root.appendChild(panel);
 
-        function selectedCity() { return cityRows.find(city => String(city.city_id) === currentValue) || null; } // ADDED
-        function updateButton() { button.textContent = selectedCity() ? fullCityLabel(selectedCity()) : "Select a city..."; } // ADDED
-        function closePicker() { isOpen = false; panel.style.display = "none"; } // ADDED
-        function renderHeader(text, level) { // ADDED
-            const header = document.createElement("div"); // ADDED
-            header.textContent = text; // ADDED
-            header.style.fontWeight = level === 1 ? "700" : "600"; // ADDED
-            header.style.margin = level === 1 ? "8px 0 3px" : "5px 0 2px 12px"; // ADDED
-            header.style.color = "#374151"; // ADDED
-            list.appendChild(header); // ADDED
-        } // ADDED
-        function chooseCity(city) { // ADDED
-            currentValue = String(city.city_id); // ADDED
-            updateButton(); // ADDED
-            closePicker(); // ADDED
-            root.dispatchEvent(new Event("change", { bubbles: true })); // ADDED
-        } // ADDED
-        function renderList() { // ADDED
-            const filter = normalizeCityGeoText(search.value).toLowerCase(); // ADDED
-            const visible = cityRows.filter(city => !filter || citySearchText(city).indexOf(filter) >= 0); // ADDED
-            list.innerHTML = ""; // ADDED
-            let lastCountry = null; // ADDED
-            let lastRegion = null; // ADDED
-            if (!visible.length) { // ADDED
-                const empty = document.createElement("div"); // ADDED
-                empty.textContent = "No matching cities"; // ADDED
-                empty.style.color = "#6b7280"; // ADDED
-                empty.style.padding = "6px"; // ADDED
-                list.appendChild(empty); // ADDED
-                return; // ADDED
-            } // ADDED
-            visible.forEach(city => { // ADDED
-                const country = cityCountryLabel(city); // ADDED
-                const region = cityRegionLabel(city); // ADDED
-                if (country !== lastCountry) { renderHeader(country, 1); lastCountry = country; lastRegion = null; } // ADDED
-                if (region !== lastRegion) { renderHeader(region, 2); lastRegion = region; } // ADDED
-                const item = document.createElement("button"); // ADDED
-                item.type = "button"; // ADDED
-                item.textContent = cityDisplayLabel(city); // ADDED
-                item.style.display = "block"; // ADDED
-                item.style.width = "100%"; // ADDED
-                item.style.margin = "1px 0"; // ADDED
-                item.style.padding = "4px 6px 4px 24px"; // ADDED
-                item.style.border = "0"; // ADDED
-                item.style.borderRadius = "4px"; // ADDED
-                item.style.background = String(city.city_id) === currentValue ? "#e5f0ff" : "#fff"; // ADDED
-                item.style.textAlign = "left"; // ADDED
-                item.addEventListener("click", () => chooseCity(city)); // ADDED
-                list.appendChild(item); // ADDED
-            }); // ADDED
-        } // ADDED
-        function openPicker() { isOpen = true; panel.style.display = "block"; renderList(); search.focus(); } // ADDED
-        Object.defineProperty(root, "value", { // ADDED
-            get() { return currentValue; }, // ADDED
-            set(value) { currentValue = String(value || ""); updateButton(); } // ADDED
-        }); // ADDED
-        root.setCities = function (nextCities, selectedValue) { // ADDED
-            cityRows = sortedCities(nextCities); // ADDED
-            currentValue = String(selectedValue || (cityRows[0] && cityRows[0].city_id || "")); // ADDED
-            updateButton(); // ADDED
-            renderList(); // ADDED
-        }; // ADDED
-        button.addEventListener("click", () => { isOpen ? closePicker() : openPicker(); }); // ADDED
-        search.addEventListener("input", renderList); // ADDED
-        search.addEventListener("keydown", evt => { // ADDED
-            if (evt.key === "Escape") { evt.preventDefault(); closePicker(); button.focus(); } // ADDED
-            if (evt.key === "Enter") { // ADDED
-                const filter = normalizeCityGeoText(search.value).toLowerCase(); // ADDED
-                const first = cityRows.find(city => !filter || citySearchText(city).indexOf(filter) >= 0); // ADDED
-                if (first) { evt.preventDefault(); chooseCity(first); } // ADDED
-            } // ADDED
-        }); // ADDED
-        document.addEventListener("mousedown", evt => { if (isOpen && !root.contains(evt.target)) closePicker(); }); // ADDED
-        updateButton(); // ADDED
-        renderList(); // ADDED
-        return root; // ADDED
-    } // ADDED
+        function selectedCity() { return cityRows.find(city => String(city.city_id) === currentValue) || null; }
+        function updateButton() { button.textContent = selectedCity() ? fullCityLabel(selectedCity()) : "Select a city..."; }
+        function closePicker() { isOpen = false; panel.style.display = "none"; }
+        function renderHeader(text, level) {
+            const header = document.createElement("div");
+            header.textContent = text;
+            header.style.fontWeight = level === 1 ? "700" : "600";
+            header.style.margin = level === 1 ? "8px 0 3px" : "5px 0 2px 12px";
+            header.style.color = "#374151";
+            list.appendChild(header);
+        }
+        function chooseCity(city) {
+            currentValue = String(city.city_id);
+            updateButton();
+            closePicker();
+            root.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        function renderList() {
+            const filter = normalizeCityGeoText(search.value).toLowerCase();
+            const visible = cityRows.filter(city => !filter || citySearchText(city).indexOf(filter) >= 0);
+            list.innerHTML = "";
+            let lastCountry = null;
+            let lastRegion = null;
+            if (!visible.length) {
+                const empty = document.createElement("div");
+                empty.textContent = "No matching cities";
+                empty.style.color = "#6b7280";
+                empty.style.padding = "6px";
+                list.appendChild(empty);
+                return;
+            }
+            visible.forEach(city => {
+                const country = cityCountryLabel(city);
+                const region = cityRegionLabel(city);
+                if (country !== lastCountry) { renderHeader(country, 1); lastCountry = country; lastRegion = null; }
+                if (region !== lastRegion) { renderHeader(region, 2); lastRegion = region; }
+                const item = document.createElement("button");
+                item.type = "button";
+                item.textContent = cityDisplayLabel(city);
+                item.style.display = "block";
+                item.style.width = "100%";
+                item.style.margin = "1px 0";
+                item.style.padding = "4px 6px 4px 24px";
+                item.style.border = "0";
+                item.style.borderRadius = "4px";
+                item.style.background = String(city.city_id) === currentValue ? "#e5f0ff" : "#fff";
+                item.style.textAlign = "left";
+                item.addEventListener("click", () => chooseCity(city));
+                list.appendChild(item);
+            });
+        }
+        function openPicker() { isOpen = true; panel.style.display = "block"; renderList(); search.focus(); }
+        Object.defineProperty(root, "value", {
+            get() { return currentValue; },
+            set(value) { currentValue = String(value || ""); updateButton(); }
+        });
+        root.setCities = function (nextCities, selectedValue) {
+            cityRows = sortedCities(nextCities);
+            currentValue = String(selectedValue || (cityRows[0] && cityRows[0].city_id || ""));
+            updateButton();
+            renderList();
+        };
+        button.addEventListener("click", () => { isOpen ? closePicker() : openPicker(); });
+        search.addEventListener("input", renderList);
+        search.addEventListener("keydown", evt => {
+            if (evt.key === "Escape") { evt.preventDefault(); closePicker(); button.focus(); }
+            if (evt.key === "Enter") {
+                const filter = normalizeCityGeoText(search.value).toLowerCase();
+                const first = cityRows.find(city => !filter || citySearchText(city).indexOf(filter) >= 0);
+                if (first) { evt.preventDefault(); chooseCity(first); }
+            }
+        });
+        document.addEventListener("mousedown", evt => { if (isOpen && !root.contains(evt.target)) closePicker(); });
+        updateButton();
+        renderList();
+        return root;
+    }
 
     async function loadCities() {
-        await ensureCityGeographySchema(); // ADDED
+        await ensureCityGeographySchema();
         const sql = `
         SELECT *
         FROM Cities
@@ -637,39 +637,39 @@ Draw.loadPlugin(function (ui) {
         return rows;
     }
 
-    async function loadCityById(cityId) { // ADDED
-        await ensureCityGeographySchema(); // ADDED
-        const id = Number(cityId); // ADDED
-        if (!Number.isFinite(id)) return null; // ADDED
-        const rows = await queryAll("SELECT * FROM Cities WHERE city_id = ? LIMIT 1;", [id]); // ADDED
-        return rows[0] || null; // ADDED
-    } // ADDED
+    async function loadCityById(cityId) {
+        await ensureCityGeographySchema();
+        const id = Number(cityId);
+        if (!Number.isFinite(id)) return null;
+        const rows = await queryAll("SELECT * FROM Cities WHERE city_id = ? LIMIT 1;", [id]);
+        return rows[0] || null;
+    }
 
-    async function cityIdentityExists(row, excludeCityId) { // CHANGED
-        await ensureCityGeographySchema(); // ADDED
-        const cityName = normalizeCityGeoText(row.city_name); // ADDED
-        const rows = await queryAll( // ADDED
-            "SELECT city_id, city_name, country_name, country_code, region_name, region_code FROM Cities WHERE LOWER(TRIM(city_name)) = LOWER(TRIM(?)) AND (? IS NULL OR city_id <> ?);", // CHANGED
-            [cityName, excludeCityId == null ? null : Number(excludeCityId), excludeCityId == null ? null : Number(excludeCityId)] // ADDED
-        ); // ADDED
-        const countryName = normalizeCityIdentityText(row.country_name); // ADDED
-        const countryCode = normalizeCityIdentityText(row.country_code); // ADDED
-        const regionName = normalizeCityIdentityText(row.region_name); // ADDED
-        const regionCode = normalizeCityIdentityText(row.region_code); // ADDED
-        return rows.some(existing => { // ADDED
-            const sameCountry = (countryCode && normalizeCityIdentityText(existing.country_code) === countryCode) || (countryName && normalizeCityIdentityText(existing.country_name) === countryName); // ADDED
-            const sameRegion = (regionCode && normalizeCityIdentityText(existing.region_code) === regionCode) || (regionName && normalizeCityIdentityText(existing.region_name) === regionName); // ADDED
-            return sameCountry && sameRegion; // ADDED
-        }); // ADDED
-    } // CHANGED
+    async function cityIdentityExists(row, excludeCityId) {
+        await ensureCityGeographySchema();
+        const cityName = normalizeCityGeoText(row.city_name);
+        const rows = await queryAll(
+            "SELECT city_id, city_name, country_name, country_code, region_name, region_code FROM Cities WHERE LOWER(TRIM(city_name)) = LOWER(TRIM(?)) AND (? IS NULL OR city_id <> ?);",
+            [cityName, excludeCityId == null ? null : Number(excludeCityId), excludeCityId == null ? null : Number(excludeCityId)]
+        );
+        const countryName = normalizeCityIdentityText(row.country_name);
+        const countryCode = normalizeCityIdentityText(row.country_code);
+        const regionName = normalizeCityIdentityText(row.region_name);
+        const regionCode = normalizeCityIdentityText(row.region_code);
+        return rows.some(existing => {
+            const sameCountry = (countryCode && normalizeCityIdentityText(existing.country_code) === countryCode) || (countryName && normalizeCityIdentityText(existing.country_name) === countryName);
+            const sameRegion = (regionCode && normalizeCityIdentityText(existing.region_code) === regionCode) || (regionName && normalizeCityIdentityText(existing.region_name) === regionName);
+            return sameCountry && sameRegion;
+        });
+    }
 
     // ------------------- Layering (garden beds, bed assemblies, other, tiler groups) ----------------
 
     let __REORDERING = false;
 
-    function isIrrigationBedAssembly(cell) { // NEW
-        return !!cell && cell.getAttribute && cell.getAttribute("irrigation_assembly") === "1" && cell.getAttribute("irrigation_assembly_type") === "bed"; // NEW
-    } // NEW
+    function isIrrigationBedAssembly(cell) {
+        return !!cell && cell.getAttribute && cell.getAttribute("irrigation_assembly") === "1" && cell.getAttribute("irrigation_assembly_type") === "bed";
+    }
 
     function reorderModuleChildrenForLayering(model, moduleCell) {
         if (!model || !moduleCell || !isGardenModule(moduleCell)) return;
@@ -688,18 +688,18 @@ Draw.loadPlugin(function (ui) {
 
         // Partition while preserving relative order within each bucket
         const beds = [];
-        const bedAssemblies = []; // NEW
+        const bedAssemblies = [];
         const groups = [];
         const others = [];
 
         for (const ch of children) {
             if (isGardenBed(ch)) beds.push(ch);
-            else if (isIrrigationBedAssembly(ch)) bedAssemblies.push(ch); // NEW
+            else if (isIrrigationBedAssembly(ch)) bedAssemblies.push(ch);
             else if (isTilerGroup(ch)) groups.push(ch);
             else others.push(ch);
         }
 
-        const ordered = beds.concat(bedAssemblies, others, groups); // CHANGE
+        const ordered = beds.concat(bedAssemblies, others, groups);
 
         // If it’s the same order, do nothing (prevents redundant undo edits)
         let same = (ordered.length === children.length);
@@ -730,21 +730,21 @@ Draw.loadPlugin(function (ui) {
     // ----------------- Tiler group helpers ----------------------
 
 
-    function isValidGardenYear(value) { // NEW
-        const n = Number(value); // NEW
-        return Number.isFinite(n) && n > 1900 && n < 3000; // NEW
-    } // NEW
+    function isValidGardenYear(value) {
+        const n = Number(value);
+        return Number.isFinite(n) && n > 1900 && n < 3000;
+    }
     
-    function getCurrentCalendarYear() { // NEW
-        return new Date().getFullYear(); // NEW
-    } // NEW
+    function getCurrentCalendarYear() {
+        return new Date().getFullYear();
+    }
     
-    function getCurrentGardenYear(moduleCell) { // NEW
-        const moduleYear = getXmlAttr(moduleCell, MODULE_CURRENT_YEAR_ATTR, ""); // NEW
-        if (isValidGardenYear(moduleYear)) return Math.trunc(Number(moduleYear)); // NEW
+    function getCurrentGardenYear(moduleCell) {
+        const moduleYear = getXmlAttr(moduleCell, MODULE_CURRENT_YEAR_ATTR, "");
+        if (isValidGardenYear(moduleYear)) return Math.trunc(Number(moduleYear));
     
-        return getCurrentCalendarYear(); // NEW
-    } // NEW
+        return getCurrentCalendarYear();
+    }
 
     function findTilerGroupAncestor(graph, cell) {
         const model = graph.getModel();
@@ -792,190 +792,190 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-    // -------------------- Rotation-aware tile placement -------------------- // NEW
-    const ROTATION_EPS_DEG = 0.000001; // NEW
+    // -------------------- Rotation-aware tile placement --------------------
+    const ROTATION_EPS_DEG = 0.000001;
 
-    function toRad(deg) { // NEW
-        return (Number(deg) || 0) * Math.PI / 180; // NEW
-    } // NEW
+    function toRad(deg) {
+        return (Number(deg) || 0) * Math.PI / 180;
+    }
 
-    function getTilerRotationDeg(cell) { // CHANGE
-        if (!cell) return 0; // MOVED
-        const style = graph.getCellStyle(cell) || {}; // MOVED
-        const raw = style[mxConstants.STYLE_ROTATION] != null ? style[mxConstants.STYLE_ROTATION] : style.rotation; // NEW
-        const n = Number(raw); // NEW
-        return Number.isFinite(n) ? n : 0; // NEW
-    } // NEW
+    function getTilerRotationDeg(cell) {
+        if (!cell) return 0;
+        const style = graph.getCellStyle(cell) || {};
+        const raw = style[mxConstants.STYLE_ROTATION] != null ? style[mxConstants.STYLE_ROTATION] : style.rotation;
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : 0;
+    }
 
-    function setCellRotationDeg(cell, angleDeg) { // MOVED
-        if (!cell) return false; // MOVED
-        const n = Number(angleDeg); // MOVED
-        const next = Number.isFinite(n) ? n : 0; // MOVED
-        if (nearlySameNumber(getTilerRotationDeg(cell), next)) return false; // MOVED
-        graph.setCellStyles(mxConstants.STYLE_ROTATION, String(next), [cell]); // MOVED
-        return true; // MOVED
-    } // MOVED
+    function setCellRotationDeg(cell, angleDeg) {
+        if (!cell) return false;
+        const n = Number(angleDeg);
+        const next = Number.isFinite(n) ? n : 0;
+        if (nearlySameNumber(getTilerRotationDeg(cell), next)) return false;
+        graph.setCellStyles(mxConstants.STYLE_ROTATION, String(next), [cell]);
+        return true;
+    }
 
-    function hasEffectiveRotation(groupCell) { // NEW
-        const rot = Math.abs(((getTilerRotationDeg(groupCell) % 360) + 360) % 360); // NEW
-        return rot > ROTATION_EPS_DEG && Math.abs(rot - 360) > ROTATION_EPS_DEG; // NEW
-    } // NEW
+    function hasEffectiveRotation(groupCell) {
+        const rot = Math.abs(((getTilerRotationDeg(groupCell) % 360) + 360) % 360);
+        return rot > ROTATION_EPS_DEG && Math.abs(rot - 360) > ROTATION_EPS_DEG;
+    }
 
-    function groupCenterLocal(groupCell) { // NEW
-        const g = groupCell && groupCell.getGeometry ? groupCell.getGeometry() : null; // NEW
-        if (!g) return { x: 0, y: 0 }; // NEW
-        return { x: (Number(g.width) || 0) / 2, y: (Number(g.height) || 0) / 2 }; // NEW
-    } // NEW
+    function groupCenterLocal(groupCell) {
+        const g = groupCell && groupCell.getGeometry ? groupCell.getGeometry() : null;
+        if (!g) return { x: 0, y: 0 };
+        return { x: (Number(g.width) || 0) / 2, y: (Number(g.height) || 0) / 2 };
+    }
 
-    function rotatePointAround(point, center, angleDeg) { // NEW
-        const a = toRad(angleDeg); // NEW
-        const cos = Math.cos(a); // NEW
-        const sin = Math.sin(a); // NEW
-        const dx = point.x - center.x; // NEW
-        const dy = point.y - center.y; // NEW
-        return { // NEW
-            x: center.x + dx * cos - dy * sin, // NEW
-            y: center.y + dx * sin + dy * cos // NEW
-        }; // NEW
-    } // NEW
+    function rotatePointAround(point, center, angleDeg) {
+        const a = toRad(angleDeg);
+        const cos = Math.cos(a);
+        const sin = Math.sin(a);
+        const dx = point.x - center.x;
+        const dy = point.y - center.y;
+        return {
+            x: center.x + dx * cos - dy * sin,
+            y: center.y + dx * sin + dy * cos
+        };
+    }
 
-    function logicalSlotCenterLocal(r, c, spacingXpx, spacingYpx, bandPx) { // NEW
-        return { // NEW
-            x: GROUP_PADDING_PX + spacingXpx / 2 + c * spacingXpx, // NEW
-            y: GROUP_PADDING_PX + (bandPx || GROUP_LABEL_BAND_PX) + spacingYpx / 2 + r * spacingYpx // NEW
-        }; // NEW
-    } // NEW
+    function logicalSlotCenterLocal(r, c, spacingXpx, spacingYpx, bandPx) {
+        return {
+            x: GROUP_PADDING_PX + spacingXpx / 2 + c * spacingXpx,
+            y: GROUP_PADDING_PX + (bandPx || GROUP_LABEL_BAND_PX) + spacingYpx / 2 + r * spacingYpx
+        };
+    }
 
-    function isInterplantLayoutGroup(groupCell) { // ADDED
-        return getXmlAttr(groupCell, "companion_layout_interplant", "") === "1" || getXmlAttr(groupCell, "companion_layout_template", "") === "interplant"; // ADDED
-    } // ADDED
+    function isInterplantLayoutGroup(groupCell) {
+        return getXmlAttr(groupCell, "companion_layout_interplant", "") === "1" || getXmlAttr(groupCell, "companion_layout_template", "") === "interplant";
+    }
 
-    function interplantSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx) { // ADDED
-        const center = logicalSlotCenterLocal(r, c, spacingXpx, spacingYpx, bandPx); // ADDED
-        if (!isInterplantLayoutGroup(groupCell)) return center; // ADDED
-        if ((r + c) % 2 !== 0) return center; // ADDED
-        const geo = groupCell && groupCell.getGeometry ? groupCell.getGeometry() : null; // ADDED
-        const maxX = Math.max(GROUP_PADDING_PX, Number(geo?.width || 0) - GROUP_PADDING_PX); // ADDED
-        const maxY = Math.max(GROUP_PADDING_PX + (bandPx || GROUP_LABEL_BAND_PX), Number(geo?.height || 0) - GROUP_PADDING_PX); // ADDED
-        return { // ADDED
-            x: Math.min(maxX, center.x + spacingXpx / 2), // ADDED
-            y: Math.min(maxY, center.y + spacingYpx / 2) // ADDED
-        }; // ADDED
-    } // ADDED
+    function interplantSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx) {
+        const center = logicalSlotCenterLocal(r, c, spacingXpx, spacingYpx, bandPx);
+        if (!isInterplantLayoutGroup(groupCell)) return center;
+        if ((r + c) % 2 !== 0) return center;
+        const geo = groupCell && groupCell.getGeometry ? groupCell.getGeometry() : null;
+        const maxX = Math.max(GROUP_PADDING_PX, Number(geo?.width || 0) - GROUP_PADDING_PX);
+        const maxY = Math.max(GROUP_PADDING_PX + (bandPx || GROUP_LABEL_BAND_PX), Number(geo?.height || 0) - GROUP_PADDING_PX);
+        return {
+            x: Math.min(maxX, center.x + spacingXpx / 2),
+            y: Math.min(maxY, center.y + spacingYpx / 2)
+        };
+    }
 
-    function visualCenterFromLogicalCenter(groupCell, logicalCenter, rotationDeg) { // NEW
-        return rotatePointAround(logicalCenter, groupCenterLocal(groupCell), rotationDeg); // NEW
-    } // NEW
+    function visualCenterFromLogicalCenter(groupCell, logicalCenter, rotationDeg) {
+        return rotatePointAround(logicalCenter, groupCenterLocal(groupCell), rotationDeg);
+    }
 
-    function visualSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx) { // NEW
-        const logical = interplantSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx); // CHANGED
-        return visualCenterFromLogicalCenter(groupCell, logical, getTilerRotationDeg(groupCell)); // NEW
-    } // NEW
+    function visualSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx) {
+        const logical = interplantSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx);
+        return visualCenterFromLogicalCenter(groupCell, logical, getTilerRotationDeg(groupCell));
+    }
 
-    function geometryFromVisualCenter(center, width, height) { // NEW
-        return new mxGeometry(center.x - width / 2, center.y - height / 2, width, height); // NEW
-    } // NEW
+    function geometryFromVisualCenter(center, width, height) {
+        return new mxGeometry(center.x - width / 2, center.y - height / 2, width, height);
+    }
 
-    function tileGeometryAtSlot(groupCell, r, c, spacingXpx, spacingYpx, iconDiamPx, bandPx) { // NEW
-        const center = visualSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx); // NEW
-        return geometryFromVisualCenter(center, iconDiamPx, iconDiamPx); // NEW
-    } // NEW
+    function tileGeometryAtSlot(groupCell, r, c, spacingXpx, spacingYpx, iconDiamPx, bandPx) {
+        const center = visualSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx);
+        return geometryFromVisualCenter(center, iconDiamPx, iconDiamPx);
+    }
 
-    function childVisualCenterLocal(childCell, geometryOverride) { // CHANGE
-        const g = geometryOverride || (childCell && childCell.getGeometry ? childCell.getGeometry() : null); // CHANGE
-        if (!g) return null; // NEW
-        return { x: Number(g.x) + Number(g.width) / 2, y: Number(g.y) + Number(g.height) / 2 }; // NEW
-    } // NEW
+    function childVisualCenterLocal(childCell, geometryOverride) {
+        const g = geometryOverride || (childCell && childCell.getGeometry ? childCell.getGeometry() : null);
+        if (!g) return null;
+        return { x: Number(g.x) + Number(g.width) / 2, y: Number(g.y) + Number(g.height) / 2 };
+    }
 
-    function childCenterInUnrotatedGroupSpace(groupCell, childCell, rotationDeg, geometryOverride) { // CHANGE
-        const center = childVisualCenterLocal(childCell, geometryOverride); // CHANGE
-        if (!center) return null; // NEW
-        const rot = rotationDeg != null ? Number(rotationDeg) : getTilerRotationDeg(groupCell); // NEW
-        return rotatePointAround(center, groupCenterLocal(groupCell), -rot); // NEW
-    } // NEW
+    function childCenterInUnrotatedGroupSpace(groupCell, childCell, rotationDeg, geometryOverride) {
+        const center = childVisualCenterLocal(childCell, geometryOverride);
+        if (!center) return null;
+        const rot = rotationDeg != null ? Number(rotationDeg) : getTilerRotationDeg(groupCell);
+        return rotatePointAround(center, groupCenterLocal(groupCell), -rot);
+    }
 
-    function childLogicalGeometryFromVisual(groupCell, childCell, rotationDeg, geometryOverride) { // CHANGE
-        const g = geometryOverride || (childCell && childCell.getGeometry ? childCell.getGeometry() : null); // CHANGE
-        const center = childCenterInUnrotatedGroupSpace(groupCell, childCell, rotationDeg, geometryOverride); // CHANGE
-        if (!g || !center) return null; // NEW
-        return { x: center.x - g.width / 2, y: center.y - g.height / 2, w: g.width, h: g.height }; // NEW
-    } // NEW
+    function childLogicalGeometryFromVisual(groupCell, childCell, rotationDeg, geometryOverride) {
+        const g = geometryOverride || (childCell && childCell.getGeometry ? childCell.getGeometry() : null);
+        const center = childCenterInUnrotatedGroupSpace(groupCell, childCell, rotationDeg, geometryOverride);
+        if (!g || !center) return null;
+        return { x: center.x - g.width / 2, y: center.y - g.height / 2, w: g.width, h: g.height };
+    }
 
-    function visualGeometryFromLogicalGeometry(groupCell, logicalGeo) { // NEW
-        if (!logicalGeo) return null; // NEW
-        const w = Number(logicalGeo.w); // NEW
-        const h = Number(logicalGeo.h); // NEW
-        const x = Number(logicalGeo.x); // NEW
-        const y = Number(logicalGeo.y); // NEW
-        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) return null; // NEW
-        const logicalCenter = { x: x + w / 2, y: y + h / 2 }; // NEW
-        const visualCenter = visualCenterFromLogicalCenter(groupCell, logicalCenter, getTilerRotationDeg(groupCell)); // NEW
-        return geometryFromVisualCenter(visualCenter, w, h); // NEW
-    } // NEW
+    function visualGeometryFromLogicalGeometry(groupCell, logicalGeo) {
+        if (!logicalGeo) return null;
+        const w = Number(logicalGeo.w);
+        const h = Number(logicalGeo.h);
+        const x = Number(logicalGeo.x);
+        const y = Number(logicalGeo.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) return null;
+        const logicalCenter = { x: x + w / 2, y: y + h / 2 };
+        const visualCenter = visualCenterFromLogicalCenter(groupCell, logicalCenter, getTilerRotationDeg(groupCell));
+        return geometryFromVisualCenter(visualCenter, w, h);
+    }
 
-    function rotationValueFromStyleString(styleText) { // NEW
-        if (typeof styleText !== "string") return null; // NEW
-        const parts = styleText.split(";"); // NEW
-        for (const part of parts) { // NEW
-            const idx = part.indexOf("="); // NEW
-            if (idx <= 0) continue; // NEW
-            const key = part.slice(0, idx); // NEW
-            if (key === mxConstants.STYLE_ROTATION || key === "rotation") return part.slice(idx + 1); // NEW
-        } // NEW
-        return null; // NEW
-    } // NEW
+    function rotationValueFromStyleString(styleText) {
+        if (typeof styleText !== "string") return null;
+        const parts = styleText.split(";");
+        for (const part of parts) {
+            const idx = part.indexOf("=");
+            if (idx <= 0) continue;
+            const key = part.slice(0, idx);
+            if (key === mxConstants.STYLE_ROTATION || key === "rotation") return part.slice(idx + 1);
+        }
+        return null;
+    }
 
-    function rotationDegFromStyleString(styleText) { // NEW
-        const raw = rotationValueFromStyleString(styleText); // NEW
-        const n = Number(raw); // NEW
-        return Number.isFinite(n) ? n : 0; // NEW
-    } // NEW
+    function rotationDegFromStyleString(styleText) {
+        const raw = rotationValueFromStyleString(styleText);
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : 0;
+    }
 
-    function rotationChangedFromStyleChange(change) { // NEW
-        if (!change) return null; // NEW
-        const cell = change.cell || null; // NEW
-        if (!cell || !isTilerGroup(cell)) return null; // NEW
-        const before = rotationDegFromStyleString(change.previous); // NEW
-        const after = rotationDegFromStyleString(change.style); // NEW
-        if (Math.abs(before - after) <= ROTATION_EPS_DEG) return null; // NEW
-        return { cell, before, after }; // NEW
-    } // NEW
+    function rotationChangedFromStyleChange(change) {
+        if (!change) return null;
+        const cell = change.cell || null;
+        if (!cell || !isTilerGroup(cell)) return null;
+        const before = rotationDegFromStyleString(change.previous);
+        const after = rotationDegFromStyleString(change.style);
+        if (Math.abs(before - after) <= ROTATION_EPS_DEG) return null;
+        return { cell, before, after };
+    }
 
-    function changeTypeName(change) { // NEW
-        return change && change.constructor && change.constructor.name ? change.constructor.name : ""; // NEW
-    } // NEW
+    function changeTypeName(change) {
+        return change && change.constructor && change.constructor.name ? change.constructor.name : "";
+    }
 
-    function previousGeometryByCellIdFromChanges(changes) { // NEW
-        const out = new Map(); // NEW
-        for (const change of (changes || [])) { // NEW
-            if (changeTypeName(change) !== "mxGeometryChange") continue; // NEW
-            const cell = change.cell; // NEW
-            const prev = change.previous; // NEW
-            if (!cell || !cell.id || !prev || !isPlantCircle(cell)) continue; // NEW
-            out.set(cell.id, prev); // NEW
-        } // NEW
-        return out; // NEW
-    } // NEW
+    function previousGeometryByCellIdFromChanges(changes) {
+        const out = new Map();
+        for (const change of (changes || [])) {
+            if (changeTypeName(change) !== "mxGeometryChange") continue;
+            const cell = change.cell;
+            const prev = change.previous;
+            if (!cell || !cell.id || !prev || !isPlantCircle(cell)) continue;
+            out.set(cell.id, prev);
+        }
+        return out;
+    }
 
-    function snapshotHasTiles(snapObj) { // NEW
-        return !!snapObj && Array.isArray(snapObj.tiles) && snapObj.tiles.length > 0; // NEW
-    } // NEW
+    function snapshotHasTiles(snapObj) {
+        return !!snapObj && Array.isArray(snapObj.tiles) && snapObj.tiles.length > 0;
+    }
 
-    function resolveLayoutSnapshot(graph, groupCell, opts = {}) { // NEW
-        if (opts.layoutSnapshot) return opts.layoutSnapshot; // NEW
-        if (opts.useLiveSnapshot !== false) { // NEW
-            const liveSnap = captureLodLayoutSnapshot(graph, groupCell, { rotationDeg: opts.previousRotationDeg }); // NEW
-            if (snapshotHasTiles(liveSnap)) return liveSnap; // NEW
-        } // NEW
-        return readLodLayoutSnapshot(groupCell); // NEW
-    } // NEW
+    function resolveLayoutSnapshot(graph, groupCell, opts = {}) {
+        if (opts.layoutSnapshot) return opts.layoutSnapshot;
+        if (opts.useLiveSnapshot !== false) {
+            const liveSnap = captureLodLayoutSnapshot(graph, groupCell, { rotationDeg: opts.previousRotationDeg });
+            if (snapshotHasTiles(liveSnap)) return liveSnap;
+        }
+        return readLodLayoutSnapshot(groupCell);
+    }
 
-    function collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, opts = {}) { // CHANGE
+    function collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, opts = {}) {
         const model = graph.getModel();
         model.beginUpdate();
         try {
             // Snapshot layout BEFORE removing children so expand can restore it. 
-            const snap = resolveLayoutSnapshot(graph, groupCell, opts); // CHANGE
+            const snap = resolveLayoutSnapshot(graph, groupCell, opts);
             writeLodLayoutSnapshot(model, groupCell, snap);
 
             clearChildren(graph, groupCell); // wipe current children under group
@@ -994,9 +994,9 @@ Draw.loadPlugin(function (ui) {
                 LOD_SUMMARY_MIN_SIZE,
                 Math.min(g.width, g.height) * 0.35
             );
-            const summaryCenter = groupCenterLocal(groupCell); // NEW
-            const xRel = summaryCenter.x - size / 2; // CHANGE
-            const yRel = summaryCenter.y - size / 2; // CHANGE
+            const summaryCenter = groupCenterLocal(groupCell);
+            const xRel = summaryCenter.x - size / 2;
+            const yRel = summaryCenter.y - size / 2;
 
             const geo = new mxGeometry(xRel, yRel, size, size);
             // In collapseToSummary summary style:
@@ -1013,7 +1013,7 @@ Draw.loadPlugin(function (ui) {
                 "html=1",
                 "resizable=0",
                 "movable=0",
-                "rotation=0", // NEW
+                "rotation=0",
                 "editable=0",
             ].join(";");
 
@@ -1023,8 +1023,8 @@ Draw.loadPlugin(function (ui) {
             const actual = getNumberAttr(groupCell, ATTR_PLANT_COUNT_ACT, count);
             const y = updateGroupYield(model, groupCell, { abbr, countOverride: actual });
 
-            // Pull unit and potential targets from attrs // RESTORE
-            const unit = groupCell.getAttribute('yield_unit') || YIELD_UNIT; // RESTORE
+            // Pull unit and potential targets from attrs
+            const unit = groupCell.getAttribute('yield_unit') || YIELD_UNIT;
 
             // Build label parts: "FullName × count [· target ...] [· current ...]"
             const parts = [];
@@ -1068,13 +1068,13 @@ Draw.loadPlugin(function (ui) {
     }
 
     // Capture ONLY the tiles that need preserving (dirty or non-auto) keyed by r,c. 
-    function captureLodLayoutSnapshot(graph, groupCell, opts = {}) { // CHANGE
+    function captureLodLayoutSnapshot(graph, groupCell, opts = {}) {
         if (!groupCell || !isTilerGroup(groupCell)) return null;
 
         const kids = graph.getChildVertices(groupCell) || [];
         const tiles = [];
-        const rotationDeg = opts.rotationDeg != null ? Number(opts.rotationDeg) : getTilerRotationDeg(groupCell); // NEW
-        const geometryByCellId = opts.geometryByCellId || null; // NEW
+        const rotationDeg = opts.rotationDeg != null ? Number(opts.rotationDeg) : getTilerRotationDeg(groupCell);
+        const geometryByCellId = opts.geometryByCellId || null;
         for (const k of kids) {
             if (!isPlantCircle(k)) continue;
             if (!hasTileRC(k)) continue;
@@ -1091,13 +1091,13 @@ Draw.loadPlugin(function (ui) {
             const c = Number(k.getAttribute("tile_c"));
             if (!Number.isFinite(r) || !Number.isFinite(c)) continue;
 
-            const overrideGeo = geometryByCellId && k.id ? geometryByCellId.get(k.id) : null; // NEW
-            const logicalGeo = childLogicalGeometryFromVisual(groupCell, k, rotationDeg, overrideGeo); // CHANGE
-            if (!logicalGeo) continue; // CHANGE
+            const overrideGeo = geometryByCellId && k.id ? geometryByCellId.get(k.id) : null;
+            const logicalGeo = childLogicalGeometryFromVisual(groupCell, k, rotationDeg, overrideGeo);
+            if (!logicalGeo) continue;
 
             tiles.push({
                 r, c,
-                x: logicalGeo.x, y: logicalGeo.y, w: logicalGeo.w, h: logicalGeo.h, // CHANGE
+                x: logicalGeo.x, y: logicalGeo.y, w: logicalGeo.w, h: logicalGeo.h,
                 auto, dirty,
                 abbr: String(k.getAttribute("abbr") || ""), // optional
                 label: String(k.getAttribute("label") || ""), // optional
@@ -1141,13 +1141,13 @@ Draw.loadPlugin(function (ui) {
         return map;
     }
 
-    function shiftLayoutSnapshotByDeltaY(snapObj, deltaY) { // NEW
-        if (!snapshotHasTiles(snapObj) || !Number.isFinite(Number(deltaY)) || !deltaY) return; // NEW
-        for (const tile of snapObj.tiles) { // NEW
-            const y = Number(tile.y); // NEW
-            if (Number.isFinite(y)) tile.y = y + deltaY; // NEW
-        } // NEW
-    } // NEW
+    function shiftLayoutSnapshotByDeltaY(snapObj, deltaY) {
+        if (!snapshotHasTiles(snapObj) || !Number.isFinite(Number(deltaY)) || !deltaY) return;
+        for (const tile of snapObj.tiles) {
+            const y = Number(tile.y);
+            if (Number.isFinite(y)) tile.y = y + deltaY;
+        }
+    }
 
 
     function shouldExpandLOD(graph, groupCell, spacingXpx, spacingYpx) {
@@ -1155,12 +1155,12 @@ Draw.loadPlugin(function (ui) {
         return count <= LOD_TILE_THRESHOLD;
     }
 
-    function expandTiles(graph, groupCell, abbr, spacingXpx, spacingYpx, iconDiamPx, opts = {}) { // CHANGE
+    function expandTiles(graph, groupCell, abbr, spacingXpx, spacingYpx, iconDiamPx, opts = {}) {
 
         const { bandPx } = groupLabelMetrics(groupCell);
         const fontPx = tileFontPx(iconDiamPx);
-        const snapObj = resolveLayoutSnapshot(graph, groupCell, opts); // NEW
-        const snapMap = snapshotTileMap(snapObj); // NEW
+        const snapObj = resolveLayoutSnapshot(graph, groupCell, opts);
+        const snapMap = snapshotTileMap(snapObj);
 
         const model = graph.getModel();
         model.beginUpdate();
@@ -1175,7 +1175,7 @@ Draw.loadPlugin(function (ui) {
             updateGroupYield(model, groupCell, { abbr, countOverride: actual });
 
             if (count > MAX_TILES) {
-                collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, { layoutSnapshot: snapObj, useLiveSnapshot: false }); // CHANGE
+                collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, { layoutSnapshot: snapObj, useLiveSnapshot: false });
                 return;
             }
 
@@ -1198,7 +1198,7 @@ Draw.loadPlugin(function (ui) {
                         const h = iconDiamPx;
 
                         if (okXY) {
-                            geo = visualGeometryFromLogicalGeometry(groupCell, { x: sx, y: sy, w, h }); // CHANGE
+                            geo = visualGeometryFromLogicalGeometry(groupCell, { x: sx, y: sy, w, h });
                             autoAttr = String(snap.auto || "0");
                             dirtyAttr = String(snap.dirty || "1");
                         }
@@ -1206,7 +1206,7 @@ Draw.loadPlugin(function (ui) {
 
                     // Default grid placement for non-snap tiles 
                     if (!geo) {
-                        geo = tileGeometryAtSlot(groupCell, r, c, spacingXpx, spacingYpx, iconDiamPx, bandPx); // CHANGE
+                        geo = tileGeometryAtSlot(groupCell, r, c, spacingXpx, spacingYpx, iconDiamPx, bandPx);
                     }
 
                     const vVal = createXmlValue("PlantTile", {
@@ -1244,152 +1244,152 @@ Draw.loadPlugin(function (ui) {
         graph.refresh(groupCell);
     }
 
-    function geometryNearlyEqual(a, b) { // NEW
-        if (!a || !b) return false; // NEW
-        return Math.abs((Number(a.x) || 0) - (Number(b.x) || 0)) < 0.001 && // NEW
-            Math.abs((Number(a.y) || 0) - (Number(b.y) || 0)) < 0.001 && // NEW
-            Math.abs((Number(a.width) || 0) - (Number(b.width) || 0)) < 0.001 && // NEW
-            Math.abs((Number(a.height) || 0) - (Number(b.height) || 0)) < 0.001; // NEW
-    } // NEW
+    function geometryNearlyEqual(a, b) {
+        if (!a || !b) return false;
+        return Math.abs((Number(a.x) || 0) - (Number(b.x) || 0)) < 0.001 &&
+            Math.abs((Number(a.y) || 0) - (Number(b.y) || 0)) < 0.001 &&
+            Math.abs((Number(a.width) || 0) - (Number(b.width) || 0)) < 0.001 &&
+            Math.abs((Number(a.height) || 0) - (Number(b.height) || 0)) < 0.001;
+    }
 
-    function setGeometryIfChanged(model, cell, nextGeo) { // NEW
-        const cur = cell && cell.getGeometry ? cell.getGeometry() : null; // NEW
-        if (!cur || !nextGeo || geometryNearlyEqual(cur, nextGeo)) return false; // NEW
-        model.setGeometry(cell, nextGeo); // NEW
-        return true; // NEW
-    } // NEW
+    function setGeometryIfChanged(model, cell, nextGeo) {
+        const cur = cell && cell.getGeometry ? cell.getGeometry() : null;
+        if (!cur || !nextGeo || geometryNearlyEqual(cur, nextGeo)) return false;
+        model.setGeometry(cell, nextGeo);
+        return true;
+    }
 
-    function setStyleIfChanged(model, cell, nextStyle) { // NEW
-        if (getStyleSafe(cell) === nextStyle) return false; // NEW
-        model.setStyle(cell, nextStyle); // NEW
-        return true; // NEW
-    } // NEW
+    function setStyleIfChanged(model, cell, nextStyle) {
+        if (getStyleSafe(cell) === nextStyle) return false;
+        model.setStyle(cell, nextStyle);
+        return true;
+    }
 
-    function setTileAttrsIfChanged(model, cell, attrs) { // NEW
-        for (const [key, value] of Object.entries(attrs || {})) { // NEW
-            if (String(cell.getAttribute(key) || "") !== String(value)) { // NEW
-                setCellAttrsNoTxn(model, cell, attrs); // NEW
-                return true; // NEW
-            } // NEW
-        } // NEW
-        return false; // NEW
-    } // NEW
+    function setTileAttrsIfChanged(model, cell, attrs) {
+        for (const [key, value] of Object.entries(attrs || {})) {
+            if (String(cell.getAttribute(key) || "") !== String(value)) {
+                setCellAttrsNoTxn(model, cell, attrs);
+                return true;
+            }
+        }
+        return false;
+    }
 
-    function syncAutoTileGeometriesInPlace(graph, groupCell, abbr, spacingXpx, spacingYpx, iconDiamPx, opts = {}) { // NEW
-        if (!groupCell || !isTilerGroup(groupCell) || isCollapsedLOD(groupCell)) return { changed: false, fallback: true, reason: "not-expanded" }; // NEW
+    function syncAutoTileGeometriesInPlace(graph, groupCell, abbr, spacingXpx, spacingYpx, iconDiamPx, opts = {}) {
+        if (!groupCell || !isTilerGroup(groupCell) || isCollapsedLOD(groupCell)) return { changed: false, fallback: true, reason: "not-expanded" };
 
-        const model = graph.getModel(); // NEW
-        const { bandPx } = groupLabelMetrics(groupCell); // NEW
-        const fontPx = tileFontPx(iconDiamPx); // NEW
-        const nextStyle = plantCircleStyle(fontPx || tileFontPx(iconDiamPx)); // NEW
-        const { rows, cols, count } = computeGridStatsXY(groupCell, spacingXpx, spacingYpx); // NEW
-        if (count > MAX_TILES) return { changed: false, fallback: true, reason: "max-tiles" }; // NEW
+        const model = graph.getModel();
+        const { bandPx } = groupLabelMetrics(groupCell);
+        const fontPx = tileFontPx(iconDiamPx);
+        const nextStyle = plantCircleStyle(fontPx || tileFontPx(iconDiamPx));
+        const { rows, cols, count } = computeGridStatsXY(groupCell, spacingXpx, spacingYpx);
+        if (count > MAX_TILES) return { changed: false, fallback: true, reason: "max-tiles" };
 
-        const kids = graph.getChildVertices(groupCell) || []; // NEW
-        const slotMap = new Map(); // NEW
-        const occupiedDisabledAutoTiles = []; // NEW
-        const disabledSet = readDisabledSet(groupCell); // NEW
-        const snapObj = resolveLayoutSnapshot(graph, groupCell, opts); // NEW
-        const snapMap = snapshotTileMap(snapObj); // NEW
+        const kids = graph.getChildVertices(groupCell) || [];
+        const slotMap = new Map();
+        const occupiedDisabledAutoTiles = [];
+        const disabledSet = readDisabledSet(groupCell);
+        const snapObj = resolveLayoutSnapshot(graph, groupCell, opts);
+        const snapMap = snapshotTileMap(snapObj);
 
-        for (const k of kids) { // NEW
-            if (k && k.getAttribute && k.getAttribute("lod_summary") === "1") return { changed: false, fallback: true, reason: "summary-child" }; // NEW
-            if (!isPlantCircle(k)) continue; // NEW
-            if (!hasTileRC(k)) return { changed: false, fallback: true, reason: "missing-slot" }; // NEW
+        for (const k of kids) {
+            if (k && k.getAttribute && k.getAttribute("lod_summary") === "1") return { changed: false, fallback: true, reason: "summary-child" };
+            if (!isPlantCircle(k)) continue;
+            if (!hasTileRC(k)) return { changed: false, fallback: true, reason: "missing-slot" };
 
-            const r = Number(k.getAttribute("tile_r")); // NEW
-            const c = Number(k.getAttribute("tile_c")); // NEW
-            if (!Number.isFinite(r) || !Number.isFinite(c) || r < 0 || c < 0) return { changed: false, fallback: true, reason: "bad-slot" }; // NEW
+            const r = Number(k.getAttribute("tile_r"));
+            const c = Number(k.getAttribute("tile_c"));
+            if (!Number.isFinite(r) || !Number.isFinite(c) || r < 0 || c < 0) return { changed: false, fallback: true, reason: "bad-slot" };
 
-            const key = `${r},${c}`; // NEW
-            if (slotMap.has(key)) return { changed: false, fallback: true, reason: "duplicate-slot" }; // NEW
-            slotMap.set(key, k); // NEW
+            const key = `${r},${c}`;
+            if (slotMap.has(key)) return { changed: false, fallback: true, reason: "duplicate-slot" };
+            slotMap.set(key, k);
 
-            if (disabledSet.has(key)) { // NEW
-                if (isAutoTile(k) && !isDirty(k)) occupiedDisabledAutoTiles.push(k); // NEW
-                else return { changed: false, fallback: true, reason: "manual-disabled-slot" }; // NEW
-            } // NEW
+            if (disabledSet.has(key)) {
+                if (isAutoTile(k) && !isDirty(k)) occupiedDisabledAutoTiles.push(k);
+                else return { changed: false, fallback: true, reason: "manual-disabled-slot" };
+            }
 
-            if (!(isAutoTile(k) && !isDirty(k)) && !snapMap.has(key)) { // NEW
-                return { changed: false, fallback: true, reason: "manual-without-snapshot" }; // NEW
-            } // NEW
-            if (!(isAutoTile(k) && !isDirty(k))) { // NEW
-                const snap = snapMap.get(key); // NEW
-                if (!Number.isFinite(Number(snap.x)) || !Number.isFinite(Number(snap.y))) { // NEW
-                    return { changed: false, fallback: true, reason: "bad-snapshot" }; // NEW
-                } // NEW
-            } // NEW
-        } // NEW
-
-        let changed = false; // NEW
-        const toRemove = occupiedDisabledAutoTiles.slice(); // NEW
-        const ownsUpdate = !opts.inTransaction; // NEW
-        if (ownsUpdate) model.beginUpdate(); // NEW
-        try {
-            pruneDisabledToGrid(model, groupCell, rows, cols); // NEW
-            const disabledSet2 = readDisabledSet(groupCell); // NEW
-            const { actual } = applyCounts(model, groupCell, count, disabledSet2); // NEW
-            updateGroupYield(model, groupCell, { abbr, countOverride: actual }); // NEW
-
-            for (const [key, tile] of slotMap.entries()) { // NEW
-                const parts = key.split(","); // NEW
-                const r = Number(parts[0]); // NEW
-                const c = Number(parts[1]); // NEW
-                if (r >= rows || c >= cols || disabledSet2.has(key)) { // NEW
-                    if (isAutoTile(tile) && !isDirty(tile)) toRemove.push(tile); // NEW
-                    else if (isChildOutOfGroupBounds(groupCell, tile)) toRemove.push(tile); // NEW
-                    continue; // NEW
-                } // NEW
-
-                const snap = snapMap.get(key); // NEW
-                let geo = null; // NEW
-                let autoAttr = "1"; // NEW
-                let dirtyAttr = "0"; // NEW
-
-                if (snap && !(isAutoTile(tile) && !isDirty(tile))) { // NEW
-                    const sx = Number(snap.x); // NEW
-                    const sy = Number(snap.y); // NEW
-                    geo = visualGeometryFromLogicalGeometry(groupCell, { x: sx, y: sy, w: iconDiamPx, h: iconDiamPx }); // NEW
-                    autoAttr = String(snap.auto || "0"); // NEW
-                    dirtyAttr = String(snap.dirty || "1"); // NEW
-                } else {
-                    geo = tileGeometryAtSlot(groupCell, r, c, spacingXpx, spacingYpx, iconDiamPx, bandPx); // NEW
+            if (!(isAutoTile(k) && !isDirty(k)) && !snapMap.has(key)) {
+                return { changed: false, fallback: true, reason: "manual-without-snapshot" };
+            }
+            if (!(isAutoTile(k) && !isDirty(k))) {
+                const snap = snapMap.get(key);
+                if (!Number.isFinite(Number(snap.x)) || !Number.isFinite(Number(snap.y))) {
+                    return { changed: false, fallback: true, reason: "bad-snapshot" };
                 }
-
-                changed = setGeometryIfChanged(model, tile, geo) || changed; // NEW
-                changed = setStyleIfChanged(model, tile, nextStyle) || changed; // NEW
-                changed = setTileAttrsIfChanged(model, tile, { // NEW
-                    plant_tiler: "1", // NEW
-                    auto: autoAttr, // NEW
-                    abbr: abbr, // NEW
-                    label: abbr, // NEW
-                    tile_r: String(r), // NEW
-                    tile_c: String(c), // NEW
-                    dirty: dirtyAttr // NEW
-                }) || changed; // NEW
-            } // NEW
-
-            if (toRemove.length) { // NEW
-                graph.removeCells(Array.from(new Set(toRemove))); // NEW
-                changed = true; // NEW
-            } // NEW
-
-            for (let r = 0; r < rows; r++) { // NEW
-                for (let c = 0; c < cols; c++) { // NEW
-                    const key = `${r},${c}`; // NEW
-                    if (disabledSet2.has(key) || slotMap.has(key)) continue; // NEW
-                    const v = addTileAtSlot(graph, groupCell, abbr, r, c, spacingXpx, spacingYpx, iconDiamPx, disabledSet2, bandPx, fontPx); // NEW
-                    if (v) changed = true; // NEW
-                } // NEW
-            } // NEW
-
-            setCollapsedFlag(model, groupCell, false); // NEW
-        } finally {
-            if (ownsUpdate) model.endUpdate(); // NEW
+            }
         }
 
-        return { changed, fallback: false }; // NEW
-    } // NEW
+        let changed = false;
+        const toRemove = occupiedDisabledAutoTiles.slice();
+        const ownsUpdate = !opts.inTransaction;
+        if (ownsUpdate) model.beginUpdate();
+        try {
+            pruneDisabledToGrid(model, groupCell, rows, cols);
+            const disabledSet2 = readDisabledSet(groupCell);
+            const { actual } = applyCounts(model, groupCell, count, disabledSet2);
+            updateGroupYield(model, groupCell, { abbr, countOverride: actual });
+
+            for (const [key, tile] of slotMap.entries()) {
+                const parts = key.split(",");
+                const r = Number(parts[0]);
+                const c = Number(parts[1]);
+                if (r >= rows || c >= cols || disabledSet2.has(key)) {
+                    if (isAutoTile(tile) && !isDirty(tile)) toRemove.push(tile);
+                    else if (isChildOutOfGroupBounds(groupCell, tile)) toRemove.push(tile);
+                    continue;
+                }
+
+                const snap = snapMap.get(key);
+                let geo = null;
+                let autoAttr = "1";
+                let dirtyAttr = "0";
+
+                if (snap && !(isAutoTile(tile) && !isDirty(tile))) {
+                    const sx = Number(snap.x);
+                    const sy = Number(snap.y);
+                    geo = visualGeometryFromLogicalGeometry(groupCell, { x: sx, y: sy, w: iconDiamPx, h: iconDiamPx });
+                    autoAttr = String(snap.auto || "0");
+                    dirtyAttr = String(snap.dirty || "1");
+                } else {
+                    geo = tileGeometryAtSlot(groupCell, r, c, spacingXpx, spacingYpx, iconDiamPx, bandPx);
+                }
+
+                changed = setGeometryIfChanged(model, tile, geo) || changed;
+                changed = setStyleIfChanged(model, tile, nextStyle) || changed;
+                changed = setTileAttrsIfChanged(model, tile, {
+                    plant_tiler: "1",
+                    auto: autoAttr,
+                    abbr: abbr,
+                    label: abbr,
+                    tile_r: String(r),
+                    tile_c: String(c),
+                    dirty: dirtyAttr
+                }) || changed;
+            }
+
+            if (toRemove.length) {
+                graph.removeCells(Array.from(new Set(toRemove)));
+                changed = true;
+            }
+
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const key = `${r},${c}`;
+                    if (disabledSet2.has(key) || slotMap.has(key)) continue;
+                    const v = addTileAtSlot(graph, groupCell, abbr, r, c, spacingXpx, spacingYpx, iconDiamPx, disabledSet2, bandPx, fontPx);
+                    if (v) changed = true;
+                }
+            }
+
+            setCollapsedFlag(model, groupCell, false);
+        } finally {
+            if (ownsUpdate) model.endUpdate();
+        }
+
+        return { changed, fallback: false };
+    }
 
 
     // -------------------- Palette (XML value) --------------------
@@ -1434,468 +1434,468 @@ Draw.loadPlugin(function (ui) {
         model.setValue(cell, clone);
     }
 
-    function cloneXmlValueWithAttrs(cell, attrs) { // ADDED
-        const base = ensureXmlValue(cell); // ADDED
-        const clone = base.cloneNode(true); // ADDED
-        for (const [k, v] of Object.entries(attrs || {})) { // ADDED
-            if (v === null || v === undefined || v === "") clone.removeAttribute(k); // ADDED
-            else clone.setAttribute(k, String(v)); // ADDED
-        } // ADDED
-        return clone; // ADDED
-    } // ADDED
+    function cloneXmlValueWithAttrs(cell, attrs) {
+        const base = ensureXmlValue(cell);
+        const clone = base.cloneNode(true);
+        for (const [k, v] of Object.entries(attrs || {})) {
+            if (v === null || v === undefined || v === "") clone.removeAttribute(k);
+            else clone.setAttribute(k, String(v));
+        }
+        return clone;
+    }
 
-    function finiteNumberOrNull(value) { // ADDED
-        const n = Number(value); // ADDED
-        return Number.isFinite(n) ? n : null; // ADDED
-    } // ADDED
+    function finiteNumberOrNull(value) {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : null;
+    }
 
-    function cToDisplayTemp(c, units) { // ADDED
-        const n = finiteNumberOrNull(c); // ADDED
-        if (n == null) return ""; // ADDED
-        return units === "imperial" ? String(Math.round((n * 9 / 5 + 32) * 10) / 10) : String(Math.round(n * 10) / 10); // ADDED
-    } // ADDED
+    function cToDisplayTemp(c, units) {
+        const n = finiteNumberOrNull(c);
+        if (n == null) return "";
+        return units === "imperial" ? String(Math.round((n * 9 / 5 + 32) * 10) / 10) : String(Math.round(n * 10) / 10);
+    }
 
-    function displayTempToC(value, units) { // ADDED
-        const n = finiteNumberOrNull(value); // ADDED
-        if (n == null) return null; // ADDED
-        return units === "imperial" ? (n - 32) * 5 / 9 : n; // ADDED
-    } // ADDED
+    function displayTempToC(value, units) {
+        const n = finiteNumberOrNull(value);
+        if (n == null) return null;
+        return units === "imperial" ? (n - 32) * 5 / 9 : n;
+    }
 
-    function formatDbNumber(value) { // ADDED
-        const n = finiteNumberOrNull(value); // ADDED
-        return n == null ? null : String(Math.round(n * 1000) / 1000); // ADDED
-    } // ADDED
+    function formatDbNumber(value) {
+        const n = finiteNumberOrNull(value);
+        return n == null ? null : String(Math.round(n * 1000) / 1000);
+    }
 
-    function mmDdToDoyNoLeap(value) { // ADDED
-        const match = /^(\d{1,2})-(\d{1,2})$/.exec(String(value || "").trim()); // ADDED
-        if (!match) return null; // ADDED
-        const month = Number(match[1]); // ADDED
-        const day = Number(match[2]); // ADDED
-        const monthDays = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]; // ADDED
-        if (month < 1 || month > 12 || day < 1 || day > monthDays[month - 1]) return null; // ADDED
-        return monthDays.slice(0, month - 1).reduce((sum, item) => sum + item, 0) + day; // ADDED
-    } // ADDED
+    function mmDdToDoyNoLeap(value) {
+        const match = /^(\d{1,2})-(\d{1,2})$/.exec(String(value || "").trim());
+        if (!match) return null;
+        const month = Number(match[1]);
+        const day = Number(match[2]);
+        const monthDays = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        if (month < 1 || month > 12 || day < 1 || day > monthDays[month - 1]) return null;
+        return monthDays.slice(0, month - 1).reduce((sum, item) => sum + item, 0) + day;
+    }
 
-    function doyToMmDdNoLeap(value) { // ADDED
-        let doy = Number(value); // ADDED
-        if (!Number.isInteger(doy) || doy < 1 || doy > 365) return ""; // ADDED
-        const monthDays = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]; // ADDED
-        let month = 1; // ADDED
-        while (doy > monthDays[month - 1]) { doy -= monthDays[month - 1]; month += 1; } // ADDED
-        return `${String(month).padStart(2, "0")}-${String(doy).padStart(2, "0")}`; // ADDED
-    } // ADDED
+    function doyToMmDdNoLeap(value) {
+        let doy = Number(value);
+        if (!Number.isInteger(doy) || doy < 1 || doy > 365) return "";
+        const monthDays = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let month = 1;
+        while (doy > monthDays[month - 1]) { doy -= monthDays[month - 1]; month += 1; }
+        return `${String(month).padStart(2, "0")}-${String(doy).padStart(2, "0")}`;
+    }
 
-    function setTooltip(el, text) { // ADDED
-        if (!el) return; // ADDED
-        el.title = String(text || ""); // ADDED
-        if (el.tagName === "BUTTON") el.setAttribute("aria-label", String(text || el.textContent || "")); // ADDED
-    } // ADDED
+    function setTooltip(el, text) {
+        if (!el) return;
+        el.title = String(text || "");
+        if (el.tagName === "BUTTON") el.setAttribute("aria-label", String(text || el.textContent || ""));
+    }
 
-    function refreshDiagramCityNameById(model, root, city) { // ADDED
-        if (!model || !root || !city || city.city_id == null) return; // ADDED
-        const cityId = String(city.city_id); // ADDED
-        const nextName = String(city.city_name || ""); // ADDED
-        function visit(cell) { // ADDED
-            if (!cell) return; // ADDED
-            if (String(cell.getAttribute?.("city_id") || "") === cityId) setCellAttrsNoTxn(model, cell, { city_name: nextName }); // ADDED
-            const count = typeof model.getChildCount === "function" ? model.getChildCount(cell) : 0; // ADDED
-            for (let i = 0; i < count; i += 1) visit(model.getChildAt(cell, i)); // ADDED
-        } // ADDED
-        visit(root); // ADDED
-    } // ADDED
+    function refreshDiagramCityNameById(model, root, city) {
+        if (!model || !root || !city || city.city_id == null) return;
+        const cityId = String(city.city_id);
+        const nextName = String(city.city_name || "");
+        function visit(cell) {
+            if (!cell) return;
+            if (String(cell.getAttribute?.("city_id") || "") === cityId) setCellAttrsNoTxn(model, cell, { city_name: nextName });
+            const count = typeof model.getChildCount === "function" ? model.getChildCount(cell) : 0;
+            for (let i = 0; i < count; i += 1) visit(model.getChildAt(cell, i));
+        }
+        visit(root);
+    }
 
-    // Default bed dimensions are stored in centimeters; dialog units are display-only. // CHANGE
-    function positiveFiniteNumber(value) { // CHANGE
-        const n = Number(value); // CHANGE
-        return Number.isFinite(n) && n > 0 ? n : null; // CHANGE
-    } // CHANGE
+    // Default bed dimensions are stored in centimeters; dialog units are display-only.
+    function positiveFiniteNumber(value) {
+        const n = Number(value);
+        return Number.isFinite(n) && n > 0 ? n : null;
+    }
 
-    function formatBedCmAttr(cm) { // CHANGE
-        return String(Math.round((Number(cm) || 0) * 1000) / 1000); // CHANGE
-    } // CHANGE
+    function formatBedCmAttr(cm) {
+        return String(Math.round((Number(cm) || 0) * 1000) / 1000);
+    }
 
-    function formatBedDisplayValue(value) { // CHANGE
-        const rounded = Math.round((Number(value) || 0) * 1000) / 1000; // CHANGE
-        return String(rounded); // CHANGE
-    } // CHANGE
+    function formatBedDisplayValue(value) {
+        const rounded = Math.round((Number(value) || 0) * 1000) / 1000;
+        return String(rounded);
+    }
 
-    function defaultBedDimensionsCmForUnits(units) { // CHANGE
-        if (units === "metric") return { widthCm: DEFAULT_METRIC_BED_WIDTH_CM, lengthCm: DEFAULT_METRIC_BED_LENGTH_CM }; // CHANGE
-        if (units === "imperial") return { widthCm: DEFAULT_IMPERIAL_BED_WIDTH_CM, lengthCm: DEFAULT_IMPERIAL_BED_LENGTH_CM }; // CHANGE
-        return null; // CHANGE
-    } // CHANGE
+    function defaultBedDimensionsCmForUnits(units) {
+        if (units === "metric") return { widthCm: DEFAULT_METRIC_BED_WIDTH_CM, lengthCm: DEFAULT_METRIC_BED_LENGTH_CM };
+        if (units === "imperial") return { widthCm: DEFAULT_IMPERIAL_BED_WIDTH_CM, lengthCm: DEFAULT_IMPERIAL_BED_LENGTH_CM };
+        return null;
+    }
 
-    function getSavedDefaultBedDimensionsCm(moduleCell) { // CHANGE
-        const widthCm = positiveFiniteNumber(getXmlAttr(moduleCell, DEFAULT_BED_WIDTH_CM_ATTR, "")); // CHANGE
-        const lengthCm = positiveFiniteNumber(getXmlAttr(moduleCell, DEFAULT_BED_LENGTH_CM_ATTR, "")); // CHANGE
-        return widthCm && lengthCm ? { widthCm, lengthCm } : null; // CHANGE
-    } // CHANGE
+    function getSavedDefaultBedDimensionsCm(moduleCell) {
+        const widthCm = positiveFiniteNumber(getXmlAttr(moduleCell, DEFAULT_BED_WIDTH_CM_ATTR, ""));
+        const lengthCm = positiveFiniteNumber(getXmlAttr(moduleCell, DEFAULT_BED_LENGTH_CM_ATTR, ""));
+        return widthCm && lengthCm ? { widthCm, lengthCm } : null;
+    }
 
-    function getDefaultBedDimensionsCm(moduleCell) { // CHANGE
-        const saved = getSavedDefaultBedDimensionsCm(moduleCell); // CHANGE
-        if (saved) return saved; // CHANGE
-        return defaultBedDimensionsCmForUnits(getXmlAttr(moduleCell, "unit_system", "")); // CHANGE
-    } // CHANGE
+    function getDefaultBedDimensionsCm(moduleCell) {
+        const saved = getSavedDefaultBedDimensionsCm(moduleCell);
+        if (saved) return saved;
+        return defaultBedDimensionsCmForUnits(getXmlAttr(moduleCell, "unit_system", ""));
+    }
 
-    function bedDisplayUnitLabel(units) { // CHANGE
-        return units === "imperial" ? "ft" : "m"; // CHANGE
-    } // CHANGE
+    function bedDisplayUnitLabel(units) {
+        return units === "imperial" ? "ft" : "m";
+    }
 
-    function bedDimensionCmToDisplay(cm, units) { // CHANGE
-        return units === "imperial" ? cm / CM_PER_FOOT : cm / CM_PER_METER; // CHANGE
-    } // CHANGE
+    function bedDimensionCmToDisplay(cm, units) {
+        return units === "imperial" ? cm / CM_PER_FOOT : cm / CM_PER_METER;
+    }
 
-    function bedDimensionDisplayToCm(value, units) { // CHANGE
-        const n = positiveFiniteNumber(value); // CHANGE
-        if (!n) return null; // CHANGE
-        return units === "imperial" ? n * CM_PER_FOOT : n * CM_PER_METER; // CHANGE
-    } // CHANGE
+    function bedDimensionDisplayToCm(value, units) {
+        const n = positiveFiniteNumber(value);
+        if (!n) return null;
+        return units === "imperial" ? n * CM_PER_FOOT : n * CM_PER_METER;
+    }
 
 
     function hasGardenSettingsSet(moduleCell) {
         if (!(moduleCell && moduleCell.getAttribute)) return false;
-        const city = String(moduleCell.getAttribute("city_id") || moduleCell.getAttribute("city_name") || "").trim(); // CHANGED
+        const city = String(moduleCell.getAttribute("city_id") || moduleCell.getAttribute("city_name") || "").trim();
         const units = String(moduleCell.getAttribute("unit_system") || "").trim();
-        return !!(city && units && getSavedDefaultBedDimensionsCm(moduleCell)); // CHANGE
+        return !!(city && units && getSavedDefaultBedDimensionsCm(moduleCell));
     }
 
-    function getModuleMarginFromStyle(moduleCell, defaultPx = 100) { // NEW
-        const fallback = Number.isInteger(defaultPx) && defaultPx >= 0 ? defaultPx : 100; // NEW
-        const match = getStyleSafe(moduleCell).match(/(?:^|;)module_margin=(\d+)(?=;|$)/); // NEW
-        return match ? parseInt(match[1], 10) : fallback; // NEW
-    } // NEW
+    function getModuleMarginFromStyle(moduleCell, defaultPx = 100) {
+        const fallback = Number.isInteger(defaultPx) && defaultPx >= 0 ? defaultPx : 100;
+        const match = getStyleSafe(moduleCell).match(/(?:^|;)module_margin=(\d+)(?=;|$)/);
+        return match ? parseInt(match[1], 10) : fallback;
+    }
 
-    function getGardenModuleMargin(moduleCell) { // NEW
-        const modulesApi = graph.__trellisModules; // NEW
-        if (modulesApi && typeof modulesApi.getModuleMargin === "function") return modulesApi.getModuleMargin(moduleCell, 100); // NEW
-        return getModuleMarginFromStyle(moduleCell, 100); // NEW
-    } // NEW
+    function getGardenModuleMargin(moduleCell) {
+        const modulesApi = graph.__trellisModules;
+        if (modulesApi && typeof modulesApi.getModuleMargin === "function") return modulesApi.getModuleMargin(moduleCell, 100);
+        return getModuleMarginFromStyle(moduleCell, 100);
+    }
 
-    function readModuleMarginInput(inputEl) { // NEW
-        const raw = String(inputEl && inputEl.value || "").trim(); // NEW
-        if (!/^\d+$/.test(raw)) return null; // NEW
-        const n = Number(raw); // NEW
-        return Number.isSafeInteger(n) && n >= 0 ? n : null; // NEW
-    } // NEW
+    function readModuleMarginInput(inputEl) {
+        const raw = String(inputEl && inputEl.value || "").trim();
+        if (!/^\d+$/.test(raw)) return null;
+        const n = Number(raw);
+        return Number.isSafeInteger(n) && n >= 0 ? n : null;
+    }
 
-    function setGardenModuleMargin(moduleCell, marginPx) { // NEW
-        const modulesApi = graph.__trellisModules; // NEW
-        if (modulesApi && typeof modulesApi.setModuleMargin === "function") { // NEW
-            modulesApi.setModuleMargin(moduleCell, marginPx); // NEW
-            return; // NEW
-        } // NEW
-        const graphModel = graph.getModel && graph.getModel(); // NEW
-        if (graphModel && graphModel.setStyle) graphModel.setStyle(moduleCell, upsertStyleKV(getStyleSafe(moduleCell), "module_margin", String(marginPx))); // NEW
-        if (graph.fireEvent && typeof mxEventObject === "function") { // NEW
-            graph.fireEvent(new mxEventObject("usl:requestApplyModuleMargins", "cell", moduleCell)); // NEW
-        } else if (graph.refresh) { // NEW
-            graph.refresh(moduleCell); // NEW
-        } // NEW
-    } // NEW
+    function setGardenModuleMargin(moduleCell, marginPx) {
+        const modulesApi = graph.__trellisModules;
+        if (modulesApi && typeof modulesApi.setModuleMargin === "function") {
+            modulesApi.setModuleMargin(moduleCell, marginPx);
+            return;
+        }
+        const graphModel = graph.getModel && graph.getModel();
+        if (graphModel && graphModel.setStyle) graphModel.setStyle(moduleCell, upsertStyleKV(getStyleSafe(moduleCell), "module_margin", String(marginPx)));
+        if (graph.fireEvent && typeof mxEventObject === "function") {
+            graph.fireEvent(new mxEventObject("usl:requestApplyModuleMargins", "cell", moduleCell));
+        } else if (graph.refresh) {
+            graph.refresh(moduleCell);
+        }
+    }
 
-    async function saveCityRecord(row, existingCityId = null) { // ADDED
-        await ensureCityGeographySchema(); // ADDED
-        const cityId = Number(row.city_id); // ADDED
-        const cityName = String(row.city_name || "").trim(); // ADDED
-        const countryName = normalizeCityGeoText(row.country_name); // ADDED
-        const regionName = normalizeCityGeoText(row.region_name); // ADDED
-        if (!Number.isInteger(cityId) || cityId <= 0) throw new Error("City ID is required and must be a positive integer."); // ADDED
-        if (!cityName) throw new Error("City name is required."); // ADDED
-        if (!countryName) throw new Error("Country is required."); // ADDED
-        if (!regionName) throw new Error("Region/state is required. Use Unspecified when no region applies."); // ADDED
-        if (await cityIdentityExists(row, existingCityId == null ? null : cityId)) throw new Error("A city with that city/country/region already exists."); // CHANGED
-        const lat = finiteNumberOrNull(row.latitude); // ADDED
-        const lon = finiteNumberOrNull(row.longitude); // ADDED
-        if (lat == null || lat < -66.5 || lat > 66.5) throw new Error("Latitude is required and must be between -66.5 and 66.5."); // ADDED
-        if (lon == null || lon < -180 || lon > 180) throw new Error("Longitude is required and must be between -180 and 180."); // ADDED
-        if (!String(row.timezone || "").trim()) throw new Error("Timezone is required."); // ADDED
-        if (!Number.isInteger(Number(row.last_spring_frost_p50_doy))) throw new Error("Spring p50 frost date is required."); // ADDED
-        if (!Number.isInteger(Number(row.first_fall_frost_p50_doy))) throw new Error("Fall p50 frost date is required."); // ADDED
-        for (let m = 1; m <= 12; m += 1) { // ADDED
-            if (finiteNumberOrNull(row[`avg_monthly_low_c${m}`]) == null || finiteNumberOrNull(row[`avg_monthly_high_c${m}`]) == null) { // ADDED
-                throw new Error("All monthly low/high normals are required."); // ADDED
-            } // ADDED
-        } // ADDED
-        const columns = [ // ADDED
-            "city_id", "city_name", "country_name", "country_code", "region_name", "region_code", "latitude", "longitude", "timezone", "gdd_annual", "gdd_base_c", // CHANGED
-            "last_spring_frost_doy", "last_spring_frost_p90_doy", "last_spring_frost_p50_doy", "last_spring_frost_p10_doy", // ADDED
-            "first_fall_frost_doy", "first_fall_frost_p90_doy", "first_fall_frost_p50_doy", "first_fall_frost_p10_doy" // ADDED
-        ]; // ADDED
-        for (let m = 1; m <= 12; m += 1) columns.push(`avg_monthly_low_c${m}`, `avg_monthly_high_c${m}`); // ADDED
-        const values = columns.map(col => row[col] == null || row[col] === "" ? null : row[col]); // ADDED
-        const exists = await loadCityById(cityId); // ADDED
-        if (exists && existingCityId == null) throw new Error("A city with that ID already exists."); // ADDED
-        if (exists) { // ADDED
-            const assignments = columns.filter(col => col !== "city_id").map(col => `${col} = ?`).join(", "); // ADDED
-            const updateValues = columns.filter(col => col !== "city_id").map(col => row[col] == null || row[col] === "" ? null : row[col]); // ADDED
-            await execAll(`UPDATE Cities SET ${assignments} WHERE city_id = ?;`, updateValues.concat(cityId)); // ADDED
-        } else { // ADDED
-            await execAll(`INSERT INTO Cities (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")});`, values); // ADDED
-        } // ADDED
-        return await loadCityById(cityId); // ADDED
-    } // ADDED
+    async function saveCityRecord(row, existingCityId = null) {
+        await ensureCityGeographySchema();
+        const cityId = Number(row.city_id);
+        const cityName = String(row.city_name || "").trim();
+        const countryName = normalizeCityGeoText(row.country_name);
+        const regionName = normalizeCityGeoText(row.region_name);
+        if (!Number.isInteger(cityId) || cityId <= 0) throw new Error("City ID is required and must be a positive integer.");
+        if (!cityName) throw new Error("City name is required.");
+        if (!countryName) throw new Error("Country is required.");
+        if (!regionName) throw new Error("Region/state is required. Use Unspecified when no region applies.");
+        if (await cityIdentityExists(row, existingCityId == null ? null : cityId)) throw new Error("A city with that city/country/region already exists.");
+        const lat = finiteNumberOrNull(row.latitude);
+        const lon = finiteNumberOrNull(row.longitude);
+        if (lat == null || lat < -66.5 || lat > 66.5) throw new Error("Latitude is required and must be between -66.5 and 66.5.");
+        if (lon == null || lon < -180 || lon > 180) throw new Error("Longitude is required and must be between -180 and 180.");
+        if (!String(row.timezone || "").trim()) throw new Error("Timezone is required.");
+        if (!Number.isInteger(Number(row.last_spring_frost_p50_doy))) throw new Error("Spring p50 frost date is required.");
+        if (!Number.isInteger(Number(row.first_fall_frost_p50_doy))) throw new Error("Fall p50 frost date is required.");
+        for (let m = 1; m <= 12; m += 1) {
+            if (finiteNumberOrNull(row[`avg_monthly_low_c${m}`]) == null || finiteNumberOrNull(row[`avg_monthly_high_c${m}`]) == null) {
+                throw new Error("All monthly low/high normals are required.");
+            }
+        }
+        const columns = [
+            "city_id", "city_name", "country_name", "country_code", "region_name", "region_code", "latitude", "longitude", "timezone", "gdd_annual", "gdd_base_c",
+            "last_spring_frost_doy", "last_spring_frost_p90_doy", "last_spring_frost_p50_doy", "last_spring_frost_p10_doy",
+            "first_fall_frost_doy", "first_fall_frost_p90_doy", "first_fall_frost_p50_doy", "first_fall_frost_p10_doy"
+        ];
+        for (let m = 1; m <= 12; m += 1) columns.push(`avg_monthly_low_c${m}`, `avg_monthly_high_c${m}`);
+        const values = columns.map(col => row[col] == null || row[col] === "" ? null : row[col]);
+        const exists = await loadCityById(cityId);
+        if (exists && existingCityId == null) throw new Error("A city with that ID already exists.");
+        if (exists) {
+            const assignments = columns.filter(col => col !== "city_id").map(col => `${col} = ?`).join(", ");
+            const updateValues = columns.filter(col => col !== "city_id").map(col => row[col] == null || row[col] === "" ? null : row[col]);
+            await execAll(`UPDATE Cities SET ${assignments} WHERE city_id = ?;`, updateValues.concat(cityId));
+        } else {
+            await execAll(`INSERT INTO Cities (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")});`, values);
+        }
+        return await loadCityById(cityId);
+    }
 
-    async function showCityManagerDialog(ui, graph, selectedCityId, units, onSaved) { // ADDED
-        const model = graph.getModel(); // ADDED
-        let cities = await loadCities(); // ADDED
-        let current = cities.find(city => String(city.city_id) === String(selectedCityId)) || cities[0] || null; // ADDED
-        let editingExistingId = current ? Number(current.city_id) : null; // ADDED
-        const displayUnits = units === "imperial" ? "imperial" : "metric"; // ADDED
-        const tempUnit = displayUnits === "imperial" ? "F" : "C"; // ADDED
-
-        const div = document.createElement("div"); // ADDED
-        div.style.padding = "10px"; // ADDED
-        div.style.width = "760px"; // ADDED
-        div.style.maxHeight = "680px"; // ADDED
-        div.style.overflow = "auto"; // ADDED
-
-        const title = document.createElement("div"); // ADDED
-        title.textContent = "City Manager"; // ADDED
-        title.style.fontWeight = "600"; // ADDED
-        title.style.marginBottom = "8px"; // ADDED
-        div.appendChild(title); // ADDED
-
-        const err = document.createElement("div"); // ADDED
-        err.style.color = "#b91c1c"; // ADDED
-        err.style.fontSize = "12px"; // ADDED
-        err.style.marginBottom = "8px"; // ADDED
-        err.style.display = "none"; // ADDED
-        div.appendChild(err); // ADDED
-
-        function showError(message) { err.textContent = message; err.style.display = "block"; } // ADDED
-        function clearError() { err.textContent = ""; err.style.display = "none"; } // ADDED
-        function input(type = "text", width = "100%") { // ADDED
-            const el = document.createElement("input"); // ADDED
-            el.type = type; // ADDED
-            el.style.width = width; // ADDED
-            el.style.padding = "5px"; // ADDED
-            return el; // ADDED
-        } // ADDED
-        function field(label, el, tooltip) { // ADDED
-            const wrap = document.createElement("div"); // ADDED
-            wrap.style.display = "flex"; // ADDED
-            wrap.style.alignItems = "center"; // ADDED
-            wrap.style.gap = "8px"; // ADDED
-            wrap.style.margin = "6px 0"; // ADDED
-            const lab = document.createElement("label"); // ADDED
-            lab.textContent = label; // ADDED
-            lab.style.minWidth = "150px"; // ADDED
-            setTooltip(lab, tooltip); // ADDED
-            setTooltip(el, tooltip); // ADDED
-            wrap.appendChild(lab); // ADDED
-            wrap.appendChild(el); // ADDED
-            div.appendChild(wrap); // ADDED
-            return el; // ADDED
-        } // ADDED
-
-        const pickerRow = document.createElement("div"); // ADDED
-        pickerRow.style.display = "flex"; // ADDED
-        pickerRow.style.gap = "8px"; // ADDED
-        pickerRow.style.alignItems = "center"; // ADDED
-        pickerRow.style.marginBottom = "8px"; // ADDED
-        const cityPicker = document.createElement("select"); // ADDED
-        cityPicker.style.flex = "1"; // ADDED
-        cityPicker.style.padding = "6px"; // ADDED
-        const newBtn = tilerButton("New City", () => { // CHANGE
-            const maxId = cities.reduce((max, city) => Math.max(max, Number(city.city_id) || 0), 0); // ADDED
-            editingExistingId = null; // ADDED
-            fillForm({ city_id: maxId + 1, city_name: "", country_name: "", region_name: "Unspecified", timezone: "America/Los_Angeles" }, false); // CHANGED
-        }, "add"); // CHANGE
-        setTooltip(newBtn, "Create a scheduler-ready city record with required climate fields."); // ADDED
-        pickerRow.appendChild(cityPicker); // ADDED
-        pickerRow.appendChild(newBtn); // ADDED
-        div.appendChild(pickerRow); // ADDED
-
-        const idInput = field("City ID:", input("number"), "Stable city_id used by diagrams; it cannot be changed for existing cities."); // ADDED
-        const nameInput = field("City name:", input("text"), "Required city-only display name, for example Vancouver."); // CHANGED
-        const countryNameInput = field("Country:", input("text"), "Required country name, for example Canada."); // ADDED
-        const countryCodeInput = field("Country code:", input("text"), "Optional ISO-style country code, for example CA."); // ADDED
-        const regionNameInput = field("Region/state:", input("text"), "Required state, province, or region name. Use Unspecified when no region applies."); // ADDED
-        const regionCodeInput = field("Region code:", input("text"), "Optional compact state/province code, for example BC."); // ADDED
-        const latInput = field("Latitude:", input("number"), "Required decimal degrees, -66.5 to 66.5, used for photoperiod checks."); // ADDED
-        const lonInput = field("Longitude:", input("number"), "Required decimal degrees, -180 to 180."); // ADDED
-        const tzInput = field("Timezone:", input("text"), "Required IANA timezone, for example America/Los_Angeles."); // ADDED
-        const gddAnnualInput = field("Annual GDD:", input("number"), "Optional annual growing-degree-days calibration target."); // ADDED
-        const gddBaseInput = field("GDD base C:", input("number"), "Optional Celsius base temperature for city annual GDD calibration."); // ADDED
-        const springP90Input = field("Spring frost p90:", input("text"), "Optional MM-DD last spring frost risk date; Feb 29 is not valid."); // ADDED
-        const springP50Input = field("Spring frost p50:", input("text"), "Required MM-DD last spring frost date; Feb 29 is not valid."); // ADDED
-        const springP10Input = field("Spring frost p10:", input("text"), "Optional MM-DD last spring frost risk date; Feb 29 is not valid."); // ADDED
-        const fallP90Input = field("Fall frost p90:", input("text"), "Optional MM-DD first fall frost risk date; Feb 29 is not valid."); // ADDED
-        const fallP50Input = field("Fall frost p50:", input("text"), "Required MM-DD first fall frost date; Feb 29 is not valid."); // ADDED
-        const fallP10Input = field("Fall frost p10:", input("text"), "Optional MM-DD first fall frost risk date; Feb 29 is not valid."); // ADDED
-
-        const monthTitle = document.createElement("div"); // ADDED
-        monthTitle.textContent = `Monthly normals (${tempUnit})`; // ADDED
-        monthTitle.style.fontWeight = "600"; // ADDED
-        monthTitle.style.margin = "12px 0 6px"; // ADDED
-        div.appendChild(monthTitle); // ADDED
-        const monthGrid = document.createElement("div"); // ADDED
-        monthGrid.style.display = "grid"; // ADDED
-        monthGrid.style.gridTemplateColumns = "70px 1fr 1fr"; // ADDED
-        monthGrid.style.gap = "4px 8px"; // ADDED
-        div.appendChild(monthGrid); // ADDED
-        ["Month", "Low", "High"].forEach(text => { // ADDED
-            const cell = document.createElement("div"); // ADDED
-            cell.textContent = text; // ADDED
-            cell.style.fontWeight = "600"; // ADDED
-            monthGrid.appendChild(cell); // ADDED
-        }); // ADDED
-        const monthInputs = []; // ADDED
-        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]; // ADDED
-        monthNames.forEach((name, index) => { // ADDED
-            const low = input("number"); // ADDED
-            const high = input("number"); // ADDED
-            low.step = high.step = "0.1"; // ADDED
-            setTooltip(low, `Required average monthly low for ${name}, shown in ${tempUnit}.`); // ADDED
-            setTooltip(high, `Required average monthly high for ${name}, shown in ${tempUnit}.`); // ADDED
-            const lab = document.createElement("div"); // ADDED
-            lab.textContent = name; // ADDED
-            monthGrid.appendChild(lab); // ADDED
-            monthGrid.appendChild(low); // ADDED
-            monthGrid.appendChild(high); // ADDED
-            monthInputs[index + 1] = { low, high }; // ADDED
-        }); // ADDED
-
-        function refreshPicker(selectedId) { // ADDED
-            while (cityPicker.firstChild) cityPicker.removeChild(cityPicker.firstChild); // ADDED
-            sortedCities(cities).forEach(city => { // CHANGED
-                const opt = document.createElement("option"); // ADDED
-                opt.value = String(city.city_id); // ADDED
-                opt.textContent = `${fullCityLabel(city)} (#${city.city_id})`; // CHANGED
-                cityPicker.appendChild(opt); // ADDED
-            }); // ADDED
-            if (selectedId != null) cityPicker.value = String(selectedId); // ADDED
-        } // ADDED
-
-        function fillForm(city, existing) { // ADDED
-            current = city || {}; // ADDED
-            editingExistingId = existing ? Number(city.city_id) : null; // ADDED
-            idInput.value = current.city_id || ""; // ADDED
-            idInput.disabled = !!existing; // ADDED
-            nameInput.value = current.city_name || ""; // ADDED
-            countryNameInput.value = current.country_name || ""; // ADDED
-            countryCodeInput.value = current.country_code || ""; // ADDED
-            regionNameInput.value = current.region_name || ""; // ADDED
-            regionCodeInput.value = current.region_code || ""; // ADDED
-            latInput.value = current.latitude ?? ""; // ADDED
-            lonInput.value = current.longitude ?? ""; // ADDED
-            tzInput.value = current.timezone || ""; // ADDED
-            gddAnnualInput.value = current.gdd_annual ?? ""; // ADDED
-            gddBaseInput.value = current.gdd_base_c ?? ""; // ADDED
-            springP90Input.value = doyToMmDdNoLeap(current.last_spring_frost_p90_doy); // ADDED
-            springP50Input.value = doyToMmDdNoLeap(current.last_spring_frost_p50_doy || current.last_spring_frost_doy); // ADDED
-            springP10Input.value = doyToMmDdNoLeap(current.last_spring_frost_p10_doy); // ADDED
-            fallP90Input.value = doyToMmDdNoLeap(current.first_fall_frost_p90_doy); // ADDED
-            fallP50Input.value = doyToMmDdNoLeap(current.first_fall_frost_p50_doy || current.first_fall_frost_doy); // ADDED
-            fallP10Input.value = doyToMmDdNoLeap(current.first_fall_frost_p10_doy); // ADDED
-            for (let m = 1; m <= 12; m += 1) { // ADDED
-                monthInputs[m].low.value = cToDisplayTemp(current[`avg_monthly_low_c${m}`], displayUnits); // ADDED
-                monthInputs[m].high.value = cToDisplayTemp(current[`avg_monthly_high_c${m}`], displayUnits); // ADDED
-            } // ADDED
-        } // ADDED
-
-        cityPicker.addEventListener("change", () => { // ADDED
-            const next = cities.find(city => String(city.city_id) === String(cityPicker.value)); // ADDED
-            fillForm(next, true); // ADDED
-        }); // ADDED
-
-        function readDate(inputEl, required, label) { // ADDED
-            const raw = String(inputEl.value || "").trim(); // ADDED
-            if (!raw && !required) return null; // ADDED
-            const doy = mmDdToDoyNoLeap(raw); // ADDED
-            if (!doy) throw new Error(`${label} must be an MM-DD date in a non-leap year.`); // ADDED
-            return doy; // ADDED
-        } // ADDED
-
-        function readForm() { // ADDED
-            const row = { // ADDED
-                city_id: Number(idInput.value), // ADDED
-                city_name: String(nameInput.value || "").trim(), // ADDED
-                country_name: String(countryNameInput.value || "").trim(), // ADDED
-                country_code: String(countryCodeInput.value || "").trim(), // ADDED
-                region_name: String(regionNameInput.value || "").trim(), // ADDED
-                region_code: String(regionCodeInput.value || "").trim(), // ADDED
-                latitude: finiteNumberOrNull(latInput.value), // ADDED
-                longitude: finiteNumberOrNull(lonInput.value), // ADDED
-                timezone: String(tzInput.value || "").trim(), // ADDED
-                gdd_annual: finiteNumberOrNull(gddAnnualInput.value), // ADDED
-                gdd_base_c: finiteNumberOrNull(gddBaseInput.value), // ADDED
-                last_spring_frost_p90_doy: readDate(springP90Input, false, "Spring frost p90"), // ADDED
-                last_spring_frost_p50_doy: readDate(springP50Input, true, "Spring frost p50"), // ADDED
-                last_spring_frost_p10_doy: readDate(springP10Input, false, "Spring frost p10"), // ADDED
-                first_fall_frost_p90_doy: readDate(fallP90Input, false, "Fall frost p90"), // ADDED
-                first_fall_frost_p50_doy: readDate(fallP50Input, true, "Fall frost p50"), // ADDED
-                first_fall_frost_p10_doy: readDate(fallP10Input, false, "Fall frost p10") // ADDED
-            }; // ADDED
-            row.last_spring_frost_doy = row.last_spring_frost_p50_doy; // ADDED
-            row.first_fall_frost_doy = row.first_fall_frost_p50_doy; // ADDED
-            for (let m = 1; m <= 12; m += 1) { // ADDED
-                row[`avg_monthly_low_c${m}`] = formatDbNumber(displayTempToC(monthInputs[m].low.value, displayUnits)); // ADDED
-                row[`avg_monthly_high_c${m}`] = formatDbNumber(displayTempToC(monthInputs[m].high.value, displayUnits)); // ADDED
-            } // ADDED
-            return row; // ADDED
-        } // ADDED
-
-        const btnRow = document.createElement("div"); // ADDED
-        btnRow.style.display = "flex"; // ADDED
-        btnRow.style.justifyContent = "flex-end"; // ADDED
-        btnRow.style.gap = "8px"; // ADDED
-        btnRow.style.marginTop = "12px"; // ADDED
-        const closeBtn = tilerButton("Close", () => ui.hideDialog(), "neutral"); // CHANGE
-        const saveBtn = tilerButton("Save City", async () => { // CHANGE
-            clearError(); // ADDED
-            try { // ADDED
-                const saved = await saveCityRecord(readForm(), editingExistingId); // ADDED
-                cities = await loadCities(); // ADDED
-                refreshPicker(saved.city_id); // ADDED
-                fillForm(saved, true); // ADDED
-                model.beginUpdate(); // ADDED
-                try { refreshDiagramCityNameById(model, model.getRoot(), saved); } finally { model.endUpdate(); } // ADDED
-                if (typeof onSaved === "function") onSaved(saved); // ADDED
-            } catch (e) { // ADDED
-                showError(e && e.message ? e.message : String(e)); // ADDED
-            } // ADDED
-        }, "add"); // CHANGE
-        setTooltip(saveBtn, "Save the city climate record to the Trellis database."); // ADDED
-        btnRow.appendChild(closeBtn); // ADDED
-        btnRow.appendChild(saveBtn); // ADDED
-        div.appendChild(btnRow); // ADDED
-
-        refreshPicker(current?.city_id); // ADDED
-        fillForm(current || { city_id: 1, timezone: "America/Los_Angeles" }, !!current); // ADDED
-        ui.showDialog(div, 800, 720, true, true); // CHANGE
-        elevateTrellisDialog(); // NEW
-    } // ADDED
-
-
-    // garden settings dialog (city + units + default bed dimensions) // CHANGE
-    async function showGardenSettingsDialog(ui, graph, moduleCell, onClose) { // CHANGE
+    async function showCityManagerDialog(ui, graph, selectedCityId, units, onSaved) {
         const model = graph.getModel();
-        const curGardenName = String(getXmlAttr(moduleCell, "garden_name", "") || getXmlAttr(moduleCell, "label", "") || "Garden").trim() || "Garden"; // ADDED
-        const curCityId = getXmlAttr(moduleCell, "city_id", ""); // ADDED
+        let cities = await loadCities();
+        let current = cities.find(city => String(city.city_id) === String(selectedCityId)) || cities[0] || null;
+        let editingExistingId = current ? Number(current.city_id) : null;
+        const displayUnits = units === "imperial" ? "imperial" : "metric";
+        const tempUnit = displayUnits === "imperial" ? "F" : "C";
+
+        const div = document.createElement("div");
+        div.style.padding = "10px";
+        div.style.width = "760px";
+        div.style.maxHeight = "680px";
+        div.style.overflow = "auto";
+
+        const title = document.createElement("div");
+        title.textContent = "City Manager";
+        title.style.fontWeight = "600";
+        title.style.marginBottom = "8px";
+        div.appendChild(title);
+
+        const err = document.createElement("div");
+        err.style.color = "#b91c1c";
+        err.style.fontSize = "12px";
+        err.style.marginBottom = "8px";
+        err.style.display = "none";
+        div.appendChild(err);
+
+        function showError(message) { err.textContent = message; err.style.display = "block"; }
+        function clearError() { err.textContent = ""; err.style.display = "none"; }
+        function input(type = "text", width = "100%") {
+            const el = document.createElement("input");
+            el.type = type;
+            el.style.width = width;
+            el.style.padding = "5px";
+            return el;
+        }
+        function field(label, el, tooltip) {
+            const wrap = document.createElement("div");
+            wrap.style.display = "flex";
+            wrap.style.alignItems = "center";
+            wrap.style.gap = "8px";
+            wrap.style.margin = "6px 0";
+            const lab = document.createElement("label");
+            lab.textContent = label;
+            lab.style.minWidth = "150px";
+            setTooltip(lab, tooltip);
+            setTooltip(el, tooltip);
+            wrap.appendChild(lab);
+            wrap.appendChild(el);
+            div.appendChild(wrap);
+            return el;
+        }
+
+        const pickerRow = document.createElement("div");
+        pickerRow.style.display = "flex";
+        pickerRow.style.gap = "8px";
+        pickerRow.style.alignItems = "center";
+        pickerRow.style.marginBottom = "8px";
+        const cityPicker = document.createElement("select");
+        cityPicker.style.flex = "1";
+        cityPicker.style.padding = "6px";
+        const newBtn = tilerButton("New City", () => {
+            const maxId = cities.reduce((max, city) => Math.max(max, Number(city.city_id) || 0), 0);
+            editingExistingId = null;
+            fillForm({ city_id: maxId + 1, city_name: "", country_name: "", region_name: "Unspecified", timezone: "America/Los_Angeles" }, false);
+        }, "add");
+        setTooltip(newBtn, "Create a scheduler-ready city record with required climate fields.");
+        pickerRow.appendChild(cityPicker);
+        pickerRow.appendChild(newBtn);
+        div.appendChild(pickerRow);
+
+        const idInput = field("City ID:", input("number"), "Stable city_id used by diagrams; it cannot be changed for existing cities.");
+        const nameInput = field("City name:", input("text"), "Required city-only display name, for example Vancouver.");
+        const countryNameInput = field("Country:", input("text"), "Required country name, for example Canada.");
+        const countryCodeInput = field("Country code:", input("text"), "Optional ISO-style country code, for example CA.");
+        const regionNameInput = field("Region/state:", input("text"), "Required state, province, or region name. Use Unspecified when no region applies.");
+        const regionCodeInput = field("Region code:", input("text"), "Optional compact state/province code, for example BC.");
+        const latInput = field("Latitude:", input("number"), "Required decimal degrees, -66.5 to 66.5, used for photoperiod checks.");
+        const lonInput = field("Longitude:", input("number"), "Required decimal degrees, -180 to 180.");
+        const tzInput = field("Timezone:", input("text"), "Required IANA timezone, for example America/Los_Angeles.");
+        const gddAnnualInput = field("Annual GDD:", input("number"), "Optional annual growing-degree-days calibration target.");
+        const gddBaseInput = field("GDD base C:", input("number"), "Optional Celsius base temperature for city annual GDD calibration.");
+        const springP90Input = field("Spring frost p90:", input("text"), "Optional MM-DD last spring frost risk date; Feb 29 is not valid.");
+        const springP50Input = field("Spring frost p50:", input("text"), "Required MM-DD last spring frost date; Feb 29 is not valid.");
+        const springP10Input = field("Spring frost p10:", input("text"), "Optional MM-DD last spring frost risk date; Feb 29 is not valid.");
+        const fallP90Input = field("Fall frost p90:", input("text"), "Optional MM-DD first fall frost risk date; Feb 29 is not valid.");
+        const fallP50Input = field("Fall frost p50:", input("text"), "Required MM-DD first fall frost date; Feb 29 is not valid.");
+        const fallP10Input = field("Fall frost p10:", input("text"), "Optional MM-DD first fall frost risk date; Feb 29 is not valid.");
+
+        const monthTitle = document.createElement("div");
+        monthTitle.textContent = `Monthly normals (${tempUnit})`;
+        monthTitle.style.fontWeight = "600";
+        monthTitle.style.margin = "12px 0 6px";
+        div.appendChild(monthTitle);
+        const monthGrid = document.createElement("div");
+        monthGrid.style.display = "grid";
+        monthGrid.style.gridTemplateColumns = "70px 1fr 1fr";
+        monthGrid.style.gap = "4px 8px";
+        div.appendChild(monthGrid);
+        ["Month", "Low", "High"].forEach(text => {
+            const cell = document.createElement("div");
+            cell.textContent = text;
+            cell.style.fontWeight = "600";
+            monthGrid.appendChild(cell);
+        });
+        const monthInputs = [];
+        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        monthNames.forEach((name, index) => {
+            const low = input("number");
+            const high = input("number");
+            low.step = high.step = "0.1";
+            setTooltip(low, `Required average monthly low for ${name}, shown in ${tempUnit}.`);
+            setTooltip(high, `Required average monthly high for ${name}, shown in ${tempUnit}.`);
+            const lab = document.createElement("div");
+            lab.textContent = name;
+            monthGrid.appendChild(lab);
+            monthGrid.appendChild(low);
+            monthGrid.appendChild(high);
+            monthInputs[index + 1] = { low, high };
+        });
+
+        function refreshPicker(selectedId) {
+            while (cityPicker.firstChild) cityPicker.removeChild(cityPicker.firstChild);
+            sortedCities(cities).forEach(city => {
+                const opt = document.createElement("option");
+                opt.value = String(city.city_id);
+                opt.textContent = `${fullCityLabel(city)} (#${city.city_id})`;
+                cityPicker.appendChild(opt);
+            });
+            if (selectedId != null) cityPicker.value = String(selectedId);
+        }
+
+        function fillForm(city, existing) {
+            current = city || {};
+            editingExistingId = existing ? Number(city.city_id) : null;
+            idInput.value = current.city_id || "";
+            idInput.disabled = !!existing;
+            nameInput.value = current.city_name || "";
+            countryNameInput.value = current.country_name || "";
+            countryCodeInput.value = current.country_code || "";
+            regionNameInput.value = current.region_name || "";
+            regionCodeInput.value = current.region_code || "";
+            latInput.value = current.latitude ?? "";
+            lonInput.value = current.longitude ?? "";
+            tzInput.value = current.timezone || "";
+            gddAnnualInput.value = current.gdd_annual ?? "";
+            gddBaseInput.value = current.gdd_base_c ?? "";
+            springP90Input.value = doyToMmDdNoLeap(current.last_spring_frost_p90_doy);
+            springP50Input.value = doyToMmDdNoLeap(current.last_spring_frost_p50_doy || current.last_spring_frost_doy);
+            springP10Input.value = doyToMmDdNoLeap(current.last_spring_frost_p10_doy);
+            fallP90Input.value = doyToMmDdNoLeap(current.first_fall_frost_p90_doy);
+            fallP50Input.value = doyToMmDdNoLeap(current.first_fall_frost_p50_doy || current.first_fall_frost_doy);
+            fallP10Input.value = doyToMmDdNoLeap(current.first_fall_frost_p10_doy);
+            for (let m = 1; m <= 12; m += 1) {
+                monthInputs[m].low.value = cToDisplayTemp(current[`avg_monthly_low_c${m}`], displayUnits);
+                monthInputs[m].high.value = cToDisplayTemp(current[`avg_monthly_high_c${m}`], displayUnits);
+            }
+        }
+
+        cityPicker.addEventListener("change", () => {
+            const next = cities.find(city => String(city.city_id) === String(cityPicker.value));
+            fillForm(next, true);
+        });
+
+        function readDate(inputEl, required, label) {
+            const raw = String(inputEl.value || "").trim();
+            if (!raw && !required) return null;
+            const doy = mmDdToDoyNoLeap(raw);
+            if (!doy) throw new Error(`${label} must be an MM-DD date in a non-leap year.`);
+            return doy;
+        }
+
+        function readForm() {
+            const row = {
+                city_id: Number(idInput.value),
+                city_name: String(nameInput.value || "").trim(),
+                country_name: String(countryNameInput.value || "").trim(),
+                country_code: String(countryCodeInput.value || "").trim(),
+                region_name: String(regionNameInput.value || "").trim(),
+                region_code: String(regionCodeInput.value || "").trim(),
+                latitude: finiteNumberOrNull(latInput.value),
+                longitude: finiteNumberOrNull(lonInput.value),
+                timezone: String(tzInput.value || "").trim(),
+                gdd_annual: finiteNumberOrNull(gddAnnualInput.value),
+                gdd_base_c: finiteNumberOrNull(gddBaseInput.value),
+                last_spring_frost_p90_doy: readDate(springP90Input, false, "Spring frost p90"),
+                last_spring_frost_p50_doy: readDate(springP50Input, true, "Spring frost p50"),
+                last_spring_frost_p10_doy: readDate(springP10Input, false, "Spring frost p10"),
+                first_fall_frost_p90_doy: readDate(fallP90Input, false, "Fall frost p90"),
+                first_fall_frost_p50_doy: readDate(fallP50Input, true, "Fall frost p50"),
+                first_fall_frost_p10_doy: readDate(fallP10Input, false, "Fall frost p10")
+            };
+            row.last_spring_frost_doy = row.last_spring_frost_p50_doy;
+            row.first_fall_frost_doy = row.first_fall_frost_p50_doy;
+            for (let m = 1; m <= 12; m += 1) {
+                row[`avg_monthly_low_c${m}`] = formatDbNumber(displayTempToC(monthInputs[m].low.value, displayUnits));
+                row[`avg_monthly_high_c${m}`] = formatDbNumber(displayTempToC(monthInputs[m].high.value, displayUnits));
+            }
+            return row;
+        }
+
+        const btnRow = document.createElement("div");
+        btnRow.style.display = "flex";
+        btnRow.style.justifyContent = "flex-end";
+        btnRow.style.gap = "8px";
+        btnRow.style.marginTop = "12px";
+        const closeBtn = tilerButton("Close", () => ui.hideDialog(), "neutral");
+        const saveBtn = tilerButton("Save City", async () => {
+            clearError();
+            try {
+                const saved = await saveCityRecord(readForm(), editingExistingId);
+                cities = await loadCities();
+                refreshPicker(saved.city_id);
+                fillForm(saved, true);
+                model.beginUpdate();
+                try { refreshDiagramCityNameById(model, model.getRoot(), saved); } finally { model.endUpdate(); }
+                if (typeof onSaved === "function") onSaved(saved);
+            } catch (e) {
+                showError(e && e.message ? e.message : String(e));
+            }
+        }, "add");
+        setTooltip(saveBtn, "Save the city climate record to the Trellis database.");
+        btnRow.appendChild(closeBtn);
+        btnRow.appendChild(saveBtn);
+        div.appendChild(btnRow);
+
+        refreshPicker(current?.city_id);
+        fillForm(current || { city_id: 1, timezone: "America/Los_Angeles" }, !!current);
+        ui.showDialog(div, 800, 720, true, true);
+        elevateTrellisDialog();
+    }
+
+
+    // garden settings dialog (city + units + default bed dimensions)
+    async function showGardenSettingsDialog(ui, graph, moduleCell, onClose) {
+        const model = graph.getModel();
+        const curGardenName = String(getXmlAttr(moduleCell, "garden_name", "") || getXmlAttr(moduleCell, "label", "") || "Garden").trim() || "Garden";
+        const curCityId = getXmlAttr(moduleCell, "city_id", "");
         const curCity = getXmlAttr(moduleCell, "city_name", "");
         const curUnits = getXmlAttr(moduleCell, "unit_system", "");
-        const curModuleMargin = getGardenModuleMargin(moduleCell); // NEW
-        const savedBedDimsCm = getSavedDefaultBedDimensionsCm(moduleCell); // CHANGE
-        let activeBedDisplayUnits = curUnits || ""; // CHANGE
-        let bedDimensionsEdited = false; // CHANGE
-        let closeNotified = false; // CHANGE
+        const curModuleMargin = getGardenModuleMargin(moduleCell);
+        const savedBedDimsCm = getSavedDefaultBedDimensionsCm(moduleCell);
+        let activeBedDisplayUnits = curUnits || "";
+        let bedDimensionsEdited = false;
+        let closeNotified = false;
 
-        function notifyClose() { // CHANGE
-            if (closeNotified) return; // CHANGE
-            closeNotified = true; // CHANGE
-            if (typeof onClose === "function") onClose(); // CHANGE
-        } // CHANGE
+        function notifyClose() {
+            if (closeNotified) return;
+            closeNotified = true;
+            if (typeof onClose === "function") onClose();
+        }
 
         let cities = [];
         try {
             cities = await loadCities();
         } catch (e) {
             mxUtils.alert("Error loading cities: " + e.message);
-            notifyClose(); // CHANGE
+            notifyClose();
             return;
         }
-        // Empty city lists are allowed so the City Manager can create the first scheduler-ready city. // CHANGED
+        // Empty city lists are allowed so the City Manager can create the first scheduler-ready city.
 
         const div = document.createElement("div");
         div.style.padding = "10px";
@@ -1914,7 +1914,7 @@ Draw.loadPlugin(function (ui) {
         err.style.display = "none";
         div.appendChild(err);
 
-        function row(labelText, controlEl) { // CHANGE
+        function row(labelText, controlEl) {
             const wrap = document.createElement("div");
             wrap.style.display = "flex";
             wrap.style.alignItems = "center";
@@ -1926,43 +1926,43 @@ Draw.loadPlugin(function (ui) {
             wrap.appendChild(lab);
             wrap.appendChild(controlEl);
             div.appendChild(wrap);
-            return { wrap, label: lab, control: controlEl }; // CHANGE
+            return { wrap, label: lab, control: controlEl };
         }
 
-        const gardenNameInput = document.createElement("input"); // ADDED
-        gardenNameInput.type = "text"; // ADDED
-        gardenNameInput.value = curGardenName; // ADDED
-        gardenNameInput.style.flex = "1"; // ADDED
-        row("Garden name:", gardenNameInput); // ADDED
+        const gardenNameInput = document.createElement("input");
+        gardenNameInput.type = "text";
+        gardenNameInput.value = curGardenName;
+        gardenNameInput.style.flex = "1";
+        row("Garden name:", gardenNameInput);
 
         // City (mandatory)
-        const citySel = makeCityTreePicker(cities, curCityId); // CHANGED
+        const citySel = makeCityTreePicker(cities, curCityId);
 
-        function selectedCityRow() { // ADDED
-            return cities.find(city => String(city.city_id) === String(citySel.value)) || null; // ADDED
-        } // ADDED
+        function selectedCityRow() {
+            return cities.find(city => String(city.city_id) === String(citySel.value)) || null;
+        }
 
-        function refreshCityOptions(selectedCityId, selectedCityName) { // ADDED
-            const selected = selectedCityId || (cities.find(city => city.city_name === selectedCityName)?.city_id) || ""; // CHANGED
-            citySel.setCities(cities, selected); // CHANGED
-        } // ADDED
+        function refreshCityOptions(selectedCityId, selectedCityName) {
+            const selected = selectedCityId || (cities.find(city => city.city_name === selectedCityName)?.city_id) || "";
+            citySel.setCities(cities, selected);
+        }
 
-        refreshCityOptions(curCityId, curCity); // ADDED
-        const cityControl = document.createElement("div"); // ADDED
-        cityControl.style.display = "flex"; // ADDED
-        cityControl.style.gap = "6px"; // ADDED
-        cityControl.style.flex = "1"; // ADDED
-        cityControl.appendChild(citySel); // ADDED
-        const manageCityBtn = tilerButton("Manage...", async () => { // CHANGE
-            await showCityManagerDialog(ui, graph, citySel.value, unitsSel.value || curUnits || "metric", async saved => { // ADDED
-                cities = await loadCities(); // ADDED
-                refreshCityOptions(saved.city_id, saved.city_name); // ADDED
-            }); // ADDED
-        }, "open"); // CHANGE
-        setTooltip(citySel, "Select the garden city. City climate data is managed with the adjacent button."); // ADDED
-        setTooltip(manageCityBtn, "Add or edit city latitude, longitude, timezone, frost dates, and monthly normals."); // ADDED
-        cityControl.appendChild(manageCityBtn); // ADDED
-        row("City:", cityControl); // CHANGED
+        refreshCityOptions(curCityId, curCity);
+        const cityControl = document.createElement("div");
+        cityControl.style.display = "flex";
+        cityControl.style.gap = "6px";
+        cityControl.style.flex = "1";
+        cityControl.appendChild(citySel);
+        const manageCityBtn = tilerButton("Manage...", async () => {
+            await showCityManagerDialog(ui, graph, citySel.value, unitsSel.value || curUnits || "metric", async saved => {
+                cities = await loadCities();
+                refreshCityOptions(saved.city_id, saved.city_name);
+            });
+        }, "open");
+        setTooltip(citySel, "Select the garden city. City climate data is managed with the adjacent button.");
+        setTooltip(manageCityBtn, "Add or edit city latitude, longitude, timezone, frost dates, and monthly normals.");
+        cityControl.appendChild(manageCityBtn);
+        row("City:", cityControl);
 
         // Units (mandatory)
         const unitsSel = document.createElement("select");
@@ -1985,64 +1985,64 @@ Draw.loadPlugin(function (ui) {
             });
         row("Units:", unitsSel);
 
-        const bedWidthInput = document.createElement("input"); // CHANGE
-        bedWidthInput.type = "number"; // CHANGE
-        bedWidthInput.step = "0.01"; // CHANGE
-        bedWidthInput.min = "0.01"; // CHANGE
-        bedWidthInput.style.flex = "1"; // CHANGE
-        const bedWidthRow = row("Default bed width:", bedWidthInput); // CHANGE
+        const bedWidthInput = document.createElement("input");
+        bedWidthInput.type = "number";
+        bedWidthInput.step = "0.01";
+        bedWidthInput.min = "0.01";
+        bedWidthInput.style.flex = "1";
+        const bedWidthRow = row("Default bed width:", bedWidthInput);
 
-        const bedLengthInput = document.createElement("input"); // CHANGE
-        bedLengthInput.type = "number"; // CHANGE
-        bedLengthInput.step = "0.01"; // CHANGE
-        bedLengthInput.min = "0.01"; // CHANGE
-        bedLengthInput.style.flex = "1"; // CHANGE
-        const bedLengthRow = row("Default bed length:", bedLengthInput); // CHANGE
-        mxEvent.addListener(bedWidthInput, "input", function () { bedDimensionsEdited = true; }); // CHANGE
-        mxEvent.addListener(bedLengthInput, "input", function () { bedDimensionsEdited = true; }); // CHANGE
+        const bedLengthInput = document.createElement("input");
+        bedLengthInput.type = "number";
+        bedLengthInput.step = "0.01";
+        bedLengthInput.min = "0.01";
+        bedLengthInput.style.flex = "1";
+        const bedLengthRow = row("Default bed length:", bedLengthInput);
+        mxEvent.addListener(bedWidthInput, "input", function () { bedDimensionsEdited = true; });
+        mxEvent.addListener(bedLengthInput, "input", function () { bedDimensionsEdited = true; });
 
-        const moduleMarginInput = document.createElement("input"); // NEW
-        moduleMarginInput.type = "number"; // NEW
-        moduleMarginInput.step = "1"; // NEW
-        moduleMarginInput.min = "0"; // NEW
-        moduleMarginInput.value = String(curModuleMargin); // NEW
-        moduleMarginInput.style.flex = "1"; // NEW
-        row("Module margin (px):", moduleMarginInput); // NEW
+        const moduleMarginInput = document.createElement("input");
+        moduleMarginInput.type = "number";
+        moduleMarginInput.step = "1";
+        moduleMarginInput.min = "0";
+        moduleMarginInput.value = String(curModuleMargin);
+        moduleMarginInput.style.flex = "1";
+        row("Module margin (px):", moduleMarginInput);
 
-        function readBedInputsAsCm(units) { // CHANGE
-            if (!units) return null; // CHANGE
-            const widthCm = bedDimensionDisplayToCm(bedWidthInput.value, units); // CHANGE
-            const lengthCm = bedDimensionDisplayToCm(bedLengthInput.value, units); // CHANGE
-            return widthCm && lengthCm ? { widthCm, lengthCm } : null; // CHANGE
-        } // CHANGE
+        function readBedInputsAsCm(units) {
+            if (!units) return null;
+            const widthCm = bedDimensionDisplayToCm(bedWidthInput.value, units);
+            const lengthCm = bedDimensionDisplayToCm(bedLengthInput.value, units);
+            return widthCm && lengthCm ? { widthCm, lengthCm } : null;
+        }
 
-        function setBedInputsFromCm(dimsCm, units) { // CHANGE
-            if (!dimsCm || !units) { // CHANGE
-                bedWidthInput.value = ""; // CHANGE
-                bedLengthInput.value = ""; // CHANGE
-                return; // CHANGE
-            } // CHANGE
-            bedWidthInput.value = formatBedDisplayValue(bedDimensionCmToDisplay(dimsCm.widthCm, units)); // CHANGE
-            bedLengthInput.value = formatBedDisplayValue(bedDimensionCmToDisplay(dimsCm.lengthCm, units)); // CHANGE
-        } // CHANGE
+        function setBedInputsFromCm(dimsCm, units) {
+            if (!dimsCm || !units) {
+                bedWidthInput.value = "";
+                bedLengthInput.value = "";
+                return;
+            }
+            bedWidthInput.value = formatBedDisplayValue(bedDimensionCmToDisplay(dimsCm.widthCm, units));
+            bedLengthInput.value = formatBedDisplayValue(bedDimensionCmToDisplay(dimsCm.lengthCm, units));
+        }
 
-        function syncBedDimensionInputs(nextUnits) { // CHANGE
-            const priorDims = activeBedDisplayUnits && bedDimensionsEdited ? readBedInputsAsCm(activeBedDisplayUnits) : null; // CHANGE
-            const nextDims = priorDims || savedBedDimsCm || defaultBedDimensionsCmForUnits(nextUnits); // CHANGE
-            const enabled = !!nextUnits; // CHANGE
-            const unitLabel = enabled ? bedDisplayUnitLabel(nextUnits) : ""; // CHANGE
-            activeBedDisplayUnits = nextUnits || ""; // CHANGE
-            bedWidthRow.label.textContent = enabled ? `Default bed width (${unitLabel}):` : "Default bed width:"; // CHANGE
-            bedLengthRow.label.textContent = enabled ? `Default bed length (${unitLabel}):` : "Default bed length:"; // CHANGE
-            bedWidthInput.disabled = !enabled; // CHANGE
-            bedLengthInput.disabled = !enabled; // CHANGE
-            setBedInputsFromCm(enabled ? nextDims : null, nextUnits); // CHANGE
-        } // CHANGE
+        function syncBedDimensionInputs(nextUnits) {
+            const priorDims = activeBedDisplayUnits && bedDimensionsEdited ? readBedInputsAsCm(activeBedDisplayUnits) : null;
+            const nextDims = priorDims || savedBedDimsCm || defaultBedDimensionsCmForUnits(nextUnits);
+            const enabled = !!nextUnits;
+            const unitLabel = enabled ? bedDisplayUnitLabel(nextUnits) : "";
+            activeBedDisplayUnits = nextUnits || "";
+            bedWidthRow.label.textContent = enabled ? `Default bed width (${unitLabel}):` : "Default bed width:";
+            bedLengthRow.label.textContent = enabled ? `Default bed length (${unitLabel}):` : "Default bed length:";
+            bedWidthInput.disabled = !enabled;
+            bedLengthInput.disabled = !enabled;
+            setBedInputsFromCm(enabled ? nextDims : null, nextUnits);
+        }
 
-        mxEvent.addListener(unitsSel, "change", function () { // CHANGE
-            syncBedDimensionInputs((unitsSel.value || "").trim()); // CHANGE
-        }); // CHANGE
-        syncBedDimensionInputs(curUnits); // CHANGE
+        mxEvent.addListener(unitsSel, "change", function () {
+            syncBedDimensionInputs((unitsSel.value || "").trim());
+        });
+        syncBedDimensionInputs(curUnits);
 
         function showError(msg) {
             err.textContent = msg;
@@ -2055,558 +2055,558 @@ Draw.loadPlugin(function (ui) {
         btnRow.style.gap = "8px";
         btnRow.style.marginTop = "12px";
 
-        const cancelBtn = tilerButton("Cancel", () => ui.hideDialog(), "neutral"); // CHANGE
-        const okBtn = tilerButton("OK", () => { // CHANGE
+        const cancelBtn = tilerButton("Cancel", () => ui.hideDialog(), "neutral");
+        const okBtn = tilerButton("OK", () => {
             err.style.display = "none";
-            const chosenGardenName = String(gardenNameInput.value || "").trim() || "Garden"; // ADDED
-            const chosenCityRow = selectedCityRow(); // ADDED
-            const chosenCity = String(chosenCityRow?.city_name || "").trim(); // CHANGED
-            const chosenCityId = chosenCityRow?.city_id != null ? String(chosenCityRow.city_id) : ""; // ADDED
+            const chosenGardenName = String(gardenNameInput.value || "").trim() || "Garden";
+            const chosenCityRow = selectedCityRow();
+            const chosenCity = String(chosenCityRow?.city_name || "").trim();
+            const chosenCityId = chosenCityRow?.city_id != null ? String(chosenCityRow.city_id) : "";
             const chosenUnits = (unitsSel.value || "").trim();
-            const chosenBedDimsCm = readBedInputsAsCm(chosenUnits); // CHANGE
-            const chosenModuleMargin = readModuleMarginInput(moduleMarginInput); // NEW
+            const chosenBedDimsCm = readBedInputsAsCm(chosenUnits);
+            const chosenModuleMargin = readModuleMarginInput(moduleMarginInput);
 
             if (!chosenCity) { showError("City is required."); citySel.focus(); return; }
             if (!chosenUnits) { showError("Units are required."); unitsSel.focus(); return; }
-            if (!chosenBedDimsCm) { showError("Default bed width and length must be positive numbers."); bedWidthInput.focus(); return; } // CHANGE
-            if (chosenModuleMargin == null) { showError("Module margin must be a non-negative whole number."); moduleMarginInput.focus(); return; } // NEW
+            if (!chosenBedDimsCm) { showError("Default bed width and length must be positive numbers."); bedWidthInput.focus(); return; }
+            if (chosenModuleMargin == null) { showError("Module margin must be a non-negative whole number."); moduleMarginInput.focus(); return; }
 
             ui.hideDialog();
             model.beginUpdate();
             try {
                 setCellAttrsNoTxn(model, moduleCell, {
-                    garden_name: chosenGardenName, // ADDED
-                    label: chosenGardenName, // ADDED
-                    city_id: chosenCityId, // ADDED
+                    garden_name: chosenGardenName,
+                    label: chosenGardenName,
+                    city_id: chosenCityId,
                     city_name: chosenCity,
                     unit_system: chosenUnits,
-                    [DEFAULT_BED_WIDTH_CM_ATTR]: formatBedCmAttr(chosenBedDimsCm.widthCm), // CHANGE
-                    [DEFAULT_BED_LENGTH_CM_ATTR]: formatBedCmAttr(chosenBedDimsCm.lengthCm), // CHANGE
+                    [DEFAULT_BED_WIDTH_CM_ATTR]: formatBedCmAttr(chosenBedDimsCm.widthCm),
+                    [DEFAULT_BED_LENGTH_CM_ATTR]: formatBedCmAttr(chosenBedDimsCm.lengthCm),
                 });
-                setGardenModuleMargin(moduleCell, chosenModuleMargin); // NEW
+                setGardenModuleMargin(moduleCell, chosenModuleMargin);
             } finally {
                 model.endUpdate();
             }
             graph.refresh(moduleCell);
 
-        }, "add"); // CHANGE
+        }, "add");
 
         btnRow.appendChild(cancelBtn);
         btnRow.appendChild(okBtn);
         div.appendChild(btnRow);
 
-        ui.showDialog(div, 420, 330, true, true, notifyClose); // CHANGE
-        elevateTrellisDialog(); // NEW
-        gardenNameInput.focus(); // CHANGED
+        ui.showDialog(div, 420, 330, true, true, notifyClose);
+        elevateTrellisDialog();
+        gardenNameInput.focus();
     }
 
-    let openGardenSettingsDialogWithOverlaySuppressed = null; // NEW
+    let openGardenSettingsDialogWithOverlaySuppressed = null;
 
-    function installGardenModuleOverlay() { // CHANGE
-        if (graph.__plantTilerGardenModuleOverlayInstalled) return; // CHANGE
-        graph.__plantTilerGardenModuleOverlayInstalled = true; // CHANGE
+    function installGardenModuleOverlay() {
+        if (graph.__plantTilerGardenModuleOverlayInstalled) return;
+        graph.__plantTilerGardenModuleOverlayInstalled = true;
 
-        const OFFSET_PX = 8; // CHANGE
-        const SIMPLE_CLICK_MAX_MOVE_PX = 4; // CHANGE
-        const MOUSE_ANCHOR_MAX_AGE_MS = 1000; // CHANGE
-        let toolbar = null; // CHANGE
-        let labelInputWrap = null; // NEW
-        let settingsBtn = null; // CHANGE
-        let addBedBtn = null; // CHANGE
-        let addGroupBtn = null; // CHANGE
-        let irrigationSourceBtn = null; // NEW
-        let activeModuleCell = null; // CHANGE
-        let activeBedCell = null; // CHANGE
-        let activeOverlayMode = ""; // CHANGE
-        let anchorModelPoint = null; // CHANGE
-        let lastMouseAnchor = null; // CHANGE
-        let gestureHidden = false; // CHANGE
-        let refreshTimer = null; // CHANGE
-        let gardenSettingsOverlaySuppressed = false; // NEW
-        let manuallyHiddenModuleCell = null; // NEW
-        let pendingSelectedModuleToggle = null; // NEW
+        const OFFSET_PX = 8;
+        const SIMPLE_CLICK_MAX_MOVE_PX = 4;
+        const MOUSE_ANCHOR_MAX_AGE_MS = 1000;
+        let toolbar = null;
+        let labelInputWrap = null;
+        let settingsBtn = null;
+        let addBedBtn = null;
+        let addGroupBtn = null;
+        let irrigationSourceBtn = null;
+        let activeModuleCell = null;
+        let activeBedCell = null;
+        let activeOverlayMode = "";
+        let anchorModelPoint = null;
+        let lastMouseAnchor = null;
+        let gestureHidden = false;
+        let refreshTimer = null;
+        let gardenSettingsOverlaySuppressed = false;
+        let manuallyHiddenModuleCell = null;
+        let pendingSelectedModuleToggle = null;
 
-        function getOverlayHost() { // CHANGE
-            return graph.container; // CHANGE
-        } // CHANGE
+        function getOverlayHost() {
+            return graph.container;
+        }
 
-        function ensureOverlayHost() { // CHANGE
-            const host = getOverlayHost(); // CHANGE
-            if (!host) return null; // CHANGE
-            const style = window.getComputedStyle ? window.getComputedStyle(host) : null; // CHANGE
-            if (style && style.position === "static") host.style.position = "relative"; // CHANGE
-            return host; // CHANGE
-        } // CHANGE
+        function ensureOverlayHost() {
+            const host = getOverlayHost();
+            if (!host) return null;
+            const style = window.getComputedStyle ? window.getComputedStyle(host) : null;
+            if (style && style.position === "static") host.style.position = "relative";
+            return host;
+        }
 
-        function makeButton(text, variant) { // CHANGE
-            const btn = document.createElement("button"); // CHANGE
-            btn.type = "button"; // CHANGE
-            btn.textContent = text; // CHANGE
-            btn.style.border = "1px solid #b8b8b8"; // CHANGE
-            btn.style.borderRadius = "4px"; // CHANGE
-            btn.style.background = "#fff"; // CHANGE
-            btn.style.color = "#222"; // CHANGE
-            btn.style.cursor = "pointer"; // CHANGE
-            btn.style.font = "12px Arial, sans-serif"; // CHANGE
-            btn.style.padding = "5px 8px"; // CHANGE
-            btn.style.textAlign = "left"; // CHANGE
-            btn.style.whiteSpace = "nowrap"; // CHANGE
-            applyTilerButtonStyle(btn, variant || "neutral", { compact: true }); // NEW
-            return btn; // CHANGE
-        } // CHANGE
+        function makeButton(text, variant) {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.textContent = text;
+            btn.style.border = "1px solid #b8b8b8";
+            btn.style.borderRadius = "4px";
+            btn.style.background = "#fff";
+            btn.style.color = "#222";
+            btn.style.cursor = "pointer";
+            btn.style.font = "12px Arial, sans-serif";
+            btn.style.padding = "5px 8px";
+            btn.style.textAlign = "left";
+            btn.style.whiteSpace = "nowrap";
+            applyTilerButtonStyle(btn, variant || "neutral", { compact: true });
+            return btn;
+        }
 
-        function gardenModuleLabelApi() { // NEW
-            return graph && graph.__trellisModules ? graph.__trellisModules : {}; // NEW
-        } // NEW
+        function gardenModuleLabelApi() {
+            return graph && graph.__trellisModules ? graph.__trellisModules : {};
+        }
 
-        function plainGardenModuleLabel(moduleCell) { // NEW
-            const api = gardenModuleLabelApi(); // NEW
-            if (typeof api.getModuleLabel === "function") return api.getModuleLabel(moduleCell, "Garden Module"); // NEW
-            const raw = getXmlAttr(moduleCell, "label", "") || (typeof (moduleCell && moduleCell.value) === "string" ? moduleCell.value : ""); // NEW
-            if (document && document.createElement) { // NEW
-                const holder = document.createElement("div"); // NEW
-                holder.innerHTML = raw; // NEW
-                const text = String(holder.textContent || "").replace(/\s+/g, " ").trim(); // NEW
-                if (text) return text; // NEW
-            } // NEW
-            const stripped = String(raw || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim(); // NEW
-            return stripped || "Garden Module"; // NEW
-        } // NEW
+        function plainGardenModuleLabel(moduleCell) {
+            const api = gardenModuleLabelApi();
+            if (typeof api.getModuleLabel === "function") return api.getModuleLabel(moduleCell, "Garden Module");
+            const raw = getXmlAttr(moduleCell, "label", "") || (typeof (moduleCell && moduleCell.value) === "string" ? moduleCell.value : "");
+            if (document && document.createElement) {
+                const holder = document.createElement("div");
+                holder.innerHTML = raw;
+                const text = String(holder.textContent || "").replace(/\s+/g, " ").trim();
+                if (text) return text;
+            }
+            const stripped = String(raw || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+            return stripped || "Garden Module";
+        }
 
-        function writeGardenModuleLabel(moduleCell, label) { // NEW
-            const api = gardenModuleLabelApi(); // NEW
-            if (typeof api.writeModuleLabel === "function") return api.writeModuleLabel(moduleCell, label); // NEW
-            const next = String(label == null ? "" : label).trim() || "Garden Module"; // NEW
-            if (plainGardenModuleLabel(moduleCell) !== next) { // NEW
-                const graphModel = graph.getModel && graph.getModel(); // NEW
-                if (graphModel) { // NEW
-                    graphModel.beginUpdate(); // NEW
-                    try { // NEW
-                        setCellAttrsNoTxn(graphModel, moduleCell, { label: next }); // NEW
-                    } finally { // NEW
-                        graphModel.endUpdate(); // NEW
-                    } // NEW
-                } // NEW
-                if (graph.refresh) graph.refresh(moduleCell); // NEW
-            } // NEW
-            return next; // NEW
-        } // NEW
+        function writeGardenModuleLabel(moduleCell, label) {
+            const api = gardenModuleLabelApi();
+            if (typeof api.writeModuleLabel === "function") return api.writeModuleLabel(moduleCell, label);
+            const next = String(label == null ? "" : label).trim() || "Garden Module";
+            if (plainGardenModuleLabel(moduleCell) !== next) {
+                const graphModel = graph.getModel && graph.getModel();
+                if (graphModel) {
+                    graphModel.beginUpdate();
+                    try {
+                        setCellAttrsNoTxn(graphModel, moduleCell, { label: next });
+                    } finally {
+                        graphModel.endUpdate();
+                    }
+                }
+                if (graph.refresh) graph.refresh(moduleCell);
+            }
+            return next;
+        }
 
-        function stopGardenLabelEvent(evt) { // NEW
-            if (evt && evt.stopPropagation) evt.stopPropagation(); // NEW
-        } // NEW
+        function stopGardenLabelEvent(evt) {
+            if (evt && evt.stopPropagation) evt.stopPropagation();
+        }
 
-        function consumeGardenLabelEvent(evt) { // NEW
-            stopGardenLabelEvent(evt); // NEW
-            if (evt && evt.preventDefault) evt.preventDefault(); // NEW
-        } // NEW
+        function consumeGardenLabelEvent(evt) {
+            stopGardenLabelEvent(evt);
+            if (evt && evt.preventDefault) evt.preventDefault();
+        }
 
-        function makeGardenModuleLabelInput(moduleCell) { // NEW
-            const initialLabel = plainGardenModuleLabel(moduleCell); // NEW
-            const input = document.createElement("input"); // NEW
-            input.type = "text"; // NEW
-            input.value = initialLabel; // NEW
-            input.setAttribute("aria-label", "Garden label"); // NEW
-            input.style.cssText = "display:block;box-sizing:border-box;width:100%;min-width:0;margin-bottom:2px;border:1px solid rgba(75,85,99,0.35);border-radius:4px;padding:3px 5px;font:12px Arial,sans-serif;font-weight:600;"; // NEW
-            ["mousedown", "mouseup", "click", "dblclick", "pointerdown", "pointerup"].forEach(function (type) { // NEW
-                input.addEventListener(type, stopGardenLabelEvent); // NEW
-            }); // NEW
-            input.addEventListener("keydown", function (evt) { // NEW
-                stopGardenLabelEvent(evt); // NEW
-                if (evt.key === "Enter") { // NEW
-                    input.value = writeGardenModuleLabel(moduleCell, input.value); // NEW
-                    if (input.blur) input.blur(); // NEW
-                    consumeGardenLabelEvent(evt); // NEW
-                } else if (evt.key === "Escape") { // NEW
-                    input.value = initialLabel; // NEW
-                    consumeGardenLabelEvent(evt); // NEW
-                } // NEW
-            }); // NEW
-            ["keypress", "keyup"].forEach(function (type) { input.addEventListener(type, stopGardenLabelEvent); }); // NEW
-            input.addEventListener("blur", function () { input.value = writeGardenModuleLabel(moduleCell, input.value); }); // NEW
-            return input; // NEW
-        } // NEW
+        function makeGardenModuleLabelInput(moduleCell) {
+            const initialLabel = plainGardenModuleLabel(moduleCell);
+            const input = document.createElement("input");
+            input.type = "text";
+            input.value = initialLabel;
+            input.setAttribute("aria-label", "Garden label");
+            input.style.cssText = "display:block;box-sizing:border-box;width:100%;min-width:0;margin-bottom:2px;border:1px solid rgba(75,85,99,0.35);border-radius:4px;padding:3px 5px;font:12px Arial,sans-serif;font-weight:600;";
+            ["mousedown", "mouseup", "click", "dblclick", "pointerdown", "pointerup"].forEach(function (type) {
+                input.addEventListener(type, stopGardenLabelEvent);
+            });
+            input.addEventListener("keydown", function (evt) {
+                stopGardenLabelEvent(evt);
+                if (evt.key === "Enter") {
+                    input.value = writeGardenModuleLabel(moduleCell, input.value);
+                    if (input.blur) input.blur();
+                    consumeGardenLabelEvent(evt);
+                } else if (evt.key === "Escape") {
+                    input.value = initialLabel;
+                    consumeGardenLabelEvent(evt);
+                }
+            });
+            ["keypress", "keyup"].forEach(function (type) { input.addEventListener(type, stopGardenLabelEvent); });
+            input.addEventListener("blur", function () { input.value = writeGardenModuleLabel(moduleCell, input.value); });
+            return input;
+        }
 
-        function renderGardenModuleLabelInput(moduleCell) { // NEW
-            if (!labelInputWrap) return; // NEW
-            labelInputWrap.innerHTML = ""; // NEW
-            if (moduleCell && isGardenModule(moduleCell)) labelInputWrap.appendChild(makeGardenModuleLabelInput(moduleCell)); // NEW
-        } // NEW
+        function renderGardenModuleLabelInput(moduleCell) {
+            if (!labelInputWrap) return;
+            labelInputWrap.innerHTML = "";
+            if (moduleCell && isGardenModule(moduleCell)) labelInputWrap.appendChild(makeGardenModuleLabelInput(moduleCell));
+        }
 
-        function ensureToolbar() { // CHANGE
-            if (toolbar) return toolbar; // CHANGE
-            toolbar = document.createElement("div"); // CHANGE
-            toolbar.style.position = "absolute"; // CHANGE
-            toolbar.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL); // CHANGE
-            toolbar.style.display = "none"; // CHANGE
-            toolbar.style.flexDirection = "column"; // CHANGE
-            toolbar.style.gap = "4px"; // CHANGE
-            toolbar.style.padding = "4px"; // CHANGE
-            toolbar.style.background = "rgba(255,255,255,0.96)"; // CHANGE
-            toolbar.style.border = "1px solid #c7c7cc"; // CHANGE
-            toolbar.style.borderRadius = "6px"; // CHANGE
-            toolbar.style.boxShadow = "0 2px 8px rgba(0,0,0,0.16)"; // CHANGE
-            toolbar.style.font = "12px Arial, sans-serif"; // CHANGE
-            toolbar.style.pointerEvents = "auto"; // CHANGE
-            mxEvent.addListener(toolbar, "mousedown", function (evt) { mxEvent.consume(evt); }); // CHANGE
-            mxEvent.addListener(toolbar, "click", function (evt) { evt.stopPropagation(); }); // CHANGE
+        function ensureToolbar() {
+            if (toolbar) return toolbar;
+            toolbar = document.createElement("div");
+            toolbar.style.position = "absolute";
+            toolbar.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL);
+            toolbar.style.display = "none";
+            toolbar.style.flexDirection = "column";
+            toolbar.style.gap = "4px";
+            toolbar.style.padding = "4px";
+            toolbar.style.background = "rgba(255,255,255,0.96)";
+            toolbar.style.border = "1px solid #c7c7cc";
+            toolbar.style.borderRadius = "6px";
+            toolbar.style.boxShadow = "0 2px 8px rgba(0,0,0,0.16)";
+            toolbar.style.font = "12px Arial, sans-serif";
+            toolbar.style.pointerEvents = "auto";
+            mxEvent.addListener(toolbar, "mousedown", function (evt) { mxEvent.consume(evt); });
+            mxEvent.addListener(toolbar, "click", function (evt) { evt.stopPropagation(); });
 
-            labelInputWrap = document.createElement("div"); // NEW
-            labelInputWrap.className = "trellis-garden-module-label-controls"; // NEW
-            labelInputWrap.style.cssText = "display:flex;flex-direction:column;gap:4px;padding:2px 2px 4px;border-bottom:1px solid #e5e7eb;"; // NEW
-            settingsBtn = makeButton("Set Garden Settings", "open"); // CHANGE
-            addBedBtn = makeButton("Add Garden Bed", "add"); // CHANGE
-            addGroupBtn = makeButton("Add New Plant Group", "add"); // CHANGE
-            irrigationSourceBtn = makeButton("Create Irrigation Source", "add"); // CHANGE
-            toolbar.appendChild(labelInputWrap); // NEW
-            toolbar.appendChild(settingsBtn); // CHANGE
-            toolbar.appendChild(addBedBtn); // CHANGE
-            toolbar.appendChild(addGroupBtn); // CHANGE
-            toolbar.appendChild(irrigationSourceBtn); // NEW
+            labelInputWrap = document.createElement("div");
+            labelInputWrap.className = "trellis-garden-module-label-controls";
+            labelInputWrap.style.cssText = "display:flex;flex-direction:column;gap:4px;padding:2px 2px 4px;border-bottom:1px solid #e5e7eb;";
+            settingsBtn = makeButton("Set Garden Settings", "open");
+            addBedBtn = makeButton("Add Garden Bed", "add");
+            addGroupBtn = makeButton("Add New Plant Group", "add");
+            irrigationSourceBtn = makeButton("Create Irrigation Source", "add");
+            toolbar.appendChild(labelInputWrap);
+            toolbar.appendChild(settingsBtn);
+            toolbar.appendChild(addBedBtn);
+            toolbar.appendChild(addGroupBtn);
+            toolbar.appendChild(irrigationSourceBtn);
 
-            mxEvent.addListener(settingsBtn, "click", async function (evt) { // CHANGE
-                mxEvent.consume(evt); // CHANGE
-                const moduleCell = activeModuleCell; // CHANGE
-                if (!moduleCell || !isGardenModule(moduleCell)) return; // CHANGE
-                await openGardenSettingsDialogWithOverlaySuppressed(moduleCell); // CHANGE
-            }); // CHANGE
+            mxEvent.addListener(settingsBtn, "click", async function (evt) {
+                mxEvent.consume(evt);
+                const moduleCell = activeModuleCell;
+                if (!moduleCell || !isGardenModule(moduleCell)) return;
+                await openGardenSettingsDialogWithOverlaySuppressed(moduleCell);
+            });
 
-            mxEvent.addListener(addBedBtn, "click", function (evt) { // CHANGE
-                mxEvent.consume(evt); // CHANGE
-                const moduleCell = activeModuleCell; // CHANGE
-                const pt = anchorModelPoint; // CHANGE
-                if (!moduleCell || !pt || !hasGardenSettingsSet(moduleCell)) return; // CHANGE
-                try { // CHANGE
-                    createDefaultGardenBed(graph, moduleCell, pt.x, pt.y); // CHANGE
-                    hideToolbar(); // CHANGE
-                } catch (e) { // CHANGE
-                    mxUtils.alert("Error creating garden bed: " + (e && e.message ? e.message : e)); // CHANGE
-                } // CHANGE
-            }); // CHANGE
+            mxEvent.addListener(addBedBtn, "click", function (evt) {
+                mxEvent.consume(evt);
+                const moduleCell = activeModuleCell;
+                const pt = anchorModelPoint;
+                if (!moduleCell || !pt || !hasGardenSettingsSet(moduleCell)) return;
+                try {
+                    createDefaultGardenBed(graph, moduleCell, pt.x, pt.y);
+                    hideToolbar();
+                } catch (e) {
+                    mxUtils.alert("Error creating garden bed: " + (e && e.message ? e.message : e));
+                }
+            });
 
-            mxEvent.addListener(addGroupBtn, "click", function (evt) { // CHANGE
-                mxEvent.consume(evt); // CHANGE
-                const moduleCell = activeModuleCell; // CHANGE
-                const pt = anchorModelPoint; // CHANGE
-                if (!moduleCell || !pt || !hasGardenSettingsSet(moduleCell)) return; // CHANGE
-                createEmptyTilerGroup(graph, moduleCell, pt.x, pt.y, { source: activeOverlayMode === "bed" ? "overlay-bed-add" : "overlay-module-add" }); // CHANGE
-                hideToolbar(); // CHANGE
-            }); // CHANGE
+            mxEvent.addListener(addGroupBtn, "click", function (evt) {
+                mxEvent.consume(evt);
+                const moduleCell = activeModuleCell;
+                const pt = anchorModelPoint;
+                if (!moduleCell || !pt || !hasGardenSettingsSet(moduleCell)) return;
+                createEmptyTilerGroup(graph, moduleCell, pt.x, pt.y, { source: activeOverlayMode === "bed" ? "overlay-bed-add" : "overlay-module-add" });
+                hideToolbar();
+            });
 
-            mxEvent.addListener(irrigationSourceBtn, "click", function (evt) { // NEW
-                mxEvent.consume(evt); // NEW
-                const moduleCell = activeModuleCell; // NEW
-                if (!moduleCell || !hasGardenSettingsSet(moduleCell) || gardenModuleHasIrrigationSource(moduleCell)) return; // NEW
-                openIrrigationSourceFormForModule(moduleCell); // NEW
-                hideToolbar(); // NEW
-            }); // NEW
+            mxEvent.addListener(irrigationSourceBtn, "click", function (evt) {
+                mxEvent.consume(evt);
+                const moduleCell = activeModuleCell;
+                if (!moduleCell || !hasGardenSettingsSet(moduleCell) || gardenModuleHasIrrigationSource(moduleCell)) return;
+                openIrrigationSourceFormForModule(moduleCell);
+                hideToolbar();
+            });
 
-            const host = ensureOverlayHost(); // CHANGE
-            if (host) host.appendChild(toolbar); // CHANGE
-            return toolbar; // CHANGE
-        } // CHANGE
+            const host = ensureOverlayHost();
+            if (host) host.appendChild(toolbar);
+            return toolbar;
+        }
 
-        function hideToolbar() { // CHANGE
-            if (toolbar) toolbar.style.display = "none"; // CHANGE
-        } // CHANGE
+        function hideToolbar() {
+            if (toolbar) toolbar.style.display = "none";
+        }
 
-        function isPlainPrimaryMouseEvent(evt) { // NEW
-            if (!evt) return false; // NEW
-            if ((mxEvent.isPopupTrigger && mxEvent.isPopupTrigger(evt)) || evt.button === 2) return false; // NEW
-            return !mxEvent.isControlDown(evt) && !mxEvent.isMetaDown(evt) && !mxEvent.isShiftDown(evt) && Number(evt.detail || 1) <= 1; // NEW
-        } // NEW
+        function isPlainPrimaryMouseEvent(evt) {
+            if (!evt) return false;
+            if ((mxEvent.isPopupTrigger && mxEvent.isPopupTrigger(evt)) || evt.button === 2) return false;
+            return !mxEvent.isControlDown(evt) && !mxEvent.isMetaDown(evt) && !mxEvent.isShiftDown(evt) && Number(evt.detail || 1) <= 1;
+        }
 
-        function mouseEventCell(me, evt) { // NEW
-            const cell = me && me.getCell ? me.getCell() : null; // NEW
-            if (cell || !evt || !graph.getCellAt || !graph.getPointForEvent) return cell; // NEW
-            const pt = graph.getPointForEvent(evt, false); // NEW
-            return pt ? graph.getCellAt(pt.x, pt.y) : null; // NEW
-        } // NEW
+        function mouseEventCell(me, evt) {
+            const cell = me && me.getCell ? me.getCell() : null;
+            if (cell || !evt || !graph.getCellAt || !graph.getPointForEvent) return cell;
+            const pt = graph.getPointForEvent(evt, false);
+            return pt ? graph.getCellAt(pt.x, pt.y) : null;
+        }
 
-        function selectedGardenModulePlainClickTarget(me, evt) { // NEW
-            if (!isPlainPrimaryMouseEvent(evt)) return null; // NEW
-            const selectedModule = getSingleSelectedGardenModule(); // NEW
-            if (!selectedModule) return null; // NEW
-            if (activeOverlayMode !== "module" || activeModuleCell !== selectedModule) return null; // NEW
-            return mouseEventCell(me, evt) === selectedModule ? selectedModule : null; // NEW
-        } // NEW
+        function selectedGardenModulePlainClickTarget(me, evt) {
+            if (!isPlainPrimaryMouseEvent(evt)) return null;
+            const selectedModule = getSingleSelectedGardenModule();
+            if (!selectedModule) return null;
+            if (activeOverlayMode !== "module" || activeModuleCell !== selectedModule) return null;
+            return mouseEventCell(me, evt) === selectedModule ? selectedModule : null;
+        }
 
-        function clearHiddenModuleIfTargetChanged(target) { // NEW
-            if (!manuallyHiddenModuleCell) return; // NEW
-            if (!target || target.mode !== "module" || target.moduleCell !== manuallyHiddenModuleCell) manuallyHiddenModuleCell = null; // NEW
-        } // NEW
+        function clearHiddenModuleIfTargetChanged(target) {
+            if (!manuallyHiddenModuleCell) return;
+            if (!target || target.mode !== "module" || target.moduleCell !== manuallyHiddenModuleCell) manuallyHiddenModuleCell = null;
+        }
 
-        function toggleHiddenModuleAfterSimpleClick(evt) { // NEW
-            const pending = pendingSelectedModuleToggle; // NEW
-            pendingSelectedModuleToggle = null; // NEW
-            if (!pending || !isSimpleAnchorClick(evt)) return false; // NEW
-            if (getSingleSelectedGardenModule() !== pending) return false; // NEW
-            manuallyHiddenModuleCell = manuallyHiddenModuleCell === pending ? null : pending; // NEW
-            return true; // NEW
-        } // NEW
+        function toggleHiddenModuleAfterSimpleClick(evt) {
+            const pending = pendingSelectedModuleToggle;
+            pendingSelectedModuleToggle = null;
+            if (!pending || !isSimpleAnchorClick(evt)) return false;
+            if (getSingleSelectedGardenModule() !== pending) return false;
+            manuallyHiddenModuleCell = manuallyHiddenModuleCell === pending ? null : pending;
+            return true;
+        }
 
-        function gardenModuleHasIrrigationSource(moduleCell) { // NEW
-            return collectModuleDescendants(moduleCell).some(function (cell) { // NEW
-                return getXmlAttr(cell, "irrigation_endpoint_type", "") === "source"; // NEW
-            }); // NEW
-        } // NEW
+        function gardenModuleHasIrrigationSource(moduleCell) {
+            return collectModuleDescendants(moduleCell).some(function (cell) {
+                return getXmlAttr(cell, "irrigation_endpoint_type", "") === "source";
+            });
+        }
 
-        function collectModuleDescendants(moduleCell) { // NEW
-            const graphModel = graph.getModel && graph.getModel(); // FIX
-            const out = []; // NEW
-            (function visit(parent) { // NEW
-                const count = graphModel && graphModel.getChildCount ? graphModel.getChildCount(parent) : ((parent && parent.children && parent.children.length) || 0); // FIX
-                for (let i = 0; i < count; i++) { // NEW
-                    const child = graphModel && graphModel.getChildAt ? graphModel.getChildAt(parent, i) : parent.children[i]; // FIX
-                    if (!child) continue; // NEW
-                    out.push(child); // NEW
-                    visit(child); // NEW
-                } // NEW
-            })(moduleCell); // NEW
-            return out; // NEW
-        } // NEW
+        function collectModuleDescendants(moduleCell) {
+            const graphModel = graph.getModel && graph.getModel();
+            const out = [];
+            (function visit(parent) {
+                const count = graphModel && graphModel.getChildCount ? graphModel.getChildCount(parent) : ((parent && parent.children && parent.children.length) || 0);
+                for (let i = 0; i < count; i++) {
+                    const child = graphModel && graphModel.getChildAt ? graphModel.getChildAt(parent, i) : parent.children[i];
+                    if (!child) continue;
+                    out.push(child);
+                    visit(child);
+                }
+            })(moduleCell);
+            return out;
+        }
 
-        function openIrrigationSourceFormForModule(moduleCell) { // NEW
-            if (window.TrellisIrrigationPlanner && typeof window.TrellisIrrigationPlanner.openIrrigationMode === "function") { // NEW
-                window.TrellisIrrigationPlanner.openIrrigationMode(moduleCell, { sourceForm: true, preserveViewport: true }); // NEW
-                return; // NEW
-            } // NEW
-            if (graph.setSelectionCell) graph.setSelectionCell(moduleCell); // NEW
-            const action = ui.actions && ui.actions.get && ui.actions.get("trellisIrrigationCreateSourceEndpoint"); // NEW
-            if (action && typeof action.funct === "function") action.funct(); // NEW
-        } // NEW
+        function openIrrigationSourceFormForModule(moduleCell) {
+            if (window.TrellisIrrigationPlanner && typeof window.TrellisIrrigationPlanner.openIrrigationMode === "function") {
+                window.TrellisIrrigationPlanner.openIrrigationMode(moduleCell, { sourceForm: true, preserveViewport: true });
+                return;
+            }
+            if (graph.setSelectionCell) graph.setSelectionCell(moduleCell);
+            const action = ui.actions && ui.actions.get && ui.actions.get("trellisIrrigationCreateSourceEndpoint");
+            if (action && typeof action.funct === "function") action.funct();
+        }
 
-        openGardenSettingsDialogWithOverlaySuppressed = async function (moduleCell, onClose) { // NEW
-            gardenSettingsOverlaySuppressed = true; // NEW
-            hideToolbar(); // NEW
-            let closeHandled = false; // NEW
+        openGardenSettingsDialogWithOverlaySuppressed = async function (moduleCell, onClose) {
+            gardenSettingsOverlaySuppressed = true;
+            hideToolbar();
+            let closeHandled = false;
 
-            function clearSuppressionAndNotify() { // NEW
-                if (closeHandled) return; // NEW
-                closeHandled = true; // NEW
-                gardenSettingsOverlaySuppressed = false; // NEW
-                if (typeof onClose === "function") onClose(); // NEW
-                scheduleRefresh(); // NEW
-            } // NEW
+            function clearSuppressionAndNotify() {
+                if (closeHandled) return;
+                closeHandled = true;
+                gardenSettingsOverlaySuppressed = false;
+                if (typeof onClose === "function") onClose();
+                scheduleRefresh();
+            }
 
-            try { // NEW
-                await showGardenSettingsDialog(ui, graph, moduleCell, clearSuppressionAndNotify); // NEW
-            } catch (e) { // NEW
-                clearSuppressionAndNotify(); // NEW
-                throw e; // NEW
-            } // NEW
-        }; // NEW
+            try {
+                await showGardenSettingsDialog(ui, graph, moduleCell, clearSuppressionAndNotify);
+            } catch (e) {
+                clearSuppressionAndNotify();
+                throw e;
+            }
+        };
 
-        function getSingleSelectedGardenModule() { // CHANGE
-            const cells = graph.getSelectionCells ? (graph.getSelectionCells() || []) : []; // CHANGE
-            if (cells.length !== 1) return null; // CHANGE
-            return isGardenModule(cells[0]) ? cells[0] : null; // CHANGE
-        } // CHANGE
+        function getSingleSelectedGardenModule() {
+            const cells = graph.getSelectionCells ? (graph.getSelectionCells() || []) : [];
+            if (cells.length !== 1) return null;
+            return isGardenModule(cells[0]) ? cells[0] : null;
+        }
 
-        function isIrrigationModeActiveForOverlay() { // NEW
-            const planner = graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner); // NEW
-            return !!(planner && typeof planner.isIrrigationModeActive === "function" && planner.isIrrigationModeActive()); // NEW
-        } // NEW
+        function isIrrigationModeActiveForOverlay() {
+            const planner = graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner);
+            return !!(planner && typeof planner.isIrrigationModeActive === "function" && planner.isIrrigationModeActive());
+        }
 
-        function getSingleSelectedOverlayTarget() { // CHANGE
-            const cells = graph.getSelectionCells ? (graph.getSelectionCells() || []) : []; // CHANGE
-            if (cells.length !== 1) return null; // CHANGE
-            const cell = cells[0]; // CHANGE
-            if (isGardenModule(cell)) return { mode: "module", moduleCell: cell, bedCell: null, anchorCell: cell }; // CHANGE
-            if (isGardenBed(cell)) { // CHANGE
-                const moduleCell = findGardenModuleAncestor(graph, cell); // CHANGE
-                if (moduleCell) return { mode: "bed", moduleCell: moduleCell, bedCell: cell, anchorCell: cell }; // CHANGE
-            } // CHANGE
-            return null; // CHANGE
-        } // CHANGE
+        function getSingleSelectedOverlayTarget() {
+            const cells = graph.getSelectionCells ? (graph.getSelectionCells() || []) : [];
+            if (cells.length !== 1) return null;
+            const cell = cells[0];
+            if (isGardenModule(cell)) return { mode: "module", moduleCell: cell, bedCell: null, anchorCell: cell };
+            if (isGardenBed(cell)) {
+                const moduleCell = findGardenModuleAncestor(graph, cell);
+                if (moduleCell) return { mode: "bed", moduleCell: moduleCell, bedCell: cell, anchorCell: cell };
+            }
+            return null;
+        }
 
-        function viewPointFromModelPoint(pt) { // CHANGE
-            const s = graph.view.scale || 1; // CHANGE
-            const tr = graph.view.translate || { x: 0, y: 0 }; // CHANGE
-            return { // CHANGE
-                x: ((Number(pt.x) || 0) + tr.x) * s + (graph.panDx || 0), // CHANGE
-                y: ((Number(pt.y) || 0) + tr.y) * s + (graph.panDy || 0) // CHANGE
-            }; // CHANGE
-        } // CHANGE
+        function viewPointFromModelPoint(pt) {
+            const s = graph.view.scale || 1;
+            const tr = graph.view.translate || { x: 0, y: 0 };
+            return {
+                x: ((Number(pt.x) || 0) + tr.x) * s + (graph.panDx || 0),
+                y: ((Number(pt.y) || 0) + tr.y) * s + (graph.panDy || 0)
+            };
+        }
 
-        function viewportCenterModelPoint() { // CHANGE
-            const s = graph.view.scale || 1; // CHANGE
-            const tr = graph.view.translate || { x: 0, y: 0 }; // CHANGE
-            const host = getOverlayHost(); // CHANGE
-            const visibleCenterX = (host ? host.scrollLeft || 0 : 0) + (host ? host.clientWidth || 0 : 0) / 2; // CHANGE
-            const visibleCenterY = (host ? host.scrollTop || 0 : 0) + (host ? host.clientHeight || 0 : 0) / 2; // CHANGE
-            return { // CHANGE
-                x: (visibleCenterX - (graph.panDx || 0)) / s - tr.x, // CHANGE
-                y: (visibleCenterY - (graph.panDy || 0)) / s - tr.y // CHANGE
-            }; // CHANGE
-        } // CHANGE
+        function viewportCenterModelPoint() {
+            const s = graph.view.scale || 1;
+            const tr = graph.view.translate || { x: 0, y: 0 };
+            const host = getOverlayHost();
+            const visibleCenterX = (host ? host.scrollLeft || 0 : 0) + (host ? host.clientWidth || 0 : 0) / 2;
+            const visibleCenterY = (host ? host.scrollTop || 0 : 0) + (host ? host.clientHeight || 0 : 0) / 2;
+            return {
+                x: (visibleCenterX - (graph.panDx || 0)) / s - tr.x,
+                y: (visibleCenterY - (graph.panDy || 0)) / s - tr.y
+            };
+        }
 
-        function cellCenterGraphPoint(cell) { // CHANGE
-            const model = graph.getModel(); // CHANGE
-            const geo = cell && model.getGeometry(cell); // CHANGE
-            if (!geo) return viewportCenterModelPoint(); // CHANGE
-            const parent = model.getParent(cell); // CHANGE
-            const parentGeo = parent && model.getGeometry(parent); // CHANGE
-            const parentX = parentGeo ? Number(parentGeo.x) || 0 : 0; // CHANGE
-            const parentY = parentGeo ? Number(parentGeo.y) || 0 : 0; // CHANGE
-            return { // CHANGE
-                x: parentX + (Number(geo.x) || 0) + (Number(geo.width) || 0) / 2, // CHANGE
-                y: parentY + (Number(geo.y) || 0) + (Number(geo.height) || 0) / 2 // CHANGE
-            }; // CHANGE
-        } // CHANGE
+        function cellCenterGraphPoint(cell) {
+            const model = graph.getModel();
+            const geo = cell && model.getGeometry(cell);
+            if (!geo) return viewportCenterModelPoint();
+            const parent = model.getParent(cell);
+            const parentGeo = parent && model.getGeometry(parent);
+            const parentX = parentGeo ? Number(parentGeo.x) || 0 : 0;
+            const parentY = parentGeo ? Number(parentGeo.y) || 0 : 0;
+            return {
+                x: parentX + (Number(geo.x) || 0) + (Number(geo.width) || 0) / 2,
+                y: parentY + (Number(geo.y) || 0) + (Number(geo.height) || 0) / 2
+            };
+        }
 
-        function stateContainsViewPoint(state, pt) { // CHANGE
-            if (!state || !pt) return false; // CHANGE
-            return pt.x >= state.x && pt.y >= state.y && pt.x <= state.x + state.width && pt.y <= state.y + state.height; // CHANGE
-        } // CHANGE
+        function stateContainsViewPoint(state, pt) {
+            if (!state || !pt) return false;
+            return pt.x >= state.x && pt.y >= state.y && pt.x <= state.x + state.width && pt.y <= state.y + state.height;
+        }
 
-        function chooseAnchorPoint(target) { // CHANGE
-            const now = Date.now(); // CHANGE
-            const state = target && target.anchorCell ? graph.view.getState(target.anchorCell) : null; // CHANGE
-            if (lastMouseAnchor && now - lastMouseAnchor.t <= MOUSE_ANCHOR_MAX_AGE_MS && stateContainsViewPoint(state, lastMouseAnchor.view)) { // CHANGE
-                return { x: lastMouseAnchor.model.x, y: lastMouseAnchor.model.y }; // CHANGE
-            } // CHANGE
-            if (target && target.mode === "bed") return cellCenterGraphPoint(target.bedCell); // CHANGE
-            return viewportCenterModelPoint(); // CHANGE
-        } // CHANGE
+        function chooseAnchorPoint(target) {
+            const now = Date.now();
+            const state = target && target.anchorCell ? graph.view.getState(target.anchorCell) : null;
+            if (lastMouseAnchor && now - lastMouseAnchor.t <= MOUSE_ANCHOR_MAX_AGE_MS && stateContainsViewPoint(state, lastMouseAnchor.view)) {
+                return { x: lastMouseAnchor.model.x, y: lastMouseAnchor.model.y };
+            }
+            if (target && target.mode === "bed") return cellCenterGraphPoint(target.bedCell);
+            return viewportCenterModelPoint();
+        }
 
-        function isSimpleAnchorClick(evt) { // CHANGE
-            if (!evt || !lastMouseAnchor || !lastMouseAnchor.client) return false; // CHANGE
-            const dx = mxEvent.getClientX(evt) - lastMouseAnchor.client.x; // CHANGE
-            const dy = mxEvent.getClientY(evt) - lastMouseAnchor.client.y; // CHANGE
-            return Math.sqrt(dx * dx + dy * dy) <= SIMPLE_CLICK_MAX_MOVE_PX; // CHANGE
-        } // CHANGE
+        function isSimpleAnchorClick(evt) {
+            if (!evt || !lastMouseAnchor || !lastMouseAnchor.client) return false;
+            const dx = mxEvent.getClientX(evt) - lastMouseAnchor.client.x;
+            const dy = mxEvent.getClientY(evt) - lastMouseAnchor.client.y;
+            return Math.sqrt(dx * dx + dy * dy) <= SIMPLE_CLICK_MAX_MOVE_PX;
+        }
 
-        function updateAnchorFromSimpleClick(evt) { // CHANGE
-            if (!isSimpleAnchorClick(evt)) return false; // CHANGE
-            const target = getSingleSelectedOverlayTarget(); // CHANGE
-            const state = target && target.anchorCell ? graph.view.getState(target.anchorCell) : null; // CHANGE
-            if (!target || !stateContainsViewPoint(state, lastMouseAnchor.view)) return false; // CHANGE
-            activeModuleCell = target.moduleCell; // CHANGE
-            activeBedCell = target.bedCell || null; // CHANGE
-            activeOverlayMode = target.mode; // CHANGE
-            anchorModelPoint = { x: lastMouseAnchor.model.x, y: lastMouseAnchor.model.y }; // CHANGE
-            return true; // CHANGE
-        } // CHANGE
+        function updateAnchorFromSimpleClick(evt) {
+            if (!isSimpleAnchorClick(evt)) return false;
+            const target = getSingleSelectedOverlayTarget();
+            const state = target && target.anchorCell ? graph.view.getState(target.anchorCell) : null;
+            if (!target || !stateContainsViewPoint(state, lastMouseAnchor.view)) return false;
+            activeModuleCell = target.moduleCell;
+            activeBedCell = target.bedCell || null;
+            activeOverlayMode = target.mode;
+            anchorModelPoint = { x: lastMouseAnchor.model.x, y: lastMouseAnchor.model.y };
+            return true;
+        }
 
-        function positionToolbar() { // CHANGE
-            if (gardenSettingsOverlaySuppressed) { hideToolbar(); return; } // NEW
-            if (isIrrigationModeActiveForOverlay()) { hideToolbar(); return; } // NEW
-            if (!toolbar || !activeModuleCell || !anchorModelPoint) return; // CHANGE
-            const host = ensureOverlayHost(); // CHANGE
-            if (host && toolbar.parentNode !== host) host.appendChild(toolbar); // CHANGE
-            const viewPt = viewPointFromModelPoint(anchorModelPoint); // CHANGE
-            toolbar.style.display = "flex"; // CHANGE
-            toolbar.style.left = Math.round(viewPt.x + OFFSET_PX) + "px"; // CHANGE
-            toolbar.style.top = Math.round(viewPt.y + OFFSET_PX) + "px"; // CHANGE
-        } // CHANGE
+        function positionToolbar() {
+            if (gardenSettingsOverlaySuppressed) { hideToolbar(); return; }
+            if (isIrrigationModeActiveForOverlay()) { hideToolbar(); return; }
+            if (!toolbar || !activeModuleCell || !anchorModelPoint) return;
+            const host = ensureOverlayHost();
+            if (host && toolbar.parentNode !== host) host.appendChild(toolbar);
+            const viewPt = viewPointFromModelPoint(anchorModelPoint);
+            toolbar.style.display = "flex";
+            toolbar.style.left = Math.round(viewPt.x + OFFSET_PX) + "px";
+            toolbar.style.top = Math.round(viewPt.y + OFFSET_PX) + "px";
+        }
 
-        function syncToolbarState() { // CHANGE
-            const moduleCell = activeModuleCell; // CHANGE
-            if (!toolbar || !labelInputWrap || !settingsBtn || !addBedBtn || !addGroupBtn || !irrigationSourceBtn || !moduleCell) return; // CHANGE
-            const hasSettings = hasGardenSettingsSet(moduleCell); // CHANGE
-            const bedMode = activeOverlayMode === "bed"; // CHANGE
-            const showIrrigationSource = !bedMode && !gardenModuleHasIrrigationSource(moduleCell); // NEW
-            labelInputWrap.style.display = bedMode ? "none" : "flex"; // NEW
-            if (!bedMode) renderGardenModuleLabelInput(moduleCell); // NEW
-            settingsBtn.style.display = bedMode ? "none" : ""; // CHANGE
-            addBedBtn.style.display = bedMode ? "none" : ""; // CHANGE
-            addGroupBtn.style.display = ""; // CHANGE
-            irrigationSourceBtn.style.display = showIrrigationSource ? "" : "none"; // NEW
-            settingsBtn.textContent = hasSettings ? "Edit Garden Settings" : "Set Garden Settings"; // CHANGE
-            addBedBtn.disabled = !hasSettings; // CHANGE
-            addBedBtn.title = hasSettings ? "Add the default-sized garden bed at the selected location" : "Set garden settings before adding beds"; // CHANGE
-            addBedBtn.style.opacity = hasSettings ? "1" : "0.55"; // CHANGE
-            addBedBtn.style.cursor = hasSettings ? "pointer" : "default"; // CHANGE
-            addGroupBtn.disabled = !hasSettings; // CHANGE
-            addGroupBtn.title = hasSettings ? (bedMode ? "Add a new plant group fitted to this garden bed" : "Add a new plant group at the selected location") : "Set garden settings before adding plants"; // CHANGE
-            addGroupBtn.style.opacity = hasSettings ? "1" : "0.55"; // CHANGE
-            addGroupBtn.style.cursor = hasSettings ? "pointer" : "default"; // CHANGE
-            irrigationSourceBtn.disabled = !hasSettings; // NEW
-            irrigationSourceBtn.title = hasSettings ? "Enter irrigation design mode and create the first irrigation source" : "Set garden settings before creating an irrigation source"; // NEW
-            irrigationSourceBtn.style.opacity = hasSettings ? "1" : "0.55"; // NEW
-            irrigationSourceBtn.style.cursor = hasSettings ? "pointer" : "default"; // NEW
-        } // CHANGE
+        function syncToolbarState() {
+            const moduleCell = activeModuleCell;
+            if (!toolbar || !labelInputWrap || !settingsBtn || !addBedBtn || !addGroupBtn || !irrigationSourceBtn || !moduleCell) return;
+            const hasSettings = hasGardenSettingsSet(moduleCell);
+            const bedMode = activeOverlayMode === "bed";
+            const showIrrigationSource = !bedMode && !gardenModuleHasIrrigationSource(moduleCell);
+            labelInputWrap.style.display = bedMode ? "none" : "flex";
+            if (!bedMode) renderGardenModuleLabelInput(moduleCell);
+            settingsBtn.style.display = bedMode ? "none" : "";
+            addBedBtn.style.display = bedMode ? "none" : "";
+            addGroupBtn.style.display = "";
+            irrigationSourceBtn.style.display = showIrrigationSource ? "" : "none";
+            settingsBtn.textContent = hasSettings ? "Edit Garden Settings" : "Set Garden Settings";
+            addBedBtn.disabled = !hasSettings;
+            addBedBtn.title = hasSettings ? "Add the default-sized garden bed at the selected location" : "Set garden settings before adding beds";
+            addBedBtn.style.opacity = hasSettings ? "1" : "0.55";
+            addBedBtn.style.cursor = hasSettings ? "pointer" : "default";
+            addGroupBtn.disabled = !hasSettings;
+            addGroupBtn.title = hasSettings ? (bedMode ? "Add a new plant group fitted to this garden bed" : "Add a new plant group at the selected location") : "Set garden settings before adding plants";
+            addGroupBtn.style.opacity = hasSettings ? "1" : "0.55";
+            addGroupBtn.style.cursor = hasSettings ? "pointer" : "default";
+            irrigationSourceBtn.disabled = !hasSettings;
+            irrigationSourceBtn.title = hasSettings ? "Enter irrigation design mode and create the first irrigation source" : "Set garden settings before creating an irrigation source";
+            irrigationSourceBtn.style.opacity = hasSettings ? "1" : "0.55";
+            irrigationSourceBtn.style.cursor = hasSettings ? "pointer" : "default";
+        }
 
-        function refreshForSelection() { // CHANGE
-            refreshTimer = null; // CHANGE
-            if (gardenSettingsOverlaySuppressed) { // NEW
-                hideToolbar(); // NEW
-                return; // NEW
-            } // NEW
-            if (isIrrigationModeActiveForOverlay()) { // NEW
-                hideToolbar(); // NEW
-                return; // NEW
-            } // NEW
-            const target = getSingleSelectedOverlayTarget(); // CHANGE
-            clearHiddenModuleIfTargetChanged(target); // NEW
-            if (!target || gestureHidden) { // CHANGE
-                activeModuleCell = target ? target.moduleCell : null; // CHANGE
-                activeBedCell = target ? target.bedCell : null; // CHANGE
-                activeOverlayMode = target ? target.mode : ""; // CHANGE
-                if (!target) anchorModelPoint = null; // CHANGE
-                hideToolbar(); // CHANGE
-                return; // CHANGE
-            } // CHANGE
-            if (activeModuleCell !== target.moduleCell || activeBedCell !== target.bedCell || activeOverlayMode !== target.mode || !anchorModelPoint) { // CHANGE
-                anchorModelPoint = chooseAnchorPoint(target); // CHANGE
-            } // CHANGE
-            activeModuleCell = target.moduleCell; // CHANGE
-            activeBedCell = target.bedCell || null; // CHANGE
-            activeOverlayMode = target.mode; // CHANGE
-            if (target.mode === "module" && target.moduleCell === manuallyHiddenModuleCell) { hideToolbar(); return; } // NEW
-            ensureToolbar(); // CHANGE
-            syncToolbarState(); // CHANGE
-            positionToolbar(); // CHANGE
-        } // CHANGE
+        function refreshForSelection() {
+            refreshTimer = null;
+            if (gardenSettingsOverlaySuppressed) {
+                hideToolbar();
+                return;
+            }
+            if (isIrrigationModeActiveForOverlay()) {
+                hideToolbar();
+                return;
+            }
+            const target = getSingleSelectedOverlayTarget();
+            clearHiddenModuleIfTargetChanged(target);
+            if (!target || gestureHidden) {
+                activeModuleCell = target ? target.moduleCell : null;
+                activeBedCell = target ? target.bedCell : null;
+                activeOverlayMode = target ? target.mode : "";
+                if (!target) anchorModelPoint = null;
+                hideToolbar();
+                return;
+            }
+            if (activeModuleCell !== target.moduleCell || activeBedCell !== target.bedCell || activeOverlayMode !== target.mode || !anchorModelPoint) {
+                anchorModelPoint = chooseAnchorPoint(target);
+            }
+            activeModuleCell = target.moduleCell;
+            activeBedCell = target.bedCell || null;
+            activeOverlayMode = target.mode;
+            if (target.mode === "module" && target.moduleCell === manuallyHiddenModuleCell) { hideToolbar(); return; }
+            ensureToolbar();
+            syncToolbarState();
+            positionToolbar();
+        }
 
-        function scheduleRefresh() { // CHANGE
-            if (refreshTimer != null) clearTimeout(refreshTimer); // CHANGE
-            refreshTimer = setTimeout(refreshForSelection, 0); // CHANGE
-        } // CHANGE
+        function scheduleRefresh() {
+            if (refreshTimer != null) clearTimeout(refreshTimer);
+            refreshTimer = setTimeout(refreshForSelection, 0);
+        }
 
-        graph.__plantTilerRefreshGardenModuleOverlay = scheduleRefresh; // CHANGE
+        graph.__plantTilerRefreshGardenModuleOverlay = scheduleRefresh;
 
-        graph.addMouseListener({ // CHANGE
-            mouseDown: function (_sender, me) { // CHANGE
-                const evt = me && me.getEvent ? me.getEvent() : null; // CHANGE
-                if (evt && toolbar && toolbar.contains(mxEvent.getSource(evt))) return; // CHANGE
-                pendingSelectedModuleToggle = selectedGardenModulePlainClickTarget(me, evt); // NEW
-                if (evt) { // CHANGE
-                    const modelPt = graph.getPointForEvent(evt, false); // CHANGE
-                    lastMouseAnchor = { // CHANGE
-                        model: { x: modelPt.x, y: modelPt.y }, // CHANGE
-                        view: { x: me.getGraphX(), y: me.getGraphY() }, // CHANGE
-                        client: { x: mxEvent.getClientX(evt), y: mxEvent.getClientY(evt) }, // CHANGE
-                        t: Date.now() // CHANGE
-                    }; // CHANGE
-                } // CHANGE
-                gestureHidden = true; // CHANGE
-                hideToolbar(); // CHANGE
-            }, // CHANGE
-            mouseMove: function () { }, // CHANGE
-            mouseUp: function (_sender, me) { // CHANGE
-                const evt = me && me.getEvent ? me.getEvent() : null; // CHANGE
-                gestureHidden = false; // CHANGE
-                updateAnchorFromSimpleClick(evt); // CHANGE
-                toggleHiddenModuleAfterSimpleClick(evt); // NEW
-                scheduleRefresh(); // CHANGE
-            } // CHANGE
-        }); // CHANGE
+        graph.addMouseListener({
+            mouseDown: function (_sender, me) {
+                const evt = me && me.getEvent ? me.getEvent() : null;
+                if (evt && toolbar && toolbar.contains(mxEvent.getSource(evt))) return;
+                pendingSelectedModuleToggle = selectedGardenModulePlainClickTarget(me, evt);
+                if (evt) {
+                    const modelPt = graph.getPointForEvent(evt, false);
+                    lastMouseAnchor = {
+                        model: { x: modelPt.x, y: modelPt.y },
+                        view: { x: me.getGraphX(), y: me.getGraphY() },
+                        client: { x: mxEvent.getClientX(evt), y: mxEvent.getClientY(evt) },
+                        t: Date.now()
+                    };
+                }
+                gestureHidden = true;
+                hideToolbar();
+            },
+            mouseMove: function () { },
+            mouseUp: function (_sender, me) {
+                const evt = me && me.getEvent ? me.getEvent() : null;
+                gestureHidden = false;
+                updateAnchorFromSimpleClick(evt);
+                toggleHiddenModuleAfterSimpleClick(evt);
+                scheduleRefresh();
+            }
+        });
 
-        graph.getSelectionModel().addListener(mxEvent.CHANGE, scheduleRefresh); // CHANGE
-        graph.addListener(mxEvent.CELLS_MOVED, scheduleRefresh); // CHANGE
-        graph.addListener(mxEvent.CELLS_RESIZED, scheduleRefresh); // CHANGE
-        graph.getView().addListener(mxEvent.SCALE, scheduleRefresh); // CHANGE
-        graph.getView().addListener(mxEvent.TRANSLATE, scheduleRefresh); // CHANGE
-        graph.getView().addListener(mxEvent.SCALE_AND_TRANSLATE, scheduleRefresh); // CHANGE
-        graph.getView().addListener(mxEvent.REPAINT, function () { if (!gardenSettingsOverlaySuppressed && toolbar && toolbar.style.display !== "none") positionToolbar(); }); // CHANGE
-        graph.getModel().addListener(mxEvent.UNDO, scheduleRefresh); // CHANGE
-        graph.getModel().addListener(mxEvent.REDO, scheduleRefresh); // CHANGE
-        mxEvent.addListener(window, "resize", scheduleRefresh); // CHANGE
-        mxEvent.addListener(window, "trellisIrrigationModeChanged", scheduleRefresh); // NEW
-        setTimeout(scheduleRefresh, 0); // CHANGE
-    } // CHANGE
+        graph.getSelectionModel().addListener(mxEvent.CHANGE, scheduleRefresh);
+        graph.addListener(mxEvent.CELLS_MOVED, scheduleRefresh);
+        graph.addListener(mxEvent.CELLS_RESIZED, scheduleRefresh);
+        graph.getView().addListener(mxEvent.SCALE, scheduleRefresh);
+        graph.getView().addListener(mxEvent.TRANSLATE, scheduleRefresh);
+        graph.getView().addListener(mxEvent.SCALE_AND_TRANSLATE, scheduleRefresh);
+        graph.getView().addListener(mxEvent.REPAINT, function () { if (!gardenSettingsOverlaySuppressed && toolbar && toolbar.style.display !== "none") positionToolbar(); });
+        graph.getModel().addListener(mxEvent.UNDO, scheduleRefresh);
+        graph.getModel().addListener(mxEvent.REDO, scheduleRefresh);
+        mxEvent.addListener(window, "resize", scheduleRefresh);
+        mxEvent.addListener(window, "trellisIrrigationModeChanged", scheduleRefresh);
+        setTimeout(scheduleRefresh, 0);
+    }
 
 
     // Listen for garden-module settings requests emitted by the module plugin               
@@ -2623,11 +2623,11 @@ Draw.loadPlugin(function (ui) {
             setTimeout(() => {
                 // Re-check in case settings were set during the delay                         
                 if (hasGardenSettingsSet(moduleCell)) return;
-                if (openGardenSettingsDialogWithOverlaySuppressed) { // NEW
-                    openGardenSettingsDialogWithOverlaySuppressed(moduleCell); // NEW
-                } else { // NEW
-                    showGardenSettingsDialog(ui, graph, moduleCell, graph.__plantTilerRefreshGardenModuleOverlay); // NEW
-                } // NEW
+                if (openGardenSettingsDialogWithOverlaySuppressed) {
+                    openGardenSettingsDialogWithOverlaySuppressed(moduleCell);
+                } else {
+                    showGardenSettingsDialog(ui, graph, moduleCell, graph.__plantTilerRefreshGardenModuleOverlay);
+                }
             }, 0);
         });
     }
@@ -2654,11 +2654,11 @@ Draw.loadPlugin(function (ui) {
     function isGardenModule(cell) {
         return (
             isModule(cell) &&
-            getXmlAttr(cell, "garden_module", "") === "1" // CHANGE
+            getXmlAttr(cell, "garden_module", "") === "1"
         );
     }
 
-    installGardenModuleOverlay(); // CHANGE
+    installGardenModuleOverlay();
 
     function findModuleAncestor(graph, cell) {
         const m = graph.getModel();
@@ -2671,12 +2671,12 @@ Draw.loadPlugin(function (ui) {
     }
 
     // -------------------- Garden Bed helpers --------------------
-    function isGardenBed(cell) { // CHANGE
-        return !!cell && cell.getAttribute && ( // CHANGE
-            cell.getAttribute("garden_bed") === "1" || // CHANGE
-            cell.getAttribute("gardenBed") === "1" || // CHANGE
-            cell.getAttribute("is_garden_bed") === "1" // CHANGE
-        ); // CHANGE
+    function isGardenBed(cell) {
+        return !!cell && cell.getAttribute && (
+            cell.getAttribute("garden_bed") === "1" ||
+            cell.getAttribute("gardenBed") === "1" ||
+            cell.getAttribute("is_garden_bed") === "1"
+        );
     }
 
     function findGardenModuleAncestor(graph, cell) {
@@ -2697,19 +2697,19 @@ Draw.loadPlugin(function (ui) {
     }
 
     function plantCenterInGraphCoords(graph, groupCell, plantCell) {
-        // Assumption: group is a direct child of the garden module (as your system intends). 
+        // Assumption: group is a direct child of the garden module (as your system intends).
         const moduleCell = findGardenModuleAncestor(graph, groupCell);
         if (!moduleCell) return null;
 
         const mg = moduleCell.getGeometry && moduleCell.getGeometry();
         const gg = groupCell.getGeometry && groupCell.getGeometry();
-        const center = childVisualCenterLocal(plantCell); // NEW
-        if (!mg || !gg || !center) return null; // CHANGE
+        const center = childVisualCenterLocal(plantCell);
+        if (!mg || !gg || !center) return null;
 
         return {
             moduleCell,
-            x: (mg.x + gg.x + center.x), // CHANGE
-            y: (mg.y + gg.y + center.y), // CHANGE
+            x: (mg.x + gg.x + center.x),
+            y: (mg.y + gg.y + center.y),
         };
     }
 
@@ -2722,7 +2722,7 @@ Draw.loadPlugin(function (ui) {
         const circles = kids.filter(k => isPlantCircle(k));
         if (!circles.length) return { removed: 0, skipped: true, reason: "no_circles" };
 
-        // Map each circle -> bed (shape hit-test) 
+        // Map each circle -> bed (shape hit-test)
         const bedIds = new Set();
         const circleBed = new Map();
 
@@ -2735,14 +2735,14 @@ Draw.loadPlugin(function (ui) {
             if (bed && bed.id) bedIds.add(bed.id);
         }
 
-        // Ignore tiler groups that are over multiple beds (or no bed). 
+        // Ignore tiler groups that are over multiple beds (or no bed).
         if (bedIds.size !== 1) {
             return { removed: 0, skipped: true, reason: bedIds.size === 0 ? "no_bed" : "multiple_beds" };
         }
 
         const bedId = Array.from(bedIds)[0];
 
-        // Remove circles not in the single bed (including null). 
+        // Remove circles not in the single bed (including null).
         const toRemove = [];
         const disabledSet = readDisabledSet(groupCell);
         let disabledAdded = 0;
@@ -2769,7 +2769,7 @@ Draw.loadPlugin(function (ui) {
             if (disabledAdded) writeDisabledSet(model, groupCell, disabledSet);
             graph.removeCells(toRemove);
 
-            // Recompute counts/yield to keep ATTR_PLANT_COUNT* consistent. 
+            // Recompute counts/yield to keep ATTR_PLANT_COUNT* consistent.
             const abbr = groupCell.getAttribute("plant_abbr") || "?";
             const sx = toPx(Number(groupCell.getAttribute("spacing_x_cm") || groupCell.getAttribute("spacing_cm") || "30"));
             const sy = toPx(Number(groupCell.getAttribute("spacing_y_cm") || groupCell.getAttribute("spacing_cm") || "30"));
@@ -2786,892 +2786,892 @@ Draw.loadPlugin(function (ui) {
         return { removed: toRemove.length, skipped: false, bedId };
     }
 
-    // -------------------- Bed-aware model-space auto-fit -------------------- // MOVED
-    let bedFitInProgress = false; // MOVED
-    let bedFitTxnSeq = 0; // CHANGE
-    let bedFitSuppressResizeUntil = 0; // CHANGE
-    let bedFitSuppressResizeIds = new Set(); // CHANGE
+    // -------------------- Bed-aware model-space auto-fit --------------------
+    let bedFitInProgress = false;
+    let bedFitTxnSeq = 0;
+    let bedFitSuppressResizeUntil = 0;
+    let bedFitSuppressResizeIds = new Set();
 
-    function nearlySameNumber(a, b) { // MOVED
-        return Math.abs((Number(a) || 0) - (Number(b) || 0)) < 0.001; // MOVED
-    } // MOVED
+    function nearlySameNumber(a, b) {
+        return Math.abs((Number(a) || 0) - (Number(b) || 0)) < 0.001;
+    }
 
-    function bedFitRound(value) { // CHANGE
-        const n = Number(value); // CHANGE
-        return Number.isFinite(n) ? Math.round(n * 1000) / 1000 : value; // CHANGE
-    } // CHANGE
+    function bedFitRound(value) {
+        const n = Number(value);
+        return Number.isFinite(n) ? Math.round(n * 1000) / 1000 : value;
+    }
 
-    function bedFitRectSnapshot(rect) { // CHANGE
-        if (!rect) return null; // CHANGE
-        return { // CHANGE
-            x: bedFitRound(rect.x), // CHANGE
-            y: bedFitRound(rect.y), // CHANGE
-            w: bedFitRound(rect.w != null ? rect.w : rect.width), // CHANGE
-            h: bedFitRound(rect.h != null ? rect.h : rect.height) // CHANGE
-        }; // CHANGE
-    } // CHANGE
+    function bedFitRectSnapshot(rect) {
+        if (!rect) return null;
+        return {
+            x: bedFitRound(rect.x),
+            y: bedFitRound(rect.y),
+            w: bedFitRound(rect.w != null ? rect.w : rect.width),
+            h: bedFitRound(rect.h != null ? rect.h : rect.height)
+        };
+    }
 
-    function bedFitGeometrySnapshot(cell) { // CHANGE
-        const g = cell && cell.getGeometry ? cell.getGeometry() : null; // CHANGE
-        return g ? bedFitRectSnapshot(g) : null; // CHANGE
-    } // CHANGE
+    function bedFitGeometrySnapshot(cell) {
+        const g = cell && cell.getGeometry ? cell.getGeometry() : null;
+        return g ? bedFitRectSnapshot(g) : null;
+    }
 
-    function bedFitCellId(cell) { // CHANGE
-        return cell && cell.id ? cell.id : null; // CHANGE
-    } // CHANGE
+    function bedFitCellId(cell) {
+        return cell && cell.id ? cell.id : null;
+    }
 
-    function bedFitTileSample(groupCell, limit) { // CHANGE
-        const model = graph.getModel(); // CHANGE
-        const out = []; // CHANGE
-        const n = model.getChildCount(groupCell); // CHANGE
-        const max = Math.max(1, Number(limit) || 6); // CHANGE
-        for (let i = 0; i < n && out.length < max; i++) { // CHANGE
-            const child = model.getChildAt(groupCell, i); // CHANGE
-            if (!model.isVertex(child) || !isPlantCircle(child)) continue; // CHANGE
-            const visualCenter = childVisualCenterLocal(child); // CHANGE
-            const unrotatedCenter = childCenterInUnrotatedGroupSpace(groupCell, child); // CHANGE
-            out.push({ // CHANGE
-                id: bedFitCellId(child), // CHANGE
-                r: child.getAttribute("tile_r"), // CHANGE
-                c: child.getAttribute("tile_c"), // CHANGE
-                auto: child.getAttribute("auto"), // CHANGE
-                dirty: child.getAttribute("dirty"), // CHANGE
-                geo: bedFitGeometrySnapshot(child), // CHANGE
-                visualCx: visualCenter ? bedFitRound(visualCenter.x) : null, // CHANGE
-                visualCy: visualCenter ? bedFitRound(visualCenter.y) : null, // CHANGE
-                unrotatedCx: unrotatedCenter ? bedFitRound(unrotatedCenter.x) : null, // CHANGE
-                unrotatedCy: unrotatedCenter ? bedFitRound(unrotatedCenter.y) : null // CHANGE
-            }); // CHANGE
-        } // CHANGE
-        return out; // CHANGE
-    } // CHANGE
+    function bedFitTileSample(groupCell, limit) {
+        const model = graph.getModel();
+        const out = [];
+        const n = model.getChildCount(groupCell);
+        const max = Math.max(1, Number(limit) || 6);
+        for (let i = 0; i < n && out.length < max; i++) {
+            const child = model.getChildAt(groupCell, i);
+            if (!model.isVertex(child) || !isPlantCircle(child)) continue;
+            const visualCenter = childVisualCenterLocal(child);
+            const unrotatedCenter = childCenterInUnrotatedGroupSpace(groupCell, child);
+            out.push({
+                id: bedFitCellId(child),
+                r: child.getAttribute("tile_r"),
+                c: child.getAttribute("tile_c"),
+                auto: child.getAttribute("auto"),
+                dirty: child.getAttribute("dirty"),
+                geo: bedFitGeometrySnapshot(child),
+                visualCx: visualCenter ? bedFitRound(visualCenter.x) : null,
+                visualCy: visualCenter ? bedFitRound(visualCenter.y) : null,
+                unrotatedCx: unrotatedCenter ? bedFitRound(unrotatedCenter.x) : null,
+                unrotatedCy: unrotatedCenter ? bedFitRound(unrotatedCenter.y) : null
+            });
+        }
+        return out;
+    }
 
-    function markBedFitResizeSuppression(items) { // CHANGE
-        bedFitSuppressResizeIds = new Set(); // CHANGE
-        for (const item of (items || [])) { // CHANGE
-            if (item && item.tg && item.tg.id) bedFitSuppressResizeIds.add(item.tg.id); // CHANGE
-            else if (item && item.assembly && item.assembly.id) bedFitSuppressResizeIds.add(item.assembly.id); // NEW
-        } // CHANGE
-        bedFitSuppressResizeUntil = bedFitSuppressResizeIds.size ? Date.now() + BED_FIT_RESIZE_SUPPRESS_MS : 0; // CHANGE
-    } // CHANGE
+    function markBedFitResizeSuppression(items) {
+        bedFitSuppressResizeIds = new Set();
+        for (const item of (items || [])) {
+            if (item && item.tg && item.tg.id) bedFitSuppressResizeIds.add(item.tg.id);
+            else if (item && item.assembly && item.assembly.id) bedFitSuppressResizeIds.add(item.assembly.id);
+        }
+        bedFitSuppressResizeUntil = bedFitSuppressResizeIds.size ? Date.now() + BED_FIT_RESIZE_SUPPRESS_MS : 0;
+    }
 
-    function bedFitAxesForGroup(groupCell) { // NEW
-        return { // NEW
-            fitWidth: !!(groupCell && groupCell.getAttribute && groupCell.getAttribute(BED_FIT_WIDTH_ATTR) === "1"), // NEW
-            fitHeight: !!(groupCell && groupCell.getAttribute && groupCell.getAttribute(BED_FIT_HEIGHT_ATTR) === "1") // NEW
-        }; // NEW
-    } // NEW
+    function bedFitAxesForGroup(groupCell) {
+        return {
+            fitWidth: !!(groupCell && groupCell.getAttribute && groupCell.getAttribute(BED_FIT_WIDTH_ATTR) === "1"),
+            fitHeight: !!(groupCell && groupCell.getAttribute && groupCell.getAttribute(BED_FIT_HEIGHT_ATTR) === "1")
+        };
+    }
 
-    function writeBedFitAxesNoTxn(model, groupCell, fitWidth, fitHeight) { // NEW
-        if (!model || !groupCell || !(isTilerGroup(groupCell) || isIrrigationBedAssembly(groupCell))) return; // CHANGE
-        setCellAttrsNoTxn(model, groupCell, { // NEW
-            [BED_FIT_WIDTH_ATTR]: fitWidth ? "1" : "0", // NEW
-            [BED_FIT_HEIGHT_ATTR]: fitHeight ? "1" : "0" // NEW
-        }); // NEW
-    } // NEW
+    function writeBedFitAxesNoTxn(model, groupCell, fitWidth, fitHeight) {
+        if (!model || !groupCell || !(isTilerGroup(groupCell) || isIrrigationBedAssembly(groupCell))) return;
+        setCellAttrsNoTxn(model, groupCell, {
+            [BED_FIT_WIDTH_ATTR]: fitWidth ? "1" : "0",
+            [BED_FIT_HEIGHT_ATTR]: fitHeight ? "1" : "0"
+        });
+    }
 
-    function shouldSuppressBedFitResize(source, groups) { // CHANGE
-        if (source !== "cells-resized" || !bedFitSuppressResizeIds.size) return false; // CHANGE
-        if (Date.now() > bedFitSuppressResizeUntil) { // CHANGE
-            bedFitSuppressResizeIds.clear(); // CHANGE
-            bedFitSuppressResizeUntil = 0; // CHANGE
-            return false; // CHANGE
-        } // CHANGE
-        return (groups || []).some(group => group && group.id && bedFitSuppressResizeIds.has(group.id)); // CHANGE
-    } // CHANGE
+    function shouldSuppressBedFitResize(source, groups) {
+        if (source !== "cells-resized" || !bedFitSuppressResizeIds.size) return false;
+        if (Date.now() > bedFitSuppressResizeUntil) {
+            bedFitSuppressResizeIds.clear();
+            bedFitSuppressResizeUntil = 0;
+            return false;
+        }
+        return (groups || []).some(group => group && group.id && bedFitSuppressResizeIds.has(group.id));
+    }
 
-    function getModelRect(cell) { // MOVED
-        const model = graph.getModel(); // MOVED
-        const g = cell ? model.getGeometry(cell) : null; // MOVED
-        if (!g) return null; // MOVED
-        return { x: Number(g.x) || 0, y: Number(g.y) || 0, w: Number(g.width) || 0, h: Number(g.height) || 0 }; // MOVED
-    } // MOVED
+    function getModelRect(cell) {
+        const model = graph.getModel();
+        const g = cell ? model.getGeometry(cell) : null;
+        if (!g) return null;
+        return { x: Number(g.x) || 0, y: Number(g.y) || 0, w: Number(g.width) || 0, h: Number(g.height) || 0 };
+    }
 
-    function rectCenterModel(rect) { // MOVED
-        return rect ? { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 } : null; // MOVED
-    } // MOVED
+    function rectCenterModel(rect) {
+        return rect ? { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 } : null;
+    }
 
-    function rectAreaModel(rect) { // MOVED
-        return rect ? Math.max(0, rect.w) * Math.max(0, rect.h) : 0; // MOVED
-    } // MOVED
+    function rectAreaModel(rect) {
+        return rect ? Math.max(0, rect.w) * Math.max(0, rect.h) : 0;
+    }
 
-    function rotatedRectForModelRect(cell, rect) { // NEW
-        if (!cell || !rect || rect.w <= 0 || rect.h <= 0) return null; // NEW
-        const center = rectCenterModel(rect); // NEW
-        const angleDeg = getTilerRotationDeg(cell); // NEW
-        return { x: rect.x, y: rect.y, w: rect.w, h: rect.h, cx: center.x, cy: center.y, center, angleDeg, angleRad: toRad(angleDeg) }; // NEW
-    } // NEW
+    function rotatedRectForModelRect(cell, rect) {
+        if (!cell || !rect || rect.w <= 0 || rect.h <= 0) return null;
+        const center = rectCenterModel(rect);
+        const angleDeg = getTilerRotationDeg(cell);
+        return { x: rect.x, y: rect.y, w: rect.w, h: rect.h, cx: center.x, cy: center.y, center, angleDeg, angleRad: toRad(angleDeg) };
+    }
 
-    function rotateModelPoint(point, center, angleRad) { // MOVED
-        const dx = point.x - center.x; // MOVED
-        const dy = point.y - center.y; // MOVED
-        const cos = Math.cos(angleRad); // MOVED
-        const sin = Math.sin(angleRad); // MOVED
-        return { x: center.x + dx * cos - dy * sin, y: center.y + dx * sin + dy * cos }; // MOVED
-    } // MOVED
+    function rotateModelPoint(point, center, angleRad) {
+        const dx = point.x - center.x;
+        const dy = point.y - center.y;
+        const cos = Math.cos(angleRad);
+        const sin = Math.sin(angleRad);
+        return { x: center.x + dx * cos - dy * sin, y: center.y + dx * sin + dy * cos };
+    }
 
-    function getRotatedRectModel(cell) { // MOVED
-        const rect = getModelRect(cell); // MOVED
-        return rotatedRectForModelRect(cell, rect); // CHANGE
-    } // MOVED
+    function getRotatedRectModel(cell) {
+        const rect = getModelRect(cell);
+        return rotatedRectForModelRect(cell, rect);
+    }
 
-    function pointInRotatedRectModel(point, rotatedRect) { // MOVED
-        if (!point || !rotatedRect) return false; // MOVED
-        const center = rotatedRect.center || { x: rotatedRect.cx, y: rotatedRect.cy }; // MOVED
-        const local = rotateModelPoint(point, center, -rotatedRect.angleRad); // MOVED
-        return local.x >= rotatedRect.x - ROTATION_EPS_DEG && // MOVED
-            local.x <= rotatedRect.x + rotatedRect.w + ROTATION_EPS_DEG && // MOVED
-            local.y >= rotatedRect.y - ROTATION_EPS_DEG && // MOVED
-            local.y <= rotatedRect.y + rotatedRect.h + ROTATION_EPS_DEG; // MOVED
-    } // MOVED
+    function pointInRotatedRectModel(point, rotatedRect) {
+        if (!point || !rotatedRect) return false;
+        const center = rotatedRect.center || { x: rotatedRect.cx, y: rotatedRect.cy };
+        const local = rotateModelPoint(point, center, -rotatedRect.angleRad);
+        return local.x >= rotatedRect.x - ROTATION_EPS_DEG &&
+            local.x <= rotatedRect.x + rotatedRect.w + ROTATION_EPS_DEG &&
+            local.y >= rotatedRect.y - ROTATION_EPS_DEG &&
+            local.y <= rotatedRect.y + rotatedRect.h + ROTATION_EPS_DEG;
+    }
 
-    function findSmallestContainingBedModel(parent, point) { // MOVED
-        if (!parent || !point) return null; // MOVED
-        const beds = (graph.getChildVertices(parent) || []).filter(isGardenBed); // MOVED
-        let chosen = null; // MOVED
-        let chosenArea = Infinity; // MOVED
-        for (const bed of beds) { // MOVED
-            const rect = getRotatedRectModel(bed); // MOVED
-            if (!rect || !pointInRotatedRectModel(point, rect)) continue; // MOVED
-            const area = rectAreaModel(rect); // MOVED
-            if (area > 0 && area < chosenArea) { // MOVED
-                chosen = bed; // MOVED
-                chosenArea = area; // MOVED
-            } // MOVED
-        } // MOVED
-        return chosen; // MOVED
-    } // MOVED
+    function findSmallestContainingBedModel(parent, point) {
+        if (!parent || !point) return null;
+        const beds = (graph.getChildVertices(parent) || []).filter(isGardenBed);
+        let chosen = null;
+        let chosenArea = Infinity;
+        for (const bed of beds) {
+            const rect = getRotatedRectModel(bed);
+            if (!rect || !pointInRotatedRectModel(point, rect)) continue;
+            const area = rectAreaModel(rect);
+            if (area > 0 && area < chosenArea) {
+                chosen = bed;
+                chosenArea = area;
+            }
+        }
+        return chosen;
+    }
 
-    function findBedAssemblyAncestor(cell) { // NEW
-        let cur = cell; // NEW
-        while (cur) { // NEW
-            if (isIrrigationBedAssembly(cur)) return cur; // NEW
-            cur = graph.getModel().getParent(cur); // NEW
-        } // NEW
-        return null; // NEW
-    } // NEW
+    function findBedAssemblyAncestor(cell) {
+        let cur = cell;
+        while (cur) {
+            if (isIrrigationBedAssembly(cur)) return cur;
+            cur = graph.getModel().getParent(cur);
+        }
+        return null;
+    }
 
-    function getBedAssembliesFromEventCells(cells) { // NEW
-        const out = new Map(); // NEW
-        const moved = (cells || []).filter(Boolean); // NEW
-        for (const cell of moved) { // NEW
-            const assembly = isIrrigationBedAssembly(cell) ? cell : findBedAssemblyAncestor(cell); // NEW
-            if (assembly && assembly.id && !out.has(assembly.id)) out.set(assembly.id, assembly); // NEW
-        } // NEW
-        if (!moved.length) { // NEW
-            const selected = graph.getSelectionCells ? graph.getSelectionCells() : [graph.getSelectionCell()]; // NEW
-            for (const cell of (selected || [])) { // NEW
-                const assembly = isIrrigationBedAssembly(cell) ? cell : findBedAssemblyAncestor(cell); // NEW
-                if (assembly && assembly.id && !out.has(assembly.id)) out.set(assembly.id, assembly); // NEW
-            } // NEW
-        } // NEW
-        return Array.from(out.values()); // NEW
-    } // NEW
+    function getBedAssembliesFromEventCells(cells) {
+        const out = new Map();
+        const moved = (cells || []).filter(Boolean);
+        for (const cell of moved) {
+            const assembly = isIrrigationBedAssembly(cell) ? cell : findBedAssemblyAncestor(cell);
+            if (assembly && assembly.id && !out.has(assembly.id)) out.set(assembly.id, assembly);
+        }
+        if (!moved.length) {
+            const selected = graph.getSelectionCells ? graph.getSelectionCells() : [graph.getSelectionCell()];
+            for (const cell of (selected || [])) {
+                const assembly = isIrrigationBedAssembly(cell) ? cell : findBedAssemblyAncestor(cell);
+                if (assembly && assembly.id && !out.has(assembly.id)) out.set(assembly.id, assembly);
+            }
+        }
+        return Array.from(out.values());
+    }
 
-    function bedFitAxisClose(value, target) { // NEW
-        const t = Math.max(1, Number(target) || 1); // NEW
-        return Math.abs((Number(value) || 0) - t) <= t * BED_FIT_TOLERANCE; // NEW
-    } // NEW
+    function bedFitAxisClose(value, target) {
+        const t = Math.max(1, Number(target) || 1);
+        return Math.abs((Number(value) || 0) - t) <= t * BED_FIT_TOLERANCE;
+    }
 
-    function inferBedAssemblyFitAxes(assembly, bed) { // NEW
-        const assemblyRect = getModelRect(assembly); // NEW
-        const bedRect = getModelRect(bed); // NEW
-        return { // NEW
-            fitWidth: !!(assemblyRect && bedRect && bedFitAxisClose(assemblyRect.w, bedRect.w)), // NEW
-            fitHeight: !!(assemblyRect && bedRect && bedFitAxisClose(assemblyRect.h, bedRect.h)) // NEW
-        }; // NEW
-    } // NEW
+    function inferBedAssemblyFitAxes(assembly, bed) {
+        const assemblyRect = getModelRect(assembly);
+        const bedRect = getModelRect(bed);
+        return {
+            fitWidth: !!(assemblyRect && bedRect && bedFitAxisClose(assemblyRect.w, bedRect.w)),
+            fitHeight: !!(assemblyRect && bedRect && bedFitAxisClose(assemblyRect.h, bedRect.h))
+        };
+    }
 
-    function bedFitAxesForBedAssembly(assembly, bed) { // NEW
-        const inferred = inferBedAssemblyFitAxes(assembly, bed); // NEW
-        const widthAttr = assembly && assembly.getAttribute ? assembly.getAttribute(BED_FIT_WIDTH_ATTR) : null; // NEW
-        const heightAttr = assembly && assembly.getAttribute ? assembly.getAttribute(BED_FIT_HEIGHT_ATTR) : null; // NEW
-        return { // NEW
-            fitWidth: widthAttr == null ? inferred.fitWidth : widthAttr === "1", // NEW
-            fitHeight: heightAttr == null ? inferred.fitHeight : heightAttr === "1" // NEW
-        }; // NEW
-    } // NEW
+    function bedFitAxesForBedAssembly(assembly, bed) {
+        const inferred = inferBedAssemblyFitAxes(assembly, bed);
+        const widthAttr = assembly && assembly.getAttribute ? assembly.getAttribute(BED_FIT_WIDTH_ATTR) : null;
+        const heightAttr = assembly && assembly.getAttribute ? assembly.getAttribute(BED_FIT_HEIGHT_ATTR) : null;
+        return {
+            fitWidth: widthAttr == null ? inferred.fitWidth : widthAttr === "1",
+            fitHeight: heightAttr == null ? inferred.fitHeight : heightAttr === "1"
+        };
+    }
 
-    function resolveBedForAssemblyGeometry(parent, assembly, fallbackBed) { // NEW
-        const center = rectCenterModel(getModelRect(assembly)); // NEW
-        return findSmallestContainingBedModel(parent, center) || fallbackBed || null; // NEW
-    } // NEW
+    function resolveBedForAssemblyGeometry(parent, assembly, fallbackBed) {
+        const center = rectCenterModel(getModelRect(assembly));
+        return findSmallestContainingBedModel(parent, center) || fallbackBed || null;
+    }
 
-    function irrigationPlannerForBedFit() { // NEW
-        return graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner); // NEW
-    } // NEW
+    function irrigationPlannerForBedFit() {
+        return graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner);
+    }
 
-    function syncBedAssemblyFitToBed(parent, assembly, bed, axes, opts) { // NEW
-        const planner = irrigationPlannerForBedFit(); // NEW
-        if (!planner || typeof planner.syncLinkedBedAssemblyToBed !== "function") return false; // NEW
-        return !!planner.syncLinkedBedAssemblyToBed(parent, assembly, bed, { // NEW
-            inTransaction: !!(opts && opts.inTransaction), // NEW
-            fitWidth: !!(axes && axes.fitWidth), // NEW
-            fitHeight: !!(axes && axes.fitHeight) // NEW
-        }); // NEW
-    } // NEW
+    function syncBedAssemblyFitToBed(parent, assembly, bed, axes, opts) {
+        const planner = irrigationPlannerForBedFit();
+        if (!planner || typeof planner.syncLinkedBedAssemblyToBed !== "function") return false;
+        return !!planner.syncLinkedBedAssemblyToBed(parent, assembly, bed, {
+            inTransaction: !!(opts && opts.inTransaction),
+            fitWidth: !!(axes && axes.fitWidth),
+            fitHeight: !!(axes && axes.fitHeight)
+        });
+    }
 
-    function largestChildPlantCircleDiameter(tg) { // MOVED
-        const model = graph.getModel(); // MOVED
-        let diameter = 0; // MOVED
-        const childCount = model.getChildCount(tg); // MOVED
-        for (let i = 0; i < childCount; i++) { // MOVED
-            const child = model.getChildAt(tg, i); // MOVED
-            if (!model.isVertex(child) || !isPlantCircle(child)) continue; // MOVED
-            const cg = model.getGeometry(child); // MOVED
-            if (!cg) continue; // MOVED
-            diameter = Math.max(diameter, Number(cg.width) || 0, Number(cg.height) || 0); // MOVED
-        } // MOVED
-        return diameter; // MOVED
-    } // MOVED
+    function largestChildPlantCircleDiameter(tg) {
+        const model = graph.getModel();
+        let diameter = 0;
+        const childCount = model.getChildCount(tg);
+        for (let i = 0; i < childCount; i++) {
+            const child = model.getChildAt(tg, i);
+            if (!model.isVertex(child) || !isPlantCircle(child)) continue;
+            const cg = model.getGeometry(child);
+            if (!cg) continue;
+            diameter = Math.max(diameter, Number(cg.width) || 0, Number(cg.height) || 0);
+        }
+        return diameter;
+    }
 
-    function getPlantCircleDiameterPx(tg) { // MOVED
-        const childDiameter = largestChildPlantCircleDiameter(tg); // MOVED
-        if (childDiameter > 0) return childDiameter; // MOVED
-        const vegDiameterCm = parseFloat(String(tg && tg.getAttribute ? tg.getAttribute("veg_diameter_cm") : 0).trim()); // MOVED
-        return Number.isFinite(vegDiameterCm) && vegDiameterCm > 0 ? toPx(vegDiameterCm) : 0; // MOVED
-    } // MOVED
+    function getPlantCircleDiameterPx(tg) {
+        const childDiameter = largestChildPlantCircleDiameter(tg);
+        if (childDiameter > 0) return childDiameter;
+        const vegDiameterCm = parseFloat(String(tg && tg.getAttribute ? tg.getAttribute("veg_diameter_cm") : 0).trim());
+        return Number.isFinite(vegDiameterCm) && vegDiameterCm > 0 ? toPx(vegDiameterCm) : 0;
+    }
 
-    function allowedOverhangForDiameter(diameter) { // MOVED
-        return Math.max(0, diameter) * (1 - EDGE_CIRCLE_CENTER_CONTAINED_PCT) / 2; // MOVED
-    } // MOVED
+    function allowedOverhangForDiameter(diameter) {
+        return Math.max(0, diameter) * (1 - EDGE_CIRCLE_CENTER_CONTAINED_PCT) / 2;
+    }
 
-    function bedFitLabelBandPxForSize(width, height) { // MOVED
-        return groupLabelMetrics({ getGeometry: () => ({ width, height }) }).bandPx; // MOVED
-    } // MOVED
+    function bedFitLabelBandPxForSize(width, height) {
+        return groupLabelMetrics({ getGeometry: () => ({ width, height }) }).bandPx;
+    }
 
-    function getPlantingFrameRectModel(tgRect) { // MOVED
-        if (!tgRect) return null; // MOVED
-        const bandPx = bedFitLabelBandPxForSize(tgRect.w, tgRect.h); // MOVED
-        return { // MOVED
-            x: tgRect.x + GROUP_PADDING_PX, // MOVED
-            y: tgRect.y + GROUP_PADDING_PX + bandPx, // MOVED
-            w: Math.max(0, tgRect.w - GROUP_PADDING_PX * 2), // MOVED
-            h: Math.max(0, tgRect.h - GROUP_PADDING_PX * 2 - bandPx), // MOVED
-            bandPx: bandPx // MOVED
-        }; // MOVED
-    } // MOVED
+    function getPlantingFrameRectModel(tgRect) {
+        if (!tgRect) return null;
+        const bandPx = bedFitLabelBandPxForSize(tgRect.w, tgRect.h);
+        return {
+            x: tgRect.x + GROUP_PADDING_PX,
+            y: tgRect.y + GROUP_PADDING_PX + bandPx,
+            w: Math.max(0, tgRect.w - GROUP_PADDING_PX * 2),
+            h: Math.max(0, tgRect.h - GROUP_PADDING_PX * 2 - bandPx),
+            bandPx: bandPx
+        };
+    }
 
-    function solveOuterHeightForPlantingFrame(innerHeight, outerWidth, seedHeight) { // MOVED
-        let bandPx = bedFitLabelBandPxForSize(outerWidth, seedHeight); // MOVED
-        let outerHeight = Math.max(1, innerHeight + GROUP_PADDING_PX * 2 + bandPx); // MOVED
-        for (let i = 0; i < 5; i++) { // MOVED
-            const nextBandPx = bedFitLabelBandPxForSize(outerWidth, outerHeight); // MOVED
-            const nextOuterHeight = Math.max(1, innerHeight + GROUP_PADDING_PX * 2 + nextBandPx); // MOVED
-            if (nextBandPx === bandPx && nearlySameNumber(nextOuterHeight, outerHeight)) break; // MOVED
-            bandPx = nextBandPx; // MOVED
-            outerHeight = nextOuterHeight; // MOVED
-        } // MOVED
-        return { outerHeight: outerHeight, bandPx: bandPx }; // MOVED
-    } // MOVED
+    function solveOuterHeightForPlantingFrame(innerHeight, outerWidth, seedHeight) {
+        let bandPx = bedFitLabelBandPxForSize(outerWidth, seedHeight);
+        let outerHeight = Math.max(1, innerHeight + GROUP_PADDING_PX * 2 + bandPx);
+        for (let i = 0; i < 5; i++) {
+            const nextBandPx = bedFitLabelBandPxForSize(outerWidth, outerHeight);
+            const nextOuterHeight = Math.max(1, innerHeight + GROUP_PADDING_PX * 2 + nextBandPx);
+            if (nextBandPx === bandPx && nearlySameNumber(nextOuterHeight, outerHeight)) break;
+            bandPx = nextBandPx;
+            outerHeight = nextOuterHeight;
+        }
+        return { outerHeight: outerHeight, bandPx: bandPx };
+    }
 
-    function collectTilerGroupCandidate(cell, out) { // MOVED
-        const tg = findTilerGroupAncestor(graph, cell); // MOVED
-        if (tg && tg.id && !out.has(tg.id)) out.set(tg.id, tg); // MOVED
-    } // MOVED
+    function collectTilerGroupCandidate(cell, out) {
+        const tg = findTilerGroupAncestor(graph, cell);
+        if (tg && tg.id && !out.has(tg.id)) out.set(tg.id, tg);
+    }
 
-    function getTilerGroupsFromEventCells(cells) { // MOVED
-        const out = new Map(); // MOVED
-        const moved = (cells || []).filter(Boolean); // MOVED
-        for (const cell of moved) collectTilerGroupCandidate(cell, out); // MOVED
-        if (!moved.length) { // MOVED
-            const selected = graph.getSelectionCells ? graph.getSelectionCells() : [graph.getSelectionCell()]; // MOVED
-            for (const cell of (selected || [])) collectTilerGroupCandidate(cell, out); // MOVED
-        } // MOVED
-        return Array.from(out.values()); // MOVED
-    } // MOVED
+    function getTilerGroupsFromEventCells(cells) {
+        const out = new Map();
+        const moved = (cells || []).filter(Boolean);
+        for (const cell of moved) collectTilerGroupCandidate(cell, out);
+        if (!moved.length) {
+            const selected = graph.getSelectionCells ? graph.getSelectionCells() : [graph.getSelectionCell()];
+            for (const cell of (selected || [])) collectTilerGroupCandidate(cell, out);
+        }
+        return Array.from(out.values());
+    }
 
-    function captureBedFitLayoutSnapshot(tg) { // CHANGE
-        if (!tg || !isTilerGroup(tg)) return null; // CHANGE
-        const model = graph.getModel(); // CHANGE
-        const rotationDeg = getTilerRotationDeg(tg); // CHANGE
-        const tiles = []; // CHANGE
-        const childCount = model.getChildCount(tg); // CHANGE
-        for (let i = 0; i < childCount; i++) { // CHANGE
-            const child = model.getChildAt(tg, i); // CHANGE
-            if (!model.isVertex(child) || !isPlantCircle(child) || !hasTileRC(child)) continue; // CHANGE
-            const r = Number(child.getAttribute("tile_r")); // CHANGE
-            const c = Number(child.getAttribute("tile_c")); // CHANGE
-            if (!Number.isFinite(r) || !Number.isFinite(c)) continue; // CHANGE
-            const auto = String(child.getAttribute("auto") || "0"); // CHANGE
-            const dirty = String(child.getAttribute("dirty") || "0"); // CHANGE
-            if (!(dirty === "1" || auto !== "1")) continue; // CHANGE
-            const logicalGeo = childLogicalGeometryFromVisual(tg, child, rotationDeg); // CHANGE
-            if (!logicalGeo) continue; // CHANGE
-            tiles.push({ // CHANGE
-                r, c, // CHANGE
-                x: logicalGeo.x, y: logicalGeo.y, w: logicalGeo.w, h: logicalGeo.h, // CHANGE
-                auto, // CHANGE
-                dirty, // CHANGE
-                abbr: String(child.getAttribute("abbr") || ""), // CHANGE
-                label: String(child.getAttribute("label") || "") // CHANGE
-            }); // CHANGE
-        } // CHANGE
-        if (!tiles.length && isCollapsedLOD(tg)) return readLodLayoutSnapshot(tg); // CHANGE
-        return { v: 1, tiles: tiles }; // CHANGE
-    } // CHANGE
+    function captureBedFitLayoutSnapshot(tg) {
+        if (!tg || !isTilerGroup(tg)) return null;
+        const model = graph.getModel();
+        const rotationDeg = getTilerRotationDeg(tg);
+        const tiles = [];
+        const childCount = model.getChildCount(tg);
+        for (let i = 0; i < childCount; i++) {
+            const child = model.getChildAt(tg, i);
+            if (!model.isVertex(child) || !isPlantCircle(child) || !hasTileRC(child)) continue;
+            const r = Number(child.getAttribute("tile_r"));
+            const c = Number(child.getAttribute("tile_c"));
+            if (!Number.isFinite(r) || !Number.isFinite(c)) continue;
+            const auto = String(child.getAttribute("auto") || "0");
+            const dirty = String(child.getAttribute("dirty") || "0");
+            if (!(dirty === "1" || auto !== "1")) continue;
+            const logicalGeo = childLogicalGeometryFromVisual(tg, child, rotationDeg);
+            if (!logicalGeo) continue;
+            tiles.push({
+                r, c,
+                x: logicalGeo.x, y: logicalGeo.y, w: logicalGeo.w, h: logicalGeo.h,
+                auto,
+                dirty,
+                abbr: String(child.getAttribute("abbr") || ""),
+                label: String(child.getAttribute("label") || "")
+            });
+        }
+        if (!tiles.length && isCollapsedLOD(tg)) return readLodLayoutSnapshot(tg);
+        return { v: 1, tiles: tiles };
+    }
 
-    function getPlantCircleBBoxLogical(tg) { // CHANGE
-        const model = graph.getModel(); // MOVED
-        const rotationDeg = getTilerRotationDeg(tg); // CHANGE
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity; // MOVED
-        const childCount = model.getChildCount(tg); // MOVED
-        for (let i = 0; i < childCount; i++) { // MOVED
-            const child = model.getChildAt(tg, i); // MOVED
-            if (!model.isVertex(child) || !isPlantCircle(child)) continue; // MOVED
-            const cg = childLogicalGeometryFromVisual(tg, child, rotationDeg); // CHANGE
-            if (!cg) continue; // CHANGE
-            const x = Number(cg.x) || 0; // CHANGE
-            const y = Number(cg.y) || 0; // CHANGE
-            const w = Number(cg.w) || 0; // CHANGE
-            const h = Number(cg.h) || 0; // CHANGE
-            if (w <= 0 || h <= 0) continue; // MOVED
-            minX = Math.min(minX, x); // MOVED
-            minY = Math.min(minY, y); // MOVED
-            maxX = Math.max(maxX, x + w); // MOVED
-            maxY = Math.max(maxY, y + h); // MOVED
-        } // MOVED
-        if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return null; // MOVED
-        return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }; // MOVED
-    } // CHANGE
+    function getPlantCircleBBoxLogical(tg) {
+        const model = graph.getModel();
+        const rotationDeg = getTilerRotationDeg(tg);
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        const childCount = model.getChildCount(tg);
+        for (let i = 0; i < childCount; i++) {
+            const child = model.getChildAt(tg, i);
+            if (!model.isVertex(child) || !isPlantCircle(child)) continue;
+            const cg = childLogicalGeometryFromVisual(tg, child, rotationDeg);
+            if (!cg) continue;
+            const x = Number(cg.x) || 0;
+            const y = Number(cg.y) || 0;
+            const w = Number(cg.w) || 0;
+            const h = Number(cg.h) || 0;
+            if (w <= 0 || h <= 0) continue;
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x + w);
+            maxY = Math.max(maxY, y + h);
+        }
+        if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return null;
+        return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    }
 
-    function shiftPlantCircleChildrenLogical(tg, dx, dy) { // CHANGE
-        if (nearlySameNumber(dx, 0) && nearlySameNumber(dy, 0)) return false; // MOVED
-        const model = graph.getModel(); // MOVED
-        const rotationDeg = getTilerRotationDeg(tg); // CHANGE
-        let changed = false; // MOVED
-        const childCount = model.getChildCount(tg); // MOVED
-        for (let i = 0; i < childCount; i++) { // MOVED
-            const child = model.getChildAt(tg, i); // MOVED
-            if (!model.isVertex(child) || !isPlantCircle(child)) continue; // MOVED
-            const logicalGeo = childLogicalGeometryFromVisual(tg, child, rotationDeg); // CHANGE
-            if (!logicalGeo) continue; // CHANGE
-            if ((Number(logicalGeo.w) || 0) <= 0 || (Number(logicalGeo.h) || 0) <= 0) continue; // CHANGE
-            const next = visualGeometryFromLogicalGeometry(tg, { // CHANGE
-                x: (Number(logicalGeo.x) || 0) + dx, // CHANGE
-                y: (Number(logicalGeo.y) || 0) + dy, // CHANGE
-                w: Number(logicalGeo.w) || 0, // CHANGE
-                h: Number(logicalGeo.h) || 0 // CHANGE
-            }); // CHANGE
-            if (!next) continue; // CHANGE
-            model.setGeometry(child, next); // MOVED
-            changed = true; // MOVED
-        } // MOVED
-        return changed; // CHANGE
-    } // CHANGE
+    function shiftPlantCircleChildrenLogical(tg, dx, dy) {
+        if (nearlySameNumber(dx, 0) && nearlySameNumber(dy, 0)) return false;
+        const model = graph.getModel();
+        const rotationDeg = getTilerRotationDeg(tg);
+        let changed = false;
+        const childCount = model.getChildCount(tg);
+        for (let i = 0; i < childCount; i++) {
+            const child = model.getChildAt(tg, i);
+            if (!model.isVertex(child) || !isPlantCircle(child)) continue;
+            const logicalGeo = childLogicalGeometryFromVisual(tg, child, rotationDeg);
+            if (!logicalGeo) continue;
+            if ((Number(logicalGeo.w) || 0) <= 0 || (Number(logicalGeo.h) || 0) <= 0) continue;
+            const next = visualGeometryFromLogicalGeometry(tg, {
+                x: (Number(logicalGeo.x) || 0) + dx,
+                y: (Number(logicalGeo.y) || 0) + dy,
+                w: Number(logicalGeo.w) || 0,
+                h: Number(logicalGeo.h) || 0
+            });
+            if (!next) continue;
+            model.setGeometry(child, next);
+            changed = true;
+        }
+        return changed;
+    }
 
-    function rotateVectorModel(vx, vy, angleRad) { // MOVED
-        const cos = Math.cos(angleRad); // MOVED
-        const sin = Math.sin(angleRad); // MOVED
-        return { x: vx * cos - vy * sin, y: vx * sin + vy * cos }; // MOVED
-    } // MOVED
+    function rotateVectorModel(vx, vy, angleRad) {
+        const cos = Math.cos(angleRad);
+        const sin = Math.sin(angleRad);
+        return { x: vx * cos - vy * sin, y: vx * sin + vy * cos };
+    }
 
-    function positionGeometryForLocalPoint(next, localPoint, targetPoint, angleDeg) { // MOVED
-        if (!next || !localPoint || !targetPoint) return false; // MOVED
-        const centerOffset = { // MOVED
-            x: localPoint.x - (Number(next.width) || 0) / 2, // MOVED
-            y: localPoint.y - (Number(next.height) || 0) / 2 // MOVED
-        }; // MOVED
-        const rotatedOffset = rotateVectorModel(centerOffset.x, centerOffset.y, toRad(angleDeg)); // MOVED
-        const groupCenter = { x: targetPoint.x - rotatedOffset.x, y: targetPoint.y - rotatedOffset.y }; // MOVED
-        next.x = groupCenter.x - (Number(next.width) || 0) / 2; // MOVED
-        next.y = groupCenter.y - (Number(next.height) || 0) / 2; // MOVED
-        return true; // MOVED
-    } // MOVED
+    function positionGeometryForLocalPoint(next, localPoint, targetPoint, angleDeg) {
+        if (!next || !localPoint || !targetPoint) return false;
+        const centerOffset = {
+            x: localPoint.x - (Number(next.width) || 0) / 2,
+            y: localPoint.y - (Number(next.height) || 0) / 2
+        };
+        const rotatedOffset = rotateVectorModel(centerOffset.x, centerOffset.y, toRad(angleDeg));
+        const groupCenter = { x: targetPoint.x - rotatedOffset.x, y: targetPoint.y - rotatedOffset.y };
+        next.x = groupCenter.x - (Number(next.width) || 0) / 2;
+        next.y = groupCenter.y - (Number(next.height) || 0) / 2;
+        return true;
+    }
 
-    function modelPointForLocalPoint(geo, localPoint, angleDeg) { // NEW
-        if (!geo || !localPoint) return null; // NEW
-        const center = { // NEW
-            x: (Number(geo.x) || 0) + (Number(geo.width) || 0) / 2, // NEW
-            y: (Number(geo.y) || 0) + (Number(geo.height) || 0) / 2 // NEW
-        }; // NEW
-        const offset = rotateVectorModel( // NEW
-            (Number(localPoint.x) || 0) - (Number(geo.width) || 0) / 2, // NEW
-            (Number(localPoint.y) || 0) - (Number(geo.height) || 0) / 2, // NEW
-            toRad(angleDeg) // NEW
-        ); // NEW
-        return { x: center.x + offset.x, y: center.y + offset.y }; // NEW
-    } // NEW
+    function modelPointForLocalPoint(geo, localPoint, angleDeg) {
+        if (!geo || !localPoint) return null;
+        const center = {
+            x: (Number(geo.x) || 0) + (Number(geo.width) || 0) / 2,
+            y: (Number(geo.y) || 0) + (Number(geo.height) || 0) / 2
+        };
+        const offset = rotateVectorModel(
+            (Number(localPoint.x) || 0) - (Number(geo.width) || 0) / 2,
+            (Number(localPoint.y) || 0) - (Number(geo.height) || 0) / 2,
+            toRad(angleDeg)
+        );
+        return { x: center.x + offset.x, y: center.y + offset.y };
+    }
 
-    function positionGeometryForLocalPointAxisAware(next, localPoint, targetPoint, angleDeg, fitWidth, fitHeight, preservePoint) { // NEW
-        if (!next || !localPoint || !targetPoint) return false; // NEW
-        const preserved = preservePoint || modelPointForLocalPoint(next, localPoint, angleDeg); // NEW
-        if (!preserved) return false; // NEW
-        const angleRad = toRad(angleDeg); // NEW
-        const centerLocal = rotateModelPoint(targetPoint, targetPoint, -angleRad); // NEW
-        const preserveLocal = rotateModelPoint(preserved, targetPoint, -angleRad); // NEW
-        const axisTargetLocal = { // NEW
-            x: fitWidth ? centerLocal.x : preserveLocal.x, // NEW
-            y: fitHeight ? centerLocal.y : preserveLocal.y // NEW
-        }; // NEW
-        const axisTargetPoint = rotateModelPoint(axisTargetLocal, targetPoint, angleRad); // NEW
-        return positionGeometryForLocalPoint(next, localPoint, axisTargetPoint, angleDeg); // NEW
-    } // NEW
+    function positionGeometryForLocalPointAxisAware(next, localPoint, targetPoint, angleDeg, fitWidth, fitHeight, preservePoint) {
+        if (!next || !localPoint || !targetPoint) return false;
+        const preserved = preservePoint || modelPointForLocalPoint(next, localPoint, angleDeg);
+        if (!preserved) return false;
+        const angleRad = toRad(angleDeg);
+        const centerLocal = rotateModelPoint(targetPoint, targetPoint, -angleRad);
+        const preserveLocal = rotateModelPoint(preserved, targetPoint, -angleRad);
+        const axisTargetLocal = {
+            x: fitWidth ? centerLocal.x : preserveLocal.x,
+            y: fitHeight ? centerLocal.y : preserveLocal.y
+        };
+        const axisTargetPoint = rotateModelPoint(axisTargetLocal, targetPoint, angleRad);
+        return positionGeometryForLocalPoint(next, localPoint, axisTargetPoint, angleDeg);
+    }
 
-    function plantingFrameLocalCenter(width, height) { // MOVED
-        const w = Math.max(1, Number(width) || 1); // MOVED
-        const h = Math.max(1, Number(height) || 1); // MOVED
-        const bandPx = bedFitLabelBandPxForSize(w, h); // MOVED
-        const frameH = Math.max(0, h - GROUP_PADDING_PX * 2 - bandPx); // MOVED
-        return { x: w / 2, y: GROUP_PADDING_PX + bandPx + frameH / 2, bandPx: bandPx }; // MOVED
-    } // MOVED
+    function plantingFrameLocalCenter(width, height) {
+        const w = Math.max(1, Number(width) || 1);
+        const h = Math.max(1, Number(height) || 1);
+        const bandPx = bedFitLabelBandPxForSize(w, h);
+        const frameH = Math.max(0, h - GROUP_PADDING_PX * 2 - bandPx);
+        return { x: w / 2, y: GROUP_PADDING_PX + bandPx + frameH / 2, bandPx: bandPx };
+    }
 
-    function buildAxisAwareTrimGeometry(tg, bed, bbox, fitWidth, fitHeight, finalWidth, finalHeight, bandPx) { // MOVED
-        const model = graph.getModel(); // MOVED
-        const bedCenter = rectCenterModel(getModelRect(bed)); // MOVED
-        const current = model.getGeometry(tg); // MOVED
-        if (!bedCenter || !current) return null; // MOVED
-        const next = current.clone(); // MOVED
-        if (fitWidth) next.width = finalWidth; // MOVED
-        if (fitHeight) next.height = finalHeight; // MOVED
-        const localPlantCenter = { // MOVED
-            x: fitWidth ? GROUP_PADDING_PX + bbox.w / 2 : bbox.x + bbox.w / 2, // MOVED
-            y: fitHeight ? GROUP_PADDING_PX + bandPx + bbox.h / 2 : bbox.y + bbox.h / 2 // MOVED
-        }; // MOVED
-        positionGeometryForLocalPointAxisAware(next, localPlantCenter, bedCenter, getTilerRotationDeg(bed), fitWidth, fitHeight); // CHANGE
-        return next; // MOVED
-    } // MOVED
+    function buildAxisAwareTrimGeometry(tg, bed, bbox, fitWidth, fitHeight, finalWidth, finalHeight, bandPx) {
+        const model = graph.getModel();
+        const bedCenter = rectCenterModel(getModelRect(bed));
+        const current = model.getGeometry(tg);
+        if (!bedCenter || !current) return null;
+        const next = current.clone();
+        if (fitWidth) next.width = finalWidth;
+        if (fitHeight) next.height = finalHeight;
+        const localPlantCenter = {
+            x: fitWidth ? GROUP_PADDING_PX + bbox.w / 2 : bbox.x + bbox.w / 2,
+            y: fitHeight ? GROUP_PADDING_PX + bandPx + bbox.h / 2 : bbox.y + bbox.h / 2
+        };
+        positionGeometryForLocalPointAxisAware(next, localPlantCenter, bedCenter, getTilerRotationDeg(bed), fitWidth, fitHeight);
+        return next;
+    }
 
-    function trimGroupToPlantFootprint(tg, bed, bbox, fitWidth, fitHeight, debugCtx) { // CHANGE
-        if (tg && isCollapsedLOD(tg)) { // CHANGE
-            bedFitLog("trim-skip", { // CHANGE
-                txnId: debugCtx && debugCtx.txnId, // CHANGE
-                groupId: bedFitCellId(tg), // CHANGE
-                bedId: bedFitCellId(bed), // CHANGE
-                reason: "lod-collapsed" // CHANGE
-            }); // CHANGE
-            return false; // CHANGE
-        } // CHANGE
-        if (!tg || !bed || !bbox || bbox.w <= 0 || bbox.h <= 0) { // CHANGE
-            bedFitLog("trim-skip", { // CHANGE
-                txnId: debugCtx && debugCtx.txnId, // CHANGE
-                groupId: bedFitCellId(tg), // CHANGE
-                bedId: bedFitCellId(bed), // CHANGE
-                reason: !bbox ? "missing-bbox" : "empty-bbox", // CHANGE
-                bbox: bedFitRectSnapshot(bbox) // CHANGE
-            }); // CHANGE
-            return false; // CHANGE
-        } // CHANGE
-        if (!fitWidth && !fitHeight) return false; // MOVED
-        const model = graph.getModel(); // MOVED
-        const current = model.getGeometry(tg); // MOVED
-        if (!current) return false; // MOVED
-        const beforeGeo = bedFitGeometrySnapshot(tg); // CHANGE
-        const beforeTiles = bedFitTileSample(tg, 6); // CHANGE
-        const finalWidth = fitWidth ? Math.max(1, bbox.w + GROUP_PADDING_PX * 2) : current.width; // MOVED
-        const solved = fitHeight // MOVED
-            ? solveOuterHeightForPlantingFrame(bbox.h, finalWidth, current.height) // MOVED
-            : { outerHeight: current.height, bandPx: bedFitLabelBandPxForSize(finalWidth, current.height) }; // MOVED
-        const next = buildAxisAwareTrimGeometry(tg, bed, bbox, fitWidth, fitHeight, finalWidth, solved.outerHeight, solved.bandPx); // MOVED
-        if (!next) return false; // MOVED
-        const dx = fitWidth ? GROUP_PADDING_PX - bbox.x : 0; // MOVED
-        const dy = fitHeight ? GROUP_PADDING_PX + solved.bandPx - bbox.y : 0; // MOVED
-        const childrenChanged = shiftPlantCircleChildrenLogical(tg, dx, dy); // CHANGE
-        const groupChanged = !(nearlySameNumber(current.x, next.x) && nearlySameNumber(current.y, next.y) && nearlySameNumber(current.width, next.width) && nearlySameNumber(current.height, next.height)); // MOVED
-        if (groupChanged) model.setGeometry(tg, next); // MOVED
-        bedFitLog("trim", { // CHANGE
-            txnId: debugCtx && debugCtx.txnId, // CHANGE
-            groupId: bedFitCellId(tg), // CHANGE
-            bedId: bedFitCellId(bed), // CHANGE
-            fitWidth, // CHANGE
-            fitHeight, // CHANGE
-            bbox: bedFitRectSnapshot(bbox), // CHANGE
-            finalWidth: bedFitRound(finalWidth), // CHANGE
-            finalHeight: bedFitRound(solved.outerHeight), // CHANGE
-            bandPx: bedFitRound(solved.bandPx), // CHANGE
-            dx: bedFitRound(dx), // CHANGE
-            dy: bedFitRound(dy), // CHANGE
-            childrenChanged, // CHANGE
-            groupChanged, // CHANGE
-            beforeGeo, // CHANGE
-            afterGeo: bedFitGeometrySnapshot(tg), // CHANGE
-            tables: { // CHANGE
-                "tiles before trim": beforeTiles, // CHANGE
-                "tiles after trim": bedFitTileSample(tg, 6) // CHANGE
-            } // CHANGE
-        }); // CHANGE
-        return childrenChanged || groupChanged; // MOVED
-    } // MOVED
+    function trimGroupToPlantFootprint(tg, bed, bbox, fitWidth, fitHeight, debugCtx) {
+        if (tg && isCollapsedLOD(tg)) {
+            bedFitLog("trim-skip", {
+                txnId: debugCtx && debugCtx.txnId,
+                groupId: bedFitCellId(tg),
+                bedId: bedFitCellId(bed),
+                reason: "lod-collapsed"
+            });
+            return false;
+        }
+        if (!tg || !bed || !bbox || bbox.w <= 0 || bbox.h <= 0) {
+            bedFitLog("trim-skip", {
+                txnId: debugCtx && debugCtx.txnId,
+                groupId: bedFitCellId(tg),
+                bedId: bedFitCellId(bed),
+                reason: !bbox ? "missing-bbox" : "empty-bbox",
+                bbox: bedFitRectSnapshot(bbox)
+            });
+            return false;
+        }
+        if (!fitWidth && !fitHeight) return false;
+        const model = graph.getModel();
+        const current = model.getGeometry(tg);
+        if (!current) return false;
+        const beforeGeo = bedFitGeometrySnapshot(tg);
+        const beforeTiles = bedFitTileSample(tg, 6);
+        const finalWidth = fitWidth ? Math.max(1, bbox.w + GROUP_PADDING_PX * 2) : current.width;
+        const solved = fitHeight
+            ? solveOuterHeightForPlantingFrame(bbox.h, finalWidth, current.height)
+            : { outerHeight: current.height, bandPx: bedFitLabelBandPxForSize(finalWidth, current.height) };
+        const next = buildAxisAwareTrimGeometry(tg, bed, bbox, fitWidth, fitHeight, finalWidth, solved.outerHeight, solved.bandPx);
+        if (!next) return false;
+        const dx = fitWidth ? GROUP_PADDING_PX - bbox.x : 0;
+        const dy = fitHeight ? GROUP_PADDING_PX + solved.bandPx - bbox.y : 0;
+        const childrenChanged = shiftPlantCircleChildrenLogical(tg, dx, dy);
+        const groupChanged = !(nearlySameNumber(current.x, next.x) && nearlySameNumber(current.y, next.y) && nearlySameNumber(current.width, next.width) && nearlySameNumber(current.height, next.height));
+        if (groupChanged) model.setGeometry(tg, next);
+        bedFitLog("trim", {
+            txnId: debugCtx && debugCtx.txnId,
+            groupId: bedFitCellId(tg),
+            bedId: bedFitCellId(bed),
+            fitWidth,
+            fitHeight,
+            bbox: bedFitRectSnapshot(bbox),
+            finalWidth: bedFitRound(finalWidth),
+            finalHeight: bedFitRound(solved.outerHeight),
+            bandPx: bedFitRound(solved.bandPx),
+            dx: bedFitRound(dx),
+            dy: bedFitRound(dy),
+            childrenChanged,
+            groupChanged,
+            beforeGeo,
+            afterGeo: bedFitGeometrySnapshot(tg),
+            tables: {
+                "tiles before trim": beforeTiles,
+                "tiles after trim": bedFitTileSample(tg, 6)
+            }
+        });
+        return childrenChanged || groupChanged;
+    }
 
-    function applyBedFitGeometry(tg, bed, allowDragIntoBedFit, debugCtx) { // CHANGE
-        const ignoreBedAutoFit = !!(debugCtx && debugCtx.ignoreBedAutoFit); // CHANGE
-        const persistAxisIntent = !!(debugCtx && debugCtx.persistAxisIntent); // NEW
-        const usePersistedFitAxes = !!(debugCtx && debugCtx.usePersistedFitAxes); // NEW
-        if (!tg || !bed || (!ignoreBedAutoFit && tg.getAttribute(BED_AUTO_FIT_ATTR) === "0")) { // CHANGE
-            bedFitLog("fit-skip", { // CHANGE
-                txnId: debugCtx && debugCtx.txnId, // CHANGE
-                groupId: bedFitCellId(tg), // CHANGE
-                bedId: bedFitCellId(bed), // CHANGE
-                reason: !tg ? "missing-group" : (!bed ? "missing-bed" : "bed-auto-fit-disabled") // CHANGE
-            }); // CHANGE
-            return null; // CHANGE
-        } // CHANGE
-        const model = graph.getModel(); // MOVED
-        const tgRect = getModelRect(tg); // MOVED
-        const bedRect = getModelRect(bed); // MOVED
-        if (!tgRect || !bedRect || bedRect.w <= 0 || bedRect.h <= 0) { // CHANGE
-            bedFitLog("fit-skip", { // CHANGE
-                txnId: debugCtx && debugCtx.txnId, // CHANGE
-                groupId: bedFitCellId(tg), // CHANGE
-                bedId: bedFitCellId(bed), // CHANGE
-                reason: "invalid-rect", // CHANGE
-                groupRect: bedFitRectSnapshot(tgRect), // CHANGE
-                bedRect: bedFitRectSnapshot(bedRect) // CHANGE
-            }); // CHANGE
-            return null; // CHANGE
-        } // CHANGE
-        const diameter = getPlantCircleDiameterPx(tg); // MOVED
-        const overhang = allowedOverhangForDiameter(diameter); // MOVED
-        const frameRect = getPlantingFrameRectModel(tgRect); // MOVED
-        if (!frameRect) return null; // MOVED
-        const targetFrameWidth = bedRect.w + overhang * 2; // MOVED
-        const targetFrameHeight = bedRect.h + overhang * 2; // MOVED
-        const widthClose = Math.abs(frameRect.w - targetFrameWidth) <= bedRect.w * BED_FIT_TOLERANCE; // MOVED
-        const heightClose = Math.abs(frameRect.h - targetFrameHeight) <= bedRect.h * BED_FIT_TOLERANCE; // MOVED
-        const canDragFit = allowDragIntoBedFit && diameter < bedRect.w && diameter < bedRect.h; // MOVED
-        const forcedFitWidth = !!(debugCtx && debugCtx.forceFitWidth); // NEW
-        const forcedFitHeight = !!(debugCtx && debugCtx.forceFitHeight); // NEW
-        const fitWidth = usePersistedFitAxes ? forcedFitWidth : (widthClose || canDragFit); // CHANGE
-        const fitHeight = usePersistedFitAxes ? forcedFitHeight : (heightClose || canDragFit); // CHANGE
-        if (!fitWidth && !fitHeight) { // CHANGE
-            if (persistAxisIntent) writeBedFitAxesNoTxn(model, tg, false, false); // NEW
-            bedFitLog("fit-skip", { // CHANGE
-                txnId: debugCtx && debugCtx.txnId, // CHANGE
-                groupId: bedFitCellId(tg), // CHANGE
-                bedId: bedFitCellId(bed), // CHANGE
-                reason: "not-close-enough", // CHANGE
-                allowDragIntoBedFit, // CHANGE
-                diameter: bedFitRound(diameter), // CHANGE
-                frameRect: bedFitRectSnapshot(frameRect), // CHANGE
-                targetFrameWidth: bedFitRound(targetFrameWidth), // CHANGE
-                targetFrameHeight: bedFitRound(targetFrameHeight), // CHANGE
-                widthClose, // CHANGE
-                heightClose, // CHANGE
-                canDragFit, // CHANGE
-                usePersistedFitAxes, // NEW
-                forcedFitWidth, // NEW
-                forcedFitHeight // NEW
-            }); // CHANGE
-            return null; // CHANGE
-        } // CHANGE
-        const g = model.getGeometry(tg); // MOVED
-        if (!g) return null; // MOVED
-        const beforeGeo = bedFitGeometrySnapshot(tg); // CHANGE
-        const beforeRotation = getTilerRotationDeg(tg); // CHANGE
-        const beforeBandPx = groupLabelMetrics(tg).bandPx; // CHANGE
-        const layoutSnapshot = captureBedFitLayoutSnapshot(tg); // CHANGE
-        const next = g.clone(); // MOVED
-        if (fitWidth) next.width = targetFrameWidth + GROUP_PADDING_PX * 2; // MOVED
-        if (fitHeight) { // MOVED
-            const solved = solveOuterHeightForPlantingFrame(targetFrameHeight, next.width, next.height); // MOVED
-            next.height = solved.outerHeight; // MOVED
-        } // MOVED
-        const bedRotation = getTilerRotationDeg(bed); // MOVED
-        const frameCenter = plantingFrameLocalCenter(next.width, next.height); // MOVED
-        const bedCenter = rectCenterModel(bedRect); // MOVED
-        positionGeometryForLocalPointAxisAware(next, frameCenter, bedCenter, bedRotation, fitWidth, fitHeight); // CHANGE
-        const geometryChanged = !(nearlySameNumber(g.x, next.x) && nearlySameNumber(g.y, next.y) && nearlySameNumber(g.width, next.width) && nearlySameNumber(g.height, next.height)); // MOVED
-        const rotationChanged = setCellRotationDeg(tg, bedRotation); // MOVED
-        if (persistAxisIntent) writeBedFitAxesNoTxn(model, tg, fitWidth, fitHeight); // NEW
-        if (geometryChanged) model.setGeometry(tg, next); // MOVED
-        const afterBandPx = groupLabelMetrics(tg).bandPx; // CHANGE
-        const bandDeltaY = (Number(afterBandPx) || 0) - (Number(beforeBandPx) || 0); // CHANGE
-        shiftLayoutSnapshotByDeltaY(layoutSnapshot, bandDeltaY); // CHANGE
-        bedFitLog("fit", { // CHANGE
-            txnId: debugCtx && debugCtx.txnId, // CHANGE
-            source: debugCtx && debugCtx.source, // CHANGE
-            groupId: bedFitCellId(tg), // CHANGE
-            bedId: bedFitCellId(bed), // CHANGE
-            allowDragIntoBedFit, // CHANGE
-            beforeGeo, // CHANGE
-            afterGeo: bedFitGeometrySnapshot(tg), // CHANGE
-            bedRect: bedFitRectSnapshot(bedRect), // CHANGE
-            frameRect: bedFitRectSnapshot(frameRect), // CHANGE
-            targetFrameWidth: bedFitRound(targetFrameWidth), // CHANGE
-            targetFrameHeight: bedFitRound(targetFrameHeight), // CHANGE
-            diameter: bedFitRound(diameter), // CHANGE
-            overhang: bedFitRound(overhang), // CHANGE
-            widthClose, // CHANGE
-            heightClose, // CHANGE
-            canDragFit, // CHANGE
-            usePersistedFitAxes, // NEW
-            forcedFitWidth, // NEW
-            forcedFitHeight, // NEW
-            fitWidth, // CHANGE
-            fitHeight, // CHANGE
-            beforeRotation: bedFitRound(beforeRotation), // CHANGE
-            bedRotation: bedFitRound(bedRotation), // CHANGE
-            afterRotation: bedFitRound(getTilerRotationDeg(tg)), // CHANGE
-            beforeBandPx: bedFitRound(beforeBandPx), // CHANGE
-            afterBandPx: bedFitRound(afterBandPx), // CHANGE
-            bandDeltaY: bedFitRound(bandDeltaY), // CHANGE
-            geometryChanged, // CHANGE
-            rotationChanged, // CHANGE
-            snapshotTiles: layoutSnapshot && Array.isArray(layoutSnapshot.tiles) ? layoutSnapshot.tiles.length : 0 // CHANGE
-        }); // CHANGE
-        return { changed: geometryChanged || rotationChanged, fitWidth: fitWidth, fitHeight: fitHeight, bed: bed, layoutSnapshot: layoutSnapshot, previousRotationDeg: beforeRotation }; // CHANGE
-    } // MOVED
+    function applyBedFitGeometry(tg, bed, allowDragIntoBedFit, debugCtx) {
+        const ignoreBedAutoFit = !!(debugCtx && debugCtx.ignoreBedAutoFit);
+        const persistAxisIntent = !!(debugCtx && debugCtx.persistAxisIntent);
+        const usePersistedFitAxes = !!(debugCtx && debugCtx.usePersistedFitAxes);
+        if (!tg || !bed || (!ignoreBedAutoFit && tg.getAttribute(BED_AUTO_FIT_ATTR) === "0")) {
+            bedFitLog("fit-skip", {
+                txnId: debugCtx && debugCtx.txnId,
+                groupId: bedFitCellId(tg),
+                bedId: bedFitCellId(bed),
+                reason: !tg ? "missing-group" : (!bed ? "missing-bed" : "bed-auto-fit-disabled")
+            });
+            return null;
+        }
+        const model = graph.getModel();
+        const tgRect = getModelRect(tg);
+        const bedRect = getModelRect(bed);
+        if (!tgRect || !bedRect || bedRect.w <= 0 || bedRect.h <= 0) {
+            bedFitLog("fit-skip", {
+                txnId: debugCtx && debugCtx.txnId,
+                groupId: bedFitCellId(tg),
+                bedId: bedFitCellId(bed),
+                reason: "invalid-rect",
+                groupRect: bedFitRectSnapshot(tgRect),
+                bedRect: bedFitRectSnapshot(bedRect)
+            });
+            return null;
+        }
+        const diameter = getPlantCircleDiameterPx(tg);
+        const overhang = allowedOverhangForDiameter(diameter);
+        const frameRect = getPlantingFrameRectModel(tgRect);
+        if (!frameRect) return null;
+        const targetFrameWidth = bedRect.w + overhang * 2;
+        const targetFrameHeight = bedRect.h + overhang * 2;
+        const widthClose = Math.abs(frameRect.w - targetFrameWidth) <= bedRect.w * BED_FIT_TOLERANCE;
+        const heightClose = Math.abs(frameRect.h - targetFrameHeight) <= bedRect.h * BED_FIT_TOLERANCE;
+        const canDragFit = allowDragIntoBedFit && diameter < bedRect.w && diameter < bedRect.h;
+        const forcedFitWidth = !!(debugCtx && debugCtx.forceFitWidth);
+        const forcedFitHeight = !!(debugCtx && debugCtx.forceFitHeight);
+        const fitWidth = usePersistedFitAxes ? forcedFitWidth : (widthClose || canDragFit);
+        const fitHeight = usePersistedFitAxes ? forcedFitHeight : (heightClose || canDragFit);
+        if (!fitWidth && !fitHeight) {
+            if (persistAxisIntent) writeBedFitAxesNoTxn(model, tg, false, false);
+            bedFitLog("fit-skip", {
+                txnId: debugCtx && debugCtx.txnId,
+                groupId: bedFitCellId(tg),
+                bedId: bedFitCellId(bed),
+                reason: "not-close-enough",
+                allowDragIntoBedFit,
+                diameter: bedFitRound(diameter),
+                frameRect: bedFitRectSnapshot(frameRect),
+                targetFrameWidth: bedFitRound(targetFrameWidth),
+                targetFrameHeight: bedFitRound(targetFrameHeight),
+                widthClose,
+                heightClose,
+                canDragFit,
+                usePersistedFitAxes,
+                forcedFitWidth,
+                forcedFitHeight
+            });
+            return null;
+        }
+        const g = model.getGeometry(tg);
+        if (!g) return null;
+        const beforeGeo = bedFitGeometrySnapshot(tg);
+        const beforeRotation = getTilerRotationDeg(tg);
+        const beforeBandPx = groupLabelMetrics(tg).bandPx;
+        const layoutSnapshot = captureBedFitLayoutSnapshot(tg);
+        const next = g.clone();
+        if (fitWidth) next.width = targetFrameWidth + GROUP_PADDING_PX * 2;
+        if (fitHeight) {
+            const solved = solveOuterHeightForPlantingFrame(targetFrameHeight, next.width, next.height);
+            next.height = solved.outerHeight;
+        }
+        const bedRotation = getTilerRotationDeg(bed);
+        const frameCenter = plantingFrameLocalCenter(next.width, next.height);
+        const bedCenter = rectCenterModel(bedRect);
+        positionGeometryForLocalPointAxisAware(next, frameCenter, bedCenter, bedRotation, fitWidth, fitHeight);
+        const geometryChanged = !(nearlySameNumber(g.x, next.x) && nearlySameNumber(g.y, next.y) && nearlySameNumber(g.width, next.width) && nearlySameNumber(g.height, next.height));
+        const rotationChanged = setCellRotationDeg(tg, bedRotation);
+        if (persistAxisIntent) writeBedFitAxesNoTxn(model, tg, fitWidth, fitHeight);
+        if (geometryChanged) model.setGeometry(tg, next);
+        const afterBandPx = groupLabelMetrics(tg).bandPx;
+        const bandDeltaY = (Number(afterBandPx) || 0) - (Number(beforeBandPx) || 0);
+        shiftLayoutSnapshotByDeltaY(layoutSnapshot, bandDeltaY);
+        bedFitLog("fit", {
+            txnId: debugCtx && debugCtx.txnId,
+            source: debugCtx && debugCtx.source,
+            groupId: bedFitCellId(tg),
+            bedId: bedFitCellId(bed),
+            allowDragIntoBedFit,
+            beforeGeo,
+            afterGeo: bedFitGeometrySnapshot(tg),
+            bedRect: bedFitRectSnapshot(bedRect),
+            frameRect: bedFitRectSnapshot(frameRect),
+            targetFrameWidth: bedFitRound(targetFrameWidth),
+            targetFrameHeight: bedFitRound(targetFrameHeight),
+            diameter: bedFitRound(diameter),
+            overhang: bedFitRound(overhang),
+            widthClose,
+            heightClose,
+            canDragFit,
+            usePersistedFitAxes,
+            forcedFitWidth,
+            forcedFitHeight,
+            fitWidth,
+            fitHeight,
+            beforeRotation: bedFitRound(beforeRotation),
+            bedRotation: bedFitRound(bedRotation),
+            afterRotation: bedFitRound(getTilerRotationDeg(tg)),
+            beforeBandPx: bedFitRound(beforeBandPx),
+            afterBandPx: bedFitRound(afterBandPx),
+            bandDeltaY: bedFitRound(bandDeltaY),
+            geometryChanged,
+            rotationChanged,
+            snapshotTiles: layoutSnapshot && Array.isArray(layoutSnapshot.tiles) ? layoutSnapshot.tiles.length : 0
+        });
+        return { changed: geometryChanged || rotationChanged, fitWidth: fitWidth, fitHeight: fitHeight, bed: bed, layoutSnapshot: layoutSnapshot, previousRotationDeg: beforeRotation };
+    }
 
-    function retileAfterBedFit(tg, debugCtx) { // CHANGE
-        const beforeTiles = bedFitTileSample(tg, 6); // CHANGE
-        const beforeChildCount = (graph.getChildVertices(tg) || []).length; // CHANGE
-        const beforeGeo = bedFitGeometrySnapshot(tg); // CHANGE
-        const beforeRotation = getTilerRotationDeg(tg); // CHANGE
-        let threw = false; // CHANGE
-        let errorMessage = ""; // CHANGE
-        try { // MOVED
-            retileGroup(graph, tg, { // CHANGE
-                layoutSnapshot: debugCtx && debugCtx.layoutSnapshot, // CHANGE
-                previousRotationDeg: debugCtx && debugCtx.previousRotationDeg, // CHANGE
-                useLiveSnapshot: false, // CHANGE
-                preferInPlace: true, // CHANGE
-                inTransaction: true // CHANGE
-            }); // CHANGE
-        } catch (e) { // MOVED
-            threw = true; // CHANGE
-            errorMessage = e && e.message ? e.message : String(e); // CHANGE
-            try { mxLog.debug("[BedFit] retile failed:", e && e.message ? e.message : e); } catch (_) { } // MOVED
-            graph.refresh(tg); // MOVED
-        } // MOVED
-        bedFitLog("retile", { // CHANGE
-            txnId: debugCtx && debugCtx.txnId, // CHANGE
-            source: debugCtx && debugCtx.source, // CHANGE
-            groupId: bedFitCellId(tg), // CHANGE
-            beforeGeo, // CHANGE
-            afterGeo: bedFitGeometrySnapshot(tg), // CHANGE
-            beforeRotation: bedFitRound(beforeRotation), // CHANGE
-            afterRotation: bedFitRound(getTilerRotationDeg(tg)), // CHANGE
-            previousRotationDeg: bedFitRound(debugCtx && debugCtx.previousRotationDeg), // CHANGE
-            snapshotTiles: debugCtx && debugCtx.layoutSnapshot && Array.isArray(debugCtx.layoutSnapshot.tiles) ? debugCtx.layoutSnapshot.tiles.length : 0, // CHANGE
-            beforeChildCount, // CHANGE
-            afterChildCount: (graph.getChildVertices(tg) || []).length, // CHANGE
-            lodCollapsed: isCollapsedLOD(tg), // CHANGE
-            threw, // CHANGE
-            errorMessage, // CHANGE
-            tables: { // CHANGE
-                "tiles before retile": beforeTiles, // CHANGE
-                "tiles after retile": bedFitTileSample(tg, 6) // CHANGE
-            } // CHANGE
-        }); // CHANGE
-    } // MOVED
+    function retileAfterBedFit(tg, debugCtx) {
+        const beforeTiles = bedFitTileSample(tg, 6);
+        const beforeChildCount = (graph.getChildVertices(tg) || []).length;
+        const beforeGeo = bedFitGeometrySnapshot(tg);
+        const beforeRotation = getTilerRotationDeg(tg);
+        let threw = false;
+        let errorMessage = "";
+        try {
+            retileGroup(graph, tg, {
+                layoutSnapshot: debugCtx && debugCtx.layoutSnapshot,
+                previousRotationDeg: debugCtx && debugCtx.previousRotationDeg,
+                useLiveSnapshot: false,
+                preferInPlace: true,
+                inTransaction: true
+            });
+        } catch (e) {
+            threw = true;
+            errorMessage = e && e.message ? e.message : String(e);
+            try { mxLog.debug("[BedFit] retile failed:", e && e.message ? e.message : e); } catch (_) { }
+            graph.refresh(tg);
+        }
+        bedFitLog("retile", {
+            txnId: debugCtx && debugCtx.txnId,
+            source: debugCtx && debugCtx.source,
+            groupId: bedFitCellId(tg),
+            beforeGeo,
+            afterGeo: bedFitGeometrySnapshot(tg),
+            beforeRotation: bedFitRound(beforeRotation),
+            afterRotation: bedFitRound(getTilerRotationDeg(tg)),
+            previousRotationDeg: bedFitRound(debugCtx && debugCtx.previousRotationDeg),
+            snapshotTiles: debugCtx && debugCtx.layoutSnapshot && Array.isArray(debugCtx.layoutSnapshot.tiles) ? debugCtx.layoutSnapshot.tiles.length : 0,
+            beforeChildCount,
+            afterChildCount: (graph.getChildVertices(tg) || []).length,
+            lodCollapsed: isCollapsedLOD(tg),
+            threw,
+            errorMessage,
+            tables: {
+                "tiles before retile": beforeTiles,
+                "tiles after retile": bedFitTileSample(tg, 6)
+            }
+        });
+    }
 
-    function finiteMoveDelta(value) { // MOVED
-        const n = Number(value); // MOVED
-        return Number.isFinite(n) ? n : null; // MOVED
-    } // MOVED
+    function finiteMoveDelta(value) {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : null;
+    }
 
-    function normalizeMovedTilerGroupsToBeds(cells, opts) { // MOVED
-        const txnId = ++bedFitTxnSeq; // CHANGE
-        const source = (opts && opts.source) || "unknown"; // CHANGE
-        if (bedFitInProgress) { // CHANGE
-            bedFitLog("normalize-skip", { txnId, source, reason: "in-progress" }); // CHANGE
-            return 0; // CHANGE
-        } // CHANGE
-        const groups = getTilerGroupsFromEventCells(cells); // MOVED
-        const movedCells = (cells || []).filter(Boolean); // CHANGE
-        if (!groups.length) { // CHANGE
-            bedFitLog("normalize-skip", { // CHANGE
-                txnId, // CHANGE
-                source, // CHANGE
-                reason: "no-groups", // CHANGE
-                movedCellIds: movedCells.map(bedFitCellId) // CHANGE
-            }); // CHANGE
-            return 0; // CHANGE
-        } // CHANGE
-        if (shouldSuppressBedFitResize(source, groups)) { // CHANGE
-            bedFitLog("normalize-skip", { // CHANGE
-                txnId, // CHANGE
-                source, // CHANGE
-                reason: "recent-bed-fit-resize", // CHANGE
-                movedCellIds: movedCells.map(bedFitCellId), // CHANGE
-                groupIds: groups.map(bedFitCellId) // CHANGE
-            }); // CHANGE
-            return 0; // CHANGE
-        } // CHANGE
-        const model = graph.getModel(); // MOVED
-        const allowDragIntoBedFit = !!(opts && opts.allowDragIntoBedFit); // MOVED
-        const skipSameBedMoveFit = !!(opts && opts.skipSameBedMoveFit); // MOVED
-        const persistAxisIntent = !!(opts && opts.persistAxisIntent); // NEW
-        const clearFitAxisIntentOnNoBed = !!(opts && opts.clearFitAxisIntentOnNoBed); // NEW
-        const moveDx = finiteMoveDelta(opts && opts.moveDx); // MOVED
-        const moveDy = finiteMoveDelta(opts && opts.moveDy); // MOVED
-        const changed = []; // MOVED
-        let trimmed = false; // MOVED
-        bedFitLog("normalize-start", { // CHANGE
-            txnId, // CHANGE
-            source, // CHANGE
-            allowDragIntoBedFit, // CHANGE
-            skipSameBedMoveFit, // CHANGE
-            persistAxisIntent, // NEW
-            clearFitAxisIntentOnNoBed, // NEW
-            moveDx: bedFitRound(moveDx), // CHANGE
-            moveDy: bedFitRound(moveDy), // CHANGE
-            movedCellIds: movedCells.map(bedFitCellId), // CHANGE
-            groupIds: groups.map(bedFitCellId) // CHANGE
-        }); // CHANGE
-        bedFitInProgress = true; // MOVED
-        model.beginUpdate(); // MOVED
-        try { // MOVED
-            for (const tg of groups) { // MOVED
-                const parent = model.getParent(tg); // MOVED
-                const center = rectCenterModel(getModelRect(tg)); // MOVED
-                const bed = findSmallestContainingBedModel(parent, center); // MOVED
-                const previousCenter = center && moveDx != null && moveDy != null ? { x: center.x - moveDx, y: center.y - moveDy } : null; // CHANGE
-                const previousBed = previousCenter ? findSmallestContainingBedModel(parent, previousCenter) : null; // CHANGE
-                const sameBedMove = !!(skipSameBedMoveFit && bed && previousBed && previousBed.id === bed.id); // CHANGE
-                bedFitLog("group-evaluate", { // CHANGE
-                    txnId, // CHANGE
-                    source, // CHANGE
-                    groupId: bedFitCellId(tg), // CHANGE
-                    parentId: bedFitCellId(parent), // CHANGE
-                    currentBedId: bedFitCellId(bed), // CHANGE
-                    previousBedId: bedFitCellId(previousBed), // CHANGE
-                    center: center ? { x: bedFitRound(center.x), y: bedFitRound(center.y) } : null, // CHANGE
-                    previousCenter: previousCenter ? { x: bedFitRound(previousCenter.x), y: bedFitRound(previousCenter.y) } : null, // CHANGE
-                    groupGeo: bedFitGeometrySnapshot(tg), // CHANGE
-                    groupRotation: bedFitRound(getTilerRotationDeg(tg)), // CHANGE
-                    lodCollapsed: isCollapsedLOD(tg), // CHANGE
-                    skipReason: sameBedMove ? "same-bed-move" : "" // CHANGE
-                }); // CHANGE
-                if (sameBedMove) continue; // CHANGE
-                if (!bed && persistAxisIntent && clearFitAxisIntentOnNoBed && tg.getAttribute(BED_AUTO_FIT_ATTR) !== "0") writeBedFitAxesNoTxn(model, tg, false, false); // NEW
-                const fitResult = applyBedFitGeometry(tg, bed, allowDragIntoBedFit, { txnId, source, persistAxisIntent }); // CHANGE
-                if (fitResult) changed.push({ // CHANGE
-                    tg: tg, // CHANGE
-                    bed: fitResult.bed, // CHANGE
-                    fitWidth: fitResult.fitWidth, // CHANGE
-                    fitHeight: fitResult.fitHeight, // CHANGE
-                    bedFitChanged: !!fitResult.changed, // CHANGE
-                    layoutSnapshot: fitResult.layoutSnapshot, // CHANGE
-                    previousRotationDeg: fitResult.previousRotationDeg // CHANGE
-                }); // CHANGE
-            } // MOVED
-            for (const item of changed) retileAfterBedFit(item.tg, { // CHANGE
-                txnId, // CHANGE
-                source, // CHANGE
-                layoutSnapshot: item.layoutSnapshot, // CHANGE
-                previousRotationDeg: item.previousRotationDeg // CHANGE
-            }); // CHANGE
-            for (const item of changed) { // MOVED
-                const bbox = getPlantCircleBBoxLogical(item.tg); // CHANGE
-                if (trimGroupToPlantFootprint(item.tg, item.bed, bbox, item.fitWidth, item.fitHeight, { txnId, source })) trimmed = true; // CHANGE
-            } // MOVED
-        } finally { // MOVED
-            model.endUpdate(); // MOVED
-            bedFitInProgress = false; // MOVED
-        } // MOVED
-        if (trimmed) { // MOVED
-            for (const item of changed) graph.refresh(item.tg); // MOVED
-        } // MOVED
-        if (trimmed || changed.some(item => item.bedFitChanged)) markBedFitResizeSuppression(changed); // CHANGE
-        bedFitLog("normalize-end", { // CHANGE
-            txnId, // CHANGE
-            source, // CHANGE
-            changedCount: changed.length, // CHANGE
-            trimmed, // CHANGE
-            tables: { // CHANGE
-                "changed groups": changed.map(item => ({ // CHANGE
-                    groupId: bedFitCellId(item.tg), // CHANGE
-                    bedId: bedFitCellId(item.bed), // CHANGE
-                    fitWidth: item.fitWidth, // CHANGE
-                    fitHeight: item.fitHeight, // CHANGE
-                    bedFitChanged: item.bedFitChanged, // CHANGE
-                    finalGeo: bedFitGeometrySnapshot(item.tg), // CHANGE
-                    finalRotation: bedFitRound(getTilerRotationDeg(item.tg)) // CHANGE
-                })) // CHANGE
-            } // CHANGE
-        }); // CHANGE
-        return changed.length; // MOVED
-    } // MOVED
+    function normalizeMovedTilerGroupsToBeds(cells, opts) {
+        const txnId = ++bedFitTxnSeq;
+        const source = (opts && opts.source) || "unknown";
+        if (bedFitInProgress) {
+            bedFitLog("normalize-skip", { txnId, source, reason: "in-progress" });
+            return 0;
+        }
+        const groups = getTilerGroupsFromEventCells(cells);
+        const movedCells = (cells || []).filter(Boolean);
+        if (!groups.length) {
+            bedFitLog("normalize-skip", {
+                txnId,
+                source,
+                reason: "no-groups",
+                movedCellIds: movedCells.map(bedFitCellId)
+            });
+            return 0;
+        }
+        if (shouldSuppressBedFitResize(source, groups)) {
+            bedFitLog("normalize-skip", {
+                txnId,
+                source,
+                reason: "recent-bed-fit-resize",
+                movedCellIds: movedCells.map(bedFitCellId),
+                groupIds: groups.map(bedFitCellId)
+            });
+            return 0;
+        }
+        const model = graph.getModel();
+        const allowDragIntoBedFit = !!(opts && opts.allowDragIntoBedFit);
+        const skipSameBedMoveFit = !!(opts && opts.skipSameBedMoveFit);
+        const persistAxisIntent = !!(opts && opts.persistAxisIntent);
+        const clearFitAxisIntentOnNoBed = !!(opts && opts.clearFitAxisIntentOnNoBed);
+        const moveDx = finiteMoveDelta(opts && opts.moveDx);
+        const moveDy = finiteMoveDelta(opts && opts.moveDy);
+        const changed = [];
+        let trimmed = false;
+        bedFitLog("normalize-start", {
+            txnId,
+            source,
+            allowDragIntoBedFit,
+            skipSameBedMoveFit,
+            persistAxisIntent,
+            clearFitAxisIntentOnNoBed,
+            moveDx: bedFitRound(moveDx),
+            moveDy: bedFitRound(moveDy),
+            movedCellIds: movedCells.map(bedFitCellId),
+            groupIds: groups.map(bedFitCellId)
+        });
+        bedFitInProgress = true;
+        model.beginUpdate();
+        try {
+            for (const tg of groups) {
+                const parent = model.getParent(tg);
+                const center = rectCenterModel(getModelRect(tg));
+                const bed = findSmallestContainingBedModel(parent, center);
+                const previousCenter = center && moveDx != null && moveDy != null ? { x: center.x - moveDx, y: center.y - moveDy } : null;
+                const previousBed = previousCenter ? findSmallestContainingBedModel(parent, previousCenter) : null;
+                const sameBedMove = !!(skipSameBedMoveFit && bed && previousBed && previousBed.id === bed.id);
+                bedFitLog("group-evaluate", {
+                    txnId,
+                    source,
+                    groupId: bedFitCellId(tg),
+                    parentId: bedFitCellId(parent),
+                    currentBedId: bedFitCellId(bed),
+                    previousBedId: bedFitCellId(previousBed),
+                    center: center ? { x: bedFitRound(center.x), y: bedFitRound(center.y) } : null,
+                    previousCenter: previousCenter ? { x: bedFitRound(previousCenter.x), y: bedFitRound(previousCenter.y) } : null,
+                    groupGeo: bedFitGeometrySnapshot(tg),
+                    groupRotation: bedFitRound(getTilerRotationDeg(tg)),
+                    lodCollapsed: isCollapsedLOD(tg),
+                    skipReason: sameBedMove ? "same-bed-move" : ""
+                });
+                if (sameBedMove) continue;
+                if (!bed && persistAxisIntent && clearFitAxisIntentOnNoBed && tg.getAttribute(BED_AUTO_FIT_ATTR) !== "0") writeBedFitAxesNoTxn(model, tg, false, false);
+                const fitResult = applyBedFitGeometry(tg, bed, allowDragIntoBedFit, { txnId, source, persistAxisIntent });
+                if (fitResult) changed.push({
+                    tg: tg,
+                    bed: fitResult.bed,
+                    fitWidth: fitResult.fitWidth,
+                    fitHeight: fitResult.fitHeight,
+                    bedFitChanged: !!fitResult.changed,
+                    layoutSnapshot: fitResult.layoutSnapshot,
+                    previousRotationDeg: fitResult.previousRotationDeg
+                });
+            }
+            for (const item of changed) retileAfterBedFit(item.tg, {
+                txnId,
+                source,
+                layoutSnapshot: item.layoutSnapshot,
+                previousRotationDeg: item.previousRotationDeg
+            });
+            for (const item of changed) {
+                const bbox = getPlantCircleBBoxLogical(item.tg);
+                if (trimGroupToPlantFootprint(item.tg, item.bed, bbox, item.fitWidth, item.fitHeight, { txnId, source })) trimmed = true;
+            }
+        } finally {
+            model.endUpdate();
+            bedFitInProgress = false;
+        }
+        if (trimmed) {
+            for (const item of changed) graph.refresh(item.tg);
+        }
+        if (trimmed || changed.some(item => item.bedFitChanged)) markBedFitResizeSuppression(changed);
+        bedFitLog("normalize-end", {
+            txnId,
+            source,
+            changedCount: changed.length,
+            trimmed,
+            tables: {
+                "changed groups": changed.map(item => ({
+                    groupId: bedFitCellId(item.tg),
+                    bedId: bedFitCellId(item.bed),
+                    fitWidth: item.fitWidth,
+                    fitHeight: item.fitHeight,
+                    bedFitChanged: item.bedFitChanged,
+                    finalGeo: bedFitGeometrySnapshot(item.tg),
+                    finalRotation: bedFitRound(getTilerRotationDeg(item.tg))
+                }))
+            }
+        });
+        return changed.length;
+    }
 
-    function normalizeMovedBedAssembliesToBeds(cells, opts) { // NEW
-        const txnId = ++bedFitTxnSeq; // NEW
-        const source = (opts && opts.source) || "unknown"; // NEW
-        const assemblies = getBedAssembliesFromEventCells(cells); // NEW
-        if (!assemblies.length || bedFitInProgress || shouldSuppressBedFitResize(source, assemblies.map(function (assembly) { return { id: assembly.id }; }))) return 0; // NEW
-        const model = graph.getModel(); // NEW
-        const fitOnDrag = !!(opts && opts.fitOnDrag); // NEW
-        const skipSameBedMoveFit = !!(opts && opts.skipSameBedMoveFit); // NEW
-        const persistAxisIntent = !!(opts && opts.persistAxisIntent); // NEW
-        const clearFitAxisIntentOnNoBed = !!(opts && opts.clearFitAxisIntentOnNoBed); // NEW
-        const moveDx = finiteMoveDelta(opts && opts.moveDx); // NEW
-        const moveDy = finiteMoveDelta(opts && opts.moveDy); // NEW
-        const changed = []; // NEW
-        bedFitInProgress = true; // NEW
-        model.beginUpdate(); // NEW
-        try { // NEW
-            for (const assembly of assemblies) { // NEW
-                if (!assembly || assembly.getAttribute(BED_AUTO_FIT_ATTR) === "0") continue; // NEW
-                const parent = model.getParent(assembly); // NEW
-                const bed = resolveBedForAssemblyGeometry(parent, assembly, null); // NEW
-                const center = rectCenterModel(getModelRect(assembly)); // NEW
-                const previousCenter = center && moveDx != null && moveDy != null ? { x: center.x - moveDx, y: center.y - moveDy } : null; // NEW
-                const previousBed = previousCenter ? findSmallestContainingBedModel(parent, previousCenter) : null; // NEW
-                if (skipSameBedMoveFit && bed && previousBed && previousBed.id === bed.id) continue; // NEW
-                if (!bed) { // NEW
-                    if (persistAxisIntent && clearFitAxisIntentOnNoBed) writeBedFitAxesNoTxn(model, assembly, false, false); // NEW
-                    continue; // NEW
-                } // NEW
-                const axes = fitOnDrag ? { fitWidth: true, fitHeight: true } : inferBedAssemblyFitAxes(assembly, bed); // NEW
-                if (persistAxisIntent && !axes.fitWidth && !axes.fitHeight) { // NEW
-                    if (syncBedAssemblyFitToBed(parent, assembly, bed, axes, { inTransaction: true })) changed.push({ assembly }); // CHANGE
-                    continue; // NEW
-                } // NEW
-                if (!axes.fitWidth && !axes.fitHeight) continue; // NEW
-                if (syncBedAssemblyFitToBed(parent, assembly, bed, axes, { inTransaction: true })) changed.push({ assembly }); // NEW
-            } // NEW
-        } finally { // NEW
-            model.endUpdate(); // NEW
-            bedFitInProgress = false; // NEW
-        } // NEW
-        if (changed.length) markBedFitResizeSuppression(changed); // NEW
-        for (const item of changed) graph.refresh(item.assembly); // NEW
-        return changed.length; // NEW
-    } // NEW
+    function normalizeMovedBedAssembliesToBeds(cells, opts) {
+        const txnId = ++bedFitTxnSeq;
+        const source = (opts && opts.source) || "unknown";
+        const assemblies = getBedAssembliesFromEventCells(cells);
+        if (!assemblies.length || bedFitInProgress || shouldSuppressBedFitResize(source, assemblies.map(function (assembly) { return { id: assembly.id }; }))) return 0;
+        const model = graph.getModel();
+        const fitOnDrag = !!(opts && opts.fitOnDrag);
+        const skipSameBedMoveFit = !!(opts && opts.skipSameBedMoveFit);
+        const persistAxisIntent = !!(opts && opts.persistAxisIntent);
+        const clearFitAxisIntentOnNoBed = !!(opts && opts.clearFitAxisIntentOnNoBed);
+        const moveDx = finiteMoveDelta(opts && opts.moveDx);
+        const moveDy = finiteMoveDelta(opts && opts.moveDy);
+        const changed = [];
+        bedFitInProgress = true;
+        model.beginUpdate();
+        try {
+            for (const assembly of assemblies) {
+                if (!assembly || assembly.getAttribute(BED_AUTO_FIT_ATTR) === "0") continue;
+                const parent = model.getParent(assembly);
+                const bed = resolveBedForAssemblyGeometry(parent, assembly, null);
+                const center = rectCenterModel(getModelRect(assembly));
+                const previousCenter = center && moveDx != null && moveDy != null ? { x: center.x - moveDx, y: center.y - moveDy } : null;
+                const previousBed = previousCenter ? findSmallestContainingBedModel(parent, previousCenter) : null;
+                if (skipSameBedMoveFit && bed && previousBed && previousBed.id === bed.id) continue;
+                if (!bed) {
+                    if (persistAxisIntent && clearFitAxisIntentOnNoBed) writeBedFitAxesNoTxn(model, assembly, false, false);
+                    continue;
+                }
+                const axes = fitOnDrag ? { fitWidth: true, fitHeight: true } : inferBedAssemblyFitAxes(assembly, bed);
+                if (persistAxisIntent && !axes.fitWidth && !axes.fitHeight) {
+                    if (syncBedAssemblyFitToBed(parent, assembly, bed, axes, { inTransaction: true })) changed.push({ assembly });
+                    continue;
+                }
+                if (!axes.fitWidth && !axes.fitHeight) continue;
+                if (syncBedAssemblyFitToBed(parent, assembly, bed, axes, { inTransaction: true })) changed.push({ assembly });
+            }
+        } finally {
+            model.endUpdate();
+            bedFitInProgress = false;
+        }
+        if (changed.length) markBedFitResizeSuppression(changed);
+        for (const item of changed) graph.refresh(item.assembly);
+        return changed.length;
+    }
 
-    function retileAndFitToContainingBed(graphArg, groupCell, opts) { // CHANGE
-        const activeGraph = graphArg || graph; // CHANGE
-        const source = (opts && opts.source) || "api-refit"; // CHANGE
-        const ownsTransaction = !(opts && opts.inTransaction); // CHANGE
-        const txnId = opts && opts.txnId ? opts.txnId : ++bedFitTxnSeq; // CHANGE
-        if (!activeGraph || !groupCell || !isTilerGroup(groupCell) || bedFitInProgress) { // CHANGE
-            bedFitLog("retile-fit-skip", { txnId, source, groupId: bedFitCellId(groupCell), reason: "not-available", hasGraph: !!activeGraph, isTilerGroup: isTilerGroup(groupCell), bedFitInProgress }); // NEW
-            return { changed: false, fitted: false, reason: "not-available" }; // CHANGE
-        } // CHANGE
-        const model = activeGraph.getModel(); // CHANGE
-        let fitResult = null; // CHANGE
-        let trimmed = false; // CHANGE
-        let result = { changed: false, fitted: false, reason: "" }; // CHANGE
-        bedFitLog("retile-fit-start", { txnId, source, groupId: bedFitCellId(groupCell), groupGeo: bedFitGeometrySnapshot(groupCell), ownsTransaction }); // NEW
-        bedFitInProgress = true; // CHANGE
-        if (ownsTransaction) model.beginUpdate(); // CHANGE
-        try { // CHANGE
-            retileGroup(activeGraph, groupCell, { preferInPlace: true, inTransaction: true }); // CHANGE
-            const parent = model.getParent(groupCell); // CHANGE
-            const center = rectCenterModel(getModelRect(groupCell)); // CHANGE
-            const bed = findSmallestContainingBedModel(parent, center); // CHANGE
-            bedFitLog("retile-fit-bed-resolve", { txnId, source, groupId: bedFitCellId(groupCell), parentId: bedFitCellId(parent), bedId: bedFitCellId(bed), center: center ? { x: bedFitRound(center.x), y: bedFitRound(center.y) } : null }); // NEW
-            if (!bed) { result = { changed: false, fitted: false, reason: "no-containing-bed" }; return result; } // CHANGE
-            fitResult = applyBedFitGeometry(groupCell, bed, true, { txnId, source, ignoreBedAutoFit: true, persistAxisIntent: true }); // CHANGE
-            if (!fitResult) { result = { changed: false, fitted: false, reason: "fit-skipped", bed }; return result; } // CHANGE
-            retileAfterBedFit(groupCell, { // CHANGE
-                txnId, // CHANGE
-                source, // CHANGE
-                layoutSnapshot: fitResult.layoutSnapshot, // CHANGE
-                previousRotationDeg: fitResult.previousRotationDeg // CHANGE
-            }); // CHANGE
-            const bbox = getPlantCircleBBoxLogical(groupCell); // CHANGE
-            trimmed = trimGroupToPlantFootprint(groupCell, fitResult.bed, bbox, fitResult.fitWidth, fitResult.fitHeight, { txnId, source }); // CHANGE
-            result = { changed: !!(fitResult.changed || trimmed), fitted: true, trimmed }; // CHANGE
-            return result; // CHANGE
-        } finally { // CHANGE
-            if (ownsTransaction) model.endUpdate(); // CHANGE
-            bedFitInProgress = false; // CHANGE
-            if (fitResult && (trimmed || fitResult.changed)) markBedFitResizeSuppression([{ tg: groupCell }]); // CHANGE
-            activeGraph.refresh(groupCell); // CHANGE
-            bedFitLog("retile-fit-end", { txnId, source, groupId: bedFitCellId(groupCell), result, finalGeo: bedFitGeometrySnapshot(groupCell), trimmed, fitChanged: !!(fitResult && fitResult.changed) }); // NEW
-        } // CHANGE
-    } // CHANGE
+    function retileAndFitToContainingBed(graphArg, groupCell, opts) {
+        const activeGraph = graphArg || graph;
+        const source = (opts && opts.source) || "api-refit";
+        const ownsTransaction = !(opts && opts.inTransaction);
+        const txnId = opts && opts.txnId ? opts.txnId : ++bedFitTxnSeq;
+        if (!activeGraph || !groupCell || !isTilerGroup(groupCell) || bedFitInProgress) {
+            bedFitLog("retile-fit-skip", { txnId, source, groupId: bedFitCellId(groupCell), reason: "not-available", hasGraph: !!activeGraph, isTilerGroup: isTilerGroup(groupCell), bedFitInProgress });
+            return { changed: false, fitted: false, reason: "not-available" };
+        }
+        const model = activeGraph.getModel();
+        let fitResult = null;
+        let trimmed = false;
+        let result = { changed: false, fitted: false, reason: "" };
+        bedFitLog("retile-fit-start", { txnId, source, groupId: bedFitCellId(groupCell), groupGeo: bedFitGeometrySnapshot(groupCell), ownsTransaction });
+        bedFitInProgress = true;
+        if (ownsTransaction) model.beginUpdate();
+        try {
+            retileGroup(activeGraph, groupCell, { preferInPlace: true, inTransaction: true });
+            const parent = model.getParent(groupCell);
+            const center = rectCenterModel(getModelRect(groupCell));
+            const bed = findSmallestContainingBedModel(parent, center);
+            bedFitLog("retile-fit-bed-resolve", { txnId, source, groupId: bedFitCellId(groupCell), parentId: bedFitCellId(parent), bedId: bedFitCellId(bed), center: center ? { x: bedFitRound(center.x), y: bedFitRound(center.y) } : null });
+            if (!bed) { result = { changed: false, fitted: false, reason: "no-containing-bed" }; return result; }
+            fitResult = applyBedFitGeometry(groupCell, bed, true, { txnId, source, ignoreBedAutoFit: true, persistAxisIntent: true });
+            if (!fitResult) { result = { changed: false, fitted: false, reason: "fit-skipped", bed }; return result; }
+            retileAfterBedFit(groupCell, {
+                txnId,
+                source,
+                layoutSnapshot: fitResult.layoutSnapshot,
+                previousRotationDeg: fitResult.previousRotationDeg
+            });
+            const bbox = getPlantCircleBBoxLogical(groupCell);
+            trimmed = trimGroupToPlantFootprint(groupCell, fitResult.bed, bbox, fitResult.fitWidth, fitResult.fitHeight, { txnId, source });
+            result = { changed: !!(fitResult.changed || trimmed), fitted: true, trimmed };
+            return result;
+        } finally {
+            if (ownsTransaction) model.endUpdate();
+            bedFitInProgress = false;
+            if (fitResult && (trimmed || fitResult.changed)) markBedFitResizeSuppression([{ tg: groupCell }]);
+            activeGraph.refresh(groupCell);
+            bedFitLog("retile-fit-end", { txnId, source, groupId: bedFitCellId(groupCell), result, finalGeo: bedFitGeometrySnapshot(groupCell), trimmed, fitChanged: !!(fitResult && fitResult.changed) });
+        }
+    }
 
 
     const BOARD_KEY = 'KANBAN_BOARD'; // already in your other plugin; include here if not present 
@@ -3800,83 +3800,83 @@ Draw.loadPlugin(function (ui) {
         for (const c of (cells || [])) graph.refresh(c);
     }
 
-    function notifyTilerGroupCreated(graph, group, source, debugTxnId) { // CHANGE
-        if (!graph || !group) return; // CHANGE
-        const groupId = group.id || ""; // CHANGE
-        const txnId = debugTxnId || null; // NEW
-        bedFitLog("created-event-schedule", { txnId, source: source || "", groupId: groupId || bedFitCellId(group) }); // NEW
-        setTimeout(function () { // CHANGE
-            const model = graph.getModel && graph.getModel(); // CHANGE
-            const liveGroup = groupId && model && model.getCell ? model.getCell(groupId) : group; // CHANGE
-            if (!liveGroup || !isTilerGroup(liveGroup)) { // CHANGE
-                bedFitLog("created-event-skip", { txnId, source: source || "", groupId, reason: "missing-live-group" }); // NEW
-                return; // CHANGE
-            } // CHANGE
-            try { // CHANGE
-                bedFitLog("created-event-fire", { txnId, source: source || "", groupId: bedFitCellId(liveGroup), groupGeo: bedFitGeometrySnapshot(liveGroup) }); // NEW
-                graph.fireEvent(new mxEventObject(TILER_GROUP_CREATED_EVENT, "cell", liveGroup, "cellId", liveGroup.id || groupId, "source", source || "")); // CHANGE
-                bedFitLog("created-event-fired", { txnId, source: source || "", groupId: bedFitCellId(liveGroup) }); // NEW
-            } catch (e) { // CHANGE
-                bedFitLog("created-event-error", { txnId, source: source || "", groupId: bedFitCellId(liveGroup), errorMessage: e && e.message ? e.message : String(e) }); // NEW
-            } // CHANGE
-        }, 0); // CHANGE
-    } // CHANGE
+    function notifyTilerGroupCreated(graph, group, source, debugTxnId) {
+        if (!graph || !group) return;
+        const groupId = group.id || "";
+        const txnId = debugTxnId || null;
+        bedFitLog("created-event-schedule", { txnId, source: source || "", groupId: groupId || bedFitCellId(group) });
+        setTimeout(function () {
+            const model = graph.getModel && graph.getModel();
+            const liveGroup = groupId && model && model.getCell ? model.getCell(groupId) : group;
+            if (!liveGroup || !isTilerGroup(liveGroup)) {
+                bedFitLog("created-event-skip", { txnId, source: source || "", groupId, reason: "missing-live-group" });
+                return;
+            }
+            try {
+                bedFitLog("created-event-fire", { txnId, source: source || "", groupId: bedFitCellId(liveGroup), groupGeo: bedFitGeometrySnapshot(liveGroup) });
+                graph.fireEvent(new mxEventObject(TILER_GROUP_CREATED_EVENT, "cell", liveGroup, "cellId", liveGroup.id || groupId, "source", source || ""));
+                bedFitLog("created-event-fired", { txnId, source: source || "", groupId: bedFitCellId(liveGroup) });
+            } catch (e) {
+                bedFitLog("created-event-error", { txnId, source: source || "", groupId: bedFitCellId(liveGroup), errorMessage: e && e.message ? e.message : String(e) });
+            }
+        }, 0);
+    }
 
-    function finalizeCreatedTilerGroup(graph, group, parent, source, debugTxnId) { // CHANGE
-        if (!graph || !group) return null; // NEW
-        const model = graph.getModel(); // NEW
-        const txnId = debugTxnId || ++bedFitTxnSeq; // NEW
-        const debugSource = source || "tiler-created"; // NEW
-        let fitResult = null; // NEW
-        let threw = false; // NEW
-        let errorMessage = ""; // NEW
-        bedFitLog("finalize-created-start", { txnId, source: debugSource, groupId: bedFitCellId(group), parentId: bedFitCellId(parent), parentIsGardenModule: !!(parent && isGardenModule(parent)), groupGeo: bedFitGeometrySnapshot(group) }); // NEW
-        try { // NEW
-            fitResult = retileAndFitToContainingBed(graph, group, { source: debugSource, inTransaction: true, txnId }); // CHANGE
-            if (parent && isGardenModule(parent)) reorderModuleChildrenForLayering(model, parent); // NEW
-            graph.setSelectionCell(group); // NEW
-            return group; // NEW
-        } catch (e) { // NEW
-            threw = true; // NEW
-            errorMessage = e && e.message ? e.message : String(e); // NEW
-            throw e; // NEW
-        } finally { // NEW
-            bedFitLog("finalize-created-end", { txnId, source: debugSource, groupId: bedFitCellId(group), fitResult, threw, errorMessage, finalGeo: bedFitGeometrySnapshot(group) }); // NEW
-        } // NEW
-    } // NEW
+    function finalizeCreatedTilerGroup(graph, group, parent, source, debugTxnId) {
+        if (!graph || !group) return null;
+        const model = graph.getModel();
+        const txnId = debugTxnId || ++bedFitTxnSeq;
+        const debugSource = source || "tiler-created";
+        let fitResult = null;
+        let threw = false;
+        let errorMessage = "";
+        bedFitLog("finalize-created-start", { txnId, source: debugSource, groupId: bedFitCellId(group), parentId: bedFitCellId(parent), parentIsGardenModule: !!(parent && isGardenModule(parent)), groupGeo: bedFitGeometrySnapshot(group) });
+        try {
+            fitResult = retileAndFitToContainingBed(graph, group, { source: debugSource, inTransaction: true, txnId });
+            if (parent && isGardenModule(parent)) reorderModuleChildrenForLayering(model, parent);
+            graph.setSelectionCell(group);
+            return group;
+        } catch (e) {
+            threw = true;
+            errorMessage = e && e.message ? e.message : String(e);
+            throw e;
+        } finally {
+            bedFitLog("finalize-created-end", { txnId, source: debugSource, groupId: bedFitCellId(group), fitResult, threw, errorMessage, finalGeo: bedFitGeometrySnapshot(group) });
+        }
+    }
 
-    function createDefaultGardenBed(graph, moduleCell, clickX, clickY) { // CHANGE
-        const dimsCm = getDefaultBedDimensionsCm(moduleCell); // CHANGE
-        if (!dimsCm) throw new Error("Default bed dimensions are not set."); // CHANGE
+    function createDefaultGardenBed(graph, moduleCell, clickX, clickY) {
+        const dimsCm = getDefaultBedDimensionsCm(moduleCell);
+        if (!dimsCm) throw new Error("Default bed dimensions are not set.");
 
-        const modGeo = moduleCell.getGeometry && moduleCell.getGeometry(); // CHANGE
-        const gx = modGeo ? modGeo.x : 0; // CHANGE
-        const gy = modGeo ? modGeo.y : 0; // CHANGE
-        const gw = modGeo ? modGeo.width : toPx(dimsCm.widthCm); // CHANGE
-        const gh = modGeo ? modGeo.height : toPx(dimsCm.lengthCm); // CHANGE
-        const w = toPx(dimsCm.widthCm); // CHANGE
-        const h = toPx(dimsCm.lengthCm); // CHANGE
-        const localX = (typeof clickX === "number") ? (clickX - gx - w / 2) : (gw - w) / 2; // CHANGE
-        const localY = (typeof clickY === "number") ? (clickY - gy - h / 2) : (gh - h) / 2; // CHANGE
-        const relX = Math.max(0, Math.min(gw - w, localX)); // CHANGE
-        const relY = Math.max(0, Math.min(gh - h, localY)); // CHANGE
-        const bedVal = createXmlValue("GardenBed", { label: "Garden Bed", garden_bed: "1" }); // CHANGE
-        const bed = new mxCell(bedVal, new mxGeometry(relX, relY, w, h), addBedStyle("shape=rectangle;whiteSpace=wrap;html=1")); // CHANGE
-        bed.setVertex(true); // CHANGE
-        bed.setConnectable(false); // CHANGE
+        const modGeo = moduleCell.getGeometry && moduleCell.getGeometry();
+        const gx = modGeo ? modGeo.x : 0;
+        const gy = modGeo ? modGeo.y : 0;
+        const gw = modGeo ? modGeo.width : toPx(dimsCm.widthCm);
+        const gh = modGeo ? modGeo.height : toPx(dimsCm.lengthCm);
+        const w = toPx(dimsCm.widthCm);
+        const h = toPx(dimsCm.lengthCm);
+        const localX = (typeof clickX === "number") ? (clickX - gx - w / 2) : (gw - w) / 2;
+        const localY = (typeof clickY === "number") ? (clickY - gy - h / 2) : (gh - h) / 2;
+        const relX = Math.max(0, Math.min(gw - w, localX));
+        const relY = Math.max(0, Math.min(gh - h, localY));
+        const bedVal = createXmlValue("GardenBed", { label: "Garden Bed", garden_bed: "1" });
+        const bed = new mxCell(bedVal, new mxGeometry(relX, relY, w, h), addBedStyle("shape=rectangle;whiteSpace=wrap;html=1"));
+        bed.setVertex(true);
+        bed.setConnectable(false);
 
-        const model = graph.getModel(); // CHANGE
-        model.beginUpdate(); // CHANGE
-        try { // CHANGE
-            graph.addCell(bed, moduleCell); // CHANGE
-            graph.setSelectionCell(bed); // CHANGE
-            reorderModuleChildrenForLayering(model, moduleCell); // CHANGE
-        } finally { // CHANGE
-            model.endUpdate(); // CHANGE
-        } // CHANGE
-        graph.refresh(bed); // CHANGE
-        return bed; // CHANGE
-    } // CHANGE
+        const model = graph.getModel();
+        model.beginUpdate();
+        try {
+            graph.addCell(bed, moduleCell);
+            graph.setSelectionCell(bed);
+            reorderModuleChildrenForLayering(model, moduleCell);
+        } finally {
+            model.endUpdate();
+        }
+        graph.refresh(bed);
+        return bed;
+    }
 
 
     /**
@@ -3885,7 +3885,7 @@ Draw.loadPlugin(function (ui) {
      * - Defaults spacing to 30 cm (both axes).
      * - Centers a 240x240 group within the module bounds.
      */
-    function createEmptyTilerGroup(graph, moduleCell, clickX, clickY, opts = {}) { // CHANGE
+    function createEmptyTilerGroup(graph, moduleCell, clickX, clickY, opts = {}) {
         const DEFAULT_GROUP_PX = 240;
         const spacingCm = 30;
 
@@ -3906,12 +3906,12 @@ Draw.loadPlugin(function (ui) {
         const relX = Math.max(0, Math.min(gw - w, localX));
         const relY = Math.max(0, Math.min(gh - h, localY));
 
-        const seasonStartYear = getCurrentGardenYear(moduleCell); // NEW
+        const seasonStartYear = getCurrentGardenYear(moduleCell);
 
         const groupVal = createXmlValue("TilerGroup", {
             label: "New Plant Group",
             tiler_group: "1",
-            season_start_year: String(seasonStartYear), // NEW
+            season_start_year: String(seasonStartYear),
 
             spacing_cm: String(spacingCm),
             spacing_x_cm: String(spacingCm),
@@ -3932,26 +3932,26 @@ Draw.loadPlugin(function (ui) {
         group.setCollapsed(false);
 
         const model = graph.getModel();
-        const creationSource = (opts && opts.source) || "empty-group"; // NEW
-        const creationTxnId = ++bedFitTxnSeq; // NEW
-        let threw = false; // NEW
-        let errorMessage = ""; // NEW
-        bedFitLog("create-empty-start", { txnId: creationTxnId, source: creationSource, moduleId: bedFitCellId(moduleCell), clickX: bedFitRound(clickX), clickY: bedFitRound(clickY), localX: bedFitRound(localX), localY: bedFitRound(localY), relX: bedFitRound(relX), relY: bedFitRound(relY), groupId: bedFitCellId(group), groupGeo: bedFitGeometrySnapshot(group) }); // NEW
+        const creationSource = (opts && opts.source) || "empty-group";
+        const creationTxnId = ++bedFitTxnSeq;
+        let threw = false;
+        let errorMessage = "";
+        bedFitLog("create-empty-start", { txnId: creationTxnId, source: creationSource, moduleId: bedFitCellId(moduleCell), clickX: bedFitRound(clickX), clickY: bedFitRound(clickY), localX: bedFitRound(localX), localY: bedFitRound(localY), relX: bedFitRound(relX), relY: bedFitRound(relY), groupId: bedFitCellId(group), groupGeo: bedFitGeometrySnapshot(group) });
         model.beginUpdate();
         try {
             graph.addCell(group, moduleCell);
-            finalizeCreatedTilerGroup(graph, group, moduleCell, creationSource, creationTxnId); // CHANGE
-        } catch (e) { // NEW
-            threw = true; // NEW
-            errorMessage = e && e.message ? e.message : String(e); // NEW
-            throw e; // NEW
+            finalizeCreatedTilerGroup(graph, group, moduleCell, creationSource, creationTxnId);
+        } catch (e) {
+            threw = true;
+            errorMessage = e && e.message ? e.message : String(e);
+            throw e;
         } finally {
             model.endUpdate();
-            bedFitLog("create-empty-end", { txnId: creationTxnId, source: creationSource, moduleId: bedFitCellId(moduleCell), groupId: bedFitCellId(group), finalGeo: bedFitGeometrySnapshot(group), threw, errorMessage }); // NEW
+            bedFitLog("create-empty-end", { txnId: creationTxnId, source: creationSource, moduleId: bedFitCellId(moduleCell), groupId: bedFitCellId(group), finalGeo: bedFitGeometrySnapshot(group), threw, errorMessage });
         }
-        notifyTilerGroupCreated(graph, group, creationSource, creationTxnId); // CHANGE
-        bedFitLog("create-empty-notify-scheduled", { txnId: creationTxnId, source: creationSource, groupId: bedFitCellId(group) }); // NEW
-        return group; // CHANGE
+        notifyTilerGroupCreated(graph, group, creationSource, creationTxnId);
+        bedFitLog("create-empty-notify-scheduled", { txnId: creationTxnId, source: creationSource, groupId: bedFitCellId(group) });
+        return group;
     }
 
     // ---------- Debug helpers (compact, JSON-safe) ----------
@@ -4021,19 +4021,19 @@ Draw.loadPlugin(function (ui) {
         btnRow.style.justifyContent = "flex-end";
         btnRow.style.gap = "8px";
 
-        const okBtn = tilerButton("OK", function () { // CHANGE
+        const okBtn = tilerButton("OK", function () {
             const x = Number(inputX.value),
                 y = Number(inputY.value);
             if (!isFinite(x) || !isFinite(y) || x <= 0 || y <= 0) {
-                log("[spacing] invalid " + JSON.stringify({ x, y })); // CHANGE
+                log("[spacing] invalid " + JSON.stringify({ x, y }));
                 return;
             }
             ui.hideDialog();
             onOk(x, y);
-        }, "neutral"); // CHANGE
-        const cancelBtn = tilerButton("Cancel", function () { // CHANGE
+        }, "neutral");
+        const cancelBtn = tilerButton("Cancel", function () {
             ui.hideDialog();
-        }, "neutral"); // CHANGE
+        }, "neutral");
         btnRow.appendChild(cancelBtn);
         btnRow.appendChild(okBtn);
         div.appendChild(btnRow);
@@ -4048,14 +4048,14 @@ Draw.loadPlugin(function (ui) {
             }
         });
 
-        ui.showDialog(div, 360, 170, true, true); // CHANGE
-        elevateTrellisDialog(); // NEW
+        ui.showDialog(div, 360, 170, true, true);
+        elevateTrellisDialog();
         inputX.focus();
     }
 
     function runSetGroupSpacingOn(graph, groupCell) {
         if (!groupCell || !isTilerGroup(groupCell)) {
-            log("[spacing] not a tiler group"); // CHANGE
+            log("[spacing] not a tiler group");
             return;
         }
         const curX = Number(
@@ -4087,7 +4087,7 @@ Draw.loadPlugin(function (ui) {
             }
             graph.refresh(groupCell);
 
-            log("[spacing] applied " + JSON.stringify({ x, y })); // CHANGE
+            log("[spacing] applied " + JSON.stringify({ x, y }));
         });
     }
 
@@ -4208,24 +4208,24 @@ Draw.loadPlugin(function (ui) {
 
 
 
-    // ---------- Popup menu: register deterministic Trellis contributor ---------- // CHANGE
+    // ---------- Popup menu: register deterministic Trellis contributor ----------
     if (graph && graph.popupMenuHandler) {
         graph.popupMenuHandler.selectOnPopup = false;
-        log("Registering ordered popup contributor"); // CHANGE
+        log("Registering ordered popup contributor");
 
-        function registerTrellisContextMenuContributor(contributor) { // NEW
-            function finishRegistration() { // NEW
-                if (!window.TrellisContextMenu) return; // NEW
-                window.TrellisContextMenu.install(ui); // NEW
-                window.TrellisContextMenu.register(contributor); // NEW
-            } // NEW
+        function registerTrellisContextMenuContributor(contributor) {
+            function finishRegistration() {
+                if (!window.TrellisContextMenu) return;
+                window.TrellisContextMenu.install(ui);
+                window.TrellisContextMenu.register(contributor);
+            }
 
-            if (window.TrellisContextMenu) { // NEW
-                finishRegistration(); // NEW
-            } else if (typeof mxscript === "function") { // NEW
-                mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration); // NEW
-            } // NEW
-        } // NEW
+            if (window.TrellisContextMenu) {
+                finishRegistration();
+            } else if (typeof mxscript === "function") {
+                mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration);
+            }
+        }
 
         // Helpers must be defined BEFORE factoryMethod uses them
         function hitTestCell(evt) {
@@ -4236,10 +4236,10 @@ Draw.loadPlugin(function (ui) {
                 const gx = pt.x / s - tr.x,
                     gy = pt.y / s - tr.y;
                 const hit = graph.getCellAt(gx, gy);
-                log("[hitTest] " + JSON.stringify({ clientX: evt.clientX, clientY: evt.clientY, gx, gy, s, tr: { x: tr.x, y: tr.y } })); // CHANGE
+                log("[hitTest] " + JSON.stringify({ clientX: evt.clientX, clientY: evt.clientY, gx, gy, s, tr: { x: tr.x, y: tr.y } }));
                 return hit;
             } catch (e) {
-                log("[hitTest] error " + e.message); // CHANGE
+                log("[hitTest] error " + e.message);
                 return null;
             }
         }
@@ -4253,7 +4253,7 @@ Draw.loadPlugin(function (ui) {
                 const parentGroup = findTilerGroupAncestor(graph, t);
                 if (parentGroup) t = parentGroup;
             }
-            log("[popup] cells " + JSON.stringify({ byParam: dbgCellInfo(byParam), byHit: dbgCellInfo(byHit), bySel: dbgCellInfo(bySel), target: dbgCellInfo(t) })); // CHANGE
+            log("[popup] cells " + JSON.stringify({ byParam: dbgCellInfo(byParam), byHit: dbgCellInfo(byHit), bySel: dbgCellInfo(bySel), target: dbgCellInfo(t) }));
             return t;
         }
 
@@ -4263,7 +4263,7 @@ Draw.loadPlugin(function (ui) {
             const bySel = graph.getSelectionCell() || null;
             const cand = byParam || byHit || bySel;
             const t = cand ? findModuleAncestor(graph, cand) : null;
-            log("[popup][module] cand=" + JSON.stringify(dbgCellInfo(cand)) + " -> target=" + JSON.stringify(dbgCellInfo(t))); // CHANGE
+            log("[popup][module] cand=" + JSON.stringify(dbgCellInfo(cand)) + " -> target=" + JSON.stringify(dbgCellInfo(t)));
             return t;
         }
 
@@ -4299,11 +4299,11 @@ Draw.loadPlugin(function (ui) {
         }
 
 
-        registerTrellisContextMenuContributor({ // CHANGE
-            id: "plantTiler", // CHANGE
-            priority: 300, // NEW
-            addItems: function (menu, cell, evt) { // CHANGE
-                log("[popup] start " + JSON.stringify({ orderedContributor: true })); // CHANGE
+        registerTrellisContextMenuContributor({
+            id: "plantTiler",
+            priority: 300,
+            addItems: function (menu, cell, evt) {
+                log("[popup] start " + JSON.stringify({ orderedContributor: true }));
 
                 // ----- Tiler group item -----
                 const target = resolveTarget(cell, evt);
@@ -4323,23 +4323,23 @@ Draw.loadPlugin(function (ui) {
                         )
                     );
                     const label = `Set Plant Spacing (cm)…  [${curX} × ${curY}]`;
-                    log("[popup] adding spacing item " + JSON.stringify({ curX, curY })); // CHANGE
+                    log("[popup] adding spacing item " + JSON.stringify({ curX, curY }));
                     menu.addItem(label, null, function () {
                         try {
                             const act = ui.actions.get("setGroupSpacing");
                             if (act && typeof act.funct === "function") {
-                                log("[popup] invoking action setGroupSpacing"); // CHANGE
+                                log("[popup] invoking action setGroupSpacing");
                                 act.funct();
                             } else {
-                                log("[popup] action missing; using direct invoker"); // CHANGE
+                                log("[popup] action missing; using direct invoker");
                                 runSetGroupSpacingOn(graph, target);
                             }
                         } catch (e) {
-                            log("[popup] action error " + e.message); // CHANGE
+                            log("[popup] action error " + e.message);
                         }
                     });
                 } else {
-                    log("[popup] no tiler group under cursor"); // CHANGE
+                    log("[popup] no tiler group under cursor");
                 }
 
                 // ----- MODULE CONTEXT MENU -----
@@ -4428,7 +4428,7 @@ Draw.loadPlugin(function (ui) {
                             }
 
                             // Keep selection stable; refresh is already done per group. 
-                            log(`[trim] groups=${trimmedGroups}/${candidates.length} removed=${totalRemoved}`); // CHANGE
+                            log(`[trim] groups=${trimmedGroups}/${candidates.length} removed=${totalRemoved}`);
                         });
                     }
                 } catch (_) { }
@@ -4509,11 +4509,11 @@ Draw.loadPlugin(function (ui) {
 
                 if (targetMod && isGardenModule(targetMod)) {
                     menu.addItem("Garden Settings…", null, async function () {
-                        if (openGardenSettingsDialogWithOverlaySuppressed) { // NEW
-                            await openGardenSettingsDialogWithOverlaySuppressed(targetMod); // NEW
-                        } else { // NEW
-                            await showGardenSettingsDialog(ui, graph, targetMod); // NEW
-                        } // NEW
+                        if (openGardenSettingsDialogWithOverlaySuppressed) {
+                            await openGardenSettingsDialogWithOverlaySuppressed(targetMod);
+                        } else {
+                            await showGardenSettingsDialog(ui, graph, targetMod);
+                        }
                     });
                 }
 
@@ -4524,7 +4524,7 @@ Draw.loadPlugin(function (ui) {
                             try {
                                 const pt = graph.getPointForEvent(evt);
                                 createEmptyTilerGroup(graph, targetMod, pt.x, pt.y);
-                                log("[module] empty tiler group created"); // CHANGE
+                                log("[module] empty tiler group created");
                             } catch (e) {
                                 mxUtils.alert("Error creating tiler group: " + e.message);
                             }
@@ -4534,12 +4534,12 @@ Draw.loadPlugin(function (ui) {
                         menu.addItem("Set garden settings to add plants", null, function () { }, null, null, false);
                     }
                 }
-            } // CHANGE
-        }); // CHANGE
+            }
+        });
 
-        log("Popup contributor registered " + JSON.stringify({ hasPopup: !!graph.popupMenuHandler, hasAction: !!ui.actions.get("setGroupSpacing") })); // CHANGE
+        log("Popup contributor registered " + JSON.stringify({ hasPopup: !!graph.popupMenuHandler, hasAction: !!ui.actions.get("setGroupSpacing") }));
     } else {
-        log("popupMenuHandler not available"); // CHANGE
+        log("popupMenuHandler not available");
     }
 
     // -------------------- Group wrapping & events --------------------
@@ -4577,8 +4577,8 @@ Draw.loadPlugin(function (ui) {
 
         const parent = model.getParent(first) || graph.getDefaultParent();
 
-        const moduleCell = findGardenModuleAncestor(graph, parent); // NEW
-        const seasonStartYear = moduleCell ? getCurrentGardenYear(moduleCell) : getCurrentCalendarYear(); // NEW
+        const moduleCell = findGardenModuleAncestor(graph, parent);
+        const seasonStartYear = moduleCell ? getCurrentGardenYear(moduleCell) : getCurrentCalendarYear();
 
         // Assumption: all circles share the same parent after the move.                                   
         // If not, bucket before calling this function.                                                    
@@ -4625,7 +4625,7 @@ Draw.loadPlugin(function (ui) {
         const groupVal = createXmlValue("TilerGroup", {
             label: `${titleName}`,
             tiler_group: "1",
-            season_start_year: String(seasonStartYear), // NEW
+            season_start_year: String(seasonStartYear),
             
             plant_abbr: abbr,
             plant_id: plantId,
@@ -4647,83 +4647,83 @@ Draw.loadPlugin(function (ui) {
         group.setConnectable(false);
         group.setCollapsed(false);
 
-        model.beginUpdate(); // NEW
-        try { // NEW
-            graph.addCell(group, parent); // CHANGE
+        model.beginUpdate();
+        try {
+            graph.addCell(group, parent);
 
-            // Move circles into group; convert to GROUP-RELATIVE coordinates                               // CHANGE
-            for (const c of circleCells) { // CHANGE
-                const cg = c.getGeometry(); // CHANGE
-                if (!cg) continue; // CHANGE
+            // Move circles into group; convert to GROUP-RELATIVE coordinates
+            for (const c of circleCells) {
+                const cg = c.getGeometry();
+                if (!cg) continue;
 
-                const local = cg.clone(); // CHANGE
-                local.x = cg.x - groupX; // CHANGE
-                local.y = (cg.y - groupY) + bandPx; // CHANGE
+                const local = cg.clone();
+                local.x = cg.x - groupX;
+                local.y = (cg.y - groupY) + bandPx;
 
-                model.setGeometry(c, local); // CHANGE
-                graph.addCell(c, group); // CHANGE
-            } // CHANGE
-            finalizeCreatedTilerGroup(graph, group, parent, "plant-circle-wrap"); // CHANGE
-        } finally { // NEW
-            model.endUpdate(); // NEW
-        } // NEW
-        notifyTilerGroupCreated(graph, group, "plant-circle-wrap"); // CHANGE
+                model.setGeometry(c, local);
+                graph.addCell(c, group);
+            }
+            finalizeCreatedTilerGroup(graph, group, parent, "plant-circle-wrap");
+        } finally {
+            model.endUpdate();
+        }
+        notifyTilerGroupCreated(graph, group, "plant-circle-wrap");
         return group;
     }
 
-    function createSiblingTilerGroupFromSource(graphArg, sourceCell, opts = {}) { // ADDED
-        const activeGraphArg = graphArg || graph; // ADDED
-        if (!activeGraphArg || !sourceCell || !isTilerGroup(sourceCell)) return null; // ADDED
-        const model = activeGraphArg.getModel && activeGraphArg.getModel(); // ADDED
-        if (!model) return null; // ADDED
-        const parent = model.getParent(sourceCell); // ADDED
-        if (!parent) return null; // ADDED
-        const sourceGeo = sourceCell.getGeometry && sourceCell.getGeometry(); // ADDED
-        if (!sourceGeo) return null; // ADDED
-        const creationSource = String(opts.source || 'derived-sibling'); // ADDED
-        const attrs = Object.assign({}, opts.attributes || {}, { tiler_group: "1" }); // ADDED
-        const value = cloneXmlValueWithAttrs(sourceCell, attrs); // ADDED
-        const style = typeof sourceCell.getStyle === "function" ? sourceCell.getStyle() : sourceCell.style; // ADDED
-        const geometry = sourceGeo.clone ? sourceGeo.clone() : new mxGeometry(sourceGeo.x, sourceGeo.y, sourceGeo.width, sourceGeo.height); // ADDED
-        const offsetCm = opts.layoutOffsetCm || opts.offsetCm || null; // ADDED
-        const offsetXPx = Number.isFinite(Number(offsetCm && offsetCm.x)) ? toPx(Number(offsetCm.x)) : 0; // ADDED
-        const offsetYPx = Number.isFinite(Number(offsetCm && offsetCm.y)) ? toPx(Number(offsetCm.y)) : 0; // ADDED
-        let placementWarning = ""; // ADDED
-        if (offsetXPx || offsetYPx) { // ADDED
-            const parentGeo = parent.getGeometry && parent.getGeometry(); // ADDED
-            geometry.x = Number(geometry.x || 0) + offsetXPx; // ADDED
-            geometry.y = Number(geometry.y || 0) + offsetYPx; // ADDED
-            if (parentGeo) { // ADDED
-                const maxX = Math.max(0, Number(parentGeo.width || 0) - Number(geometry.width || 0)); // ADDED
-                const maxY = Math.max(0, Number(parentGeo.height || 0) - Number(geometry.height || 0)); // ADDED
-                const clampedX = clamp(geometry.x, 0, maxX); // ADDED
-                const clampedY = clamp(geometry.y, 0, maxY); // ADDED
-                if (Math.abs(clampedX - geometry.x) > 0.01 || Math.abs(clampedY - geometry.y) > 0.01) { // ADDED
-                    placementWarning = "Companion layout was clamped inside the garden module."; // ADDED
-                    attrs.companion_layout_clamped = "1"; // ADDED
-                    if (value && value.setAttribute) value.setAttribute("companion_layout_clamped", "1"); // ADDED
-                } // ADDED
-                geometry.x = clampedX; // ADDED
-                geometry.y = clampedY; // ADDED
-            } // ADDED
-        } // ADDED
-        const group = new mxCell(value, geometry, style || groupFrameStyle()); // ADDED
-        group.setVertex(true); // ADDED
-        group.setConnectable(false); // ADDED
-        group.setCollapsed(false); // ADDED
-        const ownsUpdate = !opts.inTransaction; // ADDED
-        if (ownsUpdate) model.beginUpdate(); // ADDED
-        try { // ADDED
-            activeGraphArg.addCell(group, parent); // ADDED
-            if (parent && isGardenModule(parent)) reorderModuleChildrenForLayering(model, parent); // ADDED
-            if (opts.select !== false && typeof activeGraphArg.setSelectionCell === "function") activeGraphArg.setSelectionCell(group); // ADDED
-        } finally { // ADDED
-            if (ownsUpdate) model.endUpdate(); // ADDED
-        } // ADDED
-        if (placementWarning && typeof opts.onPlacementWarning === "function") opts.onPlacementWarning(placementWarning); // ADDED
-        notifyTilerGroupCreated(activeGraphArg, group, creationSource); // ADDED
-        return group; // ADDED
-    } // ADDED
+    function createSiblingTilerGroupFromSource(graphArg, sourceCell, opts = {}) {
+        const activeGraphArg = graphArg || graph;
+        if (!activeGraphArg || !sourceCell || !isTilerGroup(sourceCell)) return null;
+        const model = activeGraphArg.getModel && activeGraphArg.getModel();
+        if (!model) return null;
+        const parent = model.getParent(sourceCell);
+        if (!parent) return null;
+        const sourceGeo = sourceCell.getGeometry && sourceCell.getGeometry();
+        if (!sourceGeo) return null;
+        const creationSource = String(opts.source || 'derived-sibling');
+        const attrs = Object.assign({}, opts.attributes || {}, { tiler_group: "1" });
+        const value = cloneXmlValueWithAttrs(sourceCell, attrs);
+        const style = typeof sourceCell.getStyle === "function" ? sourceCell.getStyle() : sourceCell.style;
+        const geometry = sourceGeo.clone ? sourceGeo.clone() : new mxGeometry(sourceGeo.x, sourceGeo.y, sourceGeo.width, sourceGeo.height);
+        const offsetCm = opts.layoutOffsetCm || opts.offsetCm || null;
+        const offsetXPx = Number.isFinite(Number(offsetCm && offsetCm.x)) ? toPx(Number(offsetCm.x)) : 0;
+        const offsetYPx = Number.isFinite(Number(offsetCm && offsetCm.y)) ? toPx(Number(offsetCm.y)) : 0;
+        let placementWarning = "";
+        if (offsetXPx || offsetYPx) {
+            const parentGeo = parent.getGeometry && parent.getGeometry();
+            geometry.x = Number(geometry.x || 0) + offsetXPx;
+            geometry.y = Number(geometry.y || 0) + offsetYPx;
+            if (parentGeo) {
+                const maxX = Math.max(0, Number(parentGeo.width || 0) - Number(geometry.width || 0));
+                const maxY = Math.max(0, Number(parentGeo.height || 0) - Number(geometry.height || 0));
+                const clampedX = clamp(geometry.x, 0, maxX);
+                const clampedY = clamp(geometry.y, 0, maxY);
+                if (Math.abs(clampedX - geometry.x) > 0.01 || Math.abs(clampedY - geometry.y) > 0.01) {
+                    placementWarning = "Companion layout was clamped inside the garden module.";
+                    attrs.companion_layout_clamped = "1";
+                    if (value && value.setAttribute) value.setAttribute("companion_layout_clamped", "1");
+                }
+                geometry.x = clampedX;
+                geometry.y = clampedY;
+            }
+        }
+        const group = new mxCell(value, geometry, style || groupFrameStyle());
+        group.setVertex(true);
+        group.setConnectable(false);
+        group.setCollapsed(false);
+        const ownsUpdate = !opts.inTransaction;
+        if (ownsUpdate) model.beginUpdate();
+        try {
+            activeGraphArg.addCell(group, parent);
+            if (parent && isGardenModule(parent)) reorderModuleChildrenForLayering(model, parent);
+            if (opts.select !== false && typeof activeGraphArg.setSelectionCell === "function") activeGraphArg.setSelectionCell(group);
+        } finally {
+            if (ownsUpdate) model.endUpdate();
+        }
+        if (placementWarning && typeof opts.onPlacementWarning === "function") opts.onPlacementWarning(placementWarning);
+        notifyTilerGroupCreated(activeGraphArg, group, creationSource);
+        return group;
+    }
 
     function computeGridStatsXY(groupCell, spacingXpx, spacingYpx) {
         const g = groupCell.getGeometry();
@@ -4788,10 +4788,10 @@ Draw.loadPlugin(function (ui) {
 
     // ---------------- dirty plant circles helers -----------------
 
-    function isDIrty(cell) { // RESTORE
-        if (!cell || !cell.getAttribute) return false; // RESTORE
-        return cell.getAttribute("dirty") === "1"; // RESTORE
-    } // RESTORE
+    function isDIrty(cell) {
+        if (!cell || !cell.getAttribute) return false;
+        return cell.getAttribute("dirty") === "1";
+    }
 
     function isAutoTile(cell) {
         if (!cell || !cell.getAttribute) return false;
@@ -4810,19 +4810,19 @@ Draw.loadPlugin(function (ui) {
     function isChildOutOfGroupBounds(groupCell, childCell) {
         if (!groupCell || !childCell) return false;
         const gg = groupCell.getGeometry && groupCell.getGeometry();
-        const center = childCenterInUnrotatedGroupSpace(groupCell, childCell); // NEW
-        if (!gg || !center) return false; // CHANGE
-        // Child geos are visual group-local positions; compare unrotated centers to [0..w]x[0..h]. // CHANGE
+        const center = childCenterInUnrotatedGroupSpace(groupCell, childCell);
+        if (!gg || !center) return false;
+        // Child geos are visual group-local positions; compare unrotated centers to [0..w]x[0..h].
         const eps = 0.01;
-        if (center.x < -eps) return true; // CHANGE
-        if (center.y < -eps) return true; // CHANGE
-        if (center.x > gg.width + eps) return true; // CHANGE
-        if (center.y > gg.height + eps) return true; // CHANGE
+        if (center.x < -eps) return true;
+        if (center.y < -eps) return true;
+        if (center.x > gg.width + eps) return true;
+        if (center.y > gg.height + eps) return true;
         return false;
     }
 
     // expand/collapse helpers
-    function expandGroupDetail(graph, groupCell, opts = {}) { // CHANGE
+    function expandGroupDetail(graph, groupCell, opts = {}) {
         const abbr = groupCell.getAttribute("plant_abbr") || "?";
         const sx = toPx(Number(groupCell.getAttribute("spacing_x_cm") ||
             groupCell.getAttribute("spacing_cm") || "30"));
@@ -4834,20 +4834,20 @@ Draw.loadPlugin(function (ui) {
         );
         const { rows, cols, count } = computeGridStatsXY(groupCell, sx, sy);
         if (count > MAX_TILES) {
-            collapseToSummary(graph, groupCell, abbr, sx, sy, opts); // CHANGE
+            collapseToSummary(graph, groupCell, abbr, sx, sy, opts);
             return;
         }
-        expandTiles(graph, groupCell, abbr, sx, sy, iconDiam, opts); // CHANGE
+        expandTiles(graph, groupCell, abbr, sx, sy, iconDiam, opts);
     }
 
-    function collapseGroupDetail(graph, groupCell) { // RESTORE
-        const abbr = groupCell.getAttribute("plant_abbr") || "?"; // RESTORE
-        const sx = toPx(Number(groupCell.getAttribute("spacing_x_cm") || // RESTORE
-            groupCell.getAttribute("spacing_cm") || "30")); // RESTORE
-        const sy = toPx(Number(groupCell.getAttribute("spacing_y_cm") || // RESTORE
-            groupCell.getAttribute("spacing_cm") || "30")); // RESTORE
-        collapseToSummary(graph, groupCell, abbr, sx, sy); // RESTORE
-    } // RESTORE
+    function collapseGroupDetail(graph, groupCell) {
+        const abbr = groupCell.getAttribute("plant_abbr") || "?";
+        const sx = toPx(Number(groupCell.getAttribute("spacing_x_cm") ||
+            groupCell.getAttribute("spacing_cm") || "30"));
+        const sy = toPx(Number(groupCell.getAttribute("spacing_y_cm") ||
+            groupCell.getAttribute("spacing_cm") || "30"));
+        collapseToSummary(graph, groupCell, abbr, sx, sy);
+    }
 
     function retileVisibleExpandedGroups(graph) {
         const parent = graph.getDefaultParent();
@@ -4865,7 +4865,7 @@ Draw.loadPlugin(function (ui) {
         }
     }
 
-    // Viewport-only scroll/pan must not mutate tiler geometry. // CHANGE
+    // Viewport-only scroll/pan must not mutate tiler geometry.
 
     function updateGroupYield(model, groupCell, opts = {}) {
         const abbr = opts.abbr != null ? String(opts.abbr) : getXmlAttr(groupCell, "plant_abbr", "?");
@@ -4898,15 +4898,15 @@ Draw.loadPlugin(function (ui) {
 
     function retileGroup(graph, groupCell, opts = {}) {
 
-        if (opts.duringResize) return; // CHANGE
+        if (opts.duringResize) return;
         const model = graph.getModel();
-        const ownsTitleUpdate = !opts.inTransaction; // CHANGE
-        if (ownsTitleUpdate) model.beginUpdate(); // CHANGE
+        const ownsTitleUpdate = !opts.inTransaction;
+        if (ownsTitleUpdate) model.beginUpdate();
         try {
             syncGroupTitle(model, groupCell);
-            applyGroupLabelFont(model, groupCell); // CHANGE
+            applyGroupLabelFont(model, groupCell);
         } finally {
-            if (ownsTitleUpdate) model.endUpdate(); // CHANGE
+            if (ownsTitleUpdate) model.endUpdate();
         }
         const abbr = groupCell.getAttribute("plant_abbr") || "?";
         const spacingXcm = Number(groupCell.getAttribute("spacing_x_cm") ||
@@ -4933,105 +4933,105 @@ Draw.loadPlugin(function (ui) {
         const autoExpand = shouldExpandLOD(graph, groupCell, spacingXpx, spacingYpx);
 
         if (forceCollapse) {
-            collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot }); // CHANGE
+            collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
             return;
         }
         if (forceExpand) {
-            expandGroupDetail(graph, groupCell, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot }); // CHANGE
+            expandGroupDetail(graph, groupCell, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
             return;
         }
 
         if (autoCollapse && !collapsed) {
-            collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot }); // CHANGE
+            collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
             return;
         }
         if (autoExpand && collapsed) {
-            expandGroupDetail(graph, groupCell, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot }); // CHANGE
+            expandGroupDetail(graph, groupCell, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
             return;
         }
 
         // Default path: keep current state; only refresh contents/summary        
         if (!collapsed) {
-            if (opts.preferInPlace && hasEffectiveRotation(groupCell)) { // NEW
-                const synced = syncAutoTileGeometriesInPlace(graph, groupCell, abbr, spacingXpx, spacingYpx, iconDiam, { // NEW
-                    layoutSnapshot: opts.layoutSnapshot, // NEW
-                    previousRotationDeg: opts.previousRotationDeg, // NEW
-                    useLiveSnapshot: opts.useLiveSnapshot, // NEW
-                    inTransaction: opts.inTransaction // NEW
-                }); // NEW
-                if (!synced.fallback) return; // NEW
-            } // NEW
-            expandTiles(graph, groupCell, abbr, spacingXpx, spacingYpx, iconDiam, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot }); // CHANGE
+            if (opts.preferInPlace && hasEffectiveRotation(groupCell)) {
+                const synced = syncAutoTileGeometriesInPlace(graph, groupCell, abbr, spacingXpx, spacingYpx, iconDiam, {
+                    layoutSnapshot: opts.layoutSnapshot,
+                    previousRotationDeg: opts.previousRotationDeg,
+                    useLiveSnapshot: opts.useLiveSnapshot,
+                    inTransaction: opts.inTransaction
+                });
+                if (!synced.fallback) return;
+            }
+            expandTiles(graph, groupCell, abbr, spacingXpx, spacingYpx, iconDiam, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
         } else {
-            collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot }); // CHANGE
+            collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, { layoutSnapshot: opts.layoutSnapshot, previousRotationDeg: opts.previousRotationDeg, useLiveSnapshot: opts.useLiveSnapshot });
         }
     }
 
-    (function installRotationRetileListener() { // NEW
-        if (graph.__plantTilerRotationRetileInstalled) return; // NEW
-        graph.__plantTilerRotationRetileInstalled = true; // NEW
+    (function installRotationRetileListener() {
+        if (graph.__plantTilerRotationRetileInstalled) return;
+        graph.__plantTilerRotationRetileInstalled = true;
 
-        const model = graph.getModel(); // NEW
-        const queue = new Map(); // NEW
-        let timer = null; // NEW
-        let guard = false; // NEW
+        const model = graph.getModel();
+        const queue = new Map();
+        let timer = null;
+        let guard = false;
 
-        function rotationLayoutSnapshot(groupCell, previousRotationDeg, geometryByCellId) { // NEW
-            const snap = captureLodLayoutSnapshot(graph, groupCell, { // NEW
-                rotationDeg: previousRotationDeg, // NEW
-                geometryByCellId: geometryByCellId // NEW
-            }); // NEW
-            if (snapshotHasTiles(snap)) return snap; // NEW
-            return isCollapsedLOD(groupCell) ? readLodLayoutSnapshot(groupCell) : snap; // NEW
-        } // NEW
+        function rotationLayoutSnapshot(groupCell, previousRotationDeg, geometryByCellId) {
+            const snap = captureLodLayoutSnapshot(graph, groupCell, {
+                rotationDeg: previousRotationDeg,
+                geometryByCellId: geometryByCellId
+            });
+            if (snapshotHasTiles(snap)) return snap;
+            return isCollapsedLOD(groupCell) ? readLodLayoutSnapshot(groupCell) : snap;
+        }
 
-        function schedule(groupCell, layoutSnapshot) { // CHANGE
-            if (!groupCell || !groupCell.id) return; // NEW
-            if (!queue.has(groupCell.id)) queue.set(groupCell.id, { groupCell, layoutSnapshot }); // CHANGE
-            if (timer) clearTimeout(timer); // CHANGE
-            timer = setTimeout(function () { // NEW
-                const items = Array.from(queue.values()); // NEW
-                queue.clear(); // NEW
-                timer = null; // NEW
-                guard = true; // NEW
-                const groupsNeedingRefresh = []; // NEW
-                try { // NEW
-                    withUndoSuppressed(function () { // NEW
-                        model.beginUpdate(); // CHANGE
-                        try { // NEW
-                            for (const item of items) { // NEW
-                                if (!item.groupCell || !isTilerGroup(item.groupCell)) continue; // NEW
-                                retileGroup(graph, item.groupCell, { layoutSnapshot: item.layoutSnapshot, useLiveSnapshot: false, preferInPlace: true, inTransaction: true }); // CHANGE
-                                groupsNeedingRefresh.push(item.groupCell); // NEW
-                            } // NEW
+        function schedule(groupCell, layoutSnapshot) {
+            if (!groupCell || !groupCell.id) return;
+            if (!queue.has(groupCell.id)) queue.set(groupCell.id, { groupCell, layoutSnapshot });
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(function () {
+                const items = Array.from(queue.values());
+                queue.clear();
+                timer = null;
+                guard = true;
+                const groupsNeedingRefresh = [];
+                try {
+                    withUndoSuppressed(function () {
+                        model.beginUpdate();
+                        try {
+                            for (const item of items) {
+                                if (!item.groupCell || !isTilerGroup(item.groupCell)) continue;
+                                retileGroup(graph, item.groupCell, { layoutSnapshot: item.layoutSnapshot, useLiveSnapshot: false, preferInPlace: true, inTransaction: true });
+                                groupsNeedingRefresh.push(item.groupCell);
+                            }
                         } finally {
-                            model.endUpdate(); // CHANGE
+                            model.endUpdate();
                         }
-                    }); // NEW
-                } finally { // NEW
-                    guard = false; // NEW
-                } // NEW
-                for (const group of groupsNeedingRefresh) graph.refresh(group); // NEW
-            }, ROTATION_RETILE_DEBOUNCE_MS); // CHANGE
-        } // NEW
+                    });
+                } finally {
+                    guard = false;
+                }
+                for (const group of groupsNeedingRefresh) graph.refresh(group);
+            }, ROTATION_RETILE_DEBOUNCE_MS);
+        }
 
-        model.addListener(mxEvent.CHANGE, function (_sender, evt) { // NEW
-            if (guard) return; // NEW
-            const edit = evt && evt.getProperty && evt.getProperty("edit"); // NEW
-            const changes = edit && edit.changes ? edit.changes : []; // NEW
-            const geometryByCellId = previousGeometryByCellIdFromChanges(changes); // NEW
-            for (const change of changes) { // NEW
-                const rotationChange = rotationChangedFromStyleChange(change); // NEW
-                if (!rotationChange) continue; // NEW
-                if (rotationChange.cell && rotationChange.cell.id && queue.has(rotationChange.cell.id)) { // NEW
-                    schedule(rotationChange.cell, null); // NEW
-                    continue; // NEW
-                } // NEW
-                const snap = rotationLayoutSnapshot(rotationChange.cell, rotationChange.before, geometryByCellId); // NEW
-                schedule(rotationChange.cell, snap); // CHANGE
-            } // NEW
-        }); // NEW
-    })(); // NEW
+        model.addListener(mxEvent.CHANGE, function (_sender, evt) {
+            if (guard) return;
+            const edit = evt && evt.getProperty && evt.getProperty("edit");
+            const changes = edit && edit.changes ? edit.changes : [];
+            const geometryByCellId = previousGeometryByCellIdFromChanges(changes);
+            for (const change of changes) {
+                const rotationChange = rotationChangedFromStyleChange(change);
+                if (!rotationChange) continue;
+                if (rotationChange.cell && rotationChange.cell.id && queue.has(rotationChange.cell.id)) {
+                    schedule(rotationChange.cell, null);
+                    continue;
+                }
+                const snap = rotationLayoutSnapshot(rotationChange.cell, rotationChange.before, geometryByCellId);
+                schedule(rotationChange.cell, snap);
+            }
+        });
+    })();
 
     let REORDER_GUARD = false;
 
@@ -5049,7 +5049,7 @@ Draw.loadPlugin(function (ui) {
             const p = model.getParent(c);
             if (!p || !isGardenModule(p)) continue;
 
-            if (isGardenBed(c) || isIrrigationBedAssembly(c) || isTilerGroup(c)) { // CHANGE
+            if (isGardenBed(c) || isIrrigationBedAssembly(c) || isTilerGroup(c)) {
                 modulesToFix.set(p.id, p);
             }
         }
@@ -5103,29 +5103,29 @@ Draw.loadPlugin(function (ui) {
         });
     })();
 
-    (function installBedAutoFitListeners() { // MOVED
-        if (graph.__plantTilerBedAutoFitInstalled) return; // MOVED
-        graph.__plantTilerBedAutoFitInstalled = true; // MOVED
+    (function installBedAutoFitListeners() {
+        if (graph.__plantTilerBedAutoFitInstalled) return;
+        graph.__plantTilerBedAutoFitInstalled = true;
 
-        graph.addListener(mxEvent.CELLS_MOVED, function (_sender, evt) { // MOVED
-            const cells = evt.getProperty("cells"); // MOVED
-            normalizeMovedTilerGroupsToBeds(cells, { // MOVED
-                source: "cells-moved", // CHANGE
-                allowDragIntoBedFit: true, // MOVED
-                skipSameBedMoveFit: true, // MOVED
-                persistAxisIntent: true, // NEW
-                moveDx: evt.getProperty("dx"), // MOVED
-                moveDy: evt.getProperty("dy") // MOVED
-            }); // MOVED
-            normalizeMovedBedAssembliesToBeds(cells, { source: "cells-moved", fitOnDrag: true, skipSameBedMoveFit: true, persistAxisIntent: true, moveDx: evt.getProperty("dx"), moveDy: evt.getProperty("dy") }); // CHANGE
-        }); // MOVED
+        graph.addListener(mxEvent.CELLS_MOVED, function (_sender, evt) {
+            const cells = evt.getProperty("cells");
+            normalizeMovedTilerGroupsToBeds(cells, {
+                source: "cells-moved",
+                allowDragIntoBedFit: true,
+                skipSameBedMoveFit: true,
+                persistAxisIntent: true,
+                moveDx: evt.getProperty("dx"),
+                moveDy: evt.getProperty("dy")
+            });
+            normalizeMovedBedAssembliesToBeds(cells, { source: "cells-moved", fitOnDrag: true, skipSameBedMoveFit: true, persistAxisIntent: true, moveDx: evt.getProperty("dx"), moveDy: evt.getProperty("dy") });
+        });
 
-        graph.addListener(mxEvent.CELLS_RESIZED, function (_sender, evt) { // MOVED
-            const cells = evt.getProperty("cells"); // MOVED
-            normalizeMovedTilerGroupsToBeds(cells, { source: "cells-resized", allowDragIntoBedFit: false, persistAxisIntent: true, clearFitAxisIntentOnNoBed: true }); // CHANGE
-            normalizeMovedBedAssembliesToBeds(cells, { source: "cells-resized", fitOnDrag: false, persistAxisIntent: true, clearFitAxisIntentOnNoBed: true }); // NEW
-        }); // MOVED
-    })(); // MOVED
+        graph.addListener(mxEvent.CELLS_RESIZED, function (_sender, evt) {
+            const cells = evt.getProperty("cells");
+            normalizeMovedTilerGroupsToBeds(cells, { source: "cells-resized", allowDragIntoBedFit: false, persistAxisIntent: true, clearFitAxisIntentOnNoBed: true });
+            normalizeMovedBedAssembliesToBeds(cells, { source: "cells-resized", fitOnDrag: false, persistAxisIntent: true, clearFitAxisIntentOnNoBed: true });
+        });
+    })();
 
     function minGroupSizePx(spacingXpx, spacingYpx, bandPx) {
         const b = Number.isFinite(Number(bandPx)) ? Number(bandPx) : GROUP_LABEL_BAND_PX;
@@ -5134,26 +5134,26 @@ Draw.loadPlugin(function (ui) {
         return { minW, minH };
     }
 
-    function buildResizeSnapshot(graph, groupCell, includeLayout) { // NEW
-        const sx = toPx(Number(groupCell.getAttribute("spacing_x_cm") || groupCell.getAttribute("spacing_cm") || "30")); // NEW
-        const sy = toPx(Number(groupCell.getAttribute("spacing_y_cm") || groupCell.getAttribute("spacing_cm") || "30")); // NEW
-        const vegDiamCm = Number(groupCell.getAttribute("veg_diameter_cm") || 0); // NEW
-        let iconDiam = vegDiamCm > 0 // NEW
-            ? toPx(vegDiamCm) // NEW
-            : clamp(DEFAULT_ICON_DIAM_RATIO * Math.min(sx, sy), MIN_ICON_DIAM_PX, MAX_ICON_DIAM_PX); // NEW
-        iconDiam = Math.max(iconDiam, 6); // NEW
+    function buildResizeSnapshot(graph, groupCell, includeLayout) {
+        const sx = toPx(Number(groupCell.getAttribute("spacing_x_cm") || groupCell.getAttribute("spacing_cm") || "30"));
+        const sy = toPx(Number(groupCell.getAttribute("spacing_y_cm") || groupCell.getAttribute("spacing_cm") || "30"));
+        const vegDiamCm = Number(groupCell.getAttribute("veg_diameter_cm") || 0);
+        let iconDiam = vegDiamCm > 0
+            ? toPx(vegDiamCm)
+            : clamp(DEFAULT_ICON_DIAM_RATIO * Math.min(sx, sy), MIN_ICON_DIAM_PX, MAX_ICON_DIAM_PX);
+        iconDiam = Math.max(iconDiam, 6);
 
-        const { bandPx } = groupLabelMetrics(groupCell); // NEW
-        return { // NEW
-            prev: includeLayout ? gridSnapshot(groupCell, sx, sy) : null, // CHANGE
-            spacingXpx: sx, // NEW
-            spacingYpx: sy, // NEW
-            iconDiamPx: iconDiam, // NEW
-            bandPx, // NEW
-            rotated: includeLayout ? hasEffectiveRotation(groupCell) : false, // CHANGE
-            layoutSnapshot: includeLayout ? resolveLayoutSnapshot(graph, groupCell) : null // CHANGE
-        }; // NEW
-    } // NEW
+        const { bandPx } = groupLabelMetrics(groupCell);
+        return {
+            prev: includeLayout ? gridSnapshot(groupCell, sx, sy) : null,
+            spacingXpx: sx,
+            spacingYpx: sy,
+            iconDiamPx: iconDiam,
+            bandPx,
+            rotated: includeLayout ? hasEffectiveRotation(groupCell) : false,
+            layoutSnapshot: includeLayout ? resolveLayoutSnapshot(graph, groupCell) : null
+        };
+    }
 
     function asBoundsArray(bounds, n) {
         if (Array.isArray(bounds)) return bounds;
@@ -5209,7 +5209,7 @@ Draw.loadPlugin(function (ui) {
         return { rows, cols, count };
     }
 
-    function ensureLineSlotsPresent(graph, groupCell, abbr, rows, cols, spacingXpx, spacingYpx, iconDiamPx, opts = {}) { // CHANGE
+    function ensureLineSlotsPresent(graph, groupCell, abbr, rows, cols, spacingXpx, spacingYpx, iconDiamPx, opts = {}) {
         // Only needed for 1×N or N×1 shapes
         if (isCollapsedLOD(groupCell)) return 0;
         if (!(rows === 1 || cols === 1)) return 0;
@@ -5223,8 +5223,8 @@ Draw.loadPlugin(function (ui) {
         const fontPx = tileFontPx(iconDiamPx);
 
         let added = 0;
-        const ownsUpdate = !opts.inTransaction; // CHANGE
-        if (ownsUpdate) model.beginUpdate(); // CHANGE
+        const ownsUpdate = !opts.inTransaction;
+        if (ownsUpdate) model.beginUpdate();
         try {
             const disabledSet = readDisabledSet(groupCell);
 
@@ -5254,7 +5254,7 @@ Draw.loadPlugin(function (ui) {
                 }
             }
         } finally {
-            if (ownsUpdate) model.endUpdate(); // CHANGE
+            if (ownsUpdate) model.endUpdate();
         }
 
         return added;
@@ -5265,7 +5265,7 @@ Draw.loadPlugin(function (ui) {
     function addTileAtSlot(graph, groupCell, abbr, r, c, spacingXpx, spacingYpx, iconDiamPx, disabledSet, bandPx, fontPx) {
         if (disabledSet && disabledSet.has(`${r},${c}`)) return null;
 
-        const geo = tileGeometryAtSlot(groupCell, r, c, spacingXpx, spacingYpx, iconDiamPx, bandPx); // CHANGE
+        const geo = tileGeometryAtSlot(groupCell, r, c, spacingXpx, spacingYpx, iconDiamPx, bandPx);
 
         const vVal = createXmlValue("PlantTile", {
             plant_tiler: "1",
@@ -5285,7 +5285,7 @@ Draw.loadPlugin(function (ui) {
         return v;
     }
 
-    function applyResizeDelta(graph, groupCell, prev, next, spacingXpx, spacingYpx, iconDiamPx, opts = {}) { // CHANGE
+    function applyResizeDelta(graph, groupCell, prev, next, spacingXpx, spacingYpx, iconDiamPx, opts = {}) {
         const model = graph.getModel();
         const abbr = groupCell.getAttribute("plant_abbr") || "?";
 
@@ -5299,8 +5299,8 @@ Draw.loadPlugin(function (ui) {
 
         const slotMap = buildSlotMap(graph, groupCell);
 
-        const ownsUpdate = !opts.inTransaction; // CHANGE
-        if (ownsUpdate) model.beginUpdate(); // CHANGE
+        const ownsUpdate = !opts.inTransaction;
+        if (ownsUpdate) model.beginUpdate();
         try {
             // ---- Add new rows ----
             if (next.rows > prev.rows) {
@@ -5353,19 +5353,19 @@ Draw.loadPlugin(function (ui) {
             if (toRemove.length) graph.removeCells(toRemove);
 
         } finally {
-            if (ownsUpdate) model.endUpdate(); // CHANGE
+            if (ownsUpdate) model.endUpdate();
         }
     }
 
-    function shiftGroupChildrenByDeltaBand(graph, groupCell, deltaY, opts = {}) {      // CHANGE
-        if (!deltaY || !Number.isFinite(deltaY)) return;                               // NEW
-        if (!groupCell || isCollapsedLOD(groupCell)) return;                           // NEW
+    function shiftGroupChildrenByDeltaBand(graph, groupCell, deltaY, opts = {}) {
+        if (!deltaY || !Number.isFinite(deltaY)) return;
+        if (!groupCell || isCollapsedLOD(groupCell)) return;
 
-        const model = graph.getModel();                                                // NEW
-        const kids = graph.getChildVertices(groupCell) || [];                          // NEW
+        const model = graph.getModel();
+        const kids = graph.getChildVertices(groupCell) || [];
 
-        const ownsUpdate = !opts.inTransaction;                                        // NEW
-        if (ownsUpdate) model.beginUpdate();                                           // CHANGE
+        const ownsUpdate = !opts.inTransaction;
+        if (ownsUpdate) model.beginUpdate();
         try {
             for (const k of kids) {
                 if (!k) continue;
@@ -5376,11 +5376,11 @@ Draw.loadPlugin(function (ui) {
                 if (!g) continue;
 
                 const ng = g.clone();
-                ng.y = (Number(ng.y) || 0) + deltaY;                                   // NEW
-                model.setGeometry(k, ng);                                              // NEW
+                ng.y = (Number(ng.y) || 0) + deltaY;
+                model.setGeometry(k, ng);
             }
         } finally {
-            if (ownsUpdate) model.endUpdate();                                         // CHANGE
+            if (ownsUpdate) model.endUpdate();
         }
     }
 
@@ -5458,126 +5458,126 @@ Draw.loadPlugin(function (ui) {
         return { capacity: capacityCount, actual, disabledN };
     }
 
-    function buildBedResizeSnapshot(bed) { // NEW
-        if (!bed || !isGardenBed(bed)) return null; // NEW
-        const model = graph.getModel(); // NEW
-        const parent = model.getParent(bed); // NEW
-        const previousRect = getModelRect(bed); // NEW
-        const previousRotatedRect = rotatedRectForModelRect(bed, previousRect); // NEW
-        if (!parent || !previousRect || !previousRotatedRect) return null; // NEW
-        const targets = []; // NEW
-        const assemblyTargets = []; // NEW
-        const bedId = bed.id || (bed.getId && bed.getId()) || ""; // NEW
-        const children = graph.getChildVertices(parent) || []; // NEW
-        for (const child of children) { // NEW
-            if (isIrrigationBedAssembly(child) && child.getAttribute(BED_AUTO_FIT_ATTR) !== "0") { // CHANGE
-                const geometryBed = resolveBedForAssemblyGeometry(parent, child, null); // NEW
-                const ownsByGeometry = !!(geometryBed && geometryBed.id === bedId); // NEW
-                const ownsByCachedLink = !geometryBed && child.getAttribute("irrigation_linked_bed_id") === bedId; // NEW
-                if (ownsByGeometry || ownsByCachedLink) { // NEW
-                    const axes = bedFitAxesForBedAssembly(child, bed); // NEW
-                    if (axes.fitWidth || axes.fitHeight) assemblyTargets.push({ assembly: child, axes }); // CHANGE
-                } // NEW
-            } // NEW
-            if (!child || !isTilerGroup(child) || child.getAttribute(BED_AUTO_FIT_ATTR) === "0") continue; // NEW
-            const axes = bedFitAxesForGroup(child); // NEW
-            if (!axes.fitWidth && !axes.fitHeight) continue; // NEW
-            const center = rectCenterModel(getModelRect(child)); // NEW
-            if (!pointInRotatedRectModel(center, previousRotatedRect)) continue; // NEW
-            targets.push({ tg: child, axes }); // NEW
-        } // NEW
-        return { bed, parent, previousRect, previousRotatedRect, previousArea: rectAreaModel(previousRect), targets, assemblyTargets }; // CHANGE
-    } // NEW
+    function buildBedResizeSnapshot(bed) {
+        if (!bed || !isGardenBed(bed)) return null;
+        const model = graph.getModel();
+        const parent = model.getParent(bed);
+        const previousRect = getModelRect(bed);
+        const previousRotatedRect = rotatedRectForModelRect(bed, previousRect);
+        if (!parent || !previousRect || !previousRotatedRect) return null;
+        const targets = [];
+        const assemblyTargets = [];
+        const bedId = bed.id || (bed.getId && bed.getId()) || "";
+        const children = graph.getChildVertices(parent) || [];
+        for (const child of children) {
+            if (isIrrigationBedAssembly(child) && child.getAttribute(BED_AUTO_FIT_ATTR) !== "0") {
+                const geometryBed = resolveBedForAssemblyGeometry(parent, child, null);
+                const ownsByGeometry = !!(geometryBed && geometryBed.id === bedId);
+                const ownsByCachedLink = !geometryBed && child.getAttribute("irrigation_linked_bed_id") === bedId;
+                if (ownsByGeometry || ownsByCachedLink) {
+                    const axes = bedFitAxesForBedAssembly(child, bed);
+                    if (axes.fitWidth || axes.fitHeight) assemblyTargets.push({ assembly: child, axes });
+                }
+            }
+            if (!child || !isTilerGroup(child) || child.getAttribute(BED_AUTO_FIT_ATTR) === "0") continue;
+            const axes = bedFitAxesForGroup(child);
+            if (!axes.fitWidth && !axes.fitHeight) continue;
+            const center = rectCenterModel(getModelRect(child));
+            if (!pointInRotatedRectModel(center, previousRotatedRect)) continue;
+            targets.push({ tg: child, axes });
+        }
+        return { bed, parent, previousRect, previousRotatedRect, previousArea: rectAreaModel(previousRect), targets, assemblyTargets };
+    }
 
-    function collectBedResizeSnapshots(cells) { // NEW
-        const snapshots = new Map(); // NEW
-        for (const cell of (cells || [])) { // NEW
-            if (!cell || !cell.id || !isGardenBed(cell) || snapshots.has(cell.id)) continue; // NEW
-            const snapshot = buildBedResizeSnapshot(cell); // NEW
-            if (snapshot) snapshots.set(cell.id, snapshot); // NEW
-        } // NEW
-        return snapshots; // NEW
-    } // NEW
+    function collectBedResizeSnapshots(cells) {
+        const snapshots = new Map();
+        for (const cell of (cells || [])) {
+            if (!cell || !cell.id || !isGardenBed(cell) || snapshots.has(cell.id)) continue;
+            const snapshot = buildBedResizeSnapshot(cell);
+            if (snapshot) snapshots.set(cell.id, snapshot);
+        }
+        return snapshots;
+    }
 
-    function syncIrrigationBedAssembliesForSnapshot(snapshot, opts) { // NEW
-        const planner = (graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner)); // NEW
-        if (!planner || typeof planner.syncLinkedBedAssemblyToBed !== "function") return []; // NEW
-        const changed = []; // NEW
-        for (const target of (snapshot && snapshot.assemblyTargets || [])) { // CHANGE
-            const assembly = target && target.assembly ? target.assembly : target; // NEW
-            const axes = target && target.axes ? target.axes : { fitWidth: true, fitHeight: true }; // NEW
-            if (planner.syncLinkedBedAssemblyToBed(snapshot.parent, assembly, snapshot.bed, { inTransaction: !!(opts && opts.inTransaction), fitWidth: !!axes.fitWidth, fitHeight: !!axes.fitHeight })) changed.push(assembly); // CHANGE
-        } // NEW
-        return changed; // NEW
-    } // NEW
+    function syncIrrigationBedAssembliesForSnapshot(snapshot, opts) {
+        const planner = (graph.__trellisIrrigationPlanner || (typeof window !== "undefined" && window.TrellisIrrigationPlanner));
+        if (!planner || typeof planner.syncLinkedBedAssemblyToBed !== "function") return [];
+        const changed = [];
+        for (const target of (snapshot && snapshot.assemblyTargets || [])) {
+            const assembly = target && target.assembly ? target.assembly : target;
+            const axes = target && target.axes ? target.axes : { fitWidth: true, fitHeight: true };
+            if (planner.syncLinkedBedAssemblyToBed(snapshot.parent, assembly, snapshot.bed, { inTransaction: !!(opts && opts.inTransaction), fitWidth: !!axes.fitWidth, fitHeight: !!axes.fitHeight })) changed.push(assembly);
+        }
+        return changed;
+    }
 
-    function refitGroupsForResizedBeds(bedSnapshots, opts) { // NEW
-        const source = (opts && opts.source) || "bed-resized"; // NEW
-        const txnId = (opts && opts.txnId) || ++bedFitTxnSeq; // NEW
-        const ownsTransaction = !(opts && opts.inTransaction); // NEW
-        const snapshots = Array.from((bedSnapshots && bedSnapshots.values) ? bedSnapshots.values() : (bedSnapshots || [])); // NEW
-        if (!snapshots.length || bedFitInProgress) { // NEW
-            bedFitLog("bed-resize-skip", { txnId, source, reason: !snapshots.length ? "no-beds" : "in-progress" }); // NEW
-            return { changed: [], trimmed: false }; // NEW
-        } // NEW
-        const model = graph.getModel(); // NEW
-        const targetByGroupId = new Map(); // NEW
-        const syncedAssemblies = []; // NEW
-        for (const snap of snapshots) { // NEW
-            Array.prototype.push.apply(syncedAssemblies, syncIrrigationBedAssembliesForSnapshot(snap, { inTransaction: !ownsTransaction })); // NEW
-            for (const target of (snap.targets || [])) { // NEW
-                const tg = target && target.tg; // NEW
-                if (!tg || !tg.id || !isTilerGroup(tg)) continue; // NEW
-                const previous = targetByGroupId.get(tg.id); // NEW
-                if (!previous || snap.previousArea < previous.previousArea) targetByGroupId.set(tg.id, { tg, bed: snap.bed, axes: target.axes, previousArea: snap.previousArea }); // NEW
-            } // NEW
-        } // NEW
-        if (!targetByGroupId.size && !syncedAssemblies.length) { // CHANGE
-            bedFitLog("bed-resize-skip", { txnId, source, reason: "no-fitted-groups", bedIds: snapshots.map(snap => bedFitCellId(snap.bed)) }); // NEW
-            return { changed: [], trimmed: false }; // NEW
-        } // NEW
-        const changed = []; // NEW
-        let trimmed = false; // NEW
-        bedFitLog("bed-resize-start", { txnId, source, bedIds: snapshots.map(snap => bedFitCellId(snap.bed)), groupIds: Array.from(targetByGroupId.values()).map(item => bedFitCellId(item.tg)), assemblyIds: syncedAssemblies.map(bedFitCellId) }); // CHANGE
-        bedFitInProgress = true; // NEW
-        if (ownsTransaction) model.beginUpdate(); // NEW
-        try { // NEW
-            for (const item of targetByGroupId.values()) { // NEW
-                const fitResult = applyBedFitGeometry(item.tg, item.bed, false, { // NEW
-                    txnId, // NEW
-                    source, // NEW
-                    usePersistedFitAxes: true, // NEW
-                    forceFitWidth: !!(item.axes && item.axes.fitWidth), // NEW
-                    forceFitHeight: !!(item.axes && item.axes.fitHeight) // NEW
-                }); // NEW
-                if (fitResult) changed.push({ // NEW
-                    tg: item.tg, // NEW
-                    bed: fitResult.bed, // NEW
-                    fitWidth: fitResult.fitWidth, // NEW
-                    fitHeight: fitResult.fitHeight, // NEW
-                    bedFitChanged: !!fitResult.changed, // NEW
-                    layoutSnapshot: fitResult.layoutSnapshot, // NEW
-                    previousRotationDeg: fitResult.previousRotationDeg // NEW
-                }); // NEW
-            } // NEW
-            for (const item of changed) retileAfterBedFit(item.tg, { // NEW
-                txnId, // NEW
-                source, // NEW
-                layoutSnapshot: item.layoutSnapshot, // NEW
-                previousRotationDeg: item.previousRotationDeg // NEW
-            }); // NEW
-            for (const item of changed) { // NEW
-                const bbox = getPlantCircleBBoxLogical(item.tg); // NEW
-                if (trimGroupToPlantFootprint(item.tg, item.bed, bbox, item.fitWidth, item.fitHeight, { txnId, source })) trimmed = true; // NEW
-            } // NEW
-        } finally { // NEW
-            if (ownsTransaction) model.endUpdate(); // NEW
-            bedFitInProgress = false; // NEW
-        } // NEW
-        if (trimmed || changed.some(item => item.bedFitChanged)) markBedFitResizeSuppression(changed); // NEW
-        bedFitLog("bed-resize-end", { txnId, source, changedCount: changed.length, assemblyCount: syncedAssemblies.length, trimmed }); // CHANGE
-        return { changed, syncedAssemblies, trimmed }; // CHANGE
-    } // NEW
+    function refitGroupsForResizedBeds(bedSnapshots, opts) {
+        const source = (opts && opts.source) || "bed-resized";
+        const txnId = (opts && opts.txnId) || ++bedFitTxnSeq;
+        const ownsTransaction = !(opts && opts.inTransaction);
+        const snapshots = Array.from((bedSnapshots && bedSnapshots.values) ? bedSnapshots.values() : (bedSnapshots || []));
+        if (!snapshots.length || bedFitInProgress) {
+            bedFitLog("bed-resize-skip", { txnId, source, reason: !snapshots.length ? "no-beds" : "in-progress" });
+            return { changed: [], trimmed: false };
+        }
+        const model = graph.getModel();
+        const targetByGroupId = new Map();
+        const syncedAssemblies = [];
+        for (const snap of snapshots) {
+            Array.prototype.push.apply(syncedAssemblies, syncIrrigationBedAssembliesForSnapshot(snap, { inTransaction: !ownsTransaction }));
+            for (const target of (snap.targets || [])) {
+                const tg = target && target.tg;
+                if (!tg || !tg.id || !isTilerGroup(tg)) continue;
+                const previous = targetByGroupId.get(tg.id);
+                if (!previous || snap.previousArea < previous.previousArea) targetByGroupId.set(tg.id, { tg, bed: snap.bed, axes: target.axes, previousArea: snap.previousArea });
+            }
+        }
+        if (!targetByGroupId.size && !syncedAssemblies.length) {
+            bedFitLog("bed-resize-skip", { txnId, source, reason: "no-fitted-groups", bedIds: snapshots.map(snap => bedFitCellId(snap.bed)) });
+            return { changed: [], trimmed: false };
+        }
+        const changed = [];
+        let trimmed = false;
+        bedFitLog("bed-resize-start", { txnId, source, bedIds: snapshots.map(snap => bedFitCellId(snap.bed)), groupIds: Array.from(targetByGroupId.values()).map(item => bedFitCellId(item.tg)), assemblyIds: syncedAssemblies.map(bedFitCellId) });
+        bedFitInProgress = true;
+        if (ownsTransaction) model.beginUpdate();
+        try {
+            for (const item of targetByGroupId.values()) {
+                const fitResult = applyBedFitGeometry(item.tg, item.bed, false, {
+                    txnId,
+                    source,
+                    usePersistedFitAxes: true,
+                    forceFitWidth: !!(item.axes && item.axes.fitWidth),
+                    forceFitHeight: !!(item.axes && item.axes.fitHeight)
+                });
+                if (fitResult) changed.push({
+                    tg: item.tg,
+                    bed: fitResult.bed,
+                    fitWidth: fitResult.fitWidth,
+                    fitHeight: fitResult.fitHeight,
+                    bedFitChanged: !!fitResult.changed,
+                    layoutSnapshot: fitResult.layoutSnapshot,
+                    previousRotationDeg: fitResult.previousRotationDeg
+                });
+            }
+            for (const item of changed) retileAfterBedFit(item.tg, {
+                txnId,
+                source,
+                layoutSnapshot: item.layoutSnapshot,
+                previousRotationDeg: item.previousRotationDeg
+            });
+            for (const item of changed) {
+                const bbox = getPlantCircleBBoxLogical(item.tg);
+                if (trimGroupToPlantFootprint(item.tg, item.bed, bbox, item.fitWidth, item.fitHeight, { txnId, source })) trimmed = true;
+            }
+        } finally {
+            if (ownsTransaction) model.endUpdate();
+            bedFitInProgress = false;
+        }
+        if (trimmed || changed.some(item => item.bedFitChanged)) markBedFitResizeSuppression(changed);
+        bedFitLog("bed-resize-end", { txnId, source, changedCount: changed.length, assemblyCount: syncedAssemblies.length, trimmed });
+        return { changed, syncedAssemblies, trimmed };
+    }
 
 
     // -------------------- Resize → Retile in SAME undo step --------------------
@@ -5589,7 +5589,7 @@ Draw.loadPlugin(function (ui) {
 
         graph.resizeCells = function (cells, bounds, recurse) {
             const model = graph.getModel();
-            const duringResize = !!graph.isMouseDown; // CHANGE
+            const duringResize = !!graph.isMouseDown;
 
             // Collect affected tiler groups and snapshot BEFORE resize
             const groups = new Map();
@@ -5599,12 +5599,12 @@ Draw.loadPlugin(function (ui) {
             }
 
             const hasTiler = groups.size > 0;
-            const bedSnapshots = collectBedResizeSnapshots(cells); // NEW
-            const hasResizedBeds = bedSnapshots.size > 0; // NEW
+            const bedSnapshots = collectBedResizeSnapshots(cells);
+            const hasResizedBeds = bedSnapshots.size > 0;
 
-            const snapshots = new Map(); // groupId -> { prev, spacingXpx, spacingYpx, iconDiamPx, bandPx, rotated, layoutSnapshot } // CHANGE
+            const snapshots = new Map(); // groupId -> { prev, spacingXpx, spacingYpx, iconDiamPx, bandPx, rotated, layoutSnapshot }
             for (const g of groups.values()) {
-                snapshots.set(g.id, buildResizeSnapshot(graph, g, !duringResize)); // CHANGE
+                snapshots.set(g.id, buildResizeSnapshot(graph, g, !duringResize));
             }
 
             // Clamp tiler group bounds to minimum 1×1 capacity
@@ -5612,20 +5612,20 @@ Draw.loadPlugin(function (ui) {
                 bounds = clampTilerBounds(cells, bounds, snapshots);
             }
 
-            // During drag: do ONLY the geometry resize (lightweight)                         // CHANGED
-            if (duringResize || (!hasTiler && !hasResizedBeds)) {                            // CHANGE
-                return oldResizeCells.call(this, cells, bounds, hasTiler ? false : recurse); // CHANGED
+            // During drag: do ONLY the geometry resize (lightweight)
+            if (duringResize || (!hasTiler && !hasResizedBeds)) {
+                return oldResizeCells.call(this, cells, bounds, hasTiler ? false : recurse);
             }
 
-            // Mouse-up: make geometry resize + all follow-up edits ONE undoable change       // CHANGED
-            let res;                                                                         // CHANGED
-            const groupsNeedingRefresh = [];                                                 // CHANGED
-            const bedResizeTxnId = hasResizedBeds ? ++bedFitTxnSeq : null;                    // NEW
+            // Mouse-up: make geometry resize + all follow-up edits ONE undoable change
+            let res;
+            const groupsNeedingRefresh = [];
+            const bedResizeTxnId = hasResizedBeds ? ++bedFitTxnSeq : null;
 
-            model.beginUpdate();                                                             // CHANGED
+            model.beginUpdate();
             try {
-                // Geometry resize happens inside the SAME outer transaction                  // CHANGED
-                res = oldResizeCells.call(this, cells, bounds, hasTiler ? false : recurse);   // CHANGE
+                // Geometry resize happens inside the SAME outer transaction
+                res = oldResizeCells.call(this, cells, bounds, hasTiler ? false : recurse);
 
                 for (const g of groups.values()) {
                     const snap = snapshots.get(g.id);
@@ -5640,8 +5640,8 @@ Draw.loadPlugin(function (ui) {
                     const nextBandPx = groupLabelMetrics(g).bandPx;
                     const deltaBandY = (Number(nextBandPx) || 0) - (Number(snap.bandPx) || 0);
                     if (deltaBandY) {
-                        if (snap.rotated) shiftLayoutSnapshotByDeltaY(snap.layoutSnapshot, deltaBandY); // NEW
-                        else shiftGroupChildrenByDeltaBand(graph, g, deltaBandY, { inTransaction: true }); // CHANGE
+                        if (snap.rotated) shiftLayoutSnapshotByDeltaY(snap.layoutSnapshot, deltaBandY);
+                        else shiftGroupChildrenByDeltaBand(graph, g, deltaBandY, { inTransaction: true });
                         snap.bandPx = nextBandPx;
                     }
 
@@ -5662,27 +5662,27 @@ Draw.loadPlugin(function (ui) {
 
                     // LOD thresholds
                     if (next.count > MAX_TILES || next.count > LOD_TILE_THRESHOLD) {
-                        collapseToSummary(graph, g, abbr, snap.spacingXpx, snap.spacingYpx, snap.rotated ? { layoutSnapshot: snap.layoutSnapshot, useLiveSnapshot: false } : {}); // CHANGE
+                        collapseToSummary(graph, g, abbr, snap.spacingXpx, snap.spacingYpx, snap.rotated ? { layoutSnapshot: snap.layoutSnapshot, useLiveSnapshot: false } : {});
                         groupsNeedingRefresh.push(g);
                         continue;
                     }
 
                     // If currently collapsed but now under thresholds, expand
                     if (isCollapsedLOD(g)) {
-                        expandTiles(graph, g, abbr, snap.spacingXpx, snap.spacingYpx, snap.iconDiamPx, snap.rotated ? { layoutSnapshot: snap.layoutSnapshot, useLiveSnapshot: false } : {}); // CHANGE
+                        expandTiles(graph, g, abbr, snap.spacingXpx, snap.spacingYpx, snap.iconDiamPx, snap.rotated ? { layoutSnapshot: snap.layoutSnapshot, useLiveSnapshot: false } : {});
                         groupsNeedingRefresh.push(g);
                         continue;
                     }
 
-                    if (snap.rotated) { // NEW
-                        const synced = syncAutoTileGeometriesInPlace(graph, g, abbr, snap.spacingXpx, snap.spacingYpx, snap.iconDiamPx, { layoutSnapshot: snap.layoutSnapshot, useLiveSnapshot: false, inTransaction: true }); // CHANGE
-                        if (synced.fallback) expandTiles(graph, g, abbr, snap.spacingXpx, snap.spacingYpx, snap.iconDiamPx, { layoutSnapshot: snap.layoutSnapshot, useLiveSnapshot: false }); // CHANGE
-                        groupsNeedingRefresh.push(g); // NEW
-                        continue; // NEW
-                    } // NEW
+                    if (snap.rotated) {
+                        const synced = syncAutoTileGeometriesInPlace(graph, g, abbr, snap.spacingXpx, snap.spacingYpx, snap.iconDiamPx, { layoutSnapshot: snap.layoutSnapshot, useLiveSnapshot: false, inTransaction: true });
+                        if (synced.fallback) expandTiles(graph, g, abbr, snap.spacingXpx, snap.spacingYpx, snap.iconDiamPx, { layoutSnapshot: snap.layoutSnapshot, useLiveSnapshot: false });
+                        groupsNeedingRefresh.push(g);
+                        continue;
+                    }
 
                     // Delta slot maintenance (add/remove)
-                    applyResizeDelta(graph, g, snap.prev, next, snap.spacingXpx, snap.spacingYpx, snap.iconDiamPx, { inTransaction: true }); // CHANGE
+                    applyResizeDelta(graph, g, snap.prev, next, snap.spacingXpx, snap.spacingYpx, snap.iconDiamPx, { inTransaction: true });
 
                     ensureLineSlotsPresent(
                         graph,
@@ -5693,19 +5693,19 @@ Draw.loadPlugin(function (ui) {
                         snap.spacingXpx,
                         snap.spacingYpx,
                         snap.iconDiamPx,
-                        { inTransaction: true } // CHANGE
+                        { inTransaction: true }
                     );
 
                     groupsNeedingRefresh.push(g);
                 }
 
-                if (hasResizedBeds) { // NEW
-                    const bedFitResult = refitGroupsForResizedBeds(bedSnapshots, { source: "bed-resized", inTransaction: true, txnId: bedResizeTxnId }); // NEW
-                    for (const item of bedFitResult.changed || []) groupsNeedingRefresh.push(item.tg); // NEW
-                    for (const assembly of bedFitResult.syncedAssemblies || []) groupsNeedingRefresh.push(assembly); // NEW
-                } // NEW
+                if (hasResizedBeds) {
+                    const bedFitResult = refitGroupsForResizedBeds(bedSnapshots, { source: "bed-resized", inTransaction: true, txnId: bedResizeTxnId });
+                    for (const item of bedFitResult.changed || []) groupsNeedingRefresh.push(item.tg);
+                    for (const assembly of bedFitResult.syncedAssemblies || []) groupsNeedingRefresh.push(assembly);
+                }
             } finally {
-                model.endUpdate();                                                           // CHANGED
+                model.endUpdate();
             }
 
             for (const g of groupsNeedingRefresh) graph.refresh(g);
@@ -5718,13 +5718,13 @@ Draw.loadPlugin(function (ui) {
     // ---- Public API export (for other plugins) ---------------------------------
     window.USL = window.USL || {};
     window.USL.tiler = Object.assign({}, window.USL.tiler, {
-        retileGroup, // CHANGE
-        retileAndFitToContainingBed, // CHANGE
-        createSiblingTilerGroupFromSource, // ADDED
-        reorderModuleChildrenForLayering // NEW
+        retileGroup,
+        retileAndFitToContainingBed,
+        createSiblingTilerGroupFromSource,
+        reorderModuleChildrenForLayering
     });
-    installTrellisDebugSurface(); // NEW
-    bedFitLog("loaded", bedFitStatus()); // NEW
+    installTrellisDebugSurface();
+    bedFitLog("loaded", bedFitStatus());
 
     // -------------------- Boot --------------------
     (async function init() {

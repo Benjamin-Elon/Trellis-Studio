@@ -38,8 +38,8 @@ def run_menu() -> None:
         print("6. Settings and credentials")
         print("7. Run live tests")
         print("8. Compare scheduler to sowing-season references")  # terminology alignment
-        print("9. Generate climate benchmark")  # ADDED
-        print("10. Exit")  # CHANGED
+        print("9. Generate climate benchmark")
+        print("10. Exit")
         choice = input("Choose an option: ").strip()
         if choice == "1":
             _suggest_input_flow(settings)
@@ -58,7 +58,7 @@ def run_menu() -> None:
         elif choice == "8":
             _sowing_window_diagnostics_flow(settings)
         elif choice == "9":
-            _climate_benchmark_flow(settings)  # ADDED
+            _climate_benchmark_flow(settings)
         elif choice == "10":
             return
         else:
@@ -216,7 +216,7 @@ def _prompt_yes_no(prompt: str, default: bool) -> bool:
 
 def _preflight_provider_labels(input_data: dict) -> list[str]:
     labels = []
-    if input_data.get("crops") or input_data.get("cities") or input_data.get("companions") or (input_data.get("sowing_windows") or {}).get("enabled"):  # CHANGED
+    if input_data.get("crops") or input_data.get("cities") or input_data.get("companions") or (input_data.get("sowing_windows") or {}).get("enabled"):
         labels.append("OpenAI")
     if input_data.get("cities"):
         labels.extend(["Open-Meteo", "NASA POWER"])
@@ -453,75 +453,75 @@ def _sowing_window_diagnostics_flow(settings) -> None:
         print("Sowing-season diagnostics complete.")  # terminology alignment
 
 
-def _climate_benchmark_flow(settings) -> None:  # ADDED
-    preflight = preflight_climate_benchmark(settings)  # ADDED
-    if not preflight["ok"]:  # ADDED
-        print("Cannot generate climate benchmark yet.")  # ADDED
-        print("Missing major-city climate bands: " + ", ".join(preflight["missing_bands"]))  # ADDED
-        print("Current eligible major-city counts:")  # ADDED
-        for band, count in preflight["city_counts"].items():  # ADDED
-            print(f"- {band}: {count}")  # ADDED
-        return  # ADDED
-    benchmark_config = settings.data.get("climate_benchmark") or {}  # ADDED
-    default_seed = str(benchmark_config.get("random_seed") or "trellis-climate-benchmark")  # ADDED
-    random_seed = input(f"Random seed [{default_seed}]: ").strip() or default_seed  # ADDED
-    print("Generating climate benchmark references...")  # ADDED
-    openai = OpenAIJsonClient(read_openai_api_key(), settings.openai_model, settings.openai_reasoning_effort)  # ADDED
-    try:  # ADDED
-        result = generate_climate_benchmark(settings, openai, random_seed=random_seed)  # ADDED
-    except Exception as exc:  # ADDED
-        print(f"Climate benchmark generation failed: {exc}")  # ADDED
-        return  # ADDED
-    print(f"Benchmark artifacts written: {result.run_dir}")  # ADDED
-    if not _prompt_yes_no("Run scheduler diagnostics for this benchmark now?", default=False):  # ADDED
-        return  # ADDED
-    default_year = datetime.now().year  # ADDED
-    raw_year = input(f"Diagnostic year [{default_year}]: ").strip()  # ADDED
-    try:  # ADDED
-        year = int(raw_year) if raw_year else default_year  # ADDED
-    except ValueError:  # ADDED
-        print("Enter a whole-number year.")  # ADDED
-        return  # ADDED
-    default_tolerance = int(benchmark_config.get("tolerance_days") or 14)  # ADDED
-    raw_tolerance = input(f"Tolerance days [{default_tolerance}]: ").strip()  # ADDED
-    try:  # ADDED
-        tolerance_days = int(raw_tolerance) if raw_tolerance else default_tolerance  # ADDED
-    except ValueError:  # ADDED
-        print("Enter a whole-number tolerance.")  # ADDED
-        return  # ADDED
-    report_path = result.run_dir / "climate_benchmark_diagnostics_report.json"  # ADDED
-    _run_sowing_window_diagnostics(settings, report_path, year, tolerance_days, references_path=result.references_path)  # ADDED
+def _climate_benchmark_flow(settings) -> None:
+    preflight = preflight_climate_benchmark(settings)
+    if not preflight["ok"]:
+        print("Cannot generate climate benchmark yet.")
+        print("Missing major-city climate bands: " + ", ".join(preflight["missing_bands"]))
+        print("Current eligible major-city counts:")
+        for band, count in preflight["city_counts"].items():
+            print(f"- {band}: {count}")
+        return
+    benchmark_config = settings.data.get("climate_benchmark") or {}
+    default_seed = str(benchmark_config.get("random_seed") or "trellis-climate-benchmark")
+    random_seed = input(f"Random seed [{default_seed}]: ").strip() or default_seed
+    print("Generating climate benchmark references...")
+    openai = OpenAIJsonClient(read_openai_api_key(), settings.openai_model, settings.openai_reasoning_effort)
+    try:
+        result = generate_climate_benchmark(settings, openai, random_seed=random_seed)
+    except Exception as exc:
+        print(f"Climate benchmark generation failed: {exc}")
+        return
+    print(f"Benchmark artifacts written: {result.run_dir}")
+    if not _prompt_yes_no("Run scheduler diagnostics for this benchmark now?", default=False):
+        return
+    default_year = datetime.now().year
+    raw_year = input(f"Diagnostic year [{default_year}]: ").strip()
+    try:
+        year = int(raw_year) if raw_year else default_year
+    except ValueError:
+        print("Enter a whole-number year.")
+        return
+    default_tolerance = int(benchmark_config.get("tolerance_days") or 14)
+    raw_tolerance = input(f"Tolerance days [{default_tolerance}]: ").strip()
+    try:
+        tolerance_days = int(raw_tolerance) if raw_tolerance else default_tolerance
+    except ValueError:
+        print("Enter a whole-number tolerance.")
+        return
+    report_path = result.run_dir / "climate_benchmark_diagnostics_report.json"
+    _run_sowing_window_diagnostics(settings, report_path, year, tolerance_days, references_path=result.references_path)
 
 
-def _run_sowing_window_diagnostics(settings, report_path: Path, year: int, tolerance_days: int, references_path: Path | None = None) -> None:  # ADDED
-    script_path = PROJECT_DIR / "scripts" / "trellis_seed_sowing_season_diagnostics.cjs"  # ADDED
-    cmd = [  # ADDED
-        "node",  # ADDED
-        str(script_path),  # ADDED
-        "--db",  # ADDED
-        str(settings.db_path),  # ADDED
-        "--year",  # ADDED
-        str(year),  # ADDED
-        "--tolerance-days",  # ADDED
-        str(tolerance_days),  # ADDED
-        "--out",  # ADDED
-        str(report_path),  # ADDED
-    ]  # ADDED
-    if references_path is not None:  # ADDED
-        cmd.extend(["--references", str(references_path)])  # ADDED
-    try:  # ADDED
-        completed = subprocess.run(cmd, cwd=PROJECT_DIR, text=True, capture_output=True, check=False)  # ADDED
-    except FileNotFoundError:  # ADDED
-        print("Node.js was not found on PATH; run this from the drawio-desktop npm environment.")  # ADDED
-        return  # ADDED
-    if completed.stdout:  # ADDED
-        print(completed.stdout.strip())  # ADDED
-    if completed.stderr:  # ADDED
-        print(completed.stderr.strip())  # ADDED
-    if completed.returncode:  # ADDED
-        print(f"Sowing-season diagnostics failed with exit code {completed.returncode}.")  # ADDED
-    else:  # ADDED
-        print("Sowing-season diagnostics complete.")  # ADDED
+def _run_sowing_window_diagnostics(settings, report_path: Path, year: int, tolerance_days: int, references_path: Path | None = None) -> None:
+    script_path = PROJECT_DIR / "scripts" / "trellis_seed_sowing_season_diagnostics.cjs"
+    cmd = [
+        "node",
+        str(script_path),
+        "--db",
+        str(settings.db_path),
+        "--year",
+        str(year),
+        "--tolerance-days",
+        str(tolerance_days),
+        "--out",
+        str(report_path),
+    ]
+    if references_path is not None:
+        cmd.extend(["--references", str(references_path)])
+    try:
+        completed = subprocess.run(cmd, cwd=PROJECT_DIR, text=True, capture_output=True, check=False)
+    except FileNotFoundError:
+        print("Node.js was not found on PATH; run this from the drawio-desktop npm environment.")
+        return
+    if completed.stdout:
+        print(completed.stdout.strip())
+    if completed.stderr:
+        print(completed.stderr.strip())
+    if completed.returncode:
+        print(f"Sowing-season diagnostics failed with exit code {completed.returncode}.")
+    else:
+        print("Sowing-season diagnostics complete.")
 
 
 def _choose_run(settings, complete_only: bool = False) -> Path | None:

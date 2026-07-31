@@ -1,940 +1,940 @@
-const assert = require("node:assert/strict"); // NEW
-const fs = require("node:fs"); // NEW
-const path = require("node:path"); // NEW
-const test = require("node:test"); // NEW
-const vm = require("node:vm"); // NEW
-const { JSDOM } = require("jsdom"); // NEW
-
-const PROJECT_ROOT = path.join(__dirname, ".."); // NEW
-const PLUGIN_PATH = path.join(PROJECT_ROOT, "drawio", "src", "main", "webapp", "plugins", "garden_planner_plugins", "Modules_Standalone.js"); // NEW
-
-let nextCellId = 1; // NEW
-
-class TestGeometry { // NEW
-    constructor(x, y, width, height) { // NEW
-        this.x = x; // NEW
-        this.y = y; // NEW
-        this.width = width; // NEW
-        this.height = height; // NEW
-        this.relative = false; // NEW
-    } // NEW
-
-    clone() { // NEW
-        const copy = new TestGeometry(this.x, this.y, this.width, this.height); // NEW
-        copy.relative = this.relative; // NEW
-        copy.alternateBounds = this.alternateBounds; // NEW
-        return copy; // NEW
-    } // NEW
-} // NEW
-
-class TestCell { // NEW
-    constructor(value, geometry, style) { // NEW
-        this.id = "cell-" + nextCellId++; // NEW
-        this.value = value; // NEW
-        this.geometry = geometry || null; // NEW
-        this.style = style || ""; // NEW
-        this.children = []; // NEW
-        this.parent = null; // NEW
-        this.vertex = false; // NEW
-    } // NEW
-
-    getId() { return this.id; } // NEW
-    getStyle() { return this.style || ""; } // NEW
-    getGeometry() { return this.geometry; } // NEW
-    isVertex() { return !!this.vertex; } // NEW
-    getAttribute(key) { return this.value && this.value.nodeType === 1 ? this.value.getAttribute(key) : null; } // NEW
-} // NEW
-
-class TestModel { // NEW
-    constructor(root) { // NEW
-        this.root = root; // NEW
-        this.cells = {}; // NEW
-        this.listeners = new Map(); // NEW
-        this.updateLevel = 0; // NEW
-        this.topLevelUpdateCount = 0; // NEW
-        this.valueWrites = []; // NEW
-        this.register(root); // NEW
-    } // NEW
-
-    register(cell) { // NEW
-        if (cell && cell.id) this.cells[cell.id] = cell; // NEW
-        (cell.children || []).forEach(child => this.register(child)); // NEW
-    } // NEW
-
-    beginUpdate() { if (this.updateLevel === 0) this.topLevelUpdateCount += 1; this.updateLevel += 1; } // CHANGE
-    endUpdate() { this.updateLevel = Math.max(0, this.updateLevel - 1); } // CHANGE
-    getRoot() { return this.root; } // NEW
-    getCell(id) { return this.cells[id] || null; } // NEW
-    getParent(cell) { return cell && cell.parent ? cell.parent : null; } // NEW
-    getChildren(cell) { return cell && cell.children ? cell.children.slice() : []; } // NEW
-    getChildCount(cell) { return cell && cell.children ? cell.children.length : 0; } // NEW
-    getChildAt(cell, index) { return cell.children[index]; } // NEW
-    getGeometry(cell) { return cell && cell.geometry ? cell.geometry : null; } // NEW
-    isVertex(cell) { return !!cell && !!cell.vertex; } // NEW
-
-    add(parent, cell, index) { // NEW
-        if (!parent || !cell) return cell; // NEW
-        if (cell.parent && cell.parent.children) cell.parent.children = cell.parent.children.filter(child => child !== cell); // NEW
-        cell.parent = parent; // NEW
-        if (typeof index === "number") parent.children.splice(index, 0, cell); // NEW
-        else parent.children.push(cell); // NEW
-        this.register(cell); // NEW
-        return cell; // NEW
-    } // NEW
-
-    remove(cell) { // NEW
-        if (!cell) return null; // NEW
-        if (cell.parent && cell.parent.children) cell.parent.children = cell.parent.children.filter(child => child !== cell); // NEW
-        cell.parent = null; // NEW
-        return cell; // NEW
-    } // NEW
-
-    setGeometry(cell, geometry) { if (cell) cell.geometry = geometry; } // NEW
-    setStyle(cell, style) { if (cell) cell.style = style || ""; } // NEW
-    setValue(cell, value) { if (cell) { this.valueWrites.push({ cell, oldValue: cell.value, newValue: value }); cell.value = value; } } // CHANGE
-
-    addListener(eventName, listener) { // NEW
-        if (!this.listeners.has(eventName)) this.listeners.set(eventName, []); // NEW
-        this.listeners.get(eventName).push(listener); // NEW
-    } // NEW
-
-    fire(eventName) { // NEW
-        (this.listeners.get(eventName) || []).forEach(listener => listener(this, {})); // NEW
-    } // NEW
-} // NEW
-
-function makeEventObject(name, pairs) { // NEW
-    const props = {}; // NEW
-    for (let i = 0; i < pairs.length; i += 2) props[pairs[i]] = pairs[i + 1]; // NEW
-    return { name, getProperty(key) { return props[key]; } }; // NEW
-} // NEW
-
-function makeHarness() { // NEW
-    nextCellId = 1; // NEW
-    const dom = new JSDOM("<!doctype html><body><div id='graph'></div></body>"); // NEW
-    const document = dom.window.document; // NEW
-    const root = new TestCell("", null, ""); // NEW
-    root.id = "root"; // NEW
-    const model = new TestModel(root); // NEW
-    const mouseListeners = []; // NEW
-    const graphListeners = new Map(); // NEW
-    const viewListeners = new Map(); // NEW
-    const selectionListeners = new Map(); // NEW
-    const firedEvents = []; // NEW
-    const contextMenuContributors = []; // NEW
-    let insertImageCalls = 0; // NEW
-    let promptValue = "40"; // NEW
-    const promptCalls = []; // NEW
-    let selectedCells = []; // CHANGE
-    const container = document.getElementById("graph"); // NEW
-    Object.defineProperty(container, "clientWidth", { value: 800, configurable: true }); // NEW
-    Object.defineProperty(container, "clientHeight", { value: 600, configurable: true }); // NEW
-    container.getBoundingClientRect = () => ({ left: 10, top: 20, width: 800, height: 600 }); // NEW
-
-    function addMappedListener(map, eventName, listener) { // NEW
-        if (!map.has(eventName)) map.set(eventName, []); // NEW
-        map.get(eventName).push(listener); // NEW
-    } // NEW
-
-    const graph = { // NEW
-        container, // NEW
-        popupMenuHandler: {}, // NEW
-        resizeChildCells() {}, // NEW
-        view: { // NEW
-            scale: 1, // NEW
-            translate: { x: 0, y: 0 }, // NEW
-            getState(cell) { const g = model.getGeometry(cell); return g ? { x: g.x, y: g.y, width: g.width, height: g.height } : null; }, // NEW
-            addListener(eventName, listener) { addMappedListener(viewListeners, eventName, listener); } // NEW
-        }, // NEW
-        getModel() { return model; }, // NEW
-        getDefaultParent() { return root; }, // NEW
-        getCellGeometry(cell) { return model.getGeometry(cell); }, // NEW
-        getStartSize() { return { width: 0, height: 0 }; }, // NEW
-        getPointForEvent(evt) { return { x: evt.graphX == null ? evt.clientX : evt.graphX, y: evt.graphY == null ? evt.clientY : evt.graphY }; }, // NEW
-        getCellAt() { return graph.__hitCell || null; }, // NEW
-        getView() { return this.view; }, // NEW
-        refresh() {}, // NEW
-        insertVertex(parent, id, value, x, y, w, h, style) { const cell = new TestCell(value, new TestGeometry(x, y, w, h), style); cell.vertex = true; return model.add(parent || root, cell); }, // NEW
-        setSelectionCell(cell) { selectedCells = cell ? [cell] : []; (selectionListeners.get("change") || []).forEach(listener => listener(this, {})); }, // CHANGE
-        setSelectionCells(cells) { selectedCells = (cells || []).filter(Boolean); (selectionListeners.get("change") || []).forEach(listener => listener(this, {})); }, // NEW
-        getSelectionCell() { return selectedCells[0] || null; }, // CHANGE
-        getSelectionCells() { return selectedCells.slice(); }, // CHANGE
-        getSelectionModel() { return { addListener(eventName, listener) { addMappedListener(selectionListeners, eventName, listener); } }; }, // NEW
-        addMouseListener(listener) { mouseListeners.push(listener); }, // NEW
-        addListener(eventName, listener) { addMappedListener(graphListeners, eventName, listener); }, // NEW
-        fireEvent(evt) { firedEvents.push(evt); (graphListeners.get(evt && evt.name) || []).forEach(listener => listener(this, evt)); } // CHANGE
-    }; // NEW
-
-    dom.window.TrellisContextMenu = { // NEW
-        install() {}, // NEW
-        register(contributor) { contextMenuContributors.push(contributor); } // NEW
-    }; // NEW
-
-    const actions = { // NEW
-        get(name) { // NEW
-            if (name !== "insertImage") return null; // NEW
-            return { // NEW
-                funct() { // NEW
-                    insertImageCalls += 1; // NEW
-                    graph.insertVertex(root, null, "avatar", 0, 0, 20, 20, "shape=image;image=data:image/png;base64,test", false); // NEW
-                } // NEW
-            }; // NEW
-        } // NEW
-    }; // NEW
-
-    const ui = { // NEW
-        editor: { graph }, // NEW
-        actions, // NEW
-        prompt(message, value, callback) { // NEW
-            promptCalls.push({ message, value }); // NEW
-            callback(promptValue); // NEW
-        } // NEW
-    }; // NEW
-
-    const context = { // NEW
-        window: dom.window, // NEW
-        document, // NEW
-        console: { log() {}, warn() {}, error() {} }, // NEW
-        setTimeout, // NEW
-        clearTimeout, // NEW
-        Draw: { loadPlugin(callback) { callback(ui); } }, // CHANGE
-        mxCell: TestCell, // NEW
-        mxGeometry: TestGeometry, // NEW
-        mxLayoutManager: function mxLayoutManager() {}, // NEW
-        mxStackLayout: function mxStackLayout() {}, // NEW
-        mxEventObject: function mxEventObject(name, ...pairs) { return makeEventObject(name, pairs); }, // NEW
-        mxUtils: { // NEW
-            createXmlDocument() { return document.implementation.createDocument("", "", null); } // NEW
-        }, // NEW
-        mxEvent: { // NEW
-            CHANGE: "change", // NEW
-            ADD_CELLS: "addCells", // NEW
-            CELLS_ADDED: "cellsAdded", // NEW
-            CELLS_MOVED: "cellsMoved", // NEW
-            CELLS_RESIZED: "cellsResized", // NEW
-            SCALE: "scale", // NEW
-            TRANSLATE: "translate", // NEW
-            SCALE_AND_TRANSLATE: "scaleAndTranslate", // NEW
-            DESTROY: "destroy", // NEW
-            addListener(node, eventName, listener) { node.addEventListener(eventName, listener); }, // NEW
-            consume(evt) { if (evt && evt.preventDefault) evt.preventDefault(); if (evt && evt.stopPropagation) evt.stopPropagation(); }, // NEW
-            getSource(evt) { return evt && (evt.target || evt.srcElement); }, // NEW
-            getClientX(evt) { return evt && evt.clientX || 0; }, // NEW
-            getClientY(evt) { return evt && evt.clientY || 0; }, // NEW
-            isControlDown(evt) { return !!(evt && evt.ctrlKey); }, // NEW
-            isMetaDown(evt) { return !!(evt && evt.metaKey); }, // NEW
-            isShiftDown(evt) { return !!(evt && evt.shiftKey); }, // NEW
-            isPopupTrigger(evt) { return !!(evt && evt.button === 2); } // NEW
-        } // NEW
-    }; // NEW
-
-    vm.runInNewContext(fs.readFileSync(PLUGIN_PATH, "utf8"), context, { filename: PLUGIN_PATH }); // NEW
-    return { dom, document, graph, model, root, mouseListeners, graphListeners, viewListeners, selectionListeners, firedEvents, contextMenuContributors, promptCalls, setPromptValue(value) { promptValue = value; }, clearValueWrites() { model.valueWrites.length = 0; }, get valueWrites() { return model.valueWrites.slice(); }, get insertImageCalls() { return insertImageCalls; }, get selectedCell() { return selectedCells[0] || null; } }; // CHANGE
-} // NEW
-
-function makeMouseEvent(window, type, opts) { // NEW
-    const event = new window.MouseEvent(type, { // NEW
-        bubbles: true, // NEW
-        button: opts.button == null ? 0 : opts.button, // NEW
-        clientX: opts.clientX, // NEW
-        clientY: opts.clientY, // NEW
-        detail: opts.detail == null ? 1 : opts.detail, // NEW
-        ctrlKey: !!opts.ctrlKey, // NEW
-        shiftKey: !!opts.shiftKey, // NEW
-        altKey: !!opts.altKey // NEW
-    }); // NEW
-    Object.defineProperty(event, "graphX", { value: opts.graphX == null ? opts.clientX : opts.graphX }); // NEW
-    Object.defineProperty(event, "graphY", { value: opts.graphY == null ? opts.clientY : opts.graphY }); // NEW
-    return event; // NEW
-} // NEW
-
-function fireGraphClick(harness, opts = {}) { // NEW
-    const graph = harness.graph; // NEW
-    const cell = opts.cell || null; // NEW
-    graph.__hitCell = opts.hitCell === undefined ? cell : opts.hitCell; // NEW
-    const down = makeMouseEvent(harness.dom.window, "mousedown", { clientX: opts.clientX || 100, clientY: opts.clientY || 120, graphX: opts.graphX || 90, graphY: opts.graphY || 100, detail: opts.detail }); // NEW
-    const up = makeMouseEvent(harness.dom.window, "mouseup", { clientX: opts.upClientX || opts.clientX || 100, clientY: opts.upClientY || opts.clientY || 120, graphX: opts.graphX || 90, graphY: opts.graphY || 100, detail: opts.detail }); // NEW
-    const makeMe = event => ({ // NEW
-        getEvent() { return event; }, // NEW
-        getCell() { return cell; }, // NEW
-        getGraphX() { return event.graphX; }, // NEW
-        getGraphY() { return event.graphY; } // NEW
-    }); // NEW
-    harness.mouseListeners.forEach(listener => listener.mouseDown(graph, makeMe(down))); // NEW
-    if (opts.selectCellOnDown) graph.setSelectionCell(opts.selectCellOnDown); // NEW
-    harness.mouseListeners.forEach(listener => listener.mouseUp(graph, makeMe(up))); // NEW
-} // NEW
-
-function overlayButtons(document) { // NEW
-    return Array.from(document.querySelectorAll(".trellis-root-module-overlay button")); // NEW
-} // NEW
-
-function roleOverlay(document) { // NEW
-    return document.querySelector(".trellis-team-role-overlay"); // NEW
-} // NEW
-
-function roleOverlayButtons(document) { // NEW
-    return Array.from(document.querySelectorAll(".trellis-team-role-overlay button")); // NEW
-} // NEW
-
-function roleOverlayInput(document, ariaLabel) { // NEW
-    const input = document.querySelector(`.trellis-team-role-overlay input[aria-label='${ariaLabel}']`); // NEW
-    assert.ok(input, "missing team overlay input " + ariaLabel); // NEW
-    return input; // NEW
-} // NEW
-
-function dispatchInputKey(input, key) { // NEW
-    input.dispatchEvent(new input.ownerDocument.defaultView.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); // NEW
-} // NEW
-
-function roleImageOverlay(document) { // NEW
-    return document.querySelector(".trellis-role-image-overlay"); // NEW
-} // NEW
-
-function roleImageOverlayButtons(document) { // NEW
-    return Array.from(document.querySelectorAll(".trellis-role-image-overlay button")); // NEW
-} // NEW
-
-function isRoleImageOverlayVisible(document) { // NEW
-    const overlay = roleImageOverlay(document); // NEW
-    return !!overlay && overlay.style.display !== "none"; // NEW
-} // NEW
-
-function fireMappedListeners(map, eventName) { // NEW
-    (map.get(eventName) || []).forEach(listener => listener({}, {})); // NEW
-} // NEW
-
-function menuItemsFor(harness, cell, evt) { // NEW
-    const items = []; // NEW
-    const menu = { // NEW
-        addItem(label, _icon, funct) { items.push({ label, funct }); }, // NEW
-        addSeparator() {} // NEW
-    }; // NEW
-    harness.contextMenuContributors.forEach(contributor => contributor.addItems(menu, cell, evt)); // NEW
-    return items; // NEW
-} // NEW
-
-function styleHas(cell, flag) { // NEW
-    return new RegExp("(^|;)" + flag + "(;|$)").test(cell && cell.style || ""); // NEW
-} // NEW
-
-function cellText(cell) { // NEW
-    if (!cell) return ""; // NEW
-    const raw = cell.value && cell.value.getAttribute ? (cell.value.getAttribute("label") || "") : (cell.value == null ? "" : String(cell.value)); // NEW
-    return String(raw).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim(); // NEW
-} // NEW
-
-function createRoleFixture(harness) { // NEW
-    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team"); // NEW
-    const role = harness.graph.__trellisModules.createRoleCard(team, 90, 100); // NEW
-    const imageRow = role.children.find(child => styleHas(child, "role_imagerow=1")); // NEW
-    const nameRow = role.children.find(child => styleHas(child, "role_name=1")); // CHANGE
-    const titleRow = role.children.find(child => styleHas(child, "role_title=1")); // CHANGE
-    const fieldLabels = role.children.filter(child => styleHas(child, "role_field_label=1")); // NEW
-    const headerSeparator = role.children.find(child => styleHas(child, "role_header_separator=1")); // NEW
-    const notesLabel = fieldLabels.find(child => child.value === "Description / notes"); // NEW
-    const notesRow = role.children.find(child => notesLabel && child.geometry && child.geometry.x === notesLabel.geometry.x && child.geometry.y > notesLabel.geometry.y && !styleHas(child, "role_field_label=1")); // NEW
-    const contactLabel = fieldLabels.find(child => child.value === "Contact info"); // NEW
-    const contactRow = role.children.find(child => contactLabel && child.geometry && child.geometry.x === contactLabel.geometry.x && child.geometry.y > contactLabel.geometry.y && !styleHas(child, "role_field_label=1")); // NEW
-    return { team, role, imageRow, nameRow, titleRow, fieldLabels, headerSeparator, notesRow, contactRow }; // CHANGE
-} // NEW
-
-function runModulesContextMenu(harness, cell) { // NEW
-    const contributor = harness.contextMenuContributors.find(item => item.id === "modules"); // NEW
-    assert.ok(contributor); // NEW
-    const labels = []; // NEW
-    const actions = new Map(); // NEW
-    const menu = { // NEW
-        addSeparator() { labels.push("---"); }, // NEW
-        addItem(label, _image, funct) { labels.push(label); if (typeof funct === "function") actions.set(label, funct); } // NEW
-    }; // NEW
-    contributor.addItems(menu, cell, { graphX: 90, graphY: 100, clientX: 100, clientY: 120 }); // NEW
-    return { labels, actions }; // NEW
-} // NEW
-
-function getRoleAvatar(imageRow) { // NEW
-    return (imageRow.children || []).find(child => styleHas(child, "role_avatar=1")) || null; // NEW
-} // NEW
-
-function waitForTimers() { // NEW
-    return new Promise(resolve => setTimeout(resolve, 5)); // NEW
-} // NEW
-
-test("createModuleAtPoint creates a regular module at requested coordinates", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
-    assert.equal(harness.root.children[0], mod); // NEW
-    assert.equal(mod.geometry.x, 11); // NEW
-    assert.equal(mod.geometry.y, 22); // NEW
-    assert.match(mod.style, /module=1/); // NEW
-    assert.equal(mod.getAttribute("garden_module"), null); // NEW
-    assert.equal(mod.getAttribute("team_module"), null); // NEW
-    assert.equal(harness.selectedCell, mod); // NEW
-}); // NEW
-
-test("createModuleAtPoint creates garden module with settings-needed event", async () => { // NEW
-    const harness = makeHarness(); // NEW
-    let ensuredTaskBoard = null; // NEW
-    harness.graph.__trellisTaskManager = { ensureMainBoardInTaskModule(taskModule) { ensuredTaskBoard = taskModule; } }; // NEW
-    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
-    await new Promise(resolve => setTimeout(resolve, 5)); // NEW
-    const team = harness.root.children.find(child => child !== mod && child.getAttribute("team_module") === "1"); // NEW
-    const task = harness.root.children.find(child => child !== mod && child.getAttribute("task_module") === "1"); // NEW
-    assert.equal(mod.getAttribute("garden_module"), "1"); // NEW
-    assert.equal(mod.getAttribute("team_module"), null); // NEW
-    assert.ok(team); // NEW
-    assert.ok(task); // NEW
-    assert.equal(mod.getAttribute("trellis_team_module_id"), team.id); // NEW
-    assert.equal(team.getAttribute("trellis_garden_module_id"), mod.id); // NEW
-    assert.equal(mod.getAttribute("trellis_task_module_id"), task.id); // NEW
-    assert.equal(task.getAttribute("trellis_garden_module_id"), mod.id); // NEW
-    assert.match(mod.getAttribute("linkedTo") || "", new RegExp(team.id)); // NEW
-    assert.match(team.getAttribute("linkedTo") || "", new RegExp(mod.id)); // NEW
-    assert.match(mod.getAttribute("linkedTo") || "", new RegExp(task.id)); // NEW
-    assert.match(task.getAttribute("linkedTo") || "", new RegExp(mod.id)); // NEW
-    assert.equal(ensuredTaskBoard, task); // NEW
-    assert.match(mod.style, /swimlaneFillColor=#B9E0A5/); // NEW
-    assert.equal(mod.geometry.width, 440); // NEW
-    assert.equal(mod.geometry.height, 340); // NEW
-    assert.equal(harness.selectedCell, mod); // NEW
-    const settingsEvents = harness.firedEvents.filter(event => event.name === "usl:gardenModuleNeedsSettings"); // CHANGE
-    assert.equal(settingsEvents.length, 1); // CHANGE
-    assert.equal(settingsEvents[0].getProperty("cell"), mod); // CHANGE
-}); // NEW
-
-test("createModuleAtPoint creates team module", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team"); // NEW
-    assert.equal(mod.getAttribute("team_module"), "1"); // NEW
-    assert.equal(mod.getAttribute("garden_module"), null); // NEW
-    assert.match(mod.style, /swimlaneFillColor=#FFF2CC/); // NEW
-    assert.equal(harness.selectedCell, mod); // NEW
-}); // NEW
-
-test("createModuleAtPoint creates task module", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "task"); // NEW
-    assert.equal(mod.getAttribute("task_module"), "1"); // NEW
-    assert.equal(mod.getAttribute("garden_module"), null); // NEW
-    assert.equal(mod.getAttribute("team_module"), null); // NEW
-    assert.match(mod.style, /swimlaneFillColor=#E0F2FE/); // NEW
-    assert.equal(harness.selectedCell, mod); // NEW
-}); // NEW
-
-test("garden companion team repair reuses typed team module", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
-    const team = harness.model.getCell(garden.getAttribute("trellis_team_module_id")); // NEW
-    const repaired = harness.graph.__trellisModules.ensureGardenTeamModule(garden); // NEW
-    assert.equal(repaired, team); // NEW
-    assert.equal(harness.root.children.filter(child => child.getAttribute("team_module") === "1").length, 1); // NEW
-}); // NEW
-
-test("garden companion task repair reuses typed task module and mirrors access", () => { // NEW
-    const harness = makeHarness(); // NEW
-    let ensuredTaskBoard = null; // NEW
-    harness.graph.__trellisTaskManager = { ensureMainBoardInTaskModule(taskModule) { ensuredTaskBoard = taskModule; } }; // NEW
-    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
-    garden.value.setAttribute("trellis_owner_user_id", "owner-1"); // NEW
-    garden.value.setAttribute("trellis_access_grants_json", "[{\"userId\":\"u1\",\"preset\":\"gardener\",\"capabilities\":[]}]"); // NEW
-    ensuredTaskBoard = null; // NEW
-    const repaired = harness.graph.__trellisModules.ensureGardenTaskModule(garden); // NEW
-    const team = harness.model.getCell(garden.getAttribute("trellis_team_module_id")); // NEW
-    assert.equal(repaired.getAttribute("task_module"), "1"); // NEW
-    assert.equal(repaired.getAttribute("trellis_garden_module_id"), garden.id); // NEW
-    assert.equal(repaired.getAttribute("trellis_owner_user_id"), "owner-1"); // NEW
-    assert.equal(repaired.getAttribute("trellis_access_grants_json"), garden.getAttribute("trellis_access_grants_json")); // NEW
-    assert.equal(team.getAttribute("trellis_owner_user_id"), "owner-1"); // NEW
-    assert.equal(harness.root.children.filter(child => child.getAttribute("task_module") === "1").length, 1); // NEW
-    assert.ok(repaired.geometry.y > team.geometry.y); // NEW
-    assert.equal(ensuredTaskBoard, null); // NEW
-    harness.graph.__trellisModules.ensureGardenTaskModule(garden, { createMainBoard: true }); // NEW
-    assert.equal(ensuredTaskBoard, repaired); // NEW
-}); // NEW
-
-test("module cells cannot be dropped under non-module parents", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const nonModule = new TestCell("plain", new TestGeometry(0, 0, 400, 300), "shape=rectangle;"); // NEW
-    nonModule.vertex = true; // NEW
-    harness.model.add(harness.root, nonModule); // NEW
-    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
-    assert.equal(harness.graph.isValidDropTarget(nonModule, [mod]), false); // NEW
-    harness.model.add(nonModule, mod); // NEW
-    harness.graph.fireEvent(makeEventObject("cellsMoved", ["cells", [mod]])); // NEW
-    assert.equal(harness.model.getParent(mod), harness.root); // NEW
-}); // NEW
-
-test("promptSetModuleMargin updates style and reapplies module sizing", async () => { // NEW
-    const harness = makeHarness(); // NEW
-    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
-    mod.style += ";module_margin=12"; // NEW
-    const child = new TestCell("child", new TestGeometry(20, 30, 220, 80), ""); // NEW
-    child.vertex = true; // NEW
-    harness.model.add(mod, child); // NEW
-    harness.setPromptValue("45"); // NEW
-    harness.graph.__trellisModules.promptSetModuleMargin(mod); // NEW
-    await waitForTimers(); // NEW
-    assert.equal(harness.promptCalls.length, 1); // NEW
-    assert.equal(harness.promptCalls[0].value, "12"); // NEW
-    assert.match(mod.style, /(?:^|;)module_margin=45(?:;|$)/); // NEW
-    assert.doesNotMatch(mod.style, /(?:^|;)module_margin=12(?:;|$)/); // NEW
-    assert.equal(mod.geometry.width, 285); // NEW
-    assert.equal(mod.geometry.height, 155); // NEW
-}); // NEW
-
-test("module margin prompt can be requested through the fallback graph event", async () => { // NEW
-    const harness = makeHarness(); // NEW
-    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
-    harness.setPromptValue("30"); // NEW
-    harness.graph.fireEvent(makeEventObject("usl:requestPromptSetModuleMargin", ["cell", mod])); // NEW
-    await waitForTimers(); // NEW
-    assert.equal(harness.promptCalls.length, 1); // NEW
-    assert.match(mod.style, /(?:^|;)module_margin=30(?:;|$)/); // NEW
-}); // NEW
-
-test("module margin API updates style and reapplies module sizing without prompt", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
-    const child = new TestCell("child", new TestGeometry(20, 30, 220, 80), ""); // NEW
-    child.vertex = true; // NEW
-    harness.model.add(mod, child); // NEW
-    assert.equal(harness.graph.__trellisModules.getModuleMargin(mod, 100), 100); // NEW
-    harness.graph.__trellisModules.setModuleMargin(mod, 35); // NEW
-    assert.equal(harness.promptCalls.length, 0); // NEW
-    assert.equal(harness.graph.__trellisModules.getModuleMargin(mod, 100), 35); // NEW
-    assert.match(mod.style, /(?:^|;)module_margin=35(?:;|$)/); // NEW
-    assert.equal(mod.geometry.width, 275); // NEW
-    assert.equal(mod.geometry.height, 145); // NEW
-}); // NEW
-
-test("module margin can be set through the fallback graph event", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
-    harness.graph.fireEvent(makeEventObject("usl:requestSetModuleMargin", ["cell", mod, "marginPx", 27])); // NEW
-    assert.equal(harness.promptCalls.length, 0); // NEW
-    assert.match(mod.style, /(?:^|;)module_margin=27(?:;|$)/); // NEW
-    assert.equal(harness.graph.__trellisModules.getModuleMargin(mod, 100), 27); // NEW
-}); // NEW
-
-test("empty canvas click renders root module overlay buttons", () => { // NEW
-    const harness = makeHarness(); // NEW
-    fireGraphClick(harness, { clientX: 120, clientY: 150, graphX: 200, graphY: 230 }); // NEW
-    const buttons = overlayButtons(harness.document); // NEW
-    assert.deepEqual(buttons.map(button => button.textContent), ["Add Module", "Add Garden Module", "Add Team Module", "Add Task Module"]); // CHANGE
-    assert.equal(harness.document.querySelector(".trellis-root-module-overlay").style.display, "flex"); // NEW
-}); // NEW
-
-test("overlay buttons create the selected module type at stored click point and hide", async () => { // NEW
-    const harness = makeHarness(); // NEW
-    fireGraphClick(harness, { clientX: 130, clientY: 160, graphX: 210, graphY: 240 }); // NEW
-    overlayButtons(harness.document)[1].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true })); // NEW
-    await new Promise(resolve => setTimeout(resolve, 5)); // NEW
-    const mod = harness.root.children[0]; // NEW
-    assert.equal(mod.geometry.x, 210); // NEW
-    assert.equal(mod.geometry.y, 240); // NEW
-    assert.equal(mod.getAttribute("garden_module"), "1"); // NEW
-    assert.equal(harness.document.querySelector(".trellis-root-module-overlay").style.display, "none"); // NEW
-}); // NEW
-
-test("clicking an existing cell does not render the root module overlay", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const existing = harness.graph.__trellisModules.createModuleAtPoint({ x: 5, y: 6 }, "regular"); // NEW
-    fireGraphClick(harness, { cell: existing, hitCell: existing, clientX: 140, clientY: 170, graphX: 220, graphY: 250 }); // NEW
-    const overlay = harness.document.querySelector(".trellis-root-module-overlay"); // NEW
-    assert.equal(overlay, null); // NEW
-}); // NEW
-
-test("overlay dismisses on Escape and outside graph gesture", () => { // NEW
-    const harness = makeHarness(); // NEW
-    fireGraphClick(harness, { clientX: 150, clientY: 180, graphX: 230, graphY: 260 }); // NEW
-    const overlay = harness.document.querySelector(".trellis-root-module-overlay"); // NEW
-    assert.equal(overlay.style.display, "flex"); // NEW
-    harness.document.dispatchEvent(new harness.dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); // NEW
-    assert.equal(overlay.style.display, "none"); // NEW
-    fireGraphClick(harness, { clientX: 150, clientY: 180, graphX: 230, graphY: 260 }); // NEW
-    assert.equal(overlay.style.display, "flex"); // NEW
-    const existing = harness.graph.__trellisModules.createModuleAtPoint({ x: 1, y: 2 }, "regular"); // NEW
-    fireGraphClick(harness, { cell: existing, hitCell: existing, clientX: 160, clientY: 190, graphX: 240, graphY: 270 }); // NEW
-    assert.equal(overlay.style.display, "none"); // NEW
-}); // NEW
-
-test("empty canvas click while overlay is active dismisses without reopening", () => { // NEW
-    const harness = makeHarness(); // NEW
-    fireGraphClick(harness, { clientX: 170, clientY: 200, graphX: 250, graphY: 280 }); // NEW
-    const overlay = harness.document.querySelector(".trellis-root-module-overlay"); // NEW
-    assert.equal(overlay.style.display, "flex"); // NEW
-    fireGraphClick(harness, { clientX: 190, clientY: 220, graphX: 270, graphY: 300 }); // NEW
-    assert.equal(overlay.style.display, "none"); // NEW
-    fireGraphClick(harness, { clientX: 210, clientY: 240, graphX: 290, graphY: 320 }); // NEW
-    assert.equal(overlay.style.display, "flex"); // NEW
-}); // NEW
-
-test("selecting one team module renders the add role card overlay", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team"); // NEW
-    const buttons = roleOverlayButtons(harness.document); // NEW
-    assert.deepEqual(buttons.map(button => button.textContent), ["Add Role Card", "Set Module Margin"]); // CHANGE
-    assert.equal(roleOverlayInput(harness.document, "Team label").value, "Team Module"); // NEW
-    assert.equal(roleOverlay(harness.document).querySelectorAll(".trellis-team-module-label-controls input").length, 1); // CHANGE
-    assert.equal(roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls").textContent.includes("Garden label"), false); // NEW
-    assert.equal(roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls").textContent.includes("Team label"), false); // NEW
-    assert.equal(roleOverlay(harness.document).style.display, "flex"); // NEW
-    assert.equal(roleOverlay(harness.document).style.left, "58px"); // NEW
-    assert.equal(roleOverlay(harness.document).style.top, "68px"); // NEW
-    assert.equal(harness.selectedCell, team); // NEW
-}); // NEW
-
-test("team module overlay edits labels without graph action side effects", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team"); // NEW
-    harness.clearValueWrites(); // NEW
-    const oldTeamValue = team.value; // NEW
-    const oldTeamLabel = oldTeamValue.getAttribute("label"); // NEW
-    let input = roleOverlayInput(harness.document, "Team label"); // NEW
-    input.value = "Harvest Crew"; // NEW
-    input.dispatchEvent(new harness.dom.window.Event("blur")); // NEW
-    assert.equal(team.getAttribute("label"), "Harvest Crew"); // NEW
-    assert.equal(harness.valueWrites.length, 1); // NEW
-    assert.equal(harness.valueWrites[0].oldValue, oldTeamValue); // NEW
-    assert.notEqual(harness.valueWrites[0].newValue, oldTeamValue); // NEW
-    assert.equal(oldTeamValue.getAttribute("label"), oldTeamLabel); // CHANGE
-
-    harness.graph.setSelectionCell(team); // NEW
-    harness.clearValueWrites(); // NEW
-    input = roleOverlayInput(harness.document, "Team label"); // NEW
-    input.value = "Draft Crew"; // NEW
-    dispatchInputKey(input, "Escape"); // NEW
-    assert.equal(input.value, "Harvest Crew"); // NEW
-    assert.equal(team.getAttribute("label"), "Harvest Crew"); // NEW
-    assert.equal(harness.valueWrites.length, 0); // NEW
-
-    input.value = "   "; // NEW
-    dispatchInputKey(input, "Enter"); // NEW
-    assert.equal(team.getAttribute("label"), "Team Module"); // NEW
-}); // NEW
-
-test("module label API writes garden and team labels with clone-backed undo values", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
-    const team = harness.model.getCell(garden.getAttribute("trellis_team_module_id")); // NEW
-
-    harness.clearValueWrites(); // NEW
-    const oldGardenValue = garden.value; // NEW
-    const oldGardenLabel = oldGardenValue.getAttribute("label"); // NEW
-    assert.equal(harness.graph.__trellisModules.writeModuleLabel(garden, "Kitchen Garden"), "Kitchen Garden"); // NEW
-    assert.equal(harness.valueWrites.length, 1); // NEW
-    assert.equal(harness.valueWrites[0].cell, garden); // NEW
-    assert.equal(harness.valueWrites[0].oldValue, oldGardenValue); // NEW
-    assert.notEqual(harness.valueWrites[0].newValue, oldGardenValue); // NEW
-    assert.equal(oldGardenValue.getAttribute("label"), oldGardenLabel); // CHANGE
-    assert.equal(garden.getAttribute("label"), "Kitchen Garden"); // NEW
-
-    harness.clearValueWrites(); // NEW
-    assert.equal(harness.graph.__trellisModules.writeModuleLabel(garden, "Kitchen Garden"), "Kitchen Garden"); // NEW
-    assert.equal(harness.valueWrites.length, 0); // NEW
-
-    harness.clearValueWrites(); // NEW
-    const oldTeamValue = team.value; // NEW
-    const oldTeamLabel = oldTeamValue.getAttribute("label"); // NEW
-    assert.equal(harness.graph.__trellisModules.writeModuleLabel(team, "Harvest Crew"), "Harvest Crew"); // NEW
-    assert.equal(harness.valueWrites.length, 1); // NEW
-    assert.equal(harness.valueWrites[0].cell, team); // NEW
-    assert.equal(harness.valueWrites[0].oldValue, oldTeamValue); // NEW
-    assert.notEqual(harness.valueWrites[0].newValue, oldTeamValue); // NEW
-    assert.equal(oldTeamValue.getAttribute("label"), oldTeamLabel); // CHANGE
-    assert.equal(team.getAttribute("label"), "Harvest Crew"); // NEW
-}); // NEW
-
-test("linked team module overlay uses a single editable team label field", () => { // CHANGE
-    const harness = makeHarness(); // NEW
-    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
-    const team = harness.model.getCell(garden.getAttribute("trellis_team_module_id")); // NEW
-    harness.graph.__trellisModules.writeModuleLabel(garden, "Kitchen Garden"); // NEW
-    harness.graph.setSelectionCell(team); // NEW
-    const controls = roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls"); // CHANGE
-    assert.equal(controls.querySelectorAll("input[aria-label='Team label']").length, 1); // CHANGE
-    assert.equal(controls.textContent.includes("Garden label"), false); // CHANGE
-    assert.equal(controls.textContent.includes("Team label"), false); // NEW
-    assert.equal(roleOverlayInput(harness.document, "Team label").value, "Garden Team"); // NEW
-
-    garden.value.setAttribute("label", "Market Garden"); // NEW
-    harness.graph.setSelectionCell(team); // NEW
-    assert.equal(roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls").textContent.includes("Market Garden"), false); // CHANGE
-}); // NEW
-
-test("team module overlay position is not clamped to the viewport", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: -40, y: -50 }, "team"); // NEW
-    const overlay = roleOverlay(harness.document); // NEW
-    assert.equal(overlay.style.display, "flex"); // NEW
-    assert.equal(overlay.style.left, "-32px"); // NEW
-    assert.equal(overlay.style.top, "-42px"); // NEW
-    assert.equal(harness.selectedCell, team); // NEW
-}); // NEW
-
-test("first click selecting a team module shows role overlay next to the click", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team"); // NEW
-    harness.graph.setSelectionCell(null); // NEW
-    fireGraphClick(harness, { cell: team, hitCell: team, selectCellOnDown: team, clientX: 180, clientY: 220, graphX: 90, graphY: 100 }); // NEW
-    const overlay = roleOverlay(harness.document); // NEW
-    assert.equal(overlay.style.display, "flex"); // NEW
-    assert.equal(overlay.style.left, "178px"); // NEW
-    assert.equal(overlay.style.top, "208px"); // NEW
-}); // NEW
-
-test("selecting regular or garden modules does not render the role card overlay", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const regular = harness.graph.__trellisModules.createModuleAtPoint({ x: 10, y: 20 }, "regular"); // NEW
-    assert.equal(roleOverlay(harness.document), null); // NEW
-    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
-    assert.equal(roleOverlay(harness.document), null); // NEW
-    harness.graph.setSelectionCell(regular); // NEW
-    assert.equal(roleOverlay(harness.document), null); // NEW
-    harness.graph.setSelectionCell(garden); // NEW
-    assert.equal(roleOverlay(harness.document), null); // NEW
-}); // NEW
-
-test("role overlay button creates role card from stored click point and hides", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team"); // NEW
-    harness.document.dispatchEvent(new harness.dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); // NEW
-    fireGraphClick(harness, { cell: team, hitCell: team, clientX: 100, clientY: 120, graphX: 90, graphY: 100 }); // NEW
-    harness.graph.setSelectionCell(team); // NEW
-    const updateCountBefore = harness.model.topLevelUpdateCount; // NEW
-    roleOverlayButtons(harness.document)[0].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true })); // NEW
-    const role = team.children.find(child => /(^|;)role_card=1(;|$)/.test(child.style)); // NEW
-    assert.ok(role); // NEW
-    assert.equal(role.geometry.x, 40); // NEW
-    assert.equal(role.geometry.y, 40); // NEW
-    assert.equal(harness.selectedCell, role); // NEW
-    assert.equal(roleOverlay(harness.document).style.display, "none"); // NEW
-    assert.equal(harness.model.topLevelUpdateCount - updateCountBefore, 1); // NEW
-}); // NEW
-
-test("context menu add role card uses one top-level model transaction", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team"); // NEW
-    const evt = makeMouseEvent(harness.dom.window, "mouseup", { clientX: 110, clientY: 130, graphX: 95, graphY: 105 }); // NEW
-    const addRole = menuItemsFor(harness, team, evt).find(item => item.label === "Add Role Card"); // NEW
-    assert.ok(addRole); // NEW
-    const updateCountBefore = harness.model.topLevelUpdateCount; // NEW
-    addRole.funct(); // NEW
-    const role = team.children.find(child => /(^|;)role_card=1(;|$)/.test(child.style)); // NEW
-    assert.ok(role); // NEW
-    assert.equal(role.geometry.x, 45); // NEW
-    assert.equal(role.geometry.y, 45); // NEW
-    assert.equal(harness.selectedCell, role); // NEW
-    assert.equal(harness.model.topLevelUpdateCount - updateCountBefore, 1); // NEW
-}); // NEW
-
-test("role overlay button falls back to top-left content placement", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team"); // NEW
-    roleOverlayButtons(harness.document)[0].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true })); // NEW
-    const role = team.children.find(child => /(^|;)role_card=1(;|$)/.test(child.style)); // NEW
-    assert.ok(role); // NEW
-    assert.equal(role.geometry.x, 100); // NEW
-    assert.equal(role.geometry.y, 100); // NEW
-    assert.equal(harness.selectedCell, role); // NEW
-    assert.equal(roleOverlay(harness.document).style.display, "none"); // NEW
-}); // NEW
-
-test("role overlay margin button invokes shared module margin prompt", async () => { // NEW
-    const harness = makeHarness(); // NEW
-    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team"); // NEW
-    harness.setPromptValue("65"); // NEW
-    roleOverlayButtons(harness.document)[1].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true })); // NEW
-    await waitForTimers(); // NEW
-    assert.equal(harness.promptCalls.length, 1); // NEW
-    assert.match(team.style, /(?:^|;)module_margin=65(?:;|$)/); // NEW
-    assert.equal(roleOverlay(harness.document).style.display, "none"); // NEW
-}); // NEW
-
-test("clicking the already-selected team module hides role overlay without reopening", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team"); // NEW
-    const overlay = roleOverlay(harness.document); // NEW
-    assert.equal(overlay.style.display, "flex"); // NEW
-    fireGraphClick(harness, { cell: team, hitCell: team, clientX: 100, clientY: 120, graphX: 90, graphY: 100 }); // NEW
-    assert.equal(overlay.style.display, "none"); // NEW
-    assert.equal(roleOverlayButtons(harness.document).length, 2); // CHANGE
-}); // NEW
-
-test("role overlay hides on Escape, outside gesture, model change, and view change", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team"); // NEW
-    const overlay = roleOverlay(harness.document); // NEW
-    assert.equal(overlay.style.display, "flex"); // NEW
-    harness.document.dispatchEvent(new harness.dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); // NEW
-    assert.equal(overlay.style.display, "none"); // NEW
-    harness.graph.setSelectionCell(team); // NEW
-    assert.equal(overlay.style.display, "flex"); // NEW
-    fireGraphClick(harness, { clientX: 200, clientY: 220, graphX: 190, graphY: 200 }); // NEW
-    assert.equal(overlay.style.display, "none"); // NEW
-    harness.graph.setSelectionCell(team); // NEW
-    assert.equal(overlay.style.display, "flex"); // NEW
-    harness.model.fire("change"); // NEW
-    assert.equal(overlay.style.display, "none"); // NEW
-    harness.graph.setSelectionCell(team); // NEW
-    assert.equal(overlay.style.display, "flex"); // NEW
-    fireMappedListeners(harness.viewListeners, "scale"); // NEW
-    assert.equal(overlay.style.display, "none"); // NEW
-    harness.graph.setSelectionCell(team); // NEW
-    assert.equal(overlay.style.display, "flex"); // NEW
-    fireMappedListeners(harness.viewListeners, "translate"); // NEW
-    assert.equal(overlay.style.display, "none"); // NEW
-}); // NEW
-
-test("new role cards use v2 compact roster profile geometry", () => { // CHANGE
-    const harness = makeHarness(); // NEW
-    const { role, imageRow, nameRow, titleRow, fieldLabels, headerSeparator, notesRow, contactRow } = createRoleFixture(harness); // CHANGE
-    assert.match(role.style, /(?:^|;)role_card=1(?:;|$)/); // NEW
-    assert.match(role.style, /(?:^|;)role_card_version=2(?:;|$)/); // NEW
-    assert.match(role.style, /(?:^|;)shape=label(?:;|$)/); // NEW
-    assert.match(role.style, /(?:^|;)resizable=0(?:;|$)/); // NEW
-    assert.doesNotMatch(role.style, /(?:^|;)shape=swimlane(?:;|$)/); // NEW
-    assert.doesNotMatch(role.style, /(?:^|;)startSize=/); // NEW
-    assert.doesNotMatch(role.style, /(?:^|;)swimlaneFillColor=/); // NEW
-    assert.equal(role.geometry.width, 260); // NEW
-    assert.equal(role.geometry.height, 250); // CHANGE
-    assert.equal(role.geometry.alternateBounds.width, 180); // NEW
-    assert.equal(role.geometry.alternateBounds.height, 64); // NEW
-    assert.equal(imageRow.value, "click to add image"); // NEW
-    assert.equal(imageRow.geometry.y, 76); // NEW
-    assert.equal(nameRow.geometry.y, 76); // NEW
-    assert.equal(titleRow.geometry.y, 118); // NEW
-    assert.ok(notesRow); // NEW
-    assert.ok(contactRow); // NEW
-    assert.equal(contactRow.geometry.y, 208); // NEW
-    assert.equal(contactRow.geometry.height, 32); // NEW
-    assert.equal(styleHas(nameRow, "role_name=1"), true); // NEW
-    assert.equal(styleHas(titleRow, "role_title=1"), true); // NEW
-    assert.equal(role.children.filter(child => styleHas(child, "role_name=1")).length, 1); // NEW
-    assert.equal(role.children.filter(child => styleHas(child, "role_title=1")).length, 1); // NEW
-    assert.equal(nameRow.value, ""); // NEW
-    assert.equal(titleRow.value, ""); // NEW
-    [imageRow, nameRow, titleRow, notesRow, contactRow].forEach(cell => { // NEW
-        assert.match(cell.style, /(?:^|;)html=1(?:;|$)/); // NEW
-        assert.match(cell.style, /(?:^|;)whiteSpace=wrap(?:;|$)/); // NEW
-        assert.match(cell.style, /(?:^|;)overflow=hidden(?:;|$)/); // NEW
-    }); // NEW
-    assert.deepEqual(fieldLabels.map(cell => cell.value), ["Photo", "Name", "Role / title", "Description / notes", "Contact info"]); // NEW
-    assert.equal(fieldLabels.every(cell => /(?:^|;)editable=0(?:;|$)/.test(cell.style)), true); // NEW
-    assert.equal(fieldLabels.some(cell => styleHas(cell, "role_name=1") || styleHas(cell, "role_title=1")), false); // NEW
-    assert.ok(headerSeparator); // NEW
-    assert.equal(headerSeparator.geometry.y, 54); // NEW
-    assert.match(headerSeparator.style, /(?:^|;)editable=0(?:;|$)/); // NEW
-    assert.doesNotMatch(String(role.value), /<img/i); // NEW
-    assert.match(role.style, /(?:^|;)image=data:image\/svg\+xml,/); // NEW
-    assert.match(role.style, /(?:^|;)imageWidth=38(?:;|$)/); // NEW
-    assert.match(role.style, /(?:^|;)imageHeight=38(?:;|$)/); // NEW
-    assert.match(role.style, /(?:^|;)imageAlign=left(?:;|$)/); // NEW
-    assert.match(role.style, /(?:^|;)imageVerticalAlign=top(?:;|$)/); // NEW
-    assert.match(role.style, /(?:^|;)verticalAlign=top(?:;|$)/); // NEW
-    assert.match(role.style, /(?:^|;)spacingTop=8(?:;|$)/); // NEW
-}); // CHANGE
-
-test("v2 role card summary syncs name and role without prefixing value fields", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const { role, nameRow, titleRow } = createRoleFixture(harness); // NEW
-    assert.match(String(role.value), /Unnamed person/); // NEW
-    assert.match(String(role.value), /Unspecified role/); // NEW
-    harness.model.setValue(nameRow, "Bob"); // NEW
-    harness.model.setValue(titleRow, "Lead gardener"); // NEW
-    harness.model.fire("change"); // NEW
-    assert.match(String(role.value), /Bob/); // NEW
-    assert.match(String(role.value), /Lead gardener/); // NEW
-    assert.equal(nameRow.value, "Bob"); // NEW
-    assert.equal(titleRow.value, "Lead gardener"); // NEW
-    assert.doesNotMatch(String(nameRow.value), /^Name:/); // NEW
-    assert.doesNotMatch(String(titleRow.value), /^Role/); // NEW
-}); // NEW
-
-test("legacy role cards are not rewritten by summary sync", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team"); // NEW
-    const role = new TestCell("Legacy Role", new TestGeometry(10, 20, 240, 160), "shape=swimlane;role_card=1;"); // NEW
-    role.vertex = true; // NEW
-    harness.model.add(team, role); // NEW
-    const name = new TestCell("Legacy Name", new TestGeometry(0, 0, 100, 30), "role_name=1;"); // NEW
-    name.vertex = true; // NEW
-    harness.model.add(role, name); // NEW
-    harness.model.fire("change"); // NEW
-    assert.equal(role.value, "Legacy Role"); // NEW
-}); // NEW
-
-test("empty role image slot shows add affordances for role card and image row only", () => { // NEW
-    const harness = makeHarness(); // NEW
-    const { role, imageRow, nameRow } = createRoleFixture(harness); // NEW
-    harness.graph.setSelectionCell(role); // NEW
-    assert.equal(roleImageOverlayButtons(harness.document)[0].textContent, "Add Image"); // NEW
-    assert.equal(isRoleImageOverlayVisible(harness.document), true); // NEW
-    harness.graph.setSelectionCell(imageRow); // NEW
-    assert.equal(roleImageOverlayButtons(harness.document)[0].textContent, "Add Image"); // NEW
-    assert.equal(isRoleImageOverlayVisible(harness.document), true); // NEW
-    harness.graph.setSelectionCell(nameRow); // NEW
-    assert.equal(isRoleImageOverlayVisible(harness.document), false); // NEW
-    assert.equal(runModulesContextMenu(harness, role).labels.includes("Add Role Image"), true); // NEW
-    assert.equal(runModulesContextMenu(harness, imageRow).labels.includes("Add Role Image"), true); // NEW
-    assert.equal(runModulesContextMenu(harness, nameRow).labels.includes("Add Role Image"), false); // NEW
-}); // NEW
-
-test("existing role image shows change overlay from image section or avatar only", async () => { // CHANGE
-    const harness = makeHarness(); // NEW
-    const { role, imageRow } = createRoleFixture(harness); // NEW
-    harness.graph.__trellisModules.selectRoleImage(role); // NEW
-    await waitForTimers(); // NEW
-    const avatar = getRoleAvatar(imageRow); // NEW
-    assert.ok(avatar); // NEW
-    harness.graph.setSelectionCell(role); // NEW
-    assert.equal(isRoleImageOverlayVisible(harness.document), false); // NEW
-    harness.graph.setSelectionCell(imageRow); // NEW
-    assert.equal(roleImageOverlayButtons(harness.document)[0].textContent, "Change Image"); // CHANGE
-    assert.equal(isRoleImageOverlayVisible(harness.document), true); // CHANGE
-    harness.graph.setSelectionCell(avatar); // NEW
-    assert.equal(roleImageOverlayButtons(harness.document)[0].textContent, "Change Image"); // NEW
-    assert.equal(isRoleImageOverlayVisible(harness.document), true); // NEW
-    assert.equal(runModulesContextMenu(harness, role).labels.includes("Change Role Image"), false); // NEW
-    assert.equal(runModulesContextMenu(harness, imageRow).labels.includes("Change Role Image"), false); // NEW
-    assert.equal(runModulesContextMenu(harness, avatar).labels.includes("Change Role Image"), true); // NEW
-}); // NEW
-
-test("role image overlay button invokes insert image and creates the avatar", async () => { // NEW
-    const harness = makeHarness(); // NEW
-    const { role, imageRow } = createRoleFixture(harness); // NEW
-    harness.graph.setSelectionCell(role); // NEW
-    roleImageOverlayButtons(harness.document)[0].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true })); // NEW
-    await waitForTimers(); // NEW
-    const avatar = getRoleAvatar(imageRow); // NEW
-    assert.equal(harness.insertImageCalls, 1); // NEW
-    assert.ok(avatar); // NEW
-    assert.equal(avatar.parent, imageRow); // NEW
-    assert.equal(avatar.geometry.width, 40); // CHANGE
-    assert.equal(avatar.geometry.height, 40); // CHANGE
-    assert.equal(avatar.geometry.x, 5); // NEW
-    assert.equal(avatar.geometry.y, 5); // NEW
-    assert.equal(imageRow.value, ""); // NEW
-    assert.doesNotMatch(String(role.value), /<img/i); // CHANGE
-    assert.match(role.style, /(?:^|;)image=data:image\/png;base64,test(?:;|$)/); // CHANGE
-    assert.match(role.style, /(?:^|;)imageWidth=38(?:;|$)/); // NEW
-}); // NEW
-
-test("inserted role image replaces any prior avatar", async () => { // NEW
-    const harness = makeHarness(); // NEW
-    const { role, imageRow } = createRoleFixture(harness); // NEW
-    harness.graph.__trellisModules.selectRoleImage(role); // NEW
-    await waitForTimers(); // NEW
-    const firstAvatar = getRoleAvatar(imageRow); // NEW
-    assert.ok(firstAvatar); // NEW
-    harness.graph.__trellisModules.selectRoleImage(role); // NEW
-    await waitForTimers(); // NEW
-    const avatars = imageRow.children.filter(child => styleHas(child, "role_avatar=1")); // NEW
-    assert.equal(avatars.length, 1); // NEW
-    assert.notEqual(avatars[0], firstAvatar); // NEW
-    assert.equal(firstAvatar.parent, null); // NEW
-    assert.equal(avatars[0].geometry.width, 40); // CHANGE
-    assert.equal(avatars[0].geometry.height, 40); // CHANGE
-    assert.match(role.style, /(?:^|;)image=data:image\/png;base64,test(?:;|$)/); // NEW
-    assert.doesNotMatch(String(role.value), /<img/i); // NEW
-}); // NEW
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const test = require("node:test");
+const vm = require("node:vm");
+const { JSDOM } = require("jsdom");
+
+const PROJECT_ROOT = path.join(__dirname, "..");
+const PLUGIN_PATH = path.join(PROJECT_ROOT, "drawio", "src", "main", "webapp", "plugins", "garden_planner_plugins", "Modules_Standalone.js");
+
+let nextCellId = 1;
+
+class TestGeometry {
+    constructor(x, y, width, height) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.relative = false;
+    }
+
+    clone() {
+        const copy = new TestGeometry(this.x, this.y, this.width, this.height);
+        copy.relative = this.relative;
+        copy.alternateBounds = this.alternateBounds;
+        return copy;
+    }
+}
+
+class TestCell {
+    constructor(value, geometry, style) {
+        this.id = "cell-" + nextCellId++;
+        this.value = value;
+        this.geometry = geometry || null;
+        this.style = style || "";
+        this.children = [];
+        this.parent = null;
+        this.vertex = false;
+    }
+
+    getId() { return this.id; }
+    getStyle() { return this.style || ""; }
+    getGeometry() { return this.geometry; }
+    isVertex() { return !!this.vertex; }
+    getAttribute(key) { return this.value && this.value.nodeType === 1 ? this.value.getAttribute(key) : null; }
+}
+
+class TestModel {
+    constructor(root) {
+        this.root = root;
+        this.cells = {};
+        this.listeners = new Map();
+        this.updateLevel = 0;
+        this.topLevelUpdateCount = 0;
+        this.valueWrites = [];
+        this.register(root);
+    }
+
+    register(cell) {
+        if (cell && cell.id) this.cells[cell.id] = cell;
+        (cell.children || []).forEach(child => this.register(child));
+    }
+
+    beginUpdate() { if (this.updateLevel === 0) this.topLevelUpdateCount += 1; this.updateLevel += 1; }
+    endUpdate() { this.updateLevel = Math.max(0, this.updateLevel - 1); }
+    getRoot() { return this.root; }
+    getCell(id) { return this.cells[id] || null; }
+    getParent(cell) { return cell && cell.parent ? cell.parent : null; }
+    getChildren(cell) { return cell && cell.children ? cell.children.slice() : []; }
+    getChildCount(cell) { return cell && cell.children ? cell.children.length : 0; }
+    getChildAt(cell, index) { return cell.children[index]; }
+    getGeometry(cell) { return cell && cell.geometry ? cell.geometry : null; }
+    isVertex(cell) { return !!cell && !!cell.vertex; }
+
+    add(parent, cell, index) {
+        if (!parent || !cell) return cell;
+        if (cell.parent && cell.parent.children) cell.parent.children = cell.parent.children.filter(child => child !== cell);
+        cell.parent = parent;
+        if (typeof index === "number") parent.children.splice(index, 0, cell);
+        else parent.children.push(cell);
+        this.register(cell);
+        return cell;
+    }
+
+    remove(cell) {
+        if (!cell) return null;
+        if (cell.parent && cell.parent.children) cell.parent.children = cell.parent.children.filter(child => child !== cell);
+        cell.parent = null;
+        return cell;
+    }
+
+    setGeometry(cell, geometry) { if (cell) cell.geometry = geometry; }
+    setStyle(cell, style) { if (cell) cell.style = style || ""; }
+    setValue(cell, value) { if (cell) { this.valueWrites.push({ cell, oldValue: cell.value, newValue: value }); cell.value = value; } }
+
+    addListener(eventName, listener) {
+        if (!this.listeners.has(eventName)) this.listeners.set(eventName, []);
+        this.listeners.get(eventName).push(listener);
+    }
+
+    fire(eventName) {
+        (this.listeners.get(eventName) || []).forEach(listener => listener(this, {}));
+    }
+}
+
+function makeEventObject(name, pairs) {
+    const props = {};
+    for (let i = 0; i < pairs.length; i += 2) props[pairs[i]] = pairs[i + 1];
+    return { name, getProperty(key) { return props[key]; } };
+}
+
+function makeHarness() {
+    nextCellId = 1;
+    const dom = new JSDOM("<!doctype html><body><div id='graph'></div></body>");
+    const document = dom.window.document;
+    const root = new TestCell("", null, "");
+    root.id = "root";
+    const model = new TestModel(root);
+    const mouseListeners = [];
+    const graphListeners = new Map();
+    const viewListeners = new Map();
+    const selectionListeners = new Map();
+    const firedEvents = [];
+    const contextMenuContributors = [];
+    let insertImageCalls = 0;
+    let promptValue = "40";
+    const promptCalls = [];
+    let selectedCells = [];
+    const container = document.getElementById("graph");
+    Object.defineProperty(container, "clientWidth", { value: 800, configurable: true });
+    Object.defineProperty(container, "clientHeight", { value: 600, configurable: true });
+    container.getBoundingClientRect = () => ({ left: 10, top: 20, width: 800, height: 600 });
+
+    function addMappedListener(map, eventName, listener) {
+        if (!map.has(eventName)) map.set(eventName, []);
+        map.get(eventName).push(listener);
+    }
+
+    const graph = {
+        container,
+        popupMenuHandler: {},
+        resizeChildCells() {},
+        view: {
+            scale: 1,
+            translate: { x: 0, y: 0 },
+            getState(cell) { const g = model.getGeometry(cell); return g ? { x: g.x, y: g.y, width: g.width, height: g.height } : null; },
+            addListener(eventName, listener) { addMappedListener(viewListeners, eventName, listener); }
+        },
+        getModel() { return model; },
+        getDefaultParent() { return root; },
+        getCellGeometry(cell) { return model.getGeometry(cell); },
+        getStartSize() { return { width: 0, height: 0 }; },
+        getPointForEvent(evt) { return { x: evt.graphX == null ? evt.clientX : evt.graphX, y: evt.graphY == null ? evt.clientY : evt.graphY }; },
+        getCellAt() { return graph.__hitCell || null; },
+        getView() { return this.view; },
+        refresh() {},
+        insertVertex(parent, id, value, x, y, w, h, style) { const cell = new TestCell(value, new TestGeometry(x, y, w, h), style); cell.vertex = true; return model.add(parent || root, cell); },
+        setSelectionCell(cell) { selectedCells = cell ? [cell] : []; (selectionListeners.get("change") || []).forEach(listener => listener(this, {})); },
+        setSelectionCells(cells) { selectedCells = (cells || []).filter(Boolean); (selectionListeners.get("change") || []).forEach(listener => listener(this, {})); },
+        getSelectionCell() { return selectedCells[0] || null; },
+        getSelectionCells() { return selectedCells.slice(); },
+        getSelectionModel() { return { addListener(eventName, listener) { addMappedListener(selectionListeners, eventName, listener); } }; },
+        addMouseListener(listener) { mouseListeners.push(listener); },
+        addListener(eventName, listener) { addMappedListener(graphListeners, eventName, listener); },
+        fireEvent(evt) { firedEvents.push(evt); (graphListeners.get(evt && evt.name) || []).forEach(listener => listener(this, evt)); }
+    };
+
+    dom.window.TrellisContextMenu = {
+        install() {},
+        register(contributor) { contextMenuContributors.push(contributor); }
+    };
+
+    const actions = {
+        get(name) {
+            if (name !== "insertImage") return null;
+            return {
+                funct() {
+                    insertImageCalls += 1;
+                    graph.insertVertex(root, null, "avatar", 0, 0, 20, 20, "shape=image;image=data:image/png;base64,test", false);
+                }
+            };
+        }
+    };
+
+    const ui = {
+        editor: { graph },
+        actions,
+        prompt(message, value, callback) {
+            promptCalls.push({ message, value });
+            callback(promptValue);
+        }
+    };
+
+    const context = {
+        window: dom.window,
+        document,
+        console: { log() {}, warn() {}, error() {} },
+        setTimeout,
+        clearTimeout,
+        Draw: { loadPlugin(callback) { callback(ui); } },
+        mxCell: TestCell,
+        mxGeometry: TestGeometry,
+        mxLayoutManager: function mxLayoutManager() {},
+        mxStackLayout: function mxStackLayout() {},
+        mxEventObject: function mxEventObject(name, ...pairs) { return makeEventObject(name, pairs); },
+        mxUtils: {
+            createXmlDocument() { return document.implementation.createDocument("", "", null); }
+        },
+        mxEvent: {
+            CHANGE: "change",
+            ADD_CELLS: "addCells",
+            CELLS_ADDED: "cellsAdded",
+            CELLS_MOVED: "cellsMoved",
+            CELLS_RESIZED: "cellsResized",
+            SCALE: "scale",
+            TRANSLATE: "translate",
+            SCALE_AND_TRANSLATE: "scaleAndTranslate",
+            DESTROY: "destroy",
+            addListener(node, eventName, listener) { node.addEventListener(eventName, listener); },
+            consume(evt) { if (evt && evt.preventDefault) evt.preventDefault(); if (evt && evt.stopPropagation) evt.stopPropagation(); },
+            getSource(evt) { return evt && (evt.target || evt.srcElement); },
+            getClientX(evt) { return evt && evt.clientX || 0; },
+            getClientY(evt) { return evt && evt.clientY || 0; },
+            isControlDown(evt) { return !!(evt && evt.ctrlKey); },
+            isMetaDown(evt) { return !!(evt && evt.metaKey); },
+            isShiftDown(evt) { return !!(evt && evt.shiftKey); },
+            isPopupTrigger(evt) { return !!(evt && evt.button === 2); }
+        }
+    };
+
+    vm.runInNewContext(fs.readFileSync(PLUGIN_PATH, "utf8"), context, { filename: PLUGIN_PATH });
+    return { dom, document, graph, model, root, mouseListeners, graphListeners, viewListeners, selectionListeners, firedEvents, contextMenuContributors, promptCalls, setPromptValue(value) { promptValue = value; }, clearValueWrites() { model.valueWrites.length = 0; }, get valueWrites() { return model.valueWrites.slice(); }, get insertImageCalls() { return insertImageCalls; }, get selectedCell() { return selectedCells[0] || null; } };
+}
+
+function makeMouseEvent(window, type, opts) {
+    const event = new window.MouseEvent(type, {
+        bubbles: true,
+        button: opts.button == null ? 0 : opts.button,
+        clientX: opts.clientX,
+        clientY: opts.clientY,
+        detail: opts.detail == null ? 1 : opts.detail,
+        ctrlKey: !!opts.ctrlKey,
+        shiftKey: !!opts.shiftKey,
+        altKey: !!opts.altKey
+    });
+    Object.defineProperty(event, "graphX", { value: opts.graphX == null ? opts.clientX : opts.graphX });
+    Object.defineProperty(event, "graphY", { value: opts.graphY == null ? opts.clientY : opts.graphY });
+    return event;
+}
+
+function fireGraphClick(harness, opts = {}) {
+    const graph = harness.graph;
+    const cell = opts.cell || null;
+    graph.__hitCell = opts.hitCell === undefined ? cell : opts.hitCell;
+    const down = makeMouseEvent(harness.dom.window, "mousedown", { clientX: opts.clientX || 100, clientY: opts.clientY || 120, graphX: opts.graphX || 90, graphY: opts.graphY || 100, detail: opts.detail });
+    const up = makeMouseEvent(harness.dom.window, "mouseup", { clientX: opts.upClientX || opts.clientX || 100, clientY: opts.upClientY || opts.clientY || 120, graphX: opts.graphX || 90, graphY: opts.graphY || 100, detail: opts.detail });
+    const makeMe = event => ({
+        getEvent() { return event; },
+        getCell() { return cell; },
+        getGraphX() { return event.graphX; },
+        getGraphY() { return event.graphY; }
+    });
+    harness.mouseListeners.forEach(listener => listener.mouseDown(graph, makeMe(down)));
+    if (opts.selectCellOnDown) graph.setSelectionCell(opts.selectCellOnDown);
+    harness.mouseListeners.forEach(listener => listener.mouseUp(graph, makeMe(up)));
+}
+
+function overlayButtons(document) {
+    return Array.from(document.querySelectorAll(".trellis-root-module-overlay button"));
+}
+
+function roleOverlay(document) {
+    return document.querySelector(".trellis-team-role-overlay");
+}
+
+function roleOverlayButtons(document) {
+    return Array.from(document.querySelectorAll(".trellis-team-role-overlay button"));
+}
+
+function roleOverlayInput(document, ariaLabel) {
+    const input = document.querySelector(`.trellis-team-role-overlay input[aria-label='${ariaLabel}']`);
+    assert.ok(input, "missing team overlay input " + ariaLabel);
+    return input;
+}
+
+function dispatchInputKey(input, key) {
+    input.dispatchEvent(new input.ownerDocument.defaultView.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+}
+
+function roleImageOverlay(document) {
+    return document.querySelector(".trellis-role-image-overlay");
+}
+
+function roleImageOverlayButtons(document) {
+    return Array.from(document.querySelectorAll(".trellis-role-image-overlay button"));
+}
+
+function isRoleImageOverlayVisible(document) {
+    const overlay = roleImageOverlay(document);
+    return !!overlay && overlay.style.display !== "none";
+}
+
+function fireMappedListeners(map, eventName) {
+    (map.get(eventName) || []).forEach(listener => listener({}, {}));
+}
+
+function menuItemsFor(harness, cell, evt) {
+    const items = [];
+    const menu = {
+        addItem(label, _icon, funct) { items.push({ label, funct }); },
+        addSeparator() {}
+    };
+    harness.contextMenuContributors.forEach(contributor => contributor.addItems(menu, cell, evt));
+    return items;
+}
+
+function styleHas(cell, flag) {
+    return new RegExp("(^|;)" + flag + "(;|$)").test(cell && cell.style || "");
+}
+
+function cellText(cell) {
+    if (!cell) return "";
+    const raw = cell.value && cell.value.getAttribute ? (cell.value.getAttribute("label") || "") : (cell.value == null ? "" : String(cell.value));
+    return String(raw).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function createRoleFixture(harness) {
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const role = harness.graph.__trellisModules.createRoleCard(team, 90, 100);
+    const imageRow = role.children.find(child => styleHas(child, "role_imagerow=1"));
+    const nameRow = role.children.find(child => styleHas(child, "role_name=1"));
+    const titleRow = role.children.find(child => styleHas(child, "role_title=1"));
+    const fieldLabels = role.children.filter(child => styleHas(child, "role_field_label=1"));
+    const headerSeparator = role.children.find(child => styleHas(child, "role_header_separator=1"));
+    const notesLabel = fieldLabels.find(child => child.value === "Description / notes");
+    const notesRow = role.children.find(child => notesLabel && child.geometry && child.geometry.x === notesLabel.geometry.x && child.geometry.y > notesLabel.geometry.y && !styleHas(child, "role_field_label=1"));
+    const contactLabel = fieldLabels.find(child => child.value === "Contact info");
+    const contactRow = role.children.find(child => contactLabel && child.geometry && child.geometry.x === contactLabel.geometry.x && child.geometry.y > contactLabel.geometry.y && !styleHas(child, "role_field_label=1"));
+    return { team, role, imageRow, nameRow, titleRow, fieldLabels, headerSeparator, notesRow, contactRow };
+}
+
+function runModulesContextMenu(harness, cell) {
+    const contributor = harness.contextMenuContributors.find(item => item.id === "modules");
+    assert.ok(contributor);
+    const labels = [];
+    const actions = new Map();
+    const menu = {
+        addSeparator() { labels.push("---"); },
+        addItem(label, _image, funct) { labels.push(label); if (typeof funct === "function") actions.set(label, funct); }
+    };
+    contributor.addItems(menu, cell, { graphX: 90, graphY: 100, clientX: 100, clientY: 120 });
+    return { labels, actions };
+}
+
+function getRoleAvatar(imageRow) {
+    return (imageRow.children || []).find(child => styleHas(child, "role_avatar=1")) || null;
+}
+
+function waitForTimers() {
+    return new Promise(resolve => setTimeout(resolve, 5));
+}
+
+test("createModuleAtPoint creates a regular module at requested coordinates", () => {
+    const harness = makeHarness();
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular");
+    assert.equal(harness.root.children[0], mod);
+    assert.equal(mod.geometry.x, 11);
+    assert.equal(mod.geometry.y, 22);
+    assert.match(mod.style, /module=1/);
+    assert.equal(mod.getAttribute("garden_module"), null);
+    assert.equal(mod.getAttribute("team_module"), null);
+    assert.equal(harness.selectedCell, mod);
+});
+
+test("createModuleAtPoint creates garden module with settings-needed event", async () => {
+    const harness = makeHarness();
+    let ensuredTaskBoard = null;
+    harness.graph.__trellisTaskManager = { ensureMainBoardInTaskModule(taskModule) { ensuredTaskBoard = taskModule; } };
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden");
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const team = harness.root.children.find(child => child !== mod && child.getAttribute("team_module") === "1");
+    const task = harness.root.children.find(child => child !== mod && child.getAttribute("task_module") === "1");
+    assert.equal(mod.getAttribute("garden_module"), "1");
+    assert.equal(mod.getAttribute("team_module"), null);
+    assert.ok(team);
+    assert.ok(task);
+    assert.equal(mod.getAttribute("trellis_team_module_id"), team.id);
+    assert.equal(team.getAttribute("trellis_garden_module_id"), mod.id);
+    assert.equal(mod.getAttribute("trellis_task_module_id"), task.id);
+    assert.equal(task.getAttribute("trellis_garden_module_id"), mod.id);
+    assert.match(mod.getAttribute("linkedTo") || "", new RegExp(team.id));
+    assert.match(team.getAttribute("linkedTo") || "", new RegExp(mod.id));
+    assert.match(mod.getAttribute("linkedTo") || "", new RegExp(task.id));
+    assert.match(task.getAttribute("linkedTo") || "", new RegExp(mod.id));
+    assert.equal(ensuredTaskBoard, task);
+    assert.match(mod.style, /swimlaneFillColor=#B9E0A5/);
+    assert.equal(mod.geometry.width, 440);
+    assert.equal(mod.geometry.height, 340);
+    assert.equal(harness.selectedCell, mod);
+    const settingsEvents = harness.firedEvents.filter(event => event.name === "usl:gardenModuleNeedsSettings");
+    assert.equal(settingsEvents.length, 1);
+    assert.equal(settingsEvents[0].getProperty("cell"), mod);
+});
+
+test("createModuleAtPoint creates team module", () => {
+    const harness = makeHarness();
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    assert.equal(mod.getAttribute("team_module"), "1");
+    assert.equal(mod.getAttribute("garden_module"), null);
+    assert.match(mod.style, /swimlaneFillColor=#FFF2CC/);
+    assert.equal(harness.selectedCell, mod);
+});
+
+test("createModuleAtPoint creates task module", () => {
+    const harness = makeHarness();
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "task");
+    assert.equal(mod.getAttribute("task_module"), "1");
+    assert.equal(mod.getAttribute("garden_module"), null);
+    assert.equal(mod.getAttribute("team_module"), null);
+    assert.match(mod.style, /swimlaneFillColor=#E0F2FE/);
+    assert.equal(harness.selectedCell, mod);
+});
+
+test("garden companion team repair reuses typed team module", () => {
+    const harness = makeHarness();
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden");
+    const team = harness.model.getCell(garden.getAttribute("trellis_team_module_id"));
+    const repaired = harness.graph.__trellisModules.ensureGardenTeamModule(garden);
+    assert.equal(repaired, team);
+    assert.equal(harness.root.children.filter(child => child.getAttribute("team_module") === "1").length, 1);
+});
+
+test("garden companion task repair reuses typed task module and mirrors access", () => {
+    const harness = makeHarness();
+    let ensuredTaskBoard = null;
+    harness.graph.__trellisTaskManager = { ensureMainBoardInTaskModule(taskModule) { ensuredTaskBoard = taskModule; } };
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden");
+    garden.value.setAttribute("trellis_owner_user_id", "owner-1");
+    garden.value.setAttribute("trellis_access_grants_json", "[{\"userId\":\"u1\",\"preset\":\"gardener\",\"capabilities\":[]}]");
+    ensuredTaskBoard = null;
+    const repaired = harness.graph.__trellisModules.ensureGardenTaskModule(garden);
+    const team = harness.model.getCell(garden.getAttribute("trellis_team_module_id"));
+    assert.equal(repaired.getAttribute("task_module"), "1");
+    assert.equal(repaired.getAttribute("trellis_garden_module_id"), garden.id);
+    assert.equal(repaired.getAttribute("trellis_owner_user_id"), "owner-1");
+    assert.equal(repaired.getAttribute("trellis_access_grants_json"), garden.getAttribute("trellis_access_grants_json"));
+    assert.equal(team.getAttribute("trellis_owner_user_id"), "owner-1");
+    assert.equal(harness.root.children.filter(child => child.getAttribute("task_module") === "1").length, 1);
+    assert.ok(repaired.geometry.y > team.geometry.y);
+    assert.equal(ensuredTaskBoard, null);
+    harness.graph.__trellisModules.ensureGardenTaskModule(garden, { createMainBoard: true });
+    assert.equal(ensuredTaskBoard, repaired);
+});
+
+test("module cells cannot be dropped under non-module parents", () => {
+    const harness = makeHarness();
+    const nonModule = new TestCell("plain", new TestGeometry(0, 0, 400, 300), "shape=rectangle;");
+    nonModule.vertex = true;
+    harness.model.add(harness.root, nonModule);
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular");
+    assert.equal(harness.graph.isValidDropTarget(nonModule, [mod]), false);
+    harness.model.add(nonModule, mod);
+    harness.graph.fireEvent(makeEventObject("cellsMoved", ["cells", [mod]]));
+    assert.equal(harness.model.getParent(mod), harness.root);
+});
+
+test("promptSetModuleMargin updates style and reapplies module sizing", async () => {
+    const harness = makeHarness();
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular");
+    mod.style += ";module_margin=12";
+    const child = new TestCell("child", new TestGeometry(20, 30, 220, 80), "");
+    child.vertex = true;
+    harness.model.add(mod, child);
+    harness.setPromptValue("45");
+    harness.graph.__trellisModules.promptSetModuleMargin(mod);
+    await waitForTimers();
+    assert.equal(harness.promptCalls.length, 1);
+    assert.equal(harness.promptCalls[0].value, "12");
+    assert.match(mod.style, /(?:^|;)module_margin=45(?:;|$)/);
+    assert.doesNotMatch(mod.style, /(?:^|;)module_margin=12(?:;|$)/);
+    assert.equal(mod.geometry.width, 285);
+    assert.equal(mod.geometry.height, 155);
+});
+
+test("module margin prompt can be requested through the fallback graph event", async () => {
+    const harness = makeHarness();
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular");
+    harness.setPromptValue("30");
+    harness.graph.fireEvent(makeEventObject("usl:requestPromptSetModuleMargin", ["cell", mod]));
+    await waitForTimers();
+    assert.equal(harness.promptCalls.length, 1);
+    assert.match(mod.style, /(?:^|;)module_margin=30(?:;|$)/);
+});
+
+test("module margin API updates style and reapplies module sizing without prompt", () => {
+    const harness = makeHarness();
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular");
+    const child = new TestCell("child", new TestGeometry(20, 30, 220, 80), "");
+    child.vertex = true;
+    harness.model.add(mod, child);
+    assert.equal(harness.graph.__trellisModules.getModuleMargin(mod, 100), 100);
+    harness.graph.__trellisModules.setModuleMargin(mod, 35);
+    assert.equal(harness.promptCalls.length, 0);
+    assert.equal(harness.graph.__trellisModules.getModuleMargin(mod, 100), 35);
+    assert.match(mod.style, /(?:^|;)module_margin=35(?:;|$)/);
+    assert.equal(mod.geometry.width, 275);
+    assert.equal(mod.geometry.height, 145);
+});
+
+test("module margin can be set through the fallback graph event", () => {
+    const harness = makeHarness();
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular");
+    harness.graph.fireEvent(makeEventObject("usl:requestSetModuleMargin", ["cell", mod, "marginPx", 27]));
+    assert.equal(harness.promptCalls.length, 0);
+    assert.match(mod.style, /(?:^|;)module_margin=27(?:;|$)/);
+    assert.equal(harness.graph.__trellisModules.getModuleMargin(mod, 100), 27);
+});
+
+test("empty canvas click renders root module overlay buttons", () => {
+    const harness = makeHarness();
+    fireGraphClick(harness, { clientX: 120, clientY: 150, graphX: 200, graphY: 230 });
+    const buttons = overlayButtons(harness.document);
+    assert.deepEqual(buttons.map(button => button.textContent), ["Add Module", "Add Garden Module", "Add Team Module", "Add Task Module"]);
+    assert.equal(harness.document.querySelector(".trellis-root-module-overlay").style.display, "flex");
+});
+
+test("overlay buttons create the selected module type at stored click point and hide", async () => {
+    const harness = makeHarness();
+    fireGraphClick(harness, { clientX: 130, clientY: 160, graphX: 210, graphY: 240 });
+    overlayButtons(harness.document)[1].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const mod = harness.root.children[0];
+    assert.equal(mod.geometry.x, 210);
+    assert.equal(mod.geometry.y, 240);
+    assert.equal(mod.getAttribute("garden_module"), "1");
+    assert.equal(harness.document.querySelector(".trellis-root-module-overlay").style.display, "none");
+});
+
+test("clicking an existing cell does not render the root module overlay", () => {
+    const harness = makeHarness();
+    const existing = harness.graph.__trellisModules.createModuleAtPoint({ x: 5, y: 6 }, "regular");
+    fireGraphClick(harness, { cell: existing, hitCell: existing, clientX: 140, clientY: 170, graphX: 220, graphY: 250 });
+    const overlay = harness.document.querySelector(".trellis-root-module-overlay");
+    assert.equal(overlay, null);
+});
+
+test("overlay dismisses on Escape and outside graph gesture", () => {
+    const harness = makeHarness();
+    fireGraphClick(harness, { clientX: 150, clientY: 180, graphX: 230, graphY: 260 });
+    const overlay = harness.document.querySelector(".trellis-root-module-overlay");
+    assert.equal(overlay.style.display, "flex");
+    harness.document.dispatchEvent(new harness.dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(overlay.style.display, "none");
+    fireGraphClick(harness, { clientX: 150, clientY: 180, graphX: 230, graphY: 260 });
+    assert.equal(overlay.style.display, "flex");
+    const existing = harness.graph.__trellisModules.createModuleAtPoint({ x: 1, y: 2 }, "regular");
+    fireGraphClick(harness, { cell: existing, hitCell: existing, clientX: 160, clientY: 190, graphX: 240, graphY: 270 });
+    assert.equal(overlay.style.display, "none");
+});
+
+test("empty canvas click while overlay is active dismisses without reopening", () => {
+    const harness = makeHarness();
+    fireGraphClick(harness, { clientX: 170, clientY: 200, graphX: 250, graphY: 280 });
+    const overlay = harness.document.querySelector(".trellis-root-module-overlay");
+    assert.equal(overlay.style.display, "flex");
+    fireGraphClick(harness, { clientX: 190, clientY: 220, graphX: 270, graphY: 300 });
+    assert.equal(overlay.style.display, "none");
+    fireGraphClick(harness, { clientX: 210, clientY: 240, graphX: 290, graphY: 320 });
+    assert.equal(overlay.style.display, "flex");
+});
+
+test("selecting one team module renders the add role card overlay", () => {
+    const harness = makeHarness();
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const buttons = roleOverlayButtons(harness.document);
+    assert.deepEqual(buttons.map(button => button.textContent), ["Add Role Card", "Set Module Margin"]);
+    assert.equal(roleOverlayInput(harness.document, "Team label").value, "Team Module");
+    assert.equal(roleOverlay(harness.document).querySelectorAll(".trellis-team-module-label-controls input").length, 1);
+    assert.equal(roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls").textContent.includes("Garden label"), false);
+    assert.equal(roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls").textContent.includes("Team label"), false);
+    assert.equal(roleOverlay(harness.document).style.display, "flex");
+    assert.equal(roleOverlay(harness.document).style.left, "58px");
+    assert.equal(roleOverlay(harness.document).style.top, "68px");
+    assert.equal(harness.selectedCell, team);
+});
+
+test("team module overlay edits labels without graph action side effects", () => {
+    const harness = makeHarness();
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    harness.clearValueWrites();
+    const oldTeamValue = team.value;
+    const oldTeamLabel = oldTeamValue.getAttribute("label");
+    let input = roleOverlayInput(harness.document, "Team label");
+    input.value = "Harvest Crew";
+    input.dispatchEvent(new harness.dom.window.Event("blur"));
+    assert.equal(team.getAttribute("label"), "Harvest Crew");
+    assert.equal(harness.valueWrites.length, 1);
+    assert.equal(harness.valueWrites[0].oldValue, oldTeamValue);
+    assert.notEqual(harness.valueWrites[0].newValue, oldTeamValue);
+    assert.equal(oldTeamValue.getAttribute("label"), oldTeamLabel);
+
+    harness.graph.setSelectionCell(team);
+    harness.clearValueWrites();
+    input = roleOverlayInput(harness.document, "Team label");
+    input.value = "Draft Crew";
+    dispatchInputKey(input, "Escape");
+    assert.equal(input.value, "Harvest Crew");
+    assert.equal(team.getAttribute("label"), "Harvest Crew");
+    assert.equal(harness.valueWrites.length, 0);
+
+    input.value = "   ";
+    dispatchInputKey(input, "Enter");
+    assert.equal(team.getAttribute("label"), "Team Module");
+});
+
+test("module label API writes garden and team labels with clone-backed undo values", () => {
+    const harness = makeHarness();
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden");
+    const team = harness.model.getCell(garden.getAttribute("trellis_team_module_id"));
+
+    harness.clearValueWrites();
+    const oldGardenValue = garden.value;
+    const oldGardenLabel = oldGardenValue.getAttribute("label");
+    assert.equal(harness.graph.__trellisModules.writeModuleLabel(garden, "Kitchen Garden"), "Kitchen Garden");
+    assert.equal(harness.valueWrites.length, 1);
+    assert.equal(harness.valueWrites[0].cell, garden);
+    assert.equal(harness.valueWrites[0].oldValue, oldGardenValue);
+    assert.notEqual(harness.valueWrites[0].newValue, oldGardenValue);
+    assert.equal(oldGardenValue.getAttribute("label"), oldGardenLabel);
+    assert.equal(garden.getAttribute("label"), "Kitchen Garden");
+
+    harness.clearValueWrites();
+    assert.equal(harness.graph.__trellisModules.writeModuleLabel(garden, "Kitchen Garden"), "Kitchen Garden");
+    assert.equal(harness.valueWrites.length, 0);
+
+    harness.clearValueWrites();
+    const oldTeamValue = team.value;
+    const oldTeamLabel = oldTeamValue.getAttribute("label");
+    assert.equal(harness.graph.__trellisModules.writeModuleLabel(team, "Harvest Crew"), "Harvest Crew");
+    assert.equal(harness.valueWrites.length, 1);
+    assert.equal(harness.valueWrites[0].cell, team);
+    assert.equal(harness.valueWrites[0].oldValue, oldTeamValue);
+    assert.notEqual(harness.valueWrites[0].newValue, oldTeamValue);
+    assert.equal(oldTeamValue.getAttribute("label"), oldTeamLabel);
+    assert.equal(team.getAttribute("label"), "Harvest Crew");
+});
+
+test("linked team module overlay uses a single editable team label field", () => {
+    const harness = makeHarness();
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden");
+    const team = harness.model.getCell(garden.getAttribute("trellis_team_module_id"));
+    harness.graph.__trellisModules.writeModuleLabel(garden, "Kitchen Garden");
+    harness.graph.setSelectionCell(team);
+    const controls = roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls");
+    assert.equal(controls.querySelectorAll("input[aria-label='Team label']").length, 1);
+    assert.equal(controls.textContent.includes("Garden label"), false);
+    assert.equal(controls.textContent.includes("Team label"), false);
+    assert.equal(roleOverlayInput(harness.document, "Team label").value, "Garden Team");
+
+    garden.value.setAttribute("label", "Market Garden");
+    harness.graph.setSelectionCell(team);
+    assert.equal(roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls").textContent.includes("Market Garden"), false);
+});
+
+test("team module overlay position is not clamped to the viewport", () => {
+    const harness = makeHarness();
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: -40, y: -50 }, "team");
+    const overlay = roleOverlay(harness.document);
+    assert.equal(overlay.style.display, "flex");
+    assert.equal(overlay.style.left, "-32px");
+    assert.equal(overlay.style.top, "-42px");
+    assert.equal(harness.selectedCell, team);
+});
+
+test("first click selecting a team module shows role overlay next to the click", () => {
+    const harness = makeHarness();
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    harness.graph.setSelectionCell(null);
+    fireGraphClick(harness, { cell: team, hitCell: team, selectCellOnDown: team, clientX: 180, clientY: 220, graphX: 90, graphY: 100 });
+    const overlay = roleOverlay(harness.document);
+    assert.equal(overlay.style.display, "flex");
+    assert.equal(overlay.style.left, "178px");
+    assert.equal(overlay.style.top, "208px");
+});
+
+test("selecting regular or garden modules does not render the role card overlay", () => {
+    const harness = makeHarness();
+    const regular = harness.graph.__trellisModules.createModuleAtPoint({ x: 10, y: 20 }, "regular");
+    assert.equal(roleOverlay(harness.document), null);
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden");
+    assert.equal(roleOverlay(harness.document), null);
+    harness.graph.setSelectionCell(regular);
+    assert.equal(roleOverlay(harness.document), null);
+    harness.graph.setSelectionCell(garden);
+    assert.equal(roleOverlay(harness.document), null);
+});
+
+test("role overlay button creates role card from stored click point and hides", () => {
+    const harness = makeHarness();
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    harness.document.dispatchEvent(new harness.dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    fireGraphClick(harness, { cell: team, hitCell: team, clientX: 100, clientY: 120, graphX: 90, graphY: 100 });
+    harness.graph.setSelectionCell(team);
+    const updateCountBefore = harness.model.topLevelUpdateCount;
+    roleOverlayButtons(harness.document)[0].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
+    const role = team.children.find(child => /(^|;)role_card=1(;|$)/.test(child.style));
+    assert.ok(role);
+    assert.equal(role.geometry.x, 40);
+    assert.equal(role.geometry.y, 40);
+    assert.equal(harness.selectedCell, role);
+    assert.equal(roleOverlay(harness.document).style.display, "none");
+    assert.equal(harness.model.topLevelUpdateCount - updateCountBefore, 1);
+});
+
+test("context menu add role card uses one top-level model transaction", () => {
+    const harness = makeHarness();
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const evt = makeMouseEvent(harness.dom.window, "mouseup", { clientX: 110, clientY: 130, graphX: 95, graphY: 105 });
+    const addRole = menuItemsFor(harness, team, evt).find(item => item.label === "Add Role Card");
+    assert.ok(addRole);
+    const updateCountBefore = harness.model.topLevelUpdateCount;
+    addRole.funct();
+    const role = team.children.find(child => /(^|;)role_card=1(;|$)/.test(child.style));
+    assert.ok(role);
+    assert.equal(role.geometry.x, 45);
+    assert.equal(role.geometry.y, 45);
+    assert.equal(harness.selectedCell, role);
+    assert.equal(harness.model.topLevelUpdateCount - updateCountBefore, 1);
+});
+
+test("role overlay button falls back to top-left content placement", () => {
+    const harness = makeHarness();
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    roleOverlayButtons(harness.document)[0].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
+    const role = team.children.find(child => /(^|;)role_card=1(;|$)/.test(child.style));
+    assert.ok(role);
+    assert.equal(role.geometry.x, 100);
+    assert.equal(role.geometry.y, 100);
+    assert.equal(harness.selectedCell, role);
+    assert.equal(roleOverlay(harness.document).style.display, "none");
+});
+
+test("role overlay margin button invokes shared module margin prompt", async () => {
+    const harness = makeHarness();
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    harness.setPromptValue("65");
+    roleOverlayButtons(harness.document)[1].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
+    await waitForTimers();
+    assert.equal(harness.promptCalls.length, 1);
+    assert.match(team.style, /(?:^|;)module_margin=65(?:;|$)/);
+    assert.equal(roleOverlay(harness.document).style.display, "none");
+});
+
+test("clicking the already-selected team module hides role overlay without reopening", () => {
+    const harness = makeHarness();
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const overlay = roleOverlay(harness.document);
+    assert.equal(overlay.style.display, "flex");
+    fireGraphClick(harness, { cell: team, hitCell: team, clientX: 100, clientY: 120, graphX: 90, graphY: 100 });
+    assert.equal(overlay.style.display, "none");
+    assert.equal(roleOverlayButtons(harness.document).length, 2);
+});
+
+test("role overlay hides on Escape, outside gesture, model change, and view change", () => {
+    const harness = makeHarness();
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const overlay = roleOverlay(harness.document);
+    assert.equal(overlay.style.display, "flex");
+    harness.document.dispatchEvent(new harness.dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(overlay.style.display, "none");
+    harness.graph.setSelectionCell(team);
+    assert.equal(overlay.style.display, "flex");
+    fireGraphClick(harness, { clientX: 200, clientY: 220, graphX: 190, graphY: 200 });
+    assert.equal(overlay.style.display, "none");
+    harness.graph.setSelectionCell(team);
+    assert.equal(overlay.style.display, "flex");
+    harness.model.fire("change");
+    assert.equal(overlay.style.display, "none");
+    harness.graph.setSelectionCell(team);
+    assert.equal(overlay.style.display, "flex");
+    fireMappedListeners(harness.viewListeners, "scale");
+    assert.equal(overlay.style.display, "none");
+    harness.graph.setSelectionCell(team);
+    assert.equal(overlay.style.display, "flex");
+    fireMappedListeners(harness.viewListeners, "translate");
+    assert.equal(overlay.style.display, "none");
+});
+
+test("new role cards use v2 compact roster profile geometry", () => {
+    const harness = makeHarness();
+    const { role, imageRow, nameRow, titleRow, fieldLabels, headerSeparator, notesRow, contactRow } = createRoleFixture(harness);
+    assert.match(role.style, /(?:^|;)role_card=1(?:;|$)/);
+    assert.match(role.style, /(?:^|;)role_card_version=2(?:;|$)/);
+    assert.match(role.style, /(?:^|;)shape=label(?:;|$)/);
+    assert.match(role.style, /(?:^|;)resizable=0(?:;|$)/);
+    assert.doesNotMatch(role.style, /(?:^|;)shape=swimlane(?:;|$)/);
+    assert.doesNotMatch(role.style, /(?:^|;)startSize=/);
+    assert.doesNotMatch(role.style, /(?:^|;)swimlaneFillColor=/);
+    assert.equal(role.geometry.width, 260);
+    assert.equal(role.geometry.height, 250);
+    assert.equal(role.geometry.alternateBounds.width, 180);
+    assert.equal(role.geometry.alternateBounds.height, 64);
+    assert.equal(imageRow.value, "click to add image");
+    assert.equal(imageRow.geometry.y, 76);
+    assert.equal(nameRow.geometry.y, 76);
+    assert.equal(titleRow.geometry.y, 118);
+    assert.ok(notesRow);
+    assert.ok(contactRow);
+    assert.equal(contactRow.geometry.y, 208);
+    assert.equal(contactRow.geometry.height, 32);
+    assert.equal(styleHas(nameRow, "role_name=1"), true);
+    assert.equal(styleHas(titleRow, "role_title=1"), true);
+    assert.equal(role.children.filter(child => styleHas(child, "role_name=1")).length, 1);
+    assert.equal(role.children.filter(child => styleHas(child, "role_title=1")).length, 1);
+    assert.equal(nameRow.value, "");
+    assert.equal(titleRow.value, "");
+    [imageRow, nameRow, titleRow, notesRow, contactRow].forEach(cell => {
+        assert.match(cell.style, /(?:^|;)html=1(?:;|$)/);
+        assert.match(cell.style, /(?:^|;)whiteSpace=wrap(?:;|$)/);
+        assert.match(cell.style, /(?:^|;)overflow=hidden(?:;|$)/);
+    });
+    assert.deepEqual(fieldLabels.map(cell => cell.value), ["Photo", "Name", "Role / title", "Description / notes", "Contact info"]);
+    assert.equal(fieldLabels.every(cell => /(?:^|;)editable=0(?:;|$)/.test(cell.style)), true);
+    assert.equal(fieldLabels.some(cell => styleHas(cell, "role_name=1") || styleHas(cell, "role_title=1")), false);
+    assert.ok(headerSeparator);
+    assert.equal(headerSeparator.geometry.y, 54);
+    assert.match(headerSeparator.style, /(?:^|;)editable=0(?:;|$)/);
+    assert.doesNotMatch(String(role.value), /<img/i);
+    assert.match(role.style, /(?:^|;)image=data:image\/svg\+xml,/);
+    assert.match(role.style, /(?:^|;)imageWidth=38(?:;|$)/);
+    assert.match(role.style, /(?:^|;)imageHeight=38(?:;|$)/);
+    assert.match(role.style, /(?:^|;)imageAlign=left(?:;|$)/);
+    assert.match(role.style, /(?:^|;)imageVerticalAlign=top(?:;|$)/);
+    assert.match(role.style, /(?:^|;)verticalAlign=top(?:;|$)/);
+    assert.match(role.style, /(?:^|;)spacingTop=8(?:;|$)/);
+});
+
+test("v2 role card summary syncs name and role without prefixing value fields", () => {
+    const harness = makeHarness();
+    const { role, nameRow, titleRow } = createRoleFixture(harness);
+    assert.match(String(role.value), /Unnamed person/);
+    assert.match(String(role.value), /Unspecified role/);
+    harness.model.setValue(nameRow, "Bob");
+    harness.model.setValue(titleRow, "Lead gardener");
+    harness.model.fire("change");
+    assert.match(String(role.value), /Bob/);
+    assert.match(String(role.value), /Lead gardener/);
+    assert.equal(nameRow.value, "Bob");
+    assert.equal(titleRow.value, "Lead gardener");
+    assert.doesNotMatch(String(nameRow.value), /^Name:/);
+    assert.doesNotMatch(String(titleRow.value), /^Role/);
+});
+
+test("legacy role cards are not rewritten by summary sync", () => {
+    const harness = makeHarness();
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const role = new TestCell("Legacy Role", new TestGeometry(10, 20, 240, 160), "shape=swimlane;role_card=1;");
+    role.vertex = true;
+    harness.model.add(team, role);
+    const name = new TestCell("Legacy Name", new TestGeometry(0, 0, 100, 30), "role_name=1;");
+    name.vertex = true;
+    harness.model.add(role, name);
+    harness.model.fire("change");
+    assert.equal(role.value, "Legacy Role");
+});
+
+test("empty role image slot shows add affordances for role card and image row only", () => {
+    const harness = makeHarness();
+    const { role, imageRow, nameRow } = createRoleFixture(harness);
+    harness.graph.setSelectionCell(role);
+    assert.equal(roleImageOverlayButtons(harness.document)[0].textContent, "Add Image");
+    assert.equal(isRoleImageOverlayVisible(harness.document), true);
+    harness.graph.setSelectionCell(imageRow);
+    assert.equal(roleImageOverlayButtons(harness.document)[0].textContent, "Add Image");
+    assert.equal(isRoleImageOverlayVisible(harness.document), true);
+    harness.graph.setSelectionCell(nameRow);
+    assert.equal(isRoleImageOverlayVisible(harness.document), false);
+    assert.equal(runModulesContextMenu(harness, role).labels.includes("Add Role Image"), true);
+    assert.equal(runModulesContextMenu(harness, imageRow).labels.includes("Add Role Image"), true);
+    assert.equal(runModulesContextMenu(harness, nameRow).labels.includes("Add Role Image"), false);
+});
+
+test("existing role image shows change overlay from image section or avatar only", async () => {
+    const harness = makeHarness();
+    const { role, imageRow } = createRoleFixture(harness);
+    harness.graph.__trellisModules.selectRoleImage(role);
+    await waitForTimers();
+    const avatar = getRoleAvatar(imageRow);
+    assert.ok(avatar);
+    harness.graph.setSelectionCell(role);
+    assert.equal(isRoleImageOverlayVisible(harness.document), false);
+    harness.graph.setSelectionCell(imageRow);
+    assert.equal(roleImageOverlayButtons(harness.document)[0].textContent, "Change Image");
+    assert.equal(isRoleImageOverlayVisible(harness.document), true);
+    harness.graph.setSelectionCell(avatar);
+    assert.equal(roleImageOverlayButtons(harness.document)[0].textContent, "Change Image");
+    assert.equal(isRoleImageOverlayVisible(harness.document), true);
+    assert.equal(runModulesContextMenu(harness, role).labels.includes("Change Role Image"), false);
+    assert.equal(runModulesContextMenu(harness, imageRow).labels.includes("Change Role Image"), false);
+    assert.equal(runModulesContextMenu(harness, avatar).labels.includes("Change Role Image"), true);
+});
+
+test("role image overlay button invokes insert image and creates the avatar", async () => {
+    const harness = makeHarness();
+    const { role, imageRow } = createRoleFixture(harness);
+    harness.graph.setSelectionCell(role);
+    roleImageOverlayButtons(harness.document)[0].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
+    await waitForTimers();
+    const avatar = getRoleAvatar(imageRow);
+    assert.equal(harness.insertImageCalls, 1);
+    assert.ok(avatar);
+    assert.equal(avatar.parent, imageRow);
+    assert.equal(avatar.geometry.width, 40);
+    assert.equal(avatar.geometry.height, 40);
+    assert.equal(avatar.geometry.x, 5);
+    assert.equal(avatar.geometry.y, 5);
+    assert.equal(imageRow.value, "");
+    assert.doesNotMatch(String(role.value), /<img/i);
+    assert.match(role.style, /(?:^|;)image=data:image\/png;base64,test(?:;|$)/);
+    assert.match(role.style, /(?:^|;)imageWidth=38(?:;|$)/);
+});
+
+test("inserted role image replaces any prior avatar", async () => {
+    const harness = makeHarness();
+    const { role, imageRow } = createRoleFixture(harness);
+    harness.graph.__trellisModules.selectRoleImage(role);
+    await waitForTimers();
+    const firstAvatar = getRoleAvatar(imageRow);
+    assert.ok(firstAvatar);
+    harness.graph.__trellisModules.selectRoleImage(role);
+    await waitForTimers();
+    const avatars = imageRow.children.filter(child => styleHas(child, "role_avatar=1"));
+    assert.equal(avatars.length, 1);
+    assert.notEqual(avatars[0], firstAvatar);
+    assert.equal(firstAvatar.parent, null);
+    assert.equal(avatars[0].geometry.width, 40);
+    assert.equal(avatars[0].geometry.height, 40);
+    assert.match(role.style, /(?:^|;)image=data:image\/png;base64,test(?:;|$)/);
+    assert.doesNotMatch(String(role.value), /<img/i);
+});

@@ -13,31 +13,31 @@ def table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
     return [str(row[1]) for row in conn.execute(f"PRAGMA table_info({table});").fetchall()]
 
 
-def city_has_unique_name_constraint(conn: sqlite3.Connection) -> bool:  # ADDED
-    if "Cities" not in existing_tables(conn):  # ADDED
-        return False  # ADDED
-    for index in conn.execute("PRAGMA index_list(Cities);").fetchall():  # ADDED
-        if not int(index[2]):  # ADDED
-            continue  # ADDED
-        columns = [str(row[2]) for row in conn.execute(f"PRAGMA index_info({index[1]});").fetchall()]  # ADDED
-        if columns == ["city_name"]:  # ADDED
-            return True  # ADDED
-    return False  # ADDED
+def city_has_unique_name_constraint(conn: sqlite3.Connection) -> bool:
+    if "Cities" not in existing_tables(conn):
+        return False
+    for index in conn.execute("PRAGMA index_list(Cities);").fetchall():
+        if not int(index[2]):
+            continue
+        columns = [str(row[2]) for row in conn.execute(f"PRAGMA index_info({index[1]});").fetchall()]
+        if columns == ["city_name"]:
+            return True
+    return False
 
 
 def pending_migrations(conn: sqlite3.Connection) -> list[str]:
     tables = existing_tables(conn)
     pending = []
     if "Cities" in tables and any(column not in table_columns(conn, "Cities") for column in ("country_name", "country_code", "region_name", "region_code")):
-        pending.append("add city geography columns")  # ADDED
+        pending.append("add city geography columns")
     if "Cities" in tables and any(column not in table_columns(conn, "Cities") for column in ("is_major_city", "climate_band")):
-        pending.append("add city benchmark label columns")  # ADDED
+        pending.append("add city benchmark label columns")
     if "Plants" in tables and "killtemp_c" not in table_columns(conn, "Plants"):
-        pending.append("add plant kill temperature column")  # ADDED
+        pending.append("add plant kill temperature column")
     if "PlantVarieties" in tables and "maturity_class" not in table_columns(conn, "PlantVarieties"):
-        pending.append("add variety maturity class column")  # ADDED
-    if city_has_unique_name_constraint(conn):  # ADDED
-        pending.append("replace city name unique constraint with geography identity")  # ADDED
+        pending.append("add variety maturity class column")
+    if city_has_unique_name_constraint(conn):
+        pending.append("replace city name unique constraint with geography identity")
     if "CityWeatherMonthly" not in tables:
         pending.append("create CityWeatherMonthly")
     if "CityWeatherDaily" not in tables:
@@ -46,10 +46,10 @@ def pending_migrations(conn: sqlite3.Connection) -> list[str]:
         pending.append("create CityWeatherForecastDaily")
     if "CompanionEvidence" not in tables:
         pending.append("create CompanionEvidence")
-    if "CompanionLayoutGroupDefaults" not in tables:  # ADDED
-        pending.append("create CompanionLayoutGroupDefaults")  # ADDED
+    if "CompanionLayoutGroupDefaults" not in tables:
+        pending.append("create CompanionLayoutGroupDefaults")
     if "Companions" in tables and any(column not in table_columns(conn, "Companions") for column in ("source_plant_id", "companion_plant_id", "start_offset_days", "layout_template", "layout_spacing_x_cm", "layout_spacing_y_cm", "layout_offset_x_cm", "layout_offset_y_cm")):
-        pending.append("add companion timing and layout columns")  # CHANGED
+        pending.append("add companion timing and layout columns")
     if "PlantingWindowReferences" not in tables:
         pending.append("create PlantingWindowReferences")
     if "VarietyTaskTemplates" not in tables or "method_id" not in table_columns(conn, "VarietyTaskTemplates"):
@@ -61,23 +61,23 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
     applied = []
     tables = existing_tables(conn)
     if "Cities" in tables:
-        if city_has_unique_name_constraint(conn):  # ADDED
-            conn.execute("PRAGMA foreign_keys = OFF;")  # ADDED
-        city_columns = set(table_columns(conn, "Cities"))  # ADDED
-        for column in ("country_name", "country_code", "region_name", "region_code"):  # ADDED
-            if column not in city_columns:  # ADDED
-                conn.execute(f"ALTER TABLE Cities ADD COLUMN {column} TEXT;")  # ADDED
-                applied.append(f"added Cities.{column}")  # ADDED
-        if "is_major_city" not in city_columns:  # ADDED
-            conn.execute("ALTER TABLE Cities ADD COLUMN is_major_city INTEGER;")  # ADDED
-            applied.append("added Cities.is_major_city")  # ADDED
-        if "climate_band" not in city_columns:  # ADDED
-            conn.execute("ALTER TABLE Cities ADD COLUMN climate_band TEXT;")  # ADDED
-            applied.append("added Cities.climate_band")  # ADDED
-        if city_has_unique_name_constraint(conn):  # ADDED
-            _rebuild_cities_without_unique_name(conn)  # ADDED
-            applied.append("replaced Cities.city_name uniqueness with city geography identity")  # ADDED
-        conn.execute(  # ADDED
+        if city_has_unique_name_constraint(conn):
+            conn.execute("PRAGMA foreign_keys = OFF;")
+        city_columns = set(table_columns(conn, "Cities"))
+        for column in ("country_name", "country_code", "region_name", "region_code"):
+            if column not in city_columns:
+                conn.execute(f"ALTER TABLE Cities ADD COLUMN {column} TEXT;")
+                applied.append(f"added Cities.{column}")
+        if "is_major_city" not in city_columns:
+            conn.execute("ALTER TABLE Cities ADD COLUMN is_major_city INTEGER;")
+            applied.append("added Cities.is_major_city")
+        if "climate_band" not in city_columns:
+            conn.execute("ALTER TABLE Cities ADD COLUMN climate_band TEXT;")
+            applied.append("added Cities.climate_band")
+        if city_has_unique_name_constraint(conn):
+            _rebuild_cities_without_unique_name(conn)
+            applied.append("replaced Cities.city_name uniqueness with city geography identity")
+        conn.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_Cities_city_geo_identity
                 ON Cities(
@@ -88,24 +88,24 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
                     lower(trim(coalesce(region_code, '')))
                 );
             """
-        )  # ADDED
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_Cities_city_name ON Cities(city_name);")  # ADDED
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_Cities_city_name ON Cities(city_name);")
     if "Plants" in tables and "killtemp_c" not in table_columns(conn, "Plants"):
-        conn.execute("ALTER TABLE Plants ADD COLUMN killtemp_c REAL;")  # ADDED
-        applied.append("added Plants.killtemp_c")  # ADDED
+        conn.execute("ALTER TABLE Plants ADD COLUMN killtemp_c REAL;")
+        applied.append("added Plants.killtemp_c")
     if "PlantVarieties" in tables and "maturity_class" not in table_columns(conn, "PlantVarieties"):
-        conn.execute("ALTER TABLE PlantVarieties ADD COLUMN maturity_class TEXT;")  # ADDED
-        applied.append("added PlantVarieties.maturity_class")  # ADDED
+        conn.execute("ALTER TABLE PlantVarieties ADD COLUMN maturity_class TEXT;")
+        applied.append("added PlantVarieties.maturity_class")
     if "Companions" in tables:
-        companion_columns = set(table_columns(conn, "Companions"))  # ADDED
-        for column, column_type in (("source_plant_id", "INTEGER"), ("companion_plant_id", "INTEGER"), ("start_offset_days", "INTEGER"), ("layout_template", "TEXT"), ("layout_spacing_x_cm", "REAL"), ("layout_spacing_y_cm", "REAL"), ("layout_offset_x_cm", "REAL"), ("layout_offset_y_cm", "REAL")):  # CHANGED
-            if column not in companion_columns:  # ADDED
-                conn.execute(f"ALTER TABLE Companions ADD COLUMN {column} {column_type};")  # ADDED
-                applied.append(f"added Companions.{column}")  # ADDED
-        if {"source_plant_id", "companion_plant_id"}.issubset(set(table_columns(conn, "Companions"))) and "Plants" in tables:  # ADDED
-            resolved = _backfill_companion_plant_ids(conn)  # ADDED
-            if resolved:  # ADDED
-                applied.append(f"backfilled {resolved} companion plant id pair(s)")  # ADDED
+        companion_columns = set(table_columns(conn, "Companions"))
+        for column, column_type in (("source_plant_id", "INTEGER"), ("companion_plant_id", "INTEGER"), ("start_offset_days", "INTEGER"), ("layout_template", "TEXT"), ("layout_spacing_x_cm", "REAL"), ("layout_spacing_y_cm", "REAL"), ("layout_offset_x_cm", "REAL"), ("layout_offset_y_cm", "REAL")):
+            if column not in companion_columns:
+                conn.execute(f"ALTER TABLE Companions ADD COLUMN {column} {column_type};")
+                applied.append(f"added Companions.{column}")
+        if {"source_plant_id", "companion_plant_id"}.issubset(set(table_columns(conn, "Companions"))) and "Plants" in tables:
+            resolved = _backfill_companion_plant_ids(conn)
+            if resolved:
+                applied.append(f"backfilled {resolved} companion plant id pair(s)")
     if "VarietyTaskTemplates" in tables and "method_id" not in table_columns(conn, "VarietyTaskTemplates"):
         suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         conn.execute(f"ALTER TABLE VarietyTaskTemplates RENAME TO VarietyTaskTemplates_legacy_{suffix};")
@@ -226,77 +226,77 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
         );
         """
     )
-    for label in ("CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily", "CompanionEvidence", "CompanionLayoutGroupDefaults", "PlantingWindowReferences", "VarietyTaskTemplates"):  # CHANGED
+    for label in ("CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily", "CompanionEvidence", "CompanionLayoutGroupDefaults", "PlantingWindowReferences", "VarietyTaskTemplates"):
         if label not in tables or label == "VarietyTaskTemplates":
             applied.append(f"ensured {label}")
     return applied
 
 
-def _normalize_name(value: object) -> str:  # ADDED
-    return str(value or "").strip().casefold()  # ADDED
+def _normalize_name(value: object) -> str:
+    return str(value or "").strip().casefold()
 
 
-def _plant_ids_by_name(conn: sqlite3.Connection) -> dict[str, int]:  # ADDED
-    out: dict[str, int] = {}  # ADDED
-    if "Plants" not in existing_tables(conn):  # ADDED
-        return out  # ADDED
-    for row in conn.execute("SELECT plant_id, plant_name FROM Plants WHERE plant_name IS NOT NULL;"):  # ADDED
-        key = _normalize_name(row[1])  # ADDED
-        if key and key not in out:  # ADDED
-            out[key] = int(row[0])  # ADDED
-    return out  # ADDED
+def _plant_ids_by_name(conn: sqlite3.Connection) -> dict[str, int]:
+    out: dict[str, int] = {}
+    if "Plants" not in existing_tables(conn):
+        return out
+    for row in conn.execute("SELECT plant_id, plant_name FROM Plants WHERE plant_name IS NOT NULL;"):
+        key = _normalize_name(row[1])
+        if key and key not in out:
+            out[key] = int(row[0])
+    return out
 
 
-def _backfill_companion_plant_ids(conn: sqlite3.Connection) -> int:  # ADDED
-    plant_ids = _plant_ids_by_name(conn)  # ADDED
-    if not plant_ids:  # ADDED
-        return 0  # ADDED
-    resolved = 0  # ADDED
-    for row in conn.execute("SELECT relation_id, p1, p2, source_plant_id, companion_plant_id FROM Companions;"):  # ADDED
-        if row[3] is not None and row[4] is not None:  # ADDED
-            continue  # ADDED
-        source_id = plant_ids.get(_normalize_name(row[1]))  # ADDED
-        companion_id = plant_ids.get(_normalize_name(row[2]))  # ADDED
-        next_source_id = row[3] if row[3] is not None else source_id  # ADDED
-        next_companion_id = row[4] if row[4] is not None else companion_id  # ADDED
-        if next_source_id is None and next_companion_id is None:  # CHANGED
-            continue  # ADDED
-        conn.execute(  # ADDED
-            "UPDATE Companions SET source_plant_id=?, companion_plant_id=? WHERE relation_id=?;",  # ADDED
-            [next_source_id, next_companion_id, row[0]],  # CHANGED
-        )  # ADDED
-        resolved += 1  # ADDED
-    return resolved  # ADDED
+def _backfill_companion_plant_ids(conn: sqlite3.Connection) -> int:
+    plant_ids = _plant_ids_by_name(conn)
+    if not plant_ids:
+        return 0
+    resolved = 0
+    for row in conn.execute("SELECT relation_id, p1, p2, source_plant_id, companion_plant_id FROM Companions;"):
+        if row[3] is not None and row[4] is not None:
+            continue
+        source_id = plant_ids.get(_normalize_name(row[1]))
+        companion_id = plant_ids.get(_normalize_name(row[2]))
+        next_source_id = row[3] if row[3] is not None else source_id
+        next_companion_id = row[4] if row[4] is not None else companion_id
+        if next_source_id is None and next_companion_id is None:
+            continue
+        conn.execute(
+            "UPDATE Companions SET source_plant_id=?, companion_plant_id=? WHERE relation_id=?;",
+            [next_source_id, next_companion_id, row[0]],
+        )
+        resolved += 1
+    return resolved
 
 
-def _rebuild_cities_without_unique_name(conn: sqlite3.Connection) -> None:  # ADDED
-    columns = conn.execute("PRAGMA table_info(Cities);").fetchall()  # ADDED
-    column_defs = [_column_definition(column) for column in columns]  # ADDED
-    names = [str(column[1]) for column in columns]  # ADDED
-    quoted_names = ", ".join(_quote_identifier(name) for name in names)  # ADDED
-    conn.execute("PRAGMA foreign_keys = OFF;")  # ADDED
-    conn.execute(f"CREATE TABLE Cities_new ({', '.join(column_defs)});")  # ADDED
-    conn.execute(f"INSERT INTO Cities_new ({quoted_names}) SELECT {quoted_names} FROM Cities;")  # ADDED
-    conn.execute("DROP TABLE Cities;")  # ADDED
-    conn.execute("ALTER TABLE Cities_new RENAME TO Cities;")  # ADDED
-    conn.execute("PRAGMA foreign_keys = ON;")  # ADDED
+def _rebuild_cities_without_unique_name(conn: sqlite3.Connection) -> None:
+    columns = conn.execute("PRAGMA table_info(Cities);").fetchall()
+    column_defs = [_column_definition(column) for column in columns]
+    names = [str(column[1]) for column in columns]
+    quoted_names = ", ".join(_quote_identifier(name) for name in names)
+    conn.execute("PRAGMA foreign_keys = OFF;")
+    conn.execute(f"CREATE TABLE Cities_new ({', '.join(column_defs)});")
+    conn.execute(f"INSERT INTO Cities_new ({quoted_names}) SELECT {quoted_names} FROM Cities;")
+    conn.execute("DROP TABLE Cities;")
+    conn.execute("ALTER TABLE Cities_new RENAME TO Cities;")
+    conn.execute("PRAGMA foreign_keys = ON;")
 
 
-def _column_definition(column: sqlite3.Row | tuple) -> str:  # ADDED
-    name = str(column[1])  # ADDED
-    col_type = str(column[2] or "TEXT")  # ADDED
-    not_null = bool(column[3])  # ADDED
-    default = column[4]  # ADDED
-    primary_key = bool(column[5])  # ADDED
-    parts = [_quote_identifier(name), col_type]  # ADDED
-    if primary_key:  # ADDED
-        parts.append("PRIMARY KEY")  # ADDED
-    if not_null and not primary_key:  # ADDED
-        parts.append("NOT NULL")  # ADDED
-    if default is not None:  # ADDED
-        parts.append(f"DEFAULT {default}")  # ADDED
-    return " ".join(parts)  # ADDED
+def _column_definition(column: sqlite3.Row | tuple) -> str:
+    name = str(column[1])
+    col_type = str(column[2] or "TEXT")
+    not_null = bool(column[3])
+    default = column[4]
+    primary_key = bool(column[5])
+    parts = [_quote_identifier(name), col_type]
+    if primary_key:
+        parts.append("PRIMARY KEY")
+    if not_null and not primary_key:
+        parts.append("NOT NULL")
+    if default is not None:
+        parts.append(f"DEFAULT {default}")
+    return " ".join(parts)
 
 
-def _quote_identifier(value: str) -> str:  # ADDED
-    return '"' + value.replace('"', '""') + '"'  # ADDED
+def _quote_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'

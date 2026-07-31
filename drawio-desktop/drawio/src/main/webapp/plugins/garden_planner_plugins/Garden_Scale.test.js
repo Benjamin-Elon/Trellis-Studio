@@ -1,11 +1,11 @@
-import assert from "assert"; // CHANGE
-import fs from "fs"; // CHANGE
-import path from "path"; // CHANGE
-import vm from "vm"; // CHANGE
-import { fileURLToPath } from "url"; // NEW
+import assert from "assert";
+import fs from "fs";
+import path from "path";
+import vm from "vm";
+import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url); // NEW
-const __dirname = path.dirname(__filename); // NEW
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 function createElement() {
     return {

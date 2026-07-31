@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { JSDOM } = require('jsdom'); // ADDED
+const { JSDOM } = require('jsdom');
 
 const PLUGIN_DIR = path.join(
     __dirname,
@@ -23,7 +23,7 @@ const SCHEDULER_CORE_PATHS = [
 ].map(fileName => path.join(PLUGIN_DIR, fileName));
 
 function loadSchedulerHooks() {
-    const dom = new JSDOM('<!doctype html><html><body></body></html>'); // ADDED
+    const dom = new JSDOM('<!doctype html><html><body></body></html>');
     const context = vm.createContext({
         console,
         Date,
@@ -31,10 +31,10 @@ function loadSchedulerHooks() {
         Promise,
         setTimeout,
         clearTimeout,
-        document: dom.window.document, // ADDED
+        document: dom.window.document,
         window: {
             __TRELLIS_PLANTING_SCHEDULER_TEST__: true,
-            document: dom.window.document // ADDED
+            document: dom.window.document
         },
         Draw: {
             loadPlugin(register) {

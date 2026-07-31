@@ -1,4 +1,4 @@
-// USL Draw.io Plugin Module: Garden Scheduler perennial pure planning core. // ADDED
+// USL Draw.io Plugin Module: Garden Scheduler perennial pure planning core.
 (function (root) {
     'use strict';
 

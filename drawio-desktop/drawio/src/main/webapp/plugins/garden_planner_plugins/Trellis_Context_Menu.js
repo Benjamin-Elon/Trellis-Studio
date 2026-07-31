@@ -1,83 +1,83 @@
 /**
  * Trellis Plugin: Deterministic Context Menu Dispatcher
  *
- * - Provides window.TrellisContextMenu for Trellis-owned context menu contributors. // NEW
- * - Calls draw.io's original popup factory once, then runs Trellis contributors in priority order. // NEW
- * - Keeps contributor ordering independent of plugin script load timing. // NEW
+ * - Provides window.TrellisContextMenu for Trellis-owned context menu contributors.
+ * - Calls draw.io's original popup factory once, then runs Trellis contributors in priority order.
+ * - Keeps contributor ordering independent of plugin script load timing.
  */
 (function () {
-    if (typeof window === 'undefined') return; // NEW
+    if (typeof window === 'undefined') return;
 
-    function createTrellisContextMenuRegistry() { // NEW
-        const contributorsById = Object.create(null); // NEW
-        let popupMenuHandler = null; // NEW
-        let baseFactory = null; // NEW
-        let editorUi = null; // NEW
+    function createTrellisContextMenuRegistry() {
+        const contributorsById = Object.create(null);
+        let popupMenuHandler = null;
+        let baseFactory = null;
+        let editorUi = null;
 
-        function getOrderedContributors() { // NEW
-            return Object.keys(contributorsById) // NEW
-                .map(function (id) { return contributorsById[id]; }) // NEW
-                .sort(function (a, b) { // NEW
-                    const priorityDelta = Number(a.priority || 0) - Number(b.priority || 0); // NEW
-                    return priorityDelta || String(a.id).localeCompare(String(b.id)); // NEW
-                }); // NEW
-        } // NEW
+        function getOrderedContributors() {
+            return Object.keys(contributorsById)
+                .map(function (id) { return contributorsById[id]; })
+                .sort(function (a, b) {
+                    const priorityDelta = Number(a.priority || 0) - Number(b.priority || 0);
+                    return priorityDelta || String(a.id).localeCompare(String(b.id));
+                });
+        }
 
-        function dispatchContextMenu(menu, cell, evt) { // NEW
-            if (typeof baseFactory === 'function') { // NEW
-                baseFactory.apply(this, arguments); // NEW
-            } // NEW
+        function dispatchContextMenu(menu, cell, evt) {
+            if (typeof baseFactory === 'function') {
+                baseFactory.apply(this, arguments);
+            }
 
-            getOrderedContributors().forEach(function (contributor) { // NEW
-                try { // NEW
-                    contributor.addItems(menu, cell, evt, editorUi); // NEW
-                } catch (e) { // NEW
-                    if (window.console && console.error) { // NEW
-                        console.error('Trellis context menu contributor error:', contributor.id, e); // NEW
-                    } // NEW
-                } // NEW
-            }); // NEW
-        } // NEW
+            getOrderedContributors().forEach(function (contributor) {
+                try {
+                    contributor.addItems(menu, cell, evt, editorUi);
+                } catch (e) {
+                    if (window.console && console.error) {
+                        console.error('Trellis context menu contributor error:', contributor.id, e);
+                    }
+                }
+            });
+        }
 
-        return { // NEW
-            install: function (ui) { // NEW
-                const graph = ui && ui.editor && ui.editor.graph; // NEW
-                const nextPopupMenuHandler = graph && graph.popupMenuHandler; // NEW
-                if (!nextPopupMenuHandler) return this; // NEW
+        return {
+            install: function (ui) {
+                const graph = ui && ui.editor && ui.editor.graph;
+                const nextPopupMenuHandler = graph && graph.popupMenuHandler;
+                if (!nextPopupMenuHandler) return this;
 
-                editorUi = ui; // NEW
+                editorUi = ui;
 
-                if (popupMenuHandler === nextPopupMenuHandler && nextPopupMenuHandler.__trellisContextMenuDispatcherInstalled) { // NEW
-                    return this; // NEW
-                } // NEW
+                if (popupMenuHandler === nextPopupMenuHandler && nextPopupMenuHandler.__trellisContextMenuDispatcherInstalled) {
+                    return this;
+                }
 
-                popupMenuHandler = nextPopupMenuHandler; // NEW
-                baseFactory = popupMenuHandler.factoryMethod; // NEW
-                popupMenuHandler.factoryMethod = dispatchContextMenu; // NEW
-                popupMenuHandler.__trellisContextMenuDispatcherInstalled = true; // NEW
-                return this; // NEW
-            }, // NEW
+                popupMenuHandler = nextPopupMenuHandler;
+                baseFactory = popupMenuHandler.factoryMethod;
+                popupMenuHandler.factoryMethod = dispatchContextMenu;
+                popupMenuHandler.__trellisContextMenuDispatcherInstalled = true;
+                return this;
+            },
 
-            register: function (contributor) { // NEW
-                if (!contributor || !contributor.id || typeof contributor.addItems !== 'function') return; // NEW
-                contributorsById[String(contributor.id)] = { // NEW
-                    id: String(contributor.id), // NEW
-                    priority: Number(contributor.priority || 0), // NEW
-                    addItems: contributor.addItems // NEW
-                }; // NEW
-            }, // NEW
+            register: function (contributor) {
+                if (!contributor || !contributor.id || typeof contributor.addItems !== 'function') return;
+                contributorsById[String(contributor.id)] = {
+                    id: String(contributor.id),
+                    priority: Number(contributor.priority || 0),
+                    addItems: contributor.addItems
+                };
+            },
 
-            _getOrderedIdsForTests: function () { // NEW
-                return getOrderedContributors().map(function (contributor) { return contributor.id; }); // NEW
-            } // NEW
-        }; // NEW
-    } // NEW
+            _getOrderedIdsForTests: function () {
+                return getOrderedContributors().map(function (contributor) { return contributor.id; });
+            }
+        };
+    }
 
-    window.TrellisContextMenu = window.TrellisContextMenu || createTrellisContextMenuRegistry(); // NEW
+    window.TrellisContextMenu = window.TrellisContextMenu || createTrellisContextMenuRegistry();
 
-    if (typeof Draw !== 'undefined' && Draw.loadPlugin) { // NEW
-        Draw.loadPlugin(function (ui) { // NEW
-            window.TrellisContextMenu.install(ui); // NEW
-        }); // NEW
-    } // NEW
+    if (typeof Draw !== 'undefined' && Draw.loadPlugin) {
+        Draw.loadPlugin(function (ui) {
+            window.TrellisContextMenu.install(ui);
+        });
+    }
 })();

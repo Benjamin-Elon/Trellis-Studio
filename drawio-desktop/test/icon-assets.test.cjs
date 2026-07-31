@@ -251,9 +251,9 @@ test('visible install metadata uses Trellis branding without changing compatibil
 	assert.equal(appx.appx.displayName, 'Trellis Studio');
 	assert.equal(appx.appx.identityName, 'draw.io.draw.ioDiagrams');
 	assert.equal(appx.appId, 'com.benjaminelon.trellisfordrawio');
-	assert.ok(windows.fileAssociations.some((association) => association.ext === 'drawio' && association.name === 'Trellis Studio Diagram' && association.description === 'Trellis Studio Diagram')); // CHANGE
-	assert.equal(linux.linux.executableName, 'trellis-studio'); // CHANGE
-	assert.equal(snap.linux.executableName, 'trellis-studio'); // CHANGE
+	assert.ok(windows.fileAssociations.some((association) => association.ext === 'drawio' && association.name === 'Trellis Studio Diagram' && association.description === 'Trellis Studio Diagram'));
+	assert.equal(linux.linux.executableName, 'trellis-studio');
+	assert.equal(snap.linux.executableName, 'trellis-studio');
 	assert.match(electronMain, /path\.join\(app\.getPath\('appData'\), 'draw\.io'\)/);
 	assert.match(
 		fs.readFileSync(path.join(projectRoot, 'drawio/src/main/webapp/images/browserconfig.xml'), 'utf8'),

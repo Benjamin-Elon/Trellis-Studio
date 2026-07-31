@@ -1,81 +1,81 @@
 /**
- * Draw.io Plugin: Manual Vertex Linker with Highlight and Overlay Navigation // CHANGE
+ * Draw.io Plugin: Manual Vertex Linker with Highlight and Overlay Navigation
  * - Right-click to link/unlink selected vertices
  * - Highlights linked vertices and draws dashed edges
- * - Left-click a visible link or link label to navigate between linked vertices // CHANGE
+ * - Left-click a visible link or link label to navigate between linked vertices
  */
 Draw.loadPlugin(function (ui) {
     const graph = ui.editor.graph;
     let model = graph.getModel();
 
     const LINK_ATTR = 'linkedTo';
-    const TILER_GROUP_CREATED_EVENT = 'usl:tilerGroupCreated'; // CHANGE
-    const TRELLIS_SELECTION_VISUALS_REFRESH_EVENT = 'trellisSelectionVisualsRefresh'; // NEW
+    const TILER_GROUP_CREATED_EVENT = 'usl:tilerGroupCreated';
+    const TRELLIS_SELECTION_VISUALS_REFRESH_EVENT = 'trellisSelectionVisualsRefresh';
     const HL_TAG_KEY = 'manualLinkHL';
     const HL_OLD_COLOR = 'manualLinkOldColor';
     const HL_OLD_WIDTH = 'manualLinkOldWidth';
-    const DEBUG_VERTEX_LINKING_CONSOLE = false; // CHANGE
-    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // CHANGE
-    const GRAPH_OVERLAY_LAYER_CLASS = Object.freeze({ annotation: 'trellis-graph-annotation-layer', connection: 'trellis-graph-connection-layer', control: 'trellis-graph-control-layer', controlTop: 'trellis-graph-control-top-layer' }); // NEW
-    const GRAPH_OVERLAY_LAYER_Z = Object.freeze({ annotation: GRAPH_OVERLAY_Z.ANNOTATION, connection: GRAPH_OVERLAY_Z.CONNECTION, control: GRAPH_OVERLAY_Z.CONTROL, controlTop: GRAPH_OVERLAY_Z.CONTROL_TOP }); // NEW
-    const LINK_ENDPOINT_CENTER_OFFSET_PX = 5; // NEW
-    const LINK_LABEL_STAGGER_PX = 15; // NEW
+    const DEBUG_VERTEX_LINKING_CONSOLE = false;
+    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 });
+    const GRAPH_OVERLAY_LAYER_CLASS = Object.freeze({ annotation: 'trellis-graph-annotation-layer', connection: 'trellis-graph-connection-layer', control: 'trellis-graph-control-layer', controlTop: 'trellis-graph-control-top-layer' });
+    const GRAPH_OVERLAY_LAYER_Z = Object.freeze({ annotation: GRAPH_OVERLAY_Z.ANNOTATION, connection: GRAPH_OVERLAY_Z.CONNECTION, control: GRAPH_OVERLAY_Z.CONTROL, controlTop: GRAPH_OVERLAY_Z.CONTROL_TOP });
+    const LINK_ENDPOINT_CENTER_OFFSET_PX = 5;
+    const LINK_LABEL_STAGGER_PX = 15;
     graph.__ctrlToggleHandled = false;
 
-    function applyVertexButtonStyle(button, variant, options) { // NEW
-        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === 'function') { // NEW
-            window.Trellis.ui.applyButtonStyle(button, variant, options); // NEW
-        } else if (button) { // NEW
-            button.setAttribute('data-trellis-button-variant', variant || 'neutral'); // NEW
-        } // NEW
-        return button; // NEW
-    } // NEW
+    function applyVertexButtonStyle(button, variant, options) {
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === 'function') {
+            window.Trellis.ui.applyButtonStyle(button, variant, options);
+        } else if (button) {
+            button.setAttribute('data-trellis-button-variant', variant || 'neutral');
+        }
+        return button;
+    }
 
     // -------------------- Helpers --------------------
 
-    function vertexLinkLog() { // CHANGE
-        if (!DEBUG_VERTEX_LINKING_CONSOLE) return; // CHANGE
-        try { console.log.apply(console, arguments); } catch (_) { } // CHANGE
-    } // CHANGE
+    function vertexLinkLog() {
+        if (!DEBUG_VERTEX_LINKING_CONSOLE) return;
+        try { console.log.apply(console, arguments); } catch (_) { }
+    }
 
-    function ensureGraphOverlayContainer() { // NEW
-        const host = graph.container; // NEW
-        if (!host) return null; // NEW
-        try { // NEW
-            if (window.getComputedStyle && window.getComputedStyle(host).position === 'static') host.style.position = 'relative'; // NEW
-        } catch (_) { } // NEW
-        return host; // NEW
-    } // NEW
+    function ensureGraphOverlayContainer() {
+        const host = graph.container;
+        if (!host) return null;
+        try {
+            if (window.getComputedStyle && window.getComputedStyle(host).position === 'static') host.style.position = 'relative';
+        } catch (_) { }
+        return host;
+    }
 
-    function ensureGraphOverlayHtmlLayer(layerKey) { // NEW
-        const host = ensureGraphOverlayContainer(); // NEW
-        const key = GRAPH_OVERLAY_LAYER_CLASS[layerKey] ? layerKey : 'control'; // NEW
-        const className = GRAPH_OVERLAY_LAYER_CLASS[key]; // NEW
-        if (!host || !className) return null; // NEW
-        let layer = host.querySelector('.' + className); // NEW
-        if (!layer) { // NEW
-            layer = document.createElement('div'); // NEW
-            layer.className = className; // NEW
-            layer.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:' + GRAPH_OVERLAY_LAYER_Z[key] + ';'; // NEW
-            host.appendChild(layer); // NEW
-        } // NEW
-        return layer; // NEW
-    } // NEW
+    function ensureGraphOverlayHtmlLayer(layerKey) {
+        const host = ensureGraphOverlayContainer();
+        const key = GRAPH_OVERLAY_LAYER_CLASS[layerKey] ? layerKey : 'control';
+        const className = GRAPH_OVERLAY_LAYER_CLASS[key];
+        if (!host || !className) return null;
+        let layer = host.querySelector('.' + className);
+        if (!layer) {
+            layer = document.createElement('div');
+            layer.className = className;
+            layer.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:' + GRAPH_OVERLAY_LAYER_Z[key] + ';';
+            host.appendChild(layer);
+        }
+        return layer;
+    }
 
-    function ensureGraphOverlaySvgLayer(layerKey) { // NEW
-        const layer = ensureGraphOverlayHtmlLayer(layerKey || 'connection'); // NEW
-        if (!layer) return null; // NEW
-        layer.style.width = '100%'; // NEW
-        layer.style.height = '100%'; // NEW
-        let svg = layer.querySelector('svg.trellis-graph-connection-svg'); // NEW
-        if (!svg) { // NEW
-            svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); // NEW
-            svg.setAttribute('class', 'trellis-graph-connection-svg'); // NEW
-            svg.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;pointer-events:auto;'; // NEW
-            layer.appendChild(svg); // NEW
-        } // NEW
-        return svg; // NEW
-    } // NEW
+    function ensureGraphOverlaySvgLayer(layerKey) {
+        const layer = ensureGraphOverlayHtmlLayer(layerKey || 'connection');
+        if (!layer) return null;
+        layer.style.width = '100%';
+        layer.style.height = '100%';
+        let svg = layer.querySelector('svg.trellis-graph-connection-svg');
+        if (!svg) {
+            svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('class', 'trellis-graph-connection-svg');
+            svg.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;pointer-events:auto;';
+            layer.appendChild(svg);
+        }
+        return svg;
+    }
 
     function asVertexArray(cells) {
         if (!cells) return [];
@@ -105,7 +105,7 @@ Draw.loadPlugin(function (ui) {
         else obj.setAttribute('label', '');
 
         // Make this change undoable                                                   
-        model.setValue(cell, obj); // CHANGE
+        model.setValue(cell, obj);
         return cell.value;
     }
 
@@ -126,388 +126,388 @@ Draw.loadPlugin(function (ui) {
         return !!cell && getAttr(cell, 'kanban_card') === '1';
     }
 
-    function isKanbanBoard(cell) { // CHANGE
-        return !!cell && (getAttr(cell, 'board_key') === 'KANBAN_BOARD'); // CHANGE
-    } // CHANGE
+    function isKanbanBoard(cell) {
+        return !!cell && (getAttr(cell, 'board_key') === 'KANBAN_BOARD');
+    }
 
-    function findKanbanBoardAncestor(cell) { // CHANGE
-        const m = graph.getModel(); // CHANGE
-        let cur = cell; // CHANGE
-        while (cur) { // CHANGE
-            if (isKanbanBoard(cur)) return cur; // CHANGE
-            cur = m.getParent(cur); // CHANGE
-        } // CHANGE
-        return null; // CHANGE
-    } // CHANGE
+    function findKanbanBoardAncestor(cell) {
+        const m = graph.getModel();
+        let cur = cell;
+        while (cur) {
+            if (isKanbanBoard(cur)) return cur;
+            cur = m.getParent(cur);
+        }
+        return null;
+    }
 
-    function isGardenModuleCell(cell) { // CHANGE
-        return !!cell && getAttr(cell, 'garden_module') === '1'; // CHANGE
-    } // CHANGE
+    function isGardenModuleCell(cell) {
+        return !!cell && getAttr(cell, 'garden_module') === '1';
+    }
 
-    function isGardenDashboardCell(cell) { // CHANGE
-        return !!cell && getAttr(cell, 'garden_dashboard') === '1'; // CHANGE
-    } // CHANGE
+    function isGardenDashboardCell(cell) {
+        return !!cell && getAttr(cell, 'garden_dashboard') === '1';
+    }
 
-    function findGardenModuleAncestor(cell) { // CHANGE
-        let cur = cell; // CHANGE
-        while (cur) { // CHANGE
-            if (isGardenModuleCell(cur)) return cur; // CHANGE
-            cur = model.getParent(cur); // CHANGE
-        } // CHANGE
-        return null; // CHANGE
-    } // CHANGE
+    function findGardenModuleAncestor(cell) {
+        let cur = cell;
+        while (cur) {
+            if (isGardenModuleCell(cur)) return cur;
+            cur = model.getParent(cur);
+        }
+        return null;
+    }
 
-    function findDashboardCellInModule(moduleCell) { // CHANGE
-        if (!moduleCell) return null; // CHANGE
-        const stack = [moduleCell]; // CHANGE
-        while (stack.length) { // CHANGE
-            const cur = stack.pop(); // CHANGE
-            const count = model.getChildCount(cur); // CHANGE
-            for (let i = 0; i < count; i++) { // CHANGE
-                const child = model.getChildAt(cur, i); // CHANGE
-                if (!child) continue; // CHANGE
-                if (isGardenDashboardCell(child)) return child; // CHANGE
-                stack.push(child); // CHANGE
-            } // CHANGE
-        } // CHANGE
-        return null; // CHANGE
-    } // CHANGE
+    function findDashboardCellInModule(moduleCell) {
+        if (!moduleCell) return null;
+        const stack = [moduleCell];
+        while (stack.length) {
+            const cur = stack.pop();
+            const count = model.getChildCount(cur);
+            for (let i = 0; i < count; i++) {
+                const child = model.getChildAt(cur, i);
+                if (!child) continue;
+                if (isGardenDashboardCell(child)) return child;
+                stack.push(child);
+            }
+        }
+        return null;
+    }
 
-    function getDashboardYearForCell(cell) { // CHANGE
-        const moduleCell = findGardenModuleAncestor(cell); // CHANGE
-        const dashboard = findDashboardCellInModule(moduleCell); // CHANGE
-        const year = Number(getAttr(dashboard, 'dashboard_year')); // CHANGE
-        return Number.isFinite(year) && year > 1900 && year < 3000 ? year : new Date().getFullYear(); // CHANGE
-    } // CHANGE
+    function getDashboardYearForCell(cell) {
+        const moduleCell = findGardenModuleAncestor(cell);
+        const dashboard = findDashboardCellInModule(moduleCell);
+        const year = Number(getAttr(dashboard, 'dashboard_year'));
+        return Number.isFinite(year) && year > 1900 && year < 3000 ? year : new Date().getFullYear();
+    }
 
-    function collectSameBoardLinkedKanbanCards(selectedCard, directTargets) { // CHANGE
-        if (!isKanbanCard(selectedCard)) return []; // CHANGE
+    function collectSameBoardLinkedKanbanCards(selectedCard, directTargets) {
+        if (!isKanbanCard(selectedCard)) return [];
 
-        const board = findKanbanBoardAncestor(selectedCard); // CHANGE
-        if (!board) return []; // CHANGE
+        const board = findKanbanBoardAncestor(selectedCard);
+        if (!board) return [];
 
-        const out = []; // CHANGE
-        const seen = new Set([selectedCard.id]); // CHANGE
+        const out = [];
+        const seen = new Set([selectedCard.id]);
 
-        // Avoid duplicate highlighting for cards already highlighted as direct targets. // CHANGE
-        for (const t of directTargets || []) { // CHANGE
-            if (t && t.id) seen.add(t.id); // CHANGE
-        } // CHANGE
+        // Avoid duplicate highlighting for cards already highlighted as direct targets.
+        for (const t of directTargets || []) {
+            if (t && t.id) seen.add(t.id);
+        }
 
-        // A selected task card may link to a shared source, such as a tiler group. // CHANGE
-        // Highlight the other task cards linked to that same source, but only inside this board. // CHANGE
-        for (const sourceId of getLinkSet(selectedCard)) { // CHANGE
-            const source = model.getCell(sourceId); // CHANGE
-            if (!source || !model.isVertex(source)) continue; // CHANGE
-            if (!isTilerGroup(source)) continue; // CHANGE
+        // A selected task card may link to a shared source, such as a tiler group.
+        // Highlight the other task cards linked to that same source, but only inside this board.
+        for (const sourceId of getLinkSet(selectedCard)) {
+            const source = model.getCell(sourceId);
+            if (!source || !model.isVertex(source)) continue;
+            if (!isTilerGroup(source)) continue;
 
-            for (const candidateId of getLinkSet(source)) { // CHANGE
-                const candidate = model.getCell(candidateId); // CHANGE
-                if (!candidate || !model.isVertex(candidate)) continue; // CHANGE
-                if (!isKanbanCard(candidate)) continue; // CHANGE
-                if (candidate === selectedCard) continue; // CHANGE
-                if (findKanbanBoardAncestor(candidate) !== board) continue; // CHANGE
-                if (seen.has(candidate.id)) continue; // CHANGE
+            for (const candidateId of getLinkSet(source)) {
+                const candidate = model.getCell(candidateId);
+                if (!candidate || !model.isVertex(candidate)) continue;
+                if (!isKanbanCard(candidate)) continue;
+                if (candidate === selectedCard) continue;
+                if (findKanbanBoardAncestor(candidate) !== board) continue;
+                if (seen.has(candidate.id)) continue;
 
-                seen.add(candidate.id); // CHANGE
-                out.push(candidate); // CHANGE
-            } // CHANGE
-        } // CHANGE
+                seen.add(candidate.id);
+                out.push(candidate);
+            }
+        }
 
-        return out; // CHANGE
-    } // CHANGE
+        return out;
+    }
 
-    function collectLinkedTaskCardSiblingIdsForTiler(selectedTiler, directTargets) { // CHANGE
-        if (!isTilerGroup(selectedTiler)) return new Set(); // CHANGE
+    function collectLinkedTaskCardSiblingIdsForTiler(selectedTiler, directTargets) {
+        if (!isTilerGroup(selectedTiler)) return new Set();
 
-        const cards = []; // CHANGE
-        const seen = new Set(); // CHANGE
+        const cards = [];
+        const seen = new Set();
 
-        for (const target of directTargets || []) { // CHANGE
-            if (!target || !target.id || seen.has(target.id)) continue; // CHANGE
-            if (!model.isVertex(target)) continue; // CHANGE
-            if (!isKanbanCard(target)) continue; // CHANGE
-            if (!findKanbanBoardAncestor(target)) continue; // CHANGE
+        for (const target of directTargets || []) {
+            if (!target || !target.id || seen.has(target.id)) continue;
+            if (!model.isVertex(target)) continue;
+            if (!isKanbanCard(target)) continue;
+            if (!findKanbanBoardAncestor(target)) continue;
 
-            seen.add(target.id); // CHANGE
-            cards.push(target); // CHANGE
-        } // CHANGE
+            seen.add(target.id);
+            cards.push(target);
+        }
 
-        if (cards.length < 2) return new Set(); // CHANGE
-        return new Set(cards.map(card => card.id)); // CHANGE
-    } // CHANGE
+        if (cards.length < 2) return new Set();
+        return new Set(cards.map(card => card.id));
+    }
 
-    function collectLinkedKanbanCardsForSource(source) { // CHANGE
-        if (!source || isKanbanCard(source)) return []; // CHANGE
+    function collectLinkedKanbanCardsForSource(source) {
+        if (!source || isKanbanCard(source)) return [];
 
-        const out = []; // CHANGE
-        const seen = new Set(); // CHANGE
-        const m = graph.getModel(); // CHANGE
+        const out = [];
+        const seen = new Set();
+        const m = graph.getModel();
 
-        for (const id of getLinkSet(source)) { // CHANGE
-            if (!id || seen.has(id)) continue; // CHANGE
-            const card = m.getCell(id); // CHANGE
-            if (!card || !m.isVertex(card)) continue; // CHANGE
-            if (!isKanbanCard(card)) continue; // CHANGE
-            if (!findKanbanBoardAncestor(card)) continue; // CHANGE
+        for (const id of getLinkSet(source)) {
+            if (!id || seen.has(id)) continue;
+            const card = m.getCell(id);
+            if (!card || !m.isVertex(card)) continue;
+            if (!isKanbanCard(card)) continue;
+            if (!findKanbanBoardAncestor(card)) continue;
 
-            seen.add(card.id); // CHANGE
-            out.push(card); // CHANGE
-        } // CHANGE
+            seen.add(card.id);
+            out.push(card);
+        }
 
-        out.sort(compareTaskCardsByStartDate); // CHANGE
-        return out; // CHANGE
-    } // CHANGE
+        out.sort(compareTaskCardsByStartDate);
+        return out;
+    }
 
-    function compareTaskCardsByStartDate(a, b) { // CHANGE
-        const aRange = getTaskDateRange(a); // CHANGE
-        const bRange = getTaskDateRange(b); // CHANGE
-        const aHasDate = !!aRange; // CHANGE
-        const bHasDate = !!bRange; // CHANGE
+    function compareTaskCardsByStartDate(a, b) {
+        const aRange = getTaskDateRange(a);
+        const bRange = getTaskDateRange(b);
+        const aHasDate = !!aRange;
+        const bHasDate = !!bRange;
 
-        if (aHasDate !== bHasDate) return aHasDate ? -1 : 1; // CHANGE
-        if (aHasDate && bHasDate && aRange.startDay !== bRange.startDay) return aRange.startDay - bRange.startDay; // CHANGE
+        if (aHasDate !== bHasDate) return aHasDate ? -1 : 1;
+        if (aHasDate && bHasDate && aRange.startDay !== bRange.startDay) return aRange.startDay - bRange.startDay;
 
-        const aLabel = (getRawTextLabel(a) || getAttr(a, 'title') || a.id || '').toLowerCase(); // CHANGE
-        const bLabel = (getRawTextLabel(b) || getAttr(b, 'title') || b.id || '').toLowerCase(); // CHANGE
-        if (aLabel < bLabel) return -1; // CHANGE
-        if (aLabel > bLabel) return 1; // CHANGE
+        const aLabel = (getRawTextLabel(a) || getAttr(a, 'title') || a.id || '').toLowerCase();
+        const bLabel = (getRawTextLabel(b) || getAttr(b, 'title') || b.id || '').toLowerCase();
+        if (aLabel < bLabel) return -1;
+        if (aLabel > bLabel) return 1;
 
-        return String(a.id || '').localeCompare(String(b.id || '')); // CHANGE
-    } // CHANGE
+        return String(a.id || '').localeCompare(String(b.id || ''));
+    }
 
-    function parseTaskOverlayDate(raw) { // CHANGE
-        if (!raw) return null; // CHANGE
-        const match = String(raw).trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); // CHANGE
-        if (!match) return null; // CHANGE
-        const year = Number(match[1]); // CHANGE
-        const month = Number(match[2]); // CHANGE
-        const day = Number(match[3]); // CHANGE
-        if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null; // CHANGE
-        const utc = Date.UTC(year, month - 1, day); // CHANGE
-        const date = new Date(utc); // CHANGE
-        if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null; // CHANGE
-        return { // CHANGE
-            iso: match[0], // CHANGE
-            date, // CHANGE
-            dayNumber: Math.floor(utc / 86400000) // CHANGE
-        }; // CHANGE
-    } // CHANGE
+    function parseTaskOverlayDate(raw) {
+        if (!raw) return null;
+        const match = String(raw).trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+        if (!match) return null;
+        const year = Number(match[1]);
+        const month = Number(match[2]);
+        const day = Number(match[3]);
+        if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+        const utc = Date.UTC(year, month - 1, day);
+        const date = new Date(utc);
+        if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+        return {
+            iso: match[0],
+            date,
+            dayNumber: Math.floor(utc / 86400000)
+        };
+    }
 
-    function getTaskDateRange(card) { // CHANGE
-        const start = parseTaskOverlayDate(getAttr(card, 'start')); // CHANGE
-        if (!start) return null; // CHANGE
-        const rawEnd = getAttr(card, 'end'); // CHANGE
-        const end = rawEnd ? parseTaskOverlayDate(rawEnd) : start; // CHANGE
-        if (!end || end.dayNumber < start.dayNumber) return null; // CHANGE
-        return { // CHANGE
-            start, // CHANGE
-            end, // CHANGE
-            startDay: start.dayNumber, // CHANGE
-            endDay: end.dayNumber, // CHANGE
-            durationDays: end.dayNumber - start.dayNumber + 1 // CHANGE
-        }; // CHANGE
-    } // CHANGE
+    function getTaskDateRange(card) {
+        const start = parseTaskOverlayDate(getAttr(card, 'start'));
+        if (!start) return null;
+        const rawEnd = getAttr(card, 'end');
+        const end = rawEnd ? parseTaskOverlayDate(rawEnd) : start;
+        if (!end || end.dayNumber < start.dayNumber) return null;
+        return {
+            start,
+            end,
+            startDay: start.dayNumber,
+            endDay: end.dayNumber,
+            durationDays: end.dayNumber - start.dayNumber + 1
+        };
+    }
 
-    function taskDateRangeOverlapsYear(card, year) { // CHANGE
-        const range = getTaskDateRange(card); // CHANGE
-        const selectedYear = Number(year); // CHANGE
-        if (!range || !Number.isFinite(selectedYear)) return false; // CHANGE
-        const startDay = Math.floor(Date.UTC(selectedYear, 0, 1) / 86400000); // CHANGE
-        const endDay = Math.floor(Date.UTC(selectedYear, 11, 31) / 86400000); // CHANGE
-        return range.startDay <= endDay && range.endDay >= startDay; // CHANGE
-    } // CHANGE
+    function taskDateRangeOverlapsYear(card, year) {
+        const range = getTaskDateRange(card);
+        const selectedYear = Number(year);
+        if (!range || !Number.isFinite(selectedYear)) return false;
+        const startDay = Math.floor(Date.UTC(selectedYear, 0, 1) / 86400000);
+        const endDay = Math.floor(Date.UTC(selectedYear, 11, 31) / 86400000);
+        return range.startDay <= endDay && range.endDay >= startDay;
+    }
 
-    function getTaskOverlayYears(cards) { // CHANGE
-        const years = new Set(); // CHANGE
-        for (const card of cards || []) { // CHANGE
-            const range = getTaskDateRange(card); // CHANGE
-            if (!range) continue; // CHANGE
-            for (let year = range.start.date.getUTCFullYear(); year <= range.end.date.getUTCFullYear(); year++) { // CHANGE
-                if (year > 1900 && year < 3000) years.add(year); // CHANGE
-            } // CHANGE
-        } // CHANGE
-        return Array.from(years).sort((a, b) => a - b); // CHANGE
-    } // CHANGE
+    function getTaskOverlayYears(cards) {
+        const years = new Set();
+        for (const card of cards || []) {
+            const range = getTaskDateRange(card);
+            if (!range) continue;
+            for (let year = range.start.date.getUTCFullYear(); year <= range.end.date.getUTCFullYear(); year++) {
+                if (year > 1900 && year < 3000) years.add(year);
+            }
+        }
+        return Array.from(years).sort((a, b) => a - b);
+    }
 
-    function chooseDefaultOverlayYear(years) { // CHANGE
-        const list = Array.isArray(years) ? years : []; // CHANGE
-        if (!list.length) return null; // CHANGE
-        const currentYear = new Date().getFullYear(); // CHANGE
-        return list.indexOf(currentYear) >= 0 ? currentYear : list[0]; // CHANGE
-    } // CHANGE
+    function chooseDefaultOverlayYear(years) {
+        const list = Array.isArray(years) ? years : [];
+        if (!list.length) return null;
+        const currentYear = new Date().getFullYear();
+        return list.indexOf(currentYear) >= 0 ? currentYear : list[0];
+    }
 
-    function formatTaskOverlayDate(dateInfo) { // CHANGE
-        if (!dateInfo || !dateInfo.date) return ''; // CHANGE
-        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; // CHANGE
-        return months[dateInfo.date.getUTCMonth()] + ' ' + String(dateInfo.date.getUTCDate()).padStart(2, '0'); // CHANGE
-    } // CHANGE
+    function formatTaskOverlayDate(dateInfo) {
+        if (!dateInfo || !dateInfo.date) return '';
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        return months[dateInfo.date.getUTCMonth()] + ' ' + String(dateInfo.date.getUTCDate()).padStart(2, '0');
+    }
 
-    function formatTaskDateRange(card) { // CHANGE
-        const range = getTaskDateRange(card); // CHANGE
-        if (!range) return 'Unscheduled'; // CHANGE
-        const startLabel = formatTaskOverlayDate(range.start); // CHANGE
-        const endLabel = formatTaskOverlayDate(range.end); // CHANGE
-        return range.startDay === range.endDay ? startLabel : (startLabel + ' - ' + endLabel); // CHANGE
-    } // CHANGE
+    function formatTaskDateRange(card) {
+        const range = getTaskDateRange(card);
+        if (!range) return 'Unscheduled';
+        const startLabel = formatTaskOverlayDate(range.start);
+        const endLabel = formatTaskOverlayDate(range.end);
+        return range.startDay === range.endDay ? startLabel : (startLabel + ' - ' + endLabel);
+    }
 
-    function stripTaskBadgeText(raw) { // CHANGE
-        const text = stripHtmlAndPlaceholders(String(raw || '')); // CHANGE
-        return text.length > 36 ? text.slice(0, 33) + '...' : text; // CHANGE
-    } // CHANGE
+    function stripTaskBadgeText(raw) {
+        const text = stripHtmlAndPlaceholders(String(raw || ''));
+        return text.length > 36 ? text.slice(0, 33) + '...' : text;
+    }
 
-    function getTaskLaneColor(card) { // CHANGE
-        return getLaneColorForCard(card) || '#9aa0a6'; // CHANGE
-    } // CHANGE
+    function getTaskLaneColor(card) {
+        return getLaneColorForCard(card) || '#9aa0a6';
+    }
 
-    function getTaskOverlayBadges(card) { // CHANGE
-        const badges = []; // CHANGE
-        const rawBadges = stripTaskBadgeText(getAttr(card, 'badges_html')); // CHANGE
-        if (rawBadges) badges.push(rawBadges); // CHANGE
-        const repeatBadge = getAttr(card, 'repeat_badge'); // CHANGE
-        if (repeatBadge) badges.push('Repeat ' + repeatBadge); // CHANGE
-        const note = stripTaskBadgeText(getAttr(card, 'card_note')); // CHANGE
-        if (note) badges.push('Note ' + note); // CHANGE
-        if (getAttr(card, 'date_override') === '1') badges.push('Dates edited'); // CHANGE
-        const linkCount = getLinkSet(card).size; // CHANGE
-        if (linkCount > 1) badges.push('Links ' + linkCount); // CHANGE
-        return badges; // CHANGE
-    } // CHANGE
+    function getTaskOverlayBadges(card) {
+        const badges = [];
+        const rawBadges = stripTaskBadgeText(getAttr(card, 'badges_html'));
+        if (rawBadges) badges.push(rawBadges);
+        const repeatBadge = getAttr(card, 'repeat_badge');
+        if (repeatBadge) badges.push('Repeat ' + repeatBadge);
+        const note = stripTaskBadgeText(getAttr(card, 'card_note'));
+        if (note) badges.push('Note ' + note);
+        if (getAttr(card, 'date_override') === '1') badges.push('Dates edited');
+        const linkCount = getLinkSet(card).size;
+        if (linkCount > 1) badges.push('Links ' + linkCount);
+        return badges;
+    }
 
-    function normalizeRepeatIdentityText(value) { // CHANGE
-        return String(value == null ? '' : value).trim().toLowerCase(); // CHANGE
-    } // CHANGE
+    function normalizeRepeatIdentityText(value) {
+        return String(value == null ? '' : value).trim().toLowerCase();
+    }
 
-    function normalizeRepeatLinkedIds(value) { // CHANGE
-        return Array.from(new Set(String(value == null ? '' : value) // CHANGE
-            .split(',') // CHANGE
-            .map(id => id.trim()) // CHANGE
-            .filter(Boolean))) // CHANGE
-            .sort(); // CHANGE
-    } // CHANGE
+    function normalizeRepeatLinkedIds(value) {
+        return Array.from(new Set(String(value == null ? '' : value)
+            .split(',')
+            .map(id => id.trim())
+            .filter(Boolean)))
+            .sort();
+    }
 
-    function buildRepeatSeriesKeyForOverlay(card) { // CHANGE
-        const linkedIds = normalizeRepeatLinkedIds(getAttr(card, LINK_ATTR)); // CHANGE
-        if (linkedIds.length === 0) return null; // CHANGE
+    function buildRepeatSeriesKeyForOverlay(card) {
+        const linkedIds = normalizeRepeatLinkedIds(getAttr(card, LINK_ATTR));
+        if (linkedIds.length === 0) return null;
 
-        return JSON.stringify([ // CHANGE
-            linkedIds, // CHANGE
-            normalizeRepeatIdentityText(getAttr(card, 'plant_name')), // CHANGE
-            normalizeRepeatIdentityText(getAttr(card, 'method')), // CHANGE
-            normalizeRepeatIdentityText(getAttr(card, 'title')) // CHANGE
-        ]); // CHANGE
-    } // CHANGE
+        return JSON.stringify([
+            linkedIds,
+            normalizeRepeatIdentityText(getAttr(card, 'plant_name')),
+            normalizeRepeatIdentityText(getAttr(card, 'method')),
+            normalizeRepeatIdentityText(getAttr(card, 'title'))
+        ]);
+    }
 
-    function compareRepeatOccurrenceCards(a, b) { // CHANGE
-        const aRange = getTaskDateRange(a); // CHANGE
-        const bRange = getTaskDateRange(b); // CHANGE
-        if (aRange && bRange && aRange.startDay !== bRange.startDay) return aRange.startDay - bRange.startDay; // CHANGE
-        if (aRange && !bRange) return -1; // CHANGE
-        if (!aRange && bRange) return 1; // CHANGE
-        if (aRange && bRange && aRange.endDay !== bRange.endDay) return aRange.endDay - bRange.endDay; // CHANGE
-        return String(a && a.id || '').localeCompare(String(b && b.id || '')); // CHANGE
-    } // CHANGE
+    function compareRepeatOccurrenceCards(a, b) {
+        const aRange = getTaskDateRange(a);
+        const bRange = getTaskDateRange(b);
+        if (aRange && bRange && aRange.startDay !== bRange.startDay) return aRange.startDay - bRange.startDay;
+        if (aRange && !bRange) return -1;
+        if (!aRange && bRange) return 1;
+        if (aRange && bRange && aRange.endDay !== bRange.endDay) return aRange.endDay - bRange.endDay;
+        return String(a && a.id || '').localeCompare(String(b && b.id || ''));
+    }
 
-    function isOverlayCardVisibilityEligible(card) { // CHANGE
-        return getAttr(card, 'year_hidden') !== '1' && getAttr(card, 'repeat_hidden') !== '1'; // CHANGE
-    } // CHANGE
+    function isOverlayCardVisibilityEligible(card) {
+        return getAttr(card, 'year_hidden') !== '1' && getAttr(card, 'repeat_hidden') !== '1';
+    }
 
-    function getLaneOrderIndex(lane) { // CHANGE
-        if (!lane) return Number.POSITIVE_INFINITY; // CHANGE
-        const parent = model.getParent(lane); // CHANGE
-        if (!parent) return Number.POSITIVE_INFINITY; // CHANGE
-        const count = model.getChildCount(parent); // CHANGE
-        for (let i = 0; i < count; i++) { // CHANGE
-            if (model.getChildAt(parent, i) === lane) return i; // CHANGE
-        } // CHANGE
-        return Number.POSITIVE_INFINITY; // CHANGE
-    } // CHANGE
+    function getLaneOrderIndex(lane) {
+        if (!lane) return Number.POSITIVE_INFINITY;
+        const parent = model.getParent(lane);
+        if (!parent) return Number.POSITIVE_INFINITY;
+        const count = model.getChildCount(parent);
+        for (let i = 0; i < count; i++) {
+            if (model.getChildAt(parent, i) === lane) return i;
+        }
+        return Number.POSITIVE_INFINITY;
+    }
 
-    function cleanOverlayLaneLabel(label) { // CHANGE
-        return stripHtmlAndPlaceholders(String(label || '')).replace(/\s*\(Page\s+\d+\s*\/\s*\d+\)\s*$/i, '').trim(); // CHANGE
-    } // CHANGE
+    function cleanOverlayLaneLabel(label) {
+        return stripHtmlAndPlaceholders(String(label || '')).replace(/\s*\(Page\s+\d+\s*\/\s*\d+\)\s*$/i, '').trim();
+    }
 
-    function getLaneGroupLabel(card, lane, laneKey) { // CHANGE
-        if (lane) { // CHANGE
-            const explicit = getAttr(lane, 'label') || getAttr(lane, 'status'); // CHANGE
-            if (explicit) return cleanOverlayLaneLabel(explicit); // CHANGE
-            if (typeof lane.value === 'string' && lane.value) return cleanOverlayLaneLabel(lane.value); // CHANGE
-            if (lane.value && lane.value.textContent) return cleanOverlayLaneLabel(lane.value.textContent); // CHANGE
-        } // CHANGE
-        return laneKey || getAttr(card, 'status') || 'Unlaned'; // CHANGE
-    } // CHANGE
+    function getLaneGroupLabel(card, lane, laneKey) {
+        if (lane) {
+            const explicit = getAttr(lane, 'label') || getAttr(lane, 'status');
+            if (explicit) return cleanOverlayLaneLabel(explicit);
+            if (typeof lane.value === 'string' && lane.value) return cleanOverlayLaneLabel(lane.value);
+            if (lane.value && lane.value.textContent) return cleanOverlayLaneLabel(lane.value.textContent);
+        }
+        return laneKey || getAttr(card, 'status') || 'Unlaned';
+    }
 
-    function makeLaneGroupForCard(card) { // CHANGE
-        const lane = findLaneAncestor(card); // CHANGE
-        const laneKey = getLaneStatusKeyForTask(card) || (lane ? getAttr(lane, 'lane_key') : null) || 'UNLANED'; // CHANGE
-        return { // CHANGE
-            lane, // CHANGE
-            laneId: lane && lane.id ? lane.id : laneKey, // CHANGE
-            laneKey, // CHANGE
-            label: getLaneGroupLabel(card, lane, laneKey), // CHANGE
-            color: getTaskLaneColor(card), // CHANGE
-            order: getLaneOrderIndex(lane), // CHANGE
-            items: [] // CHANGE
-        }; // CHANGE
-    } // CHANGE
+    function makeLaneGroupForCard(card) {
+        const lane = findLaneAncestor(card);
+        const laneKey = getLaneStatusKeyForTask(card) || (lane ? getAttr(lane, 'lane_key') : null) || 'UNLANED';
+        return {
+            lane,
+            laneId: lane && lane.id ? lane.id : laneKey,
+            laneKey,
+            label: getLaneGroupLabel(card, lane, laneKey),
+            color: getTaskLaneColor(card),
+            order: getLaneOrderIndex(lane),
+            items: []
+        };
+    }
 
-    function withRepeatOverlayBadge(item, badgeText) { // CHANGE
-        item.repeatBadge = badgeText || ''; // CHANGE
-        return item; // CHANGE
-    } // CHANGE
+    function withRepeatOverlayBadge(item, badgeText) {
+        item.repeatBadge = badgeText || '';
+        return item;
+    }
 
-    function groupLinkedTasksForOverlay(cards) { // CHANGE
-        const groupsByLane = new Map(); // CHANGE
+    function groupLinkedTasksForOverlay(cards) {
+        const groupsByLane = new Map();
 
-        function getGroup(card) { // CHANGE
-            const lane = findLaneAncestor(card); // CHANGE
-            const laneKey = getLaneStatusKeyForTask(card) || (lane ? getAttr(lane, 'lane_key') : null) || 'UNLANED'; // CHANGE
-            const laneId = lane && lane.id ? lane.id : laneKey; // CHANGE
-            if (!groupsByLane.has(laneId)) groupsByLane.set(laneId, makeLaneGroupForCard(card)); // CHANGE
-            return groupsByLane.get(laneId); // CHANGE
-        } // CHANGE
+        function getGroup(card) {
+            const lane = findLaneAncestor(card);
+            const laneKey = getLaneStatusKeyForTask(card) || (lane ? getAttr(lane, 'lane_key') : null) || 'UNLANED';
+            const laneId = lane && lane.id ? lane.id : laneKey;
+            if (!groupsByLane.has(laneId)) groupsByLane.set(laneId, makeLaneGroupForCard(card));
+            return groupsByLane.get(laneId);
+        }
 
-        const recordsByLaneAndSeries = new Map(); // CHANGE
-        for (const card of cards || []) { // CHANGE
-            if (!card || getAttr(card, 'year_hidden') === '1') continue; // CHANGE
-            const group = getGroup(card); // CHANGE
-            const seriesKey = buildRepeatSeriesKeyForOverlay(card); // CHANGE
+        const recordsByLaneAndSeries = new Map();
+        for (const card of cards || []) {
+            if (!card || getAttr(card, 'year_hidden') === '1') continue;
+            const group = getGroup(card);
+            const seriesKey = buildRepeatSeriesKeyForOverlay(card);
 
-            if (!seriesKey) { // CHANGE
-                if (isOverlayCardVisibilityEligible(card)) group.items.push({ card, repeatBadge: '' }); // CHANGE
-                continue; // CHANGE
-            } // CHANGE
+            if (!seriesKey) {
+                if (isOverlayCardVisibilityEligible(card)) group.items.push({ card, repeatBadge: '' });
+                continue;
+            }
 
-            const laneSeriesKey = group.laneId + '|' + seriesKey; // CHANGE
-            if (!recordsByLaneAndSeries.has(laneSeriesKey)) { // CHANGE
-                recordsByLaneAndSeries.set(laneSeriesKey, { group, seriesKey, cards: [] }); // CHANGE
-            } // CHANGE
-            recordsByLaneAndSeries.get(laneSeriesKey).cards.push(card); // CHANGE
-        } // CHANGE
+            const laneSeriesKey = group.laneId + '|' + seriesKey;
+            if (!recordsByLaneAndSeries.has(laneSeriesKey)) {
+                recordsByLaneAndSeries.set(laneSeriesKey, { group, seriesKey, cards: [] });
+            }
+            recordsByLaneAndSeries.get(laneSeriesKey).cards.push(card);
+        }
 
-        for (const series of recordsByLaneAndSeries.values()) { // CHANGE
-            const ordered = series.cards.slice().sort(compareRepeatOccurrenceCards); // CHANGE
-            const candidates = ordered.filter(isOverlayCardVisibilityEligible); // CHANGE
-            if (!candidates.length) continue; // CHANGE
-            const representative = candidates[0]; // CHANGE
-            const globalIndex = ordered.indexOf(representative); // CHANGE
-            const hiddenInLane = Math.max(0, ordered.length - 1); // CHANGE
-            const badge = ordered.length > 1 // CHANGE
-                ? ((globalIndex + 1) + '/' + ordered.length + (hiddenInLane > 0 ? ' +' + hiddenInLane : '')) // CHANGE
-                : ''; // CHANGE
-            series.group.items.push(withRepeatOverlayBadge({ card: representative }, badge)); // CHANGE
-        } // CHANGE
+        for (const series of recordsByLaneAndSeries.values()) {
+            const ordered = series.cards.slice().sort(compareRepeatOccurrenceCards);
+            const candidates = ordered.filter(isOverlayCardVisibilityEligible);
+            if (!candidates.length) continue;
+            const representative = candidates[0];
+            const globalIndex = ordered.indexOf(representative);
+            const hiddenInLane = Math.max(0, ordered.length - 1);
+            const badge = ordered.length > 1
+                ? ((globalIndex + 1) + '/' + ordered.length + (hiddenInLane > 0 ? ' +' + hiddenInLane : ''))
+                : '';
+            series.group.items.push(withRepeatOverlayBadge({ card: representative }, badge));
+        }
 
-        const groups = Array.from(groupsByLane.values()) // CHANGE
-            .map(group => { // CHANGE
-                group.items.sort((a, b) => compareTaskCardsByStartDate(a.card, b.card)); // CHANGE
-                return group; // CHANGE
-            }) // CHANGE
-            .filter(group => group.items.length > 0) // CHANGE
-            .sort((a, b) => (a.order - b.order) || String(a.label || '').localeCompare(String(b.label || ''))); // CHANGE
+        const groups = Array.from(groupsByLane.values())
+            .map(group => {
+                group.items.sort((a, b) => compareTaskCardsByStartDate(a.card, b.card));
+                return group;
+            })
+            .filter(group => group.items.length > 0)
+            .sort((a, b) => (a.order - b.order) || String(a.label || '').localeCompare(String(b.label || '')));
 
-        return groups; // CHANGE
-    } // CHANGE
+        return groups;
+    }
 
     function findLaneAncestor(cell) {
         const m = graph.getModel();
@@ -848,27 +848,27 @@ Draw.loadPlugin(function (ui) {
         return { x: c.x, y: c.y };
     }
 
-    function sideLengthForAnchor(center, side) { // NEW
-        if (!center) return 0; // NEW
-        return (side === 'left' || side === 'right') ? center.h : center.w; // NEW
-    } // NEW
+    function sideLengthForAnchor(center, side) {
+        if (!center) return 0;
+        return (side === 'left' || side === 'right') ? center.h : center.w;
+    }
 
-    function avoidStandardLinkEndpointCenterT(center, side, t, marginPx) { // NEW
-        const sideLenPx = sideLengthForAnchor(center, side); // NEW
-        const baseT = Math.max(0, Math.min(1, t == null ? 0.5 : t)); // NEW
-        if (!Number.isFinite(sideLenPx) || sideLenPx <= 0) return baseT; // NEW
-        const marginT = Math.min(Math.max(0, marginPx || 0) / sideLenPx, 0.49); // NEW
-        const minT = marginT; // NEW
-        const maxT = 1 - marginT; // NEW
-        const clampedT = Math.max(minT, Math.min(maxT, baseT)); // NEW
-        if (Math.abs(clampedT - 0.5) > 0.0001) return clampedT; // NEW
-        const offsetT = Math.max(0, LINK_ENDPOINT_CENTER_OFFSET_PX) / sideLenPx; // NEW
-        return Math.max(minT, Math.min(maxT, 0.5 + offsetT)); // NEW
-    } // NEW
+    function avoidStandardLinkEndpointCenterT(center, side, t, marginPx) {
+        const sideLenPx = sideLengthForAnchor(center, side);
+        const baseT = Math.max(0, Math.min(1, t == null ? 0.5 : t));
+        if (!Number.isFinite(sideLenPx) || sideLenPx <= 0) return baseT;
+        const marginT = Math.min(Math.max(0, marginPx || 0) / sideLenPx, 0.49);
+        const minT = marginT;
+        const maxT = 1 - marginT;
+        const clampedT = Math.max(minT, Math.min(maxT, baseT));
+        if (Math.abs(clampedT - 0.5) > 0.0001) return clampedT;
+        const offsetT = Math.max(0, LINK_ENDPOINT_CENTER_OFFSET_PX) / sideLenPx;
+        return Math.max(minT, Math.min(maxT, 0.5 + offsetT));
+    }
 
-    function anchorStandardLinkEndpointOnSide(center, side, t, marginPx) { // NEW
-        return anchorOnSide(center, side, avoidStandardLinkEndpointCenterT(center, side, t, marginPx)); // NEW
-    } // NEW
+    function anchorStandardLinkEndpointOnSide(center, side, t, marginPx) {
+        return anchorOnSide(center, side, avoidStandardLinkEndpointCenterT(center, side, t, marginPx));
+    }
 
 
     // ------------------ LANE STATUS EDGE VISIBILITY POLICY ------------------      
@@ -952,10 +952,10 @@ Draw.loadPlugin(function (ui) {
         return !!cell && getAttr(cell, 'tiler_group') === '1';
     }
 
-    function isRoleCard(cell) { // NEW
-        const style = cell && cell.style != null ? String(cell.style) : ''; // NEW
-        return /(?:^|;)role_card=1(?:;|$)/.test(style); // NEW
-    } // NEW
+    function isRoleCard(cell) {
+        const style = cell && cell.style != null ? String(cell.style) : '';
+        return /(?:^|;)role_card=1(?:;|$)/.test(style);
+    }
 
     function findTilerGroupAncestor(cell) {
         const m = graph.getModel();
@@ -1109,39 +1109,39 @@ Draw.loadPlugin(function (ui) {
             return (aId < bId) ? (aId + '|' + bId) : (bId + '|' + aId);
         }
 
-        function getOverlayPane() { // CHANGE
-            const view = graph.getView && graph.getView(); // CHANGE
-            return view && view.getOverlayPane ? view.getOverlayPane() : null; // CHANGE
-        } // CHANGE
+        function getOverlayPane() {
+            const view = graph.getView && graph.getView();
+            return view && view.getOverlayPane ? view.getOverlayPane() : null;
+        }
 
-        function formatLinkOverlayBadgeLabel(label) { // CHANGE
-            const text = stripHtmlAndPlaceholders(String(label || '')).trim(); // CHANGE
-            return text.length > 40 ? text.slice(0, 37) + '...' : text; // CHANGE
-        } // CHANGE
+        function formatLinkOverlayBadgeLabel(label) {
+            const text = stripHtmlAndPlaceholders(String(label || '')).trim();
+            return text.length > 40 ? text.slice(0, 37) + '...' : text;
+        }
 
-        function applyLinkOverlayBadgeStyle(txt, stroke) { // CHANGE
-            if (!txt) return; // CHANGE
-            txt.size = 10; // CHANGE
-            txt.fontStyle = mxConstants.FONT_BOLD; // CHANGE
-            txt.color = '#3c4043'; // CHANGE
-            txt.background = '#ffffff'; // CHANGE
-            txt.border = stroke || '#9aa0a6'; // CHANGE
-            txt.spacing = 6; // CHANGE
-            txt.spacingTop = 2; // CHANGE
-            txt.spacingRight = 6; // CHANGE
-            txt.spacingBottom = 2; // CHANGE
-            txt.spacingLeft = 6; // CHANGE
-            if (txt.node && txt.node.style) { // CHANGE
-                txt.node.style.borderRadius = '10px'; // CHANGE
-                txt.node.style.filter = 'drop-shadow(0 1px 2px rgba(0, 0, 0, 0.16))'; // CHANGE
-            } // CHANGE
-        } // CHANGE
+        function applyLinkOverlayBadgeStyle(txt, stroke) {
+            if (!txt) return;
+            txt.size = 10;
+            txt.fontStyle = mxConstants.FONT_BOLD;
+            txt.color = '#3c4043';
+            txt.background = '#ffffff';
+            txt.border = stroke || '#9aa0a6';
+            txt.spacing = 6;
+            txt.spacingTop = 2;
+            txt.spacingRight = 6;
+            txt.spacingBottom = 2;
+            txt.spacingLeft = 6;
+            if (txt.node && txt.node.style) {
+                txt.node.style.borderRadius = '10px';
+                txt.node.style.filter = 'drop-shadow(0 1px 2px rgba(0, 0, 0, 0.16))';
+            }
+        }
 
-        function normalizeLabelOffset(offset) { // NEW
-            const x = offset && Number.isFinite(offset.x) ? offset.x : 0; // NEW
-            const y = offset && Number.isFinite(offset.y) ? offset.y : 0; // NEW
-            return { x, y }; // NEW
-        } // NEW
+        function normalizeLabelOffset(offset) {
+            const x = offset && Number.isFinite(offset.x) ? offset.x : 0;
+            const y = offset && Number.isFinite(offset.y) ? offset.y : 0;
+            return { x, y };
+        }
 
         // Compute line endpoints from current cell geometry + exitHint                    
         function computePointsFor(entry) {
@@ -1157,14 +1157,14 @@ Draw.loadPlugin(function (ui) {
             let srcPt = null;
             const hint = entry.exitHint;
             if (hint && hint.side) {
-                srcPt = anchorStandardLinkEndpointOnSide(srcC, hint.side, hint.t, 4); // CHANGE
+                srcPt = anchorStandardLinkEndpointOnSide(srcC, hint.side, hint.t, 4);
             }
             if (!srcPt) {
                 srcPt = { x: srcC.x, y: srcC.y };
             }
 
             const trgSide = sideToward(dstC, srcC);
-            const trgPt = anchorStandardLinkEndpointOnSide(dstC, trgSide, 0.5, 4); // CHANGE
+            const trgPt = anchorStandardLinkEndpointOnSide(dstC, trgSide, 0.5, 4);
             if (!trgPt) return null;
 
             return [
@@ -1176,7 +1176,7 @@ Draw.loadPlugin(function (ui) {
         // Create or update text label near the source side                               
         function createOrUpdateLabel(entry, pts) {
             const pane = getOverlayPane();
-            const label = formatLinkOverlayBadgeLabel(entry.label); // CHANGE
+            const label = formatLinkOverlayBadgeLabel(entry.label);
             if (!pane || !pts || pts.length < 2 || !label.trim()) {
                 // No label or no geometry → remove any existing label                     
                 if (entry.labelElt && entry.labelElt.node && entry.labelElt.node.parentNode) {
@@ -1201,11 +1201,11 @@ Draw.loadPlugin(function (ui) {
                 : 0.15);
             const lx = p0.x + r * (p1.x - p0.x);
             const ly = p0.y + r * (p1.y - p0.y);
-            const labelOffset = normalizeLabelOffset(entry.labelOffset); // NEW
-            const labelX = lx + labelOffset.x; // NEW
-            const labelY = ly + labelOffset.y; // NEW
+            const labelOffset = normalizeLabelOffset(entry.labelOffset);
+            const labelX = lx + labelOffset.x;
+            const labelY = ly + labelOffset.y;
 
-            if (!isFinite(labelX) || !isFinite(labelY)) { // CHANGE
+            if (!isFinite(labelX) || !isFinite(labelY)) {
                 return;
             }
 
@@ -1213,9 +1213,9 @@ Draw.loadPlugin(function (ui) {
                 entry.labelElt.node.parentNode === pane) {
                 // Update existing mxText
                 entry.labelElt.value = label;
-                entry.labelElt.bounds.x = labelX; // CHANGE
-                entry.labelElt.bounds.y = labelY; // CHANGE
-                applyLinkOverlayBadgeStyle(entry.labelElt, entry.color); // CHANGE
+                entry.labelElt.bounds.x = labelX;
+                entry.labelElt.bounds.y = labelY;
+                applyLinkOverlayBadgeStyle(entry.labelElt, entry.color);
                 entry.labelElt.redraw();
             } else {
                 // Remove old, if any
@@ -1224,31 +1224,31 @@ Draw.loadPlugin(function (ui) {
                 }
 
                 // --- CREATE NEW LABEL -------------------------------------------------------
-                const bounds = new mxRectangle(labelX, labelY, 1, 1); // CHANGE
+                const bounds = new mxRectangle(labelX, labelY, 1, 1);
 
                 const txt = new mxText(
                     label,
                     bounds,
                     mxConstants.ALIGN_LEFT,
                     mxConstants.ALIGN_MIDDLE,
-                    '#3c4043', // CHANGE
-                    'Arial, Helvetica, sans-serif', // CHANGE
-                    10, // CHANGE
-                    mxConstants.FONT_BOLD, // CHANGE
-                    6, // CHANGE
-                    2, // CHANGE
-                    6, // CHANGE
-                    2, // CHANGE
-                    6, // CHANGE
-                    true, // CHANGE
-                    '#ffffff', // CHANGE
-                    entry.color || '#9aa0a6' // CHANGE
+                    '#3c4043',
+                    'Arial, Helvetica, sans-serif',
+                    10,
+                    mxConstants.FONT_BOLD,
+                    6,
+                    2,
+                    6,
+                    2,
+                    6,
+                    true,
+                    '#ffffff',
+                    entry.color || '#9aa0a6'
                 );
-                applyLinkOverlayBadgeStyle(txt, entry.color); // CHANGE
+                applyLinkOverlayBadgeStyle(txt, entry.color);
                 txt.dialect = graph.dialect;
                 txt.init(pane);
                 txt.redraw();
-                applyLinkOverlayBadgeStyle(txt, entry.color); // CHANGE
+                applyLinkOverlayBadgeStyle(txt, entry.color);
 
                 if (txt.node) {
                     txt.node.__manualLinkMeta = {
@@ -1257,9 +1257,9 @@ Draw.loadPlugin(function (ui) {
                     };
                     txt.node.style.pointerEvents = 'all';                        // ensure click
                     mxEvent.addListener(txt.node, 'mousedown', function (evt) {
-                        const isLeft = (evt.button === 0); // CHANGE
+                        const isLeft = (evt.button === 0);
 
-                        if (isLeft) { // CHANGE
+                        if (isLeft) {
                             navigateOverlayLink(
                                 txt.node.__manualLinkMeta, evt
                             );
@@ -1314,9 +1314,9 @@ Draw.loadPlugin(function (ui) {
                     };
                     poly.node.style.pointerEvents = 'stroke';                     // ensure hit
                     mxEvent.addListener(poly.node, 'mousedown', function (evt) {
-                        const isLeft = (evt.button === 0); // CHANGE
+                        const isLeft = (evt.button === 0);
 
-                        if (isLeft) { // CHANGE
+                        if (isLeft) {
                             navigateOverlayLink(
                                 poly.node.__manualLinkMeta, evt
                             );
@@ -1337,9 +1337,9 @@ Draw.loadPlugin(function (ui) {
          * - exitHint: {side, t} from computeExitParamsForOrigin (may be null)
          * - color: stroke color
          * - label: plain text label
-         * - labelOffset: {x, y} screen-space stagger in pixels // NEW
+         * - labelOffset: {x, y} screen-space stagger in pixels
          */
-        function setLinkOverlay(a, b, exitHint, color, label, labelOffset) { // CHANGE
+        function setLinkOverlay(a, b, exitHint, color, label, labelOffset) {
             if (!a || !b || a === b) return;
             const aId = a.id, bId = b.id;
             const key = pairKey(aId, bId);
@@ -1353,7 +1353,7 @@ Draw.loadPlugin(function (ui) {
                     exitHint: exitHint || null,
                     color: color || '#ff0000',
                     label: label || '',
-                    labelOffset: normalizeLabelOffset(labelOffset), // NEW
+                    labelOffset: normalizeLabelOffset(labelOffset),
                     poly: null,
                     labelElt: null
                 };
@@ -1362,7 +1362,7 @@ Draw.loadPlugin(function (ui) {
                 entry.exitHint = exitHint || null;
                 entry.color = color || '#ff0000';
                 entry.label = label || '';
-                entry.labelOffset = normalizeLabelOffset(labelOffset); // NEW
+                entry.labelOffset = normalizeLabelOffset(labelOffset);
             }
 
             createOrUpdatePolyline(entry);
@@ -1380,7 +1380,7 @@ Draw.loadPlugin(function (ui) {
             registry.clear();
         }
 
-        function getLinkMetaForNode(node) {                                                // UNCHANGED
+        function getLinkMetaForNode(node) {
             let cur = node;
             while (cur) {
                 if (cur.__manualLinkMeta) return cur.__manualLinkMeta;
@@ -1403,1518 +1403,1518 @@ Draw.loadPlugin(function (ui) {
         };
     })();
 
-    // -------------------- Linked Task Schedule Overlay Manager -------------------- // CHANGE
-    // DOM-only task schedule panel plus mxPolyline guide lines; no model or undo changes. // CHANGE
-    const taskScheduleOverlay = (function () { // CHANGE
-        const MODE_CARDS = 'cards'; // CHANGE
-        const MODE_SCHEDULE = 'schedule'; // CHANGE
-        const MODE_OCCUPANCY = 'occupancy'; // NEW
-        const PANEL_WIDTH = 380; // CHANGE
-        const PANEL_GAP = 12; // CHANGE
-        const PANEL_SIDE_OFFSET = 60; // CHANGE
-        const BODY_MAX_HEIGHT = 360; // CHANGE
-        const registry = new Map(); // sourceId -> entry // CHANGE
-        const selectedYearBySource = new Map(); // sourceId -> session-only year // CHANGE
-        const LANE_COLLAPSE_STORAGE_KEY = 'trellis.vertexLinker.taskOverlay.collapsedLanes.v1'; // CHANGE
-        const laneCollapseState = new Map(); // laneKey -> collapsed boolean // CHANGE
-        let laneCollapseLoaded = false; // CHANGE
-        let activeMode = MODE_CARDS; // CHANGE
-
-        function getOverlayPane() { // CHANGE
-            const layeredPane = ensureGraphOverlaySvgLayer('connection'); // CHANGE
-            if (layeredPane) return layeredPane; // CHANGE
-            const view = graph.getView && graph.getView(); // CHANGE
-            return view && view.getOverlayPane ? view.getOverlayPane() : null; // CHANGE
-        } // CHANGE
-
-        function getPanelHost() { // CHANGE
-            const host = graph.container; // CHANGE
-            if (!host) return null; // CHANGE
-            try { // CHANGE
-                if (window.getComputedStyle(host).position === 'static') { // CHANGE
-                    host.style.position = 'relative'; // CHANGE
-                } // CHANGE
-            } catch (_) { } // CHANGE
-            return host; // CHANGE
-        } // CHANGE
-
-        function getPanelLayer() { // NEW
-            return ensureGraphOverlayHtmlLayer('control') || getPanelHost(); // NEW
-        } // NEW
-
-        function removeNode(node) { // CHANGE
-            if (node && node.parentNode) node.parentNode.removeChild(node); // CHANGE
-        } // CHANGE
-
-        function removePolyline(poly) { // CHANGE
-            if (poly && poly.node && poly.node.parentNode) { // CHANGE
-                poly.node.parentNode.removeChild(poly.node); // CHANGE
-            } // CHANGE
-        } // CHANGE
-
-        function loadLaneCollapseState() { // CHANGE
-            if (laneCollapseLoaded) return; // CHANGE
-            laneCollapseLoaded = true; // CHANGE
-            try { // CHANGE
-                const raw = window.localStorage && window.localStorage.getItem(LANE_COLLAPSE_STORAGE_KEY); // CHANGE
-                const parsed = raw ? JSON.parse(raw) : null; // CHANGE
-                if (!parsed || typeof parsed !== 'object') return; // CHANGE
-                for (const key in parsed) { // CHANGE
-                    if (Object.prototype.hasOwnProperty.call(parsed, key)) laneCollapseState.set(key, parsed[key] === true); // CHANGE
-                } // CHANGE
-            } catch (_) { } // CHANGE
-        } // CHANGE
-
-        function saveLaneCollapseState() { // CHANGE
-            try { // CHANGE
-                if (!window.localStorage) return; // CHANGE
-                const out = {}; // CHANGE
-                laneCollapseState.forEach((collapsed, key) => { out[key] = !!collapsed; }); // CHANGE
-                window.localStorage.setItem(LANE_COLLAPSE_STORAGE_KEY, JSON.stringify(out)); // CHANGE
-            } catch (_) { } // CHANGE
-        } // CHANGE
-
-        function laneCollapseKey(group) { // CHANGE
-            return String(group && (group.laneKey || group.label || group.laneId) || 'UNLANED'); // CHANGE
-        } // CHANGE
-
-        function isLaneGroupCollapsed(group) { // CHANGE
-            loadLaneCollapseState(); // CHANGE
-            return laneCollapseState.get(laneCollapseKey(group)) === true; // CHANGE
-        } // CHANGE
-
-        function setLaneGroupCollapsed(group, collapsed) { // CHANGE
-            loadLaneCollapseState(); // CHANGE
-            laneCollapseState.set(laneCollapseKey(group), !!collapsed); // CHANGE
-            saveLaneCollapseState(); // CHANGE
-        } // CHANGE
-
-        function normalizeBadgeText(text) { // CHANGE
-            return stripHtmlAndPlaceholders(String(text || '')).trim(); // CHANGE
-        } // CHANGE
-
-        function isValidOverlayCard(card) { // CHANGE
-            return !!card && model.isVertex(card) && isKanbanCard(card) && !!findKanbanBoardAncestor(card); // CHANGE
-        } // CHANGE
-
-        function taskTitle(card) { // CHANGE
-            return getAttr(card, 'title') || getRawTextLabel(card) || card.id || 'Task'; // CHANGE
-        } // CHANGE
-
-        function getSourceCropTitle(source) { // CHANGE
-            if (!source) return ''; // CHANGE
-            const plant = normalizeBadgeText(getAttr(source, 'plant_name') || getAttr(source, 'crop_name') || ''); // CHANGE
-            const variety = normalizeBadgeText(getAttr(source, 'variety_name') || getAttr(source, 'variety') || ''); // CHANGE
-            if (plant && variety) return plant + ' - ' + variety; // CHANGE
-            return plant || variety || normalizeBadgeText(getAttr(source, 'title') || getRawTextLabel(source)); // CHANGE
-        } // CHANGE
-
-        function getOverlayTitle(entry) { // CHANGE
-            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null; // CHANGE
-            const cropTitle = getSourceCropTitle(source); // CHANGE
-            return cropTitle ? 'Linked Task Schedule - ' + cropTitle : 'Linked Task Schedule'; // CHANGE
-        } // CHANGE
-
-        function getScheduleOnlyTitle(entry) { // ADDED
-            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null; // ADDED
-            const cropTitle = getSourceCropTitle(source); // ADDED
-            return cropTitle ? 'Plant Schedule - ' + cropTitle : 'Plant Schedule'; // ADDED
-        } // ADDED
-
-        function hasTilerSchedule(cell) { // ADDED
-            const start = getAttr(cell, 'sow_date'); // ADDED
-            return start != null && String(start).trim() !== ''; // ADDED
-        } // ADDED
-
-        function canScheduleTilerGroup(cell) { // NEW
-            if (!isTilerGroup(cell)) return false; // NEW
-            const users = window.Trellis && window.Trellis.users; // NEW
-            if (users && typeof users.isEnabled === 'function' && users.isEnabled() && typeof users.canManagePlanting === 'function') return users.canManagePlanting(cell); // NEW
-            return true; // NEW
-        } // NEW
-
-        function getOccupancyNavigatorApi() { // NEW
-            return graph && graph.__trellisBedSuccessionNavigator && typeof graph.__trellisBedSuccessionNavigator.getSelectedClusterOccupancy === 'function' // NEW
-                ? graph.__trellisBedSuccessionNavigator // NEW
-                : null; // NEW
-        } // NEW
-
-        function getPlantingOccupancyRange(cell) { // NEW
-            const perennial = String(getAttr(cell, 'perennial') || '') === '1' || !!String(getAttr(cell, 'lifespan_start') || '').trim(); // ADDED
-            const start = perennial ? parseTaskOverlayDate(getAttr(cell, 'lifespan_start')) : (parseTaskOverlayDate(getAttr(cell, 'transplant_date')) || parseTaskOverlayDate(getAttr(cell, 'sow_date'))); // CHANGED
-            const end = perennial ? parseTaskOverlayDate(getAttr(cell, 'lifespan_end')) : parseTaskOverlayDate(getAttr(cell, 'harvest_end')); // CHANGED
-            if (!start || !end || end.dayNumber < start.dayNumber) return { startISO: null, endISO: null }; // NEW
-            return { startISO: start.iso, endISO: end.iso }; // NEW
-        } // NEW
-
-        function fallbackOccupancyForSource(source) { // NEW
-            if (!isTilerGroup(source)) return { selectedId: null, items: [] }; // NEW
-            const range = getPlantingOccupancyRange(source); // NEW
-            return { // NEW
-                selectedId: source.id, // NEW
-                items: [{ cellId: source.id, label: getSourceCropTitle(source) || source.id || 'Planting', startISO: range.startISO, endISO: range.endISO }] // NEW
-            }; // NEW
-        } // NEW
-
-        function getOccupancyModelForEntry(entry) { // NEW
-            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null; // NEW
-            const api = getOccupancyNavigatorApi(); // NEW
-            if (api) { // NEW
-                const result = api.getSelectedClusterOccupancy(source); // NEW
-                if (result && Array.isArray(result.items) && result.items.length) return result; // NEW
-            } // NEW
-            return fallbackOccupancyForSource(source); // NEW
-        } // NEW
-
-        function getScheduleDialogOpener() { // ADDED
-            return window.USL && window.USL.scheduler && typeof window.USL.scheduler.openScheduleDialog === 'function' // ADDED
-                ? window.USL.scheduler.openScheduleDialog // ADDED
-                : null; // ADDED
-        } // ADDED
-
-        function getDerivedScheduleDialogOpener() { // ADDED
-            return window.USL && window.USL.scheduler && typeof window.USL.scheduler.openDerivedScheduleDialog === 'function' // ADDED
-                ? window.USL.scheduler.openDerivedScheduleDialog // ADDED
-                : null; // ADDED
-        } // ADDED
-
-        function getSetPlantDialogOpener() { // ADDED
-            return window.USL && window.USL.scheduler && typeof window.USL.scheduler.openSetPlantDialog === 'function' // ADDED
-                ? window.USL.scheduler.openSetPlantDialog // ADDED
-                : null; // ADDED
-        } // ADDED
-
-        function sourceOccupancyCompleteForDerived(cell) { // ADDED
-            if (!isTilerGroup(cell)) return false; // ADDED
-            const perennial = String(getAttr(cell, 'perennial') || '') === '1' || !!String(getAttr(cell, 'lifespan_start') || '').trim(); // ADDED
-            const start = perennial ? String(getAttr(cell, 'lifespan_start') || '').trim() : (String(getAttr(cell, 'transplant_date') || '').trim() || String(getAttr(cell, 'sow_date') || '').trim()); // ADDED
-            const end = perennial ? String(getAttr(cell, 'lifespan_end') || '').trim() : String(getAttr(cell, 'harvest_end') || '').trim(); // ADDED
-            return !!(start && end); // ADDED
-        } // ADDED
-
-        function sourceIsAnnual(cell) { // ADDED
-            if (String(getAttr(cell, 'perennial') || '') === '1' || String(getAttr(cell, 'lifespan_start') || '').trim()) return false; // CHANGED
-            return String(getAttr(cell, 'annual') || '') === '1' || !!String(getAttr(cell, 'harvest_end') || '').trim(); // CHANGED
-        } // ADDED
-
-        function styleDerivedActionButton(button, enabled, color) { // ADDED
-            applyVertexButtonStyle(button, 'add', { compact: true }); // NEW
-            button.style.border = '1px solid ' + color; // ADDED
-            button.style.borderRadius = '5px'; // ADDED
-            button.style.background = enabled ? '#ffffff' : '#f1f3f4'; // ADDED
-            button.style.color = enabled ? color : '#9aa0a6'; // ADDED
-            button.style.cursor = enabled ? 'pointer' : 'default'; // ADDED
-            button.style.fontSize = '10px'; // ADDED
-            button.style.fontWeight = 'bold'; // ADDED
-            button.style.padding = '4px 7px'; // ADDED
-            button.style.whiteSpace = 'nowrap'; // ADDED
-        } // ADDED
-
-        function createDerivedScheduleActionButton(entry, mode) { // ADDED
-            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null; // ADDED
-            if (!isTilerGroup(source) || !hasTilerSchedule(source)) return null; // ADDED
-            const opener = getDerivedScheduleDialogOpener(); // ADDED
-            const allowed = canScheduleTilerGroup(source); // ADDED
-            const hasDates = sourceOccupancyCompleteForDerived(source); // ADDED
-            const annualOk = mode !== 'turnover' || sourceIsAnnual(source); // ADDED
-            const enabled = !!(opener && allowed && hasDates && annualOk); // ADDED
-            const button = document.createElement('button'); // ADDED
-            button.type = 'button'; // ADDED
-            button.textContent = mode === 'turnover' ? 'Add Turnover' : 'Add Companion'; // ADDED
-            button.disabled = !enabled; // ADDED
-            button.title = !opener ? 'Scheduler plugin is unavailable.' : (!allowed ? 'You do not have permission to schedule this planting group.' : (!hasDates ? 'Source occupancy dates are required.' : (!annualOk ? 'Turnover is available only for annual source groups.' : button.textContent))); // ADDED
-            styleDerivedActionButton(button, enabled, '#166534'); // CHANGE
-            mxEvent.addListener(button, 'mousedown', consumeOverlayControlEvent); // ADDED
-            mxEvent.addListener(button, 'dblclick', consumeOverlayControlEvent); // ADDED
-            mxEvent.addListener(button, 'click', async function (evt) { // ADDED
-                consumeOverlayControlEvent(evt); // ADDED
-                if (!enabled) return; // ADDED
-                const liveSource = model.getCell(entry.sourceId); // ADDED
-                if (!isTilerGroup(liveSource)) return; // ADDED
-                try { // ADDED
-                    await opener(ui, liveSource, { mode }); // ADDED
-                    setTimeout(refresh, 0); // ADDED
-                } catch (e) { // ADDED
-                    mxUtils.alert('Derived scheduling error: ' + (e && e.message ? e.message : String(e))); // ADDED
-                } // ADDED
-            }); // ADDED
-            return button; // ADDED
-        } // ADDED
-
-        function hasAssignedPlant(cell) { // ADDED
-            const plantName = getAttr(cell, 'plant_name'); // ADDED
-            return plantName != null && String(plantName).trim() !== ''; // ADDED
-        } // ADDED
-
-        function getTaskLinkLabelBadge(entry, card) { // CHANGE
-            if (!entry || !entry.linkLabels || !card) return ''; // CHANGE
-            const label = normalizeBadgeText(entry.linkLabels.get(card.id)); // CHANGE
-            if (!label) return ''; // CHANGE
-            const title = normalizeBadgeText(taskTitle(card)); // CHANGE
-            return label.toLowerCase() === title.toLowerCase() ? '' : label; // CHANGE
-        } // CHANGE
-
-        function applyPanelStyle(panel) { // CHANGE
-            panel.style.position = 'absolute'; // CHANGE
-            panel.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL); // CHANGE
-            panel.style.width = PANEL_WIDTH + 'px'; // CHANGE
-            panel.style.boxSizing = 'border-box'; // CHANGE
-            panel.style.padding = '8px'; // CHANGE
-            panel.style.border = '1px solid rgba(60, 64, 67, 0.28)'; // CHANGE
-            panel.style.borderRadius = '6px'; // CHANGE
-            panel.style.background = 'rgba(255, 255, 255, 0.97)'; // CHANGE
-            panel.style.boxShadow = '0 3px 10px rgba(0, 0, 0, 0.20)'; // CHANGE
-            panel.style.fontFamily = 'Arial, Helvetica, sans-serif'; // CHANGE
-            panel.style.fontSize = '11px'; // CHANGE
-            panel.style.lineHeight = '16px'; // CHANGE
-            panel.style.pointerEvents = 'all'; // CHANGE
-            panel.style.color = '#202124'; // CHANGE
-        } // CHANGE
-
-        function makeTextSpan(text, color) { // CHANGE
-            const span = document.createElement('span'); // CHANGE
-            span.textContent = text || ''; // CHANGE
-            span.style.overflow = 'hidden'; // CHANGE
-            span.style.textOverflow = 'ellipsis'; // CHANGE
-            span.style.whiteSpace = 'nowrap'; // CHANGE
-            if (color) span.style.color = color; // CHANGE
-            return span; // CHANGE
-        } // CHANGE
-
-        function makeClickableRow(card, className) { // CHANGE
-            const row = document.createElement('div'); // CHANGE
-            row.className = className || ''; // CHANGE
-            row.setAttribute('title', 'Click to navigate to task'); // CHANGE
-            const cardId = card.id; // CHANGE
-            mxEvent.addListener(row, 'mousedown', function (evt) { // CHANGE
-                if (evt.button != null && evt.button !== 0) return; // CHANGE
-                const realCard = model.getCell(cardId); // CHANGE
-                if (realCard && model.isVertex(realCard)) selectAndReveal(realCard); // CHANGE
-                mxEvent.consume(evt); // CHANGE
-                if (evt.stopPropagation) evt.stopPropagation(); // CHANGE
-                if (evt.preventDefault) evt.preventDefault(); // CHANGE
-            }); // CHANGE
-            return row; // CHANGE
-        } // CHANGE
-
-        function makeBadge(text) { // CHANGE
-            const badge = document.createElement('span'); // CHANGE
-            badge.textContent = text; // CHANGE
-            badge.style.display = 'inline-block'; // CHANGE
-            badge.style.maxWidth = '150px'; // CHANGE
-            badge.style.overflow = 'hidden'; // CHANGE
-            badge.style.textOverflow = 'ellipsis'; // CHANGE
-            badge.style.whiteSpace = 'nowrap'; // CHANGE
-            badge.style.padding = '1px 6px'; // CHANGE
-            badge.style.border = '1px solid rgba(60, 64, 67, 0.25)'; // CHANGE
-            badge.style.borderRadius = '10px'; // CHANGE
-            badge.style.background = '#f8f9fa'; // CHANGE
-            badge.style.color = '#3c4043'; // CHANGE
-            badge.style.fontSize = '10px'; // CHANGE
-            badge.style.lineHeight = '14px'; // CHANGE
-            return badge; // CHANGE
-        } // CHANGE
-
-        function makeYearControlButton(text, disabled) { // CHANGE
-            const button = document.createElement('button'); // CHANGE
-            button.type = 'button'; // CHANGE
-            button.textContent = text; // CHANGE
-            button.disabled = !!disabled; // CHANGE
-            button.style.width = '24px'; // CHANGE
-            button.style.height = '22px'; // CHANGE
-            button.style.border = '1px solid rgba(60, 64, 67, 0.28)'; // CHANGE
-            button.style.borderRadius = '5px'; // CHANGE
-            button.style.background = disabled ? '#f1f3f4' : '#ffffff'; // CHANGE
-            button.style.color = disabled ? '#9aa0a6' : '#202124'; // CHANGE
-            button.style.cursor = disabled ? 'default' : 'pointer'; // CHANGE
-            button.style.padding = '0'; // CHANGE
-            button.style.lineHeight = '18px'; // CHANGE
-            return button; // CHANGE
-        } // CHANGE
-
-        function consumeOverlayControlEvent(evt) { // ADDED
-            try { mxEvent.consume(evt); } catch (_) { } // ADDED
-            if (evt && evt.stopPropagation) evt.stopPropagation(); // ADDED
-            if (evt && evt.preventDefault) evt.preventDefault(); // ADDED
-        } // ADDED
-
-        function existingCompanionSourceCell(cell) { // ADDED
-            if (String(getAttr(cell, 'derived_mode') || '').trim().toLowerCase() !== 'companion') return null; // ADDED
-            const sourceId = String(getAttr(cell, 'derived_source_group_id') || '').trim(); // ADDED
-            if (!sourceId) return null; // ADDED
-            const source = model.getCell(sourceId); // ADDED
-            return isTilerGroup(source) ? source : null; // ADDED
-        } // ADDED
-
-        function scheduleActionButtonLabelFor(source) { // ADDED
-            if (hasTilerSchedule(source) && existingCompanionSourceCell(source)) return 'Edit companion'; // ADDED
-            return hasTilerSchedule(source) ? 'Edit schedule' : 'Set schedule'; // ADDED
-        } // ADDED
-
-        function scheduleActionButtonTitleFor(source, opener, allowed) { // ADDED
-            if (!allowed) return 'You do not have permission to schedule this planting group.'; // ADDED
-            if (!opener) return 'Scheduler plugin is unavailable.'; // ADDED
-            if (hasTilerSchedule(source) && existingCompanionSourceCell(source)) return 'Opens companion scheduling for this derived companion.'; // ADDED
-            return scheduleActionButtonLabelFor(source); // ADDED
-        } // ADDED
-
-        function createScheduleActionButton(entry) { // ADDED
-            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null; // ADDED
-            if (!isTilerGroup(source)) return null; // ADDED
-            const opener = getScheduleDialogOpener(); // ADDED
-            const allowed = canScheduleTilerGroup(source); // NEW
-            const button = document.createElement('button'); // ADDED
-            button.type = 'button'; // ADDED
-            button.textContent = scheduleActionButtonLabelFor(source); // CHANGED
-            button.title = scheduleActionButtonTitleFor(source, opener, allowed); // CHANGED
-            button.disabled = !opener || !allowed; // CHANGE
-            applyVertexButtonStyle(button, 'open', { compact: true }); // NEW
-            button.style.border = '1px solid #2563eb'; // ADDED
-            button.style.borderRadius = '5px'; // ADDED
-            button.style.background = opener && allowed ? '#ffffff' : '#f1f3f4'; // CHANGE
-            button.style.color = opener && allowed ? '#1d4ed8' : '#9aa0a6'; // CHANGE
-            button.style.cursor = opener && allowed ? 'pointer' : 'default'; // CHANGE
-            button.style.fontSize = '10px'; // ADDED
-            button.style.fontWeight = 'bold'; // ADDED
-            button.style.padding = '4px 7px'; // ADDED
-            button.style.whiteSpace = 'nowrap'; // ADDED
-            mxEvent.addListener(button, 'mousedown', consumeOverlayControlEvent); // ADDED
-            mxEvent.addListener(button, 'dblclick', consumeOverlayControlEvent); // ADDED
-            mxEvent.addListener(button, 'click', async function (evt) { // ADDED
-                consumeOverlayControlEvent(evt); // ADDED
-                if (!opener) return; // ADDED
-                const liveSource = model.getCell(entry.sourceId); // ADDED
-                if (!isTilerGroup(liveSource)) return; // ADDED
-                if (!canScheduleTilerGroup(liveSource)) return; // NEW
-                try { // ADDED
-                    await opener(ui, liveSource); // ADDED
-                    setTimeout(refresh, 0); // ADDED
-                } catch (e) { // ADDED
-                    mxUtils.alert('Scheduling error: ' + (e && e.message ? e.message : String(e))); // ADDED
-                } // ADDED
-            }); // ADDED
-            return button; // ADDED
-        } // ADDED
-
-        function createSetPlantActionButton(entry) { // ADDED
-            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null; // ADDED
-            if (!isTilerGroup(source) || hasAssignedPlant(source)) return null; // ADDED
-            const opener = getSetPlantDialogOpener(); // ADDED
-            const button = document.createElement('button'); // ADDED
-            button.type = 'button'; // ADDED
-            button.textContent = 'Set plant'; // ADDED
-            button.title = opener ? 'Set plant' : 'Scheduler plant picker is unavailable.'; // ADDED
-            button.disabled = !opener; // ADDED
-            applyVertexButtonStyle(button, 'add', { compact: true }); // NEW
-            button.style.border = '1px solid #188038'; // ADDED
-            button.style.borderRadius = '5px'; // ADDED
-            button.style.background = opener ? '#ffffff' : '#f1f3f4'; // ADDED
-            button.style.color = opener ? '#137333' : '#9aa0a6'; // ADDED
-            button.style.cursor = opener ? 'pointer' : 'default'; // ADDED
-            button.style.fontSize = '10px'; // ADDED
-            button.style.fontWeight = 'bold'; // ADDED
-            button.style.padding = '4px 7px'; // ADDED
-            button.style.whiteSpace = 'nowrap'; // ADDED
-            mxEvent.addListener(button, 'mousedown', consumeOverlayControlEvent); // ADDED
-            mxEvent.addListener(button, 'dblclick', consumeOverlayControlEvent); // ADDED
-            mxEvent.addListener(button, 'click', async function (evt) { // ADDED
-                consumeOverlayControlEvent(evt); // ADDED
-                if (!opener) return; // ADDED
-                const liveSource = model.getCell(entry.sourceId); // ADDED
-                if (!isTilerGroup(liveSource) || hasAssignedPlant(liveSource)) return; // ADDED
-                try { // ADDED
-                    await opener(ui, liveSource); // ADDED
-                    setTimeout(refresh, 0); // ADDED
-                } catch (e) { // ADDED
-                    mxUtils.alert('Set Plant error: ' + (e && e.message ? e.message : String(e))); // ADDED
-                } // ADDED
-            }); // ADDED
-            return button; // ADDED
-        } // ADDED
-
-        function createSecondaryActionRow(entry) { // ADDED
-            const setPlantButton = createSetPlantActionButton(entry); // ADDED
-            if (!setPlantButton) return null; // ADDED
-            const row = document.createElement('div'); // ADDED
-            row.style.gridColumn = '1 / span 2'; // ADDED
-            row.style.display = 'flex'; // ADDED
-            row.style.justifyContent = 'flex-end'; // ADDED
-            row.style.marginTop = '7px'; // ADDED
-            row.appendChild(setPlantButton); // ADDED
-            return row; // ADDED
-        } // ADDED
-
-        function applyOverlayYearFilter(entry, year) { // CHANGE
-            if (!entry || !Number.isFinite(Number(year))) return; // CHANGE
-            const selectedYear = Number(year); // CHANGE
-            const cards = entry.targetIds.map(id => model.getCell(id)).filter(isValidOverlayCard); // CHANGE
-            model.beginUpdate(); // CHANGE
-            try { // CHANGE
-                for (const card of cards) { // CHANGE
-                    const hidden = !taskDateRangeOverlapsYear(card, selectedYear); // CHANGE
-                    const nextValue = hidden ? '1' : null; // CHANGE
-                    if (getAttr(card, 'year_hidden') !== (nextValue || null)) setCellAttrUndoable(card, 'year_hidden', nextValue); // CHANGE
-                } // CHANGE
-            } finally { // CHANGE
-                model.endUpdate(); // CHANGE
-            } // CHANGE
-            entry.selectedYear = selectedYear; // CHANGE
-            selectedYearBySource.set(entry.sourceId, selectedYear); // CHANGE
-            dispatchYearFilterChangedForTaskOverlay(null, selectedYear); // CHANGE
-            renderEntry(entry); // CHANGE
-        } // CHANGE
-
-        function restoreEntryTasksToCurrentYear(entry) { // CHANGE
-            if (!entry || !entry.targetIds) return; // CHANGE
-            const cards = entry.targetIds.map(id => model.getCell(id)).filter(isValidOverlayCard); // CHANGE
-            if (!cards.length) return; // CHANGE
-            const source = model.getCell(entry.sourceId); // CHANGE
-            const restoreYear = getDashboardYearForCell(source || cards[0]); // CHANGE
-            if (Number(entry.selectedYear) === restoreYear) return; // CHANGE
-            model.beginUpdate(); // CHANGE
-            try { // CHANGE
-                for (const card of cards) { // CHANGE
-                    const hidden = !taskDateRangeOverlapsYear(card, restoreYear); // CHANGE
-                    const nextValue = hidden ? '1' : null; // CHANGE
-                    if (getAttr(card, 'year_hidden') !== (nextValue || null)) setCellAttrUndoable(card, 'year_hidden', nextValue); // CHANGE
-                } // CHANGE
-            } finally { // CHANGE
-                model.endUpdate(); // CHANGE
-            } // CHANGE
-            selectedYearBySource.delete(entry.sourceId); // CHANGE
-            dispatchYearFilterChangedForTaskOverlay(null, restoreYear); // CHANGE
-        } // CHANGE
-
-        function isEntryStillSelected(entry) { // CHANGE
-            const selected = graph.getSelectionCells && graph.getSelectionCells(); // CHANGE
-            if (!entry || !selected || selected.length !== 1) return false; // CHANGE
-            const selectedCell = normalizeForLinkingAndPrimary(selected[0]); // CHANGE
-            return !!selectedCell && selectedCell.id === entry.sourceId; // CHANGE
-        } // CHANGE
-
-        function createYearControls(entry) { // CHANGE
-            const years = entry && entry.years ? entry.years : []; // CHANGE
-            if (years.length < 2) return null; // CHANGE
-            const current = Number(entry.selectedYear); // CHANGE
-            const idx = Math.max(0, years.indexOf(current)); // CHANGE
-            const wrap = document.createElement('div'); // CHANGE
-            wrap.style.gridColumn = '1 / span 2'; // CHANGE
-            wrap.style.display = 'flex'; // CHANGE
-            wrap.style.alignItems = 'center'; // CHANGE
-            wrap.style.gap = '5px'; // CHANGE
-            wrap.style.marginTop = '7px'; // CHANGE
-
-            const prev = makeYearControlButton('<', idx <= 0); // CHANGE
-            const label = document.createElement('div'); // CHANGE
-            label.textContent = String(years[idx] || current || years[0]); // CHANGE
-            label.style.minWidth = '48px'; // CHANGE
-            label.style.textAlign = 'center'; // CHANGE
-            label.style.border = '1px solid rgba(60, 64, 67, 0.28)'; // CHANGE
-            label.style.borderRadius = '5px'; // CHANGE
-            label.style.background = '#ffffff'; // CHANGE
-            label.style.fontWeight = 'bold'; // CHANGE
-            label.style.fontSize = '10px'; // CHANGE
-            label.style.lineHeight = '20px'; // CHANGE
-            const next = makeYearControlButton('>', idx >= years.length - 1); // CHANGE
-
-            mxEvent.addListener(prev, 'mousedown', function (evt) { // CHANGE
-                if (idx > 0) applyOverlayYearFilter(entry, years[idx - 1]); // CHANGE
-                mxEvent.consume(evt); // CHANGE
-                if (evt.stopPropagation) evt.stopPropagation(); // CHANGE
-                if (evt.preventDefault) evt.preventDefault(); // CHANGE
-            }); // CHANGE
-            mxEvent.addListener(next, 'mousedown', function (evt) { // CHANGE
-                if (idx < years.length - 1) applyOverlayYearFilter(entry, years[idx + 1]); // CHANGE
-                mxEvent.consume(evt); // CHANGE
-                if (evt.stopPropagation) evt.stopPropagation(); // CHANGE
-                if (evt.preventDefault) evt.preventDefault(); // CHANGE
-            }); // CHANGE
-
-            wrap.appendChild(prev); // CHANGE
-            wrap.appendChild(label); // CHANGE
-            wrap.appendChild(next); // CHANGE
-            return wrap; // CHANGE
-        } // CHANGE
-
-        function createHeader(entry, count) { // CHANGE
-            const header = document.createElement('div'); // CHANGE
-            header.style.display = 'grid'; // CHANGE
-            header.style.gridTemplateColumns = '1fr auto'; // CHANGE
-            header.style.alignItems = 'center'; // CHANGE
-            header.style.columnGap = '8px'; // CHANGE
-            header.style.marginBottom = '8px'; // CHANGE
-
-            const titleWrap = document.createElement('div'); // CHANGE
-            const title = document.createElement('div'); // CHANGE
-            title.textContent = getOverlayTitle(entry); // CHANGE
-            title.style.fontWeight = 'bold'; // CHANGE
-            title.style.fontSize = '12px'; // CHANGE
-            title.style.overflow = 'hidden'; // CHANGE
-            title.style.textOverflow = 'ellipsis'; // CHANGE
-            title.style.whiteSpace = 'nowrap'; // CHANGE
-            const subtitle = document.createElement('div'); // CHANGE
-            subtitle.textContent = activeMode === MODE_OCCUPANCY ? (count + (count === 1 ? ' planting group' : ' planting groups')) : (count + (count === 1 ? ' linked task' : ' linked tasks')); // CHANGE
-            subtitle.style.color = '#5f6368'; // CHANGE
-            subtitle.style.fontSize = '10px'; // CHANGE
-            titleWrap.appendChild(title); // CHANGE
-            titleWrap.appendChild(subtitle); // CHANGE
-            header.appendChild(titleWrap); // CHANGE
-
-            const actions = document.createElement('div'); // ADDED
-            actions.style.display = 'inline-flex'; // ADDED
-            actions.style.alignItems = 'center'; // ADDED
-            actions.style.gap = '6px'; // ADDED
-            actions.style.flexWrap = 'wrap'; // ADDED
-            actions.style.justifyContent = 'flex-end'; // ADDED
-
-            const toggle = document.createElement('div'); // CHANGE
-            toggle.style.display = 'inline-flex'; // CHANGE
-            toggle.style.border = '1px solid rgba(60, 64, 67, 0.28)'; // CHANGE
-            toggle.style.borderRadius = '5px'; // CHANGE
-            toggle.style.overflow = 'hidden'; // CHANGE
-            toggle.appendChild(createModeButton(entry, 'Cards', MODE_CARDS)); // CHANGE
-            toggle.appendChild(createModeButton(entry, 'Schedule', MODE_SCHEDULE)); // CHANGE
-            toggle.appendChild(createModeButton(entry, 'Occupancy', MODE_OCCUPANCY)); // NEW
-            actions.appendChild(toggle); // CHANGED
-            const scheduleButton = createScheduleActionButton(entry); // ADDED
-            if (scheduleButton) actions.appendChild(scheduleButton); // ADDED
-            const companionButton = createDerivedScheduleActionButton(entry, 'companion'); // ADDED
-            if (companionButton) actions.appendChild(companionButton); // ADDED
-            const turnoverButton = createDerivedScheduleActionButton(entry, 'turnover'); // ADDED
-            if (turnoverButton) actions.appendChild(turnoverButton); // ADDED
-            header.appendChild(actions); // ADDED
-            const secondaryActionRow = createSecondaryActionRow(entry); // ADDED
-            if (secondaryActionRow) header.appendChild(secondaryActionRow); // ADDED
-            const yearControls = createYearControls(entry); // CHANGE
-            if (yearControls) header.appendChild(yearControls); // CHANGE
-            return header; // CHANGE
-        } // CHANGE
-
-        function createScheduleOnlyHeader(entry) { // ADDED
-            const header = document.createElement('div'); // ADDED
-            header.style.display = 'flex'; // CHANGED
-            header.style.flexDirection = 'column'; // ADDED
-            header.style.alignItems = 'stretch'; // CHANGED
-            header.style.gap = '7px'; // ADDED
-
-            const title = document.createElement('div'); // ADDED
-            title.textContent = getScheduleOnlyTitle(entry); // ADDED
-            title.style.fontWeight = 'bold'; // ADDED
-            title.style.fontSize = '12px'; // ADDED
-            title.style.overflow = 'hidden'; // ADDED
-            title.style.textOverflow = 'ellipsis'; // ADDED
-            title.style.whiteSpace = 'nowrap'; // ADDED
-            header.appendChild(title); // ADDED
-
-            const toggle = document.createElement('div'); // NEW
-            toggle.style.display = 'inline-flex'; // NEW
-            toggle.style.alignSelf = 'flex-start'; // NEW
-            toggle.style.border = '1px solid rgba(60, 64, 67, 0.28)'; // NEW
-            toggle.style.borderRadius = '5px'; // NEW
-            toggle.style.overflow = 'hidden'; // NEW
-            const effectiveMode = activeMode === MODE_OCCUPANCY ? MODE_OCCUPANCY : MODE_SCHEDULE; // NEW
-            toggle.appendChild(createModeButton(entry, 'Schedule', MODE_SCHEDULE, effectiveMode)); // NEW
-            toggle.appendChild(createModeButton(entry, 'Occupancy', MODE_OCCUPANCY, effectiveMode)); // NEW
-            header.appendChild(toggle); // NEW
-
-            const scheduleButton = createScheduleActionButton(entry); // ADDED
-            if (scheduleButton) { // ADDED
-                scheduleButton.style.alignSelf = 'flex-start'; // ADDED
-                header.appendChild(scheduleButton); // ADDED
-            } // ADDED
-            const companionButton = createDerivedScheduleActionButton(entry, 'companion'); // ADDED
-            if (companionButton) { companionButton.style.alignSelf = 'flex-start'; header.appendChild(companionButton); } // ADDED
-            const turnoverButton = createDerivedScheduleActionButton(entry, 'turnover'); // ADDED
-            if (turnoverButton) { turnoverButton.style.alignSelf = 'flex-start'; header.appendChild(turnoverButton); } // ADDED
-            const setPlantButton = createSetPlantActionButton(entry); // ADDED
-            if (setPlantButton) { // ADDED
-                setPlantButton.style.alignSelf = 'flex-start'; // ADDED
-                header.appendChild(setPlantButton); // ADDED
-            } // ADDED
-            return header; // ADDED
-        } // ADDED
-
-        function createModeButton(entry, label, mode, activeOverride) { // CHANGE
-            const button = document.createElement('button'); // CHANGE
-            button.type = 'button'; // CHANGE
-            button.textContent = label; // CHANGE
-            button.style.border = '0'; // CHANGE
-            button.style.padding = '4px 7px'; // CHANGE
-            button.style.fontSize = '10px'; // CHANGE
-            button.style.cursor = 'pointer'; // CHANGE
-            const active = (activeOverride || activeMode) === mode; // NEW
-            button.style.background = active ? '#202124' : '#ffffff'; // CHANGE
-            button.style.color = active ? '#ffffff' : '#202124'; // CHANGE
-            mxEvent.addListener(button, 'mousedown', function (evt) { // CHANGE
-                setMode(mode); // CHANGE
-                mxEvent.consume(evt); // CHANGE
-                if (evt.stopPropagation) evt.stopPropagation(); // CHANGE
-                if (evt.preventDefault) evt.preventDefault(); // CHANGE
-            }); // CHANGE
-            return button; // CHANGE
-        } // CHANGE
-
-        function createBody() { // CHANGE
-            const body = document.createElement('div'); // CHANGE
-            body.style.maxHeight = BODY_MAX_HEIGHT + 'px'; // CHANGE
-            body.style.overflowY = 'auto'; // CHANGE
-            body.style.overflowX = 'hidden'; // CHANGE
-            body.style.paddingRight = '2px'; // CHANGE
-            return body; // CHANGE
-        } // CHANGE
-
-        function renderEmptyTaskOverlayMessage(body) { // CHANGE
-            const empty = document.createElement('div'); // CHANGE
-            empty.textContent = 'No linked tasks visible for this year'; // CHANGE
-            empty.style.color = '#5f6368'; // CHANGE
-            empty.style.padding = '8px 0'; // CHANGE
-            body.appendChild(empty); // CHANGE
-        } // CHANGE
-
-        function countGroupItems(groups) { // CHANGE
-            return (groups || []).reduce((sum, group) => sum + group.items.length, 0); // CHANGE
-        } // CHANGE
-
-        function countScheduleRows(cards) { // CHANGE
-            return buildScheduleRowsForCards(cards).length; // CHANGE
-        } // CHANGE
-
-        function countOccupancyRows(entry) { // NEW
-            const occupancy = getOccupancyModelForEntry(entry); // NEW
-            return occupancy && Array.isArray(occupancy.items) ? occupancy.items.length : 0; // NEW
-        } // NEW
-
-        function todayOverlayDayNumber() { // CHANGE
-            const now = new Date(); // CHANGE
-            return Math.floor(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86400000); // CHANGE
-        } // CHANGE
-
-        function firstScheduledCard(cards) { // CHANGE
-            return (cards || []).slice().sort(compareRepeatOccurrenceCards).find(card => !!getTaskDateRange(card)) || (cards && cards[0]) || null; // CHANGE
-        } // CHANGE
-
-        function buildScheduleRowsForCards(cards) { // CHANGE
-            const rows = []; // CHANGE
-            const repeatRows = new Map(); // CHANGE
-
-            for (const card of cards || []) { // CHANGE
-                const seriesKey = buildRepeatSeriesKeyForOverlay(card); // CHANGE
-                if (!seriesKey) { // CHANGE
-                    rows.push({ // CHANGE
-                        key: 'card:' + card.id, // CHANGE
-                        card, // CHANGE
-                        cards: [card], // CHANGE
-                        label: taskTitle(card), // CHANGE
-                        repeat: false // CHANGE
-                    }); // CHANGE
-                    continue; // CHANGE
-                } // CHANGE
-
-                if (!repeatRows.has(seriesKey)) { // CHANGE
-                    repeatRows.set(seriesKey, { // CHANGE
-                        key: 'repeat:' + seriesKey, // CHANGE
-                        card, // CHANGE
-                        cards: [], // CHANGE
-                        label: taskTitle(card), // CHANGE
-                        repeat: true // CHANGE
-                    }); // CHANGE
-                } // CHANGE
-                repeatRows.get(seriesKey).cards.push(card); // CHANGE
-            } // CHANGE
-
-            for (const row of repeatRows.values()) { // CHANGE
-                row.cards.sort(compareRepeatOccurrenceCards); // CHANGE
-                row.card = firstScheduledCard(row.cards) || row.cards[0]; // CHANGE
-                row.label = taskTitle(row.card); // CHANGE
-                rows.push(row); // CHANGE
-            } // CHANGE
-
-            rows.sort((a, b) => compareTaskCardsByStartDate(a.card, b.card)); // CHANGE
-            return rows; // CHANGE
-        } // CHANGE
-
-        function createLaneHeader(entry, group, collapsed) { // CHANGE
-            const header = document.createElement('div'); // CHANGE
-            header.style.display = 'grid'; // CHANGE
-            header.style.gridTemplateColumns = '21px 6px 1fr auto'; // CHANGE
-            header.style.alignItems = 'center'; // CHANGE
-            header.style.columnGap = '6px'; // CHANGE
-            header.style.margin = '8px 0 3px'; // CHANGE
-            header.style.color = '#3c4043'; // CHANGE
-            header.style.fontWeight = 'bold'; // CHANGE
-            header.style.fontSize = '10px'; // CHANGE
+    // -------------------- Linked Task Schedule Overlay Manager --------------------
+    // DOM-only task schedule panel plus mxPolyline guide lines; no model or undo changes.
+    const taskScheduleOverlay = (function () {
+        const MODE_CARDS = 'cards';
+        const MODE_SCHEDULE = 'schedule';
+        const MODE_OCCUPANCY = 'occupancy';
+        const PANEL_WIDTH = 380;
+        const PANEL_GAP = 12;
+        const PANEL_SIDE_OFFSET = 60;
+        const BODY_MAX_HEIGHT = 360;
+        const registry = new Map(); // sourceId -> entry
+        const selectedYearBySource = new Map(); // sourceId -> session-only year
+        const LANE_COLLAPSE_STORAGE_KEY = 'trellis.vertexLinker.taskOverlay.collapsedLanes.v1';
+        const laneCollapseState = new Map(); // laneKey -> collapsed boolean
+        let laneCollapseLoaded = false;
+        let activeMode = MODE_CARDS;
+
+        function getOverlayPane() {
+            const layeredPane = ensureGraphOverlaySvgLayer('connection');
+            if (layeredPane) return layeredPane;
+            const view = graph.getView && graph.getView();
+            return view && view.getOverlayPane ? view.getOverlayPane() : null;
+        }
+
+        function getPanelHost() {
+            const host = graph.container;
+            if (!host) return null;
+            try {
+                if (window.getComputedStyle(host).position === 'static') {
+                    host.style.position = 'relative';
+                }
+            } catch (_) { }
+            return host;
+        }
+
+        function getPanelLayer() {
+            return ensureGraphOverlayHtmlLayer('control') || getPanelHost();
+        }
+
+        function removeNode(node) {
+            if (node && node.parentNode) node.parentNode.removeChild(node);
+        }
+
+        function removePolyline(poly) {
+            if (poly && poly.node && poly.node.parentNode) {
+                poly.node.parentNode.removeChild(poly.node);
+            }
+        }
+
+        function loadLaneCollapseState() {
+            if (laneCollapseLoaded) return;
+            laneCollapseLoaded = true;
+            try {
+                const raw = window.localStorage && window.localStorage.getItem(LANE_COLLAPSE_STORAGE_KEY);
+                const parsed = raw ? JSON.parse(raw) : null;
+                if (!parsed || typeof parsed !== 'object') return;
+                for (const key in parsed) {
+                    if (Object.prototype.hasOwnProperty.call(parsed, key)) laneCollapseState.set(key, parsed[key] === true);
+                }
+            } catch (_) { }
+        }
+
+        function saveLaneCollapseState() {
+            try {
+                if (!window.localStorage) return;
+                const out = {};
+                laneCollapseState.forEach((collapsed, key) => { out[key] = !!collapsed; });
+                window.localStorage.setItem(LANE_COLLAPSE_STORAGE_KEY, JSON.stringify(out));
+            } catch (_) { }
+        }
+
+        function laneCollapseKey(group) {
+            return String(group && (group.laneKey || group.label || group.laneId) || 'UNLANED');
+        }
+
+        function isLaneGroupCollapsed(group) {
+            loadLaneCollapseState();
+            return laneCollapseState.get(laneCollapseKey(group)) === true;
+        }
+
+        function setLaneGroupCollapsed(group, collapsed) {
+            loadLaneCollapseState();
+            laneCollapseState.set(laneCollapseKey(group), !!collapsed);
+            saveLaneCollapseState();
+        }
+
+        function normalizeBadgeText(text) {
+            return stripHtmlAndPlaceholders(String(text || '')).trim();
+        }
+
+        function isValidOverlayCard(card) {
+            return !!card && model.isVertex(card) && isKanbanCard(card) && !!findKanbanBoardAncestor(card);
+        }
+
+        function taskTitle(card) {
+            return getAttr(card, 'title') || getRawTextLabel(card) || card.id || 'Task';
+        }
+
+        function getSourceCropTitle(source) {
+            if (!source) return '';
+            const plant = normalizeBadgeText(getAttr(source, 'plant_name') || getAttr(source, 'crop_name') || '');
+            const variety = normalizeBadgeText(getAttr(source, 'variety_name') || getAttr(source, 'variety') || '');
+            if (plant && variety) return plant + ' - ' + variety;
+            return plant || variety || normalizeBadgeText(getAttr(source, 'title') || getRawTextLabel(source));
+        }
+
+        function getOverlayTitle(entry) {
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null;
+            const cropTitle = getSourceCropTitle(source);
+            return cropTitle ? 'Linked Task Schedule - ' + cropTitle : 'Linked Task Schedule';
+        }
+
+        function getScheduleOnlyTitle(entry) {
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null;
+            const cropTitle = getSourceCropTitle(source);
+            return cropTitle ? 'Plant Schedule - ' + cropTitle : 'Plant Schedule';
+        }
+
+        function hasTilerSchedule(cell) {
+            const start = getAttr(cell, 'sow_date');
+            return start != null && String(start).trim() !== '';
+        }
+
+        function canScheduleTilerGroup(cell) {
+            if (!isTilerGroup(cell)) return false;
+            const users = window.Trellis && window.Trellis.users;
+            if (users && typeof users.isEnabled === 'function' && users.isEnabled() && typeof users.canManagePlanting === 'function') return users.canManagePlanting(cell);
+            return true;
+        }
+
+        function getOccupancyNavigatorApi() {
+            return graph && graph.__trellisBedSuccessionNavigator && typeof graph.__trellisBedSuccessionNavigator.getSelectedClusterOccupancy === 'function'
+                ? graph.__trellisBedSuccessionNavigator
+                : null;
+        }
+
+        function getPlantingOccupancyRange(cell) {
+            const perennial = String(getAttr(cell, 'perennial') || '') === '1' || !!String(getAttr(cell, 'lifespan_start') || '').trim();
+            const start = perennial ? parseTaskOverlayDate(getAttr(cell, 'lifespan_start')) : (parseTaskOverlayDate(getAttr(cell, 'transplant_date')) || parseTaskOverlayDate(getAttr(cell, 'sow_date')));
+            const end = perennial ? parseTaskOverlayDate(getAttr(cell, 'lifespan_end')) : parseTaskOverlayDate(getAttr(cell, 'harvest_end'));
+            if (!start || !end || end.dayNumber < start.dayNumber) return { startISO: null, endISO: null };
+            return { startISO: start.iso, endISO: end.iso };
+        }
+
+        function fallbackOccupancyForSource(source) {
+            if (!isTilerGroup(source)) return { selectedId: null, items: [] };
+            const range = getPlantingOccupancyRange(source);
+            return {
+                selectedId: source.id,
+                items: [{ cellId: source.id, label: getSourceCropTitle(source) || source.id || 'Planting', startISO: range.startISO, endISO: range.endISO }]
+            };
+        }
+
+        function getOccupancyModelForEntry(entry) {
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null;
+            const api = getOccupancyNavigatorApi();
+            if (api) {
+                const result = api.getSelectedClusterOccupancy(source);
+                if (result && Array.isArray(result.items) && result.items.length) return result;
+            }
+            return fallbackOccupancyForSource(source);
+        }
+
+        function getScheduleDialogOpener() {
+            return window.USL && window.USL.scheduler && typeof window.USL.scheduler.openScheduleDialog === 'function'
+                ? window.USL.scheduler.openScheduleDialog
+                : null;
+        }
+
+        function getDerivedScheduleDialogOpener() {
+            return window.USL && window.USL.scheduler && typeof window.USL.scheduler.openDerivedScheduleDialog === 'function'
+                ? window.USL.scheduler.openDerivedScheduleDialog
+                : null;
+        }
+
+        function getSetPlantDialogOpener() {
+            return window.USL && window.USL.scheduler && typeof window.USL.scheduler.openSetPlantDialog === 'function'
+                ? window.USL.scheduler.openSetPlantDialog
+                : null;
+        }
+
+        function sourceOccupancyCompleteForDerived(cell) {
+            if (!isTilerGroup(cell)) return false;
+            const perennial = String(getAttr(cell, 'perennial') || '') === '1' || !!String(getAttr(cell, 'lifespan_start') || '').trim();
+            const start = perennial ? String(getAttr(cell, 'lifespan_start') || '').trim() : (String(getAttr(cell, 'transplant_date') || '').trim() || String(getAttr(cell, 'sow_date') || '').trim());
+            const end = perennial ? String(getAttr(cell, 'lifespan_end') || '').trim() : String(getAttr(cell, 'harvest_end') || '').trim();
+            return !!(start && end);
+        }
+
+        function sourceIsAnnual(cell) {
+            if (String(getAttr(cell, 'perennial') || '') === '1' || String(getAttr(cell, 'lifespan_start') || '').trim()) return false;
+            return String(getAttr(cell, 'annual') || '') === '1' || !!String(getAttr(cell, 'harvest_end') || '').trim();
+        }
+
+        function styleDerivedActionButton(button, enabled, color) {
+            applyVertexButtonStyle(button, 'add', { compact: true });
+            button.style.border = '1px solid ' + color;
+            button.style.borderRadius = '5px';
+            button.style.background = enabled ? '#ffffff' : '#f1f3f4';
+            button.style.color = enabled ? color : '#9aa0a6';
+            button.style.cursor = enabled ? 'pointer' : 'default';
+            button.style.fontSize = '10px';
+            button.style.fontWeight = 'bold';
+            button.style.padding = '4px 7px';
+            button.style.whiteSpace = 'nowrap';
+        }
+
+        function createDerivedScheduleActionButton(entry, mode) {
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null;
+            if (!isTilerGroup(source) || !hasTilerSchedule(source)) return null;
+            const opener = getDerivedScheduleDialogOpener();
+            const allowed = canScheduleTilerGroup(source);
+            const hasDates = sourceOccupancyCompleteForDerived(source);
+            const annualOk = mode !== 'turnover' || sourceIsAnnual(source);
+            const enabled = !!(opener && allowed && hasDates && annualOk);
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = mode === 'turnover' ? 'Add Turnover' : 'Add Companion';
+            button.disabled = !enabled;
+            button.title = !opener ? 'Scheduler plugin is unavailable.' : (!allowed ? 'You do not have permission to schedule this planting group.' : (!hasDates ? 'Source occupancy dates are required.' : (!annualOk ? 'Turnover is available only for annual source groups.' : button.textContent)));
+            styleDerivedActionButton(button, enabled, '#166534');
+            mxEvent.addListener(button, 'mousedown', consumeOverlayControlEvent);
+            mxEvent.addListener(button, 'dblclick', consumeOverlayControlEvent);
+            mxEvent.addListener(button, 'click', async function (evt) {
+                consumeOverlayControlEvent(evt);
+                if (!enabled) return;
+                const liveSource = model.getCell(entry.sourceId);
+                if (!isTilerGroup(liveSource)) return;
+                try {
+                    await opener(ui, liveSource, { mode });
+                    setTimeout(refresh, 0);
+                } catch (e) {
+                    mxUtils.alert('Derived scheduling error: ' + (e && e.message ? e.message : String(e)));
+                }
+            });
+            return button;
+        }
+
+        function hasAssignedPlant(cell) {
+            const plantName = getAttr(cell, 'plant_name');
+            return plantName != null && String(plantName).trim() !== '';
+        }
+
+        function getTaskLinkLabelBadge(entry, card) {
+            if (!entry || !entry.linkLabels || !card) return '';
+            const label = normalizeBadgeText(entry.linkLabels.get(card.id));
+            if (!label) return '';
+            const title = normalizeBadgeText(taskTitle(card));
+            return label.toLowerCase() === title.toLowerCase() ? '' : label;
+        }
+
+        function applyPanelStyle(panel) {
+            panel.style.position = 'absolute';
+            panel.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL);
+            panel.style.width = PANEL_WIDTH + 'px';
+            panel.style.boxSizing = 'border-box';
+            panel.style.padding = '8px';
+            panel.style.border = '1px solid rgba(60, 64, 67, 0.28)';
+            panel.style.borderRadius = '6px';
+            panel.style.background = 'rgba(255, 255, 255, 0.97)';
+            panel.style.boxShadow = '0 3px 10px rgba(0, 0, 0, 0.20)';
+            panel.style.fontFamily = 'Arial, Helvetica, sans-serif';
+            panel.style.fontSize = '11px';
+            panel.style.lineHeight = '16px';
+            panel.style.pointerEvents = 'all';
+            panel.style.color = '#202124';
+        }
+
+        function makeTextSpan(text, color) {
+            const span = document.createElement('span');
+            span.textContent = text || '';
+            span.style.overflow = 'hidden';
+            span.style.textOverflow = 'ellipsis';
+            span.style.whiteSpace = 'nowrap';
+            if (color) span.style.color = color;
+            return span;
+        }
+
+        function makeClickableRow(card, className) {
+            const row = document.createElement('div');
+            row.className = className || '';
+            row.setAttribute('title', 'Click to navigate to task');
+            const cardId = card.id;
+            mxEvent.addListener(row, 'mousedown', function (evt) {
+                if (evt.button != null && evt.button !== 0) return;
+                const realCard = model.getCell(cardId);
+                if (realCard && model.isVertex(realCard)) selectAndReveal(realCard);
+                mxEvent.consume(evt);
+                if (evt.stopPropagation) evt.stopPropagation();
+                if (evt.preventDefault) evt.preventDefault();
+            });
+            return row;
+        }
+
+        function makeBadge(text) {
+            const badge = document.createElement('span');
+            badge.textContent = text;
+            badge.style.display = 'inline-block';
+            badge.style.maxWidth = '150px';
+            badge.style.overflow = 'hidden';
+            badge.style.textOverflow = 'ellipsis';
+            badge.style.whiteSpace = 'nowrap';
+            badge.style.padding = '1px 6px';
+            badge.style.border = '1px solid rgba(60, 64, 67, 0.25)';
+            badge.style.borderRadius = '10px';
+            badge.style.background = '#f8f9fa';
+            badge.style.color = '#3c4043';
+            badge.style.fontSize = '10px';
+            badge.style.lineHeight = '14px';
+            return badge;
+        }
+
+        function makeYearControlButton(text, disabled) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = text;
+            button.disabled = !!disabled;
+            button.style.width = '24px';
+            button.style.height = '22px';
+            button.style.border = '1px solid rgba(60, 64, 67, 0.28)';
+            button.style.borderRadius = '5px';
+            button.style.background = disabled ? '#f1f3f4' : '#ffffff';
+            button.style.color = disabled ? '#9aa0a6' : '#202124';
+            button.style.cursor = disabled ? 'default' : 'pointer';
+            button.style.padding = '0';
+            button.style.lineHeight = '18px';
+            return button;
+        }
+
+        function consumeOverlayControlEvent(evt) {
+            try { mxEvent.consume(evt); } catch (_) { }
+            if (evt && evt.stopPropagation) evt.stopPropagation();
+            if (evt && evt.preventDefault) evt.preventDefault();
+        }
+
+        function existingCompanionSourceCell(cell) {
+            if (String(getAttr(cell, 'derived_mode') || '').trim().toLowerCase() !== 'companion') return null;
+            const sourceId = String(getAttr(cell, 'derived_source_group_id') || '').trim();
+            if (!sourceId) return null;
+            const source = model.getCell(sourceId);
+            return isTilerGroup(source) ? source : null;
+        }
+
+        function scheduleActionButtonLabelFor(source) {
+            if (hasTilerSchedule(source) && existingCompanionSourceCell(source)) return 'Edit companion';
+            return hasTilerSchedule(source) ? 'Edit schedule' : 'Set schedule';
+        }
+
+        function scheduleActionButtonTitleFor(source, opener, allowed) {
+            if (!allowed) return 'You do not have permission to schedule this planting group.';
+            if (!opener) return 'Scheduler plugin is unavailable.';
+            if (hasTilerSchedule(source) && existingCompanionSourceCell(source)) return 'Opens companion scheduling for this derived companion.';
+            return scheduleActionButtonLabelFor(source);
+        }
+
+        function createScheduleActionButton(entry) {
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null;
+            if (!isTilerGroup(source)) return null;
+            const opener = getScheduleDialogOpener();
+            const allowed = canScheduleTilerGroup(source);
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = scheduleActionButtonLabelFor(source);
+            button.title = scheduleActionButtonTitleFor(source, opener, allowed);
+            button.disabled = !opener || !allowed;
+            applyVertexButtonStyle(button, 'open', { compact: true });
+            button.style.border = '1px solid #2563eb';
+            button.style.borderRadius = '5px';
+            button.style.background = opener && allowed ? '#ffffff' : '#f1f3f4';
+            button.style.color = opener && allowed ? '#1d4ed8' : '#9aa0a6';
+            button.style.cursor = opener && allowed ? 'pointer' : 'default';
+            button.style.fontSize = '10px';
+            button.style.fontWeight = 'bold';
+            button.style.padding = '4px 7px';
+            button.style.whiteSpace = 'nowrap';
+            mxEvent.addListener(button, 'mousedown', consumeOverlayControlEvent);
+            mxEvent.addListener(button, 'dblclick', consumeOverlayControlEvent);
+            mxEvent.addListener(button, 'click', async function (evt) {
+                consumeOverlayControlEvent(evt);
+                if (!opener) return;
+                const liveSource = model.getCell(entry.sourceId);
+                if (!isTilerGroup(liveSource)) return;
+                if (!canScheduleTilerGroup(liveSource)) return;
+                try {
+                    await opener(ui, liveSource);
+                    setTimeout(refresh, 0);
+                } catch (e) {
+                    mxUtils.alert('Scheduling error: ' + (e && e.message ? e.message : String(e)));
+                }
+            });
+            return button;
+        }
+
+        function createSetPlantActionButton(entry) {
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null;
+            if (!isTilerGroup(source) || hasAssignedPlant(source)) return null;
+            const opener = getSetPlantDialogOpener();
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = 'Set plant';
+            button.title = opener ? 'Set plant' : 'Scheduler plant picker is unavailable.';
+            button.disabled = !opener;
+            applyVertexButtonStyle(button, 'add', { compact: true });
+            button.style.border = '1px solid #188038';
+            button.style.borderRadius = '5px';
+            button.style.background = opener ? '#ffffff' : '#f1f3f4';
+            button.style.color = opener ? '#137333' : '#9aa0a6';
+            button.style.cursor = opener ? 'pointer' : 'default';
+            button.style.fontSize = '10px';
+            button.style.fontWeight = 'bold';
+            button.style.padding = '4px 7px';
+            button.style.whiteSpace = 'nowrap';
+            mxEvent.addListener(button, 'mousedown', consumeOverlayControlEvent);
+            mxEvent.addListener(button, 'dblclick', consumeOverlayControlEvent);
+            mxEvent.addListener(button, 'click', async function (evt) {
+                consumeOverlayControlEvent(evt);
+                if (!opener) return;
+                const liveSource = model.getCell(entry.sourceId);
+                if (!isTilerGroup(liveSource) || hasAssignedPlant(liveSource)) return;
+                try {
+                    await opener(ui, liveSource);
+                    setTimeout(refresh, 0);
+                } catch (e) {
+                    mxUtils.alert('Set Plant error: ' + (e && e.message ? e.message : String(e)));
+                }
+            });
+            return button;
+        }
+
+        function createSecondaryActionRow(entry) {
+            const setPlantButton = createSetPlantActionButton(entry);
+            if (!setPlantButton) return null;
+            const row = document.createElement('div');
+            row.style.gridColumn = '1 / span 2';
+            row.style.display = 'flex';
+            row.style.justifyContent = 'flex-end';
+            row.style.marginTop = '7px';
+            row.appendChild(setPlantButton);
+            return row;
+        }
+
+        function applyOverlayYearFilter(entry, year) {
+            if (!entry || !Number.isFinite(Number(year))) return;
+            const selectedYear = Number(year);
+            const cards = entry.targetIds.map(id => model.getCell(id)).filter(isValidOverlayCard);
+            model.beginUpdate();
+            try {
+                for (const card of cards) {
+                    const hidden = !taskDateRangeOverlapsYear(card, selectedYear);
+                    const nextValue = hidden ? '1' : null;
+                    if (getAttr(card, 'year_hidden') !== (nextValue || null)) setCellAttrUndoable(card, 'year_hidden', nextValue);
+                }
+            } finally {
+                model.endUpdate();
+            }
+            entry.selectedYear = selectedYear;
+            selectedYearBySource.set(entry.sourceId, selectedYear);
+            dispatchYearFilterChangedForTaskOverlay(null, selectedYear);
+            renderEntry(entry);
+        }
+
+        function restoreEntryTasksToCurrentYear(entry) {
+            if (!entry || !entry.targetIds) return;
+            const cards = entry.targetIds.map(id => model.getCell(id)).filter(isValidOverlayCard);
+            if (!cards.length) return;
+            const source = model.getCell(entry.sourceId);
+            const restoreYear = getDashboardYearForCell(source || cards[0]);
+            if (Number(entry.selectedYear) === restoreYear) return;
+            model.beginUpdate();
+            try {
+                for (const card of cards) {
+                    const hidden = !taskDateRangeOverlapsYear(card, restoreYear);
+                    const nextValue = hidden ? '1' : null;
+                    if (getAttr(card, 'year_hidden') !== (nextValue || null)) setCellAttrUndoable(card, 'year_hidden', nextValue);
+                }
+            } finally {
+                model.endUpdate();
+            }
+            selectedYearBySource.delete(entry.sourceId);
+            dispatchYearFilterChangedForTaskOverlay(null, restoreYear);
+        }
+
+        function isEntryStillSelected(entry) {
+            const selected = graph.getSelectionCells && graph.getSelectionCells();
+            if (!entry || !selected || selected.length !== 1) return false;
+            const selectedCell = normalizeForLinkingAndPrimary(selected[0]);
+            return !!selectedCell && selectedCell.id === entry.sourceId;
+        }
+
+        function createYearControls(entry) {
+            const years = entry && entry.years ? entry.years : [];
+            if (years.length < 2) return null;
+            const current = Number(entry.selectedYear);
+            const idx = Math.max(0, years.indexOf(current));
+            const wrap = document.createElement('div');
+            wrap.style.gridColumn = '1 / span 2';
+            wrap.style.display = 'flex';
+            wrap.style.alignItems = 'center';
+            wrap.style.gap = '5px';
+            wrap.style.marginTop = '7px';
+
+            const prev = makeYearControlButton('<', idx <= 0);
+            const label = document.createElement('div');
+            label.textContent = String(years[idx] || current || years[0]);
+            label.style.minWidth = '48px';
+            label.style.textAlign = 'center';
+            label.style.border = '1px solid rgba(60, 64, 67, 0.28)';
+            label.style.borderRadius = '5px';
+            label.style.background = '#ffffff';
+            label.style.fontWeight = 'bold';
+            label.style.fontSize = '10px';
+            label.style.lineHeight = '20px';
+            const next = makeYearControlButton('>', idx >= years.length - 1);
+
+            mxEvent.addListener(prev, 'mousedown', function (evt) {
+                if (idx > 0) applyOverlayYearFilter(entry, years[idx - 1]);
+                mxEvent.consume(evt);
+                if (evt.stopPropagation) evt.stopPropagation();
+                if (evt.preventDefault) evt.preventDefault();
+            });
+            mxEvent.addListener(next, 'mousedown', function (evt) {
+                if (idx < years.length - 1) applyOverlayYearFilter(entry, years[idx + 1]);
+                mxEvent.consume(evt);
+                if (evt.stopPropagation) evt.stopPropagation();
+                if (evt.preventDefault) evt.preventDefault();
+            });
+
+            wrap.appendChild(prev);
+            wrap.appendChild(label);
+            wrap.appendChild(next);
+            return wrap;
+        }
+
+        function createHeader(entry, count) {
+            const header = document.createElement('div');
+            header.style.display = 'grid';
+            header.style.gridTemplateColumns = '1fr auto';
+            header.style.alignItems = 'center';
+            header.style.columnGap = '8px';
+            header.style.marginBottom = '8px';
+
+            const titleWrap = document.createElement('div');
+            const title = document.createElement('div');
+            title.textContent = getOverlayTitle(entry);
+            title.style.fontWeight = 'bold';
+            title.style.fontSize = '12px';
+            title.style.overflow = 'hidden';
+            title.style.textOverflow = 'ellipsis';
+            title.style.whiteSpace = 'nowrap';
+            const subtitle = document.createElement('div');
+            subtitle.textContent = activeMode === MODE_OCCUPANCY ? (count + (count === 1 ? ' planting group' : ' planting groups')) : (count + (count === 1 ? ' linked task' : ' linked tasks'));
+            subtitle.style.color = '#5f6368';
+            subtitle.style.fontSize = '10px';
+            titleWrap.appendChild(title);
+            titleWrap.appendChild(subtitle);
+            header.appendChild(titleWrap);
+
+            const actions = document.createElement('div');
+            actions.style.display = 'inline-flex';
+            actions.style.alignItems = 'center';
+            actions.style.gap = '6px';
+            actions.style.flexWrap = 'wrap';
+            actions.style.justifyContent = 'flex-end';
+
+            const toggle = document.createElement('div');
+            toggle.style.display = 'inline-flex';
+            toggle.style.border = '1px solid rgba(60, 64, 67, 0.28)';
+            toggle.style.borderRadius = '5px';
+            toggle.style.overflow = 'hidden';
+            toggle.appendChild(createModeButton(entry, 'Cards', MODE_CARDS));
+            toggle.appendChild(createModeButton(entry, 'Schedule', MODE_SCHEDULE));
+            toggle.appendChild(createModeButton(entry, 'Occupancy', MODE_OCCUPANCY));
+            actions.appendChild(toggle);
+            const scheduleButton = createScheduleActionButton(entry);
+            if (scheduleButton) actions.appendChild(scheduleButton);
+            const companionButton = createDerivedScheduleActionButton(entry, 'companion');
+            if (companionButton) actions.appendChild(companionButton);
+            const turnoverButton = createDerivedScheduleActionButton(entry, 'turnover');
+            if (turnoverButton) actions.appendChild(turnoverButton);
+            header.appendChild(actions);
+            const secondaryActionRow = createSecondaryActionRow(entry);
+            if (secondaryActionRow) header.appendChild(secondaryActionRow);
+            const yearControls = createYearControls(entry);
+            if (yearControls) header.appendChild(yearControls);
+            return header;
+        }
+
+        function createScheduleOnlyHeader(entry) {
+            const header = document.createElement('div');
+            header.style.display = 'flex';
+            header.style.flexDirection = 'column';
+            header.style.alignItems = 'stretch';
+            header.style.gap = '7px';
+
+            const title = document.createElement('div');
+            title.textContent = getScheduleOnlyTitle(entry);
+            title.style.fontWeight = 'bold';
+            title.style.fontSize = '12px';
+            title.style.overflow = 'hidden';
+            title.style.textOverflow = 'ellipsis';
+            title.style.whiteSpace = 'nowrap';
+            header.appendChild(title);
+
+            const toggle = document.createElement('div');
+            toggle.style.display = 'inline-flex';
+            toggle.style.alignSelf = 'flex-start';
+            toggle.style.border = '1px solid rgba(60, 64, 67, 0.28)';
+            toggle.style.borderRadius = '5px';
+            toggle.style.overflow = 'hidden';
+            const effectiveMode = activeMode === MODE_OCCUPANCY ? MODE_OCCUPANCY : MODE_SCHEDULE;
+            toggle.appendChild(createModeButton(entry, 'Schedule', MODE_SCHEDULE, effectiveMode));
+            toggle.appendChild(createModeButton(entry, 'Occupancy', MODE_OCCUPANCY, effectiveMode));
+            header.appendChild(toggle);
+
+            const scheduleButton = createScheduleActionButton(entry);
+            if (scheduleButton) {
+                scheduleButton.style.alignSelf = 'flex-start';
+                header.appendChild(scheduleButton);
+            }
+            const companionButton = createDerivedScheduleActionButton(entry, 'companion');
+            if (companionButton) { companionButton.style.alignSelf = 'flex-start'; header.appendChild(companionButton); }
+            const turnoverButton = createDerivedScheduleActionButton(entry, 'turnover');
+            if (turnoverButton) { turnoverButton.style.alignSelf = 'flex-start'; header.appendChild(turnoverButton); }
+            const setPlantButton = createSetPlantActionButton(entry);
+            if (setPlantButton) {
+                setPlantButton.style.alignSelf = 'flex-start';
+                header.appendChild(setPlantButton);
+            }
+            return header;
+        }
+
+        function createModeButton(entry, label, mode, activeOverride) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = label;
+            button.style.border = '0';
+            button.style.padding = '4px 7px';
+            button.style.fontSize = '10px';
+            button.style.cursor = 'pointer';
+            const active = (activeOverride || activeMode) === mode;
+            button.style.background = active ? '#202124' : '#ffffff';
+            button.style.color = active ? '#ffffff' : '#202124';
+            mxEvent.addListener(button, 'mousedown', function (evt) {
+                setMode(mode);
+                mxEvent.consume(evt);
+                if (evt.stopPropagation) evt.stopPropagation();
+                if (evt.preventDefault) evt.preventDefault();
+            });
+            return button;
+        }
+
+        function createBody() {
+            const body = document.createElement('div');
+            body.style.maxHeight = BODY_MAX_HEIGHT + 'px';
+            body.style.overflowY = 'auto';
+            body.style.overflowX = 'hidden';
+            body.style.paddingRight = '2px';
+            return body;
+        }
+
+        function renderEmptyTaskOverlayMessage(body) {
+            const empty = document.createElement('div');
+            empty.textContent = 'No linked tasks visible for this year';
+            empty.style.color = '#5f6368';
+            empty.style.padding = '8px 0';
+            body.appendChild(empty);
+        }
+
+        function countGroupItems(groups) {
+            return (groups || []).reduce((sum, group) => sum + group.items.length, 0);
+        }
+
+        function countScheduleRows(cards) {
+            return buildScheduleRowsForCards(cards).length;
+        }
+
+        function countOccupancyRows(entry) {
+            const occupancy = getOccupancyModelForEntry(entry);
+            return occupancy && Array.isArray(occupancy.items) ? occupancy.items.length : 0;
+        }
+
+        function todayOverlayDayNumber() {
+            const now = new Date();
+            return Math.floor(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86400000);
+        }
+
+        function firstScheduledCard(cards) {
+            return (cards || []).slice().sort(compareRepeatOccurrenceCards).find(card => !!getTaskDateRange(card)) || (cards && cards[0]) || null;
+        }
+
+        function buildScheduleRowsForCards(cards) {
+            const rows = [];
+            const repeatRows = new Map();
+
+            for (const card of cards || []) {
+                const seriesKey = buildRepeatSeriesKeyForOverlay(card);
+                if (!seriesKey) {
+                    rows.push({
+                        key: 'card:' + card.id,
+                        card,
+                        cards: [card],
+                        label: taskTitle(card),
+                        repeat: false
+                    });
+                    continue;
+                }
+
+                if (!repeatRows.has(seriesKey)) {
+                    repeatRows.set(seriesKey, {
+                        key: 'repeat:' + seriesKey,
+                        card,
+                        cards: [],
+                        label: taskTitle(card),
+                        repeat: true
+                    });
+                }
+                repeatRows.get(seriesKey).cards.push(card);
+            }
+
+            for (const row of repeatRows.values()) {
+                row.cards.sort(compareRepeatOccurrenceCards);
+                row.card = firstScheduledCard(row.cards) || row.cards[0];
+                row.label = taskTitle(row.card);
+                rows.push(row);
+            }
+
+            rows.sort((a, b) => compareTaskCardsByStartDate(a.card, b.card));
+            return rows;
+        }
+
+        function createLaneHeader(entry, group, collapsed) {
+            const header = document.createElement('div');
+            header.style.display = 'grid';
+            header.style.gridTemplateColumns = '21px 6px 1fr auto';
+            header.style.alignItems = 'center';
+            header.style.columnGap = '6px';
+            header.style.margin = '8px 0 3px';
+            header.style.color = '#3c4043';
+            header.style.fontWeight = 'bold';
+            header.style.fontSize = '10px';
             header.style.cursor = 'pointer'; // CHANGE: visible toggle replaces browser title tooltip
 
-            const toggle = document.createElement('span'); // CHANGE
-            toggle.textContent = collapsed ? '+' : '-'; // CHANGE
-            toggle.style.display = 'inline-block'; // CHANGE
-            toggle.style.width = '21px'; // CHANGE
-            toggle.style.textAlign = 'center'; // CHANGE
-            toggle.style.color = '#5f6368'; // CHANGE
-            toggle.style.fontSize = '15px'; // CHANGE
-            toggle.style.lineHeight = '14px'; // CHANGE
-            header.appendChild(toggle); // CHANGE
-
-            const stripe = document.createElement('span'); // CHANGE
-            stripe.style.height = '12px'; // CHANGE
-            stripe.style.borderRadius = '4px'; // CHANGE
-            stripe.style.background = group.color || '#9aa0a6'; // CHANGE
-            header.appendChild(stripe); // CHANGE
-
-            header.appendChild(makeTextSpan(group.label || 'Lane', null)); // CHANGE
-            const count = document.createElement('span'); // CHANGE
-            count.textContent = String(group.items.length); // CHANGE
-            count.style.color = '#5f6368'; // CHANGE
-            count.style.fontWeight = 'normal'; // CHANGE
-            header.appendChild(count); // CHANGE
-            mxEvent.addListener(header, 'mousedown', function (evt) { // CHANGE
-                if (evt.button != null && evt.button !== 0) return; // CHANGE
-                setLaneGroupCollapsed(group, !isLaneGroupCollapsed(group)); // CHANGE
-                renderEntry(entry); // CHANGE
-                mxEvent.consume(evt); // CHANGE
-                if (evt.stopPropagation) evt.stopPropagation(); // CHANGE
-                if (evt.preventDefault) evt.preventDefault(); // CHANGE
-            }); // CHANGE
-            return header; // CHANGE
-        } // CHANGE
-
-        function renderCardView(entry, body, groups) { // CHANGE
-            for (const group of groups) { // CHANGE
-                const collapsed = isLaneGroupCollapsed(group); // CHANGE
-                body.appendChild(createLaneHeader(entry, group, collapsed)); // CHANGE
-                if (collapsed) continue; // CHANGE
-                for (const item of group.items) { // CHANGE
-                    const card = item.card; // CHANGE
-                const row = makeClickableRow(card, 'manual-link-task-schedule-card'); // CHANGE
-                row.style.display = 'grid'; // CHANGE
-                row.style.gridTemplateColumns = '6px 1fr'; // CHANGE
-                row.style.columnGap = '8px'; // CHANGE
-                row.style.margin = '4px 0'; // CHANGE
-                row.style.border = '1px solid rgba(60, 64, 67, 0.18)'; // CHANGE
-                row.style.borderRadius = '5px'; // CHANGE
-                row.style.background = '#ffffff'; // CHANGE
-                row.style.cursor = 'pointer'; // CHANGE
-                row.style.overflow = 'hidden'; // CHANGE
-
-                const stripe = document.createElement('div'); // CHANGE
-                stripe.style.background = getTaskLaneColor(card); // CHANGE
-                row.appendChild(stripe); // CHANGE
-
-                const content = document.createElement('div'); // CHANGE
-                content.style.minWidth = '0'; // CHANGE
-                content.style.padding = '6px 7px 6px 0'; // CHANGE
-
-                const titleLine = makeTextSpan(taskTitle(card), null); // CHANGE
-                titleLine.style.display = 'block'; // CHANGE
-                titleLine.style.fontWeight = 'bold'; // CHANGE
-                titleLine.style.fontSize = '12px'; // CHANGE
-                content.appendChild(titleLine); // CHANGE
-
-                const metaLine = makeTextSpan(formatTaskDateRange(card), '#5f6368'); // CHANGE
-                metaLine.style.display = 'block'; // CHANGE
-                metaLine.style.fontSize = '10px'; // CHANGE
-                content.appendChild(metaLine); // CHANGE
-
-                    let badges = getTaskOverlayBadges(card); // CHANGE
-                    const linkLabelBadge = getTaskLinkLabelBadge(entry, card); // CHANGE
-                    if (linkLabelBadge) badges.unshift(linkLabelBadge); // CHANGE
-                    if (item.repeatBadge) { // CHANGE
-                        badges = badges.filter(text => !String(text || '').startsWith('Repeat ')); // CHANGE
-                        badges.unshift('Repeat ' + item.repeatBadge); // CHANGE
-                    } // CHANGE
-                    const visibleBadges = badges.slice(0, 4); // CHANGE
-                    if (visibleBadges.length) { // CHANGE
-                    const badgeRow = document.createElement('div'); // CHANGE
-                    badgeRow.style.display = 'flex'; // CHANGE
-                    badgeRow.style.flexWrap = 'wrap'; // CHANGE
-                    badgeRow.style.gap = '3px'; // CHANGE
-                    badgeRow.style.marginTop = '4px'; // CHANGE
-                        for (const badge of visibleBadges) badgeRow.appendChild(makeBadge(badge)); // CHANGE
-                    content.appendChild(badgeRow); // CHANGE
-                } // CHANGE
-
-                row.appendChild(content); // CHANGE
-                body.appendChild(row); // CHANGE
-                entry.visibleItems.push({ cardId: card.id, row }); // CHANGE
-                } // CHANGE
-            } // CHANGE
-        } // CHANGE
-
-        function axisLabelForDay(dayNumber) { // CHANGE
-            const date = new Date(dayNumber * 86400000); // CHANGE
-            return formatTaskOverlayDate({ date }); // CHANGE
-        } // CHANGE
-
-        function renderScheduleAxis(grid, minDay, maxDay, todayPct, leftHeaderText = 'Task') { // CHANGE
-            const axis = document.createElement('div'); // CHANGE
-            axis.style.display = 'grid'; // CHANGE
-            axis.style.gridTemplateColumns = '112px 1fr'; // CHANGE
-            axis.style.columnGap = '8px'; // CHANGE
-            axis.style.alignItems = 'end'; // CHANGE
-            axis.style.marginBottom = '4px'; // CHANGE
-
-            const taskHead = document.createElement('div'); // CHANGE
-            taskHead.textContent = leftHeaderText; // CHANGE
-            taskHead.style.color = '#5f6368'; // CHANGE
-            taskHead.style.fontSize = '10px'; // CHANGE
-            axis.appendChild(taskHead); // CHANGE
-
-            const ticks = document.createElement('div'); // CHANGE
-            ticks.style.display = 'grid'; // CHANGE
-            ticks.style.gridTemplateColumns = 'repeat(4, 1fr)'; // CHANGE
-            ticks.style.color = '#5f6368'; // CHANGE
-            ticks.style.fontSize = '10px'; // CHANGE
-            ticks.style.position = 'relative'; // CHANGE
-            ticks.appendChild(makeTextSpan(axisLabelForDay(minDay), null)); // CHANGE
-            ticks.appendChild(makeTextSpan(axisLabelForDay(Math.round(minDay + (maxDay - minDay) / 3)), null)); // CHANGE
-            ticks.appendChild(makeTextSpan(axisLabelForDay(Math.round(minDay + 2 * (maxDay - minDay) / 3)), null)); // CHANGE
-            const end = makeTextSpan(axisLabelForDay(maxDay), null); // CHANGE
-            end.style.textAlign = 'right'; // CHANGE
-            ticks.appendChild(end); // CHANGE
-            if (todayPct != null) { // CHANGE
-                const today = document.createElement('span'); // CHANGE
-                today.textContent = 'Today'; // CHANGE
-                today.style.position = 'absolute'; // CHANGE
-                today.style.left = todayPct + '%'; // CHANGE
-                today.style.top = '-12px'; // CHANGE
-                today.style.transform = 'translateX(-50%)'; // CHANGE
-                today.style.color = '#b91c1c'; // CHANGE
-                today.style.fontWeight = 'bold'; // CHANGE
-                ticks.appendChild(today); // CHANGE
-            } // CHANGE
-            axis.appendChild(ticks); // CHANGE
-            grid.appendChild(axis); // CHANGE
-        } // CHANGE
-
-        function renderScheduleBar(track, card, range, minDay, totalDays) { // CHANGE
-            const bar = document.createElement('div'); // CHANGE
-            const leftPct = Math.max(0, Math.min(98, ((range.startDay - minDay) / totalDays) * 100)); // CHANGE
-            const rawWidthPct = range.startDay === range.endDay ? 2 : ((range.endDay - range.startDay + 1) / totalDays) * 100; // CHANGE
-            const widthPct = Math.max(range.startDay === range.endDay ? 2 : 3, rawWidthPct); // CHANGE
-            bar.style.position = 'absolute'; // CHANGE
-            bar.style.left = leftPct + '%'; // CHANGE
-            bar.style.top = '5px'; // CHANGE
-            bar.style.width = Math.min(100 - leftPct, widthPct) + '%'; // CHANGE
-            bar.style.height = range.startDay === range.endDay ? '8px' : '9px'; // CHANGE
-            bar.style.borderRadius = range.startDay === range.endDay ? '999px' : '4px'; // CHANGE
-            bar.style.background = getTaskLaneColor(card); // CHANGE
-            track.appendChild(bar); // CHANGE
-        } // CHANGE
-
-        function occupancyRangeForItem(item) { // NEW
-            const start = parseTaskOverlayDate(item && item.startISO); // NEW
-            const end = parseTaskOverlayDate(item && item.endISO); // NEW
-            if (!start || !end || end.dayNumber < start.dayNumber) return null; // NEW
-            return { start, end, startDay: start.dayNumber, endDay: end.dayNumber, durationDays: end.dayNumber - start.dayNumber + 1 }; // NEW
-        } // NEW
-
-        function renderOccupancyBar(track, range, selected, minDay, totalDays) { // NEW
-            const bar = document.createElement('div'); // NEW
-            const leftPct = Math.max(0, Math.min(98, ((range.startDay - minDay) / totalDays) * 100)); // NEW
-            const rawWidthPct = range.startDay === range.endDay ? 2 : ((range.endDay - range.startDay + 1) / totalDays) * 100; // NEW
-            const widthPct = Math.max(range.startDay === range.endDay ? 2 : 3, rawWidthPct); // NEW
-            bar.style.position = 'absolute'; // NEW
-            bar.style.left = leftPct + '%'; // NEW
-            bar.style.top = '5px'; // NEW
-            bar.style.width = Math.min(100 - leftPct, widthPct) + '%'; // NEW
-            bar.style.height = range.startDay === range.endDay ? '8px' : '9px'; // NEW
-            bar.style.borderRadius = range.startDay === range.endDay ? '999px' : '4px'; // NEW
-            bar.style.background = selected ? '#137333' : '#188038'; // NEW
-            bar.style.opacity = selected ? '1' : '0.72'; // NEW
-            track.appendChild(bar); // NEW
-        } // NEW
-
-        function makeOccupancyRow(entry, item) { // NEW
-            const row = document.createElement('div'); // NEW
-            row.className = 'manual-link-task-occupancy-row'; // NEW
-            row.setAttribute('title', 'Click to select planting group'); // NEW
-            mxEvent.addListener(row, 'mousedown', function (evt) { // NEW
-                if (evt.button != null && evt.button !== 0) return; // NEW
-                const cell = item && item.cellId ? model.getCell(item.cellId) : null; // NEW
-                if (cell && model.isVertex(cell)) selectAndReveal(cell); // NEW
-                mxEvent.consume(evt); // NEW
-                if (evt.stopPropagation) evt.stopPropagation(); // NEW
-                if (evt.preventDefault) evt.preventDefault(); // NEW
-            }); // NEW
-            return row; // NEW
-        } // NEW
-
-        function occupancyRangesOverlap(left, right) { // ADDED
-            return !!(left && right && left.startDay <= right.endDay && right.startDay <= left.endDay); // ADDED
-        } // ADDED
-
-        function makeRelationshipBadge(text, color) { // ADDED
-            const badge = document.createElement('span'); // ADDED
-            badge.textContent = text; // ADDED
-            badge.style.display = 'inline-block'; // ADDED
-            badge.style.marginTop = '2px'; // ADDED
-            badge.style.marginRight = '4px'; // ADDED
-            badge.style.padding = '1px 4px'; // ADDED
-            badge.style.borderRadius = '4px'; // ADDED
-            badge.style.border = '1px solid ' + color; // ADDED
-            badge.style.color = color; // ADDED
-            badge.style.fontSize = '9px'; // ADDED
-            badge.style.fontWeight = '700'; // ADDED
-            return badge; // ADDED
-        } // ADDED
-
-        function renderOccupancyRelationshipBadges(entry, labelCell, item, range) { // ADDED
-            const rel = item && item.relationship; // ADDED
-            if (!rel || !range) return ''; // CHANGED
-            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null; // ADDED
-            const sourceRange = occupancyRangeForItem(fallbackOccupancyForSource(source).items[0]); // ADDED
-            if (rel.mode === 'companion') { // ADDED
-                if (!occupancyRangesOverlap(sourceRange, range)) return ''; // CHANGED
-                const offset = rel.startOffsetDays !== '' ? rel.startOffsetDays + 'd' : 'same day'; // ADDED
-                labelCell.appendChild(makeRelationshipBadge('companion ' + offset, '#166534')); // ADDED
-                return 'Companion relationship: ' + offset + ' from source planting.'; // ADDED
-            } else if (rel.mode === 'turnover') { // ADDED
-                const gap = rel.gapDays !== '' ? rel.gapDays + 'd gap' : 'turnover'; // ADDED
-                return 'Turnover relationship: ' + gap + '.'; // CHANGED
-            } // ADDED
-            return ''; // ADDED
-        } // ADDED
-
-        function renderOccupancyRow(entry, grid, item, range, minDay, totalDays, todayPct) { // NEW
-            const selected = item && item.cellId === entry.sourceId; // NEW
-            const row = makeOccupancyRow(entry, item); // NEW
-            row.style.display = 'grid'; // NEW
-            row.style.gridTemplateColumns = '112px 1fr'; // NEW
-            row.style.columnGap = '8px'; // NEW
-            row.style.alignItems = 'center'; // NEW
-            row.style.minHeight = '24px'; // NEW
-            row.style.cursor = 'pointer'; // NEW
-            row.style.fontWeight = selected ? 'bold' : 'normal'; // NEW
-
-            const labelCell = document.createElement('div'); // NEW
-            labelCell.style.minWidth = '0'; // NEW
-            const label = makeTextSpan(item.label || item.cellId || 'Planting', null); // NEW
-            label.style.fontSize = '10px'; // NEW
-            labelCell.appendChild(label); // NEW
-            const relationshipTooltip = renderOccupancyRelationshipBadges(entry, labelCell, item, range); // CHANGED
-            if (relationshipTooltip) { // ADDED
-                row.title = relationshipTooltip; // ADDED
-                labelCell.title = relationshipTooltip; // ADDED
-            } // ADDED
-            row.appendChild(labelCell); // NEW
-
-            const track = document.createElement('div'); // NEW
-            track.style.position = 'relative'; // NEW
-            track.style.height = '18px'; // NEW
-            track.style.borderBottom = '1px solid #e8eaed'; // NEW
-            if (todayPct != null) { // NEW
-                const todayLine = document.createElement('div'); // NEW
-                todayLine.style.position = 'absolute'; // NEW
-                todayLine.style.left = todayPct + '%'; // NEW
-                todayLine.style.top = '0'; // NEW
-                todayLine.style.bottom = '0'; // NEW
-                todayLine.style.width = '1px'; // NEW
-                todayLine.style.background = '#b91c1c'; // NEW
-                todayLine.style.opacity = '0.75'; // NEW
-                track.appendChild(todayLine); // NEW
-            } // NEW
-            renderOccupancyBar(track, range, selected, minDay, totalDays); // NEW
-            if (relationshipTooltip) track.title = relationshipTooltip; // ADDED
-            row.appendChild(track); // NEW
-            grid.appendChild(row); // NEW
-        } // NEW
-
-        function renderScheduleRow(entry, grid, scheduleRow, minDay, totalDays, todayPct) { // CHANGE
-            const card = scheduleRow.card; // CHANGE
-            const row = makeClickableRow(card, 'manual-link-task-schedule-row'); // CHANGE
-            row.style.display = 'grid'; // CHANGE
-            row.style.gridTemplateColumns = '112px 1fr'; // CHANGE
-            row.style.columnGap = '8px'; // CHANGE
-            row.style.alignItems = 'center'; // CHANGE
-            row.style.minHeight = '24px'; // CHANGE
-            row.style.cursor = 'pointer'; // CHANGE
-
-            const labelCell = document.createElement('div'); // CHANGE
-            labelCell.style.minWidth = '0'; // CHANGE
-            const label = makeTextSpan(scheduleRow.label, null); // CHANGE
-            label.style.fontSize = '10px'; // CHANGE
-            if (scheduleRow.repeat && scheduleRow.cards.length > 1) { // CHANGE
-                label.textContent = scheduleRow.label + ' (' + scheduleRow.cards.length + ')'; // CHANGE
-            } // CHANGE
-            labelCell.appendChild(label); // CHANGE
-
-            const scheduleBadge = getTaskLinkLabelBadge(entry, card); // CHANGE
-            if (scheduleBadge) { // CHANGE
-                const badgeWrap = document.createElement('div'); // CHANGE
-                badgeWrap.style.marginTop = '2px'; // CHANGE
-                badgeWrap.appendChild(makeBadge(scheduleBadge)); // CHANGE
-                labelCell.appendChild(badgeWrap); // CHANGE
-            } // CHANGE
-            row.appendChild(labelCell); // CHANGE
-
-            const track = document.createElement('div'); // CHANGE
-            track.style.position = 'relative'; // CHANGE
-            track.style.height = '18px'; // CHANGE
-            track.style.borderBottom = '1px solid #e8eaed'; // CHANGE
-            if (todayPct != null) { // CHANGE
-                const todayLine = document.createElement('div'); // CHANGE
-                todayLine.style.position = 'absolute'; // CHANGE
-                todayLine.style.left = todayPct + '%'; // CHANGE
-                todayLine.style.top = '0'; // CHANGE
-                todayLine.style.bottom = '0'; // CHANGE
-                todayLine.style.width = '1px'; // CHANGE
-                todayLine.style.background = '#b91c1c'; // CHANGE
-                todayLine.style.opacity = '0.75'; // CHANGE
-                track.appendChild(todayLine); // CHANGE
-            } // CHANGE
-
-            for (const occurrenceCard of scheduleRow.cards) { // CHANGE
-                const range = getTaskDateRange(occurrenceCard); // CHANGE
-                if (range) renderScheduleBar(track, occurrenceCard, range, minDay, totalDays); // CHANGE
-            } // CHANGE
-            row.appendChild(track); // CHANGE
-
-            grid.appendChild(row); // CHANGE
-            for (const occurrenceCard of scheduleRow.cards) { // CHANGE
-                entry.visibleItems.push({ cardId: occurrenceCard.id, row }); // CHANGE
-            } // CHANGE
-        } // CHANGE
-
-        function renderUnscheduledSection(entry, body, unscheduledRows) { // CHANGE
-            if (!unscheduledRows.length) return; // CHANGE
-            const section = document.createElement('div'); // CHANGE
-            section.style.marginTop = '8px'; // CHANGE
-            const title = document.createElement('div'); // CHANGE
-            title.textContent = 'Unscheduled'; // CHANGE
-            title.style.fontWeight = 'bold'; // CHANGE
-            title.style.fontSize = '10px'; // CHANGE
-            title.style.color = '#5f6368'; // CHANGE
-            title.style.marginBottom = '3px'; // CHANGE
-            section.appendChild(title); // CHANGE
-            for (const scheduleRow of unscheduledRows) { // CHANGE
-                const card = scheduleRow.card; // CHANGE
-                const row = makeClickableRow(card, 'manual-link-task-schedule-unscheduled'); // CHANGE
-                row.style.display = 'grid'; // CHANGE
-                row.style.gridTemplateColumns = '6px 1fr'; // CHANGE
-                row.style.columnGap = '6px'; // CHANGE
-                row.style.alignItems = 'center'; // CHANGE
-                row.style.minHeight = '22px'; // CHANGE
-                row.style.padding = '2px 0'; // CHANGE
-                row.style.cursor = 'pointer'; // CHANGE
-                const stripe = document.createElement('span'); // CHANGE
-                stripe.style.height = '14px'; // CHANGE
-                stripe.style.borderRadius = '4px'; // CHANGE
-                stripe.style.background = getTaskLaneColor(card); // CHANGE
-                row.appendChild(stripe); // CHANGE
-                const label = scheduleRow.repeat && scheduleRow.cards.length > 1 // CHANGE
-                    ? scheduleRow.label + ' (' + scheduleRow.cards.length + ')' // CHANGE
-                    : scheduleRow.label; // CHANGE
-                const labelWrap = document.createElement('div'); // CHANGE
-                labelWrap.style.minWidth = '0'; // CHANGE
-                labelWrap.appendChild(makeTextSpan(label, '#5f6368')); // CHANGE
-                const linkLabelBadge = getTaskLinkLabelBadge(entry, card); // CHANGE
-                if (linkLabelBadge) { // CHANGE
-                    const badgeLine = document.createElement('div'); // CHANGE
-                    badgeLine.style.marginTop = '2px'; // CHANGE
-                    badgeLine.appendChild(makeBadge(linkLabelBadge)); // CHANGE
-                    labelWrap.appendChild(badgeLine); // CHANGE
-                } // CHANGE
-                row.appendChild(labelWrap); // CHANGE
-                section.appendChild(row); // CHANGE
-                for (const occurrenceCard of scheduleRow.cards) { // CHANGE
-                    entry.visibleItems.push({ cardId: occurrenceCard.id, row }); // CHANGE
-                } // CHANGE
-            } // CHANGE
-            body.appendChild(section); // CHANGE
-        } // CHANGE
-
-        function renderScheduleView(entry, body, cards) { // CHANGE
-            const rows = buildScheduleRowsForCards(cards); // CHANGE
-            const scheduledRows = []; // CHANGE
-            const unscheduled = []; // CHANGE
-            for (const row of rows) { // CHANGE
-                const ranges = row.cards.map(card => getTaskDateRange(card)).filter(Boolean); // CHANGE
-                if (ranges.length) scheduledRows.push({ row, ranges }); // CHANGE
-                else unscheduled.push(row); // CHANGE
-            } // CHANGE
-
-            let minDay = null; // CHANGE
-            let maxDay = null; // CHANGE
-            let totalDays = 1; // CHANGE
-            let todayPct = null; // CHANGE
-            if (scheduledRows.length) { // CHANGE
-                const startDays = []; // CHANGE
-                const endDays = []; // CHANGE
-                for (const record of scheduledRows) { // CHANGE
-                    for (const range of record.ranges) { // CHANGE
-                        startDays.push(range.startDay); // CHANGE
-                        endDays.push(range.endDay); // CHANGE
-                    } // CHANGE
-                } // CHANGE
-                minDay = Math.min.apply(null, startDays); // CHANGE
-                maxDay = Math.max.apply(null, endDays); // CHANGE
-                totalDays = Math.max(1, maxDay - minDay + 1); // CHANGE
-                const today = todayOverlayDayNumber(); // CHANGE
-                if (today >= minDay && today <= maxDay) todayPct = ((today - minDay) / totalDays) * 100; // CHANGE
-            } // CHANGE
-
-            if (!scheduledRows.length) { // CHANGE
-                const empty = document.createElement('div'); // CHANGE
-                empty.textContent = 'No scheduled task dates'; // CHANGE
-                empty.style.color = '#5f6368'; // CHANGE
-                empty.style.padding = '8px 0'; // CHANGE
-                body.appendChild(empty); // CHANGE
-            } else { // CHANGE
-                const grid = document.createElement('div'); // CHANGE
-                renderScheduleAxis(grid, minDay, maxDay, todayPct); // CHANGE
-                scheduledRows.sort((a, b) => compareTaskCardsByStartDate(a.row.card, b.row.card)); // CHANGE
-                for (const record of scheduledRows) { // CHANGE
-                    renderScheduleRow(entry, grid, record.row, minDay, totalDays, todayPct); // CHANGE
-                } // CHANGE
-                body.appendChild(grid); // CHANGE
-            } // CHANGE
-
-            renderUnscheduledSection(entry, body, unscheduled); // CHANGE
-        } // CHANGE
-
-        function renderOccupancyUnscheduledSection(entry, body, items) { // NEW
-            if (!items.length) return; // NEW
-            const section = document.createElement('div'); // NEW
-            section.style.marginTop = '8px'; // NEW
-            const title = document.createElement('div'); // NEW
-            title.textContent = 'Unscheduled'; // NEW
-            title.style.fontWeight = 'bold'; // NEW
-            title.style.fontSize = '10px'; // NEW
-            title.style.color = '#5f6368'; // NEW
-            title.style.marginBottom = '3px'; // NEW
-            section.appendChild(title); // NEW
-            for (const item of items) { // NEW
-                const row = makeOccupancyRow(entry, item); // NEW
-                row.style.display = 'grid'; // NEW
-                row.style.gridTemplateColumns = '6px 1fr'; // NEW
-                row.style.columnGap = '6px'; // NEW
-                row.style.alignItems = 'center'; // NEW
-                row.style.minHeight = '22px'; // NEW
-                row.style.padding = '2px 0'; // NEW
-                row.style.cursor = 'pointer'; // NEW
-                const stripe = document.createElement('span'); // NEW
-                stripe.style.height = '14px'; // NEW
-                stripe.style.borderRadius = '4px'; // NEW
-                stripe.style.background = '#9aa0a6'; // NEW
-                row.appendChild(stripe); // NEW
-                const labelWrap = document.createElement('div'); // NEW
-                labelWrap.style.minWidth = '0'; // NEW
-                labelWrap.appendChild(makeTextSpan(item.label || item.cellId || 'Planting', '#5f6368')); // NEW
-                row.appendChild(labelWrap); // NEW
-                section.appendChild(row); // NEW
-            } // NEW
-            body.appendChild(section); // NEW
-        } // NEW
-
-        function renderOccupancyView(entry, body) { // NEW
-            const occupancy = getOccupancyModelForEntry(entry); // NEW
-            const rows = (occupancy.items || []).map(item => ({ item, range: occupancyRangeForItem(item) })); // NEW
-            const scheduledRows = rows.filter(row => !!row.range); // NEW
-            const unscheduledItems = rows.filter(row => !row.range).map(row => row.item); // NEW
-            let minDay = null; // NEW
-            let maxDay = null; // NEW
-            let totalDays = 1; // NEW
-            let todayPct = null; // NEW
-
-            if (scheduledRows.length) { // NEW
-                minDay = Math.min.apply(null, scheduledRows.map(row => row.range.startDay)); // NEW
-                maxDay = Math.max.apply(null, scheduledRows.map(row => row.range.endDay)); // NEW
-                totalDays = Math.max(1, maxDay - minDay + 1); // NEW
-                const today = todayOverlayDayNumber(); // NEW
-                if (today >= minDay && today <= maxDay) todayPct = ((today - minDay) / totalDays) * 100; // NEW
-            } // NEW
-
-            if (!scheduledRows.length) { // NEW
-                const empty = document.createElement('div'); // NEW
-                empty.textContent = 'No scheduled occupancy dates'; // NEW
-                empty.style.color = '#5f6368'; // NEW
-                empty.style.padding = '8px 0'; // NEW
-                body.appendChild(empty); // NEW
-            } else { // NEW
-                const grid = document.createElement('div'); // NEW
-                renderScheduleAxis(grid, minDay, maxDay, todayPct, 'Planting'); // NEW
-                scheduledRows.sort((a, b) => a.range.startDay - b.range.startDay || String(a.item.cellId || '').localeCompare(String(b.item.cellId || ''))); // NEW
-                for (const row of scheduledRows) renderOccupancyRow(entry, grid, row.item, row.range, minDay, totalDays, todayPct); // NEW
-                body.appendChild(grid); // NEW
-            } // NEW
-
-            renderOccupancyUnscheduledSection(entry, body, unscheduledItems); // NEW
-        } // NEW
-
-        function getSourceBoundsForPanel(source) { // CHANGE
-            const host = getPanelHost(); // CHANGE
-            const state = source && graph.getView && graph.getView().getState(source); // CHANGE
-            if (host && state && state.shape && state.shape.node && state.shape.node.getBoundingClientRect) { // CHANGE
-                const hostRect = host.getBoundingClientRect(); // CHANGE
-                const cellRect = state.shape.node.getBoundingClientRect(); // CHANGE
-                return { // CHANGE
-                    x: cellRect.left - hostRect.left + (host.scrollLeft || 0), // CHANGE
-                    y: cellRect.top - hostRect.top + (host.scrollTop || 0), // CHANGE
-                    w: cellRect.width, // CHANGE
-                    h: cellRect.height // CHANGE
-                }; // CHANGE
-            } // CHANGE
-            const center = getCellCenter(source); // CHANGE
-            return center ? { x: center.x - center.w / 2, y: center.y - center.h / 2, w: center.w, h: center.h } : null; // CHANGE
-        } // CHANGE
-
-        function positionPanel(entry, source) { // CHANGE
-            const host = getPanelHost(); // CHANGE
-            const sourceBounds = getSourceBoundsForPanel(source); // CHANGE
-            if (!host || !entry.panel || !sourceBounds) return false; // CHANGE
-
-            const panelHeight = entry.panel.offsetHeight || 32; // CHANGE
-            const visibleRight = (host.scrollLeft || 0) + (host.clientWidth || 0); // CHANGE
-            const visibleLeft = host.scrollLeft || 0; // CHANGE
-            const rightLeft = sourceBounds.x + sourceBounds.w + PANEL_GAP + PANEL_SIDE_OFFSET; // CHANGE
-            const leftLeft = sourceBounds.x - PANEL_GAP - PANEL_SIDE_OFFSET - PANEL_WIDTH; // CHANGE
-            const leftFits = leftLeft >= visibleLeft + 4 && leftLeft + PANEL_WIDTH <= visibleRight - 8; // CHANGE
-            let left = rightLeft; // CHANGE
-
-            if (visibleRight && rightLeft + PANEL_WIDTH > visibleRight - 8 && leftFits) { // CHANGE
-                left = leftLeft; // CHANGE
-            } // CHANGE
-
-            const top = sourceBounds.y + sourceBounds.h / 2 - panelHeight / 2; // CHANGE
-
-            entry.panelLeft = left; // CHANGE
-            entry.panelTop = top; // CHANGE
-            entry.panel.style.left = left + 'px'; // CHANGE
-            entry.panel.style.top = top + 'px'; // CHANGE
-            return true; // CHANGE
-        } // CHANGE
-
-        function itemCenterFromRow(entry, row) { // CHANGE
-            const host = getPanelHost(); // CHANGE
-            if (!host || !row || !row.getBoundingClientRect) return null; // CHANGE
-            const rowRect = row.getBoundingClientRect(); // CHANGE
-            const hostRect = host.getBoundingClientRect(); // CHANGE
-            return { // CHANGE
-                x: rowRect.left - hostRect.left + (host.scrollLeft || 0) + rowRect.width / 2, // CHANGE
-                y: rowRect.top - hostRect.top + (host.scrollTop || 0) + rowRect.height / 2, // CHANGE
-                w: rowRect.width, // CHANGE
-                h: rowRect.height // CHANGE
-            }; // CHANGE
-        } // CHANGE
-
-        function createOrUpdateLine(entry, cardId, row) { // CHANGE
-            const pane = getOverlayPane(); // CHANGE
-            const card = model.getCell(cardId); // CHANGE
-            if (!pane || !row || !isValidOverlayCard(card)) { // CHANGE
-                removePolyline(entry.lines.get(cardId)); // CHANGE
-                entry.lines.delete(cardId); // CHANGE
-                return; // CHANGE
-            } // CHANGE
-
-            const itemC = itemCenterFromRow(entry, row); // CHANGE
-            const dstC = getCellCenter(card); // CHANGE
-            if (!itemC || !dstC) { // CHANGE
-                removePolyline(entry.lines.get(cardId)); // CHANGE
-                entry.lines.delete(cardId); // CHANGE
-                return; // CHANGE
-            } // CHANGE
-
-            const srcPt = anchorOnSide(itemC, sideToward(itemC, dstC), 0.5); // CHANGE
-            const dstPt = anchorOnSide(dstC, sideToward(dstC, itemC), 0.5); // CHANGE
-            if (!srcPt || !dstPt) return; // CHANGE
-
-            const points = [new mxPoint(srcPt.x, srcPt.y), new mxPoint(dstPt.x, dstPt.y)]; // CHANGE
-            const stroke = getTaskLaneColor(card); // CHANGE
-            let poly = entry.lines.get(cardId); // CHANGE
-
-            if (poly && poly.node && poly.node.parentNode === pane) { // CHANGE
-                poly.points = points; // CHANGE
-                poly.stroke = stroke; // CHANGE
-                poly.redraw(); // CHANGE
-            } else { // CHANGE
-                removePolyline(poly); // CHANGE
-                poly = new mxPolyline(points, stroke, 2); // CHANGE
-                poly.dialect = graph.dialect; // CHANGE
-                poly.init(pane); // CHANGE
-                poly.redraw(); // CHANGE
-                if (poly.node) { // CHANGE
-                    poly.node.style.pointerEvents = 'none'; // CHANGE
-                    poly.node.setAttribute('opacity', '0.72'); // CHANGE
-                } // CHANGE
-                entry.lines.set(cardId, poly); // CHANGE
-            } // CHANGE
-        } // CHANGE
-
-        function refreshLines(entry) { // CHANGE
-            const liveIds = new Set(); // CHANGE
-            for (const item of entry.visibleItems || []) { // CHANGE
-                liveIds.add(item.cardId); // CHANGE
-                createOrUpdateLine(entry, item.cardId, item.row); // CHANGE
-            } // CHANGE
-            for (const [cardId, poly] of Array.from(entry.lines.entries())) { // CHANGE
-                if (liveIds.has(cardId)) continue; // CHANGE
-                removePolyline(poly); // CHANGE
-                entry.lines.delete(cardId); // CHANGE
-            } // CHANGE
-        } // CHANGE
-
-        function renderEntry(entry) { // CHANGE
-            const host = getPanelHost(); // CHANGE
-            const panelHost = getPanelLayer(); // NEW
-            const source = model.getCell(entry.sourceId); // CHANGE
-            if (!host || !panelHost || !source || !model.isVertex(source)) { // CHANGE
-                removeEntry(entry); // CHANGE
-                return; // CHANGE
-            } // CHANGE
-
-            const cards = entry.targetIds // CHANGE
-                .map((id) => model.getCell(id)) // CHANGE
-                .filter(isValidOverlayCard) // CHANGE
-                .sort(compareTaskCardsByStartDate); // CHANGE
-            entry.targetIds = cards.map((card) => card.id); // CHANGE
-            if (entry.linkLabels) { // CHANGE
-                const liveLabels = new Map(); // CHANGE
-                for (const card of cards) liveLabels.set(card.id, entry.linkLabels.get(card.id) || ''); // CHANGE
-                entry.linkLabels = liveLabels; // CHANGE
-            } // CHANGE
-            if (cards.length === 0) { // CHANGE
-                if (!entry.scheduleOnly) { // ADDED
-                    removeEntry(entry); // CHANGE
-                    return; // CHANGE
-                } // ADDED
-            } // CHANGE
-
-            if (entry.scheduleOnly) { // ADDED
-                if (!entry.panel) { // ADDED
-                    entry.panel = document.createElement('div'); // ADDED
-                    entry.panel.className = 'manual-link-task-schedule-overlay manual-link-task-schedule-only'; // ADDED
-                    applyPanelStyle(entry.panel); // ADDED
-                    panelHost.appendChild(entry.panel); // CHANGE
-                } else if (entry.panel.parentNode !== panelHost) { // NEW
-                    panelHost.appendChild(entry.panel); // NEW
-                } // ADDED
-                while (entry.panel.firstChild) entry.panel.removeChild(entry.panel.firstChild); // ADDED
-                entry.visibleItems = []; // ADDED
-                entry.panel.appendChild(createScheduleOnlyHeader(entry)); // ADDED
-                if (activeMode === MODE_OCCUPANCY) { // NEW
-                    const body = createBody(); // NEW
-                    entry.panel.appendChild(body); // NEW
-                    renderOccupancyView(entry, body); // NEW
-                } // NEW
-                if (!positionPanel(entry, source)) { // ADDED
-                    removeEntry(entry); // ADDED
-                    return; // ADDED
-                } // ADDED
-                refreshLines(entry); // ADDED
-                return; // ADDED
-            } // ADDED
-
-            entry.years = getTaskOverlayYears(cards); // CHANGE
-            if (entry.years.length) { // CHANGE
-                const rememberedYear = selectedYearBySource.get(entry.sourceId); // CHANGE
-                entry.selectedYear = entry.years.indexOf(rememberedYear) >= 0 ? rememberedYear : (entry.selectedYear || chooseDefaultOverlayYear(entry.years)); // CHANGE
-            } else { // CHANGE
-                entry.selectedYear = null; // CHANGE
-            } // CHANGE
-            const visibleCards = cards.filter(card => getAttr(card, 'year_hidden') !== '1'); // CHANGE
-            const groups = groupLinkedTasksForOverlay(visibleCards); // CHANGE
-
-            if (!entry.panel) { // CHANGE
-                entry.panel = document.createElement('div'); // CHANGE
-                entry.panel.className = 'manual-link-task-schedule-overlay'; // CHANGE
-                applyPanelStyle(entry.panel); // CHANGE
-                panelHost.appendChild(entry.panel); // CHANGE
-            } else if (entry.panel.parentNode !== panelHost) { // NEW
-                panelHost.appendChild(entry.panel); // NEW
-            } // CHANGE
-
-            while (entry.panel.firstChild) entry.panel.removeChild(entry.panel.firstChild); // CHANGE
-            entry.visibleItems = []; // CHANGE
-            const headerCount = activeMode === MODE_OCCUPANCY ? countOccupancyRows(entry) : (activeMode === MODE_SCHEDULE ? countScheduleRows(visibleCards) : countGroupItems(groups)); // CHANGE
-            entry.panel.appendChild(createHeader(entry, headerCount)); // CHANGE
-            const body = createBody(); // CHANGE
-            entry.panel.appendChild(body); // CHANGE
-            mxEvent.addListener(body, 'scroll', function () { refreshLines(entry); }); // CHANGE
-
-            if (activeMode === MODE_OCCUPANCY) renderOccupancyView(entry, body); // NEW
-            else if (visibleCards.length === 0) renderEmptyTaskOverlayMessage(body); // CHANGE
-            else if (activeMode === MODE_SCHEDULE) renderScheduleView(entry, body, visibleCards); // CHANGE
-            else if (groups.length) renderCardView(entry, body, groups); // CHANGE
-            else renderEmptyTaskOverlayMessage(body); // CHANGE
-
-            if (!positionPanel(entry, source)) { // CHANGE
-                removeEntry(entry); // CHANGE
-                return; // CHANGE
-            } // CHANGE
-
-            refreshLines(entry); // CHANGE
-        } // CHANGE
-
-        function removeEntry(entry, restoreYear) { // CHANGE
-            if (!entry) return; // CHANGE
-            for (const poly of entry.lines.values()) removePolyline(poly); // CHANGE
-            entry.lines.clear(); // CHANGE
-            removeNode(entry.panel); // CHANGE
-            registry.delete(entry.sourceId); // CHANGE
-            if (restoreYear && !isEntryStillSelected(entry)) restoreEntryTasksToCurrentYear(entry); // CHANGE
-        } // CHANGE
-
-        function show(source, cards, linkLabels) { // CHANGE
-            clear(); // CHANGE
-            if (!source || !source.id || !cards || cards.length === 0) return; // CHANGE
-
-            const validCards = cards.filter(isValidOverlayCard).sort(compareTaskCardsByStartDate); // CHANGE
-            if (validCards.length === 0) return; // CHANGE
-
-            const entry = { // CHANGE
-                sourceId: source.id, // CHANGE
-                targetIds: validCards.map((card) => card.id), // CHANGE
-                linkLabels: new Map(), // CHANGE
-                panel: null, // CHANGE
-                panelLeft: 0, // CHANGE
-                panelTop: 0, // CHANGE
-                visibleItems: [], // CHANGE
-                lines: new Map() // CHANGE
-            }; // CHANGE
-            for (const card of validCards) entry.linkLabels.set(card.id, linkLabels && linkLabels.get ? (linkLabels.get(card.id) || '') : ''); // CHANGE
-            registry.set(source.id, entry); // CHANGE
-            renderEntry(entry); // CHANGE
-        } // CHANGE
-
-        function showScheduleOnly(source) { // ADDED
-            clear(); // ADDED
-            if (!source || !source.id || !isTilerGroup(source)) return; // ADDED
-            const entry = { // ADDED
-                sourceId: source.id, // ADDED
-                targetIds: [], // ADDED
-                linkLabels: new Map(), // ADDED
-                scheduleOnly: true, // ADDED
-                panel: null, // ADDED
-                panelLeft: 0, // ADDED
-                panelTop: 0, // ADDED
-                visibleItems: [], // ADDED
-                lines: new Map() // ADDED
-            }; // ADDED
-            registry.set(source.id, entry); // ADDED
-            renderEntry(entry); // ADDED
-        } // ADDED
-
-        function clear() { // CHANGE
-            for (const entry of Array.from(registry.values())) removeEntry(entry, true); // CHANGE
-        } // CHANGE
-
-        function refresh() { // CHANGE
-            for (const entry of Array.from(registry.values())) renderEntry(entry); // CHANGE
-        } // CHANGE
-
-        function setMode(mode) { // CHANGE
-            activeMode = mode === MODE_OCCUPANCY ? MODE_OCCUPANCY : (mode === MODE_SCHEDULE ? MODE_SCHEDULE : MODE_CARDS); // CHANGE
-            refresh(); // CHANGE
-        } // CHANGE
-
-        return { // CHANGE
-            show, // CHANGE
-            showScheduleOnly, // ADDED
-            clear, // CHANGE
-            refresh, // CHANGE
-            setMode // CHANGE
-        }; // CHANGE
-    })(); // CHANGE
+            const toggle = document.createElement('span');
+            toggle.textContent = collapsed ? '+' : '-';
+            toggle.style.display = 'inline-block';
+            toggle.style.width = '21px';
+            toggle.style.textAlign = 'center';
+            toggle.style.color = '#5f6368';
+            toggle.style.fontSize = '15px';
+            toggle.style.lineHeight = '14px';
+            header.appendChild(toggle);
+
+            const stripe = document.createElement('span');
+            stripe.style.height = '12px';
+            stripe.style.borderRadius = '4px';
+            stripe.style.background = group.color || '#9aa0a6';
+            header.appendChild(stripe);
+
+            header.appendChild(makeTextSpan(group.label || 'Lane', null));
+            const count = document.createElement('span');
+            count.textContent = String(group.items.length);
+            count.style.color = '#5f6368';
+            count.style.fontWeight = 'normal';
+            header.appendChild(count);
+            mxEvent.addListener(header, 'mousedown', function (evt) {
+                if (evt.button != null && evt.button !== 0) return;
+                setLaneGroupCollapsed(group, !isLaneGroupCollapsed(group));
+                renderEntry(entry);
+                mxEvent.consume(evt);
+                if (evt.stopPropagation) evt.stopPropagation();
+                if (evt.preventDefault) evt.preventDefault();
+            });
+            return header;
+        }
+
+        function renderCardView(entry, body, groups) {
+            for (const group of groups) {
+                const collapsed = isLaneGroupCollapsed(group);
+                body.appendChild(createLaneHeader(entry, group, collapsed));
+                if (collapsed) continue;
+                for (const item of group.items) {
+                    const card = item.card;
+                const row = makeClickableRow(card, 'manual-link-task-schedule-card');
+                row.style.display = 'grid';
+                row.style.gridTemplateColumns = '6px 1fr';
+                row.style.columnGap = '8px';
+                row.style.margin = '4px 0';
+                row.style.border = '1px solid rgba(60, 64, 67, 0.18)';
+                row.style.borderRadius = '5px';
+                row.style.background = '#ffffff';
+                row.style.cursor = 'pointer';
+                row.style.overflow = 'hidden';
+
+                const stripe = document.createElement('div');
+                stripe.style.background = getTaskLaneColor(card);
+                row.appendChild(stripe);
+
+                const content = document.createElement('div');
+                content.style.minWidth = '0';
+                content.style.padding = '6px 7px 6px 0';
+
+                const titleLine = makeTextSpan(taskTitle(card), null);
+                titleLine.style.display = 'block';
+                titleLine.style.fontWeight = 'bold';
+                titleLine.style.fontSize = '12px';
+                content.appendChild(titleLine);
+
+                const metaLine = makeTextSpan(formatTaskDateRange(card), '#5f6368');
+                metaLine.style.display = 'block';
+                metaLine.style.fontSize = '10px';
+                content.appendChild(metaLine);
+
+                    let badges = getTaskOverlayBadges(card);
+                    const linkLabelBadge = getTaskLinkLabelBadge(entry, card);
+                    if (linkLabelBadge) badges.unshift(linkLabelBadge);
+                    if (item.repeatBadge) {
+                        badges = badges.filter(text => !String(text || '').startsWith('Repeat '));
+                        badges.unshift('Repeat ' + item.repeatBadge);
+                    }
+                    const visibleBadges = badges.slice(0, 4);
+                    if (visibleBadges.length) {
+                    const badgeRow = document.createElement('div');
+                    badgeRow.style.display = 'flex';
+                    badgeRow.style.flexWrap = 'wrap';
+                    badgeRow.style.gap = '3px';
+                    badgeRow.style.marginTop = '4px';
+                        for (const badge of visibleBadges) badgeRow.appendChild(makeBadge(badge));
+                    content.appendChild(badgeRow);
+                }
+
+                row.appendChild(content);
+                body.appendChild(row);
+                entry.visibleItems.push({ cardId: card.id, row });
+                }
+            }
+        }
+
+        function axisLabelForDay(dayNumber) {
+            const date = new Date(dayNumber * 86400000);
+            return formatTaskOverlayDate({ date });
+        }
+
+        function renderScheduleAxis(grid, minDay, maxDay, todayPct, leftHeaderText = 'Task') {
+            const axis = document.createElement('div');
+            axis.style.display = 'grid';
+            axis.style.gridTemplateColumns = '112px 1fr';
+            axis.style.columnGap = '8px';
+            axis.style.alignItems = 'end';
+            axis.style.marginBottom = '4px';
+
+            const taskHead = document.createElement('div');
+            taskHead.textContent = leftHeaderText;
+            taskHead.style.color = '#5f6368';
+            taskHead.style.fontSize = '10px';
+            axis.appendChild(taskHead);
+
+            const ticks = document.createElement('div');
+            ticks.style.display = 'grid';
+            ticks.style.gridTemplateColumns = 'repeat(4, 1fr)';
+            ticks.style.color = '#5f6368';
+            ticks.style.fontSize = '10px';
+            ticks.style.position = 'relative';
+            ticks.appendChild(makeTextSpan(axisLabelForDay(minDay), null));
+            ticks.appendChild(makeTextSpan(axisLabelForDay(Math.round(minDay + (maxDay - minDay) / 3)), null));
+            ticks.appendChild(makeTextSpan(axisLabelForDay(Math.round(minDay + 2 * (maxDay - minDay) / 3)), null));
+            const end = makeTextSpan(axisLabelForDay(maxDay), null);
+            end.style.textAlign = 'right';
+            ticks.appendChild(end);
+            if (todayPct != null) {
+                const today = document.createElement('span');
+                today.textContent = 'Today';
+                today.style.position = 'absolute';
+                today.style.left = todayPct + '%';
+                today.style.top = '-12px';
+                today.style.transform = 'translateX(-50%)';
+                today.style.color = '#b91c1c';
+                today.style.fontWeight = 'bold';
+                ticks.appendChild(today);
+            }
+            axis.appendChild(ticks);
+            grid.appendChild(axis);
+        }
+
+        function renderScheduleBar(track, card, range, minDay, totalDays) {
+            const bar = document.createElement('div');
+            const leftPct = Math.max(0, Math.min(98, ((range.startDay - minDay) / totalDays) * 100));
+            const rawWidthPct = range.startDay === range.endDay ? 2 : ((range.endDay - range.startDay + 1) / totalDays) * 100;
+            const widthPct = Math.max(range.startDay === range.endDay ? 2 : 3, rawWidthPct);
+            bar.style.position = 'absolute';
+            bar.style.left = leftPct + '%';
+            bar.style.top = '5px';
+            bar.style.width = Math.min(100 - leftPct, widthPct) + '%';
+            bar.style.height = range.startDay === range.endDay ? '8px' : '9px';
+            bar.style.borderRadius = range.startDay === range.endDay ? '999px' : '4px';
+            bar.style.background = getTaskLaneColor(card);
+            track.appendChild(bar);
+        }
+
+        function occupancyRangeForItem(item) {
+            const start = parseTaskOverlayDate(item && item.startISO);
+            const end = parseTaskOverlayDate(item && item.endISO);
+            if (!start || !end || end.dayNumber < start.dayNumber) return null;
+            return { start, end, startDay: start.dayNumber, endDay: end.dayNumber, durationDays: end.dayNumber - start.dayNumber + 1 };
+        }
+
+        function renderOccupancyBar(track, range, selected, minDay, totalDays) {
+            const bar = document.createElement('div');
+            const leftPct = Math.max(0, Math.min(98, ((range.startDay - minDay) / totalDays) * 100));
+            const rawWidthPct = range.startDay === range.endDay ? 2 : ((range.endDay - range.startDay + 1) / totalDays) * 100;
+            const widthPct = Math.max(range.startDay === range.endDay ? 2 : 3, rawWidthPct);
+            bar.style.position = 'absolute';
+            bar.style.left = leftPct + '%';
+            bar.style.top = '5px';
+            bar.style.width = Math.min(100 - leftPct, widthPct) + '%';
+            bar.style.height = range.startDay === range.endDay ? '8px' : '9px';
+            bar.style.borderRadius = range.startDay === range.endDay ? '999px' : '4px';
+            bar.style.background = selected ? '#137333' : '#188038';
+            bar.style.opacity = selected ? '1' : '0.72';
+            track.appendChild(bar);
+        }
+
+        function makeOccupancyRow(entry, item) {
+            const row = document.createElement('div');
+            row.className = 'manual-link-task-occupancy-row';
+            row.setAttribute('title', 'Click to select planting group');
+            mxEvent.addListener(row, 'mousedown', function (evt) {
+                if (evt.button != null && evt.button !== 0) return;
+                const cell = item && item.cellId ? model.getCell(item.cellId) : null;
+                if (cell && model.isVertex(cell)) selectAndReveal(cell);
+                mxEvent.consume(evt);
+                if (evt.stopPropagation) evt.stopPropagation();
+                if (evt.preventDefault) evt.preventDefault();
+            });
+            return row;
+        }
+
+        function occupancyRangesOverlap(left, right) {
+            return !!(left && right && left.startDay <= right.endDay && right.startDay <= left.endDay);
+        }
+
+        function makeRelationshipBadge(text, color) {
+            const badge = document.createElement('span');
+            badge.textContent = text;
+            badge.style.display = 'inline-block';
+            badge.style.marginTop = '2px';
+            badge.style.marginRight = '4px';
+            badge.style.padding = '1px 4px';
+            badge.style.borderRadius = '4px';
+            badge.style.border = '1px solid ' + color;
+            badge.style.color = color;
+            badge.style.fontSize = '9px';
+            badge.style.fontWeight = '700';
+            return badge;
+        }
+
+        function renderOccupancyRelationshipBadges(entry, labelCell, item, range) {
+            const rel = item && item.relationship;
+            if (!rel || !range) return '';
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null;
+            const sourceRange = occupancyRangeForItem(fallbackOccupancyForSource(source).items[0]);
+            if (rel.mode === 'companion') {
+                if (!occupancyRangesOverlap(sourceRange, range)) return '';
+                const offset = rel.startOffsetDays !== '' ? rel.startOffsetDays + 'd' : 'same day';
+                labelCell.appendChild(makeRelationshipBadge('companion ' + offset, '#166534'));
+                return 'Companion relationship: ' + offset + ' from source planting.';
+            } else if (rel.mode === 'turnover') {
+                const gap = rel.gapDays !== '' ? rel.gapDays + 'd gap' : 'turnover';
+                return 'Turnover relationship: ' + gap + '.';
+            }
+            return '';
+        }
+
+        function renderOccupancyRow(entry, grid, item, range, minDay, totalDays, todayPct) {
+            const selected = item && item.cellId === entry.sourceId;
+            const row = makeOccupancyRow(entry, item);
+            row.style.display = 'grid';
+            row.style.gridTemplateColumns = '112px 1fr';
+            row.style.columnGap = '8px';
+            row.style.alignItems = 'center';
+            row.style.minHeight = '24px';
+            row.style.cursor = 'pointer';
+            row.style.fontWeight = selected ? 'bold' : 'normal';
+
+            const labelCell = document.createElement('div');
+            labelCell.style.minWidth = '0';
+            const label = makeTextSpan(item.label || item.cellId || 'Planting', null);
+            label.style.fontSize = '10px';
+            labelCell.appendChild(label);
+            const relationshipTooltip = renderOccupancyRelationshipBadges(entry, labelCell, item, range);
+            if (relationshipTooltip) {
+                row.title = relationshipTooltip;
+                labelCell.title = relationshipTooltip;
+            }
+            row.appendChild(labelCell);
+
+            const track = document.createElement('div');
+            track.style.position = 'relative';
+            track.style.height = '18px';
+            track.style.borderBottom = '1px solid #e8eaed';
+            if (todayPct != null) {
+                const todayLine = document.createElement('div');
+                todayLine.style.position = 'absolute';
+                todayLine.style.left = todayPct + '%';
+                todayLine.style.top = '0';
+                todayLine.style.bottom = '0';
+                todayLine.style.width = '1px';
+                todayLine.style.background = '#b91c1c';
+                todayLine.style.opacity = '0.75';
+                track.appendChild(todayLine);
+            }
+            renderOccupancyBar(track, range, selected, minDay, totalDays);
+            if (relationshipTooltip) track.title = relationshipTooltip;
+            row.appendChild(track);
+            grid.appendChild(row);
+        }
+
+        function renderScheduleRow(entry, grid, scheduleRow, minDay, totalDays, todayPct) {
+            const card = scheduleRow.card;
+            const row = makeClickableRow(card, 'manual-link-task-schedule-row');
+            row.style.display = 'grid';
+            row.style.gridTemplateColumns = '112px 1fr';
+            row.style.columnGap = '8px';
+            row.style.alignItems = 'center';
+            row.style.minHeight = '24px';
+            row.style.cursor = 'pointer';
+
+            const labelCell = document.createElement('div');
+            labelCell.style.minWidth = '0';
+            const label = makeTextSpan(scheduleRow.label, null);
+            label.style.fontSize = '10px';
+            if (scheduleRow.repeat && scheduleRow.cards.length > 1) {
+                label.textContent = scheduleRow.label + ' (' + scheduleRow.cards.length + ')';
+            }
+            labelCell.appendChild(label);
+
+            const scheduleBadge = getTaskLinkLabelBadge(entry, card);
+            if (scheduleBadge) {
+                const badgeWrap = document.createElement('div');
+                badgeWrap.style.marginTop = '2px';
+                badgeWrap.appendChild(makeBadge(scheduleBadge));
+                labelCell.appendChild(badgeWrap);
+            }
+            row.appendChild(labelCell);
+
+            const track = document.createElement('div');
+            track.style.position = 'relative';
+            track.style.height = '18px';
+            track.style.borderBottom = '1px solid #e8eaed';
+            if (todayPct != null) {
+                const todayLine = document.createElement('div');
+                todayLine.style.position = 'absolute';
+                todayLine.style.left = todayPct + '%';
+                todayLine.style.top = '0';
+                todayLine.style.bottom = '0';
+                todayLine.style.width = '1px';
+                todayLine.style.background = '#b91c1c';
+                todayLine.style.opacity = '0.75';
+                track.appendChild(todayLine);
+            }
+
+            for (const occurrenceCard of scheduleRow.cards) {
+                const range = getTaskDateRange(occurrenceCard);
+                if (range) renderScheduleBar(track, occurrenceCard, range, minDay, totalDays);
+            }
+            row.appendChild(track);
+
+            grid.appendChild(row);
+            for (const occurrenceCard of scheduleRow.cards) {
+                entry.visibleItems.push({ cardId: occurrenceCard.id, row });
+            }
+        }
+
+        function renderUnscheduledSection(entry, body, unscheduledRows) {
+            if (!unscheduledRows.length) return;
+            const section = document.createElement('div');
+            section.style.marginTop = '8px';
+            const title = document.createElement('div');
+            title.textContent = 'Unscheduled';
+            title.style.fontWeight = 'bold';
+            title.style.fontSize = '10px';
+            title.style.color = '#5f6368';
+            title.style.marginBottom = '3px';
+            section.appendChild(title);
+            for (const scheduleRow of unscheduledRows) {
+                const card = scheduleRow.card;
+                const row = makeClickableRow(card, 'manual-link-task-schedule-unscheduled');
+                row.style.display = 'grid';
+                row.style.gridTemplateColumns = '6px 1fr';
+                row.style.columnGap = '6px';
+                row.style.alignItems = 'center';
+                row.style.minHeight = '22px';
+                row.style.padding = '2px 0';
+                row.style.cursor = 'pointer';
+                const stripe = document.createElement('span');
+                stripe.style.height = '14px';
+                stripe.style.borderRadius = '4px';
+                stripe.style.background = getTaskLaneColor(card);
+                row.appendChild(stripe);
+                const label = scheduleRow.repeat && scheduleRow.cards.length > 1
+                    ? scheduleRow.label + ' (' + scheduleRow.cards.length + ')'
+                    : scheduleRow.label;
+                const labelWrap = document.createElement('div');
+                labelWrap.style.minWidth = '0';
+                labelWrap.appendChild(makeTextSpan(label, '#5f6368'));
+                const linkLabelBadge = getTaskLinkLabelBadge(entry, card);
+                if (linkLabelBadge) {
+                    const badgeLine = document.createElement('div');
+                    badgeLine.style.marginTop = '2px';
+                    badgeLine.appendChild(makeBadge(linkLabelBadge));
+                    labelWrap.appendChild(badgeLine);
+                }
+                row.appendChild(labelWrap);
+                section.appendChild(row);
+                for (const occurrenceCard of scheduleRow.cards) {
+                    entry.visibleItems.push({ cardId: occurrenceCard.id, row });
+                }
+            }
+            body.appendChild(section);
+        }
+
+        function renderScheduleView(entry, body, cards) {
+            const rows = buildScheduleRowsForCards(cards);
+            const scheduledRows = [];
+            const unscheduled = [];
+            for (const row of rows) {
+                const ranges = row.cards.map(card => getTaskDateRange(card)).filter(Boolean);
+                if (ranges.length) scheduledRows.push({ row, ranges });
+                else unscheduled.push(row);
+            }
+
+            let minDay = null;
+            let maxDay = null;
+            let totalDays = 1;
+            let todayPct = null;
+            if (scheduledRows.length) {
+                const startDays = [];
+                const endDays = [];
+                for (const record of scheduledRows) {
+                    for (const range of record.ranges) {
+                        startDays.push(range.startDay);
+                        endDays.push(range.endDay);
+                    }
+                }
+                minDay = Math.min.apply(null, startDays);
+                maxDay = Math.max.apply(null, endDays);
+                totalDays = Math.max(1, maxDay - minDay + 1);
+                const today = todayOverlayDayNumber();
+                if (today >= minDay && today <= maxDay) todayPct = ((today - minDay) / totalDays) * 100;
+            }
+
+            if (!scheduledRows.length) {
+                const empty = document.createElement('div');
+                empty.textContent = 'No scheduled task dates';
+                empty.style.color = '#5f6368';
+                empty.style.padding = '8px 0';
+                body.appendChild(empty);
+            } else {
+                const grid = document.createElement('div');
+                renderScheduleAxis(grid, minDay, maxDay, todayPct);
+                scheduledRows.sort((a, b) => compareTaskCardsByStartDate(a.row.card, b.row.card));
+                for (const record of scheduledRows) {
+                    renderScheduleRow(entry, grid, record.row, minDay, totalDays, todayPct);
+                }
+                body.appendChild(grid);
+            }
+
+            renderUnscheduledSection(entry, body, unscheduled);
+        }
+
+        function renderOccupancyUnscheduledSection(entry, body, items) {
+            if (!items.length) return;
+            const section = document.createElement('div');
+            section.style.marginTop = '8px';
+            const title = document.createElement('div');
+            title.textContent = 'Unscheduled';
+            title.style.fontWeight = 'bold';
+            title.style.fontSize = '10px';
+            title.style.color = '#5f6368';
+            title.style.marginBottom = '3px';
+            section.appendChild(title);
+            for (const item of items) {
+                const row = makeOccupancyRow(entry, item);
+                row.style.display = 'grid';
+                row.style.gridTemplateColumns = '6px 1fr';
+                row.style.columnGap = '6px';
+                row.style.alignItems = 'center';
+                row.style.minHeight = '22px';
+                row.style.padding = '2px 0';
+                row.style.cursor = 'pointer';
+                const stripe = document.createElement('span');
+                stripe.style.height = '14px';
+                stripe.style.borderRadius = '4px';
+                stripe.style.background = '#9aa0a6';
+                row.appendChild(stripe);
+                const labelWrap = document.createElement('div');
+                labelWrap.style.minWidth = '0';
+                labelWrap.appendChild(makeTextSpan(item.label || item.cellId || 'Planting', '#5f6368'));
+                row.appendChild(labelWrap);
+                section.appendChild(row);
+            }
+            body.appendChild(section);
+        }
+
+        function renderOccupancyView(entry, body) {
+            const occupancy = getOccupancyModelForEntry(entry);
+            const rows = (occupancy.items || []).map(item => ({ item, range: occupancyRangeForItem(item) }));
+            const scheduledRows = rows.filter(row => !!row.range);
+            const unscheduledItems = rows.filter(row => !row.range).map(row => row.item);
+            let minDay = null;
+            let maxDay = null;
+            let totalDays = 1;
+            let todayPct = null;
+
+            if (scheduledRows.length) {
+                minDay = Math.min.apply(null, scheduledRows.map(row => row.range.startDay));
+                maxDay = Math.max.apply(null, scheduledRows.map(row => row.range.endDay));
+                totalDays = Math.max(1, maxDay - minDay + 1);
+                const today = todayOverlayDayNumber();
+                if (today >= minDay && today <= maxDay) todayPct = ((today - minDay) / totalDays) * 100;
+            }
+
+            if (!scheduledRows.length) {
+                const empty = document.createElement('div');
+                empty.textContent = 'No scheduled occupancy dates';
+                empty.style.color = '#5f6368';
+                empty.style.padding = '8px 0';
+                body.appendChild(empty);
+            } else {
+                const grid = document.createElement('div');
+                renderScheduleAxis(grid, minDay, maxDay, todayPct, 'Planting');
+                scheduledRows.sort((a, b) => a.range.startDay - b.range.startDay || String(a.item.cellId || '').localeCompare(String(b.item.cellId || '')));
+                for (const row of scheduledRows) renderOccupancyRow(entry, grid, row.item, row.range, minDay, totalDays, todayPct);
+                body.appendChild(grid);
+            }
+
+            renderOccupancyUnscheduledSection(entry, body, unscheduledItems);
+        }
+
+        function getSourceBoundsForPanel(source) {
+            const host = getPanelHost();
+            const state = source && graph.getView && graph.getView().getState(source);
+            if (host && state && state.shape && state.shape.node && state.shape.node.getBoundingClientRect) {
+                const hostRect = host.getBoundingClientRect();
+                const cellRect = state.shape.node.getBoundingClientRect();
+                return {
+                    x: cellRect.left - hostRect.left + (host.scrollLeft || 0),
+                    y: cellRect.top - hostRect.top + (host.scrollTop || 0),
+                    w: cellRect.width,
+                    h: cellRect.height
+                };
+            }
+            const center = getCellCenter(source);
+            return center ? { x: center.x - center.w / 2, y: center.y - center.h / 2, w: center.w, h: center.h } : null;
+        }
+
+        function positionPanel(entry, source) {
+            const host = getPanelHost();
+            const sourceBounds = getSourceBoundsForPanel(source);
+            if (!host || !entry.panel || !sourceBounds) return false;
+
+            const panelHeight = entry.panel.offsetHeight || 32;
+            const visibleRight = (host.scrollLeft || 0) + (host.clientWidth || 0);
+            const visibleLeft = host.scrollLeft || 0;
+            const rightLeft = sourceBounds.x + sourceBounds.w + PANEL_GAP + PANEL_SIDE_OFFSET;
+            const leftLeft = sourceBounds.x - PANEL_GAP - PANEL_SIDE_OFFSET - PANEL_WIDTH;
+            const leftFits = leftLeft >= visibleLeft + 4 && leftLeft + PANEL_WIDTH <= visibleRight - 8;
+            let left = rightLeft;
+
+            if (visibleRight && rightLeft + PANEL_WIDTH > visibleRight - 8 && leftFits) {
+                left = leftLeft;
+            }
+
+            const top = sourceBounds.y + sourceBounds.h / 2 - panelHeight / 2;
+
+            entry.panelLeft = left;
+            entry.panelTop = top;
+            entry.panel.style.left = left + 'px';
+            entry.panel.style.top = top + 'px';
+            return true;
+        }
+
+        function itemCenterFromRow(entry, row) {
+            const host = getPanelHost();
+            if (!host || !row || !row.getBoundingClientRect) return null;
+            const rowRect = row.getBoundingClientRect();
+            const hostRect = host.getBoundingClientRect();
+            return {
+                x: rowRect.left - hostRect.left + (host.scrollLeft || 0) + rowRect.width / 2,
+                y: rowRect.top - hostRect.top + (host.scrollTop || 0) + rowRect.height / 2,
+                w: rowRect.width,
+                h: rowRect.height
+            };
+        }
+
+        function createOrUpdateLine(entry, cardId, row) {
+            const pane = getOverlayPane();
+            const card = model.getCell(cardId);
+            if (!pane || !row || !isValidOverlayCard(card)) {
+                removePolyline(entry.lines.get(cardId));
+                entry.lines.delete(cardId);
+                return;
+            }
+
+            const itemC = itemCenterFromRow(entry, row);
+            const dstC = getCellCenter(card);
+            if (!itemC || !dstC) {
+                removePolyline(entry.lines.get(cardId));
+                entry.lines.delete(cardId);
+                return;
+            }
+
+            const srcPt = anchorOnSide(itemC, sideToward(itemC, dstC), 0.5);
+            const dstPt = anchorOnSide(dstC, sideToward(dstC, itemC), 0.5);
+            if (!srcPt || !dstPt) return;
+
+            const points = [new mxPoint(srcPt.x, srcPt.y), new mxPoint(dstPt.x, dstPt.y)];
+            const stroke = getTaskLaneColor(card);
+            let poly = entry.lines.get(cardId);
+
+            if (poly && poly.node && poly.node.parentNode === pane) {
+                poly.points = points;
+                poly.stroke = stroke;
+                poly.redraw();
+            } else {
+                removePolyline(poly);
+                poly = new mxPolyline(points, stroke, 2);
+                poly.dialect = graph.dialect;
+                poly.init(pane);
+                poly.redraw();
+                if (poly.node) {
+                    poly.node.style.pointerEvents = 'none';
+                    poly.node.setAttribute('opacity', '0.72');
+                }
+                entry.lines.set(cardId, poly);
+            }
+        }
+
+        function refreshLines(entry) {
+            const liveIds = new Set();
+            for (const item of entry.visibleItems || []) {
+                liveIds.add(item.cardId);
+                createOrUpdateLine(entry, item.cardId, item.row);
+            }
+            for (const [cardId, poly] of Array.from(entry.lines.entries())) {
+                if (liveIds.has(cardId)) continue;
+                removePolyline(poly);
+                entry.lines.delete(cardId);
+            }
+        }
+
+        function renderEntry(entry) {
+            const host = getPanelHost();
+            const panelHost = getPanelLayer();
+            const source = model.getCell(entry.sourceId);
+            if (!host || !panelHost || !source || !model.isVertex(source)) {
+                removeEntry(entry);
+                return;
+            }
+
+            const cards = entry.targetIds
+                .map((id) => model.getCell(id))
+                .filter(isValidOverlayCard)
+                .sort(compareTaskCardsByStartDate);
+            entry.targetIds = cards.map((card) => card.id);
+            if (entry.linkLabels) {
+                const liveLabels = new Map();
+                for (const card of cards) liveLabels.set(card.id, entry.linkLabels.get(card.id) || '');
+                entry.linkLabels = liveLabels;
+            }
+            if (cards.length === 0) {
+                if (!entry.scheduleOnly) {
+                    removeEntry(entry);
+                    return;
+                }
+            }
+
+            if (entry.scheduleOnly) {
+                if (!entry.panel) {
+                    entry.panel = document.createElement('div');
+                    entry.panel.className = 'manual-link-task-schedule-overlay manual-link-task-schedule-only';
+                    applyPanelStyle(entry.panel);
+                    panelHost.appendChild(entry.panel);
+                } else if (entry.panel.parentNode !== panelHost) {
+                    panelHost.appendChild(entry.panel);
+                }
+                while (entry.panel.firstChild) entry.panel.removeChild(entry.panel.firstChild);
+                entry.visibleItems = [];
+                entry.panel.appendChild(createScheduleOnlyHeader(entry));
+                if (activeMode === MODE_OCCUPANCY) {
+                    const body = createBody();
+                    entry.panel.appendChild(body);
+                    renderOccupancyView(entry, body);
+                }
+                if (!positionPanel(entry, source)) {
+                    removeEntry(entry);
+                    return;
+                }
+                refreshLines(entry);
+                return;
+            }
+
+            entry.years = getTaskOverlayYears(cards);
+            if (entry.years.length) {
+                const rememberedYear = selectedYearBySource.get(entry.sourceId);
+                entry.selectedYear = entry.years.indexOf(rememberedYear) >= 0 ? rememberedYear : (entry.selectedYear || chooseDefaultOverlayYear(entry.years));
+            } else {
+                entry.selectedYear = null;
+            }
+            const visibleCards = cards.filter(card => getAttr(card, 'year_hidden') !== '1');
+            const groups = groupLinkedTasksForOverlay(visibleCards);
+
+            if (!entry.panel) {
+                entry.panel = document.createElement('div');
+                entry.panel.className = 'manual-link-task-schedule-overlay';
+                applyPanelStyle(entry.panel);
+                panelHost.appendChild(entry.panel);
+            } else if (entry.panel.parentNode !== panelHost) {
+                panelHost.appendChild(entry.panel);
+            }
+
+            while (entry.panel.firstChild) entry.panel.removeChild(entry.panel.firstChild);
+            entry.visibleItems = [];
+            const headerCount = activeMode === MODE_OCCUPANCY ? countOccupancyRows(entry) : (activeMode === MODE_SCHEDULE ? countScheduleRows(visibleCards) : countGroupItems(groups));
+            entry.panel.appendChild(createHeader(entry, headerCount));
+            const body = createBody();
+            entry.panel.appendChild(body);
+            mxEvent.addListener(body, 'scroll', function () { refreshLines(entry); });
+
+            if (activeMode === MODE_OCCUPANCY) renderOccupancyView(entry, body);
+            else if (visibleCards.length === 0) renderEmptyTaskOverlayMessage(body);
+            else if (activeMode === MODE_SCHEDULE) renderScheduleView(entry, body, visibleCards);
+            else if (groups.length) renderCardView(entry, body, groups);
+            else renderEmptyTaskOverlayMessage(body);
+
+            if (!positionPanel(entry, source)) {
+                removeEntry(entry);
+                return;
+            }
+
+            refreshLines(entry);
+        }
+
+        function removeEntry(entry, restoreYear) {
+            if (!entry) return;
+            for (const poly of entry.lines.values()) removePolyline(poly);
+            entry.lines.clear();
+            removeNode(entry.panel);
+            registry.delete(entry.sourceId);
+            if (restoreYear && !isEntryStillSelected(entry)) restoreEntryTasksToCurrentYear(entry);
+        }
+
+        function show(source, cards, linkLabels) {
+            clear();
+            if (!source || !source.id || !cards || cards.length === 0) return;
+
+            const validCards = cards.filter(isValidOverlayCard).sort(compareTaskCardsByStartDate);
+            if (validCards.length === 0) return;
+
+            const entry = {
+                sourceId: source.id,
+                targetIds: validCards.map((card) => card.id),
+                linkLabels: new Map(),
+                panel: null,
+                panelLeft: 0,
+                panelTop: 0,
+                visibleItems: [],
+                lines: new Map()
+            };
+            for (const card of validCards) entry.linkLabels.set(card.id, linkLabels && linkLabels.get ? (linkLabels.get(card.id) || '') : '');
+            registry.set(source.id, entry);
+            renderEntry(entry);
+        }
+
+        function showScheduleOnly(source) {
+            clear();
+            if (!source || !source.id || !isTilerGroup(source)) return;
+            const entry = {
+                sourceId: source.id,
+                targetIds: [],
+                linkLabels: new Map(),
+                scheduleOnly: true,
+                panel: null,
+                panelLeft: 0,
+                panelTop: 0,
+                visibleItems: [],
+                lines: new Map()
+            };
+            registry.set(source.id, entry);
+            renderEntry(entry);
+        }
+
+        function clear() {
+            for (const entry of Array.from(registry.values())) removeEntry(entry, true);
+        }
+
+        function refresh() {
+            for (const entry of Array.from(registry.values())) renderEntry(entry);
+        }
+
+        function setMode(mode) {
+            activeMode = mode === MODE_OCCUPANCY ? MODE_OCCUPANCY : (mode === MODE_SCHEDULE ? MODE_SCHEDULE : MODE_CARDS);
+            refresh();
+        }
+
+        return {
+            show,
+            showScheduleOnly,
+            clear,
+            refresh,
+            setMode
+        };
+    })();
 
 
     // Primary flag persistence
@@ -2939,22 +2939,22 @@ Draw.loadPlugin(function (ui) {
         return { P, S };
     }
 
-    function dispatchYearFilterChangedForTaskOverlay(card, year) { // CHANGE
-        try { // CHANGE
-            window.dispatchEvent(new CustomEvent('yearFilterChanged', { // CHANGE
-                detail: { moduleCellId: null, taskCardId: card && card.id || null, year: year == null ? null : year } // CHANGE
-            })); // CHANGE
-        } catch (_) { } // CHANGE
-    } // CHANGE
+    function dispatchYearFilterChangedForTaskOverlay(card, year) {
+        try {
+            window.dispatchEvent(new CustomEvent('yearFilterChanged', {
+                detail: { moduleCellId: null, taskCardId: card && card.id || null, year: year == null ? null : year }
+            }));
+        } catch (_) { }
+    }
 
-    function revealKanbanCardForNavigation(card) { // CHANGE
-        if (!isKanbanCard(card)) return; // CHANGE
-        if (getAttr(card, 'year_hidden') === '1' || getAttr(card, 'repeat_hidden') === '1') return; // CHANGE
-        if (!model.isVisible || model.isVisible(card)) return; // CHANGE
-        const pagingApi = graph.__trellisTaskPagingApi; // CHANGE
-        if (pagingApi && typeof pagingApi.revealCard === 'function' && pagingApi.revealCard(card)) { dispatchYearFilterChangedForTaskOverlay(card, null); return; } // CHANGE
-        dispatchYearFilterChangedForTaskOverlay(card, null); // CHANGE
-    } // CHANGE
+    function revealKanbanCardForNavigation(card) {
+        if (!isKanbanCard(card)) return;
+        if (getAttr(card, 'year_hidden') === '1' || getAttr(card, 'repeat_hidden') === '1') return;
+        if (!model.isVisible || model.isVisible(card)) return;
+        const pagingApi = graph.__trellisTaskPagingApi;
+        if (pagingApi && typeof pagingApi.revealCard === 'function' && pagingApi.revealCard(card)) { dispatchYearFilterChangedForTaskOverlay(card, null); return; }
+        dispatchYearFilterChangedForTaskOverlay(card, null);
+    }
 
 
     // Works for arbitrarily nested children
@@ -2962,7 +2962,7 @@ Draw.loadPlugin(function (ui) {
         if (!cell) return;
         const m = graph.getModel();
 
-        revealKanbanCardForNavigation(cell); // CHANGE
+        revealKanbanCardForNavigation(cell);
 
         m.beginUpdate();
         try {
@@ -3001,14 +3001,14 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-    function refreshAfterLinkNavigation() { // CHANGE
-        setTimeout(function () { // CHANGE
-            refreshCurrentHighlight(); // CHANGE
-            taskScheduleOverlay.refresh(); // CHANGE
-        }, 0); // CHANGE
-    } // CHANGE
+    function refreshAfterLinkNavigation() {
+        setTimeout(function () {
+            refreshCurrentHighlight();
+            taskScheduleOverlay.refresh();
+        }, 0);
+    }
 
-    // Navigate between endpoints of an overlay link                        
+    // Navigate between endpoints of an overlay link
     function navigateOverlayLink(meta, evt) {
         if (!meta) return;
         const m = graph.getModel();
@@ -3025,7 +3025,7 @@ Draw.loadPlugin(function (ui) {
         if (next) {
             selectAndReveal(next);
             graph.scrollCellToVisible(next, true);
-            refreshAfterLinkNavigation(); // CHANGE
+            refreshAfterLinkNavigation();
         }
 
         if (evt) {
@@ -3069,20 +3069,20 @@ Draw.loadPlugin(function (ui) {
         return linked;
     }
 
-    function historyCellIds(cells) { // NEW
-        return (cells || []).map(cell => cell && (cell.id || (cell.getId && cell.getId()))).filter(Boolean).map(String); // NEW
-    } // NEW
+    function historyCellIds(cells) {
+        return (cells || []).map(cell => cell && (cell.id || (cell.getId && cell.getId()))).filter(Boolean).map(String);
+    }
 
-    function runTrellisHistoryTransaction(metadata, operation) { // NEW
-        const history = typeof window !== "undefined" && window.Trellis && window.Trellis.history; // NEW
-        if (history && typeof history.run === "function" && !(typeof history.isRestoring === "function" && history.isRestoring())) { // NEW
-            return history.run(metadata, operation); // NEW
-        } // NEW
-        return operation(); // NEW
-    } // NEW
+    function runTrellisHistoryTransaction(metadata, operation) {
+        const history = typeof window !== "undefined" && window.Trellis && window.Trellis.history;
+        if (history && typeof history.run === "function" && !(typeof history.isRestoring === "function" && history.isRestoring())) {
+            return history.run(metadata, operation);
+        }
+        return operation();
+    }
 
     function unlinkRespectingPrimaries(verts) {
-        return runTrellisHistoryTransaction({ category: "Data", action: "unlinkVertices", origin: "Vertex_Linking_Standalone", title: "Remove vertex links", affectedCellIds: historyCellIds(verts), tags: ["Links"] }, function () { // NEW
+        return runTrellisHistoryTransaction({ category: "Data", action: "unlinkVertices", origin: "Vertex_Linking_Standalone", title: "Remove vertex links", affectedCellIds: historyCellIds(verts), tags: ["Links"] }, function () {
         const pairs = computeApplicablePairsForLinking(verts);
         let removed = 0;
 
@@ -3101,7 +3101,7 @@ Draw.loadPlugin(function (ui) {
             try { graph.fireEvent(new mxEventObject('linksChanged', 'cells', verts)); } catch (_) { }
         }
         return { pairs: pairs.length, removed };
-        }); // NEW
+        });
     }
 
 
@@ -3109,7 +3109,7 @@ Draw.loadPlugin(function (ui) {
     // If any primaries, link every Primary ↔ every Secondary only.
     // If no primaries, link all pairs (existing behavior).
     function linkRespectingPrimaries(verts) {
-        return runTrellisHistoryTransaction({ category: "Data", action: "linkVertices", origin: "Vertex_Linking_Standalone", title: "Create vertex links", affectedCellIds: historyCellIds(verts), tags: ["Links"] }, function () { // NEW
+        return runTrellisHistoryTransaction({ category: "Data", action: "linkVertices", origin: "Vertex_Linking_Standalone", title: "Create vertex links", affectedCellIds: historyCellIds(verts), tags: ["Links"] }, function () {
         const { P, S } = derivePrimariesAndSecondaries(verts);
         let pairs = 0, changes = 0;
 
@@ -3142,7 +3142,7 @@ Draw.loadPlugin(function (ui) {
             try { graph.fireEvent(new mxEventObject('linksChanged', 'cells', verts)); } catch (_) { }
         }
         return { pairs, changes };
-        }); // NEW
+        });
     }
 
 
@@ -3177,7 +3177,7 @@ Draw.loadPlugin(function (ui) {
 
     // Unlink this vertex from every linked partner; returns {checked, removed}
     function unlinkAllFor(cell) {
-        return runTrellisHistoryTransaction({ category: "Data", action: "unlinkAllVertices", origin: "Vertex_Linking_Standalone", title: "Remove all vertex links", affectedCellIds: historyCellIds([cell]), tags: ["Links"] }, function () { // NEW
+        return runTrellisHistoryTransaction({ category: "Data", action: "unlinkAllVertices", origin: "Vertex_Linking_Standalone", title: "Remove all vertex links", affectedCellIds: historyCellIds([cell]), tags: ["Links"] }, function () {
         const ids = Array.from(getLinkSet(cell));
         let checked = 0, removed = 0;
 
@@ -3202,7 +3202,7 @@ Draw.loadPlugin(function (ui) {
             try { graph.fireEvent(new mxEventObject('linksChanged', 'cells', [cell])); } catch (_) { }
         }
         return { checked, removed };
-        }); // NEW
+        });
     }
 
 
@@ -3231,14 +3231,14 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-    function highlight(cell, color, widthPx) { // CHANGE
-        domHighlightVertex(cell, color, widthPx); // CHANGE
+    function highlight(cell, color, widthPx) {
+        domHighlightVertex(cell, color, widthPx);
     }
 
 
 
     // DOM-based vertex highlighting (no model/undo impact)                    
-    function domHighlightVertex(cell, color, widthPx) { // CHANGE
+    function domHighlightVertex(cell, color, widthPx) {
         if (!cell || !cell.id) return;
         const st = graph.getView().getState(cell);
         if (!st || !st.shape || !st.shape.node) return;
@@ -3255,7 +3255,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         target.style.stroke = color || '#ff0000';
-        target.style.strokeWidth = (widthPx || 3) + 'px'; // CHANGE
+        target.style.strokeWidth = (widthPx || 3) + 'px';
         markHighlighted(cell);
     }
 
@@ -3284,115 +3284,115 @@ Draw.loadPlugin(function (ui) {
     // Clear visuals WITHOUT opening a transaction; caller groups.
     // Only clear what we previously changed, and only on vertices.
     function clearAllHighlights() {
-        taskScheduleOverlay.clear(); // CHANGE
+        taskScheduleOverlay.clear();
         linkOverlays.clearAll();
         clearDomHighlights();
     }
 
 
-    function selectedLinkableVertices() { // NEW
-        return asVertexArray(graph.getSelectionCells && graph.getSelectionCells()); // NEW
-    } // NEW
+    function selectedLinkableVertices() {
+        return asVertexArray(graph.getSelectionCells && graph.getSelectionCells());
+    }
 
-    function refreshCurrentHighlight() { // CHANGE
-        const selected = selectedLinkableVertices(); // CHANGE
+    function refreshCurrentHighlight() {
+        const selected = selectedLinkableVertices();
 
-        if (!selected || selected.length === 0) { // CHANGE
-            highlightLinked(null); // CHANGE
-            return; // CHANGE
-        } // CHANGE
+        if (!selected || selected.length === 0) {
+            highlightLinked(null);
+            return;
+        }
 
-        if (selected.length === 1) { // CHANGE
-            const cell = selected[0]; // CHANGE
-            if (cell && model.isVertex(cell)) highlightLinked(cell); // CHANGE
-            else highlightLinked(null); // CHANGE
-            return; // CHANGE
-        } // CHANGE
+        if (selected.length === 1) {
+            const cell = selected[0];
+            if (cell && model.isVertex(cell)) highlightLinked(cell);
+            else highlightLinked(null);
+            return;
+        }
 
-        if (selected.every(isRoleCard)) { // NEW
-            highlightLinkedRoleCards(selected); // NEW
-        } else { // NEW
-            highlightLinked(null); // CHANGE
-        } // CHANGE
-    } // CHANGE
+        if (selected.every(isRoleCard)) {
+            highlightLinkedRoleCards(selected);
+        } else {
+            highlightLinked(null);
+        }
+    }
 
-    function assignStandardLinkLabelOffsets(records) { // NEW
-        const groups = { left: [], right: [], top: [], bottom: [] }; // NEW
-        for (const record of records || []) { // NEW
-            record.labelOffset = { x: 0, y: 0 }; // NEW
-            const side = record.exitHint && record.exitHint.side; // NEW
-            if (groups[side]) groups[side].push(record); // NEW
-        } // NEW
+    function assignStandardLinkLabelOffsets(records) {
+        const groups = { left: [], right: [], top: [], bottom: [] };
+        for (const record of records || []) {
+            record.labelOffset = { x: 0, y: 0 };
+            const side = record.exitHint && record.exitHint.side;
+            if (groups[side]) groups[side].push(record);
+        }
 
-        for (const side of ['left', 'right', 'top', 'bottom']) { // NEW
-            groups[side].sort((a, b) => { // NEW
-                const at = a.exitHint && Number.isFinite(a.exitHint.t) ? a.exitHint.t : 0; // NEW
-                const bt = b.exitHint && Number.isFinite(b.exitHint.t) ? b.exitHint.t : 0; // NEW
-                return at - bt; // NEW
-            }); // NEW
-            for (let i = 0; i < groups[side].length; i++) { // NEW
-                const offsetPx = i * LINK_LABEL_STAGGER_PX; // NEW
-                groups[side][i].labelOffset = (side === 'left' || side === 'right') // NEW
-                    ? { x: 0, y: offsetPx } // NEW
-                    : { x: offsetPx, y: 0 }; // NEW
-            } // NEW
-        } // NEW
-    } // NEW
+        for (const side of ['left', 'right', 'top', 'bottom']) {
+            groups[side].sort((a, b) => {
+                const at = a.exitHint && Number.isFinite(a.exitHint.t) ? a.exitHint.t : 0;
+                const bt = b.exitHint && Number.isFinite(b.exitHint.t) ? b.exitHint.t : 0;
+                return at - bt;
+            });
+            for (let i = 0; i < groups[side].length; i++) {
+                const offsetPx = i * LINK_LABEL_STAGGER_PX;
+                groups[side][i].labelOffset = (side === 'left' || side === 'right')
+                    ? { x: 0, y: offsetPx }
+                    : { x: offsetPx, y: 0 };
+            }
+        }
+    }
 
     // Config: whether a Primary vertex should be highlighted even without links
     const ALLOW_PRIMARY_WHEN_UNLINKED = true; // set to false to require links
 
-    function highlightLinkedRoleCards(cells) { // NEW
-        const YELLOW = '#ffd400'; // NEW
-        const RED = '#ff0000'; // NEW
-        const selectedRoleCards = (cells || []).filter(cell => cell && model.isVertex(cell) && isRoleCard(cell)); // NEW
+    function highlightLinkedRoleCards(cells) {
+        const YELLOW = '#ffd400';
+        const RED = '#ff0000';
+        const selectedRoleCards = (cells || []).filter(cell => cell && model.isVertex(cell) && isRoleCard(cell));
 
-        model.beginUpdate(); // NEW
-        try { // NEW
-            clearAllHighlights(); // NEW
-            if (selectedRoleCards.length === 0) return; // NEW
+        model.beginUpdate();
+        try {
+            clearAllHighlights();
+            if (selectedRoleCards.length === 0) return;
 
-            const visibleLinkOverlayRecords = []; // NEW
-            for (const cell of selectedRoleCards) { // NEW
-                pruneBrokenLinks(cell); // NEW
-                const linkedIds = getLinkSet(cell); // NEW
-                const selIsPrimary = isPrimary(cell); // NEW
-                highlight(cell, selIsPrimary ? YELLOW : RED); // NEW
-                if (linkedIds.size === 0) continue; // NEW
+            const visibleLinkOverlayRecords = [];
+            for (const cell of selectedRoleCards) {
+                pruneBrokenLinks(cell);
+                const linkedIds = getLinkSet(cell);
+                const selIsPrimary = isPrimary(cell);
+                highlight(cell, selIsPrimary ? YELLOW : RED);
+                if (linkedIds.size === 0) continue;
 
-                const targets = []; // NEW
-                for (const id of linkedIds) { // NEW
-                    const other = model.getCell(id); // NEW
-                    if (other && model.isVertex(other)) targets.push(other); // NEW
-                } // NEW
+                const targets = [];
+                for (const id of linkedIds) {
+                    const other = model.getCell(id);
+                    if (other && model.isVertex(other)) targets.push(other);
+                }
 
-                const exitMap = computeExitParamsForOrigin(cell, targets); // NEW
-                for (const other of targets) { // NEW
-                    const otherIsPrimary = isPrimary(other); // NEW
-                    highlight(other, otherIsPrimary ? YELLOW : RED); // NEW
-                    const laneColor = getLinkLaneColor(cell, other); // NEW
-                    const edgeColor = laneColor ? laneColor : ((selIsPrimary || otherIsPrimary) ? YELLOW : RED); // NEW
-                    const label = getRawTextLabel ? getRawTextLabel(other) : ''; // NEW
-                    const exitHint = exitMap.get(other.id); // NEW
-                    if (shouldShowEdgeInternal(cell, other)) { // NEW
-                        visibleLinkOverlayRecords.push({ source: cell, other, exitHint, edgeColor, label, labelOffset: { x: 0, y: 0 } }); // NEW
-                    } // NEW
-                } // NEW
-            } // NEW
+                const exitMap = computeExitParamsForOrigin(cell, targets);
+                for (const other of targets) {
+                    const otherIsPrimary = isPrimary(other);
+                    highlight(other, otherIsPrimary ? YELLOW : RED);
+                    const laneColor = getLinkLaneColor(cell, other);
+                    const edgeColor = laneColor ? laneColor : ((selIsPrimary || otherIsPrimary) ? YELLOW : RED);
+                    const label = getRawTextLabel ? getRawTextLabel(other) : '';
+                    const exitHint = exitMap.get(other.id);
+                    if (shouldShowEdgeInternal(cell, other)) {
+                        visibleLinkOverlayRecords.push({ source: cell, other, exitHint, edgeColor, label, labelOffset: { x: 0, y: 0 } });
+                    }
+                }
+            }
 
-            assignStandardLinkLabelOffsets(visibleLinkOverlayRecords); // NEW
-            for (const record of visibleLinkOverlayRecords) { // NEW
-                linkOverlays.setLinkOverlay(record.source, record.other, record.exitHint, record.edgeColor, record.label, record.labelOffset); // NEW
-            } // NEW
-        } finally { // NEW
-            model.endUpdate(); // NEW
-        } // NEW
-    } // NEW
+            assignStandardLinkLabelOffsets(visibleLinkOverlayRecords);
+            for (const record of visibleLinkOverlayRecords) {
+                linkOverlays.setLinkOverlay(record.source, record.other, record.exitHint, record.edgeColor, record.label, record.labelOffset);
+            }
+        } finally {
+            model.endUpdate();
+        }
+    }
 
     function highlightLinked(cell) {
         const YELLOW = '#ffd400';
         const RED = '#ff0000';
-        const SAME_CROP_HIGHLIGHT = '#2563eb'; // NEW
+        const SAME_CROP_HIGHLIGHT = '#2563eb';
 
         model.beginUpdate();
         try {
@@ -3404,13 +3404,13 @@ Draw.loadPlugin(function (ui) {
             let linkedIds = getLinkSet(cell);
             const selIsPrimary = isPrimary(cell);
             const hasLinks = linkedIds.size > 0;
-            const selectedIsTilerGroup = isTilerGroup(cell); // ADDED
+            const selectedIsTilerGroup = isTilerGroup(cell);
 
-            if (!hasLinks && selectedIsTilerGroup) { // ADDED
-                highlight(cell, selIsPrimary ? YELLOW : RED); // CHANGED
-                taskScheduleOverlay.showScheduleOnly(cell); // ADDED
-                return; // ADDED
-            } // ADDED
+            if (!hasLinks && selectedIsTilerGroup) {
+                highlight(cell, selIsPrimary ? YELLOW : RED);
+                taskScheduleOverlay.showScheduleOnly(cell);
+                return;
+            }
 
             if (!hasLinks && !(ALLOW_PRIMARY_WHEN_UNLINKED && selIsPrimary)) {
                 return;
@@ -3427,26 +3427,26 @@ Draw.loadPlugin(function (ui) {
                     targets.push(other);
             }
 
-            const sameBoardLinkedCards = collectSameBoardLinkedKanbanCards(cell, targets); // CHANGE
-            const selectedTilerTaskSiblingIds = collectLinkedTaskCardSiblingIdsForTiler(cell, targets); // CHANGE
-            const linkedTaskCards = collectLinkedKanbanCardsForSource(cell); // CHANGE
-            const taskOverlayActive = linkedTaskCards.length > 0 && !isKanbanCard(cell); // CHANGE
-            const taskOverlayLinkLabels = new Map(); // CHANGE
-            if (taskOverlayActive) { // CHANGE
-                taskScheduleOverlay.show(cell, linkedTaskCards, taskOverlayLinkLabels); // CHANGE
-            } else if (selectedIsTilerGroup) { // ADDED
-                taskScheduleOverlay.showScheduleOnly(cell); // ADDED
-            } else { // CHANGE
-                taskScheduleOverlay.clear(); // CHANGE
-            } // CHANGE
+            const sameBoardLinkedCards = collectSameBoardLinkedKanbanCards(cell, targets);
+            const selectedTilerTaskSiblingIds = collectLinkedTaskCardSiblingIdsForTiler(cell, targets);
+            const linkedTaskCards = collectLinkedKanbanCardsForSource(cell);
+            const taskOverlayActive = linkedTaskCards.length > 0 && !isKanbanCard(cell);
+            const taskOverlayLinkLabels = new Map();
+            if (taskOverlayActive) {
+                taskScheduleOverlay.show(cell, linkedTaskCards, taskOverlayLinkLabels);
+            } else if (selectedIsTilerGroup) {
+                taskScheduleOverlay.showScheduleOnly(cell);
+            } else {
+                taskScheduleOverlay.clear();
+            }
 
             const exitMap = computeExitParamsForOrigin(cell, targets);
-            const visibleLinkOverlayRecords = []; // NEW
+            const visibleLinkOverlayRecords = [];
 
             for (const other of targets) {
                 const otherIsPrimary = isPrimary(other);
-                const linkedTargetHighlight = selectedTilerTaskSiblingIds.has(other.id) ? SAME_CROP_HIGHLIGHT : RED; // CHANGE
-                highlight(other, otherIsPrimary ? YELLOW : linkedTargetHighlight); // CHANGE
+                const linkedTargetHighlight = selectedTilerTaskSiblingIds.has(other.id) ? SAME_CROP_HIGHLIGHT : RED;
+                highlight(other, otherIsPrimary ? YELLOW : linkedTargetHighlight);
 
                 // If link touches a Kanban task card, edge color = lane fillColor  
                 const laneColor = getLinkLaneColor(cell, other);
@@ -3459,22 +3459,22 @@ Draw.loadPlugin(function (ui) {
 
                 // Decide visibility using internal lane-based policy               
                 const shouldShow = shouldShowEdgeInternal(cell, other);
-                if (shouldShow) { // CHANGE
-                    visibleLinkOverlayRecords.push({ other, exitHint, edgeColor, label, labelOffset: { x: 0, y: 0 } }); // NEW
+                if (shouldShow) {
+                    visibleLinkOverlayRecords.push({ other, exitHint, edgeColor, label, labelOffset: { x: 0, y: 0 } });
                 }
             }
 
-            assignStandardLinkLabelOffsets(visibleLinkOverlayRecords); // NEW
-            for (const record of visibleLinkOverlayRecords) { // NEW
-                linkOverlays.setLinkOverlay( // CHANGE
-                    cell, record.other, record.exitHint, record.edgeColor, record.label, record.labelOffset // CHANGE
-                ); // CHANGE
-            } // NEW
+            assignStandardLinkLabelOffsets(visibleLinkOverlayRecords);
+            for (const record of visibleLinkOverlayRecords) {
+                linkOverlays.setLinkOverlay(
+                    cell, record.other, record.exitHint, record.edgeColor, record.label, record.labelOffset
+                );
+            }
 
-            for (const otherCard of sameBoardLinkedCards) { // CHANGE
-                const otherIsPrimary = isPrimary(otherCard); // CHANGE
-                highlight(otherCard, otherIsPrimary ? YELLOW : SAME_CROP_HIGHLIGHT, 1.5); // CHANGE
-            } // CHANGE
+            for (const otherCard of sameBoardLinkedCards) {
+                const otherIsPrimary = isPrimary(otherCard);
+                highlight(otherCard, otherIsPrimary ? YELLOW : SAME_CROP_HIGHLIGHT, 1.5);
+            }
 
 
         } finally {
@@ -3482,7 +3482,7 @@ Draw.loadPlugin(function (ui) {
         }
     }
 
-    // -------------------- Ctrl Click Handling -------------------- // CHANGE
+    // -------------------- Ctrl Click Handling --------------------
     graph.addMouseListener({
         mouseDown(sender, me) {
             const evt = me.getEvent();
@@ -3599,39 +3599,39 @@ Draw.loadPlugin(function (ui) {
         }
     });
 
-    function resolveLiveCreatedTilerGroup(evt) { // CHANGE
-        const m = graph.getModel(); // CHANGE
-        const eventCell = evt && evt.getProperty ? evt.getProperty('cell') : null; // CHANGE
-        const eventCellId = evt && evt.getProperty ? evt.getProperty('cellId') : null; // CHANGE
-        const cellId = eventCellId || (eventCell && eventCell.id) || ''; // CHANGE
-        const liveCell = cellId && m.getCell ? m.getCell(cellId) : eventCell; // CHANGE
-        if (!liveCell || !isTilerGroup(liveCell)) return null; // CHANGE
-        if (typeof m.contains === 'function' && !m.contains(liveCell)) return null; // CHANGE
-        return liveCell; // CHANGE
-    } // CHANGE
+    function resolveLiveCreatedTilerGroup(evt) {
+        const m = graph.getModel();
+        const eventCell = evt && evt.getProperty ? evt.getProperty('cell') : null;
+        const eventCellId = evt && evt.getProperty ? evt.getProperty('cellId') : null;
+        const cellId = eventCellId || (eventCell && eventCell.id) || '';
+        const liveCell = cellId && m.getCell ? m.getCell(cellId) : eventCell;
+        if (!liveCell || !isTilerGroup(liveCell)) return null;
+        if (typeof m.contains === 'function' && !m.contains(liveCell)) return null;
+        return liveCell;
+    }
 
-    graph.addListener(TILER_GROUP_CREATED_EVENT, function (_sender, evt) { // CHANGE
-        const createdGroup = resolveLiveCreatedTilerGroup(evt); // CHANGE
-        if (!createdGroup) return; // CHANGE
-        if (graph.getSelectionCell && graph.getSelectionCell() !== createdGroup) graph.setSelectionCell(createdGroup); // CHANGE
-        setTimeout(function () { // CHANGE
-            const liveGroup = resolveLiveCreatedTilerGroup(evt); // CHANGE
-            if (!liveGroup) return; // CHANGE
-            if (graph.getSelectionCell && graph.getSelectionCell() !== liveGroup) graph.setSelectionCell(liveGroup); // CHANGE
-            taskScheduleOverlay.showScheduleOnly(liveGroup); // CHANGE
-            taskScheduleOverlay.refresh(); // CHANGE
-        }, 0); // CHANGE
-    }); // CHANGE
+    graph.addListener(TILER_GROUP_CREATED_EVENT, function (_sender, evt) {
+        const createdGroup = resolveLiveCreatedTilerGroup(evt);
+        if (!createdGroup) return;
+        if (graph.getSelectionCell && graph.getSelectionCell() !== createdGroup) graph.setSelectionCell(createdGroup);
+        setTimeout(function () {
+            const liveGroup = resolveLiveCreatedTilerGroup(evt);
+            if (!liveGroup) return;
+            if (graph.getSelectionCell && graph.getSelectionCell() !== liveGroup) graph.setSelectionCell(liveGroup);
+            taskScheduleOverlay.showScheduleOnly(liveGroup);
+            taskScheduleOverlay.refresh();
+        }, 0);
+    });
 
 
     // Selection Highlight Logic
     graph.getSelectionModel().addListener(mxEvent.CHANGE, function () {
-        refreshCurrentHighlight(); // CHANGE
+        refreshCurrentHighlight();
     });
-    graph.addListener(TRELLIS_SELECTION_VISUALS_REFRESH_EVENT, function () { // NEW
-        refreshCurrentHighlight(); // NEW
-        taskScheduleOverlay.refresh(); // NEW
-    }); // NEW
+    graph.addListener(TRELLIS_SELECTION_VISUALS_REFRESH_EVENT, function () {
+        refreshCurrentHighlight();
+        taskScheduleOverlay.refresh();
+    });
 
 
     // -------------------- Context Menu Hook --------------------
@@ -3680,7 +3680,7 @@ Draw.loadPlugin(function (ui) {
                     });
                 }
                 // Mixed -> show both
-                else {                                                                                 // UNCHANGED
+                else {
                     menu.addItem(`Mark as Primary (${nonPrimCount})`, null, function () {
                         model.beginUpdate();
                         try {
@@ -3705,7 +3705,7 @@ Draw.loadPlugin(function (ui) {
                         if (sel && model.isVertex(sel)) highlightLinked(sel);
                     });
 
-                    vertexLinkLog(`[Primary] Mixed selection: primary=${primCount}, nonPrimary=${nonPrimCount}`); // UNCHANGED
+                    vertexLinkLog(`[Primary] Mixed selection: primary=${primCount}, nonPrimary=${nonPrimCount}`);
                 }
             }
             // Single-selection: show Remove Links if the vertex has any links
@@ -3745,19 +3745,19 @@ Draw.loadPlugin(function (ui) {
                 // Only missing -> only "Link"                                           
                 else if (missingPairs === totalPairs && totalPairs > 0) {
                     menu.addItem(`Link Selected (respect primaries) (${totalPairs})`, null, function () {
-                        const res = linkRespectingPrimaries(verts);                     // UNCHANGED
-                        vertexLinkLog(`[LINK P↔S] pairs=${res.pairs}, changed=${res.changes}`); // UNCHANGED
-                        const sel = graph.getSelectionCell();                           // UNCHANGED
-                        if (sel && model.isVertex(sel)) highlightLinked(sel);           // UNCHANGED
+                        const res = linkRespectingPrimaries(verts);
+                        vertexLinkLog(`[LINK P↔S] pairs=${res.pairs}, changed=${res.changes}`);
+                        const sel = graph.getSelectionCell();
+                        if (sel && model.isVertex(sel)) highlightLinked(sel);
                     });
                 }
                 // Mixed -> show both with counts                                        
                 else if (totalPairs > 0) {
                     menu.addItem(`Link Selected (respect primaries) (${missingPairs})`, null, function () {
-                        const res = linkRespectingPrimaries(verts);                     // UNCHANGED
-                        vertexLinkLog(`[LINK P↔S] pairs=${res.pairs}, changed=${res.changes}`); // UNCHANGED
-                        const sel = graph.getSelectionCell();                           // UNCHANGED
-                        if (sel && model.isVertex(sel)) highlightLinked(sel);           // UNCHANGED
+                        const res = linkRespectingPrimaries(verts);
+                        vertexLinkLog(`[LINK P↔S] pairs=${res.pairs}, changed=${res.changes}`);
+                        const sel = graph.getSelectionCell();
+                        if (sel && model.isVertex(sel)) highlightLinked(sel);
                     });
 
                     menu.addItem(`Unlink Selected (${linkedPairs})`, null, function () {
@@ -3770,28 +3770,28 @@ Draw.loadPlugin(function (ui) {
             }
         }
 
-        function registerTrellisContextMenuContributor(contributor) { // NEW
-            function finishRegistration() { // NEW
-                if (!window.TrellisContextMenu) return; // NEW
-                window.TrellisContextMenu.install(ui); // NEW
-                window.TrellisContextMenu.register(contributor); // NEW
-            } // NEW
+        function registerTrellisContextMenuContributor(contributor) {
+            function finishRegistration() {
+                if (!window.TrellisContextMenu) return;
+                window.TrellisContextMenu.install(ui);
+                window.TrellisContextMenu.register(contributor);
+            }
 
-            if (window.TrellisContextMenu) { // NEW
-                finishRegistration(); // NEW
-            } else if (typeof mxscript === "function") { // NEW
-                mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration); // NEW
-            } // NEW
-        } // NEW
+            if (window.TrellisContextMenu) {
+                finishRegistration();
+            } else if (typeof mxscript === "function") {
+                mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration);
+            }
+        }
 
-        registerTrellisContextMenuContributor({ // CHANGE
-            id: "gardenLinking", // NEW
-            priority: 600, // NEW
-            addItems: function (menu) { // CHANGE
-                addMenuItems(menu); // NEW
-            } // CHANGE
-        }); // CHANGE
-        vertexLinkLog('[ManualLinker] Registered ordered context menu contributor'); // CHANGE
+        registerTrellisContextMenuContributor({
+            id: "gardenLinking",
+            priority: 600,
+            addItems: function (menu) {
+                addMenuItems(menu);
+            }
+        });
+        vertexLinkLog('[ManualLinker] Registered ordered context menu contributor');
     })();
 
     // always read the current model inside helpers                    
@@ -3850,39 +3850,39 @@ Draw.loadPlugin(function (ui) {
     // Keep link overlays attached on zoom/pan and geometry changes                 
     const view = graph.getView();
     if (view && view.addListener) {
-        function refreshViewOnlyLinkVisuals() { // CHANGE
-            linkOverlays.refreshAll(); // CHANGE
-            taskScheduleOverlay.refresh(); // CHANGE
+        function refreshViewOnlyLinkVisuals() {
+            linkOverlays.refreshAll();
+            taskScheduleOverlay.refresh();
 
             // Draw.io may recreate SVG nodes during zoom/pan, so reapply DOM highlights
-            // after the view has finished its redraw cycle. // CHANGE
-            setTimeout(function () { // CHANGE
-                refreshCurrentHighlight(); // CHANGE
-                linkOverlays.refreshAll(); // CHANGE
-                taskScheduleOverlay.refresh(); // CHANGE
-            }, 0); // CHANGE
-        } // CHANGE
+            // after the view has finished its redraw cycle.
+            setTimeout(function () {
+                refreshCurrentHighlight();
+                linkOverlays.refreshAll();
+                taskScheduleOverlay.refresh();
+            }, 0);
+        }
 
-        view.addListener(mxEvent.SCALE, refreshViewOnlyLinkVisuals); // CHANGE
-        view.addListener(mxEvent.TRANSLATE, refreshViewOnlyLinkVisuals); // CHANGE
-        view.addListener(mxEvent.SCALE_AND_TRANSLATE, refreshViewOnlyLinkVisuals); // CHANGE
+        view.addListener(mxEvent.SCALE, refreshViewOnlyLinkVisuals);
+        view.addListener(mxEvent.TRANSLATE, refreshViewOnlyLinkVisuals);
+        view.addListener(mxEvent.SCALE_AND_TRANSLATE, refreshViewOnlyLinkVisuals);
     }
 
     graph.getModel().addListener(mxEvent.CHANGE, function () {
         // Any geometry change (move/resize) will trigger recompute                
         linkOverlays.refreshAll();
-        taskScheduleOverlay.refresh(); // CHANGE
+        taskScheduleOverlay.refresh();
     });
 
-    window.addEventListener('trellisHistoryBeforeRestore', function () { // NEW
-        try { clearAllHighlights(); } catch (e) { } // NEW
-    }); // NEW
+    window.addEventListener('trellisHistoryBeforeRestore', function () {
+        try { clearAllHighlights(); } catch (e) { }
+    });
 
-    window.addEventListener('trellisHistoryAfterRestore', function () { // NEW
-        try { refreshCurrentHighlight(); } catch (e) { } // NEW
-        try { linkOverlays.refreshAll(); } catch (e) { } // NEW
-        try { taskScheduleOverlay.refresh(); } catch (e) { } // NEW
-    }); // NEW
+    window.addEventListener('trellisHistoryAfterRestore', function () {
+        try { refreshCurrentHighlight(); } catch (e) { }
+        try { linkOverlays.refreshAll(); } catch (e) { }
+        try { taskScheduleOverlay.refresh(); } catch (e) { }
+    });
 
 
     vertexLinkLog('[ManualLinker] Plugin loaded.');

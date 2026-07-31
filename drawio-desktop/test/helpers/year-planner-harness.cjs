@@ -13,7 +13,7 @@ const PLUGIN_PATH = path.join(
     "webapp",
     "plugins",
     "garden_planner_plugins",
-    "Year_Planner.js" // CHANGE
+    "Year_Planner.js"
 );
 const PLUGIN_SOURCE = fs.readFileSync(PLUGIN_PATH, "utf8");
 
@@ -23,8 +23,8 @@ class TestCell {
         this.id = id;
         this.children = [];
         this.attributes = new Map(Object.entries(attributes).map(([key, value]) => [key, String(value)]));
-        this.visible = true; // NEW
-        this.connectable = true; // NEW
+        this.visible = true;
+        this.connectable = true;
     }
 
     getId() {
@@ -36,11 +36,11 @@ class TestCell {
     }
 
     setVisible(value) {
-        this.visible = Boolean(value); // NEW
+        this.visible = Boolean(value);
     }
 
     setConnectable(value) {
-        this.connectable = Boolean(value); // NEW
+        this.connectable = Boolean(value);
     }
 }
 
@@ -53,24 +53,24 @@ function htmlEntities(value) {
         .replaceAll("'", "&#39;");
 }
 
-function createCanvasContext(operations) { // CHANGE
-    const context = { // NEW
-        fillStyle: "", // NEW
-        strokeStyle: "", // NEW
-        lineWidth: 1, // NEW
-        currentDash: [], // NEW
-        arc(...args) { operations.push({ method: "arc", args }); }, // CHANGE
-        beginPath() { operations.push({ method: "beginPath" }); }, // CHANGE
-        clearRect() { operations.length = 0; }, // CHANGE
-        fill() { operations.push({ method: "fill", fillStyle: context.fillStyle }); }, // CHANGE
-        fillRect(...args) { operations.push({ method: "fillRect", args, fillStyle: context.fillStyle }); }, // CHANGE
-        fillText(text, ...args) { operations.push({ method: "fillText", text: String(text), args, fillStyle: context.fillStyle }); }, // CHANGE
-        lineTo(...args) { operations.push({ method: "lineTo", args }); }, // CHANGE
-        moveTo(...args) { operations.push({ method: "moveTo", args }); }, // CHANGE
-        setLineDash(dash) { context.currentDash = Array.from(dash || []); }, // CHANGE
-        stroke() { operations.push({ method: "stroke", strokeStyle: context.strokeStyle, lineWidth: context.lineWidth, dash: Array.from(context.currentDash) }); } // CHANGE
-    }; // NEW
-    return context; // NEW
+function createCanvasContext(operations) {
+    const context = {
+        fillStyle: "",
+        strokeStyle: "",
+        lineWidth: 1,
+        currentDash: [],
+        arc(...args) { operations.push({ method: "arc", args }); },
+        beginPath() { operations.push({ method: "beginPath" }); },
+        clearRect() { operations.length = 0; },
+        fill() { operations.push({ method: "fill", fillStyle: context.fillStyle }); },
+        fillRect(...args) { operations.push({ method: "fillRect", args, fillStyle: context.fillStyle }); },
+        fillText(text, ...args) { operations.push({ method: "fillText", text: String(text), args, fillStyle: context.fillStyle }); },
+        lineTo(...args) { operations.push({ method: "lineTo", args }); },
+        moveTo(...args) { operations.push({ method: "moveTo", args }); },
+        setLineDash(dash) { context.currentDash = Array.from(dash || []); },
+        stroke() { operations.push({ method: "stroke", strokeStyle: context.strokeStyle, lineWidth: context.lineWidth, dash: Array.from(context.currentDash) }); }
+    };
+    return context;
 }
 
 /**
@@ -91,11 +91,11 @@ function createYearPlannerHarness(options = {}) {
     const confirmations = [];
 
     window.__USL_YEAR_PLANNER_TEST_HOOK__ = true;
-    window.HTMLCanvasElement.prototype.getContext = function getContext() { // CHANGE
-        if (!this.__canvasOperations) this.__canvasOperations = []; // NEW
-        if (!this.__canvasContext) this.__canvasContext = createCanvasContext(this.__canvasOperations); // NEW
-        return this.__canvasContext; // NEW
-    }; // CHANGE
+    window.HTMLCanvasElement.prototype.getContext = function getContext() {
+        if (!this.__canvasOperations) this.__canvasOperations = [];
+        if (!this.__canvasContext) this.__canvasContext = createCanvasContext(this.__canvasOperations);
+        return this.__canvasContext;
+    };
     window.URL.createObjectURL = () => "blob:test";
     window.URL.revokeObjectURL = () => {};
 
@@ -109,16 +109,16 @@ function createYearPlannerHarness(options = {}) {
     };
     const graph = {
         getModel: () => model,
-        getDefaultParent: () => root, // NEW
-        insertVertex(parent, id, value) { // NEW
-            const cell = new TestCell(id || `cell_${cells.size}`); // NEW
-            cell.value = value; // NEW
-            if (value && value.attributes) { // NEW
-                for (const attribute of Array.from(value.attributes)) cell.attributes.set(attribute.name, attribute.value); // NEW
+        getDefaultParent: () => root,
+        insertVertex(parent, id, value) {
+            const cell = new TestCell(id || `cell_${cells.size}`);
+            cell.value = value;
+            if (value && value.attributes) {
+                for (const attribute of Array.from(value.attributes)) cell.attributes.set(attribute.name, attribute.value);
             }
-            parent.children.push(cell); // NEW
-            cells.set(cell.id, cell); // NEW
-            return cell; // NEW
+            parent.children.push(cell);
+            cells.set(cell.id, cell);
+            return cell;
         },
         setAttributeForCell(cell, key, value) {
             if (value == null) cell.attributes.delete(key);
@@ -198,18 +198,18 @@ function createYearPlannerHarness(options = {}) {
         plant_name: "Tomato",
         yield_per_plant_kg: 1,
         default_planting_method: "direct_sow.field",
-        annual: 1, // CHANGE
-        biennial: 0, // CHANGE
-        perennial: 0 // CHANGE
+        annual: 1,
+        biennial: 0,
+        perennial: 0
     }];
 
-    api.DbClient.getPlantsBasicCached = options.getPlantsBasicCached || (async () => plants); // CHANGE
-    api.DbClient.invalidatePlantsBasicCache = options.invalidatePlantsBasicCache || (() => {}); // CHANGE
-    api.DbClient.queryVarietiesByPlantId = async plantId => { // CHANGE
-        if (typeof options.varietiesByPlantId === "function") return options.varietiesByPlantId(String(plantId)); // NEW
-        if (options.varietiesByPlantId) return options.varietiesByPlantId[String(plantId)] || []; // NEW
-        return options.varieties || []; // CHANGE
-    }; // CHANGE
+    api.DbClient.getPlantsBasicCached = options.getPlantsBasicCached || (async () => plants);
+    api.DbClient.invalidatePlantsBasicCache = options.invalidatePlantsBasicCache || (() => {});
+    api.DbClient.queryVarietiesByPlantId = async plantId => {
+        if (typeof options.varietiesByPlantId === "function") return options.varietiesByPlantId(String(plantId));
+        if (options.varietiesByPlantId) return options.varietiesByPlantId[String(plantId)] || [];
+        return options.varieties || [];
+    };
     api.DbClient.queryPlantingMethodsForPlantId = async () => options.methods || [{
         method_id: "direct_sow.field",
         method_name: "Direct sow",

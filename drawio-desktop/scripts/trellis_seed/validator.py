@@ -10,10 +10,10 @@ from .jsonio import read_json, write_json
 from .schema import (
     CITY_CLIMATE_BANDS,
     CITY_COLUMNS,
-    CITY_GEO_IDENTITY_COLUMNS,  # ADDED
-    COMPANION_COLUMNS,  # ADDED
-    COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS,  # ADDED
-    COMPANION_LAYOUT_TEMPLATES,  # ADDED
+    CITY_GEO_IDENTITY_COLUMNS,
+    COMPANION_COLUMNS,
+    COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS,
+    COMPANION_LAYOUT_TEMPLATES,
     GENERATED_TABLES,
     PLANTING_WINDOW_CONFIDENCE,
     PLANTING_WINDOW_REFERENCE_COLUMNS,
@@ -22,10 +22,10 @@ from .schema import (
     PLANT_FIELD_TYPES,
     PLANT_FLAG_FIELDS,
     PLANT_INTEGER_FIELDS,
-    PLANT_VARIETY_COLUMNS,  # ADDED
+    PLANT_VARIETY_COLUMNS,
     PLANT_REAL_FIELDS,
     PLANT_TEXT_FIELDS,
-    VARIETY_MATURITY_CLASSES,  # ADDED
+    VARIETY_MATURITY_CLASSES,
 )
 
 
@@ -194,9 +194,9 @@ def validate_row(
         if not str(row.get("city_name") or "").strip():
             errors.append(f"{prefix}.city_name is required.")
         if not str(row.get("country_name") or "").strip():
-            errors.append(f"{prefix}.country_name is required.")  # ADDED
+            errors.append(f"{prefix}.country_name is required.")
         if not str(row.get("region_name") or "").strip():
-            errors.append(f"{prefix}.region_name is required.")  # ADDED
+            errors.append(f"{prefix}.region_name is required.")
         unknown = sorted(set(row) - CITY_COLUMNS)
         if unknown:
             errors.append(f"{prefix} has unknown city columns: {unknown}")
@@ -204,10 +204,10 @@ def validate_row(
         _number_between(prefix, row, "longitude", -180, 180, errors)
         _number_between(prefix, row, "gdd_annual", 0, 20000, errors)
         _number_between(prefix, row, "gdd_base_c", -20, 30, errors)
-        if row.get("is_major_city") is not None and _coerce_integer(row.get("is_major_city")) not in {0, 1}:  # ADDED
-            errors.append(f"{prefix}.is_major_city must be 0 or 1.")  # ADDED
-        if row.get("climate_band") not in (None, "") and str(row.get("climate_band")).strip().casefold() not in CITY_CLIMATE_BANDS:  # ADDED
-            errors.append(f"{prefix}.climate_band must be one of: {', '.join(sorted(CITY_CLIMATE_BANDS))}.")  # ADDED
+        if row.get("is_major_city") is not None and _coerce_integer(row.get("is_major_city")) not in {0, 1}:
+            errors.append(f"{prefix}.is_major_city must be 0 or 1.")
+        if row.get("climate_band") not in (None, "") and str(row.get("climate_band")).strip().casefold() not in CITY_CLIMATE_BANDS:
+            errors.append(f"{prefix}.climate_band must be one of: {', '.join(sorted(CITY_CLIMATE_BANDS))}.")
         for month in range(1, 13):
             low = row.get(f"avg_monthly_low_c{month}")
             high = row.get(f"avg_monthly_high_c{month}")
@@ -225,58 +225,58 @@ def validate_row(
         else:
             errors.extend(f"{prefix}.{e}" for e in validate_task_template(template))
     elif table == "Companions":
-        unknown = sorted(set(row) - COMPANION_COLUMNS)  # ADDED
+        unknown = sorted(set(row) - COMPANION_COLUMNS)
         if unknown:
-            errors.append(f"{prefix} has unknown columns: {unknown}")  # ADDED
+            errors.append(f"{prefix} has unknown columns: {unknown}")
         if not row.get("p1") or not row.get("p2"):
             errors.append(f"{prefix} needs p1 and p2.")
-        for key in ("source_plant_id", "companion_plant_id", "start_offset_days"):  # ADDED
+        for key in ("source_plant_id", "companion_plant_id", "start_offset_days"):
             if row.get(key) in (None, ""):
                 continue
             try:
                 int(row.get(key))
             except (TypeError, ValueError):
-                errors.append(f"{prefix}.{key} must be an integer when provided.")  # ADDED
-        if row.get("layout_template") not in (None, "") and str(row.get("layout_template")).strip().casefold() not in COMPANION_LAYOUT_TEMPLATES:  # ADDED
-            errors.append(f"{prefix}.layout_template must be one of {sorted(COMPANION_LAYOUT_TEMPLATES)}.")  # ADDED
-        for key in ("layout_spacing_x_cm", "layout_spacing_y_cm", "layout_offset_x_cm", "layout_offset_y_cm"):  # ADDED
+                errors.append(f"{prefix}.{key} must be an integer when provided.")
+        if row.get("layout_template") not in (None, "") and str(row.get("layout_template")).strip().casefold() not in COMPANION_LAYOUT_TEMPLATES:
+            errors.append(f"{prefix}.layout_template must be one of {sorted(COMPANION_LAYOUT_TEMPLATES)}.")
+        for key in ("layout_spacing_x_cm", "layout_spacing_y_cm", "layout_offset_x_cm", "layout_offset_y_cm"):
             if row.get(key) in (None, ""):
                 continue
             try:
                 float(row.get(key))
             except (TypeError, ValueError):
-                errors.append(f"{prefix}.{key} must be a number when provided.")  # ADDED
-    elif table == "CompanionLayoutGroupDefaults":  # ADDED
-        unknown = sorted(set(row) - COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS)  # ADDED
-        if unknown:  # ADDED
-            errors.append(f"{prefix} has unknown columns: {unknown}")  # ADDED
-        plant_set_key = str(row.get("plant_set_key") or "").strip()  # ADDED
-        if not plant_set_key:  # ADDED
-            errors.append(f"{prefix}.plant_set_key is required.")  # ADDED
-        elif not all(part.isdigit() for part in plant_set_key.split("+")):  # ADDED
-            errors.append(f"{prefix}.plant_set_key must be sorted plant ids joined by '+'.")  # ADDED
-        elif plant_set_key.split("+") != sorted(plant_set_key.split("+"), key=int):  # ADDED
-            errors.append(f"{prefix}.plant_set_key must be sorted plant ids joined by '+'.")  # ADDED
-        try:  # ADDED
-            anchor_plant_id = int(row.get("anchor_plant_id"))  # ADDED
-        except (TypeError, ValueError):  # ADDED
-            anchor_plant_id = None  # ADDED
-            errors.append(f"{prefix}.anchor_plant_id must be an integer.")  # ADDED
-        else:  # ADDED
-            if plant_set_key and str(anchor_plant_id) not in plant_set_key.split("+"):  # ADDED
-                errors.append(f"{prefix}.anchor_plant_id must be part of plant_set_key.")  # ADDED
-        errors.extend(_validate_companion_group_layout_json(prefix, row.get("layout_json"), plant_set_key))  # ADDED
-    elif table == "PlantVarieties":
-        unknown = sorted(set(row) - PLANT_VARIETY_COLUMNS)  # ADDED
+                errors.append(f"{prefix}.{key} must be a number when provided.")
+    elif table == "CompanionLayoutGroupDefaults":
+        unknown = sorted(set(row) - COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS)
         if unknown:
-            errors.append(f"{prefix} has unknown columns: {unknown}")  # ADDED
+            errors.append(f"{prefix} has unknown columns: {unknown}")
+        plant_set_key = str(row.get("plant_set_key") or "").strip()
+        if not plant_set_key:
+            errors.append(f"{prefix}.plant_set_key is required.")
+        elif not all(part.isdigit() for part in plant_set_key.split("+")):
+            errors.append(f"{prefix}.plant_set_key must be sorted plant ids joined by '+'.")
+        elif plant_set_key.split("+") != sorted(plant_set_key.split("+"), key=int):
+            errors.append(f"{prefix}.plant_set_key must be sorted plant ids joined by '+'.")
+        try:
+            anchor_plant_id = int(row.get("anchor_plant_id"))
+        except (TypeError, ValueError):
+            anchor_plant_id = None
+            errors.append(f"{prefix}.anchor_plant_id must be an integer.")
+        else:
+            if plant_set_key and str(anchor_plant_id) not in plant_set_key.split("+"):
+                errors.append(f"{prefix}.anchor_plant_id must be part of plant_set_key.")
+        errors.extend(_validate_companion_group_layout_json(prefix, row.get("layout_json"), plant_set_key))
+    elif table == "PlantVarieties":
+        unknown = sorted(set(row) - PLANT_VARIETY_COLUMNS)
+        if unknown:
+            errors.append(f"{prefix} has unknown columns: {unknown}")
         if not row.get("plant_id") and not str(row.get("plant_name") or "").strip():
-            errors.append(f"{prefix} needs plant_id or plant_name.")  # ADDED
+            errors.append(f"{prefix} needs plant_id or plant_name.")
         if not str(row.get("variety_name") or "").strip():
-            errors.append(f"{prefix}.variety_name is required.")  # ADDED
-        maturity_class = str(row.get("maturity_class") or "").strip().casefold()  # ADDED
+            errors.append(f"{prefix}.variety_name is required.")
+        maturity_class = str(row.get("maturity_class") or "").strip().casefold()
         if maturity_class and maturity_class not in VARIETY_MATURITY_CLASSES:
-            errors.append(f"{prefix}.maturity_class must be one of: {', '.join(sorted(VARIETY_MATURITY_CLASSES))}.")  # ADDED
+            errors.append(f"{prefix}.maturity_class must be one of: {', '.join(sorted(VARIETY_MATURITY_CLASSES))}.")
     elif table == "CompanionEvidence":
         if not row.get("relation_id") and not (row.get("p1") and row.get("p2")):
             errors.append(f"{prefix} needs relation_id or p1/p2.")
@@ -335,53 +335,53 @@ def validate_row(
     return {"errors": errors, "warnings": warnings}
 
 
-def _validate_companion_group_layout_json(prefix: str, raw: Any, plant_set_key: str) -> list[str]:  # ADDED
-    errors: list[str] = []  # ADDED
-    try:  # ADDED
-        layout = json.loads(raw if isinstance(raw, str) else json.dumps(raw))  # ADDED
-    except (TypeError, ValueError):  # ADDED
-        return [f"{prefix}.layout_json must be valid JSON."]  # ADDED
-    if not isinstance(layout, dict):  # ADDED
-        return [f"{prefix}.layout_json must be an object."]  # ADDED
-    rows = layout.get("rows")  # ADDED
-    if not isinstance(rows, list) or not rows:  # ADDED
-        errors.append(f"{prefix}.layout_json.rows must be a non-empty list.")  # ADDED
-        return errors  # ADDED
-    row_plant_ids: set[str] = set()  # ADDED
-    anchor_count = 0  # ADDED
-    for index, item in enumerate(rows):  # ADDED
-        row_prefix = f"{prefix}.layout_json.rows[{index}]"  # ADDED
-        if not isinstance(item, dict):  # ADDED
-            errors.append(f"{row_prefix} must be an object.")  # ADDED
-            continue  # ADDED
-        role = item.get("role")  # ADDED
-        if role not in {"anchor", "companion"}:  # ADDED
-            errors.append(f"{row_prefix}.role must be anchor or companion.")  # ADDED
-        elif role == "anchor":  # ADDED
-            anchor_count += 1  # ADDED
-        try:  # ADDED
-            plant_id = int(item.get("plantId"))  # ADDED
-        except (TypeError, ValueError):  # ADDED
-            errors.append(f"{row_prefix}.plantId must be an integer.")  # ADDED
-        else:  # ADDED
-            row_plant_ids.add(str(plant_id))  # ADDED
-        template = str(item.get("template") or "").strip().casefold()  # ADDED
-        if role == "companion" and template not in COMPANION_LAYOUT_TEMPLATES:  # ADDED
-            errors.append(f"{row_prefix}.template must be one of {sorted(COMPANION_LAYOUT_TEMPLATES)}.")  # ADDED
-        for key in ("spacingXCm", "spacingYCm", "vegDiameterCm", "offsetXCm", "offsetYCm"):  # ADDED
-            value = item.get(key)  # ADDED
-            if value in (None, ""):  # ADDED
-                continue  # ADDED
-            try:  # ADDED
-                float(value)  # ADDED
-            except (TypeError, ValueError):  # ADDED
-                errors.append(f"{row_prefix}.{key} must be numeric when provided.")  # ADDED
-    expected = set(filter(None, plant_set_key.split("+")))  # ADDED
-    if expected and row_plant_ids and row_plant_ids != expected:  # ADDED
-        errors.append(f"{prefix}.layout_json rows must match plant_set_key.")  # ADDED
-    if anchor_count != 1:  # ADDED
-        errors.append(f"{prefix}.layout_json.rows must contain exactly one anchor row.")  # ADDED
-    return errors  # ADDED
+def _validate_companion_group_layout_json(prefix: str, raw: Any, plant_set_key: str) -> list[str]:
+    errors: list[str] = []
+    try:
+        layout = json.loads(raw if isinstance(raw, str) else json.dumps(raw))
+    except (TypeError, ValueError):
+        return [f"{prefix}.layout_json must be valid JSON."]
+    if not isinstance(layout, dict):
+        return [f"{prefix}.layout_json must be an object."]
+    rows = layout.get("rows")
+    if not isinstance(rows, list) or not rows:
+        errors.append(f"{prefix}.layout_json.rows must be a non-empty list.")
+        return errors
+    row_plant_ids: set[str] = set()
+    anchor_count = 0
+    for index, item in enumerate(rows):
+        row_prefix = f"{prefix}.layout_json.rows[{index}]"
+        if not isinstance(item, dict):
+            errors.append(f"{row_prefix} must be an object.")
+            continue
+        role = item.get("role")
+        if role not in {"anchor", "companion"}:
+            errors.append(f"{row_prefix}.role must be anchor or companion.")
+        elif role == "anchor":
+            anchor_count += 1
+        try:
+            plant_id = int(item.get("plantId"))
+        except (TypeError, ValueError):
+            errors.append(f"{row_prefix}.plantId must be an integer.")
+        else:
+            row_plant_ids.add(str(plant_id))
+        template = str(item.get("template") or "").strip().casefold()
+        if role == "companion" and template not in COMPANION_LAYOUT_TEMPLATES:
+            errors.append(f"{row_prefix}.template must be one of {sorted(COMPANION_LAYOUT_TEMPLATES)}.")
+        for key in ("spacingXCm", "spacingYCm", "vegDiameterCm", "offsetXCm", "offsetYCm"):
+            value = item.get(key)
+            if value in (None, ""):
+                continue
+            try:
+                float(value)
+            except (TypeError, ValueError):
+                errors.append(f"{row_prefix}.{key} must be numeric when provided.")
+    expected = set(filter(None, plant_set_key.split("+")))
+    if expected and row_plant_ids and row_plant_ids != expected:
+        errors.append(f"{prefix}.layout_json rows must match plant_set_key.")
+    if anchor_count != 1:
+        errors.append(f"{prefix}.layout_json.rows must contain exactly one anchor row.")
+    return errors
 
 
 def validate_source_map(row: dict[str, Any], source_values: set[str], required_fields: set[str], prefix: str) -> list[str]:
@@ -394,13 +394,13 @@ def validate_source_map(row: dict[str, Any], source_values: set[str], required_f
             errors.append(f"{prefix}.provenance.field_sources.{field} is required.")
             continue
         for ref in refs:
-            if not source_ref_allowed(str(ref), source_values):  # CHANGED
+            if not source_ref_allowed(str(ref), source_values):
                 errors.append(f"{prefix}.provenance.field_sources.{field} references an input source/note that was not supplied: {ref}")
     return errors
 
 
-def source_ref_allowed(ref: str, source_values: set[str]) -> bool:  # ADDED
-    return _source_ref_allowed(ref, source_values)  # ADDED
+def source_ref_allowed(ref: str, source_values: set[str]) -> bool:
+    return _source_ref_allowed(ref, source_values)
 
 
 def _source_ref_allowed(ref: str, source_values: set[str]) -> bool:
@@ -446,12 +446,12 @@ def _validate_db_dependencies(generated_dir: Path, db_path: Path) -> dict[str, l
         methods = {row[0] for row in conn.execute("SELECT method_id FROM PlantingMethods")}
         categories = {row[0] for row in conn.execute("SELECT method_category_id FROM PlantingMethodCategories")}
         db_plants = {_norm(row["plant_name"]) for row in conn.execute("SELECT plant_name FROM Plants")}
-        db_cities = _load_db_city_rows(conn)  # CHANGED
+        db_cities = _load_db_city_rows(conn)
         db_varieties = {(_norm(row["plant_name"]), _norm(row["variety_name"])) for row in conn.execute("SELECT p.plant_name, v.variety_name FROM PlantVarieties v JOIN Plants p ON p.plant_id = v.plant_id")}
         db_companions = {(_norm(row["p1"]), _norm(row["p2"])) for row in conn.execute("SELECT p1, p2 FROM Companions")}
 
     generated_plants = {_norm(row.get("plant_name")) for row in read_json(generated_dir / "Plants.json", []) or []}
-    generated_cities = read_json(generated_dir / "Cities.json", []) or []  # CHANGED
+    generated_cities = read_json(generated_dir / "Cities.json", []) or []
     generated_varieties = {(_norm(row.get("plant_name")), _norm(row.get("variety_name"))) for row in read_json(generated_dir / "PlantVarieties.json", []) or []}
     generated_companions = {(_norm(row.get("p1")), _norm(row.get("p2"))) for row in read_json(generated_dir / "Companions.json", []) or []}
 
@@ -472,7 +472,7 @@ def _validate_db_dependencies(generated_dir: Path, db_path: Path) -> dict[str, l
                     errors.append(f"{table} cannot resolve variety: {row.get('plant_name')} / {row.get('variety_name')}")
     for table in ("CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily"):
         for row in read_json(generated_dir / f"{table}.json", []) or []:
-            if not _city_reference_resolves(row, generated_cities, db_cities):  # CHANGED
+            if not _city_reference_resolves(row, generated_cities, db_cities):
                 errors.append(f"{table} cannot resolve city: {row.get('city_name')}")
     for row in read_json(generated_dir / "CompanionEvidence.json", []) or []:
         key = (_norm(row.get("p1")), _norm(row.get("p2")))
@@ -483,39 +483,39 @@ def _validate_db_dependencies(generated_dir: Path, db_path: Path) -> dict[str, l
             errors.append(f"PlantingWindowReferences has unknown method_id: {row.get('method_id')}")
         if _norm(row.get("plant_name")) not in generated_plants | db_plants and not row.get("plant_id"):
             errors.append(f"PlantingWindowReferences cannot resolve plant: {row.get('plant_name')}")
-        if not _city_reference_resolves(row, generated_cities, db_cities):  # CHANGED
+        if not _city_reference_resolves(row, generated_cities, db_cities):
             errors.append(f"PlantingWindowReferences cannot resolve city: {row.get('city_name')}")
     return {"errors": errors, "warnings": warnings}
 
 
-def _load_db_city_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:  # ADDED
-    columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(Cities)").fetchall()}  # ADDED
-    selected = [column if column in columns else f"NULL AS {column}" for column in ("city_id", "city_name", *sorted(CITY_GEO_IDENTITY_COLUMNS))]  # ADDED
-    return [dict(row) for row in conn.execute(f"SELECT {', '.join(selected)} FROM Cities")]  # ADDED
+def _load_db_city_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(Cities)").fetchall()}
+    selected = [column if column in columns else f"NULL AS {column}" for column in ("city_id", "city_name", *sorted(CITY_GEO_IDENTITY_COLUMNS))]
+    return [dict(row) for row in conn.execute(f"SELECT {', '.join(selected)} FROM Cities")]
 
 
-def _city_reference_resolves(row: dict[str, Any], generated_cities: list[dict[str, Any]], db_cities: list[dict[str, Any]]) -> bool:  # ADDED
-    if row.get("city_id"):  # ADDED
-        return True  # ADDED
-    city_name = _norm(row.get("city_name"))  # ADDED
-    if not city_name:  # ADDED
-        return False  # ADDED
-    candidates = [city for city in [*generated_cities, *db_cities] if _norm(city.get("city_name")) == city_name]  # ADDED
-    if not candidates:  # ADDED
-        return False  # ADDED
-    if not any(_norm(row.get(field)) for field in CITY_GEO_IDENTITY_COLUMNS):  # ADDED
-        return True  # ADDED
-    return any(_city_geo_matches(city, row, "country_name", "country_code") and _city_geo_matches(city, row, "region_name", "region_code") for city in candidates)  # ADDED
+def _city_reference_resolves(row: dict[str, Any], generated_cities: list[dict[str, Any]], db_cities: list[dict[str, Any]]) -> bool:
+    if row.get("city_id"):
+        return True
+    city_name = _norm(row.get("city_name"))
+    if not city_name:
+        return False
+    candidates = [city for city in [*generated_cities, *db_cities] if _norm(city.get("city_name")) == city_name]
+    if not candidates:
+        return False
+    if not any(_norm(row.get(field)) for field in CITY_GEO_IDENTITY_COLUMNS):
+        return True
+    return any(_city_geo_matches(city, row, "country_name", "country_code") and _city_geo_matches(city, row, "region_name", "region_code") for city in candidates)
 
 
-def _city_geo_matches(city: dict[str, Any], row: dict[str, Any], name_key: str, code_key: str) -> bool:  # ADDED
-    wanted_name = _norm(row.get(name_key))  # ADDED
-    wanted_code = _norm(row.get(code_key))  # ADDED
-    if not wanted_name and not wanted_code:  # ADDED
-        return False  # ADDED
-    city_name = _norm(city.get(name_key))  # ADDED
-    city_code = _norm(city.get(code_key))  # ADDED
-    return bool((wanted_name and wanted_name == city_name) or (wanted_code and wanted_code == city_code))  # ADDED
+def _city_geo_matches(city: dict[str, Any], row: dict[str, Any], name_key: str, code_key: str) -> bool:
+    wanted_name = _norm(row.get(name_key))
+    wanted_code = _norm(row.get(code_key))
+    if not wanted_name and not wanted_code:
+        return False
+    city_name = _norm(city.get(name_key))
+    city_code = _norm(city.get(code_key))
+    return bool((wanted_name and wanted_name == city_name) or (wanted_code and wanted_code == city_code))
 
 
 def _validate_ranges(prefix: str, row: dict[str, Any], ranges: dict[str, tuple[float, float]], out: list[str], hard: bool) -> None:

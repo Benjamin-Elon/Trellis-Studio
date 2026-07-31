@@ -19,23 +19,23 @@ Draw.loadPlugin(function (ui) {
   // Disallow dropping *into* tiler groups
   const _isValidDropTarget = graph.isValidDropTarget;
   graph.isValidDropTarget = function (cell, cells, evt) {
-    // Only block when attempting to drop a TilerGroup into a TilerGroup           // CHANGE
-    if (isTilerGroup(cell) && (cells || []).some(isTilerGroup)) return false;     // CHANGE
+    // Only block when attempting to drop a TilerGroup into a TilerGroup
+    if (isTilerGroup(cell) && (cells || []).some(isTilerGroup)) return false;
     return _isValidDropTarget.apply(this, arguments);
   };
   
   // --- Replace the sanitizer with a TG→TG-only ejection, and only on moves -----
   
-  function sanitizeTGtoTGNesting(cells) {                 // CHANGE
+  function sanitizeTGtoTGNesting(cells) {
     if (!cells || !cells.length) return;
     model.beginUpdate();
     try {
       for (const c of cells) {
-        if (!isTilerGroup(c)) continue;                  // only care about moved TGs           // CHANGE
+        if (!isTilerGroup(c)) continue;                  // only care about moved TGs
         const p = model.getParent(c);
-        if (p && isTilerGroup(p)) {                      // TG nested in TG? eject              // CHANGE
+        if (p && isTilerGroup(p)) {                      // TG nested in TG? eject
           const grand = model.getParent(p) || graph.getDefaultParent();
-          graph.moveCells([c], 0, 0, false, grand);      // preserve absolute geometry          // CHANGE
+          graph.moveCells([c], 0, 0, false, grand);      // preserve absolute geometry
         }
       }
     } finally { model.endUpdate(); }
@@ -45,12 +45,12 @@ Draw.loadPlugin(function (ui) {
   // -------------------- Event wiring: scope to moves only ----------------------
   
   // REMOVE these earlier hooks if present:
-  // graph.addListener(mxEvent.ADD_CELLS, ... sanitizeNoChildrenOfTG ...);         // REMOVE
-  // graph.addListener(mxEvent.CELLS_RESIZED, ... sanitizeNoChildrenOfTG ...);     // REMOVE
-  // graph.getModel().addListener(mxEvent.UNDO/REDO, ... sanitizeNoChildrenOfTG ...); // REMOVE
+  // graph.addListener(mxEvent.ADD_CELLS, ... sanitizeNoChildrenOfTG ...);
+  // graph.addListener(mxEvent.CELLS_RESIZED, ... sanitizeNoChildrenOfTG ...);
+  // graph.getModel().addListener(mxEvent.UNDO/REDO, ... sanitizeNoChildrenOfTG ...);
   
   graph.addListener(mxEvent.CELLS_MOVED, function(sender, evt) {
     const cells = evt.getProperty('cells') || [];
-    sanitizeTGtoTGNesting(cells);                     // only on user move                        // CHANGE
+    sanitizeTGtoTGNesting(cells);                     // only on user move
   });
 });

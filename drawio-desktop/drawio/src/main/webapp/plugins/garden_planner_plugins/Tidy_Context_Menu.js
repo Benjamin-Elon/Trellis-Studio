@@ -1,14 +1,14 @@
 /**
  * Draw.io Plugin: Context Menu Submenus for Copy/Paste, Move, and Edit
  *
- * - Adds tidy standard draw.io submenus to normal cell right-click menus. // CHANGE
+ * - Adds tidy standard draw.io submenus to normal cell right-click menus.
  *   - "Copy / Paste": cut, copy, copy as image, copy as SVG, duplicate
- *   - "Move / Arrange": to front, to back, bring forward, send backward // CHANGE
- *   - "Edit Shape": edit style, edit data, edit link, edit connection points // CHANGE
- *   - "Style": set as default style // NEW
+ *   - "Move / Arrange": to front, to back, bring forward, send backward
+ *   - "Edit Shape": edit style, edit data, edit link, edit connection points
+ *   - "Style": set as default style
  * - Hides the original top-level entries for those actions to clean up the menu.
  * - Cleans up leftover separators after hiding items.
- * - Suppresses draw.io XML data hover tooltips for Trellis-owned cells. // NEW
+ * - Suppresses draw.io XML data hover tooltips for Trellis-owned cells.
  */
 
 Draw.loadPlugin(function (ui) {
@@ -45,18 +45,18 @@ Draw.loadPlugin(function (ui) {
         'editStyle',
         'editData',
         'editLink',
-        'editConnectionPoints' // NEW
+        'editConnectionPoints'
     ];
 
-    const STYLE_ACTIONS = [ // NEW
-        'setAsDefaultStyle' // NEW
-    ]; // NEW
+    const STYLE_ACTIONS = [
+        'setAsDefaultStyle'
+    ];
 
     const COPY_PASTE_LABEL = 'Copy / Paste';
-    const STANDARD_ACTIONS_LABEL = 'Standard draw.io actions'; // NEW
-    const MOVE_LABEL = 'Move / Arrange'; // CHANGE
-    const EDIT_LABEL = 'Edit Shape'; // CHANGE
-    const STYLE_LABEL = 'Style'; // NEW
+    const STANDARD_ACTIONS_LABEL = 'Standard draw.io actions';
+    const MOVE_LABEL = 'Move / Arrange';
+    const EDIT_LABEL = 'Edit Shape';
+    const STYLE_LABEL = 'Style';
 
     // Manual display labels for actions (human-friendly)
     const DISPLAY_LABELS = {
@@ -74,9 +74,9 @@ Draw.loadPlugin(function (ui) {
         editStyle: 'Edit Style',
         editData: 'Edit Data',
         editLink: 'Edit Link',
-        editConnectionPoints: 'Edit Connection Points', // CHANGE
+        editConnectionPoints: 'Edit Connection Points',
 
-        setAsDefaultStyle: 'Set As Default Style' // NEW
+        setAsDefaultStyle: 'Set As Default Style'
     };
 
     // -----------------------------
@@ -86,72 +86,72 @@ Draw.loadPlugin(function (ui) {
     /**
      * Reads an XML-backed cell attribute without assuming the value type.
      */
-    function getCellAttribute(cell, key) { // NEW
-        if (cell && typeof cell.getAttribute === 'function') { // NEW
-            return cell.getAttribute(key); // NEW
-        } // NEW
-        return null; // NEW
-    } // NEW
+    function getCellAttribute(cell, key) {
+        if (cell && typeof cell.getAttribute === 'function') {
+            return cell.getAttribute(key);
+        }
+        return null;
+    }
 
     /**
      * Identifies cells owned by Trellis features.
      */
-    function isTrellisCell(cell) { // NEW
-        if (!cell) return false; // NEW
+    function isTrellisCell(cell) {
+        if (!cell) return false;
 
-        const trellisFlags = [ // NEW
-            'garden_module', // NEW
-            'garden_bed', // NEW
-            'tiler_group', // NEW
-            'plant_tiler', // NEW
-            'kanban_card', // NEW
-            'garden_dashboard', // CHANGE
+        const trellisFlags = [
+            'garden_module',
+            'garden_bed',
+            'tiler_group',
+            'plant_tiler',
+            'kanban_card',
+            'garden_dashboard',
             'irrigation_generated', // CHANGE: suppress irrigation metadata hover tooltips
             'irrigation_assembly', // CHANGE: suppress irrigation metadata hover tooltips
             'irrigation_pipe_edge', // CHANGE: suppress irrigation metadata hover tooltips
             'irrigation_direct_link_edge', // CHANGE: suppress irrigation metadata hover tooltips
             'irrigation_component' // CHANGE: suppress irrigation metadata hover tooltips
-        ]; // NEW
+        ];
 
-        for (let i = 0; i < trellisFlags.length; i++) { // NEW
-            if (getCellAttribute(cell, trellisFlags[i]) === '1') return true; // NEW
-        } // NEW
+        for (let i = 0; i < trellisFlags.length; i++) {
+            if (getCellAttribute(cell, trellisFlags[i]) === '1') return true;
+        }
 
         return String(getCellAttribute(cell, 'board_key') || '').trim().length > 0 || String(getCellAttribute(cell, 'lane_key') || '').trim().length > 0; // CHANGE: suppress task board lane XML hover tooltips too
-    } // NEW
+    }
 
     /**
      * Detects whether the graph currently has selected cells for selection-driven cell menus.
      */
-    function getSelectedCells() { // NEW
-        return graph.getSelectionCells ? (graph.getSelectionCells() || []) : []; // NEW
-    } // NEW
+    function getSelectedCells() {
+        return graph.getSelectionCells ? (graph.getSelectionCells() || []) : [];
+    }
 
-    function hasSelectedCells() { // CHANGE
-        const selectedCells = getSelectedCells(); // CHANGE
-        return !!(selectedCells && selectedCells.length > 0); // CHANGE
-    } // CHANGE
+    function hasSelectedCells() {
+        const selectedCells = getSelectedCells();
+        return !!(selectedCells && selectedCells.length > 0);
+    }
 
     /**
      * Applies the tidy standard-actions menu to cell or selected-cell context menus.
      */
-    function shouldUseTidyStandardActionsMenu(cell) { // CHANGE
-        return !!cell || hasSelectedCells(); // CHANGE
-    } // CHANGE
+    function shouldUseTidyStandardActionsMenu(cell) {
+        return !!cell || hasSelectedCells();
+    }
 
     /**
      * Keeps Trellis-owned cells on the nested standard actions menu while regular cells get top-level tidy submenus.
      */
-    function shouldNestTidySubmenusUnderStandardActions(cell) { // NEW
-        if (cell) return isTrellisCell(cell); // NEW
+    function shouldNestTidySubmenusUnderStandardActions(cell) {
+        if (cell) return isTrellisCell(cell);
 
-        const selectedCells = getSelectedCells(); // NEW
-        if (!selectedCells.length) return false; // NEW
+        const selectedCells = getSelectedCells();
+        if (!selectedCells.length) return false;
 
-        return selectedCells.every(function (selectedCell) { // NEW
-            return isTrellisCell(selectedCell); // NEW
-        }); // NEW
-    } // NEW
+        return selectedCells.every(function (selectedCell) {
+            return isTrellisCell(selectedCell);
+        });
+    }
 
     function getDisplayLabelForAction(actionKey) {
         if (Object.prototype.hasOwnProperty.call(DISPLAY_LABELS, actionKey)) {
@@ -211,7 +211,7 @@ Draw.loadPlugin(function (ui) {
 
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
-            if (row.tbody) continue; // NEW
+            if (row.tbody) continue;
 
             const text = (row.innerText || row.textContent || '').trim().toLowerCase();
             if (!text) continue;
@@ -265,35 +265,35 @@ Draw.loadPlugin(function (ui) {
     /**
      * Builds one submenu with items mapped from the given action keys.
      */
-    function buildSubmenu(menu, title, actionKeys, parent) { // CHANGE
+    function buildSubmenu(menu, title, actionKeys, parent) {
         if (!actionKeys || !actionKeys.length) {
             return null;
         }
 
-        const submenuParent = menu.addItem(title, null, null, parent); // CHANGE
+        const submenuParent = menu.addItem(title, null, null, parent);
 
         actionKeys.forEach(function (key) {
-            addActionMenuItem(menu, submenuParent, key); // CHANGE
+            addActionMenuItem(menu, submenuParent, key);
         });
 
-        return submenuParent; // CHANGE
+        return submenuParent;
     }
 
-    function buildTidyActionSubmenus(menu, parent) { // NEW
-        buildSubmenu(menu, COPY_PASTE_LABEL, COPY_PASTE_ACTIONS, parent); // NEW
-        buildSubmenu(menu, MOVE_LABEL, MOVE_ACTIONS, parent); // NEW
-        buildSubmenu(menu, EDIT_LABEL, EDIT_ACTIONS, parent); // NEW
-        buildSubmenu(menu, STYLE_LABEL, STYLE_ACTIONS, parent); // NEW
-    } // NEW
+    function buildTidyActionSubmenus(menu, parent) {
+        buildSubmenu(menu, COPY_PASTE_LABEL, COPY_PASTE_ACTIONS, parent);
+        buildSubmenu(menu, MOVE_LABEL, MOVE_ACTIONS, parent);
+        buildSubmenu(menu, EDIT_LABEL, EDIT_ACTIONS, parent);
+        buildSubmenu(menu, STYLE_LABEL, STYLE_ACTIONS, parent);
+    }
 
     /**
      * Builds the grouped standard draw.io submenu for Trellis cell menus.
      */
-    function buildStandardActionsSubmenu(menu) { // NEW
-        const parent = menu.addItem(STANDARD_ACTIONS_LABEL, null, null); // NEW
-        buildTidyActionSubmenus(menu, parent); // CHANGE
-        return parent; // NEW
-    } // NEW
+    function buildStandardActionsSubmenu(menu) {
+        const parent = menu.addItem(STANDARD_ACTIONS_LABEL, null, null);
+        buildTidyActionSubmenus(menu, parent);
+        return parent;
+    }
 
     /**
      * Removes hidden rows and collapses redundant separators.
@@ -364,24 +364,24 @@ Draw.loadPlugin(function (ui) {
      * Main post-processor to reorganize the popup menu.
      */
     function reorganizeContextMenu(menu, cell, evt) {
-        // Only adjust cell or selected-cell popups; leave blank-canvas menus alone. // CHANGE
-        if (!shouldUseTidyStandardActionsMenu(cell)) { // CHANGE
+        // Only adjust cell or selected-cell popups; leave blank-canvas menus alone.
+        if (!shouldUseTidyStandardActionsMenu(cell)) {
             return;
         }
 
-        // Add tidy draw.io submenus. Trellis cells keep the nested standard actions parent. // CHANGE
+        // Add tidy draw.io submenus. Trellis cells keep the nested standard actions parent.
         menu.addSeparator();
-        if (shouldNestTidySubmenusUnderStandardActions(cell)) { // NEW
-            buildStandardActionsSubmenu(menu); // CHANGE
-        } else { // NEW
-            buildTidyActionSubmenus(menu, null); // NEW
-        } // NEW
+        if (shouldNestTidySubmenusUnderStandardActions(cell)) {
+            buildStandardActionsSubmenu(menu);
+        } else {
+            buildTidyActionSubmenus(menu, null);
+        }
 
         // Hide originals
         hideOriginalActionItems(menu, COPY_PASTE_ACTIONS);
         hideOriginalActionItems(menu, MOVE_ACTIONS);
         hideOriginalActionItems(menu, EDIT_ACTIONS);
-        hideOriginalActionItems(menu, STYLE_ACTIONS); // NEW
+        hideOriginalActionItems(menu, STYLE_ACTIONS);
 
         // Cleanup separators (and remove hidden rows)
         cleanSeparators(menu);
@@ -390,50 +390,50 @@ Draw.loadPlugin(function (ui) {
     /**
      * Prevents Trellis metadata attributes from showing as draw.io hover tooltips.
      */
-    function installTrellisTooltipSuppression() { // NEW
-        if (graph.__trellisTooltipsSuppressedInstalled) { // NEW
-            return; // NEW
-        } // NEW
-        graph.__trellisTooltipsSuppressedInstalled = true; // NEW
+    function installTrellisTooltipSuppression() {
+        if (graph.__trellisTooltipsSuppressedInstalled) {
+            return;
+        }
+        graph.__trellisTooltipsSuppressedInstalled = true;
 
-        const oldGetTooltipForCell = graph.getTooltipForCell; // NEW
-        graph.getTooltipForCell = function (cell) { // NEW
-            if (isTrellisCell(cell)) { // NEW
-                return ''; // NEW
-            } // NEW
+        const oldGetTooltipForCell = graph.getTooltipForCell;
+        graph.getTooltipForCell = function (cell) {
+            if (isTrellisCell(cell)) {
+                return '';
+            }
 
-            if (typeof oldGetTooltipForCell === 'function') { // NEW
-                return oldGetTooltipForCell.apply(this, arguments); // NEW
-            } // NEW
+            if (typeof oldGetTooltipForCell === 'function') {
+                return oldGetTooltipForCell.apply(this, arguments);
+            }
 
-            return ''; // NEW
-        }; // NEW
-    } // NEW
+            return '';
+        };
+    }
 
     // -----------------------------
-    // 3. Install graph hooks // CHANGE
+    // 3. Install graph hooks
     // -----------------------------
 
-    installTrellisTooltipSuppression(); // NEW
+    installTrellisTooltipSuppression();
 
-    function registerTrellisContextMenuContributor(contributor) { // NEW
-        function finishRegistration() { // NEW
-            if (!window.TrellisContextMenu) return; // NEW
-            window.TrellisContextMenu.install(ui); // NEW
-            window.TrellisContextMenu.register(contributor); // NEW
-        } // NEW
+    function registerTrellisContextMenuContributor(contributor) {
+        function finishRegistration() {
+            if (!window.TrellisContextMenu) return;
+            window.TrellisContextMenu.install(ui);
+            window.TrellisContextMenu.register(contributor);
+        }
 
-        if (window.TrellisContextMenu) { // NEW
-            finishRegistration(); // NEW
-        } else if (typeof mxscript === "function") { // NEW
-            mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration); // NEW
-        } // NEW
-    } // NEW
+        if (window.TrellisContextMenu) {
+            finishRegistration();
+        } else if (typeof mxscript === "function") {
+            mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration);
+        }
+    }
 
-    registerTrellisContextMenuContributor({ // CHANGE
-        id: "tidyContextMenu", // NEW
-        priority: 900, // NEW
-        addItems: function (menu, cell, evt) { // CHANGE
+    registerTrellisContextMenuContributor({
+        id: "tidyContextMenu",
+        priority: 900,
+        addItems: function (menu, cell, evt) {
             try {
                 reorganizeContextMenu(menu, cell, evt);
             } catch (e) {
@@ -441,6 +441,6 @@ Draw.loadPlugin(function (ui) {
                     console.error('Context submenu plugin error:', e);
                 }
             }
-        } // CHANGE
-    }); // CHANGE
+        }
+    });
 });

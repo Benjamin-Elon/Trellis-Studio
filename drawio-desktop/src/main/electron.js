@@ -1,4 +1,4 @@
-// Trellis changes: file-system/database bridges, file-watch lifecycle management, forked support/update URLs, updater guards, app-info/release metadata. // CHANGE
+// Trellis changes: file-system/database bridges, file-watch lifecycle management, forked support/update URLs, updater guards, app-info/release metadata.
 /*
  * Trellis update progress change (2026-06-24):
  * Download-only updater progress uses guarded helpers with indeterminate fallback,
@@ -25,13 +25,13 @@ import ProgressBar from 'electron-progressbar';
 import contextMenu from 'electron-context-menu';
 import { spawn } from 'child_process';
 import { disableUpdate as disUpPkg } from './disableUpdate.js';
-import { createFileWatchRegistry } from './fileWatchRegistry.js'; // CHANGE
-import { createTrellisSplashBackgroundSelector } from './trellis-splash-backgrounds.js'; // NEW
+import { createFileWatchRegistry } from './fileWatchRegistry.js';
+import { createTrellisSplashBackgroundSelector } from './trellis-splash-backgrounds.js';
 
 // (ADD): SQLite
 import Database from 'better-sqlite3';
 
-const fileWatchRegistry = createFileWatchRegistry(); // CHANGE
+const fileWatchRegistry = createFileWatchRegistry();
 
 try {
 	const drawioUserDataPath = path.join(app.getPath('appData'), 'draw.io'); // Trellis release: preserve the existing draw.io runtime profile.
@@ -58,88 +58,88 @@ catch (e) {
 
 // (ADD): keep track of open DBs by an id (string)
 const dbRegistry = new Map();
-const dbRegistryPaths = new Map(); // NEW
-const TRELLIS_BUILT_IN_DB_REL_PATH = '../../trellis_database/Trellis_database.sqlite'; // NEW
+const dbRegistryPaths = new Map();
+const TRELLIS_BUILT_IN_DB_REL_PATH = '../../trellis_database/Trellis_database.sqlite';
 /** Generate a simple id; you can replace with something stronger if needed */
 function makeDbId() {
 	return Math.random().toString(36).slice(2);
 }
 
 //(ADD)
-function getLiveDbPath(dbName = 'Trellis_database.sqlite') {                      // NEW
-	const dir = path.join(getAppDataFolder(), 'trellis_database');                        // NEW
-	if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });         // NEW
-	return path.join(dir, dbName);                                           // NEW
-}                                                                          // NEW
+function getLiveDbPath(dbName = 'Trellis_database.sqlite') {
+	const dir = path.join(getAppDataFolder(), 'trellis_database');
+	if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+	return path.join(dir, dbName);
+}
 
 // (ADD)
-function ensureSeededDb(seedRelPath, livePath) {                           // NEW
+function ensureSeededDb(seedRelPath, livePath) {
 	// seedRelPath is repo-relative to electron.js directory OR absolute
-	const seedAbs = path.resolve(__dirname, seedRelPath);                    // NEW
+	const seedAbs = path.resolve(__dirname, seedRelPath);
 
-	if (!fs.existsSync(seedAbs)) throw new Error('Seed DB missing');         // NEW
-	if (fs.existsSync(livePath)) return livePath;                            // NEW
+	if (!fs.existsSync(seedAbs)) throw new Error('Seed DB missing');
+	if (fs.existsSync(livePath)) return livePath;
 
-	const parent = path.dirname(livePath);                                   // NEW
-	if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true });   // NEW
+	const parent = path.dirname(livePath);
+	if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true });
 
-	fs.copyFileSync(seedAbs, livePath);                                      // NEW
-	return livePath;                                                         // NEW
-}                                                                          // NEW  
+	fs.copyFileSync(seedAbs, livePath);
+	return livePath;
+}
 
-function ensureCreatedDb(livePath) {                                        // NEW
-	const parent = path.dirname(livePath);                                   // NEW
-	if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true });   // NEW
-	if (!fs.existsSync(livePath)) fs.closeSync(fs.openSync(livePath, 'a'));  // NEW
-	return livePath;                                                         // NEW
-}                                                                          // NEW
+function ensureCreatedDb(livePath) {
+	const parent = path.dirname(livePath);
+	if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true });
+	if (!fs.existsSync(livePath)) fs.closeSync(fs.openSync(livePath, 'a'));
+	return livePath;
+}
 
-function compareDbPath(dbPath) {                                           // NEW
-	const resolved = path.resolve(dbPath);                                  // NEW
-	return process.platform === 'win32' ? resolved.toLowerCase() : resolved; // NEW
-}                                                                          // NEW
+function compareDbPath(dbPath) {
+	const resolved = path.resolve(dbPath);
+	return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
 
-function closeRegisteredDbsForPath(dbPath) {                               // NEW
-	const wanted = compareDbPath(dbPath);                                   // NEW
-	for (const [dbId, registeredPath] of dbRegistryPaths.entries()) {        // NEW
-		if (compareDbPath(registeredPath) !== wanted) continue;              // NEW
-		const db = dbRegistry.get(dbId);                                     // NEW
-		if (db) db.close();                                                  // NEW
-		dbRegistry.delete(dbId);                                             // NEW
-		dbRegistryPaths.delete(dbId);                                        // NEW
-	}                                                                       // NEW
-}                                                                          // NEW
+function closeRegisteredDbsForPath(dbPath) {
+	const wanted = compareDbPath(dbPath);
+	for (const [dbId, registeredPath] of dbRegistryPaths.entries()) {
+		if (compareDbPath(registeredPath) !== wanted) continue;
+		const db = dbRegistry.get(dbId);
+		if (db) db.close();
+		dbRegistry.delete(dbId);
+		dbRegistryPaths.delete(dbId);
+	}
+}
 
-function trellisDbBackupPath(dbPath) {                                      // NEW
-	const stamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);  // NEW
-	const parsed = path.parse(dbPath);                                       // NEW
-	return path.join(parsed.dir, `${parsed.name}.${stamp}.bak${parsed.ext}`); // NEW
-}                                                                          // NEW
+function trellisDbBackupPath(dbPath) {
+	const stamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+	const parsed = path.parse(dbPath);
+	return path.join(parsed.dir, `${parsed.name}.${stamp}.bak${parsed.ext}`);
+}
 
-function restoreBuiltInTrellisDatabase(options) {                           // CHANGED
-	options = options || {};                                                // NEW
-	const dbName = String(options.dbName || 'Trellis_database.sqlite');      // NEW
-	const sourceRelPath = String(options.seedRelPath || TRELLIS_BUILT_IN_DB_REL_PATH); // NEW
-	const sourcePath = path.resolve(__dirname, sourceRelPath);               // CHANGED
-	if (!fs.existsSync(sourcePath)) throw new Error(`Built-in Trellis database missing: ${sourcePath}`); // NEW
-	const dbPath = getLiveDbPath(dbName);                                    // CHANGED
-	const parent = path.dirname(dbPath);                                     // NEW
-	if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true });   // NEW
-	closeRegisteredDbsForPath(dbPath);                                      // NEW
-	const backupPath = fs.existsSync(dbPath) ? trellisDbBackupPath(dbPath) : null; // NEW
-	try {                                                                   // NEW
-		if (backupPath) fs.copyFileSync(dbPath, backupPath);                 // NEW
-		fs.copyFileSync(sourcePath, dbPath);                                 // CHANGED
-		return { dbPath, backupPath, sourcePath };                           // NEW
-	} catch (e) {                                                           // NEW
-		try {                                                               // NEW
-			if (backupPath && fs.existsSync(backupPath) && fs.existsSync(dbPath)) { // CHANGED
-				fs.copyFileSync(backupPath, dbPath);                         // NEW
-			}                                                               // NEW
-		} catch (_) { }                                                      // NEW
-		throw e;                                                            // NEW
-	}                                                                       // NEW
-}                                                                          // NEW  
+function restoreBuiltInTrellisDatabase(options) {
+	options = options || {};
+	const dbName = String(options.dbName || 'Trellis_database.sqlite');
+	const sourceRelPath = String(options.seedRelPath || TRELLIS_BUILT_IN_DB_REL_PATH);
+	const sourcePath = path.resolve(__dirname, sourceRelPath);
+	if (!fs.existsSync(sourcePath)) throw new Error(`Built-in Trellis database missing: ${sourcePath}`);
+	const dbPath = getLiveDbPath(dbName);
+	const parent = path.dirname(dbPath);
+	if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true });
+	closeRegisteredDbsForPath(dbPath);
+	const backupPath = fs.existsSync(dbPath) ? trellisDbBackupPath(dbPath) : null;
+	try {
+		if (backupPath) fs.copyFileSync(dbPath, backupPath);
+		fs.copyFileSync(sourcePath, dbPath);
+		return { dbPath, backupPath, sourcePath };
+	} catch (e) {
+		try {
+			if (backupPath && fs.existsSync(backupPath) && fs.existsSync(dbPath)) {
+				fs.copyFileSync(backupPath, dbPath);
+			}
+		} catch (_) { }
+		throw e;
+	}
+}
 
 // (ADD): validate DB path and allow read-only open by default
 function validateDbPath(dbPath) {
@@ -162,13 +162,13 @@ autoUpdater.autoDownload = silentUpdate
 autoUpdater.autoInstallOnAppQuit = silentUpdate
 const trellisReleaseUrl = 'https://github.com/Benjamin-Elon/trellis-studio'; // Trellis release: single source for public release links.
 const trellisSupportUrl = `${trellisReleaseUrl}/issues`; // Trellis release: keep support links on the fork.
-const trellisReleasesApiUrl = 'https://api.github.com/repos/Benjamin-Elon/trellis-studio/releases?per_page=10'; // CHANGE
-const trellisReleasesTimeoutMs = 15000; // NEW
-const trellisUpdateProgressTitle = 'Trellis Studio Update'; // NEW
-const trellisUpdateProgressText = 'Downloading Trellis Studio update...'; // NEW
-let trellisUpdateDownloadInProgress = false; // NEW
-let trellisUpdateProgressBar = null; // NEW
-let trellisUpdateProgressIsDeterminate = false; // NEW
+const trellisReleasesApiUrl = 'https://api.github.com/repos/Benjamin-Elon/trellis-studio/releases?per_page=10';
+const trellisReleasesTimeoutMs = 15000;
+const trellisUpdateProgressTitle = 'Trellis Studio Update';
+const trellisUpdateProgressText = 'Downloading Trellis Studio update...';
+let trellisUpdateDownloadInProgress = false;
+let trellisUpdateProgressBar = null;
+let trellisUpdateProgressIsDeterminate = false;
 
 function canCheckForUpdates() {
 	return !disableUpdate && app.isPackaged; // Trellis release: dev runs do not have packaged updater metadata.
@@ -192,120 +192,120 @@ function checkForTrellisUpdates() {
 	}
 }
 
-function roundTrellisUpdatePercent(percent) { // NEW
-	if (typeof percent !== 'number' || !Number.isFinite(percent)) return null; // NEW
+function roundTrellisUpdatePercent(percent) {
+	if (typeof percent !== 'number' || !Number.isFinite(percent)) return null;
 
-	return Math.max(0, Math.min(100, Math.round(percent * 100) / 100)); // NEW
-} // NEW
+	return Math.max(0, Math.min(100, Math.round(percent * 100) / 100));
+}
 
-function formatTrellisUpdateSpeed(bytesPerSecond) { // NEW
-	if (typeof bytesPerSecond !== 'number' || !Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return ''; // NEW
+function formatTrellisUpdateSpeed(bytesPerSecond) {
+	if (typeof bytesPerSecond !== 'number' || !Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return '';
 
-	const kilobytesPerSecond = bytesPerSecond / 1024; // NEW
+	const kilobytesPerSecond = bytesPerSecond / 1024;
 
-	if (kilobytesPerSecond < 1024) { // NEW
-		return `${Math.round(kilobytesPerSecond * 10) / 10} KB/s`; // NEW
-	} // NEW
+	if (kilobytesPerSecond < 1024) {
+		return `${Math.round(kilobytesPerSecond * 10) / 10} KB/s`;
+	}
 
-	return `${Math.round((kilobytesPerSecond / 1024) * 10) / 10} MB/s`; // NEW
-} // NEW
+	return `${Math.round((kilobytesPerSecond / 1024) * 10) / 10} MB/s`;
+}
 
-function formatTrellisDownloadDetail(progressInfo) { // NEW
-	const percent = roundTrellisUpdatePercent(progressInfo?.percent); // NEW
+function formatTrellisDownloadDetail(progressInfo) {
+	const percent = roundTrellisUpdatePercent(progressInfo?.percent);
 
-	if (percent == null) return 'Downloading update...'; // NEW
+	if (percent == null) return 'Downloading update...';
 
-	const speed = formatTrellisUpdateSpeed(progressInfo?.bytesPerSecond); // NEW
+	const speed = formatTrellisUpdateSpeed(progressInfo?.bytesPerSecond);
 
-	return speed ? `${percent}% downloaded - ${speed}` : `${percent}% downloaded`; // NEW
-} // NEW
+	return speed ? `${percent}% downloaded - ${speed}` : `${percent}% downloaded`;
+}
 
-function createTrellisUpdateProgressBar(options = {}) { // NEW
-	return new ProgressBar({ // NEW
-		indeterminate: options.indeterminate !== false, // NEW
-		initialValue: options.initialValue || 0, // NEW
-		closeOnComplete: false, // NEW
-		title: trellisUpdateProgressTitle, // NEW
-		text: options.text || trellisUpdateProgressText, // NEW
-		detail: options.detail || 'Downloading update...', // NEW
-		browserWindow: { // NEW
-			closable: options.closable === true, // NEW
-		}, // NEW
-	}); // NEW
-} // NEW
+function createTrellisUpdateProgressBar(options = {}) {
+	return new ProgressBar({
+		indeterminate: options.indeterminate !== false,
+		initialValue: options.initialValue || 0,
+		closeOnComplete: false,
+		title: trellisUpdateProgressTitle,
+		text: options.text || trellisUpdateProgressText,
+		detail: options.detail || 'Downloading update...',
+		browserWindow: {
+			closable: options.closable === true,
+		},
+	});
+}
 
-function closeTrellisUpdateProgressBar() { // NEW
-	if (trellisUpdateProgressBar == null) return; // NEW
+function closeTrellisUpdateProgressBar() {
+	if (trellisUpdateProgressBar == null) return;
 
-	try { // NEW
-		trellisUpdateProgressBar.close(); // NEW
-	} // NEW
-	catch (e) { // NEW
-		log.error('@update-progress-close-error@\n', e); // NEW
-	} // NEW
+	try {
+		trellisUpdateProgressBar.close();
+	}
+	catch (e) {
+		log.error('@update-progress-close-error@\n', e);
+	}
 
-	trellisUpdateProgressBar = null; // NEW
-	trellisUpdateProgressIsDeterminate = false; // NEW
-} // NEW
+	trellisUpdateProgressBar = null;
+	trellisUpdateProgressIsDeterminate = false;
+}
 
-function beginTrellisUpdateDownload() { // NEW
-	closeTrellisUpdateProgressBar(); // NEW
-	trellisUpdateDownloadInProgress = true; // NEW
-	trellisUpdateProgressIsDeterminate = false; // NEW
-	trellisUpdateProgressBar = createTrellisUpdateProgressBar(); // NEW
-} // NEW
+function beginTrellisUpdateDownload() {
+	closeTrellisUpdateProgressBar();
+	trellisUpdateDownloadInProgress = true;
+	trellisUpdateProgressIsDeterminate = false;
+	trellisUpdateProgressBar = createTrellisUpdateProgressBar();
+}
 
-function showTrellisUpdateDownloadError(e) { // NEW
-	if (!trellisUpdateDownloadInProgress) return; // NEW
+function showTrellisUpdateDownloadError(e) {
+	if (!trellisUpdateDownloadInProgress) return;
 
-	const message = e && e.message ? e.message : e; // NEW
-	trellisUpdateDownloadInProgress = false; // NEW
-	closeTrellisUpdateProgressBar(); // NEW
-	trellisUpdateProgressBar = createTrellisUpdateProgressBar({ // NEW
-		closable: true, // NEW
-		indeterminate: false, // NEW
-		initialValue: 100, // NEW
-		text: 'Trellis Studio update failed.', // NEW
-		detail: `Error occurred while downloading update. ${message}`, // NEW
-	}); // NEW
-} // NEW
+	const message = e && e.message ? e.message : e;
+	trellisUpdateDownloadInProgress = false;
+	closeTrellisUpdateProgressBar();
+	trellisUpdateProgressBar = createTrellisUpdateProgressBar({
+		closable: true,
+		indeterminate: false,
+		initialValue: 100,
+		text: 'Trellis Studio update failed.',
+		detail: `Error occurred while downloading update. ${message}`,
+	});
+}
 
-function showTrellisUpdateDownloadProgress(progressInfo) { // NEW
-	if (!trellisUpdateDownloadInProgress || silentUpdate) return; // NEW
+function showTrellisUpdateDownloadProgress(progressInfo) {
+	if (!trellisUpdateDownloadInProgress || silentUpdate) return;
 
-	const percent = roundTrellisUpdatePercent(progressInfo?.percent); // NEW
+	const percent = roundTrellisUpdatePercent(progressInfo?.percent);
 
-	if (percent == null) return; // NEW
+	if (percent == null) return;
 
-	const detail = formatTrellisDownloadDetail(progressInfo); // NEW
+	const detail = formatTrellisDownloadDetail(progressInfo);
 
-	if (!trellisUpdateProgressIsDeterminate) { // NEW
-		closeTrellisUpdateProgressBar(); // NEW
-		trellisUpdateProgressIsDeterminate = true; // NEW
-		trellisUpdateProgressBar = createTrellisUpdateProgressBar({ // NEW
-			indeterminate: false, // NEW
-			initialValue: percent, // NEW
-			detail, // NEW
-		}); // NEW
-		const progressBar = trellisUpdateProgressBar; // NEW
+	if (!trellisUpdateProgressIsDeterminate) {
+		closeTrellisUpdateProgressBar();
+		trellisUpdateProgressIsDeterminate = true;
+		trellisUpdateProgressBar = createTrellisUpdateProgressBar({
+			indeterminate: false,
+			initialValue: percent,
+			detail,
+		});
+		const progressBar = trellisUpdateProgressBar;
 
-		progressBar.on('ready', function () { // NEW
-			if (trellisUpdateProgressBar !== progressBar || !trellisUpdateDownloadInProgress) return; // NEW
+		progressBar.on('ready', function () {
+			if (trellisUpdateProgressBar !== progressBar || !trellisUpdateDownloadInProgress) return;
 
-			progressBar.detail = detail; // NEW
-			progressBar.value = percent; // NEW
-		}); // NEW
-		return; // NEW
-	} // NEW
+			progressBar.detail = detail;
+			progressBar.value = percent;
+		});
+		return;
+	}
 
-	trellisUpdateProgressBar.detail = detail; // NEW
-	trellisUpdateProgressBar.value = percent; // NEW
-} // NEW
+	trellisUpdateProgressBar.detail = detail;
+	trellisUpdateProgressBar.value = percent;
+}
 
-function finishTrellisUpdateDownload() { // NEW
-	trellisUpdateDownloadInProgress = false; // NEW
-	closeTrellisUpdateProgressBar(); // NEW
-} // NEW
+function finishTrellisUpdateDownload() {
+	trellisUpdateDownloadInProgress = false;
+	closeTrellisUpdateProgressBar();
+}
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
@@ -350,8 +350,8 @@ let enableStoreBkp = store != null ? (store.get('enableStoreBkp') != null ? stor
 let dialogOpen = false;
 let enablePlugins = true;
 const codeDir = path.join(__dirname, '/../../drawio/src/main/webapp');
-const getTrellisSplashBackground = createTrellisSplashBackgroundSelector( // NEW
-	path.join(codeDir, 'images', 'trellis-splash')); // NEW
+const getTrellisSplashBackground = createTrellisSplashBackgroundSelector(
+	path.join(codeDir, 'images', 'trellis-splash'));
 const codeUrl = url.pathToFileURL(codeDir).href.replace(/\/.\:\//, str => str.toUpperCase()); // Fix for windows drive letter
 // Production app uses asar archive, so we need to go up two more level. It's extra cautious since asar is read-only anyway.
 const appBaseDir = path.join(__dirname, __dirname.endsWith(path.join('resources', 'app.asar', 'src', 'main')) ?
@@ -375,7 +375,7 @@ var queryObj = {
 	'mode': 'device',
 	'export': 'https://convert.diagrams.net/node/export',
 	'disableUpdate': disableUpdate ? 1 : 0,
-	'canCheckForUpdates': canCheckForUpdates() ? 1 : 0, // NEW
+	'canCheckForUpdates': canCheckForUpdates() ? 1 : 0,
 	'enableSpellCheck': enableSpellCheck ? 1 : 0,
 	'enableStoreBkp': enableStoreBkp ? 1 : 0,
 	'isGoogleFontsEnabled': isGoogleFontsEnabled ? 1 : 0
@@ -621,7 +621,7 @@ function createWindow(opt = {}) {
 			console.log('Window closed idx:%d', index)
 		}
 
-		fileWatchRegistry.unwatchWindow(mainWindow); // CHANGE
+		fileWatchRegistry.unwatchWindow(mainWindow);
 		windowsRegistry.splice(index, 1)
 	})
 
@@ -1209,14 +1209,14 @@ app.whenReady().then(() => {
 		if (e != null && e.senderFrame != null &&
 			!validateSender(e.senderFrame)) return null;
 
-		if (!canCheckForUpdates()) return; // CHANGE
+		if (!canCheckForUpdates()) return;
 
 		const updateCheckStarted = checkForTrellisUpdates(); // Trellis release: use electron-builder metadata instead of a hard-coded feed.
 
-		if (!updateCheckStarted) return; // CHANGE
+		if (!updateCheckStarted) return;
 
 		if (store != null) {
-			store.set('dontCheckUpdates', false); // CHANGE
+			store.set('dontCheckUpdates', false);
 		}
 
 		if (!updateNoAvailAdded) {
@@ -1439,14 +1439,14 @@ app.on('web-contents-created', (event, contents) => {
 	})
 })
 
-autoUpdater.on('error', e => { log.error('@error@\n', e); showTrellisUpdateDownloadError(e); }) // CHANGE
+autoUpdater.on('error', e => { log.error('@error@\n', e); showTrellisUpdateDownloadError(e); })
 
-autoUpdater.on('download-progress', showTrellisUpdateDownloadProgress) // NEW
+autoUpdater.on('download-progress', showTrellisUpdateDownloadProgress)
 
-autoUpdater.on('update-downloaded', (info) => { // NEW
-	if (silentUpdate || !trellisUpdateDownloadInProgress) return; // NEW
+autoUpdater.on('update-downloaded', (info) => {
+	if (silentUpdate || !trellisUpdateDownloadInProgress) return;
 
-	finishTrellisUpdateDownload(); // NEW
+	finishTrellisUpdateDownload();
 
 	// Ask user to update the app
 	dialog.showMessageBox(
@@ -1461,11 +1461,11 @@ autoUpdater.on('update-downloaded', (info) => { // NEW
 				setTimeout(() => autoUpdater.quitAndInstall(), 1)
 			}
 		})
-}) // NEW
+})
 
 autoUpdater.on('update-available', (a, b) => {
 	if (silentUpdate) return;
-	if (trellisUpdateDownloadInProgress) return; // NEW
+	if (trellisUpdateDownloadInProgress) return;
 
 	dialog.showMessageBox(
 		{
@@ -1473,23 +1473,23 @@ autoUpdater.on('update-available', (a, b) => {
 			buttons: ['Ok', 'Cancel', 'Don\'t Ask Again'],
 			title: 'Confirm Update',
 			message: 'Update available.\n\nWould you like to download and install new version?',
-			detail: 'You will be prompted to install the update after download.', // CHANGE
+			detail: 'You will be prompted to install the update after download.',
 		}).then(result => {
 			if (result.response === 0) {
-				if (trellisUpdateDownloadInProgress) return; // NEW
+				if (trellisUpdateDownloadInProgress) return;
 
-				beginTrellisUpdateDownload(); // NEW
+				beginTrellisUpdateDownload();
 
-				try { // NEW
-					const updateDownload = autoUpdater.downloadUpdate(); // CHANGE
+				try {
+					const updateDownload = autoUpdater.downloadUpdate();
 
-					if (updateDownload != null && typeof updateDownload.catch === 'function') { // NEW
-						updateDownload.catch(showTrellisUpdateDownloadError); // NEW
-					} // NEW
-				} // NEW
-				catch (e) { // NEW
-					showTrellisUpdateDownloadError(e); // NEW
-				} // NEW
+					if (updateDownload != null && typeof updateDownload.catch === 'function') {
+						updateDownload.catch(showTrellisUpdateDownloadError);
+					}
+				}
+				catch (e) {
+					showTrellisUpdateDownloadError(e);
+				}
 			}
 			else if (result.response === 2 && store != null) {
 				//save in settings don't check for updates
@@ -2531,71 +2531,71 @@ function openExternal(url) {
 	return false;
 }
 
-function getTrellisAppInfo() { // NEW
-	return { // NEW
-		productName: app.name, // NEW
-		version: app.getVersion(), // NEW
-		repoUrl: trellisReleaseUrl, // NEW
-		releasesUrl: `${trellisReleaseUrl}/releases`, // NEW
-		issuesUrl: trellisSupportUrl, // CHANGE
-		isPackaged: app.isPackaged, // NEW
-		canCheckForUpdates: canCheckForUpdates() // NEW
-	}; // NEW
-} // NEW
-
-function getTrellisSyncthingShareInfo() { // NEW
-	return { // NEW
-		ok: false, // NEW
-		managed: false, // NEW
-		deviceId: '', // NEW
-		folderId: '', // NEW
-		folderLabel: '', // NEW
-		folderPath: '', // NEW
-		reason: 'Bundled Syncthing sharing is not wired in this Trellis build yet.' // NEW
-	}; // NEW
-} // NEW
-
-function openTrellisEmailDraft(args) { // NEW
-	const source = args || {}; // NEW
-	const to = String(source.to || '').trim(); // NEW
-	const subject = String(source.subject || 'Trellis garden canvas invite'); // NEW
-	const body = String(source.body || ''); // NEW
-	if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return { ok: false, reason: 'A valid recipient email is required.' }; // NEW
-	const url = 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body); // NEW
-	return openExternal(url) ? { ok: true } : { ok: false, reason: 'Email draft could not be opened.' }; // NEW
-} // NEW
-
-async function getTrellisReleases() { // NEW
-	const controller = new AbortController(); // NEW
-	const timeout = setTimeout(() => controller.abort(), trellisReleasesTimeoutMs); // NEW
-
-	try { // NEW
-		const response = await fetch(trellisReleasesApiUrl, { // NEW
-			headers: { Accept: 'application/vnd.github+json' }, // NEW
-			signal: controller.signal // NEW
-		}); // NEW
-
-		if (!response.ok) throw new Error(`GitHub releases request failed: ${response.status}`); // NEW
-
-		const releases = await response.json(); // NEW
-		if (!Array.isArray(releases)) throw new Error('GitHub releases response was not an array'); // NEW
-		return releases; // NEW
-	} // NEW
-	finally { // NEW
-		clearTimeout(timeout); // NEW
-	} // NEW
-} // NEW
-
-function getRequestWindow(event) { // CHANGE
-	return event != null ? BrowserWindow.fromWebContents(event.sender) : null; // CHANGE
+function getTrellisAppInfo() {
+	return {
+		productName: app.name,
+		version: app.getVersion(),
+		repoUrl: trellisReleaseUrl,
+		releasesUrl: `${trellisReleaseUrl}/releases`,
+		issuesUrl: trellisSupportUrl,
+		isPackaged: app.isPackaged,
+		canCheckForUpdates: canCheckForUpdates()
+	};
 }
 
-function watchFile(filePath, win) { // CHANGE
-	return fileWatchRegistry.watch(filePath, win); // CHANGE
+function getTrellisSyncthingShareInfo() {
+	return {
+		ok: false,
+		managed: false,
+		deviceId: '',
+		folderId: '',
+		folderLabel: '',
+		folderPath: '',
+		reason: 'Bundled Syncthing sharing is not wired in this Trellis build yet.'
+	};
 }
 
-function unwatchFile(filePath, win) { // CHANGE
-	fileWatchRegistry.unwatch(filePath, win); // CHANGE
+function openTrellisEmailDraft(args) {
+	const source = args || {};
+	const to = String(source.to || '').trim();
+	const subject = String(source.subject || 'Trellis garden canvas invite');
+	const body = String(source.body || '');
+	if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return { ok: false, reason: 'A valid recipient email is required.' };
+	const url = 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+	return openExternal(url) ? { ok: true } : { ok: false, reason: 'Email draft could not be opened.' };
+}
+
+async function getTrellisReleases() {
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), trellisReleasesTimeoutMs);
+
+	try {
+		const response = await fetch(trellisReleasesApiUrl, {
+			headers: { Accept: 'application/vnd.github+json' },
+			signal: controller.signal
+		});
+
+		if (!response.ok) throw new Error(`GitHub releases request failed: ${response.status}`);
+
+		const releases = await response.json();
+		if (!Array.isArray(releases)) throw new Error('GitHub releases response was not an array');
+		return releases;
+	}
+	finally {
+		clearTimeout(timeout);
+	}
+}
+
+function getRequestWindow(event) {
+	return event != null ? BrowserWindow.fromWebContents(event.sender) : null;
+}
+
+function watchFile(filePath, win) {
+	return fileWatchRegistry.watch(filePath, win);
+}
+
+function unwatchFile(filePath, win) {
+	fileWatchRegistry.unwatch(filePath, win);
 }
 
 ipcMain.on("rendererReq", async (event, args) => {
@@ -2671,29 +2671,29 @@ ipcMain.on("rendererReq", async (event, args) => {
 			case 'openExternal':
 				ret = await openExternal(args.url);
 				break;
-			case 'getTrellisAppInfo': // NEW
-				ret = getTrellisAppInfo(); // NEW
-				break; // NEW
-			case 'getTrellisReleases': // NEW
-				ret = await getTrellisReleases(); // NEW
-				break; // NEW
-			case 'getTrellisSyncthingShareInfo': // NEW
-				ret = getTrellisSyncthingShareInfo(args); // NEW
-				break; // NEW
-			case 'openTrellisEmailDraft': // NEW
-				ret = openTrellisEmailDraft(args); // NEW
-				break; // NEW
-			case 'getTrellisSplashBackground': // NEW
-				ret = await getTrellisSplashBackground(); // NEW
-				break; // NEW
-			case 'restoreBuiltInTrellisDatabase': // NEW
-				ret = restoreBuiltInTrellisDatabase(); // NEW
-				break; // NEW
+			case 'getTrellisAppInfo':
+				ret = getTrellisAppInfo();
+				break;
+			case 'getTrellisReleases':
+				ret = await getTrellisReleases();
+				break;
+			case 'getTrellisSyncthingShareInfo':
+				ret = getTrellisSyncthingShareInfo(args);
+				break;
+			case 'openTrellisEmailDraft':
+				ret = openTrellisEmailDraft(args);
+				break;
+			case 'getTrellisSplashBackground':
+				ret = await getTrellisSplashBackground();
+				break;
+			case 'restoreBuiltInTrellisDatabase':
+				ret = restoreBuiltInTrellisDatabase();
+				break;
 			case 'watchFile':
-				ret = await watchFile(args.path, getRequestWindow(event)); // CHANGE
+				ret = await watchFile(args.path, getRequestWindow(event));
 				break;
 			case 'unwatchFile':
-				ret = await unwatchFile(args.path, getRequestWindow(event)); // CHANGE
+				ret = await unwatchFile(args.path, getRequestWindow(event));
 				break;
 			case 'exit':
 				app.quit();
@@ -2706,13 +2706,13 @@ ipcMain.on("rendererReq", async (event, args) => {
 				const dbName = String(args.dbName || 'Trellis_database.sqlite');
 				const livePath = getLiveDbPath(dbName);
 			  
-				const seedRel = args.seedRelPath == null ? null : String(args.seedRelPath); // CHANGE
-				const effectiveSeedRel = seedRel || '../../trellis_database/Trellis_database.sqlite'; // NEW
-				const seedAbs = path.resolve(__dirname, effectiveSeedRel); // CHANGE
+				const seedRel = args.seedRelPath == null ? null : String(args.seedRelPath);
+				const effectiveSeedRel = seedRel || '../../trellis_database/Trellis_database.sqlite';
+				const seedAbs = path.resolve(__dirname, effectiveSeedRel);
 			  
 				const ensured = args.reset === true
-				  ? restoreBuiltInTrellisDatabase({ dbName, seedRelPath: effectiveSeedRel }).dbPath // CHANGED
-				  : (args.createIfMissing === true && seedRel == null ? ensureCreatedDb(livePath) : ensureSeededDb(seedAbs, livePath)); // CHANGED
+				  ? restoreBuiltInTrellisDatabase({ dbName, seedRelPath: effectiveSeedRel }).dbPath
+				  : (args.createIfMissing === true && seedRel == null ? ensureCreatedDb(livePath) : ensureSeededDb(seedAbs, livePath));
 			  
 				event.reply('mainResp', {
 				  reqId: args.reqId,
@@ -2724,7 +2724,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 			case 'dbOpen': {
 				// args: { dbPath, readOnly?: boolean, pragma?: object }
 				const abs = validateDbPath(args.dbPath);
-				const options = { readonly: !!args.readOnly, fileMustExist: args.fileMustExist !== false }; // CHANGE
+				const options = { readonly: !!args.readOnly, fileMustExist: args.fileMustExist !== false };
 				const db = new Database(abs, options);
 
 				// Optional pragmas (e.g., { journal_mode: 'OFF', synchronous: 0 })
@@ -2736,7 +2736,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 				}
 				const dbId = makeDbId();
 				dbRegistry.set(dbId, db);
-				dbRegistryPaths.set(dbId, abs); // NEW
+				dbRegistryPaths.set(dbId, abs);
 				// reply with handle
 				event.reply('mainResp', { reqId: args.reqId, data: { dbId } });
 				break;
@@ -2746,7 +2746,7 @@ ipcMain.on("rendererReq", async (event, args) => {
 				// args: { dbId }
 				const db = dbRegistry.get(args.dbId);
 				if (db) { db.close(); dbRegistry.delete(args.dbId); }
-				dbRegistryPaths.delete(args.dbId); // NEW
+				dbRegistryPaths.delete(args.dbId);
 				event.reply('mainResp', { reqId: args.reqId, data: true });
 				break;
 			}

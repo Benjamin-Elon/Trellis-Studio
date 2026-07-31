@@ -1,669 +1,669 @@
-const assert = require("node:assert/strict"); // NEW
-const fs = require("node:fs"); // NEW
-const path = require("node:path"); // NEW
-const test = require("node:test"); // NEW
-const vm = require("node:vm"); // NEW
-const { JSDOM } = require("jsdom"); // NEW
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const test = require("node:test");
+const vm = require("node:vm");
+const { JSDOM } = require("jsdom");
 
-const PLUGIN_PATH = path.join( // NEW
-    __dirname, // NEW
-    "..", // NEW
-    "drawio", // NEW
-    "src", // NEW
-    "main", // NEW
-    "webapp", // NEW
-    "plugins", // NEW
-    "garden_planner_plugins", // NEW
-    "Deep_Click_Through.js" // NEW
-); // NEW
-const TEST_MOVE_IMAGE = "data:image/svg+xml;base64,PHN2Zy8+"; // NEW
+const PLUGIN_PATH = path.join(
+    __dirname,
+    "..",
+    "drawio",
+    "src",
+    "main",
+    "webapp",
+    "plugins",
+    "garden_planner_plugins",
+    "Deep_Click_Through.js"
+);
+const TEST_MOVE_IMAGE = "data:image/svg+xml;base64,PHN2Zy8+";
 
-class TestCell { // NEW
-    constructor(id, attrs = {}, style = "") { // NEW
-        this.id = id; // NEW
-        this.attrs = { ...attrs }; // NEW
-        this.style = style; // NEW
-        this.children = []; // NEW
-    } // NEW
+class TestCell {
+    constructor(id, attrs = {}, style = "") {
+        this.id = id;
+        this.attrs = { ...attrs };
+        this.style = style;
+        this.children = [];
+    }
 
-    getAttribute(key) { return this.attrs[key] || null; } // NEW
-} // NEW
+    getAttribute(key) { return this.attrs[key] || null; }
+}
 
-class TestModel { // NEW
-    constructor(root) { this.root = root; } // NEW
-    getRoot() { return this.root; } // NEW
-    getParent(cell) { return cell && cell.parent ? cell.parent : null; } // NEW
-    getChildCount(cell) { return cell && cell.children ? cell.children.length : 0; } // NEW
-    getChildAt(cell, index) { return cell.children[index]; } // NEW
-    getChildCells(cell) { return cell && cell.children ? cell.children.slice() : []; } // NEW
-    isVertex(cell) { return !!cell && cell !== this.root; } // NEW
-} // NEW
+class TestModel {
+    constructor(root) { this.root = root; }
+    getRoot() { return this.root; }
+    getParent(cell) { return cell && cell.parent ? cell.parent : null; }
+    getChildCount(cell) { return cell && cell.children ? cell.children.length : 0; }
+    getChildAt(cell, index) { return cell.children[index]; }
+    getChildCells(cell) { return cell && cell.children ? cell.children.slice() : []; }
+    isVertex(cell) { return !!cell && cell !== this.root; }
+}
 
-function appendChild(parent, child) { // NEW
-    child.parent = parent; // NEW
-    parent.children.push(child); // NEW
-    return child; // NEW
-} // NEW
+function appendChild(parent, child) {
+    child.parent = parent;
+    parent.children.push(child);
+    return child;
+}
 
-function makeHarness(options = {}) { // CHANGE
-    const dom = new JSDOM("<!doctype html><body><div id='graph'></div></body>"); // NEW
-    const document = dom.window.document; // NEW
-    const root = new TestCell("root"); // NEW
-    const gardenModule = appendChild(root, new TestCell("garden", { garden_module: "1" }, "swimlane;module=1")); // NEW
-    const legacyGardenModule = appendChild(root, new TestCell("legacyGarden", { trellis_garden_module: "1" }, "swimlane;module=1")); // NEW
-    const regularModule = appendChild(root, new TestCell("regular", {}, "swimlane;module=1")); // NEW
-    const teamModule = appendChild(root, new TestCell("team", { team_module: "1" }, "swimlane;module=1")); // NEW
-    const bed = appendChild(gardenModule, new TestCell("bed", { garden_bed: "1" })); // NEW
-    const emptyBed = appendChild(gardenModule, new TestCell("emptyBed", { garden_bed: "1" })); // NEW
-    const bedAssembly = options.bedAssembly ? appendChild(gardenModule, new TestCell("bedAssembly", { irrigation_assembly: "1", irrigation_assembly_type: "bed" })) : null; // NEW
-    const tilerGroup = appendChild(gardenModule, new TestCell("tiler", { tiler_group: "1" })); // NEW
-    const occupiedTiler = appendChild(gardenModule, new TestCell("occupiedTiler", { tiler_group: "1" })); // NEW
-    const lane = appendChild(gardenModule, new TestCell("lane", { lane_key: "TODO" }, "swimlane;")); // NEW
-    const card = appendChild(lane, new TestCell("card", { kanban_card: "1" })); // NEW
-    const siblingLane = appendChild(gardenModule, new TestCell("siblingLane", { lane_key: "DOING" }, "swimlane;")); // NEW
-    const siblingCard = appendChild(siblingLane, new TestCell("siblingCard", { kanban_card: "1" })); // NEW
-    const kanbanBoard = appendChild(root, new TestCell("kanbanBoard", { board_key: "KANBAN_BOARD" }, "swimlane;")); // CHANGE
-    const kanbanLane = appendChild(kanbanBoard, new TestCell("kanbanLane", { lane_key: "TODO" }, "swimlane;")); // NEW
-    const kanbanCard = appendChild(kanbanLane, new TestCell("kanbanCard", { kanban_card: "1" })); // NEW
-    const regularChild = appendChild(regularModule, new TestCell("regularChild", {})); // NEW
-    const teamRole = appendChild(teamModule, new TestCell("teamRole", {}, "shape=swimlane;role_card=1")); // NEW
-    const plainTop = appendChild(root, new TestCell("plainTop", {})); // NEW
-    const model = new TestModel(root); // NEW
-    let selectedCells = []; // NEW
-    const movableCells = new Map(); // NEW
-    const stateMap = new Map(); // NEW
-    stateMap.set(gardenModule, { cell: gardenModule, x: 10, y: 20, width: 300, height: 220 }); // NEW
-    stateMap.set(legacyGardenModule, { cell: legacyGardenModule, x: 400, y: 20, width: 300, height: 220 }); // NEW
-    stateMap.set(regularModule, { cell: regularModule, x: 10, y: 300, width: 300, height: 220 }); // NEW
-    stateMap.set(teamModule, { cell: teamModule, x: 400, y: 300, width: 300, height: 220 }); // NEW
-    stateMap.set(lane, { cell: lane, x: 30, y: 50, width: 120, height: 160 }); // NEW
-    stateMap.set(card, { cell: card, x: 40, y: 70, width: 80, height: 40 }); // NEW
-    stateMap.set(kanbanBoard, { cell: kanbanBoard, x: 760, y: 20, width: 160, height: 220 }); // CHANGE
-    stateMap.set(kanbanLane, { cell: kanbanLane, x: 780, y: 50, width: 120, height: 160 }); // CHANGE
-    stateMap.set(kanbanCard, { cell: kanbanCard, x: 790, y: 70, width: 80, height: 40 }); // CHANGE
-    stateMap.set(bed, { cell: bed, x: 40, y: 130, width: 80, height: 40 }); // NEW
-    stateMap.set(emptyBed, { cell: emptyBed, x: 230, y: 130, width: 80, height: 40 }); // NEW
-    if (bedAssembly) stateMap.set(bedAssembly, { cell: bedAssembly, x: 88, y: 138, width: 24, height: 20 }); // NEW
-    stateMap.set(tilerGroup, { cell: tilerGroup, x: 150, y: 130, width: 80, height: 40 }); // NEW
-    stateMap.set(occupiedTiler, { cell: occupiedTiler, x: 60, y: 140, width: 20, height: 20 }); // NEW
-    stateMap.set(siblingLane, { cell: siblingLane, x: 170, y: 175, width: 120, height: 55 }); // NEW
-    stateMap.set(siblingCard, { cell: siblingCard, x: 180, y: 188, width: 80, height: 28 }); // NEW
-    stateMap.set(regularChild, { cell: regularChild, x: 40, y: 360, width: 80, height: 40 }); // NEW
-    stateMap.set(teamRole, { cell: teamRole, x: 430, y: 360, width: 80, height: 40 }); // NEW
-    stateMap.set(plainTop, { cell: plainTop, x: 720, y: 360, width: 80, height: 40 }); // NEW
-    const graph = { // NEW
-        model, // NEW
-        container: document.getElementById("graph"), // NEW
-        view: { getState(cell) { return stateMap.get(cell) || null; }, addListener() {} }, // CHANGE
-        getModel() { return model; }, // NEW
-        getCurrentRoot() { return root; }, // NEW
-        getSelectionCells() { return selectedCells.slice(); }, // NEW
-        setSelectionCell(cell) { selectedCells = cell ? [cell] : []; }, // NEW
-        setSelectionCells(cells) { selectedCells = cells ? cells.slice() : []; }, // NEW
-        selectCellsForEvent(cells) { selectedCells = cells ? cells.slice() : []; }, // NEW
-        clearSelection() { selectedCells = []; }, // NEW
-        isCellSelected(cell) { return selectedCells.includes(cell); }, // NEW
-        removeSelectionCell(cell) { selectedCells = selectedCells.filter(selected => selected !== cell); }, // NEW
-        addSelectionCell(cell) { if (!selectedCells.includes(cell)) selectedCells.push(cell); }, // NEW
-        isCellVisible() { return true; }, // NEW
-        isCellMovable(cell) { return movableCells.has(cell) ? movableCells.get(cell) : true; }, // CHANGE
-        getCellAt() { return graph.__hitCell || null; }, // CHANGE
-        getCells() { return graph.__regionCells || []; }, // NEW
-        getCursorForMouseEvent() { return graph.__nativeCursor || null; }, // NEW
-        isToggleEvent(evt) { return !!(evt && (evt.ctrlKey || evt.metaKey)); }, // NEW
-        getSelectionModel() { return { addListener() {} }; }, // NEW
-        addListener() {}, // NEW
-        addMouseListener(listener) { graph.__mouseListener = listener; } // NEW
-    }; // NEW
-    graph.__stateMap = stateMap; // NEW
-    graph.__trellisBedSuccessionNavigator = { // NEW
-        resolveOccupiedBedMoveUnit(cell) { // NEW
-            const beds = [bed, emptyBed]; // NEW
-            const groups = [tilerGroup, occupiedTiler]; // NEW
-            const assemblies = [bedAssembly].filter(Boolean); // NEW
-            if (!isHarnessBed(cell) && !isHarnessTilerGroup(cell) && !isHarnessBedAssembly(cell)) return null; // CHANGE
-            const anchor = isHarnessBed(cell) ? cell : containingHarnessBedForCell(cell, beds, stateMap); // CHANGE
-            if (!anchor) return null; // NEW
-            const contained = groups.filter(group => containingHarnessBedForCell(group, beds, stateMap) === anchor); // NEW
-            const containedAssemblies = assemblies.filter(assembly => containingHarnessBedForCell(assembly, beds, stateMap) === anchor); // NEW
-            return contained.length || containedAssemblies.length ? { bed: anchor, bedAssemblies: containedAssemblies, plantingGroups: contained, cells: [anchor].concat(containedAssemblies, contained) } : null; // CHANGE
-        } // NEW
-    }; // NEW
-    const context = { // NEW
-        window: dom.window, // NEW
-        document, // NEW
-        console: { debug() {}, log() {}, warn() {}, error() {} }, // NEW
-        Draw: { loadPlugin(callback) { callback({ editor: { graph } }); } }, // NEW
-        Editor: { moveImage: TEST_MOVE_IMAGE }, // NEW
-        mxGraphHandler: function mxGraphHandler() {}, // NEW
-        mxEvent: { // NEW
-            isControlDown(evt) { return !!(evt && evt.ctrlKey); }, // NEW
-            isMetaDown(evt) { return !!(evt && evt.metaKey); }, // NEW
-            isShiftDown(evt) { return !!(evt && evt.shiftKey); }, // NEW
-            isAltDown(evt) { return !!(evt && evt.altKey); }, // NEW
-            getClientX(evt) { return evt && evt.clientX || 0; }, // NEW
-            getClientY(evt) { return evt && evt.clientY || 0; }, // CHANGE
-            addListener(node, name, fn) { node.addEventListener(name, fn); }, // NEW
-            addGestureListeners() {}, // NEW
-            removeGestureListeners() {}, // NEW
-            consume(evt) { if (evt && evt.preventDefault) evt.preventDefault(); } // NEW
-        }, // NEW
-        mxUtils: { // NEW
-            convertPoint(_container, x, y) { return { x: x || 0, y: y || 0 }; }, // CHANGE
-            contains(state, x, y) { return !!state && x >= state.x && y >= state.y && x <= state.x + state.width && y <= state.y + state.height; }, // CHANGE
-            getValue(style, key, fallback) { return style && key in style ? style[key] : fallback; }, // NEW
-            toRadians(degrees) { return degrees * Math.PI / 180; }, // NEW
-            getRotatedPoint(point) { return point; } // NEW
-        }, // NEW
-        mxConstants: { STYLE_ROTATION: "rotation" }, // NEW
-        mxPoint: function mxPoint(x, y) { this.x = x; this.y = y; } // NEW
-    }; // NEW
-    context.mxGraphHandler.prototype = { // NEW
-        mouseDown() { graph.__oldGraphHandlerMouseDownCalled = true; }, // NEW
-        mouseMove() { graph.__lastDragCells = this.getCells(this.cell); }, // NEW
-        mouseUp() { graph.__lastDragCells = this.getCells(this.cell); }, // NEW
-        isDelayedSelection() { return false; }, // NEW
-        getCells(initialCell) { return [initialCell]; } // NEW
-    }; // NEW
-    vm.runInNewContext(fs.readFileSync(PLUGIN_PATH, "utf8"), context, { filename: PLUGIN_PATH }); // NEW
-    const graphHandler = new context.mxGraphHandler(); // NEW
-    graphHandler.graph = graph; // NEW
-    graph.graphHandler = graphHandler; // NEW
-    return { graph, window: dom.window, Handler: context.mxGraphHandler, gardenModule, legacyGardenModule, regularModule, teamModule, regularChild, teamRole, plainTop, bed, emptyBed, bedAssembly, tilerGroup, occupiedTiler, lane, card, siblingLane, siblingCard, kanbanBoard, kanbanLane, kanbanCard, movableCells, getSelected: () => selectedCells.slice() }; // CHANGE
-} // NEW
+function makeHarness(options = {}) {
+    const dom = new JSDOM("<!doctype html><body><div id='graph'></div></body>");
+    const document = dom.window.document;
+    const root = new TestCell("root");
+    const gardenModule = appendChild(root, new TestCell("garden", { garden_module: "1" }, "swimlane;module=1"));
+    const legacyGardenModule = appendChild(root, new TestCell("legacyGarden", { trellis_garden_module: "1" }, "swimlane;module=1"));
+    const regularModule = appendChild(root, new TestCell("regular", {}, "swimlane;module=1"));
+    const teamModule = appendChild(root, new TestCell("team", { team_module: "1" }, "swimlane;module=1"));
+    const bed = appendChild(gardenModule, new TestCell("bed", { garden_bed: "1" }));
+    const emptyBed = appendChild(gardenModule, new TestCell("emptyBed", { garden_bed: "1" }));
+    const bedAssembly = options.bedAssembly ? appendChild(gardenModule, new TestCell("bedAssembly", { irrigation_assembly: "1", irrigation_assembly_type: "bed" })) : null;
+    const tilerGroup = appendChild(gardenModule, new TestCell("tiler", { tiler_group: "1" }));
+    const occupiedTiler = appendChild(gardenModule, new TestCell("occupiedTiler", { tiler_group: "1" }));
+    const lane = appendChild(gardenModule, new TestCell("lane", { lane_key: "TODO" }, "swimlane;"));
+    const card = appendChild(lane, new TestCell("card", { kanban_card: "1" }));
+    const siblingLane = appendChild(gardenModule, new TestCell("siblingLane", { lane_key: "DOING" }, "swimlane;"));
+    const siblingCard = appendChild(siblingLane, new TestCell("siblingCard", { kanban_card: "1" }));
+    const kanbanBoard = appendChild(root, new TestCell("kanbanBoard", { board_key: "KANBAN_BOARD" }, "swimlane;"));
+    const kanbanLane = appendChild(kanbanBoard, new TestCell("kanbanLane", { lane_key: "TODO" }, "swimlane;"));
+    const kanbanCard = appendChild(kanbanLane, new TestCell("kanbanCard", { kanban_card: "1" }));
+    const regularChild = appendChild(regularModule, new TestCell("regularChild", {}));
+    const teamRole = appendChild(teamModule, new TestCell("teamRole", {}, "shape=swimlane;role_card=1"));
+    const plainTop = appendChild(root, new TestCell("plainTop", {}));
+    const model = new TestModel(root);
+    let selectedCells = [];
+    const movableCells = new Map();
+    const stateMap = new Map();
+    stateMap.set(gardenModule, { cell: gardenModule, x: 10, y: 20, width: 300, height: 220 });
+    stateMap.set(legacyGardenModule, { cell: legacyGardenModule, x: 400, y: 20, width: 300, height: 220 });
+    stateMap.set(regularModule, { cell: regularModule, x: 10, y: 300, width: 300, height: 220 });
+    stateMap.set(teamModule, { cell: teamModule, x: 400, y: 300, width: 300, height: 220 });
+    stateMap.set(lane, { cell: lane, x: 30, y: 50, width: 120, height: 160 });
+    stateMap.set(card, { cell: card, x: 40, y: 70, width: 80, height: 40 });
+    stateMap.set(kanbanBoard, { cell: kanbanBoard, x: 760, y: 20, width: 160, height: 220 });
+    stateMap.set(kanbanLane, { cell: kanbanLane, x: 780, y: 50, width: 120, height: 160 });
+    stateMap.set(kanbanCard, { cell: kanbanCard, x: 790, y: 70, width: 80, height: 40 });
+    stateMap.set(bed, { cell: bed, x: 40, y: 130, width: 80, height: 40 });
+    stateMap.set(emptyBed, { cell: emptyBed, x: 230, y: 130, width: 80, height: 40 });
+    if (bedAssembly) stateMap.set(bedAssembly, { cell: bedAssembly, x: 88, y: 138, width: 24, height: 20 });
+    stateMap.set(tilerGroup, { cell: tilerGroup, x: 150, y: 130, width: 80, height: 40 });
+    stateMap.set(occupiedTiler, { cell: occupiedTiler, x: 60, y: 140, width: 20, height: 20 });
+    stateMap.set(siblingLane, { cell: siblingLane, x: 170, y: 175, width: 120, height: 55 });
+    stateMap.set(siblingCard, { cell: siblingCard, x: 180, y: 188, width: 80, height: 28 });
+    stateMap.set(regularChild, { cell: regularChild, x: 40, y: 360, width: 80, height: 40 });
+    stateMap.set(teamRole, { cell: teamRole, x: 430, y: 360, width: 80, height: 40 });
+    stateMap.set(plainTop, { cell: plainTop, x: 720, y: 360, width: 80, height: 40 });
+    const graph = {
+        model,
+        container: document.getElementById("graph"),
+        view: { getState(cell) { return stateMap.get(cell) || null; }, addListener() {} },
+        getModel() { return model; },
+        getCurrentRoot() { return root; },
+        getSelectionCells() { return selectedCells.slice(); },
+        setSelectionCell(cell) { selectedCells = cell ? [cell] : []; },
+        setSelectionCells(cells) { selectedCells = cells ? cells.slice() : []; },
+        selectCellsForEvent(cells) { selectedCells = cells ? cells.slice() : []; },
+        clearSelection() { selectedCells = []; },
+        isCellSelected(cell) { return selectedCells.includes(cell); },
+        removeSelectionCell(cell) { selectedCells = selectedCells.filter(selected => selected !== cell); },
+        addSelectionCell(cell) { if (!selectedCells.includes(cell)) selectedCells.push(cell); },
+        isCellVisible() { return true; },
+        isCellMovable(cell) { return movableCells.has(cell) ? movableCells.get(cell) : true; },
+        getCellAt() { return graph.__hitCell || null; },
+        getCells() { return graph.__regionCells || []; },
+        getCursorForMouseEvent() { return graph.__nativeCursor || null; },
+        isToggleEvent(evt) { return !!(evt && (evt.ctrlKey || evt.metaKey)); },
+        getSelectionModel() { return { addListener() {} }; },
+        addListener() {},
+        addMouseListener(listener) { graph.__mouseListener = listener; }
+    };
+    graph.__stateMap = stateMap;
+    graph.__trellisBedSuccessionNavigator = {
+        resolveOccupiedBedMoveUnit(cell) {
+            const beds = [bed, emptyBed];
+            const groups = [tilerGroup, occupiedTiler];
+            const assemblies = [bedAssembly].filter(Boolean);
+            if (!isHarnessBed(cell) && !isHarnessTilerGroup(cell) && !isHarnessBedAssembly(cell)) return null;
+            const anchor = isHarnessBed(cell) ? cell : containingHarnessBedForCell(cell, beds, stateMap);
+            if (!anchor) return null;
+            const contained = groups.filter(group => containingHarnessBedForCell(group, beds, stateMap) === anchor);
+            const containedAssemblies = assemblies.filter(assembly => containingHarnessBedForCell(assembly, beds, stateMap) === anchor);
+            return contained.length || containedAssemblies.length ? { bed: anchor, bedAssemblies: containedAssemblies, plantingGroups: contained, cells: [anchor].concat(containedAssemblies, contained) } : null;
+        }
+    };
+    const context = {
+        window: dom.window,
+        document,
+        console: { debug() {}, log() {}, warn() {}, error() {} },
+        Draw: { loadPlugin(callback) { callback({ editor: { graph } }); } },
+        Editor: { moveImage: TEST_MOVE_IMAGE },
+        mxGraphHandler: function mxGraphHandler() {},
+        mxEvent: {
+            isControlDown(evt) { return !!(evt && evt.ctrlKey); },
+            isMetaDown(evt) { return !!(evt && evt.metaKey); },
+            isShiftDown(evt) { return !!(evt && evt.shiftKey); },
+            isAltDown(evt) { return !!(evt && evt.altKey); },
+            getClientX(evt) { return evt && evt.clientX || 0; },
+            getClientY(evt) { return evt && evt.clientY || 0; },
+            addListener(node, name, fn) { node.addEventListener(name, fn); },
+            addGestureListeners() {},
+            removeGestureListeners() {},
+            consume(evt) { if (evt && evt.preventDefault) evt.preventDefault(); }
+        },
+        mxUtils: {
+            convertPoint(_container, x, y) { return { x: x || 0, y: y || 0 }; },
+            contains(state, x, y) { return !!state && x >= state.x && y >= state.y && x <= state.x + state.width && y <= state.y + state.height; },
+            getValue(style, key, fallback) { return style && key in style ? style[key] : fallback; },
+            toRadians(degrees) { return degrees * Math.PI / 180; },
+            getRotatedPoint(point) { return point; }
+        },
+        mxConstants: { STYLE_ROTATION: "rotation" },
+        mxPoint: function mxPoint(x, y) { this.x = x; this.y = y; }
+    };
+    context.mxGraphHandler.prototype = {
+        mouseDown() { graph.__oldGraphHandlerMouseDownCalled = true; },
+        mouseMove() { graph.__lastDragCells = this.getCells(this.cell); },
+        mouseUp() { graph.__lastDragCells = this.getCells(this.cell); },
+        isDelayedSelection() { return false; },
+        getCells(initialCell) { return [initialCell]; }
+    };
+    vm.runInNewContext(fs.readFileSync(PLUGIN_PATH, "utf8"), context, { filename: PLUGIN_PATH });
+    const graphHandler = new context.mxGraphHandler();
+    graphHandler.graph = graph;
+    graph.graphHandler = graphHandler;
+    return { graph, window: dom.window, Handler: context.mxGraphHandler, gardenModule, legacyGardenModule, regularModule, teamModule, regularChild, teamRole, plainTop, bed, emptyBed, bedAssembly, tilerGroup, occupiedTiler, lane, card, siblingLane, siblingCard, kanbanBoard, kanbanLane, kanbanCard, movableCells, getSelected: () => selectedCells.slice() };
+}
 
-function isHarnessBed(cell) { // NEW
-    return !!cell && cell.getAttribute && cell.getAttribute("garden_bed") === "1"; // NEW
-} // NEW
+function isHarnessBed(cell) {
+    return !!cell && cell.getAttribute && cell.getAttribute("garden_bed") === "1";
+}
 
-function isHarnessTilerGroup(cell) { // NEW
-    return !!cell && cell.getAttribute && cell.getAttribute("tiler_group") === "1"; // NEW
-} // NEW
+function isHarnessTilerGroup(cell) {
+    return !!cell && cell.getAttribute && cell.getAttribute("tiler_group") === "1";
+}
 
-function isHarnessBedAssembly(cell) { // NEW
-    return !!cell && cell.getAttribute && cell.getAttribute("irrigation_assembly") === "1" && cell.getAttribute("irrigation_assembly_type") === "bed"; // NEW
-} // NEW
+function isHarnessBedAssembly(cell) {
+    return !!cell && cell.getAttribute && cell.getAttribute("irrigation_assembly") === "1" && cell.getAttribute("irrigation_assembly_type") === "bed";
+}
 
-function harnessCenter(cell, stateMap) { // NEW
-    const state = stateMap.get(cell); // NEW
-    return state ? { x: state.x + state.width / 2, y: state.y + state.height / 2 } : null; // NEW
-} // NEW
+function harnessCenter(cell, stateMap) {
+    const state = stateMap.get(cell);
+    return state ? { x: state.x + state.width / 2, y: state.y + state.height / 2 } : null;
+}
 
-function harnessContains(bed, point, stateMap) { // NEW
-    const state = stateMap.get(bed); // NEW
-    return !!state && !!point && point.x >= state.x && point.x <= state.x + state.width && point.y >= state.y && point.y <= state.y + state.height; // NEW
-} // NEW
+function harnessContains(bed, point, stateMap) {
+    const state = stateMap.get(bed);
+    return !!state && !!point && point.x >= state.x && point.x <= state.x + state.width && point.y >= state.y && point.y <= state.y + state.height;
+}
 
-function containingHarnessBedForCell(cell, beds, stateMap) { // NEW
-    const center = harnessCenter(cell, stateMap); // NEW
-    let chosen = null; // NEW
-    let chosenArea = Infinity; // NEW
-    for (const bed of beds) { // NEW
-        const state = stateMap.get(bed); // NEW
-        const area = state ? state.width * state.height : 0; // NEW
-        if (area > 0 && area < chosenArea && harnessContains(bed, center, stateMap)) { // NEW
-            chosen = bed; // NEW
-            chosenArea = area; // NEW
-        } // NEW
-    } // NEW
-    return chosen; // NEW
-} // NEW
+function containingHarnessBedForCell(cell, beds, stateMap) {
+    const center = harnessCenter(cell, stateMap);
+    let chosen = null;
+    let chosenArea = Infinity;
+    for (const bed of beds) {
+        const state = stateMap.get(bed);
+        const area = state ? state.width * state.height : 0;
+        if (area > 0 && area < chosenArea && harnessContains(bed, center, stateMap)) {
+            chosen = bed;
+            chosenArea = area;
+        }
+    }
+    return chosen;
+}
 
-function plainClick(graph, cell, detail = 1) { // NEW
-    graph.__hitCell = cell; // NEW
-    graph.selectCellForEvent(cell, { detail, clientX: 0, clientY: 0 }); // NEW
-} // NEW
+function plainClick(graph, cell, detail = 1) {
+    graph.__hitCell = cell;
+    graph.selectCellForEvent(cell, { detail, clientX: 0, clientY: 0 });
+}
 
-function ctrlClick(graph, cell) { // NEW
-    graph.__hitCell = cell; // NEW
-    graph.selectCellForEvent(cell, { detail: 1, ctrlKey: true, clientX: 0, clientY: 0 }); // NEW
-} // NEW
+function ctrlClick(graph, cell) {
+    graph.__hitCell = cell;
+    graph.selectCellForEvent(cell, { detail: 1, ctrlKey: true, clientX: 0, clientY: 0 });
+}
 
-function makeMouseEvent(cell, x = 0, y = 0, sourceState = null) { // CHANGE
-    return { // NEW
-        sourceState, // NEW
-        getCell() { return cell; }, // NEW
-        getState() { return cell ? { cell } : null; }, // NEW
-        getX() { return x; }, // NEW
-        getY() { return y; }, // NEW
-        getEvent() { return { button: 0, clientX: x, clientY: y }; }, // NEW
-        isConsumed() { return false; }, // NEW
-        isSource() { return false; } // NEW
-    }; // NEW
-} // NEW
+function makeMouseEvent(cell, x = 0, y = 0, sourceState = null) {
+    return {
+        sourceState,
+        getCell() { return cell; },
+        getState() { return cell ? { cell } : null; },
+        getX() { return x; },
+        getY() { return y; },
+        getEvent() { return { button: 0, clientX: x, clientY: y }; },
+        isConsumed() { return false; },
+        isSource() { return false; }
+    };
+}
 
-function ids(cells) { // NEW
-    return Array.from(cells || [], cell => cell && cell.id); // CHANGE
-} // NEW
+function ids(cells) {
+    return Array.from(cells || [], cell => cell && cell.id);
+}
 
-function makeCursorState(cell) { // NEW
-    return { cell, cursor: null, setCursor(cursor) { this.cursor = cursor; } }; // NEW
-} // NEW
+function makeCursorState(cell) {
+    return { cell, cursor: null, setCursor(cursor) { this.cursor = cursor; } };
+}
 
-function applyNativeGraphHandlerCursor(graph, me) { // NEW
-    let cursor = graph.getCursorForMouseEvent(me); // NEW
-    if (cursor == null && graph.isCellMovable(me.getCell())) cursor = "move"; // NEW
-    if (cursor != null && me.sourceState) me.sourceState.setCursor(cursor); // NEW
-    return cursor; // NEW
-} // NEW
+function applyNativeGraphHandlerCursor(graph, me) {
+    let cursor = graph.getCursorForMouseEvent(me);
+    if (cursor == null && graph.isCellMovable(me.getCell())) cursor = "move";
+    if (cursor != null && me.sourceState) me.sourceState.setCursor(cursor);
+    return cursor;
+}
 
-test("plain second-click on sole-selected garden module keeps selection", () => { // CHANGE
-    const { graph, gardenModule, getSelected } = makeHarness(); // NEW
-    graph.setSelectionCell(gardenModule); // NEW
-    plainClick(graph, gardenModule); // NEW
-    assert.deepEqual(getSelected(), [gardenModule]); // CHANGE
-}); // NEW
+test("plain second-click on sole-selected garden module keeps selection", () => {
+    const { graph, gardenModule, getSelected } = makeHarness();
+    graph.setSelectionCell(gardenModule);
+    plainClick(graph, gardenModule);
+    assert.deepEqual(getSelected(), [gardenModule]);
+});
 
-test("plain second-click on selected garden module closes graph-local irrigation mode without clearing selection", () => { // CHANGE
-    const { graph, gardenModule, getSelected } = makeHarness(); // NEW
-    const closeCalls = []; // NEW
-    graph.__trellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("graph"); } }; // NEW
-    graph.setSelectionCell(gardenModule); // NEW
-    plainClick(graph, gardenModule); // NEW
-    assert.deepEqual(closeCalls, ["graph"]); // NEW
-    assert.deepEqual(getSelected(), [gardenModule]); // CHANGE
-}); // NEW
+test("plain second-click on selected garden module closes graph-local irrigation mode without clearing selection", () => {
+    const { graph, gardenModule, getSelected } = makeHarness();
+    const closeCalls = [];
+    graph.__trellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("graph"); } };
+    graph.setSelectionCell(gardenModule);
+    plainClick(graph, gardenModule);
+    assert.deepEqual(closeCalls, ["graph"]);
+    assert.deepEqual(getSelected(), [gardenModule]);
+});
 
-test("graph-local irrigation close is preferred over window fallback", () => { // NEW
-    const { graph, window, gardenModule } = makeHarness(); // NEW
-    const closeCalls = []; // NEW
-    graph.__trellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("graph"); } }; // NEW
-    window.TrellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("window"); } }; // NEW
-    graph.setSelectionCell(gardenModule); // NEW
-    plainClick(graph, gardenModule); // NEW
-    assert.deepEqual(closeCalls, ["graph"]); // NEW
-}); // NEW
+test("graph-local irrigation close is preferred over window fallback", () => {
+    const { graph, window, gardenModule } = makeHarness();
+    const closeCalls = [];
+    graph.__trellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("graph"); } };
+    window.TrellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("window"); } };
+    graph.setSelectionCell(gardenModule);
+    plainClick(graph, gardenModule);
+    assert.deepEqual(closeCalls, ["graph"]);
+});
 
-test("window irrigation close is used when graph-local API is unavailable", () => { // NEW
-    const { graph, window, gardenModule, getSelected } = makeHarness(); // NEW
-    const closeCalls = []; // NEW
-    window.TrellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("window"); } }; // NEW
-    graph.setSelectionCell(gardenModule); // NEW
-    plainClick(graph, gardenModule); // NEW
-    assert.deepEqual(closeCalls, ["window"]); // NEW
-    assert.deepEqual(getSelected(), [gardenModule]); // CHANGE
-}); // NEW
+test("window irrigation close is used when graph-local API is unavailable", () => {
+    const { graph, window, gardenModule, getSelected } = makeHarness();
+    const closeCalls = [];
+    window.TrellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("window"); } };
+    graph.setSelectionCell(gardenModule);
+    plainClick(graph, gardenModule);
+    assert.deepEqual(closeCalls, ["window"]);
+    assert.deepEqual(getSelected(), [gardenModule]);
+});
 
-test("plain second-click also recognizes legacy garden module attribute", () => { // NEW
-    const { graph, legacyGardenModule, getSelected } = makeHarness(); // NEW
-    graph.setSelectionCell(legacyGardenModule); // NEW
-    plainClick(graph, legacyGardenModule); // NEW
-    assert.deepEqual(getSelected(), [legacyGardenModule]); // CHANGE
-}); // NEW
+test("plain second-click also recognizes legacy garden module attribute", () => {
+    const { graph, legacyGardenModule, getSelected } = makeHarness();
+    graph.setSelectionCell(legacyGardenModule);
+    plainClick(graph, legacyGardenModule);
+    assert.deepEqual(getSelected(), [legacyGardenModule]);
+});
 
-test("plain second-click on regular and team modules stays selected", () => { // CHANGE
-    const { graph, regularModule, teamModule, getSelected } = makeHarness(); // CHANGE
-    const closeCalls = []; // NEW
-    graph.__trellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("graph"); } }; // NEW
-    graph.setSelectionCell(regularModule); // NEW
-    plainClick(graph, regularModule); // NEW
-    assert.deepEqual(getSelected(), [regularModule]); // NEW
-    graph.setSelectionCell(teamModule); // NEW
-    plainClick(graph, teamModule); // NEW
-    assert.deepEqual(getSelected(), [teamModule]); // NEW
-    assert.deepEqual(closeCalls, []); // NEW
-}); // NEW
+test("plain second-click on regular and team modules stays selected", () => {
+    const { graph, regularModule, teamModule, getSelected } = makeHarness();
+    const closeCalls = [];
+    graph.__trellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("graph"); } };
+    graph.setSelectionCell(regularModule);
+    plainClick(graph, regularModule);
+    assert.deepEqual(getSelected(), [regularModule]);
+    graph.setSelectionCell(teamModule);
+    plainClick(graph, teamModule);
+    assert.deepEqual(getSelected(), [teamModule]);
+    assert.deepEqual(closeCalls, []);
+});
 
-test("plain second-click on garden objects other than modules stays selected", () => { // NEW
-    const { graph, bed, tilerGroup, getSelected } = makeHarness(); // NEW
-    const closeCalls = []; // NEW
-    graph.__trellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("graph"); } }; // NEW
-    graph.setSelectionCell(bed); // NEW
-    plainClick(graph, bed); // NEW
-    assert.deepEqual(getSelected(), [bed]); // NEW
-    graph.setSelectionCell(tilerGroup); // NEW
-    plainClick(graph, tilerGroup); // NEW
-    assert.deepEqual(getSelected(), [tilerGroup]); // NEW
-    assert.deepEqual(closeCalls, []); // NEW
-}); // NEW
+test("plain second-click on garden objects other than modules stays selected", () => {
+    const { graph, bed, tilerGroup, getSelected } = makeHarness();
+    const closeCalls = [];
+    graph.__trellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("graph"); } };
+    graph.setSelectionCell(bed);
+    plainClick(graph, bed);
+    assert.deepEqual(getSelected(), [bed]);
+    graph.setSelectionCell(tilerGroup);
+    plainClick(graph, tilerGroup);
+    assert.deepEqual(getSelected(), [tilerGroup]);
+    assert.deepEqual(closeCalls, []);
+});
 
-test("selected tiler drag over a garden bed keeps the tiler as initial drag cell", () => { // NEW
-    const { graph, Handler, bed, tilerGroup } = makeHarness(); // NEW
-    graph.__stateMap.set(tilerGroup, { cell: tilerGroup, x: 40, y: 130, width: 80, height: 40 }); // NEW
-    graph.setSelectionCell(tilerGroup); // NEW
-    graph.__hitCell = tilerGroup; // NEW
-    const handler = new Handler(); // NEW
-    handler.graph = graph; // NEW
+test("selected tiler drag over a garden bed keeps the tiler as initial drag cell", () => {
+    const { graph, Handler, bed, tilerGroup } = makeHarness();
+    graph.__stateMap.set(tilerGroup, { cell: tilerGroup, x: 40, y: 130, width: 80, height: 40 });
+    graph.setSelectionCell(tilerGroup);
+    graph.__hitCell = tilerGroup;
+    const handler = new Handler();
+    handler.graph = graph;
 
-    assert.equal(handler.getInitialCellForEvent(makeMouseEvent(bed, 50, 140)), tilerGroup); // NEW
-}); // NEW
+    assert.equal(handler.getInitialCellForEvent(makeMouseEvent(bed, 50, 140)), tilerGroup);
+});
 
-test("plain click through selected tiler over a garden bed still selects the bed", () => { // NEW
-    const { graph, bed, tilerGroup, getSelected } = makeHarness(); // NEW
-    graph.__stateMap.set(tilerGroup, { cell: tilerGroup, x: 40, y: 130, width: 80, height: 40 }); // NEW
-    graph.setSelectionCell(tilerGroup); // NEW
-    graph.__hitCell = tilerGroup; // NEW
+test("plain click through selected tiler over a garden bed still selects the bed", () => {
+    const { graph, bed, tilerGroup, getSelected } = makeHarness();
+    graph.__stateMap.set(tilerGroup, { cell: tilerGroup, x: 40, y: 130, width: 80, height: 40 });
+    graph.setSelectionCell(tilerGroup);
+    graph.__hitCell = tilerGroup;
 
-    graph.selectCellForEvent(tilerGroup, { detail: 1, clientX: 50, clientY: 140, button: 0 }); // NEW
+    graph.selectCellForEvent(tilerGroup, { detail: 1, clientX: 50, clientY: 140, button: 0 });
 
-    assert.deepEqual(getSelected(), [bed]); // NEW
-}); // NEW
+    assert.deepEqual(getSelected(), [bed]);
+});
 
-test("ctrl-click selection toggle remains unchanged", () => { // NEW
-    const { graph, gardenModule, getSelected } = makeHarness(); // NEW
-    const closeCalls = []; // NEW
-    graph.__trellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("graph"); } }; // NEW
-    graph.setSelectionCell(gardenModule); // NEW
-    ctrlClick(graph, gardenModule); // NEW
-    assert.deepEqual(getSelected(), []); // NEW
-    assert.deepEqual(closeCalls, []); // NEW
-}); // NEW
+test("ctrl-click selection toggle remains unchanged", () => {
+    const { graph, gardenModule, getSelected } = makeHarness();
+    const closeCalls = [];
+    graph.__trellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("graph"); } };
+    graph.setSelectionCell(gardenModule);
+    ctrlClick(graph, gardenModule);
+    assert.deepEqual(getSelected(), []);
+    assert.deepEqual(closeCalls, []);
+});
 
-test("double-click on selected garden module does not clear selection", () => { // NEW
-    const { graph, gardenModule, getSelected } = makeHarness(); // NEW
-    const closeCalls = []; // NEW
-    graph.__trellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("graph"); } }; // NEW
-    graph.setSelectionCell(gardenModule); // NEW
-    plainClick(graph, gardenModule, 2); // NEW
-    assert.deepEqual(getSelected(), [gardenModule]); // NEW
-    assert.deepEqual(closeCalls, []); // NEW
-}); // NEW
+test("double-click on selected garden module does not clear selection", () => {
+    const { graph, gardenModule, getSelected } = makeHarness();
+    const closeCalls = [];
+    graph.__trellisIrrigationPlanner = { closeIrrigationMode() { closeCalls.push("graph"); } };
+    graph.setSelectionCell(gardenModule);
+    plainClick(graph, gardenModule, 2);
+    assert.deepEqual(getSelected(), [gardenModule]);
+    assert.deepEqual(closeCalls, []);
+});
 
-test("workspace classifier recognizes all Trellis modules and lane_key lanes", () => { // CHANGE
-    const { graph, gardenModule, legacyGardenModule, lane, kanbanLane, regularModule, teamModule, bed } = makeHarness(); // CHANGE
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    assert.equal(api.isWorkspaceContainer(gardenModule), true); // NEW
-    assert.equal(api.getWorkspaceContainerType(gardenModule), "module"); // NEW
-    assert.equal(api.isWorkspaceContainer(legacyGardenModule), true); // NEW
-    assert.equal(api.getWorkspaceContainerType(legacyGardenModule), "module"); // NEW
-    assert.equal(api.isWorkspaceContainer(regularModule), true); // CHANGE
-    assert.equal(api.getWorkspaceContainerType(regularModule), "module"); // NEW
-    assert.equal(api.isWorkspaceContainer(teamModule), true); // NEW
-    assert.equal(api.getWorkspaceContainerType(teamModule), "module"); // NEW
-    assert.equal(api.getWorkspaceContainerType(lane), "lane"); // NEW
-    assert.equal(api.isWorkspaceContainer(kanbanLane), true); // NEW
-    assert.equal(api.getWorkspaceContainerType(kanbanLane), "lane"); // NEW
-    assert.equal(api.isWorkspaceContainer(bed), false); // NEW
-}); // NEW
+test("workspace classifier recognizes all Trellis modules and lane_key lanes", () => {
+    const { graph, gardenModule, legacyGardenModule, lane, kanbanLane, regularModule, teamModule, bed } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    assert.equal(api.isWorkspaceContainer(gardenModule), true);
+    assert.equal(api.getWorkspaceContainerType(gardenModule), "module");
+    assert.equal(api.isWorkspaceContainer(legacyGardenModule), true);
+    assert.equal(api.getWorkspaceContainerType(legacyGardenModule), "module");
+    assert.equal(api.isWorkspaceContainer(regularModule), true);
+    assert.equal(api.getWorkspaceContainerType(regularModule), "module");
+    assert.equal(api.isWorkspaceContainer(teamModule), true);
+    assert.equal(api.getWorkspaceContainerType(teamModule), "module");
+    assert.equal(api.getWorkspaceContainerType(lane), "lane");
+    assert.equal(api.isWorkspaceContainer(kanbanLane), true);
+    assert.equal(api.getWorkspaceContainerType(kanbanLane), "lane");
+    assert.equal(api.isWorkspaceContainer(bed), false);
+});
 
-test("workspace marquee selects descendants across intersected containers", () => { // CHANGE
-    const { graph, gardenModule, regularModule, teamModule, bed, tilerGroup, lane, card, regularChild, teamRole, plainTop, getSelected } = makeHarness(); // CHANGE
-    graph.__regionCells = [gardenModule, bed, tilerGroup, lane, card, regularModule, regularChild, teamModule, teamRole, plainTop]; // CHANGE
-    graph.__trellisWorkspaceMarqueeContainer = gardenModule; // NEW
-    const selected = graph.selectRegion({ x: 0, y: 0, width: 500, height: 500 }, { button: 0 }); // NEW
-    assert.deepEqual(ids(selected), ["bed", "tiler", "card", "regularChild", "teamRole"]); // CHANGE
-    assert.deepEqual(ids(getSelected()), ["bed", "tiler", "card", "regularChild", "teamRole"]); // CHANGE
-}); // CHANGE
+test("workspace marquee selects descendants across intersected containers", () => {
+    const { graph, gardenModule, regularModule, teamModule, bed, tilerGroup, lane, card, regularChild, teamRole, plainTop, getSelected } = makeHarness();
+    graph.__regionCells = [gardenModule, bed, tilerGroup, lane, card, regularModule, regularChild, teamModule, teamRole, plainTop];
+    graph.__trellisWorkspaceMarqueeContainer = gardenModule;
+    const selected = graph.selectRegion({ x: 0, y: 0, width: 500, height: 500 }, { button: 0 });
+    assert.deepEqual(ids(selected), ["bed", "tiler", "card", "regularChild", "teamRole"]);
+    assert.deepEqual(ids(getSelected()), ["bed", "tiler", "card", "regularChild", "teamRole"]);
+});
 
-test("lane-start marquee selects descendants in other intersected containers", () => { // CHANGE
-    const { graph, bed, lane, card, siblingCard, regularChild, plainTop, getSelected } = makeHarness(); // CHANGE
-    graph.__regionCells = [bed, lane, card, siblingCard, regularChild, plainTop]; // CHANGE
-    graph.__trellisWorkspaceMarqueeContainer = lane; // NEW
-    const selected = graph.selectRegion({ x: 0, y: 0, width: 500, height: 500 }, { button: 0 }); // NEW
-    assert.deepEqual(ids(selected), ["bed", "card", "siblingCard", "regularChild"]); // CHANGE
-    assert.deepEqual(ids(getSelected()), ["bed", "card", "siblingCard", "regularChild"]); // CHANGE
-}); // CHANGE
+test("lane-start marquee selects descendants in other intersected containers", () => {
+    const { graph, bed, lane, card, siblingCard, regularChild, plainTop, getSelected } = makeHarness();
+    graph.__regionCells = [bed, lane, card, siblingCard, regularChild, plainTop];
+    graph.__trellisWorkspaceMarqueeContainer = lane;
+    const selected = graph.selectRegion({ x: 0, y: 0, width: 500, height: 500 }, { button: 0 });
+    assert.deepEqual(ids(selected), ["bed", "card", "siblingCard", "regularChild"]);
+    assert.deepEqual(ids(getSelected()), ["bed", "card", "siblingCard", "regularChild"]);
+});
 
-test("lane-to-lane marquee does not require sibling lane surface in region cells", () => { // NEW
-    const { graph, lane, card, siblingCard, plainTop, getSelected } = makeHarness(); // NEW
-    graph.__regionCells = [card, siblingCard, plainTop]; // NEW
-    graph.__trellisWorkspaceMarqueeContainer = lane; // NEW
-    const selected = graph.selectRegion({ x: 0, y: 0, width: 500, height: 500 }, { button: 0 }); // NEW
-    assert.deepEqual(ids(selected), ["card", "siblingCard"]); // NEW
-    assert.deepEqual(ids(getSelected()), ["card", "siblingCard"]); // NEW
-}); // NEW
+test("lane-to-lane marquee does not require sibling lane surface in region cells", () => {
+    const { graph, lane, card, siblingCard, plainTop, getSelected } = makeHarness();
+    graph.__regionCells = [card, siblingCard, plainTop];
+    graph.__trellisWorkspaceMarqueeContainer = lane;
+    const selected = graph.selectRegion({ x: 0, y: 0, width: 500, height: 500 }, { button: 0 });
+    assert.deepEqual(ids(selected), ["card", "siblingCard"]);
+    assert.deepEqual(ids(getSelected()), ["card", "siblingCard"]);
+});
 
-test("workspace handles include selected containers and hovered container", () => { // NEW
-    const { graph, gardenModule, legacyGardenModule, lane, regularModule, teamModule } = makeHarness(); // CHANGE
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    graph.setSelectionCells([gardenModule, regularModule, teamModule]); // CHANGE
-    api.setHoveredCellForTests(lane); // NEW
-    assert.deepEqual(ids(api.getHandleCells()), ["garden", "regular", "team", "lane"]); // CHANGE
-    graph.setSelectionCells([gardenModule, legacyGardenModule]); // NEW
-    api.setHoveredCellForTests(null); // NEW
-    assert.deepEqual(ids(api.getHandleCells()), ["garden", "legacyGarden"]); // NEW
-}); // NEW
+test("workspace handles include selected containers and hovered container", () => {
+    const { graph, gardenModule, legacyGardenModule, lane, regularModule, teamModule } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    graph.setSelectionCells([gardenModule, regularModule, teamModule]);
+    api.setHoveredCellForTests(lane);
+    assert.deepEqual(ids(api.getHandleCells()), ["garden", "regular", "team", "lane"]);
+    graph.setSelectionCells([gardenModule, legacyGardenModule]);
+    api.setHoveredCellForTests(null);
+    assert.deepEqual(ids(api.getHandleCells()), ["garden", "legacyGarden"]);
+});
 
-test("occupied garden bed selection shows a bed move handle at the move-unit bounding box", () => { // CHANGE
-    const { graph, bed, occupiedTiler } = makeHarness(); // CHANGE
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    graph.__stateMap.set(occupiedTiler, { cell: occupiedTiler, x: 30, y: 120, width: 20, height: 20 }); // NEW
-    graph.setSelectionCell(bed); // NEW
-    assert.deepEqual(ids(api.getHandleCells()), ["bed"]); // NEW
-    api.refreshHandles(); // NEW
-    const handle = graph.container.querySelector("[data-trellis-workspace-drag-handle='1']"); // NEW
-    assert.ok(handle, "expected occupied bed handle"); // NEW
-    assert.equal(handle.title, "Move garden bed and planting groups"); // NEW
-    assert.equal(handle.style.left, "8px"); // NEW
-    assert.equal(handle.style.top, "98px"); // NEW
-}); // NEW
+test("occupied garden bed selection shows a bed move handle at the move-unit bounding box", () => {
+    const { graph, bed, occupiedTiler } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    graph.__stateMap.set(occupiedTiler, { cell: occupiedTiler, x: 30, y: 120, width: 20, height: 20 });
+    graph.setSelectionCell(bed);
+    assert.deepEqual(ids(api.getHandleCells()), ["bed"]);
+    api.refreshHandles();
+    const handle = graph.container.querySelector("[data-trellis-workspace-drag-handle='1']");
+    assert.ok(handle, "expected occupied bed handle");
+    assert.equal(handle.title, "Move garden bed and planting groups");
+    assert.equal(handle.style.left, "8px");
+    assert.equal(handle.style.top, "98px");
+});
 
-test("planting group selection shows its containing occupied bed handle", () => { // NEW
-    const { graph, occupiedTiler } = makeHarness(); // NEW
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    graph.setSelectionCell(occupiedTiler); // NEW
-    assert.deepEqual(ids(api.getHandleCells()), ["bed"]); // NEW
-    assert.deepEqual(ids(api.getHandleDragCellsForTests(api.getHandleCells()[0])), ["bed", "occupiedTiler"]); // NEW
-}); // NEW
+test("planting group selection shows its containing occupied bed handle", () => {
+    const { graph, occupiedTiler } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    graph.setSelectionCell(occupiedTiler);
+    assert.deepEqual(ids(api.getHandleCells()), ["bed"]);
+    assert.deepEqual(ids(api.getHandleDragCellsForTests(api.getHandleCells()[0])), ["bed", "occupiedTiler"]);
+});
 
-test("bed assembly selection shows occupied bed handle and drags the whole bed unit", () => { // NEW
-    const { graph, bed, bedAssembly, occupiedTiler, getSelected } = makeHarness({ bedAssembly: true }); // NEW
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    graph.setSelectionCell(bedAssembly); // NEW
-    assert.deepEqual(ids(api.getHandleCells()), ["bed"]); // NEW
-    api.refreshHandles(); // NEW
-    const handle = graph.container.querySelector("[data-trellis-workspace-drag-handle='1']"); // NEW
-    assert.ok(handle, "expected occupied bed handle for bed assembly selection"); // NEW
-    assert.equal(handle.title, "Move garden bed, irrigation assembly, and planting groups"); // NEW
-    assert.deepEqual(ids(api.getHandleDragCellsForTests(bed)), ["bed", "bedAssembly", "occupiedTiler"]); // NEW
-    api.beginHandleDragForTests(bed, { button: 0, clientX: 40, clientY: 130, preventDefault() {} }); // NEW
-    assert.deepEqual(ids(getSelected()), ["bed", "bedAssembly", "occupiedTiler"]); // NEW
-    assert.deepEqual(ids(graph.graphHandler.__trellisWorkspaceHandleDragCells), ["bed", "bedAssembly", "occupiedTiler"]); // NEW
-}); // NEW
+test("bed assembly selection shows occupied bed handle and drags the whole bed unit", () => {
+    const { graph, bed, bedAssembly, occupiedTiler, getSelected } = makeHarness({ bedAssembly: true });
+    const api = graph.__trellisWorkspaceDragPolicy;
+    graph.setSelectionCell(bedAssembly);
+    assert.deepEqual(ids(api.getHandleCells()), ["bed"]);
+    api.refreshHandles();
+    const handle = graph.container.querySelector("[data-trellis-workspace-drag-handle='1']");
+    assert.ok(handle, "expected occupied bed handle for bed assembly selection");
+    assert.equal(handle.title, "Move garden bed, irrigation assembly, and planting groups");
+    assert.deepEqual(ids(api.getHandleDragCellsForTests(bed)), ["bed", "bedAssembly", "occupiedTiler"]);
+    api.beginHandleDragForTests(bed, { button: 0, clientX: 40, clientY: 130, preventDefault() {} });
+    assert.deepEqual(ids(getSelected()), ["bed", "bedAssembly", "occupiedTiler"]);
+    assert.deepEqual(ids(graph.graphHandler.__trellisWorkspaceHandleDragCells), ["bed", "bedAssembly", "occupiedTiler"]);
+});
 
-test("empty beds and outside-bed planting groups do not show occupied bed handles", () => { // NEW
-    const { graph, emptyBed, tilerGroup } = makeHarness(); // NEW
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    graph.setSelectionCell(emptyBed); // NEW
-    assert.deepEqual(ids(api.getHandleCells()), []); // NEW
-    graph.setSelectionCell(tilerGroup); // NEW
-    assert.deepEqual(ids(api.getHandleCells()), []); // NEW
-}); // NEW
+test("empty beds and outside-bed planting groups do not show occupied bed handles", () => {
+    const { graph, emptyBed, tilerGroup } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    graph.setSelectionCell(emptyBed);
+    assert.deepEqual(ids(api.getHandleCells()), []);
+    graph.setSelectionCell(tilerGroup);
+    assert.deepEqual(ids(api.getHandleCells()), []);
+});
 
-test("occupied bed handle drag moves every contained planting group", () => { // NEW
-    const { graph, bed, tilerGroup } = makeHarness(); // NEW
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    graph.__stateMap.set(tilerGroup, { cell: tilerGroup, x: 80, y: 145, width: 10, height: 10 }); // NEW
-    assert.deepEqual(ids(api.getHandleDragCellsForTests(bed)), ["bed", "tiler", "occupiedTiler"]); // NEW
-}); // NEW
+test("occupied bed handle drag moves every contained planting group", () => {
+    const { graph, bed, tilerGroup } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    graph.__stateMap.set(tilerGroup, { cell: tilerGroup, x: 80, y: 145, width: 10, height: 10 });
+    assert.deepEqual(ids(api.getHandleDragCellsForTests(bed)), ["bed", "tiler", "occupiedTiler"]);
+});
 
-test("occupied bed handle drag selects the bed and contained planting groups", () => { // CHANGE
-    const { graph, bed, occupiedTiler, getSelected } = makeHarness(); // NEW
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    graph.setSelectionCell(occupiedTiler); // NEW
-    api.beginHandleDragForTests(bed, { button: 0, clientX: 40, clientY: 130, preventDefault() {} }); // NEW
-    assert.deepEqual(ids(getSelected()), ["bed", "occupiedTiler"]); // CHANGE
-    assert.deepEqual(ids(graph.graphHandler.__trellisWorkspaceHandleDragCells), ["bed", "occupiedTiler"]); // NEW
-    assert.deepEqual(ids(graph.graphHandler.getCells(bed)), ["bed", "occupiedTiler"]); // NEW
-}); // NEW
+test("occupied bed handle drag selects the bed and contained planting groups", () => {
+    const { graph, bed, occupiedTiler, getSelected } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    graph.setSelectionCell(occupiedTiler);
+    api.beginHandleDragForTests(bed, { button: 0, clientX: 40, clientY: 130, preventDefault() {} });
+    assert.deepEqual(ids(getSelected()), ["bed", "occupiedTiler"]);
+    assert.deepEqual(ids(graph.graphHandler.__trellisWorkspaceHandleDragCells), ["bed", "occupiedTiler"]);
+    assert.deepEqual(ids(graph.graphHandler.getCells(bed)), ["bed", "occupiedTiler"]);
+});
 
-test("workspace handles omit canonical kanban board lanes", () => { // NEW
-    const { graph, kanbanLane } = makeHarness(); // NEW
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    graph.setSelectionCell(kanbanLane); // NEW
-    api.setHoveredCellForTests(kanbanLane); // NEW
-    assert.deepEqual(ids(api.getHandleCells()), []); // NEW
-    api.refreshHandles(); // NEW
-    assert.equal(graph.container.querySelector("[data-trellis-workspace-drag-handle='1']"), null); // NEW
-}); // NEW
+test("workspace handles omit canonical kanban board lanes", () => {
+    const { graph, kanbanLane } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    graph.setSelectionCell(kanbanLane);
+    api.setHoveredCellForTests(kanbanLane);
+    assert.deepEqual(ids(api.getHandleCells()), []);
+    api.refreshHandles();
+    assert.equal(graph.container.querySelector("[data-trellis-workspace-drag-handle='1']"), null);
+});
 
-test("workspace handles remain available for non-board lane_key lanes", () => { // NEW
-    const { graph, lane } = makeHarness(); // NEW
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    graph.setSelectionCell(lane); // NEW
-    assert.deepEqual(ids(api.getHandleCells()), ["lane"]); // NEW
-    api.refreshHandles(); // NEW
-    assert.ok(graph.container.querySelector("[data-trellis-workspace-drag-handle='1']"), "expected non-board lane handle"); // NEW
-}); // NEW
+test("workspace handles remain available for non-board lane_key lanes", () => {
+    const { graph, lane } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    graph.setSelectionCell(lane);
+    assert.deepEqual(ids(api.getHandleCells()), ["lane"]);
+    api.refreshHandles();
+    assert.ok(graph.container.querySelector("[data-trellis-workspace-drag-handle='1']"), "expected non-board lane handle");
+});
 
-test("workspace handles hide non-movable containers", () => { // NEW
-    const { graph, gardenModule, lane, movableCells } = makeHarness(); // NEW
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    movableCells.set(gardenModule, false); // NEW
-    graph.setSelectionCells([gardenModule, lane]); // NEW
-    assert.deepEqual(ids(api.getHandleCells()), ["lane"]); // NEW
-}); // NEW
+test("workspace handles hide non-movable containers", () => {
+    const { graph, gardenModule, lane, movableCells } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    movableCells.set(gardenModule, false);
+    graph.setSelectionCells([gardenModule, lane]);
+    assert.deepEqual(ids(api.getHandleCells()), ["lane"]);
+});
 
-test("workspace container body hover uses default cursor and restores over children", () => { // NEW
-    const { graph, gardenModule, card } = makeHarness(); // NEW
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    graph.container.style.cursor = "move"; // NEW
-    graph.__hitCell = gardenModule; // NEW
-    api.updateHoverForTests(makeMouseEvent(gardenModule, 250, 90)); // NEW
-    assert.equal(graph.container.style.cursor, "default"); // NEW
-    assert.equal(graph.getCursorForMouseEvent(makeMouseEvent(gardenModule, 250, 90)), "default"); // NEW
-    graph.__hitCell = card; // NEW
-    graph.__nativeCursor = "native"; // NEW
-    api.updateHoverForTests(makeMouseEvent(gardenModule, 50, 90)); // NEW
-    assert.equal(graph.container.style.cursor, "move"); // NEW
-    assert.equal(graph.getCursorForMouseEvent(makeMouseEvent(gardenModule, 50, 90)), "native"); // NEW
-}); // NEW
+test("workspace container body hover uses default cursor and restores over children", () => {
+    const { graph, gardenModule, card } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    graph.container.style.cursor = "move";
+    graph.__hitCell = gardenModule;
+    api.updateHoverForTests(makeMouseEvent(gardenModule, 250, 90));
+    assert.equal(graph.container.style.cursor, "default");
+    assert.equal(graph.getCursorForMouseEvent(makeMouseEvent(gardenModule, 250, 90)), "default");
+    graph.__hitCell = card;
+    graph.__nativeCursor = "native";
+    api.updateHoverForTests(makeMouseEvent(gardenModule, 50, 90));
+    assert.equal(graph.container.style.cursor, "move");
+    assert.equal(graph.getCursorForMouseEvent(makeMouseEvent(gardenModule, 50, 90)), "native");
+});
 
-test("workspace body hover stamps default cursor before native move fallback", () => { // NEW
-    const { graph, gardenModule } = makeHarness(); // NEW
-    const sourceState = makeCursorState(gardenModule); // NEW
-    graph.__hitCell = gardenModule; // NEW
-    const cursor = applyNativeGraphHandlerCursor(graph, makeMouseEvent(gardenModule, 250, 90, sourceState)); // NEW
-    assert.equal(cursor, "default"); // NEW
-    assert.equal(sourceState.cursor, "default"); // NEW
-}); // NEW
+test("workspace body hover stamps default cursor before native move fallback", () => {
+    const { graph, gardenModule } = makeHarness();
+    const sourceState = makeCursorState(gardenModule);
+    graph.__hitCell = gardenModule;
+    const cursor = applyNativeGraphHandlerCursor(graph, makeMouseEvent(gardenModule, 250, 90, sourceState));
+    assert.equal(cursor, "default");
+    assert.equal(sourceState.cursor, "default");
+});
 
-test("workspace container body cursor restores on graph mouseleave", () => { // NEW
-    const { graph, window, gardenModule } = makeHarness(); // NEW
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    graph.container.style.cursor = "move"; // NEW
-    graph.__hitCell = gardenModule; // NEW
-    api.updateHoverForTests(makeMouseEvent(gardenModule, 250, 90)); // NEW
-    assert.equal(graph.container.style.cursor, "default"); // NEW
-    graph.container.dispatchEvent(new window.MouseEvent("mouseleave", { bubbles: true })); // NEW
-    assert.equal(graph.container.style.cursor, "move"); // NEW
-}); // NEW
+test("workspace container body cursor restores on graph mouseleave", () => {
+    const { graph, window, gardenModule } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    graph.container.style.cursor = "move";
+    graph.__hitCell = gardenModule;
+    api.updateHoverForTests(makeMouseEvent(gardenModule, 250, 90));
+    assert.equal(graph.container.style.cursor, "default");
+    graph.container.dispatchEvent(new window.MouseEvent("mouseleave", { bubbles: true }));
+    assert.equal(graph.container.style.cursor, "move");
+});
 
-test("workspace container header hover keeps native cursor", () => { // NEW
-    const { graph, gardenModule } = makeHarness(); // NEW
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    graph.container.style.cursor = "move"; // NEW
-    graph.__hitCell = gardenModule; // NEW
-    api.updateHoverForTests(makeMouseEvent(gardenModule, 50, 30)); // NEW
-    assert.equal(graph.container.style.cursor, "move"); // NEW
-    assert.equal(api.shouldUseSelectCursorForTests(makeMouseEvent(gardenModule, 50, 30)), false); // NEW
-    assert.equal(graph.getCursorForMouseEvent(makeMouseEvent(gardenModule, 50, 30)), null); // NEW
-    const sourceState = makeCursorState(gardenModule); // NEW
-    assert.equal(applyNativeGraphHandlerCursor(graph, makeMouseEvent(gardenModule, 50, 30, sourceState)), "move"); // NEW
-    assert.equal(sourceState.cursor, "move"); // NEW
-}); // NEW
+test("workspace container header hover keeps native cursor", () => {
+    const { graph, gardenModule } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    graph.container.style.cursor = "move";
+    graph.__hitCell = gardenModule;
+    api.updateHoverForTests(makeMouseEvent(gardenModule, 50, 30));
+    assert.equal(graph.container.style.cursor, "move");
+    assert.equal(api.shouldUseSelectCursorForTests(makeMouseEvent(gardenModule, 50, 30)), false);
+    assert.equal(graph.getCursorForMouseEvent(makeMouseEvent(gardenModule, 50, 30)), null);
+    const sourceState = makeCursorState(gardenModule);
+    assert.equal(applyNativeGraphHandlerCursor(graph, makeMouseEvent(gardenModule, 50, 30, sourceState)), "move");
+    assert.equal(sourceState.cursor, "move");
+});
 
-test("workspace drag handle renders Draw.io move image and keeps move cursor", () => { // NEW
-    const { graph, gardenModule } = makeHarness(); // NEW
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    graph.setSelectionCell(gardenModule); // NEW
-    api.refreshHandles(); // NEW
-    const handle = graph.container.querySelector("[data-trellis-workspace-drag-handle='1']"); // NEW
-    assert.ok(handle, "expected workspace handle"); // NEW
-    assert.equal(handle.style.cursor, "move"); // NEW
-    const img = handle.querySelector("img"); // NEW
-    assert.ok(img, "expected Draw.io move image"); // NEW
-    assert.equal(img.getAttribute("src"), TEST_MOVE_IMAGE); // NEW
-}); // NEW
+test("workspace drag handle renders Draw.io move image and keeps move cursor", () => {
+    const { graph, gardenModule } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    graph.setSelectionCell(gardenModule);
+    api.refreshHandles();
+    const handle = graph.container.querySelector("[data-trellis-workspace-drag-handle='1']");
+    assert.ok(handle, "expected workspace handle");
+    assert.equal(handle.style.cursor, "move");
+    const img = handle.querySelector("img");
+    assert.ok(img, "expected Draw.io move image");
+    assert.equal(img.getAttribute("src"), TEST_MOVE_IMAGE);
+});
 
-test("surface drag on workspace modules is marked for scoped marquee", () => { // CHANGE
-    const { graph, Handler, gardenModule, regularModule, teamModule } = makeHarness(); // CHANGE
-    const handler = new Handler(); // NEW
-    handler.graph = graph; // NEW
-    graph.__hitCell = gardenModule; // NEW
-    handler.mouseDown(graph, makeMouseEvent(gardenModule, 250, 90)); // CHANGE
-    assert.equal(graph.__trellisWorkspaceDragContext.cell, gardenModule); // NEW
-    assert.equal(graph.__trellisWorkspaceDragContext.type, "module"); // NEW
-    assert.equal(graph.__oldGraphHandlerMouseDownCalled, undefined); // NEW
-    graph.__trellisWorkspaceDragContext = null; // NEW
-    graph.__hitCell = regularModule; // NEW
-    handler.mouseDown(graph, makeMouseEvent(regularModule, 250, 390)); // NEW
-    assert.equal(graph.__trellisWorkspaceDragContext.cell, regularModule); // NEW
-    assert.equal(graph.__trellisWorkspaceDragContext.type, "module"); // NEW
-    graph.__trellisWorkspaceDragContext = null; // NEW
-    graph.__hitCell = teamModule; // NEW
-    handler.mouseDown(graph, makeMouseEvent(teamModule, 640, 390)); // NEW
-    assert.equal(graph.__trellisWorkspaceDragContext.cell, teamModule); // NEW
-    assert.equal(graph.__trellisWorkspaceDragContext.type, "module"); // NEW
-}); // NEW
+test("surface drag on workspace modules is marked for scoped marquee", () => {
+    const { graph, Handler, gardenModule, regularModule, teamModule } = makeHarness();
+    const handler = new Handler();
+    handler.graph = graph;
+    graph.__hitCell = gardenModule;
+    handler.mouseDown(graph, makeMouseEvent(gardenModule, 250, 90));
+    assert.equal(graph.__trellisWorkspaceDragContext.cell, gardenModule);
+    assert.equal(graph.__trellisWorkspaceDragContext.type, "module");
+    assert.equal(graph.__oldGraphHandlerMouseDownCalled, undefined);
+    graph.__trellisWorkspaceDragContext = null;
+    graph.__hitCell = regularModule;
+    handler.mouseDown(graph, makeMouseEvent(regularModule, 250, 390));
+    assert.equal(graph.__trellisWorkspaceDragContext.cell, regularModule);
+    assert.equal(graph.__trellisWorkspaceDragContext.type, "module");
+    graph.__trellisWorkspaceDragContext = null;
+    graph.__hitCell = teamModule;
+    handler.mouseDown(graph, makeMouseEvent(teamModule, 640, 390));
+    assert.equal(graph.__trellisWorkspaceDragContext.cell, teamModule);
+    assert.equal(graph.__trellisWorkspaceDragContext.type, "module");
+});
 
-test("workspace module header drag stays on native graph handler path", () => { // CHANGE
-    const { graph, Handler, gardenModule, regularModule, teamModule } = makeHarness(); // CHANGE
-    const handler = new Handler(); // NEW
-    handler.graph = graph; // NEW
-    graph.__hitCell = gardenModule; // NEW
-    handler.mouseDown(graph, makeMouseEvent(gardenModule, 50, 30)); // NEW
-    assert.equal(graph.__trellisWorkspaceDragContext, undefined); // NEW
-    assert.equal(graph.__oldGraphHandlerMouseDownCalled, true); // NEW
-    graph.__oldGraphHandlerMouseDownCalled = false; // NEW
-    graph.__hitCell = regularModule; // NEW
-    handler.mouseDown(graph, makeMouseEvent(regularModule, 50, 310)); // NEW
-    assert.equal(graph.__trellisWorkspaceDragContext, undefined); // NEW
-    assert.equal(graph.__oldGraphHandlerMouseDownCalled, true); // NEW
-    graph.__oldGraphHandlerMouseDownCalled = false; // NEW
-    graph.__hitCell = teamModule; // NEW
-    handler.mouseDown(graph, makeMouseEvent(teamModule, 440, 310)); // NEW
-    assert.equal(graph.__trellisWorkspaceDragContext, undefined); // NEW
-    assert.equal(graph.__oldGraphHandlerMouseDownCalled, true); // NEW
-}); // NEW
+test("workspace module header drag stays on native graph handler path", () => {
+    const { graph, Handler, gardenModule, regularModule, teamModule } = makeHarness();
+    const handler = new Handler();
+    handler.graph = graph;
+    graph.__hitCell = gardenModule;
+    handler.mouseDown(graph, makeMouseEvent(gardenModule, 50, 30));
+    assert.equal(graph.__trellisWorkspaceDragContext, undefined);
+    assert.equal(graph.__oldGraphHandlerMouseDownCalled, true);
+    graph.__oldGraphHandlerMouseDownCalled = false;
+    graph.__hitCell = regularModule;
+    handler.mouseDown(graph, makeMouseEvent(regularModule, 50, 310));
+    assert.equal(graph.__trellisWorkspaceDragContext, undefined);
+    assert.equal(graph.__oldGraphHandlerMouseDownCalled, true);
+    graph.__oldGraphHandlerMouseDownCalled = false;
+    graph.__hitCell = teamModule;
+    handler.mouseDown(graph, makeMouseEvent(teamModule, 440, 310));
+    assert.equal(graph.__trellisWorkspaceDragContext, undefined);
+    assert.equal(graph.__oldGraphHandlerMouseDownCalled, true);
+});
 
-test("workspace first-use callout anchors to cursor point", () => { // NEW
-    const { graph, gardenModule } = makeHarness(); // NEW
-    const anchor = graph.__trellisWorkspaceDragPolicy.getCalloutAnchorPointForTests(gardenModule, makeMouseEvent(gardenModule, 123, 145)); // NEW
-    assert.deepEqual(anchor, { x: 123, y: 145 }); // NEW
-}); // NEW
+test("workspace first-use callout anchors to cursor point", () => {
+    const { graph, gardenModule } = makeHarness();
+    const anchor = graph.__trellisWorkspaceDragPolicy.getCalloutAnchorPointForTests(gardenModule, makeMouseEvent(gardenModule, 123, 145));
+    assert.deepEqual(anchor, { x: 123, y: 145 });
+});
 
-test("workspace move callout is suppressed for canonical kanban board lanes", () => { // NEW
-    const { graph, lane, kanbanLane } = makeHarness(); // NEW
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    const rubberband = { first: { x: 0, y: 0 } }; // NEW
-    assert.equal(api.shouldShowCalloutForTests({ cell: kanbanLane, type: "lane" }, rubberband, makeMouseEvent(kanbanLane, 20, 20)), false); // NEW
-    assert.equal(api.shouldShowCalloutForTests({ cell: lane, type: "lane" }, rubberband, makeMouseEvent(lane, 20, 20)), true); // NEW
-}); // NEW
+test("workspace move callout is suppressed for canonical kanban board lanes", () => {
+    const { graph, lane, kanbanLane } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    const rubberband = { first: { x: 0, y: 0 } };
+    assert.equal(api.shouldShowCalloutForTests({ cell: kanbanLane, type: "lane" }, rubberband, makeMouseEvent(kanbanLane, 20, 20)), false);
+    assert.equal(api.shouldShowCalloutForTests({ cell: lane, type: "lane" }, rubberband, makeMouseEvent(lane, 20, 20)), true);
+});
 
-test("nested workspace surface drag chooses deepest eligible container", () => { // NEW
-    const { graph, Handler, gardenModule, lane } = makeHarness(); // NEW
-    const handler = new Handler(); // NEW
-    handler.graph = graph; // NEW
-    graph.__hitCell = lane; // NEW
-    handler.mouseDown(graph, makeMouseEvent(gardenModule)); // NEW
-    assert.equal(graph.__trellisWorkspaceDragContext.cell, lane); // NEW
-    assert.equal(graph.__trellisWorkspaceDragContext.type, "lane"); // NEW
-}); // NEW
+test("nested workspace surface drag chooses deepest eligible container", () => {
+    const { graph, Handler, gardenModule, lane } = makeHarness();
+    const handler = new Handler();
+    handler.graph = graph;
+    graph.__hitCell = lane;
+    handler.mouseDown(graph, makeMouseEvent(gardenModule));
+    assert.equal(graph.__trellisWorkspaceDragContext.cell, lane);
+    assert.equal(graph.__trellisWorkspaceDragContext.type, "lane");
+});
 
-test("lane hover grace keeps lane handle when parent module is hit", () => { // NEW
-    const { graph, gardenModule, lane } = makeHarness(); // NEW
-    const api = graph.__trellisWorkspaceDragPolicy; // NEW
-    api.setHoveredCellForTests(lane); // NEW
-    graph.__hitCell = gardenModule; // NEW
-    api.updateHoverForTests(makeMouseEvent(gardenModule, 20, 90)); // NEW
-    assert.deepEqual(ids(api.getHandleCells()), ["lane"]); // NEW
-}); // NEW
+test("lane hover grace keeps lane handle when parent module is hit", () => {
+    const { graph, gardenModule, lane } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    api.setHoveredCellForTests(lane);
+    graph.__hitCell = gardenModule;
+    api.updateHoverForTests(makeMouseEvent(gardenModule, 20, 90));
+    assert.deepEqual(ids(api.getHandleCells()), ["lane"]);
+});
 
-test("child drags inside workspace modules stay on native graph handler path", () => { // CHANGE
-    const { graph, Handler, gardenModule, bed, regularChild, teamRole } = makeHarness(); // CHANGE
-    const handler = new Handler(); // NEW
-    handler.graph = graph; // NEW
-    graph.__hitCell = bed; // NEW
-    handler.mouseDown(graph, makeMouseEvent(gardenModule)); // NEW
-    assert.equal(graph.__trellisWorkspaceDragContext, undefined); // NEW
-    assert.equal(graph.__oldGraphHandlerMouseDownCalled, true); // NEW
-    graph.__oldGraphHandlerMouseDownCalled = false; // NEW
-    graph.__hitCell = regularChild; // CHANGE
-    handler.mouseDown(graph, makeMouseEvent(regularChild, 50, 370)); // CHANGE
-    assert.equal(graph.__trellisWorkspaceDragContext, undefined); // NEW
-    assert.equal(graph.__oldGraphHandlerMouseDownCalled, true); // NEW
-    graph.__oldGraphHandlerMouseDownCalled = false; // NEW
-    graph.__hitCell = teamRole; // NEW
-    handler.mouseDown(graph, makeMouseEvent(teamRole, 440, 370)); // NEW
-    assert.equal(graph.__trellisWorkspaceDragContext, undefined); // NEW
-    assert.equal(graph.__oldGraphHandlerMouseDownCalled, true); // NEW
-}); // NEW
+test("child drags inside workspace modules stay on native graph handler path", () => {
+    const { graph, Handler, gardenModule, bed, regularChild, teamRole } = makeHarness();
+    const handler = new Handler();
+    handler.graph = graph;
+    graph.__hitCell = bed;
+    handler.mouseDown(graph, makeMouseEvent(gardenModule));
+    assert.equal(graph.__trellisWorkspaceDragContext, undefined);
+    assert.equal(graph.__oldGraphHandlerMouseDownCalled, true);
+    graph.__oldGraphHandlerMouseDownCalled = false;
+    graph.__hitCell = regularChild;
+    handler.mouseDown(graph, makeMouseEvent(regularChild, 50, 370));
+    assert.equal(graph.__trellisWorkspaceDragContext, undefined);
+    assert.equal(graph.__oldGraphHandlerMouseDownCalled, true);
+    graph.__oldGraphHandlerMouseDownCalled = false;
+    graph.__hitCell = teamRole;
+    handler.mouseDown(graph, makeMouseEvent(teamRole, 440, 370));
+    assert.equal(graph.__trellisWorkspaceDragContext, undefined);
+    assert.equal(graph.__oldGraphHandlerMouseDownCalled, true);
+});
 
-test("deep click-through returns children inside regular and team modules", () => { // NEW
-    const { graph, regularModule, regularChild, teamModule, teamRole } = makeHarness(); // NEW
-    graph.__hitCell = regularModule; // NEW
-    assert.equal(graph.getCellAt(50, 370), regularChild); // NEW
-    graph.__hitCell = teamModule; // NEW
-    assert.equal(graph.getCellAt(440, 370), teamRole); // NEW
-}); // NEW
+test("deep click-through returns children inside regular and team modules", () => {
+    const { graph, regularModule, regularChild, teamModule, teamRole } = makeHarness();
+    graph.__hitCell = regularModule;
+    assert.equal(graph.getCellAt(50, 370), regularChild);
+    graph.__hitCell = teamModule;
+    assert.equal(graph.getCellAt(440, 370), teamRole);
+});

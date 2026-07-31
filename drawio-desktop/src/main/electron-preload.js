@@ -1,4 +1,4 @@
-// Trellis changes: preload file-system bridge, file-watch listener cleanup, and app-info/release bridge for renderer plugins. // CHANGE
+// Trellis changes: preload file-system bridge, file-watch listener cleanup, and app-info/release bridge for renderer plugins.
 console.log('[Preload] Script running');
 
 const {
@@ -43,9 +43,9 @@ function requestViaIPC(msg, callback, error) {
     fileChangedListeners[msg.path] = msg.listener;
     delete msg.listener;
   }
-  else if (msg.action === 'unwatchFile') { // CHANGE
-    delete fileChangedListeners[msg.path]; // CHANGE
-  } // CHANGE
+  else if (msg.action === 'unwatchFile') {
+    delete fileChangedListeners[msg.path];
+  }
   ipcRenderer.send('rendererReq', msg);
 }
 
@@ -106,56 +106,56 @@ contextBridge.exposeInMainWorld(
 	}
   );
 
-contextBridge.exposeInMainWorld('trellisApp', { // NEW
-	getInfo() { // NEW
-		return new Promise((resolve, reject) => { // NEW
-			requestViaIPC( // NEW
-				{ action: 'getTrellisAppInfo' }, // NEW
-				(data) => resolve(data || {}), // NEW
-				(msg) => reject(new Error(msg || 'getTrellisAppInfo failed')) // NEW
-			); // NEW
-		}); // NEW
-	}, // CHANGE
-	getReleases() { // NEW
-		return new Promise((resolve, reject) => { // NEW
-			requestViaIPC( // NEW
-				{ action: 'getTrellisReleases' }, // NEW
-				(data) => resolve(Array.isArray(data) ? data : []), // NEW
-				(msg) => reject(new Error(msg || 'getTrellisReleases failed')) // NEW
-			); // NEW
-		}); // NEW
-	}, // NEW
-	restoreBuiltInDatabase() { // NEW
-		return new Promise((resolve, reject) => { // NEW
-			requestViaIPC( // NEW
-				{ action: 'restoreBuiltInTrellisDatabase' }, // NEW
-				(data) => resolve(data || {}), // NEW
-				(msg) => reject(new Error(msg || 'restoreBuiltInTrellisDatabase failed')) // NEW
-			); // NEW
-		}); // NEW
-	} // NEW
-}); // NEW
+contextBridge.exposeInMainWorld('trellisApp', {
+	getInfo() {
+		return new Promise((resolve, reject) => {
+			requestViaIPC(
+				{ action: 'getTrellisAppInfo' },
+				(data) => resolve(data || {}),
+				(msg) => reject(new Error(msg || 'getTrellisAppInfo failed'))
+			);
+		});
+	},
+	getReleases() {
+		return new Promise((resolve, reject) => {
+			requestViaIPC(
+				{ action: 'getTrellisReleases' },
+				(data) => resolve(Array.isArray(data) ? data : []),
+				(msg) => reject(new Error(msg || 'getTrellisReleases failed'))
+			);
+		});
+	},
+	restoreBuiltInDatabase() {
+		return new Promise((resolve, reject) => {
+			requestViaIPC(
+				{ action: 'restoreBuiltInTrellisDatabase' },
+				(data) => resolve(data || {}),
+				(msg) => reject(new Error(msg || 'restoreBuiltInTrellisDatabase failed'))
+			);
+		});
+	}
+});
 
-contextBridge.exposeInMainWorld('trellisShare', { // NEW
-	getSyncthingShareInfo(opts = {}) { // NEW
-		return new Promise((resolve, reject) => { // NEW
-			requestViaIPC( // NEW
-				{ action: 'getTrellisSyncthingShareInfo', diagramPath: opts.diagramPath || null }, // NEW
-				(data) => resolve(data || {}), // NEW
-				(msg) => reject(new Error(msg || 'getTrellisSyncthingShareInfo failed')) // NEW
-			); // NEW
-		}); // NEW
-	}, // NEW
-	openEmailDraft(payload = {}) { // NEW
-		return new Promise((resolve, reject) => { // NEW
-			requestViaIPC( // NEW
-				{ action: 'openTrellisEmailDraft', to: payload.to || '', subject: payload.subject || '', body: payload.body || '' }, // NEW
-				(data) => resolve(data || {}), // NEW
-				(msg) => reject(new Error(msg || 'openTrellisEmailDraft failed')) // NEW
-			); // NEW
-		}); // NEW
-	} // NEW
-}); // NEW
+contextBridge.exposeInMainWorld('trellisShare', {
+	getSyncthingShareInfo(opts = {}) {
+		return new Promise((resolve, reject) => {
+			requestViaIPC(
+				{ action: 'getTrellisSyncthingShareInfo', diagramPath: opts.diagramPath || null },
+				(data) => resolve(data || {}),
+				(msg) => reject(new Error(msg || 'getTrellisSyncthingShareInfo failed'))
+			);
+		});
+	},
+	openEmailDraft(payload = {}) {
+		return new Promise((resolve, reject) => {
+			requestViaIPC(
+				{ action: 'openTrellisEmailDraft', to: payload.to || '', subject: payload.subject || '', body: payload.body || '' },
+				(data) => resolve(data || {}),
+				(msg) => reject(new Error(msg || 'openTrellisEmailDraft failed'))
+			);
+		});
+	}
+});
   
 
 contextBridge.exposeInMainWorld(
@@ -225,7 +225,7 @@ contextBridge.exposeInMainWorld('fsBridge', {
 	  
 	  // ( ADD) keep parity with unwatch
 	  watchFile(absPath, listener) {
-		if (typeof listener !== 'function') return; // CHANGE
+		if (typeof listener !== 'function') return;
 		requestViaIPC({ action: 'watchFile', path: absPath, listener }, () => {}, () => {});
 	  },
     });
@@ -240,15 +240,15 @@ contextBridge.exposeInMainWorld('dbBridge', {
 	 * @param {object} [opts] { readOnly?: boolean, pragma?: object }
 	 * @returns {Promise<{ ok: true, dbId: string }>}
 	 */
-	resolvePath(opts = {}) {                                                   // NEW
+	resolvePath(opts = {}) {
 		return new Promise((resolve, reject) => {
 		  requestViaIPC(
 			{
 			  action: 'dbResolvePath',
-			  seedRelPath: (opts.seedRelPath == null) ? null : String(opts.seedRelPath), // NEW
+			  seedRelPath: (opts.seedRelPath == null) ? null : String(opts.seedRelPath),
 			  dbName: String(opts.dbName || 'Trellis_database.sqlite'),
 			  reset: !!opts.reset,
-			  createIfMissing: !!opts.createIfMissing                         // NEW
+			  createIfMissing: !!opts.createIfMissing
 			},
 			(data) => resolve({ ok: true, dbPath: data.dbPath }),
 			(msg)  => reject(new Error(msg || 'dbResolvePath failed'))
@@ -260,7 +260,7 @@ contextBridge.exposeInMainWorld('dbBridge', {
 	open(dbPath, opts = {}) {
 	  return new Promise((resolve, reject) => {
 		requestViaIPC(
-		  { action: 'dbOpen', dbPath, readOnly: !!opts.readOnly, fileMustExist: opts.fileMustExist !== false, pragma: opts.pragma || null }, // CHANGE
+		  { action: 'dbOpen', dbPath, readOnly: !!opts.readOnly, fileMustExist: opts.fileMustExist !== false, pragma: opts.pragma || null },
 		  (data) => resolve({ ok: true, dbId: data.dbId }),
 		  (msg)  => reject(new Error(msg || 'dbOpen failed'))
 		);

@@ -5,974 +5,974 @@
  * letting a selected parent intercept descendant clicks. Locked or otherwise
  * non-movable descendants redirect drag gestures to the nearest movable parent.
  */
-Draw.loadPlugin(function (ui) { // CHANGE
-    const graph = ui.editor && ui.editor.graph; // CHANGE
-    if (!graph || graph.__deepClickThroughInstalled) return; // CHANGE
-    graph.__deepClickThroughInstalled = true; // CHANGE
-    const WORKSPACE_HANDLE_SIZE = 18; // NEW
-    const WORKSPACE_HANDLE_GAP = 2; // NEW
-    const WORKSPACE_HOVER_GRACE_PX = 30; // NEW
-    const WORKSPACE_CALLOUT_MS = 5000; // NEW
-    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // CHANGE
-    const workspaceCalloutSeenByType = { module: false, lane: false }; // NEW
-    let workspaceHoveredCell = null; // NEW
-    let workspaceDraggingHandleCell = null; // NEW
-    let workspaceHandleRefreshThread = null; // NEW
-    let workspaceCalloutDiv = null; // NEW
-    let workspaceCursorOverrideActive = false; // NEW
-    let workspaceCursorPreviousValue = ''; // NEW
-    const workspaceHandleEntries = new Map(); // NEW
-
-    graph.selectParentAfterCollapse = false; // CHANGE
-    graph.cellsSelectable = true; // CHANGE
-    graph.keepEdgesInBackground = false; // CHANGE
-    graph.cellsLocked = false; // CHANGE
-
-    const baseGetCellAt = graph.getCellAt; // CHANGE
-    const baseGetCursorForMouseEvent = graph.getCursorForMouseEvent; // NEW
-
-    graph.getCellAt = function (x, y, parent, vertices, edges, ignoreFn) { // CHANGE
-        const initial = baseGetCellAt.call(this, x, y, parent, vertices, edges, plantExactHitIgnoreFn(ignoreFn)); // CHANGE
-        if (!initial) return null; // CHANGE
-        const plantTarget = getPlantClickThroughCellAt(this, x, y, parent, initial); // CHANGE
-        if (plantTarget) return plantTarget; // CHANGE
-        if (!this.model.isVertex(initial)) return initial; // CHANGE
-
-        const descendants = []; // CHANGE
-        const collect = (cell) => { // CHANGE
-            const children = this.model.getChildCells(cell); // CHANGE
-            if (!children) return; // CHANGE
-            for (const child of children) { // CHANGE
-                if (this.model.isVertex(child) && this.isCellVisible(child)) descendants.push(child); // CHANGE
-                collect(child); // CHANGE
-            } // CHANGE
-        }; // CHANGE
-        collect(initial); // CHANGE
-
-        for (let i = descendants.length - 1; i >= 0; i--) { // CHANGE
-            const child = descendants[i]; // CHANGE
-            const state = this.view.getState(child); // CHANGE
-            if (state && cellStateContainsPoint(this, state, x, y)) return child; // CHANGE
-        } // CHANGE
-        return initial; // CHANGE
-    }; // CHANGE
-
-    graph.getCursorForMouseEvent = function (me) { // NEW
-        const hit = getDeepestCellForMouseEvent(this, me, me && me.getCell ? me.getCell() : null); // NEW
-        if (shouldUseWorkspaceSelectCursor(me, hit)) return 'default'; // NEW
-        return baseGetCursorForMouseEvent ? baseGetCursorForMouseEvent.apply(this, arguments) : null; // NEW
-    }; // NEW
-
-    mxGraphHandler.prototype.getInitialCellForEvent = function (me) { // CHANGE
-        return getDragInitialCellForEvent(this.graph, me, me.getCell(), this); // CHANGE
-    }; // CHANGE
-
-    const oldGraphHandlerMouseDown = mxGraphHandler.prototype.mouseDown; // NEW
-    mxGraphHandler.prototype.mouseDown = function (sender, me) { // NEW
-        const context = getWorkspaceSurfaceDragContext(this.graph, me); // NEW
-        if (context) { // NEW
-            this.graph.__trellisWorkspaceDragContext = context; // NEW
-            scheduleWorkspaceHandleRefresh(); // NEW
-            return; // NEW
-        } // NEW
-        return oldGraphHandlerMouseDown.apply(this, arguments); // NEW
-    }; // NEW
-
-    if (typeof mxRubberband !== 'undefined' && mxRubberband.prototype) { // NEW
-        const oldRubberbandMouseDown = mxRubberband.prototype.mouseDown; // NEW
-        mxRubberband.prototype.mouseDown = function (sender, me) { // NEW
-            const context = this.graph && (this.graph.__trellisWorkspaceDragContext || getWorkspaceSurfaceDragContext(this.graph, me)); // NEW
-            if (context && !me.isConsumed() && this.isEnabled() && this.graph.isEnabled() && !mxEvent.isMultiTouchEvent(me.getEvent())) { // NEW
-                this.graph.__trellisWorkspaceDragContext = context; // NEW
-                this.graph.__trellisWorkspaceMarqueeContainer = context.cell; // NEW
-                const offset = mxUtils.getOffset(this.graph.container); // NEW
-                const origin = mxUtils.getScrollOrigin(this.graph.container); // NEW
-                origin.x -= offset.x; // NEW
-                origin.y -= offset.y; // NEW
-                this.start(me.getX() + origin.x, me.getY() + origin.y); // NEW
-                me.consume(false); // NEW
-                return; // NEW
-            } // NEW
-            return oldRubberbandMouseDown.apply(this, arguments); // NEW
-        }; // NEW
-
-        const oldRubberbandMouseMove = mxRubberband.prototype.mouseMove; // NEW
-        mxRubberband.prototype.mouseMove = function (sender, me) { // NEW
-            const context = this.graph && this.graph.__trellisWorkspaceDragContext; // NEW
-            if (context && shouldShowWorkspaceCallout(this.graph, context, this, me)) showWorkspaceMoveCallout(context.cell, context.type, me); // NEW
-            return oldRubberbandMouseMove.apply(this, arguments); // NEW
-        }; // NEW
-
-        const oldRubberbandMouseUp = mxRubberband.prototype.mouseUp; // NEW
-        mxRubberband.prototype.mouseUp = function (sender, me) { // NEW
-            try { // NEW
-                return oldRubberbandMouseUp.apply(this, arguments); // NEW
-            } finally { // NEW
-                if (this.graph) { // NEW
-                    this.graph.__trellisWorkspaceDragContext = null; // NEW
-                    this.graph.__trellisWorkspaceMarqueeContainer = null; // NEW
-                } // NEW
-            } // NEW
-        }; // NEW
-    } // NEW
-
-    const baseSelectRegion = graph.selectRegion; // NEW
-    graph.selectRegion = function (rect, evt) { // NEW
-        const container = this.__trellisWorkspaceMarqueeContainer; // NEW
-        if (!container) return baseSelectRegion.apply(this, arguments); // NEW
-        const isect = (mxEvent.isAltDown && mxEvent.isAltDown(evt)) ? rect : null; // NEW
-        let cells = this.getCells(rect.x, rect.y, rect.width, rect.height, null, null, isect, null, true) || []; // NEW
-        cells = filterWorkspaceDescendantSelection(this, container, cells); // NEW
-        if (this.isToggleEvent && this.isToggleEvent(evt)) { // NEW
-            for (let i = 0; i < cells.length; i++) this.selectCellForEvent(cells[i], evt); // NEW
-        } else if (this.selectCellsForEvent) { // NEW
-            this.selectCellsForEvent(cells, evt); // NEW
-        } else if (this.setSelectionCells) { // NEW
-            this.setSelectionCells(cells); // NEW
-        } // NEW
-        return cells; // NEW
-    }; // NEW
-
-    function getDeepestCellForNativeEvent(graph, evt, fallback) { // CHANGE
-        if (!graph || !evt) return fallback || null; // CHANGE
-        const pt = mxUtils.convertPoint( // CHANGE
-            graph.container, // CHANGE
-            mxEvent.getClientX(evt), // CHANGE
-            mxEvent.getClientY(evt) // CHANGE
-        ); // CHANGE
-        return graph.getCellAt(pt.x, pt.y) || fallback || null; // CHANGE
-    } // CHANGE
-
-    function getSelectionCellForNativeEvent(graph, evt, fallback) { // CHANGE
-        const deepest = getDeepestCellForNativeEvent(graph, evt, fallback); // CHANGE
-        const plantTarget = getPlantSelectionTargetForEvent(graph, deepest, evt); // CHANGE
-        if (plantTarget && (plantTarget !== deepest || isPlantTile(plantTarget))) return plantTarget; // CHANGE
-        if (!graph || !deepest || !fallback || deepest === fallback) return plantTarget || deepest; // CHANGE
-        const model = graph.getModel(); // CHANGE
-        if (model.isVertex(deepest) && model.isVertex(fallback) && isStrictAncestorOf(model, fallback, deepest)) { // CHANGE
-            if (!graph.isCellMovable(deepest) && graph.isCellMovable(fallback)) return fallback; // CHANGE
-        } // CHANGE
-        return plantTarget || deepest; // CHANGE
-    } // CHANGE
-
-    function isPlantTile(cell) { // CHANGE
-        return !!cell && cell.getAttribute && cell.getAttribute('plant_tiler') === '1'; // CHANGE
-    } // CHANGE
-
-    function isTilerGroup(cell) { // CHANGE
-        return !!cell && cell.getAttribute && cell.getAttribute('tiler_group') === '1'; // CHANGE
-    } // CHANGE
-
-    function isGardenBed(cell) { // CHANGE
-        if (!cell || !cell.getAttribute) return false; // CHANGE
-        return cell.getAttribute('garden_bed') === '1' || cell.getAttribute('gardenBed') === '1' || cell.getAttribute('is_garden_bed') === '1'; // CHANGE
-    } // CHANGE
-
-    function isGardenModule(cell) { // NEW
-        return !!cell && cell.getAttribute && (cell.getAttribute('garden_module') === '1' || cell.getAttribute('trellis_garden_module') === '1'); // NEW
-    } // NEW
-
-    function isTrellisModule(cell) { // NEW
-        const style = cell && (typeof cell.getStyle === 'function' ? cell.getStyle() : cell.style) || ''; // NEW
-        return /(?:^|;)module=1(?=;|$)/.test(String(style)); // NEW
-    } // NEW
-
-    function isKanbanLane(cell) { // NEW
-        return !!cell && cell.getAttribute && !!cell.getAttribute('lane_key'); // NEW
-    } // NEW
-
-    function isCanonicalKanbanBoardCell(cell) { // NEW
-        return !!cell && cell.getAttribute && cell.getAttribute('board_key') === 'KANBAN_BOARD'; // NEW
-    } // NEW
-
-    function findCanonicalKanbanBoardAncestor(cell) { // NEW
-        const model = graph && graph.getModel ? graph.getModel() : null; // NEW
-        let cur = cell; // NEW
-        while (cur) { // NEW
-            if (isCanonicalKanbanBoardCell(cur)) return cur; // NEW
-            cur = model && model.getParent ? model.getParent(cur) : null; // NEW
-        } // NEW
-        return null; // NEW
-    } // NEW
-
-    function isCanonicalKanbanBoardLane(cell) { // NEW
-        return isKanbanLane(cell) && !!findCanonicalKanbanBoardAncestor(cell); // NEW
-    } // NEW
-
-    function getWorkspaceContainerType(cell) { // NEW
-        if (isKanbanLane(cell)) return 'lane'; // CHANGE
-        if (isGardenModule(cell) || isTrellisModule(cell)) return 'module'; // CHANGE
-        return null; // NEW
-    } // NEW
-
-    function isWorkspaceContainer(cell) { // NEW
-        return !!getWorkspaceContainerType(cell); // NEW
-    } // NEW
-
-    function isWorkspaceHandleEligibleForCell(cell) { // NEW
-        return isWorkspaceContainer(cell) && !isCanonicalKanbanBoardLane(cell); // NEW
-    } // NEW
-
-    function getOccupiedBedMoveUnit(cell) { // NEW
-        const api = graph && graph.__trellisBedSuccessionNavigator; // NEW
-        const resolve = api && api.resolveOccupiedBedMoveUnit; // NEW
-        if (typeof resolve !== 'function') return null; // NEW
-        const unit = resolve(cell); // NEW
-        if (!unit || !unit.bed || !Array.isArray(unit.cells) || unit.cells.length < 2) return null; // NEW
-        if (!graph.isCellVisible(unit.bed) || !graph.isCellMovable(unit.bed) || !graph.view || !graph.view.getState(unit.bed)) return null; // NEW
-        for (let i = 0; i < unit.cells.length; i++) { // NEW
-            if (!unit.cells[i] || !graph.isCellMovable(unit.cells[i])) return null; // NEW
-        } // NEW
-        return unit; // NEW
-    } // NEW
-
-    function isOccupiedBedHandleCell(cell) { // NEW
-        const unit = getOccupiedBedMoveUnit(cell); // NEW
-        return !!(unit && unit.bed === cell); // NEW
-    } // NEW
-
-    function getHandleCellForSelectedCell(cell) { // NEW
-        const unit = getOccupiedBedMoveUnit(cell); // NEW
-        return unit ? unit.bed : cell; // NEW
-    } // NEW
-
-    function getWorkspaceHandleDragCells(cell) { // NEW
-        const unit = getOccupiedBedMoveUnit(cell); // NEW
-        return unit ? unit.cells.slice() : [cell]; // NEW
-    } // NEW
-
-    function isLodSummary(cell) { // CHANGE
-        return !!cell && cell.getAttribute && cell.getAttribute('lod_summary') === '1'; // CHANGE
-    } // CHANGE
-
-    function isCollapsedTilerGroup(cell) { // CHANGE
-        return isTilerGroup(cell) && cell.getAttribute('lod_collapsed') === '1'; // CHANGE
-    } // CHANGE
-
-    function findTilerGroupAncestor(graph, cell) { // CHANGE
-        if (!graph || !cell) return null; // CHANGE
-        const model = graph.getModel(); // CHANGE
-        let cur = cell; // CHANGE
-        while (cur) { // CHANGE
-            if (isTilerGroup(cur)) return cur; // CHANGE
-            cur = model.getParent(cur); // CHANGE
-        } // CHANGE
-        return null; // CHANGE
-    } // CHANGE
-
-    function isPlantGroupSelected(graph, groupCell) { // CHANGE
-        return !!graph && !!groupCell && graph.isCellSelected && graph.isCellSelected(groupCell); // CHANGE
-    } // CHANGE
-
-    function eventTargetsPlantChildDirectly(graph, evt, groupCell) { // CHANGE
-        if (!evt) return isPlantGroupSelected(graph, groupCell); // CHANGE
-        return mxEvent.isControlDown(evt) || mxEvent.isMetaDown(evt) || mxEvent.isShiftDown(evt) || isPlantGroupSelected(graph, groupCell); // CHANGE
-    } // CHANGE
-
-    function getPlantSelectionTargetForEvent(graph, cell, evt) { // CHANGE
-        if (!graph || !cell) return cell || null; // CHANGE
-        const group = findTilerGroupAncestor(graph, cell); // CHANGE
-        if (!group) return cell; // CHANGE
-        if (isPlantTile(cell)) return eventTargetsPlantChildDirectly(graph, evt, group) ? cell : group; // CHANGE
-        if (isLodSummary(cell)) return eventTargetsPlantChildDirectly(graph, evt, group) ? cell : group; // CHANGE
-        if (isCollapsedTilerGroup(cell) || isTilerGroup(cell)) return group; // CHANGE
-        return cell; // CHANGE
-    } // CHANGE
-
-    function plantExactHitIgnoreFn(ignoreFn) { // CHANGE
-        return function (state, x, y) { // CHANGE
-            if (ignoreFn && ignoreFn(state, x, y)) return true; // CHANGE
-            return !!state && isPlantTile(state.cell) && !isPointInPlantTileCircleState(state, x, y); // CHANGE
-        }; // CHANGE
-    } // CHANGE
-
-    function cellStateContainsPoint(graph, state, x, y) { // CHANGE
-        if (!state) return false; // CHANGE
-        if (isPlantTile(state.cell)) return isPointInPlantTileCircleState(state, x, y); // CHANGE
-        return graph && graph.intersects ? graph.intersects(state, x, y) : mxUtils.contains(state, x, y); // CHANGE
-    } // CHANGE
-
-    function isPointInPlantTileCircleState(state, x, y) { // CHANGE
-        if (!state) return false; // CHANGE
-        const rx = Number(state.width) / 2; // CHANGE
-        const ry = Number(state.height) / 2; // CHANGE
-        if (!isFinite(rx) || !isFinite(ry) || rx <= 0 || ry <= 0) return false; // CHANGE
-        const cx = Number(state.x) + rx; // CHANGE
-        const cy = Number(state.y) + ry; // CHANGE
-        let px = x; // CHANGE
-        let py = y; // CHANGE
-        const rotation = Number(mxUtils.getValue(state.style, mxConstants.STYLE_ROTATION, 0)) || 0; // CHANGE
-        if (rotation) { // CHANGE
-            const alpha = mxUtils.toRadians(rotation); // CHANGE
-            const point = mxUtils.getRotatedPoint(new mxPoint(x, y), Math.cos(-alpha), Math.sin(-alpha), new mxPoint(cx, cy)); // CHANGE
-            px = point.x; // CHANGE
-            py = point.y; // CHANGE
-        } // CHANGE
-        const dx = (px - cx) / rx; // CHANGE
-        const dy = (py - cy) / ry; // CHANGE
-        return (dx * dx) + (dy * dy) <= 1; // CHANGE
-    } // CHANGE
-
-    function getPlantClickThroughCellAt(graph, x, y, parent, initial) { // CHANGE
-        if (!graph || !initial) return null; // CHANGE
-        const group = findTilerGroupAncestor(graph, initial); // CHANGE
-        if (!group) return null; // CHANGE
-        if (isLodSummary(initial)) return initial; // CHANGE
-        const plantSelectable = findTopmostPlantSelectableAt(graph, x, y, parent); // CHANGE
-        if (plantSelectable) return plantSelectable; // CHANGE
-        if (isCollapsedTilerGroup(group)) return initial; // CHANGE
-        return findTopmostGardenBedAt(graph, x, y, parent) || null; // CHANGE
-    } // CHANGE
-
-    function findTopmostPlantSelectableAt(graph, x, y, parent) { // CHANGE
-        const model = graph && graph.getModel ? graph.getModel() : null; // CHANGE
-        if (!model) return null; // CHANGE
-        const root = parent || graph.getCurrentRoot && graph.getCurrentRoot() || model.getRoot(); // CHANGE
-        return scanTopmostPlantSelectable(graph, model, root, x, y); // CHANGE
-    } // CHANGE
-
-    function scanTopmostPlantSelectable(graph, model, parent, x, y) { // CHANGE
-        if (!parent) return null; // CHANGE
-        for (let i = model.getChildCount(parent) - 1; i >= 0; i--) { // CHANGE
-            const cell = model.getChildAt(parent, i); // CHANGE
-            if (!cell || !graph.isCellVisible(cell)) continue; // CHANGE
-            const childHit = scanTopmostPlantSelectable(graph, model, cell, x, y); // CHANGE
-            if (childHit) return childHit; // CHANGE
-            const state = graph.view.getState(cell); // CHANGE
-            if (state && isPlantTile(cell) && isPointInPlantTileCircleState(state, x, y)) return cell; // CHANGE
-            if (state && isLodSummary(cell) && cellStateContainsPoint(graph, state, x, y)) return cell; // CHANGE
-        } // CHANGE
-        return null; // CHANGE
-    } // CHANGE
-
-    function findTopmostGardenBedAt(graph, x, y, parent) { // CHANGE
-        const model = graph && graph.getModel ? graph.getModel() : null; // CHANGE
-        if (!model) return null; // CHANGE
-        const root = parent || graph.getCurrentRoot && graph.getCurrentRoot() || model.getRoot(); // CHANGE
-        return scanTopmostGardenBed(graph, model, root, x, y); // CHANGE
-    } // CHANGE
-
-    function scanTopmostGardenBed(graph, model, parent, x, y) { // CHANGE
-        if (!parent) return null; // CHANGE
-        for (let i = model.getChildCount(parent) - 1; i >= 0; i--) { // CHANGE
-            const cell = model.getChildAt(parent, i); // CHANGE
-            if (!cell || !graph.isCellVisible(cell)) continue; // CHANGE
-            const childHit = scanTopmostGardenBed(graph, model, cell, x, y); // CHANGE
-            if (childHit) return childHit; // CHANGE
-            if (!isGardenBed(cell)) continue; // CHANGE
-            const state = graph.view.getState(cell); // CHANGE
-            if (state && cellStateContainsPoint(graph, state, x, y)) return cell; // CHANGE
-        } // CHANGE
-        return null; // CHANGE
-    } // CHANGE
-
-    function isStrictAncestorOf(model, ancestor, cell) { // CHANGE
-        if (!model || !ancestor || !cell || ancestor === cell) return false; // CHANGE
-        let cur = model.getParent(cell); // CHANGE
-        while (cur) { // CHANGE
-            if (cur === ancestor) return true; // CHANGE
-            cur = model.getParent(cur); // CHANGE
-        } // CHANGE
-        return false; // CHANGE
-    } // CHANGE
-
-    function filterWorkspaceDescendantSelection(graph, container, cells) { // CHANGE
-        const model = graph && graph.getModel ? graph.getModel() : null; // NEW
-        if (!model || !container) return []; // NEW
-        const out = []; // NEW
-        for (let i = 0; i < (cells || []).length; i++) { // NEW
-            const cell = cells[i]; // NEW
-            if (!cell || isWorkspaceContainer(cell)) continue; // NEW
-            if (hasWorkspaceContainerAncestor(model, cell) && out.indexOf(cell) < 0) out.push(cell); // CHANGE
-        } // NEW
-        return out; // NEW
-    } // CHANGE
-
-    function hasWorkspaceContainerAncestor(model, cell) { // NEW
-        let cur = model && cell ? model.getParent(cell) : null; // NEW
-        while (cur) { // NEW
-            if (isWorkspaceContainer(cur)) return true; // NEW
-            cur = model.getParent(cur); // NEW
-        } // NEW
-        return false; // NEW
-    } // NEW
-
-    function hasSelectedAncestor(graph, cell) { // CHANGE
-        if (!graph || !cell) return false; // CHANGE
-        const model = graph.getModel(); // CHANGE
-        const selected = graph.getSelectionCells ? graph.getSelectionCells() : []; // CHANGE
-        for (const selectedCell of selected || []) { // CHANGE
-            if (isStrictAncestorOf(model, selectedCell, cell)) return true; // CHANGE
-        } // CHANGE
-        return false; // CHANGE
-    } // CHANGE
-
-    function isOnlySelectedCell(graph, cell) { // NEW
-        const selected = graph && graph.getSelectionCells ? (graph.getSelectionCells() || []) : []; // NEW
-        return selected.length === 1 && selected[0] === cell; // NEW
-    } // NEW
-
-    function isDoubleClickOrTextEditClick(evt) { // NEW
-        return !!evt && Number(evt.detail || 0) > 1; // NEW
-    } // NEW
-
-    function shouldCloseGardenModuleIrrigationOnPlainClick(graph, cell, evt) { // CHANGE
-        return !isDoubleClickOrTextEditClick(evt) && isGardenModule(cell) && isOnlySelectedCell(graph, cell); // CHANGE
-    } // NEW
-
-    function clearSelection(graph) { // NEW
-        if (graph && graph.clearSelection) graph.clearSelection(); // NEW
-        else if (graph && graph.setSelectionCells) graph.setSelectionCells([]); // NEW
-        else if (graph && graph.setSelectionCell) graph.setSelectionCell(null); // NEW
-    } // NEW
-
-    function closeIrrigationModeIfAvailable(graph) { // NEW
-        const graphApi = graph && graph.__trellisIrrigationPlanner; // NEW
-        const windowApi = typeof window !== 'undefined' && window.TrellisIrrigationPlanner; // NEW
-        const close = graphApi && graphApi.closeIrrigationMode || windowApi && windowApi.closeIrrigationMode; // NEW
-        if (typeof close === 'function') close(); // NEW
-    } // NEW
-
-    function getDeepestCellForMouseEvent(graph, me, fallback) { // CHANGE
-        if (!graph || !me) return fallback || null; // CHANGE
-        const pt = mxUtils.convertPoint(graph.container, me.getX(), me.getY()); // CHANGE
-        return graph.getCellAt(pt.x, pt.y) || fallback || null; // CHANGE
-    } // CHANGE
-
-    function isPrimaryPointerEvent(evt) { // NEW
-        if (!evt) return true; // NEW
-        if ((mxEvent.isPopupTrigger && mxEvent.isPopupTrigger(evt)) || evt.button === 2) return false; // NEW
-        return evt.button == null || evt.button === 0; // NEW
-    } // NEW
-
-    function isWorkspaceHandleEvent(evt) { // NEW
-        let node = evt && (evt.target || evt.srcElement); // NEW
-        while (node) { // NEW
-            if (node.getAttribute && node.getAttribute('data-trellis-workspace-drag-handle') === '1') return true; // NEW
-            node = node.parentNode; // NEW
-        } // NEW
-        return false; // NEW
-    } // NEW
-
-    function isCellControlEvent(me) { // NEW
-        if (!me || !me.getState || !me.isSource) return false; // NEW
-        const state = me.getState(); // NEW
-        return !!(state && state.control && me.isSource(state.control)); // NEW
-    } // NEW
-
-    function getWorkspaceStyleValue(cell, state, key, fallback) { // NEW
-        const style = state && state.style || graph.getCurrentCellStyle && graph.getCurrentCellStyle(cell) || cell && cell.style || ''; // NEW
-        if (style && typeof style === 'object') return mxUtils.getValue ? mxUtils.getValue(style, key, fallback) : (style[key] != null ? style[key] : fallback); // NEW
-        const match = String(style || '').match(new RegExp('(?:^|;)' + key + '=([^;]*)(?=;|$)')); // NEW
-        return match ? match[1] : fallback; // NEW
-    } // NEW
-
-    function isWorkspaceSwimlaneCell(graph, cell, state) { // NEW
-        if (graph && graph.isSwimlane && graph.isSwimlane(cell)) return true; // NEW
-        const shape = getWorkspaceStyleValue(cell, state, mxConstants.STYLE_SHAPE || 'shape', null); // NEW
-        const style = cell && cell.style || ''; // NEW
-        return shape === mxConstants.SHAPE_SWIMLANE || shape === 'swimlane' || /(?:^|;)swimlane(?:;|$)/.test(String(style)); // NEW
-    } // NEW
-
-    function getWorkspaceHeaderSize(graph, cell, state) { // NEW
-        if (graph && graph.getStartSize) return graph.getStartSize(cell) || { width: 0, height: 0 }; // NEW
-        const startKey = mxConstants.STYLE_STARTSIZE || 'startSize'; // NEW
-        const horizontalKey = mxConstants.STYLE_HORIZONTAL || 'horizontal'; // NEW
-        const defaultStartSize = Number(mxConstants.DEFAULT_STARTSIZE) || 40; // NEW
-        const startSize = Number(getWorkspaceStyleValue(cell, state, startKey, defaultStartSize)) || 0; // NEW
-        const horizontal = String(getWorkspaceStyleValue(cell, state, horizontalKey, '1')) !== '0'; // NEW
-        return horizontal ? { width: 0, height: startSize } : { width: startSize, height: 0 }; // NEW
-    } // NEW
-
-    function isWorkspaceHeaderDragStart(graph, cell, me) { // NEW
-        const state = cell && graph.view && graph.view.getState(cell); // NEW
-        const evt = me && me.getEvent ? me.getEvent() : null; // NEW
-        const pt = eventPointInGraphContainer(evt); // NEW
-        if (!state || !pt || !isWorkspaceSwimlaneCell(graph, cell, state)) return false; // NEW
-        const size = getWorkspaceHeaderSize(graph, cell, state); // NEW
-        const headerWidth = Math.max(0, Math.min(Number(size.width) || 0, Number(state.width) || 0)); // NEW
-        const headerHeight = Math.max(0, Math.min(Number(size.height) || 0, Number(state.height) || 0)); // NEW
-        const inBounds = pt.x >= state.x && pt.x <= state.x + state.width && pt.y >= state.y && pt.y <= state.y + state.height; // NEW
-        return inBounds && ((headerHeight > 0 && pt.y <= state.y + headerHeight) || (headerWidth > 0 && pt.x <= state.x + headerWidth)); // NEW
-    } // NEW
-
-    function getWorkspaceSurfaceDragContext(graph, me) { // NEW
-        if (!graph || !me || me.isConsumed && me.isConsumed()) return null; // NEW
-        const evt = me.getEvent ? me.getEvent() : null; // NEW
-        if (!isPrimaryPointerEvent(evt) || isWorkspaceHandleEvent(evt) || isCellControlEvent(me)) return null; // NEW
-        const cell = getDeepestCellForMouseEvent(graph, me, me.getCell ? me.getCell() : null); // NEW
-        const type = getWorkspaceContainerType(cell); // NEW
-        if (!type || !graph.getModel || !graph.getModel().isVertex(cell)) return null; // NEW
-        if (isWorkspaceHeaderDragStart(graph, cell, me)) return null; // NEW
-        return { cell: cell, type: type }; // NEW
-    } // NEW
-
-    function findMovableDragAncestorForLockedCell(graph, cell) { // CHANGE
-        if (!graph || !cell) return null; // CHANGE
-        const model = graph.getModel(); // CHANGE
-        let cur = model.getParent(cell); // CHANGE
-        while (cur) { // CHANGE
-            if (model.isVertex(cur) && graph.isCellMovable(cur)) return cur; // CHANGE
-            cur = model.getParent(cur); // CHANGE
-        } // CHANGE
-        return null; // CHANGE
-    } // CHANGE
-
-    function selectedTilerDragTargetForEvent(graph, me, fallback) { // NEW
-        if (!graph || !me || !graph.view) return null; // NEW
-        const evt = me.getEvent ? me.getEvent() : null; // NEW
-        const pt = eventPointInGraphContainer(evt) || { x: me.getX(), y: me.getY() }; // NEW
-        const selected = graph.getSelectionCells ? (graph.getSelectionCells() || []) : []; // NEW
-        const candidates = []; // NEW
-        if (fallback && selected.indexOf(fallback) >= 0) candidates.push(fallback); // NEW
-        for (let i = 0; i < selected.length; i++) { // NEW
-            if (candidates.indexOf(selected[i]) < 0) candidates.push(selected[i]); // NEW
-        } // NEW
-        for (let i = 0; i < candidates.length; i++) { // NEW
-            const cell = candidates[i]; // NEW
-            if (!isTilerGroup(cell)) continue; // NEW
-            const state = graph.view.getState(cell); // NEW
-            if (state && cellStateContainsPoint(graph, state, pt.x, pt.y)) return cell; // NEW
-        } // NEW
-        return null; // NEW
-    } // NEW
-
-    function getDragInitialCellForEvent(graph, me, fallback, handler) { // CHANGE
-        if (handler) { // CHANGE
-            handler.__manualLinkerLockedDragSource = null; // CHANGE
-            handler.__manualLinkerLockedDragParent = null; // CHANGE
-        } // CHANGE
-        const selectedTilerTarget = selectedTilerDragTargetForEvent(graph, me, fallback); // NEW
-        if (selectedTilerTarget) return selectedTilerTarget; // NEW
-        const deepest = getDeepestCellForMouseEvent(graph, me, fallback); // CHANGE
-        const dragTarget = getPlantSelectionTargetForEvent(graph, deepest, me && me.getEvent ? me.getEvent() : null); // CHANGE
-        if (!graph || !dragTarget || !graph.getModel().isVertex(dragTarget)) return dragTarget; // CHANGE
-        if (graph.isCellMovable(dragTarget)) return dragTarget; // CHANGE
-
-        const movableParent = findMovableDragAncestorForLockedCell(graph, dragTarget); // CHANGE
-        if (!movableParent) return dragTarget; // CHANGE
-        if (handler) { // CHANGE
-            handler.__manualLinkerLockedDragSource = dragTarget; // CHANGE
-            handler.__manualLinkerLockedDragParent = movableParent; // CHANGE
-        } // CHANGE
-        return movableParent; // CHANGE
-    } // CHANGE
-
-    const oldIsDelayedSelection = mxGraphHandler.prototype.isDelayedSelection; // CHANGE
-    mxGraphHandler.prototype.isDelayedSelection = function (cell, me) { // CHANGE
-        const graph = this.graph; // CHANGE
-        const deepest = getPlantSelectionTargetForEvent(graph, getDeepestCellForMouseEvent(graph, me, cell), me && me.getEvent ? me.getEvent() : null); // CHANGE
-
-        if (deepest && deepest !== cell && graph.getModel().isVertex(deepest)) { // CHANGE
-            if (!graph.isCellSelected(deepest) && hasSelectedAncestor(graph, deepest)) return false; // CHANGE
-        } // CHANGE
-
-        if (deepest && graph.getModel().isVertex(deepest)) { // CHANGE
-            if (!graph.isCellSelected(deepest) && hasSelectedAncestor(graph, deepest)) return false; // CHANGE
-        } // CHANGE
-
-        return oldIsDelayedSelection.apply(this, arguments); // CHANGE
-    }; // CHANGE
-
-    const oldGetCellsForDrag = mxGraphHandler.prototype.getCells; // CHANGE
-    mxGraphHandler.prototype.getCells = function (initialCell, cells) { // CHANGE
-        const graph = this.graph; // CHANGE
-        if (this.__trellisWorkspaceHandleDragCells && this.__trellisWorkspaceHandleDragCells.length) return this.__trellisWorkspaceHandleDragCells.slice(); // NEW
-        const redirectedParent = this.__manualLinkerLockedDragParent; // CHANGE
-        if (redirectedParent && graph.getModel().isVertex(redirectedParent) && graph.isCellMovable(redirectedParent)) { // CHANGE
-            const explicitCells = cells || []; // CHANGE
-            if (initialCell === redirectedParent || this.cell === redirectedParent || explicitCells.indexOf(redirectedParent) >= 0) { // CHANGE
-                return [redirectedParent]; // CHANGE
-            } // CHANGE
-        } // CHANGE
-
-        if (initialCell && graph.getModel().isVertex(initialCell)) { // CHANGE
-            if (!graph.isCellSelected(initialCell) && hasSelectedAncestor(graph, initialCell)) return [initialCell]; // CHANGE
-        } // CHANGE
-
-        return oldGetCellsForDrag.apply(this, arguments); // CHANGE
-    }; // CHANGE
-
-    graph.selectCellForEvent = function (cell, evt) { // CHANGE
-        cell = getSelectionCellForNativeEvent(this, evt, cell); // CHANGE
-        if (!cell) return; // CHANGE
-
-        const isCtrl = mxEvent.isControlDown(evt) || mxEvent.isMetaDown(evt); // CHANGE
-        const isShift = mxEvent.isShiftDown(evt); // CHANGE
-
-        if (isCtrl && this.__ctrlToggleHandled) { // CHANGE
-            this.__ctrlToggleHandled = false; // CHANGE
-            return; // CHANGE
-        } // CHANGE
-
-        if (isCtrl) { // CHANGE
-            if (this.isCellSelected(cell)) this.removeSelectionCell(cell); // CHANGE
-            else this.addSelectionCell(cell); // CHANGE
-            return; // CHANGE
-        } // CHANGE
-
-        if (isShift) { // CHANGE
-            this.addSelectionCell(cell); // CHANGE
-            return; // CHANGE
-        } // CHANGE
-
-        if (shouldCloseGardenModuleIrrigationOnPlainClick(this, cell, evt)) closeIrrigationModeIfAvailable(this); // CHANGE
-
-        this.setSelectionCell(cell); // CHANGE
-    }; // CHANGE
-
-    function getCellId(cell) { // NEW
-        return cell && (cell.id || (cell.getId && cell.getId())) || null; // NEW
-    } // NEW
-
-    function ensureWorkspaceOverlayHost() { // NEW
-        const host = graph.container; // NEW
-        if (!host) return null; // NEW
-        const style = window.getComputedStyle ? window.getComputedStyle(host) : null; // NEW
-        if (style && style.position === 'static') host.style.position = 'relative'; // NEW
-        return host; // NEW
-    } // NEW
-
-    function isWorkspaceHandleVisibleForCell(cell) { // NEW
-        return isWorkspaceHandleEligibleForCell(cell) && graph.isCellVisible(cell) && graph.isCellMovable(cell) && graph.view && graph.view.getState(cell); // CHANGE
-    } // NEW
-
-    function isHandleVisibleForResolvedCell(cell) { // NEW
-        return isWorkspaceHandleVisibleForCell(cell) || isOccupiedBedHandleCell(cell); // NEW
-    } // NEW
-
-    function getWorkspaceHandleCells() { // NEW
-        const cells = []; // NEW
-        const seen = {}; // NEW
-        const selected = graph.getSelectionCells ? (graph.getSelectionCells() || []) : []; // NEW
-        function add(cell) { // NEW
-            const id = getCellId(cell); // NEW
-            if (!id || seen[id] || !isHandleVisibleForResolvedCell(cell)) return; // CHANGE
-            seen[id] = true; // NEW
-            cells.push(cell); // NEW
-        } // NEW
-        for (let i = 0; i < selected.length; i++) add(getHandleCellForSelectedCell(selected[i])); // CHANGE
-        add(workspaceHoveredCell); // NEW
-        add(workspaceDraggingHandleCell); // NEW
-        return cells; // NEW
-    } // NEW
-
-    function styleWorkspaceHandle(handle) { // NEW
-        handle.type = 'button'; // NEW
-        handle.setAttribute('data-trellis-workspace-drag-handle', '1'); // NEW
-        handle.style.position = 'absolute'; // NEW
-        handle.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL_TOP); // CHANGE
-        handle.style.width = WORKSPACE_HANDLE_SIZE + 'px'; // NEW
-        handle.style.height = WORKSPACE_HANDLE_SIZE + 'px'; // NEW
-        handle.style.padding = '0'; // NEW
-        handle.style.border = '1px solid rgba(60, 64, 67, 0.35)'; // NEW
-        handle.style.borderRadius = '4px'; // NEW
-        handle.style.background = 'rgba(255, 255, 255, 0.96)'; // NEW
-        handle.style.boxShadow = '0 1px 4px rgba(0, 0, 0, 0.20)'; // NEW
-        handle.style.cursor = 'move'; // NEW
-        handle.style.color = '#3c4043'; // NEW
-        handle.style.font = '13px Arial, sans-serif'; // NEW
-        handle.style.lineHeight = WORKSPACE_HANDLE_SIZE + 'px'; // NEW
-        handle.style.textAlign = 'center'; // NEW
-        handle.style.pointerEvents = 'auto'; // NEW
-        handle.style.display = 'flex'; // NEW
-        handle.style.alignItems = 'center'; // NEW
-        handle.style.justifyContent = 'center'; // NEW
-        handle.style.overflow = 'hidden'; // NEW
-        handle.textContent = ''; // CHANGE
-    } // NEW
-
-    function addWorkspaceHandleIcon(handle) { // NEW
-        while (handle.firstChild) handle.removeChild(handle.firstChild); // NEW
-        if (typeof Editor !== 'undefined' && Editor.moveImage) { // NEW
-            const img = document.createElement('img'); // NEW
-            img.setAttribute('src', Editor.moveImage); // NEW
-            img.setAttribute('alt', ''); // NEW
-            img.setAttribute('aria-hidden', 'true'); // NEW
-            img.style.width = '16px'; // NEW
-            img.style.height = '16px'; // NEW
-            img.style.display = 'block'; // NEW
-            img.style.pointerEvents = 'none'; // NEW
-            handle.appendChild(img); // NEW
-        } else { // NEW
-            handle.textContent = '+'; // NEW
-        } // NEW
-    } // NEW
-
-    function createWorkspaceHandle(cell) { // NEW
-        const handle = document.createElement('button'); // NEW
-        styleWorkspaceHandle(handle); // NEW
-        addWorkspaceHandleIcon(handle); // NEW
-        handle.setAttribute('aria-label', workspaceHandleTitle(cell)); // NEW
-        handle.setAttribute('title', workspaceHandleTitle(cell)); // NEW
-        mxEvent.addListener(handle, 'mousedown', function (evt) { // NEW
-            beginWorkspaceHandleDrag(cell, evt); // NEW
-        }); // NEW
-        mxEvent.addListener(handle, 'mousemove', function () { // NEW
-            workspaceHoveredCell = cell; // NEW
-            scheduleWorkspaceHandleRefresh(); // NEW
-        }); // NEW
-        return handle; // NEW
-    } // NEW
-
-    function workspaceHandleTitle(cell) { // NEW
-        const unit = isOccupiedBedHandleCell(cell) ? getOccupiedBedMoveUnit(cell) : null; // NEW
-        if (unit) return unit.bedAssemblies && unit.bedAssemblies.length ? 'Move garden bed, irrigation assembly, and planting groups' : 'Move garden bed and planting groups'; // CHANGE
-        return getWorkspaceContainerType(cell) === 'lane' ? 'Move lane' : 'Move module'; // NEW
-    } // NEW
-
-    function viewBoundsForCells(cells) { // NEW
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity; // NEW
-        for (let i = 0; i < (cells || []).length; i++) { // NEW
-            const state = graph.view && graph.view.getState(cells[i]); // NEW
-            if (!state) continue; // NEW
-            minX = Math.min(minX, state.x); // NEW
-            minY = Math.min(minY, state.y); // NEW
-            maxX = Math.max(maxX, state.x + state.width); // NEW
-            maxY = Math.max(maxY, state.y + state.height); // NEW
-        } // NEW
-        if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) return null; // NEW
-        return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }; // NEW
-    } // NEW
-
-    function workspaceHandleBounds(cell) { // NEW
-        const unit = isOccupiedBedHandleCell(cell) ? getOccupiedBedMoveUnit(cell) : null; // NEW
-        const unitBounds = unit && viewBoundsForCells(unit.cells); // NEW
-        if (unitBounds) return unitBounds; // NEW
-        return graph.view && graph.view.getState(cell); // NEW
-    } // NEW
-
-    function positionWorkspaceHandle(handle, cell) { // NEW
-        const bounds = workspaceHandleBounds(cell); // CHANGE
-        if (!bounds) return false; // CHANGE
-        handle.style.left = Math.round(bounds.x - WORKSPACE_HANDLE_SIZE - WORKSPACE_HANDLE_GAP - 2) + 'px'; // CHANGE
-        handle.style.top = Math.round(bounds.y - WORKSPACE_HANDLE_SIZE - WORKSPACE_HANDLE_GAP - 2) + 'px'; // CHANGE
-        handle.setAttribute('aria-label', workspaceHandleTitle(cell)); // NEW
-        handle.setAttribute('title', workspaceHandleTitle(cell)); // NEW
-        return true; // NEW
-    } // NEW
-
-    function refreshWorkspaceHandles() { // NEW
-        workspaceHandleRefreshThread = null; // NEW
-        const host = ensureWorkspaceOverlayHost(); // NEW
-        if (!host) return; // NEW
-        const cells = getWorkspaceHandleCells(); // NEW
-        const keep = {}; // NEW
-        for (let i = 0; i < cells.length; i++) { // NEW
-            const cell = cells[i]; // NEW
-            const id = getCellId(cell); // NEW
-            let entry = workspaceHandleEntries.get(id); // NEW
-            if (!entry) { // NEW
-                entry = { cell: cell, handle: createWorkspaceHandle(cell) }; // NEW
-                workspaceHandleEntries.set(id, entry); // NEW
-            } // NEW
-            if (entry.handle.parentNode !== host) host.appendChild(entry.handle); // NEW
-            if (positionWorkspaceHandle(entry.handle, cell)) keep[id] = true; // NEW
-        } // NEW
-        workspaceHandleEntries.forEach(function (entry, id) { // NEW
-            if (!keep[id]) { // NEW
-                if (entry.handle.parentNode) entry.handle.parentNode.removeChild(entry.handle); // NEW
-                workspaceHandleEntries.delete(id); // NEW
-            } // NEW
-        }); // NEW
-    } // NEW
-
-    function scheduleWorkspaceHandleRefresh() { // NEW
-        if (workspaceHandleRefreshThread) return; // NEW
-        workspaceHandleRefreshThread = window.setTimeout(refreshWorkspaceHandles, 0); // NEW
-    } // NEW
-
-    function eventPointInGraphContainer(evt) { // NEW
-        if (!evt || !graph.container) return null; // NEW
-        return mxUtils.convertPoint(graph.container, mxEvent.getClientX(evt), mxEvent.getClientY(evt)); // NEW
-    } // NEW
-
-    function pointInWorkspaceGrace(cell, pt) { // NEW
-        const state = cell && graph.view && graph.view.getState(cell); // NEW
-        if (!state || !pt) return false; // NEW
-        return pt.x >= state.x - WORKSPACE_HOVER_GRACE_PX && pt.x <= state.x + state.width + WORKSPACE_HOVER_GRACE_PX && pt.y >= state.y - WORKSPACE_HOVER_GRACE_PX && pt.y <= state.y + state.height + WORKSPACE_HOVER_GRACE_PX; // NEW
-    } // NEW
-
-    function setWorkspaceSelectCursor() { // NEW
-        if (!graph.container) return; // NEW
-        if (!workspaceCursorOverrideActive) { // NEW
-            workspaceCursorPreviousValue = graph.container.style.cursor || ''; // NEW
-            workspaceCursorOverrideActive = true; // NEW
-        } // NEW
-        graph.container.style.cursor = 'default'; // NEW
-    } // NEW
-
-    function restoreWorkspaceCursor() { // NEW
-        if (!workspaceCursorOverrideActive || !graph.container) return; // NEW
-        graph.container.style.cursor = workspaceCursorPreviousValue; // NEW
-        workspaceCursorOverrideActive = false; // NEW
-        workspaceCursorPreviousValue = ''; // NEW
-    } // NEW
-
-    function shouldUseWorkspaceSelectCursor(me, hit) { // NEW
-        const evt = me && me.getEvent ? me.getEvent() : null; // NEW
-        if (!hit || workspaceDraggingHandleCell || isWorkspaceHandleEvent(evt) || isCellControlEvent(me)) return false; // NEW
-        if (!isWorkspaceContainer(hit) || !graph.isCellVisible(hit) || !graph.view || !graph.view.getState(hit)) return false; // NEW
-        return !isWorkspaceHeaderDragStart(graph, hit, me); // NEW
-    } // NEW
-
-    function updateWorkspaceCursorFromHover(me, hit) { // NEW
-        if (shouldUseWorkspaceSelectCursor(me, hit)) setWorkspaceSelectCursor(); // NEW
-        else restoreWorkspaceCursor(); // NEW
-    } // NEW
-
-    function updateWorkspaceHoverFromMouseEvent(me) { // NEW
-        if (workspaceDraggingHandleCell) return; // NEW
-        const evt = me && me.getEvent ? me.getEvent() : null; // NEW
-        const hit = getDeepestCellForMouseEvent(graph, me, null); // NEW
-        const pt = eventPointInGraphContainer(evt); // NEW
-        updateWorkspaceCursorFromHover(me, hit); // NEW
-        if (workspaceHoveredCell && workspaceHoveredCell !== hit && isKanbanLane(workspaceHoveredCell) && pointInWorkspaceGrace(workspaceHoveredCell, pt)) { // NEW
-            scheduleWorkspaceHandleRefresh(); // NEW
-            return; // NEW
-        } // NEW
-        if (isWorkspaceHandleVisibleForCell(hit)) { // NEW
-            workspaceHoveredCell = hit; // NEW
-        } else if (!pointInWorkspaceGrace(workspaceHoveredCell, pt)) { // NEW
-            workspaceHoveredCell = null; // NEW
-        } // NEW
-        scheduleWorkspaceHandleRefresh(); // NEW
-    } // NEW
-
-    function beginWorkspaceHandleDrag(cell, evt) { // NEW
-        if (!cell || !graph.isCellMovable(cell)) return; // NEW
-        const dragCells = getWorkspaceHandleDragCells(cell); // NEW
-        const occupiedBedDrag = isOccupiedBedHandleCell(cell); // CHANGE
-        restoreWorkspaceCursor(); // NEW
-        if (occupiedBedDrag && graph.setSelectionCells) graph.setSelectionCells(dragCells); // NEW
-        else if (!occupiedBedDrag && (!graph.isCellSelected || !graph.isCellSelected(cell))) graph.setSelectionCell(cell); // CHANGE
-        workspaceDraggingHandleCell = cell; // NEW
-        workspaceHoveredCell = cell; // NEW
-        const handler = graph.graphHandler; // NEW
-        if (handler) { // NEW
-            const oldMouseDown = graph.isMouseDown; // NEW
-            graph.isMouseDown = true; // NEW
-            handler.mouseDownX = mxEvent.getClientX(evt); // NEW
-            handler.mouseDownY = mxEvent.getClientY(evt); // NEW
-            handler.delayedSelection = true; // NEW
-            handler.cell = cell; // NEW
-            if (occupiedBedDrag) handler.__trellisWorkspaceHandleDragCells = dragCells; // CHANGE
-            const move = function (moveEvt) { // NEW
-                handler.mouseMove(graph, createWorkspaceMouseEvent(moveEvt, cell)); // NEW
-            }; // NEW
-            const up = function (upEvt) { // NEW
-                try { // NEW
-                    handler.mouseUp(graph, createWorkspaceMouseEvent(upEvt, cell)); // NEW
-                } finally { // NEW
-                    graph.isMouseDown = oldMouseDown; // NEW
-                    workspaceDraggingHandleCell = null; // NEW
-                    handler.__trellisWorkspaceHandleDragCells = null; // NEW
-                    mxEvent.removeGestureListeners(document, null, move, up); // NEW
-                    scheduleWorkspaceHandleRefresh(); // NEW
-                } // NEW
-            }; // NEW
-            mxEvent.addGestureListeners(document, null, move, up); // NEW
-        } // NEW
-        scheduleWorkspaceHandleRefresh(); // NEW
-        mxEvent.consume(evt); // NEW
-    } // NEW
-
-    function createWorkspaceMouseEvent(evt, fallbackCell) { // NEW
-        if (typeof mxMouseEvent !== 'function') return { getEvent: function () { return evt; }, getX: function () { return mxEvent.getClientX(evt); }, getY: function () { return mxEvent.getClientY(evt); }, getCell: function () { return fallbackCell; }, isConsumed: function () { return false; }, consume: function () { } }; // NEW
-        const pt = eventPointInGraphContainer(evt); // NEW
-        const cell = pt && graph.getCellAt ? graph.getCellAt(pt.x, pt.y) : fallbackCell; // NEW
-        const state = cell && graph.view ? graph.view.getState(cell) : graph.view && graph.view.getState(fallbackCell); // NEW
-        return new mxMouseEvent(evt, state); // NEW
-    } // NEW
-
-    function shouldShowWorkspaceCallout(graph, context, rubberband, me) { // NEW
-        if (!context || workspaceCalloutSeenByType[context.type]) return false; // NEW
-        if (context.type === 'lane' && isCanonicalKanbanBoardLane(context.cell)) return false; // NEW
-        if (rubberband && rubberband.div) return true; // NEW
-        if (!rubberband || !rubberband.first || !me) return false; // NEW
-        const dx = Math.abs((rubberband.first.x || 0) - me.getX()); // NEW
-        const dy = Math.abs((rubberband.first.y || 0) - me.getY()); // NEW
-        return dx > (graph.tolerance || 4) || dy > (graph.tolerance || 4); // NEW
-    } // NEW
-
-    function getWorkspaceCalloutAnchorPoint(cell, me) { // NEW
-        const evt = me && me.getEvent ? me.getEvent() : null; // NEW
-        const cursorPoint = eventPointInGraphContainer(evt); // NEW
-        if (cursorPoint) return cursorPoint; // NEW
-        const state = graph.view && graph.view.getState(cell); // NEW
-        return state ? { x: state.x, y: state.y } : { x: 0, y: 0 }; // NEW
-    } // NEW
-
-    function showWorkspaceMoveCallout(cell, type, me) { // NEW
-        workspaceCalloutSeenByType[type] = true; // NEW
-        if (workspaceCalloutDiv && workspaceCalloutDiv.parentNode) workspaceCalloutDiv.parentNode.removeChild(workspaceCalloutDiv); // NEW
-        const host = ensureWorkspaceOverlayHost(); // NEW
-        if (!host) return; // NEW
-        const div = document.createElement('div'); // NEW
-        div.textContent = type === 'lane' ? 'To move this lane, drag the handle in the top-left corner.' : 'To move this module, drag the handle in the top-left corner.'; // NEW
-        div.style.position = 'absolute'; // NEW
-        div.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL_TOP); // CHANGE
-        div.style.maxWidth = '260px'; // NEW
-        div.style.padding = '8px 10px'; // NEW
-        div.style.border = '1px solid rgba(60, 64, 67, 0.28)'; // NEW
-        div.style.borderRadius = '6px'; // NEW
-        div.style.background = 'rgba(32, 33, 36, 0.94)'; // NEW
-        div.style.color = '#fff'; // NEW
-        div.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.24)'; // NEW
-        div.style.font = '12px Arial, sans-serif'; // NEW
-        div.style.lineHeight = '16px'; // NEW
-        div.style.pointerEvents = 'none'; // NEW
-        const pt = getWorkspaceCalloutAnchorPoint(cell, me); // CHANGE
-        div.style.left = Math.round(pt.x + 8) + 'px'; // CHANGE
-        div.style.top = Math.round(pt.y + 8) + 'px'; // CHANGE
-        host.appendChild(div); // NEW
-        workspaceCalloutDiv = div; // NEW
-        window.setTimeout(function () { // NEW
-            if (div.parentNode) div.parentNode.removeChild(div); // NEW
-            if (workspaceCalloutDiv === div) workspaceCalloutDiv = null; // NEW
-        }, WORKSPACE_CALLOUT_MS); // NEW
-    } // NEW
-
-    if (graph.addMouseListener) { // NEW
-        graph.addMouseListener({ // NEW
-            mouseDown() { }, // NEW
-            mouseMove(sender, me) { updateWorkspaceHoverFromMouseEvent(me); }, // NEW
-            mouseUp() { graph.__trellisWorkspaceDragContext = null; graph.__trellisWorkspaceMarqueeContainer = null; restoreWorkspaceCursor(); } // CHANGE
-        }); // NEW
-    } // NEW
-
-    function addRefreshListener(source, eventName) { // NEW
-        if (source && source.addListener && eventName) source.addListener(eventName, scheduleWorkspaceHandleRefresh); // NEW
-    } // NEW
-
-    const selectionModel = graph.getSelectionModel && graph.getSelectionModel(); // NEW
-    addRefreshListener(selectionModel, mxEvent.CHANGE || 'change'); // NEW
-    addRefreshListener(graph, mxEvent.CELLS_MOVED || 'cellsMoved'); // NEW
-    addRefreshListener(graph, mxEvent.CELLS_RESIZED || 'cellsResized'); // NEW
-    addRefreshListener(graph, mxEvent.CELLS_TOGGLED || 'cellsToggled'); // NEW
-    addRefreshListener(graph.view, mxEvent.SCALE || 'scale'); // NEW
-    addRefreshListener(graph.view, mxEvent.TRANSLATE || 'translate'); // NEW
-    addRefreshListener(graph.view, mxEvent.SCALE_AND_TRANSLATE || 'scaleAndTranslate'); // NEW
-    addRefreshListener(graph.view, mxEvent.REPAINT || 'repaint'); // NEW
-    addRefreshListener(graph.getModel && graph.getModel(), mxEvent.CHANGE || 'change'); // NEW
-    if (graph.container && mxEvent.addListener) mxEvent.addListener(graph.container, 'mouseleave', restoreWorkspaceCursor); // NEW
-    if (typeof window !== 'undefined' && mxEvent.addListener) mxEvent.addListener(window, 'resize', scheduleWorkspaceHandleRefresh); // NEW
-    scheduleWorkspaceHandleRefresh(); // NEW
-
-    graph.__trellisWorkspaceDragPolicy = { // NEW
-        isWorkspaceContainer: isWorkspaceContainer, // NEW
-        getWorkspaceContainerType: getWorkspaceContainerType, // NEW
-        filterWorkspaceDescendantSelection: function (container, cells) { return filterWorkspaceDescendantSelection(graph, container, cells); }, // NEW
-        getCalloutAnchorPointForTests: getWorkspaceCalloutAnchorPoint, // NEW
-        shouldShowCalloutForTests: function (context, rubberband, me) { return shouldShowWorkspaceCallout(graph, context, rubberband, me); }, // NEW
-        getHandleCells: getWorkspaceHandleCells, // NEW
-        getHandleDragCellsForTests: getWorkspaceHandleDragCells, // NEW
-        beginHandleDragForTests: beginWorkspaceHandleDrag, // NEW
-        shouldUseSelectCursorForTests: function (me) { return shouldUseWorkspaceSelectCursor(me, getDeepestCellForMouseEvent(graph, me, null)); }, // NEW
-        updateHoverForTests: updateWorkspaceHoverFromMouseEvent, // NEW
-        setHoveredCellForTests: function (cell) { workspaceHoveredCell = cell; scheduleWorkspaceHandleRefresh(); }, // NEW
-        refreshHandles: refreshWorkspaceHandles // NEW
-    }; // NEW
-
-    console.log('[DeepClickThrough] Deep child selection enabled.'); // CHANGE
-}); // CHANGE
+Draw.loadPlugin(function (ui) {
+    const graph = ui.editor && ui.editor.graph;
+    if (!graph || graph.__deepClickThroughInstalled) return;
+    graph.__deepClickThroughInstalled = true;
+    const WORKSPACE_HANDLE_SIZE = 18;
+    const WORKSPACE_HANDLE_GAP = 2;
+    const WORKSPACE_HOVER_GRACE_PX = 30;
+    const WORKSPACE_CALLOUT_MS = 5000;
+    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 });
+    const workspaceCalloutSeenByType = { module: false, lane: false };
+    let workspaceHoveredCell = null;
+    let workspaceDraggingHandleCell = null;
+    let workspaceHandleRefreshThread = null;
+    let workspaceCalloutDiv = null;
+    let workspaceCursorOverrideActive = false;
+    let workspaceCursorPreviousValue = '';
+    const workspaceHandleEntries = new Map();
+
+    graph.selectParentAfterCollapse = false;
+    graph.cellsSelectable = true;
+    graph.keepEdgesInBackground = false;
+    graph.cellsLocked = false;
+
+    const baseGetCellAt = graph.getCellAt;
+    const baseGetCursorForMouseEvent = graph.getCursorForMouseEvent;
+
+    graph.getCellAt = function (x, y, parent, vertices, edges, ignoreFn) {
+        const initial = baseGetCellAt.call(this, x, y, parent, vertices, edges, plantExactHitIgnoreFn(ignoreFn));
+        if (!initial) return null;
+        const plantTarget = getPlantClickThroughCellAt(this, x, y, parent, initial);
+        if (plantTarget) return plantTarget;
+        if (!this.model.isVertex(initial)) return initial;
+
+        const descendants = [];
+        const collect = (cell) => {
+            const children = this.model.getChildCells(cell);
+            if (!children) return;
+            for (const child of children) {
+                if (this.model.isVertex(child) && this.isCellVisible(child)) descendants.push(child);
+                collect(child);
+            }
+        };
+        collect(initial);
+
+        for (let i = descendants.length - 1; i >= 0; i--) {
+            const child = descendants[i];
+            const state = this.view.getState(child);
+            if (state && cellStateContainsPoint(this, state, x, y)) return child;
+        }
+        return initial;
+    };
+
+    graph.getCursorForMouseEvent = function (me) {
+        const hit = getDeepestCellForMouseEvent(this, me, me && me.getCell ? me.getCell() : null);
+        if (shouldUseWorkspaceSelectCursor(me, hit)) return 'default';
+        return baseGetCursorForMouseEvent ? baseGetCursorForMouseEvent.apply(this, arguments) : null;
+    };
+
+    mxGraphHandler.prototype.getInitialCellForEvent = function (me) {
+        return getDragInitialCellForEvent(this.graph, me, me.getCell(), this);
+    };
+
+    const oldGraphHandlerMouseDown = mxGraphHandler.prototype.mouseDown;
+    mxGraphHandler.prototype.mouseDown = function (sender, me) {
+        const context = getWorkspaceSurfaceDragContext(this.graph, me);
+        if (context) {
+            this.graph.__trellisWorkspaceDragContext = context;
+            scheduleWorkspaceHandleRefresh();
+            return;
+        }
+        return oldGraphHandlerMouseDown.apply(this, arguments);
+    };
+
+    if (typeof mxRubberband !== 'undefined' && mxRubberband.prototype) {
+        const oldRubberbandMouseDown = mxRubberband.prototype.mouseDown;
+        mxRubberband.prototype.mouseDown = function (sender, me) {
+            const context = this.graph && (this.graph.__trellisWorkspaceDragContext || getWorkspaceSurfaceDragContext(this.graph, me));
+            if (context && !me.isConsumed() && this.isEnabled() && this.graph.isEnabled() && !mxEvent.isMultiTouchEvent(me.getEvent())) {
+                this.graph.__trellisWorkspaceDragContext = context;
+                this.graph.__trellisWorkspaceMarqueeContainer = context.cell;
+                const offset = mxUtils.getOffset(this.graph.container);
+                const origin = mxUtils.getScrollOrigin(this.graph.container);
+                origin.x -= offset.x;
+                origin.y -= offset.y;
+                this.start(me.getX() + origin.x, me.getY() + origin.y);
+                me.consume(false);
+                return;
+            }
+            return oldRubberbandMouseDown.apply(this, arguments);
+        };
+
+        const oldRubberbandMouseMove = mxRubberband.prototype.mouseMove;
+        mxRubberband.prototype.mouseMove = function (sender, me) {
+            const context = this.graph && this.graph.__trellisWorkspaceDragContext;
+            if (context && shouldShowWorkspaceCallout(this.graph, context, this, me)) showWorkspaceMoveCallout(context.cell, context.type, me);
+            return oldRubberbandMouseMove.apply(this, arguments);
+        };
+
+        const oldRubberbandMouseUp = mxRubberband.prototype.mouseUp;
+        mxRubberband.prototype.mouseUp = function (sender, me) {
+            try {
+                return oldRubberbandMouseUp.apply(this, arguments);
+            } finally {
+                if (this.graph) {
+                    this.graph.__trellisWorkspaceDragContext = null;
+                    this.graph.__trellisWorkspaceMarqueeContainer = null;
+                }
+            }
+        };
+    }
+
+    const baseSelectRegion = graph.selectRegion;
+    graph.selectRegion = function (rect, evt) {
+        const container = this.__trellisWorkspaceMarqueeContainer;
+        if (!container) return baseSelectRegion.apply(this, arguments);
+        const isect = (mxEvent.isAltDown && mxEvent.isAltDown(evt)) ? rect : null;
+        let cells = this.getCells(rect.x, rect.y, rect.width, rect.height, null, null, isect, null, true) || [];
+        cells = filterWorkspaceDescendantSelection(this, container, cells);
+        if (this.isToggleEvent && this.isToggleEvent(evt)) {
+            for (let i = 0; i < cells.length; i++) this.selectCellForEvent(cells[i], evt);
+        } else if (this.selectCellsForEvent) {
+            this.selectCellsForEvent(cells, evt);
+        } else if (this.setSelectionCells) {
+            this.setSelectionCells(cells);
+        }
+        return cells;
+    };
+
+    function getDeepestCellForNativeEvent(graph, evt, fallback) {
+        if (!graph || !evt) return fallback || null;
+        const pt = mxUtils.convertPoint(
+            graph.container,
+            mxEvent.getClientX(evt),
+            mxEvent.getClientY(evt)
+        );
+        return graph.getCellAt(pt.x, pt.y) || fallback || null;
+    }
+
+    function getSelectionCellForNativeEvent(graph, evt, fallback) {
+        const deepest = getDeepestCellForNativeEvent(graph, evt, fallback);
+        const plantTarget = getPlantSelectionTargetForEvent(graph, deepest, evt);
+        if (plantTarget && (plantTarget !== deepest || isPlantTile(plantTarget))) return plantTarget;
+        if (!graph || !deepest || !fallback || deepest === fallback) return plantTarget || deepest;
+        const model = graph.getModel();
+        if (model.isVertex(deepest) && model.isVertex(fallback) && isStrictAncestorOf(model, fallback, deepest)) {
+            if (!graph.isCellMovable(deepest) && graph.isCellMovable(fallback)) return fallback;
+        }
+        return plantTarget || deepest;
+    }
+
+    function isPlantTile(cell) {
+        return !!cell && cell.getAttribute && cell.getAttribute('plant_tiler') === '1';
+    }
+
+    function isTilerGroup(cell) {
+        return !!cell && cell.getAttribute && cell.getAttribute('tiler_group') === '1';
+    }
+
+    function isGardenBed(cell) {
+        if (!cell || !cell.getAttribute) return false;
+        return cell.getAttribute('garden_bed') === '1' || cell.getAttribute('gardenBed') === '1' || cell.getAttribute('is_garden_bed') === '1';
+    }
+
+    function isGardenModule(cell) {
+        return !!cell && cell.getAttribute && (cell.getAttribute('garden_module') === '1' || cell.getAttribute('trellis_garden_module') === '1');
+    }
+
+    function isTrellisModule(cell) {
+        const style = cell && (typeof cell.getStyle === 'function' ? cell.getStyle() : cell.style) || '';
+        return /(?:^|;)module=1(?=;|$)/.test(String(style));
+    }
+
+    function isKanbanLane(cell) {
+        return !!cell && cell.getAttribute && !!cell.getAttribute('lane_key');
+    }
+
+    function isCanonicalKanbanBoardCell(cell) {
+        return !!cell && cell.getAttribute && cell.getAttribute('board_key') === 'KANBAN_BOARD';
+    }
+
+    function findCanonicalKanbanBoardAncestor(cell) {
+        const model = graph && graph.getModel ? graph.getModel() : null;
+        let cur = cell;
+        while (cur) {
+            if (isCanonicalKanbanBoardCell(cur)) return cur;
+            cur = model && model.getParent ? model.getParent(cur) : null;
+        }
+        return null;
+    }
+
+    function isCanonicalKanbanBoardLane(cell) {
+        return isKanbanLane(cell) && !!findCanonicalKanbanBoardAncestor(cell);
+    }
+
+    function getWorkspaceContainerType(cell) {
+        if (isKanbanLane(cell)) return 'lane';
+        if (isGardenModule(cell) || isTrellisModule(cell)) return 'module';
+        return null;
+    }
+
+    function isWorkspaceContainer(cell) {
+        return !!getWorkspaceContainerType(cell);
+    }
+
+    function isWorkspaceHandleEligibleForCell(cell) {
+        return isWorkspaceContainer(cell) && !isCanonicalKanbanBoardLane(cell);
+    }
+
+    function getOccupiedBedMoveUnit(cell) {
+        const api = graph && graph.__trellisBedSuccessionNavigator;
+        const resolve = api && api.resolveOccupiedBedMoveUnit;
+        if (typeof resolve !== 'function') return null;
+        const unit = resolve(cell);
+        if (!unit || !unit.bed || !Array.isArray(unit.cells) || unit.cells.length < 2) return null;
+        if (!graph.isCellVisible(unit.bed) || !graph.isCellMovable(unit.bed) || !graph.view || !graph.view.getState(unit.bed)) return null;
+        for (let i = 0; i < unit.cells.length; i++) {
+            if (!unit.cells[i] || !graph.isCellMovable(unit.cells[i])) return null;
+        }
+        return unit;
+    }
+
+    function isOccupiedBedHandleCell(cell) {
+        const unit = getOccupiedBedMoveUnit(cell);
+        return !!(unit && unit.bed === cell);
+    }
+
+    function getHandleCellForSelectedCell(cell) {
+        const unit = getOccupiedBedMoveUnit(cell);
+        return unit ? unit.bed : cell;
+    }
+
+    function getWorkspaceHandleDragCells(cell) {
+        const unit = getOccupiedBedMoveUnit(cell);
+        return unit ? unit.cells.slice() : [cell];
+    }
+
+    function isLodSummary(cell) {
+        return !!cell && cell.getAttribute && cell.getAttribute('lod_summary') === '1';
+    }
+
+    function isCollapsedTilerGroup(cell) {
+        return isTilerGroup(cell) && cell.getAttribute('lod_collapsed') === '1';
+    }
+
+    function findTilerGroupAncestor(graph, cell) {
+        if (!graph || !cell) return null;
+        const model = graph.getModel();
+        let cur = cell;
+        while (cur) {
+            if (isTilerGroup(cur)) return cur;
+            cur = model.getParent(cur);
+        }
+        return null;
+    }
+
+    function isPlantGroupSelected(graph, groupCell) {
+        return !!graph && !!groupCell && graph.isCellSelected && graph.isCellSelected(groupCell);
+    }
+
+    function eventTargetsPlantChildDirectly(graph, evt, groupCell) {
+        if (!evt) return isPlantGroupSelected(graph, groupCell);
+        return mxEvent.isControlDown(evt) || mxEvent.isMetaDown(evt) || mxEvent.isShiftDown(evt) || isPlantGroupSelected(graph, groupCell);
+    }
+
+    function getPlantSelectionTargetForEvent(graph, cell, evt) {
+        if (!graph || !cell) return cell || null;
+        const group = findTilerGroupAncestor(graph, cell);
+        if (!group) return cell;
+        if (isPlantTile(cell)) return eventTargetsPlantChildDirectly(graph, evt, group) ? cell : group;
+        if (isLodSummary(cell)) return eventTargetsPlantChildDirectly(graph, evt, group) ? cell : group;
+        if (isCollapsedTilerGroup(cell) || isTilerGroup(cell)) return group;
+        return cell;
+    }
+
+    function plantExactHitIgnoreFn(ignoreFn) {
+        return function (state, x, y) {
+            if (ignoreFn && ignoreFn(state, x, y)) return true;
+            return !!state && isPlantTile(state.cell) && !isPointInPlantTileCircleState(state, x, y);
+        };
+    }
+
+    function cellStateContainsPoint(graph, state, x, y) {
+        if (!state) return false;
+        if (isPlantTile(state.cell)) return isPointInPlantTileCircleState(state, x, y);
+        return graph && graph.intersects ? graph.intersects(state, x, y) : mxUtils.contains(state, x, y);
+    }
+
+    function isPointInPlantTileCircleState(state, x, y) {
+        if (!state) return false;
+        const rx = Number(state.width) / 2;
+        const ry = Number(state.height) / 2;
+        if (!isFinite(rx) || !isFinite(ry) || rx <= 0 || ry <= 0) return false;
+        const cx = Number(state.x) + rx;
+        const cy = Number(state.y) + ry;
+        let px = x;
+        let py = y;
+        const rotation = Number(mxUtils.getValue(state.style, mxConstants.STYLE_ROTATION, 0)) || 0;
+        if (rotation) {
+            const alpha = mxUtils.toRadians(rotation);
+            const point = mxUtils.getRotatedPoint(new mxPoint(x, y), Math.cos(-alpha), Math.sin(-alpha), new mxPoint(cx, cy));
+            px = point.x;
+            py = point.y;
+        }
+        const dx = (px - cx) / rx;
+        const dy = (py - cy) / ry;
+        return (dx * dx) + (dy * dy) <= 1;
+    }
+
+    function getPlantClickThroughCellAt(graph, x, y, parent, initial) {
+        if (!graph || !initial) return null;
+        const group = findTilerGroupAncestor(graph, initial);
+        if (!group) return null;
+        if (isLodSummary(initial)) return initial;
+        const plantSelectable = findTopmostPlantSelectableAt(graph, x, y, parent);
+        if (plantSelectable) return plantSelectable;
+        if (isCollapsedTilerGroup(group)) return initial;
+        return findTopmostGardenBedAt(graph, x, y, parent) || null;
+    }
+
+    function findTopmostPlantSelectableAt(graph, x, y, parent) {
+        const model = graph && graph.getModel ? graph.getModel() : null;
+        if (!model) return null;
+        const root = parent || graph.getCurrentRoot && graph.getCurrentRoot() || model.getRoot();
+        return scanTopmostPlantSelectable(graph, model, root, x, y);
+    }
+
+    function scanTopmostPlantSelectable(graph, model, parent, x, y) {
+        if (!parent) return null;
+        for (let i = model.getChildCount(parent) - 1; i >= 0; i--) {
+            const cell = model.getChildAt(parent, i);
+            if (!cell || !graph.isCellVisible(cell)) continue;
+            const childHit = scanTopmostPlantSelectable(graph, model, cell, x, y);
+            if (childHit) return childHit;
+            const state = graph.view.getState(cell);
+            if (state && isPlantTile(cell) && isPointInPlantTileCircleState(state, x, y)) return cell;
+            if (state && isLodSummary(cell) && cellStateContainsPoint(graph, state, x, y)) return cell;
+        }
+        return null;
+    }
+
+    function findTopmostGardenBedAt(graph, x, y, parent) {
+        const model = graph && graph.getModel ? graph.getModel() : null;
+        if (!model) return null;
+        const root = parent || graph.getCurrentRoot && graph.getCurrentRoot() || model.getRoot();
+        return scanTopmostGardenBed(graph, model, root, x, y);
+    }
+
+    function scanTopmostGardenBed(graph, model, parent, x, y) {
+        if (!parent) return null;
+        for (let i = model.getChildCount(parent) - 1; i >= 0; i--) {
+            const cell = model.getChildAt(parent, i);
+            if (!cell || !graph.isCellVisible(cell)) continue;
+            const childHit = scanTopmostGardenBed(graph, model, cell, x, y);
+            if (childHit) return childHit;
+            if (!isGardenBed(cell)) continue;
+            const state = graph.view.getState(cell);
+            if (state && cellStateContainsPoint(graph, state, x, y)) return cell;
+        }
+        return null;
+    }
+
+    function isStrictAncestorOf(model, ancestor, cell) {
+        if (!model || !ancestor || !cell || ancestor === cell) return false;
+        let cur = model.getParent(cell);
+        while (cur) {
+            if (cur === ancestor) return true;
+            cur = model.getParent(cur);
+        }
+        return false;
+    }
+
+    function filterWorkspaceDescendantSelection(graph, container, cells) {
+        const model = graph && graph.getModel ? graph.getModel() : null;
+        if (!model || !container) return [];
+        const out = [];
+        for (let i = 0; i < (cells || []).length; i++) {
+            const cell = cells[i];
+            if (!cell || isWorkspaceContainer(cell)) continue;
+            if (hasWorkspaceContainerAncestor(model, cell) && out.indexOf(cell) < 0) out.push(cell);
+        }
+        return out;
+    }
+
+    function hasWorkspaceContainerAncestor(model, cell) {
+        let cur = model && cell ? model.getParent(cell) : null;
+        while (cur) {
+            if (isWorkspaceContainer(cur)) return true;
+            cur = model.getParent(cur);
+        }
+        return false;
+    }
+
+    function hasSelectedAncestor(graph, cell) {
+        if (!graph || !cell) return false;
+        const model = graph.getModel();
+        const selected = graph.getSelectionCells ? graph.getSelectionCells() : [];
+        for (const selectedCell of selected || []) {
+            if (isStrictAncestorOf(model, selectedCell, cell)) return true;
+        }
+        return false;
+    }
+
+    function isOnlySelectedCell(graph, cell) {
+        const selected = graph && graph.getSelectionCells ? (graph.getSelectionCells() || []) : [];
+        return selected.length === 1 && selected[0] === cell;
+    }
+
+    function isDoubleClickOrTextEditClick(evt) {
+        return !!evt && Number(evt.detail || 0) > 1;
+    }
+
+    function shouldCloseGardenModuleIrrigationOnPlainClick(graph, cell, evt) {
+        return !isDoubleClickOrTextEditClick(evt) && isGardenModule(cell) && isOnlySelectedCell(graph, cell);
+    }
+
+    function clearSelection(graph) {
+        if (graph && graph.clearSelection) graph.clearSelection();
+        else if (graph && graph.setSelectionCells) graph.setSelectionCells([]);
+        else if (graph && graph.setSelectionCell) graph.setSelectionCell(null);
+    }
+
+    function closeIrrigationModeIfAvailable(graph) {
+        const graphApi = graph && graph.__trellisIrrigationPlanner;
+        const windowApi = typeof window !== 'undefined' && window.TrellisIrrigationPlanner;
+        const close = graphApi && graphApi.closeIrrigationMode || windowApi && windowApi.closeIrrigationMode;
+        if (typeof close === 'function') close();
+    }
+
+    function getDeepestCellForMouseEvent(graph, me, fallback) {
+        if (!graph || !me) return fallback || null;
+        const pt = mxUtils.convertPoint(graph.container, me.getX(), me.getY());
+        return graph.getCellAt(pt.x, pt.y) || fallback || null;
+    }
+
+    function isPrimaryPointerEvent(evt) {
+        if (!evt) return true;
+        if ((mxEvent.isPopupTrigger && mxEvent.isPopupTrigger(evt)) || evt.button === 2) return false;
+        return evt.button == null || evt.button === 0;
+    }
+
+    function isWorkspaceHandleEvent(evt) {
+        let node = evt && (evt.target || evt.srcElement);
+        while (node) {
+            if (node.getAttribute && node.getAttribute('data-trellis-workspace-drag-handle') === '1') return true;
+            node = node.parentNode;
+        }
+        return false;
+    }
+
+    function isCellControlEvent(me) {
+        if (!me || !me.getState || !me.isSource) return false;
+        const state = me.getState();
+        return !!(state && state.control && me.isSource(state.control));
+    }
+
+    function getWorkspaceStyleValue(cell, state, key, fallback) {
+        const style = state && state.style || graph.getCurrentCellStyle && graph.getCurrentCellStyle(cell) || cell && cell.style || '';
+        if (style && typeof style === 'object') return mxUtils.getValue ? mxUtils.getValue(style, key, fallback) : (style[key] != null ? style[key] : fallback);
+        const match = String(style || '').match(new RegExp('(?:^|;)' + key + '=([^;]*)(?=;|$)'));
+        return match ? match[1] : fallback;
+    }
+
+    function isWorkspaceSwimlaneCell(graph, cell, state) {
+        if (graph && graph.isSwimlane && graph.isSwimlane(cell)) return true;
+        const shape = getWorkspaceStyleValue(cell, state, mxConstants.STYLE_SHAPE || 'shape', null);
+        const style = cell && cell.style || '';
+        return shape === mxConstants.SHAPE_SWIMLANE || shape === 'swimlane' || /(?:^|;)swimlane(?:;|$)/.test(String(style));
+    }
+
+    function getWorkspaceHeaderSize(graph, cell, state) {
+        if (graph && graph.getStartSize) return graph.getStartSize(cell) || { width: 0, height: 0 };
+        const startKey = mxConstants.STYLE_STARTSIZE || 'startSize';
+        const horizontalKey = mxConstants.STYLE_HORIZONTAL || 'horizontal';
+        const defaultStartSize = Number(mxConstants.DEFAULT_STARTSIZE) || 40;
+        const startSize = Number(getWorkspaceStyleValue(cell, state, startKey, defaultStartSize)) || 0;
+        const horizontal = String(getWorkspaceStyleValue(cell, state, horizontalKey, '1')) !== '0';
+        return horizontal ? { width: 0, height: startSize } : { width: startSize, height: 0 };
+    }
+
+    function isWorkspaceHeaderDragStart(graph, cell, me) {
+        const state = cell && graph.view && graph.view.getState(cell);
+        const evt = me && me.getEvent ? me.getEvent() : null;
+        const pt = eventPointInGraphContainer(evt);
+        if (!state || !pt || !isWorkspaceSwimlaneCell(graph, cell, state)) return false;
+        const size = getWorkspaceHeaderSize(graph, cell, state);
+        const headerWidth = Math.max(0, Math.min(Number(size.width) || 0, Number(state.width) || 0));
+        const headerHeight = Math.max(0, Math.min(Number(size.height) || 0, Number(state.height) || 0));
+        const inBounds = pt.x >= state.x && pt.x <= state.x + state.width && pt.y >= state.y && pt.y <= state.y + state.height;
+        return inBounds && ((headerHeight > 0 && pt.y <= state.y + headerHeight) || (headerWidth > 0 && pt.x <= state.x + headerWidth));
+    }
+
+    function getWorkspaceSurfaceDragContext(graph, me) {
+        if (!graph || !me || me.isConsumed && me.isConsumed()) return null;
+        const evt = me.getEvent ? me.getEvent() : null;
+        if (!isPrimaryPointerEvent(evt) || isWorkspaceHandleEvent(evt) || isCellControlEvent(me)) return null;
+        const cell = getDeepestCellForMouseEvent(graph, me, me.getCell ? me.getCell() : null);
+        const type = getWorkspaceContainerType(cell);
+        if (!type || !graph.getModel || !graph.getModel().isVertex(cell)) return null;
+        if (isWorkspaceHeaderDragStart(graph, cell, me)) return null;
+        return { cell: cell, type: type };
+    }
+
+    function findMovableDragAncestorForLockedCell(graph, cell) {
+        if (!graph || !cell) return null;
+        const model = graph.getModel();
+        let cur = model.getParent(cell);
+        while (cur) {
+            if (model.isVertex(cur) && graph.isCellMovable(cur)) return cur;
+            cur = model.getParent(cur);
+        }
+        return null;
+    }
+
+    function selectedTilerDragTargetForEvent(graph, me, fallback) {
+        if (!graph || !me || !graph.view) return null;
+        const evt = me.getEvent ? me.getEvent() : null;
+        const pt = eventPointInGraphContainer(evt) || { x: me.getX(), y: me.getY() };
+        const selected = graph.getSelectionCells ? (graph.getSelectionCells() || []) : [];
+        const candidates = [];
+        if (fallback && selected.indexOf(fallback) >= 0) candidates.push(fallback);
+        for (let i = 0; i < selected.length; i++) {
+            if (candidates.indexOf(selected[i]) < 0) candidates.push(selected[i]);
+        }
+        for (let i = 0; i < candidates.length; i++) {
+            const cell = candidates[i];
+            if (!isTilerGroup(cell)) continue;
+            const state = graph.view.getState(cell);
+            if (state && cellStateContainsPoint(graph, state, pt.x, pt.y)) return cell;
+        }
+        return null;
+    }
+
+    function getDragInitialCellForEvent(graph, me, fallback, handler) {
+        if (handler) {
+            handler.__manualLinkerLockedDragSource = null;
+            handler.__manualLinkerLockedDragParent = null;
+        }
+        const selectedTilerTarget = selectedTilerDragTargetForEvent(graph, me, fallback);
+        if (selectedTilerTarget) return selectedTilerTarget;
+        const deepest = getDeepestCellForMouseEvent(graph, me, fallback);
+        const dragTarget = getPlantSelectionTargetForEvent(graph, deepest, me && me.getEvent ? me.getEvent() : null);
+        if (!graph || !dragTarget || !graph.getModel().isVertex(dragTarget)) return dragTarget;
+        if (graph.isCellMovable(dragTarget)) return dragTarget;
+
+        const movableParent = findMovableDragAncestorForLockedCell(graph, dragTarget);
+        if (!movableParent) return dragTarget;
+        if (handler) {
+            handler.__manualLinkerLockedDragSource = dragTarget;
+            handler.__manualLinkerLockedDragParent = movableParent;
+        }
+        return movableParent;
+    }
+
+    const oldIsDelayedSelection = mxGraphHandler.prototype.isDelayedSelection;
+    mxGraphHandler.prototype.isDelayedSelection = function (cell, me) {
+        const graph = this.graph;
+        const deepest = getPlantSelectionTargetForEvent(graph, getDeepestCellForMouseEvent(graph, me, cell), me && me.getEvent ? me.getEvent() : null);
+
+        if (deepest && deepest !== cell && graph.getModel().isVertex(deepest)) {
+            if (!graph.isCellSelected(deepest) && hasSelectedAncestor(graph, deepest)) return false;
+        }
+
+        if (deepest && graph.getModel().isVertex(deepest)) {
+            if (!graph.isCellSelected(deepest) && hasSelectedAncestor(graph, deepest)) return false;
+        }
+
+        return oldIsDelayedSelection.apply(this, arguments);
+    };
+
+    const oldGetCellsForDrag = mxGraphHandler.prototype.getCells;
+    mxGraphHandler.prototype.getCells = function (initialCell, cells) {
+        const graph = this.graph;
+        if (this.__trellisWorkspaceHandleDragCells && this.__trellisWorkspaceHandleDragCells.length) return this.__trellisWorkspaceHandleDragCells.slice();
+        const redirectedParent = this.__manualLinkerLockedDragParent;
+        if (redirectedParent && graph.getModel().isVertex(redirectedParent) && graph.isCellMovable(redirectedParent)) {
+            const explicitCells = cells || [];
+            if (initialCell === redirectedParent || this.cell === redirectedParent || explicitCells.indexOf(redirectedParent) >= 0) {
+                return [redirectedParent];
+            }
+        }
+
+        if (initialCell && graph.getModel().isVertex(initialCell)) {
+            if (!graph.isCellSelected(initialCell) && hasSelectedAncestor(graph, initialCell)) return [initialCell];
+        }
+
+        return oldGetCellsForDrag.apply(this, arguments);
+    };
+
+    graph.selectCellForEvent = function (cell, evt) {
+        cell = getSelectionCellForNativeEvent(this, evt, cell);
+        if (!cell) return;
+
+        const isCtrl = mxEvent.isControlDown(evt) || mxEvent.isMetaDown(evt);
+        const isShift = mxEvent.isShiftDown(evt);
+
+        if (isCtrl && this.__ctrlToggleHandled) {
+            this.__ctrlToggleHandled = false;
+            return;
+        }
+
+        if (isCtrl) {
+            if (this.isCellSelected(cell)) this.removeSelectionCell(cell);
+            else this.addSelectionCell(cell);
+            return;
+        }
+
+        if (isShift) {
+            this.addSelectionCell(cell);
+            return;
+        }
+
+        if (shouldCloseGardenModuleIrrigationOnPlainClick(this, cell, evt)) closeIrrigationModeIfAvailable(this);
+
+        this.setSelectionCell(cell);
+    };
+
+    function getCellId(cell) {
+        return cell && (cell.id || (cell.getId && cell.getId())) || null;
+    }
+
+    function ensureWorkspaceOverlayHost() {
+        const host = graph.container;
+        if (!host) return null;
+        const style = window.getComputedStyle ? window.getComputedStyle(host) : null;
+        if (style && style.position === 'static') host.style.position = 'relative';
+        return host;
+    }
+
+    function isWorkspaceHandleVisibleForCell(cell) {
+        return isWorkspaceHandleEligibleForCell(cell) && graph.isCellVisible(cell) && graph.isCellMovable(cell) && graph.view && graph.view.getState(cell);
+    }
+
+    function isHandleVisibleForResolvedCell(cell) {
+        return isWorkspaceHandleVisibleForCell(cell) || isOccupiedBedHandleCell(cell);
+    }
+
+    function getWorkspaceHandleCells() {
+        const cells = [];
+        const seen = {};
+        const selected = graph.getSelectionCells ? (graph.getSelectionCells() || []) : [];
+        function add(cell) {
+            const id = getCellId(cell);
+            if (!id || seen[id] || !isHandleVisibleForResolvedCell(cell)) return;
+            seen[id] = true;
+            cells.push(cell);
+        }
+        for (let i = 0; i < selected.length; i++) add(getHandleCellForSelectedCell(selected[i]));
+        add(workspaceHoveredCell);
+        add(workspaceDraggingHandleCell);
+        return cells;
+    }
+
+    function styleWorkspaceHandle(handle) {
+        handle.type = 'button';
+        handle.setAttribute('data-trellis-workspace-drag-handle', '1');
+        handle.style.position = 'absolute';
+        handle.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL_TOP);
+        handle.style.width = WORKSPACE_HANDLE_SIZE + 'px';
+        handle.style.height = WORKSPACE_HANDLE_SIZE + 'px';
+        handle.style.padding = '0';
+        handle.style.border = '1px solid rgba(60, 64, 67, 0.35)';
+        handle.style.borderRadius = '4px';
+        handle.style.background = 'rgba(255, 255, 255, 0.96)';
+        handle.style.boxShadow = '0 1px 4px rgba(0, 0, 0, 0.20)';
+        handle.style.cursor = 'move';
+        handle.style.color = '#3c4043';
+        handle.style.font = '13px Arial, sans-serif';
+        handle.style.lineHeight = WORKSPACE_HANDLE_SIZE + 'px';
+        handle.style.textAlign = 'center';
+        handle.style.pointerEvents = 'auto';
+        handle.style.display = 'flex';
+        handle.style.alignItems = 'center';
+        handle.style.justifyContent = 'center';
+        handle.style.overflow = 'hidden';
+        handle.textContent = '';
+    }
+
+    function addWorkspaceHandleIcon(handle) {
+        while (handle.firstChild) handle.removeChild(handle.firstChild);
+        if (typeof Editor !== 'undefined' && Editor.moveImage) {
+            const img = document.createElement('img');
+            img.setAttribute('src', Editor.moveImage);
+            img.setAttribute('alt', '');
+            img.setAttribute('aria-hidden', 'true');
+            img.style.width = '16px';
+            img.style.height = '16px';
+            img.style.display = 'block';
+            img.style.pointerEvents = 'none';
+            handle.appendChild(img);
+        } else {
+            handle.textContent = '+';
+        }
+    }
+
+    function createWorkspaceHandle(cell) {
+        const handle = document.createElement('button');
+        styleWorkspaceHandle(handle);
+        addWorkspaceHandleIcon(handle);
+        handle.setAttribute('aria-label', workspaceHandleTitle(cell));
+        handle.setAttribute('title', workspaceHandleTitle(cell));
+        mxEvent.addListener(handle, 'mousedown', function (evt) {
+            beginWorkspaceHandleDrag(cell, evt);
+        });
+        mxEvent.addListener(handle, 'mousemove', function () {
+            workspaceHoveredCell = cell;
+            scheduleWorkspaceHandleRefresh();
+        });
+        return handle;
+    }
+
+    function workspaceHandleTitle(cell) {
+        const unit = isOccupiedBedHandleCell(cell) ? getOccupiedBedMoveUnit(cell) : null;
+        if (unit) return unit.bedAssemblies && unit.bedAssemblies.length ? 'Move garden bed, irrigation assembly, and planting groups' : 'Move garden bed and planting groups';
+        return getWorkspaceContainerType(cell) === 'lane' ? 'Move lane' : 'Move module';
+    }
+
+    function viewBoundsForCells(cells) {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (let i = 0; i < (cells || []).length; i++) {
+            const state = graph.view && graph.view.getState(cells[i]);
+            if (!state) continue;
+            minX = Math.min(minX, state.x);
+            minY = Math.min(minY, state.y);
+            maxX = Math.max(maxX, state.x + state.width);
+            maxY = Math.max(maxY, state.y + state.height);
+        }
+        if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) return null;
+        return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+    }
+
+    function workspaceHandleBounds(cell) {
+        const unit = isOccupiedBedHandleCell(cell) ? getOccupiedBedMoveUnit(cell) : null;
+        const unitBounds = unit && viewBoundsForCells(unit.cells);
+        if (unitBounds) return unitBounds;
+        return graph.view && graph.view.getState(cell);
+    }
+
+    function positionWorkspaceHandle(handle, cell) {
+        const bounds = workspaceHandleBounds(cell);
+        if (!bounds) return false;
+        handle.style.left = Math.round(bounds.x - WORKSPACE_HANDLE_SIZE - WORKSPACE_HANDLE_GAP - 2) + 'px';
+        handle.style.top = Math.round(bounds.y - WORKSPACE_HANDLE_SIZE - WORKSPACE_HANDLE_GAP - 2) + 'px';
+        handle.setAttribute('aria-label', workspaceHandleTitle(cell));
+        handle.setAttribute('title', workspaceHandleTitle(cell));
+        return true;
+    }
+
+    function refreshWorkspaceHandles() {
+        workspaceHandleRefreshThread = null;
+        const host = ensureWorkspaceOverlayHost();
+        if (!host) return;
+        const cells = getWorkspaceHandleCells();
+        const keep = {};
+        for (let i = 0; i < cells.length; i++) {
+            const cell = cells[i];
+            const id = getCellId(cell);
+            let entry = workspaceHandleEntries.get(id);
+            if (!entry) {
+                entry = { cell: cell, handle: createWorkspaceHandle(cell) };
+                workspaceHandleEntries.set(id, entry);
+            }
+            if (entry.handle.parentNode !== host) host.appendChild(entry.handle);
+            if (positionWorkspaceHandle(entry.handle, cell)) keep[id] = true;
+        }
+        workspaceHandleEntries.forEach(function (entry, id) {
+            if (!keep[id]) {
+                if (entry.handle.parentNode) entry.handle.parentNode.removeChild(entry.handle);
+                workspaceHandleEntries.delete(id);
+            }
+        });
+    }
+
+    function scheduleWorkspaceHandleRefresh() {
+        if (workspaceHandleRefreshThread) return;
+        workspaceHandleRefreshThread = window.setTimeout(refreshWorkspaceHandles, 0);
+    }
+
+    function eventPointInGraphContainer(evt) {
+        if (!evt || !graph.container) return null;
+        return mxUtils.convertPoint(graph.container, mxEvent.getClientX(evt), mxEvent.getClientY(evt));
+    }
+
+    function pointInWorkspaceGrace(cell, pt) {
+        const state = cell && graph.view && graph.view.getState(cell);
+        if (!state || !pt) return false;
+        return pt.x >= state.x - WORKSPACE_HOVER_GRACE_PX && pt.x <= state.x + state.width + WORKSPACE_HOVER_GRACE_PX && pt.y >= state.y - WORKSPACE_HOVER_GRACE_PX && pt.y <= state.y + state.height + WORKSPACE_HOVER_GRACE_PX;
+    }
+
+    function setWorkspaceSelectCursor() {
+        if (!graph.container) return;
+        if (!workspaceCursorOverrideActive) {
+            workspaceCursorPreviousValue = graph.container.style.cursor || '';
+            workspaceCursorOverrideActive = true;
+        }
+        graph.container.style.cursor = 'default';
+    }
+
+    function restoreWorkspaceCursor() {
+        if (!workspaceCursorOverrideActive || !graph.container) return;
+        graph.container.style.cursor = workspaceCursorPreviousValue;
+        workspaceCursorOverrideActive = false;
+        workspaceCursorPreviousValue = '';
+    }
+
+    function shouldUseWorkspaceSelectCursor(me, hit) {
+        const evt = me && me.getEvent ? me.getEvent() : null;
+        if (!hit || workspaceDraggingHandleCell || isWorkspaceHandleEvent(evt) || isCellControlEvent(me)) return false;
+        if (!isWorkspaceContainer(hit) || !graph.isCellVisible(hit) || !graph.view || !graph.view.getState(hit)) return false;
+        return !isWorkspaceHeaderDragStart(graph, hit, me);
+    }
+
+    function updateWorkspaceCursorFromHover(me, hit) {
+        if (shouldUseWorkspaceSelectCursor(me, hit)) setWorkspaceSelectCursor();
+        else restoreWorkspaceCursor();
+    }
+
+    function updateWorkspaceHoverFromMouseEvent(me) {
+        if (workspaceDraggingHandleCell) return;
+        const evt = me && me.getEvent ? me.getEvent() : null;
+        const hit = getDeepestCellForMouseEvent(graph, me, null);
+        const pt = eventPointInGraphContainer(evt);
+        updateWorkspaceCursorFromHover(me, hit);
+        if (workspaceHoveredCell && workspaceHoveredCell !== hit && isKanbanLane(workspaceHoveredCell) && pointInWorkspaceGrace(workspaceHoveredCell, pt)) {
+            scheduleWorkspaceHandleRefresh();
+            return;
+        }
+        if (isWorkspaceHandleVisibleForCell(hit)) {
+            workspaceHoveredCell = hit;
+        } else if (!pointInWorkspaceGrace(workspaceHoveredCell, pt)) {
+            workspaceHoveredCell = null;
+        }
+        scheduleWorkspaceHandleRefresh();
+    }
+
+    function beginWorkspaceHandleDrag(cell, evt) {
+        if (!cell || !graph.isCellMovable(cell)) return;
+        const dragCells = getWorkspaceHandleDragCells(cell);
+        const occupiedBedDrag = isOccupiedBedHandleCell(cell);
+        restoreWorkspaceCursor();
+        if (occupiedBedDrag && graph.setSelectionCells) graph.setSelectionCells(dragCells);
+        else if (!occupiedBedDrag && (!graph.isCellSelected || !graph.isCellSelected(cell))) graph.setSelectionCell(cell);
+        workspaceDraggingHandleCell = cell;
+        workspaceHoveredCell = cell;
+        const handler = graph.graphHandler;
+        if (handler) {
+            const oldMouseDown = graph.isMouseDown;
+            graph.isMouseDown = true;
+            handler.mouseDownX = mxEvent.getClientX(evt);
+            handler.mouseDownY = mxEvent.getClientY(evt);
+            handler.delayedSelection = true;
+            handler.cell = cell;
+            if (occupiedBedDrag) handler.__trellisWorkspaceHandleDragCells = dragCells;
+            const move = function (moveEvt) {
+                handler.mouseMove(graph, createWorkspaceMouseEvent(moveEvt, cell));
+            };
+            const up = function (upEvt) {
+                try {
+                    handler.mouseUp(graph, createWorkspaceMouseEvent(upEvt, cell));
+                } finally {
+                    graph.isMouseDown = oldMouseDown;
+                    workspaceDraggingHandleCell = null;
+                    handler.__trellisWorkspaceHandleDragCells = null;
+                    mxEvent.removeGestureListeners(document, null, move, up);
+                    scheduleWorkspaceHandleRefresh();
+                }
+            };
+            mxEvent.addGestureListeners(document, null, move, up);
+        }
+        scheduleWorkspaceHandleRefresh();
+        mxEvent.consume(evt);
+    }
+
+    function createWorkspaceMouseEvent(evt, fallbackCell) {
+        if (typeof mxMouseEvent !== 'function') return { getEvent: function () { return evt; }, getX: function () { return mxEvent.getClientX(evt); }, getY: function () { return mxEvent.getClientY(evt); }, getCell: function () { return fallbackCell; }, isConsumed: function () { return false; }, consume: function () { } };
+        const pt = eventPointInGraphContainer(evt);
+        const cell = pt && graph.getCellAt ? graph.getCellAt(pt.x, pt.y) : fallbackCell;
+        const state = cell && graph.view ? graph.view.getState(cell) : graph.view && graph.view.getState(fallbackCell);
+        return new mxMouseEvent(evt, state);
+    }
+
+    function shouldShowWorkspaceCallout(graph, context, rubberband, me) {
+        if (!context || workspaceCalloutSeenByType[context.type]) return false;
+        if (context.type === 'lane' && isCanonicalKanbanBoardLane(context.cell)) return false;
+        if (rubberband && rubberband.div) return true;
+        if (!rubberband || !rubberband.first || !me) return false;
+        const dx = Math.abs((rubberband.first.x || 0) - me.getX());
+        const dy = Math.abs((rubberband.first.y || 0) - me.getY());
+        return dx > (graph.tolerance || 4) || dy > (graph.tolerance || 4);
+    }
+
+    function getWorkspaceCalloutAnchorPoint(cell, me) {
+        const evt = me && me.getEvent ? me.getEvent() : null;
+        const cursorPoint = eventPointInGraphContainer(evt);
+        if (cursorPoint) return cursorPoint;
+        const state = graph.view && graph.view.getState(cell);
+        return state ? { x: state.x, y: state.y } : { x: 0, y: 0 };
+    }
+
+    function showWorkspaceMoveCallout(cell, type, me) {
+        workspaceCalloutSeenByType[type] = true;
+        if (workspaceCalloutDiv && workspaceCalloutDiv.parentNode) workspaceCalloutDiv.parentNode.removeChild(workspaceCalloutDiv);
+        const host = ensureWorkspaceOverlayHost();
+        if (!host) return;
+        const div = document.createElement('div');
+        div.textContent = type === 'lane' ? 'To move this lane, drag the handle in the top-left corner.' : 'To move this module, drag the handle in the top-left corner.';
+        div.style.position = 'absolute';
+        div.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL_TOP);
+        div.style.maxWidth = '260px';
+        div.style.padding = '8px 10px';
+        div.style.border = '1px solid rgba(60, 64, 67, 0.28)';
+        div.style.borderRadius = '6px';
+        div.style.background = 'rgba(32, 33, 36, 0.94)';
+        div.style.color = '#fff';
+        div.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.24)';
+        div.style.font = '12px Arial, sans-serif';
+        div.style.lineHeight = '16px';
+        div.style.pointerEvents = 'none';
+        const pt = getWorkspaceCalloutAnchorPoint(cell, me);
+        div.style.left = Math.round(pt.x + 8) + 'px';
+        div.style.top = Math.round(pt.y + 8) + 'px';
+        host.appendChild(div);
+        workspaceCalloutDiv = div;
+        window.setTimeout(function () {
+            if (div.parentNode) div.parentNode.removeChild(div);
+            if (workspaceCalloutDiv === div) workspaceCalloutDiv = null;
+        }, WORKSPACE_CALLOUT_MS);
+    }
+
+    if (graph.addMouseListener) {
+        graph.addMouseListener({
+            mouseDown() { },
+            mouseMove(sender, me) { updateWorkspaceHoverFromMouseEvent(me); },
+            mouseUp() { graph.__trellisWorkspaceDragContext = null; graph.__trellisWorkspaceMarqueeContainer = null; restoreWorkspaceCursor(); }
+        });
+    }
+
+    function addRefreshListener(source, eventName) {
+        if (source && source.addListener && eventName) source.addListener(eventName, scheduleWorkspaceHandleRefresh);
+    }
+
+    const selectionModel = graph.getSelectionModel && graph.getSelectionModel();
+    addRefreshListener(selectionModel, mxEvent.CHANGE || 'change');
+    addRefreshListener(graph, mxEvent.CELLS_MOVED || 'cellsMoved');
+    addRefreshListener(graph, mxEvent.CELLS_RESIZED || 'cellsResized');
+    addRefreshListener(graph, mxEvent.CELLS_TOGGLED || 'cellsToggled');
+    addRefreshListener(graph.view, mxEvent.SCALE || 'scale');
+    addRefreshListener(graph.view, mxEvent.TRANSLATE || 'translate');
+    addRefreshListener(graph.view, mxEvent.SCALE_AND_TRANSLATE || 'scaleAndTranslate');
+    addRefreshListener(graph.view, mxEvent.REPAINT || 'repaint');
+    addRefreshListener(graph.getModel && graph.getModel(), mxEvent.CHANGE || 'change');
+    if (graph.container && mxEvent.addListener) mxEvent.addListener(graph.container, 'mouseleave', restoreWorkspaceCursor);
+    if (typeof window !== 'undefined' && mxEvent.addListener) mxEvent.addListener(window, 'resize', scheduleWorkspaceHandleRefresh);
+    scheduleWorkspaceHandleRefresh();
+
+    graph.__trellisWorkspaceDragPolicy = {
+        isWorkspaceContainer: isWorkspaceContainer,
+        getWorkspaceContainerType: getWorkspaceContainerType,
+        filterWorkspaceDescendantSelection: function (container, cells) { return filterWorkspaceDescendantSelection(graph, container, cells); },
+        getCalloutAnchorPointForTests: getWorkspaceCalloutAnchorPoint,
+        shouldShowCalloutForTests: function (context, rubberband, me) { return shouldShowWorkspaceCallout(graph, context, rubberband, me); },
+        getHandleCells: getWorkspaceHandleCells,
+        getHandleDragCellsForTests: getWorkspaceHandleDragCells,
+        beginHandleDragForTests: beginWorkspaceHandleDrag,
+        shouldUseSelectCursorForTests: function (me) { return shouldUseWorkspaceSelectCursor(me, getDeepestCellForMouseEvent(graph, me, null)); },
+        updateHoverForTests: updateWorkspaceHoverFromMouseEvent,
+        setHoveredCellForTests: function (cell) { workspaceHoveredCell = cell; scheduleWorkspaceHandleRefresh(); },
+        refreshHandles: refreshWorkspaceHandles
+    };
+
+    console.log('[DeepClickThrough] Deep child selection enabled.');
+});

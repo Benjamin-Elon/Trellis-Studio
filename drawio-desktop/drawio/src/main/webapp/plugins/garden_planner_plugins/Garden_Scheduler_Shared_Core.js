@@ -1,4 +1,4 @@
-// USL Draw.io Plugin Module: Garden Scheduler shared pure helpers. // ADDED
+// USL Draw.io Plugin Module: Garden Scheduler shared pure helpers.
 (function (root) {
     'use strict';
 
@@ -8,16 +8,16 @@
 
     const DEFAULT_HARVEST_WINDOW_DAYS = 7;
     const HARVEST_END_SEMANTICS = 'exclusive';
-    const SEASON_EXTENSION_EFFECTS = Object.freeze({ // ADDED
-        unknown: Object.freeze({ airOffsetC: 0, soilOffsetC: 0, frostShiftDays: 0, minAirTempC: null }), // ADDED
-        none: Object.freeze({ airOffsetC: 0, soilOffsetC: 0, frostShiftDays: 0, minAirTempC: null }), // ADDED
-        row_cover: Object.freeze({ airOffsetC: 0.5, soilOffsetC: 0.5, frostShiftDays: -3, minAirTempC: null }), // ADDED
-        low_tunnel: Object.freeze({ airOffsetC: 1.5, soilOffsetC: 1.0, frostShiftDays: -7, minAirTempC: null }), // ADDED
-        cold_frame: Object.freeze({ airOffsetC: 2.0, soilOffsetC: 1.5, frostShiftDays: -10, minAirTempC: null }), // ADDED
-        greenhouse: Object.freeze({ airOffsetC: 3.0, soilOffsetC: 2.0, frostShiftDays: -21, minAirTempC: null }), // ADDED
-        high_tunnel: Object.freeze({ airOffsetC: 2.5, soilOffsetC: 1.5, frostShiftDays: -14, minAirTempC: null }), // ADDED
-        heated_greenhouse: Object.freeze({ airOffsetC: 5.0, soilOffsetC: 3.0, frostShiftDays: -45, minAirTempC: 5.0 }) // ADDED
-    }); // ADDED
+    const SEASON_EXTENSION_EFFECTS = Object.freeze({
+        unknown: Object.freeze({ airOffsetC: 0, soilOffsetC: 0, frostShiftDays: 0, minAirTempC: null }),
+        none: Object.freeze({ airOffsetC: 0, soilOffsetC: 0, frostShiftDays: 0, minAirTempC: null }),
+        row_cover: Object.freeze({ airOffsetC: 0.5, soilOffsetC: 0.5, frostShiftDays: -3, minAirTempC: null }),
+        low_tunnel: Object.freeze({ airOffsetC: 1.5, soilOffsetC: 1.0, frostShiftDays: -7, minAirTempC: null }),
+        cold_frame: Object.freeze({ airOffsetC: 2.0, soilOffsetC: 1.5, frostShiftDays: -10, minAirTempC: null }),
+        greenhouse: Object.freeze({ airOffsetC: 3.0, soilOffsetC: 2.0, frostShiftDays: -21, minAirTempC: null }),
+        high_tunnel: Object.freeze({ airOffsetC: 2.5, soilOffsetC: 1.5, frostShiftDays: -14, minAirTempC: null }),
+        heated_greenhouse: Object.freeze({ airOffsetC: 5.0, soilOffsetC: 3.0, frostShiftDays: -45, minAirTempC: 5.0 })
+    });
 
     function daysInMonth(year, month) { return new Date(Date.UTC(year, month, 0)).getUTCDate(); }
     function addDaysUTC(d, days) { return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + days)); }
@@ -134,17 +134,17 @@
         });
         return out;
     }
-    function forecastBlendWeight(forecastISO, todayISO, weights = null) { // CHANGED
+    function forecastBlendWeight(forecastISO, todayISO, weights = null) {
         const forecastDate = parseISODateUTCValue(forecastISO);
         const today = parseISODateUTCValue(todayISO) || asUTCDate(new Date().getUTCFullYear(), new Date().getUTCMonth() + 1, new Date().getUTCDate());
         if (!forecastDate || forecastDate < today) return 0;
         const daysAhead = Math.round((forecastDate.getTime() - today.getTime()) / 86400000);
-        const w0 = clampNumber(weights?.forecastBlendWeight0To3Days ?? 0.8, 0, 1); // ADDED
-        const w1 = clampNumber(weights?.forecastBlendWeight4To7Days ?? 0.5, 0, 1); // ADDED
-        const w2 = clampNumber(weights?.forecastBlendWeight8To16Days ?? 0.25, 0, 1); // ADDED
-        if (daysAhead <= 3) return w0; // CHANGED
-        if (daysAhead <= 7) return w1; // CHANGED
-        if (daysAhead <= 16) return w2; // CHANGED
+        const w0 = clampNumber(weights?.forecastBlendWeight0To3Days ?? 0.8, 0, 1);
+        const w1 = clampNumber(weights?.forecastBlendWeight4To7Days ?? 0.5, 0, 1);
+        const w2 = clampNumber(weights?.forecastBlendWeight8To16Days ?? 0.25, 0, 1);
+        if (daysAhead <= 3) return w0;
+        if (daysAhead <= 7) return w1;
+        if (daysAhead <= 16) return w2;
         return 0;
     }
     function blendTemperatureRecords(normalRecord, forecastRecord, weight) {
@@ -163,7 +163,7 @@
         forecastRows = [],
         todayISO = null,
         source = 'city monthly normals',
-        forecastBlendWeights = null // ADDED
+        forecastBlendWeights = null
     }) {
         const monthly = normalizeMonthlyTemperatureNormals(monthlyNormals);
         const forecastByISO = normalizeForecastTemperatureMap(forecastRows);
@@ -177,7 +177,7 @@
             const key = dateKeyUTC(d);
             const normal = interpolateMonthlyTemperatureOnDate(d, monthly);
             const forecast = forecastByISO[key] || null;
-            const weight = forecast ? forecastBlendWeight(key, todayISO, forecastBlendWeights) : 0; // CHANGED
+            const weight = forecast ? forecastBlendWeight(key, todayISO, forecastBlendWeights) : 0;
             const record = blendTemperatureRecords(normal, forecast, weight);
             if (!record) {
                 diagnostics.missingNormalDays += 1;
@@ -210,28 +210,28 @@
         const rec = temperatureRecordOnDate(date, dailyClimateOrMonthly);
         return rec ? rec.mean : null;
     }
-    function applyBedAirEffectsToTemperatureRecord(record, profile) { // ADDED
-        const rec = normalizeTemperatureRecord(record); // ADDED
-        if (!rec) return null; // ADDED
-        const effects = seasonExtensionEffects(profile); // ADDED
-        const offset = bedAirTemperatureOffsetC(profile); // ADDED
-        let min = rec.min + offset; // ADDED
-        let max = rec.max + offset; // ADDED
-        let mean = rec.mean + offset; // ADDED
-        if (effects.minAirTempC != null) { // ADDED
-            min = Math.max(min, effects.minAirTempC); // ADDED
-            max = Math.max(max, min); // ADDED
-            mean = (min + max) / 2; // ADDED
-        } // ADDED
-        return Object.freeze({ min, max, mean }); // ADDED
-    } // ADDED
-    function bedAdjustedTemperatureRecordOnDate(date, dailyClimateOrMonthly, profile = null) { // ADDED
-        return applyBedAirEffectsToTemperatureRecord(temperatureRecordOnDate(date, dailyClimateOrMonthly), profile); // ADDED
-    } // ADDED
-    function bedAdjustedMeanTemperatureOnDate(date, dailyClimateOrMonthly, profile = null) { // ADDED
-        const rec = bedAdjustedTemperatureRecordOnDate(date, dailyClimateOrMonthly, profile); // ADDED
-        return rec ? rec.mean : null; // ADDED
-    } // ADDED
+    function applyBedAirEffectsToTemperatureRecord(record, profile) {
+        const rec = normalizeTemperatureRecord(record);
+        if (!rec) return null;
+        const effects = seasonExtensionEffects(profile);
+        const offset = bedAirTemperatureOffsetC(profile);
+        let min = rec.min + offset;
+        let max = rec.max + offset;
+        let mean = rec.mean + offset;
+        if (effects.minAirTempC != null) {
+            min = Math.max(min, effects.minAirTempC);
+            max = Math.max(max, min);
+            mean = (min + max) / 2;
+        }
+        return Object.freeze({ min, max, mean });
+    }
+    function bedAdjustedTemperatureRecordOnDate(date, dailyClimateOrMonthly, profile = null) {
+        return applyBedAirEffectsToTemperatureRecord(temperatureRecordOnDate(date, dailyClimateOrMonthly), profile);
+    }
+    function bedAdjustedMeanTemperatureOnDate(date, dailyClimateOrMonthly, profile = null) {
+        const rec = bedAdjustedTemperatureRecordOnDate(date, dailyClimateOrMonthly, profile);
+        return rec ? rec.mean : null;
+    }
     function monthlyMeanOnDate(date, monthlyAvgTemp) {
         const year = date.getUTCFullYear();
         const month = date.getUTCMonth() + 1;
@@ -260,7 +260,7 @@
     function normalizeBedProfile(profile) {
         const source = profile && typeof profile === 'object' ? profile : {};
         const pick = (key, fallback) => String(source[key] || fallback || 'unknown').trim() || 'unknown';
-        const pickNum = (key) => finiteNumberOrNull(source[key]); // ADDED
+        const pickNum = (key) => finiteNumberOrNull(source[key]);
         return {
             sunExposure: pick('sunExposure', 'full_sun'),
             soilMoisture: pick('soilMoisture', 'moderate'),
@@ -268,25 +268,25 @@
             soilTexture: pick('soilTexture', 'loamy'),
             windExposure: pick('windExposure', 'moderate'),
             frostRisk: pick('frostRisk', 'low'),
-            seasonExtension: pick('seasonExtension', pick('season_extension', 'unknown')), // ADDED
-            seasonExtensionAirOffsetC: pickNum('seasonExtensionAirOffsetC') ?? pickNum('season_extension_air_offset_c'), // ADDED
-            seasonExtensionSoilOffsetC: pickNum('seasonExtensionSoilOffsetC') ?? pickNum('season_extension_soil_offset_c'), // ADDED
-            seasonExtensionFrostShiftDays: pickNum('seasonExtensionFrostShiftDays') ?? pickNum('season_extension_frost_shift_days'), // ADDED
-            seasonExtensionMinAirTempC: pickNum('seasonExtensionMinAirTempC') ?? pickNum('season_extension_min_air_temp_c') // ADDED
+            seasonExtension: pick('seasonExtension', pick('season_extension', 'unknown')),
+            seasonExtensionAirOffsetC: pickNum('seasonExtensionAirOffsetC') ?? pickNum('season_extension_air_offset_c'),
+            seasonExtensionSoilOffsetC: pickNum('seasonExtensionSoilOffsetC') ?? pickNum('season_extension_soil_offset_c'),
+            seasonExtensionFrostShiftDays: pickNum('seasonExtensionFrostShiftDays') ?? pickNum('season_extension_frost_shift_days'),
+            seasonExtensionMinAirTempC: pickNum('seasonExtensionMinAirTempC') ?? pickNum('season_extension_min_air_temp_c')
         };
     }
-    function seasonExtensionEffects(profile) { // ADDED
-        const bed = normalizeBedProfile(profile); // ADDED
-        const key = Object.prototype.hasOwnProperty.call(SEASON_EXTENSION_EFFECTS, bed.seasonExtension) ? bed.seasonExtension : 'unknown'; // ADDED
-        const defaults = SEASON_EXTENSION_EFFECTS[key] || SEASON_EXTENSION_EFFECTS.unknown; // ADDED
-        return Object.freeze({ // ADDED
-            seasonExtension: key, // ADDED
-            airOffsetC: bed.seasonExtensionAirOffsetC ?? defaults.airOffsetC, // ADDED
-            soilOffsetC: bed.seasonExtensionSoilOffsetC ?? defaults.soilOffsetC, // ADDED
-            frostShiftDays: bed.seasonExtensionFrostShiftDays ?? defaults.frostShiftDays, // ADDED
-            minAirTempC: key === 'heated_greenhouse' ? (bed.seasonExtensionMinAirTempC ?? defaults.minAirTempC) : null // ADDED
-        }); // ADDED
-    } // ADDED
+    function seasonExtensionEffects(profile) {
+        const bed = normalizeBedProfile(profile);
+        const key = Object.prototype.hasOwnProperty.call(SEASON_EXTENSION_EFFECTS, bed.seasonExtension) ? bed.seasonExtension : 'unknown';
+        const defaults = SEASON_EXTENSION_EFFECTS[key] || SEASON_EXTENSION_EFFECTS.unknown;
+        return Object.freeze({
+            seasonExtension: key,
+            airOffsetC: bed.seasonExtensionAirOffsetC ?? defaults.airOffsetC,
+            soilOffsetC: bed.seasonExtensionSoilOffsetC ?? defaults.soilOffsetC,
+            frostShiftDays: bed.seasonExtensionFrostShiftDays ?? defaults.frostShiftDays,
+            minAirTempC: key === 'heated_greenhouse' ? (bed.seasonExtensionMinAirTempC ?? defaults.minAirTempC) : null
+        });
+    }
     function bedSoilTemperatureOffsetC(profile) {
         const bed = normalizeBedProfile(profile);
         let offset = 3.0; // ADDED: generic open vegetable beds warm faster than monthly city-air means.
@@ -307,7 +307,7 @@
         if (bed.frostRisk === 'none') add(0.2);
         else if (bed.frostRisk === 'medium') add(-0.3);
         else if (bed.frostRisk === 'high') add(-0.7);
-        return Math.max(-1.5, Math.min(5.0, offset)) + seasonExtensionEffects(bed).soilOffsetC; // CHANGED
+        return Math.max(-1.5, Math.min(5.0, offset)) + seasonExtensionEffects(bed).soilOffsetC;
     }
     function bedAirTemperatureOffsetC(profile) {
         const bed = normalizeBedProfile(profile);
@@ -323,15 +323,15 @@
         if (bed.frostRisk === 'none') offset += 0.15;
         else if (bed.frostRisk === 'medium') offset -= 0.2;
         else if (bed.frostRisk === 'high') offset -= 0.4;
-        return Math.max(-1.0, Math.min(1.0, offset)) + seasonExtensionEffects(bed).airOffsetC; // CHANGED
+        return Math.max(-1.0, Math.min(1.0, offset)) + seasonExtensionEffects(bed).airOffsetC;
     }
     function bedFrostGateShiftDays(profile) {
         const bed = normalizeBedProfile(profile);
-        let shift = 0; // ADDED
-        if (bed.frostRisk === 'none') shift = -3; // CHANGED
-        else if (bed.frostRisk === 'medium') shift = 5; // CHANGED
-        else if (bed.frostRisk === 'high') shift = 10; // CHANGED
-        return shift + seasonExtensionEffects(bed).frostShiftDays; // CHANGED
+        let shift = 0;
+        if (bed.frostRisk === 'none') shift = -3;
+        else if (bed.frostRisk === 'medium') shift = 5;
+        else if (bed.frostRisk === 'high') shift = 10;
+        return shift + seasonExtensionEffects(bed).frostShiftDays;
     }
     function estimateSoilTempC(date, monthlyAvgTemp, bedProfile = null) {
         const air = meanTemperatureOnDate(date, monthlyAvgTemp);
@@ -382,18 +382,18 @@
         }
         return total / samples;
     }
-    function buildDailyGddMap({ dailyClimate, cropTemp, bedProfile = null, city = null, year = null, gddCalibrationEnabled = true }) { // CHANGED
+    function buildDailyGddMap({ dailyClimate, cropTemp, bedProfile = null, city = null, year = null, gddCalibrationEnabled = true }) {
         const env = cropTemp || {};
         const lower = finiteNumberOrNull(env.Tbase ?? env.tbase_c);
         const upper = finiteNumberOrNull(env.Tmax ?? env.tmax_c);
-        const effects = seasonExtensionEffects(bedProfile); // ADDED
+        const effects = seasonExtensionEffects(bedProfile);
         const bedOffset = bedAirTemperatureOffsetC(bedProfile);
         const raw = {};
         const cityBaseByYear = {};
         let cropTotal = 0;
         Object.keys(dailyClimate?.days || {}).forEach(function (key) {
             const day = dailyClimate.days[key];
-            const adjusted = applyBedAirEffectsToTemperatureRecord(day, bedProfile); // CHANGED
+            const adjusted = applyBedAirEffectsToTemperatureRecord(day, bedProfile);
             const cropGdd = singleSineDailyGdd(adjusted, lower, upper);
             raw[key] = cropGdd;
             cropTotal += cropGdd;
@@ -406,7 +406,7 @@
         const target = finiteNumberOrNull(city?.gdd_annual);
         const scaleByYear = {};
         Object.keys(cityBaseByYear).forEach(function (y) {
-            scaleByYear[y] = gddCalibrationEnabled !== false && target != null && target > 0 && cityBaseByYear[y] > 0 ? (target / cityBaseByYear[y]) : 1; // CHANGED
+            scaleByYear[y] = gddCalibrationEnabled !== false && target != null && target > 0 && cityBaseByYear[y] > 0 ? (target / cityBaseByYear[y]) : 1;
         });
         const out = {};
         Object.keys(raw).forEach(function (key) { out[key] = raw[key] * (scaleByYear[key.slice(0, 4)] || 1); });
@@ -415,10 +415,10 @@
         Object.defineProperty(out, '__diagnostics', {
             value: Object.freeze({
                 bedAirOffsetC: bedOffset,
-                bedSoilOffsetC: bedSoilTemperatureOffsetC(bedProfile), // ADDED
-                bedFrostGateShiftDays: bedFrostGateShiftDays(bedProfile), // ADDED
-                seasonExtension: effects.seasonExtension, // ADDED
-                seasonExtensionMinAirTempC: effects.minAirTempC, // ADDED
+                bedSoilOffsetC: bedSoilTemperatureOffsetC(bedProfile),
+                bedFrostGateShiftDays: bedFrostGateShiftDays(bedProfile),
+                seasonExtension: effects.seasonExtension,
+                seasonExtensionMinAirTempC: effects.minAirTempC,
                 gddScale: scaleByYear[firstYear] || 1,
                 gddScaleByYear: Object.freeze(scaleByYear),
                 rawCropAnnualGdd: cropTotal,
@@ -568,7 +568,7 @@
     }
     function coolingGateThresholdC(plant) {
         if (!isCrossYearCrop(plant)) return null; // FIX: heat-stress metadata must not force annual fall-only scheduling
-        return asCoolingThresholdC(plant?.start_cooling_threshold_c); // FIX
+        return asCoolingThresholdC(plant?.start_cooling_threshold_c);
     }
     function dateFromDOY(year, doy) {
         const d0 = Date.UTC(year, 0, 1);
@@ -583,45 +583,45 @@
             soilGateThresholdC = null,
             soilGateConsecutiveDays = 3,
             overwinterAllowed = false,
-            annualCrossYearHarvestAllowed = true, // ADDED
-            gddCalibrationEnabled = true, // ADDED
-            weatherNormalsSource = 'auto', // ADDED
-            forecastBlendWeight0To3Days = 0.8, // ADDED
-            forecastBlendWeight4To7Days = 0.5, // ADDED
-            forecastBlendWeight8To16Days = 0.25 // ADDED
+            annualCrossYearHarvestAllowed = true,
+            gddCalibrationEnabled = true,
+            weatherNormalsSource = 'auto',
+            forecastBlendWeight0To3Days = 0.8,
+            forecastBlendWeight4To7Days = 0.5,
+            forecastBlendWeight8To16Days = 0.25
         } = {}) {
             this.overwinterAllowed = !!overwinterAllowed;
-            this.annualCrossYearHarvestAllowed = annualCrossYearHarvestAllowed !== false; // ADDED
+            this.annualCrossYearHarvestAllowed = annualCrossYearHarvestAllowed !== false;
             this.useSpringFrostGate = !!useSpringFrostGate;
-            this.springFrostRisk = ['p10', 'p50', 'p90'].indexOf(String(springFrostRisk || '')) >= 0 ? String(springFrostRisk) : 'p50'; // CHANGED
+            this.springFrostRisk = ['p10', 'p50', 'p90'].indexOf(String(springFrostRisk || '')) >= 0 ? String(springFrostRisk) : 'p50';
             const thr = Number(soilGateThresholdC);
             this.soilGateThresholdC = Number.isFinite(thr) ? thr : null;
             this.useSoilTempGate = !!useSoilTempGate && this.soilGateThresholdC != null;
-            this.soilGateConsecutiveDays = Math.max(1, Math.min(14, Number(soilGateConsecutiveDays ?? 3))); // CHANGED
-            this.gddCalibrationEnabled = gddCalibrationEnabled !== false; // ADDED
-            this.weatherNormalsSource = ['auto', 'city_weather_monthly', 'city_weather_daily', 'city_monthly_columns'].indexOf(String(weatherNormalsSource || '')) >= 0 ? String(weatherNormalsSource) : 'auto'; // ADDED
-            this.forecastBlendWeight0To3Days = Math.max(0, Math.min(1, Number(forecastBlendWeight0To3Days ?? 0.8))); // ADDED
-            this.forecastBlendWeight4To7Days = Math.max(0, Math.min(1, Number(forecastBlendWeight4To7Days ?? 0.5))); // ADDED
-            this.forecastBlendWeight8To16Days = Math.max(0, Math.min(1, Number(forecastBlendWeight8To16Days ?? 0.25))); // ADDED
+            this.soilGateConsecutiveDays = Math.max(1, Math.min(14, Number(soilGateConsecutiveDays ?? 3)));
+            this.gddCalibrationEnabled = gddCalibrationEnabled !== false;
+            this.weatherNormalsSource = ['auto', 'city_weather_monthly', 'city_weather_daily', 'city_monthly_columns'].indexOf(String(weatherNormalsSource || '')) >= 0 ? String(weatherNormalsSource) : 'auto';
+            this.forecastBlendWeight0To3Days = Math.max(0, Math.min(1, Number(forecastBlendWeight0To3Days ?? 0.8)));
+            this.forecastBlendWeight4To7Days = Math.max(0, Math.min(1, Number(forecastBlendWeight4To7Days ?? 0.5)));
+            this.forecastBlendWeight8To16Days = Math.max(0, Math.min(1, Number(forecastBlendWeight8To16Days ?? 0.25)));
             Object.freeze(this);
         }
 
-        static fromResolvedBehavior(plant, resolvedBehavior, climatePolicy = null) { // CHANGED
+        static fromResolvedBehavior(plant, resolvedBehavior, climatePolicy = null) {
             const threshold = finiteNumberOrNull(plant?.soil_temp_min_plant_c);
             const overwinterAllowed = isCrossYearCrop(plant);
             return new PolicyFlags({
                 useSpringFrostGate: true,
-                springFrostRisk: climatePolicy?.springFrostRisk || 'p50', // CHANGED
+                springFrostRisk: climatePolicy?.springFrostRisk || 'p50',
                 useSoilTempGate: !!resolvedBehavior?.usesSoilTempGate && threshold != null,
                 soilGateThresholdC: threshold,
-                soilGateConsecutiveDays: climatePolicy?.soilGateConsecutiveDays ?? 3, // CHANGED
+                soilGateConsecutiveDays: climatePolicy?.soilGateConsecutiveDays ?? 3,
                 overwinterAllowed,
-                annualCrossYearHarvestAllowed: climatePolicy?.annualCrossYearHarvestAllowed !== false, // ADDED
-                gddCalibrationEnabled: climatePolicy?.gddCalibrationEnabled !== false, // CHANGED
-                weatherNormalsSource: climatePolicy?.weatherNormalsSource || 'auto', // ADDED
-                forecastBlendWeight0To3Days: climatePolicy?.forecastBlendWeight0To3Days ?? 0.8, // ADDED
-                forecastBlendWeight4To7Days: climatePolicy?.forecastBlendWeight4To7Days ?? 0.5, // ADDED
-                forecastBlendWeight8To16Days: climatePolicy?.forecastBlendWeight8To16Days ?? 0.25 // ADDED
+                annualCrossYearHarvestAllowed: climatePolicy?.annualCrossYearHarvestAllowed !== false,
+                gddCalibrationEnabled: climatePolicy?.gddCalibrationEnabled !== false,
+                weatherNormalsSource: climatePolicy?.weatherNormalsSource || 'auto',
+                forecastBlendWeight0To3Days: climatePolicy?.forecastBlendWeight0To3Days ?? 0.8,
+                forecastBlendWeight4To7Days: climatePolicy?.forecastBlendWeight4To7Days ?? 0.5,
+                forecastBlendWeight8To16Days: climatePolicy?.forecastBlendWeight8To16Days ?? 0.25
             });
         }
     }
@@ -660,7 +660,7 @@
                 varietyId: (varietyId != null ? Number(varietyId) : null),
                 varietyName: String(varietyName || ''),
                 bedProfile: normalizeBedProfile(bedProfile), // ADDED: carry bed conditions into soil-temperature gates.
-                bedProfileSource: String(bedProfileSource || 'generic garden bed'), // ADDED
+                bedProfileSource: String(bedProfileSource || 'generic garden bed'),
                 dailyClimate
             });
             Object.freeze(this);
@@ -670,10 +670,10 @@
             const startDate = new Date(this.startISO + 'T00:00:00Z');
             const seasonEnd = new Date(this.seasonEndISO + 'T00:00:00Z');
             const env = this.plant.cropTempEnvelope();
-            const lifecycleScanYears = getPlantScanYears(this.plant); // CHANGED
-            const scanYears = !isPerennialPlant(this.plant) && this.policy?.annualCrossYearHarvestAllowed !== false // ADDED
-                ? Math.max(lifecycleScanYears, 2) // ADDED
-                : lifecycleScanYears; // ADDED
+            const lifecycleScanYears = getPlantScanYears(this.plant);
+            const scanYears = !isPerennialPlant(this.plant) && this.policy?.annualCrossYearHarvestAllowed !== false
+                ? Math.max(lifecycleScanYears, 2)
+                : lifecycleScanYears;
             const scanStart = asUTCDate(this.seasonStartYear, 1, 1);
             const scanEndHard = asUTCDate(this.seasonStartYear + scanYears - 1, 12, 31);
             const year = scanStart.getUTCFullYear();
@@ -691,7 +691,7 @@
                 bedProfile: this.bedProfile,
                 city: this.city,
                 year,
-                gddCalibrationEnabled: this.policy?.gddCalibrationEnabled !== false // ADDED
+                gddCalibrationEnabled: this.policy?.gddCalibrationEnabled !== false
             });
             return { startDate, seasonEnd, year, env, dailyRates, monthlyAvg, dailyClimate, scanStart, scanEndHard };
         }
@@ -754,10 +754,10 @@
         if (raw === 'soil_gate_missing_date') return 'A soil-temperature check could not be evaluated.';
         if (raw === 'soil_gate') return 'The soil is expected to be too cold on this date.';
         if (raw === 'insufficient_gdd') return 'There is not enough growing-degree accumulation to reach maturity.';
-        if (raw.indexOf('insufficient_gdd_before_cold') === 0) return 'There is not enough heat for this crop to mature before lethal cold.'; // ADDED
+        if (raw.indexOf('insufficient_gdd_before_cold') === 0) return 'There is not enough heat for this crop to mature before lethal cold.';
         if (raw === 'cross_year_disallowed') return 'This planting would extend into another year.';
         if (raw === 'beyond_hard_end') return 'There is not enough season remaining for the harvest window.';
-        if (raw.indexOf('cold_survival_temp') === 0 || raw.indexOf('winter_survival_temp') === 0) return 'Temperatures are too cold for this crop to survive.'; // CHANGED
+        if (raw.indexOf('cold_survival_temp') === 0 || raw.indexOf('winter_survival_temp') === 0) return 'Temperatures are too cold for this crop to survive.';
         if (raw.indexOf('harvest_too_cold') === 0) return 'Expected harvest temperatures are too cold.';
         if (raw.indexOf('harvest_too_hot') === 0) return 'Expected harvest temperatures are too hot.';
         if (raw.indexOf('error:') === 0) return raw.slice(6).trim() || 'The feasibility check failed.';
@@ -771,24 +771,24 @@
         activeSowingSeasonId = ''
     } = {}) {
         if (perennial) return { status: 'not_applicable', label: 'Not applicable for perennial planting dates.' };
-        const windows = Array.isArray(sowingSeasons) ? sowingSeasons : []; // CHANGED
-        if (!windowFeasible || !windows.length) return { status: 'no_window', label: 'No feasible sowing season is available.' }; // CHANGED
+        const windows = Array.isArray(sowingSeasons) ? sowingSeasons : [];
+        if (!windowFeasible || !windows.length) return { status: 'no_window', label: 'No feasible sowing season is available.' };
         const selected = parseISODateUTCValue(startISO);
         if (!selected) return { status: 'missing', label: 'Select a sow date.' };
-        const active = windows.find(window => String(window?.id || '') === String(activeSowingSeasonId || '')); // CHANGED
-        if (!active) return { status: 'no_active_window', label: 'Select a sowing season.' }; // ADDED
-        const earliest = parseISODateUTCValue(active.startISO); // CHANGED
-        const latest = parseISODateUTCValue(active.endISO); // CHANGED
-        if (!earliest || !latest || selected < earliest || selected > latest) { // CHANGED
-            const other = windows.find(window => { // ADDED
-                const start = parseISODateUTCValue(window?.startISO); // ADDED
-                const end = parseISODateUTCValue(window?.endISO); // ADDED
-                return start && end && selected >= start && selected <= end; // ADDED
-            }); // ADDED
-            if (other) return { status: 'window_mismatch', label: `The selected sow date belongs to ${other.label || other.id}, not ${active.label || active.id}.` }; // ADDED
-            return { status: 'outside_window', label: 'The selected sow date is outside the selected sowing season.' }; // CHANGED
+        const active = windows.find(window => String(window?.id || '') === String(activeSowingSeasonId || ''));
+        if (!active) return { status: 'no_active_window', label: 'Select a sowing season.' };
+        const earliest = parseISODateUTCValue(active.startISO);
+        const latest = parseISODateUTCValue(active.endISO);
+        if (!earliest || !latest || selected < earliest || selected > latest) {
+            const other = windows.find(window => {
+                const start = parseISODateUTCValue(window?.startISO);
+                const end = parseISODateUTCValue(window?.endISO);
+                return start && end && selected >= start && selected <= end;
+            });
+            if (other) return { status: 'window_mismatch', label: `The selected sow date belongs to ${other.label || other.id}, not ${active.label || active.id}.` };
+            return { status: 'outside_window', label: 'The selected sow date is outside the selected sowing season.' };
         }
-        return { status: 'feasible', label: `The selected sow date is in ${active.label || active.id}.` }; // CHANGED
+        return { status: 'feasible', label: `The selected sow date is in ${active.label || active.id}.` };
     }
     function buildScheduleViewState({
         perennial = false,
@@ -804,7 +804,7 @@
         firstHarvestISO = '',
         lastHarvestISO = ''
     } = {}) {
-        const feasibility = classifySelectedSowDate({ perennial, windowFeasible, startISO, sowingSeasons, activeSowingSeasonId }); // CHANGED
+        const feasibility = classifySelectedSowDate({ perennial, windowFeasible, startISO, sowingSeasons, activeSowingSeasonId });
         return {
             crop: [plantName, varietyName].filter(Boolean).join(' / ') || '(none)',
             context: [cityName, seasonStartYear].filter(value => String(value || '').trim()).join(' / ') || '(none)',
@@ -839,12 +839,12 @@
         buildDailyTemperatureSeries,
         temperatureRecordOnDate,
         meanTemperatureOnDate,
-        applyBedAirEffectsToTemperatureRecord, // ADDED
-        bedAdjustedTemperatureRecordOnDate, // ADDED
-        bedAdjustedMeanTemperatureOnDate, // ADDED
+        applyBedAirEffectsToTemperatureRecord,
+        bedAdjustedTemperatureRecordOnDate,
+        bedAdjustedMeanTemperatureOnDate,
         monthlyMeanOnDate,
         normalizeBedProfile,
-        seasonExtensionEffects, // ADDED
+        seasonExtensionEffects,
         bedSoilTemperatureOffsetC,
         bedAirTemperatureOffsetC,
         bedFrostGateShiftDays,

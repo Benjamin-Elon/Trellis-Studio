@@ -11,7 +11,7 @@ GENERATED_TABLES = [
     "CityWeatherDaily",
     "CityWeatherForecastDaily",
     "Companions",
-    "CompanionLayoutGroupDefaults",  # ADDED
+    "CompanionLayoutGroupDefaults",
     "CompanionEvidence",
     "PlantingWindowReferences",
     "PlantAllowedMethodCategories",
@@ -22,14 +22,14 @@ GENERATED_TABLES = [
 
 WEATHER_TABLES = {"CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily"}
 
-CITY_GEO_IDENTITY_COLUMNS = {"country_name", "country_code", "region_name", "region_code"}  # ADDED
-CITY_CLIMATE_BANDS = {"hot", "temperate", "cold"}  # ADDED
-VARIETY_MATURITY_CLASSES = {"early", "mid", "late"}  # ADDED
-PLANT_VARIETY_COLUMNS = {"variety_id", "plant_id", "plant_name", "variety_name", "maturity_class", "overrides", "overrides_json"}  # ADDED
-COMPANION_LAYOUT_COLUMNS = {"layout_template", "layout_spacing_x_cm", "layout_spacing_y_cm", "layout_offset_x_cm", "layout_offset_y_cm"}  # ADDED
-COMPANION_LAYOUT_TEMPLATES = {"beside", "interplant", "staggered"}  # ADDED
-COMPANION_COLUMNS = {"relation_id", "p1", "p2", "rating", "companion_type", "companion_type_id", "source_plant_id", "companion_plant_id", "start_offset_days", *COMPANION_LAYOUT_COLUMNS}  # CHANGED
-COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS = {"group_default_id", "plant_set_key", "anchor_plant_id", "layout_json", "updated_at"}  # ADDED
+CITY_GEO_IDENTITY_COLUMNS = {"country_name", "country_code", "region_name", "region_code"}
+CITY_CLIMATE_BANDS = {"hot", "temperate", "cold"}
+VARIETY_MATURITY_CLASSES = {"early", "mid", "late"}
+PLANT_VARIETY_COLUMNS = {"variety_id", "plant_id", "plant_name", "variety_name", "maturity_class", "overrides", "overrides_json"}
+COMPANION_LAYOUT_COLUMNS = {"layout_template", "layout_spacing_x_cm", "layout_spacing_y_cm", "layout_offset_x_cm", "layout_offset_y_cm"}
+COMPANION_LAYOUT_TEMPLATES = {"beside", "interplant", "staggered"}
+COMPANION_COLUMNS = {"relation_id", "p1", "p2", "rating", "companion_type", "companion_type_id", "source_plant_id", "companion_plant_id", "start_offset_days", *COMPANION_LAYOUT_COLUMNS}
+COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS = {"group_default_id", "plant_set_key", "anchor_plant_id", "layout_json", "updated_at"}
 
 PLANTING_WINDOW_REFERENCE_COLUMNS = {
     "reference_id", "plant_id", "plant_name", "city_id", "city_name", "method_id",
@@ -108,8 +108,8 @@ OVERRIDE_ENTRY_SCHEMA = {
 }
 
 CITY_COLUMNS = {
-    "city_id", "city_name", *CITY_GEO_IDENTITY_COLUMNS, "latitude", "longitude", "timezone", "gdd_annual",  # CHANGED
-    "is_major_city", "climate_band",  # ADDED
+    "city_id", "city_name", *CITY_GEO_IDENTITY_COLUMNS, "latitude", "longitude", "timezone", "gdd_annual",
+    "is_major_city", "climate_band",
     "last_spring_frost_doy", "first_fall_frost_doy", "first_fall_frost_p90_doy",
     "first_fall_frost_p50_doy", "first_fall_frost_p10_doy",
     "last_spring_frost_p90_doy", "last_spring_frost_p50_doy",
@@ -118,7 +118,7 @@ CITY_COLUMNS = {
     *{f"avg_monthly_high_c{i}" for i in range(1, 13)},
 }
 
-OPENAI_CITY_LABEL_SCHEMA = {  # ADDED
+OPENAI_CITY_LABEL_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
@@ -150,11 +150,11 @@ OPENAI_PLANT_SCHEMA = {
                 "additionalProperties": False,
                 "properties": {
                     "variety_name": {"type": "string"},
-                    "maturity_class": {"type": ["string", "null"], "enum": ["early", "mid", "late", "", None]},  # ADDED
+                    "maturity_class": {"type": ["string", "null"], "enum": ["early", "mid", "late", "", None]},
                     "overrides": {"type": "array", "items": OVERRIDE_ENTRY_SCHEMA},
                     "sources": {"type": "array", "items": {"type": "string"}},
                 },
-                "required": ["variety_name", "maturity_class", "overrides", "sources"],  # CHANGED
+                "required": ["variety_name", "maturity_class", "overrides", "sources"],
             },
         },
         "provenance": PROVENANCE_SCHEMA,

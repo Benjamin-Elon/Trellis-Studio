@@ -28,10 +28,10 @@ DEFAULT_CONFIG = {
         "city_allowlist": [],
         "city_overrides_by_crop": {},
     },
-    "climate_benchmark": {  # ADDED
-        "random_seed": "trellis-climate-benchmark",  # ADDED
-        "tolerance_days": 14,  # ADDED
-    },  # ADDED
+    "climate_benchmark": {
+        "random_seed": "trellis-climate-benchmark",
+        "tolerance_days": 14,
+    },
     "open_meteo": {
         "geocoding_url": "https://geocoding-api.open-meteo.com/v1/search",
         "archive_url": "https://archive-api.open-meteo.com/v1/archive",
@@ -105,7 +105,7 @@ def load_settings(path: Path = DEFAULT_CONFIG_PATH) -> Settings:
     data["open_meteo"] = DEFAULT_CONFIG["open_meteo"] | (data.get("open_meteo") or {})
     data["nasa_power"] = DEFAULT_CONFIG["nasa_power"] | (data.get("nasa_power") or {})
     data["sowing_windows"] = DEFAULT_CONFIG["sowing_windows"] | (data.get("sowing_windows") or {})
-    data["climate_benchmark"] = DEFAULT_CONFIG["climate_benchmark"] | (data.get("climate_benchmark") or {})  # ADDED
+    data["climate_benchmark"] = DEFAULT_CONFIG["climate_benchmark"] | (data.get("climate_benchmark") or {})
     return Settings(path=path, data=data)
 
 

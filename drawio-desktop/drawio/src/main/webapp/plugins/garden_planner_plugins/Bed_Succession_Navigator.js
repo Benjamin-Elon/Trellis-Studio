@@ -1,16 +1,16 @@
 /**
  * Draw.io Plugin: Tiler Group Overlap Navigator (Multi-Cluster, DOM Buttons)
- * - Builds bed-aware and outside-overlap succession clusters per parent. // CHANGE
- * - Keeps bed-contained clusters separate from outside overhang clusters. // NEW
+ * - Builds bed-aware and outside-overlap succession clusters per parent.
+ * - Keeps bed-contained clusters separate from outside overhang clusters.
  * - Each cluster gets its own Prev/Next controls and index badge.
  * - Non-current members of each cluster are rendered outline-only (fills/text/images hidden).
- * - Covered plant groups, clusters, and empty beds get DOM selector buttons. // CHANGE
+ * - Covered plant groups, clusters, and empty beds get DOM selector buttons.
  */
 Draw.loadPlugin(function (ui) {
     const graph = ui.editor.graph;
     const model = graph.getModel();
 
-    const TRELLIS_SELECTION_VISUALS_REFRESH_EVENT = 'trellisSelectionVisualsRefresh'; // NEW
+    const TRELLIS_SELECTION_VISUALS_REFRESH_EVENT = 'trellisSelectionVisualsRefresh';
 
     if (graph.__tilerOverlapNavClustersInstalled) return;
     graph.__tilerOverlapNavClustersInstalled = true;
@@ -47,8 +47,8 @@ Draw.loadPlugin(function (ui) {
     // -------------------- Config --------------------
     const BTN_SIZE = 22;
     const BTN_INSET = 6;
-    const SELECT_BUTTON_GAP = 4; // NEW
-    const SELECT_BUTTON_DRAG_HANDLE_SLOT = BTN_SIZE + SELECT_BUTTON_GAP; // NEW
+    const SELECT_BUTTON_GAP = 4;
+    const SELECT_BUTTON_DRAG_HANDLE_SLOT = BTN_SIZE + SELECT_BUTTON_GAP;
     const ICON_PREV = 'data:image/svg+xml;utf8,' + encodeURIComponent(
         '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22">' +
         '<circle cx="11" cy="11" r="10" fill="white" stroke="black" stroke-width="1"/>' +
@@ -59,7 +59,7 @@ Draw.loadPlugin(function (ui) {
         '<circle cx="11" cy="11" r="10" fill="white" stroke="black" stroke-width="1"/>' +
         '<polygon points="9,6 13,11 9,16" fill="black"/></svg>'
     );
-    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // CHANGE
+    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 });
 
     const ICON_SELECT = 'data:image/svg+xml;utf8,' + encodeURIComponent(
         '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">' +
@@ -78,22 +78,22 @@ Draw.loadPlugin(function (ui) {
         '</svg>'
     );
 
-    const ICON_SELECT_ASSEMBLY = 'data:image/svg+xml;utf8,' + encodeURIComponent( // NEW
-        '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">' + // NEW
-        '<circle cx="11" cy="11" r="10" fill="white" stroke="black" stroke-width="1"/>' + // NEW
-        '<rect x="6" y="6" width="5" height="5" rx="1" fill="none" stroke="black" stroke-width="1.2"/>' + // NEW
-        '<rect x="11" y="11" width="5" height="5" rx="1" fill="none" stroke="black" stroke-width="1.2"/>' + // NEW
-        '<path d="M10.6 10.6 L11.4 11.4" stroke="black" stroke-width="1.2" stroke-linecap="round"/>' + // NEW
-        '</svg>' // NEW
-    ); // NEW
+    const ICON_SELECT_ASSEMBLY = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">' +
+        '<circle cx="11" cy="11" r="10" fill="white" stroke="black" stroke-width="1"/>' +
+        '<rect x="6" y="6" width="5" height="5" rx="1" fill="none" stroke="black" stroke-width="1.2"/>' +
+        '<rect x="11" y="11" width="5" height="5" rx="1" fill="none" stroke="black" stroke-width="1.2"/>' +
+        '<path d="M10.6 10.6 L11.4 11.4" stroke="black" stroke-width="1.2" stroke-linecap="round"/>' +
+        '</svg>'
+    );
 
     const TIME_ATTRS_ASC = ['transplant_date', 'sow_date'];
     const EPS = 0; // inclusive AABB; set >0 to treat near-miss as overlap
 
-    const OVERLAP_MIN_PCT = 0.05; // CHANGE
+    const OVERLAP_MIN_PCT = 0.05;
     const OVERLAP_PCT_MODE = 'smaller';
-    const BED_COVERAGE_MIN_PCT = 0.95; // NEW
-    const COVERED_TARGET_MIN_PCT = 0.80; // NEW
+    const BED_COVERAGE_MIN_PCT = 0.95;
+    const COVERED_TARGET_MIN_PCT = 0.80;
 
     // overlap thresholds (0..1)
     const OVERLAP_FRAC_SMALL = 0.30; // % of the smaller
@@ -219,22 +219,22 @@ Draw.loadPlugin(function (ui) {
         return !!cell && cell.getAttribute && cell.getAttribute('tiler_group') === '1';
     }
 
-    function isLodSummary(cell) { // CHANGE
-        return !!cell && cell.getAttribute && cell.getAttribute('lod_summary') === '1'; // CHANGE
-    } // CHANGE
+    function isLodSummary(cell) {
+        return !!cell && cell.getAttribute && cell.getAttribute('lod_summary') === '1';
+    }
 
-    function findTilerGroupSelection(cell) { // CHANGE
-        let cur = cell; // CHANGE
-        while (cur) { // CHANGE
-            if (isTilerGroup(cur)) return cur; // CHANGE
-            if (isLodSummary(cur)) { // CHANGE
-                const parent = model.getParent(cur); // CHANGE
-                return isTilerGroup(parent) ? parent : null; // CHANGE
-            } // CHANGE
-            cur = model.getParent(cur); // CHANGE
-        } // CHANGE
-        return null; // CHANGE
-    } // CHANGE
+    function findTilerGroupSelection(cell) {
+        let cur = cell;
+        while (cur) {
+            if (isTilerGroup(cur)) return cur;
+            if (isLodSummary(cur)) {
+                const parent = model.getParent(cur);
+                return isTilerGroup(parent) ? parent : null;
+            }
+            cur = model.getParent(cur);
+        }
+        return null;
+    }
 
     function getState(cell) {
         return cell ? graph.view.getState(cell) : null;
@@ -272,309 +272,309 @@ Draw.loadPlugin(function (ui) {
     graph.getView().addListener(mxEvent.SCALE_AND_TRANSLATE, invalidateBoundsCache);
 
 
-    // -------------------- Rotation-aware geometry -------------------- // NEW
-    const GEOM_EPS = 0.000001; // NEW
+    // -------------------- Rotation-aware geometry --------------------
+    const GEOM_EPS = 0.000001;
 
-    function toRad(deg) { // NEW
-        return (Number(deg) || 0) * Math.PI / 180; // NEW
-    } // NEW
+    function toRad(deg) {
+        return (Number(deg) || 0) * Math.PI / 180;
+    }
 
-    function rotateModelPoint(point, center, angleRad) { // NEW
-        const dx = point.x - center.x; // NEW
-        const dy = point.y - center.y; // NEW
-        const cos = Math.cos(angleRad); // NEW
-        const sin = Math.sin(angleRad); // NEW
-        return { // NEW
-            x: center.x + dx * cos - dy * sin, // NEW
-            y: center.y + dx * sin + dy * cos // NEW
-        }; // NEW
-    } // NEW
+    function rotateModelPoint(point, center, angleRad) {
+        const dx = point.x - center.x;
+        const dy = point.y - center.y;
+        const cos = Math.cos(angleRad);
+        const sin = Math.sin(angleRad);
+        return {
+            x: center.x + dx * cos - dy * sin,
+            y: center.y + dx * sin + dy * cos
+        };
+    }
 
-    function getCellRotationDeg(cell) { // NEW
-        if (!cell) return 0; // NEW
-        const style = graph.getCellStyle(cell) || {}; // NEW
-        const raw = style[mxConstants.STYLE_ROTATION] != null ? style[mxConstants.STYLE_ROTATION] : style.rotation; // NEW
-        const n = Number(raw); // NEW
-        return Number.isFinite(n) ? n : 0; // NEW
-    } // NEW
+    function getCellRotationDeg(cell) {
+        if (!cell) return 0;
+        const style = graph.getCellStyle(cell) || {};
+        const raw = style[mxConstants.STYLE_ROTATION] != null ? style[mxConstants.STYLE_ROTATION] : style.rotation;
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : 0;
+    }
 
-    function getRotatedRectModel(cell) { // NEW
-        const rect = getModelRect(cell); // NEW
-        if (!rect || rect.w <= 0 || rect.h <= 0) return null; // NEW
-        const center = rectCenterModel(rect); // NEW
-        const angleDeg = getCellRotationDeg(cell); // NEW
-        return { // NEW
-            x: rect.x, y: rect.y, w: rect.w, h: rect.h, // NEW
-            cx: center.x, cy: center.y, center: center, // NEW
-            angleDeg: angleDeg, angleRad: toRad(angleDeg) // NEW
-        }; // NEW
-    } // NEW
+    function getRotatedRectModel(cell) {
+        const rect = getModelRect(cell);
+        if (!rect || rect.w <= 0 || rect.h <= 0) return null;
+        const center = rectCenterModel(rect);
+        const angleDeg = getCellRotationDeg(cell);
+        return {
+            x: rect.x, y: rect.y, w: rect.w, h: rect.h,
+            cx: center.x, cy: center.y, center: center,
+            angleDeg: angleDeg, angleRad: toRad(angleDeg)
+        };
+    }
 
-    function rotatedRectCorners(rotatedRect) { // NEW
-        if (!rotatedRect) return []; // NEW
-        const center = rotatedRect.center || { x: rotatedRect.cx, y: rotatedRect.cy }; // NEW
-        const corners = [ // NEW
-            { x: rotatedRect.x, y: rotatedRect.y }, // NEW
-            { x: rotatedRect.x + rotatedRect.w, y: rotatedRect.y }, // NEW
-            { x: rotatedRect.x + rotatedRect.w, y: rotatedRect.y + rotatedRect.h }, // NEW
-            { x: rotatedRect.x, y: rotatedRect.y + rotatedRect.h } // NEW
-        ]; // NEW
-        return corners.map(p => rotateModelPoint(p, center, rotatedRect.angleRad)); // NEW
-    } // NEW
+    function rotatedRectCorners(rotatedRect) {
+        if (!rotatedRect) return [];
+        const center = rotatedRect.center || { x: rotatedRect.cx, y: rotatedRect.cy };
+        const corners = [
+            { x: rotatedRect.x, y: rotatedRect.y },
+            { x: rotatedRect.x + rotatedRect.w, y: rotatedRect.y },
+            { x: rotatedRect.x + rotatedRect.w, y: rotatedRect.y + rotatedRect.h },
+            { x: rotatedRect.x, y: rotatedRect.y + rotatedRect.h }
+        ];
+        return corners.map(p => rotateModelPoint(p, center, rotatedRect.angleRad));
+    }
 
-    function pointInRotatedRectModel(point, rotatedRect) { // NEW
-        if (!point || !rotatedRect) return false; // NEW
-        const center = rotatedRect.center || { x: rotatedRect.cx, y: rotatedRect.cy }; // NEW
-        const local = rotateModelPoint(point, center, -rotatedRect.angleRad); // NEW
-        return local.x >= rotatedRect.x - GEOM_EPS && // NEW
-            local.x <= rotatedRect.x + rotatedRect.w + GEOM_EPS && // NEW
-            local.y >= rotatedRect.y - GEOM_EPS && // NEW
-            local.y <= rotatedRect.y + rotatedRect.h + GEOM_EPS; // NEW
-    } // NEW
+    function pointInRotatedRectModel(point, rotatedRect) {
+        if (!point || !rotatedRect) return false;
+        const center = rotatedRect.center || { x: rotatedRect.cx, y: rotatedRect.cy };
+        const local = rotateModelPoint(point, center, -rotatedRect.angleRad);
+        return local.x >= rotatedRect.x - GEOM_EPS &&
+            local.x <= rotatedRect.x + rotatedRect.w + GEOM_EPS &&
+            local.y >= rotatedRect.y - GEOM_EPS &&
+            local.y <= rotatedRect.y + rotatedRect.h + GEOM_EPS;
+    }
 
-    function polygonSignedArea(poly) { // NEW
-        if (!poly || poly.length < 3) return 0; // NEW
-        let sum = 0; // NEW
-        for (let i = 0; i < poly.length; i++) { // NEW
-            const a = poly[i]; // NEW
-            const b = poly[(i + 1) % poly.length]; // NEW
-            sum += a.x * b.y - a.y * b.x; // NEW
-        } // NEW
-        return sum / 2; // NEW
-    } // NEW
+    function polygonSignedArea(poly) {
+        if (!poly || poly.length < 3) return 0;
+        let sum = 0;
+        for (let i = 0; i < poly.length; i++) {
+            const a = poly[i];
+            const b = poly[(i + 1) % poly.length];
+            sum += a.x * b.y - a.y * b.x;
+        }
+        return sum / 2;
+    }
 
-    function polygonArea(poly) { // NEW
-        return Math.abs(polygonSignedArea(poly)); // NEW
-    } // NEW
+    function polygonArea(poly) {
+        return Math.abs(polygonSignedArea(poly));
+    }
 
-    function edgeCross(edgeStart, edgeEnd, point) { // NEW
-        return (edgeEnd.x - edgeStart.x) * (point.y - edgeStart.y) - (edgeEnd.y - edgeStart.y) * (point.x - edgeStart.x); // NEW
-    } // NEW
+    function edgeCross(edgeStart, edgeEnd, point) {
+        return (edgeEnd.x - edgeStart.x) * (point.y - edgeStart.y) - (edgeEnd.y - edgeStart.y) * (point.x - edgeStart.x);
+    }
 
-    function isInsideClipEdge(point, edgeStart, edgeEnd, clipSign) { // NEW
-        const cross = edgeCross(edgeStart, edgeEnd, point); // NEW
-        return clipSign >= 0 ? cross >= -GEOM_EPS : cross <= GEOM_EPS; // NEW
-    } // NEW
+    function isInsideClipEdge(point, edgeStart, edgeEnd, clipSign) {
+        const cross = edgeCross(edgeStart, edgeEnd, point);
+        return clipSign >= 0 ? cross >= -GEOM_EPS : cross <= GEOM_EPS;
+    }
 
-    function lineIntersection(a, b, c, d) { // NEW
-        const abx = b.x - a.x; // NEW
-        const aby = b.y - a.y; // NEW
-        const cdx = d.x - c.x; // NEW
-        const cdy = d.y - c.y; // NEW
-        const denom = abx * cdy - aby * cdx; // NEW
-        if (Math.abs(denom) <= GEOM_EPS) return b; // NEW
-        const t = ((c.x - a.x) * cdy - (c.y - a.y) * cdx) / denom; // NEW
-        return { x: a.x + abx * t, y: a.y + aby * t }; // NEW
-    } // NEW
+    function lineIntersection(a, b, c, d) {
+        const abx = b.x - a.x;
+        const aby = b.y - a.y;
+        const cdx = d.x - c.x;
+        const cdy = d.y - c.y;
+        const denom = abx * cdy - aby * cdx;
+        if (Math.abs(denom) <= GEOM_EPS) return b;
+        const t = ((c.x - a.x) * cdy - (c.y - a.y) * cdx) / denom;
+        return { x: a.x + abx * t, y: a.y + aby * t };
+    }
 
-    function convexPolygonIntersection(subject, clip) { // NEW
-        if (!subject || subject.length < 3 || !clip || clip.length < 3) return []; // NEW
-        let output = subject.slice(); // NEW
-        const clipSign = polygonSignedArea(clip) >= 0 ? 1 : -1; // NEW
-        for (let i = 0; i < clip.length; i++) { // NEW
-            const edgeStart = clip[i]; // NEW
-            const edgeEnd = clip[(i + 1) % clip.length]; // NEW
-            const input = output; // NEW
-            output = []; // NEW
-            if (!input.length) break; // NEW
-            let prev = input[input.length - 1]; // NEW
-            let prevInside = isInsideClipEdge(prev, edgeStart, edgeEnd, clipSign); // NEW
-            for (const curr of input) { // NEW
-                const currInside = isInsideClipEdge(curr, edgeStart, edgeEnd, clipSign); // NEW
-                if (currInside) { // NEW
-                    if (!prevInside) output.push(lineIntersection(prev, curr, edgeStart, edgeEnd)); // NEW
-                    output.push(curr); // NEW
-                } else if (prevInside) { // NEW
-                    output.push(lineIntersection(prev, curr, edgeStart, edgeEnd)); // NEW
-                } // NEW
-                prev = curr; // NEW
-                prevInside = currInside; // NEW
-            } // NEW
-        } // NEW
-        return output; // NEW
-    } // NEW
+    function convexPolygonIntersection(subject, clip) {
+        if (!subject || subject.length < 3 || !clip || clip.length < 3) return [];
+        let output = subject.slice();
+        const clipSign = polygonSignedArea(clip) >= 0 ? 1 : -1;
+        for (let i = 0; i < clip.length; i++) {
+            const edgeStart = clip[i];
+            const edgeEnd = clip[(i + 1) % clip.length];
+            const input = output;
+            output = [];
+            if (!input.length) break;
+            let prev = input[input.length - 1];
+            let prevInside = isInsideClipEdge(prev, edgeStart, edgeEnd, clipSign);
+            for (const curr of input) {
+                const currInside = isInsideClipEdge(curr, edgeStart, edgeEnd, clipSign);
+                if (currInside) {
+                    if (!prevInside) output.push(lineIntersection(prev, curr, edgeStart, edgeEnd));
+                    output.push(curr);
+                } else if (prevInside) {
+                    output.push(lineIntersection(prev, curr, edgeStart, edgeEnd));
+                }
+                prev = curr;
+                prevInside = currInside;
+            }
+        }
+        return output;
+    }
 
-    function rotatedRectIntersectionArea(a, b) { // NEW
-        const pa = rotatedRectCorners(a); // NEW
-        const pb = rotatedRectCorners(b); // NEW
-        const intersection = convexPolygonIntersection(pa, pb); // NEW
-        const area = polygonArea(intersection); // NEW
-        return area > GEOM_EPS ? area : 0; // NEW
-    } // NEW
+    function rotatedRectIntersectionArea(a, b) {
+        const pa = rotatedRectCorners(a);
+        const pb = rotatedRectCorners(b);
+        const intersection = convexPolygonIntersection(pa, pb);
+        const area = polygonArea(intersection);
+        return area > GEOM_EPS ? area : 0;
+    }
 
-    function segmentIntersectionPoint(a, b, c, d) { // NEW
-        const abx = b.x - a.x; // NEW
-        const aby = b.y - a.y; // NEW
-        const cdx = d.x - c.x; // NEW
-        const cdy = d.y - c.y; // NEW
-        const denom = abx * cdy - aby * cdx; // NEW
-        if (Math.abs(denom) <= GEOM_EPS) return null; // NEW
-        const t = ((c.x - a.x) * cdy - (c.y - a.y) * cdx) / denom; // NEW
-        const u = ((c.x - a.x) * aby - (c.y - a.y) * abx) / denom; // NEW
-        if (t < -GEOM_EPS || t > 1 + GEOM_EPS || u < -GEOM_EPS || u > 1 + GEOM_EPS) return null; // NEW
-        return { x: a.x + abx * t, y: a.y + aby * t }; // NEW
-    } // NEW
+    function segmentIntersectionPoint(a, b, c, d) {
+        const abx = b.x - a.x;
+        const aby = b.y - a.y;
+        const cdx = d.x - c.x;
+        const cdy = d.y - c.y;
+        const denom = abx * cdy - aby * cdx;
+        if (Math.abs(denom) <= GEOM_EPS) return null;
+        const t = ((c.x - a.x) * cdy - (c.y - a.y) * cdx) / denom;
+        const u = ((c.x - a.x) * aby - (c.y - a.y) * abx) / denom;
+        if (t < -GEOM_EPS || t > 1 + GEOM_EPS || u < -GEOM_EPS || u > 1 + GEOM_EPS) return null;
+        return { x: a.x + abx * t, y: a.y + aby * t };
+    }
 
-    function polygonEdges(poly) { // NEW
-        const edges = []; // NEW
-        if (!poly || poly.length < 2) return edges; // NEW
-        for (let i = 0; i < poly.length; i++) edges.push([poly[i], poly[(i + 1) % poly.length]]); // NEW
-        return edges; // NEW
-    } // NEW
+    function polygonEdges(poly) {
+        const edges = [];
+        if (!poly || poly.length < 2) return edges;
+        for (let i = 0; i < poly.length; i++) edges.push([poly[i], poly[(i + 1) % poly.length]]);
+        return edges;
+    }
 
-    function polygonVerticalIntervalAt(poly, x) { // NEW
-        if (!poly || poly.length < 3) return null; // NEW
-        const ys = []; // NEW
-        for (const edge of polygonEdges(poly)) { // NEW
-            const a = edge[0], b = edge[1]; // NEW
-            const minX = Math.min(a.x, b.x), maxX = Math.max(a.x, b.x); // NEW
-            if (x < minX - GEOM_EPS || x > maxX + GEOM_EPS) continue; // NEW
-            if (Math.abs(a.x - b.x) <= GEOM_EPS) { // NEW
-                ys.push(a.y, b.y); // NEW
-            } else { // NEW
-                const t = (x - a.x) / (b.x - a.x); // NEW
-                if (t >= -GEOM_EPS && t <= 1 + GEOM_EPS) ys.push(a.y + (b.y - a.y) * t); // NEW
-            } // NEW
-        } // NEW
-        if (ys.length < 2) return null; // NEW
-        ys.sort((a, b) => a - b); // NEW
-        return { y1: ys[0], y2: ys[ys.length - 1] }; // NEW
-    } // NEW
+    function polygonVerticalIntervalAt(poly, x) {
+        if (!poly || poly.length < 3) return null;
+        const ys = [];
+        for (const edge of polygonEdges(poly)) {
+            const a = edge[0], b = edge[1];
+            const minX = Math.min(a.x, b.x), maxX = Math.max(a.x, b.x);
+            if (x < minX - GEOM_EPS || x > maxX + GEOM_EPS) continue;
+            if (Math.abs(a.x - b.x) <= GEOM_EPS) {
+                ys.push(a.y, b.y);
+            } else {
+                const t = (x - a.x) / (b.x - a.x);
+                if (t >= -GEOM_EPS && t <= 1 + GEOM_EPS) ys.push(a.y + (b.y - a.y) * t);
+            }
+        }
+        if (ys.length < 2) return null;
+        ys.sort((a, b) => a - b);
+        return { y1: ys[0], y2: ys[ys.length - 1] };
+    }
 
-    function mergedIntervalLength(intervals) { // NEW
-        const sorted = intervals.filter(Boolean).sort((a, b) => a.y1 - b.y1); // NEW
-        if (!sorted.length) return 0; // NEW
-        let total = 0; // NEW
-        let start = sorted[0].y1, end = sorted[0].y2; // NEW
-        for (let i = 1; i < sorted.length; i++) { // NEW
-            const cur = sorted[i]; // NEW
-            if (cur.y1 <= end + GEOM_EPS) { // NEW
-                end = Math.max(end, cur.y2); // NEW
-            } else { // NEW
-                total += Math.max(0, end - start); // NEW
-                start = cur.y1; // NEW
-                end = cur.y2; // NEW
-            } // NEW
-        } // NEW
-        total += Math.max(0, end - start); // NEW
-        return total; // NEW
-    } // NEW
+    function mergedIntervalLength(intervals) {
+        const sorted = intervals.filter(Boolean).sort((a, b) => a.y1 - b.y1);
+        if (!sorted.length) return 0;
+        let total = 0;
+        let start = sorted[0].y1, end = sorted[0].y2;
+        for (let i = 1; i < sorted.length; i++) {
+            const cur = sorted[i];
+            if (cur.y1 <= end + GEOM_EPS) {
+                end = Math.max(end, cur.y2);
+            } else {
+                total += Math.max(0, end - start);
+                start = cur.y1;
+                end = cur.y2;
+            }
+        }
+        total += Math.max(0, end - start);
+        return total;
+    }
 
-    function unionAreaOfConvexPolygons(polys) { // NEW
-        const clipped = (polys || []).filter(poly => poly && poly.length >= 3 && polygonArea(poly) > GEOM_EPS); // NEW
-        if (!clipped.length) return 0; // NEW
-        const xs = []; // NEW
-        for (const poly of clipped) for (const p of poly) xs.push(p.x); // NEW
-        for (let i = 0; i < clipped.length; i++) { // NEW
-            const edgesA = polygonEdges(clipped[i]); // NEW
-            for (let j = i + 1; j < clipped.length; j++) { // NEW
-                const edgesB = polygonEdges(clipped[j]); // NEW
-                for (const a of edgesA) for (const b of edgesB) { // NEW
-                    const p = segmentIntersectionPoint(a[0], a[1], b[0], b[1]); // NEW
-                    if (p) xs.push(p.x); // NEW
-                } // NEW
-            } // NEW
-        } // NEW
-        const sortedXs = Array.from(new Set(xs.map(x => Math.round(x / GEOM_EPS) * GEOM_EPS))).sort((a, b) => a - b); // NEW
-        let area = 0; // NEW
-        for (let i = 0; i < sortedXs.length - 1; i++) { // NEW
-            const x1 = sortedXs[i], x2 = sortedXs[i + 1]; // NEW
-            const width = x2 - x1; // NEW
-            if (width <= GEOM_EPS) continue; // NEW
-            const pad = Math.min(width * 0.000001, GEOM_EPS); // NEW
-            const leftX = x1 + pad; // NEW
-            const rightX = x2 - pad; // NEW
-            const leftLen = mergedIntervalLength(clipped.map(poly => polygonVerticalIntervalAt(poly, leftX))); // NEW
-            const rightLen = mergedIntervalLength(clipped.map(poly => polygonVerticalIntervalAt(poly, rightX))); // NEW
-            area += width * (leftLen + rightLen) / 2; // NEW
-        } // NEW
-        return area > GEOM_EPS ? area : 0; // NEW
-    } // NEW
+    function unionAreaOfConvexPolygons(polys) {
+        const clipped = (polys || []).filter(poly => poly && poly.length >= 3 && polygonArea(poly) > GEOM_EPS);
+        if (!clipped.length) return 0;
+        const xs = [];
+        for (const poly of clipped) for (const p of poly) xs.push(p.x);
+        for (let i = 0; i < clipped.length; i++) {
+            const edgesA = polygonEdges(clipped[i]);
+            for (let j = i + 1; j < clipped.length; j++) {
+                const edgesB = polygonEdges(clipped[j]);
+                for (const a of edgesA) for (const b of edgesB) {
+                    const p = segmentIntersectionPoint(a[0], a[1], b[0], b[1]);
+                    if (p) xs.push(p.x);
+                }
+            }
+        }
+        const sortedXs = Array.from(new Set(xs.map(x => Math.round(x / GEOM_EPS) * GEOM_EPS))).sort((a, b) => a - b);
+        let area = 0;
+        for (let i = 0; i < sortedXs.length - 1; i++) {
+            const x1 = sortedXs[i], x2 = sortedXs[i + 1];
+            const width = x2 - x1;
+            if (width <= GEOM_EPS) continue;
+            const pad = Math.min(width * 0.000001, GEOM_EPS);
+            const leftX = x1 + pad;
+            const rightX = x2 - pad;
+            const leftLen = mergedIntervalLength(clipped.map(poly => polygonVerticalIntervalAt(poly, leftX)));
+            const rightLen = mergedIntervalLength(clipped.map(poly => polygonVerticalIntervalAt(poly, rightX)));
+            area += width * (leftLen + rightLen) / 2;
+        }
+        return area > GEOM_EPS ? area : 0;
+    }
 
-    function coveredAreaOfTargetByCells(targetCell, coverCells) { // NEW
-        const targetRect = getRotatedRectModel(targetCell); // NEW
-        if (!targetRect) return 0; // NEW
-        const targetPoly = rotatedRectCorners(targetRect); // NEW
-        const clippedPolys = []; // NEW
-        for (const cover of (coverCells || [])) { // NEW
-            const coverRect = getRotatedRectModel(cover); // NEW
-            if (!coverRect) continue; // NEW
-            const clipped = convexPolygonIntersection(rotatedRectCorners(coverRect), targetPoly); // NEW
-            if (clipped.length >= 3 && polygonArea(clipped) > GEOM_EPS) clippedPolys.push(clipped); // NEW
-        } // NEW
-        return unionAreaOfConvexPolygons(clippedPolys); // NEW
-    } // NEW
+    function coveredAreaOfTargetByCells(targetCell, coverCells) {
+        const targetRect = getRotatedRectModel(targetCell);
+        if (!targetRect) return 0;
+        const targetPoly = rotatedRectCorners(targetRect);
+        const clippedPolys = [];
+        for (const cover of (coverCells || [])) {
+            const coverRect = getRotatedRectModel(cover);
+            if (!coverRect) continue;
+            const clipped = convexPolygonIntersection(rotatedRectCorners(coverRect), targetPoly);
+            if (clipped.length >= 3 && polygonArea(clipped) > GEOM_EPS) clippedPolys.push(clipped);
+        }
+        return unionAreaOfConvexPolygons(clippedPolys);
+    }
 
-    function targetCoverageFractionByCells(targetCell, coverCells) { // NEW
-        const targetRect = getRotatedRectModel(targetCell); // NEW
-        const targetArea = rectAreaModel(targetRect); // NEW
-        if (targetArea <= 0) return 0; // NEW
-        return Math.min(1, coveredAreaOfTargetByCells(targetCell, coverCells) / targetArea); // NEW
-    } // NEW
+    function targetCoverageFractionByCells(targetCell, coverCells) {
+        const targetRect = getRotatedRectModel(targetCell);
+        const targetArea = rectAreaModel(targetRect);
+        if (targetArea <= 0) return 0;
+        return Math.min(1, coveredAreaOfTargetByCells(targetCell, coverCells) / targetArea);
+    }
 
-    function coverageFractionOfTargetCellsByCoverCells(targetCells, coverCells) { // NEW
-        const targetPolys = []; // NEW
-        for (const target of (targetCells || [])) { // NEW
-            const targetRect = getRotatedRectModel(target); // NEW
-            if (targetRect) targetPolys.push(rotatedRectCorners(targetRect)); // NEW
-        } // NEW
-        const targetArea = unionAreaOfConvexPolygons(targetPolys); // NEW
-        if (targetArea <= 0) return 0; // NEW
+    function coverageFractionOfTargetCellsByCoverCells(targetCells, coverCells) {
+        const targetPolys = [];
+        for (const target of (targetCells || [])) {
+            const targetRect = getRotatedRectModel(target);
+            if (targetRect) targetPolys.push(rotatedRectCorners(targetRect));
+        }
+        const targetArea = unionAreaOfConvexPolygons(targetPolys);
+        if (targetArea <= 0) return 0;
 
-        const coveredPolys = []; // NEW
-        for (const cover of (coverCells || [])) { // NEW
-            const coverRect = getRotatedRectModel(cover); // NEW
-            if (!coverRect) continue; // NEW
-            const coverPoly = rotatedRectCorners(coverRect); // NEW
-            for (const targetPoly of targetPolys) { // NEW
-                const clipped = convexPolygonIntersection(coverPoly, targetPoly); // NEW
-                if (clipped.length >= 3 && polygonArea(clipped) > GEOM_EPS) coveredPolys.push(clipped); // NEW
-            } // NEW
-        } // NEW
+        const coveredPolys = [];
+        for (const cover of (coverCells || [])) {
+            const coverRect = getRotatedRectModel(cover);
+            if (!coverRect) continue;
+            const coverPoly = rotatedRectCorners(coverRect);
+            for (const targetPoly of targetPolys) {
+                const clipped = convexPolygonIntersection(coverPoly, targetPoly);
+                if (clipped.length >= 3 && polygonArea(clipped) > GEOM_EPS) coveredPolys.push(clipped);
+            }
+        }
 
-        return Math.min(1, unionAreaOfConvexPolygons(coveredPolys) / targetArea); // NEW
-    } // NEW
+        return Math.min(1, unionAreaOfConvexPolygons(coveredPolys) / targetArea);
+    }
 
-    function significantOverlapRotatedRects(a, b) { // NEW
-        if (!a || !b) return false; // NEW
-        const ia = rotatedRectIntersectionArea(a, b); // NEW
-        if (ia <= 0) return false; // NEW
-        const aa = rectAreaModel(a), ab = rectAreaModel(b); // NEW
-        if (aa <= 0 || ab <= 0) return false; // NEW
+    function significantOverlapRotatedRects(a, b) {
+        if (!a || !b) return false;
+        const ia = rotatedRectIntersectionArea(a, b);
+        if (ia <= 0) return false;
+        const aa = rectAreaModel(a), ab = rectAreaModel(b);
+        if (aa <= 0 || ab <= 0) return false;
 
-        let denom; // NEW
-        if (OVERLAP_PCT_MODE === 'union') { // NEW
-            denom = aa + ab - ia; // NEW
-        } else { // NEW
-            denom = Math.min(aa, ab); // NEW
-        } // NEW
-        if (denom <= 0) return false; // NEW
-        return ia / denom >= OVERLAP_MIN_PCT; // NEW
-    } // NEW
+        let denom;
+        if (OVERLAP_PCT_MODE === 'union') {
+            denom = aa + ab - ia;
+        } else {
+            denom = Math.min(aa, ab);
+        }
+        if (denom <= 0) return false;
+        return ia / denom >= OVERLAP_MIN_PCT;
+    }
 
-    function significantOverlapCells(a, b) { // NEW
-        return significantOverlapRotatedRects(getRotatedRectModel(a), getRotatedRectModel(b)); // NEW
-    } // NEW
+    function significantOverlapCells(a, b) {
+        return significantOverlapRotatedRects(getRotatedRectModel(a), getRotatedRectModel(b));
+    }
 
-    function rotationValueFromStyleString(styleText) { // NEW
-        if (typeof styleText !== 'string') return null; // NEW
-        const parts = styleText.split(';'); // NEW
-        for (const part of parts) { // NEW
-            const idx = part.indexOf('='); // NEW
-            if (idx <= 0) continue; // NEW
-            const key = part.slice(0, idx); // NEW
-            if (key === mxConstants.STYLE_ROTATION || key === 'rotation') return part.slice(idx + 1); // NEW
-        } // NEW
-        return null; // NEW
-    } // NEW
+    function rotationValueFromStyleString(styleText) {
+        if (typeof styleText !== 'string') return null;
+        const parts = styleText.split(';');
+        for (const part of parts) {
+            const idx = part.indexOf('=');
+            if (idx <= 0) continue;
+            const key = part.slice(0, idx);
+            if (key === mxConstants.STYLE_ROTATION || key === 'rotation') return part.slice(idx + 1);
+        }
+        return null;
+    }
 
-    function styleChangeTouchesRotation(change) { // NEW
-        if (!change) return false; // NEW
-        if (change.key === mxConstants.STYLE_ROTATION || change.key === 'rotation') return true; // NEW
-        const before = rotationValueFromStyleString(change.previous); // NEW
-        const after = rotationValueFromStyleString(change.style); // NEW
-        return before !== after; // NEW
-    } // NEW
+    function styleChangeTouchesRotation(change) {
+        if (!change) return false;
+        if (change.key === mxConstants.STYLE_ROTATION || change.key === 'rotation') return true;
+        const before = rotationValueFromStyleString(change.previous);
+        const after = rotationValueFromStyleString(change.style);
+        return before !== after;
+    }
 
     // -------------------- Significant overlap (area-based) -------------------- 
     function rectArea(r) {
@@ -600,18 +600,18 @@ Draw.loadPlugin(function (ui) {
             cell.getAttribute('is_garden_bed') === '1';
     }
 
-    function isIrrigationBedAssembly(cell) { // NEW
-        return !!cell && !!cell.getAttribute && cell.getAttribute('irrigation_assembly') === '1' && cell.getAttribute('irrigation_assembly_type') === 'bed'; // NEW
-    } // NEW
+    function isIrrigationBedAssembly(cell) {
+        return !!cell && !!cell.getAttribute && cell.getAttribute('irrigation_assembly') === '1' && cell.getAttribute('irrigation_assembly_type') === 'bed';
+    }
 
-    function findIrrigationBedAssemblyAncestor(cell) { // NEW
-        let cur = cell; // NEW
-        while (cur) { // NEW
-            if (isIrrigationBedAssembly(cur)) return cur; // NEW
-            cur = model.getParent(cur); // NEW
-        } // NEW
-        return null; // NEW
-    } // NEW
+    function findIrrigationBedAssemblyAncestor(cell) {
+        let cur = cell;
+        while (cur) {
+            if (isIrrigationBedAssembly(cur)) return cur;
+            cur = model.getParent(cur);
+        }
+        return null;
+    }
 
     function rectContainsPoint(r, px, py) {
         if (!r) return false;
@@ -622,25 +622,25 @@ Draw.loadPlugin(function (ui) {
         return (!r) ? null : { x: r.x + r.w / 2, y: r.y + r.h / 2 };
     }
 
-    function findSmallestContainingBed(beds, bedBounds, point) { // CHANGE
-        if (!point) return null; // NEW
-        let chosen = null; // NEW
-        let chosenArea = Infinity; // NEW
-        for (let k = 0; k < beds.length; k++) { // NEW
-            const bed = beds[k]; // CHANGE
-            const rr = getRotatedRectModel(bed); // CHANGE
-            if (!rr && !bedBounds[k]) continue; // CHANGE
-            const contains = rr ? pointInRotatedRectModel(point, rr) : rectContainsPoint(bedBounds[k], point.x, point.y); // CHANGE
-            if (contains) { // CHANGE
-                const a = rr ? rectAreaModel(rr) : rectArea(bedBounds[k]); // CHANGE
-                if (a > 0 && a < chosenArea) { // NEW
-                    chosenArea = a; // NEW
-                    chosen = bed; // CHANGE
-                } // NEW
-            } // NEW
-        } // NEW
-        return chosen; // NEW
-    } // NEW
+    function findSmallestContainingBed(beds, bedBounds, point) {
+        if (!point) return null;
+        let chosen = null;
+        let chosenArea = Infinity;
+        for (let k = 0; k < beds.length; k++) {
+            const bed = beds[k];
+            const rr = getRotatedRectModel(bed);
+            if (!rr && !bedBounds[k]) continue;
+            const contains = rr ? pointInRotatedRectModel(point, rr) : rectContainsPoint(bedBounds[k], point.x, point.y);
+            if (contains) {
+                const a = rr ? rectAreaModel(rr) : rectArea(bedBounds[k]);
+                if (a > 0 && a < chosenArea) {
+                    chosenArea = a;
+                    chosen = bed;
+                }
+            }
+        }
+        return chosen;
+    }
 
     function significantOverlap(a, b) {
         if (!a || !b) return false;
@@ -687,26 +687,26 @@ Draw.loadPlugin(function (ui) {
         return null;
     }
 
-    // -------------------- Model-space geometry helpers -------------------- // CHANGE
+    // -------------------- Model-space geometry helpers --------------------
 
-    function getModelRect(cell) { // NEW
-        const g = cell ? model.getGeometry(cell) : null; // NEW
-        if (!g) return null; // NEW
-        return { // NEW
-            x: Number(g.x) || 0, // NEW
-            y: Number(g.y) || 0, // NEW
-            w: Number(g.width) || 0, // NEW
-            h: Number(g.height) || 0 // NEW
-        }; // NEW
-    } // NEW
+    function getModelRect(cell) {
+        const g = cell ? model.getGeometry(cell) : null;
+        if (!g) return null;
+        return {
+            x: Number(g.x) || 0,
+            y: Number(g.y) || 0,
+            w: Number(g.width) || 0,
+            h: Number(g.height) || 0
+        };
+    }
 
-    function rectCenterModel(rect) { // NEW
-        return rect ? { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 } : null; // NEW
-    } // NEW
+    function rectCenterModel(rect) {
+        return rect ? { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 } : null;
+    }
 
-    function rectAreaModel(rect) { // NEW
-        return rect ? Math.max(0, rect.w) * Math.max(0, rect.h) : 0; // NEW
-    } // NEW
+    function rectAreaModel(rect) {
+        return rect ? Math.max(0, rect.w) * Math.max(0, rect.h) : 0;
+    }
 
     // 1) Primary: block drop target at drag-time                                                  
     (function installBedDropBlock() {
@@ -767,11 +767,11 @@ Draw.loadPlugin(function (ui) {
     graph.addListener(mxEvent.CELLS_MOVED, function (sender, evt) {
         const cells = evt.getProperty('cells');
         enforceBedsNotInTilerGroups(cells);
-        rafDebounce(refreshAllForSelectionOrAnchor); // CHANGE
+        rafDebounce(refreshAllForSelectionOrAnchor);
     });
 
-    graph.addListener(mxEvent.CELLS_RESIZED, function () { // CHANGE
-        rafDebounce(refreshAllForSelectionOrAnchor); // NEW
+    graph.addListener(mxEvent.CELLS_RESIZED, function () {
+        rafDebounce(refreshAllForSelectionOrAnchor);
     });
 
 
@@ -832,7 +832,7 @@ Draw.loadPlugin(function (ui) {
         const imgV  = String(visible ? 100 : 0);
         const stroke = '100';
     
-        withUndoSuppressed(() => {                                     // NEW
+        withUndoSuppressed(() => {
             model.beginUpdate();
             try {
                 graph.setCellStyles('fillOpacity', fillV, cells);
@@ -842,7 +842,7 @@ Draw.loadPlugin(function (ui) {
             } finally {
                 model.endUpdate();
             }
-        });                                                            // NEW
+        });
     }
     
 
@@ -872,7 +872,7 @@ Draw.loadPlugin(function (ui) {
     // -------------------- Multi-cluster state --------------------
     // key -> { order: mxCell[], currentIdx: number, anchorId: string, btnPrev, btnNext, badge, dimmed:Set<mxCell> }
     const clusterStates = new Map();
-    const bedUnitSelectorState = { btnSelectBed: null, btnSelectPlantings: null, btnSelectBedAssembly: null, unit: null }; // NEW
+    const bedUnitSelectorState = { btnSelectBed: null, btnSelectPlantings: null, btnSelectBedAssembly: null, unit: null };
 
     function clusterKeyOf(members) {
         const ids = members.map(c => c.id || '').sort();
@@ -888,45 +888,45 @@ Draw.loadPlugin(function (ui) {
         });
     }
 
-    function coverageSetKey(ids) { // NEW
-        return (ids || []).slice().sort().join('|'); // NEW
-    } // NEW
+    function coverageSetKey(ids) {
+        return (ids || []).slice().sort().join('|');
+    }
 
-    function classifyTilerGroupForBeds(groupCell, beds) { // NEW
-        const rect = getRotatedRectModel(groupCell); // NEW
-        const containingBed = rect ? findSmallestContainingBed(beds, [], rect.center) : null; // NEW
-        if (containingBed && containingBed.id) { // NEW
-            return { type: 'contained', bedId: containingBed.id, coveredBedIds: [], coveredSetKey: '' }; // NEW
-        } // NEW
+    function classifyTilerGroupForBeds(groupCell, beds) {
+        const rect = getRotatedRectModel(groupCell);
+        const containingBed = rect ? findSmallestContainingBed(beds, [], rect.center) : null;
+        if (containingBed && containingBed.id) {
+            return { type: 'contained', bedId: containingBed.id, coveredBedIds: [], coveredSetKey: '' };
+        }
 
-        const coveredBedIds = []; // NEW
-        for (const bed of beds) { // NEW
-            if (!bed || !bed.id) continue; // NEW
-            if (targetCoverageFractionByCells(bed, [groupCell]) >= BED_COVERAGE_MIN_PCT) coveredBedIds.push(bed.id); // NEW
-        } // NEW
+        const coveredBedIds = [];
+        for (const bed of beds) {
+            if (!bed || !bed.id) continue;
+            if (targetCoverageFractionByCells(bed, [groupCell]) >= BED_COVERAGE_MIN_PCT) coveredBedIds.push(bed.id);
+        }
 
-        return { // NEW
-            type: coveredBedIds.length ? 'outside-covered' : 'outside', // NEW
-            bedId: null, // NEW
-            coveredBedIds, // NEW
-            coveredSetKey: coverageSetKey(coveredBedIds) // NEW
-        }; // NEW
-    } // NEW
+        return {
+            type: coveredBedIds.length ? 'outside-covered' : 'outside',
+            bedId: null,
+            coveredBedIds,
+            coveredSetKey: coverageSetKey(coveredBedIds)
+        };
+    }
 
-    function shouldClusterTilerGroups(a, b) { // CHANGE
-        return significantOverlapCells(a, b); // CHANGE
-    } // NEW
+    function shouldClusterTilerGroups(a, b) {
+        return significantOverlapCells(a, b);
+    }
 
     function buildAllComponentsInParent(parent) {
         const nodes = getSiblingsInParent(parent);
         const n = nodes.length;
-        if (n < 1) return []; // CHANGE
+        if (n < 1) return [];
 
         const adj = Array.from({ length: n }, () => []);
 
         for (let i = 0; i < n; i++) {
             for (let j = i + 1; j < n; j++) {
-                if (shouldClusterTilerGroups(nodes[i], nodes[j])) { // CHANGE
+                if (shouldClusterTilerGroups(nodes[i], nodes[j])) {
                     adj[i].push(j);
                     adj[j].push(i);
                 }
@@ -944,7 +944,7 @@ Draw.loadPlugin(function (ui) {
                 comp.push(nodes[v]);
                 for (const w of adj[v]) if (!seen[w]) { seen[w] = true; stack.push(w); }
             }
-            comps.push(comp); // CHANGE
+            comps.push(comp);
         }
         return comps;
     }
@@ -970,15 +970,15 @@ Draw.loadPlugin(function (ui) {
                 dimmed: new Set(),
                 btnDrag: null,
                 btnSelectAll: null,
-                btnSelectBed: null, // NEW
-                coveredTargetButtons: [], // CHANGE
+                btnSelectBed: null,
+                coveredTargetButtons: [],
             };
             clusterStates.set(key, st);
         } else {
             const oldAnchor = st.anchorId;
             st.order = order;
-            const preferredIdx = preferredAnchorId ? order.findIndex(c => c.id === preferredAnchorId) : -1; // CHANGE
-            const k = preferredIdx >= 0 ? preferredIdx : order.findIndex(c => c.id === oldAnchor); // CHANGE
+            const preferredIdx = preferredAnchorId ? order.findIndex(c => c.id === preferredAnchorId) : -1;
+            const k = preferredIdx >= 0 ? preferredIdx : order.findIndex(c => c.id === oldAnchor);
             st.currentIdx = k >= 0 ? k : 0;
             st.anchorId = st.order[st.currentIdx].id;
         }
@@ -997,77 +997,77 @@ Draw.loadPlugin(function (ui) {
         return (start && end && end >= start) ? { start, end } : null;
     }
 
-    function dateAttrISO(cell, attr) { // NEW
-        const raw = cell && cell.getAttribute ? cell.getAttribute(attr) : null; // NEW
-        const date = parseISO(raw); // NEW
-        return date ? date.toISOString().slice(0, 10) : null; // NEW
-    } // NEW
+    function dateAttrISO(cell, attr) {
+        const raw = cell && cell.getAttribute ? cell.getAttribute(attr) : null;
+        const date = parseISO(raw);
+        return date ? date.toISOString().slice(0, 10) : null;
+    }
 
-    function plantingOccupancyWindowOf(cell) { // NEW
-        const perennial = cell && cell.getAttribute && (cell.getAttribute('perennial') === '1' || cell.getAttribute('lifespan_start')); // ADDED
-        const startISO = perennial ? dateAttrISO(cell, 'lifespan_start') : (dateAttrISO(cell, 'transplant_date') || dateAttrISO(cell, 'sow_date')); // CHANGED
-        const endISO = perennial ? dateAttrISO(cell, 'lifespan_end') : dateAttrISO(cell, 'harvest_end'); // CHANGED
-        const start = startISO ? parseISO(startISO) : null; // NEW
-        const end = endISO ? parseISO(endISO) : null; // NEW
-        return start && end && end >= start ? { startISO, endISO } : { startISO: null, endISO: null }; // NEW
-    } // NEW
+    function plantingOccupancyWindowOf(cell) {
+        const perennial = cell && cell.getAttribute && (cell.getAttribute('perennial') === '1' || cell.getAttribute('lifespan_start'));
+        const startISO = perennial ? dateAttrISO(cell, 'lifespan_start') : (dateAttrISO(cell, 'transplant_date') || dateAttrISO(cell, 'sow_date'));
+        const endISO = perennial ? dateAttrISO(cell, 'lifespan_end') : dateAttrISO(cell, 'harvest_end');
+        const start = startISO ? parseISO(startISO) : null;
+        const end = endISO ? parseISO(endISO) : null;
+        return start && end && end >= start ? { startISO, endISO } : { startISO: null, endISO: null };
+    }
 
-    function derivedRelationshipFor(member, selected) { // ADDED
-        if (!member || !selected || !member.getAttribute) return null; // ADDED
-        const selectedId = String(selected.id || ''); // ADDED
-        const memberId = String(member.id || ''); // ADDED
-        const selectedSourceId = String(selected.getAttribute?.('derived_source_group_id') || '').trim(); // ADDED
-        const derivedCell = String(member.getAttribute('derived_source_group_id') || '').trim() === selectedId // CHANGED
-            ? member // ADDED
-            : (selectedSourceId && selectedSourceId === memberId ? selected : null); // ADDED
-        if (!derivedCell || !derivedCell.getAttribute) return null; // ADDED
-        const mode = String(derivedCell.getAttribute('derived_mode') || '').trim(); // CHANGED
-        if (!mode) return null; // ADDED
-        if (mode === 'companion') { // ADDED
-            return { // ADDED
-                mode, // ADDED
-                relationId: String(derivedCell.getAttribute('companion_relation_id') || ''), // CHANGED
-                rating: String(derivedCell.getAttribute('companion_rating') || ''), // CHANGED
-                companionType: String(derivedCell.getAttribute('companion_type') || ''), // CHANGED
-                startOffsetDays: String(derivedCell.getAttribute('companion_start_offset_days') || ''), // CHANGED
-                recommendedStartOffsetDays: String(derivedCell.getAttribute('companion_recommended_start_offset_days') || '') // CHANGED
-            }; // ADDED
-        } // ADDED
-        if (mode === 'turnover') { // ADDED
-            return { mode, gapDays: String(derivedCell.getAttribute('turnover_gap_days') || '') }; // CHANGED
-        } // ADDED
-        return null; // ADDED
-    } // ADDED
+    function derivedRelationshipFor(member, selected) {
+        if (!member || !selected || !member.getAttribute) return null;
+        const selectedId = String(selected.id || '');
+        const memberId = String(member.id || '');
+        const selectedSourceId = String(selected.getAttribute?.('derived_source_group_id') || '').trim();
+        const derivedCell = String(member.getAttribute('derived_source_group_id') || '').trim() === selectedId
+            ? member
+            : (selectedSourceId && selectedSourceId === memberId ? selected : null);
+        if (!derivedCell || !derivedCell.getAttribute) return null;
+        const mode = String(derivedCell.getAttribute('derived_mode') || '').trim();
+        if (!mode) return null;
+        if (mode === 'companion') {
+            return {
+                mode,
+                relationId: String(derivedCell.getAttribute('companion_relation_id') || ''),
+                rating: String(derivedCell.getAttribute('companion_rating') || ''),
+                companionType: String(derivedCell.getAttribute('companion_type') || ''),
+                startOffsetDays: String(derivedCell.getAttribute('companion_start_offset_days') || ''),
+                recommendedStartOffsetDays: String(derivedCell.getAttribute('companion_recommended_start_offset_days') || '')
+            };
+        }
+        if (mode === 'turnover') {
+            return { mode, gapDays: String(derivedCell.getAttribute('turnover_gap_days') || '') };
+        }
+        return null;
+    }
 
-    function plantingOccupancyLabel(cell) { // NEW
-        const plant = cell && cell.getAttribute ? (cell.getAttribute('plant_name') || cell.getAttribute('crop_name') || '') : ''; // NEW
-        const variety = cell && cell.getAttribute ? (cell.getAttribute('variety_name') || cell.getAttribute('variety') || '') : ''; // NEW
-        if (plant && variety) return plant + ' - ' + variety; // NEW
-        return plant || variety || (cell && cell.getAttribute && (cell.getAttribute('label') || cell.getAttribute('title'))) || (cell && cell.id) || 'Planting'; // NEW
-    } // NEW
+    function plantingOccupancyLabel(cell) {
+        const plant = cell && cell.getAttribute ? (cell.getAttribute('plant_name') || cell.getAttribute('crop_name') || '') : '';
+        const variety = cell && cell.getAttribute ? (cell.getAttribute('variety_name') || cell.getAttribute('variety') || '') : '';
+        if (plant && variety) return plant + ' - ' + variety;
+        return plant || variety || (cell && cell.getAttribute && (cell.getAttribute('label') || cell.getAttribute('title'))) || (cell && cell.id) || 'Planting';
+    }
 
-    function selectedClusterOccupancyFor(cell) { // NEW
-        const selected = findTilerGroupSelection(cell || graph.getSelectionCell()); // NEW
-        if (!selected) return { selectedId: null, items: [] }; // NEW
-        const parent = model.getParent(selected); // NEW
-        const components = parent ? buildAllComponentsInParent(parent) : []; // NEW
-        const component = components.find(members => members.some(member => member && member.id === selected.id)) || [selected]; // NEW
-        const order = orderComponentByTime(component); // NEW
-        return { // NEW
-            selectedId: selected.id, // NEW
-            items: order.map(member => { // NEW
-                const window = plantingOccupancyWindowOf(member); // NEW
-                return { cellId: member.id, label: plantingOccupancyLabel(member), startISO: window.startISO, endISO: window.endISO, relationship: derivedRelationshipFor(member, selected) }; // CHANGED
-            }) // NEW
-        }; // NEW
-    } // NEW
+    function selectedClusterOccupancyFor(cell) {
+        const selected = findTilerGroupSelection(cell || graph.getSelectionCell());
+        if (!selected) return { selectedId: null, items: [] };
+        const parent = model.getParent(selected);
+        const components = parent ? buildAllComponentsInParent(parent) : [];
+        const component = components.find(members => members.some(member => member && member.id === selected.id)) || [selected];
+        const order = orderComponentByTime(component);
+        return {
+            selectedId: selected.id,
+            items: order.map(member => {
+                const window = plantingOccupancyWindowOf(member);
+                return { cellId: member.id, label: plantingOccupancyLabel(member), startISO: window.startISO, endISO: window.endISO, relationship: derivedRelationshipFor(member, selected) };
+            })
+        };
+    }
 
     // -------------------- Per-cluster UI helpers --------------------
     function styleBtn(el) {
         el.style.position = 'absolute';
         el.style.width = BTN_SIZE + 'px';
         el.style.height = BTN_SIZE + 'px';
-        el.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL); // CHANGE
+        el.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL);
         el.style.cursor = 'pointer';
         el.style.pointerEvents = 'auto';
     }
@@ -1076,7 +1076,7 @@ Draw.loadPlugin(function (ui) {
         el.style.position = 'absolute';
         el.style.width = BTN_SIZE + 'px';
         el.style.height = BTN_SIZE + 'px';
-        el.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL); // CHANGE
+        el.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL);
         el.style.cursor = 'pointer';
         el.style.pointerEvents = 'auto';
         el.style.userSelect = 'none';
@@ -1098,108 +1098,108 @@ Draw.loadPlugin(function (ui) {
         return !!btn && btn.dataset.navEnabled === '1';
     }
 
-    function currentSelectionCells() { // NEW
-        return graph.getSelectionCells ? (graph.getSelectionCells() || []) : (graph.getSelectionCell && graph.getSelectionCell() ? [graph.getSelectionCell()] : []); // NEW
-    } // NEW
+    function currentSelectionCells() {
+        return graph.getSelectionCells ? (graph.getSelectionCells() || []) : (graph.getSelectionCell && graph.getSelectionCell() ? [graph.getSelectionCell()] : []);
+    }
 
-    function sameCellSet(a, b) { // NEW
-        const left = (a || []).map(c => c && c.id).filter(Boolean).sort(); // NEW
-        const right = (b || []).map(c => c && c.id).filter(Boolean).sort(); // NEW
-        if (left.length !== right.length) return false; // NEW
-        for (let i = 0; i < left.length; i++) if (left[i] !== right[i]) return false; // NEW
-        return true; // NEW
-    } // NEW
+    function sameCellSet(a, b) {
+        const left = (a || []).map(c => c && c.id).filter(Boolean).sort();
+        const right = (b || []).map(c => c && c.id).filter(Boolean).sort();
+        if (left.length !== right.length) return false;
+        for (let i = 0; i < left.length; i++) if (left[i] !== right[i]) return false;
+        return true;
+    }
 
-    function bedUnitSelectorButton(name, src, alt, title) { // CHANGE
-        const host = getHost(); // NEW
-        let b = bedUnitSelectorState[name]; // NEW
-        if (!b) { // NEW
-            b = document.createElement('img'); // NEW
-            styleSelectBtn(b); // NEW
-            b.draggable = false; // NEW
-            b.addEventListener('pointerdown', consumeEvt, { passive: false }); // NEW
-            b.addEventListener('mousedown', consumeEvt, { passive: false }); // NEW
-            b.addEventListener('click', function (evt) { consumeEvt(evt); selectBedUnitTarget(name); }); // CHANGE
-            bedUnitSelectorState[name] = b; // NEW
-        } // NEW
-        b.src = src; // NEW
-        b.alt = alt; // NEW
-        b.title = title; // NEW
-        if (b.parentNode !== host) host.appendChild(b); // NEW
-        return b; // NEW
-    } // NEW
+    function bedUnitSelectorButton(name, src, alt, title) {
+        const host = getHost();
+        let b = bedUnitSelectorState[name];
+        if (!b) {
+            b = document.createElement('img');
+            styleSelectBtn(b);
+            b.draggable = false;
+            b.addEventListener('pointerdown', consumeEvt, { passive: false });
+            b.addEventListener('mousedown', consumeEvt, { passive: false });
+            b.addEventListener('click', function (evt) { consumeEvt(evt); selectBedUnitTarget(name); });
+            bedUnitSelectorState[name] = b;
+        }
+        b.src = src;
+        b.alt = alt;
+        b.title = title;
+        if (b.parentNode !== host) host.appendChild(b);
+        return b;
+    }
 
-    function hideBedUnitSelectors() { // NEW
-        ['btnSelectBed', 'btnSelectPlantings', 'btnSelectBedAssembly'].forEach(name => { // NEW
-            const b = bedUnitSelectorState[name]; // NEW
-            if (b) b.style.display = 'none'; // NEW
-        }); // NEW
-        bedUnitSelectorState.unit = null; // NEW
-    } // NEW
+    function hideBedUnitSelectors() {
+        ['btnSelectBed', 'btnSelectPlantings', 'btnSelectBedAssembly'].forEach(name => {
+            const b = bedUnitSelectorState[name];
+            if (b) b.style.display = 'none';
+        });
+        bedUnitSelectorState.unit = null;
+    }
 
-    function visibleBedUnitSelectorCount() { // NEW
-        return ['btnSelectBed', 'btnSelectPlantings', 'btnSelectBedAssembly'].reduce((count, name) => { // NEW
-            const b = bedUnitSelectorState[name]; // NEW
-            return count + (b && b.style.display !== 'none' ? 1 : 0); // NEW
-        }, 0); // NEW
-    } // NEW
+    function visibleBedUnitSelectorCount() {
+        return ['btnSelectBed', 'btnSelectPlantings', 'btnSelectBedAssembly'].reduce((count, name) => {
+            const b = bedUnitSelectorState[name];
+            return count + (b && b.style.display !== 'none' ? 1 : 0);
+        }, 0);
+    }
 
-    function selectBedUnitCells(cells, bringToFront) { // NEW
-        const selected = (cells || []).filter(Boolean); // NEW
-        if (!selected.length) return; // NEW
-        const parent = model.getParent(selected[0]); // NEW
-        if (bringToFront) bringCellsToFrontTemporarilyInParent(parent, selected); // NEW
-        graph.setSelectionCells(selected); // NEW
-        if (parent) graph.refresh(parent); else graph.refresh(); // NEW
-        hideBedUnitSelectors(); // NEW
-    } // NEW
+    function selectBedUnitCells(cells, bringToFront) {
+        const selected = (cells || []).filter(Boolean);
+        if (!selected.length) return;
+        const parent = model.getParent(selected[0]);
+        if (bringToFront) bringCellsToFrontTemporarilyInParent(parent, selected);
+        graph.setSelectionCells(selected);
+        if (parent) graph.refresh(parent); else graph.refresh();
+        hideBedUnitSelectors();
+    }
 
-    function bedUnitTargetCells(name) { // NEW
-        const unit = bedUnitSelectorState.unit; // NEW
-        if (!unit) return []; // NEW
-        if (name === 'btnSelectBed') return unit.bed ? [unit.bed] : []; // NEW
-        if (name === 'btnSelectPlantings') return unit.plantingGroups || []; // NEW
-        if (name === 'btnSelectBedAssembly') return unit.bedAssemblies || []; // NEW
-        return []; // NEW
-    } // NEW
+    function bedUnitTargetCells(name) {
+        const unit = bedUnitSelectorState.unit;
+        if (!unit) return [];
+        if (name === 'btnSelectBed') return unit.bed ? [unit.bed] : [];
+        if (name === 'btnSelectPlantings') return unit.plantingGroups || [];
+        if (name === 'btnSelectBedAssembly') return unit.bedAssemblies || [];
+        return [];
+    }
 
-    function selectBedUnitTarget(name) { // NEW
-        selectBedUnitCells(bedUnitTargetCells(name), name === 'btnSelectBed' || name === 'btnSelectBedAssembly'); // CHANGE
-    } // NEW
+    function selectBedUnitTarget(name) {
+        selectBedUnitCells(bedUnitTargetCells(name), name === 'btnSelectBed' || name === 'btnSelectBedAssembly');
+    }
 
-    function updateBedUnitSelectorButton(name, targetCells, src, alt, title) { // CHANGE
-        const target = (targetCells || []).filter(Boolean); // NEW
-        const b = bedUnitSelectorButton(name, src, alt, title); // CHANGE
-        b.style.display = target.length && !sameCellSet(currentSelectionCells(), target) ? '' : 'none'; // NEW
-        return b; // NEW
-    } // NEW
+    function updateBedUnitSelectorButton(name, targetCells, src, alt, title) {
+        const target = (targetCells || []).filter(Boolean);
+        const b = bedUnitSelectorButton(name, src, alt, title);
+        b.style.display = target.length && !sameCellSet(currentSelectionCells(), target) ? '' : 'none';
+        return b;
+    }
 
-    function renderBedUnitSelectors(unit) { // NEW
-        hideBedUnitSelectors(); // NEW
-        if (!unit || !unit.bed || !unit.cells || unit.cells.length < 2) return; // NEW
-        bedUnitSelectorState.unit = unit; // NEW
-        updateBedUnitSelectorButton('btnSelectBed', [unit.bed], ICON_SELECT_BEDS, 'Select bed', 'Select containing garden bed'); // CHANGE
-        updateBedUnitSelectorButton('btnSelectPlantings', unit.plantingGroups, ICON_SELECT, 'Select plantings', 'Select planting groups in this bed'); // CHANGE
-        updateBedUnitSelectorButton('btnSelectBedAssembly', unit.bedAssemblies, ICON_SELECT_ASSEMBLY, 'Select irrigation assembly', 'Select bed irrigation assembly'); // CHANGE
-        positionBedUnitSelectors(); // NEW
-    } // NEW
+    function renderBedUnitSelectors(unit) {
+        hideBedUnitSelectors();
+        if (!unit || !unit.bed || !unit.cells || unit.cells.length < 2) return;
+        bedUnitSelectorState.unit = unit;
+        updateBedUnitSelectorButton('btnSelectBed', [unit.bed], ICON_SELECT_BEDS, 'Select bed', 'Select containing garden bed');
+        updateBedUnitSelectorButton('btnSelectPlantings', unit.plantingGroups, ICON_SELECT, 'Select plantings', 'Select planting groups in this bed');
+        updateBedUnitSelectorButton('btnSelectBedAssembly', unit.bedAssemblies, ICON_SELECT_ASSEMBLY, 'Select irrigation assembly', 'Select bed irrigation assembly');
+        positionBedUnitSelectors();
+    }
 
-    function bedUnitPlantingsMatchCluster(members) { // NEW
-        return sameCellSet(members, bedUnitTargetCells('btnSelectPlantings')); // NEW
-    } // NEW
+    function bedUnitPlantingsMatchCluster(members) {
+        return sameCellSet(members, bedUnitTargetCells('btnSelectPlantings'));
+    }
 
-    function positionBedUnitSelectors() { // NEW
-        const unit = bedUnitSelectorState.unit; // NEW
-        const box = unit && viewBBoxForCells(unit.cells); // NEW
-        if (!box) { hideBedUnitSelectors(); return; } // NEW
-        const visible = ['btnSelectBed', 'btnSelectPlantings', 'btnSelectBedAssembly'].map(name => bedUnitSelectorState[name]).filter(b => b && b.style.display !== 'none'); // NEW
-        const baseX = Math.max(0, Math.round(box.x - BTN_SIZE - BTN_INSET + SELECT_BUTTON_DRAG_HANDLE_SLOT)); // CHANGE
-        const y = Math.round(box.y - BTN_SIZE - BTN_INSET); // NEW
-        visible.forEach((b, index) => { // NEW
-            b.style.left = Math.round(baseX + index * (BTN_SIZE + SELECT_BUTTON_GAP)) + 'px'; // NEW
-            b.style.top = y + 'px'; // NEW
-        }); // NEW
-    } // NEW
+    function positionBedUnitSelectors() {
+        const unit = bedUnitSelectorState.unit;
+        const box = unit && viewBBoxForCells(unit.cells);
+        if (!box) { hideBedUnitSelectors(); return; }
+        const visible = ['btnSelectBed', 'btnSelectPlantings', 'btnSelectBedAssembly'].map(name => bedUnitSelectorState[name]).filter(b => b && b.style.display !== 'none');
+        const baseX = Math.max(0, Math.round(box.x - BTN_SIZE - BTN_INSET + SELECT_BUTTON_DRAG_HANDLE_SLOT));
+        const y = Math.round(box.y - BTN_SIZE - BTN_INSET);
+        visible.forEach((b, index) => {
+            b.style.left = Math.round(baseX + index * (BTN_SIZE + SELECT_BUTTON_GAP)) + 'px';
+            b.style.top = y + 'px';
+        });
+    }
 
 
     function ensureButtonsFor(key) {
@@ -1280,250 +1280,250 @@ Draw.loadPlugin(function (ui) {
         st.btnSelectAll.style.display = '';
     }
 
-    function containedBedForCluster(key) { // NEW
-        const st = clusterStates.get(key); if (!st || !st.order || !st.order.length) return null; // NEW
-        const parent = model.getParent(st.order[0]); // NEW
-        if (!parent) return null; // NEW
-        const beds = (graph.getChildVertices(parent) || []).filter(isGardenBed); // NEW
-        const bedId = containedBedIdForComponent(st.order, beds); // NEW
-        if (!bedId) return null; // NEW
-        const bed = model.getCell(bedId); // NEW
-        return bed && model.isVertex(bed) && isGardenBed(bed) ? bed : null; // NEW
-    } // NEW
+    function containedBedForCluster(key) {
+        const st = clusterStates.get(key); if (!st || !st.order || !st.order.length) return null;
+        const parent = model.getParent(st.order[0]);
+        if (!parent) return null;
+        const beds = (graph.getChildVertices(parent) || []).filter(isGardenBed);
+        const bedId = containedBedIdForComponent(st.order, beds);
+        if (!bedId) return null;
+        const bed = model.getCell(bedId);
+        return bed && model.isVertex(bed) && isGardenBed(bed) ? bed : null;
+    }
 
-    function selectContainedBedForCluster(key) { // NEW
-        const st = clusterStates.get(key); if (!st || !st.order || !st.order.length) return; // NEW
-        const bed = containedBedForCluster(key); // NEW
-        if (!bed) return; // NEW
-        const parent = model.getParent(st.order[0]); // NEW
-        bringCellsToFrontTemporarilyInParent(parent, [bed]); // NEW
-        clearVisibilityFor(key); // NEW
-        graph.setSelectionCells([bed]); // NEW
-        if (parent) graph.refresh(parent); else graph.refresh(); // NEW
-        hideUIFor(key); // NEW
-    } // NEW
+    function selectContainedBedForCluster(key) {
+        const st = clusterStates.get(key); if (!st || !st.order || !st.order.length) return;
+        const bed = containedBedForCluster(key);
+        if (!bed) return;
+        const parent = model.getParent(st.order[0]);
+        bringCellsToFrontTemporarilyInParent(parent, [bed]);
+        clearVisibilityFor(key);
+        graph.setSelectionCells([bed]);
+        if (parent) graph.refresh(parent); else graph.refresh();
+        hideUIFor(key);
+    }
 
-    function ensureContainedBedSelectorFor(key) { // NEW
-        const host = getHost(); // NEW
-        const st = clusterStates.get(key); if (!st) return; // NEW
-        const bed = containedBedForCluster(key); // NEW
-        if (!bed) { // NEW
-            if (st.btnSelectBed) st.btnSelectBed.style.display = 'none'; // NEW
-            return; // NEW
-        } // NEW
+    function ensureContainedBedSelectorFor(key) {
+        const host = getHost();
+        const st = clusterStates.get(key); if (!st) return;
+        const bed = containedBedForCluster(key);
+        if (!bed) {
+            if (st.btnSelectBed) st.btnSelectBed.style.display = 'none';
+            return;
+        }
 
-        if (!st.btnSelectBed) { // NEW
-            const b = document.createElement('img'); // NEW
-            b.src = ICON_SELECT_BEDS; // NEW
-            b.alt = 'Select bed'; // NEW
-            styleSelectBtn(b); // NEW
-            b.title = 'Select containing garden bed'; // NEW
-            b.draggable = false; // NEW
-            b.addEventListener('pointerdown', consumeEvt, { passive: false }); // NEW
-            b.addEventListener('mousedown', consumeEvt, { passive: false }); // NEW
-            b.addEventListener('click', function (evt) { // NEW
-                consumeEvt(evt); // NEW
-                selectContainedBedForCluster(key); // NEW
-            }); // NEW
-            host.appendChild(b); // NEW
-            st.btnSelectBed = b; // NEW
-        } else if (st.btnSelectBed.parentNode !== host) { // NEW
-            host.appendChild(st.btnSelectBed); // NEW
-        } // NEW
+        if (!st.btnSelectBed) {
+            const b = document.createElement('img');
+            b.src = ICON_SELECT_BEDS;
+            b.alt = 'Select bed';
+            styleSelectBtn(b);
+            b.title = 'Select containing garden bed';
+            b.draggable = false;
+            b.addEventListener('pointerdown', consumeEvt, { passive: false });
+            b.addEventListener('mousedown', consumeEvt, { passive: false });
+            b.addEventListener('click', function (evt) {
+                consumeEvt(evt);
+                selectContainedBedForCluster(key);
+            });
+            host.appendChild(b);
+            st.btnSelectBed = b;
+        } else if (st.btnSelectBed.parentNode !== host) {
+            host.appendChild(st.btnSelectBed);
+        }
 
-        st.btnSelectBed.style.display = ''; // NEW
-    } // NEW
+        st.btnSelectBed.style.display = '';
+    }
 
-    function removeCoveredTargetSelectorsFor(key) { // NEW
-        const st = clusterStates.get(key); if (!st) return; // NEW
-        for (const item of (st.coveredTargetButtons || [])) { // NEW
-            if (item.el && item.el.parentNode) item.el.parentNode.removeChild(item.el); // NEW
-        } // NEW
-        st.coveredTargetButtons = []; // NEW
-    } // NEW
+    function removeCoveredTargetSelectorsFor(key) {
+        const st = clusterStates.get(key); if (!st) return;
+        for (const item of (st.coveredTargetButtons || [])) {
+            if (item.el && item.el.parentNode) item.el.parentNode.removeChild(item.el);
+        }
+        st.coveredTargetButtons = [];
+    }
 
-    function viewBBoxForCells(cells) { // NEW
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity; // NEW
-        for (const cell of (cells || [])) { // NEW
-            const s = getState(cell); // NEW
-            if (!s) continue; // NEW
-            minX = Math.min(minX, s.x); // NEW
-            minY = Math.min(minY, s.y); // NEW
-            maxX = Math.max(maxX, s.x + s.width); // NEW
-            maxY = Math.max(maxY, s.y + s.height); // NEW
-        } // NEW
-        if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) return null; // NEW
-        return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }; // NEW
-    } // NEW
+    function viewBBoxForCells(cells) {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const cell of (cells || [])) {
+            const s = getState(cell);
+            if (!s) continue;
+            minX = Math.min(minX, s.x);
+            minY = Math.min(minY, s.y);
+            maxX = Math.max(maxX, s.x + s.width);
+            maxY = Math.max(maxY, s.y + s.height);
+        }
+        if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) return null;
+        return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    }
 
-    function bboxCenter(box) { // NEW
-        return box ? { x: box.x + box.w / 2, y: box.y + box.h / 2 } : null; // NEW
-    } // NEW
+    function bboxCenter(box) {
+        return box ? { x: box.x + box.w / 2, y: box.y + box.h / 2 } : null;
+    }
 
-    function clampNumber(value, min, max) { // NEW
-        return Math.max(min, Math.min(max, value)); // NEW
-    } // NEW
+    function clampNumber(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+    }
 
-    function containedBedIdForComponent(members, beds) { // NEW
-        let bedId = null; // NEW
-        for (const member of (members || [])) { // NEW
-            const meta = classifyTilerGroupForBeds(member, beds); // NEW
-            if (meta.type !== 'contained' || !meta.bedId) return null; // NEW
-            if (bedId && bedId !== meta.bedId) return null; // NEW
-            bedId = meta.bedId; // NEW
-        } // NEW
-        return bedId; // NEW
-    } // NEW
+    function containedBedIdForComponent(members, beds) {
+        let bedId = null;
+        for (const member of (members || [])) {
+            const meta = classifyTilerGroupForBeds(member, beds);
+            if (meta.type !== 'contained' || !meta.bedId) return null;
+            if (bedId && bedId !== meta.bedId) return null;
+            bedId = meta.bedId;
+        }
+        return bedId;
+    }
 
-    function resolveOccupiedBedAnchor(cell) { // NEW
-        if (!cell || !model.isVertex(cell)) return null; // NEW
-        if (isGardenBed(cell)) return cell; // NEW
-        const assembly = findIrrigationBedAssemblyAncestor(cell); // NEW
-        if (assembly) return containingBedForIrrigationAssembly(assembly); // NEW
-        const group = findTilerGroupSelection(cell); // NEW
-        if (!group) return null; // NEW
-        const parent = model.getParent(group); // NEW
-        if (!parent) return null; // NEW
-        const beds = (graph.getChildVertices(parent) || []).filter(isGardenBed); // NEW
-        const meta = classifyTilerGroupForBeds(group, beds); // NEW
-        if (meta.type !== 'contained' || !meta.bedId) return null; // NEW
-        const bed = model.getCell(meta.bedId); // NEW
-        return bed && model.isVertex(bed) && isGardenBed(bed) ? bed : null; // NEW
-    } // NEW
+    function resolveOccupiedBedAnchor(cell) {
+        if (!cell || !model.isVertex(cell)) return null;
+        if (isGardenBed(cell)) return cell;
+        const assembly = findIrrigationBedAssemblyAncestor(cell);
+        if (assembly) return containingBedForIrrigationAssembly(assembly);
+        const group = findTilerGroupSelection(cell);
+        if (!group) return null;
+        const parent = model.getParent(group);
+        if (!parent) return null;
+        const beds = (graph.getChildVertices(parent) || []).filter(isGardenBed);
+        const meta = classifyTilerGroupForBeds(group, beds);
+        if (meta.type !== 'contained' || !meta.bedId) return null;
+        const bed = model.getCell(meta.bedId);
+        return bed && model.isVertex(bed) && isGardenBed(bed) ? bed : null;
+    }
 
-    function containingBedForIrrigationAssembly(assembly) { // NEW
-        const directParent = model.getParent(assembly); // NEW
-        if (directParent && isGardenBed(directParent)) return directParent; // NEW
-        const parent = directParent || graph.getDefaultParent && graph.getDefaultParent(); // NEW
-        if (!parent) return null; // NEW
-        const beds = (graph.getChildVertices(parent) || []).filter(isGardenBed); // NEW
-        const rect = getRotatedRectModel(assembly); // NEW
-        const bed = rect ? findSmallestContainingBed(beds, [], rect.center) : null; // NEW
-        return bed && model.isVertex(bed) && isGardenBed(bed) ? bed : null; // NEW
-    } // NEW
+    function containingBedForIrrigationAssembly(assembly) {
+        const directParent = model.getParent(assembly);
+        if (directParent && isGardenBed(directParent)) return directParent;
+        const parent = directParent || graph.getDefaultParent && graph.getDefaultParent();
+        if (!parent) return null;
+        const beds = (graph.getChildVertices(parent) || []).filter(isGardenBed);
+        const rect = getRotatedRectModel(assembly);
+        const bed = rect ? findSmallestContainingBed(beds, [], rect.center) : null;
+        return bed && model.isVertex(bed) && isGardenBed(bed) ? bed : null;
+    }
 
-    function containedPlantingGroupsForBed(bed) { // NEW
-        const parent = bed && model.getParent(bed); // NEW
-        if (!parent) return []; // NEW
-        const beds = (graph.getChildVertices(parent) || []).filter(isGardenBed); // NEW
-        return (graph.getChildVertices(parent) || []).filter(cell => { // NEW
-            if (!isTilerGroup(cell)) return false; // NEW
-            const meta = classifyTilerGroupForBeds(cell, beds); // NEW
-            return meta.type === 'contained' && meta.bedId === bed.id; // NEW
-        }); // NEW
-    } // NEW
+    function containedPlantingGroupsForBed(bed) {
+        const parent = bed && model.getParent(bed);
+        if (!parent) return [];
+        const beds = (graph.getChildVertices(parent) || []).filter(isGardenBed);
+        return (graph.getChildVertices(parent) || []).filter(cell => {
+            if (!isTilerGroup(cell)) return false;
+            const meta = classifyTilerGroupForBeds(cell, beds);
+            return meta.type === 'contained' && meta.bedId === bed.id;
+        });
+    }
 
-    function uniqueCells(cells) { // NEW
-        const seen = new Set(); // NEW
-        const out = []; // NEW
-        for (const cell of (cells || [])) { // NEW
-            const id = cell && cell.id; // NEW
-            if (!id || seen.has(id)) continue; // NEW
-            seen.add(id); // NEW
-            out.push(cell); // NEW
-        } // NEW
-        return out; // NEW
-    } // NEW
+    function uniqueCells(cells) {
+        const seen = new Set();
+        const out = [];
+        for (const cell of (cells || [])) {
+            const id = cell && cell.id;
+            if (!id || seen.has(id)) continue;
+            seen.add(id);
+            out.push(cell);
+        }
+        return out;
+    }
 
-    function containedBedAssembliesForBed(bed) { // NEW
-        const parent = bed && model.getParent(bed); // NEW
-        const candidates = []; // NEW
-        if (parent) candidates.push(...(graph.getChildVertices(parent) || []).filter(isIrrigationBedAssembly)); // NEW
-        candidates.push(...(graph.getChildVertices(bed) || []).filter(isIrrigationBedAssembly)); // NEW
-        return uniqueCells(candidates).filter(assembly => containingBedForIrrigationAssembly(assembly) === bed); // NEW
-    } // NEW
+    function containedBedAssembliesForBed(bed) {
+        const parent = bed && model.getParent(bed);
+        const candidates = [];
+        if (parent) candidates.push(...(graph.getChildVertices(parent) || []).filter(isIrrigationBedAssembly));
+        candidates.push(...(graph.getChildVertices(bed) || []).filter(isIrrigationBedAssembly));
+        return uniqueCells(candidates).filter(assembly => containingBedForIrrigationAssembly(assembly) === bed);
+    }
 
-    function resolveOccupiedBedMoveUnit(cell) { // NEW
-        const bed = resolveOccupiedBedAnchor(cell); // NEW
-        if (!bed) return null; // NEW
-        const bedAssemblies = containedBedAssembliesForBed(bed); // NEW
-        const plantingGroups = containedPlantingGroupsForBed(bed); // CHANGE
-        if (!bedAssemblies.length && !plantingGroups.length) return null; // CHANGE
-        return { bed, bedAssemblies, plantingGroups, cells: [bed].concat(bedAssemblies, plantingGroups) }; // CHANGE
-    } // NEW
+    function resolveOccupiedBedMoveUnit(cell) {
+        const bed = resolveOccupiedBedAnchor(cell);
+        if (!bed) return null;
+        const bedAssemblies = containedBedAssembliesForBed(bed);
+        const plantingGroups = containedPlantingGroupsForBed(bed);
+        if (!bedAssemblies.length && !plantingGroups.length) return null;
+        return { bed, bedAssemblies, plantingGroups, cells: [bed].concat(bedAssemblies, plantingGroups) };
+    }
 
-    function makeCoveredPlantTarget(component, coverKey, coverCells) { // NEW
-        if (!component || !component.length || clusterKeyOf(component) === coverKey) return null; // NEW
-        const fraction = coverageFractionOfTargetCellsByCoverCells(component, coverCells); // NEW
-        if (fraction < COVERED_TARGET_MIN_PCT) return null; // NEW
-        return { type: 'plant', cells: component.slice(), fraction }; // NEW
-    } // NEW
+    function makeCoveredPlantTarget(component, coverKey, coverCells) {
+        if (!component || !component.length || clusterKeyOf(component) === coverKey) return null;
+        const fraction = coverageFractionOfTargetCellsByCoverCells(component, coverCells);
+        if (fraction < COVERED_TARGET_MIN_PCT) return null;
+        return { type: 'plant', cells: component.slice(), fraction };
+    }
 
-    function coveredTargetsForCluster(key, components) { // NEW
-        const st = clusterStates.get(key); if (!st || !st.order || !st.order.length) return []; // NEW
-        const parent = model.getParent(st.order[0]); // NEW
-        if (!parent) return []; // NEW
-        const coverCells = st.order.slice(); // NEW
-        const coverKey = clusterKeyOf(coverCells); // NEW
-        const beds = (graph.getChildVertices(parent) || []).filter(isGardenBed); // NEW
-        const targets = []; // NEW
-        const coveredPlantBedIds = new Set(); // NEW
-        const occupiedBedIds = new Set(); // NEW
+    function coveredTargetsForCluster(key, components) {
+        const st = clusterStates.get(key); if (!st || !st.order || !st.order.length) return [];
+        const parent = model.getParent(st.order[0]);
+        if (!parent) return [];
+        const coverCells = st.order.slice();
+        const coverKey = clusterKeyOf(coverCells);
+        const beds = (graph.getChildVertices(parent) || []).filter(isGardenBed);
+        const targets = [];
+        const coveredPlantBedIds = new Set();
+        const occupiedBedIds = new Set();
 
-        for (const component of (components || [])) { // NEW
-            const bedId = containedBedIdForComponent(component, beds); // NEW
-            if (bedId) occupiedBedIds.add(bedId); // NEW
-            const target = makeCoveredPlantTarget(component, coverKey, coverCells); // NEW
-            if (!target) continue; // NEW
-            if (bedId) coveredPlantBedIds.add(bedId); // NEW
-            targets.push(target); // NEW
-        } // NEW
+        for (const component of (components || [])) {
+            const bedId = containedBedIdForComponent(component, beds);
+            if (bedId) occupiedBedIds.add(bedId);
+            const target = makeCoveredPlantTarget(component, coverKey, coverCells);
+            if (!target) continue;
+            if (bedId) coveredPlantBedIds.add(bedId);
+            targets.push(target);
+        }
 
-        for (const bed of beds) { // NEW
-            if (!bed || !bed.id || occupiedBedIds.has(bed.id) || coveredPlantBedIds.has(bed.id)) continue; // NEW
-            if (targetCoverageFractionByCells(bed, coverCells) >= COVERED_TARGET_MIN_PCT) targets.push({ type: 'bed', cells: [bed], bed }); // NEW
-        } // NEW
+        for (const bed of beds) {
+            if (!bed || !bed.id || occupiedBedIds.has(bed.id) || coveredPlantBedIds.has(bed.id)) continue;
+            if (targetCoverageFractionByCells(bed, coverCells) >= COVERED_TARGET_MIN_PCT) targets.push({ type: 'bed', cells: [bed], bed });
+        }
 
-        return targets; // NEW
-    } // NEW
+        return targets;
+    }
 
-    function coveredTargetLabel(target) { // NEW
-        if (!target) return 'Select covered target'; // NEW
-        if (target.type === 'bed') return 'Select covered garden bed'; // NEW
-        return target.cells && target.cells.length > 1 ? 'Select covered plant cluster' : 'Select covered plant group'; // NEW
-    } // NEW
+    function coveredTargetLabel(target) {
+        if (!target) return 'Select covered target';
+        if (target.type === 'bed') return 'Select covered garden bed';
+        return target.cells && target.cells.length > 1 ? 'Select covered plant cluster' : 'Select covered plant group';
+    }
 
-    function selectCoveredTarget(key, target) { // NEW
-        const st = clusterStates.get(key); // NEW
-        if (!st || !target || !target.cells || !target.cells.length) return; // NEW
-        const parent = model.getParent(st.order[0]); // NEW
-        clearVisibilityFor(key); // NEW
-        if (target.type === 'bed') { // NEW
-            bringCellsToFrontTemporarilyInParent(parent, target.cells); // NEW
-            graph.setSelectionCells(target.cells); // NEW
-        } else if (target.cells.length === 1) { // NEW
-            bringToFrontAndSelect(target.cells[0]); // NEW
-        } else { // NEW
-            graph.setSelectionCells(target.cells); // NEW
-        } // NEW
-        if (parent) graph.refresh(parent); else graph.refresh(); // CHANGE
-        hideUIFor(key); // NEW
-    } // NEW
+    function selectCoveredTarget(key, target) {
+        const st = clusterStates.get(key);
+        if (!st || !target || !target.cells || !target.cells.length) return;
+        const parent = model.getParent(st.order[0]);
+        clearVisibilityFor(key);
+        if (target.type === 'bed') {
+            bringCellsToFrontTemporarilyInParent(parent, target.cells);
+            graph.setSelectionCells(target.cells);
+        } else if (target.cells.length === 1) {
+            bringToFrontAndSelect(target.cells[0]);
+        } else {
+            graph.setSelectionCells(target.cells);
+        }
+        if (parent) graph.refresh(parent); else graph.refresh();
+        hideUIFor(key);
+    }
 
-    function ensureCoveredTargetSelectorsFor(key, components) { // NEW
-        const host = getHost(); // NEW
-        const st = clusterStates.get(key); if (!st) return; // NEW
-        removeCoveredTargetSelectorsFor(key); // NEW
-        const targets = coveredTargetsForCluster(key, components); // NEW
-        if (!targets.length) return; // NEW
-        for (const target of targets) { // NEW
-            const b = document.createElement('img'); // NEW
-            b.src = target.type === 'bed' ? ICON_SELECT_BEDS : ICON_SELECT; // NEW
-            b.alt = 'Select covered target'; // NEW
-            styleSelectBtn(b); // NEW
-            b.title = coveredTargetLabel(target); // NEW
-            b.draggable = false; // NEW
-            b.addEventListener('pointerdown', consumeEvt, { passive: false }); // NEW
-            b.addEventListener('mousedown', consumeEvt, { passive: false }); // NEW
-            b.addEventListener('click', function (evt) { // NEW
-                consumeEvt(evt); // NEW
-                selectCoveredTarget(key, target); // NEW
-            }); // NEW
-            host.appendChild(b); // NEW
-            st.coveredTargetButtons.push({ el: b, target }); // NEW
-        } // NEW
-        positionCoveredTargetSelectorsFor(key); // NEW
-    } // NEW
+    function ensureCoveredTargetSelectorsFor(key, components) {
+        const host = getHost();
+        const st = clusterStates.get(key); if (!st) return;
+        removeCoveredTargetSelectorsFor(key);
+        const targets = coveredTargetsForCluster(key, components);
+        if (!targets.length) return;
+        for (const target of targets) {
+            const b = document.createElement('img');
+            b.src = target.type === 'bed' ? ICON_SELECT_BEDS : ICON_SELECT;
+            b.alt = 'Select covered target';
+            styleSelectBtn(b);
+            b.title = coveredTargetLabel(target);
+            b.draggable = false;
+            b.addEventListener('pointerdown', consumeEvt, { passive: false });
+            b.addEventListener('mousedown', consumeEvt, { passive: false });
+            b.addEventListener('click', function (evt) {
+                consumeEvt(evt);
+                selectCoveredTarget(key, target);
+            });
+            host.appendChild(b);
+            st.coveredTargetButtons.push({ el: b, target });
+        }
+        positionCoveredTargetSelectorsFor(key);
+    }
 
     function ensureBadgeFor(key) {
         const host = getHost();
@@ -1531,7 +1531,7 @@ Draw.loadPlugin(function (ui) {
         if (!st.badge) {
             const b = document.createElement('div');
             b.style.position = 'absolute';
-            b.style.zIndex = String(GRAPH_OVERLAY_Z.ANNOTATION); // CHANGE
+            b.style.zIndex = String(GRAPH_OVERLAY_Z.ANNOTATION);
             b.style.padding = '2px 6px';
             b.style.font = '12px/16px sans-serif';
             b.style.background = 'rgba(255,255,255,0.9)';
@@ -1554,10 +1554,10 @@ Draw.loadPlugin(function (ui) {
         if (st.btnNext) st.btnNext.style.display = 'none';
         if (st.badge) st.badge.style.display = 'none';
         if (st.btnSelectAll) st.btnSelectAll.style.display = 'none';
-        if (st.btnSelectBed) st.btnSelectBed.style.display = 'none'; // NEW
-        if (st.btnSelectPlantings) st.btnSelectPlantings.style.display = 'none'; // NEW
-        if (st.btnSelectBedAssembly) st.btnSelectBedAssembly.style.display = 'none'; // NEW
-        removeCoveredTargetSelectorsFor(key); // CHANGE
+        if (st.btnSelectBed) st.btnSelectBed.style.display = 'none';
+        if (st.btnSelectPlantings) st.btnSelectPlantings.style.display = 'none';
+        if (st.btnSelectBedAssembly) st.btnSelectBedAssembly.style.display = 'none';
+        removeCoveredTargetSelectorsFor(key);
 
     }
 
@@ -1578,24 +1578,24 @@ Draw.loadPlugin(function (ui) {
         return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
     }
 
-    function positionCoveredTargetSelectorsFor(key) { // NEW
-        const st = clusterStates.get(key); if (!st || !st.coveredTargetButtons || !st.coveredTargetButtons.length) return; // NEW
-        const coverBox = getClusterBBox(key); // NEW
-        if (!coverBox) { removeCoveredTargetSelectorsFor(key); return; } // NEW
-        for (const item of st.coveredTargetButtons) { // NEW
-            const el = item.el; // NEW
-            const targetBox = viewBBoxForCells(item.target && item.target.cells); // NEW
-            const center = bboxCenter(targetBox); // NEW
-            if (!el || !center) continue; // NEW
-            const minLeft = coverBox.x; // NEW
-            const maxLeft = coverBox.x + Math.max(0, coverBox.w - BTN_SIZE); // NEW
-            const minTop = coverBox.y; // NEW
-            const maxTop = coverBox.y + Math.max(0, coverBox.h - BTN_SIZE); // NEW
-            el.style.left = Math.round(clampNumber(center.x - BTN_SIZE / 2, minLeft, maxLeft)) + 'px'; // NEW
-            el.style.top = Math.round(clampNumber(center.y - BTN_SIZE / 2, minTop, maxTop)) + 'px'; // NEW
-            el.style.display = ''; // NEW
-        } // NEW
-    } // NEW
+    function positionCoveredTargetSelectorsFor(key) {
+        const st = clusterStates.get(key); if (!st || !st.coveredTargetButtons || !st.coveredTargetButtons.length) return;
+        const coverBox = getClusterBBox(key);
+        if (!coverBox) { removeCoveredTargetSelectorsFor(key); return; }
+        for (const item of st.coveredTargetButtons) {
+            const el = item.el;
+            const targetBox = viewBBoxForCells(item.target && item.target.cells);
+            const center = bboxCenter(targetBox);
+            if (!el || !center) continue;
+            const minLeft = coverBox.x;
+            const maxLeft = coverBox.x + Math.max(0, coverBox.w - BTN_SIZE);
+            const minTop = coverBox.y;
+            const maxTop = coverBox.y + Math.max(0, coverBox.h - BTN_SIZE);
+            el.style.left = Math.round(clampNumber(center.x - BTN_SIZE / 2, minLeft, maxLeft)) + 'px';
+            el.style.top = Math.round(clampNumber(center.y - BTN_SIZE / 2, minTop, maxTop)) + 'px';
+            el.style.display = '';
+        }
+    }
 
 
     function positionUIFor(key) {
@@ -1604,40 +1604,40 @@ Draw.loadPlugin(function (ui) {
         if (!box) { hideUIFor(key); return; }
 
         const midY = box.y + box.h / 2;
-        if (st.btnPrev) { // CHANGE
-            st.btnPrev.style.left = Math.round(box.x - BTN_SIZE - BTN_INSET) + 'px'; // CHANGE
-            st.btnPrev.style.top = Math.round(midY - BTN_SIZE / 2) + 'px'; // CHANGE
-        } // CHANGE
-        if (st.btnNext) { // CHANGE
-            st.btnNext.style.left = Math.round(box.x + box.w + BTN_INSET) + 'px'; // CHANGE
-            st.btnNext.style.top = Math.round(midY - BTN_SIZE / 2) + 'px'; // CHANGE
-        } // CHANGE
+        if (st.btnPrev) {
+            st.btnPrev.style.left = Math.round(box.x - BTN_SIZE - BTN_INSET) + 'px';
+            st.btnPrev.style.top = Math.round(midY - BTN_SIZE / 2) + 'px';
+        }
+        if (st.btnNext) {
+            st.btnNext.style.left = Math.round(box.x + box.w + BTN_INSET) + 'px';
+            st.btnNext.style.top = Math.round(midY - BTN_SIZE / 2) + 'px';
+        }
 
         const gap = 6, cx = box.x + box.w / 2;
-        if (st.badge) { // CHANGE
-            st.badge.textContent = (st.currentIdx + 1) + ' / ' + st.order.length; // CHANGE
-            const bw = 54, bh = 18; // CHANGE
-            st.badge.style.left = Math.round(cx - bw / 2) + 'px'; // CHANGE
-            st.badge.style.top = Math.round(box.y - bh - gap) + 'px'; // CHANGE
-        } // CHANGE
+        if (st.badge) {
+            st.badge.textContent = (st.currentIdx + 1) + ' / ' + st.order.length;
+            const bw = 54, bh = 18;
+            st.badge.style.left = Math.round(cx - bw / 2) + 'px';
+            st.badge.style.top = Math.round(box.y - bh - gap) + 'px';
+        }
 
         // place select buttons at the top-left outside corner of the cluster bbox
-        if (st.btnSelectAll || st.btnSelectBed) { // CHANGE
-            const baseX = Math.round(box.x - BTN_SIZE - BTN_INSET + SELECT_BUTTON_DRAG_HANDLE_SLOT); // CHANGE
+        if (st.btnSelectAll || st.btnSelectBed) {
+            const baseX = Math.round(box.x - BTN_SIZE - BTN_INSET + SELECT_BUTTON_DRAG_HANDLE_SLOT);
             const y = Math.round(box.y - BTN_SIZE - BTN_INSET);
-            if (st.btnSelectBed) { // NEW
-                st.btnSelectBed.style.left = baseX + 'px'; // CHANGE
-                st.btnSelectBed.style.top = y + 'px'; // NEW
-            } // NEW
+            if (st.btnSelectBed) {
+                st.btnSelectBed.style.left = baseX + 'px';
+                st.btnSelectBed.style.top = y + 'px';
+            }
             if (st.btnSelectAll) {
-                const unitOffset = visibleBedUnitSelectorCount() * (BTN_SIZE + SELECT_BUTTON_GAP); // NEW
-                const x2 = baseX + unitOffset + (st.btnSelectBed && st.btnSelectBed.style.display !== 'none' ? (BTN_SIZE + SELECT_BUTTON_GAP) : 0); // CHANGE
-                st.btnSelectAll.style.left = x2 + 'px'; // CHANGE
+                const unitOffset = visibleBedUnitSelectorCount() * (BTN_SIZE + SELECT_BUTTON_GAP);
+                const x2 = baseX + unitOffset + (st.btnSelectBed && st.btnSelectBed.style.display !== 'none' ? (BTN_SIZE + SELECT_BUTTON_GAP) : 0);
+                st.btnSelectAll.style.left = x2 + 'px';
                 st.btnSelectAll.style.top = y + 'px';
             }
         }
 
-        positionCoveredTargetSelectorsFor(key); // NEW
+        positionCoveredTargetSelectorsFor(key);
     }
 
     function updateControlsVisibilityFor(key) {
@@ -1706,10 +1706,10 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-    // -------------------- NEW: temporary bed-unit front-ordering -------------------- // CHANGE
+    // -------------------- NEW: temporary bed-unit front-ordering --------------------
     const parentOrderSnapshots = new Map(); // parentId -> [childId,...]               
-    let temporaryFrontedParent = null; // CHANGE
-    let temporaryFrontedCellIds = []; // NEW
+    let temporaryFrontedParent = null;
+    let temporaryFrontedCellIds = [];
 
     function snapshotChildOrder(parent) {
         if (!parent || !parent.id) return;
@@ -1750,7 +1750,7 @@ Draw.loadPlugin(function (ui) {
     function bringCellsToFrontTemporarilyInParent(parent, cells) {
         if (!parent || !cells || !cells.length) return;
 
-        if (temporaryFrontedParent && temporaryFrontedParent !== parent) restoreTemporaryFrontedOrder(); // NEW
+        if (temporaryFrontedParent && temporaryFrontedParent !== parent) restoreTemporaryFrontedOrder();
 
         // Snapshot once, then move target cells to the end in their current order
         snapshotChildOrder(parent);
@@ -1764,7 +1764,7 @@ Draw.loadPlugin(function (ui) {
             if (c && set.has(c.id)) order.push(c);
         }
         if (!order.length) return;
-        temporaryFrontedCellIds = order.map(c => c && c.id).filter(Boolean); // NEW
+        temporaryFrontedCellIds = order.map(c => c && c.id).filter(Boolean);
         withUndoSuppressed(() => {
             model.beginUpdate();
             try {
@@ -1772,25 +1772,25 @@ Draw.loadPlugin(function (ui) {
             } finally {
                 model.endUpdate();
             }
-            temporaryFrontedParent = parent; // CHANGE
+            temporaryFrontedParent = parent;
             graph.refresh(parent);
         });
     }
 
-    function selectionMatchesTemporaryFrontedCells(cells) { // NEW
-        const selectedIds = (cells || []).map(c => c && c.id).filter(Boolean).sort(); // NEW
-        const frontedIds = (temporaryFrontedCellIds || []).slice().sort(); // NEW
-        if (!frontedIds.length || selectedIds.length !== frontedIds.length) return false; // NEW
-        for (let i = 0; i < frontedIds.length; i++) if (frontedIds[i] !== selectedIds[i]) return false; // NEW
-        return true; // NEW
-    } // NEW
+    function selectionMatchesTemporaryFrontedCells(cells) {
+        const selectedIds = (cells || []).map(c => c && c.id).filter(Boolean).sort();
+        const frontedIds = (temporaryFrontedCellIds || []).slice().sort();
+        if (!frontedIds.length || selectedIds.length !== frontedIds.length) return false;
+        for (let i = 0; i < frontedIds.length; i++) if (frontedIds[i] !== selectedIds[i]) return false;
+        return true;
+    }
 
-    function restoreTemporaryFrontedOrder() { // NEW
-        const parent = temporaryFrontedParent; // NEW
-        temporaryFrontedParent = null; // NEW
-        temporaryFrontedCellIds = []; // NEW
-        if (parent) restoreChildOrder(parent); // NEW
-    } // NEW
+    function restoreTemporaryFrontedOrder() {
+        const parent = temporaryFrontedParent;
+        temporaryFrontedParent = null;
+        temporaryFrontedCellIds = [];
+        if (parent) restoreChildOrder(parent);
+    }
 
 
     function bringToFrontAndSelect(cell) {
@@ -1821,7 +1821,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     // -------------------- Orchestration --------------------
-    function refreshClustersInParent(parent, preferredAnchorId, selectedId) { // CHANGE
+    function refreshClustersInParent(parent, preferredAnchorId, selectedId) {
         const comps = buildAllComponentsInParent(parent);
         const liveKeys = new Set();
 
@@ -1830,23 +1830,23 @@ Draw.loadPlugin(function (ui) {
             liveKeys.add(key);
 
             // Only show UI/dimming for the cluster containing the selected tiler group
-            const isSelectedCluster = selectedId && members.some(c => c.id === selectedId); // CHANGE
+            const isSelectedCluster = selectedId && members.some(c => c.id === selectedId);
             if (!isSelectedCluster) {
                 hideUIFor(key);
                 clearVisibilityFor(key);
                 continue;
             }
 
-            if (members.length >= 2) { // NEW
-                ensureButtonsFor(key); // CHANGE
-                ensureBadgeFor(key); // CHANGE
-                if (bedUnitPlantingsMatchCluster(members)) { if (clusterStates.get(key).btnSelectAll) clusterStates.get(key).btnSelectAll.style.display = 'none'; } // NEW
-                else ensureSelectAllFor(key); // CHANGE
-            } // NEW
+            if (members.length >= 2) {
+                ensureButtonsFor(key);
+                ensureBadgeFor(key);
+                if (bedUnitPlantingsMatchCluster(members)) { if (clusterStates.get(key).btnSelectAll) clusterStates.get(key).btnSelectAll.style.display = 'none'; }
+                else ensureSelectAllFor(key);
+            }
             updateControlsVisibilityFor(key);
             positionUIFor(key);
             applyVisibilityFor(key);
-            ensureCoveredTargetSelectorsFor(key, comps); // NEW
+            ensureCoveredTargetSelectorsFor(key, comps);
 
         }
 
@@ -1909,13 +1909,13 @@ Draw.loadPlugin(function (ui) {
 
     function refreshAllForSelectionOrAnchor() {
         const sel = graph.getSelectionCell();
-        renderBedUnitSelectors(resolveOccupiedBedMoveUnit(sel)); // NEW
-        const selectedTilerGroup = findTilerGroupSelection(sel); // CHANGE
-        const preferred = selectedTilerGroup ? selectedTilerGroup.id : null; // CHANGE
+        renderBedUnitSelectors(resolveOccupiedBedMoveUnit(sel));
+        const selectedTilerGroup = findTilerGroupSelection(sel);
+        const preferred = selectedTilerGroup ? selectedTilerGroup.id : null;
         lastSelectedTGId = preferred || null;
 
         // If no tiler group is selected, hide all cluster UI and restore baseline visuals.
-        if (!lastSelectedTGId) { // CHANGE
+        if (!lastSelectedTGId) {
             for (const [k] of clusterStates.entries()) {
                 hideUIFor(k);
                 clearVisibilityFor(k);
@@ -1924,10 +1924,10 @@ Draw.loadPlugin(function (ui) {
         }
 
         // Drive clustering only for the selection's parent as before
-        const selCell = model.getCell(lastSelectedTGId); // CHANGE
+        const selCell = model.getCell(lastSelectedTGId);
         const p = selCell ? model.getParent(selCell) : null;
         if (p) {
-            refreshClustersInParent(p, preferred, lastSelectedTGId); // CHANGE
+            refreshClustersInParent(p, preferred, lastSelectedTGId);
             // Prune clusters not under this parent
             for (const [k, st] of clusterStates.entries()) {
                 if (!st.order.every(c => model.getParent(c) === p)) {
@@ -1943,7 +1943,7 @@ Draw.loadPlugin(function (ui) {
         const parents = parentsToScan();
         const live = new Set();
         parents.forEach(par => {
-            refreshClustersInParent(par, preferred, lastSelectedTGId); // CHANGE
+            refreshClustersInParent(par, preferred, lastSelectedTGId);
             for (const k of clusterStates.keys()) live.add(k);
         });
         for (const [k, st] of clusterStates.entries()) {
@@ -1960,15 +1960,15 @@ Draw.loadPlugin(function (ui) {
     function repositionAllUI() {
         for (const [key, st] of clusterStates.entries()) {
             // Only reposition visible UI (selected cluster only)                      
-            const hasVisibleUI = // NEW
-                (st.btnPrev && st.btnPrev.style.display !== 'none') || // NEW
-                (st.btnSelectAll && st.btnSelectAll.style.display !== 'none') || // CHANGE
-                (st.btnSelectBed && st.btnSelectBed.style.display !== 'none') || // NEW
-                (st.coveredTargetButtons && st.coveredTargetButtons.length > 0); // CHANGE
-            if (!hasVisibleUI) continue; // CHANGE
+            const hasVisibleUI =
+                (st.btnPrev && st.btnPrev.style.display !== 'none') ||
+                (st.btnSelectAll && st.btnSelectAll.style.display !== 'none') ||
+                (st.btnSelectBed && st.btnSelectBed.style.display !== 'none') ||
+                (st.coveredTargetButtons && st.coveredTargetButtons.length > 0);
+            if (!hasVisibleUI) continue;
             positionUIFor(key);
         }
-        positionBedUnitSelectors(); // NEW
+        positionBedUnitSelectors();
     }
 
 
@@ -1978,10 +1978,10 @@ Draw.loadPlugin(function (ui) {
 
     graph.getSelectionModel().addListener(mxEvent.CHANGE, function () {
         const sel = graph.getSelectionCell();
-        const selectedCells = graph.getSelectionCells ? graph.getSelectionCells() : (sel ? [sel] : []); // NEW
+        const selectedCells = graph.getSelectionCells ? graph.getSelectionCells() : (sel ? [sel] : []);
 
-        // If we previously brought a bed or bed assembly to front, restore when leaving that exact selection. // CHANGE
-        if (temporaryFrontedParent && !selectionMatchesTemporaryFrontedCells(selectedCells)) restoreTemporaryFrontedOrder(); // CHANGE
+        // If we previously brought a bed or bed assembly to front, restore when leaving that exact selection.
+        if (temporaryFrontedParent && !selectionMatchesTemporaryFrontedCells(selectedCells)) restoreTemporaryFrontedOrder();
 
         const selIsPlanting = sel && model.isVertex(sel) && isPlantingCell(sel);
 
@@ -2003,19 +2003,19 @@ Draw.loadPlugin(function (ui) {
 
         rafDebounce(refreshAllForSelectionOrAnchor);
     });
-    graph.addListener(TRELLIS_SELECTION_VISUALS_REFRESH_EVENT, function () { rafDebounce(refreshAllForSelectionOrAnchor); }); // NEW
+    graph.addListener(TRELLIS_SELECTION_VISUALS_REFRESH_EVENT, function () { rafDebounce(refreshAllForSelectionOrAnchor); });
 
     graph.addListener(mxEvent.ADD_CELLS, function () { rafDebounce(refreshAllForSelectionOrAnchor); });
     graph.addListener(mxEvent.REMOVE_CELLS, function () { rafDebounce(refreshAllForSelectionOrAnchor); });
-    graph.getModel().addListener(mxEvent.CHANGE, function (sender, evt) { // NEW
-        const edit = evt.getProperty('edit'); // NEW
-        const changes = edit && edit.changes ? edit.changes : []; // NEW
-        const rotationChanged = changes.some(styleChangeTouchesRotation); // CHANGE
-        if (rotationChanged) { // CHANGE
-            invalidateBoundsCache(); // NEW
-            rafDebounce(refreshAllForSelectionOrAnchor); // NEW
-        } // NEW
-    }); // NEW
+    graph.getModel().addListener(mxEvent.CHANGE, function (sender, evt) {
+        const edit = evt.getProperty('edit');
+        const changes = edit && edit.changes ? edit.changes : [];
+        const rotationChanged = changes.some(styleChangeTouchesRotation);
+        if (rotationChanged) {
+            invalidateBoundsCache();
+            rafDebounce(refreshAllForSelectionOrAnchor);
+        }
+    });
     graph.getModel().addListener(mxEvent.UNDO, function () { rafDebounce(refreshAllForSelectionOrAnchor); });
     graph.getModel().addListener(mxEvent.REDO, function () { rafDebounce(refreshAllForSelectionOrAnchor); });
 
@@ -2026,10 +2026,10 @@ Draw.loadPlugin(function (ui) {
         repositionAllUI();
     });
 
-    graph.__trellisBedSuccessionNavigator = Object.assign({}, graph.__trellisBedSuccessionNavigator, { // NEW
-        getSelectedClusterOccupancy: selectedClusterOccupancyFor, // CHANGE
-        resolveOccupiedBedMoveUnit: resolveOccupiedBedMoveUnit // NEW
-    }); // NEW
+    graph.__trellisBedSuccessionNavigator = Object.assign({}, graph.__trellisBedSuccessionNavigator, {
+        getSelectedClusterOccupancy: selectedClusterOccupancyFor,
+        resolveOccupiedBedMoveUnit: resolveOccupiedBedMoveUnit
+    });
 
     // Init
     setTimeout(refreshAllForSelectionOrAnchor, 0);

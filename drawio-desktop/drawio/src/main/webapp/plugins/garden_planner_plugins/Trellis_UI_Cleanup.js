@@ -5,99 +5,99 @@
  * less common commands behind explicit overflow submenus.
  */
 
-(function () { // NEW
-    if (typeof window === 'undefined') return; // NEW
+(function () {
+    if (typeof window === 'undefined') return;
 
-    window.Trellis = window.Trellis || {}; // NEW
-    window.Trellis.ui = window.Trellis.ui || {}; // NEW
+    window.Trellis = window.Trellis || {};
+    window.Trellis.ui = window.Trellis.ui || {};
 
-    const BUTTON_TOKENS = Object.freeze({ // NEW
-        open: { border: '#2563eb', color: '#1d4ed8', background: '#fff', hoverBackground: '#eff6ff' }, // NEW
-        add: { border: '#188038', color: '#166534', background: '#fff', hoverBackground: '#f0fdf4' }, // NEW
-        danger: { border: '#b91c1c', color: '#b91c1c', background: '#fff', hoverBackground: '#fef2f2' }, // NEW
-        neutral: { border: '#6b7280', color: '#111827', background: '#fff', hoverBackground: '#f9fafb' }, // NEW
-        focus: 'rgba(37, 99, 235, 0.28)', // NEW
-        disabledOpacity: '0.55' // NEW
-    }); // NEW
+    const BUTTON_TOKENS = Object.freeze({
+        open: { border: '#2563eb', color: '#1d4ed8', background: '#fff', hoverBackground: '#eff6ff' },
+        add: { border: '#188038', color: '#166534', background: '#fff', hoverBackground: '#f0fdf4' },
+        danger: { border: '#b91c1c', color: '#b91c1c', background: '#fff', hoverBackground: '#fef2f2' },
+        neutral: { border: '#6b7280', color: '#111827', background: '#fff', hoverBackground: '#f9fafb' },
+        focus: 'rgba(37, 99, 235, 0.28)',
+        disabledOpacity: '0.55'
+    });
 
-    function normalizeButtonVariant(variant) { // NEW
-        return BUTTON_TOKENS[variant] ? variant : 'neutral'; // NEW
-    } // NEW
+    function normalizeButtonVariant(variant) {
+        return BUTTON_TOKENS[variant] ? variant : 'neutral';
+    }
 
-    function classForVariant(variant) { // NEW
-        return 'trellis-button trellis-button-' + normalizeButtonVariant(variant); // NEW
-    } // NEW
+    function classForVariant(variant) {
+        return 'trellis-button trellis-button-' + normalizeButtonVariant(variant);
+    }
 
-    function ensureButtonStyles(doc) { // NEW
-        const owner = doc || (typeof document !== 'undefined' ? document : null); // NEW
-        if (!owner || owner.getElementById('trellis-shared-button-styles')) return; // NEW
+    function ensureButtonStyles(doc) {
+        const owner = doc || (typeof document !== 'undefined' ? document : null);
+        if (!owner || owner.getElementById('trellis-shared-button-styles')) return;
 
-        const style = owner.createElement('style'); // NEW
-        style.id = 'trellis-shared-button-styles'; // NEW
-        style.textContent = [ // NEW
-            '.trellis-button{box-sizing:border-box;border-radius:6px;cursor:pointer;font:12px Arial,sans-serif;padding:6px 10px;background:#fff;transition:background-color 120ms ease,border-color 120ms ease,color 120ms ease}', // NEW
-            '.trellis-button-open{border:1px solid #2563eb;color:#1d4ed8}', // NEW
-            '.trellis-button-open:hover{background:#eff6ff}', // NEW
-            '.trellis-button-add{border:1px solid #188038;color:#166534}', // NEW
-            '.trellis-button-add:hover{background:#f0fdf4}', // NEW
-            '.trellis-button-add.trellis-button-filled{background:#188038;color:#fff}', // NEW
-            '.trellis-button-add.trellis-button-filled:hover{background:#166534}', // NEW
-            '.trellis-button-danger{border:1px solid #b91c1c;color:#b91c1c}', // NEW
-            '.trellis-button-danger:hover{background:#fef2f2}', // NEW
-            '.trellis-button-neutral{border:1px solid #6b7280;color:#111827}', // NEW
-            '.trellis-button-neutral:hover{background:#f9fafb}', // NEW
-            '.trellis-button-compact{padding:3px 6px;font-size:12px}', // NEW
-            '.trellis-button:disabled,.trellis-button[aria-disabled="true"]{opacity:.55;cursor:not-allowed}', // NEW
-            '.trellis-button:focus-visible{outline:2px solid #2563eb;outline-offset:2px;box-shadow:0 0 0 3px rgba(37,99,235,.28)}' // NEW
-        ].join('\n'); // NEW
-        (owner.head || owner.documentElement || owner.body).appendChild(style); // NEW
-    } // NEW
+        const style = owner.createElement('style');
+        style.id = 'trellis-shared-button-styles';
+        style.textContent = [
+            '.trellis-button{box-sizing:border-box;border-radius:6px;cursor:pointer;font:12px Arial,sans-serif;padding:6px 10px;background:#fff;transition:background-color 120ms ease,border-color 120ms ease,color 120ms ease}',
+            '.trellis-button-open{border:1px solid #2563eb;color:#1d4ed8}',
+            '.trellis-button-open:hover{background:#eff6ff}',
+            '.trellis-button-add{border:1px solid #188038;color:#166534}',
+            '.trellis-button-add:hover{background:#f0fdf4}',
+            '.trellis-button-add.trellis-button-filled{background:#188038;color:#fff}',
+            '.trellis-button-add.trellis-button-filled:hover{background:#166534}',
+            '.trellis-button-danger{border:1px solid #b91c1c;color:#b91c1c}',
+            '.trellis-button-danger:hover{background:#fef2f2}',
+            '.trellis-button-neutral{border:1px solid #6b7280;color:#111827}',
+            '.trellis-button-neutral:hover{background:#f9fafb}',
+            '.trellis-button-compact{padding:3px 6px;font-size:12px}',
+            '.trellis-button:disabled,.trellis-button[aria-disabled="true"]{opacity:.55;cursor:not-allowed}',
+            '.trellis-button:focus-visible{outline:2px solid #2563eb;outline-offset:2px;box-shadow:0 0 0 3px rgba(37,99,235,.28)}'
+        ].join('\n');
+        (owner.head || owner.documentElement || owner.body).appendChild(style);
+    }
 
-    function applyButtonStyle(button, variant, options) { // NEW
-        if (!button || !button.style) return button; // NEW
-        const opts = options || {}; // NEW
-        const normalized = normalizeButtonVariant(variant); // NEW
-        const tokens = BUTTON_TOKENS[normalized]; // NEW
-        ensureButtonStyles(button.ownerDocument); // NEW
+    function applyButtonStyle(button, variant, options) {
+        if (!button || !button.style) return button;
+        const opts = options || {};
+        const normalized = normalizeButtonVariant(variant);
+        const tokens = BUTTON_TOKENS[normalized];
+        ensureButtonStyles(button.ownerDocument);
 
-        ['trellis-button', 'trellis-button-open', 'trellis-button-add', 'trellis-button-danger', 'trellis-button-neutral', 'trellis-button-compact', 'trellis-button-filled'].forEach(function (className) { // NEW
-            if (button.classList) button.classList.remove(className); // NEW
-        }); // NEW
-        if (button.classList) { // NEW
-            button.classList.add('trellis-button', 'trellis-button-' + normalized); // NEW
-            if (opts.compact) button.classList.add('trellis-button-compact'); // NEW
-            if (opts.filled) button.classList.add('trellis-button-filled'); // NEW
-        } // NEW
-        button.setAttribute('data-trellis-button-variant', normalized); // NEW
-        button.type = button.type || 'button'; // NEW
-        button.style.border = '1px solid ' + tokens.border; // NEW
-        button.style.borderRadius = opts.radius || '6px'; // NEW
-        button.style.background = opts.filled && normalized === 'add' ? tokens.border : tokens.background; // NEW
-        button.style.color = opts.filled && normalized === 'add' ? '#fff' : tokens.color; // NEW
-        button.style.cursor = button.disabled ? 'not-allowed' : 'pointer'; // NEW
-        button.style.font = opts.font || '12px Arial, sans-serif'; // NEW
-        button.style.padding = opts.compact ? '3px 6px' : (opts.padding || '6px 10px'); // NEW
-        button.style.boxSizing = 'border-box'; // NEW
-        return button; // NEW
-    } // NEW
+        ['trellis-button', 'trellis-button-open', 'trellis-button-add', 'trellis-button-danger', 'trellis-button-neutral', 'trellis-button-compact', 'trellis-button-filled'].forEach(function (className) {
+            if (button.classList) button.classList.remove(className);
+        });
+        if (button.classList) {
+            button.classList.add('trellis-button', 'trellis-button-' + normalized);
+            if (opts.compact) button.classList.add('trellis-button-compact');
+            if (opts.filled) button.classList.add('trellis-button-filled');
+        }
+        button.setAttribute('data-trellis-button-variant', normalized);
+        button.type = button.type || 'button';
+        button.style.border = '1px solid ' + tokens.border;
+        button.style.borderRadius = opts.radius || '6px';
+        button.style.background = opts.filled && normalized === 'add' ? tokens.border : tokens.background;
+        button.style.color = opts.filled && normalized === 'add' ? '#fff' : tokens.color;
+        button.style.cursor = button.disabled ? 'not-allowed' : 'pointer';
+        button.style.font = opts.font || '12px Arial, sans-serif';
+        button.style.padding = opts.compact ? '3px 6px' : (opts.padding || '6px 10px');
+        button.style.boxSizing = 'border-box';
+        return button;
+    }
 
-    function button(label, variant, onClick, options) { // NEW
-        const b = document.createElement('button'); // NEW
-        b.type = 'button'; // NEW
-        b.textContent = String(label == null ? '' : label); // NEW
-        applyButtonStyle(b, variant, options); // NEW
-        if (options && options.title != null) b.title = String(options.title); // NEW
-        if (options && options.ariaLabel != null) b.setAttribute('aria-label', String(options.ariaLabel)); // NEW
-        if (typeof onClick === 'function') b.addEventListener('click', onClick); // NEW
-        return b; // NEW
-    } // NEW
+    function button(label, variant, onClick, options) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = String(label == null ? '' : label);
+        applyButtonStyle(b, variant, options);
+        if (options && options.title != null) b.title = String(options.title);
+        if (options && options.ariaLabel != null) b.setAttribute('aria-label', String(options.ariaLabel));
+        if (typeof onClick === 'function') b.addEventListener('click', onClick);
+        return b;
+    }
 
-    window.Trellis.ui.buttonTokens = BUTTON_TOKENS; // NEW
-    window.Trellis.ui.applyButtonStyle = window.Trellis.ui.applyButtonStyle || applyButtonStyle; // NEW
-    window.Trellis.ui.button = window.Trellis.ui.button || button; // NEW
-    window.Trellis.ui.classForVariant = window.Trellis.ui.classForVariant || classForVariant; // NEW
-    window.Trellis.ui.ensureButtonStyles = window.Trellis.ui.ensureButtonStyles || ensureButtonStyles; // NEW
-})(); // NEW
+    window.Trellis.ui.buttonTokens = BUTTON_TOKENS;
+    window.Trellis.ui.applyButtonStyle = window.Trellis.ui.applyButtonStyle || applyButtonStyle;
+    window.Trellis.ui.button = window.Trellis.ui.button || button;
+    window.Trellis.ui.classForVariant = window.Trellis.ui.classForVariant || classForVariant;
+    window.Trellis.ui.ensureButtonStyles = window.Trellis.ui.ensureButtonStyles || ensureButtonStyles;
+})();
 
 Draw.loadPlugin(function (ui) {
     if (!ui || ui.__trellisUiCleanupInstalled) {
@@ -412,9 +412,9 @@ Draw.loadPlugin(function (ui) {
         }
     }
 
-    function shouldPreserveMainToolbarChild(child, index) { // CHANGE
-        return index === 0 || !!(child && child.classList && child.classList.contains('geZoomInput')); // CHANGE
-    } // CHANGE
+    function shouldPreserveMainToolbarChild(child, index) {
+        return index === 0 || !!(child && child.classList && child.classList.contains('geZoomInput'));
+    }
 
     function pruneMainToolbar() {
         const container = ui.toolbar && ui.toolbar.container;
@@ -423,7 +423,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         Array.prototype.slice.call(container.children).forEach(function (child, index) {
-            if (!shouldPreserveMainToolbarChild(child, index)) { // CHANGE
+            if (!shouldPreserveMainToolbarChild(child, index)) {
                 removeChild(child);
             }
         });

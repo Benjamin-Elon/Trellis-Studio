@@ -5,458 +5,458 @@
  * adds Trellis-owned structure, styling hooks, background loading, and
  * accessibility behavior after the application classes have loaded.
  */
-(function() { // NEW
-	var installed = false; // NEW
-	var centeredDialogMaxWidth = 760; // CHANGE
-	var centeredDialogMaxHeight = 690; // CHANGE
-	var centeredDialogMinWidth = 760; // NEW
-	var centeredDialogMinHeight = 600; // NEW
-	var preferredHorizontalMarginRatio = 0.12; // NEW
-	var preferredVerticalMarginRatio = 0.08; // NEW
-	var minimumHorizontalMarginRatio = 0.04; // NEW
-	var minimumVerticalMarginRatio = 0.04; // NEW
-	var defaultSplashBackgroundFilename = 'trellis-garden-sunrise.png'; // NEW
+(function() {
+	var installed = false;
+	var centeredDialogMaxWidth = 760;
+	var centeredDialogMaxHeight = 690;
+	var centeredDialogMinWidth = 760;
+	var centeredDialogMinHeight = 600;
+	var preferredHorizontalMarginRatio = 0.12;
+	var preferredVerticalMarginRatio = 0.08;
+	var minimumHorizontalMarginRatio = 0.04;
+	var minimumVerticalMarginRatio = 0.04;
+	var defaultSplashBackgroundFilename = 'trellis-garden-sunrise.png';
 
-	function addClass(element, className) { // NEW
-		if (element == null) return; // NEW
+	function addClass(element, className) {
+		if (element == null) return;
 
-		if (element.classList != null) { // NEW
-			element.classList.add(className); // NEW
-		} else { // NEW
-			var currentClass = element.getAttribute('class') || ''; // NEW
-			if ((' ' + currentClass + ' ').indexOf(' ' + className + ' ') < 0) { // NEW
-				element.setAttribute('class', currentClass + (currentClass.length > 0 ? ' ' : '') + className); // NEW
-			} // NEW
-		} // NEW
-	} // NEW
+		if (element.classList != null) {
+			element.classList.add(className);
+		} else {
+			var currentClass = element.getAttribute('class') || '';
+			if ((' ' + currentClass + ' ').indexOf(' ' + className + ' ') < 0) {
+				element.setAttribute('class', currentClass + (currentClass.length > 0 ? ' ' : '') + className);
+			}
+		}
+	}
 
-	function removeClass(element, className) { // NEW
-		if (element == null) return; // NEW
+	function removeClass(element, className) {
+		if (element == null) return;
 
-		if (element.classList != null) { // NEW
-			element.classList.remove(className); // NEW
-		} else { // NEW
-			var currentClass = ' ' + (element.getAttribute('class') || '') + ' '; // NEW
-			element.setAttribute('class', currentClass.replace(' ' + className + ' ', ' ').replace(/^\s+|\s+$/g, '')); // NEW
-		} // NEW
-	} // NEW
+		if (element.classList != null) {
+			element.classList.remove(className);
+		} else {
+			var currentClass = ' ' + (element.getAttribute('class') || '') + ' ';
+			element.setAttribute('class', currentClass.replace(' ' + className + ' ', ' ').replace(/^\s+|\s+$/g, ''));
+		}
+	}
 
-	function createIcon(documentRef, name) { // NEW
-		var svg = documentRef.createElementNS('http://www.w3.org/2000/svg', 'svg'); // NEW
-		var paths = { // NEW
-			create: ['M6 3h8l5 5v13H6z', 'M14 3v5h5', 'M12.5 11v6', 'M9.5 14h6'], // NEW
-			open: ['M3 7h7l2 2h9v10H3z', 'M3 7V5h7l2 2'], // NEW
-			support: ['M12 21s-7-4.6-7-10a4 4 0 0 1 7-2.7A4 4 0 0 1 19 11c0 5.4-7 10-7 10z'], // NEW
-			user: ['M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', 'M4 21a8 8 0 0 1 16 0'] // NEW
-		}; // NEW
+	function createIcon(documentRef, name) {
+		var svg = documentRef.createElementNS('http://www.w3.org/2000/svg', 'svg');
+		var paths = {
+			create: ['M6 3h8l5 5v13H6z', 'M14 3v5h5', 'M12.5 11v6', 'M9.5 14h6'],
+			open: ['M3 7h7l2 2h9v10H3z', 'M3 7V5h7l2 2'],
+			support: ['M12 21s-7-4.6-7-10a4 4 0 0 1 7-2.7A4 4 0 0 1 19 11c0 5.4-7 10-7 10z'],
+			user: ['M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', 'M4 21a8 8 0 0 1 16 0']
+		};
 
-		svg.setAttribute('viewBox', '0 0 24 24'); // NEW
-		svg.setAttribute('aria-hidden', 'true'); // NEW
-		svg.setAttribute('focusable', 'false'); // NEW
-		addClass(svg, 'trellis-splash-icon'); // NEW
+		svg.setAttribute('viewBox', '0 0 24 24');
+		svg.setAttribute('aria-hidden', 'true');
+		svg.setAttribute('focusable', 'false');
+		addClass(svg, 'trellis-splash-icon');
 
-		for (var i = 0; i < paths[name].length; i++) { // NEW
-			var path = documentRef.createElementNS('http://www.w3.org/2000/svg', 'path'); // NEW
-			path.setAttribute('d', paths[name][i]); // NEW
-			svg.appendChild(path); // NEW
-		} // NEW
+		for (var i = 0; i < paths[name].length; i++) {
+			var path = documentRef.createElementNS('http://www.w3.org/2000/svg', 'path');
+			path.setAttribute('d', paths[name][i]);
+			svg.appendChild(path);
+		}
 
-		return svg; // NEW
-	} // NEW
+		return svg;
+	}
 
-	function prependButtonIcon(button, iconName) { // NEW
-		if (button.querySelector('.trellis-splash-icon') == null) { // NEW
-			button.insertBefore(createIcon(button.ownerDocument, iconName), button.firstChild); // NEW
-		} // NEW
-	} // NEW
+	function prependButtonIcon(button, iconName) {
+		if (button.querySelector('.trellis-splash-icon') == null) {
+			button.insertBefore(createIcon(button.ownerDocument, iconName), button.firstChild);
+		}
+	}
 
-	function getDirectCloseButton(container) { // NEW
-		for (var i = 0; container != null && i < container.children.length; i++) { // NEW
-			if ((' ' + container.children[i].className + ' ').indexOf(' geButton ') >= 0) { // NEW
-				return container.children[i]; // NEW
-			} // NEW
-		} // NEW
+	function getDirectCloseButton(container) {
+		for (var i = 0; container != null && i < container.children.length; i++) {
+			if ((' ' + container.children[i].className + ' ').indexOf(' geButton ') >= 0) {
+				return container.children[i];
+			}
+		}
 
-		return null; // NEW
-	} // NEW
+		return null;
+	}
 
-	function updateCloseLabel(splashDialog, outerDialog) { // NEW
-		var closeButton = getDirectCloseButton(outerDialog != null ? outerDialog.container : null); // NEW
+	function updateCloseLabel(splashDialog, outerDialog) {
+		var closeButton = getDirectCloseButton(outerDialog != null ? outerDialog.container : null);
 
-		if (closeButton != null) { // NEW
-			var isComplete = splashDialog.isTrellisLicenseWizardComplete == null || // NEW
-				splashDialog.isTrellisLicenseWizardComplete(); // NEW
-			var label = isComplete ? 'Continue with a blank diagram' : 'Exit Trellis Studio'; // NEW
-			closeButton.setAttribute('title', label); // NEW
-			closeButton.setAttribute('aria-label', label); // NEW
-		} // NEW
-	} // NEW
+		if (closeButton != null) {
+			var isComplete = splashDialog.isTrellisLicenseWizardComplete == null ||
+				splashDialog.isTrellisLicenseWizardComplete();
+			var label = isComplete ? 'Continue with a blank diagram' : 'Exit Trellis Studio';
+			closeButton.setAttribute('title', label);
+			closeButton.setAttribute('aria-label', label);
+		}
+	}
 
-	function decorateSavedLicenseCard(container) { // NEW
-		var sections = container.querySelectorAll('.trellis-splash-section, .trellis-saved-license-card'); // CHANGE
-		var foundSavedCard = false; // NEW
+	function decorateSavedLicenseCard(container) {
+		var sections = container.querySelectorAll('.trellis-splash-section, .trellis-saved-license-card');
+		var foundSavedCard = false;
 
-		for (var i = 0; i < sections.length; i++) { // NEW
-			var heading = sections[i].firstElementChild; // NEW
+		for (var i = 0; i < sections.length; i++) {
+			var heading = sections[i].firstElementChild;
 
-			if (heading != null && (heading.textContent == 'Saved license path' || heading.textContent == 'Saved license')) { // NEW
-				foundSavedCard = true; // NEW
-				heading.textContent = 'Saved license'; // CHANGE
-				addClass(heading, 'trellis-saved-license-heading'); // NEW
-				addClass(sections[i], 'trellis-saved-license-card'); // NEW
-				var copy = heading.nextElementSibling; // NEW
+			if (heading != null && (heading.textContent == 'Saved license path' || heading.textContent == 'Saved license')) {
+				foundSavedCard = true;
+				heading.textContent = 'Saved license';
+				addClass(heading, 'trellis-saved-license-heading');
+				addClass(sections[i], 'trellis-saved-license-card');
+				var copy = heading.nextElementSibling;
 
-				if (copy != null && !copy.classList.contains('trellis-saved-license-copy')) { // NEW
-					var savedText = copy.textContent; // NEW
-					var signerMarker = '. Signed by '; // NEW
-					var signerIndex = savedText.indexOf(signerMarker); // NEW
-					addClass(copy, 'trellis-saved-license-copy'); // NEW
+				if (copy != null && !copy.classList.contains('trellis-saved-license-copy')) {
+					var savedText = copy.textContent;
+					var signerMarker = '. Signed by ';
+					var signerIndex = savedText.indexOf(signerMarker);
+					addClass(copy, 'trellis-saved-license-copy');
 
-					if (signerIndex >= 0) { // NEW
-						copy.textContent = ''; // NEW
-						var pathLine = container.ownerDocument.createElement('div'); // NEW
-						var signerLine = container.ownerDocument.createElement('div'); // NEW
-						var signerText = 'Signed by ' + savedText.substring(signerIndex + signerMarker.length); // NEW
-						if (/\.\.$/.test(signerText)) signerText = signerText.substring(0, signerText.length - 1); // NEW
-						pathLine.className = 'trellis-saved-license-path'; // NEW
-						signerLine.className = 'trellis-saved-license-signer'; // NEW
-						pathLine.textContent = savedText.substring(0, signerIndex + 1); // NEW
-						signerLine.textContent = signerText; // NEW
-						copy.appendChild(pathLine); // NEW
-						copy.appendChild(signerLine); // NEW
-					} // NEW
-				} // NEW
+					if (signerIndex >= 0) {
+						copy.textContent = '';
+						var pathLine = container.ownerDocument.createElement('div');
+						var signerLine = container.ownerDocument.createElement('div');
+						var signerText = 'Signed by ' + savedText.substring(signerIndex + signerMarker.length);
+						if (/\.\.$/.test(signerText)) signerText = signerText.substring(0, signerText.length - 1);
+						pathLine.className = 'trellis-saved-license-path';
+						signerLine.className = 'trellis-saved-license-signer';
+						pathLine.textContent = savedText.substring(0, signerIndex + 1);
+						signerLine.textContent = signerText;
+						copy.appendChild(pathLine);
+						copy.appendChild(signerLine);
+					}
+				}
 
-				if (sections[i].querySelector('.trellis-license-icon') == null) { // NEW
-					var icon = createIcon(container.ownerDocument, 'user'); // NEW
-					addClass(icon, 'trellis-license-icon'); // NEW
-					sections[i].insertBefore(icon, heading); // NEW
-				} // NEW
-			} // NEW
-		} // NEW
+				if (sections[i].querySelector('.trellis-license-icon') == null) {
+					var icon = createIcon(container.ownerDocument, 'user');
+					addClass(icon, 'trellis-license-icon');
+					sections[i].insertBefore(icon, heading);
+				}
+			}
+		}
 
-		return foundSavedCard; // NEW
-	} // NEW
+		return foundSavedCard;
+	}
 
-	function decorateButtons(container) { // NEW
-		var buttons = container.querySelectorAll('button'); // NEW
+	function decorateButtons(container) {
+		var buttons = container.querySelectorAll('button');
 
-		for (var i = 0; i < buttons.length; i++) { // NEW
-			buttons[i].setAttribute('type', 'button'); // NEW
+		for (var i = 0; i < buttons.length; i++) {
+			buttons[i].setAttribute('type', 'button');
 
-			if (buttons[i].textContent.indexOf('Explore & Support My Projects') >= 0) { // NEW
-				addClass(buttons[i], 'trellis-support-action'); // NEW
-				prependButtonIcon(buttons[i], 'support'); // NEW
-			} else if (buttons[i].textContent.indexOf('Create New Diagram') >= 0) { // NEW
-				addClass(buttons[i], 'trellis-primary-action'); // NEW
-				addClass(buttons[i], 'trellis-button-add'); // NEW
-				addClass(buttons[i], 'trellis-button-filled'); // NEW
-				prependButtonIcon(buttons[i], 'create'); // NEW
-			} else if (buttons[i].textContent.indexOf('Open Existing Diagram') >= 0) { // NEW
-				addClass(buttons[i], 'trellis-secondary-action'); // NEW
-				addClass(buttons[i], 'trellis-button-open'); // NEW
-				prependButtonIcon(buttons[i], 'open'); // NEW
-			} else if (buttons[i].textContent.indexOf('Change license') >= 0) { // NEW
-				addClass(buttons[i], 'trellis-change-license'); // NEW
-				addClass(buttons[i], 'trellis-button-neutral'); // NEW
-			} // NEW
-		} // NEW
-	} // NEW
+			if (buttons[i].textContent.indexOf('Explore & Support My Projects') >= 0) {
+				addClass(buttons[i], 'trellis-support-action');
+				prependButtonIcon(buttons[i], 'support');
+			} else if (buttons[i].textContent.indexOf('Create New Diagram') >= 0) {
+				addClass(buttons[i], 'trellis-primary-action');
+				addClass(buttons[i], 'trellis-button-add');
+				addClass(buttons[i], 'trellis-button-filled');
+				prependButtonIcon(buttons[i], 'create');
+			} else if (buttons[i].textContent.indexOf('Open Existing Diagram') >= 0) {
+				addClass(buttons[i], 'trellis-secondary-action');
+				addClass(buttons[i], 'trellis-button-open');
+				prependButtonIcon(buttons[i], 'open');
+			} else if (buttons[i].textContent.indexOf('Change license') >= 0) {
+				addClass(buttons[i], 'trellis-change-license');
+				addClass(buttons[i], 'trellis-button-neutral');
+			}
+		}
+	}
 
-	function decorateRenderedState(splashDialog) { // NEW
-		var container = splashDialog.container; // NEW
-		var center = container.querySelector('.trellis-splash-center'); // NEW
+	function decorateRenderedState(splashDialog) {
+		var container = splashDialog.container;
+		var center = container.querySelector('.trellis-splash-center');
 
-		if (center != null && center.firstElementChild != null) { // NEW
-			center.firstElementChild.setAttribute('role', 'heading'); // NEW
-			center.firstElementChild.setAttribute('aria-level', '1'); // NEW
+		if (center != null && center.firstElementChild != null) {
+			center.firstElementChild.setAttribute('role', 'heading');
+			center.firstElementChild.setAttribute('aria-level', '1');
 
-			if (center.querySelector('.trellis-splash-tagline') == null) { // NEW
-				var insertBeforeNode = center.children.length > 1 ? center.children[1] : null; // CHANGE
-				var stateIntro = insertBeforeNode; // CHANGE
-				if (stateIntro != null && ((' ' + stateIntro.className + ' ').indexOf(' trellis-splash-section ') >= 0 || (' ' + stateIntro.className + ' ').indexOf(' trellis-license-contact-panel ') >= 0 || (' ' + stateIntro.className + ' ').indexOf(' trellis-saved-license-card ') >= 0)) stateIntro = null; // CHANGE
-				var tagline = container.ownerDocument.createElement('div'); // NEW
-				tagline.className = 'trellis-splash-tagline'; // NEW
-				tagline.textContent = 'Build systems that grow.'; // NEW
-				if (stateIntro != null) addClass(stateIntro, 'trellis-splash-state-intro'); // NEW
-				center.insertBefore(tagline, insertBeforeNode); // CHANGE
-			} // NEW
-		} // NEW
+			if (center.querySelector('.trellis-splash-tagline') == null) {
+				var insertBeforeNode = center.children.length > 1 ? center.children[1] : null;
+				var stateIntro = insertBeforeNode;
+				if (stateIntro != null && ((' ' + stateIntro.className + ' ').indexOf(' trellis-splash-section ') >= 0 || (' ' + stateIntro.className + ' ').indexOf(' trellis-license-contact-panel ') >= 0 || (' ' + stateIntro.className + ' ').indexOf(' trellis-saved-license-card ') >= 0)) stateIntro = null;
+				var tagline = container.ownerDocument.createElement('div');
+				tagline.className = 'trellis-splash-tagline';
+				tagline.textContent = 'Build systems that grow.';
+				if (stateIntro != null) addClass(stateIntro, 'trellis-splash-state-intro');
+				center.insertBefore(tagline, insertBeforeNode);
+			}
+		}
 
-		var savedState = decorateSavedLicenseCard(container); // NEW
-		var stateIntro = container.querySelector('.trellis-splash-state-intro'); // NEW
-		if (stateIntro != null) stateIntro.hidden = savedState; // NEW
+		var savedState = decorateSavedLicenseCard(container);
+		var stateIntro = container.querySelector('.trellis-splash-state-intro');
+		if (stateIntro != null) stateIntro.hidden = savedState;
 
-		if (savedState) { // NEW
-			addClass(container, 'trellis-saved-state'); // NEW
-		} else { // NEW
-			removeClass(container, 'trellis-saved-state'); // NEW
-		} // NEW
-		decorateButtons(container); // NEW
-		addClass(container.querySelector('.trellis-splash-actions') != null ? // NEW
-			container.querySelector('.trellis-splash-actions').parentNode : null, 'trellis-splash-buttons'); // NEW
+		if (savedState) {
+			addClass(container, 'trellis-saved-state');
+		} else {
+			removeClass(container, 'trellis-saved-state');
+		}
+		decorateButtons(container);
+		addClass(container.querySelector('.trellis-splash-actions') != null ?
+			container.querySelector('.trellis-splash-actions').parentNode : null, 'trellis-splash-buttons');
 
-		if (splashDialog.trellisOuterDialog != null) { // NEW
-			updateCloseLabel(splashDialog, splashDialog.trellisOuterDialog); // NEW
-		} // NEW
-	} // NEW
+		if (splashDialog.trellisOuterDialog != null) {
+			updateCloseLabel(splashDialog, splashDialog.trellisOuterDialog);
+		}
+	}
 
-	function removeLanguageControl(container) { // NEW
-		var languageControls = container.querySelectorAll('.geAdaptiveAsset'); // NEW
+	function removeLanguageControl(container) {
+		var languageControls = container.querySelectorAll('.geAdaptiveAsset');
 
-		for (var i = 0; i < languageControls.length; i++) { // NEW
-			if (languageControls[i].parentNode == container) { // NEW
-				container.removeChild(languageControls[i]); // NEW
-			} // NEW
-		} // NEW
-	} // NEW
+		for (var i = 0; i < languageControls.length; i++) {
+			if (languageControls[i].parentNode == container) {
+				container.removeChild(languageControls[i]);
+			}
+		}
+	}
 
-	function enhanceSplashDialog(baseSplashDialog, editorUi) { // NEW
-		addClass(baseSplashDialog.container, 'trellis-splash-root'); // NEW
-		baseSplashDialog.container.trellisSplashDialog = baseSplashDialog; // NEW
-		removeLanguageControl(baseSplashDialog.container); // NEW
-		decorateRenderedState(baseSplashDialog); // NEW
-		baseSplashDialog.container.addEventListener('click', function() { // NEW
-			decorateRenderedState(baseSplashDialog); // NEW
-		}); // NEW
-		return baseSplashDialog; // NEW
-	} // NEW
+	function enhanceSplashDialog(baseSplashDialog, editorUi) {
+		addClass(baseSplashDialog.container, 'trellis-splash-root');
+		baseSplashDialog.container.trellisSplashDialog = baseSplashDialog;
+		removeLanguageControl(baseSplashDialog.container);
+		decorateRenderedState(baseSplashDialog);
+		baseSplashDialog.container.addEventListener('click', function() {
+			decorateRenderedState(baseSplashDialog);
+		});
+		return baseSplashDialog;
+	}
 
-	function isSafeBackgroundFilename(filename) { // NEW
-		return typeof filename == 'string' && filename.length > 0 && // NEW
-			filename == filename.replace(/^.*[\\\\\/]/, '') && /\.(webp|jpe?g|png)$/i.test(filename); // NEW
-	} // NEW
+	function isSafeBackgroundFilename(filename) {
+		return typeof filename == 'string' && filename.length > 0 &&
+			filename == filename.replace(/^.*[\\\\\/]/, '') && /\.(webp|jpe?g|png)$/i.test(filename);
+	}
 
-	function getSplashImagePath() { // NEW
-		return typeof IMAGE_PATH != 'undefined' && IMAGE_PATH ? IMAGE_PATH : 'images'; // NEW
-	} // NEW
+	function getSplashImagePath() {
+		return typeof IMAGE_PATH != 'undefined' && IMAGE_PATH ? IMAGE_PATH : 'images';
+	}
 
-	function getSplashBackgroundLayer(backdrop) { // CHANGE
-		if (backdrop == null || typeof document == 'undefined' || document.createElement == null) return null; // CHANGE
-		var layer = backdrop.querySelector != null ? backdrop.querySelector('.trellis-splash-bg-image') : null; // NEW
+	function getSplashBackgroundLayer(backdrop) {
+		if (backdrop == null || typeof document == 'undefined' || document.createElement == null) return null;
+		var layer = backdrop.querySelector != null ? backdrop.querySelector('.trellis-splash-bg-image') : null;
 
-		if (layer == null) { // NEW
-			layer = document.createElement('img'); // NEW
-			layer.className = 'trellis-splash-bg-image'; // NEW
-			layer.alt = ''; // NEW
-			layer.setAttribute('aria-hidden', 'true'); // NEW
-			layer.draggable = false; // NEW
-			if (backdrop.insertBefore != null) backdrop.insertBefore(layer, backdrop.firstChild); // NEW
-			else if (backdrop.appendChild != null) backdrop.appendChild(layer); // NEW
-		} // NEW
+		if (layer == null) {
+			layer = document.createElement('img');
+			layer.className = 'trellis-splash-bg-image';
+			layer.alt = '';
+			layer.setAttribute('aria-hidden', 'true');
+			layer.draggable = false;
+			if (backdrop.insertBefore != null) backdrop.insertBefore(layer, backdrop.firstChild);
+			else if (backdrop.appendChild != null) backdrop.appendChild(layer);
+		}
 
-		return layer; // NEW
-	} // NEW
+		return layer;
+	}
 
-	function scheduleSplashBackgroundReveal(backdrop) { // CHANGE
-		var ownerWindow = backdrop != null && backdrop.ownerDocument != null ? backdrop.ownerDocument.defaultView : null; // NEW
+	function scheduleSplashBackgroundReveal(backdrop) {
+		var ownerWindow = backdrop != null && backdrop.ownerDocument != null ? backdrop.ownerDocument.defaultView : null;
 
-		if (ownerWindow != null && typeof ownerWindow.requestAnimationFrame == 'function') { // NEW
-			ownerWindow.requestAnimationFrame(function() { // NEW
-				addClass(backdrop, 'trellis-splash-has-image'); // NEW
-			}); // NEW
-		} else { // NEW
-			addClass(backdrop, 'trellis-splash-has-image'); // NEW
-		} // NEW
-	} // NEW
+		if (ownerWindow != null && typeof ownerWindow.requestAnimationFrame == 'function') {
+			ownerWindow.requestAnimationFrame(function() {
+				addClass(backdrop, 'trellis-splash-has-image');
+			});
+		} else {
+			addClass(backdrop, 'trellis-splash-has-image');
+		}
+	}
 
-	function applyBackgroundFilename(backdrop, filename) { // NEW
-		if (backdrop == null || !isSafeBackgroundFilename(filename)) { // CHANGE
-			return; // NEW
-		} // NEW
-		if (window.Image == null) { // NEW
-			return; // NEW
-		} // NEW
-		if (backdrop.trellisSplashBackgroundFilename == filename || // NEW
-			backdrop.trellisSplashPendingBackgroundFilename == filename) { // NEW
-			return; // NEW
-		} // NEW
+	function applyBackgroundFilename(backdrop, filename) {
+		if (backdrop == null || !isSafeBackgroundFilename(filename)) {
+			return;
+		}
+		if (window.Image == null) {
+			return;
+		}
+		if (backdrop.trellisSplashBackgroundFilename == filename ||
+			backdrop.trellisSplashPendingBackgroundFilename == filename) {
+			return;
+		}
 
-		var imagePath = getSplashImagePath(); // NEW
-		var backgroundUrl = imagePath + '/trellis-splash/' + encodeURIComponent(filename); // CHANGE
-		var image = new window.Image(); // NEW
-		image.decoding = 'async'; // NEW
-		image.onload = function() { // NEW
-			if (backdrop.trellisSplashPendingBackgroundFilename != filename) return; // NEW
-			var layer = getSplashBackgroundLayer(backdrop); // NEW
-			if (layer == null) return; // NEW
-			layer.onload = function() { // NEW
-				if (backdrop.trellisSplashPendingBackgroundFilename != filename && // NEW
-					backdrop.trellisSplashBackgroundFilename != filename) return; // NEW
-				backdrop.trellisSplashPendingBackgroundFilename = null; // NEW
-				backdrop.trellisSplashBackgroundFilename = filename; // NEW
-				scheduleSplashBackgroundReveal(backdrop); // CHANGE
-			}; // NEW
-			layer.onerror = function() { // NEW
-				if (backdrop.trellisSplashPendingBackgroundFilename == filename) { // NEW
-					backdrop.trellisSplashPendingBackgroundFilename = null; // NEW
-				} // NEW
-				if (!backdrop.style.getPropertyValue('--trellis-splash-image')) { // NEW
-					removeClass(backdrop, 'trellis-splash-has-image'); // NEW
-					layer.removeAttribute('src'); // NEW
-				} // NEW
-			}; // NEW
-			backdrop.style.setProperty('--trellis-splash-image', 'url("' + backgroundUrl + '")'); // NEW
-			layer.src = backgroundUrl; // CHANGE
-		}; // NEW
-		image.onerror = function(event) { // CHANGE
-			if (backdrop.trellisSplashPendingBackgroundFilename == filename) { // NEW
-				backdrop.trellisSplashPendingBackgroundFilename = null; // NEW
-			} // NEW
-			if (!backdrop.style.getPropertyValue('--trellis-splash-image')) { // CHANGE
-				backdrop.style.removeProperty('--trellis-splash-image'); // NEW
-				removeClass(backdrop, 'trellis-splash-has-image'); // NEW
-				var layer = backdrop.querySelector != null ? backdrop.querySelector('.trellis-splash-bg-image') : null; // NEW
-				if (layer != null) layer.removeAttribute('src'); // NEW
-			} // NEW
-		}; // NEW
-		getSplashBackgroundLayer(backdrop); // NEW
-		backdrop.trellisSplashPendingBackgroundFilename = filename; // NEW
-		image.src = backgroundUrl; // NEW
-	} // NEW
+		var imagePath = getSplashImagePath();
+		var backgroundUrl = imagePath + '/trellis-splash/' + encodeURIComponent(filename);
+		var image = new window.Image();
+		image.decoding = 'async';
+		image.onload = function() {
+			if (backdrop.trellisSplashPendingBackgroundFilename != filename) return;
+			var layer = getSplashBackgroundLayer(backdrop);
+			if (layer == null) return;
+			layer.onload = function() {
+				if (backdrop.trellisSplashPendingBackgroundFilename != filename &&
+					backdrop.trellisSplashBackgroundFilename != filename) return;
+				backdrop.trellisSplashPendingBackgroundFilename = null;
+				backdrop.trellisSplashBackgroundFilename = filename;
+				scheduleSplashBackgroundReveal(backdrop);
+			};
+			layer.onerror = function() {
+				if (backdrop.trellisSplashPendingBackgroundFilename == filename) {
+					backdrop.trellisSplashPendingBackgroundFilename = null;
+				}
+				if (!backdrop.style.getPropertyValue('--trellis-splash-image')) {
+					removeClass(backdrop, 'trellis-splash-has-image');
+					layer.removeAttribute('src');
+				}
+			};
+			backdrop.style.setProperty('--trellis-splash-image', 'url("' + backgroundUrl + '")');
+			layer.src = backgroundUrl;
+		};
+		image.onerror = function(event) {
+			if (backdrop.trellisSplashPendingBackgroundFilename == filename) {
+				backdrop.trellisSplashPendingBackgroundFilename = null;
+			}
+			if (!backdrop.style.getPropertyValue('--trellis-splash-image')) {
+				backdrop.style.removeProperty('--trellis-splash-image');
+				removeClass(backdrop, 'trellis-splash-has-image');
+				var layer = backdrop.querySelector != null ? backdrop.querySelector('.trellis-splash-bg-image') : null;
+				if (layer != null) layer.removeAttribute('src');
+			}
+		};
+		getSplashBackgroundLayer(backdrop);
+		backdrop.trellisSplashPendingBackgroundFilename = filename;
+		image.src = backgroundUrl;
+	}
 
-	function requestBackground(backdrop) { // NEW
-		applyBackgroundFilename(backdrop, defaultSplashBackgroundFilename); // NEW
-		if (typeof electron == 'undefined' || electron.request == null) { // CHANGE
-			return; // NEW
-		} // NEW
+	function requestBackground(backdrop) {
+		applyBackgroundFilename(backdrop, defaultSplashBackgroundFilename);
+		if (typeof electron == 'undefined' || electron.request == null) {
+			return;
+		}
 
-		electron.request({ action: 'getTrellisSplashBackground' }, function(filename) { // NEW
-			applyBackgroundFilename(backdrop, filename); // NEW
-		}, function(error) { // CHANGE
-			if (!backdrop.style.getPropertyValue('--trellis-splash-image')) { // CHANGE
-				backdrop.style.removeProperty('--trellis-splash-image'); // NEW
-			} // NEW
-		}); // NEW
-	} // NEW
+		electron.request({ action: 'getTrellisSplashBackground' }, function(filename) {
+			applyBackgroundFilename(backdrop, filename);
+		}, function(error) {
+			if (!backdrop.style.getPropertyValue('--trellis-splash-image')) {
+				backdrop.style.removeProperty('--trellis-splash-image');
+			}
+		});
+	}
 
-	function getWorkspaceBounds(editorUi) { // NEW
-		var workspace = editorUi.diagramContainer; // NEW
-		var bounds = workspace != null && workspace.getBoundingClientRect != null ? // NEW
-			workspace.getBoundingClientRect() : null; // NEW
-		var documentElement = document.documentElement; // NEW
-		var viewportWidth = documentElement != null && documentElement.clientWidth > 0 ? // NEW
-			documentElement.clientWidth : (window.innerWidth || 0); // NEW
-		var viewportHeight = documentElement != null && documentElement.clientHeight > 0 ? // NEW
-			documentElement.clientHeight : (window.innerHeight || 0); // NEW
-		var left = bounds != null && isFinite(bounds.left) ? Math.max(0, bounds.left) : 0; // NEW
-		var top = bounds != null && isFinite(bounds.top) ? Math.max(0, bounds.top) : 0; // NEW
-		var width = bounds != null && isFinite(bounds.width) && bounds.width > 0 ? // NEW
-			bounds.width : Math.max(0, viewportWidth - left); // NEW
-		var height = bounds != null && isFinite(bounds.height) && bounds.height > 0 ? // NEW
-			bounds.height : Math.max(0, viewportHeight - top); // NEW
+	function getWorkspaceBounds(editorUi) {
+		var workspace = editorUi.diagramContainer;
+		var bounds = workspace != null && workspace.getBoundingClientRect != null ?
+			workspace.getBoundingClientRect() : null;
+		var documentElement = document.documentElement;
+		var viewportWidth = documentElement != null && documentElement.clientWidth > 0 ?
+			documentElement.clientWidth : (window.innerWidth || 0);
+		var viewportHeight = documentElement != null && documentElement.clientHeight > 0 ?
+			documentElement.clientHeight : (window.innerHeight || 0);
+		var left = bounds != null && isFinite(bounds.left) ? Math.max(0, bounds.left) : 0;
+		var top = bounds != null && isFinite(bounds.top) ? Math.max(0, bounds.top) : 0;
+		var width = bounds != null && isFinite(bounds.width) && bounds.width > 0 ?
+			bounds.width : Math.max(0, viewportWidth - left);
+		var height = bounds != null && isFinite(bounds.height) && bounds.height > 0 ?
+			bounds.height : Math.max(0, viewportHeight - top);
 
-		return { left: left, top: top, width: width, height: height }; // NEW
-	} // NEW
+		return { left: left, top: top, width: width, height: height };
+	}
 
-	function clampSplashSize(preferredSize, minimumSize, maximumSize) { // NEW
-		return Math.max(minimumSize, Math.min(maximumSize, preferredSize)); // NEW
-	} // NEW
+	function clampSplashSize(preferredSize, minimumSize, maximumSize) {
+		return Math.max(minimumSize, Math.min(maximumSize, preferredSize));
+	}
 
-	function calculateSplashLayout(bounds) { // NEW
-		var preferredWidth = bounds.width * (1 - preferredHorizontalMarginRatio * 2); // NEW
-		var preferredHeight = bounds.height * (1 - preferredVerticalMarginRatio * 2); // NEW
-		var minimumMarginWidth = bounds.width * minimumHorizontalMarginRatio * 2; // NEW
-		var minimumMarginHeight = bounds.height * minimumVerticalMarginRatio * 2; // NEW
-		var compact = bounds.width - minimumMarginWidth < centeredDialogMinWidth || // NEW
-			bounds.height - minimumMarginHeight < centeredDialogMinHeight; // NEW
+	function calculateSplashLayout(bounds) {
+		var preferredWidth = bounds.width * (1 - preferredHorizontalMarginRatio * 2);
+		var preferredHeight = bounds.height * (1 - preferredVerticalMarginRatio * 2);
+		var minimumMarginWidth = bounds.width * minimumHorizontalMarginRatio * 2;
+		var minimumMarginHeight = bounds.height * minimumVerticalMarginRatio * 2;
+		var compact = bounds.width - minimumMarginWidth < centeredDialogMinWidth ||
+			bounds.height - minimumMarginHeight < centeredDialogMinHeight;
 
-		return { // NEW
-			compact: compact, // NEW
-			width: compact ? bounds.width : clampSplashSize(preferredWidth, centeredDialogMinWidth, centeredDialogMaxWidth), // NEW
-			height: compact ? bounds.height : clampSplashSize(preferredHeight, centeredDialogMinHeight, centeredDialogMaxHeight) // NEW
-		}; // NEW
-	} // NEW
+		return {
+			compact: compact,
+			width: compact ? bounds.width : clampSplashSize(preferredWidth, centeredDialogMinWidth, centeredDialogMaxWidth),
+			height: compact ? bounds.height : clampSplashSize(preferredHeight, centeredDialogMinHeight, centeredDialogMaxHeight)
+		};
+	}
 
-	function applyWorkspaceLayout(editorUi, outerDialog) { // NEW
-		var bounds = getWorkspaceBounds(editorUi); // NEW
-		var layout = calculateSplashLayout(bounds); // CHANGE
-		var targets = [outerDialog.container, outerDialog.bg]; // NEW
+	function applyWorkspaceLayout(editorUi, outerDialog) {
+		var bounds = getWorkspaceBounds(editorUi);
+		var layout = calculateSplashLayout(bounds);
+		var targets = [outerDialog.container, outerDialog.bg];
 
-		for (var i = 0; i < targets.length; i++) { // NEW
-			if (targets[i] == null) continue; // NEW
-			targets[i].style.setProperty('--trellis-workspace-left', bounds.left + 'px'); // NEW
-			targets[i].style.setProperty('--trellis-workspace-top', bounds.top + 'px'); // NEW
-			targets[i].style.setProperty('--trellis-workspace-width', bounds.width + 'px'); // NEW
-			targets[i].style.setProperty('--trellis-workspace-height', bounds.height + 'px'); // NEW
-			targets[i].style.setProperty('--trellis-workspace-center-x', (bounds.left + bounds.width / 2) + 'px'); // NEW
-			targets[i].style.setProperty('--trellis-workspace-center-y', (bounds.top + bounds.height / 2) + 'px'); // NEW
-			targets[i].style.setProperty('--trellis-splash-dialog-width', layout.width + 'px'); // NEW
-			targets[i].style.setProperty('--trellis-splash-dialog-height', layout.height + 'px'); // NEW
-		} // NEW
+		for (var i = 0; i < targets.length; i++) {
+			if (targets[i] == null) continue;
+			targets[i].style.setProperty('--trellis-workspace-left', bounds.left + 'px');
+			targets[i].style.setProperty('--trellis-workspace-top', bounds.top + 'px');
+			targets[i].style.setProperty('--trellis-workspace-width', bounds.width + 'px');
+			targets[i].style.setProperty('--trellis-workspace-height', bounds.height + 'px');
+			targets[i].style.setProperty('--trellis-workspace-center-x', (bounds.left + bounds.width / 2) + 'px');
+			targets[i].style.setProperty('--trellis-workspace-center-y', (bounds.top + bounds.height / 2) + 'px');
+			targets[i].style.setProperty('--trellis-splash-dialog-width', layout.width + 'px');
+			targets[i].style.setProperty('--trellis-splash-dialog-height', layout.height + 'px');
+		}
 
-		if (layout.compact) addClass(outerDialog.container, 'trellis-splash-compact'); // CHANGE
-		else removeClass(outerDialog.container, 'trellis-splash-compact'); // NEW
-	} // NEW
+		if (layout.compact) addClass(outerDialog.container, 'trellis-splash-compact');
+		else removeClass(outerDialog.container, 'trellis-splash-compact');
+	}
 
-	function setSplashChromeActive(editorUi, active) { // NEW
-		if (editorUi == null || editorUi.container == null) return; // NEW
-		if (active) addClass(editorUi.container, 'trellis-splash-active'); // NEW
-		else removeClass(editorUi.container, 'trellis-splash-active'); // NEW
-	} // NEW
+	function setSplashChromeActive(editorUi, active) {
+		if (editorUi == null || editorUi.container == null) return;
+		if (active) addClass(editorUi.container, 'trellis-splash-active');
+		else removeClass(editorUi.container, 'trellis-splash-active');
+	}
 
-	function decorateOuterDialog(editorUi, splashDialog, outerDialog) { // NEW
-		addClass(outerDialog.container, 'trellis-splash-dialog'); // NEW
-		addClass(outerDialog.bg, 'trellis-splash-backdrop'); // NEW
-		setSplashChromeActive(editorUi, true); // NEW
-		applyWorkspaceLayout(editorUi, outerDialog); // NEW
-		splashDialog.trellisOuterDialog = outerDialog; // NEW
-		updateCloseLabel(splashDialog, outerDialog); // NEW
-		requestBackground(outerDialog.bg); // NEW
+	function decorateOuterDialog(editorUi, splashDialog, outerDialog) {
+		addClass(outerDialog.container, 'trellis-splash-dialog');
+		addClass(outerDialog.bg, 'trellis-splash-backdrop');
+		setSplashChromeActive(editorUi, true);
+		applyWorkspaceLayout(editorUi, outerDialog);
+		splashDialog.trellisOuterDialog = outerDialog;
+		updateCloseLabel(splashDialog, outerDialog);
+		requestBackground(outerDialog.bg);
 
-		if (outerDialog.trellisSplashCleanup != null) outerDialog.trellisSplashCleanup(); // NEW
-		var disposed = false; // NEW
-		var resizeHandler = function() { applyWorkspaceLayout(editorUi, outerDialog); }; // NEW
-		var cleanup = function() { // NEW
-			if (disposed) return; // NEW
-			disposed = true; // NEW
-			window.removeEventListener('resize', resizeHandler); // NEW
-			outerDialog.trellisSplashCleanup = null; // NEW
-		}; // NEW
-		window.addEventListener('resize', resizeHandler); // NEW
-		outerDialog.trellisSplashCleanup = cleanup; // NEW
+		if (outerDialog.trellisSplashCleanup != null) outerDialog.trellisSplashCleanup();
+		var disposed = false;
+		var resizeHandler = function() { applyWorkspaceLayout(editorUi, outerDialog); };
+		var cleanup = function() {
+			if (disposed) return;
+			disposed = true;
+			window.removeEventListener('resize', resizeHandler);
+			outerDialog.trellisSplashCleanup = null;
+		};
+		window.addEventListener('resize', resizeHandler);
+		outerDialog.trellisSplashCleanup = cleanup;
 
-		if (typeof outerDialog.close == 'function' && !outerDialog.trellisSplashCloseWrapped) { // NEW
-			var baseClose = outerDialog.close; // NEW
-			outerDialog.close = function() { // CHANGE
-				var result = baseClose.apply(this, arguments); // CHANGE
-				if (result !== false) { // NEW
-					if (typeof this.trellisSplashCleanup == 'function') this.trellisSplashCleanup(); // CHANGE
-					setSplashChromeActive(editorUi, false); // NEW
-				} // NEW
-				return result; // NEW
-			}; // CHANGE
-			outerDialog.trellisSplashCloseWrapped = true; // NEW
-		} // NEW
-	} // NEW
+		if (typeof outerDialog.close == 'function' && !outerDialog.trellisSplashCloseWrapped) {
+			var baseClose = outerDialog.close;
+			outerDialog.close = function() {
+				var result = baseClose.apply(this, arguments);
+				if (result !== false) {
+					if (typeof this.trellisSplashCleanup == 'function') this.trellisSplashCleanup();
+					setSplashChromeActive(editorUi, false);
+				}
+				return result;
+			};
+			outerDialog.trellisSplashCloseWrapped = true;
+		}
+	}
 
-	function install() { // NEW
-		if (installed || typeof SplashDialog == 'undefined') return; // NEW
-		installed = true; // NEW
+	function install() {
+		if (installed || typeof SplashDialog == 'undefined') return;
+		installed = true;
 
-		var BaseSplashDialog = SplashDialog; // NEW
-		SplashDialog = function(editorUi) { // CHANGE
-			return enhanceSplashDialog(new BaseSplashDialog(editorUi), editorUi); // NEW
-		}; // CHANGE
+		var BaseSplashDialog = SplashDialog;
+		SplashDialog = function(editorUi) {
+			return enhanceSplashDialog(new BaseSplashDialog(editorUi), editorUi);
+		};
 
-		if (typeof App != 'undefined' && App.prototype != null && App.prototype.showDialog != null) { // NEW
-			var baseShowDialog = App.prototype.showDialog; // NEW
-			App.prototype.showDialog = function(element) { // CHANGE
-				var result = baseShowDialog.apply(this, arguments); // NEW
+		if (typeof App != 'undefined' && App.prototype != null && App.prototype.showDialog != null) {
+			var baseShowDialog = App.prototype.showDialog;
+			App.prototype.showDialog = function(element) {
+				var result = baseShowDialog.apply(this, arguments);
 
-				if (element != null && element.trellisSplashDialog != null && this.dialog != null) { // NEW
-					decorateOuterDialog(this, element.trellisSplashDialog, this.dialog); // NEW
-				} // NEW
+				if (element != null && element.trellisSplashDialog != null && this.dialog != null) {
+					decorateOuterDialog(this, element.trellisSplashDialog, this.dialog);
+				}
 
-				return result; // NEW
-			}; // CHANGE
-		} // NEW
-	} // NEW
+				return result;
+			};
+		}
+	}
 
-	window.TrellisSplashEnhancements = { // NEW
-		install: install, // NEW
-		enhanceSplashDialog: enhanceSplashDialog, // NEW
-		decorateOuterDialog: decorateOuterDialog, // NEW
-		isSafeBackgroundFilename: isSafeBackgroundFilename // NEW
-	}; // NEW
-})(); // NEW
+	window.TrellisSplashEnhancements = {
+		install: install,
+		enhanceSplashDialog: enhanceSplashDialog,
+		decorateOuterDialog: decorateOuterDialog,
+		isSafeBackgroundFilename: isSafeBackgroundFilename
+	};
+})();

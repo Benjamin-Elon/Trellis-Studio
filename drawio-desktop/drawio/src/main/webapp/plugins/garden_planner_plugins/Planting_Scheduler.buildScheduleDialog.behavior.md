@@ -907,7 +907,7 @@ Preview/Save validate the selected date directly. Sowing seasons are guidance
 and defaults, not a hard save boundary. Thermal schedule problems can surface as
 runtime warnings when the selected date passes the non-thermal gates; those
 warnings are recomputed when inputs change and are not persisted as cell
-attributes. // CHANGED
+attributes.
 The Schedule summary renders those runtime warnings as de-duplicated bullet
 points in the Feasibility tile; the inline sow-date note remains compact text. <!-- ADDED -->
 
@@ -941,7 +941,7 @@ bands, a subtle Today marker when today falls inside the range, and visible
 milestones for sowing, transplant when applicable, first harvest, and harvest
 end. The x-axis shows quarterly month labels and a separate year row below the
 rail. Germination and maturity remain available in the exact-date details text
-and marker tooltips so crowded compact layouts do not drop stage dates. // CHANGED
+and marker tooltips so crowded compact layouts do not drop stage dates.
 
 Milestone labels are stacked into a bounded number of rows. This keeps the
 right-column Timeline section stable for short crops and dense milestone dates,
@@ -954,7 +954,7 @@ small task dot. Clicking one refreshes the Tasks tab and opens the first
 matching rule in the same deterministic display order used by the task list.
 Generated task occurrences are not edited directly from the timeline.
 Task-dot state is recomputed after the task preview refresh so generated
-occurrence dates influence the same deterministic display order. // ADDED
+occurrence dates influence the same deterministic display order.
 
 ### Identifier normalization
 

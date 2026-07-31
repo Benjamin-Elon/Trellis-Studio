@@ -18,42 +18,42 @@ Draw.loadPlugin(function (ui) {
     const PLAN_YEARS_ATTR = "plan_year_json";
     const PLAN_TEMPLATES_ATTR = "plan_year_templates";      // (diagram-scoped)
     const PLAN_UNIT_DEFAULTS_ATTR = "plan_unit_defaults";   // (diagram-scoped, per plantId)
-    const PLAN_METADATA_CELL_ATTR = "usl_year_planner_metadata"; // NEW
-    const EPS = 0.0001; // NEW
-    const TRELLIS_DIALOG_Z = 2000000000; // NEW
+    const PLAN_METADATA_CELL_ATTR = "usl_year_planner_metadata";
+    const EPS = 0.0001;
+    const TRELLIS_DIALOG_Z = 2000000000;
     const __YP_GLOBAL = window.__uslYearPlannerGlobal || (window.__uslYearPlannerGlobal = {});
 
-    // -------------------- SessionController -------------------- // CHANGE
+    // -------------------- SessionController --------------------
     /**
-     * Owns the single active modal session and all listener/DOM cleanup attached to it. // NEW
+     * Owns the single active modal session and all listener/DOM cleanup attached to it.
      */
-    const SessionController = (() => { // NEW
-        let activeSession = null; // NEW
+    const SessionController = (() => {
+        let activeSession = null;
 
-        function safeDispose(fn) { // CHANGE
+        function safeDispose(fn) {
             try { fn && fn(); } catch (_) { }
         }
 
-        function close() { // CHANGE
-            const session = activeSession; // CHANGE
+        function close() {
+            const session = activeSession;
             if (!session) return;
 
-            const disposers = Array.isArray(session.disposers) ? session.disposers.slice().reverse() : []; // CHANGE
+            const disposers = Array.isArray(session.disposers) ? session.disposers.slice().reverse() : [];
             session.disposers = [];
-            for (const dispose of disposers) safeDispose(dispose); // CHANGE
+            for (const dispose of disposers) safeDispose(dispose);
 
             if (session.ui && session.ui.modalEl) {
                 try { session.ui.modalEl.remove(); } catch (_) { }
                 session.ui.modalEl = null;
             }
 
-            activeSession = null; // CHANGE
+            activeSession = null;
         }
 
-        function start(moduleCell, year, plan) { // CHANGE
-            close(); // NEW
+        function start(moduleCell, year, plan) {
+            close();
             const moduleCellId = String(moduleCell?.getId ? moduleCell.getId() : moduleCell?.id || "");
-            activeSession = { // CHANGE
+            activeSession = {
                 moduleCell,
                 moduleCellId,
                 year: Number(year),
@@ -64,24 +64,24 @@ Draw.loadPlugin(function (ui) {
                 },
                 disposers: []
             };
-            return activeSession; // NEW
+            return activeSession;
         }
 
-        function isActive(session) { // NEW
-            return activeSession === session; // NEW
+        function isActive(session) {
+            return activeSession === session;
         }
 
-        function addWindowListener(session, type, handler, opts) { // CHANGE
+        function addWindowListener(session, type, handler, opts) {
             window.addEventListener(type, handler, opts);
             session.disposers.push(() => window.removeEventListener(type, handler, opts));
         }
 
-        function addGraphListener(session, targetGraph, eventName, handler) { // CHANGE
+        function addGraphListener(session, targetGraph, eventName, handler) {
             targetGraph.addListener(eventName, handler);
             session.disposers.push(() => { try { targetGraph.removeListener(handler); } catch (_) { } });
         }
 
-        return { start, close, isActive, addWindowListener, addGraphListener }; // NEW
+        return { start, close, isActive, addWindowListener, addGraphListener };
     })();
 
 
@@ -108,7 +108,7 @@ Draw.loadPlugin(function (ui) {
                 PLAN_YEARS_ATTR,
                 PLAN_TEMPLATES_ATTR,
                 PLAN_UNIT_DEFAULTS_ATTR,
-                PLAN_METADATA_CELL_ATTR // NEW
+                PLAN_METADATA_CELL_ATTR
             }
         };
     })();
@@ -203,7 +203,7 @@ Draw.loadPlugin(function (ui) {
         async function listPlantsBasicRows() {
             const sql = `
           SELECT plant_id, plant_name, yield_per_plant_kg, harvest_window_days, default_planting_method,
-                 annual, biennial, perennial /* CHANGE */
+                 annual, biennial, perennial
           FROM Plants
           WHERE abbr IS NOT NULL
           ORDER BY plant_name;`;
@@ -231,18 +231,18 @@ Draw.loadPlugin(function (ui) {
             return await queryAll(sql, [pid]);
         }
 
-        async function queryPlantingMethodsForPlantId(plantId) { // NEW
-            const pid = Number(plantId); // NEW
-            if (!Number.isFinite(pid)) return []; // NEW
+        async function queryPlantingMethodsForPlantId(plantId) {
+            const pid = Number(plantId);
+            if (!Number.isFinite(pid)) return [];
             const sql = `
         SELECT pm.method_id, pm.method_name, pm.method_category_id
         FROM PlantingMethods pm
         INNER JOIN PlantAllowedMethodCategories allowed
           ON LOWER(TRIM(allowed.method_category_id)) = LOWER(TRIM(pm.method_category_id))
         WHERE allowed.plant_id = ?
-        ORDER BY LOWER(TRIM(pm.method_category_id)), LOWER(TRIM(pm.method_name)), LOWER(TRIM(pm.method_id));`; // NEW
-            return await queryAll(sql, [pid]); // NEW
-        } // NEW
+        ORDER BY LOWER(TRIM(pm.method_category_id)), LOWER(TRIM(pm.method_name)), LOWER(TRIM(pm.method_id));`;
+            return await queryAll(sql, [pid]);
+        }
 
         return {
             getDbPath,
@@ -251,7 +251,7 @@ Draw.loadPlugin(function (ui) {
             getPlantsBasicCached,
             invalidatePlantsBasicCache,
             queryVarietiesByPlantId,
-            queryPlantingMethodsForPlantId // NEW
+            queryPlantingMethodsForPlantId
         };
     })();
 
@@ -339,54 +339,54 @@ Draw.loadPlugin(function (ui) {
             return -1;
         }
 
-        const DAY_MS = 24 * 60 * 60 * 1000; // NEW
-        const WEEK_MS = 7 * DAY_MS; // CHANGE
+        const DAY_MS = 24 * 60 * 60 * 1000;
+        const WEEK_MS = 7 * DAY_MS;
 
-        function weekRangeForWindowClamped(weekStarts, fromYmd, toYmd) { // NEW
-            if (!Array.isArray(weekStarts) || !weekStarts.length) return null; // NEW
-            if (!hasYmd(fromYmd) || !hasYmd(toYmd)) return null; // NEW
+        function weekRangeForWindowClamped(weekStarts, fromYmd, toYmd) {
+            if (!Array.isArray(weekStarts) || !weekStarts.length) return null;
+            if (!hasYmd(fromYmd) || !hasYmd(toYmd)) return null;
 
-            const t0 = parseYmdLocalToMs(fromYmd); // NEW
-            const t1 = parseYmdLocalToMs(toYmd); // NEW
-            if (!Number.isFinite(t0) || !Number.isFinite(t1)) return null; // NEW
+            const t0 = parseYmdLocalToMs(fromYmd);
+            const t1 = parseYmdLocalToMs(toYmd);
+            if (!Number.isFinite(t0) || !Number.isFinite(t1)) return null;
 
-            const winStart = Math.min(t0, t1); // NEW
-            const winEndEx = addDaysMs(Math.max(t0, t1), 1); // NEW
+            const winStart = Math.min(t0, t1);
+            const winEndEx = addDaysMs(Math.max(t0, t1), 1);
 
-            let a = -1; // NEW
-            let b = -1; // NEW
+            let a = -1;
+            let b = -1;
 
-            for (let i = 0; i < weekStarts.length; i++) { // NEW
-                const ws = weekStarts[i].ms; // NEW
-                const we = addDaysMs(ws, 7); // NEW
-                const overlaps = winStart < we && winEndEx > ws; // NEW
-                if (!overlaps) continue; // NEW
-                if (a < 0) a = i; // NEW
-                b = i; // NEW
-            } // NEW
+            for (let i = 0; i < weekStarts.length; i++) {
+                const ws = weekStarts[i].ms;
+                const we = addDaysMs(ws, 7);
+                const overlaps = winStart < we && winEndEx > ws;
+                if (!overlaps) continue;
+                if (a < 0) a = i;
+                b = i;
+            }
 
-            return (a >= 0 && b >= 0) ? { a, b } : null; // NEW
-        } // NEW
+            return (a >= 0 && b >= 0) ? { a, b } : null;
+        }
 
-        function weekStartMsForDate(dateYmd, weekStartDow) { // NEW
-            const t = parseYmdLocalToMs(dateYmd); // NEW
-            if (!Number.isFinite(t)) return NaN; // NEW
+        function weekStartMsForDate(dateYmd, weekStartDow) {
+            const t = parseYmdLocalToMs(dateYmd);
+            if (!Number.isFinite(t)) return NaN;
 
-            const d = new Date(t); // NEW
-            const dow = d.getDay(); // NEW
-            const delta = (7 + (dow - weekStartDow)) % 7; // NEW
-            return addDaysMs(t, -delta); // NEW
-        } // NEW
+            const d = new Date(t);
+            const dow = d.getDay();
+            const delta = (7 + (dow - weekStartDow)) % 7;
+            return addDaysMs(t, -delta);
+        }
 
-        function weekOffsetFromWindowStart(weekStarts, i, fromYmd, weekStartDow) { // NEW
-            const startWeekMs = weekStartMsForDate(fromYmd, weekStartDow); // NEW
-            if (!Number.isFinite(startWeekMs)) return 0; // NEW
+        function weekOffsetFromWindowStart(weekStarts, i, fromYmd, weekStartDow) {
+            const startWeekMs = weekStartMsForDate(fromYmd, weekStartDow);
+            if (!Number.isFinite(startWeekMs)) return 0;
 
-            const diff = Number(weekStarts[i].ms) - startWeekMs; // NEW
-            if (!Number.isFinite(diff)) return 0; // NEW
+            const diff = Number(weekStarts[i].ms) - startWeekMs;
+            if (!Number.isFinite(diff)) return 0;
 
-            return Math.max(0, Math.round(diff / WEEK_MS)); // NEW
-        } // NEW
+            return Math.max(0, Math.round(diff / WEEK_MS));
+        }
 
         function findCrop(plan, cropId) {
             const list = (plan && plan.crops) ? plan.crops : [];
@@ -426,263 +426,263 @@ Draw.loadPlugin(function (ui) {
             return NaN;
         }
 
-        function resolvePackagePriceForUnit(crop, unit) { // NEW
-            const u = String(unit || "").trim().toLowerCase(); // NEW
-            if (!u) return NaN; // NEW
-            const packs = Array.isArray(crop && crop.packages) ? crop.packages : []; // NEW
-            const pkg = packs.find(item => String(item && item.unit || "").trim().toLowerCase() === u); // NEW
-            if (!pkg || pkg.price === "" || pkg.price === null || pkg.price === undefined) return NaN; // NEW
-            const price = Number(pkg.price); // NEW
-            return Number.isFinite(price) && price >= 0 ? price : NaN; // NEW
-        } // NEW
-
-        function addKgAcrossWeeks(series, weekStarts, fromYmd, toYmd, kgPerWeek) {
-            const wr = weekRangeForWindowClamped(weekStarts, fromYmd, toYmd); // CHANGE
-            if (!wr) return; // CHANGE
-
-            for (let i = wr.a; i <= wr.b; i++) series[i] += kgPerWeek; // CHANGE
+        function resolvePackagePriceForUnit(crop, unit) {
+            const u = String(unit || "").trim().toLowerCase();
+            if (!u) return NaN;
+            const packs = Array.isArray(crop && crop.packages) ? crop.packages : [];
+            const pkg = packs.find(item => String(item && item.unit || "").trim().toLowerCase() === u);
+            if (!pkg || pkg.price === "" || pkg.price === null || pkg.price === undefined) return NaN;
+            const price = Number(pkg.price);
+            return Number.isFinite(price) && price >= 0 ? price : NaN;
         }
 
-        function addDailyDemandAcrossWeeks(series, weekStarts, fromYmd, toYmd, kgPerOccurrence, everyN) { // NEW
-            if (!Array.isArray(series) || !Array.isArray(weekStarts)) return false; // NEW
-            if (!hasYmd(fromYmd) || !hasYmd(toYmd) || fromYmd > toYmd) return false; // NEW
-            const kg = Number(kgPerOccurrence); // NEW
-            const interval = Math.max(1, Math.trunc(Number(everyN) || 1)); // NEW
-            if (!Number.isFinite(kg) || kg <= 0) return false; // NEW
-            const match = String(fromYmd).match(/^(\d{4})-(\d{2})-(\d{2})$/); // NEW
-            if (!match) return false; // NEW
-            const anchor = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])); // NEW
-            const endMatch = String(toYmd).match(/^(\d{4})-(\d{2})-(\d{2})$/); // NEW
-            const end = Date.UTC(Number(endMatch[1]), Number(endMatch[2]) - 1, Number(endMatch[3])); // NEW
-            let added = false; // NEW
-            for (let day = anchor; day <= end; day += interval * DAY_MS) { // NEW
-                const date = new Date(day); // NEW
-                const ymd = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`; // NEW
-                const index = weekIndexForDate(weekStarts, ymd); // NEW
-                if (index < 0) continue; // NEW
-                series[index] += kg; // NEW
-                added = true; // NEW
-            } // NEW
-            return added; // NEW
-        } // NEW
+        function addKgAcrossWeeks(series, weekStarts, fromYmd, toYmd, kgPerWeek) {
+            const wr = weekRangeForWindowClamped(weekStarts, fromYmd, toYmd);
+            if (!wr) return;
 
-        function addWeeklyDemandAcrossWeeks(series, weekStarts, fromYmd, toYmd, kgPerOccurrence, everyN, weekStartDow) { // NEW
-            const wr = weekRangeForWindowClamped(weekStarts, fromYmd, toYmd); // NEW
-            const kg = Number(kgPerOccurrence); // NEW
-            const interval = Math.max(1, Math.trunc(Number(everyN) || 1)); // NEW
-            if (!wr || !Number.isFinite(kg) || kg <= 0) return false; // NEW
-            let added = false; // NEW
-            for (let i = wr.a; i <= wr.b; i++) { // NEW
-                const offset = weekOffsetFromWindowStart(weekStarts, i, fromYmd, weekStartDow); // NEW
-                if (offset % interval !== 0) continue; // NEW
-                series[i] += kg; // NEW
-                added = true; // NEW
-            } // NEW
-            return added; // NEW
-        } // NEW
+            for (let i = wr.a; i <= wr.b; i++) series[i] += kgPerWeek;
+        }
 
-        function addMonthlyDemandAcrossWeeks(series, weekStarts, fromYmd, toYmd, kgPerMonth, everyN) { // NEW
-            if (!Array.isArray(series) || !Array.isArray(weekStarts)) return false; // NEW
-            if (!hasYmd(fromYmd) || !hasYmd(toYmd) || fromYmd > toYmd) return false; // NEW
-            const kg = Number(kgPerMonth); // NEW
-            const interval = Math.max(1, Math.trunc(Number(everyN) || 1)); // NEW
-            if (!Number.isFinite(kg) || kg <= 0) return false; // NEW
-            const fromParts = String(fromYmd).split("-").map(Number); // NEW
-            const toParts = String(toYmd).split("-").map(Number); // NEW
-            const anchorMonth = fromParts[0] * 12 + fromParts[1] - 1; // NEW
-            const lastMonth = toParts[0] * 12 + toParts[1] - 1; // NEW
-            let added = false; // NEW
-            for (let monthKey = anchorMonth; monthKey <= lastMonth; monthKey += interval) { // NEW
-                const year = Math.floor(monthKey / 12); // NEW
-                const monthIndex = monthKey % 12; // NEW
-                const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate(); // NEW
-                const activeStart = monthKey === anchorMonth ? fromParts[2] : 1; // NEW
-                const activeEnd = monthKey === lastMonth ? toParts[2] : daysInMonth; // NEW
-                for (let day = activeStart; day <= activeEnd; day++) { // NEW
-                    const ymd = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`; // NEW
-                    const index = weekIndexForDate(weekStarts, ymd); // NEW
-                    if (index < 0) continue; // NEW
-                    series[index] += kg / daysInMonth; // NEW
-                    added = true; // NEW
-                } // NEW
-            } // NEW
-            return added; // NEW
-        } // NEW
+        function addDailyDemandAcrossWeeks(series, weekStarts, fromYmd, toYmd, kgPerOccurrence, everyN) {
+            if (!Array.isArray(series) || !Array.isArray(weekStarts)) return false;
+            if (!hasYmd(fromYmd) || !hasYmd(toYmd) || fromYmd > toYmd) return false;
+            const kg = Number(kgPerOccurrence);
+            const interval = Math.max(1, Math.trunc(Number(everyN) || 1));
+            if (!Number.isFinite(kg) || kg <= 0) return false;
+            const match = String(fromYmd).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (!match) return false;
+            const anchor = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+            const endMatch = String(toYmd).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            const end = Date.UTC(Number(endMatch[1]), Number(endMatch[2]) - 1, Number(endMatch[3]));
+            let added = false;
+            for (let day = anchor; day <= end; day += interval * DAY_MS) {
+                const date = new Date(day);
+                const ymd = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+                const index = weekIndexForDate(weekStarts, ymd);
+                if (index < 0) continue;
+                series[index] += kg;
+                added = true;
+            }
+            return added;
+        }
 
-        function addDemandAcrossWeeks(series, weekStarts, line, kgPerUnit, weekStartDow) { // NEW
-            const qtyKg = Number(line && line.qty) * Number(kgPerUnit); // NEW
-            const everyN = Math.max(1, Math.trunc(Number(line && line.everyN) || 1)); // NEW
-            if (line && line.frequency === "day") return addDailyDemandAcrossWeeks(series, weekStarts, line.from, line.to, qtyKg, everyN); // NEW
-            if (line && line.frequency === "month") return addMonthlyDemandAcrossWeeks(series, weekStarts, line.from, line.to, qtyKg, everyN); // NEW
-            return addWeeklyDemandAcrossWeeks(series, weekStarts, line && line.from, line && line.to, qtyKg, everyN, weekStartDow); // NEW
-        } // NEW
+        function addWeeklyDemandAcrossWeeks(series, weekStarts, fromYmd, toYmd, kgPerOccurrence, everyN, weekStartDow) {
+            const wr = weekRangeForWindowClamped(weekStarts, fromYmd, toYmd);
+            const kg = Number(kgPerOccurrence);
+            const interval = Math.max(1, Math.trunc(Number(everyN) || 1));
+            if (!wr || !Number.isFinite(kg) || kg <= 0) return false;
+            let added = false;
+            for (let i = wr.a; i <= wr.b; i++) {
+                const offset = weekOffsetFromWindowStart(weekStarts, i, fromYmd, weekStartDow);
+                if (offset % interval !== 0) continue;
+                series[i] += kg;
+                added = true;
+            }
+            return added;
+        }
 
-        function addTotalKgAcrossWindowProrated(series, weekStarts, fromYmd, toYmd, totalKg, selectedYear) { // NEW
-            if (!Array.isArray(series) || !Array.isArray(weekStarts)) return false; // NEW
-            if (!hasYmd(fromYmd) || !hasYmd(toYmd)) return false; // NEW
+        function addMonthlyDemandAcrossWeeks(series, weekStarts, fromYmd, toYmd, kgPerMonth, everyN) {
+            if (!Array.isArray(series) || !Array.isArray(weekStarts)) return false;
+            if (!hasYmd(fromYmd) || !hasYmd(toYmd) || fromYmd > toYmd) return false;
+            const kg = Number(kgPerMonth);
+            const interval = Math.max(1, Math.trunc(Number(everyN) || 1));
+            if (!Number.isFinite(kg) || kg <= 0) return false;
+            const fromParts = String(fromYmd).split("-").map(Number);
+            const toParts = String(toYmd).split("-").map(Number);
+            const anchorMonth = fromParts[0] * 12 + fromParts[1] - 1;
+            const lastMonth = toParts[0] * 12 + toParts[1] - 1;
+            let added = false;
+            for (let monthKey = anchorMonth; monthKey <= lastMonth; monthKey += interval) {
+                const year = Math.floor(monthKey / 12);
+                const monthIndex = monthKey % 12;
+                const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+                const activeStart = monthKey === anchorMonth ? fromParts[2] : 1;
+                const activeEnd = monthKey === lastMonth ? toParts[2] : daysInMonth;
+                for (let day = activeStart; day <= activeEnd; day++) {
+                    const ymd = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+                    const index = weekIndexForDate(weekStarts, ymd);
+                    if (index < 0) continue;
+                    series[index] += kg / daysInMonth;
+                    added = true;
+                }
+            }
+            return added;
+        }
 
-            const total = Number(totalKg); // NEW
-            if (!Number.isFinite(total) || total <= 0) return false; // NEW
+        function addDemandAcrossWeeks(series, weekStarts, line, kgPerUnit, weekStartDow) {
+            const qtyKg = Number(line && line.qty) * Number(kgPerUnit);
+            const everyN = Math.max(1, Math.trunc(Number(line && line.everyN) || 1));
+            if (line && line.frequency === "day") return addDailyDemandAcrossWeeks(series, weekStarts, line.from, line.to, qtyKg, everyN);
+            if (line && line.frequency === "month") return addMonthlyDemandAcrossWeeks(series, weekStarts, line.from, line.to, qtyKg, everyN);
+            return addWeeklyDemandAcrossWeeks(series, weekStarts, line && line.from, line && line.to, qtyKg, everyN, weekStartDow);
+        }
 
-            const y = Number(selectedYear); // NEW
-            if (!Number.isFinite(y)) return false; // NEW
+        function addTotalKgAcrossWindowProrated(series, weekStarts, fromYmd, toYmd, totalKg, selectedYear) {
+            if (!Array.isArray(series) || !Array.isArray(weekStarts)) return false;
+            if (!hasYmd(fromYmd) || !hasYmd(toYmd)) return false;
 
-            const t0 = parseYmdLocalToMs(fromYmd); // NEW
-            const t1 = parseYmdLocalToMs(toYmd); // NEW
-            if (!Number.isFinite(t0) || !Number.isFinite(t1)) return false; // NEW
-            if (t0 > t1) return false; // CHANGE
+            const total = Number(totalKg);
+            if (!Number.isFinite(total) || total <= 0) return false;
 
-            const winStart = t0; // CHANGE
-            const winEndEx = addDaysMs(t1, 1); // CHANGE
+            const y = Number(selectedYear);
+            if (!Number.isFinite(y)) return false;
 
-            const yearStart = parseYmdLocalToMs(`${y}-01-01`); // NEW
-            const yearEndEx = parseYmdLocalToMs(`${y + 1}-01-01`); // NEW
-            if (!Number.isFinite(yearStart) || !Number.isFinite(yearEndEx)) return false; // NEW
+            const t0 = parseYmdLocalToMs(fromYmd);
+            const t1 = parseYmdLocalToMs(toYmd);
+            if (!Number.isFinite(t0) || !Number.isFinite(t1)) return false;
+            if (t0 > t1) return false;
 
-            const fullDays = Math.max(1, Math.round((winEndEx - winStart) / DAY_MS)); // NEW
-            let added = false; // NEW
+            const winStart = t0;
+            const winEndEx = addDaysMs(t1, 1);
 
-            for (let i = 0; i < weekStarts.length; i++) { // NEW
-                const ws = Number(weekStarts[i].ms); // NEW
-                if (!Number.isFinite(ws)) continue; // NEW
+            const yearStart = parseYmdLocalToMs(`${y}-01-01`);
+            const yearEndEx = parseYmdLocalToMs(`${y + 1}-01-01`);
+            if (!Number.isFinite(yearStart) || !Number.isFinite(yearEndEx)) return false;
 
-                const we = addDaysMs(ws, 7); // NEW
+            const fullDays = Math.max(1, Math.round((winEndEx - winStart) / DAY_MS));
+            let added = false;
 
-                const overlapStart = Math.max(winStart, ws, yearStart); // NEW
-                const overlapEnd = Math.min(winEndEx, we, yearEndEx); // NEW
-                if (overlapStart >= overlapEnd) continue; // NEW
+            for (let i = 0; i < weekStarts.length; i++) {
+                const ws = Number(weekStarts[i].ms);
+                if (!Number.isFinite(ws)) continue;
 
-                const overlapDays = Math.max(0, (overlapEnd - overlapStart) / DAY_MS); // NEW
-                if (!(overlapDays > 0)) continue; // NEW
+                const we = addDaysMs(ws, 7);
 
-                series[i] += total * (overlapDays / fullDays); // NEW
-                added = true; // NEW
-            } // NEW
+                const overlapStart = Math.max(winStart, ws, yearStart);
+                const overlapEnd = Math.min(winEndEx, we, yearEndEx);
+                if (overlapStart >= overlapEnd) continue;
 
-            return added; // NEW
-        } // NEW
+                const overlapDays = Math.max(0, (overlapEnd - overlapStart) / DAY_MS);
+                if (!(overlapDays > 0)) continue;
+
+                series[i] += total * (overlapDays / fullDays);
+                added = true;
+            }
+
+            return added;
+        }
 
         /**
-         * Simulates weekly FIFO inventory for one crop without changing its harvest series. // NEW
-         * Shelf life is approximated in whole weekly buckets; harvest remains usable in its harvest week. // NEW
-         */ // NEW
-        function buildUsableSupplySeries(harvestSeries, targetSeries, shelfLifeDays, weekStarts) { // NEW
-            const harvest = Array.isArray(harvestSeries) ? harvestSeries : []; // NEW
-            const target = Array.isArray(targetSeries) ? targetSeries : []; // NEW
-            const weeks = Array.isArray(weekStarts) ? weekStarts : []; // NEW
-            const length = Math.max(harvest.length, target.length, weeks.length); // NEW
-            const lifetimeWeeks = Math.max(1, Math.ceil(Math.max(0, Number(shelfLifeDays) || 0) / 7)); // NEW
-            const availableSupply = Array(length).fill(0); // NEW
-            const usableSupply = Array(length).fill(0); // NEW
-            const short = Array(length).fill(0); // NEW
-            const surplus = Array(length).fill(0); // NEW
-            const expired = Array(length).fill(0); // NEW
-            const endingInventory = Array(length).fill(0); // NEW
-            const inventory = []; // NEW
+         * Simulates weekly FIFO inventory for one crop without changing its harvest series.
+         * Shelf life is approximated in whole weekly buckets; harvest remains usable in its harvest week.
+         */
+        function buildUsableSupplySeries(harvestSeries, targetSeries, shelfLifeDays, weekStarts) {
+            const harvest = Array.isArray(harvestSeries) ? harvestSeries : [];
+            const target = Array.isArray(targetSeries) ? targetSeries : [];
+            const weeks = Array.isArray(weekStarts) ? weekStarts : [];
+            const length = Math.max(harvest.length, target.length, weeks.length);
+            const lifetimeWeeks = Math.max(1, Math.ceil(Math.max(0, Number(shelfLifeDays) || 0) / 7));
+            const availableSupply = Array(length).fill(0);
+            const usableSupply = Array(length).fill(0);
+            const short = Array(length).fill(0);
+            const surplus = Array(length).fill(0);
+            const expired = Array(length).fill(0);
+            const endingInventory = Array(length).fill(0);
+            const inventory = [];
 
-            for (let weekIndex = 0; weekIndex < length; weekIndex++) { // NEW
-                const harvestedKg = Math.max(0, Number(harvest[weekIndex]) || 0); // NEW
-                if (harvestedKg > 0) { // NEW
-                    inventory.push({ kg: harvestedKg, expiresWeek: weekIndex + lifetimeWeeks }); // NEW
-                } // NEW
+            for (let weekIndex = 0; weekIndex < length; weekIndex++) {
+                const harvestedKg = Math.max(0, Number(harvest[weekIndex]) || 0);
+                if (harvestedKg > 0) {
+                    inventory.push({ kg: harvestedKg, expiresWeek: weekIndex + lifetimeWeeks });
+                }
 
-                while (inventory.length && inventory[0].expiresWeek <= weekIndex) { // NEW
-                    expired[weekIndex] += inventory.shift().kg; // NEW
-                } // NEW
+                while (inventory.length && inventory[0].expiresWeek <= weekIndex) {
+                    expired[weekIndex] += inventory.shift().kg;
+                }
 
-                availableSupply[weekIndex] = inventory.reduce((sum, batch) => sum + batch.kg, 0); // NEW
-                let demandRemaining = Math.max(0, Number(target[weekIndex]) || 0); // NEW
+                availableSupply[weekIndex] = inventory.reduce((sum, batch) => sum + batch.kg, 0);
+                let demandRemaining = Math.max(0, Number(target[weekIndex]) || 0);
 
-                while (demandRemaining > 0 && inventory.length) { // NEW
-                    const batch = inventory[0]; // NEW
-                    const usedKg = Math.min(demandRemaining, batch.kg); // NEW
-                    batch.kg -= usedKg; // NEW
-                    demandRemaining -= usedKg; // NEW
-                    usableSupply[weekIndex] += usedKg; // NEW
-                    if (batch.kg <= 1e-9) inventory.shift(); // NEW
-                } // NEW
+                while (demandRemaining > 0 && inventory.length) {
+                    const batch = inventory[0];
+                    const usedKg = Math.min(demandRemaining, batch.kg);
+                    batch.kg -= usedKg;
+                    demandRemaining -= usedKg;
+                    usableSupply[weekIndex] += usedKg;
+                    if (batch.kg <= 1e-9) inventory.shift();
+                }
 
-                short[weekIndex] = demandRemaining; // NEW
-                endingInventory[weekIndex] = inventory.reduce((sum, batch) => sum + batch.kg, 0); // NEW
-                surplus[weekIndex] = endingInventory[weekIndex]; // NEW
-            } // NEW
+                short[weekIndex] = demandRemaining;
+                endingInventory[weekIndex] = inventory.reduce((sum, batch) => sum + batch.kg, 0);
+                surplus[weekIndex] = endingInventory[weekIndex];
+            }
 
-            return { availableSupply, usableSupply, short, surplus, expired, endingInventory }; // NEW
-        } // NEW
+            return { availableSupply, usableSupply, short, surplus, expired, endingInventory };
+        }
 
-        function buildPlanChartModel(weekly, cropId) { // NEW
-            const source = cropId && weekly && weekly.perCrop // NEW
-                ? (weekly.perCrop.get(cropId) || weekly.perCrop.get(String(cropId))) // CHANGE
-                : null; // NEW
-            const weeks = weekly && Array.isArray(weekly.weeks) ? weekly.weeks : []; // NEW
-            const target = source ? source.target : (weekly && weekly.targetTotal) || []; // NEW
-            const harvest = source ? source.supply : (weekly && weekly.supplyTotal) || []; // NEW
-            const available = source ? source.availableSupply : (weekly && weekly.availableSupplyTotal) || []; // NEW
-            const usable = source ? source.usableSupply : (weekly && weekly.usableSupplyTotal) || []; // NEW
-            const short = source ? source.short : (weekly && weekly.shortTotal) || []; // NEW
-            const surplus = source ? source.surplus : (weekly && weekly.surplusTotal) || []; // NEW
-            const expired = source ? source.expired : (weekly && weekly.expiredTotal) || []; // NEW
-            const endingInventory = source ? source.endingInventory : (weekly && weekly.endingInventoryTotal) || []; // NEW
+        function buildPlanChartModel(weekly, cropId) {
+            const source = cropId && weekly && weekly.perCrop
+                ? (weekly.perCrop.get(cropId) || weekly.perCrop.get(String(cropId)))
+                : null;
+            const weeks = weekly && Array.isArray(weekly.weeks) ? weekly.weeks : [];
+            const target = source ? source.target : (weekly && weekly.targetTotal) || [];
+            const harvest = source ? source.supply : (weekly && weekly.supplyTotal) || [];
+            const available = source ? source.availableSupply : (weekly && weekly.availableSupplyTotal) || [];
+            const usable = source ? source.usableSupply : (weekly && weekly.usableSupplyTotal) || [];
+            const short = source ? source.short : (weekly && weekly.shortTotal) || [];
+            const surplus = source ? source.surplus : (weekly && weekly.surplusTotal) || [];
+            const expired = source ? source.expired : (weekly && weekly.expiredTotal) || [];
+            const endingInventory = source ? source.endingInventory : (weekly && weekly.endingInventoryTotal) || [];
 
-            return weeks.map((week, index) => ({ // NEW
-                week: week && week.iso ? String(week.iso) : "", // NEW
-                targetKg: Math.max(0, Number(target[index]) || 0), // NEW
-                harvestKg: Math.max(0, Number(harvest[index]) || 0), // NEW
-                availableSupplyKg: Math.max(0, Number(available[index]) || 0), // NEW
-                usableSupplyKg: Math.max(0, Number(usable[index]) || 0), // NEW
-                shortKg: Math.max(0, Number(short[index]) || 0), // NEW
-                surplusKg: Math.max(0, Number(surplus[index]) || 0), // NEW
-                expiredKg: Math.max(0, Number(expired[index]) || 0), // NEW
-                endingInventoryKg: Math.max(0, Number(endingInventory[index]) || 0) // NEW
-            })); // NEW
-        } // NEW
+            return weeks.map((week, index) => ({
+                week: week && week.iso ? String(week.iso) : "",
+                targetKg: Math.max(0, Number(target[index]) || 0),
+                harvestKg: Math.max(0, Number(harvest[index]) || 0),
+                availableSupplyKg: Math.max(0, Number(available[index]) || 0),
+                usableSupplyKg: Math.max(0, Number(usable[index]) || 0),
+                shortKg: Math.max(0, Number(short[index]) || 0),
+                surplusKg: Math.max(0, Number(surplus[index]) || 0),
+                expiredKg: Math.max(0, Number(expired[index]) || 0),
+                endingInventoryKg: Math.max(0, Number(endingInventory[index]) || 0)
+            }));
+        }
 
-        function summarizePlanChartModel(chartModel) { // NEW
-            const rows = Array.isArray(chartModel) ? chartModel : []; // NEW
-            const summary = { // NEW
-                targetKg: 0, // NEW
-                harvestKg: 0, // NEW
-                usableSupplyKg: 0, // NEW
-                shortKg: 0, // NEW
-                expiredKg: 0, // NEW
-                worstShortageKg: 0, // NEW
-                worstShortageWeek: "", // NEW
-                shortWeeks: 0 // NEW
-            }; // NEW
+        function summarizePlanChartModel(chartModel) {
+            const rows = Array.isArray(chartModel) ? chartModel : [];
+            const summary = {
+                targetKg: 0,
+                harvestKg: 0,
+                usableSupplyKg: 0,
+                shortKg: 0,
+                expiredKg: 0,
+                worstShortageKg: 0,
+                worstShortageWeek: "",
+                shortWeeks: 0
+            };
 
-            for (const row of rows) { // NEW
-                summary.targetKg += Math.max(0, Number(row && row.targetKg) || 0); // NEW
-                summary.harvestKg += Math.max(0, Number(row && row.harvestKg) || 0); // NEW
-                summary.usableSupplyKg += Math.max(0, Number(row && row.usableSupplyKg) || 0); // NEW
-                summary.shortKg += Math.max(0, Number(row && row.shortKg) || 0); // NEW
-                summary.expiredKg += Math.max(0, Number(row && row.expiredKg) || 0); // NEW
-                if (Number(row && row.shortKg) > 1e-9) summary.shortWeeks += 1; // NEW
-                if (Number(row && row.shortKg) > summary.worstShortageKg) { // NEW
-                    summary.worstShortageKg = Number(row.shortKg); // NEW
-                    summary.worstShortageWeek = String(row.week || ""); // NEW
-                } // NEW
-            } // NEW
-            return summary; // NEW
-        } // NEW
+            for (const row of rows) {
+                summary.targetKg += Math.max(0, Number(row && row.targetKg) || 0);
+                summary.harvestKg += Math.max(0, Number(row && row.harvestKg) || 0);
+                summary.usableSupplyKg += Math.max(0, Number(row && row.usableSupplyKg) || 0);
+                summary.shortKg += Math.max(0, Number(row && row.shortKg) || 0);
+                summary.expiredKg += Math.max(0, Number(row && row.expiredKg) || 0);
+                if (Number(row && row.shortKg) > 1e-9) summary.shortWeeks += 1;
+                if (Number(row && row.shortKg) > summary.worstShortageKg) {
+                    summary.worstShortageKg = Number(row.shortKg);
+                    summary.worstShortageWeek = String(row.week || "");
+                }
+            }
+            return summary;
+        }
 
         function computePlanWeekly(plan, warns) {
 
             warns = Array.isArray(warns) ? warns : [];
 
-            PlanSchema.normalizeForRuntime(plan, plan && plan.year); // CHANGE
+            PlanSchema.normalizeForRuntime(plan, plan && plan.year);
             const year = Number(plan && plan.year);
-            const weekStartDow = plan.weekStartDow; // CHANGE
+            const weekStartDow = plan.weekStartDow;
             const weeks = buildWeekStartsForYearLocal(year, weekStartDow);
             const n = weeks.length;
 
             const targetTotal = Array(n).fill(0);
             const supplyTotal = Array(n).fill(0);
-            const availableSupplyTotal = Array(n).fill(0); // NEW
-            const usableSupplyTotal = Array(n).fill(0); // NEW
-            const shortTotal = Array(n).fill(0); // NEW
-            const surplusTotal = Array(n).fill(0); // NEW
-            const expiredTotal = Array(n).fill(0); // NEW
-            const endingInventoryTotal = Array(n).fill(0); // NEW
+            const availableSupplyTotal = Array(n).fill(0);
+            const usableSupplyTotal = Array(n).fill(0);
+            const shortTotal = Array(n).fill(0);
+            const surplusTotal = Array(n).fill(0);
+            const expiredTotal = Array(n).fill(0);
+            const endingInventoryTotal = Array(n).fill(0);
             const perCrop = new Map();
 
             function ensureCropArrays(cropId) {
@@ -693,58 +693,58 @@ Draw.loadPlugin(function (ui) {
             }
 
             const crops = (plan && plan.crops) ? plan.crops : [];
-            const carryoverCrops = Array.isArray(plan && plan.__carryoverCrops) ? plan.__carryoverCrops : []; // ADDED
-            const supplyCrops = crops.concat(carryoverCrops); // ADDED
+            const carryoverCrops = Array.isArray(plan && plan.__carryoverCrops) ? plan.__carryoverCrops : [];
+            const supplyCrops = crops.concat(carryoverCrops);
 
-            const demandLineOrder = new Map(); // NEW
-            const channelOrder = new Map(((plan && plan.demandChannels) || []).map((channel, index) => [String(channel && channel.id || ""), index])); // NEW
-            const perDemandLine = new Map(); // NEW
-            const perChannel = new Map(); // NEW
-            const perPriority = new Map(); // NEW
-            const csaWeekly = { target: Array(n).fill(0), usableSupply: Array(n).fill(0), short: Array(n).fill(0), potentialRevenue: Array(n).fill(0), fulfilledRevenue: Array(n).fill(0), boxFillRatio: Array(n).fill(0), potentialRevenueByCropId: new Map(), fulfilledRevenueByCropId: new Map(), componentValuePerBox: 0, salePricePerBox: 0 }; // CHANGE
-            const csaComponentRequests = []; // ADDED
-            const priorityRank = new Map([["committed", 0], ["target", 1], ["optional", 2]]); // NEW
+            const demandLineOrder = new Map();
+            const channelOrder = new Map(((plan && plan.demandChannels) || []).map((channel, index) => [String(channel && channel.id || ""), index]));
+            const perDemandLine = new Map();
+            const perChannel = new Map();
+            const perPriority = new Map();
+            const csaWeekly = { target: Array(n).fill(0), usableSupply: Array(n).fill(0), short: Array(n).fill(0), potentialRevenue: Array(n).fill(0), fulfilledRevenue: Array(n).fill(0), boxFillRatio: Array(n).fill(0), potentialRevenueByCropId: new Map(), fulfilledRevenueByCropId: new Map(), componentValuePerBox: 0, salePricePerBox: 0 };
+            const csaComponentRequests = [];
+            const priorityRank = new Map([["committed", 0], ["target", 1], ["optional", 2]]);
 
-            function ensureCsaRevenueArrays(cropId) { // ADDED
-                const key = String(cropId || ""); // ADDED
-                if (!csaWeekly.potentialRevenueByCropId.has(key)) csaWeekly.potentialRevenueByCropId.set(key, Array(n).fill(0)); // ADDED
-                if (!csaWeekly.fulfilledRevenueByCropId.has(key)) csaWeekly.fulfilledRevenueByCropId.set(key, Array(n).fill(0)); // ADDED
-                return { // ADDED
-                    potential: csaWeekly.potentialRevenueByCropId.get(key), // ADDED
-                    fulfilled: csaWeekly.fulfilledRevenueByCropId.get(key) // ADDED
-                }; // ADDED
-            } // ADDED
+            function ensureCsaRevenueArrays(cropId) {
+                const key = String(cropId || "");
+                if (!csaWeekly.potentialRevenueByCropId.has(key)) csaWeekly.potentialRevenueByCropId.set(key, Array(n).fill(0));
+                if (!csaWeekly.fulfilledRevenueByCropId.has(key)) csaWeekly.fulfilledRevenueByCropId.set(key, Array(n).fill(0));
+                return {
+                    potential: csaWeekly.potentialRevenueByCropId.get(key),
+                    fulfilled: csaWeekly.fulfilledRevenueByCropId.get(key)
+                };
+            }
 
-            for (const [lineIndex, line] of ((plan && plan.demands) || []).entries()) { // NEW
-                demandLineOrder.set(String(line && line.id || ""), lineIndex); // NEW
-                const crop = findCrop(plan, line && line.cropId); // NEW
-                if (!crop) { pushWarn(warns, "Demand line skipped (missing crop)."); continue; } // NEW
-                const qty = Number(line && line.qty); // NEW
-                if (!Number.isFinite(qty) || qty <= 0) { pushWarn(warns, `Demand line skipped (qty missing) for ${crop.plant || crop.id}`); continue; } // NEW
-                if (!hasYmd(line.from) || !hasYmd(line.to)) { pushWarn(warns, `Demand line skipped (missing dates) for ${crop.plant || crop.id}`); continue; } // NEW
-                if (line.from > line.to) { pushWarn(warns, `Demand line skipped (start date after end date) for ${crop.plant || crop.id}`); continue; } // NEW
-                const kgPerUnit = resolveUnitToKgPerUnit(crop, line.unit); // NEW
-                if (!Number.isFinite(kgPerUnit)) { pushWarn(warns, `Demand line skipped (unknown unit "${line.unit}") for ${crop.plant || crop.id}`); continue; } // NEW
-                const unitPrice = resolvePackagePriceForUnit(crop, line.unit); // NEW
-                const target = Array(n).fill(0); // NEW
-                if (!addDemandAcrossWeeks(target, weeks, line, kgPerUnit, weekStartDow)) continue; // NEW
-                const result = { // NEW
-                    line, // NEW
-                    cropId: String(crop.id), // NEW
-                    channelId: String(line.channelId || ""), // NEW
-                    priority: String(line.priority || "target"), // NEW
-                    kgPerUnit, // NEW
-                    unitPrice, // NEW
-                    target, // NEW
-                    usableSupply: Array(n).fill(0), // NEW
-                    short: Array(n).fill(0), // NEW
-                    potentialRevenue: target.map(value => Number.isFinite(unitPrice) ? (value / kgPerUnit) * unitPrice : 0), // CHANGE
-                    fulfilledRevenue: Array(n).fill(0) // NEW
-                }; // NEW
-                perDemandLine.set(String(line.id), result); // NEW
-                const cropArrays = ensureCropArrays(crop.id); // NEW
-                for (let i = 0; i < n; i++) cropArrays.target[i] += target[i]; // NEW
-            } // NEW
+            for (const [lineIndex, line] of ((plan && plan.demands) || []).entries()) {
+                demandLineOrder.set(String(line && line.id || ""), lineIndex);
+                const crop = findCrop(plan, line && line.cropId);
+                if (!crop) { pushWarn(warns, "Demand line skipped (missing crop)."); continue; }
+                const qty = Number(line && line.qty);
+                if (!Number.isFinite(qty) || qty <= 0) { pushWarn(warns, `Demand line skipped (qty missing) for ${crop.plant || crop.id}`); continue; }
+                if (!hasYmd(line.from) || !hasYmd(line.to)) { pushWarn(warns, `Demand line skipped (missing dates) for ${crop.plant || crop.id}`); continue; }
+                if (line.from > line.to) { pushWarn(warns, `Demand line skipped (start date after end date) for ${crop.plant || crop.id}`); continue; }
+                const kgPerUnit = resolveUnitToKgPerUnit(crop, line.unit);
+                if (!Number.isFinite(kgPerUnit)) { pushWarn(warns, `Demand line skipped (unknown unit "${line.unit}") for ${crop.plant || crop.id}`); continue; }
+                const unitPrice = resolvePackagePriceForUnit(crop, line.unit);
+                const target = Array(n).fill(0);
+                if (!addDemandAcrossWeeks(target, weeks, line, kgPerUnit, weekStartDow)) continue;
+                const result = {
+                    line,
+                    cropId: String(crop.id),
+                    channelId: String(line.channelId || ""),
+                    priority: String(line.priority || "target"),
+                    kgPerUnit,
+                    unitPrice,
+                    target,
+                    usableSupply: Array(n).fill(0),
+                    short: Array(n).fill(0),
+                    potentialRevenue: target.map(value => Number.isFinite(unitPrice) ? (value / kgPerUnit) * unitPrice : 0),
+                    fulfilledRevenue: Array(n).fill(0)
+                };
+                perDemandLine.set(String(line.id), result);
+                const cropArrays = ensureCropArrays(crop.id);
+                for (let i = 0; i < n; i++) cropArrays.target[i] += target[i];
+            }
 
             // CSA
             const csa = plan && plan.csa;
@@ -754,9 +754,9 @@ Draw.loadPlugin(function (ui) {
                     pushWarn(warns, "CSA enabled but boxes/week is not set.");
                 } else {
                     const comps = csa.components || [];
-                    let componentValuePerBox = 0; // ADDED
-                    let salePricePerBox = 0; // ADDED
-                    let hasValidComponent = false; // ADDED
+                    let componentValuePerBox = 0;
+                    let salePricePerBox = 0;
+                    let hasValidComponent = false;
                     for (const comp of comps) {
                         const crop = findCrop(plan, comp.cropId);
                         if (!crop) { pushWarn(warns, "CSA component skipped (missing crop)."); continue; }
@@ -772,11 +772,11 @@ Draw.loadPlugin(function (ui) {
                             pushWarn(warns, `CSA component skipped (unknown unit "${comp.unit}") for ${crop.plant || crop.id}`);
                             continue;
                         }
-                        hasValidComponent = true; // ADDED
-                        const unitPrice = resolvePackagePriceForUnit(crop, comp.unit); // ADDED
-                        const componentValue = Number.isFinite(unitPrice) ? qty * unitPrice : 0; // ADDED
-                        if (Number.isFinite(unitPrice)) componentValuePerBox += componentValue; // CHANGE
-                        else pushWarn(warns, `CSA component value for ${crop.plant || crop.id} ${comp.unit || "unit"} counted as $0 because no matching package price is set.`); // ADDED
+                        hasValidComponent = true;
+                        const unitPrice = resolvePackagePriceForUnit(crop, comp.unit);
+                        const componentValue = Number.isFinite(unitPrice) ? qty * unitPrice : 0;
+                        if (Number.isFinite(unitPrice)) componentValuePerBox += componentValue;
+                        else pushWarn(warns, `CSA component value for ${crop.plant || crop.id} ${comp.unit || "unit"} counted as $0 because no matching package price is set.`);
 
                         const everyN = Math.max(1, Number(comp.everyNWeeks) || 1);
                         const from = comp.start || csa.start;
@@ -786,62 +786,62 @@ Draw.loadPlugin(function (ui) {
                             pushWarn(warns, `CSA component skipped (missing dates) for ${crop.plant || crop.id}`);
                             continue;
                         }
-                        if (from > to) { // NEW
-                            pushWarn(warns, `CSA component skipped (start date after end date) for ${crop.plant || crop.id}`); // NEW
-                            continue; // NEW
-                        } // NEW
+                        if (from > to) {
+                            pushWarn(warns, `CSA component skipped (start date after end date) for ${crop.plant || crop.id}`);
+                            continue;
+                        }
 
-                        const wr = PlanMath.weekRangeForWindowClamped(weeks, from, to); // CHANGE
-                        if (!wr) continue; // CHANGE
+                        const wr = PlanMath.weekRangeForWindowClamped(weeks, from, to);
+                        if (!wr) continue;
 
-                        const arr = ensureCropArrays(crop.id); // CHANGE
-                        const componentRequest = { cropId: String(crop.id), target: Array(n).fill(0), componentValuePerBox: Math.max(0, componentValue) }; // CHANGE
-                        csaComponentRequests.push(componentRequest); // ADDED
+                        const arr = ensureCropArrays(crop.id);
+                        const componentRequest = { cropId: String(crop.id), target: Array(n).fill(0), componentValuePerBox: Math.max(0, componentValue) };
+                        csaComponentRequests.push(componentRequest);
 
-                        for (let i = wr.a; i <= wr.b; i++) { // CHANGE
-                            const rel = weekOffsetFromWindowStart(weeks, i, from, weekStartDow); // CHANGE
-                            if (rel % everyN !== 0) continue; // CHANGE
-                            const targetKg = boxes * qty * kgPerUnit; // CHANGE
-                            arr.target[i] += targetKg; // CHANGE
-                            csaWeekly.target[i] += targetKg; // NEW
-                            componentRequest.target[i] += targetKg; // ADDED
-                            if (!arr.csaTarget) arr.csaTarget = Array(n).fill(0); // NEW
-                            arr.csaTarget[i] += targetKg; // NEW
+                        for (let i = wr.a; i <= wr.b; i++) {
+                            const rel = weekOffsetFromWindowStart(weeks, i, from, weekStartDow);
+                            if (rel % everyN !== 0) continue;
+                            const targetKg = boxes * qty * kgPerUnit;
+                            arr.target[i] += targetKg;
+                            csaWeekly.target[i] += targetKg;
+                            componentRequest.target[i] += targetKg;
+                            if (!arr.csaTarget) arr.csaTarget = Array(n).fill(0);
+                            arr.csaTarget[i] += targetKg;
                         }
                     }
-                    csaWeekly.componentValuePerBox = componentValuePerBox; // ADDED
-                    salePricePerBox = csa.salePriceMode === "manual" && Number.isFinite(Number(csa.salePricePerBox)) && Number(csa.salePricePerBox) >= 0 // ADDED
-                        ? Number(csa.salePricePerBox) // ADDED
-                        : componentValuePerBox; // ADDED
-                    csaWeekly.salePricePerBox = salePricePerBox; // ADDED
-                    const activeRange = PlanMath.hasYmd(csa.start) && PlanMath.hasYmd(csa.end) && csa.start <= csa.end // ADDED
-                        ? PlanMath.weekRangeForWindowClamped(weeks, csa.start, csa.end) // ADDED
-                        : null; // ADDED
-                    if (activeRange && hasValidComponent) { // ADDED
-                        for (let i = activeRange.a; i <= activeRange.b; i++) csaWeekly.potentialRevenue[i] = boxes * salePricePerBox; // ADDED
-                    } // ADDED
+                    csaWeekly.componentValuePerBox = componentValuePerBox;
+                    salePricePerBox = csa.salePriceMode === "manual" && Number.isFinite(Number(csa.salePricePerBox)) && Number(csa.salePricePerBox) >= 0
+                        ? Number(csa.salePricePerBox)
+                        : componentValuePerBox;
+                    csaWeekly.salePricePerBox = salePricePerBox;
+                    const activeRange = PlanMath.hasYmd(csa.start) && PlanMath.hasYmd(csa.end) && csa.start <= csa.end
+                        ? PlanMath.weekRangeForWindowClamped(weeks, csa.start, csa.end)
+                        : null;
+                    if (activeRange && hasValidComponent) {
+                        for (let i = activeRange.a; i <= activeRange.b; i++) csaWeekly.potentialRevenue[i] = boxes * salePricePerBox;
+                    }
                 }
             }
 
             // supply estimate / actual harvest
-            for (const crop of supplyCrops) { // CHANGED
+            for (const crop of supplyCrops) {
                 if (!crop || !crop.id) continue;
 
-                const arr = ensureCropArrays(crop.id); // NEW
+                const arr = ensureCropArrays(crop.id);
 
                 const actualSeries = Array.isArray(crop.__actualHarvestWeeklyKg)
                     ? crop.__actualHarvestWeeklyKg
-                    : null; // NEW
+                    : null;
 
-                const hasActualSeries = !!actualSeries && actualSeries.some(v => Number(v) > 0); // NEW
-                const useActual = crop.useActualHarvest !== false; // NEW
+                const hasActualSeries = !!actualSeries && actualSeries.some(v => Number(v) > 0);
+                const useActual = crop.useActualHarvest !== false;
 
-                if (useActual && hasActualSeries) { // NEW
-                    for (let i = 0; i < n; i++) { // NEW
-                        arr.supply[i] += Math.max(0, Number(actualSeries[i]) || 0); // NEW
-                    } // NEW
-                    continue; // NEW
-                } // NEW
+                if (useActual && hasActualSeries) {
+                    for (let i = 0; i < n; i++) {
+                        arr.supply[i] += Math.max(0, Number(actualSeries[i]) || 0);
+                    }
+                    continue;
+                }
 
                 const actualPlants = Number(crop.actualPlants);
                 const kgPerPlant = Number(crop.kgPerPlant);
@@ -856,14 +856,14 @@ Draw.loadPlugin(function (ui) {
                     pushWarn(warns, `Supply skipped (harvest window missing) for ${crop.plant || crop.id}`);
                     continue;
                 }
-                if (crop.harvestStart > crop.harvestEnd) { // NEW
-                    pushWarn(warns, `Supply skipped (harvest start date after end date) for ${crop.plant || crop.id}`); // NEW
-                    continue; // NEW
-                } // NEW
+                if (crop.harvestStart > crop.harvestEnd) {
+                    pushWarn(warns, `Supply skipped (harvest start date after end date) for ${crop.plant || crop.id}`);
+                    continue;
+                }
 
-                const totalKg = actualPlants * kgPerPlant; // CHANGE
+                const totalKg = actualPlants * kgPerPlant;
 
-                addTotalKgAcrossWindowProrated( // CHANGE
+                addTotalKgAcrossWindowProrated(
                     arr.supply,
                     weeks,
                     crop.harvestStart,
@@ -873,155 +873,155 @@ Draw.loadPlugin(function (ui) {
                 );
             }
 
-            for (const crop of supplyCrops) { // CHANGED
-                if (!crop || !crop.id) continue; // CHANGE
-                const arr = ensureCropArrays(crop.id); // CHANGE
-                arr.availableSupply = Array(n).fill(0); // NEW
-                arr.usableSupply = Array(n).fill(0); // NEW
-                arr.short = Array(n).fill(0); // NEW
-                arr.surplus = Array(n).fill(0); // NEW
-                arr.expired = Array(n).fill(0); // NEW
-                arr.endingInventory = Array(n).fill(0); // NEW
-                arr.csaUsableSupply = Array(n).fill(0); // ADDED
-                arr.csaShort = Array(n).fill(0); // ADDED
-                const lifetimeWeeks = Math.max(1, Math.ceil(Math.max(0, Number(crop.shelfLifeDays) || 0) / 7)); // NEW
-                const inventory = []; // NEW
-                const demandResults = Array.from(perDemandLine.values()) // NEW
-                    .filter(result => result.cropId === String(crop.id)) // NEW
-                    .sort((a, b) => { // NEW
-                        const priorityDifference = (priorityRank.get(a.priority) ?? 1) - (priorityRank.get(b.priority) ?? 1); // NEW
-                        if (priorityDifference) return priorityDifference; // NEW
-                        const channelDifference = (channelOrder.get(a.channelId) ?? Number.MAX_SAFE_INTEGER) - (channelOrder.get(b.channelId) ?? Number.MAX_SAFE_INTEGER); // NEW
-                        if (channelDifference) return channelDifference; // NEW
-                        return (demandLineOrder.get(String(a.line.id)) ?? 0) - (demandLineOrder.get(String(b.line.id)) ?? 0); // NEW
-                    }); // NEW
-                const consume = requestedKg => { // NEW
-                    let remaining = Math.max(0, Number(requestedKg) || 0); // NEW
-                    let used = 0; // NEW
-                    while (remaining > 0 && inventory.length) { // NEW
-                        const batch = inventory[0]; // NEW
-                        const amount = Math.min(remaining, batch.kg); // NEW
-                        batch.kg -= amount; // NEW
-                        remaining -= amount; // NEW
-                        used += amount; // NEW
-                        if (batch.kg <= 1e-9) inventory.shift(); // NEW
-                    } // NEW
-                    return { used, short: remaining }; // NEW
-                }; // NEW
-                for (let weekIndex = 0; weekIndex < n; weekIndex++) { // NEW
-                    const harvestedKg = Math.max(0, Number(arr.supply[weekIndex]) || 0); // NEW
-                    if (harvestedKg > 0) inventory.push({ kg: harvestedKg, expiresWeek: weekIndex + lifetimeWeeks }); // NEW
-                    while (inventory.length && inventory[0].expiresWeek <= weekIndex) arr.expired[weekIndex] += inventory.shift().kg; // NEW
-                    arr.availableSupply[weekIndex] = inventory.reduce((sum, batch) => sum + batch.kg, 0); // NEW
-                    const csaAllocation = consume(arr.csaTarget && arr.csaTarget[weekIndex]); // NEW
-                    csaWeekly.usableSupply[weekIndex] += csaAllocation.used; // NEW
-                    csaWeekly.short[weekIndex] += csaAllocation.short; // NEW
-                    arr.csaUsableSupply[weekIndex] = csaAllocation.used; // ADDED
-                    arr.csaShort[weekIndex] = csaAllocation.short; // ADDED
-                    arr.usableSupply[weekIndex] += csaAllocation.used; // NEW
-                    arr.short[weekIndex] += csaAllocation.short; // NEW
-                    for (const result of demandResults) { // NEW
-                        const allocation = consume(result.target[weekIndex]); // NEW
-                        result.usableSupply[weekIndex] = allocation.used; // NEW
-                        result.short[weekIndex] = allocation.short; // NEW
-                        result.fulfilledRevenue[weekIndex] = Number.isFinite(result.unitPrice) // CHANGE
-                            ? (allocation.used / result.kgPerUnit) * result.unitPrice // CHANGE
-                            : 0; // NEW
-                        arr.usableSupply[weekIndex] += allocation.used; // NEW
-                        arr.short[weekIndex] += allocation.short; // NEW
-                    } // NEW
-                    arr.endingInventory[weekIndex] = inventory.reduce((sum, batch) => sum + batch.kg, 0); // NEW
-                    arr.surplus[weekIndex] = arr.endingInventory[weekIndex]; // NEW
-                } // NEW
-            } // CHANGE
-            for (let weekIndex = 0; weekIndex < n; weekIndex++) { // ADDED
-                let fillRatio = csaComponentRequests.length ? 1 : 0; // ADDED
-                let activeComponent = false; // ADDED
-                for (const request of csaComponentRequests) { // ADDED
-                    const targetKg = Math.max(0, Number(request.target[weekIndex]) || 0); // ADDED
-                    if (targetKg <= 0) continue; // ADDED
-                    activeComponent = true; // ADDED
-                    const cropArrays = perCrop.get(String(request.cropId)); // ADDED
-                    const cropTarget = Math.max(0, Number(cropArrays && cropArrays.csaTarget && cropArrays.csaTarget[weekIndex]) || 0); // ADDED
-                    const cropUsed = Math.max(0, Number(cropArrays && cropArrays.csaUsableSupply && cropArrays.csaUsableSupply[weekIndex]) || 0); // ADDED
-                    const componentRatio = cropTarget > 0 ? Math.max(0, Math.min(1, cropUsed / cropTarget)) : 0; // ADDED
-                    fillRatio = Math.min(fillRatio, componentRatio); // ADDED
-                } // ADDED
-                csaWeekly.boxFillRatio[weekIndex] = activeComponent ? fillRatio : 0; // ADDED
-                csaWeekly.fulfilledRevenue[weekIndex] = Math.max(0, Number(csaWeekly.potentialRevenue[weekIndex]) || 0) * csaWeekly.boxFillRatio[weekIndex]; // ADDED
-                const activeComponentValue = csaComponentRequests.reduce((sum, request) => { // ADDED
-                    return Math.max(0, Number(request.target[weekIndex]) || 0) > 0 // ADDED
-                        ? sum + Math.max(0, Number(request.componentValuePerBox) || 0) // ADDED
-                        : sum; // ADDED
-                }, 0); // ADDED
-                if (activeComponentValue > EPS) { // ADDED
-                    for (const request of csaComponentRequests) { // ADDED
-                        if (Math.max(0, Number(request.target[weekIndex]) || 0) <= 0) continue; // ADDED
-                        const share = Math.max(0, Number(request.componentValuePerBox) || 0) / activeComponentValue; // ADDED
-                        if (share <= 0) continue; // ADDED
-                        const cropRevenue = ensureCsaRevenueArrays(request.cropId); // ADDED
-                        cropRevenue.potential[weekIndex] += Math.max(0, Number(csaWeekly.potentialRevenue[weekIndex]) || 0) * share; // ADDED
-                        cropRevenue.fulfilled[weekIndex] += Math.max(0, Number(csaWeekly.fulfilledRevenue[weekIndex]) || 0) * share; // ADDED
-                    } // ADDED
-                } // ADDED
-            } // ADDED
+            for (const crop of supplyCrops) {
+                if (!crop || !crop.id) continue;
+                const arr = ensureCropArrays(crop.id);
+                arr.availableSupply = Array(n).fill(0);
+                arr.usableSupply = Array(n).fill(0);
+                arr.short = Array(n).fill(0);
+                arr.surplus = Array(n).fill(0);
+                arr.expired = Array(n).fill(0);
+                arr.endingInventory = Array(n).fill(0);
+                arr.csaUsableSupply = Array(n).fill(0);
+                arr.csaShort = Array(n).fill(0);
+                const lifetimeWeeks = Math.max(1, Math.ceil(Math.max(0, Number(crop.shelfLifeDays) || 0) / 7));
+                const inventory = [];
+                const demandResults = Array.from(perDemandLine.values())
+                    .filter(result => result.cropId === String(crop.id))
+                    .sort((a, b) => {
+                        const priorityDifference = (priorityRank.get(a.priority) ?? 1) - (priorityRank.get(b.priority) ?? 1);
+                        if (priorityDifference) return priorityDifference;
+                        const channelDifference = (channelOrder.get(a.channelId) ?? Number.MAX_SAFE_INTEGER) - (channelOrder.get(b.channelId) ?? Number.MAX_SAFE_INTEGER);
+                        if (channelDifference) return channelDifference;
+                        return (demandLineOrder.get(String(a.line.id)) ?? 0) - (demandLineOrder.get(String(b.line.id)) ?? 0);
+                    });
+                const consume = requestedKg => {
+                    let remaining = Math.max(0, Number(requestedKg) || 0);
+                    let used = 0;
+                    while (remaining > 0 && inventory.length) {
+                        const batch = inventory[0];
+                        const amount = Math.min(remaining, batch.kg);
+                        batch.kg -= amount;
+                        remaining -= amount;
+                        used += amount;
+                        if (batch.kg <= 1e-9) inventory.shift();
+                    }
+                    return { used, short: remaining };
+                };
+                for (let weekIndex = 0; weekIndex < n; weekIndex++) {
+                    const harvestedKg = Math.max(0, Number(arr.supply[weekIndex]) || 0);
+                    if (harvestedKg > 0) inventory.push({ kg: harvestedKg, expiresWeek: weekIndex + lifetimeWeeks });
+                    while (inventory.length && inventory[0].expiresWeek <= weekIndex) arr.expired[weekIndex] += inventory.shift().kg;
+                    arr.availableSupply[weekIndex] = inventory.reduce((sum, batch) => sum + batch.kg, 0);
+                    const csaAllocation = consume(arr.csaTarget && arr.csaTarget[weekIndex]);
+                    csaWeekly.usableSupply[weekIndex] += csaAllocation.used;
+                    csaWeekly.short[weekIndex] += csaAllocation.short;
+                    arr.csaUsableSupply[weekIndex] = csaAllocation.used;
+                    arr.csaShort[weekIndex] = csaAllocation.short;
+                    arr.usableSupply[weekIndex] += csaAllocation.used;
+                    arr.short[weekIndex] += csaAllocation.short;
+                    for (const result of demandResults) {
+                        const allocation = consume(result.target[weekIndex]);
+                        result.usableSupply[weekIndex] = allocation.used;
+                        result.short[weekIndex] = allocation.short;
+                        result.fulfilledRevenue[weekIndex] = Number.isFinite(result.unitPrice)
+                            ? (allocation.used / result.kgPerUnit) * result.unitPrice
+                            : 0;
+                        arr.usableSupply[weekIndex] += allocation.used;
+                        arr.short[weekIndex] += allocation.short;
+                    }
+                    arr.endingInventory[weekIndex] = inventory.reduce((sum, batch) => sum + batch.kg, 0);
+                    arr.surplus[weekIndex] = arr.endingInventory[weekIndex];
+                }
+            }
+            for (let weekIndex = 0; weekIndex < n; weekIndex++) {
+                let fillRatio = csaComponentRequests.length ? 1 : 0;
+                let activeComponent = false;
+                for (const request of csaComponentRequests) {
+                    const targetKg = Math.max(0, Number(request.target[weekIndex]) || 0);
+                    if (targetKg <= 0) continue;
+                    activeComponent = true;
+                    const cropArrays = perCrop.get(String(request.cropId));
+                    const cropTarget = Math.max(0, Number(cropArrays && cropArrays.csaTarget && cropArrays.csaTarget[weekIndex]) || 0);
+                    const cropUsed = Math.max(0, Number(cropArrays && cropArrays.csaUsableSupply && cropArrays.csaUsableSupply[weekIndex]) || 0);
+                    const componentRatio = cropTarget > 0 ? Math.max(0, Math.min(1, cropUsed / cropTarget)) : 0;
+                    fillRatio = Math.min(fillRatio, componentRatio);
+                }
+                csaWeekly.boxFillRatio[weekIndex] = activeComponent ? fillRatio : 0;
+                csaWeekly.fulfilledRevenue[weekIndex] = Math.max(0, Number(csaWeekly.potentialRevenue[weekIndex]) || 0) * csaWeekly.boxFillRatio[weekIndex];
+                const activeComponentValue = csaComponentRequests.reduce((sum, request) => {
+                    return Math.max(0, Number(request.target[weekIndex]) || 0) > 0
+                        ? sum + Math.max(0, Number(request.componentValuePerBox) || 0)
+                        : sum;
+                }, 0);
+                if (activeComponentValue > EPS) {
+                    for (const request of csaComponentRequests) {
+                        if (Math.max(0, Number(request.target[weekIndex]) || 0) <= 0) continue;
+                        const share = Math.max(0, Number(request.componentValuePerBox) || 0) / activeComponentValue;
+                        if (share <= 0) continue;
+                        const cropRevenue = ensureCsaRevenueArrays(request.cropId);
+                        cropRevenue.potential[weekIndex] += Math.max(0, Number(csaWeekly.potentialRevenue[weekIndex]) || 0) * share;
+                        cropRevenue.fulfilled[weekIndex] += Math.max(0, Number(csaWeekly.fulfilledRevenue[weekIndex]) || 0) * share;
+                    }
+                }
+            }
 
-            function aggregateDemandResults(results) { // NEW
-                const aggregate = { // NEW
-                    target: Array(n).fill(0), usableSupply: Array(n).fill(0), short: Array(n).fill(0), // NEW
-                    potentialRevenue: Array(n).fill(0), fulfilledRevenue: Array(n).fill(0), lineIds: [] // NEW
-                }; // NEW
-                for (const result of results) { // NEW
-                    aggregate.lineIds.push(String(result.line.id)); // NEW
-                    for (let i = 0; i < n; i++) { // NEW
-                        aggregate.target[i] += result.target[i]; // NEW
-                        aggregate.usableSupply[i] += result.usableSupply[i]; // NEW
-                        aggregate.short[i] += result.short[i]; // NEW
-                        aggregate.potentialRevenue[i] += result.potentialRevenue[i]; // NEW
-                        aggregate.fulfilledRevenue[i] += result.fulfilledRevenue[i]; // NEW
-                    } // NEW
-                } // NEW
-                return aggregate; // NEW
-            } // NEW
+            function aggregateDemandResults(results) {
+                const aggregate = {
+                    target: Array(n).fill(0), usableSupply: Array(n).fill(0), short: Array(n).fill(0),
+                    potentialRevenue: Array(n).fill(0), fulfilledRevenue: Array(n).fill(0), lineIds: []
+                };
+                for (const result of results) {
+                    aggregate.lineIds.push(String(result.line.id));
+                    for (let i = 0; i < n; i++) {
+                        aggregate.target[i] += result.target[i];
+                        aggregate.usableSupply[i] += result.usableSupply[i];
+                        aggregate.short[i] += result.short[i];
+                        aggregate.potentialRevenue[i] += result.potentialRevenue[i];
+                        aggregate.fulfilledRevenue[i] += result.fulfilledRevenue[i];
+                    }
+                }
+                return aggregate;
+            }
 
-            for (const channel of ((plan && plan.demandChannels) || [])) { // NEW
-                const channelId = String(channel && channel.id || ""); // NEW
-                perChannel.set(channelId, aggregateDemandResults(Array.from(perDemandLine.values()).filter(result => result.channelId === channelId))); // NEW
-            } // NEW
-            for (const priority of ["committed", "target", "optional"]) { // NEW
-                perPriority.set(priority, aggregateDemandResults(Array.from(perDemandLine.values()).filter(result => result.priority === priority))); // NEW
-            } // NEW
+            for (const channel of ((plan && plan.demandChannels) || [])) {
+                const channelId = String(channel && channel.id || "");
+                perChannel.set(channelId, aggregateDemandResults(Array.from(perDemandLine.values()).filter(result => result.channelId === channelId)));
+            }
+            for (const priority of ["committed", "target", "optional"]) {
+                perPriority.set(priority, aggregateDemandResults(Array.from(perDemandLine.values()).filter(result => result.priority === priority)));
+            }
 
-            // Aggregate all per-crop series into total series before returning. // CHANGE
-            for (const v of perCrop.values()) { // CHANGE
-                for (let i = 0; i < n; i++) { // CHANGE
-                    targetTotal[i] += Math.max(0, Number(v.target[i]) || 0); // CHANGE
-                    supplyTotal[i] += Math.max(0, Number(v.supply[i]) || 0); // CHANGE
-                    availableSupplyTotal[i] += Math.max(0, Number(v.availableSupply[i]) || 0); // NEW
-                    usableSupplyTotal[i] += Math.max(0, Number(v.usableSupply[i]) || 0); // NEW
-                    shortTotal[i] += Math.max(0, Number(v.short[i]) || 0); // NEW
-                    surplusTotal[i] += Math.max(0, Number(v.surplus[i]) || 0); // NEW
-                    expiredTotal[i] += Math.max(0, Number(v.expired[i]) || 0); // NEW
-                    endingInventoryTotal[i] += Math.max(0, Number(v.endingInventory[i]) || 0); // NEW
-                } // CHANGE
-            } // CHANGE
+            // Aggregate all per-crop series into total series before returning.
+            for (const v of perCrop.values()) {
+                for (let i = 0; i < n; i++) {
+                    targetTotal[i] += Math.max(0, Number(v.target[i]) || 0);
+                    supplyTotal[i] += Math.max(0, Number(v.supply[i]) || 0);
+                    availableSupplyTotal[i] += Math.max(0, Number(v.availableSupply[i]) || 0);
+                    usableSupplyTotal[i] += Math.max(0, Number(v.usableSupply[i]) || 0);
+                    shortTotal[i] += Math.max(0, Number(v.short[i]) || 0);
+                    surplusTotal[i] += Math.max(0, Number(v.surplus[i]) || 0);
+                    expiredTotal[i] += Math.max(0, Number(v.expired[i]) || 0);
+                    endingInventoryTotal[i] += Math.max(0, Number(v.endingInventory[i]) || 0);
+                }
+            }
 
-            return { // CHANGE
-                weeks, // CHANGE
-                targetTotal, // CHANGE
-                supplyTotal, // CHANGE
-                availableSupplyTotal, // NEW
-                usableSupplyTotal, // NEW
-                shortTotal, // NEW
-                surplusTotal, // NEW
-                expiredTotal, // NEW
-                endingInventoryTotal, // NEW
-                perCrop, // CHANGE
-                perDemandLine, // NEW
-                perChannel, // NEW
-                perPriority, // NEW
-                csa: csaWeekly // NEW
-            }; // CHANGE
+            return {
+                weeks,
+                targetTotal,
+                supplyTotal,
+                availableSupplyTotal,
+                usableSupplyTotal,
+                shortTotal,
+                surplusTotal,
+                expiredTotal,
+                endingInventoryTotal,
+                perCrop,
+                perDemandLine,
+                perChannel,
+                perPriority,
+                csa: csaWeekly
+            };
         }
 
         function computePlanCropTotals(plan, weekly) {
@@ -1053,63 +1053,63 @@ Draw.loadPlugin(function (ui) {
             addDaysMs,
             buildWeekStartsForYearLocal,
             weekIndexForDate,
-            weekRangeForWindowClamped, // NEW
-            weekStartMsForDate, // NEW
-            weekOffsetFromWindowStart, // NEW
+            weekRangeForWindowClamped,
+            weekStartMsForDate,
+            weekOffsetFromWindowStart,
             findCrop,
-            resolvePackagePriceForUnit, // NEW
+            resolvePackagePriceForUnit,
             resolveUnitToKgPerUnit,
             addKgAcrossWeeks,
-            addDailyDemandAcrossWeeks, // NEW
-            addWeeklyDemandAcrossWeeks, // NEW
-            addMonthlyDemandAcrossWeeks, // NEW
-            addDemandAcrossWeeks, // NEW
-            addTotalKgAcrossWindowProrated, // NEW
-            buildUsableSupplySeries, // NEW
-            buildPlanChartModel, // NEW
-            summarizePlanChartModel, // NEW
+            addDailyDemandAcrossWeeks,
+            addWeeklyDemandAcrossWeeks,
+            addMonthlyDemandAcrossWeeks,
+            addDemandAcrossWeeks,
+            addTotalKgAcrossWindowProrated,
+            buildUsableSupplySeries,
+            buildPlanChartModel,
+            summarizePlanChartModel,
             computePlanWeekly,
             computePlanCropTotals
         };
     })();
 
-    // -------------------- PlanSchema -------------------- // NEW
+    // -------------------- PlanSchema --------------------
     /**
-     * Owns the persisted plan shape, runtime normalization, validation, and crop identity rules. // NEW
+     * Owns the persisted plan shape, runtime normalization, validation, and crop identity rules.
      */
-    const PlanSchema = (() => { // NEW
-        const DEFAULT_DEMAND_CHANNELS = [ // NEW
-            { id: "farm_store", label: "Farm Store", type: "farm_store" }, // NEW
-            { id: "restaurant_1", label: "Restaurant 1", type: "restaurant" }, // NEW
-            { id: "farmers_market", label: "Farmers Market", type: "market" }, // NEW
-            { id: "wholesale", label: "Wholesale", type: "wholesale" } // NEW
-        ]; // NEW
-        const DEMAND_CHANNEL_TYPES = ["farm_store", "restaurant", "market", "wholesale", "other"]; // NEW
-        const DEMAND_FREQUENCIES = ["day", "week", "month"]; // NEW
-        const DEMAND_PRIORITIES = ["committed", "target", "optional"]; // NEW
+    const PlanSchema = (() => {
+        const DEFAULT_DEMAND_CHANNELS = [
+            { id: "farm_store", label: "Farm Store", type: "farm_store" },
+            { id: "restaurant_1", label: "Restaurant 1", type: "restaurant" },
+            { id: "farmers_market", label: "Farmers Market", type: "market" },
+            { id: "wholesale", label: "Wholesale", type: "wholesale" }
+        ];
+        const DEMAND_CHANNEL_TYPES = ["farm_store", "restaurant", "market", "wholesale", "other"];
+        const DEMAND_FREQUENCIES = ["day", "week", "month"];
+        const DEMAND_PRIORITIES = ["committed", "target", "optional"];
 
-        function clonePlain(obj) { // NEW
-            return JSON.parse(JSON.stringify(obj || {})); // NEW
+        function clonePlain(obj) {
+            return JSON.parse(JSON.stringify(obj || {}));
         }
 
-        function createEmptyPlan(year) { // NEW
-            return normalizeForRuntime({ // NEW
-                version: 2, // CHANGE
+        function createEmptyPlan(year) {
+            return normalizeForRuntime({
+                version: 2,
                 year: Number(year),
                 weekStartDow: 1,
                 crops: [],
-                demandChannels: clonePlain(DEFAULT_DEMAND_CHANNELS), // NEW
-                demands: [], // NEW
+                demandChannels: clonePlain(DEFAULT_DEMAND_CHANNELS),
+                demands: [],
                 csa: { enabled: false, boxesPerWeek: 0, start: "", end: "", salePricePerBox: null, salePriceMode: "auto", components: [] }
             }, year);
         }
 
-        function isPositiveFiniteNumber(value) { // NEW
-            const number = Number(value); // NEW
-            return Number.isFinite(number) && number > 0; // NEW
+        function isPositiveFiniteNumber(value) {
+            const number = Number(value);
+            return Number.isFinite(number) && number > 0;
         }
 
-        function normalizeYieldFieldsForRuntime(crop) { // CHANGE
+        function normalizeYieldFieldsForRuntime(crop) {
             if (!crop) return;
 
             const legacyBase = Number(crop.baseKgPerPlant ?? crop.__baseKgPerPlant);
@@ -1137,25 +1137,25 @@ Draw.loadPlugin(function (ui) {
             }
         }
 
-        function normalizeForRuntime(plan, year) { // CHANGE
+        function normalizeForRuntime(plan, year) {
             const normalized = plan && typeof plan === "object" ? plan : {};
-            normalized.version = 2; // CHANGE
+            normalized.version = 2;
             normalized.year = Number.isFinite(Number(year)) ? Number(year) : Number(normalized.year);
             if (!Number.isFinite(normalized.year)) normalized.year = new Date().getFullYear();
-            const weekStartDow = Math.trunc(Number(normalized.weekStartDow)); // CHANGE
-            normalized.weekStartDow = Number.isFinite(weekStartDow) && weekStartDow >= 0 && weekStartDow <= 6 // CHANGE
-                ? weekStartDow // CHANGE
-                : 1; // CHANGE
+            const weekStartDow = Math.trunc(Number(normalized.weekStartDow));
+            normalized.weekStartDow = Number.isFinite(weekStartDow) && weekStartDow >= 0 && weekStartDow <= 6
+                ? weekStartDow
+                : 1;
             normalized.crops = Array.isArray(normalized.crops) ? normalized.crops : [];
-            if (!Array.isArray(normalized.demandChannels)) normalized.demandChannels = clonePlain(DEFAULT_DEMAND_CHANNELS); // NEW
-            normalized.demands = Array.isArray(normalized.demands) ? normalized.demands : []; // NEW
+            if (!Array.isArray(normalized.demandChannels)) normalized.demandChannels = clonePlain(DEFAULT_DEMAND_CHANNELS);
+            normalized.demands = Array.isArray(normalized.demands) ? normalized.demands : [];
 
             if (!normalized.csa || typeof normalized.csa !== "object") {
                 normalized.csa = { enabled: false, boxesPerWeek: 0, start: "", end: "", salePricePerBox: null, salePriceMode: "auto", components: [] };
             }
-            normalized.csa.salePriceMode = normalized.csa.salePriceMode === "manual" ? "manual" : "auto"; // ADDED
-            const csaSalePrice = normalized.csa.salePricePerBox === "" || normalized.csa.salePricePerBox === null || normalized.csa.salePricePerBox === undefined ? NaN : Number(normalized.csa.salePricePerBox); // ADDED
-            normalized.csa.salePricePerBox = Number.isFinite(csaSalePrice) && csaSalePrice >= 0 ? csaSalePrice : null; // ADDED
+            normalized.csa.salePriceMode = normalized.csa.salePriceMode === "manual" ? "manual" : "auto";
+            const csaSalePrice = normalized.csa.salePricePerBox === "" || normalized.csa.salePricePerBox === null || normalized.csa.salePricePerBox === undefined ? NaN : Number(normalized.csa.salePricePerBox);
+            normalized.csa.salePricePerBox = Number.isFinite(csaSalePrice) && csaSalePrice >= 0 ? csaSalePrice : null;
             normalized.csa.components = Array.isArray(normalized.csa.components) ? normalized.csa.components : [];
 
             for (const crop of normalized.crops) {
@@ -1170,10 +1170,10 @@ Draw.loadPlugin(function (ui) {
             return normalized;
         }
 
-        function stripRuntimeFields(plan, options) { // NEW
+        function stripRuntimeFields(plan, options) {
             const forTemplate = !!(options && options.forTemplate);
             delete plan.cropFilterId;
-            delete plan.__carryoverCrops; // ADDED
+            delete plan.__carryoverCrops;
             if (!forTemplate) delete plan.templateBaseYear;
 
             for (const crop of (plan.crops || [])) {
@@ -1186,34 +1186,34 @@ Draw.loadPlugin(function (ui) {
                 delete crop.savePackagesAsDefault;
 
                 crop.kgPerPlantMode = crop.kgPerPlantMode === "manual" ? "manual" : "auto";
-                delete crop.market; // CHANGE
+                delete crop.market;
             }
-            for (const demandLine of (plan.demands || [])) delete demandLine.price; // NEW
-            if (plan.csa) delete plan.csa.__componentValuePerBox; // ADDED
+            for (const demandLine of (plan.demands || [])) delete demandLine.price;
+            if (plan.csa) delete plan.csa.__componentValuePerBox;
             return plan;
         }
 
-        function serializeForPersistence(plan, options) { // CHANGE
+        function serializeForPersistence(plan, options) {
             const serialized = normalizeForRuntime(clonePlain(plan || {}), plan && plan.year);
             return stripRuntimeFields(serialized, options);
         }
 
-        function normalizeVarietyIdForIdentity(varietyId) { // NEW
+        function normalizeVarietyIdForIdentity(varietyId) {
             if (varietyId === null || varietyId === undefined || varietyId === "") return "";
             return String(varietyId).trim();
         }
 
-        function makeCropIdentityKey(plantId, varietyId) { // CHANGE
+        function makeCropIdentityKey(plantId, varietyId) {
             const normalizedPlantId = String(plantId ?? "").trim();
             if (!normalizedPlantId) return "";
             return `pid:${normalizedPlantId}|vid:${normalizeVarietyIdForIdentity(varietyId)}`;
         }
 
-        function getCropIdentityKey(crop) { // NEW
+        function getCropIdentityKey(crop) {
             return makeCropIdentityKey(crop && crop.plantId, crop && crop.varietyId);
         }
 
-        function findDuplicateCrop(plan, plantId, varietyId, exceptCropId) { // CHANGE
+        function findDuplicateCrop(plan, plantId, varietyId, exceptCropId) {
             const key = makeCropIdentityKey(plantId, varietyId);
             if (!key || !plan || !Array.isArray(plan.crops)) return null;
             const except = String(exceptCropId || "");
@@ -1226,7 +1226,7 @@ Draw.loadPlugin(function (ui) {
             return null;
         }
 
-        function findFirstDuplicateCrop(plan) { // CHANGE
+        function findFirstDuplicateCrop(plan) {
             const seen = new Map();
             for (const crop of ((plan && plan.crops) || [])) {
                 const key = getCropIdentityKey(crop);
@@ -1237,143 +1237,143 @@ Draw.loadPlugin(function (ui) {
             return null;
         }
 
-        function makeValidation(scope, code, message, metadata) { // CHANGE
-            return { scope, code, message, ...(metadata || {}) }; // CHANGE
-        } // CHANGE
+        function makeValidation(scope, code, message, metadata) {
+            return { scope, code, message, ...(metadata || {}) };
+        }
 
-        function cropTarget(crop, tab, field, extra) { // CHANGE
-            return { area: "crop", cropId: String(crop && crop.id || ""), tab, field, ...(extra || {}) }; // CHANGE
-        } // CHANGE
+        function cropTarget(crop, tab, field, extra) {
+            return { area: "crop", cropId: String(crop && crop.id || ""), tab, field, ...(extra || {}) };
+        }
 
-        function csaTarget(field, extra) { // CHANGE
-            return { area: "csa", field, ...(extra || {}) }; // CHANGE
-        } // CHANGE
+        function csaTarget(field, extra) {
+            return { area: "csa", field, ...(extra || {}) };
+        }
 
-        function demandTarget(field, extra) { // CHANGE
-            return { area: "demand", field, ...(extra || {}) }; // CHANGE
-        } // CHANGE
+        function demandTarget(field, extra) {
+            return { area: "demand", field, ...(extra || {}) };
+        }
 
-        function validateCrop(crop) { // CHANGE
-            const errors = []; // CHANGE
-            const cropId = String(crop && crop.id || ""); // CHANGE
-            const cropName = String(crop && (crop.plant || crop.id) || "Crop"); // CHANGE
-            if (!crop || typeof crop !== "object") return [makeValidation("crop", "crop.missing", "Add a crop before planning demand.", { field: "crop", target: { area: "crop-list" } })]; // CHANGE
-            if (!crop.id) errors.push(makeValidation("crop", "crop.missing_id", "This crop row needs an id.", { cropId, field: "id", target: cropTarget(crop, "basics", "id") })); // CHANGE
-            if (!crop.plantId) errors.push(makeValidation("crop", "crop.missing_plant_id", `Choose a plant for ${cropName}.`, { cropId, field: "plantId", target: cropTarget(crop, "basics", "plantId") })); // CHANGE
+        function validateCrop(crop) {
+            const errors = [];
+            const cropId = String(crop && crop.id || "");
+            const cropName = String(crop && (crop.plant || crop.id) || "Crop");
+            if (!crop || typeof crop !== "object") return [makeValidation("crop", "crop.missing", "Add a crop before planning demand.", { field: "crop", target: { area: "crop-list" } })];
+            if (!crop.id) errors.push(makeValidation("crop", "crop.missing_id", "This crop row needs an id.", { cropId, field: "id", target: cropTarget(crop, "basics", "id") }));
+            if (!crop.plantId) errors.push(makeValidation("crop", "crop.missing_plant_id", `Choose a plant for ${cropName}.`, { cropId, field: "plantId", target: cropTarget(crop, "basics", "plantId") }));
             if (!Number.isFinite(Number(crop.kgPerPlant)) || Number(crop.kgPerPlant) <= 0) {
-                errors.push(makeValidation("crop", "crop.invalid_kg_per_plant", `Enter kg/plant greater than 0 for ${cropName}.`, { cropId, field: "kgPerPlant", target: cropTarget(crop, "basics", "kgPerPlant") })); // CHANGE
+                errors.push(makeValidation("crop", "crop.invalid_kg_per_plant", `Enter kg/plant greater than 0 for ${cropName}.`, { cropId, field: "kgPerPlant", target: cropTarget(crop, "basics", "kgPerPlant") }));
             }
-            if (PlanMath.hasYmd(crop.harvestStart) && PlanMath.hasYmd(crop.harvestEnd) && crop.harvestStart > crop.harvestEnd) { // NEW
-                errors.push(makeValidation("crop", "crop.reversed_harvest_window", `Set ${cropName} harvest start on or before harvest end.`, { cropId, field: "harvestStart", target: cropTarget(crop, "basics", "harvestStart") })); // CHANGE
-            } // NEW
+            if (PlanMath.hasYmd(crop.harvestStart) && PlanMath.hasYmd(crop.harvestEnd) && crop.harvestStart > crop.harvestEnd) {
+                errors.push(makeValidation("crop", "crop.reversed_harvest_window", `Set ${cropName} harvest start on or before harvest end.`, { cropId, field: "harvestStart", target: cropTarget(crop, "basics", "harvestStart") }));
+            }
 
-            const packageUnitKeys = new Set(); // NEW
-            for (const [packageIndex, pkg] of (crop.packages || []).entries()) { // CHANGE
+            const packageUnitKeys = new Set();
+            for (const [packageIndex, pkg] of (crop.packages || []).entries()) {
                 const unit = String(pkg.unit || "").trim();
-                const unitKey = unit.toLowerCase(); // NEW
+                const unitKey = unit.toLowerCase();
                 const baseType = String(pkg.baseType || "").trim().toLowerCase();
                 const baseQty = Number(pkg.baseQty);
-                const packageLabel = unit || `package ${packageIndex + 1}`; // CHANGE
-                if (!unit) errors.push(makeValidation("crop", "crop.package_blank_unit", `Enter a unit for ${cropName} package ${packageIndex + 1}.`, { cropId, packageIndex, field: "unit", target: cropTarget(crop, "packages", "unit", { packageIndex }) })); // CHANGE
-                else if (packageUnitKeys.has(unitKey)) errors.push(makeValidation("crop", "crop.package_duplicate_unit", `Use a unique package unit for ${cropName}: ${unit}.`, { cropId, packageIndex, field: "unit", target: cropTarget(crop, "packages", "unit", { packageIndex }) })); // CHANGE
-                else packageUnitKeys.add(unitKey); // NEW
-                if (!Number.isFinite(baseQty) || baseQty <= 0) errors.push(makeValidation("crop", "crop.package_invalid_base_qty", `Enter package quantity greater than 0 for ${cropName} ${packageLabel}.`, { cropId, packageIndex, field: "baseQty", target: cropTarget(crop, "packages", "baseQty", { packageIndex }) })); // CHANGE
-                if (baseType !== "kg" && baseType !== "plant" && baseType !== "plants") errors.push(makeValidation("crop", "crop.package_invalid_base_type", `Choose kg or plant for ${cropName} ${packageLabel} package base.`, { cropId, packageIndex, field: "baseType", target: cropTarget(crop, "packages", "baseType", { packageIndex }) })); // CHANGE
+                const packageLabel = unit || `package ${packageIndex + 1}`;
+                if (!unit) errors.push(makeValidation("crop", "crop.package_blank_unit", `Enter a unit for ${cropName} package ${packageIndex + 1}.`, { cropId, packageIndex, field: "unit", target: cropTarget(crop, "packages", "unit", { packageIndex }) }));
+                else if (packageUnitKeys.has(unitKey)) errors.push(makeValidation("crop", "crop.package_duplicate_unit", `Use a unique package unit for ${cropName}: ${unit}.`, { cropId, packageIndex, field: "unit", target: cropTarget(crop, "packages", "unit", { packageIndex }) }));
+                else packageUnitKeys.add(unitKey);
+                if (!Number.isFinite(baseQty) || baseQty <= 0) errors.push(makeValidation("crop", "crop.package_invalid_base_qty", `Enter package quantity greater than 0 for ${cropName} ${packageLabel}.`, { cropId, packageIndex, field: "baseQty", target: cropTarget(crop, "packages", "baseQty", { packageIndex }) }));
+                if (baseType !== "kg" && baseType !== "plant" && baseType !== "plants") errors.push(makeValidation("crop", "crop.package_invalid_base_type", `Choose kg or plant for ${cropName} ${packageLabel} package base.`, { cropId, packageIndex, field: "baseType", target: cropTarget(crop, "packages", "baseType", { packageIndex }) }));
                 if ((baseType === "plant" || baseType === "plants") && !(Number(crop.kgPerPlant) > 0)) {
-                    errors.push(makeValidation("crop", "crop.package_needs_kg_per_plant", `Enter kg/plant before using plant-based packages for ${cropName}.`, { cropId, packageIndex, field: "kgPerPlant", target: cropTarget(crop, "basics", "kgPerPlant", { packageIndex }) })); // CHANGE
+                    errors.push(makeValidation("crop", "crop.package_needs_kg_per_plant", `Enter kg/plant before using plant-based packages for ${cropName}.`, { cropId, packageIndex, field: "kgPerPlant", target: cropTarget(crop, "basics", "kgPerPlant", { packageIndex }) }));
                 }
             }
 
             const germinationRate = Number(crop.germRate);
             if (!Number.isFinite(germinationRate) || germinationRate <= 0 || germinationRate > 1) {
-                errors.push(makeValidation("crop", "crop.invalid_germination_rate", `Enter germination rate from 0.01 through 1 for ${cropName}.`, { cropId, field: "germRate", target: cropTarget(crop, "basics", "germRate") })); // CHANGE
+                errors.push(makeValidation("crop", "crop.invalid_germination_rate", `Enter germination rate from 0.01 through 1 for ${cropName}.`, { cropId, field: "germRate", target: cropTarget(crop, "basics", "germRate") }));
             }
-            return errors; // CHANGE
-        } // CHANGE
-
-        function validateCsa(plan) { // CHANGE
-            const errors = []; // CHANGE
-            if (plan && plan.csa && plan.csa.enabled) { // CHANGE
-                if (!Number.isFinite(Number(plan.csa.boxesPerWeek)) || Number(plan.csa.boxesPerWeek) <= 0) { // CHANGE
-                    errors.push(makeValidation("csa", "csa.invalid_boxes_per_week", "Enter CSA boxes/week greater than 0.", { field: "boxesPerWeek", target: csaTarget("boxesPerWeek") })); // CHANGE
-                }
-                if (PlanMath.hasYmd(plan.csa.start) && PlanMath.hasYmd(plan.csa.end) && plan.csa.start > plan.csa.end) { // NEW
-                    errors.push(makeValidation("csa", "csa.reversed_date_range", "Set CSA start on or before CSA end.", { field: "start", target: csaTarget("start") })); // CHANGE
-                } // NEW
-                for (const [componentIndex, component] of (plan.csa.components || []).entries()) { // CHANGE
-                    const crop = PlanMath.findCrop(plan, component.cropId);
-                    if (!crop) {
-                        errors.push(makeValidation("csa", "csa.component_missing_crop", `Choose a crop for CSA component ${componentIndex + 1}.`, { componentIndex, field: "cropId", target: csaTarget("cropId", { componentIndex }) })); // CHANGE
-                        continue;
-                    }
-                    const cropName = String(crop.plant || crop.id); // CHANGE
-                    const from = component.start || plan.csa.start;
-                    const to = component.end || plan.csa.end;
-                    if (!PlanMath.hasYmd(from) || !PlanMath.hasYmd(to)) {
-                        errors.push(makeValidation("csa", "csa.component_missing_dates", `Enter CSA component dates for ${cropName}.`, { cropId: String(crop.id || ""), componentIndex, field: "start", target: csaTarget("start", { componentIndex }) })); // CHANGE
-                    }
-                    if (PlanMath.hasYmd(from) && PlanMath.hasYmd(to) && from > to) { // NEW
-                        errors.push(makeValidation("csa", "csa.component_reversed_dates", `Set CSA component start on or before end for ${cropName}.`, { cropId: String(crop.id || ""), componentIndex, field: "start", target: csaTarget("start", { componentIndex }) })); // CHANGE
-                    } // NEW
-                    if (!Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, component.unit))) {
-                        errors.push(makeValidation("csa", "csa.component_unresolved_unit", `Choose a valid CSA unit for ${cropName}.`, { cropId: String(crop.id || ""), componentIndex, field: "unit", target: csaTarget("unit", { componentIndex }) })); // CHANGE
-                    }
-                }
-            }
-            return errors; // CHANGE
-        } // CHANGE
-
-        function validateDemand(plan) { // CHANGE
-            const errors = []; // CHANGE
-            const channels = (plan && plan.demandChannels) || []; // NEW
-            const demands = (plan && plan.demands) || []; // NEW
-            const channelIds = new Set(); // NEW
-            for (const channel of channels) { // NEW
-                const id = String(channel && channel.id || "").trim(); // NEW
-                if (!id) errors.push(makeValidation("demand", "demand.channel_missing_id", "Demand channel needs an id.", { field: "channelId", target: demandTarget("channelId") })); // CHANGE
-                else if (channelIds.has(id)) errors.push(makeValidation("demand", "demand.channel_duplicate_id", `Use a unique demand channel id: ${id}.`, { field: "channelId", target: demandTarget("channelId", { channelId: id }) })); // CHANGE
-                else channelIds.add(id); // NEW
-                if (!String(channel && channel.label || "").trim()) errors.push(makeValidation("demand", "demand.channel_missing_label", `Enter a label for demand channel ${id || "unknown"}.`, { field: "label", target: demandTarget("label", { channelId: id }) })); // CHANGE
-                if (!DEMAND_CHANNEL_TYPES.includes(String(channel && channel.type || ""))) errors.push(makeValidation("demand", "demand.channel_invalid_type", `Choose a valid type for demand channel ${id || "unknown"}.`, { field: "type", target: demandTarget("type", { channelId: id }) })); // CHANGE
-            } // NEW
-            const demandIds = new Set(); // NEW
-            for (const [lineIndex, line] of demands.entries()) { // CHANGE
-                const id = String(line && line.id || "").trim(); // NEW
-                const crop = PlanMath.findCrop(plan, line && line.cropId); // NEW
-                if (!id) errors.push(makeValidation("demand", "demand.line_missing_id", "Demand line needs an id.", { field: "id", target: demandTarget("id", { lineIndex }) })); // CHANGE
-                else if (demandIds.has(id)) errors.push(makeValidation("demand", "demand.line_duplicate_id", `Use a unique demand line id: ${id}.`, { field: "id", target: demandTarget("id", { lineId: id, lineIndex }) })); // CHANGE
-                else demandIds.add(id); // NEW
-                if (!channelIds.has(String(line && line.channelId || ""))) errors.push(makeValidation("demand", "demand.line_missing_channel", `Choose a valid channel for demand line ${id || "unknown"}.`, { field: "channelId", target: demandTarget("channelId", { lineId: id, lineIndex }) })); // CHANGE
-                if (!crop) errors.push(makeValidation("demand", "demand.line_missing_crop", `Choose a crop for demand line ${id || "unknown"}.`, { field: "cropId", target: demandTarget("cropId", { lineId: id, lineIndex }) })); // CHANGE
-                if (!Number.isFinite(Number(line && line.qty)) || Number(line.qty) <= 0) errors.push(makeValidation("demand", "demand.line_invalid_quantity", `Enter quantity greater than 0 for demand line ${id || "unknown"}.`, { field: "qty", target: demandTarget("qty", { lineId: id, lineIndex }) })); // CHANGE
-                if (!DEMAND_FREQUENCIES.includes(String(line && line.frequency || ""))) errors.push(makeValidation("demand", "demand.line_invalid_frequency", `Choose a valid frequency for demand line ${id || "unknown"}.`, { field: "frequency", target: demandTarget("frequency", { lineId: id, lineIndex }) })); // CHANGE
-                if (!Number.isInteger(Number(line && line.everyN)) || Number(line.everyN) < 1) errors.push(makeValidation("demand", "demand.line_invalid_every_n", `Enter every value greater than 0 for demand line ${id || "unknown"}.`, { field: "everyN", target: demandTarget("everyN", { lineId: id, lineIndex }) })); // CHANGE
-                if (!DEMAND_PRIORITIES.includes(String(line && line.priority || ""))) errors.push(makeValidation("demand", "demand.line_invalid_priority", `Choose a valid priority for demand line ${id || "unknown"}.`, { field: "priority", target: demandTarget("priority", { lineId: id, lineIndex }) })); // CHANGE
-                if (!PlanMath.hasYmd(line && line.from) || !PlanMath.hasYmd(line && line.to)) errors.push(makeValidation("demand", "demand.line_missing_dates", `Enter demand dates for line ${id || "unknown"}.`, { field: "from", target: demandTarget("from", { lineId: id, lineIndex }) })); // CHANGE
-                if (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to) errors.push(makeValidation("demand", "demand.line_reversed_dates", `Set demand start on or before end for line ${id || "unknown"}.`, { field: "from", target: demandTarget("from", { lineId: id, lineIndex }) })); // CHANGE
-                if (crop && !Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, line && line.unit))) errors.push(makeValidation("demand", "demand.line_unresolved_unit", `Choose a valid unit for demand line ${id || "unknown"}.`, { cropId: String(crop.id || ""), field: "unit", target: demandTarget("unit", { lineId: id, lineIndex }) })); // CHANGE
-            } // NEW
-            return errors; // CHANGE
-        } // CHANGE
-
-        function validate(plan) { // CHANGE
-            const errors = [];
-            const crops = (plan && plan.crops) || [];
-            for (const crop of crops) errors.push(...validateCrop(crop)); // CHANGE
-
-            const duplicate = findFirstDuplicateCrop(plan); // NEW
-            if (duplicate) errors.push(makeValidation("crop", "crop.duplicate_identity", "Each plant/variety can appear only once in a year plan.", { cropId: String(duplicate.second && duplicate.second.id || ""), field: "varietyId", target: cropTarget(duplicate.second, "basics", "varietyId") })); // CHANGE
-            errors.push(...validateDemand(plan)); // NEW
-            errors.push(...validateCsa(plan)); // NEW
             return errors;
         }
 
-        return { // NEW
+        function validateCsa(plan) {
+            const errors = [];
+            if (plan && plan.csa && plan.csa.enabled) {
+                if (!Number.isFinite(Number(plan.csa.boxesPerWeek)) || Number(plan.csa.boxesPerWeek) <= 0) {
+                    errors.push(makeValidation("csa", "csa.invalid_boxes_per_week", "Enter CSA boxes/week greater than 0.", { field: "boxesPerWeek", target: csaTarget("boxesPerWeek") }));
+                }
+                if (PlanMath.hasYmd(plan.csa.start) && PlanMath.hasYmd(plan.csa.end) && plan.csa.start > plan.csa.end) {
+                    errors.push(makeValidation("csa", "csa.reversed_date_range", "Set CSA start on or before CSA end.", { field: "start", target: csaTarget("start") }));
+                }
+                for (const [componentIndex, component] of (plan.csa.components || []).entries()) {
+                    const crop = PlanMath.findCrop(plan, component.cropId);
+                    if (!crop) {
+                        errors.push(makeValidation("csa", "csa.component_missing_crop", `Choose a crop for CSA component ${componentIndex + 1}.`, { componentIndex, field: "cropId", target: csaTarget("cropId", { componentIndex }) }));
+                        continue;
+                    }
+                    const cropName = String(crop.plant || crop.id);
+                    const from = component.start || plan.csa.start;
+                    const to = component.end || plan.csa.end;
+                    if (!PlanMath.hasYmd(from) || !PlanMath.hasYmd(to)) {
+                        errors.push(makeValidation("csa", "csa.component_missing_dates", `Enter CSA component dates for ${cropName}.`, { cropId: String(crop.id || ""), componentIndex, field: "start", target: csaTarget("start", { componentIndex }) }));
+                    }
+                    if (PlanMath.hasYmd(from) && PlanMath.hasYmd(to) && from > to) {
+                        errors.push(makeValidation("csa", "csa.component_reversed_dates", `Set CSA component start on or before end for ${cropName}.`, { cropId: String(crop.id || ""), componentIndex, field: "start", target: csaTarget("start", { componentIndex }) }));
+                    }
+                    if (!Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, component.unit))) {
+                        errors.push(makeValidation("csa", "csa.component_unresolved_unit", `Choose a valid CSA unit for ${cropName}.`, { cropId: String(crop.id || ""), componentIndex, field: "unit", target: csaTarget("unit", { componentIndex }) }));
+                    }
+                }
+            }
+            return errors;
+        }
+
+        function validateDemand(plan) {
+            const errors = [];
+            const channels = (plan && plan.demandChannels) || [];
+            const demands = (plan && plan.demands) || [];
+            const channelIds = new Set();
+            for (const channel of channels) {
+                const id = String(channel && channel.id || "").trim();
+                if (!id) errors.push(makeValidation("demand", "demand.channel_missing_id", "Demand channel needs an id.", { field: "channelId", target: demandTarget("channelId") }));
+                else if (channelIds.has(id)) errors.push(makeValidation("demand", "demand.channel_duplicate_id", `Use a unique demand channel id: ${id}.`, { field: "channelId", target: demandTarget("channelId", { channelId: id }) }));
+                else channelIds.add(id);
+                if (!String(channel && channel.label || "").trim()) errors.push(makeValidation("demand", "demand.channel_missing_label", `Enter a label for demand channel ${id || "unknown"}.`, { field: "label", target: demandTarget("label", { channelId: id }) }));
+                if (!DEMAND_CHANNEL_TYPES.includes(String(channel && channel.type || ""))) errors.push(makeValidation("demand", "demand.channel_invalid_type", `Choose a valid type for demand channel ${id || "unknown"}.`, { field: "type", target: demandTarget("type", { channelId: id }) }));
+            }
+            const demandIds = new Set();
+            for (const [lineIndex, line] of demands.entries()) {
+                const id = String(line && line.id || "").trim();
+                const crop = PlanMath.findCrop(plan, line && line.cropId);
+                if (!id) errors.push(makeValidation("demand", "demand.line_missing_id", "Demand line needs an id.", { field: "id", target: demandTarget("id", { lineIndex }) }));
+                else if (demandIds.has(id)) errors.push(makeValidation("demand", "demand.line_duplicate_id", `Use a unique demand line id: ${id}.`, { field: "id", target: demandTarget("id", { lineId: id, lineIndex }) }));
+                else demandIds.add(id);
+                if (!channelIds.has(String(line && line.channelId || ""))) errors.push(makeValidation("demand", "demand.line_missing_channel", `Choose a valid channel for demand line ${id || "unknown"}.`, { field: "channelId", target: demandTarget("channelId", { lineId: id, lineIndex }) }));
+                if (!crop) errors.push(makeValidation("demand", "demand.line_missing_crop", `Choose a crop for demand line ${id || "unknown"}.`, { field: "cropId", target: demandTarget("cropId", { lineId: id, lineIndex }) }));
+                if (!Number.isFinite(Number(line && line.qty)) || Number(line.qty) <= 0) errors.push(makeValidation("demand", "demand.line_invalid_quantity", `Enter quantity greater than 0 for demand line ${id || "unknown"}.`, { field: "qty", target: demandTarget("qty", { lineId: id, lineIndex }) }));
+                if (!DEMAND_FREQUENCIES.includes(String(line && line.frequency || ""))) errors.push(makeValidation("demand", "demand.line_invalid_frequency", `Choose a valid frequency for demand line ${id || "unknown"}.`, { field: "frequency", target: demandTarget("frequency", { lineId: id, lineIndex }) }));
+                if (!Number.isInteger(Number(line && line.everyN)) || Number(line.everyN) < 1) errors.push(makeValidation("demand", "demand.line_invalid_every_n", `Enter every value greater than 0 for demand line ${id || "unknown"}.`, { field: "everyN", target: demandTarget("everyN", { lineId: id, lineIndex }) }));
+                if (!DEMAND_PRIORITIES.includes(String(line && line.priority || ""))) errors.push(makeValidation("demand", "demand.line_invalid_priority", `Choose a valid priority for demand line ${id || "unknown"}.`, { field: "priority", target: demandTarget("priority", { lineId: id, lineIndex }) }));
+                if (!PlanMath.hasYmd(line && line.from) || !PlanMath.hasYmd(line && line.to)) errors.push(makeValidation("demand", "demand.line_missing_dates", `Enter demand dates for line ${id || "unknown"}.`, { field: "from", target: demandTarget("from", { lineId: id, lineIndex }) }));
+                if (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to) errors.push(makeValidation("demand", "demand.line_reversed_dates", `Set demand start on or before end for line ${id || "unknown"}.`, { field: "from", target: demandTarget("from", { lineId: id, lineIndex }) }));
+                if (crop && !Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, line && line.unit))) errors.push(makeValidation("demand", "demand.line_unresolved_unit", `Choose a valid unit for demand line ${id || "unknown"}.`, { cropId: String(crop.id || ""), field: "unit", target: demandTarget("unit", { lineId: id, lineIndex }) }));
+            }
+            return errors;
+        }
+
+        function validate(plan) {
+            const errors = [];
+            const crops = (plan && plan.crops) || [];
+            for (const crop of crops) errors.push(...validateCrop(crop));
+
+            const duplicate = findFirstDuplicateCrop(plan);
+            if (duplicate) errors.push(makeValidation("crop", "crop.duplicate_identity", "Each plant/variety can appear only once in a year plan.", { cropId: String(duplicate.second && duplicate.second.id || ""), field: "varietyId", target: cropTarget(duplicate.second, "basics", "varietyId") }));
+            errors.push(...validateDemand(plan));
+            errors.push(...validateCsa(plan));
+            return errors;
+        }
+
+        return {
             clonePlain,
-            DEFAULT_DEMAND_CHANNELS, // NEW
-            DEMAND_CHANNEL_TYPES, // NEW
-            DEMAND_FREQUENCIES, // NEW
-            DEMAND_PRIORITIES, // NEW
+            DEFAULT_DEMAND_CHANNELS,
+            DEMAND_CHANNEL_TYPES,
+            DEMAND_FREQUENCIES,
+            DEMAND_PRIORITIES,
             createEmptyPlan,
             normalizeYieldFieldsForRuntime,
             normalizeForRuntime,
@@ -1383,25 +1383,25 @@ Draw.loadPlugin(function (ui) {
             getCropIdentityKey,
             findDuplicateCrop,
             findFirstDuplicateCrop,
-            validateCrop, // NEW
-            validateDemand, // NEW
-            validateCsa, // NEW
+            validateCrop,
+            validateDemand,
+            validateCsa,
             validate
         };
     })();
 
-    // -------------------- PlanRepository -------------------- // NEW
+    // -------------------- PlanRepository --------------------
     /**
-     * Owns all persisted year-plan, template, and unit-default storage contracts. // NEW
+     * Owns all persisted year-plan, template, and unit-default storage contracts.
      */
-    const PlanRepository = (() => { // NEW
-        function readJsonMap(cell, attributeName) { // NEW
+    const PlanRepository = (() => {
+        function readJsonMap(cell, attributeName) {
             const raw = DiagramStore.getCellAttr(cell, attributeName, "");
             const parsed = Env.safeJsonStringParse(raw, null);
             return (parsed && typeof parsed === "object" && !Array.isArray(parsed)) ? parsed : {};
         }
 
-        function writeJsonMap(cell, attributeName, map) { // NEW
+        function writeJsonMap(cell, attributeName, map) {
             if (!cell) return;
             Env.model.beginUpdate();
             try {
@@ -1412,102 +1412,102 @@ Draw.loadPlugin(function (ui) {
             Env.graph.refresh(cell);
         }
 
-        function getDiagramRootCell() { // NEW
+        function getDiagramRootCell() {
             try { return Env.model.getRoot(); } catch (_) { return null; }
         }
 
-        function findDiagramMetadataCell() { // NEW
-            const root = getDiagramRootCell(); // NEW
-            if (!root) return null; // NEW
-            const queue = [root]; // NEW
-            while (queue.length) { // NEW
-                const cell = queue.shift(); // NEW
-                if (DiagramStore.getCellAttr(cell, Env.ATTRS.PLAN_METADATA_CELL_ATTR, "") === "1") return cell; // NEW
-                const count = Env.model.getChildCount(cell); // NEW
-                for (let index = 0; index < count; index++) queue.push(Env.model.getChildAt(cell, index)); // NEW
+        function findDiagramMetadataCell() {
+            const root = getDiagramRootCell();
+            if (!root) return null;
+            const queue = [root];
+            while (queue.length) {
+                const cell = queue.shift();
+                if (DiagramStore.getCellAttr(cell, Env.ATTRS.PLAN_METADATA_CELL_ATTR, "") === "1") return cell;
+                const count = Env.model.getChildCount(cell);
+                for (let index = 0; index < count; index++) queue.push(Env.model.getChildAt(cell, index));
             }
-            return null; // NEW
+            return null;
         }
 
         /**
-         * Creates one invisible vertex so diagram-level JSON is encoded as an XML user object. // NEW
+         * Creates one invisible vertex so diagram-level JSON is encoded as an XML user object.
          */
-        function createDiagramMetadataCell() { // NEW
-            const parent = Env.graph.getDefaultParent ? Env.graph.getDefaultParent() : getDiagramRootCell(); // NEW
-            if (!parent || typeof Env.graph.insertVertex !== "function") return null; // NEW
-            const xmlDocument = (typeof mxUtils !== "undefined" && typeof mxUtils.createXmlDocument === "function") // NEW
-                ? mxUtils.createXmlDocument() : document; // NEW
-            const value = xmlDocument.createElement("uslYearPlannerMetadata"); // NEW
-            value.setAttribute(Env.ATTRS.PLAN_METADATA_CELL_ATTR, "1"); // NEW
-            const cell = Env.graph.insertVertex(parent, null, value, 0, 0, 0, 0, "shape=none;opacity=0;noLabel=1;locked=1;"); // NEW
-            if (cell && typeof cell.setVisible === "function") cell.setVisible(false); // NEW
-            if (cell && typeof cell.setConnectable === "function") cell.setConnectable(false); // NEW
-            return cell; // NEW
+        function createDiagramMetadataCell() {
+            const parent = Env.graph.getDefaultParent ? Env.graph.getDefaultParent() : getDiagramRootCell();
+            if (!parent || typeof Env.graph.insertVertex !== "function") return null;
+            const xmlDocument = (typeof mxUtils !== "undefined" && typeof mxUtils.createXmlDocument === "function")
+                ? mxUtils.createXmlDocument() : document;
+            const value = xmlDocument.createElement("uslYearPlannerMetadata");
+            value.setAttribute(Env.ATTRS.PLAN_METADATA_CELL_ATTR, "1");
+            const cell = Env.graph.insertVertex(parent, null, value, 0, 0, 0, 0, "shape=none;opacity=0;noLabel=1;locked=1;");
+            if (cell && typeof cell.setVisible === "function") cell.setVisible(false);
+            if (cell && typeof cell.setConnectable === "function") cell.setConnectable(false);
+            return cell;
         }
 
-        function rawCellAttribute(cell, attributeName) { // NEW
-            return DiagramStore.getCellAttr(cell, attributeName, ""); // NEW
+        function rawCellAttribute(cell, attributeName) {
+            return DiagramStore.getCellAttr(cell, attributeName, "");
         }
 
-        function parseJsonMap(raw) { // NEW
-            const parsed = Env.safeJsonStringParse(raw, null); // NEW
-            return (parsed && typeof parsed === "object" && !Array.isArray(parsed)) ? parsed : {}; // NEW
+        function parseJsonMap(raw) {
+            const parsed = Env.safeJsonStringParse(raw, null);
+            return (parsed && typeof parsed === "object" && !Array.isArray(parsed)) ? parsed : {};
         }
 
-        function readRootJsonMap(attributeName) { // NEW
-            const metadataCell = findDiagramMetadataCell(); // NEW
-            const metadataRaw = rawCellAttribute(metadataCell, attributeName); // NEW
-            if (metadataRaw !== "") return parseJsonMap(metadataRaw); // NEW
-            return readJsonMap(getDiagramRootCell(), attributeName); // CHANGE
+        function readRootJsonMap(attributeName) {
+            const metadataCell = findDiagramMetadataCell();
+            const metadataRaw = rawCellAttribute(metadataCell, attributeName);
+            if (metadataRaw !== "") return parseJsonMap(metadataRaw);
+            return readJsonMap(getDiagramRootCell(), attributeName);
         }
 
         /**
-         * Copies both legacy root maps on the first write, then makes the metadata cell canonical. // NEW
+         * Copies both legacy root maps on the first write, then makes the metadata cell canonical.
          */
-        function writeRootJsonMap(attributeName, map) { // NEW
-            const root = getDiagramRootCell(); // NEW
-            Env.model.beginUpdate(); // NEW
-            let metadataCell = null; // NEW
+        function writeRootJsonMap(attributeName, map) {
+            const root = getDiagramRootCell();
+            Env.model.beginUpdate();
+            let metadataCell = null;
             try {
-                metadataCell = findDiagramMetadataCell() || createDiagramMetadataCell(); // NEW
-                if (!metadataCell) return; // NEW
-                for (const legacyAttribute of [Env.ATTRS.PLAN_TEMPLATES_ATTR, Env.ATTRS.PLAN_UNIT_DEFAULTS_ATTR]) { // NEW
-                    const metadataRaw = rawCellAttribute(metadataCell, legacyAttribute); // NEW
-                    const legacyRaw = rawCellAttribute(root, legacyAttribute); // NEW
-                    if (metadataRaw === "" && legacyRaw !== "") DiagramStore.setCellAttr(metadataCell, legacyAttribute, legacyRaw); // NEW
-                    if (legacyRaw !== "") DiagramStore.setCellAttr(root, legacyAttribute, null); // NEW
+                metadataCell = findDiagramMetadataCell() || createDiagramMetadataCell();
+                if (!metadataCell) return;
+                for (const legacyAttribute of [Env.ATTRS.PLAN_TEMPLATES_ATTR, Env.ATTRS.PLAN_UNIT_DEFAULTS_ATTR]) {
+                    const metadataRaw = rawCellAttribute(metadataCell, legacyAttribute);
+                    const legacyRaw = rawCellAttribute(root, legacyAttribute);
+                    if (metadataRaw === "" && legacyRaw !== "") DiagramStore.setCellAttr(metadataCell, legacyAttribute, legacyRaw);
+                    if (legacyRaw !== "") DiagramStore.setCellAttr(root, legacyAttribute, null);
                 }
-                DiagramStore.setCellAttr(metadataCell, attributeName, JSON.stringify(map || {})); // NEW
+                DiagramStore.setCellAttr(metadataCell, attributeName, JSON.stringify(map || {}));
             } finally {
-                Env.model.endUpdate(); // NEW
+                Env.model.endUpdate();
             }
-            if (metadataCell) Env.graph.refresh(metadataCell); // NEW
+            if (metadataCell) Env.graph.refresh(metadataCell);
         }
 
-        function loadPlanForYear(moduleCell, year) { // CHANGE
+        function loadPlanForYear(moduleCell, year) {
             const stored = readJsonMap(moduleCell, Env.ATTRS.PLAN_YEARS_ATTR)[String(year)];
             return (stored && typeof stored === "object" && !Array.isArray(stored))
                 ? PlanSchema.normalizeForRuntime(PlanSchema.clonePlain(stored), year)
                 : null;
         }
 
-        function savePlanForYear(moduleCell, year, plan) { // CHANGE
+        function savePlanForYear(moduleCell, year, plan) {
             const plans = readJsonMap(moduleCell, Env.ATTRS.PLAN_YEARS_ATTR);
             plans[String(year)] = PlanSchema.serializeForPersistence(plan);
             writeJsonMap(moduleCell, Env.ATTRS.PLAN_YEARS_ATTR, plans);
         }
 
-        function deletePlanForYear(moduleCell, year) { // CHANGE
+        function deletePlanForYear(moduleCell, year) {
             const plans = readJsonMap(moduleCell, Env.ATTRS.PLAN_YEARS_ATTR);
             delete plans[String(year)];
             writeJsonMap(moduleCell, Env.ATTRS.PLAN_YEARS_ATTR, plans);
         }
 
-        function daysInMonthLocal(year, monthIndex) { // NEW
+        function daysInMonthLocal(year, monthIndex) {
             return new Date(year, monthIndex + 1, 0).getDate();
         }
 
-        function shiftYmdByYears(ymd, deltaYears) { // NEW
+        function shiftYmdByYears(ymd, deltaYears) {
             if (!PlanMath.hasYmd(ymd)) return ymd || "";
             const match = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})$/);
             if (!match) return ymd;
@@ -1517,20 +1517,20 @@ Draw.loadPlugin(function (ui) {
             return PlanMath.toIsoDateLocal(new Date(nextYear, monthIndex, safeDay));
         }
 
-        function shiftFieldYear(target, key, deltaYears) { // NEW
+        function shiftFieldYear(target, key, deltaYears) {
             if (target && PlanMath.hasYmd(target[key])) target[key] = shiftYmdByYears(target[key], deltaYears);
         }
 
-        function shiftPlanDateFields(plan, deltaYears) { // NEW
+        function shiftPlanDateFields(plan, deltaYears) {
             if (!plan || !Number.isFinite(Number(deltaYears)) || Number(deltaYears) === 0) return;
             for (const crop of (plan.crops || [])) {
                 shiftFieldYear(crop, "harvestStart", deltaYears);
                 shiftFieldYear(crop, "harvestEnd", deltaYears);
             }
-            for (const demandLine of (plan.demands || [])) { // CHANGE
-                shiftFieldYear(demandLine, "from", deltaYears); // CHANGE
-                shiftFieldYear(demandLine, "to", deltaYears); // CHANGE
-            } // CHANGE
+            for (const demandLine of (plan.demands || [])) {
+                shiftFieldYear(demandLine, "from", deltaYears);
+                shiftFieldYear(demandLine, "to", deltaYears);
+            }
             if (!plan.csa) return;
             shiftFieldYear(plan.csa, "start", deltaYears);
             shiftFieldYear(plan.csa, "end", deltaYears);
@@ -1540,16 +1540,16 @@ Draw.loadPlugin(function (ui) {
             }
         }
 
-        function listTemplateNames() { // CHANGE
+        function listTemplateNames() {
             return Object.keys(readRootJsonMap(Env.ATTRS.PLAN_TEMPLATES_ATTR)).sort();
         }
 
-        function loadTemplateByName(name) { // CHANGE
+        function loadTemplateByName(name) {
             const template = readRootJsonMap(Env.ATTRS.PLAN_TEMPLATES_ATTR)[String(name || "")];
             return (template && typeof template === "object" && !Array.isArray(template)) ? template : null;
         }
 
-        function saveTemplateByName(name, template) { // CHANGE
+        function saveTemplateByName(name, template) {
             const key = String(name || "").trim();
             if (!key) return;
             const templates = readRootJsonMap(Env.ATTRS.PLAN_TEMPLATES_ATTR);
@@ -1557,7 +1557,7 @@ Draw.loadPlugin(function (ui) {
             writeRootJsonMap(Env.ATTRS.PLAN_TEMPLATES_ATTR, templates);
         }
 
-        function deleteTemplateByName(name) { // CHANGE
+        function deleteTemplateByName(name) {
             const key = String(name || "").trim();
             if (!key) return;
             const templates = readRootJsonMap(Env.ATTRS.PLAN_TEMPLATES_ATTR);
@@ -1565,7 +1565,7 @@ Draw.loadPlugin(function (ui) {
             writeRootJsonMap(Env.ATTRS.PLAN_TEMPLATES_ATTR, templates);
         }
 
-        function rekeyTemplateToPlan(template, year) { // CHANGE
+        function rekeyTemplateToPlan(template, year) {
             const rekeyed = template ? PlanSchema.clonePlain(template) : {};
             const validYear = value => {
                 const number = Number(value);
@@ -1591,21 +1591,21 @@ Draw.loadPlugin(function (ui) {
             for (const component of rekeyed.csa.components) {
                 component.cropId = idMap.has(component.cropId) ? idMap.get(component.cropId) : "";
             }
-            for (const demandLine of rekeyed.demands) { // NEW
-                demandLine.cropId = idMap.has(demandLine.cropId) ? idMap.get(demandLine.cropId) : ""; // NEW
-            } // NEW
+            for (const demandLine of rekeyed.demands) {
+                demandLine.cropId = idMap.has(demandLine.cropId) ? idMap.get(demandLine.cropId) : "";
+            }
             if (idMap.has(rekeyed.cropFilterId)) rekeyed.cropFilterId = idMap.get(rekeyed.cropFilterId);
             else delete rekeyed.cropFilterId;
             delete rekeyed.templateBaseYear;
             return PlanSchema.normalizeForRuntime(rekeyed, targetYear);
         }
 
-        function getDefaultsForPlant(plantId) { // CHANGE
+        function getDefaultsForPlant(plantId) {
             const value = readRootJsonMap(Env.ATTRS.PLAN_UNIT_DEFAULTS_ATTR)[String(plantId || "")];
             return Array.isArray(value) ? value : null;
         }
 
-        function saveDefaultsForPlant(plantId, packages) { // CHANGE
+        function saveDefaultsForPlant(plantId, packages) {
             const key = String(plantId || "").trim();
             if (!key) return;
             const defaults = readRootJsonMap(Env.ATTRS.PLAN_UNIT_DEFAULTS_ATTR);
@@ -1613,7 +1613,7 @@ Draw.loadPlugin(function (ui) {
             writeRootJsonMap(Env.ATTRS.PLAN_UNIT_DEFAULTS_ATTR, defaults);
         }
 
-        return { // NEW
+        return {
             loadPlanForYear,
             savePlanForYear,
             deletePlanForYear,
@@ -1656,8 +1656,8 @@ Draw.loadPlugin(function (ui) {
 
 
 
-    // -------------------- DiagramPlanReader -------------------- // CHANGE
-    const DiagramPlanReader = (() => { // CHANGE
+    // -------------------- DiagramPlanReader --------------------
+    const DiagramPlanReader = (() => {
         function isTilerGroupCell(cell) {
             return !!cell && typeof cell.getAttribute === "function" && cell.getAttribute("tiler_group") === "1";
         }
@@ -1716,16 +1716,16 @@ Draw.loadPlugin(function (ui) {
         function shouldIncludeTilerGroupInYear(tg, selectedYear, harvestEndYearFn) {
             if (!isTilerGroupCell(tg)) return false;
 
-            const y = Number(selectedYear); // CHANGE
-            if (!Number.isFinite(y)) return false; // CHANGE
+            const y = Number(selectedYear);
+            if (!Number.isFinite(y)) return false;
 
-            const rawStart = String(DiagramStore.getCellAttr(tg, "season_start_year", "")).trim(); // CHANGE
-            const startY = rawStart ? Number(rawStart) : NaN; // CHANGE
+            const rawStart = String(DiagramStore.getCellAttr(tg, "season_start_year", "")).trim();
+            const startY = rawStart ? Number(rawStart) : NaN;
 
-            if (isPerennialTilerGroup(tg)) { // CHANGE
-                if (Number.isFinite(startY)) return y >= startY; // CHANGE
-                return true; // CHANGE
-            } // CHANGE
+            if (isPerennialTilerGroup(tg)) {
+                if (Number.isFinite(startY)) return y >= startY;
+                return true;
+            }
 
             // 1) Explicit season assignment
             if (Number.isFinite(startY) && startY === y) return true;
@@ -1759,79 +1759,79 @@ Draw.loadPlugin(function (ui) {
             return false;
         }
 
-        function harvestStartYmd(tg) { // CHANGE
+        function harvestStartYmd(tg) {
             return String(getFirstNonEmptyAttr(tg, [
                 "harvest_start", "harvest_start_date", "planting_harvest_start", "season_harvest_start", "start"
             ]) || "").trim();
         }
 
-        function harvestEndYmd(tg) { // CHANGE
+        function harvestEndYmd(tg) {
             return String(getFirstNonEmptyAttr(tg, [
                 "harvest_end", "harvest_end_date", "planting_harvest_end", "season_harvest_end", "end"
             ]) || "").trim();
         }
 
-        function harvestEndLocalYear(tg) { // NEW
+        function harvestEndLocalYear(tg) {
             const endMs = PlanMath.parseYmdLocalToMs(harvestEndYmd(tg));
             return Number.isFinite(endMs) ? new Date(endMs).getFullYear() : NaN;
         }
 
-        function harvestWindowOverlapsYear(tg, year) { // CHANGE
+        function harvestWindowOverlapsYear(tg, year) {
             const startMs = PlanMath.parseYmdLocalToMs(harvestStartYmd(tg));
             const endMs = PlanMath.parseYmdLocalToMs(harvestEndYmd(tg));
             const selectedYear = Number(year);
             if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || !Number.isFinite(selectedYear)) return false;
-            if (startMs > endMs) return false; // CHANGE
+            if (startMs > endMs) return false;
 
             const yearStartMs = PlanMath.parseYmdLocalToMs(`${selectedYear}-01-01`);
             const yearEndExMs = PlanMath.parseYmdLocalToMs(`${selectedYear + 1}-01-01`);
-            const windowStartMs = startMs; // CHANGE
-            const windowEndExMs = PlanMath.addDaysMs(endMs, 1); // CHANGE
+            const windowStartMs = startMs;
+            const windowEndExMs = PlanMath.addDaysMs(endMs, 1);
             return windowStartMs < yearEndExMs && windowEndExMs > yearStartMs;
         }
 
-        function getTilerGroups(moduleCell) { // NEW
+        function getTilerGroups(moduleCell) {
             return getAllDescendants(Env.model, moduleCell).filter(isTilerGroupCell);
         }
 
         /**
-         * Returns stable crop metadata from every tiler group in the garden module. // NEW
-         * Database availability and legacy variety-name resolution remain caller concerns. // NEW
-         */ // NEW
-        function readGardenCropCandidates(moduleCell) { // NEW
-            const candidates = []; // NEW
-            for (const tilerGroup of getTilerGroups(moduleCell)) { // NEW
-                const plantId = String(DiagramStore.getCellAttr(tilerGroup, "plant_id", "") || "").trim(); // NEW
-                if (!plantId) continue; // NEW
-                candidates.push({ // NEW
-                    plantId, // NEW
-                    plantName: String(DiagramStore.getCellAttr(tilerGroup, "plant_name", "") || "").trim(), // NEW
-                    varietyId: String(DiagramStore.getCellAttr(tilerGroup, "variety_id", "") || "").trim() || null, // NEW
-                    varietyName: String(DiagramStore.getCellAttr(tilerGroup, "variety_name", "") || "").trim() // NEW
-                }); // NEW
-            } // NEW
-            return candidates; // NEW
-        } // NEW
+         * Returns stable crop metadata from every tiler group in the garden module.
+         * Database availability and legacy variety-name resolution remain caller concerns.
+         */
+        function readGardenCropCandidates(moduleCell) {
+            const candidates = [];
+            for (const tilerGroup of getTilerGroups(moduleCell)) {
+                const plantId = String(DiagramStore.getCellAttr(tilerGroup, "plant_id", "") || "").trim();
+                if (!plantId) continue;
+                candidates.push({
+                    plantId,
+                    plantName: String(DiagramStore.getCellAttr(tilerGroup, "plant_name", "") || "").trim(),
+                    varietyId: String(DiagramStore.getCellAttr(tilerGroup, "variety_id", "") || "").trim() || null,
+                    varietyName: String(DiagramStore.getCellAttr(tilerGroup, "variety_name", "") || "").trim()
+                });
+            }
+            return candidates;
+        }
 
-        function actualPlantsMapFromTilers(tilerGroups, selectedYear, resolveCropKey) { // CHANGE
+        function actualPlantsMapFromTilers(tilerGroups, selectedYear, resolveCropKey) {
             const actualPlantsByCropKey = new Map();
             for (const tilerGroup of tilerGroups) {
                 if (!shouldIncludeTilerGroupInYear(tilerGroup, selectedYear, harvestEndLocalYear)) continue;
                 const plantCount = Number(DiagramStore.getCellAttr(tilerGroup, "plant_count", ""));
                 const count = Number.isFinite(plantCount) && plantCount > 0 ? Math.trunc(plantCount) : 0;
                 if (count <= 0) continue;
-                const key = resolveCropKey ? resolveCropKey(tilerGroup) : getCropKeyFromTilerGroup(tilerGroup); // CHANGE
-                if (!key) continue; // NEW
+                const key = resolveCropKey ? resolveCropKey(tilerGroup) : getCropKeyFromTilerGroup(tilerGroup);
+                if (!key) continue;
                 actualPlantsByCropKey.set(key, (actualPlantsByCropKey.get(key) || 0) + count);
             }
             return actualPlantsByCropKey;
         }
 
-        function actualPlantsMapFromModule(moduleCell, selectedYear) { // CHANGE
+        function actualPlantsMapFromModule(moduleCell, selectedYear) {
             return actualPlantsMapFromTilers(getTilerGroups(moduleCell), selectedYear);
         }
 
-        function buildActualHarvestSeriesFromTilers(tilerGroups, year, weekStarts, cropKeyToKgPerPlant, resolveCropKey) { // CHANGE
+        function buildActualHarvestSeriesFromTilers(tilerGroups, year, weekStarts, cropKeyToKgPerPlant, resolveCropKey) {
             const seriesByCropKey = new Map();
             const ensureSeries = key => {
                 if (!seriesByCropKey.has(key)) seriesByCropKey.set(key, Array(weekStarts.length).fill(0));
@@ -1844,8 +1844,8 @@ Draw.loadPlugin(function (ui) {
                 const count = Number.isFinite(plantCount) && plantCount > 0 ? Math.trunc(plantCount) : 0;
                 if (count <= 0) continue;
 
-                const key = resolveCropKey ? resolveCropKey(tilerGroup) : getCropKeyFromTilerGroup(tilerGroup); // CHANGE
-                if (!key) continue; // NEW
+                const key = resolveCropKey ? resolveCropKey(tilerGroup) : getCropKeyFromTilerGroup(tilerGroup);
+                if (!key) continue;
                 const kgPerPlant = Number(cropKeyToKgPerPlant.get(key));
                 if (!Number.isFinite(kgPerPlant) || kgPerPlant <= 0) continue;
 
@@ -1861,117 +1861,117 @@ Draw.loadPlugin(function (ui) {
             return seriesByCropKey;
         }
 
-        function buildActualHarvestSeriesByCropKey(moduleCell, year, weekStarts, cropKeyToKgPerPlant) { // CHANGE
+        function buildActualHarvestSeriesByCropKey(moduleCell, year, weekStarts, cropKeyToKgPerPlant) {
             return buildActualHarvestSeriesFromTilers(getTilerGroups(moduleCell), year, weekStarts, cropKeyToKgPerPlant);
         }
 
-        function normalizeIdentityName(value) { // NEW
-            return String(value || "").trim().toLocaleLowerCase(); // NEW
-        } // NEW
+        function normalizeIdentityName(value) {
+            return String(value || "").trim().toLocaleLowerCase();
+        }
 
         /**
-         * Resolves legacy variety-name-only tiler groups against unique planned crop identities. // NEW
-         */ // NEW
-        function createPlanCropKeyResolver(plan, diagnostics) { // NEW
-            const plannedByPlantAndVarietyName = new Map(); // NEW
-            for (const crop of ((plan && plan.crops) || [])) { // NEW
-                const plantId = String(crop && crop.plantId || "").trim(); // NEW
-                const varietyId = String((crop && crop.varietyId) ?? "").trim(); // NEW
-                const varietyName = normalizeIdentityName(crop && crop.variety); // NEW
-                if (!plantId || !varietyId || !varietyName) continue; // NEW
-                const lookupKey = `${plantId}|${varietyName}`; // NEW
-                const matches = plannedByPlantAndVarietyName.get(lookupKey) || []; // NEW
-                matches.push(getCropKeyFromPlanCrop(crop)); // NEW
-                plannedByPlantAndVarietyName.set(lookupKey, matches); // NEW
-            } // NEW
-
-            return tilerGroup => { // NEW
-                const plantId = String(DiagramStore.getCellAttr(tilerGroup, "plant_id", "") || "").trim(); // NEW
-                const varietyId = String(DiagramStore.getCellAttr(tilerGroup, "variety_id", "") || "").trim(); // NEW
-                if (!plantId || varietyId) return getCropKeyFromTilerGroup(tilerGroup); // NEW
-
-                const varietyName = String(DiagramStore.getCellAttr(tilerGroup, "variety_name", "") || "").trim(); // NEW
-                if (!varietyName) return getCropKeyFromTilerGroup(tilerGroup); // NEW
-
-                const matches = plannedByPlantAndVarietyName.get(`${plantId}|${normalizeIdentityName(varietyName)}`) || []; // NEW
-                const plantName = String(DiagramStore.getCellAttr(tilerGroup, "plant_name", "") || plantId).trim(); // NEW
-                const label = `${plantName} - ${varietyName}`; // NEW
-                if (matches.length === 1) return matches[0]; // NEW
-                diagnostics.push(matches.length > 1 // NEW
-                    ? `Diagram crop "${label}" matches multiple planned varieties and was ignored.` // NEW
-                    : `Diagram crop "${label}" has no unique planned variety match and was ignored.`); // NEW
-                return ""; // NEW
-            }; // NEW
-        } // NEW
-
-        /**
-         * Scans relevant tiler groups once so counts, weekly harvest, and exact ranges share one identity. // NEW
-         */ // NEW
-        function collectYearFactsFromTilers(tilerGroups, year, weekStarts, cropKeyToKgPerPlant, plan) { // NEW
-            const diagnostics = []; // NEW
-            const resolveCropKey = createPlanCropKeyResolver(plan, diagnostics); // NEW
-            const actualPlantsByCropKey = new Map(); // NEW
-            const actualHarvestSeriesByCropKey = new Map(); // NEW
-            const actualHarvestDateRangeByCropKey = new Map(); // NEW
-            const ensureSeries = key => { // NEW
-                if (!actualHarvestSeriesByCropKey.has(key)) actualHarvestSeriesByCropKey.set(key, Array(weekStarts.length).fill(0)); // NEW
-                return actualHarvestSeriesByCropKey.get(key); // NEW
-            }; // NEW
-
-            for (const tilerGroup of tilerGroups) { // NEW
-                if (!shouldIncludeTilerGroupInYear(tilerGroup, year, harvestEndLocalYear)) continue; // NEW
-                const plantCount = Number(DiagramStore.getCellAttr(tilerGroup, "plant_count", "")); // NEW
-                const count = Number.isFinite(plantCount) && plantCount > 0 ? Math.trunc(plantCount) : 0; // NEW
-                if (count <= 0) continue; // NEW
-                const key = resolveCropKey(tilerGroup); // NEW
-                if (!key) continue; // NEW
-
-                actualPlantsByCropKey.set(key, (actualPlantsByCropKey.get(key) || 0) + count); // NEW
-                const start = harvestStartYmd(tilerGroup); // NEW
-                const end = harvestEndYmd(tilerGroup); // NEW
-                const label = String(DiagramStore.getCellAttr(tilerGroup, "plant_name", "") || key).trim(); // NEW
-                if (!PlanMath.hasYmd(start) || !PlanMath.hasYmd(end)) { // NEW
-                    diagnostics.push(`Diagram harvest window for "${label}" is incomplete and was ignored.`); // NEW
-                    continue; // NEW
-                } // NEW
-                if (start > end) { // NEW
-                    diagnostics.push(`Diagram harvest window for "${label}" has start date after end date and was ignored.`); // NEW
-                    continue; // NEW
-                } // NEW
-                if (!harvestWindowOverlapsYear(tilerGroup, year)) continue; // NEW
-
-                const currentRange = actualHarvestDateRangeByCropKey.get(key); // NEW
-                actualHarvestDateRangeByCropKey.set(key, { // NEW
-                    start: currentRange && currentRange.start < start ? currentRange.start : start, // NEW
-                    end: currentRange && currentRange.end > end ? currentRange.end : end // NEW
-                }); // NEW
-
-                const kgPerPlant = Number(cropKeyToKgPerPlant.get(key)); // NEW
-                if (!Number.isFinite(kgPerPlant) || kgPerPlant <= 0) continue; // NEW
-                PlanMath.addTotalKgAcrossWindowProrated( // NEW
-                    ensureSeries(key), // NEW
-                    weekStarts, // NEW
-                    start, // NEW
-                    end, // NEW
-                    count * kgPerPlant, // NEW
-                    year // NEW
-                ); // NEW
-            } // NEW
-
-            return { // NEW
-                actualPlantsByCropKey, // NEW
-                actualHarvestSeriesByCropKey, // NEW
-                actualHarvestDateRangeByCropKey, // NEW
-                diagnostics // NEW
-            }; // NEW
-        } // NEW
-
-        /**
-         * Scans module descendants once and returns all diagram facts needed by recalculation. // NEW
+         * Resolves legacy variety-name-only tiler groups against unique planned crop identities.
          */
-        function readYearFacts(moduleCell, year, weekStarts, cropKeyToKgPerPlant, plan) { // CHANGE
+        function createPlanCropKeyResolver(plan, diagnostics) {
+            const plannedByPlantAndVarietyName = new Map();
+            for (const crop of ((plan && plan.crops) || [])) {
+                const plantId = String(crop && crop.plantId || "").trim();
+                const varietyId = String((crop && crop.varietyId) ?? "").trim();
+                const varietyName = normalizeIdentityName(crop && crop.variety);
+                if (!plantId || !varietyId || !varietyName) continue;
+                const lookupKey = `${plantId}|${varietyName}`;
+                const matches = plannedByPlantAndVarietyName.get(lookupKey) || [];
+                matches.push(getCropKeyFromPlanCrop(crop));
+                plannedByPlantAndVarietyName.set(lookupKey, matches);
+            }
+
+            return tilerGroup => {
+                const plantId = String(DiagramStore.getCellAttr(tilerGroup, "plant_id", "") || "").trim();
+                const varietyId = String(DiagramStore.getCellAttr(tilerGroup, "variety_id", "") || "").trim();
+                if (!plantId || varietyId) return getCropKeyFromTilerGroup(tilerGroup);
+
+                const varietyName = String(DiagramStore.getCellAttr(tilerGroup, "variety_name", "") || "").trim();
+                if (!varietyName) return getCropKeyFromTilerGroup(tilerGroup);
+
+                const matches = plannedByPlantAndVarietyName.get(`${plantId}|${normalizeIdentityName(varietyName)}`) || [];
+                const plantName = String(DiagramStore.getCellAttr(tilerGroup, "plant_name", "") || plantId).trim();
+                const label = `${plantName} - ${varietyName}`;
+                if (matches.length === 1) return matches[0];
+                diagnostics.push(matches.length > 1
+                    ? `Diagram crop "${label}" matches multiple planned varieties and was ignored.`
+                    : `Diagram crop "${label}" has no unique planned variety match and was ignored.`);
+                return "";
+            };
+        }
+
+        /**
+         * Scans relevant tiler groups once so counts, weekly harvest, and exact ranges share one identity.
+         */
+        function collectYearFactsFromTilers(tilerGroups, year, weekStarts, cropKeyToKgPerPlant, plan) {
+            const diagnostics = [];
+            const resolveCropKey = createPlanCropKeyResolver(plan, diagnostics);
+            const actualPlantsByCropKey = new Map();
+            const actualHarvestSeriesByCropKey = new Map();
+            const actualHarvestDateRangeByCropKey = new Map();
+            const ensureSeries = key => {
+                if (!actualHarvestSeriesByCropKey.has(key)) actualHarvestSeriesByCropKey.set(key, Array(weekStarts.length).fill(0));
+                return actualHarvestSeriesByCropKey.get(key);
+            };
+
+            for (const tilerGroup of tilerGroups) {
+                if (!shouldIncludeTilerGroupInYear(tilerGroup, year, harvestEndLocalYear)) continue;
+                const plantCount = Number(DiagramStore.getCellAttr(tilerGroup, "plant_count", ""));
+                const count = Number.isFinite(plantCount) && plantCount > 0 ? Math.trunc(plantCount) : 0;
+                if (count <= 0) continue;
+                const key = resolveCropKey(tilerGroup);
+                if (!key) continue;
+
+                actualPlantsByCropKey.set(key, (actualPlantsByCropKey.get(key) || 0) + count);
+                const start = harvestStartYmd(tilerGroup);
+                const end = harvestEndYmd(tilerGroup);
+                const label = String(DiagramStore.getCellAttr(tilerGroup, "plant_name", "") || key).trim();
+                if (!PlanMath.hasYmd(start) || !PlanMath.hasYmd(end)) {
+                    diagnostics.push(`Diagram harvest window for "${label}" is incomplete and was ignored.`);
+                    continue;
+                }
+                if (start > end) {
+                    diagnostics.push(`Diagram harvest window for "${label}" has start date after end date and was ignored.`);
+                    continue;
+                }
+                if (!harvestWindowOverlapsYear(tilerGroup, year)) continue;
+
+                const currentRange = actualHarvestDateRangeByCropKey.get(key);
+                actualHarvestDateRangeByCropKey.set(key, {
+                    start: currentRange && currentRange.start < start ? currentRange.start : start,
+                    end: currentRange && currentRange.end > end ? currentRange.end : end
+                });
+
+                const kgPerPlant = Number(cropKeyToKgPerPlant.get(key));
+                if (!Number.isFinite(kgPerPlant) || kgPerPlant <= 0) continue;
+                PlanMath.addTotalKgAcrossWindowProrated(
+                    ensureSeries(key),
+                    weekStarts,
+                    start,
+                    end,
+                    count * kgPerPlant,
+                    year
+                );
+            }
+
+            return {
+                actualPlantsByCropKey,
+                actualHarvestSeriesByCropKey,
+                actualHarvestDateRangeByCropKey,
+                diagnostics
+            };
+        }
+
+        /**
+         * Scans module descendants once and returns all diagram facts needed by recalculation.
+         */
+        function readYearFacts(moduleCell, year, weekStarts, cropKeyToKgPerPlant, plan) {
             const tilerGroups = getTilerGroups(moduleCell);
-            return collectYearFactsFromTilers(tilerGroups, year, weekStarts, cropKeyToKgPerPlant, plan); // CHANGE
+            return collectYearFactsFromTilers(tilerGroups, year, weekStarts, cropKeyToKgPerPlant, plan);
         }
 
         return {
@@ -1987,8 +1987,8 @@ Draw.loadPlugin(function (ui) {
             harvestStartYmd,
             harvestEndYmd,
             harvestWindowOverlapsYear,
-            readGardenCropCandidates, // NEW
-            createPlanCropKeyResolver, // NEW
+            readGardenCropCandidates,
+            createPlanCropKeyResolver,
             readYearFacts
         };
     })();
@@ -2010,77 +2010,77 @@ Draw.loadPlugin(function (ui) {
 
 
 
-    // -------------------- PlanRuntimeService -------------------- // NEW
+    // -------------------- PlanRuntimeService --------------------
     /**
-     * Mutates the live plan with diagram-derived values and returns a DOM-free render model. // NEW
+     * Mutates the live plan with diagram-derived values and returns a DOM-free render model.
      */
-    const PlanRuntimeService = (() => { // NEW
-        function addDaysYmd(ymd, days) { // NEW
+    const PlanRuntimeService = (() => {
+        function addDaysYmd(ymd, days) {
             const ms = PlanMath.parseYmdLocalToMs(ymd);
             return Number.isFinite(ms)
                 ? PlanMath.toIsoDateLocal(new Date(PlanMath.addDaysMs(ms, days)))
                 : null;
         }
 
-        function cropAvailableEndYmd(crop) { // NEW
+        function cropAvailableEndYmd(crop) {
             if (!PlanMath.hasYmd(crop && crop.harvestEnd)) return null;
-            return String(crop.harvestEnd); // CHANGE
-        } // CHANGE
-
-        function cropHarvestOverlapsYear(crop, year) { // ADDED
-            if (!crop || !PlanMath.hasYmd(crop.harvestStart) || !PlanMath.hasYmd(crop.harvestEnd)) return false; // ADDED
-            const startMs = PlanMath.parseYmdLocalToMs(crop.harvestStart); // ADDED
-            const endMs = PlanMath.parseYmdLocalToMs(crop.harvestEnd); // ADDED
-            const yearStartMs = PlanMath.parseYmdLocalToMs(`${year}-01-01`); // ADDED
-            const yearEndExMs = PlanMath.parseYmdLocalToMs(`${Number(year) + 1}-01-01`); // ADDED
-            return Number.isFinite(startMs) && Number.isFinite(endMs) && startMs <= endMs && startMs < yearEndExMs && PlanMath.addDaysMs(endMs, 1) > yearStartMs; // ADDED
-        } // ADDED
-
-        function buildCarryoverCrops(moduleCell, year, plan) { // ADDED
-            const priorYear = Number(year) - 1; // ADDED
-            if (!Number.isFinite(priorYear) || priorYear < 1900) return []; // ADDED
-            const prior = PlanRepository.loadPlanForYear(moduleCell, priorYear); // ADDED
-            if (!prior || !Array.isArray(prior.crops)) return []; // ADDED
-            PlanSchema.normalizeForRuntime(prior, priorYear); // ADDED
-            const currentByKey = new Map(); // ADDED
-            for (const crop of (plan.crops || [])) { // ADDED
-                const key = PlanSchema.getCropIdentityKey(crop); // ADDED
-                if (key) currentByKey.set(key, crop); // ADDED
-            } // ADDED
-            const carryovers = []; // ADDED
-            for (const priorCrop of prior.crops || []) { // ADDED
-                if (!cropHarvestOverlapsYear(priorCrop, year)) continue; // ADDED
-                const key = PlanSchema.getCropIdentityKey(priorCrop); // ADDED
-                const currentCrop = key ? currentByKey.get(key) : null; // ADDED
-                const source = PlanSchema.clonePlain(priorCrop); // ADDED
-                source.id = currentCrop ? currentCrop.id : `carryover:${priorYear}:${priorCrop.id || key || carryovers.length}`; // ADDED
-                source.__carryover = true; // ADDED
-                source.__carryoverFromYear = priorYear; // ADDED
-                source.useActualHarvest = false; // ADDED
-                carryovers.push(source); // ADDED
-            } // ADDED
-            return carryovers; // ADDED
-        } // ADDED
-
-        function legacyShelfExtendedEndYmd(crop, harvestEnd) { // NEW
-            if (!PlanMath.hasYmd(harvestEnd)) return null; // NEW
-            const shelfDays = Math.max(0, Math.trunc(Number(crop && crop.shelfLifeDays) || 0)); // NEW
-            return shelfDays > 0 ? addDaysYmd(harvestEnd, shelfDays) : null; // NEW
+            return String(crop.harvestEnd);
         }
 
-        function ymdMin(a, b) { // NEW
+        function cropHarvestOverlapsYear(crop, year) {
+            if (!crop || !PlanMath.hasYmd(crop.harvestStart) || !PlanMath.hasYmd(crop.harvestEnd)) return false;
+            const startMs = PlanMath.parseYmdLocalToMs(crop.harvestStart);
+            const endMs = PlanMath.parseYmdLocalToMs(crop.harvestEnd);
+            const yearStartMs = PlanMath.parseYmdLocalToMs(`${year}-01-01`);
+            const yearEndExMs = PlanMath.parseYmdLocalToMs(`${Number(year) + 1}-01-01`);
+            return Number.isFinite(startMs) && Number.isFinite(endMs) && startMs <= endMs && startMs < yearEndExMs && PlanMath.addDaysMs(endMs, 1) > yearStartMs;
+        }
+
+        function buildCarryoverCrops(moduleCell, year, plan) {
+            const priorYear = Number(year) - 1;
+            if (!Number.isFinite(priorYear) || priorYear < 1900) return [];
+            const prior = PlanRepository.loadPlanForYear(moduleCell, priorYear);
+            if (!prior || !Array.isArray(prior.crops)) return [];
+            PlanSchema.normalizeForRuntime(prior, priorYear);
+            const currentByKey = new Map();
+            for (const crop of (plan.crops || [])) {
+                const key = PlanSchema.getCropIdentityKey(crop);
+                if (key) currentByKey.set(key, crop);
+            }
+            const carryovers = [];
+            for (const priorCrop of prior.crops || []) {
+                if (!cropHarvestOverlapsYear(priorCrop, year)) continue;
+                const key = PlanSchema.getCropIdentityKey(priorCrop);
+                const currentCrop = key ? currentByKey.get(key) : null;
+                const source = PlanSchema.clonePlain(priorCrop);
+                source.id = currentCrop ? currentCrop.id : `carryover:${priorYear}:${priorCrop.id || key || carryovers.length}`;
+                source.__carryover = true;
+                source.__carryoverFromYear = priorYear;
+                source.useActualHarvest = false;
+                carryovers.push(source);
+            }
+            return carryovers;
+        }
+
+        function legacyShelfExtendedEndYmd(crop, harvestEnd) {
+            if (!PlanMath.hasYmd(harvestEnd)) return null;
+            const shelfDays = Math.max(0, Math.trunc(Number(crop && crop.shelfLifeDays) || 0));
+            return shelfDays > 0 ? addDaysYmd(harvestEnd, shelfDays) : null;
+        }
+
+        function ymdMin(a, b) {
             if (!PlanMath.hasYmd(a)) return b;
             if (!PlanMath.hasYmd(b)) return a;
             return a < b ? a : b;
         }
 
-        function ymdMax(a, b) { // NEW
+        function ymdMax(a, b) {
             if (!PlanMath.hasYmd(a)) return b;
             if (!PlanMath.hasYmd(b)) return a;
             return a > b ? a : b;
         }
 
-        function clampYmdIntoRange(value, lower, upper) { // NEW
+        function clampYmdIntoRange(value, lower, upper) {
             if (!PlanMath.hasYmd(value) || (!PlanMath.hasYmd(lower) && !PlanMath.hasYmd(upper))) return value;
             let clamped = value;
             if (PlanMath.hasYmd(lower) && clamped < lower) clamped = lower;
@@ -2088,51 +2088,51 @@ Draw.loadPlugin(function (ui) {
             return clamped;
         }
 
-        function shouldAutoReplaceDate(current, lastAutomatic) { // NEW
+        function shouldAutoReplaceDate(current, lastAutomatic) {
             return !PlanMath.hasYmd(current)
                 || (PlanMath.hasYmd(lastAutomatic) && current === lastAutomatic);
         }
 
-        function hasPositiveActualHarvestSeries(series) { // CHANGE
-            return Array.isArray(series) && series.some(value => Number(value) > 0); // CHANGE
-        } // CHANGE
+        function hasPositiveActualHarvestSeries(series) {
+            return Array.isArray(series) && series.some(value => Number(value) > 0);
+        }
 
-        function syncCropDatesIfEnabled(plan, crop, oldSnapshot) { // CHANGE
+        function syncCropDatesIfEnabled(plan, crop, oldSnapshot) {
             if (!crop || !crop.syncharvest) return;
             const harvestStart = crop.harvestStart;
             const harvestEnd = crop.harvestEnd;
             const availableEnd = cropAvailableEndYmd(crop);
-            const previousHarvestEnd = oldSnapshot && oldSnapshot.he; // NEW
-            const previousLegacyEnd = legacyShelfExtendedEndYmd(crop, previousHarvestEnd); // NEW
+            const previousHarvestEnd = oldSnapshot && oldSnapshot.he;
+            const previousLegacyEnd = legacyShelfExtendedEndYmd(crop, previousHarvestEnd);
             const csa = plan && plan.csa ? plan.csa : null;
 
             crop.__sync_lastHarvestStart = crop.__sync_lastHarvestStart ?? (oldSnapshot && oldSnapshot.hs) ?? "";
             crop.__sync_lastHarvestEnd = crop.__sync_lastHarvestEnd ?? (oldSnapshot && oldSnapshot.he) ?? "";
             crop.__sync_lastAvailEnd = crop.__sync_lastAvailEnd ?? (oldSnapshot && oldSnapshot.availEnd) ?? "";
 
-            for (const demandLine of ((plan && plan.demands) || [])) { // CHANGE
-                if (!demandLine || demandLine.cropId !== crop.id) continue; // CHANGE
-                if (previousLegacyEnd && String(demandLine.to || "") === previousLegacyEnd) demandLine.to = previousHarvestEnd; // CHANGE
-                if (shouldAutoReplaceDate(demandLine.from, crop.__sync_lastHarvestStart) && PlanMath.hasYmd(harvestStart)) { // CHANGE
-                    demandLine.from = harvestStart; // CHANGE
+            for (const demandLine of ((plan && plan.demands) || [])) {
+                if (!demandLine || demandLine.cropId !== crop.id) continue;
+                if (previousLegacyEnd && String(demandLine.to || "") === previousLegacyEnd) demandLine.to = previousHarvestEnd;
+                if (shouldAutoReplaceDate(demandLine.from, crop.__sync_lastHarvestStart) && PlanMath.hasYmd(harvestStart)) {
+                    demandLine.from = harvestStart;
                 }
-                demandLine.from = clampYmdIntoRange(demandLine.from, harvestStart, availableEnd); // CHANGE
+                demandLine.from = clampYmdIntoRange(demandLine.from, harvestStart, availableEnd);
 
                 const lastAutomaticEnd = crop.__sync_lastAvailEnd || crop.__sync_lastHarvestEnd;
                 const looksAutomatic = PlanMath.hasYmd(harvestEnd)
-                    && PlanMath.hasYmd(demandLine.to) // CHANGE
-                    && String(demandLine.to) === String(harvestEnd); // CHANGE
-                if (shouldAutoReplaceDate(demandLine.to, lastAutomaticEnd) || looksAutomatic) { // CHANGE
-                    if (PlanMath.hasYmd(availableEnd)) demandLine.to = availableEnd; // CHANGE
-                    else if (PlanMath.hasYmd(harvestEnd)) demandLine.to = harvestEnd; // CHANGE
+                    && PlanMath.hasYmd(demandLine.to)
+                    && String(demandLine.to) === String(harvestEnd);
+                if (shouldAutoReplaceDate(demandLine.to, lastAutomaticEnd) || looksAutomatic) {
+                    if (PlanMath.hasYmd(availableEnd)) demandLine.to = availableEnd;
+                    else if (PlanMath.hasYmd(harvestEnd)) demandLine.to = harvestEnd;
                 }
-                demandLine.to = clampYmdIntoRange(demandLine.to, harvestStart, availableEnd); // CHANGE
+                demandLine.to = clampYmdIntoRange(demandLine.to, harvestStart, availableEnd);
             }
 
             if (csa && Array.isArray(csa.components)) {
                 for (const component of csa.components) {
                     if (!component || component.cropId !== crop.id) continue;
-                    if (previousLegacyEnd && String(component.end || "") === previousLegacyEnd) component.end = previousHarvestEnd; // NEW
+                    if (previousLegacyEnd && String(component.end || "") === previousLegacyEnd) component.end = previousHarvestEnd;
                     const desiredStart = PlanMath.hasYmd(harvestStart) ? ymdMax(harvestStart, csa.start) : csa.start;
                     if (shouldAutoReplaceDate(component.start, crop.__sync_lastHarvestStart) && PlanMath.hasYmd(desiredStart)) {
                         component.start = desiredStart;
@@ -2155,7 +2155,7 @@ Draw.loadPlugin(function (ui) {
             crop.__sync_lastAvailEnd = PlanMath.hasYmd(availableEnd) ? availableEnd : crop.__sync_lastAvailEnd;
         }
 
-        function autoFillAndClampCsa(plan) { // CHANGE
+        function autoFillAndClampCsa(plan) {
             plan.csa = plan.csa || { enabled: false, boxesPerWeek: 0, start: "", end: "", components: [] };
             plan.csa.components = Array.isArray(plan.csa.components) ? plan.csa.components : [];
             const cropsWithWindows = (plan.crops || []).filter(
@@ -2189,11 +2189,11 @@ Draw.loadPlugin(function (ui) {
             }
         }
 
-        function recalculate(moduleCell, year, plan) { // NEW
+        function recalculate(moduleCell, year, plan) {
             PlanSchema.normalizeForRuntime(plan, year);
             const selectedYear = Number(plan.year);
-            plan.__carryoverCrops = buildCarryoverCrops(moduleCell, selectedYear, plan); // ADDED
-            const weekStartDow = plan.weekStartDow; // CHANGE
+            plan.__carryoverCrops = buildCarryoverCrops(moduleCell, selectedYear, plan);
+            const weekStartDow = plan.weekStartDow;
             const weekStarts = PlanMath.buildWeekStartsForYearLocal(selectedYear, weekStartDow);
             const kgPerPlantByCropKey = new Map();
 
@@ -2208,7 +2208,7 @@ Draw.loadPlugin(function (ui) {
                 selectedYear,
                 weekStarts,
                 kgPerPlantByCropKey,
-                plan // CHANGE
+                plan
             );
             const beforeHarvestById = new Map();
 
@@ -2222,24 +2222,24 @@ Draw.loadPlugin(function (ui) {
                 });
                 crop.__actualHarvestWeeklyKg = diagramFacts.actualHarvestSeriesByCropKey.get(key)
                     || Array(weekStarts.length).fill(0);
-                if (!hasPositiveActualHarvestSeries(crop.__actualHarvestWeeklyKg)) crop.useActualHarvest = false; // CHANGE
-                const exactRange = diagramFacts.actualHarvestDateRangeByCropKey.get(key); // CHANGE
-                if (crop.useActualHarvest !== false && exactRange) { // CHANGE
-                    crop.harvestStart = exactRange.start; // CHANGE
-                    crop.harvestEnd = exactRange.end; // CHANGE
-                } // CHANGE
+                if (!hasPositiveActualHarvestSeries(crop.__actualHarvestWeeklyKg)) crop.useActualHarvest = false;
+                const exactRange = diagramFacts.actualHarvestDateRangeByCropKey.get(key);
+                if (crop.useActualHarvest !== false && exactRange) {
+                    crop.harvestStart = exactRange.start;
+                    crop.harvestEnd = exactRange.end;
+                }
             }
 
             for (const crop of plan.crops) syncCropDatesIfEnabled(plan, crop, beforeHarvestById.get(crop.id));
             autoFillAndClampCsa(plan);
 
-            const warnings = Array.from(diagramFacts.diagnostics || []); // CHANGE
-            if (plan.__carryoverCrops.length) warnings.push(`${plan.__carryoverCrops.length} prior-year harvest window${plan.__carryoverCrops.length === 1 ? '' : 's'} included as carryover supply.`); // ADDED
+            const warnings = Array.from(diagramFacts.diagnostics || []);
+            if (plan.__carryoverCrops.length) warnings.push(`${plan.__carryoverCrops.length} prior-year harvest window${plan.__carryoverCrops.length === 1 ? '' : 's'} included as carryover supply.`);
             const weekly = PlanMath.computePlanWeekly(plan, warnings);
-            if (plan.csa && weekly && weekly.csa) { // ADDED
-                plan.csa.__componentValuePerBox = Math.max(0, Number(weekly.csa.componentValuePerBox) || 0); // ADDED
-                if (plan.csa.salePriceMode !== "manual") plan.csa.salePricePerBox = Math.max(0, Number(weekly.csa.salePricePerBox) || 0); // ADDED
-            } // ADDED
+            if (plan.csa && weekly && weekly.csa) {
+                plan.csa.__componentValuePerBox = Math.max(0, Number(weekly.csa.componentValuePerBox) || 0);
+                if (plan.csa.salePriceMode !== "manual") plan.csa.salePricePerBox = Math.max(0, Number(weekly.csa.salePricePerBox) || 0);
+            }
             const cropTotals = PlanMath.computePlanCropTotals(plan, weekly);
             const totalsById = new Map(cropTotals.map(row => [String(row.crop.id), row]));
             const derivedByCropId = new Map();
@@ -2264,7 +2264,7 @@ Draw.loadPlugin(function (ui) {
                 });
             }
 
-            return { // NEW
+            return {
                 plan,
                 year: selectedYear,
                 weekStarts,
@@ -2275,379 +2275,379 @@ Draw.loadPlugin(function (ui) {
             };
         }
 
-        return { recalculate, cropAvailableEndYmd, syncCropDatesIfEnabled, autoFillAndClampCsa, addDaysYmd }; // NEW
+        return { recalculate, cropAvailableEndYmd, syncCropDatesIfEnabled, autoFillAndClampCsa, addDaysYmd };
     })();
 
-    // -------------------- Dashboard model -------------------- // NEW
-    /** // NEW
-     * Produces persistence-safe modal state and presentation metrics from one runtime calculation. // NEW
-     * This layer has no DOM dependencies so status, dirty-state, and selection rules remain testable. // NEW
-     */ // NEW
-    const YearPlanDashboard = (() => { // NEW
-        const EPS = 0.0001; // NEW
+    // -------------------- Dashboard model --------------------
+    /**
+     * Produces persistence-safe modal state and presentation metrics from one runtime calculation.
+     * This layer has no DOM dependencies so status, dirty-state, and selection rules remain testable.
+     */
+    const YearPlanDashboard = (() => {
+        const EPS = 0.0001;
 
-        function uniqueMessages(messages) { // NEW
-            const seen = new Set(); // NEW
-            const out = []; // NEW
-            for (const message of (messages || [])) { // NEW
-                const text = String(message || "").trim(); // NEW
-                if (!text || seen.has(text)) continue; // NEW
-                seen.add(text); // NEW
-                out.push(text); // NEW
-            } // NEW
-            return out; // NEW
-        } // NEW
+        function uniqueMessages(messages) {
+            const seen = new Set();
+            const out = [];
+            for (const message of (messages || [])) {
+                const text = String(message || "").trim();
+                if (!text || seen.has(text)) continue;
+                seen.add(text);
+                out.push(text);
+            }
+            return out;
+        }
 
-        function validationMessage(result) { // CHANGE
-            return String(result && result.message || result || "").trim(); // CHANGE
-        } // CHANGE
+        function validationMessage(result) {
+            return String(result && result.message || result || "").trim();
+        }
 
-        function validationKey(result) { // CHANGE
-            if (!result || typeof result !== "object") return validationMessage(result); // CHANGE
-            const target = result.target && typeof result.target === "object" ? JSON.stringify(result.target) : ""; // CHANGE
-            return `${result.code || ""}|${result.cropId || ""}|${result.packageIndex ?? ""}|${result.componentIndex ?? ""}|${target}|${validationMessage(result)}`; // CHANGE
-        } // CHANGE
+        function validationKey(result) {
+            if (!result || typeof result !== "object") return validationMessage(result);
+            const target = result.target && typeof result.target === "object" ? JSON.stringify(result.target) : "";
+            return `${result.code || ""}|${result.cropId || ""}|${result.packageIndex ?? ""}|${result.componentIndex ?? ""}|${target}|${validationMessage(result)}`;
+        }
 
-        function uniqueValidationResults(results) { // CHANGE
-            const seen = new Set(); // CHANGE
-            const out = []; // CHANGE
-            for (const result of (results || [])) { // CHANGE
-                const message = validationMessage(result); // CHANGE
-                if (!message) continue; // CHANGE
-                const key = validationKey(result); // CHANGE
-                if (seen.has(key)) continue; // CHANGE
-                seen.add(key); // CHANGE
-                out.push(result); // CHANGE
-            } // CHANGE
-            return out; // CHANGE
-        } // CHANGE
+        function uniqueValidationResults(results) {
+            const seen = new Set();
+            const out = [];
+            for (const result of (results || [])) {
+                const message = validationMessage(result);
+                if (!message) continue;
+                const key = validationKey(result);
+                if (seen.has(key)) continue;
+                seen.add(key);
+                out.push(result);
+            }
+            return out;
+        }
 
-        function persistenceSnapshot(plan) { // NEW
-            const persistedPlan = PlanSchema.serializeForPersistence(plan || {}); // NEW
-            const packageDefaultCropIds = ((plan && plan.crops) || []) // NEW
-                .filter(crop => crop && crop.savePackagesAsDefault) // NEW
-                .map(crop => String(crop.id || "")) // NEW
-                .sort(); // NEW
-            return JSON.stringify({ persistedPlan, packageDefaultCropIds }); // NEW
-        } // NEW
+        function persistenceSnapshot(plan) {
+            const persistedPlan = PlanSchema.serializeForPersistence(plan || {});
+            const packageDefaultCropIds = ((plan && plan.crops) || [])
+                .filter(crop => crop && crop.savePackagesAsDefault)
+                .map(crop => String(crop.id || ""))
+                .sort();
+            return JSON.stringify({ persistedPlan, packageDefaultCropIds });
+        }
 
-        function resolveSelectedCropId(crops, requestedId, removedIndex) { // NEW
-            const list = Array.isArray(crops) ? crops : []; // NEW
-            const wanted = String(requestedId || ""); // NEW
-            if (wanted && list.some(crop => String(crop && crop.id || "") === wanted)) return wanted; // NEW
-            if (list.length === 0) return ""; // NEW
-            const index = Number.isFinite(Number(removedIndex)) // NEW
-                ? Math.max(0, Math.min(list.length - 1, Math.trunc(Number(removedIndex)))) // NEW
-                : 0; // NEW
-            return String(list[index] && list[index].id || ""); // NEW
-        } // NEW
+        function resolveSelectedCropId(crops, requestedId, removedIndex) {
+            const list = Array.isArray(crops) ? crops : [];
+            const wanted = String(requestedId || "");
+            if (wanted && list.some(crop => String(crop && crop.id || "") === wanted)) return wanted;
+            if (list.length === 0) return "";
+            const index = Number.isFinite(Number(removedIndex))
+                ? Math.max(0, Math.min(list.length - 1, Math.trunc(Number(removedIndex))))
+                : 0;
+            return String(list[index] && list[index].id || "");
+        }
 
-        function createState(plan) { // NEW
-            const crops = (plan && plan.crops) || []; // NEW
-            return { // NEW
-                selectedCropId: resolveSelectedCropId(crops, "", 0), // NEW
-                activeTab: "basics", // NEW
-                csaExpanded: false, // NEW
-                demandExpanded: true, // NEW
-                collapsedDemandChannelIds: new Set(), // NEW
-                cropPlanExpanded: true, // NEW
-                planCheckExpanded: false, // CHANGE
-                hadBlockingErrors: false, // NEW
-                hadCsaErrors: false, // NEW
-                hadDemandErrors: false, // NEW
-                baselineSnapshot: "", // NEW
-                validationState: "idle", // NEW
-                lastSavedAt: null, // NEW
-                closePromptOpen: false, // NEW
-                extraDiagnostics: [] // NEW
-            }; // NEW
-        } // NEW
+        function createState(plan) {
+            const crops = (plan && plan.crops) || [];
+            return {
+                selectedCropId: resolveSelectedCropId(crops, "", 0),
+                activeTab: "basics",
+                csaExpanded: false,
+                demandExpanded: true,
+                collapsedDemandChannelIds: new Set(),
+                cropPlanExpanded: true,
+                planCheckExpanded: false,
+                hadBlockingErrors: false,
+                hadCsaErrors: false,
+                hadDemandErrors: false,
+                baselineSnapshot: "",
+                validationState: "idle",
+                lastSavedAt: null,
+                closePromptOpen: false,
+                extraDiagnostics: []
+            };
+        }
 
-        function markBaseline(state, plan, savedAt) { // NEW
-            state.baselineSnapshot = persistenceSnapshot(plan); // NEW
-            state.validationState = "valid"; // NEW
-            state.lastSavedAt = savedAt || null; // NEW
-            return state.baselineSnapshot; // NEW
-        } // NEW
+        function markBaseline(state, plan, savedAt) {
+            state.baselineSnapshot = persistenceSnapshot(plan);
+            state.validationState = "valid";
+            state.lastSavedAt = savedAt || null;
+            return state.baselineSnapshot;
+        }
 
-        function isDirty(state, plan) { // NEW
-            return !!state && persistenceSnapshot(plan) !== String(state.baselineSnapshot || ""); // NEW
-        } // NEW
+        function isDirty(state, plan) {
+            return !!state && persistenceSnapshot(plan) !== String(state.baselineSnapshot || "");
+        }
 
-        function buildMethodOptions(rows, currentValue) { // NEW
-            const current = String(currentValue || "").trim(); // NEW
-            const seen = new Set(); // NEW
-            const options = []; // NEW
-            for (const row of (rows || [])) { // NEW
-                const value = String(row && row.method_id || "").trim(); // NEW
-                if (!value || seen.has(value)) continue; // NEW
-                seen.add(value); // NEW
-                options.push({ value, label: String(row.method_name || value), unavailable: false }); // NEW
-            } // NEW
-            if (current && !seen.has(current)) options.unshift({ value: current, label: `${current} (legacy/unavailable)`, unavailable: true }); // NEW
-            return options; // NEW
-        } // NEW
+        function buildMethodOptions(rows, currentValue) {
+            const current = String(currentValue || "").trim();
+            const seen = new Set();
+            const options = [];
+            for (const row of (rows || [])) {
+                const value = String(row && row.method_id || "").trim();
+                if (!value || seen.has(value)) continue;
+                seen.add(value);
+                options.push({ value, label: String(row.method_name || value), unavailable: false });
+            }
+            if (current && !seen.has(current)) options.unshift({ value: current, label: `${current} (legacy/unavailable)`, unavailable: true });
+            return options;
+        }
 
-        function formatKg(value) { // NEW
-            const number = Number(value); // NEW
-            return Number.isFinite(number) ? `${number.toFixed(1)} kg` : "-"; // NEW
-        } // NEW
+        function formatKg(value) {
+            const number = Number(value);
+            return Number.isFinite(number) ? `${number.toFixed(1)} kg` : "-";
+        }
 
-        function formatYmd(ymd) { // NEW
-            const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || "")); // NEW
-            if (!match) return ""; // NEW
-            const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(match[2]) - 1]; // NEW
-            return month ? `${month} ${match[3]}` : ""; // NEW
-        } // NEW
+        function formatYmd(ymd) {
+            const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || ""));
+            if (!match) return "";
+            const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(match[2]) - 1];
+            return month ? `${month} ${match[3]}` : "";
+        }
 
-        function formatMoney(value) { // NEW
-            const number = Number(value); // NEW
-            return Number.isFinite(number) ? `$${number.toFixed(2)}` : "-"; // NEW
-        } // NEW
+        function formatMoney(value) {
+            const number = Number(value);
+            return Number.isFinite(number) ? `$${number.toFixed(2)}` : "-";
+        }
 
-        function summarizeDemandAggregate(aggregate) { // NEW
-            const sum = values => (Array.isArray(values) ? values : []).reduce((total, value) => total + Math.max(0, Number(value) || 0), 0); // NEW
-            return { // NEW
-                targetKg: sum(aggregate && aggregate.target), // NEW
-                usableSupplyKg: sum(aggregate && aggregate.usableSupply), // NEW
-                shortKg: sum(aggregate && aggregate.short), // NEW
-                potentialRevenue: sum(aggregate && aggregate.potentialRevenue), // NEW
-                fulfilledRevenue: sum(aggregate && aggregate.fulfilledRevenue), // NEW
-                lineCount: Array.isArray(aggregate && aggregate.lineIds) ? aggregate.lineIds.length : 0 // NEW
-            }; // NEW
-        } // NEW
+        function summarizeDemandAggregate(aggregate) {
+            const sum = values => (Array.isArray(values) ? values : []).reduce((total, value) => total + Math.max(0, Number(value) || 0), 0);
+            return {
+                targetKg: sum(aggregate && aggregate.target),
+                usableSupplyKg: sum(aggregate && aggregate.usableSupply),
+                shortKg: sum(aggregate && aggregate.short),
+                potentialRevenue: sum(aggregate && aggregate.potentialRevenue),
+                fulfilledRevenue: sum(aggregate && aggregate.fulfilledRevenue),
+                lineCount: Array.isArray(aggregate && aggregate.lineIds) ? aggregate.lineIds.length : 0
+            };
+        }
 
-        function summarizeCsaWeekly(csaWeekly) { // ADDED
-            const sum = values => (Array.isArray(values) ? values : []).reduce((total, value) => total + Math.max(0, Number(value) || 0), 0); // ADDED
-            return { // ADDED
-                targetKg: sum(csaWeekly && csaWeekly.target), // ADDED
-                usableSupplyKg: sum(csaWeekly && csaWeekly.usableSupply), // ADDED
-                shortKg: sum(csaWeekly && csaWeekly.short), // ADDED
-                potentialRevenue: sum(csaWeekly && csaWeekly.potentialRevenue), // ADDED
-                fulfilledRevenue: sum(csaWeekly && csaWeekly.fulfilledRevenue), // ADDED
-                componentValuePerBox: Math.max(0, Number(csaWeekly && csaWeekly.componentValuePerBox) || 0), // ADDED
-                salePricePerBox: Math.max(0, Number(csaWeekly && csaWeekly.salePricePerBox) || 0) // ADDED
-            }; // ADDED
-        } // ADDED
+        function summarizeCsaWeekly(csaWeekly) {
+            const sum = values => (Array.isArray(values) ? values : []).reduce((total, value) => total + Math.max(0, Number(value) || 0), 0);
+            return {
+                targetKg: sum(csaWeekly && csaWeekly.target),
+                usableSupplyKg: sum(csaWeekly && csaWeekly.usableSupply),
+                shortKg: sum(csaWeekly && csaWeekly.short),
+                potentialRevenue: sum(csaWeekly && csaWeekly.potentialRevenue),
+                fulfilledRevenue: sum(csaWeekly && csaWeekly.fulfilledRevenue),
+                componentValuePerBox: Math.max(0, Number(csaWeekly && csaWeekly.componentValuePerBox) || 0),
+                salePricePerBox: Math.max(0, Number(csaWeekly && csaWeekly.salePricePerBox) || 0)
+            };
+        }
 
-        function buildCompactStatus(dashboard) { // NEW
-            const cropCount = Math.max(0, Math.trunc(Number(dashboard && dashboard.cropCount) || 0)); // NEW
-            const parts = [String(Number(dashboard && dashboard.year) || ""), `${cropCount} crop${cropCount === 1 ? "" : "s"}`]; // NEW
-            if (Number(dashboard && dashboard.shortKg) > EPS) parts.push(`Short ${formatKg(dashboard.shortKg)}`); // NEW
-            else if (Number(dashboard && dashboard.surplusKg) > EPS) parts.push(`Surplus ${formatKg(dashboard.surplusKg)}`); // NEW
-            if (dashboard && dashboard.dirty) parts.push("Unsaved"); // NEW
-            return parts.filter(Boolean).join(" \u00b7 "); // NEW
-        } // NEW
+        function buildCompactStatus(dashboard) {
+            const cropCount = Math.max(0, Math.trunc(Number(dashboard && dashboard.cropCount) || 0));
+            const parts = [String(Number(dashboard && dashboard.year) || ""), `${cropCount} crop${cropCount === 1 ? "" : "s"}`];
+            if (Number(dashboard && dashboard.shortKg) > EPS) parts.push(`Short ${formatKg(dashboard.shortKg)}`);
+            else if (Number(dashboard && dashboard.surplusKg) > EPS) parts.push(`Surplus ${formatKg(dashboard.surplusKg)}`);
+            if (dashboard && dashboard.dirty) parts.push("Unsaved");
+            return parts.filter(Boolean).join(" \u00b7 ");
+        }
 
-        function buildCsaSummary(plan) { // NEW
-            const csa = plan && plan.csa; // NEW
-            if (!csa || !csa.enabled) return "CSA Box Plan: Off"; // NEW
-            const parts = [`CSA Box Plan: ${Math.max(0, Math.trunc(Number(csa.boxesPerWeek) || 0))} boxes/week`]; // NEW
-            const start = formatYmd(csa.start); // NEW
-            const end = formatYmd(csa.end); // NEW
-            if (start || end) parts.push(`${start || "?"}\u2013${end || "?"}`); // NEW
-            const componentCount = Array.isArray(csa.components) ? csa.components.length : 0; // NEW
-            parts.push(`${componentCount} component${componentCount === 1 ? "" : "s"}`); // NEW
-            return parts.join(" \u00b7 "); // NEW
-        } // NEW
+        function buildCsaSummary(plan) {
+            const csa = plan && plan.csa;
+            if (!csa || !csa.enabled) return "CSA Box Plan: Off";
+            const parts = [`CSA Box Plan: ${Math.max(0, Math.trunc(Number(csa.boxesPerWeek) || 0))} boxes/week`];
+            const start = formatYmd(csa.start);
+            const end = formatYmd(csa.end);
+            if (start || end) parts.push(`${start || "?"}\u2013${end || "?"}`);
+            const componentCount = Array.isArray(csa.components) ? csa.components.length : 0;
+            parts.push(`${componentCount} component${componentCount === 1 ? "" : "s"}`);
+            return parts.join(" \u00b7 ");
+        }
 
-        function syncExpansionState(state, dashboard, csaErrors, demandErrors) { // CHANGE
-            const hasBlockingErrors = !!(dashboard && dashboard.validationErrors && dashboard.validationErrors.length); // NEW
-            const hasCsaErrors = !!(csaErrors && csaErrors.length); // NEW
-            const hasDemandErrors = !!(demandErrors && demandErrors.length); // NEW
-            const changes = { planCheckChanged: false, csaChanged: false, demandChanged: false }; // CHANGE
-            if (hasBlockingErrors && !state.hadBlockingErrors && !state.planCheckExpanded) { // CHANGE
-                state.planCheckExpanded = true; // CHANGE
-                changes.planCheckChanged = true; // CHANGE
-            } // NEW
-            if (hasCsaErrors && !state.hadCsaErrors && !state.csaExpanded) { // NEW
-                state.csaExpanded = true; // NEW
-                changes.csaChanged = true; // NEW
-            } // NEW
-            if (hasDemandErrors && !state.hadDemandErrors && !state.demandExpanded) { // NEW
-                state.demandExpanded = true; // NEW
-                changes.demandChanged = true; // NEW
-            } // NEW
-            state.hadBlockingErrors = hasBlockingErrors; // NEW
-            state.hadCsaErrors = hasCsaErrors; // NEW
-            state.hadDemandErrors = hasDemandErrors; // NEW
-            return changes; // NEW
-        } // NEW
+        function syncExpansionState(state, dashboard, csaErrors, demandErrors) {
+            const hasBlockingErrors = !!(dashboard && dashboard.validationErrors && dashboard.validationErrors.length);
+            const hasCsaErrors = !!(csaErrors && csaErrors.length);
+            const hasDemandErrors = !!(demandErrors && demandErrors.length);
+            const changes = { planCheckChanged: false, csaChanged: false, demandChanged: false };
+            if (hasBlockingErrors && !state.hadBlockingErrors && !state.planCheckExpanded) {
+                state.planCheckExpanded = true;
+                changes.planCheckChanged = true;
+            }
+            if (hasCsaErrors && !state.hadCsaErrors && !state.csaExpanded) {
+                state.csaExpanded = true;
+                changes.csaChanged = true;
+            }
+            if (hasDemandErrors && !state.hadDemandErrors && !state.demandExpanded) {
+                state.demandExpanded = true;
+                changes.demandChanged = true;
+            }
+            state.hadBlockingErrors = hasBlockingErrors;
+            state.hadCsaErrors = hasCsaErrors;
+            state.hadDemandErrors = hasDemandErrors;
+            return changes;
+        }
 
-        function compute(plan, runtime, options) { // NEW
-            const settings = options || {}; // NEW
-            const rows = runtime && Array.isArray(runtime.cropTotals) ? runtime.cropTotals : []; // NEW
-            const rowsById = new Map(rows.map(row => [String(row && row.crop && row.crop.id || ""), row])); // NEW
-            const weekly = runtime && runtime.weekly; // NEW
-            const cropMetrics = []; // NEW
-            let targetKg = 0; // NEW
-            let supplyKg = 0; // NEW
-            let shortKg = 0; // NEW
-            let surplusKg = 0; // NEW
-            let actualHarvestActive = false; // NEW
-            let manualHarvestDates = false; // NEW
+        function compute(plan, runtime, options) {
+            const settings = options || {};
+            const rows = runtime && Array.isArray(runtime.cropTotals) ? runtime.cropTotals : [];
+            const rowsById = new Map(rows.map(row => [String(row && row.crop && row.crop.id || ""), row]));
+            const weekly = runtime && runtime.weekly;
+            const cropMetrics = [];
+            let targetKg = 0;
+            let supplyKg = 0;
+            let shortKg = 0;
+            let surplusKg = 0;
+            let actualHarvestActive = false;
+            let manualHarvestDates = false;
 
-            for (const crop of ((plan && plan.crops) || [])) { // NEW
-                const row = rowsById.get(String(crop.id || "")) || { targetKg: 0, supplyKg: 0, plantsReq: NaN, seedsReq: NaN }; // NEW
-                const chartSummary = weekly // NEW
-                    ? PlanMath.summarizePlanChartModel(PlanMath.buildPlanChartModel(weekly, String(crop.id))) // NEW
-                    : { // NEW
-                        targetKg: Math.max(0, Number(row.targetKg) || 0), // NEW
-                        harvestKg: Math.max(0, Number(row.supplyKg) || 0), // NEW
-                        usableSupplyKg: Math.min(Math.max(0, Number(row.targetKg) || 0), Math.max(0, Number(row.supplyKg) || 0)), // NEW
-                        shortKg: Math.max(0, (Number(row.targetKg) || 0) - (Number(row.supplyKg) || 0)), // NEW
-                        expiredKg: 0 // NEW
-                    }; // NEW
-                const target = chartSummary.targetKg; // CHANGE
-                const supply = chartSummary.harvestKg; // CHANGE
-                const shortage = chartSummary.shortKg; // CHANGE
-                const surplus = Math.max(0, supply - chartSummary.usableSupplyKg); // CHANGE
-                const errors = PlanSchema.validateCrop(crop); // NEW
-                if (target > EPS && (!PlanMath.hasYmd(crop.harvestStart) || !PlanMath.hasYmd(crop.harvestEnd))) { // NEW
-                    const cropName = String(crop.plant || crop.id); // CHANGE
-                    const field = PlanMath.hasYmd(crop.harvestStart) ? "harvestEnd" : "harvestStart"; // CHANGE
-                    errors.push({ scope: "crop", code: "crop.missing_harvest_window", message: `Enter a harvest window for ${cropName}.`, cropId: String(crop.id || ""), field, target: { area: "crop", cropId: String(crop.id || ""), tab: "basics", field } }); // CHANGE
-                } // NEW
-                let status = "OK"; // NEW
+            for (const crop of ((plan && plan.crops) || [])) {
+                const row = rowsById.get(String(crop.id || "")) || { targetKg: 0, supplyKg: 0, plantsReq: NaN, seedsReq: NaN };
+                const chartSummary = weekly
+                    ? PlanMath.summarizePlanChartModel(PlanMath.buildPlanChartModel(weekly, String(crop.id)))
+                    : {
+                        targetKg: Math.max(0, Number(row.targetKg) || 0),
+                        harvestKg: Math.max(0, Number(row.supplyKg) || 0),
+                        usableSupplyKg: Math.min(Math.max(0, Number(row.targetKg) || 0), Math.max(0, Number(row.supplyKg) || 0)),
+                        shortKg: Math.max(0, (Number(row.targetKg) || 0) - (Number(row.supplyKg) || 0)),
+                        expiredKg: 0
+                    };
+                const target = chartSummary.targetKg;
+                const supply = chartSummary.harvestKg;
+                const shortage = chartSummary.shortKg;
+                const surplus = Math.max(0, supply - chartSummary.usableSupplyKg);
+                const errors = PlanSchema.validateCrop(crop);
+                if (target > EPS && (!PlanMath.hasYmd(crop.harvestStart) || !PlanMath.hasYmd(crop.harvestEnd))) {
+                    const cropName = String(crop.plant || crop.id);
+                    const field = PlanMath.hasYmd(crop.harvestStart) ? "harvestEnd" : "harvestStart";
+                    errors.push({ scope: "crop", code: "crop.missing_harvest_window", message: `Enter a harvest window for ${cropName}.`, cropId: String(crop.id || ""), field, target: { area: "crop", cropId: String(crop.id || ""), tab: "basics", field } });
+                }
+                let status = "OK";
 
-                if (errors.length > 0) status = "Missing data"; // NEW
-                else if (target <= EPS) status = "No demand"; // NEW
-                else if (shortage > EPS && supply + EPS < target) status = "Short"; // CHANGE
-                else if (shortage > EPS) status = "Expired / timing issue"; // NEW
-                else if (surplus > EPS) status = "Surplus"; // NEW
+                if (errors.length > 0) status = "Missing data";
+                else if (target <= EPS) status = "No demand";
+                else if (shortage > EPS && supply + EPS < target) status = "Short";
+                else if (shortage > EPS) status = "Expired / timing issue";
+                else if (surplus > EPS) status = "Surplus";
 
-                targetKg += target; // NEW
-                supplyKg += supply; // NEW
-                shortKg += shortage; // NEW
-                surplusKg += surplus; // NEW
-                const derived = runtime && runtime.derivedByCropId && runtime.derivedByCropId.get(String(crop.id)); // NEW
-                actualHarvestActive = actualHarvestActive || (crop.useActualHarvest !== false // NEW
-                    && !!derived // NEW
-                    && Array.isArray(derived.actualHarvestWeeklyKg) // NEW
-                    && derived.actualHarvestWeeklyKg.some(value => Number(value) > 0)); // NEW
-                manualHarvestDates = manualHarvestDates || crop.useActualHarvest === false; // NEW
+                targetKg += target;
+                supplyKg += supply;
+                shortKg += shortage;
+                surplusKg += surplus;
+                const derived = runtime && runtime.derivedByCropId && runtime.derivedByCropId.get(String(crop.id));
+                actualHarvestActive = actualHarvestActive || (crop.useActualHarvest !== false
+                    && !!derived
+                    && Array.isArray(derived.actualHarvestWeeklyKg)
+                    && derived.actualHarvestWeeklyKg.some(value => Number(value) > 0));
+                manualHarvestDates = manualHarvestDates || crop.useActualHarvest === false;
 
-                cropMetrics.push({ // NEW
+                cropMetrics.push({
                     crop,
                     targetKg: target,
                     supplyKg: supply,
                     shortKg: shortage,
                     surplusKg: surplus,
-                    expiredKg: chartSummary.expiredKg, // NEW
+                    expiredKg: chartSummary.expiredKg,
                     plantsReq: Number(row.plantsReq),
                     seedsReq: Number(row.seedsReq),
                     errors,
                     status
-                }); // NEW
-            } // NEW
+                });
+            }
 
-            const validationErrors = uniqueValidationResults([ // CHANGE
-                ...PlanSchema.validate(plan), // NEW
-                ...cropMetrics.flatMap(metric => metric.errors) // NEW
-            ]); // CHANGE
-            const channelMetrics = ((plan && plan.demandChannels) || []).map(channel => { // NEW
-                const channelId = String(channel && channel.id || ""); // NEW
-                const summary = summarizeDemandAggregate(weekly && weekly.perChannel && weekly.perChannel.get(channelId)); // NEW
-                summary.lineCount = ((plan && plan.demands) || []).filter(line => String(line && line.channelId || "") === channelId).length; // CHANGE
-                const priorityKg = { committed: 0, target: 0, optional: 0 }; // NEW
-                for (const result of (weekly && weekly.perDemandLine ? weekly.perDemandLine.values() : [])) { // NEW
-                    if (result.channelId !== channelId) continue; // NEW
-                    priorityKg[result.priority] = (priorityKg[result.priority] || 0) + result.target.reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0); // NEW
-                } // NEW
-                return { channel, ...summary, priorityKg, status: summary.shortKg > EPS ? "Short" : "OK" }; // NEW
-            }); // NEW
-            const priorityMetrics = ["committed", "target", "optional"].map(priority => ({ // NEW
-                priority, // NEW
-                ...summarizeDemandAggregate(weekly && weekly.perPriority && weekly.perPriority.get(priority)) // NEW
-            })); // NEW
-            const potentialRevenue = channelMetrics.reduce((sum, metric) => sum + metric.potentialRevenue, 0); // NEW
-            const fulfilledRevenue = channelMetrics.reduce((sum, metric) => sum + metric.fulfilledRevenue, 0); // NEW
-            const csaMetric = summarizeCsaWeekly(weekly && weekly.csa); // ADDED
-            const totalPotentialRevenue = potentialRevenue + csaMetric.potentialRevenue; // ADDED
-            const totalFulfilledRevenue = fulfilledRevenue + csaMetric.fulfilledRevenue; // ADDED
-            const shortageWeeks = []; // NEW
-            if (weekly && Array.isArray(weekly.weeks)) { // NEW
-                for (let i = 0; i < weekly.weeks.length; i++) { // NEW
-                    const channelDemandKg = channelMetrics.reduce((sum, metric) => { // CHANGE
-                        const aggregate = weekly.perChannel && weekly.perChannel.get(String(metric.channel.id)); // NEW
-                        return sum + Math.max(0, Number(aggregate && aggregate.target && aggregate.target[i]) || 0); // NEW
-                    }, 0); // CHANGE
-                    const channelShortKg = channelMetrics.reduce((sum, metric) => { // CHANGE
-                        const aggregate = weekly.perChannel && weekly.perChannel.get(String(metric.channel.id)); // NEW
-                        return sum + Math.max(0, Number(aggregate && aggregate.short && aggregate.short[i]) || 0); // NEW
-                    }, 0); // CHANGE
-                    const csaDemandKg = Math.max(0, Number(weekly.csa && weekly.csa.target[i]) || 0); // NEW
-                    const csaShortKg = Math.max(0, Number(weekly.csa && weekly.csa.short[i]) || 0); // NEW
-                    if (channelShortKg + csaShortKg <= EPS) continue; // NEW
-                    shortageWeeks.push({ // NEW
-                        week: String(weekly.weeks[i] && weekly.weeks[i].iso || ""), // NEW
-                        channelDemandKg, channelShortKg, csaDemandKg, csaShortKg // NEW
-                    }); // NEW
-                } // NEW
-            } // NEW
-            const diagnostics = uniqueMessages([ // CHANGE
-                ...((runtime && runtime.warnings) || []), // NEW
-                ...validationErrors.map(validationMessage), // CHANGE
-                ...((settings.extraDiagnostics) || []) // NEW
-            ]); // NEW
-            const badges = []; // NEW
-            if (cropMetrics.some(metric => metric.status === "Missing data")) badges.push("Missing data"); // NEW
-            if (cropMetrics.some(metric => metric.status === "Short")) badges.push("Short"); // NEW
-            if (cropMetrics.some(metric => metric.status === "Expired / timing issue")) badges.push("Expired / timing issue"); // NEW
-            if (cropMetrics.some(metric => metric.status === "Surplus")) badges.push("Surplus"); // NEW
-            if (cropMetrics.length > 0 && cropMetrics.every(metric => metric.status === "OK" || metric.status === "No demand")) badges.push("OK"); // NEW
-            if (actualHarvestActive) badges.push("Actual harvest active"); // NEW
-            if (manualHarvestDates) badges.push("Manual harvest dates"); // NEW
-            if (settings.dirty) badges.push("Unsaved"); // NEW
+            const validationErrors = uniqueValidationResults([
+                ...PlanSchema.validate(plan),
+                ...cropMetrics.flatMap(metric => metric.errors)
+            ]);
+            const channelMetrics = ((plan && plan.demandChannels) || []).map(channel => {
+                const channelId = String(channel && channel.id || "");
+                const summary = summarizeDemandAggregate(weekly && weekly.perChannel && weekly.perChannel.get(channelId));
+                summary.lineCount = ((plan && plan.demands) || []).filter(line => String(line && line.channelId || "") === channelId).length;
+                const priorityKg = { committed: 0, target: 0, optional: 0 };
+                for (const result of (weekly && weekly.perDemandLine ? weekly.perDemandLine.values() : [])) {
+                    if (result.channelId !== channelId) continue;
+                    priorityKg[result.priority] = (priorityKg[result.priority] || 0) + result.target.reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
+                }
+                return { channel, ...summary, priorityKg, status: summary.shortKg > EPS ? "Short" : "OK" };
+            });
+            const priorityMetrics = ["committed", "target", "optional"].map(priority => ({
+                priority,
+                ...summarizeDemandAggregate(weekly && weekly.perPriority && weekly.perPriority.get(priority))
+            }));
+            const potentialRevenue = channelMetrics.reduce((sum, metric) => sum + metric.potentialRevenue, 0);
+            const fulfilledRevenue = channelMetrics.reduce((sum, metric) => sum + metric.fulfilledRevenue, 0);
+            const csaMetric = summarizeCsaWeekly(weekly && weekly.csa);
+            const totalPotentialRevenue = potentialRevenue + csaMetric.potentialRevenue;
+            const totalFulfilledRevenue = fulfilledRevenue + csaMetric.fulfilledRevenue;
+            const shortageWeeks = [];
+            if (weekly && Array.isArray(weekly.weeks)) {
+                for (let i = 0; i < weekly.weeks.length; i++) {
+                    const channelDemandKg = channelMetrics.reduce((sum, metric) => {
+                        const aggregate = weekly.perChannel && weekly.perChannel.get(String(metric.channel.id));
+                        return sum + Math.max(0, Number(aggregate && aggregate.target && aggregate.target[i]) || 0);
+                    }, 0);
+                    const channelShortKg = channelMetrics.reduce((sum, metric) => {
+                        const aggregate = weekly.perChannel && weekly.perChannel.get(String(metric.channel.id));
+                        return sum + Math.max(0, Number(aggregate && aggregate.short && aggregate.short[i]) || 0);
+                    }, 0);
+                    const csaDemandKg = Math.max(0, Number(weekly.csa && weekly.csa.target[i]) || 0);
+                    const csaShortKg = Math.max(0, Number(weekly.csa && weekly.csa.short[i]) || 0);
+                    if (channelShortKg + csaShortKg <= EPS) continue;
+                    shortageWeeks.push({
+                        week: String(weekly.weeks[i] && weekly.weeks[i].iso || ""),
+                        channelDemandKg, channelShortKg, csaDemandKg, csaShortKg
+                    });
+                }
+            }
+            const diagnostics = uniqueMessages([
+                ...((runtime && runtime.warnings) || []),
+                ...validationErrors.map(validationMessage),
+                ...((settings.extraDiagnostics) || [])
+            ]);
+            const badges = [];
+            if (cropMetrics.some(metric => metric.status === "Missing data")) badges.push("Missing data");
+            if (cropMetrics.some(metric => metric.status === "Short")) badges.push("Short");
+            if (cropMetrics.some(metric => metric.status === "Expired / timing issue")) badges.push("Expired / timing issue");
+            if (cropMetrics.some(metric => metric.status === "Surplus")) badges.push("Surplus");
+            if (cropMetrics.length > 0 && cropMetrics.every(metric => metric.status === "OK" || metric.status === "No demand")) badges.push("OK");
+            if (actualHarvestActive) badges.push("Actual harvest active");
+            if (manualHarvestDates) badges.push("Manual harvest dates");
+            if (settings.dirty) badges.push("Unsaved");
 
-            return { // NEW
-                year: Number(plan && plan.year), // NEW
-                cropCount: cropMetrics.length, // NEW
-                targetKg, // NEW
-                supplyKg, // NEW
-                shortKg, // NEW
-                surplusKg, // NEW
-                warningCount: diagnostics.length, // NEW
-                validationErrors, // NEW
-                diagnostics, // NEW
-                badges, // NEW
-                dirty: !!settings.dirty, // NEW
-                cropMetrics, // NEW
-                cropMetricsById: new Map(cropMetrics.map(metric => [String(metric.crop.id), metric])), // CHANGE
-                channelMetrics, // NEW
-                channelMetricsById: new Map(channelMetrics.map(metric => [String(metric.channel.id), metric])), // NEW
-                priorityMetrics, // NEW
-                csaMetric, // ADDED
-                shortageWeeks, // NEW
-                potentialRevenue, // NEW
-                fulfilledRevenue, // CHANGE
-                totalPotentialRevenue, // ADDED
-                totalFulfilledRevenue // ADDED
-            }; // NEW
-        } // NEW
+            return {
+                year: Number(plan && plan.year),
+                cropCount: cropMetrics.length,
+                targetKg,
+                supplyKg,
+                shortKg,
+                surplusKg,
+                warningCount: diagnostics.length,
+                validationErrors,
+                diagnostics,
+                badges,
+                dirty: !!settings.dirty,
+                cropMetrics,
+                cropMetricsById: new Map(cropMetrics.map(metric => [String(metric.crop.id), metric])),
+                channelMetrics,
+                channelMetricsById: new Map(channelMetrics.map(metric => [String(metric.channel.id), metric])),
+                priorityMetrics,
+                csaMetric,
+                shortageWeeks,
+                potentialRevenue,
+                fulfilledRevenue,
+                totalPotentialRevenue,
+                totalFulfilledRevenue
+            };
+        }
 
-        return { // NEW
+        return {
             createState,
             markBaseline,
             isDirty,
             persistenceSnapshot,
             resolveSelectedCropId,
             uniqueMessages,
-            validationMessage, // CHANGE
-            uniqueValidationResults, // CHANGE
-            buildMethodOptions, // NEW
-            formatKg, // NEW
-            formatMoney, // NEW
-            formatYmd, // NEW
-            summarizeDemandAggregate, // NEW
-            buildCompactStatus, // NEW
-            buildCsaSummary, // NEW
-            syncExpansionState, // NEW
+            validationMessage,
+            uniqueValidationResults,
+            buildMethodOptions,
+            formatKg,
+            formatMoney,
+            formatYmd,
+            summarizeDemandAggregate,
+            buildCompactStatus,
+            buildCsaSummary,
+            syncExpansionState,
             compute
-        }; // NEW
-    })(); // NEW
+        };
+    })();
 
-    // -------------------- Modal UI (dashboard) -------------------- // CHANGE
+    // -------------------- Modal UI (dashboard) --------------------
 
     function downloadJson(filename, obj) {
         const txt = JSON.stringify(obj, null, 2);
@@ -2662,228 +2662,228 @@ Draw.loadPlugin(function (ui) {
         URL.revokeObjectURL(url);
     }
 
-    const YP_COLORS = Object.freeze({ // NEW
-        primary: "#2f6fed", // NEW
-        primaryBg: "#eef4ff", // NEW
-        primarySoft: "#dbe8ff", // NEW
-        primaryDark: "#1f4fbf", // NEW
-        success: "#256a36", // NEW
-        successBg: "#edf8f0", // NEW
-        successSoft: "#62a96b", // NEW
-        danger: "#b3261e", // NEW
-        dangerBg: "#fdebea", // NEW
-        warning: "#b56a00", // NEW
-        warningBg: "#fff4df", // NEW
-        neutral900: "#222", // NEW
-        neutral700: "#555", // NEW
-        neutral500: "#777", // NEW
-        neutral300: "#ddd", // NEW
-        neutral100: "#f7f7f7" // NEW
-    }); // NEW
+    const YP_COLORS = Object.freeze({
+        primary: "#2f6fed",
+        primaryBg: "#eef4ff",
+        primarySoft: "#dbe8ff",
+        primaryDark: "#1f4fbf",
+        success: "#256a36",
+        successBg: "#edf8f0",
+        successSoft: "#62a96b",
+        danger: "#b3261e",
+        dangerBg: "#fdebea",
+        warning: "#b56a00",
+        warningBg: "#fff4df",
+        neutral900: "#222",
+        neutral700: "#555",
+        neutral500: "#777",
+        neutral300: "#ddd",
+        neutral100: "#f7f7f7"
+    });
 
-    /** Defines the chart's visual encodings once for rendering, legend controls, and hover details. */ // NEW
-    const PLAN_CHART_SERIES = Object.freeze([ // NEW
-        { id: "target", label: "Target demand", tooltipLabel: "Target", field: "targetKg", kind: "line", color: YP_COLORS.primary, lineWidth: 2, dash: [], help: "Weekly demand required by channel and CSA plans." }, // CHANGE
-        { id: "available", label: "Available supply", tooltipLabel: "Available", field: "availableSupplyKg", kind: "dashed-line", color: YP_COLORS.success, lineWidth: 2, dash: [6, 3], help: "Harvested inventory available before weekly demand is allocated." }, // CHANGE
-        { id: "usable", label: "Usable supply", tooltipLabel: "Usable", field: "usableSupplyKg", kind: "line", color: YP_COLORS.successSoft, lineWidth: 1.5, dash: [], help: "Available supply used to satisfy this week's demand." }, // CHANGE
-        { id: "harvest", label: "Harvest", tooltipLabel: "Harvested", field: "harvestKg", kind: "bar", color: YP_COLORS.success, fill: YP_COLORS.successBg, help: "Estimated harvested weight added during the week." }, // CHANGE
-        { id: "shortage", label: "Shortage", tooltipLabel: "Short", field: "shortKg", kind: "area", color: YP_COLORS.danger, fill: YP_COLORS.dangerBg, help: "Demand that remains unmet after available supply is used." }, // CHANGE
-        { id: "expired", label: "Expired", tooltipLabel: "Expired", field: "expiredKg", kind: "point", color: YP_COLORS.warning, help: "Stored harvest that reaches the end of its shelf life this week." } // CHANGE
-    ]); // NEW
+    /** Defines the chart's visual encodings once for rendering, legend controls, and hover details. */
+    const PLAN_CHART_SERIES = Object.freeze([
+        { id: "target", label: "Target demand", tooltipLabel: "Target", field: "targetKg", kind: "line", color: YP_COLORS.primary, lineWidth: 2, dash: [], help: "Weekly demand required by channel and CSA plans." },
+        { id: "available", label: "Available supply", tooltipLabel: "Available", field: "availableSupplyKg", kind: "dashed-line", color: YP_COLORS.success, lineWidth: 2, dash: [6, 3], help: "Harvested inventory available before weekly demand is allocated." },
+        { id: "usable", label: "Usable supply", tooltipLabel: "Usable", field: "usableSupplyKg", kind: "line", color: YP_COLORS.successSoft, lineWidth: 1.5, dash: [], help: "Available supply used to satisfy this week's demand." },
+        { id: "harvest", label: "Harvest", tooltipLabel: "Harvested", field: "harvestKg", kind: "bar", color: YP_COLORS.success, fill: YP_COLORS.successBg, help: "Estimated harvested weight added during the week." },
+        { id: "shortage", label: "Shortage", tooltipLabel: "Short", field: "shortKg", kind: "area", color: YP_COLORS.danger, fill: YP_COLORS.dangerBg, help: "Demand that remains unmet after available supply is used." },
+        { id: "expired", label: "Expired", tooltipLabel: "Expired", field: "expiredKg", kind: "point", color: YP_COLORS.warning, help: "Stored harvest that reaches the end of its shelf life this week." }
+    ]);
 
-    function isPlanChartSeriesVisible(visibleSeriesIds, seriesId) { // NEW
-        return !visibleSeriesIds || visibleSeriesIds.has(seriesId); // NEW
-    } // NEW
+    function isPlanChartSeriesVisible(visibleSeriesIds, seriesId) {
+        return !visibleSeriesIds || visibleSeriesIds.has(seriesId);
+    }
 
-    function drawPlanChart(canvas, chartModel, visibleSeriesIds) { // CHANGE
-        const ctx = canvas.getContext("2d"); // CHANGE
-        const rows = Array.isArray(chartModel) ? chartModel : []; // NEW
-        const seriesById = new Map(PLAN_CHART_SERIES.map(series => [series.id, series])); // NEW
-        if (!ctx) return null; // CHANGE
-        const width = canvas.width; // CHANGE
-        const height = canvas.height; // CHANGE
-        ctx.clearRect(0, 0, width, height); // CHANGE
-        if (!rows.length) return null; // CHANGE
+    function drawPlanChart(canvas, chartModel, visibleSeriesIds) {
+        const ctx = canvas.getContext("2d");
+        const rows = Array.isArray(chartModel) ? chartModel : [];
+        const seriesById = new Map(PLAN_CHART_SERIES.map(series => [series.id, series]));
+        if (!ctx) return null;
+        const width = canvas.width;
+        const height = canvas.height;
+        ctx.clearRect(0, 0, width, height);
+        if (!rows.length) return null;
 
-        const padLeft = 48; // CHANGE
-        const padRight = 14; // CHANGE
-        const padTop = 12; // CHANGE
-        const padBottom = 28; // CHANGE
-        const plotRight = width - padRight; // NEW
-        const plotBottom = height - padBottom; // NEW
-        const plotWidth = plotRight - padLeft; // NEW
-        const plotHeight = plotBottom - padTop; // NEW
-        const step = plotWidth / rows.length; // NEW
-        const weekCenters = rows.map((row, index) => padLeft + ((index + 0.5) * step)); // NEW
-        const maxValue = Math.max(1, ...rows.flatMap(row => [ // CHANGE
-            row.targetKg, // NEW
-            row.harvestKg, // NEW
-            row.availableSupplyKg, // NEW
-            row.usableSupplyKg, // NEW
-            row.expiredKg // NEW
-        ]).map(value => Math.max(0, Number(value) || 0))); // CHANGE
-        const y = value => plotBottom - ((Math.max(0, Number(value) || 0) / maxValue) * plotHeight); // NEW
+        const padLeft = 48;
+        const padRight = 14;
+        const padTop = 12;
+        const padBottom = 28;
+        const plotRight = width - padRight;
+        const plotBottom = height - padBottom;
+        const plotWidth = plotRight - padLeft;
+        const plotHeight = plotBottom - padTop;
+        const step = plotWidth / rows.length;
+        const weekCenters = rows.map((row, index) => padLeft + ((index + 0.5) * step));
+        const maxValue = Math.max(1, ...rows.flatMap(row => [
+            row.targetKg,
+            row.harvestKg,
+            row.availableSupplyKg,
+            row.usableSupplyKg,
+            row.expiredKg
+        ]).map(value => Math.max(0, Number(value) || 0)));
+        const y = value => plotBottom - ((Math.max(0, Number(value) || 0) / maxValue) * plotHeight);
 
-        ctx.font = "10px Arial"; // NEW
-        ctx.textBaseline = "middle"; // NEW
-        ctx.lineWidth = 1; // CHANGE
-        for (let tick = 0; tick <= 4; tick++) { // NEW
-            const value = maxValue * tick / 4; // NEW
-            const tickY = y(value); // NEW
-            ctx.strokeStyle = tick === 0 ? "#999" : "#e4e4e4"; // NEW
-            ctx.beginPath(); // CHANGE
-            ctx.moveTo(padLeft, tickY); // CHANGE
-            ctx.lineTo(plotRight, tickY); // CHANGE
-            ctx.stroke(); // CHANGE
-            ctx.fillStyle = "#555"; // NEW
-            ctx.textAlign = "right"; // NEW
-            ctx.fillText(`${value.toFixed(value >= 10 ? 0 : 1)} kg`, padLeft - 5, tickY); // NEW
-        } // NEW
+        ctx.font = "10px Arial";
+        ctx.textBaseline = "middle";
+        ctx.lineWidth = 1;
+        for (let tick = 0; tick <= 4; tick++) {
+            const value = maxValue * tick / 4;
+            const tickY = y(value);
+            ctx.strokeStyle = tick === 0 ? "#999" : "#e4e4e4";
+            ctx.beginPath();
+            ctx.moveTo(padLeft, tickY);
+            ctx.lineTo(plotRight, tickY);
+            ctx.stroke();
+            ctx.fillStyle = "#555";
+            ctx.textAlign = "right";
+            ctx.fillText(`${value.toFixed(value >= 10 ? 0 : 1)} kg`, padLeft - 5, tickY);
+        }
 
-        let previousMonth = ""; // NEW
-        for (let index = 0; index < rows.length; index++) { // NEW
-            const week = String(rows[index].week || ""); // NEW
-            const month = week.slice(0, 7); // NEW
-            if (!month || month === previousMonth) continue; // NEW
-            const boundaryX = padLeft + (index * step); // NEW
-            ctx.strokeStyle = "#d4d4d4"; // NEW
-            ctx.beginPath(); // NEW
-            ctx.moveTo(boundaryX, padTop); // NEW
-            ctx.lineTo(boundaryX, plotBottom); // NEW
-            ctx.stroke(); // NEW
-            ctx.fillStyle = "#666"; // NEW
-            ctx.textAlign = "left"; // NEW
-            ctx.textBaseline = "alphabetic"; // NEW
-            ctx.fillText(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(week.slice(5, 7)) - 1] || "", boundaryX + 2, height - 8); // NEW
-            previousMonth = month; // NEW
-        } // NEW
+        let previousMonth = "";
+        for (let index = 0; index < rows.length; index++) {
+            const week = String(rows[index].week || "");
+            const month = week.slice(0, 7);
+            if (!month || month === previousMonth) continue;
+            const boundaryX = padLeft + (index * step);
+            ctx.strokeStyle = "#d4d4d4";
+            ctx.beginPath();
+            ctx.moveTo(boundaryX, padTop);
+            ctx.lineTo(boundaryX, plotBottom);
+            ctx.stroke();
+            ctx.fillStyle = "#666";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "alphabetic";
+            ctx.fillText(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(week.slice(5, 7)) - 1] || "", boundaryX + 2, height - 8);
+            previousMonth = month;
+        }
 
-        const barWidth = Math.max(2, Math.min(12, step * 0.58)); // NEW
-        for (let index = 0; index < rows.length; index++) { // NEW
-            const row = rows[index]; // NEW
-            const centerX = weekCenters[index]; // NEW
-            if (isPlanChartSeriesVisible(visibleSeriesIds, "harvest")) { // NEW
-                const harvestTop = y(row.harvestKg); // NEW
-                ctx.fillStyle = seriesById.get("harvest").fill; // CHANGE
-                ctx.fillRect(centerX - (barWidth / 2), harvestTop, barWidth, plotBottom - harvestTop); // NEW
-            } // NEW
-            if (isPlanChartSeriesVisible(visibleSeriesIds, "shortage") && row.shortKg > 0) { // CHANGE
-                const targetY = y(row.targetKg); // NEW
-                const usableY = y(row.usableSupplyKg); // NEW
-                ctx.fillStyle = seriesById.get("shortage").fill; // CHANGE
-                ctx.fillRect(centerX - (step * 0.38), targetY, step * 0.76, Math.max(2, usableY - targetY)); // NEW
-            } // NEW
-            if (isPlanChartSeriesVisible(visibleSeriesIds, "expired") && row.expiredKg > 0) { // CHANGE
-                ctx.fillStyle = seriesById.get("expired").color; // CHANGE
-                ctx.beginPath(); // NEW
-                ctx.arc(centerX, y(row.expiredKg), 3, 0, Math.PI * 2); // NEW
-                ctx.fill(); // NEW
-            } // NEW
-        } // NEW
+        const barWidth = Math.max(2, Math.min(12, step * 0.58));
+        for (let index = 0; index < rows.length; index++) {
+            const row = rows[index];
+            const centerX = weekCenters[index];
+            if (isPlanChartSeriesVisible(visibleSeriesIds, "harvest")) {
+                const harvestTop = y(row.harvestKg);
+                ctx.fillStyle = seriesById.get("harvest").fill;
+                ctx.fillRect(centerX - (barWidth / 2), harvestTop, barWidth, plotBottom - harvestTop);
+            }
+            if (isPlanChartSeriesVisible(visibleSeriesIds, "shortage") && row.shortKg > 0) {
+                const targetY = y(row.targetKg);
+                const usableY = y(row.usableSupplyKg);
+                ctx.fillStyle = seriesById.get("shortage").fill;
+                ctx.fillRect(centerX - (step * 0.38), targetY, step * 0.76, Math.max(2, usableY - targetY));
+            }
+            if (isPlanChartSeriesVisible(visibleSeriesIds, "expired") && row.expiredKg > 0) {
+                ctx.fillStyle = seriesById.get("expired").color;
+                ctx.beginPath();
+                ctx.arc(centerX, y(row.expiredKg), 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
 
-        function drawLine(field, color, lineWidth, dash) { // NEW
-            ctx.strokeStyle = color; // NEW
-            ctx.lineWidth = lineWidth; // NEW
-            ctx.setLineDash(dash || []); // NEW
-            ctx.beginPath(); // NEW
-            for (let index = 0; index < rows.length; index++) { // NEW
-                const pointY = y(rows[index][field]); // NEW
-                if (index === 0) ctx.moveTo(weekCenters[index], pointY); // NEW
-                else ctx.lineTo(weekCenters[index], pointY); // NEW
-            } // NEW
-            ctx.stroke(); // NEW
-            ctx.setLineDash([]); // NEW
-        } // NEW
+        function drawLine(field, color, lineWidth, dash) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = lineWidth;
+            ctx.setLineDash(dash || []);
+            ctx.beginPath();
+            for (let index = 0; index < rows.length; index++) {
+                const pointY = y(rows[index][field]);
+                if (index === 0) ctx.moveTo(weekCenters[index], pointY);
+                else ctx.lineTo(weekCenters[index], pointY);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
 
-        for (const series of PLAN_CHART_SERIES) { // NEW
-            if ((series.kind === "line" || series.kind === "dashed-line") && isPlanChartSeriesVisible(visibleSeriesIds, series.id)) { // NEW
-                drawLine(series.field, series.color, series.lineWidth, series.dash); // NEW
-            } // NEW
-        } // NEW
+        for (const series of PLAN_CHART_SERIES) {
+            if ((series.kind === "line" || series.kind === "dashed-line") && isPlanChartSeriesVisible(visibleSeriesIds, series.id)) {
+                drawLine(series.field, series.color, series.lineWidth, series.dash);
+            }
+        }
 
-        return { rows, weekCenters, plotLeft: padLeft, plotRight, step, maxValue }; // CHANGE
-    } // CHANGE
+        return { rows, weekCenters, plotLeft: padLeft, plotRight, step, maxValue };
+    }
 
-    function renderActualHarvestTimeline(hostEl, weekStarts, weeklyKg) { // CHANGE
-        if (!hostEl) return; // NEW
-        const weeks = Array.isArray(weekStarts) ? weekStarts : []; // NEW
-        const series = Array.isArray(weeklyKg) ? weeklyKg : []; // NEW
-        const maxValue = Math.max(0, ...series.map(value => Number(value) || 0)); // NEW
-        hostEl.innerHTML = ""; // NEW
-        hostEl.className = "yp-harvest-timeline"; // ADDED
-        hostEl.style.gridTemplateColumns = `repeat(${Math.max(1, weeks.length)}, minmax(4px, 1fr))`; // ADDED
-        if (maxValue <= 0) { // ADDED
-            hostEl.className = "yp-harvest-empty"; // ADDED
-            hostEl.textContent = "No actual harvest recorded for this crop/year."; // ADDED
-            return; // ADDED
-        } // ADDED
-        for (let index = 0; index < weeks.length; index++) { // NEW
-            const value = Math.max(0, Number(series[index]) || 0); // NEW
-            const intensity = maxValue > 0 ? Math.min(1, value / maxValue) : 0; // NEW
-            const bar = document.createElement("div"); // CHANGE
-            bar.className = "yp-harvest-bar"; // ADDED
-            bar.style.height = `${Math.max(3, Math.round(4 + 30 * intensity))}px`; // ADDED
-            bar.style.background = `rgba(48,105,64,${0.14 + 0.76 * intensity})`; // ADDED
-            bar.title = `${weeks[index] && weeks[index].iso || ""} - ${value.toFixed(2)} kg actual harvest`; // CHANGE
-            hostEl.appendChild(bar); // CHANGE
-        } // NEW
-    } // CHANGE
+    function renderActualHarvestTimeline(hostEl, weekStarts, weeklyKg) {
+        if (!hostEl) return;
+        const weeks = Array.isArray(weekStarts) ? weekStarts : [];
+        const series = Array.isArray(weeklyKg) ? weeklyKg : [];
+        const maxValue = Math.max(0, ...series.map(value => Number(value) || 0));
+        hostEl.innerHTML = "";
+        hostEl.className = "yp-harvest-timeline";
+        hostEl.style.gridTemplateColumns = `repeat(${Math.max(1, weeks.length)}, minmax(4px, 1fr))`;
+        if (maxValue <= 0) {
+            hostEl.className = "yp-harvest-empty";
+            hostEl.textContent = "No actual harvest recorded for this crop/year.";
+            return;
+        }
+        for (let index = 0; index < weeks.length; index++) {
+            const value = Math.max(0, Number(series[index]) || 0);
+            const intensity = maxValue > 0 ? Math.min(1, value / maxValue) : 0;
+            const bar = document.createElement("div");
+            bar.className = "yp-harvest-bar";
+            bar.style.height = `${Math.max(3, Math.round(4 + 30 * intensity))}px`;
+            bar.style.background = `rgba(48,105,64,${0.14 + 0.76 * intensity})`;
+            bar.title = `${weeks[index] && weeks[index].iso || ""} - ${value.toFixed(2)} kg actual harvest`;
+            hostEl.appendChild(bar);
+        }
+    }
 
     // ------------ openPlanModal --------------
-    // -------------------- Dashboard modal controller -------------------- // NEW
-    /** Owns dashboard DOM construction, event orchestration, persistence, and session-scoped UI state. */ // NEW
-    const YearPlanModalController = (() => { // NEW
-        function open(moduleCell, year) { // NEW
-            let currentYear = Number(year); // NEW
-            const existing = PlanRepository.loadPlanForYear(moduleCell, currentYear); // NEW
-            let loadedExistingForCurrentYear = !!existing; // NEW
-            const plan = PlanSchema.normalizeForRuntime(existing || PlanSchema.createEmptyPlan(currentYear), currentYear); // NEW
-            const state = YearPlanDashboard.createState(plan); // NEW
-            const session = SessionController.start(moduleCell, currentYear, plan); // NEW
-            const varietyCache = new Map(); // NEW
-            const methodCache = new Map(); // NEW
-            const addCropOptionById = new Map(); // NEW
-            let addCropOptionsLoadVersion = 0; // NEW
-            let runtime = null; // NEW
-            let dashboard = null; // NEW
-            let refreshTimer = null; // NEW
-            let pendingRefreshOptions = null; // NEW
-            let editorRefs = {}; // NEW
-            let demandRefs = {}; // NEW
-            let csaRefs = {}; // ADDED
-            let chartHitModel = null; // NEW
-            const visibleChartSeriesIds = new Set(PLAN_CHART_SERIES.map(series => series.id)); // NEW
+    // -------------------- Dashboard modal controller --------------------
+    /** Owns dashboard DOM construction, event orchestration, persistence, and session-scoped UI state. */
+    const YearPlanModalController = (() => {
+        function open(moduleCell, year) {
+            let currentYear = Number(year);
+            const existing = PlanRepository.loadPlanForYear(moduleCell, currentYear);
+            let loadedExistingForCurrentYear = !!existing;
+            const plan = PlanSchema.normalizeForRuntime(existing || PlanSchema.createEmptyPlan(currentYear), currentYear);
+            const state = YearPlanDashboard.createState(plan);
+            const session = SessionController.start(moduleCell, currentYear, plan);
+            const varietyCache = new Map();
+            const methodCache = new Map();
+            const addCropOptionById = new Map();
+            let addCropOptionsLoadVersion = 0;
+            let runtime = null;
+            let dashboard = null;
+            let refreshTimer = null;
+            let pendingRefreshOptions = null;
+            let editorRefs = {};
+            let demandRefs = {};
+            let csaRefs = {};
+            let chartHitModel = null;
+            const visibleChartSeriesIds = new Set(PLAN_CHART_SERIES.map(series => series.id));
 
-            const wrap = document.createElement("div"); // NEW
-            wrap.style.cssText = "position:fixed;inset:0;z-index:" + TRELLIS_DIALOG_Z + ";background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;"; // CHANGE
-            const card = document.createElement("div"); // NEW
-            card.className = "yp-modal-card"; // CHANGE
-            card.style.cssText = "width:1180px;max-width:97vw;height:92vh;background:#fff;border:1px solid #777;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.25);display:flex;flex-direction:column;overflow:hidden;font:12px Arial,sans-serif;"; // NEW
-            const style = document.createElement("style"); // NEW
-            style.textContent = ` /* NEW */
+            const wrap = document.createElement("div");
+            wrap.style.cssText = "position:fixed;inset:0;z-index:" + TRELLIS_DIALOG_Z + ";background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;";
+            const card = document.createElement("div");
+            card.className = "yp-modal-card";
+            card.style.cssText = "width:1180px;max-width:97vw;height:92vh;background:#fff;border:1px solid #777;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.25);display:flex;flex-direction:column;overflow:hidden;font:12px Arial,sans-serif;";
+            const style = document.createElement("style");
+            style.textContent = `
                 .yp-modal-card{--yp-primary:${YP_COLORS.primary};--yp-primary-bg:${YP_COLORS.primaryBg};--yp-primary-soft:${YP_COLORS.primarySoft};--yp-primary-dark:${YP_COLORS.primaryDark};--yp-success:${YP_COLORS.success};--yp-success-bg:${YP_COLORS.successBg};--yp-danger:${YP_COLORS.danger};--yp-danger-bg:${YP_COLORS.dangerBg};--yp-warning:${YP_COLORS.warning};--yp-warning-bg:${YP_COLORS.warningBg};--yp-neutral-900:${YP_COLORS.neutral900};--yp-neutral-700:${YP_COLORS.neutral700};--yp-neutral-500:${YP_COLORS.neutral500};--yp-neutral-300:${YP_COLORS.neutral300};--yp-neutral-100:${YP_COLORS.neutral100}}
-                .yp-dashboard-grid{display:grid;grid-template-columns:minmax(340px,32%) minmax(0,1fr);gap:12px;align-items:start} /* CHANGE */
+                .yp-dashboard-grid{display:grid;grid-template-columns:minmax(340px,32%) minmax(0,1fr);gap:12px;align-items:start}
                 .yp-scroll-body > * + *{margin-top:10px}
-                .yp-strip-box{box-sizing:border-box;border:1px solid var(--yp-neutral-300);border-radius:8px;background:#fff;overflow:hidden} /* CHANGE */
-                .yp-strip-header{box-sizing:border-box;display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px 9px 10px;border:0;background:var(--yp-neutral-100);cursor:pointer;text-align:left;font:12px Arial,sans-serif} /* CHANGE */
+                .yp-strip-box{box-sizing:border-box;border:1px solid var(--yp-neutral-300);border-radius:8px;background:#fff;overflow:hidden}
+                .yp-strip-header{box-sizing:border-box;display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px 9px 10px;border:0;background:var(--yp-neutral-100);cursor:pointer;text-align:left;font:12px Arial,sans-serif}
                 .yp-strip-title{flex:0 0 auto;font-weight:700;font-size:13px}
                 .yp-strip-summary{flex:1 1 auto;min-width:0;color:var(--yp-neutral-700);overflow-wrap:anywhere}
-                .yp-strip-toggle{flex:0 0 auto;margin-left:auto;padding-left:4px;color:#333;white-space:nowrap;text-align:right} /* CHANGE */
-                .yp-strip-details{box-sizing:border-box;padding:10px;border-top:1px solid var(--yp-neutral-300)} /* CHANGE */
+                .yp-strip-toggle{flex:0 0 auto;margin-left:auto;padding-left:4px;color:#333;white-space:nowrap;text-align:right}
+                .yp-strip-details{box-sizing:border-box;padding:10px;border-top:1px solid var(--yp-neutral-300)}
                 .yp-field-grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:10px}
-                .yp-derived-totals{display:grid;grid-template-columns:repeat(3,minmax(110px,1fr));gap:8px;margin-top:12px} /* ADDED */
-                .yp-derived-tile{border:1px solid var(--yp-neutral-300);border-radius:7px;background:var(--yp-neutral-100);padding:8px;min-width:0} /* ADDED */
-                .yp-derived-label{font-size:11px;color:var(--yp-neutral-700);font-weight:700;overflow-wrap:anywhere} /* ADDED */
-                .yp-derived-value{font-size:17px;font-weight:700;color:var(--yp-neutral-900);margin-top:3px} /* ADDED */
-                .yp-harvest-timeline-section{margin-top:14px;border-top:1px solid var(--yp-neutral-300);padding-top:10px} /* ADDED */
-                .yp-harvest-timeline-title{font-weight:700;margin-bottom:7px} /* ADDED */
-                .yp-harvest-timeline{display:grid;grid-template-columns:repeat(52,minmax(4px,1fr));gap:2px;align-items:end;min-height:34px} /* ADDED */
-                .yp-harvest-bar{height:24px;min-width:4px;border:1px solid rgba(0,0,0,.16);border-radius:2px 2px 0 0;background:rgba(48,105,64,.14)} /* ADDED */
-                .yp-harvest-empty{color:var(--yp-neutral-700);font-size:11px} /* ADDED */
-                .yp-yield-hint{display:flex;gap:6px;align-items:center;flex-wrap:wrap;color:#666;font-size:11px;margin-top:4px} /* ADDED */
-                .yp-package-row{display:grid;grid-template-columns:repeat(4,minmax(88px,1fr)) auto;gap:8px;align-items:end;padding:8px;border:1px solid #e1e1e1;border-radius:7px;background:#fcfcfc} /* ADDED */
-                .yp-package-field{display:flex;flex-direction:column;gap:4px;min-width:0} /* ADDED */
-                .yp-package-title{font-weight:700;color:#555} /* ADDED */
+                .yp-derived-totals{display:grid;grid-template-columns:repeat(3,minmax(110px,1fr));gap:8px;margin-top:12px}
+                .yp-derived-tile{border:1px solid var(--yp-neutral-300);border-radius:7px;background:var(--yp-neutral-100);padding:8px;min-width:0}
+                .yp-derived-label{font-size:11px;color:var(--yp-neutral-700);font-weight:700;overflow-wrap:anywhere}
+                .yp-derived-value{font-size:17px;font-weight:700;color:var(--yp-neutral-900);margin-top:3px}
+                .yp-harvest-timeline-section{margin-top:14px;border-top:1px solid var(--yp-neutral-300);padding-top:10px}
+                .yp-harvest-timeline-title{font-weight:700;margin-bottom:7px}
+                .yp-harvest-timeline{display:grid;grid-template-columns:repeat(52,minmax(4px,1fr));gap:2px;align-items:end;min-height:34px}
+                .yp-harvest-bar{height:24px;min-width:4px;border:1px solid rgba(0,0,0,.16);border-radius:2px 2px 0 0;background:rgba(48,105,64,.14)}
+                .yp-harvest-empty{color:var(--yp-neutral-700);font-size:11px}
+                .yp-yield-hint{display:flex;gap:6px;align-items:center;flex-wrap:wrap;color:#666;font-size:11px;margin-top:4px}
+                .yp-package-row{display:grid;grid-template-columns:repeat(4,minmax(88px,1fr)) auto;gap:8px;align-items:end;padding:8px;border:1px solid #e1e1e1;border-radius:7px;background:#fcfcfc}
+                .yp-package-field{display:flex;flex-direction:column;gap:4px;min-width:0}
+                .yp-package-title{font-weight:700;color:#555}
                 .yp-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
                 .yp-line{display:grid;grid-template-columns:minmax(70px,1fr) 120px 150px 150px auto;gap:8px;align-items:center}
                 .yp-demand-channel{border:1px solid #d5d5d5;border-radius:7px;background:#fff;overflow:hidden}
@@ -2898,7 +2898,7 @@ Draw.loadPlugin(function (ui) {
                 .yp-plan-hero-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px}
                 .yp-plan-hero-title{font-size:16px;font-weight:700;color:var(--yp-neutral-900)}
                 .yp-plan-hero-sub{display:none}
-                .yp-kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:6px} /* CHANGE */
+                .yp-kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:6px}
                 .yp-kpi-tile{border:1px solid var(--yp-neutral-300);border-radius:6px;background:#fff;padding:6px 7px;min-width:0}
                 .yp-kpi-tile[data-tone="primary"]{border-color:var(--yp-primary-soft);background:var(--yp-primary-bg)}
                 .yp-kpi-tile[data-tone="success"]{border-color:var(--yp-success);background:var(--yp-success-bg)}
@@ -2914,22 +2914,22 @@ Draw.loadPlugin(function (ui) {
                 .yp-chip[data-tone="danger"]{border-color:var(--yp-danger);background:var(--yp-danger-bg);color:var(--yp-danger)}
                 .yp-chip[data-tone="warning"]{border-color:var(--yp-warning);background:var(--yp-warning-bg);color:var(--yp-warning)}
                 .yp-chip[data-clickable="true"]{cursor:pointer}
-                .yp-diagnostics-wrap{display:inline-flex;align-items:center;gap:4px;position:relative} /* CHANGE */
-                .yp-diagnostics-trigger{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--yp-danger);border-radius:50%;background:#fff;color:var(--yp-danger);font:700 12px Arial,sans-serif;cursor:pointer} /* CHANGE */
-                .yp-diagnostics-popover{position:absolute;z-index:2;top:calc(100% + 4px);right:0;min-width:230px;max-width:320px;padding:7px;border:1px solid var(--yp-danger);border-radius:7px;background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.18);color:var(--yp-neutral-900)} /* CHANGE */
-                .yp-diagnostics-popover[hidden]{display:none} /* CHANGE */
-                .yp-diagnostics-title{font-weight:700;margin-bottom:5px;color:var(--yp-danger)} /* CHANGE */
-                .yp-diagnostics-item{display:block;width:100%;padding:5px 6px;border:0;border-radius:5px;background:#fff;text-align:left;color:var(--yp-neutral-900);font:12px Arial,sans-serif;cursor:pointer} /* CHANGE */
-                .yp-diagnostics-item:hover,.yp-diagnostics-item:focus{background:var(--yp-danger-bg);outline:1px solid var(--yp-danger)} /* CHANGE */
-                .yp-field-highlight{outline:2px solid var(--yp-danger)!important;outline-offset:2px} /* CHANGE */
+                .yp-diagnostics-wrap{display:inline-flex;align-items:center;gap:4px;position:relative}
+                .yp-diagnostics-trigger{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--yp-danger);border-radius:50%;background:#fff;color:var(--yp-danger);font:700 12px Arial,sans-serif;cursor:pointer}
+                .yp-diagnostics-popover{position:absolute;z-index:2;top:calc(100% + 4px);right:0;min-width:230px;max-width:320px;padding:7px;border:1px solid var(--yp-danger);border-radius:7px;background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.18);color:var(--yp-neutral-900)}
+                .yp-diagnostics-popover[hidden]{display:none}
+                .yp-diagnostics-title{font-weight:700;margin-bottom:5px;color:var(--yp-danger)}
+                .yp-diagnostics-item{display:block;width:100%;padding:5px 6px;border:0;border-radius:5px;background:#fff;text-align:left;color:var(--yp-neutral-900);font:12px Arial,sans-serif;cursor:pointer}
+                .yp-diagnostics-item:hover,.yp-diagnostics-item:focus{background:var(--yp-danger-bg);outline:1px solid var(--yp-danger)}
+                .yp-field-highlight{outline:2px solid var(--yp-danger)!important;outline-offset:2px}
                 .yp-attention-strip{display:none;margin-top:6px;padding:6px;border:1px solid var(--yp-warning);border-radius:6px;background:var(--yp-warning-bg)}
                 .yp-attention-title{font-weight:700;margin-bottom:4px;color:var(--yp-neutral-900)}
-                .yp-crop-card{box-sizing:border-box;border:0;border-bottom:1px solid #eee;background:#fff;padding:10px;text-align:left;cursor:pointer;width:100%;overflow-wrap:anywhere} /* CHANGE */
+                .yp-crop-card{box-sizing:border-box;border:0;border-bottom:1px solid #eee;background:#fff;padding:10px;text-align:left;cursor:pointer;width:100%;overflow-wrap:anywhere}
                 .yp-crop-card[data-selected="true"]{background:var(--yp-primary-bg);box-shadow:inset 3px 0 0 var(--yp-primary)}
-                .yp-crop-card-name{flex:1 1 140px;min-width:0;font-weight:700;font-size:13px;color:var(--yp-neutral-900);overflow-wrap:anywhere} /* CHANGE */
-                .yp-crop-card-top{display:flex;gap:7px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap} /* CHANGE */
-                .yp-crop-card .yp-diagnostics-wrap{flex:1 1 120px;min-width:0;justify-content:flex-end;flex-wrap:wrap} /* CHANGE */
-                .yp-crop-card .yp-chip{white-space:normal;overflow-wrap:anywhere} /* CHANGE */
+                .yp-crop-card-name{flex:1 1 140px;min-width:0;font-weight:700;font-size:13px;color:var(--yp-neutral-900);overflow-wrap:anywhere}
+                .yp-crop-card-top{display:flex;gap:7px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+                .yp-crop-card .yp-diagnostics-wrap{flex:1 1 120px;min-width:0;justify-content:flex-end;flex-wrap:wrap}
+                .yp-crop-card .yp-chip{white-space:normal;overflow-wrap:anywhere}
                 .yp-crop-card-metrics{margin-top:7px;color:var(--yp-neutral-700);font-size:11px;line-height:1.5}
                 .yp-chart-legend{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;margin:0 0 6px}
                 .yp-chart-legend-item{display:inline-flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid #aaa;border-radius:999px;background:#fff;color:var(--yp-neutral-900);cursor:pointer;font:12px Arial,sans-serif}
@@ -2943,957 +2943,957 @@ Draw.loadPlugin(function (ui) {
                 @media(max-width:850px){
                     .yp-dashboard-grid{grid-template-columns:1fr}
                     .yp-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
-                    .yp-field-grid,.yp-derived-totals,.yp-package-row{grid-template-columns:1fr} /* CHANGE */
-                    .yp-line{display:flex;flex-wrap:wrap} /* CHANGE */
+                    .yp-field-grid,.yp-derived-totals,.yp-package-row{grid-template-columns:1fr}
+                    .yp-line{display:flex;flex-wrap:wrap}
                     .yp-demand-line{grid-template-columns:1fr}
                     .yp-plan-check-grid{grid-template-columns:1fr!important}
-                }`; // NEW
-            card.appendChild(style); // NEW
+                }`;
+            card.appendChild(style);
 
-            const header = document.createElement("div"); // NEW
-            header.className = "yp-header-main"; // CHANGE
-            const titleEl = document.createElement("div"); // NEW
-            titleEl.style.cssText = "font-weight:700;font-size:15px;white-space:nowrap;"; // NEW
-            const headerStatus = document.createElement("div"); // NEW
-            headerStatus.className = "yp-header-status"; // NEW
-            const headerActions = document.createElement("div"); // NEW
-            headerActions.className = "yp-row"; // NEW
-            const secondaryToolbar = document.createElement("div"); // NEW
-            secondaryToolbar.className = "yp-secondary-toolbar"; // NEW
-            const headerControls = document.createElement("div"); // NEW
-            headerControls.className = "yp-row"; // NEW
-            const summaryBox = document.createElement("div"); // NEW
-            summaryBox.className = "yp-plan-hero"; // CHANGE
-            const heroMain = document.createElement("div"); // NEW
-            const attentionBox = document.createElement("div"); // NEW
-            attentionBox.className = "yp-attention-strip"; // NEW
-            summaryBox.appendChild(heroMain); // NEW
-            summaryBox.appendChild(attentionBox); // NEW
-            const body = document.createElement("div"); // NEW
-            body.className = "yp-scroll-body"; // NEW
-            body.style.cssText = "padding:12px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;flex:1 1 0;min-height:0;display:block;"; // CHANGE
-            body.tabIndex = 0; // NEW
-            const addRow = document.createElement("div"); // NEW
-            addRow.className = "yp-row"; // NEW
-            addRow.style.marginBottom = "12px"; // NEW
-            const dashboardGrid = document.createElement("div"); // NEW
-            dashboardGrid.className = "yp-dashboard-grid"; // NEW
-            const sidebar = document.createElement("div"); // NEW
-            sidebar.style.cssText = "border:1px solid #ddd;border-radius:8px;background:#fff;overflow:hidden;"; // NEW
-            const sidebarHead = document.createElement("div"); // NEW
-            sidebarHead.style.cssText = "padding:10px;font-weight:700;border-bottom:1px solid #eee;"; // NEW
-            sidebarHead.textContent = "Crops"; // NEW
-            const cropList = document.createElement("div"); // NEW
-            cropList.style.cssText = "display:flex;flex-direction:column;max-height:56vh;overflow:auto;"; // NEW
-            sidebar.appendChild(sidebarHead); // NEW
-            sidebar.appendChild(cropList); // NEW
-            const mainColumn = document.createElement("div"); // NEW
-            mainColumn.style.cssText = "display:flex;flex-direction:column;gap:12px;min-width:0;"; // NEW
-            const editorBox = document.createElement("div"); // NEW
-            editorBox.style.cssText = "border:1px solid #ddd;border-radius:8px;background:#fff;min-height:280px;"; // NEW
-            const csaBox = document.createElement("div"); // NEW
-            const demandBox = document.createElement("div"); // NEW
-            const cropPlanBox = document.createElement("div"); // NEW
-            const planCheckBox = document.createElement("div"); // NEW
-            csaBox.dataset.yearPlanStrip = "csa"; // NEW
-            demandBox.dataset.yearPlanStrip = "demand"; // NEW
-            cropPlanBox.dataset.yearPlanStrip = "crop-plan"; // NEW
-            planCheckBox.dataset.yearPlanStrip = "plan-check"; // NEW
-            mainColumn.appendChild(editorBox); // NEW
-            dashboardGrid.appendChild(sidebar); // NEW
-            dashboardGrid.appendChild(mainColumn); // NEW
-            body.appendChild(summaryBox); // CHANGE
-            body.appendChild(cropPlanBox); // CHANGE
-            body.appendChild(demandBox); // CHANGE
-            body.appendChild(csaBox); // CHANGE
-            body.appendChild(planCheckBox); // NEW
+            const header = document.createElement("div");
+            header.className = "yp-header-main";
+            const titleEl = document.createElement("div");
+            titleEl.style.cssText = "font-weight:700;font-size:15px;white-space:nowrap;";
+            const headerStatus = document.createElement("div");
+            headerStatus.className = "yp-header-status";
+            const headerActions = document.createElement("div");
+            headerActions.className = "yp-row";
+            const secondaryToolbar = document.createElement("div");
+            secondaryToolbar.className = "yp-secondary-toolbar";
+            const headerControls = document.createElement("div");
+            headerControls.className = "yp-row";
+            const summaryBox = document.createElement("div");
+            summaryBox.className = "yp-plan-hero";
+            const heroMain = document.createElement("div");
+            const attentionBox = document.createElement("div");
+            attentionBox.className = "yp-attention-strip";
+            summaryBox.appendChild(heroMain);
+            summaryBox.appendChild(attentionBox);
+            const body = document.createElement("div");
+            body.className = "yp-scroll-body";
+            body.style.cssText = "padding:12px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;flex:1 1 0;min-height:0;display:block;";
+            body.tabIndex = 0;
+            const addRow = document.createElement("div");
+            addRow.className = "yp-row";
+            addRow.style.marginBottom = "12px";
+            const dashboardGrid = document.createElement("div");
+            dashboardGrid.className = "yp-dashboard-grid";
+            const sidebar = document.createElement("div");
+            sidebar.style.cssText = "border:1px solid #ddd;border-radius:8px;background:#fff;overflow:hidden;";
+            const sidebarHead = document.createElement("div");
+            sidebarHead.style.cssText = "padding:10px;font-weight:700;border-bottom:1px solid #eee;";
+            sidebarHead.textContent = "Crops";
+            const cropList = document.createElement("div");
+            cropList.style.cssText = "display:flex;flex-direction:column;max-height:56vh;overflow:auto;";
+            sidebar.appendChild(sidebarHead);
+            sidebar.appendChild(cropList);
+            const mainColumn = document.createElement("div");
+            mainColumn.style.cssText = "display:flex;flex-direction:column;gap:12px;min-width:0;";
+            const editorBox = document.createElement("div");
+            editorBox.style.cssText = "border:1px solid #ddd;border-radius:8px;background:#fff;min-height:280px;";
+            const csaBox = document.createElement("div");
+            const demandBox = document.createElement("div");
+            const cropPlanBox = document.createElement("div");
+            const planCheckBox = document.createElement("div");
+            csaBox.dataset.yearPlanStrip = "csa";
+            demandBox.dataset.yearPlanStrip = "demand";
+            cropPlanBox.dataset.yearPlanStrip = "crop-plan";
+            planCheckBox.dataset.yearPlanStrip = "plan-check";
+            mainColumn.appendChild(editorBox);
+            dashboardGrid.appendChild(sidebar);
+            dashboardGrid.appendChild(mainColumn);
+            body.appendChild(summaryBox);
+            body.appendChild(cropPlanBox);
+            body.appendChild(demandBox);
+            body.appendChild(csaBox);
+            body.appendChild(planCheckBox);
 
-            const planCheckGrid = document.createElement("div"); // CHANGE
-            planCheckGrid.className = "yp-plan-check-grid"; // CHANGE
-            planCheckGrid.style.cssText = "display:grid;grid-template-columns:minmax(0,1fr) minmax(340px,1fr);gap:12px;"; // CHANGE
-            const chartBox = document.createElement("div"); // NEW
-            chartBox.style.position = "relative"; // NEW
-            const chartControls = document.createElement("div"); // NEW
-            chartControls.className = "yp-row"; // NEW
-            chartControls.style.marginBottom = "6px"; // NEW
-            const cropFilterSel = document.createElement("select"); // NEW
-            const planCheckSummary = document.createElement("div"); // NEW
-            planCheckSummary.className = "yp-plan-check-summary"; // NEW
-            planCheckSummary.style.cssText = "display:flex;flex-wrap:wrap;gap:5px 14px;padding:7px 8px;margin-bottom:6px;border:1px solid #e0e0e0;border-radius:6px;background:#fafafa;"; // NEW
-            const chartLegend = document.createElement("div"); // NEW
-            chartLegend.className = "yp-chart-legend"; // NEW
-            chartLegend.setAttribute("role", "group"); // NEW
-            chartLegend.setAttribute("aria-label", "Chart series visibility"); // NEW
-            const chartLegendHelp = document.createElement("div"); // NEW
-            chartLegendHelp.className = "yp-chart-legend-help"; // NEW
-            chartLegendHelp.style.cssText = "margin:-1px 0 6px;color:#666;font-size:11px;"; // NEW
-            chartLegendHelp.textContent = "Toggle chart series. Plan Check calculations and totals are unchanged."; // NEW
-            const canvas = document.createElement("canvas"); // NEW
-            canvas.width = 900; // NEW
-            canvas.height = 240; // CHANGE
-            canvas.style.cssText = "width:100%;height:240px;border:1px solid #eee;"; // CHANGE
-            const chartHiddenMessage = document.createElement("div"); // NEW
-            chartHiddenMessage.className = "yp-plan-chart-hidden-message"; // NEW
-            chartHiddenMessage.style.cssText = "display:none;position:absolute;left:50%;top:62%;transform:translate(-50%,-50%);pointer-events:none;padding:6px 9px;border:1px solid #bbb;border-radius:5px;background:rgba(255,255,255,.94);color:#555;font-weight:700;"; // NEW
-            chartHiddenMessage.textContent = "All chart series hidden"; // NEW
-            const chartTooltip = document.createElement("div"); // NEW
-            chartTooltip.className = "yp-plan-chart-tooltip"; // NEW
-            chartTooltip.style.cssText = "display:none;position:absolute;z-index:2;pointer-events:none;min-width:170px;padding:7px 8px;border:1px solid #777;border-radius:5px;background:rgba(255,255,255,.97);box-shadow:0 3px 12px rgba(0,0,0,.18);line-height:1.45;"; // NEW
-            const totalsBox = document.createElement("div"); // NEW
-            const diagnosticsBox = document.createElement("div"); // NEW
-            diagnosticsBox.style.marginTop = "10px"; // NEW
-            chartControls.appendChild(document.createTextNode("Crop filter")); // NEW
-            chartControls.appendChild(cropFilterSel); // NEW
-            chartBox.appendChild(chartControls); // NEW
-            chartBox.appendChild(planCheckSummary); // NEW
-            chartBox.appendChild(chartLegend); // NEW
-            chartBox.appendChild(chartLegendHelp); // NEW
-            chartBox.appendChild(canvas); // NEW
-            chartBox.appendChild(chartHiddenMessage); // NEW
-            chartBox.appendChild(chartTooltip); // NEW
-            planCheckGrid.appendChild(chartBox); // CHANGE
-            planCheckGrid.appendChild(totalsBox); // CHANGE
+            const planCheckGrid = document.createElement("div");
+            planCheckGrid.className = "yp-plan-check-grid";
+            planCheckGrid.style.cssText = "display:grid;grid-template-columns:minmax(0,1fr) minmax(340px,1fr);gap:12px;";
+            const chartBox = document.createElement("div");
+            chartBox.style.position = "relative";
+            const chartControls = document.createElement("div");
+            chartControls.className = "yp-row";
+            chartControls.style.marginBottom = "6px";
+            const cropFilterSel = document.createElement("select");
+            const planCheckSummary = document.createElement("div");
+            planCheckSummary.className = "yp-plan-check-summary";
+            planCheckSummary.style.cssText = "display:flex;flex-wrap:wrap;gap:5px 14px;padding:7px 8px;margin-bottom:6px;border:1px solid #e0e0e0;border-radius:6px;background:#fafafa;";
+            const chartLegend = document.createElement("div");
+            chartLegend.className = "yp-chart-legend";
+            chartLegend.setAttribute("role", "group");
+            chartLegend.setAttribute("aria-label", "Chart series visibility");
+            const chartLegendHelp = document.createElement("div");
+            chartLegendHelp.className = "yp-chart-legend-help";
+            chartLegendHelp.style.cssText = "margin:-1px 0 6px;color:#666;font-size:11px;";
+            chartLegendHelp.textContent = "Toggle chart series. Plan Check calculations and totals are unchanged.";
+            const canvas = document.createElement("canvas");
+            canvas.width = 900;
+            canvas.height = 240;
+            canvas.style.cssText = "width:100%;height:240px;border:1px solid #eee;";
+            const chartHiddenMessage = document.createElement("div");
+            chartHiddenMessage.className = "yp-plan-chart-hidden-message";
+            chartHiddenMessage.style.cssText = "display:none;position:absolute;left:50%;top:62%;transform:translate(-50%,-50%);pointer-events:none;padding:6px 9px;border:1px solid #bbb;border-radius:5px;background:rgba(255,255,255,.94);color:#555;font-weight:700;";
+            chartHiddenMessage.textContent = "All chart series hidden";
+            const chartTooltip = document.createElement("div");
+            chartTooltip.className = "yp-plan-chart-tooltip";
+            chartTooltip.style.cssText = "display:none;position:absolute;z-index:2;pointer-events:none;min-width:170px;padding:7px 8px;border:1px solid #777;border-radius:5px;background:rgba(255,255,255,.97);box-shadow:0 3px 12px rgba(0,0,0,.18);line-height:1.45;";
+            const totalsBox = document.createElement("div");
+            const diagnosticsBox = document.createElement("div");
+            diagnosticsBox.style.marginTop = "10px";
+            chartControls.appendChild(document.createTextNode("Crop filter"));
+            chartControls.appendChild(cropFilterSel);
+            chartBox.appendChild(chartControls);
+            chartBox.appendChild(planCheckSummary);
+            chartBox.appendChild(chartLegend);
+            chartBox.appendChild(chartLegendHelp);
+            chartBox.appendChild(canvas);
+            chartBox.appendChild(chartHiddenMessage);
+            chartBox.appendChild(chartTooltip);
+            planCheckGrid.appendChild(chartBox);
+            planCheckGrid.appendChild(totalsBox);
 
-            const footer = document.createElement("div"); // NEW
-            footer.style.cssText = "padding:9px 12px;border-top:1px solid #ccc;background:#fff;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"; // NEW
-            const footerStatus = document.createElement("div"); // NEW
-            footerStatus.style.color = "#555"; // NEW
-            const footerActions = document.createElement("div"); // NEW
-            footerActions.className = "yp-row"; // NEW
-            const closePrompt = document.createElement("div"); // NEW
-            closePrompt.className = "yp-row"; // NEW
-            closePrompt.style.display = "none"; // NEW
-            closePrompt.appendChild(document.createTextNode("Unsaved changes.")); // NEW
-            footer.appendChild(footerStatus); // NEW
-            footer.appendChild(footerActions); // NEW
-            footer.appendChild(closePrompt); // NEW
+            const footer = document.createElement("div");
+            footer.style.cssText = "padding:9px 12px;border-top:1px solid #ccc;background:#fff;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;";
+            const footerStatus = document.createElement("div");
+            footerStatus.style.color = "#555";
+            const footerActions = document.createElement("div");
+            footerActions.className = "yp-row";
+            const closePrompt = document.createElement("div");
+            closePrompt.className = "yp-row";
+            closePrompt.style.display = "none";
+            closePrompt.appendChild(document.createTextNode("Unsaved changes."));
+            footer.appendChild(footerStatus);
+            footer.appendChild(footerActions);
+            footer.appendChild(closePrompt);
 
-            card.appendChild(header); // NEW
-            card.appendChild(secondaryToolbar); // NEW
-            card.appendChild(body); // NEW
-            card.appendChild(footer); // NEW
-            wrap.appendChild(card); // NEW
-            document.body.appendChild(wrap); // NEW
-            session.ui.modalEl = wrap; // NEW
-            SessionController.addWindowListener(session, "keydown", event => { if (event.key === "Escape") closeDiagnosticsPopovers(null); }); // CHANGE
-            SessionController.addWindowListener(session, "click", event => { if (!event.target || !event.target.closest || !event.target.closest(".yp-diagnostics-wrap")) closeDiagnosticsPopovers(null); }); // CHANGE
+            card.appendChild(header);
+            card.appendChild(secondaryToolbar);
+            card.appendChild(body);
+            card.appendChild(footer);
+            wrap.appendChild(card);
+            document.body.appendChild(wrap);
+            session.ui.modalEl = wrap;
+            SessionController.addWindowListener(session, "keydown", event => { if (event.key === "Escape") closeDiagnosticsPopovers(null); });
+            SessionController.addWindowListener(session, "click", event => { if (!event.target || !event.target.closest || !event.target.closest(".yp-diagnostics-wrap")) closeDiagnosticsPopovers(null); });
 
-            function getWheelDeltaY(event) { // NEW
-                if (!event) return 0; // NEW
-                if (event.deltaMode === 1) return event.deltaY * 16; // NEW
-                if (event.deltaMode === 2) return event.deltaY * Math.max(1, body.clientHeight); // NEW
-                return event.deltaY; // NEW
-            } // NEW
+            function getWheelDeltaY(event) {
+                if (!event) return 0;
+                if (event.deltaMode === 1) return event.deltaY * 16;
+                if (event.deltaMode === 2) return event.deltaY * Math.max(1, body.clientHeight);
+                return event.deltaY;
+            }
 
-            function canScrollElement(element, deltaY) { // NEW
-                if (!element || element.scrollHeight <= element.clientHeight + 1) return false; // NEW
-                if (deltaY < 0) return element.scrollTop > 0; // NEW
-                if (deltaY > 0) return element.scrollTop + element.clientHeight < element.scrollHeight - 1; // NEW
-                return false; // NEW
-            } // NEW
+            function canScrollElement(element, deltaY) {
+                if (!element || element.scrollHeight <= element.clientHeight + 1) return false;
+                if (deltaY < 0) return element.scrollTop > 0;
+                if (deltaY > 0) return element.scrollTop + element.clientHeight < element.scrollHeight - 1;
+                return false;
+            }
 
-            function findScrollableElement(target, boundary) { // NEW
-                let element = target && target.nodeType === 1 ? target : target && target.parentElement; // NEW
-                while (element && element !== boundary) { // NEW
-                    const computed = window.getComputedStyle(element); // NEW
-                    if (/(auto|scroll)/.test(computed.overflowY) && element.scrollHeight > element.clientHeight + 1) return element; // NEW
-                    element = element.parentElement; // NEW
-                } // NEW
-                return null; // NEW
-            } // NEW
+            function findScrollableElement(target, boundary) {
+                let element = target && target.nodeType === 1 ? target : target && target.parentElement;
+                while (element && element !== boundary) {
+                    const computed = window.getComputedStyle(element);
+                    if (/(auto|scroll)/.test(computed.overflowY) && element.scrollHeight > element.clientHeight + 1) return element;
+                    element = element.parentElement;
+                }
+                return null;
+            }
 
-            function routeModalWheel(event) { // NEW
-                const deltaY = getWheelDeltaY(event); // NEW
-                const scrollHost = findScrollableElement(event.target, card) || body; // NEW
-                if (canScrollElement(scrollHost, deltaY)) { // NEW
-                    event.preventDefault(); // NEW
-                    event.stopPropagation(); // NEW
-                    scrollHost.scrollTop += deltaY; // NEW
-                    return; // NEW
-                } // NEW
-                event.stopPropagation(); // NEW
-            } // NEW
+            function routeModalWheel(event) {
+                const deltaY = getWheelDeltaY(event);
+                const scrollHost = findScrollableElement(event.target, card) || body;
+                if (canScrollElement(scrollHost, deltaY)) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    scrollHost.scrollTop += deltaY;
+                    return;
+                }
+                event.stopPropagation();
+            }
 
-            wrap.addEventListener("wheel", routeModalWheel, { passive: false, capture: true }); // NEW
-            wrap.addEventListener("mousewheel", routeModalWheel, { passive: false, capture: true }); // NEW
+            wrap.addEventListener("wheel", routeModalWheel, { passive: false, capture: true });
+            wrap.addEventListener("mousewheel", routeModalWheel, { passive: false, capture: true });
 
-            function mkBtn(label, variant) { // CHANGE
-                const button = document.createElement("button"); // NEW
-                button.type = "button"; // NEW
-                button.textContent = label; // NEW
-                const semanticVariant = variant === "primary" ? "add" : (variant === "secondary" ? "open" : (variant || "neutral")); // CHANGE
-                if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") { // NEW
-                    window.Trellis.ui.applyButtonStyle(button, semanticVariant); // NEW
-                } else { // NEW
-                    const styles = { // NEW
-                        add: "border:1px solid var(--yp-success);background:#fff;color:var(--yp-success);", // NEW
-                        open: "border:1px solid var(--yp-primary);background:#fff;color:var(--yp-primary);", // NEW
-                        neutral: "border:1px solid var(--yp-neutral-500);background:#fff;color:var(--yp-neutral-900);", // NEW
-                        danger: "border:1px solid var(--yp-danger);background:#fff;color:var(--yp-danger);" // NEW
-                    }; // NEW
-                    button.style.cssText = `${styles[semanticVariant] || styles.neutral}border-radius:6px;cursor:pointer;padding:6px 10px;font:12px Arial,sans-serif;`; // CHANGE
-                    button.setAttribute("data-trellis-button-variant", semanticVariant); // NEW
-                } // NEW
-                return button; // NEW
-            } // NEW
+            function mkBtn(label, variant) {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.textContent = label;
+                const semanticVariant = variant === "primary" ? "add" : (variant === "secondary" ? "open" : (variant || "neutral"));
+                if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") {
+                    window.Trellis.ui.applyButtonStyle(button, semanticVariant);
+                } else {
+                    const styles = {
+                        add: "border:1px solid var(--yp-success);background:#fff;color:var(--yp-success);",
+                        open: "border:1px solid var(--yp-primary);background:#fff;color:var(--yp-primary);",
+                        neutral: "border:1px solid var(--yp-neutral-500);background:#fff;color:var(--yp-neutral-900);",
+                        danger: "border:1px solid var(--yp-danger);background:#fff;color:var(--yp-danger);"
+                    };
+                    button.style.cssText = `${styles[semanticVariant] || styles.neutral}border-radius:6px;cursor:pointer;padding:6px 10px;font:12px Arial,sans-serif;`;
+                    button.setAttribute("data-trellis-button-variant", semanticVariant);
+                }
+                return button;
+            }
 
-            function mkInput(type, value, width) { // NEW
-                const input = document.createElement("input"); // NEW
-                input.type = type; // NEW
-                if (value !== null && value !== undefined) input.value = String(value); // NEW
-                input.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;box-sizing:border-box;"; // NEW
-                if (width) input.style.width = `${width}px`; // NEW
-                return input; // NEW
-            } // NEW
+            function mkInput(type, value, width) {
+                const input = document.createElement("input");
+                input.type = type;
+                if (value !== null && value !== undefined) input.value = String(value);
+                input.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;box-sizing:border-box;";
+                if (width) input.style.width = `${width}px`;
+                return input;
+            }
 
-            function mkSelect(options, value, width) { // NEW
-                const select = document.createElement("select"); // NEW
-                select.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;box-sizing:border-box;"; // NEW
-                if (width) select.style.width = `${width}px`; // NEW
-                for (const option of (options || [])) { // NEW
-                    const element = document.createElement("option"); // NEW
-                    element.value = String(option.value); // NEW
-                    element.textContent = String(option.label); // NEW
-                    select.appendChild(element); // NEW
-                } // NEW
-                select.value = String(value ?? ""); // NEW
-                return select; // NEW
-            } // NEW
-
-            /**
-             * Renders one persistent collapsible strip shell and rebuilds its details only when requested. // NEW
-             */ // NEW
-            function renderStripBox(box, config) { // NEW
-                const settings = config || {}; // NEW
-                let shell = box.__yearPlanStrip; // NEW
-                if (!shell) { // NEW
-                    box.className = "yp-strip-box"; // NEW
-                    const header = document.createElement("div"); // CHANGE
-                    header.tabIndex = 0; // CHANGE
-                    header.setAttribute("role", "button"); // CHANGE
-                    header.className = "yp-strip-header"; // NEW
-                    const title = document.createElement("span"); // NEW
-                    title.className = "yp-strip-title"; // NEW
-                    const summary = document.createElement("span"); // NEW
-                    summary.className = "yp-strip-summary"; // NEW
-                    const toggle = document.createElement("span"); // NEW
-                    toggle.className = "yp-strip-toggle"; // NEW
-                    const details = document.createElement("div"); // NEW
-                    details.className = "yp-strip-details"; // NEW
-                    details.id = settings.detailsId || Env.uid("yp-strip-details"); // NEW
-                    header.setAttribute("aria-controls", details.id); // NEW
-                    header.appendChild(title); // NEW
-                    header.appendChild(summary); // NEW
-                    header.appendChild(toggle); // NEW
-                    box.appendChild(header); // NEW
-                    box.appendChild(details); // NEW
-                    shell = { header, title, summary, toggle, details, detailsBuilt: false, onToggle: null }; // NEW
-                    header.addEventListener("click", () => { if (shell.onToggle) shell.onToggle(); }); // NEW
-                    header.addEventListener("keydown", event => { if ((event.key === "Enter" || event.key === " ") && shell.onToggle) { event.preventDefault(); shell.onToggle(); } }); // CHANGE
-                    box.__yearPlanStrip = shell; // NEW
-                } // NEW
-                shell.onToggle = settings.onToggle || null; // NEW
-                shell.title.textContent = String(settings.title || ""); // NEW
-                shell.summary.innerHTML = ""; // CHANGE
-                if (Array.isArray(settings.summaryChips)) setChipRow(shell.summary, settings.summaryChips); // NEW
-                else shell.summary.textContent = String(settings.summaryText || ""); // CHANGE
-                shell.toggle.textContent = settings.expanded ? "Collapse" : "Expand"; // NEW
-                shell.header.setAttribute("aria-expanded", settings.expanded ? "true" : "false"); // NEW
-                shell.details.style.display = settings.expanded ? "block" : "none"; // NEW
-                const shouldBuild = !!settings.rebuildDetails || (!shell.detailsBuilt && (settings.expanded || settings.mountWhenCollapsed)); // NEW
-                if (shouldBuild && settings.renderDetails) { // NEW
-                    shell.details.innerHTML = ""; // NEW
-                    settings.renderDetails(shell.details); // NEW
-                    shell.detailsBuilt = true; // NEW
-                } // NEW
-                return shell; // NEW
-            } // NEW
-
-            function cropLabel(crop) { // NEW
-                const plantName = String(crop && crop.plant || "").trim(); // NEW
-                const varietyName = String(crop && crop.variety || "").trim(); // NEW
-                return plantName && varietyName ? `${plantName} - ${varietyName}` : (plantName || varietyName || String(crop && crop.id || "Crop")); // NEW
-            } // NEW
-
-            const formatKg = YearPlanDashboard.formatKg; // CHANGE
-            const formatMoney = YearPlanDashboard.formatMoney; // NEW
-
-            function statusTone(status) { // NEW
-                if (status === "Short" || status === "Missing data") return "danger"; // NEW
-                if (status === "Expired / timing issue") return "warning"; // NEW
-                if (status === "Surplus" || status === "OK") return "success"; // NEW
-                if (status === "Unsaved") return "primary"; // NEW
-                return "neutral"; // NEW
-            } // NEW
-
-            function createChip(label, value, tone, onClick) { // NEW
-                const chip = document.createElement(onClick ? "button" : "span"); // NEW
-                if (onClick) chip.type = "button"; // NEW
-                chip.className = "yp-chip"; // NEW
-                chip.dataset.tone = tone || "neutral"; // NEW
-                if (onClick) chip.dataset.clickable = "true"; // NEW
-                chip.innerHTML = value === undefined || value === null || value === "" // NEW
-                    ? mxUtils.htmlEntities(String(label || "")) // NEW
-                    : `<strong>${mxUtils.htmlEntities(String(label || ""))}</strong> ${mxUtils.htmlEntities(String(value))}`; // NEW
-                if (onClick) chip.addEventListener("click", onClick); // NEW
-                return chip; // NEW
-            } // NEW
-
-            function validationMessage(result) { // CHANGE
-                return YearPlanDashboard.validationMessage(result); // CHANGE
-            } // CHANGE
-
-            function cropValidationResults(cropId) { // CHANGE
-                const wanted = String(cropId || ""); // CHANGE
-                return ((dashboard && dashboard.validationErrors) || []).filter(error => error && error.scope === "crop" && String(error.cropId || "") === wanted); // CHANGE
-            } // CHANGE
-
-            function cropHasDiagnostics(cropId) { // ADDED
-                return cropValidationResults(cropId).length > 0; // ADDED
-            } // ADDED
-
-            function csaValidationResults() { // CHANGE
-                return ((dashboard && dashboard.validationErrors) || []).filter(error => error && error.scope === "csa"); // CHANGE
-            } // CHANGE
-
-            function closeDiagnosticsPopovers(except) { // CHANGE
-                for (const popover of card.querySelectorAll(".yp-diagnostics-popover")) { // CHANGE
-                    if (popover !== except) { popover.hidden = true; if (popover.parentElement) popover.parentElement.dataset.pinned = "false"; } // CHANGE
-                } // CHANGE
-            } // CHANGE
-
-            function focusAndHighlight(element) { // CHANGE
-                if (!element) return false; // CHANGE
-                if (element.disabled) return false; // ADDED
-                if (typeof element.focus === "function") element.focus(); // CHANGE
-                element.classList.add("yp-field-highlight"); // CHANGE
-                setTimeout(() => { if (element && element.classList) element.classList.remove("yp-field-highlight"); }, 1200); // CHANGE
-                if (typeof element.scrollIntoView === "function") element.scrollIntoView({ block: "center", inline: "nearest" }); // CHANGE
-                return true; // CHANGE
-            } // CHANGE
-
-            function findTargetControl(target) { // CHANGE
-                if (!target || typeof target !== "object") return null; // CHANGE
-                const selectorParts = [`[data-year-plan-field="${String(target.field || "").replace(/"/g, '\\"')}"]`]; // CHANGE
-                if (target.cropId) selectorParts.push(`[data-crop-id="${String(target.cropId).replace(/"/g, '\\"')}"]`); // CHANGE
-                if (target.packageIndex !== undefined) selectorParts.push(`[data-package-index="${String(target.packageIndex).replace(/"/g, '\\"')}"]`); // CHANGE
-                if (target.componentIndex !== undefined) selectorParts.push(`[data-csa-component-index="${String(target.componentIndex).replace(/"/g, '\\"')}"]`); // CHANGE
-                return card.querySelector(selectorParts.join("")); // CHANGE
-            } // CHANGE
-
-            function navigateToValidation(result, fallbackTrigger) { // CHANGE
-                const target = result && result.target; // CHANGE
-                if (!target || typeof target !== "object") return focusAndHighlight(fallbackTrigger); // CHANGE
-                if (target.area === "crop") { // CHANGE
-                    const targetTab = target.tab || "basics"; // ADDED
-                    const needsCropRender = String(state.selectedCropId || "") !== String(target.cropId || "") || state.activeTab !== targetTab; // ADDED
-                    if (target.cropId && setSelectedCropEverywhere(target.cropId, { expandCropPlan: true, expandPlanCheck: true, activeTab: targetTab }) && needsCropRender) { // CHANGE
-                        renderCropList(); renderSelectedEditor(); renderCropPlan(false); renderPlanCheck(); // CHANGE
-                    } // CHANGE
-                } else if (target.area === "csa") { // CHANGE
-                    state.csaExpanded = true; // CHANGE
-                    renderCsa(true); // CHANGE
-                } else if (target.area === "demand") { // CHANGE
-                    state.demandExpanded = true; // CHANGE
-                    renderDemandStrip(true); // CHANGE
-                } else if (target.area === "crop-list") { // CHANGE
-                    state.cropPlanExpanded = true; // CHANGE
-                    renderCropPlan(false); // CHANGE
-                } // CHANGE
-                const control = findTargetControl(target); // CHANGE
-                return focusAndHighlight(control) || focusAndHighlight(fallbackTrigger); // CHANGE
-            } // CHANGE
-
-            function createDiagnosticsControl(label, results) { // CHANGE
-                const diagnostics = (results || []).filter(error => validationMessage(error)); // CHANGE
-                if (!diagnostics.length) return null; // CHANGE
-                const wrapControl = document.createElement("span"); // CHANGE
-                wrapControl.className = "yp-diagnostics-wrap"; // CHANGE
-                const trigger = document.createElement("button"); // CHANGE
-                trigger.type = "button"; // CHANGE
-                trigger.className = "yp-diagnostics-trigger"; // CHANGE
-                trigger.textContent = "?"; // CHANGE
-                trigger.setAttribute("aria-label", label); // CHANGE
-                const popover = document.createElement("div"); // CHANGE
-                popover.className = "yp-diagnostics-popover"; // CHANGE
-                popover.hidden = true; // CHANGE
-                const title = document.createElement("div"); // CHANGE
-                title.className = "yp-diagnostics-title"; // CHANGE
-                title.textContent = label; // CHANGE
-                popover.appendChild(title); // CHANGE
-                for (const result of diagnostics) { // CHANGE
-                    const item = document.createElement("button"); // CHANGE
-                    item.type = "button"; // CHANGE
-                    item.className = "yp-diagnostics-item"; // CHANGE
-                    item.textContent = validationMessage(result); // CHANGE
-                    item.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); navigateToValidation(result, trigger); }); // CHANGE
-                    popover.appendChild(item); // CHANGE
-                } // CHANGE
-                const show = pinned => { closeDiagnosticsPopovers(popover); popover.hidden = false; if (pinned) wrapControl.dataset.pinned = "true"; }; // CHANGE
-                const hide = () => { if (wrapControl.dataset.pinned !== "true") popover.hidden = true; }; // CHANGE
-                trigger.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); const nextPinned = wrapControl.dataset.pinned !== "true"; wrapControl.dataset.pinned = nextPinned ? "true" : "false"; if (nextPinned) show(true); else popover.hidden = true; }); // CHANGE
-                trigger.addEventListener("focus", () => show(false)); // CHANGE
-                trigger.addEventListener("mouseenter", () => show(false)); // CHANGE
-                wrapControl.addEventListener("mouseleave", hide); // CHANGE
-                wrapControl.addEventListener("click", event => event.stopPropagation()); // CHANGE
-                wrapControl.appendChild(trigger); // CHANGE
-                wrapControl.appendChild(popover); // CHANGE
-                return wrapControl; // CHANGE
-            } // CHANGE
-
-            function createDiagnosticsChip(label, tone, results, onClick) { // CHANGE
-                const wrapControl = document.createElement("span"); // CHANGE
-                wrapControl.className = "yp-diagnostics-wrap"; // CHANGE
-                wrapControl.appendChild(createChip(label, "", tone, onClick)); // CHANGE
-                const diagnostics = createDiagnosticsControl(label, results); // CHANGE
-                if (diagnostics) wrapControl.appendChild(diagnostics); // CHANGE
-                return wrapControl; // CHANGE
-            } // CHANGE
-
-            function setChipRow(host, chips) { // NEW
-                host.innerHTML = ""; // NEW
-                host.classList.add("yp-chip-row"); // NEW
-                for (const chip of (chips || [])) host.appendChild(chip); // NEW
-            } // NEW
-
-            function createKpiTile(label, value, tone) { // NEW
-                const tile = document.createElement("div"); // NEW
-                tile.className = "yp-kpi-tile"; // NEW
-                tile.dataset.tone = tone || "neutral"; // NEW
-                const labelEl = document.createElement("div"); // NEW
-                labelEl.className = "yp-kpi-label"; // NEW
-                labelEl.textContent = label; // NEW
-                const valueEl = document.createElement("div"); // NEW
-                valueEl.className = "yp-kpi-value"; // NEW
-                valueEl.textContent = value; // NEW
-                tile.appendChild(labelEl); // NEW
-                tile.appendChild(valueEl); // NEW
-                return tile; // NEW
-            } // NEW
-
-            function getDashboardStatus() { // NEW
-                if (!dashboard) return "OK"; // NEW
-                if ((dashboard.validationErrors || []).length || (dashboard.cropMetrics || []).some(metric => metric.status === "Missing data")) return "Missing data"; // NEW
-                if (Number(dashboard.shortKg) > EPS) return "Short"; // NEW
-                if ((dashboard.cropMetrics || []).some(metric => metric.status === "Expired / timing issue")) return "Expired / timing issue"; // NEW
-                return "OK"; // NEW
-            } // NEW
-
-            function dashboardChartSummary() { // NEW
-                return runtime && runtime.weekly // NEW
-                    ? PlanMath.summarizePlanChartModel(PlanMath.buildPlanChartModel(runtime.weekly, "")) // NEW
-                    : { targetKg: Number(dashboard && dashboard.targetKg) || 0, usableSupplyKg: Math.max(0, (Number(dashboard && dashboard.targetKg) || 0) - (Number(dashboard && dashboard.shortKg) || 0)), shortKg: Number(dashboard && dashboard.shortKg) || 0, expiredKg: 0, worstShortageKg: 0, worstShortageWeek: "", shortWeeks: 0 }; // NEW
-            } // NEW
-
-            function buildAttentionItems(chartSummary) { // NEW
-                const items = []; // NEW
-                const add = item => { if (items.length < 8 && item) items.push(item); }; // CHANGE
-                for (const metric of ((dashboard && dashboard.cropMetrics) || [])) { // NEW
-                    const cropDiagnostics = cropValidationResults(metric.crop.id); // ADDED
-                    if (metric.status === "Missing data") add(createDiagnosticsChip(`${cropLabel(metric.crop)} missing data`, "danger", cropDiagnostics, () => selectCropFromAttention(metric.crop.id))); // CHANGE
-                    else if (cropDiagnostics.length) add(createDiagnosticsChip(`${cropLabel(metric.crop)} diagnostics`, "danger", cropDiagnostics, () => selectCropFromAttention(metric.crop.id))); // ADDED
-                    else if (metric.status === "Short") add(createChip(`${cropLabel(metric.crop)} short ${formatKg(metric.shortKg)}`, "", "danger", () => selectCropFromAttention(metric.crop.id))); // CHANGE
-                    else if (metric.status === "Expired / timing issue") add(createChip(`${cropLabel(metric.crop)} timing ${formatKg(metric.shortKg)}`, "", "warning", () => selectCropFromAttention(metric.crop.id))); // CHANGE
-                } // NEW
-                if (chartSummary && chartSummary.expiredKg > EPS) add(createChip(`Expired ${formatKg(chartSummary.expiredKg)}`, "", "warning", () => { state.planCheckExpanded = true; renderPlanCheck(); })); // CHANGE
-                if (PlanSchema.validateDemand(plan).length) add(createChip("Demand dates invalid", "", "danger", () => { state.demandExpanded = true; renderDemandStrip(true); })); // CHANGE
-                if (PlanSchema.validateCsa(plan).length) add(createDiagnosticsChip("CSA setup issues", "danger", csaValidationResults(), () => { state.csaExpanded = true; renderCsa(true); })); // CHANGE
-                if ((dashboard && dashboard.diagnostics || []).length && !items.length) add(createChip("Plan Check has diagnostics", "", "warning", () => { state.planCheckExpanded = true; renderPlanCheck(); })); // CHANGE
-                return items; // NEW
-            } // NEW
-
-            function selectCropFromAttention(cropId) { // NEW
-                if (!setSelectedCropEverywhere(cropId, { expandCropPlan: true, expandPlanCheck: true })) return; // CHANGE
-                renderCropList(); // NEW
-                renderSelectedEditor(); // NEW
-                renderCropPlan(false); // NEW
-                renderPlanCheck(); // NEW
-            } // NEW
-
-            function listUnitOptions(crop) { // NEW
-                const options = [{ value: "kg", label: "kg" }, { value: "g", label: "g" }, { value: "lb", label: "lb" }, { value: "plant", label: "plant" }]; // NEW
-                const seen = new Set(options.map(option => option.value)); // NEW
-                for (const pkg of ((crop && crop.packages) || [])) { // NEW
-                    const unit = String(pkg && pkg.unit || "").trim(); // NEW
-                    const key = unit.toLowerCase(); // NEW
-                    if (!key || seen.has(key)) continue; // NEW
-                    seen.add(key); // NEW
-                    options.push({ value: unit, label: unit }); // NEW
-                } // NEW
-                return options; // NEW
-            } // NEW
-
-            function defaultUnit(crop) { // NEW
-                return String(crop && crop.packages && crop.packages[0] && crop.packages[0].unit || "").trim() || "kg"; // NEW
-            } // NEW
-
-            function ensureSelectOption(select, value, label) { // CHANGE
-                const desired = String(value ?? ""); // CHANGE
-                if (!desired || Array.from(select.options).some(option => String(option.value) === desired)) return; // CHANGE
-                select.appendChild(new Option(label || `${desired} (unavailable)`, desired)); // CHANGE
-            } // CHANGE
-
-            function setYearPlanField(control, field, metadata) { // CHANGE
-                if (!control) return control; // CHANGE
-                control.dataset.yearPlanField = String(field || ""); // CHANGE
-                const data = metadata || {}; // CHANGE
-                if (data.cropId !== undefined) control.dataset.cropId = String(data.cropId); // CHANGE
-                if (data.packageIndex !== undefined) control.dataset.packageIndex = String(data.packageIndex); // CHANGE
-                if (data.componentIndex !== undefined) control.dataset.csaComponentIndex = String(data.componentIndex); // CHANGE
-                return control; // CHANGE
-            } // CHANGE
-
-            function hasActualHarvestForCrop(crop) { // CHANGE
-                const derived = runtime && runtime.derivedByCropId && runtime.derivedByCropId.get(String(crop && crop.id || "")); // CHANGE
-                return !!derived && Array.isArray(derived.actualHarvestWeeklyKg) && derived.actualHarvestWeeklyKg.some(value => Number(value) > 0); // CHANGE
-            } // CHANGE
-
-            function selectedCrop() { // NEW
-                return (plan.crops || []).find(crop => String(crop.id) === String(state.selectedCropId)) || null; // NEW
-            } // NEW
-
-            function setSelectedCropEverywhere(cropId, options) { // NEW
-                const settings = options || {}; // NEW
-                const crop = (plan.crops || []).find(item => String(item && item.id || "") === String(cropId)); // NEW
-                if (!crop) return false; // NEW
-                const selectedId = String(crop.id); // NEW
-                state.selectedCropId = selectedId; // NEW
-                state.activeTab = settings.activeTab || "basics"; // NEW
-                if (settings.expandCropPlan) state.cropPlanExpanded = true; // NEW
-                if (settings.expandPlanCheck) state.planCheckExpanded = true; // NEW
-                if (settings.syncPlanCheck !== false) { // NEW
-                    plan.cropFilterId = selectedId; // NEW
-                    cropFilterSel.value = selectedId; // NEW
-                } // NEW
-                return true; // NEW
-            } // NEW
-
-            function addField(host, label, control, help) { // NEW
-                const field = document.createElement("label"); // NEW
-                field.style.cssText = "display:flex;flex-direction:column;gap:4px;min-width:0;"; // NEW
-                const title = document.createElement("span"); // NEW
-                title.style.fontWeight = "700"; // NEW
-                title.textContent = label; // NEW
-                if (control && !control.style.width) control.style.width = "100%"; // NEW
-                field.appendChild(title); // NEW
-                field.appendChild(control); // NEW
-                if (help) { // NEW
-                    const note = document.createElement("span"); // NEW
-                    note.style.cssText = "color:#666;font-size:11px;"; // NEW
-                    note.textContent = help; // NEW
-                    field.appendChild(note); // NEW
-                } // NEW
-                host.appendChild(field); // NEW
-                return field; // NEW
-            } // NEW
-
-            function addPackageField(host, label, control) { // ADDED
-                const field = document.createElement("label"); // ADDED
-                field.className = "yp-package-field"; // ADDED
-                const title = document.createElement("span"); // ADDED
-                title.className = "yp-package-title"; // ADDED
-                title.textContent = label; // ADDED
-                if (control && !control.style.width) control.style.width = "100%"; // ADDED
-                field.appendChild(title); // ADDED
-                field.appendChild(control); // ADDED
-                host.appendChild(field); // ADDED
-                return field; // ADDED
-            } // ADDED
-
-            function createDerivedTile(label, help) { // ADDED
-                const tile = document.createElement("div"); // ADDED
-                tile.className = "yp-derived-tile"; // ADDED
-                if (help) tile.title = help; // ADDED
-                const labelEl = document.createElement("div"); // ADDED
-                labelEl.className = "yp-derived-label"; // ADDED
-                labelEl.textContent = label; // ADDED
-                const valueEl = document.createElement("div"); // ADDED
-                valueEl.className = "yp-derived-value"; // ADDED
-                valueEl.textContent = "0"; // ADDED
-                tile.appendChild(labelEl); // ADDED
-                tile.appendChild(valueEl); // ADDED
-                return { tile, valueEl }; // ADDED
-            } // ADDED
-
-            function resolveDefaultKgPerPlant(crop) { // ADDED
-                let nextYield = Number(crop && crop.baseKgPerPlant); // ADDED
-                const rows = varietyCache.get(String(crop && crop.plantId || "")) || []; // ADDED
-                const row = rows.find(item => String(item.variety_id) === String((crop && crop.varietyId) ?? "")); // ADDED
-                const overrides = row ? Env.safeJsonStringParse(row.overrides_json, null) : null; // ADDED
-                const overrideYield = Number(overrides && (overrides.yield_per_plant_kg ?? overrides.overrides?.yield_per_plant_kg)); // ADDED
-                if (Number.isFinite(overrideYield) && overrideYield > 0) nextYield = overrideYield; // ADDED
-                return Number.isFinite(nextYield) && nextYield > 0 ? nextYield : null; // ADDED
-            } // ADDED
-
-            function updateYieldHint(crop, hint, resetYield) { // ADDED
-                if (!hint) return; // ADDED
-                const defaultYield = resolveDefaultKgPerPlant(crop); // ADDED
-                const defaultText = Number.isFinite(defaultYield) ? `${defaultYield} kg/plant default` : "No default yield available"; // ADDED
-                hint.textContent = crop && crop.kgPerPlantMode === "manual" // ADDED
-                    ? `Manual override; ${defaultText}` // ADDED
-                    : `Using ${defaultText}`; // ADDED
-                if (resetYield) resetYield.style.display = crop && crop.kgPerPlantMode === "manual" ? "" : "none"; // ADDED
-            } // ADDED
+            function mkSelect(options, value, width) {
+                const select = document.createElement("select");
+                select.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;box-sizing:border-box;";
+                if (width) select.style.width = `${width}px`;
+                for (const option of (options || [])) {
+                    const element = document.createElement("option");
+                    element.value = String(option.value);
+                    element.textContent = String(option.label);
+                    select.appendChild(element);
+                }
+                select.value = String(value ?? "");
+                return select;
+            }
 
             /**
-             * Keeps one editable date pair valid without rewriting the opposite endpoint. // NEW
-             */ // NEW
-            function bindPairedDateControls(startInput, endInput, options) { // NEW
-                const settings = options || {}; // NEW
-                const diagnostic = String(settings.diagnostic || "Start date cannot be after end date."); // NEW
-                let lastStartValue = String(startInput.value || ""); // NEW
-                let lastEndValue = String(endInput.value || ""); // NEW
+             * Renders one persistent collapsible strip shell and rebuilds its details only when requested.
+             */
+            function renderStripBox(box, config) {
+                const settings = config || {};
+                let shell = box.__yearPlanStrip;
+                if (!shell) {
+                    box.className = "yp-strip-box";
+                    const header = document.createElement("div");
+                    header.tabIndex = 0;
+                    header.setAttribute("role", "button");
+                    header.className = "yp-strip-header";
+                    const title = document.createElement("span");
+                    title.className = "yp-strip-title";
+                    const summary = document.createElement("span");
+                    summary.className = "yp-strip-summary";
+                    const toggle = document.createElement("span");
+                    toggle.className = "yp-strip-toggle";
+                    const details = document.createElement("div");
+                    details.className = "yp-strip-details";
+                    details.id = settings.detailsId || Env.uid("yp-strip-details");
+                    header.setAttribute("aria-controls", details.id);
+                    header.appendChild(title);
+                    header.appendChild(summary);
+                    header.appendChild(toggle);
+                    box.appendChild(header);
+                    box.appendChild(details);
+                    shell = { header, title, summary, toggle, details, detailsBuilt: false, onToggle: null };
+                    header.addEventListener("click", () => { if (shell.onToggle) shell.onToggle(); });
+                    header.addEventListener("keydown", event => { if ((event.key === "Enter" || event.key === " ") && shell.onToggle) { event.preventDefault(); shell.onToggle(); } });
+                    box.__yearPlanStrip = shell;
+                }
+                shell.onToggle = settings.onToggle || null;
+                shell.title.textContent = String(settings.title || "");
+                shell.summary.innerHTML = "";
+                if (Array.isArray(settings.summaryChips)) setChipRow(shell.summary, settings.summaryChips);
+                else shell.summary.textContent = String(settings.summaryText || "");
+                shell.toggle.textContent = settings.expanded ? "Collapse" : "Expand";
+                shell.header.setAttribute("aria-expanded", settings.expanded ? "true" : "false");
+                shell.details.style.display = settings.expanded ? "block" : "none";
+                const shouldBuild = !!settings.rebuildDetails || (!shell.detailsBuilt && (settings.expanded || settings.mountWhenCollapsed));
+                if (shouldBuild && settings.renderDetails) {
+                    shell.details.innerHTML = "";
+                    settings.renderDetails(shell.details);
+                    shell.detailsBuilt = true;
+                }
+                return shell;
+            }
 
-                function updateConstraints() { // NEW
-                    startInput.max = PlanMath.hasYmd(endInput.value) ? endInput.value : ""; // NEW
-                    endInput.min = PlanMath.hasYmd(startInput.value) ? startInput.value : ""; // NEW
-                } // NEW
+            function cropLabel(crop) {
+                const plantName = String(crop && crop.plant || "").trim();
+                const varietyName = String(crop && crop.variety || "").trim();
+                return plantName && varietyName ? `${plantName} - ${varietyName}` : (plantName || varietyName || String(crop && crop.id || "Crop"));
+            }
 
-                function syncFromInputs() { // NEW
-                    lastStartValue = String(startInput.value || ""); // NEW
-                    lastEndValue = String(endInput.value || ""); // NEW
-                    updateConstraints(); // NEW
-                } // NEW
+            const formatKg = YearPlanDashboard.formatKg;
+            const formatMoney = YearPlanDashboard.formatMoney;
 
-                function removeDiagnostic() { // NEW
-                    state.extraDiagnostics = (state.extraDiagnostics || []).filter(message => message !== diagnostic); // NEW
-                } // NEW
+            function statusTone(status) {
+                if (status === "Short" || status === "Missing data") return "danger";
+                if (status === "Expired / timing issue") return "warning";
+                if (status === "Surplus" || status === "OK") return "success";
+                if (status === "Unsaved") return "primary";
+                return "neutral";
+            }
 
-                function rejectChange(input, previousValue, beforeDateRanges) { // NEW
-                    input.value = previousValue; // NEW
-                    state.extraDiagnostics = YearPlanDashboard.uniqueMessages([...(state.extraDiagnostics || []), diagnostic]); // NEW
-                    state.planCheckExpanded = true; // CHANGE
-                    updateConstraints(); // NEW
-                    refreshDerived(beforeDateRanges); // NEW
-                } // NEW
+            function createChip(label, value, tone, onClick) {
+                const chip = document.createElement(onClick ? "button" : "span");
+                if (onClick) chip.type = "button";
+                chip.className = "yp-chip";
+                chip.dataset.tone = tone || "neutral";
+                if (onClick) chip.dataset.clickable = "true";
+                chip.innerHTML = value === undefined || value === null || value === ""
+                    ? mxUtils.htmlEntities(String(label || ""))
+                    : `<strong>${mxUtils.htmlEntities(String(label || ""))}</strong> ${mxUtils.htmlEntities(String(value))}`;
+                if (onClick) chip.addEventListener("click", onClick);
+                return chip;
+            }
 
-                function handleChange(changedField) { // NEW
-                    const beforeDateRanges = captureDateRangeSnapshot(); // NEW
-                    const nextStart = String(startInput.value || ""); // NEW
-                    const nextEnd = String(endInput.value || ""); // NEW
-                    if (PlanMath.hasYmd(nextStart) && PlanMath.hasYmd(nextEnd) && nextStart > nextEnd) { // NEW
-                        rejectChange( // NEW
-                            changedField === "start" ? startInput : endInput, // NEW
-                            changedField === "start" ? lastStartValue : lastEndValue, // NEW
-                            beforeDateRanges // NEW
-                        ); // NEW
-                        return; // NEW
-                    } // NEW
+            function validationMessage(result) {
+                return YearPlanDashboard.validationMessage(result);
+            }
 
-                    const previousPair = { start: lastStartValue, end: lastEndValue }; // NEW
-                    removeDiagnostic(); // NEW
-                    if (changedField === "start") { // NEW
-                        lastStartValue = nextStart; // NEW
-                        if (settings.setStart) settings.setStart(nextStart); // NEW
-                    } else { // NEW
-                        lastEndValue = nextEnd; // NEW
-                        if (settings.setEnd) settings.setEnd(nextEnd); // NEW
-                    } // NEW
-                    updateConstraints(); // NEW
-                    if (settings.afterCommit) settings.afterCommit(beforeDateRanges, previousPair, changedField); // NEW
-                    else refreshDerived(beforeDateRanges); // NEW
-                } // NEW
+            function cropValidationResults(cropId) {
+                const wanted = String(cropId || "");
+                return ((dashboard && dashboard.validationErrors) || []).filter(error => error && error.scope === "crop" && String(error.cropId || "") === wanted);
+            }
 
-                startInput.__syncPairedDateState = syncFromInputs; // NEW
-                endInput.__syncPairedDateState = syncFromInputs; // NEW
-                syncFromInputs(); // CHANGE
-                startInput.addEventListener("change", () => handleChange("start")); // NEW
-                endInput.addEventListener("change", () => handleChange("end")); // NEW
-            } // NEW
+            function cropHasDiagnostics(cropId) {
+                return cropValidationResults(cropId).length > 0;
+            }
 
-            function debounceRefresh(renderOptions) { // CHANGE
-                if (renderOptions) pendingRefreshOptions = { ...(pendingRefreshOptions || {}), ...renderOptions }; // NEW
-                if (refreshTimer) clearTimeout(refreshTimer); // NEW
-                refreshTimer = setTimeout(() => { // NEW
-                    refreshTimer = null; // NEW
-                    const options = pendingRefreshOptions; // NEW
-                    pendingRefreshOptions = null; // NEW
-                    if (SessionController.isActive(session)) refreshDerived(null, options); // CHANGE
-                }, 90); // NEW
-            } // NEW
+            function csaValidationResults() {
+                return ((dashboard && dashboard.validationErrors) || []).filter(error => error && error.scope === "csa");
+            }
 
-            function fillTemplateDropdown() { // NEW
-                templateSel.innerHTML = ""; // NEW
-                templateSel.appendChild(new Option("-- Select template --", "")); // NEW
-                for (const name of PlanRepository.listTemplateNames()) templateSel.appendChild(new Option(name, name)); // NEW
-            } // NEW
+            function closeDiagnosticsPopovers(except) {
+                for (const popover of card.querySelectorAll(".yp-diagnostics-popover")) {
+                    if (popover !== except) { popover.hidden = true; if (popover.parentElement) popover.parentElement.dataset.pinned = "false"; }
+                }
+            }
 
-            function fillCropFilter() { // NEW
-                const current = String(plan.cropFilterId || ""); // NEW
-                cropFilterSel.innerHTML = ""; // NEW
-                cropFilterSel.appendChild(new Option("-- All crops --", "")); // NEW
-                for (const crop of (plan.crops || [])) cropFilterSel.appendChild(new Option(cropLabel(crop), crop.id)); // NEW
-                cropFilterSel.value = (plan.crops || []).some(crop => String(crop.id) === current) ? current : ""; // NEW
-                plan.cropFilterId = cropFilterSel.value; // NEW
-            } // NEW
+            function focusAndHighlight(element) {
+                if (!element) return false;
+                if (element.disabled) return false;
+                if (typeof element.focus === "function") element.focus();
+                element.classList.add("yp-field-highlight");
+                setTimeout(() => { if (element && element.classList) element.classList.remove("yp-field-highlight"); }, 1200);
+                if (typeof element.scrollIntoView === "function") element.scrollIntoView({ block: "center", inline: "nearest" });
+                return true;
+            }
 
-            function replacePlan(nextPlan, nextYear, loadedExisting) { // CHANGE
-                Object.keys(plan).forEach(key => delete plan[key]); // NEW
-                Object.assign(plan, PlanSchema.normalizeForRuntime(nextPlan, nextYear)); // NEW
-                currentYear = Number(nextYear); // NEW
-                loadedExistingForCurrentYear = !!loadedExisting; // NEW
-                plan.year = currentYear; // NEW
-                state.selectedCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, "", 0); // NEW
-                state.activeTab = "basics"; // NEW
-                state.hadBlockingErrors = false; // NEW
-                state.hadCsaErrors = false; // NEW
-                state.hadDemandErrors = false; // NEW
-                state.validationState = "idle"; // NEW
-                state.lastSavedAt = null; // NEW
-                state.closePromptOpen = false; // NEW
-                state.extraDiagnostics = []; // NEW
-                titleEl.textContent = `Plan Year ${currentYear}`; // CHANGE
-                yearInput.value = String(currentYear); // NEW
-            } // NEW
+            function findTargetControl(target) {
+                if (!target || typeof target !== "object") return null;
+                const selectorParts = [`[data-year-plan-field="${String(target.field || "").replace(/"/g, '\\"')}"]`];
+                if (target.cropId) selectorParts.push(`[data-crop-id="${String(target.cropId).replace(/"/g, '\\"')}"]`);
+                if (target.packageIndex !== undefined) selectorParts.push(`[data-package-index="${String(target.packageIndex).replace(/"/g, '\\"')}"]`);
+                if (target.componentIndex !== undefined) selectorParts.push(`[data-csa-component-index="${String(target.componentIndex).replace(/"/g, '\\"')}"]`);
+                return card.querySelector(selectorParts.join(""));
+            }
 
-            function renderSummary() { // NEW
-                const chartSummary = dashboardChartSummary(); // NEW
-                const status = getDashboardStatus(); // NEW
-                const statusText = status === "Expired / timing issue" ? "Warning" : status; // NEW
-                const statusToneName = status === "Expired / timing issue" ? "warning" : statusTone(status); // NEW
-                const dirty = YearPlanDashboard.isDirty(state, plan); // NEW
-                heroMain.innerHTML = ""; // CHANGE
-                const head = document.createElement("div"); // NEW
-                head.className = "yp-plan-hero-head"; // NEW
-                const titleGroup = document.createElement("div"); // NEW
-                const title = document.createElement("div"); // NEW
-                title.className = "yp-plan-hero-title"; // NEW
-                title.textContent = `${currentYear} Year Plan`; // NEW
-                const sub = document.createElement("div"); // NEW
-                sub.className = "yp-plan-hero-sub"; // NEW
-                sub.textContent = `${dashboard.cropCount} crop${dashboard.cropCount === 1 ? "" : "s"} planned`; // NEW
-                titleGroup.appendChild(title); // NEW
-                titleGroup.appendChild(sub); // NEW
-                const statusRow = document.createElement("div"); // NEW
-                statusRow.className = "yp-chip-row"; // NEW
-                statusRow.appendChild(createChip("Status", statusText, statusToneName)); // NEW
-                if (dirty) statusRow.appendChild(createChip("Unsaved", "", "primary")); // NEW
-                head.appendChild(titleGroup); // NEW
-                head.appendChild(statusRow); // NEW
-                const grid = document.createElement("div"); // NEW
-                grid.className = "yp-kpi-grid"; // NEW
-                grid.appendChild(createKpiTile("Crops", String(dashboard.cropCount), "neutral")); // NEW
-                grid.appendChild(createKpiTile("Target", formatKg(chartSummary.targetKg), "primary")); // NEW
-                grid.appendChild(createKpiTile("Usable supply", formatKg(chartSummary.usableSupplyKg), "success")); // CHANGE
-                grid.appendChild(createKpiTile("Total revenue", formatMoney(dashboard.totalFulfilledRevenue), dashboard.totalFulfilledRevenue > EPS ? "success" : "neutral")); // CHANGE
-                heroMain.appendChild(head); // NEW
-                heroMain.appendChild(grid); // NEW
-                const attentionItems = buildAttentionItems(chartSummary); // NEW
-                attentionBox.innerHTML = ""; // NEW
-                attentionBox.style.display = attentionItems.length ? "block" : "none"; // NEW
-                if (attentionItems.length) { // NEW
-                    const label = document.createElement("div"); // NEW
-                    label.className = "yp-attention-title"; // NEW
-                    label.textContent = "Needs attention"; // NEW
-                    const row = document.createElement("div"); // NEW
-                    row.className = "yp-chip-row"; // NEW
-                    for (const item of attentionItems) row.appendChild(item); // NEW
-                    attentionBox.appendChild(label); // NEW
-                    attentionBox.appendChild(row); // NEW
-                } // NEW
-            } // NEW
+            function navigateToValidation(result, fallbackTrigger) {
+                const target = result && result.target;
+                if (!target || typeof target !== "object") return focusAndHighlight(fallbackTrigger);
+                if (target.area === "crop") {
+                    const targetTab = target.tab || "basics";
+                    const needsCropRender = String(state.selectedCropId || "") !== String(target.cropId || "") || state.activeTab !== targetTab;
+                    if (target.cropId && setSelectedCropEverywhere(target.cropId, { expandCropPlan: true, expandPlanCheck: true, activeTab: targetTab }) && needsCropRender) {
+                        renderCropList(); renderSelectedEditor(); renderCropPlan(false); renderPlanCheck();
+                    }
+                } else if (target.area === "csa") {
+                    state.csaExpanded = true;
+                    renderCsa(true);
+                } else if (target.area === "demand") {
+                    state.demandExpanded = true;
+                    renderDemandStrip(true);
+                } else if (target.area === "crop-list") {
+                    state.cropPlanExpanded = true;
+                    renderCropPlan(false);
+                }
+                const control = findTargetControl(target);
+                return focusAndHighlight(control) || focusAndHighlight(fallbackTrigger);
+            }
 
-            function renderCropList() { // NEW
-                cropList.innerHTML = ""; // NEW
-                if (!dashboard.cropMetrics.length) { // NEW
-                    const empty = document.createElement("div"); // NEW
-                    empty.style.cssText = "padding:16px;color:#666;"; // NEW
-                    empty.textContent = "No crops in this plan."; // NEW
-                    cropList.appendChild(empty); // NEW
-                    return; // NEW
-                } // NEW
-                for (const metric of dashboard.cropMetrics) { // NEW
-                    const selected = String(metric.crop.id) === String(state.selectedCropId); // NEW
-                    const cardEl = document.createElement("div"); // CHANGE
-                    cardEl.tabIndex = 0; // CHANGE
-                    cardEl.setAttribute("role", "button"); // CHANGE
-                    cardEl.className = "yp-crop-card"; // CHANGE
-                    cardEl.dataset.selected = selected ? "true" : "false"; // NEW
-                    cardEl.dataset.cropId = String(metric.crop.id || ""); // CHANGE
-                    const detail = metric.status === "Short" || metric.status === "Expired / timing issue" // CHANGE
-                        ? `${metric.status} ${formatKg(metric.shortKg)}` // CHANGE
-                        : metric.status === "Surplus" ? `Surplus ${formatKg(metric.surplusKg)}` // NEW
-                            : metric.status; // NEW
-                    const top = document.createElement("div"); // NEW
-                    top.className = "yp-crop-card-top"; // NEW
-                    const name = document.createElement("div"); // NEW
-                    name.className = "yp-crop-card-name"; // NEW
-                    name.textContent = cropLabel(metric.crop); // NEW
-                    const statusHost = document.createElement("span"); // CHANGE
-                    statusHost.className = "yp-diagnostics-wrap"; // CHANGE
-                    statusHost.appendChild(createChip(detail, "", statusTone(metric.status))); // CHANGE
-                    const cropDiagnostics = cropHasDiagnostics(metric.crop.id) ? createDiagnosticsControl(`${cropLabel(metric.crop)} diagnostics`, cropValidationResults(metric.crop.id)) : null; // CHANGE
-                    if (cropDiagnostics) statusHost.appendChild(cropDiagnostics); // CHANGE
-                    top.appendChild(name); // NEW
-                    top.appendChild(statusHost); // CHANGE
-                    const metrics = document.createElement("div"); // NEW
-                    metrics.className = "yp-crop-card-metrics"; // NEW
-                    const requiredPlants = Number.isFinite(metric.plantsReq) && metric.plantsReq > 0 ? Math.ceil(metric.plantsReq) : 0; // NEW
-                    const actualPlants = Math.max(0, Math.trunc(Number(metric.crop.actualPlants) || 0)); // NEW
-                    metrics.innerHTML = `Target ${mxUtils.htmlEntities(formatKg(metric.targetKg))}<br>Usable ${mxUtils.htmlEntities(formatKg(Math.max(0, metric.targetKg - metric.shortKg)))}<br>Plants ${actualPlants} / ${requiredPlants} required`; // CHANGE
-                    cardEl.appendChild(top); // NEW
-                    cardEl.appendChild(metrics); // NEW
-                    cardEl.addEventListener("click", () => { // NEW
-                        if (!setSelectedCropEverywhere(metric.crop.id)) return; // CHANGE
-                        renderCropList(); // NEW
-                        renderSelectedEditor(); // NEW
-                        renderDemandStrip(true); // NEW
-                        renderCropPlan(false); // NEW
-                        renderPlanCheck(); // NEW
-                    }); // NEW
-                    cardEl.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); cardEl.click(); } }); // CHANGE
-                    cropList.appendChild(cardEl); // NEW
-                } // NEW
-            } // NEW
+            function createDiagnosticsControl(label, results) {
+                const diagnostics = (results || []).filter(error => validationMessage(error));
+                if (!diagnostics.length) return null;
+                const wrapControl = document.createElement("span");
+                wrapControl.className = "yp-diagnostics-wrap";
+                const trigger = document.createElement("button");
+                trigger.type = "button";
+                trigger.className = "yp-diagnostics-trigger";
+                trigger.textContent = "?";
+                trigger.setAttribute("aria-label", label);
+                const popover = document.createElement("div");
+                popover.className = "yp-diagnostics-popover";
+                popover.hidden = true;
+                const title = document.createElement("div");
+                title.className = "yp-diagnostics-title";
+                title.textContent = label;
+                popover.appendChild(title);
+                for (const result of diagnostics) {
+                    const item = document.createElement("button");
+                    item.type = "button";
+                    item.className = "yp-diagnostics-item";
+                    item.textContent = validationMessage(result);
+                    item.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); navigateToValidation(result, trigger); });
+                    popover.appendChild(item);
+                }
+                const show = pinned => { closeDiagnosticsPopovers(popover); popover.hidden = false; if (pinned) wrapControl.dataset.pinned = "true"; };
+                const hide = () => { if (wrapControl.dataset.pinned !== "true") popover.hidden = true; };
+                trigger.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); const nextPinned = wrapControl.dataset.pinned !== "true"; wrapControl.dataset.pinned = nextPinned ? "true" : "false"; if (nextPinned) show(true); else popover.hidden = true; });
+                trigger.addEventListener("focus", () => show(false));
+                trigger.addEventListener("mouseenter", () => show(false));
+                wrapControl.addEventListener("mouseleave", hide);
+                wrapControl.addEventListener("click", event => event.stopPropagation());
+                wrapControl.appendChild(trigger);
+                wrapControl.appendChild(popover);
+                return wrapControl;
+            }
 
-            function syncEditorDerived() { // NEW
-                const crop = selectedCrop(); // NEW
-                if (!crop || !dashboard) return; // NEW
-                const metric = dashboard.cropMetricsById.get(String(crop.id)); // NEW
-                if (editorRefs.actual) editorRefs.actual.textContent = String(Math.max(0, Math.trunc(Number(crop.actualPlants) || 0))); // CHANGE
-                if (editorRefs.required) editorRefs.required.textContent = String(metric && Number.isFinite(metric.plantsReq) && metric.plantsReq > 0 ? Math.ceil(metric.plantsReq) : 0); // CHANGE
-                if (editorRefs.seeds) editorRefs.seeds.textContent = String(metric && Number.isFinite(metric.seedsReq) && metric.seedsReq > 0 ? Math.ceil(metric.seedsReq) : 0); // CHANGE
-                if (editorRefs.harvestStart) editorRefs.harvestStart.value = PlanMath.hasYmd(crop.harvestStart) ? crop.harvestStart : ""; // NEW
-                if (editorRefs.harvestEnd) editorRefs.harvestEnd.value = PlanMath.hasYmd(crop.harvestEnd) ? crop.harvestEnd : ""; // NEW
-                if (editorRefs.useActual) { editorRefs.useActual.disabled = !hasActualHarvestForCrop(crop); editorRefs.useActual.checked = crop.useActualHarvest !== false && !editorRefs.useActual.disabled; } // CHANGE
-                if (editorRefs.harvestStart && editorRefs.harvestEnd) editorRefs.harvestStart.disabled = editorRefs.harvestEnd.disabled = !!(editorRefs.useActual && editorRefs.useActual.checked); // CHANGE
-                if (editorRefs.harvestStart && editorRefs.harvestStart.__syncPairedDateState) editorRefs.harvestStart.__syncPairedDateState(); // NEW
-                if (editorRefs.yieldHint) updateYieldHint(crop, editorRefs.yieldHint, editorRefs.resetYield); // ADDED
-                if (editorRefs.harvestTimeline && runtime) { // CHANGE
-                    const derived = runtime.derivedByCropId.get(String(crop.id)); // NEW
-                    renderActualHarvestTimeline(editorRefs.harvestTimeline, runtime.weekStarts, derived ? derived.actualHarvestWeeklyKg : []); // CHANGE
-                } // NEW
-            } // NEW
+            function createDiagnosticsChip(label, tone, results, onClick) {
+                const wrapControl = document.createElement("span");
+                wrapControl.className = "yp-diagnostics-wrap";
+                wrapControl.appendChild(createChip(label, "", tone, onClick));
+                const diagnostics = createDiagnosticsControl(label, results);
+                if (diagnostics) wrapControl.appendChild(diagnostics);
+                return wrapControl;
+            }
 
-            function syncDemandDerived() { // NEW
-                if (!dashboard || !demandRefs.channelSummaries) return; // CHANGE
-                for (const [channelId, summary] of demandRefs.channelSummaries) { // NEW
-                    const metric = dashboard.channelMetricsById.get(String(channelId)); // NEW
-                    if (metric) setChipRow(summary, buildChannelSummaryChips(metric)); // CHANGE
-                } // NEW
-            } // NEW
+            function setChipRow(host, chips) {
+                host.innerHTML = "";
+                host.classList.add("yp-chip-row");
+                for (const chip of (chips || [])) host.appendChild(chip);
+            }
 
-            function syncCsaDerived() { // ADDED
-                if (!dashboard || !csaRefs.componentValue || !csaRefs.salePrice) return; // ADDED
-                const metric = dashboard.csaMetric || {}; // ADDED
-                csaRefs.componentValue.value = (Math.max(0, Number(metric.componentValuePerBox) || 0)).toFixed(2); // ADDED
-                if (document.activeElement !== csaRefs.salePrice) csaRefs.salePrice.value = (Math.max(0, Number(plan.csa && plan.csa.salePricePerBox) || 0)).toFixed(2); // ADDED
-                if (csaRefs.resetSale) csaRefs.resetSale.disabled = plan.csa && plan.csa.salePriceMode !== "manual"; // ADDED
-            } // ADDED
+            function createKpiTile(label, value, tone) {
+                const tile = document.createElement("div");
+                tile.className = "yp-kpi-tile";
+                tile.dataset.tone = tone || "neutral";
+                const labelEl = document.createElement("div");
+                labelEl.className = "yp-kpi-label";
+                labelEl.textContent = label;
+                const valueEl = document.createElement("div");
+                valueEl.className = "yp-kpi-value";
+                valueEl.textContent = value;
+                tile.appendChild(labelEl);
+                tile.appendChild(valueEl);
+                return tile;
+            }
 
-            function updateChartLegendState() { // NEW
-                for (const button of chartLegend.querySelectorAll(".yp-chart-legend-item")) { // NEW
-                    const series = PLAN_CHART_SERIES.find(item => item.id === button.dataset.seriesId); // NEW
-                    if (!series) continue; // NEW
-                    const visible = visibleChartSeriesIds.has(series.id); // NEW
-                    button.setAttribute("aria-pressed", visible ? "true" : "false"); // NEW
-                    button.setAttribute("aria-label", `${series.label}. ${series.help} Currently ${visible ? "shown" : "hidden"}.`); // NEW
-                    button.title = `${series.label}: ${series.help} Click to ${visible ? "hide" : "show"}.`; // NEW
-                } // NEW
-            } // NEW
+            function getDashboardStatus() {
+                if (!dashboard) return "OK";
+                if ((dashboard.validationErrors || []).length || (dashboard.cropMetrics || []).some(metric => metric.status === "Missing data")) return "Missing data";
+                if (Number(dashboard.shortKg) > EPS) return "Short";
+                if ((dashboard.cropMetrics || []).some(metric => metric.status === "Expired / timing issue")) return "Expired / timing issue";
+                return "OK";
+            }
 
-            function renderChartLegend() { // NEW
-                chartLegend.innerHTML = ""; // NEW
-                for (const series of PLAN_CHART_SERIES) { // NEW
-                    const button = document.createElement("button"); // NEW
-                    button.type = "button"; // NEW
-                    button.className = "yp-chart-legend-item"; // NEW
-                    button.dataset.seriesId = series.id; // NEW
-                    const swatch = document.createElement("span"); // NEW
-                    swatch.className = "yp-chart-legend-swatch"; // NEW
-                    swatch.dataset.kind = series.kind; // NEW
-                    swatch.setAttribute("aria-hidden", "true"); // NEW
-                    swatch.style.setProperty("--yp-series-color", series.color); // NEW
-                    swatch.style.setProperty("--yp-series-fill", series.fill || series.color); // NEW
-                    const label = document.createElement("span"); // NEW
-                    label.textContent = series.label; // NEW
-                    button.appendChild(swatch); // NEW
-                    button.appendChild(label); // NEW
-                    button.addEventListener("click", () => { // NEW
-                        if (visibleChartSeriesIds.has(series.id)) visibleChartSeriesIds.delete(series.id); // NEW
-                        else visibleChartSeriesIds.add(series.id); // NEW
-                        chartTooltip.style.display = "none"; // NEW
-                        renderPlanCheck(); // CHANGE
-                    }); // NEW
-                    chartLegend.appendChild(button); // NEW
-                } // NEW
-                updateChartLegendState(); // NEW
-            } // NEW
+            function dashboardChartSummary() {
+                return runtime && runtime.weekly
+                    ? PlanMath.summarizePlanChartModel(PlanMath.buildPlanChartModel(runtime.weekly, ""))
+                    : { targetKg: Number(dashboard && dashboard.targetKg) || 0, usableSupplyKg: Math.max(0, (Number(dashboard && dashboard.targetKg) || 0) - (Number(dashboard && dashboard.shortKg) || 0)), shortKg: Number(dashboard && dashboard.shortKg) || 0, expiredKg: 0, worstShortageKg: 0, worstShortageWeek: "", shortWeeks: 0 };
+            }
 
-            function sumPositiveValues(values) { // ADDED
-                return (Array.isArray(values) ? values : []).reduce((total, value) => total + Math.max(0, Number(value) || 0), 0); // ADDED
-            } // ADDED
+            function buildAttentionItems(chartSummary) {
+                const items = [];
+                const add = item => { if (items.length < 8 && item) items.push(item); };
+                for (const metric of ((dashboard && dashboard.cropMetrics) || [])) {
+                    const cropDiagnostics = cropValidationResults(metric.crop.id);
+                    if (metric.status === "Missing data") add(createDiagnosticsChip(`${cropLabel(metric.crop)} missing data`, "danger", cropDiagnostics, () => selectCropFromAttention(metric.crop.id)));
+                    else if (cropDiagnostics.length) add(createDiagnosticsChip(`${cropLabel(metric.crop)} diagnostics`, "danger", cropDiagnostics, () => selectCropFromAttention(metric.crop.id)));
+                    else if (metric.status === "Short") add(createChip(`${cropLabel(metric.crop)} short ${formatKg(metric.shortKg)}`, "", "danger", () => selectCropFromAttention(metric.crop.id)));
+                    else if (metric.status === "Expired / timing issue") add(createChip(`${cropLabel(metric.crop)} timing ${formatKg(metric.shortKg)}`, "", "warning", () => selectCropFromAttention(metric.crop.id)));
+                }
+                if (chartSummary && chartSummary.expiredKg > EPS) add(createChip(`Expired ${formatKg(chartSummary.expiredKg)}`, "", "warning", () => { state.planCheckExpanded = true; renderPlanCheck(); }));
+                if (PlanSchema.validateDemand(plan).length) add(createChip("Demand dates invalid", "", "danger", () => { state.demandExpanded = true; renderDemandStrip(true); }));
+                if (PlanSchema.validateCsa(plan).length) add(createDiagnosticsChip("CSA setup issues", "danger", csaValidationResults(), () => { state.csaExpanded = true; renderCsa(true); }));
+                if ((dashboard && dashboard.diagnostics || []).length && !items.length) add(createChip("Plan Check has diagnostics", "", "warning", () => { state.planCheckExpanded = true; renderPlanCheck(); }));
+                return items;
+            }
 
-            function summarizePlanCheckRevenue(cropId) { // ADDED
-                const selectedCropId = String(cropId || ""); // ADDED
-                if (!selectedCropId) { // ADDED
-                    return { // ADDED
-                        potentialRevenue: Math.max(0, Number(dashboard.totalPotentialRevenue) || 0), // ADDED
-                        fulfilledRevenue: Math.max(0, Number(dashboard.totalFulfilledRevenue) || 0) // ADDED
-                    }; // ADDED
-                } // ADDED
-                let salesPotential = 0; // ADDED
-                let salesFulfilled = 0; // ADDED
-                if (runtime.weekly && runtime.weekly.perDemandLine && typeof runtime.weekly.perDemandLine.forEach === "function") { // ADDED
-                    runtime.weekly.perDemandLine.forEach(result => { // ADDED
-                        if (String(result && result.cropId || "") !== selectedCropId) return; // ADDED
-                        salesPotential += sumPositiveValues(result && result.potentialRevenue); // ADDED
-                        salesFulfilled += sumPositiveValues(result && result.fulfilledRevenue); // ADDED
-                    }); // ADDED
-                } // ADDED
-                const csaWeekly = runtime.weekly && runtime.weekly.csa; // ADDED
-                const csaPotentialByCrop = csaWeekly && csaWeekly.potentialRevenueByCropId; // ADDED
-                const csaFulfilledByCrop = csaWeekly && csaWeekly.fulfilledRevenueByCropId; // ADDED
-                return { // ADDED
-                    potentialRevenue: salesPotential + sumPositiveValues(csaPotentialByCrop && csaPotentialByCrop.get ? csaPotentialByCrop.get(selectedCropId) : null), // ADDED
-                    fulfilledRevenue: salesFulfilled + sumPositiveValues(csaFulfilledByCrop && csaFulfilledByCrop.get ? csaFulfilledByCrop.get(selectedCropId) : null) // ADDED
-                }; // ADDED
-            } // ADDED
+            function selectCropFromAttention(cropId) {
+                if (!setSelectedCropEverywhere(cropId, { expandCropPlan: true, expandPlanCheck: true })) return;
+                renderCropList();
+                renderSelectedEditor();
+                renderCropPlan(false);
+                renderPlanCheck();
+            }
 
-            function renderPlanCheck() { // CHANGE
-                const cropId = String(plan.cropFilterId || ""); // NEW
-                const visibleCrops = cropId // NEW
-                    ? (plan.crops || []).filter(crop => String(crop && crop.id || "") === cropId) // NEW
-                    : (plan.crops || []); // NEW
-                const chartModel = PlanMath.buildPlanChartModel(runtime.weekly, cropId); // NEW
-                const chartSummary = PlanMath.summarizePlanChartModel(chartModel); // NEW
-                const scopedRevenue = summarizePlanCheckRevenue(cropId); // ADDED
-                renderStripBox(planCheckBox, { // NEW
-                    title: "Plan Check", // NEW
-                    expanded: state.planCheckExpanded, // NEW
-                    onToggle: () => { state.planCheckExpanded = !state.planCheckExpanded; renderPlanCheck(); }, // NEW
-                    mountWhenCollapsed: true, // NEW
-                    renderDetails: details => { details.appendChild(planCheckGrid); details.appendChild(diagnosticsBox); } // NEW
-                }); // NEW
-                if (!state.planCheckExpanded) chartTooltip.style.display = "none"; // CHANGE
-                updateChartLegendState(); // NEW
-                chartHiddenMessage.style.display = visibleChartSeriesIds.size === 0 ? "block" : "none"; // NEW
-                chartHitModel = drawPlanChart(canvas, chartModel, visibleChartSeriesIds); // CHANGE
-                const worstShortage = chartSummary.worstShortageKg > 0 // NEW
-                    ? `${formatKg(chartSummary.worstShortageKg)} \u00b7 Week of ${mxUtils.htmlEntities(chartSummary.worstShortageWeek)}` // NEW
-                    : "-"; // NEW
-                setChipRow(planCheckSummary, [ // CHANGE
-                    createChip("Target", formatKg(chartSummary.targetKg), "primary"), // NEW
-                    createChip("Harvested", formatKg(chartSummary.harvestKg), chartSummary.harvestKg > EPS ? "success" : "neutral"), // NEW
-                    createChip("Usable", formatKg(chartSummary.usableSupplyKg), chartSummary.usableSupplyKg > EPS ? "success" : "neutral"), // NEW
-                    createChip("Short", formatKg(chartSummary.shortKg), chartSummary.shortKg > EPS ? "danger" : "success"), // NEW
-                    createChip("Expired", formatKg(chartSummary.expiredKg), chartSummary.expiredKg > EPS ? "warning" : "neutral"), // NEW
-                    createChip("Worst shortage", worstShortage, chartSummary.worstShortageKg > EPS ? "danger" : "neutral"), // NEW
-                    createChip("Short weeks", String(chartSummary.shortWeeks), chartSummary.shortWeeks > 0 ? "danger" : "success"), // CHANGE
-                    createChip("Total potential", formatMoney(scopedRevenue.potentialRevenue), "neutral"), // CHANGE
-                    createChip("Total fulfilled", formatMoney(scopedRevenue.fulfilledRevenue), scopedRevenue.fulfilledRevenue > EPS ? "success" : "neutral") // CHANGE
-                ]); // CHANGE
+            function listUnitOptions(crop) {
+                const options = [{ value: "kg", label: "kg" }, { value: "g", label: "g" }, { value: "lb", label: "lb" }, { value: "plant", label: "plant" }];
+                const seen = new Set(options.map(option => option.value));
+                for (const pkg of ((crop && crop.packages) || [])) {
+                    const unit = String(pkg && pkg.unit || "").trim();
+                    const key = unit.toLowerCase();
+                    if (!key || seen.has(key)) continue;
+                    seen.add(key);
+                    options.push({ value: unit, label: unit });
+                }
+                return options;
+            }
 
-                const rows = visibleCrops.map(crop => { // CHANGE
-                    const summary = PlanMath.summarizePlanChartModel(PlanMath.buildPlanChartModel(runtime.weekly, String(crop.id))); // NEW
-                    const revenue = summarizePlanCheckRevenue(crop.id); // ADDED
-                    const metric = dashboard.cropMetricsById.get(String(crop.id)); // CHANGE
-                    return `<tr><td>${mxUtils.htmlEntities(cropLabel(crop))}</td><td>${summary.targetKg.toFixed(1)}</td><td>${summary.harvestKg.toFixed(1)}</td><td>${summary.usableSupplyKg.toFixed(1)}</td><td>${summary.shortKg.toFixed(1)}</td><td>${summary.expiredKg.toFixed(1)}</td><td>${formatMoney(revenue.potentialRevenue)}</td><td>${formatMoney(revenue.fulfilledRevenue)}</td><td>${mxUtils.htmlEntities(metric ? metric.status : "Missing data")}</td></tr>`; // CHANGE
-                }).join(""); // CHANGE
-                const channelRows = dashboard.channelMetrics.map(metric => `<tr><td>${mxUtils.htmlEntities(metric.channel.label || metric.channel.id)}</td><td>${metric.targetKg.toFixed(1)}</td><td>${metric.usableSupplyKg.toFixed(1)}</td><td>${metric.shortKg.toFixed(1)}</td><td>${metric.lineCount}</td><td>${formatMoney(metric.potentialRevenue)}</td><td>${formatMoney(metric.fulfilledRevenue)}</td><td>${mxUtils.htmlEntities(metric.status)}</td></tr>`).join(""); // NEW
-                const priorityRows = dashboard.priorityMetrics.map(metric => `<tr><td>${mxUtils.htmlEntities(metric.priority)}</td><td>${metric.targetKg.toFixed(1)}</td><td>${metric.usableSupplyKg.toFixed(1)}</td><td>${metric.shortKg.toFixed(1)}</td><td>${formatMoney(metric.potentialRevenue)}</td><td>${formatMoney(metric.fulfilledRevenue)}</td></tr>`).join(""); // NEW
-                const shortageRows = dashboard.shortageWeeks.map(row => `<tr><td>${mxUtils.htmlEntities(row.week)}</td><td>${row.csaDemandKg.toFixed(1)}</td><td>${row.csaShortKg.toFixed(1)}</td><td>${row.channelDemandKg.toFixed(1)}</td><td>${row.channelShortKg.toFixed(1)}</td></tr>`).join(""); // NEW
-                totalsBox.innerHTML = // CHANGE
+            function defaultUnit(crop) {
+                return String(crop && crop.packages && crop.packages[0] && crop.packages[0].unit || "").trim() || "kg";
+            }
+
+            function ensureSelectOption(select, value, label) {
+                const desired = String(value ?? "");
+                if (!desired || Array.from(select.options).some(option => String(option.value) === desired)) return;
+                select.appendChild(new Option(label || `${desired} (unavailable)`, desired));
+            }
+
+            function setYearPlanField(control, field, metadata) {
+                if (!control) return control;
+                control.dataset.yearPlanField = String(field || "");
+                const data = metadata || {};
+                if (data.cropId !== undefined) control.dataset.cropId = String(data.cropId);
+                if (data.packageIndex !== undefined) control.dataset.packageIndex = String(data.packageIndex);
+                if (data.componentIndex !== undefined) control.dataset.csaComponentIndex = String(data.componentIndex);
+                return control;
+            }
+
+            function hasActualHarvestForCrop(crop) {
+                const derived = runtime && runtime.derivedByCropId && runtime.derivedByCropId.get(String(crop && crop.id || ""));
+                return !!derived && Array.isArray(derived.actualHarvestWeeklyKg) && derived.actualHarvestWeeklyKg.some(value => Number(value) > 0);
+            }
+
+            function selectedCrop() {
+                return (plan.crops || []).find(crop => String(crop.id) === String(state.selectedCropId)) || null;
+            }
+
+            function setSelectedCropEverywhere(cropId, options) {
+                const settings = options || {};
+                const crop = (plan.crops || []).find(item => String(item && item.id || "") === String(cropId));
+                if (!crop) return false;
+                const selectedId = String(crop.id);
+                state.selectedCropId = selectedId;
+                state.activeTab = settings.activeTab || "basics";
+                if (settings.expandCropPlan) state.cropPlanExpanded = true;
+                if (settings.expandPlanCheck) state.planCheckExpanded = true;
+                if (settings.syncPlanCheck !== false) {
+                    plan.cropFilterId = selectedId;
+                    cropFilterSel.value = selectedId;
+                }
+                return true;
+            }
+
+            function addField(host, label, control, help) {
+                const field = document.createElement("label");
+                field.style.cssText = "display:flex;flex-direction:column;gap:4px;min-width:0;";
+                const title = document.createElement("span");
+                title.style.fontWeight = "700";
+                title.textContent = label;
+                if (control && !control.style.width) control.style.width = "100%";
+                field.appendChild(title);
+                field.appendChild(control);
+                if (help) {
+                    const note = document.createElement("span");
+                    note.style.cssText = "color:#666;font-size:11px;";
+                    note.textContent = help;
+                    field.appendChild(note);
+                }
+                host.appendChild(field);
+                return field;
+            }
+
+            function addPackageField(host, label, control) {
+                const field = document.createElement("label");
+                field.className = "yp-package-field";
+                const title = document.createElement("span");
+                title.className = "yp-package-title";
+                title.textContent = label;
+                if (control && !control.style.width) control.style.width = "100%";
+                field.appendChild(title);
+                field.appendChild(control);
+                host.appendChild(field);
+                return field;
+            }
+
+            function createDerivedTile(label, help) {
+                const tile = document.createElement("div");
+                tile.className = "yp-derived-tile";
+                if (help) tile.title = help;
+                const labelEl = document.createElement("div");
+                labelEl.className = "yp-derived-label";
+                labelEl.textContent = label;
+                const valueEl = document.createElement("div");
+                valueEl.className = "yp-derived-value";
+                valueEl.textContent = "0";
+                tile.appendChild(labelEl);
+                tile.appendChild(valueEl);
+                return { tile, valueEl };
+            }
+
+            function resolveDefaultKgPerPlant(crop) {
+                let nextYield = Number(crop && crop.baseKgPerPlant);
+                const rows = varietyCache.get(String(crop && crop.plantId || "")) || [];
+                const row = rows.find(item => String(item.variety_id) === String((crop && crop.varietyId) ?? ""));
+                const overrides = row ? Env.safeJsonStringParse(row.overrides_json, null) : null;
+                const overrideYield = Number(overrides && (overrides.yield_per_plant_kg ?? overrides.overrides?.yield_per_plant_kg));
+                if (Number.isFinite(overrideYield) && overrideYield > 0) nextYield = overrideYield;
+                return Number.isFinite(nextYield) && nextYield > 0 ? nextYield : null;
+            }
+
+            function updateYieldHint(crop, hint, resetYield) {
+                if (!hint) return;
+                const defaultYield = resolveDefaultKgPerPlant(crop);
+                const defaultText = Number.isFinite(defaultYield) ? `${defaultYield} kg/plant default` : "No default yield available";
+                hint.textContent = crop && crop.kgPerPlantMode === "manual"
+                    ? `Manual override; ${defaultText}`
+                    : `Using ${defaultText}`;
+                if (resetYield) resetYield.style.display = crop && crop.kgPerPlantMode === "manual" ? "" : "none";
+            }
+
+            /**
+             * Keeps one editable date pair valid without rewriting the opposite endpoint.
+             */
+            function bindPairedDateControls(startInput, endInput, options) {
+                const settings = options || {};
+                const diagnostic = String(settings.diagnostic || "Start date cannot be after end date.");
+                let lastStartValue = String(startInput.value || "");
+                let lastEndValue = String(endInput.value || "");
+
+                function updateConstraints() {
+                    startInput.max = PlanMath.hasYmd(endInput.value) ? endInput.value : "";
+                    endInput.min = PlanMath.hasYmd(startInput.value) ? startInput.value : "";
+                }
+
+                function syncFromInputs() {
+                    lastStartValue = String(startInput.value || "");
+                    lastEndValue = String(endInput.value || "");
+                    updateConstraints();
+                }
+
+                function removeDiagnostic() {
+                    state.extraDiagnostics = (state.extraDiagnostics || []).filter(message => message !== diagnostic);
+                }
+
+                function rejectChange(input, previousValue, beforeDateRanges) {
+                    input.value = previousValue;
+                    state.extraDiagnostics = YearPlanDashboard.uniqueMessages([...(state.extraDiagnostics || []), diagnostic]);
+                    state.planCheckExpanded = true;
+                    updateConstraints();
+                    refreshDerived(beforeDateRanges);
+                }
+
+                function handleChange(changedField) {
+                    const beforeDateRanges = captureDateRangeSnapshot();
+                    const nextStart = String(startInput.value || "");
+                    const nextEnd = String(endInput.value || "");
+                    if (PlanMath.hasYmd(nextStart) && PlanMath.hasYmd(nextEnd) && nextStart > nextEnd) {
+                        rejectChange(
+                            changedField === "start" ? startInput : endInput,
+                            changedField === "start" ? lastStartValue : lastEndValue,
+                            beforeDateRanges
+                        );
+                        return;
+                    }
+
+                    const previousPair = { start: lastStartValue, end: lastEndValue };
+                    removeDiagnostic();
+                    if (changedField === "start") {
+                        lastStartValue = nextStart;
+                        if (settings.setStart) settings.setStart(nextStart);
+                    } else {
+                        lastEndValue = nextEnd;
+                        if (settings.setEnd) settings.setEnd(nextEnd);
+                    }
+                    updateConstraints();
+                    if (settings.afterCommit) settings.afterCommit(beforeDateRanges, previousPair, changedField);
+                    else refreshDerived(beforeDateRanges);
+                }
+
+                startInput.__syncPairedDateState = syncFromInputs;
+                endInput.__syncPairedDateState = syncFromInputs;
+                syncFromInputs();
+                startInput.addEventListener("change", () => handleChange("start"));
+                endInput.addEventListener("change", () => handleChange("end"));
+            }
+
+            function debounceRefresh(renderOptions) {
+                if (renderOptions) pendingRefreshOptions = { ...(pendingRefreshOptions || {}), ...renderOptions };
+                if (refreshTimer) clearTimeout(refreshTimer);
+                refreshTimer = setTimeout(() => {
+                    refreshTimer = null;
+                    const options = pendingRefreshOptions;
+                    pendingRefreshOptions = null;
+                    if (SessionController.isActive(session)) refreshDerived(null, options);
+                }, 90);
+            }
+
+            function fillTemplateDropdown() {
+                templateSel.innerHTML = "";
+                templateSel.appendChild(new Option("-- Select template --", ""));
+                for (const name of PlanRepository.listTemplateNames()) templateSel.appendChild(new Option(name, name));
+            }
+
+            function fillCropFilter() {
+                const current = String(plan.cropFilterId || "");
+                cropFilterSel.innerHTML = "";
+                cropFilterSel.appendChild(new Option("-- All crops --", ""));
+                for (const crop of (plan.crops || [])) cropFilterSel.appendChild(new Option(cropLabel(crop), crop.id));
+                cropFilterSel.value = (plan.crops || []).some(crop => String(crop.id) === current) ? current : "";
+                plan.cropFilterId = cropFilterSel.value;
+            }
+
+            function replacePlan(nextPlan, nextYear, loadedExisting) {
+                Object.keys(plan).forEach(key => delete plan[key]);
+                Object.assign(plan, PlanSchema.normalizeForRuntime(nextPlan, nextYear));
+                currentYear = Number(nextYear);
+                loadedExistingForCurrentYear = !!loadedExisting;
+                plan.year = currentYear;
+                state.selectedCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, "", 0);
+                state.activeTab = "basics";
+                state.hadBlockingErrors = false;
+                state.hadCsaErrors = false;
+                state.hadDemandErrors = false;
+                state.validationState = "idle";
+                state.lastSavedAt = null;
+                state.closePromptOpen = false;
+                state.extraDiagnostics = [];
+                titleEl.textContent = `Plan Year ${currentYear}`;
+                yearInput.value = String(currentYear);
+            }
+
+            function renderSummary() {
+                const chartSummary = dashboardChartSummary();
+                const status = getDashboardStatus();
+                const statusText = status === "Expired / timing issue" ? "Warning" : status;
+                const statusToneName = status === "Expired / timing issue" ? "warning" : statusTone(status);
+                const dirty = YearPlanDashboard.isDirty(state, plan);
+                heroMain.innerHTML = "";
+                const head = document.createElement("div");
+                head.className = "yp-plan-hero-head";
+                const titleGroup = document.createElement("div");
+                const title = document.createElement("div");
+                title.className = "yp-plan-hero-title";
+                title.textContent = `${currentYear} Year Plan`;
+                const sub = document.createElement("div");
+                sub.className = "yp-plan-hero-sub";
+                sub.textContent = `${dashboard.cropCount} crop${dashboard.cropCount === 1 ? "" : "s"} planned`;
+                titleGroup.appendChild(title);
+                titleGroup.appendChild(sub);
+                const statusRow = document.createElement("div");
+                statusRow.className = "yp-chip-row";
+                statusRow.appendChild(createChip("Status", statusText, statusToneName));
+                if (dirty) statusRow.appendChild(createChip("Unsaved", "", "primary"));
+                head.appendChild(titleGroup);
+                head.appendChild(statusRow);
+                const grid = document.createElement("div");
+                grid.className = "yp-kpi-grid";
+                grid.appendChild(createKpiTile("Crops", String(dashboard.cropCount), "neutral"));
+                grid.appendChild(createKpiTile("Target", formatKg(chartSummary.targetKg), "primary"));
+                grid.appendChild(createKpiTile("Usable supply", formatKg(chartSummary.usableSupplyKg), "success"));
+                grid.appendChild(createKpiTile("Total revenue", formatMoney(dashboard.totalFulfilledRevenue), dashboard.totalFulfilledRevenue > EPS ? "success" : "neutral"));
+                heroMain.appendChild(head);
+                heroMain.appendChild(grid);
+                const attentionItems = buildAttentionItems(chartSummary);
+                attentionBox.innerHTML = "";
+                attentionBox.style.display = attentionItems.length ? "block" : "none";
+                if (attentionItems.length) {
+                    const label = document.createElement("div");
+                    label.className = "yp-attention-title";
+                    label.textContent = "Needs attention";
+                    const row = document.createElement("div");
+                    row.className = "yp-chip-row";
+                    for (const item of attentionItems) row.appendChild(item);
+                    attentionBox.appendChild(label);
+                    attentionBox.appendChild(row);
+                }
+            }
+
+            function renderCropList() {
+                cropList.innerHTML = "";
+                if (!dashboard.cropMetrics.length) {
+                    const empty = document.createElement("div");
+                    empty.style.cssText = "padding:16px;color:#666;";
+                    empty.textContent = "No crops in this plan.";
+                    cropList.appendChild(empty);
+                    return;
+                }
+                for (const metric of dashboard.cropMetrics) {
+                    const selected = String(metric.crop.id) === String(state.selectedCropId);
+                    const cardEl = document.createElement("div");
+                    cardEl.tabIndex = 0;
+                    cardEl.setAttribute("role", "button");
+                    cardEl.className = "yp-crop-card";
+                    cardEl.dataset.selected = selected ? "true" : "false";
+                    cardEl.dataset.cropId = String(metric.crop.id || "");
+                    const detail = metric.status === "Short" || metric.status === "Expired / timing issue"
+                        ? `${metric.status} ${formatKg(metric.shortKg)}`
+                        : metric.status === "Surplus" ? `Surplus ${formatKg(metric.surplusKg)}`
+                            : metric.status;
+                    const top = document.createElement("div");
+                    top.className = "yp-crop-card-top";
+                    const name = document.createElement("div");
+                    name.className = "yp-crop-card-name";
+                    name.textContent = cropLabel(metric.crop);
+                    const statusHost = document.createElement("span");
+                    statusHost.className = "yp-diagnostics-wrap";
+                    statusHost.appendChild(createChip(detail, "", statusTone(metric.status)));
+                    const cropDiagnostics = cropHasDiagnostics(metric.crop.id) ? createDiagnosticsControl(`${cropLabel(metric.crop)} diagnostics`, cropValidationResults(metric.crop.id)) : null;
+                    if (cropDiagnostics) statusHost.appendChild(cropDiagnostics);
+                    top.appendChild(name);
+                    top.appendChild(statusHost);
+                    const metrics = document.createElement("div");
+                    metrics.className = "yp-crop-card-metrics";
+                    const requiredPlants = Number.isFinite(metric.plantsReq) && metric.plantsReq > 0 ? Math.ceil(metric.plantsReq) : 0;
+                    const actualPlants = Math.max(0, Math.trunc(Number(metric.crop.actualPlants) || 0));
+                    metrics.innerHTML = `Target ${mxUtils.htmlEntities(formatKg(metric.targetKg))}<br>Usable ${mxUtils.htmlEntities(formatKg(Math.max(0, metric.targetKg - metric.shortKg)))}<br>Plants ${actualPlants} / ${requiredPlants} required`;
+                    cardEl.appendChild(top);
+                    cardEl.appendChild(metrics);
+                    cardEl.addEventListener("click", () => {
+                        if (!setSelectedCropEverywhere(metric.crop.id)) return;
+                        renderCropList();
+                        renderSelectedEditor();
+                        renderDemandStrip(true);
+                        renderCropPlan(false);
+                        renderPlanCheck();
+                    });
+                    cardEl.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); cardEl.click(); } });
+                    cropList.appendChild(cardEl);
+                }
+            }
+
+            function syncEditorDerived() {
+                const crop = selectedCrop();
+                if (!crop || !dashboard) return;
+                const metric = dashboard.cropMetricsById.get(String(crop.id));
+                if (editorRefs.actual) editorRefs.actual.textContent = String(Math.max(0, Math.trunc(Number(crop.actualPlants) || 0)));
+                if (editorRefs.required) editorRefs.required.textContent = String(metric && Number.isFinite(metric.plantsReq) && metric.plantsReq > 0 ? Math.ceil(metric.plantsReq) : 0);
+                if (editorRefs.seeds) editorRefs.seeds.textContent = String(metric && Number.isFinite(metric.seedsReq) && metric.seedsReq > 0 ? Math.ceil(metric.seedsReq) : 0);
+                if (editorRefs.harvestStart) editorRefs.harvestStart.value = PlanMath.hasYmd(crop.harvestStart) ? crop.harvestStart : "";
+                if (editorRefs.harvestEnd) editorRefs.harvestEnd.value = PlanMath.hasYmd(crop.harvestEnd) ? crop.harvestEnd : "";
+                if (editorRefs.useActual) { editorRefs.useActual.disabled = !hasActualHarvestForCrop(crop); editorRefs.useActual.checked = crop.useActualHarvest !== false && !editorRefs.useActual.disabled; }
+                if (editorRefs.harvestStart && editorRefs.harvestEnd) editorRefs.harvestStart.disabled = editorRefs.harvestEnd.disabled = !!(editorRefs.useActual && editorRefs.useActual.checked);
+                if (editorRefs.harvestStart && editorRefs.harvestStart.__syncPairedDateState) editorRefs.harvestStart.__syncPairedDateState();
+                if (editorRefs.yieldHint) updateYieldHint(crop, editorRefs.yieldHint, editorRefs.resetYield);
+                if (editorRefs.harvestTimeline && runtime) {
+                    const derived = runtime.derivedByCropId.get(String(crop.id));
+                    renderActualHarvestTimeline(editorRefs.harvestTimeline, runtime.weekStarts, derived ? derived.actualHarvestWeeklyKg : []);
+                }
+            }
+
+            function syncDemandDerived() {
+                if (!dashboard || !demandRefs.channelSummaries) return;
+                for (const [channelId, summary] of demandRefs.channelSummaries) {
+                    const metric = dashboard.channelMetricsById.get(String(channelId));
+                    if (metric) setChipRow(summary, buildChannelSummaryChips(metric));
+                }
+            }
+
+            function syncCsaDerived() {
+                if (!dashboard || !csaRefs.componentValue || !csaRefs.salePrice) return;
+                const metric = dashboard.csaMetric || {};
+                csaRefs.componentValue.value = (Math.max(0, Number(metric.componentValuePerBox) || 0)).toFixed(2);
+                if (document.activeElement !== csaRefs.salePrice) csaRefs.salePrice.value = (Math.max(0, Number(plan.csa && plan.csa.salePricePerBox) || 0)).toFixed(2);
+                if (csaRefs.resetSale) csaRefs.resetSale.disabled = plan.csa && plan.csa.salePriceMode !== "manual";
+            }
+
+            function updateChartLegendState() {
+                for (const button of chartLegend.querySelectorAll(".yp-chart-legend-item")) {
+                    const series = PLAN_CHART_SERIES.find(item => item.id === button.dataset.seriesId);
+                    if (!series) continue;
+                    const visible = visibleChartSeriesIds.has(series.id);
+                    button.setAttribute("aria-pressed", visible ? "true" : "false");
+                    button.setAttribute("aria-label", `${series.label}. ${series.help} Currently ${visible ? "shown" : "hidden"}.`);
+                    button.title = `${series.label}: ${series.help} Click to ${visible ? "hide" : "show"}.`;
+                }
+            }
+
+            function renderChartLegend() {
+                chartLegend.innerHTML = "";
+                for (const series of PLAN_CHART_SERIES) {
+                    const button = document.createElement("button");
+                    button.type = "button";
+                    button.className = "yp-chart-legend-item";
+                    button.dataset.seriesId = series.id;
+                    const swatch = document.createElement("span");
+                    swatch.className = "yp-chart-legend-swatch";
+                    swatch.dataset.kind = series.kind;
+                    swatch.setAttribute("aria-hidden", "true");
+                    swatch.style.setProperty("--yp-series-color", series.color);
+                    swatch.style.setProperty("--yp-series-fill", series.fill || series.color);
+                    const label = document.createElement("span");
+                    label.textContent = series.label;
+                    button.appendChild(swatch);
+                    button.appendChild(label);
+                    button.addEventListener("click", () => {
+                        if (visibleChartSeriesIds.has(series.id)) visibleChartSeriesIds.delete(series.id);
+                        else visibleChartSeriesIds.add(series.id);
+                        chartTooltip.style.display = "none";
+                        renderPlanCheck();
+                    });
+                    chartLegend.appendChild(button);
+                }
+                updateChartLegendState();
+            }
+
+            function sumPositiveValues(values) {
+                return (Array.isArray(values) ? values : []).reduce((total, value) => total + Math.max(0, Number(value) || 0), 0);
+            }
+
+            function summarizePlanCheckRevenue(cropId) {
+                const selectedCropId = String(cropId || "");
+                if (!selectedCropId) {
+                    return {
+                        potentialRevenue: Math.max(0, Number(dashboard.totalPotentialRevenue) || 0),
+                        fulfilledRevenue: Math.max(0, Number(dashboard.totalFulfilledRevenue) || 0)
+                    };
+                }
+                let salesPotential = 0;
+                let salesFulfilled = 0;
+                if (runtime.weekly && runtime.weekly.perDemandLine && typeof runtime.weekly.perDemandLine.forEach === "function") {
+                    runtime.weekly.perDemandLine.forEach(result => {
+                        if (String(result && result.cropId || "") !== selectedCropId) return;
+                        salesPotential += sumPositiveValues(result && result.potentialRevenue);
+                        salesFulfilled += sumPositiveValues(result && result.fulfilledRevenue);
+                    });
+                }
+                const csaWeekly = runtime.weekly && runtime.weekly.csa;
+                const csaPotentialByCrop = csaWeekly && csaWeekly.potentialRevenueByCropId;
+                const csaFulfilledByCrop = csaWeekly && csaWeekly.fulfilledRevenueByCropId;
+                return {
+                    potentialRevenue: salesPotential + sumPositiveValues(csaPotentialByCrop && csaPotentialByCrop.get ? csaPotentialByCrop.get(selectedCropId) : null),
+                    fulfilledRevenue: salesFulfilled + sumPositiveValues(csaFulfilledByCrop && csaFulfilledByCrop.get ? csaFulfilledByCrop.get(selectedCropId) : null)
+                };
+            }
+
+            function renderPlanCheck() {
+                const cropId = String(plan.cropFilterId || "");
+                const visibleCrops = cropId
+                    ? (plan.crops || []).filter(crop => String(crop && crop.id || "") === cropId)
+                    : (plan.crops || []);
+                const chartModel = PlanMath.buildPlanChartModel(runtime.weekly, cropId);
+                const chartSummary = PlanMath.summarizePlanChartModel(chartModel);
+                const scopedRevenue = summarizePlanCheckRevenue(cropId);
+                renderStripBox(planCheckBox, {
+                    title: "Plan Check",
+                    expanded: state.planCheckExpanded,
+                    onToggle: () => { state.planCheckExpanded = !state.planCheckExpanded; renderPlanCheck(); },
+                    mountWhenCollapsed: true,
+                    renderDetails: details => { details.appendChild(planCheckGrid); details.appendChild(diagnosticsBox); }
+                });
+                if (!state.planCheckExpanded) chartTooltip.style.display = "none";
+                updateChartLegendState();
+                chartHiddenMessage.style.display = visibleChartSeriesIds.size === 0 ? "block" : "none";
+                chartHitModel = drawPlanChart(canvas, chartModel, visibleChartSeriesIds);
+                const worstShortage = chartSummary.worstShortageKg > 0
+                    ? `${formatKg(chartSummary.worstShortageKg)} \u00b7 Week of ${mxUtils.htmlEntities(chartSummary.worstShortageWeek)}`
+                    : "-";
+                setChipRow(planCheckSummary, [
+                    createChip("Target", formatKg(chartSummary.targetKg), "primary"),
+                    createChip("Harvested", formatKg(chartSummary.harvestKg), chartSummary.harvestKg > EPS ? "success" : "neutral"),
+                    createChip("Usable", formatKg(chartSummary.usableSupplyKg), chartSummary.usableSupplyKg > EPS ? "success" : "neutral"),
+                    createChip("Short", formatKg(chartSummary.shortKg), chartSummary.shortKg > EPS ? "danger" : "success"),
+                    createChip("Expired", formatKg(chartSummary.expiredKg), chartSummary.expiredKg > EPS ? "warning" : "neutral"),
+                    createChip("Worst shortage", worstShortage, chartSummary.worstShortageKg > EPS ? "danger" : "neutral"),
+                    createChip("Short weeks", String(chartSummary.shortWeeks), chartSummary.shortWeeks > 0 ? "danger" : "success"),
+                    createChip("Total potential", formatMoney(scopedRevenue.potentialRevenue), "neutral"),
+                    createChip("Total fulfilled", formatMoney(scopedRevenue.fulfilledRevenue), scopedRevenue.fulfilledRevenue > EPS ? "success" : "neutral")
+                ]);
+
+                const rows = visibleCrops.map(crop => {
+                    const summary = PlanMath.summarizePlanChartModel(PlanMath.buildPlanChartModel(runtime.weekly, String(crop.id)));
+                    const revenue = summarizePlanCheckRevenue(crop.id);
+                    const metric = dashboard.cropMetricsById.get(String(crop.id));
+                    return `<tr><td>${mxUtils.htmlEntities(cropLabel(crop))}</td><td>${summary.targetKg.toFixed(1)}</td><td>${summary.harvestKg.toFixed(1)}</td><td>${summary.usableSupplyKg.toFixed(1)}</td><td>${summary.shortKg.toFixed(1)}</td><td>${summary.expiredKg.toFixed(1)}</td><td>${formatMoney(revenue.potentialRevenue)}</td><td>${formatMoney(revenue.fulfilledRevenue)}</td><td>${mxUtils.htmlEntities(metric ? metric.status : "Missing data")}</td></tr>`;
+                }).join("");
+                const channelRows = dashboard.channelMetrics.map(metric => `<tr><td>${mxUtils.htmlEntities(metric.channel.label || metric.channel.id)}</td><td>${metric.targetKg.toFixed(1)}</td><td>${metric.usableSupplyKg.toFixed(1)}</td><td>${metric.shortKg.toFixed(1)}</td><td>${metric.lineCount}</td><td>${formatMoney(metric.potentialRevenue)}</td><td>${formatMoney(metric.fulfilledRevenue)}</td><td>${mxUtils.htmlEntities(metric.status)}</td></tr>`).join("");
+                const priorityRows = dashboard.priorityMetrics.map(metric => `<tr><td>${mxUtils.htmlEntities(metric.priority)}</td><td>${metric.targetKg.toFixed(1)}</td><td>${metric.usableSupplyKg.toFixed(1)}</td><td>${metric.shortKg.toFixed(1)}</td><td>${formatMoney(metric.potentialRevenue)}</td><td>${formatMoney(metric.fulfilledRevenue)}</td></tr>`).join("");
+                const shortageRows = dashboard.shortageWeeks.map(row => `<tr><td>${mxUtils.htmlEntities(row.week)}</td><td>${row.csaDemandKg.toFixed(1)}</td><td>${row.csaShortKg.toFixed(1)}</td><td>${row.channelDemandKg.toFixed(1)}</td><td>${row.channelShortKg.toFixed(1)}</td></tr>`).join("");
+                totalsBox.innerHTML =
                     `
                     <div style="font-weight:700;margin-bottom:6px;">Plan Check totals</div>
                     <table style="width:100%;border-collapse:collapse;"><thead><tr><th>Crop</th><th>Target</th><th>Harvested</th><th>Usable</th><th>Short</th><th>Expired</th><th>Potential</th><th>Fulfilled</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="9">No crops.</td></tr>'}</tbody></table>
@@ -3903,1170 +3903,1170 @@ Draw.loadPlugin(function (ui) {
                     <table style="width:100%;border-collapse:collapse;"><thead><tr><th>Priority</th><th>Demand</th><th>Usable</th><th>Short</th><th>Potential</th><th>Fulfilled</th></tr></thead><tbody>${priorityRows}</tbody></table>
                     <div style="font-weight:700;margin:10px 0 6px;">Shortage weeks</div>
                     <table style="width:100%;border-collapse:collapse;"><thead><tr><th>Week</th><th>CSA demand</th><th>CSA short</th><th>Channel demand</th><th>Channel short</th></tr></thead><tbody>${shortageRows || '<tr><td colspan="5">No shortage weeks.</td></tr>'}</tbody></table>
-                    <div style="margin-top:9px;"><strong>Revenue:</strong> Total potential ${formatMoney(dashboard.totalPotentialRevenue)} | Total fulfilled ${formatMoney(dashboard.totalFulfilledRevenue)}. Sales ${formatMoney(dashboard.fulfilledRevenue)} | CSA ${formatMoney(dashboard.csaMetric && dashboard.csaMetric.fulfilledRevenue)}.</div>`; // CHANGE
-                for (const cell of totalsBox.querySelectorAll("th,td")) cell.style.cssText = "border:1px solid #ddd;padding:4px;text-align:left;"; // NEW
-                const cropRows = totalsBox.querySelectorAll("table:first-of-type tbody tr"); // CHANGE
-                visibleCrops.forEach((crop, index) => { // CHANGE
-                    const metric = dashboard.cropMetricsById.get(String(crop.id)); // CHANGE
-                    const statusCell = cropRows[index] && cropRows[index].cells && cropRows[index].cells[8]; // CHANGE
-                    if (!statusCell || !metric || !cropHasDiagnostics(crop.id)) return; // CHANGE
-                    const diagnostics = createDiagnosticsControl(`${cropLabel(crop)} diagnostics`, cropValidationResults(crop.id)); // CHANGE
-                    if (diagnostics) statusCell.appendChild(document.createTextNode(" ")); // CHANGE
-                    if (diagnostics) statusCell.appendChild(diagnostics); // CHANGE
-                }); // CHANGE
-                diagnosticsBox.innerHTML = dashboard.diagnostics.length // NEW
-                    ? `<div style="font-weight:700;margin-bottom:5px;">Plan Check</div><ul style="margin:0 0 0 18px;padding:0;">${dashboard.diagnostics.map(message => `<li>${mxUtils.htmlEntities(message)}</li>`).join("")}</ul>` // CHANGE
-                    : `<div style="color:${YP_COLORS.success};font-weight:700;">Plan Check passed.</div>`; // CHANGE
-            } // NEW
+                    <div style="margin-top:9px;"><strong>Revenue:</strong> Total potential ${formatMoney(dashboard.totalPotentialRevenue)} | Total fulfilled ${formatMoney(dashboard.totalFulfilledRevenue)}. Sales ${formatMoney(dashboard.fulfilledRevenue)} | CSA ${formatMoney(dashboard.csaMetric && dashboard.csaMetric.fulfilledRevenue)}.</div>`;
+                for (const cell of totalsBox.querySelectorAll("th,td")) cell.style.cssText = "border:1px solid #ddd;padding:4px;text-align:left;";
+                const cropRows = totalsBox.querySelectorAll("table:first-of-type tbody tr");
+                visibleCrops.forEach((crop, index) => {
+                    const metric = dashboard.cropMetricsById.get(String(crop.id));
+                    const statusCell = cropRows[index] && cropRows[index].cells && cropRows[index].cells[8];
+                    if (!statusCell || !metric || !cropHasDiagnostics(crop.id)) return;
+                    const diagnostics = createDiagnosticsControl(`${cropLabel(crop)} diagnostics`, cropValidationResults(crop.id));
+                    if (diagnostics) statusCell.appendChild(document.createTextNode(" "));
+                    if (diagnostics) statusCell.appendChild(diagnostics);
+                });
+                diagnosticsBox.innerHTML = dashboard.diagnostics.length
+                    ? `<div style="font-weight:700;margin-bottom:5px;">Plan Check</div><ul style="margin:0 0 0 18px;padding:0;">${dashboard.diagnostics.map(message => `<li>${mxUtils.htmlEntities(message)}</li>`).join("")}</ul>`
+                    : `<div style="color:${YP_COLORS.success};font-weight:700;">Plan Check passed.</div>`;
+            }
 
-            function renderFooter() { // NEW
-                const dirty = YearPlanDashboard.isDirty(state, plan); // NEW
-                reset.textContent = loadedExistingForCurrentYear ? "Reset" : "Clear"; // NEW
-                if (state.validationState === "invalid") footerStatus.textContent = "Validation failed"; // NEW
-                else if (dirty) footerStatus.textContent = "Unsaved changes"; // NEW
-                else if (state.lastSavedAt) footerStatus.textContent = `Last saved ${state.lastSavedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`; // NEW
-                else footerStatus.textContent = loadedExistingForCurrentYear ? "Loaded saved plan" : "New plan"; // CHANGE
-                headerStatus.textContent = footerStatus.textContent; // NEW
-                closePrompt.style.display = state.closePromptOpen ? "flex" : "none"; // NEW
-                footerActions.style.display = state.closePromptOpen ? "none" : "flex"; // NEW
-                headerActions.style.display = state.closePromptOpen ? "none" : "flex"; // NEW
-                if (dashboard) renderSummary(); // NEW
-            } // NEW
+            function renderFooter() {
+                const dirty = YearPlanDashboard.isDirty(state, plan);
+                reset.textContent = loadedExistingForCurrentYear ? "Reset" : "Clear";
+                if (state.validationState === "invalid") footerStatus.textContent = "Validation failed";
+                else if (dirty) footerStatus.textContent = "Unsaved changes";
+                else if (state.lastSavedAt) footerStatus.textContent = `Last saved ${state.lastSavedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+                else footerStatus.textContent = loadedExistingForCurrentYear ? "Loaded saved plan" : "New plan";
+                headerStatus.textContent = footerStatus.textContent;
+                closePrompt.style.display = state.closePromptOpen ? "flex" : "none";
+                footerActions.style.display = state.closePromptOpen ? "none" : "flex";
+                headerActions.style.display = state.closePromptOpen ? "none" : "flex";
+                if (dashboard) renderSummary();
+            }
 
-            function captureDateRangeSnapshot() { // NEW
-                const csa = plan && plan.csa ? plan.csa : {}; // NEW
-                return { // NEW
-                    csa: JSON.stringify({ // NEW
-                        start: String(csa.start || ""), // NEW
-                        end: String(csa.end || ""), // NEW
-                        components: (Array.isArray(csa.components) ? csa.components : []).map(component => ({ // NEW
-                            cropId: String(component && component.cropId || ""), // NEW
-                            start: String(component && component.start || ""), // NEW
-                            end: String(component && component.end || "") // NEW
-                        })) // NEW
-                    }), // NEW
-                    demand: JSON.stringify(((plan && plan.demands) || []).map(line => ({ // CHANGE
-                        id: String(line && line.id || ""), // NEW
-                        from: String(line && line.from || ""), // NEW
-                        to: String(line && line.to || "") // NEW
-                    }))) // NEW
-                }; // NEW
-            } // NEW
+            function captureDateRangeSnapshot() {
+                const csa = plan && plan.csa ? plan.csa : {};
+                return {
+                    csa: JSON.stringify({
+                        start: String(csa.start || ""),
+                        end: String(csa.end || ""),
+                        components: (Array.isArray(csa.components) ? csa.components : []).map(component => ({
+                            cropId: String(component && component.cropId || ""),
+                            start: String(component && component.start || ""),
+                            end: String(component && component.end || "")
+                        }))
+                    }),
+                    demand: JSON.stringify(((plan && plan.demands) || []).map(line => ({
+                        id: String(line && line.id || ""),
+                        from: String(line && line.from || ""),
+                        to: String(line && line.to || "")
+                    })))
+                };
+            }
 
-            function refreshDerived(beforeDateRanges, renderOptions) { // CHANGE
-                const options = renderOptions || {}; // NEW
-                const beforeRecalculation = captureDateRangeSnapshot(); // NEW
-                runtime = PlanRuntimeService.recalculate(moduleCell, currentYear, plan); // NEW
-                const dirty = state.baselineSnapshot ? YearPlanDashboard.isDirty(state, plan) : false; // NEW
-                dashboard = YearPlanDashboard.compute(plan, runtime, { dirty, extraDiagnostics: state.extraDiagnostics }); // NEW
-                const demandErrors = PlanSchema.validateDemand(plan); // NEW
-                const hadDemandErrors = state.hadDemandErrors; // NEW
-                const expansionChanges = YearPlanDashboard.syncExpansionState(state, dashboard, PlanSchema.validateCsa(plan), demandErrors); // CHANGE
-                if (demandErrors.length && !hadDemandErrors) { // CHANGE
-                    for (const line of (plan.demands || [])) state.collapsedDemandChannelIds.delete(String(line.channelId || "")); // NEW
-                } // NEW
-                state.selectedCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, state.selectedCropId, 0); // NEW
-                const afterRecalculation = captureDateRangeSnapshot(); // NEW
-                const comparisonSnapshot = beforeDateRanges || beforeRecalculation; // NEW
-                const csaDatesChanged = comparisonSnapshot.csa !== afterRecalculation.csa // NEW
-                    || beforeRecalculation.csa !== afterRecalculation.csa; // NEW
-                const demandDatesChanged = comparisonSnapshot.demand !== afterRecalculation.demand // CHANGE
-                    || beforeRecalculation.demand !== afterRecalculation.demand; // CHANGE
-                renderSummary(); // NEW
-                renderCropList(); // NEW
-                renderCsa(!!options.rebuildCsa || expansionChanges.csaChanged || (state.csaExpanded && csaDatesChanged)); // CHANGE
-                renderDemandStrip(!!options.rebuildDemand || expansionChanges.demandChanged || (state.demandExpanded && demandDatesChanged)); // CHANGE
-                renderCropPlan(false); // NEW
-                renderPlanCheck(); // CHANGE
-                renderFooter(); // NEW
-                syncEditorDerived(); // NEW
-                syncDemandDerived(); // NEW
-                syncCsaDerived(); // ADDED
-                return runtime; // NEW
-            } // NEW
+            function refreshDerived(beforeDateRanges, renderOptions) {
+                const options = renderOptions || {};
+                const beforeRecalculation = captureDateRangeSnapshot();
+                runtime = PlanRuntimeService.recalculate(moduleCell, currentYear, plan);
+                const dirty = state.baselineSnapshot ? YearPlanDashboard.isDirty(state, plan) : false;
+                dashboard = YearPlanDashboard.compute(plan, runtime, { dirty, extraDiagnostics: state.extraDiagnostics });
+                const demandErrors = PlanSchema.validateDemand(plan);
+                const hadDemandErrors = state.hadDemandErrors;
+                const expansionChanges = YearPlanDashboard.syncExpansionState(state, dashboard, PlanSchema.validateCsa(plan), demandErrors);
+                if (demandErrors.length && !hadDemandErrors) {
+                    for (const line of (plan.demands || [])) state.collapsedDemandChannelIds.delete(String(line.channelId || ""));
+                }
+                state.selectedCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, state.selectedCropId, 0);
+                const afterRecalculation = captureDateRangeSnapshot();
+                const comparisonSnapshot = beforeDateRanges || beforeRecalculation;
+                const csaDatesChanged = comparisonSnapshot.csa !== afterRecalculation.csa
+                    || beforeRecalculation.csa !== afterRecalculation.csa;
+                const demandDatesChanged = comparisonSnapshot.demand !== afterRecalculation.demand
+                    || beforeRecalculation.demand !== afterRecalculation.demand;
+                renderSummary();
+                renderCropList();
+                renderCsa(!!options.rebuildCsa || expansionChanges.csaChanged || (state.csaExpanded && csaDatesChanged));
+                renderDemandStrip(!!options.rebuildDemand || expansionChanges.demandChanged || (state.demandExpanded && demandDatesChanged));
+                renderCropPlan(false);
+                renderPlanCheck();
+                renderFooter();
+                syncEditorDerived();
+                syncDemandDerived();
+                syncCsaDerived();
+                return runtime;
+            }
 
-            async function getVarietyRows(plantId) { // NEW
-                const key = String(plantId || ""); // NEW
-                let rows = varietyCache.get(key); // NEW
-                if (!rows) { // NEW
-                    rows = await DbClient.queryVarietiesByPlantId(key); // NEW
-                    varietyCache.set(key, rows); // NEW
-                } // NEW
-                return rows; // NEW
-            } // NEW
+            async function getVarietyRows(plantId) {
+                const key = String(plantId || "");
+                let rows = varietyCache.get(key);
+                if (!rows) {
+                    rows = await DbClient.queryVarietiesByPlantId(key);
+                    varietyCache.set(key, rows);
+                }
+                return rows;
+            }
 
-            async function loadVarieties(crop, select) { // NEW
-                const key = String(crop.plantId || ""); // NEW
-                select.disabled = true; // NEW
-                try { // NEW
-                    const rows = await getVarietyRows(key); // CHANGE
-                    if (!SessionController.isActive(session) || selectedCrop() !== crop || editorRefs.variety !== select) return; // NEW
-                    select.innerHTML = ""; // NEW
-                    select.appendChild(new Option("(base plant)", "")); // NEW
-                    for (const row of rows) select.appendChild(new Option(String(row.variety_name || row.variety_id), String(row.variety_id))); // NEW
-                    const desired = crop.varietyId == null ? "" : String(crop.varietyId); // NEW
-                    if (desired && !rows.some(row => String(row.variety_id) === desired)) select.appendChild(new Option(`${crop.variety || desired} (unavailable)`, desired)); // NEW
-                    select.value = desired; // NEW
-                } catch (error) { // NEW
-                    if (SessionController.isActive(session)) { // NEW
-                        select.innerHTML = ""; // NEW
-                        select.appendChild(new Option(crop.variety || "(varieties unavailable)", crop.varietyId == null ? "" : String(crop.varietyId))); // NEW
-                    } // NEW
-                } finally { // NEW
-                    if (SessionController.isActive(session) && editorRefs.variety === select) select.disabled = false; // NEW
-                } // NEW
-            } // NEW
+            async function loadVarieties(crop, select) {
+                const key = String(crop.plantId || "");
+                select.disabled = true;
+                try {
+                    const rows = await getVarietyRows(key);
+                    if (!SessionController.isActive(session) || selectedCrop() !== crop || editorRefs.variety !== select) return;
+                    select.innerHTML = "";
+                    select.appendChild(new Option("(base plant)", ""));
+                    for (const row of rows) select.appendChild(new Option(String(row.variety_name || row.variety_id), String(row.variety_id)));
+                    const desired = crop.varietyId == null ? "" : String(crop.varietyId);
+                    if (desired && !rows.some(row => String(row.variety_id) === desired)) select.appendChild(new Option(`${crop.variety || desired} (unavailable)`, desired));
+                    select.value = desired;
+                } catch (error) {
+                    if (SessionController.isActive(session)) {
+                        select.innerHTML = "";
+                        select.appendChild(new Option(crop.variety || "(varieties unavailable)", crop.varietyId == null ? "" : String(crop.varietyId)));
+                    }
+                } finally {
+                    if (SessionController.isActive(session) && editorRefs.variety === select) select.disabled = false;
+                }
+            }
 
-            async function loadMethods(crop, select, diagnostic) { // NEW
-                const key = String(crop.plantId || ""); // NEW
-                select.disabled = true; // NEW
-                try { // NEW
-                    let rows = methodCache.get(key); // NEW
-                    if (!rows) { // NEW
-                        rows = await DbClient.queryPlantingMethodsForPlantId(key); // NEW
-                        methodCache.set(key, rows); // NEW
-                    } // NEW
-                    if (!SessionController.isActive(session) || selectedCrop() !== crop || editorRefs.method !== select) return; // NEW
-                    select.innerHTML = ""; // NEW
-                    const current = String(crop.method || "").trim(); // NEW
-                    const options = YearPlanDashboard.buildMethodOptions(rows, current); // NEW
-                    for (const option of options) select.appendChild(new Option(option.label, option.value)); // NEW
-                    diagnostic.textContent = options.some(option => option.value === current && option.unavailable) // NEW
-                        ? "The saved planting method is not available in current plant metadata. It will be preserved until changed." // NEW
-                        : ""; // NEW
-                    if (!current && options.length) crop.method = String(options[0].value); // NEW
-                    select.value = String(crop.method || ""); // NEW
-                    if (!current && crop.method) refreshDerived(); // NEW
-                } catch (error) { // NEW
-                    if (SessionController.isActive(session)) { // NEW
-                        select.innerHTML = ""; // NEW
-                        select.appendChild(new Option(String(crop.method || "(unavailable)"), String(crop.method || ""))); // NEW
-                        diagnostic.textContent = "Planting method metadata could not be loaded. The current value is preserved."; // NEW
-                    } // NEW
-                } finally { // NEW
-                    if (SessionController.isActive(session) && editorRefs.method === select) select.disabled = false; // NEW
-                } // NEW
-            } // NEW
+            async function loadMethods(crop, select, diagnostic) {
+                const key = String(crop.plantId || "");
+                select.disabled = true;
+                try {
+                    let rows = methodCache.get(key);
+                    if (!rows) {
+                        rows = await DbClient.queryPlantingMethodsForPlantId(key);
+                        methodCache.set(key, rows);
+                    }
+                    if (!SessionController.isActive(session) || selectedCrop() !== crop || editorRefs.method !== select) return;
+                    select.innerHTML = "";
+                    const current = String(crop.method || "").trim();
+                    const options = YearPlanDashboard.buildMethodOptions(rows, current);
+                    for (const option of options) select.appendChild(new Option(option.label, option.value));
+                    diagnostic.textContent = options.some(option => option.value === current && option.unavailable)
+                        ? "The saved planting method is not available in current plant metadata. It will be preserved until changed."
+                        : "";
+                    if (!current && options.length) crop.method = String(options[0].value);
+                    select.value = String(crop.method || "");
+                    if (!current && crop.method) refreshDerived();
+                } catch (error) {
+                    if (SessionController.isActive(session)) {
+                        select.innerHTML = "";
+                        select.appendChild(new Option(String(crop.method || "(unavailable)"), String(crop.method || "")));
+                        diagnostic.textContent = "Planting method metadata could not be loaded. The current value is preserved.";
+                    }
+                } finally {
+                    if (SessionController.isActive(session) && editorRefs.method === select) select.disabled = false;
+                }
+            }
 
-            function renderBasics(crop, content) { // NEW
-                const grid = document.createElement("div"); // NEW
-                grid.className = "yp-field-grid"; // NEW
-                const plant = mkInput("text", crop.plant || "", 0); // NEW
-                plant.disabled = true; // NEW
-                setYearPlanField(plant, "plantId", { cropId: crop.id }); // CHANGE
-                const varietyRow = document.createElement("div"); // NEW
-                varietyRow.className = "yp-row"; // NEW
-                const variety = document.createElement("select"); // NEW
-                variety.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;flex:1 1 180px;"; // NEW
-                setYearPlanField(variety, "varietyId", { cropId: crop.id }); // CHANGE
-                const addVariety = mkBtn("+", "add"); // CHANGE
-                varietyRow.appendChild(variety); // NEW
-                varietyRow.appendChild(addVariety); // NEW
-                const kg = mkInput("number", crop.kgPerPlant ?? ""); // NEW
-                setYearPlanField(kg, "kgPerPlant", { cropId: crop.id }); // CHANGE
-                kg.min = "0"; // NEW
-                const kgHost = document.createElement("div"); // ADDED
-                const yieldMeta = document.createElement("div"); // ADDED
-                yieldMeta.className = "yp-yield-hint"; // ADDED
-                const yieldHint = document.createElement("span"); // ADDED
-                const resetYield = mkBtn("Reset", "danger"); // CHANGE
-                yieldMeta.appendChild(yieldHint); yieldMeta.appendChild(resetYield); // ADDED
-                kgHost.appendChild(kg); kgHost.appendChild(yieldMeta); // ADDED
-                const germ = mkInput("number", crop.germRate ?? 1); // NEW
-                setYearPlanField(germ, "germRate", { cropId: crop.id }); // CHANGE
-                germ.min = "0.01"; germ.max = "1"; germ.step = "0.01"; // NEW
-                const harvestStart = mkInput("date", crop.harvestStart || ""); // NEW
-                const harvestEnd = mkInput("date", crop.harvestEnd || ""); // NEW
-                setYearPlanField(harvestStart, "harvestStart", { cropId: crop.id }); // CHANGE
-                setYearPlanField(harvestEnd, "harvestEnd", { cropId: crop.id }); // CHANGE
-                const shelf = mkInput("number", crop.shelfLifeDays ?? 0); // NEW
-                setYearPlanField(shelf, "shelfLifeDays", { cropId: crop.id }); // CHANGE
-                shelf.min = "0"; // NEW
-                const method = document.createElement("select"); // ADDED
-                method.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;width:100%;"; // ADDED
-                setYearPlanField(method, "method", { cropId: crop.id }); // CHANGE
-                const methodDiagnostic = document.createElement("div"); // ADDED
-                methodDiagnostic.style.cssText = `color:${YP_COLORS.danger};font-size:11px;margin-top:4px;`; // ADDED
-                const methodHost = document.createElement("div"); // ADDED
-                methodHost.appendChild(method); methodHost.appendChild(methodDiagnostic); // ADDED
-                const useActual = document.createElement("input"); // NEW
-                useActual.type = "checkbox"; useActual.checked = crop.useActualHarvest !== false; // NEW
-                setYearPlanField(useActual, "useActualHarvest", { cropId: crop.id }); // CHANGE
-                const syncAvailability = document.createElement("input"); // NEW
-                syncAvailability.type = "checkbox"; syncAvailability.checked = !!crop.syncharvest; // NEW
-                const useActualLabel = document.createElement("label"); // NEW
-                useActualLabel.className = "yp-row"; useActualLabel.appendChild(useActual); useActualLabel.appendChild(document.createTextNode("Use actual harvest")); // NEW
-                useActualLabel.title = "Use diagram actual harvest records for this crop when available; harvest dates become diagram-driven."; // ADDED
-                useActual.title = useActualLabel.title; // ADDED
-                const syncLabel = document.createElement("label"); // NEW
-                syncLabel.className = "yp-row"; syncLabel.appendChild(syncAvailability); syncLabel.appendChild(document.createTextNode("Sync demand to harvest window")); // CHANGE
-                syncLabel.title = "When the crop harvest window changes, update matching demand and CSA dates to stay inside that window."; // ADDED
-                syncAvailability.title = syncLabel.title; // ADDED
-                useActual.disabled = !hasActualHarvestForCrop(crop); // CHANGE
-                if (useActual.disabled) useActual.checked = false; // CHANGE
-                harvestStart.disabled = harvestEnd.disabled = useActual.checked; // NEW
-                addField(grid, "Plant", plant); // NEW
-                addField(grid, "Variety", varietyRow); // NEW
-                addField(grid, "Planting method", methodHost); // ADDED
-                addField(grid, "kg/plant", kgHost); // CHANGE
-                addField(grid, "Germination rate", germ, "Value from 0.01 through 1.00"); // NEW
-                addField(grid, "Harvest start", harvestStart); // NEW
-                addField(grid, "Harvest end", harvestEnd); // NEW
-                addField(grid, "Shelf life (days)", shelf); // NEW
-                grid.appendChild(useActualLabel); // NEW
-                grid.appendChild(syncLabel); // NEW
-                content.appendChild(grid); // NEW
-                const totals = document.createElement("div"); // ADDED
-                totals.className = "yp-derived-totals"; // ADDED
-                const actualTile = createDerivedTile("Actual plants", "Read from diagram planting groups"); // ADDED
-                const requiredTile = createDerivedTile("Plants required", "Calculated from target and yield"); // ADDED
-                const seedsTile = createDerivedTile("Seeds required", "Calculated from plants required and germination"); // ADDED
-                totals.appendChild(actualTile.tile); totals.appendChild(requiredTile.tile); totals.appendChild(seedsTile.tile); // ADDED
-                content.appendChild(totals); // ADDED
-                const timelineSection = document.createElement("div"); // ADDED
-                timelineSection.className = "yp-harvest-timeline-section"; // ADDED
-                const timelineTitle = document.createElement("div"); // ADDED
-                timelineTitle.className = "yp-harvest-timeline-title"; // ADDED
-                timelineTitle.textContent = "Actual harvest by week"; // ADDED
-                const timeline = document.createElement("div"); // ADDED
-                timelineSection.appendChild(timelineTitle); timelineSection.appendChild(timeline); // ADDED
-                content.appendChild(timelineSection); // ADDED
-                editorRefs = { ...editorRefs, variety, actual: actualTile.valueEl, required: requiredTile.valueEl, seeds: seedsTile.valueEl, harvestStart, harvestEnd, method, useActual, yieldHint, resetYield, harvestTimeline: timeline }; // CHANGE
-                loadVarieties(crop, variety); // NEW
-                loadMethods(crop, method, methodDiagnostic); // ADDED
-                updateYieldHint(crop, yieldHint, resetYield); // ADDED
+            function renderBasics(crop, content) {
+                const grid = document.createElement("div");
+                grid.className = "yp-field-grid";
+                const plant = mkInput("text", crop.plant || "", 0);
+                plant.disabled = true;
+                setYearPlanField(plant, "plantId", { cropId: crop.id });
+                const varietyRow = document.createElement("div");
+                varietyRow.className = "yp-row";
+                const variety = document.createElement("select");
+                variety.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;flex:1 1 180px;";
+                setYearPlanField(variety, "varietyId", { cropId: crop.id });
+                const addVariety = mkBtn("+", "add");
+                varietyRow.appendChild(variety);
+                varietyRow.appendChild(addVariety);
+                const kg = mkInput("number", crop.kgPerPlant ?? "");
+                setYearPlanField(kg, "kgPerPlant", { cropId: crop.id });
+                kg.min = "0";
+                const kgHost = document.createElement("div");
+                const yieldMeta = document.createElement("div");
+                yieldMeta.className = "yp-yield-hint";
+                const yieldHint = document.createElement("span");
+                const resetYield = mkBtn("Reset", "danger");
+                yieldMeta.appendChild(yieldHint); yieldMeta.appendChild(resetYield);
+                kgHost.appendChild(kg); kgHost.appendChild(yieldMeta);
+                const germ = mkInput("number", crop.germRate ?? 1);
+                setYearPlanField(germ, "germRate", { cropId: crop.id });
+                germ.min = "0.01"; germ.max = "1"; germ.step = "0.01";
+                const harvestStart = mkInput("date", crop.harvestStart || "");
+                const harvestEnd = mkInput("date", crop.harvestEnd || "");
+                setYearPlanField(harvestStart, "harvestStart", { cropId: crop.id });
+                setYearPlanField(harvestEnd, "harvestEnd", { cropId: crop.id });
+                const shelf = mkInput("number", crop.shelfLifeDays ?? 0);
+                setYearPlanField(shelf, "shelfLifeDays", { cropId: crop.id });
+                shelf.min = "0";
+                const method = document.createElement("select");
+                method.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;width:100%;";
+                setYearPlanField(method, "method", { cropId: crop.id });
+                const methodDiagnostic = document.createElement("div");
+                methodDiagnostic.style.cssText = `color:${YP_COLORS.danger};font-size:11px;margin-top:4px;`;
+                const methodHost = document.createElement("div");
+                methodHost.appendChild(method); methodHost.appendChild(methodDiagnostic);
+                const useActual = document.createElement("input");
+                useActual.type = "checkbox"; useActual.checked = crop.useActualHarvest !== false;
+                setYearPlanField(useActual, "useActualHarvest", { cropId: crop.id });
+                const syncAvailability = document.createElement("input");
+                syncAvailability.type = "checkbox"; syncAvailability.checked = !!crop.syncharvest;
+                const useActualLabel = document.createElement("label");
+                useActualLabel.className = "yp-row"; useActualLabel.appendChild(useActual); useActualLabel.appendChild(document.createTextNode("Use actual harvest"));
+                useActualLabel.title = "Use diagram actual harvest records for this crop when available; harvest dates become diagram-driven.";
+                useActual.title = useActualLabel.title;
+                const syncLabel = document.createElement("label");
+                syncLabel.className = "yp-row"; syncLabel.appendChild(syncAvailability); syncLabel.appendChild(document.createTextNode("Sync demand to harvest window"));
+                syncLabel.title = "When the crop harvest window changes, update matching demand and CSA dates to stay inside that window.";
+                syncAvailability.title = syncLabel.title;
+                useActual.disabled = !hasActualHarvestForCrop(crop);
+                if (useActual.disabled) useActual.checked = false;
+                harvestStart.disabled = harvestEnd.disabled = useActual.checked;
+                addField(grid, "Plant", plant);
+                addField(grid, "Variety", varietyRow);
+                addField(grid, "Planting method", methodHost);
+                addField(grid, "kg/plant", kgHost);
+                addField(grid, "Germination rate", germ, "Value from 0.01 through 1.00");
+                addField(grid, "Harvest start", harvestStart);
+                addField(grid, "Harvest end", harvestEnd);
+                addField(grid, "Shelf life (days)", shelf);
+                grid.appendChild(useActualLabel);
+                grid.appendChild(syncLabel);
+                content.appendChild(grid);
+                const totals = document.createElement("div");
+                totals.className = "yp-derived-totals";
+                const actualTile = createDerivedTile("Actual plants", "Read from diagram planting groups");
+                const requiredTile = createDerivedTile("Plants required", "Calculated from target and yield");
+                const seedsTile = createDerivedTile("Seeds required", "Calculated from plants required and germination");
+                totals.appendChild(actualTile.tile); totals.appendChild(requiredTile.tile); totals.appendChild(seedsTile.tile);
+                content.appendChild(totals);
+                const timelineSection = document.createElement("div");
+                timelineSection.className = "yp-harvest-timeline-section";
+                const timelineTitle = document.createElement("div");
+                timelineTitle.className = "yp-harvest-timeline-title";
+                timelineTitle.textContent = "Actual harvest by week";
+                const timeline = document.createElement("div");
+                timelineSection.appendChild(timelineTitle); timelineSection.appendChild(timeline);
+                content.appendChild(timelineSection);
+                editorRefs = { ...editorRefs, variety, actual: actualTile.valueEl, required: requiredTile.valueEl, seeds: seedsTile.valueEl, harvestStart, harvestEnd, method, useActual, yieldHint, resetYield, harvestTimeline: timeline };
+                loadVarieties(crop, variety);
+                loadMethods(crop, method, methodDiagnostic);
+                updateYieldHint(crop, yieldHint, resetYield);
 
-                variety.addEventListener("change", () => { // NEW
-                    const next = String(variety.value || ""); // NEW
-                    const duplicate = PlanSchema.findDuplicateCrop(plan, crop.plantId, next, crop.id); // NEW
-                    if (duplicate) { // NEW
-                        variety.value = crop.varietyId == null ? "" : String(crop.varietyId); // NEW
-                        state.extraDiagnostics = ["That plant/variety already exists in this year plan."]; // NEW
-                        state.planCheckExpanded = true; // CHANGE
-                        refreshDerived(); // NEW
-                        return; // NEW
-                    } // NEW
-                    state.extraDiagnostics = []; // NEW
-                    const rows = varietyCache.get(String(crop.plantId || "")) || []; // NEW
-                    const row = rows.find(item => String(item.variety_id) === next); // NEW
-                    crop.varietyId = next ? Number(next) : null; // NEW
-                    crop.variety = row ? String(row.variety_name || "") : ""; // NEW
-                    const overrides = row ? Env.safeJsonStringParse(row.overrides_json, null) : null; // NEW
-                    const overrideYield = Number(overrides && (overrides.yield_per_plant_kg ?? overrides.overrides?.yield_per_plant_kg)); // NEW
-                    crop.kgPerPlantMode = "auto"; // NEW
-                    const autoYield = Number.isFinite(overrideYield) && overrideYield > 0 ? overrideYield : Number(crop.baseKgPerPlant); // NEW
-                    if (Number.isFinite(autoYield) && autoYield > 0) crop.kgPerPlant = autoYield; // NEW
-                    renderSelectedEditor(); // NEW
-                    refreshDerived(); // NEW
-                    loadAddCropOptions(false); // NEW
-                }); // NEW
-                addVariety.addEventListener("click", () => { // NEW
-                    graph.fireEvent(new mxEventObject("usl:openVarietyEditor", "cropId", String(crop.id), "plantId", Number(crop.plantId), "varietyId", crop.varietyId == null ? null : Number(crop.varietyId))); // NEW
-                }); // NEW
-                kg.addEventListener("input", () => { crop.kgPerPlant = Number(kg.value); crop.kgPerPlantMode = "manual"; updateYieldHint(crop, yieldHint, resetYield); debounceRefresh(); }); // CHANGE
-                germ.addEventListener("input", () => { crop.germRate = Math.max(0.01, Math.min(1, Number(germ.value) || 1)); debounceRefresh(); }); // NEW
-                method.addEventListener("change", () => { crop.method = method.value; refreshDerived(); }); // ADDED
-                resetYield.addEventListener("click", () => { // ADDED
-                    const defaultYield = resolveDefaultKgPerPlant(crop); // ADDED
-                    crop.kgPerPlantMode = "auto"; // ADDED
-                    if (Number.isFinite(defaultYield) && defaultYield > 0) crop.kgPerPlant = defaultYield; // ADDED
-                    renderSelectedEditor(); // ADDED
-                    refreshDerived(); // ADDED
-                }); // ADDED
-                useActual.addEventListener("change", () => { crop.useActualHarvest = useActual.checked; harvestStart.disabled = harvestEnd.disabled = useActual.checked; refreshDerived(); }); // NEW
-                syncAvailability.addEventListener("change", () => { // NEW
-                    const beforeDateRanges = captureDateRangeSnapshot(); // NEW
-                    crop.syncharvest = syncAvailability.checked; // NEW
-                    if (crop.syncharvest) { // CHANGE
-                        const before = { hs: crop.harvestStart, he: crop.harvestEnd, availEnd: crop.harvestEnd }; // NEW
-                        PlanRuntimeService.syncCropDatesIfEnabled(plan, crop, before); // NEW
-                    } // NEW
-                    refreshDerived(beforeDateRanges); // CHANGE
-                }); // NEW
-                bindPairedDateControls(harvestStart, harvestEnd, { // CHANGE
-                    diagnostic: `Harvest start date cannot be after end date for "${crop.plant || crop.id}".`, // NEW
-                    setStart: value => { crop.harvestStart = value; }, // NEW
-                    setEnd: value => { crop.harvestEnd = value; }, // NEW
-                    afterCommit: (beforeDateRanges, previousPair) => { // NEW
-                        PlanRuntimeService.syncCropDatesIfEnabled(plan, crop, { // NEW
-                            hs: previousPair.start, // NEW
-                            he: previousPair.end, // NEW
-                            availEnd: previousPair.end // NEW
-                        }); // NEW
-                        refreshDerived(beforeDateRanges); // NEW
-                    } // NEW
-                }); // CHANGE
-                shelf.addEventListener("input", () => { // NEW
-                    crop.shelfLifeDays = Math.max(0, Math.trunc(Number(shelf.value) || 0)); // NEW
-                    debounceRefresh(); // NEW
-                }); // NEW
-            } // NEW
+                variety.addEventListener("change", () => {
+                    const next = String(variety.value || "");
+                    const duplicate = PlanSchema.findDuplicateCrop(plan, crop.plantId, next, crop.id);
+                    if (duplicate) {
+                        variety.value = crop.varietyId == null ? "" : String(crop.varietyId);
+                        state.extraDiagnostics = ["That plant/variety already exists in this year plan."];
+                        state.planCheckExpanded = true;
+                        refreshDerived();
+                        return;
+                    }
+                    state.extraDiagnostics = [];
+                    const rows = varietyCache.get(String(crop.plantId || "")) || [];
+                    const row = rows.find(item => String(item.variety_id) === next);
+                    crop.varietyId = next ? Number(next) : null;
+                    crop.variety = row ? String(row.variety_name || "") : "";
+                    const overrides = row ? Env.safeJsonStringParse(row.overrides_json, null) : null;
+                    const overrideYield = Number(overrides && (overrides.yield_per_plant_kg ?? overrides.overrides?.yield_per_plant_kg));
+                    crop.kgPerPlantMode = "auto";
+                    const autoYield = Number.isFinite(overrideYield) && overrideYield > 0 ? overrideYield : Number(crop.baseKgPerPlant);
+                    if (Number.isFinite(autoYield) && autoYield > 0) crop.kgPerPlant = autoYield;
+                    renderSelectedEditor();
+                    refreshDerived();
+                    loadAddCropOptions(false);
+                });
+                addVariety.addEventListener("click", () => {
+                    graph.fireEvent(new mxEventObject("usl:openVarietyEditor", "cropId", String(crop.id), "plantId", Number(crop.plantId), "varietyId", crop.varietyId == null ? null : Number(crop.varietyId)));
+                });
+                kg.addEventListener("input", () => { crop.kgPerPlant = Number(kg.value); crop.kgPerPlantMode = "manual"; updateYieldHint(crop, yieldHint, resetYield); debounceRefresh(); });
+                germ.addEventListener("input", () => { crop.germRate = Math.max(0.01, Math.min(1, Number(germ.value) || 1)); debounceRefresh(); });
+                method.addEventListener("change", () => { crop.method = method.value; refreshDerived(); });
+                resetYield.addEventListener("click", () => {
+                    const defaultYield = resolveDefaultKgPerPlant(crop);
+                    crop.kgPerPlantMode = "auto";
+                    if (Number.isFinite(defaultYield) && defaultYield > 0) crop.kgPerPlant = defaultYield;
+                    renderSelectedEditor();
+                    refreshDerived();
+                });
+                useActual.addEventListener("change", () => { crop.useActualHarvest = useActual.checked; harvestStart.disabled = harvestEnd.disabled = useActual.checked; refreshDerived(); });
+                syncAvailability.addEventListener("change", () => {
+                    const beforeDateRanges = captureDateRangeSnapshot();
+                    crop.syncharvest = syncAvailability.checked;
+                    if (crop.syncharvest) {
+                        const before = { hs: crop.harvestStart, he: crop.harvestEnd, availEnd: crop.harvestEnd };
+                        PlanRuntimeService.syncCropDatesIfEnabled(plan, crop, before);
+                    }
+                    refreshDerived(beforeDateRanges);
+                });
+                bindPairedDateControls(harvestStart, harvestEnd, {
+                    diagnostic: `Harvest start date cannot be after end date for "${crop.plant || crop.id}".`,
+                    setStart: value => { crop.harvestStart = value; },
+                    setEnd: value => { crop.harvestEnd = value; },
+                    afterCommit: (beforeDateRanges, previousPair) => {
+                        PlanRuntimeService.syncCropDatesIfEnabled(plan, crop, {
+                            hs: previousPair.start,
+                            he: previousPair.end,
+                            availEnd: previousPair.end
+                        });
+                        refreshDerived(beforeDateRanges);
+                    }
+                });
+                shelf.addEventListener("input", () => {
+                    crop.shelfLifeDays = Math.max(0, Math.trunc(Number(shelf.value) || 0));
+                    debounceRefresh();
+                });
+            }
 
-            function buildChannelSummaryChips(metric) { // NEW
-                if (!metric) return [createChip("No demand", "", "neutral")]; // NEW
-                return [ // NEW
-                    createChip("Demand", formatKg(metric.targetKg), "neutral"), // NEW
-                    createChip("Usable", formatKg(metric.usableSupplyKg), metric.usableSupplyKg > EPS ? "success" : "neutral"), // NEW
-                    createChip(metric.shortKg > EPS ? "Short" : "Status", metric.shortKg > EPS ? formatKg(metric.shortKg) : "OK", metric.shortKg > EPS ? "danger" : "success"), // NEW
-                    createChip("Lines", String(metric.lineCount), "neutral"), // NEW
-                    createChip("Committed", formatKg(metric.priorityKg.committed), "neutral"), // NEW
-                    createChip("Target", formatKg(metric.priorityKg.target), "neutral"), // NEW
-                    createChip("Optional", formatKg(metric.priorityKg.optional), "neutral"), // NEW
-                    createChip("Potential", formatMoney(metric.potentialRevenue), "neutral"), // NEW
-                    createChip("Fulfilled", formatMoney(metric.fulfilledRevenue), metric.fulfilledRevenue > EPS ? "success" : "neutral") // NEW
-                ]; // NEW
-            } // NEW
+            function buildChannelSummaryChips(metric) {
+                if (!metric) return [createChip("No demand", "", "neutral")];
+                return [
+                    createChip("Demand", formatKg(metric.targetKg), "neutral"),
+                    createChip("Usable", formatKg(metric.usableSupplyKg), metric.usableSupplyKg > EPS ? "success" : "neutral"),
+                    createChip(metric.shortKg > EPS ? "Short" : "Status", metric.shortKg > EPS ? formatKg(metric.shortKg) : "OK", metric.shortKg > EPS ? "danger" : "success"),
+                    createChip("Lines", String(metric.lineCount), "neutral"),
+                    createChip("Committed", formatKg(metric.priorityKg.committed), "neutral"),
+                    createChip("Target", formatKg(metric.priorityKg.target), "neutral"),
+                    createChip("Optional", formatKg(metric.priorityKg.optional), "neutral"),
+                    createChip("Potential", formatMoney(metric.potentialRevenue), "neutral"),
+                    createChip("Fulfilled", formatMoney(metric.fulfilledRevenue), metric.fulfilledRevenue > EPS ? "success" : "neutral")
+                ];
+            }
 
-            function createDemandLine(channelId) { // NEW
-                const crop = (plan.crops || [])[0] || null; // NEW
-                return { // NEW
-                    id: Env.uid("demand"), // NEW
-                    channelId: String(channelId || ""), // NEW
-                    cropId: crop ? crop.id : "", // NEW
-                    qty: 1, // NEW
-                    unit: defaultUnit(crop), // NEW
-                    frequency: "week", // NEW
-                    everyN: 1, // NEW
-                    from: crop && crop.harvestStart || "", // NEW
-                    to: crop && crop.harvestEnd || "", // NEW
-                    priority: "target", // NEW
-                    notes: "" // NEW
-                }; // NEW
-            } // NEW
+            function createDemandLine(channelId) {
+                const crop = (plan.crops || [])[0] || null;
+                return {
+                    id: Env.uid("demand"),
+                    channelId: String(channelId || ""),
+                    cropId: crop ? crop.id : "",
+                    qty: 1,
+                    unit: defaultUnit(crop),
+                    frequency: "week",
+                    everyN: 1,
+                    from: crop && crop.harvestStart || "",
+                    to: crop && crop.harvestEnd || "",
+                    priority: "target",
+                    notes: ""
+                };
+            }
 
-            function addDemandLine(channelId) { // NEW
-                if (!(plan.crops || []).length || !(plan.demandChannels || []).some(channel => String(channel.id) === String(channelId))) return; // NEW
-                plan.demands.push(createDemandLine(channelId)); // NEW
-                state.collapsedDemandChannelIds.delete(String(channelId)); // NEW
-                refreshDerived(null, { rebuildDemand: true }); // NEW
-            } // NEW
+            function addDemandLine(channelId) {
+                if (!(plan.crops || []).length || !(plan.demandChannels || []).some(channel => String(channel.id) === String(channelId))) return;
+                plan.demands.push(createDemandLine(channelId));
+                state.collapsedDemandChannelIds.delete(String(channelId));
+                refreshDerived(null, { rebuildDemand: true });
+            }
 
-            function renderDemandLine(line, host) { // NEW
-                const crop = PlanMath.findCrop(plan, line.cropId); // NEW
-                const row = document.createElement("div"); // NEW
-                row.className = "yp-demand-line"; // NEW
-                row.dataset.demandLineId = String(line.id || ""); // NEW
-                const cropSelect = mkSelect((plan.crops || []).map(item => ({ value: item.id, label: cropLabel(PlanMath.findCrop(plan, item.id)) })), line.cropId || ""); // NEW
-                const qty = mkInput("number", line.qty ?? 1); // NEW
-                qty.min = "0"; qty.step = "any"; // NEW
-                const unit = mkSelect(listUnitOptions(crop), line.unit || defaultUnit(crop)); // NEW
-                const frequency = mkSelect([{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }], line.frequency || "week"); // NEW
-                const every = mkInput("number", line.everyN ?? 1); // NEW
-                every.min = "1"; every.step = "1"; // NEW
-                const from = mkInput("date", line.from || ""); // NEW
-                const to = mkInput("date", line.to || ""); // NEW
-                const priority = mkSelect([{ value: "committed", label: "Committed" }, { value: "target", label: "Target" }, { value: "optional", label: "Optional" }], line.priority || "target"); // NEW
-                const unitPrice = PlanMath.resolvePackagePriceForUnit(crop, line.unit); // NEW
-                const price = mkInput("number", Number.isFinite(unitPrice) ? unitPrice : ""); // CHANGE
-                price.min = "0"; price.step = "any"; price.readOnly = true; // CHANGE
-                price.title = "Synced from the matching crop package."; // NEW
-                const notes = document.createElement("textarea"); // NEW
-                notes.value = String(line.notes || ""); // NEW
-                notes.rows = 2; // NEW
-                notes.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;box-sizing:border-box;width:100%;resize:vertical;"; // NEW
-                const remove = mkBtn("Remove", "danger"); // CHANGE
-                addField(row, "Crop", cropSelect); // NEW
-                addField(row, "Qty", qty); // NEW
-                addField(row, "Unit", unit); // NEW
-                addField(row, "Frequency", frequency); // NEW
-                addField(row, "Every", every); // NEW
-                addField(row, "From", from); // NEW
-                addField(row, "To", to); // NEW
-                addField(row, "Priority", priority); // NEW
-                addField(row, "Price", price, "From matching crop package"); // CHANGE
-                addField(row, "Notes", notes); // NEW
-                addField(row, "Remove", remove); // NEW
-                host.appendChild(row); // NEW
-                cropSelect.addEventListener("change", () => { // NEW
-                    line.cropId = cropSelect.value; // NEW
-                    line.unit = defaultUnit(PlanMath.findCrop(plan, line.cropId)); // NEW
-                    refreshDerived(null, { rebuildDemand: true }); // NEW
-                }); // NEW
-                qty.addEventListener("input", () => { line.qty = Math.max(0, Number(qty.value) || 0); debounceRefresh(); }); // NEW
-                unit.addEventListener("change", () => { line.unit = unit.value; refreshDerived(null, { rebuildDemand: true }); }); // CHANGE
-                frequency.addEventListener("change", () => { line.frequency = frequency.value; refreshDerived(); }); // NEW
-                every.addEventListener("input", () => { line.everyN = Math.max(1, Math.trunc(Number(every.value) || 1)); debounceRefresh(); }); // NEW
-                priority.addEventListener("change", () => { line.priority = priority.value; refreshDerived(); }); // NEW
-                notes.addEventListener("input", () => { line.notes = notes.value; renderFooter(); }); // NEW
-                bindPairedDateControls(from, to, { // CHANGE
-                    diagnostic: `Demand line start date cannot be after end date for "${crop ? cropLabel(crop) : line.cropId}".`, // CHANGE
-                    setStart: value => { line.from = value; }, // NEW
-                    setEnd: value => { line.to = value; } // NEW
-                }); // CHANGE
-                remove.addEventListener("click", () => { // NEW
-                    plan.demands = plan.demands.filter(item => item !== line); // NEW
-                    refreshDerived(null, { rebuildDemand: true }); // NEW
-                }); // NEW
-            } // NEW
+            function renderDemandLine(line, host) {
+                const crop = PlanMath.findCrop(plan, line.cropId);
+                const row = document.createElement("div");
+                row.className = "yp-demand-line";
+                row.dataset.demandLineId = String(line.id || "");
+                const cropSelect = mkSelect((plan.crops || []).map(item => ({ value: item.id, label: cropLabel(PlanMath.findCrop(plan, item.id)) })), line.cropId || "");
+                const qty = mkInput("number", line.qty ?? 1);
+                qty.min = "0"; qty.step = "any";
+                const unit = mkSelect(listUnitOptions(crop), line.unit || defaultUnit(crop));
+                const frequency = mkSelect([{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }], line.frequency || "week");
+                const every = mkInput("number", line.everyN ?? 1);
+                every.min = "1"; every.step = "1";
+                const from = mkInput("date", line.from || "");
+                const to = mkInput("date", line.to || "");
+                const priority = mkSelect([{ value: "committed", label: "Committed" }, { value: "target", label: "Target" }, { value: "optional", label: "Optional" }], line.priority || "target");
+                const unitPrice = PlanMath.resolvePackagePriceForUnit(crop, line.unit);
+                const price = mkInput("number", Number.isFinite(unitPrice) ? unitPrice : "");
+                price.min = "0"; price.step = "any"; price.readOnly = true;
+                price.title = "Synced from the matching crop package.";
+                const notes = document.createElement("textarea");
+                notes.value = String(line.notes || "");
+                notes.rows = 2;
+                notes.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;box-sizing:border-box;width:100%;resize:vertical;";
+                const remove = mkBtn("Remove", "danger");
+                addField(row, "Crop", cropSelect);
+                addField(row, "Qty", qty);
+                addField(row, "Unit", unit);
+                addField(row, "Frequency", frequency);
+                addField(row, "Every", every);
+                addField(row, "From", from);
+                addField(row, "To", to);
+                addField(row, "Priority", priority);
+                addField(row, "Price", price, "From matching crop package");
+                addField(row, "Notes", notes);
+                addField(row, "Remove", remove);
+                host.appendChild(row);
+                cropSelect.addEventListener("change", () => {
+                    line.cropId = cropSelect.value;
+                    line.unit = defaultUnit(PlanMath.findCrop(plan, line.cropId));
+                    refreshDerived(null, { rebuildDemand: true });
+                });
+                qty.addEventListener("input", () => { line.qty = Math.max(0, Number(qty.value) || 0); debounceRefresh(); });
+                unit.addEventListener("change", () => { line.unit = unit.value; refreshDerived(null, { rebuildDemand: true }); });
+                frequency.addEventListener("change", () => { line.frequency = frequency.value; refreshDerived(); });
+                every.addEventListener("input", () => { line.everyN = Math.max(1, Math.trunc(Number(every.value) || 1)); debounceRefresh(); });
+                priority.addEventListener("change", () => { line.priority = priority.value; refreshDerived(); });
+                notes.addEventListener("input", () => { line.notes = notes.value; renderFooter(); });
+                bindPairedDateControls(from, to, {
+                    diagnostic: `Demand line start date cannot be after end date for "${crop ? cropLabel(crop) : line.cropId}".`,
+                    setStart: value => { line.from = value; },
+                    setEnd: value => { line.to = value; }
+                });
+                remove.addEventListener("click", () => {
+                    plan.demands = plan.demands.filter(item => item !== line);
+                    refreshDerived(null, { rebuildDemand: true });
+                });
+            }
 
-            function renderDemandChannel(channel, host) { // NEW
-                const channelId = String(channel.id || ""); // NEW
-                const metric = dashboard && dashboard.channelMetricsById.get(channelId); // NEW
-                const box = document.createElement("section"); // NEW
-                box.className = "yp-demand-channel"; // NEW
-                box.dataset.demandChannelId = channelId; // NEW
-                const header = document.createElement("div"); // NEW
-                header.className = "yp-demand-channel-header"; // NEW
-                const label = mkInput("text", channel.label || ""); // NEW
-                label.setAttribute("aria-label", "Channel name"); // NEW
-                label.style.minWidth = "160px"; // NEW
-                const type = mkSelect([ // NEW
-                    { value: "farm_store", label: "Farm store" }, // NEW
-                    { value: "restaurant", label: "Restaurant" }, // NEW
-                    { value: "market", label: "Market" }, // NEW
-                    { value: "wholesale", label: "Wholesale" }, // NEW
-                    { value: "other", label: "Other" } // NEW
-                ], channel.type || "other", 120); // NEW
-                type.setAttribute("aria-label", "Channel type"); // NEW
-                const summary = document.createElement("div"); // NEW
-                summary.className = "yp-demand-channel-summary"; // NEW
-                setChipRow(summary, buildChannelSummaryChips(metric)); // CHANGE
-                demandRefs.channelSummaries.set(channelId, summary); // NEW
-                const lines = (plan.demands || []).filter(line => String(line.channelId) === channelId); // NEW
-                const removeChannel = mkBtn("Remove channel", "danger"); // CHANGE
-                removeChannel.disabled = lines.length > 0; // NEW
-                removeChannel.title = lines.length ? "Remove or move all demand lines before removing this channel." : ""; // NEW
-                const collapsed = state.collapsedDemandChannelIds.has(channelId); // NEW
-                const toggle = mkBtn(collapsed ? "Expand" : "Collapse", "neutral"); // CHANGE
-                toggle.setAttribute("aria-expanded", collapsed ? "false" : "true"); // NEW
-                header.appendChild(label); header.appendChild(type); header.appendChild(summary); header.appendChild(removeChannel); header.appendChild(toggle); // NEW
-                const details = document.createElement("div"); // NEW
-                details.className = "yp-demand-channel-details"; // NEW
-                details.style.display = collapsed ? "none" : "block"; // NEW
-                const rows = document.createElement("div"); // NEW
-                rows.style.cssText = "display:flex;flex-direction:column;gap:8px;"; // NEW
-                for (const line of lines) renderDemandLine(line, rows); // NEW
-                if (!lines.length) { // NEW
-                    const empty = document.createElement("div"); // NEW
-                    empty.style.cssText = "color:#666;padding:4px 0 8px;"; // NEW
-                    empty.textContent = "No demand lines in this channel."; // NEW
-                    rows.appendChild(empty); // NEW
-                } // NEW
-                const add = mkBtn("Add demand line", "add"); // CHANGE
-                add.style.marginTop = "8px"; // NEW
-                add.disabled = !(plan.crops || []).length; // NEW
-                add.addEventListener("click", () => addDemandLine(channelId)); // NEW
-                details.appendChild(rows); details.appendChild(add); // NEW
-                box.appendChild(header); box.appendChild(details); host.appendChild(box); // NEW
-                label.addEventListener("input", () => { channel.label = label.value; debounceRefresh(); }); // NEW
-                type.addEventListener("change", () => { channel.type = type.value; refreshDerived(); }); // NEW
-                removeChannel.addEventListener("click", () => { // NEW
-                    if ((plan.demands || []).some(line => String(line.channelId) === channelId)) return; // NEW
-                    plan.demandChannels = plan.demandChannels.filter(item => item !== channel); // NEW
-                    state.collapsedDemandChannelIds.delete(channelId); // NEW
-                    refreshDerived(null, { rebuildDemand: true }); // NEW
-                }); // NEW
-                toggle.addEventListener("click", () => { // NEW
-                    if (collapsed) state.collapsedDemandChannelIds.delete(channelId); // NEW
-                    else state.collapsedDemandChannelIds.add(channelId); // NEW
-                    renderDemandStrip(true); // NEW
-                    syncDemandDerived(); // NEW
-                }); // NEW
-            } // NEW
+            function renderDemandChannel(channel, host) {
+                const channelId = String(channel.id || "");
+                const metric = dashboard && dashboard.channelMetricsById.get(channelId);
+                const box = document.createElement("section");
+                box.className = "yp-demand-channel";
+                box.dataset.demandChannelId = channelId;
+                const header = document.createElement("div");
+                header.className = "yp-demand-channel-header";
+                const label = mkInput("text", channel.label || "");
+                label.setAttribute("aria-label", "Channel name");
+                label.style.minWidth = "160px";
+                const type = mkSelect([
+                    { value: "farm_store", label: "Farm store" },
+                    { value: "restaurant", label: "Restaurant" },
+                    { value: "market", label: "Market" },
+                    { value: "wholesale", label: "Wholesale" },
+                    { value: "other", label: "Other" }
+                ], channel.type || "other", 120);
+                type.setAttribute("aria-label", "Channel type");
+                const summary = document.createElement("div");
+                summary.className = "yp-demand-channel-summary";
+                setChipRow(summary, buildChannelSummaryChips(metric));
+                demandRefs.channelSummaries.set(channelId, summary);
+                const lines = (plan.demands || []).filter(line => String(line.channelId) === channelId);
+                const removeChannel = mkBtn("Remove channel", "danger");
+                removeChannel.disabled = lines.length > 0;
+                removeChannel.title = lines.length ? "Remove or move all demand lines before removing this channel." : "";
+                const collapsed = state.collapsedDemandChannelIds.has(channelId);
+                const toggle = mkBtn(collapsed ? "Expand" : "Collapse", "neutral");
+                toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+                header.appendChild(label); header.appendChild(type); header.appendChild(summary); header.appendChild(removeChannel); header.appendChild(toggle);
+                const details = document.createElement("div");
+                details.className = "yp-demand-channel-details";
+                details.style.display = collapsed ? "none" : "block";
+                const rows = document.createElement("div");
+                rows.style.cssText = "display:flex;flex-direction:column;gap:8px;";
+                for (const line of lines) renderDemandLine(line, rows);
+                if (!lines.length) {
+                    const empty = document.createElement("div");
+                    empty.style.cssText = "color:#666;padding:4px 0 8px;";
+                    empty.textContent = "No demand lines in this channel.";
+                    rows.appendChild(empty);
+                }
+                const add = mkBtn("Add demand line", "add");
+                add.style.marginTop = "8px";
+                add.disabled = !(plan.crops || []).length;
+                add.addEventListener("click", () => addDemandLine(channelId));
+                details.appendChild(rows); details.appendChild(add);
+                box.appendChild(header); box.appendChild(details); host.appendChild(box);
+                label.addEventListener("input", () => { channel.label = label.value; debounceRefresh(); });
+                type.addEventListener("change", () => { channel.type = type.value; refreshDerived(); });
+                removeChannel.addEventListener("click", () => {
+                    if ((plan.demands || []).some(line => String(line.channelId) === channelId)) return;
+                    plan.demandChannels = plan.demandChannels.filter(item => item !== channel);
+                    state.collapsedDemandChannelIds.delete(channelId);
+                    refreshDerived(null, { rebuildDemand: true });
+                });
+                toggle.addEventListener("click", () => {
+                    if (collapsed) state.collapsedDemandChannelIds.delete(channelId);
+                    else state.collapsedDemandChannelIds.add(channelId);
+                    renderDemandStrip(true);
+                    syncDemandDerived();
+                });
+            }
 
-            function renderDemand(content) { // CHANGE
-                demandRefs = { channelSummaries: new Map() }; // CHANGE
-                const toolbar = document.createElement("div"); // NEW
-                toolbar.className = "yp-row"; // NEW
-                toolbar.style.marginBottom = "9px"; // NEW
-                const addChannel = mkBtn("Add channel", "add"); // CHANGE
-                const channelSelect = mkSelect((plan.demandChannels || []).map(channel => ({ value: channel.id, label: channel.label || channel.id })), plan.demandChannels && plan.demandChannels[0] ? plan.demandChannels[0].id : "", 180); // NEW
-                channelSelect.setAttribute("aria-label", "Demand line channel"); // NEW
-                const addLine = mkBtn("Add demand line", "add"); // CHANGE
-                addLine.disabled = !(plan.crops || []).length || !(plan.demandChannels || []).length; // NEW
-                toolbar.appendChild(addChannel); toolbar.appendChild(channelSelect); toolbar.appendChild(addLine); // NEW
-                const channelsHost = document.createElement("div"); // NEW
-                channelsHost.style.cssText = "display:flex;flex-direction:column;gap:9px;"; // NEW
-                content.appendChild(toolbar); content.appendChild(channelsHost); // NEW
-                for (const channel of (plan.demandChannels || [])) renderDemandChannel(channel, channelsHost); // NEW
-                if (!(plan.demandChannels || []).length) { // NEW
-                    const empty = document.createElement("div"); // NEW
-                    empty.style.cssText = "padding:12px;color:#666;text-align:center;"; // NEW
-                    empty.textContent = "Add a demand channel to begin planning sales."; // NEW
-                    channelsHost.appendChild(empty); // NEW
-                } // NEW
-                addChannel.addEventListener("click", () => { // NEW
-                    const channel = { id: Env.uid("demand_channel"), label: "New Channel", type: "other" }; // NEW
-                    plan.demandChannels.push(channel); // NEW
-                    state.collapsedDemandChannelIds.delete(channel.id); // NEW
-                    refreshDerived(null, { rebuildDemand: true }); // NEW
-                }); // NEW
-                addLine.addEventListener("click", () => addDemandLine(channelSelect.value)); // NEW
-            } // CHANGE
+            function renderDemand(content) {
+                demandRefs = { channelSummaries: new Map() };
+                const toolbar = document.createElement("div");
+                toolbar.className = "yp-row";
+                toolbar.style.marginBottom = "9px";
+                const addChannel = mkBtn("Add channel", "add");
+                const channelSelect = mkSelect((plan.demandChannels || []).map(channel => ({ value: channel.id, label: channel.label || channel.id })), plan.demandChannels && plan.demandChannels[0] ? plan.demandChannels[0].id : "", 180);
+                channelSelect.setAttribute("aria-label", "Demand line channel");
+                const addLine = mkBtn("Add demand line", "add");
+                addLine.disabled = !(plan.crops || []).length || !(plan.demandChannels || []).length;
+                toolbar.appendChild(addChannel); toolbar.appendChild(channelSelect); toolbar.appendChild(addLine);
+                const channelsHost = document.createElement("div");
+                channelsHost.style.cssText = "display:flex;flex-direction:column;gap:9px;";
+                content.appendChild(toolbar); content.appendChild(channelsHost);
+                for (const channel of (plan.demandChannels || [])) renderDemandChannel(channel, channelsHost);
+                if (!(plan.demandChannels || []).length) {
+                    const empty = document.createElement("div");
+                    empty.style.cssText = "padding:12px;color:#666;text-align:center;";
+                    empty.textContent = "Add a demand channel to begin planning sales.";
+                    channelsHost.appendChild(empty);
+                }
+                addChannel.addEventListener("click", () => {
+                    const channel = { id: Env.uid("demand_channel"), label: "New Channel", type: "other" };
+                    plan.demandChannels.push(channel);
+                    state.collapsedDemandChannelIds.delete(channel.id);
+                    refreshDerived(null, { rebuildDemand: true });
+                });
+                addLine.addEventListener("click", () => addDemandLine(channelSelect.value));
+            }
 
-            function renderDemandStrip(rebuildDetails) { // NEW
-                const channelCount = (plan.demandChannels || []).length; // NEW
-                const lineCount = (plan.demands || []).length; // NEW
-                const demandKg = (dashboard && dashboard.channelMetrics || []).reduce((sum, metric) => sum + metric.targetKg, 0); // NEW
-                const shortKg = (dashboard && dashboard.channelMetrics || []).reduce((sum, metric) => sum + metric.shortKg, 0); // NEW
-                renderStripBox(demandBox, { // NEW
-                    title: "Demand", // NEW
-                    expanded: state.demandExpanded, // NEW
-                    summaryChips: [ // CHANGE
-                        createChip("Channels", String(channelCount), "neutral"), // NEW
-                        createChip("Lines", String(lineCount), "neutral"), // NEW
-                        createChip("Demand", formatKg(demandKg), "primary"), // NEW
-                        createChip("Short", formatKg(shortKg), shortKg > EPS ? "danger" : "success"), // NEW
-                        createChip("Potential", formatMoney(dashboard && dashboard.potentialRevenue), "neutral"), // NEW
-                        createChip("Fulfilled", formatMoney(dashboard && dashboard.fulfilledRevenue), (dashboard && dashboard.fulfilledRevenue) > EPS ? "success" : "neutral") // NEW
-                    ], // NEW
-                    rebuildDetails: !!rebuildDetails, // NEW
-                    onToggle: () => { // NEW
-                        state.demandExpanded = !state.demandExpanded; // NEW
-                        renderDemandStrip(state.demandExpanded); // NEW
-                        syncDemandDerived(); // NEW
-                    }, // NEW
-                    renderDetails: details => renderDemand(details) // CHANGE
-                }); // NEW
-            } // NEW
+            function renderDemandStrip(rebuildDetails) {
+                const channelCount = (plan.demandChannels || []).length;
+                const lineCount = (plan.demands || []).length;
+                const demandKg = (dashboard && dashboard.channelMetrics || []).reduce((sum, metric) => sum + metric.targetKg, 0);
+                const shortKg = (dashboard && dashboard.channelMetrics || []).reduce((sum, metric) => sum + metric.shortKg, 0);
+                renderStripBox(demandBox, {
+                    title: "Demand",
+                    expanded: state.demandExpanded,
+                    summaryChips: [
+                        createChip("Channels", String(channelCount), "neutral"),
+                        createChip("Lines", String(lineCount), "neutral"),
+                        createChip("Demand", formatKg(demandKg), "primary"),
+                        createChip("Short", formatKg(shortKg), shortKg > EPS ? "danger" : "success"),
+                        createChip("Potential", formatMoney(dashboard && dashboard.potentialRevenue), "neutral"),
+                        createChip("Fulfilled", formatMoney(dashboard && dashboard.fulfilledRevenue), (dashboard && dashboard.fulfilledRevenue) > EPS ? "success" : "neutral")
+                    ],
+                    rebuildDetails: !!rebuildDetails,
+                    onToggle: () => {
+                        state.demandExpanded = !state.demandExpanded;
+                        renderDemandStrip(state.demandExpanded);
+                        syncDemandDerived();
+                    },
+                    renderDetails: details => renderDemand(details)
+                });
+            }
 
-            function renderCropPlan(rebuildDetails) { // NEW
-                const crop = selectedCrop(); // NEW
-                const cropCount = Array.isArray(plan.crops) ? plan.crops.length : 0; // NEW
-                renderStripBox(cropPlanBox, { // NEW
-                    title: "Crop Plan", // NEW
-                    expanded: state.cropPlanExpanded, // NEW
-                    summaryChips: [ // CHANGE
-                        createChip("Crops", String(cropCount), "neutral"), // NEW
-                        createChip("Selected", crop ? cropLabel(crop) : "No crop selected", crop ? "primary" : "neutral") // NEW
-                    ], // NEW
-                    rebuildDetails: !!rebuildDetails, // NEW
-                    onToggle: () => { state.cropPlanExpanded = !state.cropPlanExpanded; renderCropPlan(false); }, // NEW
-                    renderDetails: details => { details.appendChild(addRow); details.appendChild(dashboardGrid); } // NEW
-                }); // NEW
-            } // NEW
+            function renderCropPlan(rebuildDetails) {
+                const crop = selectedCrop();
+                const cropCount = Array.isArray(plan.crops) ? plan.crops.length : 0;
+                renderStripBox(cropPlanBox, {
+                    title: "Crop Plan",
+                    expanded: state.cropPlanExpanded,
+                    summaryChips: [
+                        createChip("Crops", String(cropCount), "neutral"),
+                        createChip("Selected", crop ? cropLabel(crop) : "No crop selected", crop ? "primary" : "neutral")
+                    ],
+                    rebuildDetails: !!rebuildDetails,
+                    onToggle: () => { state.cropPlanExpanded = !state.cropPlanExpanded; renderCropPlan(false); },
+                    renderDetails: details => { details.appendChild(addRow); details.appendChild(dashboardGrid); }
+                });
+            }
 
-            function renderPackages(crop, content) { // NEW
-                const defaultLabel = document.createElement("label"); // NEW
-                defaultLabel.className = "yp-row"; // NEW
-                const saveDefault = document.createElement("input"); // NEW
-                saveDefault.type = "checkbox"; saveDefault.checked = !!crop.savePackagesAsDefault; // NEW
-                defaultLabel.appendChild(saveDefault); defaultLabel.appendChild(document.createTextNode("Save as default for plant")); // NEW
-                content.appendChild(defaultLabel); // NEW
-                const rowsHost = document.createElement("div"); // NEW
-                rowsHost.style.cssText = "display:flex;flex-direction:column;gap:7px;margin-top:10px;"; // NEW
-                content.appendChild(rowsHost); // NEW
-                const add = mkBtn("Add package", "add"); // CHANGE
-                add.style.marginTop = "8px"; // NEW
-                content.appendChild(add); // NEW
-                saveDefault.addEventListener("change", () => { crop.savePackagesAsDefault = saveDefault.checked; renderFooter(); }); // NEW
+            function renderPackages(crop, content) {
+                const defaultLabel = document.createElement("label");
+                defaultLabel.className = "yp-row";
+                const saveDefault = document.createElement("input");
+                saveDefault.type = "checkbox"; saveDefault.checked = !!crop.savePackagesAsDefault;
+                defaultLabel.appendChild(saveDefault); defaultLabel.appendChild(document.createTextNode("Save as default for plant"));
+                content.appendChild(defaultLabel);
+                const rowsHost = document.createElement("div");
+                rowsHost.style.cssText = "display:flex;flex-direction:column;gap:7px;margin-top:10px;";
+                content.appendChild(rowsHost);
+                const add = mkBtn("Add package", "add");
+                add.style.marginTop = "8px";
+                content.appendChild(add);
+                saveDefault.addEventListener("change", () => { crop.savePackagesAsDefault = saveDefault.checked; renderFooter(); });
 
-                function renderRows() { // NEW
-                    rowsHost.innerHTML = ""; // NEW
-                    crop.packages = Array.isArray(crop.packages) ? crop.packages : []; // NEW
-                    for (const [packageIndex, pkg] of crop.packages.entries()) { // CHANGE
-                        const row = document.createElement("div"); // NEW
-                        row.className = "yp-package-row"; // CHANGE
-                        row.dataset.packageIndex = String(packageIndex); // CHANGE
-                        row.dataset.cropId = String(crop.id || ""); // CHANGE
-                        const unit = mkInput("text", pkg.unit || ""); // NEW
-                        const baseQty = mkInput("number", pkg.baseQty ?? 1); // NEW
-                        const baseType = mkSelect([{ value: "kg", label: "kg" }, { value: "plant", label: "plant" }], pkg.baseType || "kg"); // NEW
-                        const price = mkInput("number", Number.isFinite(Number(pkg.price)) ? pkg.price : ""); // NEW
-                        setYearPlanField(unit, "unit", { cropId: crop.id, packageIndex }); // CHANGE
-                        setYearPlanField(baseQty, "baseQty", { cropId: crop.id, packageIndex }); // CHANGE
-                        setYearPlanField(baseType, "baseType", { cropId: crop.id, packageIndex }); // CHANGE
-                        setYearPlanField(price, "price", { cropId: crop.id, packageIndex }); // CHANGE
-                        const remove = mkBtn("Remove", "danger"); // CHANGE
-                        addPackageField(row, "Unit", unit); // ADDED
-                        addPackageField(row, "Quantity", baseQty); // ADDED
-                        addPackageField(row, "Base", baseType); // ADDED
-                        addPackageField(row, "Price", price); // ADDED
-                        row.appendChild(remove); // CHANGE
-                        rowsHost.appendChild(row); // NEW
-                        unit.addEventListener("input", () => { pkg.unit = unit.value; debounceRefresh({ rebuildDemand: true, rebuildCsa: true }); }); // CHANGE
-                        baseQty.addEventListener("input", () => { pkg.baseQty = Math.max(0, Number(baseQty.value) || 0); debounceRefresh(); }); // NEW
-                        baseType.addEventListener("change", () => { pkg.baseType = baseType.value; refreshDerived(); }); // NEW
-                        price.addEventListener("input", () => { pkg.price = price.value === "" ? NaN : Math.max(0, Number(price.value) || 0); debounceRefresh({ rebuildDemand: true }); }); // CHANGE
-                        remove.addEventListener("click", () => { crop.packages = crop.packages.filter(item => item !== pkg); renderRows(); refreshDerived(null, { rebuildDemand: true, rebuildCsa: true }); }); // CHANGE
-                    } // NEW
-                } // NEW
+                function renderRows() {
+                    rowsHost.innerHTML = "";
+                    crop.packages = Array.isArray(crop.packages) ? crop.packages : [];
+                    for (const [packageIndex, pkg] of crop.packages.entries()) {
+                        const row = document.createElement("div");
+                        row.className = "yp-package-row";
+                        row.dataset.packageIndex = String(packageIndex);
+                        row.dataset.cropId = String(crop.id || "");
+                        const unit = mkInput("text", pkg.unit || "");
+                        const baseQty = mkInput("number", pkg.baseQty ?? 1);
+                        const baseType = mkSelect([{ value: "kg", label: "kg" }, { value: "plant", label: "plant" }], pkg.baseType || "kg");
+                        const price = mkInput("number", Number.isFinite(Number(pkg.price)) ? pkg.price : "");
+                        setYearPlanField(unit, "unit", { cropId: crop.id, packageIndex });
+                        setYearPlanField(baseQty, "baseQty", { cropId: crop.id, packageIndex });
+                        setYearPlanField(baseType, "baseType", { cropId: crop.id, packageIndex });
+                        setYearPlanField(price, "price", { cropId: crop.id, packageIndex });
+                        const remove = mkBtn("Remove", "danger");
+                        addPackageField(row, "Unit", unit);
+                        addPackageField(row, "Quantity", baseQty);
+                        addPackageField(row, "Base", baseType);
+                        addPackageField(row, "Price", price);
+                        row.appendChild(remove);
+                        rowsHost.appendChild(row);
+                        unit.addEventListener("input", () => { pkg.unit = unit.value; debounceRefresh({ rebuildDemand: true, rebuildCsa: true }); });
+                        baseQty.addEventListener("input", () => { pkg.baseQty = Math.max(0, Number(baseQty.value) || 0); debounceRefresh(); });
+                        baseType.addEventListener("change", () => { pkg.baseType = baseType.value; refreshDerived(); });
+                        price.addEventListener("input", () => { pkg.price = price.value === "" ? NaN : Math.max(0, Number(price.value) || 0); debounceRefresh({ rebuildDemand: true }); });
+                        remove.addEventListener("click", () => { crop.packages = crop.packages.filter(item => item !== pkg); renderRows(); refreshDerived(null, { rebuildDemand: true, rebuildCsa: true }); });
+                    }
+                }
 
-                add.addEventListener("click", () => { crop.packages.push({ unit: "kg", baseType: "kg", baseQty: 1, price: NaN }); renderRows(); refreshDerived(null, { rebuildDemand: true, rebuildCsa: true }); }); // CHANGE
-                renderRows(); // NEW
-            } // NEW
+                add.addEventListener("click", () => { crop.packages.push({ unit: "kg", baseType: "kg", baseQty: 1, price: NaN }); renderRows(); refreshDerived(null, { rebuildDemand: true, rebuildCsa: true }); });
+                renderRows();
+            }
 
-            function renderSelectedEditor() { // NEW
-                editorBox.innerHTML = ""; // NEW
-                editorRefs = {}; // NEW
-                const crop = selectedCrop(); // NEW
-                if (!crop) { // NEW
-                    const empty = document.createElement("div"); // NEW
-                    empty.style.cssText = "padding:24px;color:#666;text-align:center;"; // NEW
-                    empty.textContent = "Add or select a crop to edit its plan."; // NEW
-                    editorBox.appendChild(empty); // NEW
-                    return; // NEW
-                } // NEW
-                const head = document.createElement("div"); // NEW
-                head.style.cssText = "padding:10px 12px;border-bottom:1px solid #ddd;display:flex;justify-content:space-between;gap:10px;align-items:center;"; // NEW
-                const title = document.createElement("div"); // NEW
-                title.style.cssText = "font-size:14px;font-weight:700;"; // NEW
-                title.textContent = cropLabel(crop); // NEW
-                const remove = mkBtn("Remove crop", "danger"); // CHANGE
-                head.appendChild(title); head.appendChild(remove); // NEW
-                const tabs = document.createElement("div"); // NEW
-                tabs.style.cssText = "display:flex;gap:4px;padding:8px 10px 0;flex-wrap:wrap;"; // NEW
-                const content = document.createElement("div"); // NEW
-                content.style.padding = "12px"; // NEW
-                for (const tab of [{ id: "basics", label: "Basics" }, { id: "packages", label: "Packages" }]) { // CHANGE
-                    const button = mkBtn(tab.label, "neutral"); // CHANGE
-                    button.addEventListener("click", () => { state.activeTab = tab.id; renderSelectedEditor(); syncEditorDerived(); }); // NEW
-                    tabs.appendChild(button); // NEW
-                } // NEW
-                editorBox.appendChild(head); editorBox.appendChild(tabs); editorBox.appendChild(content); // NEW
-                if (state.activeTab === "packages") renderPackages(crop, content); // CHANGE
-                else renderBasics(crop, content); // NEW
-                remove.addEventListener("click", () => { // NEW
-                    const index = plan.crops.indexOf(crop); // NEW
-                    plan.crops = plan.crops.filter(item => item !== crop); // NEW
-                    plan.demands = (plan.demands || []).filter(line => line.cropId !== crop.id); // NEW
-                    if (plan.csa && Array.isArray(plan.csa.components)) plan.csa.components = plan.csa.components.filter(component => component.cropId !== crop.id); // NEW
-                    const nextCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, "", index); // CHANGE
-                    if (nextCropId) setSelectedCropEverywhere(nextCropId); // NEW
-                    else { state.selectedCropId = ""; plan.cropFilterId = ""; cropFilterSel.value = ""; } // NEW
-                    renderSelectedEditor(); fillCropFilter(); refreshDerived(null, { rebuildCsa: true, rebuildDemand: true }); loadAddCropOptions(false); // CHANGE
-                }); // NEW
-                syncEditorDerived(); // NEW
-            } // NEW
+            function renderSelectedEditor() {
+                editorBox.innerHTML = "";
+                editorRefs = {};
+                const crop = selectedCrop();
+                if (!crop) {
+                    const empty = document.createElement("div");
+                    empty.style.cssText = "padding:24px;color:#666;text-align:center;";
+                    empty.textContent = "Add or select a crop to edit its plan.";
+                    editorBox.appendChild(empty);
+                    return;
+                }
+                const head = document.createElement("div");
+                head.style.cssText = "padding:10px 12px;border-bottom:1px solid #ddd;display:flex;justify-content:space-between;gap:10px;align-items:center;";
+                const title = document.createElement("div");
+                title.style.cssText = "font-size:14px;font-weight:700;";
+                title.textContent = cropLabel(crop);
+                const remove = mkBtn("Remove crop", "danger");
+                head.appendChild(title); head.appendChild(remove);
+                const tabs = document.createElement("div");
+                tabs.style.cssText = "display:flex;gap:4px;padding:8px 10px 0;flex-wrap:wrap;";
+                const content = document.createElement("div");
+                content.style.padding = "12px";
+                for (const tab of [{ id: "basics", label: "Basics" }, { id: "packages", label: "Packages" }]) {
+                    const button = mkBtn(tab.label, "neutral");
+                    button.addEventListener("click", () => { state.activeTab = tab.id; renderSelectedEditor(); syncEditorDerived(); });
+                    tabs.appendChild(button);
+                }
+                editorBox.appendChild(head); editorBox.appendChild(tabs); editorBox.appendChild(content);
+                if (state.activeTab === "packages") renderPackages(crop, content);
+                else renderBasics(crop, content);
+                remove.addEventListener("click", () => {
+                    const index = plan.crops.indexOf(crop);
+                    plan.crops = plan.crops.filter(item => item !== crop);
+                    plan.demands = (plan.demands || []).filter(line => line.cropId !== crop.id);
+                    if (plan.csa && Array.isArray(plan.csa.components)) plan.csa.components = plan.csa.components.filter(component => component.cropId !== crop.id);
+                    const nextCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, "", index);
+                    if (nextCropId) setSelectedCropEverywhere(nextCropId);
+                    else { state.selectedCropId = ""; plan.cropFilterId = ""; cropFilterSel.value = ""; }
+                    renderSelectedEditor(); fillCropFilter(); refreshDerived(null, { rebuildCsa: true, rebuildDemand: true }); loadAddCropOptions(false);
+                });
+                syncEditorDerived();
+            }
 
-            function renderCsa(rebuildDetails) { // CHANGE
-                plan.csa = plan.csa || { enabled: false, boxesPerWeek: 0, start: "", end: "", components: [] }; // NEW
-                const componentCount = Array.isArray(plan.csa.components) ? plan.csa.components.length : 0; // NEW
-                const start = YearPlanDashboard.formatYmd(plan.csa.start) || "?"; // NEW
-                const end = YearPlanDashboard.formatYmd(plan.csa.end) || "?"; // NEW
-                const csaErrors = PlanSchema.validateCsa(plan); // CHANGE
-                const csaMetric = dashboard && dashboard.csaMetric || {}; // ADDED
-                renderStripBox(csaBox, { // NEW
-                    title: "CSA", // NEW
-                    expanded: state.csaExpanded, // NEW
-                    summaryChips: [ // CHANGE
-                        createChip("Status", plan.csa.enabled ? "On" : "Off", plan.csa.enabled ? "success" : "neutral"), // NEW
-                        createChip("Boxes/week", String(Math.max(0, Math.trunc(Number(plan.csa.boxesPerWeek) || 0))), "neutral"), // NEW
-                        csaErrors.length ? createDiagnosticsChip("CSA setup issues", "danger", csaErrors, null) : createChip("Dates", `${start}-${end}`, "neutral"), // CHANGE
-                        createChip("Components", String(componentCount), "neutral"), // CHANGE
-                        createChip("Component value", formatMoney(csaMetric.componentValuePerBox), "neutral"), // ADDED
-                        createChip("Sale value", formatMoney(csaMetric.salePricePerBox), "neutral"), // ADDED
-                        createChip("Potential", formatMoney(csaMetric.potentialRevenue), "neutral"), // ADDED
-                        createChip("Fulfilled", formatMoney(csaMetric.fulfilledRevenue), Number(csaMetric.fulfilledRevenue) > EPS ? "success" : "neutral") // ADDED
-                    ], // NEW
-                    rebuildDetails: !!rebuildDetails && state.csaExpanded, // NEW
-                    onToggle: () => { state.csaExpanded = !state.csaExpanded; renderCsa(state.csaExpanded); }, // NEW
-                    renderDetails: renderCsaDetails // NEW
-                }); // NEW
-            } // NEW
+            function renderCsa(rebuildDetails) {
+                plan.csa = plan.csa || { enabled: false, boxesPerWeek: 0, start: "", end: "", components: [] };
+                const componentCount = Array.isArray(plan.csa.components) ? plan.csa.components.length : 0;
+                const start = YearPlanDashboard.formatYmd(plan.csa.start) || "?";
+                const end = YearPlanDashboard.formatYmd(plan.csa.end) || "?";
+                const csaErrors = PlanSchema.validateCsa(plan);
+                const csaMetric = dashboard && dashboard.csaMetric || {};
+                renderStripBox(csaBox, {
+                    title: "CSA",
+                    expanded: state.csaExpanded,
+                    summaryChips: [
+                        createChip("Status", plan.csa.enabled ? "On" : "Off", plan.csa.enabled ? "success" : "neutral"),
+                        createChip("Boxes/week", String(Math.max(0, Math.trunc(Number(plan.csa.boxesPerWeek) || 0))), "neutral"),
+                        csaErrors.length ? createDiagnosticsChip("CSA setup issues", "danger", csaErrors, null) : createChip("Dates", `${start}-${end}`, "neutral"),
+                        createChip("Components", String(componentCount), "neutral"),
+                        createChip("Component value", formatMoney(csaMetric.componentValuePerBox), "neutral"),
+                        createChip("Sale value", formatMoney(csaMetric.salePricePerBox), "neutral"),
+                        createChip("Potential", formatMoney(csaMetric.potentialRevenue), "neutral"),
+                        createChip("Fulfilled", formatMoney(csaMetric.fulfilledRevenue), Number(csaMetric.fulfilledRevenue) > EPS ? "success" : "neutral")
+                    ],
+                    rebuildDetails: !!rebuildDetails && state.csaExpanded,
+                    onToggle: () => { state.csaExpanded = !state.csaExpanded; renderCsa(state.csaExpanded); },
+                    renderDetails: renderCsaDetails
+                });
+            }
 
-            function renderCsaDetails(details) { // NEW
-                const controls = document.createElement("div"); // NEW
-                controls.className = "yp-row"; // NEW
-                const pricingControls = document.createElement("div"); // ADDED
-                pricingControls.className = "yp-row"; // ADDED
-                const enabled = document.createElement("input"); enabled.type = "checkbox"; enabled.checked = !!plan.csa.enabled; // NEW
-                const enabledLabel = document.createElement("label"); enabledLabel.className = "yp-row"; enabledLabel.appendChild(enabled); enabledLabel.appendChild(document.createTextNode("Enable CSA")); // NEW
-                const boxes = mkInput("number", plan.csa.boxesPerWeek ?? 0, 90); // NEW
-                const start = mkInput("date", plan.csa.start || "", 145); // NEW
-                const end = mkInput("date", plan.csa.end || "", 145); // NEW
-                const componentValue = mkInput("number", Math.max(0, Number(plan.csa.__componentValuePerBox) || 0).toFixed(2), 110); // ADDED
-                componentValue.readOnly = true; // ADDED
-                componentValue.title = "Derived from CSA component quantities and matching crop package prices."; // ADDED
-                const salePrice = mkInput("number", Math.max(0, Number(plan.csa.salePricePerBox) || 0).toFixed(2), 110); // ADDED
-                salePrice.min = "0"; salePrice.step = "any"; // ADDED
-                salePrice.title = "Whole-box CSA sale value. Editing makes it manual."; // ADDED
-                const resetSale = mkBtn("Reset", "danger"); // CHANGE
-                resetSale.title = "Reset sale value to the derived component value."; // ADDED
-                setYearPlanField(enabled, "enabled"); // CHANGE
-                setYearPlanField(boxes, "boxesPerWeek"); // CHANGE
-                setYearPlanField(start, "start"); // CHANGE
-                setYearPlanField(end, "end"); // CHANGE
-                setYearPlanField(componentValue, "componentValuePerBox"); // ADDED
-                setYearPlanField(salePrice, "salePricePerBox"); // ADDED
-                controls.appendChild(enabledLabel); controls.appendChild(document.createTextNode("Boxes/week")); controls.appendChild(boxes); controls.appendChild(document.createTextNode("Start")); controls.appendChild(start); controls.appendChild(document.createTextNode("End")); controls.appendChild(end); // NEW
-                pricingControls.appendChild(document.createTextNode("Component value / box")); pricingControls.appendChild(componentValue); pricingControls.appendChild(document.createTextNode("Sale value / box")); pricingControls.appendChild(salePrice); pricingControls.appendChild(resetSale); // ADDED
-                const rowsHost = document.createElement("div"); // NEW
-                rowsHost.style.cssText = "display:flex;flex-direction:column;gap:7px;margin-top:10px;"; // NEW
-                const add = mkBtn("Add component", "add"); // CHANGE
-                add.style.marginTop = "8px"; // NEW
-                details.appendChild(controls); details.appendChild(pricingControls); details.appendChild(rowsHost); details.appendChild(add); // CHANGE
-                csaRefs = { componentValue, salePrice, resetSale }; // ADDED
-                const refreshSummary = () => { renderCsa(false); }; // CHANGE
-                const syncNonDateControls = () => { plan.csa.enabled = enabled.checked; plan.csa.boxesPerWeek = Math.max(0, Math.trunc(Number(boxes.value) || 0)); refreshSummary(); debounceRefresh(); }; // CHANGE
-                enabled.addEventListener("change", syncNonDateControls); // CHANGE
-                boxes.addEventListener("input", syncNonDateControls); // CHANGE
-                salePrice.addEventListener("input", () => { plan.csa.salePriceMode = "manual"; plan.csa.salePricePerBox = Math.max(0, Number(salePrice.value) || 0); refreshSummary(); debounceRefresh(); }); // ADDED
-                resetSale.addEventListener("click", () => { plan.csa.salePriceMode = "auto"; plan.csa.salePricePerBox = Math.max(0, Number(plan.csa.__componentValuePerBox) || 0); salePrice.value = plan.csa.salePricePerBox.toFixed(2); refreshSummary(); refreshDerived(); }); // ADDED
-                bindPairedDateControls(start, end, { // CHANGE
-                    diagnostic: "CSA start date cannot be after end date.", // NEW
-                    setStart: value => { plan.csa.start = value; }, // NEW
-                    setEnd: value => { plan.csa.end = value; }, // NEW
-                    afterCommit: beforeDateRanges => { refreshSummary(); refreshDerived(beforeDateRanges); } // NEW
-                }); // CHANGE
+            function renderCsaDetails(details) {
+                const controls = document.createElement("div");
+                controls.className = "yp-row";
+                const pricingControls = document.createElement("div");
+                pricingControls.className = "yp-row";
+                const enabled = document.createElement("input"); enabled.type = "checkbox"; enabled.checked = !!plan.csa.enabled;
+                const enabledLabel = document.createElement("label"); enabledLabel.className = "yp-row"; enabledLabel.appendChild(enabled); enabledLabel.appendChild(document.createTextNode("Enable CSA"));
+                const boxes = mkInput("number", plan.csa.boxesPerWeek ?? 0, 90);
+                const start = mkInput("date", plan.csa.start || "", 145);
+                const end = mkInput("date", plan.csa.end || "", 145);
+                const componentValue = mkInput("number", Math.max(0, Number(plan.csa.__componentValuePerBox) || 0).toFixed(2), 110);
+                componentValue.readOnly = true;
+                componentValue.title = "Derived from CSA component quantities and matching crop package prices.";
+                const salePrice = mkInput("number", Math.max(0, Number(plan.csa.salePricePerBox) || 0).toFixed(2), 110);
+                salePrice.min = "0"; salePrice.step = "any";
+                salePrice.title = "Whole-box CSA sale value. Editing makes it manual.";
+                const resetSale = mkBtn("Reset", "danger");
+                resetSale.title = "Reset sale value to the derived component value.";
+                setYearPlanField(enabled, "enabled");
+                setYearPlanField(boxes, "boxesPerWeek");
+                setYearPlanField(start, "start");
+                setYearPlanField(end, "end");
+                setYearPlanField(componentValue, "componentValuePerBox");
+                setYearPlanField(salePrice, "salePricePerBox");
+                controls.appendChild(enabledLabel); controls.appendChild(document.createTextNode("Boxes/week")); controls.appendChild(boxes); controls.appendChild(document.createTextNode("Start")); controls.appendChild(start); controls.appendChild(document.createTextNode("End")); controls.appendChild(end);
+                pricingControls.appendChild(document.createTextNode("Component value / box")); pricingControls.appendChild(componentValue); pricingControls.appendChild(document.createTextNode("Sale value / box")); pricingControls.appendChild(salePrice); pricingControls.appendChild(resetSale);
+                const rowsHost = document.createElement("div");
+                rowsHost.style.cssText = "display:flex;flex-direction:column;gap:7px;margin-top:10px;";
+                const add = mkBtn("Add component", "add");
+                add.style.marginTop = "8px";
+                details.appendChild(controls); details.appendChild(pricingControls); details.appendChild(rowsHost); details.appendChild(add);
+                csaRefs = { componentValue, salePrice, resetSale };
+                const refreshSummary = () => { renderCsa(false); };
+                const syncNonDateControls = () => { plan.csa.enabled = enabled.checked; plan.csa.boxesPerWeek = Math.max(0, Math.trunc(Number(boxes.value) || 0)); refreshSummary(); debounceRefresh(); };
+                enabled.addEventListener("change", syncNonDateControls);
+                boxes.addEventListener("input", syncNonDateControls);
+                salePrice.addEventListener("input", () => { plan.csa.salePriceMode = "manual"; plan.csa.salePricePerBox = Math.max(0, Number(salePrice.value) || 0); refreshSummary(); debounceRefresh(); });
+                resetSale.addEventListener("click", () => { plan.csa.salePriceMode = "auto"; plan.csa.salePricePerBox = Math.max(0, Number(plan.csa.__componentValuePerBox) || 0); salePrice.value = plan.csa.salePricePerBox.toFixed(2); refreshSummary(); refreshDerived(); });
+                bindPairedDateControls(start, end, {
+                    diagnostic: "CSA start date cannot be after end date.",
+                    setStart: value => { plan.csa.start = value; },
+                    setEnd: value => { plan.csa.end = value; },
+                    afterCommit: beforeDateRanges => { refreshSummary(); refreshDerived(beforeDateRanges); }
+                });
 
-                function renderRows() { // NEW
-                    rowsHost.innerHTML = ""; // NEW
-                    plan.csa.components = Array.isArray(plan.csa.components) ? plan.csa.components : []; // NEW
-                    for (const [componentIndex, component] of plan.csa.components.entries()) { // CHANGE
-                        const row = document.createElement("div"); // NEW
-                        row.className = "yp-row"; // NEW
-                        row.dataset.csaComponentIndex = String(componentIndex); // CHANGE
-                        const crop = PlanMath.findCrop(plan, component.cropId); // NEW
-                        const cropSelect = mkSelect((plan.crops || []).map(item => ({ value: item.id, label: cropLabel(item) })), component.cropId || "", 220); // NEW
-                        const qty = mkInput("number", component.qty ?? 1, 70); // NEW
-                        const unit = mkSelect(listUnitOptions(crop), component.unit || defaultUnit(crop), 100); // NEW
-                        const every = mkInput("number", component.everyNWeeks ?? 1, 65); // NEW
-                        const from = mkInput("date", component.start || plan.csa.start || "", 145); // NEW
-                        const to = mkInput("date", component.end || plan.csa.end || "", 145); // NEW
-                        ensureSelectOption(cropSelect, component.cropId, `${component.cropId || "Missing crop"} (unavailable)`); // CHANGE
-                        ensureSelectOption(unit, component.unit, `${component.unit || "Missing unit"} (unavailable)`); // CHANGE
-                        cropSelect.value = String(component.cropId || ""); // CHANGE
-                        unit.value = String(component.unit || defaultUnit(crop)); // CHANGE
-                        setYearPlanField(cropSelect, "cropId", { componentIndex }); // CHANGE
-                        setYearPlanField(qty, "qty", { componentIndex }); // CHANGE
-                        setYearPlanField(unit, "unit", { componentIndex }); // CHANGE
-                        setYearPlanField(every, "everyNWeeks", { componentIndex }); // CHANGE
-                        setYearPlanField(from, "start", { componentIndex }); // CHANGE
-                        setYearPlanField(to, "end", { componentIndex }); // CHANGE
-                        const remove = mkBtn("Remove", "danger"); // CHANGE
-                        row.appendChild(cropSelect); row.appendChild(qty); row.appendChild(unit); row.appendChild(document.createTextNode("Every")); row.appendChild(every); row.appendChild(document.createTextNode("weeks")); row.appendChild(from); row.appendChild(to); row.appendChild(remove); // NEW
-                        rowsHost.appendChild(row); // NEW
-                        cropSelect.addEventListener("change", () => { component.cropId = cropSelect.value; component.unit = defaultUnit(PlanMath.findCrop(plan, component.cropId)); renderRows(); refreshDerived(); }); // NEW
-                        qty.addEventListener("input", () => { component.qty = Math.max(0, Number(qty.value) || 0); debounceRefresh(); }); // NEW
-                        unit.addEventListener("change", () => { component.unit = unit.value; refreshDerived(); }); // NEW
-                        every.addEventListener("input", () => { component.everyNWeeks = Math.max(1, Math.trunc(Number(every.value) || 1)); debounceRefresh(); }); // NEW
-                        bindPairedDateControls(from, to, { // CHANGE
-                            diagnostic: `CSA component start date cannot be after end date for "${crop ? crop.plant || crop.id : component.cropId}".`, // NEW
-                            setStart: value => { component.start = value; }, // NEW
-                            setEnd: value => { component.end = value; } // NEW
-                        }); // CHANGE
-                        remove.addEventListener("click", () => { plan.csa.components = plan.csa.components.filter(item => item !== component); renderRows(); refreshSummary(); refreshDerived(); }); // CHANGE
-                    } // NEW
-                } // NEW
-                add.addEventListener("click", () => { // NEW
-                    const crop = plan.crops && plan.crops[0]; // NEW
-                    plan.csa.components.push({ cropId: crop ? crop.id : "", qty: 1, unit: defaultUnit(crop), everyNWeeks: 1, start: plan.csa.start || "", end: plan.csa.end || "" }); // NEW
-                    state.csaExpanded = true; // NEW
-                    renderRows(); refreshSummary(); refreshDerived(); // CHANGE
-                }); // NEW
-                renderRows(); // NEW
-            } // NEW
+                function renderRows() {
+                    rowsHost.innerHTML = "";
+                    plan.csa.components = Array.isArray(plan.csa.components) ? plan.csa.components : [];
+                    for (const [componentIndex, component] of plan.csa.components.entries()) {
+                        const row = document.createElement("div");
+                        row.className = "yp-row";
+                        row.dataset.csaComponentIndex = String(componentIndex);
+                        const crop = PlanMath.findCrop(plan, component.cropId);
+                        const cropSelect = mkSelect((plan.crops || []).map(item => ({ value: item.id, label: cropLabel(item) })), component.cropId || "", 220);
+                        const qty = mkInput("number", component.qty ?? 1, 70);
+                        const unit = mkSelect(listUnitOptions(crop), component.unit || defaultUnit(crop), 100);
+                        const every = mkInput("number", component.everyNWeeks ?? 1, 65);
+                        const from = mkInput("date", component.start || plan.csa.start || "", 145);
+                        const to = mkInput("date", component.end || plan.csa.end || "", 145);
+                        ensureSelectOption(cropSelect, component.cropId, `${component.cropId || "Missing crop"} (unavailable)`);
+                        ensureSelectOption(unit, component.unit, `${component.unit || "Missing unit"} (unavailable)`);
+                        cropSelect.value = String(component.cropId || "");
+                        unit.value = String(component.unit || defaultUnit(crop));
+                        setYearPlanField(cropSelect, "cropId", { componentIndex });
+                        setYearPlanField(qty, "qty", { componentIndex });
+                        setYearPlanField(unit, "unit", { componentIndex });
+                        setYearPlanField(every, "everyNWeeks", { componentIndex });
+                        setYearPlanField(from, "start", { componentIndex });
+                        setYearPlanField(to, "end", { componentIndex });
+                        const remove = mkBtn("Remove", "danger");
+                        row.appendChild(cropSelect); row.appendChild(qty); row.appendChild(unit); row.appendChild(document.createTextNode("Every")); row.appendChild(every); row.appendChild(document.createTextNode("weeks")); row.appendChild(from); row.appendChild(to); row.appendChild(remove);
+                        rowsHost.appendChild(row);
+                        cropSelect.addEventListener("change", () => { component.cropId = cropSelect.value; component.unit = defaultUnit(PlanMath.findCrop(plan, component.cropId)); renderRows(); refreshDerived(); });
+                        qty.addEventListener("input", () => { component.qty = Math.max(0, Number(qty.value) || 0); debounceRefresh(); });
+                        unit.addEventListener("change", () => { component.unit = unit.value; refreshDerived(); });
+                        every.addEventListener("input", () => { component.everyNWeeks = Math.max(1, Math.trunc(Number(every.value) || 1)); debounceRefresh(); });
+                        bindPairedDateControls(from, to, {
+                            diagnostic: `CSA component start date cannot be after end date for "${crop ? crop.plant || crop.id : component.cropId}".`,
+                            setStart: value => { component.start = value; },
+                            setEnd: value => { component.end = value; }
+                        });
+                        remove.addEventListener("click", () => { plan.csa.components = plan.csa.components.filter(item => item !== component); renderRows(); refreshSummary(); refreshDerived(); });
+                    }
+                }
+                add.addEventListener("click", () => {
+                    const crop = plan.crops && plan.crops[0];
+                    plan.csa.components.push({ cropId: crop ? crop.id : "", qty: 1, unit: defaultUnit(crop), everyNWeeks: 1, start: plan.csa.start || "", end: plan.csa.end || "" });
+                    state.csaExpanded = true;
+                    renderRows(); refreshSummary(); refreshDerived();
+                });
+                renderRows();
+            }
 
-            function renderAll() { // NEW
-                fillCropFilter(); // NEW
-                renderSelectedEditor(); // NEW
-                renderCropPlan(true); // NEW
-                refreshDerived(null, { rebuildCsa: true, rebuildDemand: true }); // CHANGE
-                loadAddCropOptions(false); // NEW
-            } // NEW
+            function renderAll() {
+                fillCropFilter();
+                renderSelectedEditor();
+                renderCropPlan(true);
+                refreshDerived(null, { rebuildCsa: true, rebuildDemand: true });
+                loadAddCropOptions(false);
+            }
 
-            function persistPackageDefaults() { // NEW
-                for (const crop of (plan.crops || [])) { // NEW
-                    if (crop.savePackagesAsDefault && crop.plantId && Array.isArray(crop.packages)) PlanRepository.saveDefaultsForPlant(crop.plantId, crop.packages); // NEW
-                } // NEW
-            } // NEW
+            function persistPackageDefaults() {
+                for (const crop of (plan.crops || [])) {
+                    if (crop.savePackagesAsDefault && crop.plantId && Array.isArray(crop.packages)) PlanRepository.saveDefaultsForPlant(crop.plantId, crop.packages);
+                }
+            }
 
-            function saveCurrent(closeAfter) { // NEW
-                refreshDerived(); // NEW
-                if (dashboard.validationErrors.length) { // NEW
-                    state.validationState = "invalid"; // NEW
-                    state.planCheckExpanded = true; // CHANGE
-                    if (PlanSchema.validateCsa(plan).length) state.csaExpanded = true; // NEW
-                    renderCsa(true); renderPlanCheck(); renderFooter(); // CHANGE
-                    const firstDiagnostics = card.querySelector(".yp-diagnostics-trigger"); // CHANGE
-                    if (firstDiagnostics) focusAndHighlight(firstDiagnostics); // CHANGE
-                    return false; // NEW
-                } // NEW
-                persistPackageDefaults(); // NEW
-                PlanRepository.savePlanForYear(moduleCell, currentYear, plan); // NEW
-                loadedExistingForCurrentYear = true; // NEW
-                YearPlanDashboard.markBaseline(state, plan, new Date()); // NEW
-                state.closePromptOpen = false; // NEW
-                state.extraDiagnostics = []; // NEW
-                refreshDerived(); // NEW
-                if (closeAfter) SessionController.close(); // NEW
-                return true; // NEW
-            } // NEW
+            function saveCurrent(closeAfter) {
+                refreshDerived();
+                if (dashboard.validationErrors.length) {
+                    state.validationState = "invalid";
+                    state.planCheckExpanded = true;
+                    if (PlanSchema.validateCsa(plan).length) state.csaExpanded = true;
+                    renderCsa(true); renderPlanCheck(); renderFooter();
+                    const firstDiagnostics = card.querySelector(".yp-diagnostics-trigger");
+                    if (firstDiagnostics) focusAndHighlight(firstDiagnostics);
+                    return false;
+                }
+                persistPackageDefaults();
+                PlanRepository.savePlanForYear(moduleCell, currentYear, plan);
+                loadedExistingForCurrentYear = true;
+                YearPlanDashboard.markBaseline(state, plan, new Date());
+                state.closePromptOpen = false;
+                state.extraDiagnostics = [];
+                refreshDerived();
+                if (closeAfter) SessionController.close();
+                return true;
+            }
 
-            function requestClose() { // NEW
-                refreshDerived(); // NEW
-                if (!YearPlanDashboard.isDirty(state, plan)) { SessionController.close(); return; } // NEW
-                state.closePromptOpen = true; // NEW
-                renderFooter(); // NEW
-            } // NEW
+            function requestClose() {
+                refreshDerived();
+                if (!YearPlanDashboard.isDirty(state, plan)) { SessionController.close(); return; }
+                state.closePromptOpen = true;
+                renderFooter();
+            }
 
-            const yearInput = mkInput("number", currentYear, 88); // NEW
-            yearInput.min = "1900"; yearInput.max = "3000"; // NEW
-            const templateSel = document.createElement("select"); // NEW
-            templateSel.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;min-width:190px;"; // NEW
-            const templateNameInput = mkInput("text", "", 170); // NEW
-            templateNameInput.placeholder = "Template name"; // NEW
-            const applyTemplate = mkBtn("Apply template", "neutral"); // CHANGE
-            const saveTemplate = mkBtn("Save template", "add"); // CHANGE
-            const deleteTemplate = mkBtn("Delete template", "danger"); // CHANGE
-            const save = mkBtn("Save", "add"); // CHANGE
-            const saveClose = mkBtn("Save & Close", "add"); // CHANGE
-            const close = mkBtn("Close", "neutral"); // CHANGE
-            const exportButton = mkBtn("Export", "neutral"); // CHANGE
-            const reset = mkBtn(loadedExistingForCurrentYear ? "Reset" : "Clear", "danger"); // CHANGE
-            const promptSave = mkBtn("Save and Close", "add"); // CHANGE
-            const promptDiscard = mkBtn("Discard", "danger"); // CHANGE
-            const promptCancel = mkBtn("Cancel", "neutral"); // CHANGE
-            titleEl.textContent = `Plan Year ${currentYear}`; // CHANGE
-            headerControls.appendChild(headerStatus); // CHANGE
-            headerActions.appendChild(save); headerActions.appendChild(saveClose); headerActions.appendChild(close); // NEW
-            header.appendChild(titleEl); header.appendChild(headerControls); header.appendChild(headerActions); // CHANGE
-            secondaryToolbar.appendChild(document.createTextNode("Year")); secondaryToolbar.appendChild(yearInput); secondaryToolbar.appendChild(document.createTextNode("Template")); secondaryToolbar.appendChild(templateSel); secondaryToolbar.appendChild(templateNameInput); secondaryToolbar.appendChild(applyTemplate); secondaryToolbar.appendChild(saveTemplate); secondaryToolbar.appendChild(deleteTemplate); // NEW
-            fillTemplateDropdown(); // NEW
-            saveTemplate.disabled = true; // NEW
+            const yearInput = mkInput("number", currentYear, 88);
+            yearInput.min = "1900"; yearInput.max = "3000";
+            const templateSel = document.createElement("select");
+            templateSel.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;min-width:190px;";
+            const templateNameInput = mkInput("text", "", 170);
+            templateNameInput.placeholder = "Template name";
+            const applyTemplate = mkBtn("Apply template", "neutral");
+            const saveTemplate = mkBtn("Save template", "add");
+            const deleteTemplate = mkBtn("Delete template", "danger");
+            const save = mkBtn("Save", "add");
+            const saveClose = mkBtn("Save & Close", "add");
+            const close = mkBtn("Close", "neutral");
+            const exportButton = mkBtn("Export", "neutral");
+            const reset = mkBtn(loadedExistingForCurrentYear ? "Reset" : "Clear", "danger");
+            const promptSave = mkBtn("Save and Close", "add");
+            const promptDiscard = mkBtn("Discard", "danger");
+            const promptCancel = mkBtn("Cancel", "neutral");
+            titleEl.textContent = `Plan Year ${currentYear}`;
+            headerControls.appendChild(headerStatus);
+            headerActions.appendChild(save); headerActions.appendChild(saveClose); headerActions.appendChild(close);
+            header.appendChild(titleEl); header.appendChild(headerControls); header.appendChild(headerActions);
+            secondaryToolbar.appendChild(document.createTextNode("Year")); secondaryToolbar.appendChild(yearInput); secondaryToolbar.appendChild(document.createTextNode("Template")); secondaryToolbar.appendChild(templateSel); secondaryToolbar.appendChild(templateNameInput); secondaryToolbar.appendChild(applyTemplate); secondaryToolbar.appendChild(saveTemplate); secondaryToolbar.appendChild(deleteTemplate);
+            fillTemplateDropdown();
+            saveTemplate.disabled = true;
 
-            const plantSelect = document.createElement("select"); // NEW
-            plantSelect.style.cssText = "padding:6px;border:1px solid #bbb;border-radius:6px;min-width:260px;flex:1 1 260px;"; // NEW
-            const addCrop = mkBtn("Add crop", "add"); // CHANGE
-            const reloadPlants = mkBtn("Reload crops", "neutral"); // CHANGE
-            const plantMessage = document.createElement("span"); // NEW
-            plantMessage.style.color = "#666"; // NEW
-            addRow.appendChild(plantSelect); addRow.appendChild(addCrop); addRow.appendChild(reloadPlants); addRow.appendChild(plantMessage); // NEW
+            const plantSelect = document.createElement("select");
+            plantSelect.style.cssText = "padding:6px;border:1px solid #bbb;border-radius:6px;min-width:260px;flex:1 1 260px;";
+            const addCrop = mkBtn("Add crop", "add");
+            const reloadPlants = mkBtn("Reload crops", "neutral");
+            const plantMessage = document.createElement("span");
+            plantMessage.style.color = "#666";
+            addRow.appendChild(plantSelect); addRow.appendChild(addCrop); addRow.appendChild(reloadPlants); addRow.appendChild(plantMessage);
 
-            footerActions.appendChild(exportButton); footerActions.appendChild(reset); // CHANGE
-            closePrompt.appendChild(promptSave); closePrompt.appendChild(promptDiscard); closePrompt.appendChild(promptCancel); // NEW
+            footerActions.appendChild(exportButton); footerActions.appendChild(reset);
+            closePrompt.appendChild(promptSave); closePrompt.appendChild(promptDiscard); closePrompt.appendChild(promptCancel);
 
-            function appendAddCropOptionGroup(label, options) { // NEW
-                if (!options.length) return; // NEW
-                const group = document.createElement("optgroup"); // NEW
-                group.label = label; // NEW
-                for (const option of options) { // NEW
-                    const optionId = Env.uid("addcrop"); // NEW
-                    addCropOptionById.set(optionId, option); // NEW
-                    const element = document.createElement("option"); // NEW
-                    element.value = optionId; // NEW
-                    element.textContent = option.label; // NEW
-                    group.appendChild(element); // NEW
-                } // NEW
-                plantSelect.appendChild(group); // NEW
-            } // NEW
+            function appendAddCropOptionGroup(label, options) {
+                if (!options.length) return;
+                const group = document.createElement("optgroup");
+                group.label = label;
+                for (const option of options) {
+                    const optionId = Env.uid("addcrop");
+                    addCropOptionById.set(optionId, option);
+                    const element = document.createElement("option");
+                    element.value = optionId;
+                    element.textContent = option.label;
+                    group.appendChild(element);
+                }
+                plantSelect.appendChild(group);
+            }
 
-            function getPlantLifecycle(row) { // NEW
-                const enabled = [ // NEW
-                    ["annual", Number(row && row.annual) === 1], // NEW
-                    ["biennial", Number(row && row.biennial) === 1], // NEW
-                    ["perennial", Number(row && row.perennial) === 1] // NEW
-                ].filter(item => item[1]); // NEW
-                return enabled.length === 1 ? enabled[0][0] : "uncategorized"; // NEW
-            } // NEW
+            function getPlantLifecycle(row) {
+                const enabled = [
+                    ["annual", Number(row && row.annual) === 1],
+                    ["biennial", Number(row && row.biennial) === 1],
+                    ["perennial", Number(row && row.perennial) === 1]
+                ].filter(item => item[1]);
+                return enabled.length === 1 ? enabled[0][0] : "uncategorized";
+            }
 
-            function parseVarietyOverrideYield(varietyRow) { // NEW
-                const overrides = varietyRow ? Env.safeJsonStringParse(varietyRow.overrides_json, null) : null; // NEW
-                const value = Number(overrides && (overrides.yield_per_plant_kg ?? overrides.overrides?.yield_per_plant_kg)); // NEW
-                return Number.isFinite(value) && value > 0 ? value : NaN; // NEW
-            } // NEW
+            function parseVarietyOverrideYield(varietyRow) {
+                const overrides = varietyRow ? Env.safeJsonStringParse(varietyRow.overrides_json, null) : null;
+                const value = Number(overrides && (overrides.yield_per_plant_kg ?? overrides.overrides?.yield_per_plant_kg));
+                return Number.isFinite(value) && value > 0 ? value : NaN;
+            }
 
-            async function resolveGardenCropOption(candidate, plantRowsById) { // NEW
-                const plantId = String(candidate && candidate.plantId || ""); // NEW
-                const row = plantRowsById.get(plantId); // NEW
-                if (!row) return null; // NEW
-                let varietyId = candidate && candidate.varietyId ? String(candidate.varietyId) : ""; // NEW
-                let varietyName = String(candidate && candidate.varietyName || "").trim(); // NEW
-                let varietyRow = null; // NEW
+            async function resolveGardenCropOption(candidate, plantRowsById) {
+                const plantId = String(candidate && candidate.plantId || "");
+                const row = plantRowsById.get(plantId);
+                if (!row) return null;
+                let varietyId = candidate && candidate.varietyId ? String(candidate.varietyId) : "";
+                let varietyName = String(candidate && candidate.varietyName || "").trim();
+                let varietyRow = null;
 
-                if (varietyId || varietyName) { // NEW
-                    const varietyRows = await getVarietyRows(plantId); // NEW
-                    if (varietyId) { // NEW
-                        varietyRow = varietyRows.find(item => String(item.variety_id) === varietyId) || null; // NEW
-                        if (!varietyName && varietyRow) varietyName = String(varietyRow.variety_name || "").trim(); // NEW
-                    } else { // NEW
-                        const normalizedName = varietyName.toLocaleLowerCase(); // NEW
-                        const matches = varietyRows.filter(item => String(item.variety_name || "").trim().toLocaleLowerCase() === normalizedName); // NEW
-                        if (matches.length !== 1) return null; // NEW
-                        varietyRow = matches[0]; // NEW
-                        varietyId = String(varietyRow.variety_id); // NEW
-                        varietyName = String(varietyRow.variety_name || varietyName).trim(); // NEW
-                    } // NEW
-                } // NEW
+                if (varietyId || varietyName) {
+                    const varietyRows = await getVarietyRows(plantId);
+                    if (varietyId) {
+                        varietyRow = varietyRows.find(item => String(item.variety_id) === varietyId) || null;
+                        if (!varietyName && varietyRow) varietyName = String(varietyRow.variety_name || "").trim();
+                    } else {
+                        const normalizedName = varietyName.toLocaleLowerCase();
+                        const matches = varietyRows.filter(item => String(item.variety_name || "").trim().toLocaleLowerCase() === normalizedName);
+                        if (matches.length !== 1) return null;
+                        varietyRow = matches[0];
+                        varietyId = String(varietyRow.variety_id);
+                        varietyName = String(varietyRow.variety_name || varietyName).trim();
+                    }
+                }
 
-                const plantName = String(row.plant_name || candidate.plantName || "").trim(); // NEW
-                return { // NEW
-                    source: "garden", // NEW
-                    plantId, // NEW
-                    plantName, // NEW
-                    varietyId: varietyId || null, // NEW
-                    varietyName, // NEW
-                    varietyRow, // NEW
-                    row, // NEW
-                    lifecycle: getPlantLifecycle(row), // NEW
-                    label: varietyName ? `${plantName} - ${varietyName}` : plantName // NEW
-                }; // NEW
-            } // NEW
+                const plantName = String(row.plant_name || candidate.plantName || "").trim();
+                return {
+                    source: "garden",
+                    plantId,
+                    plantName,
+                    varietyId: varietyId || null,
+                    varietyName,
+                    varietyRow,
+                    row,
+                    lifecycle: getPlantLifecycle(row),
+                    label: varietyName ? `${plantName} - ${varietyName}` : plantName
+                };
+            }
 
-            async function loadAddCropOptions(force) { // NEW
-                const loadVersion = ++addCropOptionsLoadVersion; // NEW
-                plantSelect.disabled = true; // NEW
-                addCrop.disabled = true; // NEW
-                reloadPlants.disabled = true; // NEW
-                addCropOptionById.clear(); // NEW
-                plantSelect.innerHTML = ""; // NEW
-                plantSelect.appendChild(new Option("-- Select crop --", "")); // CHANGE
-                plantMessage.textContent = "Loading crops..."; // CHANGE
-                try { // NEW
-                    if (force) { // NEW
-                        DbClient.invalidatePlantsBasicCache(); // NEW
-                        varietyCache.clear(); // NEW
-                    } // NEW
-                    const plants = await DbClient.getPlantsBasicCached(); // NEW
-                    const plantRowsById = new Map(plants.map(row => [String(row.plant_id), row])); // NEW
-                    const plannedKeys = new Set((plan.crops || []).map(crop => PlanSchema.getCropIdentityKey(crop)).filter(Boolean)); // NEW
-                    const gardenOptions = []; // NEW
-                    const gardenKeys = new Set(); // NEW
-                    let skippedGardenCount = 0; // NEW
+            async function loadAddCropOptions(force) {
+                const loadVersion = ++addCropOptionsLoadVersion;
+                plantSelect.disabled = true;
+                addCrop.disabled = true;
+                reloadPlants.disabled = true;
+                addCropOptionById.clear();
+                plantSelect.innerHTML = "";
+                plantSelect.appendChild(new Option("-- Select crop --", ""));
+                plantMessage.textContent = "Loading crops...";
+                try {
+                    if (force) {
+                        DbClient.invalidatePlantsBasicCache();
+                        varietyCache.clear();
+                    }
+                    const plants = await DbClient.getPlantsBasicCached();
+                    const plantRowsById = new Map(plants.map(row => [String(row.plant_id), row]));
+                    const plannedKeys = new Set((plan.crops || []).map(crop => PlanSchema.getCropIdentityKey(crop)).filter(Boolean));
+                    const gardenOptions = [];
+                    const gardenKeys = new Set();
+                    let skippedGardenCount = 0;
 
-                    for (const candidate of DiagramPlanReader.readGardenCropCandidates(moduleCell)) { // NEW
-                        const option = await resolveGardenCropOption(candidate, plantRowsById); // NEW
-                        if (!option) { skippedGardenCount += 1; continue; } // NEW
-                        const key = PlanSchema.makeCropIdentityKey(option.plantId, option.varietyId || ""); // NEW
-                        if (!key || plannedKeys.has(key) || gardenKeys.has(key)) continue; // NEW
-                        gardenKeys.add(key); // NEW
-                        gardenOptions.push(option); // NEW
-                    } // NEW
+                    for (const candidate of DiagramPlanReader.readGardenCropCandidates(moduleCell)) {
+                        const option = await resolveGardenCropOption(candidate, plantRowsById);
+                        if (!option) { skippedGardenCount += 1; continue; }
+                        const key = PlanSchema.makeCropIdentityKey(option.plantId, option.varietyId || "");
+                        if (!key || plannedKeys.has(key) || gardenKeys.has(key)) continue;
+                        gardenKeys.add(key);
+                        gardenOptions.push(option);
+                    }
 
-                    if (!SessionController.isActive(session) || loadVersion !== addCropOptionsLoadVersion) return; // NEW
-                    const byLifecycle = { annual: [], biennial: [], perennial: [], uncategorized: [] }; // NEW
-                    for (const row of plants) { // NEW
-                        const plantId = String(row.plant_id); // NEW
-                        const key = PlanSchema.makeCropIdentityKey(plantId, ""); // NEW
-                        if (!key || plannedKeys.has(key) || gardenKeys.has(key)) continue; // NEW
-                        const plantName = String(row.plant_name || "").trim(); // NEW
-                        const lifecycle = getPlantLifecycle(row); // NEW
-                        byLifecycle[lifecycle].push({ // NEW
-                            source: "database", // NEW
-                            plantId, // NEW
-                            plantName, // NEW
-                            varietyId: null, // NEW
-                            varietyName: "", // NEW
-                            varietyRow: null, // NEW
-                            row, // NEW
-                            lifecycle, // NEW
-                            label: plantName // NEW
-                        }); // NEW
-                    } // NEW
+                    if (!SessionController.isActive(session) || loadVersion !== addCropOptionsLoadVersion) return;
+                    const byLifecycle = { annual: [], biennial: [], perennial: [], uncategorized: [] };
+                    for (const row of plants) {
+                        const plantId = String(row.plant_id);
+                        const key = PlanSchema.makeCropIdentityKey(plantId, "");
+                        if (!key || plannedKeys.has(key) || gardenKeys.has(key)) continue;
+                        const plantName = String(row.plant_name || "").trim();
+                        const lifecycle = getPlantLifecycle(row);
+                        byLifecycle[lifecycle].push({
+                            source: "database",
+                            plantId,
+                            plantName,
+                            varietyId: null,
+                            varietyName: "",
+                            varietyRow: null,
+                            row,
+                            lifecycle,
+                            label: plantName
+                        });
+                    }
 
-                    const sortOptions = options => options.sort((a, b) => a.label.localeCompare(b.label)); // NEW
-                    plantSelect.innerHTML = ""; // NEW
-                    plantSelect.appendChild(new Option("-- Select crop --", "")); // NEW
-                    addCropOptionById.clear(); // NEW
-                    appendAddCropOptionGroup("Crops in this garden, not yet in plan", sortOptions(gardenOptions)); // NEW
-                    appendAddCropOptionGroup("Annual crops", sortOptions(byLifecycle.annual)); // NEW
-                    appendAddCropOptionGroup("Biennial crops", sortOptions(byLifecycle.biennial)); // NEW
-                    appendAddCropOptionGroup("Perennial crops", sortOptions(byLifecycle.perennial)); // NEW
-                    appendAddCropOptionGroup("Uncategorized crops", sortOptions(byLifecycle.uncategorized)); // NEW
-                    plantMessage.textContent = skippedGardenCount // NEW
-                        ? `Skipped ${skippedGardenCount} unavailable garden crop${skippedGardenCount === 1 ? "" : "s"}.` // NEW
-                        : ""; // NEW
-                } catch (error) { // NEW
-                    if (SessionController.isActive(session) && loadVersion === addCropOptionsLoadVersion) { // NEW
-                        addCropOptionById.clear(); // NEW
-                        plantMessage.textContent = String(error && error.message || error); // NEW
-                    } // NEW
-                } finally { // NEW
-                    if (SessionController.isActive(session) && loadVersion === addCropOptionsLoadVersion) { // NEW
-                        plantSelect.disabled = false; // NEW
-                        addCrop.disabled = false; // NEW
-                        reloadPlants.disabled = false; // NEW
-                    } // NEW
-                } // NEW
-            } // NEW
+                    const sortOptions = options => options.sort((a, b) => a.label.localeCompare(b.label));
+                    plantSelect.innerHTML = "";
+                    plantSelect.appendChild(new Option("-- Select crop --", ""));
+                    addCropOptionById.clear();
+                    appendAddCropOptionGroup("Crops in this garden, not yet in plan", sortOptions(gardenOptions));
+                    appendAddCropOptionGroup("Annual crops", sortOptions(byLifecycle.annual));
+                    appendAddCropOptionGroup("Biennial crops", sortOptions(byLifecycle.biennial));
+                    appendAddCropOptionGroup("Perennial crops", sortOptions(byLifecycle.perennial));
+                    appendAddCropOptionGroup("Uncategorized crops", sortOptions(byLifecycle.uncategorized));
+                    plantMessage.textContent = skippedGardenCount
+                        ? `Skipped ${skippedGardenCount} unavailable garden crop${skippedGardenCount === 1 ? "" : "s"}.`
+                        : "";
+                } catch (error) {
+                    if (SessionController.isActive(session) && loadVersion === addCropOptionsLoadVersion) {
+                        addCropOptionById.clear();
+                        plantMessage.textContent = String(error && error.message || error);
+                    }
+                } finally {
+                    if (SessionController.isActive(session) && loadVersion === addCropOptionsLoadVersion) {
+                        plantSelect.disabled = false;
+                        addCrop.disabled = false;
+                        reloadPlants.disabled = false;
+                    }
+                }
+            }
 
-            addCrop.addEventListener("click", () => { // CHANGE
-                const selectedOption = addCropOptionById.get(String(plantSelect.value || "")); // NEW
-                if (!selectedOption) return; // NEW
-                if (PlanSchema.findDuplicateCrop(plan, selectedOption.plantId, selectedOption.varietyId || "", "")) { // CHANGE
-                    state.extraDiagnostics = [`Crop already exists for ${selectedOption.label}.`]; // CHANGE
-                    state.planCheckExpanded = true; // CHANGE
-                    refreshDerived(); // NEW
-                    return; // NEW
-                } // NEW
-                state.extraDiagnostics = []; // NEW
-                const plantId = selectedOption.plantId; // NEW
-                const item = selectedOption.row; // NEW
-                const defaults = PlanRepository.getDefaultsForPlant(plantId); // NEW
-                const baseYield = Number(item.yield_per_plant_kg); // NEW
-                const overrideYield = parseVarietyOverrideYield(selectedOption.varietyRow); // NEW
-                const cropYield = Number.isFinite(overrideYield) ? overrideYield : baseYield; // NEW
-                const numericVarietyId = selectedOption.varietyId == null ? NaN : Number(selectedOption.varietyId); // NEW
-                const crop = { // NEW
-                    id: Env.uid("crop"), plantId, plant: selectedOption.plantName, method: String(item.default_planting_method || "").trim() || "direct_sow", // CHANGE
-                    varietyId: selectedOption.varietyId == null ? null : (Number.isFinite(numericVarietyId) ? numericVarietyId : selectedOption.varietyId), variety: selectedOption.varietyName, harvestStart: "", harvestEnd: "", useActualHarvest: false, syncharvest: false, // CHANGE
-                    shelfLifeDays: 0, baseKgPerPlant: baseYield, kgPerPlant: cropYield, // CHANGE
+            addCrop.addEventListener("click", () => {
+                const selectedOption = addCropOptionById.get(String(plantSelect.value || ""));
+                if (!selectedOption) return;
+                if (PlanSchema.findDuplicateCrop(plan, selectedOption.plantId, selectedOption.varietyId || "", "")) {
+                    state.extraDiagnostics = [`Crop already exists for ${selectedOption.label}.`];
+                    state.planCheckExpanded = true;
+                    refreshDerived();
+                    return;
+                }
+                state.extraDiagnostics = [];
+                const plantId = selectedOption.plantId;
+                const item = selectedOption.row;
+                const defaults = PlanRepository.getDefaultsForPlant(plantId);
+                const baseYield = Number(item.yield_per_plant_kg);
+                const overrideYield = parseVarietyOverrideYield(selectedOption.varietyRow);
+                const cropYield = Number.isFinite(overrideYield) ? overrideYield : baseYield;
+                const numericVarietyId = selectedOption.varietyId == null ? NaN : Number(selectedOption.varietyId);
+                const crop = {
+                    id: Env.uid("crop"), plantId, plant: selectedOption.plantName, method: String(item.default_planting_method || "").trim() || "direct_sow",
+                    varietyId: selectedOption.varietyId == null ? null : (Number.isFinite(numericVarietyId) ? numericVarietyId : selectedOption.varietyId), variety: selectedOption.varietyName, harvestStart: "", harvestEnd: "", useActualHarvest: false, syncharvest: false,
+                    shelfLifeDays: 0, baseKgPerPlant: baseYield, kgPerPlant: cropYield,
                     kgPerPlantMode: "auto", actualPlants: 0, germRate: 1,
-                    packages: defaults && defaults.length ? PlanSchema.clonePlain(defaults) : [{ unit: "kg", baseType: "kg", baseQty: 1, price: NaN }] // CHANGE
-                }; // NEW
-                plan.crops.push(crop); // NEW
-                setSelectedCropEverywhere(crop.id); // CHANGE
-                emitHarvestWindowsNeeded(crop); // NEW
-                renderAll(); // NEW
-            }); // NEW
-            reloadPlants.addEventListener("click", () => loadAddCropOptions(true)); // CHANGE
+                    packages: defaults && defaults.length ? PlanSchema.clonePlain(defaults) : [{ unit: "kg", baseType: "kg", baseQty: 1, price: NaN }]
+                };
+                plan.crops.push(crop);
+                setSelectedCropEverywhere(crop.id);
+                emitHarvestWindowsNeeded(crop);
+                renderAll();
+            });
+            reloadPlants.addEventListener("click", () => loadAddCropOptions(true));
 
-            yearInput.addEventListener("change", () => { // NEW
-                const nextYear = Number(yearInput.value); // NEW
-                if (!Number.isFinite(nextYear) || nextYear < 1900 || nextYear > 3000) { yearInput.value = String(currentYear); return; } // NEW
-                if (nextYear === currentYear) return; // NEW
-                if (!saveCurrent(false)) { yearInput.value = String(currentYear); return; } // NEW
-                const nextExisting = PlanRepository.loadPlanForYear(moduleCell, nextYear); // NEW
-                replacePlan(nextExisting || PlanSchema.createEmptyPlan(nextYear), nextYear, !!nextExisting); // CHANGE
-                renderAll(); // NEW
-                YearPlanDashboard.markBaseline(state, plan, null); // NEW
-                refreshDerived(); // NEW
-            }); // NEW
-            applyTemplate.addEventListener("click", () => { // NEW
-                const name = String(templateSel.value || ""); // NEW
-                const template = name && PlanRepository.loadTemplateByName(name); // NEW
-                if (!template) return; // NEW
-                replacePlan(PlanRepository.rekeyTemplateToPlan(template, currentYear), currentYear, loadedExistingForCurrentYear); // CHANGE
-                renderAll(); // NEW
-            }); // NEW
-            templateSel.addEventListener("change", () => { // NEW
-                templateNameInput.value = String(templateSel.value || ""); // NEW
-                saveTemplate.disabled = !templateNameInput.value.trim(); // NEW
-            }); // NEW
-            templateNameInput.addEventListener("input", () => { saveTemplate.disabled = !templateNameInput.value.trim(); }); // NEW
-            saveTemplate.addEventListener("click", () => { // NEW
-                const name = String(templateNameInput.value || "").trim(); // CHANGE
-                if (!name) return; // NEW
-                const template = PlanSchema.serializeForPersistence(plan, { forTemplate: true }); // NEW
-                template.templateBaseYear = currentYear; template.year = null; // NEW
-                PlanRepository.saveTemplateByName(name, template); fillTemplateDropdown(); templateSel.value = name; templateNameInput.value = name; saveTemplate.disabled = false; // CHANGE
-            }); // NEW
-            deleteTemplate.addEventListener("click", () => { // NEW
-                const name = String(templateSel.value || ""); // NEW
-                if (!name || !confirm(`Delete template "${name}"?`)) return; // NEW
-                PlanRepository.deleteTemplateByName(name); fillTemplateDropdown(); templateNameInput.value = ""; saveTemplate.disabled = true; // CHANGE
-            }); // NEW
-            cropFilterSel.addEventListener("change", () => { // CHANGE
-                const cropId = String(cropFilterSel.value || ""); // NEW
-                if (cropId) { // NEW
-                    if (!setSelectedCropEverywhere(cropId, { expandCropPlan: true, syncPlanCheck: true })) return; // NEW
-                    renderCropList(); // NEW
-                    renderSelectedEditor(); // NEW
-                    renderCropPlan(false); // NEW
-                    renderPlanCheck(); // NEW
-                    renderFooter(); // NEW
-                    return; // NEW
-                } // NEW
-                plan.cropFilterId = ""; // NEW
-                renderPlanCheck(); // NEW
-                renderFooter(); // NEW
-            }); // CHANGE
-            canvas.addEventListener("mousemove", event => { // NEW
-                if (!chartHitModel || !chartHitModel.weekCenters.length) return; // NEW
-                const canvasRect = canvas.getBoundingClientRect(); // NEW
-                const chartRect = chartBox.getBoundingClientRect(); // NEW
-                const canvasX = (event.clientX - canvasRect.left) * (canvas.width / Math.max(1, canvasRect.width)); // NEW
-                if (canvasX < chartHitModel.plotLeft || canvasX > chartHitModel.plotRight) { // NEW
-                    chartTooltip.style.display = "none"; // NEW
-                    return; // NEW
-                } // NEW
-                const index = Math.max(0, Math.min( // NEW
-                    chartHitModel.rows.length - 1, // NEW
-                    Math.floor((canvasX - chartHitModel.plotLeft) / chartHitModel.step) // NEW
-                )); // NEW
-                const row = chartHitModel.rows[index]; // NEW
-                if (!row) return; // NEW
-                const tooltipLines = [`<strong>Week of ${mxUtils.htmlEntities(row.week)}</strong>`]; // CHANGE
-                for (const series of PLAN_CHART_SERIES) { // NEW
-                    if (visibleChartSeriesIds.has(series.id)) tooltipLines.push(`${series.tooltipLabel}: ${formatKg(row[series.field])}`); // NEW
-                } // NEW
-                tooltipLines.push(`Inventory: ${formatKg(row.endingInventoryKg)}`); // NEW
-                chartTooltip.innerHTML = tooltipLines.join("<br>"); // CHANGE
-                const maximumLeft = Math.max(4, chartBox.clientWidth - 190); // NEW
-                chartTooltip.style.left = `${Math.max(4, Math.min(maximumLeft, event.clientX - chartRect.left + 12))}px`; // CHANGE
-                chartTooltip.style.top = `${Math.max(35, event.clientY - chartRect.top - 18)}px`; // NEW
-                chartTooltip.style.display = "block"; // NEW
-            }); // NEW
-            canvas.addEventListener("mouseleave", () => { chartTooltip.style.display = "none"; }); // NEW
-            save.addEventListener("click", () => saveCurrent(false)); // NEW
-            saveClose.addEventListener("click", () => saveCurrent(true)); // NEW
-            promptSave.addEventListener("click", () => saveCurrent(true)); // NEW
-            promptDiscard.addEventListener("click", () => SessionController.close()); // NEW
-            promptCancel.addEventListener("click", () => { state.closePromptOpen = false; renderFooter(); }); // NEW
-            close.addEventListener("click", requestClose); // NEW
-            exportButton.addEventListener("click", () => { // NEW
-                const safeName = String(DiagramStore.getCellAttr(moduleCell, "label", "garden")).replace(/[^\w\-]+/g, "_").slice(0, 60); // NEW
-                downloadJson(`${safeName}_${currentYear}_plan.json`, PlanSchema.serializeForPersistence(plan)); // NEW
-            }); // NEW
-            reset.addEventListener("click", () => { // NEW
-                if (!confirm(`Clear the saved ${currentYear} plan?`)) return; // NEW
-                PlanRepository.deletePlanForYear(moduleCell, currentYear); // NEW
-                replacePlan(PlanSchema.createEmptyPlan(currentYear), currentYear, false); // CHANGE
-                renderAll(); // NEW
-                YearPlanDashboard.markBaseline(state, plan, null); // NEW
-                refreshDerived(); // NEW
-            }); // NEW
+            yearInput.addEventListener("change", () => {
+                const nextYear = Number(yearInput.value);
+                if (!Number.isFinite(nextYear) || nextYear < 1900 || nextYear > 3000) { yearInput.value = String(currentYear); return; }
+                if (nextYear === currentYear) return;
+                if (!saveCurrent(false)) { yearInput.value = String(currentYear); return; }
+                const nextExisting = PlanRepository.loadPlanForYear(moduleCell, nextYear);
+                replacePlan(nextExisting || PlanSchema.createEmptyPlan(nextYear), nextYear, !!nextExisting);
+                renderAll();
+                YearPlanDashboard.markBaseline(state, plan, null);
+                refreshDerived();
+            });
+            applyTemplate.addEventListener("click", () => {
+                const name = String(templateSel.value || "");
+                const template = name && PlanRepository.loadTemplateByName(name);
+                if (!template) return;
+                replacePlan(PlanRepository.rekeyTemplateToPlan(template, currentYear), currentYear, loadedExistingForCurrentYear);
+                renderAll();
+            });
+            templateSel.addEventListener("change", () => {
+                templateNameInput.value = String(templateSel.value || "");
+                saveTemplate.disabled = !templateNameInput.value.trim();
+            });
+            templateNameInput.addEventListener("input", () => { saveTemplate.disabled = !templateNameInput.value.trim(); });
+            saveTemplate.addEventListener("click", () => {
+                const name = String(templateNameInput.value || "").trim();
+                if (!name) return;
+                const template = PlanSchema.serializeForPersistence(plan, { forTemplate: true });
+                template.templateBaseYear = currentYear; template.year = null;
+                PlanRepository.saveTemplateByName(name, template); fillTemplateDropdown(); templateSel.value = name; templateNameInput.value = name; saveTemplate.disabled = false;
+            });
+            deleteTemplate.addEventListener("click", () => {
+                const name = String(templateSel.value || "");
+                if (!name || !confirm(`Delete template "${name}"?`)) return;
+                PlanRepository.deleteTemplateByName(name); fillTemplateDropdown(); templateNameInput.value = ""; saveTemplate.disabled = true;
+            });
+            cropFilterSel.addEventListener("change", () => {
+                const cropId = String(cropFilterSel.value || "");
+                if (cropId) {
+                    if (!setSelectedCropEverywhere(cropId, { expandCropPlan: true, syncPlanCheck: true })) return;
+                    renderCropList();
+                    renderSelectedEditor();
+                    renderCropPlan(false);
+                    renderPlanCheck();
+                    renderFooter();
+                    return;
+                }
+                plan.cropFilterId = "";
+                renderPlanCheck();
+                renderFooter();
+            });
+            canvas.addEventListener("mousemove", event => {
+                if (!chartHitModel || !chartHitModel.weekCenters.length) return;
+                const canvasRect = canvas.getBoundingClientRect();
+                const chartRect = chartBox.getBoundingClientRect();
+                const canvasX = (event.clientX - canvasRect.left) * (canvas.width / Math.max(1, canvasRect.width));
+                if (canvasX < chartHitModel.plotLeft || canvasX > chartHitModel.plotRight) {
+                    chartTooltip.style.display = "none";
+                    return;
+                }
+                const index = Math.max(0, Math.min(
+                    chartHitModel.rows.length - 1,
+                    Math.floor((canvasX - chartHitModel.plotLeft) / chartHitModel.step)
+                ));
+                const row = chartHitModel.rows[index];
+                if (!row) return;
+                const tooltipLines = [`<strong>Week of ${mxUtils.htmlEntities(row.week)}</strong>`];
+                for (const series of PLAN_CHART_SERIES) {
+                    if (visibleChartSeriesIds.has(series.id)) tooltipLines.push(`${series.tooltipLabel}: ${formatKg(row[series.field])}`);
+                }
+                tooltipLines.push(`Inventory: ${formatKg(row.endingInventoryKg)}`);
+                chartTooltip.innerHTML = tooltipLines.join("<br>");
+                const maximumLeft = Math.max(4, chartBox.clientWidth - 190);
+                chartTooltip.style.left = `${Math.max(4, Math.min(maximumLeft, event.clientX - chartRect.left + 12))}px`;
+                chartTooltip.style.top = `${Math.max(35, event.clientY - chartRect.top - 18)}px`;
+                chartTooltip.style.display = "block";
+            });
+            canvas.addEventListener("mouseleave", () => { chartTooltip.style.display = "none"; });
+            save.addEventListener("click", () => saveCurrent(false));
+            saveClose.addEventListener("click", () => saveCurrent(true));
+            promptSave.addEventListener("click", () => saveCurrent(true));
+            promptDiscard.addEventListener("click", () => SessionController.close());
+            promptCancel.addEventListener("click", () => { state.closePromptOpen = false; renderFooter(); });
+            close.addEventListener("click", requestClose);
+            exportButton.addEventListener("click", () => {
+                const safeName = String(DiagramStore.getCellAttr(moduleCell, "label", "garden")).replace(/[^\w\-]+/g, "_").slice(0, 60);
+                downloadJson(`${safeName}_${currentYear}_plan.json`, PlanSchema.serializeForPersistence(plan));
+            });
+            reset.addEventListener("click", () => {
+                if (!confirm(`Clear the saved ${currentYear} plan?`)) return;
+                PlanRepository.deletePlanForYear(moduleCell, currentYear);
+                replacePlan(PlanSchema.createEmptyPlan(currentYear), currentYear, false);
+                renderAll();
+                YearPlanDashboard.markBaseline(state, plan, null);
+                refreshDerived();
+            });
 
-            function emitHarvestWindowsNeeded(crop) { // NEW
-                window.dispatchEvent(new CustomEvent("usl:harvestWindowsNeeded", { detail: { // NEW
+            function emitHarvestWindowsNeeded(crop) {
+                window.dispatchEvent(new CustomEvent("usl:harvestWindowsNeeded", { detail: {
                     moduleCellId: moduleCell.getId ? moduleCell.getId() : moduleCell.id,
                     year: currentYear,
                     crops: [{ cropId: crop.id, plantId: crop.plantId, varietyId: crop.varietyId ?? null, method: crop.method ?? null, yieldTargetKg: 0 }]
-                } })); // NEW
-            } // NEW
+                } }));
+            }
 
-            SessionController.addWindowListener(session, "usl:harvestWindowsSuggested", event => { // NEW
-                const detail = event && event.detail; // NEW
-                if (!detail || String(detail.moduleCellId || "") !== String(moduleCell.getId ? moduleCell.getId() : moduleCell.id) || Number(detail.year) !== currentYear) return; // NEW
-                const beforeDateRanges = captureDateRangeSnapshot(); // NEW
-                const byId = new Map((plan.crops || []).map(crop => [String(crop.id), crop])); // NEW
-                for (const result of (detail.results || [])) { // NEW
-                    const crop = byId.get(String(result.cropId)); // NEW
-                    if (!crop) continue; // NEW
-                    if (!PlanMath.hasYmd(crop.harvestStart) && PlanMath.hasYmd(result.harvestStart)) crop.harvestStart = result.harvestStart; // NEW
-                    if (!PlanMath.hasYmd(crop.harvestEnd) && PlanMath.hasYmd(result.harvestEnd)) crop.harvestEnd = result.harvestEnd; // NEW
-                    if (!(Number(crop.shelfLifeDays) > 0) && Number(result.shelfLifeDays) > 0) crop.shelfLifeDays = Math.trunc(Number(result.shelfLifeDays)); // NEW
-                } // NEW
-                refreshDerived(beforeDateRanges); // CHANGE
-            }); // NEW
+            SessionController.addWindowListener(session, "usl:harvestWindowsSuggested", event => {
+                const detail = event && event.detail;
+                if (!detail || String(detail.moduleCellId || "") !== String(moduleCell.getId ? moduleCell.getId() : moduleCell.id) || Number(detail.year) !== currentYear) return;
+                const beforeDateRanges = captureDateRangeSnapshot();
+                const byId = new Map((plan.crops || []).map(crop => [String(crop.id), crop]));
+                for (const result of (detail.results || [])) {
+                    const crop = byId.get(String(result.cropId));
+                    if (!crop) continue;
+                    if (!PlanMath.hasYmd(crop.harvestStart) && PlanMath.hasYmd(result.harvestStart)) crop.harvestStart = result.harvestStart;
+                    if (!PlanMath.hasYmd(crop.harvestEnd) && PlanMath.hasYmd(result.harvestEnd)) crop.harvestEnd = result.harvestEnd;
+                    if (!(Number(crop.shelfLifeDays) > 0) && Number(result.shelfLifeDays) > 0) crop.shelfLifeDays = Math.trunc(Number(result.shelfLifeDays));
+                }
+                refreshDerived(beforeDateRanges);
+            });
 
-            SessionController.addGraphListener(session, graph, "usl:varietyEditorClosed", (sender, event) => { // NEW
-                const cropId = String(event.getProperty("cropId") || ""); // NEW
-                const crop = (plan.crops || []).find(item => String(item.id) === cropId); // NEW
-                if (!crop) return; // NEW
-                varietyCache.delete(String(crop.plantId || "")); // NEW
-                const action = String(event.getProperty("action") || ""); // NEW
-                const varietyId = event.getProperty("varietyId"); // NEW
-                if (action !== "cancel" && action !== "error" && varietyId !== null && varietyId !== "") { // NEW
-                    if (!PlanSchema.findDuplicateCrop(plan, crop.plantId, varietyId, crop.id)) { // NEW
-                        crop.varietyId = Number(varietyId); crop.variety = String(event.getProperty("varietyName") || ""); // NEW
-                    } // NEW
-                } // NEW
-                if (selectedCrop() === crop) renderSelectedEditor(); // NEW
-                refreshDerived(); // NEW
-                loadAddCropOptions(false); // NEW
-            }); // NEW
+            SessionController.addGraphListener(session, graph, "usl:varietyEditorClosed", (sender, event) => {
+                const cropId = String(event.getProperty("cropId") || "");
+                const crop = (plan.crops || []).find(item => String(item.id) === cropId);
+                if (!crop) return;
+                varietyCache.delete(String(crop.plantId || ""));
+                const action = String(event.getProperty("action") || "");
+                const varietyId = event.getProperty("varietyId");
+                if (action !== "cancel" && action !== "error" && varietyId !== null && varietyId !== "") {
+                    if (!PlanSchema.findDuplicateCrop(plan, crop.plantId, varietyId, crop.id)) {
+                        crop.varietyId = Number(varietyId); crop.variety = String(event.getProperty("varietyName") || "");
+                    }
+                }
+                if (selectedCrop() === crop) renderSelectedEditor();
+                refreshDerived();
+                loadAddCropOptions(false);
+            });
 
-            renderChartLegend(); // NEW
-            renderAll(); // NEW
-            YearPlanDashboard.markBaseline(state, plan, null); // NEW
-            refreshDerived(); // NEW
-            return session; // NEW
-        } // NEW
+            renderChartLegend();
+            renderAll();
+            YearPlanDashboard.markBaseline(state, plan, null);
+            refreshDerived();
+            return session;
+        }
 
-        return { open }; // NEW
-    })(); // NEW
+        return { open };
+    })();
 
-    if (window.__USL_YEAR_PLANNER_TEST_HOOK__) { // NEW
-        window.__uslYearPlannerTestApi = { // NEW
+    if (window.__USL_YEAR_PLANNER_TEST_HOOK__) {
+        window.__uslYearPlannerTestApi = {
             Env,
             DiagramStore,
-            DbClient, // NEW
+            DbClient,
             PlanMath,
             PlanSchema,
             PlanRepository,
             DiagramPlanReader,
             PlanRuntimeService,
-            YearPlanDashboard, // NEW
-            YearPlanModalController, // NEW
+            YearPlanDashboard,
+            YearPlanModalController,
             SessionController
         };
     }
 
-    /** Starts the single year-plan modal session. // NEW */
-    function openPlanModal(moduleCell, year) { // CHANGE
-        return YearPlanModalController.open(moduleCell, year); // NEW
+    /** Starts the single year-plan modal session. */
+    function openPlanModal(moduleCell, year) {
+        return YearPlanModalController.open(moduleCell, year);
     }
 
     // -------------------- Event listener --------------------

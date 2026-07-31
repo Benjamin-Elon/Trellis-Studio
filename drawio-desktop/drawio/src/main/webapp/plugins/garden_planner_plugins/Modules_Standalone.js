@@ -1,24 +1,24 @@
 Draw.loadPlugin(function (ui) {
     const graph = ui.editor.graph;
     const model = graph.getModel();
-    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // CHANGE
-    const ATTR_GARDEN_TEAM_MODULE = "trellis_team_module_id"; // NEW
-    const ATTR_TEAM_GARDEN_MODULE = "trellis_garden_module_id"; // NEW
-    const ATTR_GARDEN_TASK_MODULE = "trellis_task_module_id"; // NEW
-    const ATTR_TASK_GARDEN_MODULE = "trellis_garden_module_id"; // NEW
-    const ATTR_OWNER = "trellis_owner_user_id"; // NEW
-    const ATTR_ACCESS_GRANTS = "trellis_access_grants_json"; // NEW
-    const LINK_ATTR = "linkedTo"; // NEW
-    const COMPANION_TEAM_GAP = 40; // NEW
+    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 });
+    const ATTR_GARDEN_TEAM_MODULE = "trellis_team_module_id";
+    const ATTR_TEAM_GARDEN_MODULE = "trellis_garden_module_id";
+    const ATTR_GARDEN_TASK_MODULE = "trellis_task_module_id";
+    const ATTR_TASK_GARDEN_MODULE = "trellis_garden_module_id";
+    const ATTR_OWNER = "trellis_owner_user_id";
+    const ATTR_ACCESS_GRANTS = "trellis_access_grants_json";
+    const LINK_ATTR = "linkedTo";
+    const COMPANION_TEAM_GAP = 40;
 
-    function applyTrellisButtonStyle(button, variant, options) { // NEW
-        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") { // NEW
-            window.Trellis.ui.applyButtonStyle(button, variant, options); // NEW
-        } else if (button) { // NEW
-            button.setAttribute("data-trellis-button-variant", variant || "neutral"); // NEW
-        } // NEW
-        return button; // NEW
-    } // NEW
+    function applyTrellisButtonStyle(button, variant, options) {
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") {
+            window.Trellis.ui.applyButtonStyle(button, variant, options);
+        } else if (button) {
+            button.setAttribute("data-trellis-button-variant", variant || "neutral");
+        }
+        return button;
+    }
 
     // Override resizeChildCells so modules do not resize children
     const originalResizeChildCells = graph.resizeChildCells;
@@ -98,45 +98,45 @@ Draw.loadPlugin(function (ui) {
 
 
 
-    const MIN_W = 60, MIN_H = 40; // CHANGE
-    const GARDEN_MIN_CONTENT_W = 440, GARDEN_MIN_CONTENT_H = 340; // CHANGE
+    const MIN_W = 60, MIN_H = 40;
+    const GARDEN_MIN_CONTENT_W = 440, GARDEN_MIN_CONTENT_H = 340;
 
     const EPS = 0.5; // epsilon                                                      
 
-    function getModuleMinContentSize(moduleCell) { // CHANGE
-        return isGardenModule(moduleCell) // CHANGE
-            ? { width: GARDEN_MIN_CONTENT_W, height: GARDEN_MIN_CONTENT_H } // CHANGE
-            : { width: MIN_W, height: MIN_H }; // CHANGE
-    } // CHANGE
+    function getModuleMinContentSize(moduleCell) {
+        return isGardenModule(moduleCell)
+            ? { width: GARDEN_MIN_CONTENT_W, height: GARDEN_MIN_CONTENT_H }
+            : { width: MIN_W, height: MIN_H };
+    }
 
-    function getModuleHeaderHeight(moduleCell) { // CHANGE
-        return isSwimlane(moduleCell) ? getStartSize(moduleCell).height : 0; // CHANGE
-    } // CHANGE
+    function getModuleHeaderHeight(moduleCell) {
+        return isSwimlane(moduleCell) ? getStartSize(moduleCell).height : 0;
+    }
 
-    function getModuleMinOuterSize(moduleCell) { // CHANGE
-        const content = getModuleMinContentSize(moduleCell); // CHANGE
-        return { width: content.width, height: content.height + getModuleHeaderHeight(moduleCell) }; // CHANGE
-    } // CHANGE
+    function getModuleMinOuterSize(moduleCell) {
+        const content = getModuleMinContentSize(moduleCell);
+        return { width: content.width, height: content.height + getModuleHeaderHeight(moduleCell) };
+    }
 
-    function enforceGardenModuleMinimum(moduleCell) { // CHANGE
-        if (!isGardenModule(moduleCell)) return false; // CHANGE
-        const g = model.getGeometry(moduleCell); // CHANGE
-        if (!g) return false; // CHANGE
-        const min = getModuleMinOuterSize(moduleCell); // CHANGE
-        const nextW = Math.max(Number(g.width) || 0, min.width); // CHANGE
-        const nextH = Math.max(Number(g.height) || 0, min.height); // CHANGE
-        if (Math.abs(nextW - g.width) < EPS && Math.abs(nextH - g.height) < EPS) return false; // CHANGE
-        const g2 = g.clone(); // CHANGE
-        g2.width = nextW; // CHANGE
-        g2.height = nextH; // CHANGE
-        model.setGeometry(moduleCell, g2); // CHANGE
-        return true; // CHANGE
-    } // CHANGE
+    function enforceGardenModuleMinimum(moduleCell) {
+        if (!isGardenModule(moduleCell)) return false;
+        const g = model.getGeometry(moduleCell);
+        if (!g) return false;
+        const min = getModuleMinOuterSize(moduleCell);
+        const nextW = Math.max(Number(g.width) || 0, min.width);
+        const nextH = Math.max(Number(g.height) || 0, min.height);
+        if (Math.abs(nextW - g.width) < EPS && Math.abs(nextH - g.height) < EPS) return false;
+        const g2 = g.clone();
+        g2.width = nextW;
+        g2.height = nextH;
+        model.setGeometry(moduleCell, g2);
+        return true;
+    }
 
     function applyModuleMargins(moduleCell, opts) {
         const o = opts || {};
         const allowShrink = !!o.allowShrink;
-        const manageUpdate = o.manageUpdate !== false; // NEW
+        const manageUpdate = o.manageUpdate !== false;
         if (!isModule(moduleCell)) return;
 
         const margin = getIntStyle(moduleCell, "module_margin", 100);
@@ -144,13 +144,13 @@ Draw.loadPlugin(function (ui) {
         if (!mGeo) return;
 
         const u = getChildUnionRelative(moduleCell); // union in module space
-        const minContent = getModuleMinContentSize(moduleCell); // CHANGE
+        const minContent = getModuleMinContentSize(moduleCell);
 
         // Children coords are in swimlane content space; outerHeight = content + header.
-        const headerH = getModuleHeaderHeight(moduleCell); // CHANGE
+        const headerH = getModuleHeaderHeight(moduleCell);
 
-        const minRight = Math.max(u ? u.right + margin : 0, minContent.width); // CHANGE
-        const minBottom = Math.max(u ? u.bottom + margin : 0, minContent.height); // CHANGE
+        const minRight = Math.max(u ? u.right + margin : 0, minContent.width);
+        const minBottom = Math.max(u ? u.bottom + margin : 0, minContent.height);
 
         // If shrinking is allowed, snap to minima; otherwise never shrink (only expand).     
         const targetW = allowShrink ? minRight : Math.max(mGeo.width, minRight);
@@ -161,54 +161,54 @@ Draw.loadPlugin(function (ui) {
             return;
         }
 
-        if (manageUpdate) model.beginUpdate(); // CHANGE
-        try { // CHANGE
+        if (manageUpdate) model.beginUpdate();
+        try {
             const g2 = mGeo.clone();
             g2.width = targetW;
             g2.height = targetH;
             model.setGeometry(moduleCell, g2);
         } finally {
-            if (manageUpdate) model.endUpdate(); // CHANGE
+            if (manageUpdate) model.endUpdate();
         }
 
         graph.refresh(moduleCell);
     }
 
-    function getModuleMarginValue(moduleCell, defaultPx) { // NEW
-        const fallback = Number.isInteger(defaultPx) && defaultPx >= 0 ? defaultPx : 100; // NEW
-        return getIntStyle(moduleCell, "module_margin", fallback); // NEW
-    } // NEW
+    function getModuleMarginValue(moduleCell, defaultPx) {
+        const fallback = Number.isInteger(defaultPx) && defaultPx >= 0 ? defaultPx : 100;
+        return getIntStyle(moduleCell, "module_margin", fallback);
+    }
 
-    function setModuleMarginValue(moduleCell, marginPx) { // NEW
-        if (!isModule(moduleCell)) return; // NEW
-        const n = Math.max(0, parseInt(marginPx, 10) || 0); // NEW
-        let st = getStyle(moduleCell) || ""; // NEW
-        st = st.replace(/(?:^|;)module_margin=\d+(?=;|$)/, ""); // NEW
-        st = st.replace(/;;+/g, ";").replace(/^;|;$/g, ""); // NEW
-        st += (st ? ";" : "") + "module_margin=" + n; // NEW
+    function setModuleMarginValue(moduleCell, marginPx) {
+        if (!isModule(moduleCell)) return;
+        const n = Math.max(0, parseInt(marginPx, 10) || 0);
+        let st = getStyle(moduleCell) || "";
+        st = st.replace(/(?:^|;)module_margin=\d+(?=;|$)/, "");
+        st = st.replace(/;;+/g, ";").replace(/^;|;$/g, "");
+        st += (st ? ";" : "") + "module_margin=" + n;
 
-        model.beginUpdate(); // NEW
-        try { // NEW
-            model.setStyle(moduleCell, st); // NEW
-            applyModuleMargins(moduleCell); // NEW
-        } finally { // NEW
-            model.endUpdate(); // NEW
-        } // NEW
-    } // NEW
+        model.beginUpdate();
+        try {
+            model.setStyle(moduleCell, st);
+            applyModuleMargins(moduleCell);
+        } finally {
+            model.endUpdate();
+        }
+    }
 
-    function promptSetModuleMargin(moduleCell) { // NEW
-        if (!isModule(moduleCell) || !ui.prompt) return; // NEW
-        const cur = getIntStyle(moduleCell, "module_margin", 100); // NEW
-        if (graph.popupMenuHandler && graph.popupMenuHandler.hideMenu) { // NEW
-            graph.popupMenuHandler.hideMenu(); // NEW
-        } // NEW
-        setTimeout(function () { // NEW
-            ui.prompt("Module internal margin (px):", String(cur), function (val) { // NEW
-                if (val == null) return; // NEW
-                setModuleMarginValue(moduleCell, val); // NEW
-            }); // NEW
-        }, 0); // NEW
-    } // NEW
+    function promptSetModuleMargin(moduleCell) {
+        if (!isModule(moduleCell) || !ui.prompt) return;
+        const cur = getIntStyle(moduleCell, "module_margin", 100);
+        if (graph.popupMenuHandler && graph.popupMenuHandler.hideMenu) {
+            graph.popupMenuHandler.hideMenu();
+        }
+        setTimeout(function () {
+            ui.prompt("Module internal margin (px):", String(cur), function (val) {
+                if (val == null) return;
+                setModuleMarginValue(moduleCell, val);
+            });
+        }, 0);
+    }
 
 
     // ---- Helpers for module typing ----                                               
@@ -220,13 +220,13 @@ Draw.loadPlugin(function (ui) {
         return !!cell && getXmlFlag(cell, "team_module");
     }
 
-    function isTaskModule(cell) { // NEW
-        return !!cell && getXmlFlag(cell, "task_module"); // NEW
-    } // NEW
+    function isTaskModule(cell) {
+        return !!cell && getXmlFlag(cell, "task_module");
+    }
 
-    function isGardenDashboardCell(cell) { // CHANGE
-        return !!cell && cell.getAttribute && cell.getAttribute("garden_dashboard") === "1"; // CHANGE
-    } // CHANGE
+    function isGardenDashboardCell(cell) {
+        return !!cell && cell.getAttribute && cell.getAttribute("garden_dashboard") === "1";
+    }
 
     // Safely set/remove a style flag key=1                                       
     function setStyleFlag(cell, key, on) {
@@ -274,127 +274,127 @@ Draw.loadPlugin(function (ui) {
         model.setValue(cell, elt);
     }
 
-    function cellId(cell) { // NEW
-        return cell && (cell.id || (cell.getId && cell.getId())) || ""; // NEW
-    } // NEW
+    function cellId(cell) {
+        return cell && (cell.id || (cell.getId && cell.getId())) || "";
+    }
 
-    function getValueAttr(cell, key) { // NEW
-        const v = cell && cell.value; // NEW
-        return v && v.nodeType === 1 ? (v.getAttribute(key) || "") : ""; // NEW
-    } // NEW
+    function getValueAttr(cell, key) {
+        const v = cell && cell.value;
+        return v && v.nodeType === 1 ? (v.getAttribute(key) || "") : "";
+    }
 
-    function setStringValueAttr(cell, key, value) { // NEW
-        const elt = ensureXmlValue(cell); // NEW
-        if (!elt) return; // NEW
-        const next = value == null || value === "" ? "" : String(value); // NEW
-        if (next) elt.setAttribute(key, next); // NEW
-        else elt.removeAttribute(key); // NEW
-        model.setValue(cell, elt); // NEW
-    } // NEW
+    function setStringValueAttr(cell, key, value) {
+        const elt = ensureXmlValue(cell);
+        if (!elt) return;
+        const next = value == null || value === "" ? "" : String(value);
+        if (next) elt.setAttribute(key, next);
+        else elt.removeAttribute(key);
+        model.setValue(cell, elt);
+    }
 
-    function linkSet(cell) { // NEW
-        return new Set(String(getValueAttr(cell, LINK_ATTR) || "").split(",").map(function (part) { return part.trim(); }).filter(Boolean)); // NEW
-    } // NEW
+    function linkSet(cell) {
+        return new Set(String(getValueAttr(cell, LINK_ATTR) || "").split(",").map(function (part) { return part.trim(); }).filter(Boolean));
+    }
 
-    function setLinkSet(cell, ids) { // NEW
-        setStringValueAttr(cell, LINK_ATTR, Array.from(ids || []).filter(Boolean).join(",")); // NEW
-    } // NEW
+    function setLinkSet(cell, ids) {
+        setStringValueAttr(cell, LINK_ATTR, Array.from(ids || []).filter(Boolean).join(","));
+    }
 
-    function addReciprocalLink(a, b) { // NEW
-        const aId = cellId(a); // NEW
-        const bId = cellId(b); // NEW
-        if (!a || !b || !aId || !bId || a === b) return false; // NEW
-        const aLinks = linkSet(a); // NEW
-        const bLinks = linkSet(b); // NEW
-        let changed = false; // NEW
-        if (!aLinks.has(bId)) { aLinks.add(bId); setLinkSet(a, aLinks); changed = true; } // NEW
-        if (!bLinks.has(aId)) { bLinks.add(aId); setLinkSet(b, bLinks); changed = true; } // NEW
-        return changed; // NEW
-    } // NEW
+    function addReciprocalLink(a, b) {
+        const aId = cellId(a);
+        const bId = cellId(b);
+        if (!a || !b || !aId || !bId || a === b) return false;
+        const aLinks = linkSet(a);
+        const bLinks = linkSet(b);
+        let changed = false;
+        if (!aLinks.has(bId)) { aLinks.add(bId); setLinkSet(a, aLinks); changed = true; }
+        if (!bLinks.has(aId)) { bLinks.add(aId); setLinkSet(b, bLinks); changed = true; }
+        return changed;
+    }
 
-    function plainCellLabel(cell, fallback) { // NEW
-        const raw = getValueAttr(cell, "label") || (typeof (cell && cell.value) === "string" ? cell.value : ""); // NEW
-        if (document && document.createElement) { // NEW
-            const holder = document.createElement("div"); // NEW
-            holder.innerHTML = raw; // NEW
-            const text = String(holder.textContent || "").replace(/\s+/g, " ").trim(); // NEW
-            if (text) return text; // NEW
-        } // NEW
-        const stripped = String(raw || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim(); // NEW
-        return stripped || fallback || "Garden"; // NEW
-    } // NEW
+    function plainCellLabel(cell, fallback) {
+        const raw = getValueAttr(cell, "label") || (typeof (cell && cell.value) === "string" ? cell.value : "");
+        if (document && document.createElement) {
+            const holder = document.createElement("div");
+            holder.innerHTML = raw;
+            const text = String(holder.textContent || "").replace(/\s+/g, " ").trim();
+            if (text) return text;
+        }
+        const stripped = String(raw || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+        return stripped || fallback || "Garden";
+    }
 
-    function companionModuleLabelFallback(cell) { // NEW
-        if (isTeamModule(cell)) return "Team Module"; // NEW
-        if (isTaskModule(cell)) return "Task Module"; // NEW
-        if (isGardenModule(cell)) return "Garden Module"; // CHANGE
-        return "Module"; // NEW
-    } // NEW
+    function companionModuleLabelFallback(cell) {
+        if (isTeamModule(cell)) return "Team Module";
+        if (isTaskModule(cell)) return "Task Module";
+        if (isGardenModule(cell)) return "Garden Module";
+        return "Module";
+    }
 
-    function normalizeModuleLabel(cell, label) { // NEW
-        const trimmed = String(label == null ? "" : label).trim(); // NEW
-        return trimmed || companionModuleLabelFallback(cell); // NEW
-    } // NEW
+    function normalizeModuleLabel(cell, label) {
+        const trimmed = String(label == null ? "" : label).trim();
+        return trimmed || companionModuleLabelFallback(cell);
+    }
 
-    function getModuleLabel(cell, fallback) { // NEW
-        return plainCellLabel(cell, fallback || companionModuleLabelFallback(cell)); // NEW
-    } // NEW
+    function getModuleLabel(cell, fallback) {
+        return plainCellLabel(cell, fallback || companionModuleLabelFallback(cell));
+    }
 
-    function buildModuleLabelXmlValueForEdit(cell) { // NEW
-        if (!cell) return null; // NEW
-        const value = cell.value; // NEW
-        if (value && value.nodeType === 1) return value.cloneNode(true); // NEW
-        const doc = mxUtils.createXmlDocument(); // NEW
-        const node = doc.createElement("obj"); // NEW
-        if (typeof value === "string" && value) node.setAttribute("label", value); // NEW
-        return node; // NEW
-    } // NEW
+    function buildModuleLabelXmlValueForEdit(cell) {
+        if (!cell) return null;
+        const value = cell.value;
+        if (value && value.nodeType === 1) return value.cloneNode(true);
+        const doc = mxUtils.createXmlDocument();
+        const node = doc.createElement("obj");
+        if (typeof value === "string" && value) node.setAttribute("label", value);
+        return node;
+    }
 
-    function setModuleLabelUndoable(cell, label) { // NEW
-        const node = buildModuleLabelXmlValueForEdit(cell); // NEW
-        if (!node) return; // NEW
-        const next = label == null || label === "" ? "" : String(label); // NEW
-        if (next) node.setAttribute("label", next); // NEW
-        else node.removeAttribute("label"); // NEW
-        model.beginUpdate(); // NEW
-        try { // NEW
-            model.setValue(cell, node); // NEW
-        } finally { // NEW
-            model.endUpdate(); // NEW
-        } // NEW
-    } // NEW
+    function setModuleLabelUndoable(cell, label) {
+        const node = buildModuleLabelXmlValueForEdit(cell);
+        if (!node) return;
+        const next = label == null || label === "" ? "" : String(label);
+        if (next) node.setAttribute("label", next);
+        else node.removeAttribute("label");
+        model.beginUpdate();
+        try {
+            model.setValue(cell, node);
+        } finally {
+            model.endUpdate();
+        }
+    }
 
-    function writeModuleLabel(cell, label) { // NEW
-        const next = normalizeModuleLabel(cell, label); // NEW
-        if (getModuleLabel(cell) === next) return next; // NEW
-        setModuleLabelUndoable(cell, next); // CHANGE
-        if (graph.refresh) graph.refresh(cell); // NEW
-        return next; // NEW
-    } // NEW
+    function writeModuleLabel(cell, label) {
+        const next = normalizeModuleLabel(cell, label);
+        if (getModuleLabel(cell) === next) return next;
+        setModuleLabelUndoable(cell, next);
+        if (graph.refresh) graph.refresh(cell);
+        return next;
+    }
 
-    function linkedGardenModuleForCompanion(cell) { // NEW
-        const gardenId = getValueAttr(cell, ATTR_TEAM_GARDEN_MODULE) || getValueAttr(cell, ATTR_TASK_GARDEN_MODULE); // NEW
-        const garden = gardenId && model.getCell ? model.getCell(gardenId) : null; // NEW
-        return isGardenModule(garden) ? garden : null; // NEW
-    } // NEW
+    function linkedGardenModuleForCompanion(cell) {
+        const gardenId = getValueAttr(cell, ATTR_TEAM_GARDEN_MODULE) || getValueAttr(cell, ATTR_TASK_GARDEN_MODULE);
+        const garden = gardenId && model.getCell ? model.getCell(gardenId) : null;
+        return isGardenModule(garden) ? garden : null;
+    }
 
-    function linkedGardenLabelForCompanion(cell) { // NEW
-        const garden = linkedGardenModuleForCompanion(cell); // NEW
-        return garden ? getModuleLabel(garden, "Garden") : ""; // NEW
-    } // NEW
+    function linkedGardenLabelForCompanion(cell) {
+        const garden = linkedGardenModuleForCompanion(cell);
+        return garden ? getModuleLabel(garden, "Garden") : "";
+    }
 
-    function stopModuleOverlayDomEvent(evt) { // NEW
-        if (evt && evt.stopPropagation) evt.stopPropagation(); // NEW
-    } // NEW
+    function stopModuleOverlayDomEvent(evt) {
+        if (evt && evt.stopPropagation) evt.stopPropagation();
+    }
 
-    function stopAndPreventModuleOverlayDomEvent(evt) { // NEW
-        stopModuleOverlayDomEvent(evt); // NEW
-        if (evt && evt.preventDefault) evt.preventDefault(); // NEW
-    } // NEW
+    function stopAndPreventModuleOverlayDomEvent(evt) {
+        stopModuleOverlayDomEvent(evt);
+        if (evt && evt.preventDefault) evt.preventDefault();
+    }
 
-    function setCellLabel(cell, label) { // NEW
-        setStringValueAttr(cell, "label", label || ""); // NEW
-    } // NEW
+    function setCellLabel(cell, label) {
+        setStringValueAttr(cell, "label", label || "");
+    }
 
 
     // Place a new child inside a module using abs click coords and a cell factory           
@@ -424,7 +424,7 @@ Draw.loadPlugin(function (ui) {
     function hasGardenSettingsSet(cell) {                                                     
         const v = cell && cell.value;                                                         
         if (!(v && v.nodeType === 1)) return false;                                           
-        const city = (v.getAttribute("city_id") || v.getAttribute("city_name") || "").trim(); // CHANGED
+        const city = (v.getAttribute("city_id") || v.getAttribute("city_name") || "").trim();
         const units = (v.getAttribute("unit_system") || "").trim();                           
         return !!(city && units);                                                             
     }                                                                                         
@@ -447,16 +447,16 @@ Draw.loadPlugin(function (ui) {
             ensureXmlValue(cell);
             setXmlFlag(cell, "garden_module", false);
             setXmlFlag(cell, "team_module", false);
-            setXmlFlag(cell, "task_module", false); // NEW
+            setXmlFlag(cell, "task_module", false);
 
             // Set the desired flag
             if (type === "garden") {
-                setXmlFlag(cell, "garden_module", true);                                     // FIX
+                setXmlFlag(cell, "garden_module", true);
                 becameGarden = true;                                                        
             } else if (type === "team") {
                 setXmlFlag(cell, "team_module", true);
-            } else if (type === "task") { // NEW
-                setXmlFlag(cell, "task_module", true); // NEW
+            } else if (type === "task") {
+                setXmlFlag(cell, "task_module", true);
             }
 
             let st = getStyle(cell) || "";
@@ -467,8 +467,8 @@ Draw.loadPlugin(function (ui) {
                 st += (st ? ";" : "") + "swimlaneFillColor=#B9E0A5";
             } else if (type === "team") {
                 st += (st ? ";" : "") + "swimlaneFillColor=#FFF2CC";
-            } else if (type === "task") { // NEW
-                st += (st ? ";" : "") + "swimlaneFillColor=#E0F2FE"; // NEW
+            } else if (type === "task") {
+                st += (st ? ";" : "") + "swimlaneFillColor=#E0F2FE";
             } else {
                 st += (st ? ";" : "") + "swimlaneFillColor=default";
             }
@@ -479,24 +479,24 @@ Draw.loadPlugin(function (ui) {
         }
         graph.refresh(cell);
 
-        if (becameGarden) {                                                                  // CHANGE
-            model.beginUpdate();                                                             // CHANGE
-            try {                                                                            // CHANGE
-                enforceGardenModuleMinimum(cell);                                            // CHANGE
-                applyModuleMargins(cell, { allowShrink: false });                            // CHANGE
-                ensureGardenTeamModule(cell, { insideUpdate: true });                        // NEW
-                ensureGardenTaskModule(cell, { insideUpdate: true, createMainBoard: true }); // CHANGE
-            } finally {                                                                      // CHANGE
-                model.endUpdate();                                                           // CHANGE
-            }                                                                                // CHANGE
-        }                                                                                    // CHANGE
+        if (becameGarden) {
+            model.beginUpdate();
+            try {
+                enforceGardenModuleMinimum(cell);
+                applyModuleMargins(cell, { allowShrink: false });
+                ensureGardenTeamModule(cell, { insideUpdate: true });
+                ensureGardenTaskModule(cell, { insideUpdate: true, createMainBoard: true });
+            } finally {
+                model.endUpdate();
+            }
+        }
 
-        if (becameGarden) {                                                                  // FIX
-            setTimeout(() => emitGardenSettingsNeededIfMissing(graph, cell), 0);             // FIX
+        if (becameGarden) {
+            setTimeout(() => emitGardenSettingsNeededIfMissing(graph, cell), 0);
         }                                                                              
     }                                                                                        
 
-    function isRoleCard(cell) { // CHANGE
+    function isRoleCard(cell) {
         const st = getStyle(cell);
         if (!st) return false;
         if (/(^|;)role_card=1(;|$)/.test(st)) return true;             // primary signal
@@ -505,393 +505,393 @@ Draw.loadPlugin(function (ui) {
         return /(^|;)swimlane(;|$)/.test(st) && !!p && isModule(p) && isTeamModule(p);
     }
 
-    function isRoleImageRow(cell) { // NEW
-        return /(^|;)role_imagerow=1(;|$)/.test(getStyle(cell)); // NEW
-    } // NEW
+    function isRoleImageRow(cell) {
+        return /(^|;)role_imagerow=1(;|$)/.test(getStyle(cell));
+    }
 
-    function isRoleAvatar(cell) { // NEW
-        return /(^|;)role_avatar=1(;|$)/.test(getStyle(cell)); // NEW
-    } // NEW
+    function isRoleAvatar(cell) {
+        return /(^|;)role_avatar=1(;|$)/.test(getStyle(cell));
+    }
 
-    const ROLE_CARD_VERSION = "2"; // NEW
-    const ROLE_EXPANDED_W = 260; // NEW
-    const ROLE_EXPANDED_H = 250; // CHANGE
-    const ROLE_COLLAPSED_W = 180; // NEW
-    const ROLE_COLLAPSED_H = 64; // NEW
+    const ROLE_CARD_VERSION = "2";
+    const ROLE_EXPANDED_W = 260;
+    const ROLE_EXPANDED_H = 250;
+    const ROLE_COLLAPSED_W = 180;
+    const ROLE_COLLAPSED_H = 64;
 
-    function styleHasKeyValue(cell, key, value) { // NEW
-        const safeKey = String(key || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); // NEW
-        const safeValue = String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); // NEW
-        return new RegExp("(^|;)" + safeKey + "=" + safeValue + "(;|$)").test(getStyle(cell)); // NEW
-    } // NEW
+    function styleHasKeyValue(cell, key, value) {
+        const safeKey = String(key || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const safeValue = String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp("(^|;)" + safeKey + "=" + safeValue + "(;|$)").test(getStyle(cell));
+    }
 
-    function isRoleCardV2(cell) { // NEW
-        return isRoleCard(cell) && styleHasKeyValue(cell, "role_card_version", ROLE_CARD_VERSION); // NEW
-    } // NEW
+    function isRoleCardV2(cell) {
+        return isRoleCard(cell) && styleHasKeyValue(cell, "role_card_version", ROLE_CARD_VERSION);
+    }
 
-    function htmlEscape(value) { // NEW
+    function htmlEscape(value) {
         return String(value == null ? "" : value)
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#39;"); // NEW
-    } // NEW
+            .replace(/'/g, "&#39;");
+    }
 
-    function getCellDisplayText(cell) { // NEW
-        if (!cell) return ""; // NEW
-        const value = cell.value; // NEW
-        const raw = value && value.getAttribute ? (value.getAttribute("label") || "") : (value == null ? "" : String(value)); // NEW
-        if (document && document.createElement) { // NEW
-            const holder = document.createElement("div"); // NEW
-            holder.innerHTML = raw; // NEW
-            return String(holder.textContent || "").replace(/\s+/g, " ").trim(); // NEW
-        } // NEW
-        return String(raw).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim(); // NEW
-    } // NEW
+    function getCellDisplayText(cell) {
+        if (!cell) return "";
+        const value = cell.value;
+        const raw = value && value.getAttribute ? (value.getAttribute("label") || "") : (value == null ? "" : String(value));
+        if (document && document.createElement) {
+            const holder = document.createElement("div");
+            holder.innerHTML = raw;
+            return String(holder.textContent || "").replace(/\s+/g, " ").trim();
+        }
+        return String(raw).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    }
 
-    function getCellRawLabel(cell) { // NEW
-        if (!cell) return ""; // NEW
-        const value = cell.value; // NEW
-        return value && value.getAttribute ? (value.getAttribute("label") || "") : (value == null ? "" : String(value)); // NEW
-    } // NEW
+    function getCellRawLabel(cell) {
+        if (!cell) return "";
+        const value = cell.value;
+        return value && value.getAttribute ? (value.getAttribute("label") || "") : (value == null ? "" : String(value));
+    }
 
-    function getRoleField(roleCard, flag) { // NEW
-        const children = model.getChildren(roleCard) || []; // NEW
-        return children.find(function (child) { return styleHasKeyValue(child, flag, "1"); }) || null; // NEW
-    } // NEW
+    function getRoleField(roleCard, flag) {
+        const children = model.getChildren(roleCard) || [];
+        return children.find(function (child) { return styleHasKeyValue(child, flag, "1"); }) || null;
+    }
 
-    function roleFieldDisplayValue(roleCard, flag, fallback) { // NEW
-        const text = getCellDisplayText(getRoleField(roleCard, flag)); // NEW
-        return text || fallback; // NEW
-    } // NEW
+    function roleFieldDisplayValue(roleCard, flag, fallback) {
+        const text = getCellDisplayText(getRoleField(roleCard, flag));
+        return text || fallback;
+    }
 
-    function roleInitials(name) { // NEW
-        const parts = String(name || "").trim().split(/\s+/).filter(Boolean); // NEW
-        if (!parts.length) return "?"; // NEW
-        return (parts[0].charAt(0) + (parts.length > 1 ? parts[parts.length - 1].charAt(0) : "")).toUpperCase(); // NEW
-    } // NEW
+    function roleInitials(name) {
+        const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+        if (!parts.length) return "?";
+        return (parts[0].charAt(0) + (parts.length > 1 ? parts[parts.length - 1].charAt(0) : "")).toUpperCase();
+    }
 
-    function roleAvatarColor(seed) { // NEW
-        const palette = ["#2563EB", "#047857", "#B45309", "#7C3AED", "#BE123C", "#0F766E"]; // NEW
-        let hash = 0; // NEW
-        String(seed || "").split("").forEach(function (ch) { hash = ((hash * 31) + ch.charCodeAt(0)) | 0; }); // NEW
-        return palette[Math.abs(hash) % palette.length]; // NEW
-    } // NEW
+    function roleAvatarColor(seed) {
+        const palette = ["#2563EB", "#047857", "#B45309", "#7C3AED", "#BE123C", "#0F766E"];
+        let hash = 0;
+        String(seed || "").split("").forEach(function (ch) { hash = ((hash * 31) + ch.charCodeAt(0)) | 0; });
+        return palette[Math.abs(hash) % palette.length];
+    }
 
-    function getStyleImageSource(cell) { // NEW
-        const match = getStyle(cell).match(/(?:^|;)image=(.*?)(?=;[A-Za-z_][A-Za-z0-9_]*=|;?$)/); // NEW
-        return match ? String(match[1] || "").trim() : ""; // NEW
-    } // NEW
+    function getStyleImageSource(cell) {
+        const match = getStyle(cell).match(/(?:^|;)image=(.*?)(?=;[A-Za-z_][A-Za-z0-9_]*=|;?$)/);
+        return match ? String(match[1] || "").trim() : "";
+    }
 
-    function removeStyleKey(style, key) { // NEW
-        const safeKey = String(key || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); // NEW
-        const valuePattern = key === "image" ? ".*?(?=;[A-Za-z_][A-Za-z0-9_]*=|;?$)" : "[^;]*"; // NEW
+    function removeStyleKey(style, key) {
+        const safeKey = String(key || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const valuePattern = key === "image" ? ".*?(?=;[A-Za-z_][A-Za-z0-9_]*=|;?$)" : "[^;]*";
         return String(style || "")
             .replace(new RegExp("(?:^|;)" + safeKey + "=" + valuePattern, "g"), "")
             .replace(/;;+/g, ";")
-            .replace(/^;|;$/g, ""); // NEW
-    } // NEW
+            .replace(/^;|;$/g, "");
+    }
 
-    function setStyleValue(style, key, value) { // NEW
-        let next = removeStyleKey(style, key); // NEW
-        next += (next ? ";" : "") + key + "=" + String(value == null ? "" : value); // NEW
-        return next; // NEW
-    } // NEW
+    function setStyleValue(style, key, value) {
+        let next = removeStyleKey(style, key);
+        next += (next ? ";" : "") + key + "=" + String(value == null ? "" : value);
+        return next;
+    }
 
-    function summaryInitialsImageSource(name, title) { // NEW
-        const initials = htmlEscape(roleInitials(name)); // NEW
-        const fill = roleAvatarColor(name + "|" + title); // NEW
+    function summaryInitialsImageSource(name, title) {
+        const initials = htmlEscape(roleInitials(name));
+        const fill = roleAvatarColor(name + "|" + title);
         const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="38" height="38" viewBox="0 0 38 38">'
             + '<circle cx="19" cy="19" r="19" fill="' + fill + '"/>'
             + '<text x="19" y="24" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="700" fill="#ffffff">' + initials + '</text>'
-            + '</svg>'; // NEW
-        return "data:image/svg+xml," + encodeURIComponent(svg); // NEW
-    } // NEW
+            + '</svg>';
+        return "data:image/svg+xml," + encodeURIComponent(svg);
+    }
 
-    function buildRoleSummaryImageSource(roleCard, name, title) { // NEW
-        return getStyleImageSource(getRoleAvatar(roleCard)) || summaryInitialsImageSource(name, title); // NEW
-    } // NEW
+    function buildRoleSummaryImageSource(roleCard, name, title) {
+        return getStyleImageSource(getRoleAvatar(roleCard)) || summaryInitialsImageSource(name, title);
+    }
 
-    function applyRoleSummaryImageStyle(roleCard, imageSource) { // NEW
-        let st = getStyle(roleCard); // NEW
-        ["image", "imageWidth", "imageHeight", "imageAlign", "imageVerticalAlign", "imageAspect", "spacingLeft", "spacingRight", "spacingTop", "align", "verticalAlign"].forEach(function (key) { // CHANGE
-            st = removeStyleKey(st, key); // NEW
-        }); // NEW
-        st = setStyleValue(st, "image", imageSource); // NEW
-        st = setStyleValue(st, "imageWidth", "38"); // NEW
-        st = setStyleValue(st, "imageHeight", "38"); // NEW
-        st = setStyleValue(st, "imageAlign", "left"); // NEW
-        st = setStyleValue(st, "imageVerticalAlign", "top"); // CHANGE
-        st = setStyleValue(st, "imageAspect", "1"); // NEW
-        st = setStyleValue(st, "spacingLeft", "54"); // NEW
-        st = setStyleValue(st, "spacingRight", "8"); // NEW
-        st = setStyleValue(st, "spacingTop", "8"); // NEW
-        st = setStyleValue(st, "align", "left"); // NEW
-        st = setStyleValue(st, "verticalAlign", "top"); // CHANGE
-        if (getStyle(roleCard) !== st) model.setStyle(roleCard, st); // NEW
-    } // NEW
+    function applyRoleSummaryImageStyle(roleCard, imageSource) {
+        let st = getStyle(roleCard);
+        ["image", "imageWidth", "imageHeight", "imageAlign", "imageVerticalAlign", "imageAspect", "spacingLeft", "spacingRight", "spacingTop", "align", "verticalAlign"].forEach(function (key) {
+            st = removeStyleKey(st, key);
+        });
+        st = setStyleValue(st, "image", imageSource);
+        st = setStyleValue(st, "imageWidth", "38");
+        st = setStyleValue(st, "imageHeight", "38");
+        st = setStyleValue(st, "imageAlign", "left");
+        st = setStyleValue(st, "imageVerticalAlign", "top");
+        st = setStyleValue(st, "imageAspect", "1");
+        st = setStyleValue(st, "spacingLeft", "54");
+        st = setStyleValue(st, "spacingRight", "8");
+        st = setStyleValue(st, "spacingTop", "8");
+        st = setStyleValue(st, "align", "left");
+        st = setStyleValue(st, "verticalAlign", "top");
+        if (getStyle(roleCard) !== st) model.setStyle(roleCard, st);
+    }
 
-    function buildCollapsedRoleLabel(roleCard) { // NEW
-        const name = roleFieldDisplayValue(roleCard, "role_name", "Unnamed person"); // NEW
-        const title = roleFieldDisplayValue(roleCard, "role_title", "Unspecified role"); // NEW
+    function buildCollapsedRoleLabel(roleCard) {
+        const name = roleFieldDisplayValue(roleCard, "role_name", "Unnamed person");
+        const title = roleFieldDisplayValue(roleCard, "role_title", "Unspecified role");
         return '<div style="box-sizing:border-box;width:100%;height:100%;padding:6px 8px 5px 0;text-align:left;font-family:Arial,sans-serif;overflow:hidden;line-height:1.15;">'
             + '<div style="font-size:12px;font-weight:700;color:#1F2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + htmlEscape(name) + '</div>'
             + '<div style="font-size:10px;color:#4B5563;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;">' + htmlEscape(title) + '</div>'
-            + '</div>'; // CHANGE
-    } // NEW
+            + '</div>';
+    }
 
-    function syncRoleCardSummary(roleCard) { // NEW
-        if (!isRoleCardV2(roleCard)) return false; // NEW
-        const name = roleFieldDisplayValue(roleCard, "role_name", "Unnamed person"); // NEW
-        const title = roleFieldDisplayValue(roleCard, "role_title", "Unspecified role"); // NEW
-        const nextLabel = buildCollapsedRoleLabel(roleCard); // NEW
-        const imageSource = buildRoleSummaryImageSource(roleCard, name, title); // NEW
-        const labelChanged = getCellRawLabel(roleCard) !== nextLabel; // NEW
-        if (labelChanged) setCellLabel(roleCard, nextLabel); // CHANGE
-        applyRoleSummaryImageStyle(roleCard, imageSource); // NEW
-        return labelChanged; // CHANGE
-    } // NEW
+    function syncRoleCardSummary(roleCard) {
+        if (!isRoleCardV2(roleCard)) return false;
+        const name = roleFieldDisplayValue(roleCard, "role_name", "Unnamed person");
+        const title = roleFieldDisplayValue(roleCard, "role_title", "Unspecified role");
+        const nextLabel = buildCollapsedRoleLabel(roleCard);
+        const imageSource = buildRoleSummaryImageSource(roleCard, name, title);
+        const labelChanged = getCellRawLabel(roleCard) !== nextLabel;
+        if (labelChanged) setCellLabel(roleCard, nextLabel);
+        applyRoleSummaryImageStyle(roleCard, imageSource);
+        return labelChanged;
+    }
 
-    let syncingRoleCardSummaries = false; // NEW
+    let syncingRoleCardSummaries = false;
 
-    function syncAllRoleCardSummaries() { // NEW
-        if (syncingRoleCardSummaries) return; // NEW
-        const cells = model.cells ? Object.values(model.cells) : []; // NEW
-        const roles = cells.filter(isRoleCardV2); // CHANGE
-        if (!roles.length) return; // NEW
-        syncingRoleCardSummaries = true; // NEW
-        model.beginUpdate(); // NEW
-        try { roles.forEach(syncRoleCardSummary); } finally { model.endUpdate(); syncingRoleCardSummaries = false; } // NEW
-    } // NEW
+    function syncAllRoleCardSummaries() {
+        if (syncingRoleCardSummaries) return;
+        const cells = model.cells ? Object.values(model.cells) : [];
+        const roles = cells.filter(isRoleCardV2);
+        if (!roles.length) return;
+        syncingRoleCardSummaries = true;
+        model.beginUpdate();
+        try { roles.forEach(syncRoleCardSummary); } finally { model.endUpdate(); syncingRoleCardSummaries = false; }
+    }
 
-    function makeAlternateBounds(x, y, width, height) { // NEW
-        return (typeof mxRectangle !== "undefined") ? new mxRectangle(x, y, width, height) : new mxGeometry(x, y, width, height); // NEW
-    } // NEW
+    function makeAlternateBounds(x, y, width, height) {
+        return (typeof mxRectangle !== "undefined") ? new mxRectangle(x, y, width, height) : new mxGeometry(x, y, width, height);
+    }
 
-    if (model.addListener && typeof mxEvent !== "undefined" && mxEvent.CHANGE) { // CHANGE
-        model.addListener(mxEvent.CHANGE, function () { syncAllRoleCardSummaries(); }); // NEW
-    } // NEW
+    if (model.addListener && typeof mxEvent !== "undefined" && mxEvent.CHANGE) {
+        model.addListener(mxEvent.CHANGE, function () { syncAllRoleCardSummaries(); });
+    }
 
-    function getRoleImageRow(roleCard) { // NEW
-        const children = model.getChildren(roleCard) || []; // NEW
-        return children.find(function (child) { return isRoleImageRow(child); }) || null; // NEW
-    } // NEW
+    function getRoleImageRow(roleCard) {
+        const children = model.getChildren(roleCard) || [];
+        return children.find(function (child) { return isRoleImageRow(child); }) || null;
+    }
 
-    function getRoleAvatar(roleCard) { // NEW
-        const imageRow = getRoleImageRow(roleCard); // NEW
-        const children = imageRow ? (model.getChildren(imageRow) || []) : []; // NEW
-        return children.find(function (child) { return isRoleAvatar(child); }) || null; // NEW
-    } // NEW
+    function getRoleAvatar(roleCard) {
+        const imageRow = getRoleImageRow(roleCard);
+        const children = imageRow ? (model.getChildren(imageRow) || []) : [];
+        return children.find(function (child) { return isRoleAvatar(child); }) || null;
+    }
 
-    function roleCardForImageCell(cell) { // NEW
-        if (!cell) return null; // NEW
-        if (isRoleCard(cell)) return cell; // NEW
-        if (isRoleImageRow(cell)) { // NEW
-            const roleCard = model.getParent(cell); // NEW
-            return isRoleCard(roleCard) ? roleCard : null; // NEW
-        } // NEW
-        if (isRoleAvatar(cell)) { // NEW
-            const imageRow = model.getParent(cell); // NEW
-            const roleCard = model.getParent(imageRow); // NEW
-            return isRoleImageRow(imageRow) && isRoleCard(roleCard) ? roleCard : null; // NEW
-        } // NEW
-        return null; // NEW
-    } // NEW
+    function roleCardForImageCell(cell) {
+        if (!cell) return null;
+        if (isRoleCard(cell)) return cell;
+        if (isRoleImageRow(cell)) {
+            const roleCard = model.getParent(cell);
+            return isRoleCard(roleCard) ? roleCard : null;
+        }
+        if (isRoleAvatar(cell)) {
+            const imageRow = model.getParent(cell);
+            const roleCard = model.getParent(imageRow);
+            return isRoleImageRow(imageRow) && isRoleCard(roleCard) ? roleCard : null;
+        }
+        return null;
+    }
 
-    function roleHasAvatar(roleCard) { // NEW
-        return !!getRoleAvatar(roleCard); // NEW
-    } // NEW
+    function roleHasAvatar(roleCard) {
+        return !!getRoleAvatar(roleCard);
+    }
 
-    function setCellLabel(cell, label) { // NEW
-        if (!cell) return; // NEW
-        const v = cell.value; // NEW
-        if (v && v.nodeType === 1) { // NEW
-            v.setAttribute("label", label || ""); // NEW
-            model.setValue(cell, v); // NEW
-        } else { // NEW
-            model.setValue(cell, label || ""); // NEW
-        } // NEW
-    } // NEW
+    function setCellLabel(cell, label) {
+        if (!cell) return;
+        const v = cell.value;
+        if (v && v.nodeType === 1) {
+            v.setAttribute("label", label || "");
+            model.setValue(cell, v);
+        } else {
+            model.setValue(cell, label || "");
+        }
+    }
 
-    function normalizeRoleImagePlaceholder(roleCard) { // NEW
-        const imageRow = getRoleImageRow(roleCard); // NEW
-        if (imageRow && !roleHasAvatar(roleCard) && imageRow.value === "Image") setCellLabel(imageRow, "click to add image"); // NEW
-    } // NEW
+    function normalizeRoleImagePlaceholder(roleCard) {
+        const imageRow = getRoleImageRow(roleCard);
+        if (imageRow && !roleHasAvatar(roleCard) && imageRow.value === "Image") setCellLabel(imageRow, "click to add image");
+    }
 
-    function roleImageActionForCell(cell, options) { // CHANGE
-        const opts = options || {}; // NEW
-        const roleCard = roleCardForImageCell(cell); // NEW
-        if (!roleCard) return null; // NEW
-        const hasAvatar = roleHasAvatar(roleCard); // NEW
-        if (hasAvatar && !isRoleAvatar(cell) && !(opts.allowImageRowChange && isRoleImageRow(cell))) return null; // CHANGE
-        if (!hasAvatar && !(isRoleCard(cell) || isRoleImageRow(cell))) return null; // NEW
-        return { roleCard: roleCard, mode: hasAvatar ? "change" : "add", avatar: getRoleAvatar(roleCard), imageRow: getRoleImageRow(roleCard), sourceCell: cell }; // CHANGE
-    } // NEW
+    function roleImageActionForCell(cell, options) {
+        const opts = options || {};
+        const roleCard = roleCardForImageCell(cell);
+        if (!roleCard) return null;
+        const hasAvatar = roleHasAvatar(roleCard);
+        if (hasAvatar && !isRoleAvatar(cell) && !(opts.allowImageRowChange && isRoleImageRow(cell))) return null;
+        if (!hasAvatar && !(isRoleCard(cell) || isRoleImageRow(cell))) return null;
+        return { roleCard: roleCard, mode: hasAvatar ? "change" : "add", avatar: getRoleAvatar(roleCard), imageRow: getRoleImageRow(roleCard), sourceCell: cell };
+    }
 
-    function getOrCreateRoleImageRow(roleCard) { // NEW
-        let imageRow = getRoleImageRow(roleCard); // NEW
-        if (imageRow) return imageRow; // NEW
-        const roleGeo = graph.getCellGeometry(roleCard); // NEW
-        const rowGeo = new mxGeometry(0, 0, roleGeo ? roleGeo.width : 80, 80); // NEW
-        const rowStyle = "shape=rectangle;fillColor=#ffffff;strokeColor=#d6b656;role_imagerow=1;"; // NEW
-        imageRow = new mxCell("click to add image", rowGeo, rowStyle); // NEW
-        imageRow.vertex = true; // NEW
-        model.add(roleCard, imageRow, 0); // NEW
-        return imageRow; // NEW
-    } // NEW
+    function getOrCreateRoleImageRow(roleCard) {
+        let imageRow = getRoleImageRow(roleCard);
+        if (imageRow) return imageRow;
+        const roleGeo = graph.getCellGeometry(roleCard);
+        const rowGeo = new mxGeometry(0, 0, roleGeo ? roleGeo.width : 80, 80);
+        const rowStyle = "shape=rectangle;fillColor=#ffffff;strokeColor=#d6b656;role_imagerow=1;";
+        imageRow = new mxCell("click to add image", rowGeo, rowStyle);
+        imageRow.vertex = true;
+        model.add(roleCard, imageRow, 0);
+        return imageRow;
+    }
 
-    function removeExistingRoleAvatar(imageRow) { // NEW
-        const children = model.getChildren(imageRow) || []; // NEW
-        children.forEach(function (child) { if (isRoleAvatar(child)) model.remove(child); }); // NEW
-    } // NEW
+    function removeExistingRoleAvatar(imageRow) {
+        const children = model.getChildren(imageRow) || [];
+        children.forEach(function (child) { if (isRoleAvatar(child)) model.remove(child); });
+    }
 
-    function tagRoleAvatar(cell) { // NEW
-        let st = getStyle(cell) || ""; // NEW
-        st = st.replace(/(?:^|;)role_avatar=1(?=;|$)/g, ""); // NEW
-        st = st.replace(/;;+/g, ";").replace(/^;|;$/g, ""); // NEW
-        st += (st ? ";" : "") + "role_avatar=1"; // NEW
-        model.setStyle(cell, st); // NEW
-    } // NEW
+    function tagRoleAvatar(cell) {
+        let st = getStyle(cell) || "";
+        st = st.replace(/(?:^|;)role_avatar=1(?=;|$)/g, "");
+        st = st.replace(/;;+/g, ";").replace(/^;|;$/g, "");
+        st += (st ? ";" : "") + "role_avatar=1";
+        model.setStyle(cell, st);
+    }
 
-    function placeRoleAvatar(roleCard, cell) { // NEW
-        const imageRow = getOrCreateRoleImageRow(roleCard); // NEW
-        removeExistingRoleAvatar(imageRow); // NEW
-        setCellLabel(imageRow, ""); // NEW
-        const geo = cell.getGeometry().clone(); // NEW
-        geo.width = isRoleCardV2(roleCard) ? 40 : 70; // CHANGE
-        geo.height = isRoleCardV2(roleCard) ? 40 : 70; // CHANGE
-        geo.x = 5; // NEW
-        geo.y = 5; // NEW
-        model.setGeometry(cell, geo); // NEW
-        tagRoleAvatar(cell); // NEW
-        model.remove(cell); // NEW
-        model.add(imageRow, cell); // NEW
-        syncRoleCardSummary(roleCard); // NEW
-    } // NEW
+    function placeRoleAvatar(roleCard, cell) {
+        const imageRow = getOrCreateRoleImageRow(roleCard);
+        removeExistingRoleAvatar(imageRow);
+        setCellLabel(imageRow, "");
+        const geo = cell.getGeometry().clone();
+        geo.width = isRoleCardV2(roleCard) ? 40 : 70;
+        geo.height = isRoleCardV2(roleCard) ? 40 : 70;
+        geo.x = 5;
+        geo.y = 5;
+        model.setGeometry(cell, geo);
+        tagRoleAvatar(cell);
+        model.remove(cell);
+        model.add(imageRow, cell);
+        syncRoleCardSummary(roleCard);
+    }
 
 
-    function createReadOnlyRoleLabel(text, x, y, width) { // NEW
+    function createReadOnlyRoleLabel(text, x, y, width) {
         const label = new mxCell(text, new mxGeometry(x, y, width, 14),
-            "shape=rectangle;fillColor=none;strokeColor=none;fontSize=9;fontColor=#6B7280;align=left;verticalAlign=bottom;whiteSpace=wrap;editable=0;movable=0;resizable=0;connectable=0;role_field_label=1;"); // NEW
-        label.vertex = true; // NEW
-        return label; // NEW
-    } // NEW
+            "shape=rectangle;fillColor=none;strokeColor=none;fontSize=9;fontColor=#6B7280;align=left;verticalAlign=bottom;whiteSpace=wrap;editable=0;movable=0;resizable=0;connectable=0;role_field_label=1;");
+        label.vertex = true;
+        return label;
+    }
 
-    function createRoleValueCell(value, x, y, width, height, extraStyle) { // NEW
+    function createRoleValueCell(value, x, y, width, height, extraStyle) {
         const cell = new mxCell(value, new mxGeometry(x, y, width, height),
-            "shape=rectangle;align=left;verticalAlign=middle;whiteSpace=wrap;html=1;overflow=hidden;fillColor=#ffffff;strokeColor=#CBD5E1;fontSize=12;fontColor=#111827;spacingLeft=6;spacingRight=6;" + (extraStyle || "")); // CHANGE
-        cell.vertex = true; // NEW
-        return cell; // NEW
-    } // NEW
+            "shape=rectangle;align=left;verticalAlign=middle;whiteSpace=wrap;html=1;overflow=hidden;fillColor=#ffffff;strokeColor=#CBD5E1;fontSize=12;fontColor=#111827;spacingLeft=6;spacingRight=6;" + (extraStyle || ""));
+        cell.vertex = true;
+        return cell;
+    }
 
-    function createRoleHeaderSeparator(width) { // NEW
+    function createRoleHeaderSeparator(width) {
         const separator = new mxCell("", new mxGeometry(0, 54, width, 1),
-            "shape=line;strokeColor=#7AA35A;strokeWidth=1;editable=0;movable=0;resizable=0;connectable=0;role_header_separator=1;"); // NEW
-        separator.vertex = true; // NEW
-        return separator; // NEW
-    } // NEW
+            "shape=line;strokeColor=#7AA35A;strokeWidth=1;editable=0;movable=0;resizable=0;connectable=0;role_header_separator=1;");
+        separator.vertex = true;
+        return separator;
+    }
 
-    function createRoleCard(graph, moduleCell, x, y, opts) { // CHANGE
-        const o = opts || {}; // NEW
-        const manageUpdate = o.manageUpdate !== false; // NEW
-        const w = ROLE_EXPANDED_W, h = ROLE_EXPANDED_H; // CHANGE
+    function createRoleCard(graph, moduleCell, x, y, opts) {
+        const o = opts || {};
+        const manageUpdate = o.manageUpdate !== false;
+        const w = ROLE_EXPANDED_W, h = ROLE_EXPANDED_H;
         const moduleGeo = graph.getCellGeometry(moduleCell);
 
         const relX = x - moduleGeo.x;
         const relY = y - moduleGeo.y;
 
-        const roleGeo = new mxGeometry(relX, relY, w, h); // NEW
-        roleGeo.alternateBounds = makeAlternateBounds(relX, relY, ROLE_COLLAPSED_W, ROLE_COLLAPSED_H); // NEW
+        const roleGeo = new mxGeometry(relX, relY, w, h);
+        roleGeo.alternateBounds = makeAlternateBounds(relX, relY, ROLE_COLLAPSED_W, ROLE_COLLAPSED_H);
         const role = new mxCell("", roleGeo,
-            "shape=label;whiteSpace=wrap;html=1;collapsible=1;resizable=0;rounded=1;arcSize=8;fillColor=#F8FAFC;strokeColor=#7AA35A;role_card=1;role_card_version=2"); // CHANGE
+            "shape=label;whiteSpace=wrap;html=1;collapsible=1;resizable=0;rounded=1;arcSize=8;fillColor=#F8FAFC;strokeColor=#7AA35A;role_card=1;role_card_version=2");
         role.vertex = true;
 
-        const headerSeparator = createRoleHeaderSeparator(w); // NEW
-        const photoLabel = createReadOnlyRoleLabel("Photo", 10, 62, 50); // CHANGE
+        const headerSeparator = createRoleHeaderSeparator(w);
+        const photoLabel = createReadOnlyRoleLabel("Photo", 10, 62, 50);
         const avatar = createRoleValueCell("click to add image", 10, 76, 50, 50,
-            "align=center;verticalAlign=middle;fillColor=#F3F4F6;strokeColor=#94A3B8;fontSize=10;spacingLeft=0;role_imagerow=1;"); // CHANGE
+            "align=center;verticalAlign=middle;fillColor=#F3F4F6;strokeColor=#94A3B8;fontSize=10;spacingLeft=0;role_imagerow=1;");
 
-        const nameLabel = createReadOnlyRoleLabel("Name", 70, 62, 174); // CHANGE
-        const name = createRoleValueCell("", 70, 76, 174, 24, "fontStyle=1;role_name=1;"); // CHANGE
+        const nameLabel = createReadOnlyRoleLabel("Name", 70, 62, 174);
+        const name = createRoleValueCell("", 70, 76, 174, 24, "fontStyle=1;role_name=1;");
 
-        const titleLabel = createReadOnlyRoleLabel("Role / title", 70, 104, 174); // CHANGE
-        const title = createRoleValueCell("", 70, 118, 174, 22, "role_title=1;"); // CHANGE
+        const titleLabel = createReadOnlyRoleLabel("Role / title", 70, 104, 174);
+        const title = createRoleValueCell("", 70, 118, 174, 22, "role_title=1;");
 
-        const notesLabel = createReadOnlyRoleLabel("Description / notes", 10, 144, 234); // CHANGE
-        const notes = createRoleValueCell("", 10, 158, 234, 34, "verticalAlign=top;spacingTop=4;"); // CHANGE
+        const notesLabel = createReadOnlyRoleLabel("Description / notes", 10, 144, 234);
+        const notes = createRoleValueCell("", 10, 158, 234, 34, "verticalAlign=top;spacingTop=4;");
 
-        const contactLabel = createReadOnlyRoleLabel("Contact info", 10, 194, 234); // CHANGE
-        const contact = createRoleValueCell("", 10, 208, 234, 32, "fontSize=10;verticalAlign=top;spacingTop=4;role_contact=1;"); // CHANGE
+        const contactLabel = createReadOnlyRoleLabel("Contact info", 10, 194, 234);
+        const contact = createRoleValueCell("", 10, 208, 234, 32, "fontSize=10;verticalAlign=top;spacingTop=4;role_contact=1;");
 
-        if (manageUpdate) model.beginUpdate(); // CHANGE
-        try { // CHANGE
+        if (manageUpdate) model.beginUpdate();
+        try {
             model.add(moduleCell, role);
-            [headerSeparator, photoLabel, avatar, nameLabel, name, titleLabel, title, notesLabel, notes, contactLabel, contact].forEach(child => model.add(role, child)); // CHANGE
-            syncRoleCardSummary(role); // NEW
+            [headerSeparator, photoLabel, avatar, nameLabel, name, titleLabel, title, notesLabel, notes, contactLabel, contact].forEach(child => model.add(role, child));
+            syncRoleCardSummary(role);
         } finally {
-            if (manageUpdate) model.endUpdate(); // CHANGE
+            if (manageUpdate) model.endUpdate();
         }
         return role;
     }
 
-    function addRoleCardToTeamModule(moduleCell, x, y) { // NEW
-        if (!moduleCell || !isTeamModule(moduleCell)) return null; // NEW
-        let role = null; // NEW
-        model.beginUpdate(); // NEW
-        try { // NEW
-            role = createRoleCard(graph, moduleCell, x, y, { manageUpdate: false }); // NEW
-            applyModuleMargins(moduleCell, { manageUpdate: false }); // NEW
-        } finally { // NEW
-            model.endUpdate(); // NEW
-        } // NEW
-        if (role && graph.setSelectionCell) graph.setSelectionCell(role); // NEW
-        return role; // NEW
-    } // NEW
+    function addRoleCardToTeamModule(moduleCell, x, y) {
+        if (!moduleCell || !isTeamModule(moduleCell)) return null;
+        let role = null;
+        model.beginUpdate();
+        try {
+            role = createRoleCard(graph, moduleCell, x, y, { manageUpdate: false });
+            applyModuleMargins(moduleCell, { manageUpdate: false });
+        } finally {
+            model.endUpdate();
+        }
+        if (role && graph.setSelectionCell) graph.setSelectionCell(role);
+        return role;
+    }
 
 
     function selectRoleImage(ui, graph, roleCard) {
         const origInsertVertex = graph.insertVertex;
-        let restored = false; // NEW
+        let restored = false;
 
-        function restoreInsertVertex() { // NEW
-            if (restored) return; // NEW
-            restored = true; // NEW
-            graph.insertVertex = origInsertVertex; // NEW
-        } // NEW
+        function restoreInsertVertex() {
+            if (restored) return;
+            restored = true;
+            graph.insertVertex = origInsertVertex;
+        }
 
         graph.insertVertex = function (parent, id, value, x, y, w, h, style, relative) {
             const cell = origInsertVertex.apply(this, arguments);
-            const insertedStyle = style || getStyle(cell); // NEW
+            const insertedStyle = style || getStyle(cell);
 
-            if (insertedStyle && insertedStyle.includes("shape=image")) { // CHANGE
+            if (insertedStyle && insertedStyle.includes("shape=image")) {
                 // Delay to let Draw.io finish committing the inserted image
                 setTimeout(() => {
                     model.beginUpdate();
                     try {
-                        placeRoleAvatar(roleCard, cell); // CHANGE
+                        placeRoleAvatar(roleCard, cell);
                     } finally {
                         model.endUpdate();
                     }
 
-                    restoreInsertVertex(); // CHANGE
+                    restoreInsertVertex();
                 }, 0);
             } else {
-                restoreInsertVertex(); // CHANGE
+                restoreInsertVertex();
             }
 
             return cell;
         };
 
         // Trigger the standard Insert → Image dialog
-        const action = ui.actions && ui.actions.get ? ui.actions.get("insertImage") : null; // NEW
-        if (!action || typeof action.funct !== "function") { restoreInsertVertex(); return; } // NEW
-        try { // NEW
-            action.funct(); // CHANGE
-        } catch (e) { // NEW
-            restoreInsertVertex(); // NEW
-            throw e; // NEW
-        } // NEW
+        const action = ui.actions && ui.actions.get ? ui.actions.get("insertImage") : null;
+        if (!action || typeof action.funct !== "function") { restoreInsertVertex(); return; }
+        try {
+            action.funct();
+        } catch (e) {
+            restoreInsertVertex();
+            throw e;
+        }
     }
 
 
@@ -1014,44 +1014,44 @@ Draw.loadPlugin(function (ui) {
             return false;
         }
 
-        function isAllowedModuleParent(parent) { // NEW
-            return !!parent && (parent === graph.getDefaultParent() || isModule(parent)); // NEW
-        } // NEW
+        function isAllowedModuleParent(parent) {
+            return !!parent && (parent === graph.getDefaultParent() || isModule(parent));
+        }
 
-        function restoreModuleToDefaultParent(cell) { // NEW
-            if (!isModule(cell)) return false; // NEW
-            const parent = model.getParent(cell); // NEW
-            if (isAllowedModuleParent(parent)) return false; // NEW
-            const b = getAbsBounds(cell); // NEW
-            const root = graph.getDefaultParent(); // NEW
-            const rootGeo = model.getGeometry(root); // NEW
-            const rootX = (rootGeo && !rootGeo.relative) ? (rootGeo.x || 0) : 0; // NEW
-            const rootY = (rootGeo && !rootGeo.relative) ? (rootGeo.y || 0) : 0; // NEW
-            const g = cell.getGeometry && cell.getGeometry(); // NEW
-            if (b && g) { // NEW
-                const g2 = g.clone(); // NEW
-                g2.x = b.x - rootX; // NEW
-                g2.y = b.y - rootY; // NEW
-                model.setGeometry(cell, g2); // NEW
-            } // NEW
-            model.add(root, cell); // NEW
-            return true; // NEW
-        } // NEW
+        function restoreModuleToDefaultParent(cell) {
+            if (!isModule(cell)) return false;
+            const parent = model.getParent(cell);
+            if (isAllowedModuleParent(parent)) return false;
+            const b = getAbsBounds(cell);
+            const root = graph.getDefaultParent();
+            const rootGeo = model.getGeometry(root);
+            const rootX = (rootGeo && !rootGeo.relative) ? (rootGeo.x || 0) : 0;
+            const rootY = (rootGeo && !rootGeo.relative) ? (rootGeo.y || 0) : 0;
+            const g = cell.getGeometry && cell.getGeometry();
+            if (b && g) {
+                const g2 = g.clone();
+                g2.x = b.x - rootX;
+                g2.y = b.y - rootY;
+                model.setGeometry(cell, g2);
+            }
+            model.add(root, cell);
+            return true;
+        }
 
-        function sanitizeModuleParents(cells) { // NEW
-            const source = cells && cells.length ? cells : (model.cells ? Object.values(model.cells) : []); // NEW
-            if (!source.length) return false; // NEW
-            let changed = false; // NEW
-            model.beginUpdate(); // NEW
-            try { source.forEach(function (cell) { changed = restoreModuleToDefaultParent(cell) || changed; }); } finally { model.endUpdate(); } // NEW
-            return changed; // NEW
-        } // NEW
+        function sanitizeModuleParents(cells) {
+            const source = cells && cells.length ? cells : (model.cells ? Object.values(model.cells) : []);
+            if (!source.length) return false;
+            let changed = false;
+            model.beginUpdate();
+            try { source.forEach(function (cell) { changed = restoreModuleToDefaultParent(cell) || changed; }); } finally { model.endUpdate(); }
+            return changed;
+        }
 
-        const originalIsValidDropTarget = graph.isValidDropTarget; // NEW
-        graph.isValidDropTarget = function (cell, cells, evt) { // NEW
-            if ((cells || []).some(isModule) && cell && !isAllowedModuleParent(cell)) return false; // NEW
-            return originalIsValidDropTarget ? originalIsValidDropTarget.apply(this, arguments) : true; // NEW
-        }; // NEW
+        const originalIsValidDropTarget = graph.isValidDropTarget;
+        graph.isValidDropTarget = function (cell, cells, evt) {
+            if ((cells || []).some(isModule) && cell && !isAllowedModuleParent(cell)) return false;
+            return originalIsValidDropTarget ? originalIsValidDropTarget.apply(this, arguments) : true;
+        };
 
         // Reparent only top-level cells that are not already under modules
         // and not children of tiler groups                                                
@@ -1134,7 +1134,7 @@ Draw.loadPlugin(function (ui) {
 
             // Defer to next tick so paste offset/move is already applied             
             setTimeout(function () {
-                sanitizeModuleParents(cells); // NEW
+                sanitizeModuleParents(cells);
                 model.beginUpdate();
                 try {
                     reparentCellsIntoModules(cells);
@@ -1166,7 +1166,7 @@ Draw.loadPlugin(function (ui) {
         graph.addListener(mxEvent.CELLS_MOVED, function (sender, evt) {
             const cells = evt.getProperty("cells") || [];
             if (!cells.length) return;
-            sanitizeModuleParents(cells); // NEW
+            sanitizeModuleParents(cells);
 
             const seenModules = new Set();
             const toRoot = [];
@@ -1182,8 +1182,8 @@ Draw.loadPlugin(function (ui) {
 
                     // If no longer inside module content, mark for reparenting         
                     if (!rectInsideModule(b, p)) {
-                        if (isGardenDashboardCell(c)) seenModules.add(p.id); // CHANGE
-                        else toRoot.push({ cell: c, oldModule: p }); // CHANGE
+                        if (isGardenDashboardCell(c)) seenModules.add(p.id);
+                        else toRoot.push({ cell: c, oldModule: p });
                     } else {
                         seenModules.add(p.id);
                     }
@@ -1237,7 +1237,7 @@ Draw.loadPlugin(function (ui) {
             const cells = evt.getProperty("cells") || [];
             const seenModules = new Set();
             cells.forEach(c => {
-                if (isGardenModule(c)) enforceGardenModuleMinimum(c);          // CHANGE
+                if (isGardenModule(c)) enforceGardenModuleMinimum(c);
                 if (isModule(c)) seenModules.add(c.id);                // module resized by user
                 const p = model.getParent(c);
                 if (p && isModule(p)) seenModules.add(p.id);           // child resized
@@ -1252,8 +1252,8 @@ Draw.loadPlugin(function (ui) {
     // MODULE CREATION
     // ------------------------
 
-    function createModuleCell(graph, x, y, parentOverride) { // CHANGE
-        const parent = parentOverride || graph.getDefaultParent(); // CHANGE
+    function createModuleCell(graph, x, y, parentOverride) {
+        const parent = parentOverride || graph.getDefaultParent();
         const w = 160, h = 100;
 
         const moduleCell = new mxCell("",
@@ -1265,1000 +1265,1000 @@ Draw.loadPlugin(function (ui) {
         return moduleCell;
     }
 
-    function createSiblingModuleCell(sourceCell, x, y) { // NEW
-        const parent = (sourceCell && model.getParent(sourceCell)) || graph.getDefaultParent(); // NEW
-        return createModuleCell(graph, x, y, parent); // NEW
-    } // NEW
+    function createSiblingModuleCell(sourceCell, x, y) {
+        const parent = (sourceCell && model.getParent(sourceCell)) || graph.getDefaultParent();
+        return createModuleCell(graph, x, y, parent);
+    }
 
-    function companionTeamLabel(gardenCell) { // NEW
-        return plainCellLabel(gardenCell, "Garden") + " Team"; // NEW
-    } // NEW
+    function companionTeamLabel(gardenCell) {
+        return plainCellLabel(gardenCell, "Garden") + " Team";
+    }
 
-    function companionTaskLabel(gardenCell) { // NEW
-        return plainCellLabel(gardenCell, "Garden") + " Tasks"; // NEW
-    } // NEW
+    function companionTaskLabel(gardenCell) {
+        return plainCellLabel(gardenCell, "Garden") + " Tasks";
+    }
 
-    function validCompanionTeam(gardenCell, teamCell) { // NEW
-        return !!(gardenCell && teamCell && isTeamModule(teamCell) && getValueAttr(teamCell, ATTR_TEAM_GARDEN_MODULE) === cellId(gardenCell)); // NEW
-    } // NEW
+    function validCompanionTeam(gardenCell, teamCell) {
+        return !!(gardenCell && teamCell && isTeamModule(teamCell) && getValueAttr(teamCell, ATTR_TEAM_GARDEN_MODULE) === cellId(gardenCell));
+    }
 
-    function validCompanionTask(gardenCell, taskCell) { // NEW
-        return !!(gardenCell && taskCell && isTaskModule(taskCell) && getValueAttr(taskCell, ATTR_TASK_GARDEN_MODULE) === cellId(gardenCell)); // NEW
-    } // NEW
+    function validCompanionTask(gardenCell, taskCell) {
+        return !!(gardenCell && taskCell && isTaskModule(taskCell) && getValueAttr(taskCell, ATTR_TASK_GARDEN_MODULE) === cellId(gardenCell));
+    }
 
-    function findExistingCompanionTeam(gardenCell) { // NEW
-        const expectedGardenId = cellId(gardenCell); // NEW
-        if (!expectedGardenId) return null; // NEW
-        const typedId = getValueAttr(gardenCell, ATTR_GARDEN_TEAM_MODULE); // NEW
-        const typed = typedId && model.getCell ? model.getCell(typedId) : null; // NEW
-        if (validCompanionTeam(gardenCell, typed)) return typed; // NEW
-        const root = model.getRoot && model.getRoot(); // NEW
-        const cells = model.cells ? Object.values(model.cells) : []; // NEW
-        const pool = cells.length ? cells : (model.getChildren(root) || []); // NEW
-        return pool.find(function (cell) { return validCompanionTeam(gardenCell, cell); }) || null; // NEW
-    } // NEW
+    function findExistingCompanionTeam(gardenCell) {
+        const expectedGardenId = cellId(gardenCell);
+        if (!expectedGardenId) return null;
+        const typedId = getValueAttr(gardenCell, ATTR_GARDEN_TEAM_MODULE);
+        const typed = typedId && model.getCell ? model.getCell(typedId) : null;
+        if (validCompanionTeam(gardenCell, typed)) return typed;
+        const root = model.getRoot && model.getRoot();
+        const cells = model.cells ? Object.values(model.cells) : [];
+        const pool = cells.length ? cells : (model.getChildren(root) || []);
+        return pool.find(function (cell) { return validCompanionTeam(gardenCell, cell); }) || null;
+    }
 
-    function findExistingCompanionTask(gardenCell) { // NEW
-        const expectedGardenId = cellId(gardenCell); // NEW
-        if (!expectedGardenId) return null; // NEW
-        const typedId = getValueAttr(gardenCell, ATTR_GARDEN_TASK_MODULE); // NEW
-        const typed = typedId && model.getCell ? model.getCell(typedId) : null; // NEW
-        if (validCompanionTask(gardenCell, typed)) return typed; // NEW
-        const root = model.getRoot && model.getRoot(); // NEW
-        const cells = model.cells ? Object.values(model.cells) : []; // NEW
-        const pool = cells.length ? cells : (model.getChildren(root) || []); // NEW
-        return pool.find(function (cell) { return validCompanionTask(gardenCell, cell); }) || null; // NEW
-    } // NEW
+    function findExistingCompanionTask(gardenCell) {
+        const expectedGardenId = cellId(gardenCell);
+        if (!expectedGardenId) return null;
+        const typedId = getValueAttr(gardenCell, ATTR_GARDEN_TASK_MODULE);
+        const typed = typedId && model.getCell ? model.getCell(typedId) : null;
+        if (validCompanionTask(gardenCell, typed)) return typed;
+        const root = model.getRoot && model.getRoot();
+        const cells = model.cells ? Object.values(model.cells) : [];
+        const pool = cells.length ? cells : (model.getChildren(root) || []);
+        return pool.find(function (cell) { return validCompanionTask(gardenCell, cell); }) || null;
+    }
 
-    function companionTeamPoint(gardenCell) { // NEW
-        const g = graph.getCellGeometry(gardenCell) || { x: 0, y: 0, width: 160 }; // NEW
-        return { x: (Number(g.x) || 0) + (Number(g.width) || 160) + COMPANION_TEAM_GAP, y: Number(g.y) || 0 }; // NEW
-    } // NEW
+    function companionTeamPoint(gardenCell) {
+        const g = graph.getCellGeometry(gardenCell) || { x: 0, y: 0, width: 160 };
+        return { x: (Number(g.x) || 0) + (Number(g.width) || 160) + COMPANION_TEAM_GAP, y: Number(g.y) || 0 };
+    }
 
-    function companionTaskPoint(gardenCell, teamCell) { // NEW
-        const gardenGeo = graph.getCellGeometry(gardenCell) || { x: 0, y: 0, width: 160, height: 100 }; // NEW
-        const teamGeo = teamCell ? graph.getCellGeometry(teamCell) : null; // NEW
-        const x = teamGeo ? Number(teamGeo.x) || 0 : (Number(gardenGeo.x) || 0) + (Number(gardenGeo.width) || 160) + COMPANION_TEAM_GAP; // NEW
-        const y = teamGeo ? (Number(teamGeo.y) || 0) + (Number(teamGeo.height) || 100) + COMPANION_TEAM_GAP : (Number(gardenGeo.y) || 0) + (Number(gardenGeo.height) || 100) + COMPANION_TEAM_GAP; // NEW
-        return { x, y }; // NEW
-    } // NEW
+    function companionTaskPoint(gardenCell, teamCell) {
+        const gardenGeo = graph.getCellGeometry(gardenCell) || { x: 0, y: 0, width: 160, height: 100 };
+        const teamGeo = teamCell ? graph.getCellGeometry(teamCell) : null;
+        const x = teamGeo ? Number(teamGeo.x) || 0 : (Number(gardenGeo.x) || 0) + (Number(gardenGeo.width) || 160) + COMPANION_TEAM_GAP;
+        const y = teamGeo ? (Number(teamGeo.y) || 0) + (Number(teamGeo.height) || 100) + COMPANION_TEAM_GAP : (Number(gardenGeo.y) || 0) + (Number(gardenGeo.height) || 100) + COMPANION_TEAM_GAP;
+        return { x, y };
+    }
 
-    function syncCompanionModuleAccess(gardenCell, companionCell) { // NEW
-        if (!gardenCell || !companionCell) return false; // NEW
-        let changed = false; // NEW
-        const owner = getValueAttr(gardenCell, ATTR_OWNER); // NEW
-        if (owner !== getValueAttr(companionCell, ATTR_OWNER)) { setStringValueAttr(companionCell, ATTR_OWNER, owner); changed = true; } // NEW
-        const grants = getValueAttr(gardenCell, ATTR_ACCESS_GRANTS); // NEW
-        if (grants !== getValueAttr(companionCell, ATTR_ACCESS_GRANTS)) { setStringValueAttr(companionCell, ATTR_ACCESS_GRANTS, grants); changed = true; } // NEW
-        return changed; // NEW
-    } // NEW
+    function syncCompanionModuleAccess(gardenCell, companionCell) {
+        if (!gardenCell || !companionCell) return false;
+        let changed = false;
+        const owner = getValueAttr(gardenCell, ATTR_OWNER);
+        if (owner !== getValueAttr(companionCell, ATTR_OWNER)) { setStringValueAttr(companionCell, ATTR_OWNER, owner); changed = true; }
+        const grants = getValueAttr(gardenCell, ATTR_ACCESS_GRANTS);
+        if (grants !== getValueAttr(companionCell, ATTR_ACCESS_GRANTS)) { setStringValueAttr(companionCell, ATTR_ACCESS_GRANTS, grants); changed = true; }
+        return changed;
+    }
 
-    function ensureGardenTeamModule(gardenCell, opts) { // NEW
-        if (!isGardenModule(gardenCell)) return null; // NEW
-        const o = opts || {}; // NEW
-        let team = findExistingCompanionTeam(gardenCell); // NEW
-        const manageUpdate = !o.insideUpdate; // NEW
-        if (manageUpdate) model.beginUpdate(); // NEW
-        try { // NEW
-            if (!team) { // NEW
-                const pt = companionTeamPoint(gardenCell); // NEW
-                team = createSiblingModuleCell(gardenCell, pt.x, pt.y); // NEW
-                setModuleType(team, "team"); // NEW
-                setCellLabel(team, companionTeamLabel(gardenCell)); // NEW
-            } // NEW
-            syncCompanionModuleAccess(gardenCell, team); // CHANGE
-            setStringValueAttr(gardenCell, ATTR_GARDEN_TEAM_MODULE, cellId(team)); // NEW
-            setStringValueAttr(team, ATTR_TEAM_GARDEN_MODULE, cellId(gardenCell)); // NEW
-            addReciprocalLink(gardenCell, team); // NEW
-            applyModuleMargins(team, { allowShrink: false, manageUpdate: false }); // NEW
-        } finally { // NEW
-            if (manageUpdate) model.endUpdate(); // NEW
-        } // NEW
-        try { graph.fireEvent(new mxEventObject("linksChanged", "cells", [gardenCell, team])); } catch (_) { } // NEW
-        return team; // NEW
-    } // NEW
+    function ensureGardenTeamModule(gardenCell, opts) {
+        if (!isGardenModule(gardenCell)) return null;
+        const o = opts || {};
+        let team = findExistingCompanionTeam(gardenCell);
+        const manageUpdate = !o.insideUpdate;
+        if (manageUpdate) model.beginUpdate();
+        try {
+            if (!team) {
+                const pt = companionTeamPoint(gardenCell);
+                team = createSiblingModuleCell(gardenCell, pt.x, pt.y);
+                setModuleType(team, "team");
+                setCellLabel(team, companionTeamLabel(gardenCell));
+            }
+            syncCompanionModuleAccess(gardenCell, team);
+            setStringValueAttr(gardenCell, ATTR_GARDEN_TEAM_MODULE, cellId(team));
+            setStringValueAttr(team, ATTR_TEAM_GARDEN_MODULE, cellId(gardenCell));
+            addReciprocalLink(gardenCell, team);
+            applyModuleMargins(team, { allowShrink: false, manageUpdate: false });
+        } finally {
+            if (manageUpdate) model.endUpdate();
+        }
+        try { graph.fireEvent(new mxEventObject("linksChanged", "cells", [gardenCell, team])); } catch (_) { }
+        return team;
+    }
 
-    function ensureGardenTaskModule(gardenCell, opts) { // NEW
-        if (!isGardenModule(gardenCell)) return null; // NEW
-        const o = opts || {}; // NEW
-        let task = findExistingCompanionTask(gardenCell); // NEW
-        const manageUpdate = !o.insideUpdate; // NEW
-        if (manageUpdate) model.beginUpdate(); // NEW
-        try { // NEW
-            const team = ensureGardenTeamModule(gardenCell, { insideUpdate: true }); // NEW
-            if (!task) { // NEW
-                const pt = companionTaskPoint(gardenCell, team); // NEW
-                task = createSiblingModuleCell(gardenCell, pt.x, pt.y); // NEW
-                setModuleType(task, "task"); // NEW
-                setCellLabel(task, companionTaskLabel(gardenCell)); // NEW
-            } // NEW
-            syncCompanionModuleAccess(gardenCell, task); // NEW
-            setStringValueAttr(gardenCell, ATTR_GARDEN_TASK_MODULE, cellId(task)); // NEW
-            setStringValueAttr(task, ATTR_TASK_GARDEN_MODULE, cellId(gardenCell)); // NEW
-            addReciprocalLink(gardenCell, task); // NEW
-            applyModuleMargins(task, { allowShrink: false, manageUpdate: false }); // NEW
-        } finally { // NEW
-            if (manageUpdate) model.endUpdate(); // NEW
-        } // NEW
-        try { graph.fireEvent(new mxEventObject("linksChanged", "cells", [gardenCell, task])); } catch (_) { } // NEW
-        try { graph.fireEvent(new mxEventObject("usl:taskModuleReady", "gardenCell", gardenCell, "taskModule", task, "createMainBoard", !!o.createMainBoard)); } catch (_) { } // CHANGE
-        const taskApi = graph.__trellisTaskManager; // NEW
-        if (o.createMainBoard && taskApi && typeof taskApi.ensureMainBoardInTaskModule === "function") taskApi.ensureMainBoardInTaskModule(task); // CHANGE
-        return task; // NEW
-    } // NEW
+    function ensureGardenTaskModule(gardenCell, opts) {
+        if (!isGardenModule(gardenCell)) return null;
+        const o = opts || {};
+        let task = findExistingCompanionTask(gardenCell);
+        const manageUpdate = !o.insideUpdate;
+        if (manageUpdate) model.beginUpdate();
+        try {
+            const team = ensureGardenTeamModule(gardenCell, { insideUpdate: true });
+            if (!task) {
+                const pt = companionTaskPoint(gardenCell, team);
+                task = createSiblingModuleCell(gardenCell, pt.x, pt.y);
+                setModuleType(task, "task");
+                setCellLabel(task, companionTaskLabel(gardenCell));
+            }
+            syncCompanionModuleAccess(gardenCell, task);
+            setStringValueAttr(gardenCell, ATTR_GARDEN_TASK_MODULE, cellId(task));
+            setStringValueAttr(task, ATTR_TASK_GARDEN_MODULE, cellId(gardenCell));
+            addReciprocalLink(gardenCell, task);
+            applyModuleMargins(task, { allowShrink: false, manageUpdate: false });
+        } finally {
+            if (manageUpdate) model.endUpdate();
+        }
+        try { graph.fireEvent(new mxEventObject("linksChanged", "cells", [gardenCell, task])); } catch (_) { }
+        try { graph.fireEvent(new mxEventObject("usl:taskModuleReady", "gardenCell", gardenCell, "taskModule", task, "createMainBoard", !!o.createMainBoard)); } catch (_) { }
+        const taskApi = graph.__trellisTaskManager;
+        if (o.createMainBoard && taskApi && typeof taskApi.ensureMainBoardInTaskModule === "function") taskApi.ensureMainBoardInTaskModule(task);
+        return task;
+    }
 
-    function normalizeRootModuleType(type) { // NEW
-        return type === "garden" || type === "team" || type === "task" ? type : "regular"; // CHANGE
-    } // NEW
+    function normalizeRootModuleType(type) {
+        return type === "garden" || type === "team" || type === "task" ? type : "regular";
+    }
 
-    function createModuleAtPoint(point, type) { // NEW
-        const moduleType = normalizeRootModuleType(type); // NEW
-        const x = Number(point && point.x) || 0; // NEW
-        const y = Number(point && point.y) || 0; // NEW
-        let mod = null; // NEW
-        model.beginUpdate(); // NEW
-        try { // NEW
-            mod = createModuleCell(graph, x, y); // NEW
-            applyModuleMargins(mod); // NEW
-            if (moduleType !== "regular") setModuleType(mod, moduleType); // NEW
+    function createModuleAtPoint(point, type) {
+        const moduleType = normalizeRootModuleType(type);
+        const x = Number(point && point.x) || 0;
+        const y = Number(point && point.y) || 0;
+        let mod = null;
+        model.beginUpdate();
+        try {
+            mod = createModuleCell(graph, x, y);
+            applyModuleMargins(mod);
+            if (moduleType !== "regular") setModuleType(mod, moduleType);
             if (window.Trellis && window.Trellis.users && typeof window.Trellis.users.stampCreatedOwner === "function") window.Trellis.users.stampCreatedOwner(mod); // NEW: modules created by logged-in users become ownership boundaries
-            if (moduleType === "garden") { ensureGardenTeamModule(mod, { insideUpdate: true }); ensureGardenTaskModule(mod, { insideUpdate: true, createMainBoard: true }); } // CHANGE
-            if (mod && graph.setSelectionCell) graph.setSelectionCell(mod); // NEW
-        } finally { // NEW
-            model.endUpdate(); // NEW
-        } // NEW
-        return mod; // NEW
-    } // NEW
+            if (moduleType === "garden") { ensureGardenTeamModule(mod, { insideUpdate: true }); ensureGardenTaskModule(mod, { insideUpdate: true, createMainBoard: true }); }
+            if (mod && graph.setSelectionCell) graph.setSelectionCell(mod);
+        } finally {
+            model.endUpdate();
+        }
+        return mod;
+    }
 
-    function installRootModuleCreationOverlay() { // NEW
-        if (graph.__trellisRootModuleCreationOverlayInstalled) return; // NEW
-        graph.__trellisRootModuleCreationOverlayInstalled = true; // NEW
+    function installRootModuleCreationOverlay() {
+        if (graph.__trellisRootModuleCreationOverlayInstalled) return;
+        graph.__trellisRootModuleCreationOverlayInstalled = true;
 
-        const OFFSET_PX = 8; // NEW
-        const SIMPLE_CLICK_MAX_MOVE_PX = 4; // NEW
-        let overlay = null; // NEW
-        let pendingClick = null; // NEW
-        let overlayShownAt = 0; // NEW
-        let dismissOnlyClick = false; // NEW
+        const OFFSET_PX = 8;
+        const SIMPLE_CLICK_MAX_MOVE_PX = 4;
+        let overlay = null;
+        let pendingClick = null;
+        let overlayShownAt = 0;
+        let dismissOnlyClick = false;
 
-        function overlayHost() { // NEW
-            return graph.container || null; // NEW
-        } // NEW
+        function overlayHost() {
+            return graph.container || null;
+        }
 
-        function ensureOverlayHost() { // NEW
-            const host = overlayHost(); // NEW
-            if (!host) return null; // NEW
-            const style = window.getComputedStyle ? window.getComputedStyle(host) : null; // NEW
-            if (style && style.position === "static") host.style.position = "relative"; // NEW
-            return host; // NEW
-        } // NEW
+        function ensureOverlayHost() {
+            const host = overlayHost();
+            if (!host) return null;
+            const style = window.getComputedStyle ? window.getComputedStyle(host) : null;
+            if (style && style.position === "static") host.style.position = "relative";
+            return host;
+        }
 
-        function eventSource(evt) { // NEW
-            return mxEvent.getSource ? mxEvent.getSource(evt) : evt && (evt.target || evt.srcElement); // NEW
-        } // NEW
+        function eventSource(evt) {
+            return mxEvent.getSource ? mxEvent.getSource(evt) : evt && (evt.target || evt.srcElement);
+        }
 
-        function eventInOverlay(evt) { // NEW
-            return !!overlay && !!evt && overlay.contains(eventSource(evt)); // NEW
-        } // NEW
+        function eventInOverlay(evt) {
+            return !!overlay && !!evt && overlay.contains(eventSource(evt));
+        }
 
-        function isPlainLeftMouseEvent(evt) { // NEW
-            if (!evt) return false; // NEW
-            const button = typeof evt.button === "number" ? evt.button : 0; // NEW
-            const popup = mxEvent.isPopupTrigger && mxEvent.isPopupTrigger(evt); // NEW
-            return button === 0 && !popup && !mxEvent.isControlDown(evt) && !mxEvent.isMetaDown(evt) && !mxEvent.isShiftDown(evt) && !evt.altKey; // NEW
-        } // NEW
+        function isPlainLeftMouseEvent(evt) {
+            if (!evt) return false;
+            const button = typeof evt.button === "number" ? evt.button : 0;
+            const popup = mxEvent.isPopupTrigger && mxEvent.isPopupTrigger(evt);
+            return button === 0 && !popup && !mxEvent.isControlDown(evt) && !mxEvent.isMetaDown(evt) && !mxEvent.isShiftDown(evt) && !evt.altKey;
+        }
 
-        function isDoubleClick(evt) { // NEW
-            return !!evt && Number(evt.detail || 0) > 1; // NEW
-        } // NEW
+        function isDoubleClick(evt) {
+            return !!evt && Number(evt.detail || 0) > 1;
+        }
 
-        function eventClientPoint(evt) { // NEW
-            return { x: mxEvent.getClientX(evt), y: mxEvent.getClientY(evt) }; // NEW
-        } // NEW
+        function eventClientPoint(evt) {
+            return { x: mxEvent.getClientX(evt), y: mxEvent.getClientY(evt) };
+        }
 
-        function containerPointForEvent(evt) { // NEW
-            const host = overlayHost(); // NEW
-            const rect = host && host.getBoundingClientRect ? host.getBoundingClientRect() : { left: 0, top: 0 }; // NEW
-            const client = eventClientPoint(evt); // NEW
-            return { // NEW
-                x: client.x - (rect.left || 0) + (host ? host.scrollLeft || 0 : 0), // NEW
-                y: client.y - (rect.top || 0) + (host ? host.scrollTop || 0 : 0) // NEW
-            }; // NEW
-        } // NEW
+        function containerPointForEvent(evt) {
+            const host = overlayHost();
+            const rect = host && host.getBoundingClientRect ? host.getBoundingClientRect() : { left: 0, top: 0 };
+            const client = eventClientPoint(evt);
+            return {
+                x: client.x - (rect.left || 0) + (host ? host.scrollLeft || 0 : 0),
+                y: client.y - (rect.top || 0) + (host ? host.scrollTop || 0 : 0)
+            };
+        }
 
-        function modelPointForEvent(evt) { // NEW
-            if (graph.getPointForEvent) return graph.getPointForEvent(evt, false); // NEW
-            return containerPointForEvent(evt); // NEW
-        } // NEW
+        function modelPointForEvent(evt) {
+            if (graph.getPointForEvent) return graph.getPointForEvent(evt, false);
+            return containerPointForEvent(evt);
+        }
 
-        function hitPointForMouseEvent(me, evt) { // NEW
-            if (me && typeof me.getGraphX === "function" && typeof me.getGraphY === "function") { // NEW
-                return { x: me.getGraphX(), y: me.getGraphY() }; // NEW
-            } // NEW
-            return containerPointForEvent(evt); // NEW
-        } // NEW
+        function hitPointForMouseEvent(me, evt) {
+            if (me && typeof me.getGraphX === "function" && typeof me.getGraphY === "function") {
+                return { x: me.getGraphX(), y: me.getGraphY() };
+            }
+            return containerPointForEvent(evt);
+        }
 
-        function cellForMouseEvent(me, evt) { // NEW
-            const direct = me && typeof me.getCell === "function" ? me.getCell() : null; // NEW
-            if (direct) return direct; // NEW
-            const pt = hitPointForMouseEvent(me, evt); // NEW
-            return graph.getCellAt ? graph.getCellAt(pt.x, pt.y) : null; // NEW
-        } // NEW
+        function cellForMouseEvent(me, evt) {
+            const direct = me && typeof me.getCell === "function" ? me.getCell() : null;
+            if (direct) return direct;
+            const pt = hitPointForMouseEvent(me, evt);
+            return graph.getCellAt ? graph.getCellAt(pt.x, pt.y) : null;
+        }
 
-        function isSimpleClick(start, evt) { // NEW
-            if (!start || !evt) return false; // NEW
-            const client = eventClientPoint(evt); // NEW
-            const dx = client.x - start.client.x; // NEW
-            const dy = client.y - start.client.y; // NEW
-            return Math.sqrt(dx * dx + dy * dy) <= SIMPLE_CLICK_MAX_MOVE_PX; // NEW
-        } // NEW
+        function isSimpleClick(start, evt) {
+            if (!start || !evt) return false;
+            const client = eventClientPoint(evt);
+            const dx = client.x - start.client.x;
+            const dy = client.y - start.client.y;
+            return Math.sqrt(dx * dx + dy * dy) <= SIMPLE_CLICK_MAX_MOVE_PX;
+        }
 
-        function hideOverlay() { // NEW
-            if (overlay) overlay.style.display = "none"; // NEW
-        } // NEW
+        function hideOverlay() {
+            if (overlay) overlay.style.display = "none";
+        }
 
-        function isOverlayVisible() { // NEW
-            return !!overlay && overlay.style.display !== "none"; // NEW
-        } // NEW
+        function isOverlayVisible() {
+            return !!overlay && overlay.style.display !== "none";
+        }
 
-        function makeOverlayButton(label, type) { // NEW
-            const btn = document.createElement("button"); // NEW
-            btn.type = "button"; // NEW
-            btn.textContent = label; // NEW
-            btn.style.border = "1px solid #b8b8b8"; // NEW
-            btn.style.borderRadius = "4px"; // NEW
-            btn.style.background = "#fff"; // NEW
-            btn.style.color = "#222"; // NEW
-            btn.style.cursor = "pointer"; // NEW
-            btn.style.font = "12px Arial, sans-serif"; // NEW
-            btn.style.padding = "5px 8px"; // NEW
-            btn.style.textAlign = "left"; // NEW
-            btn.style.whiteSpace = "nowrap"; // NEW
-            applyTrellisButtonStyle(btn, "add", { compact: true }); // NEW
-            mxEvent.addListener(btn, "click", function (evt) { // NEW
-                mxEvent.consume(evt); // NEW
-                const point = overlay && overlay.__trellisModulePoint; // NEW
-                if (point) createModuleAtPoint(point, type); // NEW
-                hideOverlay(); // NEW
-            }); // NEW
-            return btn; // NEW
-        } // NEW
+        function makeOverlayButton(label, type) {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.textContent = label;
+            btn.style.border = "1px solid #b8b8b8";
+            btn.style.borderRadius = "4px";
+            btn.style.background = "#fff";
+            btn.style.color = "#222";
+            btn.style.cursor = "pointer";
+            btn.style.font = "12px Arial, sans-serif";
+            btn.style.padding = "5px 8px";
+            btn.style.textAlign = "left";
+            btn.style.whiteSpace = "nowrap";
+            applyTrellisButtonStyle(btn, "add", { compact: true });
+            mxEvent.addListener(btn, "click", function (evt) {
+                mxEvent.consume(evt);
+                const point = overlay && overlay.__trellisModulePoint;
+                if (point) createModuleAtPoint(point, type);
+                hideOverlay();
+            });
+            return btn;
+        }
 
-        function ensureOverlay() { // NEW
-            if (overlay) return overlay; // NEW
-            overlay = document.createElement("div"); // NEW
-            overlay.className = "trellis-root-module-overlay"; // NEW
-            overlay.style.position = "absolute"; // NEW
-            overlay.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL); // CHANGE
-            overlay.style.display = "none"; // NEW
-            overlay.style.flexDirection = "column"; // NEW
-            overlay.style.gap = "4px"; // NEW
-            overlay.style.padding = "4px"; // NEW
-            overlay.style.background = "rgba(255,255,255,0.96)"; // NEW
-            overlay.style.border = "1px solid #c7c7cc"; // NEW
-            overlay.style.borderRadius = "6px"; // NEW
-            overlay.style.boxShadow = "0 2px 8px rgba(0,0,0,0.16)"; // NEW
-            overlay.style.font = "12px Arial, sans-serif"; // NEW
-            overlay.style.pointerEvents = "auto"; // NEW
-            mxEvent.addListener(overlay, "mousedown", function (evt) { mxEvent.consume(evt); }); // NEW
-            mxEvent.addListener(overlay, "click", function (evt) { mxEvent.consume(evt); }); // NEW
-            overlay.appendChild(makeOverlayButton("Add Module", "regular")); // NEW
-            overlay.appendChild(makeOverlayButton("Add Garden Module", "garden")); // NEW
-            overlay.appendChild(makeOverlayButton("Add Team Module", "team")); // NEW
-            overlay.appendChild(makeOverlayButton("Add Task Module", "task")); // NEW
-            const host = ensureOverlayHost(); // NEW
-            if (host) host.appendChild(overlay); // NEW
-            return overlay; // NEW
-        } // NEW
+        function ensureOverlay() {
+            if (overlay) return overlay;
+            overlay = document.createElement("div");
+            overlay.className = "trellis-root-module-overlay";
+            overlay.style.position = "absolute";
+            overlay.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL);
+            overlay.style.display = "none";
+            overlay.style.flexDirection = "column";
+            overlay.style.gap = "4px";
+            overlay.style.padding = "4px";
+            overlay.style.background = "rgba(255,255,255,0.96)";
+            overlay.style.border = "1px solid #c7c7cc";
+            overlay.style.borderRadius = "6px";
+            overlay.style.boxShadow = "0 2px 8px rgba(0,0,0,0.16)";
+            overlay.style.font = "12px Arial, sans-serif";
+            overlay.style.pointerEvents = "auto";
+            mxEvent.addListener(overlay, "mousedown", function (evt) { mxEvent.consume(evt); });
+            mxEvent.addListener(overlay, "click", function (evt) { mxEvent.consume(evt); });
+            overlay.appendChild(makeOverlayButton("Add Module", "regular"));
+            overlay.appendChild(makeOverlayButton("Add Garden Module", "garden"));
+            overlay.appendChild(makeOverlayButton("Add Team Module", "team"));
+            overlay.appendChild(makeOverlayButton("Add Task Module", "task"));
+            const host = ensureOverlayHost();
+            if (host) host.appendChild(overlay);
+            return overlay;
+        }
 
-        function positionOverlay(containerPoint) { // NEW
-            const host = ensureOverlayHost(); // NEW
-            const div = ensureOverlay(); // NEW
-            if (!host || !div) return; // NEW
-            if (div.parentNode !== host) host.appendChild(div); // NEW
-            div.style.display = "flex"; // NEW
-            div.style.left = "0px"; // NEW
-            div.style.top = "0px"; // NEW
-            const width = div.offsetWidth || 150; // NEW
-            const height = div.offsetHeight || 92; // NEW
-            const scrollLeft = host.scrollLeft || 0; // NEW
-            const scrollTop = host.scrollTop || 0; // NEW
-            const maxLeft = scrollLeft + Math.max(0, (host.clientWidth || width) - width - OFFSET_PX); // NEW
-            const maxTop = scrollTop + Math.max(0, (host.clientHeight || height) - height - OFFSET_PX); // NEW
-            const left = Math.max(scrollLeft, Math.min(maxLeft, Math.round(containerPoint.x + OFFSET_PX))); // NEW
-            const top = Math.max(scrollTop, Math.min(maxTop, Math.round(containerPoint.y + OFFSET_PX))); // NEW
-            div.style.left = left + "px"; // NEW
-            div.style.top = top + "px"; // NEW
-        } // NEW
+        function positionOverlay(containerPoint) {
+            const host = ensureOverlayHost();
+            const div = ensureOverlay();
+            if (!host || !div) return;
+            if (div.parentNode !== host) host.appendChild(div);
+            div.style.display = "flex";
+            div.style.left = "0px";
+            div.style.top = "0px";
+            const width = div.offsetWidth || 150;
+            const height = div.offsetHeight || 92;
+            const scrollLeft = host.scrollLeft || 0;
+            const scrollTop = host.scrollTop || 0;
+            const maxLeft = scrollLeft + Math.max(0, (host.clientWidth || width) - width - OFFSET_PX);
+            const maxTop = scrollTop + Math.max(0, (host.clientHeight || height) - height - OFFSET_PX);
+            const left = Math.max(scrollLeft, Math.min(maxLeft, Math.round(containerPoint.x + OFFSET_PX)));
+            const top = Math.max(scrollTop, Math.min(maxTop, Math.round(containerPoint.y + OFFSET_PX)));
+            div.style.left = left + "px";
+            div.style.top = top + "px";
+        }
 
-        function showOverlay(anchor) { // NEW
-            const div = ensureOverlay(); // NEW
-            if (!div) return; // NEW
-            div.__trellisModulePoint = { x: anchor.model.x, y: anchor.model.y }; // NEW
-            overlayShownAt = Date.now(); // NEW
-            positionOverlay(anchor.container); // NEW
-        } // NEW
+        function showOverlay(anchor) {
+            const div = ensureOverlay();
+            if (!div) return;
+            div.__trellisModulePoint = { x: anchor.model.x, y: anchor.model.y };
+            overlayShownAt = Date.now();
+            positionOverlay(anchor.container);
+        }
 
-        function onDismissEvent() { // NEW
-            if (overlayShownAt && Date.now() - overlayShownAt < 80) return; // NEW
-            pendingClick = null; // NEW
-            hideOverlay(); // NEW
-        } // NEW
+        function onDismissEvent() {
+            if (overlayShownAt && Date.now() - overlayShownAt < 80) return;
+            pendingClick = null;
+            hideOverlay();
+        }
 
-        if (graph.addMouseListener) { // NEW
-            graph.addMouseListener({ // NEW
-                mouseDown: function (_sender, me) { // NEW
-                    const evt = me && me.getEvent ? me.getEvent() : null; // NEW
-                    if (eventInOverlay(evt)) return; // NEW
-                    if (isOverlayVisible()) { // NEW
-                        dismissOnlyClick = true; // NEW
-                        pendingClick = null; // NEW
-                        hideOverlay(); // NEW
-                        return; // NEW
-                    } // NEW
-                    dismissOnlyClick = false; // NEW
-                    hideOverlay(); // NEW
-                    pendingClick = null; // NEW
-                    if (!isPlainLeftMouseEvent(evt) || isDoubleClick(evt)) return; // NEW
-                    pendingClick = { // NEW
-                        client: eventClientPoint(evt), // NEW
-                        model: modelPointForEvent(evt), // NEW
-                        container: containerPointForEvent(evt) // NEW
-                    }; // NEW
-                }, // NEW
-                mouseMove: function () { }, // NEW
-                mouseUp: function (_sender, me) { // NEW
-                    const evt = me && me.getEvent ? me.getEvent() : null; // NEW
-                    if (dismissOnlyClick) { // NEW
-                        dismissOnlyClick = false; // NEW
-                        pendingClick = null; // NEW
-                        return; // NEW
-                    } // NEW
-                    const start = pendingClick; // NEW
-                    pendingClick = null; // NEW
-                    if (eventInOverlay(evt)) return; // NEW
-                    if (!isPlainLeftMouseEvent(evt) || isDoubleClick(evt) || !isSimpleClick(start, evt)) return; // NEW
-                    if (cellForMouseEvent(me, evt)) return; // NEW
-                    showOverlay(start); // NEW
-                } // NEW
-            }); // NEW
-        } // NEW
+        if (graph.addMouseListener) {
+            graph.addMouseListener({
+                mouseDown: function (_sender, me) {
+                    const evt = me && me.getEvent ? me.getEvent() : null;
+                    if (eventInOverlay(evt)) return;
+                    if (isOverlayVisible()) {
+                        dismissOnlyClick = true;
+                        pendingClick = null;
+                        hideOverlay();
+                        return;
+                    }
+                    dismissOnlyClick = false;
+                    hideOverlay();
+                    pendingClick = null;
+                    if (!isPlainLeftMouseEvent(evt) || isDoubleClick(evt)) return;
+                    pendingClick = {
+                        client: eventClientPoint(evt),
+                        model: modelPointForEvent(evt),
+                        container: containerPointForEvent(evt)
+                    };
+                },
+                mouseMove: function () { },
+                mouseUp: function (_sender, me) {
+                    const evt = me && me.getEvent ? me.getEvent() : null;
+                    if (dismissOnlyClick) {
+                        dismissOnlyClick = false;
+                        pendingClick = null;
+                        return;
+                    }
+                    const start = pendingClick;
+                    pendingClick = null;
+                    if (eventInOverlay(evt)) return;
+                    if (!isPlainLeftMouseEvent(evt) || isDoubleClick(evt) || !isSimpleClick(start, evt)) return;
+                    if (cellForMouseEvent(me, evt)) return;
+                    showOverlay(start);
+                }
+            });
+        }
 
-        const selectionModel = graph.getSelectionModel ? graph.getSelectionModel() : null; // NEW
-        if (selectionModel && selectionModel.addListener) selectionModel.addListener(mxEvent.CHANGE, onDismissEvent); // NEW
-        if (model.addListener) model.addListener(mxEvent.CHANGE, onDismissEvent); // NEW
-        if (graph.getView && graph.getView()) { // NEW
-            const view = graph.getView(); // NEW
-            if (view.addListener) { // NEW
-                view.addListener(mxEvent.SCALE, onDismissEvent); // NEW
-                view.addListener(mxEvent.TRANSLATE, onDismissEvent); // NEW
-                view.addListener(mxEvent.SCALE_AND_TRANSLATE, onDismissEvent); // NEW
-            } // NEW
-        } // NEW
-        mxEvent.addListener(document, "keydown", function (evt) { if (evt && evt.key === "Escape") hideOverlay(); }); // NEW
-        graph.addListener && graph.addListener(mxEvent.DESTROY, function () { if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay); overlay = null; }); // NEW
-    } // NEW
+        const selectionModel = graph.getSelectionModel ? graph.getSelectionModel() : null;
+        if (selectionModel && selectionModel.addListener) selectionModel.addListener(mxEvent.CHANGE, onDismissEvent);
+        if (model.addListener) model.addListener(mxEvent.CHANGE, onDismissEvent);
+        if (graph.getView && graph.getView()) {
+            const view = graph.getView();
+            if (view.addListener) {
+                view.addListener(mxEvent.SCALE, onDismissEvent);
+                view.addListener(mxEvent.TRANSLATE, onDismissEvent);
+                view.addListener(mxEvent.SCALE_AND_TRANSLATE, onDismissEvent);
+            }
+        }
+        mxEvent.addListener(document, "keydown", function (evt) { if (evt && evt.key === "Escape") hideOverlay(); });
+        graph.addListener && graph.addListener(mxEvent.DESTROY, function () { if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay); overlay = null; });
+    }
 
     //  Role cards, menus, layouts etc… remain as you have them.
-    function installSelectedTeamModuleRoleOverlay() { // NEW
-        if (graph.__trellisSelectedTeamModuleRoleOverlayInstalled) return; // NEW
-        graph.__trellisSelectedTeamModuleRoleOverlayInstalled = true; // NEW
+    function installSelectedTeamModuleRoleOverlay() {
+        if (graph.__trellisSelectedTeamModuleRoleOverlayInstalled) return;
+        graph.__trellisSelectedTeamModuleRoleOverlayInstalled = true;
 
-        const OFFSET_PX = 8; // NEW
-        const SIMPLE_CLICK_MAX_MOVE_PX = 4; // NEW
-        let overlay = null; // NEW
-        let pendingClick = null; // NEW
-        let lastClickAnchor = null; // CHANGE
-        let currentTeamModule = null; // NEW
-        let dismissOnlyClick = false; // NEW
-        let recentlyDismissedCell = null; // NEW
-        let recentlyDismissedAt = 0; // NEW
-        let labelControls = null; // NEW
+        const OFFSET_PX = 8;
+        const SIMPLE_CLICK_MAX_MOVE_PX = 4;
+        let overlay = null;
+        let pendingClick = null;
+        let lastClickAnchor = null;
+        let currentTeamModule = null;
+        let dismissOnlyClick = false;
+        let recentlyDismissedCell = null;
+        let recentlyDismissedAt = 0;
+        let labelControls = null;
 
-        function overlayHost() { // NEW
-            return graph.container || null; // NEW
-        } // NEW
+        function overlayHost() {
+            return graph.container || null;
+        }
 
-        function ensureOverlayHost() { // NEW
-            const host = overlayHost(); // NEW
-            if (!host) return null; // NEW
-            const style = window.getComputedStyle ? window.getComputedStyle(host) : null; // NEW
-            if (style && style.position === "static") host.style.position = "relative"; // NEW
-            return host; // NEW
-        } // NEW
+        function ensureOverlayHost() {
+            const host = overlayHost();
+            if (!host) return null;
+            const style = window.getComputedStyle ? window.getComputedStyle(host) : null;
+            if (style && style.position === "static") host.style.position = "relative";
+            return host;
+        }
 
-        function eventSource(evt) { // NEW
-            return mxEvent.getSource ? mxEvent.getSource(evt) : evt && (evt.target || evt.srcElement); // NEW
-        } // NEW
+        function eventSource(evt) {
+            return mxEvent.getSource ? mxEvent.getSource(evt) : evt && (evt.target || evt.srcElement);
+        }
 
-        function eventInOverlay(evt) { // NEW
-            return !!overlay && !!evt && overlay.contains(eventSource(evt)); // NEW
-        } // NEW
+        function eventInOverlay(evt) {
+            return !!overlay && !!evt && overlay.contains(eventSource(evt));
+        }
 
-        function isPlainLeftMouseEvent(evt) { // NEW
-            if (!evt) return false; // NEW
-            const button = typeof evt.button === "number" ? evt.button : 0; // NEW
-            const popup = mxEvent.isPopupTrigger && mxEvent.isPopupTrigger(evt); // NEW
-            return button === 0 && !popup && !mxEvent.isControlDown(evt) && !mxEvent.isMetaDown(evt) && !mxEvent.isShiftDown(evt) && !evt.altKey; // NEW
-        } // NEW
+        function isPlainLeftMouseEvent(evt) {
+            if (!evt) return false;
+            const button = typeof evt.button === "number" ? evt.button : 0;
+            const popup = mxEvent.isPopupTrigger && mxEvent.isPopupTrigger(evt);
+            return button === 0 && !popup && !mxEvent.isControlDown(evt) && !mxEvent.isMetaDown(evt) && !mxEvent.isShiftDown(evt) && !evt.altKey;
+        }
 
-        function isDoubleClick(evt) { // NEW
-            return !!evt && Number(evt.detail || 0) > 1; // NEW
-        } // NEW
+        function isDoubleClick(evt) {
+            return !!evt && Number(evt.detail || 0) > 1;
+        }
 
-        function eventClientPoint(evt) { // NEW
-            return { x: mxEvent.getClientX(evt), y: mxEvent.getClientY(evt) }; // NEW
-        } // NEW
+        function eventClientPoint(evt) {
+            return { x: mxEvent.getClientX(evt), y: mxEvent.getClientY(evt) };
+        }
 
-        function containerPointForEvent(evt) { // NEW
-            const host = overlayHost(); // NEW
-            const rect = host && host.getBoundingClientRect ? host.getBoundingClientRect() : { left: 0, top: 0 }; // NEW
-            const client = eventClientPoint(evt); // NEW
-            return { // NEW
-                x: client.x - (rect.left || 0) + (host ? host.scrollLeft || 0 : 0), // NEW
-                y: client.y - (rect.top || 0) + (host ? host.scrollTop || 0 : 0) // NEW
-            }; // NEW
-        } // NEW
+        function containerPointForEvent(evt) {
+            const host = overlayHost();
+            const rect = host && host.getBoundingClientRect ? host.getBoundingClientRect() : { left: 0, top: 0 };
+            const client = eventClientPoint(evt);
+            return {
+                x: client.x - (rect.left || 0) + (host ? host.scrollLeft || 0 : 0),
+                y: client.y - (rect.top || 0) + (host ? host.scrollTop || 0 : 0)
+            };
+        }
 
-        function modelPointForEvent(evt) { // NEW
-            if (graph.getPointForEvent) return graph.getPointForEvent(evt, false); // NEW
-            return containerPointForEvent(evt); // NEW
-        } // NEW
+        function modelPointForEvent(evt) {
+            if (graph.getPointForEvent) return graph.getPointForEvent(evt, false);
+            return containerPointForEvent(evt);
+        }
 
-        function hitPointForMouseEvent(me, evt) { // NEW
-            if (me && typeof me.getGraphX === "function" && typeof me.getGraphY === "function") { // NEW
-                return { x: me.getGraphX(), y: me.getGraphY() }; // NEW
-            } // NEW
-            return containerPointForEvent(evt); // NEW
-        } // NEW
+        function hitPointForMouseEvent(me, evt) {
+            if (me && typeof me.getGraphX === "function" && typeof me.getGraphY === "function") {
+                return { x: me.getGraphX(), y: me.getGraphY() };
+            }
+            return containerPointForEvent(evt);
+        }
 
-        function cellForMouseEvent(me, evt) { // NEW
-            const direct = me && typeof me.getCell === "function" ? me.getCell() : null; // NEW
-            if (direct) return direct; // NEW
-            const pt = hitPointForMouseEvent(me, evt); // NEW
-            return graph.getCellAt ? graph.getCellAt(pt.x, pt.y) : null; // NEW
-        } // NEW
+        function cellForMouseEvent(me, evt) {
+            const direct = me && typeof me.getCell === "function" ? me.getCell() : null;
+            if (direct) return direct;
+            const pt = hitPointForMouseEvent(me, evt);
+            return graph.getCellAt ? graph.getCellAt(pt.x, pt.y) : null;
+        }
 
-        function isSimpleClick(start, evt) { // NEW
-            if (!start || !evt) return false; // NEW
-            const client = eventClientPoint(evt); // NEW
-            const dx = client.x - start.client.x; // NEW
-            const dy = client.y - start.client.y; // NEW
-            return Math.sqrt(dx * dx + dy * dy) <= SIMPLE_CLICK_MAX_MOVE_PX; // NEW
-        } // NEW
+        function isSimpleClick(start, evt) {
+            if (!start || !evt) return false;
+            const client = eventClientPoint(evt);
+            const dx = client.x - start.client.x;
+            const dy = client.y - start.client.y;
+            return Math.sqrt(dx * dx + dy * dy) <= SIMPLE_CLICK_MAX_MOVE_PX;
+        }
 
-        function selectedTeamModule() { // NEW
-            const cells = graph.getSelectionCells ? graph.getSelectionCells() : (graph.getSelectionCell ? [graph.getSelectionCell()] : []); // NEW
-            return cells && cells.length === 1 && isModule(cells[0]) && isTeamModule(cells[0]) ? cells[0] : null; // NEW
-        } // NEW
+        function selectedTeamModule() {
+            const cells = graph.getSelectionCells ? graph.getSelectionCells() : (graph.getSelectionCell ? [graph.getSelectionCell()] : []);
+            return cells && cells.length === 1 && isModule(cells[0]) && isTeamModule(cells[0]) ? cells[0] : null;
+        }
 
-        function hideOverlay() { // NEW
-            if (overlay) overlay.style.display = "none"; // NEW
-            currentTeamModule = null; // NEW
-        } // NEW
+        function hideOverlay() {
+            if (overlay) overlay.style.display = "none";
+            currentTeamModule = null;
+        }
 
-        function isOverlayVisible() { // NEW
-            return !!overlay && overlay.style.display !== "none"; // NEW
-        } // NEW
+        function isOverlayVisible() {
+            return !!overlay && overlay.style.display !== "none";
+        }
 
-        function moduleContainsPoint(moduleCell, point) { // NEW
-            const geo = graph.getCellGeometry(moduleCell); // NEW
-            return !!geo && !!point && point.x >= geo.x && point.x <= geo.x + geo.width && point.y >= geo.y && point.y <= geo.y + geo.height; // NEW
-        } // NEW
+        function moduleContainsPoint(moduleCell, point) {
+            const geo = graph.getCellGeometry(moduleCell);
+            return !!geo && !!point && point.x >= geo.x && point.x <= geo.x + geo.width && point.y >= geo.y && point.y <= geo.y + geo.height;
+        }
 
-        function fallbackRoleCardPoint(moduleCell) { // NEW
-            const geo = graph.getCellGeometry(moduleCell); // NEW
-            const margin = getIntStyle(moduleCell, "module_margin", 100); // NEW
-            const headerH = getModuleHeaderHeight(moduleCell); // NEW
-            return { x: (geo ? geo.x : 0) + margin, y: (geo ? geo.y : 0) + headerH + margin }; // NEW
-        } // NEW
+        function fallbackRoleCardPoint(moduleCell) {
+            const geo = graph.getCellGeometry(moduleCell);
+            const margin = getIntStyle(moduleCell, "module_margin", 100);
+            const headerH = getModuleHeaderHeight(moduleCell);
+            return { x: (geo ? geo.x : 0) + margin, y: (geo ? geo.y : 0) + headerH + margin };
+        }
 
-        function roleCardPoint(moduleCell) { // NEW
-            return moduleContainsPoint(moduleCell, lastClickAnchor && lastClickAnchor.model) ? lastClickAnchor.model : fallbackRoleCardPoint(moduleCell); // CHANGE
-        } // NEW
+        function roleCardPoint(moduleCell) {
+            return moduleContainsPoint(moduleCell, lastClickAnchor && lastClickAnchor.model) ? lastClickAnchor.model : fallbackRoleCardPoint(moduleCell);
+        }
 
-        function cellContainerPoint(cell) { // NEW
-            const view = graph.getView ? graph.getView() : graph.view; // NEW
-            const state = view && typeof view.getState === "function" ? view.getState(cell) : null; // NEW
-            if (state) return { x: state.x, y: state.y }; // NEW
-            const geo = graph.getCellGeometry(cell); // NEW
-            const scale = view && view.scale ? view.scale : 1; // NEW
-            const translate = view && view.translate ? view.translate : { x: 0, y: 0 }; // NEW
-            return { x: geo ? (geo.x + (translate.x || 0)) * scale : 0, y: geo ? (geo.y + (translate.y || 0)) * scale : 0 }; // NEW
-        } // NEW
+        function cellContainerPoint(cell) {
+            const view = graph.getView ? graph.getView() : graph.view;
+            const state = view && typeof view.getState === "function" ? view.getState(cell) : null;
+            if (state) return { x: state.x, y: state.y };
+            const geo = graph.getCellGeometry(cell);
+            const scale = view && view.scale ? view.scale : 1;
+            const translate = view && view.translate ? view.translate : { x: 0, y: 0 };
+            return { x: geo ? (geo.x + (translate.x || 0)) * scale : 0, y: geo ? (geo.y + (translate.y || 0)) * scale : 0 };
+        }
 
-        function moduleOverlayAnchor(cell) { // NEW
-            return { model: fallbackRoleCardPoint(cell), container: cellContainerPoint(cell) }; // NEW
-        } // NEW
+        function moduleOverlayAnchor(cell) {
+            return { model: fallbackRoleCardPoint(cell), container: cellContainerPoint(cell) };
+        }
 
-        function overlayAnchorForCell(cell) { // NEW
-            if (pendingClick && moduleContainsPoint(cell, pendingClick.model)) return pendingClick; // NEW
-            if (lastClickAnchor && moduleContainsPoint(cell, lastClickAnchor.model)) return lastClickAnchor; // NEW
-            return moduleOverlayAnchor(cell); // NEW
-        } // NEW
+        function overlayAnchorForCell(cell) {
+            if (pendingClick && moduleContainsPoint(cell, pendingClick.model)) return pendingClick;
+            if (lastClickAnchor && moduleContainsPoint(cell, lastClickAnchor.model)) return lastClickAnchor;
+            return moduleOverlayAnchor(cell);
+        }
 
-        function positionOverlay(anchor) { // CHANGE
-            const host = ensureOverlayHost(); // NEW
-            const div = ensureOverlay(); // NEW
-            if (!host || !div || !anchor || !anchor.container) return; // CHANGE
-            if (div.parentNode !== host) host.appendChild(div); // NEW
-            div.style.display = "flex"; // NEW
-            div.style.left = "0px"; // NEW
-            div.style.top = "0px"; // NEW
-            const point = anchor.container; // NEW
+        function positionOverlay(anchor) {
+            const host = ensureOverlayHost();
+            const div = ensureOverlay();
+            if (!host || !div || !anchor || !anchor.container) return;
+            if (div.parentNode !== host) host.appendChild(div);
+            div.style.display = "flex";
+            div.style.left = "0px";
+            div.style.top = "0px";
+            const point = anchor.container;
             const left = Math.round(point.x + OFFSET_PX); // CHANGE: selected team module overlays intentionally do not clamp to the viewport
             const top = Math.round(point.y + OFFSET_PX); // CHANGE: selected team module overlays intentionally do not clamp to the viewport
-            div.style.left = left + "px"; // NEW
-            div.style.top = top + "px"; // NEW
-        } // NEW
+            div.style.left = left + "px";
+            div.style.top = top + "px";
+        }
 
-        function addRoleCardFromOverlay(evt) { // NEW
-            mxEvent.consume(evt); // NEW
-            const moduleCell = currentTeamModule || selectedTeamModule(); // NEW
-            if (!moduleCell) { hideOverlay(); return; } // NEW
-            const point = roleCardPoint(moduleCell); // NEW
-            addRoleCardToTeamModule(moduleCell, point.x, point.y); // CHANGE
-            hideOverlay(); // NEW
-        } // NEW
+        function addRoleCardFromOverlay(evt) {
+            mxEvent.consume(evt);
+            const moduleCell = currentTeamModule || selectedTeamModule();
+            if (!moduleCell) { hideOverlay(); return; }
+            const point = roleCardPoint(moduleCell);
+            addRoleCardToTeamModule(moduleCell, point.x, point.y);
+            hideOverlay();
+        }
 
-        function promptModuleMarginFromOverlay(evt) { // NEW
-            mxEvent.consume(evt); // NEW
-            const moduleCell = currentTeamModule || selectedTeamModule(); // NEW
-            if (!moduleCell) { hideOverlay(); return; } // NEW
-            hideOverlay(); // NEW
-            promptSetModuleMargin(moduleCell); // NEW
-        } // NEW
+        function promptModuleMarginFromOverlay(evt) {
+            mxEvent.consume(evt);
+            const moduleCell = currentTeamModule || selectedTeamModule();
+            if (!moduleCell) { hideOverlay(); return; }
+            hideOverlay();
+            promptSetModuleMargin(moduleCell);
+        }
 
-        function makeOverlayButton(label, onClick, variant) { // CHANGE
-            const btn = document.createElement("button"); // NEW
-            btn.type = "button"; // NEW
-            btn.textContent = label; // CHANGE
-            btn.style.border = "1px solid #b8b8b8"; // NEW
-            btn.style.borderRadius = "4px"; // NEW
-            btn.style.background = "#fff"; // NEW
-            btn.style.color = "#222"; // NEW
-            btn.style.cursor = "pointer"; // NEW
-            btn.style.font = "12px Arial, sans-serif"; // NEW
-            btn.style.padding = "5px 8px"; // NEW
-            btn.style.whiteSpace = "nowrap"; // NEW
-            applyTrellisButtonStyle(btn, variant || "neutral", { compact: true }); // NEW
-            mxEvent.addListener(btn, "click", onClick); // CHANGE
-            return btn; // NEW
-        } // NEW
+        function makeOverlayButton(label, onClick, variant) {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.textContent = label;
+            btn.style.border = "1px solid #b8b8b8";
+            btn.style.borderRadius = "4px";
+            btn.style.background = "#fff";
+            btn.style.color = "#222";
+            btn.style.cursor = "pointer";
+            btn.style.font = "12px Arial, sans-serif";
+            btn.style.padding = "5px 8px";
+            btn.style.whiteSpace = "nowrap";
+            applyTrellisButtonStyle(btn, variant || "neutral", { compact: true });
+            mxEvent.addListener(btn, "click", onClick);
+            return btn;
+        }
 
-        function makeModuleLabelInput(moduleCell, ariaLabel) { // NEW
-            const initialLabel = getModuleLabel(moduleCell); // NEW
-            const input = document.createElement("input"); // NEW
-            input.type = "text"; // NEW
-            input.value = initialLabel; // NEW
-            input.setAttribute("aria-label", ariaLabel); // NEW
-            input.style.display = "block"; // CHANGE
-            input.style.boxSizing = "border-box"; // NEW
-            input.style.width = "100%"; // NEW
-            input.style.minWidth = "0"; // NEW
-            input.style.marginBottom = "2px"; // CHANGE
-            input.style.border = "1px solid rgba(75, 85, 99, 0.35)"; // NEW
-            input.style.borderRadius = "4px"; // NEW
-            input.style.padding = "3px 5px"; // NEW
-            input.style.font = "12px Arial, sans-serif"; // NEW
-            input.style.fontWeight = "600"; // NEW
-            ["mousedown", "mouseup", "click", "dblclick", "pointerdown", "pointerup"].forEach(function (type) { // NEW
-                input.addEventListener(type, stopModuleOverlayDomEvent); // NEW
-            }); // NEW
-            input.addEventListener("keydown", function (evt) { // NEW
-                stopModuleOverlayDomEvent(evt); // NEW
-                if (evt.key === "Enter") { // NEW
-                    input.value = writeModuleLabel(moduleCell, input.value); // NEW
-                    if (input.blur) input.blur(); // NEW
-                    stopAndPreventModuleOverlayDomEvent(evt); // NEW
-                } else if (evt.key === "Escape") { // NEW
-                    input.value = initialLabel; // NEW
-                    stopAndPreventModuleOverlayDomEvent(evt); // NEW
-                } // NEW
-            }); // NEW
-            ["keypress", "keyup"].forEach(function (type) { input.addEventListener(type, stopModuleOverlayDomEvent); }); // NEW
-            input.addEventListener("blur", function () { input.value = writeModuleLabel(moduleCell, input.value); }); // NEW
-            return input; // NEW
-        } // NEW
+        function makeModuleLabelInput(moduleCell, ariaLabel) {
+            const initialLabel = getModuleLabel(moduleCell);
+            const input = document.createElement("input");
+            input.type = "text";
+            input.value = initialLabel;
+            input.setAttribute("aria-label", ariaLabel);
+            input.style.display = "block";
+            input.style.boxSizing = "border-box";
+            input.style.width = "100%";
+            input.style.minWidth = "0";
+            input.style.marginBottom = "2px";
+            input.style.border = "1px solid rgba(75, 85, 99, 0.35)";
+            input.style.borderRadius = "4px";
+            input.style.padding = "3px 5px";
+            input.style.font = "12px Arial, sans-serif";
+            input.style.fontWeight = "600";
+            ["mousedown", "mouseup", "click", "dblclick", "pointerdown", "pointerup"].forEach(function (type) {
+                input.addEventListener(type, stopModuleOverlayDomEvent);
+            });
+            input.addEventListener("keydown", function (evt) {
+                stopModuleOverlayDomEvent(evt);
+                if (evt.key === "Enter") {
+                    input.value = writeModuleLabel(moduleCell, input.value);
+                    if (input.blur) input.blur();
+                    stopAndPreventModuleOverlayDomEvent(evt);
+                } else if (evt.key === "Escape") {
+                    input.value = initialLabel;
+                    stopAndPreventModuleOverlayDomEvent(evt);
+                }
+            });
+            ["keypress", "keyup"].forEach(function (type) { input.addEventListener(type, stopModuleOverlayDomEvent); });
+            input.addEventListener("blur", function () { input.value = writeModuleLabel(moduleCell, input.value); });
+            return input;
+        }
 
-        function renderTeamModuleLabelControls(moduleCell) { // NEW
-            if (!labelControls) return; // NEW
-            labelControls.innerHTML = ""; // NEW
-            labelControls.appendChild(makeModuleLabelInput(moduleCell, "Team label")); // CHANGE
-        } // NEW
+        function renderTeamModuleLabelControls(moduleCell) {
+            if (!labelControls) return;
+            labelControls.innerHTML = "";
+            labelControls.appendChild(makeModuleLabelInput(moduleCell, "Team label"));
+        }
 
-        function ensureOverlay() { // NEW
-            if (overlay) return overlay; // NEW
-            overlay = document.createElement("div"); // NEW
-            overlay.className = "trellis-team-role-overlay"; // NEW
-            overlay.style.position = "absolute"; // NEW
-            overlay.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL); // CHANGE
-            overlay.style.display = "none"; // NEW
-            overlay.style.flexDirection = "column"; // NEW
-            overlay.style.gap = "4px"; // NEW
-            overlay.style.padding = "4px"; // NEW
-            overlay.style.background = "rgba(255,255,255,0.96)"; // NEW
-            overlay.style.border = "1px solid #c7c7cc"; // NEW
-            overlay.style.borderRadius = "6px"; // NEW
-            overlay.style.boxShadow = "0 2px 8px rgba(0,0,0,0.16)"; // NEW
-            overlay.style.font = "12px Arial, sans-serif"; // NEW
-            overlay.style.pointerEvents = "auto"; // NEW
-            mxEvent.addListener(overlay, "mousedown", function (evt) { mxEvent.consume(evt); }); // NEW
-            mxEvent.addListener(overlay, "click", function (evt) { mxEvent.consume(evt); }); // NEW
-            labelControls = document.createElement("div"); // NEW
-            labelControls.className = "trellis-team-module-label-controls"; // NEW
-            labelControls.style.display = "flex"; // NEW
-            labelControls.style.flexDirection = "column"; // NEW
-            labelControls.style.gap = "4px"; // NEW
-            labelControls.style.padding = "2px 2px 4px"; // NEW
-            labelControls.style.borderBottom = "1px solid #e5e7eb"; // NEW
-            overlay.appendChild(labelControls); // NEW
-            overlay.appendChild(makeOverlayButton("Add Role Card", addRoleCardFromOverlay, "add")); // CHANGE
-            overlay.appendChild(makeOverlayButton("Set Module Margin", promptModuleMarginFromOverlay, "open")); // CHANGE
-            const host = ensureOverlayHost(); // NEW
-            if (host) host.appendChild(overlay); // NEW
-            return overlay; // NEW
-        } // NEW
+        function ensureOverlay() {
+            if (overlay) return overlay;
+            overlay = document.createElement("div");
+            overlay.className = "trellis-team-role-overlay";
+            overlay.style.position = "absolute";
+            overlay.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL);
+            overlay.style.display = "none";
+            overlay.style.flexDirection = "column";
+            overlay.style.gap = "4px";
+            overlay.style.padding = "4px";
+            overlay.style.background = "rgba(255,255,255,0.96)";
+            overlay.style.border = "1px solid #c7c7cc";
+            overlay.style.borderRadius = "6px";
+            overlay.style.boxShadow = "0 2px 8px rgba(0,0,0,0.16)";
+            overlay.style.font = "12px Arial, sans-serif";
+            overlay.style.pointerEvents = "auto";
+            mxEvent.addListener(overlay, "mousedown", function (evt) { mxEvent.consume(evt); });
+            mxEvent.addListener(overlay, "click", function (evt) { mxEvent.consume(evt); });
+            labelControls = document.createElement("div");
+            labelControls.className = "trellis-team-module-label-controls";
+            labelControls.style.display = "flex";
+            labelControls.style.flexDirection = "column";
+            labelControls.style.gap = "4px";
+            labelControls.style.padding = "2px 2px 4px";
+            labelControls.style.borderBottom = "1px solid #e5e7eb";
+            overlay.appendChild(labelControls);
+            overlay.appendChild(makeOverlayButton("Add Role Card", addRoleCardFromOverlay, "add"));
+            overlay.appendChild(makeOverlayButton("Set Module Margin", promptModuleMarginFromOverlay, "open"));
+            const host = ensureOverlayHost();
+            if (host) host.appendChild(overlay);
+            return overlay;
+        }
 
-        function showOverlay(cell, anchor) { // CHANGE
-            currentTeamModule = cell; // NEW
-            ensureOverlay(); // NEW
-            renderTeamModuleLabelControls(cell); // NEW
-            positionOverlay(anchor || moduleOverlayAnchor(cell)); // CHANGE
-        } // NEW
+        function showOverlay(cell, anchor) {
+            currentTeamModule = cell;
+            ensureOverlay();
+            renderTeamModuleLabelControls(cell);
+            positionOverlay(anchor || moduleOverlayAnchor(cell));
+        }
 
-        function refreshSelectedOverlay() { // NEW
-            const cell = selectedTeamModule(); // NEW
-            hideOverlay(); // NEW
-            if (!cell) return; // NEW
-            if (recentlyDismissedCell === cell && Date.now() - recentlyDismissedAt < 250) return; // NEW
-            showOverlay(cell, overlayAnchorForCell(cell)); // CHANGE
-        } // NEW
+        function refreshSelectedOverlay() {
+            const cell = selectedTeamModule();
+            hideOverlay();
+            if (!cell) return;
+            if (recentlyDismissedCell === cell && Date.now() - recentlyDismissedAt < 250) return;
+            showOverlay(cell, overlayAnchorForCell(cell));
+        }
 
-        function onDismissEvent() { // NEW
-            pendingClick = null; // NEW
-            hideOverlay(); // NEW
-        } // NEW
+        function onDismissEvent() {
+            pendingClick = null;
+            hideOverlay();
+        }
 
-        if (graph.addMouseListener) { // NEW
-            graph.addMouseListener({ // NEW
-                mouseDown: function (_sender, me) { // NEW
-                    const evt = me && me.getEvent ? me.getEvent() : null; // NEW
-                    if (eventInOverlay(evt)) return; // NEW
-                    const hitCell = cellForMouseEvent(me, evt); // NEW
-                    if (isOverlayVisible()) { // NEW
-                        dismissOnlyClick = true; // NEW
-                        pendingClick = null; // NEW
-                        recentlyDismissedCell = hitCell === currentTeamModule ? currentTeamModule : null; // NEW
-                        recentlyDismissedAt = recentlyDismissedCell ? Date.now() : 0; // NEW
-                        hideOverlay(); // NEW
-                        return; // NEW
-                    } // NEW
-                    dismissOnlyClick = false; // NEW
-                    pendingClick = null; // NEW
-                    if (!isPlainLeftMouseEvent(evt) || isDoubleClick(evt)) return; // NEW
-                    pendingClick = { // NEW
-                        client: eventClientPoint(evt), // NEW
-                        model: modelPointForEvent(evt), // CHANGE
-                        container: containerPointForEvent(evt) // NEW
-                    }; // NEW
-                }, // NEW
-                mouseMove: function () { }, // NEW
-                mouseUp: function (_sender, me) { // NEW
-                    const evt = me && me.getEvent ? me.getEvent() : null; // NEW
-                    if (dismissOnlyClick) { // NEW
-                        dismissOnlyClick = false; // NEW
-                        pendingClick = null; // NEW
-                        return; // NEW
-                    } // NEW
-                    const start = pendingClick; // NEW
-                    pendingClick = null; // NEW
-                    if (eventInOverlay(evt)) return; // NEW
-                    if (!isPlainLeftMouseEvent(evt) || isDoubleClick(evt) || !isSimpleClick(start, evt)) return; // NEW
-                    lastClickAnchor = { model: { x: start.model.x, y: start.model.y }, container: { x: start.container.x, y: start.container.y } }; // CHANGE
-                    refreshSelectedOverlay(); // NEW
-                } // NEW
-            }); // NEW
-        } // NEW
+        if (graph.addMouseListener) {
+            graph.addMouseListener({
+                mouseDown: function (_sender, me) {
+                    const evt = me && me.getEvent ? me.getEvent() : null;
+                    if (eventInOverlay(evt)) return;
+                    const hitCell = cellForMouseEvent(me, evt);
+                    if (isOverlayVisible()) {
+                        dismissOnlyClick = true;
+                        pendingClick = null;
+                        recentlyDismissedCell = hitCell === currentTeamModule ? currentTeamModule : null;
+                        recentlyDismissedAt = recentlyDismissedCell ? Date.now() : 0;
+                        hideOverlay();
+                        return;
+                    }
+                    dismissOnlyClick = false;
+                    pendingClick = null;
+                    if (!isPlainLeftMouseEvent(evt) || isDoubleClick(evt)) return;
+                    pendingClick = {
+                        client: eventClientPoint(evt),
+                        model: modelPointForEvent(evt),
+                        container: containerPointForEvent(evt)
+                    };
+                },
+                mouseMove: function () { },
+                mouseUp: function (_sender, me) {
+                    const evt = me && me.getEvent ? me.getEvent() : null;
+                    if (dismissOnlyClick) {
+                        dismissOnlyClick = false;
+                        pendingClick = null;
+                        return;
+                    }
+                    const start = pendingClick;
+                    pendingClick = null;
+                    if (eventInOverlay(evt)) return;
+                    if (!isPlainLeftMouseEvent(evt) || isDoubleClick(evt) || !isSimpleClick(start, evt)) return;
+                    lastClickAnchor = { model: { x: start.model.x, y: start.model.y }, container: { x: start.container.x, y: start.container.y } };
+                    refreshSelectedOverlay();
+                }
+            });
+        }
 
-        const selectionModel = graph.getSelectionModel ? graph.getSelectionModel() : null; // NEW
-        if (selectionModel && selectionModel.addListener) selectionModel.addListener(mxEvent.CHANGE, refreshSelectedOverlay); // NEW
-        if (model.addListener) model.addListener(mxEvent.CHANGE, onDismissEvent); // NEW
-        if (graph.getView && graph.getView()) { // NEW
-            const view = graph.getView(); // NEW
-            if (view.addListener) { // NEW
-                view.addListener(mxEvent.SCALE, onDismissEvent); // NEW
-                view.addListener(mxEvent.TRANSLATE, onDismissEvent); // NEW
-                view.addListener(mxEvent.SCALE_AND_TRANSLATE, onDismissEvent); // NEW
-            } // NEW
-        } // NEW
-        mxEvent.addListener(document, "keydown", function (evt) { if (evt && evt.key === "Escape") hideOverlay(); }); // NEW
-        graph.addListener && graph.addListener(mxEvent.DESTROY, function () { if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay); overlay = null; currentTeamModule = null; }); // NEW
-    } // NEW
+        const selectionModel = graph.getSelectionModel ? graph.getSelectionModel() : null;
+        if (selectionModel && selectionModel.addListener) selectionModel.addListener(mxEvent.CHANGE, refreshSelectedOverlay);
+        if (model.addListener) model.addListener(mxEvent.CHANGE, onDismissEvent);
+        if (graph.getView && graph.getView()) {
+            const view = graph.getView();
+            if (view.addListener) {
+                view.addListener(mxEvent.SCALE, onDismissEvent);
+                view.addListener(mxEvent.TRANSLATE, onDismissEvent);
+                view.addListener(mxEvent.SCALE_AND_TRANSLATE, onDismissEvent);
+            }
+        }
+        mxEvent.addListener(document, "keydown", function (evt) { if (evt && evt.key === "Escape") hideOverlay(); });
+        graph.addListener && graph.addListener(mxEvent.DESTROY, function () { if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay); overlay = null; currentTeamModule = null; });
+    }
 
-    function installSelectedRoleImageOverlay() { // NEW
-        if (graph.__trellisSelectedRoleImageOverlayInstalled) return; // NEW
-        graph.__trellisSelectedRoleImageOverlayInstalled = true; // NEW
+    function installSelectedRoleImageOverlay() {
+        if (graph.__trellisSelectedRoleImageOverlayInstalled) return;
+        graph.__trellisSelectedRoleImageOverlayInstalled = true;
 
-        const OFFSET_PX = 8; // NEW
-        let overlay = null; // NEW
-        let button = null; // NEW
-        let currentAction = null; // NEW
+        const OFFSET_PX = 8;
+        let overlay = null;
+        let button = null;
+        let currentAction = null;
 
-        function overlayHost() { // NEW
-            return graph.container || null; // NEW
-        } // NEW
+        function overlayHost() {
+            return graph.container || null;
+        }
 
-        function ensureOverlayHost() { // NEW
-            const host = overlayHost(); // NEW
-            if (!host) return null; // NEW
-            const style = window.getComputedStyle ? window.getComputedStyle(host) : null; // NEW
-            if (style && style.position === "static") host.style.position = "relative"; // NEW
-            return host; // NEW
-        } // NEW
+        function ensureOverlayHost() {
+            const host = overlayHost();
+            if (!host) return null;
+            const style = window.getComputedStyle ? window.getComputedStyle(host) : null;
+            if (style && style.position === "static") host.style.position = "relative";
+            return host;
+        }
 
-        function selectedRoleImageAction() { // NEW
-            const cells = graph.getSelectionCells ? (graph.getSelectionCells() || []) : (graph.getSelectionCell ? [graph.getSelectionCell()] : []); // NEW
-            if (!cells || cells.length !== 1) return null; // NEW
-            const action = roleImageActionForCell(cells[0], { allowImageRowChange: true }); // CHANGE
-            if (action && action.roleCard) normalizeRoleImagePlaceholder(action.roleCard); // NEW
-            return action; // NEW
-        } // NEW
+        function selectedRoleImageAction() {
+            const cells = graph.getSelectionCells ? (graph.getSelectionCells() || []) : (graph.getSelectionCell ? [graph.getSelectionCell()] : []);
+            if (!cells || cells.length !== 1) return null;
+            const action = roleImageActionForCell(cells[0], { allowImageRowChange: true });
+            if (action && action.roleCard) normalizeRoleImagePlaceholder(action.roleCard);
+            return action;
+        }
 
-        function anchorCellForAction(action) { // NEW
-            if (!action) return null; // NEW
-            if (action.mode === "change") return isRoleImageRow(action.sourceCell) || isRoleAvatar(action.sourceCell) ? action.sourceCell : action.avatar; // CHANGE
-            return action.imageRow || action.roleCard; // NEW
-        } // NEW
+        function anchorCellForAction(action) {
+            if (!action) return null;
+            if (action.mode === "change") return isRoleImageRow(action.sourceCell) || isRoleAvatar(action.sourceCell) ? action.sourceCell : action.avatar;
+            return action.imageRow || action.roleCard;
+        }
 
-        function hideOverlay() { // NEW
-            currentAction = null; // NEW
-            if (overlay) overlay.style.display = "none"; // NEW
-        } // NEW
+        function hideOverlay() {
+            currentAction = null;
+            if (overlay) overlay.style.display = "none";
+        }
 
-        function invokeRoleImageAction(evt) { // NEW
-            mxEvent.consume(evt); // NEW
-            const action = currentAction; // NEW
-            if (!action || !action.roleCard) { hideOverlay(); return; } // NEW
-            hideOverlay(); // NEW
-            selectRoleImage(ui, graph, action.roleCard); // NEW
-        } // NEW
+        function invokeRoleImageAction(evt) {
+            mxEvent.consume(evt);
+            const action = currentAction;
+            if (!action || !action.roleCard) { hideOverlay(); return; }
+            hideOverlay();
+            selectRoleImage(ui, graph, action.roleCard);
+        }
 
-        function makeOverlayButton() { // NEW
-            const btn = document.createElement("button"); // NEW
-            btn.type = "button"; // NEW
-            btn.style.border = "1px solid #b8b8b8"; // NEW
-            btn.style.borderRadius = "4px"; // NEW
-            btn.style.background = "#fff"; // NEW
-            btn.style.color = "#222"; // NEW
-            btn.style.cursor = "pointer"; // NEW
-            btn.style.font = "12px Arial, sans-serif"; // NEW
-            btn.style.padding = "5px 8px"; // NEW
-            btn.style.whiteSpace = "nowrap"; // NEW
-            applyTrellisButtonStyle(btn, "open", { compact: true }); // NEW
-            mxEvent.addListener(btn, "click", invokeRoleImageAction); // NEW
-            return btn; // NEW
-        } // NEW
+        function makeOverlayButton() {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.style.border = "1px solid #b8b8b8";
+            btn.style.borderRadius = "4px";
+            btn.style.background = "#fff";
+            btn.style.color = "#222";
+            btn.style.cursor = "pointer";
+            btn.style.font = "12px Arial, sans-serif";
+            btn.style.padding = "5px 8px";
+            btn.style.whiteSpace = "nowrap";
+            applyTrellisButtonStyle(btn, "open", { compact: true });
+            mxEvent.addListener(btn, "click", invokeRoleImageAction);
+            return btn;
+        }
 
-        function ensureOverlay() { // NEW
-            if (overlay) return overlay; // NEW
-            overlay = document.createElement("div"); // NEW
-            overlay.className = "trellis-role-image-overlay"; // NEW
-            overlay.style.position = "absolute"; // NEW
-            overlay.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL); // CHANGE
-            overlay.style.display = "none"; // NEW
-            overlay.style.padding = "4px"; // NEW
-            overlay.style.background = "rgba(255,255,255,0.96)"; // NEW
-            overlay.style.border = "1px solid #c7c7cc"; // NEW
-            overlay.style.borderRadius = "6px"; // NEW
-            overlay.style.boxShadow = "0 2px 8px rgba(0,0,0,0.16)"; // NEW
-            overlay.style.font = "12px Arial, sans-serif"; // NEW
-            overlay.style.pointerEvents = "auto"; // NEW
-            mxEvent.addListener(overlay, "mousedown", function (evt) { mxEvent.consume(evt); }); // NEW
-            mxEvent.addListener(overlay, "click", function (evt) { mxEvent.consume(evt); }); // NEW
-            button = makeOverlayButton(); // NEW
-            overlay.appendChild(button); // NEW
-            const host = ensureOverlayHost(); // NEW
-            if (host) host.appendChild(overlay); // NEW
-            return overlay; // NEW
-        } // NEW
+        function ensureOverlay() {
+            if (overlay) return overlay;
+            overlay = document.createElement("div");
+            overlay.className = "trellis-role-image-overlay";
+            overlay.style.position = "absolute";
+            overlay.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL);
+            overlay.style.display = "none";
+            overlay.style.padding = "4px";
+            overlay.style.background = "rgba(255,255,255,0.96)";
+            overlay.style.border = "1px solid #c7c7cc";
+            overlay.style.borderRadius = "6px";
+            overlay.style.boxShadow = "0 2px 8px rgba(0,0,0,0.16)";
+            overlay.style.font = "12px Arial, sans-serif";
+            overlay.style.pointerEvents = "auto";
+            mxEvent.addListener(overlay, "mousedown", function (evt) { mxEvent.consume(evt); });
+            mxEvent.addListener(overlay, "click", function (evt) { mxEvent.consume(evt); });
+            button = makeOverlayButton();
+            overlay.appendChild(button);
+            const host = ensureOverlayHost();
+            if (host) host.appendChild(overlay);
+            return overlay;
+        }
 
-        function positionOverlay(action) { // NEW
-            const host = ensureOverlayHost(); // NEW
-            const div = ensureOverlay(); // NEW
-            const anchorCell = anchorCellForAction(action); // NEW
-            const view = graph.getView ? graph.getView() : graph.view; // NEW
-            const state = view && typeof view.getState === "function" && anchorCell ? view.getState(anchorCell) : null; // NEW
-            if (!host || !div || !state) { hideOverlay(); return; } // NEW
-            if (div.parentNode !== host) host.appendChild(div); // NEW
-            if (button) button.textContent = action.mode === "change" ? "Change Image" : "Add Image"; // NEW
-            currentAction = action; // NEW
-            div.style.display = "flex"; // NEW
-            div.style.left = "0px"; // NEW
-            div.style.top = "0px"; // NEW
-            const width = div.offsetWidth || 105; // NEW
-            const height = div.offsetHeight || 30; // NEW
-            const scrollLeft = host.scrollLeft || 0; // NEW
-            const scrollTop = host.scrollTop || 0; // NEW
-            const maxLeft = scrollLeft + Math.max(0, (host.clientWidth || width) - width - OFFSET_PX); // NEW
-            const maxTop = scrollTop + Math.max(0, (host.clientHeight || height) - height - OFFSET_PX); // NEW
-            const left = Math.max(scrollLeft, Math.min(maxLeft, Math.round(state.x + (state.width || 0) + OFFSET_PX))); // NEW
-            const top = Math.max(scrollTop, Math.min(maxTop, Math.round(state.y))); // NEW
-            div.style.left = left + "px"; // NEW
-            div.style.top = top + "px"; // NEW
-        } // NEW
+        function positionOverlay(action) {
+            const host = ensureOverlayHost();
+            const div = ensureOverlay();
+            const anchorCell = anchorCellForAction(action);
+            const view = graph.getView ? graph.getView() : graph.view;
+            const state = view && typeof view.getState === "function" && anchorCell ? view.getState(anchorCell) : null;
+            if (!host || !div || !state) { hideOverlay(); return; }
+            if (div.parentNode !== host) host.appendChild(div);
+            if (button) button.textContent = action.mode === "change" ? "Change Image" : "Add Image";
+            currentAction = action;
+            div.style.display = "flex";
+            div.style.left = "0px";
+            div.style.top = "0px";
+            const width = div.offsetWidth || 105;
+            const height = div.offsetHeight || 30;
+            const scrollLeft = host.scrollLeft || 0;
+            const scrollTop = host.scrollTop || 0;
+            const maxLeft = scrollLeft + Math.max(0, (host.clientWidth || width) - width - OFFSET_PX);
+            const maxTop = scrollTop + Math.max(0, (host.clientHeight || height) - height - OFFSET_PX);
+            const left = Math.max(scrollLeft, Math.min(maxLeft, Math.round(state.x + (state.width || 0) + OFFSET_PX)));
+            const top = Math.max(scrollTop, Math.min(maxTop, Math.round(state.y)));
+            div.style.left = left + "px";
+            div.style.top = top + "px";
+        }
 
-        function refreshSelectedOverlay() { // NEW
-            const action = selectedRoleImageAction(); // NEW
-            if (!action) { hideOverlay(); return; } // NEW
-            positionOverlay(action); // NEW
-        } // NEW
+        function refreshSelectedOverlay() {
+            const action = selectedRoleImageAction();
+            if (!action) { hideOverlay(); return; }
+            positionOverlay(action);
+        }
 
-        const selectionModel = graph.getSelectionModel ? graph.getSelectionModel() : null; // NEW
-        if (selectionModel && selectionModel.addListener) selectionModel.addListener(mxEvent.CHANGE, refreshSelectedOverlay); // NEW
-        if (model.addListener) model.addListener(mxEvent.CHANGE, refreshSelectedOverlay); // NEW
-        if (graph.getView && graph.getView()) { // NEW
-            const view = graph.getView(); // NEW
-            if (view.addListener) { // NEW
-                view.addListener(mxEvent.SCALE, refreshSelectedOverlay); // NEW
-                view.addListener(mxEvent.TRANSLATE, refreshSelectedOverlay); // NEW
-                view.addListener(mxEvent.SCALE_AND_TRANSLATE, refreshSelectedOverlay); // NEW
-            } // NEW
-        } // NEW
-        mxEvent.addListener(document, "keydown", function (evt) { if (evt && evt.key === "Escape") hideOverlay(); }); // NEW
-        graph.addListener && graph.addListener(mxEvent.DESTROY, function () { if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay); overlay = null; button = null; currentAction = null; }); // NEW
-    } // NEW
+        const selectionModel = graph.getSelectionModel ? graph.getSelectionModel() : null;
+        if (selectionModel && selectionModel.addListener) selectionModel.addListener(mxEvent.CHANGE, refreshSelectedOverlay);
+        if (model.addListener) model.addListener(mxEvent.CHANGE, refreshSelectedOverlay);
+        if (graph.getView && graph.getView()) {
+            const view = graph.getView();
+            if (view.addListener) {
+                view.addListener(mxEvent.SCALE, refreshSelectedOverlay);
+                view.addListener(mxEvent.TRANSLATE, refreshSelectedOverlay);
+                view.addListener(mxEvent.SCALE_AND_TRANSLATE, refreshSelectedOverlay);
+            }
+        }
+        mxEvent.addListener(document, "keydown", function (evt) { if (evt && evt.key === "Escape") hideOverlay(); });
+        graph.addListener && graph.addListener(mxEvent.DESTROY, function () { if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay); overlay = null; button = null; currentAction = null; });
+    }
 
     // Ensure right-click does not alter selection unexpectedly                           
     graph.popupMenuHandler && (graph.popupMenuHandler.selectOnPopup = false);
 
-    graph.__trellisModules = { // CHANGE
-        applyModuleMargins: function (moduleCell, opts) { // CHANGE
-            return applyModuleMargins(moduleCell, opts); // CHANGE
-        }, // CHANGE
-        enforceGardenModuleMinimum: function (moduleCell) { // CHANGE
-            let changed = false; // CHANGE
-            model.beginUpdate(); // CHANGE
-            try { // CHANGE
-                changed = enforceGardenModuleMinimum(moduleCell); // CHANGE
-            } finally { // CHANGE
-                model.endUpdate(); // CHANGE
-            } // CHANGE
-            return changed; // CHANGE
-        }, // CHANGE
-        getGardenModuleMinimumSize: function (moduleCell) { // CHANGE
-            return getModuleMinOuterSize(moduleCell); // CHANGE
-        }, // CHANGE
-        getModuleMargin: function (moduleCell, defaultPx) { // NEW
-            return getModuleMarginValue(moduleCell, defaultPx); // NEW
-        }, // NEW
-        setModuleMargin: function (moduleCell, marginPx) { // NEW
-            return setModuleMarginValue(moduleCell, marginPx); // NEW
-        }, // NEW
-        promptSetModuleMargin: function (moduleCell) { // NEW
-            return promptSetModuleMargin(moduleCell); // NEW
-        }, // NEW
-        createModuleAtPoint: function (point, type) { // NEW
-            return createModuleAtPoint(point, type); // NEW
-        }, // CHANGE
-        createRoleCard: function (moduleCell, x, y) { // NEW
-            return createRoleCard(graph, moduleCell, x, y); // NEW
-        }, // NEW
-        ensureGardenTeamModule: function (gardenCell) { // NEW
-            return ensureGardenTeamModule(gardenCell); // NEW
-        }, // NEW
-        findExistingCompanionTeam: function (gardenCell) { // NEW
-            return findExistingCompanionTeam(gardenCell); // NEW
-        }, // NEW
-        ensureGardenTaskModule: function (gardenCell, opts) { // CHANGE
-            return ensureGardenTaskModule(gardenCell, opts); // CHANGE
-        }, // NEW
-        findExistingCompanionTask: function (gardenCell) { // NEW
-            return findExistingCompanionTask(gardenCell); // NEW
-        }, // NEW
-        syncCompanionModuleAccess: function (gardenCell, companionCell) { // NEW
-            return syncCompanionModuleAccess(gardenCell, companionCell); // NEW
-        }, // NEW
-        getModuleLabel: function (moduleCell, fallback) { // NEW
-            return getModuleLabel(moduleCell, fallback); // NEW
-        }, // NEW
-        writeModuleLabel: function (moduleCell, label) { // NEW
-            return writeModuleLabel(moduleCell, label); // NEW
-        }, // NEW
-        linkedGardenModuleForCompanion: function (moduleCell) { // NEW
-            return linkedGardenModuleForCompanion(moduleCell); // NEW
-        }, // NEW
-        linkedGardenLabelForCompanion: function (moduleCell) { // NEW
-            return linkedGardenLabelForCompanion(moduleCell); // NEW
-        }, // NEW
-        addReciprocalLink: function (left, right) { // NEW
-            return addReciprocalLink(left, right); // NEW
-        }, // NEW
-        selectRoleImage: function (roleCard) { // NEW
-            return selectRoleImage(ui, graph, roleCard); // NEW
-        } // CHANGE
-    }; // CHANGE
+    graph.__trellisModules = {
+        applyModuleMargins: function (moduleCell, opts) {
+            return applyModuleMargins(moduleCell, opts);
+        },
+        enforceGardenModuleMinimum: function (moduleCell) {
+            let changed = false;
+            model.beginUpdate();
+            try {
+                changed = enforceGardenModuleMinimum(moduleCell);
+            } finally {
+                model.endUpdate();
+            }
+            return changed;
+        },
+        getGardenModuleMinimumSize: function (moduleCell) {
+            return getModuleMinOuterSize(moduleCell);
+        },
+        getModuleMargin: function (moduleCell, defaultPx) {
+            return getModuleMarginValue(moduleCell, defaultPx);
+        },
+        setModuleMargin: function (moduleCell, marginPx) {
+            return setModuleMarginValue(moduleCell, marginPx);
+        },
+        promptSetModuleMargin: function (moduleCell) {
+            return promptSetModuleMargin(moduleCell);
+        },
+        createModuleAtPoint: function (point, type) {
+            return createModuleAtPoint(point, type);
+        },
+        createRoleCard: function (moduleCell, x, y) {
+            return createRoleCard(graph, moduleCell, x, y);
+        },
+        ensureGardenTeamModule: function (gardenCell) {
+            return ensureGardenTeamModule(gardenCell);
+        },
+        findExistingCompanionTeam: function (gardenCell) {
+            return findExistingCompanionTeam(gardenCell);
+        },
+        ensureGardenTaskModule: function (gardenCell, opts) {
+            return ensureGardenTaskModule(gardenCell, opts);
+        },
+        findExistingCompanionTask: function (gardenCell) {
+            return findExistingCompanionTask(gardenCell);
+        },
+        syncCompanionModuleAccess: function (gardenCell, companionCell) {
+            return syncCompanionModuleAccess(gardenCell, companionCell);
+        },
+        getModuleLabel: function (moduleCell, fallback) {
+            return getModuleLabel(moduleCell, fallback);
+        },
+        writeModuleLabel: function (moduleCell, label) {
+            return writeModuleLabel(moduleCell, label);
+        },
+        linkedGardenModuleForCompanion: function (moduleCell) {
+            return linkedGardenModuleForCompanion(moduleCell);
+        },
+        linkedGardenLabelForCompanion: function (moduleCell) {
+            return linkedGardenLabelForCompanion(moduleCell);
+        },
+        addReciprocalLink: function (left, right) {
+            return addReciprocalLink(left, right);
+        },
+        selectRoleImage: function (roleCard) {
+            return selectRoleImage(ui, graph, roleCard);
+        }
+    };
 
-    installRootModuleCreationOverlay(); // NEW
-    installSelectedTeamModuleRoleOverlay(); // NEW
-    installSelectedRoleImageOverlay(); // NEW
+    installRootModuleCreationOverlay();
+    installSelectedTeamModuleRoleOverlay();
+    installSelectedRoleImageOverlay();
 
-    graph.addListener("usl:requestApplyModuleMargins", function (_sender, evt) { // CHANGE
-        const cell = evt && evt.getProperty ? evt.getProperty("cell") : null; // CHANGE
-        if (!cell || !isModule(cell)) return; // CHANGE
-        model.beginUpdate(); // CHANGE
-        try { // CHANGE
-            enforceGardenModuleMinimum(cell); // CHANGE
-            applyModuleMargins(cell, { allowShrink: false }); // CHANGE
-        } finally { // CHANGE
-            model.endUpdate(); // CHANGE
-        } // CHANGE
-    }); // CHANGE
+    graph.addListener("usl:requestApplyModuleMargins", function (_sender, evt) {
+        const cell = evt && evt.getProperty ? evt.getProperty("cell") : null;
+        if (!cell || !isModule(cell)) return;
+        model.beginUpdate();
+        try {
+            enforceGardenModuleMinimum(cell);
+            applyModuleMargins(cell, { allowShrink: false });
+        } finally {
+            model.endUpdate();
+        }
+    });
 
-    graph.addListener("usl:requestPromptSetModuleMargin", function (_sender, evt) { // NEW
-        const cell = evt && evt.getProperty ? evt.getProperty("cell") : null; // NEW
-        if (!cell || !isModule(cell)) return; // NEW
-        promptSetModuleMargin(cell); // NEW
-    }); // NEW
+    graph.addListener("usl:requestPromptSetModuleMargin", function (_sender, evt) {
+        const cell = evt && evt.getProperty ? evt.getProperty("cell") : null;
+        if (!cell || !isModule(cell)) return;
+        promptSetModuleMargin(cell);
+    });
 
-    graph.addListener("usl:requestSetModuleMargin", function (_sender, evt) { // NEW
-        const cell = evt && evt.getProperty ? evt.getProperty("cell") : null; // NEW
-        const marginPx = evt && evt.getProperty ? evt.getProperty("marginPx") : null; // NEW
-        if (!cell || !isModule(cell)) return; // NEW
-        setModuleMarginValue(cell, marginPx); // NEW
-    }); // NEW
+    graph.addListener("usl:requestSetModuleMargin", function (_sender, evt) {
+        const cell = evt && evt.getProperty ? evt.getProperty("cell") : null;
+        const marginPx = evt && evt.getProperty ? evt.getProperty("marginPx") : null;
+        if (!cell || !isModule(cell)) return;
+        setModuleMarginValue(cell, marginPx);
+    });
 
-    function registerTrellisContextMenuContributor(contributor) { // NEW
-        function finishRegistration() { // NEW
-            if (!window.TrellisContextMenu) return; // NEW
-            window.TrellisContextMenu.install(ui); // NEW
-            window.TrellisContextMenu.register(contributor); // NEW
-        } // NEW
+    function registerTrellisContextMenuContributor(contributor) {
+        function finishRegistration() {
+            if (!window.TrellisContextMenu) return;
+            window.TrellisContextMenu.install(ui);
+            window.TrellisContextMenu.register(contributor);
+        }
 
-        if (window.TrellisContextMenu) { // NEW
-            finishRegistration(); // NEW
-        } else if (typeof mxscript === "function") { // NEW
-            mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration); // NEW
-        } // NEW
-    } // NEW
+        if (window.TrellisContextMenu) {
+            finishRegistration();
+        } else if (typeof mxscript === "function") {
+            mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration);
+        }
+    }
 
-    registerTrellisContextMenuContributor({ // CHANGE
-        id: "modules", // NEW
-        priority: 100, // NEW
-        addItems: function (menu, cell, evt) { // CHANGE
+    registerTrellisContextMenuContributor({
+        id: "modules",
+        priority: 100,
+        addItems: function (menu, cell, evt) {
 
         // Add Module on background or right-click on module
         if (!cell) {
             menu.addItem("Add Module", null, function () {
                 const pt = graph.getPointForEvent(evt);
-                createModuleAtPoint(pt, "regular"); // CHANGE
+                createModuleAtPoint(pt, "regular");
             });
         }
 
-        const roleImageAction = roleImageActionForCell(cell); // NEW
-        if (roleImageAction) { // NEW
-            if (menu.addSeparator) menu.addSeparator(); // NEW
-            menu.addItem(roleImageAction.mode === "change" ? "Change Role Image" : "Add Role Image", null, function () { // NEW
-                selectRoleImage(ui, graph, roleImageAction.roleCard); // NEW
-            }); // NEW
-        } // NEW
+        const roleImageAction = roleImageActionForCell(cell);
+        if (roleImageAction) {
+            if (menu.addSeparator) menu.addSeparator();
+            menu.addItem(roleImageAction.mode === "change" ? "Change Role Image" : "Add Role Image", null, function () {
+                selectRoleImage(ui, graph, roleImageAction.roleCard);
+            });
+        }
 
         if (cell && isModule(cell)) {
             const isGarden = isGardenModule(cell);
             const isTeam = isTeamModule(cell);
-            const isTask = isTaskModule(cell); // NEW
+            const isTask = isTaskModule(cell);
 
             // Toggle options based on current type                                       
-            if (!isGarden && !isTeam && !isTask) { // CHANGE
+            if (!isGarden && !isTeam && !isTask) {
                 menu.addItem("Set as Garden Module", null, function () {
                     setModuleType(cell, "garden");
                 });
                 menu.addItem("Set as Team Module", null, function () {
                     setModuleType(cell, "team");
                 });
-                menu.addItem("Set as Task Module", null, function () { // NEW
-                    setModuleType(cell, "task"); // NEW
-                }); // NEW
+                menu.addItem("Set as Task Module", null, function () {
+                    setModuleType(cell, "task");
+                });
             } else {
                 menu.addItem("Set as Regular Module", null, function () {
                     setModuleType(cell, "regular");
@@ -2290,19 +2290,19 @@ Draw.loadPlugin(function (ui) {
 
             // Keep your existing margin editor (using ui.prompt)                         
             menu.addItem("Set Module Margin (px)…", null, function () {
-                promptSetModuleMargin(cell); // CHANGE
+                promptSetModuleMargin(cell);
             });
 
             // Team module gets Add Role Card                                             
             if (isTeam) {
                 menu.addItem("Add Role Card", null, function () {
                     const pt = graph.getPointForEvent(evt);
-                    addRoleCardToTeamModule(cell, pt.x, pt.y); // CHANGE
+                    addRoleCardToTeamModule(cell, pt.x, pt.y);
                 });
             }
 
         }
-        } // CHANGE
-    }); // CHANGE
+        }
+    });
 
 });

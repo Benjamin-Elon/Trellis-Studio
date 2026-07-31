@@ -17,7 +17,7 @@ function loadPlugin(options = {}) {
     const callbacks = [];
     const sentMessages = [];
     const openedLinks = [];
-    const releaseCalls = []; // NEW
+    const releaseCalls = [];
     const context = {
         window: dom.window,
         document: dom.window.document,
@@ -51,28 +51,28 @@ function loadPlugin(options = {}) {
     };
     context.window.trellisApp = {
         getInfo() {
-            return Promise.resolve(Object.assign({ // CHANGE
+            return Promise.resolve(Object.assign({
                 productName: "Trellis Studio",
                 version: "1.1.2",
                 repoUrl: "https://github.com/Benjamin-Elon/trellis-studio",
                 releasesUrl: "https://github.com/Benjamin-Elon/trellis-studio/releases",
                 issuesUrl: "https://github.com/Benjamin-Elon/trellis-studio/issues",
-                isPackaged: true, // NEW
-                canCheckForUpdates: true // NEW
-            }, options.appInfo || {})); // CHANGE
+                isPackaged: true,
+                canCheckForUpdates: true
+            }, options.appInfo || {}));
         }
     };
-    if (options.includeGetReleases !== false) { // NEW
-        context.window.trellisApp.getReleases = function () { // NEW
-            releaseCalls.push("trellisApp.getReleases"); // NEW
-            if (options.releaseError) return Promise.reject(options.releaseError); // NEW
-            return Promise.resolve(options.releases || []); // NEW
-        }; // NEW
-    } // NEW
+    if (options.includeGetReleases !== false) {
+        context.window.trellisApp.getReleases = function () {
+            releaseCalls.push("trellisApp.getReleases");
+            if (options.releaseError) return Promise.reject(options.releaseError);
+            return Promise.resolve(options.releases || []);
+        };
+    }
     context.window.open = href => openedLinks.push(href);
 
     vm.runInNewContext(readProjectFile("drawio/src/main/webapp/plugins/garden_planner_plugins/Trellis_Updates_Links.js"), context, { filename: pluginPath });
-    return { context, callbacks, sentMessages, openedLinks, releaseCalls, document: dom.window.document }; // CHANGE
+    return { context, callbacks, sentMessages, openedLinks, releaseCalls, document: dom.window.document };
 }
 
 function createUi() {
@@ -87,7 +87,7 @@ function createUi() {
     return {
         shown,
         ui: {
-            dialog: { bg: { style: {} }, container: { style: {} } }, // NEW
+            dialog: { bg: { style: {} }, container: { style: {} } },
             actions: {
                 addAction(id, funct) {
                     actions[id] = { funct };
@@ -143,22 +143,22 @@ test("Trellis updates helpers compare versions and sanitize release summaries", 
 
 test("Trellis updates plugin registers Help action and opens dialog", async () => {
     const fakeFetch = async () => {
-        throw new Error("renderer fetch should not be used when bridge exists"); // NEW
+        throw new Error("renderer fetch should not be used when bridge exists");
     };
-    const releases = [{ // NEW
-        tag_name: "v1.1.3", // NEW
-        name: "Trellis 1.1.3", // NEW
-        published_at: "2026-06-27T00:00:00Z", // NEW
-        html_url: "https://github.com/Benjamin-Elon/trellis-studio/releases/tag/v1.1.3", // CHANGE
-        body: "One useful change for gardeners." // NEW
-    }]; // NEW
+    const releases = [{
+        tag_name: "v1.1.3",
+        name: "Trellis 1.1.3",
+        published_at: "2026-06-27T00:00:00Z",
+        html_url: "https://github.com/Benjamin-Elon/trellis-studio/releases/tag/v1.1.3",
+        body: "One useful change for gardeners."
+    }];
     const mxUtils = {
         get(url, success) {
             assert.equal(url, "plugins/garden_planner_plugins/trellis_changelog.json");
             success({ getText: () => JSON.stringify({ version: 1, entries: [{ version: "1.1.2", date: "2026-06-28", items: ["Bundled changelog entry."] }] }) });
         }
     };
-    const { callbacks, sentMessages, releaseCalls } = loadPlugin({ fetch: fakeFetch, mxUtils, releases }); // CHANGE
+    const { callbacks, sentMessages, releaseCalls } = loadPlugin({ fetch: fakeFetch, mxUtils, releases });
     const { ui, actions, shown } = createUi();
 
     callbacks.forEach(callback => callback(ui));
@@ -172,99 +172,99 @@ test("Trellis updates plugin registers Help action and opens dialog", async () =
     await settle();
 
     assert.equal(shown.length, 1);
-    assert.equal(ui.dialog.container.style.zIndex, "2000000000"); // NEW
-    assert.equal(ui.dialog.bg.style.zIndex, "1999999999"); // NEW
-    assert.equal(shown[0].width, 960); // CHANGE
-    assert.equal(shown[0].height, 620); // NEW
-    assert.equal(shown[0].node.querySelectorAll("[role='tab']").length, 0); // NEW
-    assert.equal(shown[0].node.querySelectorAll(".trellis-updates-pane").length, 2); // NEW
-    assert.match(shown[0].node.textContent, /Support/); // NEW
-    assert.match(shown[0].node.textContent, /Project/); // NEW
-    assert.match(shown[0].node.textContent, /Contact/); // NEW
+    assert.equal(ui.dialog.container.style.zIndex, "2000000000");
+    assert.equal(ui.dialog.bg.style.zIndex, "1999999999");
+    assert.equal(shown[0].width, 960);
+    assert.equal(shown[0].height, 620);
+    assert.equal(shown[0].node.querySelectorAll("[role='tab']").length, 0);
+    assert.equal(shown[0].node.querySelectorAll(".trellis-updates-pane").length, 2);
+    assert.match(shown[0].node.textContent, /Support/);
+    assert.match(shown[0].node.textContent, /Project/);
+    assert.match(shown[0].node.textContent, /Contact/);
     assert.match(shown[0].node.textContent, /Trellis Studio 1\.1\.2/);
     assert.match(shown[0].node.textContent, /Trellis 1\.1\.3/);
     assert.match(shown[0].node.textContent, /Bundled changelog entry/);
-    assert.equal(findButton(shown[0].node, "Retry"), undefined); // NEW
+    assert.equal(findButton(shown[0].node, "Retry"), undefined);
 
     findButton(shown[0].node, "Check for updates").click();
     assert.deepEqual(sentMessages.at(-1), { action: "checkForUpdates", args: undefined });
-    assert.deepEqual(releaseCalls, ["trellisApp.getReleases"]); // CHANGE
+    assert.deepEqual(releaseCalls, ["trellisApp.getReleases"]);
 });
 
-test("Trellis updates falls back to direct release fetch without bridge", async () => { // NEW
-    const fetchCalls = []; // NEW
-    const fakeFetch = async url => { // NEW
-        fetchCalls.push(String(url)); // NEW
-        return { // NEW
-            ok: true, // NEW
-            async json() { // NEW
-                return [{ tag_name: "v1.1.4", name: "Direct release", published_at: "2026-06-28T00:00:00Z", html_url: "https://github.com/release", body: "" }]; // NEW
-            } // NEW
-        }; // NEW
-    }; // NEW
-    const mxUtils = { // NEW
-        get(url, success) { // NEW
-            success({ getText: () => JSON.stringify({ version: 1, entries: [] }) }); // NEW
-        } // NEW
-    }; // NEW
-    const { callbacks } = loadPlugin({ fetch: fakeFetch, mxUtils, includeGetReleases: false }); // NEW
-    const { ui, actions, shown } = createUi(); // NEW
-
-    callbacks.forEach(callback => callback(ui)); // NEW
-    actions.trellisUpdatesLinks.funct(); // NEW
-    await settle(); // NEW
-
-    assert.match(shown[0].node.textContent, /Direct release/); // NEW
-    assert.ok(fetchCalls.some(url => url.includes("api.github.com") && url.includes("per_page=10"))); // NEW
-}); // NEW
-
-test("Trellis updates dialog remains visible but disables update checks for developer builds", async () => { // NEW
-    const fakeFetch = async () => ({ // NEW
-        ok: true, // NEW
-        async json() { return []; } // NEW
-    }); // NEW
-    const mxUtils = { // NEW
-        get(url, success) { // NEW
-            success({ getText: () => JSON.stringify({ version: 1, entries: [] }) }); // NEW
-        } // NEW
-    }; // NEW
-    const { callbacks, sentMessages } = loadPlugin({ fetch: fakeFetch, mxUtils, appInfo: { isPackaged: false, canCheckForUpdates: false } }); // NEW
-    const { ui, actions, shown } = createUi(); // NEW
-
-    callbacks.forEach(callback => callback(ui)); // NEW
-    actions.trellisUpdatesLinks.funct(); // NEW
-    await settle(); // NEW
-
-    assert.equal(shown.length, 1); // NEW
-    assert.match(shown[0].node.textContent, /Update checks are disabled in developer builds/); // NEW
-    const updateButton = findButton(shown[0].node, "Check for updates"); // NEW
-    assert.equal(updateButton.disabled, true); // NEW
-    updateButton.click(); // NEW
-    assert.equal(sentMessages.length, 0); // NEW
-}); // NEW
-
-test("Trellis updates dialog shows inline GitHub fallback on fetch failure", async () => {
-    const fakeFetch = async () => {
-        throw new Error("renderer fetch should not be used when bridge exists"); // CHANGE
+test("Trellis updates falls back to direct release fetch without bridge", async () => {
+    const fetchCalls = [];
+    const fakeFetch = async url => {
+        fetchCalls.push(String(url));
+        return {
+            ok: true,
+            async json() {
+                return [{ tag_name: "v1.1.4", name: "Direct release", published_at: "2026-06-28T00:00:00Z", html_url: "https://github.com/release", body: "" }];
+            }
+        };
     };
     const mxUtils = {
         get(url, success) {
-            success({ getText: () => JSON.stringify({ version: 1, entries: [{ title: "Local fallback", items: ["Still available."] }] }) });
+            success({ getText: () => JSON.stringify({ version: 1, entries: [] }) });
         }
     };
-    const { callbacks, releaseCalls } = loadPlugin({ fetch: fakeFetch, mxUtils, releaseError: new Error("offline") }); // CHANGE
+    const { callbacks } = loadPlugin({ fetch: fakeFetch, mxUtils, includeGetReleases: false });
     const { ui, actions, shown } = createUi();
 
     callbacks.forEach(callback => callback(ui));
     actions.trellisUpdatesLinks.funct();
     await settle();
 
-    assert.match(shown[0].node.textContent, /Live GitHub releases are unavailable right now/); // CHANGE
+    assert.match(shown[0].node.textContent, /Direct release/);
+    assert.ok(fetchCalls.some(url => url.includes("api.github.com") && url.includes("per_page=10")));
+});
+
+test("Trellis updates dialog remains visible but disables update checks for developer builds", async () => {
+    const fakeFetch = async () => ({
+        ok: true,
+        async json() { return []; }
+    });
+    const mxUtils = {
+        get(url, success) {
+            success({ getText: () => JSON.stringify({ version: 1, entries: [] }) });
+        }
+    };
+    const { callbacks, sentMessages } = loadPlugin({ fetch: fakeFetch, mxUtils, appInfo: { isPackaged: false, canCheckForUpdates: false } });
+    const { ui, actions, shown } = createUi();
+
+    callbacks.forEach(callback => callback(ui));
+    actions.trellisUpdatesLinks.funct();
+    await settle();
+
+    assert.equal(shown.length, 1);
+    assert.match(shown[0].node.textContent, /Update checks are disabled in developer builds/);
+    const updateButton = findButton(shown[0].node, "Check for updates");
+    assert.equal(updateButton.disabled, true);
+    updateButton.click();
+    assert.equal(sentMessages.length, 0);
+});
+
+test("Trellis updates dialog shows inline GitHub fallback on fetch failure", async () => {
+    const fakeFetch = async () => {
+        throw new Error("renderer fetch should not be used when bridge exists");
+    };
+    const mxUtils = {
+        get(url, success) {
+            success({ getText: () => JSON.stringify({ version: 1, entries: [{ title: "Local fallback", items: ["Still available."] }] }) });
+        }
+    };
+    const { callbacks, releaseCalls } = loadPlugin({ fetch: fakeFetch, mxUtils, releaseError: new Error("offline") });
+    const { ui, actions, shown } = createUi();
+
+    callbacks.forEach(callback => callback(ui));
+    actions.trellisUpdatesLinks.funct();
+    await settle();
+
+    assert.match(shown[0].node.textContent, /Live GitHub releases are unavailable right now/);
     assert.match(shown[0].node.textContent, /Still available/);
     assert.ok(findButton(shown[0].node, "Retry"));
-    findButton(shown[0].node, "Retry").click(); // NEW
-    await settle(); // NEW
-    assert.deepEqual(releaseCalls, ["trellisApp.getReleases", "trellisApp.getReleases"]); // NEW
+    findButton(shown[0].node, "Retry").click();
+    await settle();
+    assert.deepEqual(releaseCalls, ["trellisApp.getReleases", "trellisApp.getReleases"]);
 });
 
 test("Trellis updates integration is registered, default-loaded, and bridged", () => {
@@ -275,32 +275,32 @@ test("Trellis updates integration is registered, default-loaded, and bridged", (
     const electronSource = readProjectFile("src/main/electron.js");
 
     assert.match(appSource, /'trellisUpdatesLinks': 'plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js'/);
-    assert.match(appSource, /App\.trellisDefaultPlugins = App\.publicPlugin\.slice\(\); \/\/ NEW/); // CHANGE
-    assert.match(appSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\); \/\/ CHANGE/); // CHANGE
-    assert.ok(appSource.indexOf("App.loadPlugins(App.trellisDefaultPlugins); // CHANGE") < appSource.indexOf("if (urlParams['plugins'] != '0' && urlParams['offline'] != '1')")); // CHANGE
+    assert.match(appSource, /App\.trellisDefaultPlugins = App\.publicPlugin\.slice\(\); \/\/ NEW/);
+    assert.match(appSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\); \/\/ CHANGE/);
+    assert.ok(appSource.indexOf("App.loadPlugins(App.trellisDefaultPlugins); // CHANGE") < appSource.indexOf("if (urlParams['plugins'] != '0' && urlParams['offline'] != '1')"));
     assert.match(bundledSource, /'trellisUpdatesLinks': 'plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js'/);
-    assert.match(bundledSource, /App\.trellisDefaultPlugins=App\.publicPlugin\.slice\(\)/); // CHANGE
-    assert.match(bundledSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/); // CHANGE
-    assert.ok(bundledSource.indexOf('App.loadPlugins(App.trellisDefaultPlugins)') < bundledSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)')); // CHANGE
+    assert.match(bundledSource, /App\.trellisDefaultPlugins=App\.publicPlugin\.slice\(\)/);
+    assert.match(bundledSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/);
+    assert.ok(bundledSource.indexOf('App.loadPlugins(App.trellisDefaultPlugins)') < bundledSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)'));
     assert.match(integrateSource, /trellisUpdatesLinks:"plugins\/garden_planner_plugins\/Trellis_Updates_Links\.js"/);
-    assert.match(integrateSource, /App\.trellisDefaultPlugins=App\.publicPlugin\.slice\(\)/); // CHANGE
-    assert.match(integrateSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/); // CHANGE
-    assert.ok(integrateSource.indexOf('App.loadPlugins(App.trellisDefaultPlugins)') < integrateSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)')); // CHANGE
+    assert.match(integrateSource, /App\.trellisDefaultPlugins=App\.publicPlugin\.slice\(\)/);
+    assert.match(integrateSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/);
+    assert.ok(integrateSource.indexOf('App.loadPlugins(App.trellisDefaultPlugins)') < integrateSource.indexOf('if("0"!=urlParams.plugins&&"1"!=urlParams.offline)'));
     assert.match(preloadSource, /contextBridge\.exposeInMainWorld\('trellisApp'/);
-    assert.match(preloadSource, /getReleases\(\) \{ \/\/ NEW/); // NEW
-    assert.match(preloadSource, /\{ action: 'getTrellisReleases' \}, \/\/ NEW/); // NEW
-    assert.match(preloadSource, /contextBridge\.exposeInMainWorld\('trellisShare'/); // NEW
-    assert.match(preloadSource, /action: 'getTrellisSyncthingShareInfo'/); // NEW
-    assert.match(preloadSource, /action: 'openTrellisEmailDraft'/); // NEW
+    assert.match(preloadSource, /getReleases\(\) \{ \/\/ NEW/);
+    assert.match(preloadSource, /\{ action: 'getTrellisReleases' \}, \/\/ NEW/);
+    assert.match(preloadSource, /contextBridge\.exposeInMainWorld\('trellisShare'/);
+    assert.match(preloadSource, /action: 'getTrellisSyncthingShareInfo'/);
+    assert.match(preloadSource, /action: 'openTrellisEmailDraft'/);
     assert.match(electronSource, /case 'getTrellisAppInfo': \/\/ NEW/);
-    assert.match(electronSource, /const trellisReleasesApiUrl = 'https:\/\/api\.github\.com\/repos\/Benjamin-Elon\/trellis-studio\/releases\?per_page=10'; \/\/ CHANGE/); // CHANGE
-    assert.match(electronSource, /const trellisReleasesTimeoutMs = 15000; \/\/ NEW/); // NEW
-    assert.match(electronSource, /async function getTrellisReleases\(\) \{ \/\/ NEW/); // NEW
-    assert.match(electronSource, /fetch\(trellisReleasesApiUrl/); // NEW
-    assert.match(electronSource, /controller\.abort\(\)/); // NEW
-    assert.match(electronSource, /case 'getTrellisReleases': \/\/ NEW/); // NEW
-    assert.match(electronSource, /case 'getTrellisSyncthingShareInfo': \/\/ NEW/); // NEW
-    assert.match(electronSource, /case 'openTrellisEmailDraft': \/\/ NEW/); // NEW
-    assert.match(electronSource, /mailto:/); // NEW
-    assert.match(electronSource, /canCheckForUpdates: canCheckForUpdates\(\) \/\/ NEW/); // NEW
+    assert.match(electronSource, /const trellisReleasesApiUrl = 'https:\/\/api\.github\.com\/repos\/Benjamin-Elon\/trellis-studio\/releases\?per_page=10'; \/\/ CHANGE/);
+    assert.match(electronSource, /const trellisReleasesTimeoutMs = 15000; \/\/ NEW/);
+    assert.match(electronSource, /async function getTrellisReleases\(\) \{ \/\/ NEW/);
+    assert.match(electronSource, /fetch\(trellisReleasesApiUrl/);
+    assert.match(electronSource, /controller\.abort\(\)/);
+    assert.match(electronSource, /case 'getTrellisReleases': \/\/ NEW/);
+    assert.match(electronSource, /case 'getTrellisSyncthingShareInfo': \/\/ NEW/);
+    assert.match(electronSource, /case 'openTrellisEmailDraft': \/\/ NEW/);
+    assert.match(electronSource, /mailto:/);
+    assert.match(electronSource, /canCheckForUpdates: canCheckForUpdates\(\) \/\/ NEW/);
 });

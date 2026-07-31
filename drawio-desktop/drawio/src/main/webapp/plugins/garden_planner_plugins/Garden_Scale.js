@@ -13,22 +13,22 @@ Draw.loadPlugin(function (ui) {
     const graph = ui && ui.editor && ui.editor.graph;
     if (!graph) return;
 
-    // Prevent double install on the same graph instance. // CHANGE
+    // Prevent double install on the same graph instance.
     if (graph.__gardenScaleOverlayInstalled) return;
     graph.__gardenScaleOverlayInstalled = true;
 
     // -------------------- Config --------------------
     const PX_PER_CM = 5;
     const DRAW_SCALE = 0.18;
-    const CM_PER_FOOT = 30.48; // NEW
-    const CM_PER_INCH = 2.54; // NEW
+    const CM_PER_FOOT = 30.48;
+    const CM_PER_INCH = 2.54;
 
     const MAX_OVERLAYS = 6; // cap to avoid clutter
-    const OVERLAY_PADDING = "3px 7px"; // CHANGE
+    const OVERLAY_PADDING = "3px 7px";
     const OVERLAY_FONT = "12px";
-    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 }); // CHANGE
-    const OVERLAY_Z = GRAPH_OVERLAY_Z.ANNOTATION; // CHANGE
-    const CHIP_Y_OFFSET = 8; // px below rotated bounds, matching draw.io hint intent. // NEW
+    const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 });
+    const OVERLAY_Z = GRAPH_OVERLAY_Z.ANNOTATION;
+    const CHIP_Y_OFFSET = 8; // px below rotated bounds, matching draw.io hint intent.
 
     const GROUP_LABEL_FONT_PX = 12;
     const GROUP_LABEL_LINE_HEIGHT = 1.25;
@@ -38,7 +38,7 @@ Draw.loadPlugin(function (ui) {
     );
 
     // -------------------- Cell classification --------------------
-    function isGardenBed(cell) { // CHANGE
+    function isGardenBed(cell) {
         return !!cell && cell.getAttribute && (
             cell.getAttribute("garden_bed") === "1" ||
             cell.getAttribute("gardenBed") === "1" ||
@@ -54,19 +54,19 @@ Draw.loadPlugin(function (ui) {
         return !!cell && cell.getAttribute && cell.getAttribute("tiler_group") === "1";
     }
 
-    function isGardenModule(cell) { // NEW
+    function isGardenModule(cell) {
         return !!cell && cell.getAttribute && cell.getAttribute("garden_module") === "1";
     }
 
-    function getModelParent(cell) { // NEW
+    function getModelParent(cell) {
         return model && model.getParent ? model.getParent(cell) : null;
     }
 
-    function getCellId(cell) { // NEW
+    function getCellId(cell) {
         return cell && cell.getId ? cell.getId() : (cell && cell.id);
     }
 
-    function findTilerGroupAncestor(cell) { // CHANGE
+    function findTilerGroupAncestor(cell) {
         let cur = cell;
         while (cur) {
             if (isTilerGroup(cur)) return cur;
@@ -75,7 +75,7 @@ Draw.loadPlugin(function (ui) {
         return null;
     }
 
-    function findGardenModuleAncestor(cell) { // NEW
+    function findGardenModuleAncestor(cell) {
         let cur = cell;
         while (cur) {
             if (isGardenModule(cur)) return cur;
@@ -88,30 +88,30 @@ Draw.loadPlugin(function (ui) {
     const model = graph.getModel && graph.getModel();
     if (!model) return;
 
-    const overlaysByCellId = new Map(); // cellId -> { div, cell } // CHANGE
-    const activeResizeCellIds = new Set(); // cell ids whose persistent chip should be hidden. // NEW
+    const overlaysByCellId = new Map(); // cellId -> { div, cell }
+    const activeResizeCellIds = new Set(); // cell ids whose persistent chip should be hidden.
 
     // -------------------- Unit conversion and formatting --------------------
     function unitsToCm(units) {
         return Number(units) / (PX_PER_CM * DRAW_SCALE);
     }
 
-    function normalizeUnitSystem(units) { // NEW
+    function normalizeUnitSystem(units) {
         return String(units || "").trim() === "imperial" ? "imperial" : "metric";
     }
 
-    function resolveUnitSystem(cell) { // NEW
+    function resolveUnitSystem(cell) {
         const moduleCell = findGardenModuleAncestor(cell);
         return normalizeUnitSystem(moduleCell && moduleCell.getAttribute ? moduleCell.getAttribute("unit_system") : "");
     }
 
-    function formatMetricLengthCm(cm) { // CHANGE
+    function formatMetricLengthCm(cm) {
         if (!Number.isFinite(cm)) return "?";
         if (cm < 100) return `${cm.toFixed(1)} cm`;
         return `${(cm / 100).toFixed(2)} m`;
     }
 
-    function formatImperialLengthCm(cm) { // NEW
+    function formatImperialLengthCm(cm) {
         if (!Number.isFinite(cm)) return "?";
         const totalInches = Math.max(0, Math.round(cm / CM_PER_INCH));
         const feet = Math.floor(totalInches / 12);
@@ -119,13 +119,13 @@ Draw.loadPlugin(function (ui) {
         return `${feet} ft ${inches} in`;
     }
 
-    function formatLengthCm(cm, unitSystem) { // CHANGE
+    function formatLengthCm(cm, unitSystem) {
         return normalizeUnitSystem(unitSystem) === "imperial"
             ? formatImperialLengthCm(cm)
             : formatMetricLengthCm(cm);
     }
 
-    function getMeasuredGeometryUnits(cell, bounds) { // NEW
+    function getMeasuredGeometryUnits(cell, bounds) {
         const source = bounds || (cell && cell.getGeometry ? cell.getGeometry() : null);
         if (!source) return null;
 
@@ -137,19 +137,19 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
-    function formatDimensionsFromUnits(widthUnits, heightUnits, cell) { // NEW
+    function formatDimensionsFromUnits(widthUnits, heightUnits, cell) {
         const unitSystem = resolveUnitSystem(cell);
         return `${formatLengthCm(unitsToCm(widthUnits), unitSystem)} x ${formatLengthCm(unitsToCm(heightUnits), unitSystem)}`;
     }
 
-    function formatCellDimensions(cell, bounds) { // NEW
+    function formatCellDimensions(cell, bounds) {
         const measured = getMeasuredGeometryUnits(cell, bounds);
         if (!measured) return "";
         return formatDimensionsFromUnits(measured.width, measured.height, cell);
     }
 
     // -------------------- Target resolution --------------------
-    function resolveTargetCellForOverlay(cell) { // CHANGE
+    function resolveTargetCellForOverlay(cell) {
         if (!cell) return null;
         if (isGardenBed(cell)) return cell;
         if (isTilerGroup(cell)) return cell;
@@ -170,7 +170,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     // -------------------- DOM overlay creation --------------------
-    function ensureOverlayContainer() { // CHANGE
+    function ensureOverlayContainer() {
         const c = graph.container;
         if (!c) return;
 
@@ -192,27 +192,27 @@ Draw.loadPlugin(function (ui) {
         div.style.background = "rgba(0,0,0,0.75)";
         div.style.color = "#fff";
         div.style.boxShadow = "0 1px 3px rgba(0,0,0,0.35)";
-        div.style.lineHeight = "16px"; // NEW
+        div.style.lineHeight = "16px";
         return div;
     }
 
     // -------------------- Rotation and placement helpers --------------------
     function getRotationDeg(cell) {
         const style = graph.getCellStyle ? (graph.getCellStyle(cell) || {}) : {};
-        const key = (typeof mxConstants !== "undefined" && mxConstants.STYLE_ROTATION) ? mxConstants.STYLE_ROTATION : "rotation"; // CHANGE
+        const key = (typeof mxConstants !== "undefined" && mxConstants.STYLE_ROTATION) ? mxConstants.STYLE_ROTATION : "rotation";
         const r = style[key] != null ? style[key] : style.rotation;
         const n = Number(r);
         return Number.isFinite(n) ? n : 0;
     }
 
-    function getRotatedBounds(bounds, rotationDeg) { // NEW
+    function getRotatedBounds(bounds, rotationDeg) {
         if (typeof mxUtils !== "undefined" && mxUtils.getBoundingBox) {
             return mxUtils.getBoundingBox(bounds, rotationDeg) || bounds;
         }
         return bounds;
     }
 
-    function positionOverlayDiv(entry) { // CHANGE
+    function positionOverlayDiv(entry) {
         const cell = entry.cell;
         const state = graph.view && graph.view.getState ? graph.view.getState(cell) : null;
         if (!state) return false;
@@ -245,7 +245,7 @@ Draw.loadPlugin(function (ui) {
         const entry = overlaysByCellId.get(cellId);
         if (!entry) return;
         try {
-            if (entry.div && entry.div.parentNode) entry.div.parentNode.removeChild(entry.div); // CHANGE
+            if (entry.div && entry.div.parentNode) entry.div.parentNode.removeChild(entry.div);
         } finally {
             overlaysByCellId.delete(cellId);
         }
@@ -282,7 +282,7 @@ Draw.loadPlugin(function (ui) {
 
             let entry = overlaysByCellId.get(id);
             if (!entry) {
-                entry = { div: createOverlayDiv(), cell }; // CHANGE
+                entry = { div: createOverlayDiv(), cell };
                 graph.container.appendChild(entry.div);
                 overlaysByCellId.set(id, entry);
             } else {
@@ -301,18 +301,18 @@ Draw.loadPlugin(function (ui) {
     }
 
     // -------------------- Resize hint integration --------------------
-    function isResizeHandleIndex(index) { // NEW
+    function isResizeHandleIndex(index) {
         if (index == null || typeof mxEvent === "undefined") return false;
         if (index === mxEvent.LABEL_HANDLE || index === mxEvent.ROTATION_HANDLE) return false;
         if (mxEvent.CUSTOM_HANDLE != null && index <= mxEvent.CUSTOM_HANDLE) return false;
         return true;
     }
 
-    function getHandlerTargetCell(handler) { // NEW
+    function getHandlerTargetCell(handler) {
         return handler && handler.state ? resolveTargetCellForOverlay(handler.state.cell) : null;
     }
 
-    function markResizeTarget(handler, hidden) { // NEW
+    function markResizeTarget(handler, hidden) {
         const target = getHandlerTargetCell(handler);
         const id = getCellId(target);
         if (!id) return;
@@ -323,7 +323,7 @@ Draw.loadPlugin(function (ui) {
         refreshOverlayPositions();
     }
 
-    function getHintBoundsForHandler(handler, target) { // NEW
+    function getHintBoundsForHandler(handler, target) {
         const raw = handler && handler.unscaledBounds
             ? handler.unscaledBounds
             : (handler && handler.bounds && handler.graph && handler.graph.view && handler.graph.view.scale
@@ -336,7 +336,7 @@ Draw.loadPlugin(function (ui) {
         return raw ? getMeasuredGeometryUnits(target, raw) : null;
     }
 
-    function replaceResizeHintText(handler) { // NEW
+    function replaceResizeHintText(handler) {
         const target = getHandlerTargetCell(handler);
         if (!target || !handler || !handler.hint || !isResizeHandleIndex(handler.index)) return;
 
@@ -346,7 +346,7 @@ Draw.loadPlugin(function (ui) {
         handler.hint.innerHTML = formatDimensionsFromUnits(measured.width, measured.height, target);
     }
 
-    function installResizeHintWrapper() { // NEW
+    function installResizeHintWrapper() {
         if (typeof mxVertexHandler === "undefined" || !mxVertexHandler.prototype) return;
         if (mxVertexHandler.prototype.__gardenScaleHintInstalled) return;
         mxVertexHandler.prototype.__gardenScaleHintInstalled = true;
@@ -356,40 +356,40 @@ Draw.loadPlugin(function (ui) {
         const originalReset = mxVertexHandler.prototype.reset;
         const originalUpdateHint = mxVertexHandler.prototype.updateHint;
 
-        mxVertexHandler.prototype.mouseDown = function (sender, me) { // NEW
-            const controller = this.graph && this.graph.__gardenScaleController; // NEW
+        mxVertexHandler.prototype.mouseDown = function (sender, me) {
+            const controller = this.graph && this.graph.__gardenScaleController;
             const handle = this.getHandleForEvent ? this.getHandleForEvent(me) : null;
-            const shouldHideChip = !!controller && !!controller.getHandlerTargetCell(this) && controller.isResizeHandleIndex(handle); // CHANGE
-            if (shouldHideChip) controller.markResizeTarget(this, true); // CHANGE
+            const shouldHideChip = !!controller && !!controller.getHandlerTargetCell(this) && controller.isResizeHandleIndex(handle);
+            if (shouldHideChip) controller.markResizeTarget(this, true);
             return originalMouseDown.apply(this, arguments);
         };
 
-        mxVertexHandler.prototype.mouseUp = function (sender, me) { // NEW
-            const controller = this.graph && this.graph.__gardenScaleController; // NEW
+        mxVertexHandler.prototype.mouseUp = function (sender, me) {
+            const controller = this.graph && this.graph.__gardenScaleController;
             try {
                 return originalMouseUp.apply(this, arguments);
             } finally {
-                if (controller) controller.markResizeTarget(this, false); // CHANGE
+                if (controller) controller.markResizeTarget(this, false);
             }
         };
 
-        mxVertexHandler.prototype.reset = function () { // NEW
-            const controller = this.graph && this.graph.__gardenScaleController; // NEW
+        mxVertexHandler.prototype.reset = function () {
+            const controller = this.graph && this.graph.__gardenScaleController;
             try {
                 return originalReset.apply(this, arguments);
             } finally {
-                if (controller) controller.markResizeTarget(this, false); // CHANGE
+                if (controller) controller.markResizeTarget(this, false);
             }
         };
 
-        mxVertexHandler.prototype.updateHint = function (me) { // NEW
+        mxVertexHandler.prototype.updateHint = function (me) {
             originalUpdateHint.apply(this, arguments);
-            const controller = this.graph && this.graph.__gardenScaleController; // NEW
-            if (controller) controller.replaceResizeHintText(this); // CHANGE
+            const controller = this.graph && this.graph.__gardenScaleController;
+            if (controller) controller.replaceResizeHintText(this);
         };
     }
 
-    graph.__gardenScaleController = { // NEW
+    graph.__gardenScaleController = {
         getHandlerTargetCell,
         isResizeHandleIndex,
         markResizeTarget,
@@ -397,8 +397,8 @@ Draw.loadPlugin(function (ui) {
     };
 
     // -------------------- Test surface --------------------
-    window.TrellisGardenScale = window.TrellisGardenScale || {}; // NEW
-    window.TrellisGardenScale._test = { // NEW
+    window.TrellisGardenScale = window.TrellisGardenScale || {};
+    window.TrellisGardenScale._test = {
         unitsToCm,
         formatLengthCm,
         formatMetricLengthCm,
@@ -417,7 +417,7 @@ Draw.loadPlugin(function (ui) {
     };
 
     // -------------------- Event wiring --------------------
-    installResizeHintWrapper(); // NEW
+    installResizeHintWrapper();
 
     graph.getSelectionModel().addListener(mxEvent.CHANGE, function () {
         syncOverlaysToSelection();
@@ -433,7 +433,7 @@ Draw.loadPlugin(function (ui) {
         refreshOverlayPositions();
     });
 
-    if (graph.container && graph.container.addEventListener) { // CHANGE
+    if (graph.container && graph.container.addEventListener) {
         graph.container.addEventListener("scroll", function () {
             refreshOverlayPositions();
         }, { passive: true });
