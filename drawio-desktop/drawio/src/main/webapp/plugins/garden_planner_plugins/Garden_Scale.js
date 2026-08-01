@@ -1,10 +1,10 @@
 /**
- * Draw.io Plugin: Selection Scale Overlay (Garden Beds + Tiler Groups)
+ * Draw.io Plugin: Selection Scale Overlay (Garden Modules + Garden Beds + Tiler Groups)
  *
- * Shows one compact unit-aware dimension chip for selected garden beds
- * (garden_bed=1) and tiler groups (tiler_group=1). The chip uses the nearest
+ * Shows one compact unit-aware dimension chip for selected garden modules
+ * (garden_module=1), garden beds (garden_bed=1), and tiler groups (tiler_group=1). The chip uses the nearest
  * garden module's unit_system setting, and the same formatter is reused for
- * draw.io's built-in resize hint while garden beds/groups are resized.
+ * draw.io's built-in resize hint while garden modules, garden beds, and groups are resized.
  *
  * If a plant circle (plant_tiler=1) is selected, the overlay is shown for its
  * tiler group ancestor.
@@ -151,6 +151,7 @@ Draw.loadPlugin(function (ui) {
     // -------------------- Target resolution --------------------
     function resolveTargetCellForOverlay(cell) {
         if (!cell) return null;
+        if (isGardenModule(cell)) return cell; // CHANGE
         if (isGardenBed(cell)) return cell;
         if (isTilerGroup(cell)) return cell;
         if (isPlantCircle(cell)) return findTilerGroupAncestor(cell);

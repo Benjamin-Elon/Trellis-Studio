@@ -97,15 +97,21 @@ function installPlugin(cells, parents, selection) {
     vm.runInThisContext(source, { filename: pluginPath });
     callbacks[0]({ editor: { graph } });
 
-    return { graph, container, api: global.window.TrellisGardenScale._test };
+    return { graph, container, listeners, api: global.window.TrellisGardenScale._test }; // CHANGE
 }
 
 function cmToUnits(cm) {
     return cm * 5 * 0.18;
 }
 
+function fireListeners(listeners, eventName) { // CHANGE
+    listeners.forEach(args => {
+        if (args[0] === eventName && typeof args[1] === "function") args[1]();
+    });
+}
+
 function run() {
-    const moduleMetric = makeCell("moduleMetric", { garden_module: "1", unit_system: "metric" });
+    const moduleMetric = makeCell("moduleMetric", { garden_module: "1", unit_system: "metric" }, { width: cmToUnits(400), height: cmToUnits(300) }); // CHANGE
     const moduleImperial = makeCell("moduleImperial", { garden_module: "1", unit_system: "imperial" });
     const bed = makeCell("bed", { garden_bed: "1" }, { width: cmToUnits(121.92), height: cmToUnits(243.84) });
     const group = makeCell("group", { tiler_group: "1" }, { width: cmToUnits(100), height: cmToUnits(200) + 21 });
@@ -119,7 +125,7 @@ function run() {
         [plant, group]
     ]);
     const selection = { cells: [bed] };
-    const { graph, api, container } = installPlugin([moduleMetric, moduleImperial, bed, group, outsideBed, plain], parents, selection);
+    const { graph, api, container, listeners } = installPlugin([moduleMetric, moduleImperial, bed, group, outsideBed, plain], parents, selection); // CHANGE
 
     assert.strictEqual(api.formatMetricLengthCm(99.94), "99.9 cm");
     assert.strictEqual(api.formatMetricLengthCm(100), "1.00 m");
@@ -128,9 +134,12 @@ function run() {
     assert.strictEqual(api.resolveUnitSystem(bed), "imperial");
     assert.strictEqual(api.resolveUnitSystem(group), "metric");
     assert.strictEqual(api.resolveUnitSystem(outsideBed), "metric");
+    assert.strictEqual(api.resolveUnitSystem(moduleMetric), "metric"); // CHANGE
 
     assert.strictEqual(api.formatCellDimensions(bed), "4 ft 0 in x 8 ft 0 in");
     assert.strictEqual(api.formatCellDimensions(group), "1.00 m x 2.00 m");
+    assert.strictEqual(api.formatCellDimensions(moduleMetric), "4.00 m x 3.00 m"); // CHANGE
+    assert.strictEqual(api.resolveTargetCellForOverlay(moduleMetric), moduleMetric); // CHANGE
     assert.strictEqual(api.resolveTargetCellForOverlay(plant), group);
 
     const handler = {
@@ -142,6 +151,16 @@ function run() {
     };
     api.replaceResizeHintText(handler);
     assert.strictEqual(handler.hint.innerHTML, "5 ft 0 in x 10 ft 0 in");
+
+    const moduleHandler = { // CHANGE
+        state: { cell: moduleMetric },
+        graph: { view: { scale: 1 } },
+        index: 0,
+        hint: { innerHTML: "native" },
+        unscaledBounds: { width: cmToUnits(500), height: cmToUnits(350) }
+    };
+    api.replaceResizeHintText(moduleHandler);
+    assert.strictEqual(moduleHandler.hint.innerHTML, "5.00 m x 3.50 m"); // CHANGE
 
     const wrappedHandler = new global.mxVertexHandler();
     wrappedHandler.state = { cell: bed };
@@ -170,6 +189,17 @@ function run() {
     global.window.TrellisGardenScale._test.markResizeTarget({ state: { cell: bed } }, false);
     assert.strictEqual(api.activeResizeCellIds.has("bed"), false);
     assert.strictEqual(container.children[0].style.display, "");
+    selection.cells = [moduleMetric]; // CHANGE
+    fireListeners(listeners, "change"); // CHANGE
+    assert.strictEqual(container.children.length, 1); // CHANGE
+    assert.strictEqual(container.children[0].textContent, "4.00 m x 3.00 m"); // CHANGE
+    global.window.TrellisGardenScale._test.markResizeTarget({ state: { cell: moduleMetric } }, true); // CHANGE
+    assert.strictEqual(api.activeResizeCellIds.has("moduleMetric"), true); // CHANGE
+    assert.strictEqual(container.children[0].style.display, "none"); // CHANGE
+    global.window.TrellisGardenScale._test.markResizeTarget({ state: { cell: moduleMetric } }, false); // CHANGE
+    assert.strictEqual(api.activeResizeCellIds.has("moduleMetric"), false); // CHANGE
+    assert.strictEqual(container.children[0].style.display, ""); // CHANGE
+    assert.strictEqual(api.resolveTargetCellForOverlay(plain), null); // CHANGE
 }
 
 run();

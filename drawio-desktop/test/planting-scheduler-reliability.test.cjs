@@ -3512,6 +3512,16 @@ test('save path passes the in-memory task template to graph application', () => 
     assert.match(source, /taskTemplate,\s*\/\/ FIX: generate tasks from the in-memory template/);
 });
 
+test('scheduler tab buttons do not style an out-of-scope save button', () => { // FIX: guard against copied button styling references that break dialog open
+    const source = fs.readFileSync(schedulerPath, 'utf8'); // FIX
+    const tabsStart = source.indexOf('const scheduleTabBtn = makeTabButton("Schedule", div);'); // FIX
+    const tabsEnd = source.indexOf('tabsHeader.appendChild(scheduleTabBtn);', tabsStart); // FIX
+    const tabsBlock = source.slice(tabsStart, tabsEnd); // FIX
+    assert.ok(tabsStart >= 0 && tabsEnd > tabsStart, 'expected scheduler tab button block'); // FIX
+    assert.doesNotMatch(tabsBlock, /applySharedButtonStyle\(saveBtn,\s*'add'\)/); // FIX
+    assert.match(source, /const okBtn = mxUtils\.button\('Save'[\s\S]*applySharedButtonStyle\(okBtn,\s*'add'\);/); // FIX
+});
+
 test('schedule save requests selection overlay refresh after final graph refresh', () => {
     const source = fs.readFileSync(schedulerPath, 'utf8');
     assert.match(source, /function requestSelectionVisualsRefresh\(graph, cell\)/);

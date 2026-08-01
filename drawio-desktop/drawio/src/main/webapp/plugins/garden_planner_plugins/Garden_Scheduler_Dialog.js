@@ -11284,7 +11284,6 @@ Draw.loadPlugin(function (ui) {
             tabsBody.appendChild(tasksTab);
             setActiveTabButton(tasksTabBtn);
         });
-        applySharedButtonStyle(saveBtn, 'add');
         tasksTabBtn.className = "usl-scheduler-tab";
         applySharedButtonStyle(tasksTabBtn, 'neutral');
         tasksTabBtn.style.minWidth = "100px";
