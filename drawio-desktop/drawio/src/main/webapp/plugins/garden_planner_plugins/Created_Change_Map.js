@@ -38,7 +38,14 @@ Draw.loadPlugin(function (ui) {
     if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === 'function') {
       window.Trellis.ui.applyButtonStyle(button, variant, options);
     } else if (button) {
-      button.setAttribute('data-trellis-button-variant', variant || 'neutral');
+      const normalized = variant || 'neutral'; // CHANGE: fallback needs the variant to support active open styling
+      const activeOpen = normalized === 'open' && options && options.active === true; // CHANGE: match shared active-open treatment before Trellis UI loads
+      const style = { open: ['#2563eb', activeOpen ? '#1e3a8a' : '#1d4ed8', activeOpen ? '#eff6ff' : '#fff'], add: ['#188038', '#166534', '#fff'], close: ['#b91c1c', '#b91c1c', '#fff'], danger: ['#b91c1c', '#fff', '#b91c1c'], neutral: ['#6b7280', '#111827', '#fff'] }[normalized] || ['#6b7280', '#111827', '#fff']; // NEW
+      button.setAttribute('data-trellis-button-variant', normalized);
+      button.style.border = '1px solid ' + style[0]; // CHANGE
+      button.style.background = style[2]; // CHANGE
+      button.style.color = style[1]; // CHANGE
+      if (activeOpen) button.style.fontWeight = '700'; // CHANGE: fallback active emphasis
     }
     return button;
   }
@@ -1543,6 +1550,7 @@ Draw.loadPlugin(function (ui) {
   // -------------------- UI overlay --------------------
 
   let panel = null;
+  let historyToolbarButton = null; // CHANGE: retain the toolbar button so its active state can track the panel
   let modeSelect = null;
   let scopeSelect = null;
   let windowValueInput = null;
@@ -1660,6 +1668,14 @@ Draw.loadPlugin(function (ui) {
     return !!(panel && panel.style.display !== 'none' && graph.__ccPanelVisible);
   }
 
+  function updateHistoryToolbarButton() {
+    if (!historyToolbarButton) return;
+    const active = isPanelVisible();
+    historyToolbarButton.title = active ? 'Hide ChangeMap History' : 'Show ChangeMap History'; // CHANGE: align title with current panel state
+    applyChangeMapButtonStyle(historyToolbarButton, 'open', { compact: true, active: active }); // CHANGE: reuse shared light-blue active open-button styling
+    historyToolbarButton.setAttribute('aria-pressed', active ? 'true' : 'false'); // CHANGE: expose panel state to assistive tech
+  }
+
   function showPanel() {
     createPanel();
     if (!panel) return;
@@ -1669,6 +1685,7 @@ Draw.loadPlugin(function (ui) {
     syncPanelFromState();
     updateNavUI();
     updateHistoryUI();
+    updateHistoryToolbarButton(); // CHANGE: opening the panel activates the history button
   }
 
   function hidePanel() {
@@ -1677,6 +1694,7 @@ Draw.loadPlugin(function (ui) {
     graph.__ccPanelVisible = false;
     clearHistoryCompareOverlays();
     restoreFormatPanel();
+    updateHistoryToolbarButton(); // CHANGE: closing the panel clears the history button active state
   }
 
   function turnOffChangeMapForFileBoundary() {
@@ -1840,6 +1858,7 @@ Draw.loadPlugin(function (ui) {
 
     attachPanel();
     panel.style.display = graph.__ccPanelVisible ? '' : 'none';
+    updateHistoryToolbarButton(); // CHANGE: keep the toolbar button synced when the panel is first created
 
     applyPanelSize();
 
@@ -2693,6 +2712,8 @@ Draw.loadPlugin(function (ui) {
     applyChangeMapButtonStyle(button, 'open', { compact: true });
     button.addEventListener('click', function () { togglePanel(); });
     host.appendChild(button);
+    historyToolbarButton = button; // CHANGE: allow active styling updates after show/hide
+    updateHistoryToolbarButton(); // CHANGE: initialize active state if the panel was already open
   }
 
   function installDiagramBoundaryReset() {

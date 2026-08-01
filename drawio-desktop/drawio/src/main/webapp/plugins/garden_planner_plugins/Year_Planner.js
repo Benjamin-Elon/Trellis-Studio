@@ -3128,8 +3128,9 @@ Draw.loadPlugin(function (ui) {
                     const styles = {
                         add: "border:1px solid var(--yp-success);background:#fff;color:var(--yp-success);",
                         open: "border:1px solid var(--yp-primary);background:#fff;color:var(--yp-primary);",
+                        close: "border:1px solid var(--yp-danger);background:#fff;color:var(--yp-danger);", // NEW
                         neutral: "border:1px solid var(--yp-neutral-500);background:#fff;color:var(--yp-neutral-900);",
-                        danger: "border:1px solid var(--yp-danger);background:#fff;color:var(--yp-danger);"
+                        danger: "border:1px solid var(--yp-danger);background:var(--yp-danger);color:#fff;" // CHANGE
                     };
                     button.style.cssText = `${styles[semanticVariant] || styles.neutral}border-radius:6px;cursor:pointer;padding:6px 10px;font:12px Arial,sans-serif;`;
                     button.setAttribute("data-trellis-button-variant", semanticVariant);
@@ -4702,7 +4703,7 @@ Draw.loadPlugin(function (ui) {
             const deleteTemplate = mkBtn("Delete template", "danger");
             const save = mkBtn("Save", "add");
             const saveClose = mkBtn("Save & Close", "add");
-            const close = mkBtn("Close", "neutral");
+            const close = mkBtn("Close", "close"); // CHANGE
             const exportButton = mkBtn("Export", "neutral");
             const reset = mkBtn(loadedExistingForCurrentYear ? "Reset" : "Clear", "danger");
             const promptSave = mkBtn("Save and Close", "add");

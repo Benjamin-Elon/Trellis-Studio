@@ -28,7 +28,7 @@ test("garden dashboard toolbar is mounted to the graph viewport and sized from t
     assert.match(text, /return graph && graph\.container;/);
     assert.match(text, /host\.appendChild\(wrap\);/);
     assert.match(text, /wrap\.style\.position = "fixed";/);
-    assert.match(text, /const host = getViewportToolbarContainer\(\); \/\/ CHANGE/);
+    assert.match(text, /const host = getViewportToolbarContainer\(\);/);
     assert.match(text, /function viewportToolbarWidth\(host\)/);
     assert.match(text, /host\.getBoundingClientRect/);
     assert.match(text, /if \(rect && rect\.width\) return rect\.width;/);
@@ -197,14 +197,14 @@ test("garden dashboard table is collapsed by default and session scoped", () => 
 
 test("legacy dashboard cells are inert and no longer created or attached", () => {
     const text = source();
-    assert.match(text, /function createDashboardCell\(moduleCell\) \{\s*return null; \/\/ CHANGE/);
-    assert.match(text, /graph\.addListener\("usl:gardenModuleNeedsSettings", function \(sender, evt\) \{\s*return; \/\/ CHANGE/);
-    assert.match(text, /addItems: function \(menu, cell, evt\) \{ \/\/ CHANGE\s*return; \/\/ CHANGE/);
-    assert.match(text, /function attachExistingDashboards\(\) \{\s*return; \/\/ CHANGE/);
-    assert.match(text, /function scheduleAttachExistingDashboards\(\) \{\s*return; \/\/ CHANGE/);
-    assert.match(text, /function recomputeAndRenderDashboard\(dashCell, opts\) \{ \/\/ CHANGE\s*return; \/\/ CHANGE/);
-    assert.match(text, /function collectTouchedDashboards\(cells\) \{ \/\/ CHANGE\s*return \[\]; \/\/ CHANGE/);
-    assert.match(text, /graph\.getSelectionModel\(\)\.addListener\(mxEvent\.CHANGE, function \(\) \{ \/\/ CHANGE\s*return; \/\/ CHANGE/);
+    assert.match(text, /function createDashboardCell\(moduleCell\) \{\s*return null;/);
+    assert.match(text, /graph\.addListener\("usl:gardenModuleNeedsSettings", function \(sender, evt\) \{\s*return;/);
+    assert.match(text, /addItems: function \(menu, cell, evt\) \{\s*return;/);
+    assert.match(text, /function attachExistingDashboards\(\) \{\s*return;/);
+    assert.match(text, /function scheduleAttachExistingDashboards\(\) \{\s*return;/);
+    assert.match(text, /function recomputeAndRenderDashboard\(dashCell, opts\) \{\s*return;/);
+    assert.match(text, /function collectTouchedDashboards\(cells\) \{\s*return \[\];/);
+    assert.match(text, /graph\.getSelectionModel\(\)\.addListener\(mxEvent\.CHANGE, function \(\) \{\s*return;/);
     const selectionListener = text.slice(text.indexOf("// Recompute when selecting a dashboard"), text.indexOf("// -------------------- Context menu: Create Garden Dashboard"));
     assert.doesNotMatch(selectionListener, /ensureOverlayForDashboard\(dash\)/);
     assert.doesNotMatch(selectionListener, /recomputeAndRenderDashboard\(dash\)/);

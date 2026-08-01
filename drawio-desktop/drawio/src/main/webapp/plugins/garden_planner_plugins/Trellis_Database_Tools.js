@@ -37,8 +37,10 @@
             ".trellis-db-tools-paths{font-size:12px;line-height:1.45;word-break:break-all}",
             ".trellis-db-tools-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:auto}",
             ".trellis-db-tools-btn{border:1px solid #6b7280;background:#fff;color:#111827;padding:7px 10px;border-radius:4px;cursor:pointer}",
-            ".trellis-db-tools-btn-danger{border-color:#b91c1c;color:#b91c1c}",
-            ".trellis-db-tools-btn-danger:hover{background:#fef2f2}",
+            ".trellis-db-tools-btn-close{border-color:#b91c1c;color:#b91c1c}", // NEW
+            ".trellis-db-tools-btn-close:hover{background:#fef2f2}", // NEW
+            ".trellis-db-tools-btn-danger{border-color:#b91c1c;background:#b91c1c;color:#fff}", // CHANGE
+            ".trellis-db-tools-btn-danger:hover{background:#991b1b;border-color:#991b1b}", // CHANGE
             ".trellis-db-tools-btn-neutral:hover{background:#f9fafb}",
             ".trellis-db-tools-btn:disabled{opacity:.65;cursor:default}"
         ].join("\n");
@@ -50,6 +52,11 @@
         const button = createEl("button", "trellis-db-tools-btn trellis-db-tools-btn-" + semanticVariant, label);
         button.type = "button";
         if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") window.Trellis.ui.applyButtonStyle(button, semanticVariant);
+        else { // NEW
+            button.setAttribute("data-trellis-button-variant", semanticVariant); // NEW
+            if (semanticVariant === "danger") { button.style.background = "#b91c1c"; button.style.borderColor = "#b91c1c"; button.style.color = "#fff"; } // NEW
+            else if (semanticVariant === "close") { button.style.borderColor = "#b91c1c"; button.style.color = "#b91c1c"; } // NEW
+        } // NEW
         button.addEventListener("click", onClick);
         return button;
     }

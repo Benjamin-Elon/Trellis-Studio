@@ -41,7 +41,14 @@ Draw.loadPlugin(function (ui) {
         if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") {
             window.Trellis.ui.applyButtonStyle(button, variant, options);
         } else if (button) {
-            button.setAttribute("data-trellis-button-variant", variant || "neutral");
+            const normalized = variant || "neutral"; // CHANGE
+            const activeOpen = normalized === "open" && options && options.active === true; // NEW
+            const style = { open: ["#2563eb", activeOpen ? "#1e3a8a" : "#1d4ed8", activeOpen ? "#eff6ff" : "#fff"], add: ["#188038", "#166534", "#fff"], close: ["#b91c1c", "#b91c1c", "#fff"], danger: ["#b91c1c", "#fff", "#b91c1c"], neutral: ["#6b7280", "#111827", "#fff"] }[normalized] || ["#6b7280", "#111827", "#fff"]; // NEW
+            button.setAttribute("data-trellis-button-variant", normalized); // CHANGE
+            button.style.border = "1px solid " + style[0]; // NEW
+            button.style.color = style[1]; // NEW
+            button.style.background = style[2]; // NEW
+            if (activeOpen) button.style.fontWeight = "700"; // NEW
         }
         return button;
     }
@@ -1499,7 +1506,7 @@ Draw.loadPlugin(function (ui) {
 .trellis-eq-btn { border: 1px solid #d5dcd5; background: #fff; color: #172018; border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 13px; }
 .trellis-eq-btn:hover { background: #f5f7f5; }
 .trellis-eq-btn.primary { background: #fff; color: #166534; border-color: #188038; }
-.trellis-eq-btn.danger { background: #fff; color: #b91c1c; border-color: #b91c1c; }
+.trellis-eq-btn.danger { background: #b91c1c; color: #fff; border-color: #b91c1c; } /* CHANGE */
 .trellis-eq-search { flex: 1; min-width: 160px; border: 1px solid #d5dcd5; border-radius: 6px; height: 34px; padding: 0 9px; }
 .trellis-eq-table-wrap { overflow: auto; border: 1px solid #e0e5e0; border-radius: 7px; }
 .trellis-eq-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -1651,7 +1658,7 @@ Draw.loadPlugin(function (ui) {
     function renderHeader(close) {
         const header = div("trellis-eq-header");
         header.appendChild(textDiv("trellis-eq-title", "Garden Equipment & Workload Assumptions"));
-        const button = buttonEl("×", "trellis-eq-close", close);
+        const button = buttonEl("×", "trellis-eq-close", close, "Close", "close"); // CHANGE
         button.title = "Close";
         header.appendChild(button);
         return header;
@@ -2386,7 +2393,7 @@ Draw.loadPlugin(function (ui) {
         btn.onclick = onClick;
         applyTooltip(btn, tooltip || trim(text));
         btn.setAttribute("aria-label", tooltip || trim(text));
-        if ((btn.className || "").indexOf("trellis-eq-close") < 0) {
+        if (variant || (btn.className || "").indexOf("trellis-eq-close") < 0) { // CHANGE
             applyEquipmentButtonStyle(btn, variant || ((btn.className || "").indexOf("danger") >= 0 ? "danger" : ((btn.className || "").indexOf("primary") >= 0 ? "add" : "neutral")));
         }
         return btn;

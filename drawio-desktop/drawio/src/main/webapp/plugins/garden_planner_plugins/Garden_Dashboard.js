@@ -50,7 +50,8 @@ Draw.loadPlugin(function (ui) {
     const PLAN_YEAR_EVENT = "usl:planYearRequested";
     const ALLOCATE_PLAN_EVENT = "usl:allocatePlanRequested";
     const IRRIGATION_MODE_CHANGED_EVENT = "trellisIrrigationModeChanged";
-    const IRRIGATION_ACTIVE_BLUE = "#2563eb";
+    const IRRIGATION_ACTIVE_BACKGROUND = "#eff6ff"; // CHANGE: match the Enter Irrigation Design Mode light-blue active fill
+    const IRRIGATION_ACTIVE_TEXT = "#1e3a8a"; // CHANGE: match the Enter Irrigation Design Mode dark-blue active text
 
     const GROUP_LABEL_FONT_PX = 12;
     const GROUP_LABEL_LINE_HEIGHT = 1.25;
@@ -1037,12 +1038,13 @@ Draw.loadPlugin(function (ui) {
         btn.title = title || label;
         const semanticVariant = variant || "neutral";
         if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") window.Trellis.ui.applyButtonStyle(btn, semanticVariant, { compact: true, padding: "0 8px" });
-        const fallbackColors = { open: "#2563eb", add: "#188038", danger: "#b91c1c", neutral: "#777" };
+        const fallbackColors = { open: "#2563eb", add: "#188038", close: "#b91c1c", danger: "#b91c1c", neutral: "#777" }; // CHANGE
+        const dangerFallback = semanticVariant === "danger"; // NEW
         btn.style.height = BTN_SIZE + "px";
         if (!btn.getAttribute("data-trellis-button-variant")) btn.style.border = "1px solid " + (fallbackColors[semanticVariant] || fallbackColors.neutral);
         btn.style.borderRadius = "6px";
-        if (!btn.getAttribute("data-trellis-button-variant")) btn.style.background = "#fff";
-        if (!btn.getAttribute("data-trellis-button-variant")) btn.style.color = semanticVariant === "open" ? "#1d4ed8" : (semanticVariant === "add" ? "#166534" : (semanticVariant === "danger" ? "#b91c1c" : "#000"));
+        if (!btn.getAttribute("data-trellis-button-variant")) btn.style.background = dangerFallback ? "#b91c1c" : "#fff"; // CHANGE
+        if (!btn.getAttribute("data-trellis-button-variant")) btn.style.color = semanticVariant === "open" ? "#1d4ed8" : (semanticVariant === "add" ? "#166534" : (semanticVariant === "close" ? "#b91c1c" : (dangerFallback ? "#fff" : "#000"))); // CHANGE
         btn.style.cursor = "pointer";
         btn.style.padding = "0 8px";
         btn.style.fontFamily = "Arial";
@@ -1118,9 +1120,14 @@ Draw.loadPlugin(function (ui) {
 
     function applyToolbarActiveButtonState(btn, active) {
         if (!btn) return;
-        btn.style.background = active ? IRRIGATION_ACTIVE_BLUE : "#fff";
-        btn.style.borderColor = active ? IRRIGATION_ACTIVE_BLUE : "#2563eb";
-        btn.style.color = active ? "#fff" : "#1d4ed8";
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") window.Trellis.ui.applyButtonStyle(btn, "open", { compact: true, active: !!active }); // CHANGE: reuse the shared active open-button style
+        btn.style.height = BTN_SIZE + "px"; // CHANGE: preserve dashboard toolbar sizing after shared restyling
+        btn.style.padding = "0 8px"; // CHANGE: preserve dashboard toolbar spacing after shared restyling
+        btn.style.background = active ? IRRIGATION_ACTIVE_BACKGROUND : "#fff"; // CHANGE: fallback light-blue active fill
+        btn.style.borderColor = "#2563eb"; // CHANGE: keep active/inactive open-button border consistent
+        btn.style.color = active ? IRRIGATION_ACTIVE_TEXT : "#1d4ed8"; // CHANGE: fallback dark-blue active text
+        btn.style.fontWeight = active ? "700" : ""; // CHANGE: match the active overlay-button emphasis
+        btn.setAttribute("aria-pressed", active ? "true" : "false"); // CHANGE: expose irrigation mode state on the toggle button
     }
 
     function openIrrigationPlannerForModule(moduleCell) {
@@ -1908,7 +1915,7 @@ Draw.loadPlugin(function (ui) {
             leftBar, centerBar, rightBar,
             contentViewport, contentScaleBox, content,
             prev, next,
-            planBtn, equipmentBtn, allocateBtn, exportBtn,
+            planBtn, equipmentBtn, irrigationBtn, allocateBtn, exportBtn, // CHANGE: retain the in-cell Irrigation button so its active state can refresh
             yearLabel, syncYearLabel
         };
 
@@ -2022,6 +2029,7 @@ Draw.loadPlugin(function (ui) {
     function renderOverlay(dashCell, metrics, year, opts) {
         const entry = ensureOverlay(dashCell);
         entry.syncYearLabel();
+        applyToolbarActiveButtonState(entry.irrigationBtn, activeIrrigationModuleMatches(findGardenModuleAncestor(graph, dashCell))); // CHANGE: keep in-cell dashboard Irrigation active state synchronized
         entry.content.innerHTML = formatOverlayTableHtml(metrics, year);
         const irrigationSummary = entry.content.querySelector(".trellis-irrigation-dashboard-summary");
         if (irrigationSummary) {
@@ -2052,6 +2060,14 @@ Draw.loadPlugin(function (ui) {
             }
         }
     }
+
+    function refreshDashboardIrrigationButtons() {
+        for (const [dashId, entry] of overlayByDashId.entries()) {
+            const dashCell = model.getCell(dashId);
+            if (!dashCell || !entry || !entry.irrigationBtn) continue;
+            applyToolbarActiveButtonState(entry.irrigationBtn, activeIrrigationModuleMatches(findGardenModuleAncestor(graph, dashCell)));
+        }
+    } // CHANGE: keep already-created in-cell dashboard Irrigation buttons synced on irrigation mode changes
 
     // -------------------- Dashboard update orchestration --------------------
     function recomputeAndRenderDashboard(dashCell, opts) {
@@ -2313,7 +2329,7 @@ Draw.loadPlugin(function (ui) {
     window.addEventListener("resize", scheduleViewportToolbarRefresh);
     window.addEventListener("trellisUsersStoreChanged", scheduleViewportToolbarRefresh);
     window.addEventListener("trellisTaskBoardSeenStateChanged", scheduleViewportToolbarRefresh);
-    window.addEventListener(IRRIGATION_MODE_CHANGED_EVENT, scheduleViewportToolbarRefresh);
+    window.addEventListener(IRRIGATION_MODE_CHANGED_EVENT, function () { scheduleViewportToolbarRefresh(); refreshDashboardIrrigationButtons(); }); // CHANGE: refresh viewport and in-cell Irrigation active states
     const viewportToolbarHost = getViewportToolbarContainer();
     if (viewportToolbarHost && viewportToolbarHost.addEventListener) {
         viewportToolbarHost.addEventListener("scroll", scheduleViewportToolbarRefresh);

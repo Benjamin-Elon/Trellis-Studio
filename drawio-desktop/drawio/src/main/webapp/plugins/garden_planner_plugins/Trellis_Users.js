@@ -70,7 +70,14 @@ Draw.loadPlugin(function (ui) {
         if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") {
             window.Trellis.ui.applyButtonStyle(button, variant, options);
         } else if (button) {
-            button.setAttribute("data-trellis-button-variant", variant || "neutral");
+            const normalized = variant || "neutral"; // CHANGE: local fallback needs the normalized variant for active styling
+            const activeOpen = normalized === "open" && options && options.active === true; // CHANGE: support the shared active-open state even before Trellis UI loads
+            const style = { open: ["#2563eb", activeOpen ? "#1e3a8a" : "#1d4ed8", activeOpen ? "#eff6ff" : "#fff"], add: ["#188038", "#166534", "#fff"], close: ["#b91c1c", "#b91c1c", "#fff"], danger: ["#b91c1c", "#fff", "#b91c1c"], neutral: ["#6b7280", "#111827", "#fff"] }[normalized] || ["#6b7280", "#111827", "#fff"]; // NEW
+            button.setAttribute("data-trellis-button-variant", normalized);
+            button.style.border = "1px solid " + style[0]; // CHANGE
+            button.style.background = style[2]; // CHANGE
+            button.style.color = style[1]; // CHANGE
+            if (activeOpen) button.style.fontWeight = "700"; // CHANGE: fallback active emphasis
         }
         return button;
     }
@@ -2982,8 +2989,11 @@ Draw.loadPlugin(function (ui) {
 
     function updateToolbarButton() {
         if (!toolbarButton) return;
+        const panelActive = !!(panel && panel.style.display !== "none"); // CHANGE: user button is active only while the main People & Access panel is visible
         toolbarButton.textContent = toolbarLabel();
         toolbarButton.title = currentUser() ? "People & Access account" : (isEnabled() ? "Log in to People & Access" : "Enable People & Access");
+        applyUsersButtonStyle(toolbarButton, "open", { compact: true, active: panelActive }); // CHANGE: reuse the shared light-blue active open-button style
+        toolbarButton.setAttribute("aria-pressed", panelActive ? "true" : "false"); // CHANGE: expose the active panel state to assistive tech
     }
 
     function closeAccountMenu() {
@@ -3102,7 +3112,7 @@ Draw.loadPlugin(function (ui) {
         title.textContent = "People & Access";
         title.style.cssText = "font-weight:700;font-size:14px;";
         header.appendChild(title);
-        header.appendChild(makeButton("Close", function () { if (panel) panel.style.display = "none"; }, "neutral"));
+        header.appendChild(makeButton("Close", function () { if (panel) panel.style.display = "none"; updateToolbarButton(); }, "close")); // CHANGE: closing the panel clears the user button active state
         panel.appendChild(header);
         statusNode = document.createElement("div");
         statusNode.style.cssText = "min-height:16px;color:#4B5563;margin-bottom:8px;";
@@ -3129,6 +3139,7 @@ Draw.loadPlugin(function (ui) {
         panel.style.display = opening ? "" : "none";
         if (opening) positionPanelNearButton();
         refreshPanel();
+        updateToolbarButton(); // CHANGE: keep the toolbar button active state synchronized with the panel visibility
     }
 
     function installSelectionListener() {
@@ -3620,7 +3631,7 @@ Draw.loadPlugin(function (ui) {
         title.textContent = titleText;
         title.style.cssText = "font-weight:700;font-size:15px;";
         header.appendChild(title);
-        header.appendChild(makeButton("Close", function () { closeAccessDialog(overlay); }, "neutral"));
+        header.appendChild(makeButton("Close", function () { closeAccessDialog(overlay); }, "close")); // CHANGE
         box.appendChild(header);
         overlay.appendChild(box);
         return { overlay, box };

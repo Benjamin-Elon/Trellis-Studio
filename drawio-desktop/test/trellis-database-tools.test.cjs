@@ -113,6 +113,8 @@ test("Trellis database tools registers Extras restore action and confirms before
     assert.equal(ui.dialog.bg.style.zIndex, "1999999999");
     assert.match(shown[0].node.textContent, /replace the local AppData Trellis database/);
     assert.equal(harness.restoreCalls(), 0);
+    assert.equal(findButton(shown[0].node, "Restore built-in database").getAttribute("data-trellis-button-variant"), "danger"); // NEW
+    assert.match(findButton(shown[0].node, "Restore built-in database").getAttribute("style") || "", /background:\s*(?:#b91c1c|rgb\(185,\s*28,\s*28\))/); // NEW
 
     findButton(shown[0].node, "Restore built-in database").click();
     await settle();
@@ -163,7 +165,7 @@ test("Trellis database restore bridge and default plugin registration are wired"
     assert.match(preloadSource, /restoreBuiltInDatabase\(\)/);
     assert.match(preloadSource, /action: 'restoreBuiltInTrellisDatabase'/);
     assert.match(electronSource, /function restoreBuiltInTrellisDatabase\(options\)/);
-    assert.match(electronSource, /case 'restoreBuiltInTrellisDatabase': \/\/ NEW/);
+    assert.match(electronSource, /case 'restoreBuiltInTrellisDatabase':/);
     assert.match(electronSource, /backupPath/);
     assert.match(electronSource, /sourcePath/);
     assert.match(electronSource, /fs\.copyFileSync\(sourcePath, dbPath\)/);

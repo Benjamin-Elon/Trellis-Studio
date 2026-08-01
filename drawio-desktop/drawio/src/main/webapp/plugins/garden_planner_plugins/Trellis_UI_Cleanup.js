@@ -14,7 +14,8 @@
     const BUTTON_TOKENS = Object.freeze({
         open: { border: '#2563eb', color: '#1d4ed8', background: '#fff', hoverBackground: '#eff6ff' },
         add: { border: '#188038', color: '#166534', background: '#fff', hoverBackground: '#f0fdf4' },
-        danger: { border: '#b91c1c', color: '#b91c1c', background: '#fff', hoverBackground: '#fef2f2' },
+        close: { border: '#b91c1c', color: '#b91c1c', background: '#fff', hoverBackground: '#fef2f2' }, // NEW
+        danger: { border: '#b91c1c', color: '#fff', background: '#b91c1c', hoverBackground: '#991b1b' }, // CHANGE: destructive actions are red filled
         neutral: { border: '#6b7280', color: '#111827', background: '#fff', hoverBackground: '#f9fafb' },
         focus: 'rgba(37, 99, 235, 0.28)',
         disabledOpacity: '0.55'
@@ -38,12 +39,16 @@
             '.trellis-button{box-sizing:border-box;border-radius:6px;cursor:pointer;font:12px Arial,sans-serif;padding:6px 10px;background:#fff;transition:background-color 120ms ease,border-color 120ms ease,color 120ms ease}',
             '.trellis-button-open{border:1px solid #2563eb;color:#1d4ed8}',
             '.trellis-button-open:hover{background:#eff6ff}',
+            '.trellis-button-open.trellis-button-active{background:#eff6ff;color:#1e3a8a;font-weight:700}', // CHANGE: share the light-blue active treatment with open-style buttons
+            '.trellis-button-open.trellis-button-active:hover{background:#eff6ff}', // CHANGE: keep active open buttons visually stable on hover
             '.trellis-button-add{border:1px solid #188038;color:#166534}',
             '.trellis-button-add:hover{background:#f0fdf4}',
             '.trellis-button-add.trellis-button-filled{background:#188038;color:#fff}',
             '.trellis-button-add.trellis-button-filled:hover{background:#166534}',
-            '.trellis-button-danger{border:1px solid #b91c1c;color:#b91c1c}',
-            '.trellis-button-danger:hover{background:#fef2f2}',
+            '.trellis-button-close{border:1px solid #b91c1c;color:#b91c1c}', // NEW
+            '.trellis-button-close:hover{background:#fef2f2}', // NEW
+            '.trellis-button-danger{border:1px solid #b91c1c;background:#b91c1c;color:#fff}', // CHANGE
+            '.trellis-button-danger:hover{background:#991b1b;border-color:#991b1b}', // CHANGE
             '.trellis-button-neutral{border:1px solid #6b7280;color:#111827}',
             '.trellis-button-neutral:hover{background:#f9fafb}',
             '.trellis-button-compact{padding:3px 6px;font-size:12px}',
@@ -60,22 +65,25 @@
         const tokens = BUTTON_TOKENS[normalized];
         ensureButtonStyles(button.ownerDocument);
 
-        ['trellis-button', 'trellis-button-open', 'trellis-button-add', 'trellis-button-danger', 'trellis-button-neutral', 'trellis-button-compact', 'trellis-button-filled'].forEach(function (className) {
+        const activeOpen = opts.active === true && normalized === 'open'; // CHANGE: only open buttons support the shared active state
+        ['trellis-button', 'trellis-button-open', 'trellis-button-add', 'trellis-button-close', 'trellis-button-danger', 'trellis-button-neutral', 'trellis-button-compact', 'trellis-button-filled', 'trellis-button-active'].forEach(function (className) { // CHANGE: clear prior active and semantic state when restyling
             if (button.classList) button.classList.remove(className);
         });
         if (button.classList) {
             button.classList.add('trellis-button', 'trellis-button-' + normalized);
             if (opts.compact) button.classList.add('trellis-button-compact');
             if (opts.filled) button.classList.add('trellis-button-filled');
+            if (activeOpen) button.classList.add('trellis-button-active'); // CHANGE: expose active state to shared CSS
         }
         button.setAttribute('data-trellis-button-variant', normalized);
         button.type = button.type || 'button';
         button.style.border = '1px solid ' + tokens.border;
         button.style.borderRadius = opts.radius || '6px';
-        button.style.background = opts.filled && normalized === 'add' ? tokens.border : tokens.background;
-        button.style.color = opts.filled && normalized === 'add' ? '#fff' : tokens.color;
+        button.style.background = activeOpen ? tokens.hoverBackground : (opts.filled && normalized === 'add' ? tokens.border : tokens.background); // CHANGE: light-blue active fill
+        button.style.color = activeOpen ? '#1e3a8a' : (opts.filled && normalized === 'add' ? '#fff' : tokens.color); // CHANGE: dark-blue active text
         button.style.cursor = button.disabled ? 'not-allowed' : 'pointer';
         button.style.font = opts.font || '12px Arial, sans-serif';
+        button.style.fontWeight = activeOpen ? '700' : (opts.fontWeight || ''); // CHANGE: match the existing Enter Irrigation Design Mode emphasis
         button.style.padding = opts.compact ? '3px 6px' : (opts.padding || '6px 10px');
         button.style.boxSizing = 'border-box';
         return button;

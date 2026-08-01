@@ -619,6 +619,8 @@ test("logged-in toolbar button toggles a user panel below the button", () => {
     assert.equal(panel.style.top, "38px");
     assert.equal(panel.style.left, "510px");
     assert.ok(buttonByText(harness.document, "Close"));
+    assert.equal(buttonByText(harness.document, "Close").getAttribute("data-trellis-button-variant"), "close"); // NEW
+    assert.match(buttonByText(harness.document, "Close").getAttribute("style") || "", /background:\s*(?:#fff|rgb\(255,\s*255,\s*255\))/); // NEW
     button.click();
     assert.equal(panel.style.display, "none");
     button.click();

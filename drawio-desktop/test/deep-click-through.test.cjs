@@ -144,8 +144,8 @@ function makeHarness(options = {}) {
             getClientX(evt) { return evt && evt.clientX || 0; },
             getClientY(evt) { return evt && evt.clientY || 0; },
             addListener(node, name, fn) { node.addEventListener(name, fn); },
-            addGestureListeners() {},
-            removeGestureListeners() {},
+            addGestureListeners(_node, _down, move, up) { graph.__gestureMove = move; graph.__gestureUp = up; },
+            removeGestureListeners() { graph.__gestureMove = null; graph.__gestureUp = null; },
             consume(evt) { if (evt && evt.preventDefault) evt.preventDefault(); }
         },
         mxUtils: {
@@ -439,6 +439,19 @@ test("planting group selection shows its containing occupied bed handle", () => 
 test("bed assembly selection shows occupied bed handle and drags the whole bed unit", () => {
     const { graph, bed, bedAssembly, occupiedTiler, getSelected } = makeHarness({ bedAssembly: true });
     const api = graph.__trellisWorkspaceDragPolicy;
+    const suppressionCalls = [];
+    graph.__trellisIrrigationPlanner = {
+        beginHudDragSuppression(target, evt, dragCells) {
+            suppressionCalls.push(["begin", target.id, evt.clientX, evt.clientY, ids(dragCells)]);
+            return true;
+        },
+        updateHudDragSuppression(evt) {
+            suppressionCalls.push(["update", evt.clientX, evt.clientY]);
+        },
+        finishHudDragSuppression() {
+            suppressionCalls.push(["finish"]);
+        }
+    };
     graph.setSelectionCell(bedAssembly);
     assert.deepEqual(ids(api.getHandleCells()), ["bed"]);
     api.refreshHandles();
@@ -449,6 +462,29 @@ test("bed assembly selection shows occupied bed handle and drags the whole bed u
     api.beginHandleDragForTests(bed, { button: 0, clientX: 40, clientY: 130, preventDefault() {} });
     assert.deepEqual(ids(getSelected()), ["bed", "bedAssembly", "occupiedTiler"]);
     assert.deepEqual(ids(graph.graphHandler.__trellisWorkspaceHandleDragCells), ["bed", "bedAssembly", "occupiedTiler"]);
+    assert.deepEqual(suppressionCalls, [["begin", "bedAssembly", 40, 130, ["bedAssembly"]]]);
+    graph.__gestureMove({ button: 0, clientX: 48, clientY: 132 });
+    graph.__gestureUp({ button: 0, clientX: 48, clientY: 132 });
+    assert.deepEqual(suppressionCalls, [
+        ["begin", "bedAssembly", 40, 130, ["bedAssembly"]],
+        ["update", 48, 132],
+        ["finish"]
+    ]);
+});
+
+test("occupied bed handle without irrigation assembly does not suppress irrigation HUD", () => {
+    const { graph, bed } = makeHarness();
+    const api = graph.__trellisWorkspaceDragPolicy;
+    const suppressionCalls = [];
+    graph.__trellisIrrigationPlanner = {
+        beginHudDragSuppression() { suppressionCalls.push("begin"); return true; },
+        updateHudDragSuppression() { suppressionCalls.push("update"); },
+        finishHudDragSuppression() { suppressionCalls.push("finish"); }
+    };
+    api.beginHandleDragForTests(bed, { button: 0, clientX: 40, clientY: 130, preventDefault() {} });
+    if (graph.__gestureMove) graph.__gestureMove({ button: 0, clientX: 48, clientY: 132 });
+    if (graph.__gestureUp) graph.__gestureUp({ button: 0, clientX: 48, clientY: 132 });
+    assert.deepEqual(suppressionCalls, []);
 });
 
 test("empty beds and outside-bed planting groups do not show occupied bed handles", () => {

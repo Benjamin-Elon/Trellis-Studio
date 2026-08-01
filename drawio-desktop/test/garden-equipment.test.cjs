@@ -178,6 +178,9 @@ test("equipment dialog shows yearly reserve tile and native tooltips", () => {
     api.openDialog(moduleCell);
     const overlay = document.querySelector(".trellis-eq-overlay");
     assert.equal(document.defaultView.getComputedStyle(overlay).zIndex, "2000000000");
+    const closeButton = document.querySelector(".trellis-eq-close"); // NEW
+    assert.equal(closeButton.getAttribute("data-trellis-button-variant"), "close"); // NEW
+    assert.match(closeButton.getAttribute("style") || "", /background:\s*(?:#fff|rgb\(255,\s*255,\s*255\))/); // NEW
     const title = document.querySelector(".trellis-eq-title");
     assert.equal(title.textContent, "Garden Equipment & Workload Assumptions");
     const reserveTile = Array.from(document.querySelectorAll(".trellis-eq-tile")).find(tile => tile.textContent.includes("Yearly Replacement"));

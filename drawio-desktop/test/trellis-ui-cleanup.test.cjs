@@ -292,6 +292,7 @@ test("shared Trellis button helper applies semantic variants and preserves butto
     button.disabled = true;
 
     assert.equal(shared.classForVariant("open"), "trellis-button trellis-button-open");
+    assert.equal(shared.classForVariant("close"), "trellis-button trellis-button-close"); // NEW
     shared.applyButtonStyle(button, "open", { compact: true });
     assert.ok(button.classList.contains("custom-class"));
     assert.ok(button.classList.contains("trellis-button-open"));
@@ -299,11 +300,19 @@ test("shared Trellis button helper applies semantic variants and preserves butto
     assert.equal(button.getAttribute("data-trellis-button-variant"), "open");
     assert.equal(button.disabled, true);
 
-    shared.applyButtonStyle(button, "danger");
+    shared.applyButtonStyle(button, "close"); // NEW
     assert.equal(button.classList.contains("trellis-button-open"), false);
     assert.equal(button.classList.contains("trellis-button-compact"), false);
+    assert.ok(button.classList.contains("trellis-button-close")); // NEW
+    assert.equal(button.getAttribute("data-trellis-button-variant"), "close"); // NEW
+    assert.equal(button.style.background, "rgb(255, 255, 255)"); // NEW
+
+    shared.applyButtonStyle(button, "danger"); // CHANGE
+    assert.equal(button.classList.contains("trellis-button-close"), false); // NEW
     assert.ok(button.classList.contains("trellis-button-danger"));
     assert.equal(button.getAttribute("data-trellis-button-variant"), "danger");
+    assert.match(button.style.background, /(?:#b91c1c|rgb\(185,\s*28,\s*28\))/); // NEW
+    assert.match(button.style.color, /(?:#fff|rgb\(255,\s*255,\s*255\)|white)/); // NEW
 
     const made = shared.button("Save", "add", () => {}, { title: "Save changes" });
     assert.equal(made.textContent, "Save");

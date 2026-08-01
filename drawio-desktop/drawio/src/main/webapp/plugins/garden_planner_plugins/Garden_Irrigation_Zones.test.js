@@ -60,6 +60,7 @@ function edge(id, source, target, attrs) {
 function installPlugin(moduleCell) {
     const callbacks = [];
     let nextId = 1;
+    const selection = { cells: [moduleCell] }; // CHANGE
     function absoluteGeometry(cell) {
         const geo = cell && cell.geometry || {};
         let x = Number(geo.x || 0);
@@ -91,8 +92,10 @@ function installPlugin(moduleCell) {
         container: { appendChild() {}, removeChild() {}, style: {} },
         view: { scale: 1, translate: { x: 0, y: 0 }, addListener() {}, getState(cell) { return Object.assign({ cell }, absoluteGeometry(cell)); } },
         getModel() { return model; },
-        getSelectionCell() { return moduleCell; },
-        getSelectionCells() { return [moduleCell]; },
+        getSelectionCell() { return selection.cells[0] || null; }, // CHANGE
+        getSelectionCells() { return selection.cells.slice(); }, // CHANGE
+        setSelectionCell(cell) { selection.cells = cell ? [cell] : []; }, // CHANGE
+        setSelectionCells(cells) { selection.cells = (cells || []).slice(); }, // CHANGE
         getSelectionModel() { return { addListener() {} }; },
         addListener() {},
         addMouseListener() {},
@@ -111,7 +114,7 @@ function installPlugin(moduleCell) {
     const pluginPath = path.join(__dirname, "Garden_Irrigation_Planner.js");
     vm.runInThisContext(fs.readFileSync(pluginPath, "utf8"), { filename: pluginPath });
     callbacks[0]({ editor: { graph }, actions: { addAction() {} } });
-    return { graph, api: graph.__trellisIrrigationPlanner };
+    return { graph, api: graph.__trellisIrrigationPlanner, selection }; // CHANGE
 }
 
 function buildZoneFixture() {
@@ -280,6 +283,49 @@ function runReverseAndBadgeLayoutTests() {
     assert.strictEqual(inputNode.style.left, "128px");
     assert.strictEqual(inputNode.style.top, "38px");
 }
+
+function dragEvt(cell, x, y) { // CHANGE
+    return { getCell() { return cell; }, getEvent() { return { clientX: x, clientY: y }; } }; // CHANGE
+} // CHANGE
+
+function runIrrigationDragSuppressionTests() { // CHANGE
+    const moduleCell = makeCell("module_drag", { garden_module: "1" }); // CHANGE
+    const assembly = addChild(moduleCell, makeCell("assembly_drag", { irrigation_assembly: "1", irrigation_assembly_type: "parts", label: "Assembly" }, { x: 10, y: 20, width: 210, height: 78 })); // CHANGE
+    addChild(assembly, partCell("dragPart", "valve", "Valve", 44)); // CHANGE
+    const bedAssembly = addChild(moduleCell, makeCell("bed_drag", { irrigation_assembly: "1", irrigation_assembly_type: "bed", label: "Bed" }, { x: 240, y: 20, width: 120, height: 80 })); // CHANGE
+    const plain = addChild(moduleCell, makeCell("plain_drag", { label: "Plain" }, { x: 400, y: 20, width: 80, height: 40 })); // CHANGE
+    const installed = installPlugin(moduleCell); // CHANGE
+    installed.graph.setSelectionCell(assembly); // CHANGE
+    const session = installed.api.openIrrigationMode(moduleCell, { selectCell: assembly, preserveViewport: true }); // CHANGE
+    assert.ok(session); // CHANGE
+
+    assert.strictEqual(installed.api.__test.beginIrrigationDragCandidate(session, dragEvt(assembly, 10, 10)), true); // CHANGE
+    assert.strictEqual(installed.api.__test.updateIrrigationDragSuppression(session, dragEvt(assembly, 12, 11)), false); // CHANGE
+    assert.strictEqual(session.suppressHudDuringDrag, false); // CHANGE
+    assert.strictEqual(installed.api.__test.finishIrrigationDragSuppression(session), false); // CHANGE
+
+    assert.strictEqual(installed.api.__test.beginIrrigationDragCandidate(session, dragEvt(assembly, 10, 10)), true); // CHANGE
+    assert.strictEqual(installed.api.__test.updateIrrigationDragSuppression(session, dragEvt(assembly, 20, 10)), true); // CHANGE
+    assert.strictEqual(session.suppressHudDuringDrag, true); // CHANGE
+    assert.strictEqual(installed.api.__test.finishIrrigationDragSuppression(session), true); // CHANGE
+    assert.strictEqual(session.suppressHudDuringDrag, false); // CHANGE
+    assert.strictEqual(installed.api.__test.isIrrigationHudSelectionTarget(session, assembly), true); // CHANGE
+
+    installed.graph.setSelectionCell(plain); // CHANGE
+    assert.strictEqual(installed.api.__test.beginIrrigationDragCandidate(session, dragEvt(plain, 10, 10)), false); // CHANGE
+    assert.strictEqual(installed.api.__test.updateIrrigationDragSuppression(session, dragEvt(plain, 30, 10)), false); // CHANGE
+    assert.strictEqual(session.suppressHudDuringDrag, false); // CHANGE
+
+    installed.graph.setSelectionCells([assembly, bedAssembly]); // CHANGE
+    assert.strictEqual(installed.api.__test.beginIrrigationDragCandidate(session, dragEvt(assembly, 10, 10)), true); // CHANGE
+    assert.strictEqual(installed.api.__test.updateIrrigationDragSuppression(session, dragEvt(assembly, 10, 18)), true); // CHANGE
+    assert.strictEqual(installed.api.__test.finishIrrigationDragSuppression(session), true); // CHANGE
+
+    installed.graph.setSelectionCells([assembly, plain]); // CHANGE
+    assert.strictEqual(installed.api.__test.beginIrrigationDragCandidate(session, dragEvt(assembly, 10, 10)), false); // CHANGE
+    assert.strictEqual(installed.api.__test.updateIrrigationDragSuppression(session, dragEvt(assembly, 10, 18)), false); // CHANGE
+    installed.api.closeIrrigationMode(); // CHANGE
+} // CHANGE
 
 function irrigationLayoutRows(assembly) {
     return assembly.children.filter(cell => cell.getAttribute("irrigation_bed_layout") === "1");
@@ -543,6 +589,7 @@ function run() {
     runDeletePartTests();
     runExternalEdgePathTests();
     runReverseAndBadgeLayoutTests();
+    runIrrigationDragSuppressionTests(); // CHANGE
     runBedRowSpacingGeometryTests();
     runBedAssemblyLabelModeTests();
     runDropdownPipeOutputCreatesExternalAssemblyTest();

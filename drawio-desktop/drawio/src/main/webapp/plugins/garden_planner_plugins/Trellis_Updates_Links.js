@@ -278,6 +278,10 @@
             ".trellis-updates-btn{border:1px solid #6b7280;background:#fff;color:#111827;padding:7px 10px;border-radius:4px;cursor:pointer}",
             ".trellis-updates-btn-open{border-color:#2563eb;color:#1d4ed8}",
             ".trellis-updates-btn-open:hover{background:#eff6ff}",
+            ".trellis-updates-btn-close{border-color:#b91c1c;color:#b91c1c}", // NEW
+            ".trellis-updates-btn-close:hover{background:#fef2f2}", // NEW
+            ".trellis-updates-btn-danger{border-color:#b91c1c;background:#b91c1c;color:#fff}", // NEW
+            ".trellis-updates-btn-danger:hover{background:#991b1b;border-color:#991b1b}", // NEW
             ".trellis-updates-btn-neutral:hover{background:#f9fafb}",
             ".trellis-updates-btn:disabled{opacity:.55;cursor:default}",
             ".trellis-updates-status{padding:8px 10px;background:#f5f7fa;border:1px solid #d7dde5;border-radius:4px;margin:8px 0}",
@@ -304,6 +308,11 @@
         const button = createEl("button", "trellis-updates-btn trellis-updates-btn-" + semanticVariant, label);
         button.type = "button";
         if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") window.Trellis.ui.applyButtonStyle(button, semanticVariant);
+        else { // NEW
+            button.setAttribute("data-trellis-button-variant", semanticVariant); // NEW
+            if (semanticVariant === "danger") { button.style.background = "#b91c1c"; button.style.borderColor = "#b91c1c"; button.style.color = "#fff"; } // NEW
+            else if (semanticVariant === "close") { button.style.borderColor = "#b91c1c"; button.style.color = "#b91c1c"; } // NEW
+        } // NEW
         if (options && options.disabled) button.disabled = true;
         if (options && options.title) button.title = options.title;
         button.addEventListener("click", onClick);

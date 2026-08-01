@@ -1322,6 +1322,8 @@ test("task manager day-lane overlay appears only for selected week day lanes", a
     assert.ok(buttonByText(overlay, "Change Hours"));
     assert.ok(buttonByText(overlay, "Add Break"));
     assert.equal(buttonByText(overlay, "Close Day").style.display, "");
+    assert.equal(buttonByText(overlay, "Close Day").getAttribute("data-trellis-button-variant"), "danger"); // NEW
+    assert.match(buttonByText(overlay, "Close Day").getAttribute("style") || "", /background:\s*(?:#b91c1c|rgb\(185,\s*28,\s*28\))/); // NEW
     assert.equal(buttonByText(overlay, "Open Day").style.display, "none");
 });
 
@@ -2700,6 +2702,8 @@ test("task manager multi-card overlay applies note, date, reset, and clear actio
 
     assert.equal(overlay.style.display, "flex");
     ["Edit", "Reset Dates", "Clear Note"].forEach(label => assert.ok(buttonByText(overlay, label)));
+    assert.equal(buttonByText(overlay, "Reset Dates").getAttribute("data-trellis-button-variant"), "danger"); // NEW
+    assert.match(buttonByText(overlay, "Reset Dates").getAttribute("style") || "", /background:\s*(?:#b91c1c|rgb\(185,\s*28,\s*28\))/); // NEW
     assert.equal(buttonByText(overlay, "TODO").style.display, "none");
     assert.equal(buttonByText(overlay, "DOING").style.display, "none");
     assert.equal(buttonByText(overlay, "DONE").style.display, "none");

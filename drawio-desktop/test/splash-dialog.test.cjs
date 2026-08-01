@@ -728,7 +728,7 @@ test("Trellis splash hides top chrome only while the splash dialog remains activ
 		}
 	};
 
-	assert.match(splashCss, /\.geEditor\.trellis-splash-active > \.geMenubarContainer,\s*\/\* NEW \*\/\s*\.geEditor\.trellis-splash-active > \.geToolbarContainer[\s\S]*display: none !important/);
+	assert.match(splashCss, /\.geEditor\.trellis-splash-active > \.geMenubarContainer,\s*\.geEditor\.trellis-splash-active > \.geToolbarContainer[\s\S]*display: none !important/);
 	assert.doesNotMatch(splashCss, /\.geEditor\.trellis-splash-active > \.geSidebarContainer/);
 
 	context.window.TrellisSplashEnhancements.decorateOuterDialog(editorUi, dialog, outerDialog);
@@ -897,5 +897,5 @@ test("Trellis splash assets and bootstrap wire the same enhancement into package
     assert.match(indexSource, /styles\/trellis-splash\.css/);
     assert.ok(enhancementIndex >= 0 && enhancementIndex < bootstrapIndex);
     assert.match(bootstrapSource, /TrellisSplashEnhancements\.install\(\)/);
-    assert.match(electronSource, /case 'getTrellisSplashBackground': \/\/ NEW/);
+    assert.match(electronSource, /case 'getTrellisSplashBackground':/);
 });

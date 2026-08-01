@@ -168,6 +168,10 @@ Draw.loadPlugin(function (ui) {
         return cell.getAttribute('garden_bed') === '1' || cell.getAttribute('gardenBed') === '1' || cell.getAttribute('is_garden_bed') === '1';
     }
 
+    function isIrrigationBedAssembly(cell) { // CHANGE
+        return !!cell && cell.getAttribute && cell.getAttribute('irrigation_assembly') === '1' && cell.getAttribute('irrigation_assembly_type') === 'bed'; // CHANGE
+    } // CHANGE
+
     function isGardenModule(cell) {
         return !!cell && cell.getAttribute && (cell.getAttribute('garden_module') === '1' || cell.getAttribute('trellis_garden_module') === '1');
     }
@@ -432,6 +436,30 @@ Draw.loadPlugin(function (ui) {
         const close = graphApi && graphApi.closeIrrigationMode || windowApi && windowApi.closeIrrigationMode;
         if (typeof close === 'function') close();
     }
+
+    function irrigationPlannerApiForWorkspaceDrag() { // CHANGE
+        return graph && graph.__trellisIrrigationPlanner || (typeof window !== 'undefined' && window.TrellisIrrigationPlanner) || null; // CHANGE
+    } // CHANGE
+
+    function firstIrrigationBedAssemblyCell(cells) { // CHANGE
+        for (let i = 0; i < (cells || []).length; i++) if (isIrrigationBedAssembly(cells[i])) return cells[i]; // CHANGE
+        return null; // CHANGE
+    } // CHANGE
+
+    function beginIrrigationWorkspaceHandleSuppression(dragCells, evt) { // CHANGE
+        const target = firstIrrigationBedAssemblyCell(dragCells); // CHANGE
+        const api = target && irrigationPlannerApiForWorkspaceDrag(); // CHANGE
+        if (!api || typeof api.beginHudDragSuppression !== 'function') return null; // CHANGE
+        return api.beginHudDragSuppression(target, evt, [target]) ? api : null; // CHANGE
+    } // CHANGE
+
+    function updateIrrigationWorkspaceHandleSuppression(api, evt) { // CHANGE
+        if (api && typeof api.updateHudDragSuppression === 'function') api.updateHudDragSuppression(evt); // CHANGE
+    } // CHANGE
+
+    function finishIrrigationWorkspaceHandleSuppression(api) { // CHANGE
+        if (api && typeof api.finishHudDragSuppression === 'function') api.finishHudDragSuppression(); // CHANGE
+    } // CHANGE
 
     function getDeepestCellForMouseEvent(graph, me, fallback) {
         if (!graph || !me) return fallback || null;
@@ -850,6 +878,7 @@ Draw.loadPlugin(function (ui) {
         workspaceHoveredCell = cell;
         const handler = graph.graphHandler;
         if (handler) {
+            const irrigationSuppressionApi = occupiedBedDrag ? beginIrrigationWorkspaceHandleSuppression(dragCells, evt) : null; // CHANGE
             const oldMouseDown = graph.isMouseDown;
             graph.isMouseDown = true;
             handler.mouseDownX = mxEvent.getClientX(evt);
@@ -858,6 +887,7 @@ Draw.loadPlugin(function (ui) {
             handler.cell = cell;
             if (occupiedBedDrag) handler.__trellisWorkspaceHandleDragCells = dragCells;
             const move = function (moveEvt) {
+                updateIrrigationWorkspaceHandleSuppression(irrigationSuppressionApi, moveEvt); // CHANGE
                 handler.mouseMove(graph, createWorkspaceMouseEvent(moveEvt, cell));
             };
             const up = function (upEvt) {
@@ -868,6 +898,7 @@ Draw.loadPlugin(function (ui) {
                     workspaceDraggingHandleCell = null;
                     handler.__trellisWorkspaceHandleDragCells = null;
                     mxEvent.removeGestureListeners(document, null, move, up);
+                    finishIrrigationWorkspaceHandleSuppression(irrigationSuppressionApi); // CHANGE
                     scheduleWorkspaceHandleRefresh();
                 }
             };

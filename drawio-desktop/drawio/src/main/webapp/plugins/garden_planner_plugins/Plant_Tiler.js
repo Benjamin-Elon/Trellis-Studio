@@ -24,7 +24,14 @@ Draw.loadPlugin(function (ui) {
         if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") {
             window.Trellis.ui.applyButtonStyle(button, variant, options);
         } else if (button) {
-            button.setAttribute("data-trellis-button-variant", variant || "neutral");
+            const normalized = variant || "neutral"; // CHANGE
+            const activeOpen = normalized === "open" && options && options.active === true; // NEW
+            const style = { open: ["#2563eb", activeOpen ? "#1e3a8a" : "#1d4ed8", activeOpen ? "#eff6ff" : "#fff"], add: ["#188038", "#166534", "#fff"], close: ["#b91c1c", "#b91c1c", "#fff"], danger: ["#b91c1c", "#fff", "#b91c1c"], neutral: ["#6b7280", "#111827", "#fff"] }[normalized] || ["#6b7280", "#111827", "#fff"]; // NEW
+            button.setAttribute("data-trellis-button-variant", normalized); // CHANGE
+            button.style.border = "1px solid " + style[0]; // NEW
+            button.style.color = style[1]; // NEW
+            button.style.background = style[2]; // NEW
+            if (activeOpen) button.style.fontWeight = "700"; // NEW
         }
         return button;
     }
@@ -1841,7 +1848,7 @@ Draw.loadPlugin(function (ui) {
         btnRow.style.justifyContent = "flex-end";
         btnRow.style.gap = "8px";
         btnRow.style.marginTop = "12px";
-        const closeBtn = tilerButton("Close", () => ui.hideDialog(), "neutral");
+        const closeBtn = tilerButton("Close", () => ui.hideDialog(), "close"); // CHANGE
         const saveBtn = tilerButton("Save City", async () => {
             clearError();
             try {

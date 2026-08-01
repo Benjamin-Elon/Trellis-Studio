@@ -1194,6 +1194,7 @@ test("interactive chart legend controls drawing and hover details without changi
     harness.findButton("Apply template").click();
     assert.equal(chartLegendButtons(harness.document)[0].getAttribute("aria-pressed"), "false");
 
+    assert.equal(harness.findButton("Close").getAttribute("data-trellis-button-variant"), "close"); // NEW
     harness.findButton("Close").click();
     await harness.openModal(2026);
     setStripExpanded(harness.document, "plan-check", true);
@@ -1518,6 +1519,8 @@ test("dirty close uses the inline save-discard-cancel workflow", async t => {
     assert.ok(harness.findButton("Save and Close"));
     assert.ok(harness.findButton("Discard"));
     assert.ok(harness.findButton("Cancel"));
+    assert.equal(harness.findButton("Discard").getAttribute("data-trellis-button-variant"), "danger"); // NEW
+    assert.match(harness.findButton("Discard").getAttribute("style") || "", /background:\s*(?:var\(--yp-danger\)|#b3261e|rgb\(179,\s*38,\s*30\))/); // NEW
 
     harness.findButton("Cancel").click();
     assert.equal(harness.findButton("Save and Close").parentElement.style.display, "none");

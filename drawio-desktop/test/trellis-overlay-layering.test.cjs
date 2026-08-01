@@ -111,7 +111,7 @@ test("custom Trellis dialogs render at the Draw.io dialog layer", () => {
     assert.match(users, /trellis-users-auth-overlay[\s\S]*z-index:" \+ AUTH_OVERLAY_Z/);
     assert.doesNotMatch(users, /ui\.showDialog\(buildChangeRejectedDialog/);
     assert.match(users, /accountMenu\.style\.cssText = "position:fixed[\s\S]*z-index:" \+ USERS_UI_LAYER_Z/);
-    assert.match(users, /const host = document\.body; \/\/ CHANGE[\s\S]*panel\.style\.cssText = "position:fixed[\s\S]*z-index:" \+ USERS_UI_LAYER_Z/);
+    assert.match(users, /const host = document\.body;[\s\S]*panel\.style\.cssText = "position:fixed[\s\S]*z-index:" \+ USERS_UI_LAYER_Z/);
     const yearPlanner = readPlugin("Year_Planner.js");
     assert.match(yearPlanner, /const TRELLIS_DIALOG_Z = 2000000000;/);
     assert.match(yearPlanner, /z-index:" \+ TRELLIS_DIALOG_Z \+ "/);

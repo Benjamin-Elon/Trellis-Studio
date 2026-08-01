@@ -756,7 +756,61 @@ mxCellRenderer.prototype.createControlClickHandler = function(state)
 		if (this.forceControlClickHandler || graph.isEnabled())
 		{
 			var collapse = !graph.isCellCollapsed(state.cell);
-			graph.foldCells(collapse, false, [state.cell], null, evt);
+			var model = graph.model; // CHANGE: Batch folding is scoped to the clicked cell's immediate parent.
+			var clickedParent = (model != null && model.getParent != null) ? model.getParent(state.cell) : null; // CHANGE
+			var targets = []; // CHANGE: Native fold controls apply to the clicked cell plus selected foldable cells.
+			var targetIds = {}; // CHANGE: Deduplicate by stable cell id when available.
+			var addTarget = function(cell) // CHANGE
+			{
+				if (cell != null)
+				{
+					var id = (cell.getId != null) ? cell.getId() : cell.id;
+
+					if (id != null && id !== '')
+					{
+						if (targetIds[id])
+						{
+							return;
+						}
+
+						targetIds[id] = true;
+					}
+					else if (mxUtils.indexOf(targets, cell) >= 0)
+					{
+						return;
+					}
+
+					targets.push(cell);
+				}
+			};
+
+			addTarget(state.cell); // CHANGE
+
+			if (graph.getFoldableCells != null) // CHANGE
+			{
+				var selectionCells = state.__trellisFoldSelectionCells ||
+					((graph.getSelectionCells != null) ? graph.getSelectionCells() : null); // CHANGE
+				var selectedTargets = graph.getFoldableCells(selectionCells, collapse);
+
+				for (var i = 0; selectedTargets != null && i < selectedTargets.length; i++)
+				{
+					if (model != null && model.getParent != null &&
+						model.getParent(selectedTargets[i]) == clickedParent) // CHANGE
+					{
+						addTarget(selectedTargets[i]);
+					}
+				}
+			}
+
+			try
+			{
+				graph.foldCells(collapse, false, targets, null, evt);
+			}
+			finally
+			{
+				state.__trellisFoldSelectionCells = null; // CHANGE
+			}
+
 			mxEvent.consume(evt);
 		}
 	});
@@ -811,11 +865,33 @@ mxCellRenderer.prototype.initControl = function(state, control, handleEvents, cl
 	if (handleEvents)
 	{
 		var first = null;
+		var clearFoldSelectionSnapshot = function() // CHANGE
+		{
+			state.__trellisFoldSelectionCells = null;
+		};
+		var scheduleFoldSelectionSnapshotClear = function() // CHANGE
+		{
+			if (typeof window !== 'undefined' && window.setTimeout != null)
+			{
+				window.setTimeout(clearFoldSelectionSnapshot, 0);
+			}
+			else
+			{
+				clearFoldSelectionSnapshot();
+			}
+		};
 
 		mxEvent.addGestureListeners(node,
 			function (evt)
 			{
 				first = new mxPoint(mxEvent.getClientX(evt), mxEvent.getClientY(evt));
+
+				if (clickHandler != null && graph.getSelectionCells != null) // CHANGE
+				{
+					var cells = graph.getSelectionCells();
+					state.__trellisFoldSelectionCells = (cells != null && cells.slice != null) ? cells.slice() : cells;
+				}
+
 				graph.fireMouseEvent(mxEvent.MOUSE_DOWN, new mxMouseEvent(evt, state));
 				mxEvent.consume(evt);
 			},
@@ -826,6 +902,7 @@ mxCellRenderer.prototype.initControl = function(state, control, handleEvents, cl
 			function (evt)
 			{
 				graph.fireMouseEvent(mxEvent.MOUSE_UP, new mxMouseEvent(evt, state));
+				scheduleFoldSelectionSnapshotClear(); // CHANGE
 				mxEvent.consume(evt);
 			});
 		
@@ -841,7 +918,15 @@ mxCellRenderer.prototype.initControl = function(state, control, handleEvents, cl
 					if (Math.abs(first.x - mxEvent.getClientX(evt)) < tol &&
 						Math.abs(first.y - mxEvent.getClientY(evt)) < tol)
 					{
-						clickHandler.call(clickHandler, evt);
+						try
+						{
+							clickHandler.call(clickHandler, evt);
+						}
+						finally
+						{
+							clearFoldSelectionSnapshot(); // CHANGE
+						}
+
 						mxEvent.consume(evt);
 					}
 				}
