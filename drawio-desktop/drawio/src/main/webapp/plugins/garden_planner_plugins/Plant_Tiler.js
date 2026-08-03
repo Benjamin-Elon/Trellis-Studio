@@ -55,6 +55,7 @@ Draw.loadPlugin(function (ui) {
     const DEFAULT_METRIC_BED_LENGTH_CM = 200;
     const DEFAULT_IMPERIAL_BED_WIDTH_CM = 4 * CM_PER_FOOT;
     const DEFAULT_IMPERIAL_BED_LENGTH_CM = 8 * CM_PER_FOOT;
+    const DEFAULT_MODULE_MARGIN_CM = 5 * CM_PER_METER; // CHANGE
     const TILER_GROUP_CREATED_EVENT = "usl:tilerGroupCreated";
 
     // ---------- LOD settings ----------
@@ -1517,6 +1518,11 @@ Draw.loadPlugin(function (ui) {
         return Number.isFinite(n) && n > 0 ? n : null;
     }
 
+    function nonNegativeFiniteNumber(value) {
+        const n = Number(value);
+        return Number.isFinite(n) && n >= 0 ? n : null;
+    } // CHANGE
+
     function formatBedCmAttr(cm) {
         return String(Math.round((Number(cm) || 0) * 1000) / 1000);
     }
@@ -1558,6 +1564,71 @@ Draw.loadPlugin(function (ui) {
         return units === "imperial" ? n * CM_PER_FOOT : n * CM_PER_METER;
     }
 
+    function graphUnitsToCm(units) {
+        return Number(units) / (PX_PER_CM * DRAW_SCALE);
+    } // CHANGE
+
+    function cmToGraphUnits(cm) {
+        return Number(cm) * PX_PER_CM * DRAW_SCALE;
+    } // CHANGE
+
+    function defaultModuleMarginUnits() {
+        return Math.round(cmToGraphUnits(DEFAULT_MODULE_MARGIN_CM));
+    } // CHANGE
+
+    function lengthCmToDisplay(cm, units) {
+        return units === "imperial" ? Number(cm) / CM_PER_FOOT : Number(cm) / CM_PER_METER;
+    } // CHANGE
+
+    function positiveLengthDisplayToCm(value, units) {
+        const n = positiveFiniteNumber(value);
+        if (!n) return null;
+        return units === "imperial" ? n * CM_PER_FOOT : n * CM_PER_METER;
+    } // CHANGE
+
+    function nonNegativeLengthDisplayToCm(value, units) {
+        const n = nonNegativeFiniteNumber(value);
+        if (n == null) return null;
+        return units === "imperial" ? n * CM_PER_FOOT : n * CM_PER_METER;
+    } // CHANGE
+
+    function geometryDimensionsCm(moduleCell) {
+        const geo = moduleCell && moduleCell.getGeometry ? moduleCell.getGeometry() : null;
+        return geo ? { widthCm: graphUnitsToCm(Number(geo.width) || 0), lengthCm: graphUnitsToCm(Number(geo.height) || 0) } : null;
+    } // CHANGE
+
+    function getModuleHeaderHeightForSettings(moduleCell) {
+        if (!moduleCell) return 0;
+        if (graph.getStartSize) {
+            const size = graph.getStartSize(moduleCell) || {};
+            return Number(size.height) || 0;
+        }
+        const match = getStyleSafe(moduleCell).match(/(?:^|;)startSize=(\d+)(?=;|$)/);
+        return match ? parseInt(match[1], 10) : 0;
+    } // CHANGE
+
+    function childUnionRelative(moduleCell) {
+        const graphModel = graph.getModel && graph.getModel();
+        const children = graphModel && graphModel.getChildren ? graphModel.getChildren(moduleCell) || [] : [];
+        let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+        let any = false;
+        children.forEach(child => {
+            if (!(child && child.isVertex && child.isVertex())) return;
+            const geo = graphModel.getGeometry ? graphModel.getGeometry(child) : child.getGeometry && child.getGeometry();
+            if (!geo || geo.relative) return;
+            const x = Number(geo.x) || 0;
+            const y = Number(geo.y) || 0;
+            const width = Number(geo.width) || 0;
+            const height = Number(geo.height) || 0;
+            left = Math.min(left, x);
+            top = Math.min(top, y);
+            right = Math.max(right, x + width);
+            bottom = Math.max(bottom, y + height);
+            any = true;
+        });
+        return any ? { left, top, right, bottom, width: right - left, height: bottom - top } : null;
+    } // CHANGE
+
 
     function hasGardenSettingsSet(moduleCell) {
         if (!(moduleCell && moduleCell.getAttribute)) return false;
@@ -1566,23 +1637,25 @@ Draw.loadPlugin(function (ui) {
         return !!(city && units && getSavedDefaultBedDimensionsCm(moduleCell));
     }
 
-    function getModuleMarginFromStyle(moduleCell, defaultPx = 100) {
-        const fallback = Number.isInteger(defaultPx) && defaultPx >= 0 ? defaultPx : 100;
+    function getModuleMarginFromStyle(moduleCell, defaultPx = defaultModuleMarginUnits()) {
+        const fallback = Number.isInteger(defaultPx) && defaultPx >= 0 ? defaultPx : defaultModuleMarginUnits(); // CHANGE
         const match = getStyleSafe(moduleCell).match(/(?:^|;)module_margin=(\d+)(?=;|$)/);
         return match ? parseInt(match[1], 10) : fallback;
     }
 
     function getGardenModuleMargin(moduleCell) {
         const modulesApi = graph.__trellisModules;
-        if (modulesApi && typeof modulesApi.getModuleMargin === "function") return modulesApi.getModuleMargin(moduleCell, 100);
-        return getModuleMarginFromStyle(moduleCell, 100);
+        if (modulesApi && typeof modulesApi.getModuleMargin === "function") return modulesApi.getModuleMargin(moduleCell, defaultModuleMarginUnits()); // CHANGE
+        return getModuleMarginFromStyle(moduleCell, defaultModuleMarginUnits()); // CHANGE
     }
 
-    function readModuleMarginInput(inputEl) {
+    function readModuleMarginInput(inputEl, units) {
         const raw = String(inputEl && inputEl.value || "").trim();
-        if (!/^\d+$/.test(raw)) return null;
-        const n = Number(raw);
-        return Number.isSafeInteger(n) && n >= 0 ? n : null;
+        if (!units || raw === "") return null; // CHANGE
+        const cm = nonNegativeLengthDisplayToCm(raw, units); // CHANGE
+        if (cm == null) return null; // CHANGE
+        const n = Math.round(cmToGraphUnits(cm)); // CHANGE
+        return Number.isSafeInteger(n) && n >= 0 ? n : null; // CHANGE
     }
 
     function setGardenModuleMargin(moduleCell, marginPx) {
@@ -1875,7 +1948,7 @@ Draw.loadPlugin(function (ui) {
     }
 
 
-    // garden settings dialog (city + units + default bed dimensions)
+    // garden settings dialog (city + units + garden dimensions + default bed dimensions) // CHANGE
     async function showGardenSettingsDialog(ui, graph, moduleCell, onClose) {
         const model = graph.getModel();
         const curGardenName = String(getXmlAttr(moduleCell, "garden_name", "") || getXmlAttr(moduleCell, "label", "") || "Garden").trim() || "Garden";
@@ -1883,7 +1956,10 @@ Draw.loadPlugin(function (ui) {
         const curCity = getXmlAttr(moduleCell, "city_name", "");
         const curUnits = getXmlAttr(moduleCell, "unit_system", "");
         const curModuleMargin = getGardenModuleMargin(moduleCell);
+        const curGardenDimsCm = geometryDimensionsCm(moduleCell); // CHANGE
         const savedBedDimsCm = getSavedDefaultBedDimensionsCm(moduleCell);
+        let activeGardenDisplayUnits = curUnits || ""; // CHANGE
+        let activeMarginDisplayUnits = curUnits || ""; // CHANGE
         let activeBedDisplayUnits = curUnits || "";
         let bedDimensionsEdited = false;
         let closeNotified = false;
@@ -1992,6 +2068,20 @@ Draw.loadPlugin(function (ui) {
             });
         row("Units:", unitsSel);
 
+        const gardenWidthInput = document.createElement("input"); // CHANGE
+        gardenWidthInput.type = "number"; // CHANGE
+        gardenWidthInput.step = "0.01"; // CHANGE
+        gardenWidthInput.min = "0.01"; // CHANGE
+        gardenWidthInput.style.flex = "1"; // CHANGE
+        const gardenWidthRow = row("Garden width:", gardenWidthInput); // CHANGE
+
+        const gardenLengthInput = document.createElement("input"); // CHANGE
+        gardenLengthInput.type = "number"; // CHANGE
+        gardenLengthInput.step = "0.01"; // CHANGE
+        gardenLengthInput.min = "0.01"; // CHANGE
+        gardenLengthInput.style.flex = "1"; // CHANGE
+        const gardenLengthRow = row("Garden length:", gardenLengthInput); // CHANGE
+
         const bedWidthInput = document.createElement("input");
         bedWidthInput.type = "number";
         bedWidthInput.step = "0.01";
@@ -2010,11 +2100,35 @@ Draw.loadPlugin(function (ui) {
 
         const moduleMarginInput = document.createElement("input");
         moduleMarginInput.type = "number";
-        moduleMarginInput.step = "1";
+        moduleMarginInput.step = "0.01"; // CHANGE
         moduleMarginInput.min = "0";
-        moduleMarginInput.value = String(curModuleMargin);
         moduleMarginInput.style.flex = "1";
-        row("Module margin (px):", moduleMarginInput);
+        const moduleMarginRow = row("Module margin:", moduleMarginInput); // CHANGE
+
+        function readGardenInputsAsCm(units) {
+            if (!units) return null; // CHANGE
+            const widthCm = positiveLengthDisplayToCm(gardenWidthInput.value, units); // CHANGE
+            const lengthCm = positiveLengthDisplayToCm(gardenLengthInput.value, units); // CHANGE
+            return widthCm && lengthCm ? { widthCm, lengthCm } : null; // CHANGE
+        }
+
+        function setGardenInputsFromCm(dimsCm, units) {
+            if (!dimsCm || !units) {
+                gardenWidthInput.value = ""; // CHANGE
+                gardenLengthInput.value = ""; // CHANGE
+                return;
+            }
+            gardenWidthInput.value = formatBedDisplayValue(lengthCmToDisplay(dimsCm.widthCm, units)); // CHANGE
+            gardenLengthInput.value = formatBedDisplayValue(lengthCmToDisplay(dimsCm.lengthCm, units)); // CHANGE
+        }
+
+        function setModuleMarginInputFromUnits(marginUnits, units) {
+            if (!units) {
+                moduleMarginInput.value = ""; // CHANGE
+                return;
+            }
+            moduleMarginInput.value = formatBedDisplayValue(lengthCmToDisplay(graphUnitsToCm(marginUnits), units)); // CHANGE
+        }
 
         function readBedInputsAsCm(units) {
             if (!units) return null;
@@ -2033,6 +2147,31 @@ Draw.loadPlugin(function (ui) {
             bedLengthInput.value = formatBedDisplayValue(bedDimensionCmToDisplay(dimsCm.lengthCm, units));
         }
 
+        function syncGardenDimensionInputs(nextUnits) {
+            const priorDims = activeGardenDisplayUnits ? readGardenInputsAsCm(activeGardenDisplayUnits) : null; // CHANGE
+            const nextDims = priorDims || curGardenDimsCm; // CHANGE
+            const enabled = !!nextUnits; // CHANGE
+            const unitLabel = enabled ? bedDisplayUnitLabel(nextUnits) : ""; // CHANGE
+            activeGardenDisplayUnits = nextUnits || ""; // CHANGE
+            gardenWidthRow.label.textContent = enabled ? `Garden width (${unitLabel}):` : "Garden width:"; // CHANGE
+            gardenLengthRow.label.textContent = enabled ? `Garden length (${unitLabel}):` : "Garden length:"; // CHANGE
+            gardenWidthInput.disabled = !enabled; // CHANGE
+            gardenLengthInput.disabled = !enabled; // CHANGE
+            setGardenInputsFromCm(enabled ? nextDims : null, nextUnits); // CHANGE
+        }
+
+        function syncModuleMarginInput(nextUnits) {
+            const priorMargin = activeMarginDisplayUnits ? readModuleMarginInput(moduleMarginInput, activeMarginDisplayUnits) : null; // CHANGE
+            const nextMargin = priorMargin == null ? curModuleMargin : priorMargin; // CHANGE
+            const enabled = !!nextUnits; // CHANGE
+            const unitLabel = enabled ? bedDisplayUnitLabel(nextUnits) : ""; // CHANGE
+            activeMarginDisplayUnits = nextUnits || ""; // CHANGE
+            moduleMarginRow.label.textContent = enabled ? `Module margin (${unitLabel}):` : "Module margin:"; // CHANGE
+            moduleMarginInput.disabled = !enabled; // CHANGE
+            if (enabled) setModuleMarginInputFromUnits(nextMargin, nextUnits); // CHANGE
+            else moduleMarginInput.value = ""; // CHANGE
+        }
+
         function syncBedDimensionInputs(nextUnits) {
             const priorDims = activeBedDisplayUnits && bedDimensionsEdited ? readBedInputsAsCm(activeBedDisplayUnits) : null;
             const nextDims = priorDims || savedBedDimsCm || defaultBedDimensionsCmForUnits(nextUnits);
@@ -2046,9 +2185,32 @@ Draw.loadPlugin(function (ui) {
             setBedInputsFromCm(enabled ? nextDims : null, nextUnits);
         }
 
+        function gardenDimensionsFit(widthUnits, heightUnits, marginUnits) {
+            const union = childUnionRelative(moduleCell); // CHANGE
+            if (!union) return true; // CHANGE
+            const neededWidth = union.right + marginUnits; // CHANGE
+            const neededHeight = union.bottom + marginUnits + getModuleHeaderHeightForSettings(moduleCell); // CHANGE
+            return widthUnits + 0.5 >= neededWidth && heightUnits + 0.5 >= neededHeight; // CHANGE
+        }
+
+        function requiredGardenFitMessage(marginUnits, units) {
+            const union = childUnionRelative(moduleCell); // CHANGE
+            if (!union) return ""; // CHANGE
+            const neededWidth = union.right + marginUnits; // CHANGE
+            const neededHeight = union.bottom + marginUnits + getModuleHeaderHeightForSettings(moduleCell); // CHANGE
+            const width = formatBedDisplayValue(lengthCmToDisplay(graphUnitsToCm(neededWidth), units)); // CHANGE
+            const length = formatBedDisplayValue(lengthCmToDisplay(graphUnitsToCm(neededHeight), units)); // CHANGE
+            return `Garden dimensions must be at least ${width} by ${length} ${bedDisplayUnitLabel(units)} to fit existing contents plus margin.`; // CHANGE
+        }
+
         mxEvent.addListener(unitsSel, "change", function () {
-            syncBedDimensionInputs((unitsSel.value || "").trim());
+            const nextUnits = (unitsSel.value || "").trim(); // CHANGE
+            syncGardenDimensionInputs(nextUnits); // CHANGE
+            syncModuleMarginInput(nextUnits); // CHANGE
+            syncBedDimensionInputs(nextUnits); // CHANGE
         });
+        syncGardenDimensionInputs(curUnits); // CHANGE
+        syncModuleMarginInput(curUnits); // CHANGE
         syncBedDimensionInputs(curUnits);
 
         function showError(msg) {
@@ -2070,17 +2232,29 @@ Draw.loadPlugin(function (ui) {
             const chosenCity = String(chosenCityRow?.city_name || "").trim();
             const chosenCityId = chosenCityRow?.city_id != null ? String(chosenCityRow.city_id) : "";
             const chosenUnits = (unitsSel.value || "").trim();
+            const chosenGardenDimsCm = readGardenInputsAsCm(chosenUnits); // CHANGE
             const chosenBedDimsCm = readBedInputsAsCm(chosenUnits);
-            const chosenModuleMargin = readModuleMarginInput(moduleMarginInput);
+            const chosenModuleMargin = readModuleMarginInput(moduleMarginInput, chosenUnits); // CHANGE
+            const chosenGardenWidthUnits = chosenGardenDimsCm ? cmToGraphUnits(chosenGardenDimsCm.widthCm) : null; // CHANGE
+            const chosenGardenHeightUnits = chosenGardenDimsCm ? cmToGraphUnits(chosenGardenDimsCm.lengthCm) : null; // CHANGE
 
             if (!chosenCity) { showError("City is required."); citySel.focus(); return; }
             if (!chosenUnits) { showError("Units are required."); unitsSel.focus(); return; }
+            if (!chosenGardenDimsCm) { showError("Garden width and length must be positive numbers."); gardenWidthInput.focus(); return; } // CHANGE
             if (!chosenBedDimsCm) { showError("Default bed width and length must be positive numbers."); bedWidthInput.focus(); return; }
-            if (chosenModuleMargin == null) { showError("Module margin must be a non-negative whole number."); moduleMarginInput.focus(); return; }
+            if (chosenModuleMargin == null) { showError("Module margin must be a non-negative number."); moduleMarginInput.focus(); return; } // CHANGE
+            if (!gardenDimensionsFit(chosenGardenWidthUnits, chosenGardenHeightUnits, chosenModuleMargin)) { showError(requiredGardenFitMessage(chosenModuleMargin, chosenUnits)); gardenWidthInput.focus(); return; } // CHANGE
 
             ui.hideDialog();
             model.beginUpdate();
             try {
+                const geo = model.getGeometry(moduleCell); // CHANGE
+                if (geo) { // CHANGE
+                    const nextGeo = geo.clone ? geo.clone() : new mxGeometry(geo.x, geo.y, geo.width, geo.height); // CHANGE
+                    nextGeo.width = chosenGardenWidthUnits; // CHANGE
+                    nextGeo.height = chosenGardenHeightUnits; // CHANGE
+                    model.setGeometry(moduleCell, nextGeo); // CHANGE
+                } // CHANGE
                 setCellAttrsNoTxn(model, moduleCell, {
                     garden_name: chosenGardenName,
                     label: chosenGardenName,
@@ -2102,7 +2276,7 @@ Draw.loadPlugin(function (ui) {
         btnRow.appendChild(okBtn);
         div.appendChild(btnRow);
 
-        ui.showDialog(div, 420, 330, true, true, notifyClose);
+        ui.showDialog(div, 420, 420, true, true, notifyClose); // CHANGE
         elevateTrellisDialog();
         gardenNameInput.focus();
     }
@@ -2121,7 +2295,7 @@ Draw.loadPlugin(function (ui) {
         let settingsBtn = null;
         let addBedBtn = null;
         let addGroupBtn = null;
-        let irrigationSourceBtn = null;
+        let irrigationModeBtn = null; // CHANGE
         let activeModuleCell = null;
         let activeBedCell = null;
         let activeOverlayMode = "";
@@ -2264,12 +2438,12 @@ Draw.loadPlugin(function (ui) {
             settingsBtn = makeButton("Set Garden Settings", "open");
             addBedBtn = makeButton("Add Garden Bed", "add");
             addGroupBtn = makeButton("Add New Plant Group", "add");
-            irrigationSourceBtn = makeButton("Create Irrigation Source", "add");
+            irrigationModeBtn = makeButton("Enter Irrigation Design Mode", "open"); // CHANGE
             toolbar.appendChild(labelInputWrap);
             toolbar.appendChild(settingsBtn);
             toolbar.appendChild(addBedBtn);
             toolbar.appendChild(addGroupBtn);
-            toolbar.appendChild(irrigationSourceBtn);
+            toolbar.appendChild(irrigationModeBtn); // CHANGE
 
             mxEvent.addListener(settingsBtn, "click", async function (evt) {
                 mxEvent.consume(evt);
@@ -2300,11 +2474,11 @@ Draw.loadPlugin(function (ui) {
                 hideToolbar();
             });
 
-            mxEvent.addListener(irrigationSourceBtn, "click", function (evt) {
+            mxEvent.addListener(irrigationModeBtn, "click", function (evt) { // CHANGE
                 mxEvent.consume(evt);
                 const moduleCell = activeModuleCell;
-                if (!moduleCell || !hasGardenSettingsSet(moduleCell) || gardenModuleHasIrrigationSource(moduleCell)) return;
-                openIrrigationSourceFormForModule(moduleCell);
+                if (!moduleCell || !hasGardenSettingsSet(moduleCell)) return; // CHANGE
+                openIrrigationModeForModule(moduleCell); // CHANGE
                 hideToolbar();
             });
 
@@ -2352,34 +2526,13 @@ Draw.loadPlugin(function (ui) {
             return true;
         }
 
-        function gardenModuleHasIrrigationSource(moduleCell) {
-            return collectModuleDescendants(moduleCell).some(function (cell) {
-                return getXmlAttr(cell, "irrigation_endpoint_type", "") === "source";
-            });
-        }
-
-        function collectModuleDescendants(moduleCell) {
-            const graphModel = graph.getModel && graph.getModel();
-            const out = [];
-            (function visit(parent) {
-                const count = graphModel && graphModel.getChildCount ? graphModel.getChildCount(parent) : ((parent && parent.children && parent.children.length) || 0);
-                for (let i = 0; i < count; i++) {
-                    const child = graphModel && graphModel.getChildAt ? graphModel.getChildAt(parent, i) : parent.children[i];
-                    if (!child) continue;
-                    out.push(child);
-                    visit(child);
-                }
-            })(moduleCell);
-            return out;
-        }
-
-        function openIrrigationSourceFormForModule(moduleCell) {
-            if (window.TrellisIrrigationPlanner && typeof window.TrellisIrrigationPlanner.openIrrigationMode === "function") {
-                window.TrellisIrrigationPlanner.openIrrigationMode(moduleCell, { sourceForm: true, preserveViewport: true });
+        function openIrrigationModeForModule(moduleCell) { // CHANGE
+            if (typeof window !== "undefined" && window.TrellisIrrigationPlanner && typeof window.TrellisIrrigationPlanner.openIrrigationMode === "function") { // CHANGE
+                window.TrellisIrrigationPlanner.openIrrigationMode(moduleCell, { preserveViewport: true }); // CHANGE
                 return;
             }
             if (graph.setSelectionCell) graph.setSelectionCell(moduleCell);
-            const action = ui.actions && ui.actions.get && ui.actions.get("trellisIrrigationCreateSourceEndpoint");
+            const action = ui.actions && ui.actions.get && ui.actions.get("trellisIrrigationPlanner"); // CHANGE
             if (action && typeof action.funct === "function") action.funct();
         }
 
@@ -2510,16 +2663,16 @@ Draw.loadPlugin(function (ui) {
 
         function syncToolbarState() {
             const moduleCell = activeModuleCell;
-            if (!toolbar || !labelInputWrap || !settingsBtn || !addBedBtn || !addGroupBtn || !irrigationSourceBtn || !moduleCell) return;
+            if (!toolbar || !labelInputWrap || !settingsBtn || !addBedBtn || !addGroupBtn || !irrigationModeBtn || !moduleCell) return; // CHANGE
             const hasSettings = hasGardenSettingsSet(moduleCell);
             const bedMode = activeOverlayMode === "bed";
-            const showIrrigationSource = !bedMode && !gardenModuleHasIrrigationSource(moduleCell);
+            const showIrrigationModeEntry = !bedMode; // CHANGE
             labelInputWrap.style.display = bedMode ? "none" : "flex";
             if (!bedMode) renderGardenModuleLabelInput(moduleCell);
             settingsBtn.style.display = bedMode ? "none" : "";
             addBedBtn.style.display = bedMode ? "none" : "";
             addGroupBtn.style.display = "";
-            irrigationSourceBtn.style.display = showIrrigationSource ? "" : "none";
+            irrigationModeBtn.style.display = showIrrigationModeEntry ? "" : "none"; // CHANGE
             settingsBtn.textContent = hasSettings ? "Edit Garden Settings" : "Set Garden Settings";
             addBedBtn.disabled = !hasSettings;
             addBedBtn.title = hasSettings ? "Add the default-sized garden bed at the selected location" : "Set garden settings before adding beds";
@@ -2529,10 +2682,10 @@ Draw.loadPlugin(function (ui) {
             addGroupBtn.title = hasSettings ? (bedMode ? "Add a new plant group fitted to this garden bed" : "Add a new plant group at the selected location") : "Set garden settings before adding plants";
             addGroupBtn.style.opacity = hasSettings ? "1" : "0.55";
             addGroupBtn.style.cursor = hasSettings ? "pointer" : "default";
-            irrigationSourceBtn.disabled = !hasSettings;
-            irrigationSourceBtn.title = hasSettings ? "Enter irrigation design mode and create the first irrigation source" : "Set garden settings before creating an irrigation source";
-            irrigationSourceBtn.style.opacity = hasSettings ? "1" : "0.55";
-            irrigationSourceBtn.style.cursor = hasSettings ? "pointer" : "default";
+            irrigationModeBtn.disabled = !hasSettings; // CHANGE
+            irrigationModeBtn.title = hasSettings ? "Enter irrigation design mode" : "Set garden settings before entering irrigation design mode"; // CHANGE
+            irrigationModeBtn.style.opacity = hasSettings ? "1" : "0.55"; // CHANGE
+            irrigationModeBtn.style.cursor = hasSettings ? "pointer" : "default"; // CHANGE
         }
 
         function refreshForSelection() {

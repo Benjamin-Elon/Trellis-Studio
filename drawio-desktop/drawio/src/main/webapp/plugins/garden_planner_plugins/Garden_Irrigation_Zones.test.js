@@ -493,6 +493,42 @@ function writeBedTemplate(assembly, record) {
     return assembly;
 }
 
+function analysisBedRecord(flowGpm, pressurePsi) {
+    return { templateModel: "bom", demand: { flowGpm, operatingPressurePsi: pressurePsi }, requiredParts: [], partIds: [] };
+}
+
+function analysisCatalog(overrides) {
+    const base = [
+        { id: "timer_analysis", name: "Timer", category: "controller_timer", stockState: "in_stock", connectors: { inputs: 1, outputs: 2, input: { type: "barb", nominalSize: "3/4" }, output: { type: "barb", nominalSize: "3/4", maxFlowGpm: 3 } }, specs: {} },
+        { id: "pipe_analysis", name: "Pipe", category: "pipe_tubing", stockState: "in_stock", unitCost: 1, cost: 1, connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "3/4", pipeConnection: true }, output: { type: "barb", nominalSize: "3/4", pipeConnection: true } }, specs: { innerDiameterIn: 0.824 } },
+        { id: "valve_analysis", name: "Valve", category: "valve", stockState: "in_stock", connectors: { inputs: 1, outputs: 2, input: { type: "barb", nominalSize: "3/4" }, output: { type: "barb", nominalSize: "3/4" } }, specs: {} },
+        { id: "regulator_analysis", name: "Regulator", category: "regulator", stockState: "in_stock", connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "3/4" }, output: { type: "barb", nominalSize: "3/4" } }, specs: { operatingPressurePsi: 25, pressureLossPsi: 0 } },
+        { id: "spray_analysis", name: "Micro spray", category: "microspray", stockState: "in_stock", connectors: { inputs: 1, outputs: 0, input: { type: "barb", nominalSize: "3/4" } }, specs: { flowGpm: 0.5, operatingPressurePsi: 20, coveragePattern: "circle", throwRadiusFt: 6 } },
+        { id: "dripline_analysis", name: "Analysis dripline", category: "dripline", stockState: "in_stock", unitCost: 1, cost: 1, connectors: { inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "3/4", pipeConnection: true }, output: { type: "barb", nominalSize: "3/4", pipeConnection: true } }, specs: { emitterFlowGph: 0.8, emitterSpacingIn: 12, wettedWidthIn: 12, operatingPressurePsi: 10 } }
+    ];
+    return { items: base.map(part => Object.assign({}, part, overrides && overrides[part.id] || {})) };
+}
+
+function buildAnalysisFixture(options = {}) {
+    const moduleCell = makeCell("module_analysis", { garden_module: "1", unit_system: "imperial" });
+    const sourceProfile = options.sourceProfile || { usableFlowGpm: 4, staticPressurePsi: 45, connectorType: "barb", nominalSize: "3/4", pipeConnection: true };
+    const source = addChild(moduleCell, makeCell("analysisSource", { irrigation_endpoint: "1", irrigation_endpoint_type: "source", irrigation_endpoint_profile_json: JSON.stringify(sourceProfile), label: "Source" }, { x: 0, y: 0, width: 80, height: 34 }));
+    const timerLane = addChild(moduleCell, makeCell("analysisTimerLane", { irrigation_assembly: "1", irrigation_assembly_type: "parts" }, { x: 120, y: 0, width: 180, height: 78 }));
+    const timer = addChild(timerLane, partCell("analysisTimer", "timer_analysis", "Timer", 20));
+    const valveLane = addChild(moduleCell, makeCell("analysisValveLane", { irrigation_assembly: "1", irrigation_assembly_type: "parts" }, { x: 340, y: 0, width: 180, height: 78 }));
+    const valve = addChild(valveLane, partCell("analysisValve", "valve_analysis", "Valve", 20));
+    const bedA = writeBedTemplate(addChild(moduleCell, makeCell("analysisBedA", { irrigation_assembly: "1", irrigation_assembly_type: "bed", label: "Bed A" }, { x: 580, y: 0, width: 100, height: 50 })), analysisBedRecord(1, 12));
+    const bedB = writeBedTemplate(addChild(moduleCell, makeCell("analysisBedB", { irrigation_assembly: "1", irrigation_assembly_type: "bed", label: "Bed B" }, { x: 580, y: 90, width: 100, height: 50 })), analysisBedRecord(2, 12));
+    setPipeLength(addChild(moduleCell, edge("analysisSourceTimer", source, timer, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 4);
+    setPipeLength(addChild(moduleCell, edge("analysisTimerValve", timer, valve, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 6);
+    setPipeLength(addChild(moduleCell, edge("analysisValveBedA", valve, bedA, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 8);
+    setPipeLength(addChild(moduleCell, edge("analysisValveBedB", valve, bedB, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "1", irrigation_edge_target_port: "0" })), 10);
+    const installed = installPlugin(moduleCell);
+    installed.api.writeCatalog(moduleCell, analysisCatalog(options.catalogOverrides));
+    const zone = installed.api.syncZones(moduleCell).find(item => item.originCellId === "analysisTimer" && item.outletIndex === 0);
+    return Object.assign({ moduleCell, source, timer, valve, bedA, bedB, zone }, installed);
+}
+
 function runBomAggregationTests() {
     const moduleCell = makeCell("module_bom", { garden_module: "1", unit_system: "imperial" });
     const installed = installPlugin(moduleCell);
@@ -582,6 +618,83 @@ function runSharedTrunkComponentBomTests() {
     assert.strictEqual(Math.round(findBomRow(bom.rows, "drip_bom").requiredQuantity), 20);
 }
 
+function runAnalysisSharedTrunkTests() {
+    const { moduleCell, api, zone } = buildAnalysisFixture();
+    const analysis = api.__test.buildActiveZoneAnalysis(moduleCell, zone);
+    const byEdge = new Map(analysis.pipeLabels.map(row => [row.edgeId, row]));
+    assert.strictEqual(byEdge.get("analysisSourceTimer").flowGpm, 3);
+    assert.strictEqual(byEdge.get("analysisTimerValve").flowGpm, 3);
+    assert.strictEqual(byEdge.get("analysisValveBedA").flowGpm, 1);
+    assert.strictEqual(byEdge.get("analysisValveBedB").flowGpm, 2);
+    assert.strictEqual(analysis.endpointLabels.length, 2);
+    assert.strictEqual(analysis.issues.some(issue => issue.code === "source_over_capacity"), false);
+}
+
+function runAnalysisStandaloneEmitterAndRegulatorTests() {
+    const moduleCell = makeCell("module_analysis_emitter", { garden_module: "1", unit_system: "imperial" });
+    const source = addChild(moduleCell, makeCell("emitterSource", { irrigation_endpoint: "1", irrigation_endpoint_type: "source", irrigation_endpoint_profile_json: JSON.stringify({ usableFlowGpm: 5, staticPressurePsi: 60, connectorType: "barb", nominalSize: "3/4", pipeConnection: true }), label: "Source" }));
+    const timerLane = addChild(moduleCell, makeCell("emitterTimerLane", { irrigation_assembly: "1", irrigation_assembly_type: "parts" }));
+    const timer = addChild(timerLane, partCell("emitterTimer", "timer_analysis", "Timer", 20));
+    const regulatorLane = addChild(moduleCell, makeCell("regulatorLane", { irrigation_assembly: "1", irrigation_assembly_type: "parts" }));
+    const regulator = addChild(regulatorLane, partCell("regulatorCell", "regulator_analysis", "Regulator", 20));
+    const sprayLane = addChild(moduleCell, makeCell("sprayLane", { irrigation_assembly: "1", irrigation_assembly_type: "parts" }));
+    const spray = addChild(sprayLane, partCell("sprayCell", "spray_analysis", "Spray", 20));
+    setPipeLength(addChild(moduleCell, edge("emitterSourceTimer", source, timer, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 1);
+    setPipeLength(addChild(moduleCell, edge("emitterTimerReg", timer, regulator, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 1);
+    setPipeLength(addChild(moduleCell, edge("emitterRegSpray", regulator, spray, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" })), 1);
+    const installed = installPlugin(moduleCell);
+    installed.api.writeCatalog(moduleCell, analysisCatalog());
+    const zone = installed.api.syncZones(moduleCell).find(item => item.originCellId === "emitterTimer");
+    const analysis = installed.api.__test.buildActiveZoneAnalysis(moduleCell, zone);
+    const endpoint = analysis.endpointLabels.find(row => row.cellId === "sprayCell");
+    assert.ok(endpoint);
+    assert.strictEqual(endpoint.flowGpm, 0.5);
+    assert.ok(endpoint.deliveredPressurePsi <= 25.01);
+    assert.ok(analysis.coverageOverlays.some(row => row.cellId === "sprayCell" && row.radiusFt === 6));
+}
+
+function runAnalysisMissingAndUnsupportedGraphTests() {
+    const fixture = buildAnalysisFixture({
+        sourceProfile: { usableFlowGpm: 2, connectorType: "barb", nominalSize: "3/4", pipeConnection: true },
+        catalogOverrides: { pipe_analysis: { specs: {} } }
+    });
+    let analysis = fixture.api.__test.buildActiveZoneAnalysis(fixture.moduleCell, fixture.zone);
+    assert.ok(analysis.issues.some(issue => issue.code === "source_over_capacity"));
+    assert.ok(analysis.issues.some(issue => issue.code === "missing_source_pressure"));
+    assert.ok(analysis.issues.some(issue => issue.code === "missing_pipe_diameter"));
+    addChild(fixture.moduleCell, edge("analysisLoop", fixture.bedA, fixture.valve, { irrigation_pipe_edge: "1", irrigation_pipe_part_id: "pipe_analysis", irrigation_edge_source_port: "0", irrigation_edge_target_port: "0" }));
+    analysis = fixture.api.__test.buildActiveZoneAnalysis(fixture.moduleCell, fixture.zone);
+    assert.ok(analysis.issues.some(issue => issue.code === "loop" || issue.code === "multiple_upstream"));
+}
+
+function runAnalysisCoverageAndHudHookTests() {
+    const { moduleCell, api, selection, bedB, zone } = buildAnalysisFixture();
+    const normalized = api.__test.normalizeCatalogPart({ id: "coverage", name: "Coverage", category: "microspray", connectors: { inputs: 1, outputs: 0, input: { type: "barb", nominalSize: "1/4" } }, specs: { coveragePattern: "Arc", throwRadiusFt: "12", arcDegrees: "180", coverageDirectionDeg: "45" } });
+    assert.strictEqual(normalized.specs.coveragePattern, "arc");
+    assert.strictEqual(normalized.specs.throwRadiusFt, 12);
+    assert.strictEqual(normalized.specs.arcDegrees, 180);
+    selection.cells = [bedB];
+    assert.strictEqual(api.__test.inferAnalysisZoneId(moduleCell, [bedB], ""), zone.id);
+    const view = api.__test.buildAnalysisView(moduleCell, { selectedCells: [bedB] });
+    assert.strictEqual(view.activeZoneId, zone.id);
+    assert.ok(view.analysis.pipeLabels.length > 0);
+    const session = api.openIrrigationMode(moduleCell, { analysisMode: "analysis", preserveViewport: true });
+    assert.strictEqual(session.analysisMode, "analysis");
+    api.closeIrrigationMode();
+}
+
+function runAnalysisLinearBedCoverageTests() { // NEW
+    const { moduleCell, api, bedA, zone } = buildAnalysisFixture(); // NEW
+    writeBedTemplate(bedA, Object.assign(analysisBedRecord(1, 10), { templateId: "dripline_bed", rowPartId: "dripline_analysis", rowOrientation: "width", spacing: { rows: 2 } })); // NEW
+    const analysis = api.__test.buildActiveZoneAnalysis(moduleCell, zone); // NEW
+    const coverage = analysis.coverageOverlays.find(row => row.cellId === "analysisBedA"); // NEW
+    assert.ok(coverage, "Expected analysis coverage for dripline bed"); // NEW
+    assert.strictEqual(coverage.wettedWidthIn, 12); // NEW
+    assert.strictEqual(coverage.bands.length, 2); // NEW
+    assert.ok(coverage.bands.every(band => band.width === 100)); // NEW
+    assert.ok(coverage.bands.every(band => band.height > 20 && band.height < 30)); // NEW
+} // NEW
+
 function run() {
     runZoneTests();
     runBoundaryDisconnectTests();
@@ -602,6 +715,11 @@ function run() {
     runBomStockAndSummaryTests();
     runDisconnectedComponentBomTests();
     runSharedTrunkComponentBomTests();
+    runAnalysisSharedTrunkTests();
+    runAnalysisStandaloneEmitterAndRegulatorTests();
+    runAnalysisMissingAndUnsupportedGraphTests();
+    runAnalysisCoverageAndHudHookTests();
+    runAnalysisLinearBedCoverageTests(); // NEW
 }
 
 run();

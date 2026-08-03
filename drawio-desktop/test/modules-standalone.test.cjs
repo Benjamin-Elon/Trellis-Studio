@@ -394,8 +394,8 @@ test("createModuleAtPoint creates garden module with settings-needed event", asy
     assert.match(task.getAttribute("linkedTo") || "", new RegExp(mod.id));
     assert.equal(ensuredTaskBoard, task);
     assert.match(mod.style, /swimlaneFillColor=#B9E0A5/);
-    assert.equal(mod.geometry.width, 440);
-    assert.equal(mod.geometry.height, 340);
+    assert.equal(mod.geometry.width, 160); // CHANGE
+    assert.equal(mod.geometry.height, 100); // CHANGE
     assert.equal(harness.selectedCell, mod);
     const settingsEvents = harness.firedEvents.filter(event => event.name === "usl:gardenModuleNeedsSettings");
     assert.equal(settingsEvents.length, 1);
@@ -489,6 +489,7 @@ test("module margin prompt can be requested through the fallback graph event", a
     harness.graph.fireEvent(makeEventObject("usl:requestPromptSetModuleMargin", ["cell", mod]));
     await waitForTimers();
     assert.equal(harness.promptCalls.length, 1);
+    assert.equal(harness.promptCalls[0].value, "450"); // CHANGE
     assert.match(mod.style, /(?:^|;)module_margin=30(?:;|$)/);
 });
 
@@ -498,10 +499,10 @@ test("module margin API updates style and reapplies module sizing without prompt
     const child = new TestCell("child", new TestGeometry(20, 30, 220, 80), "");
     child.vertex = true;
     harness.model.add(mod, child);
-    assert.equal(harness.graph.__trellisModules.getModuleMargin(mod, 100), 100);
+    assert.equal(harness.graph.__trellisModules.getModuleMargin(mod), 450); // CHANGE
     harness.graph.__trellisModules.setModuleMargin(mod, 35);
     assert.equal(harness.promptCalls.length, 0);
-    assert.equal(harness.graph.__trellisModules.getModuleMargin(mod, 100), 35);
+    assert.equal(harness.graph.__trellisModules.getModuleMargin(mod), 35); // CHANGE
     assert.match(mod.style, /(?:^|;)module_margin=35(?:;|$)/);
     assert.equal(mod.geometry.width, 275);
     assert.equal(mod.geometry.height, 145);
@@ -513,7 +514,7 @@ test("module margin can be set through the fallback graph event", () => {
     harness.graph.fireEvent(makeEventObject("usl:requestSetModuleMargin", ["cell", mod, "marginPx", 27]));
     assert.equal(harness.promptCalls.length, 0);
     assert.match(mod.style, /(?:^|;)module_margin=27(?:;|$)/);
-    assert.equal(harness.graph.__trellisModules.getModuleMargin(mod, 100), 27);
+    assert.equal(harness.graph.__trellisModules.getModuleMargin(mod), 27); // CHANGE
 });
 
 test("empty canvas click renders root module overlay buttons", () => {

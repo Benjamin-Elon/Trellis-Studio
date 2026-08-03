@@ -37,8 +37,6 @@ Draw.loadPlugin(function (ui) {
     const CTRL_PAD = 6;
     const DASH_MIN_W = 320;
     const DASH_DEFAULT_ASPECT = 320 / 220;
-    const GARDEN_MIN_CONTENT_W = 440;
-    const GARDEN_MIN_CONTENT_H = 340;
 
     const DASH_STYLE =
         "rounded=0;whiteSpace=wrap;html=1;" +
@@ -309,10 +307,10 @@ Draw.loadPlugin(function (ui) {
 
     function getGardenModuleContentSize(moduleCell) {
         const g = moduleCell && model.getGeometry(moduleCell);
-        if (!g) return { width: GARDEN_MIN_CONTENT_W, height: GARDEN_MIN_CONTENT_H };
+        if (!g) return { width: 0, height: 0 }; // CHANGE
         return {
-            width: Math.max(GARDEN_MIN_CONTENT_W, Number(g.width) || 0),
-            height: Math.max(GARDEN_MIN_CONTENT_H, (Number(g.height) || 0) - getModuleHeaderHeight(moduleCell))
+            width: Math.max(0, Number(g.width) || 0), // CHANGE
+            height: Math.max(0, (Number(g.height) || 0) - getModuleHeaderHeight(moduleCell)) // CHANGE
         };
     }
 
@@ -321,8 +319,8 @@ Draw.loadPlugin(function (ui) {
         const g = model.getGeometry(moduleCell);
         if (!g) return false;
         const headerH = getModuleHeaderHeight(moduleCell);
-        const neededW = Math.max(GARDEN_MIN_CONTENT_W, (Number(x) || 0) + (Number(width) || 0));
-        const neededH = Math.max(GARDEN_MIN_CONTENT_H, (Number(y) || 0) + (Number(height) || 0)) + headerH;
+        const neededW = Math.max(0, (Number(x) || 0) + (Number(width) || 0)); // CHANGE
+        const neededH = Math.max(0, (Number(y) || 0) + (Number(height) || 0)) + headerH; // CHANGE
         const nextW = Math.max(Number(g.width) || 0, neededW);
         const nextH = Math.max(Number(g.height) || 0, neededH);
         if (Math.abs(nextW - g.width) < 0.5 && Math.abs(nextH - g.height) < 0.5) return false;

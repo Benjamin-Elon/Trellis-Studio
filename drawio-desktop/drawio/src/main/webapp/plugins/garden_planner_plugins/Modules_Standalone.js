@@ -106,14 +106,12 @@ Draw.loadPlugin(function (ui) {
 
 
     const MIN_W = 60, MIN_H = 40;
-    const GARDEN_MIN_CONTENT_W = 440, GARDEN_MIN_CONTENT_H = 340;
+    const DEFAULT_MODULE_MARGIN_UNITS = 450; // CHANGE: 5 m at PX_PER_CM 5 and DRAW_SCALE 0.18
 
     const EPS = 0.5; // epsilon                                                      
 
     function getModuleMinContentSize(moduleCell) {
-        return isGardenModule(moduleCell)
-            ? { width: GARDEN_MIN_CONTENT_W, height: GARDEN_MIN_CONTENT_H }
-            : { width: MIN_W, height: MIN_H };
+        return { width: MIN_W, height: MIN_H }; // CHANGE: garden dimensions are user-controlled
     }
 
     function getModuleHeaderHeight(moduleCell) {
@@ -127,17 +125,7 @@ Draw.loadPlugin(function (ui) {
 
     function enforceGardenModuleMinimum(moduleCell) {
         if (!isGardenModule(moduleCell)) return false;
-        const g = model.getGeometry(moduleCell);
-        if (!g) return false;
-        const min = getModuleMinOuterSize(moduleCell);
-        const nextW = Math.max(Number(g.width) || 0, min.width);
-        const nextH = Math.max(Number(g.height) || 0, min.height);
-        if (Math.abs(nextW - g.width) < EPS && Math.abs(nextH - g.height) < EPS) return false;
-        const g2 = g.clone();
-        g2.width = nextW;
-        g2.height = nextH;
-        model.setGeometry(moduleCell, g2);
-        return true;
+        return false; // CHANGE: preserve API without forcing a fixed garden size
     }
 
     function applyModuleMargins(moduleCell, opts) {
@@ -146,7 +134,7 @@ Draw.loadPlugin(function (ui) {
         const manageUpdate = o.manageUpdate !== false;
         if (!isModule(moduleCell)) return;
 
-        const margin = getIntStyle(moduleCell, "module_margin", 100);
+        const margin = getIntStyle(moduleCell, "module_margin", DEFAULT_MODULE_MARGIN_UNITS); // CHANGE
         const mGeo = model.getGeometry(moduleCell);
         if (!mGeo) return;
 
@@ -182,7 +170,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function getModuleMarginValue(moduleCell, defaultPx) {
-        const fallback = Number.isInteger(defaultPx) && defaultPx >= 0 ? defaultPx : 100;
+        const fallback = Number.isInteger(defaultPx) && defaultPx >= 0 ? defaultPx : DEFAULT_MODULE_MARGIN_UNITS; // CHANGE
         return getIntStyle(moduleCell, "module_margin", fallback);
     }
 
@@ -205,12 +193,12 @@ Draw.loadPlugin(function (ui) {
 
     function promptSetModuleMargin(moduleCell) {
         if (!isModule(moduleCell) || !ui.prompt) return;
-        const cur = getIntStyle(moduleCell, "module_margin", 100);
+        const cur = getIntStyle(moduleCell, "module_margin", DEFAULT_MODULE_MARGIN_UNITS); // CHANGE
         if (graph.popupMenuHandler && graph.popupMenuHandler.hideMenu) {
             graph.popupMenuHandler.hideMenu();
         }
         setTimeout(function () {
-            ui.prompt("Module internal margin (px):", String(cur), function (val) {
+            ui.prompt("Module internal margin (diagram units):", String(cur), function (val) { // CHANGE
                 if (val == null) return;
                 setModuleMarginValue(moduleCell, val);
             });

@@ -55,22 +55,17 @@ test('Garden Settings can open with an empty city table so City Manager can add 
     assert.match(source, /Empty city lists are allowed so the City Manager can create the first scheduler-ready city/);
 });
 
-test('Garden module overlay can route first irrigation source creation through the irrigation planner', () => {
+test('Garden module overlay enters neutral irrigation design mode through the irrigation planner', () => { // CHANGE
     const source = readPlantTilerSource();
-    assert.match(source, /irrigationSourceBtn = makeButton\("Create Irrigation Source", "add"\);/);
-    assert.match(source, /function gardenModuleHasIrrigationSource\(moduleCell\)/);
-    assert.match(source, /getXmlAttr\(cell, "irrigation_endpoint_type", ""\) === "source"/);
-    assert.match(source, /window\.TrellisIrrigationPlanner\.openIrrigationMode\(moduleCell, \{ sourceForm: true, preserveViewport: true \}\);/);
-    assert.match(source, /ui\.actions[\s\S]*trellisIrrigationCreateSourceEndpoint/);
-    assert.match(source, /irrigationSourceBtn\.disabled = !hasSettings;/);
-    assert.match(source, /const showIrrigationSource = !bedMode && !gardenModuleHasIrrigationSource\(moduleCell\);/);
-    const helperStart = source.indexOf('function collectModuleDescendants(moduleCell)');
-    const helperEnd = source.indexOf('function openIrrigationSourceFormForModule', helperStart);
-    assert.notEqual(helperStart, -1);
-    assert.notEqual(helperEnd, -1);
-    const helperSource = source.slice(helperStart, helperEnd);
-    assert.match(helperSource, /const graphModel = graph\.getModel && graph\.getModel\(\);/);
-    assert.doesNotMatch(helperSource, /\bmodel\.getChild(?:Count|At)\b/);
+    assert.match(source, /irrigationModeBtn = makeButton\("Enter Irrigation Design Mode", "open"\);/); // CHANGE
+    assert.doesNotMatch(source, /function gardenModuleHasIrrigationSource\(moduleCell\)/); // CHANGE
+    assert.doesNotMatch(source, /getXmlAttr\(cell, "irrigation_endpoint_type", ""\) === "source"/); // CHANGE
+    assert.match(source, /window\.TrellisIrrigationPlanner\.openIrrigationMode\(moduleCell, \{ preserveViewport: true \}\);/); // CHANGE
+    assert.doesNotMatch(source, /sourceForm: true/); // CHANGE
+    assert.match(source, /ui\.actions[\s\S]*trellisIrrigationPlanner/); // CHANGE
+    assert.match(source, /irrigationModeBtn\.disabled = !hasSettings;/); // CHANGE
+    assert.match(source, /const showIrrigationModeEntry = !bedMode;/); // CHANGE
+    assert.doesNotMatch(source, /gardenModuleHasIrrigationSource\(moduleCell\)/); // CHANGE
 });
 
 test('Garden module margin lives in Garden Settings instead of the overlay', () => {
@@ -81,12 +76,17 @@ test('Garden module margin lives in Garden Settings instead of the overlay', () 
     assert.doesNotMatch(source, /mxEvent\.addListener\(marginBtn, "click"/);
     assert.doesNotMatch(source, /function promptSetModuleMarginForModule\(moduleCell\)/);
     assert.doesNotMatch(source, /new mxEventObject\("usl:requestPromptSetModuleMargin", "cell", moduleCell\)/);
-    assert.match(source, /row\("Module margin \(px\):", moduleMarginInput\);/);
+    assert.match(source, /const gardenWidthRow = row\("Garden width:", gardenWidthInput\);/); // CHANGE
+    assert.match(source, /const gardenLengthRow = row\("Garden length:", gardenLengthInput\);/); // CHANGE
+    assert.match(source, /const moduleMarginRow = row\("Module margin:", moduleMarginInput\);/); // CHANGE
     assert.match(source, /const curModuleMargin = getGardenModuleMargin\(moduleCell\);/);
-    assert.match(source, /const chosenModuleMargin = readModuleMarginInput\(moduleMarginInput\);/);
-    assert.match(source, /Module margin must be a non-negative whole number\./);
+    assert.match(source, /const chosenModuleMargin = readModuleMarginInput\(moduleMarginInput, chosenUnits\);/); // CHANGE
+    assert.match(source, /Module margin must be a non-negative number\./); // CHANGE
+    assert.match(source, /Garden dimensions must be at least \$\{width\} by \$\{length\} \$\{bedDisplayUnitLabel\(units\)\} to fit existing contents plus margin\./); // CHANGE
+    assert.match(source, /nextGeo\.width = chosenGardenWidthUnits;/); // CHANGE
+    assert.match(source, /nextGeo\.height = chosenGardenHeightUnits;/); // CHANGE
     assert.match(source, /setGardenModuleMargin\(moduleCell, chosenModuleMargin\);/);
-    assert.match(source, /if \(!toolbar \|\| !labelInputWrap \|\| !settingsBtn \|\| !addBedBtn \|\| !addGroupBtn \|\| !irrigationSourceBtn \|\| !moduleCell\) return;/);
+    assert.match(source, /if \(!toolbar \|\| !labelInputWrap \|\| !settingsBtn \|\| !addBedBtn \|\| !addGroupBtn \|\| !irrigationModeBtn \|\| !moduleCell\) return;/); // CHANGE
 });
 
 test('Garden module overlay uses a single editable bed-style label input', () => {
@@ -269,7 +269,7 @@ test('Layering orders bed assemblies between beds and planting groups', () => {
 
 test('Garden module overlay plant group add no longer runs a second post-creation bed fit', () => {
     const source = readPlantTilerSource();
-    const overlayAdd = sourceSlice(source, 'mxEvent.addListener(addGroupBtn, "click"', 'mxEvent.addListener(irrigationSourceBtn, "click"');
+    const overlayAdd = sourceSlice(source, 'mxEvent.addListener(addGroupBtn, "click"', 'mxEvent.addListener(irrigationModeBtn, "click"'); // CHANGE
 
     assert.match(overlayAdd, /createEmptyTilerGroup\(graph, moduleCell, pt\.x, pt\.y, \{ source: activeOverlayMode === "bed" \? "overlay-bed-add" : "overlay-module-add" \}\);/);
     assert.doesNotMatch(overlayAdd, /retileAndFitToContainingBed\(graph, group/);
