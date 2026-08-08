@@ -517,6 +517,48 @@ test("module margin can be set through the fallback graph event", () => {
     assert.equal(harness.graph.__trellisModules.getModuleMargin(mod), 27); // CHANGE
 });
 
+test("module external margin API stores spacing and pushes neighbors", () => {
+    const harness = makeHarness();
+    const left = harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "regular");
+    const right = harness.graph.__trellisModules.createModuleAtPoint({ x: 260, y: 0 }, "regular");
+    assert.equal(harness.graph.__trellisModules.getModuleExternalMargin(left), 40); // NEW
+    harness.graph.__trellisModules.setModuleExternalMargin(left, 120);
+    assert.match(left.style, /(?:^|;)module_external_margin=120(?:;|$)/); // NEW
+    assert.equal(right.geometry.x, 280); // NEW
+});
+
+test("created modules push neighboring modules to maintain external margins", () => {
+    const harness = makeHarness();
+    const existing = harness.graph.__trellisModules.createModuleAtPoint({ x: 200, y: 0 }, "regular");
+    harness.graph.__trellisModules.setModuleExternalMargin(existing, 80);
+    const created = harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "regular");
+    assert.equal(created.geometry.x, 0);
+    assert.equal(existing.geometry.x, 240); // NEW
+});
+
+test("moved modules push neighbors using the move vector", () => {
+    const harness = makeHarness();
+    const left = harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "regular");
+    const right = harness.graph.__trellisModules.createModuleAtPoint({ x: 300, y: 0 }, "regular");
+    const moved = left.geometry.clone();
+    moved.x = 120;
+    harness.model.setGeometry(left, moved);
+    harness.graph.fireEvent(makeEventObject("cellsMoved", ["cells", [left], "dx", 120, "dy", 0]));
+    assert.equal(right.geometry.x, 320); // NEW
+});
+
+test("resized modules push neighbors on expanded edges", () => {
+    const harness = makeHarness();
+    const left = harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "regular");
+    const right = harness.graph.__trellisModules.createModuleAtPoint({ x: 220, y: 0 }, "regular");
+    const previous = left.geometry.clone();
+    const next = left.geometry.clone();
+    next.width = 200;
+    harness.model.setGeometry(left, next);
+    harness.graph.fireEvent(makeEventObject("cellsResized", ["cells", [left], "bounds", [next], "previous", [previous]]));
+    assert.equal(right.geometry.x, 240); // NEW
+});
+
 test("empty canvas click renders root module overlay buttons", () => {
     const harness = makeHarness();
     fireGraphClick(harness, { clientX: 120, clientY: 150, graphX: 200, graphY: 230 });
@@ -574,7 +616,7 @@ test("selecting one team module renders the add role card overlay", () => {
     const harness = makeHarness();
     const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
     const buttons = roleOverlayButtons(harness.document);
-    assert.deepEqual(buttons.map(button => button.textContent), ["Add Role Card", "Set Module Margin"]);
+    assert.deepEqual(buttons.map(button => button.textContent), ["Add Role Card", "Internal Margin", "External Margin"]); // CHANGE
     assert.equal(roleOverlayInput(harness.document, "Team label").value, "Team Module");
     assert.equal(roleOverlay(harness.document).querySelectorAll(".trellis-team-module-label-controls input").length, 1);
     assert.equal(roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls").textContent.includes("Garden label"), false);
@@ -741,7 +783,7 @@ test("role overlay button falls back to top-left content placement", () => {
     assert.equal(roleOverlay(harness.document).style.display, "none");
 });
 
-test("role overlay margin button invokes shared module margin prompt", async () => {
+test("role overlay margin buttons invoke internal and external margin prompts", async () => {
     const harness = makeHarness();
     const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
     harness.setPromptValue("65");
@@ -750,6 +792,13 @@ test("role overlay margin button invokes shared module margin prompt", async () 
     assert.equal(harness.promptCalls.length, 1);
     assert.match(team.style, /(?:^|;)module_margin=65(?:;|$)/);
     assert.equal(roleOverlay(harness.document).style.display, "none");
+
+    harness.graph.setSelectionCell(team);
+    harness.setPromptValue("25");
+    roleOverlayButtons(harness.document)[2].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
+    await waitForTimers();
+    assert.equal(harness.promptCalls.length, 2); // NEW
+    assert.match(team.style, /(?:^|;)module_external_margin=25(?:;|$)/); // NEW
 });
 
 test("clicking the already-selected team module hides role overlay without reopening", () => {
@@ -759,7 +808,7 @@ test("clicking the already-selected team module hides role overlay without reope
     assert.equal(overlay.style.display, "flex");
     fireGraphClick(harness, { cell: team, hitCell: team, clientX: 100, clientY: 120, graphX: 90, graphY: 100 });
     assert.equal(overlay.style.display, "none");
-    assert.equal(roleOverlayButtons(harness.document).length, 2);
+    assert.equal(roleOverlayButtons(harness.document).length, 3); // CHANGE
 });
 
 test("role overlay hides on Escape, outside gesture, model change, and view change", () => {

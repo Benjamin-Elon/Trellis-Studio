@@ -107,6 +107,7 @@ Draw.loadPlugin(function (ui) {
 
     const MIN_W = 60, MIN_H = 40;
     const DEFAULT_MODULE_MARGIN_UNITS = 450; // CHANGE: 5 m at PX_PER_CM 5 and DRAW_SCALE 0.18
+    const DEFAULT_MODULE_EXTERNAL_MARGIN_UNITS = 40; // NEW: default spacing kept between neighboring top-level modules
 
     const EPS = 0.5; // epsilon                                                      
 
@@ -174,17 +175,22 @@ Draw.loadPlugin(function (ui) {
         return getIntStyle(moduleCell, "module_margin", fallback);
     }
 
+    function setModuleStyleIntValue(moduleCell, key, valuePx) {
+        if (!isModule(moduleCell)) return;
+        const n = Math.max(0, parseInt(valuePx, 10) || 0);
+        let st = getStyle(moduleCell) || "";
+        st = st.replace(new RegExp("(?:^|;)" + key + "=\\d+(?=;|$)", "g"), "");
+        st = st.replace(/;;+/g, ";").replace(/^;|;$/g, "");
+        st += (st ? ";" : "") + key + "=" + n;
+        model.setStyle(moduleCell, st);
+        return n;
+    }
+
     function setModuleMarginValue(moduleCell, marginPx) {
         if (!isModule(moduleCell)) return;
-        const n = Math.max(0, parseInt(marginPx, 10) || 0);
-        let st = getStyle(moduleCell) || "";
-        st = st.replace(/(?:^|;)module_margin=\d+(?=;|$)/, "");
-        st = st.replace(/;;+/g, ";").replace(/^;|;$/g, "");
-        st += (st ? ";" : "") + "module_margin=" + n;
-
         model.beginUpdate();
         try {
-            model.setStyle(moduleCell, st);
+            setModuleStyleIntValue(moduleCell, "module_margin", marginPx); // CHANGE
             applyModuleMargins(moduleCell);
         } finally {
             model.endUpdate();
@@ -201,6 +207,36 @@ Draw.loadPlugin(function (ui) {
             ui.prompt("Module internal margin (diagram units):", String(cur), function (val) { // CHANGE
                 if (val == null) return;
                 setModuleMarginValue(moduleCell, val);
+            });
+        }, 0);
+    }
+
+    function getModuleExternalMarginValue(moduleCell, defaultPx) {
+        const fallback = Number.isInteger(defaultPx) && defaultPx >= 0 ? defaultPx : DEFAULT_MODULE_EXTERNAL_MARGIN_UNITS; // NEW
+        return getIntStyle(moduleCell, "module_external_margin", fallback); // NEW
+    }
+
+    function setModuleExternalMarginValue(moduleCell, marginPx) {
+        if (!isModule(moduleCell)) return;
+        model.beginUpdate();
+        try {
+            setModuleStyleIntValue(moduleCell, "module_external_margin", marginPx); // NEW
+            enforceModuleExternalMarginsFor([moduleCell], { manageUpdate: false }); // NEW
+        } finally {
+            model.endUpdate();
+        }
+    }
+
+    function promptSetModuleExternalMargin(moduleCell) {
+        if (!isModule(moduleCell) || !ui.prompt) return;
+        const cur = getModuleExternalMarginValue(moduleCell); // NEW
+        if (graph.popupMenuHandler && graph.popupMenuHandler.hideMenu) {
+            graph.popupMenuHandler.hideMenu();
+        }
+        setTimeout(function () {
+            ui.prompt("Module external margin (diagram units):", String(cur), function (val) { // NEW
+                if (val == null) return;
+                setModuleExternalMarginValue(moduleCell, val);
             });
         }, 0);
     }
@@ -385,6 +421,154 @@ Draw.loadPlugin(function (ui) {
     function stopAndPreventModuleOverlayDomEvent(evt) {
         stopModuleOverlayDomEvent(evt);
         if (evt && evt.preventDefault) evt.preventDefault();
+    }
+
+    function cellPageBounds(cell) {
+        const g = model.getGeometry(cell);
+        if (!g || g.relative) return null;
+        let x = Number(g.x) || 0;
+        let y = Number(g.y) || 0;
+        let p = model.getParent(cell);
+        while (p) {
+            const pg = model.getGeometry(p);
+            if (pg && !pg.relative) {
+                x += Number(pg.x) || 0;
+                y += Number(pg.y) || 0;
+                if (isModule(p) && isSwimlane(p)) y += getStartSize(p).height || 0;
+            }
+            p = model.getParent(p);
+        }
+        return { x, y, w: Number(g.width) || 0, h: Number(g.height) || 0 }; // NEW
+    }
+
+    function rectCenter(rect) {
+        return { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 }; // NEW
+    }
+
+    function expandedRect(rect, margin) {
+        const gap = Math.max(0, Number(margin) || 0);
+        return { x: rect.x - gap, y: rect.y - gap, w: rect.w + 2 * gap, h: rect.h + 2 * gap }; // NEW
+    }
+
+    function rectsIntersect(a, b) {
+        return !!(a && b && b.x < a.x + a.w - EPS && b.x + b.w > a.x + EPS && b.y < a.y + a.h - EPS && b.y + b.h > a.y + EPS); // NEW
+    }
+
+    function modulePairExternalMargin(a, b) {
+        return Math.max(getModuleExternalMarginValue(a), getModuleExternalMarginValue(b)); // NEW
+    }
+
+    function allTopLevelModules() {
+        const root = graph.getDefaultParent();
+        const cells = model.cells ? Object.values(model.cells) : (model.getChildren(root) || []);
+        const seen = new Set();
+        return cells.filter(function (cell) {
+            const id = cellId(cell);
+            if (!id || seen.has(id) || !isModule(cell) || model.getParent(cell) !== root) return false;
+            seen.add(id);
+            return true;
+        });
+    }
+
+    function translateModuleGeometry(cell, dx, dy) {
+        const g = model.getGeometry(cell);
+        if (!g || g.relative || (Math.abs(dx) < EPS && Math.abs(dy) < EPS)) return false;
+        const g2 = g.clone();
+        g2.x = (Number(g2.x) || 0) + dx;
+        g2.y = (Number(g2.y) || 0) + dy;
+        model.setGeometry(cell, g2);
+        if (graph.refresh) graph.refresh(cell);
+        return true; // NEW
+    }
+
+    function shortestExternalMarginDelta(anchorRect, targetRect, margin) {
+        const expanded = expandedRect(anchorRect, margin);
+        if (!rectsIntersect(expanded, targetRect)) return null;
+        const candidates = [
+            { dx: expanded.x - (targetRect.x + targetRect.w), dy: 0 },
+            { dx: expanded.x + expanded.w - targetRect.x, dy: 0 },
+            { dx: 0, dy: expanded.y - (targetRect.y + targetRect.h) },
+            { dx: 0, dy: expanded.y + expanded.h - targetRect.y }
+        ];
+        candidates.sort(function (a, b) { return (Math.abs(a.dx) + Math.abs(a.dy)) - (Math.abs(b.dx) + Math.abs(b.dy)); });
+        return candidates[0] || null; // NEW
+    }
+
+    function vectorExternalMarginDelta(anchorRect, targetRect, margin, vector) {
+        const expanded = expandedRect(anchorRect, margin);
+        if (!rectsIntersect(expanded, targetRect)) return null;
+        const len = Math.sqrt((vector && vector.x || 0) * (vector && vector.x || 0) + (vector && vector.y || 0) * (vector && vector.y || 0));
+        if (len < EPS) return null;
+        const vx = vector.x / len;
+        const vy = vector.y / len;
+        const ac = rectCenter(anchorRect);
+        const tc = rectCenter(targetRect);
+        if (((tc.x - ac.x) * vx + (tc.y - ac.y) * vy) <= EPS) return null;
+        const candidates = [];
+        if (Math.abs(vx) >= EPS) {
+            if (vx > 0) candidates.push((expanded.x + expanded.w - targetRect.x) / vx);
+            else candidates.push((expanded.x - (targetRect.x + targetRect.w)) / vx);
+        }
+        if (Math.abs(vy) >= EPS) {
+            if (vy > 0) candidates.push((expanded.y + expanded.h - targetRect.y) / vy);
+            else candidates.push((expanded.y - (targetRect.y + targetRect.h)) / vy);
+        }
+        candidates.sort(function (a, b) { return a - b; });
+        for (let i = 0; i < candidates.length; i++) {
+            const t = candidates[i];
+            if (!(t > EPS)) continue;
+            const delta = { dx: vx * t, dy: vy * t }; // CHANGE
+            const moved = { x: targetRect.x + delta.dx, y: targetRect.y + delta.dy, w: targetRect.w, h: targetRect.h };
+            if (!rectsIntersect(expanded, moved)) return delta;
+        }
+        return null; // NEW
+    }
+
+    function relativePushVector(anchorRect, targetRect) {
+        const ac = rectCenter(anchorRect);
+        const tc = rectCenter(targetRect);
+        const dx = tc.x - ac.x;
+        const dy = tc.y - ac.y;
+        if (Math.abs(dx) >= EPS || Math.abs(dy) >= EPS) return { x: dx, y: dy };
+        return { x: 1, y: 0 }; // NEW
+    }
+
+    function enforceModuleExternalMarginsFor(seedCells, opts) {
+        const options = opts || {};
+        const seeds = (seedCells || []).filter(function (cell) { return isModule(cell) && model.getParent(cell) === graph.getDefaultParent(); });
+        if (!seeds.length || graph.__trellisModuleExternalMarginEnforcing) return;
+        const modules = allTopLevelModules();
+        if (modules.length < 2) return;
+        const seedIds = new Set(seeds.map(cellId));
+        let frontier = seeds.slice();
+        const manageUpdate = options.manageUpdate !== false;
+        graph.__trellisModuleExternalMarginEnforcing = true;
+        if (manageUpdate) model.beginUpdate();
+        try {
+            const maxPasses = Math.max(1, modules.length * 2);
+            for (let pass = 0; pass < maxPasses && frontier.length; pass++) {
+                const movedThisPass = [];
+                frontier.forEach(function (anchor) {
+                    const anchorRect = cellPageBounds(anchor);
+                    if (!anchorRect) return;
+                    modules.forEach(function (candidate) {
+                        const candidateId = cellId(candidate);
+                        if (!candidateId || candidate === anchor || seedIds.has(candidateId)) return;
+                        const candidateRect = cellPageBounds(candidate);
+                        if (!candidateRect) return;
+                        const margin = modulePairExternalMargin(anchor, candidate);
+                        const preferred = options.vector || relativePushVector(anchorRect, candidateRect);
+                        const delta = vectorExternalMarginDelta(anchorRect, candidateRect, margin, preferred)
+                            || shortestExternalMarginDelta(anchorRect, candidateRect, margin);
+                        if (delta && translateModuleGeometry(candidate, delta.dx, delta.dy)) movedThisPass.push(candidate);
+                    });
+                });
+                frontier = movedThisPass;
+            }
+        } finally {
+            if (manageUpdate) model.endUpdate();
+            graph.__trellisModuleExternalMarginEnforcing = false;
+        }
     }
 
     function setCellLabel(cell, label) {
@@ -1133,6 +1317,7 @@ Draw.loadPlugin(function (ui) {
                 model.beginUpdate();
                 try {
                     reparentCellsIntoModules(cells);
+                    enforceModuleExternalMarginsFor(cells, { manageUpdate: false }); // NEW
                 } finally {
                     model.endUpdate();
                 }
@@ -1225,11 +1410,14 @@ Draw.loadPlugin(function (ui) {
                 const mod = model.getCell(id);
                 if (mod) applyModuleMargins(mod, { allowShrink: true });
             });
+            enforceModuleExternalMarginsFor(cells, { vector: { x: Number(evt.getProperty("dx")) || 0, y: Number(evt.getProperty("dy")) || 0 } }); // NEW
         });
 
 
         graph.addListener(mxEvent.CELLS_RESIZED, function (sender, evt) {
             const cells = evt.getProperty("cells") || [];
+            const bounds = evt.getProperty("bounds") || []; // NEW
+            const previous = evt.getProperty("previous") || []; // NEW
             const seenModules = new Set();
             cells.forEach(c => {
                 if (isGardenModule(c)) enforceGardenModuleMinimum(c);
@@ -1239,6 +1427,18 @@ Draw.loadPlugin(function (ui) {
             });
             // Do NOT shrink for module resize or child resize                                      
             seenModules.forEach(id => applyModuleMargins(model.getCell(id), { allowShrink: false }));
+            cells.forEach(function (cell, index) {
+                if (!isModule(cell)) return;
+                const next = bounds[index] || model.getGeometry(cell);
+                const prev = previous[index];
+                if (!next || !prev) return;
+                if (next.x < prev.x - EPS) enforceModuleExternalMarginsFor([cell], { vector: { x: next.x - prev.x, y: 0 } }); // NEW
+                if (next.y < prev.y - EPS) enforceModuleExternalMarginsFor([cell], { vector: { x: 0, y: next.y - prev.y } }); // NEW
+                const rightDelta = (next.x + next.width) - (prev.x + prev.width);
+                const bottomDelta = (next.y + next.height) - (prev.y + prev.height);
+                if (rightDelta > EPS) enforceModuleExternalMarginsFor([cell], { vector: { x: rightDelta, y: 0 } }); // NEW
+                if (bottomDelta > EPS) enforceModuleExternalMarginsFor([cell], { vector: { x: 0, y: bottomDelta } }); // NEW
+            });
         });
 
     }
@@ -1307,14 +1507,16 @@ Draw.loadPlugin(function (ui) {
 
     function companionTeamPoint(gardenCell) {
         const g = graph.getCellGeometry(gardenCell) || { x: 0, y: 0, width: 160 };
-        return { x: (Number(g.x) || 0) + (Number(g.width) || 160) + COMPANION_TEAM_GAP, y: Number(g.y) || 0 };
+        const gap = getModuleExternalMarginValue(gardenCell, COMPANION_TEAM_GAP); // CHANGE
+        return { x: (Number(g.x) || 0) + (Number(g.width) || 160) + gap, y: Number(g.y) || 0 }; // CHANGE
     }
 
     function companionTaskPoint(gardenCell, teamCell) {
         const gardenGeo = graph.getCellGeometry(gardenCell) || { x: 0, y: 0, width: 160, height: 100 };
         const teamGeo = teamCell ? graph.getCellGeometry(teamCell) : null;
-        const x = teamGeo ? Number(teamGeo.x) || 0 : (Number(gardenGeo.x) || 0) + (Number(gardenGeo.width) || 160) + COMPANION_TEAM_GAP;
-        const y = teamGeo ? (Number(teamGeo.y) || 0) + (Number(teamGeo.height) || 100) + COMPANION_TEAM_GAP : (Number(gardenGeo.y) || 0) + (Number(gardenGeo.height) || 100) + COMPANION_TEAM_GAP;
+        const gap = teamCell ? modulePairExternalMargin(gardenCell, teamCell) : getModuleExternalMarginValue(gardenCell, COMPANION_TEAM_GAP); // CHANGE
+        const x = teamGeo ? Number(teamGeo.x) || 0 : (Number(gardenGeo.x) || 0) + (Number(gardenGeo.width) || 160) + gap; // CHANGE
+        const y = teamGeo ? (Number(teamGeo.y) || 0) + (Number(teamGeo.height) || 100) + gap : (Number(gardenGeo.y) || 0) + (Number(gardenGeo.height) || 100) + gap; // CHANGE
         return { x, y };
     }
 
@@ -1346,6 +1548,7 @@ Draw.loadPlugin(function (ui) {
             setStringValueAttr(team, ATTR_TEAM_GARDEN_MODULE, cellId(gardenCell));
             addReciprocalLink(gardenCell, team);
             applyModuleMargins(team, { allowShrink: false, manageUpdate: false });
+            enforceModuleExternalMarginsFor([gardenCell, team], { manageUpdate: false }); // NEW
         } finally {
             if (manageUpdate) model.endUpdate();
         }
@@ -1372,6 +1575,7 @@ Draw.loadPlugin(function (ui) {
             setStringValueAttr(task, ATTR_TASK_GARDEN_MODULE, cellId(gardenCell));
             addReciprocalLink(gardenCell, task);
             applyModuleMargins(task, { allowShrink: false, manageUpdate: false });
+            enforceModuleExternalMarginsFor([gardenCell, team, task], { manageUpdate: false }); // NEW
         } finally {
             if (manageUpdate) model.endUpdate();
         }
@@ -1398,6 +1602,7 @@ Draw.loadPlugin(function (ui) {
             if (moduleType !== "regular") setModuleType(mod, moduleType);
             if (window.Trellis && window.Trellis.users && typeof window.Trellis.users.stampCreatedOwner === "function") window.Trellis.users.stampCreatedOwner(mod); // NEW: modules created by logged-in users become ownership boundaries
             if (moduleType === "garden") { ensureGardenTeamModule(mod, { insideUpdate: true }); ensureGardenTaskModule(mod, { insideUpdate: true, createMainBoard: true }); }
+            enforceModuleExternalMarginsFor([mod], { manageUpdate: false }); // NEW
             if (mod && graph.setSelectionCell) graph.setSelectionCell(mod);
         } finally {
             model.endUpdate();
@@ -1804,6 +2009,14 @@ Draw.loadPlugin(function (ui) {
             promptSetModuleMargin(moduleCell);
         }
 
+        function promptModuleExternalMarginFromOverlay(evt) {
+            mxEvent.consume(evt);
+            const moduleCell = currentTeamModule || selectedTeamModule();
+            if (!moduleCell) { hideOverlay(); return; }
+            hideOverlay();
+            promptSetModuleExternalMargin(moduleCell); // NEW
+        }
+
         function makeOverlayButton(label, onClick, variant) {
             const btn = document.createElement("button");
             btn.type = "button";
@@ -1889,7 +2102,8 @@ Draw.loadPlugin(function (ui) {
             labelControls.style.borderBottom = "1px solid #e5e7eb";
             overlay.appendChild(labelControls);
             overlay.appendChild(makeOverlayButton("Add Role Card", addRoleCardFromOverlay, "add"));
-            overlay.appendChild(makeOverlayButton("Set Module Margin", promptModuleMarginFromOverlay, "open"));
+            overlay.appendChild(makeOverlayButton("Internal Margin", promptModuleMarginFromOverlay, "open")); // CHANGE
+            overlay.appendChild(makeOverlayButton("External Margin", promptModuleExternalMarginFromOverlay, "open")); // NEW
             const host = ensureOverlayHost();
             if (host) host.appendChild(overlay);
             return overlay;
@@ -2133,6 +2347,18 @@ Draw.loadPlugin(function (ui) {
         promptSetModuleMargin: function (moduleCell) {
             return promptSetModuleMargin(moduleCell);
         },
+        getModuleExternalMargin: function (moduleCell, defaultPx) {
+            return getModuleExternalMarginValue(moduleCell, defaultPx); // NEW
+        },
+        setModuleExternalMargin: function (moduleCell, marginPx) {
+            return setModuleExternalMarginValue(moduleCell, marginPx); // NEW
+        },
+        promptSetModuleExternalMargin: function (moduleCell) {
+            return promptSetModuleExternalMargin(moduleCell); // NEW
+        },
+        enforceModuleExternalMargins: function (moduleCells) {
+            return enforceModuleExternalMarginsFor(moduleCells); // NEW
+        },
         createModuleAtPoint: function (point, type) {
             return createModuleAtPoint(point, type);
         },
@@ -2201,6 +2427,19 @@ Draw.loadPlugin(function (ui) {
         const marginPx = evt && evt.getProperty ? evt.getProperty("marginPx") : null;
         if (!cell || !isModule(cell)) return;
         setModuleMarginValue(cell, marginPx);
+    });
+
+    graph.addListener("usl:requestPromptSetModuleExternalMargin", function (_sender, evt) {
+        const cell = evt && evt.getProperty ? evt.getProperty("cell") : null;
+        if (!cell || !isModule(cell)) return;
+        promptSetModuleExternalMargin(cell); // NEW
+    });
+
+    graph.addListener("usl:requestSetModuleExternalMargin", function (_sender, evt) {
+        const cell = evt && evt.getProperty ? evt.getProperty("cell") : null;
+        const marginPx = evt && evt.getProperty ? evt.getProperty("marginPx") : null;
+        if (!cell || !isModule(cell)) return;
+        setModuleExternalMarginValue(cell, marginPx); // NEW
     });
 
     function registerTrellisContextMenuContributor(contributor) {
@@ -2284,8 +2523,11 @@ Draw.loadPlugin(function (ui) {
             });
 
             // Keep your existing margin editor (using ui.prompt)                         
-            menu.addItem("Set Module Margin (px)…", null, function () {
+            menu.addItem("Set Internal Margin (diagram units)...", null, function () { // CHANGE
                 promptSetModuleMargin(cell);
+            });
+            menu.addItem("Set External Margin (diagram units)...", null, function () { // NEW
+                promptSetModuleExternalMargin(cell);
             });
 
             // Team module gets Add Role Card                                             

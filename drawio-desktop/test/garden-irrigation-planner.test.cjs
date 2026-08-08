@@ -1478,10 +1478,14 @@ test("linear catalog editor uses one size field and preserves pipe-style connect
     ui.lastDialog.querySelector("[data-part-id='twist_drip']").click(); // NEW
     assert.match(ui.lastDialog.textContent, /Pipe size/); // NEW
     assert.match(ui.lastDialog.textContent, /Emitter flow gph/); // NEW
+    assert.match(ui.lastDialog.textContent, /Emitter spacing cm/); // NEW
     assert.match(ui.lastDialog.textContent, /Wetted width in/); // NEW
     assert.doesNotMatch(ui.lastDialog.textContent, /Input type/); // NEW
     assert.doesNotMatch(ui.lastDialog.textContent, /Output type/); // NEW
     const size = catalogFormControl(ui.lastDialog, "Pipe size"); // NEW
+    const metricSpacing = catalogFormControl(ui.lastDialog, "Emitter spacing"); // NEW
+    assert.equal(metricSpacing.value, "30.5"); // NEW
+    metricSpacing.value = "30"; // NEW
     size.value = "3/4"; // NEW
     clickButton(ui.lastDialog, "Save Part"); // NEW
     let saved = api.readCatalog(moduleCell).items.find(item => item.id === "twist_drip"); // NEW
@@ -1491,6 +1495,7 @@ test("linear catalog editor uses one size field and preserves pipe-style connect
     assert.equal(saved.connectors.output.type, "twist_lock"); // NEW
     assert.equal(saved.connectors.input.nominalSize, "3/4"); // NEW
     assert.equal(saved.connectors.output.nominalSize, "3/4"); // NEW
+    assert.ok(Math.abs(saved.specs.emitterSpacingIn - (30 / 2.54)) < 0.0001); // NEW
     ui.lastDialog.querySelector("[data-part-id='push_tape']").click(); // NEW
     clickButton(ui.lastDialog, "Save Part"); // NEW
     saved = api.readCatalog(moduleCell).items.find(item => item.id === "push_tape"); // NEW
@@ -3697,6 +3702,8 @@ test("bed assemblies sync to linked beds, apply templates, and assembly reports 
     assert.match(bedForm.getAttribute("style"), /grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(0,\s*1fr\)/);
     assert.ok(bedForm.querySelector(".trellis-irrigation-bed-template-layout-column"));
     assert.ok(bedForm.querySelector(".trellis-irrigation-bed-template-parts-column"));
+    assert.deepEqual(Array.from(bedForm.querySelectorAll(".trellis-irrigation-bed-template-group-title")).map(node => node.textContent), ["Layout", "Supply", "Row lines", "Header termination"]); // CHANGE
+    Array.from(bedForm.querySelectorAll(".trellis-irrigation-bed-template-group")).forEach((group, index) => assertBoundedStyle(group, "bed template group " + index)); // CHANGE
     assert.deepEqual(Array.from(bedForm.querySelector(".trellis-irrigation-bed-template-parts-column").querySelectorAll("label")).map(labelCaption), ["Inlet part", "Row part", "Row takeoff part", "Emitter/device part", "Row end cap", "Header end cap", "Outlet part"]); // CHANGE
     assertBoundedStyle(bedForm, "bed template form");
     assertBoundedStyle(graph.container.querySelector(".trellis-irrigation-hud-section"), "HUD section");
@@ -3735,7 +3742,7 @@ test("bed assemblies sync to linked beds, apply templates, and assembly reports 
     const protectedRowsInput = inputByLabel(graph.container, "Rows");
     protectedRowsInput.dispatchEvent(new graph.container.ownerDocument.defaultView.Event("keypress", { bubbles: true, cancelable: true }));
     assert.equal(leakedKeypress, false);
-    assert.equal(bedAssembly.assembly.getAttribute("label"), "Drip tape 12 in"); // CHANGE
+    assert.equal(bedAssembly.assembly.getAttribute("label"), "Drip tape 30.5 cm"); // CHANGE
     model.completedEdits = [];
     const rowInput = inputTextByLabel(graph.container, "Rows", "3");
     assert.match(graph.container.querySelector(".trellis-irrigation-bed-template-summary").textContent, /^Rows 3 x /);
@@ -3746,7 +3753,7 @@ test("bed assemblies sync to linked beds, apply templates, and assembly reports 
     assert.equal(bedLayoutRows(bedAssembly.assembly, api).length, 3);
     const emitterInput = inputTextByLabel(graph.container, "Emitter", "8");
     blurInput(emitterInput);
-    assert.equal(bedAssembly.assembly.getAttribute("label"), "Drip tape 12 in"); // CHANGE
+    assert.equal(bedAssembly.assembly.getAttribute("label"), "Drip tape 30.5 cm"); // CHANGE
     assert.equal(bed.getAttribute("label"), "Bed 1");
     const template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly);
     assert.equal(template.templateModel, "bom");
@@ -3799,7 +3806,7 @@ test("direct bed template commits create assembly-owned visual rows", () => {
     const assembly = bedAssemblies[0];
     assert.equal(assembly.parent, moduleCell);
     assert.equal(JSON.stringify(assembly.geometry), JSON.stringify(bed.geometry));
-    assert.equal(assembly.getAttribute("label"), "Sprinkler 12 in"); // CHANGE
+    assert.equal(assembly.getAttribute("label"), "Sprinkler 30.5 cm"); // CHANGE
     assertRegularBedAssemblyStyle(assembly);
     assert.ok(assembly.getAttribute(api.attrs.BED_TEMPLATE_JSON));
     assert.equal(api.__test.assemblyPartCells(assembly).length, 0);
@@ -4047,6 +4054,32 @@ test("bed assembly inlet supply size filters rows takeoffs and reversed option n
     assert.equal(ports.input.nominalSize, "3/4"); // NEW
     assert.equal(ports.outputs, 0); // NEW
 }); // NEW
+
+test("bed assembly header end cap selection does not prefill row end cap", () => { // CHANGE
+    const { api, graph, moduleCell, bed } = loadPlugin(); // CHANGE
+    const catalog = addDripTapeBomParts(sampleCatalog()); // CHANGE
+    catalog.items.push(part("header_cap_3_4_unique", "3/4 in header-only cap", "cap_end", "in_stock", 1.5, 1, 0, "barb", "3/4", "", "", { pressureLossPsi: 0 }, undefined, true)); // CHANGE
+    catalog.items.push(part("row_cap_1_2_unique", "1/2 in row-only cap", "cap_end", "in_stock", 1.25, 1, 0, "barb", "1/2", "", "", { pressureLossPsi: 0 }, undefined, true)); // CHANGE
+    api.writeCatalog(moduleCell, catalog); // CHANGE
+    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 240, y: 120 }); // CHANGE
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // CHANGE
+    graph.setSelectionCell(bedAssembly.assembly); // CHANGE
+
+    changeSelectByLabel(graph.container, "Inlet part", "fpt_to_barb"); // CHANGE
+    changeSelectByLabel(graph.container, "Row part", "drip_tape_8mil_12in"); // CHANGE
+    changeSelectByLabel(graph.container, "Row takeoff part", "barb_tee_3_4_to_1_2"); // CHANGE
+    assert.equal(changeSelectByLabel(graph.container, "Header end cap", "header_cap_3_4_unique").value, "header_cap_3_4_unique"); // CHANGE
+    const rowEndCap = selectByLabel(graph.container, "Row end cap"); // CHANGE
+    assert.equal(rowEndCap.value, ""); // CHANGE
+    assert.equal(selectValues(rowEndCap).includes("row_cap_1_2_unique"), true); // CHANGE
+    assert.equal(selectValues(rowEndCap).includes("header_cap_3_4_unique"), false); // CHANGE
+    assert.equal((api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly) || {}).headerEndCapPartId || "", ""); // CHANGE
+
+    changeSelectByLabel(graph.container, "Row end cap", "row_cap_1_2_unique"); // CHANGE
+    const template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly); // CHANGE
+    assert.equal(template.headerEndCapPartId, "header_cap_3_4_unique"); // CHANGE
+    assert.equal(template.rowEndCapPartId, "row_cap_1_2_unique"); // CHANGE
+}); // CHANGE
 
 test("bed assembly labels soaker rows without emitter spacing", () => { // NEW
     const { api, graph, moduleCell, bed } = loadPlugin(); // NEW
@@ -4330,26 +4363,29 @@ test("bed recipe UI toggles self-emitting and device row controls", () => {
     assert.match(selectByLabel(graph.container, "Header end cap").parentNode.getAttribute("style") || "", /display:\s*flex/);
     assert.match(inputByLabel(graph.container, "Rows").parentNode.getAttribute("style") || "", /display:\s*none/); // NEW
     assert.match(inputByLabel(graph.container, "Row spacing").parentNode.getAttribute("style") || "", /display:\s*none/); // NEW
-    assert.match(inputByLabel(graph.container, "Emitter spacing in").parentNode.getAttribute("style") || "", /display:\s*none/); // NEW
-    assert.equal(inputByLabel(graph.container, "Emitter spacing in").disabled, true);
+    assert.match(inputByLabel(graph.container, "Emitter spacing").parentNode.getAttribute("style") || "", /display:\s*none/); // CHANGE
+    assert.equal(inputByLabel(graph.container, "Emitter spacing").disabled, true); // CHANGE
     changeSelectByLabel(graph.container, "Inlet part", "fpt_to_half_barb");
     assert.match(selectByLabel(graph.container, "Outlet part").parentNode.getAttribute("style") || "", /display:\s*flex/);
     assert.match(selectByLabel(graph.container, "Header end cap").parentNode.getAttribute("style") || "", /display:\s*flex/);
     assert.match(inputByLabel(graph.container, "Rows").parentNode.getAttribute("style") || "", /display:\s*none/); // NEW
     assert.match(inputByLabel(graph.container, "Row spacing").parentNode.getAttribute("style") || "", /display:\s*none/); // NEW
-    assert.match(inputByLabel(graph.container, "Emitter spacing in").parentNode.getAttribute("style") || "", /display:\s*none/); // NEW
+    assert.match(inputByLabel(graph.container, "Emitter spacing").parentNode.getAttribute("style") || "", /display:\s*none/); // CHANGE
     changeSelectByLabel(graph.container, "Row part", "poly_distribution_1_2"); // CHANGE
     assert.match(inputByLabel(graph.container, "Rows").parentNode.getAttribute("style") || "", /display:\s*flex/); // NEW
     assert.match(inputByLabel(graph.container, "Row spacing").parentNode.getAttribute("style") || "", /display:\s*flex/); // NEW
-    assert.match(inputByLabel(graph.container, "Emitter spacing in").parentNode.getAttribute("style") || "", /display:\s*flex/); // NEW
+    assert.match(inputByLabel(graph.container, "Emitter spacing").parentNode.getAttribute("style") || "", /display:\s*none/); // CHANGE
     assert.match(selectByLabel(graph.container, "Emitter/device part").parentNode.getAttribute("style") || "", /display:\s*flex/); // CHANGE
-    assert.equal(inputByLabel(graph.container, "Emitter spacing in").disabled, false); // CHANGE
+    assert.equal(inputByLabel(graph.container, "Emitter spacing").disabled, true); // CHANGE
+    changeSelectByLabel(graph.container, "Emitter/device part", "overhead_sprinkler_head_30psi"); // CHANGE
+    assert.match(inputByLabel(graph.container, "Emitter spacing").parentNode.getAttribute("style") || "", /display:\s*flex/); // CHANGE
+    assert.equal(inputByLabel(graph.container, "Emitter spacing").disabled, false); // CHANGE
     changeSelectByLabel(graph.container, "Row part", "drip_tape_8mil_12in"); // CHANGE
     assert.match(inputByLabel(graph.container, "Rows").parentNode.getAttribute("style") || "", /display:\s*flex/); // NEW
     assert.match(inputByLabel(graph.container, "Row spacing").parentNode.getAttribute("style") || "", /display:\s*flex/); // NEW
-    assert.match(inputByLabel(graph.container, "Emitter spacing in").parentNode.getAttribute("style") || "", /display:\s*none/); // NEW
+    assert.match(inputByLabel(graph.container, "Emitter spacing").parentNode.getAttribute("style") || "", /display:\s*none/); // CHANGE
     assert.match(selectByLabel(graph.container, "Emitter/device part").parentNode.getAttribute("style") || "", /display:\s*none/); // CHANGE
-    assert.equal(inputByLabel(graph.container, "Emitter spacing in").disabled, true); // CHANGE
+    assert.equal(inputByLabel(graph.container, "Emitter spacing").disabled, true); // CHANGE
     changeSelectByLabel(graph.container, "Row takeoff part", "barb_tee_1_2"); // CHANGE
     changeSelectByLabel(graph.container, "Row end cap", "end_cap_1_2_barb"); // CHANGE
     changeSelectByLabel(graph.container, "Header end cap", "end_cap_1_2_barb");
@@ -4370,6 +4406,59 @@ test("bed recipe UI toggles self-emitting and device row controls", () => {
     assert.equal(querySelectByLabel(graph.container, "Template"), null); // CHANGE
 });
 
+test("bed recipe numeric edits keep incomplete draft fields instead of restoring saved template", () => { // NEW
+    const { api, graph, moduleCell, bed } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, addDripTapeBomParts(sampleCatalog())); // NEW
+    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 240, y: 120 }); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(bedAssembly.assembly); // NEW
+    changeSelectByLabel(graph.container, "Inlet part", "fpt_to_half_barb"); // NEW
+    changeSelectByLabel(graph.container, "Row part", "drip_tape_8mil_12in"); // NEW
+    changeSelectByLabel(graph.container, "Row takeoff part", "barb_tee_1_2"); // NEW
+    changeSelectByLabel(graph.container, "Row end cap", "end_cap_1_2_barb"); // NEW
+    changeSelectByLabel(graph.container, "Header end cap", "end_cap_1_2_barb"); // NEW
+    let template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly); // NEW
+    assert.equal(template.spacing.rows, 2); // NEW
+    assert.equal(template.headerEndCapPartId, "end_cap_1_2_barb"); // NEW
+
+    graph.setSelectionCell(bedAssembly.assembly); // NEW
+    changeSelectByLabel(graph.container, "Header end cap", ""); // NEW
+    assert.equal(selectByLabel(graph.container, "Header end cap").value, ""); // NEW
+    assert.equal(selectByLabel(graph.container, "Outlet part").value, ""); // NEW
+    const rows = inputTextByLabel(graph.container, "Rows", "3"); // NEW
+    blurInput(rows); // NEW
+    assert.equal(selectByLabel(graph.container, "Header end cap").value, ""); // NEW
+    assert.equal(selectByLabel(graph.container, "Outlet part").value, ""); // NEW
+    assert.match(graph.container.textContent, /Select a header end cap or outlet part/); // NEW
+    template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly); // NEW
+    assert.equal(template.spacing.rows, 2); // NEW
+    assert.equal(template.headerEndCapPartId, "end_cap_1_2_barb"); // NEW
+}); // NEW
+
+test("bed recipe emitter spacing follows garden module units", () => { // NEW
+    const { api, graph, moduleCell, bed } = loadPlugin(); // NEW
+    const catalog = addDripTapeBomParts(sampleCatalog()); // NEW
+    catalog.items.push(part("overhead_sprinkler_head_30psi", "Overhead sprinkler head", "sprinkler", "in_stock", 14, 1, 1, "barb", "1/2", "barb", "1/2", { flowGpm: 2.5, operatingPressurePsi: 30 }, undefined, true)); // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 240, y: 120 }).assembly; // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(bedAssembly); // NEW
+    const spacing = inputByLabel(graph.container, "Emitter spacing"); // NEW
+    assert.equal(labelCaption(spacing.parentNode), "Emitter spacing cm"); // NEW
+    assert.equal(spacing.value, "30.5"); // NEW
+    changeSelectByLabel(graph.container, "Inlet part", "fpt_to_half_barb"); // NEW
+    changeSelectByLabel(graph.container, "Row part", "poly_distribution_1_2"); // NEW
+    changeSelectByLabel(graph.container, "Emitter/device part", "overhead_sprinkler_head_30psi"); // NEW
+    changeSelectByLabel(graph.container, "Row takeoff part", "barb_tee_1_2"); // NEW
+    changeSelectByLabel(graph.container, "Row end cap", "end_cap_1_2_barb"); // NEW
+    changeSelectByLabel(graph.container, "Header end cap", "end_cap_1_2_barb"); // NEW
+    inputTextByLabel(graph.container, "Emitter spacing", "30"); // NEW
+    blurInput(inputByLabel(graph.container, "Emitter spacing")); // NEW
+    const template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly); // NEW
+    assert.ok(Math.abs(template.spacing.emitterInches - (30 / 2.54)) < 0.0001); // NEW
+    assert.equal(bedAssembly.getAttribute("label"), "Sprinkler 30 cm"); // NEW
+}); // NEW
+
 test("legacy bed terminal choices prefer outlet and clear header on next commit", () => {
     const { api, graph, moduleCell, bed } = loadPlugin();
     api.writeCatalog(moduleCell, addDripTapeBomParts(sampleCatalog()));
@@ -4388,7 +4477,7 @@ test("legacy bed terminal choices prefer outlet and clear header on next commit"
     assert.equal(template.outletPartId, "half_barb_to_3_4_barb");
     assert.equal(template.headerEndCapPartId, "");
     assert.equal(template.irrigationType, "drip_tape"); // NEW
-    assert.equal(bedAssembly.getAttribute("label"), "Drip tape 12 in"); // NEW
+    assert.equal(bedAssembly.getAttribute("label"), "Drip tape 30.5 cm"); // CHANGE
 });
 
 test("overhead sprinkler bed recipe resolves precise BOM roles", () => {

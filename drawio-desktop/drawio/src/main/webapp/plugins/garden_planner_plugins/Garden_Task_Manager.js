@@ -7002,6 +7002,18 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         addBoardBtn.textContent = 'Add Kanban Board';
         addBoardBtn.style.cssText = 'font:12px Arial,sans-serif;padding:3px 6px;';
         applyTaskButtonStyle(addBoardBtn, 'add', { compact: true });
+        const internalMarginBtn = document.createElement('button'); // NEW
+        internalMarginBtn.type = 'button'; // NEW
+        internalMarginBtn.textContent = 'Internal Margin'; // NEW
+        internalMarginBtn.style.cssText = 'font:12px Arial,sans-serif;padding:3px 6px;'; // NEW
+        applyTaskButtonStyle(internalMarginBtn, 'open', { compact: true }); // NEW
+        overlay.appendChild(internalMarginBtn); // NEW
+        const externalMarginBtn = document.createElement('button'); // NEW
+        externalMarginBtn.type = 'button'; // NEW
+        externalMarginBtn.textContent = 'External Margin'; // NEW
+        externalMarginBtn.style.cssText = 'font:12px Arial,sans-serif;padding:3px 6px;'; // NEW
+        applyTaskButtonStyle(externalMarginBtn, 'open', { compact: true }); // NEW
+        overlay.appendChild(externalMarginBtn); // NEW
         overlay.appendChild(addBoardBtn);
         let currentTaskModule = null;
         let pendingClickAnchor = null;
@@ -7132,6 +7144,22 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             if (board && graph.setSelectionCell) graph.setSelectionCell(board);
             if (board && graph.scrollCellToVisible) graph.scrollCellToVisible(board, true);
             overlay.style.display = 'none';
+        });
+
+        mxEvent.addListener(internalMarginBtn, 'click', function (evt) {
+            mxEvent.consume(evt);
+            const taskModule = selectedTaskModule();
+            const modules = taskModulesApi();
+            if (taskModule && modules && typeof modules.promptSetModuleMargin === 'function') modules.promptSetModuleMargin(taskModule); // NEW
+            overlay.style.display = 'none'; // NEW
+        });
+
+        mxEvent.addListener(externalMarginBtn, 'click', function (evt) {
+            mxEvent.consume(evt);
+            const taskModule = selectedTaskModule();
+            const modules = taskModulesApi();
+            if (taskModule && modules && typeof modules.promptSetModuleExternalMargin === 'function') modules.promptSetModuleExternalMargin(taskModule); // NEW
+            overlay.style.display = 'none'; // NEW
         });
 
         function refresh() {

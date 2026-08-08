@@ -719,6 +719,8 @@ test("task module overlay edits labels with one bed-style field and no clamping"
     assert.equal(overlay.querySelectorAll("input[aria-label='Task label']").length, 1);
     assert.equal(overlay.textContent.includes("Garden label"), false);
     assert.equal(overlay.textContent.includes("Task label"), false);
+    assert.ok(buttonByText(overlay, "Internal Margin")); // NEW
+    assert.ok(buttonByText(overlay, "External Margin")); // NEW
     assert.ok(buttonByText(overlay, "Add Kanban Board"));
     let input = taskModuleOverlayInput(h.document);
     assert.equal(input.value, "Kitchen Garden Tasks");
@@ -785,6 +787,26 @@ test("task module overlay delegates label writes to the Modules API when availab
     assert.equal(h.valueWrites[0].oldValue, oldValue);
     assert.notEqual(h.valueWrites[0].newValue, oldValue);
     assert.equal(oldValue.getAttribute("label"), "API Tasks");
+});
+
+test("task module overlay delegates margin prompts to the Modules API", async () => {
+    const h = makeHarness();
+    const taskModule = new TestCell("apiTaskModuleMargins", makeValue(h.document, { task_module: "1", label: "API Tasks" }), new TestGeometry(40, 50, 300, 120), "shape=swimlane;");
+    h.addCell(h.root, taskModule);
+    h.setState(taskModule, { x: 40, y: 50, width: 300, height: 120 });
+    const calls = [];
+    h.graph.__trellisModules = {
+        promptSetModuleMargin(cell) { calls.push(["internal", cell]); },
+        promptSetModuleExternalMargin(cell) { calls.push(["external", cell]); }
+    };
+    h.graph.setSelectionCell(taskModule);
+    await nextTick();
+
+    const overlay = taskModuleOverlay(h.document);
+    buttonByText(overlay, "Internal Margin").dispatchEvent(new h.window.MouseEvent("click", { bubbles: true }));
+    buttonByText(overlay, "External Margin").dispatchEvent(new h.window.MouseEvent("click", { bubbles: true }));
+
+    assert.deepEqual(calls, [["internal", taskModule], ["external", taskModule]]); // NEW
 });
 
 test("unlinked task module overlay only shows the editable label input", async () => {

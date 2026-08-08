@@ -5902,6 +5902,8 @@ Draw.loadPlugin(function (ui) {
             }
         });
 
+        applySharedButtonStyle(addVarBtn, 'add');
+
         selectorWrap.appendChild(plantSel);
         selectorWrap.appendChild(varietySel);
         selectorWrap.appendChild(addPlantBtn);
@@ -11115,6 +11117,8 @@ Draw.loadPlugin(function (ui) {
             }
         });
 
+        applySharedButtonStyle(resetTasksBtn, 'danger');
+
         const taskDefaultsActions = document.createElement('div');
         taskDefaultsActions.style.marginTop = '10px';
         taskDefaultsActions.style.paddingTop = '10px';
@@ -11128,6 +11132,7 @@ Draw.loadPlugin(function (ui) {
         taskDefaultsActions.appendChild(row("Save these tasks as plant default", saveDefaultChk).row);
         tasksTab.insertBefore(taskDefaultsActions, taskEditorDiv);
 
+        applySharedButtonStyle(restoreBuiltinsBtn, 'neutral');
         appendLayoutTabControls();
         writeLayoutControlsFromSelection();
         refreshLayoutPreview();
@@ -12809,9 +12814,6 @@ Draw.loadPlugin(function (ui) {
             },
             restoreGraphPatch
         });
-        applySharedButtonStyle(resetTasksBtn, 'danger');
-        applySharedButtonStyle(restoreBuiltinsBtn, 'neutral');
-        applySharedButtonStyle(addVarBtn, 'add');
     }
 
     function readGraphCellAttribute(cell, key) {

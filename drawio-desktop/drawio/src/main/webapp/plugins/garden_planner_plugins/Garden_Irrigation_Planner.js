@@ -1818,11 +1818,10 @@ Draw.loadPlugin(function (ui) {
         return !!(p && p.category === "dripline" && /soaker/i.test([p.id, p.name].join(" "))); // NEW
     } // NEW
 
-    function formatBedEmitterSpacingLabel(value) { // NEW
+    function formatBedEmitterSpacingLabel(value, moduleCell) { // CHANGE
         const n = finiteNumber(value, null); // NEW
         if (!(n > 0)) return ""; // NEW
-        const rounded = Math.round(n * 100) / 100; // NEW
-        return String(rounded).replace(/\.0+$/, "") + " in"; // NEW
+        return formatEmitterSpacingDisplayValue(n, moduleCell) + " " + emitterSpacingDisplayUnit(moduleCell); // CHANGE
     } // NEW
 
     function bedEffectiveEmitterInfo(catalog, record, options) { // NEW
@@ -1838,7 +1837,7 @@ Draw.loadPlugin(function (ui) {
         else if (useStoredCategory) category = String(saved.irrigationType || "").trim(); // NEW
         if (category === "soaker_hose") omitSpacing = true; // NEW
         const label = bedIrrigationMethodLabel(category); // NEW
-        const spacing = omitSpacing ? "" : formatBedEmitterSpacingLabel(saved.spacing && saved.spacing.emitterInches != null ? saved.spacing.emitterInches : saved.emitterSpacingIn); // NEW
+        const spacing = omitSpacing ? "" : formatBedEmitterSpacingLabel(saved.spacing && saved.spacing.emitterInches != null ? saved.spacing.emitterInches : saved.emitterSpacingIn, options && options.moduleCell); // CHANGE
         return { category, label, spacing, assemblyLabel: label ? [label, spacing].filter(Boolean).join(" ") : "" }; // NEW
     } // NEW
 
@@ -1883,6 +1882,25 @@ Draw.loadPlugin(function (ui) {
         const value = rowSpacingCmToDisplayValue(cm, moduleCell);
         return String(Math.max(0, Math.round(value)));
     }
+
+    function emitterSpacingDisplayUnit(moduleCell) { // NEW
+        return rowSpacingDisplayUnit(moduleCell); // NEW
+    } // NEW
+
+    function emitterSpacingInToDisplayValue(inches, moduleCell) { // NEW
+        const value = Math.max(0, finiteNumber(inches, 0)); // NEW
+        return resolveModuleUnitSystem(moduleCell) === "imperial" ? value : value * CM_PER_INCH; // NEW
+    } // NEW
+
+    function emitterSpacingDisplayValueToIn(value, moduleCell) { // NEW
+        const n = Math.max(0, finiteNumber(value, 0)); // NEW
+        return resolveModuleUnitSystem(moduleCell) === "imperial" ? n : n / CM_PER_INCH; // NEW
+    } // NEW
+
+    function formatEmitterSpacingDisplayValue(inches, moduleCell) { // NEW
+        const n = finiteNumber(inches, null); // NEW
+        return n > 0 ? formatBomNumber(emitterSpacingInToDisplayValue(n, moduleCell)) : ""; // NEW
+    } // NEW
 
     function rowLengthMetersForBedGeometry(bedGeo, orientation) {
         const geo = bedGeo || {};
@@ -3574,13 +3592,13 @@ Draw.loadPlugin(function (ui) {
             if (record.recipeVersion > 0) record.partIds = uniqueStrings([record.inletPartId, record.outletPartId, record.rowPartId, record.emitterPartId, record.rowTakeoffPartId, record.rowEndCapPartId, record.headerEndCapPartId, record.supplyPipePartId].concat(record.resolvedBomParts.map(function (entry) { return entry.partId; }))).filter(Boolean);
             record.anchorPartId = String(template && template.anchorPartId || "");
         }
-        record.irrigationType = bedEffectiveEmitterInfo(catalog, record, { ignoreStoredCategory: true }).category; // NEW
+        record.irrigationType = bedEffectiveEmitterInfo(catalog, record, { ignoreStoredCategory: true, moduleCell }).category; // CHANGE
 
         model.beginUpdate && model.beginUpdate();
         try {
             if (!bedAssembly) return record;
             if (bedAssembly) {
-                setCellAttrs(bedAssembly, { label: assemblyLabelForTemplateRecord(record, catalog), [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(record) }); // CHANGE
+                setCellAttrs(bedAssembly, { label: assemblyLabelForTemplateRecord(record, catalog, moduleCell), [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(record) }); // CHANGE
                 createBedTemplateLayoutCells(bedAssembly, pathId, record, getGeometry(bedAssembly) || bedGeo);
             }
 
@@ -3591,8 +3609,8 @@ Draw.loadPlugin(function (ui) {
         return record;
     }
 
-    function assemblyLabelForTemplateRecord(record, catalog) { // CHANGE
-        return record && record.assemblyLabelMode === BED_ASSEMBLY_LABEL_HIDDEN ? "" : (bedEffectiveEmitterInfo(catalog, record).assemblyLabel || "Bed Assembly"); // CHANGE
+    function assemblyLabelForTemplateRecord(record, catalog, moduleCell) { // CHANGE
+        return record && record.assemblyLabelMode === BED_ASSEMBLY_LABEL_HIDDEN ? "" : (bedEffectiveEmitterInfo(catalog, record, { moduleCell }).assemblyLabel || "Bed Assembly"); // CHANGE
     }
 
     function createBedTemplateLayoutCells(bedCell, pathId, record, bedGeo) {
@@ -3658,7 +3676,7 @@ Draw.loadPlugin(function (ui) {
             demand: bom.demand, // NEW
             spacing: Object.assign({}, record.spacing || {}, { rows: bom.rowCount, rowSpacingCm: bom.rowSpacingCm }) // NEW
         }); // NEW
-        const effective = bedEffectiveEmitterInfo(catalog, nextRecord, { ignoreStoredCategory: true }); // NEW
+        const effective = bedEffectiveEmitterInfo(catalog, nextRecord, { ignoreStoredCategory: true, moduleCell }); // CHANGE
         if (effective.category) nextRecord.irrigationType = effective.category; // NEW
         return {
             record: nextRecord, // CHANGE
@@ -3676,7 +3694,7 @@ Draw.loadPlugin(function (ui) {
         if (refreshed.recomputed && JSON.stringify(nextRecord) !== JSON.stringify(record)) {
             changed = setCellAttrs(bedAssembly, { [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(nextRecord) }) || changed;
         }
-        changed = setCellAttrs(bedAssembly, { label: assemblyLabelForTemplateRecord(nextRecord, catalog) }) || changed; // CHANGE
+        changed = setCellAttrs(bedAssembly, { label: assemblyLabelForTemplateRecord(nextRecord, catalog, moduleCell) }) || changed; // CHANGE
         changed = createBedTemplateLayoutCells(bedAssembly, nextRecord.pathId || ("assembly_bed_" + sanitizeId(getCellId(bedCell))), nextRecord, geometry) || changed;
         return changed;
     }
@@ -6057,13 +6075,14 @@ Draw.loadPlugin(function (ui) {
         fields.stockState.disabled = true;
         fields.stockQuantity = addTextField(node, "Stock", bomDisplayQuantityValue(part.stockQuantity, part, moduleCell)); // CHANGE
         fields.cost = addTextField(node, "Cost", part.cost);
+        const emitterSpacingUnit = emitterSpacingDisplayUnit(moduleCell); // NEW
         if (unitCostAppliesToCategory(part.category)) fields.unitCost = addTextField(node, "Unit cost per ft", part.unitCost);
         if (isLinearPipeStyleCategory(part.category)) { // CHANGE
             fields.pipeSize = addSelectField(node, "Pipe size", ensureOptionValue(connectorOptions.sizes, catalogPipeSize(part)), catalogPipeSize(part));
             if (part.category === "pipe_tubing") fields.innerDiameterIn = addTextField(node, "Pipe inner diameter in", part.specs.innerDiameterIn || ""); // CHANGE
             if (isSelfEmittingLinearCategory(part.category)) { // NEW
                 fields.emitterFlowGph = addTextField(node, "Emitter flow gph", part.specs.emitterFlowGph || ""); // NEW
-                fields.emitterSpacingIn = addTextField(node, "Emitter spacing in", part.specs.emitterSpacingIn || ""); // NEW
+                fields.emitterSpacingIn = addTextField(node, "Emitter spacing " + emitterSpacingUnit, formatEmitterSpacingDisplayValue(part.specs.emitterSpacingIn, moduleCell)); // CHANGE
                 fields.wettedWidthIn = addTextField(node, "Wetted width in", part.specs.wettedWidthIn || ""); // NEW
                 fields.minOperatingPressurePsi = addTextField(node, "Min operating psi", part.specs.minOperatingPressurePsi || ""); // NEW
                 fields.maxOperatingPressurePsi = addTextField(node, "Max operating psi", part.specs.maxOperatingPressurePsi || ""); // NEW
@@ -6078,7 +6097,7 @@ Draw.loadPlugin(function (ui) {
             fields.maxFlowGpm = addTextField(node, "Max flow gpm", part.connectors.output.maxFlowGpm || part.specs.maxFlowGpm || "");
             fields.pressureLossPsi = addTextField(node, "Pressure loss psi", part.specs.pressureLossPsi || "");
             fields.flowGpm = addTextField(node, "Part flow gpm", part.specs.flowGpm || "");
-            if (BED_SELF_EMITTING_ROW_CATEGORIES.has(part.category)) fields.emitterSpacingIn = addTextField(node, "Emitter spacing in", part.specs.emitterSpacingIn || "");
+            if (BED_SELF_EMITTING_ROW_CATEGORIES.has(part.category)) fields.emitterSpacingIn = addTextField(node, "Emitter spacing " + emitterSpacingUnit, formatEmitterSpacingDisplayValue(part.specs.emitterSpacingIn, moduleCell)); // CHANGE
             fields.minOperatingPressurePsi = addTextField(node, "Min operating psi", part.specs.minOperatingPressurePsi || "");
             fields.maxOperatingPressurePsi = addTextField(node, "Max operating psi", part.specs.maxOperatingPressurePsi || "");
             if (ANALYSIS_DEMAND_CATEGORIES.has(part.category)) appendCoverageCatalogFields(node, fields, part.specs); // NEW
@@ -6133,7 +6152,7 @@ Draw.loadPlugin(function (ui) {
                 maxFlowGpm,
                 pressureLossPsi: form.fields.pressureLossPsi ? finiteNumber(form.fields.pressureLossPsi.value, null) : null,
                 flowGpm: form.fields.flowGpm ? finiteNumber(form.fields.flowGpm.value, null) : null,
-                emitterSpacingIn: form.fields.emitterSpacingIn ? finiteNumber(form.fields.emitterSpacingIn.value, null) : null,
+                emitterSpacingIn: form.fields.emitterSpacingIn ? emitterSpacingDisplayValueToIn(form.fields.emitterSpacingIn.value, form.fields.moduleCell) : null, // CHANGE
                 minOperatingPressurePsi: form.fields.minOperatingPressurePsi ? finiteNumber(form.fields.minOperatingPressurePsi.value, null) : null,
                 maxOperatingPressurePsi: form.fields.maxOperatingPressurePsi ? finiteNumber(form.fields.maxOperatingPressurePsi.value, null) : null,
                 coveragePattern: form.fields.coveragePattern ? form.fields.coveragePattern.value : "", // NEW
@@ -6149,7 +6168,7 @@ Draw.loadPlugin(function (ui) {
         if (category === "pipe_tubing") return { innerDiameterIn: fields.innerDiameterIn ? finiteNumber(fields.innerDiameterIn.value, null) : null }; // NEW
         return { // NEW
             emitterFlowGph: fields.emitterFlowGph ? finiteNumber(fields.emitterFlowGph.value, null) : null, // NEW
-            emitterSpacingIn: fields.emitterSpacingIn ? finiteNumber(fields.emitterSpacingIn.value, null) : null, // NEW
+            emitterSpacingIn: fields.emitterSpacingIn ? emitterSpacingDisplayValueToIn(fields.emitterSpacingIn.value, fields.moduleCell) : null, // CHANGE
             wettedWidthIn: fields.wettedWidthIn ? finiteNumber(fields.wettedWidthIn.value, null) : null, // NEW
             minOperatingPressurePsi: fields.minOperatingPressurePsi ? finiteNumber(fields.minOperatingPressurePsi.value, null) : null, // NEW
             maxOperatingPressurePsi: fields.maxOperatingPressurePsi ? finiteNumber(fields.maxOperatingPressurePsi.value, null) : null // NEW
@@ -9229,6 +9248,7 @@ Draw.loadPlugin(function (ui) {
         const inletLocked = assemblyHasConnectedPortRole(session.moduleCell, bedAssembly, "input");
         const outletLocked = assemblyHasConnectedPortRole(session.moduleCell, bedAssembly, "output");
         const rowSpacingUnit = rowSpacingDisplayUnit(session.moduleCell);
+        const emitterSpacingUnit = emitterSpacingDisplayUnit(session.moduleCell); // NEW
         const initialRowSpacingCm = finiteNumber(saved.spacing && saved.spacing.rowSpacingCm, initialBom.rowSpacingCm);
         const templateSection = hudSection("Bed Assembly"); // CHANGE
         const narrowTemplate = typeof window !== "undefined" && window.innerWidth && window.innerWidth < 560;
@@ -9245,17 +9265,33 @@ Draw.loadPlugin(function (ui) {
         partsColumn.style.cssText = "display:grid;gap:6px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;";
         form.appendChild(layoutColumn);
         form.appendChild(partsColumn);
-        const orientation = addSelectField(layoutColumn, "Row orientation", BED_TEMPLATE_ROW_ORIENTATIONS, initialRowOrientation);
-        const rows = addNumericField(layoutColumn, "Rows", initialRows, { min: 1, step: 1, inputMode: "numeric" });
-        const rowSpacing = addNumericField(layoutColumn, "Row spacing " + rowSpacingUnit, formatRowSpacingDisplayValue(initialRowSpacingCm, session.moduleCell), { min: 0, step: 1, inputMode: "numeric" });
-        const spacing = addNumericField(layoutColumn, "Emitter spacing in", initialRecipe.emitterSpacingIn || "12", { min: 1, step: 1, inputMode: "decimal" });
-        const inletPart = addPartSelectField(partsColumn, "Inlet part", preservePartSelectOption(session.moduleCell, bedRolePartOptions(session.moduleCell, "input", roleParts.inletPartId, savedTemplateId, initialRecipe.rowPartId), inletLocked ? roleParts.inletPartId : ""), roleParts.inletPartId);
-        const rowPart = addPartSelectField(partsColumn, "Row part", bedRowPartOptions(session.moduleCell, initialRecipe.rowPartId, true, initialSupplyConnector), initialRecipe.rowPartId); // CHANGE
-        const rowTakeoffPart = addPartSelectField(partsColumn, "Row takeoff part", bedFittingPartOptions(session.moduleCell, "row_takeoff", initialBom.recipe && initialBom.recipe.supplyPipePartId, initialRecipe.rowPartId, initialRecipe.rowTakeoffPartId), initialRecipe.rowTakeoffPartId); // CHANGE
-        const emitterPart = addPartSelectField(partsColumn, "Emitter/device part", bedEmitterPartOptions(session.moduleCell, initialRecipe.rowPartId, initialRecipe.emitterPartId), initialRecipe.emitterPartId);
-        const rowEndCapPart = addPartSelectField(partsColumn, "Row end cap", bedFittingPartOptions(session.moduleCell, "row_end_cap", initialBom.recipe && initialBom.recipe.supplyPipePartId, initialRecipe.rowPartId, initialRecipe.rowEndCapPartId), initialRecipe.rowEndCapPartId);
-        const headerEndCapPart = addPartSelectField(partsColumn, "Header end cap", bedFittingPartOptions(session.moduleCell, "header_end_cap", initialBom.recipe && initialBom.recipe.supplyPipePartId, initialRecipe.rowPartId, initialRecipe.headerEndCapPartId), initialRecipe.headerEndCapPartId);
-        const outletPart = addPartSelectField(partsColumn, "Outlet part", preservePartSelectOption(session.moduleCell, bedOutletPartOptions(session.moduleCell, initialBom.recipe && initialBom.recipe.supplyPipePartId, roleParts.outletPartId), outletLocked ? roleParts.outletPartId : ""), roleParts.outletPartId);
+        function bedTemplateFieldGroup(parent, title) { // CHANGE
+            const group = document.createElement("div"); // CHANGE
+            group.className = "trellis-irrigation-bed-template-group"; // CHANGE
+            group.style.cssText = "display:grid;gap:6px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;padding-top:4px;border-top:1px solid #e5e7eb;"; // CHANGE
+            const heading = document.createElement("div"); // CHANGE
+            heading.className = "trellis-irrigation-bed-template-group-title"; // CHANGE
+            heading.textContent = title; // CHANGE
+            heading.style.cssText = "font:700 11px Arial,sans-serif;color:#374151;letter-spacing:0;text-transform:uppercase;"; // CHANGE
+            group.appendChild(heading); // CHANGE
+            parent.appendChild(group); // CHANGE
+            return group; // CHANGE
+        } // CHANGE
+        const layoutGroup = bedTemplateFieldGroup(layoutColumn, "Layout"); // CHANGE
+        const supplyGroup = bedTemplateFieldGroup(partsColumn, "Supply"); // CHANGE
+        const rowGroup = bedTemplateFieldGroup(partsColumn, "Row lines"); // CHANGE
+        const terminalGroup = bedTemplateFieldGroup(partsColumn, "Header termination"); // CHANGE
+        const orientation = addSelectField(layoutGroup, "Row orientation", BED_TEMPLATE_ROW_ORIENTATIONS, initialRowOrientation); // CHANGE
+        const rows = addNumericField(layoutGroup, "Rows", initialRows, { min: 1, step: 1, inputMode: "numeric" }); // CHANGE
+        const rowSpacing = addNumericField(layoutGroup, "Row spacing " + rowSpacingUnit, formatRowSpacingDisplayValue(initialRowSpacingCm, session.moduleCell), { min: 0, step: 1, inputMode: "numeric" }); // CHANGE
+        const spacing = addNumericField(layoutGroup, "Emitter spacing " + emitterSpacingUnit, formatEmitterSpacingDisplayValue(initialRecipe.emitterSpacingIn || 12, session.moduleCell), { min: 1, step: 1, inputMode: "decimal" }); // CHANGE
+        const inletPart = addPartSelectField(supplyGroup, "Inlet part", preservePartSelectOption(session.moduleCell, bedRolePartOptions(session.moduleCell, "input", roleParts.inletPartId, savedTemplateId, initialRecipe.rowPartId), inletLocked ? roleParts.inletPartId : ""), roleParts.inletPartId); // CHANGE
+        const rowPart = addPartSelectField(rowGroup, "Row part", bedRowPartOptions(session.moduleCell, initialRecipe.rowPartId, true, initialSupplyConnector), initialRecipe.rowPartId); // CHANGE
+        const rowTakeoffPart = addPartSelectField(rowGroup, "Row takeoff part", bedFittingPartOptions(session.moduleCell, "row_takeoff", initialBom.recipe && initialBom.recipe.supplyPipePartId, initialRecipe.rowPartId, initialRecipe.rowTakeoffPartId), initialRecipe.rowTakeoffPartId); // CHANGE
+        const emitterPart = addPartSelectField(rowGroup, "Emitter/device part", bedEmitterPartOptions(session.moduleCell, initialRecipe.rowPartId, initialRecipe.emitterPartId), initialRecipe.emitterPartId); // CHANGE
+        const rowEndCapPart = addPartSelectField(rowGroup, "Row end cap", bedFittingPartOptions(session.moduleCell, "row_end_cap", initialBom.recipe && initialBom.recipe.supplyPipePartId, initialRecipe.rowPartId, initialRecipe.rowEndCapPartId), initialRecipe.rowEndCapPartId); // CHANGE
+        const headerEndCapPart = addPartSelectField(terminalGroup, "Header end cap", bedFittingPartOptions(session.moduleCell, "header_end_cap", initialBom.recipe && initialBom.recipe.supplyPipePartId, initialRecipe.rowPartId, initialRecipe.headerEndCapPartId), initialRecipe.headerEndCapPartId); // CHANGE
+        const outletPart = addPartSelectField(terminalGroup, "Outlet part", preservePartSelectOption(session.moduleCell, bedOutletPartOptions(session.moduleCell, initialBom.recipe && initialBom.recipe.supplyPipePartId, roleParts.outletPartId), outletLocked ? roleParts.outletPartId : ""), roleParts.outletPartId); // CHANGE
         inletPart.disabled = inletLocked;
         outletPart.disabled = outletLocked;
         const summary = hudText("");
@@ -9283,8 +9319,10 @@ Draw.loadPlugin(function (ui) {
             const rowCount = Math.max(0, Math.floor(finiteNumber(rows.value, templateDef.defaultRows)));
             const catalog = readCatalog(session.moduleCell);
             const terminalParts = currentTerminalPartIds();
-            const recipeInput = { inletPartId: inletPart.value, outletPartId: terminalParts.outletPartId, rowPartId: rowPart.value, emitterPartId: emitterPart.value, rowTakeoffPartId: rowTakeoffPart.value, rowEndCapPartId: rowEndCapPart.value, headerEndCapPartId: terminalParts.headerEndCapPartId, emitterSpacingIn: finiteNumber(spacing.value, 12) };
+            const emitterSpacingIn = emitterSpacingDisplayValueToIn(spacing.value, session.moduleCell); // NEW
+            const recipeInput = { inletPartId: inletPart.value, outletPartId: terminalParts.outletPartId, rowPartId: rowPart.value, emitterPartId: emitterPart.value, rowTakeoffPartId: rowTakeoffPart.value, rowEndCapPartId: rowEndCapPart.value, headerEndCapPartId: terminalParts.headerEndCapPartId, emitterSpacingIn }; // CHANGE
             const bom = computeBedTemplateBom(catalog, currentBedTemplateGeometry(), savedTemplateId, rowCount, orientation.value, recipeInput); // CHANGE
+            const normalizedEmitterSpacingIn = bom.recipe && bom.recipe.emitterSpacingIn != null ? bom.recipe.emitterSpacingIn : emitterSpacingIn; // NEW
             return {
                 catalog,
                 bom,
@@ -9297,7 +9335,7 @@ Draw.loadPlugin(function (ui) {
                 rowEndCapPartId: String(rowEndCapPart.value || "").trim(),
                 headerEndCapPartId: terminalParts.headerEndCapPartId,
                 rowSpacingCm: bom.rowSpacingCm,
-                emitterInches: finiteNumber(spacing.value, 12)
+                emitterInches: normalizedEmitterSpacingIn // CHANGE
             };
         }
         function bomSummaryText(bom) {
@@ -9332,7 +9370,7 @@ Draw.loadPlugin(function (ui) {
             rowTakeoffPart.disabled = !hasInlet || !hasRow; // NEW
             rowEndCapPart.disabled = !hasRow; // NEW
             emitterPart.disabled = !hasRow || !!selfEmitting; // NEW
-            spacing.disabled = !hasRow || !rowPartIsPipe || !!selfEmitting; // CHANGE
+            spacing.disabled = !hasRow || !rowPartIsPipe || !!selfEmitting || !String(emitterPart.value || "").trim(); // CHANGE
         } // NEW
         function syncTerminalPartVisibility(hasSupplyOutlet) {
             const terminalParts = currentTerminalPartIds();
@@ -9367,9 +9405,9 @@ Draw.loadPlugin(function (ui) {
             const rowPartIsPipe = currentRowPartIsPipe(draft.catalog); // NEW
             setTemplateFieldVisible(rows, !!rowPart.value); // NEW
             setTemplateFieldVisible(rowSpacing, !!rowPart.value); // NEW
-            setTemplateFieldVisible(spacing, rowPartIsPipe); // NEW
+            setTemplateFieldVisible(spacing, rowPartIsPipe && !!String(emitterPart.value || "").trim()); // CHANGE
             setTemplateFieldVisible(emitterPart, !!rowPart.value && !selfEmitting); // CHANGE
-            if (selfEmitting) spacing.value = String(finiteNumber(selectedRowPart && selectedRowPart.specs && selectedRowPart.specs.emitterSpacingIn, 12)); // CHANGE
+            if (selfEmitting) spacing.value = formatEmitterSpacingDisplayValue(finiteNumber(selectedRowPart && selectedRowPart.specs && selectedRowPart.specs.emitterSpacingIn, 12), session.moduleCell); // CHANGE
             syncTerminalPartVisibility(bom.recipe && bom.recipe.supplyPipePartId);
             syncPrerequisiteLocks(selfEmitting, rowPartIsPipe); // CHANGE
             summary.textContent = bomSummaryText(bom);
@@ -9397,11 +9435,11 @@ Draw.loadPlugin(function (ui) {
             if (!draftDirty) return false;
             const draft = currentDraft();
             const validation = validateBedTemplateDraft(draft);
-            if (!validation.ok) { session.message = validation.message; renderIrrigationMode(session); return false; }
+            if (!validation.ok) { session.message = validation.message; summary.textContent = validation.message; summary.style.color = "#8a4b00"; return false; } // CHANGE
             const bom = draft.bom;
             rows.value = String(bom.rowCount);
             rowSpacing.value = formatRowSpacingDisplayValue(draft.rowSpacingCm, session.moduleCell);
-            spacing.value = String(draft.emitterInches);
+            spacing.value = formatEmitterSpacingDisplayValue(draft.emitterInches, session.moduleCell); // CHANGE
             runIrrigationEdit("applyBedLayout", function () {
                 if (bom.rowCount > 0) writeBedPortConfig(bedCell, bedPortConfigFromRecipe(draft.catalog, ports, draft.inletPartId, draft.outletPartId, draft.rowPartId, bom.recipe && bom.recipe.supplyPipePartId));
                 const path = firstAssemblyPathForBedAssembly(session.moduleCell, bedAssembly) || { id: "assembly_bed_" + sanitizeId(getCellId(bedCell)), targetBedId: getCellId(bedCell) || "" };
@@ -9445,7 +9483,8 @@ Draw.loadPlugin(function (ui) {
         function commitChangedSelect(clearInvalidSelections) {
             if (activeIrrigationMode !== session || isIrrigationModeClosing(session)) return;
             markDraftAndRefresh(clearInvalidSelections);
-            if (!currentDraft().outletPartId && !currentDraft().headerEndCapPartId) return;
+            const draft = currentDraft(); // CHANGE
+            if ((!draft.outletPartId && !draft.headerEndCapPartId) || !draft.rowEndCapPartId) return; // CHANGE
             commitBedTemplateDraft();
         }
         function commitTextFieldOnEnter(ev) {
@@ -11657,6 +11696,9 @@ Draw.loadPlugin(function (ui) {
             rowsForRowSpacingCm,
             rowSpacingDisplayValueToCm,
             rowSpacingCmToDisplayValue,
+            emitterSpacingDisplayValueToIn, // NEW
+            emitterSpacingInToDisplayValue, // NEW
+            formatEmitterSpacingDisplayValue, // NEW
             resolveTemplateAnchorPart,
             boundaryMatchForAnchor,
             buildReportSummary: ReportModel.buildSummary,
