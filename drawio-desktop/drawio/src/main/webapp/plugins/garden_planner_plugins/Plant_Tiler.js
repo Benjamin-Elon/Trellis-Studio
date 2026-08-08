@@ -1649,6 +1649,13 @@ Draw.loadPlugin(function (ui) {
         return getModuleMarginFromStyle(moduleCell, defaultModuleMarginUnits()); // CHANGE
     }
 
+    function getGardenModuleExternalMargin(moduleCell) {
+        const modulesApi = graph.__trellisModules;
+        if (modulesApi && typeof modulesApi.getModuleExternalMargin === "function") return modulesApi.getModuleExternalMargin(moduleCell, 40); // NEW
+        const match = getStyleSafe(moduleCell).match(/(?:^|;)module_external_margin=(\d+)(?=;|$)/); // NEW
+        return match ? parseInt(match[1], 10) : 40; // NEW
+    }
+
     function readModuleMarginInput(inputEl, units) {
         const raw = String(inputEl && inputEl.value || "").trim();
         if (!units || raw === "") return null; // CHANGE
@@ -1671,6 +1678,17 @@ Draw.loadPlugin(function (ui) {
         } else if (graph.refresh) {
             graph.refresh(moduleCell);
         }
+    }
+
+    function setGardenModuleExternalMargin(moduleCell, marginPx) {
+        const modulesApi = graph.__trellisModules;
+        if (modulesApi && typeof modulesApi.setModuleExternalMargin === "function") {
+            modulesApi.setModuleExternalMargin(moduleCell, marginPx); // NEW
+            return;
+        }
+        const graphModel = graph.getModel && graph.getModel();
+        if (graphModel && graphModel.setStyle) graphModel.setStyle(moduleCell, upsertStyleKV(getStyleSafe(moduleCell), "module_external_margin", String(marginPx))); // NEW
+        if (graph.fireEvent && typeof mxEventObject === "function") graph.fireEvent(new mxEventObject("usl:requestSetModuleExternalMargin", "cell", moduleCell, "marginPx", marginPx)); // NEW
     }
 
     async function saveCityRecord(row, existingCityId = null) {
@@ -1956,6 +1974,7 @@ Draw.loadPlugin(function (ui) {
         const curCity = getXmlAttr(moduleCell, "city_name", "");
         const curUnits = getXmlAttr(moduleCell, "unit_system", "");
         const curModuleMargin = getGardenModuleMargin(moduleCell);
+        const curModuleExternalMargin = getGardenModuleExternalMargin(moduleCell); // NEW
         const curGardenDimsCm = geometryDimensionsCm(moduleCell); // CHANGE
         const savedBedDimsCm = getSavedDefaultBedDimensionsCm(moduleCell);
         let activeGardenDisplayUnits = curUnits || ""; // CHANGE
@@ -2103,7 +2122,14 @@ Draw.loadPlugin(function (ui) {
         moduleMarginInput.step = "0.01"; // CHANGE
         moduleMarginInput.min = "0";
         moduleMarginInput.style.flex = "1";
-        const moduleMarginRow = row("Module margin:", moduleMarginInput); // CHANGE
+        const moduleMarginRow = row("Internal margin:", moduleMarginInput); // CHANGE
+
+        const moduleExternalMarginInput = document.createElement("input"); // NEW
+        moduleExternalMarginInput.type = "number"; // NEW
+        moduleExternalMarginInput.step = "0.01"; // NEW
+        moduleExternalMarginInput.min = "0"; // NEW
+        moduleExternalMarginInput.style.flex = "1"; // NEW
+        const moduleExternalMarginRow = row("External margin:", moduleExternalMarginInput); // NEW
 
         function readGardenInputsAsCm(units) {
             if (!units) return null; // CHANGE
@@ -2122,12 +2148,12 @@ Draw.loadPlugin(function (ui) {
             gardenLengthInput.value = formatBedDisplayValue(lengthCmToDisplay(dimsCm.lengthCm, units)); // CHANGE
         }
 
-        function setModuleMarginInputFromUnits(marginUnits, units) {
+        function setModuleMarginInputFromUnits(inputEl, marginUnits, units) {
             if (!units) {
-                moduleMarginInput.value = ""; // CHANGE
+                inputEl.value = ""; // CHANGE
                 return;
             }
-            moduleMarginInput.value = formatBedDisplayValue(lengthCmToDisplay(graphUnitsToCm(marginUnits), units)); // CHANGE
+            inputEl.value = formatBedDisplayValue(lengthCmToDisplay(graphUnitsToCm(marginUnits), units)); // CHANGE
         }
 
         function readBedInputsAsCm(units) {
@@ -2162,14 +2188,23 @@ Draw.loadPlugin(function (ui) {
 
         function syncModuleMarginInput(nextUnits) {
             const priorMargin = activeMarginDisplayUnits ? readModuleMarginInput(moduleMarginInput, activeMarginDisplayUnits) : null; // CHANGE
+            const priorExternalMargin = activeMarginDisplayUnits ? readModuleMarginInput(moduleExternalMarginInput, activeMarginDisplayUnits) : null; // NEW
             const nextMargin = priorMargin == null ? curModuleMargin : priorMargin; // CHANGE
+            const nextExternalMargin = priorExternalMargin == null ? curModuleExternalMargin : priorExternalMargin; // NEW
             const enabled = !!nextUnits; // CHANGE
             const unitLabel = enabled ? bedDisplayUnitLabel(nextUnits) : ""; // CHANGE
             activeMarginDisplayUnits = nextUnits || ""; // CHANGE
-            moduleMarginRow.label.textContent = enabled ? `Module margin (${unitLabel}):` : "Module margin:"; // CHANGE
+            moduleMarginRow.label.textContent = enabled ? `Internal margin (${unitLabel}):` : "Internal margin:"; // CHANGE
+            moduleExternalMarginRow.label.textContent = enabled ? `External margin (${unitLabel}):` : "External margin:"; // NEW
             moduleMarginInput.disabled = !enabled; // CHANGE
-            if (enabled) setModuleMarginInputFromUnits(nextMargin, nextUnits); // CHANGE
-            else moduleMarginInput.value = ""; // CHANGE
+            moduleExternalMarginInput.disabled = !enabled; // NEW
+            if (enabled) { // CHANGE
+                setModuleMarginInputFromUnits(moduleMarginInput, nextMargin, nextUnits); // CHANGE
+                setModuleMarginInputFromUnits(moduleExternalMarginInput, nextExternalMargin, nextUnits); // NEW
+            } else {
+                moduleMarginInput.value = ""; // CHANGE
+                moduleExternalMarginInput.value = ""; // NEW
+            }
         }
 
         function syncBedDimensionInputs(nextUnits) {
@@ -2200,7 +2235,7 @@ Draw.loadPlugin(function (ui) {
             const neededHeight = union.bottom + marginUnits + getModuleHeaderHeightForSettings(moduleCell); // CHANGE
             const width = formatBedDisplayValue(lengthCmToDisplay(graphUnitsToCm(neededWidth), units)); // CHANGE
             const length = formatBedDisplayValue(lengthCmToDisplay(graphUnitsToCm(neededHeight), units)); // CHANGE
-            return `Garden dimensions must be at least ${width} by ${length} ${bedDisplayUnitLabel(units)} to fit existing contents plus margin.`; // CHANGE
+            return `Garden dimensions must be at least ${width} by ${length} ${bedDisplayUnitLabel(units)} to fit existing contents plus internal margin.`; // CHANGE
         }
 
         mxEvent.addListener(unitsSel, "change", function () {
@@ -2235,6 +2270,7 @@ Draw.loadPlugin(function (ui) {
             const chosenGardenDimsCm = readGardenInputsAsCm(chosenUnits); // CHANGE
             const chosenBedDimsCm = readBedInputsAsCm(chosenUnits);
             const chosenModuleMargin = readModuleMarginInput(moduleMarginInput, chosenUnits); // CHANGE
+            const chosenModuleExternalMargin = readModuleMarginInput(moduleExternalMarginInput, chosenUnits); // NEW
             const chosenGardenWidthUnits = chosenGardenDimsCm ? cmToGraphUnits(chosenGardenDimsCm.widthCm) : null; // CHANGE
             const chosenGardenHeightUnits = chosenGardenDimsCm ? cmToGraphUnits(chosenGardenDimsCm.lengthCm) : null; // CHANGE
 
@@ -2242,7 +2278,8 @@ Draw.loadPlugin(function (ui) {
             if (!chosenUnits) { showError("Units are required."); unitsSel.focus(); return; }
             if (!chosenGardenDimsCm) { showError("Garden width and length must be positive numbers."); gardenWidthInput.focus(); return; } // CHANGE
             if (!chosenBedDimsCm) { showError("Default bed width and length must be positive numbers."); bedWidthInput.focus(); return; }
-            if (chosenModuleMargin == null) { showError("Module margin must be a non-negative number."); moduleMarginInput.focus(); return; } // CHANGE
+            if (chosenModuleMargin == null) { showError("Internal margin must be a non-negative number."); moduleMarginInput.focus(); return; } // CHANGE
+            if (chosenModuleExternalMargin == null) { showError("External margin must be a non-negative number."); moduleExternalMarginInput.focus(); return; } // NEW
             if (!gardenDimensionsFit(chosenGardenWidthUnits, chosenGardenHeightUnits, chosenModuleMargin)) { showError(requiredGardenFitMessage(chosenModuleMargin, chosenUnits)); gardenWidthInput.focus(); return; } // CHANGE
 
             ui.hideDialog();
@@ -2265,6 +2302,7 @@ Draw.loadPlugin(function (ui) {
                     [DEFAULT_BED_LENGTH_CM_ATTR]: formatBedCmAttr(chosenBedDimsCm.lengthCm),
                 });
                 setGardenModuleMargin(moduleCell, chosenModuleMargin);
+                setGardenModuleExternalMargin(moduleCell, chosenModuleExternalMargin); // NEW
             } finally {
                 model.endUpdate();
             }
@@ -2276,7 +2314,7 @@ Draw.loadPlugin(function (ui) {
         btnRow.appendChild(okBtn);
         div.appendChild(btnRow);
 
-        ui.showDialog(div, 420, 420, true, true, notifyClose); // CHANGE
+        ui.showDialog(div, 420, 450, true, true, notifyClose); // CHANGE
         elevateTrellisDialog();
         gardenNameInput.focus();
     }

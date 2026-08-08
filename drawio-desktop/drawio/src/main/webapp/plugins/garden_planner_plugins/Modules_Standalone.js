@@ -10,6 +10,10 @@ Draw.loadPlugin(function (ui) {
     const ATTR_ACCESS_GRANTS = "trellis_access_grants_json";
     const LINK_ATTR = "linkedTo";
     const COMPANION_TEAM_GAP = 40;
+    const CM_PER_METER = 100; // NEW
+    const CM_PER_FOOT = 30.48; // NEW
+    const PX_PER_CM = 5; // NEW
+    const DRAW_SCALE = 0.18; // NEW
 
     function applyTrellisButtonStyle(button, variant, options) {
         if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") {
@@ -197,16 +201,68 @@ Draw.loadPlugin(function (ui) {
         }
     }
 
+    function getLinkedGardenModule(moduleCell) {
+        if (isGardenModule(moduleCell)) return moduleCell; // NEW
+        const gardenId = getValueAttr(moduleCell, ATTR_TEAM_GARDEN_MODULE) || getValueAttr(moduleCell, ATTR_TASK_GARDEN_MODULE); // NEW
+        const gardenCell = gardenId && model.getCell ? model.getCell(gardenId) : null; // NEW
+        return isGardenModule(gardenCell) ? gardenCell : null; // NEW
+    }
+
+    function getModuleMarginUnitSystem(moduleCell) {
+        const gardenCell = getLinkedGardenModule(moduleCell); // NEW
+        const units = String(getValueAttr(gardenCell, "unit_system") || "").trim(); // NEW
+        return units === "metric" || units === "imperial" ? units : ""; // NEW
+    }
+
+    function marginUnitLabel(units) {
+        if (units === "metric") return "m"; // NEW
+        if (units === "imperial") return "ft"; // NEW
+        return "diagram units"; // NEW
+    }
+
+    function graphUnitsToCm(units) {
+        return Number(units) / (PX_PER_CM * DRAW_SCALE); // NEW
+    }
+
+    function cmToGraphUnits(cm) {
+        return Number(cm) * PX_PER_CM * DRAW_SCALE; // NEW
+    }
+
+    function lengthCmToDisplay(cm, units) {
+        return units === "imperial" ? Number(cm) / CM_PER_FOOT : Number(cm) / CM_PER_METER; // NEW
+    }
+
+    function nonNegativeDisplayToGraphUnits(value, units) {
+        const raw = String(value == null ? "" : value).trim(); // NEW
+        if (raw === "") return null; // NEW
+        const n = Number(raw); // NEW
+        if (!Number.isFinite(n) || n < 0) return null; // NEW
+        if (!units) return Math.round(n); // NEW
+        const cm = units === "imperial" ? n * CM_PER_FOOT : n * CM_PER_METER; // NEW
+        const graphUnits = Math.round(cmToGraphUnits(cm)); // NEW
+        return Number.isSafeInteger(graphUnits) && graphUnits >= 0 ? graphUnits : null; // NEW
+    }
+
+    function formatMarginDisplayValue(marginUnits, units) {
+        const rawUnits = Math.max(0, parseInt(marginUnits, 10) || 0); // NEW
+        if (!units) return String(rawUnits); // NEW
+        const displayValue = lengthCmToDisplay(graphUnitsToCm(rawUnits), units); // NEW
+        return String(Math.round(displayValue * 1000) / 1000); // NEW
+    }
+
     function promptSetModuleMargin(moduleCell) {
         if (!isModule(moduleCell) || !ui.prompt) return;
         const cur = getIntStyle(moduleCell, "module_margin", DEFAULT_MODULE_MARGIN_UNITS); // CHANGE
+        const units = getModuleMarginUnitSystem(moduleCell); // NEW
         if (graph.popupMenuHandler && graph.popupMenuHandler.hideMenu) {
             graph.popupMenuHandler.hideMenu();
         }
         setTimeout(function () {
-            ui.prompt("Module internal margin (diagram units):", String(cur), function (val) { // CHANGE
+            ui.prompt("Module internal margin (" + marginUnitLabel(units) + "):", formatMarginDisplayValue(cur, units), function (val) { // CHANGE
                 if (val == null) return;
-                setModuleMarginValue(moduleCell, val);
+                const margin = nonNegativeDisplayToGraphUnits(val, units); // NEW
+                if (margin == null) return; // NEW
+                setModuleMarginValue(moduleCell, margin); // CHANGE
             });
         }, 0);
     }
@@ -230,15 +286,103 @@ Draw.loadPlugin(function (ui) {
     function promptSetModuleExternalMargin(moduleCell) {
         if (!isModule(moduleCell) || !ui.prompt) return;
         const cur = getModuleExternalMarginValue(moduleCell); // NEW
+        const units = getModuleMarginUnitSystem(moduleCell); // NEW
         if (graph.popupMenuHandler && graph.popupMenuHandler.hideMenu) {
             graph.popupMenuHandler.hideMenu();
         }
         setTimeout(function () {
-            ui.prompt("Module external margin (diagram units):", String(cur), function (val) { // NEW
+            ui.prompt("Module external margin (" + marginUnitLabel(units) + "):", formatMarginDisplayValue(cur, units), function (val) { // CHANGE
                 if (val == null) return;
-                setModuleExternalMarginValue(moduleCell, val);
+                const margin = nonNegativeDisplayToGraphUnits(val, units); // NEW
+                if (margin == null) return; // NEW
+                setModuleExternalMarginValue(moduleCell, margin); // CHANGE
             });
         }, 0);
+    }
+
+    function setModuleMarginsValue(moduleCell, internalMarginPx, externalMarginPx) {
+        if (!isModule(moduleCell)) return;
+        model.beginUpdate();
+        try {
+            setModuleStyleIntValue(moduleCell, "module_margin", internalMarginPx); // NEW
+            setModuleStyleIntValue(moduleCell, "module_external_margin", externalMarginPx); // NEW
+            applyModuleMargins(moduleCell, { manageUpdate: false }); // NEW
+            enforceModuleExternalMarginsFor([moduleCell], { manageUpdate: false }); // NEW
+        } finally {
+            model.endUpdate();
+        }
+    }
+
+    function promptSetModuleMargins(moduleCell) {
+        if (!isModule(moduleCell)) return;
+        if (!ui.showDialog || !document || !document.createElement) {
+            promptSetModuleMargin(moduleCell); // NEW
+            return;
+        }
+        const div = document.createElement("div");
+        div.style.padding = "10px";
+        div.style.minWidth = "280px";
+        const units = getModuleMarginUnitSystem(moduleCell); // NEW
+        const unitLabel = marginUnitLabel(units); // NEW
+        const title = document.createElement("div");
+        title.textContent = "Set Module Margins";
+        title.style.fontWeight = "600";
+        title.style.marginBottom = "10px";
+        div.appendChild(title);
+        const err = document.createElement("div");
+        err.style.color = "#b91c1c";
+        err.style.fontSize = "12px";
+        err.style.marginBottom = "8px";
+        err.style.display = "none";
+        div.appendChild(err);
+        function row(labelText, value) {
+            const wrap = document.createElement("div");
+            wrap.style.display = "flex";
+            wrap.style.alignItems = "center";
+            wrap.style.gap = "8px";
+            wrap.style.margin = "8px 0";
+            const label = document.createElement("label");
+            label.textContent = labelText;
+            label.style.minWidth = "150px";
+            const input = document.createElement("input");
+            input.type = "number";
+            input.min = "0";
+            input.step = units ? "0.01" : "1"; // CHANGE
+            input.value = String(value);
+            input.style.flex = "1";
+            wrap.appendChild(label);
+            wrap.appendChild(input);
+            div.appendChild(wrap);
+            return input;
+        }
+        const internalInput = row("Internal margin (" + unitLabel + "):", formatMarginDisplayValue(getModuleMarginValue(moduleCell), units)); // CHANGE
+        const externalInput = row("External margin (" + unitLabel + "):", formatMarginDisplayValue(getModuleExternalMarginValue(moduleCell), units)); // CHANGE
+        const buttons = document.createElement("div");
+        buttons.style.display = "flex";
+        buttons.style.justifyContent = "flex-end";
+        buttons.style.gap = "8px";
+        buttons.style.marginTop = "12px";
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.textContent = "Cancel";
+        applyTrellisButtonStyle(cancel, "neutral", { compact: true });
+        mxEvent.addListener(cancel, "click", function () { if (ui.hideDialog) ui.hideDialog(); });
+        const save = document.createElement("button");
+        save.type = "button";
+        save.textContent = "OK";
+        applyTrellisButtonStyle(save, "add", { compact: true });
+        mxEvent.addListener(save, "click", function () {
+            const internalMargin = nonNegativeDisplayToGraphUnits(internalInput.value, units); // CHANGE
+            const externalMargin = nonNegativeDisplayToGraphUnits(externalInput.value, units); // CHANGE
+            if (!Number.isSafeInteger(internalMargin) || internalMargin < 0) { err.textContent = "Internal margin must be a non-negative number."; err.style.display = "block"; internalInput.focus(); return; } // NEW
+            if (!Number.isSafeInteger(externalMargin) || externalMargin < 0) { err.textContent = "External margin must be a non-negative number."; err.style.display = "block"; externalInput.focus(); return; } // NEW
+            if (ui.hideDialog) ui.hideDialog();
+            setModuleMarginsValue(moduleCell, internalMargin, externalMargin);
+        });
+        buttons.appendChild(cancel);
+        buttons.appendChild(save);
+        div.appendChild(buttons);
+        ui.showDialog(div, 320, 190, true, true); // NEW
     }
 
 
@@ -2001,20 +2145,12 @@ Draw.loadPlugin(function (ui) {
             hideOverlay();
         }
 
-        function promptModuleMarginFromOverlay(evt) {
+        function promptModuleMarginsFromOverlay(evt) {
             mxEvent.consume(evt);
             const moduleCell = currentTeamModule || selectedTeamModule();
             if (!moduleCell) { hideOverlay(); return; }
             hideOverlay();
-            promptSetModuleMargin(moduleCell);
-        }
-
-        function promptModuleExternalMarginFromOverlay(evt) {
-            mxEvent.consume(evt);
-            const moduleCell = currentTeamModule || selectedTeamModule();
-            if (!moduleCell) { hideOverlay(); return; }
-            hideOverlay();
-            promptSetModuleExternalMargin(moduleCell); // NEW
+            promptSetModuleMargins(moduleCell); // CHANGE
         }
 
         function makeOverlayButton(label, onClick, variant) {
@@ -2102,8 +2238,7 @@ Draw.loadPlugin(function (ui) {
             labelControls.style.borderBottom = "1px solid #e5e7eb";
             overlay.appendChild(labelControls);
             overlay.appendChild(makeOverlayButton("Add Role Card", addRoleCardFromOverlay, "add"));
-            overlay.appendChild(makeOverlayButton("Internal Margin", promptModuleMarginFromOverlay, "open")); // CHANGE
-            overlay.appendChild(makeOverlayButton("External Margin", promptModuleExternalMarginFromOverlay, "open")); // NEW
+            overlay.appendChild(makeOverlayButton("Set Module Margins", promptModuleMarginsFromOverlay, "open")); // CHANGE
             const host = ensureOverlayHost();
             if (host) host.appendChild(overlay);
             return overlay;
@@ -2355,6 +2490,12 @@ Draw.loadPlugin(function (ui) {
         },
         promptSetModuleExternalMargin: function (moduleCell) {
             return promptSetModuleExternalMargin(moduleCell); // NEW
+        },
+        setModuleMargins: function (moduleCell, internalMarginPx, externalMarginPx) {
+            return setModuleMarginsValue(moduleCell, internalMarginPx, externalMarginPx); // NEW
+        },
+        promptSetModuleMargins: function (moduleCell) {
+            return promptSetModuleMargins(moduleCell); // NEW
         },
         enforceModuleExternalMargins: function (moduleCells) {
             return enforceModuleExternalMarginsFor(moduleCells); // NEW

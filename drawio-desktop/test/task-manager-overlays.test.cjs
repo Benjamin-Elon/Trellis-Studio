@@ -719,8 +719,9 @@ test("task module overlay edits labels with one bed-style field and no clamping"
     assert.equal(overlay.querySelectorAll("input[aria-label='Task label']").length, 1);
     assert.equal(overlay.textContent.includes("Garden label"), false);
     assert.equal(overlay.textContent.includes("Task label"), false);
-    assert.ok(buttonByText(overlay, "Internal Margin")); // NEW
-    assert.ok(buttonByText(overlay, "External Margin")); // NEW
+    assert.ok(buttonByText(overlay, "Set Module Margins")); // CHANGE
+    assert.equal(buttonByText(overlay, "Internal Margin"), undefined); // CHANGE
+    assert.equal(buttonByText(overlay, "External Margin"), undefined); // CHANGE
     assert.ok(buttonByText(overlay, "Add Kanban Board"));
     let input = taskModuleOverlayInput(h.document);
     assert.equal(input.value, "Kitchen Garden Tasks");
@@ -796,17 +797,15 @@ test("task module overlay delegates margin prompts to the Modules API", async ()
     h.setState(taskModule, { x: 40, y: 50, width: 300, height: 120 });
     const calls = [];
     h.graph.__trellisModules = {
-        promptSetModuleMargin(cell) { calls.push(["internal", cell]); },
-        promptSetModuleExternalMargin(cell) { calls.push(["external", cell]); }
+        promptSetModuleMargins(cell) { calls.push(["margins", cell]); } // CHANGE
     };
     h.graph.setSelectionCell(taskModule);
     await nextTick();
 
     const overlay = taskModuleOverlay(h.document);
-    buttonByText(overlay, "Internal Margin").dispatchEvent(new h.window.MouseEvent("click", { bubbles: true }));
-    buttonByText(overlay, "External Margin").dispatchEvent(new h.window.MouseEvent("click", { bubbles: true }));
+    buttonByText(overlay, "Set Module Margins").dispatchEvent(new h.window.MouseEvent("click", { bubbles: true })); // CHANGE
 
-    assert.deepEqual(calls, [["internal", taskModule], ["external", taskModule]]); // NEW
+    assert.deepEqual(calls, [["margins", taskModule]]); // CHANGE
 });
 
 test("unlinked task module overlay only shows the editable label input", async () => {

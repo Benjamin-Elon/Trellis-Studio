@@ -125,6 +125,7 @@ function makeHarness() {
     let insertImageCalls = 0;
     let promptValue = "40";
     const promptCalls = [];
+    let lastDialog = null; // NEW
     let selectedCells = [];
     const container = document.getElementById("graph");
     Object.defineProperty(container, "clientWidth", { value: 800, configurable: true });
@@ -188,6 +189,14 @@ function makeHarness() {
         prompt(message, value, callback) {
             promptCalls.push({ message, value });
             callback(promptValue);
+        },
+        showDialog(node) {
+            lastDialog = node; // NEW
+            document.body.appendChild(node); // NEW
+        },
+        hideDialog() {
+            if (lastDialog && lastDialog.parentNode) lastDialog.parentNode.removeChild(lastDialog); // NEW
+            lastDialog = null; // NEW
         }
     };
 
@@ -229,7 +238,7 @@ function makeHarness() {
     };
 
     vm.runInNewContext(fs.readFileSync(PLUGIN_PATH, "utf8"), context, { filename: PLUGIN_PATH });
-    return { dom, document, graph, model, root, mouseListeners, graphListeners, viewListeners, selectionListeners, firedEvents, contextMenuContributors, promptCalls, setPromptValue(value) { promptValue = value; }, clearValueWrites() { model.valueWrites.length = 0; }, get valueWrites() { return model.valueWrites.slice(); }, get insertImageCalls() { return insertImageCalls; }, get selectedCell() { return selectedCells[0] || null; } };
+    return { dom, document, graph, model, root, mouseListeners, graphListeners, viewListeners, selectionListeners, firedEvents, contextMenuContributors, promptCalls, setPromptValue(value) { promptValue = value; }, clearValueWrites() { model.valueWrites.length = 0; }, get valueWrites() { return model.valueWrites.slice(); }, get insertImageCalls() { return insertImageCalls; }, get selectedCell() { return selectedCells[0] || null; }, get lastDialog() { return lastDialog; } }; // CHANGE
 }
 
 function makeMouseEvent(window, type, opts) {
@@ -616,7 +625,7 @@ test("selecting one team module renders the add role card overlay", () => {
     const harness = makeHarness();
     const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
     const buttons = roleOverlayButtons(harness.document);
-    assert.deepEqual(buttons.map(button => button.textContent), ["Add Role Card", "Internal Margin", "External Margin"]); // CHANGE
+    assert.deepEqual(buttons.map(button => button.textContent), ["Add Role Card", "Set Module Margins"]); // CHANGE
     assert.equal(roleOverlayInput(harness.document, "Team label").value, "Team Module");
     assert.equal(roleOverlay(harness.document).querySelectorAll(".trellis-team-module-label-controls input").length, 1);
     assert.equal(roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls").textContent.includes("Garden label"), false);
@@ -783,22 +792,42 @@ test("role overlay button falls back to top-left content placement", () => {
     assert.equal(roleOverlay(harness.document).style.display, "none");
 });
 
-test("role overlay margin buttons invoke internal and external margin prompts", async () => {
+test("role overlay margin button opens the combined module margins dialog", () => {
     const harness = makeHarness();
     const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
-    harness.setPromptValue("65");
     roleOverlayButtons(harness.document)[1].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
-    await waitForTimers();
-    assert.equal(harness.promptCalls.length, 1);
+    assert.ok(harness.lastDialog); // CHANGE
+    assert.equal(harness.lastDialog.querySelector("div").textContent, "Set Module Margins"); // CHANGE
+    const inputs = harness.lastDialog.querySelectorAll("input"); // CHANGE
+    assert.equal(inputs.length, 2); // CHANGE
+    inputs[0].value = "65"; // CHANGE
+    inputs[1].value = "25"; // CHANGE
+    Array.from(harness.lastDialog.querySelectorAll("button")).find(button => button.textContent === "OK").dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true })); // CHANGE
     assert.match(team.style, /(?:^|;)module_margin=65(?:;|$)/);
+    assert.match(team.style, /(?:^|;)module_external_margin=25(?:;|$)/); // CHANGE
     assert.equal(roleOverlay(harness.document).style.display, "none");
+});
 
+test("linked team module margin dialog uses the garden unit system", () => {
+    const harness = makeHarness();
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden");
+    garden.value.setAttribute("unit_system", "metric"); // NEW
+    const team = harness.model.getCell(garden.getAttribute("trellis_team_module_id"));
+    team.style += ";module_margin=180;module_external_margin=45"; // NEW
     harness.graph.setSelectionCell(team);
-    harness.setPromptValue("25");
-    roleOverlayButtons(harness.document)[2].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
-    await waitForTimers();
-    assert.equal(harness.promptCalls.length, 2); // NEW
-    assert.match(team.style, /(?:^|;)module_external_margin=25(?:;|$)/); // NEW
+
+    roleOverlayButtons(harness.document)[1].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
+    const labels = Array.from(harness.lastDialog.querySelectorAll("label")).map(label => label.textContent); // NEW
+    const inputs = harness.lastDialog.querySelectorAll("input"); // NEW
+    assert.deepEqual(labels, ["Internal margin (m):", "External margin (m):"]); // NEW
+    assert.equal(inputs[0].value, "2"); // NEW
+    assert.equal(inputs[1].value, "0.5"); // NEW
+
+    inputs[0].value = "3"; // NEW
+    inputs[1].value = "1.25"; // NEW
+    Array.from(harness.lastDialog.querySelectorAll("button")).find(button => button.textContent === "OK").dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true })); // NEW
+    assert.match(team.style, /(?:^|;)module_margin=270(?:;|$)/); // NEW
+    assert.match(team.style, /(?:^|;)module_external_margin=113(?:;|$)/); // NEW
 });
 
 test("clicking the already-selected team module hides role overlay without reopening", () => {
@@ -808,7 +837,7 @@ test("clicking the already-selected team module hides role overlay without reope
     assert.equal(overlay.style.display, "flex");
     fireGraphClick(harness, { cell: team, hitCell: team, clientX: 100, clientY: 120, graphX: 90, graphY: 100 });
     assert.equal(overlay.style.display, "none");
-    assert.equal(roleOverlayButtons(harness.document).length, 3); // CHANGE
+    assert.equal(roleOverlayButtons(harness.document).length, 2); // CHANGE
 });
 
 test("role overlay hides on Escape, outside gesture, model change, and view change", () => {

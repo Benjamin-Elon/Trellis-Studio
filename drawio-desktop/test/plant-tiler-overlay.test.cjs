@@ -78,14 +78,19 @@ test('Garden module margin lives in Garden Settings instead of the overlay', () 
     assert.doesNotMatch(source, /new mxEventObject\("usl:requestPromptSetModuleMargin", "cell", moduleCell\)/);
     assert.match(source, /const gardenWidthRow = row\("Garden width:", gardenWidthInput\);/); // CHANGE
     assert.match(source, /const gardenLengthRow = row\("Garden length:", gardenLengthInput\);/); // CHANGE
-    assert.match(source, /const moduleMarginRow = row\("Module margin:", moduleMarginInput\);/); // CHANGE
+    assert.match(source, /const moduleMarginRow = row\("Internal margin:", moduleMarginInput\);/); // CHANGE
+    assert.match(source, /const moduleExternalMarginRow = row\("External margin:", moduleExternalMarginInput\);/); // NEW
     assert.match(source, /const curModuleMargin = getGardenModuleMargin\(moduleCell\);/);
+    assert.match(source, /const curModuleExternalMargin = getGardenModuleExternalMargin\(moduleCell\);/); // NEW
     assert.match(source, /const chosenModuleMargin = readModuleMarginInput\(moduleMarginInput, chosenUnits\);/); // CHANGE
-    assert.match(source, /Module margin must be a non-negative number\./); // CHANGE
-    assert.match(source, /Garden dimensions must be at least \$\{width\} by \$\{length\} \$\{bedDisplayUnitLabel\(units\)\} to fit existing contents plus margin\./); // CHANGE
+    assert.match(source, /const chosenModuleExternalMargin = readModuleMarginInput\(moduleExternalMarginInput, chosenUnits\);/); // NEW
+    assert.match(source, /Internal margin must be a non-negative number\./); // CHANGE
+    assert.match(source, /External margin must be a non-negative number\./); // NEW
+    assert.match(source, /Garden dimensions must be at least \$\{width\} by \$\{length\} \$\{bedDisplayUnitLabel\(units\)\} to fit existing contents plus internal margin\./); // CHANGE
     assert.match(source, /nextGeo\.width = chosenGardenWidthUnits;/); // CHANGE
     assert.match(source, /nextGeo\.height = chosenGardenHeightUnits;/); // CHANGE
     assert.match(source, /setGardenModuleMargin\(moduleCell, chosenModuleMargin\);/);
+    assert.match(source, /setGardenModuleExternalMargin\(moduleCell, chosenModuleExternalMargin\);/); // NEW
     assert.match(source, /if \(!toolbar \|\| !labelInputWrap \|\| !settingsBtn \|\| !addBedBtn \|\| !addGroupBtn \|\| !irrigationModeBtn \|\| !moduleCell\) return;/); // CHANGE
 });
 
