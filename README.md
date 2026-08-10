@@ -5,13 +5,13 @@ Trellis Studio extends Draw.io with a coordinated suite of plugins that turn dia
 **Features:**
 
 - Create comprehensive yearly business/garden plans.
-- Draw beds, garden zones, and modules.
-- Drag crops into place and generate schedules based on climate, GDD, frost windows, and plant traits.
-- Plan multi-crop successions and turnovers.
-- Design irrigation systems.
+- Draw full garden layout
+- Drag crops into place and generate schedules.
+- Design irrigation systems and zones.
+- Plan multi-crop turnovers and companions.
 - Manage and coordinate tasks with Automated, linked Kanban boards.
-- Build multi-person workflows and ownership using role cards and team modules.
-- Automatically track and visualize when diagram elements were created or edited, using time-based coloring, filtering, and navigation to explore change history directly on the canvas.
+- Build multi-person workflows and ownership.
+- Track and visualize diagram edits, exploring change history directly on the canvas.
 - In addition to all the base features included in Draw.io
 
 **Who This Is For**
@@ -56,13 +56,15 @@ In the root directory of this repo:
 
 I have big plans for this project.
 
+Upcoming features:
+-Allocate Mode: a Year Plan to garden placement mode.
+-Guide Mode: get the information you need to successfully garden, exactly when you need it.
+-Labor Mode: spacially visualize what it will take to get the garden growing.
+
+-v3.0 for equipment
+-Database for all common crops
+
+
 Eventually, I would like this to become a community-level coordination and planning environment.
 
 Collaborative peer-networked diagramming, always local first.  
-
-**High priority TODO Features:**
-- Add automatic fit garden plantings to year plan plugin
-- Add users plugin and extend changeMap plugin with user selector
-- Extend planner to include bed turnover and companion mode
-- Extend scheduler with proper perennial scheduling.
-- Add labor plugin
