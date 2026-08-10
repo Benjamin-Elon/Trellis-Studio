@@ -2,8 +2,8 @@
  * Draw.io Plugin: Tiler Group Overlap Navigator (Multi-Cluster, DOM Buttons)
  * - Builds bed-aware and outside-overlap succession clusters per parent.
  * - Keeps bed-contained clusters separate from outside overhang clusters.
- * - Each cluster gets its own Prev/Next controls and index badge.
- * - Non-current members of each cluster are rendered outline-only (fills/text/images hidden).
+ * - Each cluster gets its own Prev/Next controls and Mini Rail timeline.
+ * - Non-active members of each cluster are rendered outline-only (fills/text/images hidden).
  * - Covered plant groups, clusters, and empty beds get DOM selector buttons.
  */
 Draw.loadPlugin(function (ui) {
@@ -49,6 +49,10 @@ Draw.loadPlugin(function (ui) {
     const BTN_INSET = 6;
     const SELECT_BUTTON_GAP = 4;
     const SELECT_BUTTON_DRAG_HANDLE_SLOT = BTN_SIZE + SELECT_BUTTON_GAP;
+    const MINI_RAIL_MIN_W = 260; // CHANGE: replace the low-information index badge with a compact timeline rail.
+    const MINI_RAIL_MAX_W = 520; // CHANGE: keep dense cluster timelines readable without covering the canvas.
+    const MINI_RAIL_GAP = 8; // CHANGE: attach the rail above the selected cluster with a small visual gap.
+    const DAY_MS = 24 * 60 * 60 * 1000; // CHANGE: normalize occupancy windows for inclusive overlap checks.
     const ICON_PREV = 'data:image/svg+xml;utf8,' + encodeURIComponent(
         '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22">' +
         '<circle cx="11" cy="11" r="10" fill="white" stroke="black" stroke-width="1"/>' +
@@ -870,7 +874,7 @@ Draw.loadPlugin(function (ui) {
     graph.addListener(mxEvent.REMOVE_CELLS, () => { descendantsCache = new WeakMap(); });
 
     // -------------------- Multi-cluster state --------------------
-    // key -> { order: mxCell[], currentIdx: number, anchorId: string, btnPrev, btnNext, badge, dimmed:Set<mxCell> }
+    // key -> { order: mxCell[], currentIdx: number, anchorId: string, btnPrev, btnNext, miniRail, dimmed:Set<mxCell> }
     const clusterStates = new Map();
     const bedUnitSelectorState = { btnSelectBed: null, btnSelectPlantings: null, btnSelectBedAssembly: null, unit: null };
 
@@ -966,7 +970,8 @@ Draw.loadPlugin(function (ui) {
                 anchorId: order[idx].id,
                 btnPrev: null,
                 btnNext: null,
-                badge: null,
+                miniRail: null, // CHANGE: Mini Rail replaces the old 1/N badge.
+                miniRailHeight: 0, // CHANGE: jsdom and draw.io overlays both need deterministic positioning.
                 dimmed: new Set(),
                 btnDrag: null,
                 btnSelectAll: null,
@@ -1044,6 +1049,131 @@ Draw.loadPlugin(function (ui) {
         const variety = cell && cell.getAttribute ? (cell.getAttribute('variety_name') || cell.getAttribute('variety') || '') : '';
         if (plant && variety) return plant + ' - ' + variety;
         return plant || variety || (cell && cell.getAttribute && (cell.getAttribute('label') || cell.getAttribute('title'))) || (cell && cell.id) || 'Planting';
+    }
+
+    function isPerennialPlanting(cell) {
+        return !!(cell && cell.getAttribute && (cell.getAttribute('perennial') === '1' || cell.getAttribute('lifespan_start'))); // CHANGE: rail display needs perennial-specific clipping while true occupancy remains multi-year.
+    }
+
+    function dayNumberFromISO(iso) {
+        const date = parseISO(iso);
+        return date ? Math.floor(+date / DAY_MS) : null; // CHANGE: compare date-only occupancy ranges inclusively.
+    }
+
+    function occupancyRangeFromISO(startISO, endISO) {
+        const startDay = dayNumberFromISO(startISO);
+        const endDay = dayNumberFromISO(endISO);
+        if (startDay == null || endDay == null || endDay < startDay) return null; // CHANGE: incomplete dates are undated, not active.
+        return { startISO, endISO, startDay, endDay };
+    }
+
+    function trueOccupancyRangeForCell(cell) {
+        const window = plantingOccupancyWindowOf(cell);
+        return occupancyRangeFromISO(window.startISO, window.endISO); // CHANGE: full perennial lifespan remains the true occupancy range.
+    }
+
+    function occupancyRangeForCell(cell) {
+        return trueOccupancyRangeForCell(cell); // CHANGE: preserve the existing API semantics for active overlap callers.
+    }
+
+    function occupancyRangesOverlap(left, right) {
+        return !!(left && right && left.startDay <= right.endDay && right.startDay <= left.endDay); // CHANGE: inclusive temporal overlap.
+    }
+
+    function yearRange(year) {
+        const y = Math.trunc(Number(year));
+        if (!Number.isFinite(y)) return null;
+        return occupancyRangeFromISO(y + '-01-01', y + '-12-31'); // CHANGE: perennial-only clusters use a stable current-year rail.
+    }
+
+    function rangeYear(range) {
+        return range && range.startISO ? Math.trunc(Number(String(range.startISO).slice(0, 4))) : NaN;
+    }
+
+    function seasonStartYearOf(cell) {
+        const year = Math.trunc(Number(cell && cell.getAttribute && cell.getAttribute('season_start_year')));
+        return Number.isFinite(year) ? year : NaN;
+    }
+
+    function resolveMiniRailYear(cells, selected, selectedRange) {
+        const selectedYear = seasonStartYearOf(selected);
+        if (Number.isFinite(selectedYear)) return selectedYear;
+        for (const cell of (cells || [])) {
+            const year = seasonStartYearOf(cell);
+            if (Number.isFinite(year)) return year;
+        }
+        const rangeStartYear = rangeYear(selectedRange);
+        if (Number.isFinite(rangeStartYear)) return rangeStartYear;
+        return new Date().getFullYear(); // CHANGE: final fallback only when cluster data has no usable year.
+    }
+
+    function clampRangeToSpan(range, span) {
+        if (!range || !span || range.startDay > span.maxDay || span.minDay > range.endDay) return null;
+        const startDay = Math.max(range.startDay, span.minDay != null ? span.minDay : span.startDay);
+        const endDay = Math.min(range.endDay, span.maxDay != null ? span.maxDay : span.endDay);
+        if (endDay < startDay) return null;
+        const startISO = startDay === range.startDay ? range.startISO : isoFromDayNumber(startDay);
+        const endISO = endDay === range.endDay ? range.endISO : isoFromDayNumber(endDay);
+        return { startISO, endISO, startDay, endDay }; // CHANGE: display clipping does not change true occupancy.
+    }
+
+    function isoFromDayNumber(dayNumber) {
+        return new Date(Math.trunc(dayNumber) * DAY_MS).toISOString().slice(0, 10);
+    }
+
+    function miniRailAxisSpanForItems(items, year) {
+        const yr = yearRange(year);
+        const annualRanges = (items || [])
+            .filter(item => !item.perennial && item.trueRange && (!yr || occupancyRangesOverlap(item.trueRange, yr)))
+            .map(item => item.trueRange);
+        if (annualRanges.length) {
+            return {
+                minDay: Math.min.apply(null, annualRanges.map(range => range.startDay)),
+                maxDay: Math.max.apply(null, annualRanges.map(range => range.endDay))
+            }; // CHANGE: non-perennial crop windows define the axis, including cross-year windows.
+        }
+        if (yr) return { minDay: yr.startDay, maxDay: yr.endDay }; // CHANGE: perennial-only fallback avoids multi-year compression.
+        return null;
+    }
+
+    function miniRailItemForCell(cell, selectedId, selectedRange) {
+        const trueRange = trueOccupancyRangeForCell(cell);
+        const isSelected = !!cell && String(cell.id || '') === String(selectedId || '');
+        return {
+            cell,
+            cellId: cell && cell.id || '',
+            label: plantingOccupancyLabel(cell),
+            perennial: isPerennialPlanting(cell),
+            trueRange,
+            range: trueRange,
+            displayRange: trueRange,
+            selected: isSelected,
+            active: isSelected || (!!trueRange && !!selectedRange && occupancyRangesOverlap(trueRange, selectedRange)) // CHANGE: active means selected or overlapping the selected true occupancy window.
+        };
+    }
+
+    function miniRailItemsForState(st) {
+        const selected = st && st.order && st.order[st.currentIdx] || null;
+        const selectedId = selected && selected.id || '';
+        const selectedRange = trueOccupancyRangeForCell(selected);
+        const items = (st && st.order || []).map(cell => miniRailItemForCell(cell, selectedId, selectedRange));
+        const year = resolveMiniRailYear(st && st.order || [], selected, selectedRange);
+        const span = miniRailAxisSpanForItems(items, year);
+        items.forEach(item => {
+            item.displayRange = item.perennial ? clampRangeToSpan(item.trueRange, span) : (span ? clampRangeToSpan(item.trueRange, span) : item.trueRange); // CHANGE: perennials display inside the rail span instead of stretching it.
+            item.range = item.displayRange; // CHANGE: keep existing bar rendering paths pointed at display range.
+        });
+        return items;
+    }
+
+    function activeCellsForClusterState(st) {
+        return miniRailItemsForState(st).filter(item => item.active).map(item => item.cell).filter(Boolean); // CHANGE: share the rail's temporal model with canvas visibility.
+    }
+
+    function miniRailDateTitle(item) {
+        if (!item || !item.trueRange) return (item && item.label || 'Planting') + ' - Undated';
+        const title = item.label + ' - ' + item.trueRange.startISO + ' to ' + item.trueRange.endISO;
+        return item.perennial && item.displayRange ? title + ' (shown clipped to visible year span)' : title; // CHANGE: tooltip keeps full perennial lifespan while explaining clipping.
     }
 
     function selectedClusterOccupancyFor(cell) {
@@ -1525,34 +1655,183 @@ Draw.loadPlugin(function (ui) {
         positionCoveredTargetSelectorsFor(key);
     }
 
-    function ensureBadgeFor(key) {
+    function styleMiniRail(el) {
+        el.style.position = 'absolute';
+        el.style.zIndex = String(GRAPH_OVERLAY_Z.ANNOTATION);
+        el.style.boxSizing = 'border-box';
+        el.style.padding = '6px 8px';
+        el.style.border = '1px solid #c7cdd3';
+        el.style.borderRadius = '6px';
+        el.style.background = 'rgba(255,255,255,0.96)';
+        el.style.boxShadow = '0 2px 8px rgba(60,64,67,0.18)';
+        el.style.font = '11px/14px Arial,sans-serif';
+        el.style.pointerEvents = 'auto'; // CHANGE: bars are direct selection targets.
+        el.style.userSelect = 'none';
+    }
+
+    function miniRailMonthLabel(date, includeYear) {
+        const options = includeYear
+            ? { month: 'short', year: 'numeric', timeZone: 'UTC' }
+            : { month: 'short', timeZone: 'UTC' };
+        return date.toLocaleString('en-US', options); // CHANGE: endpoint labels need year context without timezone drift.
+    }
+
+    function miniRailAxisModel(items) {
+        const dated = (items || []).filter(item => item.range);
+        if (!dated.length) return { mode: 'undated', labels: ['UNDATED'] }; // CHANGE: explicit axis mode replaces flat month labels.
+        const minISO = dated.reduce((min, item) => item.range.startISO < min ? item.range.startISO : min, dated[0].range.startISO);
+        const maxISO = dated.reduce((max, item) => item.range.endISO > max ? item.range.endISO : max, dated[0].range.endISO);
+        const minParts = String(minISO || '').split('-').map(Number);
+        const maxParts = String(maxISO || '').split('-').map(Number);
+        if (!Number.isFinite(minParts[0]) || !Number.isFinite(minParts[1]) || !Number.isFinite(maxParts[0]) || !Number.isFinite(maxParts[1])) return { mode: 'undated', labels: ['UNDATED'] };
+        const labels = [];
+        const cursor = new Date(Date.UTC(minParts[0], minParts[1] - 1, 1));
+        const end = new Date(Date.UTC(maxParts[0], maxParts[1] - 1, 1));
+        const monthCount = (maxParts[0] - minParts[0]) * 12 + (maxParts[1] - minParts[1]) + 1;
+        if (monthCount > 6) {
+            return {
+                mode: 'endpoints',
+                labels: [miniRailMonthLabel(cursor, true), miniRailMonthLabel(end, true)]
+            }; // CHANGE: long spans show only start/end month-year labels to avoid header crowding.
+        }
+        while (+cursor <= +end) {
+            labels.push(miniRailMonthLabel(cursor, false).toUpperCase()); // CHANGE: keep compact month ticks for short spans.
+            cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+        }
+        return { mode: 'monthly', labels };
+    }
+
+    function miniRailSpan(items) {
+        const ranges = (items || []).map(item => item.range).filter(Boolean);
+        if (!ranges.length) return null;
+        return {
+            minDay: Math.min.apply(null, ranges.map(range => range.startDay)),
+            maxDay: Math.max.apply(null, ranges.map(range => range.endDay))
+        };
+    }
+
+    function makeMiniRailBar(key, item, span) {
+        const bar = document.createElement('div');
+        bar.dataset.miniRailBar = '1'; // CHANGE: make exact planting bars easy to test and target.
+        bar.dataset.cellId = item.cellId;
+        bar.textContent = item.label;
+        bar.title = miniRailDateTitle(item);
+        bar.style.position = 'absolute'; // CHANGE: date offsets should place bars within each timeline track.
+        bar.style.boxSizing = 'border-box';
+        bar.style.height = '16px';
+        bar.style.marginTop = '3px';
+        bar.style.padding = '1px 6px';
+        bar.style.borderRadius = '4px';
+        bar.style.overflow = 'hidden';
+        bar.style.textOverflow = 'ellipsis';
+        bar.style.whiteSpace = 'nowrap';
+        bar.style.textAlign = 'center';
+        bar.style.font = '700 10px/14px Arial,sans-serif';
+        bar.style.cursor = 'pointer';
+
+        if (item.range && span) {
+            const total = Math.max(1, span.maxDay - span.minDay + 1);
+            const leftPct = Math.max(0, Math.min(98, ((item.range.startDay - span.minDay) / total) * 100));
+            const rawWidthPct = ((item.range.endDay - item.range.startDay + 1) / total) * 100;
+            bar.style.left = leftPct + '%';
+            bar.style.width = Math.min(100 - leftPct, Math.max(10, rawWidthPct)) + '%';
+        } else {
+            bar.style.left = '0';
+            bar.style.width = '100%';
+            bar.style.borderStyle = 'dashed';
+        }
+
+        if (item.selected) {
+            bar.style.background = '#e8f0fe';
+            bar.style.border = '2px solid #1a73e8';
+            bar.style.color = '#174ea6';
+            bar.style.lineHeight = '12px';
+        } else if (item.active) {
+            bar.style.background = '#188038';
+            bar.style.border = '1px solid #137333';
+            bar.style.color = '#fff';
+        } else if (item.range) {
+            bar.style.background = '#eef0f2';
+            bar.style.border = '1px solid #9aa0a6';
+            bar.style.color = '#3c4043';
+        } else {
+            bar.style.background = '#fff';
+            bar.style.border = '1px dashed #9aa0a6';
+            bar.style.color = '#5f6368';
+        }
+
+        bar.addEventListener('pointerdown', consumeEvt, { passive: false });
+        bar.addEventListener('mousedown', consumeEvt, { passive: false });
+        bar.addEventListener('click', function (evt) {
+            consumeEvt(evt);
+            const cell = item.cellId ? model.getCell(item.cellId) : null;
+            if (cell && model.isVertex(cell)) bringToFrontAndSelect(cell); // CHANGE: one bar selects one actual planting group.
+        });
+        return bar;
+    }
+
+    function renderMiniRailFor(key) {
         const host = getHost();
         const st = clusterStates.get(key); if (!st) return;
-        if (!st.badge) {
-            const b = document.createElement('div');
-            b.style.position = 'absolute';
-            b.style.zIndex = String(GRAPH_OVERLAY_Z.ANNOTATION);
-            b.style.padding = '2px 6px';
-            b.style.font = '12px/16px sans-serif';
-            b.style.background = 'rgba(255,255,255,0.9)';
-            b.style.border = '1px solid #000';
-            b.style.borderRadius = '10px';
-            b.style.pointerEvents = 'none';
-            b.style.width = '54px';
-            b.style.textAlign = 'center';
-            host.appendChild(b);
-            st.badge = b;
-        } else if (st.badge.parentNode !== host) {
-            host.appendChild(st.badge);
+        if (!st.miniRail) {
+            const rail = document.createElement('div');
+            rail.dataset.miniRail = '1'; // CHANGE: Mini Rail replaces the old numeric badge.
+            styleMiniRail(rail);
+            host.appendChild(rail);
+            st.miniRail = rail;
+        } else if (st.miniRail.parentNode !== host) {
+            host.appendChild(st.miniRail);
         }
-        st.badge.style.display = '';
+        const rail = st.miniRail;
+        const items = miniRailItemsForState(st);
+        const span = miniRailSpan(items);
+        const axisModel = miniRailAxisModel(items);
+        rail.innerHTML = '';
+        const axis = document.createElement('div');
+        axis.dataset.miniRailAxis = '1';
+        axis.style.display = 'grid';
+        axis.style.gridTemplateColumns = axisModel.mode === 'monthly' ? 'repeat(' + axisModel.labels.length + ', 1fr)' : (axisModel.mode === 'endpoints' ? '1fr 1fr' : '1fr');
+        axis.style.gap = '0';
+        axis.style.color = '#3c4043';
+        axis.style.font = '700 10px/12px Arial,sans-serif';
+        axis.style.marginBottom = '2px';
+        axisModel.labels.forEach((label, index) => {
+            const tick = document.createElement('div');
+            tick.textContent = label;
+            tick.style.textAlign = axisModel.mode === 'endpoints' ? (index === 0 ? 'left' : 'right') : 'center';
+            axis.appendChild(tick);
+        });
+        rail.appendChild(axis);
+        items.forEach(item => {
+            const track = document.createElement('div');
+            track.dataset.miniRailTrack = item.cellId;
+            track.style.position = 'relative';
+            track.style.height = '19px';
+            track.style.borderTop = '1px solid rgba(218,220,224,0.7)';
+            track.appendChild(makeMiniRailBar(key, item, span));
+            rail.appendChild(track);
+        });
+        st.miniRailHeight = 22 + items.length * 19 + 12; // CHANGE: estimate rail height for stable above-cluster placement.
+        rail.style.display = '';
+    }
+
+    function hideMiniRailFor(key) {
+        const st = clusterStates.get(key); if (!st || !st.miniRail) return;
+        st.miniRail.style.display = 'none'; // CHANGE: hide with the selected-cluster UI.
+    }
+
+    function removeMiniRailFor(key) {
+        const st = clusterStates.get(key); if (!st || !st.miniRail) return;
+        if (st.miniRail.parentNode) st.miniRail.parentNode.removeChild(st.miniRail); // CHANGE: clean up when a cluster is deleted.
+        st.miniRail = null;
+        st.miniRailHeight = 0;
     }
 
     function hideUIFor(key) {
         const st = clusterStates.get(key); if (!st) return;
         if (st.btnPrev) st.btnPrev.style.display = 'none';
         if (st.btnNext) st.btnNext.style.display = 'none';
-        if (st.badge) st.badge.style.display = 'none';
+        hideMiniRailFor(key); // CHANGE: Mini Rail replaces badge visibility.
         if (st.btnSelectAll) st.btnSelectAll.style.display = 'none';
         if (st.btnSelectBed) st.btnSelectBed.style.display = 'none';
         if (st.btnSelectPlantings) st.btnSelectPlantings.style.display = 'none';
@@ -1613,12 +1892,14 @@ Draw.loadPlugin(function (ui) {
             st.btnNext.style.top = Math.round(midY - BTN_SIZE / 2) + 'px';
         }
 
-        const gap = 6, cx = box.x + box.w / 2;
-        if (st.badge) {
-            st.badge.textContent = (st.currentIdx + 1) + ' / ' + st.order.length;
-            const bw = 54, bh = 18;
-            st.badge.style.left = Math.round(cx - bw / 2) + 'px';
-            st.badge.style.top = Math.round(box.y - bh - gap) + 'px';
+        if (st.miniRail) {
+            const railWidth = Math.round(clampNumber(Math.max(box.w, MINI_RAIL_MIN_W), MINI_RAIL_MIN_W, MINI_RAIL_MAX_W)); // CHANGE: size the rail from the selected cluster footprint.
+            const railHeight = st.miniRailHeight || 72;
+            const left = Math.max(0, Math.round(box.x + box.w / 2 - railWidth / 2));
+            const aboveTop = Math.round(box.y - railHeight - MINI_RAIL_GAP);
+            st.miniRail.style.width = railWidth + 'px';
+            st.miniRail.style.left = left + 'px';
+            st.miniRail.style.top = (aboveTop >= 0 ? aboveTop : Math.round(box.y + box.h + MINI_RAIL_GAP)) + 'px'; // CHANGE: fall below the cluster if there is no room above.
         }
 
         // place select buttons at the top-left outside corner of the cluster bbox
@@ -1667,8 +1948,8 @@ Draw.loadPlugin(function (ui) {
         const st = clusterStates.get(key); if (!st) return;
         if (st.order.length < 2) { clearVisibilityFor(key); return; }
 
-        const curr = st.order[st.currentIdx];
-        const nextDim = new Set(st.order.filter((c, i) => i !== st.currentIdx));
+        const active = new Set(activeCellsForClusterState(st));
+        const nextDim = new Set(st.order.filter(c => !active.has(c))); // CHANGE: dim only groups outside the selected group's occupancy window.
 
         // Dim newly added
         const toDim = [];
@@ -1678,9 +1959,11 @@ Draw.loadPlugin(function (ui) {
             setOpacityDeep(toDim, SELECTED_TG_OPACITY);
         }
 
-        // Ensure current is fully visible
-        setOutlineOnlyVisibleDeep([curr], true);
-        setOpacityDeep([curr], SELECTED_TG_OPACITY);
+        const activeMembers = st.order.filter(c => active.has(c));
+        if (activeMembers.length) {
+            setOutlineOnlyVisibleDeep(activeMembers, true); // CHANGE: selected and temporally overlapping groups stay fully visible.
+            setOpacityDeep(activeMembers, SELECTED_TG_OPACITY);
+        }
 
         st.dimmed = nextDim;
     }
@@ -1813,7 +2096,7 @@ Draw.loadPlugin(function (ui) {
         st.currentIdx = st.order.findIndex(c => c.id === st.anchorId);
 
         ensureButtonsFor(key);
-        ensureBadgeFor(key);
+        renderMiniRailFor(key); // CHANGE: update direct-selection timeline after arrow navigation.
         updateControlsVisibilityFor(key);
         positionUIFor(key);
         applyVisibilityFor(key);
@@ -1839,7 +2122,7 @@ Draw.loadPlugin(function (ui) {
 
             if (members.length >= 2) {
                 ensureButtonsFor(key);
-                ensureBadgeFor(key);
+                renderMiniRailFor(key); // CHANGE: Mini Rail replaces the selected cluster badge.
                 if (bedUnitPlantingsMatchCluster(members)) { if (clusterStates.get(key).btnSelectAll) clusterStates.get(key).btnSelectAll.style.display = 'none'; }
                 else ensureSelectAllFor(key);
             }
@@ -1854,6 +2137,7 @@ Draw.loadPlugin(function (ui) {
             if (!liveKeys.has(key)) {
                 hideUIFor(key);
                 clearVisibilityFor(key);
+                removeMiniRailFor(key); // CHANGE: detach stale cluster rail before deleting state.
                 clusterStates.delete(key);
             }
         }
@@ -1933,6 +2217,7 @@ Draw.loadPlugin(function (ui) {
                 if (!st.order.every(c => model.getParent(c) === p)) {
                     hideUIFor(k);
                     clearVisibilityFor(k);
+                    removeMiniRailFor(k); // CHANGE: remove orphaned rail when selection moves to another parent.
                     clusterStates.delete(k);
                 }
             }
@@ -1951,6 +2236,7 @@ Draw.loadPlugin(function (ui) {
             if (!exists) {
                 hideUIFor(k);
                 clearVisibilityFor(k);
+                removeMiniRailFor(k); // CHANGE: remove orphaned rail when cluster cells no longer exist.
                 clusterStates.delete(k);
             }
         }
@@ -1964,6 +2250,7 @@ Draw.loadPlugin(function (ui) {
                 (st.btnPrev && st.btnPrev.style.display !== 'none') ||
                 (st.btnSelectAll && st.btnSelectAll.style.display !== 'none') ||
                 (st.btnSelectBed && st.btnSelectBed.style.display !== 'none') ||
+                (st.miniRail && st.miniRail.style.display !== 'none') || // CHANGE: keep the selected cluster rail attached during pan/zoom.
                 (st.coveredTargetButtons && st.coveredTargetButtons.length > 0);
             if (!hasVisibleUI) continue;
             positionUIFor(key);

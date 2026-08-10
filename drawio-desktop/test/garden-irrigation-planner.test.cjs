@@ -290,6 +290,8 @@ function addDripTapeBomParts(catalog) {
     catalog.items.push(part("end_cap_1_2_barb", "1/2 in barb end cap", "cap_end", "in_stock", 1.25, 1, 0, "barb", "1/2", "", "", { pressureLossPsi: 0 }, undefined, true));
     catalog.items.push(part("drip_tape_8mil_12in", "8 mil drip tape", "drip_tape", "in_stock", 0, 1, 1, "barb", "1/2", "barb", "1/2", { flowGpm: 1.2, flowGpmPerMeter: 1.2, emitterSpacingIn: 12, operatingPressurePsi: 10 }, 0.42, true));
     catalog.items.push(part("fpt_to_half_barb", "FPT to 1/2 barb", "fitting", "in_stock", 4, 1, 1, "fpt", "3/4", "barb", "1/2", { pressureLossPsi: 0.2 }, undefined, true));
+    catalog.items.push(part("half_barb_coupler", "1/2 barb coupler", "fitting", "in_stock", 2, 1, 1, "barb", "1/2", "barb", "1/2", { pressureLossPsi: 0.1 }, undefined, true)); // NEW
+    catalog.items.push(part("filter_half", "1/2 filter", "filter", "in_stock", 18, 1, 1, "barb", "1/2", "barb", "1/2", { pressureLossPsi: 1.5 }, undefined, true)); // NEW
     catalog.items.push(part("half_barb_to_3_4_barb", "1/2 barb to 3/4 barb", "fitting", "in_stock", 4, 1, 1, "barb", "1/2", "barb", "3/4", { pressureLossPsi: 0.2 }, undefined, true));
     catalog.items.push(part("half_barb_plug", "1/2 barb plug", "fitting", "in_stock", 2, 1, 0, "barb", "1/2", "", "", { pressureLossPsi: 0 }, undefined, true));
     return catalog;
@@ -384,8 +386,9 @@ function buttonByText(root, text) {
 }
 
 function clickPort(root, titlePattern) {
-    const button = Array.from(root.querySelectorAll(".trellis-irrigation-port-badge")).find(node => titlePattern.test(node.title));
-    assert.ok(button, "Missing port badge: " + titlePattern);
+    const badges = Array.from(root.querySelectorAll(".trellis-irrigation-port-badge")); // CHANGE
+    const button = badges.find(node => titlePattern.test(node.title)); // CHANGE
+    assert.ok(button, "Missing port badge: " + titlePattern + " in [" + badges.map(node => node.title).join(" | ") + "]"); // CHANGE
     button.click();
     return button;
 }
@@ -609,7 +612,7 @@ function createConfiguredDripTapeBedAssembly(api, graph, moduleCell, bed, anchor
     changeSelectByLabel(graph.container, "Row part", "drip_tape_8mil_12in"); // CHANGE
     changeSelectByLabel(graph.container, "Row takeoff part", "barb_tee_1_2"); // CHANGE
     changeSelectByLabel(graph.container, "Row end cap", "end_cap_1_2_barb"); // CHANGE
-    changeSelectByLabel(graph.container, "Outlet part", "half_barb_to_3_4_barb");
+    changeSelectByLabel(graph.container, "Outlet part", "half_barb_coupler"); // CHANGE
     graph.setSelectionCell(bedAssembly);
     return bedAssembly;
 }
@@ -668,8 +671,7 @@ function createLifecycleBomFixture(options) { // CHANGE
     const source = api.__test.createSourceAssembly(moduleCell, "Half Source", { connectorType: "barb", nominalSize: "1/2", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 });
     const filter = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "filter_half_lifecycle"), { x: 30, y: 170 });
     const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 320 });
-    const bom = api.__test.computeBedTemplateBom(catalog, bedAssembly.assembly.geometry, "drip_tape_bed", 2, "width");
-    api.__test.commitBedTemplate(moduleCell, "bed_lifecycle", bedAssembly.assembly, { templateId: "drip_tape_bed", templateModel: "bom", irrigationType: bom.templateDef.lineKind, rowOrientation: bom.rowOrientation, rowLengthMeters: bom.rowLengthMeters, rowSpacingCm: bom.rowSpacingCm, totalRowMeters: bom.totalRowMeters, requiredParts: bom.requiredParts, anchorPartId: bom.anchorPartId, demand: bom.demand, spacing: { rows: bom.rowCount, emitterInches: 12, rowSpacingCm: bom.rowSpacingCm } });
+    const bom = commitRecipeBedAssembly(api, moduleCell, bedAssembly.assembly, "bed_lifecycle", "drip_tape_bed", 2, "width", { inletPartId: "half_barb_coupler", rowPartId: "drip_tape_8mil_12in", rowTakeoffPartId: "barb_tee_1_2", rowEndCapPartId: "end_cap_1_2_barb", headerEndCapPartId: "end_cap_1_2_barb", emitterSpacingIn: 12 }); // CHANGE
     assert.equal(api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(filter.assembly).getId(), role: "input", index: 0 }).ok, true);
     assert.equal(api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(filter.assembly).getId(), role: "output", index: 0 }, { cellId: bedAssembly.assembly.getId(), role: "input", index: 0 }).ok, true);
     const edges = api.__test.collectAssemblyEdges(moduleCell).filter(edge => edge.getAttribute(api.attrs.PIPE_EDGE) === "1");
@@ -686,8 +688,7 @@ function createLifecycleBranchpointFixture() {
     const source = api.__test.createSourceAssembly(moduleCell, "Half Source", { connectorType: "barb", nominalSize: "1/2", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 });
     const branchpoint = api.__test.createBranchpointEndpoint(moduleCell, "Branch Filter", "branch_filter_lifecycle", { connectorType: "barb", nominalSize: "1/2", pipeConnection: true });
     const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 320 });
-    const bom = api.__test.computeBedTemplateBom(catalog, bedAssembly.assembly.geometry, "drip_tape_bed", 2, "width");
-    api.__test.commitBedTemplate(moduleCell, "bed_branch_lifecycle", bedAssembly.assembly, { templateId: "drip_tape_bed", templateModel: "bom", irrigationType: bom.templateDef.lineKind, rowOrientation: bom.rowOrientation, rowLengthMeters: bom.rowLengthMeters, rowSpacingCm: bom.rowSpacingCm, totalRowMeters: bom.totalRowMeters, requiredParts: bom.requiredParts, anchorPartId: bom.anchorPartId, demand: bom.demand, spacing: { rows: bom.rowCount, emitterInches: 12, rowSpacingCm: bom.rowSpacingCm } });
+    commitRecipeBedAssembly(api, moduleCell, bedAssembly.assembly, "bed_branch_lifecycle", "drip_tape_bed", 2, "width", { inletPartId: "half_barb_coupler", rowPartId: "drip_tape_8mil_12in", rowTakeoffPartId: "barb_tee_1_2", rowEndCapPartId: "end_cap_1_2_barb", headerEndCapPartId: "end_cap_1_2_barb", emitterSpacingIn: 12 }); // CHANGE
     assert.equal(api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: branchpoint.getId(), role: "input", index: 0 }).ok, true);
     assert.equal(api.__test.createAssemblyConnection(moduleCell, { cellId: branchpoint.getId(), role: "output", index: 0 }, { cellId: bedAssembly.assembly.getId(), role: "input", index: 0 }).ok, true);
     const pipeEdges = api.__test.collectAssemblyEdges(moduleCell).filter(edge => edge.getAttribute(api.attrs.PIPE_EDGE) === "1");
@@ -1521,6 +1522,8 @@ test("starter catalog includes 1 inch and 1/4 inch poly/barb irrigation componen
         "micro_elbow_1_4",
         "micro_coupler_1_4",
         "micro_goof_plug_1_4",
+        "barb_takeoff_1_4_on_1_2", // NEW
+        "barb_takeoff_1_4_on_3_4", // NEW
         "transfer_barb_1_2_to_1_4",
         "adapter_1_4_to_1_2_barb",
         "micro_emitter_0_5_gph",
@@ -1530,39 +1533,46 @@ test("starter catalog includes 1 inch and 1/4 inch poly/barb irrigation componen
         "hose_splitter_2way_3_4_fght_mght",
         "hose_splitter_4way_3_4_fght_mght",
         "barb_tee_3_4_to_1_2",
-        "twist_lock_coupler_1_4",
         "twist_lock_tee_1_2",
         "twist_lock_elbow_3_4",
         "twist_lock_end_cap_1",
-        "twist_lock_adapter_1_4_to_1",
-        "push_connect_coupler_1_4",
         "push_connect_tee_1_2",
         "push_connect_elbow_3_4",
-        "push_connect_end_cap_1",
-        "push_connect_adapter_1_to_1_4",
+        "push_connect_end_cap_3_4", // CHANGE
+        "push_connect_reducing_tee_3_4_to_1_2", // NEW
+        "twist_lock_reducing_tee_1_to_3_4", // NEW
+        "twist_lock_reducing_tee_1_to_1_2", // NEW
         "mpt_nipple_1_4",
         "fpt_coupler_1_2",
         "mpt_to_1_twist_lock_adapter",
-        "fpt_to_1_4_push_connect_adapter" // CHANGE
+        "mpt_to_1_4_barb_adapter" // CHANGE
     ].forEach(id => assert.ok(ids.has(id), "Missing starter part " + id));
     ["1_4", "1_2", "3_4", "1"].forEach(sizeId => {
         assert.ok(ids.has("mpt_nipple_" + sizeId), "Missing MPT nipple for " + sizeId);
         assert.ok(ids.has("fpt_coupler_" + sizeId), "Missing FPT coupler for " + sizeId);
-        ["barb", "twist_lock", "push_connect"].forEach(family => {
-            assert.ok(ids.has("mpt_to_" + sizeId + "_" + family + "_adapter"), "Missing MPT to " + family + " adapter for " + sizeId);
-            assert.ok(ids.has("fpt_to_" + sizeId + "_" + family + "_adapter"), "Missing FPT to " + family + " adapter for " + sizeId);
+        ["barb"].forEach(family => { // CHANGE
+            assert.equal(ids.has("mpt_to_" + sizeId + "_" + family + "_adapter"), true, "Missing MPT to " + family + " adapter for " + sizeId); // CHANGE
+            assert.equal(ids.has("fpt_to_" + sizeId + "_" + family + "_adapter"), true, "Missing FPT to " + family + " adapter for " + sizeId); // CHANGE
             assert.equal(ids.has(family + "_to_" + sizeId + "_mpt_adapter"), false, "Reverse MPT adapter should be represented by flipped canonical part for " + sizeId); // CHANGE
             assert.equal(ids.has(family + "_to_" + sizeId + "_fpt_adapter"), false, "Reverse FPT adapter should be represented by flipped canonical part for " + sizeId); // CHANGE
         });
     });
+    ["1_2", "3_4", "1"].forEach(sizeId => assert.equal(ids.has("mpt_to_" + sizeId + "_twist_lock_adapter"), true, "Missing explicit MPT twist-lock adapter for " + sizeId)); // NEW
+    ["1_2", "3_4"].forEach(sizeId => assert.equal(ids.has("mpt_to_" + sizeId + "_push_connect_adapter"), true, "Missing explicit MPT push-connect adapter for " + sizeId)); // NEW
+    ["1_4", "1_2", "3_4", "1"].forEach(sizeId => { // NEW
+        assert.equal(ids.has("fpt_to_" + sizeId + "_twist_lock_adapter"), false, "FPT twist-lock matrix part should be absent for " + sizeId); // NEW
+        assert.equal(ids.has("fpt_to_" + sizeId + "_push_connect_adapter"), false, "FPT push-connect matrix part should be absent for " + sizeId); // NEW
+    }); // NEW
     ["twist_lock_tubing_1_4", "twist_lock_tubing_1_2", "twist_lock_tubing_3_4", "twist_lock_tubing_1", "push_connect_tubing_1_4", "push_connect_tubing_1_2", "push_connect_tubing_3_4", "push_connect_tubing_1"].forEach(id => assert.equal(ids.has(id), false, "Removed family tubing should be absent: " + id));
+    ["twist_lock_coupler_1_4", "twist_lock_tee_1_4", "twist_lock_elbow_1_4", "twist_lock_end_cap_1_4", "twist_lock_adapter_1_4_to_1_2", "twist_lock_adapter_1_to_1_4", "push_connect_coupler_1_4", "push_connect_tee_1_4", "push_connect_elbow_1_4", "push_connect_end_cap_1_4", "push_connect_adapter_1_4_to_1_2", "push_connect_adapter_1_to_1_4", "mpt_to_1_4_twist_lock_adapter", "fpt_to_1_4_push_connect_adapter"].forEach(id => assert.equal(ids.has(id), false, "Non-barb generated 1/4 seed part should be absent: " + id)); // NEW
+    ["push_connect_coupler_1", "push_connect_tee_1", "push_connect_elbow_1", "push_connect_end_cap_1", "mpt_to_1_push_connect_adapter"].forEach(id => assert.equal(ids.has(id), false, "1 inch push-connect starter part should be absent: " + id)); // NEW
+    ["twist_lock_adapter_1_2_to_3_4", "twist_lock_adapter_3_4_to_1_2", "twist_lock_adapter_1_to_3_4", "twist_lock_adapter_3_4_to_1", "twist_lock_adapter_1_to_1_2", "twist_lock_adapter_1_2_to_1", "push_connect_adapter_1_2_to_3_4", "push_connect_adapter_3_4_to_1_2"].forEach(id => assert.equal(ids.has(id), false, "Generated inline lock-collar size adapter should be absent: " + id)); // NEW
+    assert.equal(catalog.items.some(item => [item.connectors.input, item.connectors.output].some(connector => connector && connector.nominalSize === "1/4" && (connector.type === "twist_lock" || connector.type === "push_connect"))), false, "Generated 1/4 pipe-style connectors should stay barb-only."); // NEW
     assert.equal(catalog.items.length, ids.size, "Starter catalog should not contain duplicate part IDs.");
     assert.equal(catalog.items.some(item => [item.connectors.input, item.connectors.output].some(connector => connector && connector.type === "ght")), false);
     assert.equal(catalog.items.some(item => /_(?:1_4|1_2|1)_.*ght|ght.*_(?:1_4|1_2|1)_/.test(item.id)), false, "GHT generated coverage should stay practical 3/4 only.");
     assert.equal(catalog.items.find(item => item.id === "hose_splitter_2way_3_4_fght_mght").connectors.outputs, 2);
     assert.equal(catalog.items.find(item => item.id === "hose_splitter_4way_3_4_fght_mght").connectors.outputs, 4);
-    assert.equal(catalog.items.find(item => item.id === "twist_lock_adapter_1_4_to_1").connectors.input.type, "twist_lock");
-    assert.equal(catalog.items.find(item => item.id === "push_connect_adapter_1_to_1_4").connectors.output.type, "push_connect");
     assert.equal(catalog.items.find(item => item.id === "twist_lock_coupler_1_2").connectors.input.pipeConnection, true);
     const starterNames = catalog.items.map(item => item.name); // NEW
     assert.equal(starterNames.some(name => /\bin\b/i.test(name)), false, "Starter names should use inch symbols instead of standalone in."); // NEW
@@ -1571,12 +1581,23 @@ test("starter catalog includes 1 inch and 1/4 inch poly/barb irrigation componen
     assert.equal(byId("fght_to_3_4_mpt_adapter").name, "3/4\" FGHT: MPT adapter"); // NEW
     assert.equal(byId("barb_tee_3_4_to_1_2").name, "3/4\": 1/2\" barb tee"); // CHANGE
     assert.equal(byId("reducer_3_4_to_1_2_barb").name, "3/4\": 1/2\" barb reducer"); // NEW
-    assert.equal(byId("twist_lock_adapter_1_4_to_1").name, "1/4\": 1\" twist-lock adapter"); // NEW
+    assert.equal(byId("barb_takeoff_1_4_on_1_2").connectors.outputPorts[0].nominalSize, "1/2"); // NEW
+    assert.equal(byId("barb_takeoff_1_4_on_1_2").connectors.outputPorts[1].nominalSize, "1/4"); // NEW
+    assert.equal(byId("barb_takeoff_1_4_on_1_2").connectors.outputPorts[1].takeoffBranch, true); // NEW
+    assert.equal(byId("barb_takeoff_1_4_on_3_4").connectors.outputPorts[0].nominalSize, "3/4"); // NEW
+    assert.equal(byId("barb_takeoff_1_4_on_3_4").connectors.outputPorts[1].nominalSize, "1/4"); // NEW
+    assert.equal(byId("barb_takeoff_1_4_on_3_4").connectors.outputPorts[1].takeoffBranch, true); // NEW
+    assert.equal(byId("push_connect_reducing_tee_3_4_to_1_2").connectors.outputPorts[0].nominalSize, "3/4"); // NEW
+    assert.equal(byId("push_connect_reducing_tee_3_4_to_1_2").connectors.outputPorts[1].nominalSize, "1/2"); // NEW
+    assert.equal(byId("push_connect_reducing_tee_3_4_to_1_2").connectors.outputPorts[1].takeoffBranch, true); // NEW
+    assert.equal(byId("twist_lock_reducing_tee_1_to_3_4").connectors.outputPorts[0].nominalSize, "1"); // NEW
+    assert.equal(byId("twist_lock_reducing_tee_1_to_3_4").connectors.outputPorts[1].nominalSize, "3/4"); // NEW
+    assert.equal(byId("twist_lock_reducing_tee_1_to_1_2").connectors.outputPorts[1].nominalSize, "1/2"); // NEW
     assert.equal(byId("drip_tape_8mil_12in").name, "8 mil drip tape, 12\" emitter spacing"); // NEW
     assert.equal(byId("mpt_to_1_2_push_connect_adapter").connectors.input.type, "mpt");
     assert.equal(byId("mpt_to_1_2_push_connect_adapter").connectors.output.pipeConnection, true);
-    assert.equal(byId("fpt_to_1_2_push_connect_adapter").connectors.input.type, "fpt"); // CHANGE
-    assert.equal(byId("fpt_to_1_2_push_connect_adapter").connectors.output.pipeConnection, true); // CHANGE
+    assert.equal(byId("mpt_to_1_twist_lock_adapter").connectors.input.type, "mpt"); // CHANGE
+    assert.equal(byId("mpt_to_1_twist_lock_adapter").connectors.output.pipeConnection, true); // CHANGE
     assert.equal(catalog.items.some(item => item.id === "push_connect_tubing_3_4"), false);
     assert.equal(catalog.items.some(item => [item.connectors.input, item.connectors.output].some(connector => connector && connector.type === "pipe")), false);
     assert.equal(catalog.items.some(item => [item.connectors.input, item.connectors.output].some(connector => connector && connector.method)), false);
@@ -1696,7 +1717,10 @@ test("starter catalog upgrade merges new parts into existing catalogs without ov
     api.writeCatalog(moduleCell, { items: [
         part("filter", "User Edited Filter", "filter", "in_stock", 99, 1, 1, "barb", "3/4", "barb", "3/4", { pressureLossPsi: 4 }),
         part("custom_micro", "Custom micro part", "fitting", "in_stock", 1, 1, 1, "barb", "1/4", "barb", "1/4", { pressureLossPsi: 0.1 }),
+        part("custom_push_quarter", "Custom push quarter", "fitting", "in_stock", 1, 1, 1, "push_connect", "1/4", "push_connect", "1/4", { pressureLossPsi: 0.1 }, undefined, true), // NEW
         part("twist_lock_tubing_custom", "Custom twist fitting with obsolete prefix", "fitting", "in_stock", 2, 1, 1, "twist_lock", "1/2", "twist_lock", "1/2", { pressureLossPsi: 0.1 }, undefined, true),
+        part("twist_lock_coupler_1_4", "Obsolete generated twist-lock 1/4 coupler", "fitting", "in_stock", 2, 1, 1, "twist_lock", "1/4", "twist_lock", "1/4", { pressureLossPsi: 0.1 }, undefined, true), // NEW
+        part("fpt_to_1_4_push_connect_adapter", "Obsolete generated FPT to 1/4 push adapter", "fitting", "in_stock", 2, 1, 1, "fpt", "1/4", "push_connect", "1/4", { pressureLossPsi: 0.1 }, undefined, true), // NEW
         part("twist_lock_tubing_1_2", "Obsolete twist tubing", "pipe_tubing", "in_stock", 0, 1, 1, "twist_lock", "1/2", "twist_lock", "1/2", { innerDiameterIn: 0.6 }, 0.4, true),
         part("push_connect_tubing_3_4", "Obsolete push tubing", "pipe_tubing", "in_stock", 0, 1, 1, "push_connect", "3/4", "push_connect", "3/4", { innerDiameterIn: 0.824 }, 0.5, true)
     ] });
@@ -1710,13 +1734,16 @@ test("starter catalog upgrade merges new parts into existing catalogs without ov
     assert.equal(filter.cost, 99);
     assert.ok(upgraded.items.some(item => item.id === "poly_mainline_1"));
     assert.ok(upgraded.items.some(item => item.id === "micro_tubing_1_4"));
-    assert.ok(upgraded.items.some(item => item.id === "twist_lock_adapter_1_4_to_1"));
-    assert.ok(upgraded.items.some(item => item.id === "push_connect_adapter_1_to_1_4"));
-    assert.equal(upgraded.items.some(item => item.id === "mpt_to_1_2_twist_lock_adapter"), false);
+    assert.ok(upgraded.items.some(item => item.id === "twist_lock_reducing_tee_1_to_3_4")); // CHANGE
+    assert.ok(upgraded.items.some(item => item.id === "push_connect_reducing_tee_3_4_to_1_2")); // CHANGE
+    assert.equal(upgraded.items.some(item => item.id === "mpt_to_1_2_twist_lock_adapter"), true); // CHANGE
     assert.ok(upgraded.items.some(item => item.id === "custom_micro"));
+    assert.ok(upgraded.items.some(item => item.id === "custom_push_quarter")); // NEW
     assert.ok(upgraded.items.some(item => item.id === "twist_lock_tubing_custom"));
-    assert.equal(upgraded.items.some(item => item.id === "twist_lock_tubing_1_2"), false);
-    assert.equal(upgraded.items.some(item => item.id === "push_connect_tubing_3_4"), false);
+    assert.equal(upgraded.items.some(item => item.id === "twist_lock_coupler_1_4"), true); // CHANGE
+    assert.equal(upgraded.items.some(item => item.id === "fpt_to_1_4_push_connect_adapter"), true); // CHANGE
+    assert.equal(upgraded.items.some(item => item.id === "twist_lock_tubing_1_2"), true); // CHANGE
+    assert.equal(upgraded.items.some(item => item.id === "push_connect_tubing_3_4"), true); // CHANGE
 });
 
 test("fitting intent grouping infers granular buckets from existing part data", () => { // NEW
@@ -1805,18 +1832,20 @@ test("source and part assemblies store compact stack row geometry", () => { // N
 }); // NEW
 
 test("irrigation mode exposes active state and normalizes invalid entry selection", () => {
-    const { api, graph, moduleCell, document } = loadPlugin();
+    const { api, graph, moduleCell, document, context } = loadPlugin();
     const group = appendChild(moduleCell, makeXmlCell(document, "plantGroup", { tiler_group: "1", label: "Lettuce" }, { x: 40, y: 40, width: 90, height: 60 }));
     graph.setSelectionCell(group);
     assert.equal(api.isIrrigationModeActive(), false);
     api.openIrrigationMode(moduleCell, { preserveViewport: true });
     assert.equal(api.isIrrigationModeActive(), true);
+    assert.equal(JSON.stringify(context.window.Trellis.interactionModes.getActive()), JSON.stringify({ mode: "irrigation", ownerId: "irrigation:module" })); // NEW
     assert.equal(api.isIrrigationModeActive(moduleCell), true);
     assert.equal(api.getActiveIrrigationModule(), moduleCell);
     assert.equal(graph.getSelectionCell(), moduleCell);
     assert.match(graph.container.querySelector(".trellis-irrigation-mode-hud").textContent, /Irrigation Mode/);
     api.closeIrrigationMode();
     assert.equal(api.isIrrigationModeActive(), false);
+    assert.equal(context.window.Trellis.interactionModes.getActive(), null); // NEW
     assert.equal(api.getActiveIrrigationModule(), null);
     assert.equal(graph.container.querySelector(".trellis-irrigation-mode-hud"), null);
 });
@@ -1862,11 +1891,27 @@ test("Add Part groups global options and creates one undoable unconnected assemb
     assert.ok(form, "Missing Add Part form");
     const select = form.querySelector(".trellis-irrigation-add-part-picker");
     assert.ok(select, "Missing Add Part picker");
-    const groups = Array.from(select.querySelectorAll("optgroup")).map(group => group.label);
-    assert.ok(groups.includes("In stock / Filters")); // CHANGE
-    assert.ok(groups.includes("In stock / Fittings / Thread adapters / 3/4 <-> 3/4 FPT")); // CHANGE
-    assert.ok(groups.includes("Needs purchase / Drip tape")); // CHANGE
-    select.value = "filter";
+    const picker = form.querySelector(".trellis-irrigation-add-part-combobox");
+    assert.ok(picker, "Missing searchable Add Part picker");
+    picker.querySelector(".trellis-irrigation-part-picker-trigger").click();
+    const panels = Array.from(graph.container.ownerDocument.querySelectorAll(".trellis-irrigation-part-picker-panel"));
+    const panel = panels[panels.length - 1];
+    assert.ok(panel, "Missing Add Part picker panel");
+    const categoryLabels = Array.from(panel.querySelectorAll(".trellis-irrigation-connection-combobox-category")).map(node => node.textContent.replace(/^[>v] /, "").replace(/ \(.+\)$/, ""));
+    assert.ok(categoryLabels.includes("Filters")); // CHANGE
+    assert.ok(categoryLabels.includes("Fittings")); // CHANGE
+    assert.ok(categoryLabels.includes("Drip tape")); // CHANGE
+    const search = panel.querySelector(".trellis-irrigation-part-picker-search");
+    search.value = "drip";
+    search.dispatchEvent(new graph.container.ownerDocument.defaultView.Event("input", { bubbles: true }));
+    assert.match(panel.textContent, /Needs purchase/); // CHANGE
+    search.value = "filter";
+    search.dispatchEvent(new graph.container.ownerDocument.defaultView.Event("input", { bubbles: true }));
+    const filterOption = panel.querySelector(".trellis-irrigation-part-picker-option[data-part-id='filter']");
+    assert.ok(filterOption, "Missing filter option in Add Part picker");
+    assert.match(filterOption.textContent, /In stock/); // CHANGE
+    filterOption.click();
+    assert.equal(select.value, "filter"); // CHANGE
     model.completedEdits = [];
     clickButton(form, "Add Part");
     const partAssembly = assemblyCells(moduleCell, api)[0];
@@ -1990,7 +2035,7 @@ test("inner assembly parts remain selectable while native moves are guarded", ()
 
 test("Delete Part splits downstream assembly and updates reports in one redoable edit", () => {
     const { api, graph, model, moduleCell, bed } = loadPlugin();
-    api.writeCatalog(moduleCell, sampleCatalog());
+    api.writeCatalog(moduleCell, addDripTapeBomParts(sampleCatalog())); // CHANGE
     const catalog = api.readCatalog(moduleCell);
     const source = api.__test.createSourceAssembly(moduleCell, "Half inch source", { connectorType: "barb", nominalSize: "1/2", method: "drip", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 });
     const assembly = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "pipe_half"), { x: 30, y: 160 }).assembly;
@@ -2002,7 +2047,8 @@ test("Delete Part splits downstream assembly and updates reports in one redoable
     appendChild(assembly, middle); middle.parent = assembly; model.remove(middleCreated.assembly);
     appendChild(assembly, last); last.parent = assembly; model.remove(lastCreated.assembly);
     first.geometry.y = 28; middle.geometry.y = 62; last.geometry.y = 96; // CHANGE
-    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 360 });
+    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 360 }); // CHANGE
+    commitRecipeBedAssembly(api, moduleCell, bedAssembly.assembly, "delete_part_bed", "drip_tape_bed", 2, "width", { inletPartId: "half_barb_coupler", rowPartId: "drip_tape_8mil_12in", rowTakeoffPartId: "barb_tee_1_2", rowEndCapPartId: "end_cap_1_2_barb", headerEndCapPartId: "end_cap_1_2_barb", emitterSpacingIn: 12 }); // NEW
     assert.equal(api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: first.getId(), role: "input", index: 0 }).ok, true);
     assert.equal(api.__test.createAssemblyConnection(moduleCell, { cellId: last.getId(), role: "output", index: 0 }, { cellId: bedAssembly.assembly.getId(), role: "input", index: 0 }).ok, true);
     assert.equal(api.__test.syncHudGraphState(moduleCell).length, 1);
@@ -2648,6 +2694,119 @@ test("connection HUD hides port row and updates pipe edge style", () => {
     assert.equal(edge.getAttribute(api.attrs.PIPE_PART_ID), "pipe_cheap");
 });
 
+test("selected 3/4 pipe edge can add a free 1/4 barb takeoff branch", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, api.starterCatalog()); // NEW
+    const catalog = api.readCatalog(moduleCell); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "3/4", method: "drip", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    const coupler = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "barb_coupler_3_4"), { x: 300, y: 180 }); // NEW
+    const connection = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(coupler.assembly).getId(), role: "input", index: 0 }); // NEW
+    assert.equal(connection.ok, true, connection.reason); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(connection.edge); // NEW
+    const hud = assertConnectionHud(graph.container, /Pipe:\s*poly mainline tubing/); // CHANGE
+    assert.ok(buttonTexts(hud).includes("Add 1/4 barb takeoff")); // NEW
+    clickExactButton(hud, "Add 1/4 barb takeoff"); // NEW
+    const takeoffAssembly = assemblyCells(moduleCell, api).find(assembly => api.__test.assemblyPartCells(assembly).some(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID) === "barb_takeoff_1_4_on_3_4")); // NEW
+    assert.ok(takeoffAssembly, "expected takeoff assembly"); // NEW
+    const takeoffPart = api.__test.firstAssemblyPart(takeoffAssembly); // NEW
+    const edges = api.__test.collectAssemblyEdges(moduleCell).filter(edge => edge.getAttribute(api.attrs.PIPE_EDGE) === "1"); // NEW
+    assert.equal(edges.length, 2); // NEW
+    assert.equal(JSON.stringify(edges.map(edge => edge.getAttribute(api.attrs.PIPE_PART_ID))), JSON.stringify(["poly_mainline_3_4", "poly_mainline_3_4"])); // CHANGE
+    assert.equal(api.__test.portConnectorForCell(moduleCell, takeoffPart, "output", 1).nominalSize, "1/4"); // NEW
+    assert.equal(api.__test.portConnectorForCell(moduleCell, takeoffPart, "output", 1).takeoffBranch, true); // NEW
+    assert.equal(api.__test.collectAssemblyEdges(moduleCell).some(edge => edge.source === takeoffPart && edge.getAttribute(api.attrs.EDGE_SOURCE_PORT) === "1"), false); // NEW
+}); // NEW
+
+test("selected 1/2 pipe edge can add a free 1/4 barb takeoff branch", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, api.starterCatalog()); // NEW
+    const catalog = api.readCatalog(moduleCell); // NEW
+    const source = api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "1/2", method: "drip", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 }); // NEW
+    const coupler = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "barb_coupler_1_2"), { x: 300, y: 180 }); // NEW
+    const connection = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(coupler.assembly).getId(), role: "input", index: 0 }); // NEW
+    assert.equal(connection.ok, true, connection.reason); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(connection.edge); // NEW
+    const hud = assertConnectionHud(graph.container, /Pipe:\s*distribution tubing/); // CHANGE
+    assert.ok(buttonTexts(hud).includes("Add 1/4 barb takeoff")); // NEW
+    clickExactButton(hud, "Add 1/4 barb takeoff"); // NEW
+    const takeoffAssembly = assemblyCells(moduleCell, api).find(assembly => api.__test.assemblyPartCells(assembly).some(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID) === "barb_takeoff_1_4_on_1_2")); // NEW
+    assert.ok(takeoffAssembly, "expected takeoff assembly"); // NEW
+    const takeoffPart = api.__test.firstAssemblyPart(takeoffAssembly); // NEW
+    const edges = api.__test.collectAssemblyEdges(moduleCell).filter(edge => edge.getAttribute(api.attrs.PIPE_EDGE) === "1"); // NEW
+    assert.equal(edges.length, 2); // NEW
+    assert.equal(JSON.stringify(edges.map(edge => edge.getAttribute(api.attrs.PIPE_PART_ID))), JSON.stringify(["poly_distribution_1_2", "poly_distribution_1_2"])); // NEW
+    assert.equal(api.__test.portConnectorForCell(moduleCell, takeoffPart, "output", 1).nominalSize, "1/4"); // NEW
+    assert.equal(api.__test.portConnectorForCell(moduleCell, takeoffPart, "output", 1).takeoffBranch, true); // NEW
+    assert.equal(api.__test.collectAssemblyEdges(moduleCell).some(edge => edge.source === takeoffPart && edge.getAttribute(api.attrs.EDGE_SOURCE_PORT) === "1"), false); // NEW
+}); // NEW
+
+function exerciseTakeoffBranchSideHandle(side) { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, api.starterCatalog()); // NEW
+    const catalog = api.readCatalog(moduleCell); // NEW
+    const takeoff = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "barb_takeoff_1_4_on_3_4"), { x: 300, y: 120 }); // NEW
+    const target = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "micro_coupler_1_4"), { x: side === "left" ? 80 : 620, y: 120 }); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCells([takeoff.assembly, target.assembly]); // NEW
+    const freeBranches = portBadges(graph.container).filter(node => node.getAttribute("data-takeoff-branch") === "1" && /Outlet 2 .*free.*1\/4/.test(node.title)); // CHANGE
+    assert.equal(freeBranches.length, 2); // NEW
+    assert.ok(freeBranches.every(node => /^OUT 1\/4/.test(node.textContent.trim()))); // NEW
+    assert.ok(freeBranches.some(node => /Outlet 2 left free.*1\/4/.test(node.title))); // CHANGE
+    assert.ok(freeBranches.some(node => /Outlet 2 right free.*1\/4/.test(node.title))); // CHANGE
+    assert.ok(portBadges(graph.container).some(node => /Outlet 1 .*free.*3\/4/.test(node.title))); // CHANGE
+    clickPort(graph.container, new RegExp("Outlet 2 " + side + " free.*1/4")); // CHANGE
+    clickPort(graph.container, /Inlet 1 .*free.*1\/4/); // CHANGE
+    assert.equal(inlineConnectionActions(graph.container).length, 1); // NEW
+    assert.equal(inlineConnectionActions(graph.container)[0].textContent, "Connect"); // NEW
+    clickButton(graph.container, "Connect"); // NEW
+    const takeoffPart = api.__test.firstAssemblyPart(takeoff.assembly); // NEW
+    const edge = api.__test.collectAssemblyEdges(moduleCell).find(edge => edge.source === takeoffPart && edge.getAttribute(api.attrs.EDGE_SOURCE_PORT) === "1"); // NEW
+    assert.ok(edge, "expected branch edge"); // NEW
+    assert.equal(edge.getAttribute(api.attrs.EDGE_SOURCE_SIDE), side); // CHANGE
+    assert.equal(edge.getAttribute(api.attrs.EDGE_TARGET_SIDE), side === "left" ? "right" : "left"); // NEW
+    assert.equal(styleToken(edge.style, "exitX"), side === "left" ? "0" : "1"); // NEW
+    assert.equal(styleToken(edge.style, "exitY"), "0.5"); // NEW
+    graph.setSelectionCells([takeoff.assembly, target.assembly]); // NEW
+    const branchBadges = portBadges(graph.container).filter(node => node.getAttribute("data-takeoff-branch") === "1"); // CHANGE
+    assert.equal(branchBadges.length, 1); // NEW
+    assert.match(branchBadges[0].title, new RegExp("Outlet 2 " + side + " connected.*1/4")); // CHANGE
+    assert.equal(portBadges(graph.container).some(node => new RegExp("Outlet 2 " + (side === "left" ? "right" : "left")).test(node.title)), false); // CHANGE
+} // NEW
+
+test("1/4 barb takeoff branch renders left and right aliases and keeps the connected side", () => { // NEW
+    exerciseTakeoffBranchSideHandle("right"); // NEW
+    exerciseTakeoffBranchSideHandle("left"); // NEW
+}); // NEW
+
+test("connected ordinary ports render on the closest side with side-local spacing", () => { // NEW
+    const { api, graph, moduleCell } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    const valve = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "valve"), { x: 280, y: 120 }); // NEW
+    const filterA = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 620, y: 80 }); // NEW
+    const filterB = api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "filter"), { x: 620, y: 220 }); // NEW
+    const valvePart = api.__test.firstAssemblyPart(valve.assembly); // NEW
+    const filterPartA = api.__test.firstAssemblyPart(filterA.assembly); // NEW
+    const filterPartB = api.__test.firstAssemblyPart(filterB.assembly); // NEW
+    const first = api.__test.createAssemblyConnection(moduleCell, { cellId: valvePart.getId(), role: "output", index: 0 }, { cellId: filterPartA.getId(), role: "input", index: 0 }); // NEW
+    const second = api.__test.createAssemblyConnection(moduleCell, { cellId: valvePart.getId(), role: "output", index: 1 }, { cellId: filterPartB.getId(), role: "input", index: 0 }); // NEW
+    assert.equal(first.ok, true, first.reason); // NEW
+    assert.equal(second.ok, true, second.reason); // NEW
+    assert.equal(first.edge.getAttribute(api.attrs.EDGE_SOURCE_SIDE), "right"); // NEW
+    assert.equal(first.edge.getAttribute(api.attrs.EDGE_TARGET_SIDE), "left"); // NEW
+    assert.equal(second.edge.getAttribute(api.attrs.EDGE_SOURCE_SIDE), "right"); // NEW
+    assert.equal(second.edge.getAttribute(api.attrs.EDGE_TARGET_SIDE), "left"); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCells([valve.assembly, filterA.assembly, filterB.assembly]); // NEW
+    const valveOutlets = portBadges(graph.container).filter(node => /Outlet [12] right connected.*3\/4/.test(node.title)); // NEW
+    assert.equal(valveOutlets.length, 2); // NEW
+    assert.ok(valveOutlets.every(node => /^OUT 3\/4/.test(node.textContent.trim()))); // NEW
+    const tops = valveOutlets.map(node => Number(String(node.style.top || "").replace("px", ""))).sort((a, b) => a - b); // NEW
+    assert.ok(tops[1] > tops[0], "same-side outlet badges should be vertically spaced"); // NEW
+    assert.ok(portBadges(graph.container).some(node => /Inlet 1 left connected.*3\/4/.test(node.title) && /^IN 3\/4/.test(node.textContent.trim()))); // NEW
+}); // NEW
+
 test("inline port action controls avoid SVG overlay panes", () => {
     const { api, graph, moduleCell } = loadPlugin({ svgOverlayPane: true });
     api.writeCatalog(moduleCell, sampleCatalog());
@@ -2737,9 +2896,9 @@ test("free selected port badges FIFO-replace incompatible second ports", () => {
     graph.setSelectionCells([source.assembly, valve.assembly]);
     clickPort(graph.container, /Outlet 1 free/);
     clickPort(graph.container, /Inlet 1 free/);
-    assert.deepEqual(selectedPortBadgeLabels(graph.container), ["3/4", "3/4"]);
+    assert.deepEqual(selectedPortBadgeLabels(graph.container), ["IN 3/4", "OUT 3/4"]); // CHANGE
     clickPort(graph.container, /Outlet 2 free/);
-    assert.deepEqual(selectedPortBadgeLabels(graph.container), ["3/4"]);
+    assert.deepEqual(selectedPortBadgeLabels(graph.container), ["OUT 3/4"]); // CHANGE
     clickPort(graph.container, /Outlet 2 free selected/);
     assert.deepEqual(selectedPortBadgeLabels(graph.container), []);
 });
@@ -2787,9 +2946,9 @@ test("port badges show size-only pipe labels and size-plus-type threaded labels"
     api.__test.createPartAssembly(moduleCell, api.readCatalog(moduleCell).items.find(item => item.id === "fght_to_mpt"), { x: 280, y: 40 });
     api.openIrrigationMode(moduleCell, { preserveViewport: true });
     const labels = portBadges(graph.container).map(node => node.textContent.trim()).sort();
-    assert.ok(labels.includes("3/4"), "pipe-style barb badge should show size only");
-    assert.ok(labels.includes("3/4 FGHT"), "threaded inlet badge should include connector type");
-    assert.ok(labels.includes("3/4 MPT"), "threaded outlet badge should include connector type");
+    assert.ok(labels.includes("OUT 3/4"), "pipe-style barb badge should show prefixed size only"); // CHANGE
+    assert.ok(labels.includes("IN 3/4 FGHT"), "threaded inlet badge should include prefix and connector type"); // CHANGE
+    assert.ok(labels.includes("OUT 3/4 MPT"), "threaded outlet badge should include prefix and connector type"); // CHANGE
     assert.equal(labels.some(label => /^I\d|O\d$/.test(label)), false);
 });
 
@@ -2981,7 +3140,7 @@ test("Flip and Connect keeps pipe edge anchors stored-role based and reverses ba
     assert.equal(edge.target, targetPart); // NEW
     assert.equal(edge.getAttribute(api.attrs.EDGE_SOURCE_PORT), "1"); // NEW
     assert.equal(edge.getAttribute(api.attrs.EDGE_TARGET_PORT), "0"); // NEW
-    assertEdgeAnchors(edge, { exitX: "0.67", exitY: "1", entryY: "0" }); // CHANGE
+    assertEdgeAnchors(edge, { exitX: "0.5", exitY: "1", entryY: "0" }); // CHANGE
     assert.ok(portBadges(graph.container).some(node => /Inlet 1 connected.*1\/2/.test(node.title)), "flipped stored inlet should show the catalogue output connector label"); // NEW
     assert.ok(portBadges(graph.container).some(node => /Outlet 1 free.*1\/2 MPT/.test(node.title)), "flipped stored outlet should show the catalogue input connector label"); // NEW
 }); // NEW
@@ -3050,7 +3209,7 @@ test("occupied branch replacement keeps stored-role anchors for flipped canonica
     let edge = api.__test.collectAssemblyEdges(moduleCell)[0]; // NEW
     assert.equal(edge.getAttribute(api.attrs.EDGE_SOURCE_PORT), "1"); // NEW
     assert.equal(edge.getAttribute(api.attrs.EDGE_TARGET_PORT), "0"); // NEW
-    assertEdgeAnchors(edge, { exitX: "0.67", exitY: "1", entryY: "0" }); // NEW
+    assertEdgeAnchors(edge, { exitX: "0.5", exitY: "1", entryY: "0" }); // CHANGE
     result = api.__test.applyConnectionPartChoice(moduleCell, { cell: valve, role: "output", index: 1 }, catalog.items[3]); // CHANGE
     assert.ok(result.cell, result.message); // NEW
     edge = api.__test.collectAssemblyEdges(moduleCell)[0]; // NEW
@@ -3058,7 +3217,7 @@ test("occupied branch replacement keeps stored-role anchors for flipped canonica
     assert.equal(edge.getAttribute(api.attrs.EDGE_TARGET_PORT), "0"); // NEW
     assert.equal(edge.target.getAttribute(api.attrs.CATALOG_PART_ID), "mpt_to_push_adapter"); // NEW
     assert.equal(edge.target.getAttribute(api.attrs.PART_FLIPPED), "1"); // NEW
-    assertEdgeAnchors(edge, { exitX: "0.67", exitY: "1", entryY: "0" }); // CHANGE
+    assertEdgeAnchors(edge, { exitX: "0.5", exitY: "1", entryY: "0" }); // CHANGE
 }); // NEW
 
 test("occupied direct branch rows stay read-only without reclassifying links", () => {
@@ -3281,12 +3440,15 @@ test("pipe-to-thread starter adapters bridge pipe-style sources to threaded targ
     const { api, moduleCell, model } = loadPlugin();
     api.writeCatalog(moduleCell, api.starterCatalog());
     const catalog = api.readCatalog(moduleCell);
+    const feed = api.__test.createSourceAssembly(moduleCell, "Feed", { connectorType: "push_connect", nominalSize: "1/2", method: "drip", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 0 }); // NEW
     const source = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "push_connect_coupler_1_2"), { x: 30, y: 40 });
     const target = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "fpt_coupler_1_2"), { x: 30, y: 240 });
     const downstream = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "fpt_coupler_1_2"), { x: 30, y: 300 }); // CHANGE
     downstream.partCell.geometry.y = 62; // CHANGE
     model.add(target.assembly, downstream.partCell); // CHANGE
     model.remove(downstream.assembly); // CHANGE
+    const feedConnection = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(feed.assembly).getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "input", index: 0 }); // NEW
+    assert.equal(feedConnection.ok, true, feedConnection.reason); // NEW
     const sourcePort = { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 };
     const targetPort = { cellId: api.__test.firstAssemblyPart(target.assembly).getId(), role: "input", index: 0 };
     const suggestion = api.__test.bridgeSuggestionsForPorts(moduleCell, sourcePort, targetPort).find(entry => JSON.stringify(entry.partIds) === JSON.stringify(["mpt_to_1_2_push_connect_adapter"])); // CHANGE
@@ -3300,7 +3462,7 @@ test("pipe-to-thread starter adapters bridge pipe-style sources to threaded targ
     const targetPosition = { x: target.assembly.geometry.x, y: target.assembly.geometry.y }; // CHANGE
     const applied = api.__test.ConnectionChainPlanner.applyBridge(moduleCell, plan);
     assert.equal(applied.ok, true, applied.reason);
-    const external = assemblyCells(moduleCell, api).filter(cell => ![source.assembly, target.assembly].includes(cell)); // NEW
+    const external = assemblyCells(moduleCell, api).filter(cell => ![feed.assembly, source.assembly, target.assembly].includes(cell)); // CHANGE
     assert.equal(external.length, 0); // CHANGE
     assert.equal(target.assembly.geometry.x, targetPosition.x); // CHANGE
     assert.equal(target.assembly.geometry.y, targetPosition.y); // CHANGE
@@ -3312,8 +3474,13 @@ test("pipe-to-thread starter adapters bridge pipe-style sources to threaded targ
     const directEdges = api.__test.collectAssemblyEdges(moduleCell).filter(edge => edge.getAttribute(api.attrs.DIRECT_LINK_EDGE) === "1"); // CHANGE
     assert.equal(directEdges.length, 0); // CHANGE
     const pipeEdges = api.__test.collectAssemblyEdges(moduleCell).filter(edge => edge.getAttribute(api.attrs.PIPE_EDGE) === "1");
-    assert.equal(pipeEdges.length, 1); // CHANGE
+    assert.equal(pipeEdges.length, 2); // CHANGE
     assert.ok(pipeEdges.some(edge => edge.getAttribute(api.attrs.PIPE_PART_ID) === "poly_distribution_1_2"));
+    const bridgePipeEdge = pipeEdges.find(edge => edge.target && edge.target.getAttribute(api.attrs.CATALOG_PART_ID) === "mpt_to_1_2_push_connect_adapter"); // NEW
+    assert.ok(bridgePipeEdge, "Missing bridge pipe edge into flipped adapter"); // NEW
+    const bridgeCompatibility = api.__test.validateHudCompatibility(moduleCell, bridgePipeEdge.source, bridgePipeEdge.target); // NEW
+    assert.equal(bridgeCompatibility.ok, true, bridgeCompatibility.reason); // NEW
+    assert.equal(api.__test.cellWarning(moduleCell, bridgePipeEdge.target), ""); // NEW
 });
 
 test("non-pipe connector types create direct assembly merges instead of pipe edges", () => {
@@ -3618,6 +3785,10 @@ test("direct-only Suggest Connection still merges through the downstream assembl
     assert.equal(applied.ok, true, applied.reason);
     assert.equal(api.__test.collectAssemblyEdges(moduleCell).length, 0);
     assert.equal(JSON.stringify(api.__test.assemblyPartCells(source.assembly).map(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID)).filter(Boolean)), JSON.stringify(["fght_to_mpt_direct_bridge", "fpt_target"]));
+    const mergedParts = api.__test.assemblyPartCells(source.assembly).filter(cell => cell.getAttribute(api.attrs.CATALOG_PART_ID)); // NEW
+    const threadCompatibility = api.__test.validateHudCompatibility(moduleCell, mergedParts[0], mergedParts[1]); // NEW
+    assert.equal(threadCompatibility.ok, true, threadCompatibility.reason); // NEW
+    assert.equal(api.__test.cellWarning(moduleCell, mergedParts[1]), ""); // NEW
     assert.equal(assemblyCells(moduleCell, api).includes(target.assembly), false);
 });
 
@@ -3662,6 +3833,7 @@ test("bed assemblies sync to linked beds, apply templates, and assembly reports 
     const legacy = api.__test.createBedEndpoint(bed2, "Legacy inlet", { connectorType: "barb", nominalSize: "3/4", method: "drip" });
     legacy.value.setAttribute(api.attrs.GENERATED, "1");
     const legacyLayout = appendChild(bed, makeXmlCell(document, "legacy_layout", { [api.attrs.BED_LAYOUT]: "1", label: "Legacy template label" }, { x: 8, y: 8, width: 80, height: 16 }));
+    commitRecipeBedAssembly(api, moduleCell, bedAssembly.assembly, "sync_bed_recipe", "drip_tape_bed", 2, "width", { inletPartId: "half_barb_coupler", rowPartId: "drip_tape_8mil_12in", rowTakeoffPartId: "barb_tee_1_2", rowEndCapPartId: "end_cap_1_2_barb", headerEndCapPartId: "end_cap_1_2_barb", emitterSpacingIn: 12 }); // NEW
     const connection = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: bedAssembly.assembly.getId(), role: "input", index: 0 });
     assert.equal(connection.ok, true, connection.reason);
     api.openIrrigationMode(moduleCell, { preserveViewport: true });
@@ -3700,7 +3872,9 @@ test("bed assemblies sync to linked beds, apply templates, and assembly reports 
     assert.match(hudStyle, /overflow:\s*hidden/);
     const bedForm = graph.container.querySelector(".trellis-irrigation-bed-inlet-form");
     assert.match(bedForm.getAttribute("style"), /grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(0,\s*1fr\)/);
+    assert.match(bedForm.getAttribute("style"), /align-items:\s*start/); // NEW
     assert.ok(bedForm.querySelector(".trellis-irrigation-bed-template-layout-column"));
+    assert.match(bedForm.querySelector(".trellis-irrigation-bed-template-layout-column").getAttribute("style") || "", /align-content:\s*start/); // NEW
     assert.ok(bedForm.querySelector(".trellis-irrigation-bed-template-parts-column"));
     assert.deepEqual(Array.from(bedForm.querySelectorAll(".trellis-irrigation-bed-template-group-title")).map(node => node.textContent), ["Layout", "Supply", "Row lines", "Header termination"]); // CHANGE
     Array.from(bedForm.querySelectorAll(".trellis-irrigation-bed-template-group")).forEach((group, index) => assertBoundedStyle(group, "bed template group " + index)); // CHANGE
@@ -3728,10 +3902,12 @@ test("bed assemblies sync to linked beds, apply templates, and assembly reports 
     const templateSummaryLines = templateSummary.textContent.split("\n");
     assert.equal(templateSummaryLines.length, 2);
     assert.match(templateSummaryLines[0], /^Rows \d+ x \d+\.\d{2} m = \d+\.\d{2} row m$/);
-    assert.match(templateSummaryLines[1], /^Supply .+, demand \d+\.\d{2} gpm, \d+ PSI$/);
+    assert.match(templateSummaryLines[1], /^Supply 1\/2 in distribution tubing, demand \d+(?:\.\d+)? gpm \/ \d+(?:\.\d+)? L\/min, \d+(?:\.\d+)? PSI \/ \d+(?:\.\d+)? kPa$/); // CHANGE
+    assert.doesNotMatch(templateSummaryLines[1], /poly_distribution_1_2/); // CHANGE
     assert.doesNotMatch(templateSummary.textContent, /Anchor:|BOM:/);
     assert.doesNotMatch(graph.container.textContent, /Select inlet\/outlet badges/);
     changeSelectByLabel(graph.container, "Inlet part", "fpt_to_half_barb");
+    assert.match(graph.container.querySelector(".trellis-irrigation-bed-template-summary").textContent.split("\n")[1], /^Supply 1\/2 in distribution tubing, demand \d+(?:\.\d+)? gpm \/ \d+(?:\.\d+)? L\/min, \d+(?:\.\d+)? PSI \/ \d+(?:\.\d+)? kPa$/); // CHANGE
     changeSelectByLabel(graph.container, "Row part", "drip_tape_8mil_12in"); // CHANGE
     changeSelectByLabel(graph.container, "Row takeoff part", "barb_tee_1_2"); // CHANGE
     changeSelectByLabel(graph.container, "Row end cap", "end_cap_1_2_barb"); // CHANGE
@@ -3830,7 +4006,10 @@ test("multiple bed assemblies on one bed own independent templates and derive me
     assert.equal(bed.getAttribute(api.attrs.BED_TEMPLATE_JSON), null);
     assert.equal(dripTemplate.templateId, "drip_tape_bed");
     assert.equal(sprayTemplate.templateId, "nursery_microspray");
-    assert.deepEqual(Array.from(api.__test.getBedIrrigationMethods(moduleCell, bed).map(method => method.label)), ["Drip tape", "Microspray"]);
+    const methods = api.__test.getBedIrrigationMethods(moduleCell, bed); // NEW
+    assert.deepEqual(Array.from(methods.map(method => method.label)), ["Drip tape", "Microspray stake"]); // CHANGE
+    assert.equal(methods[1].id, "microspray"); // NEW
+    assert.equal(methods[1].partId, "microspray_stake_20psi"); // NEW
 });
 
 test("bed assemblies reject child drops and moved assemblies are lifted back to the module", () => {
@@ -3959,14 +4138,25 @@ test("syncing existing regular bed assemblies moves labels above the bed edge", 
     assertRegularBedAssemblyStyle(bedAssembly); // CHANGE
 }); // CHANGE
 
+test("unconfigured bed assembly does not render fallback canvas port badges", () => { // NEW
+    const { api, graph, moduleCell, bed } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, addDripTapeBomParts(sampleCatalog())); // NEW
+    bed.value.setAttribute(api.attrs.BED_PORTS_JSON, JSON.stringify({ inputs: 1, outputs: 1, input: { type: "barb", nominalSize: "1/2", pipeConnection: true }, output: { type: "barb", nominalSize: "1/2", pipeConnection: true } })); // NEW
+    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 240, y: 120 }); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(bedAssembly.assembly); // NEW
+    assert.equal(portBadges(graph.container).filter(node => /Inlet|Outlet/.test(node.title)).length, 0); // NEW
+    assert.equal(api.__test.portConnectorForCell(moduleCell, bedAssembly.assembly, "input").nominalSize, ""); // NEW
+}); // NEW
+
 test("bed assembly BOM parts persist and drive inlet/outlet connector compatibility", () => {
     const { api, graph, moduleCell, bed } = loadPlugin();
     const catalog = addDripTapeBomParts(sampleCatalog());
     catalog.items.push(part("spray_3_4", "Spray 3/4", "sprinkler", "in_stock", 9, 1, 1, "barb", "3/4", "barb", "3/4", { pressureLossPsi: 0.2 }, undefined, true));
     api.writeCatalog(moduleCell, catalog);
-    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 240, y: 120 });
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // CHANGE
+    const bedAssembly = { assembly: createConfiguredDripTapeBedAssembly(api, graph, moduleCell, bed, { x: 240, y: 120 }) }; // CHANGE
     assertRegularBedAssemblyStyle(bedAssembly.assembly);
-    api.openIrrigationMode(moduleCell, { preserveViewport: true });
     graph.setSelectionCell(bedAssembly.assembly);
     const inlet = selectByLabel(graph.container, "Inlet part");
     const outlet = selectByLabel(graph.container, "Outlet part");
@@ -3984,20 +4174,23 @@ test("bed assembly BOM parts persist and drive inlet/outlet connector compatibil
     assert.equal(Array.from(inlet.options).some(option => option.value === "filter"), false);
     assert.equal(Array.from(inlet.options).some(option => option.value === "spray_3_4"), false);
     changeSelectByLabel(graph.container, "Inlet part", "fpt_to_half_barb");
-    assert.equal(Array.from(selectByLabel(graph.container, "Outlet part").options).some(option => option.value === "half_barb_to_3_4_barb"), true);
+    assert.equal(Array.from(selectByLabel(graph.container, "Outlet part").options).some(option => option.value === "half_barb_coupler"), true); // CHANGE
+    assert.equal(Array.from(selectByLabel(graph.container, "Outlet part").options).some(option => option.value === "half_barb_to_3_4_barb"), false); // CHANGE
     changeSelectByLabel(graph.container, "Row part", "drip_tape_8mil_12in"); // CHANGE
+    assert.equal(Array.from(selectByLabel(graph.container, "Row takeoff part").options).some(option => option.value === "barb_tee_1_2"), true); // NEW
+    assert.equal(Array.from(selectByLabel(graph.container, "Row takeoff part").options).some(option => option.value === "barb_tee_3_4_to_1_2"), false); // NEW
     changeSelectByLabel(graph.container, "Row takeoff part", "barb_tee_1_2"); // CHANGE
     changeSelectByLabel(graph.container, "Row end cap", "end_cap_1_2_barb"); // CHANGE
-    changeSelectByLabel(graph.container, "Outlet part", "half_barb_to_3_4_barb");
+    changeSelectByLabel(graph.container, "Outlet part", "half_barb_coupler"); // CHANGE
     changeSelectByLabel(graph.container, "Row orientation", "height");
     const template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly);
     assert.equal(template.templateModel, "bom");
     assert.equal(template.inletPartId, "fpt_to_half_barb");
-    assert.equal(template.outletPartId, "half_barb_to_3_4_barb");
+    assert.equal(template.outletPartId, "half_barb_coupler"); // CHANGE
     assert.equal(template.pipePartId, "");
     assert.equal(template.anchorPartId, "drip_tape_8mil_12in");
     assert.equal(template.rowOrientation, "height");
-    assert.deepEqual(Array.from(template.partIds), ["fpt_to_half_barb", "half_barb_to_3_4_barb", "drip_tape_8mil_12in", "barb_tee_1_2", "end_cap_1_2_barb", "poly_distribution_1_2"]);
+    assert.deepEqual(Array.from(template.partIds), ["fpt_to_half_barb", "half_barb_coupler", "drip_tape_8mil_12in", "barb_tee_1_2", "end_cap_1_2_barb", "poly_distribution_1_2"]); // CHANGE
     assert.equal(template.requiredParts[0].partId, "drip_tape_8mil_12in");
     assert.ok(template.requiredParts[0].quantityMeters > 0);
     assert.ok(template.demand.flowGpm > 1.2);
@@ -4007,7 +4200,7 @@ test("bed assembly BOM parts persist and drive inlet/outlet connector compatibil
     assert.equal(ports.input.type, "fpt");
     assert.equal(ports.input.nominalSize, "3/4");
     assert.equal(ports.output.type, "barb");
-    assert.equal(ports.output.nominalSize, "3/4");
+    assert.equal(ports.output.nominalSize, "1/2"); // CHANGE
     assert.equal(JSON.stringify(api.__test.portConnectorForCell(moduleCell, bedAssembly.assembly, "input")), JSON.stringify(ports.input));
     assert.equal(JSON.stringify(api.__test.portConnectorForCell(moduleCell, bedAssembly.assembly, "output")), JSON.stringify(ports.output));
     const rows = descendants(bedAssembly.assembly, cell => cell.getAttribute && cell.getAttribute(api.attrs.BED_LAYOUT) === "1");
@@ -4016,11 +4209,11 @@ test("bed assembly BOM parts persist and drive inlet/outlet connector compatibil
     const direct = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: bedAssembly.assembly.getId(), role: "input", index: 0 });
     assert.equal(direct.ok, true, direct.reason);
     assert.equal(direct.edge.getAttribute(api.attrs.DIRECT_LINK_EDGE), "1");
-    const filter = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "filter"), { x: 460, y: 120 });
+    const filter = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "filter_half"), { x: 460, y: 120 }); // CHANGE
     const outletConnection = api.__test.createAssemblyConnection(moduleCell, { cellId: bedAssembly.assembly.getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(filter.assembly).getId(), role: "input", index: 0 });
     assert.equal(outletConnection.ok, true, outletConnection.reason);
     assert.equal(outletConnection.edge.getAttribute(api.attrs.PIPE_EDGE), "1");
-    assert.equal(outletConnection.edge.getAttribute(api.attrs.PIPE_PART_ID), "pipe_cheap");
+    assert.ok(["pipe_half", "poly_distribution_1_2"].includes(outletConnection.edge.getAttribute(api.attrs.PIPE_PART_ID))); // CHANGE
 });
 
 test("bed assembly inlet supply size filters rows takeoffs and reversed option names", () => { // NEW
@@ -4040,7 +4233,7 @@ test("bed assembly inlet supply size filters rows takeoffs and reversed option n
     const takeoff = selectByLabel(graph.container, "Row takeoff part"); // NEW
     assert.ok(Array.from(takeoff.options).some(option => option.value === "barb_tee_3_4_to_1_2")); // NEW
     assert.equal(Array.from(takeoff.options).some(option => option.value === "barb_tee_1_2"), false); // NEW
-    assert.match(Array.from(takeoff.options).find(option => option.value === "reverse_reducer_takeoff").textContent, /3\/4": 1\/2" barb adapter/); // NEW
+    assert.equal(Array.from(takeoff.options).some(option => option.value === "reverse_reducer_takeoff"), false); // CHANGE
     assert.match(Array.from(selectByLabel(graph.container, "Outlet part").options).find(option => option.value === "half_barb_to_3_4_barb").textContent, /3\/4": 1\/2" barb adapter/); // NEW
 
     changeSelectByLabel(graph.container, "Row takeoff part", "barb_tee_3_4_to_1_2"); // NEW
@@ -4053,6 +4246,83 @@ test("bed assembly inlet supply size filters rows takeoffs and reversed option n
     const ports = JSON.parse(bed.getAttribute(api.attrs.BED_PORTS_JSON)); // NEW
     assert.equal(ports.input.nominalSize, "3/4"); // NEW
     assert.equal(ports.outputs, 0); // NEW
+}); // NEW
+
+test("equal-size bed inlet adapters preserve catalog orientation", () => { // NEW
+    const { api, graph, moduleCell, bed } = loadPlugin(); // NEW
+    const catalog = addDripTapeBomParts(sampleCatalog()); // NEW
+    catalog.items.push(part("fght_to_3_4_barb_equal", "FGHT to 3/4 barb equal adapter", "fitting", "in_stock", 5, 1, 1, "fght", "3/4", "barb", "3/4", { pressureLossPsi: 0.2 }, undefined, true)); // NEW
+    catalog.items.push(part("end_cap_3_4_barb_equal", "3/4 barb header cap", "cap_end", "in_stock", 1.5, 1, 0, "barb", "3/4", "", "", { pressureLossPsi: 0 }, undefined, true)); // NEW
+    api.writeCatalog(moduleCell, catalog); // NEW
+    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 240, y: 120 }); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(bedAssembly.assembly); // NEW
+
+    changeSelectByLabel(graph.container, "Inlet part", "fght_to_3_4_barb_equal"); // NEW
+    assert.ok(Array.from(selectByLabel(graph.container, "Row takeoff part").options).every(option => option.value !== "barb_tee_1_2")); // NEW
+    changeSelectByLabel(graph.container, "Row part", "drip_tape_8mil_12in"); // NEW
+    assert.ok(Array.from(selectByLabel(graph.container, "Row takeoff part").options).some(option => option.value === "barb_tee_3_4_to_1_2")); // NEW
+    changeSelectByLabel(graph.container, "Row takeoff part", "barb_tee_3_4_to_1_2"); // NEW
+    changeSelectByLabel(graph.container, "Row end cap", "end_cap_1_2_barb"); // NEW
+    changeSelectByLabel(graph.container, "Header end cap", "end_cap_3_4_barb_equal"); // NEW
+    const ports = JSON.parse(bed.getAttribute(api.attrs.BED_PORTS_JSON)); // NEW
+    assert.equal(ports.input.type, "fght"); // NEW
+    assert.equal(ports.input.nominalSize, "3/4"); // NEW
+}); // NEW
+
+test("bed assembly 1/4 inch supply exposes 1/4 tee row takeoff", () => { // NEW
+    const { api, graph, moduleCell, bed } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, api.starterCatalog()); // NEW
+    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 240, y: 120 }); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(bedAssembly.assembly); // NEW
+
+    changeSelectByLabel(graph.container, "Inlet part", "mpt_to_1_4_barb_adapter"); // CHANGE
+    changeSelectByLabel(graph.container, "Row part", "micro_tubing_1_4"); // NEW
+    const takeoffOptions = Array.from(selectByLabel(graph.container, "Row takeoff part").options); // NEW
+    assert.ok(takeoffOptions.some(option => option.value === "micro_tee_1_4"), "Missing 1/4 micro tubing tee row takeoff"); // NEW
+    assert.equal(takeoffOptions.some(option => option.value === "micro_coupler_1_4"), false); // NEW
+    assert.equal(takeoffOptions.some(option => option.value === "micro_elbow_1_4"), false); // NEW
+    const recipe = { // NEW
+        inletPartId: "mpt_to_1_4_barb_adapter", // CHANGE
+        rowPartId: "micro_tubing_1_4", // NEW
+        emitterPartId: "micro_emitter_1_0_gph", // NEW
+        rowTakeoffPartId: "micro_tee_1_4", // NEW
+        rowEndCapPartId: "micro_goof_plug_1_4", // NEW
+        headerEndCapPartId: "micro_goof_plug_1_4", // NEW
+        emitterSpacingIn: 12 // NEW
+    }; // NEW
+    const bom = api.__test.computeBedTemplateBom(api.readCatalog(moduleCell), { width: 306, height: 178 }, "overhead_sprinkler_block", 2, "width", recipe); // NEW
+    assert.equal(bom.recipe.supplyPipePartId, "micro_tubing_1_4"); // NEW
+}); // NEW
+
+test("bed assembly large supply to 1/4 row exposes host-size barb takeoff", () => { // CHANGE
+    const { api, graph, moduleCell, bed } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, api.starterCatalog()); // NEW
+    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 240, y: 120 }); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    graph.setSelectionCell(bedAssembly.assembly); // NEW
+
+    changeSelectByLabel(graph.container, "Inlet part", "fpt_to_1_2_barb_adapter"); // NEW
+    changeSelectByLabel(graph.container, "Row part", "micro_tubing_1_4"); // NEW
+    let takeoffIds = Array.from(selectByLabel(graph.container, "Row takeoff part").options).map(option => option.value); // NEW
+    assert.equal(takeoffIds.includes("micro_tee_1_4"), false); // CHANGE
+    assert.equal(takeoffIds.includes("micro_coupler_1_4"), false); // CHANGE
+    assert.ok(takeoffIds.includes("barb_takeoff_1_4_on_1_2")); // CHANGE
+    assert.equal(takeoffIds.includes("micro_elbow_1_4"), false); // NEW
+
+    changeSelectByLabel(graph.container, "Inlet part", "fpt_to_3_4_barb_adapter"); // NEW
+    takeoffIds = Array.from(selectByLabel(graph.container, "Row takeoff part").options).map(option => option.value); // NEW
+    assert.equal(takeoffIds.includes("micro_coupler_1_4"), false); // CHANGE
+    assert.ok(takeoffIds.includes("barb_takeoff_1_4_on_3_4")); // CHANGE
+    assert.equal(takeoffIds.includes("barb_takeoff_1_4_on_1_2"), false); // NEW
+    assert.equal(takeoffIds.includes("micro_elbow_1_4"), false); // NEW
+
+    changeSelectByLabel(graph.container, "Row part", "poly_distribution_1_2"); // NEW
+    takeoffIds = Array.from(selectByLabel(graph.container, "Row takeoff part").options).map(option => option.value); // NEW
+    assert.ok(takeoffIds.includes("barb_tee_3_4_to_1_2")); // NEW
+    assert.equal(takeoffIds.includes("micro_coupler_1_4"), false); // NEW
+    assert.equal(takeoffIds.includes("reducer_3_4_to_1_2_barb"), false); // NEW
 }); // NEW
 
 test("bed assembly header end cap selection does not prefill row end cap", () => { // CHANGE
@@ -4079,7 +4349,32 @@ test("bed assembly header end cap selection does not prefill row end cap", () =>
     const template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly); // CHANGE
     assert.equal(template.headerEndCapPartId, "header_cap_3_4_unique"); // CHANGE
     assert.equal(template.rowEndCapPartId, "row_cap_1_2_unique"); // CHANGE
+    graph.setSelectionCell(bedAssembly.assembly); // NEW
+    assert.equal(portBadges(graph.container).some(node => /Outlet/.test(node.title)), false); // NEW
+    assert.equal(portBadges(graph.container).some(node => /Inlet/.test(node.title)), true); // NEW
 }); // CHANGE
+
+test("bed assembly part picker exposes Choose part option to clear selections", () => { // NEW
+    const { api, graph, moduleCell, bed } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, addDripTapeBomParts(sampleCatalog())); // NEW
+    api.openIrrigationMode(moduleCell, { preserveViewport: true }); // NEW
+    const bedAssembly = createConfiguredDripTapeBedAssembly(api, graph, moduleCell, bed, { x: 240, y: 120 }); // NEW
+    graph.setSelectionCell(bedAssembly); // NEW
+    const rowEndCap = selectByLabel(graph.container, "Row end cap"); // NEW
+    assert.equal(rowEndCap.value, "end_cap_1_2_barb"); // NEW
+    const picker = rowEndCap.__trellisPartPicker && rowEndCap.__trellisPartPicker.root; // NEW
+    assert.ok(picker, "Missing visible part picker"); // NEW
+    picker.querySelector(".trellis-irrigation-part-picker-trigger").click(); // NEW
+    const panels = Array.from(graph.container.ownerDocument.querySelectorAll(".trellis-irrigation-part-picker-panel")); // NEW
+    const panel = panels[panels.length - 1]; // NEW
+    assert.ok(panel, "Missing part picker panel"); // NEW
+    const clearOption = panel.querySelector(".trellis-irrigation-part-picker-option[data-part-id='']"); // NEW
+    assert.ok(clearOption, "Missing Choose part clear option"); // NEW
+    assert.equal(clearOption.textContent.trim(), "Choose part"); // NEW
+    clearOption.click(); // NEW
+    assert.equal(rowEndCap.value, ""); // NEW
+    assert.match(picker.querySelector(".trellis-irrigation-part-picker-trigger").textContent, /Choose part/); // NEW
+}); // NEW
 
 test("bed assembly labels soaker rows without emitter spacing", () => { // NEW
     const { api, graph, moduleCell, bed } = loadPlugin(); // NEW
@@ -4116,14 +4411,14 @@ test("connected bed assembly inlet and outlet part selectors lock by connected p
     assert.equal(selectByLabel(graph.container, "Outlet part").disabled, false);
 
     const outletOnlyBed = createConfiguredDripTapeBedAssembly(api, graph, moduleCell, bed2, { x: 440, y: 120 });
-    const outletFilter = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "filter"), { x: 650, y: 120 });
+    const outletFilter = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "filter_half"), { x: 650, y: 120 }); // CHANGE
     const outletOnlyConnection = api.__test.createAssemblyConnection(moduleCell, { cellId: outletOnlyBed.getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(outletFilter.assembly).getId(), role: "input", index: 0 });
     assert.equal(outletOnlyConnection.ok, true, outletOnlyConnection.reason);
     graph.setSelectionCell(outletOnlyBed);
     assert.equal(selectByLabel(graph.container, "Inlet part").disabled, true); // CHANGE
     assert.equal(selectByLabel(graph.container, "Outlet part").disabled, true);
 
-    const downstreamFilter = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "filter"), { x: 460, y: 320 });
+    const downstreamFilter = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "filter_half"), { x: 460, y: 320 }); // CHANGE
     const outletConnection = api.__test.createAssemblyConnection(moduleCell, { cellId: inletLockedBed.getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(downstreamFilter.assembly).getId(), role: "input", index: 0 });
     assert.equal(outletConnection.ok, true, outletConnection.reason);
     graph.setSelectionCell(inletLockedBed);
@@ -4140,19 +4435,19 @@ test("locked bed assembly part selectors preserve values during template refresh
     const source = api.__test.createSourceAssembly(moduleCell, "Hose", { connectorType: "mpt", nominalSize: "3/4", usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 });
     const inletConnection = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: bedAssembly.getId(), role: "input", index: 0 });
     assert.equal(inletConnection.ok, true, inletConnection.reason);
-    const filter = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "filter"), { x: 460, y: 120 });
+    const filter = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "filter_half"), { x: 460, y: 120 }); // CHANGE
     const outletConnection = api.__test.createAssemblyConnection(moduleCell, { cellId: bedAssembly.getId(), role: "output", index: 0 }, { cellId: api.__test.firstAssemblyPart(filter.assembly).getId(), role: "input", index: 0 });
     assert.equal(outletConnection.ok, true, outletConnection.reason);
     graph.setSelectionCell(bedAssembly);
     assert.equal(selectByLabel(graph.container, "Inlet part").value, "fpt_to_half_barb");
-    assert.equal(selectByLabel(graph.container, "Outlet part").value, "half_barb_to_3_4_barb");
+    assert.equal(selectByLabel(graph.container, "Outlet part").value, "half_barb_coupler"); // CHANGE
 
     changeSelectByLabel(graph.container, "Row orientation", "height");
     graph.setSelectionCell(bedAssembly);
     assert.equal(selectByLabel(graph.container, "Inlet part").disabled, true);
     assert.equal(selectByLabel(graph.container, "Outlet part").disabled, true);
     assert.equal(selectByLabel(graph.container, "Inlet part").value, "fpt_to_half_barb");
-    assert.equal(selectByLabel(graph.container, "Outlet part").value, "half_barb_to_3_4_barb");
+    assert.equal(selectByLabel(graph.container, "Outlet part").value, "half_barb_coupler"); // CHANGE
 });
 
 test("bed inlet role uses the selected non-pipe part upstream side", () => {
@@ -4187,7 +4482,7 @@ test("selected bed assembly ports do not show Add Part placement UI", () => {
     changeSelectByLabel(graph.container, "Row part", "drip_tape_8mil_12in"); // CHANGE
     changeSelectByLabel(graph.container, "Row takeoff part", "barb_tee_1_2"); // CHANGE
     changeSelectByLabel(graph.container, "Row end cap", "end_cap_1_2_barb"); // CHANGE
-    changeSelectByLabel(graph.container, "Outlet part", "half_barb_to_3_4_barb");
+    changeSelectByLabel(graph.container, "Outlet part", "half_barb_coupler"); // CHANGE
     graph.setSelectionCell(bedAssembly.assembly);
     assert.equal(graph.container.querySelectorAll(".trellis-irrigation-connection-row").length, 0);
 
@@ -4207,14 +4502,14 @@ test("selected bed assembly ports do not show Add Part placement UI", () => {
 test("unconnected bed inlet port renders only the selected inlet selector", () => {
     const { api, graph, moduleCell, bed } = loadPlugin();
     api.writeCatalog(moduleCell, addDripTapeBomParts(sampleCatalog()));
-    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 240, y: 120 });
     api.openIrrigationMode(moduleCell, { preserveViewport: true });
+    const bedAssembly = { assembly: createConfiguredDripTapeBedAssembly(api, graph, moduleCell, bed, { x: 240, y: 120 }) }; // CHANGE
     graph.setSelectionCell(bedAssembly.assembly);
     changeSelectByLabel(graph.container, "Inlet part", "fpt_to_half_barb");
     changeSelectByLabel(graph.container, "Row part", "drip_tape_8mil_12in"); // CHANGE
     changeSelectByLabel(graph.container, "Row takeoff part", "barb_tee_1_2"); // CHANGE
     changeSelectByLabel(graph.container, "Row end cap", "end_cap_1_2_barb"); // CHANGE
-    changeSelectByLabel(graph.container, "Outlet part", "half_barb_to_3_4_barb");
+    changeSelectByLabel(graph.container, "Outlet part", "half_barb_coupler"); // CHANGE
 
     clickPort(graph.container, /Inlet 1 free/);
 
@@ -4231,7 +4526,7 @@ test("unconnected bed inlet port renders only the selected inlet selector", () =
 test("unconnected bed outlet port renders only outlet selector and clears header end cap on change", () => {
     const { api, graph, moduleCell, bed } = loadPlugin();
     const catalog = addDripTapeBomParts(sampleCatalog());
-    catalog.items.push(part("half_barb_to_1_barb", "1/2 barb to 1 barb", "fitting", "in_stock", 4, 1, 1, "barb", "1/2", "barb", "1", { pressureLossPsi: 0.2 }, undefined, true));
+    catalog.items.push(part("half_barb_to_quarter_barb", "1/2 barb to 1/4 barb", "fitting", "in_stock", 4, 1, 1, "barb", "1/2", "barb", "1/4", { pressureLossPsi: 0.2 }, undefined, true)); // CHANGE
     api.writeCatalog(moduleCell, catalog);
     const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 240, y: 120 });
     api.openIrrigationMode(moduleCell, { preserveViewport: true });
@@ -4244,7 +4539,7 @@ test("unconnected bed outlet port renders only outlet selector and clears header
     let template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly);
     assert.equal(template.headerEndCapPartId, "end_cap_1_2_barb");
     graph.setSelectionCell(bedAssembly.assembly);
-    changeSelectByLabel(graph.container, "Outlet part", "half_barb_to_3_4_barb");
+    changeSelectByLabel(graph.container, "Outlet part", "half_barb_coupler"); // CHANGE
     graph.setSelectionCell(bedAssembly.assembly);
 
     clickPort(graph.container, /Outlet 1 free/);
@@ -4252,10 +4547,10 @@ test("unconnected bed outlet port renders only outlet selector and clears header
     assert.ok(hud, "Missing port-only HUD");
     assert.ok(selectByLabel(hud, "Outlet part"));
     assert.equal(querySelectByLabel(hud, "Header end cap"), null);
-    changeSelectByLabel(hud, "Outlet part", "half_barb_to_1_barb");
+    changeSelectByLabel(hud, "Outlet part", "half_barb_to_quarter_barb"); // CHANGE
 
     template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly);
-    assert.equal(template.outletPartId, "half_barb_to_1_barb");
+    assert.equal(template.outletPartId, "half_barb_to_quarter_barb"); // CHANGE
     assert.equal(template.headerEndCapPartId, "");
 });
 
@@ -4288,7 +4583,7 @@ test("graph cell selection clears selected port badge state and restores normal 
     changeSelectByLabel(graph.container, "Row part", "drip_tape_8mil_12in"); // CHANGE
     changeSelectByLabel(graph.container, "Row takeoff part", "barb_tee_1_2"); // CHANGE
     changeSelectByLabel(graph.container, "Row end cap", "end_cap_1_2_barb"); // CHANGE
-    changeSelectByLabel(graph.container, "Outlet part", "half_barb_to_3_4_barb");
+    changeSelectByLabel(graph.container, "Outlet part", "half_barb_coupler"); // CHANGE
     clickPort(graph.container, /Inlet 1 free/);
     assert.ok(graph.container.querySelector(".trellis-irrigation-port-only-hud"));
     assert.ok(portBadgesInState(graph.container, "selected").length >= 1);
@@ -4313,7 +4608,7 @@ test("connected port badge does not enter unconnected port-only selector mode", 
     changeSelectByLabel(graph.container, "Row part", "drip_tape_8mil_12in"); // CHANGE
     changeSelectByLabel(graph.container, "Row takeoff part", "barb_tee_1_2"); // CHANGE
     changeSelectByLabel(graph.container, "Row end cap", "end_cap_1_2_barb"); // CHANGE
-    changeSelectByLabel(graph.container, "Outlet part", "half_barb_to_3_4_barb");
+    changeSelectByLabel(graph.container, "Outlet part", "half_barb_coupler"); // CHANGE
     const connected = api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: bedAssembly.assembly.getId(), role: "input", index: 0 });
     assert.equal(connected.ok, true, connected.reason);
     graph.setSelectionCell(bedAssembly.assembly);
@@ -4348,6 +4643,43 @@ test("bed template BOM quantities, flow, pressure, and meter costs scale from ro
     assert.equal(bom.demand.operatingPressurePsi, 10);
     assert.ok(Math.abs(api.__test.partCostForRequiredMeters(catalog, "drip_tape_8mil_12in", 3) - (0.42 * (3 / 0.3048))) < 0.0001);
 });
+
+test("bed recipe BOM reads persisted nested emitter spacing when recomputing demand", () => { // NEW
+    const { api } = loadPlugin(); // NEW
+    const catalog = addDripTapeBomParts(sampleCatalog()); // NEW
+    catalog.items.push(part("test_drip_emitter", "Test drip emitter", "emitter", "in_stock", 1, 1, 0, "barb", "1/2", "", "", { flowGpm: 0.1, operatingPressurePsi: 15 }, undefined, true)); // NEW
+    catalog.items.push(part("overhead_sprinkler_head_30psi", "Overhead sprinkler head", "sprinkler", "in_stock", 14, 1, 1, "barb", "1/2", "barb", "1/2", { flowGpm: 2.5, operatingPressurePsi: 30 }, undefined, true)); // NEW
+    const recipe = { inletPartId: "half_barb_coupler", rowPartId: "poly_distribution_1_2", emitterPartId: "test_drip_emitter", rowTakeoffPartId: "barb_tee_1_2", rowEndCapPartId: "end_cap_1_2_barb", headerEndCapPartId: "end_cap_1_2_barb", spacing: { emitterInches: 6 } }; // NEW
+    const bom = api.__test.computeBedTemplateBom(catalog, { width: 306, height: 178 }, "overhead_sprinkler_block", 2, "width", recipe); // NEW
+    const emitterLine = bom.recipe.resolvedBomParts.find(entry => entry.role === "emitter_device"); // NEW
+    assert.equal(bom.recipe.emitterSpacingIn, 6); // NEW
+    assert.equal(emitterLine.quantity, 46); // NEW
+    assert.ok(Math.abs(bom.demand.flowGpm - 4.6) < 0.0001); // NEW
+}); // NEW
+
+test("bed recipe BOM keeps emitter spacing compatibility and precedence", () => { // NEW
+    const { api } = loadPlugin(); // NEW
+    const catalog = addDripTapeBomParts(sampleCatalog()); // NEW
+    catalog.items.push(part("test_drip_emitter", "Test drip emitter", "emitter", "in_stock", 1, 1, 0, "barb", "1/2", "", "", { flowGpm: 0.1, operatingPressurePsi: 15 }, undefined, true)); // NEW
+    catalog.items.push(part("overhead_sprinkler_head_30psi", "Overhead sprinkler head", "sprinkler", "in_stock", 14, 1, 1, "barb", "1/2", "barb", "1/2", { flowGpm: 2.5, operatingPressurePsi: 30 }, undefined, true)); // NEW
+    const baseRecipe = { inletPartId: "half_barb_coupler", rowPartId: "poly_distribution_1_2", emitterPartId: "test_drip_emitter", rowTakeoffPartId: "barb_tee_1_2", rowEndCapPartId: "end_cap_1_2_barb", headerEndCapPartId: "end_cap_1_2_barb" }; // NEW
+    const topLevel = api.__test.computeBedTemplateBom(catalog, { width: 306, height: 178 }, "overhead_sprinkler_block", 2, "width", Object.assign({}, baseRecipe, { emitterSpacingIn: 24 })); // NEW
+    const topLevelWins = api.__test.computeBedTemplateBom(catalog, { width: 306, height: 178 }, "overhead_sprinkler_block", 2, "width", Object.assign({}, baseRecipe, { emitterSpacingIn: 24, spacing: { emitterInches: 6 } })); // NEW
+    const legacy = api.__test.computeBedTemplateBom(catalog, { width: 306, height: 178 }, "overhead_sprinkler_block", 2, "width", Object.assign({}, baseRecipe, { emitterInches: 18 })); // NEW
+    const invalidNested = api.__test.computeBedTemplateBom(catalog, { width: 306, height: 178 }, "overhead_sprinkler_block", 2, "width", Object.assign({}, baseRecipe, { spacing: { emitterInches: 0 } })); // NEW
+    assert.equal(topLevel.recipe.emitterSpacingIn, 24); // NEW
+    assert.equal(topLevelWins.recipe.emitterSpacingIn, 24); // NEW
+    assert.equal(legacy.recipe.emitterSpacingIn, 18); // NEW
+    assert.equal(invalidNested.recipe.emitterSpacingIn, 12); // NEW
+}); // NEW
+
+test("bed recipe BOM uses catalog spacing for self-emitting row parts", () => { // NEW
+    const { api } = loadPlugin(); // NEW
+    const catalog = addDripTapeBomParts(sampleCatalog()); // NEW
+    const bom = api.__test.computeBedTemplateBom(catalog, { width: 306, height: 178 }, "drip_tape_bed", 2, "width", { inletPartId: "half_barb_coupler", rowPartId: "drip_tape_8mil_12in", rowTakeoffPartId: "barb_tee_1_2", rowEndCapPartId: "end_cap_1_2_barb", headerEndCapPartId: "end_cap_1_2_barb", spacing: { emitterInches: 6 } }); // NEW
+    assert.equal(bom.recipe.emitterSpacingIn, 12); // NEW
+    assert.ok(Math.abs(bom.demand.flowGpm - 8.16) < 0.0001); // NEW
+}); // NEW
 
 test("bed recipe UI toggles self-emitting and device row controls", () => {
     const { api, graph, moduleCell, bed } = loadPlugin();
@@ -4397,12 +4729,12 @@ test("bed recipe UI toggles self-emitting and device row controls", () => {
     changeSelectByLabel(graph.container, "Header end cap", "");
     assert.match(selectByLabel(graph.container, "Header end cap").parentNode.getAttribute("style") || "", /display:\s*flex/);
     assert.match(selectByLabel(graph.container, "Outlet part").parentNode.getAttribute("style") || "", /display:\s*flex/);
-    changeSelectByLabel(graph.container, "Outlet part", "half_barb_to_3_4_barb");
+    changeSelectByLabel(graph.container, "Outlet part", "half_barb_coupler"); // CHANGE
     assert.equal(selectByLabel(graph.container, "Header end cap").value, "");
     assert.match(selectByLabel(graph.container, "Header end cap").parentNode.getAttribute("style") || "", /display:\s*none/);
     template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly.assembly);
     assert.equal(template.headerEndCapPartId, "");
-    assert.equal(template.outletPartId, "half_barb_to_3_4_barb");
+    assert.equal(template.outletPartId, "half_barb_coupler"); // CHANGE
     assert.equal(querySelectByLabel(graph.container, "Template"), null); // CHANGE
 });
 
@@ -4463,18 +4795,18 @@ test("legacy bed terminal choices prefer outlet and clear header on next commit"
     const { api, graph, moduleCell, bed } = loadPlugin();
     api.writeCatalog(moduleCell, addDripTapeBomParts(sampleCatalog()));
     const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 240, y: 120 }).assembly;
-    const legacyTemplate = { templateModel: "bom", recipeVersion: 1, templateId: "drip_tape_bed", irrigationType: "drip_tape", inletPartId: "fpt_to_half_barb", outletPartId: "half_barb_to_3_4_barb", rowPartId: "drip_tape_8mil_12in", emitterPartId: "", rowTakeoffPartId: "barb_tee_1_2", rowEndCapPartId: "end_cap_1_2_barb", headerEndCapPartId: "end_cap_1_2_barb", supplyPipePartId: "poly_distribution_1_2", spacing: { rows: 2, emitterInches: 12, rowSpacingCm: 100 }, requiredParts: [], resolvedBomParts: [], partIds: ["fpt_to_half_barb", "half_barb_to_3_4_barb", "drip_tape_8mil_12in", "barb_tee_1_2", "end_cap_1_2_barb", "poly_distribution_1_2"] };
+    const legacyTemplate = { templateModel: "bom", recipeVersion: 1, templateId: "drip_tape_bed", irrigationType: "drip_tape", inletPartId: "fpt_to_half_barb", outletPartId: "half_barb_coupler", rowPartId: "drip_tape_8mil_12in", emitterPartId: "", rowTakeoffPartId: "barb_tee_1_2", rowEndCapPartId: "end_cap_1_2_barb", headerEndCapPartId: "end_cap_1_2_barb", supplyPipePartId: "poly_distribution_1_2", spacing: { rows: 2, emitterInches: 12, rowSpacingCm: 100 }, requiredParts: [], resolvedBomParts: [], partIds: ["fpt_to_half_barb", "half_barb_coupler", "drip_tape_8mil_12in", "barb_tee_1_2", "end_cap_1_2_barb", "poly_distribution_1_2"] }; // CHANGE
     bedAssembly.value.setAttribute(api.attrs.BED_TEMPLATE_JSON, JSON.stringify(legacyTemplate));
     api.openIrrigationMode(moduleCell, { preserveViewport: true });
     graph.setSelectionCell(bedAssembly);
-    assert.equal(selectByLabel(graph.container, "Outlet part").value, "half_barb_to_3_4_barb");
+    assert.equal(selectByLabel(graph.container, "Outlet part").value, "half_barb_coupler"); // CHANGE
     assert.equal(selectByLabel(graph.container, "Header end cap").value, "");
     assert.match(selectByLabel(graph.container, "Header end cap").parentNode.getAttribute("style") || "", /display:\s*none/);
     assert.equal(JSON.parse(bedAssembly.getAttribute(api.attrs.BED_TEMPLATE_JSON)).headerEndCapPartId, "end_cap_1_2_barb");
     const rows = inputTextByLabel(graph.container, "Rows", "3");
     blurInput(rows);
     const template = api.__test.readBedAssemblyTemplateRecord(moduleCell, bedAssembly);
-    assert.equal(template.outletPartId, "half_barb_to_3_4_barb");
+    assert.equal(template.outletPartId, "half_barb_coupler"); // CHANGE
     assert.equal(template.headerEndCapPartId, "");
     assert.equal(template.irrigationType, "drip_tape"); // NEW
     assert.equal(bedAssembly.getAttribute("label"), "Drip tape 30.5 cm"); // CHANGE
@@ -4531,8 +4863,8 @@ test("bed assembly Exit closes before recipe field blur can rerender overlays", 
 test("bed assembly port-only HUD hides Exit and clears on graph selection without add-part UI", () => {
     const { api, graph, moduleCell, bed } = loadPlugin();
     api.writeCatalog(moduleCell, addDripTapeBomParts(sampleCatalog()));
-    const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 240, y: 120 });
     api.openIrrigationMode(moduleCell, { preserveViewport: true });
+    const bedAssembly = { assembly: createConfiguredDripTapeBedAssembly(api, graph, moduleCell, bed, { x: 240, y: 120 }) }; // CHANGE
     graph.setSelectionCell(bedAssembly.assembly);
     clickPort(graph.container, /Inlet 1 free/);
     assert.equal(graph.container.querySelector(".trellis-irrigation-add-part-picker"), null);
@@ -4588,9 +4920,10 @@ test("invalid bed template auto-apply preserves the previous saved layout", () =
 
 test("irrigation mode rendering does not write derived zone or path state", () => {
     const { api, graph, model, moduleCell, bed } = loadPlugin();
-    api.writeCatalog(moduleCell, sampleCatalog());
+    api.writeCatalog(moduleCell, addDripTapeBomParts(sampleCatalog())); // CHANGE
     const source = api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "1/2", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 });
     const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 220 });
+    commitRecipeBedAssembly(api, moduleCell, bedAssembly.assembly, "render_readonly_bed", "drip_tape_bed", 2, "width", { inletPartId: "half_barb_coupler", rowPartId: "drip_tape_8mil_12in", rowTakeoffPartId: "barb_tee_1_2", rowEndCapPartId: "end_cap_1_2_barb", headerEndCapPartId: "end_cap_1_2_barb", emitterSpacingIn: 12 }); // NEW
     assert.equal(api.__test.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(source.assembly).getId(), role: "output", index: 0 }, { cellId: bedAssembly.assembly.getId(), role: "input", index: 0 }).ok, true);
     const writesBeforeOpen = model.valuesWritten;
     api.openIrrigationMode(moduleCell, { preserveViewport: true });
@@ -4659,12 +4992,13 @@ test("internal architecture facades expose domain seams without changing public 
 
 test("ZoneModel preserves inferred zones, manual overrides, ambiguous beds, and unzoned beds", () => {
     const { api, moduleCell, bed, bed2 } = loadPlugin();
-    const catalog = sampleCatalog();
+    const catalog = addDripTapeBomParts(sampleCatalog()); // CHANGE
     catalog.items.push(part("timer_two", "Two Zone Timer", "controller_timer", "in_stock", 40, 1, 2, "barb", "1/2", "barb", "1/2", { maxFlowGpm: 3 }, undefined, true));
     api.writeCatalog(moduleCell, catalog);
     const timer = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "timer_two"), { x: 30, y: 40 });
     const bedOne = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 180 });
     const bedTwo = api.__test.createBedAssembly(moduleCell, bed2, { x: 30, y: 320 });
+    commitRecipeBedAssembly(api, moduleCell, bedOne.assembly, "zone_bed_one", "drip_tape_bed", 2, "width", { inletPartId: "half_barb_coupler", rowPartId: "drip_tape_8mil_12in", rowTakeoffPartId: "barb_tee_1_2", rowEndCapPartId: "end_cap_1_2_barb", headerEndCapPartId: "end_cap_1_2_barb", emitterSpacingIn: 12 }); // NEW
     assert.equal(api.__test.ConnectorRules.createAssemblyConnection(moduleCell, { cellId: api.__test.firstAssemblyPart(timer.assembly).getId(), role: "output", index: 0 }, { cellId: bedOne.assembly.getId(), role: "input", index: 0 }).ok, true);
     const zones = api.__test.ZoneModel.sync(moduleCell);
     assert.equal(zones.length, 2);
@@ -4795,7 +5129,7 @@ test("HUD lifecycle actions mark selected pipe edges completed", () => {
     assert.equal(styleToken(pipeEdges[0].style, "strokeColor"), "#82b366");
     assert.equal(styleToken(pipeEdges[0].style, "dashed"), "1");
     const rows = api.__test.buildBomRows(moduleCell);
-    assert.equal(rows.rows.some(row => row.partId === "poly_distribution_1_2"), false);
+    assert.equal(rows.rows.some(row => row.partId === "poly_distribution_1_2"), true); // CHANGE
     assert.equal(rows.completedRows.some(row => row.partId === "poly_distribution_1_2"), true);
 });
 

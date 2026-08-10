@@ -23,6 +23,82 @@ Draw.loadPlugin(function (ui) {
     const TRELLIS_DIALOG_Z = 2000000000;
     const __YP_GLOBAL = window.__uslYearPlannerGlobal || (window.__uslYearPlannerGlobal = {});
 
+    function installTrellisInteractionModeController() {
+        window.Trellis = window.Trellis || {};
+        if (window.Trellis.interactionModes && window.Trellis.interactionModes.__trellisInteractionModeController) return window.Trellis.interactionModes;
+
+        let active = null;
+
+        function normalizeId(value) {
+            return String(value || "").trim();
+        }
+
+        function dispatchChanged(previous, next) {
+            if (!window.dispatchEvent) return;
+            try {
+                window.dispatchEvent(new CustomEvent("trellisInteractionModeChanged", {
+                    detail: {
+                        previousMode: previous && previous.mode || "",
+                        activeMode: next && next.mode || "",
+                        ownerId: next && next.ownerId || ""
+                    }
+                }));
+            } catch (_) { }
+        }
+
+        function closeActive(reason) {
+            const previous = active;
+            if (!previous) return false;
+            active = null;
+            try {
+                if (previous.hooks && typeof previous.hooks.close === "function") previous.hooks.close({ reason: reason || "closed" });
+            } finally {
+                dispatchChanged(previous, null);
+            }
+            return true;
+        }
+
+        const api = {
+            __trellisInteractionModeController: true,
+            request(mode, ownerId, hooks) {
+                const nextMode = normalizeId(mode);
+                const nextOwner = normalizeId(ownerId) || nextMode;
+                if (!nextMode) throw new Error("Interaction mode requires a mode id.");
+                if (active && active.mode === nextMode && active.ownerId === nextOwner) {
+                    active.hooks = hooks || {};
+                    return { mode: active.mode, ownerId: active.ownerId };
+                }
+                const previous = active;
+                if (previous) closeActive("replaced");
+                active = { mode: nextMode, ownerId: nextOwner, hooks: hooks || {} };
+                dispatchChanged(previous, active);
+                return { mode: active.mode, ownerId: active.ownerId };
+            },
+            release(mode, ownerId, reason) {
+                const requestedMode = normalizeId(mode);
+                const requestedOwner = normalizeId(ownerId) || requestedMode;
+                if (!active || active.mode !== requestedMode || active.ownerId !== requestedOwner) return false;
+                return closeActive(reason || "released");
+            },
+            closeActive,
+            getActive() {
+                return active ? { mode: active.mode, ownerId: active.ownerId } : null;
+            },
+            isActive(mode, ownerId) {
+                if (!active) return false;
+                const requestedMode = normalizeId(mode);
+                const requestedOwner = normalizeId(ownerId);
+                if (requestedMode && active.mode !== requestedMode) return false;
+                if (requestedOwner && active.ownerId !== requestedOwner) return false;
+                return true;
+            }
+        };
+        window.Trellis.interactionModes = api;
+        return api;
+    }
+
+    installTrellisInteractionModeController();
+
     // -------------------- SessionController --------------------
     /**
      * Owns the single active modal session and all listener/DOM cleanup attached to it.
@@ -834,7 +910,7 @@ Draw.loadPlugin(function (ui) {
                     : null;
 
                 const hasActualSeries = !!actualSeries && actualSeries.some(v => Number(v) > 0);
-                const useActual = crop.useActualHarvest !== false;
+                const useActual = String(crop.harvestWindowSource || "") === "actual_harvest";
 
                 if (useActual && hasActualSeries) {
                     for (let i = 0; i < n; i++) {
@@ -991,6 +1067,17 @@ Draw.loadPlugin(function (ui) {
             for (const priority of ["committed", "target", "optional"]) {
                 perPriority.set(priority, aggregateDemandResults(Array.from(perDemandLine.values()).filter(result => result.priority === priority)));
             }
+            const committedAggregate = perPriority.get("committed");
+            if (committedAggregate && csaWeekly) {
+                committedAggregate.lineIds.push("__csa__");
+                for (let i = 0; i < n; i++) {
+                    committedAggregate.target[i] += Math.max(0, Number(csaWeekly.target[i]) || 0);
+                    committedAggregate.usableSupply[i] += Math.max(0, Number(csaWeekly.usableSupply[i]) || 0);
+                    committedAggregate.short[i] += Math.max(0, Number(csaWeekly.short[i]) || 0);
+                    committedAggregate.potentialRevenue[i] += Math.max(0, Number(csaWeekly.potentialRevenue[i]) || 0);
+                    committedAggregate.fulfilledRevenue[i] += Math.max(0, Number(csaWeekly.fulfilledRevenue[i]) || 0);
+                }
+            }
 
             // Aggregate all per-crop series into total series before returning.
             for (const v of perCrop.values()) {
@@ -1087,6 +1174,7 @@ Draw.loadPlugin(function (ui) {
         const DEMAND_CHANNEL_TYPES = ["farm_store", "restaurant", "market", "wholesale", "other"];
         const DEMAND_FREQUENCIES = ["day", "week", "month"];
         const DEMAND_PRIORITIES = ["committed", "target", "optional"];
+        const HARVEST_WINDOW_SOURCES = ["manual", "actual_harvest", "sowing_window_estimate"]; // CHANGE: persist the selected harvest-window authority.
 
         function clonePlain(obj) {
             return JSON.parse(JSON.stringify(obj || {}));
@@ -1137,6 +1225,27 @@ Draw.loadPlugin(function (ui) {
             }
         }
 
+        function normalizeHarvestWindowSourceForRuntime(crop) {
+            if (!crop) return "manual";
+            const missingSource = !HARVEST_WINDOW_SOURCES.includes(String(crop.harvestWindowSource || ""))
+                || crop.__harvestWindowSourceMissing === true;
+            const source = missingSource
+                ? (crop.useActualHarvest === true ? "actual_harvest" : "manual")
+                : String(crop.harvestWindowSource);
+            crop.harvestWindowSource = source;
+            crop.useActualHarvest = source === "actual_harvest";
+            crop.__harvestWindowSourceMissing = missingSource; // CHANGE: allows first estimate response to default legacy/manual rows once.
+            return source;
+        }
+
+        function setCropHarvestWindowSource(crop, source) {
+            if (!crop) return "manual";
+            crop.harvestWindowSource = HARVEST_WINDOW_SOURCES.includes(String(source || "")) ? String(source) : "manual";
+            crop.useActualHarvest = crop.harvestWindowSource === "actual_harvest";
+            crop.__harvestWindowSourceMissing = false;
+            return crop.harvestWindowSource;
+        }
+
         function normalizeForRuntime(plan, year) {
             const normalized = plan && typeof plan === "object" ? plan : {};
             normalized.version = 2;
@@ -1160,6 +1269,7 @@ Draw.loadPlugin(function (ui) {
 
             for (const crop of normalized.crops) {
                 normalizeYieldFieldsForRuntime(crop);
+                normalizeHarvestWindowSourceForRuntime(crop);
                 crop.packages = Array.isArray(crop.packages) ? crop.packages : [];
                 if (!Number.isFinite(Number(crop.shelfLifeDays))) crop.shelfLifeDays = 0;
                 if (!Number.isFinite(Number(crop.germRate)) || Number(crop.germRate) <= 0 || Number(crop.germRate) > 1) {
@@ -1183,9 +1293,12 @@ Draw.loadPlugin(function (ui) {
                 delete crop.__sync_lastAvailEnd;
                 delete crop.__kgpp_lastAuto;
                 delete crop.__baseKgPerPlant;
+                delete crop.__harvestWindowSourceMissing;
                 delete crop.savePackagesAsDefault;
 
                 crop.kgPerPlantMode = crop.kgPerPlantMode === "manual" ? "manual" : "auto";
+                crop.harvestWindowSource = HARVEST_WINDOW_SOURCES.includes(String(crop.harvestWindowSource || "")) ? String(crop.harvestWindowSource) : "manual";
+                crop.useActualHarvest = crop.harvestWindowSource === "actual_harvest";
                 delete crop.market;
             }
             for (const demandLine of (plan.demands || [])) delete demandLine.price;
@@ -1383,6 +1496,7 @@ Draw.loadPlugin(function (ui) {
             getCropIdentityKey,
             findDuplicateCrop,
             findFirstDuplicateCrop,
+            setCropHarvestWindowSource,
             validateCrop,
             validateDemand,
             validateCsa,
@@ -2036,6 +2150,48 @@ Draw.loadPlugin(function (ui) {
             return Number.isFinite(startMs) && Number.isFinite(endMs) && startMs <= endMs && startMs < yearEndExMs && PlanMath.addDaysMs(endMs, 1) > yearStartMs;
         }
 
+        function hasEstimatedHarvestWindow(crop) {
+            return !!crop
+                && PlanMath.hasYmd(crop.estimatedHarvestStart)
+                && PlanMath.hasYmd(crop.estimatedHarvestEnd)
+                && String(crop.estimatedHarvestStart) <= String(crop.estimatedHarvestEnd);
+        }
+
+        function applyEstimatedHarvestWindow(crop) {
+            if (!hasEstimatedHarvestWindow(crop)) return false;
+            crop.harvestStart = crop.estimatedHarvestStart; // CHANGE: source-driven dates remain visible in the existing date fields.
+            crop.harvestEnd = crop.estimatedHarvestEnd; // CHANGE: source-driven dates remain visible in the existing date fields.
+            return true;
+        }
+
+        function resolveCropHarvestWindowSource(crop, hasActualSeries, exactRange) {
+            const source = String(crop && crop.harvestWindowSource || "manual");
+            const hasEstimate = hasEstimatedHarvestWindow(crop);
+
+            if (source === "actual_harvest" && hasActualSeries && exactRange) {
+                crop.harvestStart = exactRange.start;
+                crop.harvestEnd = exactRange.end;
+                PlanSchema.setCropHarvestWindowSource(crop, "actual_harvest");
+                return "actual_harvest";
+            }
+
+            if (source === "sowing_window_estimate" && hasEstimate) {
+                applyEstimatedHarvestWindow(crop);
+                PlanSchema.setCropHarvestWindowSource(crop, "sowing_window_estimate");
+                return "sowing_window_estimate";
+            }
+
+            const manualBlankWindow = source === "manual" && !PlanMath.hasYmd(crop.harvestStart) && !PlanMath.hasYmd(crop.harvestEnd);
+            if (!hasActualSeries && hasEstimate && (crop.__harvestWindowSourceMissing || manualBlankWindow)) {
+                applyEstimatedHarvestWindow(crop);
+                PlanSchema.setCropHarvestWindowSource(crop, "sowing_window_estimate");
+                return "sowing_window_estimate";
+            }
+
+            PlanSchema.setCropHarvestWindowSource(crop, "manual");
+            return "manual";
+        }
+
         function buildCarryoverCrops(moduleCell, year, plan) {
             const priorYear = Number(year) - 1;
             if (!Number.isFinite(priorYear) || priorYear < 1900) return [];
@@ -2056,7 +2212,7 @@ Draw.loadPlugin(function (ui) {
                 source.id = currentCrop ? currentCrop.id : `carryover:${priorYear}:${priorCrop.id || key || carryovers.length}`;
                 source.__carryover = true;
                 source.__carryoverFromYear = priorYear;
-                source.useActualHarvest = false;
+                PlanSchema.setCropHarvestWindowSource(source, "manual"); // CHANGE: carryover supply uses persisted/manual dates, never live actual-harvest mode.
                 carryovers.push(source);
             }
             return carryovers;
@@ -2222,12 +2378,9 @@ Draw.loadPlugin(function (ui) {
                 });
                 crop.__actualHarvestWeeklyKg = diagramFacts.actualHarvestSeriesByCropKey.get(key)
                     || Array(weekStarts.length).fill(0);
-                if (!hasPositiveActualHarvestSeries(crop.__actualHarvestWeeklyKg)) crop.useActualHarvest = false;
                 const exactRange = diagramFacts.actualHarvestDateRangeByCropKey.get(key);
-                if (crop.useActualHarvest !== false && exactRange) {
-                    crop.harvestStart = exactRange.start;
-                    crop.harvestEnd = exactRange.end;
-                }
+                const hasActualSeries = hasPositiveActualHarvestSeries(crop.__actualHarvestWeeklyKg);
+                resolveCropHarvestWindowSource(crop, hasActualSeries, exactRange); // CHANGE: choose manual, actual, or sowing-window estimate before downstream math.
             }
 
             for (const crop of plan.crops) syncCropDatesIfEnabled(plan, crop, beforeHarvestById.get(crop.id));
@@ -2260,6 +2413,10 @@ Draw.loadPlugin(function (ui) {
                     requiredSeeds,
                     harvestStart: crop.harvestStart || "",
                     harvestEnd: crop.harvestEnd || "",
+                    harvestWindowSource: crop.harvestWindowSource || "manual",
+                    estimatedHarvestStart: crop.estimatedHarvestStart || "",
+                    estimatedHarvestEnd: crop.estimatedHarvestEnd || "",
+                    estimatedHarvestUnavailableReason: crop.estimatedHarvestUnavailableReason || "",
                     actualHarvestWeeklyKg: crop.__actualHarvestWeeklyKg
                 });
             }
@@ -2275,8 +2432,173 @@ Draw.loadPlugin(function (ui) {
             };
         }
 
-        return { recalculate, cropAvailableEndYmd, syncCropDatesIfEnabled, autoFillAndClampCsa, addDaysYmd };
+        return { recalculate, cropAvailableEndYmd, syncCropDatesIfEnabled, autoFillAndClampCsa, addDaysYmd, hasEstimatedHarvestWindow };
     })();
+
+    const PlanningCore = (() => {
+        function clonePlan(plan, year) {
+            const fallbackYear = Number(year || plan && plan.year) || new Date().getFullYear();
+            const copy = PlanSchema.clonePlain(plan || PlanSchema.createEmptyPlan(fallbackYear));
+            PlanSchema.normalizeForRuntime(copy, fallbackYear);
+            return copy;
+        }
+
+        function sumSeries(series) {
+            return (Array.isArray(series) ? series : []).reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
+        }
+
+        function summarizeAggregate(aggregate) {
+            return {
+                targetKg: sumSeries(aggregate && aggregate.target),
+                usableSupplyKg: sumSeries(aggregate && aggregate.usableSupply),
+                shortKg: sumSeries(aggregate && aggregate.short),
+                potentialRevenue: sumSeries(aggregate && aggregate.potentialRevenue),
+                fulfilledRevenue: sumSeries(aggregate && aggregate.fulfilledRevenue)
+            };
+        }
+
+        function buildCropSummaries(plan, weekly) {
+            return ((plan && plan.crops) || []).map(crop => {
+                const arrays = weekly && weekly.perCrop && weekly.perCrop.get(String(crop.id));
+                const targetKg = sumSeries(arrays && arrays.target);
+                const shortKg = sumSeries(arrays && arrays.short);
+                return {
+                    cropId: String(crop.id || ""),
+                    plantId: String(crop.plantId || ""),
+                    varietyId: String(crop.varietyId || ""),
+                    label: [crop.plant, crop.variety].filter(Boolean).join(" - ") || String(crop.id || ""),
+                    targetKg,
+                    harvestKg: sumSeries(arrays && arrays.supply),
+                    usableSupplyKg: sumSeries(arrays && arrays.usableSupply),
+                    shortKg,
+                    surplusKg: sumSeries(arrays && arrays.surplus),
+                    status: targetKg <= EPS ? "no_demand" : (shortKg > EPS ? "short" : "satisfied")
+                };
+            });
+        }
+
+        function buildWeekSummaries(plan, weekly) {
+            const weeks = weekly && Array.isArray(weekly.weeks) ? weekly.weeks : [];
+            return weeks.map((week, weekIndex) => {
+                const cropShortages = [];
+                for (const crop of ((plan && plan.crops) || [])) {
+                    const arrays = weekly.perCrop && weekly.perCrop.get(String(crop.id));
+                    const shortKg = Math.max(0, Number(arrays && arrays.short && arrays.short[weekIndex]) || 0);
+                    if (shortKg > EPS) cropShortages.push({ cropId: String(crop.id || ""), label: [crop.plant, crop.variety].filter(Boolean).join(" - ") || String(crop.id || ""), shortKg });
+                }
+                return {
+                    weekIndex,
+                    start: week && week.ymd || "",
+                    targetKg: Math.max(0, Number(weekly.targetTotal && weekly.targetTotal[weekIndex]) || 0),
+                    shortKg: Math.max(0, Number(weekly.shortTotal && weekly.shortTotal[weekIndex]) || 0),
+                    cropShortages
+                };
+            });
+        }
+
+        function coverageFromRuntime(runtime, warnings) {
+            const plan = runtime && runtime.plan;
+            const weekly = runtime && runtime.weekly;
+            const prioritySummaries = {};
+            for (const priority of ["committed", "target", "optional"]) {
+                prioritySummaries[priority] = summarizeAggregate(weekly && weekly.perPriority && weekly.perPriority.get(priority));
+            }
+            return {
+                plan,
+                year: runtime && runtime.year,
+                weekStarts: runtime && runtime.weekStarts || weekly && weekly.weeks || [],
+                weekly,
+                cropTotals: runtime && runtime.cropTotals || PlanMath.computePlanCropTotals(plan, weekly),
+                warnings: Array.from(warnings || runtime && runtime.warnings || []),
+                derivedByCropId: runtime && runtime.derivedByCropId || new Map(),
+                cropSummaries: buildCropSummaries(plan, weekly),
+                weekSummaries: buildWeekSummaries(plan, weekly),
+                prioritySummaries,
+                totals: {
+                    targetKg: sumSeries(weekly && weekly.targetTotal),
+                    harvestKg: sumSeries(weekly && weekly.supplyTotal),
+                    usableSupplyKg: sumSeries(weekly && weekly.usableSupplyTotal),
+                    shortKg: sumSeries(weekly && weekly.shortTotal),
+                    surplusKg: sumSeries(weekly && weekly.surplusTotal)
+                }
+            };
+        }
+
+        function computeYearCoverage(input) {
+            const options = input || {};
+            const plan = clonePlan(options.plan, options.year);
+            const year = Number(options.year || plan.year);
+            if (options.moduleCell) return coverageFromRuntime(PlanRuntimeService.recalculate(options.moduleCell, year, plan));
+            const warnings = [];
+            const weekly = PlanMath.computePlanWeekly(plan, warnings);
+            return coverageFromRuntime({
+                plan,
+                year,
+                weekStarts: weekly.weeks,
+                weekly,
+                cropTotals: PlanMath.computePlanCropTotals(plan, weekly),
+                warnings,
+                derivedByCropId: new Map()
+            }, warnings);
+        }
+
+        function candidateHarvestSeries(plan, candidate, weekly) {
+            const weeks = weekly && weekly.weeks || PlanMath.buildWeekStartsForYearLocal(Number(plan.year), plan.weekStartDow);
+            const series = Array(weeks.length).fill(0);
+            const kgPerPlant = Number(candidate && candidate.kgPerPlant);
+            const plantCount = Math.max(0, Math.trunc(Number(candidate && candidate.plantCount) || 0));
+            if (plantCount <= 0 || !Number.isFinite(kgPerPlant) || kgPerPlant <= 0) return series;
+            PlanMath.addTotalKgAcrossWindowProrated(series, weeks, candidate.harvestStart, candidate.harvestEnd, plantCount * kgPerPlant, Number(plan.year));
+            return series;
+        }
+
+        function simulateCandidatePlanting(input) {
+            const base = computeYearCoverage(input || {});
+            const candidate = input && input.candidate || {};
+            const nextPlan = clonePlan(base.plan, base.year);
+            const crop = PlanMath.findCrop(nextPlan, candidate.cropId);
+            if (!crop) return { base, coverage: base, demandServedKg: 0, projectedSurplusKg: 0, reason: "missing_crop" };
+            const addSeries = candidateHarvestSeries(nextPlan, candidate, base.weekly);
+            const existingSeries = Array.isArray(crop.__actualHarvestWeeklyKg) ? crop.__actualHarvestWeeklyKg : Array(addSeries.length).fill(0);
+            crop.__actualHarvestWeeklyKg = addSeries.map((value, index) => Math.max(0, Number(value) || 0) + Math.max(0, Number(existingSeries[index]) || 0));
+            PlanSchema.setCropHarvestWindowSource(crop, "actual_harvest"); // CHANGE: simulated candidate supply behaves like an actual harvest source.
+            if (PlanMath.hasYmd(candidate.harvestStart)) crop.harvestStart = candidate.harvestStart;
+            if (PlanMath.hasYmd(candidate.harvestEnd)) crop.harvestEnd = candidate.harvestEnd;
+            const coverage = computeYearCoverage({ plan: nextPlan, year: base.year });
+            return {
+                base,
+                coverage,
+                demandServedKg: Math.max(0, base.totals.shortKg - coverage.totals.shortKg),
+                projectedSurplusKg: Math.max(0, coverage.totals.surplusKg - base.totals.surplusKg)
+            };
+        }
+
+        function recommendPlantCount(input) {
+            const coverage = computeYearCoverage(input || {});
+            const candidate = input && input.candidate || {};
+            const crop = PlanMath.findCrop(coverage.plan, candidate.cropId);
+            const kgPerPlant = Number(candidate.kgPerPlant ?? (crop && crop.kgPerPlant));
+            if (!crop || !Number.isFinite(kgPerPlant) || kgPerPlant <= 0) return { plantCount: 0, reachableShortKg: 0, reason: "missing_yield" };
+            const arrays = coverage.weekly && coverage.weekly.perCrop && coverage.weekly.perCrop.get(String(crop.id));
+            const weeks = coverage.weekStarts || [];
+            const shelfWeeks = Math.max(0, Math.ceil(Math.max(0, Number(candidate.shelfLifeDays ?? crop.shelfLifeDays) || 0) / 7));
+            const range = PlanMath.weekRangeForWindowClamped(weeks, candidate.harvestStart, candidate.harvestEnd);
+            if (!range) return { plantCount: 0, reachableShortKg: 0, reason: "no_reachable_horizon" };
+            let reachableShortKg = 0;
+            const end = Math.min(weeks.length - 1, range.b + shelfWeeks);
+            for (let i = range.a; i <= end; i++) reachableShortKg += Math.max(0, Number(arrays && arrays.short && arrays.short[i]) || 0);
+            return { plantCount: Math.max(0, Math.ceil(reachableShortKg / kgPerPlant)), reachableShortKg };
+        }
+
+        function loadPlanForYear(moduleCell, year) {
+            return PlanRepository.loadPlanForYear(moduleCell, year);
+        }
+
+        return { computeYearCoverage, simulateCandidatePlanting, recommendPlantCount, summarizeAggregate, loadPlanForYear };
+    })();
+
+    window.USL = window.USL || {};
+    window.USL.planningCore = Object.assign({}, window.USL.planningCore, PlanningCore);
 
     // -------------------- Dashboard model --------------------
     /**
@@ -2485,6 +2807,7 @@ Draw.loadPlugin(function (ui) {
             let shortKg = 0;
             let surplusKg = 0;
             let actualHarvestActive = false;
+            let estimatedHarvestActive = false;
             let manualHarvestDates = false;
 
             for (const crop of ((plan && plan.crops) || [])) {
@@ -2521,11 +2844,13 @@ Draw.loadPlugin(function (ui) {
                 shortKg += shortage;
                 surplusKg += surplus;
                 const derived = runtime && runtime.derivedByCropId && runtime.derivedByCropId.get(String(crop.id));
-                actualHarvestActive = actualHarvestActive || (crop.useActualHarvest !== false
+                const harvestWindowSource = String(crop.harvestWindowSource || "manual");
+                actualHarvestActive = actualHarvestActive || (harvestWindowSource === "actual_harvest"
                     && !!derived
                     && Array.isArray(derived.actualHarvestWeeklyKg)
                     && derived.actualHarvestWeeklyKg.some(value => Number(value) > 0));
-                manualHarvestDates = manualHarvestDates || crop.useActualHarvest === false;
+                estimatedHarvestActive = estimatedHarvestActive || harvestWindowSource === "sowing_window_estimate";
+                manualHarvestDates = manualHarvestDates || harvestWindowSource === "manual";
 
                 cropMetrics.push({
                     crop,
@@ -2597,6 +2922,7 @@ Draw.loadPlugin(function (ui) {
             if (cropMetrics.some(metric => metric.status === "Surplus")) badges.push("Surplus");
             if (cropMetrics.length > 0 && cropMetrics.every(metric => metric.status === "OK" || metric.status === "No demand")) badges.push("OK");
             if (actualHarvestActive) badges.push("Actual harvest active");
+            if (estimatedHarvestActive) badges.push("Sowing-window estimates");
             if (manualHarvestDates) badges.push("Manual harvest dates");
             if (settings.dirty) badges.push("Unsaved");
 
@@ -2804,28 +3130,63 @@ Draw.loadPlugin(function (ui) {
         return { rows, weekCenters, plotLeft: padLeft, plotRight, step, maxValue };
     }
 
-    function renderActualHarvestTimeline(hostEl, weekStarts, weeklyKg) {
+    function harvestTimelineMarkers(weekStarts, crop) {
+        const weeks = Array.isArray(weekStarts) ? weekStarts : [];
+        const markers = new Map();
+        const addMarker = (field, label) => {
+            const ymd = crop && crop[field];
+            if (!PlanMath.hasYmd(ymd)) return;
+            const index = PlanMath.weekIndexForDate(weeks, ymd);
+            if (index < 0) return;
+            const existing = markers.get(index) || [];
+            existing.push({ label, ymd });
+            markers.set(index, existing);
+        };
+        addMarker("harvestStart", "S");
+        addMarker("harvestEnd", "E");
+        return markers;
+    }
+
+    function renderActualHarvestTimeline(hostEl, weekStarts, weeklyKg, crop) {
         if (!hostEl) return;
         const weeks = Array.isArray(weekStarts) ? weekStarts : [];
         const series = Array.isArray(weeklyKg) ? weeklyKg : [];
         const maxValue = Math.max(0, ...series.map(value => Number(value) || 0));
+        const markersByWeek = harvestTimelineMarkers(weeks, crop);
         hostEl.innerHTML = "";
         hostEl.className = "yp-harvest-timeline";
         hostEl.style.gridTemplateColumns = `repeat(${Math.max(1, weeks.length)}, minmax(4px, 1fr))`;
-        if (maxValue <= 0) {
+        if (maxValue <= 0 && !markersByWeek.size) {
             hostEl.className = "yp-harvest-empty";
             hostEl.textContent = "No actual harvest recorded for this crop/year.";
             return;
         }
+        if (maxValue <= 0) {
+            const emptyNote = document.createElement("div");
+            emptyNote.className = "yp-harvest-empty yp-harvest-empty-note";
+            emptyNote.textContent = "No actual harvest recorded for this crop/year.";
+            hostEl.appendChild(emptyNote); // harvest-window marker empty state
+        }
         for (let index = 0; index < weeks.length; index++) {
             const value = Math.max(0, Number(series[index]) || 0);
             const intensity = maxValue > 0 ? Math.min(1, value / maxValue) : 0;
+            const week = document.createElement("div");
+            week.className = "yp-harvest-week";
             const bar = document.createElement("div");
             bar.className = "yp-harvest-bar";
             bar.style.height = `${Math.max(3, Math.round(4 + 30 * intensity))}px`;
             bar.style.background = `rgba(48,105,64,${0.14 + 0.76 * intensity})`;
             bar.title = `${weeks[index] && weeks[index].iso || ""} - ${value.toFixed(2)} kg actual harvest`;
-            hostEl.appendChild(bar);
+            week.appendChild(bar);
+            const markers = markersByWeek.get(index) || [];
+            if (markers.length) {
+                const marker = document.createElement("div");
+                marker.className = `yp-harvest-marker ${markers.length > 1 ? "yp-harvest-marker-combined" : (markers[0].label === "S" ? "yp-harvest-marker-start" : "yp-harvest-marker-end")}`;
+                marker.setAttribute("data-label", markers.map(item => item.label).join("/"));
+                marker.title = markers.map(item => `${item.label === "S" ? "Harvest start" : "Harvest end"} ${item.ymd}`).join(" / ");
+                week.appendChild(marker); // harvest-window marker
+            }
+            hostEl.appendChild(week);
         }
     }
 
@@ -2877,9 +3238,19 @@ Draw.loadPlugin(function (ui) {
                 .yp-derived-value{font-size:17px;font-weight:700;color:var(--yp-neutral-900);margin-top:3px}
                 .yp-harvest-timeline-section{margin-top:14px;border-top:1px solid var(--yp-neutral-300);padding-top:10px}
                 .yp-harvest-timeline-title{font-weight:700;margin-bottom:7px}
-                .yp-harvest-timeline{display:grid;grid-template-columns:repeat(52,minmax(4px,1fr));gap:2px;align-items:end;min-height:34px}
-                .yp-harvest-bar{height:24px;min-width:4px;border:1px solid rgba(0,0,0,.16);border-radius:2px 2px 0 0;background:rgba(48,105,64,.14)}
+                .yp-harvest-timeline{display:grid;grid-template-columns:repeat(52,minmax(4px,1fr));gap:2px;align-items:end;min-height:50px;padding-top:16px}
+                .yp-harvest-week{position:relative;display:flex;align-items:flex-end;min-width:4px;min-height:34px}
+                .yp-harvest-bar{height:24px;width:100%;min-width:4px;border:1px solid rgba(0,0,0,.16);border-radius:2px 2px 0 0;background:rgba(48,105,64,.14)}
+                .yp-harvest-marker{position:absolute;left:50%;top:-13px;bottom:0;width:0;border-left:2px solid #7a3f12;transform:translateX(-1px);pointer-events:none}
+                .yp-harvest-marker::before{content:attr(data-label);position:absolute;top:-1px;left:50%;transform:translateX(-50%);min-width:12px;height:12px;line-height:12px;border-radius:6px;background:#7a3f12;color:#fff;font-size:9px;font-weight:700;text-align:center}
+                .yp-harvest-marker-start{border-left-color:#1f5f99}
+                .yp-harvest-marker-start::before{background:#1f5f99}
+                .yp-harvest-marker-end{border-left-color:#9a3d2f}
+                .yp-harvest-marker-end::before{background:#9a3d2f}
+                .yp-harvest-marker-combined{border-left-color:#5c4a8a}
+                .yp-harvest-marker-combined::before{background:#5c4a8a;min-width:22px}
                 .yp-harvest-empty{color:var(--yp-neutral-700);font-size:11px}
+                .yp-harvest-empty-note{grid-column:1/-1;margin-bottom:2px}
                 .yp-yield-hint{display:flex;gap:6px;align-items:center;flex-wrap:wrap;color:#666;font-size:11px;margin-top:4px}
                 .yp-package-row{display:grid;grid-template-columns:repeat(4,minmax(88px,1fr)) auto;gap:8px;align-items:end;padding:8px;border:1px solid #e1e1e1;border-radius:7px;background:#fcfcfc}
                 .yp-package-field{display:flex;flex-direction:column;gap:4px;min-width:0}
@@ -3449,6 +3820,10 @@ Draw.loadPlugin(function (ui) {
                 return !!derived && Array.isArray(derived.actualHarvestWeeklyKg) && derived.actualHarvestWeeklyKg.some(value => Number(value) > 0);
             }
 
+            function hasSowingWindowEstimateForCrop(crop) {
+                return PlanRuntimeService.hasEstimatedHarvestWindow(crop);
+            }
+
             function selectedCrop() {
                 return (plan.crops || []).find(crop => String(crop.id) === String(state.selectedCropId)) || null;
             }
@@ -3756,13 +4131,28 @@ Draw.loadPlugin(function (ui) {
                 if (editorRefs.seeds) editorRefs.seeds.textContent = String(metric && Number.isFinite(metric.seedsReq) && metric.seedsReq > 0 ? Math.ceil(metric.seedsReq) : 0);
                 if (editorRefs.harvestStart) editorRefs.harvestStart.value = PlanMath.hasYmd(crop.harvestStart) ? crop.harvestStart : "";
                 if (editorRefs.harvestEnd) editorRefs.harvestEnd.value = PlanMath.hasYmd(crop.harvestEnd) ? crop.harvestEnd : "";
-                if (editorRefs.useActual) { editorRefs.useActual.disabled = !hasActualHarvestForCrop(crop); editorRefs.useActual.checked = crop.useActualHarvest !== false && !editorRefs.useActual.disabled; }
-                if (editorRefs.harvestStart && editorRefs.harvestEnd) editorRefs.harvestStart.disabled = editorRefs.harvestEnd.disabled = !!(editorRefs.useActual && editorRefs.useActual.checked);
+                const source = String(crop.harvestWindowSource || "manual");
+                const actualAvailable = hasActualHarvestForCrop(crop);
+                const estimateAvailable = hasSowingWindowEstimateForCrop(crop);
+                if (editorRefs.useActual) {
+                    editorRefs.useActual.checked = source === "actual_harvest" && actualAvailable;
+                    editorRefs.useActual.disabled = !actualAvailable || source === "sowing_window_estimate";
+                }
+                if (editorRefs.useSowingEstimate) {
+                    editorRefs.useSowingEstimate.checked = source === "sowing_window_estimate" && estimateAvailable;
+                    editorRefs.useSowingEstimate.disabled = !estimateAvailable || source === "actual_harvest";
+                }
+                if (editorRefs.estimateMessage) {
+                    editorRefs.estimateMessage.textContent = estimateAvailable
+                        ? `Estimate ${crop.estimatedHarvestStart} to ${crop.estimatedHarvestEnd}`
+                        : (crop.estimatedHarvestUnavailableReason ? `Estimate unavailable: ${crop.estimatedHarvestUnavailableReason}` : "Estimate unavailable");
+                }
+                if (editorRefs.harvestStart && editorRefs.harvestEnd) editorRefs.harvestStart.disabled = editorRefs.harvestEnd.disabled = source !== "manual";
                 if (editorRefs.harvestStart && editorRefs.harvestStart.__syncPairedDateState) editorRefs.harvestStart.__syncPairedDateState();
                 if (editorRefs.yieldHint) updateYieldHint(crop, editorRefs.yieldHint, editorRefs.resetYield);
                 if (editorRefs.harvestTimeline && runtime) {
                     const derived = runtime.derivedByCropId.get(String(crop.id));
-                    renderActualHarvestTimeline(editorRefs.harvestTimeline, runtime.weekStarts, derived ? derived.actualHarvestWeeklyKg : []);
+                    renderActualHarvestTimeline(editorRefs.harvestTimeline, runtime.weekStarts, derived ? derived.actualHarvestWeeklyKg : [], crop);
                 }
             }
 
@@ -4091,21 +4481,39 @@ Draw.loadPlugin(function (ui) {
                 const methodHost = document.createElement("div");
                 methodHost.appendChild(method); methodHost.appendChild(methodDiagnostic);
                 const useActual = document.createElement("input");
-                useActual.type = "checkbox"; useActual.checked = crop.useActualHarvest !== false;
+                useActual.type = "checkbox"; useActual.checked = crop.harvestWindowSource === "actual_harvest";
                 setYearPlanField(useActual, "useActualHarvest", { cropId: crop.id });
+                const useSowingEstimate = document.createElement("input");
+                useSowingEstimate.type = "checkbox"; useSowingEstimate.checked = crop.harvestWindowSource === "sowing_window_estimate";
+                setYearPlanField(useSowingEstimate, "useSowingWindowEstimate", { cropId: crop.id });
                 const syncAvailability = document.createElement("input");
                 syncAvailability.type = "checkbox"; syncAvailability.checked = !!crop.syncharvest;
+                setYearPlanField(syncAvailability, "syncharvest", { cropId: crop.id });
                 const useActualLabel = document.createElement("label");
                 useActualLabel.className = "yp-row"; useActualLabel.appendChild(useActual); useActualLabel.appendChild(document.createTextNode("Use actual harvest"));
                 useActualLabel.title = "Use diagram actual harvest records for this crop when available; harvest dates become diagram-driven.";
                 useActual.title = useActualLabel.title;
+                const estimateLabel = document.createElement("label");
+                estimateLabel.className = "yp-row"; estimateLabel.appendChild(useSowingEstimate); estimateLabel.appendChild(document.createTextNode("Use sowing-window estimate"));
+                estimateLabel.title = "Use the scheduler's broad harvest window from feasible sowing dates; harvest dates become estimate-driven.";
+                useSowingEstimate.title = estimateLabel.title;
+                const estimateMessage = document.createElement("div");
+                estimateMessage.className = "yp-harvest-source-note";
+                estimateMessage.style.cssText = "grid-column:1/-1;color:#666;font-size:11px;";
                 const syncLabel = document.createElement("label");
                 syncLabel.className = "yp-row"; syncLabel.appendChild(syncAvailability); syncLabel.appendChild(document.createTextNode("Sync demand to harvest window"));
                 syncLabel.title = "When the crop harvest window changes, update matching demand and CSA dates to stay inside that window.";
                 syncAvailability.title = syncLabel.title;
-                useActual.disabled = !hasActualHarvestForCrop(crop);
-                if (useActual.disabled) useActual.checked = false;
-                harvestStart.disabled = harvestEnd.disabled = useActual.checked;
+                const actualAvailable = hasActualHarvestForCrop(crop);
+                const estimateAvailable = hasSowingWindowEstimateForCrop(crop);
+                useActual.checked = crop.harvestWindowSource === "actual_harvest" && actualAvailable;
+                useSowingEstimate.checked = crop.harvestWindowSource === "sowing_window_estimate" && estimateAvailable;
+                useActual.disabled = !actualAvailable || useSowingEstimate.checked;
+                useSowingEstimate.disabled = !estimateAvailable || useActual.checked;
+                harvestStart.disabled = harvestEnd.disabled = crop.harvestWindowSource !== "manual";
+                estimateMessage.textContent = estimateAvailable
+                    ? `Estimate ${crop.estimatedHarvestStart} to ${crop.estimatedHarvestEnd}`
+                    : (crop.estimatedHarvestUnavailableReason ? `Estimate unavailable: ${crop.estimatedHarvestUnavailableReason}` : "Estimate unavailable");
                 addField(grid, "Plant", plant);
                 addField(grid, "Variety", varietyRow);
                 addField(grid, "Planting method", methodHost);
@@ -4115,6 +4523,8 @@ Draw.loadPlugin(function (ui) {
                 addField(grid, "Harvest end", harvestEnd);
                 addField(grid, "Shelf life (days)", shelf);
                 grid.appendChild(useActualLabel);
+                grid.appendChild(estimateLabel);
+                grid.appendChild(estimateMessage);
                 grid.appendChild(syncLabel);
                 content.appendChild(grid);
                 const totals = document.createElement("div");
@@ -4132,7 +4542,7 @@ Draw.loadPlugin(function (ui) {
                 const timeline = document.createElement("div");
                 timelineSection.appendChild(timelineTitle); timelineSection.appendChild(timeline);
                 content.appendChild(timelineSection);
-                editorRefs = { ...editorRefs, variety, actual: actualTile.valueEl, required: requiredTile.valueEl, seeds: seedsTile.valueEl, harvestStart, harvestEnd, method, useActual, yieldHint, resetYield, harvestTimeline: timeline };
+                editorRefs = { ...editorRefs, variety, actual: actualTile.valueEl, required: requiredTile.valueEl, seeds: seedsTile.valueEl, harvestStart, harvestEnd, method, useActual, useSowingEstimate, estimateMessage, yieldHint, resetYield, harvestTimeline: timeline };
                 loadVarieties(crop, variety);
                 loadMethods(crop, method, methodDiagnostic);
                 updateYieldHint(crop, yieldHint, resetYield);
@@ -4174,7 +4584,18 @@ Draw.loadPlugin(function (ui) {
                     renderSelectedEditor();
                     refreshDerived();
                 });
-                useActual.addEventListener("change", () => { crop.useActualHarvest = useActual.checked; harvestStart.disabled = harvestEnd.disabled = useActual.checked; refreshDerived(); });
+                useActual.addEventListener("change", () => {
+                    PlanSchema.setCropHarvestWindowSource(crop, useActual.checked ? "actual_harvest" : "manual"); // CHANGE: actual harvest and sowing-window estimate are mutually exclusive sources.
+                    refreshDerived();
+                });
+                useSowingEstimate.addEventListener("change", () => {
+                    PlanSchema.setCropHarvestWindowSource(crop, useSowingEstimate.checked ? "sowing_window_estimate" : "manual"); // CHANGE: actual harvest and sowing-window estimate are mutually exclusive sources.
+                    if (useSowingEstimate.checked) {
+                        crop.harvestStart = crop.estimatedHarvestStart || crop.harvestStart;
+                        crop.harvestEnd = crop.estimatedHarvestEnd || crop.harvestEnd;
+                    }
+                    refreshDerived();
+                });
                 syncAvailability.addEventListener("change", () => {
                     const beforeDateRanges = captureDateRangeSnapshot();
                     crop.syncharvest = syncAvailability.checked;
@@ -4654,6 +5075,7 @@ Draw.loadPlugin(function (ui) {
                 renderSelectedEditor();
                 renderCropPlan(true);
                 refreshDerived(null, { rebuildCsa: true, rebuildDemand: true });
+                emitHarvestWindowsNeeded(plan.crops || []); // CHANGE: loaded crops can receive sowing-window estimates, not only newly added crops.
                 loadAddCropOptions(false);
             }
 
@@ -4891,13 +5313,14 @@ Draw.loadPlugin(function (ui) {
                 const numericVarietyId = selectedOption.varietyId == null ? NaN : Number(selectedOption.varietyId);
                 const crop = {
                     id: Env.uid("crop"), plantId, plant: selectedOption.plantName, method: String(item.default_planting_method || "").trim() || "direct_sow",
-                    varietyId: selectedOption.varietyId == null ? null : (Number.isFinite(numericVarietyId) ? numericVarietyId : selectedOption.varietyId), variety: selectedOption.varietyName, harvestStart: "", harvestEnd: "", useActualHarvest: false, syncharvest: false,
+                    varietyId: selectedOption.varietyId == null ? null : (Number.isFinite(numericVarietyId) ? numericVarietyId : selectedOption.varietyId), variety: selectedOption.varietyName, harvestStart: "", harvestEnd: "", harvestWindowSource: "manual", useActualHarvest: false, syncharvest: false,
                     shelfLifeDays: 0, baseKgPerPlant: baseYield, kgPerPlant: cropYield,
                     kgPerPlantMode: "auto", actualPlants: 0, germRate: 1,
                     packages: defaults && defaults.length ? PlanSchema.clonePlain(defaults) : [{ unit: "kg", baseType: "kg", baseQty: 1, price: NaN }]
                 };
                 plan.crops.push(crop);
                 setSelectedCropEverywhere(crop.id);
+                crop.__harvestWindowSourceMissing = true; // CHANGE: newly added rows may default to the first valid estimate.
                 emitHarvestWindowsNeeded(crop);
                 renderAll();
             });
@@ -4999,11 +5422,20 @@ Draw.loadPlugin(function (ui) {
                 refreshDerived();
             });
 
-            function emitHarvestWindowsNeeded(crop) {
+            function emitHarvestWindowsNeeded(crops) {
+                const requestedCrops = (Array.isArray(crops) ? crops : [crops]).filter(Boolean);
+                if (!requestedCrops.length) return;
                 window.dispatchEvent(new CustomEvent("usl:harvestWindowsNeeded", { detail: {
                     moduleCellId: moduleCell.getId ? moduleCell.getId() : moduleCell.id,
                     year: currentYear,
-                    crops: [{ cropId: crop.id, plantId: crop.plantId, varietyId: crop.varietyId ?? null, method: crop.method ?? null, yieldTargetKg: 0 }]
+                    crops: requestedCrops.map(crop => ({
+                        cropId: crop.id,
+                        plantId: crop.plantId,
+                        varietyId: crop.varietyId ?? null,
+                        methodId: crop.method ?? null,
+                        method: crop.method ?? null,
+                        yieldTargetKg: 0
+                    }))
                 } }));
             }
 
@@ -5015,8 +5447,20 @@ Draw.loadPlugin(function (ui) {
                 for (const result of (detail.results || [])) {
                     const crop = byId.get(String(result.cropId));
                     if (!crop) continue;
-                    if (!PlanMath.hasYmd(crop.harvestStart) && PlanMath.hasYmd(result.harvestStart)) crop.harvestStart = result.harvestStart;
-                    if (!PlanMath.hasYmd(crop.harvestEnd) && PlanMath.hasYmd(result.harvestEnd)) crop.harvestEnd = result.harvestEnd;
+                    if (PlanMath.hasYmd(result.harvestStart) && PlanMath.hasYmd(result.harvestEnd) && result.harvestStart <= result.harvestEnd) {
+                        crop.estimatedHarvestStart = result.harvestStart;
+                        crop.estimatedHarvestEnd = result.harvestEnd;
+                        crop.estimatedHarvestUnavailableReason = "";
+                        const manualBlankWindow = crop.harvestWindowSource === "manual" && !PlanMath.hasYmd(crop.harvestStart) && !PlanMath.hasYmd(crop.harvestEnd);
+                        if (!hasActualHarvestForCrop(crop) && (crop.__harvestWindowSourceMissing || !crop.harvestWindowSource || manualBlankWindow)) {
+                            PlanSchema.setCropHarvestWindowSource(crop, "sowing_window_estimate"); // CHANGE: default estimates only when this crop has no actual harvest records.
+                        }
+                    } else {
+                        crop.estimatedHarvestStart = "";
+                        crop.estimatedHarvestEnd = "";
+                        crop.estimatedHarvestUnavailableReason = String(result.reason || "No feasible sowing-window estimate");
+                        if (crop.harvestWindowSource === "sowing_window_estimate") PlanSchema.setCropHarvestWindowSource(crop, "manual");
+                    }
                     if (!(Number(crop.shelfLifeDays) > 0) && Number(result.shelfLifeDays) > 0) crop.shelfLifeDays = Math.trunc(Number(result.shelfLifeDays));
                 }
                 refreshDerived(beforeDateRanges);
@@ -5059,6 +5503,7 @@ Draw.loadPlugin(function (ui) {
             PlanRepository,
             DiagramPlanReader,
             PlanRuntimeService,
+            PlanningCore,
             YearPlanDashboard,
             YearPlanModalController,
             SessionController
@@ -5067,6 +5512,10 @@ Draw.loadPlugin(function (ui) {
 
     /** Starts the single year-plan modal session. */
     function openPlanModal(moduleCell, year) {
+        if (window.Trellis && window.Trellis.interactionModes && typeof window.Trellis.interactionModes.closeActive === "function") {
+            const activeMode = window.Trellis.interactionModes.getActive && window.Trellis.interactionModes.getActive();
+            if (activeMode && activeMode.mode === "allocate") window.Trellis.interactionModes.closeActive("year-planner-opened");
+        }
         return YearPlanModalController.open(moduleCell, year);
     }
 

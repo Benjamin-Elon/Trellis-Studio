@@ -21,6 +21,7 @@ class TestCell {
     constructor(id, attrs = {}) {
         this.id = id;
         this.attrs = { ...attrs };
+        this.styles = {}; // CHANGE: capture navigator visibility changes in tests.
         this.children = [];
         this.geometry = null;
     }
@@ -84,6 +85,9 @@ function makeHarness(options = {}) {
     if (options.secondTiler) {
         extraCells.push(appendChild(layer, new TestCell("tiler2", { tiler_group: "1", ...(options.tiler2Attrs || {}) })));
     }
+    if (options.thirdTiler) {
+        extraCells.push(appendChild(layer, new TestCell("tiler3", { tiler_group: "1", ...(options.tiler3Attrs || {}) }))); // CHANGE: support dense temporal-overlap cluster tests.
+    }
 
     const model = new TestModel(root);
     let selectedCells = [tiler1];
@@ -108,6 +112,7 @@ function makeHarness(options = {}) {
 
     if (extraBeds[0]) states.set(extraBeds[0], options.bed2State || { x: 40, y: 40, width: 100, height: 100 });
     if (extraCells[0]) states.set(extraCells[0], options.tiler2State || { x: 50, y: 50, width: 20, height: 20 });
+    if (extraCells[1]) states.set(extraCells[1], options.tiler3State || { x: 12, y: 12, width: 20, height: 20 }); // CHANGE: overlap the default selected group.
     if (bedAssemblies[0]) states.set(bedAssemblies[0], options.bedAssemblyState || { x: 20, y: 20, width: 30, height: 20 });
     if (bedAssemblies[1]) states.set(bedAssemblies[1], options.bedAssembly2State || { x: 60, y: 20, width: 24, height: 20 });
     if (bedAssemblies[2]) states.set(bedAssemblies[2], options.outsideBedAssemblyState || { x: 140, y: 20, width: 24, height: 20 });
@@ -133,7 +138,7 @@ function makeHarness(options = {}) {
         addListener() {},
         refresh() {},
         orderCells() {},
-        setCellStyles() {}
+        setCellStyles(key, value, cells) { (cells || []).forEach(cell => { cell.styles[key] = String(value); }); } // CHANGE: expose outline-only assertions.
     };
 
     const context = {
@@ -161,7 +166,7 @@ function makeHarness(options = {}) {
     };
 
     vm.runInNewContext(fs.readFileSync(PLUGIN_PATH, "utf8"), context, { filename: PLUGIN_PATH });
-    return { document, graph, layer, bed, bed2: extraBeds[0] || null, tiler1, tiler2: extraCells[0] || null, bedAssembly: bedAssemblies[0] || null, bedAssembly2: bedAssemblies[1] || null, outsideBedAssembly: bedAssemblies[2] || null, getSelected: () => selectedCells.slice() };
+    return { document, graph, layer, bed, bed2: extraBeds[0] || null, tiler1, tiler2: extraCells[0] || null, tiler3: extraCells[1] || null, bedAssembly: bedAssemblies[0] || null, bedAssembly2: bedAssemblies[1] || null, outsideBedAssembly: bedAssemblies[2] || null, getSelected: () => selectedCells.slice() };
 }
 
 function visibleControls(document) {
@@ -178,6 +183,27 @@ function visibleImageByTitle(document, title) {
 
 function childOrder(parent) {
     return (parent.children || []).map(child => child.id);
+}
+
+function visibleMiniRail(document) {
+    return visibleControls(document).find(el => el.dataset && el.dataset.miniRail === "1");
+}
+
+function visibleMiniRailBars(document) {
+    const rail = visibleMiniRail(document);
+    return rail ? Array.from(rail.querySelectorAll("[data-mini-rail-bar='1']")) : [];
+}
+
+function visibleMiniRailAxisText(document) {
+    const rail = visibleMiniRail(document);
+    const axis = rail && rail.querySelector("[data-mini-rail-axis='1']");
+    return axis ? String(axis.textContent || "") : "";
+}
+
+function visibleMiniRailAxisTicks(document) {
+    const rail = visibleMiniRail(document);
+    const axis = rail && rail.querySelector("[data-mini-rail-axis='1']");
+    return axis ? Array.from(axis.children).map(child => ({ text: String(child.textContent || ""), align: child.style.textAlign })) : [];
 }
 
 test("navigator source no longer contains day-count overlap badge machinery", () => {
@@ -314,6 +340,203 @@ test("two selected tilers with five-percent overlap hide duplicate cluster selec
     assert.equal(selectPlantings.style.top, "-28px");
     assert.ok(visibleImageByTitle(document, "Previous"), "expected visible previous button");
     assert.ok(visibleImageByTitle(document, "Next"), "expected visible next button");
+});
+
+test("selected overlap cluster shows Mini Rail instead of numeric badge", () => {
+    const { document } = makeHarness({
+        secondTiler: true,
+        tiler2State: { x: 29, y: 10, width: 20, height: 20 },
+        tiler1Attrs: { plant_name: "Tomato", variety_name: "Roma", sow_date: "2026-04-01", harvest_end: "2026-07-01" },
+        tiler2Attrs: { plant_name: "Basil", variety_name: "Genovese", sow_date: "2026-05-01", harvest_end: "2026-06-01" }
+    });
+    const rail = visibleMiniRail(document);
+    const numericBadge = visibleControls(document).find(el => /^\d+\s*\/\s*\d+$/.test(String(el.textContent || "").trim()));
+
+    assert.ok(rail, "expected visible Mini Rail");
+    assert.equal(numericBadge, undefined);
+    assert.equal(visibleMiniRailBars(document).length, 2);
+});
+
+test("Mini Rail bars center crop variety names without left label column", () => {
+    const { document } = makeHarness({
+        secondTiler: true,
+        tiler2State: { x: 29, y: 10, width: 20, height: 20 },
+        tiler1Attrs: { plant_name: "Tomato", variety_name: "Very Long Roma Selection", sow_date: "2026-04-01", harvest_end: "2026-07-01" },
+        tiler2Attrs: { plant_name: "Basil", variety_name: "Genovese", sow_date: "2026-05-01", harvest_end: "2026-06-01" }
+    });
+    const bars = visibleMiniRailBars(document);
+    const tomato = bars.find(bar => bar.dataset.cellId === "tiler1");
+
+    assert.ok(tomato);
+    assert.equal(tomato.textContent, "Tomato - Very Long Roma Selection");
+    assert.equal(tomato.style.textAlign, "center");
+    assert.equal(tomato.style.textOverflow, "ellipsis");
+    assert.match(tomato.title, /Tomato - Very Long Roma Selection - 2026-04-01 to 2026-07-01/);
+    assert.equal(visibleMiniRail(document).querySelector("[data-mini-rail-label]"), null);
+});
+
+test("Mini Rail bar click selects the exact planting group", () => {
+    const { document, getSelected } = makeHarness({
+        secondTiler: true,
+        tiler2State: { x: 29, y: 10, width: 20, height: 20 },
+        tiler1Attrs: { plant_name: "Tomato", sow_date: "2026-04-01", harvest_end: "2026-07-01" },
+        tiler2Attrs: { plant_name: "Basil", sow_date: "2026-05-01", harvest_end: "2026-06-01" }
+    });
+    const basil = visibleMiniRailBars(document).find(bar => bar.dataset.cellId === "tiler2");
+
+    basil.dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true }));
+
+    assert.deepEqual(JSON.parse(JSON.stringify(getSelected().map(cell => cell.id))), ["tiler2"]);
+});
+
+test("cluster visibility keeps selected and temporally overlapping groups active", () => {
+    const { tiler1, tiler2, tiler3 } = makeHarness({
+        secondTiler: true,
+        thirdTiler: true,
+        tiler2State: { x: 12, y: 12, width: 20, height: 20 },
+        tiler3State: { x: 14, y: 14, width: 20, height: 20 },
+        tiler1Attrs: { plant_name: "Tomato", sow_date: "2026-04-01", harvest_end: "2026-07-01" },
+        tiler2Attrs: { plant_name: "Basil", sow_date: "2026-05-01", harvest_end: "2026-06-01" },
+        tiler3Attrs: { plant_name: "Lettuce", sow_date: "2026-02-01", harvest_end: "2026-03-01" }
+    });
+
+    assert.equal(tiler1.styles.fillOpacity, "100");
+    assert.equal(tiler2.styles.fillOpacity, "100");
+    assert.equal(tiler3.styles.fillOpacity, "0");
+    assert.equal(tiler3.styles.textOpacity, "0");
+    assert.equal(tiler3.styles.imageOpacity, "0");
+});
+
+test("undated Mini Rail groups render dashed and inactive unless selected", () => {
+    const { document, tiler2 } = makeHarness({
+        secondTiler: true,
+        tiler2State: { x: 29, y: 10, width: 20, height: 20 },
+        tiler1Attrs: { plant_name: "Tomato", sow_date: "2026-04-01", harvest_end: "2026-07-01" },
+        tiler2Attrs: { plant_name: "Basil", variety_name: "Genovese" }
+    });
+    const basil = visibleMiniRailBars(document).find(bar => bar.dataset.cellId === "tiler2");
+
+    assert.ok(basil);
+    assert.match(basil.title, /Basil - Genovese - Undated/);
+    assert.equal(basil.style.borderStyle, "dashed");
+    assert.equal(tiler2.styles.fillOpacity, "0");
+});
+
+test("Prev and Next cycle through all cluster members and recompute active overlap", () => {
+    const { document, graph, tiler1, tiler2, tiler3 } = makeHarness({
+        secondTiler: true,
+        thirdTiler: true,
+        tiler2State: { x: 12, y: 12, width: 20, height: 20 },
+        tiler3State: { x: 14, y: 14, width: 20, height: 20 },
+        tiler1Attrs: { plant_name: "Tomato", sow_date: "2026-04-01", harvest_end: "2026-07-01" },
+        tiler2Attrs: { plant_name: "Basil", sow_date: "2026-05-01", harvest_end: "2026-06-01" },
+        tiler3Attrs: { plant_name: "Lettuce", sow_date: "2026-02-01", harvest_end: "2026-03-01" }
+    });
+    const next = visibleImageByTitle(document, "Next");
+
+    next.dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true }));
+
+    assert.deepEqual(JSON.parse(JSON.stringify(graph.getSelectionCells().map(cell => cell.id))), ["tiler2"]);
+    assert.equal(tiler2.styles.fillOpacity, "100");
+    assert.equal(tiler1.styles.fillOpacity, "100");
+    assert.equal(tiler3.styles.fillOpacity, "0");
+});
+
+test("Mini Rail excludes perennial lifespan from axis and clips perennial display", () => {
+    const { document, tiler1, tiler2 } = makeHarness({
+        secondTiler: true,
+        tiler2State: { x: 12, y: 12, width: 20, height: 20 },
+        tiler1Attrs: { plant_name: "Apple", perennial: "1", season_start_year: "2026", lifespan_start: "2026-01-01", lifespan_end: "2030-12-31" },
+        tiler2Attrs: { plant_name: "Broccoli", season_start_year: "2026", sow_date: "2026-08-05", harvest_end: "2026-11-08" }
+    });
+    const axisText = visibleMiniRailAxisText(document);
+    const apple = visibleMiniRailBars(document).find(bar => bar.dataset.cellId === "tiler1");
+
+    assert.match(axisText, /AUG/);
+    assert.match(axisText, /NOV/);
+    assert.doesNotMatch(axisText, /JAN.*FEB.*MAR.*APR.*MAY.*JUN.*JUL.*AUG.*SEP.*OCT.*NOV.*DEC.*JAN/);
+    assert.equal(apple.style.left, "0%");
+    assert.equal(apple.style.width, "100%");
+    assert.match(apple.title, /Apple - 2026-01-01 to 2030-12-31 \(shown clipped to visible year span\)/);
+    assert.equal(tiler1.styles.fillOpacity, "100");
+    assert.equal(tiler2.styles.fillOpacity, "100");
+});
+
+test("Mini Rail preserves non-perennial cross-year crop span", () => {
+    const { document } = makeHarness({
+        secondTiler: true,
+        tiler2State: { x: 12, y: 12, width: 20, height: 20 },
+        tiler1Attrs: { plant_name: "Apple", perennial: "1", season_start_year: "2026", lifespan_start: "2025-01-01", lifespan_end: "2030-12-31" },
+        tiler2Attrs: { plant_name: "Garlic", season_start_year: "2026", sow_date: "2025-12-15", harvest_end: "2026-02-20" }
+    });
+    const axisText = visibleMiniRailAxisText(document);
+    const garlic = visibleMiniRailBars(document).find(bar => bar.dataset.cellId === "tiler2");
+
+    assert.match(axisText, /DEC/);
+    assert.match(axisText, /JAN/);
+    assert.match(axisText, /FEB/);
+    assert.equal(garlic.style.left, "0%");
+    assert.equal(garlic.textContent, "Garlic");
+});
+
+test("Mini Rail short spans keep monthly axis labels", () => {
+    const { document } = makeHarness({
+        secondTiler: true,
+        tiler2State: { x: 12, y: 12, width: 20, height: 20 },
+        tiler1Attrs: { plant_name: "Broccoli", season_start_year: "2026", sow_date: "2026-08-05", harvest_end: "2026-11-08" },
+        tiler2Attrs: { plant_name: "Beet", season_start_year: "2026", sow_date: "2026-09-01", harvest_end: "2026-10-01" }
+    });
+    const ticks = visibleMiniRailAxisTicks(document);
+
+    assert.deepEqual(JSON.parse(JSON.stringify(ticks.map(tick => tick.text))), ["AUG", "SEP", "OCT", "NOV"]);
+    assert.ok(ticks.every(tick => tick.align === "center"));
+});
+
+test("Mini Rail long spans show endpoint month-year labels only", () => {
+    const { document } = makeHarness({
+        secondTiler: true,
+        tiler2State: { x: 12, y: 12, width: 20, height: 20 },
+        tiler1Attrs: { plant_name: "Broccoli", season_start_year: "2026", sow_date: "2026-08-05", harvest_end: "2026-11-08" },
+        tiler2Attrs: { plant_name: "Garlic", season_start_year: "2026", sow_date: "2026-12-15", harvest_end: "2027-07-20" }
+    });
+    const ticks = visibleMiniRailAxisTicks(document);
+    const garlic = visibleMiniRailBars(document).find(bar => bar.dataset.cellId === "tiler2");
+
+    assert.deepEqual(JSON.parse(JSON.stringify(ticks.map(tick => tick.text))), ["Aug 2026", "Jul 2027"]);
+    assert.deepEqual(JSON.parse(JSON.stringify(ticks.map(tick => tick.align))), ["left", "right"]);
+    assert.equal(garlic.textContent, "Garlic");
+    assert.notEqual(garlic.style.left, "");
+    assert.notEqual(garlic.style.width, "");
+});
+
+test("Mini Rail endpoint labels ignore perennial lifespan", () => {
+    const { document } = makeHarness({
+        secondTiler: true,
+        tiler2State: { x: 12, y: 12, width: 20, height: 20 },
+        tiler1Attrs: { plant_name: "Apple", perennial: "1", season_start_year: "2026", lifespan_start: "2025-01-01", lifespan_end: "2030-12-31" },
+        tiler2Attrs: { plant_name: "Garlic", season_start_year: "2026", sow_date: "2026-08-05", harvest_end: "2027-07-20" }
+    });
+    const ticks = visibleMiniRailAxisTicks(document);
+
+    assert.deepEqual(JSON.parse(JSON.stringify(ticks.map(tick => tick.text))), ["Aug 2026", "Jul 2027"]);
+    assert.doesNotMatch(visibleMiniRailAxisText(document), /2030/);
+});
+
+test("Mini Rail perennial-only cluster falls back to selected season year", () => {
+    const { document } = makeHarness({
+        secondTiler: true,
+        tiler2State: { x: 12, y: 12, width: 20, height: 20 },
+        tiler1Attrs: { plant_name: "Apple", perennial: "1", season_start_year: "2026", lifespan_start: "2025-01-01", lifespan_end: "2030-12-31" },
+        tiler2Attrs: { plant_name: "Rhubarb", perennial: "1", season_start_year: "2026", lifespan_start: "2026-03-01", lifespan_end: "2029-10-31" }
+    });
+    const ticks = visibleMiniRailAxisTicks(document); // CHANGE: 12-month fallback now uses endpoint labels.
+    const apple = visibleMiniRailBars(document).find(bar => bar.dataset.cellId === "tiler1");
+
+    assert.deepEqual(JSON.parse(JSON.stringify(ticks.map(tick => tick.text))), ["Jan 2026", "Dec 2026"]); // CHANGE: long fallback spans should not render crowded monthly ticks.
+    assert.deepEqual(JSON.parse(JSON.stringify(ticks.map(tick => tick.align))), ["left", "right"]); // CHANGE: endpoint labels anchor to each side of the rail.
+    assert.equal(apple.style.left, "0%");
+    assert.equal(apple.style.width, "100%");
+    assert.match(apple.title, /Apple - 2025-01-01 to 2030-12-31 \(shown clipped to visible year span\)/);
 });
 
 test("same-bed tilers touching edges do not cluster", () => {

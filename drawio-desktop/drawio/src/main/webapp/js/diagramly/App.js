@@ -301,6 +301,7 @@ App.pluginRegistry = {    'trellisUpdatesLinks': 'plugins/garden_planner_plugins
     'createdChangeMap': 'plugins/garden_planner_plugins/Created_Change_Map.js',                  // CHANGE
     'gardenDashboard': 'plugins/garden_planner_plugins/Garden_Dashboard.js',                     // NEW
     'gardenPlanner': 'plugins/garden_planner_plugins/Year_Planner.js',                           // CHANGE
+    'gardenAllocate': 'plugins/garden_planner_plugins/Allocate_Planner.js',                       // NEW
     'gardenScale': 'plugins/garden_planner_plugins/Garden_Scale.js',                             // CHANGE
     'gardenBeds': 'plugins/garden_planner_plugins/Garden_Beds.js',
 	'gardenEquipment': 'plugins/garden_planner_plugins/Garden_Equipment.js',                              // CHANGE
@@ -324,6 +325,7 @@ App.publicPlugin = [
     'createdChangeMap',                                       // NEW
     'gardenDashboard',                                        // NEW
     'gardenPlanner',                                          // NEW
+    'gardenAllocate',                                         // NEW
     'gardenScale',                                            // CHANGE
     'gardenBeds',                                              // CHANGE
 	'gardenEquipment',

@@ -127,6 +127,16 @@ function findYearPlanField(document, field, filters = {}) {
     return controls.find(control => Object.entries(filters).every(([key, value]) => String(control.dataset[key] || "") === String(value))) || null;
 }
 
+function installHarvestEstimateResponder(harness, resolver) {
+    harness.window.addEventListener("usl:harvestWindowsNeeded", event => {
+        const detail = event.detail || {};
+        const results = (detail.crops || []).map(req => ({ cropId: req.cropId, ...resolver(req) }));
+        harness.window.dispatchEvent(new harness.window.CustomEvent("usl:harvestWindowsSuggested", {
+            detail: { moduleCellId: detail.moduleCellId, year: detail.year, results }
+        }));
+    });
+}
+
 function openDiagnostics(document, labelPattern) {
     const triggers = Array.from(document.querySelectorAll(".yp-diagnostics-trigger"));
     const trigger = triggers.find(button => labelPattern.test(button.getAttribute("aria-label") || button.parentElement.textContent));
@@ -244,8 +254,10 @@ test("Crop Plan Basics separates editable controls, derived totals, tooltips, an
     assert.ok(findEditorField(harness, "Planting method"));
 
     const useActual = Array.from(editor.querySelectorAll("label.yp-row")).find(label => label.textContent.includes("Use actual harvest"));
+    const useEstimate = Array.from(editor.querySelectorAll("label.yp-row")).find(label => label.textContent.includes("Use sowing-window estimate"));
     const syncHarvest = Array.from(editor.querySelectorAll("label.yp-row")).find(label => label.textContent.includes("Sync demand to harvest window"));
     assert.match(useActual.title, /actual harvest records/);
+    assert.match(useEstimate.title, /feasible sowing dates/);
     assert.match(syncHarvest.title, /matching demand and CSA dates/);
 
     const method = findEditorField(harness, "Planting method").querySelector("select");
@@ -259,6 +271,7 @@ test("Crop Plan Basics separates editable controls, derived totals, tooltips, an
     assert.deepEqual(Array.from(totals.querySelectorAll(".yp-derived-label")).map(label => label.textContent), ["Actual plants", "Plants required", "Seeds required"]);
     assert.deepEqual(Array.from(totals.querySelectorAll(".yp-derived-value")).map(value => value.textContent), ["0", "5", "7"]);
     assert.match(editor.querySelector(".yp-harvest-empty").textContent, /No actual harvest recorded/);
+    assert.deepEqual(Array.from(editor.querySelectorAll(".yp-harvest-marker")).map(marker => marker.getAttribute("data-label")), ["S", "E"]);
 
     let kgField = findEditorField(harness, "kg/plant");
     assert.match(kgField.querySelector(".yp-yield-hint").textContent, /Using 1 kg\/plant default/);
@@ -290,6 +303,107 @@ test("Basics actual harvest timeline renders diagram-backed weekly harvest", asy
     assert.ok(timeline);
     assert.ok(timeline.querySelectorAll(".yp-harvest-bar").length >= 52);
     assert.ok(Array.from(timeline.querySelectorAll(".yp-harvest-bar")).some(bar => /kg actual harvest/.test(bar.title) && !/0\.00 kg/.test(bar.title)));
+    assert.deepEqual(Array.from(timeline.querySelectorAll(".yp-harvest-marker")).map(marker => marker.getAttribute("data-label")), ["S", "E"]);
+    assert.match(Array.from(timeline.querySelectorAll(".yp-harvest-marker"))[0].title, /Harvest start 2026-07-01/);
+});
+
+test("Sowing-window estimate defaults on per crop when no actual harvest exists", async t => {
+    const harness = createYearPlannerHarness();
+    t.after(() => harness.dom.window.close());
+    installHarvestEstimateResponder(harness, () => ({
+        harvestStart: "2026-06-01",
+        harvestEnd: "2026-06-07",
+        shelfLifeDays: 3
+    }));
+    savePlan(harness, 2026, plan => {
+        plan.crops[0].harvestStart = "";
+        plan.crops[0].harvestEnd = "";
+    });
+
+    const session = await harness.openModal(2026);
+    await harness.settle(20);
+
+    const estimate = findYearPlanField(harness.document, "useSowingWindowEstimate", { cropId: "crop_1" });
+    const actual = findYearPlanField(harness.document, "useActualHarvest", { cropId: "crop_1" });
+    const harvestStart = findYearPlanField(harness.document, "harvestStart", { cropId: "crop_1" });
+    assert.equal(estimate.checked, true);
+    assert.equal(estimate.disabled, false);
+    assert.equal(actual.checked, false);
+    assert.equal(actual.disabled, true);
+    assert.equal(harvestStart.value, "2026-06-01");
+    assert.equal(harvestStart.disabled, true);
+    assert.equal(session.plan.crops[0].harvestWindowSource, "sowing_window_estimate");
+});
+
+test("Unavailable sowing-window estimate is disabled and reports the scheduler reason", async t => {
+    const harness = createYearPlannerHarness();
+    t.after(() => harness.dom.window.close());
+    installHarvestEstimateResponder(harness, () => ({
+        harvestStart: null,
+        harvestEnd: null,
+        shelfLifeDays: null,
+        reason: "Module city_id/city_name not set"
+    }));
+    savePlan(harness, 2026, plan => {
+        plan.crops[0].harvestStart = "";
+        plan.crops[0].harvestEnd = "";
+    });
+
+    const session = await harness.openModal(2026);
+    await harness.settle(20);
+
+    const estimate = findYearPlanField(harness.document, "useSowingWindowEstimate", { cropId: "crop_1" });
+    assert.equal(estimate.checked, false);
+    assert.equal(estimate.disabled, true);
+    assert.equal(session.plan.crops[0].harvestWindowSource, "manual");
+    assert.match(findEditorBox(harness).textContent, /Estimate unavailable: Module city_id\/city_name not set/);
+});
+
+test("Sowing-window estimate and actual harvest controls are mutually exclusive", async t => {
+    const harness = createYearPlannerHarness();
+    t.after(() => harness.dom.window.close());
+    installHarvestEstimateResponder(harness, () => ({
+        harvestStart: "2026-06-01",
+        harvestEnd: "2026-06-07",
+        shelfLifeDays: null
+    }));
+    harness.addCell(harness.moduleCell, new harness.TestCell("actual-harvest", {
+        tiler_group: "1",
+        plant_id: "1",
+        plant_name: "Tomato",
+        plant_count: "12",
+        season_start_year: "2026",
+        harvest_start: "2026-07-01",
+        harvest_end: "2026-07-21"
+    }));
+    savePlan(harness, 2026, plan => { plan.crops[0].harvestWindowSource = "manual"; });
+
+    const session = await harness.openModal(2026);
+    await harness.settle(20);
+
+    let estimate = findYearPlanField(harness.document, "useSowingWindowEstimate", { cropId: "crop_1" });
+    let actual = findYearPlanField(harness.document, "useActualHarvest", { cropId: "crop_1" });
+    estimate.checked = true;
+    estimate.dispatchEvent(new harness.window.Event("change", { bubbles: true }));
+    await harness.settle(20);
+    estimate = findYearPlanField(harness.document, "useSowingWindowEstimate", { cropId: "crop_1" });
+    actual = findYearPlanField(harness.document, "useActualHarvest", { cropId: "crop_1" });
+    assert.equal(session.plan.crops[0].harvestWindowSource, "sowing_window_estimate");
+    assert.equal(estimate.checked, true);
+    assert.equal(actual.disabled, true);
+
+    estimate.checked = false;
+    estimate.dispatchEvent(new harness.window.Event("change", { bubbles: true }));
+    await harness.settle(20);
+    actual = findYearPlanField(harness.document, "useActualHarvest", { cropId: "crop_1" });
+    actual.checked = true;
+    actual.dispatchEvent(new harness.window.Event("change", { bubbles: true }));
+    await harness.settle(20);
+    estimate = findYearPlanField(harness.document, "useSowingWindowEstimate", { cropId: "crop_1" });
+    actual = findYearPlanField(harness.document, "useActualHarvest", { cropId: "crop_1" });
+    assert.equal(session.plan.crops[0].harvestWindowSource, "actual_harvest");
+    assert.equal(actual.checked, true);
+    assert.equal(estimate.disabled, true);
 });
 
 test("Packages render labeled compact package rows", async t => {
@@ -1449,9 +1563,9 @@ test("Sync and harvest date changes keep expanded CSA and reopened Demand dates 
     findCsaStrip(harness.document).click();
 
     let editor = findEditorBox(harness);
-    const basicsChecks = editor.querySelectorAll('input[type="checkbox"]');
-    basicsChecks[1].checked = true;
-    basicsChecks[1].dispatchEvent(new harness.window.Event("change", { bubbles: true }));
+    const syncHarvest = findYearPlanField(harness.document, "syncharvest", { cropId: "crop_1" });
+    syncHarvest.checked = true;
+    syncHarvest.dispatchEvent(new harness.window.Event("change", { bubbles: true }));
     assert.equal(session.plan.demands[0].from, "2026-06-01");
     assert.equal(session.plan.demands[0].to, "2026-09-30");
 

@@ -55,16 +55,22 @@ test('Garden Settings can open with an empty city table so City Manager can add 
     assert.match(source, /Empty city lists are allowed so the City Manager can create the first scheduler-ready city/);
 });
 
-test('Garden module overlay enters neutral irrigation design mode through the irrigation planner', () => { // CHANGE
+test('Garden module and bed overlays expose exclusive mode launchers', () => { // CHANGE
     const source = readPlantTilerSource();
+    assert.match(source, /const ALLOCATE_PLAN_EVENT = "usl:allocatePlanRequested";/); // NEW
+    assert.match(source, /allocateModeBtn = makeButton\("Enter Allocation Mode", "open"\);/); // NEW
     assert.match(source, /irrigationModeBtn = makeButton\("Enter Irrigation Design Mode", "open"\);/); // CHANGE
+    assert.match(source, /toolbar\.appendChild\(addGroupBtn\);[\s\S]*toolbar\.appendChild\(allocateModeBtn\);[\s\S]*toolbar\.appendChild\(irrigationModeBtn\);/); // NEW
     assert.doesNotMatch(source, /function gardenModuleHasIrrigationSource\(moduleCell\)/); // CHANGE
     assert.doesNotMatch(source, /getXmlAttr\(cell, "irrigation_endpoint_type", ""\) === "source"/); // CHANGE
-    assert.match(source, /window\.TrellisIrrigationPlanner\.openIrrigationMode\(moduleCell, \{ preserveViewport: true \}\);/); // CHANGE
+    assert.match(source, /window\.dispatchEvent\(new CustomEvent\(ALLOCATE_PLAN_EVENT, \{ detail: \{ moduleCellId: moduleCellId, year: getCurrentGardenYear\(moduleCell\) \} \}\)\)/); // NEW
+    assert.match(source, /window\.TrellisIrrigationPlanner\.openIrrigationMode\(moduleCell, \{ selectCell: selectedBedCell \|\| null, preserveViewport: true \}\);/); // CHANGE
     assert.doesNotMatch(source, /sourceForm: true/); // CHANGE
     assert.match(source, /ui\.actions[\s\S]*trellisIrrigationPlanner/); // CHANGE
+    assert.match(source, /allocateModeBtn\.disabled = !hasSettings;/); // NEW
     assert.match(source, /irrigationModeBtn\.disabled = !hasSettings;/); // CHANGE
-    assert.match(source, /const showIrrigationModeEntry = !bedMode;/); // CHANGE
+    assert.match(source, /allocateModeBtn\.style\.display = bedMode \? "" : "none";/); // NEW
+    assert.match(source, /irrigationModeBtn\.style\.display = "";/); // CHANGE
     assert.doesNotMatch(source, /gardenModuleHasIrrigationSource\(moduleCell\)/); // CHANGE
 });
 
@@ -91,7 +97,7 @@ test('Garden module margin lives in Garden Settings instead of the overlay', () 
     assert.match(source, /nextGeo\.height = chosenGardenHeightUnits;/); // CHANGE
     assert.match(source, /setGardenModuleMargin\(moduleCell, chosenModuleMargin\);/);
     assert.match(source, /setGardenModuleExternalMargin\(moduleCell, chosenModuleExternalMargin\);/); // NEW
-    assert.match(source, /if \(!toolbar \|\| !labelInputWrap \|\| !settingsBtn \|\| !addBedBtn \|\| !addGroupBtn \|\| !irrigationModeBtn \|\| !moduleCell\) return;/); // CHANGE
+    assert.match(source, /if \(!toolbar \|\| !labelInputWrap \|\| !settingsBtn \|\| !addBedBtn \|\| !addGroupBtn \|\| !allocateModeBtn \|\| !irrigationModeBtn \|\| !moduleCell\) return;/); // CHANGE
 });
 
 test('Garden module overlay uses a single editable bed-style label input', () => {
@@ -152,8 +158,10 @@ test('scheduler sibling plant groups clone footprint and attrs without reusing s
     const helperSource = sourceSlice(source, 'function createSiblingTilerGroupFromSource', 'function computeGridStatsXY');
     assert.match(helperSource, /const geometry = sourceGeo\.clone \? sourceGeo\.clone\(\) : new mxGeometry\(sourceGeo\.x, sourceGeo\.y, sourceGeo\.width, sourceGeo\.height\);/);
     assert.match(helperSource, /const offsetCm = opts\.layoutOffsetCm \|\| opts\.offsetCm \|\| null;/);
-    assert.match(helperSource, /geometry\.x = Number\(geometry\.x \|\| 0\) \+ offsetXPx;/);
-    assert.match(helperSource, /attrs\.companion_layout_clamped = "1";/);
+    assert.match(helperSource, /value\.setAttribute\("layout_offset_x_cm", String\(offsetXCm\)\)/);
+    assert.match(helperSource, /value\.setAttribute\("layout_offset_y_cm", String\(offsetYCm\)\)/);
+    assert.doesNotMatch(helperSource, /geometry\.x = Number\(geometry\.x \|\| 0\) \+/);
+    assert.doesNotMatch(helperSource, /attrs\.companion_layout_clamped = "1";/);
     assert.match(helperSource, /const group = new mxCell\(value, geometry, style \|\| groupFrameStyle\(\)\);/);
     assert.match(helperSource, /group\.setVertex\(true\);/);
     assert.match(helperSource, /activeGraphArg\.addCell\(group, parent\);/);
@@ -166,13 +174,20 @@ test('interplant companion groups offset alternating tile slots during retile', 
     const source = readPlantTilerSource();
     const slotSource = sourceSlice(source, 'function logicalSlotCenterLocal', 'function geometryFromVisualCenter');
     const expandSource = sourceSlice(source, 'function expandTiles', 'function hasTileRC');
+    const trimSource = sourceSlice(source, 'function trimGroupToPlantFootprint', 'function applyBedFitGeometry');
     assert.match(slotSource, /function isInterplantLayoutGroup\(groupCell\)/);
     assert.match(slotSource, /getXmlAttr\(groupCell, "companion_layout_interplant", ""\) === "1"/);
     assert.match(slotSource, /function interplantSlotCenterLocal\(groupCell, r, c, spacingXpx, spacingYpx, bandPx\)/);
     assert.match(slotSource, /if \(\(r \+ c\) % 2 !== 0\) return center;/);
     assert.match(slotSource, /x: Math\.min\(maxX, center\.x \+ spacingXpx \/ 2\)/);
+    assert.match(source, /function layoutGridOffsetPx\(groupCell\)/);
+    assert.match(source, /getXmlAttr\(groupCell, "companion_offset_x_cm", ""\)/);
+    assert.match(source, /function clampSlotCenterInsidePlantingFrame\(groupCell, center, iconDiamPx, bandPx\)/);
+    assert.match(slotSource, /function layoutSlotCenterLocal\(groupCell, r, c, spacingXpx, spacingYpx, bandPx, iconDiamPx\)/);
     assert.match(slotSource, /const logical = interplantSlotCenterLocal\(groupCell, r, c, spacingXpx, spacingYpx, bandPx\);/);
+    assert.match(slotSource, /const shifted = \{[\s\S]*x: logical\.x \+ offset\.x,[\s\S]*y: logical\.y \+ offset\.y/);
     assert.match(expandSource, /tileGeometryAtSlot\(groupCell, r, c, spacingXpx, spacingYpx, iconDiamPx, bandPx\)/);
+    assert.match(trimSource, /reason: "layout-grid-offset"/);
 });
 
 test('Bed fit diagnostics expose a self-verifying debug surface', () => {
@@ -289,4 +304,26 @@ test('Context menu and plant-circle wrap use the shared plant group finalizer', 
     assert.match(wrapCreate, /model\.beginUpdate\(\);[\s\S]*graph\.addCell\(group, parent\);[\s\S]*finalizeCreatedTilerGroup\(graph, group, parent, "plant-circle-wrap"\);[\s\S]*model\.endUpdate\(\);/);
     assert.match(wrapCreate, /model\.setGeometry\(c, local\);/);
     assert.doesNotMatch(wrapCreate, /retileGroup\(graph, group\);/);
+});
+
+test('Plant Tiler exposes Allocate proposal and creation contracts', () => {
+    const source = readPlantTilerSource();
+    assert.match(source, /function proposePlantingGeometry\(input = \{\}\)/);
+    assert.match(source, /function createPlantingFromProposal\(input = \{\}, opts = \{\}\)/);
+    assert.match(source, /function listGardenBeds\(moduleCell\)/);
+    assert.match(source, /function readBedProfile\(bedCell\)/);
+    assert.match(source, /function listPlantingFootprints\(moduleCell, options = \{\}\)/);
+    assert.match(source, /function proposalConflictsForRect\(input, rect\)/);
+    assert.match(source, /orientationOverride/);
+    assert.match(source, /entryISO/);
+    assert.match(source, /harvestEndISO/);
+    assert.match(source, /proposePlantingGeometry,/);
+    assert.match(source, /createPlantingFromProposal,/);
+    assert.match(source, /listGardenBeds,/);
+    assert.match(source, /readBedProfile,/);
+    assert.match(source, /listPlantingFootprints,/);
+    assert.match(source, /slots: buildProposalSlots\(best, plantCount\)/);
+    assert.match(source, /lodCollapsed: best\.capacity > LOD_TILE_THRESHOLD/);
+    assert.match(source, /const insideUpdate = !!\(input\.insideUpdate \|\| opts\.insideUpdate\)/);
+    assert.match(source, /createEmptyTilerGroup\(activeGraphArg, moduleCell/);
 });

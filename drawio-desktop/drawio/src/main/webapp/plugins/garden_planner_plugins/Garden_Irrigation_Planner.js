@@ -55,6 +55,8 @@ Draw.loadPlugin(function (ui) {
         BED_PORTS_JSON: "irrigation_bed_ports_json",
         EDGE_SOURCE_PORT: "irrigation_edge_source_port",
         EDGE_TARGET_PORT: "irrigation_edge_target_port",
+        EDGE_SOURCE_SIDE: "irrigation_edge_source_side", // NEW
+        EDGE_TARGET_SIDE: "irrigation_edge_target_side", // NEW
         BED_TEMPLATE_JSON: "irrigation_bed_template_json",
         BED_SUPPLY_LINE: "irrigation_bed_supply_line",
         BED_LAYOUT: "irrigation_bed_layout"
@@ -213,6 +215,7 @@ Draw.loadPlugin(function (ui) {
     const BED_TEMPLATE_MODEL_BOM = "bom";
     const BED_ASSEMBLY_LABEL_HIDDEN = "hidden";
     const METERS_PER_FOOT = CM_PER_FOOT / 100;
+    const LITERS_PER_GALLON = 3.785411784; // NEW
     const BED_TEMPLATE_ROW_ORIENTATIONS = ["width", "height"];
     const BED_TEMPLATE_ANCHOR_CATEGORIES = new Set(["pipe_tubing", "drip_tape", "dripline"]);
     const BED_RECIPE_VERSION = 1;
@@ -225,7 +228,7 @@ Draw.loadPlugin(function (ui) {
     const ANALYSIS_DEMAND_CATEGORIES = new Set(["emitter", "sprinkler", "microspray", "bubbler", "standpipe"]); // NEW
     const ANALYSIS_LOW_MARGIN_PSI = 5; // NEW
     const ANALYSIS_DEFAULT_HW_C = 150; // NEW
-    const BED_SUPPLY_PIPE_BY_SIZE = { "1/2": "poly_distribution_1_2", "3/4": "poly_mainline_3_4", "1": "poly_mainline_1" };
+    const BED_SUPPLY_PIPE_BY_SIZE = { "1/4": "micro_tubing_1_4", "1/2": "poly_distribution_1_2", "3/4": "poly_mainline_3_4", "1": "poly_mainline_1" }; // CHANGE
     const DISCONNECTED_SOURCE_WARNING = "Irrigation tree is disconnected from a source.";
 
     const BED_TEMPLATES = [
@@ -238,8 +241,8 @@ Draw.loadPlugin(function (ui) {
         { id: "manual_hose_standpipe", label: "Manual hose standpipe", defaultRows: 1, defaultRowOrientation: "width", lineKind: "standpipe", pipePartId: "poly_distribution_1_2", requiredParts: [{ partId: "poly_distribution_1_2", quantityPerRowMeter: 1 }, { partId: "hose_standpipe_1_2", quantityPerRowMeter: 1 }], flowGpm: 2.0, pressurePsi: 20 }
     ];
 
-    const GENERATED_CONNECTOR_CATALOG_ITEMS = generateLabelOnlyConnectorParts();
-    const GENERATED_THREAD_CONNECTOR_CATALOG_ITEMS = generateThreadConnectorParts();
+    const GENERATED_CONNECTOR_CATALOG_ITEMS = generateLabelOnlyConnectorParts(); // CHANGE: explicit realistic lock-collar starter classes only
+    const GENERATED_THREAD_CONNECTOR_CATALOG_ITEMS = generateThreadConnectorParts(); // CHANGE: explicit common thread adapters only
 
     const CATALOG_UPGRADE_PART_IDS = new Set([
         "poly_mainline_1",
@@ -255,13 +258,15 @@ Draw.loadPlugin(function (ui) {
         "micro_elbow_1_4",
         "micro_coupler_1_4",
         "micro_goof_plug_1_4",
+        "barb_takeoff_1_4_on_1_2", // NEW
+        "barb_takeoff_1_4_on_3_4", // NEW
         "transfer_barb_1_2_to_1_4",
         "adapter_1_4_to_1_2_barb",
         "micro_emitter_0_5_gph",
         "micro_emitter_1_0_gph",
         "micro_emitter_2_0_gph",
         "micro_spray_stake_1_4"
-    ].concat(GENERATED_CONNECTOR_CATALOG_ITEMS.map(function (part) { return part.id; })));
+    ].concat(GENERATED_CONNECTOR_CATALOG_ITEMS.map(function (part) { return part.id; }), GENERATED_THREAD_CONNECTOR_CATALOG_ITEMS.map(function (part) { return part.id; }))); // CHANGE: additive upgrades include the cleaned realistic starter parts
 
     const STARTER_CATALOG_ITEMS = [
         starterPart("hose_vacuum_breaker", "3/4\" FGHT: MGHT hose vacuum breaker", "backflow", 12, 1, 1, input("fght", "3/4"), output("mght", "3/4"), { pressureLossPsi: 1.0 }), // CHANGE
@@ -299,6 +304,8 @@ Draw.loadPlugin(function (ui) {
         starterPart("micro_elbow_1_4", "1/4\" micro tubing elbow", "fitting", 0.65, 1, 1, input("barb", "1/4"), output("barb", "1/4"), { pressureLossPsi: 0.1 }), // CHANGE
         starterPart("micro_coupler_1_4", "1/4\" micro tubing coupler", "fitting", 0.55, 1, 1, input("barb", "1/4"), output("barb", "1/4"), { pressureLossPsi: 0.05 }), // CHANGE
         starterPart("micro_goof_plug_1_4", "1/4\" goof plug / end plug", "cap_end", 0.35, 1, 0, input("barb", "1/4"), output("", ""), { pressureLossPsi: 0 }), // CHANGE
+        starterBarbTakeoffPart("1/2", "1_2"), // NEW
+        starterBarbTakeoffPart("3/4", "3_4"), // NEW
         starterPart("transfer_barb_1_2_to_1_4", "1/2\": 1/4\" barb transfer adapter", "fitting", 0.85, 1, 1, input("barb", "1/2"), output("barb", "1/4"), { pressureLossPsi: 0.2 }), // CHANGE
         starterPart("adapter_1_4_to_1_2_barb", "1/4\": 1/2\" barb adapter", "fitting", 0.85, 1, 1, input("barb", "1/4"), output("barb", "1/2"), { pressureLossPsi: 0.2 }), // CHANGE
         starterPart("poly_mainline_3_4", "3/4\" poly mainline tubing", "pipe_tubing", 0, 1, 1, input("barb", "3/4"), output("barb", "3/4"), { innerDiameterIn: 0.824, hazenWilliamsC: 150 }, 0.42), // CHANGE
@@ -330,8 +337,37 @@ Draw.loadPlugin(function (ui) {
     let pendingHudGraphSyncModuleCells = [];
     let irrigationUndoRedoReplayDepth = 0;
     let irrigationDebugQuietDepth = 0;
+    let originalSetSelectionCellForIrrigation = null; // NEW
+    const IRRIGATION_INTERACTION_MODE_ID = "irrigation"; // NEW
 
     installIrrigationUndoRedoReplayGuard();
+    installIrrigationSelectionRefreshPatch(); // NEW
+
+    function ensureTrellisInteractionModes() { // NEW
+        window.Trellis = window.Trellis || {};
+        if (window.Trellis.interactionModes) return window.Trellis.interactionModes;
+        let active = null;
+        window.Trellis.interactionModes = {
+            request(mode, ownerId, hooks) {
+                if (active && active.hooks && typeof active.hooks.close === "function") active.hooks.close({ reason: "replaced" });
+                active = { mode: String(mode || ""), ownerId: String(ownerId || mode || ""), hooks: hooks || {} };
+                return { mode: active.mode, ownerId: active.ownerId };
+            },
+            release(mode, ownerId) {
+                if (!active || active.mode !== mode || active.ownerId !== ownerId) return false;
+                active = null;
+                return true;
+            },
+            closeActive(reason) {
+                const previous = active;
+                active = null;
+                if (previous && previous.hooks && typeof previous.hooks.close === "function") previous.hooks.close({ reason: reason || "closed" });
+                return !!previous;
+            },
+            getActive() { return active ? { mode: active.mode, ownerId: active.ownerId } : null; }
+        };
+        return window.Trellis.interactionModes;
+    } // NEW
 
     function runTrellisHistoryTransaction(metadata, operation) {
         const history = typeof window !== "undefined" && window.Trellis && window.Trellis.history;
@@ -398,52 +434,59 @@ Draw.loadPlugin(function (ui) {
     }
 
     function generateLabelOnlyConnectorParts() {
-        const families = [
-            { id: "twist_lock", label: "Twist-lock" },
-            { id: "push_connect", label: "Push-to-connect" }
-        ];
-        const sizes = STARTER_CONNECTOR_SIZES;
         const parts = [];
-        families.forEach(function (family) {
-            sizes.forEach(function (size) {
+        [
+            { id: "twist_lock", sizeIds: ["1_2", "3_4", "1"] }, // CHANGE
+            { id: "push_connect", sizeIds: ["1_2", "3_4"] } // CHANGE
+        ].forEach(function (family) {
+            family.sizeIds.map(starterConnectorSizeById).filter(Boolean).forEach(function (size) { // CHANGE
                 parts.push(labelOnlyConnectorPart(family, "coupler", size, size, 1, size.cost, starterConnectorPairName(input(family.id, size.label), output(family.id, size.label)) + " coupler")); // CHANGE
                 parts.push(labelOnlyConnectorPart(family, "tee", size, size, 2, size.cost + 0.75, starterConnectorPairName(input(family.id, size.label), output(family.id, size.label)) + " tee")); // CHANGE
                 parts.push(labelOnlyConnectorPart(family, "elbow", size, size, 1, size.cost + 0.35, starterConnectorPairName(input(family.id, size.label), output(family.id, size.label)) + " elbow")); // CHANGE
                 parts.push(labelOnlyConnectorPart(family, "end_cap", size, null, 0, Math.max(0.75, size.cost - 0.6), starterConnectorName(input(family.id, size.label)) + " end cap")); // CHANGE
             });
-            sizes.forEach(function (from) {
-                sizes.forEach(function (to) {
-                    if (from.id === to.id) return;
-                    const cost = Math.max(from.cost, to.cost) + 0.85;
-                    parts.push(labelOnlyConnectorPart(family, "adapter", from, to, 1, cost, starterConnectorPairName(input(family.id, from.label), output(family.id, to.label)) + " adapter")); // CHANGE
-                });
-            });
         });
+        parts.push(starterReducingTeePart("push_connect", starterConnectorSizeById("3_4"), starterConnectorSizeById("1_2"), 5.65)); // NEW
+        parts.push(starterReducingTeePart("twist_lock", starterConnectorSizeById("1"), starterConnectorSizeById("3_4"), 7.15)); // NEW
+        parts.push(starterReducingTeePart("twist_lock", starterConnectorSizeById("1"), starterConnectorSizeById("1_2"), 5.85)); // NEW
         return parts;
     }
+
+    function starterConnectorSizeById(id) { // NEW
+        const key = String(id || "").trim(); // NEW
+        return STARTER_CONNECTOR_SIZES.find(function (size) { return size.id === key; }) || null; // NEW
+    } // NEW
 
     function labelOnlyConnectorPart(family, kind, inputSize, outputSize, outputs, cost, name) {
         const id = family.id + "_" + kind + "_" + inputSize.id + (outputSize && outputSize.id !== inputSize.id ? "_to_" + outputSize.id : "");
         return starterPart(id, name, "fitting", cost, 1, outputs, input(family.id, inputSize.label, "", true), output(outputSize ? family.id : "", outputSize ? outputSize.label : "", "", null, !!outputSize), { pressureLossPsi: outputs > 0 ? 0.2 : 0 });
     }
 
+    function starterReducingTeePart(familyId, runSize, branchSize, cost) { // NEW
+        const run = input(familyId, runSize.label, "", true); // NEW
+        const runOutput = output(familyId, runSize.label, "", null, true); // NEW
+        const branchOutput = Object.assign(output(familyId, branchSize.label, "", null, true), { takeoffBranch: true }); // NEW
+        return Object.assign(starterPart(familyId + "_reducing_tee_" + runSize.id + "_to_" + branchSize.id, starterConnectorPairName(run, branchOutput) + " reducing tee", "fitting", cost, 1, 2, run, runOutput, { pressureLossPsi: 0.25 }), { // NEW
+            connectors: { inputs: 1, outputs: 2, input: normalizeConnectorRecord(run), output: normalizeConnectorRecord(runOutput), outputPorts: [normalizeConnectorRecord(runOutput), normalizeConnectorRecord(branchOutput)] } // NEW
+        }); // NEW
+    } // NEW
+
     function generateThreadConnectorParts() {
         const preservedIds = new Set(["mpt_nipple_3_4", "fpt_coupler_3_4", "mpt_to_3_4_barb_adapter", "fpt_to_3_4_barb_adapter"]);
-        const pipeFamilies = [
-            { id: "barb", label: "barb", costOffset: 0 },
-            { id: "twist_lock", label: "twist-lock", costOffset: 0.75 },
-            { id: "push_connect", label: "push-to-connect", costOffset: 0.75 }
-        ];
         const parts = [];
         function add(part) { if (part && !preservedIds.has(part.id)) parts.push(part); }
         STARTER_CONNECTOR_SIZES.forEach(function (size) {
             add(pipeThreadBasicPart("mpt_nipple", "close nipple", "mpt", size, size.cost + 0.75)); // CHANGE
             add(pipeThreadBasicPart("fpt_coupler", "coupler", "fpt", size, size.cost + 0.75)); // CHANGE
-            pipeFamilies.forEach(function (family) {
-                add(threadToPipeAdapterPart("mpt", family, size, size.cost + family.costOffset + 1));
-                add(threadToPipeAdapterPart("fpt", family, size, size.cost + family.costOffset + 1));
-            });
+            add(threadToPipeAdapterPart("mpt", { id: "barb" }, size, size.cost + 1)); // CHANGE
+            add(threadToPipeAdapterPart("fpt", { id: "barb" }, size, size.cost + 1)); // CHANGE
         });
+        ["1_2", "3_4", "1"].map(starterConnectorSizeById).filter(Boolean).forEach(function (size) { // NEW
+            add(threadToPipeAdapterPart("mpt", { id: "twist_lock" }, size, size.cost + 1.75)); // NEW
+        }); // NEW
+        ["1_2", "3_4"].map(starterConnectorSizeById).filter(Boolean).forEach(function (size) { // NEW
+            add(threadToPipeAdapterPart("mpt", { id: "push_connect" }, size, size.cost + 1.75)); // NEW
+        }); // NEW
         return parts;
     }
 
@@ -726,6 +769,14 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
+    function starterBarbTakeoffPart(hostSize, sizeId) { // NEW
+        const host = input("barb", hostSize, "", true); // NEW
+        const branch = Object.assign(output("barb", "1/4", "", null, true), { takeoffBranch: true }); // NEW
+        return Object.assign(starterPart("barb_takeoff_1_4_on_" + sizeId, "1/4\" barb takeoff", "fitting", 0.85, 1, 2, host, output("barb", hostSize, "", null, true), { pressureLossPsi: 0.2 }), { // NEW
+            connectors: { inputs: 1, outputs: 2, input: normalizeConnectorRecord(host), output: normalizeConnectorRecord(output("barb", hostSize, "", null, true)), outputPorts: [normalizeConnectorRecord(output("barb", hostSize, "", null, true)), normalizeConnectorRecord(branch)] } // NEW
+        }); // NEW
+    } // NEW
+
     function starterCatalog() {
         return { version: PLUGIN_VERSION, items: STARTER_CATALOG_ITEMS.map(normalizeCatalogPart).filter(Boolean) };
     }
@@ -736,14 +787,9 @@ Draw.loadPlugin(function (ui) {
             .filter(function (part) { return part && CATALOG_UPGRADE_PART_IDS.has(part.id); });
     }
 
-    function isObsoleteFamilyTubingPart(part) {
-        const p = normalizeCatalogPart(part);
-        return !!(p && p.category === "pipe_tubing" && (/^(twist_lock|push_connect)_tubing_/).test(p.id));
-    }
-
     function mergeCatalogUpgradeParts(moduleCell, currentCatalog) {
         const current = currentCatalog || readCatalog(moduleCell);
-        const items = (current.items || []).filter(function (item) { return !isObsoleteFamilyTubingPart(item); });
+        const items = (current.items || []).slice(); // CHANGE: starter upgrades are additive and preserve existing catalog entries
         const usedIds = new Set(items.map(function (item) { return item.id; }));
         starterCatalogUpgradeItems().forEach(function (part) {
             if (!usedIds.has(part.id)) {
@@ -754,17 +800,11 @@ Draw.loadPlugin(function (ui) {
         return writeCatalog(moduleCell, { items });
     }
 
-    function pruneObsoleteFamilyTubingParts(moduleCell, currentCatalog) {
-        const current = currentCatalog || readCatalog(moduleCell);
-        if (!(current.items || []).some(isObsoleteFamilyTubingPart)) return current;
-        return writeCatalog(moduleCell, { items: (current.items || []).filter(function (item) { return !isObsoleteFamilyTubingPart(item); }) });
-    }
-
     function seedStarterCatalogIfEmpty(moduleCell) {
         const current = readCatalog(moduleCell);
         if (!moduleCell) return current;
         if (current.items.length > 0 && current.version < PLUGIN_VERSION) return mergeCatalogUpgradeParts(moduleCell, current);
-        if (current.items.length > 0) return pruneObsoleteFamilyTubingParts(moduleCell, current);
+        if (current.items.length > 0) return current; // CHANGE: do not prune existing user/module catalogues during startup
         return writeCatalog(moduleCell, starterCatalog());
     }
 
@@ -917,11 +957,15 @@ Draw.loadPlugin(function (ui) {
         const nominalSize = String(size || inputConnector.nominalSize || outputConnector.nominalSize || "3/4").trim(); // NEW
         const inputPipeConnection = inputConnector.type ? inputConnector.pipeConnection : true; // NEW
         const outputPipeConnection = outputConnector.type ? outputConnector.pipeConnection : true; // NEW
+        const input = Object.assign({}, inputConnector, { type: family, nominalSize, pipeConnection: inputPipeConnection }); // NEW
+        const output = Object.assign({}, outputConnector, { type: family, nominalSize, pipeConnection: outputPipeConnection }); // NEW
         return { // NEW
             inputs: 1, // NEW
             outputs: 1, // NEW
-            input: Object.assign({}, inputConnector, { type: family, nominalSize, pipeConnection: inputPipeConnection }), // NEW
-            output: Object.assign({}, outputConnector, { type: family, nominalSize, pipeConnection: outputPipeConnection }) // NEW
+            input, // CHANGE
+            output, // CHANGE
+            inputPorts: [input], // NEW
+            outputPorts: [output] // NEW
         }; // NEW
     } // NEW
 
@@ -945,11 +989,20 @@ Draw.loadPlugin(function (ui) {
             nominalSize: String(c.nominalSize || c.size || "").trim(),
             pipeType: String(c.pipeType || "").trim(),
             pipeConnection: c.pipeConnection === true || c.pipeConnection === "true" || c.pipeConnection === "1",
+            takeoffBranch: c.takeoffBranch === true || c.takeoffBranch === "true" || c.takeoffBranch === "1", // NEW
             maxFlowGpm: finiteNumber(c.maxFlowGpm, null),
             minPressurePsi: finiteNumber(c.minPressurePsi, null),
             maxPressurePsi: finiteNumber(c.maxPressurePsi, null)
         };
     }
+
+    function normalizeConnectorPortRecords(records, fallback, count) { // NEW
+        const normalizedFallback = normalizeConnectorRecord(fallback); // NEW
+        const list = Array.isArray(records) ? records : []; // NEW
+        const out = []; // NEW
+        for (let i = 0; i < Math.max(0, Math.floor(finiteNumber(count, 0))); i++) out.push(normalizeConnectorRecord(list[i] || normalizedFallback)); // NEW
+        return out; // NEW
+    } // NEW
 
     function normalizeCatalogPart(part) {
         if (!part || typeof part !== "object") return null;
@@ -967,7 +1020,9 @@ Draw.loadPlugin(function (ui) {
                 inputs: Math.max(0, Math.floor(finiteNumber(connectors.inputs, 0))),
                 outputs: Math.max(0, Math.floor(finiteNumber(connectors.outputs, 0))),
                 input: normalizeConnectorRecord(connectors.input || connectors.in),
-                output: normalizeConnectorRecord(connectors.output || connectors.out)
+                output: normalizeConnectorRecord(connectors.output || connectors.out),
+                inputPorts: normalizeConnectorPortRecords(connectors.inputPorts || connectors.inputsByPort, connectors.input || connectors.in, connectors.inputs), // NEW
+                outputPorts: normalizeConnectorPortRecords(connectors.outputPorts || connectors.outputsByPort, connectors.output || connectors.out, connectors.outputs) // NEW
             },
             specs: normalizeCatalogSpecs(part.specs || {})
         };
@@ -1729,6 +1784,37 @@ Draw.loadPlugin(function (ui) {
         return { version: PLUGIN_VERSION, inputs: 1, outputs: 1, input: input("barb", "1/2", "", true), output: output("barb", "1/2", "", null, true) };
     }
 
+    function emptyBedPortConfig() { // NEW: unconfigured bed assemblies should not expose fallback canvas ports.
+        return { version: PLUGIN_VERSION, inputs: 0, outputs: 0, input: normalizeConnectorRecord({}), output: normalizeConnectorRecord({}) }; // NEW
+    } // NEW
+
+    function bedPortConfigMatchesDefault(config) { // NEW: legacy default JSON is treated as an unconfigured draft unless a real recipe exists.
+        const normalized = readBedPortConfigFromObject(config); // NEW
+        return normalized.inputs === 1 && normalized.outputs === 1 && normalized.input.type === "barb" && normalized.input.nominalSize === "1/2" && normalized.output.type === "barb" && normalized.output.nominalSize === "1/2"; // CHANGE
+    } // NEW
+
+    function isCompleteBomBedRecipeRecord(record) { // NEW: canvas ports are a saved assembly contract, not a partial HUD draft.
+        const saved = record || {}; // NEW
+        if (saved.templateModel !== BED_TEMPLATE_MODEL_BOM || !(finiteNumber(saved.recipeVersion, 0) > 0)) return false; // NEW
+        return !!(String(saved.inletPartId || "").trim() && String(saved.rowPartId || "").trim() && String(saved.rowTakeoffPartId || "").trim() && String(saved.rowEndCapPartId || "").trim() && String(saved.supplyPipePartId || "").trim() && (String(saved.outletPartId || "").trim() || String(saved.headerEndCapPartId || "").trim())); // NEW
+    } // NEW
+
+    function bedAssemblyExposesCanvasPorts(moduleCell, assembly) { // NEW
+        if (!isAssembly(assembly) || assemblyType(assembly) !== "bed") return true; // NEW
+        const record = readBedAssemblyTemplateRecord(moduleCell, assembly); // NEW
+        if (record && record.templateModel === BED_TEMPLATE_MODEL_BOM) return isCompleteBomBedRecipeRecord(record); // NEW
+        if (record) return true; // NEW: older non-BOM templates keep their saved port behavior.
+        const bedCell = bedCellForAssembly(moduleCell, assembly); // NEW
+        const rawPorts = getCellAttr(bedCell, ATTRS.BED_PORTS_JSON, ""); // NEW
+        if (!rawPorts) return false; // NEW
+        return !bedPortConfigMatchesDefault(safeJsonParse(rawPorts, null)); // NEW
+    } // NEW
+
+    function canvasBedPortConfig(moduleCell, assembly) { // NEW
+        const bedCell = bedCellForAssembly(moduleCell, assembly); // NEW
+        return bedAssemblyExposesCanvasPorts(moduleCell, assembly) ? readBedPortConfig(bedCell) : emptyBedPortConfig(); // NEW
+    } // NEW
+
     function bedCellForAssembly(moduleCell, assembly) {
         if (!assembly) return null;
         const linkedId = getCellAttr(assembly, ATTRS.LINKED_BED_ID, "");
@@ -1838,7 +1924,9 @@ Draw.loadPlugin(function (ui) {
         if (category === "soaker_hose") omitSpacing = true; // NEW
         const label = bedIrrigationMethodLabel(category); // NEW
         const spacing = omitSpacing ? "" : formatBedEmitterSpacingLabel(saved.spacing && saved.spacing.emitterInches != null ? saved.spacing.emitterInches : saved.emitterSpacingIn, options && options.moduleCell); // CHANGE
-        return { category, label, spacing, assemblyLabel: label ? [label, spacing].filter(Boolean).join(" ") : "" }; // NEW
+        const methodPart = emitterPart && saved.emitterPartId ? emitterPart : null; // NEW
+        const methodLabel = methodPart ? installedPartDisplayName(methodPart) : label; // NEW
+        return { category, label, spacing, methodLabel, methodPartId: methodPart ? methodPart.id : "", assemblyLabel: label ? [label, spacing].filter(Boolean).join(" ") : "" }; // CHANGE
     } // NEW
 
     function bedTemplatePipePartId(templateId, savedPipePartId) {
@@ -1977,6 +2065,16 @@ Draw.loadPlugin(function (ui) {
         return device ? device.id : "";
     }
 
+    function savedEmitterSpacingIn(saved, fallback) { // NEW
+        const spacing = saved && saved.spacing || {}; // NEW
+        const candidates = [saved && saved.emitterSpacingIn, spacing.emitterInches, saved && saved.emitterInches, fallback]; // NEW
+        for (let i = 0; i < candidates.length; i++) { // NEW
+            const value = finiteNumber(candidates[i], null); // NEW
+            if (value > 0) return value; // NEW
+        } // NEW
+        return 12; // NEW
+    } // NEW
+
     function normalizeBedRecipeInput(catalog, templateDef, recipe, options) {
         const saved = recipe || {};
         const useTemplateDefaults = !(options && options.suppressTemplateDefaults); // CHANGE
@@ -1985,7 +2083,8 @@ Draw.loadPlugin(function (ui) {
         const rowPart = partById(catalog, rowPartId);
         const selfEmitting = isSelfEmittingRowPart(rowPart);
         const emitterPartId = selfEmitting ? "" : String(saved.emitterPartId || (useTemplateDefaults ? templateDefaultEmitterPartId(catalog, templateDef, rowPartId) : "") || "").trim(); // CHANGE
-        const emitterSpacingIn = selfEmitting ? finiteNumber(rowPart && rowPart.specs && rowPart.specs.emitterSpacingIn, finiteNumber(saved.emitterSpacingIn, 12)) : finiteNumber(saved.emitterSpacingIn, finiteNumber(saved.emitterInches, 12));
+        const rowEmitterSpacingIn = finiteNumber(rowPart && rowPart.specs && rowPart.specs.emitterSpacingIn, null); // NEW
+        const emitterSpacingIn = selfEmitting && rowEmitterSpacingIn > 0 ? rowEmitterSpacingIn : savedEmitterSpacingIn(saved, 12); // CHANGE
         return { inletPartId: String(saved.inletPartId || "").trim(), outletPartId: terminalParts.outletPartId, rowPartId, emitterPartId, rowTakeoffPartId: String(saved.rowTakeoffPartId || "").trim(), rowEndCapPartId: String(saved.rowEndCapPartId || "").trim(), headerEndCapPartId: terminalParts.headerEndCapPartId, emitterSpacingIn, selfEmitting };
     }
 
@@ -2028,6 +2127,22 @@ Draw.loadPlugin(function (ui) {
         return side === "output" ? finiteNumber(p && p.connectors && p.connectors.outputs, 0) : finiteNumber(p && p.connectors && p.connectors.inputs, 0); // NEW
     } // NEW
 
+    function connectorNominalSizeDelta(sourceConnector, targetConnector) { // NEW
+        return nominalSizeNumber(sourceConnector && sourceConnector.nominalSize) - nominalSizeNumber(targetConnector && targetConnector.nominalSize); // NEW
+    } // NEW
+
+    function bedBoundaryMatchFollowsFlowRule(match, role) { // NEW
+        if (!match) return false; // NEW
+        const delta = connectorNominalSizeDelta(match.externalConnector, match.internalConnector); // NEW
+        if (role === "input") return delta >= 0; // NEW: inlet supply flows from larger/equal external side into smaller/equal header side.
+        return delta <= 0; // NEW: outlet flow leaves the header without increasing nominal size.
+    } // NEW
+
+    function bedBoundaryMatchSortScore(match) { // NEW
+        const delta = Math.abs(connectorNominalSizeDelta(match.externalConnector, match.internalConnector)); // NEW
+        return [delta, match.flipped ? 0 : 1]; // NEW: prefer explicit size-changing inference, then catalog order for equal-size ties.
+    } // NEW
+
     function bedBoundaryMatchForPart(part, role, requiredInternalConnector) { // NEW
         const p = normalizeCatalogPart(part); // NEW
         if (!p || !validateCatalogPart(p).ok || p.connectors.inputs <= 0 || p.connectors.outputs <= 0) return null; // NEW
@@ -2041,8 +2156,8 @@ Draw.loadPlugin(function (ui) {
             const externalCapacity = partConnectorCapacity(p, externalSide); // NEW
             if (!externalConnector || !(externalCapacity > 0)) return null; // NEW
             return { part: p, flipped: !!orientation.flipped, internalSide, internalConnector, externalSide, externalConnector, externalCapacity }; // NEW
-        }).filter(Boolean); // NEW
-        matches.sort(function (a, b) { return (nominalSizeNumber(b.internalConnector.nominalSize) - nominalSizeNumber(a.internalConnector.nominalSize)) || (a.flipped === b.flipped ? 0 : (a.flipped ? 1 : -1)); }); // NEW
+        }).filter(function (match) { return bedBoundaryMatchFollowsFlowRule(match, role); }); // CHANGE
+        matches.sort(function (a, b) { const scoreA = bedBoundaryMatchSortScore(a); const scoreB = bedBoundaryMatchSortScore(b); return (scoreB[0] - scoreA[0]) || (scoreB[1] - scoreA[1]); }); // CHANGE
         return matches[0] || null; // NEW
     } // NEW
 
@@ -2074,11 +2189,30 @@ Draw.loadPlugin(function (ui) {
         }) || null; // NEW
     } // NEW
 
+    function isTeeLikeRowTakeoffPart(part) { // NEW
+        const p = normalizeCatalogPart(part); // NEW
+        const text = String((p && p.id || "") + " " + (p && p.name || "")).toLowerCase(); // NEW
+        return !!(p && p.category === "fitting" && /\b(?:tee|splitter|wye|branch|takeoff)\b/.test(text)); // CHANGE
+    } // NEW
+
+    function isLargeHeaderToQuarterRowTakeoffException(part, headerConnector, rowConnector) { // NEW
+        return false; // CHANGE: larger host tubing now requires explicit 1/4 barb takeoff parts.
+    } // NEW
+
+    function bedRowTakeoffOptionForPart(part, headerConnector, rowConnector) { // NEW
+        const p = normalizeCatalogPart(part); // NEW
+        if (!p || p.category !== "fitting" || !validateCatalogPart(p).ok) return null; // NEW
+        if (isLargeHeaderToQuarterRowTakeoffException(p, headerConnector, rowConnector)) return orientedPartSelectEntry(p, false); // NEW
+        if (!isTeeLikeRowTakeoffPart(p)) return null; // NEW
+        const match = orientedFittingMatch(p, headerConnector, rowConnector); // NEW
+        return match ? orientedPartSelectEntry(p, match.flipped) : null; // NEW
+    } // NEW
+
     function bedRowTakeoffMatchForPart(catalog, partId, headerPart, rowPart) { // NEW
         const headerConnector = headerPart && headerPart.connectors && headerPart.connectors.output; // NEW
         const rowConnector = rowPart && rowPart.connectors && rowPart.connectors.input; // NEW
         const part = partById(catalog, partId); // NEW
-        return part && headerConnector && rowConnector ? orientedFittingMatch(part, headerConnector, rowConnector) : null; // NEW
+        return part && headerConnector && rowConnector ? bedRowTakeoffOptionForPart(part, headerConnector, rowConnector) : null; // CHANGE
     } // NEW
 
     function bedHeaderMatchForPart(catalog, partId, headerPart) {
@@ -2271,7 +2405,7 @@ Draw.loadPlugin(function (ui) {
         if ((role === "row_takeoff" && (!headerConnector || !rowConnector)) || (role === "header_end_cap" && !headerConnector) || (role === "row_end_cap" && !rowConnector)) return preserveSelectedPartOption([], catalog, selectedPartId, preserveSelected); // NEW
         const items = sortCatalogParts(catalog.items).map(normalizeCatalogPart).map(function (part) { // CHANGE
             if (!part || !validateCatalogPart(part).ok) return false;
-            if (role === "row_takeoff") { const match = part.category === "fitting" ? orientedFittingMatch(part, headerConnector, rowConnector) : null; return match ? orientedPartSelectEntry(part, match.flipped) : null; } // CHANGE
+            if (role === "row_takeoff") return bedRowTakeoffOptionForPart(part, headerConnector, rowConnector); // CHANGE
             if (role === "row_end_cap") return (part.category === "cap_end" || part.category === "fitting") && part.connectors.outputs <= 0 && connectorMatchesPartInput(part, rowConnector) ? part : null; // CHANGE
             if (role === "header_end_cap") return (part.category === "cap_end" || part.category === "fitting") && part.connectors.outputs <= 0 && connectorMatchesPartInput(part, headerConnector) ? part : null; // CHANGE
             return false;
@@ -2324,8 +2458,18 @@ Draw.loadPlugin(function (ui) {
         return [port && port.cellId || "", port && port.role || "", String(port && port.index || 0)].join(":");
     }
 
+    function portVisualKey(port) { // NEW
+        const side = normalizeVisualSide(port && (port.visualSide || port.branchSide)); // CHANGE
+        return portKey(port) + (side ? ":" + side : ""); // NEW
+    } // NEW
+
+    function normalizeVisualSide(value) { // CHANGE
+        const side = String(value || "").trim().toLowerCase(); // NEW
+        return side === "top" || side === "bottom" || side === "left" || side === "right" ? side : ""; // CHANGE
+    } // CHANGE
+
     function normalizePort(port) {
-        return { cellId: String(port && port.cellId || ""), role: String(port && port.role || ""), index: Math.max(0, Math.floor(finiteNumber(port && port.index, 0))) };
+        return { cellId: String(port && port.cellId || ""), role: String(port && port.role || ""), index: Math.max(0, Math.floor(finiteNumber(port && port.index, 0))), visualSide: normalizeVisualSide(port && (port.visualSide || port.branchSide || port.side)) }; // CHANGE
     }
 
     function portCell(moduleCell, port) {
@@ -2334,7 +2478,7 @@ Draw.loadPlugin(function (ui) {
 
     function portCapacityForCell(moduleCell, cell, role) {
         if (!cell) return 0;
-        if (isAssembly(cell) && assemblyType(cell) === "bed") { const ports = readBedPortConfig(bedCellForAssembly(moduleCell, cell)); return role === "input" ? ports.inputs : ports.outputs; }
+        if (isAssembly(cell) && assemblyType(cell) === "bed") { const ports = canvasBedPortConfig(moduleCell, cell); return role === "input" ? ports.inputs : ports.outputs; } // CHANGE
         if (endpointType(cell) === "source") return role === "output" ? 1 : 0;
         if (endpointType(cell) === "bed") return role === "input" ? 1 : 0;
         const part = partForCell(moduleCell, cell);
@@ -2342,9 +2486,17 @@ Draw.loadPlugin(function (ui) {
         return Math.max(0, finiteNumber(role === "input" ? part.connectors.inputs : part.connectors.outputs, 0));
     }
 
-    function portConnectorForCell(moduleCell, cell, role) {
+    function connectorForPartPort(part, role, index) { // NEW
+        const p = normalizeCatalogPart(part); // NEW
+        if (!p || !p.connectors) return null; // NEW
+        const normalizedIndex = Math.max(0, Math.floor(finiteNumber(index, 0))); // NEW
+        if (role === "input") return p.connectors.inputPorts[normalizedIndex] || p.connectors.input; // NEW
+        return p.connectors.outputPorts[normalizedIndex] || p.connectors.output; // NEW
+    } // NEW
+
+    function portConnectorForCell(moduleCell, cell, role, index) { // CHANGE
         if (!cell) return null;
-        if (isAssembly(cell) && assemblyType(cell) === "bed") { const ports = readBedPortConfig(bedCellForAssembly(moduleCell, cell)); return role === "input" ? ports.input : ports.output; }
+        if (isAssembly(cell) && assemblyType(cell) === "bed") { const ports = canvasBedPortConfig(moduleCell, cell); return role === "input" ? ports.input : ports.output; } // CHANGE
         if (isEndpoint(cell)) {
             const profile = endpointProfile(cell);
             return endpointProfileAsConnector(profile);
@@ -2352,8 +2504,13 @@ Draw.loadPlugin(function (ui) {
         const part = partForCell(moduleCell, cell);
         if (!part || !part.connectors) return null;
         const flipped = isReversibleFittingCell(moduleCell, cell) && isPartCellFlipped(cell);
-        return role === "input" ? (flipped ? part.connectors.output : part.connectors.input) : (flipped ? part.connectors.input : part.connectors.output);
+        return role === "input" ? (flipped ? connectorForPartPort(part, "output", index) : connectorForPartPort(part, "input", index)) : (flipped ? connectorForPartPort(part, "input", index) : connectorForPartPort(part, "output", index)); // CHANGE
     }
+
+    function isTakeoffBranchPort(moduleCell, cell, role, index) { // NEW
+        const connector = ConnectorRules.portConnectorForCell(moduleCell, cell, role, index); // NEW
+        return role === "output" && !!(connector && connector.takeoffBranch); // NEW
+    } // NEW
 
     function collectAssemblyEdges(moduleCell) {
         return collectDescendants(moduleCell, function (cell) {
@@ -2364,7 +2521,7 @@ Draw.loadPlugin(function (ui) {
     function portEdgeMatches(edge, cell, role, index) {
         const attr = role === "output" ? ATTRS.EDGE_SOURCE_PORT : ATTRS.EDGE_TARGET_PORT;
         const endCell = role === "output" ? edge.source : edge.target;
-        return endCell === cell && String(getCellAttr(edge, attr, "0")) === String(index || 0);
+        return getCellId(endCell) === getCellId(cell) && String(getCellAttr(edge, attr, "0")) === String(index || 0); // CHANGE
     }
 
     function edgesForPort(moduleCell, port) {
@@ -2375,17 +2532,28 @@ Draw.loadPlugin(function (ui) {
     }
 
     function incomingAssemblyEdges(moduleCell, cell) {
-        return collectAssemblyEdges(moduleCell).filter(function (edge) { return edge.target === cell; });
+        return collectAssemblyEdges(moduleCell).filter(function (edge) { return getCellId(edge.target) === getCellId(cell); }); // CHANGE
     }
 
     function outgoingAssemblyEdges(moduleCell, cell) {
-        return collectAssemblyEdges(moduleCell).filter(function (edge) { return edge.source === cell; });
+        return collectAssemblyEdges(moduleCell).filter(function (edge) { return getCellId(edge.source) === getCellId(cell); }); // CHANGE
     }
 
     function assemblyHasConnectedPortRole(moduleCell, cell, role) {
         if (!moduleCell || !cell) return false;
         return role === "input" ? incomingAssemblyEdges(moduleCell, cell).length > 0 : outgoingAssemblyEdges(moduleCell, cell).length > 0;
     }
+
+    function bedAssemblyPortRoleLocked(moduleCell, bedAssembly, bedCell, role) { // NEW
+        const assemblyId = getCellId(bedAssembly); // NEW
+        const bedId = getCellId(bedCell); // NEW
+        const attr = role === "output" ? ATTRS.EDGE_SOURCE_PORT : ATTRS.EDGE_TARGET_PORT; // NEW
+        return collectAssemblyEdges(moduleCell).some(function (edge) { // NEW
+            const terminal = role === "output" ? edge.source : edge.target; // NEW
+            const terminalBed = bedCellForAssembly(moduleCell, terminal); // NEW
+            return String(getCellAttr(edge, attr, "0")) === "0" && (getCellId(terminal) === assemblyId || getCellId(terminal) === bedId || getCellId(terminalBed) === bedId); // NEW
+        }); // NEW
+    } // NEW
 
     function sourceConnectorFieldsLocked(moduleCell, sourceCell) {
         if (!sourceCell || endpointType(sourceCell) !== "source") return false;
@@ -2486,8 +2654,8 @@ Draw.loadPlugin(function (ui) {
     function connectionDecisionForPorts(moduleCell, sourcePort, targetPort) {
         const structure = ConnectorRules.validatePortConnectionStructure(moduleCell, sourcePort, targetPort);
         if (!structure.ok) { irrigationDebug("connectionDecision:rejected", { stage: "structure-result", reason: structure.reason, sourcePort: normalizePort(sourcePort), targetPort: normalizePort(targetPort) }); return structure; }
-        const sourceConnector = ConnectorRules.portConnectorForCell(moduleCell, structure.sourceCell, "output");
-        const targetConnector = ConnectorRules.portConnectorForCell(moduleCell, structure.targetCell, "input");
+        const sourceConnector = ConnectorRules.portConnectorForCell(moduleCell, structure.sourceCell, "output", structure.source.index); // CHANGE
+        const targetConnector = ConnectorRules.portConnectorForCell(moduleCell, structure.targetCell, "input", structure.target.index); // CHANGE
         const compatibility = ConnectorRules.connectionMode(moduleCell, sourceConnector, targetConnector);
         if (!compatibility.ok) { irrigationDebug("connectionDecision:rejected", { stage: "compatibility", reason: compatibility.reason, source: structure.source, target: structure.target, sourceCell: debugCellSummary(structure.sourceCell), targetCell: debugCellSummary(structure.targetCell), sourceConnector, targetConnector }); return compatibility; }
         const sourceCapacity = portCapacityForCell(moduleCell, structure.sourceCell, "output");
@@ -2500,8 +2668,8 @@ Draw.loadPlugin(function (ui) {
     function bridgeSuggestionEligibility(moduleCell, sourcePort, targetPort) {
         const structure = ConnectorRules.validatePortConnectionStructure(moduleCell, sourcePort, targetPort);
         if (!structure.ok) return Object.assign({}, structure, { bridgeable: false });
-        const sourceConnector = ConnectorRules.portConnectorForCell(moduleCell, structure.sourceCell, "output");
-        const targetConnector = ConnectorRules.portConnectorForCell(moduleCell, structure.targetCell, "input");
+        const sourceConnector = ConnectorRules.portConnectorForCell(moduleCell, structure.sourceCell, "output", structure.source.index); // CHANGE
+        const targetConnector = ConnectorRules.portConnectorForCell(moduleCell, structure.targetCell, "input", structure.target.index); // CHANGE
         const compatibility = ConnectorRules.connectionMode(moduleCell, sourceConnector, targetConnector);
         return compatibility.ok ? Object.assign({}, structure, { ok: false, bridgeable: false, reason: "Selected ports can connect directly." }) : Object.assign({}, structure, { ok: true, bridgeable: true, reason: compatibility.reason, sourceConnector, targetConnector });
     }
@@ -2512,7 +2680,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function createAssemblyConnection(moduleCell, sourcePort, targetPort) {
-        if (activeIrrigationEditDepth === 0) return runIrrigationEdit("createAssemblyConnection", function () { return createAssemblyConnection(moduleCell, sourcePort, targetPort); });
+        if (activeIrrigationEditDepth === 0) { const result = runIrrigationEdit("createAssemblyConnection", function () { return createAssemblyConnection(moduleCell, sourcePort, targetPort); }); if (result && result.ok && isIrrigationModeActive(moduleCell)) renderIrrigationMode(activeIrrigationMode); return result; } // CHANGE
         const decision = ConnectorRules.connectionDecision(moduleCell, sourcePort, targetPort);
         if (!decision.ok) { irrigationDebug("createAssemblyConnection:rejected", { reason: decision.reason, sourcePort: normalizePort(sourcePort), targetPort: normalizePort(targetPort) }); return { ok: false, reason: decision.reason, edge: null, mode: "" }; }
         if (decision.mode === "merge") return mergeAssemblyConnection(moduleCell, decision);
@@ -2520,6 +2688,7 @@ Draw.loadPlugin(function (ui) {
             [ATTRS.EDGE_SOURCE_PORT]: String(decision.source.index),
             [ATTRS.EDGE_TARGET_PORT]: String(decision.target.index)
         };
+        Object.assign(attrs, connectionVisualSideAttrs(moduleCell, decision.source, decision.target, decision.sourceCell, decision.targetCell)); // CHANGE
         if (decision.mode === "pipe") { attrs[ATTRS.PIPE_EDGE] = "1"; attrs[ATTRS.PIPE_PART_ID] = decision.pipePartId; attrs[ATTRS.PART_STATE] = PART_STATE_PLANNED; }
         else attrs[ATTRS.DIRECT_LINK_EDGE] = "1";
         const edgeLabel = connectionEdgeDisplayLabelForDecision(moduleCell, decision);
@@ -2562,13 +2731,13 @@ Draw.loadPlugin(function (ui) {
         if (decision.mode === "pipe") {
             const pipePartId = String(decision.pipePartId || "").trim();
             if (!pipePartId) return;
-            setCellAttrs(edge, { [ATTRS.PIPE_EDGE]: "1", [ATTRS.DIRECT_LINK_EDGE]: "", [ATTRS.PIPE_PART_ID]: pipePartId, [ATTRS.PART_STATE]: partStateForCell(edge), [ATTRS.EDGE_SOURCE_PORT]: String(decision.source.index), [ATTRS.EDGE_TARGET_PORT]: String(decision.target.index) });
+            setCellAttrs(edge, Object.assign({ [ATTRS.PIPE_EDGE]: "1", [ATTRS.DIRECT_LINK_EDGE]: "", [ATTRS.PIPE_PART_ID]: pipePartId, [ATTRS.PART_STATE]: partStateForCell(edge), [ATTRS.EDGE_SOURCE_PORT]: String(decision.source.index), [ATTRS.EDGE_TARGET_PORT]: String(decision.target.index) }, connectionVisualSideAttrs(findGardenModuleAncestor(edge), decision.source, decision.target, decision.sourceCell, decision.targetCell))); // CHANGE
             applyPipeEdgeLifecycleStyle(edge, findGardenModuleAncestor(edge), PIPE_EDGE_BASE_STYLE);
             syncConnectionEdgeDisplayLabel(findGardenModuleAncestor(edge), edge);
             syncConnectionEdgeVisualAnchors(findGardenModuleAncestor(edge), edge); // NEW
             return;
         }
-        else { setCellAttrs(edge, { [ATTRS.PIPE_EDGE]: "", [ATTRS.DIRECT_LINK_EDGE]: "1", [ATTRS.PIPE_PART_ID]: "", [ATTRS.EDGE_SOURCE_PORT]: String(decision.source.index), [ATTRS.EDGE_TARGET_PORT]: String(decision.target.index) }); applyDirectLinkEdgeStyle(edge); syncConnectionEdgeDisplayLabel(findGardenModuleAncestor(edge), edge); syncConnectionEdgeVisualAnchors(findGardenModuleAncestor(edge), edge); } // CHANGE
+        else { setCellAttrs(edge, Object.assign({ [ATTRS.PIPE_EDGE]: "", [ATTRS.DIRECT_LINK_EDGE]: "1", [ATTRS.PIPE_PART_ID]: "", [ATTRS.EDGE_SOURCE_PORT]: String(decision.source.index), [ATTRS.EDGE_TARGET_PORT]: String(decision.target.index) }, connectionVisualSideAttrs(findGardenModuleAncestor(edge), decision.source, decision.target, decision.sourceCell, decision.targetCell))); applyDirectLinkEdgeStyle(edge); syncConnectionEdgeDisplayLabel(findGardenModuleAncestor(edge), edge); syncConnectionEdgeVisualAnchors(findGardenModuleAncestor(edge), edge); } // CHANGE
     }
 
     function existingEdgeConnectionDecision(moduleCell, sourcePort, targetPort) {
@@ -2579,8 +2748,10 @@ Draw.loadPlugin(function (ui) {
         const targetCell = portCell(moduleCell, target);
         if (!sourceCell || !targetCell) return { ok: false, reason: "Selected port is no longer available." };
         if (sourceCell === targetCell) return { ok: false, reason: "A part cannot connect to itself." };
-        const compatibility = ConnectorRules.connectionMode(moduleCell, ConnectorRules.portConnectorForCell(moduleCell, sourceCell, "output"), ConnectorRules.portConnectorForCell(moduleCell, targetCell, "input"));
-        return compatibility.ok ? Object.assign({}, compatibility, { source, target, sourceCell, targetCell }) : compatibility;
+        const sourceConnector = ConnectorRules.portConnectorForCell(moduleCell, sourceCell, "output", source.index); // NEW
+        const targetConnector = ConnectorRules.portConnectorForCell(moduleCell, targetCell, "input", target.index); // NEW
+        const compatibility = ConnectorRules.connectionMode(moduleCell, sourceConnector, targetConnector); // CHANGE
+        return compatibility.ok ? Object.assign({}, compatibility, { source, target, sourceCell, targetCell, sourceConnector, targetConnector }) : compatibility; // CHANGE
     }
 
     function moveCellToParent(cell, parent, index) {
@@ -2943,7 +3114,8 @@ Draw.loadPlugin(function (ui) {
     function partConnectorOrientations(part) { // NEW
         const p = normalizeCatalogPart(part); // NEW
         if (!p || !p.connectors) return []; // NEW
-        const orientations = [{ part: p, flipped: false, inputConnector: p.connectors.input, outputConnector: p.connectors.output, inputSide: "input", outputSide: "output" }]; // CHANGE
+        const outputConnectors = p.connectors.outputPorts && p.connectors.outputPorts.length ? p.connectors.outputPorts : [p.connectors.output]; // NEW
+        const orientations = outputConnectors.map(function (outputConnector, outputIndex) { return { part: p, flipped: false, inputConnector: p.connectors.input, outputConnector, inputSide: "input", outputSide: "output", inputIndex: 0, outputIndex }; }); // CHANGE
         if (isReversibleFittingPart(p)) orientations.push({ part: p, flipped: true, inputConnector: p.connectors.output, outputConnector: p.connectors.input, inputSide: "output", outputSide: "input" }); // CHANGE
         return orientations; // NEW
     } // NEW
@@ -2963,8 +3135,8 @@ Draw.loadPlugin(function (ui) {
         return true;
     }
 
-    function compatibleDropdownParts(moduleCell, cell, role) {
-        const connector = ConnectorRules.portConnectorForCell(moduleCell, cell, role);
+    function compatibleDropdownParts(moduleCell, cell, role, index) { // CHANGE
+        const connector = ConnectorRules.portConnectorForCell(moduleCell, cell, role, index); // CHANGE
         return sortCatalogParts(readCatalog(moduleCell).items).map(normalizeCatalogPart).filter(function (part) {
             if (!part || part.category === "pipe_tubing" || !validateCatalogPart(part).ok) return false;
             return role === "output" ? partCanReceiveFromConnector(part, connector) : partCanFeedConnector(part, connector);
@@ -3006,7 +3178,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function addPartPickerParts(session, context) {
-        const baseParts = context ? compatibleDropdownParts(session.moduleCell, context.row.cell, context.row.role).filter(function (part) { return partAllowedForConnectionRow(session.moduleCell, context.row, part); }) : allAddableCatalogParts(session.moduleCell);
+        const baseParts = context ? compatibleDropdownParts(session.moduleCell, context.row.cell, context.row.role, context.row.index).filter(function (part) { return partAllowedForConnectionRow(session.moduleCell, context.row, part); }) : allAddableCatalogParts(session.moduleCell); // CHANGE
         const suppressed = context ? upstreamSingletonCategories(session.moduleCell, context.row) : new Set();
         const parts = baseParts.filter(function (part) { return !suppressed.has(part.category); }); // NEW
         return sortAddPartPickerParts(context ? parts.map(function (part) { return connectionContextPartOption(session.moduleCell, context.row, part); }) : parts); // CHANGE
@@ -3055,7 +3227,7 @@ Draw.loadPlugin(function (ui) {
     function addPartContextLabel(moduleCell, context) {
         const cell = context && context.row && context.row.cell;
         const role = context && context.row && context.row.role;
-        const connector = ConnectorRules.portConnectorForCell(moduleCell, cell, role);
+        const connector = ConnectorRules.portConnectorForCell(moduleCell, cell, role, context && context.row && context.row.index); // CHANGE
         return portDisplayPrefix(moduleCell, cell, role).toLowerCase() + " " + ((context.row.index || 0) + 1) + " on " + irrigationCellLabel(cell) + " (" + connectorLabel(connector) + ")"; // CHANGE
     }
 
@@ -3067,6 +3239,284 @@ Draw.loadPlugin(function (ui) {
     function addPartStockGroupLabel(part) {
         return STOCK_AVAILABLE.has(normalizeCatalogPart(part).stockState) ? "In stock" : "Needs purchase";
     }
+
+    function createPartSearchCombobox(select, parts, options) { // NEW
+        const config = options || {}; // NEW
+        let currentParts = sortConnectionComboboxParts(parts || []); // NEW
+        const root = document.createElement("div"); // NEW
+        root.className = "trellis-irrigation-part-picker-combobox trellis-irrigation-connection-combobox " + (config.rootClassName || ""); // NEW
+        root.style.cssText = "position:relative;min-width:0;width:100%;max-width:100%;box-sizing:border-box;"; // NEW
+        const trigger = document.createElement("button"); // NEW
+        trigger.type = "button"; // NEW
+        trigger.className = "trellis-irrigation-part-picker-trigger trellis-irrigation-connection-combobox-trigger"; // NEW
+        trigger.style.cssText = "min-width:0;width:100%;max-width:100%;padding:4px 22px 4px 6px;border:1px solid #aaa;border-radius:4px;background:#fff;color:#111827;text-align:left;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;position:relative;"; // NEW
+        const label = document.createElement("span"); // NEW
+        label.className = "trellis-irrigation-part-picker-label"; // NEW
+        const chevron = document.createElement("span"); // NEW
+        chevron.textContent = "v"; // NEW
+        chevron.setAttribute("aria-hidden", "true"); // NEW
+        chevron.style.cssText = "position:absolute;right:7px;top:50%;transform:translateY(-50%);font-size:10px;color:#4b5563;"; // NEW
+        trigger.appendChild(label); // NEW
+        trigger.appendChild(chevron); // NEW
+        trigger.setAttribute("aria-haspopup", "listbox"); // NEW
+        trigger.setAttribute("aria-expanded", "false"); // NEW
+        root.appendChild(trigger); // NEW
+        const state = { open: false, query: "", panel: null, search: null, list: null, activeIndex: -1, outsideListener: null, resizeListener: null, blurTimer: null, renderedPartsForList: 0 }; // NEW
+        function selectedPart() { // NEW
+            const value = String(select.value || ""); // NEW
+            return currentParts.find(function (part) { return part && part.id === value; }) || null; // NEW
+        } // NEW
+        function sync() { // NEW
+            const selected = selectedPart(); // NEW
+            const hasParts = currentParts.length > 0; // NEW
+            label.textContent = selected ? (selected.name || selected.id) : (hasParts ? (config.placeholder || "Choose part") : (config.emptyText || "No compatible parts")); // NEW
+            trigger.disabled = !!select.disabled || !hasParts; // NEW
+            root.classList.toggle("trellis-irrigation-part-picker-disabled", trigger.disabled); // NEW
+            trigger.style.opacity = trigger.disabled ? "0.6" : "1"; // NEW
+            trigger.style.cursor = trigger.disabled ? "default" : "pointer"; // NEW
+            if (state.list) renderList(); // NEW
+        } // NEW
+        function closeMenu(focusTrigger) { // NEW
+            if (!state.open) return; // NEW
+            state.open = false; // NEW
+            trigger.setAttribute("aria-expanded", "false"); // NEW
+            root.classList.remove("trellis-irrigation-connection-combobox-open"); // NEW
+            if (state.panel && state.panel.parentNode) state.panel.parentNode.removeChild(state.panel); // NEW
+            state.panel = state.search = state.list = null; // NEW
+            if (state.outsideListener) document.removeEventListener("mousedown", state.outsideListener); // NEW
+            if (state.resizeListener && typeof window !== "undefined" && window.removeEventListener) { window.removeEventListener("resize", state.resizeListener); window.removeEventListener("scroll", state.resizeListener, true); } // NEW
+            state.outsideListener = null; // NEW
+            state.resizeListener = null; // NEW
+            if (state.blurTimer) clearTimeout(state.blurTimer); // NEW
+            state.blurTimer = null; // NEW
+            if (activeConnectionComboboxClose === closeMenu) activeConnectionComboboxClose = null; // NEW
+            if (focusTrigger && trigger.focus) trigger.focus(); // NEW
+        } // NEW
+        function menuContainsNode(node) { // NEW
+            return !!(node && (root.contains(node) || state.panel && state.panel.contains(node))); // NEW
+        } // NEW
+        function clearFocusLossClose() { // NEW
+            if (state.blurTimer) clearTimeout(state.blurTimer); // NEW
+            state.blurTimer = null; // NEW
+        } // NEW
+        function closeAfterFocusLoss() { // NEW
+            clearFocusLossClose(); // NEW
+            state.blurTimer = setTimeout(function () { if (!menuContainsNode(document.activeElement)) closeMenu(false); }, 0); // NEW
+        } // NEW
+        function optionButtons() { // NEW
+            return state.panel ? Array.from(state.panel.querySelectorAll(".trellis-irrigation-connection-combobox-option")) : []; // NEW
+        } // NEW
+        function focusOption(index) { // NEW
+            const options = optionButtons(); // NEW
+            if (!options.length) return; // NEW
+            state.activeIndex = Math.max(0, Math.min(index, options.length - 1)); // NEW
+            options[state.activeIndex].focus(); // NEW
+        } // NEW
+        function moveOption(delta) { // NEW
+            const options = optionButtons(); // NEW
+            if (!options.length) return; // NEW
+            const next = state.activeIndex < 0 ? (delta > 0 ? 0 : options.length - 1) : (state.activeIndex + delta + options.length) % options.length; // NEW
+            focusOption(next); // NEW
+        } // NEW
+        function choosePart(partId) { // NEW
+            setNativeSelectValue(select, partId || ""); // CHANGE
+            closeMenu(false); // NEW
+            dispatchNativeChange(select); // NEW
+        } // NEW
+        function renderClearPartOption(groupNode) { // NEW
+            const option = document.createElement("button"); // NEW
+            option.type = "button"; // NEW
+            option.className = "trellis-irrigation-part-picker-option trellis-irrigation-connection-combobox-option"; // NEW
+            option.setAttribute("role", "option"); // NEW
+            option.setAttribute("data-part-id", ""); // NEW
+            option.style.cssText = partComboboxOptionStyle(7) + "font-weight:600;color:#374151;"; // NEW
+            option.textContent = config.placeholder || "Choose part"; // NEW
+            option.addEventListener("click", function () { choosePart(""); }); // NEW
+            option.addEventListener("keydown", function (ev) { // NEW
+                if (ev.key === "ArrowDown") { ev.preventDefault(); moveOption(1); } // NEW
+                else if (ev.key === "ArrowUp") { ev.preventDefault(); moveOption(-1); } // NEW
+                else if (ev.key === "Enter") { ev.preventDefault(); choosePart(""); } // NEW
+                else if (ev.key === "Escape") { ev.preventDefault(); closeMenu(true); } // NEW
+            }); // NEW
+            groupNode.appendChild(option); // NEW
+        } // NEW
+        function focusCategoryButton(categoryKey) { // NEW
+            if (!state.list || !categoryKey) return; // NEW
+            const buttons = Array.from(state.list.querySelectorAll(".trellis-irrigation-connection-combobox-category,.trellis-irrigation-connection-combobox-fitting-subgroup,.trellis-irrigation-connection-combobox-fitting-size-pair")); // NEW
+            const button = buttons.find(function (node) { return node.getAttribute("data-category-key") === categoryKey; }); // NEW
+            if (button && button.focus) button.focus(); // NEW
+        } // NEW
+        function renderPartOption(groupNode, part, indentPx) { // NEW
+            state.renderedPartsForList += 1; // NEW
+            const option = document.createElement("button"); // NEW
+            option.type = "button"; // NEW
+            option.className = "trellis-irrigation-part-picker-option trellis-irrigation-connection-combobox-option"; // NEW
+            option.setAttribute("role", "option"); // NEW
+            option.setAttribute("data-part-id", part.id); // NEW
+            option.style.cssText = partComboboxOptionStyle(indentPx); // NEW
+            appendPartComboboxOptionContent(option, part); // NEW
+            option.addEventListener("click", function () { choosePart(part.id); }); // NEW
+            option.addEventListener("keydown", function (ev) { // NEW
+                if (ev.key === "ArrowDown") { ev.preventDefault(); moveOption(1); } // NEW
+                else if (ev.key === "ArrowUp") { ev.preventDefault(); moveOption(-1); } // NEW
+                else if (ev.key === "Enter") { ev.preventDefault(); choosePart(part.id); } // NEW
+                else if (ev.key === "Escape") { ev.preventDefault(); closeMenu(true); } // NEW
+            }); // NEW
+            groupNode.appendChild(option); // NEW
+        } // NEW
+        function renderFittingSubgroup(groupNode, groupId, subgroup, subgroupIndex, query) { // NEW
+            const subgroupKey = connectionComboboxCategoryKey(groupId, "fitting:" + subgroup.id); // NEW
+            const collapsed = query ? false : connectionComboboxCategoryCollapsed(subgroupKey, subgroupIndex !== 0); // NEW
+            const buttonNode = partPickerGroupButton("trellis-irrigation-connection-combobox-fitting-subgroup", subgroupKey, collapsed, subgroup.label, subgroup.parts.length, "18px", "#fff", "#4b5563"); // NEW
+            buttonNode.addEventListener("click", function () { clearFocusLossClose(); connectionComboboxSetCategoryCollapsed(subgroupKey, !collapsed); renderList(subgroupKey); }); // NEW
+            buttonNode.addEventListener("keydown", function (ev) { if (ev.key === "ArrowDown") { ev.preventDefault(); focusOption(0); } else if (ev.key === "Escape") { ev.preventDefault(); closeMenu(true); } }); // NEW
+            groupNode.appendChild(buttonNode); // NEW
+            if (!collapsed) { // NEW
+                if (subgroup.childGroups && subgroup.childGroups.length) subgroup.childGroups.forEach(function (childGroup, childIndex) { renderFittingSizePairGroup(groupNode, groupId, subgroup, childGroup, childIndex, query); }); // NEW
+                if (subgroup.ungroupedParts && subgroup.ungroupedParts.length) subgroup.ungroupedParts.forEach(function (part) { renderPartOption(groupNode, part, 30); }); // NEW
+                else if (!subgroup.childGroups || !subgroup.childGroups.length) subgroup.parts.forEach(function (part) { renderPartOption(groupNode, part, 30); }); // NEW
+            } // NEW
+        } // NEW
+        function renderFittingSizePairGroup(groupNode, groupId, subgroup, childGroup, childIndex, query) { // NEW
+            const childKey = connectionComboboxCategoryKey(groupId, "fitting:" + subgroup.id + ":" + childGroup.id); // NEW
+            const collapsed = query ? false : connectionComboboxCategoryCollapsed(childKey, childIndex !== 0); // NEW
+            const buttonNode = partPickerGroupButton("trellis-irrigation-connection-combobox-fitting-size-pair", childKey, collapsed, childGroup.label, childGroup.parts.length, "30px", "#fff", "#6b7280"); // NEW
+            buttonNode.addEventListener("click", function () { clearFocusLossClose(); connectionComboboxSetCategoryCollapsed(childKey, !collapsed); renderList(childKey); }); // NEW
+            buttonNode.addEventListener("keydown", function (ev) { if (ev.key === "ArrowDown") { ev.preventDefault(); focusOption(0); } else if (ev.key === "Escape") { ev.preventDefault(); closeMenu(true); } }); // NEW
+            groupNode.appendChild(buttonNode); // NEW
+            if (!collapsed) childGroup.parts.forEach(function (part) { renderPartOption(groupNode, part, 42); }); // NEW
+        } // NEW
+        function renderList(focusCategoryKey) { // NEW
+            if (!state.list) return; // NEW
+            state.list.innerHTML = ""; // NEW
+            state.renderedPartsForList = 0; // NEW
+            const query = normalizeSearchText(state.query); // NEW
+            if (!query) renderClearPartOption(state.list); // NEW
+            const categories = connectionComboboxCategoryGroups(currentParts, query); // NEW
+            categories.forEach(function (category, categoryIndex) { // NEW
+                const categoryKey = connectionComboboxCategoryKey("partPicker", category.category); // NEW
+                const collapsed = query ? false : connectionComboboxCategoryCollapsed(categoryKey, categoryIndex !== 0); // NEW
+                const groupNode = document.createElement("div"); // NEW
+                groupNode.className = "trellis-irrigation-part-picker-category-group"; // NEW
+                const categoryButton = partPickerGroupButton("trellis-irrigation-connection-combobox-category", categoryKey, collapsed, catalogCategoryLabel(category.category), category.parts.length, "7px", "#f9fafb", "#374151"); // NEW
+                categoryButton.addEventListener("click", function () { clearFocusLossClose(); connectionComboboxSetCategoryCollapsed(categoryKey, !collapsed); renderList(categoryKey); }); // NEW
+                categoryButton.addEventListener("keydown", function (ev) { if (ev.key === "ArrowDown") { ev.preventDefault(); focusOption(0); } else if (ev.key === "Escape") { ev.preventDefault(); closeMenu(true); } }); // NEW
+                groupNode.appendChild(categoryButton); // NEW
+                if (!collapsed) { // NEW
+                    if (category.subgroups && category.subgroups.length) category.subgroups.forEach(function (subgroup, subgroupIndex) { renderFittingSubgroup(groupNode, "partPicker", subgroup, subgroupIndex, query); }); // NEW
+                    else category.parts.forEach(function (part) { renderPartOption(groupNode, part, 18); }); // NEW
+                } // NEW
+                state.list.appendChild(groupNode); // NEW
+            }); // NEW
+            if (!state.renderedPartsForList) { // NEW
+                const empty = document.createElement("div"); // NEW
+                empty.className = "trellis-irrigation-connection-combobox-empty"; // NEW
+                empty.style.cssText = "padding:7px;color:#6b7280;"; // NEW
+                empty.textContent = query ? "No matching parts" : (config.emptyText || "No compatible parts"); // NEW
+                state.list.appendChild(empty); // NEW
+            } // NEW
+            state.activeIndex = -1; // NEW
+            focusCategoryButton(focusCategoryKey); // NEW
+        } // NEW
+        function openMenu(focusSearch) { // NEW
+            if (state.open || trigger.disabled) return; // NEW
+            if (activeConnectionComboboxClose) activeConnectionComboboxClose(false); // NEW
+            state.open = true; // NEW
+            activeConnectionComboboxClose = closeMenu; // NEW
+            trigger.setAttribute("aria-expanded", "true"); // NEW
+            root.classList.add("trellis-irrigation-connection-combobox-open"); // NEW
+            const panel = document.createElement("div"); // NEW
+            panel.className = "trellis-irrigation-part-picker-panel trellis-irrigation-connection-combobox-panel"; // NEW
+            panel.style.cssText = "position:fixed;z-index:2000;border:1px solid #9ca3af;border-radius:4px;background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.25);overflow:auto;box-sizing:border-box;"; // NEW
+            const search = document.createElement("input"); // NEW
+            search.className = "trellis-irrigation-part-picker-search trellis-irrigation-connection-combobox-search"; // NEW
+            search.type = "search"; // NEW
+            search.placeholder = "Search parts"; // NEW
+            search.value = state.query; // NEW
+            search.style.cssText = "position:sticky;top:0;z-index:1;width:100%;min-width:0;box-sizing:border-box;padding:6px 7px;border:0;border-bottom:1px solid #d1d5db;outline:none;"; // NEW
+            const list = document.createElement("div"); // NEW
+            list.className = "trellis-irrigation-part-picker-list trellis-irrigation-connection-combobox-list"; // NEW
+            list.setAttribute("role", "listbox"); // NEW
+            panel.appendChild(search); // NEW
+            panel.appendChild(list); // NEW
+            connectionComboboxPanelHost().appendChild(panel); // NEW
+            state.panel = panel; // NEW
+            state.search = search; // NEW
+            state.list = list; // NEW
+            shieldHudEvents(panel); // NEW
+            search.addEventListener("input", function () { state.query = search.value; renderList(); }); // NEW
+            search.addEventListener("keydown", function (ev) { // NEW
+                if (ev.key === "ArrowDown") { ev.preventDefault(); focusOption(0); } // NEW
+                else if (ev.key === "ArrowUp") { ev.preventDefault(); focusOption(optionButtons().length - 1); } // NEW
+                else if (ev.key === "Escape") { ev.preventDefault(); closeMenu(true); } // NEW
+                else if (ev.key === "Enter") { const options = optionButtons(); if (options.length) { ev.preventDefault(); options[0].click(); } } // NEW
+            }); // NEW
+            panel.addEventListener("mousedown", function (ev) { if (ev.stopPropagation) ev.stopPropagation(); }); // NEW
+            panel.addEventListener("focusout", closeAfterFocusLoss); // NEW
+            state.outsideListener = function (ev) { if (!menuContainsNode(ev.target)) closeMenu(false); }; // NEW
+            state.resizeListener = function () { positionConnectionComboboxPanel(root, trigger, panel); }; // NEW
+            document.addEventListener("mousedown", state.outsideListener); // NEW
+            if (typeof window !== "undefined" && window.addEventListener) { window.addEventListener("resize", state.resizeListener); window.addEventListener("scroll", state.resizeListener, true); } // NEW
+            renderList(); // NEW
+            positionConnectionComboboxPanel(root, trigger, panel); // NEW
+            if (focusSearch && search.focus) search.focus(); // NEW
+        } // NEW
+        root.addEventListener("focusout", closeAfterFocusLoss); // NEW
+        trigger.addEventListener("click", function () { state.open ? closeMenu(false) : openMenu(true); }); // NEW
+        trigger.addEventListener("keydown", function (ev) { if (ev.key === "ArrowDown" || ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openMenu(true); } else if (ev.key === "Escape") { ev.preventDefault(); closeMenu(true); } }); // NEW
+        return { root, close: closeMenu, sync, setParts: function (nextParts) { currentParts = sortConnectionComboboxParts(nextParts || []); sync(); } }; // NEW
+    } // NEW
+
+    function partPickerGroupButton(className, key, collapsed, label, count, paddingLeft, background, color) { // NEW
+        const buttonNode = document.createElement("button"); // NEW
+        buttonNode.type = "button"; // NEW
+        buttonNode.className = className; // NEW
+        buttonNode.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;padding:5px 7px 5px " + paddingLeft + ";border:0;border-top:1px solid #e5e7eb;background:" + background + ";color:" + color + ";font-weight:700;text-align:left;box-sizing:border-box;cursor:pointer;"; // NEW
+        buttonNode.setAttribute("data-category-key", key); // NEW
+        buttonNode.setAttribute("aria-expanded", collapsed ? "false" : "true"); // NEW
+        buttonNode.textContent = (collapsed ? "> " : "v ") + label + " (" + count + ")"; // NEW
+        return buttonNode; // NEW
+    } // NEW
+
+    function partComboboxOptionStyle(indentPx) { // NEW
+        return "display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:5px 8px 5px " + Math.max(18, indentPx || 18) + "px;border:0;border-top:1px solid #f3f4f6;background:#fff;color:#111827;text-align:left;box-sizing:border-box;cursor:pointer;"; // NEW
+    } // NEW
+
+    function appendPartComboboxOptionContent(option, part) { // NEW
+        const text = document.createElement("span"); // NEW
+        text.style.cssText = "display:flex;flex-direction:column;gap:1px;min-width:0;flex:1;"; // NEW
+        const name = document.createElement("span"); // NEW
+        name.textContent = part.name || part.id; // NEW
+        name.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"; // NEW
+        const detail = document.createElement("span"); // NEW
+        detail.className = "trellis-irrigation-part-picker-option-detail"; // NEW
+        detail.style.cssText = "font-size:11px;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"; // NEW
+        detail.textContent = connectionComboboxPartDetail(part); // NEW
+        text.appendChild(name); // NEW
+        text.appendChild(detail); // NEW
+        const badge = document.createElement("span"); // NEW
+        badge.className = "trellis-irrigation-part-stock-badge"; // NEW
+        badge.textContent = partStockBadgeLabel(part); // NEW
+        badge.style.cssText = partStockBadgeStyle(part); // NEW
+        option.appendChild(text); // NEW
+        option.appendChild(badge); // NEW
+    } // NEW
+
+    function partStockBadgeLabel(part) { // NEW
+        return STOCK_AVAILABLE.has(normalizeCatalogPart(part).stockState) ? "In stock" : "Needs purchase"; // NEW
+    } // NEW
+
+    function partStockBadgeStyle(part) { // NEW
+        const available = STOCK_AVAILABLE.has(normalizeCatalogPart(part).stockState); // NEW
+        return "flex:0 0 auto;font-size:10px;font-weight:700;border-radius:999px;padding:2px 6px;color:" + (available ? "#14532d" : "#7f1d1d") + ";background:" + (available ? "#dcfce7" : "#fee2e2") + ";"; // NEW
+    } // NEW
+
+    function dispatchNativeChange(select) { // NEW
+        let event; // NEW
+        if (typeof Event === "function") event = new Event("change", { bubbles: true }); // NEW
+        else { event = document.createEvent("Event"); event.initEvent("change", true, false); } // NEW
+        select.dispatchEvent(event); // NEW
+    } // NEW
 
     function broadCategorySortIndex(part) {
         return partDisplayCategory(part).broadOrder; // CHANGE
@@ -3108,7 +3558,7 @@ Draw.loadPlugin(function (ui) {
 
     function portDisplayLabel(moduleCell, port) {
         const normalized = normalizePort(port);
-        return connectorDisplayLabel(ConnectorRules.portConnectorForCell(moduleCell, portCell(moduleCell, normalized), normalized.role));
+        return connectorDisplayLabel(ConnectorRules.portConnectorForCell(moduleCell, portCell(moduleCell, normalized), normalized.role, normalized.index)); // CHANGE
     }
 
     function portDisplayRole(moduleCell, cellOrPort, storedRole) { // CHANGE
@@ -3121,12 +3571,16 @@ Draw.loadPlugin(function (ui) {
         return portDisplayRole(moduleCell, cellOrPort, storedRole) === "input" ? "Inlet" : "Outlet"; // CHANGE
     } // CHANGE
 
-    function cellPortDisplayLabel(moduleCell, cell, role) {
-        return connectorDisplayLabel(ConnectorRules.portConnectorForCell(moduleCell, cell, role));
+    function cellPortDisplayLabel(moduleCell, cell, role, index) { // CHANGE
+        return connectorDisplayLabel(ConnectorRules.portConnectorForCell(moduleCell, cell, role, index)); // CHANGE
     }
 
+    function portBadgeTextLabel(moduleCell, cell, role, index) { // NEW
+        return (role === "input" ? "IN " : "OUT ") + cellPortDisplayLabel(moduleCell, cell, role, index); // NEW
+    } // NEW
+
     function edgeConnectionDisplayLabel(moduleCell, edge) {
-        return connectionEdgeDisplayLabel(moduleCell, edge, ConnectorRules.portConnectorForCell(moduleCell, edge && edge.source, "output"), ConnectorRules.portConnectorForCell(moduleCell, edge && edge.target, "input"));
+        return connectionEdgeDisplayLabel(moduleCell, edge, ConnectorRules.portConnectorForCell(moduleCell, edge && edge.source, "output", getCellAttr(edge, ATTRS.EDGE_SOURCE_PORT, "0")), ConnectorRules.portConnectorForCell(moduleCell, edge && edge.target, "input", getCellAttr(edge, ATTRS.EDGE_TARGET_PORT, "0"))); // CHANGE
     }
 
     function internalConnectionDisplayLabel(moduleCell, upstream, downstream) {
@@ -3599,6 +4053,7 @@ Draw.loadPlugin(function (ui) {
             if (!bedAssembly) return record;
             if (bedAssembly) {
                 setCellAttrs(bedAssembly, { label: assemblyLabelForTemplateRecord(record, catalog, moduleCell), [ATTRS.BED_TEMPLATE_JSON]: JSON.stringify(record) }); // CHANGE
+                if (linkedBedCell && isCompleteBomBedRecipeRecord(record)) writeBedPortConfig(linkedBedCell, bedPortConfigFromRecipe(catalog, readBedPortConfig(linkedBedCell), record.inletPartId, record.outletPartId, record.rowPartId, record.supplyPipePartId)); // NEW
                 createBedTemplateLayoutCells(bedAssembly, pathId, record, getGeometry(bedAssembly) || bedGeo);
             }
 
@@ -3751,15 +4206,18 @@ Draw.loadPlugin(function (ui) {
 
     function getBedIrrigationMethods(moduleCell, bedCell) {
         const root = moduleCell || findGardenModuleAncestor(bedCell);
+        const catalog = readCatalog(root); // NEW
         const seen = new Set();
         const methods = [];
         linkedBedAssembliesForBed(root, bedCell).forEach(function (assembly) {
             const record = readBedAssemblyTemplateRecord(root, assembly);
-            const id = normalizeBedIrrigationMethodId(record);
-            const label = bedIrrigationMethodLabel(id);
-            if (!id || !label || seen.has(id)) return;
-            seen.add(id);
-            methods.push({ id, label });
+            const effective = bedEffectiveEmitterInfo(catalog, record, { moduleCell: root }); // NEW
+            const id = effective.category || normalizeBedIrrigationMethodId(record); // CHANGE
+            const label = String(effective.methodLabel || effective.label || bedIrrigationMethodLabel(id) || "").trim(); // CHANGE
+            const key = id + "\n" + label; // NEW
+            if (!id || !label || seen.has(key)) return; // CHANGE
+            seen.add(key); // CHANGE
+            methods.push({ id, label, partId: effective.methodPartId || "" }); // CHANGE
         });
         return methods;
     }
@@ -5956,16 +6414,16 @@ Draw.loadPlugin(function (ui) {
     }
 
     function connectionEdgeDisplayLabelForDecision(moduleCell, decision) {
-        const sourceConnector = ConnectorRules.portConnectorForCell(moduleCell, decision && decision.sourceCell, "output");
-        const targetConnector = ConnectorRules.portConnectorForCell(moduleCell, decision && decision.targetCell, "input");
+        const sourceConnector = ConnectorRules.portConnectorForCell(moduleCell, decision && decision.sourceCell, "output", decision && decision.source && decision.source.index); // CHANGE
+        const targetConnector = ConnectorRules.portConnectorForCell(moduleCell, decision && decision.targetCell, "input", decision && decision.target && decision.target.index); // CHANGE
         if (decision && decision.mode === "pipe") return pipeEdgeDisplayLabelForPart(moduleCell, decision.pipePartId || "", sourceConnector, targetConnector);
         return connectionDisplayLabel(sourceConnector, targetConnector);
     }
 
     function syncConnectionEdgeDisplayLabel(moduleCell, edge) {
         if (!edge) return false;
-        const sourceConnector = ConnectorRules.portConnectorForCell(moduleCell, edge.source, "output");
-        const targetConnector = ConnectorRules.portConnectorForCell(moduleCell, edge.target, "input");
+        const sourceConnector = ConnectorRules.portConnectorForCell(moduleCell, edge.source, "output", getCellAttr(edge, ATTRS.EDGE_SOURCE_PORT, "0")); // CHANGE
+        const targetConnector = ConnectorRules.portConnectorForCell(moduleCell, edge.target, "input", getCellAttr(edge, ATTRS.EDGE_TARGET_PORT, "0")); // CHANGE
         return setCellAttrs(edge, { label: connectionEdgeDisplayLabel(moduleCell, edge, sourceConnector, targetConnector) });
     }
 
@@ -5978,15 +6436,83 @@ Draw.loadPlugin(function (ui) {
         return style; // NEW
     } // NEW
 
+    function visualSideDefaultForRole(role) { // NEW
+        return role === "input" ? "top" : "bottom"; // NEW
+    } // NEW
+
+    function terminalVisualCell(cell) { // NEW
+        return findAssemblyAncestor(cell) || cell; // NEW
+    } // NEW
+
+    function cellCenter(cell) { // CHANGE
+        const geo = getGeometry(terminalVisualCell(cell)) || {}; // CHANGE
+        return { x: finiteNumber(geo.x, 0) + finiteNumber(geo.width, ASSEMBLY_DEFAULT_WIDTH) / 2, y: finiteNumber(geo.y, 0) + finiteNumber(geo.height, ASSEMBLY_PART_HEIGHT) / 2 }; // CHANGE
+    } // CHANGE
+
+    function closestVisualSide(cell, otherCell, fallback) { // NEW
+        const own = cellCenter(cell); // NEW
+        const other = cellCenter(otherCell); // NEW
+        const dx = other.x - own.x; // NEW
+        const dy = other.y - own.y; // NEW
+        if (Math.abs(dx) >= Math.abs(dy)) return dx < 0 ? "left" : "right"; // NEW
+        return dy < 0 ? "top" : "bottom"; // NEW
+    } // NEW
+
+    function connectionPortVisualSide(moduleCell, port, cell, otherCell, source) { // NEW
+        const normalized = normalizePort(port); // NEW
+        if (isTakeoffBranchPort(moduleCell, cell, normalized.role, normalized.index) && (normalized.visualSide === "left" || normalized.visualSide === "right")) return normalized.visualSide; // CHANGE
+        if (cell && otherCell) return closestVisualSide(cell, otherCell, visualSideDefaultForRole(normalized.role)); // NEW
+        return visualSideDefaultForRole(normalized.role); // NEW
+    } // NEW
+
+    function edgeTerminalVisualSide(moduleCell, edge, source) { // NEW
+        if (!edge) return ""; // NEW
+        const attr = source ? ATTRS.EDGE_SOURCE_SIDE : ATTRS.EDGE_TARGET_SIDE; // NEW
+        const stored = normalizeVisualSide(getCellAttr(edge, attr, "")); // NEW
+        if (stored) return stored; // NEW
+        if (source && isTakeoffBranchPort(moduleCell, edge.source, "output", getCellAttr(edge, ATTRS.EDGE_SOURCE_PORT, "0"))) { // NEW
+            const legacy = normalizeVisualSide(getCellAttr(edge, "irrigation_edge_branch_side", "")); // NEW
+            if (legacy) return legacy; // NEW
+        } // NEW
+        return closestVisualSide(source ? edge.source : edge.target, source ? edge.target : edge.source, visualSideDefaultForRole(source ? "output" : "input")); // NEW
+    } // NEW
+
+    function connectionVisualSideAttrs(moduleCell, sourcePort, targetPort, sourceCell, targetCell) { // NEW
+        return { // NEW
+            [ATTRS.EDGE_SOURCE_SIDE]: connectionPortVisualSide(moduleCell, sourcePort, sourceCell, targetCell, true), // NEW
+            [ATTRS.EDGE_TARGET_SIDE]: connectionPortVisualSide(moduleCell, targetPort, targetCell, sourceCell, false) // NEW
+        }; // NEW
+    } // NEW
+
     function connectionPortAnchorX(moduleCell, port) { // NEW
         const normalized = normalizePort(port); // NEW
-        const cell = portCell(moduleCell, normalized); // NEW
-        const count = Math.max(1, portCapacityForCell(moduleCell, cell, normalized.role)); // NEW
-        return formatStyleNumber((normalized.index + 1) / (count + 1)); // NEW
+        const side = normalized.visualSide || visualSideDefaultForRole(normalized.role); // NEW
+        if (side === "left") return "0"; // CHANGE
+        if (side === "right") return "1"; // CHANGE
+        return formatStyleNumber(connectionPortSideSlot(moduleCell, normalized)); // CHANGE
     } // NEW
 
     function connectionPortAnchorY(moduleCell, port) { // NEW
-        return portDisplayRole(moduleCell, port) === "input" ? "0" : "1"; // NEW
+        const normalized = normalizePort(port); // NEW
+        const side = normalized.visualSide || visualSideDefaultForRole(normalized.role); // NEW
+        if (side === "top") return "0"; // CHANGE
+        if (side === "bottom") return "1"; // CHANGE
+        return formatStyleNumber(connectionPortSideSlot(moduleCell, normalized)); // CHANGE
+    } // NEW
+
+    function connectionPortSideSlot(moduleCell, port) { // NEW
+        const normalized = normalizePort(port); // NEW
+        const cell = portCell(moduleCell, normalized); // NEW
+        const side = normalized.visualSide || visualSideDefaultForRole(normalized.role); // NEW
+        if (!cell) return 0.5; // NEW
+        const peers = []; // NEW
+        externalEdgesForCell(moduleCell, cell).forEach(function (edge) { // NEW
+            if (getCellId(edge.source) === getCellId(cell)) peers.push(portForConnectionEdge(edge, true)); // CHANGE
+            if (getCellId(edge.target) === getCellId(cell)) peers.push(portForConnectionEdge(edge, false)); // CHANGE
+        }); // NEW
+        const group = peers.filter(function (peer) { return normalizePort(peer).visualSide === side; }).sort(function (a, b) { return (a.role === b.role ? 0 : (a.role === "input" ? -1 : 1)) || (a.index - b.index) || portKey(a).localeCompare(portKey(b)); }); // NEW
+        const index = Math.max(0, group.findIndex(function (peer) { return portKey(peer) === portKey(normalized); })); // NEW
+        return (index + 1) / (Math.max(1, group.length) + 1); // NEW
     } // NEW
 
     function setConnectionPortAnchorStyle(moduleCell, style, port, source) { // NEW
@@ -6010,7 +6536,8 @@ Draw.loadPlugin(function (ui) {
 
     function syncConnectionEdgeVisualAnchors(moduleCell, edge) { // NEW
         if (!managedConnectionEdge(edge)) return false; // NEW
-        return setCellStyle(edge, connectionEdgeVisualAnchorStyle(moduleCell || findGardenModuleAncestor(edge), edge)); // NEW
+        const owner = moduleCell || findGardenModuleAncestor(edge); // NEW
+        return setCellStyle(edge, connectionEdgeVisualAnchorStyle(owner, edge)); // CHANGE
     } // NEW
 
     function syncConnectionEdgeVisualAnchorsForCell(moduleCell, cell) { // NEW
@@ -6229,22 +6756,76 @@ Draw.loadPlugin(function (ui) {
     function addPartSelectField(parent, label, parts, value) {
         const wrap = document.createElement("label");
         wrap.style.cssText = "display:flex;flex-direction:column;gap:3px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;";
-        wrap.textContent = label;
-        const select = document.createElement("select");
-        appendPartSelectOptions(select, parts, { placeholder: "Choose part" }); // CHANGE
-        select.value = value || "";
-        select.style.cssText = "width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;padding:4px;border:1px solid #aaa;border-radius:4px;";
+        wrap.appendChild(document.createTextNode(label));
+        const select = createPartPickerSelect(parts, value, { placeholder: "Choose part", emptyText: "No compatible parts", selectClassName: "trellis-irrigation-part-select" }); // CHANGE
         wrap.appendChild(select);
+        wrap.appendChild(select.__trellisPartPicker.root); // CHANGE
         parent.appendChild(wrap);
         return select;
     }
 
     function setPartSelectOptions(select, parts, value) {
+        if (select.__trellisPartPicker) select.__trellisPartPicker.close(false); // CHANGE
         select.innerHTML = "";
         appendPartSelectOptions(select, parts, { placeholder: "Choose part" }); // CHANGE
-        select.value = value || "";
+        setNativeSelectValue(select, value || ""); // CHANGE
         if (select.value !== (value || "")) select.value = "";
+        if (select.__trellisPartPicker) select.__trellisPartPicker.setParts(parts); // CHANGE
     }
+
+    function createPartPickerSelect(parts, value, options) { // NEW
+        const select = document.createElement("select"); // NEW
+        select.className = options && options.selectClassName || "trellis-irrigation-part-select"; // NEW
+        appendPartSelectOptions(select, parts, { placeholder: options && options.placeholder || "Choose part" }); // NEW
+        setNativeSelectValue(select, value || ""); // NEW
+        select.style.cssText = "position:absolute;width:1px;height:1px;min-width:0;max-width:100%;box-sizing:border-box;opacity:0;pointer-events:none;"; // CHANGE
+        const picker = createPartSearchCombobox(select, parts, options || {}); // NEW
+        select.__trellisPartPicker = picker; // NEW
+        bindPartSelectPickerSync(select, picker); // NEW
+        select.addEventListener("change", function () { picker.sync(); }); // NEW
+        picker.sync(); // NEW
+        return select; // NEW
+    } // NEW
+
+    function setNativeSelectValue(select, value) { // NEW
+        const normalized = String(value || ""); // NEW
+        const options = Array.from(select.options || []); // NEW
+        const index = options.findIndex(function (option) { return option.value === normalized; }); // NEW
+        if (index >= 0) select.selectedIndex = index; // NEW
+        else select.value = normalized; // NEW
+        if (select.__trellisPartPicker) select.__trellisPartPicker.sync(); // NEW
+    } // NEW
+
+    function setPartSelectDisabled(select, disabled) { // NEW
+        if (!select) return; // NEW
+        if (disabled) select.setAttribute("disabled", "disabled"); // NEW
+        else select.removeAttribute("disabled"); // NEW
+        if (select.__trellisPartPicker) select.__trellisPartPicker.sync(); // NEW
+    } // NEW
+
+    function bindPartSelectPickerSync(select, picker) { // NEW
+        bindPartSelectPickerProperty(select, picker, "disabled"); // NEW
+    } // NEW
+
+    function bindPartSelectPickerProperty(select, picker, prop) { // NEW
+        const descriptor = nativeSelectPropertyDescriptor(select, prop); // NEW
+        if (!descriptor || !descriptor.get || !descriptor.set) return; // NEW
+        Object.defineProperty(select, prop, { // NEW
+            configurable: true, // NEW
+            get: function () { return descriptor.get.call(select); }, // NEW
+            set: function (next) { if (prop === "disabled") { if (next) select.setAttribute("disabled", "disabled"); else select.removeAttribute("disabled"); } else descriptor.set.call(select, next); if (picker && picker.sync) picker.sync(); } // CHANGE
+        }); // NEW
+    } // NEW
+
+    function nativeSelectPropertyDescriptor(select, prop) { // NEW
+        let proto = Object.getPrototypeOf(select); // NEW
+        while (proto) { // NEW
+            const descriptor = Object.getOwnPropertyDescriptor(proto, prop); // NEW
+            if (descriptor) return descriptor; // NEW
+            proto = Object.getPrototypeOf(proto); // NEW
+        } // NEW
+        return null; // NEW
+    } // NEW
 
     function appendPartSelectOptions(select, parts, options) { // NEW
         appendSelectOption(select, "", options && options.placeholder || "Choose part"); // NEW
@@ -6679,10 +7260,13 @@ Draw.loadPlugin(function (ui) {
         seedStarterCatalogIfEmpty(targetModule);
         closeWizardSessionForModeSwitch();
         closeIrrigationMode();
+        const interactionOwnerId = "irrigation:" + (targetModule.id || targetModule.getId && targetModule.getId() || "module"); // NEW
+        ensureTrellisInteractionModes().request(IRRIGATION_INTERACTION_MODE_ID, interactionOwnerId, { close: function () { closeIrrigationMode(); } }); // NEW
         removeHudNode(inactiveEntryOverlay);
         inactiveEntryOverlay = null;
         activeIrrigationMode = {
             moduleCell: targetModule,
+            interactionOwnerId, // NEW
             hud: null,
             navigator: [],
             targetHighlights: [],
@@ -6751,6 +7335,8 @@ Draw.loadPlugin(function (ui) {
             if (session.frontedBedAssemblyId) { reorderIrrigationModuleLayering(session.moduleCell); session.frontedBedAssemblyId = ""; }
             removeIrrigationModeListeners(session);
             activeIrrigationMode = null;
+            const modes = window.Trellis && window.Trellis.interactionModes; // NEW
+            if (modes && typeof modes.release === "function") modes.release(IRRIGATION_INTERACTION_MODE_ID, session.interactionOwnerId); // NEW
         } finally {
             closingIrrigationModeSession = null;
             session.closing = false;
@@ -7209,10 +7795,24 @@ Draw.loadPlugin(function (ui) {
         return n == null ? "unknown gpm" : n.toFixed(n >= 10 ? 1 : 2).replace(/\.0+$/, "") + " gpm"; // NEW
     } // NEW
 
+    function formatDualFlow(value) { // CHANGE
+        const n = finiteNumber(value, null); // NEW
+        const litersPerMinute = n == null ? null : n * LITERS_PER_GALLON; // NEW
+        const metric = litersPerMinute == null ? "unknown L/min" : litersPerMinute.toFixed(litersPerMinute >= 10 ? 1 : 2).replace(/\.0+$/, "") + " L/min"; // NEW
+        return formatGpm(n) + " / " + metric; // CHANGE
+    } // CHANGE
+
     function formatPsi(value) { // NEW
         const n = finiteNumber(value, null); // NEW
         return n == null ? "unknown PSI" : n.toFixed(Math.abs(n) >= 10 ? 1 : 2).replace(/\.0+$/, "") + " PSI"; // NEW
     } // NEW
+
+    function formatDualPressure(value) { // CHANGE
+        const n = finiteNumber(value, null); // NEW
+        const kpa = n == null ? null : n * 6.8947572932; // NEW
+        const metric = kpa == null ? "unknown kPa" : kpa.toFixed(Math.abs(kpa) >= 100 ? 0 : 1).replace(/\.0+$/, "") + " kPa"; // NEW
+        return formatPsi(n) + " / " + metric; // CHANGE
+    } // CHANGE
 
     function renderSourceSelector(session, hud) {
         const sources = collectHudEndpoints(session.moduleCell, "source");
@@ -7258,6 +7858,7 @@ Draw.loadPlugin(function (ui) {
         hud.appendChild(route);
         hud.appendChild(hudText(connectionSummaryLabel(session.moduleCell, context)));
         appendPipeEdgeStyleControls(session, hud, context);
+        appendPipeEdgeTakeoffControls(session, hud, context); // NEW
         const connectionActions = hudActions();
         connectionActions.appendChild(button("Select Upstream", function () { selectConnectionEndpoint(session, context.sourceCell); }));
         connectionActions.appendChild(button("Select Downstream", function () { selectConnectionEndpoint(session, context.targetCell); }));
@@ -7434,6 +8035,69 @@ Draw.loadPlugin(function (ui) {
         appendHudActionSection(hud, "Style", actions);
     }
 
+    function appendPipeEdgeTakeoffControls(session, hud, context) { // NEW
+        const takeoffPart = pipeEdgeTakeoffPart(session.moduleCell, context && context.edge); // NEW
+        if (!takeoffPart) return; // NEW
+        const actions = hudActions(); // NEW
+        actions.appendChild(button("Add 1/4 barb takeoff", function () { // NEW
+            const result = runIrrigationEdit("pipeEdgeTakeoff", function () { return applyPipeEdgeTakeoff(session.moduleCell, context, takeoffPart); }); // NEW
+            if (result && result.cell) { scheduleHudGraphStateSync(session.moduleCell); selectCell(result.cell, false); } // NEW
+            session.message = result && result.message || ""; // NEW
+            renderIrrigationMode(session); // NEW
+        })); // NEW
+        appendHudActionSection(hud, "Takeoff", actions); // NEW
+    } // NEW
+
+    function pipeEdgeTakeoffPart(moduleCell, edge) { // NEW
+        if (!edge || getCellAttr(edge, ATTRS.PIPE_EDGE, "") !== "1") return null; // NEW
+        const catalog = readCatalog(moduleCell); // NEW
+        const pipe = partById(catalog, getCellAttr(edge, ATTRS.PIPE_PART_ID, "")); // CHANGE
+        const size = pipeVisualNominalSize(pipe); // NEW
+        const id = size === "1/2" ? "barb_takeoff_1_4_on_1_2" : (size === "3/4" ? "barb_takeoff_1_4_on_3_4" : ""); // NEW
+        const part = id ? partById(catalog, id) : null; // CHANGE
+        return part && validateCatalogPart(part).ok ? part : null; // NEW
+    } // NEW
+
+    function applyPipeEdgeTakeoff(moduleCell, context, takeoffPart) { // NEW
+        const edge = context && context.edge; // NEW
+        const part = normalizeCatalogPart(takeoffPart); // NEW
+        if (!edge || getCellAttr(edge, ATTRS.PIPE_EDGE, "") !== "1" || !part) return { cell: null, message: "Select a compatible pipe edge." }; // NEW
+        const sourcePort = context.sourcePort || portForConnectionEdge(edge, true); // NEW
+        const targetPort = context.targetPort || portForConnectionEdge(edge, false); // NEW
+        const createdEdges = []; // NEW
+        let created = null; // NEW
+        model.beginUpdate && model.beginUpdate(); // NEW
+        try { // NEW
+            created = createPartAssembly(moduleCell, part, pipeEdgeTakeoffAnchor(edge)); // NEW
+            const partCell = created && created.partCell; // NEW
+            if (!partCell) throw new Error("Takeoff part could not be created."); // NEW
+            const upstreamDecision = existingEdgeConnectionDecision(moduleCell, sourcePort, { cellId: getCellId(partCell), role: "input", index: 0 }); // NEW
+            const downstreamDecision = existingEdgeConnectionDecision(moduleCell, { cellId: getCellId(partCell), role: "output", index: 0 }, targetPort); // NEW
+            if (!upstreamDecision.ok || !downstreamDecision.ok) throw new Error(upstreamDecision.reason || downstreamDecision.reason || "Takeoff could not be inserted."); // NEW
+            createdEdges.push(createPlannedConnectionEdge(moduleCell, upstreamDecision.sourceCell, upstreamDecision.targetCell, upstreamDecision, upstreamDecision.source.index, upstreamDecision.target.index)); // NEW
+            createdEdges.push(createPlannedConnectionEdge(moduleCell, downstreamDecision.sourceCell, downstreamDecision.targetCell, downstreamDecision, downstreamDecision.source.index, downstreamDecision.target.index)); // NEW
+            if (!createdEdges[0] || !createdEdges[1]) throw new Error("Takeoff pipe edges could not be created."); // NEW
+            removeCellFromParent(edge); // CHANGE
+            return { cell: created.assembly, message: "1/4 barb takeoff added." }; // NEW
+        } catch (err) { // NEW
+            createdEdges.forEach(function (createdEdge) { if (createdEdge) removeCellFromParent(createdEdge); }); // NEW
+            if (created && created.assembly) removeCellFromParent(created.assembly); // NEW
+            return { cell: null, message: err && err.message || "Takeoff could not be inserted." }; // NEW
+        } finally { model.endUpdate && model.endUpdate(); } // NEW
+    } // NEW
+
+    function pipeEdgeTakeoffAnchor(edge) { // NEW
+        const source = connectionTerminalCenter(edge && edge.source); // NEW
+        const target = connectionTerminalCenter(edge && edge.target); // NEW
+        return { x: Math.max(24, Math.round((source.x + target.x) / 2 - ASSEMBLY_DEFAULT_WIDTH / 2)), y: Math.max(24, Math.round((source.y + target.y) / 2)) }; // NEW
+    } // NEW
+
+    function connectionTerminalCenter(cell) { // NEW
+        const assembly = findAssemblyAncestor(cell) || cell; // NEW
+        const geo = getGeometry(assembly) || {}; // NEW
+        return { x: finiteNumber(geo.x, 24) + finiteNumber(geo.width, ASSEMBLY_DEFAULT_WIDTH) / 2, y: finiteNumber(geo.y, 72) + finiteNumber(geo.height, assemblyPartLaneHeight(1)) / 2 }; // NEW
+    } // NEW
+
     function selectConnectionEndpoint(session, cell) {
         session.selectedPorts = [];
         session.selectedBoundaries = [];
@@ -7522,11 +8186,9 @@ Draw.loadPlugin(function (ui) {
         form.style.cssText = "display:grid;gap:6px;margin-top:8px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;";
         const context = addPartPickerContext(session);
         form.appendChild(hudText(context ? "Compatible with " + addPartContextLabel(session.moduleCell, context) : "All catalog parts"));
-        const select = document.createElement("select");
-        select.className = "trellis-irrigation-add-part-picker";
-        select.style.cssText = "width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;";
-        appendGroupedPartOptions(select, addPartPickerParts(session, context));
+        const select = createPartPickerSelect(addPartPickerParts(session, context), "", { placeholder: "Choose part", emptyText: "No compatible parts", selectClassName: "trellis-irrigation-add-part-picker", rootClassName: "trellis-irrigation-add-part-combobox" }); // CHANGE
         form.appendChild(select);
+        form.appendChild(select.__trellisPartPicker.root); // CHANGE
         form.appendChild(button("Add Part", function () {
             const part = partById(readCatalog(session.moduleCell), select.value);
             if (!part) { session.message = "Choose a catalog part."; renderIrrigationMode(session); return; }
@@ -7709,14 +8371,8 @@ Draw.loadPlugin(function (ui) {
             option.className = "trellis-irrigation-connection-combobox-option"; // NEW
             option.setAttribute("role", "option"); // NEW
             option.setAttribute("data-part-id", part.id); // NEW
-            option.style.cssText = "display:flex;flex-direction:column;gap:1px;width:100%;padding:5px 8px 5px " + Math.max(18, indentPx || 18) + "px;border:0;border-top:1px solid #f3f4f6;background:#fff;color:#111827;text-align:left;box-sizing:border-box;cursor:pointer;"; // NEW
-            const name = document.createElement("span"); // NEW
-            name.textContent = part.name || part.id; // NEW
-            const detail = document.createElement("span"); // NEW
-            detail.style.cssText = "font-size:11px;color:#6b7280;"; // NEW
-            detail.textContent = connectionComboboxPartDetail(part); // NEW
-            option.appendChild(name); // NEW
-            option.appendChild(detail); // NEW
+            option.style.cssText = partComboboxOptionStyle(indentPx); // CHANGE
+            appendPartComboboxOptionContent(option, part); // CHANGE
             option.addEventListener("click", function () { choosePart(part.id); }); // NEW
             option.addEventListener("keydown", function (ev) { // NEW
                 if (ev.key === "ArrowDown") { ev.preventDefault(); moveOption(1); } // NEW
@@ -7990,9 +8646,11 @@ Draw.loadPlugin(function (ui) {
 
     function sortConnectionComboboxParts(parts) {
         return (parts || []).map(normalizeCatalogPart).filter(Boolean).sort(function (a, b) {
+            const stockA = STOCK_AVAILABLE.has(a.stockState) ? 0 : 1; // CHANGE
+            const stockB = STOCK_AVAILABLE.has(b.stockState) ? 0 : 1; // CHANGE
             const ka = catalogPartSortKey(a);
             const kb = catalogPartSortKey(b);
-            return compareCatalogPartSortKeys(ka, kb); // CHANGE
+            return (stockA - stockB) || compareCatalogPartSortKeys(ka, kb); // CHANGE
         });
     }
 
@@ -8025,7 +8683,8 @@ Draw.loadPlugin(function (ui) {
             p && p.category,
             catalogCategoryLabel(p && p.category),
             catalogPartSizeLabel(p),
-            catalogPartConnectorTypeLabel(p)
+            catalogPartConnectorTypeLabel(p),
+            partStockBadgeLabel(p) // CHANGE
         ].filter(Boolean).join(" "));
     }
 
@@ -8074,7 +8733,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function connectionDropdownGroups(moduleCell, row) {
-        const parts = compatibleDropdownParts(moduleCell, row.cell, row.role).filter(function (part) { return partAllowedForConnectionRow(moduleCell, row, part); });
+        const parts = compatibleDropdownParts(moduleCell, row.cell, row.role, row.index).filter(function (part) { return partAllowedForConnectionRow(moduleCell, row, part); }); // CHANGE
         const occupied = !!internalNeighborForPort(row.cell, row.role) || edgesForPort(moduleCell, { cellId: getCellId(row.cell), role: row.role, index: row.index }).length > 0;
         if (!occupied) return { keep: parts.map(function (part) { return connectionContextPartOption(moduleCell, row, part); }), disconnect: [] }; // CHANGE
         const keep = parts.filter(function (part) { return replacementKeepsExistingConnection(moduleCell, row, part); });
@@ -8088,7 +8747,7 @@ Draw.loadPlugin(function (ui) {
         const edge = edgesForPort(moduleCell, { cellId: getCellId(row.cell), role: row.role, index: row.index })[0];
         if (!edge) return true;
         if (row.role === "output") return branchCanReuseDownstream(moduleCell, row.cell, part, edge.target);
-        return ConnectorRules.connectionMode(moduleCell, ConnectorRules.portConnectorForCell(moduleCell, edge.source, "output"), normalizeCatalogPart(part).connectors.input).ok;
+        return ConnectorRules.connectionMode(moduleCell, ConnectorRules.portConnectorForCell(moduleCell, edge.source, "output", getCellAttr(edge, ATTRS.EDGE_SOURCE_PORT, "0")), normalizeCatalogPart(part).connectors.input).ok; // CHANGE
     }
 
     function internalNeighborForPort(cell, role) {
@@ -8177,7 +8836,7 @@ Draw.loadPlugin(function (ui) {
     function dropdownPartConnectionDecision(moduleCell, row, part) {
         const p = normalizeCatalogPart(part);
         if (!p) return { ok: false, reason: "Selected part is no longer available." };
-        const rowConnector = ConnectorRules.portConnectorForCell(moduleCell, row.cell, row.role);
+        const rowConnector = ConnectorRules.portConnectorForCell(moduleCell, row.cell, row.role, row.index); // CHANGE
         let fallback = null; // NEW
         const orientations = partConnectorOrientations(p); // NEW
         for (let i = 0; i < orientations.length; i++) { // NEW
@@ -8423,7 +9082,7 @@ Draw.loadPlugin(function (ui) {
         const normalized = normalizePort(port);
         const cell = portCell(moduleCell, normalized);
         const visualRole = portVisualRoleForPort(moduleCell, normalized);
-        return { port: normalized, key: portKey(normalized), storedRole: normalized.role, visualRole, free: !!(cell && isPortFree(moduleCell, normalized)), connectedObject: !!(cell && selectedObjectHasAnyConnection(moduleCell, cell)), connector: cell ? ConnectorRules.portConnectorForCell(moduleCell, cell, normalized.role) : null, cell: debugCellSummary(cell) };
+        return { port: normalized, key: portKey(normalized), storedRole: normalized.role, visualRole, free: !!(cell && isPortFree(moduleCell, normalized)), connectedObject: !!(cell && selectedObjectHasAnyConnection(moduleCell, cell)), connector: cell ? ConnectorRules.portConnectorForCell(moduleCell, cell, normalized.role, normalized.index) : null, cell: debugCellSummary(cell) }; // CHANGE
     }
 
     function quietIrrigationDebug(fn) {
@@ -8644,7 +9303,7 @@ Draw.loadPlugin(function (ui) {
     function portBadgeNodeForPort(session, port) {
         const normalized = normalizePort(port);
         if (!normalized.cellId || !session.portBadgeNodeByKey) return null;
-        return session.portBadgeNodeByKey.get(portKey(normalized)) || null;
+        return session.portBadgeNodeByKey.get(portVisualKey(normalized)) || session.portBadgeNodeByKey.get(portKey(normalized)) || null; // CHANGE
     }
 
     function connectionBadgeNodeForBoundary(session, boundary) {
@@ -8671,7 +9330,10 @@ Draw.loadPlugin(function (ui) {
     function portForConnectionEdge(edge, source) {
         const terminal = source ? edge && edge.source : edge && edge.target;
         if (!terminal) return null;
-        return { cellId: getCellId(terminal), role: source ? "output" : "input", index: finiteNumber(getCellAttr(edge, source ? ATTRS.EDGE_SOURCE_PORT : ATTRS.EDGE_TARGET_PORT, 0), 0) };
+        const moduleCell = findGardenModuleAncestor(edge); // NEW
+        const port = { cellId: getCellId(terminal), role: source ? "output" : "input", index: finiteNumber(getCellAttr(edge, source ? ATTRS.EDGE_SOURCE_PORT : ATTRS.EDGE_TARGET_PORT, 0), 0) }; // CHANGE
+        port.visualSide = edgeTerminalVisualSide(moduleCell, edge, source); // CHANGE
+        return normalizePort(port); // CHANGE
     }
 
     function portBadgeBounds(session, port) {
@@ -8679,10 +9341,12 @@ Draw.loadPlugin(function (ui) {
         const cell = portCell(session.moduleCell, normalized);
         if (!cell) return null;
         const state = cellState(cell);
-        const total = Math.max(1, Math.floor(finiteNumber(portCapacityForCell(session.moduleCell, cell, normalized.role), 1)));
-        const slot = (normalized.index + 1) / (total + 1);
-        const width = portBadgeWidthForLabel(portDisplayLabel(session.moduleCell, normalized));
-        return { x: state.x + state.width * slot - width / 2, y: normalized.role === "input" ? state.y - PORT_BADGE_SIZE - 4 : state.y + state.height + 4, width, height: PORT_BADGE_SIZE };
+        const side = normalized.visualSide || visualSideDefaultForRole(normalized.role); // CHANGE
+        const width = portBadgeWidthForLabel(portBadgeTextLabel(session.moduleCell, cell, normalized.role, normalized.index)); // CHANGE
+        const slot = connectionPortSideSlot(session.moduleCell, normalized); // CHANGE
+        if (side === "left") return { x: state.x - width - 4, y: state.y + state.height * slot - PORT_BADGE_SIZE / 2, width, height: PORT_BADGE_SIZE }; // CHANGE
+        if (side === "right") return { x: state.x + state.width + 4, y: state.y + state.height * slot - PORT_BADGE_SIZE / 2, width, height: PORT_BADGE_SIZE }; // CHANGE
+        return { x: state.x + state.width * slot - width / 2, y: side === "top" ? state.y - PORT_BADGE_SIZE - 4 : state.y + state.height + 4, width, height: PORT_BADGE_SIZE }; // CHANGE
     }
 
     function internalConnectionBadgeBounds(upstream, downstream) {
@@ -9115,6 +9779,9 @@ Draw.loadPlugin(function (ui) {
 
     function createPlannedConnectionEdge(moduleCell, sourceCell, targetCell, hop, sourceIndex, targetIndex) {
         const attrs = { [ATTRS.EDGE_SOURCE_PORT]: String(sourceIndex || 0), [ATTRS.EDGE_TARGET_PORT]: String(targetIndex || 0) };
+        const sourcePort = hop && hop.source ? hop.source : { cellId: getCellId(sourceCell), role: "output", index: sourceIndex || 0 }; // NEW
+        const targetPort = hop && hop.target ? hop.target : { cellId: getCellId(targetCell), role: "input", index: targetIndex || 0 }; // NEW
+        Object.assign(attrs, connectionVisualSideAttrs(moduleCell, sourcePort, targetPort, sourceCell, targetCell)); // CHANGE
         let style = DIRECT_LINK_EDGE_STYLE;
         if (hop.mode === "pipe") { attrs[ATTRS.PIPE_EDGE] = "1"; attrs[ATTRS.DIRECT_LINK_EDGE] = ""; attrs[ATTRS.PIPE_PART_ID] = hop.pipePartId || ""; attrs[ATTRS.PART_STATE] = PART_STATE_PLANNED; style = pipeEdgeStyleForPart(moduleCell, hop.pipePartId || "", PIPE_EDGE_BASE_STYLE); }
         else { attrs[ATTRS.PIPE_EDGE] = ""; attrs[ATTRS.DIRECT_LINK_EDGE] = "1"; attrs[ATTRS.PIPE_PART_ID] = ""; }
@@ -9245,8 +9912,8 @@ Draw.loadPlugin(function (ui) {
         const initialBom = computeBedTemplateBom(initialCatalog, getGeometry(bedAssembly) || getGeometry(bedCell) || {}, savedTemplateId, initialRows, initialRowOrientation, initialRecipe);
         const initialSupplyPart = partById(initialCatalog, initialBom.recipe && initialBom.recipe.supplyPipePartId); // NEW
         const initialSupplyConnector = initialSupplyPart && initialSupplyPart.connectors && initialSupplyPart.connectors.output; // NEW
-        const inletLocked = assemblyHasConnectedPortRole(session.moduleCell, bedAssembly, "input");
-        const outletLocked = assemblyHasConnectedPortRole(session.moduleCell, bedAssembly, "output");
+        const inletLocked = bedAssemblyPortRoleLocked(session.moduleCell, bedAssembly, bedCell, "input"); // CHANGE
+        const outletLocked = bedAssemblyPortRoleLocked(session.moduleCell, bedAssembly, bedCell, "output"); // CHANGE
         const rowSpacingUnit = rowSpacingDisplayUnit(session.moduleCell);
         const emitterSpacingUnit = emitterSpacingDisplayUnit(session.moduleCell); // NEW
         const initialRowSpacingCm = finiteNumber(saved.spacing && saved.spacing.rowSpacingCm, initialBom.rowSpacingCm);
@@ -9256,19 +9923,19 @@ Draw.loadPlugin(function (ui) {
         hud.style.maxWidth = narrowTemplate ? "min(460px,calc(100vw - 32px))" : "min(640px,calc(100vw - 32px))";
         const form = document.createElement("div");
         form.className = "trellis-irrigation-bed-inlet-form";
-        form.style.cssText = "display:grid;grid-template-columns:" + (narrowTemplate ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)") + ";gap:8px 10px;width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;";
+        form.style.cssText = "display:grid;grid-template-columns:" + (narrowTemplate ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)") + ";gap:8px 10px;align-items:start;width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;"; // CHANGE
         const layoutColumn = document.createElement("div");
         layoutColumn.className = "trellis-irrigation-bed-template-layout-column";
-        layoutColumn.style.cssText = "display:grid;gap:6px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;";
+        layoutColumn.style.cssText = "display:grid;gap:6px;align-content:start;align-self:start;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;"; // CHANGE
         const partsColumn = document.createElement("div");
         partsColumn.className = "trellis-irrigation-bed-template-parts-column";
-        partsColumn.style.cssText = "display:grid;gap:6px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;";
+        partsColumn.style.cssText = "display:grid;gap:6px;align-content:start;align-self:start;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;"; // CHANGE
         form.appendChild(layoutColumn);
         form.appendChild(partsColumn);
         function bedTemplateFieldGroup(parent, title) { // CHANGE
             const group = document.createElement("div"); // CHANGE
             group.className = "trellis-irrigation-bed-template-group"; // CHANGE
-            group.style.cssText = "display:grid;gap:6px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;padding-top:4px;border-top:1px solid #e5e7eb;"; // CHANGE
+            group.style.cssText = "display:grid;gap:6px;align-content:start;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;padding-top:4px;border-top:1px solid #e5e7eb;"; // CHANGE
             const heading = document.createElement("div"); // CHANGE
             heading.className = "trellis-irrigation-bed-template-group-title"; // CHANGE
             heading.textContent = title; // CHANGE
@@ -9292,8 +9959,8 @@ Draw.loadPlugin(function (ui) {
         const rowEndCapPart = addPartSelectField(rowGroup, "Row end cap", bedFittingPartOptions(session.moduleCell, "row_end_cap", initialBom.recipe && initialBom.recipe.supplyPipePartId, initialRecipe.rowPartId, initialRecipe.rowEndCapPartId), initialRecipe.rowEndCapPartId); // CHANGE
         const headerEndCapPart = addPartSelectField(terminalGroup, "Header end cap", bedFittingPartOptions(session.moduleCell, "header_end_cap", initialBom.recipe && initialBom.recipe.supplyPipePartId, initialRecipe.rowPartId, initialRecipe.headerEndCapPartId), initialRecipe.headerEndCapPartId); // CHANGE
         const outletPart = addPartSelectField(terminalGroup, "Outlet part", preservePartSelectOption(session.moduleCell, bedOutletPartOptions(session.moduleCell, initialBom.recipe && initialBom.recipe.supplyPipePartId, roleParts.outletPartId), outletLocked ? roleParts.outletPartId : ""), roleParts.outletPartId); // CHANGE
-        inletPart.disabled = inletLocked;
-        outletPart.disabled = outletLocked;
+        setPartSelectDisabled(inletPart, inletLocked); // CHANGE
+        setPartSelectDisabled(outletPart, outletLocked); // CHANGE
         const summary = hudText("");
         summary.className = "trellis-irrigation-bed-template-summary";
         let draftDirty = false;
@@ -9338,8 +10005,11 @@ Draw.loadPlugin(function (ui) {
                 emitterInches: normalizedEmitterSpacingIn // CHANGE
             };
         }
-        function bomSummaryText(bom) {
-            return "Rows " + bom.rowCount + " x " + bom.rowLengthMeters.toFixed(2) + " m = " + bom.totalRowMeters.toFixed(2) + " row m\nSupply " + (bom.recipe && bom.recipe.supplyPipePartId || "not selected") + ", demand " + bom.demand.flowGpm.toFixed(2) + " gpm, " + bom.demand.operatingPressurePsi.toFixed(0) + " PSI";
+        function bomSummaryText(catalog, bom) { // CHANGE
+            const supplyPartId = bom.recipe && bom.recipe.supplyPipePartId || ""; // NEW
+            const supplyPart = partById(catalog, supplyPartId); // NEW
+            const supplyName = supplyPart ? installedPartDisplayName(supplyPart) : (supplyPartId || "not selected"); // NEW
+            return "Rows " + bom.rowCount + " x " + bom.rowLengthMeters.toFixed(2) + " m = " + bom.totalRowMeters.toFixed(2) + " row m\nSupply " + supplyName + ", demand " + formatDualFlow(bom.demand.flowGpm) + ", " + formatDualPressure(bom.demand.operatingPressurePsi); // CHANGE
         }
         function setTemplateFieldVisible(control, visible) {
             if (control && control.parentNode) control.parentNode.style.display = visible ? "flex" : "none";
@@ -9363,13 +10033,13 @@ Draw.loadPlugin(function (ui) {
         function syncPrerequisiteLocks(selfEmitting, rowPartIsPipe) { // NEW
             const hasInlet = !!String(inletPart.value || "").trim(); // NEW
             const hasRow = !!String(rowPart.value || "").trim(); // NEW
-            inletPart.disabled = !!(inletLocked || hasInletDependentSelection()); // CHANGE
-            rowPart.disabled = !hasInlet || hasRowDependentSelection(); // NEW
-            outletPart.disabled = !!(outletLocked || !hasInlet); // CHANGE
-            headerEndCapPart.disabled = !hasInlet; // NEW
-            rowTakeoffPart.disabled = !hasInlet || !hasRow; // NEW
-            rowEndCapPart.disabled = !hasRow; // NEW
-            emitterPart.disabled = !hasRow || !!selfEmitting; // NEW
+            setPartSelectDisabled(inletPart, !!(inletLocked || hasInletDependentSelection())); // CHANGE
+            setPartSelectDisabled(rowPart, !hasInlet || hasRowDependentSelection()); // CHANGE
+            setPartSelectDisabled(outletPart, !!(outletLocked || !hasInlet)); // CHANGE
+            setPartSelectDisabled(headerEndCapPart, !hasInlet); // CHANGE
+            setPartSelectDisabled(rowTakeoffPart, !hasInlet || !hasRow); // CHANGE
+            setPartSelectDisabled(rowEndCapPart, !hasRow); // CHANGE
+            setPartSelectDisabled(emitterPart, !hasRow || !!selfEmitting); // CHANGE
             spacing.disabled = !hasRow || !rowPartIsPipe || !!selfEmitting || !String(emitterPart.value || "").trim(); // CHANGE
         } // NEW
         function syncTerminalPartVisibility(hasSupplyOutlet) {
@@ -9410,7 +10080,7 @@ Draw.loadPlugin(function (ui) {
             if (selfEmitting) spacing.value = formatEmitterSpacingDisplayValue(finiteNumber(selectedRowPart && selectedRowPart.specs && selectedRowPart.specs.emitterSpacingIn, 12), session.moduleCell); // CHANGE
             syncTerminalPartVisibility(bom.recipe && bom.recipe.supplyPipePartId);
             syncPrerequisiteLocks(selfEmitting, rowPartIsPipe); // CHANGE
-            summary.textContent = bomSummaryText(bom);
+            summary.textContent = bomSummaryText(draft.catalog, bom); // CHANGE
             summary.style.color = bom.missingPartIds.length ? "#8a4b00" : "#333";
             return draft;
         }
@@ -9522,7 +10192,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function renderAssemblyPortBadges(session, selectedCells) {
-        allAssemblyBoundaryPortSpecs(session.moduleCell).forEach(function (spec) { renderPortBadge(session, spec.cell, spec.role, spec.index); });
+        allAssemblyBoundaryPortSpecs(session.moduleCell).forEach(function (spec) { renderPortBadge(session, spec); }); // CHANGE
         renderInternalConnectionBadges(session, selectedCells);
     }
 
@@ -9536,31 +10206,83 @@ Draw.loadPlugin(function (ui) {
             if (first) appendPortBadgeSpecsForCell(moduleCell, out, seen, first, "input");
             if (last) appendPortBadgeSpecsForCell(moduleCell, out, seen, last, "output");
         });
+        assignPortBadgeSideSlots(out); // NEW
         return out;
     }
 
     function appendPortBadgeSpecsForCell(moduleCell, out, seen, cell, role) {
         const count = portCapacityForCell(moduleCell, cell, role);
         for (let index = 0; index < count; index++) {
-            const key = [getCellId(cell), role, index].join(":");
-            if (!getCellId(cell) || seen.has(key)) continue;
-            seen.add(key);
-            out.push({ cell, role, index });
+            const port = { cellId: getCellId(cell), role, index }; // NEW
+            if (!getCellId(cell)) continue; // CHANGE
+            const edge = edgesForPort(moduleCell, port)[0]; // NEW
+            if (edge) { // NEW
+                appendPortBadgeSpec(out, seen, cell, role, index, edgeTerminalVisualSide(moduleCell, edge, role === "output")); // NEW
+                continue; // NEW
+            } // NEW
+            if (isTakeoffBranchPort(moduleCell, cell, role, index)) { // NEW
+                const sides = ["left", "right"]; // CHANGE
+                sides.forEach(function (branchSide) { appendPortBadgeSpec(out, seen, cell, role, index, branchSide); }); // NEW
+                continue; // NEW
+            } // NEW
+            appendPortBadgeSpec(out, seen, cell, role, index, visualSideDefaultForRole(role)); // CHANGE
         }
     }
 
-    function renderPortBadge(session, cell, role, index) {
-        const port = { cellId: getCellId(cell), role, index };
+    function installIrrigationSelectionRefreshPatch() { // NEW
+        if (!graph.setSelectionCell || graph.__trellisIrrigationSelectionRefreshPatched) return; // NEW
+        graph.__trellisIrrigationSelectionRefreshPatched = true; // NEW
+        originalSetSelectionCellForIrrigation = graph.setSelectionCell; // NEW
+        graph.setSelectionCell = function (cell) { // NEW
+            const previous = graph.getSelectionCell && graph.getSelectionCell(); // NEW
+            const result = originalSetSelectionCellForIrrigation.apply(this, arguments); // NEW
+            if (activeIrrigationMode && previous && cell && getCellId(previous) === getCellId(cell)) renderIrrigationMode(activeIrrigationMode); // NEW
+            return result; // NEW
+        }; // NEW
+    } // NEW
+
+    function appendPortBadgeSpec(out, seen, cell, role, index, visualSide) { // CHANGE
+        const port = { cellId: getCellId(cell), role, index, visualSide }; // CHANGE
+        const key = portVisualKey(port); // NEW
+        if (seen.has(key)) return; // NEW
+        seen.add(key); // NEW
+        out.push({ cell, role, index, visualSide: normalizeVisualSide(visualSide) || visualSideDefaultForRole(role), sideIndex: 0, sideCount: 1 }); // CHANGE
+    } // NEW
+
+    function assignPortBadgeSideSlots(specs) { // NEW
+        const groups = new Map(); // NEW
+        (specs || []).forEach(function (spec) { // NEW
+            const key = [getCellId(spec.cell), spec.visualSide].join(":"); // NEW
+            if (!groups.has(key)) groups.set(key, []); // NEW
+            groups.get(key).push(spec); // NEW
+        }); // NEW
+        groups.forEach(function (group) { // NEW
+            group.sort(function (a, b) { return (a.role === b.role ? 0 : (a.role === "input" ? -1 : 1)) || (a.index - b.index) || String(a.visualSide).localeCompare(String(b.visualSide)); }); // NEW
+            group.forEach(function (spec, index) { spec.sideIndex = index; spec.sideCount = group.length; }); // NEW
+        }); // NEW
+    } // NEW
+
+    function renderPortBadge(session, spec) { // CHANGE
+        const cell = spec && spec.cell; // NEW
+        const role = spec && spec.role; // NEW
+        const index = spec && spec.index || 0; // NEW
+        const port = { cellId: getCellId(cell), role, index, visualSide: normalizeVisualSide(spec && spec.visualSide) }; // CHANGE
         const visual = portBadgeVisualState(session, port);
-        const visualRole = portVisualRoleForCell(session.moduleCell, cell, role);
-        const label = cellPortDisplayLabel(session.moduleCell, cell, role);
+        const label = portBadgeTextLabel(session.moduleCell, cell, role, index); // CHANGE
+        const connectorLabel = cellPortDisplayLabel(session.moduleCell, cell, role, index); // NEW
         const badge = document.createElement("button");
         badge.type = "button";
         badge.className = "trellis-irrigation-port-badge trellis-irrigation-port-badge-" + visual.state;
-        renderPortBadgeContent(badge, label, visualRole, visual);
-        badge.title = portDisplayPrefix(session.moduleCell, cell, role) + " " + (index + 1) + visual.titleSuffix + " (" + label + ")"; // CHANGE
+        badge.className += " trellis-irrigation-port-badge-side-" + port.visualSide; // CHANGE
+        badge.setAttribute("data-port-role", role); // NEW
+        badge.setAttribute("data-port-index", String(index)); // NEW
+        badge.setAttribute("data-visual-side", port.visualSide); // CHANGE
+        if (isTakeoffBranchPort(session.moduleCell, cell, role, index)) badge.setAttribute("data-takeoff-branch", "1"); // NEW
+        renderPortBadgeContent(badge, label, port.visualSide, visual); // CHANGE
+        const titlePrefix = portDisplayPrefix(session.moduleCell, cell, role) + " " + (index + 1); // NEW
+        badge.title = titlePrefix + " " + port.visualSide + visual.titleSuffix + " (" + connectorLabel + "); " + titlePrefix + visual.titleSuffix + " (" + connectorLabel + ")"; // CHANGE
         badge.style.cssText = portBadgeStyle(visual, label);
-        positionPortBadge(badge, cell, visualRole, index, portCapacityForCell(session.moduleCell, cell, role), label);
+        positionPortBadge(badge, cell, port.visualSide, spec.sideIndex || 0, spec.sideCount || 1, label); // CHANGE
         badge.addEventListener("click", function (ev) {
             if (ev && ev.stopPropagation) ev.stopPropagation();
             const boundary = boundaryForPort(session.moduleCell, port);
@@ -9574,12 +10296,13 @@ Draw.loadPlugin(function (ui) {
         });
         appendOverlayNode(badge);
         session.portBadges.push(badge);
-        if (session.portBadgeNodeByKey) session.portBadgeNodeByKey.set(portKey(port), badge);
+        if (session.portBadgeNodeByKey) session.portBadgeNodeByKey.set(portVisualKey(port), badge); // CHANGE
     }
 
     function portBadgeVisualState(session, port) {
-        const key = portKey(port);
-        const selected = (session.selectedPorts || []).map(portKey).indexOf(key) >= 0;
+        const normalized = normalizePort(port); // NEW
+        const key = portKey(normalized); // CHANGE
+        const selected = (session.selectedPorts || []).map(normalizePort).some(function (entry) { return portKey(entry) === key && (!normalized.visualSide || !entry.visualSide || entry.visualSide === normalized.visualSide); }); // CHANGE
         const boundary = boundaryForPort(session.moduleCell, port);
         const boundarySelected = boundary && selectedValidBoundaries(session).map(boundaryKey).indexOf(boundaryKey(boundary)) >= 0;
         const occupied = edgesForPort(session.moduleCell, port).length > 0;
@@ -9630,8 +10353,10 @@ Draw.loadPlugin(function (ui) {
 
     function portBadgeArrowStyle(role, visual) {
         const color = visual && visual.state === "compatible" ? "#16a34a" : visual && visual.state === "selected" ? "#1d4ed8" : "#475569";
+        if (role === "left") return "position:absolute;right:-" + PORT_BADGE_ARROW_SIZE + "px;top:50%;width:0;height:0;margin-top:-" + PORT_BADGE_ARROW_SIZE + "px;border-top:" + PORT_BADGE_ARROW_SIZE + "px solid transparent;border-bottom:" + PORT_BADGE_ARROW_SIZE + "px solid transparent;border-left:" + PORT_BADGE_ARROW_SIZE + "px solid " + color + ";pointer-events:none;"; // NEW
+        if (role === "right") return "position:absolute;left:-" + PORT_BADGE_ARROW_SIZE + "px;top:50%;width:0;height:0;margin-top:-" + PORT_BADGE_ARROW_SIZE + "px;border-top:" + PORT_BADGE_ARROW_SIZE + "px solid transparent;border-bottom:" + PORT_BADGE_ARROW_SIZE + "px solid transparent;border-right:" + PORT_BADGE_ARROW_SIZE + "px solid " + color + ";pointer-events:none;"; // NEW
         const base = "position:absolute;left:50%;width:0;height:0;margin-left:-" + PORT_BADGE_ARROW_SIZE + "px;border-left:" + PORT_BADGE_ARROW_SIZE + "px solid transparent;border-right:" + PORT_BADGE_ARROW_SIZE + "px solid transparent;pointer-events:none;";
-        return role === "input" ? base + "bottom:-" + PORT_BADGE_ARROW_SIZE + "px;border-top:" + PORT_BADGE_ARROW_SIZE + "px solid " + color + ";" : base + "top:-" + PORT_BADGE_ARROW_SIZE + "px;border-bottom:" + PORT_BADGE_ARROW_SIZE + "px solid " + color + ";";
+        return role === "top" ? base + "bottom:-" + PORT_BADGE_ARROW_SIZE + "px;border-top:" + PORT_BADGE_ARROW_SIZE + "px solid " + color + ";" : base + "top:-" + PORT_BADGE_ARROW_SIZE + "px;border-bottom:" + PORT_BADGE_ARROW_SIZE + "px solid " + color + ";"; // CHANGE
     }
 
     function portBadgeStyle(visual, label) {
@@ -9653,8 +10378,9 @@ Draw.loadPlugin(function (ui) {
         const state = cellState(cell);
         const total = Math.max(1, Math.floor(finiteNumber(count, 1)));
         const slot = (index + 1) / (total + 1);
-        const x = state.x + state.width * slot - portBadgeWidthForLabel(label) / 2;
-        const y = role === "input" ? state.y - PORT_BADGE_SIZE - 4 : state.y + state.height + 4;
+        const width = portBadgeWidthForLabel(label); // NEW
+        const x = role === "left" ? state.x - width - 4 : (role === "right" ? state.x + state.width + 4 : state.x + state.width * slot - width / 2); // CHANGE
+        const y = role === "left" || role === "right" ? state.y + state.height * slot - PORT_BADGE_SIZE / 2 : (role === "top" ? state.y - PORT_BADGE_SIZE - 4 : state.y + state.height + 4); // CHANGE
         node.style.left = Math.round(x) + "px";
         node.style.top = Math.round(y) + "px";
     }
@@ -10253,17 +10979,17 @@ Draw.loadPlugin(function (ui) {
         return validateHudCompatibility(moduleCell, source, target);
     }
 
-    function validateHudCompatibility(moduleCell, source, target) {
-        const sourcePart = partForCell(moduleCell, source);
-        const targetPart = partForCell(moduleCell, target);
-        if (endpointType(source) === "source" && targetPart) return canEndpointConnectToPart(endpointProfile(source), targetPart);
+    function validateHudCompatibility(moduleCell, source, target, sourceIndex, targetIndex) {
+        const sourceConnector = portConnectorForCell(moduleCell, source, "output", sourceIndex); // CHANGE
+        const targetConnector = portConnectorForCell(moduleCell, target, "input", targetIndex); // CHANGE
+        const targetRequirement = endpointType(target) === "bed" ? endpointProfile(target) : null; // CHANGE
         if (endpointType(source) === "source" && endpointType(target) === "bed") {
-            const direct = connectorRecordsMatch(endpointProfileAsConnector(endpointProfile(source)), endpointProfileAsConnector(endpointProfile(target)), endpointProfile(target));
+            const direct = connectorRecordsMatch(sourceConnector, targetConnector, targetRequirement); // CHANGE
             return direct.ok ? direct : { ok: false, reason: "Source endpoint cannot connect directly to bed inlet: " + direct.reason };
         }
-        if (sourcePart && targetPart) return canConnectParts(sourcePart, targetPart, endpointType(target) === "bed" ? endpointProfile(target) : null);
-        if (sourcePart && endpointType(target) === "bed") return canPartReachEndpoint(sourcePart, endpointProfile(target));
-        return { ok: false, reason: "Unsupported irrigation connection." };
+        if (endpointType(source) === "source" && targetConnector) return connectorRecordsMatch(sourceConnector, targetConnector, targetRequirement); // CHANGE
+        if (sourceConnector && targetConnector) return connectorRecordsMatch(sourceConnector, targetConnector, targetRequirement); // CHANGE
+        return { ok: false, reason: "Unsupported irrigation connection." }; // CHANGE
     }
 
     function endpointProfileAsConnector(profile) {
@@ -10343,7 +11069,7 @@ Draw.loadPlugin(function (ui) {
         if (endpointType(cell) === "source") return hasDownstreamConnection(moduleCell, cell) ? "" : "Source has no downstream irrigation tree.";
         if (!hasSourceRoute(moduleCell, cell)) return "Disconnected irrigation object.";
         const validation = incomingHudEdges(moduleCell, cell)[0];
-        if (validation && !validateHudCompatibility(moduleCell, validation.source, cell).ok) return "Incoming connection is incompatible.";
+        if (validation && !validateHudCompatibility(moduleCell, validation.source, cell, getCellAttr(validation, ATTRS.EDGE_SOURCE_PORT, "0"), getCellAttr(validation, ATTRS.EDGE_TARGET_PORT, "0")).ok) return "Incoming connection is incompatible."; // CHANGE
         return "";
     }
 
@@ -11732,6 +12458,8 @@ Draw.loadPlugin(function (ui) {
             syncLinkedBedAssemblyToBed,
             createAssemblyConnection: ConnectorRules.createAssemblyConnection,
             validatePortConnection: ConnectorRules.validatePortConnection,
+            validateHudCompatibility, // NEW
+            cellWarning, // NEW
             portConnectorForCell: ConnectorRules.portConnectorForCell,
             isReversibleFittingPart: ConnectorRules.isReversibleFittingPart,
             isReversibleFittingCell: ConnectorRules.isReversibleFittingCell,

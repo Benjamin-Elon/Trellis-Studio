@@ -207,7 +207,9 @@ test("PlanSchema normalizes legacy yield fields and strips runtime-only persiste
             shelfLifeDays: 0,
             packages: [{ unit: "kg", baseType: "kg", baseQty: 1 }],
             baseKgPerPlant: 1.5,
-            kgPerPlantMode: "auto"
+            kgPerPlantMode: "auto",
+            harvestWindowSource: "manual",
+            useActualHarvest: false
         }],
         version: 2,
         weekStartDow: 1,
@@ -220,6 +222,60 @@ test("PlanSchema normalizes legacy yield fields and strips runtime-only persiste
         demands: [],
         csa: { enabled: false, boxesPerWeek: 0, start: "", end: "", salePricePerBox: null, salePriceMode: "auto", components: [] }
     });
+});
+
+test("PlanningCore treats CSA components as committed demand", () => {
+    const { api } = createHarness();
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    plan.crops.push(emptyCrop({ harvestStart: "2026-06-01", harvestEnd: "2026-06-07" }));
+    plan.csa = {
+        enabled: true,
+        boxesPerWeek: 10,
+        start: "2026-06-01",
+        end: "2026-06-07",
+        componentValuePerBox: 0,
+        salePricePerBox: 0,
+        salePriceMode: "auto",
+        components: [{ cropId: "crop_1", qty: 1, unit: "kg", everyNWeeks: 1, start: "", end: "" }]
+    };
+
+    const coverage = api.PlanningCore.computeYearCoverage({ plan, year: 2026 });
+
+    assert.equal(coverage.prioritySummaries.committed.targetKg, 10);
+    assert.equal(coverage.prioritySummaries.committed.shortKg, 10);
+    assert.equal(coverage.totals.targetKg, 10);
+});
+
+test("PlanningCore recommends the smallest whole plant count for reachable shortage", () => {
+    const { api } = createHarness();
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    plan.crops.push(emptyCrop({ kgPerPlant: 2, harvestStart: "2026-06-01", harvestEnd: "2026-06-07" }));
+    addDemand(plan, { qty: 5, from: "2026-06-01", to: "2026-06-07" });
+
+    const recommendation = api.PlanningCore.recommendPlantCount({
+        plan,
+        year: 2026,
+        candidate: {
+            cropId: "crop_1",
+            kgPerPlant: 2,
+            harvestStart: "2026-06-01",
+            harvestEnd: "2026-06-07"
+        }
+    });
+    const simulated = api.PlanningCore.simulateCandidatePlanting({
+        plan,
+        year: 2026,
+        candidate: {
+            cropId: "crop_1",
+            plantCount: recommendation.plantCount,
+            kgPerPlant: 2,
+            harvestStart: "2026-06-01",
+            harvestEnd: "2026-06-07"
+        }
+    });
+
+    assert.equal(recommendation.plantCount, 3);
+    assert.equal(simulated.demandServedKg, 5);
 });
 
 test("PlanSchema normalizes weekStartDow to an integer from zero through six", () => {
@@ -605,6 +661,83 @@ test("PlanRuntimeService derives actual harvest windows and returns calculation 
     assert.ok(runtime.warnings.some(warning => warning.includes("missing dates")));
 });
 
+test("PlanRuntimeService defaults legacy crops to sowing-window estimate only without actual harvest records", () => {
+    const { api, root, addCell, TestCell: Cell } = createHarness();
+    const moduleCell = addCell(root, new Cell("module"));
+    addCell(moduleCell, new Cell("planned", {
+        tiler_group: "1",
+        plant_id: "1",
+        plant_count: "10",
+        season_start_year: "2026"
+    }));
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    plan.crops.push(emptyCrop({
+        estimatedHarvestStart: "2026-06-01",
+        estimatedHarvestEnd: "2026-06-07",
+        harvestStart: "",
+        harvestEnd: ""
+    }));
+
+    const runtime = api.PlanRuntimeService.recalculate(moduleCell, 2026, plan);
+    const derived = runtime.derivedByCropId.get("crop_1");
+
+    assert.equal(plan.crops[0].harvestWindowSource, "sowing_window_estimate");
+    assert.equal(plan.crops[0].useActualHarvest, false);
+    assert.equal(derived.harvestStart, "2026-06-01");
+    assert.equal(derived.harvestEnd, "2026-06-07");
+});
+
+test("PlanRuntimeService does not default sowing-window estimate when actual harvest records exist", () => {
+    const { api, root, addCell, TestCell: Cell } = createHarness();
+    const moduleCell = addCell(root, new Cell("module"));
+    addCell(moduleCell, new Cell("actual", {
+        tiler_group: "1",
+        plant_id: "1",
+        plant_count: "10",
+        season_start_year: "2026",
+        harvest_start: "2026-09-01",
+        harvest_end: "2026-09-07"
+    }));
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    plan.crops.push(emptyCrop({
+        estimatedHarvestStart: "2026-06-01",
+        estimatedHarvestEnd: "2026-06-07",
+        harvestStart: "",
+        harvestEnd: ""
+    }));
+
+    api.PlanRuntimeService.recalculate(moduleCell, 2026, plan);
+
+    assert.equal(plan.crops[0].harvestWindowSource, "manual");
+    assert.equal(plan.crops[0].useActualHarvest, false);
+});
+
+test("PlanRuntimeService keeps manual, sowing-window estimate, and actual harvest supply windows distinct", () => {
+    const firstHarvestWeek = (harnessApi, runtime) => harnessApi.PlanMath.buildPlanChartModel(runtime.weekly, "crop_1")
+        .find(row => row.harvestKg > 0)?.week;
+    const makeModuleWithTiler = attributes => {
+        const { api: harnessApi, root, addCell, TestCell: Cell } = createHarness();
+        const moduleCell = addCell(root, new Cell("module"));
+        addCell(moduleCell, new Cell("tiler", { tiler_group: "1", plant_id: "1", plant_count: "10", season_start_year: "2026", ...attributes }));
+        return { api: harnessApi, moduleCell };
+    };
+
+    let harness = makeModuleWithTiler({});
+    let plan = harness.api.PlanSchema.createEmptyPlan(2026);
+    plan.crops.push(emptyCrop({ harvestWindowSource: "manual", harvestStart: "2026-01-05", harvestEnd: "2026-01-11" }));
+    assert.equal(firstHarvestWeek(harness.api, harness.api.PlanRuntimeService.recalculate(harness.moduleCell, 2026, plan)), "2026-01-05");
+
+    harness = makeModuleWithTiler({});
+    plan = harness.api.PlanSchema.createEmptyPlan(2026);
+    plan.crops.push(emptyCrop({ harvestWindowSource: "sowing_window_estimate", estimatedHarvestStart: "2026-06-01", estimatedHarvestEnd: "2026-06-07" }));
+    assert.equal(firstHarvestWeek(harness.api, harness.api.PlanRuntimeService.recalculate(harness.moduleCell, 2026, plan)), "2026-06-01");
+
+    harness = makeModuleWithTiler({ harvest_start: "2026-09-01", harvest_end: "2026-09-07" });
+    plan = harness.api.PlanSchema.createEmptyPlan(2026);
+    plan.crops.push(emptyCrop({ harvestWindowSource: "actual_harvest", useActualHarvest: true, harvestStart: "2026-01-05", harvestEnd: "2026-01-11" }));
+    assert.equal(firstHarvestWeek(harness.api, harness.api.PlanRuntimeService.recalculate(harness.moduleCell, 2026, plan)), "2026-08-31");
+});
+
 test("PlanRuntimeService includes prior-year cross-year harvest as carryover supply without editable crop rows", () => {
     const { api, root, addCell, TestCell: Cell } = createHarness();
     const moduleCell = addCell(root, new Cell("module"));
@@ -707,7 +840,7 @@ test("PlanMath allocates CSA first, then priority and channel order, with reques
     assert.equal(dashboard.totalFulfilledRevenue, 20);
     assert.equal(dashboard.channelMetricsById.get("restaurant_1").status, "OK");
     assert.equal(dashboard.channelMetricsById.get("farm_store").shortKg, 4);
-    assert.equal(dashboard.priorityMetrics.find(metric => metric.priority === "committed").usableSupplyKg, 6);
+    assert.equal(dashboard.priorityMetrics.find(metric => metric.priority === "committed").usableSupplyKg, 8); // CSA demand is committed in Allocate V1.
 });
 
 test("PlanMath derives CSA box value and prorates CSA revenue by component fulfillment", () => {

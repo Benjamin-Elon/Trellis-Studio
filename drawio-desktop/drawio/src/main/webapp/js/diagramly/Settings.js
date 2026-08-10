@@ -33,6 +33,7 @@ var mxSettings =
 		'createdChangeMap', // NEW
 		'gardenDashboard', // NEW
 		'gardenPlanner', // NEW
+		'gardenAllocate', // NEW
 		'gardenScale', // NEW
 		'gardenBeds', // NEW
 		'gardenEquipment', // NEW
@@ -56,6 +57,7 @@ var mxSettings =
 		createdChangeMap: 'plugins/garden_planner_plugins/Created_Change_Map.js', // NEW
 		gardenDashboard: 'plugins/garden_planner_plugins/Garden_Dashboard.js', // NEW
 		gardenPlanner: 'plugins/garden_planner_plugins/Year_Planner.js', // NEW
+		gardenAllocate: 'plugins/garden_planner_plugins/Allocate_Planner.js', // NEW
 		gardenScale: 'plugins/garden_planner_plugins/Garden_Scale.js', // NEW
 		gardenBeds: 'plugins/garden_planner_plugins/Garden_Beds.js', // NEW
 		gardenEquipment: 'plugins/garden_planner_plugins/Garden_Equipment.js', // NEW

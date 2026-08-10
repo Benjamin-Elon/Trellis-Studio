@@ -98,6 +98,95 @@ test('crop option sorting prefers suitability then name within lifecycle groups'
     assert.equal(groups[0].options[0].displayLabel, 'Best Crop - 80% window left');
 });
 
+test('proposeLifecycle returns lifecycle metadata and task preview without graph mutation', async () => {
+    const template = {
+        version: 2,
+        rules: [{
+            id: 'prep',
+            title: 'Prep {plant}',
+            startAnchorStage: 'SOW',
+            startOffsetDays: 0,
+            startOffsetDirection: 'after',
+            endMode: 'fixed_days',
+            durationDays: 0,
+            repeatMode: 'none'
+        }]
+    };
+
+    const proposal = await hooks.proposeLifecycle({
+        plant: makePlant(hooks, { plant_name: 'Lettuce', days_maturity: 30, harvest_window_days: 7 }),
+        city: makeCity(hooks, 18),
+        methodId: 'direct_sow.field',
+        methodCategoryId: 'direct_sow',
+        primaryDateISO: '2026-04-01',
+        seasonStartYear: 2026,
+        taskTemplate: template
+    });
+
+    assert.equal(proposal.ok, true);
+    assert.equal(proposal.attributePatch.sow_date, '2026-04-01');
+    assert.equal(proposal.attributePatch.harvest_start, '2026-05-01');
+    assert.equal(proposal.attributePatch.harvest_end, '2026-05-08');
+    assert.equal(proposal.taskPreview.length, 1);
+    assert.match(proposal.taskPreview[0].title, /Prep/);
+    assert.match(proposal.taskPreview[0].title, /Lettuce/);
+});
+
+test('proposeLifecycle can choose the earliest calculable bed-entry day in a week', async () => {
+    const proposal = await hooks.proposeLifecycle({
+        plant: makePlant(hooks, { plant_name: 'Lettuce', days_maturity: 30, harvest_window_days: 7 }),
+        city: makeCity(hooks, 18),
+        methodId: 'direct_sow.field',
+        methodCategoryId: 'direct_sow',
+        weekStartISO: '2026-04-01',
+        weekEndISO: '2026-04-07',
+        chooseBestFeasibleDay: true,
+        seasonStartYear: 2026
+    });
+
+    assert.equal(proposal.ok, true);
+    assert.equal(proposal.primaryDateISO, '2026-04-01');
+    assert.equal(proposal.attributePatch.sow_date, '2026-04-01');
+});
+
+test('proposeLifecycle reports overrideable warnings separately from structural failures', async () => {
+    const proposal = await hooks.proposeLifecycle({
+        plant: makePlant(hooks, { plant_name: 'Lettuce', days_maturity: 30, harvest_window_days: 7 }),
+        city: makeCity(hooks, 18),
+        methodId: 'direct_sow.field',
+        methodCategoryId: 'direct_sow',
+        primaryDateISO: '2026-04-01',
+        seasonStartYear: 2026,
+        minYieldMultiplier: 2
+    });
+
+    assert.equal(proposal.ok, true);
+    assert.equal(proposal.status, 'warning');
+    assert.ok(proposal.warnings.length);
+
+    const failure = await hooks.proposeLifecycle({
+        plant: makePlant(hooks, { plant_name: 'Lettuce', days_maturity: 30, harvest_window_days: 7 }),
+        city: makeCity(hooks, 18),
+        methodId: 'direct_sow.field',
+        methodCategoryId: 'direct_sow',
+        primaryDateISO: '',
+        seasonStartYear: 2026
+    });
+    assert.equal(failure.ok, false);
+    assert.equal(failure.status, 'structural_failure');
+});
+
+test('Scheduler exposes Allocate resolver and draft editing contracts', () => {
+    assert.equal(typeof hooks.resolvePlantForPlanCrop, 'function');
+    assert.equal(typeof hooks.resolveCityForModule, 'function');
+    assert.equal(typeof hooks.openDraftScheduleDialog, 'function');
+    assert.match(schedulerSource, /resolvePlantForPlanCrop,/);
+    assert.match(schedulerSource, /resolveCityForModule,/);
+    assert.match(schedulerSource, /openDraftScheduleDialog/);
+    assert.match(schedulerSource, /renderTaskRows/);
+    assert.match(schedulerSource, /Add task/);
+});
+
 test('companion metadata annotates crop options without changing suitability order', () => {
     const crops = [
         makeCrop({ plant_id: 1, plant_name: 'Late Crop', annual: 1, biennial: 0, perennial: 0 }),
@@ -235,7 +324,8 @@ test('derived dialogs do not persist resolved city onto the source while opening
 test('derived save creates sibling after validation and rolls it back on save failure', () => {
     assert.match(schedulerSource, /const scheduleResult = computeScheduleResult\(inputs\);[\s\S]*if \(derivedContext\.operation === 'create'\) \{[\s\S]*createdDerivedCell = createSibling\(graph, relationshipSourceCell/);
     assert.match(schedulerSource, /let targetCell = cell;[\s\S]*targetCell = createdDerivedCell;/);
-    assert.match(schedulerSource, /await applyScheduleToGraph\(ui, targetCell, inputs,[\s\S]*targetAttributePatch: derivedRelationshipPatch[\s\S]*preserveTargetGeometry: !!derivedContext/);
+    assert.match(schedulerSource, /const targetLayoutPatch = Object\.assign\(\{\}, derivedRelationshipPatch, layoutGraphApplication\.targetPatch \|\| \{\}\);/);
+    assert.match(schedulerSource, /await applyScheduleToGraph\(ui, targetCell, inputs,[\s\S]*targetAttributePatch: targetLayoutPatch[\s\S]*preserveTargetGeometry: !!derivedContext/);
     assert.match(schedulerSource, /catch \(saveError\) \{[\s\S]*if \(createdDerivedCell\) removeDerivedSiblingIfPresent\(ui\?\.editor\?\.graph, createdDerivedCell\);[\s\S]*throw saveError/);
     assert.match(schedulerSource, /targetGroupId: cell\.id/);
 });
@@ -320,6 +410,10 @@ test('layout preview model renders no-bed and clamps companion placement', () =>
     const dense = hooks.computePreviewPlantCircles({ x: 0, y: 0, width: 400, height: 400 }, 1, 1, { maxCircles: 12 });
     assert.equal(dense.circles.length, 12);
     assert.equal(dense.summarized, true);
+    const normalDense = hooks.computePreviewPlantCircles({ x: 0, y: 0, width: 40, height: 40 }, 1, 1);
+    assert.equal(normalDense.circles.length, normalDense.total);
+    assert.equal(normalDense.summarized, false);
+    assert.ok(normalDense.circles[0].r > 2);
 });
 
 test('active companion layout templates compute distinct placements', () => {
@@ -340,16 +434,20 @@ test('active companion layout templates compute distinct placements', () => {
 test('multi-companion preview model renders anchor and all companions with warnings', () => {
     const model = hooks.buildCompanionLayoutPreviewModel({
         bedRect: { x: 0, y: 0, width: 180, height: 120 },
-        anchorRow: { plantId: 1, label: 'Carrot', rect: { x: 20, y: 20, width: 80, height: 50 }, spacingXCm: 20, spacingYCm: 20 },
+        anchorRow: { plantId: 1, label: 'Carrot', rect: { x: 20, y: 20, width: 80, height: 50 }, spacingXCm: 20, spacingYCm: 20, offsetXCm: 10, offsetYCm: 10 },
         companionRows: [
-            { plantId: 2, label: 'Lettuce', rect: { x: 0, y: 0, width: 40, height: 40 }, template: 'staggered', spacingXCm: 18, spacingYCm: 18, offsetXCm: 0, offsetYCm: 0 },
-            { plantId: 3, label: 'Tomato', rect: { x: 0, y: 0, width: 80, height: 80 }, template: 'beside', spacingXCm: 30, spacingYCm: 30, offsetXCm: 120, offsetYCm: 0 }
+            { plantId: 2, label: 'Lettuce', rect: { x: 0, y: 0, width: 40, height: 40 }, template: 'staggered', spacingXCm: 18, spacingYCm: 18, offsetXCm: 20, offsetYCm: 12 },
+            { plantId: 3, label: 'Tomato', rect: { x: 0, y: 0, width: 80, height: 80 }, template: 'beside', spacingXCm: 30, spacingYCm: 30, offsetXCm: 300, offsetYCm: 0 }
         ],
         requireRealBed: true
     });
     assert.equal(model.status, 'ok');
     assert.equal(model.rows.length, 3);
     assert.equal(model.rows[0].role, 'anchor');
+    assert.equal(model.rows[0].rect.x, 20);
+    assert.equal(model.rows[1].rect.x, 0);
+    assert.ok(model.rows[0].dots.circles[0].x < model.rows[0].rect.x);
+    assert.ok(model.rows[2].dots.clamped);
     assert.match(model.warning, /Tomato: Clamped inside bed/);
 });
 
@@ -380,6 +478,34 @@ test('interplant preview offsets alternating row and column parity like the tile
     assert.equal(row0col1.y, 9);
     assert.equal(row1col0.x, 9);
     assert.equal(row1col0.y, 27);
+});
+
+test('layout patches write spacing and bed-relative offsets for current planting rows', () => {
+    const patch = hooks.plantingLayoutAttributePatch({
+        role: 'anchor',
+        spacingXCm: 18,
+        spacingYCm: 24,
+        vegDiameterCm: 12,
+        offsetXCm: 30,
+        offsetYCm: 6
+    });
+    assert.equal(patch.spacing_x_cm, '18');
+    assert.equal(patch.spacing_y_cm, '24');
+    assert.equal(patch.veg_diameter_cm, '12');
+    assert.equal(patch.layout_offset_x_cm, '30');
+    assert.equal(patch.layout_offset_y_cm, '6');
+
+    const companionPatch = hooks.plantingLayoutAttributePatch({
+        role: 'companion',
+        template: 'interplant',
+        spacingXCm: 10,
+        spacingYCm: 10,
+        offsetXCm: 40,
+        offsetYCm: 8
+    });
+    assert.equal(companionPatch.companion_layout_template, 'interplant');
+    assert.equal(companionPatch.companion_offset_x_cm, '40');
+    assert.equal(companionPatch.companion_offset_y_cm, '8');
 });
 
 test('graph-created companion pairs get an in-memory relationship before DB default save', () => {
@@ -454,11 +580,17 @@ test('scheduler layout tab wires live SVG preview and context-aware default savi
     assert.match(schedulerSource, /renderLayoutPreviewSvg\(layoutPreview, model\)/);
     assert.match(schedulerSource, /saveLayoutDefaultChk\.checked[\s\S]*CompanionRelationshipModel\.ensurePairDefaultsRelationship[\s\S]*CompanionRelationshipModel\.saveLayoutDefaults/);
     assert.match(schedulerSource, /PlantModel\.update\(formState\.plantId, spacingPatch\)/);
-    assert.match(schedulerSource, /layoutOffsetCm: derivedContext\.mode === 'companion'/);
+    assert.match(schedulerSource, /layoutOffsetForDerivedCreation\(\)/);
     assert.match(schedulerSource, /writeCellAttribute\(targetCell, 'companion_relation_id', ensured\.relationId/);
-    assert.match(schedulerSource, /Companion group layout/);
-    assert.match(schedulerSource, /applyCompanionGroupLayoutToGraph/);
+    assert.match(schedulerSource, /makeSection\('Planting layout'\)/);
+    assert.match(schedulerSource, /needsDraftCompanion[\s\S]*readDraftCompanionLayoutRow/);
+    assert.match(schedulerSource, /'Revert'/);
+    assert.match(schedulerSource, /targetGeometryRect: layoutGraphApplication\.targetRect/);
+    assert.match(schedulerSource, /extraAttributePatches: \(layoutGraphApplication\.extraAttributePatches/);
     assert.match(schedulerSource, /CompanionLayoutGroupDefaultModel\.save/);
+    assert.doesNotMatch(schedulerSource, /mxUtils\.button\('Apply layout'/);
+    assert.doesNotMatch(schedulerSource, /Save changed defaults/);
+    assert.doesNotMatch(schedulerSource, /geometryRect: rowRect/);
 });
 
 test('plant editor exposes layout defaults without a diagram preview', () => {

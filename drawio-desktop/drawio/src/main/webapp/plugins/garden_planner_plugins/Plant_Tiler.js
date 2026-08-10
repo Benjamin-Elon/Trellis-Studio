@@ -57,6 +57,7 @@ Draw.loadPlugin(function (ui) {
     const DEFAULT_IMPERIAL_BED_LENGTH_CM = 8 * CM_PER_FOOT;
     const DEFAULT_MODULE_MARGIN_CM = 5 * CM_PER_METER; // CHANGE
     const TILER_GROUP_CREATED_EVENT = "usl:tilerGroupCreated";
+    const ALLOCATE_PLAN_EVENT = "usl:allocatePlanRequested"; // NEW
 
     // ---------- LOD settings ----------
     const LOD_TILE_THRESHOLD = 300; // collapse if rows*cols > this
@@ -847,6 +848,34 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
+    function layoutGridOffsetPx(groupCell) {
+        const xCm = finiteNumberOrNull(getXmlAttr(groupCell, "companion_offset_x_cm", "")) ?? finiteNumberOrNull(getXmlAttr(groupCell, "layout_offset_x_cm", ""));
+        const yCm = finiteNumberOrNull(getXmlAttr(groupCell, "companion_offset_y_cm", "")) ?? finiteNumberOrNull(getXmlAttr(groupCell, "layout_offset_y_cm", ""));
+        return {
+            x: xCm == null ? 0 : toPx(xCm),
+            y: yCm == null ? 0 : toPx(yCm),
+            active: !!((xCm != null && xCm !== 0) || (yCm != null && yCm !== 0))
+        };
+    }
+
+    function clampSlotCenterInsidePlantingFrame(groupCell, center, iconDiamPx, bandPx) {
+        const g = groupCell && groupCell.getGeometry ? groupCell.getGeometry() : null;
+        if (!g || !center) return center;
+        const radius = Math.max(0, Number(iconDiamPx) || 0) / 2;
+        const minX = GROUP_PADDING_PX + radius;
+        const minY = GROUP_PADDING_PX + (bandPx || GROUP_LABEL_BAND_PX) + radius;
+        const maxX = Math.max(minX, Number(g.width || 0) - GROUP_PADDING_PX - radius);
+        const maxY = Math.max(minY, Number(g.height || 0) - GROUP_PADDING_PX - radius);
+        return {
+            x: clamp(Number(center.x) || 0, minX, maxX),
+            y: clamp(Number(center.y) || 0, minY, maxY)
+        };
+    }
+
+    function layoutGridOffsetActive(groupCell) {
+        return layoutGridOffsetPx(groupCell).active;
+    }
+
     function logicalSlotCenterLocal(r, c, spacingXpx, spacingYpx, bandPx) {
         return {
             x: GROUP_PADDING_PX + spacingXpx / 2 + c * spacingXpx,
@@ -871,12 +900,22 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
+    function layoutSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx, iconDiamPx) {
+        const logical = interplantSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx);
+        const offset = layoutGridOffsetPx(groupCell);
+        const shifted = {
+            x: logical.x + offset.x,
+            y: logical.y + offset.y
+        };
+        return clampSlotCenterInsidePlantingFrame(groupCell, shifted, iconDiamPx, bandPx);
+    }
+
     function visualCenterFromLogicalCenter(groupCell, logicalCenter, rotationDeg) {
         return rotatePointAround(logicalCenter, groupCenterLocal(groupCell), rotationDeg);
     }
 
-    function visualSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx) {
-        const logical = interplantSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx);
+    function visualSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx, iconDiamPx) {
+        const logical = layoutSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx, iconDiamPx);
         return visualCenterFromLogicalCenter(groupCell, logical, getTilerRotationDeg(groupCell));
     }
 
@@ -885,7 +924,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function tileGeometryAtSlot(groupCell, r, c, spacingXpx, spacingYpx, iconDiamPx, bandPx) {
-        const center = visualSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx);
+        const center = visualSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx, iconDiamPx);
         return geometryFromVisualCenter(center, iconDiamPx, iconDiamPx);
     }
 
@@ -2333,6 +2372,7 @@ Draw.loadPlugin(function (ui) {
         let settingsBtn = null;
         let addBedBtn = null;
         let addGroupBtn = null;
+        let allocateModeBtn = null; // NEW
         let irrigationModeBtn = null; // CHANGE
         let activeModuleCell = null;
         let activeBedCell = null;
@@ -2476,11 +2516,13 @@ Draw.loadPlugin(function (ui) {
             settingsBtn = makeButton("Set Garden Settings", "open");
             addBedBtn = makeButton("Add Garden Bed", "add");
             addGroupBtn = makeButton("Add New Plant Group", "add");
+            allocateModeBtn = makeButton("Enter Allocation Mode", "open"); // NEW
             irrigationModeBtn = makeButton("Enter Irrigation Design Mode", "open"); // CHANGE
             toolbar.appendChild(labelInputWrap);
             toolbar.appendChild(settingsBtn);
             toolbar.appendChild(addBedBtn);
             toolbar.appendChild(addGroupBtn);
+            toolbar.appendChild(allocateModeBtn); // NEW
             toolbar.appendChild(irrigationModeBtn); // CHANGE
 
             mxEvent.addListener(settingsBtn, "click", async function (evt) {
@@ -2512,11 +2554,19 @@ Draw.loadPlugin(function (ui) {
                 hideToolbar();
             });
 
+            mxEvent.addListener(allocateModeBtn, "click", function (evt) { // NEW
+                mxEvent.consume(evt); // NEW
+                const moduleCell = activeModuleCell; // NEW
+                if (!moduleCell || !hasGardenSettingsSet(moduleCell)) return; // NEW
+                openAllocateModeForModule(moduleCell); // NEW
+                hideToolbar(); // NEW
+            }); // NEW
+
             mxEvent.addListener(irrigationModeBtn, "click", function (evt) { // CHANGE
                 mxEvent.consume(evt);
                 const moduleCell = activeModuleCell;
                 if (!moduleCell || !hasGardenSettingsSet(moduleCell)) return; // CHANGE
-                openIrrigationModeForModule(moduleCell); // CHANGE
+                openIrrigationModeForModule(moduleCell, activeBedCell); // CHANGE
                 hideToolbar();
             });
 
@@ -2564,15 +2614,22 @@ Draw.loadPlugin(function (ui) {
             return true;
         }
 
-        function openIrrigationModeForModule(moduleCell) { // CHANGE
+        function openIrrigationModeForModule(moduleCell, selectedBedCell) { // CHANGE
             if (typeof window !== "undefined" && window.TrellisIrrigationPlanner && typeof window.TrellisIrrigationPlanner.openIrrigationMode === "function") { // CHANGE
-                window.TrellisIrrigationPlanner.openIrrigationMode(moduleCell, { preserveViewport: true }); // CHANGE
+                window.TrellisIrrigationPlanner.openIrrigationMode(moduleCell, { selectCell: selectedBedCell || null, preserveViewport: true }); // CHANGE
                 return;
             }
-            if (graph.setSelectionCell) graph.setSelectionCell(moduleCell);
+            if (graph.setSelectionCell) graph.setSelectionCell(selectedBedCell || moduleCell); // CHANGE
             const action = ui.actions && ui.actions.get && ui.actions.get("trellisIrrigationPlanner"); // CHANGE
             if (action && typeof action.funct === "function") action.funct();
         }
+
+        function openAllocateModeForModule(moduleCell) { // NEW
+            if (!moduleCell) return; // NEW
+            const moduleCellId = String(moduleCell.getId ? moduleCell.getId() : moduleCell.id || "").trim(); // NEW
+            if (!moduleCellId) return; // NEW
+            try { window.dispatchEvent(new CustomEvent(ALLOCATE_PLAN_EVENT, { detail: { moduleCellId: moduleCellId, year: getCurrentGardenYear(moduleCell) } })); } catch (_) { } // NEW
+        } // NEW
 
         openGardenSettingsDialogWithOverlaySuppressed = async function (moduleCell, onClose) {
             gardenSettingsOverlaySuppressed = true;
@@ -2701,16 +2758,16 @@ Draw.loadPlugin(function (ui) {
 
         function syncToolbarState() {
             const moduleCell = activeModuleCell;
-            if (!toolbar || !labelInputWrap || !settingsBtn || !addBedBtn || !addGroupBtn || !irrigationModeBtn || !moduleCell) return; // CHANGE
+            if (!toolbar || !labelInputWrap || !settingsBtn || !addBedBtn || !addGroupBtn || !allocateModeBtn || !irrigationModeBtn || !moduleCell) return; // CHANGE
             const hasSettings = hasGardenSettingsSet(moduleCell);
             const bedMode = activeOverlayMode === "bed";
-            const showIrrigationModeEntry = !bedMode; // CHANGE
             labelInputWrap.style.display = bedMode ? "none" : "flex";
             if (!bedMode) renderGardenModuleLabelInput(moduleCell);
             settingsBtn.style.display = bedMode ? "none" : "";
             addBedBtn.style.display = bedMode ? "none" : "";
             addGroupBtn.style.display = "";
-            irrigationModeBtn.style.display = showIrrigationModeEntry ? "" : "none"; // CHANGE
+            allocateModeBtn.style.display = bedMode ? "" : "none"; // NEW
+            irrigationModeBtn.style.display = ""; // CHANGE
             settingsBtn.textContent = hasSettings ? "Edit Garden Settings" : "Set Garden Settings";
             addBedBtn.disabled = !hasSettings;
             addBedBtn.title = hasSettings ? "Add the default-sized garden bed at the selected location" : "Set garden settings before adding beds";
@@ -2720,6 +2777,10 @@ Draw.loadPlugin(function (ui) {
             addGroupBtn.title = hasSettings ? (bedMode ? "Add a new plant group fitted to this garden bed" : "Add a new plant group at the selected location") : "Set garden settings before adding plants";
             addGroupBtn.style.opacity = hasSettings ? "1" : "0.55";
             addGroupBtn.style.cursor = hasSettings ? "pointer" : "default";
+            allocateModeBtn.disabled = !hasSettings; // NEW
+            allocateModeBtn.title = hasSettings ? "Enter allocation mode" : "Set garden settings before entering allocation mode"; // NEW
+            allocateModeBtn.style.opacity = hasSettings ? "1" : "0.55"; // NEW
+            allocateModeBtn.style.cursor = hasSettings ? "pointer" : "default"; // NEW
             irrigationModeBtn.disabled = !hasSettings; // CHANGE
             irrigationModeBtn.title = hasSettings ? "Enter irrigation design mode" : "Set garden settings before entering irrigation design mode"; // CHANGE
             irrigationModeBtn.style.opacity = hasSettings ? "1" : "0.55"; // CHANGE
@@ -3451,6 +3512,15 @@ Draw.loadPlugin(function (ui) {
             return false;
         }
         if (!fitWidth && !fitHeight) return false;
+        if (layoutGridOffsetActive(tg)) {
+            bedFitLog("trim-skip", {
+                txnId: debugCtx && debugCtx.txnId,
+                groupId: bedFitCellId(tg),
+                bedId: bedFitCellId(bed),
+                reason: "layout-grid-offset"
+            });
+            return false;
+        }
         const model = graph.getModel();
         const current = model.getGeometry(tg);
         if (!current) return false;
@@ -4884,26 +4954,11 @@ Draw.loadPlugin(function (ui) {
         const style = typeof sourceCell.getStyle === "function" ? sourceCell.getStyle() : sourceCell.style;
         const geometry = sourceGeo.clone ? sourceGeo.clone() : new mxGeometry(sourceGeo.x, sourceGeo.y, sourceGeo.width, sourceGeo.height);
         const offsetCm = opts.layoutOffsetCm || opts.offsetCm || null;
-        const offsetXPx = Number.isFinite(Number(offsetCm && offsetCm.x)) ? toPx(Number(offsetCm.x)) : 0;
-        const offsetYPx = Number.isFinite(Number(offsetCm && offsetCm.y)) ? toPx(Number(offsetCm.y)) : 0;
-        let placementWarning = "";
-        if (offsetXPx || offsetYPx) {
-            const parentGeo = parent.getGeometry && parent.getGeometry();
-            geometry.x = Number(geometry.x || 0) + offsetXPx;
-            geometry.y = Number(geometry.y || 0) + offsetYPx;
-            if (parentGeo) {
-                const maxX = Math.max(0, Number(parentGeo.width || 0) - Number(geometry.width || 0));
-                const maxY = Math.max(0, Number(parentGeo.height || 0) - Number(geometry.height || 0));
-                const clampedX = clamp(geometry.x, 0, maxX);
-                const clampedY = clamp(geometry.y, 0, maxY);
-                if (Math.abs(clampedX - geometry.x) > 0.01 || Math.abs(clampedY - geometry.y) > 0.01) {
-                    placementWarning = "Companion layout was clamped inside the garden module.";
-                    attrs.companion_layout_clamped = "1";
-                    if (value && value.setAttribute) value.setAttribute("companion_layout_clamped", "1");
-                }
-                geometry.x = clampedX;
-                geometry.y = clampedY;
-            }
+        const offsetXCm = finiteNumberOrNull(offsetCm && offsetCm.x);
+        const offsetYCm = finiteNumberOrNull(offsetCm && offsetCm.y);
+        if (value && value.setAttribute) {
+            if (offsetXCm != null && !value.getAttribute("layout_offset_x_cm")) value.setAttribute("layout_offset_x_cm", String(offsetXCm));
+            if (offsetYCm != null && !value.getAttribute("layout_offset_y_cm")) value.setAttribute("layout_offset_y_cm", String(offsetYCm));
         }
         const group = new mxCell(value, geometry, style || groupFrameStyle());
         group.setVertex(true);
@@ -4918,8 +4973,263 @@ Draw.loadPlugin(function (ui) {
         } finally {
             if (ownsUpdate) model.endUpdate();
         }
-        if (placementWarning && typeof opts.onPlacementWarning === "function") opts.onPlacementWarning(placementWarning);
         notifyTilerGroupCreated(activeGraphArg, group, creationSource);
+        return group;
+    }
+
+    function ymdValue(value) {
+        const text = String(value || "").trim();
+        return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+    }
+
+    function ymdIntervalsOverlap(aStart, aEnd, bStart, bEnd) {
+        const as = ymdValue(aStart);
+        const ae = ymdValue(aEnd);
+        const bs = ymdValue(bStart);
+        const be = ymdValue(bEnd);
+        return !!(as && ae && bs && be && as <= be && bs <= ae);
+    }
+
+    function rectsOverlap(a, b) {
+        if (!a || !b) return false;
+        const ax = Number(a.x) || 0;
+        const ay = Number(a.y) || 0;
+        const aw = Math.max(0, Number(a.width) || 0);
+        const ah = Math.max(0, Number(a.height) || 0);
+        const bx = Number(b.x) || 0;
+        const by = Number(b.y) || 0;
+        const bw = Math.max(0, Number(b.width) || 0);
+        const bh = Math.max(0, Number(b.height) || 0);
+        return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+    }
+
+    function proposalConflictsForRect(input, rect) {
+        const entryISO = ymdValue(input.entryISO || input.bedEntryISO);
+        const harvestEndISO = ymdValue(input.harvestEndISO);
+        const bedId = input.bedCell && (input.bedCell.id || input.bedCell.getId && input.bedCell.getId()) || "";
+        if (!entryISO || !harvestEndISO || !Array.isArray(input.occupancy) || !rect) return [];
+        return input.occupancy.filter(function (item) {
+            if (!item || String(item.groupId || "") === String(input.excludeGroupId || "")) return false;
+            if (bedId && item.bedId && String(item.bedId) !== String(bedId)) return false;
+            if (!ymdIntervalsOverlap(entryISO, harvestEndISO, item.bedEntryISO, item.harvestEndISO)) return false;
+            return rectsOverlap(rect, item.rect || item.geometry);
+        });
+    }
+
+    function chooseProposalPlacement(input, base, spacingXpx, spacingYpx, maxW, maxH, originX, originY) {
+        if (!base || !base.complete) return Object.assign({}, base);
+        const stepX = Math.max(8, Math.min(spacingXpx, Math.max(8, base.geometry.width)));
+        const stepY = Math.max(8, Math.min(spacingYpx, Math.max(8, base.geometry.height)));
+        const maxX = Math.max(originX, originX + maxW - base.geometry.width);
+        const maxY = Math.max(originY, originY + maxH - base.geometry.height);
+        let warningCandidate = null;
+        const xs = [];
+        const ys = [];
+        for (let x = originX; x <= maxX + 0.1; x += stepX) xs.push(Math.min(x, maxX));
+        for (let y = originY; y <= maxY + 0.1; y += stepY) ys.push(Math.min(y, maxY));
+        if (!xs.includes(maxX)) xs.push(maxX);
+        if (!ys.includes(maxY)) ys.push(maxY);
+        for (const y of ys) {
+            for (const x of xs) {
+                const placed = Object.assign({}, base, { geometry: Object.assign({}, base.geometry, { x, y }) });
+                const conflicts = proposalConflictsForRect(input, placed.geometry);
+                if (!conflicts.length) return Object.assign(placed, { placementStatus: "compatible", conflicts: [] });
+                if (!warningCandidate) warningCandidate = Object.assign(placed, { placementStatus: "warning", conflicts });
+            }
+        }
+        return warningCandidate || Object.assign({}, base, { placementStatus: "compatible", conflicts: [] });
+    }
+
+    function proposePlantingGeometry(input = {}) {
+        const plantCount = Math.max(0, Math.trunc(Number(input.plantCount) || 0));
+        const spacingXCm = Number(input.spacingXCm ?? input.spacingCm ?? 30);
+        const spacingYCm = Number(input.spacingYCm ?? input.spacingCm ?? 30);
+        const sx = toPx(Number.isFinite(spacingXCm) && spacingXCm > 0 ? spacingXCm : 30);
+        const sy = toPx(Number.isFinite(spacingYCm) && spacingYCm > 0 ? spacingYCm : 30);
+        const bedGeo = input.bedCell && input.bedCell.getGeometry ? input.bedCell.getGeometry() : null;
+        const maxW = Math.max(1, Number(input.maxWidthPx || bedGeo && bedGeo.width || 240));
+        const maxH = Math.max(1, Number(input.maxHeightPx || bedGeo && bedGeo.height || 240));
+        const originX = Number(input.xPx ?? (bedGeo && bedGeo.x) ?? 0) || 0;
+        const originY = Number(input.yPx ?? (bedGeo && bedGeo.y) ?? 0) || 0;
+
+        function candidate(spacingXpx, spacingYpx, orientation) {
+            const usableW = Math.max(spacingXpx, maxW - GROUP_PADDING_PX * 2);
+            const cols = Math.max(1, Math.floor(usableW / spacingXpx));
+            const rows = plantCount > 0 ? Math.max(1, Math.ceil(plantCount / cols)) : 1;
+            const width = Math.min(maxW, Math.max(spacingXpx + GROUP_PADDING_PX * 2, Math.min(cols, Math.max(1, plantCount)) * spacingXpx + GROUP_PADDING_PX * 2));
+            const height = Math.min(maxH, Math.max(spacingYpx + GROUP_PADDING_PX * 2 + GROUP_LABEL_BAND_PX, rows * spacingYpx + GROUP_PADDING_PX * 2 + GROUP_LABEL_BAND_PX));
+            const capacityRows = Math.max(1, Math.floor(Math.max(0, height - GROUP_PADDING_PX * 2 - GROUP_LABEL_BAND_PX) / spacingYpx));
+            const capacityCols = Math.max(1, Math.floor(Math.max(0, width - GROUP_PADDING_PX * 2) / spacingXpx));
+            const capacity = capacityRows * capacityCols;
+            return {
+                orientation,
+                spacingXpx,
+                spacingYpx,
+                rows: capacityRows,
+                cols: capacityCols,
+                capacity,
+                complete: capacity >= plantCount,
+                wastedSlots: Math.max(0, capacity - plantCount),
+                area: width * height,
+                geometry: { x: originX, y: originY, width, height }
+            };
+        }
+
+        const orientationOverride = String(input.orientationOverride || "").trim();
+        const candidates = [
+            candidate(sx, sy, "normal"),
+            candidate(sy, sx, "rotated_grid")
+        ].filter(function (item) {
+            return !orientationOverride || item.orientation === orientationOverride;
+        }).map(function (item) {
+            return chooseProposalPlacement(input, item, item.spacingXpx, item.spacingYpx, maxW, maxH, originX, originY);
+        }).sort((a, b) => {
+            if (a.complete !== b.complete) return a.complete ? -1 : 1;
+            if ((a.placementStatus || "compatible") !== (b.placementStatus || "compatible")) return (a.placementStatus === "compatible") ? -1 : 1;
+            if (a.wastedSlots !== b.wastedSlots) return a.wastedSlots - b.wastedSlots;
+            if (a.area !== b.area) return a.area - b.area;
+            return a.orientation.localeCompare(b.orientation);
+        });
+        const best = candidates[0] || candidate(sx, sy, "normal");
+        const conflicts = best && Array.isArray(best.conflicts) ? best.conflicts : [];
+        return {
+            ok: plantCount === 0 || !!(best && best.complete),
+            status: conflicts.length ? "warning" : "compatible",
+            reason: plantCount > 0 && !best.complete ? "insufficient_space" : "",
+            warnings: conflicts.length ? ["Temporal overlap with " + conflicts.length + " dated planting" + (conflicts.length === 1 ? "" : "s") + "."] : [],
+            conflictGroupIds: conflicts.map(function (item) { return String(item.groupId || ""); }).filter(Boolean),
+            plantCount,
+            rows: best.rows,
+            cols: best.cols,
+            capacity: best.capacity,
+            lodCollapsed: best.capacity > LOD_TILE_THRESHOLD,
+            orientation: best.orientation,
+            spacingXCm: best.orientation === "normal" ? spacingXCm : spacingYCm,
+            spacingYCm: best.orientation === "normal" ? spacingYCm : spacingXCm,
+            slots: buildProposalSlots(best, plantCount),
+            geometry: best.geometry
+        };
+    }
+
+    function buildProposalSlots(best, plantCount) {
+        const limit = Math.min(Math.max(0, Math.trunc(Number(plantCount) || 0)), LOD_TILE_THRESHOLD);
+        const out = [];
+        if (!best || !best.geometry) return out;
+        const iconDiam = DEFAULT_ICON_DIAM_RATIO * Math.min(best.spacingXpx, best.spacingYpx);
+        for (let r = 0; r < best.rows && out.length < limit; r++) {
+            for (let c = 0; c < best.cols && out.length < limit; c++) {
+                out.push({
+                    row: r,
+                    col: c,
+                    x: GROUP_PADDING_PX + best.spacingXpx / 2 + c * best.spacingXpx,
+                    y: GROUP_PADDING_PX + GROUP_LABEL_BAND_PX + best.spacingYpx / 2 + r * best.spacingYpx,
+                    r: iconDiam / 2
+                });
+            }
+        }
+        return out;
+    }
+
+    function listGardenBeds(moduleCell) {
+        if (!moduleCell) return [];
+        return (graph.getChildVertices(moduleCell) || []).filter(isGardenBed);
+    }
+
+    function readBedProfile(bedCell) {
+        if (!bedCell || !bedCell.getAttribute) return {};
+        const keys = ["sun", "moisture", "drainage", "fertility", "irrigation", "trellis", "season_extension", "protection", "wind", "frost_risk", "bed_use"];
+        const profile = {};
+        keys.forEach(function (key) {
+            const value = String(bedCell.getAttribute(key) || "").trim();
+            if (value) profile[key] = value;
+        });
+        return profile;
+    }
+
+    function firstNonEmptyCellAttr(cell, keys) {
+        for (const key of keys) {
+            const value = getXmlAttr(cell, key, "");
+            if (String(value || "").trim()) return String(value || "").trim();
+        }
+        return "";
+    }
+
+    function allDescendantsOf(root) {
+        const out = [];
+        const stack = root ? [root] : [];
+        const model = graph.getModel && graph.getModel();
+        while (stack.length && model) {
+            const current = stack.pop();
+            const n = model.getChildCount ? model.getChildCount(current) : 0;
+            for (let i = 0; i < n; i++) {
+                const child = model.getChildAt(current, i);
+                out.push(child);
+                stack.push(child);
+            }
+        }
+        return out;
+    }
+
+    function listPlantingFootprints(moduleCell, options = {}) {
+        const year = Number(options.year);
+        const includeUndated = options.includeUndatedOccupancy === true;
+        const yearStart = Number.isFinite(year) ? `${year}-01-01` : "";
+        const yearEnd = Number.isFinite(year) ? `${year}-12-31` : "";
+        return allDescendantsOf(moduleCell).filter(isTilerGroup).map(function (group) {
+            const geo = group.getGeometry && group.getGeometry();
+            if (!geo) return null;
+            const center = { x: (Number(geo.x) || 0) + (Number(geo.width) || 0) / 2, y: (Number(geo.y) || 0) + (Number(geo.height) || 0) / 2 };
+            const bed = findSmallestContainingBedModel(moduleCell, center);
+            if (!bed) return null;
+            const bedEntryISO = firstNonEmptyCellAttr(group, ["transplant_date", "bed_entry_date", "sow_date", "planting_date", "start"]);
+            const harvestEndISO = firstNonEmptyCellAttr(group, ["harvest_end", "harvest_end_date", "planting_harvest_end", "season_harvest_end", "end"]);
+            if ((!ymdValue(bedEntryISO) || !ymdValue(harvestEndISO)) && !includeUndated) return null;
+            if (yearStart && ymdValue(bedEntryISO) && ymdValue(harvestEndISO) && !ymdIntervalsOverlap(yearStart, yearEnd, bedEntryISO, harvestEndISO)) return null;
+            return {
+                groupId: String(group.id || group.getId && group.getId() || ""),
+                bedId: String(bed.id || bed.getId && bed.getId() || ""),
+                rect: { x: Number(geo.x) || 0, y: Number(geo.y) || 0, width: Math.max(0, Number(geo.width) || 0), height: Math.max(0, Number(geo.height) || 0) },
+                bedEntryISO,
+                harvestEndISO,
+                plantId: String(getXmlAttr(group, "plant_id", "") || ""),
+                varietyId: String(getXmlAttr(group, "variety_id", "") || ""),
+                plantName: String(getXmlAttr(group, "plant_name", "") || ""),
+                varietyName: String(getXmlAttr(group, "variety_name", "") || "")
+            };
+        }).filter(Boolean);
+    }
+
+    function createPlantingFromProposal(input = {}, opts = {}) {
+        const activeGraphArg = input.graph || graph;
+        const proposal = input.proposal || input;
+        const moduleCell = input.moduleCell || proposal.moduleCell || findGardenModuleAncestor(activeGraphArg, proposal.bedCell);
+        if (!activeGraphArg || !moduleCell || !isGardenModule(moduleCell)) throw new Error("Planting creation requires a garden module.");
+        const geometry = proposal.geometry || {};
+        const centerX = Number(geometry.x || 0) + Number(geometry.width || 240) / 2;
+        const centerY = Number(geometry.y || 0) + Number(geometry.height || 240) / 2;
+        const moduleGeo = moduleCell.getGeometry && moduleCell.getGeometry();
+        const group = createEmptyTilerGroup(activeGraphArg, moduleCell, (moduleGeo ? Number(moduleGeo.x) || 0 : 0) + centerX, (moduleGeo ? Number(moduleGeo.y) || 0 : 0) + centerY, { source: input.source || "allocate-create" });
+        const model = activeGraphArg.getModel && activeGraphArg.getModel();
+        const attrs = Object.assign({}, input.attributes || proposal.attributes || {}, {
+            plant_count: String(Math.max(0, Math.trunc(Number(proposal.plantCount) || 0))),
+            spacing_x_cm: String(proposal.spacingXCm || 30),
+            spacing_y_cm: String(proposal.spacingYCm || 30),
+            spacing_cm: String(proposal.spacingXCm === proposal.spacingYCm ? proposal.spacingXCm || 30 : getXmlAttr(group, "spacing_cm", "30"))
+        });
+        if (model) {
+            const insideUpdate = !!(input.insideUpdate || opts.insideUpdate);
+            if (!insideUpdate) model.beginUpdate();
+            try {
+                if (geometry && Number.isFinite(Number(geometry.width)) && Number.isFinite(Number(geometry.height))) {
+                    model.setGeometry(group, new mxGeometry(Number(geometry.x) || 0, Number(geometry.y) || 0, Math.max(1, Number(geometry.width) || 1), Math.max(1, Number(geometry.height) || 1)));
+                }
+                setCellAttrsNoTxn(model, group, attrs);
+                retileGroup(activeGraphArg, group, { inTransaction: true, forceExpand: proposal.lodCollapsed !== true });
+                if (proposal.lodCollapsed === true) retileGroup(activeGraphArg, group, { inTransaction: true, forceCollapse: true });
+            } finally {
+                if (!insideUpdate) model.endUpdate();
+            }
+        }
         return group;
     }
 
@@ -5919,6 +6229,11 @@ Draw.loadPlugin(function (ui) {
         retileGroup,
         retileAndFitToContainingBed,
         createSiblingTilerGroupFromSource,
+        listGardenBeds,
+        readBedProfile,
+        listPlantingFootprints,
+        proposePlantingGeometry,
+        createPlantingFromProposal,
         reorderModuleChildrenForLayering
     });
     installTrellisDebugSurface();

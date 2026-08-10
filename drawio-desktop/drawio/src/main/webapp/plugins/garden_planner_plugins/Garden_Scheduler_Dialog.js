@@ -3459,6 +3459,18 @@ Draw.loadPlugin(function (ui) {
         if (layout.vegDiameterCm != null) patch.veg_diameter_cm = String(layout.vegDiameterCm);
         return patch;
     }
+    function plantingLayoutAttributePatch(layout) { // ADDED: persist current layout rows independently of reusable defaults.
+        const patch = {};
+        if (layout?.spacingXCm != null) patch.spacing_x_cm = String(layout.spacingXCm);
+        if (layout?.spacingYCm != null) patch.spacing_y_cm = String(layout.spacingYCm);
+        if (layout?.spacingXCm != null && layout?.spacingYCm != null && layout.spacingXCm === layout.spacingYCm) patch.spacing_cm = String(layout.spacingXCm);
+        if (layout?.vegDiameterCm != null) patch.veg_diameter_cm = String(layout.vegDiameterCm);
+        if (layout?.offsetXCm != null) patch.layout_offset_x_cm = String(layout.offsetXCm);
+        if (layout?.offsetYCm != null) patch.layout_offset_y_cm = String(layout.offsetYCm);
+        if (layout?.template) patch.companion_layout_template = layout.template;
+        if (layout?.role === 'companion') Object.assign(patch, companionLayoutAttributePatch(layout));
+        return patch;
+    }
     function graphRectForCell(cell) {
         const geo = cell?.getGeometry?.();
         if (!geo) return null;
@@ -3543,27 +3555,47 @@ Draw.loadPlugin(function (ui) {
         const companions = (cluster.members || []).filter(candidate => candidate && candidate !== anchor);
         return { anchor, companions, bed: cluster.bed, members: cluster.members, root: cluster.root };
     }
+    function clampPreviewCircleAxis(value, min, max) {
+        if (max < min) return min + (max - min) / 2;
+        return Math.max(min, Math.min(max, value));
+    }
     function computePreviewPlantCircles(groupRect, spacingXCm, spacingYCm, opts = {}) {
         const pxPerCm = 5 * 0.18;
         const spacingX = Math.max(1, (layoutNumberOrNull(spacingXCm) ?? 30) * pxPerCm);
         const spacingY = Math.max(1, (layoutNumberOrNull(spacingYCm) ?? 30) * pxPerCm);
-        const maxCircles = Math.max(1, Math.trunc(layoutNumberOrNull(opts.maxCircles) ?? 120));
+        const maxCircles = Math.max(1, Math.trunc(layoutNumberOrNull(opts.maxCircles) ?? 5000));
+        const vegDiameterPx = (layoutNumberOrNull(opts.vegDiameterCm) ?? 0) * pxPerCm;
+        const radius = vegDiameterPx > 0 ? Math.max(2.4, vegDiameterPx / 2) : Math.max(2.4, Math.min(spacingX, spacingY) * 0.32);
         const cols = Math.max(1, Math.floor(Math.max(1, groupRect.width) / spacingX));
         const rows = Math.max(1, Math.floor(Math.max(1, groupRect.height) / spacingY));
         const total = rows * cols;
         const count = Math.min(total, maxCircles);
         const circles = [];
+        const originX = layoutNumberOrNull(opts.originX) ?? groupRect.x;
+        const originY = layoutNumberOrNull(opts.originY) ?? groupRect.y;
+        const bounds = opts.clampRect || groupRect;
+        const minX = Number(bounds.x || 0) + radius;
+        const minY = Number(bounds.y || 0) + radius;
+        const maxX = Number(bounds.x || 0) + Math.max(0, Number(bounds.width || 0)) - radius;
+        const maxY = Number(bounds.y || 0) + Math.max(0, Number(bounds.height || 0)) - radius;
+        let clamped = false;
         for (let i = 0; i < count; i++) {
             const r = Math.floor(i / cols);
             const c = i % cols;
+            const rawX = originX + spacingX / 2 + c * spacingX;
+            const rawY = originY + spacingY / 2 + r * spacingY;
+            const x = clampPreviewCircleAxis(rawX, minX, maxX);
+            const y = clampPreviewCircleAxis(rawY, minY, maxY);
+            if (Math.abs(x - rawX) > 0.01 || Math.abs(y - rawY) > 0.01) clamped = true;
             circles.push({
-                x: groupRect.x + spacingX / 2 + c * spacingX,
-                y: groupRect.y + spacingY / 2 + r * spacingY,
+                x,
+                y,
                 row: r,
-                col: c
+                col: c,
+                r: radius
             });
         }
-        return { circles, total, summarized: total > count };
+        return { circles, total, summarized: total > count, clamped };
     }
     function buildLayoutPreviewModel({ bedRect = null, sourceRect = null, layout = null, sourceSpacing = null, companionLabel = 'Companion', sourceLabel = 'Source', requireRealBed = false, showCompanion = true } = {}) {
         if (!bedRect && requireRealBed) return { status: 'no-bed', message: 'No containing garden bed for this planting.' };
@@ -3572,7 +3604,7 @@ Draw.loadPlugin(function (ui) {
         const source = sourceRect || { x: bed.x + bed.width * 0.15, y: bed.y + bed.height * 0.2, width: bed.width * 0.34, height: bed.height * 0.55 };
         const offsetX = (layoutNumberOrNull(layout?.offsetXCm) ?? 0) * pxPerCm;
         const offsetY = (layoutNumberOrNull(layout?.offsetYCm) ?? 0) * pxPerCm;
-        const rawCompanion = showCompanion ? { x: source.x + offsetX, y: source.y + offsetY, width: source.width, height: source.height } : null;
+        const rawCompanion = showCompanion ? { x: source.x, y: source.y, width: source.width, height: source.height } : null;
         const companion = rawCompanion ? { ...rawCompanion } : null;
         let clamped = false;
         if (companion) {
@@ -3584,9 +3616,22 @@ Draw.loadPlugin(function (ui) {
             if (Math.abs(nextX - companion.x) > 0.01 || Math.abs(nextY - companion.y) > 0.01) clamped = true;
             companion.x = nextX; companion.y = nextY;
         }
-        const sourceCircles = computePreviewPlantCircles(source, sourceSpacing?.spacingXCm ?? 30, sourceSpacing?.spacingYCm ?? 30);
-        const companionCircles = companion ? computePreviewPlantCircles(companion, layout?.spacingXCm ?? 30, layout?.spacingYCm ?? 30) : { circles: [], total: 0, summarized: false };
+        const sourceCircles = computePreviewPlantCircles(source, sourceSpacing?.spacingXCm ?? 30, sourceSpacing?.spacingYCm ?? 30, { vegDiameterCm: sourceSpacing?.vegDiameterCm });
+        const companionCircles = companion ? computePreviewPlantCircles(companion, layout?.spacingXCm ?? 30, layout?.spacingYCm ?? 30, { vegDiameterCm: layout?.vegDiameterCm, originX: bed.x + offsetX, originY: bed.y + offsetY, clampRect: bed }) : { circles: [], total: 0, summarized: false };
+        clamped = clamped || !!companionCircles.clamped;
         return { status: 'ok', bed, source, companion, sourceLabel, companionLabel, layout: layout || {}, sourceCircles, companionCircles, clamped, warning: clamped ? 'Preview placement is clamped inside the bed.' : '' };
+    }
+    function bedRelativeRectForLayoutRow(row, fallbackRect, bedRect) { // ADDED: preview and save share bed-relative offset semantics.
+        const pxPerCm = 5 * 0.18;
+        const fallback = fallbackRect || { x: bedRect?.x || 0, y: bedRect?.y || 0, width: 120, height: 80 };
+        const offsetX = layoutNumberOrNull(row?.offsetXCm);
+        const offsetY = layoutNumberOrNull(row?.offsetYCm);
+        return {
+            x: offsetX == null || !bedRect ? fallback.x : bedRect.x + offsetX * pxPerCm,
+            y: offsetY == null || !bedRect ? fallback.y : bedRect.y + offsetY * pxPerCm,
+            width: Number(fallback.width || 0),
+            height: Number(fallback.height || 0)
+        };
     }
     function clampRectInsideRect(rect, bounds) {
         const next = Object.assign({}, rect || {});
@@ -3626,21 +3671,43 @@ Draw.loadPlugin(function (ui) {
         const placed = bedRect ? clampRectInsideRect(raw, bedRect) : Object.assign({ clamped: false }, raw);
         return Object.assign(placed, { template, rawX: raw.x, rawY: raw.y, interplant: template === 'interplant' });
     }
-    function computePreviewCirclesForLayoutRow(rect, row, anchorSpacing = {}) {
+    function previewGridOriginForLayoutRow(bedRect, row, rect) {
+        const pxPerCm = 5 * 0.18;
+        const offsetX = layoutNumberOrNull(row?.offsetXCm);
+        const offsetY = layoutNumberOrNull(row?.offsetYCm);
+        return {
+            x: offsetX == null || !bedRect ? rect.x : bedRect.x + offsetX * pxPerCm,
+            y: offsetY == null || !bedRect ? rect.y : bedRect.y + offsetY * pxPerCm
+        };
+    }
+    function computePreviewCirclesForLayoutRow(rect, row, anchorSpacing = {}, bedRect = null) {
         const spacingX = layoutNumberOrNull(row?.spacingXCm) ?? 30;
         const spacingY = layoutNumberOrNull(row?.spacingYCm) ?? 30;
-        const dots = computePreviewPlantCircles(rect, spacingX, spacingY, { maxCircles: 140 });
+        const origin = previewGridOriginForLayoutRow(bedRect, row, rect);
+        const dots = computePreviewPlantCircles(rect, spacingX, spacingY, { maxCircles: 5000, vegDiameterCm: row?.vegDiameterCm, originX: origin.x, originY: origin.y, clampRect: bedRect || rect });
         if (normalizeCompanionLayoutTemplate(row?.template) !== 'interplant') return dots;
         const pxPerCm = 5 * 0.18;
         const dx = (layoutNumberOrNull(anchorSpacing.spacingXCm) ?? spacingX) * pxPerCm / 2;
         const dy = (layoutNumberOrNull(anchorSpacing.spacingYCm) ?? spacingY) * pxPerCm / 2;
+        const radius = Math.max(0, Number(dots.circles[0]?.r || 0));
+        const bounds = bedRect || rect;
+        const minX = Number(bounds.x || 0) + radius;
+        const minY = Number(bounds.y || 0) + radius;
+        const maxX = Number(bounds.x || 0) + Math.max(0, Number(bounds.width || 0)) - radius;
+        const maxY = Number(bounds.y || 0) + Math.max(0, Number(bounds.height || 0)) - radius;
         dots.circles = dots.circles.map(p => {
             const offset = ((Number(p.row) || 0) + (Number(p.col) || 0)) % 2 === 0;
+            const rawX = p.x + (offset ? dx : 0);
+            const rawY = p.y + (offset ? dy : 0);
+            const x = clampPreviewCircleAxis(rawX, minX, maxX);
+            const y = clampPreviewCircleAxis(rawY, minY, maxY);
+            if (Math.abs(x - rawX) > 0.01 || Math.abs(y - rawY) > 0.01) dots.clamped = true;
             return {
-                x: Math.min(rect.x + rect.width - 2, p.x + (offset ? dx : 0)),
-                y: Math.min(rect.y + rect.height - 2, p.y + (offset ? dy : 0)),
+                x,
+                y,
                 row: p.row,
-                col: p.col
+                col: p.col,
+                r: p.r
             };
         });
         return dots;
@@ -3648,7 +3715,10 @@ Draw.loadPlugin(function (ui) {
     function buildCompanionLayoutPreviewModel({ bedRect = null, anchorRow = null, companionRows = [], requireRealBed = true } = {}) {
         if (!bedRect && requireRealBed) return { status: 'no-bed', message: 'No containing garden bed for this companion group.' };
         const bed = bedRect || { x: 0, y: 0, width: 520, height: 240, generic: true };
-        const anchorRect = anchorRow?.rect || { x: bed.x + bed.width * 0.1, y: bed.y + bed.height * 0.25, width: bed.width * 0.32, height: bed.height * 0.45 };
+        const fallbackAnchorRect = anchorRow?.rect || { x: bed.x + bed.width * 0.1, y: bed.y + bed.height * 0.25, width: bed.width * 0.32, height: bed.height * 0.45 };
+        const anchorRect = clampRectInsideRect(fallbackAnchorRect, bed);
+        const anchorDots = computePreviewCirclesForLayoutRow(anchorRect, anchorRow, {}, bed);
+        const anchorWarning = anchorDots.clamped ? 'Clamped inside bed.' : '';
         const anchorSpacing = {
             spacingXCm: layoutNumberOrNull(anchorRow?.spacingXCm) ?? 30,
             spacingYCm: layoutNumberOrNull(anchorRow?.spacingYCm) ?? 30
@@ -3659,28 +3729,34 @@ Draw.loadPlugin(function (ui) {
             cellId: anchorRow?.cellId || '',
             plantId: anchorRow?.plantId ?? null,
             rect: anchorRect,
-            dots: computePreviewPlantCircles(anchorRect, anchorSpacing.spacingXCm, anchorSpacing.spacingYCm, { maxCircles: 140 }),
+            rawRect: { x: anchorRect.rawX, y: anchorRect.rawY, width: anchorRect.width, height: anchorRect.height },
+            dots: anchorDots,
             className: 'usl-layout-preview-source',
             dotClassName: 'usl-layout-preview-source-dot',
-            warning: ''
+            warning: anchorWarning
         }];
-        const warnings = [];
+        const warnings = anchorWarning ? [`${anchorRow?.label || 'Anchor'}: ${anchorWarning}`] : [];
         (companionRows || []).forEach((row, index) => {
             const currentRect = row?.rect || { x: anchorRect.x, y: anchorRect.y, width: anchorRect.width, height: anchorRect.height };
-            const placed = computeActiveCompanionPlacement(anchorRect, currentRect, bed, row, anchorSpacing);
-            const warning = placed.clamped ? 'Clamped inside bed.' : '';
+            const placed = clampRectInsideRect(currentRect, bed);
+            const template = normalizeCompanionLayoutTemplate(row?.template) || 'beside';
+            placed.template = template;
+            placed.rawX = currentRect.x;
+            placed.rawY = currentRect.y;
+            const dots = computePreviewCirclesForLayoutRow(placed, row, anchorSpacing, bed);
+            const warning = (placed.clamped || dots.clamped) ? 'Clamped inside bed.' : '';
             if (warning) warnings.push(`${row?.label || 'Companion'}: ${warning}`);
             rows.push({
                 role: 'companion',
                 label: row?.label || `Companion ${index + 1}`,
                 cellId: row?.cellId || '',
                 plantId: row?.plantId ?? null,
-                template: placed.template,
+                template,
                 rect: placed,
                 rawRect: { x: placed.rawX, y: placed.rawY, width: placed.width, height: placed.height },
-                dots: computePreviewCirclesForLayoutRow(placed, row, anchorSpacing),
-                className: `usl-layout-preview-companion usl-layout-preview-companion-${placed.template}`,
-                dotClassName: `usl-layout-preview-companion-dot usl-layout-preview-companion-dot-${placed.template}`,
+                dots,
+                className: `usl-layout-preview-companion usl-layout-preview-companion-${template}`,
+                dotClassName: `usl-layout-preview-companion-dot usl-layout-preview-companion-dot-${template}`,
                 warning
             });
         });
@@ -3720,7 +3796,7 @@ Draw.loadPlugin(function (ui) {
                 rect(row.rect, row.className || 'usl-layout-preview-companion');
             });
             (model.rows || []).forEach(row => {
-                (row.dots?.circles || []).forEach(p => { const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); c.setAttribute('cx', p.x); c.setAttribute('cy', p.y); c.setAttribute('r', row.role === 'anchor' ? 2.6 : 2.35); c.setAttribute('class', row.dotClassName || 'usl-layout-preview-companion-dot'); svg.appendChild(c); });
+                (row.dots?.circles || []).forEach(p => { const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); c.setAttribute('cx', p.x); c.setAttribute('cy', p.y); c.setAttribute('r', p.r || (row.role === 'anchor' ? 2.6 : 2.35)); c.setAttribute('class', row.dotClassName || 'usl-layout-preview-companion-dot'); svg.appendChild(c); });
             });
             (model.rows || []).forEach(row => text(row.rect.x + 4, row.rect.y + 12, row.label || '', 'usl-layout-preview-label'));
             if (model.warning) text(model.bed.x + 4, model.bed.y + model.bed.height - 6, model.warning, 'usl-layout-preview-warning');
@@ -3730,8 +3806,8 @@ Draw.loadPlugin(function (ui) {
         rect(model.bed, 'usl-layout-preview-bed');
         rect(model.source, 'usl-layout-preview-source');
         if (model.companion) rect(model.companion, 'usl-layout-preview-companion');
-        (model.sourceCircles.circles || []).forEach(p => { const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); c.setAttribute('cx', p.x); c.setAttribute('cy', p.y); c.setAttribute('r', 2.6); c.setAttribute('class', 'usl-layout-preview-source-dot'); svg.appendChild(c); });
-        (model.companionCircles.circles || []).forEach(p => { const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); c.setAttribute('cx', p.x); c.setAttribute('cy', p.y); c.setAttribute('r', 2.4); c.setAttribute('class', 'usl-layout-preview-companion-dot'); svg.appendChild(c); });
+        (model.sourceCircles.circles || []).forEach(p => { const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); c.setAttribute('cx', p.x); c.setAttribute('cy', p.y); c.setAttribute('r', p.r || 2.6); c.setAttribute('class', 'usl-layout-preview-source-dot'); svg.appendChild(c); });
+        (model.companionCircles.circles || []).forEach(p => { const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); c.setAttribute('cx', p.x); c.setAttribute('cy', p.y); c.setAttribute('r', p.r || 2.4); c.setAttribute('class', 'usl-layout-preview-companion-dot'); svg.appendChild(c); });
         text(model.source.x + 4, model.source.y + 12, model.sourceLabel, 'usl-layout-preview-label');
         if (model.companion) text(model.companion.x + 4, model.companion.y + 12, model.companionLabel, 'usl-layout-preview-label');
         if (model.warning || model.sourceCircles.summarized || model.companionCircles.summarized) {
@@ -8119,10 +8195,6 @@ Draw.loadPlugin(function (ui) {
         layoutStatus.className = 'usl-layout-status';
         const layoutGroupEditor = document.createElement('div');
         layoutGroupEditor.className = 'usl-companion-layout-editor';
-        const applyGroupLayoutBtn = mxUtils.button('Apply layout', () => runUiAsyncOperation('Apply layout', applyCompanionGroupLayoutToGraph, showErrorInline));
-        const saveGroupLayoutDefaultBtn = mxUtils.button('Save changed defaults', () => runUiAsyncOperation('Save group layout defaults', saveCompanionGroupLayoutDefaults, showErrorInline));
-        applySharedButtonStyle(applyGroupLayoutBtn, 'neutral');
-        applySharedButtonStyle(saveGroupLayoutDefaultBtn, 'add');
         let singleLayoutSectionWrap = null;
         let groupLayoutSectionWrap = null;
         let companionLayoutEditorState = null;
@@ -8163,8 +8235,16 @@ Draw.loadPlugin(function (ui) {
         function syncLayoutDraftFromControls() {
             if (companionLayoutEditorState?.active) {
                 const groupDraft = readCompanionGroupLayoutDraftFromEditor();
-                if (derivedContext?.mode === 'companion') derivedContext.groupLayoutDraft = groupDraft;
-                return groupDraft?.rows?.find(row => row.role === 'companion') || {};
+                const selectedPlantId = String(formState.plantId || plantSel?.value || '');
+                const companionDraft = groupDraft?.rows?.find(row => row.role === 'companion' && String(row.plantId || '') === selectedPlantId)
+                    || groupDraft?.rows?.find(row => row.role === 'companion')
+                    || groupDraft?.rows?.[0]
+                    || {};
+                if (derivedContext?.mode === 'companion') {
+                    derivedContext.groupLayoutDraft = groupDraft;
+                    derivedContext.layoutDraft = companionDraft;
+                }
+                return companionDraft;
             }
             const draft = readLayoutDraftFromControls();
             formState.layoutTemplate = draft.template;
@@ -8181,9 +8261,43 @@ Draw.loadPlugin(function (ui) {
         function readCellLayoutNumber(layoutCell, key) {
             return layoutNumberOrNull(layoutCell?.getAttribute?.(key));
         }
-        function readAnchorLayoutRow(anchorCell) {
+        function bedRelativeOffsetForCell(layoutCell, bedCell) {
+            const pxPerCm = 5 * 0.18;
+            const rect = graphRectForCell(layoutCell);
+            const bedRect = graphRectForCell(bedCell);
+            if (!rect || !bedRect) {
+                return {
+                    x: readCellLayoutNumber(layoutCell, 'layout_offset_x_cm') ?? 0,
+                    y: readCellLayoutNumber(layoutCell, 'layout_offset_y_cm') ?? 0
+                };
+            }
+            return {
+                x: readCellLayoutNumber(layoutCell, 'layout_offset_x_cm') ?? ((rect.x - bedRect.x) / pxPerCm),
+                y: readCellLayoutNumber(layoutCell, 'layout_offset_y_cm') ?? ((rect.y - bedRect.y) / pxPerCm)
+            };
+        }
+        function rowInitialSnapshot(rowState) {
+            return {
+                template: rowState.template || '',
+                spacingXCm: rowState.spacingXCm,
+                spacingYCm: rowState.spacingYCm,
+                vegDiameterCm: rowState.vegDiameterCm,
+                offsetXCm: rowState.offsetXCm,
+                offsetYCm: rowState.offsetYCm
+            };
+        }
+        function writeLayoutRowControls(rowState, snapshot) {
+            if (rowState.templateControl) rowState.templateControl.value = normalizeCompanionLayoutTemplate(snapshot.template) || 'beside';
+            if (rowState.spacingXControl) rowState.spacingXControl.value = snapshot.spacingXCm == null ? '' : String(snapshot.spacingXCm);
+            if (rowState.spacingYControl) rowState.spacingYControl.value = snapshot.spacingYCm == null ? '' : String(snapshot.spacingYCm);
+            if (rowState.vegDiameterControl) rowState.vegDiameterControl.value = snapshot.vegDiameterCm == null ? '' : String(snapshot.vegDiameterCm);
+            if (rowState.offsetXControl) rowState.offsetXControl.value = snapshot.offsetXCm == null ? '' : String(snapshot.offsetXCm);
+            if (rowState.offsetYControl) rowState.offsetYControl.value = snapshot.offsetYCm == null ? '' : String(snapshot.offsetYCm);
+        }
+        function readAnchorLayoutRow(anchorCell, bedCell) {
             const plant = plantForLayoutCell(anchorCell);
             const defaults = plantSpacingDefaults(plant);
+            const offsets = bedRelativeOffsetForCell(anchorCell, bedCell);
             return {
                 role: 'anchor',
                 cell: anchorCell,
@@ -8194,7 +8308,9 @@ Draw.loadPlugin(function (ui) {
                 rect: graphRectForCell(anchorCell),
                 spacingXCm: readCellLayoutNumber(anchorCell, 'spacing_x_cm') ?? readCellLayoutNumber(anchorCell, 'spacing_cm') ?? defaults.spacingXCm,
                 spacingYCm: readCellLayoutNumber(anchorCell, 'spacing_y_cm') ?? readCellLayoutNumber(anchorCell, 'spacing_cm') ?? defaults.spacingYCm,
-                vegDiameterCm: readCellLayoutNumber(anchorCell, 'veg_diameter_cm') ?? defaults.vegDiameterCm
+                vegDiameterCm: readCellLayoutNumber(anchorCell, 'veg_diameter_cm') ?? defaults.vegDiameterCm,
+                offsetXCm: offsets.x,
+                offsetYCm: offsets.y
             };
         }
         function relationshipForCompanionLayoutCell(anchorCell, companionCell) {
@@ -8213,11 +8329,23 @@ Draw.loadPlugin(function (ui) {
                 known: !!companionCell?.getAttribute?.('companion_relation_id')
             });
         }
-        function readCompanionLayoutRow(anchorCell, companionCell) {
+        function defaultCompanionBedOffset(anchorCell, bedCell, relationship, fallback) {
+            const sourceOffset = bedRelativeOffsetForCell(anchorCell, bedCell);
+            const hasStoredOffset = relationship && (relationship.layoutOffsetXCm != null || relationship.layoutOffsetYCm != null);
+            return {
+                x: hasStoredOffset ? fallback.offsetXCm : sourceOffset.x + (layoutNumberOrNull(fallback.offsetXCm) ?? 0),
+                y: hasStoredOffset ? fallback.offsetYCm : sourceOffset.y + (layoutNumberOrNull(fallback.offsetYCm) ?? 0)
+            };
+        }
+        function readCompanionLayoutRow(anchorCell, companionCell, bedCell) {
             const targetPlant = plantForLayoutCell(companionCell) || selectedLayoutPlant();
             const relationship = relationshipForCompanionLayoutCell(anchorCell, companionCell);
             const fallback = resolveCompanionLayout(anchorCell, targetPlant, relationship, {});
             const template = normalizeCompanionLayoutTemplate(companionCell?.getAttribute?.('companion_layout_template')) || fallback.template;
+            const offsets = {
+                x: readCellLayoutNumber(companionCell, 'companion_offset_x_cm') ?? readCellLayoutNumber(companionCell, 'layout_offset_x_cm') ?? bedRelativeOffsetForCell(companionCell, bedCell).x,
+                y: readCellLayoutNumber(companionCell, 'companion_offset_y_cm') ?? readCellLayoutNumber(companionCell, 'layout_offset_y_cm') ?? bedRelativeOffsetForCell(companionCell, bedCell).y
+            };
             return {
                 role: 'companion',
                 cell: companionCell,
@@ -8230,8 +8358,30 @@ Draw.loadPlugin(function (ui) {
                 spacingXCm: readCellLayoutNumber(companionCell, 'spacing_x_cm') ?? readCellLayoutNumber(companionCell, 'companion_layout_spacing_x_cm') ?? fallback.spacingXCm,
                 spacingYCm: readCellLayoutNumber(companionCell, 'spacing_y_cm') ?? readCellLayoutNumber(companionCell, 'companion_layout_spacing_y_cm') ?? fallback.spacingYCm,
                 vegDiameterCm: readCellLayoutNumber(companionCell, 'veg_diameter_cm') ?? fallback.vegDiameterCm,
-                offsetXCm: readCellLayoutNumber(companionCell, 'companion_offset_x_cm') ?? fallback.offsetXCm,
-                offsetYCm: readCellLayoutNumber(companionCell, 'companion_offset_y_cm') ?? fallback.offsetYCm,
+                offsetXCm: offsets.x,
+                offsetYCm: offsets.y,
+                relationship
+            };
+        }
+        function readDraftCompanionLayoutRow(anchorCell, bedCell) {
+            const targetPlant = selectedLayoutPlant();
+            const relationship = currentLayoutRelationship();
+            const fallback = resolveCompanionLayout(anchorCell, targetPlant, relationship, {});
+            const offsets = defaultCompanionBedOffset(anchorCell, bedCell, relationship, fallback);
+            return {
+                role: 'companion',
+                cell: null,
+                cellId: '',
+                plantId: targetPlant?.plant_id ?? formState.plantId,
+                plantName: targetPlant?.plant_name || 'Companion',
+                label: targetPlant?.plant_name || 'Companion',
+                rect: graphRectForCell(anchorCell),
+                template: fallback.template,
+                spacingXCm: fallback.spacingXCm,
+                spacingYCm: fallback.spacingYCm,
+                vegDiameterCm: fallback.vegDiameterCm,
+                offsetXCm: offsets.x,
+                offsetYCm: offsets.y,
                 relationship
             };
         }
@@ -8262,6 +8412,7 @@ Draw.loadPlugin(function (ui) {
             return input;
         }
         function appendCompanionLayoutEditorRow(rowState) {
+            rowState.initial = rowInitialSnapshot(rowState);
             const rowEl = document.createElement('div');
             rowEl.className = `usl-companion-layout-row usl-companion-layout-row--${rowState.role}`;
             const name = document.createElement('div');
@@ -8278,7 +8429,7 @@ Draw.loadPlugin(function (ui) {
             } else {
                 const anchorTag = document.createElement('span');
                 anchorTag.className = 'usl-companion-layout-anchor-tag';
-                anchorTag.textContent = 'Anchor';
+                anchorTag.textContent = rowState.role === 'anchor' && derivedContext?.mode === 'companion' ? 'Anchor' : '';
                 rowEl.appendChild(anchorTag);
             }
             rowState.spacingXControl = makeGroupLayoutNumberControl(rowState.spacingXCm, { min: 0.1, step: 0.1 });
@@ -8287,21 +8438,17 @@ Draw.loadPlugin(function (ui) {
             rowEl.appendChild(rowState.spacingXControl);
             rowEl.appendChild(rowState.spacingYControl);
             rowEl.appendChild(rowState.vegDiameterControl);
-            if (rowState.role === 'companion') {
-                rowState.offsetXControl = makeGroupLayoutNumberControl(rowState.offsetXCm, { step: 0.1 });
-                rowState.offsetYControl = makeGroupLayoutNumberControl(rowState.offsetYCm, { step: 0.1 });
-                rowEl.appendChild(rowState.offsetXControl);
-                rowEl.appendChild(rowState.offsetYControl);
-            } else {
-                rowEl.appendChild(document.createElement('span'));
-                rowEl.appendChild(document.createElement('span'));
-            }
+            rowState.offsetXControl = makeGroupLayoutNumberControl(rowState.offsetXCm, { step: 0.1 });
+            rowState.offsetYControl = makeGroupLayoutNumberControl(rowState.offsetYCm, { step: 0.1 });
+            rowEl.appendChild(rowState.offsetXControl);
+            rowEl.appendChild(rowState.offsetYControl);
             rowState.warningEl = document.createElement('div');
             rowState.warningEl.className = 'usl-companion-layout-warning';
             rowEl.appendChild(rowState.warningEl);
-            rowState.changedEl = document.createElement('div');
-            rowState.changedEl.className = 'usl-companion-layout-changed';
-            rowEl.appendChild(rowState.changedEl);
+            rowState.revertButton = mxUtils.button('Revert', () => revertCompanionLayoutRow(rowState));
+            rowState.revertButton.disabled = true;
+            applySharedButtonStyle(rowState.revertButton, 'neutral');
+            rowEl.appendChild(rowState.revertButton);
             rowState.rowEl = rowEl;
             const controls = [rowState.templateControl, rowState.spacingXControl, rowState.spacingYControl, rowState.vegDiameterControl, rowState.offsetXControl, rowState.offsetYControl].filter(Boolean);
             controls.forEach(control => {
@@ -8312,7 +8459,14 @@ Draw.loadPlugin(function (ui) {
         }
         function markCompanionLayoutRowChanged(rowState) {
             rowState.changed = true;
-            if (rowState.changedEl) rowState.changedEl.textContent = 'Changed';
+            if (rowState.revertButton) rowState.revertButton.disabled = false;
+            refreshLayoutPreview();
+        }
+        function revertCompanionLayoutRow(rowState) {
+            if (!rowState?.initial) return;
+            writeLayoutRowControls(rowState, rowState.initial);
+            rowState.changed = false;
+            if (rowState.revertButton) rowState.revertButton.disabled = true;
             refreshLayoutPreview();
         }
         function readCompanionGroupLayoutDraftFromEditor() {
@@ -8330,12 +8484,12 @@ Draw.loadPlugin(function (ui) {
                     spacingXCm: readNullableNumber(row.spacingXControl),
                     spacingYCm: readNullableNumber(row.spacingYControl),
                     vegDiameterCm: readNullableNumber(row.vegDiameterControl),
+                    offsetXCm: readNullableNumber(row.offsetXControl),
+                    offsetYCm: readNullableNumber(row.offsetYControl),
                     changed: !!row.changed
                 };
                 if (row.role === 'companion') {
                     draft.template = normalizeCompanionLayoutTemplate(row.templateControl?.value) || 'beside';
-                    draft.offsetXCm = readNullableNumber(row.offsetXControl);
-                    draft.offsetYCm = readNullableNumber(row.offsetYControl);
                     draft.relationship = row.relationship;
                 }
                 return draft;
@@ -8362,10 +8516,10 @@ Draw.loadPlugin(function (ui) {
             renderLayoutPreviewSvg(layoutPreview, model);
             layoutStatus.textContent = model.warning || (model.status === 'no-bed' ? model.message : '');
             if (model.status === 'ok') {
-                const rowModels = new Map((model.rows || []).filter(row => row.role === 'companion').map(row => [String(row.cellId || row.plantId || ''), row]));
+                const rowModels = new Map((model.rows || []).map(row => [String(row.cellId || row.plantId || row.role || ''), row]));
                 (companionLayoutEditorState.rows || []).forEach(row => {
-                    if (!row.warningEl || row.role !== 'companion') return;
-                    row.warningEl.textContent = rowModels.get(String(row.cellId || row.plantId || ''))?.warning || '';
+                    if (!row.warningEl) return;
+                    row.warningEl.textContent = rowModels.get(String(row.cellId || row.plantId || row.role || ''))?.warning || '';
                 });
             }
             return true;
@@ -8375,23 +8529,28 @@ Draw.loadPlugin(function (ui) {
             const activeGraph = ui?.editor?.graph;
             const initialLinked = collectLinkedCompanionLayoutCells(activeGraph, cell);
             const initialPlantIds = (initialLinked.members || []).map(member => cellPlantId(member));
+            if (derivedContext?.mode === 'companion' && formState.plantId != null && !initialPlantIds.some(id => String(id || '') === String(formState.plantId))) initialPlantIds.push(formState.plantId);
             const saved = initialPlantIds.length
                 ? await CompanionLayoutGroupDefaultModel.load(initialPlantIds, cellPlantId(initialLinked.anchor)) || await CompanionLayoutGroupDefaultModel.load(initialPlantIds, null)
                 : null;
             if (token !== companionLayoutEditorLoadToken) return;
             const linked = collectLinkedCompanionLayoutCells(activeGraph, cell, saved);
-            const hasEditor = derivedContext?.mode === 'companion' && linked.anchor && linked.companions.length > 0;
-            companionLayoutEditorState = hasEditor ? { active: true, anchor: linked.anchor, companions: linked.companions, bed: linked.bed, rows: [] } : null;
-            if (singleLayoutSectionWrap) singleLayoutSectionWrap.style.display = hasEditor ? 'none' : '';
+            const anchorCell = linked.anchor || cell;
+            const bedCell = linked.bed || findContainingBedForScheduleCell(anchorCell);
+            const needsDraftCompanion = derivedContext?.mode === 'companion' && linked.companions.length === 0;
+            const hasEditor = !!anchorCell;
+            companionLayoutEditorState = hasEditor ? { active: true, anchor: anchorCell, companions: linked.companions, bed: bedCell, rows: [] } : null;
+            if (singleLayoutSectionWrap) singleLayoutSectionWrap.style.display = 'none';
             if (groupLayoutSectionWrap) groupLayoutSectionWrap.style.display = hasEditor ? '' : 'none';
             layoutGroupEditor.innerHTML = '';
             if (!hasEditor) return;
             const header = document.createElement('div');
             header.className = 'usl-companion-layout-row usl-companion-layout-row--header';
-            ['Planting', 'Template', 'Spacing X', 'Spacing Y', 'Veg diam.', 'Offset X', 'Offset Y', 'Warning', 'State'].forEach(label => { const el = document.createElement('div'); el.textContent = label; header.appendChild(el); });
+            ['Planting', 'Template', 'Spacing X', 'Spacing Y', 'Veg diam.', 'Offset X', 'Offset Y', 'Warning', 'Revert'].forEach(label => { const el = document.createElement('div'); el.textContent = label; header.appendChild(el); });
             layoutGroupEditor.appendChild(header);
-            const anchorRow = readAnchorLayoutRow(linked.anchor);
-            const companionRows = linked.companions.map(companionCell => readCompanionLayoutRow(linked.anchor, companionCell));
+            const anchorRow = readAnchorLayoutRow(anchorCell, bedCell);
+            const companionRows = linked.companions.map(companionCell => readCompanionLayoutRow(anchorCell, companionCell, bedCell));
+            if (needsDraftCompanion) companionRows.push(readDraftCompanionLayoutRow(anchorCell, bedCell));
             applySavedGroupDefaultToRows(anchorRow, companionRows, saved);
             companionLayoutEditorState.savedDefault = saved;
             companionLayoutEditorState.rows = [anchorRow].concat(companionRows);
@@ -8408,31 +8567,29 @@ Draw.loadPlugin(function (ui) {
             const companionRows = draft.rows.filter(row => row.role === 'companion');
             const preview = buildCompanionLayoutPreviewModel({ bedRect: graphRectForCell(draft.bed), anchorRow, companionRows, requireRealBed: true });
             if (preview.status !== 'ok') throw new Error(preview.message || 'Layout preview is unavailable.');
-            const byCell = new Map(preview.rows.filter(row => row.role === 'companion').map(row => [String(row.cellId || row.plantId || ''), row]));
+            const byCell = new Map(preview.rows.map(row => [String(row.cellId || row.plantId || row.role || ''), row]));
             model.beginUpdate();
             try {
                 const tiler = window.USL && window.USL.tiler ? window.USL.tiler : null;
                 draft.rows.forEach(row => {
-                    const patch = row.role === 'anchor' ? {} : companionLayoutAttributePatch(row);
-                    if (row.spacingXCm != null) patch.spacing_x_cm = String(row.spacingXCm);
-                    if (row.spacingYCm != null) patch.spacing_y_cm = String(row.spacingYCm);
-                    if (row.vegDiameterCm != null) patch.veg_diameter_cm = String(row.vegDiameterCm);
+                    if (!row.cell) return;
+                    const patch = plantingLayoutAttributePatch(row);
+                    const previewRow = byCell.get(String(row.cellId || row.plantId || row.role || ''));
                     if (row.role === 'companion') {
-                        const placed = byCell.get(String(row.cellId || row.plantId || ''));
                         patch.companion_layout_anchor_group_id = String(draft.anchorCell?.id || '');
                         patch.companion_layout_interplant = row.template === 'interplant' ? '1' : '';
-                        patch.companion_layout_clamped = placed?.rect?.clamped || placed?.clamped ? '1' : '';
-                        if (placed) setCellAbsoluteRect(activeGraph, row.cell, placed.rect || placed, model);
+                        patch.companion_layout_clamped = previewRow?.dots?.clamped || previewRow?.rect?.clamped ? '1' : '';
                     }
+                    if (row.role === 'anchor') patch.layout_clamped = previewRow?.dots?.clamped || previewRow?.rect?.clamped ? '1' : '';
                     applyCellAttributePatch(row.cell, patch, model);
                     if (tiler && typeof tiler.retileGroup === 'function') tiler.retileGroup(activeGraph, row.cell, { inTransaction: true, preferInPlace: true });
                 });
             } finally {
                 model.endUpdate();
             }
-            draft.rows.forEach(row => activeGraph.refresh?.(row.cell));
+            draft.rows.forEach(row => { if (row.cell) activeGraph.refresh?.(row.cell); });
             layoutStatus.textContent = preview.warning || 'Layout applied.';
-            (companionLayoutEditorState?.rows || []).forEach(row => { row.changed = false; if (row.changedEl) row.changedEl.textContent = ''; });
+            (companionLayoutEditorState?.rows || []).forEach(row => { row.changed = false; if (row.revertButton) row.revertButton.disabled = true; });
             refreshCompanionGroupLayoutPreview();
         }
         async function saveCompanionGroupLayoutDefaults() {
@@ -8440,7 +8597,58 @@ Draw.loadPlugin(function (ui) {
             if (!draft) throw new Error('No companion layout group is available to save.');
             await CompanionLayoutGroupDefaultModel.save(draft.rows.map(row => row.plantId), draft.anchorPlantId, { rows: draft.rows });
             layoutStatus.textContent = 'Group layout defaults saved.';
-            (companionLayoutEditorState?.rows || []).forEach(row => { row.changed = false; if (row.changedEl) row.changedEl.textContent = ''; });
+            (companionLayoutEditorState?.rows || []).forEach(row => { row.changed = false; if (row.revertButton) row.revertButton.disabled = true; });
+        }
+        function buildLayoutGraphApplication(targetCell) { // ADDED: apply row-editor spacing, offsets, and retile intent during Save.
+            const draft = readCompanionGroupLayoutDraftFromEditor();
+            if (!draft) {
+                const layout = readLayoutDraftFromControls();
+                return {
+                    targetPatch: plantingLayoutAttributePatch(Object.assign({ role: derivedContext?.mode === 'companion' ? 'companion' : 'anchor' }, layout)),
+                    targetRect: null,
+                    extraAttributePatches: []
+                };
+            }
+            const anchorRow = draft.rows.find(row => row.role === 'anchor');
+            const companionRows = draft.rows.filter(row => row.role === 'companion');
+            const preview = buildCompanionLayoutPreviewModel({ bedRect: graphRectForCell(draft.bed), anchorRow, companionRows, requireRealBed: true });
+            if (preview.status !== 'ok') throw new Error(preview.message || 'Layout preview is unavailable.');
+            const selectedPlantId = String(formState.plantId || plantSel?.value || '');
+            const targetRow = draft.rows.find(row => row.cell && row.cell === targetCell)
+                || draft.rows.find(row => row.role === 'companion' && String(row.plantId || '') === selectedPlantId)
+                || draft.rows.find(row => row.cell && row.cell.id && targetCell?.id && String(row.cell.id) === String(targetCell.id))
+                || draft.rows[0];
+            const rowPatch = row => {
+                const patch = plantingLayoutAttributePatch(row);
+                if (row.role === 'companion') {
+                    patch.companion_layout_anchor_group_id = String(draft.anchorCell?.id || '');
+                    patch.companion_layout_interplant = row.template === 'interplant' ? '1' : '';
+                }
+                return patch;
+            };
+            const extraAttributePatches = draft.rows
+                .filter(row => row.cell && row !== targetRow)
+                .map(row => ({ cell: row.cell, patch: rowPatch(row), retile: true }));
+            return {
+                targetPatch: rowPatch(targetRow),
+                targetRect: null,
+                extraAttributePatches
+            };
+        }
+        function layoutOffsetForDerivedCreation() { // ADDED: pass the requested bed-relative grid origin into sibling creation.
+            const draft = readCompanionGroupLayoutDraftFromEditor();
+            if (!draft) {
+                const layout = readLayoutDraftFromControls();
+                return { x: finiteNumberOrNull(layout.offsetXCm) || 0, y: finiteNumberOrNull(layout.offsetYCm) || 0 };
+            }
+            const selectedPlantId = String(formState.plantId || plantSel?.value || '');
+            const companion = draft.rows.find(row => row.role === 'companion' && String(row.plantId || '') === selectedPlantId)
+                || draft.rows.find(row => row.role === 'companion');
+            if (!companion) return { x: 0, y: 0 };
+            return {
+                x: finiteNumberOrNull(companion.offsetXCm) || 0,
+                y: finiteNumberOrNull(companion.offsetYCm) || 0
+            };
         }
         function refreshLayoutPreview() {
             try {
@@ -8481,20 +8689,16 @@ Draw.loadPlugin(function (ui) {
             layoutSection.body.appendChild(saveRow.row);
             layoutTab.appendChild(layoutSection.wrap);
             singleLayoutSectionWrap = layoutSection.wrap;
-            const groupSection = makeSection('Companion group layout');
+            singleLayoutSectionWrap.style.display = 'none';
+            const groupSection = makeSection('Planting layout');
             const intro = document.createElement('div');
             intro.className = 'usl-companion-layout-note';
-            intro.textContent = 'Controls edit the live preview until Apply layout is selected.';
+            intro.textContent = 'Preview updates while editing. Changes are applied to the planting when Save is selected.';
             groupSection.body.appendChild(intro);
             groupSection.body.appendChild(layoutGroupEditor);
-            const groupActions = document.createElement('div');
-            groupActions.className = 'usl-companion-layout-actions';
-            groupActions.appendChild(applyGroupLayoutBtn);
-            groupActions.appendChild(saveGroupLayoutDefaultBtn);
-            groupSection.body.appendChild(groupActions);
+            groupSection.body.appendChild(row(derivedContext?.mode === 'companion' ? 'Save layout default:' : 'Save plant default:', saveLayoutDefaultChk).row);
             layoutTab.appendChild(groupSection.wrap);
             groupLayoutSectionWrap = groupSection.wrap;
-            groupLayoutSectionWrap.style.display = 'none';
             const previewSection = makeSection('Bed preview');
             previewSection.body.appendChild(layoutPreview);
             previewSection.body.appendChild(layoutStatus);
@@ -10298,7 +10502,7 @@ Draw.loadPlugin(function (ui) {
                         });
                     }
                     if (saveLayoutDefaultChk.checked) {
-                        const layoutDraft = readLayoutDraftFromControls();
+                        const layoutDraft = syncLayoutDraftFromControls();
                         if (derivedContext?.mode === 'companion') {
                             try {
                                 const relationship = currentLayoutRelationship();
@@ -10340,26 +10544,28 @@ Draw.loadPlugin(function (ui) {
                 let targetCell = cell;
                 let createdDerivedCell = null;
                 let derivedRelationshipPatch = {};
+                let layoutGraphApplication = null;
                 if (derivedContext) {
                     const graph = ui?.editor?.graph;
                     const relationshipSourceCell = derivedContext.sourceCell || cell;
+                    syncLayoutDraftFromControls();
                     derivedRelationshipPatch = buildDerivedRelationshipPatch(relationshipSourceCell, inputs.plant, scheduleResult, derivedContext);
                     if (derivedContext.operation === 'create') {
                         const createSibling = getTilerSiblingCreator(graph);
                         if (!createSibling) throw new Error('Plant tiler sibling creation API is unavailable.');
+                        const creationOffset = derivedContext.mode === 'companion' ? layoutOffsetForDerivedCreation() : null;
                         createdDerivedCell = createSibling(graph, relationshipSourceCell, {
                             source: 'scheduler-' + derivedContext.mode,
                             attributes: derivedRelationshipPatch,
-                            layoutOffsetCm: derivedContext.mode === 'companion' ? {
-                                x: finiteNumberOrNull(derivedRelationshipPatch.companion_offset_x_cm) || 0,
-                                y: finiteNumberOrNull(derivedRelationshipPatch.companion_offset_y_cm) || 0
-                            } : null,
+                            layoutOffsetCm: creationOffset,
                             onPlacementWarning: message => showErrorInline(message)
                         });
                         if (!createdDerivedCell) throw new Error('Could not create derived plant group.');
                         targetCell = createdDerivedCell;
                     }
                 }
+                layoutGraphApplication = buildLayoutGraphApplication(targetCell);
+                const targetLayoutPatch = Object.assign({}, derivedRelationshipPatch, layoutGraphApplication.targetPatch || {});
 
                 try {
                     await applyScheduleToGraph(ui, targetCell, inputs, {
@@ -10370,9 +10576,10 @@ Draw.loadPlugin(function (ui) {
                     sowingSeasonLabel: activeWindow?.label || '',
                     transplantDaysOverrideEnabled: formState.transplantDaysOverrideEnabled,
                     effectiveTransplantDays: inputs?.plant?.days_transplant,
-                    targetAttributePatch: derivedRelationshipPatch,
+                    targetAttributePatch: targetLayoutPatch,
+                    targetGeometryRect: layoutGraphApplication.targetRect,
                     preserveTargetGeometry: !!derivedContext,
-                    extraAttributePatches: climateModelAttributePatch ? [climateModelAttributePatch] : [],
+                    extraAttributePatches: (layoutGraphApplication.extraAttributePatches || []).concat(climateModelAttributePatch ? [climateModelAttributePatch] : []),
                     afterGraphUpdate: persistPlantTaskDefault // FIX: undo graph edits if the database write fails
                     });
                 } catch (saveError) {
@@ -11847,6 +12054,20 @@ Draw.loadPlugin(function (ui) {
         return applyTaskAnchorOffset(cutoffAnchorISO, rule.repeatCutoffOffsetDays, rule.repeatCutoffOffsetDirection);
     }
 
+    function clampHardeningRuleToTransplantLeadWindow(rule, anchors, methodId) {
+        const r = normalizeTaskRule(rule);
+        if (!methodUsesTransplantDateInput(methodId) || r.id !== "harden" || r.startAnchorStage !== "TRANSPLANT" || r.startOffsetDirection !== "before") return r;
+        const leadDays = daysDeltaISO(anchors.SOW, anchors.TRANSPLANT);
+        if (!(Number.isFinite(leadDays) && leadDays >= 0)) return r;
+        const clampedOffset = Math.min(Math.max(0, Math.round(Number(r.startOffsetDays) || 0)), leadDays);
+        if (clampedOffset === r.startOffsetDays) return r;
+        return {
+            ...r,
+            startOffsetDays: clampedOffset, // FIX: keep hardening inside the sow/start-to-transplant lead window.
+            durationDays: r.endMode === "fixed_days" ? Math.min(Math.max(0, Number(r.durationDays) || 0), clampedOffset) : r.durationDays // FIX: avoid hardening continuing after transplant when the offset is shortened.
+        };
+    }
+
     function validateTaskRuleAnchorOrder(rule, { schedule, timelines } = {}) {
         const r = normalizeTaskRule(rule);
         const sowDate = Array.isArray(schedule) ? schedule[0] : schedule;
@@ -11923,7 +12144,7 @@ Draw.loadPlugin(function (ui) {
 
         const anchors = taskAnchorDatesForTimeline(timeline, sowDate);
         for (let ruleIndex = 0; ruleIndex < rules.length; ruleIndex++) {
-            const rule = normalizeTaskRule(rules[ruleIndex]);
+            const rule = clampHardeningRuleToTransplantLeadWindow(rules[ruleIndex], anchors, methodId);
             validateTaskRuleAnchorOrder(rule, { schedule: sowDate, timelines: timeline });
             const range = resolveTaskRuleRange(rule, anchors);
             if (!range) continue;
@@ -12437,6 +12658,14 @@ Draw.loadPlugin(function (ui) {
         return normalizeTaskRule({ ...base, ...override });
     }
 
+    function normalizeMethodRequiredTasks(methodId, required) {
+        const normalized = required && typeof required === "object" ? { ...required } : {};
+        if (normId(methodId) === "transplant.purchased" && !Object.prototype.hasOwnProperty.call(normalized, "harden")) {
+            normalized.harden = true; // FIX: existing databases should gain purchased-transplant hardening unless explicitly opted out.
+        }
+        return normalized;
+    }
+
     // -------------------- Default template from method --------------------------
 
     async function getDefaultTaskTemplateForPlantingMethods(methodId) {
@@ -12452,7 +12681,7 @@ Draw.loadPlugin(function (ui) {
     
         const lib = taskRuleLibraryForPlanningMode(resolved.planningMode);
 
-        const required = safeJsonParse(method.tasks_required_json, {}) || {};
+        const required = normalizeMethodRequiredTasks(resolved.methodId, safeJsonParse(method.tasks_required_json, {}) || {});
         const orderedIds = ["prep", "sow", "start", "harden", "transplant", "thin", "harvest"];
 
         const rules = [];
@@ -12597,7 +12826,7 @@ Draw.loadPlugin(function (ui) {
             sowing_window_label: null, // CHANGED: remove stale pre-rename scheduler metadata on resave.
             tbase_c: String(env.Tbase),
             sow_date: fmt(sowDate),
-            days_transplant: options.transplantDaysOverrideEnabled ? String(options.effectiveTransplantDays ?? '') : null,
+            days_transplant: options.transplantDaysOverrideEnabled && methodUsesTransplantDateInput(inputs.methodId) ? String(options.effectiveTransplantDays ?? '') : null, // FIX: persist overrides only for methods that use transplant lead days.
             germ_date: perennial ? '' : fmt(timeline.germ),
             transplant_date: perennial ? '' : fmt(timeline.transplant),
             maturity_date: perennial ? '' : fmt(timeline.maturity),
@@ -12751,10 +12980,12 @@ Draw.loadPlugin(function (ui) {
         const attributePatch = buildScheduleAttributePatch(inputs, result, options);
         Object.assign(attributePatch, options.targetAttributePatch || {});
         const attributeSnapshot = snapshotCellAttributes(cell, Object.keys(attributePatch));
+        const geometrySnapshot = cell?.getGeometry?.()?.clone?.() || null;
         const extraAttributePatches = (options.extraAttributePatches || []).filter(spec => spec && spec.cell && spec.patch);
         const extraAttributeSnapshots = extraAttributePatches.map(spec => ({
             cell: spec.cell,
-            snapshot: snapshotCellAttributes(spec.cell, Object.keys(spec.patch))
+            snapshot: snapshotCellAttributes(spec.cell, Object.keys(spec.patch)),
+            geometry: spec.cell?.getGeometry?.()?.clone?.() || null
         }));
         const taskReplacement = await buildTaskReplacementForPlan({
             method,
@@ -12777,10 +13008,17 @@ Draw.loadPlugin(function (ui) {
                 model.beginUpdate();
                 try {
                     applyCellAttributePatch(cell, attributePatch, model);
-                    extraAttributePatches.forEach(spec => applyCellAttributePatch(spec.cell, spec.patch, model));
+                    if (options.targetGeometryRect) setCellAbsoluteRect(graph, cell, options.targetGeometryRect, model);
+                    extraAttributePatches.forEach(spec => {
+                        applyCellAttributePatch(spec.cell, spec.patch, model);
+                        if (spec.geometryRect) setCellAbsoluteRect(graph, spec.cell, spec.geometryRect, model);
+                    });
                     applySchedulerTaskReplacement(taskReplacement, { insideUpdate: true });
+                    const tiler = window.USL && window.USL.tiler ? window.USL.tiler : null;
+                    extraAttributePatches.forEach(spec => {
+                        if (spec.retile && tiler && typeof tiler.retileGroup === 'function') tiler.retileGroup(graph, spec.cell, { inTransaction: true, preferInPlace: true });
+                    });
                     if (options.preserveTargetGeometry) {
-                        const tiler = window.USL && window.USL.tiler ? window.USL.tiler : null;
                         if (tiler && typeof tiler.retileGroup === 'function') tiler.retileGroup(graph, cell, { inTransaction: true });
                     } else {
                         retileAndFitGroupIfAvailable(graph, cell, { source: 'schedule-save' });
@@ -12797,7 +13035,9 @@ Draw.loadPlugin(function (ui) {
             model.beginUpdate();
             try {
                 restoreCellAttributeSnapshot(cell, attributeSnapshot, model);
+                if (geometrySnapshot && typeof model.setGeometry === 'function') model.setGeometry(cell, geometrySnapshot);
                 extraAttributeSnapshots.forEach(spec => restoreCellAttributeSnapshot(spec.cell, spec.snapshot, model));
+                extraAttributeSnapshots.forEach(spec => { if (spec.geometry && typeof model.setGeometry === 'function') model.setGeometry(spec.cell, spec.geometry); });
             } finally {
                 model.endUpdate();
             }
@@ -13525,12 +13765,281 @@ Draw.loadPlugin(function (ui) {
         });
     }
 
+    async function resolvePlantForPlanCrop(options = {}) {
+        const plantId = Number(options.plantId);
+        if (!Number.isFinite(plantId)) return { ok: false, reason: "missing_plant_id" };
+        const varietyId = options.varietyId == null || options.varietyId === "" ? null : Number(options.varietyId);
+        const plant = await resolveEffectivePlant(plantId, varietyId);
+        if (!plant) return { ok: false, reason: "plant_not_found" };
+        const varietyName = Number.isFinite(varietyId) ? await resolveVarietyName(varietyId) : "";
+        return {
+            ok: true,
+            plant,
+            plantId: String(plantId),
+            varietyId: Number.isFinite(varietyId) ? String(varietyId) : "",
+            varietyName,
+            label: [plant.plant_name, varietyName].filter(Boolean).join(" - ") || String(plantId)
+        };
+    }
+
+    async function resolveCityForModule(moduleCell) {
+        const cityId = moduleCell && moduleCell.getAttribute ? moduleCell.getAttribute("city_id") : "";
+        const cityName = moduleCell && moduleCell.getAttribute ? moduleCell.getAttribute("city_name") : "";
+        const city = await CityClimate.resolveUniqueNameFallback({ cityId, cityName });
+        if (!city) return { ok: false, reason: cityName || cityId ? "city_not_found" : "missing_city" };
+        return { ok: true, city };
+    }
+
+    function shiftISODate(iso, days) {
+        const d = parseISODateUTCValue(iso);
+        if (!d) return "";
+        d.setUTCDate(d.getUTCDate() + Number(days || 0));
+        return fmtISO(d);
+    }
+
+    function datesBetweenISO(startISO, endISO) {
+        const out = [];
+        let cur = parseISODateUTCValue(startISO);
+        const end = parseISODateUTCValue(endISO);
+        if (!cur || !end) return out;
+        while (cur.getTime() <= end.getTime()) {
+            out.push(fmtISO(cur));
+            cur.setUTCDate(cur.getUTCDate() + 1);
+        }
+        return out;
+    }
+
+    async function proposeLifecycle(options = {}) {
+        try {
+            const plant = options.plant instanceof PlantModel ? options.plant : new PlantModel(options.plant || {});
+            const city = options.city instanceof CityClimate ? options.city : new CityClimate(options.city || {});
+            const methodId = normId(options.methodId || plant.default_planting_method || "direct_sow.field");
+            const behavior = resolveMethodBehavior({ methodCategoryId: options.methodCategoryId || "", methodId });
+            const effectiveTransplantDays = normalizeTransplantDays(options.effectiveTransplantDays ?? plant.days_transplant) ?? 0;
+            let primaryDateISO = String(options.primaryDateISO || options.bedEntryDateISO || options.startISO || "").trim();
+            const weekStartISO = String(options.weekStartISO || "").trim();
+            const weekEndISO = String(options.weekEndISO || "").trim() || (weekStartISO ? shiftISODate(weekStartISO, 6) : "");
+            if (options.chooseBestFeasibleDay && weekStartISO) {
+                const candidates = datesBetweenISO(weekStartISO, weekEndISO || weekStartISO);
+                let chosen = "";
+                for (const candidateISO of candidates) {
+                    const candidateStartISO = behavior.planningMode === "transplant_indoor"
+                        ? sowDateFromPrimaryDate(candidateISO, methodId, effectiveTransplantDays)
+                        : candidateISO;
+                    try {
+                        const candidateInputs = new sharedCore.ScheduleInputs({
+                            plant,
+                            city,
+                            planningMode: behavior.planningMode,
+                            methodCategoryId: behavior.methodCategoryId,
+                            methodId,
+                            startISO: candidateStartISO,
+                            seasonEndISO: String(options.seasonEndISO || `${Number(options.seasonStartYear || candidateStartISO.slice(0, 4))}-12-31`),
+                            seasonStartYear: Number(options.seasonStartYear || candidateStartISO.slice(0, 4)),
+                            harvestWindowDays: resolveHarvestWindowDays(plant, options.harvestWindowDays),
+                            minYieldMultiplier: Number(options.minYieldMultiplier || 0),
+                            policy: options.policy || new PolicyFlags({
+                                useSpringFrostGate: options.useSpringFrostGate !== false,
+                                useSoilTempGate: options.useSoilTempGate !== false && behavior.usesSoilTempGate !== false,
+                                overwinterAllowed: plant.isBiennial() || plant.isPerennial() || plant.overwinter_ok === 1
+                            }),
+                            dailyClimate: options.dailyClimate || null,
+                            bedProfile: normalizeBedProfile(options.bedProfile || null),
+                            bedProfileSource: String(options.bedProfileSource || "allocation bed")
+                        });
+                        computeScheduleResult(candidateInputs);
+                        chosen = candidateISO;
+                        break;
+                    } catch (_) { }
+                }
+                primaryDateISO = chosen || candidates[0] || primaryDateISO;
+            }
+            const startISO = behavior.planningMode === "transplant_indoor"
+                ? sowDateFromPrimaryDate(primaryDateISO, methodId, effectiveTransplantDays)
+                : primaryDateISO;
+            const seasonStartYear = Number(options.seasonStartYear || (startISO ? Number(startISO.slice(0, 4)) : new Date().getFullYear()));
+            const inputs = new sharedCore.ScheduleInputs({
+                plant,
+                city,
+                planningMode: behavior.planningMode,
+                methodCategoryId: behavior.methodCategoryId,
+                methodId,
+                startISO,
+                seasonEndISO: String(options.seasonEndISO || `${seasonStartYear}-12-31`),
+                seasonStartYear,
+                harvestWindowDays: resolveHarvestWindowDays(plant, options.harvestWindowDays),
+                minYieldMultiplier: Number(options.minYieldMultiplier || 0),
+                policy: options.policy || new PolicyFlags({
+                    useSpringFrostGate: options.useSpringFrostGate !== false,
+                    useSoilTempGate: options.useSoilTempGate !== false && behavior.usesSoilTempGate !== false,
+                    overwinterAllowed: plant.isBiennial() || plant.isPerennial() || plant.overwinter_ok === 1
+                }),
+                dailyClimate: options.dailyClimate || null,
+                bedProfile: normalizeBedProfile(options.bedProfile || null),
+                bedProfileSource: String(options.bedProfileSource || "allocation bed")
+            });
+            const result = computeScheduleResult(inputs);
+            const taskTemplate = options.taskTemplate === undefined
+                ? null
+                : options.taskTemplate;
+            const tasks = await buildTasksForPlan({
+                plant,
+                schedule: result && result.schedule,
+                timelines: result && result.timelines,
+                taskTemplate,
+                methodCategoryId: behavior.methodCategoryId,
+                methodId,
+                varietyName: String(options.varietyName || ""),
+                includePreviewMetadata: true
+            });
+            const attributePatch = buildScheduleAttributePatch(inputs, result, {
+                effectiveTransplantDays,
+                transplantDaysOverrideEnabled: options.effectiveTransplantDays != null,
+                taskTemplateJson: taskTemplate == null ? undefined : JSON.stringify(taskTemplate)
+            });
+            const scheduleWarnings = Array.isArray(result && result.warnings) ? Array.from(result.warnings) : [];
+            return {
+                ok: true,
+                status: scheduleWarnings.length ? "warning" : "compatible",
+                warnings: scheduleWarnings,
+                methodId,
+                methodCategoryId: behavior.methodCategoryId,
+                planningMode: behavior.planningMode,
+                primaryDateISO,
+                startISO,
+                result,
+                attributePatch,
+                taskPreview: tasks
+            };
+        } catch (error) {
+            return {
+                ok: false,
+                status: "structural_failure",
+                reason: error && error.message ? error.message : String(error || "Unable to calculate lifecycle."),
+                taskPreview: []
+            };
+        }
+    }
+
+    async function openDraftScheduleDialog(ui, draft, callbacks = {}) {
+        const current = Object.assign({}, draft || {});
+        const proposal = current.lifecycle || current.scheduleProposal || null;
+        const tasks = (Array.isArray(current.taskPreview) ? current.taskPreview : (proposal && Array.isArray(proposal.taskPreview) ? proposal.taskPreview : [])).map(function (task) {
+            return Object.assign({}, task || {});
+        });
+        const div = document.createElement("div");
+        div.style.cssText = "padding:14px;font:12px Arial,sans-serif;color:#111827;display:flex;flex-direction:column;gap:10px;max-height:70vh;overflow:auto;";
+        const title = document.createElement("div");
+        title.style.cssText = "font-weight:700;font-size:15px;";
+        title.textContent = "Edit Allocation Tasks";
+        div.appendChild(title);
+        const hint = document.createElement("div");
+        hint.style.cssText = "color:#4b5563;line-height:1.35;";
+        hint.textContent = "Review the generated task schedule before creating the planting.";
+        div.appendChild(hint);
+        const list = document.createElement("div");
+        list.style.cssText = "display:flex;flex-direction:column;gap:6px;border:1px solid #e5e7eb;border-radius:6px;padding:8px;background:#f9fafb;";
+        function renderTaskRows() {
+            list.innerHTML = "";
+            if (!tasks.length) {
+                const empty = document.createElement("div");
+                empty.textContent = "No generated tasks.";
+                list.appendChild(empty);
+                return;
+            }
+            tasks.forEach(function (task, index) {
+                const row = document.createElement("div");
+                row.style.cssText = "display:grid;grid-template-columns:105px minmax(0,1fr) auto;gap:6px;align-items:center;";
+                const date = document.createElement("input");
+                date.type = "date";
+                date.value = String(task.startISO || task.start || "");
+                date.style.cssText = "width:100%;box-sizing:border-box;";
+                date.addEventListener("change", function () {
+                    task.startISO = String(date.value || "");
+                    task.start = task.startISO;
+                });
+                const titleInput = document.createElement("input");
+                titleInput.type = "text";
+                titleInput.value = String(task.title || task.name || "Task");
+                titleInput.style.cssText = "width:100%;box-sizing:border-box;";
+                titleInput.addEventListener("input", function () {
+                    task.title = String(titleInput.value || "");
+                    task.name = task.title;
+                });
+                const remove = document.createElement("button");
+                remove.type = "button";
+                remove.textContent = "Remove";
+                remove.style.cssText = "border:1px solid #b91c1c;color:#b91c1c;background:#fff;border-radius:4px;padding:4px 7px;cursor:pointer;";
+                remove.addEventListener("click", function () {
+                    tasks.splice(index, 1);
+                    renderTaskRows();
+                });
+                row.appendChild(date);
+                row.appendChild(titleInput);
+                row.appendChild(remove);
+                list.appendChild(row);
+            });
+        }
+        renderTaskRows();
+        div.appendChild(list);
+        const addTask = document.createElement("button");
+        addTask.type = "button";
+        addTask.textContent = "Add task";
+        addTask.style.cssText = "align-self:flex-start;border:1px solid #2563eb;color:#1d4ed8;background:#fff;border-radius:4px;padding:5px 10px;cursor:pointer;";
+        addTask.addEventListener("click", function () {
+            tasks.push({ startISO: "", title: "New task" });
+            renderTaskRows();
+        });
+        div.appendChild(addTask);
+        const prefLabel = document.createElement("label");
+        prefLabel.style.cssText = "display:flex;align-items:center;gap:8px;padding:8px;border:1px solid #188038;border-radius:6px;background:#f0fff4;font-weight:700;";
+        const pref = document.createElement("input");
+        pref.type = "checkbox";
+        pref.checked = true;
+        prefLabel.appendChild(pref);
+        prefLabel.appendChild(document.createTextNode("Save these tasks as plant default"));
+        div.appendChild(prefLabel);
+        const buttons = document.createElement("div");
+        buttons.style.cssText = "display:flex;justify-content:flex-end;gap:8px;";
+        const cancel = document.createElement("button");
+        cancel.textContent = "Cancel";
+        const save = document.createElement("button");
+        save.textContent = "Save";
+        save.style.cssText = "border:1px solid #188038;color:#166534;background:#fff;border-radius:4px;padding:5px 10px;cursor:pointer;";
+        cancel.style.cssText = "border:1px solid #6b7280;color:#111827;background:#fff;border-radius:4px;padding:5px 10px;cursor:pointer;";
+        buttons.appendChild(cancel);
+        buttons.appendChild(save);
+        div.appendChild(buttons);
+
+        return await new Promise(function (resolve) {
+            cancel.addEventListener("click", function () {
+                if (ui && typeof ui.hideDialog === "function") ui.hideDialog();
+                resolve(null);
+            });
+            save.addEventListener("click", function () {
+                const next = Object.assign({}, current, {
+                    taskPreview: tasks,
+                    saveTasksAsPlantDefault: pref.checked
+                });
+                if (callbacks && typeof callbacks.onSave === "function") callbacks.onSave(next);
+                if (ui && typeof ui.hideDialog === "function") ui.hideDialog();
+                resolve(next);
+            });
+            ui.showDialog(div, 520, 420, true, true);
+            elevateTrellisDialog(ui);
+        });
+    }
+
     window.USL = window.USL || {};
     window.USL.scheduler = Object.assign({}, window.USL.scheduler, {
         openScheduleDialog: (ui, cell) => openScheduleDialog(ui, cell),
         openDerivedScheduleDialog: (ui, sourceCell, options) => openDerivedScheduleDialog(ui, sourceCell, options),
         openSetPlantDialog: (ui, cell) => openSetPlantDialog(ui, cell),
-        listPlantOptions: listPlantOptions
+        listPlantOptions: listPlantOptions,
+        resolvePlantForPlanCrop,
+        resolveCityForModule,
+        proposeLifecycle,
+        openDraftScheduleDialog
     });
     window.openUSLScheduleDialog = window.USL.scheduler.openScheduleDialog;
 
@@ -13673,6 +14182,7 @@ Draw.loadPlugin(function (ui) {
             normalizeCompanionLayoutTemplate,
             resolveCompanionLayout,
             companionLayoutAttributePatch,
+            plantingLayoutAttributePatch,
             buildLayoutPreviewModel,
             buildCompanionLayoutPreviewModel,
             computeActiveCompanionPlacement,
@@ -14007,7 +14517,11 @@ Draw.loadPlugin(function (ui) {
             openScheduleDialog: function (uiArg) { showDisabledMessage(uiArg); },
             openDerivedScheduleDialog: function (uiArg) { showDisabledMessage(uiArg); },
             openSetPlantDialog: function (uiArg) { showDisabledMessage(uiArg); },
-            listPlantOptions: async function () { throw new Error(message); }
+            listPlantOptions: async function () { throw new Error(message); },
+            resolvePlantForPlanCrop: async function () { return { ok: false, reason: message }; },
+            resolveCityForModule: async function () { return { ok: false, reason: message }; },
+            proposeLifecycle: async function () { return { ok: false, status: "structural_failure", reason: message, taskPreview: [] }; },
+            openDraftScheduleDialog: async function () { throw new Error(message); }
         });
         window.openUSLScheduleDialog = window.USL.scheduler.openScheduleDialog;
     }
@@ -14125,6 +14639,10 @@ Draw.loadPlugin(function (ui) {
             describeBlockingScheduleQualityDiagnostics,
             normalizeLatitudeDeg,
             saveSchedulerCityLatitude,
+            resolvePlantForPlanCrop,
+            resolveCityForModule,
+            proposeLifecycle,
+            openDraftScheduleDialog,
             buildScheduleViewState,
             renderScheduleSummary,
             updateScheduleSummary,
@@ -14174,6 +14692,7 @@ Draw.loadPlugin(function (ui) {
             normalizeCompanionLayoutTemplate,
             resolveCompanionLayout,
             companionLayoutAttributePatch,
+            plantingLayoutAttributePatch,
             buildLayoutPreviewModel,
             buildCompanionLayoutPreviewModel,
             computeActiveCompanionPlacement,

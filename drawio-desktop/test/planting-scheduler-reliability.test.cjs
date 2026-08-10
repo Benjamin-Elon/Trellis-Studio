@@ -373,6 +373,17 @@ test('cutting transplant primary date uses transplant-date conversion', () => {
     assert.equal(hooks.primaryDateFromSowDate(sowISO, 'transplant.cutting', 21), '2026-04-10');
 });
 
+test('transplant lead override availability follows lead-day transplant methods', () => {
+    assert.equal(hooks.methodUsesTransplantDateInput('transplant.indoor'), true);
+    assert.equal(hooks.methodUsesTransplantDateInput('transplant.cutting'), true);
+    assert.equal(hooks.methodUsesTransplantDateInput('transplant.outdoor'), false);
+    assert.equal(hooks.methodUsesTransplantDateInput('transplant.purchased'), false);
+    assert.equal(hooks.methodUsesTransplantDateInput('direct_sow.field'), false);
+    const schedulerSource = fs.readFileSync(schedulerPath, 'utf8');
+    assert.match(schedulerSource, /function updateTransplantDaysControls\(\)[\s\S]*const visible = currentMethodUsesTransplantDateInput\(\);/);
+    assert.match(schedulerSource, /formState\.transplantDaysOverrideEnabled = usesTransplantDate && !!transplantDaysOverrideChk\.checked;/);
+});
+
 test('cell transplant-days override beats plant default for derived sow date', () => {
     const cell = makeAttributeCell({ days_transplant: '35' });
     const overrideDays = hooks.readCellTransplantDaysOverride(cell);
@@ -402,6 +413,21 @@ test('schedule patch persists transplant-days only for explicit cell override', 
     assert.equal(inheritPatch.days_transplant, null);
     const overridePatch = hooks.buildScheduleAttributePatch(inputs, result, { transplantDaysOverrideEnabled: true, effectiveTransplantDays: 21 });
     assert.equal(overridePatch.days_transplant, '21');
+});
+
+test('schedule patch ignores transplant-days override for methods without lead days', () => {
+    const plant = makePlant({ days_transplant: 21 });
+    const cases = [
+        { planningMode: 'transplant_outdoor', methodCategoryId: 'transplant', methodId: 'transplant.outdoor' },
+        { planningMode: 'transplant_outdoor', methodCategoryId: 'transplant', methodId: 'transplant.purchased' },
+        { planningMode: 'direct_sow', methodCategoryId: 'direct_sow', methodId: 'direct_sow.field' }
+    ];
+    for (const method of cases) {
+        const inputs = makeInputs({ plant, ...method });
+        const result = hooks.computeScheduleResult(inputs);
+        const patch = hooks.buildScheduleAttributePatch(inputs, result, { transplantDaysOverrideEnabled: true, effectiveTransplantDays: 21 });
+        assert.equal(patch.days_transplant, null, method.methodId);
+    }
 });
 
 test('transplant-date display windows project sowing windows by lead days', () => {
@@ -2229,6 +2255,60 @@ test('task template resolution uses cell, variety, plant, method, none precedenc
     }
 });
 
+test('purchased transplant built-in template backfills hardening off before transplant', async () => {
+    const testWindow = hooks.__testWindow;
+    const previousBridge = testWindow.dbBridge;
+    const purchasedMethod = {
+        method_id: 'transplant.purchased',
+        method_category_id: 'transplant',
+        method_name: 'Purchased transplant',
+        tasks_required_json: JSON.stringify({
+            prep: { offsetDays: 3, offsetDirection: 'before' },
+            transplant: { offsetDays: 0 },
+            harvest: true
+        })
+    };
+    testWindow.dbBridge = {
+        async resolvePath() { return { dbPath: 'mock.sqlite' }; },
+        async open() { return { dbId: 'mock-db' }; },
+        async close() {},
+        async query(_dbId, sql, params) {
+            if (/FROM PlantingMethods/i.test(sql) && params[0] === 'transplant.purchased') return { rows: [purchasedMethod] };
+            return { rows: [] };
+        }
+    };
+    try {
+        const template = await hooks.TaskTemplateModel.loadMethodBuiltinTemplate('transplant.purchased');
+        assert.deepEqual(Array.from(template.rules, rule => rule.id), ['prep', 'harden', 'transplant', 'harvest']);
+
+        const plant = makePlant({ plant_name: 'Tomato', days_transplant: 3 });
+        const result = hooks.computeScheduleResult(makeInputs({
+            plant,
+            planningMode: 'transplant_outdoor',
+            methodCategoryId: 'transplant',
+            methodId: 'transplant.purchased',
+            startISO: '2026-04-10'
+        }));
+        const tasks = await hooks.buildTasksForPlan({
+            plant,
+            schedule: result.schedule,
+            timelines: result.timelines,
+            methodCategoryId: 'transplant',
+            methodId: 'transplant.purchased',
+            taskTemplate: template
+        });
+        const harden = tasks.find(task => task.rule_id === 'harden');
+        assert.equal(harden.task_type_id, 'hardening_off');
+        assert.equal(harden.scheduler_anchor_stage, 'TRANSPLANT');
+        assert.equal(harden.startISO, '2026-04-03');
+        assert.equal(harden.endISO, '2026-04-10');
+        assert.equal(result.rows[0].sow, '2026-04-10');
+        assert.equal(result.rows[0].trans, '2026-04-10');
+    } finally {
+        testWindow.dbBridge = previousBridge;
+    }
+});
+
 test('task rule task type metadata is custom-only and canonical mappings are generated', () => {
     const custom = hooks.normalizeTaskRule({ id: 'water_weekly', title: 'Water', taskTypeId: 'Watering' });
     assert.equal(custom.taskTypeId, 'watering');
@@ -2490,6 +2570,48 @@ test('built-in task titles separate action and crop with an en dash', async () =
         varietyName: 'butthead'
     });
     assert.equal(tasks.map(task => task.title).join('|'), 'Thin / check – Lettuce (butthead)|Harvest – Lettuce (butthead)');
+});
+
+test('hardening off is clamped to short transplant lead window', async () => {
+    const plant = makePlant({ plant_name: 'Tomato', days_transplant: 3 });
+    const result = hooks.computeScheduleResult(makeInputs({
+        plant,
+        planningMode: 'transplant_indoor',
+        methodCategoryId: 'transplant',
+        methodId: 'transplant.indoor',
+        startISO: '2026-04-01'
+    }));
+    const tasks = await hooks.buildTasksForPlan({
+        plant,
+        schedule: result.schedule,
+        timelines: result.timelines,
+        methodCategoryId: 'transplant',
+        methodId: 'transplant.indoor',
+        taskTemplate: { version: 2, rules: [hooks.taskRuleLibraryForPlanningMode('transplant_indoor').harden] }
+    });
+    assert.equal(tasks[0].startISO, '2026-04-01');
+    assert.equal(tasks[0].endISO, '2026-04-04');
+});
+
+test('hardening off keeps default timing when transplant lead is long enough', async () => {
+    const plant = makePlant({ plant_name: 'Tomato', days_transplant: 21 });
+    const result = hooks.computeScheduleResult(makeInputs({
+        plant,
+        planningMode: 'transplant_indoor',
+        methodCategoryId: 'transplant',
+        methodId: 'transplant.indoor',
+        startISO: '2026-04-01'
+    }));
+    const tasks = await hooks.buildTasksForPlan({
+        plant,
+        schedule: result.schedule,
+        timelines: result.timelines,
+        methodCategoryId: 'transplant',
+        methodId: 'transplant.indoor',
+        taskTemplate: { version: 2, rules: [hooks.taskRuleLibraryForPlanningMode('transplant_indoor').harden] }
+    });
+    assert.equal(tasks[0].startISO, '2026-04-15');
+    assert.equal(tasks[0].endISO, '2026-04-22');
 });
 
 test('task preview range uses the complete annual schedule instead of selected task dates', () => {
