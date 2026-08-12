@@ -7,7 +7,6 @@
  * - Prev/Next year buttons + current year label are stored on the garden module
  * - Metrics are computed from tiler groups under that module
  * - Only includes crops that begin in selected year (season_start_year == selected year)
- * Existing garden_dashboard cells are left in files as inert legacy remnants.
  */
 Draw.loadPlugin(function (ui) {
     const graph = ui.editor && ui.editor.graph;
@@ -26,30 +25,25 @@ Draw.loadPlugin(function (ui) {
     const GRAPH_OVERLAY_LAYER_CLASS = Object.freeze({ control: "trellis-graph-control-layer trellis-body-control-layer" });
     const TRELLIS_DIALOG_Z = 2000000000;
 
-    const DASH_ATTR = "garden_dashboard";
-    const DASH_YEAR_ATTR = "dashboard_year";
     const MODULE_CURRENT_YEAR_ATTR = "current_year";
     const YEAR_HIDDEN_ATTR = "year_hidden";
     const PLAN_YEAR_JSON_ATTR = "plan_year_json";
 
     const BTN_SIZE = 22;
     const BTN_GAP = 6;
-    const CTRL_PAD = 6;
-    const DASH_MIN_W = 320;
-    const DASH_DEFAULT_ASPECT = 320 / 220;
-
-    const DASH_STYLE =
-        "rounded=0;whiteSpace=wrap;html=1;" +
-        "align=left;verticalAlign=top;" +
-        "labelPosition=left;verticalLabelPosition=top;" +
-        "spacing=0;spacingTop=0;spacingLeft=0;spacingRight=0;spacingBottom=0;" +
-        "strokeColor=#666666;fillColor=#f7f7f7;fontSize=12;";
+    const GARDEN_PICKER_NO_CITY = "No city";
+    const DEFAULT_MODULE_WIDTH = 160;
+    const DEFAULT_MODULE_HEIGHT = 100;
 
     const PLAN_YEAR_EVENT = "usl:planYearRequested";
     const ALLOCATE_PLAN_EVENT = "usl:allocatePlanRequested";
     const IRRIGATION_MODE_CHANGED_EVENT = "trellisIrrigationModeChanged";
+    const ALLOCATE_NO_PLAN_TITLE = "Create a year plan before allocating."; // CHANGE: explain why Allocate is disabled before a saved plan exists.
+    const ALLOCATE_EMPTY_PLAN_TITLE = "Add at least one crop to the year plan before allocating."; // CHANGE: saved empty plans are not allocatable.
     const IRRIGATION_ACTIVE_BACKGROUND = "#eff6ff"; // CHANGE: match the Enter Irrigation Design Mode light-blue active fill
     const IRRIGATION_ACTIVE_TEXT = "#1e3a8a"; // CHANGE: match the Enter Irrigation Design Mode dark-blue active text
+    const WORKSPACE_TASK_BOARD_STORAGE_PREFIX = "trellis.gardenDashboard.workspaceTaskBoard.v1"; // NEW: local per-user workspace task-board memory
+    const WORKSPACE_DISABLED_TITLE = "Return to Garden workspace before using garden tools."; // NEW: explain visible disabled dashboard actions outside Garden
 
     const GROUP_LABEL_FONT_PX = 12;
     const GROUP_LABEL_LINE_HEIGHT = 1.25;
@@ -78,6 +72,10 @@ Draw.loadPlugin(function (ui) {
 
     function isTaskModule(cell) {
         return !!(cell && cell.getAttribute && cell.getAttribute("task_module") === "1");
+    }
+
+    function isTeamModule(cell) {
+        return !!(cell && cell.getAttribute && cell.getAttribute("team_module") === "1");
     }
 
     function findModuleAncestor(graph, cell) {
@@ -110,17 +108,12 @@ Draw.loadPlugin(function (ui) {
         return null;
     }
 
-    function gardenForTaskModule(taskModule) {
-        const gardenId = taskModule && taskModule.getAttribute ? taskModule.getAttribute("trellis_garden_module_id") : "";
-        const garden = gardenId && model.getCell ? model.getCell(gardenId) : null;
-        return isGardenModule(garden) ? garden : null;
-    }
-
-    function findDashboardAncestor(cell) {
+    function findTeamModuleAncestor(graph, cell) {
+        const m = graph.getModel();
         let cur = cell;
         while (cur) {
-            if (cur.getAttribute && cur.getAttribute(DASH_ATTR) === "1") return cur;
-            cur = model.getParent(cur);
+            if (isTeamModule(cur)) return cur;
+            cur = m.getParent(cur);
         }
         return null;
     }
@@ -150,6 +143,15 @@ Draw.loadPlugin(function (ui) {
         const yKey = String(year);
         const obj = root[yKey];
         return (obj && typeof obj === "object") ? obj : null;
+    }
+
+    function allocationPlanStatus(moduleCell, year) {
+        const planObj = getPlanYearObject(moduleCell, year);
+        if (!planObj) return { enabled: false, title: ALLOCATE_NO_PLAN_TITLE }; // CHANGE: Allocate requires a saved plan for the selected toolbar year.
+        const crops = Array.isArray(planObj.crops) ? planObj.crops : [];
+        return crops.length
+            ? { enabled: true, title: "Allocate the current plan" }
+            : { enabled: false, title: ALLOCATE_EMPTY_PLAN_TITLE }; // CHANGE: a saved empty plan still has no allocatable crop plan.
     }
 
     function normKeyPart(s) {
@@ -267,131 +269,6 @@ Draw.loadPlugin(function (ui) {
         return out;
     }
 
-    function findDashboardCell(moduleCell) {
-        if (!moduleCell) return null;
-        const kids = getDescendants(moduleCell);
-        for (const c of kids) {
-            if (c && c.getAttribute && c.getAttribute(DASH_ATTR) === "1") {
-                return c;
-            }
-        }
-        return null;
-    }
-
-    function isDashboardCell(cell) {
-        return !!cell && cell.getAttribute && cell.getAttribute(DASH_ATTR) === "1";
-    }
-
-    function getModuleHeaderHeight(moduleCell) {
-        if (!moduleCell) return 0;
-        if (graph.getStartSize) {
-            const size = graph.getStartSize(moduleCell) || {};
-            return Number(size.height) || 0;
-        }
-        const style = getStyleSafe(moduleCell);
-        const m = style.match(/(?:^|;)startSize=(\d+)(?=;|$)/);
-        return m ? parseInt(m[1], 10) : 0;
-    }
-
-    function ensureGardenModuleMinimum(moduleCell) {
-        if (!isGardenModule(moduleCell)) return;
-        const api = graph && graph.__trellisModules;
-        if (api && typeof api.enforceGardenModuleMinimum === "function") {
-            api.enforceGardenModuleMinimum(moduleCell);
-            return;
-        }
-        try {
-            graph.fireEvent(new mxEventObject("usl:requestApplyModuleMargins", "cell", moduleCell));
-        } catch (_) { }
-    }
-
-    function getGardenModuleContentSize(moduleCell) {
-        const g = moduleCell && model.getGeometry(moduleCell);
-        if (!g) return { width: 0, height: 0 }; // CHANGE
-        return {
-            width: Math.max(0, Number(g.width) || 0), // CHANGE
-            height: Math.max(0, (Number(g.height) || 0) - getModuleHeaderHeight(moduleCell)) // CHANGE
-        };
-    }
-
-    function growGardenModuleToContain(moduleCell, x, y, width, height) {
-        if (!isGardenModule(moduleCell)) return false;
-        const g = model.getGeometry(moduleCell);
-        if (!g) return false;
-        const headerH = getModuleHeaderHeight(moduleCell);
-        const neededW = Math.max(0, (Number(x) || 0) + (Number(width) || 0)); // CHANGE
-        const neededH = Math.max(0, (Number(y) || 0) + (Number(height) || 0)) + headerH; // CHANGE
-        const nextW = Math.max(Number(g.width) || 0, neededW);
-        const nextH = Math.max(Number(g.height) || 0, neededH);
-        if (Math.abs(nextW - g.width) < 0.5 && Math.abs(nextH - g.height) < 0.5) return false;
-        const g2 = g.clone();
-        g2.width = nextW;
-        g2.height = nextH;
-        model.setGeometry(moduleCell, g2);
-        return true;
-    }
-
-    function getDashboardMeasuredAspect(dashCell) {
-        const entry = dashCell && overlayByDashId.get(dashCell.getId());
-        const size = measureDashboardUiNaturalSize(entry);
-        return size.width > 0 && size.height > 0 ? size.width / size.height : DASH_DEFAULT_ASPECT;
-    }
-
-    function clampDashboardGeometry(dashCell, opts) {
-        const o = opts || {};
-        if (!isDashboardCell(dashCell) || graph.__gardenDashboardClamping) return false;
-        const g = model.getGeometry(dashCell);
-        if (!g) return false;
-        const moduleCell = findGardenModuleAncestor(graph, dashCell);
-        if (moduleCell && o.allowModuleGrow !== false) ensureGardenModuleMinimum(moduleCell);
-
-        const ratio = Math.max(0.01, Number(o.aspectRatio) || getDashboardMeasuredAspect(dashCell));
-        let width = Math.max(DASH_MIN_W, Number(g.width) || DASH_MIN_W);
-        let height = Math.max(1, Number(g.height) || (DASH_MIN_W / ratio));
-
-        if (o.preserveWidth) {
-            width = Math.max(DASH_MIN_W, width);
-            height = Math.max(1, width / ratio);
-        } else if (o.preserveSize) {
-            width = Math.max(DASH_MIN_W, width);
-            height = Math.max(1, height);
-        } else if (o.preserveArea) {
-            const area = Math.max(DASH_MIN_W, width * height);
-            width = Math.max(DASH_MIN_W, Math.sqrt(area * ratio));
-            height = Math.max(1, width / ratio);
-        } else if (width / height > ratio) {
-            width = Math.max(DASH_MIN_W, height * ratio);
-        } else {
-            height = Math.max(1, width / ratio);
-        }
-
-        if (moduleCell) {
-            const content = getGardenModuleContentSize(moduleCell);
-            if (width > content.width || height > content.height) growGardenModuleToContain(moduleCell, Number(g.x) || 0, Number(g.y) || 0, width, height);
-            const updatedContent = getGardenModuleContentSize(moduleCell);
-            width = Math.min(width, Math.max(DASH_MIN_W, updatedContent.width));
-            height = Math.min(height, Math.max(1, updatedContent.height));
-        }
-
-        const next = g.clone();
-        next.width = width;
-        next.height = height;
-        if (moduleCell) {
-            const content = getGardenModuleContentSize(moduleCell);
-            next.x = Math.max(0, Math.min(Number(next.x) || 0, Math.max(0, content.width - next.width)));
-            next.y = Math.max(0, Math.min(Number(next.y) || 0, Math.max(0, content.height - next.height)));
-        }
-
-        if (Math.abs(next.x - g.x) < 0.5 && Math.abs(next.y - g.y) < 0.5 && Math.abs(next.width - g.width) < 0.5 && Math.abs(next.height - g.height) < 0.5) return false;
-        graph.__gardenDashboardClamping = true;
-        try {
-            model.setGeometry(dashCell, next);
-        } finally {
-            graph.__gardenDashboardClamping = false;
-        }
-        return true;
-    }
-
     function isValidYear(n) {
         return Number.isFinite(n) && n > 1900 && n < 3000;
     }
@@ -409,27 +286,6 @@ Draw.loadPlugin(function (ui) {
         const y = toInt(year, NaN);
         if (!moduleCell || !isGardenModule(moduleCell) || !isValidYear(y)) return;
         setCellAttr(moduleCell, MODULE_CURRENT_YEAR_ATTR, String(y));
-    }
-
-    function getDashboardYear(dashCell) {
-        const dashYear = getAttrYear(dashCell, DASH_YEAR_ATTR);
-        if (isValidYear(dashYear)) return dashYear;
-
-        const moduleCell = findGardenModuleAncestor(graph, dashCell);
-        const moduleYear = getModuleCurrentYear(moduleCell);
-        if (isValidYear(moduleYear)) return moduleYear;
-
-        return new Date().getFullYear();
-    }
-
-    function setDashboardYear(dashCell, year, moduleCell) {
-        const y = toInt(year, NaN);
-        if (!isValidYear(y)) return;
-
-        setCellAttr(dashCell, DASH_YEAR_ATTR, String(y));
-
-        const mod = moduleCell || findGardenModuleAncestor(graph, dashCell);
-        if (mod) setModuleCurrentYear(mod, y);
     }
 
     function notifyYearFilterChanged(moduleCell, selectedYear) {
@@ -956,10 +812,18 @@ Draw.loadPlugin(function (ui) {
 
     // -------------------- Viewport toolbar (active dashboard UI) --------------------
     const toolbarExpandedByModuleId = new Map();
-    const taskBoardSelectionByModuleId = new Map();
+    const taskBoardSelectionByPreferenceKey = new Map(); // CHANGE: board memory is keyed by user/shared local preference
     let viewportToolbar = null;
     let activeToolbarModule = null;
     let toolbarRefreshTimer = null;
+    let gardenPickerOpen = false;
+    let gardenPickerSearchText = "";
+    let lastToolbarContext = null;
+    let startupGardenFocusDone = false;
+
+    function dashboardDiagramIsOpen() {
+        return !!(ui && typeof ui.getCurrentFile === "function" && ui.getCurrentFile());
+    }
 
     function cellId(cell) {
         return cell && cell.getId ? cell.getId() : (cell && cell.id) || "";
@@ -1018,15 +882,420 @@ Draw.loadPlugin(function (ui) {
         applyYearVisibilityToModule(moduleCell, y);
     }
 
-    function selectedGardenModuleForToolbar() {
-        const selected = graph.getSelectionCells ? (graph.getSelectionCells() || []) : [graph.getSelectionCell && graph.getSelectionCell()].filter(Boolean);
-        for (const cell of selected) {
-            const moduleCell = isGardenModule(cell) ? cell : findGardenModuleAncestor(graph, cell);
-            if (moduleCell) return moduleCell;
-            const taskGarden = gardenForTaskModule(isTaskModule(cell) ? cell : findTaskModuleAncestor(graph, cell));
-            if (taskGarden) return taskGarden;
+    function plainTextLabel(raw, fallback) {
+        const value = String(raw == null ? "" : raw);
+        if (document && document.createElement) {
+            const holder = document.createElement("div");
+            holder.innerHTML = value;
+            const text = String(holder.textContent || "").replace(/\s+/g, " ").trim();
+            if (text) return text;
         }
+        const stripped = value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+        return stripped || fallback || "";
+    }
+
+    function gardenLabel(moduleCell) {
+        const raw = getCellAttr(moduleCell, "label", "") || (typeof (moduleCell && moduleCell.value) === "string" ? moduleCell.value : "");
+        return plainTextLabel(raw, "Garden Module") || cellId(moduleCell) || "Garden Module";
+    }
+
+    function gardenCity(moduleCell) {
+        return plainTextLabel(getCellAttr(moduleCell, "city_name", "") || getCellAttr(moduleCell, "city_id", ""), "");
+    }
+
+    function allModelCells() {
+        const root = model.getRoot && model.getRoot();
+        const fromMap = model.cells ? Object.values(model.cells) : [];
+        if (fromMap.length) return fromMap;
+        return getDescendants(root);
+    }
+
+    function collectGardenModules() {
+        const seen = new Set();
+        const gardens = [];
+        for (const cell of allModelCells()) {
+            const id = cellId(cell);
+            if (!id || seen.has(id) || !isGardenModule(cell)) continue;
+            seen.add(id);
+            gardens.push(cell);
+        }
+        return gardens;
+    }
+
+    function linkIdSet(cell) {
+        return new Set(String(getCellAttr(cell, "linkedTo", "") || "").split(",").map(function (part) { return part.trim(); }).filter(Boolean));
+    }
+
+    function linkedGardenModulesForCompanion(moduleCell) {
+        if (!moduleCell) return [];
+        const ids = linkIdSet(moduleCell);
+        const typedGardenId = getCellAttr(moduleCell, "trellis_garden_module_id", "");
+        if (typedGardenId) ids.add(typedGardenId);
+        const seen = new Set();
+        const gardens = [];
+        ids.forEach(function (id) {
+            const garden = id && model.getCell ? model.getCell(id) : null;
+            const gardenId = cellId(garden);
+            if (!gardenId || seen.has(gardenId) || !isGardenModule(garden)) return;
+            seen.add(gardenId);
+            gardens.push(garden);
+        });
+        return sortGardensForPicker(gardens);
+    }
+
+    function resolvedGardenCandidatesForCell(cell) {
+        const moduleCell = isGardenModule(cell) ? cell : findGardenModuleAncestor(graph, cell);
+        if (moduleCell) return [moduleCell];
+        const taskModule = isTaskModule(cell) ? cell : findTaskModuleAncestor(graph, cell);
+        if (taskModule) return linkedGardenModulesForCompanion(taskModule);
+        const teamModule = isTeamModule(cell) ? cell : findTeamModuleAncestor(graph, cell);
+        if (teamModule) return linkedGardenModulesForCompanion(teamModule);
+        return [];
+    }
+
+    function selectedCellsForDashboard() {
+        const selected = graph.getSelectionCells ? (graph.getSelectionCells() || []) : [graph.getSelectionCell && graph.getSelectionCell()].filter(Boolean);
+        return selected.filter(Boolean);
+    }
+
+    function uniqueGardenList(gardens) {
+        const seen = new Set();
+        const out = [];
+        for (const garden of (gardens || [])) {
+            const id = cellId(garden);
+            if (!id || seen.has(id) || !isGardenModule(garden)) continue;
+            seen.add(id);
+            out.push(garden);
+        }
+        return out;
+    }
+
+    function sortGardensForPicker(gardens) {
+        return uniqueGardenList(gardens).sort(function (left, right) {
+            const leftCity = gardenCity(left) || GARDEN_PICKER_NO_CITY;
+            const rightCity = gardenCity(right) || GARDEN_PICKER_NO_CITY;
+            const leftNoCity = leftCity === GARDEN_PICKER_NO_CITY;
+            const rightNoCity = rightCity === GARDEN_PICKER_NO_CITY;
+            if (leftNoCity !== rightNoCity) return leftNoCity ? 1 : -1;
+            const cityCmp = leftCity.localeCompare(rightCity);
+            if (cityCmp) return cityCmp;
+            return gardenLabel(left).localeCompare(gardenLabel(right));
+        });
+    }
+
+    function resolveDashboardToolbarContext() {
+        const allGardens = sortGardensForPicker(collectGardenModules());
+        const selected = selectedCellsForDashboard();
+        if (!selected.length) return { moduleCell: null, candidates: allGardens, allGardens, reason: "none" };
+
+        const resolved = [];
+        const ambiguous = [];
+        for (const cell of selected) {
+            const candidates = resolvedGardenCandidatesForCell(cell);
+            if (candidates.length === 1) resolved.push(candidates[0]);
+            else if (candidates.length > 1) ambiguous.push(candidates);
+            else return { moduleCell: null, candidates: allGardens, allGardens, reason: "unrelated" };
+        }
+
+        if (ambiguous.length) {
+            const filtered = ambiguous.length === 1 ? ambiguous[0] : allGardens;
+            return { moduleCell: null, candidates: sortGardensForPicker(filtered), allGardens, reason: "ambiguous" };
+        }
+
+        const unique = uniqueGardenList(resolved);
+        if (unique.length === 1) return { moduleCell: unique[0], candidates: allGardens, allGardens, reason: "selected" };
+        return { moduleCell: null, candidates: allGardens, allGardens, reason: "mixed" };
+    }
+
+    function selectedGardenModuleForToolbar() {
+        return resolveDashboardToolbarContext().moduleCell;
+    }
+
+    function selectedCellIsGardenRelated() {
+        return !!selectedGardenModuleForToolbar();
+    }
+
+    function modulesApi() {
+        return graph && graph.__trellisModules; // NEW: workspace switching repairs companion modules through the existing Modules API
+    }
+
+    function localStorageSafe() {
+        try { return typeof window !== "undefined" && window.localStorage ? window.localStorage : null; } catch (_) { return null; } // NEW: local workspace memory must fail closed
+    }
+
+    function workspaceUserScopeKey() {
+        const users = window.Trellis && window.Trellis.users;
+        const current = users && typeof users.getCurrentUser === "function" ? users.getCurrentUser() : null;
+        return current && current.id ? "user:" + current.id : "shared"; // NEW: shared fallback keeps preferences useful without login
+    }
+
+    function taskBoardPreferenceKey(moduleCell) {
+        return WORKSPACE_TASK_BOARD_STORAGE_PREFIX + ":" + workspaceUserScopeKey() + ":" + cellId(moduleCell); // NEW
+    }
+
+    function loadRememberedTaskBoardId(moduleCell) {
+        const key = taskBoardPreferenceKey(moduleCell);
+        if (!key) return "";
+        if (taskBoardSelectionByPreferenceKey.has(key)) return taskBoardSelectionByPreferenceKey.get(key) || ""; // NEW
+        const store = localStorageSafe();
+        let value = "";
+        if (store) {
+            try { value = String(store.getItem(key) || ""); } catch (_) { value = ""; }
+        }
+        taskBoardSelectionByPreferenceKey.set(key, value);
+        return value;
+    }
+
+    function saveRememberedTaskBoardId(moduleCell, boardId) {
+        const key = taskBoardPreferenceKey(moduleCell);
+        const value = String(boardId || "");
+        if (!key || !value) return;
+        taskBoardSelectionByPreferenceKey.set(key, value); // NEW
+        const store = localStorageSafe();
+        if (store) {
+            try { store.setItem(key, value); } catch (_) { }
+        }
+    }
+
+    function getSelectedWorkspaceForCell(cell) {
+        if (!cell) return null;
+        if (isGardenModule(cell) || findGardenModuleAncestor(graph, cell)) return "garden"; // NEW
+        if (isTaskModule(cell) || findTaskModuleAncestor(graph, cell)) return "tasks"; // NEW
+        if (isTeamModule(cell) || findTeamModuleAncestor(graph, cell)) return "team"; // NEW
         return null;
+    }
+
+    function getActiveWorkspaceForSelection() {
+        const selected = selectedCellsForDashboard();
+        if (!selected.length) return null;
+        const workspaces = new Set();
+        selected.forEach(function (cell) {
+            const workspace = getSelectedWorkspaceForCell(cell);
+            if (workspace) workspaces.add(workspace);
+        });
+        return workspaces.size === 1 ? Array.from(workspaces)[0] : null; // NEW: mixed selections do not claim an active workspace
+    }
+
+    function cellBoundsInModel(cell) {
+        const state = graph.view && graph.view.getState ? graph.view.getState(cell) : null;
+        if (state && Number.isFinite(Number(state.x)) && Number.isFinite(Number(state.y))) {
+            const scale = Number(graph.view && graph.view.scale) || 1;
+            const translate = graph.view && graph.view.translate ? graph.view.translate : { x: 0, y: 0 };
+            return {
+                x: Number(state.x) / scale - (Number(translate.x) || 0),
+                y: Number(state.y) / scale - (Number(translate.y) || 0),
+                width: Math.max(0, (Number(state.width) || 0) / scale),
+                height: Math.max(0, (Number(state.height) || 0) / scale)
+            };
+        }
+
+        const geo = cell && model.getGeometry ? model.getGeometry(cell) : null;
+        if (!geo) return null;
+        let x = Number(geo.x) || 0;
+        let y = Number(geo.y) || 0;
+        let parent = model.getParent ? model.getParent(cell) : cell && cell.parent;
+        while (parent) {
+            const parentGeo = model.getGeometry ? model.getGeometry(parent) : null;
+            if (parentGeo) {
+                x += Number(parentGeo.x) || 0;
+                y += Number(parentGeo.y) || 0;
+            }
+            parent = model.getParent ? model.getParent(parent) : parent.parent;
+        }
+        return {
+            x,
+            y,
+            width: Math.max(0, Number(geo.width) || 0),
+            height: Math.max(0, Number(geo.height) || 0)
+        };
+    }
+
+    function zoomGardenToViewport(moduleCell) {
+        const bounds = cellBoundsInModel(moduleCell);
+        const host = getViewportToolbarContainer();
+        if (!bounds || !host || typeof graph.fitWindow !== "function") {
+            if (graph.scrollCellToVisible) graph.scrollCellToVisible(moduleCell, true);
+            return;
+        }
+        graph.fitWindow(bounds, 48);
+        setTimeout(function () {
+            if (graph.view && Number(graph.view.scale) > 1 && graph.zoomTo) graph.zoomTo(1);
+        }, 0);
+    }
+
+    function selectAndZoomToGarden(moduleCell) {
+        if (!moduleCell || !isGardenModule(moduleCell)) return;
+        if (graph.setSelectionCell) graph.setSelectionCell(moduleCell);
+        zoomGardenToViewport(moduleCell);
+    }
+
+    function fitCellToViewport(cell) {
+        if (!cell) return;
+        const bounds = cellBoundsInModel(cell);
+        if (bounds && typeof graph.fitWindow === "function") {
+            graph.fitWindow(bounds, 48); // NEW: shared workspace navigation fits nested companion modules and boards
+        } else if (graph.scrollCellToVisible) {
+            graph.scrollCellToVisible(cell, true);
+        }
+        setTimeout(function () {
+            if (graph.view && Number(graph.view.scale) > 1 && graph.zoomTo) graph.zoomTo(1);
+        }, 0);
+    }
+
+    function selectAndFitWorkspaceCell(cell) {
+        if (!cell) return;
+        if (graph.setSelectionCell) graph.setSelectionCell(cell); // NEW
+        fitCellToViewport(cell);
+    }
+
+    function visualBoundsForPulse(cell) {
+        const state = graph.view && graph.view.getState ? graph.view.getState(cell) : null;
+        const node = state && state.shape && state.shape.node ? state.shape.node : null;
+        if (!node || !node.getBoundingClientRect) return null;
+        const rect = node.getBoundingClientRect();
+        if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+        return { left: rect.left, top: rect.top, width: rect.width, height: rect.height }; // NEW
+    }
+
+    function pulseWorkspaceDestination(cell) {
+        const host = ensureViewportToolbarHost();
+        const bounds = visualBoundsForPulse(cell);
+        if (!host || !bounds || !document || !document.createElement) return;
+        const pulse = document.createElement("div");
+        pulse.className = "trellis-garden-workspace-destination-pulse";
+        pulse.style.cssText = "position:fixed;left:" + Math.round(bounds.left - 5) + "px;top:" + Math.round(bounds.top - 5) + "px;width:" + Math.round(bounds.width + 10) + "px;height:" + Math.round(bounds.height + 10) + "px;box-sizing:border-box;border:3px solid #2563eb;border-radius:8px;box-shadow:0 0 0 4px rgba(37,99,235,.16);pointer-events:none;opacity:1;transition:opacity .45s ease;z-index:" + GRAPH_OVERLAY_Z.ANNOTATION + ";"; // NEW
+        host.appendChild(pulse);
+        setTimeout(function () { pulse.style.opacity = "0"; }, 650);
+        setTimeout(function () { if (pulse.parentNode) pulse.parentNode.removeChild(pulse); }, 1150);
+    }
+
+    function visibleViewportGardenInsertPoint() {
+        const moduleBounds = { width: DEFAULT_MODULE_WIDTH, height: DEFAULT_MODULE_HEIGHT };
+        if (graph.getCenterInsertPoint) return graph.getCenterInsertPoint(moduleBounds);
+        const host = getViewportToolbarContainer();
+        const view = graph.view || {};
+        const scale = Number(view.scale) > 0 ? Number(view.scale) : 1;
+        const translate = view.translate || { x: 0, y: 0 };
+        const scrollLeft = host && Number(host.scrollLeft) || 0;
+        const scrollTop = host && Number(host.scrollTop) || 0;
+        const width = host && (Number(host.clientWidth) || 0) || 0;
+        const height = host && (Number(host.clientHeight) || 0) || 0;
+        return {
+            x: (scrollLeft + width / 2) / scale - (Number(translate.x) || 0) - moduleBounds.width / 2,
+            y: (scrollTop + height / 2) / scale - (Number(translate.y) || 0) - moduleBounds.height / 2
+        };
+    }
+
+    function createGardenFromDashboard() {
+        const modules = graph && graph.__trellisModules;
+        if (!modules || typeof modules.createModuleAtPoint !== "function") return;
+        const garden = modules.createModuleAtPoint(visibleViewportGardenInsertPoint(), "garden");
+        if (garden) selectAndZoomToGarden(garden);
+    }
+
+    function runStartupGardenFocusOnce() {
+        if (!dashboardDiagramIsOpen()) return;
+        if (startupGardenFocusDone) return;
+        startupGardenFocusDone = true;
+        const gardens = collectGardenModules();
+        if (gardens.length !== 1 || selectedCellIsGardenRelated()) return;
+        selectAndZoomToGarden(gardens[0]);
+    }
+
+    function scheduleStartupGardenFocus() {
+        if (!dashboardDiagramIsOpen()) return;
+        setTimeout(runStartupGardenFocusOnce, 0);
+    }
+
+    function groupedGardensForPicker(gardens, searchText) {
+        const query = String(searchText || "").trim().toLocaleLowerCase();
+        const visible = sortGardensForPicker(gardens).filter(function (garden) {
+            return !query || gardenLabel(garden).toLocaleLowerCase().indexOf(query) >= 0;
+        });
+        const byCity = new Map();
+        for (const garden of visible) {
+            const city = gardenCity(garden) || GARDEN_PICKER_NO_CITY;
+            if (!byCity.has(city)) byCity.set(city, []);
+            byCity.get(city).push(garden);
+        }
+        return Array.from(byCity.keys()).sort(function (left, right) {
+            if (left === GARDEN_PICKER_NO_CITY && right !== GARDEN_PICKER_NO_CITY) return 1;
+            if (right === GARDEN_PICKER_NO_CITY && left !== GARDEN_PICKER_NO_CITY) return -1;
+            return left.localeCompare(right);
+        }).map(function (city) {
+            return { city, gardens: byCity.get(city).sort(function (left, right) { return gardenLabel(left).localeCompare(gardenLabel(right)); }) };
+        });
+    }
+
+    function closeGardenPicker(entry) {
+        gardenPickerOpen = false;
+        if (entry && entry.gardenPickerPopover) {
+            entry.gardenPickerPopover.remove();
+            entry.gardenPickerPopover = null;
+        }
+    }
+
+    function renderGardenPickerPopover(entry, context) {
+        if (!entry || !entry.gardenPickerWrap) return;
+        if (entry.gardenPickerPopover) entry.gardenPickerPopover.remove();
+        if (!gardenPickerOpen) { entry.gardenPickerPopover = null; return; }
+
+        const popover = document.createElement("div");
+        popover.className = "trellis-garden-dashboard-picker-popover";
+        popover.style.cssText = "position:absolute;left:0;top:calc(100% + 4px);width:280px;max-height:320px;overflow:auto;background:#fff;border:1px solid #9ca3af;border-radius:6px;box-shadow:0 8px 20px rgba(0,0,0,.18);padding:8px;box-sizing:border-box;z-index:" + GRAPH_OVERLAY_Z.CONTROL_TOP + ";";
+
+        const search = document.createElement("input");
+        search.type = "search";
+        search.className = "trellis-garden-dashboard-garden-search";
+        search.placeholder = "Search gardens";
+        search.setAttribute("aria-label", "Search gardens");
+        search.value = gardenPickerSearchText;
+        search.style.cssText = "box-sizing:border-box;width:100%;height:26px;margin-bottom:6px;padding:4px 6px;border:1px solid #9ca3af;border-radius:4px;font:12px Arial,sans-serif;";
+        search.addEventListener("input", function () {
+            gardenPickerSearchText = search.value || "";
+            renderGardenPickerPopover(entry, lastToolbarContext || context || {});
+        });
+        popover.appendChild(search);
+
+        const candidates = (context && context.candidates) || [];
+        const groups = groupedGardensForPicker(candidates, gardenPickerSearchText);
+        if (!groups.length) {
+            const empty = document.createElement("div");
+            empty.className = "trellis-garden-dashboard-picker-empty";
+            empty.textContent = "No gardens match the current search.";
+            empty.style.cssText = "padding:8px 4px;color:#6b7280;font:12px Arial,sans-serif;";
+            popover.appendChild(empty);
+        }
+
+        groups.forEach(function (group) {
+            const heading = document.createElement("div");
+            heading.className = "trellis-garden-dashboard-picker-city";
+            heading.textContent = group.city;
+            heading.style.cssText = "padding:7px 4px 3px;color:#4b5563;font:700 11px Arial,sans-serif;text-transform:uppercase;";
+            popover.appendChild(heading);
+            group.gardens.forEach(function (garden) {
+                const row = document.createElement("button");
+                row.type = "button";
+                row.className = "trellis-garden-dashboard-picker-row";
+                row.textContent = gardenLabel(garden);
+                row.setAttribute("data-garden-cell-id", cellId(garden));
+                row.style.cssText = "display:block;width:100%;text-align:left;border:0;background:#fff;border-radius:4px;padding:6px 7px;cursor:pointer;font:12px Arial,sans-serif;color:#111827;";
+                row.addEventListener("mouseenter", function () { row.style.background = "#eff6ff"; });
+                row.addEventListener("mouseleave", function () { row.style.background = "#fff"; });
+                row.addEventListener("click", function (ev) {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    closeGardenPicker(entry);
+                    selectAndZoomToGarden(garden);
+                    scheduleViewportToolbarRefresh();
+                });
+                popover.appendChild(row);
+            });
+        });
+
+        entry.gardenPickerWrap.appendChild(popover);
+        entry.gardenPickerPopover = popover;
+        setTimeout(function () { if (search && typeof search.focus === "function") search.focus(); }, 0);
     }
 
     function createToolbarButton(label, title, variant) {
@@ -1060,21 +1329,52 @@ Draw.loadPlugin(function (ui) {
         return btn;
     }
 
-    function createTaskBoardButton() {
-        const btn = createToolbarButton("Task Board", "Open the current task board", "open");
+    function createWorkspaceSegment(label, workspace) {
+        const btn = createToolbarButton(label, "Open " + label + " workspace", "open"); // NEW
+        btn.className = "trellis-garden-workspace-segment trellis-garden-workspace-" + workspace;
+        btn.setAttribute("data-workspace", workspace);
         btn.style.position = "relative";
+        btn.style.borderRadius = "0";
+        btn.style.marginLeft = "-1px";
+        btn.style.minWidth = workspace === "garden" ? "58px" : "52px";
+        return btn;
+    }
+
+    function attachTaskWorkspaceBadge(btn) {
         const badge = document.createElement("span");
-        badge.className = "trellis-task-board-toolbar-badge";
+        badge.className = "trellis-garden-workspace-task-badge"; // CHANGE: unseen task count now belongs to the Tasks segment
         badge.style.cssText = "display:none;position:absolute;right:-7px;top:-7px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:#dc2626;color:#fff;font:10px Arial,sans-serif;line-height:16px;text-align:center;box-sizing:border-box;";
         btn.appendChild(badge);
-        btn.__trellisTaskBadge = badge;
-        return btn;
+        btn.__trellisTaskBadge = badge; // CHANGE: preserve existing badge update path on the new switcher segment
+    }
+
+    function createWorkspaceSwitcher() {
+        const wrap = document.createElement("div");
+        wrap.className = "trellis-garden-workspace-switcher"; // NEW
+        wrap.style.display = "inline-flex";
+        wrap.style.alignItems = "center";
+        wrap.style.gap = "0";
+        wrap.style.height = BTN_SIZE + "px";
+
+        const gardenBtn = createWorkspaceSegment("Garden", "garden");
+        const tasksBtn = createWorkspaceSegment("Tasks", "tasks");
+        const teamBtn = createWorkspaceSegment("Team", "team");
+        gardenBtn.style.borderTopLeftRadius = "6px";
+        gardenBtn.style.borderBottomLeftRadius = "6px";
+        teamBtn.style.borderTopRightRadius = "6px";
+        teamBtn.style.borderBottomRightRadius = "6px";
+        attachTaskWorkspaceBadge(tasksBtn);
+        wrap.appendChild(gardenBtn);
+        wrap.appendChild(tasksBtn);
+        wrap.appendChild(teamBtn);
+        return { wrap, gardenBtn, tasksBtn, teamBtn };
     }
 
     function createTaskBoardSelect() {
         const select = document.createElement("select");
         select.className = "trellis-task-board-toolbar-selector";
-        select.title = "Open a task board";
+        select.title = "Task Boards"; // CHANGE: visible value is the selected board; tooltip names the chooser
+        select.setAttribute("aria-label", "Task Boards"); // NEW
         select.style.height = BTN_SIZE + "px";
         select.style.border = "1px solid #777";
         select.style.borderRadius = "6px";
@@ -1083,7 +1383,17 @@ Draw.loadPlugin(function (ui) {
         select.style.fontSize = "12px";
         select.style.boxSizing = "border-box";
         select.style.maxWidth = "210px";
+        ["mousedown", "mouseup", "click", "dblclick", "pointerdown", "pointerup"].forEach(function (type) { select.addEventListener(type, stopToolbarNativeControlEvent); }); // NEW: native selects must keep their default open behavior
         return select;
+    }
+
+    function isToolbarNativeControl(target) {
+        const tag = target && target.tagName ? String(target.tagName).toUpperCase() : "";
+        return tag === "SELECT" || tag === "OPTION" || tag === "INPUT" || tag === "TEXTAREA"; // NEW: form controls need browser-default pointer handling
+    }
+
+    function stopToolbarNativeControlEvent(evt) {
+        if (evt && evt.stopPropagation) evt.stopPropagation(); // NEW: keep graph gestures out without preventing native control defaults
     }
 
     function taskManagerApi() {
@@ -1091,24 +1401,90 @@ Draw.loadPlugin(function (ui) {
     }
 
     function taskBoardOptionLabel(boardSummary) {
-        const count = Number(boardSummary && boardSummary.count) || 0;
-        const years = Array.isArray(boardSummary && boardSummary.years) ? boardSummary.years : [];
-        return String(boardSummary && boardSummary.name || "Kanban") + (count ? " (" + count + ")" : "") + (years.length ? " " + years.join(", ") : "");
+        return String(boardSummary && boardSummary.name || "Kanban"); // CHANGE: the compact chooser displays only the selected board name
+    }
+
+    function taskBoardIdInList(boards, boardId) {
+        const id = String(boardId || "");
+        return !!id && (boards || []).some(function (board) { return cellId(board) === id; }); // NEW
+    }
+
+    function selectedTaskBoardIdForGarden(moduleCell, boards, fallbackValue) {
+        const remembered = loadRememberedTaskBoardId(moduleCell);
+        if (taskBoardIdInList(boards, remembered)) return remembered; // NEW
+        if (taskBoardIdInList(boards, fallbackValue)) return String(fallbackValue || "");
+        return boards && boards.length ? cellId(boards[0]) : ""; // CHANGE: main board remains first/default
+    }
+
+    function applyWorkspaceSegmentState(btn, active, disabled) {
+        if (!btn) return;
+        if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") window.Trellis.ui.applyButtonStyle(btn, "open", { compact: true, active: !!active }); // NEW
+        btn.disabled = !!disabled;
+        btn.style.height = BTN_SIZE + "px";
+        btn.style.padding = "0 8px";
+        btn.style.background = active ? "#eff6ff" : "#fff";
+        btn.style.borderColor = active ? "#2563eb" : "#777";
+        btn.style.color = active ? "#1e3a8a" : "#1d4ed8";
+        btn.style.fontWeight = active ? "700" : "";
+        btn.style.opacity = disabled ? "0.45" : "1";
+        btn.style.cursor = disabled ? "not-allowed" : "pointer";
+        btn.setAttribute("aria-pressed", active ? "true" : "false");
+    }
+
+    function ensureWorkspaceTaskModule(moduleCell) {
+        const modules = modulesApi();
+        if (!moduleCell || !modules || typeof modules.ensureGardenTaskModule !== "function") return null;
+        return modules.ensureGardenTaskModule(moduleCell, { createMainBoard: true }); // NEW: switcher repairs/creates missing Task companion on demand
+    }
+
+    function ensureWorkspaceTeamModule(moduleCell) {
+        const modules = modulesApi();
+        if (!moduleCell || !modules || typeof modules.ensureGardenTeamModule !== "function") return null;
+        return modules.ensureGardenTeamModule(moduleCell); // NEW: switcher repairs/creates missing Team companion on demand
     }
 
     function openToolbarTaskBoard(moduleCell, boardId) {
-        if (!moduleCell) return;
+        return openGardenWorkspace(moduleCell, "tasks", boardId); // CHANGE: the Tasks workspace owns board opening
+    }
+
+    function openGardenWorkspace(moduleCell, workspace, boardId) {
+        if (!moduleCell) return null;
+        if (workspace === "garden") {
+            selectAndZoomToGarden(moduleCell);
+            setTimeout(function () { pulseWorkspaceDestination(moduleCell); }, 0); // NEW
+            renderViewportToolbar(moduleCell);
+            return moduleCell;
+        }
+        if (workspace === "team") {
+            const teamModule = ensureWorkspaceTeamModule(moduleCell);
+            if (teamModule) {
+                selectAndFitWorkspaceCell(teamModule);
+                setTimeout(function () { pulseWorkspaceDestination(teamModule); }, 0); // NEW
+                renderViewportToolbar(moduleCell);
+            }
+            return teamModule || null;
+        }
+        if (workspace !== "tasks") return null;
+        const taskModule = ensureWorkspaceTaskModule(moduleCell);
         const api = taskManagerApi();
-        if (!api || typeof api.openBoardForGarden !== "function") return;
+        if (!api || typeof api.openBoardForGarden !== "function") {
+            if (taskModule) {
+                selectAndFitWorkspaceCell(taskModule);
+                setTimeout(function () { pulseWorkspaceDestination(taskModule); }, 0); // NEW
+            }
+            return taskModule || null;
+        }
         const year = getToolbarYear(moduleCell);
-        const moduleId = cellId(moduleCell);
-        const requestedBoardId = boardId || taskBoardSelectionByModuleId.get(moduleId) || "";
-        if (requestedBoardId) taskBoardSelectionByModuleId.set(moduleId, requestedBoardId);
+        const taskBoards = typeof api.listBoardsForGarden === "function" ? (api.listBoardsForGarden(moduleCell) || []) : [];
+        const requestedBoardId = boardId || selectedTaskBoardIdForGarden(moduleCell, taskBoards, "");
+        if (requestedBoardId) saveRememberedTaskBoardId(moduleCell, requestedBoardId); // CHANGE
         const openedBoard = api.openBoardForGarden(moduleCell, requestedBoardId, year);
         const openedBoardId = cellId(openedBoard);
-        if (openedBoardId) taskBoardSelectionByModuleId.set(moduleId, openedBoardId);
+        if (openedBoardId) saveRememberedTaskBoardId(moduleCell, openedBoardId); // CHANGE
         if (typeof api.setActiveDashboardContext === "function") api.setActiveDashboardContext(moduleCell, year);
+        setTimeout(function () { pulseWorkspaceDestination(openedBoard || taskModule); }, 0); // NEW
         renderViewportToolbar(moduleCell);
+        return openedBoard || taskModule || null;
     }
 
     function activeIrrigationModuleMatches(moduleCell) {
@@ -1187,9 +1563,20 @@ Draw.loadPlugin(function (ui) {
     function setButtonDisabled(button, disabled, title) {
         if (!button) return;
         button.disabled = !!disabled;
-        button.title = title || button.title || "";
+        if (title !== undefined) button.title = title;
         button.style.opacity = disabled ? "0.45" : "1";
         button.style.cursor = disabled ? "not-allowed" : "pointer";
+    }
+
+    function renderWorkspaceSwitcher(entry, activeWorkspace, taskSummary) {
+        if (!entry || !entry.workspaceWrap) return;
+        entry.workspaceWrap.style.display = "inline-flex"; // NEW
+        applyWorkspaceSegmentState(entry.workspaceGardenBtn, activeWorkspace === "garden", false);
+        applyWorkspaceSegmentState(entry.workspaceTasksBtn, activeWorkspace === "tasks", false);
+        applyWorkspaceSegmentState(entry.workspaceTeamBtn, activeWorkspace === "team", false);
+        const badge = entry.workspaceTasksBtn && entry.workspaceTasksBtn.__trellisTaskBadge;
+        const badgeTotal = taskSummary && !taskSummary.hidden ? (Number(taskSummary.total) || 0) : 0;
+        if (badge) { badge.style.display = badgeTotal > 0 ? "" : "none"; badge.textContent = String(badgeTotal); } // CHANGE
     }
 
     function alertShareStatus(message) {
@@ -1420,11 +1807,43 @@ Draw.loadPlugin(function (ui) {
         yearLabel.style.background = "#fff";
         yearLabel.style.boxSizing = "border-box";
 
+        const gardenName = document.createElement("div");
+        gardenName.className = "trellis-garden-dashboard-active-garden";
+        gardenName.style.minHeight = BTN_SIZE + "px";
+        gardenName.style.display = "flex";
+        gardenName.style.alignItems = "center";
+        gardenName.style.maxWidth = "230px";
+        gardenName.style.overflow = "hidden";
+        gardenName.style.textOverflow = "ellipsis";
+        gardenName.style.whiteSpace = "nowrap";
+        gardenName.style.fontFamily = "Arial";
+        gardenName.style.fontSize = "12px";
+        gardenName.style.fontWeight = "700";
+        gardenName.style.color = "#111827";
+
+        const gardenPickerWrap = document.createElement("div");
+        gardenPickerWrap.className = "trellis-garden-dashboard-picker";
+        gardenPickerWrap.style.position = "relative";
+        gardenPickerWrap.style.display = "none";
+
+        const gardenPickerBtn = createToolbarButton("Select garden...", "Select a garden module", "open");
+        gardenPickerBtn.className = "trellis-garden-dashboard-picker-button";
+
+        const createGardenBtn = createToolbarButton("Create Garden", "Create a garden module", "add");
+        createGardenBtn.className = "trellis-garden-dashboard-create-garden";
+        createGardenBtn.style.display = "none";
+
+        gardenPickerWrap.appendChild(gardenPickerBtn);
+
+        const workspaceSwitcher = createWorkspaceSwitcher(); // NEW
+        const workspaceWrap = workspaceSwitcher.wrap; // NEW
+        const workspaceGardenBtn = workspaceSwitcher.gardenBtn; // NEW
+        const workspaceTasksBtn = workspaceSwitcher.tasksBtn; // NEW
+        const workspaceTeamBtn = workspaceSwitcher.teamBtn; // NEW
         const planBtn = createToolbarButton("Plan", "Open the year planner", "open");
         const equipmentBtn = createToolbarButton("Equipment", "Open garden equipment", "open");
         const irrigationBtn = createToolbarButton("Irrigation", "Open irrigation planner", "open");
         const allocateBtn = createToolbarButton("Allocate", "Allocate the current plan", "add");
-        const taskBoardBtn = createTaskBoardButton();
         const taskBoardSelect = createTaskBoardSelect();
         const messagesBtn = createToolbarButton("Messages", "Review access requests", "open");
         const exportBtn = createToolbarButton("Export", "Export dashboard CSV", "neutral");
@@ -1440,15 +1859,18 @@ Draw.loadPlugin(function (ui) {
         table.style.paddingTop = "8px";
         table.style.boxSizing = "border-box";
 
+        leftControls.appendChild(gardenName);
+        leftControls.appendChild(gardenPickerWrap);
+        leftControls.appendChild(createGardenBtn);
+        leftControls.appendChild(workspaceWrap);
+        leftControls.appendChild(taskBoardSelect);
         leftControls.appendChild(prev);
         leftControls.appendChild(yearLabel);
         leftControls.appendChild(next);
         leftControls.appendChild(planBtn);
-        leftControls.appendChild(equipmentBtn);
-        leftControls.appendChild(irrigationBtn);
         leftControls.appendChild(allocateBtn);
-        leftControls.appendChild(taskBoardBtn);
-        leftControls.appendChild(taskBoardSelect);
+        leftControls.appendChild(irrigationBtn);
+        leftControls.appendChild(equipmentBtn);
         rightActions.appendChild(messagesBtn);
         rightActions.appendChild(exportBtn);
         rightActions.appendChild(shareBtn);
@@ -1460,9 +1882,12 @@ Draw.loadPlugin(function (ui) {
         wrap.appendChild(panel);
         host.appendChild(wrap);
 
-        viewportToolbar = { wrap, panel, controls, leftControls, rightActions, prev, next, yearLabel, planBtn, equipmentBtn, irrigationBtn, allocateBtn, taskBoardBtn, taskBoardSelect, messagesBtn, exportBtn, shareBtn, tableBtn, table };
+        viewportToolbar = { wrap, panel, controls, leftControls, rightActions, gardenName, gardenPickerWrap, gardenPickerBtn, createGardenBtn, gardenPickerPopover: null, workspaceWrap, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, prev, next, yearLabel, planBtn, equipmentBtn, irrigationBtn, allocateBtn, taskBoardSelect, messagesBtn, exportBtn, shareBtn, tableBtn, table }; // CHANGE
+        [prev, next, planBtn, equipmentBtn, irrigationBtn, allocateBtn, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, messagesBtn, exportBtn, shareBtn, tableBtn, gardenPickerBtn, createGardenBtn].forEach(function (button) {
+            button.__trellisDashboardDefaultTitle = button.title || "";
+        });
 
-        mxEvent.addListener(wrap, "mousedown", function (evt) { mxEvent.consume(evt); });
+        mxEvent.addListener(wrap, "mousedown", function (evt) { if (isToolbarNativeControl(evt && evt.target)) { stopToolbarNativeControlEvent(evt); return; } mxEvent.consume(evt); }); // CHANGE: do not block native select opening
         mxEvent.addListener(wrap, "click", function (evt) { evt.stopPropagation(); });
 
         prev.addEventListener("click", function () {
@@ -1493,8 +1918,18 @@ Draw.loadPlugin(function (ui) {
             setToolbarYear(activeToolbarModule, year);
             try { window.dispatchEvent(new CustomEvent(ALLOCATE_PLAN_EVENT, { detail: { moduleCellId: cellId(activeToolbarModule), year } })); } catch (_) { }
         });
-        taskBoardBtn.addEventListener("click", function () { openToolbarTaskBoard(activeToolbarModule, taskBoardSelect.value); });
-        taskBoardSelect.addEventListener("change", function () { if (activeToolbarModule && taskBoardSelect.value) taskBoardSelectionByModuleId.set(cellId(activeToolbarModule), taskBoardSelect.value); });
+        workspaceGardenBtn.addEventListener("click", function () { openGardenWorkspace(activeToolbarModule, "garden"); }); // NEW
+        workspaceTasksBtn.addEventListener("click", function () { openToolbarTaskBoard(activeToolbarModule, taskBoardSelect.value); }); // CHANGE
+        workspaceTeamBtn.addEventListener("click", function () { openGardenWorkspace(activeToolbarModule, "team"); }); // NEW
+        taskBoardSelect.addEventListener("change", function () { if (activeToolbarModule && taskBoardSelect.value) { saveRememberedTaskBoardId(activeToolbarModule, taskBoardSelect.value); openToolbarTaskBoard(activeToolbarModule, taskBoardSelect.value); } }); // CHANGE
+        gardenPickerBtn.addEventListener("click", function (ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            gardenPickerOpen = !gardenPickerOpen;
+            if (gardenPickerOpen) gardenPickerSearchText = "";
+            renderGardenPickerPopover(viewportToolbar, lastToolbarContext || resolveDashboardToolbarContext());
+        });
+        createGardenBtn.addEventListener("click", function () { createGardenFromDashboard(); });
         exportBtn.addEventListener("click", function () {
             if (!activeToolbarModule) return;
             const year = getToolbarYear(activeToolbarModule);
@@ -1523,20 +1958,73 @@ Draw.loadPlugin(function (ui) {
         entry.wrap.style.width = Math.max(0, Math.round(viewportToolbarWidth(host))) + "px";
     }
 
+    function setGardenActionControlsDisabled(entry, disabled, title) {
+        [entry.prev, entry.next, entry.planBtn, entry.equipmentBtn, entry.irrigationBtn, entry.allocateBtn, entry.messagesBtn, entry.exportBtn, entry.shareBtn, entry.tableBtn].forEach(function (button) { // CHANGE: workspace switcher and task board selector remain available outside Garden
+            setButtonDisabled(button, disabled, disabled ? "Select a garden module first." : (button.__trellisDashboardDefaultTitle || ""));
+        });
+        if (disabled && title) {
+            [entry.prev, entry.next, entry.planBtn, entry.equipmentBtn, entry.irrigationBtn, entry.allocateBtn, entry.messagesBtn, entry.exportBtn, entry.shareBtn, entry.tableBtn].forEach(function (button) { if (button) button.title = title; }); // NEW
+        }
+        entry.taskBoardSelect.disabled = true;
+        entry.taskBoardSelect.style.opacity = disabled ? "0.45" : "1";
+        entry.taskBoardSelect.style.cursor = disabled ? "not-allowed" : "pointer";
+    }
+
+    function renderBlankViewportToolbar(context) {
+        const entry = ensureViewportToolbar();
+        if (!entry) return;
+        activeToolbarModule = null;
+        if (taskManagerApi() && typeof taskManagerApi().setActiveDashboardContext === "function") taskManagerApi().setActiveDashboardContext(null, null);
+        entry.gardenName.textContent = "No active garden";
+        entry.gardenName.title = "No active garden";
+        entry.yearLabel.textContent = String(new Date().getFullYear());
+        entry.taskBoardSelect.innerHTML = "";
+        entry.taskBoardSelect.title = "Task Boards"; // CHANGE
+        entry.taskBoardSelect.style.display = "none"; // NEW: no board chooser without an active garden
+        entry.workspaceWrap.style.display = "none"; // NEW: no switcher until there is an active garden
+        entry.messagesBtn.textContent = "Messages";
+        entry.tableBtn.textContent = "Table";
+        entry.tableBtn.title = "Select a garden module first.";
+        entry.table.style.display = "none";
+        entry.table.innerHTML = "";
+        applyToolbarActiveButtonState(entry.irrigationBtn, false);
+        setGardenActionControlsDisabled(entry, true);
+
+        const candidates = sortGardensForPicker(context && context.candidates || []);
+        entry.gardenPickerWrap.style.display = candidates.length ? "block" : "none";
+        entry.createGardenBtn.style.display = candidates.length ? "none" : "inline-block";
+        entry.gardenPickerBtn.textContent = "Select garden...";
+        entry.gardenPickerBtn.title = candidates.length ? "Select a garden module" : "No garden modules found.";
+        setButtonDisabled(entry.gardenPickerBtn, !candidates.length, candidates.length ? "Select a garden module" : "No garden modules found.");
+        setButtonDisabled(entry.createGardenBtn, false, "Create a garden module");
+        if (!gardenPickerOpen) closeGardenPicker(entry);
+        else renderGardenPickerPopover(entry, context || {});
+        entry.wrap.style.display = "block";
+        positionViewportToolbar(entry);
+    }
+
     function renderViewportToolbar(moduleCell) {
         const entry = ensureViewportToolbar();
         if (!entry || !moduleCell) return;
+        closeGardenPicker(entry);
+        entry.gardenName.textContent = gardenLabel(moduleCell);
+        entry.gardenName.title = gardenLabel(moduleCell);
+        entry.gardenPickerWrap.style.display = "none";
+        entry.createGardenBtn.style.display = "none";
         const year = getToolbarYear(moduleCell);
+        const activeWorkspace = getActiveWorkspaceForSelection() || "garden"; // NEW
+        const gardenToolsDisabled = activeWorkspace === "tasks" || activeWorkspace === "team"; // NEW
+        setGardenActionControlsDisabled(entry, gardenToolsDisabled, gardenToolsDisabled ? WORKSPACE_DISABLED_TITLE : "");
         const expanded = toolbarExpandedByModuleId.get(cellId(moduleCell)) === true;
         const taskApi = taskManagerApi();
         if (taskApi && typeof taskApi.setActiveDashboardContext === "function") taskApi.setActiveDashboardContext(moduleCell, year);
         const taskBoards = taskApi && typeof taskApi.listBoardsForGarden === "function" ? (taskApi.listBoardsForGarden(moduleCell) || []) : [];
         const taskSummary = taskApi && typeof taskApi.unseenCreatedSummaryForGarden === "function" ? taskApi.unseenCreatedSummaryForGarden(moduleCell) : { hidden: true, total: 0, boards: [] };
         const summaryByBoardId = new Map((taskSummary.boards || []).map(function (entry) { return [String(entry.boardId || ""), entry]; }));
-        const moduleId = cellId(moduleCell);
-        const preferredBoardId = taskBoardSelectionByModuleId.get(moduleId) || entry.taskBoardSelect.value || "";
+        const preferredBoardId = selectedTaskBoardIdForGarden(moduleCell, taskBoards, entry.taskBoardSelect.value); // CHANGE
         let selectedBoardId = "";
         entry.yearLabel.textContent = String(year);
+        renderWorkspaceSwitcher(entry, activeWorkspace, taskSummary); // NEW
         entry.taskBoardSelect.innerHTML = "";
         taskBoards.forEach(function (board) {
             const id = cellId(board);
@@ -1548,20 +2036,21 @@ Draw.loadPlugin(function (ui) {
             entry.taskBoardSelect.appendChild(option);
         });
         if (!selectedBoardId && taskBoards.length) selectedBoardId = cellId(taskBoards[0]);
-        if (selectedBoardId) { entry.taskBoardSelect.value = selectedBoardId; taskBoardSelectionByModuleId.set(moduleId, selectedBoardId); }
-        entry.taskBoardSelect.disabled = !taskApi || !taskBoards.length;
-        entry.taskBoardBtn.disabled = !taskApi || !taskBoards.length;
-        const badge = entry.taskBoardBtn.__trellisTaskBadge;
-        const badgeTotal = taskSummary.hidden ? 0 : (Number(taskSummary.total) || 0);
-        if (badge) { badge.style.display = badgeTotal > 0 ? "" : "none"; badge.textContent = String(badgeTotal); }
-        entry.taskBoardBtn.title = taskApi ? (taskBoards.length ? "Open the selected task board" : "No companion task board exists for this garden") : "Task manager is unavailable";
+        if (selectedBoardId) entry.taskBoardSelect.value = selectedBoardId; // CHANGE: render reflects remembered/default board without persisting defaults
+        entry.taskBoardSelect.style.display = taskBoards.length > 1 ? "" : "none"; // NEW: single-board gardens use the Tasks segment only
+        entry.taskBoardSelect.disabled = !taskApi || taskBoards.length < 2; // CHANGE
+        entry.taskBoardSelect.style.opacity = entry.taskBoardSelect.disabled ? "0.45" : "1";
+        entry.taskBoardSelect.style.cursor = entry.taskBoardSelect.disabled ? "not-allowed" : "pointer";
+        entry.taskBoardSelect.title = "Task Boards"; // CHANGE
         entry.messagesBtn.textContent = messagesButtonLabel(moduleCell);
-        entry.messagesBtn.title = "Review access requests";
+        entry.messagesBtn.title = gardenToolsDisabled ? WORKSPACE_DISABLED_TITLE : "Review access requests"; // CHANGE
         entry.tableBtn.textContent = expanded ? "Hide Table" : "Table";
-        entry.tableBtn.title = expanded ? "Hide dashboard table" : "Show dashboard table";
+        entry.tableBtn.title = gardenToolsDisabled ? WORKSPACE_DISABLED_TITLE : (expanded ? "Hide dashboard table" : "Show dashboard table"); // CHANGE
         applyToolbarActiveButtonState(entry.irrigationBtn, activeIrrigationModuleMatches(moduleCell));
+        const allocateStatus = allocationPlanStatus(moduleCell, year); // CHANGE: gate Allocate from the selected year's saved crop plan.
+        setButtonDisabled(entry.allocateBtn, gardenToolsDisabled || !allocateStatus.enabled, gardenToolsDisabled ? WORKSPACE_DISABLED_TITLE : allocateStatus.title); // CHANGE
         const shareState = shareSelectionState();
-        setButtonDisabled(entry.shareBtn, !shareState.ok, shareState.ok ? "Share selected scope(s)" : shareState.reason);
+        setButtonDisabled(entry.shareBtn, gardenToolsDisabled || !shareState.ok, gardenToolsDisabled ? WORKSPACE_DISABLED_TITLE : (shareState.ok ? "Share selected scope(s)" : shareState.reason)); // CHANGE
         entry.table.style.display = expanded ? "block" : "none";
         if (expanded) {
             entry.table.innerHTML = formatOverlayTableHtml(computeModuleMetrics(moduleCell, year), year);
@@ -1587,10 +2076,12 @@ Draw.loadPlugin(function (ui) {
 
     function refreshViewportToolbarForSelection() {
         toolbarRefreshTimer = null;
-        const moduleCell = selectedGardenModuleForToolbar();
-        if (!moduleCell) { hideViewportToolbar(); return; }
-        activeToolbarModule = moduleCell;
-        renderViewportToolbar(moduleCell);
+        if (!dashboardDiagramIsOpen()) { hideViewportToolbar(); return; }
+        const context = resolveDashboardToolbarContext();
+        lastToolbarContext = context;
+        if (!context.moduleCell) { renderBlankViewportToolbar(context); return; }
+        activeToolbarModule = context.moduleCell;
+        renderViewportToolbar(context.moduleCell);
     }
 
     function scheduleViewportToolbarRefresh() {
@@ -1598,585 +2089,19 @@ Draw.loadPlugin(function (ui) {
         toolbarRefreshTimer = setTimeout(refreshViewportToolbarForSelection, 0);
     }
 
-    function openIrrigationPlannerForDashboard(dashCell) {
-        const moduleCell = findModuleAncestor(graph, dashCell);
-        if (!moduleCell) return;
-        const plannerApi = graph && graph.__trellisIrrigationPlanner;
-        if (!plannerApi || typeof plannerApi.openIrrigationMode !== "function") return;
-        plannerApi.openIrrigationMode(moduleCell, { preserveViewport: true });
+    function handleDashboardDiagramOpened() {
+        startupGardenFocusDone = false;
+        gardenPickerOpen = false;
+        gardenPickerSearchText = "";
+        scheduleViewportToolbarRefresh();
+        scheduleStartupGardenFocus();
     }
-
-    function toggleIrrigationPlannerForDashboard(dashCell) {
-        const moduleCell = findModuleAncestor(graph, dashCell);
-        toggleIrrigationPlannerForModule(moduleCell);
-    }
-
-    // -------------------- DOM overlay (controls + table) --------------------
-    const overlayByDashId = new Map();
-
-    function removeOverlay(dashId) {
-        const entry = overlayByDashId.get(dashId);
-        if (!entry) return;
-        entry.wrap.remove();
-        overlayByDashId.delete(dashId);
-    }
-
-    function ensureOverlay(dashCell) {
-        const dashId = dashCell.getId();
-        if (overlayByDashId.has(dashId)) return overlayByDashId.get(dashId);
-
-        const wrap = document.createElement("div");
-        wrap.style.display = "flex";
-        wrap.style.flexDirection = "column";
-        wrap.style.minHeight = "0";
-
-        wrap.style.position = "absolute";
-        wrap.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL);
-        wrap.style.pointerEvents = "none";
-        wrap.style.boxSizing = "border-box";
-        wrap.style.padding = "0";
-        wrap.style.overflow = "hidden";
-
-        // Visual: keep overlay readable but inside the cell bounds 
-        wrap.style.background = "rgba(255,255,255,0.0)";
-
-        const uiScaleBox = document.createElement("div");
-        uiScaleBox.style.position = "absolute";
-        uiScaleBox.style.left = "0";
-        uiScaleBox.style.top = "0";
-        uiScaleBox.style.display = "flex";
-        uiScaleBox.style.flexDirection = "column";
-        uiScaleBox.style.boxSizing = "border-box";
-        uiScaleBox.style.transformOrigin = "top left";
-        uiScaleBox.style.pointerEvents = "none";
-
-        // Header bar (controls) 
-        const header = document.createElement("div");
-        header.style.flex = "0 0 auto";
-        header.style.display = "flex";
-        header.style.alignItems = "center";
-        header.style.justifyContent = "space-between";
-        header.style.gap = "0px";
-        header.style.padding = CTRL_PAD + "px";
-        header.style.boxSizing = "border-box";
-        header.style.background = "rgba(255,255,255,0.0)";
-        header.style.pointerEvents = "none";
-
-        // Header bar button layout
-        const leftBar = document.createElement("div");
-        leftBar.style.display = "flex";
-        leftBar.style.alignItems = "center";
-        leftBar.style.pointerEvents = "none";
-
-        const centerBar = document.createElement("div");
-        centerBar.style.display = "flex";
-        centerBar.style.alignItems = "center";
-        centerBar.style.justifyContent = "center";
-        centerBar.style.flex = "1 1 auto";
-        centerBar.style.pointerEvents = "none";
-
-        const rightBar = document.createElement("div");
-        rightBar.style.display = "flex";
-        rightBar.style.alignItems = "center";
-        rightBar.style.justifyContent = "flex-end";
-        rightBar.style.pointerEvents = "none";
-
-        const contentViewport = document.createElement("div");
-        contentViewport.style.flex = "1 1 auto";
-        contentViewport.style.minHeight = "0";
-        contentViewport.style.overflow = "hidden";
-        contentViewport.style.boxSizing = "border-box";
-        contentViewport.style.padding = CTRL_PAD + "px";
-        contentViewport.style.pointerEvents = "none";
-
-        contentViewport.style.background = "#fff";
-        contentViewport.style.border = "1px solid #999";
-        contentViewport.style.borderRadius = "6px";
-
-        const mkBtn = (txt) => {
-            const b = document.createElement("button");
-            b.textContent = txt;
-            if (window.Trellis && window.Trellis.ui && typeof window.Trellis.ui.applyButtonStyle === "function") window.Trellis.ui.applyButtonStyle(b, "neutral", { compact: true });
-            b.style.width = BTN_SIZE + "px";
-            b.style.height = BTN_SIZE + "px";
-            if (!b.getAttribute("data-trellis-button-variant")) b.style.border = "1px solid #777";
-            b.style.borderRadius = "6px";
-            if (!b.getAttribute("data-trellis-button-variant")) b.style.background = "#fff";
-            b.style.cursor = "pointer";
-            b.style.padding = "0";
-            b.style.lineHeight = "1";
-            b.style.pointerEvents = "auto";
-            return b;
-        };
-
-        const prev = mkBtn("◀");
-        const next = mkBtn("▶");
-
-        const yearLabel = document.createElement("div");
-        yearLabel.style.minWidth = "60px";
-        yearLabel.style.textAlign = "center";
-        yearLabel.style.fontFamily = "Arial";
-        yearLabel.style.fontSize = "12px";
-        yearLabel.style.fontWeight = "700";
-        yearLabel.style.padding = "2px 6px";
-        yearLabel.style.border = "1px solid #777";
-        yearLabel.style.borderRadius = "6px";
-        yearLabel.style.background = "#fff";
-
-        const planBtn = createToolbarButton("Plan", "Open the year planner", "open");
-        planBtn.style.pointerEvents = "auto";
-
-        const equipmentBtn = createToolbarButton("Equipment", "Open garden equipment", "open");
-        equipmentBtn.style.pointerEvents = "auto";
-
-        const irrigationBtn = createToolbarButton("Irrigation", "Open irrigation planner", "open");
-        irrigationBtn.style.pointerEvents = "auto";
-
-        const allocateBtn = createToolbarButton("Allocate", "Allocate the current plan", "add");
-        allocateBtn.style.pointerEvents = "auto";
-
-        const exportBtn = createToolbarButton("Export", "Export dashboard CSV", "neutral");
-        exportBtn.style.pointerEvents = "auto";
-
-        // Content area 
-        const content = document.createElement("div");
-        content.style.background = "transparent";
-        content.style.border = "0";
-        content.style.borderRadius = "0";
-        content.style.padding = "0";
-        content.style.boxSizing = "border-box";
-        content.style.width = "max-content";
-        content.style.pointerEvents = "none";
-
-        const contentScaleBox = document.createElement("div");
-        contentScaleBox.style.width = "max-content";
-        contentScaleBox.style.height = "max-content";
-        contentScaleBox.style.pointerEvents = "none";
-
-
-        contentScaleBox.appendChild(content);
-        contentViewport.appendChild(contentScaleBox);
-        uiScaleBox.appendChild(header);
-        uiScaleBox.appendChild(contentViewport);
-        wrap.appendChild(uiScaleBox);
-
-        function syncYearLabel() {
-            yearLabel.textContent = String(getDashboardYear(dashCell));
-        }
-
-        prev.addEventListener("click", (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-
-            const moduleCell = findGardenModuleAncestor(graph, dashCell);
-
-            model.beginUpdate();
-            try {
-                const y = getDashboardYear(dashCell);
-                setDashboardYear(dashCell, y - 1, moduleCell);
-            } finally {
-                model.endUpdate();
-            }
-
-            if (moduleCell) applyYearVisibilityToModule(moduleCell, getDashboardYear(dashCell));
-
-            recomputeAndRenderDashboard(dashCell, { allowGeometryChange: true, preserveWidth: true });
-        });
-
-
-        next.addEventListener("click", (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-
-            const moduleCell = findGardenModuleAncestor(graph, dashCell);
-
-            model.beginUpdate();
-            try {
-                const y = getDashboardYear(dashCell);
-                setDashboardYear(dashCell, y + 1, moduleCell);
-            } finally {
-                model.endUpdate();
-            }
-
-            if (moduleCell) applyYearVisibilityToModule(moduleCell, getDashboardYear(dashCell));
-
-            recomputeAndRenderDashboard(dashCell, { allowGeometryChange: true, preserveWidth: true });
-        });
-
-        planBtn.addEventListener("click", (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-
-            const moduleCell = findModuleAncestor(graph, dashCell);
-            if (!moduleCell) return;
-
-            const year = getDashboardYear(dashCell);
-
-            setDashboardYear(dashCell, year, moduleCell);
-
-            try {
-                window.dispatchEvent(new CustomEvent(PLAN_YEAR_EVENT, {
-                    detail: {
-                        moduleCellId: moduleCell.getId ? moduleCell.getId() : moduleCell.id,
-                        dashCellId: dashCell.getId ? dashCell.getId() : dashCell.id,
-                        year: year
-                    }
-                }));
-            } catch (_) { }
-        });
-
-        equipmentBtn.addEventListener("click", (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-
-            const moduleCell = findModuleAncestor(graph, dashCell);
-            if (!moduleCell) return;
-
-            const equipmentApi = graph && graph.__trellisEquipment;
-            if (!equipmentApi || typeof equipmentApi.openDialog !== "function") return;
-
-            equipmentApi.openDialog(moduleCell);
-        });
-
-        irrigationBtn.addEventListener("click", (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-            toggleIrrigationPlannerForDashboard(dashCell);
-        });
-
-        allocateBtn.addEventListener("click", (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-
-            const moduleCell = findModuleAncestor(graph, dashCell);
-            if (!moduleCell) return;
-
-            const year = getDashboardYear(dashCell);
-
-            setDashboardYear(dashCell, year, moduleCell);
-
-            try {
-                window.dispatchEvent(new CustomEvent(ALLOCATE_PLAN_EVENT, {
-                    detail: {
-                        moduleCellId: moduleCell.getId ? moduleCell.getId() : moduleCell.id,
-                        dashCellId: dashCell.getId ? dashCell.getId() : dashCell.id,
-                        year: year
-                    }
-                }));
-            } catch (_) { }
-        });
-
-        exportBtn.addEventListener("click", (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-
-            const moduleCell = findModuleAncestor(graph, dashCell);
-            if (!moduleCell) return;
-
-            const year = getDashboardYear(dashCell);
-
-            applyYearVisibilityToModule(moduleCell, year);
-
-            const metrics = computeModuleMetrics(moduleCell, year);
-
-            const safeName = String(metrics.moduleName || "garden")
-                .replace(/[^\w\-]+/g, "_")
-                .slice(0, 60);
-
-            const filename = `${safeName}_${year}_dashboard.csv`;
-            const csv = buildDashboardCsvSingleTable(metrics, year);
-            downloadCsv(filename, csv);
-        });
-
-        // Left: year controls
-        leftBar.appendChild(prev);
-        leftBar.appendChild(yearLabel);
-        leftBar.appendChild(next);
-
-        // Right: action buttons
-        rightBar.appendChild(planBtn);
-        rightBar.appendChild(equipmentBtn);
-        rightBar.appendChild(irrigationBtn);
-        rightBar.appendChild(allocateBtn);
-        rightBar.appendChild(exportBtn);
-
-        // Mount bars into header
-        header.appendChild(leftBar);
-        header.appendChild(centerBar);
-        header.appendChild(rightBar);
-
-
-        graph.container.appendChild(wrap);
-
-        const entry = {
-            wrap, uiScaleBox, header,
-            leftBar, centerBar, rightBar,
-            contentViewport, contentScaleBox, content,
-            prev, next,
-            planBtn, equipmentBtn, irrigationBtn, allocateBtn, exportBtn, // CHANGE: retain the in-cell Irrigation button so its active state can refresh
-            yearLabel, syncYearLabel
-        };
-
-        overlayByDashId.set(dashId, entry);
-
-        syncYearLabel();
-        return entry;
-    }
-
-    // -------------------- Zoom Helpers ------------------------------
-
-    function applyDashboardUiScale(entry, dashCell) {
-        if (!entry || !entry.uiScaleBox) return;
-        const s = getEffectiveDashUiScale(entry, dashCell);
-        syncDashboardUiNaturalBox(entry);
-        entry.uiScaleBox.style.transformOrigin = "top left";
-        entry.uiScaleBox.style.transform = `scale(${s})`;
-    }
-
-    function getNaturalContentWidthPx(entry) {
-        if (!entry || !entry.content) return 0;
-        // scrollWidth is the natural layout width (not affected by transforms on ancestors)
-        const w = entry.content.scrollWidth || entry.content.offsetWidth || 0;
-        return Math.max(0, w);
-    }
-
-    function getNaturalContentHeightPx(entry) {
-        if (!entry || !entry.content) return 0;
-        const h = entry.content.scrollHeight || entry.content.offsetHeight || 0;
-        return Math.max(0, h);
-    }
-
-    function measureHeaderNaturalSize(entry) {
-        if (!entry) return { width: 0, height: 0 };
-        const bars = [entry.leftBar, entry.centerBar, entry.rightBar];
-        let width = 2 * CTRL_PAD;
-        let height = 0;
-        for (const bar of bars) {
-            if (!bar) continue;
-            width += bar.scrollWidth || bar.offsetWidth || 0;
-            height = Math.max(height, bar.scrollHeight || bar.offsetHeight || 0);
-        }
-        return { width, height: height + (2 * CTRL_PAD) };
-    }
-
-    function measureDashboardUiNaturalSize(entry) {
-        if (!entry) return { width: DASH_MIN_W, height: DASH_MIN_W / DASH_DEFAULT_ASPECT };
-        const headerSize = measureHeaderNaturalSize(entry);
-        const contentW = getNaturalContentWidthPx(entry);
-        const contentH = getNaturalContentHeightPx(entry);
-        const viewportW = contentW + (2 * CTRL_PAD) + 2;
-        const viewportH = contentH + (2 * CTRL_PAD) + 2;
-        return {
-            width: Math.max(DASH_MIN_W, Math.ceil(Math.max(headerSize.width, viewportW))),
-            height: Math.max(1, Math.ceil(headerSize.height + viewportH))
-        };
-    }
-
-    function syncDashboardUiNaturalBox(entry) {
-        if (!entry || !entry.uiScaleBox) return;
-        const size = measureDashboardUiNaturalSize(entry);
-        const headerH = measureHeaderNaturalSize(entry).height;
-        entry.uiScaleBox.style.width = size.width + "px";
-        entry.uiScaleBox.style.height = size.height + "px";
-        if (entry.header) entry.header.style.width = size.width + "px";
-        if (entry.contentViewport) {
-            entry.contentViewport.style.width = size.width + "px";
-            entry.contentViewport.style.height = Math.max(0, size.height - headerH) + "px";
-        }
-    }
-
-    function getEffectiveDashUiScale(entry, dashCell) {
-        const st = dashCell && graph.view.getState(dashCell);
-        const size = measureDashboardUiNaturalSize(entry);
-        if (!st || !(size.width > 0) || !(size.height > 0)) return 1;
-        return Math.min(Math.max(0, st.width) / size.width, Math.max(0, st.height) / size.height);
-    }
-
-    function applyScaledHeaderLayout(entry) {
-        if (!entry) return;
-
-        const gapPx = BTN_GAP;
-        const padPx = CTRL_PAD;
-
-        entry.header.style.padding = padPx + "px";
-
-        // Use CSS gap inside each bar for consistent spacing
-        for (const bar of [entry.leftBar, entry.centerBar, entry.rightBar]) {
-            if (!bar) continue;
-            bar.style.gap = gapPx + "px";
-        }
-    }
-
-    function positionOverlay(dashCell) {
-        const st = graph.view.getState(dashCell);
-        if (!st) return;
-
-        const entry = overlayByDashId.get(dashCell.getId());
-        if (!entry) return;
-
-        entry.wrap.style.left = Math.round(st.x) + "px";
-        entry.wrap.style.top = Math.round(st.y) + "px";
-        entry.wrap.style.width = Math.max(0, Math.round(st.width)) + "px";
-        entry.wrap.style.height = Math.max(0, Math.round(st.height)) + "px";
-
-        applyScaledHeaderLayout(entry);
-        applyDashboardUiScale(entry, dashCell);
-    }
-
-
-    function renderOverlay(dashCell, metrics, year, opts) {
-        const entry = ensureOverlay(dashCell);
-        entry.syncYearLabel();
-        applyToolbarActiveButtonState(entry.irrigationBtn, activeIrrigationModuleMatches(findGardenModuleAncestor(graph, dashCell))); // CHANGE: keep in-cell dashboard Irrigation active state synchronized
-        entry.content.innerHTML = formatOverlayTableHtml(metrics, year);
-        const irrigationSummary = entry.content.querySelector(".trellis-irrigation-dashboard-summary");
-        if (irrigationSummary) {
-            irrigationSummary.style.pointerEvents = "auto";
-            irrigationSummary.addEventListener("click", function (ev) {
-                ev.preventDefault();
-                ev.stopPropagation();
-                openIrrigationPlannerForDashboard(dashCell);
-            });
-        }
-        syncDashboardUiNaturalBox(entry);
-        if (opts && opts.allowGeometryChange) {
-            model.beginUpdate();
-            try {
-                clampDashboardGeometry(dashCell, { preserveArea: !opts.preserveWidth, preserveWidth: !!opts.preserveWidth, allowModuleGrow: true });
-            } finally {
-                model.endUpdate();
-            }
-        }
-        positionOverlay(dashCell);
-    }
-
-    function cleanupMissingDashboards() {
-        for (const [dashId, entry] of overlayByDashId.entries()) {
-            const cell = model.getCell(dashId);
-            if (!cell || !cell.getAttribute || cell.getAttribute(DASH_ATTR) !== "1") {
-                removeOverlay(dashId);
-            }
-        }
-    }
-
-    function refreshDashboardIrrigationButtons() {
-        for (const [dashId, entry] of overlayByDashId.entries()) {
-            const dashCell = model.getCell(dashId);
-            if (!dashCell || !entry || !entry.irrigationBtn) continue;
-            applyToolbarActiveButtonState(entry.irrigationBtn, activeIrrigationModuleMatches(findGardenModuleAncestor(graph, dashCell)));
-        }
-    } // CHANGE: keep already-created in-cell dashboard Irrigation buttons synced on irrigation mode changes
-
-    // -------------------- Dashboard update orchestration --------------------
-    function recomputeAndRenderDashboard(dashCell, opts) {
-        return;
-        if (!dashCell) return;
-        const moduleCell = findModuleAncestor(graph, dashCell);
-        if (!moduleCell) return;
-
-        const year = getDashboardYear(dashCell);
-        const metrics = computeModuleMetrics(moduleCell, year);
-
-        // Render the full UI as a DOM overlay. 
-        renderOverlay(dashCell, metrics, year, opts);
-    }
-
-    function ensureOverlayForDashboard(dashCell) {
-        if (!dashCell) return;
-        ensureOverlay(dashCell);
-        positionOverlay(dashCell);
-    }
-
-    // -------------------- Create dashboard cell --------------------
-    function createDashboardCell(moduleCell) {
-        return null;
-        const parent = moduleCell;
-
-        const x = 20;
-        const y = 20;
-        const w = 320;
-        const h = 220;
-
-        // Safer: use graph.insertVertex which handles value nodes correctly
-        const inserted = graph.insertVertex(parent, null, "", x, y, w, h, DASH_STYLE);
-
-        setCellAttr(inserted, DASH_ATTR, "1");
-
-        const initialYear = getModuleCurrentYear(moduleCell) || new Date().getFullYear();
-        setDashboardYear(inserted, initialYear, moduleCell);
-        ensureGardenModuleMinimum(moduleCell);
-        applyYearVisibilityToModule(moduleCell, initialYear);
-
-        // Ensure it is visually on top of other children (optional)
-        try { graph.orderCells(false, [inserted]); } catch (e) { }
-
-        ensureOverlayForDashboard(inserted);
-        recomputeAndRenderDashboard(inserted, { allowGeometryChange: true });
-
-        return inserted;
-    }
-
-    function hasGardenSettingsSet(moduleCell) {
-        return !!(moduleCell && moduleCell.getAttribute &&
-            (moduleCell.getAttribute("city_id") || moduleCell.getAttribute("city_name")) &&
-            moduleCell.getAttribute("unit_system"));
-    }
-
-    // -------------------- Auto-create dashboard on garden module event -------------------- 
-    if (!graph.__gardenDashboardAutoCreateInstalled) {
-        graph.__gardenDashboardAutoCreateInstalled = true;
-
-        graph.addListener("usl:gardenModuleNeedsSettings", function (sender, evt) {
-            return;
-            const mod = evt.getProperty("cell");
-            if (!mod || !isGardenModule(mod)) return;
-
-            // Idempotent: do nothing if already present                                       
-            if (findDashboardCell(mod)) return;
-
-            // Optional gating: only create after mandatory settings exist                      
-            // If you want immediate dashboard creation, delete this block.                     
-            if (!hasGardenSettingsSet(mod)) return;
-
-            setTimeout(function () {
-                // Re-check after delay                                                         
-                if (!model.getCell(mod.getId ? mod.getId() : mod.id)) return;
-                if (!isGardenModule(mod)) return;
-                if (findDashboardCell(mod)) return;
-                if (!hasGardenSettingsSet(mod)) return;
-
-                model.beginUpdate();
-                try {
-                    createDashboardCell(mod);
-                } finally {
-                    model.endUpdate();
-                }
-            }, 0);
-        });
-    }
-
 
     // -------------------- View/model event wiring --------------------
-    let rafPending = false;
-    let attachExistingDashboardsOncePending = false;
-    let attachExistingDashboardsOnceDone = false;
-
     function scheduleOverlayReposition() {
         scheduleViewportToolbarRefresh();
-        return;
-        if (rafPending) return;
-        rafPending = true;
-        requestAnimationFrame(function () {
-            rafPending = false;
-            cleanupMissingDashboards();
-            for (const [dashId, entry] of overlayByDashId.entries()) {
-                const cell = model.getCell(dashId);
-                if (cell) positionOverlay(cell);
-            }
-        });
     }
 
-    // Hook into view updates (zoom/pan/resize)
     const oldValidate = graph.view.validate;
     graph.view.validate = function () {
         const res = oldValidate.apply(this, arguments);
@@ -2184,156 +2109,25 @@ Draw.loadPlugin(function (ui) {
         return res;
     };
 
-    window.addEventListener("resize", function () {
-        scheduleOverlayReposition();
-    });
-
-    function collectTouchedDashboards(cells) {
-        return [];
-        const out = [];
-        const seen = new Set();
-        for (const cell of (cells || [])) {
-            const dash = isDashboardCell(cell) ? cell : (isGardenModule(cell) ? findDashboardCell(cell) : findDashboardAncestor(cell));
-            if (!dash || seen.has(dash.getId())) continue;
-            seen.add(dash.getId());
-            out.push(dash);
-        }
-        return out;
-    }
-
-    graph.addListener(mxEvent.CELLS_MOVED, function (_sender, evt) {
-        const dashboards = collectTouchedDashboards(evt.getProperty("cells") || []);
-        if (!dashboards.length) return;
-        model.beginUpdate();
-        try {
-            dashboards.forEach(dash => clampDashboardGeometry(dash, { preserveSize: true, allowModuleGrow: true }));
-        } finally {
-            model.endUpdate();
-        }
-        scheduleOverlayReposition();
-    });
-
-    graph.addListener(mxEvent.CELLS_RESIZED, function (_sender, evt) {
-        const dashboards = collectTouchedDashboards(evt.getProperty("cells") || []);
-        if (!dashboards.length) return;
-        model.beginUpdate();
-        try {
-            dashboards.forEach(dash => clampDashboardGeometry(dash, { preserveArea: false, allowModuleGrow: true }));
-        } finally {
-            model.endUpdate();
-        }
-        scheduleOverlayReposition();
-    });
-
-    // On model changes, reposition overlays (and optionally recompute when selected). 
-    model.addListener(mxEvent.CHANGE, function () {
-        scheduleOverlayReposition();
-
-        // Conservative recompute: if a dashboard is selected (or inside selected), update it. 
-        const sel = graph.getSelectionCell && graph.getSelectionCell();
-        if (!sel) return;
-        const dash = (sel.getAttribute && sel.getAttribute(DASH_ATTR) === "1") ? sel : findDashboardAncestor(sel);
-        if (!dash) return;
-        recomputeAndRenderDashboard(dash);
-    });
-
-    // Recompute when selecting a dashboard (or something inside it)
-    graph.getSelectionModel().addListener(mxEvent.CHANGE, function () {
-        return;
-    });
-
-    // -------------------- Context menu: Create Garden Dashboard --------------------
-    function registerTrellisContextMenuContributor(contributor) {
-        function finishRegistration() {
-            if (!window.TrellisContextMenu) return;
-            window.TrellisContextMenu.install(ui);
-            window.TrellisContextMenu.register(contributor);
-        }
-
-        if (window.TrellisContextMenu) {
-            finishRegistration();
-        } else if (typeof mxscript === "function") {
-            mxscript("plugins/garden_planner_plugins/Trellis_Context_Menu.js", finishRegistration);
-        }
-    }
-
-    registerTrellisContextMenuContributor({
-        id: "gardenDashboard",
-        priority: 200,
-        addItems: function (menu, cell, evt) {
-            return;
-
-            if (!cell) return;
-
-            // If user right-clicks inside something, we want the garden module ancestor
-            const mod = isGardenModule(cell) ? cell : (function () {
-                const anc = findModuleAncestor(graph, cell);
-                return (anc && isGardenModule(anc)) ? anc : null;
-            })();
-
-            if (!mod) return;
-
-            const existing = findDashboardCell(mod);
-            if (existing) return;
-
-            menu.addSeparator();
-            menu.addItem("Create Garden Dashboard", null, function () {
-                graph.getModel().beginUpdate();
-                try {
-                    createDashboardCell(mod);
-                } finally {
-                    graph.getModel().endUpdate();
-                }
-            });
-        }
-    });
-
-    // -------------------- If dashboards already exist in file, attach overlays --------------------
-    function attachExistingDashboards() {
-        return;
-        const root = model.getRoot();
-        const all = getDescendants(root);
-
-        for (const c of all) {
-            if (c && c.getAttribute && c.getAttribute(DASH_ATTR) === "1") {
-                ensureOverlayForDashboard(c);
-                recomputeAndRenderDashboard(c);
-
-                const mod = findGardenModuleAncestor(graph, c);
-                if (mod) {
-                    const year = getDashboardYear(c);
-                    setDashboardYear(c, year, mod);
-                    applyYearVisibilityToModule(mod, year);
-                }
-            }
-        }
-
-        scheduleOverlayReposition();
-    }
-
-    function scheduleAttachExistingDashboards() {
-        return;
-        setTimeout(function () {
-            attachExistingDashboards();
-        }, 10000);
-    }
-
+    window.addEventListener("resize", scheduleOverlayReposition);
     if (graph.getSelectionModel && graph.getSelectionModel().addListener) {
         graph.getSelectionModel().addListener(mxEvent.CHANGE, scheduleViewportToolbarRefresh);
     }
     if (model.addListener) {
         model.addListener(mxEvent.CHANGE, scheduleViewportToolbarRefresh);
     }
+    if (ui.editor && typeof ui.editor.addListener === "function") {
+        ui.editor.addListener("fileLoaded", handleDashboardDiagramOpened);
+    }
     window.addEventListener("resize", scheduleViewportToolbarRefresh);
     window.addEventListener("trellisUsersStoreChanged", scheduleViewportToolbarRefresh);
     window.addEventListener("trellisTaskBoardSeenStateChanged", scheduleViewportToolbarRefresh);
-    window.addEventListener(IRRIGATION_MODE_CHANGED_EVENT, function () { scheduleViewportToolbarRefresh(); refreshDashboardIrrigationButtons(); }); // CHANGE: refresh viewport and in-cell Irrigation active states
+    window.addEventListener(IRRIGATION_MODE_CHANGED_EVENT, scheduleViewportToolbarRefresh);
     const viewportToolbarHost = getViewportToolbarContainer();
     if (viewportToolbarHost && viewportToolbarHost.addEventListener) {
         viewportToolbarHost.addEventListener("scroll", scheduleViewportToolbarRefresh);
     }
     scheduleViewportToolbarRefresh();
-
-    scheduleAttachExistingDashboards();
+    scheduleStartupGardenFocus();
 
 });

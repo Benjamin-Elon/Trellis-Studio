@@ -161,17 +161,22 @@ Draw.loadPlugin(function (ui) {
             return;
         }
 
+        const previousGeo = mGeo.clone();
+        let nextGeo = null;
+
         if (manageUpdate) model.beginUpdate();
         try {
             const g2 = mGeo.clone();
             g2.width = targetW;
             g2.height = targetH;
+            nextGeo = g2;
             model.setGeometry(moduleCell, g2);
         } finally {
             if (manageUpdate) model.endUpdate();
         }
 
         graph.refresh(moduleCell);
+        enforceExternalMarginsForBoundsChange(moduleCell, previousGeo, nextGeo); // NEW
     }
 
     function getModuleMarginValue(moduleCell, defaultPx) {
@@ -684,6 +689,7 @@ Draw.loadPlugin(function (ui) {
         const modules = allTopLevelModules();
         if (modules.length < 2) return;
         const seedIds = new Set(seeds.map(cellId));
+        const excludedIds = new Set((options.excludeCells || []).map(cellId)); // NEW
         let frontier = seeds.slice();
         const manageUpdate = options.manageUpdate !== false;
         graph.__trellisModuleExternalMarginEnforcing = true;
@@ -697,7 +703,7 @@ Draw.loadPlugin(function (ui) {
                     if (!anchorRect) return;
                     modules.forEach(function (candidate) {
                         const candidateId = cellId(candidate);
-                        if (!candidateId || candidate === anchor || seedIds.has(candidateId)) return;
+                        if (!candidateId || candidate === anchor || seedIds.has(candidateId) || excludedIds.has(candidateId)) return;
                         const candidateRect = cellPageBounds(candidate);
                         if (!candidateRect) return;
                         const margin = modulePairExternalMargin(anchor, candidate);
@@ -713,6 +719,72 @@ Draw.loadPlugin(function (ui) {
             if (manageUpdate) model.endUpdate();
             graph.__trellisModuleExternalMarginEnforcing = false;
         }
+    }
+
+    function sameSideShrinkDelta(cell, candidate, previousGeo, nextGeo) {
+        const margin = modulePairExternalMargin(cell, candidate);
+        const threshold = margin * 3;
+        const candidateRect = cellPageBounds(candidate);
+        if (!candidateRect) return null;
+        const previousLeft = Number(previousGeo.x) || 0;
+        const previousTop = Number(previousGeo.y) || 0;
+        const previousRight = previousLeft + (Number(previousGeo.width) || 0);
+        const previousBottom = previousTop + (Number(previousGeo.height) || 0);
+        const nextLeft = Number(nextGeo.x) || 0;
+        const nextTop = Number(nextGeo.y) || 0;
+        const nextRight = nextLeft + (Number(nextGeo.width) || 0);
+        const nextBottom = nextTop + (Number(nextGeo.height) || 0);
+        const candidateRight = candidateRect.x + candidateRect.w;
+        const candidateBottom = candidateRect.y + candidateRect.h;
+        let dx = 0, dy = 0;
+
+        if (nextLeft > previousLeft + EPS) {
+            const gap = previousLeft - candidateRight;
+            if (candidateRight <= previousLeft + EPS && gap <= threshold + EPS) dx = (nextLeft - margin) - candidateRight; // NEW
+        }
+        if (nextRight < previousRight - EPS) {
+            const gap = candidateRect.x - previousRight;
+            if (candidateRect.x >= previousRight - EPS && gap <= threshold + EPS) dx = (nextRight + margin) - candidateRect.x; // NEW
+        }
+        if (nextTop > previousTop + EPS) {
+            const gap = previousTop - candidateBottom;
+            if (candidateBottom <= previousTop + EPS && gap <= threshold + EPS) dy = (nextTop - margin) - candidateBottom; // NEW
+        }
+        if (nextBottom < previousBottom - EPS) {
+            const gap = candidateRect.y - previousBottom;
+            if (candidateRect.y >= previousBottom - EPS && gap <= threshold + EPS) dy = (nextBottom + margin) - candidateRect.y; // NEW
+        }
+
+        return Math.abs(dx) >= EPS || Math.abs(dy) >= EPS ? { dx, dy } : null;
+    }
+
+    function pullExternalMarginNeighborsForShrink(cell, previousGeo, nextGeo) {
+        if (!isModule(cell) || model.getParent(cell) !== graph.getDefaultParent() || graph.__trellisModuleExternalMarginEnforcing) return []; // NEW
+        const moved = [];
+        const modules = allTopLevelModules();
+        model.beginUpdate();
+        try {
+            modules.forEach(function (candidate) {
+                if (candidate === cell) return;
+                const delta = sameSideShrinkDelta(cell, candidate, previousGeo, nextGeo);
+                if (delta && translateModuleGeometry(candidate, delta.dx, delta.dy)) moved.push(candidate);
+            });
+        } finally {
+            model.endUpdate();
+        }
+        return moved;
+    }
+
+    function enforceExternalMarginsForBoundsChange(cell, previousGeo, nextGeo) {
+        if (!isModule(cell) || !previousGeo || !nextGeo) return;
+        if (nextGeo.x < previousGeo.x - EPS) enforceModuleExternalMarginsFor([cell], { vector: { x: nextGeo.x - previousGeo.x, y: 0 } }); // NEW
+        if (nextGeo.y < previousGeo.y - EPS) enforceModuleExternalMarginsFor([cell], { vector: { x: 0, y: nextGeo.y - previousGeo.y } }); // NEW
+        const rightDelta = (nextGeo.x + nextGeo.width) - (previousGeo.x + previousGeo.width);
+        const bottomDelta = (nextGeo.y + nextGeo.height) - (previousGeo.y + previousGeo.height);
+        if (rightDelta > EPS) enforceModuleExternalMarginsFor([cell], { vector: { x: rightDelta, y: 0 } }); // NEW
+        if (bottomDelta > EPS) enforceModuleExternalMarginsFor([cell], { vector: { x: 0, y: bottomDelta } }); // NEW
+        const pulled = pullExternalMarginNeighborsForShrink(cell, previousGeo, nextGeo); // NEW
+        if (pulled.length) enforceModuleExternalMarginsFor(pulled, { excludeCells: [cell] }); // NEW
     }
 
     function setCellLabel(cell, label) {
@@ -1575,13 +1647,7 @@ Draw.loadPlugin(function (ui) {
                 if (!isModule(cell)) return;
                 const next = bounds[index] || model.getGeometry(cell);
                 const prev = previous[index];
-                if (!next || !prev) return;
-                if (next.x < prev.x - EPS) enforceModuleExternalMarginsFor([cell], { vector: { x: next.x - prev.x, y: 0 } }); // NEW
-                if (next.y < prev.y - EPS) enforceModuleExternalMarginsFor([cell], { vector: { x: 0, y: next.y - prev.y } }); // NEW
-                const rightDelta = (next.x + next.width) - (prev.x + prev.width);
-                const bottomDelta = (next.y + next.height) - (prev.y + prev.height);
-                if (rightDelta > EPS) enforceModuleExternalMarginsFor([cell], { vector: { x: rightDelta, y: 0 } }); // NEW
-                if (bottomDelta > EPS) enforceModuleExternalMarginsFor([cell], { vector: { x: 0, y: bottomDelta } }); // NEW
+                enforceExternalMarginsForBoundsChange(cell, prev, next); // NEW
             });
         });
 

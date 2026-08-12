@@ -120,6 +120,10 @@ function laneTogglePanel(root) {
     return root.querySelector(".trellis-task-board-column-panel");
 }
 
+function boardModeLabel(root) {
+    return root.querySelector(".trellis-task-board-mode-label");
+}
+
 function taskModuleOverlay(document) {
     return document.querySelector(".trellis-task-module-board-overlay");
 }
@@ -127,6 +131,12 @@ function taskModuleOverlay(document) {
 function taskModuleOverlayInput(document) {
     const input = document.querySelector(".trellis-task-module-board-overlay input[aria-label='Task label']");
     assert.ok(input, "missing task module label input");
+    return input;
+}
+
+function taskBoardNameInput(document) {
+    const input = document.querySelector(".trellis-task-board-header-controls input[aria-label='Task board name']");
+    assert.ok(input, "missing task board name input");
     return input;
 }
 
@@ -141,7 +151,7 @@ test("task manager routes garden board creation through companion Task Modules",
     assert.match(text, /function ensureTaskModuleForGarden\(gardenModule\)/);
     assert.match(text, /const parent = isGardenModule\(containerVertex\) \? boardContainerForGarden\(containerVertex\)/);
     assert.match(text, /const taskModule = cell && model\.isVertex\(cell\) && isTaskModule\(cell\) \? cell : null;/);
-    assert.match(text, /menu\.addItem\('Add Kanban Board'[\s\S]*createSecondaryBoardIn\(taskModule\)/);
+    assert.match(text, /menu\.addItem\(taskModuleAddBoardLabel\(taskModule\)[\s\S]*createBoardForTaskModuleState\(taskModule\)/); // CHANGE
     assert.match(text, /const createMainBoard = !!\(evt[\s\S]*evt\.getProperty\("createMainBoard"\)\);/);
     assert.doesNotMatch(text, /function repairExistingCompanionTaskBoards\(\)/);
     assert.doesNotMatch(text, /setTimeout\(repairExistingCompanionTaskBoards, 0\);/);
@@ -164,8 +174,9 @@ test("task manager installs a selected Task Module add-board overlay", () => {
     const text = taskManagerSource();
     assert.match(text, /function installSelectedTaskModuleBoardOverlay\(\)/);
     assert.match(text, /trellis-task-module-board-overlay/);
-    assert.match(text, /addBoardBtn\.textContent = 'Add Kanban Board';/);
-    assert.match(text, /createSecondaryBoardIn\(taskModule\)/);
+    assert.match(text, /function taskModuleHasAnyBoard\(taskModule\)/); // NEW
+    assert.match(text, /addBoardBtn\.textContent = taskModuleAddBoardLabel\(taskModule\);/); // CHANGE
+    assert.match(text, /createBoardForTaskModuleState\(taskModule\)/); // CHANGE
     assert.match(text, /installSelectedTaskModuleBoardOverlay\(\);/);
 });
 
@@ -670,6 +681,9 @@ test("task manager source keeps dashboard open highlights before seen marking", 
     assert.match(text, /let suppressDashboardSeenSelection = false;/);
     assert.match(text, /if \(!suppressDashboardSeenSelection && activeDashboardTaskContext[\s\S]*markBoardYearViewed\(sel, activeDashboardTaskContext\.gardenModule, activeDashboardTaskContext\.year\)/);
     assert.match(text, /suppressDashboardSeenSelection = true;[\s\S]*graph\.setSelectionCell\(board\);[\s\S]*suppressDashboardSeenSelection = false;/);
+    assert.match(text, /function cellBoundsInModel\(cell\)/); // CHANGE: dashboard-opened boards are nested under companion Task modules.
+    assert.match(text, /const bounds = cellBoundsInModel\(board\);/); // CHANGE
+    assert.match(text, /graph\.fitWindow\(bounds, 24\)/); // CHANGE
     assert.match(text, /fitBoardInViewport\(board\);[\s\S]*highlightUnseenCards\(board, viewerKey, String\(year \|\| ''\)\);[\s\S]*markBoardYearViewed\(board, gardenModule, year\);/);
     assert.match(text, /trellis-task-unseen-created-highlight/);
     assert.doesNotMatch(text, /__trellisUnseenOriginalStyle/);
@@ -702,6 +716,7 @@ test("scheduler sync-created tasks target the companion Task Module main board",
     assert.equal(boardCellsUnder(garden).length, 0);
     const boards = boardCellsUnder(taskModule);
     assert.equal(boards.length, 1);
+    assert.equal(attr(boards[0], "label"), "Main Board"); // NEW
     assert.ok(boards[0].children.some(lane => (lane.children || []).some(card => attr(card, "title") === "Sow peas")));
 });
 
@@ -722,7 +737,7 @@ test("task module overlay edits labels with one bed-style field and no clamping"
     assert.ok(buttonByText(overlay, "Set Module Margins")); // CHANGE
     assert.equal(buttonByText(overlay, "Internal Margin"), undefined); // CHANGE
     assert.equal(buttonByText(overlay, "External Margin"), undefined); // CHANGE
-    assert.ok(buttonByText(overlay, "Add Kanban Board"));
+    assert.ok(buttonByText(overlay, "Add Main Task Board")); // CHANGE
     let input = taskModuleOverlayInput(h.document);
     assert.equal(input.value, "Kitchen Garden Tasks");
 
@@ -755,6 +770,106 @@ test("task module overlay edits labels with one bed-style field and no clamping"
     h.graph.setSelectionCell(taskModule);
     await nextTick();
     assert.equal(taskModuleOverlay(h.document).textContent.includes("Market Garden"), false);
+});
+
+test("task module overlay creates a main board when no task board exists", async () => {
+    const h = makeHarness();
+    const { taskModule } = attachCompanionTaskFixture(h);
+    h.graph.setSelectionCell(taskModule);
+    await nextTick();
+
+    const overlay = taskModuleOverlay(h.document);
+    const addMain = buttonByText(overlay, "Add Main Task Board");
+    assert.ok(addMain); // NEW
+    addMain.click();
+
+    const boards = boardCellsUnder(taskModule);
+    assert.equal(boards.length, 1); // NEW
+    assert.equal(attr(boards[0], "board_role"), "main"); // NEW
+    assert.equal(attr(boards[0], "label"), "Main Board"); // NEW
+    assert.equal(h.selectedCell, boards[0]); // NEW
+});
+
+test("task module overlay creates a secondary board when a task board already exists", async () => {
+    const h = makeHarness();
+    const { taskModule } = attachCompanionTaskFixture(h);
+    const mainResult = h.graph.__trellisTaskManager.ensureMainBoardInTaskModule(taskModule);
+    assert.ok(mainResult && mainResult.board); // NEW
+    assert.equal(attr(mainResult.board, "label"), "Main Board"); // NEW
+    const existingSecondary = h.graph.__trellisTaskManager.createSecondaryBoardInTaskModule(taskModule); // NEW
+    assert.ok(existingSecondary); // NEW
+    assert.equal(attr(existingSecondary, "label"), "Secondary Board"); // NEW
+    h.graph.setSelectionCell(taskModule);
+    await nextTick();
+
+    const overlay = taskModuleOverlay(h.document);
+    const addSecondary = buttonByText(overlay, "Add Secondary Task Board");
+    assert.ok(addSecondary); // NEW
+    addSecondary.click();
+
+    const boards = boardCellsUnder(taskModule);
+    assert.equal(boards.length, 3); // CHANGE
+    assert.equal(boards.filter(board => attr(board, "board_role") === "main").length, 1); // NEW
+    assert.equal(boards.filter(board => attr(board, "board_role") === "secondary").length, 2); // CHANGE
+    assert.equal(attr(h.selectedCell, "board_role"), "secondary"); // NEW
+    assert.equal(attr(h.selectedCell, "label"), "Secondary Board"); // NEW
+    assert.ok(h.selectedCell.geometry.y >= existingSecondary.geometry.y + existingSecondary.geometry.height + 40); // NEW
+});
+
+test("task board header overlay edits board labels with role defaults", async () => {
+    const h = makeHarness();
+    h.graph.setSelectionCell(h.board);
+    await nextTick();
+
+    const overlay = h.document.querySelector(".trellis-task-board-header-controls");
+    assert.equal(overlay.querySelectorAll("input[aria-label='Task board name']").length, 1); // NEW
+    let input = taskBoardNameInput(h.document);
+    assert.equal(input.value, "Kanban"); // NEW: unlabeled existing boards keep their current display fallback
+
+    h.clearValueWrites();
+    const oldBoardValue = h.board.value;
+    input.value = "Field Work";
+    input.dispatchEvent(new h.window.Event("blur"));
+    assert.equal(attr(h.board, "label"), "Field Work"); // NEW
+    assert.equal(h.valueWrites.length, 1); // NEW
+    assert.equal(h.valueWrites[0].cell, h.board); // NEW
+    assert.equal(h.valueWrites[0].oldValue, oldBoardValue); // NEW
+    assert.notEqual(h.valueWrites[0].newValue, oldBoardValue); // NEW
+    assert.equal(oldBoardValue.getAttribute("label"), null); // NEW
+
+    h.graph.setSelectionCell(h.board);
+    await nextTick();
+    h.clearValueWrites();
+    input = taskBoardNameInput(h.document);
+    input.value = "Draft Work";
+    input.dispatchEvent(new h.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    assert.equal(input.value, "Field Work"); // NEW
+    assert.equal(attr(h.board, "label"), "Field Work"); // NEW
+    assert.equal(h.valueWrites.length, 0); // NEW
+
+    input.value = "   ";
+    input.dispatchEvent(new h.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    assert.equal(attr(h.board, "label"), "Main Board"); // NEW
+
+    const secondaryHarness = makeHarness({ secondaryBoard: true });
+    secondaryHarness.graph.setSelectionCell(secondaryHarness.secondaryBoard);
+    await nextTick();
+    const secondaryInput = taskBoardNameInput(secondaryHarness.document);
+    secondaryInput.value = "   ";
+    secondaryInput.dispatchEvent(new secondaryHarness.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    assert.equal(attr(secondaryHarness.secondaryBoard, "label"), "Secondary Board"); // NEW
+});
+
+test("task board header overlay does not migrate existing Kanban labels", async () => {
+    const h = makeHarness();
+    setAttr(h.board, "label", "Kanban");
+    h.clearValueWrites();
+    h.graph.setSelectionCell(h.board);
+    await nextTick();
+
+    assert.equal(taskBoardNameInput(h.document).value, "Kanban"); // NEW
+    assert.equal(attr(h.board, "label"), "Kanban"); // NEW
+    assert.equal(h.valueWrites.length, 0); // NEW
 });
 
 test("task module overlay delegates label writes to the Modules API when available", async () => {
@@ -856,6 +971,24 @@ test("task module overlay follows the cursor and alternates show and hide", asyn
     assert.equal(overlay.style.display, "flex");
     assert.equal(overlay.style.left, "208px");
     assert.equal(overlay.style.top, "238px");
+});
+
+test("task module overlay uses the right-click cursor as its anchor", async () => {
+    const h = makeHarness();
+    h.graph.container.getBoundingClientRect = () => ({ left: 10, top: 20, width: 800, height: 600, right: 810, bottom: 620 });
+    const taskModule = new TestCell("rightClickTaskModule", makeValue(h.document, { task_module: "1", label: "Right Click Tasks" }), new TestGeometry(80, 90, 300, 120), "shape=swimlane;");
+    h.addCell(h.root, taskModule);
+    h.setState(taskModule, { x: 80, y: 90, width: 300, height: 120 });
+    h.graph.setSelectionCell(taskModule);
+    await nextTick();
+
+    h.mouseDown(taskModule, { button: 2, clientX: 260, clientY: 300, graphX: 180, graphY: 190 });
+    h.mouseUp(taskModule, { button: 2, clientX: 260, clientY: 300, graphX: 180, graphY: 190 });
+
+    const overlay = taskModuleOverlay(h.document);
+    assert.equal(overlay.style.display, "flex");
+    assert.equal(overlay.style.left, "258px"); // NEW
+    assert.equal(overlay.style.top, "288px"); // NEW
 });
 
 test("task manager reflow scope policy maps command categories", () => {
@@ -1601,7 +1734,7 @@ test("task manager toggles destination view labels, arrows, and board selection"
     h.graph.setSelectionCell(h.board);
     await nextTick();
 
-    assert.equal(boardOverlay.firstChild.textContent, "Mode: Week");
+    assert.equal(boardModeLabel(boardOverlay).textContent, "Mode: Week"); // CHANGE
     assert.equal(modeToggleButton(boardOverlay).textContent, "Switch to Full view");
     assert.equal(modeToggleButton(boardOverlay).getAttribute("aria-pressed"), "true");
     assert.equal(buttonByText(boardOverlay, "<").style.display, "");
@@ -1613,7 +1746,7 @@ test("task manager toggles destination view labels, arrows, and board selection"
 
     assert.equal(attr(h.board, "task_view_mode"), "FULL");
     assert.equal(h.graph.getSelectionCell(), h.board);
-    assert.equal(boardOverlay.firstChild.textContent, "Mode: Full");
+    assert.equal(boardModeLabel(boardOverlay).textContent, "Mode: Full"); // CHANGE
     assert.equal(modeToggleButton(boardOverlay).textContent, "Switch to Week view");
     assert.equal(modeToggleButton(boardOverlay).getAttribute("aria-pressed"), "false");
     assert.equal(buttonByText(boardOverlay, "<").style.display, "none");
@@ -1624,7 +1757,7 @@ test("task manager toggles destination view labels, arrows, and board selection"
     await nextTick();
 
     assert.equal(attr(h.board, "task_view_mode"), "WEEK");
-    assert.equal(boardOverlay.firstChild.textContent, "Mode: Week");
+    assert.equal(boardModeLabel(boardOverlay).textContent, "Mode: Week"); // CHANGE
     assert.equal(modeToggleButton(boardOverlay).textContent, "Switch to Full view");
     assert.equal(buttonByText(boardOverlay, "<").style.display, "");
     assert.equal(buttonByText(boardOverlay, ">").style.display, "");
@@ -1640,7 +1773,7 @@ test("task manager toggles destination view labels, arrows, and board selection"
     assert.equal(attr(h.board, "task_view_mode"), "FULL");
     assert.equal(h.graph.getSelectionCell(), h.board);
     assert.equal(boardOverlay.style.display, "flex");
-    assert.equal(boardOverlay.firstChild.textContent, "Mode: Full");
+    assert.equal(boardModeLabel(boardOverlay).textContent, "Mode: Full"); // CHANGE
     assert.equal(modeToggleButton(boardOverlay).textContent, "Switch to Week view");
 });
 

@@ -568,6 +568,73 @@ test("resized modules push neighbors on expanded edges", () => {
     assert.equal(right.geometry.x, 240); // NEW
 });
 
+test("shrunk modules pull nearby right-side neighbors to the exact external margin", () => {
+    const harness = makeHarness();
+    const left = harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "regular");
+    const right = harness.graph.__trellisModules.createModuleAtPoint({ x: 280, y: 0 }, "regular");
+    const previous = left.geometry.clone();
+    previous.width = 240;
+    const next = previous.clone();
+    next.width = 160;
+    harness.model.setGeometry(left, next);
+    harness.graph.fireEvent(makeEventObject("cellsResized", ["cells", [left], "bounds", [next], "previous", [previous]]));
+    assert.equal(right.geometry.x, 200); // NEW
+});
+
+test("programmatic module margin growth preserves external margins", () => {
+    const harness = makeHarness();
+    const left = harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "regular");
+    const right = harness.graph.__trellisModules.createModuleAtPoint({ x: 260, y: 0 }, "regular");
+    left.style += ";module_margin=40";
+    const child = new TestCell("wide-child", new TestGeometry(20, 10, 180, 20), "");
+    child.vertex = true;
+    harness.model.add(left, child);
+    harness.graph.__trellisModules.applyModuleMargins(left);
+    assert.equal(left.geometry.width, 240);
+    assert.equal(right.geometry.x, 280); // NEW
+});
+
+test("programmatic module margin shrink pulls nearby neighbors to the exact external margin", () => {
+    const harness = makeHarness();
+    const left = harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "regular");
+    const right = harness.graph.__trellisModules.createModuleAtPoint({ x: 280, y: 0 }, "regular");
+    left.style += ";module_margin=40";
+    const child = new TestCell("resized-child", new TestGeometry(20, 10, 180, 20), "");
+    child.vertex = true;
+    harness.model.add(left, child);
+    harness.graph.__trellisModules.applyModuleMargins(left);
+    child.geometry.width = 100;
+    harness.graph.__trellisModules.applyModuleMargins(left, { allowShrink: true });
+    assert.equal(left.geometry.width, 160);
+    assert.equal(right.geometry.x, 200); // NEW
+});
+
+test("shrunk modules leave neighbors beyond three external margins in place", () => {
+    const harness = makeHarness();
+    const left = harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "regular");
+    const farRight = harness.graph.__trellisModules.createModuleAtPoint({ x: 401, y: 0 }, "regular");
+    const previous = left.geometry.clone();
+    previous.width = 240;
+    const next = previous.clone();
+    next.width = 160;
+    harness.model.setGeometry(left, next);
+    harness.graph.fireEvent(makeEventObject("cellsResized", ["cells", [left], "bounds", [next], "previous", [previous]]));
+    assert.equal(farRight.geometry.x, 401); // NEW
+});
+
+test("programmatic module margin no-op leaves neighbors in place", () => {
+    const harness = makeHarness();
+    const left = harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "regular");
+    const right = harness.graph.__trellisModules.createModuleAtPoint({ x: 260, y: 0 }, "regular");
+    left.style += ";module_margin=40";
+    const child = new TestCell("small-child", new TestGeometry(20, 10, 80, 20), "");
+    child.vertex = true;
+    harness.model.add(left, child);
+    harness.graph.__trellisModules.applyModuleMargins(left);
+    assert.equal(left.geometry.width, 160);
+    assert.equal(right.geometry.x, 260); // NEW
+});
+
 test("empty canvas click renders root module overlay buttons", () => {
     const harness = makeHarness();
     fireGraphClick(harness, { clientX: 120, clientY: 150, graphX: 200, graphY: 230 });

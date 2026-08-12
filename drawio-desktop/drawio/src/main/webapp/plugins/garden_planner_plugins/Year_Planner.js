@@ -21,6 +21,7 @@ Draw.loadPlugin(function (ui) {
     const PLAN_METADATA_CELL_ATTR = "usl_year_planner_metadata";
     const EPS = 0.0001;
     const TRELLIS_DIALOG_Z = 2000000000;
+    const EMPTY_PLAN_SAVE_MESSAGE = "Add at least one crop to the year plan before saving."; // CHANGE: empty plans can be edited but not persisted.
     const __YP_GLOBAL = window.__uslYearPlannerGlobal || (window.__uslYearPlannerGlobal = {});
 
     function installTrellisInteractionModeController() {
@@ -226,6 +227,68 @@ Draw.loadPlugin(function (ui) {
         };
     })();
 
+    // -------------------- YearPlanCollapsePreferences --------------------
+    const YearPlanCollapsePreferences = (() => {
+        const STORAGE_PREFIX = "trellis.yearPlanner.collapse.v1";
+
+        function storage() {
+            try { return typeof window !== "undefined" && window.localStorage ? window.localStorage : null; } catch (_) { return null; }
+        }
+
+        function moduleCellId(moduleCell) {
+            return String(moduleCell && (moduleCell.getId ? moduleCell.getId() : moduleCell.id) || "");
+        }
+
+        function storageKey(moduleCell, year) {
+            return `${STORAGE_PREFIX}:${moduleCellId(moduleCell)}:${Number(year) || ""}`;
+        }
+
+        function normalizeIdList(value) {
+            return Array.isArray(value)
+                ? Array.from(new Set(value.map(item => String(item || "").trim()).filter(Boolean)))
+                : [];
+        }
+
+        function normalize(record) {
+            const source = record && typeof record === "object" ? record : {};
+            const top = source.top && typeof source.top === "object" ? source.top : {};
+            return {
+                top: {
+                    cropPlanExpanded: top.cropPlanExpanded === false ? false : true,
+                    demandExpanded: top.demandExpanded === false ? false : true,
+                    csaExpanded: top.csaExpanded === true,
+                    planCheckExpanded: top.planCheckExpanded === true
+                },
+                collapsedDemandChannelIds: normalizeIdList(source.collapsedDemandChannelIds),
+                collapsedDemandLineIds: normalizeIdList(source.collapsedDemandLineIds)
+            };
+        }
+
+        function load(moduleCell, year) {
+            const store = storage();
+            if (!store) return normalize(null);
+            try { return normalize(JSON.parse(store.getItem(storageKey(moduleCell, year)) || "{}")); } catch (_) { return normalize(null); }
+        }
+
+        function save(moduleCell, year, state) {
+            const store = storage();
+            if (!store || !state) return;
+            const record = normalize({
+                top: {
+                    cropPlanExpanded: state.cropPlanExpanded,
+                    demandExpanded: state.demandExpanded,
+                    csaExpanded: state.csaExpanded,
+                    planCheckExpanded: state.planCheckExpanded
+                },
+                collapsedDemandChannelIds: Array.from(state.collapsedDemandChannelIds || []),
+                collapsedDemandLineIds: Array.from(state.collapsedDemandLineIds || [])
+            });
+            try { store.setItem(storageKey(moduleCell, year), JSON.stringify(record)); } catch (_) { }
+        }
+
+        return { load, save, storageKey };
+    })();
+
 
 
 
@@ -279,6 +342,7 @@ Draw.loadPlugin(function (ui) {
         async function listPlantsBasicRows() {
             const sql = `
           SELECT plant_id, plant_name, yield_per_plant_kg, harvest_window_days, default_planting_method,
+                 default_planting_method_category,
                  annual, biennial, perennial
           FROM Plants
           WHERE abbr IS NOT NULL
@@ -899,7 +963,7 @@ Draw.loadPlugin(function (ui) {
                 }
             }
 
-            // supply estimate / actual harvest
+            // actual harvest supply
             for (const crop of supplyCrops) {
                 if (!crop || !crop.id) continue;
 
@@ -909,44 +973,11 @@ Draw.loadPlugin(function (ui) {
                     ? crop.__actualHarvestWeeklyKg
                     : null;
 
-                const hasActualSeries = !!actualSeries && actualSeries.some(v => Number(v) > 0);
-                const useActual = String(crop.harvestWindowSource || "") === "actual_harvest";
-
-                if (useActual && hasActualSeries) {
+                if (actualSeries && actualSeries.some(v => Number(v) > 0)) {
                     for (let i = 0; i < n; i++) {
                         arr.supply[i] += Math.max(0, Number(actualSeries[i]) || 0);
                     }
-                    continue;
                 }
-
-                const actualPlants = Number(crop.actualPlants);
-                const kgPerPlant = Number(crop.kgPerPlant);
-                if (!Number.isFinite(actualPlants) || actualPlants <= 0) continue;
-
-                if (!Number.isFinite(kgPerPlant) || kgPerPlant <= 0) {
-                    pushWarn(warns, `Supply skipped (kg/plant missing) for ${crop.plant || crop.id}`);
-                    continue;
-                }
-
-                if (!hasYmd(crop.harvestStart) || !hasYmd(crop.harvestEnd)) {
-                    pushWarn(warns, `Supply skipped (harvest window missing) for ${crop.plant || crop.id}`);
-                    continue;
-                }
-                if (crop.harvestStart > crop.harvestEnd) {
-                    pushWarn(warns, `Supply skipped (harvest start date after end date) for ${crop.plant || crop.id}`);
-                    continue;
-                }
-
-                const totalKg = actualPlants * kgPerPlant;
-
-                addTotalKgAcrossWindowProrated(
-                    arr.supply,
-                    weeks,
-                    crop.harvestStart,
-                    crop.harvestEnd,
-                    totalKg,
-                    year
-                );
             }
 
             for (const crop of supplyCrops) {
@@ -1180,6 +1211,24 @@ Draw.loadPlugin(function (ui) {
             return JSON.parse(JSON.stringify(obj || {}));
         }
 
+        function normMethodId(value) {
+            return String(value || "").trim().toLowerCase();
+        }
+
+        function inferMethodCategoryFromMethodId(methodId) {
+            const normalized = normMethodId(methodId);
+            return normalized.indexOf(".") > 0 ? normalized.split(".")[0] : "";
+        }
+
+        function normalizeCropMethodFieldsForRuntime(crop) {
+            if (!crop) return;
+            const methodId = normMethodId(crop.method || crop.methodId);
+            const inferredCategoryId = inferMethodCategoryFromMethodId(methodId);
+            crop.method = methodId || "direct_sow.field";
+            crop.methodCategoryId = String(crop.methodCategoryId || crop.method_category_id || inferredCategoryId || "").trim().toLowerCase();
+            if (!crop.methodCategoryId && crop.method === "direct_sow.field") crop.methodCategoryId = "direct_sow";
+        }
+
         function createEmptyPlan(year) {
             return normalizeForRuntime({
                 version: 2,
@@ -1268,6 +1317,7 @@ Draw.loadPlugin(function (ui) {
             normalized.csa.components = Array.isArray(normalized.csa.components) ? normalized.csa.components : [];
 
             for (const crop of normalized.crops) {
+                normalizeCropMethodFieldsForRuntime(crop);
                 normalizeYieldFieldsForRuntime(crop);
                 normalizeHarvestWindowSourceForRuntime(crop);
                 crop.packages = Array.isArray(crop.packages) ? crop.packages : [];
@@ -1497,6 +1547,8 @@ Draw.loadPlugin(function (ui) {
             findDuplicateCrop,
             findFirstDuplicateCrop,
             setCropHarvestWindowSource,
+            inferMethodCategoryFromMethodId,
+            normalizeCropMethodFieldsForRuntime,
             validateCrop,
             validateDemand,
             validateCsa,
@@ -2181,6 +2233,11 @@ Draw.loadPlugin(function (ui) {
                 return "sowing_window_estimate";
             }
 
+            if (source === "sowing_window_estimate" && !crop.estimatedHarvestUnavailableReason) {
+                PlanSchema.setCropHarvestWindowSource(crop, "sowing_window_estimate");
+                return "sowing_window_estimate";
+            } // CHANGE: newly added crops can show a pending sowing window before dates arrive.
+
             const manualBlankWindow = source === "manual" && !PlanMath.hasYmd(crop.harvestStart) && !PlanMath.hasYmd(crop.harvestEnd);
             if (!hasActualSeries && hasEstimate && (crop.__harvestWindowSourceMissing || manualBlankWindow)) {
                 applyEstimatedHarvestWindow(crop);
@@ -2193,29 +2250,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         function buildCarryoverCrops(moduleCell, year, plan) {
-            const priorYear = Number(year) - 1;
-            if (!Number.isFinite(priorYear) || priorYear < 1900) return [];
-            const prior = PlanRepository.loadPlanForYear(moduleCell, priorYear);
-            if (!prior || !Array.isArray(prior.crops)) return [];
-            PlanSchema.normalizeForRuntime(prior, priorYear);
-            const currentByKey = new Map();
-            for (const crop of (plan.crops || [])) {
-                const key = PlanSchema.getCropIdentityKey(crop);
-                if (key) currentByKey.set(key, crop);
-            }
-            const carryovers = [];
-            for (const priorCrop of prior.crops || []) {
-                if (!cropHarvestOverlapsYear(priorCrop, year)) continue;
-                const key = PlanSchema.getCropIdentityKey(priorCrop);
-                const currentCrop = key ? currentByKey.get(key) : null;
-                const source = PlanSchema.clonePlain(priorCrop);
-                source.id = currentCrop ? currentCrop.id : `carryover:${priorYear}:${priorCrop.id || key || carryovers.length}`;
-                source.__carryover = true;
-                source.__carryoverFromYear = priorYear;
-                PlanSchema.setCropHarvestWindowSource(source, "manual"); // CHANGE: carryover supply uses persisted/manual dates, never live actual-harvest mode.
-                carryovers.push(source);
-            }
-            return carryovers;
+            return []; // CHANGE: supply is actual-record backed only; cross-year diagram harvest records are read directly by DiagramPlanReader.
         }
 
         function legacyShelfExtendedEndYmd(crop, harvestEnd) {
@@ -2664,14 +2699,27 @@ Draw.loadPlugin(function (ui) {
             return String(list[index] && list[index].id || "");
         }
 
-        function createState(plan) {
+        function applyCollapsePreferences(state, preferences) {
+            const prefs = preferences && typeof preferences === "object" ? preferences : {};
+            const top = prefs.top && typeof prefs.top === "object" ? prefs.top : {};
+            state.csaExpanded = top.csaExpanded === true;
+            state.demandExpanded = top.demandExpanded === false ? false : true;
+            state.cropPlanExpanded = top.cropPlanExpanded === false ? false : true;
+            state.planCheckExpanded = top.planCheckExpanded === true;
+            state.collapsedDemandChannelIds = new Set(Array.isArray(prefs.collapsedDemandChannelIds) ? prefs.collapsedDemandChannelIds.map(String).filter(Boolean) : []);
+            state.collapsedDemandLineIds = new Set(Array.isArray(prefs.collapsedDemandLineIds) ? prefs.collapsedDemandLineIds.map(String).filter(Boolean) : []);
+            return state;
+        }
+
+        function createState(plan, preferences) {
             const crops = (plan && plan.crops) || [];
-            return {
+            return applyCollapsePreferences({
                 selectedCropId: resolveSelectedCropId(crops, "", 0),
                 activeTab: "basics",
                 csaExpanded: false,
                 demandExpanded: true,
                 collapsedDemandChannelIds: new Set(),
+                collapsedDemandLineIds: new Set(),
                 cropPlanExpanded: true,
                 planCheckExpanded: false,
                 hadBlockingErrors: false,
@@ -2681,8 +2729,9 @@ Draw.loadPlugin(function (ui) {
                 validationState: "idle",
                 lastSavedAt: null,
                 closePromptOpen: false,
-                extraDiagnostics: []
-            };
+                extraDiagnostics: [],
+                saveValidationErrors: [] // CHANGE: populated only after save attempts so new empty plans do not open invalid.
+            }, preferences);
         }
 
         function markBaseline(state, plan, savedAt) {
@@ -2704,9 +2753,9 @@ Draw.loadPlugin(function (ui) {
                 const value = String(row && row.method_id || "").trim();
                 if (!value || seen.has(value)) continue;
                 seen.add(value);
-                options.push({ value, label: String(row.method_name || value), unavailable: false });
+                options.push({ value, label: String(row.method_name || value), methodCategoryId: String(row && row.method_category_id || "").trim(), unavailable: false });
             }
-            if (current && !seen.has(current)) options.unshift({ value: current, label: `${current} (legacy/unavailable)`, unavailable: true });
+            if (current && !seen.has(current)) options.unshift({ value: current, label: `${current} (legacy/unavailable)`, methodCategoryId: PlanSchema.inferMethodCategoryFromMethodId(current), unavailable: true });
             return options;
         }
 
@@ -2845,10 +2894,9 @@ Draw.loadPlugin(function (ui) {
                 surplusKg += surplus;
                 const derived = runtime && runtime.derivedByCropId && runtime.derivedByCropId.get(String(crop.id));
                 const harvestWindowSource = String(crop.harvestWindowSource || "manual");
-                actualHarvestActive = actualHarvestActive || (harvestWindowSource === "actual_harvest"
-                    && !!derived
+                actualHarvestActive = actualHarvestActive || (!!derived
                     && Array.isArray(derived.actualHarvestWeeklyKg)
-                    && derived.actualHarvestWeeklyKg.some(value => Number(value) > 0));
+                    && derived.actualHarvestWeeklyKg.some(value => Number(value) > 0)); // CHANGE: actual supply is record-backed regardless of selected harvest-window source.
                 estimatedHarvestActive = estimatedHarvestActive || harvestWindowSource === "sowing_window_estimate";
                 manualHarvestDates = manualHarvestDates || harvestWindowSource === "manual";
 
@@ -2868,7 +2916,8 @@ Draw.loadPlugin(function (ui) {
 
             const validationErrors = uniqueValidationResults([
                 ...PlanSchema.validate(plan),
-                ...cropMetrics.flatMap(metric => metric.errors)
+                ...cropMetrics.flatMap(metric => metric.errors),
+                ...((settings.extraValidationErrors) || []) // CHANGE: save-only blockers surface through the existing Plan Check diagnostics.
             ]);
             const channelMetrics = ((plan && plan.demandChannels) || []).map(channel => {
                 const channelId = String(channel && channel.id || "");
@@ -2922,7 +2971,7 @@ Draw.loadPlugin(function (ui) {
             if (cropMetrics.some(metric => metric.status === "Surplus")) badges.push("Surplus");
             if (cropMetrics.length > 0 && cropMetrics.every(metric => metric.status === "OK" || metric.status === "No demand")) badges.push("OK");
             if (actualHarvestActive) badges.push("Actual harvest active");
-            if (estimatedHarvestActive) badges.push("Sowing-window estimates");
+            if (estimatedHarvestActive) badges.push("Sowing windows");
             if (manualHarvestDates) badges.push("Manual harvest dates");
             if (settings.dirty) badges.push("Unsaved");
 
@@ -2954,6 +3003,7 @@ Draw.loadPlugin(function (ui) {
 
         return {
             createState,
+            applyCollapsePreferences,
             markBaseline,
             isDirty,
             persistenceSnapshot,
@@ -3012,7 +3062,7 @@ Draw.loadPlugin(function (ui) {
         { id: "target", label: "Target demand", tooltipLabel: "Target", field: "targetKg", kind: "line", color: YP_COLORS.primary, lineWidth: 2, dash: [], help: "Weekly demand required by channel and CSA plans." },
         { id: "available", label: "Available supply", tooltipLabel: "Available", field: "availableSupplyKg", kind: "dashed-line", color: YP_COLORS.success, lineWidth: 2, dash: [6, 3], help: "Harvested inventory available before weekly demand is allocated." },
         { id: "usable", label: "Usable supply", tooltipLabel: "Usable", field: "usableSupplyKg", kind: "line", color: YP_COLORS.successSoft, lineWidth: 1.5, dash: [], help: "Available supply used to satisfy this week's demand." },
-        { id: "harvest", label: "Harvest", tooltipLabel: "Harvested", field: "harvestKg", kind: "bar", color: YP_COLORS.success, fill: YP_COLORS.successBg, help: "Estimated harvested weight added during the week." },
+        { id: "harvest", label: "Harvest", tooltipLabel: "Harvested", field: "harvestKg", kind: "bar", color: YP_COLORS.success, fill: YP_COLORS.successBg, help: "Actual harvested weight recorded during the week." }, // CHANGE: harvest series is record-backed only.
         { id: "shortage", label: "Shortage", tooltipLabel: "Short", field: "shortKg", kind: "area", color: YP_COLORS.danger, fill: YP_COLORS.dangerBg, help: "Demand that remains unmet after available supply is used." },
         { id: "expired", label: "Expired", tooltipLabel: "Expired", field: "expiredKg", kind: "point", color: YP_COLORS.warning, help: "Stored harvest that reaches the end of its shelf life this week." }
     ]);
@@ -3147,37 +3197,137 @@ Draw.loadPlugin(function (ui) {
         return markers;
     }
 
-    function renderActualHarvestTimeline(hostEl, weekStarts, weeklyKg, crop) {
+    /** Builds the selected-crop timeline rows from existing weekly demand, harvest, and inventory arrays. */
+    function buildCropTimelineModel(weekStarts, cropWeekly) {
+        const weeks = Array.isArray(weekStarts) ? weekStarts : [];
+        const source = cropWeekly && typeof cropWeekly === "object" ? cropWeekly : {};
+        const length = Math.max(
+            weeks.length,
+            Array.isArray(source.target) ? source.target.length : 0,
+            Array.isArray(source.supply) ? source.supply.length : 0,
+            Array.isArray(source.endingInventory) ? source.endingInventory.length : 0,
+            Array.isArray(source.surplus) ? source.surplus.length : 0
+        );
+        const numberAt = (series, index) => Math.max(0, Number(Array.isArray(series) ? series[index] : 0) || 0);
+        const rows = [];
+        for (let index = 0; index < length; index++) {
+            const demandKg = numberAt(source.target, index);
+            const harvestKg = numberAt(source.supply, index);
+            const inventoryKg = Array.isArray(source.endingInventory)
+                ? numberAt(source.endingInventory, index)
+                : numberAt(source.surplus, index);
+            const usableSupplyKg = numberAt(source.usableSupply, index);
+            const shortKg = numberAt(source.short, index);
+            const expiredKg = numberAt(source.expired, index);
+            const solidBars = [
+                { id: "demand", label: "Demand", valueKg: demandKg },
+                { id: "inventory", label: "Remaining inventory", valueKg: inventoryKg }
+            ]
+                .filter(bar => bar.valueKg > EPS)
+                .sort((a, b) => (b.valueKg - a.valueKg) || ["demand", "inventory"].indexOf(a.id) - ["demand", "inventory"].indexOf(b.id));
+            const bars = harvestKg > EPS
+                ? [...solidBars, { id: "harvest", label: "Raw harvest", valueKg: harvestKg }]
+                : solidBars; // CHANGE: raw-harvest outline always renders in front of solid bars.
+            rows.push({
+                week: weeks[index] || null,
+                demandKg,
+                harvestKg,
+                inventoryKg,
+                usableSupplyKg,
+                shortKg,
+                expiredKg,
+                bars
+            });
+        }
+        return rows;
+    }
+
+    function cropTimelineTooltip(row) {
+        const weekLabel = row && row.week && row.week.iso ? row.week.iso : "";
+        return [
+            weekLabel ? `Week of ${weekLabel}` : "Week",
+            `Demand: ${row.demandKg.toFixed(2)} kg`,
+            `Raw harvest: ${row.harvestKg.toFixed(2)} kg`,
+            `Usable supply: ${row.usableSupplyKg.toFixed(2)} kg`,
+            `Remaining inventory: ${row.inventoryKg.toFixed(2)} kg`,
+            `Shortfall: ${row.shortKg.toFixed(2)} kg`,
+            `Expired: ${row.expiredKg.toFixed(2)} kg`
+        ].join("\n");
+    }
+
+    function cropTimelineMonthLabel(week, previousWeek) {
+        const iso = String(week && week.iso || "");
+        const previousIso = String(previousWeek && previousWeek.iso || "");
+        const month = iso.slice(5, 7);
+        if (!previousIso && month === "12") return ""; // CHANGE: suppress leading prior-year December so it does not collide with January.
+        if (!month || month === previousIso.slice(5, 7)) return "";
+        return ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(month) - 1] || "";
+    }
+
+    function formatCropTimelineAxisKg(value) {
+        const kg = Math.max(0, Number(value) || 0);
+        return `${kg >= 10 ? kg.toFixed(0) : kg.toFixed(1)} kg`;
+    }
+
+    function renderCropTimeline(hostEl, weekStarts, cropWeekly, crop) {
         if (!hostEl) return;
         const weeks = Array.isArray(weekStarts) ? weekStarts : [];
-        const series = Array.isArray(weeklyKg) ? weeklyKg : [];
-        const maxValue = Math.max(0, ...series.map(value => Number(value) || 0));
+        const rows = buildCropTimelineModel(weeks, cropWeekly);
+        const maxValue = Math.max(0, ...rows.flatMap(row => [row.demandKg, row.harvestKg, row.inventoryKg]));
         const markersByWeek = harvestTimelineMarkers(weeks, crop);
         hostEl.innerHTML = "";
-        hostEl.className = "yp-harvest-timeline";
-        hostEl.style.gridTemplateColumns = `repeat(${Math.max(1, weeks.length)}, minmax(4px, 1fr))`;
+        hostEl.className = "yp-harvest-timeline yp-crop-timeline"; // CHANGE: retain existing timeline anchor while applying coverage styling.
+        hostEl.style.gridTemplateColumns = maxValue > 0
+            ? `36px repeat(${Math.max(1, weeks.length)}, minmax(4px, 1fr))`
+            : `repeat(${Math.max(1, weeks.length)}, minmax(4px, 1fr))`; // CHANGE: reserve a compact quantity axis only when there is data to scale.
         if (maxValue <= 0 && !markersByWeek.size) {
             hostEl.className = "yp-harvest-empty";
-            hostEl.textContent = "No actual harvest recorded for this crop/year.";
+            hostEl.textContent = "No harvest or demand recorded for this crop/year."; // CHANGE: empty state now reflects both series.
             return;
+        }
+        if (maxValue > 0) {
+            const axis = document.createElement("div");
+            axis.className = "yp-crop-timeline-y-axis";
+            axis.dataset.maxKg = maxValue.toFixed(4);
+            const maxLabel = document.createElement("span");
+            maxLabel.className = "yp-crop-timeline-y-axis-max";
+            maxLabel.textContent = formatCropTimelineAxisKg(maxValue);
+            const zeroLabel = document.createElement("span");
+            zeroLabel.className = "yp-crop-timeline-y-axis-zero";
+            zeroLabel.textContent = "0";
+            axis.appendChild(maxLabel);
+            axis.appendChild(zeroLabel);
+            hostEl.appendChild(axis); // CHANGE: add quantity scale for the compact weekly bars.
         }
         if (maxValue <= 0) {
             const emptyNote = document.createElement("div");
             emptyNote.className = "yp-harvest-empty yp-harvest-empty-note";
-            emptyNote.textContent = "No actual harvest recorded for this crop/year.";
+            emptyNote.textContent = "No harvest or demand recorded for this crop/year."; // CHANGE: marker-only empty state now reflects both series.
             hostEl.appendChild(emptyNote); // harvest-window marker empty state
         }
-        for (let index = 0; index < weeks.length; index++) {
-            const value = Math.max(0, Number(series[index]) || 0);
-            const intensity = maxValue > 0 ? Math.min(1, value / maxValue) : 0;
+        for (let index = 0; index < rows.length; index++) {
+            const row = rows[index];
             const week = document.createElement("div");
-            week.className = "yp-harvest-week";
-            const bar = document.createElement("div");
-            bar.className = "yp-harvest-bar";
-            bar.style.height = `${Math.max(3, Math.round(4 + 30 * intensity))}px`;
-            bar.style.background = `rgba(48,105,64,${0.14 + 0.76 * intensity})`;
-            bar.title = `${weeks[index] && weeks[index].iso || ""} - ${value.toFixed(2)} kg actual harvest`;
-            week.appendChild(bar);
+            week.className = "yp-harvest-week yp-crop-timeline-week";
+            week.title = cropTimelineTooltip(row);
+            const monthLabel = cropTimelineMonthLabel(row.week, index > 0 ? rows[index - 1].week : null);
+            if (monthLabel) {
+                week.dataset.monthStart = "true";
+                week.dataset.monthLabel = monthLabel;
+            }
+            for (let order = 0; order < row.bars.length; order++) {
+                const item = row.bars[order];
+                const intensity = maxValue > 0 ? Math.min(1, item.valueKg / maxValue) : 0;
+                const bar = document.createElement("div");
+                bar.className = `yp-harvest-bar yp-crop-timeline-bar yp-crop-timeline-bar-${item.id}`; // CHANGE: identify demand, raw harvest, and inventory bars for styling/tests.
+                bar.dataset.series = item.id;
+                bar.dataset.valueKg = item.valueKg.toFixed(4);
+                bar.dataset.renderOrder = String(order);
+                bar.style.height = `${Math.max(3, Math.round(4 + 30 * intensity))}px`;
+                bar.style.zIndex = String(order + 1);
+                bar.title = `${item.label}: ${item.valueKg.toFixed(2)} kg\n${cropTimelineTooltip(row)}`;
+                week.appendChild(bar);
+            }
             const markers = markersByWeek.get(index) || [];
             if (markers.length) {
                 const marker = document.createElement("div");
@@ -3199,7 +3349,7 @@ Draw.loadPlugin(function (ui) {
             const existing = PlanRepository.loadPlanForYear(moduleCell, currentYear);
             let loadedExistingForCurrentYear = !!existing;
             const plan = PlanSchema.normalizeForRuntime(existing || PlanSchema.createEmptyPlan(currentYear), currentYear);
-            const state = YearPlanDashboard.createState(plan);
+            const state = YearPlanDashboard.createState(plan, YearPlanCollapsePreferences.load(moduleCell, currentYear));
             const session = SessionController.start(moduleCell, currentYear, plan);
             const varietyCache = new Map();
             const methodCache = new Map();
@@ -3214,6 +3364,22 @@ Draw.loadPlugin(function (ui) {
             let csaRefs = {};
             let chartHitModel = null;
             const visibleChartSeriesIds = new Set(PLAN_CHART_SERIES.map(series => series.id));
+
+            function pruneCollapseState() {
+                const channelIds = new Set((plan.demandChannels || []).map(channel => String(channel && channel.id || "")).filter(Boolean));
+                const lineIds = new Set((plan.demands || []).map(line => String(line && line.id || "")).filter(Boolean));
+                for (const channelId of Array.from(state.collapsedDemandChannelIds || [])) {
+                    if (!channelIds.has(String(channelId))) state.collapsedDemandChannelIds.delete(channelId);
+                }
+                for (const lineId of Array.from(state.collapsedDemandLineIds || [])) {
+                    if (!lineIds.has(String(lineId))) state.collapsedDemandLineIds.delete(lineId);
+                }
+            }
+
+            function saveCollapsePreferences() {
+                pruneCollapseState();
+                YearPlanCollapsePreferences.save(moduleCell, currentYear, state);
+            }
 
             const wrap = document.createElement("div");
             wrap.style.cssText = "position:fixed;inset:0;z-index:" + TRELLIS_DIALOG_Z + ";background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;";
@@ -3237,10 +3403,27 @@ Draw.loadPlugin(function (ui) {
                 .yp-derived-label{font-size:11px;color:var(--yp-neutral-700);font-weight:700;overflow-wrap:anywhere}
                 .yp-derived-value{font-size:17px;font-weight:700;color:var(--yp-neutral-900);margin-top:3px}
                 .yp-harvest-timeline-section{margin-top:14px;border-top:1px solid var(--yp-neutral-300);padding-top:10px}
-                .yp-harvest-timeline-title{font-weight:700;margin-bottom:7px}
-                .yp-harvest-timeline{display:grid;grid-template-columns:repeat(52,minmax(4px,1fr));gap:2px;align-items:end;min-height:50px;padding-top:16px}
-                .yp-harvest-week{position:relative;display:flex;align-items:flex-end;min-width:4px;min-height:34px}
+                .yp-harvest-timeline-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:7px}
+                .yp-harvest-timeline-title{font-weight:700}
+                .yp-crop-timeline-legend{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;color:var(--yp-neutral-700);font-size:10px}
+                .yp-crop-timeline-legend-item{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+                .yp-crop-timeline-legend-swatch{box-sizing:border-box;display:inline-block;width:14px;height:9px;border-radius:2px}
+                .yp-crop-timeline-legend-swatch-demand{border:1px solid #c59b18;background:#ffd95a}
+                .yp-crop-timeline-legend-swatch-harvest{border:2px solid #0c3f1a;background:#fff}
+                .yp-crop-timeline-legend-swatch-inventory{border:1px solid #4f8b57;background:#62a96b}
+                .yp-harvest-timeline{display:grid;grid-template-columns:repeat(52,minmax(4px,1fr));gap:2px;align-items:end;min-height:70px;padding-top:16px;padding-bottom:16px}
+                .yp-harvest-week{position:relative;display:flex;align-items:flex-end;min-width:4px;min-height:38px}
                 .yp-harvest-bar{height:24px;width:100%;min-width:4px;border:1px solid rgba(0,0,0,.16);border-radius:2px 2px 0 0;background:rgba(48,105,64,.14)}
+                .yp-crop-timeline-y-axis{position:relative;box-sizing:border-box;min-height:38px;border-right:1px solid var(--yp-neutral-300);border-bottom:1px solid var(--yp-neutral-300);color:var(--yp-neutral-700);font-size:9px;line-height:1}
+                .yp-crop-timeline-y-axis-max{position:absolute;right:5px;top:0;white-space:nowrap}
+                .yp-crop-timeline-y-axis-zero{position:absolute;right:5px;bottom:-3px;white-space:nowrap}
+                .yp-crop-timeline-week{display:block;border-bottom:1px solid var(--yp-neutral-300)}
+                .yp-crop-timeline-week[data-month-start="true"]{border-left:1px solid var(--yp-neutral-300)}
+                .yp-crop-timeline-week[data-month-start="true"]::after{content:attr(data-month-label);position:absolute;left:1px;bottom:-14px;color:var(--yp-neutral-700);font-size:9px;line-height:1;white-space:nowrap}
+                .yp-crop-timeline-bar{position:absolute;left:50%;bottom:0;box-sizing:border-box;width:100%;transform:translateX(-50%);min-width:3px;border-radius:2px 2px 0 0}
+                .yp-crop-timeline-bar-demand{border:1px solid #c59b18;background:#ffd95a}
+                .yp-crop-timeline-bar-harvest{border:2px solid #0c3f1a;background:transparent;box-shadow:inset 0 0 0 1px rgba(12,63,26,.36),0 0 0 1px rgba(255,255,255,.78)}
+                .yp-crop-timeline-bar-inventory{border:1px solid #4f8b57;background:#62a96b}
                 .yp-harvest-marker{position:absolute;left:50%;top:-13px;bottom:0;width:0;border-left:2px solid #7a3f12;transform:translateX(-1px);pointer-events:none}
                 .yp-harvest-marker::before{content:attr(data-label);position:absolute;top:-1px;left:50%;transform:translateX(-50%);min-width:12px;height:12px;line-height:12px;border-radius:6px;background:#7a3f12;color:#fff;font-size:9px;font-weight:700;text-align:center}
                 .yp-harvest-marker-start{border-left-color:#1f5f99}
@@ -3261,7 +3444,11 @@ Draw.loadPlugin(function (ui) {
                 .yp-demand-channel-header{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px;background:#f8f8f8}
                 .yp-demand-channel-summary{flex:1 1 360px;color:var(--yp-neutral-700);overflow-wrap:anywhere}
                 .yp-demand-channel-details{padding:9px;border-top:1px solid var(--yp-neutral-300)}
+                .yp-demand-line-shell{border:1px solid #e1e1e1;border-radius:6px;background:#fcfcfc;overflow:hidden}
+                .yp-demand-line-header{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:7px 8px;background:#fff}
+                .yp-demand-line-summary{flex:1 1 320px;min-width:0;color:var(--yp-neutral-700);overflow-wrap:anywhere}
                 .yp-demand-line{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:8px;padding:9px;border:1px solid #e1e1e1;border-radius:6px;background:#fcfcfc}
+                .yp-demand-line-details{border:0;border-top:1px solid var(--yp-neutral-300);border-radius:0}
                 .yp-header-main{padding:10px 12px 8px;border-bottom:1px solid var(--yp-neutral-300);display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:#fff}
                 .yp-secondary-toolbar{padding:7px 12px;border-bottom:1px solid var(--yp-neutral-300);display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--yp-neutral-100)}
                 .yp-header-status{color:var(--yp-neutral-700);font-weight:700}
@@ -3650,6 +3837,8 @@ Draw.loadPlugin(function (ui) {
                 if (target.cropId) selectorParts.push(`[data-crop-id="${String(target.cropId).replace(/"/g, '\\"')}"]`);
                 if (target.packageIndex !== undefined) selectorParts.push(`[data-package-index="${String(target.packageIndex).replace(/"/g, '\\"')}"]`);
                 if (target.componentIndex !== undefined) selectorParts.push(`[data-csa-component-index="${String(target.componentIndex).replace(/"/g, '\\"')}"]`);
+                if (target.channelId) selectorParts.push(`[data-year-plan-demand-channel-id="${String(target.channelId).replace(/"/g, '\\"')}"]`);
+                if (target.lineId) selectorParts.push(`[data-year-plan-demand-line-id="${String(target.lineId).replace(/"/g, '\\"')}"]`);
                 return card.querySelector(selectorParts.join(""));
             }
 
@@ -3667,6 +3856,15 @@ Draw.loadPlugin(function (ui) {
                     renderCsa(true);
                 } else if (target.area === "demand") {
                     state.demandExpanded = true;
+                    const line = target.lineId
+                        ? (plan.demands || []).find(item => String(item && item.id || "") === String(target.lineId))
+                        : (plan.demands || [])[Math.max(0, Math.trunc(Number(target.lineIndex) || 0))];
+                    if (line) {
+                        state.collapsedDemandLineIds.delete(String(line.id || ""));
+                        state.collapsedDemandChannelIds.delete(String(line.channelId || ""));
+                    } else if (target.channelId) {
+                        state.collapsedDemandChannelIds.delete(String(target.channelId));
+                    }
                     renderDemandStrip(true);
                 } else if (target.area === "crop-list") {
                     state.cropPlanExpanded = true;
@@ -3812,6 +4010,8 @@ Draw.loadPlugin(function (ui) {
                 if (data.cropId !== undefined) control.dataset.cropId = String(data.cropId);
                 if (data.packageIndex !== undefined) control.dataset.packageIndex = String(data.packageIndex);
                 if (data.componentIndex !== undefined) control.dataset.csaComponentIndex = String(data.componentIndex);
+                if (data.channelId !== undefined) control.dataset.yearPlanDemandChannelId = String(data.channelId);
+                if (data.lineId !== undefined) control.dataset.yearPlanDemandLineId = String(data.lineId);
                 return control;
             }
 
@@ -3823,6 +4023,27 @@ Draw.loadPlugin(function (ui) {
             function hasSowingWindowEstimateForCrop(crop) {
                 return PlanRuntimeService.hasEstimatedHarvestWindow(crop);
             }
+
+            function harvestWindowSourceOptions() {
+                return [
+                    { value: "manual", label: "Manual dates" },
+                    { value: "actual_harvest", label: "Actual harvest" },
+                    { value: "sowing_window_estimate", label: "Sowing window" }
+                ];
+            } // CHANGE: expose the mutually exclusive harvest-date sources as one editor control.
+
+            function syncHarvestWindowSourceControl(control, crop, actualAvailable, estimateAvailable) {
+                if (!control || !crop) return;
+                const source = String(crop.harvestWindowSource || "manual");
+                control.value = source;
+                for (const option of Array.from(control.options || [])) {
+                    option.disabled = (option.value === "actual_harvest" && !actualAvailable)
+                        || (option.value === "sowing_window_estimate" && !estimateAvailable && source !== "sowing_window_estimate");
+                }
+                if ((source === "actual_harvest" && !actualAvailable) || (source === "sowing_window_estimate" && !estimateAvailable)) {
+                    control.value = source === "sowing_window_estimate" && !crop.estimatedHarvestUnavailableReason ? "sowing_window_estimate" : "manual";
+                }
+            } // CHANGE: pending sowing-window crops stay selected until a failed result falls back to manual.
 
             function selectedCrop() {
                 return (plan.crops || []).find(crop => String(crop.id) === String(state.selectedCropId)) || null;
@@ -4018,6 +4239,7 @@ Draw.loadPlugin(function (ui) {
                 state.lastSavedAt = null;
                 state.closePromptOpen = false;
                 state.extraDiagnostics = [];
+                YearPlanDashboard.applyCollapsePreferences(state, YearPlanCollapsePreferences.load(moduleCell, currentYear));
                 titleEl.textContent = `Plan Year ${currentYear}`;
                 yearInput.value = String(currentYear);
             }
@@ -4134,25 +4356,18 @@ Draw.loadPlugin(function (ui) {
                 const source = String(crop.harvestWindowSource || "manual");
                 const actualAvailable = hasActualHarvestForCrop(crop);
                 const estimateAvailable = hasSowingWindowEstimateForCrop(crop);
-                if (editorRefs.useActual) {
-                    editorRefs.useActual.checked = source === "actual_harvest" && actualAvailable;
-                    editorRefs.useActual.disabled = !actualAvailable || source === "sowing_window_estimate";
-                }
-                if (editorRefs.useSowingEstimate) {
-                    editorRefs.useSowingEstimate.checked = source === "sowing_window_estimate" && estimateAvailable;
-                    editorRefs.useSowingEstimate.disabled = !estimateAvailable || source === "actual_harvest";
-                }
+                syncHarvestWindowSourceControl(editorRefs.harvestSource, crop, actualAvailable, estimateAvailable); // CHANGE: one selector replaces the old paired checkboxes.
                 if (editorRefs.estimateMessage) {
                     editorRefs.estimateMessage.textContent = estimateAvailable
-                        ? `Estimate ${crop.estimatedHarvestStart} to ${crop.estimatedHarvestEnd}`
-                        : (crop.estimatedHarvestUnavailableReason ? `Estimate unavailable: ${crop.estimatedHarvestUnavailableReason}` : "Estimate unavailable");
+                        ? `Sowing window ${crop.estimatedHarvestStart} to ${crop.estimatedHarvestEnd}`
+                        : (crop.estimatedHarvestUnavailableReason ? `Sowing window unavailable: ${crop.estimatedHarvestUnavailableReason}` : "Sowing window unavailable");
                 }
                 if (editorRefs.harvestStart && editorRefs.harvestEnd) editorRefs.harvestStart.disabled = editorRefs.harvestEnd.disabled = source !== "manual";
                 if (editorRefs.harvestStart && editorRefs.harvestStart.__syncPairedDateState) editorRefs.harvestStart.__syncPairedDateState();
                 if (editorRefs.yieldHint) updateYieldHint(crop, editorRefs.yieldHint, editorRefs.resetYield);
                 if (editorRefs.harvestTimeline && runtime) {
-                    const derived = runtime.derivedByCropId.get(String(crop.id));
-                    renderActualHarvestTimeline(editorRefs.harvestTimeline, runtime.weekStarts, derived ? derived.actualHarvestWeeklyKg : [], crop);
+                    const weeklyCrop = runtime.weekly && runtime.weekly.perCrop && runtime.weekly.perCrop.get(String(crop.id));
+                    renderCropTimeline(editorRefs.harvestTimeline, runtime.weekStarts, weeklyCrop, crop); // CHANGE: show demand, raw harvest, and inventory for the selected crop.
                 }
             }
 
@@ -4161,6 +4376,12 @@ Draw.loadPlugin(function (ui) {
                 for (const [channelId, summary] of demandRefs.channelSummaries) {
                     const metric = dashboard.channelMetricsById.get(String(channelId));
                     if (metric) setChipRow(summary, buildChannelSummaryChips(metric));
+                }
+                if (demandRefs.lineSummaries) {
+                    for (const [lineId, summary] of demandRefs.lineSummaries) {
+                        const line = (plan.demands || []).find(item => String(item && item.id || "") === String(lineId));
+                        if (line) setChipRow(summary, demandLineSummaryChips(line, PlanMath.findCrop(plan, line.cropId)));
+                    }
                 }
             }
 
@@ -4252,7 +4473,7 @@ Draw.loadPlugin(function (ui) {
                 renderStripBox(planCheckBox, {
                     title: "Plan Check",
                     expanded: state.planCheckExpanded,
-                    onToggle: () => { state.planCheckExpanded = !state.planCheckExpanded; renderPlanCheck(); },
+                    onToggle: () => { state.planCheckExpanded = !state.planCheckExpanded; saveCollapsePreferences(); renderPlanCheck(); },
                     mountWhenCollapsed: true,
                     renderDetails: details => { details.appendChild(planCheckGrid); details.appendChild(diagnosticsBox); }
                 });
@@ -4346,15 +4567,29 @@ Draw.loadPlugin(function (ui) {
 
             function refreshDerived(beforeDateRanges, renderOptions) {
                 const options = renderOptions || {};
+                if (((plan && plan.crops) || []).length && state.saveValidationErrors.length) state.saveValidationErrors = []; // CHANGE: clear save-only empty-plan errors as soon as the plan has a crop.
                 const beforeRecalculation = captureDateRangeSnapshot();
                 runtime = PlanRuntimeService.recalculate(moduleCell, currentYear, plan);
                 const dirty = state.baselineSnapshot ? YearPlanDashboard.isDirty(state, plan) : false;
-                dashboard = YearPlanDashboard.compute(plan, runtime, { dirty, extraDiagnostics: state.extraDiagnostics });
+                dashboard = YearPlanDashboard.compute(plan, runtime, { dirty, extraDiagnostics: state.extraDiagnostics, extraValidationErrors: state.saveValidationErrors }); // CHANGE: include save-only validation after failed saves.
                 const demandErrors = PlanSchema.validateDemand(plan);
                 const hadDemandErrors = state.hadDemandErrors;
                 const expansionChanges = YearPlanDashboard.syncExpansionState(state, dashboard, PlanSchema.validateCsa(plan), demandErrors);
                 if (demandErrors.length && !hadDemandErrors) {
-                    for (const line of (plan.demands || [])) state.collapsedDemandChannelIds.delete(String(line.channelId || ""));
+                    for (const error of demandErrors) {
+                        const target = error && error.target || {};
+                        const line = target.lineId
+                            ? (plan.demands || []).find(item => String(item && item.id || "") === String(target.lineId))
+                            : (target.lineIndex !== undefined ? (plan.demands || [])[Math.max(0, Math.trunc(Number(target.lineIndex) || 0))] : null);
+                        if (line) {
+                            state.collapsedDemandLineIds.delete(String(line.id || ""));
+                            state.collapsedDemandChannelIds.delete(String(line.channelId || ""));
+                        } else if (target.channelId) {
+                            state.collapsedDemandChannelIds.delete(String(target.channelId));
+                        } else {
+                            for (const item of (plan.demands || [])) state.collapsedDemandChannelIds.delete(String(item && item.channelId || ""));
+                        }
+                    }
                 }
                 state.selectedCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, state.selectedCropId, 0);
                 const afterRecalculation = captureDateRangeSnapshot();
@@ -4421,11 +4656,21 @@ Draw.loadPlugin(function (ui) {
                     select.innerHTML = "";
                     const current = String(crop.method || "").trim();
                     const options = YearPlanDashboard.buildMethodOptions(rows, current);
-                    for (const option of options) select.appendChild(new Option(option.label, option.value));
+                    for (const option of options) {
+                        const element = new Option(option.label, option.value);
+                        element.dataset.methodCategoryId = option.methodCategoryId || "";
+                        select.appendChild(element);
+                    }
                     diagnostic.textContent = options.some(option => option.value === current && option.unavailable)
                         ? "The saved planting method is not available in current plant metadata. It will be preserved until changed."
                         : "";
-                    if (!current && options.length) crop.method = String(options[0].value);
+                    const selectedOption = options.find(option => option.value === String(crop.method || "")) || null;
+                    if (!current && options.length) {
+                        crop.method = String(options[0].value);
+                        crop.methodCategoryId = String(options[0].methodCategoryId || "");
+                    } else if (selectedOption && !crop.methodCategoryId) {
+                        crop.methodCategoryId = String(selectedOption.methodCategoryId || "");
+                    }
                     select.value = String(crop.method || "");
                     if (!current && crop.method) refreshDerived();
                 } catch (error) {
@@ -4480,23 +4725,13 @@ Draw.loadPlugin(function (ui) {
                 methodDiagnostic.style.cssText = `color:${YP_COLORS.danger};font-size:11px;margin-top:4px;`;
                 const methodHost = document.createElement("div");
                 methodHost.appendChild(method); methodHost.appendChild(methodDiagnostic);
-                const useActual = document.createElement("input");
-                useActual.type = "checkbox"; useActual.checked = crop.harvestWindowSource === "actual_harvest";
-                setYearPlanField(useActual, "useActualHarvest", { cropId: crop.id });
-                const useSowingEstimate = document.createElement("input");
-                useSowingEstimate.type = "checkbox"; useSowingEstimate.checked = crop.harvestWindowSource === "sowing_window_estimate";
-                setYearPlanField(useSowingEstimate, "useSowingWindowEstimate", { cropId: crop.id });
+                const harvestSource = mkSelect(harvestWindowSourceOptions(), crop.harvestWindowSource || "manual");
+                harvestSource.style.width = "100%";
+                harvestSource.title = "Choose whether harvest dates are edited manually, read from diagram harvest records, or derived from feasible sowing dates.";
+                setYearPlanField(harvestSource, "harvestWindowSource", { cropId: crop.id }); // CHANGE: one source selector replaces two mutually exclusive toggles.
                 const syncAvailability = document.createElement("input");
                 syncAvailability.type = "checkbox"; syncAvailability.checked = !!crop.syncharvest;
                 setYearPlanField(syncAvailability, "syncharvest", { cropId: crop.id });
-                const useActualLabel = document.createElement("label");
-                useActualLabel.className = "yp-row"; useActualLabel.appendChild(useActual); useActualLabel.appendChild(document.createTextNode("Use actual harvest"));
-                useActualLabel.title = "Use diagram actual harvest records for this crop when available; harvest dates become diagram-driven.";
-                useActual.title = useActualLabel.title;
-                const estimateLabel = document.createElement("label");
-                estimateLabel.className = "yp-row"; estimateLabel.appendChild(useSowingEstimate); estimateLabel.appendChild(document.createTextNode("Use sowing-window estimate"));
-                estimateLabel.title = "Use the scheduler's broad harvest window from feasible sowing dates; harvest dates become estimate-driven.";
-                useSowingEstimate.title = estimateLabel.title;
                 const estimateMessage = document.createElement("div");
                 estimateMessage.className = "yp-harvest-source-note";
                 estimateMessage.style.cssText = "grid-column:1/-1;color:#666;font-size:11px;";
@@ -4506,24 +4741,20 @@ Draw.loadPlugin(function (ui) {
                 syncAvailability.title = syncLabel.title;
                 const actualAvailable = hasActualHarvestForCrop(crop);
                 const estimateAvailable = hasSowingWindowEstimateForCrop(crop);
-                useActual.checked = crop.harvestWindowSource === "actual_harvest" && actualAvailable;
-                useSowingEstimate.checked = crop.harvestWindowSource === "sowing_window_estimate" && estimateAvailable;
-                useActual.disabled = !actualAvailable || useSowingEstimate.checked;
-                useSowingEstimate.disabled = !estimateAvailable || useActual.checked;
+                syncHarvestWindowSourceControl(harvestSource, crop, actualAvailable, estimateAvailable); // CHANGE: disable only unavailable source choices.
                 harvestStart.disabled = harvestEnd.disabled = crop.harvestWindowSource !== "manual";
                 estimateMessage.textContent = estimateAvailable
-                    ? `Estimate ${crop.estimatedHarvestStart} to ${crop.estimatedHarvestEnd}`
-                    : (crop.estimatedHarvestUnavailableReason ? `Estimate unavailable: ${crop.estimatedHarvestUnavailableReason}` : "Estimate unavailable");
+                    ? `Sowing window ${crop.estimatedHarvestStart} to ${crop.estimatedHarvestEnd}`
+                    : (crop.estimatedHarvestUnavailableReason ? `Sowing window unavailable: ${crop.estimatedHarvestUnavailableReason}` : "Sowing window unavailable");
                 addField(grid, "Plant", plant);
                 addField(grid, "Variety", varietyRow);
                 addField(grid, "Planting method", methodHost);
                 addField(grid, "kg/plant", kgHost);
                 addField(grid, "Germination rate", germ, "Value from 0.01 through 1.00");
                 addField(grid, "Harvest start", harvestStart);
-                addField(grid, "Harvest end", harvestEnd);
-                addField(grid, "Shelf life (days)", shelf);
-                grid.appendChild(useActualLabel);
-                grid.appendChild(estimateLabel);
+                addField(grid, "Shelf life (days)", shelf); // CHANGE: shelf life now appears before harvest end.
+                addField(grid, "Harvest end", harvestEnd); // CHANGE: harvest end is swapped after shelf life.
+                addField(grid, "Harvest dates", harvestSource); // CHANGE: source selector follows the harvest date block.
                 grid.appendChild(estimateMessage);
                 grid.appendChild(syncLabel);
                 content.appendChild(grid);
@@ -4536,13 +4767,31 @@ Draw.loadPlugin(function (ui) {
                 content.appendChild(totals);
                 const timelineSection = document.createElement("div");
                 timelineSection.className = "yp-harvest-timeline-section";
+                const timelineHead = document.createElement("div");
+                timelineHead.className = "yp-harvest-timeline-head";
                 const timelineTitle = document.createElement("div");
                 timelineTitle.className = "yp-harvest-timeline-title";
-                timelineTitle.textContent = "Actual harvest by week";
+                timelineTitle.textContent = "Harvest vs demand by week"; // CHANGE: timeline now compares demand, harvest, and inventory.
+                const timelineLegend = document.createElement("div");
+                timelineLegend.className = "yp-crop-timeline-legend";
+                const addTimelineLegendItem = (label, className) => {
+                    const item = document.createElement("span");
+                    item.className = "yp-crop-timeline-legend-item";
+                    const swatch = document.createElement("span");
+                    swatch.className = `yp-crop-timeline-legend-swatch ${className}`;
+                    swatch.setAttribute("aria-hidden", "true");
+                    item.appendChild(swatch);
+                    item.appendChild(document.createTextNode(label));
+                    timelineLegend.appendChild(item);
+                };
+                addTimelineLegendItem("Demand", "yp-crop-timeline-legend-swatch-demand");
+                addTimelineLegendItem("Raw harvest", "yp-crop-timeline-legend-swatch-harvest");
+                addTimelineLegendItem("Inventory", "yp-crop-timeline-legend-swatch-inventory"); // CHANGE: compact read-only legend for timeline encodings.
                 const timeline = document.createElement("div");
-                timelineSection.appendChild(timelineTitle); timelineSection.appendChild(timeline);
+                timelineHead.appendChild(timelineTitle); timelineHead.appendChild(timelineLegend);
+                timelineSection.appendChild(timelineHead); timelineSection.appendChild(timeline);
                 content.appendChild(timelineSection);
-                editorRefs = { ...editorRefs, variety, actual: actualTile.valueEl, required: requiredTile.valueEl, seeds: seedsTile.valueEl, harvestStart, harvestEnd, method, useActual, useSowingEstimate, estimateMessage, yieldHint, resetYield, harvestTimeline: timeline };
+                editorRefs = { ...editorRefs, variety, actual: actualTile.valueEl, required: requiredTile.valueEl, seeds: seedsTile.valueEl, harvestStart, harvestEnd, method, harvestSource, estimateMessage, yieldHint, resetYield, harvestTimeline: timeline }; // CHANGE: editor refs track the single harvest-source selector.
                 loadVarieties(crop, variety);
                 loadMethods(crop, method, methodDiagnostic);
                 updateYieldHint(crop, yieldHint, resetYield);
@@ -4576,7 +4825,13 @@ Draw.loadPlugin(function (ui) {
                 });
                 kg.addEventListener("input", () => { crop.kgPerPlant = Number(kg.value); crop.kgPerPlantMode = "manual"; updateYieldHint(crop, yieldHint, resetYield); debounceRefresh(); });
                 germ.addEventListener("input", () => { crop.germRate = Math.max(0.01, Math.min(1, Number(germ.value) || 1)); debounceRefresh(); });
-                method.addEventListener("change", () => { crop.method = method.value; refreshDerived(); });
+                method.addEventListener("change", () => {
+                    const selectedOption = method.options[method.selectedIndex] || null;
+                    crop.method = method.value;
+                    crop.methodCategoryId = String(selectedOption && selectedOption.dataset.methodCategoryId || PlanSchema.inferMethodCategoryFromMethodId(method.value));
+                    refreshDerived();
+                    emitHarvestWindowsNeeded(crop);
+                });
                 resetYield.addEventListener("click", () => {
                     const defaultYield = resolveDefaultKgPerPlant(crop);
                     crop.kgPerPlantMode = "auto";
@@ -4584,13 +4839,9 @@ Draw.loadPlugin(function (ui) {
                     renderSelectedEditor();
                     refreshDerived();
                 });
-                useActual.addEventListener("change", () => {
-                    PlanSchema.setCropHarvestWindowSource(crop, useActual.checked ? "actual_harvest" : "manual"); // CHANGE: actual harvest and sowing-window estimate are mutually exclusive sources.
-                    refreshDerived();
-                });
-                useSowingEstimate.addEventListener("change", () => {
-                    PlanSchema.setCropHarvestWindowSource(crop, useSowingEstimate.checked ? "sowing_window_estimate" : "manual"); // CHANGE: actual harvest and sowing-window estimate are mutually exclusive sources.
-                    if (useSowingEstimate.checked) {
+                harvestSource.addEventListener("change", () => {
+                    PlanSchema.setCropHarvestWindowSource(crop, harvestSource.value); // CHANGE: source selection is stored in the existing enum field.
+                    if (crop.harvestWindowSource === "sowing_window_estimate") {
                         crop.harvestStart = crop.estimatedHarvestStart || crop.harvestStart;
                         crop.harvestEnd = crop.estimatedHarvestEnd || crop.harvestEnd;
                     }
@@ -4639,6 +4890,41 @@ Draw.loadPlugin(function (ui) {
                 ];
             }
 
+            function formatCompactNumber(value) {
+                const number = Number(value);
+                if (!Number.isFinite(number)) return "0";
+                return Number.isInteger(number) ? String(number) : String(Number(number.toFixed(2)));
+            }
+
+            function demandFrequencyLabel(frequency, everyN) {
+                const unit = String(frequency || "week");
+                const every = Math.max(1, Math.trunc(Number(everyN) || 1));
+                if (every === 1) return unit;
+                return `every ${every} ${unit}${unit.endsWith("s") ? "" : "s"}`;
+            }
+
+            function demandLineSummaryChips(line, crop) {
+                const result = runtime && runtime.weekly && runtime.weekly.perDemandLine && runtime.weekly.perDemandLine.get(String(line && line.id || ""));
+                const demandKg = result ? sumPositiveValues(result.target) : 0;
+                const shortKg = result ? sumPositiveValues(result.short) : 0;
+                const potentialRevenue = result ? sumPositiveValues(result.potentialRevenue) : 0;
+                const fulfilledRevenue = result ? sumPositiveValues(result.fulfilledRevenue) : 0;
+                const from = YearPlanDashboard.formatYmd(line && line.from) || "?";
+                const to = YearPlanDashboard.formatYmd(line && line.to) || "?";
+                const priorityValue = String(line && line.priority || "target");
+                const priorityLabel = priorityValue.charAt(0).toUpperCase() + priorityValue.slice(1);
+                return [
+                    createChip("Crop", crop ? cropLabel(crop) : String(line && line.cropId || "Crop"), crop ? "primary" : "warning"),
+                    createChip("Qty", `${formatCompactNumber(line && line.qty)} ${line && line.unit || "kg"} / ${demandFrequencyLabel(line && line.frequency, line && line.everyN)}`, "neutral"),
+                    createChip("Dates", `${from}-${to}`, from === "?" || to === "?" ? "warning" : "neutral"),
+                    createChip("Priority", priorityLabel, "neutral"),
+                    createChip("Demand", formatKg(demandKg), "neutral"),
+                    createChip(shortKg > EPS ? "Short" : "Status", shortKg > EPS ? formatKg(shortKg) : (result ? "OK" : "Not calculated"), shortKg > EPS ? "danger" : (result ? "success" : "warning")),
+                    createChip("Potential", formatMoney(potentialRevenue), "neutral"),
+                    createChip("Fulfilled", formatMoney(fulfilledRevenue), fulfilledRevenue > EPS ? "success" : "neutral")
+                ];
+            }
+
             function createDemandLine(channelId) {
                 const crop = (plan.crops || [])[0] || null;
                 return {
@@ -4658,16 +4944,33 @@ Draw.loadPlugin(function (ui) {
 
             function addDemandLine(channelId) {
                 if (!(plan.crops || []).length || !(plan.demandChannels || []).some(channel => String(channel.id) === String(channelId))) return;
-                plan.demands.push(createDemandLine(channelId));
+                const line = createDemandLine(channelId);
+                plan.demands.push(line);
                 state.collapsedDemandChannelIds.delete(String(channelId));
+                state.collapsedDemandLineIds.delete(String(line.id || ""));
+                saveCollapsePreferences();
                 refreshDerived(null, { rebuildDemand: true });
             }
 
             function renderDemandLine(line, host) {
                 const crop = PlanMath.findCrop(plan, line.cropId);
+                const lineId = String(line.id || "");
+                const shell = document.createElement("section");
+                shell.className = "yp-demand-line-shell";
+                shell.dataset.demandLineId = lineId;
+                const collapsed = state.collapsedDemandLineIds.has(lineId);
+                const header = document.createElement("div");
+                header.className = "yp-demand-line-header";
+                const toggle = mkBtn(collapsed ? "Expand" : "Collapse", "neutral");
+                toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+                const summary = document.createElement("div");
+                summary.className = "yp-demand-line-summary";
+                setChipRow(summary, demandLineSummaryChips(line, crop));
+                demandRefs.lineSummaries.set(lineId, summary);
+                header.appendChild(toggle); header.appendChild(summary);
                 const row = document.createElement("div");
-                row.className = "yp-demand-line";
-                row.dataset.demandLineId = String(line.id || "");
+                row.className = "yp-demand-line yp-demand-line-details";
+                row.style.display = collapsed ? "none" : "grid";
                 const cropSelect = mkSelect((plan.crops || []).map(item => ({ value: item.id, label: cropLabel(PlanMath.findCrop(plan, item.id)) })), line.cropId || "");
                 const qty = mkInput("number", line.qty ?? 1);
                 qty.min = "0"; qty.step = "any";
@@ -4687,6 +4990,16 @@ Draw.loadPlugin(function (ui) {
                 notes.rows = 2;
                 notes.style.cssText = "padding:5px 6px;border:1px solid #bbb;border-radius:6px;box-sizing:border-box;width:100%;resize:vertical;";
                 const remove = mkBtn("Remove", "danger");
+                setYearPlanField(cropSelect, "cropId", { lineId });
+                setYearPlanField(qty, "qty", { lineId });
+                setYearPlanField(unit, "unit", { lineId });
+                setYearPlanField(frequency, "frequency", { lineId });
+                setYearPlanField(every, "everyN", { lineId });
+                setYearPlanField(from, "from", { lineId });
+                setYearPlanField(to, "to", { lineId });
+                setYearPlanField(priority, "priority", { lineId });
+                setYearPlanField(price, "price", { lineId });
+                setYearPlanField(notes, "notes", { lineId });
                 addField(row, "Crop", cropSelect);
                 addField(row, "Qty", qty);
                 addField(row, "Unit", unit);
@@ -4698,7 +5011,16 @@ Draw.loadPlugin(function (ui) {
                 addField(row, "Price", price, "From matching crop package");
                 addField(row, "Notes", notes);
                 addField(row, "Remove", remove);
-                host.appendChild(row);
+                shell.appendChild(header);
+                shell.appendChild(row);
+                host.appendChild(shell);
+                toggle.addEventListener("click", () => {
+                    if (collapsed) state.collapsedDemandLineIds.delete(lineId);
+                    else state.collapsedDemandLineIds.add(lineId);
+                    saveCollapsePreferences();
+                    renderDemandStrip(true);
+                    syncDemandDerived();
+                });
                 cropSelect.addEventListener("change", () => {
                     line.cropId = cropSelect.value;
                     line.unit = defaultUnit(PlanMath.findCrop(plan, line.cropId));
@@ -4717,6 +5039,8 @@ Draw.loadPlugin(function (ui) {
                 });
                 remove.addEventListener("click", () => {
                     plan.demands = plan.demands.filter(item => item !== line);
+                    state.collapsedDemandLineIds.delete(lineId);
+                    saveCollapsePreferences();
                     refreshDerived(null, { rebuildDemand: true });
                 });
             }
@@ -4740,6 +5064,8 @@ Draw.loadPlugin(function (ui) {
                     { value: "other", label: "Other" }
                 ], channel.type || "other", 120);
                 type.setAttribute("aria-label", "Channel type");
+                setYearPlanField(label, "label", { channelId });
+                setYearPlanField(type, "type", { channelId });
                 const summary = document.createElement("div");
                 summary.className = "yp-demand-channel-summary";
                 setChipRow(summary, buildChannelSummaryChips(metric));
@@ -4776,18 +5102,21 @@ Draw.loadPlugin(function (ui) {
                     if ((plan.demands || []).some(line => String(line.channelId) === channelId)) return;
                     plan.demandChannels = plan.demandChannels.filter(item => item !== channel);
                     state.collapsedDemandChannelIds.delete(channelId);
+                    saveCollapsePreferences();
                     refreshDerived(null, { rebuildDemand: true });
                 });
                 toggle.addEventListener("click", () => {
                     if (collapsed) state.collapsedDemandChannelIds.delete(channelId);
                     else state.collapsedDemandChannelIds.add(channelId);
+                    saveCollapsePreferences();
                     renderDemandStrip(true);
                     syncDemandDerived();
                 });
             }
 
             function renderDemand(content) {
-                demandRefs = { channelSummaries: new Map() };
+                pruneCollapseState();
+                demandRefs = { channelSummaries: new Map(), lineSummaries: new Map() };
                 const toolbar = document.createElement("div");
                 toolbar.className = "yp-row";
                 toolbar.style.marginBottom = "9px";
@@ -4811,6 +5140,7 @@ Draw.loadPlugin(function (ui) {
                     const channel = { id: Env.uid("demand_channel"), label: "New Channel", type: "other" };
                     plan.demandChannels.push(channel);
                     state.collapsedDemandChannelIds.delete(channel.id);
+                    saveCollapsePreferences();
                     refreshDerived(null, { rebuildDemand: true });
                 });
                 addLine.addEventListener("click", () => addDemandLine(channelSelect.value));
@@ -4835,6 +5165,7 @@ Draw.loadPlugin(function (ui) {
                     rebuildDetails: !!rebuildDetails,
                     onToggle: () => {
                         state.demandExpanded = !state.demandExpanded;
+                        saveCollapsePreferences();
                         renderDemandStrip(state.demandExpanded);
                         syncDemandDerived();
                     },
@@ -4853,7 +5184,7 @@ Draw.loadPlugin(function (ui) {
                         createChip("Selected", crop ? cropLabel(crop) : "No crop selected", crop ? "primary" : "neutral")
                     ],
                     rebuildDetails: !!rebuildDetails,
-                    onToggle: () => { state.cropPlanExpanded = !state.cropPlanExpanded; renderCropPlan(false); },
+                    onToggle: () => { state.cropPlanExpanded = !state.cropPlanExpanded; saveCollapsePreferences(); renderCropPlan(false); },
                     renderDetails: details => { details.appendChild(addRow); details.appendChild(dashboardGrid); }
                 });
             }
@@ -4940,12 +5271,15 @@ Draw.loadPlugin(function (ui) {
                 else renderBasics(crop, content);
                 remove.addEventListener("click", () => {
                     const index = plan.crops.indexOf(crop);
+                    const removedDemandLineIds = (plan.demands || []).filter(line => line.cropId === crop.id).map(line => String(line && line.id || ""));
                     plan.crops = plan.crops.filter(item => item !== crop);
                     plan.demands = (plan.demands || []).filter(line => line.cropId !== crop.id);
+                    for (const lineId of removedDemandLineIds) state.collapsedDemandLineIds.delete(lineId);
                     if (plan.csa && Array.isArray(plan.csa.components)) plan.csa.components = plan.csa.components.filter(component => component.cropId !== crop.id);
                     const nextCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, "", index);
                     if (nextCropId) setSelectedCropEverywhere(nextCropId);
                     else { state.selectedCropId = ""; plan.cropFilterId = ""; cropFilterSel.value = ""; }
+                    saveCollapsePreferences();
                     renderSelectedEditor(); fillCropFilter(); refreshDerived(null, { rebuildCsa: true, rebuildDemand: true }); loadAddCropOptions(false);
                 });
                 syncEditorDerived();
@@ -4972,7 +5306,7 @@ Draw.loadPlugin(function (ui) {
                         createChip("Fulfilled", formatMoney(csaMetric.fulfilledRevenue), Number(csaMetric.fulfilledRevenue) > EPS ? "success" : "neutral")
                     ],
                     rebuildDetails: !!rebuildDetails && state.csaExpanded,
-                    onToggle: () => { state.csaExpanded = !state.csaExpanded; renderCsa(state.csaExpanded); },
+                    onToggle: () => { state.csaExpanded = !state.csaExpanded; saveCollapsePreferences(); renderCsa(state.csaExpanded); },
                     renderDetails: renderCsaDetails
                 });
             }
@@ -5085,15 +5419,29 @@ Draw.loadPlugin(function (ui) {
                 }
             }
 
+            function validateSaveReadiness() {
+                return ((plan && plan.crops) || []).length
+                    ? []
+                    : [{ scope: "plan", code: "plan.empty_crops", message: EMPTY_PLAN_SAVE_MESSAGE, target: { area: "crop-list" } }]; // CHANGE: Save requires an allocatable crop plan.
+            }
+
+            function focusSaveValidationFailure() {
+                const firstDiagnostics = card.querySelector(".yp-diagnostics-trigger");
+                const planCheckHeader = card.querySelector('[data-year-plan-strip="plan-check"] .yp-strip-header');
+                if (firstDiagnostics) focusAndHighlight(firstDiagnostics);
+                else if (planCheckHeader) focusAndHighlight(planCheckHeader); // CHANGE: empty-plan save failures have only the Plan Check list.
+            }
+
             function saveCurrent(closeAfter) {
+                state.saveValidationErrors = validateSaveReadiness(); // CHANGE: save-only rule runs for Save, Save & Close, and prompt Save.
                 refreshDerived();
                 if (dashboard.validationErrors.length) {
                     state.validationState = "invalid";
                     state.planCheckExpanded = true;
+                    if (state.saveValidationErrors.some(error => error && error.code === "plan.empty_crops")) state.cropPlanExpanded = true; // CHANGE: show where to add the required crop.
                     if (PlanSchema.validateCsa(plan).length) state.csaExpanded = true;
                     renderCsa(true); renderPlanCheck(); renderFooter();
-                    const firstDiagnostics = card.querySelector(".yp-diagnostics-trigger");
-                    if (firstDiagnostics) focusAndHighlight(firstDiagnostics);
+                    focusSaveValidationFailure();
                     return false;
                 }
                 persistPackageDefaults();
@@ -5101,6 +5449,7 @@ Draw.loadPlugin(function (ui) {
                 loadedExistingForCurrentYear = true;
                 YearPlanDashboard.markBaseline(state, plan, new Date());
                 state.closePromptOpen = false;
+                state.saveValidationErrors = []; // CHANGE: clear save-only diagnostics after a successful save.
                 state.extraDiagnostics = [];
                 refreshDerived();
                 if (closeAfter) SessionController.close();
@@ -5312,15 +5661,16 @@ Draw.loadPlugin(function (ui) {
                 const cropYield = Number.isFinite(overrideYield) ? overrideYield : baseYield;
                 const numericVarietyId = selectedOption.varietyId == null ? NaN : Number(selectedOption.varietyId);
                 const crop = {
-                    id: Env.uid("crop"), plantId, plant: selectedOption.plantName, method: String(item.default_planting_method || "").trim() || "direct_sow",
-                    varietyId: selectedOption.varietyId == null ? null : (Number.isFinite(numericVarietyId) ? numericVarietyId : selectedOption.varietyId), variety: selectedOption.varietyName, harvestStart: "", harvestEnd: "", harvestWindowSource: "manual", useActualHarvest: false, syncharvest: false,
+                    id: Env.uid("crop"), plantId, plant: selectedOption.plantName, method: String(item.default_planting_method || "").trim() || "direct_sow.field",
+                    methodCategoryId: String(item.default_planting_method_category || PlanSchema.inferMethodCategoryFromMethodId(item.default_planting_method) || "direct_sow").trim(),
+                    varietyId: selectedOption.varietyId == null ? null : (Number.isFinite(numericVarietyId) ? numericVarietyId : selectedOption.varietyId), variety: selectedOption.varietyName, harvestStart: "", harvestEnd: "", harvestWindowSource: "sowing_window_estimate", useActualHarvest: false, syncharvest: false, // CHANGE: new crops default to the sowing-window planning source while dates are requested.
                     shelfLifeDays: 0, baseKgPerPlant: baseYield, kgPerPlant: cropYield,
                     kgPerPlantMode: "auto", actualPlants: 0, germRate: 1,
                     packages: defaults && defaults.length ? PlanSchema.clonePlain(defaults) : [{ unit: "kg", baseType: "kg", baseQty: 1, price: NaN }]
                 };
                 plan.crops.push(crop);
                 setSelectedCropEverywhere(crop.id);
-                crop.__harvestWindowSourceMissing = true; // CHANGE: newly added rows may default to the first valid estimate.
+                crop.__harvestWindowSourceMissing = false; // CHANGE: new rows already default to the sowing-window source.
                 emitHarvestWindowsNeeded(crop);
                 renderAll();
             });
@@ -5417,6 +5767,7 @@ Draw.loadPlugin(function (ui) {
                 if (!confirm(`Clear the saved ${currentYear} plan?`)) return;
                 PlanRepository.deletePlanForYear(moduleCell, currentYear);
                 replacePlan(PlanSchema.createEmptyPlan(currentYear), currentYear, false);
+                state.saveValidationErrors = []; // CHANGE: Reset/Clear deletes the plan instead of saving an empty one.
                 renderAll();
                 YearPlanDashboard.markBaseline(state, plan, null);
                 refreshDerived();
@@ -5434,6 +5785,7 @@ Draw.loadPlugin(function (ui) {
                         varietyId: crop.varietyId ?? null,
                         methodId: crop.method ?? null,
                         method: crop.method ?? null,
+                        methodCategoryId: crop.methodCategoryId ?? null,
                         yieldTargetKg: 0
                     }))
                 } }));
@@ -5458,7 +5810,7 @@ Draw.loadPlugin(function (ui) {
                     } else {
                         crop.estimatedHarvestStart = "";
                         crop.estimatedHarvestEnd = "";
-                        crop.estimatedHarvestUnavailableReason = String(result.reason || "No feasible sowing-window estimate");
+                        crop.estimatedHarvestUnavailableReason = String(result.reason || "No feasible sowing window");
                         if (crop.harvestWindowSource === "sowing_window_estimate") PlanSchema.setCropHarvestWindowSource(crop, "manual");
                     }
                     if (!(Number(crop.shelfLifeDays) > 0) && Number(result.shelfLifeDays) > 0) crop.shelfLifeDays = Math.trunc(Number(result.shelfLifeDays));
@@ -5504,6 +5856,8 @@ Draw.loadPlugin(function (ui) {
             DiagramPlanReader,
             PlanRuntimeService,
             PlanningCore,
+            CropTimeline: { buildCropTimelineModel }, // CHANGE: expose the render model for focused timeline tests.
+            YearPlanCollapsePreferences,
             YearPlanDashboard,
             YearPlanModalController,
             SessionController

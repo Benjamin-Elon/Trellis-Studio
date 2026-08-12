@@ -432,6 +432,7 @@ var SplashDialog = function(editorUi)
 		phoneNumber: '+1 (236) 878 7411', // CHANGE
 		phone: 'tel:+12368787411', // CHANGE
 		patreon: 'https://patreon.com/Benjamin980?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink', // CHANGE
+		website: 'https://example.com', // NEW
 		issues: 'https://github.com/Benjamin-Elon/trellis-studio/issues', // CHANGE
 		releases: 'https://github.com/Benjamin-Elon/trellis-studio/releases', // CHANGE
 		repo: 'https://github.com/Benjamin-Elon/trellis-studio' // CHANGE
@@ -440,13 +441,19 @@ var SplashDialog = function(editorUi)
 	var trellisLicenseVersion = '2'; // CHANGE
 	var trellisLicenseKey = 'trellis.licenseWizard.v' + trellisLicenseVersion; // CHANGE
 	var trellisOathText = 'I solemnly affirm, with unnecessary ceremony and full awareness that this button did not appear by accident, that I have answered the Trellis license questions honestly, that I understand commercial use requires contacting the project owner, and that I will not pretend I missed this because the software was too polite.'; // NEW
-	var trellisCheckboxText = 'I have listened to the oath, survived the pageantry, and understand that my use of Trellis must match the path I selected.'; // NEW
+	var trellisCheckboxText = 'I have listened to the oath, survived, and understand that my use of Trellis must match the path I selected.'; // NEW
+	var trellisCommercialObligationText = 'People should have access to tools that increase shared regenerative capacity. Those who convert that shared capacity into private commercial value have a corresponding obligation to help sustain it. Written approval is still required before commercial use of Trellis plugin files.'; // CHANGE
 	var trellisLicensePaths = { // NEW
 		personal: { label: 'Personal / Noncommercial', detail: 'Home, hobby, and other noncommercial work.', contactGuidance: false }, // NEW
 		education: { label: 'Education / Nonprofit / Public-interest', detail: 'Teaching, learning, nonprofit, and public-interest work.', contactGuidance: false }, // NEW
 		commercial: { label: 'Commercial / Client / Company', detail: 'Company work, client deliverables, paid work, or business operations.', contactGuidance: true }, // NEW
 		unsure: { label: 'Not sure', detail: 'You are not sure which path applies yet.', contactGuidance: true } // NEW
 	}; // NEW
+	var trellisPortfolioProjects = [ // NEW
+		{ name: 'Mystery Lawn', role: 'Umbrella ecological cooperative', detail: 'The cooperative frame for regenerative projects, shared capacity, and community-level coordination.', url: trellisLinks.website }, // NEW
+		{ name: 'LifeCycler', role: 'Small-scale food infrastructure', detail: 'A vertical composter garden that turns food waste, water, and limited space into soil, harvests, and long-term resilience.', url: trellisLinks.website }, // NEW
+		{ name: 'Trellis Studio', role: 'Planning and coordination layer', detail: 'A Draw.io-based support structure for gardens, teams, workflows, and local-first diagrams.', url: trellisLinks.repo } // NEW
+	]; // NEW
 	var trellisSavedWizard = readTrellisWizardRecord(); // CHANGE
 	var trellisSelectedPath = trellisSavedWizard != null ? trellisSavedWizard.path : null; // NEW
 	var trellisWizardComplete = trellisSavedWizard != null; // NEW
@@ -486,8 +493,32 @@ var SplashDialog = function(editorUi)
 		var link = createTrellisElement('a', null, label); // NEW
 		link.setAttribute('href', href); // NEW
 		link.setAttribute('target', '_blank'); // NEW
+		link.setAttribute('rel', 'noopener'); // NEW
 		link.style.marginRight = '10px'; // NEW
 		return link; // NEW
+	} // NEW
+
+	function createTrellisProjectCard(project) // NEW
+	{ // NEW
+		var card = createTrellisElement('div', 'trellis-project-card'); // NEW
+		card.style.cssText = 'box-sizing:border-box;border:1px solid #c8d2c8;border-radius:6px;padding:10px;background:#fff;'; // NEW
+		var title = createTrellisElement('div', null, project.name); // NEW
+		title.style.cssText = 'font-weight:bold;margin-bottom:4px;color:#2f3b2f;'; // NEW
+		var role = createTrellisElement('div', null, project.role); // NEW
+		role.style.cssText = 'font-size:11px;font-weight:bold;line-height:1.3;color:#527047;margin-bottom:5px;'; // NEW
+		var detail = createTrellisElement('div', null, project.detail); // NEW
+		detail.style.cssText = 'font-size:11px;line-height:1.35;color:#4f5a4f;'; // NEW
+		card.appendChild(title); // NEW
+		card.appendChild(role); // NEW
+		card.appendChild(detail); // NEW
+		if (project.url != null && project.url != '') // NEW
+		{ // NEW
+			var link = createTrellisLink('Open project link', project.url); // NEW
+			link.className = 'trellis-project-link'; // NEW
+			link.style.cssText = 'display:inline-block;margin-top:8px;font-size:11px;'; // NEW
+			card.appendChild(link); // NEW
+		} // NEW
+		return card; // NEW
 	} // NEW
 
 	function hasTrellisStoredText(value) // NEW
@@ -604,16 +635,18 @@ var SplashDialog = function(editorUi)
 		var panel = createTrellisElement('div', 'trellis-license-contact-panel'); // NEW
 		panel.style.cssText = 'box-sizing:border-box;border:1px solid #d8e0d8;border-radius:6px;padding:10px;text-align:left;background:#fff;'; // NEW
 		var contact = createTrellisElement('div', 'trellis-license-panel-column trellis-contact-column'); // NEW
-		var heading = createTrellisElement('div', null, 'Contact'); // NEW
+		var heading = createTrellisElement('div', null, 'Support and contact'); // CHANGE
 		heading.style.cssText = 'font-weight:bold;font-size:13px;margin-bottom:6px;color:#2f3b2f;'; // NEW
 		var details = createTrellisElement('div', null); // NEW
 		details.style.cssText = 'display:grid;gap:6px;font-size:12px;line-height:1.35;color:#3f4a3f;'; // CHANGE
 		details.appendChild(createTrellisElement('div', null, 'Name: ' + trellisLinks.name)); // NEW
+		details.appendChild(createTrellisLink('Support: Patreon', trellisLinks.patreon)); // NEW
 		details.appendChild(createTrellisLink('Email: ' + trellisLinks.emailAddress, trellisLinks.email)); // NEW
 		details.appendChild(createTrellisLink('Phone: ' + trellisLinks.phoneNumber, trellisLinks.phone)); // NEW
+		details.appendChild(createTrellisLink('GitHub: Issues and feedback', trellisLinks.issues)); // NEW
 		contact.appendChild(heading); // NEW
 		contact.appendChild(details); // NEW
-		var notice = createTrellisElement('div', 'trellis-commercial-permission-notice', 'Commercial use requires written permission from Benjamin Elon before relying on Trellis-covered plugin files.'); // NEW
+		var notice = createTrellisElement('div', 'trellis-commercial-permission-notice', trellisCommercialObligationText); // CHANGE
 		notice.style.cssText = 'font-size:12px;line-height:1.35;color:#3f4a3f;'; // NEW
 		panel.appendChild(licenseColumn); // NEW
 		panel.appendChild(contact); // NEW
@@ -665,7 +698,8 @@ var SplashDialog = function(editorUi)
 			var summary = createTrellisElement('div', 'trellis-license-panel-column trellis-saved-license-card'); // CHANGE
 			var summaryHeading = createTrellisElement('div', null, 'Saved license path'); // NEW
 			summaryHeading.style.cssText = 'font-weight:bold;font-size:13px;margin-bottom:6px;color:#2f3b2f;'; // NEW
-			var summaryCopy = createTrellisElement('div', null, 'Path: ' + getTrellisPathLabel(trellisSavedWizard.path) + '. Signed by ' + trellisSavedWizard.name + ' using ' + trellisSavedWizard.email + '.'); // NEW
+			var organizationText = hasTrellisStoredText(trellisSavedWizard.organization) ? ' Project: ' + trellisSavedWizard.organization + '.' : ''; // NEW
+			var summaryCopy = createTrellisElement('div', null, 'Path: ' + getTrellisPathLabel(trellisSavedWizard.path) + '. Signed by ' + trellisSavedWizard.name + ' using ' + trellisSavedWizard.email + '.' + organizationText); // CHANGE
 			summaryCopy.style.cssText = 'font-size:12px;line-height:1.35;color:#3f4a3f;'; // NEW
 			summary.appendChild(summaryHeading); // NEW
 			summary.appendChild(summaryCopy); // NEW
@@ -676,7 +710,7 @@ var SplashDialog = function(editorUi)
 				trellisSavedWizard = null; // NEW
 				trellisSelectedPath = null; // NEW
 				trellisWizardComplete = false; // NEW
-				renderUsage(); // NEW
+				renderIntro(); // CHANGE
 			}); // NEW
 			change.className = 'geBtn'; // NEW
 			change.style.marginTop = '8px'; // NEW
@@ -696,11 +730,49 @@ var SplashDialog = function(editorUi)
 			scheduleTrellisActionReveal(status); // CHANGE
 		} // NEW
 
+		function renderIntro() // NEW
+		{ // NEW
+			center.innerHTML = ''; // NEW
+			writeHeader('A support structure for projects that grow food, people, and shared capacity.'); // NEW
+			var intro = createTrellisInfoSection('Hello, I am Benjamin', 'Trellis is a name pun with a job: a trellis is a support structure. This software is meant to support gardens, teams, planning, and the other regenerative projects growing around it.'); // NEW
+			center.appendChild(intro); // NEW
+			var projects = createTrellisInfoSection('Project ecosystem', 'Mystery Lawn is the umbrella ecological cooperative, LifeCycler is physical food infrastructure, and Trellis Studio is the planning layer that helps coordinate the work.'); // NEW
+			var projectGrid = createTrellisElement('div', 'trellis-project-grid'); // NEW
+			projectGrid.style.cssText = 'display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px;'; // NEW
+			for (var i = 0; i < trellisPortfolioProjects.length; i++) // NEW
+			{ // NEW
+				projectGrid.appendChild(createTrellisProjectCard(trellisPortfolioProjects[i])); // NEW
+			} // NEW
+			projects.appendChild(projectGrid); // NEW
+			center.appendChild(projects); // NEW
+			var support = createTrellisInfoSection('How to help', 'Support is the first contribution path. Patreon, commercial collaboration, issue reports, testing notes, gardening data, and feedback all help sustain the project. Code contributions require prior written permission so Trellis can keep publishing, modifying, redistributing, and commercially licensing covered plugin files.'); // NEW
+			var supportLinks = createTrellisElement('div', 'trellis-support-links'); // NEW
+			supportLinks.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;'; // NEW
+			supportLinks.appendChild(createTrellisLink('Support on Patreon', trellisLinks.patreon)); // NEW
+			supportLinks.appendChild(createTrellisLink('Open GitHub issues', trellisLinks.issues)); // NEW
+			supportLinks.appendChild(createTrellisLink('Email Benjamin', trellisLinks.email)); // NEW
+			support.appendChild(supportLinks); // NEW
+			center.appendChild(support); // NEW
+			var continueRow = createTrellisElement('div', null); // NEW
+			continueRow.style.cssText = 'margin-top:10px;text-align:center;'; // NEW
+			var continueButton = mxUtils.button('Continue to License', function() // NEW
+			{ // NEW
+				renderUsage(); // NEW
+			}); // NEW
+			continueButton.className = 'geBtn gePrimaryBtn trellis-intro-continue'; // NEW
+			continueRow.appendChild(continueButton); // NEW
+			center.appendChild(continueRow); // NEW
+			var status = createTrellisElement('div', 'trellis-license-status', 'The license path and oath appear on the next step.'); // NEW
+			status.style.cssText = 'margin-top:8px;color:#5f6a5f;font-size:12px;text-align:center;'; // NEW
+			trellisExitStatus = status; // NEW
+			center.appendChild(status); // NEW
+		} // NEW
+
 		function renderUsage() // NEW
 		{ // NEW
 			center.innerHTML = ''; // NEW
 			writeHeader('Choose how you are using Trellis, then complete the oath to unlock diagram options.'); // NEW
-			var section = createTrellisInfoSection('Choose your path', 'This is an attention ritual, not an automatic approval system. Commercial and unsure paths will show contact guidance before the oath.'); // NEW
+			var section = createTrellisInfoSection('Choose your path', 'This is an attention ritual, not an automatic approval system. Commercial and unsure paths will show support/contact guidance before the oath.'); // CHANGE
 			var choiceRow = createTrellisElement('div', null); // NEW
 			choiceRow.style.cssText = 'display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px;'; // NEW
 			function addChoice(path) // NEW
@@ -781,11 +853,13 @@ var SplashDialog = function(editorUi)
 			center.appendChild(oathSection); // NEW
 			var nameField = createTrellisInput('Name', 'text'); // NEW
 			var emailField = createTrellisInput('Email', 'email'); // NEW
+			var organizationField = createTrellisInput('Organization / Project (optional)', 'text'); // NEW
 			var signatureField = createTrellisInput('Signature', 'text'); // NEW
 			var gateSection = createTrellisElement('div', null); // NEW
 			var formSection = createTrellisInfoSection('Ceremonial paperwork', 'Fill these local-only fields. They are stored in this browser or desktop app profile with the completed oath.'); // NEW
 			formSection.appendChild(nameField.wrap); // NEW
 			formSection.appendChild(emailField.wrap); // NEW
+			formSection.appendChild(organizationField.wrap); // NEW
 			formSection.appendChild(signatureField.wrap); // NEW
 			var checkboxWrap = createTrellisElement('label', null); // NEW
 			checkboxWrap.style.cssText = 'display:flex;align-items:flex-start;gap:7px;margin-top:10px;font-size:12px;line-height:1.35;color:#2f3b2f;'; // NEW
@@ -798,7 +872,13 @@ var SplashDialog = function(editorUi)
 			gateSection.appendChild(formSection); // NEW
 			center.appendChild(gateSection); // NEW
 			var buttonRow = createTrellisElement('div', null); // NEW
-			buttonRow.style.cssText = 'margin-top:10px;text-align:center;min-height:44px;'; // NEW
+			buttonRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:10px;min-height:44px;'; // CHANGE
+			var skipButton = mxUtils.button('Skip the Oath', function(evt) // NEW
+			{ // NEW
+				attemptSkipOath(evt); // NEW
+			}); // NEW
+			skipButton.className = 'geBtn trellis-skip-oath-decoy'; // NEW
+			skipButton.style.cssText = 'position:relative;transition:transform 120ms ease;'; // NEW
 			var affirmButton = mxUtils.button('I Affirm the Oath', function(evt) // NEW
 			{ // NEW
 				if (!isGateReady()) // NEW
@@ -809,29 +889,30 @@ var SplashDialog = function(editorUi)
 				completeWizard(); // NEW
 			}); // NEW
 			affirmButton.className = 'geBtn gePrimaryBtn'; // NEW
-			affirmButton.style.cssText = 'position:relative;transition:transform 120ms ease;'; // NEW
+			affirmButton.style.cssText = 'position:relative;'; // CHANGE
 			mxEvent.addListener(gateSection, mxClient.IS_POINTER ? 'pointermove' : 'mousemove', function(evt) // NEW
 			{ // NEW
 				runAwayFromPointerProximity(evt); // NEW
 			}); // NEW
-			mxEvent.addListener(affirmButton, 'focus', function(evt) // NEW
+			mxEvent.addListener(skipButton, 'focus', function(evt) // CHANGE
 			{ // NEW
 				tryNonPointerRunAway(evt); // CHANGE
 			}); // NEW
-			mxEvent.addListener(affirmButton, 'touchstart', function(evt) // NEW
+			mxEvent.addListener(skipButton, 'touchstart', function(evt) // CHANGE
 			{ // NEW
 				tryNonPointerRunAway(evt); // CHANGE
 			}); // NEW
-			mxEvent.addListener(affirmButton, 'keydown', function(evt) // NEW
+			mxEvent.addListener(skipButton, 'keydown', function(evt) // CHANGE
 			{ // NEW
 				if (!isGateReady() && (evt.key == 'Enter' || evt.key == ' ' || evt.keyCode == 13 || evt.keyCode == 32)) // NEW
 				{ // NEW
-					blockAffirmUntilReady(evt); // NEW
+					tryNonPointerRunAway(evt); // CHANGE
 				} // NEW
 			}); // NEW
+			buttonRow.appendChild(skipButton); // NEW
 			buttonRow.appendChild(affirmButton); // NEW
 			gateSection.appendChild(buttonRow); // CHANGE
-			var change = mxUtils.button('Change answer', function() // NEW
+			var change = mxUtils.button('Change license', function() // CHANGE
 			{ // NEW
 				cancelSpeech(); // NEW
 				trellisSelectedPath = null; // NEW
@@ -871,13 +952,29 @@ var SplashDialog = function(editorUi)
 					} // NEW
 					return; // NEW
 				} // NEW
+				updateStatus('The oath has to be heard before affirming. The skip button is the theatrical one.'); // CHANGE
+				if (evt != null) // NEW
+				{ // NEW
+					mxEvent.consume(evt); // NEW
+				} // NEW
+			} // NEW
+
+			function attemptSkipOath(evt) // NEW
+			{ // NEW
+				if (isGateReady()) // NEW
+				{ // NEW
+					updateStatus('The oath is ready. Use I Affirm the Oath to finish.'); // NEW
+					if (evt != null) mxEvent.consume(evt); // NEW
+					return; // NEW
+				} // NEW
 				tryNonPointerRunAway(evt); // NEW
 			} // NEW
 
 			function tryNonPointerRunAway(evt) // NEW
 			{ // NEW
-				if (oathDone) // NEW
+				if (isGateReady()) // CHANGE
 				{ // NEW
+					updateStatus('The oath is ready. Use I Affirm the Oath to finish.'); // NEW
 					return; // NEW
 				} // NEW
 				if (nonPointerRunaways < 3) // NEW
@@ -887,7 +984,7 @@ var SplashDialog = function(editorUi)
 				} // NEW
 				else // NEW
 				{ // NEW
-					updateStatus('Placeholder joke: the button is out of hiding places, but the oath still has to be heard.'); // NEW
+					updateStatus('The skip button is out of hiding places. Finish the oath fields and use the real button.'); // CHANGE
 					if (evt != null) // NEW
 					{ // NEW
 						mxEvent.consume(evt); // NEW
@@ -897,7 +994,7 @@ var SplashDialog = function(editorUi)
 
 			function runAwayFromPointerProximity(evt) // NEW
 			{ // NEW
-				if (oathDone || evt == null || evt.clientX == null || evt.clientY == null) // NEW
+				if (isGateReady() || evt == null || evt.clientX == null || evt.clientY == null) // CHANGE
 				{ // NEW
 					return; // NEW
 				} // NEW
@@ -911,11 +1008,11 @@ var SplashDialog = function(editorUi)
 
 			function isPointerNearAffirmButton(evt) // NEW
 			{ // NEW
-				if (affirmButton.getBoundingClientRect == null) // NEW
+				if (skipButton.getBoundingClientRect == null) // CHANGE
 				{ // NEW
 					return false; // NEW
 				} // NEW
-				var rect = affirmButton.getBoundingClientRect(); // NEW
+				var rect = skipButton.getBoundingClientRect(); // CHANGE
 				var nearestX = Math.max(rect.left, Math.min(evt.clientX, rect.right)); // NEW
 				var nearestY = Math.max(rect.top, Math.min(evt.clientY, rect.bottom)); // NEW
 				var dx = evt.clientX - nearestX; // NEW
@@ -925,14 +1022,14 @@ var SplashDialog = function(editorUi)
 
 			function runAway(evt) // CHANGE
 			{ // NEW
-				if (oathDone) // NEW
+				if (isGateReady()) // CHANGE
 				{ // NEW
 					return; // NEW
 				} // NEW
 				runawayX = (runawayX <= 0) ? 90 : -90; // NEW
 				runawayY = (runawayY <= 0) ? 18 : -18; // NEW
-				affirmButton.style.transform = 'translate(' + runawayX + 'px,' + runawayY + 'px)'; // NEW
-				updateStatus('Placeholder joke: the oath has not been heard, so the button has chosen drama.'); // NEW
+				skipButton.style.transform = 'translate(' + runawayX + 'px,' + runawayY + 'px)'; // CHANGE
+				updateStatus('Nice try. The oath is short, and the skip button is unserious.'); // CHANGE
 				if (evt != null) // NEW
 				{ // NEW
 					mxEvent.consume(evt); // NEW
@@ -943,7 +1040,7 @@ var SplashDialog = function(editorUi)
 			{ // NEW
 				cancelSpeech(); // NEW
 				oathDone = true; // NEW
-				affirmButton.style.transform = 'translate(0,0)'; // NEW
+				skipButton.style.transform = 'translate(0,0)'; // CHANGE
 				playButton.innerHTML = ''; // NEW
 				mxUtils.write(playButton, 'Replay Oath'); // NEW
 				updateStatus(message); // NEW
@@ -980,6 +1077,8 @@ var SplashDialog = function(editorUi)
 
 			function playOath() // NEW
 			{ // NEW
+				skipButton.style.display = 'none'; // CHANGE
+				skipButton.style.transform = 'translate(0,0)'; // CHANGE
 				if (window.speechSynthesis == null || window.SpeechSynthesisUtterance == null) // NEW
 				{ // NEW
 					countSpeechFailure('This browser did not provide speech synthesis.'); // NEW
@@ -1031,6 +1130,7 @@ var SplashDialog = function(editorUi)
 					contactGuidance: !!pathInfo.contactGuidance, // NEW
 					name: mxUtils.trim(nameField.input.value), // NEW
 					email: mxUtils.trim(emailField.input.value), // NEW
+					organization: mxUtils.trim(organizationField.input.value), // NEW
 					signature: mxUtils.trim(signatureField.input.value), // NEW
 					oathCompletedAt: new Date().toISOString(), // NEW
 					version: trellisLicenseVersion // NEW
@@ -1042,8 +1142,7 @@ var SplashDialog = function(editorUi)
 				{ // NEW
 					storageWarning = ' The oath is accepted for this session, but local storage failed, so it may be requested again next launch.'; // NEW
 				} // NEW
-				updateStatus('Oath accepted.' + (storageWarning || '') + ' Diagram options will be ready shortly.'); // CHANGE
-				scheduleTrellisActionReveal(status); // NEW
+				renderSaved(); // CHANGE
 			} // NEW
 		} // NEW
 
@@ -1053,7 +1152,7 @@ var SplashDialog = function(editorUi)
 		} // NEW
 		else // NEW
 		{ // NEW
-			renderUsage(); // NEW
+			renderIntro(); // CHANGE
 		} // NEW
 		return center; // NEW
 	} // NEW

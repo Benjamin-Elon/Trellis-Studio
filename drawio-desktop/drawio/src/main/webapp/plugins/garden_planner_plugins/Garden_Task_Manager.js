@@ -1530,6 +1530,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     ];
 
     const BOARD_GEOM = { x: 40, y: 40, w: 2200, h: 760 };
+    const SECONDARY_BOARD_STACK_GAP = 40; // NEW
     const LANE_W = DEFAULT_DAY_LANE_WIDTH, LANE_H = 680, LANE_GAP = 16;
     const BOARD_LANE_Y = 28, BOARD_BOTTOM_PADDING = 10, FULL_LANE_MIN_H = TASK_LANE_MIN_HEIGHT; // CHANGE: one minimum for every non-day lane
     const WEEK_BOARD_TOP_MARGIN = 20; // NEW: replaces schedule-lane stackBorder so hour origin and resize math match
@@ -1777,6 +1778,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         return taskModuleForGarden(gardenModule); // CHANGE: normal task paths only use existing companion Task Modules
     }
 
+    function defaultBoardNameForRole(role) {
+        return String(role || '') === 'secondary' ? 'Secondary Board' : 'Main Board'; // NEW: newly created boards use role-specific names
+    }
+
     // -------------------- Board and lane template commands --------------------
     function ensureBoardTemplateIn(containerVertex, opts) {
         const parent = isGardenModule(containerVertex) ? boardContainerForGarden(containerVertex) : (containerVertex || graph.getDefaultParent());
@@ -1787,7 +1792,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         return taskTransactions.runModelUpdate(opts, function () {
             let board = main;
             if (!board) {
-                board = createVertex('Kanban', BOARD_GEOM.x, BOARD_GEOM.y, BOARD_GEOM.w, BOARD_GEOM.h, BOARD_STYLE);
+                board = createVertex(defaultBoardNameForRole('main'), BOARD_GEOM.x, BOARD_GEOM.y, BOARD_GEOM.w, BOARD_GEOM.h, BOARD_STYLE); // CHANGE
                 model.add(parent, board, model.getChildCount(parent));
                 setAttrNoUndo(board, 'board_key', BOARD_KEY);
                 setAttrNoUndo(board, BOARD_ROLE_ATTR, 'main');
@@ -1799,10 +1804,21 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         });
     }
 
+    function secondaryBoardGeometryFor(parent) {
+        const boards = findBoardsIn(parent); // NEW: secondary boards stack below recognized task boards only
+        const existing = [boards.main].concat(boards.secondary).filter(Boolean); // NEW
+        const bottom = existing.reduce(function (max, board) { // NEW
+            const geo = model.getGeometry ? model.getGeometry(board) : null; // NEW
+            return geo ? Math.max(max, (Number(geo.y) || 0) + (Number(geo.height) || BOARD_GEOM.h)) : max; // NEW
+        }, BOARD_GEOM.y - SECONDARY_BOARD_STACK_GAP); // NEW
+        return { x: BOARD_GEOM.x, y: bottom + SECONDARY_BOARD_STACK_GAP, w: BOARD_GEOM.w, h: BOARD_GEOM.h }; // NEW
+    }
+
     function createSecondaryBoardIn(parent) {
         parent = isGardenModule(parent) ? boardContainerForGarden(parent) : parent;
         if (!parent) return null;
-        const board = createVertex('Kanban', BOARD_GEOM.x, BOARD_GEOM.y, BOARD_GEOM.w, BOARD_GEOM.h, BOARD_STYLE);
+        const geom = secondaryBoardGeometryFor(parent); // CHANGE
+        const board = createVertex(defaultBoardNameForRole('secondary'), geom.x, geom.y, geom.w, geom.h, BOARD_STYLE); // CHANGE
         model.add(parent, board, model.getChildCount(parent));
         setAttrNoUndo(board, 'board_key', BOARD_KEY);
         setAttrNoUndo(board, BOARD_ROLE_ATTR, 'secondary');
@@ -4782,6 +4798,21 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         return out;
     }
 
+    function taskModuleHasAnyBoard(taskModule) {
+        const boards = findBoardsIn(taskModule); // NEW: reuse board recognition, including legacy main boards
+        return !!(boards.main || boards.secondary.length); // NEW
+    }
+
+    function taskModuleAddBoardLabel(taskModule) {
+        return taskModuleHasAnyBoard(taskModule) ? 'Add Secondary Task Board' : 'Add Main Task Board'; // NEW
+    }
+
+    function createBoardForTaskModuleState(taskModule) {
+        if (taskModuleHasAnyBoard(taskModule)) return taskCommands.runModelUpdate({}, function () { return createSecondaryBoardIn(taskModule); }); // NEW
+        const result = taskCommands.ensureBoardTemplateInUpdate(taskModule); // NEW
+        return result && result.board ? result.board : result; // NEW
+    }
+
     function cellId(cell) {
         return String(cell && (cell.id || (cell.getId && cell.getId())) || '');
     }
@@ -4804,6 +4835,38 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         const holder = document && document.createElement ? document.createElement('div') : null;
         if (holder) { holder.innerHTML = raw; return String(holder.textContent || '').replace(/\s+/g, ' ').trim() || 'Kanban'; }
         return String(raw || 'Kanban').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() || 'Kanban';
+    }
+
+    function normalizeBoardName(board, value) {
+        const next = String(value == null ? '' : value).trim();
+        return next || defaultBoardNameForRole(getAttr(board, BOARD_ROLE_ATTR)); // NEW: blank board names fall back by board role
+    }
+
+    function buildBoardLabelXmlValueForEdit(board) {
+        if (!board) return null;
+        const value = board.value;
+        if (value && value.nodeType === 1) return value.cloneNode(true); // NEW: clone-backed writes preserve undo history values
+        const doc = mxUtils.createXmlDocument();
+        const node = doc.createElement('object');
+        if (typeof value === 'string' && value) node.setAttribute('label', value);
+        return node;
+    }
+
+    function writeBoardLabelUndoable(board, label) {
+        if (!board || !isBoardCell(board)) return '';
+        const next = normalizeBoardName(board, label);
+        if (boardDisplayName(board) === next) return next;
+        const node = buildBoardLabelXmlValueForEdit(board);
+        if (!node) return next;
+        node.setAttribute('label', next);
+        model.beginUpdate();
+        try {
+            model.setValue(board, node);
+        } finally {
+            model.endUpdate();
+        }
+        if (graph.refresh) graph.refresh(board);
+        return next;
     }
 
     function listBoardsInTaskModule(taskModule) {
@@ -4884,6 +4947,20 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         return { hidden: false, total, boards: summaries };
     }
 
+    function cellBoundsInModel(cell) {
+        const geo = cell && model.getGeometry ? model.getGeometry(cell) : null;
+        if (!geo) return null;
+        let x = Number(geo.x) || 0;
+        let y = Number(geo.y) || 0;
+        let parent = model.getParent ? model.getParent(cell) : null;
+        while (parent) {
+            const parentGeo = model.getGeometry ? model.getGeometry(parent) : null;
+            if (parentGeo) { x += Number(parentGeo.x) || 0; y += Number(parentGeo.y) || 0; } // NEW
+            parent = model.getParent ? model.getParent(parent) : null;
+        }
+        return { x, y, width: Math.max(0, Number(geo.width) || 0), height: Math.max(0, Number(geo.height) || 0) }; // NEW
+    }
+
     function clearTransientUnseenHighlights() {
         transientUnseenHighlightOverlays.forEach(overlay => { if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay); });
         transientUnseenHighlightOverlays.clear();
@@ -4951,9 +5028,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             suppressDashboardSeenSelection = true;
             try { graph.setSelectionCell(board); } finally { suppressDashboardSeenSelection = false; }
         }
-        const geo = model.getGeometry(board);
-        if (geo && typeof graph.fitWindow === 'function') { graph.fitWindow({ x: geo.x, y: geo.y, width: geo.width, height: geo.height }, 24); return; }
-        if (geo && typeof graph.scrollRectToVisible === 'function') { graph.scrollRectToVisible({ x: geo.x, y: geo.y, width: geo.width, height: geo.height }); return; }
+        const bounds = cellBoundsInModel(board); // CHANGE: task boards are nested inside companion Task modules
+        if (bounds && typeof graph.fitWindow === 'function') { graph.fitWindow(bounds, 24); return; }
+        if (bounds && typeof graph.scrollRectToVisible === 'function') { graph.scrollRectToVisible(bounds); return; }
         if (typeof graph.fit === 'function') graph.fit(48);
         if (graph.scrollCellToVisible) graph.scrollCellToVisible(board, true);
     }
@@ -6505,6 +6582,32 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         requestRefresh();
     }
 
+    function makeBoardNameInput(board) {
+        let committedLabel = boardDisplayName(board); // CHANGE: Escape restores the latest committed label, not the first render label
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = committedLabel;
+        input.title = 'Task board name';
+        input.setAttribute('aria-label', 'Task board name');
+        input.style.cssText = 'box-sizing:border-box;width:180px;min-width:0;border:1px solid rgba(75,85,99,.35);border-radius:4px;padding:3px 5px;font:12px Arial,sans-serif;font-weight:600;';
+        ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup'].forEach(function (type) { input.addEventListener(type, stopDomPropagation); }); // NEW: text editing should not start graph gestures
+        input.addEventListener('keydown', function (evt) {
+            stopDomPropagation(evt);
+            if (evt.key === 'Enter') {
+                input.value = writeBoardLabelUndoable(board, input.value);
+                committedLabel = input.value; // NEW
+                if (input.blur) input.blur();
+                if (evt.preventDefault) evt.preventDefault();
+            } else if (evt.key === 'Escape') {
+                input.value = committedLabel; // CHANGE
+                if (evt.preventDefault) evt.preventDefault();
+            }
+        });
+        ['keypress', 'keyup'].forEach(function (type) { input.addEventListener(type, stopDomPropagation); });
+        input.addEventListener('blur', function () { input.value = writeBoardLabelUndoable(board, input.value); committedLabel = input.value; }); // CHANGE
+        return input;
+    }
+
     function installBoardHeaderControls() {
         if (graph.__trellisTaskBoardHeaderInstalled || !document || !document.createElement) return;
         graph.__trellisTaskBoardHeaderInstalled = true;
@@ -6516,7 +6619,12 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         bar.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL);
         host.appendChild(bar);
         registerTaskOverlayGestureElement(bar);
+        const nameSlot = document.createElement('div');
+        nameSlot.className = 'trellis-task-board-name-controls'; // NEW
+        nameSlot.style.cssText = 'display:flex;align-items:center;width:100%;';
+        bar.appendChild(nameSlot);
         const modeLabel = document.createElement('div');
+        modeLabel.className = 'trellis-task-board-mode-label'; // NEW
         modeLabel.style.cssText = 'font:12px Arial,sans-serif;font-weight:700;line-height:1.2;color:#111;';
         bar.appendChild(modeLabel);
         const dateInput = document.createElement('input');
@@ -6641,14 +6749,25 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             taskCommands.setBoardPlanningView(b, 'WEEK', { [TASK_SELECTED_WEEK_START_ATTR]: weekStart, [TASK_SELECTED_DAY_ATTR]: value });
             requestRefresh();
         });
+        let boardNameInput = null;
+        let boardNameContextKey = null;
 
         function refresh() {
             const board = selectedBoard();
-            if (!board) { bar.style.display = 'none'; columnsExpanded = false; columnsContextKey = null; return; }
+            if (!board) { bar.style.display = 'none'; columnsExpanded = false; columnsContextKey = null; boardNameContextKey = null; boardNameInput = null; nameSlot.innerHTML = ''; return; } // CHANGE
             ensureBoardPlanningDefaults(board);
             const mode = getBoardViewMode(board);
             const nextColumnsContextKey = taskCellId(board) + ':' + mode;
             if (columnsContextKey !== nextColumnsContextKey) { columnsExpanded = false; columnsContextKey = nextColumnsContextKey; }
+            const nextBoardNameContextKey = taskCellId(board);
+            if (boardNameContextKey !== nextBoardNameContextKey || !boardNameInput) {
+                nameSlot.innerHTML = '';
+                boardNameInput = makeBoardNameInput(board); // NEW
+                nameSlot.appendChild(boardNameInput);
+                boardNameContextKey = nextBoardNameContextKey;
+            } else if (document.activeElement !== boardNameInput) {
+                boardNameInput.value = boardDisplayName(board); // NEW: external label updates refresh without clobbering active edits
+            }
             bar.style.display = 'flex';
             dateInput.value = mode === 'FULL' ? '' : getSelectedDay(board);
             modeLabel.textContent = mode === 'WEEK' ? 'Mode: Week' : 'Mode: Full';
@@ -6999,7 +7118,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         overlay.appendChild(labelControls);
         const addBoardBtn = document.createElement('button');
         addBoardBtn.type = 'button';
-        addBoardBtn.textContent = 'Add Kanban Board';
+        addBoardBtn.textContent = 'Add Main Task Board'; // CHANGE
         addBoardBtn.style.cssText = 'font:12px Arial,sans-serif;padding:3px 6px;';
         applyTaskButtonStyle(addBoardBtn, 'add', { compact: true });
         const marginsBtn = document.createElement('button'); // NEW
@@ -7011,6 +7130,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         overlay.appendChild(addBoardBtn);
         let currentTaskModule = null;
         let pendingClickAnchor = null;
+        let pendingAnchorCell = null; // NEW
         let lastClickAnchor = null;
         let pendingToggleCell = null;
         let manuallyHiddenTaskModule = null;
@@ -7067,6 +7187,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             if (!evt) return false;
             if ((mxEvent.isPopupTrigger && mxEvent.isPopupTrigger(evt)) || evt.button === 2) return false;
             return !mxEvent.isControlDown(evt) && !mxEvent.isMetaDown(evt) && !mxEvent.isShiftDown(evt) && Number(evt.detail || 1) <= 1;
+        }
+
+        function isTaskModuleCursorAnchorEvent(evt) {
+            return isPlainPrimaryMouseEvent(evt) || !!(evt && ((mxEvent.isPopupTrigger && mxEvent.isPopupTrigger(evt)) || evt.button === 2)); // NEW
         }
 
         function taskContainerPointForEvent(evt, fallbackX, fallbackY) {
@@ -7126,6 +7250,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         function showOverlay(taskModule, anchor) {
             currentTaskModule = taskModule;
             renderTaskModuleLabelControls(taskModule);
+            addBoardBtn.textContent = taskModuleAddBoardLabel(taskModule); // NEW
             overlay.style.display = 'flex';
             if (!positionTaskModuleOverlay(taskModule, anchor || fallbackAnchorForTaskModule(taskModule))) hideOverlay();
         }
@@ -7134,7 +7259,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             mxEvent.consume(evt);
             const taskModule = selectedTaskModule();
             if (!taskModule) return;
-            const board = taskCommands.runModelUpdate({}, function () { return createSecondaryBoardIn(taskModule); });
+            const board = createBoardForTaskModuleState(taskModule); // CHANGE
             if (board && graph.setSelectionCell) graph.setSelectionCell(board);
             if (board && graph.scrollCellToVisible) graph.scrollCellToVisible(board, true);
             overlay.style.display = 'none';
@@ -7156,6 +7281,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             const rememberedAnchor = rememberTaskModuleCursorAnchor(taskModule, pendingClickAnchor);
             showOverlay(taskModule, rememberedAnchor || overlayAnchorForTaskModule(taskModule));
             pendingClickAnchor = null;
+            pendingAnchorCell = null; // NEW
         }
 
         function onMouseDown(_sender, me) {
@@ -7163,21 +7289,32 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             if (evt && overlay.contains(mxEvent.getSource ? mxEvent.getSource(evt) : evt.target)) return;
             pendingToggleCell = null;
             pendingClickAnchor = null;
-            if (!isPlainPrimaryMouseEvent(evt)) return;
+            pendingAnchorCell = null; // NEW
+            if (!isTaskModuleCursorAnchorEvent(evt)) return; // CHANGE
             const selected = selectedTaskModule();
             const cell = taskMouseEventCell(me, evt);
             if (!isTaskModule(cell)) return;
             pendingClickAnchor = mouseAnchorForEvent(me, evt);
-            if (selected && cell === selected) pendingToggleCell = selected;
+            pendingAnchorCell = cell; // NEW
+            if (selected && cell === selected && isPlainPrimaryMouseEvent(evt)) pendingToggleCell = selected; // CHANGE
         }
 
         function onMouseUp(_sender, me) {
             const evt = me && me.getEvent ? me.getEvent() : null;
             const selected = selectedTaskModule();
             const toggleCell = pendingToggleCell;
+            const anchorCell = pendingAnchorCell; // NEW
             const anchor = pendingClickAnchor || mouseAnchorForEvent(me, evt);
             pendingToggleCell = null;
-            if (!toggleCell || selected !== toggleCell || !isPlainPrimaryMouseEvent(evt)) return;
+            pendingAnchorCell = null; // NEW
+            if (!toggleCell || selected !== toggleCell || !isPlainPrimaryMouseEvent(evt)) {
+                if (anchorCell && selected === anchorCell && isTaskModuleCursorAnchorEvent(evt)) { // NEW
+                    lastClickAnchor = rememberTaskModuleCursorAnchor(anchorCell, anchor) || anchor || lastClickAnchor; // NEW
+                    showOverlay(anchorCell, lastClickAnchor); // NEW
+                }
+                pendingClickAnchor = null; // NEW
+                return; // CHANGE
+            }
             lastClickAnchor = rememberTaskModuleCursorAnchor(toggleCell, anchor) || anchor || lastClickAnchor;
             manuallyHiddenTaskModule = overlay.style.display !== 'none' && currentTaskModule === toggleCell ? toggleCell : null;
             if (manuallyHiddenTaskModule) hideOverlay();
@@ -7532,8 +7669,8 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             if (!taskModule) return;
 
             menu.addSeparator();
-            menu.addItem('Add Kanban Board', null, function () {
-                taskCommands.runModelUpdate({}, function () { createSecondaryBoardIn(taskModule); });
+            menu.addItem(taskModuleAddBoardLabel(taskModule), null, function () { // CHANGE
+                createBoardForTaskModuleState(taskModule); // CHANGE
             });
             }
         });

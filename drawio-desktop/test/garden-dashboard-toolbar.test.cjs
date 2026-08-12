@@ -13,9 +13,9 @@ function source() {
 function viewportToolbarSource() {
     const text = source();
     const start = text.indexOf("// -------------------- Viewport toolbar (active dashboard UI)");
-    const end = text.indexOf("function openIrrigationPlannerForDashboard", start);
+    const end = text.indexOf("// -------------------- View/model event wiring", start);
     assert.notEqual(start, -1, "Missing viewport toolbar section");
-    assert.notEqual(end, -1, "Missing legacy compatibility boundary");
+    assert.notEqual(end, -1, "Missing viewport toolbar boundary");
     return text.slice(start, end);
 }
 
@@ -70,10 +70,11 @@ test("garden dashboard toolbar width follows a narrowed graph container rect", (
 test("garden dashboard toolbar follows garden module and descendant selection", () => {
     const text = viewportToolbarSource();
     const fullSource = source();
+    assert.match(text, /function resolveDashboardToolbarContext\(\)/);
     assert.match(text, /function selectedGardenModuleForToolbar\(\)/);
     assert.match(text, /graph\.getSelectionCells/);
     assert.match(text, /const moduleCell = isGardenModule\(cell\) \? cell : findGardenModuleAncestor\(graph, cell\);/);
-    assert.match(text, /if \(!moduleCell\) \{ hideViewportToolbar\(\); return; \}/);
+    assert.match(text, /if \(!context\.moduleCell\) \{ renderBlankViewportToolbar\(context\); return; \}/);
     assert.match(fullSource, /graph\.getSelectionModel\(\)\.addListener\(mxEvent\.CHANGE, scheduleViewportToolbarRefresh\);/);
 });
 
@@ -94,7 +95,7 @@ test("garden dashboard toolbar exposes share only for eligible selected scopes",
     assert.match(text, /shareBtn\.addEventListener\("click", function \(\) \{ openShareGardenCanvasDialog\(\); \}\);/);
     assert.match(text, /function shareSelectionState\(\)/);
     assert.match(text, /users\.getEligibleShareScopes\(selectedCellsForShare\(\)\)/);
-    assert.match(text, /setButtonDisabled\(entry\.shareBtn, !shareState\.ok, shareState\.ok \? "Share selected scope\(s\)" : shareState\.reason\);/);
+    assert.match(text, /setButtonDisabled\(entry\.shareBtn, gardenToolsDisabled \|\| !shareState\.ok, gardenToolsDisabled \? WORKSPACE_DISABLED_TITLE : \(shareState\.ok \? "Share selected scope\(s\)" : shareState\.reason\)\);/);
     assert.match(text, /function openEnableUsersForShareDialog\(\)/);
     assert.match(text, /Create the first admin before sharing selected garden scopes\./);
     assert.match(text, /setTimeout\(openShareGardenCanvasDialog, 0\);/);
@@ -105,60 +106,244 @@ test("garden dashboard toolbar groups tools left and messages export share table
     const text = viewportToolbarSource();
     assert.match(text, /leftControls\.className = "trellis-garden-dashboard-toolbar-left"/);
     assert.match(text, /rightActions\.className = "trellis-garden-dashboard-toolbar-right"/);
-    assert.match(text, /leftControls\.appendChild\(prev\);[\s\S]*leftControls\.appendChild\(yearLabel\);[\s\S]*leftControls\.appendChild\(next\);[\s\S]*leftControls\.appendChild\(planBtn\);[\s\S]*leftControls\.appendChild\(equipmentBtn\);[\s\S]*leftControls\.appendChild\(irrigationBtn\);[\s\S]*leftControls\.appendChild\(allocateBtn\);[\s\S]*leftControls\.appendChild\(taskBoardBtn\);[\s\S]*leftControls\.appendChild\(taskBoardSelect\);/);
+    assert.match(text, /leftControls\.appendChild\(gardenName\);[\s\S]*leftControls\.appendChild\(gardenPickerWrap\);[\s\S]*leftControls\.appendChild\(createGardenBtn\);[\s\S]*leftControls\.appendChild\(workspaceWrap\);[\s\S]*leftControls\.appendChild\(taskBoardSelect\);[\s\S]*leftControls\.appendChild\(prev\);[\s\S]*leftControls\.appendChild\(yearLabel\);[\s\S]*leftControls\.appendChild\(next\);[\s\S]*leftControls\.appendChild\(planBtn\);[\s\S]*leftControls\.appendChild\(allocateBtn\);[\s\S]*leftControls\.appendChild\(irrigationBtn\);[\s\S]*leftControls\.appendChild\(equipmentBtn\);/);
     assert.match(text, /rightActions\.appendChild\(messagesBtn\);[\s\S]*rightActions\.appendChild\(exportBtn\);[\s\S]*rightActions\.appendChild\(shareBtn\);[\s\S]*rightActions\.appendChild\(tableBtn\);/);
     assert.match(text, /controls\.appendChild\(leftControls\);[\s\S]*controls\.appendChild\(rightActions\);/);
 });
 
-test("garden dashboard toolbar exposes Task Board button badge and selector", () => {
+test("garden dashboard toolbar disables Allocate until the selected year has saved crops", () => {
+    const fullSource = source();
+    const text = viewportToolbarSource();
+    assert.match(fullSource, /const ALLOCATE_NO_PLAN_TITLE = "Create a year plan before allocating\.";[\s\S]*const ALLOCATE_EMPTY_PLAN_TITLE = "Add at least one crop to the year plan before allocating\.";/);
+    assert.match(fullSource, /function allocationPlanStatus\(moduleCell, year\)/);
+    assert.match(fullSource, /const planObj = getPlanYearObject\(moduleCell, year\);/);
+    assert.match(fullSource, /const crops = Array\.isArray\(planObj\.crops\) \? planObj\.crops : \[\];/);
+    assert.match(fullSource, /crops\.length[\s\S]*\{ enabled: true, title: "Allocate the current plan" \}/);
+    assert.match(text, /const allocateStatus = allocationPlanStatus\(moduleCell, year\);/);
+    assert.match(text, /setButtonDisabled\(entry\.allocateBtn, gardenToolsDisabled \|\| !allocateStatus\.enabled, gardenToolsDisabled \? WORKSPACE_DISABLED_TITLE : allocateStatus\.title\);/);
+
+    function getCellAttr(cell, key, fallbackValue) {
+        return cell && cell.attrs && Object.prototype.hasOwnProperty.call(cell.attrs, key) ? cell.attrs[key] : fallbackValue;
+    }
+    function safeJsonParse(value, fallbackValue) {
+        try { return JSON.parse(String(value || "")); } catch (_) { return fallbackValue; }
+    }
+    function getPlanYearObject(moduleCell, year) {
+        const raw = getCellAttr(moduleCell, "plan_year_json", "");
+        if (!raw) return null;
+        const root = safeJsonParse(raw, null);
+        if (!root || typeof root !== "object") return null;
+        const obj = root[String(year)];
+        return obj && typeof obj === "object" ? obj : null;
+    }
+    function allocationPlanStatus(moduleCell, year) {
+        const planObj = getPlanYearObject(moduleCell, year);
+        if (!planObj) return { enabled: false, title: "Create a year plan before allocating." };
+        const crops = Array.isArray(planObj.crops) ? planObj.crops : [];
+        return crops.length
+            ? { enabled: true, title: "Allocate the current plan" }
+            : { enabled: false, title: "Add at least one crop to the year plan before allocating." };
+    }
+
+    assert.deepEqual(allocationPlanStatus({ attrs: {} }, 2026), { enabled: false, title: "Create a year plan before allocating." });
+    assert.deepEqual(allocationPlanStatus({ attrs: { plan_year_json: JSON.stringify({ 2026: { crops: [] } }) } }, 2026), { enabled: false, title: "Add at least one crop to the year plan before allocating." });
+    assert.deepEqual(allocationPlanStatus({ attrs: { plan_year_json: JSON.stringify({ 2026: { crops: [{}] } }) } }, 2026), { enabled: true, title: "Allocate the current plan" });
+    assert.deepEqual(allocationPlanStatus({ attrs: { plan_year_json: JSON.stringify({ 2025: { crops: [{}] } }) } }, 2026), { enabled: false, title: "Create a year plan before allocating." });
+});
+
+test("garden dashboard blank state keeps controls visible and exposes searchable garden picker", () => {
+    const text = viewportToolbarSource();
+    assert.match(text, /function renderBlankViewportToolbar\(context\)/);
+    assert.match(text, /entry\.gardenName\.textContent = "No active garden";/);
+    assert.match(text, /setGardenActionControlsDisabled\(entry, true\);/);
+    assert.match(text, /entry\.workspaceWrap\.style\.display = "none";/);
+    assert.match(text, /const gardenPickerWrap = document\.createElement\("div"\);/);
+    assert.match(text, /gardenPickerWrap\.className = "trellis-garden-dashboard-picker";/);
+    assert.match(text, /const gardenPickerBtn = createToolbarButton\("Select garden\.\.\.", "Select a garden module", "open"\);/);
+    assert.match(text, /const search = document\.createElement\("input"\);[\s\S]*search\.type = "search";[\s\S]*search\.className = "trellis-garden-dashboard-garden-search";/);
+    assert.match(text, /search\.placeholder = "Search gardens";/);
+});
+
+test("garden dashboard waits for an opened diagram before rendering toolbar", () => {
     const text = viewportToolbarSource();
     const fullSource = source();
-    assert.match(text, /const taskBoardBtn = createTaskBoardButton\(\);/);
+    assert.match(text, /function dashboardDiagramIsOpen\(\)/);
+    assert.match(text, /ui\.getCurrentFile\(\)/);
+    assert.match(text, /if \(!dashboardDiagramIsOpen\(\)\) \{ hideViewportToolbar\(\); return; \}/);
+    assert.match(text, /function handleDashboardDiagramOpened\(\)/);
+    assert.match(text, /startupGardenFocusDone = false;/);
+    assert.match(fullSource, /ui\.editor\.addListener\("fileLoaded", handleDashboardDiagramOpened\);/);
+});
+
+test("garden dashboard picker searches by garden name while preserving city grouping", () => {
+    const text = viewportToolbarSource();
+    assert.match(text, /function groupedGardensForPicker\(gardens, searchText\)/);
+    assert.match(text, /gardenLabel\(garden\)\.toLocaleLowerCase\(\)\.indexOf\(query\) >= 0/);
+    assert.doesNotMatch(text, /gardenCity\(garden\)\.toLocaleLowerCase\(\)\.indexOf\(query\)/);
+    assert.match(text, /const city = gardenCity\(garden\) \|\| GARDEN_PICKER_NO_CITY;/);
+    assert.match(text, /if \(left === GARDEN_PICKER_NO_CITY && right !== GARDEN_PICKER_NO_CITY\) return 1;/);
+    assert.match(text, /gardenLabel\(left\)\.localeCompare\(gardenLabel\(right\)\)/);
+});
+
+test("garden dashboard picker selection and no-garden create path select and zoom gardens", () => {
+    const text = viewportToolbarSource();
+    const fullSource = source();
+    assert.match(text, /function selectAndZoomToGarden\(moduleCell\)/);
+    assert.match(text, /graph\.setSelectionCell\(moduleCell\)/);
+    assert.match(text, /function cellBoundsInModel\(cell\)/);
+    assert.match(text, /graph\.view && graph\.view\.getState \? graph\.view\.getState\(cell\) : null/);
+    assert.match(text, /x: Number\(state\.x\) \/ scale - \(Number\(translate\.x\) \|\| 0\)/);
+    assert.match(text, /parentGeo = model\.getGeometry \? model\.getGeometry\(parent\) : null/);
+    assert.match(text, /function zoomGardenToViewport\(moduleCell\)/);
+    assert.match(text, /const bounds = cellBoundsInModel\(moduleCell\);/);
+    assert.doesNotMatch(text, /model\.getGeometry\(moduleCell\)/);
+    assert.match(text, /graph\.fitWindow\(bounds, 48\);/);
+    assert.doesNotMatch(text, /scrollRectToVisible\(bounds\)/);
+    assert.match(text, /if \(graph\.view && Number\(graph\.view\.scale\) > 1 && graph\.zoomTo\) graph\.zoomTo\(1\);/);
+    assert.match(text, /if \(graph\.scrollCellToVisible\) graph\.scrollCellToVisible\(moduleCell, true\);/);
+    assert.match(fullSource, /const DEFAULT_MODULE_WIDTH = 160;/);
+    assert.match(fullSource, /const DEFAULT_MODULE_HEIGHT = 100;/);
+    assert.match(text, /function visibleViewportGardenInsertPoint\(\)/);
+    assert.match(text, /if \(graph\.getCenterInsertPoint\) return graph\.getCenterInsertPoint\(moduleBounds\);/);
+    assert.match(text, /- moduleBounds\.width \/ 2/);
+    assert.match(text, /- moduleBounds\.height \/ 2/);
+    assert.match(text, /modules\.createModuleAtPoint\(visibleViewportGardenInsertPoint\(\), "garden"\)/);
+    assert.match(text, /entry\.createGardenBtn\.style\.display = candidates\.length \? "none" : "inline-block";/);
+});
+
+test("garden dashboard startup focuses sole garden only once", () => {
+    const text = viewportToolbarSource();
+    const fullSource = source();
+    assert.match(text, /let startupGardenFocusDone = false;/);
+    assert.match(text, /function runStartupGardenFocusOnce\(\)/);
+    assert.match(text, /if \(startupGardenFocusDone\) return;/);
+    assert.match(text, /if \(gardens\.length !== 1 \|\| selectedCellIsGardenRelated\(\)\) return;/);
+    assert.match(text, /selectAndZoomToGarden\(gardens\[0\]\);/);
+    assert.match(fullSource, /scheduleStartupGardenFocus\(\);/);
+});
+
+test("garden dashboard resolves linked and ambiguous module contexts", () => {
+    const text = viewportToolbarSource();
+    assert.match(text, /function linkedGardenModulesForCompanion\(moduleCell\)/);
+    assert.match(text, /const typedGardenId = getCellAttr\(moduleCell, "trellis_garden_module_id", ""\);/);
+    assert.match(text, /const taskModule = isTaskModule\(cell\) \? cell : findTaskModuleAncestor\(graph, cell\);[\s\S]*if \(taskModule\) return linkedGardenModulesForCompanion\(taskModule\);/);
+    assert.match(text, /const teamModule = isTeamModule\(cell\) \? cell : findTeamModuleAncestor\(graph, cell\);[\s\S]*if \(teamModule\) return linkedGardenModulesForCompanion\(teamModule\);/);
+    assert.match(text, /if \(ambiguous\.length\) \{[\s\S]*return \{ moduleCell: null, candidates: sortGardensForPicker\(filtered\), allGardens, reason: "ambiguous" \};/);
+    assert.match(text, /if \(unique\.length === 1\) return \{ moduleCell: unique\[0\], candidates: allGardens, allGardens, reason: "selected" \};/);
+    assert.match(text, /return \{ moduleCell: null, candidates: allGardens, allGardens, reason: "mixed" \};/);
+});
+
+test("garden dashboard derives active workspace from selection", () => {
+    const text = viewportToolbarSource();
+    assert.match(text, /function getActiveWorkspaceForSelection\(\)/);
+    assert.match(text, /function getSelectedWorkspaceForCell\(cell\)/);
+    assert.match(text, /if \(isGardenModule\(cell\) \|\| findGardenModuleAncestor\(graph, cell\)\) return "garden";/);
+    assert.match(text, /if \(isTaskModule\(cell\) \|\| findTaskModuleAncestor\(graph, cell\)\) return "tasks";/);
+    assert.match(text, /if \(isTeamModule\(cell\) \|\| findTeamModuleAncestor\(graph, cell\)\) return "team";/);
+    assert.match(text, /return workspaces\.size === 1 \? Array\.from\(workspaces\)\[0\] : null;/);
+    assert.match(text, /applyWorkspaceSegmentState\(entry\.workspaceGardenBtn, activeWorkspace === "garden", false\);/);
+    assert.match(text, /applyWorkspaceSegmentState\(entry\.workspaceTasksBtn, activeWorkspace === "tasks", false\);/);
+    assert.match(text, /applyWorkspaceSegmentState\(entry\.workspaceTeamBtn, activeWorkspace === "team", false\);/);
+});
+
+test("garden workspace switcher repairs companions and pulses destinations", () => {
+    const text = viewportToolbarSource();
+    assert.match(text, /function ensureWorkspaceTaskModule\(moduleCell\)/);
+    assert.match(text, /modules\.ensureGardenTaskModule\(moduleCell, \{ createMainBoard: true \}\)/);
+    assert.match(text, /function ensureWorkspaceTeamModule\(moduleCell\)/);
+    assert.match(text, /modules\.ensureGardenTeamModule\(moduleCell\)/);
+    assert.match(text, /function pulseWorkspaceDestination\(cell\)/);
+    assert.match(text, /trellis-garden-workspace-destination-pulse/);
+    assert.match(text, /setTimeout\(function \(\) \{ pulseWorkspaceDestination\(openedBoard \|\| taskModule\); \}, 0\);/);
+    assert.match(text, /setTimeout\(function \(\) \{ pulseWorkspaceDestination\(teamModule\); \}, 0\);/);
+    assert.doesNotMatch(text, /model\.add\(.*trellis-garden-workspace-destination-pulse/);
+});
+
+test("garden dashboard disables garden tools outside Garden workspace", () => {
+    const text = viewportToolbarSource();
+    const fullSource = source();
+    assert.match(fullSource, /const WORKSPACE_DISABLED_TITLE = "Return to Garden workspace before using garden tools\.";/);
+    assert.match(text, /const gardenToolsDisabled = activeWorkspace === "tasks" \|\| activeWorkspace === "team";/);
+    assert.match(text, /setGardenActionControlsDisabled\(entry, gardenToolsDisabled, gardenToolsDisabled \? WORKSPACE_DISABLED_TITLE : ""\);/);
+    assert.match(text, /\[entry\.prev, entry\.next, entry\.planBtn, entry\.equipmentBtn, entry\.irrigationBtn, entry\.allocateBtn, entry\.messagesBtn, entry\.exportBtn, entry\.shareBtn, entry\.tableBtn\]/);
+    assert.doesNotMatch(text, /entry\.workspaceGardenBtn[\s\S]{0,120}setButtonDisabled/);
+    assert.match(text, /entry\.taskBoardSelect\.disabled = !taskApi \|\| taskBoards\.length < 2;/);
+    assert.match(text, /entry\.taskBoardSelect\.style\.display = taskBoards\.length > 1 \? "" : "none";/);
+});
+
+test("garden dashboard toolbar exposes Garden Workspace Switcher with task badge and selector", () => {
+    const text = viewportToolbarSource();
+    const fullSource = source();
+    assert.match(text, /const workspaceSwitcher = createWorkspaceSwitcher\(\);/);
+    assert.match(text, /const workspaceGardenBtn = workspaceSwitcher\.gardenBtn;/);
+    assert.match(text, /const workspaceTasksBtn = workspaceSwitcher\.tasksBtn;/);
+    assert.match(text, /const workspaceTeamBtn = workspaceSwitcher\.teamBtn;/);
     assert.match(text, /const taskBoardSelect = createTaskBoardSelect\(\);/);
-    assert.match(fullSource, /function createTaskBoardButton\(\)/);
-    assert.match(fullSource, /trellis-task-board-toolbar-badge/);
+    assert.match(fullSource, /select\.title = "Task Boards";/);
+    assert.match(fullSource, /select\.setAttribute\("aria-label", "Task Boards"\);/);
+    assert.match(fullSource, /select\.addEventListener\(type, stopToolbarNativeControlEvent\);/); // NEW
+    assert.match(fullSource, /function isToolbarNativeControl\(target\)/); // NEW
+    assert.match(text, /if \(isToolbarNativeControl\(evt && evt\.target\)\) \{ stopToolbarNativeControlEvent\(evt\); return; \} mxEvent\.consume\(evt\);/); // NEW
+    assert.match(fullSource, /function createWorkspaceSwitcher\(\)/);
+    assert.match(fullSource, /trellis-garden-workspace-switcher/);
+    assert.match(fullSource, /trellis-garden-workspace-task-badge/);
+    assert.doesNotMatch(fullSource, /function createTaskBoardButton\(\)/);
+    assert.doesNotMatch(fullSource, /trellis-task-board-toolbar-badge/);
     assert.match(fullSource, /function taskBoardOptionLabel\(boardSummary\)/);
-    assert.match(fullSource, /count \? " \(" \+ count \+ "\)" : ""/);
-    assert.match(fullSource, /years\.length \? " " \+ years\.join\(", "\) : ""/);
-    assert.match(text, /taskBoardBtn\.addEventListener\("click", function \(\) \{ openToolbarTaskBoard\(activeToolbarModule, taskBoardSelect\.value\); \}\);/);
-    assert.match(text, /taskBoardSelect\.addEventListener\("change", function \(\) \{ if \(activeToolbarModule && taskBoardSelect\.value\) taskBoardSelectionByModuleId\.set\(cellId\(activeToolbarModule\), taskBoardSelect\.value\); \}\);/);
-    assert.doesNotMatch(text, /taskBoardSelect\.addEventListener\("change", function \(\) \{ openToolbarTaskBoard/);
+    assert.match(fullSource, /return String\(boardSummary && boardSummary\.name \|\| "Kanban"\);/);
+    assert.doesNotMatch(fullSource, /count \? " \(" \+ count \+ "\)" : ""/);
+    assert.doesNotMatch(fullSource, /years\.length \? " " \+ years\.join\(", "\) : ""/);
+    assert.match(text, /workspaceGardenBtn\.addEventListener\("click", function \(\) \{ openGardenWorkspace\(activeToolbarModule, "garden"\); \}\);/);
+    assert.match(text, /workspaceTasksBtn\.addEventListener\("click", function \(\) \{ openToolbarTaskBoard\(activeToolbarModule, taskBoardSelect\.value\); \}\);/);
+    assert.match(text, /workspaceTeamBtn\.addEventListener\("click", function \(\) \{ openGardenWorkspace\(activeToolbarModule, "team"\); \}\);/);
+    assert.match(text, /taskBoardSelect\.addEventListener\("change", function \(\) \{ if \(activeToolbarModule && taskBoardSelect\.value\) \{ saveRememberedTaskBoardId\(activeToolbarModule, taskBoardSelect\.value\); openToolbarTaskBoard\(activeToolbarModule, taskBoardSelect\.value\); \} \}\);/);
+    assert.match(text, /entry\.taskBoardSelect\.style\.display = taskBoards\.length > 1 \? "" : "none";/);
+    assert.match(text, /entry\.taskBoardSelect\.disabled = !taskApi \|\| taskBoards\.length < 2;/);
+    assert.match(text, /entry\.taskBoardSelect\.title = "Task Boards";/);
 });
 
 test("garden dashboard toolbar uses task manager API for boards and unseen counts", () => {
     const text = viewportToolbarSource();
     const fullSource = source();
     assert.match(fullSource, /function taskManagerApi\(\)/);
-    assert.match(fullSource, /const requestedBoardId = boardId \|\| taskBoardSelectionByModuleId\.get\(moduleId\) \|\| "";/);
+    assert.match(fullSource, /const requestedBoardId = boardId \|\| selectedTaskBoardIdForGarden\(moduleCell, taskBoards, ""\);/);
     assert.match(fullSource, /const openedBoard = api\.openBoardForGarden\(moduleCell, requestedBoardId, year\);/);
     assert.match(text, /taskApi\.setActiveDashboardContext\(moduleCell, year\);/);
     assert.match(text, /taskApi\.listBoardsForGarden\(moduleCell\)/);
     assert.match(text, /taskApi\.unseenCreatedSummaryForGarden\(moduleCell\)/);
+    assert.match(text, /renderWorkspaceSwitcher\(entry, activeWorkspace, taskSummary\);/);
     assert.match(text, /badge\.style\.display = badgeTotal > 0 \? "" : "none";/);
     assert.match(fullSource, /window\.addEventListener\("trellisTaskBoardSeenStateChanged", scheduleViewportToolbarRefresh\);/);
 });
 
-test("garden dashboard toolbar preserves the current task board across refresh", () => {
+test("garden dashboard toolbar persists the selected task board in local user storage", () => {
     const text = viewportToolbarSource();
-    assert.match(text, /const taskBoardSelectionByModuleId = new Map\(\);/);
-    assert.match(text, /if \(requestedBoardId\) taskBoardSelectionByModuleId\.set\(moduleId, requestedBoardId\);/);
-    assert.match(text, /if \(openedBoardId\) taskBoardSelectionByModuleId\.set\(moduleId, openedBoardId\);/);
-    assert.match(text, /const preferredBoardId = taskBoardSelectionByModuleId\.get\(moduleId\) \|\| entry\.taskBoardSelect\.value \|\| "";/);
+    const fullSource = source();
+    assert.match(text, /const taskBoardSelectionByPreferenceKey = new Map\(\);/);
+    assert.match(fullSource, /const WORKSPACE_TASK_BOARD_STORAGE_PREFIX = "trellis\.gardenDashboard\.workspaceTaskBoard\.v1";/);
+    assert.match(text, /function workspaceUserScopeKey\(\)/);
+    assert.match(text, /return current && current\.id \? "user:" \+ current\.id : "shared";/);
+    assert.match(text, /function loadRememberedTaskBoardId\(moduleCell\)/);
+    assert.match(text, /function saveRememberedTaskBoardId\(moduleCell, boardId\)/);
+    assert.match(text, /if \(requestedBoardId\) saveRememberedTaskBoardId\(moduleCell, requestedBoardId\);/);
+    assert.match(text, /if \(openedBoardId\) saveRememberedTaskBoardId\(moduleCell, openedBoardId\);/);
+    assert.match(text, /const preferredBoardId = selectedTaskBoardIdForGarden\(moduleCell, taskBoards, entry\.taskBoardSelect\.value\);/);
     assert.match(text, /if \(id && id === preferredBoardId\) selectedBoardId = id;/);
-    assert.match(text, /if \(selectedBoardId\) \{ entry\.taskBoardSelect\.value = selectedBoardId; taskBoardSelectionByModuleId\.set\(moduleId, selectedBoardId\); \}/);
+    assert.match(text, /if \(selectedBoardId\) entry\.taskBoardSelect\.value = selectedBoardId;/);
 });
 
 test("garden dashboard toolbar marks Irrigation active with existing blue", () => {
     const text = viewportToolbarSource();
     const fullSource = source();
     assert.match(fullSource, /const IRRIGATION_MODE_CHANGED_EVENT = "trellisIrrigationModeChanged";/);
-    assert.match(fullSource, /const IRRIGATION_ACTIVE_BLUE = "#2563eb";/);
+    assert.match(fullSource, /const IRRIGATION_ACTIVE_BACKGROUND = "#eff6ff";/);
+    assert.match(fullSource, /const IRRIGATION_ACTIVE_TEXT = "#1e3a8a";/);
     assert.match(text, /function activeIrrigationModuleMatches\(moduleCell\)/);
     assert.match(text, /plannerApi\.isIrrigationModeActive\(moduleCell\)/);
     assert.match(text, /function applyToolbarActiveButtonState\(btn, active\)/);
-    assert.match(text, /btn\.style\.background = active \? IRRIGATION_ACTIVE_BLUE : "#fff";/);
-    assert.match(text, /btn\.style\.borderColor = active \? IRRIGATION_ACTIVE_BLUE : "#2563eb";/);
-    assert.match(text, /btn\.style\.color = active \? "#fff" : "#1d4ed8";/);
+    assert.match(text, /btn\.style\.background = active \? IRRIGATION_ACTIVE_BACKGROUND : "#fff";/);
+    assert.match(text, /btn\.style\.borderColor = "#2563eb";/);
+    assert.match(text, /btn\.style\.color = active \? IRRIGATION_ACTIVE_TEXT : "#1d4ed8";/);
     assert.match(text, /applyToolbarActiveButtonState\(entry\.irrigationBtn, activeIrrigationModuleMatches\(moduleCell\)\);/);
     assert.match(fullSource, /window\.addEventListener\(IRRIGATION_MODE_CHANGED_EVENT, scheduleViewportToolbarRefresh\);/);
 });
@@ -169,8 +354,7 @@ test("garden dashboard irrigation buttons close active irrigation mode", () => {
     assert.match(text, /function toggleIrrigationPlannerForModule\(moduleCell\)/);
     assert.match(text, /plannerApi\.isIrrigationModeActive\(moduleCell\)[\s\S]*plannerApi\.closeIrrigationMode\(\);[\s\S]*return;/);
     assert.match(text, /irrigationBtn\.addEventListener\("click", function \(\) \{ toggleIrrigationPlannerForModule\(activeToolbarModule\); \}\);/);
-    assert.match(fullSource, /function toggleIrrigationPlannerForDashboard\(dashCell\)[\s\S]*toggleIrrigationPlannerForModule\(moduleCell\);/);
-    assert.match(fullSource, /irrigationBtn\.addEventListener\("click", \(ev\) => \{[\s\S]*toggleIrrigationPlannerForDashboard\(dashCell\);/);
+    assert.doesNotMatch(fullSource, /toggleIrrigationPlannerForDashboard/);
 });
 
 test("garden dashboard messages button calls users API for active module and prompts auth", () => {
@@ -195,17 +379,13 @@ test("garden dashboard table is collapsed by default and session scoped", () => 
     assert.doesNotMatch(text, /setCellAttr\(.*expanded/i);
 });
 
-test("legacy dashboard cells are inert and no longer created or attached", () => {
+test("legacy dashboard cell code is removed from the viewport dashboard plugin", () => {
     const text = source();
-    assert.match(text, /function createDashboardCell\(moduleCell\) \{\s*return null;/);
-    assert.match(text, /graph\.addListener\("usl:gardenModuleNeedsSettings", function \(sender, evt\) \{\s*return;/);
-    assert.match(text, /addItems: function \(menu, cell, evt\) \{\s*return;/);
-    assert.match(text, /function attachExistingDashboards\(\) \{\s*return;/);
-    assert.match(text, /function scheduleAttachExistingDashboards\(\) \{\s*return;/);
-    assert.match(text, /function recomputeAndRenderDashboard\(dashCell, opts\) \{\s*return;/);
-    assert.match(text, /function collectTouchedDashboards\(cells\) \{\s*return \[\];/);
-    assert.match(text, /graph\.getSelectionModel\(\)\.addListener\(mxEvent\.CHANGE, function \(\) \{\s*return;/);
-    const selectionListener = text.slice(text.indexOf("// Recompute when selecting a dashboard"), text.indexOf("// -------------------- Context menu: Create Garden Dashboard"));
-    assert.doesNotMatch(selectionListener, /ensureOverlayForDashboard\(dash\)/);
-    assert.doesNotMatch(selectionListener, /recomputeAndRenderDashboard\(dash\)/);
+    assert.doesNotMatch(text, /function createDashboardCell/);
+    assert.doesNotMatch(text, /function attachExistingDashboards/);
+    assert.doesNotMatch(text, /function recomputeAndRenderDashboard/);
+    assert.doesNotMatch(text, /function collectTouchedDashboards/);
+    assert.doesNotMatch(text, /garden_dashboard/);
+    assert.doesNotMatch(text, /DASH_ATTR/);
+    assert.doesNotMatch(text, /overlayByDashId/);
 });

@@ -30,6 +30,34 @@ test('crop lifecycle classification requires exactly one lifecycle flag', () => 
     assert.equal(hooks.getCropLifecycle(makeCrop({ annual: 0, biennial: 0, perennial: 0 })), 'uncategorized');
 });
 
+test('harvest request method resolver accepts complete and legacy dotted method context', () => {
+    assert.deepEqual(JSON.parse(JSON.stringify(hooks.resolveHarvestRequestMethodBehavior({
+        methodId: 'direct_sow.field',
+        methodCategoryId: 'direct_sow'
+    }))), {
+        methodCategoryId: 'direct_sow',
+        methodId: 'direct_sow.field',
+        planningMode: 'direct_sow',
+        usesSoilTempGate: true,
+        leadDaysMode: 'none'
+    });
+
+    assert.equal(hooks.resolveHarvestRequestMethodBehavior({
+        methodId: 'transplant.indoor'
+    }).methodCategoryId, 'transplant');
+});
+
+test('harvest request method resolver rejects missing or mismatched category context', () => {
+    assert.throws(
+        () => hooks.resolveHarvestRequestMethodBehavior({ methodId: 'direct_sow' }),
+        /methodCategoryId is required/
+    );
+    assert.throws(
+        () => hooks.resolveHarvestRequestMethodBehavior({ methodId: 'direct_sow.field', methodCategoryId: 'transplant' }),
+        /does not belong to methodCategoryId "transplant"/
+    );
+});
+
 test('lifecycle filter control reads and persists the shared crop filter preference', () => {
     const store = new Map([['trellis.scheduler.cropLifecycleFilter', 'perennial']]);
     hooks.__testWindow.localStorage = {

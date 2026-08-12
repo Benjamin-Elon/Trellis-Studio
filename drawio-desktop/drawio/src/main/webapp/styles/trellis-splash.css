@@ -197,7 +197,7 @@
 .trellis-saved-license-card {
 	align-items: center;
 	display: grid;
-	grid-template-columns: 52px minmax(0, 1fr) auto;
+	grid-template-columns: 76px minmax(0, 1fr) auto; /* Fits avatar remove control. */
 	min-height: 78px;
 	text-align: left;
 }
@@ -222,8 +222,93 @@
 	width: 40px;
 }
 
+.trellis-saved-license-card > .trellis-avatar-wrap {
+	height: 58px;
+	position: relative;
+	width: 58px;
+}
+
+.trellis-saved-license-card .trellis-avatar-control {
+	align-items: center;
+	background: #fbf8ed;
+	box-sizing: border-box;
+	cursor: pointer;
+	display: flex;
+	height: 58px;
+	justify-content: center;
+	margin: 0;
+	overflow: hidden;
+	padding: 8px;
+	position: relative;
+	transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+	width: 58px;
+}
+
+.trellis-saved-license-card .trellis-avatar-control:hover {
+	border-color: #6b9c4b;
+	box-shadow: 0 4px 12px rgba(65, 100, 43, 0.16);
+	transform: translateY(-1px);
+}
+
+.trellis-saved-license-card .trellis-avatar-control:focus-visible {
+	box-shadow: 0 0 0 3px rgba(77, 132, 48, 0.32) !important;
+	outline: 2px solid #376b25 !important;
+	outline-offset: 2px;
+}
+
+.trellis-avatar-control .trellis-avatar-placeholder-icon {
+	height: 32px;
+	margin: 0;
+	width: 32px;
+}
+
+.trellis-avatar-image {
+	display: block;
+	height: 100%;
+	left: 0;
+	object-fit: cover;
+	position: absolute;
+	top: 0;
+	width: 100%;
+}
+
+.trellis-avatar-remove {
+	align-items: center;
+	background: #fffdf6;
+	border: 1px solid #c9d4bf;
+	border-radius: 50%;
+	box-shadow: 0 2px 6px rgba(34, 50, 29, 0.18);
+	box-sizing: border-box;
+	color: #264233;
+	cursor: pointer;
+	display: flex;
+	font-size: 16px;
+	height: 22px;
+	justify-content: center;
+	line-height: 18px;
+	padding: 0;
+	position: absolute;
+	right: -4px;
+	top: -4px;
+	width: 22px;
+}
+
+.trellis-avatar-remove:hover {
+	background: #f5efe0;
+	border-color: #9fb58d;
+}
+
+.trellis-avatar-file-input {
+	display: none;
+}
+
 .trellis-saved-license-card > div {
 	grid-column: 2;
+}
+
+.trellis-saved-license-card > .trellis-avatar-wrap {
+	grid-column: 1;
+	grid-row: 1 / span 2;
 }
 
 .trellis-saved-license-heading {
@@ -276,6 +361,29 @@
 	transform: translateY(-1px);
 }
 
+.trellis-project-grid {
+	display: grid;
+	gap: 8px;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.trellis-project-card {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.trellis-project-link,
+.trellis-support-links a {
+	color: #1d4ed8;
+	font-weight: 600;
+}
+
+.trellis-skip-oath-decoy {
+	background: #fff7ed !important;
+	border: 1px solid #d6a15e !important;
+	color: #684019 !important;
+}
+
 .trellis-splash-center button:focus-visible {
 	box-shadow: 0 0 0 3px rgba(77, 132, 48, 0.32) !important;
 	outline: 2px solid #376b25 !important;
@@ -311,6 +419,10 @@
 	min-height: 54px;
 	padding: 12px 20px !important;
 	width: 100% !important;
+}
+
+.trellis-splash-actions button:last-child {
+	margin-bottom: 0 !important; /* Avoids accidental bottom overflow. */
 }
 
 .trellis-splash-actions .trellis-primary-action {
@@ -416,7 +528,11 @@
 	}
 
 	.trellis-saved-license-card {
-		grid-template-columns: 48px minmax(0, 1fr);
+		grid-template-columns: 68px minmax(0, 1fr); /* Fits avatar remove control. */
+	}
+
+	.trellis-project-grid {
+		grid-template-columns: minmax(0, 1fr);
 	}
 
 	.trellis-saved-license-card > .geBtn {

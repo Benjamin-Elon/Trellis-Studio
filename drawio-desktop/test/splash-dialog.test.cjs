@@ -15,10 +15,12 @@ const bootstrapPath = path.join(projectRoot, "drawio/src/main/webapp/js/bootstra
 const indexPath = path.join(projectRoot, "drawio/src/main/webapp/index.html");
 const electronPath = path.join(projectRoot, "src/main/electron.js");
 const wizardStorageKey = "trellis.licenseWizard.v2";
+const avatarStorageKey = "trellis.splash.avatar.v1";
 
 function loadSplashDialog(options = {}) {
     const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://app.test/" });
     const timers = [];
+    const alerts = [];
 
     dom.window.setTimeout = function (callback, delay) {
         const id = timers.length + 1;
@@ -37,9 +39,17 @@ function loadSplashDialog(options = {}) {
         dom.window.localStorage.setItem(wizardStorageKey, JSON.stringify(options.savedRecord));
     }
 
+    if (options.avatarRecord) {
+        dom.window.localStorage.setItem(avatarStorageKey, JSON.stringify(options.avatarRecord));
+    }
+
     if (options.oldChoice) {
         dom.window.localStorage.setItem("trellis.licenseNotice.v1", JSON.stringify({ choice: options.oldChoice, version: "1" }));
     }
+
+    dom.window.alert = function (message) {
+        alerts.push(String(message));
+    };
 
     let helpCalls = 0;
     const actions = {
@@ -133,7 +143,7 @@ function loadSplashDialog(options = {}) {
     vm.runInNewContext(fs.readFileSync(enhancementPath, "utf8"), context, { filename: enhancementPath });
     context.window.TrellisSplashEnhancements.install();
     const dialog = new context.SplashDialog(editorUi);
-    return { dom, dialog, timers, context, editorUi, getHelpCalls: () => helpCalls };
+    return { dom, dialog, timers, context, editorUi, getHelpCalls: () => helpCalls, getAlerts: () => alerts };
 }
 
 function findButton(root, label) {
@@ -141,6 +151,8 @@ function findButton(root, label) {
 }
 
 function openOath(dialog, pathLabel = "Personal / Noncommercial") {
+    const continueButton = findButton(dialog.container, "Continue to License");
+    if (continueButton) continueButton.click();
     findButton(dialog.container, pathLabel).click();
     return findButton(dialog.container, "I Affirm the Oath");
 }
@@ -173,6 +185,16 @@ function makeSavedRecord(overrides = {}) {
         signature: "Saved User",
         oathCompletedAt: "2026-07-03T00:00:00.000Z",
         version: "2",
+        ...overrides
+    };
+}
+
+function makeAvatarRecord(overrides = {}) {
+    return {
+        version: "1",
+        dataUrl: "data:image/png;base64,avatar",
+        mimeType: "image/png",
+        updatedAt: "2026-08-10T00:00:00.000Z",
         ...overrides
     };
 }
@@ -277,88 +299,128 @@ function completeVisibleOath(dom, dialog) {
     const inputs = dialog.container.querySelectorAll("input");
     inputs[0].value = "Test User";
     inputs[1].value = "test@example.com";
-    inputs[2].value = "Test User";
-    inputs[3].checked = true;
+    inputs[2].value = "Test Project";
+    inputs[3].value = "Test User";
+    inputs[4].checked = true;
 
     findButton(dialog.container, "I Affirm the Oath").click();
 }
 
-test("SplashDialog renders the usage wizard and hides diagram actions before oath completion", () => {
+test("SplashDialog renders the personal project intro before license selection", () => {
     const { dialog, timers } = loadSplashDialog();
     const text = dialog.container.textContent;
 
-    assert.match(text, /Choose your path/);
-    assert.match(text, /Personal \/ Noncommercial/);
-    assert.match(text, /Education \/ Nonprofit \/ Public-interest/);
-    assert.match(text, /Commercial \/ Client \/ Company/);
-    assert.match(text, /Not sure/);
+    assert.match(text, /Hello, I am Benjamin/);
+    assert.match(text, /Trellis is a name pun/);
+    assert.match(text, /Mystery Lawn/);
+    assert.match(text, /LifeCycler/);
+    assert.match(text, /Trellis Studio/);
+    assert.match(text, /Support is the first contribution path/);
+    assert.ok(findButton(dialog.container, "Continue to License"));
     assert.equal(dialog.container.querySelector(".trellis-splash-actions").style.display, "none");
     assert.equal(dialog.isTrellisLicenseWizardComplete(), false);
     assert.equal(timers.length, 0);
 });
 
+test("SplashDialog routes from project intro to usage wizard", () => {
+    const { dialog } = loadSplashDialog();
+
+    findButton(dialog.container, "Continue to License").click();
+
+    assert.match(dialog.container.textContent, /Choose your path/);
+    assert.match(dialog.container.textContent, /Personal \/ Noncommercial/);
+    assert.match(dialog.container.textContent, /Education \/ Nonprofit \/ Public-interest/);
+    assert.match(dialog.container.textContent, /Commercial \/ Client \/ Company/);
+    assert.match(dialog.container.textContent, /Not sure/);
+});
+
 test("Commercial path shows contact guidance and the Grand Oath gate", () => {
     const { dialog } = loadSplashDialog();
 
+    findButton(dialog.container, "Continue to License").click();
     findButton(dialog.container, "Commercial / Client / Company").click();
 
     assert.ok(dialog.container.querySelector(".trellis-license-contact-panel"));
     assert.match(dialog.container.textContent, /Selected path/);
-    assert.match(dialog.container.textContent, /Contact/);
+    assert.match(dialog.container.textContent, /Support and contact/);
     assert.match(dialog.container.textContent, /Benjamin Elon/);
-    assert.match(dialog.container.textContent, /Commercial use requires written permission from Benjamin Elon before relying on Trellis-covered plugin files\./);
-    assert.doesNotMatch(dialog.container.querySelector(".trellis-contact-column").textContent, /Patreon/);
+    assert.match(dialog.container.textContent, /People should have access to tools that increase shared regenerative capacity/);
+    assert.match(dialog.container.textContent, /Written approval is still required before commercial use of Trellis-covered plugin files\./);
+    assert.match(dialog.container.querySelector(".trellis-contact-column").textContent, /Patreon/);
+    assert.match(dialog.container.querySelector(".trellis-contact-column").textContent, /GitHub: Issues and feedback/);
     assert.match(dialog.container.textContent, /The Grand Oath of Paying Attention/);
     assert.ok(findButton(dialog.container, "Play Oath Aloud"));
+    assert.ok(findButton(dialog.container, "Skip the Oath"));
     assert.ok(findButton(dialog.container, "I Affirm the Oath"));
+    assert.ok(findButton(dialog.container, "Change license"));
+    assert.equal(findButton(dialog.container, "Change answer"), undefined);
 });
 
-test("Affirm button evades pointer proximity only before oath completion", () => {
+test("Skip oath decoy evades pointer proximity only before gate completion", () => {
     const { dom, dialog } = loadSplashDialog();
-    const affirmButton = openOath(dialog);
-    const gateSection = affirmButton.parentNode.parentNode;
+    openOath(dialog);
+    const skipButton = findButton(dialog.container, "Skip the Oath");
+    const gateSection = skipButton.parentNode.parentNode;
 
-    setAffirmButtonRect(affirmButton);
+    setAffirmButtonRect(skipButton);
     dispatchMouseMove(dom, gateSection, 400, 400);
-    assert.equal(affirmButton.style.transform, "");
+    assert.equal(skipButton.style.transform, "");
 
     dispatchMouseMove(dom, gateSection, 90, 120);
-    assert.equal(affirmButton.style.transform, "translate(90px,18px)");
+    assert.equal(skipButton.style.transform, "translate(90px,18px)");
 
     findButton(dialog.container, "Play Oath Aloud").click();
+    assert.equal(skipButton.style.display, "none");
     findButton(dialog.container, "Play Oath Aloud").click();
     findButton(dialog.container, "Play Oath Aloud").click();
     findButton(dialog.container, "Manual audio override").click();
+    const inputs = dialog.container.querySelectorAll("input");
+    inputs[0].value = "Test User";
+    inputs[1].value = "test@example.com";
+    inputs[3].value = "Test User";
+    inputs[4].checked = true;
 
-    assert.equal(affirmButton.style.transform, "translate(0,0)");
+    assert.equal(skipButton.style.transform, "translate(0,0)");
     dispatchMouseMove(dom, gateSection, 90, 120);
-    assert.equal(affirmButton.style.transform, "translate(0,0)");
+    assert.equal(skipButton.style.transform, "translate(0,0)");
 });
 
-test("Affirm button caps non-pointer evasions before the oath is ready", () => {
+test("Skip oath decoy caps non-pointer evasions before the oath is ready", () => {
     const { dom, dialog } = loadSplashDialog();
-    const affirmButton = openOath(dialog);
+    openOath(dialog);
+    const skipButton = findButton(dialog.container, "Skip the Oath");
 
-    affirmButton.dispatchEvent(new dom.window.Event("focus", { bubbles: false, cancelable: true }));
-    assert.equal(affirmButton.style.transform, "translate(90px,18px)");
+    skipButton.dispatchEvent(new dom.window.Event("focus", { bubbles: false, cancelable: true }));
+    assert.equal(skipButton.style.transform, "translate(90px,18px)");
 
-    affirmButton.dispatchEvent(new dom.window.Event("touchstart", { bubbles: true, cancelable: true }));
-    assert.equal(affirmButton.style.transform, "translate(-90px,-18px)");
+    skipButton.dispatchEvent(new dom.window.Event("touchstart", { bubbles: true, cancelable: true }));
+    assert.equal(skipButton.style.transform, "translate(-90px,-18px)");
 
-    affirmButton.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
+    skipButton.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
         bubbles: true,
         cancelable: true,
         key: "Enter",
         keyCode: 13
     }));
-    const cappedTransform = affirmButton.style.transform;
+    const cappedTransform = skipButton.style.transform;
     assert.equal(cappedTransform, "translate(90px,18px)");
 
-    affirmButton.click();
+    skipButton.click();
+    skipButton.click();
+
+    assert.equal(skipButton.style.transform, cappedTransform);
+    assert.match(dialog.container.textContent, /out of hiding places/);
+    assert.equal(dialog.isTrellisLicenseWizardComplete(), false);
+});
+
+test("Real affirm button stays put and reports missing oath requirements", () => {
+    const { dialog } = loadSplashDialog();
+    const affirmButton = openOath(dialog);
+
     affirmButton.click();
 
-    assert.equal(affirmButton.style.transform, cappedTransform);
-    assert.match(dialog.container.textContent, /out of hiding places/);
+    assert.equal(affirmButton.style.transform, "");
+    assert.match(dialog.container.textContent, /The oath has to be heard before affirming/);
     assert.equal(dialog.isTrellisLicenseWizardComplete(), false);
 });
 
@@ -366,6 +428,7 @@ test("Oath completion stores the wizard record and reveals actions after two sec
     const { dom, dialog, timers } = loadSplashDialog();
     const actions = dialog.container.querySelector(".trellis-splash-actions");
 
+    findButton(dialog.container, "Continue to License").click();
     findButton(dialog.container, "Commercial / Client / Company").click();
     completeVisibleOath(dom, dialog);
 
@@ -374,9 +437,12 @@ test("Oath completion stores the wizard record and reveals actions after two sec
     assert.equal(record.contactGuidance, true);
     assert.equal(record.name, "Test User");
     assert.equal(record.email, "test@example.com");
+    assert.equal(record.organization, "Test Project");
     assert.equal(record.signature, "Test User");
     assert.equal(record.version, "2");
     assert.equal(dialog.isTrellisLicenseWizardComplete(), true);
+    assert.match(dialog.container.textContent, /Saved license/);
+    assert.doesNotMatch(dialog.container.textContent, /The Grand Oath of Paying Attention/);
     assert.equal(actions.style.display, "none");
 	const status = dialog.container.querySelector(".trellis-license-status");
 	assert.equal(status.textContent, "Diagram options will be ready shortly.");
@@ -406,8 +472,8 @@ test("New oath records require a complete email without invalidating legacy reco
     const inputs = dialog.container.querySelectorAll("input");
     inputs[0].value = "New User";
     inputs[1].value = "new@example.";
-    inputs[2].value = "New User";
-    inputs[3].checked = true;
+    inputs[3].value = "New User";
+    inputs[4].checked = true;
     findButton(dialog.container, "I Affirm the Oath").click();
 
     assert.equal(dom.window.localStorage.getItem(wizardStorageKey), null);
@@ -436,8 +502,8 @@ test("Saved wizard records show summary, contact guidance, Change license, and d
     assert.match(dialog.container.textContent, /Saved license/);
     assert.ok(dialog.container.querySelector(".trellis-license-contact-panel"));
     assert.match(dialog.container.textContent, /Benjamin Elon/);
-    assert.match(dialog.container.textContent, /Commercial use requires written permission from Benjamin Elon before relying on Trellis-covered plugin files\./);
-    assert.doesNotMatch(dialog.container.querySelector(".trellis-contact-column").textContent, /Patreon/);
+    assert.match(dialog.container.textContent, /Written approval is still required before commercial use of Trellis-covered plugin files\./);
+    assert.match(dialog.container.querySelector(".trellis-contact-column").textContent, /Patreon/);
     assert.doesNotMatch(dialog.container.textContent, /License oath completed/);
     assert.doesNotMatch(dialog.container.textContent, /Diagram options are ready/);
     const status = dialog.container.querySelector(".trellis-license-status");
@@ -455,7 +521,7 @@ test("Saved wizard records show summary, contact guidance, Change license, and d
 
     findButton(dialog.container, "Change license").click();
     assert.equal(dom.window.localStorage.getItem(wizardStorageKey), null);
-    assert.match(dialog.container.textContent, /Choose your path/);
+    assert.match(dialog.container.textContent, /Hello, I am Benjamin/);
     assert.equal(actions.style.display, "none");
     assert.equal(dialog.isTrellisLicenseWizardComplete(), false);
 });
@@ -464,14 +530,14 @@ test("Incomplete or corrupt saved wizard records are ignored", () => {
     const missingSignature = loadSplashDialog({
         savedRecord: makeSavedRecord({ signature: "" })
     });
-    assert.match(missingSignature.dialog.container.textContent, /Choose your path/);
+    assert.match(missingSignature.dialog.container.textContent, /Hello, I am Benjamin/);
     assert.equal(missingSignature.dialog.isTrellisLicenseWizardComplete(), false);
     assert.equal(missingSignature.timers.length, 0);
 
     const mismatchedGuidance = loadSplashDialog({
         savedRecord: makeSavedRecord({ path: "commercial", contactGuidance: false })
     });
-    assert.match(mismatchedGuidance.dialog.container.textContent, /Choose your path/);
+    assert.match(mismatchedGuidance.dialog.container.textContent, /Hello, I am Benjamin/);
     assert.equal(mismatchedGuidance.dialog.isTrellisLicenseWizardComplete(), false);
     assert.equal(mismatchedGuidance.timers.length, 0);
 });
@@ -479,7 +545,7 @@ test("Incomplete or corrupt saved wizard records are ignored", () => {
 test("SplashDialog ignores old v1 license acknowledgements", () => {
     const { dialog, timers } = loadSplashDialog({ oldChoice: "community" });
 
-    assert.match(dialog.container.textContent, /Choose your path/);
+    assert.match(dialog.container.textContent, /Hello, I am Benjamin/);
     assert.equal(dialog.container.querySelector(".trellis-splash-actions").style.display, "none");
     assert.equal(dialog.isTrellisLicenseWizardComplete(), false);
     assert.equal(timers.length, 0);
@@ -527,6 +593,11 @@ test("SplashDialog source and bundle use oath wizard storage, close hook, valida
     assert.match(dialogSource, /isTrellisWizardRecordValid/);
     assert.match(dialogSource, /isTrellisNewEmailValid/);
     assert.match(dialogSource, /pointerRunawayDistance = 120/);
+    assert.match(dialogSource, /Hello, I am Benjamin/);
+    assert.match(dialogSource, /Mystery Lawn/);
+    assert.match(dialogSource, /LifeCycler/);
+    assert.match(dialogSource, /Skip the Oath/);
+    assert.match(dialogSource, /Organization \/ Project \(optional\)/);
     assert.match(dialogSource, /I Affirm the Oath/);
     assert.doesNotMatch(dialogSource, /License oath completed/);
     assert.doesNotMatch(dialogSource, /Diagram options are ready/);
@@ -544,6 +615,11 @@ test("SplashDialog source and bundle use oath wizard storage, close hook, valida
     assert.match(bundledSource, /isTrellisWizardRecordValid/);
     assert.match(bundledSource, /isTrellisNewEmailValid/);
     assert.match(bundledSource, /pointerRunawayDistance = 120/);
+    assert.match(bundledSource, /Hello, I am Benjamin/);
+    assert.match(bundledSource, /Mystery Lawn/);
+    assert.match(bundledSource, /LifeCycler/);
+    assert.match(bundledSource, /Skip the Oath/);
+    assert.match(bundledSource, /Organization \/ Project \(optional\)/);
     assert.doesNotMatch(bundledSource, /License oath completed/);
     assert.doesNotMatch(bundledSource, /Diagram options are ready/);
     assert.match(bundledSource, /Diagram options will be ready shortly/);
@@ -576,7 +652,12 @@ test("Trellis splash enhancement adds the branded shell, saved-state structure, 
 	assert.equal(dialog.container.querySelector(".trellis-splash-state-intro"), null);
 	assert.equal(dialog.container.querySelector(".trellis-saved-license-path").textContent, "Path: Personal / Noncommercial.");
 	assert.equal(dialog.container.querySelector(".trellis-saved-license-signer").textContent, "Signed by Saved User using Barneywilson@gmail.");
-    assert.ok(dialog.container.querySelector(".trellis-saved-license-card .trellis-license-icon"));
+    const avatarControl = dialog.container.querySelector(".trellis-saved-license-card .trellis-avatar-control");
+    assert.ok(avatarControl);
+    assert.ok(avatarControl.classList.contains("trellis-license-icon"));
+    assert.equal(avatarControl.getAttribute("aria-label"), "Set avatar");
+    assert.equal(dialog.container.querySelector(".trellis-avatar-image"), null);
+    assert.equal(dialog.container.querySelector(".trellis-avatar-remove").hidden, true);
     assert.ok(supportButton.classList.contains("trellis-support-action"));
     assert.equal(supportButton.classList.contains("trellis-button-open"), false);
     assert.equal(supportButton.getAttribute("data-trellis-url"), "https://patreon.com/Benjamin980?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink");
@@ -592,6 +673,132 @@ test("Trellis splash enhancement adds the branded shell, saved-state structure, 
     assert.equal(dialog.container.querySelector(".trellis-splash-footer"), null);
     assert.equal(getHelpCalls(), 0);
     assert.doesNotMatch(dialog.container.textContent, /Settings|Language/);
+});
+
+test("Trellis splash renders a saved local avatar without changing license state", () => {
+    const { dom, dialog } = loadSplashDialog({
+        savedRecord: makeSavedRecord(),
+        avatarRecord: makeAvatarRecord()
+    });
+    const avatarControl = dialog.container.querySelector(".trellis-avatar-control");
+    const avatarImage = dialog.container.querySelector(".trellis-avatar-image");
+    const removeButton = dialog.container.querySelector(".trellis-avatar-remove");
+
+    assert.equal(dialog.isTrellisLicenseWizardComplete(), true);
+    assert.equal(avatarControl.getAttribute("aria-label"), "Change avatar");
+    assert.equal(avatarImage.getAttribute("src"), "data:image/png;base64,avatar");
+    assert.equal(removeButton.hidden, false);
+
+    findButton(dialog.container, "Change license").click();
+    assert.equal(dom.window.localStorage.getItem(wizardStorageKey), null);
+    assert.equal(JSON.parse(dom.window.localStorage.getItem(avatarStorageKey)).dataUrl, "data:image/png;base64,avatar");
+});
+
+test("Trellis splash ignores corrupt local avatar data", () => {
+    const { dom, dialog } = loadSplashDialog({
+        savedRecord: makeSavedRecord(),
+        avatarRecord: { version: "1", dataUrl: "javascript:alert(1)", mimeType: "image/png" }
+    });
+    const avatarControl = dialog.container.querySelector(".trellis-avatar-control");
+    const removeButton = dialog.container.querySelector(".trellis-avatar-remove");
+
+    assert.equal(dom.window.localStorage.getItem(avatarStorageKey), JSON.stringify({ version: "1", dataUrl: "javascript:alert(1)", mimeType: "image/png" }));
+    assert.equal(avatarControl.getAttribute("aria-label"), "Set avatar");
+    assert.equal(dialog.container.querySelector(".trellis-avatar-image"), null);
+    assert.equal(removeButton.hidden, true);
+});
+
+test("Trellis splash remove avatar control clears local avatar storage", () => {
+    const { dom, dialog } = loadSplashDialog({
+        savedRecord: makeSavedRecord(),
+        avatarRecord: makeAvatarRecord()
+    });
+    const removeButton = dialog.container.querySelector(".trellis-avatar-remove");
+
+    removeButton.click();
+
+    assert.equal(dom.window.localStorage.getItem(avatarStorageKey), null);
+    assert.equal(dialog.container.querySelector(".trellis-avatar-control").getAttribute("aria-label"), "Set avatar");
+    assert.equal(dialog.container.querySelector(".trellis-avatar-image"), null);
+    assert.equal(removeButton.hidden, true);
+});
+
+test("Trellis splash avatar click opens an image file picker", () => {
+    const { dialog } = loadSplashDialog({ savedRecord: makeSavedRecord() });
+    const avatarControl = dialog.container.querySelector(".trellis-avatar-control");
+    let pickerClicks = 0;
+
+    avatarControl.click();
+    avatarControl.trellisAvatarInput.click = function () {
+        pickerClicks++;
+    };
+    avatarControl.click();
+
+    assert.equal(pickerClicks, 1);
+    assert.equal(avatarControl.trellisAvatarInput.type, "file");
+    assert.equal(avatarControl.trellisAvatarInput.accept, "image/png,image/jpeg,image/webp");
+});
+
+test("Trellis splash avatar upload crops, stores, and renders the compact image", () => {
+    const { dom, dialog, getAlerts } = loadSplashDialog({ savedRecord: makeSavedRecord() });
+    const avatarControl = dialog.container.querySelector(".trellis-avatar-control");
+    const originalCreateElement = dom.window.document.createElement.bind(dom.window.document);
+    const drawCalls = [];
+
+    dom.window.FileReader = class {
+        readAsDataURL(file) {
+            assert.equal(file.name, "photo.jpg");
+            this.onload({ target: { result: "data:image/jpeg;base64,source" } });
+        }
+    };
+    dom.window.Image = class {
+        set src(value) {
+            assert.equal(value, "data:image/jpeg;base64,source");
+            this.naturalWidth = 400;
+            this.naturalHeight = 200;
+            this.onload();
+        }
+    };
+    dom.window.document.createElement = function (tagName) {
+        if (tagName === "canvas") {
+            return {
+                width: 0,
+                height: 0,
+                getContext(type) {
+                    assert.equal(type, "2d");
+                    return {
+                        clearRect() {},
+                        drawImage(...args) {
+                            drawCalls.push(args);
+                        }
+                    };
+                },
+                toDataURL(type) {
+                    assert.equal(type, "image/png");
+                    assert.equal(this.width, 96);
+                    assert.equal(this.height, 96);
+                    return "data:image/png;base64,cropped";
+                }
+            };
+        }
+        return originalCreateElement(tagName);
+    };
+
+    avatarControl.click();
+    Object.defineProperty(avatarControl.trellisAvatarInput, "files", {
+        configurable: true,
+        value: [{ name: "photo.jpg", type: "image/jpeg", size: 1234 }]
+    });
+    avatarControl.trellisAvatarInput.dispatchEvent(new dom.window.Event("change"));
+
+    const saved = JSON.parse(dom.window.localStorage.getItem(avatarStorageKey));
+    assert.equal(saved.version, "1");
+    assert.equal(saved.mimeType, "image/png");
+    assert.equal(saved.dataUrl, "data:image/png;base64,cropped");
+    assert.deepEqual(drawCalls[0].slice(1), [100, 0, 200, 200, 0, 0, 96, 96]);
+    assert.equal(dialog.container.querySelector(".trellis-avatar-image").getAttribute("src"), "data:image/png;base64,cropped");
+    assert.equal(dialog.container.querySelector(".trellis-avatar-remove").hidden, false);
+    assert.deepEqual(getAlerts(), []);
 });
 
 test("Trellis splash outer decoration stays below app chrome and applies a validated background", () => {
@@ -662,6 +869,12 @@ test("Trellis splash eats percentage margins before compact mode and removes its
 	assert.equal(outerContainer.classList.contains("trellis-splash-compact"), false);
 	assert.equal(outerContainer.style.getPropertyValue("--trellis-splash-dialog-width"), "760px");
 	assert.equal(outerContainer.style.getPropertyValue("--trellis-splash-dialog-height"), "603.12px");
+
+	bounds = { left: 0, top: 98, width: 1536, height: 1000 };
+	dom.window.dispatchEvent(new dom.window.Event("resize"));
+	assert.equal(outerContainer.classList.contains("trellis-splash-compact"), false);
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-splash-dialog-width"), "760px");
+	assert.equal(outerContainer.style.getPropertyValue("--trellis-splash-dialog-height"), "760px");
 
 	bounds = { left: 0, top: 98, width: 1536, height: 688 };
 	dom.window.dispatchEvent(new dom.window.Event("resize"));
@@ -876,7 +1089,16 @@ test("Trellis splash assets and bootstrap wire the same enhancement into package
 	assert.match(enhancementSource, /Build systems that grow/);
 	assert.match(enhancementSource, /getTrellisSplashBackground/);
 	assert.match(enhancementSource, /trellis-splash-active/);
+	assert.match(enhancementSource, /trellis\.splash\.avatar\.v1/);
+	assert.match(enhancementSource, /image\/png,image\/jpeg,image\/webp/);
+	assert.match(enhancementSource, /drawImage\(image, cropX, cropY, cropSize, cropSize/);
 	assert.match(splashCss, /trellis-splash-dialog\.trellis-splash-compact/);
+	assert.match(splashCss, /\.trellis-avatar-control/);
+	assert.match(splashCss, /\.trellis-avatar-remove/);
+	assert.match(splashCss, /\.trellis-avatar-image[\s\S]*object-fit: cover/);
+	assert.match(splashCss, /grid-template-columns: 76px minmax\(0, 1fr\) auto/);
+	assert.match(splashCss, /grid-template-columns: 68px minmax\(0, 1fr\)/);
+	assert.match(splashCss, /\.trellis-splash-actions button:last-child[\s\S]*margin-bottom: 0 !important/);
 	assert.match(splashCss, /trellis-splash-backdrop::before/);
 	assert.doesNotMatch(splashCss, /trellis-splash-backdrop::after/);
 	assert.doesNotMatch(splashCss, /background-image: var\(--trellis-splash-image\)/);

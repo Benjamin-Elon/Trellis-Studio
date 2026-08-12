@@ -5227,5 +5227,5 @@ test("irrigation planner registration and dashboard wiring remain present", () =
     assert.match(appSource, /'gardenIrrigationPlanner': 'plugins\/garden_planner_plugins\/Garden_Irrigation_Planner\.js'/);
     assert.match(bundledSource, /gardenEquipment gardenIrrigationPlanner/);
     assert.match(dashboardSource, /irrigation_dashboard_summary_json/);
-    assert.match(dashboardSource, /openIrrigationPlannerForDashboard/);
+    assert.match(dashboardSource, /openIrrigationPlannerForModule/);
 });

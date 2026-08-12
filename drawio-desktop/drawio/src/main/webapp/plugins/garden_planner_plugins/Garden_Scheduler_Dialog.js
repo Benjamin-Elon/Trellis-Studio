@@ -2316,6 +2316,12 @@ Draw.loadPlugin(function (ui) {
         return '';
     }
 
+    function resolveHarvestRequestMethodBehavior(req) {
+        const methodId = normId(req?.methodId || req?.method);
+        const methodCategoryId = normId(req?.methodCategoryId || inferMethodCategoryFromMethodId(methodId));
+        return resolveMethodBehavior({ methodCategoryId, methodId });
+    }
+
     function resolveCandidateMethodSelection(plant) {
         const methodId = normId(plant?.default_planting_method || '');
         const methodCategoryId = normId(plant?.default_planting_method_category || inferMethodCategoryFromMethodId(methodId));
@@ -14376,13 +14382,7 @@ Draw.loadPlugin(function (ui) {
                 if (!city) return { cropId, harvestStart: null, harvestEnd: null, shelfLifeDays: null, reason: "City not found" };
                 const cityName = String(city.city_name || cityRef?.cityName || "");
 
-                const methodId = normId(req?.methodId);
-                const methodCategoryId = normId(req?.methodCategoryId);
-                
-                const resolvedBehavior = resolveMethodBehavior({
-                    methodCategoryId,
-                    methodId
-                });
+                const resolvedBehavior = resolveHarvestRequestMethodBehavior(req);
                 
                 const planningMode = resolvedBehavior.planningMode;
                 const climateResolution = resolveClimateModelPolicy(moduleCell, cityName, plantId, null);
@@ -14587,6 +14587,7 @@ Draw.loadPlugin(function (ui) {
             persistCropLifecycleFilter,
             readPersistedCropLifecycleFilter,
             resolveHarvestWindowDays,
+            resolveHarvestRequestMethodBehavior,
             resolveInitialMethodSelection,
             resolveMethodBehavior,
             resolveValidMethodRecord,

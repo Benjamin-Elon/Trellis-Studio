@@ -8,7 +8,7 @@
 (function() {
 	var installed = false;
 	var centeredDialogMaxWidth = 760;
-	var centeredDialogMaxHeight = 690;
+	var centeredDialogMaxHeight = 760; // Fits the saved-license splash without accidental scroll.
 	var centeredDialogMinWidth = 760;
 	var centeredDialogMinHeight = 600;
 	var preferredHorizontalMarginRatio = 0.12;
@@ -16,6 +16,9 @@
 	var minimumHorizontalMarginRatio = 0.04;
 	var minimumVerticalMarginRatio = 0.04;
 	var defaultSplashBackgroundFilename = 'trellis-garden-sunrise.png';
+	var splashAvatarStorageKey = 'trellis.splash.avatar.v1';
+	var splashAvatarVersion = '1';
+	var splashAvatarSize = 96;
 
 	function addClass(element, className) {
 		if (element == null) return;
@@ -92,6 +95,262 @@
 		}
 	}
 
+	function getStorage() {
+		try {
+			return typeof window != 'undefined' && window.localStorage ? window.localStorage : null;
+		} catch (e) {
+			return null;
+		}
+	}
+
+	function isValidAvatarDataUrl(dataUrl) {
+		return typeof dataUrl == 'string' &&
+			/^data:image\/(?:png|jpeg|webp);base64,/i.test(dataUrl);
+	}
+
+	function normalizeAvatarRecord(record) {
+		if (record == null || record.version != splashAvatarVersion ||
+			!isValidAvatarDataUrl(record.dataUrl)) {
+			return null;
+		}
+
+		return {
+			version: splashAvatarVersion,
+			dataUrl: record.dataUrl,
+			mimeType: record.mimeType || 'image/png',
+			updatedAt: record.updatedAt || ''
+		};
+	}
+
+	function readAvatarRecord() {
+		var storage = getStorage();
+
+		if (storage == null) return null;
+
+		try {
+			return normalizeAvatarRecord(JSON.parse(storage.getItem(splashAvatarStorageKey) || 'null'));
+		} catch (e) {
+			return null;
+		}
+	}
+
+	function writeAvatarRecord(dataUrl) {
+		var storage = getStorage();
+		var record = {
+			version: splashAvatarVersion,
+			dataUrl: dataUrl,
+			mimeType: 'image/png',
+			updatedAt: new Date().toISOString()
+		};
+
+		if (storage == null) return false;
+
+		try {
+			storage.setItem(splashAvatarStorageKey, JSON.stringify(record));
+			return true;
+		} catch (e) {
+			return false;
+		}
+	}
+
+	function clearAvatarRecord() {
+		var storage = getStorage();
+
+		if (storage == null) return;
+
+		try {
+			storage.removeItem(splashAvatarStorageKey);
+		} catch (e) {
+			// Ignore storage failures while restoring the visible placeholder.
+		}
+	}
+
+	function showAvatarError(documentRef, message) {
+		var ownerWindow = documentRef != null ? documentRef.defaultView : null;
+
+		if (ownerWindow != null && typeof ownerWindow.alert == 'function') {
+			ownerWindow.alert(message);
+		} else if (typeof window != 'undefined' && typeof window.alert == 'function') {
+			window.alert(message);
+		}
+	}
+
+	function isSupportedAvatarFile(file) {
+		var type = file != null && file.type ? file.type.toLowerCase() : '';
+		var name = file != null && file.name ? file.name : '';
+
+		return file != null && file.size !== 0 &&
+			(/image\/(?:png|jpeg|webp)/.test(type) || /\.(png|jpe?g|webp)$/i.test(name));
+	}
+
+	function cropAvatarDataUrl(documentRef, sourceDataUrl, callback, errorCallback) {
+		var ownerWindow = documentRef != null ? documentRef.defaultView : window;
+		var image = new ownerWindow.Image();
+
+		image.onload = function() {
+			try {
+				var canvas = documentRef.createElement('canvas');
+				var context = canvas.getContext != null ? canvas.getContext('2d') : null;
+				var sourceWidth = image.naturalWidth || image.width;
+				var sourceHeight = image.naturalHeight || image.height;
+				var cropSize = Math.min(sourceWidth, sourceHeight);
+				var cropX = Math.max(0, (sourceWidth - cropSize) / 2);
+				var cropY = Math.max(0, (sourceHeight - cropSize) / 2);
+
+				if (context == null || cropSize <= 0 || canvas.toDataURL == null) {
+					throw new Error('Canvas unavailable');
+				}
+
+				canvas.width = splashAvatarSize;
+				canvas.height = splashAvatarSize;
+				context.clearRect(0, 0, splashAvatarSize, splashAvatarSize);
+				context.drawImage(image, cropX, cropY, cropSize, cropSize, 0, 0, splashAvatarSize, splashAvatarSize);
+				callback(canvas.toDataURL('image/png'));
+			} catch (e) {
+				errorCallback(e);
+			}
+		};
+		image.onerror = function(error) {
+			errorCallback(error);
+		};
+		image.src = sourceDataUrl;
+	}
+
+	function saveAvatarFile(documentRef, file, onSaved) {
+		if (!isSupportedAvatarFile(file)) {
+			showAvatarError(documentRef, 'Choose a PNG, JPEG, or WebP image for your avatar.');
+			return;
+		}
+
+		try {
+			var ownerWindow = documentRef != null ? documentRef.defaultView : window;
+			var reader = new ownerWindow.FileReader();
+			reader.onload = function(event) {
+				cropAvatarDataUrl(documentRef, event.target.result, function(dataUrl) {
+					if (!writeAvatarRecord(dataUrl)) {
+						showAvatarError(documentRef, 'Could not save the avatar on this device.');
+						return;
+					}
+					onSaved();
+				}, function() {
+					showAvatarError(documentRef, 'Could not read that avatar image.');
+				});
+			};
+			reader.onerror = function() {
+				showAvatarError(documentRef, 'Could not read that avatar image.');
+			};
+			reader.readAsDataURL(file);
+		} catch (e) {
+			showAvatarError(documentRef, 'Could not read that avatar image.');
+		}
+	}
+
+	function renderAvatarControl(control) {
+		var record = readAvatarRecord();
+		var image = control.querySelector('.trellis-avatar-image');
+		var placeholder = control.querySelector('.trellis-avatar-placeholder-icon');
+		var remove = control.parentNode != null ? control.parentNode.querySelector('.trellis-avatar-remove') : null;
+
+		if (record != null) {
+			if (image == null) {
+				image = control.ownerDocument.createElement('img');
+				image.className = 'trellis-avatar-image';
+				image.alt = '';
+				image.setAttribute('aria-hidden', 'true');
+				control.appendChild(image);
+			}
+			image.src = record.dataUrl;
+			if (placeholder != null) placeholder.style.display = 'none';
+			if (remove != null) remove.hidden = false;
+			control.setAttribute('aria-label', 'Change avatar');
+			control.setAttribute('title', 'Change avatar');
+		} else {
+			if (image != null && image.parentNode != null) image.parentNode.removeChild(image);
+			if (placeholder != null) placeholder.style.display = '';
+			if (remove != null) remove.hidden = true;
+			control.setAttribute('aria-label', 'Set avatar');
+			control.setAttribute('title', 'Set avatar');
+		}
+	}
+
+	function openAvatarPicker(control) {
+		var documentRef = control.ownerDocument;
+		var input = control.trellisAvatarInput;
+
+		if (input == null) {
+			input = documentRef.createElement('input');
+			input.type = 'file';
+			input.accept = 'image/png,image/jpeg,image/webp';
+			input.className = 'trellis-avatar-file-input';
+			input.addEventListener('change', function() {
+				var file = input.files != null ? input.files[0] : null;
+
+				if (file != null) {
+					saveAvatarFile(documentRef, file, function() {
+						renderAvatarControl(control);
+					});
+				}
+
+				input.value = '';
+			});
+			control.trellisAvatarInput = input;
+		}
+
+		input.click();
+	}
+
+	function createAvatarControl(documentRef) {
+		var wrap = documentRef.createElement('div');
+		var control = documentRef.createElement('button');
+		var placeholder = createIcon(documentRef, 'user');
+		var remove = documentRef.createElement('button');
+
+		wrap.className = 'trellis-avatar-wrap';
+		control.className = 'trellis-license-icon trellis-avatar-control';
+		control.type = 'button';
+		addClass(placeholder, 'trellis-avatar-placeholder-icon');
+		control.appendChild(placeholder);
+		control.addEventListener('click', function(evt) {
+			if (evt != null && evt.stopPropagation != null) evt.stopPropagation();
+			openAvatarPicker(control);
+		});
+
+		remove.className = 'trellis-avatar-remove';
+		remove.type = 'button';
+		remove.textContent = '\u00d7';
+		remove.setAttribute('aria-label', 'Remove avatar');
+		remove.setAttribute('title', 'Remove avatar');
+		remove.addEventListener('click', function(evt) {
+			if (evt != null && evt.preventDefault != null) evt.preventDefault();
+			if (evt != null && evt.stopPropagation != null) evt.stopPropagation();
+			clearAvatarRecord();
+			renderAvatarControl(control);
+		});
+
+		wrap.appendChild(control);
+		wrap.appendChild(remove);
+		renderAvatarControl(control);
+		return wrap;
+	}
+
+	function ensureSavedLicenseAvatar(section) {
+		var existingControl = section.querySelector('.trellis-avatar-control');
+
+		if (existingControl != null) {
+			renderAvatarControl(existingControl);
+			return;
+		}
+
+		var existingIcon = section.querySelector('.trellis-license-icon');
+		var avatar = createAvatarControl(section.ownerDocument);
+
+		if (existingIcon != null && existingIcon.parentNode != null) {
+			existingIcon.parentNode.replaceChild(avatar, existingIcon);
+		} else {
+			section.insertBefore(avatar, section.firstChild);
+		}
+	}
+
 	function decorateSavedLicenseCard(container) {
 		var sections = container.querySelectorAll('.trellis-splash-section, .trellis-saved-license-card');
 		var foundSavedCard = false;
@@ -127,11 +386,7 @@
 					}
 				}
 
-				if (sections[i].querySelector('.trellis-license-icon') == null) {
-					var icon = createIcon(container.ownerDocument, 'user');
-					addClass(icon, 'trellis-license-icon');
-					sections[i].insertBefore(icon, heading);
-				}
+				ensureSavedLicenseAvatar(sections[i]);
 			}
 		}
 

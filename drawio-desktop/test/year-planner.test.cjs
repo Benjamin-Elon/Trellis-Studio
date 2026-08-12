@@ -164,6 +164,17 @@ function addDemand(plan, overrides = {}) {
     return line;
 }
 
+function setActualHarvest(api, plan, crop, entries) {
+    const weeks = api.PlanMath.buildWeekStartsForYearLocal(Number(plan.year), plan.weekStartDow);
+    const series = Array(weeks.length).fill(0);
+    for (const [ymd, kg] of entries) {
+        const index = api.PlanMath.weekIndexForDate(weeks, ymd);
+        if (index >= 0) series[index] += Math.max(0, Number(kg) || 0);
+    }
+    crop.__actualHarvestWeeklyKg = series;
+    return crop;
+} // CHANGE: focused tests model measured harvest records instead of synthetic plant-count supply.
+
 function codes(results) {
     return Array.from(results || []).map(error => error && error.code);
 }
@@ -206,6 +217,8 @@ test("PlanSchema normalizes legacy yield fields and strips runtime-only persiste
             germRate: 0.8,
             shelfLifeDays: 0,
             packages: [{ unit: "kg", baseType: "kg", baseQty: 1 }],
+            method: "direct_sow.field",
+            methodCategoryId: "direct_sow",
             baseKgPerPlant: 1.5,
             kgPerPlantMode: "auto",
             harvestWindowSource: "manual",
@@ -395,7 +408,7 @@ test("PlanMath excludes reversed demand ranges while retaining explicit valid CS
     assert.ok(warnings.some(warning => warning.includes("CSA component skipped (start date after end date)")));
 });
 
-test("PlanMath rejects reversed manual harvest windows without producing supply", () => {
+test("PlanMath ignores manual harvest windows for supply and validation still rejects reversed dates", () => {
     const { api } = createHarness();
     const plan = api.PlanSchema.createEmptyPlan(2026);
     const crop = emptyCrop({
@@ -405,7 +418,7 @@ test("PlanMath rejects reversed manual harvest windows without producing supply"
     const warnings = [];
     const weekly = api.PlanMath.computePlanWeekly(plan, warnings);
     assert.equal(weekly.supplyTotal.reduce((sum, value) => sum + value, 0), 0);
-    assert.ok(warnings.some(warning => warning.includes("harvest start date after end date")));
+    assert.equal(warnings.some(warning => warning.includes("harvest start date after end date")), false);
     assert.ok(codes(api.PlanSchema.validateCrop(crop)).includes("crop.reversed_harvest_window"));
 });
 
@@ -712,7 +725,7 @@ test("PlanRuntimeService does not default sowing-window estimate when actual har
     assert.equal(plan.crops[0].useActualHarvest, false);
 });
 
-test("PlanRuntimeService keeps manual, sowing-window estimate, and actual harvest supply windows distinct", () => {
+test("PlanRuntimeService keeps harvest windows independent from actual-only supply", () => {
     const firstHarvestWeek = (harnessApi, runtime) => harnessApi.PlanMath.buildPlanChartModel(runtime.weekly, "crop_1")
         .find(row => row.harvestKg > 0)?.week;
     const makeModuleWithTiler = attributes => {
@@ -725,20 +738,30 @@ test("PlanRuntimeService keeps manual, sowing-window estimate, and actual harves
     let harness = makeModuleWithTiler({});
     let plan = harness.api.PlanSchema.createEmptyPlan(2026);
     plan.crops.push(emptyCrop({ harvestWindowSource: "manual", harvestStart: "2026-01-05", harvestEnd: "2026-01-11" }));
-    assert.equal(firstHarvestWeek(harness.api, harness.api.PlanRuntimeService.recalculate(harness.moduleCell, 2026, plan)), "2026-01-05");
+    assert.equal(firstHarvestWeek(harness.api, harness.api.PlanRuntimeService.recalculate(harness.moduleCell, 2026, plan)), undefined);
 
     harness = makeModuleWithTiler({});
     plan = harness.api.PlanSchema.createEmptyPlan(2026);
     plan.crops.push(emptyCrop({ harvestWindowSource: "sowing_window_estimate", estimatedHarvestStart: "2026-06-01", estimatedHarvestEnd: "2026-06-07" }));
-    assert.equal(firstHarvestWeek(harness.api, harness.api.PlanRuntimeService.recalculate(harness.moduleCell, 2026, plan)), "2026-06-01");
+    let runtime = harness.api.PlanRuntimeService.recalculate(harness.moduleCell, 2026, plan);
+    assert.equal(firstHarvestWeek(harness.api, runtime), undefined);
+    assert.equal(runtime.derivedByCropId.get("crop_1").harvestStart, "2026-06-01");
 
     harness = makeModuleWithTiler({ harvest_start: "2026-09-01", harvest_end: "2026-09-07" });
     plan = harness.api.PlanSchema.createEmptyPlan(2026);
+    plan.crops.push(emptyCrop({ harvestWindowSource: "sowing_window_estimate", estimatedHarvestStart: "2026-06-01", estimatedHarvestEnd: "2026-06-07" }));
+    runtime = harness.api.PlanRuntimeService.recalculate(harness.moduleCell, 2026, plan);
+    assert.equal(firstHarvestWeek(harness.api, runtime), "2026-08-31");
+    assert.equal(runtime.derivedByCropId.get("crop_1").harvestStart, "2026-06-01");
+
+    plan = harness.api.PlanSchema.createEmptyPlan(2026);
     plan.crops.push(emptyCrop({ harvestWindowSource: "actual_harvest", useActualHarvest: true, harvestStart: "2026-01-05", harvestEnd: "2026-01-11" }));
-    assert.equal(firstHarvestWeek(harness.api, harness.api.PlanRuntimeService.recalculate(harness.moduleCell, 2026, plan)), "2026-08-31");
+    runtime = harness.api.PlanRuntimeService.recalculate(harness.moduleCell, 2026, plan);
+    assert.equal(firstHarvestWeek(harness.api, runtime), "2026-08-31");
+    assert.equal(runtime.derivedByCropId.get("crop_1").harvestStart, "2026-09-01");
 });
 
-test("PlanRuntimeService includes prior-year cross-year harvest as carryover supply without editable crop rows", () => {
+test("PlanRuntimeService does not synthesize prior-year saved harvest windows as supply", () => {
     const { api, root, addCell, TestCell: Cell } = createHarness();
     const moduleCell = addCell(root, new Cell("module"));
     const prior = api.PlanSchema.createEmptyPlan(2026);
@@ -759,9 +782,10 @@ test("PlanRuntimeService includes prior-year cross-year harvest as carryover sup
 
     assert.equal(current.crops.length, 1);
     assert.equal(current.crops[0].id, "crop_1");
-    assert.ok(Math.abs(weekly.supply.reduce((sum, value) => sum + value, 0) - (100 / 13)) < 0.0001);
-    assert.equal(weekly.usableSupply.reduce((sum, value) => sum + value, 0), 5);
-    assert.ok(runtime.warnings.some(warning => warning.includes("carryover supply")));
+    assert.equal(weekly.supply.reduce((sum, value) => sum + value, 0), 0);
+    assert.equal(weekly.usableSupply.reduce((sum, value) => sum + value, 0), 0);
+    assert.equal(weekly.short.reduce((sum, value) => sum + value, 0), 5);
+    assert.equal(runtime.warnings.some(warning => warning.includes("carryover supply")), false);
     assert.equal(api.PlanSchema.stripRuntimeFields(current).__carryoverCrops, undefined);
 });
 
@@ -815,6 +839,7 @@ test("PlanMath allocates CSA first, then priority and channel order, with reques
     const plan = api.PlanSchema.createEmptyPlan(2026);
     const crop = emptyCrop({ actualPlants: 10, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 2 }] });
     plan.crops.push(crop);
+    setActualHarvest(api, plan, crop, [["2026-06-01", 10]]);
     plan.csa.enabled = true;
     plan.csa.boxesPerWeek = 1;
     plan.csa.start = "2026-06-01";
@@ -846,8 +871,11 @@ test("PlanMath allocates CSA first, then priority and channel order, with reques
 test("PlanMath derives CSA box value and prorates CSA revenue by component fulfillment", () => {
     const { api } = createHarness();
     const plan = api.PlanSchema.createEmptyPlan(2026);
-    plan.crops.push(emptyCrop({ id: "tomato", plantId: "1", plant: "Tomato", actualPlants: 10, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 5 }] }));
-    plan.crops.push(emptyCrop({ id: "lettuce", plantId: "2", plant: "Lettuce", actualPlants: 1, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 3 }] }));
+    const tomato = emptyCrop({ id: "tomato", plantId: "1", plant: "Tomato", actualPlants: 10, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 5 }] });
+    const lettuce = emptyCrop({ id: "lettuce", plantId: "2", plant: "Lettuce", actualPlants: 1, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 3 }] });
+    plan.crops.push(tomato, lettuce);
+    setActualHarvest(api, plan, tomato, [["2026-06-01", 10]]);
+    setActualHarvest(api, plan, lettuce, [["2026-06-01", 1]]);
     plan.csa.enabled = true;
     plan.csa.boxesPerWeek = 2;
     plan.csa.start = "2026-06-01";
@@ -924,7 +952,9 @@ test("PlanMath prices demand from exact package unit matches only", () => {
 test("PlanMath breaks equal-priority shortages by stored channel order", () => {
     const { api } = createHarness();
     const plan = api.PlanSchema.createEmptyPlan(2026);
-    plan.crops.push(emptyCrop({ actualPlants: 8, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07" }));
+    const crop = emptyCrop({ actualPlants: 8, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07" });
+    plan.crops.push(crop);
+    setActualHarvest(api, plan, crop, [["2026-06-01", 8]]);
     addDemand(plan, { id: "later", channelId: "restaurant_1", qty: 5, priority: "committed" });
     addDemand(plan, { id: "earlier", channelId: "farm_store", qty: 5, priority: "committed" });
     const weekly = api.PlanMath.computePlanWeekly(plan, []);
@@ -936,13 +966,15 @@ test("PlanMath keeps raw harvest stable and never pools inventory across crops",
     const { api } = createHarness();
     function makeWeeklyPlan(shelfLifeDays) {
         const plan = api.PlanSchema.createEmptyPlan(2026);
-        plan.crops.push(emptyCrop({
+        const crop = emptyCrop({
             useActualHarvest: false,
             actualPlants: 10,
             shelfLifeDays,
             harvestStart: "2026-01-05",
             harvestEnd: "2026-01-11"
-        }));
+        });
+        plan.crops.push(crop);
+        setActualHarvest(api, plan, crop, [["2026-01-05", 10]]);
         addDemand(plan, { qty: 5, from: "2026-01-12", to: "2026-01-18" });
         return api.PlanMath.computePlanWeekly(plan, []);
     }
@@ -955,10 +987,10 @@ test("PlanMath keeps raw harvest stable and never pools inventory across crops",
     assert.equal(stored.usableSupplyTotal.reduce((sum, value) => sum + value, 0), 5);
 
     const plan = api.PlanSchema.createEmptyPlan(2026);
-    plan.crops.push(
-        emptyCrop({ id: "harvest", actualPlants: 10, useActualHarvest: false, shelfLifeDays: 8, harvestStart: "2026-01-05", harvestEnd: "2026-01-11" }),
-        emptyCrop({ id: "demand", plantId: "2", plant: "Carrot", actualPlants: 0, useActualHarvest: false, shelfLifeDays: 8 })
-    );
+    const harvestCrop = emptyCrop({ id: "harvest", actualPlants: 10, useActualHarvest: false, shelfLifeDays: 8, harvestStart: "2026-01-05", harvestEnd: "2026-01-11" });
+    const demandCrop = emptyCrop({ id: "demand", plantId: "2", plant: "Carrot", actualPlants: 0, useActualHarvest: false, shelfLifeDays: 8 });
+    plan.crops.push(harvestCrop, demandCrop);
+    setActualHarvest(api, plan, harvestCrop, [["2026-01-05", 10]]);
     addDemand(plan, { cropId: "demand", qty: 5, from: "2026-01-12", to: "2026-01-18" });
     const weekly = api.PlanMath.computePlanWeekly(plan, []);
     const demandSeries = weekly.perCrop.get("demand");
@@ -1005,6 +1037,27 @@ test("PlanMath builds filtered and aggregate chart models with additive flow sum
         worstShortageWeek: "2026-01-12",
         shortWeeks: 1
     });
+});
+
+test("CropTimeline orders solid bars by value and keeps raw harvest in front", () => {
+    const { api } = createHarness();
+    const weeks = [{ iso: "2026-01-05" }, { iso: "2026-01-12" }, { iso: "2026-01-19" }, { iso: "2026-01-26" }];
+    const rows = api.CropTimeline.buildCropTimelineModel(weeks, {
+        target: [5, 0, 8, 0],
+        supply: [10, 4, 0, 0],
+        usableSupply: [5, 0, 3, 0],
+        short: [0, 0, 5, 0],
+        surplus: [5, 4, 0, 0],
+        expired: [0, 1, 0, 0],
+        endingInventory: [5, 9, 1, 0]
+    });
+
+    const barIds = row => JSON.parse(JSON.stringify(row.bars.map(bar => bar.id)));
+    assert.deepEqual(barIds(rows[0]), ["demand", "inventory", "harvest"]); // CHANGE: raw harvest renders last so its outline stays in front.
+    assert.deepEqual(barIds(rows[1]), ["inventory", "harvest"]);
+    assert.deepEqual(barIds(rows[2]), ["demand", "inventory"]);
+    assert.equal(rows[2].shortKg, 5);
+    assert.equal(rows[3].bars.length, 0);
 });
 
 test("PlanRuntimeService syncs demand to harvest dates and collapses legacy shelf extensions", () => {
@@ -1192,11 +1245,22 @@ test("YearPlanDashboard resolves selection after crop removal and preserves unkn
     assert.equal(api.YearPlanDashboard.resolveSelectedCropId([], "b", 0), "");
 
     const options = api.YearPlanDashboard.buildMethodOptions([
-        { method_id: "direct_sow.field", method_name: "Direct sow" },
-        { method_id: "direct_sow.field", method_name: "Duplicate" }
+        { method_id: "direct_sow.field", method_name: "Direct sow", method_category_id: "direct_sow" },
+        { method_id: "direct_sow.field", method_name: "Duplicate", method_category_id: "direct_sow" }
     ], "legacy.method");
     assert.deepEqual(JSON.parse(JSON.stringify(options)), [
-        { value: "legacy.method", label: "legacy.method (legacy/unavailable)", unavailable: true },
-        { value: "direct_sow.field", label: "Direct sow", unavailable: false }
+        { value: "legacy.method", label: "legacy.method (legacy/unavailable)", methodCategoryId: "legacy", unavailable: true },
+        { value: "direct_sow.field", label: "Direct sow", methodCategoryId: "direct_sow", unavailable: false }
     ]);
+});
+
+test("PlanSchema infers method category for legacy dotted crop methods", () => {
+    const { api } = createHarness();
+    const plan = api.PlanSchema.normalizeForRuntime({
+        year: 2026,
+        crops: [{ id: "crop_1", plantId: "1", method: "transplant.indoor" }]
+    }, 2026);
+
+    assert.equal(plan.crops[0].method, "transplant.indoor");
+    assert.equal(plan.crops[0].methodCategoryId, "transplant");
 });

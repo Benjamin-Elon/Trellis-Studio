@@ -198,6 +198,7 @@ function createYearPlannerHarness(options = {}) {
         plant_name: "Tomato",
         yield_per_plant_kg: 1,
         default_planting_method: "direct_sow.field",
+        default_planting_method_category: "direct_sow",
         annual: 1,
         biennial: 0,
         perennial: 0
@@ -270,6 +271,7 @@ function makePlanCrop(overrides = {}) {
         varietyId: null,
         variety: "",
         method: "direct_sow.field",
+        methodCategoryId: "direct_sow",
         harvestStart: "2026-06-01",
         harvestEnd: "2026-09-30",
         useActualHarvest: false,
