@@ -57,6 +57,8 @@ function makeHarness(options = {}) {
     const emptyBed = appendChild(gardenModule, new TestCell("emptyBed", { garden_bed: "1" }));
     const bedAssembly = options.bedAssembly ? appendChild(gardenModule, new TestCell("bedAssembly", { irrigation_assembly: "1", irrigation_assembly_type: "bed" })) : null;
     const tilerGroup = appendChild(gardenModule, new TestCell("tiler", { tiler_group: "1" }));
+    const plantTile = appendChild(tilerGroup, new TestCell("plantTile", { plant_tiler: "1", auto: "1" })); // CHANGE
+    const lockedPlantTile = appendChild(tilerGroup, new TestCell("lockedPlantTile", { plant_tiler: "1", auto: "1" })); // CHANGE
     const occupiedTiler = appendChild(gardenModule, new TestCell("occupiedTiler", { tiler_group: "1" }));
     const lane = appendChild(gardenModule, new TestCell("lane", { lane_key: "TODO" }, "swimlane;"));
     const card = appendChild(lane, new TestCell("card", { kanban_card: "1" }));
@@ -85,6 +87,8 @@ function makeHarness(options = {}) {
     stateMap.set(emptyBed, { cell: emptyBed, x: 230, y: 130, width: 80, height: 40 });
     if (bedAssembly) stateMap.set(bedAssembly, { cell: bedAssembly, x: 88, y: 138, width: 24, height: 20 });
     stateMap.set(tilerGroup, { cell: tilerGroup, x: 150, y: 130, width: 80, height: 40 });
+    stateMap.set(plantTile, { cell: plantTile, x: 160, y: 140, width: 20, height: 20 }); // CHANGE
+    stateMap.set(lockedPlantTile, { cell: lockedPlantTile, x: 190, y: 140, width: 20, height: 20 }); // CHANGE
     stateMap.set(occupiedTiler, { cell: occupiedTiler, x: 60, y: 140, width: 20, height: 20 });
     stateMap.set(siblingLane, { cell: siblingLane, x: 170, y: 175, width: 120, height: 55 });
     stateMap.set(siblingCard, { cell: siblingCard, x: 180, y: 188, width: 80, height: 28 });
@@ -169,7 +173,7 @@ function makeHarness(options = {}) {
     const graphHandler = new context.mxGraphHandler();
     graphHandler.graph = graph;
     graph.graphHandler = graphHandler;
-    return { graph, window: dom.window, Handler: context.mxGraphHandler, gardenModule, legacyGardenModule, regularModule, teamModule, regularChild, teamRole, plainTop, bed, emptyBed, bedAssembly, tilerGroup, occupiedTiler, lane, card, siblingLane, siblingCard, kanbanBoard, kanbanLane, kanbanCard, movableCells, getSelected: () => selectedCells.slice() };
+    return { graph, window: dom.window, Handler: context.mxGraphHandler, gardenModule, legacyGardenModule, regularModule, teamModule, regularChild, teamRole, plainTop, bed, emptyBed, bedAssembly, tilerGroup, plantTile, lockedPlantTile, occupiedTiler, lane, card, siblingLane, siblingCard, kanbanBoard, kanbanLane, kanbanCard, movableCells, getSelected: () => selectedCells.slice() }; // CHANGE
 }
 
 function isHarnessBed(cell) {
@@ -327,6 +331,27 @@ test("selected tiler drag over a garden bed keeps the tiler as initial drag cell
 
     assert.equal(handler.getInitialCellForEvent(makeMouseEvent(bed, 50, 140)), tilerGroup);
 });
+
+test("movable plant circle is the initial drag cell inside a planting group", () => { // CHANGE
+    const { graph, Handler, plantTile } = makeHarness(); // CHANGE
+    graph.__hitCell = plantTile; // CHANGE
+    const handler = new Handler(); // CHANGE
+    handler.graph = graph; // CHANGE
+
+    assert.equal(handler.getInitialCellForEvent(makeMouseEvent(plantTile, 170, 150)), plantTile); // CHANGE
+}); // CHANGE
+
+test("non-movable plant circle drag redirects to the planting group", () => { // CHANGE
+    const { graph, Handler, tilerGroup, lockedPlantTile, movableCells } = makeHarness(); // CHANGE
+    movableCells.set(lockedPlantTile, false); // CHANGE
+    graph.__hitCell = lockedPlantTile; // CHANGE
+    const handler = new Handler(); // CHANGE
+    handler.graph = graph; // CHANGE
+
+    assert.equal(handler.getInitialCellForEvent(makeMouseEvent(lockedPlantTile, 200, 150)), tilerGroup); // CHANGE
+    assert.equal(handler.__manualLinkerLockedDragSource, lockedPlantTile); // CHANGE
+    assert.equal(handler.__manualLinkerLockedDragParent, tilerGroup); // CHANGE
+}); // CHANGE
 
 test("plain click through selected tiler over a garden bed still selects the bed", () => {
     const { graph, bed, tilerGroup, getSelected } = makeHarness();

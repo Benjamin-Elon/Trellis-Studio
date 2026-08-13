@@ -170,10 +170,14 @@ test("task manager exposes dashboard board APIs and unseen-created state", () =>
     assert.match(text, /viewer\.unscheduled = Date\.now\(\);/);
 });
 
-test("task manager canonical lane styles are not draggable", () => {
+test("task manager canonical lane and card styles disable native Draw.io connectors", () => { // CHANGE
     const text = taskManagerSource();
     assert.match(text, /const LANE_STYLE_BASE =[\s\S]*movable=0/); // NEW
     assert.match(text, /const SCHEDULE_LANE_STYLE_BASE =[\s\S]*movable=0/); // NEW
+    assert.match(text, /const LANE_STYLE_BASE =[\s\S]*connectable=0/); // CHANGE
+    assert.match(text, /const SCHEDULE_LANE_STYLE_BASE =[\s\S]*connectable=0/); // CHANGE
+    assert.match(text, /const CARD_STYLE =[\s\S]*connectable=0/); // CHANGE
+    assert.match(text, /const BREAK_CARD_STYLE = CARD_STYLE \+ 'dashed=1;fillColor=#F3F4F6;strokeColor=#6B7280;'/); // CHANGE
 });
 
 test("task manager installs a selected Task Module add-board overlay", () => {

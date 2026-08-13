@@ -573,6 +573,16 @@ Draw.loadPlugin(function (ui) {
         const selectedTilerTarget = selectedTilerDragTargetForEvent(graph, me, fallback);
         if (selectedTilerTarget) return selectedTilerTarget;
         const deepest = getDeepestCellForMouseEvent(graph, me, fallback);
+        if (graph && deepest && isPlantTile(deepest) && graph.getModel().isVertex(deepest)) { // CHANGE: draggable plant circles own their drag unless draw.io marks them locked.
+            if (graph.isCellMovable(deepest)) return deepest; // CHANGE
+            const movablePlantParent = findMovableDragAncestorForLockedCell(graph, deepest); // CHANGE
+            if (!movablePlantParent) return deepest; // CHANGE
+            if (handler) { // CHANGE
+                handler.__manualLinkerLockedDragSource = deepest; // CHANGE
+                handler.__manualLinkerLockedDragParent = movablePlantParent; // CHANGE
+            } // CHANGE
+            return movablePlantParent; // CHANGE
+        } // CHANGE
         const dragTarget = getPlantSelectionTargetForEvent(graph, deepest, me && me.getEvent ? me.getEvent() : null);
         if (!graph || !dragTarget || !graph.getModel().isVertex(dragTarget)) return dragTarget;
         if (graph.isCellMovable(dragTarget)) return dragTarget;

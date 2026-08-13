@@ -1499,11 +1499,11 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     const BOARD_STYLE = // CHANGE: task layout owns board-child geometry instead of Draw.io stack fill
         'swimlane;fontStyle=2;horizontal=1;startSize=28;collapsible=1;swimlaneFillColor=#F8FAFC;fontFamily=Permanent Marker;fontSize=16;points=[];verticalAlign=top;resizable=1;strokeWidth=2;disableMultiStroke=1;'; // CHANGE: opaque body remains visible below shorter week lanes
     const LANE_STYLE_BASE =
-        'swimlane;strokeWidth=2;fontFamily=Permanent Marker;fontSize=12;html=0;startSize=40;align=center;verticalAlign=middle;whiteSpace=wrap;spacingBottom=5;points=[];childLayout=stackLayout;stackBorder=20;stackSpacing=20;marginTop=0;resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=0;movable=0;fillStyle=solid;swimlaneFillColor=default;'; // CHANGE: lane visibility is controlled by board toggles, not draw.io collapse handles
+        'swimlane;strokeWidth=2;fontFamily=Permanent Marker;fontSize=12;html=0;startSize=40;align=center;verticalAlign=middle;whiteSpace=wrap;spacingBottom=5;points=[];childLayout=stackLayout;stackBorder=20;stackSpacing=20;marginTop=0;resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=0;movable=0;connectable=0;fillStyle=solid;swimlaneFillColor=default;'; // CHANGE: lane visibility is controlled by board toggles, not draw.io collapse handles
     const SCHEDULE_LANE_STYLE_BASE = // NEW: plugin-owned schedule geometry prevents Draw.io stack layout from expanding day lanes
-        'swimlane;strokeWidth=2;fontFamily=Permanent Marker;html=0;startSize=1;verticalAlign=bottom;spacingBottom=5;points=[];resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=0;movable=0;fillStyle=solid;swimlaneFillColor=default;'; // CHANGE
+        'swimlane;strokeWidth=2;fontFamily=Permanent Marker;html=0;startSize=1;verticalAlign=bottom;spacingBottom=5;points=[];resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=0;movable=0;connectable=0;fillStyle=solid;swimlaneFillColor=default;'; // CHANGE
     const CARD_STYLE =
-        'whiteSpace=wrap;html=1;strokeWidth=2;fillColor=swimlane;fontStyle=1;spacingTop=0;rounded=1;arcSize=9;points=[];fontFamily=Permanent Marker;hachureGap=8;fillWeight=1;';
+        'whiteSpace=wrap;html=1;strokeWidth=2;fillColor=swimlane;fontStyle=1;spacingTop=0;rounded=1;arcSize=9;points=[];fontFamily=Permanent Marker;hachureGap=8;fillWeight=1;connectable=0;'; // CHANGE
     const BREAK_CARD_STYLE = CARD_STYLE + 'dashed=1;fillColor=#F3F4F6;strokeColor=#6B7280;';
 
     // Lane fills

@@ -130,7 +130,20 @@ Draw.loadPlugin(function (ui) {
 
     function enforceGardenModuleMinimum(moduleCell) {
         if (!isGardenModule(moduleCell)) return false;
-        return false; // CHANGE: preserve API without forcing a fixed garden size
+        const g = model.getGeometry(moduleCell);
+        if (!g) return false;
+        const content = getModuleMinContentSize(moduleCell);
+        const headerH = getModuleHeaderHeight(moduleCell);
+        const u = getChildUnionRelative(moduleCell);
+        const minW = Math.max(content.width, u ? u.right : 0);
+        const minH = Math.max(content.height, u ? u.bottom : 0) + headerH;
+        if (g.width + EPS >= minW && g.height + EPS >= minH) return false;
+        const g2 = g.clone ? g.clone() : Object.assign({}, g);
+        g2.width = Math.max(g.width || 0, minW);
+        g2.height = Math.max(g.height || 0, minH);
+        model.setGeometry(moduleCell, g2);
+        graph.refresh(moduleCell);
+        return true; // CHANGE: gardens keep intentional size, but cannot shrink below contents.
     }
 
     function applyModuleMargins(moduleCell, opts) {
@@ -138,8 +151,9 @@ Draw.loadPlugin(function (ui) {
         const allowShrink = !!o.allowShrink;
         const manageUpdate = o.manageUpdate !== false;
         if (!isModule(moduleCell)) return;
+        if (isGardenModule(moduleCell)) return; // CHANGE: garden dimensions are intentional and do not auto-fit internal margins.
 
-        const margin = getIntStyle(moduleCell, "module_margin", DEFAULT_MODULE_MARGIN_UNITS); // CHANGE
+        const margin = getModuleMarginValue(moduleCell); // CHANGE
         const mGeo = model.getGeometry(moduleCell);
         if (!mGeo) return;
 
@@ -181,6 +195,7 @@ Draw.loadPlugin(function (ui) {
 
     function getModuleMarginValue(moduleCell, defaultPx) {
         const fallback = Number.isInteger(defaultPx) && defaultPx >= 0 ? defaultPx : DEFAULT_MODULE_MARGIN_UNITS; // CHANGE
+        if (isGardenModule(moduleCell)) return 0; // CHANGE: legacy garden module_margin styles are ignored.
         return getIntStyle(moduleCell, "module_margin", fallback);
     }
 
@@ -197,6 +212,7 @@ Draw.loadPlugin(function (ui) {
 
     function setModuleMarginValue(moduleCell, marginPx) {
         if (!isModule(moduleCell)) return;
+        if (isGardenModule(moduleCell)) return 0; // CHANGE: garden modules have no internal margin setting.
         model.beginUpdate();
         try {
             setModuleStyleIntValue(moduleCell, "module_margin", marginPx); // CHANGE
@@ -402,6 +418,10 @@ Draw.loadPlugin(function (ui) {
 
     function isTaskModule(cell) {
         return !!cell && getXmlFlag(cell, "task_module");
+    }
+
+    function isPlainRegularModule(cell) {
+        return isModule(cell) && !isGardenModule(cell) && !isTeamModule(cell) && !isTaskModule(cell); // CHANGE
     }
 
     function isGardenDashboardCell(cell) {
@@ -1175,7 +1195,7 @@ Draw.loadPlugin(function (ui) {
 
     function createRoleValueCell(value, x, y, width, height, extraStyle) {
         const cell = new mxCell(value, new mxGeometry(x, y, width, height),
-            "shape=rectangle;align=left;verticalAlign=middle;whiteSpace=wrap;html=1;overflow=hidden;fillColor=#ffffff;strokeColor=#CBD5E1;fontSize=12;fontColor=#111827;spacingLeft=6;spacingRight=6;" + (extraStyle || ""));
+            "shape=rectangle;align=left;verticalAlign=middle;whiteSpace=wrap;html=1;overflow=hidden;fillColor=#ffffff;strokeColor=#CBD5E1;fontSize=12;fontColor=#111827;spacingLeft=6;spacingRight=6;connectable=0;" + (extraStyle || "")); // CHANGE
         cell.vertex = true;
         return cell;
     }
@@ -1460,6 +1480,11 @@ Draw.loadPlugin(function (ui) {
             return isGardenBedCell(cell) || isIrrigationAssemblyCell(cell) || isTilerGroup(cell) || isRoleCard(cell) || isTaskBoardCell(cell);
         } // NEW
 
+        function directModuleParent(cell) {
+            const p = model.getParent(cell);
+            return p && isModule(p) ? p : null;
+        } // CHANGE
+
         function getImmediateProtectedParent(cell) {
             const p = model.getParent(cell);
             if (!p) return null;
@@ -1471,6 +1496,8 @@ Draw.loadPlugin(function (ui) {
             if (!cell || isModule(cell) || isKanbanCardCell(cell) || isKanbanLaneCell(cell)) return null;
             const immediateParent = getImmediateProtectedParent(cell);
             if (immediateParent) return immediateParent;
+            const moduleParent = directModuleParent(cell);
+            if (moduleParent) return moduleParent; // CHANGE: all direct module children stay in their current module.
             return isTopLevelContainerProtectedCell(cell) ? findModuleAncestor(cell) : null;
         } // NEW
 
@@ -1487,8 +1514,13 @@ Draw.loadPlugin(function (ui) {
         } // NEW
 
         function isTopLevelModuleClamp(cell, container) {
-            return !!container && isModule(container) && isTopLevelContainerProtectedCell(cell);
+            return !!container && isModule(container) && (directModuleParent(cell) === container || isTopLevelContainerProtectedCell(cell)); // CHANGE
         } // NEW
+
+        function moduleRightBottomClampMargin(container) {
+            if (isPlainRegularModule(container) || isGardenModule(container)) return 0; // CHANGE
+            return Math.max(0, getModuleMarginValue(container)); // CHANGE
+        } // CHANGE
 
         function centerInsideContainerBounds(rect, container) {
             const bounds = getAbsContainerBounds(container);
@@ -1503,7 +1535,8 @@ Draw.loadPlugin(function (ui) {
             if (isTopLevelModuleClamp(cell, container)) {
                 const bounds = getModuleContentBounds(container);
                 if (!bounds) return false;
-                const margin = Math.max(0, getModuleMarginValue(container));
+                if (isPlainRegularModule(container)) return rect.x >= bounds.x && rect.y >= bounds.y; // CHANGE
+                const margin = moduleRightBottomClampMargin(container); // CHANGE
                 return (
                     rect.x >= bounds.x &&
                     rect.y >= bounds.y &&
@@ -1520,11 +1553,11 @@ Draw.loadPlugin(function (ui) {
             if (isTopLevelModuleClamp(cell, container)) {
                 const bounds = getModuleContentBounds(container);
                 if (!bounds) return null;
-                const margin = Math.max(0, getModuleMarginValue(container));
+                const margin = moduleRightBottomClampMargin(container); // CHANGE
                 let minDx = bounds.x - b.x;
-                let maxDx = bounds.x + bounds.width - margin - (b.x + b.w);
+                let maxDx = isPlainRegularModule(container) ? Infinity : bounds.x + bounds.width - margin - (b.x + b.w); // CHANGE
                 let minDy = bounds.y - b.y;
-                let maxDy = bounds.y + bounds.height - margin - (b.y + b.h);
+                let maxDy = isPlainRegularModule(container) ? Infinity : bounds.y + bounds.height - margin - (b.y + b.h); // CHANGE
                 if (minDx > maxDx) minDx = maxDx; // NEW: prefer the no-resize edge when the object cannot fit.
                 if (minDy > maxDy) minDy = maxDy; // NEW
                 return { minDx: minDx, maxDx: maxDx, minDy: minDy, maxDy: maxDy };
@@ -1630,7 +1663,7 @@ Draw.loadPlugin(function (ui) {
             if (dragged.some(isKanbanLaneCell)) return false; // NEW
             if (dragged.some(function (draggedCell) { return isKanbanCardCell(draggedCell) && cell && !isValidKanbanCardDropTarget(cell); })) return false; // NEW
             if (dragged.some(function (draggedCell) { const parent = getImmediateProtectedParent(draggedCell); return parent && cell && cell !== parent; })) return false; // NEW
-            if (dragged.some(function (draggedCell) { const moduleCell = isTopLevelContainerProtectedCell(draggedCell) ? findModuleAncestor(draggedCell) : null; return moduleCell && cell && cell !== moduleCell; })) return false; // NEW
+            if (dragged.some(function (draggedCell) { const moduleCell = directModuleParent(draggedCell) || (isTopLevelContainerProtectedCell(draggedCell) ? findModuleAncestor(draggedCell) : null); return moduleCell && cell && cell !== moduleCell; })) return false; // CHANGE
             return originalIsValidDropTarget ? originalIsValidDropTarget.apply(this, arguments) : true;
         };
 
@@ -1643,6 +1676,7 @@ Draw.loadPlugin(function (ui) {
                 if (!movable.length) return requested; // NEW
                 const args = Array.prototype.slice.call(arguments);
                 args[0] = movable;
+                if (target && movable.some(function (cell) { const container = getClampContainer(cell); return container && target !== container; })) args[4] = null; // CHANGE
                 const adjusted = clampedMoveDelta(movable, Number(dx) || 0, Number(dy) || 0);
                 args[1] = adjusted.dx;
                 args[2] = adjusted.dy;
@@ -1865,7 +1899,7 @@ Draw.loadPlugin(function (ui) {
             seenModules.forEach(id => applyModuleMargins(model.getCell(id), { allowShrink: false }));
             cells.forEach(function (cell, index) {
                 if (!isModule(cell)) return;
-                const next = bounds[index] || model.getGeometry(cell);
+                const next = isGardenModule(cell) ? model.getGeometry(cell) : (bounds[index] || model.getGeometry(cell)); // CHANGE
                 const prev = previous[index];
                 enforceExternalMarginsForBoundsChange(cell, prev, next); // NEW
             });

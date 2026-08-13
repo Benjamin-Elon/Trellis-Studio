@@ -74,8 +74,9 @@ test('Garden module and bed overlays expose exclusive mode launchers', () => { /
     assert.doesNotMatch(source, /gardenModuleHasIrrigationSource\(moduleCell\)/); // CHANGE
 });
 
-test('Garden module margin lives in Garden Settings instead of the overlay', () => {
+test('Garden module settings expose external margin but no internal margin', () => {
     const source = readPlantTilerSource();
+    const dialogSource = sourceSlice(source, 'async function showGardenSettingsDialog', 'function plainGardenModuleLabel'); // CHANGE
     assert.doesNotMatch(source, /let marginBtn = null;/);
     assert.doesNotMatch(source, /marginBtn = makeButton\("Set Module Margin"\);/);
     assert.doesNotMatch(source, /toolbar\.appendChild\(marginBtn\);/);
@@ -84,18 +85,18 @@ test('Garden module margin lives in Garden Settings instead of the overlay', () 
     assert.doesNotMatch(source, /new mxEventObject\("usl:requestPromptSetModuleMargin", "cell", moduleCell\)/);
     assert.match(source, /const gardenWidthRow = row\("Garden width:", gardenWidthInput\);/); // CHANGE
     assert.match(source, /const gardenLengthRow = row\("Garden length:", gardenLengthInput\);/); // CHANGE
-    assert.match(source, /const moduleMarginRow = row\("Internal margin:", moduleMarginInput\);/); // CHANGE
+    assert.doesNotMatch(source, /row\("Internal margin:/); // CHANGE
     assert.match(source, /const moduleExternalMarginRow = row\("External margin:", moduleExternalMarginInput\);/); // NEW
-    assert.match(source, /const curModuleMargin = getGardenModuleMargin\(moduleCell\);/);
+    assert.match(source, /function getGardenModuleMargin\(moduleCell\) \{[\s\S]*return 0; \/\/ CHANGE: garden modules no longer expose or honor internal margins\./); // CHANGE
     assert.match(source, /const curModuleExternalMargin = getGardenModuleExternalMargin\(moduleCell\);/); // NEW
-    assert.match(source, /const chosenModuleMargin = readModuleMarginInput\(moduleMarginInput, chosenUnits\);/); // CHANGE
+    assert.doesNotMatch(source, /chosenModuleMargin/); // CHANGE
     assert.match(source, /const chosenModuleExternalMargin = readModuleMarginInput\(moduleExternalMarginInput, chosenUnits\);/); // NEW
-    assert.match(source, /Internal margin must be a non-negative number\./); // CHANGE
+    assert.doesNotMatch(source, /Internal margin must be a non-negative number\./); // CHANGE
     assert.match(source, /External margin must be a non-negative number\./); // NEW
-    assert.match(source, /Garden dimensions must be at least \$\{width\} by \$\{length\} \$\{bedDisplayUnitLabel\(units\)\} to fit existing contents plus internal margin\./); // CHANGE
+    assert.match(source, /Garden dimensions must be at least \$\{width\} by \$\{length\} \$\{bedDisplayUnitLabel\(units\)\} to fit existing contents\./); // CHANGE
     assert.match(source, /nextGeo\.width = chosenGardenWidthUnits;/); // CHANGE
     assert.match(source, /nextGeo\.height = chosenGardenHeightUnits;/); // CHANGE
-    assert.match(source, /setGardenModuleMargin\(moduleCell, chosenModuleMargin\);/);
+    assert.doesNotMatch(dialogSource, /setGardenModuleMargin\(moduleCell,/); // CHANGE
     assert.match(source, /setGardenModuleExternalMargin\(moduleCell, chosenModuleExternalMargin\);/); // NEW
     assert.match(source, /if \(!toolbar \|\| !labelInputWrap \|\| !settingsBtn \|\| !addBedBtn \|\| !addGroupBtn \|\| !allocateModeBtn \|\| !irrigationModeBtn \|\| !moduleCell\) return;/); // CHANGE
 });
@@ -162,13 +163,23 @@ test('scheduler sibling plant groups clone footprint and attrs without reusing s
     assert.match(helperSource, /value\.setAttribute\("layout_offset_y_cm", String\(offsetYCm\)\)/);
     assert.doesNotMatch(helperSource, /geometry\.x = Number\(geometry\.x \|\| 0\) \+/);
     assert.doesNotMatch(helperSource, /attrs\.companion_layout_clamped = "1";/);
-    assert.match(helperSource, /const group = new mxCell\(value, geometry, style \|\| groupFrameStyle\(\)\);/);
+    assert.match(helperSource, /const sourceStyle = typeof sourceCell\.getStyle === "function" \? sourceCell\.getStyle\(\) : sourceCell\.style;/); // CHANGE
+    assert.match(helperSource, /const style = upsertStyleKV\(sourceStyle \|\| groupFrameStyle\(\), "connectable", "0"\);/); // CHANGE
+    assert.match(helperSource, /const group = new mxCell\(value, geometry, style\);/); // CHANGE
     assert.match(helperSource, /group\.setVertex\(true\);/);
     assert.match(helperSource, /activeGraphArg\.addCell\(group, parent\);/);
     assert.match(helperSource, /reorderModuleChildrenForLayering\(model, parent\);/);
     assert.doesNotMatch(helperSource, /group\.id\s*=\s*sourceCell\.id/);
     assert.match(source, /createSiblingTilerGroupFromSource,/);
 });
+
+test('planting groups and plant circles disable native Draw.io connectors', () => { // CHANGE
+    const source = readPlantTilerSource(); // CHANGE
+    const circleStyle = sourceSlice(source, 'function plantCircleStyle', 'function groupFrameStyle'); // CHANGE
+    const groupStyle = sourceSlice(source, 'function groupFrameStyle', 'let __dbPathCached'); // CHANGE
+    assert.match(circleStyle, /"connectable=0"/); // CHANGE
+    assert.match(groupStyle, /"connectable=0"/); // CHANGE
+}); // CHANGE
 
 test('interplant companion groups offset alternating tile slots during retile', () => {
     const source = readPlantTilerSource();

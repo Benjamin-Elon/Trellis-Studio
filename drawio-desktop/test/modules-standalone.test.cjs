@@ -400,6 +400,17 @@ function insideRightBottomInnerMargin(cell, moduleCell) {
     );
 }
 
+function insideModuleBounds(cell, moduleCell) {
+    const cellBounds = absoluteBounds(cell);
+    const moduleBounds = absoluteBounds(moduleCell);
+    return (
+        cellBounds.x >= moduleBounds.x &&
+        cellBounds.y >= moduleBounds.y &&
+        cellBounds.x + cellBounds.width <= moduleBounds.x + moduleBounds.width &&
+        cellBounds.y + cellBounds.height <= moduleBounds.y + moduleBounds.height
+    );
+} // CHANGE
+
 function cellText(cell) {
     if (!cell) return "";
     const raw = cell.value && cell.value.getAttribute ? (cell.value.getAttribute("label") || "") : (cell.value == null ? "" : String(cell.value));
@@ -441,6 +452,15 @@ function getRoleAvatar(imageRow) {
 function waitForTimers() {
     return new Promise(resolve => setTimeout(resolve, 5));
 }
+
+function resizeCellAndFire(harness, cell, width, height) {
+    const previous = cell.geometry.clone(); // CHANGE
+    const next = cell.geometry.clone(); // CHANGE
+    next.width = width; // CHANGE
+    next.height = height; // CHANGE
+    harness.model.setGeometry(cell, next); // CHANGE
+    harness.graph.fireEvent(makeEventObject("cellsResized", ["cells", [cell], "bounds", [next], "previous", [previous]])); // CHANGE
+} // CHANGE
 
 test("createModuleAtPoint creates a regular module at requested coordinates", () => {
     const harness = makeHarness();
@@ -546,23 +566,66 @@ test("module cells cannot be dropped under non-module parents", () => {
     assert.equal(harness.model.getParent(mod), harness.root);
 });
 
-test("protected trellis objects clamp to their module edges", () => {
+test("protected trellis objects clamp by module type", () => {
     const cases = [
-        { name: "garden bed", attrs: { garden_bed: "1" } },
-        { name: "planting group", attrs: { tiler_group: "1" } },
-        { name: "bed assembly", attrs: { irrigation_assembly: "1", irrigation_assembly_type: "bed" } },
-        { name: "source assembly", attrs: { irrigation_assembly: "1", irrigation_assembly_type: "source" } },
-        { name: "task board", attrs: { board_key: "KANBAN_BOARD", board_role: "main" } }
+        { name: "garden bed", attrs: { garden_bed: "1" }, type: "garden", expected: { dx: 40, dy: 50 }, inside: insideModuleBounds },
+        { name: "planting group", attrs: { tiler_group: "1" }, type: "garden", expected: { dx: 40, dy: 50 }, inside: insideModuleBounds },
+        { name: "bed assembly", attrs: { irrigation_assembly: "1", irrigation_assembly_type: "bed" }, type: "garden", expected: { dx: 40, dy: 50 }, inside: insideModuleBounds },
+        { name: "source assembly", attrs: { irrigation_assembly: "1", irrigation_assembly_type: "source" }, type: "garden", expected: { dx: 40, dy: 50 }, inside: insideModuleBounds },
+        { name: "task board", attrs: { board_key: "KANBAN_BOARD", board_role: "main" }, type: "task", expected: { dx: 20, dy: 30 }, inside: insideRightBottomInnerMargin }
     ];
-    cases.forEach(({ attrs }) => {
+    cases.forEach(({ attrs, type, expected, inside }) => {
         const harness = makeHarness();
-        const mod = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, attrs.board_key ? "task" : "garden"), 320, 220, 20);
+        const mod = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, type), 320, 220, 20);
+        const beforeSize = { width: mod.geometry.width, height: mod.geometry.height }; // CHANGE
         const cell = makeCell(harness, attrs, new TestGeometry(240, 140, 40, 30), attrs.board_key ? "swimlane;" : "");
         harness.model.add(mod, cell);
         harness.graph.moveCells([cell], 120, 120);
-        assert.deepEqual(harness.graph.lastMoveDelta, { dx: 20, dy: 30 });
-        assert.equal(insideRightBottomInnerMargin(cell, mod), true);
+        assert.deepEqual(harness.graph.lastMoveDelta, expected); // CHANGE
+        assert.equal(inside(cell, mod), true); // CHANGE
+        if (type === "garden") assert.deepEqual({ width: mod.geometry.width, height: mod.geometry.height }, beforeSize); // CHANGE
         assert.equal(harness.model.getParent(cell), mod);
+    });
+});
+
+test("regular module children can drag past right and bottom to grow the module", () => {
+    const harness = makeHarness();
+    const mod = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "regular"), 320, 220, 20);
+    const child = makeCell(harness, { label: "ordinary" }, new TestGeometry(240, 140, 40, 30));
+    harness.model.add(mod, child);
+    harness.graph.moveCells([child], 120, 120);
+    assert.deepEqual(harness.graph.lastMoveDelta, { dx: 120, dy: 120 }); // CHANGE
+    assert.equal(harness.model.getParent(child), mod); // CHANGE
+    assert.equal(child.geometry.x, 360); // CHANGE
+    assert.equal(child.geometry.y, 260); // CHANGE
+    assert.equal(mod.geometry.width, 420); // CHANGE
+    assert.equal(mod.geometry.height, 310); // CHANGE
+});
+
+test("regular module children clamp at left and top edges", () => {
+    const harness = makeHarness();
+    const mod = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "regular"), 320, 220, 20);
+    const child = makeCell(harness, { label: "ordinary" }, new TestGeometry(20, 20, 40, 30));
+    harness.model.add(mod, child);
+    harness.graph.moveCells([child], -80, -90);
+    assert.deepEqual(harness.graph.lastMoveDelta, { dx: -20, dy: -20 }); // CHANGE
+    assert.equal(child.geometry.x, 0); // CHANGE
+    assert.equal(child.geometry.y, 0); // CHANGE
+    assert.equal(harness.model.getParent(child), mod); // CHANGE
+});
+
+test("team and task module ordinary children do not use regular outside growth", () => {
+    ["team", "task"].forEach(type => {
+        const harness = makeHarness();
+        const mod = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, type), 320, 220, 20);
+        const child = makeCell(harness, { label: "ordinary" }, new TestGeometry(240, 140, 40, 30), type === "task" ? "swimlane;" : "");
+        harness.model.add(mod, child);
+        harness.graph.moveCells([child], 120, 120);
+        assert.deepEqual(harness.graph.lastMoveDelta, { dx: 20, dy: 30 }); // CHANGE
+        assert.equal(insideRightBottomInnerMargin(child, mod), true); // CHANGE
+        assert.equal(mod.geometry.width, 320); // CHANGE
+        assert.equal(mod.geometry.height, 220); // CHANGE
+        assert.equal(harness.model.getParent(child), mod); // CHANGE
     });
 });
 
@@ -590,9 +653,10 @@ test("mixed protected selections share one clamped delta", () => {
     harness.model.add(mod, bed);
     harness.model.add(mod, note);
     harness.graph.moveCells([bed, note], 120, 0);
-    assert.equal(harness.graph.lastMoveDelta.dx, 20);
-    assert.equal(bed.geometry.x, 260);
-    assert.equal(note.geometry.x, 40);
+    assert.equal(harness.graph.lastMoveDelta.dx, 40); // CHANGE
+    assert.equal(bed.geometry.x, 280); // CHANGE
+    assert.equal(note.geometry.x, 60); // CHANGE
+    assert.equal(mod.geometry.width, 320); // CHANGE
 });
 
 test("protected cells reject drops outside their current module", () => {
@@ -601,11 +665,16 @@ test("protected cells reject drops outside their current module", () => {
     const other = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 500, y: 0 }, "garden"));
     const bed = makeCell(harness, { garden_bed: "1" }, new TestGeometry(20, 20, 80, 40));
     const assembly = makeCell(harness, { irrigation_assembly: "1", irrigation_assembly_type: "parts" }, new TestGeometry(120, 20, 80, 40));
+    const ordinary = makeCell(harness, { label: "ordinary" }, new TestGeometry(220, 20, 80, 40)); // CHANGE
     harness.model.add(garden, bed);
     harness.model.add(garden, assembly);
+    harness.model.add(garden, ordinary); // CHANGE
     assert.equal(harness.graph.isValidDropTarget(garden, [bed]), true);
     assert.equal(harness.graph.isValidDropTarget(other, [bed]), false);
     assert.equal(harness.graph.isValidDropTarget(harness.root, [assembly]), false);
+    assert.equal(harness.graph.isValidDropTarget(harness.root, [ordinary]), false); // CHANGE
+    assert.deepEqual(harness.graph.moveCells([ordinary], 10, 0, false, harness.root), [ordinary]); // CHANGE
+    assert.equal(harness.model.getParent(ordinary), garden); // CHANGE
 });
 
 test("CELLS_MOVED clamps leaked protected cells instead of reparenting to root", () => {
@@ -615,8 +684,21 @@ test("CELLS_MOVED clamps leaked protected cells instead of reparenting to root",
     harness.model.add(garden, bed);
     harness.graph.fireEvent(makeEventObject("cellsMoved", ["cells", [bed], "dx", 200, "dy", 0]));
     assert.equal(harness.model.getParent(bed), garden);
-    assert.equal(bed.geometry.x, 220);
-    assert.equal(insideRightBottomInnerMargin(bed, garden), true);
+    assert.equal(bed.geometry.x, 240); // CHANGE
+    assert.equal(insideModuleBounds(bed, garden), true); // CHANGE
+    assert.equal(garden.geometry.width, 320); // CHANGE
+    assert.equal(garden.geometry.height, 220); // CHANGE
+});
+
+test("garden child moves do not auto-shrink the garden module", () => {
+    const harness = makeHarness();
+    const garden = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "garden"), 500, 400, 60);
+    const bed = makeCell(harness, { garden_bed: "1" }, new TestGeometry(320, 260, 80, 40));
+    harness.model.add(garden, bed);
+    harness.graph.moveCells([bed], -120, -100);
+    assert.equal(garden.geometry.width, 500); // CHANGE
+    assert.equal(garden.geometry.height, 400); // CHANGE
+    assert.equal(harness.model.getParent(bed), garden); // CHANGE
 });
 
 test("kanban cards can move to another board lane while lanes remain fixed", () => {
@@ -684,6 +766,66 @@ test("module margin API updates style and reapplies module sizing without prompt
     assert.match(mod.style, /(?:^|;)module_margin=35(?:;|$)/);
     assert.equal(mod.geometry.width, 275);
     assert.equal(mod.geometry.height, 145);
+});
+
+test("garden module margin API ignores legacy internal margin values", () => {
+    const harness = makeHarness();
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "garden");
+    garden.style += ";module_margin=90"; // CHANGE
+    assert.equal(harness.graph.__trellisModules.getModuleMargin(garden), 0); // CHANGE
+    harness.graph.__trellisModules.setModuleMargin(garden, 35); // CHANGE
+    assert.equal(harness.graph.__trellisModules.getModuleMargin(garden), 0); // CHANGE
+    assert.doesNotMatch(garden.style, /(?:^|;)module_margin=35(?:;|$)/); // CHANGE
+});
+
+test("garden module resize cannot shrink below child contents", () => {
+    const harness = makeHarness();
+    const garden = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "garden"), 360, 260, 0); // CHANGE
+    const bed = makeCell(harness, { garden_bed: "1" }, new TestGeometry(240, 150, 100, 90)); // CHANGE
+    harness.model.add(garden, bed); // CHANGE
+    resizeCellAndFire(harness, garden, 200, 180); // CHANGE
+    assert.equal(garden.geometry.width, 340); // CHANGE
+    assert.equal(garden.geometry.height, 240); // CHANGE
+});
+
+test("garden module resize restores only undersized dimensions", () => {
+    const harness = makeHarness();
+    const garden = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "garden"), 360, 320, 0); // CHANGE
+    const bed = makeCell(harness, { garden_bed: "1" }, new TestGeometry(180, 100, 80, 80)); // CHANGE
+    harness.model.add(garden, bed); // CHANGE
+    resizeCellAndFire(harness, garden, 220, 300); // CHANGE
+    assert.equal(garden.geometry.width, 260); // CHANGE
+    assert.equal(garden.geometry.height, 300); // CHANGE
+});
+
+test("garden module resize minimum ignores legacy internal margin", () => {
+    const harness = makeHarness();
+    const garden = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "garden"), 360, 260, 90); // CHANGE
+    const bed = makeCell(harness, { garden_bed: "1" }, new TestGeometry(180, 100, 80, 80)); // CHANGE
+    harness.model.add(garden, bed); // CHANGE
+    resizeCellAndFire(harness, garden, 120, 120); // CHANGE
+    assert.equal(garden.geometry.width, 260); // CHANGE
+    assert.equal(garden.geometry.height, 180); // CHANGE
+});
+
+test("empty garden module resize honors base minimum", () => {
+    const harness = makeHarness();
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "garden"); // CHANGE
+    resizeCellAndFire(harness, garden, 20, 20); // CHANGE
+    assert.equal(garden.geometry.width, 60); // CHANGE
+    assert.equal(garden.geometry.height, 40); // CHANGE
+});
+
+test("garden resize minimum does not normalize negative child positions", () => {
+    const harness = makeHarness();
+    const garden = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "garden"), 180, 120, 0); // CHANGE
+    const bed = makeCell(harness, { garden_bed: "1" }, new TestGeometry(-50, -40, 80, 70)); // CHANGE
+    harness.model.add(garden, bed); // CHANGE
+    resizeCellAndFire(harness, garden, 20, 20); // CHANGE
+    assert.equal(garden.geometry.width, 60); // CHANGE
+    assert.equal(garden.geometry.height, 40); // CHANGE
+    assert.equal(bed.geometry.x, -50); // CHANGE
+    assert.equal(bed.geometry.y, -40); // CHANGE
 });
 
 test("module margin can be set through the fallback graph event", () => {
@@ -1133,6 +1275,7 @@ test("new role cards use v2 compact roster profile geometry", () => {
         assert.match(cell.style, /(?:^|;)html=1(?:;|$)/);
         assert.match(cell.style, /(?:^|;)whiteSpace=wrap(?:;|$)/);
         assert.match(cell.style, /(?:^|;)overflow=hidden(?:;|$)/);
+        assert.match(cell.style, /(?:^|;)connectable=0(?:;|$)/); // CHANGE
     });
     assert.deepEqual(fieldLabels.map(cell => cell.value), ["Photo", "Name", "Role / title", "Description / notes", "Contact info"]);
     assert.equal(fieldLabels.every(cell => /(?:^|;)editable=0(?:;|$)/.test(cell.style)), true);

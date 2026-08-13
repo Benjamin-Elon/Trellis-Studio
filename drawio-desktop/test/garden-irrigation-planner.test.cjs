@@ -470,6 +470,7 @@ function assertRegularBedAssemblyStyle(assembly) {
     assert.equal(styleToken(style, "verticalAlign"), "bottom", "bed assembly title should sit just above the top edge"); // CHANGE
     assert.equal(styleToken(style, "spacingBottom"), "2", "bed assembly title should stay close to the top edge"); // CHANGE
     assert.equal(styleToken(style, "fontStyle"), "1", "bed assembly title should remain visually distinct");
+    assert.equal(styleToken(style, "connectable"), "0", "bed assemblies should not expose raw draw.io connectors"); // CHANGE
 }
 
 function assertSwimlaneAssemblyStyle(assembly) {
@@ -477,6 +478,7 @@ function assertSwimlaneAssemblyStyle(assembly) {
     assert.match(style, /(?:^|;)swimlane(?:;|$)/, "source and part assemblies should remain swimlanes");
     assert.equal(styleToken(style, "childLayout"), "stackLayout", "source and part assemblies should keep ordered stack layout");
     assert.equal(styleToken(style, "horizontalStack"), "0", "source and part assemblies should keep vertical stacking");
+    assert.equal(styleToken(style, "connectable"), "0", "source and part assemblies should not expose raw draw.io connectors"); // CHANGE
 }
 
 function assertAssemblyPartPlannerManagedStyle(partCell) {
@@ -488,6 +490,10 @@ function assertAssemblyPartPlannerManagedStyle(partCell) {
     assert.equal(styleToken(style, "resizable"), "0", "assembly parts should not be manually resized");
     assert.equal(styleToken(style, "connectable"), "0", "assembly parts should not expose raw draw.io connectors");
 }
+
+function assertIrrigationVertexNotConnectable(cell, label) { // CHANGE
+    assert.equal(styleToken(cell && cell.style, "connectable"), "0", label + " should not expose raw draw.io connectors"); // CHANGE
+} // CHANGE
 
 function geometryCenter(geo) {
     return { x: Number(geo.x || 0) + Number(geo.width || 0) / 2, y: Number(geo.y || 0) + Number(geo.height || 0) / 2 };
@@ -2694,6 +2700,16 @@ test("connection HUD hides port row and updates pipe edge style", () => {
     assert.equal(edge.getAttribute(api.attrs.PIPE_PART_ID), "pipe_cheap");
 });
 
+test("standalone irrigation endpoints disable native Draw.io connectors", () => { // CHANGE
+    const { api, moduleCell, bed } = loadPlugin(); // CHANGE
+    const source = api.__test.createSourceEndpoint(moduleCell, "Water", { connectorType: "barb", nominalSize: "3/4" }); // CHANGE
+    const inlet = api.__test.createBedEndpoint(bed, "Inlet", { connectorType: "barb", nominalSize: "1/2" }); // CHANGE
+    const branch = api.__test.createBranchpointEndpoint(moduleCell, "Branch", "barb_tee_1_2", { connectorType: "barb", nominalSize: "1/2" }); // CHANGE
+    assertIrrigationVertexNotConnectable(source, "source endpoint"); // CHANGE
+    assertIrrigationVertexNotConnectable(inlet, "bed endpoint"); // CHANGE
+    assertIrrigationVertexNotConnectable(branch, "branchpoint endpoint"); // CHANGE
+}); // CHANGE
+
 test("selected 3/4 pipe edge can add a free 1/4 barb takeoff branch", () => { // NEW
     const { api, graph, moduleCell } = loadPlugin(); // NEW
     api.writeCatalog(moduleCell, api.starterCatalog()); // NEW
@@ -3989,6 +4005,7 @@ test("direct bed template commits create assembly-owned visual rows", () => {
     assert.equal(api.__test.readBedAssemblyTemplateRecord(moduleCell, assembly).irrigationType, "sprinkler"); // NEW
     const rows = descendants(assembly, cell => cell.getAttribute && cell.getAttribute(api.attrs.BED_LAYOUT) === "1");
     assert.deepEqual(rows.map(cell => cell.getAttribute("label")), ["Sprinkler line", "Sprinkler line", "Sprinkler line"]);
+    rows.forEach(row => assertIrrigationVertexNotConnectable(row, "bed layout row")); // CHANGE
 });
 
 test("multiple bed assemblies on one bed own independent templates and derive method labels", () => {
@@ -4015,17 +4032,52 @@ test("multiple bed assemblies on one bed own independent templates and derive me
 test("bed assemblies reject child drops and moved assemblies are lifted back to the module", () => {
     const { api, graph, model, root, moduleCell, bed, document } = loadPlugin();
     api.__test.commitBedTemplate(moduleCell, "bed_one", bed, { templateId: "overhead_sprinkler_block" });
+    const catalog = sampleCatalog();
+    api.writeCatalog(moduleCell, catalog);
     const assembly = assemblyCells(moduleCell, api).find(cell => cell.getAttribute(api.attrs.ASSEMBLY_TYPE) === "bed");
     const plainContainer = appendChild(moduleCell, makeXmlCell(document, "plain_container", { label: "Plain container" }, { x: 40, y: 36, width: 300, height: 220 }));
     const orphanAssembly = appendChild(root, makeXmlCell(document, "orphan_bed_assembly", { [api.attrs.ASSEMBLY]: "1", [api.attrs.ASSEMBLY_TYPE]: "bed", label: "Orphan Bed Assembly" }, { x: 10, y: 10, width: 100, height: 60 }));
+    const partsAssembly = api.__test.createPartAssembly(moduleCell, catalog.items.find(item => item.id === "filter"), { x: 360, y: 40 }).assembly;
+    const partCell = api.__test.firstAssemblyPart(partsAssembly);
+    const plainDrop = appendChild(moduleCell, makeXmlCell(document, "plain_drop", { label: "Plain Drop" }, { x: 420, y: 180, width: 36, height: 24 }));
     assert.ok(assembly, "Expected committed bed assembly");
+    const rows = bedLayoutRows(assembly, api);
+    assert.equal(rows.length, 3);
     assert.equal(graph.isValidDropTarget(bed, [assembly]), false);
     assert.equal(graph.isValidDropTarget(plainContainer, [assembly]), false);
     assert.equal(graph.isValidDropTarget(root, [assembly]), false);
     assert.equal(graph.isValidDropTarget(moduleCell, [assembly]), true);
     assert.equal(graph.isValidDropTarget(root, [orphanAssembly]), true);
-    const rows = bedLayoutRows(assembly, api);
-    assert.equal(rows.length, 3);
+    assert.equal(graph.isValidDropTarget(assembly, [plainDrop]), false);
+    assert.equal(graph.isValidDropTarget(partsAssembly, [plainDrop]), false);
+    assert.equal(graph.isValidDropTarget(partCell, [plainDrop]), false);
+    assert.equal(graph.isValidDropTarget(rows[0], [plainDrop]), false);
+    assert.equal(graph.isValidDropTarget(moduleCell, [plainDrop]), true);
+    graph.fireCellsMoved([partCell].concat(rows));
+    assert.equal(partCell.parent, partsAssembly);
+    rows.forEach(row => assert.equal(row.parent, assembly));
+    const lockedRow = rows[0]; // CHANGE
+    const initialMovedCount = (graph.movedCells || []).length; // CHANGE
+    const rowBeforeDrag = Object.assign({}, lockedRow.geometry); // CHANGE
+    assert.deepEqual(graph.moveCells([lockedRow], 1, 0, false, null), [lockedRow]); // CHANGE
+    assert.deepEqual(lockedRow.geometry, rowBeforeDrag); // CHANGE
+    assert.equal(lockedRow.parent, assembly); // CHANGE
+    assert.equal((graph.movedCells || []).length, initialMovedCount); // CHANGE
+    assert.deepEqual(graph.moveCells([lockedRow, assembly], 7, 11, false, null), [assembly]); // CHANGE
+    assert.deepEqual(lockedRow.geometry, rowBeforeDrag); // CHANGE
+    assert.equal((graph.movedCells || []).length, initialMovedCount + 1); // CHANGE
+    [moduleCell, root, plainContainer, partsAssembly].forEach(target => { // CHANGE
+        const rowBeforeTargetDrop = Object.assign({}, lockedRow.geometry); // CHANGE
+        assert.deepEqual(graph.moveCells([lockedRow], 0, 0, false, target), [lockedRow]); // CHANGE
+        assert.deepEqual(lockedRow.geometry, rowBeforeTargetDrop); // CHANGE
+        assert.equal(lockedRow.parent, assembly); // CHANGE
+        assert.equal((graph.movedCells || []).length, initialMovedCount + 1); // CHANGE
+    }); // CHANGE
+    const leakedPlain = appendChild(partsAssembly, makeXmlCell(document, "leaked_plain", { label: "Leaked Plain" }, { x: 12, y: 18, width: 36, height: 24 }));
+    const leakedBefore = absoluteGeometry(leakedPlain);
+    graph.fireCellsMoved([leakedPlain]);
+    assert.equal(leakedPlain.parent, moduleCell);
+    assert.deepEqual(absoluteGeometry(leakedPlain), leakedBefore);
     const before = absoluteGeometry(assembly);
     const bedAbs = absoluteGeometry(bed);
     assembly.geometry = { x: before.x - bedAbs.x, y: before.y - bedAbs.y, width: before.width, height: before.height };
@@ -4830,11 +4882,23 @@ test("overhead sprinkler bed recipe resolves precise BOM roles", () => {
 
 test("moved bed supply line persists while BOM length remains formula based", () => {
     const harness = loadPlugin();
-    const { api, moduleCell, bed } = harness;
+    const { api, graph, moduleCell, bed } = harness; // CHANGE
     const assembly = createCommittedDripTapeBedAssembly(harness, bed);
     const beforeTemplate = api.__test.readBedAssemblyTemplateRecord(moduleCell, assembly);
     const beforeSupply = bedSupplyLines(assembly, api)[0];
     assert.ok(beforeSupply, "Missing generated supply line");
+    assertIrrigationVertexNotConnectable(beforeSupply, "bed supply line"); // CHANGE
+    const supplyMoveCount = (graph.movedCells || []).length; // CHANGE
+    const supplyBeforeDrag = Object.assign({}, beforeSupply.geometry); // CHANGE
+    assert.deepEqual(graph.moveCells([beforeSupply], 1, 0, false, null), [beforeSupply]); // CHANGE
+    assert.deepEqual(beforeSupply.geometry, supplyBeforeDrag); // CHANGE
+    assert.equal(beforeSupply.parent, assembly); // CHANGE
+    assert.equal((graph.movedCells || []).length, supplyMoveCount); // CHANGE
+    const supplyBeforeEscape = Object.assign({}, beforeSupply.geometry); // CHANGE
+    assert.deepEqual(graph.moveCells([beforeSupply], 400, 0, false, null), [beforeSupply]); // CHANGE
+    assert.deepEqual(beforeSupply.geometry, supplyBeforeEscape); // CHANGE
+    assert.equal(beforeSupply.parent, assembly); // CHANGE
+    assert.equal((graph.movedCells || []).length, supplyMoveCount); // CHANGE
     const beforeSupplyMeters = beforeTemplate.resolvedBomParts.find(entry => entry.role === "supply_pipe").quantity;
     beforeSupply.geometry = Object.assign({}, beforeSupply.geometry, { x: beforeSupply.geometry.x + 24 });
     api.__test.commitBedTemplate(moduleCell, beforeTemplate.pathId, assembly, beforeTemplate);

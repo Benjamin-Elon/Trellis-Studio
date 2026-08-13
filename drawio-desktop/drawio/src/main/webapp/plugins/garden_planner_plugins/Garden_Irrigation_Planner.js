@@ -75,7 +75,7 @@ Draw.loadPlugin(function (ui) {
     const ASSEMBLY_HEADER_SIZE = 28;
     const ASSEMBLY_DEFAULT_WIDTH = 210;
     const ASSEMBLY_CONTRACTED_BED = { width: 220, height: 120 };
-    const BED_ASSEMBLY_CONTAINER_STYLE = "rounded=1;whiteSpace=wrap;html=1;container=1;recursiveResize=0;collapsible=0;editable=0;fillColor=none;strokeColor=#666666;fontStyle=1;fontSize=14;align=center;labelPosition=center;verticalLabelPosition=top;verticalAlign=bottom;spacingTop=0;spacingBottom=2;spacingLeft=6;spacingRight=6;labelBackgroundColor=#ffffff;"; // CHANGE
+    const BED_ASSEMBLY_CONTAINER_STYLE = "rounded=1;whiteSpace=wrap;html=1;container=1;recursiveResize=0;collapsible=0;editable=0;connectable=0;fillColor=none;strokeColor=#666666;fontStyle=1;fontSize=14;align=center;labelPosition=center;verticalLabelPosition=top;verticalAlign=bottom;spacingTop=0;spacingBottom=2;spacingLeft=6;spacingRight=6;labelBackgroundColor=#ffffff;"; // CHANGE
     const PORT_BADGE_SIZE = 22;
     const PORT_BADGE_MIN_WIDTH = 30;
     const PORT_BADGE_MAX_WIDTH = 78;
@@ -121,8 +121,8 @@ Draw.loadPlugin(function (ui) {
         return button;
     }
 
-    const BED_LAYOUT_PLANNED_STYLE = "rounded=0;whiteSpace=wrap;html=1;fillColor=#e1f5fe;strokeColor=#0288d1;fontSize=8;";
-    const BED_LAYOUT_COMPLETED_STYLE = "rounded=0;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#82b366;fontColor=#2f6b3c;fontSize=8;";
+    const BED_LAYOUT_PLANNED_STYLE = "rounded=0;whiteSpace=wrap;html=1;fillColor=#e1f5fe;strokeColor=#0288d1;fontSize=8;connectable=0;"; // CHANGE
+    const BED_LAYOUT_COMPLETED_STYLE = "rounded=0;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#82b366;fontColor=#2f6b3c;fontSize=8;connectable=0;"; // CHANGE
     const CONNECTION_COMBOBOX_COLLAPSED_STORAGE_KEY = "trellis.irrigation.connectionCombobox.collapsed.v1";
     const CATALOG_MANAGER_COMPACT_STORAGE_KEY = "trellis.irrigation.catalogManager.compactView.v1"; // NEW
     const BOM_DIALOG_COMPACT_STORAGE_KEY = "trellis.irrigation.bomDialog.compactView.v1"; // NEW
@@ -1345,7 +1345,7 @@ Draw.loadPlugin(function (ui) {
     function createSourceEndpoint(moduleCell, label, profile) {
         const normalized = normalizeEndpointProfile(Object.assign({}, profile || {}, { label }));
         const endpoint = createVertex(moduleCell, label || "Water Source", 24, 72, 80, 34,
-            "rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;",
+            "rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;connectable=0;", // CHANGE
             {
                 label: label || "Water Source",
                 [ATTRS.ENDPOINT]: "1",
@@ -1358,7 +1358,7 @@ Draw.loadPlugin(function (ui) {
     function createBedEndpoint(bedCell, label, profile) {
         const normalized = normalizeEndpointProfile(Object.assign({}, profile || {}, { label }));
         const endpoint = createVertex(bedCell, label || "Irrigation inlet", 8, 8, 72, 24,
-            "rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;",
+            "rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;connectable=0;", // CHANGE
             {
                 label: label || "Irrigation inlet",
                 [ATTRS.ENDPOINT]: "1",
@@ -1371,7 +1371,7 @@ Draw.loadPlugin(function (ui) {
     function createBranchpointEndpoint(moduleCell, label, catalogPartId, profile) {
         const normalized = normalizeEndpointProfile(Object.assign({}, profile || {}, { label }));
         return createVertex(moduleCell, label || "Irrigation branch", 130, 72, 92, 34,
-            "rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;",
+            "rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;connectable=0;", // CHANGE
             {
                 label: label || "Irrigation branch",
                 [ATTRS.ENDPOINT]: "1",
@@ -1386,7 +1386,7 @@ Draw.loadPlugin(function (ui) {
         const laneWidth = size && size.width != null ? size.width : ASSEMBLY_DEFAULT_WIDTH;
         const laneHeight = size && size.height != null ? size.height : assemblyPartLaneHeight(1); // CHANGE
         return createVertex(moduleCell, label || "Assembly", x, y, laneWidth, laneHeight,
-            "swimlane;whiteSpace=wrap;html=1;startSize=" + ASSEMBLY_HEADER_SIZE + ";horizontal=1;childLayout=stackLayout;horizontalStack=0;resizeParent=0;resizeLast=0;collapsible=1;rounded=1;fillColor=#ffffff;strokeColor=#666666;fontStyle=1;",
+            "swimlane;whiteSpace=wrap;html=1;startSize=" + ASSEMBLY_HEADER_SIZE + ";horizontal=1;childLayout=stackLayout;horizontalStack=0;resizeParent=0;resizeLast=0;collapsible=1;rounded=1;fillColor=#ffffff;strokeColor=#666666;fontStyle=1;connectable=0;", // CHANGE
             Object.assign({
                 label: label || "Assembly",
                 [ATTRS.ASSEMBLY]: "1",
@@ -1706,6 +1706,54 @@ Draw.loadPlugin(function (ui) {
         return changed;
     }
 
+    function isAllowedIrrigationAssemblyChild(cell) { // NEW
+        return isAssemblyPartCell(cell) || getCellAttr(cell, ATTRS.BED_LAYOUT, "") === "1" || getCellAttr(cell, ATTRS.BED_SUPPLY_LINE, "") === "1"; // CHANGE
+    } // NEW
+
+    function directIrrigationAssemblyParent(cell) { // CHANGE
+        const parent = model.getParent ? model.getParent(cell) : cell && cell.parent; // CHANGE
+        return isAssembly(parent) ? parent : null; // CHANGE
+    } // CHANGE
+
+    function isDirectIrrigationAssemblyChild(cell) { // CHANGE
+        return !!directIrrigationAssemblyParent(cell); // CHANGE
+    } // CHANGE
+
+    function findAssemblyDropTargetAncestor(cell) { // NEW
+        let cur = cell; // NEW
+        while (cur) { // NEW
+            if (isAssembly(cur)) return cur; // NEW
+            cur = model.getParent ? model.getParent(cur) : cur.parent; // NEW
+        } // NEW
+        return null; // NEW
+    } // NEW
+
+    function repairIrrigationAssemblyChildParenting(cells) { // NEW
+        const moved = (cells || []).filter(function (cell) { return !!cell && !isAllowedIrrigationAssemblyChild(cell); }); // NEW
+        if (!moved.length) return false; // NEW
+        let changed = false; // NEW
+        (graph.__withUndoSuppressed || function (fn) { return fn(); }).call(graph, function () { // NEW
+            model.beginUpdate && model.beginUpdate(); // NEW
+            try { // NEW
+                moved.forEach(function (cell) { // NEW
+                    const parent = model.getParent ? model.getParent(cell) : cell.parent; // NEW
+                    const assembly = findAssemblyDropTargetAncestor(parent); // NEW
+                    if (!assembly) return; // NEW
+                    const safeParent = (model.getParent ? model.getParent(assembly) : assembly.parent) || (graph.getDefaultParent && graph.getDefaultParent()) || (model.getRoot && model.getRoot()) || null; // NEW
+                    if (!safeParent || safeParent === parent) return; // NEW
+                    const nextGeo = preserveAbsoluteGeometryForParent(cell, safeParent); // NEW
+                    moveCellToParent(cell, safeParent); // NEW
+                    if (nextGeo) setGeometry(cell, nextGeo); // NEW
+                    changed = true; // NEW
+                }); // NEW
+            } finally { // NEW
+                model.endUpdate && model.endUpdate(); // NEW
+            } // NEW
+        }); // NEW
+        if (changed && graph.refresh) graph.refresh(); // NEW
+        return changed; // NEW
+    } // NEW
+
     function installBedAssemblyParentingGuard() {
         if (graph.__trellisBedAssemblyParentGuardInstalled) return;
         graph.__trellisBedAssemblyParentGuardInstalled = true;
@@ -1722,6 +1770,21 @@ Draw.loadPlugin(function (ui) {
 
     installBedAssemblyParentingGuard();
 
+    function installIrrigationAssemblyNoChildGuard() { // NEW
+        if (graph.__trellisIrrigationAssemblyNoChildGuardInstalled) return; // NEW
+        graph.__trellisIrrigationAssemblyNoChildGuardInstalled = true; // NEW
+        const originalIsValidDropTarget = graph.isValidDropTarget; // NEW
+        graph.isValidDropTarget = function (target, cells, evt) { // NEW
+            if (target && findAssemblyDropTargetAncestor(target)) return false; // NEW
+            return originalIsValidDropTarget ? originalIsValidDropTarget.apply(this, arguments) : true; // NEW
+        }; // NEW
+        if (graph.addListener && typeof mxEvent !== "undefined" && mxEvent.CELLS_MOVED) { // NEW
+            graph.addListener(mxEvent.CELLS_MOVED, function (_, evt) { repairIrrigationAssemblyChildParenting(evt && evt.getProperty && evt.getProperty("cells") || []); }); // NEW
+        } // NEW
+    } // NEW
+
+    installIrrigationAssemblyNoChildGuard(); // NEW
+
     function installAssemblyPartMoveGuard() {
         if (graph.__trellisAssemblyPartMoveGuardInstalled || typeof graph.moveCells !== "function") return;
         graph.__trellisAssemblyPartMoveGuardInstalled = true;
@@ -1729,7 +1792,7 @@ Draw.loadPlugin(function (ui) {
         graph.moveCells = function (cells) {
             if (activeIrrigationEditDepth > 0) return originalMoveCells.apply(this, arguments);
             const requested = Array.isArray(cells) ? cells : [];
-            const movableCells = requested.filter(function (cell) { return !isAssemblyPartCell(cell); });
+            const movableCells = requested.filter(function (cell) { return !isDirectIrrigationAssemblyChild(cell); }); // CHANGE
             if (movableCells.length === requested.length) return originalMoveCells.apply(this, arguments);
             if (!movableCells.length) return requested;
             const args = Array.prototype.slice.call(arguments);
