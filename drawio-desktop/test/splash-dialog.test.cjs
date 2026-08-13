@@ -350,7 +350,7 @@ test("Commercial path shows contact guidance and the Grand Oath gate", () => {
     assert.ok(dialog.container.querySelector(".trellis-contact-row-email .trellis-contact-icon-email"));
     assert.ok(dialog.container.querySelector(".trellis-contact-row-phone .trellis-contact-icon-phone"));
     assert.ok(dialog.container.querySelector(".trellis-contact-row-github .trellis-contact-icon-github"));
-    assert.match(dialog.container.textContent, /We agree that people should have access to tools that increase shared regenerative capacity/);
+    assert.match(dialog.container.textContent, /I agree that people should have access to tools that increase shared regenerative capacity/);
     assert.match(dialog.container.textContent, /Written approval is still required before commercial use of Trellis plugin files\./);
     assert.doesNotMatch(dialog.container.querySelector(".trellis-contact-column").textContent, /Patreon/i);
     assert.match(dialog.container.querySelector(".trellis-contact-column").textContent, /GitHub: Issues and feedback/);

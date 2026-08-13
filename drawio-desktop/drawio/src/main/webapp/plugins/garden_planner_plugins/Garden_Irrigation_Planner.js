@@ -591,6 +591,7 @@ Draw.loadPlugin(function (ui) {
         next = setStyleValue(next, "verticalAlign", "bottom"); // CHANGE
         next = setStyleValue(next, "spacingTop", "0"); // CHANGE
         next = setStyleValue(next, "spacingBottom", "2"); // CHANGE
+        next = setStyleValue(next, "connectable", "0"); // CHANGE
         return next; // CHANGE
     } // CHANGE
 
