@@ -170,6 +170,12 @@ test("task manager exposes dashboard board APIs and unseen-created state", () =>
     assert.match(text, /viewer\.unscheduled = Date\.now\(\);/);
 });
 
+test("task manager canonical lane styles are not draggable", () => {
+    const text = taskManagerSource();
+    assert.match(text, /const LANE_STYLE_BASE =[\s\S]*movable=0/); // NEW
+    assert.match(text, /const SCHEDULE_LANE_STYLE_BASE =[\s\S]*movable=0/); // NEW
+});
+
 test("task manager installs a selected Task Module add-board overlay", () => {
     const text = taskManagerSource();
     assert.match(text, /function installSelectedTaskModuleBoardOverlay\(\)/);
@@ -455,6 +461,13 @@ function makeHarness(options = {}) {
         },
         addMouseListener(listener) { mouseListeners.push(listener); },
         fireEvent() {},
+        getPointForEvent(evt) {
+            if (options.getPointForEvent) return options.getPointForEvent(evt); // CHANGE
+            return {
+                x: evt && evt.modelX != null ? evt.modelX : (evt && evt.graphX != null ? evt.graphX : (evt && evt.clientX != null ? evt.clientX : 0)), // CHANGE
+                y: evt && evt.modelY != null ? evt.modelY : (evt && evt.graphY != null ? evt.graphY : (evt && evt.clientY != null ? evt.clientY : 0)) // CHANGE
+            };
+        },
         getEdges() { return []; },
         scrollCellToVisible(cell) { scrollCellToVisibleCalls += 1; lastScrollCell = cell || null; },
         isCellVisible(cell) { return !cell || cell.visible !== false; },
@@ -618,6 +631,8 @@ function makeHarness(options = {}) {
             const event = new dom.window.MouseEvent("mousedown", { bubbles: true, button: opts.button || 0, detail: opts.detail == null ? 1 : opts.detail, clientX: opts.clientX == null ? 100 : opts.clientX, clientY: opts.clientY == null ? 120 : opts.clientY });
             Object.defineProperty(event, "graphX", { value: opts.graphX == null ? event.clientX : opts.graphX });
             Object.defineProperty(event, "graphY", { value: opts.graphY == null ? event.clientY : opts.graphY });
+            Object.defineProperty(event, "modelX", { value: opts.modelX == null ? undefined : opts.modelX }); // CHANGE
+            Object.defineProperty(event, "modelY", { value: opts.modelY == null ? undefined : opts.modelY }); // CHANGE
             const me = { getCell() { return cell; }, getEvent() { return event; }, getGraphX() { return event.graphX; }, getGraphY() { return event.graphY; } };
             mouseListeners.forEach(listener => { if (listener.mouseDown) listener.mouseDown(graph, me); });
         },
@@ -625,6 +640,8 @@ function makeHarness(options = {}) {
             const event = new dom.window.MouseEvent("mouseup", { bubbles: true, button: opts.button || 0, detail: opts.detail == null ? 1 : opts.detail, clientX: opts.clientX == null ? 100 : opts.clientX, clientY: opts.clientY == null ? 120 : opts.clientY });
             Object.defineProperty(event, "graphX", { value: opts.graphX == null ? event.clientX : opts.graphX });
             Object.defineProperty(event, "graphY", { value: opts.graphY == null ? event.clientY : opts.graphY });
+            Object.defineProperty(event, "modelX", { value: opts.modelX == null ? undefined : opts.modelX }); // CHANGE
+            Object.defineProperty(event, "modelY", { value: opts.modelY == null ? undefined : opts.modelY }); // CHANGE
             const me = { getCell() { return cell; }, getEvent() { return event; }, getGraphX() { return event.graphX; }, getGraphY() { return event.graphY; } };
             mouseListeners.forEach(listener => { if (listener.mouseUp) listener.mouseUp(graph, me); });
         },
@@ -971,6 +988,27 @@ test("task module overlay follows the cursor and alternates show and hide", asyn
     assert.equal(overlay.style.display, "flex");
     assert.equal(overlay.style.left, "208px");
     assert.equal(overlay.style.top, "238px");
+});
+
+test("task module overlay keeps cursor anchor when view coordinates differ from model geometry", async () => {
+    const h = makeHarness();
+    h.graph.container.getBoundingClientRect = () => ({ left: 10, top: 20, width: 800, height: 600, right: 810, bottom: 620 });
+    const taskModule = new TestCell("translatedTaskModule", makeValue(h.document, { task_module: "1", label: "Translated Tasks" }), new TestGeometry(80, 90, 300, 120), "shape=swimlane;");
+    h.addCell(h.root, taskModule);
+    h.setState(taskModule, { x: 520, y: 640, width: 300, height: 120 });
+
+    h.mouseDown(taskModule, { clientX: 180, clientY: 220, graphX: 900, graphY: 960, modelX: 120, modelY: 130 }); // CHANGE
+    h.graph.setSelectionCell(taskModule);
+    await nextTick();
+
+    const overlay = taskModuleOverlay(h.document);
+    assert.equal(overlay.style.display, "flex");
+    assert.equal(overlay.style.left, "178px"); // CHANGE
+    assert.equal(overlay.style.top, "208px"); // CHANGE
+    h.fireViewEvent();
+    await nextTick();
+    assert.equal(overlay.style.left, "178px"); // CHANGE
+    assert.equal(overlay.style.top, "208px"); // CHANGE
 });
 
 test("task module overlay uses the right-click cursor as its anchor", async () => {

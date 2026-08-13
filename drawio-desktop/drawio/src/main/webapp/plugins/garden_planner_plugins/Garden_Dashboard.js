@@ -599,7 +599,7 @@ Draw.loadPlugin(function (ui) {
 
         const all = getDescendants(moduleCell);
         const tilers = all.filter(isTilerGroup);
-        const cards = all.filter(isKanbanCard);
+        const cards = all.filter(isKanbanCard).concat(collectLinkedTaskBoardCards(moduleCell)); // CHANGE: companion Task modules are outside the garden module tree
 
         model.beginUpdate();
         try {
@@ -968,6 +968,22 @@ Draw.loadPlugin(function (ui) {
             out.push(garden);
         }
         return out;
+    }
+
+    function collectLinkedTaskBoardCards(moduleCell) {
+        const api = taskManagerApi();
+        if (!api || typeof api.listBoardsForGarden !== "function") return []; // NEW: task year filtering is best-effort when the task manager is unavailable
+        const cards = [];
+        const seen = new Set();
+        (api.listBoardsForGarden(moduleCell) || []).forEach(function (board) {
+            getDescendants(board).forEach(function (cell) {
+                const id = cellId(cell);
+                if (!isKanbanCard(cell) || (id && seen.has(id))) return;
+                if (id) seen.add(id);
+                cards.push(cell);
+            });
+        });
+        return cards;
     }
 
     function sortGardensForPicker(gardens) {
@@ -1959,15 +1975,21 @@ Draw.loadPlugin(function (ui) {
     }
 
     function setGardenActionControlsDisabled(entry, disabled, title) {
-        [entry.prev, entry.next, entry.planBtn, entry.equipmentBtn, entry.irrigationBtn, entry.allocateBtn, entry.messagesBtn, entry.exportBtn, entry.shareBtn, entry.tableBtn].forEach(function (button) { // CHANGE: workspace switcher and task board selector remain available outside Garden
+        [entry.planBtn, entry.equipmentBtn, entry.irrigationBtn, entry.allocateBtn, entry.messagesBtn, entry.exportBtn, entry.shareBtn, entry.tableBtn].forEach(function (button) { // CHANGE: year controls remain active in linked Task workspace
             setButtonDisabled(button, disabled, disabled ? "Select a garden module first." : (button.__trellisDashboardDefaultTitle || ""));
         });
         if (disabled && title) {
-            [entry.prev, entry.next, entry.planBtn, entry.equipmentBtn, entry.irrigationBtn, entry.allocateBtn, entry.messagesBtn, entry.exportBtn, entry.shareBtn, entry.tableBtn].forEach(function (button) { if (button) button.title = title; }); // NEW
+            [entry.planBtn, entry.equipmentBtn, entry.irrigationBtn, entry.allocateBtn, entry.messagesBtn, entry.exportBtn, entry.shareBtn, entry.tableBtn].forEach(function (button) { if (button) button.title = title; }); // CHANGE: keep year navigation available while task tools are disabled
         }
         entry.taskBoardSelect.disabled = true;
         entry.taskBoardSelect.style.opacity = disabled ? "0.45" : "1";
         entry.taskBoardSelect.style.cursor = disabled ? "not-allowed" : "pointer";
+    }
+
+    function setYearActionControlsDisabled(entry, disabled, title) {
+        [entry.prev, entry.next].forEach(function (button) { // NEW: year navigation has different workspace availability than garden-only tools
+            setButtonDisabled(button, disabled, disabled ? (title || "Select a garden module first.") : (button.__trellisDashboardDefaultTitle || ""));
+        });
     }
 
     function renderBlankViewportToolbar(context) {
@@ -1989,6 +2011,7 @@ Draw.loadPlugin(function (ui) {
         entry.table.innerHTML = "";
         applyToolbarActiveButtonState(entry.irrigationBtn, false);
         setGardenActionControlsDisabled(entry, true);
+        setYearActionControlsDisabled(entry, true);
 
         const candidates = sortGardensForPicker(context && context.candidates || []);
         entry.gardenPickerWrap.style.display = candidates.length ? "block" : "none";
@@ -2014,7 +2037,9 @@ Draw.loadPlugin(function (ui) {
         const year = getToolbarYear(moduleCell);
         const activeWorkspace = getActiveWorkspaceForSelection() || "garden"; // NEW
         const gardenToolsDisabled = activeWorkspace === "tasks" || activeWorkspace === "team"; // NEW
+        const yearControlsDisabled = activeWorkspace === "team"; // NEW: linked Task workspace can still drive the garden year
         setGardenActionControlsDisabled(entry, gardenToolsDisabled, gardenToolsDisabled ? WORKSPACE_DISABLED_TITLE : "");
+        setYearActionControlsDisabled(entry, yearControlsDisabled, yearControlsDisabled ? WORKSPACE_DISABLED_TITLE : "");
         const expanded = toolbarExpandedByModuleId.get(cellId(moduleCell)) === true;
         const taskApi = taskManagerApi();
         if (taskApi && typeof taskApi.setActiveDashboardContext === "function") taskApi.setActiveDashboardContext(moduleCell, year);

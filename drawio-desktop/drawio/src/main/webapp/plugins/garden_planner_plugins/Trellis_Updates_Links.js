@@ -26,7 +26,6 @@
 
     const LINK_CONFIG = Object.freeze({
         name: "Benjamin Elon",
-        patreon: "https://patreon.com/Benjamin980?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink",
         youtube: "https://www.youtube.com/@placeholder",
         website: "https://example.com",
         email: "Benjaminyelon@gmail.com",
@@ -393,7 +392,7 @@
     function renderLinks(container, appInfo, ui) {
         clearNode(container);
         const groups = [
-            ["Support", [["Patreon", LINK_CONFIG.patreon], ["YouTube", LINK_CONFIG.youtube]]],
+            ["Support", [["YouTube", LINK_CONFIG.youtube]]],
             ["Project", [["GitHub issues", appInfo.issuesUrl], ["GitHub releases", appInfo.releasesUrl]]],
             ["Contact", [["Website", LINK_CONFIG.website], ["Email", LINK_CONFIG.email], ["Phone", LINK_CONFIG.phone]]]
         ];

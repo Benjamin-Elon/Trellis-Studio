@@ -1409,6 +1409,187 @@ Draw.loadPlugin(function (ui) {
             return false;
         }
 
+        function findModuleAncestor(cell) {
+            let p = model.getParent(cell);
+            while (p) {
+                if (isModule(p)) return p;
+                p = model.getParent(p);
+            }
+            return null;
+        } // NEW
+
+        function escapedStyleKey(key) {
+            return String(key || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        } // NEW
+
+        function getStyleValue(cell, key) {
+            const m = getStyle(cell).match(new RegExp("(?:^|;)" + escapedStyleKey(key) + "=([^;]*)(?=;|$)"));
+            return m ? m[1] : "";
+        } // NEW
+
+        function getTrellisAttr(cell, key) {
+            return getValueAttr(cell, key) || getStyleValue(cell, key);
+        } // NEW
+
+        function hasTrellisFlag(cell, key) {
+            return getValueAttr(cell, key) === "1" || getStyleValue(cell, key) === "1";
+        } // NEW
+
+        function isGardenBedCell(cell) {
+            return hasTrellisFlag(cell, "garden_bed") || hasTrellisFlag(cell, "gardenBed") || hasTrellisFlag(cell, "is_garden_bed");
+        } // NEW
+
+        function isIrrigationAssemblyCell(cell) {
+            return hasTrellisFlag(cell, "irrigation_assembly");
+        } // NEW
+
+        function isTaskBoardCell(cell) {
+            const key = getTrellisAttr(cell, "board_key");
+            return key === "KANBAN_BOARD" || key === "MAIN_KANBAN_BOARD";
+        } // NEW
+
+        function isKanbanCardCell(cell) {
+            return hasTrellisFlag(cell, "kanban_card");
+        } // NEW
+
+        function isKanbanLaneCell(cell) {
+            return !!getTrellisAttr(cell, "lane_key");
+        } // NEW
+
+        function isTopLevelContainerProtectedCell(cell) {
+            return isGardenBedCell(cell) || isIrrigationAssemblyCell(cell) || isTilerGroup(cell) || isRoleCard(cell) || isTaskBoardCell(cell);
+        } // NEW
+
+        function getImmediateProtectedParent(cell) {
+            const p = model.getParent(cell);
+            if (!p) return null;
+            if (isRoleCard(p) || isTilerGroup(p)) return p;
+            return null;
+        } // NEW
+
+        function getClampContainer(cell) {
+            if (!cell || isModule(cell) || isKanbanCardCell(cell) || isKanbanLaneCell(cell)) return null;
+            const immediateParent = getImmediateProtectedParent(cell);
+            if (immediateParent) return immediateParent;
+            return isTopLevelContainerProtectedCell(cell) ? findModuleAncestor(cell) : null;
+        } // NEW
+
+        function getAbsContainerBounds(cell) {
+            const b = getAbsBounds(cell);
+            return b ? { x: b.x, y: b.y, width: b.w, height: b.h } : null;
+        } // NEW
+
+        function getModuleContentBounds(moduleCell) {
+            const bounds = getAbsContainerBounds(moduleCell);
+            if (!bounds) return null;
+            const headerH = getModuleHeaderHeight(moduleCell);
+            return { x: bounds.x, y: bounds.y + headerH, width: bounds.width, height: Math.max(0, bounds.height - headerH) };
+        } // NEW
+
+        function isTopLevelModuleClamp(cell, container) {
+            return !!container && isModule(container) && isTopLevelContainerProtectedCell(cell);
+        } // NEW
+
+        function centerInsideContainerBounds(rect, container) {
+            const bounds = getAbsContainerBounds(container);
+            if (!rect || !bounds) return false;
+            const cx = rect.x + rect.w / 2;
+            const cy = rect.y + rect.h / 2;
+            return cx >= bounds.x && cx <= bounds.x + bounds.width && cy >= bounds.y && cy <= bounds.y + bounds.height;
+        } // NEW
+
+        function rectInsideClampContainer(rect, cell, container) {
+            if (!rect || !container) return false;
+            if (isTopLevelModuleClamp(cell, container)) {
+                const bounds = getModuleContentBounds(container);
+                if (!bounds) return false;
+                const margin = Math.max(0, getModuleMarginValue(container));
+                return (
+                    rect.x >= bounds.x &&
+                    rect.y >= bounds.y &&
+                    rect.x + rect.w <= bounds.x + bounds.width - margin &&
+                    rect.y + rect.h <= bounds.y + bounds.height - margin
+                );
+            }
+            return centerInsideContainerBounds(rect, container);
+        } // NEW
+
+        function deltaRangeForCellInContainer(cell, container) {
+            const b = getAbsBounds(cell);
+            if (!b) return null;
+            if (isTopLevelModuleClamp(cell, container)) {
+                const bounds = getModuleContentBounds(container);
+                if (!bounds) return null;
+                const margin = Math.max(0, getModuleMarginValue(container));
+                let minDx = bounds.x - b.x;
+                let maxDx = bounds.x + bounds.width - margin - (b.x + b.w);
+                let minDy = bounds.y - b.y;
+                let maxDy = bounds.y + bounds.height - margin - (b.y + b.h);
+                if (minDx > maxDx) minDx = maxDx; // NEW: prefer the no-resize edge when the object cannot fit.
+                if (minDy > maxDy) minDy = maxDy; // NEW
+                return { minDx: minDx, maxDx: maxDx, minDy: minDy, maxDy: maxDy };
+            }
+            const bounds = getAbsContainerBounds(container);
+            if (!bounds) return null;
+            const cx = b.x + b.w / 2;
+            const cy = b.y + b.h / 2;
+            return {
+                minDx: bounds.x - cx,
+                maxDx: bounds.x + bounds.width - cx,
+                minDy: bounds.y - cy,
+                maxDy: bounds.y + bounds.height - cy
+            };
+        } // NEW
+
+        function clampNumber(value, min, max) {
+            if (min > max) return 0;
+            return Math.max(min, Math.min(max, value));
+        } // NEW
+
+        function moveCellByDelta(cell, dx, dy) {
+            const g = cell && cell.getGeometry && cell.getGeometry();
+            if (!g || g.relative) return false;
+            const g2 = g.clone ? g.clone() : Object.assign({}, g);
+            g2.x = (g2.x || 0) + dx;
+            g2.y = (g2.y || 0) + dy;
+            model.setGeometry(cell, g2);
+            return true;
+        } // NEW
+
+        function clampCellIntoContainer(cell, container) {
+            const range = deltaRangeForCellInContainer(cell, container);
+            if (!range) return false;
+            const dx = clampNumber(0, range.minDx, range.maxDx);
+            const dy = clampNumber(0, range.minDy, range.maxDy);
+            if (Math.abs(dx) < EPS && Math.abs(dy) < EPS) return false;
+            return moveCellByDelta(cell, dx, dy);
+        } // NEW
+
+        function clampedMoveDelta(cells, dx, dy) {
+            let minDx = -Infinity, maxDx = Infinity, minDy = -Infinity, maxDy = Infinity;
+            let constrained = false;
+            (cells || []).forEach(function (cell) {
+                const container = getClampContainer(cell);
+                if (!container) return;
+                const range = deltaRangeForCellInContainer(cell, container);
+                if (!range) return;
+                minDx = Math.max(minDx, range.minDx);
+                maxDx = Math.min(maxDx, range.maxDx);
+                minDy = Math.max(minDy, range.minDy);
+                maxDy = Math.min(maxDy, range.maxDy);
+                constrained = true;
+            });
+            if (!constrained) return { dx: dx, dy: dy };
+            return {
+                dx: clampNumber(dx, minDx, maxDx),
+                dy: clampNumber(dy, minDy, maxDy)
+            };
+        } // NEW
+
+        function isValidKanbanCardDropTarget(target) {
+            return !!target && isKanbanLaneCell(target);
+        } // NEW
+
         function isAllowedModuleParent(parent) {
             return !!parent && (parent === graph.getDefaultParent() || isModule(parent));
         }
@@ -1444,9 +1625,30 @@ Draw.loadPlugin(function (ui) {
 
         const originalIsValidDropTarget = graph.isValidDropTarget;
         graph.isValidDropTarget = function (cell, cells, evt) {
-            if ((cells || []).some(isModule) && cell && !isAllowedModuleParent(cell)) return false;
+            const dragged = cells || [];
+            if (dragged.some(isModule) && cell && !isAllowedModuleParent(cell)) return false;
+            if (dragged.some(isKanbanLaneCell)) return false; // NEW
+            if (dragged.some(function (draggedCell) { return isKanbanCardCell(draggedCell) && cell && !isValidKanbanCardDropTarget(cell); })) return false; // NEW
+            if (dragged.some(function (draggedCell) { const parent = getImmediateProtectedParent(draggedCell); return parent && cell && cell !== parent; })) return false; // NEW
+            if (dragged.some(function (draggedCell) { const moduleCell = isTopLevelContainerProtectedCell(draggedCell) ? findModuleAncestor(draggedCell) : null; return moduleCell && cell && cell !== moduleCell; })) return false; // NEW
             return originalIsValidDropTarget ? originalIsValidDropTarget.apply(this, arguments) : true;
         };
+
+        if (typeof graph.moveCells === "function" && !graph.__trellisProtectedContainerClampInstalled) {
+            graph.__trellisProtectedContainerClampInstalled = true;
+            const originalMoveCells = graph.moveCells;
+            graph.moveCells = function (cells, dx, dy, clone, target, evt, mapping) {
+                const requested = Array.isArray(cells) ? cells : [];
+                const movable = requested.filter(function (cell) { return !isKanbanLaneCell(cell); }); // NEW
+                if (!movable.length) return requested; // NEW
+                const args = Array.prototype.slice.call(arguments);
+                args[0] = movable;
+                const adjusted = clampedMoveDelta(movable, Number(dx) || 0, Number(dy) || 0);
+                args[1] = adjusted.dx;
+                args[2] = adjusted.dy;
+                return originalMoveCells.apply(this, args);
+            };
+        }
 
         // Reparent only top-level cells that are not already under modules
         // and not children of tiler groups                                                
@@ -1566,9 +1768,18 @@ Draw.loadPlugin(function (ui) {
 
             const seenModules = new Set();
             const toRoot = [];
+            const protectedLeaks = []; // NEW
 
             // Determine which children have left their module                          
             cells.forEach(c => {
+                const protectedContainer = getClampContainer(c); // NEW
+                if (protectedContainer) {
+                    const b = getAbsBounds(c);
+                    if (b && !rectInsideClampContainer(b, c, protectedContainer)) protectedLeaks.push({ cell: c, container: protectedContainer });
+                    if (isModule(protectedContainer)) seenModules.add(protectedContainer.id);
+                    return;
+                }
+
                 const p = model.getParent(c);
                 if (!p) return;
 
@@ -1589,6 +1800,15 @@ Draw.loadPlugin(function (ui) {
                     if (mp && isModule(mp)) seenModules.add(mp.id);
                 }
             });
+
+            if (protectedLeaks.length) {
+                model.beginUpdate();
+                try {
+                    protectedLeaks.forEach(function (entry) { clampCellIntoContainer(entry.cell, entry.container); });
+                } finally {
+                    model.endUpdate();
+                }
+            } // NEW
 
             const root = graph.getDefaultParent();
             if (toRoot.length) {

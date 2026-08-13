@@ -402,12 +402,12 @@
 			if (buttons[i].textContent.indexOf('Explore & Support My Projects') >= 0) {
 				addClass(buttons[i], 'trellis-support-action');
 				prependButtonIcon(buttons[i], 'support');
-			} else if (buttons[i].textContent.indexOf('Create New Diagram') >= 0) {
+			} else if (buttons[i].textContent.indexOf('Create New Garden') >= 0) {
 				addClass(buttons[i], 'trellis-primary-action');
 				addClass(buttons[i], 'trellis-button-add');
 				addClass(buttons[i], 'trellis-button-filled');
 				prependButtonIcon(buttons[i], 'create');
-			} else if (buttons[i].textContent.indexOf('Open Existing Diagram') >= 0) {
+			} else if (buttons[i].textContent.indexOf('Open Existing Garden') >= 0) {
 				addClass(buttons[i], 'trellis-secondary-action');
 				addClass(buttons[i], 'trellis-button-open');
 				prependButtonIcon(buttons[i], 'open');

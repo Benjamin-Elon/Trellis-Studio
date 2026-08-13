@@ -181,6 +181,7 @@ test("Trellis updates plugin registers Help action and opens dialog", async () =
     assert.match(shown[0].node.textContent, /Support/);
     assert.match(shown[0].node.textContent, /Project/);
     assert.match(shown[0].node.textContent, /Contact/);
+    assert.doesNotMatch(shown[0].node.textContent, /Patreon/i);
     assert.match(shown[0].node.textContent, /Trellis Studio 1\.1\.2/);
     assert.match(shown[0].node.textContent, /Trellis 1\.1\.3/);
     assert.match(shown[0].node.textContent, /Bundled changelog entry/);

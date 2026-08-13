@@ -1499,9 +1499,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     const BOARD_STYLE = // CHANGE: task layout owns board-child geometry instead of Draw.io stack fill
         'swimlane;fontStyle=2;horizontal=1;startSize=28;collapsible=1;swimlaneFillColor=#F8FAFC;fontFamily=Permanent Marker;fontSize=16;points=[];verticalAlign=top;resizable=1;strokeWidth=2;disableMultiStroke=1;'; // CHANGE: opaque body remains visible below shorter week lanes
     const LANE_STYLE_BASE =
-        'swimlane;strokeWidth=2;fontFamily=Permanent Marker;fontSize=12;html=0;startSize=40;align=center;verticalAlign=middle;whiteSpace=wrap;spacingBottom=5;points=[];childLayout=stackLayout;stackBorder=20;stackSpacing=20;marginTop=0;resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=0;fillStyle=solid;swimlaneFillColor=default;'; // CHANGE: lane visibility is controlled by board toggles, not draw.io collapse handles
+        'swimlane;strokeWidth=2;fontFamily=Permanent Marker;fontSize=12;html=0;startSize=40;align=center;verticalAlign=middle;whiteSpace=wrap;spacingBottom=5;points=[];childLayout=stackLayout;stackBorder=20;stackSpacing=20;marginTop=0;resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=0;movable=0;fillStyle=solid;swimlaneFillColor=default;'; // CHANGE: lane visibility is controlled by board toggles, not draw.io collapse handles
     const SCHEDULE_LANE_STYLE_BASE = // NEW: plugin-owned schedule geometry prevents Draw.io stack layout from expanding day lanes
-        'swimlane;strokeWidth=2;fontFamily=Permanent Marker;html=0;startSize=1;verticalAlign=bottom;spacingBottom=5;points=[];resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=0;fillStyle=solid;swimlaneFillColor=default;';
+        'swimlane;strokeWidth=2;fontFamily=Permanent Marker;html=0;startSize=1;verticalAlign=bottom;spacingBottom=5;points=[];resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=0;movable=0;fillStyle=solid;swimlaneFillColor=default;'; // CHANGE
     const CARD_STYLE =
         'whiteSpace=wrap;html=1;strokeWidth=2;fillColor=swimlane;fontStyle=1;spacingTop=0;rounded=1;arcSize=9;points=[];fontFamily=Permanent Marker;hachureGap=8;fillWeight=1;';
     const BREAK_CARD_STYLE = CARD_STYLE + 'dashed=1;fillColor=#F3F4F6;strokeColor=#6B7280;';
@@ -7205,12 +7205,25 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             };
         }
 
+        function taskModelPointForEvent(me, evt, fallbackX, fallbackY) {
+            if (evt && graph.getPointForEvent) {
+                try {
+                    const point = graph.getPointForEvent(evt, false);
+                    if (point && point.x != null && point.y != null) return { x: Number(point.x) || 0, y: Number(point.y) || 0 }; // CHANGE: validate click anchors in model coordinates
+                } catch (_) { }
+            }
+            const rawX = fallbackX != null ? fallbackX : (me && typeof me.getGraphX === 'function' ? me.getGraphX() : (evt && evt.graphX != null ? evt.graphX : null));
+            const rawY = fallbackY != null ? fallbackY : (me && typeof me.getGraphY === 'function' ? me.getGraphY() : (evt && evt.graphY != null ? evt.graphY : null));
+            return rawX == null || rawY == null ? null : { x: Number(rawX) || 0, y: Number(rawY) || 0 }; // CHANGE: preserve legacy fallback when no native event point is available
+        }
+
         function mouseAnchorForEvent(me, evt) {
             const graphX = me && typeof me.getGraphX === 'function' ? me.getGraphX() : (evt && evt.graphX != null ? evt.graphX : null);
             const graphY = me && typeof me.getGraphY === 'function' ? me.getGraphY() : (evt && evt.graphY != null ? evt.graphY : null);
             const containerPoint = taskContainerPointForEvent(evt, graphX, graphY);
-            if (graphX == null || graphY == null || !containerPoint) return null;
-            return { model: { x: Number(graphX) || 0, y: Number(graphY) || 0 }, container: containerPoint, source: 'cursor' };
+            const modelPoint = taskModelPointForEvent(me, evt, graphX, graphY); // CHANGE
+            if (!modelPoint || !containerPoint) return null;
+            return { model: modelPoint, container: containerPoint, source: 'cursor' }; // CHANGE
         }
 
         function fallbackAnchorForTaskModule(taskModule) {

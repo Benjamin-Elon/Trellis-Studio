@@ -233,6 +233,17 @@ test("garden dashboard resolves linked and ambiguous module contexts", () => {
     assert.match(text, /return \{ moduleCell: null, candidates: allGardens, allGardens, reason: "mixed" \};/);
 });
 
+test("garden dashboard applies selected year to linked task module cards", () => {
+    const text = source();
+    assert.match(text, /function collectLinkedTaskBoardCards\(moduleCell\)/);
+    assert.match(text, /api\.listBoardsForGarden\(moduleCell\)/);
+    assert.match(text, /getDescendants\(board\)\.forEach\(function \(cell\)/);
+    assert.match(text, /if \(!isKanbanCard\(cell\) \|\| \(id && seen\.has\(id\)\)\) return;/);
+    assert.match(text, /const cards = all\.filter\(isKanbanCard\)\.concat\(collectLinkedTaskBoardCards\(moduleCell\)\);/);
+    assert.match(text, /const show = shouldRenderTaskCard\(c, selectedYear\);[\s\S]*setYearHidden\(c, !show\);/);
+    assert.match(text, /graph\.refresh\(moduleCell\);[\s\S]*notifyYearFilterChanged\(moduleCell, selectedYear\);/);
+});
+
 test("garden dashboard derives active workspace from selection", () => {
     const text = viewportToolbarSource();
     assert.match(text, /function getActiveWorkspaceForSelection\(\)/);
@@ -264,8 +275,12 @@ test("garden dashboard disables garden tools outside Garden workspace", () => {
     const fullSource = source();
     assert.match(fullSource, /const WORKSPACE_DISABLED_TITLE = "Return to Garden workspace before using garden tools\.";/);
     assert.match(text, /const gardenToolsDisabled = activeWorkspace === "tasks" \|\| activeWorkspace === "team";/);
+    assert.match(text, /const yearControlsDisabled = activeWorkspace === "team";/);
     assert.match(text, /setGardenActionControlsDisabled\(entry, gardenToolsDisabled, gardenToolsDisabled \? WORKSPACE_DISABLED_TITLE : ""\);/);
-    assert.match(text, /\[entry\.prev, entry\.next, entry\.planBtn, entry\.equipmentBtn, entry\.irrigationBtn, entry\.allocateBtn, entry\.messagesBtn, entry\.exportBtn, entry\.shareBtn, entry\.tableBtn\]/);
+    assert.match(text, /setYearActionControlsDisabled\(entry, yearControlsDisabled, yearControlsDisabled \? WORKSPACE_DISABLED_TITLE : ""\);/);
+    assert.match(text, /\[entry\.planBtn, entry\.equipmentBtn, entry\.irrigationBtn, entry\.allocateBtn, entry\.messagesBtn, entry\.exportBtn, entry\.shareBtn, entry\.tableBtn\]/);
+    assert.match(text, /\[entry\.prev, entry\.next\]\.forEach/);
+    assert.match(text, /setYearActionControlsDisabled\(entry, true\);/);
     assert.doesNotMatch(text, /entry\.workspaceGardenBtn[\s\S]{0,120}setButtonDisabled/);
     assert.match(text, /entry\.taskBoardSelect\.disabled = !taskApi \|\| taskBoards\.length < 2;/);
     assert.match(text, /entry\.taskBoardSelect\.style\.display = taskBoards\.length > 1 \? "" : "none";/);

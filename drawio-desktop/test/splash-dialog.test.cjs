@@ -315,7 +315,7 @@ test("SplashDialog renders the personal project intro before license selection",
     assert.match(text, /Mystery Lawn/);
     assert.match(text, /LifeCycler/);
     assert.match(text, /Trellis Studio/);
-    assert.match(text, /Support is the first contribution path/);
+    assert.match(text, /Commercial collaboration, issue reports, testing notes, gardening data, and feedback/);
     assert.ok(findButton(dialog.container, "Continue to License"));
     assert.equal(dialog.container.querySelector(".trellis-splash-actions").style.display, "none");
     assert.equal(dialog.isTrellisLicenseWizardComplete(), false);
@@ -341,12 +341,14 @@ test("Commercial path shows contact guidance and the Grand Oath gate", () => {
     findButton(dialog.container, "Commercial / Client / Company").click();
 
     assert.ok(dialog.container.querySelector(".trellis-license-contact-panel"));
+    assert.ok(dialog.container.querySelector(".trellis-license-card"));
+    assert.ok(dialog.container.querySelector(".trellis-support-card"));
     assert.match(dialog.container.textContent, /Selected path/);
     assert.match(dialog.container.textContent, /Support and contact/);
     assert.match(dialog.container.textContent, /Benjamin Elon/);
-    assert.match(dialog.container.textContent, /People should have access to tools that increase shared regenerative capacity/);
-    assert.match(dialog.container.textContent, /Written approval is still required before commercial use of Trellis-covered plugin files\./);
-    assert.match(dialog.container.querySelector(".trellis-contact-column").textContent, /Patreon/);
+    assert.match(dialog.container.textContent, /We agree that people should have access to tools that increase shared regenerative capacity/);
+    assert.match(dialog.container.textContent, /Written approval is still required before commercial use of Trellis plugin files\./);
+    assert.doesNotMatch(dialog.container.querySelector(".trellis-contact-column").textContent, /Patreon/i);
     assert.match(dialog.container.querySelector(".trellis-contact-column").textContent, /GitHub: Issues and feedback/);
     assert.match(dialog.container.textContent, /The Grand Oath of Paying Attention/);
     assert.ok(findButton(dialog.container, "Play Oath Aloud"));
@@ -354,6 +356,21 @@ test("Commercial path shows contact guidance and the Grand Oath gate", () => {
     assert.ok(findButton(dialog.container, "I Affirm the Oath"));
     assert.ok(findButton(dialog.container, "Change license"));
     assert.equal(findButton(dialog.container, "Change answer"), undefined);
+});
+
+test("Nonprofit path shows the short obligation copy before oath completion", () => {
+    const { dialog } = loadSplashDialog();
+
+    findButton(dialog.container, "Continue to License").click();
+    findButton(dialog.container, "Education / Nonprofit / Public-interest").click();
+
+    assert.ok(dialog.container.querySelector(".trellis-license-contact-panel"));
+    assert.ok(dialog.container.querySelector(".trellis-license-card"));
+    assert.ok(dialog.container.querySelector(".trellis-support-card"));
+    assert.equal(dialog.container.querySelector(".trellis-license-obligation-italic").textContent, "People should have access to tools that increase shared regenerative capacity.");
+    assert.match(dialog.container.querySelector(".trellis-license-obligation").textContent, /Written approval is required before commercial use of Trellis plugin files\./);
+    assert.doesNotMatch(dialog.container.querySelector(".trellis-license-obligation").textContent, /still required/);
+    assert.doesNotMatch(dialog.container.querySelector(".trellis-contact-column").textContent, /Patreon/i);
 });
 
 test("Skip oath decoy evades pointer proximity only before gate completion", () => {
@@ -501,9 +518,11 @@ test("Saved wizard records show summary, contact guidance, Change license, and d
 
     assert.match(dialog.container.textContent, /Saved license/);
     assert.ok(dialog.container.querySelector(".trellis-license-contact-panel"));
+    assert.ok(dialog.container.querySelector(".trellis-license-card"));
+    assert.ok(dialog.container.querySelector(".trellis-support-card"));
     assert.match(dialog.container.textContent, /Benjamin Elon/);
-    assert.match(dialog.container.textContent, /Written approval is still required before commercial use of Trellis-covered plugin files\./);
-    assert.match(dialog.container.querySelector(".trellis-contact-column").textContent, /Patreon/);
+    assert.match(dialog.container.textContent, /Written approval is still required before commercial use of Trellis plugin files\./);
+    assert.doesNotMatch(dialog.container.querySelector(".trellis-contact-column").textContent, /Patreon/i);
     assert.doesNotMatch(dialog.container.textContent, /License oath completed/);
     assert.doesNotMatch(dialog.container.textContent, /Diagram options are ready/);
     const status = dialog.container.querySelector(".trellis-license-status");
@@ -602,10 +621,11 @@ test("SplashDialog source and bundle use oath wizard storage, close hook, valida
     assert.doesNotMatch(dialogSource, /License oath completed/);
     assert.doesNotMatch(dialogSource, /Diagram options are ready/);
     assert.match(dialogSource, /Diagram options will be ready shortly/);
-    assert.match(dialogSource, /createTrellisLicenseContactPanel/);
+    assert.match(dialogSource, /createTrellisLicenseSupportLayout/);
+    assert.match(dialogSource, /trellisCommunityObligationItalicText/);
     assert.match(dialogSource, /Explore & Support My Projects/);
     assert.match(dialogSource, /https:\/\/patreon\.com\/Benjamin980/);
-    assert.doesNotMatch(dialogSource, /Placeholder Contact Name|patreon: 'https:\/\/www\.patreon\.com\/placeholder'|appendTrellisContactGuidance/);
+    assert.doesNotMatch(dialogSource, /Placeholder Contact Name|patreon: 'https:\/\/www\.patreon\.com\/placeholder'|appendTrellisContactGuidance|Support on Patreon|Support: Patreon/);
     assert.match(appSource, /showDialog\(dlg\.container, 700, 630[\s\S]*true, null, null, true/);
     assert.match(appSource, /showTrellisExitMessage/);
     assert.match(bundledSource, /trellis\.licenseWizard\.v/);
@@ -623,10 +643,11 @@ test("SplashDialog source and bundle use oath wizard storage, close hook, valida
     assert.doesNotMatch(bundledSource, /License oath completed/);
     assert.doesNotMatch(bundledSource, /Diagram options are ready/);
     assert.match(bundledSource, /Diagram options will be ready shortly/);
-    assert.match(bundledSource, /createTrellisLicenseContactPanel/);
+    assert.match(bundledSource, /createTrellisLicenseSupportLayout/);
+    assert.match(bundledSource, /trellisCommunityObligationItalicText/);
     assert.match(bundledSource, /Explore & Support My Projects/);
     assert.match(bundledSource, /https:\/\/patreon\.com\/Benjamin980/);
-    assert.doesNotMatch(bundledSource, /Placeholder Contact Name|patreon: 'https:\/\/www\.patreon\.com\/placeholder'|appendTrellisContactGuidance/);
+    assert.doesNotMatch(bundledSource, /Placeholder Contact Name|patreon: 'https:\/\/www\.patreon\.com\/placeholder'|appendTrellisContactGuidance|Support on Patreon|Support: Patreon/);
     assert.match(bundledSource, /showDialog\(p\.container,700,630[\s\S]*!0,null,null,!0/);
 });
 
@@ -636,13 +657,16 @@ test("Trellis splash enhancement adds the branded shell, saved-state structure, 
         helpAction: true,
         languageControl: true
     });
-    const createButton = findButton(dialog.container, "Create New Diagram");
+    const createButton = findButton(dialog.container, "Create New Garden");
     const supportButton = findButton(dialog.container, "Explore & Support My Projects");
-    const openButton = findButton(dialog.container, "Open Existing Diagram");
+    const openButton = findButton(dialog.container, "Open Existing Garden");
     const helpButton = findButton(dialog.container, "Help");
 
     assert.ok(dialog.container.classList.contains("trellis-splash-root"));
     assert.equal(dialog.container.querySelector(".geAdaptiveAsset"), null);
+    assert.ok(dialog.container.querySelector(".trellis-splash-identity"));
+    assert.ok(dialog.container.querySelector(".trellis-splash-brand-mark"));
+    assert.equal(dialog.container.querySelector(".trellis-splash-title").textContent, "Trellis Studio");
     assert.equal(dialog.container.querySelector(".trellis-splash-tagline").textContent, "Build systems that grow.");
 	assert.ok(dialog.container.querySelector(".trellis-splash-tagline").compareDocumentPosition(dialog.container.querySelector(".trellis-saved-license-card")) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
 	assert.match(dialog.container.textContent, /Saved license/);
@@ -652,6 +676,9 @@ test("Trellis splash enhancement adds the branded shell, saved-state structure, 
 	assert.equal(dialog.container.querySelector(".trellis-splash-state-intro"), null);
 	assert.equal(dialog.container.querySelector(".trellis-saved-license-path").textContent, "Path: Personal / Noncommercial.");
 	assert.equal(dialog.container.querySelector(".trellis-saved-license-signer").textContent, "Signed by Saved User using Barneywilson@gmail.");
+    assert.equal(dialog.container.querySelector(".trellis-license-obligation-italic").textContent, "People should have access to tools that increase shared regenerative capacity.");
+    assert.match(dialog.container.querySelector(".trellis-license-obligation").textContent, /Written approval is required before commercial use of Trellis plugin files\./);
+    assert.doesNotMatch(dialog.container.querySelector(".trellis-license-obligation").textContent, /still required/);
     const avatarControl = dialog.container.querySelector(".trellis-saved-license-card .trellis-avatar-control");
     assert.ok(avatarControl);
     assert.ok(avatarControl.classList.contains("trellis-license-icon"));
@@ -665,7 +692,8 @@ test("Trellis splash enhancement adds the branded shell, saved-state structure, 
     assert.ok(createButton.classList.contains("trellis-button-add"));
     assert.ok(openButton.classList.contains("trellis-secondary-action"));
     assert.ok(openButton.classList.contains("trellis-button-open"));
-    assert.ok(supportButton.compareDocumentPosition(createButton) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+    assert.ok(createButton.compareDocumentPosition(openButton) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+    assert.ok(openButton.compareDocumentPosition(supportButton) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
     assert.ok(supportButton.querySelector("svg"));
     assert.ok(createButton.querySelector("svg"));
     assert.ok(openButton.querySelector("svg"));
@@ -1108,7 +1136,9 @@ test("Trellis splash assets and bootstrap wire the same enhancement into package
 	assert.match(splashCss, /\.geEditor\.trellis-splash-active > \.geToolbarContainer/);
 	assert.match(splashCss, /\.trellis-splash-bg-image/);
 	assert.match(splashCss, /object-fit: cover/);
-	assert.match(splashCss, /\.trellis-splash-tagline[\s\S]*text-align: center/);
+	assert.match(splashCss, /\.trellis-splash-identity[\s\S]*display: flex/);
+	assert.match(splashCss, /\.trellis-splash-brand-mark[\s\S]*trellis-splash-icon\.png/);
+	assert.match(splashCss, /\.trellis-license-obligation-italic[\s\S]*font-style: italic/);
 	assert.match(splashCss, /width: var\(--trellis-workspace-width, 100%\)/);
 	assert.match(enhancementSource, /trellis-splash-bg-image/);
 	assert.doesNotMatch(splashCss, /max-height: 820px/);

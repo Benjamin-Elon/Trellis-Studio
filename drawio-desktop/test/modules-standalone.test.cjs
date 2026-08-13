@@ -156,6 +156,21 @@ function makeHarness() {
         getView() { return this.view; },
         refresh() {},
         insertVertex(parent, id, value, x, y, w, h, style) { const cell = new TestCell(value, new TestGeometry(x, y, w, h), style); cell.vertex = true; return model.add(parent || root, cell); },
+        moveCells(cells, dx = 0, dy = 0, _clone = false, target = null) { // NEW
+            const moved = (cells || []).filter(Boolean);
+            moved.forEach(cell => {
+                const geo = model.getGeometry(cell);
+                if (geo && !geo.relative) {
+                    geo.x = (geo.x || 0) + dx;
+                    geo.y = (geo.y || 0) + dy;
+                }
+                if (target) model.add(target, cell);
+            });
+            this.fireEvent(makeEventObject("cellsMoved", ["cells", moved, "dx", dx, "dy", dy]));
+            this.movedCells = moved;
+            this.lastMoveDelta = { dx, dy };
+            return moved;
+        },
         setSelectionCell(cell) { selectedCells = cell ? [cell] : []; (selectionListeners.get("change") || []).forEach(listener => listener(this, {})); },
         setSelectionCells(cells) { selectedCells = (cells || []).filter(Boolean); (selectionListeners.get("change") || []).forEach(listener => listener(this, {})); },
         getSelectionCell() { return selectedCells[0] || null; },
@@ -327,6 +342,64 @@ function styleHas(cell, flag) {
     return new RegExp("(^|;)" + flag + "(;|$)").test(cell && cell.style || "");
 }
 
+function makeValue(document, attrs) {
+    const value = document.createElement("obj");
+    Object.entries(attrs || {}).forEach(([key, attrValue]) => value.setAttribute(key, String(attrValue)));
+    return value;
+}
+
+function makeCell(harness, attrs, geometry, style = "") {
+    const cell = new TestCell(makeValue(harness.document, attrs), geometry, style);
+    cell.vertex = true;
+    return cell;
+}
+
+function makeModuleReady(moduleCell, width = 320, height = 220, margin = 0) {
+    moduleCell.geometry.width = width;
+    moduleCell.geometry.height = height;
+    moduleCell.style += ";module_margin=" + margin;
+    return moduleCell;
+}
+
+function absoluteBounds(cell) {
+    const geo = cell && cell.geometry || {};
+    let x = Number(geo.x || 0);
+    let y = Number(geo.y || 0);
+    let parent = cell && cell.parent;
+    while (parent) {
+        const parentGeo = parent.geometry || {};
+        x += Number(parentGeo.x || 0);
+        y += Number(parentGeo.y || 0);
+        parent = parent.parent;
+    }
+    return { x, y, width: Number(geo.width || 0), height: Number(geo.height || 0) };
+}
+
+function centerInside(cell, container) {
+    const cellBounds = absoluteBounds(cell);
+    const containerBounds = absoluteBounds(container);
+    const cx = cellBounds.x + cellBounds.width / 2;
+    const cy = cellBounds.y + cellBounds.height / 2;
+    return cx >= containerBounds.x && cx <= containerBounds.x + containerBounds.width && cy >= containerBounds.y && cy <= containerBounds.y + containerBounds.height;
+}
+
+function styleInt(cell, key, fallback = 0) {
+    const match = new RegExp("(?:^|;)" + key + "=(\\d+)(?=;|$)").exec(cell && cell.style || "");
+    return match ? Number(match[1]) : fallback;
+}
+
+function insideRightBottomInnerMargin(cell, moduleCell) {
+    const cellBounds = absoluteBounds(cell);
+    const moduleBounds = absoluteBounds(moduleCell);
+    const margin = styleInt(moduleCell, "module_margin", 0);
+    return (
+        cellBounds.x >= moduleBounds.x &&
+        cellBounds.y >= moduleBounds.y &&
+        cellBounds.x + cellBounds.width <= moduleBounds.x + moduleBounds.width - margin &&
+        cellBounds.y + cellBounds.height <= moduleBounds.y + moduleBounds.height - margin
+    );
+}
+
 function cellText(cell) {
     if (!cell) return "";
     const raw = cell.value && cell.value.getAttribute ? (cell.value.getAttribute("label") || "") : (cell.value == null ? "" : String(cell.value));
@@ -471,6 +544,102 @@ test("module cells cannot be dropped under non-module parents", () => {
     harness.model.add(nonModule, mod);
     harness.graph.fireEvent(makeEventObject("cellsMoved", ["cells", [mod]]));
     assert.equal(harness.model.getParent(mod), harness.root);
+});
+
+test("protected trellis objects clamp to their module edges", () => {
+    const cases = [
+        { name: "garden bed", attrs: { garden_bed: "1" } },
+        { name: "planting group", attrs: { tiler_group: "1" } },
+        { name: "bed assembly", attrs: { irrigation_assembly: "1", irrigation_assembly_type: "bed" } },
+        { name: "source assembly", attrs: { irrigation_assembly: "1", irrigation_assembly_type: "source" } },
+        { name: "task board", attrs: { board_key: "KANBAN_BOARD", board_role: "main" } }
+    ];
+    cases.forEach(({ attrs }) => {
+        const harness = makeHarness();
+        const mod = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, attrs.board_key ? "task" : "garden"), 320, 220, 20);
+        const cell = makeCell(harness, attrs, new TestGeometry(240, 140, 40, 30), attrs.board_key ? "swimlane;" : "");
+        harness.model.add(mod, cell);
+        harness.graph.moveCells([cell], 120, 120);
+        assert.deepEqual(harness.graph.lastMoveDelta, { dx: 20, dy: 30 });
+        assert.equal(insideRightBottomInnerMargin(cell, mod), true);
+        assert.equal(harness.model.getParent(cell), mod);
+    });
+});
+
+test("role cards clamp to team modules and role internals clamp to their role parent", () => {
+    const harness = makeHarness();
+    const { team, role, nameRow } = createRoleFixture(harness);
+    makeModuleReady(team, 520, 360, 20);
+    role.geometry.x = 200;
+    role.geometry.y = 40;
+    harness.graph.moveCells([role], 200, 0);
+    assert.equal(harness.graph.lastMoveDelta.dx, 40);
+    assert.equal(insideRightBottomInnerMargin(role, team), true);
+    nameRow.geometry.x = 168;
+    harness.graph.moveCells([nameRow], 80, 0);
+    assert.equal(harness.graph.lastMoveDelta.dx, 5);
+    assert.equal(centerInside(nameRow, role), true);
+    assert.equal(harness.model.getParent(nameRow), role);
+});
+
+test("mixed protected selections share one clamped delta", () => {
+    const harness = makeHarness();
+    const mod = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "garden"), 320, 220, 20);
+    const bed = makeCell(harness, { garden_bed: "1" }, new TestGeometry(240, 80, 40, 30));
+    const note = makeCell(harness, { label: "loose note" }, new TestGeometry(20, 20, 40, 30));
+    harness.model.add(mod, bed);
+    harness.model.add(mod, note);
+    harness.graph.moveCells([bed, note], 120, 0);
+    assert.equal(harness.graph.lastMoveDelta.dx, 20);
+    assert.equal(bed.geometry.x, 260);
+    assert.equal(note.geometry.x, 40);
+});
+
+test("protected cells reject drops outside their current module", () => {
+    const harness = makeHarness();
+    const garden = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "garden"));
+    const other = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 500, y: 0 }, "garden"));
+    const bed = makeCell(harness, { garden_bed: "1" }, new TestGeometry(20, 20, 80, 40));
+    const assembly = makeCell(harness, { irrigation_assembly: "1", irrigation_assembly_type: "parts" }, new TestGeometry(120, 20, 80, 40));
+    harness.model.add(garden, bed);
+    harness.model.add(garden, assembly);
+    assert.equal(harness.graph.isValidDropTarget(garden, [bed]), true);
+    assert.equal(harness.graph.isValidDropTarget(other, [bed]), false);
+    assert.equal(harness.graph.isValidDropTarget(harness.root, [assembly]), false);
+});
+
+test("CELLS_MOVED clamps leaked protected cells instead of reparenting to root", () => {
+    const harness = makeHarness();
+    const garden = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "garden"), 320, 220, 20);
+    const bed = makeCell(harness, { garden_bed: "1" }, new TestGeometry(420, 20, 80, 40));
+    harness.model.add(garden, bed);
+    harness.graph.fireEvent(makeEventObject("cellsMoved", ["cells", [bed], "dx", 200, "dy", 0]));
+    assert.equal(harness.model.getParent(bed), garden);
+    assert.equal(bed.geometry.x, 220);
+    assert.equal(insideRightBottomInnerMargin(bed, garden), true);
+});
+
+test("kanban cards can move to another board lane while lanes remain fixed", () => {
+    const harness = makeHarness();
+    const taskModule = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "task"), 900, 500);
+    const boardA = makeCell(harness, { board_key: "KANBAN_BOARD", board_role: "main" }, new TestGeometry(10, 10, 360, 240), "swimlane;");
+    const boardB = makeCell(harness, { board_key: "KANBAN_BOARD", board_role: "secondary" }, new TestGeometry(430, 10, 360, 240), "swimlane;");
+    const laneA = makeCell(harness, { lane_key: "TODO" }, new TestGeometry(20, 40, 140, 160), "swimlane;");
+    const laneB = makeCell(harness, { lane_key: "DOING" }, new TestGeometry(20, 40, 140, 160), "swimlane;");
+    const card = makeCell(harness, { kanban_card: "1" }, new TestGeometry(20, 50, 100, 40));
+    harness.model.add(taskModule, boardA);
+    harness.model.add(taskModule, boardB);
+    harness.model.add(boardA, laneA);
+    harness.model.add(boardB, laneB);
+    harness.model.add(laneA, card);
+    assert.equal(harness.graph.isValidDropTarget(laneB, [card]), true);
+    assert.equal(harness.graph.isValidDropTarget(boardB, [card]), false);
+    harness.graph.moveCells([card], 10, 0, false, laneB);
+    assert.equal(harness.model.getParent(card), laneB);
+    const laneX = laneB.geometry.x;
+    assert.deepEqual(harness.graph.moveCells([laneB], 100, 0), [laneB]);
+    assert.equal(laneB.geometry.x, laneX);
+    assert.equal(harness.graph.isValidDropTarget(boardA, [laneB]), false);
 });
 
 test("promptSetModuleMargin updates style and reapplies module sizing", async () => {

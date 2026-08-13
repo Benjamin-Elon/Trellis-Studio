@@ -443,6 +443,8 @@ var SplashDialog = function(editorUi)
 	var trellisOathText = 'I solemnly affirm, with unnecessary ceremony and full awareness that this button did not appear by accident, that I have answered the Trellis license questions honestly, that I understand commercial use requires contacting the project owner, and that I will not pretend I missed this because the software was too polite.'; // NEW
 	var trellisCheckboxText = 'I have listened to the oath, survived, and understand that my use of Trellis must match the path I selected.'; // NEW
 	var trellisCommercialObligationText = 'We agree that people should have access to tools that increase shared regenerative capacity, and those who convert that shared capacity into private commercial value have a corresponding obligation to help sustain it. Written approval is still required before commercial use of Trellis plugin files.'; // CHANGE
+	var trellisCommunityObligationItalicText = 'People should have access to tools that increase shared regenerative capacity.'; // NEW
+	var trellisCommercialApprovalText = 'Written approval is required before commercial use of Trellis plugin files.'; // NEW
 	var trellisLicensePaths = { // NEW
 		personal: { label: 'Personal / Noncommercial', detail: 'Home, hobby, and other noncommercial work.', contactGuidance: false }, // NEW
 		education: { label: 'Education / Nonprofit / Public-interest', detail: 'Teaching, learning, nonprofit, and public-interest work.', contactGuidance: false }, // NEW
@@ -630,27 +632,43 @@ var SplashDialog = function(editorUi)
 		return section; // NEW
 	} // NEW
 
-	function createTrellisLicenseContactPanel(licenseColumn) // NEW
+	function createTrellisObligationNotice(pathInfo) // NEW
+	{ // NEW
+		var notice = createTrellisElement('div', 'trellis-license-obligation'); // CHANGE
+		notice.style.cssText = 'font-size:12px;line-height:1.35;color:#3f4a3f;'; // NEW
+		if (pathInfo != null && pathInfo.contactGuidance) // NEW
+		{ // NEW
+			mxUtils.write(notice, trellisCommercialObligationText); // CHANGE
+		} // NEW
+		else // NEW
+		{ // NEW
+			var sharedCapacity = createTrellisElement('span', 'trellis-license-obligation-italic', trellisCommunityObligationItalicText); // NEW
+			notice.appendChild(sharedCapacity); // NEW
+			notice.appendChild(document.createTextNode(' ')); // NEW
+			mxUtils.write(notice, trellisCommercialApprovalText); // NEW
+		} // NEW
+		return notice; // NEW
+	} // NEW
+
+	function createTrellisLicenseSupportLayout(licenseColumn, pathInfo) // CHANGE
 	{ // NEW
 		var panel = createTrellisElement('div', 'trellis-license-contact-panel'); // NEW
-		panel.style.cssText = 'box-sizing:border-box;border:1px solid #d8e0d8;border-radius:6px;padding:10px;text-align:left;background:#fff;'; // NEW
-		var contact = createTrellisElement('div', 'trellis-license-panel-column trellis-contact-column'); // NEW
+		panel.style.cssText = 'box-sizing:border-box;text-align:left;'; // CHANGE
+		var contact = createTrellisElement('div', 'trellis-support-card trellis-contact-column'); // CHANGE
 		var heading = createTrellisElement('div', null, 'Support and contact'); // CHANGE
 		heading.style.cssText = 'font-weight:bold;font-size:13px;margin-bottom:6px;color:#2f3b2f;'; // NEW
 		var details = createTrellisElement('div', null); // NEW
 		details.style.cssText = 'display:grid;gap:6px;font-size:12px;line-height:1.35;color:#3f4a3f;'; // CHANGE
 		details.appendChild(createTrellisElement('div', null, 'Name: ' + trellisLinks.name)); // NEW
-		details.appendChild(createTrellisLink('Support: Patreon', trellisLinks.patreon)); // NEW
 		details.appendChild(createTrellisLink('Email: ' + trellisLinks.emailAddress, trellisLinks.email)); // NEW
 		details.appendChild(createTrellisLink('Phone: ' + trellisLinks.phoneNumber, trellisLinks.phone)); // NEW
 		details.appendChild(createTrellisLink('GitHub: Issues and feedback', trellisLinks.issues)); // NEW
 		contact.appendChild(heading); // NEW
 		contact.appendChild(details); // NEW
-		var notice = createTrellisElement('div', 'trellis-commercial-permission-notice', trellisCommercialObligationText); // CHANGE
-		notice.style.cssText = 'font-size:12px;line-height:1.35;color:#3f4a3f;'; // NEW
+		licenseColumn.className += ' trellis-license-card'; // NEW
 		panel.appendChild(licenseColumn); // NEW
 		panel.appendChild(contact); // NEW
-		panel.appendChild(notice); // NEW
+		panel.appendChild(createTrellisObligationNotice(pathInfo)); // CHANGE
 		return panel; // NEW
 	} // NEW
 
@@ -680,12 +698,20 @@ var SplashDialog = function(editorUi)
 
 		function writeHeader(subtitle) // NEW
 		{ // NEW
-			var title = createTrellisElement('div', null, 'Trellis Studio'); // NEW
-			title.style.cssText = 'font-size:20px;font-weight:bold;text-align:center;color:#2f3b2f;margin-bottom:4px;'; // NEW
-			center.appendChild(title); // NEW
+			var header = createTrellisElement('div', 'trellis-splash-identity'); // CHANGE
+			var mark = createTrellisElement('div', 'trellis-splash-brand-mark'); // NEW
+			var copy = createTrellisElement('div', 'trellis-splash-brand-copy'); // NEW
+			var title = createTrellisElement('div', 'trellis-splash-title', 'Trellis Studio'); // CHANGE
+			var slogan = createTrellisElement('div', 'trellis-splash-tagline', 'Build systems that grow.'); // CHANGE
+			mark.setAttribute('aria-hidden', 'true'); // NEW
+			copy.appendChild(title); // NEW
+			copy.appendChild(slogan); // NEW
+			header.appendChild(mark); // NEW
+			header.appendChild(copy); // NEW
+			center.appendChild(header); // CHANGE
 			if (subtitle != null && subtitle != '') // NEW
 			{ // NEW
-				var intro = createTrellisElement('div', null, subtitle); // NEW
+				var intro = createTrellisElement('div', 'trellis-splash-state-intro', subtitle); // CHANGE
 				intro.style.cssText = 'text-align:center;color:#5f6a5f;margin-bottom:10px;'; // NEW
 				center.appendChild(intro); // NEW
 			} // NEW
@@ -715,14 +741,7 @@ var SplashDialog = function(editorUi)
 			change.className = 'geBtn'; // NEW
 			change.style.marginTop = '8px'; // NEW
 			summary.appendChild(change); // NEW
-			if (trellisSavedWizard.contactGuidance) // NEW
-			{ // NEW
-				center.appendChild(createTrellisLicenseContactPanel(summary)); // CHANGE
-			} // NEW
-			else // NEW
-			{ // NEW
-				center.appendChild(summary); // NEW
-			} // NEW
+			center.appendChild(createTrellisLicenseSupportLayout(summary, trellisLicensePaths[trellisSavedWizard.path])); // CHANGE
 			var status = createTrellisElement('div', 'trellis-license-status', 'Diagram options will be ready shortly.'); // CHANGE
 			status.style.cssText = 'margin-top:8px;color:#5f6a5f;font-size:12px;text-align:center;'; // NEW
 			trellisExitStatus = status; // CHANGE
@@ -745,10 +764,9 @@ var SplashDialog = function(editorUi)
 			} // NEW
 			projects.appendChild(projectGrid); // NEW
 			center.appendChild(projects); // NEW
-			var support = createTrellisInfoSection('How to help', 'Support is the first contribution path. Patreon, commercial collaboration, issue reports, testing notes, gardening data, and feedback all help sustain the project. Code contributions require prior written permission so Trellis can keep publishing, modifying, redistributing, and commercially licensing covered plugin files.'); // NEW
+			var support = createTrellisInfoSection('How to help', 'Commercial collaboration, issue reports, testing notes, gardening data, and feedback all help sustain the project. Code contributions require prior written permission so Trellis can keep publishing, modifying, redistributing, and commercially licensing covered plugin files.'); // CHANGE
 			var supportLinks = createTrellisElement('div', 'trellis-support-links'); // NEW
 			supportLinks.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;'; // NEW
-			supportLinks.appendChild(createTrellisLink('Support on Patreon', trellisLinks.patreon)); // NEW
 			supportLinks.appendChild(createTrellisLink('Open GitHub issues', trellisLinks.issues)); // NEW
 			supportLinks.appendChild(createTrellisLink('Email Benjamin', trellisLinks.email)); // NEW
 			support.appendChild(supportLinks); // NEW
@@ -826,15 +844,7 @@ var SplashDialog = function(editorUi)
 			var pointerRunawayDelay = 120; // NEW
 			var storageWarning = null; // NEW
 			var section = createTrellisInfoSection('Selected path', pathInfo.label + '. ' + pathInfo.detail); // NEW
-			if (pathInfo.contactGuidance) // NEW
-			{ // NEW
-				section.className += ' trellis-license-panel-column'; // NEW
-				center.appendChild(createTrellisLicenseContactPanel(section)); // CHANGE
-			} // NEW
-			else // NEW
-			{ // NEW
-				center.appendChild(section); // NEW
-			} // NEW
+			center.appendChild(createTrellisLicenseSupportLayout(section, pathInfo)); // CHANGE
 			var oathSection = createTrellisInfoSection('Read aloud before proceeding', trellisOathText); // NEW
 			var playButton = mxUtils.button('Play Oath Aloud', function() // NEW
 			{ // NEW
@@ -1159,25 +1169,7 @@ var SplashDialog = function(editorUi)
 
 	div.appendChild(createTrellisStartCenter()); // NEW
 
-	var supportButton = document.createElement('button'); // NEW
-	supportButton.className = 'geBigButton trellis-support-action'; // NEW
-	supportButton.style.marginBottom = '8px'; // NEW
-	supportButton.style.fontSize = '18px'; // NEW
-	supportButton.style.padding = '10px'; // NEW
-	supportButton.style.width = '340px'; // NEW
-	supportButton.setAttribute('data-trellis-url', trellisLinks.patreon); // NEW
-	mxUtils.write(supportButton, 'Explore & Support My Projects'); // NEW
-	mxEvent.addListener(supportButton, 'click', function() // NEW
-	{ // NEW
-		if (window.open != null) // NEW
-		{ // NEW
-			window.open(trellisLinks.patreon, '_blank'); // NEW
-		} // NEW
-	}); // NEW
-	actionButtons.appendChild(supportButton); // NEW
-	mxUtils.br(actionButtons); // NEW
-
-	mxUtils.write(btn, mxResources.get('createNewDiagram'));
+	mxUtils.write(btn, 'Create New Garden'); // CHANGE
 	
 	mxEvent.addListener(btn, 'click', function()
 	{
@@ -1190,12 +1182,12 @@ var SplashDialog = function(editorUi)
 	
 	var btn = document.createElement('button');
 	btn.className = 'geBigButton';
-	btn.style.marginBottom = '22px';
+	btn.style.marginBottom = '8px'; // CHANGE
 	btn.style.fontSize = '18px';
 	btn.style.padding = '10px';
 	btn.style.width = '340px';
 	
-	mxUtils.write(btn, mxResources.get('openExistingDiagram'));
+	mxUtils.write(btn, 'Open Existing Garden'); // CHANGE
 	
 	mxEvent.addListener(btn, 'click', function()
 	{
@@ -1203,6 +1195,24 @@ var SplashDialog = function(editorUi)
 	});
 	
 	actionButtons.appendChild(btn); // CHANGE
+	mxUtils.br(actionButtons); // CHANGE
+
+	var supportButton = document.createElement('button'); // NEW
+	supportButton.className = 'geBigButton trellis-support-action'; // NEW
+	supportButton.style.marginBottom = '22px'; // CHANGE
+	supportButton.style.fontSize = '18px'; // NEW
+	supportButton.style.padding = '10px'; // NEW
+	supportButton.style.width = '340px'; // NEW
+	supportButton.setAttribute('data-trellis-url', trellisLinks.patreon); // NEW
+	mxUtils.write(supportButton, 'Explore & Support My Projects'); // NEW
+	mxEvent.addListener(supportButton, 'click', function() // NEW
+	{ // NEW
+		if (window.open != null) // NEW
+		{ // NEW
+			window.open(trellisLinks.patreon, '_blank'); // NEW
+		} // NEW
+	}); // NEW
+	actionButtons.appendChild(supportButton); // CHANGE
 	buttons.appendChild(actionButtons); // NEW
 
 	var storage = 'undefined';
