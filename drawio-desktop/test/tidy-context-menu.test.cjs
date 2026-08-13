@@ -200,6 +200,8 @@ test("tidy menu still suppresses Trellis tooltips without suppressing regular ce
     const { graph } = loadTidyContributor();
 
     assert.equal(graph.getTooltipForCell(new TestCell({ garden_bed: "1" })), "");
+    assert.equal(graph.getTooltipForCell(new TestCell({ task_module: "1" })), ""); // CHANGE: companion task modules suppress XML metadata hover tooltips
+    assert.equal(graph.getTooltipForCell(new TestCell({ team_module: "1" })), ""); // CHANGE: companion team modules suppress XML metadata hover tooltips
     assert.equal(graph.getTooltipForCell(new TestCell({ lane_key: "TODO" })), "");
     assert.equal(graph.getTooltipForCell(new TestCell({ irrigation_generated: "1" })), "");
     assert.equal(graph.getTooltipForCell(new TestCell({ irrigation_assembly: "1" })), "");

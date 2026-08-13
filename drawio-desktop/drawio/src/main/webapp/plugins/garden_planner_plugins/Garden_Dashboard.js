@@ -44,6 +44,8 @@ Draw.loadPlugin(function (ui) {
     const IRRIGATION_ACTIVE_TEXT = "#1e3a8a"; // CHANGE: match the Enter Irrigation Design Mode dark-blue active text
     const WORKSPACE_TASK_BOARD_STORAGE_PREFIX = "trellis.gardenDashboard.workspaceTaskBoard.v1"; // NEW: local per-user workspace task-board memory
     const WORKSPACE_DISABLED_TITLE = "Return to Garden workspace before using garden tools."; // NEW: explain visible disabled dashboard actions outside Garden
+    const TASK_BOARD_KEY = "KANBAN_BOARD"; // NEW: dashboard selector sync recognizes current task board cells locally
+    const LEGACY_TASK_BOARD_KEY = "MAIN_KANBAN_BOARD"; // NEW: preserve selector sync for legacy main board cells
 
     const GROUP_LABEL_FONT_PX = 12;
     const GROUP_LABEL_LINE_HEIGHT = 1.25;
@@ -78,6 +80,11 @@ Draw.loadPlugin(function (ui) {
         return !!(cell && cell.getAttribute && cell.getAttribute("team_module") === "1");
     }
 
+    function isTaskBoard(cell) {
+        const key = getCellAttr(cell, "board_key", "");
+        return key === TASK_BOARD_KEY || key === LEGACY_TASK_BOARD_KEY; // NEW: mirror task manager board recognition without coupling APIs
+    }
+
     function findModuleAncestor(graph, cell) {
         const m = graph.getModel();
         let cur = cell;
@@ -106,6 +113,15 @@ Draw.loadPlugin(function (ui) {
             cur = m.getParent(cur);
         }
         return null;
+    }
+
+    function findTaskBoardAncestor(cell) {
+        let cur = cell;
+        while (cur) {
+            if (isTaskBoard(cur)) return cur;
+            cur = model.getParent(cur);
+        }
+        return null; // NEW
     }
 
     function findTeamModuleAncestor(graph, cell) {
@@ -1092,6 +1108,20 @@ Draw.loadPlugin(function (ui) {
         return workspaces.size === 1 ? Array.from(workspaces)[0] : null; // NEW: mixed selections do not claim an active workspace
     }
 
+    function selectedTaskBoardIdForSelection() {
+        const selected = selectedCellsForDashboard();
+        if (!selected.length) return "";
+        let selectedBoardId = "";
+        for (const cell of selected) {
+            const board = findTaskBoardAncestor(cell);
+            const id = cellId(board);
+            if (!id) return ""; // NEW: strict sync requires every selected item to resolve to a board
+            if (selectedBoardId && selectedBoardId !== id) return ""; // NEW: mixed-board selections leave the chooser on remembered/current fallback
+            selectedBoardId = id;
+        }
+        return selectedBoardId; // NEW
+    }
+
     function cellBoundsInModel(cell) {
         const state = graph.view && graph.view.getState ? graph.view.getState(cell) : null;
         if (state && Number.isFinite(Number(state.x)) && Number.isFinite(Number(state.y))) {
@@ -1425,7 +1455,8 @@ Draw.loadPlugin(function (ui) {
         return !!id && (boards || []).some(function (board) { return cellId(board) === id; }); // NEW
     }
 
-    function selectedTaskBoardIdForGarden(moduleCell, boards, fallbackValue) {
+    function selectedTaskBoardIdForGarden(moduleCell, boards, fallbackValue, selectedBoardId) {
+        if (taskBoardIdInList(boards, selectedBoardId)) return String(selectedBoardId || ""); // NEW: active board selection takes precedence over stored preference
         const remembered = loadRememberedTaskBoardId(moduleCell);
         if (taskBoardIdInList(boards, remembered)) return remembered; // NEW
         if (taskBoardIdInList(boards, fallbackValue)) return String(fallbackValue || "");
@@ -2046,7 +2077,7 @@ Draw.loadPlugin(function (ui) {
         const taskBoards = taskApi && typeof taskApi.listBoardsForGarden === "function" ? (taskApi.listBoardsForGarden(moduleCell) || []) : [];
         const taskSummary = taskApi && typeof taskApi.unseenCreatedSummaryForGarden === "function" ? taskApi.unseenCreatedSummaryForGarden(moduleCell) : { hidden: true, total: 0, boards: [] };
         const summaryByBoardId = new Map((taskSummary.boards || []).map(function (entry) { return [String(entry.boardId || ""), entry]; }));
-        const preferredBoardId = selectedTaskBoardIdForGarden(moduleCell, taskBoards, entry.taskBoardSelect.value); // CHANGE
+        const preferredBoardId = selectedTaskBoardIdForGarden(moduleCell, taskBoards, entry.taskBoardSelect.value, selectedTaskBoardIdForSelection()); // CHANGE
         let selectedBoardId = "";
         entry.yearLabel.textContent = String(year);
         renderWorkspaceSwitcher(entry, activeWorkspace, taskSummary); // NEW
@@ -2062,8 +2093,9 @@ Draw.loadPlugin(function (ui) {
         });
         if (!selectedBoardId && taskBoards.length) selectedBoardId = cellId(taskBoards[0]);
         if (selectedBoardId) entry.taskBoardSelect.value = selectedBoardId; // CHANGE: render reflects remembered/default board without persisting defaults
-        entry.taskBoardSelect.style.display = taskBoards.length > 1 ? "" : "none"; // NEW: single-board gardens use the Tasks segment only
-        entry.taskBoardSelect.disabled = !taskApi || taskBoards.length < 2; // CHANGE
+        const showTaskBoardSelect = activeWorkspace === "tasks" && taskBoards.length > 1; // NEW: board chooser is scoped to the active Tasks workspace
+        entry.taskBoardSelect.style.display = showTaskBoardSelect ? "" : "none"; // CHANGE
+        entry.taskBoardSelect.disabled = !taskApi || !showTaskBoardSelect; // CHANGE
         entry.taskBoardSelect.style.opacity = entry.taskBoardSelect.disabled ? "0.45" : "1";
         entry.taskBoardSelect.style.cursor = entry.taskBoardSelect.disabled ? "not-allowed" : "pointer";
         entry.taskBoardSelect.title = "Task Boards"; // CHANGE

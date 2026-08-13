@@ -101,6 +101,8 @@ Draw.loadPlugin(function (ui) {
 
         const trellisFlags = [
             'garden_module',
+            'task_module', // CHANGE: suppress companion task module metadata hover tooltips
+            'team_module', // CHANGE: suppress companion team module metadata hover tooltips
             'garden_bed',
             'tiler_group',
             'plant_tiler',

@@ -168,9 +168,9 @@
 	box-sizing: border-box;
 	color: #314437;
 	display: grid;
-	gap: 12px 18px;
-	grid-template-columns: minmax(0, 1.15fr) minmax(210px, 0.85fr);
-	margin-bottom: 12px;
+	gap: 12px 14px;
+	grid-template-columns: minmax(0, 1.08fr) minmax(230px, 0.92fr);
+	margin-bottom: 14px;
 	text-align: left;
 }
 
@@ -183,7 +183,16 @@
 	box-sizing: border-box;
 	color: #314437;
 	margin: 0;
-	padding: 14px 16px !important;
+	min-height: 128px;
+	padding: 16px 18px !important;
+}
+
+.trellis-card-heading {
+	color: #0d3f2d !important;
+	font-size: 15px !important;
+	font-weight: 700 !important;
+	line-height: 1.2;
+	margin: 0 0 12px !important;
 }
 
 .trellis-license-panel-column,
@@ -196,6 +205,48 @@
 .trellis-contact-column a {
 	display: block;
 	margin-right: 0 !important;
+}
+
+.trellis-contact-rows {
+	display: grid;
+	gap: 11px !important;
+}
+
+.trellis-contact-row {
+	align-items: center;
+	color: #15251c !important;
+	display: grid !important;
+	font-size: 14px !important;
+	font-weight: 500;
+	gap: 12px;
+	grid-template-columns: 24px minmax(0, 1fr);
+	line-height: 1.25 !important;
+	min-width: 0;
+	text-decoration: none !important;
+}
+
+.trellis-contact-row:hover .trellis-contact-row-text {
+	text-decoration: underline;
+}
+
+.trellis-contact-row-text {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.trellis-contact-icon {
+	fill: none;
+	height: 22px;
+	stroke: #106139;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	stroke-width: 2;
+	width: 22px;
+}
+
+.trellis-contact-icon-github {
+	fill: #106139;
+	stroke: none;
 }
 
 .trellis-license-obligation {
@@ -211,8 +262,9 @@
 .trellis-saved-license-card {
 	align-items: center;
 	display: grid;
-	grid-template-columns: 76px minmax(0, 1fr) auto; /* Fits avatar remove control. */
-	min-height: 78px;
+	column-gap: 16px;
+	grid-template-columns: 76px minmax(0, 1fr); /* Fits avatar remove control. */
+	min-height: 96px;
 	text-align: left;
 }
 
@@ -340,9 +392,10 @@
 }
 
 .trellis-saved-license-card > .geBtn {
-	grid-column: 3;
-	grid-row: 1 / span 2;
-	margin: 0 0 0 18px !important;
+	grid-column: 2;
+	grid-row: 3;
+	justify-self: start;
+	margin: 12px 0 0 !important;
 }
 
 .trellis-splash-icon {

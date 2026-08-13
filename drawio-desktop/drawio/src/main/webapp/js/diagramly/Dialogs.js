@@ -623,13 +623,49 @@ var SplashDialog = function(editorUi)
 	{ // NEW
 		var section = createTrellisElement('div', 'trellis-splash-section'); // NEW
 		section.style.cssText = 'box-sizing:border-box;border:1px solid #d8e0d8;border-radius:6px;padding:10px;text-align:left;background:#fff;'; // NEW
-		var heading = createTrellisElement('div', null, title); // NEW
+		var heading = createTrellisCardHeading(title); // CHANGE
 		heading.style.cssText = 'font-weight:bold;font-size:13px;margin-bottom:6px;color:#2f3b2f;'; // NEW
 		var copy = createTrellisElement('div', null, body); // NEW
 		copy.style.cssText = 'font-size:12px;line-height:1.35;color:#3f4a3f;'; // NEW
 		section.appendChild(heading); // NEW
 		section.appendChild(copy); // NEW
 		return section; // NEW
+	} // NEW
+
+	function createTrellisCardHeading(title) // NEW
+	{ // NEW
+		return createTrellisElement('div', 'trellis-card-heading', title); // NEW
+	} // NEW
+
+	function createTrellisInlineIcon(name) // NEW
+	{ // NEW
+		var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); // NEW
+		var paths = { // NEW
+			email: ['M4 6h16v12H4z', 'M4 7l8 6 8-6'], // NEW
+			phone: ['M6.5 4.5l3 3-2 2c1.2 2.5 3 4.3 5.5 5.5l2-2 3 3-1.2 2.2c-.4.8-1.2 1.2-2.1 1.1C8.8 18.9 5.1 15.2 4.2 9.3c-.1-.9.3-1.7 1.1-2.1z'], // NEW
+			github: ['M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.8c-2.8.6-3.4-1.2-3.4-1.2-.5-1.1-1.1-1.4-1.1-1.4-.9-.6.1-.6.1-.6 1 .1 1.6 1.1 1.6 1.1.9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.7-1.4-2.2-.3-4.5-1.1-4.5-4.9 0-1.1.4-2 1.1-2.7-.1-.3-.5-1.3.1-2.7 0 0 .9-.3 2.8 1a9.7 9.7 0 0 1 5.2 0c1.9-1.3 2.8-1 2.8-1 .6 1.4.2 2.4.1 2.7.7.7 1.1 1.6 1.1 2.7 0 3.8-2.3 4.6-4.5 4.9.4.3.8 1 .8 2v3.2c0 .3.2.6.8.5A10 10 0 0 0 12 2z'] // NEW
+		}; // NEW
+		svg.setAttribute('viewBox', '0 0 24 24'); // NEW
+		svg.setAttribute('aria-hidden', 'true'); // NEW
+		svg.setAttribute('focusable', 'false'); // NEW
+		svg.setAttribute('class', 'trellis-contact-icon trellis-contact-icon-' + name); // NEW
+		for (var i = 0; i < paths[name].length; i++) // NEW
+		{ // NEW
+			var path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); // NEW
+			path.setAttribute('d', paths[name][i]); // NEW
+			svg.appendChild(path); // NEW
+		} // NEW
+		return svg; // NEW
+	} // NEW
+
+	function createTrellisContactRow(kind, label, href) // NEW
+	{ // NEW
+		var row = createTrellisLink(label, href); // NEW
+		row.className = 'trellis-contact-row trellis-contact-row-' + kind; // NEW
+		row.innerHTML = ''; // NEW
+		row.appendChild(createTrellisInlineIcon(kind)); // NEW
+		row.appendChild(createTrellisElement('span', 'trellis-contact-row-text', label)); // NEW
+		return row; // NEW
 	} // NEW
 
 	function createTrellisObligationNotice(pathInfo) // NEW
@@ -655,14 +691,13 @@ var SplashDialog = function(editorUi)
 		var panel = createTrellisElement('div', 'trellis-license-contact-panel'); // NEW
 		panel.style.cssText = 'box-sizing:border-box;text-align:left;'; // CHANGE
 		var contact = createTrellisElement('div', 'trellis-support-card trellis-contact-column'); // CHANGE
-		var heading = createTrellisElement('div', null, 'Support and contact'); // CHANGE
+		var heading = createTrellisCardHeading('Support & contact'); // CHANGE
 		heading.style.cssText = 'font-weight:bold;font-size:13px;margin-bottom:6px;color:#2f3b2f;'; // NEW
-		var details = createTrellisElement('div', null); // NEW
+		var details = createTrellisElement('div', 'trellis-contact-rows'); // CHANGE
 		details.style.cssText = 'display:grid;gap:6px;font-size:12px;line-height:1.35;color:#3f4a3f;'; // CHANGE
-		details.appendChild(createTrellisElement('div', null, 'Name: ' + trellisLinks.name)); // NEW
-		details.appendChild(createTrellisLink('Email: ' + trellisLinks.emailAddress, trellisLinks.email)); // NEW
-		details.appendChild(createTrellisLink('Phone: ' + trellisLinks.phoneNumber, trellisLinks.phone)); // NEW
-		details.appendChild(createTrellisLink('GitHub: Issues and feedback', trellisLinks.issues)); // NEW
+		details.appendChild(createTrellisContactRow('email', trellisLinks.emailAddress, trellisLinks.email)); // CHANGE
+		details.appendChild(createTrellisContactRow('phone', trellisLinks.phoneNumber, trellisLinks.phone)); // CHANGE
+		details.appendChild(createTrellisContactRow('github', 'GitHub: Issues and feedback', trellisLinks.issues)); // CHANGE
 		contact.appendChild(heading); // NEW
 		contact.appendChild(details); // NEW
 		licenseColumn.className += ' trellis-license-card'; // NEW
@@ -722,7 +757,7 @@ var SplashDialog = function(editorUi)
 			center.innerHTML = ''; // NEW
 			writeHeader(); // CHANGE
 			var summary = createTrellisElement('div', 'trellis-license-panel-column trellis-saved-license-card'); // CHANGE
-			var summaryHeading = createTrellisElement('div', null, 'Saved license path'); // NEW
+			var summaryHeading = createTrellisCardHeading('License'); // CHANGE
 			summaryHeading.style.cssText = 'font-weight:bold;font-size:13px;margin-bottom:6px;color:#2f3b2f;'; // NEW
 			var organizationText = hasTrellisStoredText(trellisSavedWizard.organization) ? ' Project: ' + trellisSavedWizard.organization + '.' : ''; // NEW
 			var summaryCopy = createTrellisElement('div', null, 'Path: ' + getTrellisPathLabel(trellisSavedWizard.path) + '. Signed by ' + trellisSavedWizard.name + ' using ' + trellisSavedWizard.email + '.' + organizationText); // CHANGE

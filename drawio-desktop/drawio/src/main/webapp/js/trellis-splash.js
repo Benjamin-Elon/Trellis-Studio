@@ -50,6 +50,9 @@
 			create: ['M6 3h8l5 5v13H6z', 'M14 3v5h5', 'M12.5 11v6', 'M9.5 14h6'],
 			open: ['M3 7h7l2 2h9v10H3z', 'M3 7V5h7l2 2'],
 			support: ['M12 21s-7-4.6-7-10a4 4 0 0 1 7-2.7A4 4 0 0 1 19 11c0 5.4-7 10-7 10z'],
+			email: ['M4 6h16v12H4z', 'M4 7l8 6 8-6'],
+			phone: ['M6.5 4.5l3 3-2 2c1.2 2.5 3 4.3 5.5 5.5l2-2 3 3-1.2 2.2c-.4.8-1.2 1.2-2.1 1.1C8.8 18.9 5.1 15.2 4.2 9.3c-.1-.9.3-1.7 1.1-2.1z'],
+			github: ['M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.8c-2.8.6-3.4-1.2-3.4-1.2-.5-1.1-1.1-1.4-1.1-1.4-.9-.6.1-.6.1-.6 1 .1 1.6 1.1 1.6 1.1.9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.7-1.4-2.2-.3-4.5-1.1-4.5-4.9 0-1.1.4-2 1.1-2.7-.1-.3-.5-1.3.1-2.7 0 0 .9-.3 2.8 1a9.7 9.7 0 0 1 5.2 0c1.9-1.3 2.8-1 2.8-1 .6 1.4.2 2.4.1 2.7.7.7 1.1 1.6 1.1 2.7 0 3.8-2.3 4.6-4.5 4.9.4.3.8 1 .8 2v3.2c0 .3.2.6.8.5A10 10 0 0 0 12 2z'],
 			user: ['M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', 'M4 21a8 8 0 0 1 16 0']
 		};
 
@@ -356,11 +359,11 @@
 		var foundSavedCard = false;
 
 		for (var i = 0; i < sections.length; i++) {
-			var heading = sections[i].firstElementChild;
+			var heading = sections[i].querySelector('.trellis-saved-license-heading') || sections[i].querySelector('.trellis-card-heading') || sections[i].firstElementChild;
 
-			if (heading != null && (heading.textContent == 'Saved license path' || heading.textContent == 'Saved license')) {
+			if (heading != null && (heading.textContent == 'Saved license path' || heading.textContent == 'Saved license' || heading.textContent == 'License')) {
 				foundSavedCard = true;
-				heading.textContent = 'Saved license';
+				heading.textContent = 'License';
 				addClass(heading, 'trellis-saved-license-heading');
 				addClass(sections[i], 'trellis-saved-license-card');
 				var copy = heading.nextElementSibling;

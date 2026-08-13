@@ -344,8 +344,12 @@ test("Commercial path shows contact guidance and the Grand Oath gate", () => {
     assert.ok(dialog.container.querySelector(".trellis-license-card"));
     assert.ok(dialog.container.querySelector(".trellis-support-card"));
     assert.match(dialog.container.textContent, /Selected path/);
-    assert.match(dialog.container.textContent, /Support and contact/);
-    assert.match(dialog.container.textContent, /Benjamin Elon/);
+    assert.match(dialog.container.textContent, /Support & contact/);
+    assert.equal(dialog.container.querySelector(".trellis-support-card .trellis-card-heading").textContent, "Support & contact");
+    assert.equal(dialog.container.querySelectorAll(".trellis-contact-row").length, 3);
+    assert.ok(dialog.container.querySelector(".trellis-contact-row-email .trellis-contact-icon-email"));
+    assert.ok(dialog.container.querySelector(".trellis-contact-row-phone .trellis-contact-icon-phone"));
+    assert.ok(dialog.container.querySelector(".trellis-contact-row-github .trellis-contact-icon-github"));
     assert.match(dialog.container.textContent, /We agree that people should have access to tools that increase shared regenerative capacity/);
     assert.match(dialog.container.textContent, /Written approval is still required before commercial use of Trellis plugin files\./);
     assert.doesNotMatch(dialog.container.querySelector(".trellis-contact-column").textContent, /Patreon/i);
@@ -367,6 +371,7 @@ test("Nonprofit path shows the short obligation copy before oath completion", ()
     assert.ok(dialog.container.querySelector(".trellis-license-contact-panel"));
     assert.ok(dialog.container.querySelector(".trellis-license-card"));
     assert.ok(dialog.container.querySelector(".trellis-support-card"));
+    assert.equal(dialog.container.querySelector(".trellis-license-card .trellis-card-heading").textContent, "Selected path");
     assert.equal(dialog.container.querySelector(".trellis-license-obligation-italic").textContent, "People should have access to tools that increase shared regenerative capacity.");
     assert.match(dialog.container.querySelector(".trellis-license-obligation").textContent, /Written approval is required before commercial use of Trellis plugin files\./);
     assert.doesNotMatch(dialog.container.querySelector(".trellis-license-obligation").textContent, /still required/);
@@ -458,7 +463,7 @@ test("Oath completion stores the wizard record and reveals actions after two sec
     assert.equal(record.signature, "Test User");
     assert.equal(record.version, "2");
     assert.equal(dialog.isTrellisLicenseWizardComplete(), true);
-    assert.match(dialog.container.textContent, /Saved license/);
+    assert.match(dialog.container.textContent, /License/);
     assert.doesNotMatch(dialog.container.textContent, /The Grand Oath of Paying Attention/);
     assert.equal(actions.style.display, "none");
 	const status = dialog.container.querySelector(".trellis-license-status");
@@ -516,11 +521,13 @@ test("Saved wizard records show summary, contact guidance, Change license, and d
     const { dom, dialog, timers } = loadSplashDialog({ savedRecord });
     const actions = dialog.container.querySelector(".trellis-splash-actions");
 
-    assert.match(dialog.container.textContent, /Saved license/);
+    assert.match(dialog.container.textContent, /License/);
     assert.ok(dialog.container.querySelector(".trellis-license-contact-panel"));
     assert.ok(dialog.container.querySelector(".trellis-license-card"));
     assert.ok(dialog.container.querySelector(".trellis-support-card"));
-    assert.match(dialog.container.textContent, /Benjamin Elon/);
+    assert.equal(dialog.container.querySelector(".trellis-license-card .trellis-card-heading").textContent, "License");
+    assert.equal(dialog.container.querySelector(".trellis-support-card .trellis-card-heading").textContent, "Support & contact");
+    assert.equal(dialog.container.querySelectorAll(".trellis-contact-row").length, 3);
     assert.match(dialog.container.textContent, /Written approval is still required before commercial use of Trellis plugin files\./);
     assert.doesNotMatch(dialog.container.querySelector(".trellis-contact-column").textContent, /Patreon/i);
     assert.doesNotMatch(dialog.container.textContent, /License oath completed/);
@@ -669,7 +676,7 @@ test("Trellis splash enhancement adds the branded shell, saved-state structure, 
     assert.equal(dialog.container.querySelector(".trellis-splash-title").textContent, "Trellis Studio");
     assert.equal(dialog.container.querySelector(".trellis-splash-tagline").textContent, "Build systems that grow.");
 	assert.ok(dialog.container.querySelector(".trellis-splash-tagline").compareDocumentPosition(dialog.container.querySelector(".trellis-saved-license-card")) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
-	assert.match(dialog.container.textContent, /Saved license/);
+	assert.match(dialog.container.textContent, /License/);
 	assert.match(dialog.container.textContent, /Saved User/);
 	assert.match(dialog.container.textContent, /Barneywilson@gmail\./);
 	assert.ok(dialog.container.classList.contains("trellis-saved-state"));
@@ -685,6 +692,18 @@ test("Trellis splash enhancement adds the branded shell, saved-state structure, 
     assert.equal(avatarControl.getAttribute("aria-label"), "Set avatar");
     assert.equal(dialog.container.querySelector(".trellis-avatar-image"), null);
     assert.equal(dialog.container.querySelector(".trellis-avatar-remove").hidden, true);
+    assert.equal(dialog.container.querySelector(".trellis-license-card .trellis-card-heading").textContent, "License");
+    assert.equal(dialog.container.querySelector(".trellis-support-card .trellis-card-heading").textContent, "Support & contact");
+    assert.equal(dialog.container.querySelectorAll(".trellis-contact-row").length, 3);
+    assert.equal(dialog.container.querySelector(".trellis-contact-row-email .trellis-contact-row-text").textContent, "Benjaminyelon@gmail.com");
+    assert.equal(dialog.container.querySelector(".trellis-contact-row-phone .trellis-contact-row-text").textContent, "+1 (236) 878 7411");
+    assert.equal(dialog.container.querySelector(".trellis-contact-row-github .trellis-contact-row-text").textContent, "GitHub: Issues and feedback");
+    assert.ok(dialog.container.querySelector(".trellis-contact-row-email .trellis-contact-icon-email"));
+    assert.ok(dialog.container.querySelector(".trellis-contact-row-phone .trellis-contact-icon-phone"));
+    assert.ok(dialog.container.querySelector(".trellis-contact-row-github .trellis-contact-icon-github"));
+    const changeButton = dialog.container.querySelector(".trellis-saved-license-card > .geBtn");
+    assert.ok(changeButton);
+    assert.ok(dialog.container.querySelector(".trellis-saved-license-copy").compareDocumentPosition(changeButton) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
     assert.ok(supportButton.classList.contains("trellis-support-action"));
     assert.equal(supportButton.classList.contains("trellis-button-open"), false);
     assert.equal(supportButton.getAttribute("data-trellis-url"), "https://patreon.com/Benjamin980?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink");
@@ -1124,8 +1143,11 @@ test("Trellis splash assets and bootstrap wire the same enhancement into package
 	assert.match(splashCss, /\.trellis-avatar-control/);
 	assert.match(splashCss, /\.trellis-avatar-remove/);
 	assert.match(splashCss, /\.trellis-avatar-image[\s\S]*object-fit: cover/);
-	assert.match(splashCss, /grid-template-columns: 76px minmax\(0, 1fr\) auto/);
+	assert.match(splashCss, /grid-template-columns: 76px minmax\(0, 1fr\)/);
 	assert.match(splashCss, /grid-template-columns: 68px minmax\(0, 1fr\)/);
+	assert.match(splashCss, /\.trellis-card-heading[\s\S]*color: #0d3f2d/);
+	assert.match(splashCss, /\.trellis-contact-row[\s\S]*grid-template-columns: 24px minmax\(0, 1fr\)/);
+	assert.match(splashCss, /\.trellis-contact-icon-github[\s\S]*fill: #106139/);
 	assert.match(splashCss, /\.trellis-splash-actions button:last-child[\s\S]*margin-bottom: 0 !important/);
 	assert.match(splashCss, /trellis-splash-backdrop::before/);
 	assert.doesNotMatch(splashCss, /trellis-splash-backdrop::after/);
@@ -1139,6 +1161,8 @@ test("Trellis splash assets and bootstrap wire the same enhancement into package
 	assert.match(splashCss, /\.trellis-splash-identity[\s\S]*display: flex/);
 	assert.match(splashCss, /\.trellis-splash-brand-mark[\s\S]*trellis-splash-icon\.png/);
 	assert.match(splashCss, /\.trellis-license-obligation-italic[\s\S]*font-style: italic/);
+	assert.match(enhancementSource, /email: \['M4 6h16v12H4z'/);
+	assert.match(enhancementSource, /github: \['M12 2a10 10/);
 	assert.match(splashCss, /width: var\(--trellis-workspace-width, 100%\)/);
 	assert.match(enhancementSource, /trellis-splash-bg-image/);
 	assert.doesNotMatch(splashCss, /max-height: 820px/);

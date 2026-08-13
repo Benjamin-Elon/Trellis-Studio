@@ -282,8 +282,9 @@ test("garden dashboard disables garden tools outside Garden workspace", () => {
     assert.match(text, /\[entry\.prev, entry\.next\]\.forEach/);
     assert.match(text, /setYearActionControlsDisabled\(entry, true\);/);
     assert.doesNotMatch(text, /entry\.workspaceGardenBtn[\s\S]{0,120}setButtonDisabled/);
-    assert.match(text, /entry\.taskBoardSelect\.disabled = !taskApi \|\| taskBoards\.length < 2;/);
-    assert.match(text, /entry\.taskBoardSelect\.style\.display = taskBoards\.length > 1 \? "" : "none";/);
+    assert.match(text, /const showTaskBoardSelect = activeWorkspace === "tasks" && taskBoards\.length > 1;/);
+    assert.match(text, /entry\.taskBoardSelect\.disabled = !taskApi \|\| !showTaskBoardSelect;/);
+    assert.match(text, /entry\.taskBoardSelect\.style\.display = showTaskBoardSelect \? "" : "none";/);
 });
 
 test("garden dashboard toolbar exposes Garden Workspace Switcher with task badge and selector", () => {
@@ -306,14 +307,19 @@ test("garden dashboard toolbar exposes Garden Workspace Switcher with task badge
     assert.doesNotMatch(fullSource, /trellis-task-board-toolbar-badge/);
     assert.match(fullSource, /function taskBoardOptionLabel\(boardSummary\)/);
     assert.match(fullSource, /return String\(boardSummary && boardSummary\.name \|\| "Kanban"\);/);
+    assert.match(fullSource, /const TASK_BOARD_KEY = "KANBAN_BOARD";/);
+    assert.match(fullSource, /const LEGACY_TASK_BOARD_KEY = "MAIN_KANBAN_BOARD";/);
+    assert.match(fullSource, /function selectedTaskBoardIdForSelection\(\)/);
+    assert.match(fullSource, /findTaskBoardAncestor\(cell\)/);
     assert.doesNotMatch(fullSource, /count \? " \(" \+ count \+ "\)" : ""/);
     assert.doesNotMatch(fullSource, /years\.length \? " " \+ years\.join\(", "\) : ""/);
     assert.match(text, /workspaceGardenBtn\.addEventListener\("click", function \(\) \{ openGardenWorkspace\(activeToolbarModule, "garden"\); \}\);/);
     assert.match(text, /workspaceTasksBtn\.addEventListener\("click", function \(\) \{ openToolbarTaskBoard\(activeToolbarModule, taskBoardSelect\.value\); \}\);/);
     assert.match(text, /workspaceTeamBtn\.addEventListener\("click", function \(\) \{ openGardenWorkspace\(activeToolbarModule, "team"\); \}\);/);
     assert.match(text, /taskBoardSelect\.addEventListener\("change", function \(\) \{ if \(activeToolbarModule && taskBoardSelect\.value\) \{ saveRememberedTaskBoardId\(activeToolbarModule, taskBoardSelect\.value\); openToolbarTaskBoard\(activeToolbarModule, taskBoardSelect\.value\); \} \}\);/);
-    assert.match(text, /entry\.taskBoardSelect\.style\.display = taskBoards\.length > 1 \? "" : "none";/);
-    assert.match(text, /entry\.taskBoardSelect\.disabled = !taskApi \|\| taskBoards\.length < 2;/);
+    assert.match(text, /const showTaskBoardSelect = activeWorkspace === "tasks" && taskBoards\.length > 1;/);
+    assert.match(text, /entry\.taskBoardSelect\.style\.display = showTaskBoardSelect \? "" : "none";/);
+    assert.match(text, /entry\.taskBoardSelect\.disabled = !taskApi \|\| !showTaskBoardSelect;/);
     assert.match(text, /entry\.taskBoardSelect\.title = "Task Boards";/);
 });
 
@@ -342,9 +348,61 @@ test("garden dashboard toolbar persists the selected task board in local user st
     assert.match(text, /function saveRememberedTaskBoardId\(moduleCell, boardId\)/);
     assert.match(text, /if \(requestedBoardId\) saveRememberedTaskBoardId\(moduleCell, requestedBoardId\);/);
     assert.match(text, /if \(openedBoardId\) saveRememberedTaskBoardId\(moduleCell, openedBoardId\);/);
-    assert.match(text, /const preferredBoardId = selectedTaskBoardIdForGarden\(moduleCell, taskBoards, entry\.taskBoardSelect\.value\);/);
+    assert.match(text, /const preferredBoardId = selectedTaskBoardIdForGarden\(moduleCell, taskBoards, entry\.taskBoardSelect\.value, selectedTaskBoardIdForSelection\(\)\);/);
+    assert.match(text, /if \(taskBoardIdInList\(boards, selectedBoardId\)\) return String\(selectedBoardId \|\| ""\);/);
     assert.match(text, /if \(id && id === preferredBoardId\) selectedBoardId = id;/);
     assert.match(text, /if \(selectedBoardId\) entry\.taskBoardSelect\.value = selectedBoardId;/);
+});
+
+test("garden dashboard selected task board resolver is strict across selected cells", () => {
+    const TASK_BOARD_KEY = "KANBAN_BOARD";
+    const LEGACY_TASK_BOARD_KEY = "MAIN_KANBAN_BOARD";
+    const root = { id: "root" };
+    const boardA = { id: "board-a", attrs: { board_key: TASK_BOARD_KEY }, parent: root };
+    const boardB = { id: "board-b", attrs: { board_key: TASK_BOARD_KEY }, parent: root };
+    const legacyBoard = { id: "legacy-board", attrs: { board_key: LEGACY_TASK_BOARD_KEY }, parent: root };
+    const laneA = { id: "lane-a", parent: boardA };
+    const cardA = { id: "card-a", parent: laneA };
+    const taskModule = { id: "task-module", attrs: { task_module: "1" }, parent: root };
+
+    function getCellAttr(cell, key, def = "") {
+        return cell && cell.attrs && Object.prototype.hasOwnProperty.call(cell.attrs, key) ? cell.attrs[key] : def;
+    }
+    function cellId(cell) {
+        return cell && cell.id || "";
+    }
+    function isTaskBoard(cell) {
+        const key = getCellAttr(cell, "board_key", "");
+        return key === TASK_BOARD_KEY || key === LEGACY_TASK_BOARD_KEY;
+    }
+    function findTaskBoardAncestor(cell) {
+        let cur = cell;
+        while (cur) {
+            if (isTaskBoard(cur)) return cur;
+            cur = cur.parent || null;
+        }
+        return null;
+    }
+    function selectedTaskBoardIdForSelection(selected) {
+        if (!selected.length) return "";
+        let selectedBoardId = "";
+        for (const cell of selected) {
+            const board = findTaskBoardAncestor(cell);
+            const id = cellId(board);
+            if (!id) return "";
+            if (selectedBoardId && selectedBoardId !== id) return "";
+            selectedBoardId = id;
+        }
+        return selectedBoardId;
+    }
+
+    assert.equal(selectedTaskBoardIdForSelection([boardA]), "board-a");
+    assert.equal(selectedTaskBoardIdForSelection([cardA]), "board-a");
+    assert.equal(selectedTaskBoardIdForSelection([laneA, cardA]), "board-a");
+    assert.equal(selectedTaskBoardIdForSelection([legacyBoard]), "legacy-board");
+    assert.equal(selectedTaskBoardIdForSelection([cardA, boardB]), "");
+    assert.equal(selectedTaskBoardIdForSelection([taskModule]), "");
+    assert.equal(selectedTaskBoardIdForSelection([cardA, taskModule]), "");
 });
 
 test("garden dashboard toolbar marks Irrigation active with existing blue", () => {
