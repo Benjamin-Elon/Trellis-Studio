@@ -10,7 +10,7 @@ from typing import Any
 
 from .jsonio import read_json, write_json
 from .migrations import apply_migrations, pending_migrations
-from .schema import CITY_COLUMNS, COMPANION_COLUMNS, COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS, COMPANION_LAYOUT_TEMPLATES, PLANT_COLUMNS, PLANTING_WINDOW_REFERENCE_COLUMNS, VARIETY_MATURITY_CLASSES, WEATHER_TABLES
+from .schema import CITY_COLUMNS, COMPANION_COLUMNS, COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS, COMPANION_LAYOUT_TEMPLATES, PLANT_COLUMNS, PLANT_GROWTH_STAGE_COLUMNS, PLANTING_WINDOW_REFERENCE_COLUMNS, VARIETY_MATURITY_CLASSES, WEATHER_TABLES
 from .validator import normalize_key, validate_run
 from .weather import checksum_rows
 
@@ -186,7 +186,7 @@ def _unique_paths(paths: list[Path]) -> list[Path]:
 
 def _apply_order() -> list[str]:
     return [
-        "Plants", "Cities", "PlantAllowedMethodCategories", "PlantVarieties",
+        "Plants", "Cities", "PlantAllowedMethodCategories", "PlantVarieties", "PlantGrowthStages",
         "Companions", "CompanionLayoutGroupDefaults", "CompanionEvidence", "PlantTaskTemplates",
         "VarietyTaskTemplates", "PlantingWindowReferences", "CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily",
     ]
@@ -201,6 +201,8 @@ def _apply_table(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]
         return _replace_allowed_methods(conn, rows)
     if table == "PlantVarieties":
         return _upsert_varieties(conn, rows)
+    if table == "PlantGrowthStages":
+        return _upsert_growth_stages(conn, rows)
     if table == "Companions":
         return _upsert_companions(conn, rows)
     if table == "CompanionLayoutGroupDefaults":
@@ -299,6 +301,52 @@ def _normalize_maturity_class(value: Any) -> str | None:
     if normalized and normalized not in VARIETY_MATURITY_CLASSES:
         raise ValueError(f"Invalid PlantVarieties.maturity_class: {value}")
     return normalized if normalized in VARIETY_MATURITY_CLASSES else None
+
+
+def _normalize_stage_key(value: Any) -> str:
+    return "_".join("".join(ch.lower() if ch.isalnum() else " " for ch in str(value or "").strip()).split())
+
+
+def _upsert_growth_stages(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
+    now = datetime.now(timezone.utc).isoformat()
+    writable = [column for column in (
+        "plant_id", "stage_key", "stage_label", "gdd_ratio", "spacing_ratio",
+        "plant_diameter_ratio", "plant_height_ratio", "sort_order", "active", "is_default",
+        "created_at", "updated_at",
+    ) if column in PLANT_GROWTH_STAGE_COLUMNS]
+    for raw in rows:
+        plant_id = _resolve_plant_id(conn, raw)
+        stage_key = _normalize_stage_key(raw.get("stage_key") or raw.get("stage_label"))
+        if not stage_key:
+            raise ValueError("PlantGrowthStages.stage_key is required")
+        existing = conn.execute("SELECT stage_id FROM PlantGrowthStages WHERE plant_id=? AND stage_key=?", [plant_id, stage_key]).fetchone()
+        payload = {
+            "plant_id": plant_id,
+            "stage_key": stage_key,
+            "stage_label": str(raw.get("stage_label") or stage_key).strip(),
+            "gdd_ratio": raw.get("gdd_ratio"),
+            "spacing_ratio": raw.get("spacing_ratio"),
+            "plant_diameter_ratio": raw.get("plant_diameter_ratio"),
+            "plant_height_ratio": raw.get("plant_height_ratio"),
+            "sort_order": raw.get("sort_order") if raw.get("sort_order") is not None else 0,
+            "active": raw.get("active") if raw.get("active") is not None else 1,
+            "is_default": raw.get("is_default") if raw.get("is_default") is not None else 0,
+            "updated_at": now,
+        }
+        if existing:
+            assignments = [column for column in writable if column not in {"created_at"}]
+            conn.execute(
+                "UPDATE PlantGrowthStages SET " + ", ".join(f"{column}=?" for column in assignments) + " WHERE stage_id=?",
+                [payload.get(column) for column in assignments] + [existing["stage_id"]],
+            )
+        else:
+            payload["created_at"] = now
+            insert_cols = [column for column in writable if column in payload]
+            conn.execute(
+                f"INSERT INTO PlantGrowthStages ({', '.join(insert_cols)}) VALUES ({', '.join('?' for _ in insert_cols)})",
+                [payload.get(column) for column in insert_cols],
+            )
+    return len(rows)
 
 
 def _upsert_companions(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
@@ -462,6 +510,10 @@ def _existing_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> 
             plant_id = row.get("plant_id") or _find_id_by_name(conn, "Plants", "plant_id", "plant_name", row.get("plant_name"))
             variety_id = row.get("variety_id") or (_find_variety_id(conn, int(plant_id), row.get("variety_name")) if plant_id else None)
             return conn.execute("SELECT * FROM PlantVarieties WHERE variety_id=?", [variety_id]).fetchone() if variety_id else None
+        if table == "PlantGrowthStages":
+            plant_id = row.get("plant_id") or _find_id_by_name(conn, "Plants", "plant_id", "plant_name", row.get("plant_name"))
+            stage_key = _normalize_stage_key(row.get("stage_key") or row.get("stage_label"))
+            return conn.execute("SELECT * FROM PlantGrowthStages WHERE plant_id=? AND stage_key=?", [plant_id, stage_key]).fetchone() if plant_id and stage_key else None
         if table == "PlantAllowedMethodCategories":
             plant_id = row.get("plant_id") or _find_id_by_name(conn, "Plants", "plant_id", "plant_name", row.get("plant_name"))
             return conn.execute("SELECT * FROM PlantAllowedMethodCategories WHERE plant_id=? AND method_category_id=?", [plant_id, row.get("method_category_id")]).fetchone() if plant_id else None
@@ -534,6 +586,8 @@ def _load_generated_index(generated_dir: Path) -> dict[str, Any]:
 def _identity_label(conn: sqlite3.Connection, table: str, row: dict[str, Any], generated_index: dict[str, Any]) -> str:
     if table == "PlantVarieties":
         return f"{row.get('plant_name') or _db_plant_name(conn, row.get('plant_id'))} / {row.get('variety_name') or row.get('variety_id')}"
+    if table == "PlantGrowthStages":
+        return f"{row.get('plant_name') or _db_plant_name(conn, row.get('plant_id'))} / {row.get('stage_label') or row.get('stage_key')}"
     if table == "PlantAllowedMethodCategories":
         return f"{row.get('plant_name') or _db_plant_name(conn, row.get('plant_id'))} / {row.get('method_category_id')}"
     if table == "PlantTaskTemplates":

@@ -5,7 +5,7 @@ from typing import Any
 
 SECTION_TABLES = {
     "cities": ["Cities", "CityWeatherMonthly", "CityWeatherForecastDaily"],
-    "crops": ["Plants", "PlantAllowedMethodCategories", "PlantVarieties", "PlantTaskTemplates", "VarietyTaskTemplates"],
+    "crops": ["Plants", "PlantAllowedMethodCategories", "PlantVarieties", "PlantGrowthStages", "PlantTaskTemplates", "VarietyTaskTemplates"],
     "companions": ["Companions", "CompanionEvidence"],
     "sowing_windows": ["PlantingWindowReferences"],
 }

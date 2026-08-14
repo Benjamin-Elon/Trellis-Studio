@@ -21,6 +21,7 @@ from .schema import (
     PLANT_COLUMNS,
     PLANT_FIELD_TYPES,
     PLANT_FLAG_FIELDS,
+    PLANT_GROWTH_STAGE_COLUMNS,
     PLANT_INTEGER_FIELDS,
     PLANT_VARIETY_COLUMNS,
     PLANT_REAL_FIELDS,
@@ -277,6 +278,30 @@ def validate_row(
         maturity_class = str(row.get("maturity_class") or "").strip().casefold()
         if maturity_class and maturity_class not in VARIETY_MATURITY_CLASSES:
             errors.append(f"{prefix}.maturity_class must be one of: {', '.join(sorted(VARIETY_MATURITY_CLASSES))}.")
+    elif table == "PlantGrowthStages":
+        unknown = sorted(set(row) - PLANT_GROWTH_STAGE_COLUMNS)
+        if unknown:
+            errors.append(f"{prefix} has unknown columns: {unknown}")
+        if not row.get("plant_id") and not str(row.get("plant_name") or "").strip():
+            errors.append(f"{prefix} needs plant_id or plant_name.")
+        stage_key = str(row.get("stage_key") or "").strip()
+        if not stage_key:
+            errors.append(f"{prefix}.stage_key is required.")
+        elif not all(ch.isalnum() or ch == "_" for ch in stage_key):
+            errors.append(f"{prefix}.stage_key may contain only letters, numbers, and underscores.")
+        if not str(row.get("stage_label") or "").strip():
+            errors.append(f"{prefix}.stage_label is required.")
+        for key in ("gdd_ratio", "spacing_ratio", "plant_diameter_ratio", "plant_height_ratio"):
+            if row.get(key) in (None, "") and key != "gdd_ratio":
+                continue
+            value = _coerce_number(row.get(key))
+            if value is None or value <= 0:
+                errors.append(f"{prefix}.{key} must be a positive number.")
+        for key in ("sort_order", "active", "is_default"):
+            if row.get(key) in (None, ""):
+                continue
+            if _coerce_integer(row.get(key)) is None:
+                errors.append(f"{prefix}.{key} must be an integer.")
     elif table == "CompanionEvidence":
         if not row.get("relation_id") and not (row.get("p1") and row.get("p2")):
             errors.append(f"{prefix} needs relation_id or p1/p2.")
@@ -460,6 +485,9 @@ def _validate_db_dependencies(generated_dir: Path, db_path: Path) -> dict[str, l
             errors.append(f"Unknown method_category_id: {row.get('method_category_id')}")
         if _norm(row.get("plant_name")) not in generated_plants | db_plants and not row.get("plant_id"):
             errors.append(f"PlantAllowedMethodCategories cannot resolve plant: {row.get('plant_name')}")
+    for row in read_json(generated_dir / "PlantGrowthStages.json", []) or []:
+        if _norm(row.get("plant_name")) not in generated_plants | db_plants and not row.get("plant_id"):
+            errors.append(f"PlantGrowthStages cannot resolve plant: {row.get('plant_name')}")
     for table in ("PlantTaskTemplates", "VarietyTaskTemplates"):
         for row in read_json(generated_dir / f"{table}.json", []) or []:
             if row.get("method_id") not in methods:

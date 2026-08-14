@@ -150,6 +150,9 @@ class TrellisSeederTests(unittest.TestCase):
             self.assertIn("killtemp_c", plant_cols)
             variety_cols = [row[1] for row in conn.execute("PRAGMA table_info(PlantVarieties);")]
             self.assertIn("maturity_class", variety_cols)
+            growth_stage_cols = [row[1] for row in conn.execute("PRAGMA table_info(PlantGrowthStages);")]
+            self.assertIn("gdd_ratio", growth_stage_cols)
+            self.assertIn("plant_height_ratio", growth_stage_cols)
             companion_cols = [row[1] for row in conn.execute("PRAGMA table_info(Companions);")]
             self.assertIn("source_plant_id", companion_cols)
             self.assertIn("companion_plant_id", companion_cols)
@@ -359,6 +362,29 @@ class TrellisSeederTests(unittest.TestCase):
             "overrides": {"days_maturity": 45},
         })
         self.assertTrue(any("maturity_class" in error for error in invalid["errors"]))
+
+    def test_growth_stage_validation_requires_positive_ratios(self) -> None:
+        valid = validate_row("PlantGrowthStages", {
+            "plant_name": "Lettuce",
+            "stage_key": "microgreens",
+            "stage_label": "Microgreens",
+            "gdd_ratio": 0.2,
+            "spacing_ratio": 0.45,
+            "plant_diameter_ratio": 0.45,
+            "plant_height_ratio": 0.45,
+            "sort_order": 1,
+            "active": 1,
+            "is_default": 0,
+        })
+        self.assertEqual(valid["errors"], [])
+        invalid = validate_row("PlantGrowthStages", {
+            "plant_name": "Lettuce",
+            "stage_key": "bad stage",
+            "stage_label": "Bad",
+            "gdd_ratio": 0,
+        })
+        self.assertTrue(any("stage_key" in error for error in invalid["errors"]))
+        self.assertTrue(any("gdd_ratio" in error for error in invalid["errors"]))
 
     def test_openai_settings_come_from_environment(self) -> None:
         original = {key: os.environ.get(key) for key in ("OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_REASONING_EFFORT")}
@@ -1851,6 +1877,18 @@ class TrellisSeederTests(unittest.TestCase):
             "maturity_class": "early",
             "overrides": {"days_maturity": 30},
         }])
+        write_json(generated / "PlantGrowthStages.json", [{
+            "plant_name": "Seeder Test Crop",
+            "stage_key": "microgreens",
+            "stage_label": "Microgreens",
+            "gdd_ratio": 0.2,
+            "spacing_ratio": 0.45,
+            "plant_diameter_ratio": 0.45,
+            "plant_height_ratio": 0.45,
+            "sort_order": 1,
+            "active": 1,
+            "is_default": 0,
+        }])
         write_json(generated / "PlantTaskTemplates.json", [{
             "plant_name": "Seeder Test Crop",
             "method_id": "direct_sow.field",
@@ -1941,6 +1979,7 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
         diff = create_diff_report(run_dir, self.db_path)
         self.assertIn("Plants", diff["tables"])
+        self.assertIn("PlantGrowthStages", diff["tables"])
         self.assertIn("PlantingWindowReferences", diff["tables"])
         variety_template_diff = diff["tables"]["VarietyTaskTemplates"][0]
         self.assertIn("Seeder Test Crop / Seeder Test Variety / direct_sow.field", variety_template_diff["identity"])
@@ -1957,12 +1996,14 @@ class TrellisSeederTests(unittest.TestCase):
             evidence_count = conn.execute("SELECT COUNT(*) FROM CompanionEvidence").fetchone()[0]
             window_count = conn.execute("SELECT COUNT(*) FROM PlantingWindowReferences WHERE plant_id=? AND city_id=?", [plant_id, city_id]).fetchone()[0]
             variety_class = conn.execute("SELECT maturity_class FROM PlantVarieties WHERE plant_id=? AND variety_name='Seeder Test Variety'", [plant_id]).fetchone()[0]
+            stage_row = conn.execute("SELECT gdd_ratio, spacing_ratio, plant_height_ratio FROM PlantGrowthStages WHERE plant_id=? AND stage_key='microgreens'", [plant_id]).fetchone()
             variety_template_count = conn.execute("SELECT COUNT(*) FROM VarietyTaskTemplates").fetchone()[0]
             self.assertEqual(weather_count, 1)
             self.assertEqual(monthly_count, 1)
             self.assertGreaterEqual(evidence_count, 1)
             self.assertEqual(window_count, 1)
             self.assertEqual(variety_class, "early")
+            self.assertEqual(tuple(stage_row), (0.2, 0.45, 0.45))
             self.assertGreaterEqual(variety_template_count, 1)
         references = load_planting_window_references(self.db_path)
         self.assertTrue(any(row["plant_name"] == "Seeder Test Crop" and row["city_name"] == "Seeder Test City" for row in references))

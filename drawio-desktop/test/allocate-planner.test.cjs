@@ -131,6 +131,8 @@ test("Allocate plugin owns launch, draft review, and one-transaction create cont
     assert.match(SOURCE, /buildWeekOpportunityModel/);
     assert.match(SOURCE, /listPlantingFootprints/);
     assert.match(SOURCE, /currentBedContext/);
+    assert.match(SOURCE, /vegHeightCm: plantResolution\.plant\.veg_height_cm \|\| null/);
+    assert.match(SOURCE, /vegHeightCm: d\.geometry\.vegHeightCm \|\| null/);
 });
 
 test("Year Planner no longer owns the Allocate launcher", () => {

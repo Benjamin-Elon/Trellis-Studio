@@ -25,6 +25,7 @@
         resolveHarvestWindowDays,
         isPerennialPlant,
         pickFrostByRisk,
+        pickFallFrostByRisk,
         PolicyFlags,
         ScheduleInputs,
         asCoolingThresholdC,
@@ -193,15 +194,6 @@
             cur = addDaysUTC(cur, 1);
         }
         return { date: cur, gdd: acc, reached: acc >= targetGDD, scaleFactor: scale };
-    }
-    function pickFallFrostByRisk(city, risk = 'p50') {
-        const p90 = finiteNumberOrNull(city?.first_fall_frost_p90_doy);
-        const p50 = finiteNumberOrNull(city?.first_fall_frost_p50_doy);
-        const p10 = finiteNumberOrNull(city?.first_fall_frost_p10_doy);
-        const plain = finiteNumberOrNull(city?.first_fall_frost_doy);
-        if (risk === 'p90') return p90 ?? p50 ?? plain ?? null;
-        if (risk === 'p10') return p10 ?? p50 ?? plain ?? null;
-        return p50 ?? plain ?? p90 ?? p10 ?? null;
     }
     function dateFromDoyAfter(date, doy, scanEndHard) {
         const normalized = Math.max(1, Math.min(366, Math.round(Number(doy))));

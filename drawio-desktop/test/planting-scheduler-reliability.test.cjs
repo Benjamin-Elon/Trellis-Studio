@@ -142,6 +142,8 @@ function makeLangleyColdCity(overrides = {}) {
     return new hooks.CityClimate(row);
 }
 
+const LANGLEY_LATE_STORED_FALL_FROST = { first_fall_frost_p50_doy: 345, first_fall_frost_doy: 345 };
+
 function makeDailyClimateRange(startISO, endISO, defaultRecord, overrides = {}) {
     const days = {};
     for (let cur = new Date(`${startISO}T00:00:00Z`), end = new Date(`${endISO}T00:00:00Z`); cur <= end; cur.setUTCDate(cur.getUTCDate() + 1)) {
@@ -415,6 +417,60 @@ test('schedule patch persists transplant-days only for explicit cell override', 
     assert.equal(overridePatch.days_transplant, '21');
 });
 
+test('schedule patch persists growth stage metadata and stage-adjusted layout', () => {
+    const basePlant = makePlant({
+        plant_name: 'Lettuce',
+        days_maturity: 40,
+        spacing_cm: 30,
+        spacing_x_cm: 30,
+        spacing_y_cm: 40,
+        veg_diameter_cm: 20,
+        veg_height_cm: 10
+    });
+    const plant = hooks.applyGrowthStageToPlant(basePlant, hooks.normalizeGrowthStage({
+        stage_key: 'microgreens',
+        stage_label: 'Microgreens',
+        gdd_ratio: 0.25
+    }));
+    const inputs = makeInputs({ plant });
+    const result = hooks.computeScheduleResult(inputs);
+    const patch = hooks.buildScheduleAttributePatch(inputs, result);
+
+    assert.equal(patch.label, 'Lettuce - Microgreens group');
+    assert.equal(patch.days_maturity, '10');
+    assert.equal(patch.growth_stage_key, 'microgreens');
+    assert.equal(patch.growth_stage_label, 'Microgreens');
+    assert.equal(patch.growth_stage_gdd_ratio, '0.25');
+    assert.equal(patch.growth_stage_spacing_ratio, '0.5');
+    assert.equal(patch.growth_stage_diameter_ratio, '0.5');
+    assert.equal(patch.growth_stage_height_ratio, '0.5');
+    assert.equal(patch.spacing_cm, '15');
+    assert.equal(patch.spacing_x_cm, '15');
+    assert.equal(patch.spacing_y_cm, '20');
+    assert.equal(patch.veg_diameter_cm, '10');
+    assert.equal(patch.veg_height_cm, '5');
+});
+
+test('growth stage maturity scaling changes computed harvest dates', () => {
+    const basePlant = makePlant({
+        days_maturity: 40,
+        days_germ: 0,
+        harvest_window_days: 7
+    });
+    const stagePlant = hooks.applyGrowthStageToPlant(basePlant, hooks.normalizeGrowthStage({
+        stage_key: 'microgreens',
+        stage_label: 'Microgreens',
+        gdd_ratio: 0.25
+    }));
+
+    const baseResult = hooks.computeScheduleResult(makeInputs({ plant: basePlant, startISO: '2026-04-01', harvestWindowDays: 7 }));
+    const stageResult = hooks.computeScheduleResult(makeInputs({ plant: stagePlant, startISO: '2026-04-01', harvestWindowDays: 7 }));
+
+    assert.equal(baseResult.rows[0].harvStart, '2026-05-11');
+    assert.equal(stageResult.rows[0].harvStart, '2026-04-11');
+    assert.equal(stageResult.lastScheduledHarvestEndISO, '2026-04-18');
+});
+
 test('schedule patch ignores transplant-days override for methods without lead days', () => {
     const plant = makePlant({ days_transplant: 21 });
     const cases = [
@@ -460,6 +516,22 @@ test('lifecycle timeline shows annual direct sow and harvest milestones', () => 
     assert.equal(model.visibleMilestones.find(m => m.stage === 'HARVEST_START').iso, '2026-05-01');
     assert.equal(model.visibleMilestones.find(m => m.stage === 'HARVEST_END').iso, '2026-05-08');
     assert.equal(model.visibleMilestones.find(m => m.stage === 'HARVEST_START').tooltip, 'HS - First harvest: 2026-05-01');
+});
+
+test('lifecycle timeline exposes latest harvest as a separate non-task boundary', () => {
+    const plant = makePlant();
+    const model = hooks.buildLifecycleTimelineViewModel({
+        plant,
+        seasonStartYear: 2026,
+        startISO: '2026-04-01',
+        latestHarvestEndISO: '2026-11-30',
+        scheduleResult: hooks.computeScheduleResult(makeInputs({ plant }))
+    });
+    assert.equal(model.latestHarvestBoundary.iso, '2026-11-30');
+    assert.equal(model.latestHarvestBoundary.label, 'Latest harvest');
+    assert.equal(model.latestHarvestBoundary.abbr, 'LH');
+    assert.equal(model.latestHarvestBoundary.tooltip, 'Latest harvest: 2026-11-30');
+    assert.equal(model.visibleMilestones.some(milestone => milestone.stage === 'LATEST_HARVEST_END'), false);
 });
 
 test('lifecycle timeline includes transplant milestone for transplant schedules', () => {
@@ -684,6 +756,71 @@ test('cooling trigger returns null without an observed warm-to-cool transition',
     assert.equal(crossing, null);
 });
 
+test('spring frost resolver prefers stored p50 before monthly inference', () => {
+    const city = makeLangleyColdCity({ last_spring_frost_doy: null, last_spring_frost_p50_doy: 80 });
+    const resolved = hooks.resolveSpringFrostByRisk(city, 'p50');
+    assert.equal(resolved.source, 'stored');
+    assert.equal(resolved.field, 'last_spring_frost_p50_doy');
+    assert.equal(resolved.doy, 80);
+});
+
+test('spring frost resolver infers missing frost dates from monthly lows', () => {
+    const city = makeLangleyColdCity({ last_spring_frost_doy: null });
+    const resolved = hooks.resolveSpringFrostByRisk(city, 'p50');
+    const tip = hooks.resolveFrostRiskTip(city, 'p50', 2026);
+    assert.equal(resolved.source, 'inferred_monthly_normals');
+    assert.equal(resolved.bufferDays, 14);
+    assert.ok(resolved.doy >= 105 && resolved.doy <= 130, JSON.stringify(resolved));
+    assert.match(tip.text, /^Inferred /);
+    assert.match(tip.tooltip, /monthly low normals/);
+});
+
+test('spring frost resolver handles warm and unusable monthly normals', () => {
+    const warm = new hooks.CityClimate(Object.fromEntries(
+        Array.from({ length: 12 }, (_, index) => [`avg_monthly_low_c${index + 1}`, 3])
+    ));
+    const missing = new hooks.CityClimate({ city_name: 'Missing Frost City' });
+    assert.deepEqual(
+        (({ source, doy }) => ({ source, doy }))(hooks.resolveSpringFrostByRisk(warm, 'p50')),
+        { source: 'inferred_monthly_normals', doy: 1 }
+    );
+    assert.deepEqual(
+        (({ source, doy }) => ({ source, doy }))(hooks.resolveSpringFrostByRisk(missing, 'p50')),
+        { source: 'fallback', doy: 105 }
+    );
+});
+
+test('fall frost resolver prefers stored p50 before monthly inference', () => {
+    const city = makeLangleyColdCity({ first_fall_frost_p50_doy: 300 });
+    const resolved = hooks.resolveFallFrostByRisk(city, 'p50');
+    assert.equal(resolved.source, 'stored');
+    assert.equal(resolved.field, 'first_fall_frost_p50_doy');
+    assert.equal(resolved.doy, 300);
+});
+
+test('fall frost resolver infers missing frost dates from monthly lows', () => {
+    const city = makeLangleyColdCity();
+    const resolved = hooks.resolveFallFrostByRisk(city, 'p50');
+    assert.equal(resolved.source, 'inferred_monthly_normals');
+    assert.equal(resolved.bufferDays, 14);
+    assert.ok(resolved.doy >= 275 && resolved.doy <= 290, JSON.stringify(resolved));
+});
+
+test('fall frost resolver returns null without stored dates or a monthly crossing', () => {
+    const warm = new hooks.CityClimate(Object.fromEntries(
+        Array.from({ length: 12 }, (_, index) => [`avg_monthly_low_c${index + 1}`, 3])
+    ));
+    const missing = new hooks.CityClimate({ city_name: 'Missing Fall Frost City' });
+    assert.deepEqual(
+        (({ source, doy }) => ({ source, doy }))(hooks.resolveFallFrostByRisk(warm, 'p50')),
+        { source: 'none', doy: null }
+    );
+    assert.deepEqual(
+        (({ source, doy }) => ({ source, doy }))(hooks.resolveFallFrostByRisk(missing, 'p50')),
+        { source: 'none', doy: null }
+    );
+});
+
 test('annual crop cooling threshold does not force a fall-only sowing season', () => {
     const plant = makePlant({
         plant_name: 'Beet',
@@ -881,7 +1018,7 @@ test('cold shoulder-season daily lows block annual survival outside winter month
 test('Langley-like sweet corn reports insufficient GDD before lethal cold instead of winter survival', () => {
     const plant = makePlant({ plant_name: 'Sweet Corn', days_maturity: 78, gdd_to_maturity: 1250, tbase_c: 10, tmin_c: 0, killtemp_c: null, tmax_c: 38, soil_temp_min_plant_c: 16 });
     const policy = new hooks.PolicyFlags({ useSpringFrostGate: false, useSoilTempGate: true, soilGateThresholdC: 16, soilGateConsecutiveDays: 3 });
-    const planner = new hooks.Planner(makeInputs({ plant, city: makeLangleyColdCity(), startISO: '2026-01-01', policy }));
+    const planner = new hooks.Planner(makeInputs({ plant, city: makeLangleyColdCity(LANGLEY_LATE_STORED_FALL_FROST), startISO: '2026-01-01', policy }));
     const feasibility = planner.isSowFeasible(new Date('2026-04-29T00:00:00Z'));
     assert.equal(feasibility.ok, false);
     assert.match(feasibility.reason, /^insufficient_gdd_before_cold\(gdd [0-9.]+<1250\.0 deadline 2026-11-/);
@@ -890,7 +1027,7 @@ test('Langley-like sweet corn reports insufficient GDD before lethal cold instea
 test('Langley-like before-cold diagnostics summarize usable GDD instead of annual estimate', async () => {
     const plant = makePlant({ plant_name: 'Sweet Corn', days_maturity: 78, gdd_to_maturity: 1250, tbase_c: 10, tmin_c: 0, killtemp_c: null, tmax_c: 38, soil_temp_min_plant_c: 16 });
     const policy = new hooks.PolicyFlags({ useSpringFrostGate: false, useSoilTempGate: true, soilGateThresholdC: 16, soilGateConsecutiveDays: 3 });
-    const inputs = makeInputs({ plant, city: makeLangleyColdCity(), startISO: '', policy });
+    const inputs = makeInputs({ plant, city: makeLangleyColdCity(LANGLEY_LATE_STORED_FALL_FROST), startISO: '', policy });
     const rows = await hooks.explainFeasibilityOverSeason(inputs, 400, false);
     const summary = hooks.buildFeasibilityBlockingSummary(inputs, rows);
     assert.match(summary, /Primary blocker after frost\/soil readiness: insufficient_gdd_before_cold/);
@@ -926,9 +1063,9 @@ test('explicit kill temperature changes the cold GDD deadline', () => {
 
 test('heated greenhouse can push lethal cold deadline later and rescue GDD maturity', () => {
     const plant = makePlant({ days_maturity: null, gdd_to_maturity: 1150, tbase_c: 10, tmin_c: 0, killtemp_c: 0, tmax_c: 40, harvest_window_days: 7 });
-    const open = new hooks.Planner(makeInputs({ plant, city: makeLangleyColdCity(), startISO: '2026-04-29' })).isSowFeasible(new Date('2026-04-29T00:00:00Z'));
+    const open = new hooks.Planner(makeInputs({ plant, city: makeLangleyColdCity(LANGLEY_LATE_STORED_FALL_FROST), startISO: '2026-04-29' })).isSowFeasible(new Date('2026-04-29T00:00:00Z'));
     const protectedBed = { seasonExtension: 'heated_greenhouse' };
-    const protectedResult = new hooks.Planner(makeInputs({ plant, city: makeLangleyColdCity(), startISO: '2026-04-29', bedProfile: protectedBed })).isSowFeasible(new Date('2026-04-29T00:00:00Z'));
+    const protectedResult = new hooks.Planner(makeInputs({ plant, city: makeLangleyColdCity(LANGLEY_LATE_STORED_FALL_FROST), startISO: '2026-04-29', bedProfile: protectedBed })).isSowFeasible(new Date('2026-04-29T00:00:00Z'));
     assert.match(open.reason, /^insufficient_gdd_before_cold/);
     assert.equal(protectedResult.ok, true);
 });
@@ -999,6 +1136,32 @@ test('warning-tolerant annual schedule scales GDD only within cap', () => {
     assert.ok(warning, JSON.stringify(result.warnings));
     assert.ok(warning.scaleFactor > 1 && warning.scaleFactor <= 2, JSON.stringify(warning));
     assert.match(warning.message, /scaled GDD/);
+});
+
+test('warning-tolerant annual schedule uses inferred fall frost as thermal deadline', () => {
+    const city = makeLangleyColdCity();
+    const inferred = hooks.resolveFallFrostByRisk(city, 'p50');
+    const plant = makePlant({ days_maturity: null, gdd_to_maturity: 3000, tbase_c: 5, tmin_c: -30, tmax_c: 45 });
+    const policy = new hooks.PolicyFlags({ annualCrossYearHarvestAllowed: true });
+    const result = hooks.computeScheduleResult(makeInputs({ plant, city, startISO: '2026-01-01', policy }));
+    const warning = result.warnings.find(item => item.type === 'insufficient_gdd_scaled_fallback');
+    assert.equal(inferred.source, 'inferred_monthly_normals');
+    assert.ok(warning, JSON.stringify(result.warnings));
+    assert.equal(warning.deadlineSource, 'fall frost');
+    assert.equal(warning.deadlineISO, `2026-${String(new Date(Date.UTC(2026, 0, inferred.doy)).getUTCMonth() + 1).padStart(2, '0')}-${String(new Date(Date.UTC(2026, 0, inferred.doy)).getUTCDate()).padStart(2, '0')}`);
+});
+
+test('warning-tolerant annual schedule does not invent fall frost without a crossing', () => {
+    const city = makeCity(20);
+    city.first_fall_frost_doy = null;
+    const inferred = hooks.resolveFallFrostByRisk(city, 'p50');
+    const plant = makePlant({ days_maturity: null, gdd_to_maturity: 15000, tbase_c: 5, tmin_c: -30, tmax_c: 45 });
+    const policy = new hooks.PolicyFlags({ annualCrossYearHarvestAllowed: true });
+    const result = hooks.computeScheduleResult(makeInputs({ plant, city, startISO: '2026-01-01', policy, harvestWindowDays: 0 }));
+    const warning = result.warnings.find(item => item.type === 'insufficient_gdd_scaled_fallback');
+    assert.equal(inferred.source, 'none');
+    assert.ok(warning, JSON.stringify(result.warnings));
+    assert.equal(warning.deadlineSource, 'scan hard end');
 });
 
 test('warning-tolerant annual schedule scales GDD before lethal cold when within cap', () => {
@@ -1220,6 +1383,37 @@ test('overwinter crop can mature in the following year', () => {
         seasonEndISO: '2027-12-31'
     }));
     assert.equal(result.rows[0].harvStart, '2027-06-22');
+});
+
+test('Langley garlic uses inferred spring frost date for cooling-gate exemption', () => {
+    const plant = makePlant({
+        plant_name: 'Garlic',
+        days_maturity: 120,
+        gdd_to_maturity: null,
+        tmin_c: -15,
+        overwinter_ok: 1,
+        start_cooling_threshold_c: 7
+    });
+    const city = makeLangleyColdCity({ last_spring_frost_doy: null });
+    const frost = hooks.resolveSpringFrostByRisk(city, 'p50');
+    assert.equal(frost.source, 'inferred_monthly_normals');
+    assert.doesNotThrow(() => hooks.computeScheduleResult(makeInputs({
+        plant,
+        city,
+        startISO: '2026-02-01',
+        seasonEndISO: '2027-12-31',
+        policy: new hooks.PolicyFlags({
+            useSpringFrostGate: true,
+            useSoilTempGate: false,
+            overwinterAllowed: true
+        })
+    })));
+    const seasons = hooks.computeAnnualSowingSeasons({
+        ...makeAutoWindowParams({ plant, city, year: 2026 }),
+        useSpringFrostGate: true,
+        lastSpringFrostDOY: frost.doy
+    }).seasons;
+    assert.ok(seasons.some(window => window.startISO <= '2026-02-01' && window.endISO >= '2026-02-01'), JSON.stringify(seasons));
 });
 
 test('annual sowing seasons derive one continuous season-bound window', () => {
@@ -2131,6 +2325,8 @@ test('sowing season change refreshes derived UI after harvest recomputation', ()
     const handlerBody = source.slice(handlerStart, handlerEnd);
     const harvestIndex = handlerBody.indexOf('await recomputeLastHarvestFromSchedule()');
     const refreshIndex = handlerBody.indexOf('await refreshTasksTabUI()');
+    assert.doesNotMatch(handlerBody, /syncSeasonStartYearFromPrimaryDate/, 'season selection should not mutate the selected year from the visible date');
+    assert.match(handlerBody, /clampPrimaryDateToSelectedYear\(\);[\s\S]*formState\.startISO = internalSowDateISO\(startInput\.value\)/, 'season selection should clamp the visible date to the selected year');
     assert.ok(harvestIndex >= 0, 'season change should recompute harvest before refreshing dependent UI');
     assert.ok(refreshIndex > harvestIndex, 'task/timeline refresh should run after harvest recomputation');
     assert.equal(handlerBody.includes('await updateTaskPreview()'), false, 'season change should use shared task/timeline refresh orchestration');
@@ -2169,12 +2365,14 @@ test('schedule summary state uses perennial and annual harvest semantics', () =>
         lastHarvestISO: '2026-05-08'
     });
     assert.equal(annual.crop, 'Tomato / Roma');
+    assert.equal(annual.context, 'Test City / 2026');
     assert.equal(annual.feasibility.status, 'feasible');
-    assert.equal(annual.harvestEnd, '2026-05-08');
+    assert.equal(Object.prototype.hasOwnProperty.call(annual, 'harvestEnd'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(annual, 'firstHarvest'), false);
 
     const perennial = hooks.buildScheduleViewState({ perennial: true, plantName: 'Asparagus' });
     assert.equal(perennial.feasibility.status, 'not_applicable');
-    assert.match(perennial.firstHarvest, /Not calculated/);
+    assert.equal(Object.prototype.hasOwnProperty.call(perennial, 'firstHarvest'), false);
 });
 
 test('schedule summary state renders thermal warnings as warning status', () => {

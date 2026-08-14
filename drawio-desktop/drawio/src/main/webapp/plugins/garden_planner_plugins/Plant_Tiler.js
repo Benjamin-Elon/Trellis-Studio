@@ -5017,6 +5017,7 @@ Draw.loadPlugin(function (ui) {
         const plantCount = Math.max(0, Math.trunc(Number(input.plantCount) || 0));
         const spacingXCm = Number(input.spacingXCm ?? input.spacingCm ?? 30);
         const spacingYCm = Number(input.spacingYCm ?? input.spacingCm ?? 30);
+        const vegHeightCm = Number(input.vegHeightCm ?? input.veg_height_cm);
         const sx = toPx(Number.isFinite(spacingXCm) && spacingXCm > 0 ? spacingXCm : 30);
         const sy = toPx(Number.isFinite(spacingYCm) && spacingYCm > 0 ? spacingYCm : 30);
         const bedGeo = input.bedCell && input.bedCell.getGeometry ? input.bedCell.getGeometry() : null;
@@ -5079,6 +5080,7 @@ Draw.loadPlugin(function (ui) {
             orientation: best.orientation,
             spacingXCm: best.orientation === "normal" ? spacingXCm : spacingYCm,
             spacingYCm: best.orientation === "normal" ? spacingYCm : spacingXCm,
+            vegHeightCm: Number.isFinite(vegHeightCm) && vegHeightCm > 0 ? vegHeightCm : null,
             slots: buildProposalSlots(best, plantCount),
             geometry: best.geometry
         };
@@ -5187,7 +5189,8 @@ Draw.loadPlugin(function (ui) {
             plant_count: String(Math.max(0, Math.trunc(Number(proposal.plantCount) || 0))),
             spacing_x_cm: String(proposal.spacingXCm || 30),
             spacing_y_cm: String(proposal.spacingYCm || 30),
-            spacing_cm: String(proposal.spacingXCm === proposal.spacingYCm ? proposal.spacingXCm || 30 : getXmlAttr(group, "spacing_cm", "30"))
+            spacing_cm: String(proposal.spacingXCm === proposal.spacingYCm ? proposal.spacingXCm || 30 : getXmlAttr(group, "spacing_cm", "30")),
+            veg_height_cm: proposal.vegHeightCm == null ? String((input.attributes || proposal.attributes || {}).veg_height_cm || "") : String(proposal.vegHeightCm)
         });
         if (model) {
             const insideUpdate = !!(input.insideUpdate || opts.insideUpdate);

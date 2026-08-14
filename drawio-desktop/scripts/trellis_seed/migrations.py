@@ -36,6 +36,8 @@ def pending_migrations(conn: sqlite3.Connection) -> list[str]:
         pending.append("add plant kill temperature column")
     if "PlantVarieties" in tables and "maturity_class" not in table_columns(conn, "PlantVarieties"):
         pending.append("add variety maturity class column")
+    if "PlantGrowthStages" not in tables:
+        pending.append("create PlantGrowthStages")
     if city_has_unique_name_constraint(conn):
         pending.append("replace city name unique constraint with geography identity")
     if "CityWeatherMonthly" not in tables:
@@ -96,6 +98,29 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
     if "PlantVarieties" in tables and "maturity_class" not in table_columns(conn, "PlantVarieties"):
         conn.execute("ALTER TABLE PlantVarieties ADD COLUMN maturity_class TEXT;")
         applied.append("added PlantVarieties.maturity_class")
+    if "PlantGrowthStages" not in tables:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS PlantGrowthStages (
+                stage_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                plant_id INTEGER NOT NULL REFERENCES Plants(plant_id) ON DELETE CASCADE,
+                stage_key TEXT NOT NULL,
+                stage_label TEXT NOT NULL,
+                gdd_ratio REAL NOT NULL,
+                spacing_ratio REAL,
+                plant_diameter_ratio REAL,
+                plant_height_ratio REAL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                active INTEGER NOT NULL DEFAULT 1,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(plant_id, stage_key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_PlantGrowthStages_plant_id ON PlantGrowthStages(plant_id);
+            """
+        )
+        applied.append("created PlantGrowthStages")
     if "Companions" in tables:
         companion_columns = set(table_columns(conn, "Companions"))
         for column, column_type in (("source_plant_id", "INTEGER"), ("companion_plant_id", "INTEGER"), ("start_offset_days", "INTEGER"), ("layout_template", "TEXT"), ("layout_spacing_x_cm", "REAL"), ("layout_spacing_y_cm", "REAL"), ("layout_offset_x_cm", "REAL"), ("layout_offset_y_cm", "REAL")):

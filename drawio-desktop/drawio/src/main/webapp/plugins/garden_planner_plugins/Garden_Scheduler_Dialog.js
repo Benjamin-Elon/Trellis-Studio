@@ -404,6 +404,123 @@ Draw.loadPlugin(function (ui) {
         return new PlantModel(row);
     }
 
+    const DEFAULT_GROWTH_STAGE_KEY = 'mature';
+    const DEFAULT_GROWTH_STAGE_LABEL = 'Mature';
+    const MIN_GROWTH_STAGE_RATIO = 0.01;
+    const MAX_GROWTH_STAGE_RATIO = 10;
+    const MIN_GROWTH_STAGE_LAYOUT_RATIO = 0.1;
+    const MAX_GROWTH_STAGE_LAYOUT_RATIO = 10;
+
+    function normalizeGrowthStageKey(value) {
+        return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    }
+
+    function positiveFiniteOrNull(value) {
+        const n = Number(value);
+        return Number.isFinite(n) && n > 0 ? n : null;
+    }
+
+    function clampGrowthRatio(value, min = MIN_GROWTH_STAGE_RATIO, max = MAX_GROWTH_STAGE_RATIO) {
+        const n = positiveFiniteOrNull(value);
+        if (n == null) return null;
+        return Math.min(max, Math.max(min, n));
+    }
+
+    function deriveGrowthStageLayoutRatio(gddRatio) {
+        const ratio = clampGrowthRatio(gddRatio) ?? 1;
+        return Math.min(MAX_GROWTH_STAGE_LAYOUT_RATIO, Math.max(MIN_GROWTH_STAGE_LAYOUT_RATIO, Math.sqrt(ratio)));
+    }
+
+    function normalizeGrowthStage(row, fallback = null) {
+        const source = row || {};
+        const fallbackStage = fallback || {};
+        const key = normalizeGrowthStageKey(source.stage_key || source.stageKey || fallbackStage.stageKey || fallbackStage.stage_key) || DEFAULT_GROWTH_STAGE_KEY;
+        const label = String(source.stage_label || source.stageLabel || fallbackStage.stageLabel || fallbackStage.stage_label || DEFAULT_GROWTH_STAGE_LABEL).trim() || DEFAULT_GROWTH_STAGE_LABEL;
+        const gddRatio = clampGrowthRatio(source.gdd_ratio ?? source.gddRatio ?? fallbackStage.gddRatio ?? fallbackStage.gdd_ratio) ?? 1;
+        const derivedLayoutRatio = deriveGrowthStageLayoutRatio(gddRatio);
+        const spacingRatio = clampGrowthRatio(source.spacing_ratio ?? source.spacingRatio ?? fallbackStage.spacingRatio ?? fallbackStage.spacing_ratio, MIN_GROWTH_STAGE_LAYOUT_RATIO, MAX_GROWTH_STAGE_LAYOUT_RATIO) ?? derivedLayoutRatio;
+        const diameterRatio = clampGrowthRatio(source.plant_diameter_ratio ?? source.plantDiameterRatio ?? fallbackStage.plantDiameterRatio ?? fallbackStage.plant_diameter_ratio, MIN_GROWTH_STAGE_LAYOUT_RATIO, MAX_GROWTH_STAGE_LAYOUT_RATIO) ?? derivedLayoutRatio;
+        const heightRatio = clampGrowthRatio(source.plant_height_ratio ?? source.plantHeightRatio ?? fallbackStage.plantHeightRatio ?? fallbackStage.plant_height_ratio, MIN_GROWTH_STAGE_LAYOUT_RATIO, MAX_GROWTH_STAGE_LAYOUT_RATIO) ?? derivedLayoutRatio;
+        return Object.freeze({
+            stageId: finiteNumberOrNull(source.stage_id ?? source.stageId ?? fallbackStage.stageId ?? fallbackStage.stage_id),
+            plantId: finiteNumberOrNull(source.plant_id ?? source.plantId ?? fallbackStage.plantId ?? fallbackStage.plant_id),
+            stageKey: key,
+            stageLabel: label,
+            gddRatio,
+            spacingRatio,
+            plantDiameterRatio: diameterRatio,
+            plantHeightRatio: heightRatio,
+            sortOrder: finiteNumberOrNull(source.sort_order ?? source.sortOrder ?? fallbackStage.sortOrder ?? fallbackStage.sort_order) ?? 0,
+            active: Number(source.active ?? fallbackStage.active ?? 1) === 0 ? 0 : 1,
+            isDefault: Number(source.is_default ?? source.isDefault ?? fallbackStage.isDefault ?? fallbackStage.is_default ?? (key === DEFAULT_GROWTH_STAGE_KEY ? 1 : 0)) === 1 ? 1 : 0,
+            legacy: !!source.legacy
+        });
+    }
+
+    function defaultGrowthStage() {
+        return normalizeGrowthStage({
+            stage_key: DEFAULT_GROWTH_STAGE_KEY,
+            stage_label: DEFAULT_GROWTH_STAGE_LABEL,
+            gdd_ratio: 1,
+            spacing_ratio: 1,
+            plant_diameter_ratio: 1,
+            plant_height_ratio: 1,
+            sort_order: 0,
+            active: 1,
+            is_default: 1
+        });
+    }
+
+    function stageIsDefaultMature(stage) {
+        const normalized = normalizeGrowthStage(stage);
+        return normalized.stageKey === DEFAULT_GROWTH_STAGE_KEY
+            && Math.abs(normalized.gddRatio - 1) < 0.000001
+            && Math.abs(normalized.spacingRatio - 1) < 0.000001
+            && Math.abs(normalized.plantDiameterRatio - 1) < 0.000001
+            && Math.abs(normalized.plantHeightRatio - 1) < 0.000001;
+    }
+
+    function readGrowthStageFromCell(cell) {
+        const key = normalizeGrowthStageKey(cell?.getAttribute?.('growth_stage_key'));
+        if (!key) return defaultGrowthStage();
+        return normalizeGrowthStage({
+            stage_key: key,
+            stage_label: cell?.getAttribute?.('growth_stage_label') || key,
+            gdd_ratio: cell?.getAttribute?.('growth_stage_gdd_ratio') || 1,
+            spacing_ratio: cell?.getAttribute?.('growth_stage_spacing_ratio') || null,
+            plant_diameter_ratio: cell?.getAttribute?.('growth_stage_diameter_ratio') || null,
+            plant_height_ratio: cell?.getAttribute?.('growth_stage_height_ratio') || null,
+            legacy: true
+        });
+    }
+
+    function scalePositiveField(row, key, ratio) {
+        const base = positiveFiniteOrNull(row[key]);
+        const scale = positiveFiniteOrNull(ratio);
+        if (base == null || scale == null) return;
+        row[key] = base * scale;
+    }
+
+    function applyGrowthStageToPlant(plant, stage) {
+        const growthStage = normalizeGrowthStage(stage);
+        if (!plant || stageIsDefaultMature(growthStage)) return plant;
+        const row = toPlainDict(plant);
+        scalePositiveField(row, 'gdd_to_maturity', growthStage.gddRatio);
+        scalePositiveField(row, 'days_maturity', growthStage.gddRatio);
+        scalePositiveField(row, 'spacing_cm', growthStage.spacingRatio);
+        scalePositiveField(row, 'spacing_x_cm', growthStage.spacingRatio);
+        scalePositiveField(row, 'spacing_y_cm', growthStage.spacingRatio);
+        scalePositiveField(row, 'veg_diameter_cm', growthStage.plantDiameterRatio);
+        scalePositiveField(row, 'veg_height_cm', growthStage.plantHeightRatio);
+        row.growth_stage_key = growthStage.stageKey;
+        row.growth_stage_label = growthStage.stageLabel;
+        row.growth_stage_gdd_ratio = growthStage.gddRatio;
+        row.growth_stage_spacing_ratio = growthStage.spacingRatio;
+        row.growth_stage_diameter_ratio = growthStage.plantDiameterRatio;
+        row.growth_stage_height_ratio = growthStage.plantHeightRatio;
+        return new PlantModel(row);
+    }
+
     function shiftISODateByDays(value, days) {
         const date = parseISODateUTCValue(value);
         if (!date) return '';
@@ -498,17 +615,7 @@ Draw.loadPlugin(function (ui) {
         return value instanceof Date && !Number.isNaN(value.getTime());
     }
     function pickFrostByRisk(city, risk = 'p50') {
-        // fallbacks: specific percentile → pX → plain
-        const p90 = finiteNumberOrNull(city?.last_spring_frost_p90_doy);
-        const p50 = finiteNumberOrNull(city?.last_spring_frost_p50_doy);
-        const p10 = finiteNumberOrNull(city?.last_spring_frost_p10_doy);
-        const plain = finiteNumberOrNull(city?.last_spring_frost_doy);
-        if (risk === 'p90' && p90 != null) return p90;
-        if (risk === 'p50' && p50 != null) return p50;
-        if (risk === 'p10' && p10 != null) return p10;
-        if (plain != null) return plain;
-        // worst-case: mid-April DOY=105 (safe-ish default for many temperate zones)
-        return 105;
+        return sharedCore.resolveSpringFrostByRisk(city, risk).doy; // CHANGED: use the shared stored/inferred/fallback frost resolver.
     }
 
     let __dbPathCached = null;
@@ -682,6 +789,23 @@ Draw.loadPlugin(function (ui) {
                 updated_at TEXT NOT NULL,
                 UNIQUE(plant_set_key, anchor_plant_id)
             );`, []);
+            await execRunOnDb(dbId, `CREATE TABLE IF NOT EXISTS PlantGrowthStages (
+                stage_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                plant_id INTEGER NOT NULL REFERENCES Plants(plant_id) ON DELETE CASCADE,
+                stage_key TEXT NOT NULL,
+                stage_label TEXT NOT NULL,
+                gdd_ratio REAL NOT NULL,
+                spacing_ratio REAL,
+                plant_diameter_ratio REAL,
+                plant_height_ratio REAL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                active INTEGER NOT NULL DEFAULT 1,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(plant_id, stage_key)
+            );`, []);
+            await execRunOnDb(dbId, `CREATE INDEX IF NOT EXISTS idx_PlantGrowthStages_plant_id ON PlantGrowthStages (plant_id);`, []);
         });
         schedulerPhysiologySchemaEnsured = true;
     }
@@ -1506,23 +1630,19 @@ Draw.loadPlugin(function (ui) {
             .filter(group => group.options.length > 0);
     }
 
+    function buildVarietyPickerGroups(varieties, { includeBase = true, includeNew = false, newValue = '__NEW__' } = {}) {
+        const groups = [];
+        const selectionOptions = [];
+        if (includeBase) selectionOptions.push({ value: '', label: '(base plant)', displayLabel: '(base plant)' });
+        if (includeNew) selectionOptions.push({ value: newValue, label: 'New variety...', displayLabel: 'New variety...' });
+        if (selectionOptions.length) groups.push({ key: 'selection', label: 'Selection', options: selectionOptions });
+        return groups.concat(buildGroupedVarietyOptions(varieties));
+    }
+
     function renderGroupedVarietyOptions(selectEl, groups, selectedValue = '') {
-        selectEl.innerHTML = '';
-        const baseOpt = document.createElement('option');
-        baseOpt.value = '';
-        baseOpt.textContent = '(base plant)';
-        selectEl.appendChild(baseOpt);
-        for (const group of groups || []) {
-            const optGroup = document.createElement('optgroup');
-            optGroup.label = group.label;
-            for (const option of group.options || []) {
-                const opt = document.createElement('option');
-                opt.value = String(option.value);
-                opt.textContent = option.label;
-                optGroup.appendChild(opt);
-            }
-            selectEl.appendChild(optGroup);
-        }
+        const pickerGroups = buildVarietyPickerGroups([], { includeBase: true, includeNew: false })
+            .concat(groups || []);
+        renderGroupedSelectOptions(selectEl, pickerGroups, selectedValue, { emptyLabel: 'No varieties match' });
         const valid = new Set(Array.from(selectEl.options).map(option => option.value));
         selectEl.value = valid.has(String(selectedValue || '')) ? String(selectedValue || '') : '';
     }
@@ -1680,6 +1800,96 @@ Draw.loadPlugin(function (ui) {
             if (!Number.isFinite(vid)) return;
             const sql = `DELETE FROM PlantVarieties WHERE variety_id = ?;`;
             await execAll(sql, [vid]);
+        }
+    }
+
+    class PlantGrowthStageModel {
+        constructor(row) {
+            Object.assign(this, normalizeGrowthStage(row));
+            this.stage_id = finiteNumberOrNull(row?.stage_id);
+            this.plant_id = finiteNumberOrNull(row?.plant_id);
+            this.stage_key = this.stageKey;
+            this.stage_label = this.stageLabel;
+            this.gdd_ratio = this.gddRatio;
+            this.spacing_ratio = row?.spacing_ratio == null || row?.spacing_ratio === '' ? null : this.spacingRatio;
+            this.plant_diameter_ratio = row?.plant_diameter_ratio == null || row?.plant_diameter_ratio === '' ? null : this.plantDiameterRatio;
+            this.plant_height_ratio = row?.plant_height_ratio == null || row?.plant_height_ratio === '' ? null : this.plantHeightRatio;
+            this.sort_order = this.sortOrder;
+            this.active = this.active;
+            this.is_default = this.isDefault;
+            this.created_at = row?.created_at || '';
+            this.updated_at = row?.updated_at || '';
+        }
+
+        static async ensureTable() {
+            await ensureSchedulerPhysiologySchema();
+        }
+
+        static async listByPlantId(plantId, { includeInactive = false } = {}) {
+            await this.ensureTable();
+            const pid = Number(plantId);
+            if (!Number.isFinite(pid)) return [];
+            const whereActive = includeInactive ? '' : 'AND active <> 0';
+            const rows = await queryAll(`
+                SELECT stage_id, plant_id, stage_key, stage_label, gdd_ratio, spacing_ratio,
+                       plant_diameter_ratio, plant_height_ratio, sort_order, active, is_default,
+                       created_at, updated_at
+                FROM PlantGrowthStages
+                WHERE plant_id = ? ${whereActive}
+                ORDER BY is_default DESC, sort_order ASC, stage_label COLLATE NOCASE;`, [pid]);
+            return rows.map(row => new PlantGrowthStageModel(row));
+        }
+
+        static async saveForPlant(plantId, stages) {
+            await this.ensureTable();
+            const pid = Number(plantId);
+            if (!Number.isFinite(pid)) throw new Error('Invalid plantId for growth stages.');
+            const normalized = (Array.isArray(stages) ? stages : [])
+                .map(row => {
+                    const source = row || {};
+                    return {
+                        stage: normalizeGrowthStage(Object.assign({}, source, { plant_id: pid })),
+                        spacingRatioOverride: clampGrowthRatio(source.spacing_ratio ?? source.spacingRatio, MIN_GROWTH_STAGE_LAYOUT_RATIO, MAX_GROWTH_STAGE_LAYOUT_RATIO),
+                        diameterRatioOverride: clampGrowthRatio(source.plant_diameter_ratio ?? source.plantDiameterRatio, MIN_GROWTH_STAGE_LAYOUT_RATIO, MAX_GROWTH_STAGE_LAYOUT_RATIO),
+                        heightRatioOverride: clampGrowthRatio(source.plant_height_ratio ?? source.plantHeightRatio, MIN_GROWTH_STAGE_LAYOUT_RATIO, MAX_GROWTH_STAGE_LAYOUT_RATIO)
+                    };
+                })
+                .filter(entry => entry.stage.stageKey);
+            const seen = new Set();
+            const unique = [];
+            normalized.forEach(entry => {
+                const stage = entry.stage;
+                if (seen.has(stage.stageKey)) return;
+                seen.add(stage.stageKey);
+                unique.push(entry);
+            });
+            await withDbTransaction(async dbId => {
+                await execRunOnDb(dbId, 'DELETE FROM PlantGrowthStages WHERE plant_id = ?;', [pid]);
+                const now = new Date().toISOString();
+                for (let index = 0; index < unique.length; index += 1) {
+                    const entry = unique[index];
+                    const stage = entry.stage;
+                    await execRunOnDb(dbId, `INSERT INTO PlantGrowthStages (
+                        plant_id, stage_key, stage_label, gdd_ratio, spacing_ratio,
+                        plant_diameter_ratio, plant_height_ratio, sort_order, active, is_default,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`, [
+                        pid,
+                        stage.stageKey,
+                        stage.stageLabel,
+                        stage.gddRatio,
+                        entry.spacingRatioOverride,
+                        entry.diameterRatioOverride,
+                        entry.heightRatioOverride,
+                        Number.isFinite(Number(stage.sortOrder)) ? Number(stage.sortOrder) : index,
+                        stage.active,
+                        stage.isDefault,
+                        now,
+                        now
+                    ]);
+                }
+            });
+            return this.listByPlantId(pid, { includeInactive: true });
         }
     }
 
@@ -2050,24 +2260,30 @@ Draw.loadPlugin(function (ui) {
     }
 
     function resolveFrostRiskTip(city, risk, year) {
-        const selectedRisk = ['p10', 'p50', 'p90'].indexOf(String(risk || '')) >= 0 ? String(risk) : 'p50';
-        const selectedValue = finiteNumberOrNull(city?.[`last_spring_frost_${selectedRisk}_doy`]);
-        const plainValue = finiteNumberOrNull(city?.last_spring_frost_doy);
-        if (selectedValue != null) {
+        const resolution = sharedCore.resolveSpringFrostByRisk(city, risk); // CHANGED: report the same frost source used by schedule validation.
+        const selectedRisk = resolution.risk || 'p50';
+        if (resolution.source === 'stored' && resolution.field !== 'last_spring_frost_doy') {
             return {
-                text: `${formatClimateModelDoyDate(selectedValue, year)} (${selectedRisk})`,
-                tooltip: `Selected ${selectedRisk} frost date is DOY ${Math.round(selectedValue)} for ${city?.city_name || 'the selected city'}.`
+                text: `${formatClimateModelDoyDate(resolution.doy, year)} (${selectedRisk})`,
+                tooltip: `Selected ${selectedRisk} frost date is DOY ${Math.round(resolution.doy)} for ${city?.city_name || 'the selected city'}.`
             };
         }
-        if (plainValue != null) {
+        if (resolution.source === 'stored') {
             return {
-                text: `No ${selectedRisk}; using ${formatClimateModelDoyDate(plainValue, year)}`,
-                tooltip: `No ${selectedRisk} frost date is stored for ${city?.city_name || 'the selected city'}; using the plain last_spring_frost_doy value ${Math.round(plainValue)}.`
+                text: `No ${selectedRisk}; using ${formatClimateModelDoyDate(resolution.doy, year)}`,
+                tooltip: `No ${selectedRisk} frost date is stored for ${city?.city_name || 'the selected city'}; using ${resolution.field || 'a stored frost field'} value ${Math.round(resolution.doy)}.`
+            };
+        }
+        if (resolution.source === 'inferred_monthly_normals') {
+            const crossingText = resolution.crossingDoy ? ` after the monthly-low 0 C crossing near DOY ${Math.round(resolution.crossingDoy)}` : '';
+            return {
+                text: `Inferred ${formatClimateModelDoyDate(resolution.doy, year)} (${selectedRisk})`,
+                tooltip: `No stored ${selectedRisk} or plain spring frost date exists for ${city?.city_name || 'the selected city'}; inferred from monthly low normals${crossingText}, plus ${resolution.bufferDays || 0} safety days.`
             };
         }
         return {
-            text: `No ${selectedRisk}; using ${formatClimateModelDoyDate(105, year)}`,
-            tooltip: `No ${selectedRisk} or plain frost date is stored for ${city?.city_name || 'the selected city'}; using scheduler fallback DOY 105.`
+            text: `No ${selectedRisk}; using ${formatClimateModelDoyDate(resolution.doy, year)}`,
+            tooltip: `No stored or monthly-normal spring frost date could be resolved for ${city?.city_name || 'the selected city'}; using scheduler fallback DOY ${Math.round(resolution.doy)}.`
         };
     }
 
@@ -2665,6 +2881,39 @@ Draw.loadPlugin(function (ui) {
         });
     }
 
+    function buildGroupedPlantOptions(plants, { selectedValue = '', includeSelectedWhenFiltered = true } = {}) {
+        return buildGroupedCropOptions(makeCropPickerOptions(plants || []), {
+            filter: 'all',
+            selectedValue,
+            includeSelectedWhenFiltered
+        });
+    }
+
+    function renderGroupedSelectOptions(selectEl, groups, selectedValue = '', { emptyLabel = 'No options match' } = {}) {
+        selectEl.innerHTML = '';
+        const selected = String(selectedValue || '');
+        if (!(groups || []).some(group => group.options && group.options.length)) {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = emptyLabel;
+            opt.disabled = true;
+            selectEl.appendChild(opt);
+            return;
+        }
+        (groups || []).forEach(groupSpec => {
+            const group = document.createElement('optgroup');
+            group.label = groupSpec.label;
+            (groupSpec.options || []).forEach(optionSpec => {
+                const opt = document.createElement('option');
+                opt.value = String(optionSpec.value);
+                opt.textContent = optionSpec.displayLabel || optionSpec.label;
+                group.appendChild(opt);
+            });
+            if (group.children.length) selectEl.appendChild(group);
+        });
+        if (selected && Array.from(selectEl.options).some(option => option.value === selected)) selectEl.value = selected;
+    }
+
     function buildGroupedCropOptions(options, { filter = 'all', selectedValue = '', includeSelectedWhenFiltered = true } = {}) {
         const normalizedFilter = normalizeCropLifecycleFilter(filter);
         const selected = String(selectedValue || '');
@@ -2686,33 +2935,12 @@ Draw.loadPlugin(function (ui) {
     }
 
     function renderGroupedCropOptions(selectEl, groups, selectedValue = '') {
-        selectEl.innerHTML = '';
-        const selected = String(selectedValue || '');
-        if (!(groups || []).some(group => group.options && group.options.length)) {
-            const opt = document.createElement('option');
-            opt.value = '';
-            opt.textContent = 'No crops match this filter';
-            opt.disabled = true;
-            selectEl.appendChild(opt);
-            return;
-        }
-        (groups || []).forEach(groupSpec => {
-            const group = document.createElement('optgroup');
-            group.label = groupSpec.label;
-            (groupSpec.options || []).forEach(optionSpec => {
-                const opt = document.createElement('option');
-                opt.value = String(optionSpec.value);
-                opt.textContent = optionSpec.displayLabel || optionSpec.label;
-                group.appendChild(opt);
-            });
-            if (group.children.length) selectEl.appendChild(group);
-        });
-        if (selected && Array.from(selectEl.options).some(option => option.value === selected)) selectEl.value = selected;
+        renderGroupedSelectOptions(selectEl, groups, selectedValue, { emptyLabel: 'No crops match this filter' });
     }
 
-    function createSchedulerCropCombobox(selectEl) {
+    function createSchedulerCropCombobox(selectEl, options = {}) {
         const root = document.createElement('div');
-        root.className = 'usl-crop-combobox';
+        root.className = options.className || 'usl-crop-combobox';
         root.style.width = '100%';
         selectEl.style.display = 'none';
         const doc = selectEl.ownerDocument || document;
@@ -2739,7 +2967,7 @@ Draw.loadPlugin(function (ui) {
         panel.style.display = 'none';
         const input = document.createElement('input');
         input.type = 'search';
-        input.placeholder = 'Search crops...';
+        input.placeholder = options.placeholder || 'Search crops...';
         input.style.width = 'calc(100% - 12px)';
         input.style.margin = '6px';
         input.style.boxSizing = 'border-box';
@@ -2830,6 +3058,7 @@ Draw.loadPlugin(function (ui) {
             input.focus();
         }
         function optionTitle(option) {
+            if (typeof options.optionTitle === 'function') return options.optionTitle(option);
             const meta = option && option.metadata;
             if (!meta) return option?.displayLabel || option?.label || '';
             const evidence = (meta.evidence || []).map(item => item.summary || item.sourceNote || item.sourceUrl).filter(Boolean).slice(0, 2).join('\n');
@@ -2882,7 +3111,12 @@ Draw.loadPlugin(function (ui) {
             const q = String(filterText || '').trim().toLocaleLowerCase();
             list.innerHTML = '';
             (groupsCache || []).forEach(group => {
-                const matching = (group.options || []).filter(option => !q || String(option.displayLabel || option.label || '').toLocaleLowerCase().includes(q));
+                const matching = (group.options || []).filter(option => {
+                    const haystack = typeof options.searchText === 'function'
+                        ? options.searchText(option)
+                        : (option.displayLabel || option.label || '');
+                    return !q || String(haystack || '').toLocaleLowerCase().includes(q);
+                });
                 if (!matching.length) return;
                 const heading = document.createElement('div');
                 heading.textContent = group.label;
@@ -2895,7 +3129,7 @@ Draw.loadPlugin(function (ui) {
             });
             if (!list.children.length) {
                 const empty = document.createElement('div');
-                empty.textContent = 'No crops match';
+                empty.textContent = options.emptyText || 'No crops match';
                 empty.style.padding = '8px';
                 empty.style.color = '#6b7280';
                 list.appendChild(empty);
@@ -2910,7 +3144,7 @@ Draw.loadPlugin(function (ui) {
                 groupsCache = groups || [];
                 const selected = String(selectedValue || selectEl.value || '');
                 const option = groupsCache.flatMap(group => group.options || []).find(item => String(item.value) === selected);
-                selectedLabel = option ? (option.displayLabel || option.label || '') : (selectEl.options[selectEl.selectedIndex]?.textContent || 'Select crop');
+                selectedLabel = option ? (option.displayLabel || option.label || '') : (selectEl.options[selectEl.selectedIndex]?.textContent || options.buttonFallback || 'Select crop');
                 button.textContent = selectedLabel;
                 renderList(input.value);
                 positionPanel();
@@ -2972,7 +3206,9 @@ Draw.loadPlugin(function (ui) {
             overrideValue: formState.transplantDaysOverrideValue
         });
         requireEffectiveTransplantDays(methodId, transplantDaysConfig.effectiveDays);
-        const plant = applyEffectiveTransplantDaysToPlant(basePlant, transplantDaysConfig.effectiveDays);
+        const transplantAdjustedPlant = applyEffectiveTransplantDaysToPlant(basePlant, transplantDaysConfig.effectiveDays);
+        const growthStage = normalizeGrowthStage(formState.growthStage || defaultGrowthStage());
+        const plant = applyGrowthStageToPlant(transplantAdjustedPlant, growthStage);
 
         const climateResolution = resolveClimateModelPolicy(
             options.climateModelModuleCell || formState.climateModelModuleCell || null,
@@ -3024,7 +3260,8 @@ Draw.loadPlugin(function (ui) {
             resolvedBehavior,
             policy,
             inputs,
-            transplantDaysConfig
+            transplantDaysConfig,
+            growthStage
         };
     }
 
@@ -3422,7 +3659,8 @@ Draw.loadPlugin(function (ui) {
             spacingCm: fallback,
             spacingXCm: layoutNumberOrNull(plant?.spacing_x_cm) ?? fallback,
             spacingYCm: layoutNumberOrNull(plant?.spacing_y_cm) ?? fallback,
-            vegDiameterCm: layoutNumberOrNull(plant?.veg_diameter_cm)
+            vegDiameterCm: layoutNumberOrNull(plant?.veg_diameter_cm),
+            vegHeightCm: layoutNumberOrNull(plant?.veg_height_cm)
         };
     }
     function companionLayoutDefaultsForRelationship(relationship) {
@@ -3450,7 +3688,7 @@ Draw.loadPlugin(function (ui) {
             : (template === 'staggered' ? { x: sourceSpacingX / 2, y: sourceSpacingY / 2 } : { x: sourceWidthCm + Math.max(sourceSpacingX, spacingXCm), y: 0 });
         const offsetXCm = layoutNumberOrNull(overrides.offsetXCm) ?? relLayout.offsetXCm ?? defaultOffset.x;
         const offsetYCm = layoutNumberOrNull(overrides.offsetYCm) ?? relLayout.offsetYCm ?? defaultOffset.y;
-        return { template, spacingXCm, spacingYCm, offsetXCm, offsetYCm, vegDiameterCm: targetSpacing.vegDiameterCm };
+        return { template, spacingXCm, spacingYCm, offsetXCm, offsetYCm, vegDiameterCm: targetSpacing.vegDiameterCm, vegHeightCm: targetSpacing.vegHeightCm };
     }
     function companionLayoutAttributePatch(layout) {
         const patch = {
@@ -3463,6 +3701,7 @@ Draw.loadPlugin(function (ui) {
         if (layout.spacingXCm != null) patch.spacing_x_cm = String(layout.spacingXCm);
         if (layout.spacingYCm != null) patch.spacing_y_cm = String(layout.spacingYCm);
         if (layout.vegDiameterCm != null) patch.veg_diameter_cm = String(layout.vegDiameterCm);
+        if (layout.vegHeightCm != null) patch.veg_height_cm = String(layout.vegHeightCm);
         return patch;
     }
     function plantingLayoutAttributePatch(layout) { // ADDED: persist current layout rows independently of reusable defaults.
@@ -3471,6 +3710,7 @@ Draw.loadPlugin(function (ui) {
         if (layout?.spacingYCm != null) patch.spacing_y_cm = String(layout.spacingYCm);
         if (layout?.spacingXCm != null && layout?.spacingYCm != null && layout.spacingXCm === layout.spacingYCm) patch.spacing_cm = String(layout.spacingXCm);
         if (layout?.vegDiameterCm != null) patch.veg_diameter_cm = String(layout.vegDiameterCm);
+        if (layout?.vegHeightCm != null) patch.veg_height_cm = String(layout.vegHeightCm);
         if (layout?.offsetXCm != null) patch.layout_offset_x_cm = String(layout.offsetXCm);
         if (layout?.offsetYCm != null) patch.layout_offset_y_cm = String(layout.offsetYCm);
         if (layout?.template) patch.companion_layout_template = layout.template;
@@ -3855,6 +4095,7 @@ Draw.loadPlugin(function (ui) {
         const sy = plantRow.spacing_y_cm;
         const s = plantRow.spacing_cm;
         const vd = plantRow.veg_diameter_cm;
+        const vh = plantRow.veg_height_cm;
 
         const hasVal = (v) => v !== undefined && v !== null && v !== '';
 
@@ -3874,6 +4115,9 @@ Draw.loadPlugin(function (ui) {
 
         if (hasVal(vd)) {
             setAttr(groupCell, 'veg_diameter_cm', vd);
+        }
+        if (hasVal(vh)) {
+            setAttr(groupCell, 'veg_height_cm', vh);
         }
     }
 
@@ -4607,6 +4851,7 @@ Draw.loadPlugin(function (ui) {
         seasonStartYear = null,
         startISO = '',
         sowingSeasons = [],
+        latestHarvestEndISO = '',
         scheduleResult = null,
         todayISO = null,
         taskRules = [],
@@ -4616,8 +4861,12 @@ Draw.loadPlugin(function (ui) {
         let bounds = buildLifecycleTimelineBounds({ plant, seasonStartYear });
         const firstTimelineForBounds = Array.isArray(scheduleResult?.timelines) ? scheduleResult.timelines[0] : null;
         const scheduleEndForBounds = parseISODateUTCValue(scheduleResult?.lastScheduledHarvestEndISO) || parseISODateUTCValue(firstTimelineForBounds?.harvestEnd);
-        if (scheduleEndForBounds && scheduleEndForBounds > bounds.end) {
-            bounds = { ...bounds, end: scheduleEndForBounds, endISO: fmtISO(scheduleEndForBounds), multiYear: true };
+        const latestHarvestEndForBounds = parseISODateUTCValue(latestHarvestEndISO);
+        const endForBounds = [scheduleEndForBounds, latestHarvestEndForBounds]
+            .filter(date => date && date > bounds.end)
+            .sort((left, right) => right.getTime() - left.getTime())[0] || null;
+        if (endForBounds) {
+            bounds = { ...bounds, end: endForBounds, endISO: fmtISO(endForBounds), multiYear: true };
         }
         const totalDays = Math.max(1, timelineDaysBetween(bounds.start, bounds.end));
         const bands = normalizeSowingSeasons(sowingSeasons).map(window => {
@@ -4666,6 +4915,16 @@ Draw.loadPlugin(function (ui) {
             return { ...enriched, tooltip: lifecycleTimelineTooltipText(enriched) };
         }).filter(milestone => Number.isFinite(Number(milestone.percent)));
         const visibleMilestones = milestones.filter(milestone => milestone.visible);
+        const latestHarvestBoundaryPercent = latestHarvestEndForBounds && latestHarvestEndForBounds >= bounds.start && latestHarvestEndForBounds <= bounds.end
+            ? timelinePercentForDate(latestHarvestEndForBounds, bounds.start, totalDays)
+            : null;
+        const latestHarvestBoundary = Number.isFinite(Number(latestHarvestBoundaryPercent)) ? {
+            iso: fmtISO(latestHarvestEndForBounds),
+            label: 'Latest harvest',
+            abbr: 'LH',
+            percent: latestHarvestBoundaryPercent,
+            tooltip: `Latest harvest: ${fmtISO(latestHarvestEndForBounds)}`
+        } : null;
         const todayDate = parseISODateUTCValue(todayISO || fmtISO(new Date()));
         const todayPercent = todayDate && todayDate >= bounds.start && todayDate <= bounds.end
             ? timelinePercentForDate(todayDate, bounds.start, totalDays)
@@ -4678,6 +4937,7 @@ Draw.loadPlugin(function (ui) {
             axis: buildLifecycleTimelineAxisMarkers(bounds, totalDays),
             milestones,
             visibleMilestones,
+            latestHarvestBoundary,
             todayISO: todayPercent == null ? null : fmtISO(todayDate),
             todayPercent
         };
@@ -4713,14 +4973,10 @@ Draw.loadPlugin(function (ui) {
         varietyName = '',
         cityName = '',
         seasonStartYear = '',
-        methodName = '',
         startISO = '',
-        selectedDateISO = '',
         dateInputMode = 'sow',
         sowingSeasons = [],
         activeSowingSeasonId = '',
-        firstHarvestISO = '',
-        lastHarvestISO = '',
         scheduleWarnings = []
     } = {}) {
         let feasibility = classifySelectedSowDate({
@@ -4747,10 +5003,6 @@ Draw.loadPlugin(function (ui) {
         return {
             crop: [plantName, varietyName].filter(Boolean).join(' / ') || '(none)',
             context: [cityName, seasonStartYear].filter(value => String(value || '').trim()).join(' / ') || '(none)',
-            method: methodName || '(none)',
-            selectedDate: selectedDateISO || startISO || '(not selected)',
-            firstHarvest: perennial ? 'Not calculated for perennial schedules' : (firstHarvestISO || '(not available)'),
-            harvestEnd: perennial ? 'Not calculated for perennial schedules' : (lastHarvestISO || '(not available)'),
             feasibility
         };
     }
@@ -4782,10 +5034,6 @@ Draw.loadPlugin(function (ui) {
         [
             ['crop', 'Plant / variety'],
             ['context', 'City / year'],
-            ['method', 'Planting method'],
-            ['selectedDate', 'Selected sow or planting date'],
-            ['firstHarvest', 'Expected first harvest'],
-            ['harvestEnd', 'Expected harvest end'],
             ['feasibility', 'Feasibility']
         ].forEach(([key, label]) => {
             const item = document.createElement('div');
@@ -4812,10 +5060,6 @@ Draw.loadPlugin(function (ui) {
         if (!summaryView?.fields || !viewState) return;
         summaryView.fields.crop.textContent = viewState.crop;
         summaryView.fields.context.textContent = viewState.context;
-        summaryView.fields.method.textContent = viewState.method;
-        summaryView.fields.selectedDate.textContent = viewState.selectedDate;
-        summaryView.fields.firstHarvest.textContent = viewState.firstHarvest;
-        summaryView.fields.harvestEnd.textContent = viewState.harvestEnd;
         const feasibilityField = summaryView.fields.feasibility;
         feasibilityField.textContent = '';
         if (viewState.feasibility.status === 'warning' && Array.isArray(viewState.feasibility.warningMessages) && viewState.feasibility.warningMessages.length) {
@@ -5661,6 +5905,7 @@ Draw.loadPlugin(function (ui) {
         let currentVarietyId = null;
         let currentVarietyRow = null;
         let varietiesCache = [];
+        let plantEditorSections = [];
 
         const DIALOG_MODE = {
             PLANT_ADD: 'plant_add',
@@ -5722,6 +5967,8 @@ Draw.loadPlugin(function (ui) {
             }
 
             syncSaveButtonLabel();
+            refreshPlantEditorSectionSummaries();
+            syncPlantEditorSectionOpenState();
         }
 
         const div = document.createElement('div');
@@ -5824,6 +6071,66 @@ Draw.loadPlugin(function (ui) {
                 margin-top:6px;
                 min-height:16px;
             }
+            .usl-plant-editor-sections{
+                display:grid;
+                gap:8px;
+            }
+            .usl-plant-editor-section{
+                border:1px solid #d1d5db;
+                border-radius:7px;
+                background:#fff;
+                overflow:hidden;
+            }
+            .usl-plant-editor-section-header{
+                width:100%;
+                border:0;
+                background:#f8fafc;
+                color:#111827;
+                cursor:pointer;
+                display:grid;
+                grid-template-columns:auto minmax(0,1fr) auto;
+                gap:8px;
+                align-items:center;
+                padding:8px 10px;
+                text-align:left;
+                font:12px Arial,sans-serif;
+            }
+            .usl-plant-editor-section-title{
+                font-weight:700;
+                min-width:0;
+            }
+            .usl-plant-editor-section-summary{
+                min-width:0;
+                display:flex;
+                gap:5px;
+                flex-wrap:wrap;
+                justify-content:flex-end;
+            }
+            .usl-plant-editor-chip{
+                border:1px solid #d1d5db;
+                border-radius:999px;
+                background:#fff;
+                color:#374151;
+                padding:1px 6px;
+                font-size:11px;
+                line-height:16px;
+                max-width:170px;
+                overflow:hidden;
+                text-overflow:ellipsis;
+                white-space:nowrap;
+            }
+            .usl-plant-editor-chip-warning{
+                border-color:#f59e0b;
+                color:#92400e;
+                background:#fffbeb;
+            }
+            .usl-plant-editor-section-toggle{
+                color:#4b5563;
+                font-weight:700;
+            }
+            .usl-plant-editor-section-body{
+                padding:8px 10px 10px;
+            }
             .usl-companion-defaults-list{
                 margin-top:10px;
                 border-top:1px solid #e5e7eb;
@@ -5834,6 +6141,24 @@ Draw.loadPlugin(function (ui) {
             .usl-companion-defaults-heading{font-weight:700;color:#374151;font-size:12px}
             .usl-companion-defaults-empty,.usl-companion-defaults-item{font-size:12px;color:#4b5563}
             .usl-companion-defaults-item{border:1px solid #e5e7eb;border-radius:6px;background:#fff;padding:6px 8px}
+            .usl-growth-stage-table{
+                display:grid;
+                grid-template-columns:90px minmax(130px,1fr) repeat(4,78px) 56px 56px 34px;
+                gap:6px;
+                align-items:center;
+                font-size:12px;
+            }
+            .usl-growth-stage-table input{
+                min-width:0;
+                padding:4px 5px;
+                border:1px solid #d1d5db;
+                border-radius:4px;
+                box-sizing:border-box;
+            }
+            .usl-growth-stage-table .usl-growth-stage-header{
+                color:#4b5563;
+                font-weight:700;
+            }
             @media (max-width:760px){
                 .usl-plant-editor.usl-plant-editor-variety-mode .usl-plant-editor-override-row{
                     grid-template-columns:minmax(0,1fr);
@@ -5841,6 +6166,13 @@ Draw.loadPlugin(function (ui) {
                 .usl-plant-editor.usl-plant-editor-variety-mode .usl-plant-editor-override-controls{
                     justify-content:flex-start;
                     flex-wrap:wrap;
+                }
+                .usl-plant-editor-section-header{
+                    grid-template-columns:minmax(0,1fr) auto;
+                }
+                .usl-plant-editor-section-summary{
+                    grid-column:1 / -1;
+                    justify-content:flex-start;
                 }
             }
         `;
@@ -5923,7 +6255,7 @@ Draw.loadPlugin(function (ui) {
 
         async function listPlantsBasic() {
             const sql = `
-        SELECT plant_id, plant_name
+        SELECT plant_id, plant_name, abbr, annual, biennial, perennial
         FROM Plants
         ORDER BY plant_name;`;
             return await queryAll(sql, []);
@@ -5960,6 +6292,21 @@ Draw.loadPlugin(function (ui) {
         varietySel.style.padding = '6px';
         varietySel.style.flex = '1';
 
+        const plantEditorPlantCombo = createSchedulerCropCombobox(plantSel, {
+            className: 'usl-plant-editor-combobox',
+            placeholder: 'Search plants...',
+            emptyText: 'No plants match',
+            buttonFallback: 'Select plant'
+        });
+        const plantEditorVarietyCombo = createSchedulerCropCombobox(varietySel, {
+            className: 'usl-plant-editor-combobox',
+            placeholder: 'Search varieties...',
+            emptyText: 'No varieties match',
+            buttonFallback: 'Select variety'
+        });
+        plantEditorPlantCombo.root.style.flex = '1 1 0';
+        plantEditorVarietyCombo.root.style.flex = '1 1 0';
+
         const addPlantBtn = mxUtils.button('Add plant', async () => {
             try {
                 plantSel.value = NEW_PLANT_VALUE;
@@ -5986,8 +6333,8 @@ Draw.loadPlugin(function (ui) {
 
         applySharedButtonStyle(addVarBtn, 'add');
 
-        selectorWrap.appendChild(plantSel);
-        selectorWrap.appendChild(varietySel);
+        selectorWrap.appendChild(plantEditorPlantCombo.root);
+        selectorWrap.appendChild(plantEditorVarietyCombo.root);
         selectorWrap.appendChild(addPlantBtn);
         selectorWrap.appendChild(addVarBtn);
         div.appendChild(selectorWrap);
@@ -5995,7 +6342,108 @@ Draw.loadPlugin(function (ui) {
         // -------------------- Layout (single column; inline overrides) --------------------
         const leftCol = document.createElement('div');
         leftCol.style.minWidth = '0';
+        leftCol.className = 'usl-plant-editor-sections';
         div.appendChild(leftCol);
+
+        function plantEditorNode(item) {
+            return item && item.row ? item.row : item;
+        }
+
+        function makePlantEditorChip(text, kind = '') {
+            const chip = document.createElement('span');
+            chip.className = 'usl-plant-editor-chip' + (kind ? ` usl-plant-editor-chip-${kind}` : '');
+            chip.textContent = String(text || '');
+            return chip;
+        }
+
+        function createPlantEditorSection(titleText, items, options = {}) {
+            const section = document.createElement('section');
+            section.className = 'usl-plant-editor-section';
+            const header = document.createElement('button');
+            header.type = 'button';
+            header.className = 'usl-plant-editor-section-header';
+            const titleEl = document.createElement('span');
+            titleEl.className = 'usl-plant-editor-section-title';
+            titleEl.textContent = titleText;
+            const summary = document.createElement('span');
+            summary.className = 'usl-plant-editor-section-summary';
+            const toggle = document.createElement('span');
+            toggle.className = 'usl-plant-editor-section-toggle';
+            const body = document.createElement('div');
+            body.className = 'usl-plant-editor-section-body';
+            (items || []).forEach(item => {
+                const node = plantEditorNode(item);
+                if (node) body.appendChild(node);
+            });
+            let open = options.defaultOpen !== false;
+            function setOpen(nextOpen) {
+                open = !!nextOpen;
+                body.style.display = open ? '' : 'none';
+                toggle.textContent = open ? 'v' : '>';
+                section.setAttribute('data-open', open ? 'true' : 'false');
+            }
+            function refreshSummary() {
+                summary.innerHTML = '';
+                const chips = typeof options.summaryProvider === 'function' ? options.summaryProvider() : [];
+                (chips || []).filter(Boolean).slice(0, 5).forEach(chip => {
+                    summary.appendChild(makePlantEditorChip(chip.text || chip, chip.kind || ''));
+                });
+            }
+            header.appendChild(titleEl);
+            header.appendChild(summary);
+            header.appendChild(toggle);
+            header.addEventListener('click', () => setOpen(!open));
+            section.appendChild(header);
+            section.appendChild(body);
+            setOpen(open);
+            refreshSummary();
+            return {
+                section,
+                key: options.key || titleText,
+                overrideKeys: options.overrideKeys || [],
+                setOpen,
+                refreshSummary
+            };
+        }
+
+        function labelForSelectValue(selectEl) {
+            const opt = selectEl && selectEl.options ? selectEl.options[selectEl.selectedIndex] : null;
+            return String(opt?.textContent || '').trim();
+        }
+
+        function formatEditorNumber(value, suffix = '') {
+            const n = finiteNumberOrNull(value);
+            if (n == null) return '';
+            const rounded = Math.abs(n) >= 10 ? Math.round(n) : Math.round(n * 100) / 100;
+            return `${rounded}${suffix}`;
+        }
+
+        function countCheckedOverrides(keys) {
+            return (keys || []).filter(key => overrideInlineByKey[key]?.chk?.checked).length;
+        }
+
+        function sectionOverrideChip(keys) {
+            const count = countCheckedOverrides(keys);
+            return count ? { text: `${count} override${count === 1 ? '' : 's'}`, kind: 'warning' } : null;
+        }
+
+        function refreshPlantEditorSectionSummaries() {
+            (plantEditorSections || []).forEach(section => section.refreshSummary());
+        }
+
+        function syncPlantEditorSectionOpenState() {
+            if (!plantEditorSections || !plantEditorSections.length) return;
+            const varietyMode = currentVarietyMode === 'add' || currentVarietyMode === 'edit';
+            plantEditorSections.forEach(section => {
+                if (!varietyMode) {
+                    section.setOpen(section.key === 'basics' || section.key === 'maturity');
+                    return;
+                }
+                const hasOverrides = countCheckedOverrides(section.overrideKeys) > 0;
+                const hasWarning = section.key === 'basics' && maturityClassWarning.style.display !== 'none';
+                section.setOpen(section.key === 'basics' || hasOverrides || hasWarning);
+            });
+        }
 
         // --- Identity ---
         const nameInput = document.createElement('input');
@@ -6032,11 +6480,13 @@ Draw.loadPlugin(function (ui) {
         maturityClassWarning.style.color = '#92400e';
         maturityClassWarning.style.margin = '0 0 8px 150px';
 
-        leftCol.appendChild(row('Plant name:', nameInput).row);
+        const plantNameRow = row('Plant name:', nameInput);
+        leftCol.appendChild(plantNameRow.row);
         leftCol.appendChild(varietyNameRow.row);
         leftCol.appendChild(maturityClassRow.row);
         leftCol.appendChild(maturityClassWarning);
-        leftCol.appendChild(row('Abbreviation (abbr):', abbrInput).row);
+        const abbrRow = row('Abbreviation (abbr):', abbrInput);
+        leftCol.appendChild(abbrRow.row);
 
         function buildDraftVarietyRowForMaturityWarning() {
             return {
@@ -6061,6 +6511,8 @@ Draw.loadPlugin(function (ui) {
             if (!mismatch) {
                 maturityClassWarning.style.display = 'none';
                 maturityClassWarning.textContent = '';
+                refreshPlantEditorSectionSummaries();
+                syncPlantEditorSectionOpenState();
                 return;
             }
             const manualLabel = VARIETY_MATURITY_CLASS_LABELS[mismatch.manualClass].replace(' varieties', '');
@@ -6068,6 +6520,8 @@ Draw.loadPlugin(function (ui) {
             const sourceLabel = mismatch.source === 'days_maturity' ? 'DTM' : 'GDD';
             maturityClassWarning.textContent = `Manual class is ${manualLabel}, but ${sourceLabel} ranking suggests ${inferredLabel}. Saving is allowed.`;
             maturityClassWarning.style.display = 'block';
+            refreshPlantEditorSectionSummaries();
+            syncPlantEditorSectionOpenState();
         }
         maturityClassSel.addEventListener('change', refreshMaturityClassWarning);
         varietyNameInput.addEventListener('input', refreshMaturityClassWarning);
@@ -6124,7 +6578,8 @@ Draw.loadPlugin(function (ui) {
         methodsBox.style.flexDirection = 'column';
         methodsBox.style.gap = '6px';
 
-        leftCol.appendChild(row('Allowed methods:', methodsBox).row);
+        const allowedMethodsRow = row('Allowed methods:', methodsBox);
+        leftCol.appendChild(allowedMethodsRow.row);
 
         const methodChecksById = new Map(); // method_category_id -> checkbox                      
 
@@ -6151,7 +6606,8 @@ Draw.loadPlugin(function (ui) {
         const defaultMethodSel = document.createElement('select');
         defaultMethodSel.style.padding = '6px';
         defaultMethodSel.style.width = '100%';
-        leftCol.appendChild(row('Default planting method:', defaultMethodSel).row);
+        const defaultMethodRow = row('Default planting method:', defaultMethodSel);
+        leftCol.appendChild(defaultMethodRow.row);
 
         function selectDefaultMethodFromPlantRow() {
             const wanted = normId(currentPlantRow?.default_planting_method);
@@ -6246,6 +6702,8 @@ Draw.loadPlugin(function (ui) {
                     if (def.type === 'bool01') input.checked = false;
                     else input.value = '';
                 }
+                refreshPlantEditorSectionSummaries();
+                syncPlantEditorSectionOpenState();
             });
 
             const baseHint = document.createElement('span');
@@ -6350,6 +6808,7 @@ Draw.loadPlugin(function (ui) {
                 if (def.type === 'bool01') input.checked = has ? (Number(overridesObj[key] ?? 0) === 1) : false;
                 else input.value = has ? String(overridesObj[key] ?? '') : '';
             }
+            refreshPlantEditorSectionSummaries();
         }
 
         function buildOverridesFromUI() {
@@ -6372,7 +6831,8 @@ Draw.loadPlugin(function (ui) {
         const gddInput = makeNullableNumber(existing?.gdd_to_maturity ?? null, { min: 0, step: 1 });
         const daysMatInput = makeNullableNumber(existing?.days_maturity ?? null, { min: 0, step: 1 });
 
-        leftCol.appendChild(row('Maturity budget:', budgetModeSel).row);
+        const maturityBudgetRow = row('Maturity budget:', budgetModeSel);
+        leftCol.appendChild(maturityBudgetRow.row);
 
         const gddRow = row('GDD to maturity:', gddInput);
         leftCol.appendChild(gddRow.row);
@@ -6582,6 +7042,38 @@ Draw.loadPlugin(function (ui) {
         leftCol.appendChild(spacingYRow.row);
         attachInlineOverrideToRow(spacingYRow, { key: 'spacing_y_cm', type: 'num_ge0', step: 1 });
 
+        const growthStagePanel = document.createElement('div');
+        growthStagePanel.className = 'usl-plant-editor-layout-panel';
+        const growthStageHeading = document.createElement('div');
+        growthStageHeading.className = 'usl-plant-editor-layout-heading';
+        growthStageHeading.textContent = 'Growing stages';
+        growthStagePanel.appendChild(growthStageHeading);
+        const growthStageTable = document.createElement('div');
+        growthStageTable.className = 'usl-growth-stage-table';
+        growthStagePanel.appendChild(growthStageTable);
+        const growthStageActions = document.createElement('div');
+        growthStageActions.className = 'usl-plant-editor-layout-actions';
+        const addGrowthStageBtn = mxUtils.button('Add stage', () => {
+            addGrowthStageEditorRow({
+                stage_key: '',
+                stage_label: '',
+                gdd_ratio: 1,
+                spacing_ratio: '',
+                plant_diameter_ratio: '',
+                plant_height_ratio: '',
+                active: 1,
+                is_default: 0
+            });
+        });
+        applySharedButtonStyle(addGrowthStageBtn, 'add');
+        growthStageActions.appendChild(addGrowthStageBtn);
+        growthStagePanel.appendChild(growthStageActions);
+        const growthStageStatus = document.createElement('div');
+        growthStageStatus.className = 'usl-layout-status';
+        growthStagePanel.appendChild(growthStageStatus);
+        leftCol.appendChild(growthStagePanel);
+        let growthStageEditorRows = [];
+
         const companionLayoutPanel = document.createElement('div');
         companionLayoutPanel.className = 'usl-plant-editor-layout-panel';
         const companionLayoutHeading = document.createElement('div');
@@ -6643,6 +7135,107 @@ Draw.loadPlugin(function (ui) {
         function refreshPlantEditorLayoutPreview() {
             return;
         }
+        function addGrowthStageCell(text, className) {
+            const cell = document.createElement('div');
+            cell.textContent = text;
+            if (className) cell.className = className;
+            growthStageTable.appendChild(cell);
+            return cell;
+        }
+        function rebuildGrowthStageTableHeader() {
+            growthStageTable.innerHTML = '';
+            ['Key', 'Label', 'GDD', 'Spacing', 'Diameter', 'Height', 'Active', 'Default', ''].forEach(label => addGrowthStageCell(label, 'usl-growth-stage-header'));
+        }
+        function makeGrowthStageNumberInput(value, placeholder = '') {
+            const input = makeNullableNumber(value == null ? '' : value, { min: 0.01, step: 0.01 });
+            input.placeholder = placeholder;
+            return input;
+        }
+        function addGrowthStageEditorRow(stageLike) {
+            const raw = stageLike || {};
+            const stage = normalizeGrowthStage(raw);
+            const keyInput = document.createElement('input');
+            keyInput.type = 'text';
+            keyInput.value = stage.stageKey === DEFAULT_GROWTH_STAGE_KEY && raw.stage_key === '' ? '' : stage.stageKey;
+            const labelInput = document.createElement('input');
+            labelInput.type = 'text';
+            labelInput.value = stage.stageLabel === DEFAULT_GROWTH_STAGE_LABEL && raw.stage_label === '' ? '' : stage.stageLabel;
+            const gddInput = makeGrowthStageNumberInput(stage.gddRatio);
+            const spacingInputLocal = makeGrowthStageNumberInput(raw.spacing_ratio ?? raw.spacingRatio ?? '', 'sqrt');
+            const diameterInput = makeGrowthStageNumberInput(raw.plant_diameter_ratio ?? raw.plantDiameterRatio ?? '', 'sqrt');
+            const heightInput = makeGrowthStageNumberInput(raw.plant_height_ratio ?? raw.plantHeightRatio ?? '', 'sqrt');
+            const activeInput = makeCheckbox(Number(raw.active ?? stage.active) !== 0);
+            const defaultInput = makeCheckbox(Number(raw.is_default ?? raw.isDefault ?? stage.isDefault) === 1);
+            const removeBtn = mxUtils.button('x', () => {
+                growthStageEditorRows = growthStageEditorRows.filter(item => item.removeBtn !== removeBtn);
+                renderGrowthStageRows(growthStageEditorRows.map(readGrowthStageEditorRow).filter(Boolean));
+            });
+            applySharedButtonStyle(removeBtn, 'danger', { compact: true }); // CHANGE
+            [keyInput, labelInput, gddInput, spacingInputLocal, diameterInput, heightInput].forEach(input => {
+                input.addEventListener('input', refreshGrowthStageStatus);
+                input.addEventListener('change', refreshGrowthStageStatus);
+            });
+            defaultInput.addEventListener('change', () => {
+                if (defaultInput.checked) growthStageEditorRows.forEach(rowState => { if (rowState.defaultInput !== defaultInput) rowState.defaultInput.checked = false; });
+                refreshGrowthStageStatus();
+            });
+            growthStageEditorRows.push({ keyInput, labelInput, gddInput, spacingInputLocal, diameterInput, heightInput, activeInput, defaultInput, removeBtn });
+            [keyInput, labelInput, gddInput, spacingInputLocal, diameterInput, heightInput, activeInput, defaultInput, removeBtn].forEach(el => growthStageTable.appendChild(el));
+            refreshGrowthStageStatus();
+        }
+        function readGrowthStageEditorRow(rowState) {
+            const key = normalizeGrowthStageKey(rowState.keyInput.value || rowState.labelInput.value);
+            const label = String(rowState.labelInput.value || rowState.keyInput.value || '').trim();
+            if (!key && !label) return null;
+            const gddRatio = positiveFiniteOrNull(rowState.gddInput.value);
+            if (gddRatio == null) throw new Error(`Growing stage "${label || key}" requires GDD ratio > 0.`);
+            return {
+                stage_key: key,
+                stage_label: label || key,
+                gdd_ratio: gddRatio,
+                spacing_ratio: positiveFiniteOrNull(rowState.spacingInputLocal.value),
+                plant_diameter_ratio: positiveFiniteOrNull(rowState.diameterInput.value),
+                plant_height_ratio: positiveFiniteOrNull(rowState.heightInput.value),
+                active: rowState.activeInput.checked ? 1 : 0,
+                is_default: rowState.defaultInput.checked ? 1 : 0
+            };
+        }
+        function readGrowthStageEditorRows() {
+            const rows = growthStageEditorRows.map(readGrowthStageEditorRow).filter(Boolean);
+            const seen = new Set();
+            rows.forEach(stage => {
+                if (seen.has(stage.stage_key)) throw new Error(`Duplicate growing stage key: ${stage.stage_key}`);
+                seen.add(stage.stage_key);
+            });
+            return rows;
+        }
+        function renderGrowthStageRows(stages) {
+            rebuildGrowthStageTableHeader();
+            growthStageEditorRows = [];
+            (Array.isArray(stages) ? stages : []).forEach(stage => addGrowthStageEditorRow(stage));
+            if (!growthStageEditorRows.length) addGrowthStageEditorRow(defaultGrowthStage());
+            refreshGrowthStageStatus();
+        }
+        function refreshGrowthStageStatus() {
+            try {
+                const rows = growthStageEditorRows.map(readGrowthStageEditorRow).filter(Boolean);
+                growthStageStatus.textContent = rows.length ? `${rows.length} growing stage${rows.length === 1 ? '' : 's'} configured.` : 'No growing stages configured; scheduler uses Mature at 1.0.';
+                refreshPlantEditorSectionSummaries();
+            } catch (e) {
+                growthStageStatus.textContent = 'Growing stage error: ' + (e?.message || String(e));
+                refreshPlantEditorSectionSummaries();
+            }
+        }
+        async function refreshGrowthStageEditorForPlant(pid) {
+            const plantIdNumber = Number(pid);
+            if (!Number.isFinite(plantIdNumber)) {
+                renderGrowthStageRows([defaultGrowthStage()]);
+                return;
+            }
+            const rows = await PlantGrowthStageModel.listByPlantId(plantIdNumber, { includeInactive: true });
+            renderGrowthStageRows(rows.length ? rows : [defaultGrowthStage()]);
+        }
+
         function selectedCompanionLayoutRelationship() {
             const key = String(companionLayoutRelSel.value || '');
             return companionLayoutRelationships.find(rel => String(rel.relationId || '') === key) || null;
@@ -6674,6 +7267,7 @@ Draw.loadPlugin(function (ui) {
             const relationship = selectedCompanionLayoutRelationship();
             if (!relationship) companionLayoutStatus.textContent = Number.isFinite(Number(currentPlantId)) ? 'No companion pairs found for this plant.' : 'Save or select a plant to edit companion pair defaults.';
             else companionLayoutStatus.textContent = 'Pair layout defaults are used as fallbacks for scheduler groups.';
+            refreshPlantEditorSectionSummaries();
         }
         async function refreshCompanionGroupDefaultsList() {
             companionGroupDefaultsList.innerHTML = '';
@@ -6722,6 +7316,7 @@ Draw.loadPlugin(function (ui) {
             [companionLayoutTemplateSel, companionLayoutSpacingXInput, companionLayoutSpacingYInput, companionLayoutOffsetXInput, companionLayoutOffsetYInput, companionLayoutSaveBtn].forEach(el => { if (el) el.disabled = !hasRelationship; });
             writeCompanionLayoutControls(selectedCompanionLayoutRelationship());
             await refreshCompanionGroupDefaultsList();
+            refreshPlantEditorSectionSummaries();
         }
         [spacingInput, spacingXInput, spacingYInput, vegDiamInput, nameInput].forEach(control => {
             control.addEventListener('input', () => { refreshPlantEditorLayoutPreview(); refreshCompanionLayoutPreview(); });
@@ -6737,6 +7332,173 @@ Draw.loadPlugin(function (ui) {
 
         // hide overrides by default
         setInlineOverridesVisible(false);
+
+        const maturityOverrideKeys = ['gdd_to_maturity', 'days_maturity', 'days_germ', 'days_transplant'];
+        const yieldOverrideKeys = ['yield_per_plant_kg', 'harvest_window_days'];
+        const climateOverrideKeys = [
+            'tbase_c', 'tmin_c', 'topt_low_c', 'topt_high_c', 'tmax_c', 'killtemp_c',
+            'soil_temp_min_plant_c', 'start_cooling_threshold_c',
+            'establishment_temp_max_c', 'establishment_heat_window_days', 'establishment_heat_policy',
+            'quality_temp_max_c', 'heat_stress_stage', 'quality_heat_policy',
+            'photoperiod_response', 'critical_daylength_hours', 'photoperiod_stage', 'photoperiod_policy',
+            'chilling_required_days', 'chilling_required_hours', 'chilling_temp_min_c', 'chilling_temp_max_c',
+            'chilling_stage', 'chilling_policy', 'diagnostic_policy'
+        ];
+        const layoutOverrideKeys = ['veg_height_cm', 'veg_diameter_cm', 'spacing_cm', 'spacing_x_cm', 'spacing_y_cm'];
+
+        function summarizeBasicsSection() {
+            const chips = [];
+            const plantName = String(nameInput.value || '').trim();
+            if (plantName) chips.push(plantName);
+            if (currentVarietyMode === 'add' || currentVarietyMode === 'edit') {
+                const varietyName = String(varietyNameInput.value || '').trim();
+                if (varietyName) chips.push(varietyName);
+                const maturityLabel = labelForSelectValue(maturityClassSel);
+                if (maturityLabel) chips.push(maturityLabel);
+            }
+            if (maturityClassWarning.style.display !== 'none') chips.push({ text: 'Maturity mismatch', kind: 'warning' });
+            return chips;
+        }
+
+        function summarizeLifecycleSection() {
+            const chips = [labelForSelectValue(typeSel)].filter(Boolean);
+            const methodCount = getAllowedmethodCategoryIdsFromUI().length;
+            if (methodCount) chips.push(`${methodCount} method${methodCount === 1 ? '' : 's'}`);
+            const defaultMethod = labelForSelectValue(defaultMethodSel);
+            if (defaultMethod) chips.push(defaultMethod);
+            if (overwinterChk.checked) chips.push('Overwinter');
+            const overrideChip = sectionOverrideChip(['overwinter_ok']);
+            if (overrideChip) chips.push(overrideChip);
+            return chips;
+        }
+
+        function summarizeMaturitySection() {
+            const chips = [];
+            if (budgetModeSel.value === 'gdd') {
+                const gdd = formatEditorNumber(gddInput.value, ' GDD');
+                if (gdd) chips.push(gdd);
+            } else {
+                const days = formatEditorNumber(daysMatInput.value, 'd');
+                if (days) chips.push(days);
+            }
+            const germ = formatEditorNumber(daysGermInput.value, 'd germ');
+            const transplant = formatEditorNumber(daysTransInput.value, 'd transplant');
+            if (germ) chips.push(germ);
+            if (transplant) chips.push(transplant);
+            const overrideChip = sectionOverrideChip(maturityOverrideKeys);
+            if (overrideChip) chips.push(overrideChip);
+            return chips;
+        }
+
+        function summarizeYieldSection() {
+            const chips = [];
+            const yieldValue = formatEditorNumber(yieldInput.value, ' kg/plant');
+            const harvestWindow = formatEditorNumber(hwInput.value, 'd harvest');
+            if (yieldValue) chips.push(yieldValue);
+            if (harvestWindow) chips.push(harvestWindow);
+            const overrideChip = sectionOverrideChip(yieldOverrideKeys);
+            if (overrideChip) chips.push(overrideChip);
+            return chips;
+        }
+
+        function summarizeClimateSection() {
+            const chips = [];
+            const tmin = formatEditorNumber(tminInput.value, 'C');
+            const tmax = formatEditorNumber(tmaxInput.value, 'C');
+            if (tmin || tmax) chips.push([tmin || '?', tmax || '?'].join(' to '));
+            const soilMin = formatEditorNumber(soilMinInput.value, 'C soil');
+            if (soilMin) chips.push(soilMin);
+            const diagnostic = labelForSelectValue(diagnosticPolicySel);
+            if (diagnostic) chips.push(`${diagnostic} diagnostics`);
+            if (!tmin && !tmax && !formatEditorNumber(tbaseInput.value, '')) chips.push({ text: 'Missing climate', kind: 'warning' });
+            const overrideChip = sectionOverrideChip(climateOverrideKeys);
+            if (overrideChip) chips.push(overrideChip);
+            return chips;
+        }
+
+        function summarizeLayoutSection() {
+            const chips = [];
+            const spacingX = formatEditorNumber(spacingXInput.value, 'cm');
+            const spacingY = formatEditorNumber(spacingYInput.value, 'cm');
+            const spacing = formatEditorNumber(spacingInput.value, 'cm');
+            if (spacingX || spacingY) chips.push(`${spacingX || '?'} x ${spacingY || '?'}`);
+            else if (spacing) chips.push(spacing);
+            const diameter = formatEditorNumber(vegDiamInput.value, 'cm diameter');
+            const height = formatEditorNumber(vegHeightInput.value, 'cm high');
+            if (diameter) chips.push(diameter);
+            if (height) chips.push(height);
+            const overrideChip = sectionOverrideChip(layoutOverrideKeys);
+            if (overrideChip) chips.push(overrideChip);
+            return chips;
+        }
+
+        function summarizeGrowingStagesSection() {
+            const count = growthStageEditorRows.length;
+            return count ? [`${count} stage${count === 1 ? '' : 's'}`] : ['No stages'];
+        }
+
+        function summarizeCompanionSection() {
+            const pairCount = companionLayoutRelationships.length;
+            return pairCount ? [`${pairCount} pair${pairCount === 1 ? '' : 's'}`] : ['No pairs'];
+        }
+
+        plantEditorSections = [
+            createPlantEditorSection('Basics', [plantNameRow, varietyNameRow, maturityClassRow, maturityClassWarning, abbrRow], {
+                key: 'basics',
+                defaultOpen: true,
+                summaryProvider: summarizeBasicsSection
+            }),
+            createPlantEditorSection('Lifecycle & Methods', [lifecycleRow, lifeRow, overwinterRow, allowedMethodsRow, defaultMethodRow], {
+                key: 'lifecycle',
+                defaultOpen: false,
+                overrideKeys: ['overwinter_ok'],
+                summaryProvider: summarizeLifecycleSection
+            }),
+            createPlantEditorSection('Maturity & Timing', [maturityBudgetRow, gddRow, daysRow, daysGermRow, daysTransRow], {
+                key: 'maturity',
+                defaultOpen: true,
+                overrideKeys: maturityOverrideKeys,
+                summaryProvider: summarizeMaturitySection
+            }),
+            createPlantEditorSection('Yield', [yieldRow, hwRow], {
+                key: 'yield',
+                defaultOpen: false,
+                overrideKeys: yieldOverrideKeys,
+                summaryProvider: summarizeYieldSection
+            }),
+            createPlantEditorSection('Climate', [
+                tbaseRow, tminRow, toptLowRow, toptHighRow, tmaxRow, killTempRow,
+                soilMinRow, coolThreshRow,
+                establishmentMaxRow, establishmentDaysRow, establishmentPolicyRow,
+                qualityMaxRow, heatStageRow, qualityPolicyRow,
+                photoperiodResponseRow, criticalDaylengthRow, photoperiodStageRow, photoperiodPolicyRow,
+                chillingDaysRow, chillingHoursRow, chillingMinRow, chillingMaxRow, chillingStageRow, chillingPolicyRow,
+                diagnosticPolicyRow
+            ], {
+                key: 'climate',
+                defaultOpen: false,
+                overrideKeys: climateOverrideKeys,
+                summaryProvider: summarizeClimateSection
+            }),
+            createPlantEditorSection('Spacing/Layout', [vegHeightRow, vegDiamRow, spacingRow, spacingXRow, spacingYRow], {
+                key: 'layout',
+                defaultOpen: false,
+                overrideKeys: layoutOverrideKeys,
+                summaryProvider: summarizeLayoutSection
+            }),
+            createPlantEditorSection('Growing Stages', [growthStagePanel], { // CHANGE: keep growth stages browseable as a first-class editor section.
+                key: 'growthStages',
+                defaultOpen: false,
+                summaryProvider: summarizeGrowingStagesSection
+            }),
+            createPlantEditorSection('Companion Defaults', [companionLayoutPanel], {
+                key: 'companions',
+                defaultOpen: false,
+                summaryProvider: summarizeCompanionSection
+            })
+        ];
+        plantEditorSections.forEach(section => leftCol.appendChild(section.section));
+        syncPlantEditorSectionOpenState();
 
         const PLANT_FIELD_BINDINGS = [
             { key: 'plant_name', input: nameInput, kind: 'text', empty: '' },
@@ -6782,6 +7544,28 @@ Draw.loadPlugin(function (ui) {
             { key: 'spacing_x_cm', input: spacingXInput, kind: 'nullable-number', empty: '' },
             { key: 'spacing_y_cm', input: spacingYInput, kind: 'nullable-number', empty: '' },
         ];
+
+        const sectionSummaryControls = [
+            nameInput, abbrInput, varietyNameInput, maturityClassSel, typeSel, lifespanInput, overwinterChk,
+            defaultMethodSel, budgetModeSel, gddInput, daysMatInput, daysGermInput, daysTransInput,
+            yieldInput, hwInput, tbaseInput, tminInput, toptLowInput, toptHighInput, tmaxInput, killTempInput,
+            soilMinInput, coolThreshInput, establishmentMaxInput, establishmentDaysInput, establishmentPolicySel,
+            qualityMaxInput, heatStageSel, qualityPolicySel, photoperiodResponseSel, criticalDaylengthInput,
+            photoperiodStageSel, photoperiodPolicySel, chillingDaysInput, chillingHoursInput, chillingMinInput,
+            chillingMaxInput, chillingStageSel, chillingPolicySel, diagnosticPolicySel,
+            vegHeightInput, vegDiamInput, spacingInput, spacingXInput, spacingYInput
+        ];
+        sectionSummaryControls.forEach(control => {
+            if (!control) return;
+            control.addEventListener('input', refreshPlantEditorSectionSummaries);
+            control.addEventListener('change', refreshPlantEditorSectionSummaries);
+        });
+        for (const chk of methodChecksById.values()) chk.addEventListener('change', refreshPlantEditorSectionSummaries);
+        for (const key of Object.keys(overrideInlineByKey)) {
+            const controls = overrideInlineByKey[key];
+            controls?.input?.addEventListener?.('input', refreshPlantEditorSectionSummaries);
+            controls?.input?.addEventListener?.('change', refreshPlantEditorSectionSummaries);
+        }
 
         function setBoundInputValue(binding, row) {
             const { key, input, kind, empty = '' } = binding;
@@ -6847,36 +7631,24 @@ Draw.loadPlugin(function (ui) {
                 chk.checked = allowedSet.has(mid);
             }
             await rebuildDefaultMethodOptions();
+            refreshPlantEditorSectionSummaries();
         }
 
         async function refreshVarietyDropdown(pid, preferredVarietyId = null) {
             varietiesCache = Number.isFinite(Number(pid)) ? await listVarietiesForPlant(Number(pid)) : [];
 
             const prev = String(preferredVarietyId ?? varietySel.value ?? '');
-            varietySel.innerHTML = '';
-
-            const none = document.createElement('option');
-            none.value = '';
-            none.textContent = '';
-            varietySel.appendChild(none);
-
-            const newOpt = document.createElement('option');
-            newOpt.value = NEW_VARIETY_VALUE;
-            newOpt.textContent = 'New variety…';
-            varietySel.appendChild(newOpt);
-
-            for (const v of varietiesCache) {
-                const opt = document.createElement('option');
-                opt.value = String(v.variety_id);
-                opt.textContent = String(v.variety_name || v.variety_id);
-                varietySel.appendChild(opt);
-            }
+            const hasPlant = Number.isFinite(Number(currentPlantId));
+            const groups = hasPlant
+                ? buildVarietyPickerGroups(varietiesCache, { includeBase: true, includeNew: true, newValue: NEW_VARIETY_VALUE })
+                : [{ label: 'Selection', options: [{ value: '', label: 'Save plant before varieties', displayLabel: 'Save plant before varieties' }] }];
+            renderGroupedSelectOptions(varietySel, groups, prev, { emptyLabel: 'No varieties match' });
 
             const valid = new Set(Array.from(varietySel.options).map(o => o.value));
             varietySel.value = valid.has(prev) ? prev : '';
 
-            const hasPlant = Number.isFinite(Number(currentPlantId));
             addVarBtn.disabled = !hasPlant;
+            plantEditorVarietyCombo.refresh(groups, varietySel.value);
         }
 
         function applyPlantRowToUI(p) {
@@ -6926,16 +7698,11 @@ Draw.loadPlugin(function (ui) {
                 await rebuildDefaultMethodOptions();
                 defaultMethodSel.value = '';
 
-                // Reset variety UI                                                      
-                varietiesCache = [];
-                varietySel.innerHTML = '';
-                const none = document.createElement('option');
-                none.value = '';
-                none.textContent = '';
-                varietySel.appendChild(none);
-                addVarBtn.disabled = true;
+                // Reset variety UI
+                await refreshVarietyDropdown(null);
 
                 refreshPlantEditorLayoutPreview();
+                await refreshGrowthStageEditorForPlant(null);
                 await refreshCompanionLayoutDefaultsUI();
                 return;
             }
@@ -6955,6 +7722,7 @@ Draw.loadPlugin(function (ui) {
             refreshInlineBaseHints();
             await refreshAllowedMethodCategoriesUIForPlant(pid);
             selectDefaultMethodFromPlantRow();
+            await refreshGrowthStageEditorForPlant(pid);
             await refreshCompanionLayoutDefaultsUI();
 
             await refreshVarietyDropdown(pid, preferredVarietyId);
@@ -7023,26 +7791,22 @@ Draw.loadPlugin(function (ui) {
 
         // -------------------- Populate plant dropdown --------------------
         const plantRows = await listPlantsBasic();
-        plantSel.innerHTML = '';
-
-        const emptyPlantOpt = document.createElement('option');
-        emptyPlantOpt.value = '';
-        emptyPlantOpt.textContent = '';
-        plantSel.appendChild(emptyPlantOpt);
-
-        const newPlantOpt = document.createElement('option');
-        newPlantOpt.value = NEW_PLANT_VALUE;
-        newPlantOpt.textContent = 'New plant…';
-        plantSel.appendChild(newPlantOpt);
-
-        for (const p of plantRows) {
-            const opt = document.createElement('option');
-            opt.value = String(p.plant_id);
-            opt.textContent = String(p.plant_name || p.plant_id);
-            plantSel.appendChild(opt);
+        function buildPlantEditorPlantGroups(selectedValue = plantSel.value) {
+            return [{
+                label: 'Selection',
+                options: [
+                    { value: '', label: '(select plant)', displayLabel: '(select plant)' },
+                    { value: NEW_PLANT_VALUE, label: 'New plant...', displayLabel: 'New plant...' }
+                ]
+            }].concat(buildGroupedPlantOptions(plantRows, { selectedValue, includeSelectedWhenFiltered: false }));
+        }
+        function refreshPlantEditorPlantPicker(selectedValue = plantSel.value) {
+            const groups = buildPlantEditorPlantGroups(selectedValue);
+            renderGroupedSelectOptions(plantSel, groups, selectedValue, { emptyLabel: 'No plants match' });
+            plantEditorPlantCombo.refresh(groups, plantSel.value || selectedValue);
         }
 
-        plantSel.value = Number.isFinite(Number(currentPlantId)) ? String(currentPlantId) : '';
+        refreshPlantEditorPlantPicker(Number.isFinite(Number(currentPlantId)) ? String(currentPlantId) : '');
 
         // --- Buttons ---
         const btns = document.createElement('div');
@@ -7052,7 +7816,7 @@ Draw.loadPlugin(function (ui) {
         btns.style.gap = '8px';
 
         const cancelBtn = mxUtils.button('Cancel', () => div.__cancel());
-        applySharedButtonStyle(cancelBtn, 'neutral');
+        applySharedButtonStyle(cancelBtn, 'close'); // CHANGE
 
         const saveBtn = mxUtils.button('Save', async () => {
             try {
@@ -7195,16 +7959,19 @@ Draw.loadPlugin(function (ui) {
 
                 const savedId = Number(saved?.plant_id ?? currentPlantId);
                 if (!Number.isFinite(savedId)) throw new Error('Save succeeded but plant_id is missing');
+                await PlantGrowthStageModel.saveForPlant(savedId, readGrowthStageEditorRows());
 
                 // After save, sync dialog state to saved plant
                 currentPlantId = savedId;
                 plantSel.value = String(savedId);
+                refreshPlantEditorPlantPicker(String(savedId));
                 currentPlantRow = toPlainDict(await PlantModel.loadById(savedId));
                 applyDialogMode(DIALOG_MODE.PLANT_EDIT);
                 refreshInlineBaseHints();
 
                 await refreshAllowedMethodCategoriesUIForPlant(savedId);
                 await refreshVarietyDropdown(savedId, null);
+                await refreshGrowthStageEditorForPlant(savedId);
 
                 div.__commit(saved);
             } catch (e) {
@@ -7226,6 +7993,7 @@ Draw.loadPlugin(function (ui) {
             : (initialPlantId ? String(initialPlantId) : NEW_PLANT_VALUE);
 
         plantSel.value = initialPlantSelValue;
+        refreshPlantEditorPlantPicker(initialPlantSelValue);
 
         console.log('[PlantEditorDialog] calling loadPlantIntoForm with:', {
             initialPlantId,
@@ -7242,6 +8010,7 @@ Draw.loadPlugin(function (ui) {
         async function handlePlantEditorPlantChange() { // FIX: provide an awaitable plant-editor workflow
             try {
                 const raw = String(plantSel.value || '').trim();
+                refreshPlantEditorPlantPicker(raw);
 
                 if (raw === NEW_PLANT_VALUE) {
                     await loadPlantIntoForm(null);
@@ -7260,6 +8029,10 @@ Draw.loadPlugin(function (ui) {
             try {
                 const v = String(varietySel.value || '').trim();
                 const hasPlant = Number.isFinite(Number(currentPlantId));
+                const groups = hasPlant
+                    ? buildVarietyPickerGroups(varietiesCache, { includeBase: true, includeNew: true, newValue: NEW_VARIETY_VALUE })
+                    : [{ label: 'Selection', options: [{ value: '', label: 'Save plant before varieties', displayLabel: 'Save plant before varieties' }] }];
+                plantEditorVarietyCombo.refresh(groups, v);
 
                 addVarBtn.disabled = !hasPlant;
 
@@ -7392,6 +8165,7 @@ Draw.loadPlugin(function (ui) {
             derivedContext = null
         } = options || {};
         const cropMetadataByPlantId = derivedContext?.metadataByPlantId || new Map();
+        const initialGrowthStage = readGrowthStageFromCell(cell);
         let hasPersistedSchedule = !!initialHasPersistedSchedule; // FIX: provenance changes after an automatic replacement
 
         // Helper to centralize plant mode (perennial vs annual/biennial)          
@@ -7683,6 +8457,28 @@ Draw.loadPlugin(function (ui) {
             if (selectedValue != null) selectEl.value = String(selectedValue);
         }
 
+        function selectedGrowthStage() {
+            const key = normalizeGrowthStageKey(growthStageSel.value);
+            return currentGrowthStages.find(stage => stage.stageKey === key) || currentGrowthStages.find(stage => stage.isDefault === 1) || defaultGrowthStage();
+        }
+
+        async function refreshGrowthStageOptionsForPlant(plantId, preferredStage = null) {
+            const preferred = normalizeGrowthStage(preferredStage || formState?.growthStage || initialGrowthStage || defaultGrowthStage());
+            const rows = await PlantGrowthStageModel.listByPlantId(plantId);
+            const stages = rows.length ? rows.map(row => normalizeGrowthStage(row)) : [defaultGrowthStage()];
+            if (preferred.stageKey && !stages.some(stage => stage.stageKey === preferred.stageKey)) {
+                stages.push(normalizeGrowthStage(Object.assign({}, preferred, { legacy: true })));
+            }
+            currentGrowthStages = stages.sort((a, b) => (b.isDefault - a.isDefault) || (a.sortOrder - b.sortOrder) || a.stageLabel.localeCompare(b.stageLabel));
+            setSelectOptions(growthStageSel, currentGrowthStages.map(stage => ({
+                value: stage.stageKey,
+                label: stage.legacy ? `${stage.stageLabel} (saved)` : stage.stageLabel
+            })), preferred.stageKey || currentGrowthStages[0]?.stageKey || DEFAULT_GROWTH_STAGE_KEY);
+            if (!growthStageSel.value && currentGrowthStages[0]) growthStageSel.value = currentGrowthStages[0].stageKey;
+            formState.growthStageKey = normalizeGrowthStageKey(growthStageSel.value);
+            formState.growthStage = selectedGrowthStage();
+        }
+
         async function refreshEffectivePlant() {
             baseEffectivePlant = await resolveEffectivePlant(
                 formState.plantId,
@@ -7696,7 +8492,8 @@ Draw.loadPlugin(function (ui) {
                 overrideEnabled: formState.transplantDaysOverrideEnabled,
                 overrideValue: formState.transplantDaysOverrideValue
             });
-            effectivePlant = applyEffectiveTransplantDaysToPlant(baseEffectivePlant, transplantDaysConfig.effectiveDays);
+            const transplantAdjustedPlant = applyEffectiveTransplantDaysToPlant(baseEffectivePlant, transplantDaysConfig.effectiveDays);
+            effectivePlant = applyGrowthStageToPlant(transplantAdjustedPlant, formState.growthStage || selectedGrowthStage());
             mode = getModeForPlant(effectivePlant);
         }
 
@@ -7716,12 +8513,19 @@ Draw.loadPlugin(function (ui) {
         const varietySel = document.createElement('select');
         varietySel.style.width = '100%';
         varietySel.style.padding = '6px';
+        const scheduleVarietyCombo = createSchedulerCropCombobox(varietySel, {
+            className: 'usl-scheduler-variety-combobox',
+            placeholder: 'Search varieties...',
+            emptyText: 'No varieties match',
+            buttonFallback: 'Select variety'
+        });
+        scheduleVarietyCombo.root.style.flex = '1 1 auto';
 
         const varietyControlsWrap = document.createElement('div');
         varietyControlsWrap.style.display = 'flex';
         varietyControlsWrap.style.gap = '8px';
         varietyControlsWrap.style.alignItems = 'center';
-        varietyControlsWrap.appendChild(varietySel);
+        varietyControlsWrap.appendChild(scheduleVarietyCombo.root);
 
         const addVarietyBtn = styleCompactActionButton(inlineButton('+', async () => {
             try {
@@ -7744,6 +8548,7 @@ Draw.loadPlugin(function (ui) {
 
                 const savedId = Number(saved?.variety_id ?? saved?.varietyId ?? saved?.id);
                 if (Number.isFinite(savedId)) varietySel.value = String(savedId);
+                if (Number.isFinite(savedId)) renderScheduleVarietyPicker(String(savedId));
 
                 await handleScheduleVarietyChange(); // FIX: await the shared variety selection workflow
             } catch (e) {
@@ -7775,6 +8580,7 @@ Draw.loadPlugin(function (ui) {
 
                 const savedId = Number(saved?.variety_id ?? saved?.varietyId ?? vid);
                 varietySel.value = String(savedId);
+                renderScheduleVarietyPicker(String(savedId));
 
                 await handleScheduleVarietyChange(); // FIX: await the shared variety selection workflow
             } catch (e) {
@@ -7806,10 +8612,15 @@ Draw.loadPlugin(function (ui) {
         }
 
         let currentVarieties = [];
+        function renderScheduleVarietyPicker(selectedVarietyId = varietySel.value) {
+            const sel = Number.isFinite(Number(selectedVarietyId)) ? String(selectedVarietyId) : '';
+            const groups = buildVarietyPickerGroups(currentVarieties, { includeBase: true, includeNew: false });
+            renderGroupedSelectOptions(varietySel, groups, sel, { emptyLabel: 'No varieties match' });
+            scheduleVarietyCombo.refresh(groups, varietySel.value || sel);
+        }
         async function reloadVarietyOptionsForPlant(plantId, selectedVarietyId = null) {
             currentVarieties = await PlantVarietyModel.listByPlantId(Number(plantId));
-            const sel = Number.isFinite(Number(selectedVarietyId)) ? String(selectedVarietyId) : '';
-            renderGroupedVarietyOptions(varietySel, buildGroupedVarietyOptions(currentVarieties), sel);
+            renderScheduleVarietyPicker(selectedVarietyId);
         }
 
 
@@ -7818,11 +8629,11 @@ Draw.loadPlugin(function (ui) {
         const initialCityKey = initialCityId != null ? String(initialCityId) : '';
         const cityValue = cityOpts.some(o => o.value === initialCityKey)
             ? initialCityKey
-            : (cityOpts.find(o => o.label === initialCityName)?.value || cityOpts[0]?.value);
+            : (cityOpts.find(o => o.label === initialCityName)?.value || initialCityKey || initialCityName);
         const citySel = makeCityTreePicker(cities, cityValue);
         setTooltip(citySel, 'City climate is resolved by city_id when available. Edit city latitude and climate data from Garden Settings.');
         function selectedCityOption() {
-            return cityOpts.find(o => String(o.value) === String(citySel.value)) || cityOpts[0] || null;
+            return cityOpts.find(o => String(o.value) === String(citySel.value)) || null;
         }
         function selectedCityRow() {
             const opt = selectedCityOption();
@@ -8098,6 +8909,8 @@ Draw.loadPlugin(function (ui) {
         // --- Harvest window
         const hwDefault = effectivePlant.defaultHW();
         const harvestWindowInput = makeNullableNumber(hwDefault ?? null, { min: 0, step: 1 });
+        const growthStageSel = makeSelect([{ value: initialGrowthStage.stageKey, label: initialGrowthStage.stageLabel }], initialGrowthStage.stageKey);
+        let currentGrowthStages = [initialGrowthStage];
         const minYieldMultInput = makeNumber(0.50, { min: 0 }); minYieldMultInput.step = '0.01';
         minYieldMultInput.max = '1';
         const transplantDaysOverrideChk = makeCheckbox(transplantDaysOverrideInitial != null);
@@ -8153,8 +8966,8 @@ Draw.loadPlugin(function (ui) {
         const formState = {
             plantId: initId,
             varietyId: cellVarietyId0,
-            cityId: finiteNumberOrNull(selectedCityRow()?.city_id),
-            cityName: String(selectedCityRow()?.city_name || selectedCityOption()?.label || ''),
+            cityId: finiteNumberOrNull(selectedCityRow()?.city_id) ?? finiteNumberOrNull(initialCityId),
+            cityName: String(selectedCityRow()?.city_name || selectedCityOption()?.label || initialCityName || ''),
 
             // keep both (methodCategoryId is for UI + filtering; methodId is the scheduler “method” everywhere)
             methodCategoryId: methodCategorySel.value,
@@ -8164,6 +8977,8 @@ Draw.loadPlugin(function (ui) {
             seasonEndISO: mode.perennial ? seasonEndInput.value : '', // CHANGED: reserve seasonEndISO for perennial lifespan end.
             latestHarvestEndISO: mode.perennial ? '' : initialLatestHarvestEndISO, // ADDED: annual display output is not a scheduling constraint.
             seasonStartYear: Number(seasonYearInput.value || (new Date()).getUTCFullYear()),
+            growthStageKey: initialGrowthStage.stageKey,
+            growthStage: initialGrowthStage,
             harvestWindowDays: (harvestWindowInput.value === '' ? null : Number(harvestWindowInput.value)),
             minYieldMultiplier: Number(minYieldMultInput.value || 0),
             sowingSeasons: [],
@@ -8210,7 +9025,7 @@ Draw.loadPlugin(function (ui) {
             return derivedContext?.mode === 'companion' ? derivedContext.relationshipByPlantId?.get?.(String(plantSel?.value || '')) : null;
         }
         function selectedLayoutPlant() {
-            return findPlantById(Number(plantSel.value)) || effectivePlant || selPlant;
+            return effectivePlant || findPlantById(Number(plantSel.value)) || selPlant;
         }
         function readLayoutDraftFromControls() {
             return {
@@ -8735,6 +9550,36 @@ Draw.loadPlugin(function (ui) {
             return sowDateFromPrimaryDate(primaryDateISO, formState.methodId, currentTransplantDaysConfig().effectiveDays);
         }
 
+        function selectedSeasonStartYear() {
+            const year = finiteNumberOrNull(seasonYearInput.value);
+            if (year != null && year >= 1900 && year <= 3000) return Math.trunc(year);
+            return currentYear;
+        }
+
+        function selectedYearDateBounds() {
+            const year = selectedSeasonStartYear();
+            return {
+                year,
+                minISO: `${year}-01-01`,
+                maxISO: `${year}-12-31`
+            };
+        }
+
+        function clampPrimaryDateToSelectedYear() {
+            const raw = String(startInput.value || '').trim();
+            if (!parseISODateUTCValue(raw)) return false;
+            const bounds = selectedYearDateBounds();
+            if (raw < bounds.minISO) {
+                startInput.value = bounds.minISO;
+                return true;
+            }
+            if (raw > bounds.maxISO) {
+                startInput.value = bounds.maxISO;
+                return true;
+            }
+            return false;
+        }
+
         function displaySowingSeasons() {
             return projectSowingSeasonsForPrimaryDate(formState.sowingSeasons, formState.methodId, currentTransplantDaysConfig().effectiveDays);
         }
@@ -8800,8 +9645,8 @@ Draw.loadPlugin(function (ui) {
             formState.plantId = Number(plantSel.value);
             formState.varietyId = (varietySel && varietySel.value) ? Number(varietySel.value) : null;
             const selectedCity = selectedCityRow();
-            formState.cityId = finiteNumberOrNull(selectedCity?.city_id);
-            formState.cityName = String(selectedCity?.city_name || selectedCityOption()?.label || '');
+            formState.cityId = finiteNumberOrNull(selectedCity?.city_id) ?? finiteNumberOrNull(initialCityId);
+            formState.cityName = String(selectedCity?.city_name || selectedCityOption()?.label || initialCityName || '');
 
             formState.methodCategoryId = normId(methodCategorySel.value);
             formState.methodId = normId(methodSel.value);
@@ -8809,11 +9654,14 @@ Draw.loadPlugin(function (ui) {
             const usesTransplantDate = methodUsesTransplantDateInput(formState.methodId);
             formState.transplantDaysOverrideEnabled = usesTransplantDate && !!transplantDaysOverrideChk.checked;
             formState.transplantDaysOverrideValue = formState.transplantDaysOverrideEnabled ? readOptionalIntGE1(transplantDaysInput) : null;
+            clampPrimaryDateToSelectedYear();
             formState.startISO = internalSowDateISO(startInput.value);
             formState.activeSowingSeasonId = sowingSeasonSel.value || formState.activeSowingSeasonId || '';
             if (mode.perennial) formState.seasonEndISO = seasonEndInput.value;
             else formState.latestHarvestEndISO = seasonEndInput.value;
-            formState.seasonStartYear = Number(seasonYearInput.value || (new Date()).getUTCFullYear());
+            formState.seasonStartYear = selectedSeasonStartYear();
+            formState.growthStageKey = normalizeGrowthStageKey(growthStageSel.value);
+            formState.growthStage = selectedGrowthStage();
             formState.harvestWindowDays = (harvestWindowInput.value === '' ? null : Number(harvestWindowInput.value));
             formState.minYieldMultiplier = Number(minYieldMultInput.value || 0);
             syncLayoutDraftFromControls();
@@ -8905,6 +9753,9 @@ Draw.loadPlugin(function (ui) {
         function syncControlsFromState({ start = false, end = false, harvest = false } = {}) {
             if (start) {
                 syncStartInputFromState();
+                if (clampPrimaryDateToSelectedYear()) {
+                    formState.startISO = internalSowDateISO(startInput.value);
+                }
             }
             if (end) {
                 seasonEndInput.value = mode.perennial ? (formState.seasonEndISO || '') : (formState.latestHarvestEndISO || '');
@@ -8943,8 +9794,9 @@ Draw.loadPlugin(function (ui) {
 
         function syncStartDateBounds() {
             if (!startInput) return;
-            startInput.min = '';
-            startInput.max = '';
+            const bounds = selectedYearDateBounds();
+            startInput.min = bounds.minISO;
+            startInput.max = bounds.maxISO;
         }
 
         function updateDaysToFirstHarvest() {
@@ -8963,8 +9815,8 @@ Draw.loadPlugin(function (ui) {
         // -------------------- Form schema for simple labeled fields ---------------- 
         const FIELD_SCHEMA = [
             { key: 'seasonStartYear', label: 'Season start year:', control: seasonYearInput },
-            { key: 'cityName', label: 'City:', control: citySel, tooltip: 'City climate is resolved by city_id when available; Garden Settings owns city climate edits.' },
             { key: 'methodSelection', label: 'Planting method:', control: combinedMethodSel },
+            { key: 'growthStage', label: 'Grown for:', control: growthStageSel, tooltip: 'Growth stage scales maturity timing and layout from crop-level stage ratios.' },
             { key: 'harvestWindowDays', label: 'Harvest window days:', control: harvestWindowInput },
             { key: 'minYieldMultiplier', label: 'Minimum yield multiplier:', control: minYieldMultInput },
         ];
@@ -8981,6 +9833,7 @@ Draw.loadPlugin(function (ui) {
             formState.varietyId = null;
         }
 
+        await refreshGrowthStageOptionsForPlant(formState.plantId, initialGrowthStage);
         syncStateFromControls();
         await refreshEffectivePlant();
         await resetMethodOptionsForPlant(formState.plantId, {
@@ -9008,13 +9861,12 @@ Draw.loadPlugin(function (ui) {
         setTooltip(transplantDaysRowObj.label, 'Days from sowing to transplant for this planting group.');
         setTooltip(transplantDaysInput, 'Unchecked: inherit the plant or variety default. Checked: save a group-specific days_transplant override.');
 
-        const endRow = row('Latest harvest end:', seasonEndInput);
+        const endRow = row('Lifespan end:', seasonEndInput);
         const harvestStartRowObj = row('Expected first harvest:', harvestStartInput);
         const harvestEndRowObj = row('Expected harvest end:', harvestEndInput);
         const daysToFirstHarvestRowObj = row('Days to first harvest:', daysToFirstHarvestInput);
 
-        appendFieldRows(contextSection.body, fieldRows, ['seasonStartYear', 'cityName', 'methodSelection']);
-        contextSection.body.appendChild(transplantDaysRowObj.row);
+        appendFieldRows(contextSection.body, fieldRows, ['seasonStartYear', 'methodSelection', 'growthStage']);
         const legacyMethodControls = document.createElement('div');
         legacyMethodControls.style.display = 'none';
         legacyMethodControls.appendChild(methodCategorySel);
@@ -9046,6 +9898,7 @@ Draw.loadPlugin(function (ui) {
         windowSection.body.appendChild(endRow.row);
 
         inputsSection.body.appendChild(firstSowRowObj.row);
+        inputsSection.body.appendChild(transplantDaysRowObj.row);
         const climateSection = makeSection('Climate model');
         climateSection.wrap.style.marginTop = '10px';
         advancedBody.appendChild(climateSection.wrap);
@@ -9250,8 +10103,6 @@ Draw.loadPlugin(function (ui) {
         refreshContextSummary();
 
         appendFieldRows(harvestSection.body, fieldRows, ['harvestWindowDays', 'minYieldMultiplier']);
-        harvestSection.body.appendChild(harvestStartRowObj.row);
-        harvestSection.body.appendChild(harvestEndRowObj.row);
         harvestSection.body.appendChild(daysToFirstHarvestRowObj.row);
 
         const baseStartNote = startNote || '';
@@ -9296,6 +10147,7 @@ Draw.loadPlugin(function (ui) {
             if (perennial) {
                 firstSowRowObj.label.textContent = 'Planting date:';
                 endRow.label.textContent = 'Lifespan end:';
+                endRow.row.style.display = '';
                 harvestStartRowObj.row.style.display = 'none';
                 harvestEndRowObj.row.style.display = 'none';
                 daysToFirstHarvestRowObj.row.style.display = 'none';
@@ -9303,7 +10155,7 @@ Draw.loadPlugin(function (ui) {
                 firstSowRowObj.label.textContent = transplantDateInput ? 'Transplant date:' : 'Sow date:';
                 sowingSeasonRowObj.label.textContent = transplantDateInput ? 'Transplant season:' : 'Sowing season:';
                 sowingSeasonBoundsRowObj.label.textContent = transplantDateInput ? 'Transplant window:' : 'Sowing window:';
-                endRow.label.textContent = 'Latest harvest end:';
+                endRow.row.style.display = 'none';
                 harvestStartRowObj.row.style.display = '';
                 harvestEndRowObj.row.style.display = '';
                 daysToFirstHarvestRowObj.row.style.display = '';
@@ -9627,6 +10479,7 @@ Draw.loadPlugin(function (ui) {
 
             switch (reason) {
 
+                case 'growthStageChanged':
                 case 'varietyChanged': {
                     await recomputeAnchors(false, true); // CHANGED: crop changes preserve the visible selected date.
                     await recomputeLastHarvestFromSchedule();
@@ -9752,17 +10605,49 @@ Draw.loadPlugin(function (ui) {
                 trackWrap.appendChild(bandEl);
             });
 
+            function appendVerticalTimelineBoundary({ percent, label, tooltip, dataAttr }) {
+                if (!Number.isFinite(Number(percent))) return;
+                const boundary = document.createElement('div');
+                if (dataAttr) boundary.setAttribute(dataAttr, '1');
+                boundary.style.position = 'absolute';
+                boundary.style.left = `${percent}%`;
+                boundary.style.top = '8px';
+                boundary.style.height = '42px';
+                boundary.style.borderLeft = '1px dashed #64748b';
+                boundary.style.transform = 'translateX(-50%)';
+                boundary.style.opacity = '0.65';
+                const labelEl = document.createElement('div');
+                labelEl.textContent = label;
+                labelEl.style.position = 'absolute';
+                labelEl.style.left = `${percent}%`;
+                labelEl.style.top = '0';
+                labelEl.style.transform = timelineAxisLabelTransform(percent);
+                labelEl.style.fontSize = '10px';
+                labelEl.style.lineHeight = '1';
+                labelEl.style.color = '#64748b';
+                labelEl.style.whiteSpace = 'nowrap';
+                setTooltip(boundary, tooltip);
+                setTooltip(labelEl, tooltip);
+                trackWrap.appendChild(boundary);
+                trackWrap.appendChild(labelEl);
+            }
+
             if (model.todayPercent != null) {
-                const today = document.createElement('div');
-                today.style.position = 'absolute';
-                today.style.left = `${model.todayPercent}%`;
-                today.style.top = '8px';
-                today.style.height = '42px';
-                today.style.borderLeft = '1px dashed #64748b';
-                today.style.transform = 'translateX(-50%)';
-                today.style.opacity = '0.65';
-                setTooltip(today, `Today: ${model.todayISO}`);
-                trackWrap.appendChild(today);
+                appendVerticalTimelineBoundary({
+                    percent: model.todayPercent,
+                    label: 'Today',
+                    tooltip: `Today: ${model.todayISO}`,
+                    dataAttr: 'data-usl-today-marker'
+                });
+            }
+
+            if (model.latestHarvestBoundary) {
+                appendVerticalTimelineBoundary({
+                    percent: model.latestHarvestBoundary.percent,
+                    label: model.latestHarvestBoundary.label,
+                    tooltip: model.latestHarvestBoundary.tooltip,
+                    dataAttr: 'data-usl-latest-harvest-marker'
+                });
             }
 
             model.visibleMilestones.forEach(milestone => {
@@ -9937,6 +10822,7 @@ Draw.loadPlugin(function (ui) {
                 seasonStartYear: formState.seasonStartYear,
                 startISO: formState.startISO,
                 sowingSeasons: formState.sowingSeasons,
+                latestHarvestEndISO: formState.latestHarvestEndISO,
                 scheduleResult: latestScheduleResult,
                 taskRules,
                 generatedTasks: generatedPreviewTasks
@@ -9968,6 +10854,7 @@ Draw.loadPlugin(function (ui) {
                 ? Number(varietySel.value)
                 : null;
             syncVarietyButtons();
+            await refreshGrowthStageOptionsForPlant(formState.plantId, defaultGrowthStage());
             await refreshEffectivePlant();
 
 
@@ -10072,6 +10959,7 @@ Draw.loadPlugin(function (ui) {
             void runUiAsync('Date change error', async () => {
                 userEditedStartThisSession = true;
                 generatedStartThisSession = false;
+                clampPrimaryDateToSelectedYear();
                 syncStateFromControls();
                 updateCompanionTimingHelp();
                 refreshLayoutPreview();
@@ -10095,6 +10983,8 @@ Draw.loadPlugin(function (ui) {
                 formState.activeSowingSeasonId = sowingSeasonSel.value || '';
                 formState.startISO = resolveStartForSowingSeasonSwitch(formState.sowingSeasons, formState.activeSowingSeasonId, formState.startISO);
                 syncStartInputFromState();
+                clampPrimaryDateToSelectedYear();
+                formState.startISO = internalSowDateISO(startInput.value);
                 userEditedStartThisSession = false;
                 generatedStartThisSession = !hasPersistedSchedule && !mode.perennial && !!formState.startISO;
                 syncStartDateBounds();
@@ -10117,6 +11007,8 @@ Draw.loadPlugin(function (ui) {
 
         seasonYearInput.addEventListener('input', () => {
             void runUiAsync('Year change error', async () => {
+                clampPrimaryDateToSelectedYear();
+                syncStartDateBounds();
                 await recomputeAll('yearChanged');
                 scheduleCropPickerSuitabilityRefresh();
             });
@@ -10126,6 +11018,18 @@ Draw.loadPlugin(function (ui) {
             void runUiAsync('Harvest window change error', async () => {
                 syncStateFromControls();
                 await recomputeAll('hwChanged');
+                await refreshTaskTemplateFromSelection();
+                scheduleCropPickerSuitabilityRefresh();
+            });
+        });
+
+        growthStageSel.addEventListener('change', () => {
+            void runUiAsync('Growth stage change error', async () => {
+                syncStateFromControls();
+                await refreshEffectivePlant();
+                writeLayoutControlsFromSelection();
+                refreshLayoutPreview();
+                await recomputeAll('growthStageChanged');
                 await refreshTaskTemplateFromSelection();
                 scheduleCropPickerSuitabilityRefresh();
             });
@@ -12806,6 +13710,15 @@ Draw.loadPlugin(function (ui) {
             ? plant.yieldPerPlant()
             : plant.yield_per_plant_kg;
         const numericYield = Number(yieldPerPlant);
+        const growthStage = normalizeGrowthStage({
+            stage_key: plant.growth_stage_key || inputs.growthStageKey || DEFAULT_GROWTH_STAGE_KEY,
+            stage_label: plant.growth_stage_label || inputs.growthStageLabel || DEFAULT_GROWTH_STAGE_LABEL,
+            gdd_ratio: plant.growth_stage_gdd_ratio ?? inputs.growthStageGddRatio ?? 1,
+            spacing_ratio: plant.growth_stage_spacing_ratio ?? inputs.growthStageSpacingRatio,
+            plant_diameter_ratio: plant.growth_stage_diameter_ratio ?? inputs.growthStageDiameterRatio,
+            plant_height_ratio: plant.growth_stage_height_ratio ?? inputs.growthStageHeightRatio
+        });
+        const stageLabelSuffix = stageIsDefaultMature(growthStage) ? '' : ' - ' + growthStage.stageLabel;
         const patch = {
             season_start_year: String(inputs.seasonStartYear),
             days_maturity: perennial || budget?.mode !== 'days' ? '' : String(budget.amount),
@@ -12815,10 +13728,16 @@ Draw.loadPlugin(function (ui) {
             variety_id: String(inputs.varietyId ?? ''),
             variety_name: String(inputs.varietyName || ''),
             start_cooling_threshold_c: String(finiteNumberOrNull(plant.start_cooling_threshold_c) ?? ''),
-            label: plant.plant_name + ' group',
+            label: plant.plant_name + stageLabelSuffix + ' group',
             plant_id: String(plant.plant_id),
             plant_name: String(plant.plant_name || ''),
             plant_abbr: String(plant.abbr || ''),
+            growth_stage_key: stageIsDefaultMature(growthStage) ? '' : growthStage.stageKey,
+            growth_stage_label: stageIsDefaultMature(growthStage) ? '' : growthStage.stageLabel,
+            growth_stage_gdd_ratio: stageIsDefaultMature(growthStage) ? '' : String(growthStage.gddRatio),
+            growth_stage_spacing_ratio: stageIsDefaultMature(growthStage) ? '' : String(growthStage.spacingRatio),
+            growth_stage_diameter_ratio: stageIsDefaultMature(growthStage) ? '' : String(growthStage.plantDiameterRatio),
+            growth_stage_height_ratio: stageIsDefaultMature(growthStage) ? '' : String(growthStage.plantHeightRatio),
             annual: plant.isAnnual && plant.isAnnual() ? '1' : '0',
             biennial: plant.isBiennial && plant.isBiennial() ? '1' : '0',
             perennial: plant.isPerennial && plant.isPerennial() ? '1' : '0',
@@ -12853,6 +13772,7 @@ Draw.loadPlugin(function (ui) {
         if (hasValue(spacingY)) patch.spacing_y_cm = String(spacingY);
         if (hasValue(plant.spacing_cm)) patch.spacing_cm = String(plant.spacing_cm);
         if (hasValue(plant.veg_diameter_cm)) patch.veg_diameter_cm = String(plant.veg_diameter_cm);
+        if (hasValue(plant.veg_height_cm)) patch.veg_height_cm = String(plant.veg_height_cm);
 
         return patch;
     }
@@ -13491,10 +14411,10 @@ Draw.loadPlugin(function (ui) {
         const nameMatches = groupCityName ? cities.filter(city => String(city.city_name || '') === String(groupCityName)) : [];
         if (!idMatch && groupCityName && nameMatches.length > 1) throw new Error(`City name is ambiguous; select a city in Garden Settings: ${groupCityName}`);
         const initialCityRow = idMatch
-            || (nameMatches.length === 1 ? nameMatches[0] : null) // CHANGED: old city_name backfill is safe only when the name is unique.
-            || cities[0];
-        const initialCityId = finiteNumberOrNull(initialCityRow?.city_id);
-        const initialCityName = initialCityRow?.city_name || groupCityName || (cities[0].city_name || cities[0]);
+            || (nameMatches.length === 1 ? nameMatches[0] : null); // CHANGED: old city_name backfill is safe only when the name is unique.
+        const initialCityId = finiteNumberOrNull(initialCityRow?.city_id) ?? groupCityId;
+        const initialCityName = initialCityRow?.city_name || groupCityName || '';
+        if (initialCityId == null && !initialCityName) throw new Error('Scheduler city is not set. Select a city in Garden Settings before scheduling.');
 
         const cityInit = await CityClimate.resolveUniqueNameFallback({ cityId: initialCityId, cityName: initialCityName });
         if (!cityInit) throw new Error(`City not found: ${initialCityName}`);
@@ -14167,6 +15087,7 @@ Draw.loadPlugin(function (ui) {
             PlantModel,
             TaskTemplateModel,
             CompanionLayoutGroupDefaultModel,
+            PlantGrowthStageModel,
             CityClimate,
             PolicyFlags,
             ScheduleInputs: sharedCore.ScheduleInputs,
@@ -14176,6 +15097,13 @@ Draw.loadPlugin(function (ui) {
             getPlantScanYears,
             isCrossYearCrop, // FIX: expose lifecycle behavior to the opt-in regression harness
             resolveHarvestWindowDays, // FIX: expose fallback behavior to the opt-in regression harness
+            resolveSpringFrostByRisk: sharedCore.resolveSpringFrostByRisk, // ADDED: expose shared frost inference for regression tests.
+            resolveFallFrostByRisk: sharedCore.resolveFallFrostByRisk, // ADDED: expose shared fall frost inference for regression tests.
+            resolveFrostRiskTip, // ADDED: expose frost-source UI text for regression tests.
+            normalizeGrowthStage,
+            readGrowthStageFromCell,
+            deriveGrowthStageLayoutRatio,
+            applyGrowthStageToPlant,
             computeStageDatesForPlanting: annualCore.computeStageDatesForPlanting, // CHANGED: expose canonical annual core behavior.
             buildLifecycleTimelineViewModel,
             buildLifecycleTimelineAxisMarkers,
@@ -14556,6 +15484,10 @@ Draw.loadPlugin(function (ui) {
             ScheduleInputs: sharedCore.ScheduleInputs,
             Planner: annualCore.Planner,
             applyPlantOverrides,
+            normalizeGrowthStage,
+            readGrowthStageFromCell,
+            deriveGrowthStageLayoutRatio,
+            applyGrowthStageToPlant,
             computeScheduleResult,
             computeStageDatesForPlanting: annualCore.computeStageDatesForPlanting,
             computePerennialLifespanEndISO,
@@ -14587,6 +15519,11 @@ Draw.loadPlugin(function (ui) {
             persistCropLifecycleFilter,
             readPersistedCropLifecycleFilter,
             resolveHarvestWindowDays,
+            resolveSpringFrostByRisk: sharedCore.resolveSpringFrostByRisk, // ADDED: expose shared frost inference for regression tests.
+            inferSpringFrostFromMonthlyLows: sharedCore.inferSpringFrostFromMonthlyLows, // ADDED: expose monthly-normal frost inference for focused tests.
+            resolveFallFrostByRisk: sharedCore.resolveFallFrostByRisk, // ADDED: expose shared fall frost inference for regression tests.
+            inferFallFrostFromMonthlyLows: sharedCore.inferFallFrostFromMonthlyLows, // ADDED: expose monthly-normal fall frost inference for focused tests.
+            resolveFrostRiskTip, // ADDED: expose frost-source UI text for regression tests.
             resolveHarvestRequestMethodBehavior,
             resolveInitialMethodSelection,
             resolveMethodBehavior,

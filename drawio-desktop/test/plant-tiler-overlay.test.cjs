@@ -335,6 +335,9 @@ test('Plant Tiler exposes Allocate proposal and creation contracts', () => {
     assert.match(source, /listPlantingFootprints,/);
     assert.match(source, /slots: buildProposalSlots\(best, plantCount\)/);
     assert.match(source, /lodCollapsed: best\.capacity > LOD_TILE_THRESHOLD/);
+    assert.match(source, /const vegHeightCm = Number\(input\.vegHeightCm \?\? input\.veg_height_cm\)/);
+    assert.match(source, /vegHeightCm: Number\.isFinite\(vegHeightCm\) && vegHeightCm > 0 \? vegHeightCm : null/);
+    assert.match(source, /veg_height_cm: proposal\.vegHeightCm == null/);
     assert.match(source, /const insideUpdate = !!\(input\.insideUpdate \|\| opts\.insideUpdate\)/);
     assert.match(source, /createEmptyTilerGroup\(activeGraphArg, moduleCell/);
 });

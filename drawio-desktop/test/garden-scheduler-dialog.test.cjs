@@ -58,6 +58,79 @@ test('harvest request method resolver rejects missing or mismatched category con
     );
 });
 
+test('growth stage ratio scales timing and layout with sqrt defaults', () => {
+    const plant = makeCrop({
+        gdd_to_maturity: 500,
+        days_maturity: 50,
+        spacing_cm: 30,
+        spacing_x_cm: 30,
+        spacing_y_cm: 40,
+        veg_diameter_cm: 20,
+        veg_height_cm: 10
+    });
+    const stage = hooks.normalizeGrowthStage({
+        stage_key: 'microgreens',
+        stage_label: 'Microgreens',
+        gdd_ratio: 0.25
+    });
+    const effective = hooks.applyGrowthStageToPlant(plant, stage);
+    assert.equal(effective.gdd_to_maturity, 125);
+    assert.equal(effective.days_maturity, 12.5);
+    assert.equal(effective.spacing_cm, 15);
+    assert.equal(effective.spacing_x_cm, 15);
+    assert.equal(effective.spacing_y_cm, 20);
+    assert.equal(effective.veg_diameter_cm, 10);
+    assert.equal(effective.veg_height_cm, 5);
+    assert.equal(effective.growth_stage_key, 'microgreens');
+});
+
+test('growth stage explicit layout ratios override sqrt derivation', () => {
+    const plant = makeCrop({ days_maturity: 100, spacing_cm: 30, veg_diameter_cm: 20, veg_height_cm: 10 });
+    const effective = hooks.applyGrowthStageToPlant(plant, hooks.normalizeGrowthStage({
+        stage_key: 'baby',
+        stage_label: 'Baby',
+        gdd_ratio: 0.25,
+        spacing_ratio: 0.75,
+        plant_diameter_ratio: 0.6,
+        plant_height_ratio: 0.8
+    }));
+    assert.equal(effective.days_maturity, 25);
+    assert.equal(effective.spacing_cm, 22.5);
+    assert.equal(effective.veg_diameter_cm, 12);
+    assert.equal(effective.veg_height_cm, 8);
+});
+
+test('missing and legacy saved growth stages normalize for scheduler reopen', () => {
+    const missing = hooks.readGrowthStageFromCell({ getAttribute: () => '' });
+    assert.equal(missing.stageKey, 'mature');
+    assert.equal(missing.gddRatio, 1);
+    assert.equal(missing.spacingRatio, 1);
+
+    const attrs = {
+        growth_stage_key: 'microgreens',
+        growth_stage_label: 'Microgreens',
+        growth_stage_gdd_ratio: '0.25',
+        growth_stage_spacing_ratio: '0.6',
+        growth_stage_diameter_ratio: '0.55',
+        growth_stage_height_ratio: '0.5'
+    };
+    const legacy = hooks.readGrowthStageFromCell({ getAttribute: key => attrs[key] || '' });
+    assert.equal(legacy.stageKey, 'microgreens');
+    assert.equal(legacy.stageLabel, 'Microgreens');
+    assert.equal(legacy.gddRatio, 0.25);
+    assert.equal(legacy.spacingRatio, 0.6);
+    assert.equal(legacy.plantDiameterRatio, 0.55);
+    assert.equal(legacy.plantHeightRatio, 0.5);
+    assert.equal(legacy.legacy, true);
+});
+
+test('growth stage table schema and editor validation stay aligned', () => {
+    assert.match(schedulerSource, /plant_id INTEGER NOT NULL REFERENCES Plants\(plant_id\) ON DELETE CASCADE/);
+    assert.match(schedulerSource, /growthStageStatus\.textContent = 'Growing stage error: ' \+ \(e\?\.message \|\| String\(e\)\);/);
+    assert.match(schedulerSource, /stages\.push\(normalizeGrowthStage\(Object\.assign\(\{\}, preferred, \{ legacy: true \}\)\)\);/);
+    assert.match(schedulerSource, /label: stage\.legacy \? `\$\{stage\.stageLabel\} \(saved\)` : stage\.stageLabel/);
+});
+
 test('lifecycle filter control reads and persists the shared crop filter preference', () => {
     const store = new Map([['trellis.scheduler.cropLifecycleFilter', 'perennial']]);
     hooks.__testWindow.localStorage = {
@@ -347,6 +420,12 @@ test('crop picker row uses custom layout without section overflow workaround', (
 test('derived dialogs do not persist resolved city onto the source while opening', () => {
     assert.match(schedulerSource, /if \(!openOptions\?\.derivedMode && model && cell && cityInit\.city_id != null\) \{/);
     assert.match(schedulerSource, /city_id: city\.city_id != null \? String\(city\.city_id\) : '',/);
+});
+
+test('scheduler requires inherited city instead of silently falling back to first city', () => {
+    assert.match(schedulerSource, /Scheduler city is not set\. Select a city in Garden Settings before scheduling\./);
+    assert.doesNotMatch(schedulerSource, /const initialCityRow =[\s\S]*\|\| cities\[0\];/);
+    assert.doesNotMatch(schedulerSource, /cityOpts\.find\(o => o\.label === initialCityName\)\?\.value \|\| cityOpts\[0\]\?\.value/);
 });
 
 test('derived save creates sibling after validation and rolls it back on save failure', () => {
@@ -722,9 +801,8 @@ test('rendered variety dropdown keeps base plant first and omits empty optgroups
         makeVariety({ variety_id: 1, variety_name: 'Alpha', maturity_class: 'early' })
     ]);
     hooks.renderGroupedVarietyOptions(select, groups, '1');
-    assert.equal(select.children[0].tagName, 'OPTION');
-    assert.equal(select.children[0].textContent, '(base plant)');
-    assert.deepEqual(Array.from(select.querySelectorAll('optgroup'), group => group.label), ['Early varieties']);
+    assert.equal(select.options[0].textContent, '(base plant)');
+    assert.deepEqual(Array.from(select.querySelectorAll('optgroup'), group => group.label), ['Selection', 'Early varieties']);
     assert.equal(select.value, '1');
 });
 
@@ -844,6 +922,19 @@ test('date and filter handlers use cached fast paths', () => {
     assert.ok(!schedulerSource.includes("lifecycleFilterSel.addEventListener('change', () => {\r\n            renderSchedulerCropPicker(currentCropPickerOptions, plantSel.value);\r\n            scheduleCropPickerSuitabilityRefresh(0);"));
 });
 
+test('growth stage dropdown change recomputes scheduler anchors and harvest dates', () => {
+    const handlerStart = schedulerSource.indexOf("growthStageSel.addEventListener('change'");
+    const handlerEnd = schedulerSource.indexOf("minYieldMultInput.addEventListener", handlerStart);
+    assert.ok(handlerStart >= 0 && handlerEnd > handlerStart, 'expected growth stage change handler');
+    const handlerBody = schedulerSource.slice(handlerStart, handlerEnd);
+    assert.match(handlerBody, /await recomputeAll\('growthStageChanged'\)/);
+
+    assert.match(
+        schedulerSource,
+        /case 'growthStageChanged':\s*[\r\n]+\s*case 'varietyChanged': \{[\s\S]*await recomputeAnchors\(false, true\);[\s\S]*await recomputeLastHarvestFromSchedule\(\);/
+    );
+});
+
 test('crop picker selection stays fresh across async refreshes', () => {
     assert.match(schedulerSource, /let currentCropPickerSelectedValue = String\(initialPlant\?\.plant_id \?\? plantsLocal\[0\]\?\.plant_id \?\? ''\);/);
     assert.match(schedulerSource, /function renderSchedulerCropPicker\(pickerOptions = currentCropPickerOptions, selectedValue = currentCropPickerSelectedValue\)/);
@@ -907,10 +998,40 @@ test('schedule summary renders warnings as bullet list in double-wide feasibilit
 
     hooks.updateScheduleSummary(summaryView, viewState);
 
+    assert.deepEqual(Object.keys(summaryView.fields), ['crop', 'context', 'feasibility']);
+    assert.equal(summaryView.root.textContent.includes('Expected first harvest'), false);
+    assert.equal(summaryView.root.textContent.includes('Expected harvest end'), false);
     const feasibilityItem = summaryView.fields.feasibility.parentElement;
     const warningItems = Array.from(summaryView.fields.feasibility.querySelectorAll('ul.usl-scheduler-summary-warning-list > li'), item => item.textContent);
     assert.equal(feasibilityItem.classList.contains('usl-scheduler-summary-item--wide'), true);
     assert.deepEqual(warningItems, Array.from(viewState.feasibility.warningMessages));
+});
+
+test('scheduler hides duplicate harvest and context fields from main sections', () => {
+    assert.match(schedulerSource, /appendFieldRows\(contextSection\.body, fieldRows, \['seasonStartYear', 'methodSelection', 'growthStage'\]\)/);
+    assert.doesNotMatch(schedulerSource, /appendFieldRows\(contextSection\.body, fieldRows, \[[^\]]*'cityName'/);
+    assert.match(schedulerSource, /inputsSection\.body\.appendChild\(firstSowRowObj\.row\);\s*inputsSection\.body\.appendChild\(transplantDaysRowObj\.row\);/);
+    assert.doesNotMatch(schedulerSource, /contextSection\.body\.appendChild\(transplantDaysRowObj\.row\)/);
+    assert.match(schedulerSource, /endRow\.row\.style\.display = 'none';/);
+    assert.doesNotMatch(schedulerSource, /harvestSection\.body\.appendChild\(harvestStartRowObj\.row\)/);
+    assert.doesNotMatch(schedulerSource, /harvestSection\.body\.appendChild\(harvestEndRowObj\.row\)/);
+});
+
+test('scheduler year selector owns visible date bounds and clamping', () => {
+    assert.match(schedulerSource, /function selectedSeasonStartYear\(\)[\s\S]*return currentYear;/);
+    assert.match(schedulerSource, /function selectedYearDateBounds\(\)[\s\S]*minISO: `\$\{year\}-01-01`[\s\S]*maxISO: `\$\{year\}-12-31`/);
+    assert.match(schedulerSource, /function clampPrimaryDateToSelectedYear\(\)[\s\S]*startInput\.value = bounds\.minISO;[\s\S]*startInput\.value = bounds\.maxISO;/);
+    assert.match(schedulerSource, /function syncStartDateBounds\(\)[\s\S]*startInput\.min = bounds\.minISO;[\s\S]*startInput\.max = bounds\.maxISO;/);
+    assert.match(schedulerSource, /seasonYearInput\.addEventListener\('input'[\s\S]*clampPrimaryDateToSelectedYear\(\);[\s\S]*syncStartDateBounds\(\);[\s\S]*await recomputeAll\('yearChanged'\);/);
+    assert.doesNotMatch(schedulerSource, /function syncSeasonStartYearFromPrimaryDate/);
+});
+
+test('latest harvest timeline marker reuses today boundary styling', () => {
+    assert.match(schedulerSource, /function appendVerticalTimelineBoundary\(\{ percent, label, tooltip, dataAttr \}\)/);
+    assert.match(schedulerSource, /label: 'Today'[\s\S]*tooltip: `Today: \$\{model\.todayISO\}`[\s\S]*dataAttr: 'data-usl-today-marker'/);
+    assert.match(schedulerSource, /label: model\.latestHarvestBoundary\.label[\s\S]*tooltip: model\.latestHarvestBoundary\.tooltip[\s\S]*dataAttr: 'data-usl-latest-harvest-marker'/);
+    assert.match(schedulerSource, /boundary\.style\.borderLeft = '1px dashed #64748b';/);
+    assert.match(schedulerSource, /labelEl\.textContent = label;/);
 });
 
 test('schedule summary keeps non-warning feasibility as plain text', () => {

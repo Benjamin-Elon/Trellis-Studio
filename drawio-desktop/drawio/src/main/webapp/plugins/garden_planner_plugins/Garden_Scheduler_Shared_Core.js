@@ -8,6 +8,9 @@
 
     const DEFAULT_HARVEST_WINDOW_DAYS = 7;
     const HARVEST_END_SEMANTICS = 'exclusive';
+    const INFERRED_SPRING_FROST_BUFFER_DAYS = 14; // ADDED: shared missing-frost policy for scheduler/runtime callers.
+    const INFERRED_FALL_FROST_BUFFER_DAYS = 14; // ADDED: shared missing-fall-frost policy for thermal deadline callers.
+    const SPRING_FROST_FALLBACK_DOY = 105; // ADDED: final conservative fallback when monthly lows cannot support inference.
     const SEASON_EXTENSION_EFFECTS = Object.freeze({
         unknown: Object.freeze({ airOffsetC: 0, soilOffsetC: 0, frostShiftDays: 0, minAirTempC: null }),
         none: Object.freeze({ airOffsetC: 0, soilOffsetC: 0, frostShiftDays: 0, minAirTempC: null }),
@@ -527,14 +530,125 @@
             return null;
         }
     }
-    function pickFrostByRisk(city, risk = 'p50') {
+    function clampDoy(value) {
+        return Math.max(1, Math.min(366, Math.round(Number(value) || 1))); // ADDED: keep stored and inferred frost dates inside annual scheduler bounds.
+    }
+    function storedSpringFrostByRisk(city, risk = 'p50') {
         const p90 = finiteNumberOrNull(city?.last_spring_frost_p90_doy);
         const p50 = finiteNumberOrNull(city?.last_spring_frost_p50_doy);
         const p10 = finiteNumberOrNull(city?.last_spring_frost_p10_doy);
         const plain = finiteNumberOrNull(city?.last_spring_frost_doy);
-        if (risk === 'p90') return p90 ?? p50 ?? plain ?? 1;
-        if (risk === 'p10') return p10 ?? p50 ?? plain ?? 1;
-        return p50 ?? plain ?? p90 ?? p10 ?? 1;
+        if (risk === 'p90' && p90 != null) return { doy: clampDoy(p90), source: 'stored', field: 'last_spring_frost_p90_doy' }; // ADDED: prefer requested stored percentile.
+        if (risk === 'p10' && p10 != null) return { doy: clampDoy(p10), source: 'stored', field: 'last_spring_frost_p10_doy' }; // ADDED: prefer requested stored percentile.
+        if (risk === 'p50' && p50 != null) return { doy: clampDoy(p50), source: 'stored', field: 'last_spring_frost_p50_doy' }; // ADDED: prefer requested stored percentile.
+        if (p50 != null) return { doy: clampDoy(p50), source: 'stored', field: 'last_spring_frost_p50_doy' }; // ADDED: keep old shared fallback order before inference.
+        if (plain != null) return { doy: clampDoy(plain), source: 'stored', field: 'last_spring_frost_doy' }; // ADDED: keep plain stored frost-date support.
+        if (p90 != null) return { doy: clampDoy(p90), source: 'stored', field: 'last_spring_frost_p90_doy' }; // ADDED: use any stored percentile before monthly inference.
+        if (p10 != null) return { doy: clampDoy(p10), source: 'stored', field: 'last_spring_frost_p10_doy' }; // ADDED: use any stored percentile before monthly inference.
+        return null;
+    }
+    function monthlyLowC(city, month) {
+        const direct = finiteNumberOrNull(city?.[`avg_monthly_low_c${month}`]);
+        if (direct != null) return direct;
+        const lows = typeof city?.monthlyLows === 'function' ? city.monthlyLows() : null;
+        return finiteNumberOrNull(lows?.[month]); // ADDED: support both plain city rows and CityClimate instances.
+    }
+    function inferSpringFrostFromMonthlyLows(city, { bufferDays = INFERRED_SPRING_FROST_BUFFER_DAYS } = {}) {
+        const lows = {};
+        for (let month = 1; month <= 12; month += 1) {
+            const low = monthlyLowC(city, month);
+            if (low != null) lows[month] = low;
+        }
+        if (Object.keys(lows).length < 2) return null;
+        for (let month = 1; month <= 6; month += 1) {
+            const low = finiteNumberOrNull(lows[month]);
+            if (low == null) continue;
+            if (month === 1 && low > 0) {
+                return { doy: 1, crossingDoy: 1, bufferDays: 0, source: 'inferred_monthly_normals' }; // ADDED: all-warm spring climates should infer an early frost-safety date.
+            }
+            const nextLow = finiteNumberOrNull(lows[month + 1]);
+            if (nextLow == null) continue;
+            if (low <= 0 && nextLow > 0) {
+                const currentCenter = dayOfYear(asUTCDate(2026, month, 15));
+                const nextCenter = dayOfYear(asUTCDate(2026, month + 1, 15));
+                const ratio = (0 - low) / Math.max(1e-6, nextLow - low);
+                const crossingDoy = currentCenter + ratio * (nextCenter - currentCenter);
+                return {
+                    doy: clampDoy(crossingDoy + Math.max(0, Math.round(Number(bufferDays || 0)))),
+                    crossingDoy: clampDoy(crossingDoy),
+                    bufferDays: Math.max(0, Math.round(Number(bufferDays || 0))),
+                    source: 'inferred_monthly_normals'
+                }; // ADDED: monthly-low frost approximation with a fixed safety buffer.
+            }
+        }
+        return null;
+    }
+    function resolveSpringFrostByRisk(city, risk = 'p50') {
+        const selectedRisk = ['p10', 'p50', 'p90'].indexOf(String(risk || '')) >= 0 ? String(risk) : 'p50';
+        const stored = storedSpringFrostByRisk(city, selectedRisk);
+        if (stored) return Object.freeze({ ...stored, risk: selectedRisk });
+        const inferred = inferSpringFrostFromMonthlyLows(city);
+        if (inferred) return Object.freeze({ ...inferred, risk: selectedRisk });
+        return Object.freeze({ doy: SPRING_FROST_FALLBACK_DOY, source: 'fallback', field: null, risk: selectedRisk }); // ADDED: single hard fallback when stored and monthly-normal sources are unavailable.
+    }
+    function pickFrostByRisk(city, risk = 'p50') {
+        return resolveSpringFrostByRisk(city, risk).doy; // CHANGED: preserve numeric API while sharing inference logic.
+    }
+    function storedFallFrostByRisk(city, risk = 'p50') {
+        const p90 = finiteNumberOrNull(city?.first_fall_frost_p90_doy);
+        const p50 = finiteNumberOrNull(city?.first_fall_frost_p50_doy);
+        const p10 = finiteNumberOrNull(city?.first_fall_frost_p10_doy);
+        const plain = finiteNumberOrNull(city?.first_fall_frost_doy);
+        if (risk === 'p90' && p90 != null) return { doy: clampDoy(p90), source: 'stored', field: 'first_fall_frost_p90_doy' }; // ADDED: prefer requested stored percentile.
+        if (risk === 'p10' && p10 != null) return { doy: clampDoy(p10), source: 'stored', field: 'first_fall_frost_p10_doy' }; // ADDED: prefer requested stored percentile.
+        if (risk === 'p50' && p50 != null) return { doy: clampDoy(p50), source: 'stored', field: 'first_fall_frost_p50_doy' }; // ADDED: prefer requested stored percentile.
+        if (p50 != null) return { doy: clampDoy(p50), source: 'stored', field: 'first_fall_frost_p50_doy' }; // ADDED: keep spring-style fallback order before inference.
+        if (plain != null) return { doy: clampDoy(plain), source: 'stored', field: 'first_fall_frost_doy' }; // ADDED: keep plain stored frost-date support.
+        if (p90 != null) return { doy: clampDoy(p90), source: 'stored', field: 'first_fall_frost_p90_doy' }; // ADDED: use any stored percentile before monthly inference.
+        if (p10 != null) return { doy: clampDoy(p10), source: 'stored', field: 'first_fall_frost_p10_doy' }; // ADDED: use any stored percentile before monthly inference.
+        return null;
+    }
+    function inferFallFrostFromMonthlyLows(city, { bufferDays = INFERRED_FALL_FROST_BUFFER_DAYS } = {}) {
+        const lows = {};
+        for (let month = 1; month <= 12; month += 1) {
+            const low = monthlyLowC(city, month);
+            if (low != null) lows[month] = low;
+        }
+        if (Object.keys(lows).length < 2) return null;
+        for (let month = 7; month <= 12; month += 1) {
+            const low = finiteNumberOrNull(lows[month]);
+            const nextMonth = month === 12 ? 1 : month + 1;
+            const nextLow = finiteNumberOrNull(lows[nextMonth]);
+            if (low == null || nextLow == null) continue;
+            if (low > 0 && nextLow <= 0) {
+                const currentCenter = dayOfYear(asUTCDate(2026, month, 15));
+                const nextCenter = month === 12 ? dayOfYear(asUTCDate(2026, 12, 31)) + 15 : dayOfYear(asUTCDate(2026, month + 1, 15));
+                const delta = nextLow - low;
+                if (Math.abs(delta) < 1e-6) continue;
+                const ratio = (0 - low) / delta;
+                const crossingDoy = currentCenter + ratio * (nextCenter - currentCenter);
+                if (!Number.isFinite(crossingDoy)) continue;
+                return {
+                    doy: clampDoy(crossingDoy - Math.max(0, Math.round(Number(bufferDays || 0)))),
+                    crossingDoy: clampDoy(crossingDoy),
+                    bufferDays: Math.max(0, Math.round(Number(bufferDays || 0))),
+                    source: 'inferred_monthly_normals'
+                }; // ADDED: monthly-low fall frost approximation with an earlier safety deadline.
+            }
+        }
+        return null;
+    }
+    function resolveFallFrostByRisk(city, risk = 'p50') {
+        const selectedRisk = ['p10', 'p50', 'p90'].indexOf(String(risk || '')) >= 0 ? String(risk) : 'p50';
+        const stored = storedFallFrostByRisk(city, selectedRisk);
+        if (stored) return Object.freeze({ ...stored, risk: selectedRisk });
+        const inferred = inferFallFrostFromMonthlyLows(city);
+        if (inferred) return Object.freeze({ ...inferred, risk: selectedRisk });
+        return Object.freeze({ doy: null, source: 'none', field: null, risk: selectedRisk }); // ADDED: no crossing means no artificial fall frost deadline.
+    }
+    function pickFallFrostByRisk(city, risk = 'p50') {
+        const resolved = resolveFallFrostByRisk(city, risk);
+        return resolved.doy == null ? null : resolved.doy; // ADDED: preserve annual-core numeric/null API.
     }
     function isCrossYearCrop(plant) {
         if (!plant) return false;
@@ -819,6 +933,9 @@
     win.USL.scheduler.sharedCore = Object.freeze({
         DEFAULT_HARVEST_WINDOW_DAYS,
         HARVEST_END_SEMANTICS,
+        INFERRED_SPRING_FROST_BUFFER_DAYS,
+        INFERRED_FALL_FROST_BUFFER_DAYS,
+        SPRING_FROST_FALLBACK_DOY,
         daysInMonth,
         addDaysUTC,
         asUTCDate,
@@ -864,7 +981,12 @@
         requirePerennialLifespanYears,
         computePerennialLifespanEndISO,
         runUiAsyncOperation,
+        resolveSpringFrostByRisk,
+        inferSpringFrostFromMonthlyLows,
         pickFrostByRisk,
+        resolveFallFrostByRisk,
+        inferFallFrostFromMonthlyLows,
+        pickFallFrostByRisk,
         isCrossYearCrop,
         getPlantScanYears,
         asCoolingThresholdC,
