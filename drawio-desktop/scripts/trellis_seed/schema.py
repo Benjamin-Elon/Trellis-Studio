@@ -163,9 +163,32 @@ OPENAI_PLANT_SCHEMA = {
                 "required": ["variety_name", "maturity_class", "overrides", "sources"],
             },
         },
+        "growth_stages": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "stage_key": {"type": "string", "minLength": 1},
+                    "stage_label": {"type": "string", "minLength": 1},
+                    "gdd_ratio": {"type": "number"},
+                    "spacing_ratio": {"type": ["number", "null"]},
+                    "plant_diameter_ratio": {"type": ["number", "null"]},
+                    "plant_height_ratio": {"type": ["number", "null"]},
+                    "sort_order": {"type": "integer"},
+                    "active": {"type": "integer", "enum": [0, 1]},
+                    "is_default": {"type": "integer", "enum": [0, 1]},
+                },
+                "required": [
+                    "stage_key", "stage_label", "gdd_ratio", "spacing_ratio",
+                    "plant_diameter_ratio", "plant_height_ratio", "sort_order",
+                    "active", "is_default",
+                ],
+            },
+        },
         "provenance": PROVENANCE_SCHEMA,
     },
-    "required": ["row", "allowed_method_categories", "allowed_method_ids", "varieties", "provenance"],
+    "required": ["row", "allowed_method_categories", "allowed_method_ids", "varieties", "growth_stages", "provenance"],
 }
 
 OPENAI_TEMPLATE_SCHEMA = {

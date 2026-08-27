@@ -48,6 +48,7 @@ from trellis_seed.generator import (
     _generate_task_template,
     _merge_template_polish,
     _prepare_crop_result,
+    _prepare_growth_stages,
     _validate_crop_result,
     _validate_sowing_window_result,
     _validate_template_result,
@@ -385,6 +386,51 @@ class TrellisSeederTests(unittest.TestCase):
         })
         self.assertTrue(any("stage_key" in error for error in invalid["errors"]))
         self.assertTrue(any("gdd_ratio" in error for error in invalid["errors"]))
+
+    def test_growth_stage_preparation_forces_mature_and_filters_lifecycle_rows(self) -> None:
+        stages = _prepare_growth_stages([
+            {
+                "stage_key": "Baby Leaf",
+                "stage_label": "Baby Leaf",
+                "gdd_ratio": 0.45,
+                "spacing_ratio": "",
+                "plant_diameter_ratio": 0.6,
+                "plant_height_ratio": 1.2,
+                "sort_order": 5,
+                "active": 1,
+                "is_default": 1,
+            },
+            {
+                "stage_key": "flowering",
+                "stage_label": "Flowering",
+                "gdd_ratio": 0.8,
+                "spacing_ratio": 0.8,
+                "plant_diameter_ratio": 0.8,
+                "plant_height_ratio": 0.8,
+                "sort_order": 2,
+                "active": 1,
+                "is_default": 0,
+            },
+            {
+                "stage_key": "mature",
+                "stage_label": "Large Mature",
+                "gdd_ratio": 0.9,
+                "spacing_ratio": 0.9,
+                "plant_diameter_ratio": 0.9,
+                "plant_height_ratio": 0.9,
+                "sort_order": 3,
+                "active": 1,
+                "is_default": 0,
+            },
+        ], "Lettuce")
+
+        self.assertEqual([stage["stage_key"] for stage in stages], ["mature", "baby_leaf"])
+        self.assertEqual(stages[0]["stage_label"], "Mature")
+        self.assertEqual(stages[0]["gdd_ratio"], 1.0)
+        self.assertEqual(stages[0]["is_default"], 1)
+        self.assertEqual(stages[1]["is_default"], 0)
+        self.assertIsNone(stages[1]["spacing_ratio"])
+        self.assertIsNone(stages[1]["plant_height_ratio"])
 
     def test_openai_settings_come_from_environment(self) -> None:
         original = {key: os.environ.get(key) for key in ("OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_REASONING_EFFORT")}
@@ -1264,6 +1310,13 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertIn("maturity_class", variety_schema["required"])
         self.assertEqual(maturity_schema["enum"], ["early", "mid", "late", "", None])
 
+    def test_openai_plant_schema_requires_growth_stages(self) -> None:
+        stage_schema = OPENAI_PLANT_SCHEMA["properties"]["growth_stages"]["items"]
+        self.assertIn("growth_stages", OPENAI_PLANT_SCHEMA["required"])
+        self.assertIn("stage_key", stage_schema["required"])
+        self.assertIn("gdd_ratio", stage_schema["required"])
+        self.assertEqual(stage_schema["properties"]["spacing_ratio"]["type"], ["number", "null"])
+
     def test_openai_client_does_not_mask_responses_api_errors(self) -> None:
         class FakeResponses:
             def create(self, **_kwargs):
@@ -1374,6 +1427,17 @@ class TrellisSeederTests(unittest.TestCase):
             "row": complete_plant_row(),
             "allowed_method_categories": ["direct_sow"],
             "varieties": [{"variety_name": "Buttercrunch", "overrides": [], "sources": []}],
+            "growth_stages": [{
+                "stage_key": "mature",
+                "stage_label": "Mature",
+                "gdd_ratio": 1.0,
+                "spacing_ratio": None,
+                "plant_diameter_ratio": None,
+                "plant_height_ratio": None,
+                "sort_order": 0,
+                "active": 1,
+                "is_default": 1,
+            }],
             "provenance": {
                 "field_sources": [
                     {"field": "plant_name", "source": "Lettuce"},
@@ -1577,6 +1641,60 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertEqual(varieties["Buttercrunch"]["maturity_class"], "early")
         self.assertNotIn("maturity_class", varieties["Romaine"])
         self.assertNotIn("maturity_class", varieties["Oakleaf"])
+
+    def test_crop_generation_emits_growth_stage_rows(self) -> None:
+        class FakeOpenAI:
+            model = "fake"
+            reasoning_effort = "low"
+
+            def generate_json(self, **_kwargs):
+                return {
+                    "row": complete_plant_row(),
+                    "allowed_method_categories": ["direct_sow"],
+                    "allowed_method_ids": ["direct_sow.field"],
+                    "varieties": [{"variety_name": "Buttercrunch", "maturity_class": "", "overrides": [], "sources": []}],
+                    "growth_stages": [
+                        {
+                            "stage_key": "baby leaf",
+                            "stage_label": "Baby Leaf",
+                            "gdd_ratio": 0.45,
+                            "spacing_ratio": None,
+                            "plant_diameter_ratio": 0.6,
+                            "plant_height_ratio": 0.55,
+                            "sort_order": 1,
+                            "active": 1,
+                            "is_default": 0,
+                        },
+                        {
+                            "stage_key": "flowering",
+                            "stage_label": "Flowering",
+                            "gdd_ratio": 0.8,
+                            "spacing_ratio": 0.8,
+                            "plant_diameter_ratio": 0.8,
+                            "plant_height_ratio": 0.8,
+                            "sort_order": 2,
+                            "active": 1,
+                            "is_default": 0,
+                        },
+                    ],
+                    "provenance": {"field_sources": []},
+                }, ProviderTrace("fake", {})
+
+        run_dir = self.tmp_path / "run-crop-growth-stages"
+        run_dir.mkdir()
+        settings = Settings(self.tmp_path / "config.json", {"db_path": str(self.db_path), "runs_dir": str(self.tmp_path / "runs")})
+        methods = [{"method_id": "direct_sow.field", "method_category_id": "direct_sow", "method_name": "Direct sow (field)"}]
+        generated = {table: [] for table in ("Plants", "PlantAllowedMethodCategories", "PlantVarieties", "PlantGrowthStages", "PlantTaskTemplates", "VarietyTaskTemplates")}
+        provenance = {"traces": [], "tables": {}}
+        input_data = {"crops": [{"name": "Lettuce", "sources": ["https://example.test/lettuce"], "variety_count": 1}]}
+
+        _generate_crops(settings, input_data, FakeOpenAI(), methods, generated, provenance, run_dir, generate_templates=False)
+
+        self.assertEqual([row["stage_key"] for row in generated["PlantGrowthStages"]], ["mature", "baby_leaf"])
+        self.assertEqual(generated["PlantGrowthStages"][0]["stage_label"], "Mature")
+        self.assertEqual(generated["PlantGrowthStages"][0]["is_default"], 1)
+        self.assertEqual(generated["PlantGrowthStages"][1]["plant_name"], "Lettuce")
+        self.assertEqual(generated["PlantGrowthStages"][1]["plant_diameter_ratio"], 0.6)
 
     def test_companion_generation_skips_failed_pair_and_continues(self) -> None:
         class FakeOpenAI:

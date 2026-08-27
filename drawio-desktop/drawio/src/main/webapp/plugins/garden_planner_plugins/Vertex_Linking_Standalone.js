@@ -1446,7 +1446,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         function getPanelLayer() {
-            return ensureGraphOverlayHtmlLayer('control') || getPanelHost();
+            return ensureGraphOverlayHtmlLayer('control'); // CHANGE: task schedule panels must stay on the graph control layer below dialogs.
         }
 
         function removeNode(node) {

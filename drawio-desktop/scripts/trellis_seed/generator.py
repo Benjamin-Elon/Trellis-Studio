@@ -35,6 +35,13 @@ VALID_STAGES = {"SOW", "GERM", "TRANSPLANT", "HARVEST_START", "HARVEST_END"}
 CONTROLLED_CROP_SOURCE_FIELDS = {
     "plant_name", "default_planting_method_category", "default_planting_method", "direct_sow", "transplant"
 }
+MATURE_GROWTH_STAGE_KEY = "mature"
+MATURE_GROWTH_STAGE_LABEL = "Mature"
+LIFECYCLE_GROWTH_STAGE_KEYS = {
+    "emergence", "germination", "germinate", "sprout", "sprouting", "seedling",
+    "vegetative", "vegetative_growth", "flower", "flowering", "bloom", "blooming",
+    "fruiting", "senescence", "dormancy", "transplant", "harvest", "harvest_start", "harvest_end",
+}
 
 CROP_PROMPT_FIELD_GUIDE = {
     "regional_default": "Use generic temperate home-garden assumptions unless the crop input specifies a region.",  # prompt quality
@@ -48,6 +55,7 @@ CROP_PROMPT_FIELD_GUIDE = {
     "methods": "allowed_method_categories are broad capabilities; allowed_method_ids are concrete fixed_methods that truly fit the crop.",  # prompt quality
     "default_method": "default_planting_method must be one of allowed_method_ids and should reflect the most common reliable home-garden method.",  # prompt quality
     "varieties": "Return real named cultivars only, preferably widely available and suitable for temperate gardens.",  # prompt quality
+    "growth_stages": "Return harvest-form stages for the scheduler's 'Grown for' control, such as microgreens, baby leaf, shoots, immature harvest, or mature; do not return lifecycle milestones like germination, vegetative, flowering, or fruiting.",  # prompt quality
     "provenance": "For required provenance fields, use exact strings from allowed_provenance_references only.",  # prompt quality
 }
 
@@ -245,6 +253,9 @@ def _generated_lengths(generated: dict[str, list[dict[str, Any]]]) -> dict[str, 
 
 
 def _restore_generated_lengths(generated: dict[str, list[dict[str, Any]]], lengths: dict[str, int]) -> None:
+    for table in list(generated):
+        if table not in lengths:
+            del generated[table]
     for table, original_length in lengths.items():
         del generated[table][original_length:]
 
@@ -488,6 +499,7 @@ def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int
                 "Lifecycle flags must be coherent, method flags must match allowed planting methods, and default_planting_method must be a concrete allowed method. "
                 "Return real named cultivars/varieties only; never placeholders such as '<crop> variety 1', 'generic', 'standard', or crop-name-only varieties. "
                 "Set variety.maturity_class only when a supplied variety source explicitly supports early, mid, or late maturity; otherwise return an empty string. "
+                "Generate growth_stages as harvest-form 'grown for' targets that scale scheduler timing and layout; always include a Mature stage with gdd_ratio 1.0, and exclude lifecycle milestones such as germination, vegetative, flowering, and fruiting. "
                 "Do not include planting methods (such as propagation-by-cutting) unless the crop is normally grown using the method. "
                 "provenance.field_sources must cite exact supplied strings from allowed_provenance_references for required provenance fields; do not cite invented estimate labels."
             ),
@@ -525,6 +537,9 @@ def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int
             if maturity_class and _has_explicit_variety_sources(variety):
                 variety_row["maturity_class"] = maturity_class
             generated["PlantVarieties"].append(variety_row)
+        for stage in result.get("growth_stages") or []:
+            generated.setdefault("PlantGrowthStages", []).append({"plant_name": row["plant_name"], **stage})
+        print(f"  - Growth stages generated: {len(result.get('growth_stages') or [])}", flush=True)
         crop_methods = [m for m in methods if m["method_id"] in set(allowed_method_ids)]
         if not generate_templates:
             print("  - Plant task templates skipped; scheduler defaults will be used", flush=True)  # template opt-in
@@ -1200,6 +1215,7 @@ def _prepare_crop_result(result: dict[str, Any], crop: dict[str, Any], methods: 
         provenance.get("field_sources"),
         _controlled_crop_field_sources(row, crop, methods),
     )
+    prepared["growth_stages"] = _prepare_growth_stages(prepared.get("growth_stages"), row.get("plant_name") or name)
     prepared["row"] = row
     prepared["provenance"] = provenance
     return prepared
@@ -1289,6 +1305,89 @@ def _number_value(value: Any) -> int | float | None:
     return int(parsed) if parsed.is_integer() else parsed
 
 
+def _normalize_growth_stage_key(value: Any) -> str:
+    return "_".join("".join(ch.lower() if ch.isalnum() else " " for ch in str(value or "").strip()).split())
+
+
+def _growth_stage_label_from_key(stage_key: str) -> str:
+    return " ".join(part.capitalize() for part in stage_key.split("_")) or MATURE_GROWTH_STAGE_LABEL
+
+
+def _bounded_ratio(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    parsed = _number_value(value)
+    if not isinstance(parsed, (int, float)) or parsed <= 0 or parsed > 1:
+        return None
+    return float(parsed)
+
+
+def _integer_or_default(value: Any, default: int) -> int:
+    parsed = _integer_value(value)
+    return parsed if isinstance(parsed, int) else default
+
+
+def _active_flag(value: Any, default: int) -> int:
+    parsed = _flag_value(value)
+    return parsed if parsed in (0, 1) else default
+
+
+def _is_lifecycle_growth_stage(stage_key: str, stage_label: str) -> bool:
+    label_key = _normalize_growth_stage_key(stage_label)
+    candidates = {stage_key, label_key}
+    return any(candidate in LIFECYCLE_GROWTH_STAGE_KEYS for candidate in candidates)
+
+
+def _canonical_mature_growth_stage() -> dict[str, Any]:
+    return {
+        "stage_key": MATURE_GROWTH_STAGE_KEY,
+        "stage_label": MATURE_GROWTH_STAGE_LABEL,
+        "gdd_ratio": 1.0,
+        "spacing_ratio": None,
+        "plant_diameter_ratio": None,
+        "plant_height_ratio": None,
+        "sort_order": 0,
+        "active": 1,
+        "is_default": 1,
+    }
+
+
+def _prepare_growth_stages(raw_stages: Any, plant_name: Any) -> list[dict[str, Any]]:
+    prepared = [_canonical_mature_growth_stage()]
+    seen = {MATURE_GROWTH_STAGE_KEY}
+    source_rows = raw_stages if isinstance(raw_stages, list) else []
+    for raw in source_rows:
+        if not isinstance(raw, dict):
+            continue
+        stage_key = _normalize_growth_stage_key(raw.get("stage_key") or raw.get("stage_label"))
+        if not stage_key or stage_key in seen:
+            continue
+        stage_label = str(raw.get("stage_label") or _growth_stage_label_from_key(stage_key)).strip()
+        if _is_lifecycle_growth_stage(stage_key, stage_label):
+            continue
+        gdd_ratio = _bounded_ratio(raw.get("gdd_ratio"))
+        if gdd_ratio is None:
+            continue
+        row = {
+            "plant_name": str(plant_name or "").strip(),
+            "stage_key": stage_key,
+            "stage_label": stage_label,
+            "gdd_ratio": gdd_ratio,
+            "spacing_ratio": _bounded_ratio(raw.get("spacing_ratio")),
+            "plant_diameter_ratio": _bounded_ratio(raw.get("plant_diameter_ratio")),
+            "plant_height_ratio": _bounded_ratio(raw.get("plant_height_ratio")),
+            "sort_order": max(1, _integer_or_default(raw.get("sort_order"), len(prepared))),
+            "active": _active_flag(raw.get("active"), 1),
+            "is_default": 0,
+        }
+        if validate_row("PlantGrowthStages", row)["errors"]:
+            continue
+        row.pop("plant_name", None)
+        prepared.append(row)
+        seen.add(stage_key)
+    return prepared
+
+
 def _controlled_crop_field_sources(row: dict[str, Any], crop: dict[str, Any], methods: list[dict[str, Any]]) -> list[dict[str, str]]:
     name = str(crop.get("plant_name") or crop.get("name") or row.get("plant_name") or "").strip()
     method_by_id = {str(method.get("method_id")): method for method in methods}
@@ -1353,6 +1452,7 @@ def _validate_crop_result(result: dict[str, Any], source_values: set[str], metho
         errors.append("allowed_method_categories is required.")
     errors.extend(_validate_allowed_method_ids(result, methods or []))
     errors.extend(_validate_varieties(result.get("varieties"), str(row.get("plant_name") or ""), source_values))
+    errors.extend(_validate_growth_stages(result.get("growth_stages"), str(row.get("plant_name") or "")))
     return errors
 
 
@@ -1402,6 +1502,32 @@ def _validate_variety_maturity_sources(prefix: str, variety: dict[str, Any], sou
         for source in sources
         if not source_ref_allowed(source, source_values)
     ]
+
+
+def _validate_growth_stages(stages: Any, plant_name: str) -> list[str]:
+    if not isinstance(stages, list) or not stages:
+        return ["growth_stages must include at least the Mature stage."]
+    errors: list[str] = []
+    default_count = 0
+    seen: set[str] = set()
+    for index, stage in enumerate(stages):
+        if not isinstance(stage, dict):
+            errors.append(f"growth_stages[{index}] must be an object.")
+            continue
+        row = {"plant_name": plant_name, **stage}
+        report = validate_row("PlantGrowthStages", row)
+        errors.extend(f"growth_stages[{index}].{error}" for error in report["errors"])
+        stage_key = _normalize_growth_stage_key(stage.get("stage_key"))
+        if stage_key in seen:
+            errors.append(f"growth_stages[{index}].stage_key duplicates another stage: {stage_key}")
+        seen.add(stage_key)
+        if _integer_value(stage.get("is_default")) == 1:
+            default_count += 1
+    if MATURE_GROWTH_STAGE_KEY not in seen:
+        errors.append("growth_stages must include mature.")
+    if default_count != 1:
+        errors.append("growth_stages must have exactly one default stage.")
+    return errors
 
 
 def _is_placeholder_variety_name(name: str, plant_name: str) -> bool:

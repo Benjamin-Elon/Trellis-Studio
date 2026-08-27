@@ -97,6 +97,8 @@ test("graph-local Trellis controls use control layers", () => {
     assert.match(vertexLinking, /trellis-graph-connection-layer/);
     assert.match(vertexLinking, /trellis-graph-control-layer/);
     assert.match(vertexLinking, /ensureGraphOverlaySvgLayer\('connection'\)/);
+    assert.match(vertexLinking, /function getPanelLayer\(\) \{[\s\S]*return ensureGraphOverlayHtmlLayer\('control'\);/);
+    assert.doesNotMatch(vertexLinking, /return ensureGraphOverlayHtmlLayer\('control'\) \|\| getPanelHost\(\)/);
     assert.match(vertexLinking, /panelHost\.appendChild\(entry\.panel\)/);
     assert.match(vertexLinking, /manual-link-task-schedule-overlay/);
     assert.match(vertexLinking, /panel\.style\.zIndex = String\(GRAPH_OVERLAY_Z\.CONTROL\)/);
