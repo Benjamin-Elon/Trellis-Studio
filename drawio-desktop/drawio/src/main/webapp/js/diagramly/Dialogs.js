@@ -442,7 +442,8 @@ var SplashDialog = function(editorUi)
 	var trellisLicenseKey = 'trellis.licenseWizard.v' + trellisLicenseVersion; // CHANGE
 	var trellisOathText = 'I solemnly affirm, with unnecessary ceremony and full awareness that this button did not appear by accident, that I have answered the Trellis license questions honestly, that I understand commercial use requires contacting the project owner, and that I will not pretend I missed this because the software was too polite.'; // NEW
 	var trellisCheckboxText = 'I have listened to the oath, survived, and understand that my use of Trellis must match the path I selected.'; // NEW
-	var trellisCommercialObligationText = 'I agree that people should have access to tools that increase shared regenerative capacity, and those who convert that shared capacity into private commercial value have a corresponding obligation to help sustain it. Written approval is still required before commercial use of Trellis plugin files.'; // CHANGE
+	var trellisAgreementBodyText = 'that people should have access to tools that increase shared regenerative capacity, and those who convert that shared capacity into private commercial value have a corresponding obligation to help sustain it. Written approval is still required before commercial use of Trellis plugin files.'; // NEW
+	var trellisCommercialObligationText = 'People should have access to tools that increase shared regenerative capacity, and those who convert that shared capacity into private commercial value have a corresponding obligation to help sustain it. Written approval is still required before commercial use of Trellis plugin files.'; // CHANGE
 	var trellisCommunityObligationItalicText = 'People should have access to tools that increase shared regenerative capacity.'; // NEW
 	var trellisCommercialApprovalText = 'Written approval is required before commercial use of Trellis plugin files.'; // NEW
 	var trellisLicensePaths = { // NEW
@@ -668,11 +669,15 @@ var SplashDialog = function(editorUi)
 		return row; // NEW
 	} // NEW
 
-	function createTrellisObligationNotice(pathInfo) // NEW
+	function createTrellisObligationNotice(pathInfo, obligationText) // CHANGE
 	{ // NEW
 		var notice = createTrellisElement('div', 'trellis-license-obligation'); // CHANGE
 		notice.style.cssText = 'font-size:12px;line-height:1.35;color:#3f4a3f;'; // NEW
-		if (pathInfo != null && pathInfo.contactGuidance) // NEW
+		if (obligationText != null) // NEW
+		{ // NEW
+			mxUtils.write(notice, obligationText); // NEW
+		} // NEW
+		else if (pathInfo != null && pathInfo.contactGuidance) // CHANGE
 		{ // NEW
 			mxUtils.write(notice, trellisCommercialObligationText); // CHANGE
 		} // NEW
@@ -686,7 +691,16 @@ var SplashDialog = function(editorUi)
 		return notice; // NEW
 	} // NEW
 
-	function createTrellisLicenseSupportLayout(licenseColumn, pathInfo) // CHANGE
+	function getTrellisAgreementText(pathInfo, name, organization) // NEW
+	{ // NEW
+		var isCommercial = pathInfo != null && pathInfo.contactGuidance; // NEW
+		var partyValue = isCommercial ? organization : name; // NEW
+		var party = mxUtils.trim(String(partyValue == null ? '' : partyValue)); // CHANGE
+		var prefix = isCommercial ? 'We, ' + (party != '' ? party : '[Organization]') + ', agree' : 'I, ' + (party != '' ? party : '[Name]') + ', agree'; // NEW
+		return prefix + ' ' + trellisAgreementBodyText; // NEW
+	} // NEW
+
+	function createTrellisLicenseSupportLayout(licenseColumn, pathInfo, obligationText) // CHANGE
 	{ // NEW
 		var panel = createTrellisElement('div', 'trellis-license-contact-panel'); // NEW
 		panel.style.cssText = 'box-sizing:border-box;text-align:left;'; // CHANGE
@@ -703,7 +717,7 @@ var SplashDialog = function(editorUi)
 		licenseColumn.className += ' trellis-license-card'; // NEW
 		panel.appendChild(licenseColumn); // NEW
 		panel.appendChild(contact); // NEW
-		panel.appendChild(createTrellisObligationNotice(pathInfo)); // CHANGE
+		panel.appendChild(createTrellisObligationNotice(pathInfo, obligationText)); // CHANGE
 		return panel; // NEW
 	} // NEW
 
@@ -759,6 +773,7 @@ var SplashDialog = function(editorUi)
 			var summary = createTrellisElement('div', 'trellis-license-panel-column trellis-saved-license-card'); // CHANGE
 			var summaryHeading = createTrellisCardHeading('License'); // CHANGE
 			summaryHeading.style.cssText = 'font-weight:bold;font-size:13px;margin-bottom:6px;color:#2f3b2f;'; // NEW
+			var pathInfo = trellisLicensePaths[trellisSavedWizard.path]; // NEW
 			var organizationText = hasTrellisStoredText(trellisSavedWizard.organization) ? ' Project: ' + trellisSavedWizard.organization + '.' : ''; // NEW
 			var summaryCopy = createTrellisElement('div', null, 'Path: ' + getTrellisPathLabel(trellisSavedWizard.path) + '. Signed by ' + trellisSavedWizard.name + ' using ' + trellisSavedWizard.email + '.' + organizationText); // CHANGE
 			summaryCopy.style.cssText = 'font-size:12px;line-height:1.35;color:#3f4a3f;'; // NEW
@@ -776,7 +791,7 @@ var SplashDialog = function(editorUi)
 			change.className = 'geBtn'; // NEW
 			change.style.marginTop = '8px'; // NEW
 			summary.appendChild(change); // NEW
-			center.appendChild(createTrellisLicenseSupportLayout(summary, trellisLicensePaths[trellisSavedWizard.path])); // CHANGE
+			center.appendChild(createTrellisLicenseSupportLayout(summary, pathInfo, getTrellisAgreementText(pathInfo, trellisSavedWizard.name, trellisSavedWizard.organization))); // CHANGE
 			var status = createTrellisElement('div', 'trellis-license-status', 'Diagram options will be ready shortly.'); // CHANGE
 			status.style.cssText = 'margin-top:8px;color:#5f6a5f;font-size:12px;text-align:center;'; // NEW
 			trellisExitStatus = status; // CHANGE
@@ -898,7 +913,7 @@ var SplashDialog = function(editorUi)
 			center.appendChild(oathSection); // NEW
 			var nameField = createTrellisInput('Name', 'text'); // NEW
 			var emailField = createTrellisInput('Email', 'email'); // NEW
-			var organizationField = createTrellisInput('Organization / Project (optional)', 'text'); // NEW
+			var organizationField = createTrellisInput(pathInfo.contactGuidance ? 'Organization / Legal entity' : 'Organization / Project (optional)', 'text'); // CHANGE
 			var signatureField = createTrellisInput('Signature', 'text'); // NEW
 			var gateSection = createTrellisElement('div', null); // NEW
 			var formSection = createTrellisInfoSection('Ceremonial paperwork', 'Fill these local-only fields. They are stored in this browser or desktop app profile with the completed oath.'); // NEW
@@ -906,6 +921,9 @@ var SplashDialog = function(editorUi)
 			formSection.appendChild(emailField.wrap); // NEW
 			formSection.appendChild(organizationField.wrap); // NEW
 			formSection.appendChild(signatureField.wrap); // NEW
+			var agreementPreview = createTrellisElement('div', 'trellis-license-agreement-preview'); // NEW
+			agreementPreview.style.cssText = 'margin-top:10px;padding:8px 10px;border-left:3px solid #6f8f5f;background:#f7f9f4;font-size:12px;line-height:1.35;color:#2f3b2f;'; // NEW
+			formSection.appendChild(agreementPreview); // NEW
 			var checkboxWrap = createTrellisElement('label', null); // NEW
 			checkboxWrap.style.cssText = 'display:flex;align-items:flex-start;gap:7px;margin-top:10px;font-size:12px;line-height:1.35;color:#2f3b2f;'; // NEW
 			var oathCheckbox = document.createElement('input'); // NEW
@@ -974,16 +992,35 @@ var SplashDialog = function(editorUi)
 				mxUtils.write(status, message); // NEW
 			} // NEW
 
+			function updateAgreementPreview() // NEW
+			{ // NEW
+				agreementPreview.innerHTML = ''; // NEW
+				mxUtils.write(agreementPreview, getTrellisAgreementText(pathInfo, nameField.input.value, organizationField.input.value)); // NEW
+			} // NEW
+
+			mxEvent.addListener(nameField.input, 'input', updateAgreementPreview); // NEW
+			mxEvent.addListener(organizationField.input, 'input', updateAgreementPreview); // NEW
+			updateAgreementPreview(); // NEW
+
+			function isCommercialOrganizationReady() // NEW
+			{ // NEW
+				return !pathInfo.contactGuidance || mxUtils.trim(organizationField.input.value) != ''; // NEW
+			} // NEW
+
 			function isGateReady() // NEW
 			{ // NEW
-				return oathDone && mxUtils.trim(nameField.input.value) != '' && mxUtils.trim(signatureField.input.value) != '' && isTrellisNewEmailValid(emailField.input.value) && oathCheckbox.checked; // CHANGE
+				return oathDone && mxUtils.trim(nameField.input.value) != '' && mxUtils.trim(signatureField.input.value) != '' && isTrellisNewEmailValid(emailField.input.value) && isCommercialOrganizationReady() && oathCheckbox.checked; // CHANGE
 			} // NEW
 
 			function blockAffirmUntilReady(evt) // NEW
 			{ // NEW
 				if (oathDone) // NEW
 				{ // NEW
-					if (!isTrellisNewEmailValid(emailField.input.value)) // NEW
+					if (!isCommercialOrganizationReady()) // NEW
+					{ // NEW
+						updateStatus('Enter an organization name for commercial use before affirming.'); // NEW
+					} // NEW
+					else if (!isTrellisNewEmailValid(emailField.input.value)) // CHANGE
 					{ // NEW
 						updateStatus('Enter a complete email address, for example name@example.com.'); // NEW
 					} // NEW

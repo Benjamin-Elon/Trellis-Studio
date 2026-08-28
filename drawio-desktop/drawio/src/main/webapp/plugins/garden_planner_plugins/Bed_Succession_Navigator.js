@@ -2,7 +2,7 @@
  * Draw.io Plugin: Tiler Group Overlap Navigator (Multi-Cluster, DOM Buttons)
  * - Builds bed-aware and outside-overlap succession clusters per parent.
  * - Keeps bed-contained clusters separate from outside overhang clusters.
- * - Each cluster gets its own Prev/Next controls and Mini Rail timeline.
+ * - Each selected planting cluster gets an above-cluster Occupancy timeline.
  * - Non-active members of each cluster are rendered outline-only (fills/text/images hidden).
  * - Covered plant groups, clusters, and empty beds get DOM selector buttons.
  */
@@ -49,8 +49,8 @@ Draw.loadPlugin(function (ui) {
     const BTN_INSET = 6;
     const SELECT_BUTTON_GAP = 4;
     const SELECT_BUTTON_DRAG_HANDLE_SLOT = BTN_SIZE + SELECT_BUTTON_GAP;
-    const MINI_RAIL_MIN_W = 260; // CHANGE: replace the low-information index badge with a compact timeline rail.
-    const MINI_RAIL_MAX_W = 520; // CHANGE: keep dense cluster timelines readable without covering the canvas.
+    const MINI_RAIL_MIN_W = 380; // CHANGE: the above-cluster Occupancy panel needs room for row labels.
+    const MINI_RAIL_MAX_W = 680; // CHANGE: full occupancy rows stay readable without covering excessive canvas width.
     const MINI_RAIL_GAP = 8; // CHANGE: attach the rail above the selected cluster with a small visual gap.
     const DAY_MS = 24 * 60 * 60 * 1000; // CHANGE: normalize occupancy windows for inclusive overlap checks.
     const ICON_PREV = 'data:image/svg+xml;utf8,' + encodeURIComponent(
@@ -1192,6 +1192,29 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
+    function selectedClusterRecordFor(cell) {
+        const selected = findTilerGroupSelection(cell || graph.getSelectionCell());
+        if (!selected) return null;
+        const parent = model.getParent(selected);
+        const components = parent ? buildAllComponentsInParent(parent) : [];
+        const component = components.find(members => members.some(member => member && member.id === selected.id)) || [selected];
+        const ensured = ensureClusterState(component, selected.id);
+        return { selected, key: ensured.key, st: ensured.st, component };
+    }
+
+    function selectedClusterLayoutContextFor(cell) {
+        const record = selectedClusterRecordFor(cell);
+        if (!record) return { selectedId: null, cellIds: [], enabledIds: [], clusterBounds: null };
+        const activeIds = new Set(activeCellsForClusterState(record.st).map(member => String(member.id || '')));
+        if (record.selected && record.selected.id) activeIds.add(String(record.selected.id));
+        return {
+            selectedId: record.selected.id,
+            cellIds: (record.st.order || []).map(member => String(member.id || '')).filter(Boolean),
+            enabledIds: Array.from(activeIds),
+            clusterBounds: getClusterBBox(record.key) // CHANGE: overlay positioning uses cluster bounds only, reserving above-cluster space deterministically.
+        };
+    }
+
     // -------------------- Per-cluster UI helpers --------------------
     function styleBtn(el) {
         el.style.position = 'absolute';
@@ -1659,7 +1682,7 @@ Draw.loadPlugin(function (ui) {
         el.style.position = 'absolute';
         el.style.zIndex = String(GRAPH_OVERLAY_Z.ANNOTATION);
         el.style.boxSizing = 'border-box';
-        el.style.padding = '6px 8px';
+        el.style.padding = '7px 8px 8px';
         el.style.border = '1px solid #c7cdd3';
         el.style.borderRadius = '6px';
         el.style.background = 'rgba(255,255,255,0.96)';
@@ -1712,7 +1735,7 @@ Draw.loadPlugin(function (ui) {
 
     function makeMiniRailBar(key, item, span) {
         const bar = document.createElement('div');
-        bar.dataset.miniRailBar = '1'; // CHANGE: make exact planting bars easy to test and target.
+        bar.dataset.occupancyNavigatorBar = '1'; // CHANGE: make exact planting bars easy to test and target.
         bar.dataset.cellId = item.cellId;
         bar.textContent = item.label;
         bar.title = miniRailDateTitle(item);
@@ -1775,7 +1798,7 @@ Draw.loadPlugin(function (ui) {
         const st = clusterStates.get(key); if (!st) return;
         if (!st.miniRail) {
             const rail = document.createElement('div');
-            rail.dataset.miniRail = '1'; // CHANGE: Mini Rail replaces the old numeric badge.
+            rail.dataset.occupancyNavigator = '1'; // CHANGE: Occupancy now lives above the cluster instead of inside the selected overlay.
             styleMiniRail(rail);
             host.appendChild(rail);
             st.miniRail = rail;
@@ -1787,31 +1810,72 @@ Draw.loadPlugin(function (ui) {
         const span = miniRailSpan(items);
         const axisModel = miniRailAxisModel(items);
         rail.innerHTML = '';
+        const title = document.createElement('div');
+        title.textContent = 'Occupancy';
+        title.style.font = '700 11px/14px Arial,sans-serif';
+        title.style.color = '#202124';
+        title.style.marginBottom = '4px';
+        rail.appendChild(title);
         const axis = document.createElement('div');
-        axis.dataset.miniRailAxis = '1';
+        axis.dataset.occupancyNavigatorAxis = '1';
         axis.style.display = 'grid';
-        axis.style.gridTemplateColumns = axisModel.mode === 'monthly' ? 'repeat(' + axisModel.labels.length + ', 1fr)' : (axisModel.mode === 'endpoints' ? '1fr 1fr' : '1fr');
+        axis.style.gridTemplateColumns = '112px 1fr';
         axis.style.gap = '0';
         axis.style.color = '#3c4043';
         axis.style.font = '700 10px/12px Arial,sans-serif';
-        axis.style.marginBottom = '2px';
+        axis.style.marginBottom = '3px';
+        const axisLabel = document.createElement('div');
+        axisLabel.textContent = 'Planting';
+        axisLabel.style.color = '#5f6368';
+        axis.appendChild(axisLabel);
+        const ticks = document.createElement('div');
+        ticks.style.display = 'grid';
+        ticks.style.gridTemplateColumns = axisModel.mode === 'monthly' ? 'repeat(' + axisModel.labels.length + ', 1fr)' : (axisModel.mode === 'endpoints' ? '1fr 1fr' : '1fr');
         axisModel.labels.forEach((label, index) => {
             const tick = document.createElement('div');
             tick.textContent = label;
             tick.style.textAlign = axisModel.mode === 'endpoints' ? (index === 0 ? 'left' : 'right') : 'center';
-            axis.appendChild(tick);
+            ticks.appendChild(tick);
         });
+        axis.appendChild(ticks);
         rail.appendChild(axis);
         items.forEach(item => {
+            const row = document.createElement('div');
+            row.dataset.occupancyNavigatorRow = item.cellId;
+            row.style.display = 'grid';
+            row.style.gridTemplateColumns = '112px 1fr';
+            row.style.columnGap = '8px';
+            row.style.alignItems = 'center';
+            row.style.minHeight = '24px';
+            row.style.cursor = 'pointer';
+            row.style.fontWeight = item.selected ? '700' : '400';
+            row.title = miniRailDateTitle(item);
+            row.addEventListener('pointerdown', consumeEvt, { passive: false });
+            row.addEventListener('mousedown', consumeEvt, { passive: false });
+            row.addEventListener('click', function (evt) {
+                consumeEvt(evt);
+                const cell = item.cellId ? model.getCell(item.cellId) : null;
+                if (cell && model.isVertex(cell)) bringToFrontAndSelect(cell);
+            });
+            const label = document.createElement('div');
+            label.textContent = item.label || 'Planting';
+            label.style.minWidth = '0';
+            label.style.overflow = 'hidden';
+            label.style.textOverflow = 'ellipsis';
+            label.style.whiteSpace = 'nowrap';
+            label.style.font = '700 10px/14px Arial,sans-serif';
+            label.style.color = item.selected ? '#174ea6' : (item.active ? '#202124' : '#5f6368');
+            row.appendChild(label);
             const track = document.createElement('div');
-            track.dataset.miniRailTrack = item.cellId;
+            track.dataset.occupancyNavigatorTrack = item.cellId;
             track.style.position = 'relative';
-            track.style.height = '19px';
+            track.style.height = '20px';
             track.style.borderTop = '1px solid rgba(218,220,224,0.7)';
             track.appendChild(makeMiniRailBar(key, item, span));
-            rail.appendChild(track);
+            row.appendChild(track);
+            rail.appendChild(row);
         });
-        st.miniRailHeight = 22 + items.length * 19 + 12; // CHANGE: estimate rail height for stable above-cluster placement.
+        st.miniRailHeight = 33 + items.length * 24 + 12; // CHANGE: estimate full occupancy panel height for stable above-cluster placement.
         rail.style.display = '';
     }
 
@@ -1895,11 +1959,11 @@ Draw.loadPlugin(function (ui) {
         if (st.miniRail) {
             const railWidth = Math.round(clampNumber(Math.max(box.w, MINI_RAIL_MIN_W), MINI_RAIL_MIN_W, MINI_RAIL_MAX_W)); // CHANGE: size the rail from the selected cluster footprint.
             const railHeight = st.miniRailHeight || 72;
-            const left = Math.max(0, Math.round(box.x + box.w / 2 - railWidth / 2));
+            const left = Math.round(box.x + box.w / 2 - railWidth / 2);
             const aboveTop = Math.round(box.y - railHeight - MINI_RAIL_GAP);
             st.miniRail.style.width = railWidth + 'px';
             st.miniRail.style.left = left + 'px';
-            st.miniRail.style.top = (aboveTop >= 0 ? aboveTop : Math.round(box.y + box.h + MINI_RAIL_GAP)) + 'px'; // CHANGE: fall below the cluster if there is no room above.
+            st.miniRail.style.top = aboveTop + 'px'; // CHANGE: occupancy navigator stays vertically above the cluster and does not fall below.
         }
 
         // place select buttons at the top-left outside corner of the cluster bbox
@@ -2315,6 +2379,7 @@ Draw.loadPlugin(function (ui) {
 
     graph.__trellisBedSuccessionNavigator = Object.assign({}, graph.__trellisBedSuccessionNavigator, {
         getSelectedClusterOccupancy: selectedClusterOccupancyFor,
+        getSelectedClusterLayoutContext: selectedClusterLayoutContextFor, // CHANGE: selected overlays need cluster bounds and active rows without measuring Occupancy DOM.
         resolveOccupiedBedMoveUnit: resolveOccupiedBedMoveUnit
     });
 

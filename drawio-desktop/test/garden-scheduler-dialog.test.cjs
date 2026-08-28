@@ -681,17 +681,15 @@ test('scheduler adjacent gap hints support companion pair and turnover bases', (
     assert.equal(turnoverHints.text, 'Before: 1d gap; After: 19d gap');
 });
 
-test('scheduler layout tab wires live SVG preview and context-aware default saving', () => {
-    assert.match(schedulerSource, /const layoutTab = document\.createElement\('div'\)/);
-    assert.match(schedulerSource, /const layoutTabBtn = mxUtils\.button\("Layout"/);
-    assert.match(schedulerSource, /renderLayoutPreviewSvg\(layoutPreview, model\)/);
-    assert.match(schedulerSource, /saveLayoutDefaultChk\.checked[\s\S]*CompanionRelationshipModel\.ensurePairDefaultsRelationship[\s\S]*CompanionRelationshipModel\.saveLayoutDefaults/);
-    assert.match(schedulerSource, /PlantModel\.update\(formState\.plantId, spacingPatch\)/);
+test('scheduler dialog removes Layout tab while exposing diagram spacing tools', () => {
+    assert.match(schedulerSource, /const scheduleTabBtn = makeTabButton\("Schedule", div\)/);
+    assert.match(schedulerSource, /const tasksTabBtn = mxUtils\.button\("Tasks"/);
+    assert.match(schedulerSource, /tabsHeader\.appendChild\(scheduleTabBtn\);[\s\S]*tabsHeader\.appendChild\(tasksTabBtn\);/);
+    assert.doesNotMatch(schedulerSource, /const layoutTabBtn = mxUtils\.button\("Layout"/); // CHANGE: physical layout editing moved out of the scheduler dialog.
+    assert.doesNotMatch(schedulerSource, /tabsHeader\.appendChild\(layoutTabBtn\)/);
+    assert.match(schedulerSource, /const layoutTools = \{[\s\S]*buildSpacingLayoutRows[\s\S]*validateSpacingDraft[\s\S]*buildSpacingPreviewModel[\s\S]*applySpacingDraft/); // CHANGE: diagram overlay uses a narrow scheduler layout service.
     assert.match(schedulerSource, /layoutOffsetForDerivedCreation\(\)/);
     assert.match(schedulerSource, /writeCellAttribute\(targetCell, 'companion_relation_id', ensured\.relationId/);
-    assert.match(schedulerSource, /makeSection\('Planting layout'\)/);
-    assert.match(schedulerSource, /needsDraftCompanion[\s\S]*readDraftCompanionLayoutRow/);
-    assert.match(schedulerSource, /'Revert'/);
     assert.match(schedulerSource, /targetGeometryRect: layoutGraphApplication\.targetRect/);
     assert.match(schedulerSource, /extraAttributePatches: \(layoutGraphApplication\.extraAttributePatches/);
     assert.match(schedulerSource, /CompanionLayoutGroupDefaultModel\.save/);

@@ -217,9 +217,59 @@ test("garden dashboard startup focuses sole garden only once", () => {
     assert.match(text, /let startupGardenFocusDone = false;/);
     assert.match(text, /function runStartupGardenFocusOnce\(\)/);
     assert.match(text, /if \(startupGardenFocusDone\) return;/);
-    assert.match(text, /if \(gardens\.length !== 1 \|\| selectedCellIsGardenRelated\(\)\) return;/);
+    assert.match(text, /const context = resolveDashboardToolbarContext\(\);[\s\S]*if \(context\.moduleCell\) \{[\s\S]*selectAndZoomToGarden\(context\.moduleCell\);[\s\S]*return;[\s\S]*\}/);
+    assert.match(text, /const remembered = rememberedGardenModuleForStartup\(\);[\s\S]*if \(remembered\) \{[\s\S]*selectAndZoomToGarden\(remembered\);[\s\S]*return;[\s\S]*\}/);
+    assert.match(text, /if \(gardens\.length !== 1\) return;/);
     assert.match(text, /selectAndZoomToGarden\(gardens\[0\]\);/);
     assert.match(fullSource, /scheduleStartupGardenFocus\(\);/);
+});
+
+test("garden dashboard persists the last selected garden by diagram page and user", () => {
+    const text = viewportToolbarSource();
+    const fullSource = source();
+    assert.match(fullSource, /const LAST_GARDEN_STORAGE_PREFIX = "trellis\.gardenDashboard\.lastGarden\.v1";/);
+    assert.match(text, /const lastGardenSelectionByPreferenceKey = new Map\(\);/);
+    assert.match(text, /function currentDashboardPageKey\(\)/);
+    assert.match(text, /const page = ui && ui\.currentPage;/);
+    assert.match(text, /typeof page\.getId === "function" \? page\.getId\(\) : \(page && page\.id\)/);
+    assert.match(text, /function diagramPreferenceKey\(create\)/);
+    assert.match(text, /typeof users\.getDiagramKey !== "function"/);
+    assert.match(text, /users\.getDiagramKey\(\{ create: !!create \}\)/);
+    assert.match(text, /function lastGardenPreferenceKey\(create\)/);
+    assert.match(text, /LAST_GARDEN_STORAGE_PREFIX \+ ":" \+ diagramKey \+ ":" \+ currentDashboardPageKey\(\) \+ ":" \+ workspaceUserScopeKey\(\)/);
+    assert.match(text, /return current && current\.id \? "user:" \+ current\.id : "shared";/);
+    assert.match(text, /function loadRememberedGardenId\(\)/);
+    assert.match(text, /function saveRememberedGardenId\(moduleCell\)/);
+    assert.match(text, /function clearRememberedGardenId\(\)/);
+});
+
+test("garden dashboard updates last garden memory only for unambiguous garden contexts", () => {
+    const text = viewportToolbarSource();
+    assert.match(text, /function saveResolvedGardenSelection\(context\)/);
+    assert.match(text, /if \(context && context\.moduleCell\) saveRememberedGardenId\(context\.moduleCell\);/);
+    assert.match(text, /const context = resolveDashboardToolbarContext\(\);[\s\S]*if \(!context\.moduleCell\) \{ renderBlankViewportToolbar\(context\); return; \}[\s\S]*saveResolvedGardenSelection\(context\);/);
+    assert.match(text, /function resolveDashboardToolbarContext\(\)/);
+    assert.match(text, /if \(ambiguous\.length\) \{[\s\S]*return \{ moduleCell: null, candidates: sortGardensForPicker\(filtered\), allGardens, reason: "ambiguous" \};/);
+    assert.match(text, /if \(unique\.length === 1\) return \{ moduleCell: unique\[0\], candidates: allGardens, allGardens, reason: "selected" \};/);
+    assert.match(text, /return \{ moduleCell: null, candidates: allGardens, allGardens, reason: "mixed" \};/);
+});
+
+test("garden dashboard startup uses selected remembered then sole-garden fallback", () => {
+    const text = viewportToolbarSource();
+    assert.match(text, /function rememberedGardenModuleForStartup\(\)/);
+    assert.match(text, /const id = loadRememberedGardenId\(\);/);
+    assert.match(text, /const moduleCell = model\.getCell\(id\);/);
+    assert.match(text, /if \(moduleCell && isGardenModule\(moduleCell\)\) return moduleCell;/);
+    assert.match(text, /clearRememberedGardenId\(\);[\s\S]*return null;/);
+    assert.match(text, /function runStartupGardenFocusOnce\(\)/);
+    assert.match(text, /const context = resolveDashboardToolbarContext\(\);[\s\S]*selectAndZoomToGarden\(context\.moduleCell\);[\s\S]*const remembered = rememberedGardenModuleForStartup\(\);[\s\S]*selectAndZoomToGarden\(remembered\);[\s\S]*const gardens = collectGardenModules\(\);[\s\S]*selectAndZoomToGarden\(gardens\[0\]\);/);
+});
+
+test("garden dashboard last garden restore runs only on file open, not page switch", () => {
+    const fullSource = source();
+    assert.match(fullSource, /ui\.editor\.addListener\("fileLoaded", handleDashboardDiagramOpened\);/);
+    assert.doesNotMatch(fullSource, /addListener\("pageSelected", handleDashboardDiagramOpened\)/);
+    assert.doesNotMatch(fullSource, /addListener\("pageSelected", scheduleStartupGardenFocus\)/);
 });
 
 test("garden dashboard resolves linked and ambiguous module contexts", () => {

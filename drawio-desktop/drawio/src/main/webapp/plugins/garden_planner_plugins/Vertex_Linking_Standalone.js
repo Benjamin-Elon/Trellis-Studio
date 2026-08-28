@@ -1415,7 +1415,7 @@ Draw.loadPlugin(function (ui) {
     const taskScheduleOverlay = (function () {
         const MODE_CARDS = 'cards';
         const MODE_SCHEDULE = 'schedule';
-        const MODE_OCCUPANCY = 'occupancy';
+        const MODE_SPACING = 'spacing';
         const PANEL_WIDTH = 380;
         const PANEL_GAP = 12;
         const PANEL_SIDE_OFFSET = 60;
@@ -1960,7 +1960,7 @@ Draw.loadPlugin(function (ui) {
             title.style.textOverflow = 'ellipsis';
             title.style.whiteSpace = 'nowrap';
             const subtitle = document.createElement('div');
-            subtitle.textContent = activeMode === MODE_OCCUPANCY ? (count + (count === 1 ? ' planting group' : ' planting groups')) : (count + (count === 1 ? ' linked task' : ' linked tasks'));
+            subtitle.textContent = activeMode === MODE_SPACING ? (count + (count === 1 ? ' planting row' : ' planting rows')) : (count + (count === 1 ? ' linked task' : ' linked tasks'));
             subtitle.style.color = '#5f6368';
             subtitle.style.fontSize = '10px';
             titleWrap.appendChild(title);
@@ -1981,7 +1981,7 @@ Draw.loadPlugin(function (ui) {
             toggle.style.overflow = 'hidden';
             toggle.appendChild(createModeButton(entry, 'Cards', MODE_CARDS));
             toggle.appendChild(createModeButton(entry, 'Schedule', MODE_SCHEDULE));
-            toggle.appendChild(createModeButton(entry, 'Occupancy', MODE_OCCUPANCY));
+            toggle.appendChild(createModeButton(entry, 'Spacing', MODE_SPACING));
             actions.appendChild(toggle);
             const scheduleButton = createScheduleActionButton(entry);
             if (scheduleButton) actions.appendChild(scheduleButton);
@@ -2019,9 +2019,9 @@ Draw.loadPlugin(function (ui) {
             toggle.style.border = '1px solid rgba(60, 64, 67, 0.28)';
             toggle.style.borderRadius = '5px';
             toggle.style.overflow = 'hidden';
-            const effectiveMode = activeMode === MODE_OCCUPANCY ? MODE_OCCUPANCY : MODE_SCHEDULE;
+            const effectiveMode = activeMode === MODE_SPACING ? MODE_SPACING : MODE_SCHEDULE;
             toggle.appendChild(createModeButton(entry, 'Schedule', MODE_SCHEDULE, effectiveMode));
-            toggle.appendChild(createModeButton(entry, 'Occupancy', MODE_OCCUPANCY, effectiveMode));
+            toggle.appendChild(createModeButton(entry, 'Spacing', MODE_SPACING, effectiveMode));
             header.appendChild(toggle);
 
             const scheduleButton = createScheduleActionButton(entry);
@@ -2089,6 +2089,379 @@ Draw.loadPlugin(function (ui) {
         function countOccupancyRows(entry) {
             const occupancy = getOccupancyModelForEntry(entry);
             return occupancy && Array.isArray(occupancy.items) ? occupancy.items.length : 0;
+        }
+
+        function getLayoutTools() {
+            return window.USL && window.USL.scheduler && window.USL.scheduler.layoutTools;
+        }
+
+        function countSpacingRows(entry) {
+            if (entry && Array.isArray(entry.spacingRows)) return entry.spacingRows.length;
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null;
+            const api = graph.__trellisBedSuccessionNavigator;
+            const context = api && typeof api.getSelectedClusterLayoutContext === 'function' ? api.getSelectedClusterLayoutContext(source) : null;
+            return context && Array.isArray(context.cellIds) && context.cellIds.length ? context.cellIds.length : 1;
+        }
+
+        const spacingPreviewState = { host: null, faded: [] };
+
+        function clearSpacingPreview() {
+            spacingPreviewState.faded.forEach(item => {
+                if (item && item.node && item.node.style) item.node.style.opacity = item.opacity;
+            });
+            spacingPreviewState.faded = [];
+            removeNode(spacingPreviewState.host);
+            spacingPreviewState.host = null;
+        }
+
+        function fadeSpacingPreviewCell(cell) {
+            const state = cell && graph.getView && graph.getView().getState(cell);
+            const node = state && state.shape && state.shape.node;
+            if (!node || !node.style) return;
+            if (!spacingPreviewState.faded.some(item => item.node === node)) {
+                spacingPreviewState.faded.push({ node, opacity: node.style.opacity || '' });
+            }
+            node.style.opacity = '0.28'; // CHANGE: draft spacing preview keeps the real group visible as context.
+        }
+
+        function modelRectToViewRect(rect) {
+            const view = graph.getView && graph.getView();
+            const scale = Number(view && view.scale) || 1;
+            const translate = view && view.translate || { x: 0, y: 0 };
+            return {
+                x: (Number(rect.x || 0) + Number(translate.x || 0)) * scale,
+                y: (Number(rect.y || 0) + Number(translate.y || 0)) * scale,
+                width: Number(rect.width || 0) * scale,
+                height: Number(rect.height || 0) * scale,
+                scale
+            };
+        }
+
+        function renderSpacingPreview(modelPreview) {
+            clearSpacingPreview();
+            const rows = modelPreview && Array.isArray(modelPreview.rows) ? modelPreview.rows : [];
+            if (!rows.length) return;
+            const host = ensureGraphOverlayHtmlLayer('annotation');
+            if (!host) return;
+            const preview = document.createElement('div');
+            preview.className = 'manual-link-spacing-preview';
+            preview.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;';
+            rows.forEach(row => {
+                const cell = row.cellId ? model.getCell(row.cellId) : null;
+                fadeSpacingPreviewCell(cell);
+                const rect = modelRectToViewRect(row.rect || {});
+                const box = document.createElement('div');
+                box.dataset.spacingPreviewCell = row.cellId || '';
+                box.style.position = 'absolute';
+                box.style.left = Math.round(rect.x) + 'px';
+                box.style.top = Math.round(rect.y) + 'px';
+                box.style.width = Math.round(rect.width) + 'px';
+                box.style.height = Math.round(rect.height) + 'px';
+                box.style.boxSizing = 'border-box';
+                box.style.border = '2px dashed ' + (row.role === 'companion' ? '#166534' : '#1a73e8');
+                box.style.background = row.role === 'companion' ? 'rgba(22,101,52,0.08)' : 'rgba(26,115,232,0.08)';
+                preview.appendChild(box);
+                (row.dots && row.dots.circles || []).forEach(dot => {
+                    const circle = document.createElement('div');
+                    circle.style.position = 'absolute';
+                    const x = (Number(dot.x || 0) + Number((graph.getView() && graph.getView().translate && graph.getView().translate.x) || 0)) * rect.scale;
+                    const y = (Number(dot.y || 0) + Number((graph.getView() && graph.getView().translate && graph.getView().translate.y) || 0)) * rect.scale;
+                    const r = Math.max(2, Number(dot.r || 2.5) * rect.scale);
+                    circle.style.left = Math.round(x - r) + 'px';
+                    circle.style.top = Math.round(y - r) + 'px';
+                    circle.style.width = Math.round(r * 2) + 'px';
+                    circle.style.height = Math.round(r * 2) + 'px';
+                    circle.style.borderRadius = '50%';
+                    circle.style.background = row.role === 'companion' ? '#16a34a' : '#2563eb';
+                    circle.style.opacity = '0.78';
+                    preview.appendChild(circle);
+                });
+            });
+            host.appendChild(preview);
+            spacingPreviewState.host = preview;
+        }
+
+        function spacingNumberInput(value, enabled) {
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.step = '0.1';
+            input.value = value == null ? '' : String(Math.round(Number(value) * 10) / 10);
+            input.disabled = !enabled;
+            input.style.width = '100%'; // CHANGE: fit all spacing fields inside the fixed overlay width.
+            input.style.minWidth = '0';
+            input.style.boxSizing = 'border-box';
+            input.style.fontSize = '10px';
+            input.style.padding = '2px 3px'; // CHANGE: compact numeric fields prevent clipped columns.
+            input.style.textAlign = 'right'; // CHANGE: compact numeric columns stay readable.
+            return input;
+        }
+
+        function spacingSelect(value, enabled) {
+            const select = document.createElement('select');
+            ['beside', 'interplant', 'staggered'].forEach(optionValue => {
+                const option = document.createElement('option');
+                option.value = optionValue;
+                option.textContent = optionValue;
+                select.appendChild(option);
+            });
+            select.value = value || 'beside';
+            select.disabled = !enabled;
+            select.style.width = '100%'; // CHANGE: let the spacing grid own column sizing.
+            select.style.minWidth = '0'; // CHANGE: prevent the native select width from forcing overflow.
+            select.style.fontSize = '10px';
+            select.style.padding = '2px 3px'; // CHANGE: keep template control aligned with compact numeric fields.
+            return select;
+        }
+
+        function spacingIdleStatus(rows) {
+            const allRows = rows || [];
+            const activeCount = allRows.filter(row => row && row.enabled !== false).length;
+            const inactiveCount = allRows.length - activeCount;
+            if (!activeCount && allRows.length) return 'No active rows in this occupancy window.'; // CHANGE: explain why preview/apply is unavailable.
+            return inactiveCount ? 'Only active-window rows preview and apply.' : ''; // CHANGE: inactive rows are context, not editable targets.
+        }
+
+        function spacingDraftFromRowStates(rowStates) {
+            return (rowStates || []).map(state => Object.assign({}, state.row, {
+                template: state.templateControl ? state.templateControl.value : state.row.template,
+                spacingXCm: state.spacingX.value,
+                spacingYCm: state.spacingY.value,
+                offsetXCm: state.offsetX.value,
+                offsetYCm: state.offsetY.value
+            }));
+        }
+
+        function spacingRowChanged(state) {
+            const row = state.row;
+            return String(state.templateControl ? state.templateControl.value : row.template || '') !== String(row.template || '') ||
+                String(state.spacingX.value) !== String(row.spacingXCm == null ? '' : Math.round(Number(row.spacingXCm) * 10) / 10) ||
+                String(state.spacingY.value) !== String(row.spacingYCm == null ? '' : Math.round(Number(row.spacingYCm) * 10) / 10) ||
+                String(state.offsetX.value) !== String(row.offsetXCm == null ? '' : Math.round(Number(row.offsetXCm) * 10) / 10) ||
+                String(state.offsetY.value) !== String(row.offsetYCm == null ? '' : Math.round(Number(row.offsetYCm) * 10) / 10);
+        }
+
+        function revertSpacingRowState(state) {
+            const row = state.row;
+            if (state.templateControl) state.templateControl.value = row.template || 'beside';
+            state.spacingX.value = row.spacingXCm == null ? '' : String(Math.round(Number(row.spacingXCm) * 10) / 10);
+            state.spacingY.value = row.spacingYCm == null ? '' : String(Math.round(Number(row.spacingYCm) * 10) / 10);
+            state.offsetX.value = row.offsetXCm == null ? '' : String(Math.round(Number(row.offsetXCm) * 10) / 10);
+            state.offsetY.value = row.offsetYCm == null ? '' : String(Math.round(Number(row.offsetYCm) * 10) / 10);
+        }
+
+        const SPACING_ROW_GRID_COLUMNS = 'minmax(72px,1fr) minmax(48px,52px) repeat(4,minmax(42px,46px)) 24px'; // CHANGE: shared header/row columns keep every plant row aligned.
+
+        function createSpacingGridRow(className) {
+            const row = document.createElement('div');
+            row.className = className || '';
+            row.style.display = 'grid';
+            row.style.gridTemplateColumns = SPACING_ROW_GRID_COLUMNS;
+            row.style.columnGap = '4px';
+            row.style.alignItems = 'center';
+            row.style.width = '100%';
+            row.style.minWidth = '0';
+            return row; // CHANGE: each plant owns one grid row instead of relying on global CSS grid auto-placement.
+        }
+
+        function renderSpacingEditor(entry, body, context, tools) {
+            body.innerHTML = '';
+            entry.spacingRows = context.rows || [];
+            const wrap = document.createElement('div');
+            wrap.className = 'manual-link-spacing-editor';
+            wrap.style.display = 'flex';
+            wrap.style.flexDirection = 'column';
+            wrap.style.gap = '6px';
+
+            const rowsWrap = document.createElement('div');
+            rowsWrap.className = 'manual-link-spacing-rows';
+            rowsWrap.style.display = 'flex';
+            rowsWrap.style.flexDirection = 'column';
+            rowsWrap.style.gap = '5px';
+            rowsWrap.style.width = '100%';
+            rowsWrap.style.minWidth = '0';
+            const headerRow = createSpacingGridRow('manual-link-spacing-header');
+            ['Planting', 'Template', 'Space X', 'Space Y', 'Off X', 'Off Y', ''].forEach(text => {
+                const head = document.createElement('div');
+                head.textContent = text;
+                head.style.fontSize = '9px';
+                head.style.color = '#5f6368';
+                head.style.fontWeight = '700';
+                head.style.minWidth = '0'; // CHANGE: headers no longer force the spacing grid wider than the panel.
+                head.style.textAlign = text === 'Planting' ? 'left' : 'center'; // CHANGE: compact columns remain visually aligned.
+                headerRow.appendChild(head);
+            });
+            rowsWrap.appendChild(headerRow);
+
+            const rowStates = [];
+            (context.rows || []).forEach(row => {
+                const enabled = row.enabled !== false;
+                const rowEl = createSpacingGridRow('manual-link-spacing-row');
+                rowEl.dataset.spacingRowCell = row.cellId || '';
+                const labelCell = document.createElement('div');
+                labelCell.style.minWidth = '0';
+                labelCell.style.display = 'flex';
+                labelCell.style.flexDirection = 'column';
+                labelCell.style.lineHeight = '12px';
+                const label = makeTextSpan(row.label || row.cellId || 'Planting', enabled ? null : '#9aa0a6');
+                label.style.fontWeight = row.selected ? '700' : '400';
+                labelCell.appendChild(label);
+                if (!enabled) {
+                    const marker = document.createElement('span');
+                    marker.textContent = 'Inactive';
+                    marker.style.fontSize = '9px';
+                    marker.style.color = '#9aa0a6';
+                    marker.style.whiteSpace = 'nowrap';
+                    marker.style.lineHeight = '10px';
+                    labelCell.appendChild(marker); // CHANGE: disabled rows are explicitly outside the active occupancy window.
+                }
+                rowEl.appendChild(labelCell);
+
+                const template = row.role === 'companion' ? spacingSelect(row.template, enabled) : document.createElement('span');
+                if (row.role !== 'companion') template.textContent = '-';
+                if (row.role !== 'companion') template.style.textAlign = 'center'; // CHANGE: anchor placeholder stays aligned in the compact grid.
+                rowEl.appendChild(template);
+
+                const spacingX = spacingNumberInput(row.spacingXCm, enabled);
+                const spacingY = spacingNumberInput(row.spacingYCm, enabled);
+                const offsetX = spacingNumberInput(row.offsetXCm, enabled);
+                const offsetY = spacingNumberInput(row.offsetYCm, enabled);
+                [spacingX, spacingY, offsetX, offsetY].forEach(input => rowEl.appendChild(input));
+
+                const revert = document.createElement('button');
+                revert.type = 'button';
+                revert.textContent = '↺'; // CHANGE: use a revert symbol instead of Reset text.
+                revert.setAttribute('aria-label', 'Revert row spacing'); // CHANGE: icon-only control remains accessible.
+                revert.title = 'Revert row spacing'; // CHANGE: clarify the compact revert symbol.
+                revert.style.fontSize = '12px';
+                revert.style.lineHeight = '14px';
+                revert.style.visibility = 'hidden'; // CHANGE: reserve the grid slot without exposing inactive actions.
+                revert.style.pointerEvents = 'none';
+                revert.disabled = !enabled;
+                applyVertexButtonStyle(revert, 'neutral', { compact: true });
+                revert.style.width = '100%'; // CHANGE: revert column stays fixed and aligned.
+                revert.style.minWidth = '0';
+                revert.style.padding = '2px 0'; // CHANGE: override shared compact padding to fit the icon column.
+                rowEl.appendChild(revert);
+
+                const state = { row, templateControl: row.role === 'companion' ? template : null, spacingX, spacingY, offsetX, offsetY, revert };
+                rowStates.push(state);
+                rowsWrap.appendChild(rowEl);
+            });
+            wrap.appendChild(rowsWrap);
+
+            const defaultLabel = document.createElement('label');
+            defaultLabel.style.display = 'none';
+            defaultLabel.style.alignItems = 'center';
+            defaultLabel.style.gap = '6px';
+            defaultLabel.style.fontSize = '10px';
+            defaultLabel.style.color = '#3c4043';
+            const saveDefaults = document.createElement('input');
+            saveDefaults.type = 'checkbox';
+            defaultLabel.appendChild(saveDefaults);
+            defaultLabel.appendChild(document.createTextNode('Save enabled rows as defaults'));
+            wrap.appendChild(defaultLabel);
+
+            const status = document.createElement('div');
+            status.style.minHeight = '14px';
+            status.style.color = '#92400e';
+            status.style.fontSize = '10px';
+            status.style.fontWeight = '700';
+            wrap.appendChild(status);
+            const idleStatus = spacingIdleStatus(context.rows || []);
+            status.textContent = idleStatus; // CHANGE: clarify inactive rows before edits begin.
+
+            const actions = document.createElement('div');
+            actions.style.display = 'flex';
+            actions.style.justifyContent = 'flex-end';
+            const apply = document.createElement('button');
+            apply.type = 'button';
+            apply.textContent = 'Apply';
+            apply.disabled = true;
+            applyVertexButtonStyle(apply, 'add', { compact: true });
+            actions.appendChild(apply);
+            wrap.appendChild(actions);
+            body.appendChild(wrap);
+
+            function refreshDraftState() {
+                const changed = rowStates.filter(state => state.row.enabled !== false && spacingRowChanged(state));
+                rowStates.forEach(state => {
+                    const showRevert = state.row.enabled !== false && spacingRowChanged(state);
+                    state.revert.style.visibility = showRevert ? 'visible' : 'hidden'; // CHANGE: keep row layout stable while toggling the revert affordance.
+                    state.revert.style.pointerEvents = showRevert ? 'auto' : 'none'; // CHANGE: hidden revert controls are not interactive.
+                });
+                defaultLabel.style.display = changed.length ? 'flex' : 'none';
+                const draft = spacingDraftFromRowStates(rowStates);
+                const validation = tools.validateSpacingDraft(draft);
+                apply.disabled = !changed.length || !validation.ok;
+                status.textContent = validation.ok ? idleStatus : validation.errors.join(' '); // CHANGE: preserve active-window explanation while editing.
+                if (!changed.length || !validation.ok) {
+                    clearSpacingPreview();
+                    return;
+                }
+                const previewRows = draft.map(row => Object.assign({}, row, { enabled: changed.some(state => state.row.cellId === row.cellId) }));
+                const preview = tools.buildSpacingPreviewModel(previewRows);
+                renderSpacingPreview(preview);
+                if (preview.warning) status.textContent = preview.warning;
+            }
+
+            rowStates.forEach(state => {
+                [state.templateControl, state.spacingX, state.spacingY, state.offsetX, state.offsetY].filter(Boolean).forEach(control => {
+                    control.addEventListener('input', refreshDraftState);
+                    control.addEventListener('change', refreshDraftState);
+                });
+                state.revert.addEventListener('click', function (evt) {
+                    consumeOverlayControlEvent(evt);
+                    revertSpacingRowState(state);
+                    refreshDraftState();
+                });
+            });
+
+            apply.addEventListener('click', async function (evt) {
+                consumeOverlayControlEvent(evt);
+                if (apply.disabled) return;
+                try {
+                    await tools.applySpacingDraft(graph, spacingDraftFromRowStates(rowStates), { saveDefaults: saveDefaults.checked });
+                    clearSpacingPreview();
+                    status.textContent = 'Spacing applied.';
+                    setTimeout(refresh, 0);
+                } catch (e) {
+                    status.textContent = e && e.message ? e.message : String(e);
+                }
+            });
+        }
+
+        function renderSpacingView(entry, body) {
+            clearSpacingPreview();
+            const tools = getLayoutTools();
+            if (!tools || typeof tools.buildSpacingLayoutRows !== 'function') {
+                const empty = document.createElement('div');
+                empty.textContent = 'Spacing tools are unavailable.';
+                empty.style.color = '#5f6368';
+                empty.style.padding = '8px 0';
+                body.appendChild(empty);
+                return;
+            }
+            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null;
+            const token = (entry.spacingRenderToken || 0) + 1;
+            entry.spacingRenderToken = token;
+            const loading = document.createElement('div');
+            loading.textContent = 'Loading spacing...';
+            loading.style.color = '#5f6368';
+            loading.style.padding = '8px 0';
+            body.appendChild(loading);
+            Promise.resolve(tools.buildSpacingLayoutRows(graph, source)).then(context => {
+                if (entry.spacingRenderToken !== token || !entry.panel || activeMode !== MODE_SPACING) return;
+                renderSpacingEditor(entry, body, context || { rows: [] }, tools);
+                positionPanel(entry, source);
+            }).catch(e => {
+                if (entry.spacingRenderToken !== token) return;
+                body.innerHTML = '';
+                const error = document.createElement('div');
+                error.textContent = e && e.message ? e.message : String(e);
+                error.style.color = '#b91c1c';
+                error.style.padding = '8px 0';
+                body.appendChild(error);
+            });
         }
 
         function todayOverlayDayNumber() {
@@ -2665,24 +3038,34 @@ Draw.loadPlugin(function (ui) {
             return center ? { x: center.x - center.w / 2, y: center.y - center.h / 2, w: center.w, h: center.h } : null;
         }
 
+        function normalizeLayoutBounds(bounds) {
+            if (!bounds) return null;
+            const w = Number(bounds.w ?? bounds.width ?? 0);
+            const h = Number(bounds.h ?? bounds.height ?? 0);
+            const x = Number(bounds.x ?? bounds.left ?? 0);
+            const y = Number(bounds.y ?? bounds.top ?? 0);
+            return Number.isFinite(x) && Number.isFinite(y) && w >= 0 && h >= 0 ? { x, y, w, h } : null;
+        }
+
+        function getClusterBoundsForPanel(source) {
+            const api = graph.__trellisBedSuccessionNavigator;
+            if (api && typeof api.getSelectedClusterLayoutContext === 'function') {
+                const context = api.getSelectedClusterLayoutContext(source);
+                const bounds = normalizeLayoutBounds(context && context.clusterBounds);
+                if (bounds) return bounds;
+            }
+            return getSourceBoundsForPanel(source);
+        }
+
         function positionPanel(entry, source) {
             const host = getPanelHost();
-            const sourceBounds = getSourceBoundsForPanel(source);
+            const sourceBounds = getClusterBoundsForPanel(source);
             if (!host || !entry.panel || !sourceBounds) return false;
 
             const panelHeight = entry.panel.offsetHeight || 32;
-            const visibleRight = (host.scrollLeft || 0) + (host.clientWidth || 0);
-            const visibleLeft = host.scrollLeft || 0;
-            const rightLeft = sourceBounds.x + sourceBounds.w + PANEL_GAP + PANEL_SIDE_OFFSET;
-            const leftLeft = sourceBounds.x - PANEL_GAP - PANEL_SIDE_OFFSET - PANEL_WIDTH;
-            const leftFits = leftLeft >= visibleLeft + 4 && leftLeft + PANEL_WIDTH <= visibleRight - 8;
-            let left = rightLeft;
-
-            if (visibleRight && rightLeft + PANEL_WIDTH > visibleRight - 8 && leftFits) {
-                left = leftLeft;
-            }
-
-            const top = sourceBounds.y + sourceBounds.h / 2 - panelHeight / 2;
+            const left = sourceBounds.x - PANEL_GAP - PANEL_SIDE_OFFSET - PANEL_WIDTH; // CHANGE: spacing/task overlay now lives on the left side of the selected cluster.
+            const centeredTop = sourceBounds.y + sourceBounds.h / 2 - panelHeight / 2; // CHANGE: center only when the overlay would not enter the reserved occupancy space above the cluster.
+            const top = centeredTop < sourceBounds.y ? sourceBounds.y : centeredTop; // CHANGE: deterministic clamp avoids render-order-sensitive Occupancy bounds measurement.
 
             entry.panelLeft = left;
             entry.panelTop = top;
@@ -2798,10 +3181,10 @@ Draw.loadPlugin(function (ui) {
                 while (entry.panel.firstChild) entry.panel.removeChild(entry.panel.firstChild);
                 entry.visibleItems = [];
                 entry.panel.appendChild(createScheduleOnlyHeader(entry));
-                if (activeMode === MODE_OCCUPANCY) {
+                if (activeMode === MODE_SPACING) {
                     const body = createBody();
                     entry.panel.appendChild(body);
-                    renderOccupancyView(entry, body);
+                    renderSpacingView(entry, body);
                 }
                 if (!positionPanel(entry, source)) {
                     removeEntry(entry);
@@ -2832,13 +3215,13 @@ Draw.loadPlugin(function (ui) {
 
             while (entry.panel.firstChild) entry.panel.removeChild(entry.panel.firstChild);
             entry.visibleItems = [];
-            const headerCount = activeMode === MODE_OCCUPANCY ? countOccupancyRows(entry) : (activeMode === MODE_SCHEDULE ? countScheduleRows(visibleCards) : countGroupItems(groups));
+            const headerCount = activeMode === MODE_SPACING ? countSpacingRows(entry) : (activeMode === MODE_SCHEDULE ? countScheduleRows(visibleCards) : countGroupItems(groups));
             entry.panel.appendChild(createHeader(entry, headerCount));
             const body = createBody();
             entry.panel.appendChild(body);
             mxEvent.addListener(body, 'scroll', function () { refreshLines(entry); });
 
-            if (activeMode === MODE_OCCUPANCY) renderOccupancyView(entry, body);
+            if (activeMode === MODE_SPACING) renderSpacingView(entry, body);
             else if (visibleCards.length === 0) renderEmptyTaskOverlayMessage(body);
             else if (activeMode === MODE_SCHEDULE) renderScheduleView(entry, body, visibleCards);
             else if (groups.length) renderCardView(entry, body, groups);
@@ -2854,6 +3237,7 @@ Draw.loadPlugin(function (ui) {
 
         function removeEntry(entry, restoreYear) {
             if (!entry) return;
+            clearSpacingPreview();
             for (const poly of entry.lines.values()) removePolyline(poly);
             entry.lines.clear();
             removeNode(entry.panel);
@@ -2910,7 +3294,8 @@ Draw.loadPlugin(function (ui) {
         }
 
         function setMode(mode) {
-            activeMode = mode === MODE_OCCUPANCY ? MODE_OCCUPANCY : (mode === MODE_SCHEDULE ? MODE_SCHEDULE : MODE_CARDS);
+            clearSpacingPreview();
+            activeMode = mode === MODE_SPACING ? MODE_SPACING : (mode === MODE_SCHEDULE ? MODE_SCHEDULE : MODE_CARDS);
             refresh();
         }
 

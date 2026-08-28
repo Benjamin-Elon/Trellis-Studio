@@ -298,20 +298,28 @@ test('Layering orders bed assemblies between beds and planting groups', () => {
     assert.match(exportSource, /reorderModuleChildrenForLayering/);
 });
 
-test('Garden module overlay plant group add no longer runs a second post-creation bed fit', () => {
+test('Garden module overlay exposes plant group creation only in bed mode', () => { // CHANGE
     const source = readPlantTilerSource();
     const overlayAdd = sourceSlice(source, 'mxEvent.addListener(addGroupBtn, "click"', 'mxEvent.addListener(irrigationModeBtn, "click"'); // CHANGE
+    const toolbarState = sourceSlice(source, 'function syncToolbarState()', 'function refreshForSelection()'); // CHANGE
 
-    assert.match(overlayAdd, /createEmptyTilerGroup\(graph, moduleCell, pt\.x, pt\.y, \{ source: activeOverlayMode === "bed" \? "overlay-bed-add" : "overlay-module-add" \}\);/);
+    assert.match(overlayAdd, /const bedCell = activeBedCell;/); // CHANGE
+    assert.match(overlayAdd, /if \(!moduleCell \|\| !bedCell \|\| activeOverlayMode !== "bed" \|\| !pt \|\| !hasGardenSettingsSet\(moduleCell\)\) return;/); // CHANGE
+    assert.match(overlayAdd, /createEmptyTilerGroup\(graph, moduleCell, pt\.x, pt\.y, \{ source: "overlay-bed-add" \}\);/); // CHANGE
+    assert.doesNotMatch(overlayAdd, /overlay-module-add/); // CHANGE
     assert.doesNotMatch(overlayAdd, /retileAndFitToContainingBed\(graph, group/);
+    assert.match(toolbarState, /addGroupBtn\.style\.display = bedMode \? "" : "none";/); // CHANGE
 });
 
-test('Context menu and plant-circle wrap use the shared plant group finalizer', () => {
+test('Context menu plant group creation requires a garden bed target', () => { // CHANGE
     const source = readPlantTilerSource();
-    const contextMenu = sourceSlice(source, 'menu.addItem("Add New Plant Group"', 'log("[module] empty tiler group created"');
+    const contextMenu = sourceSlice(source, 'function resolveGardenBedTarget', 'log("[bed] empty tiler group created"'); // CHANGE
     const wrapCreate = sourceSlice(source, 'function createTilerGroupFromCircle', 'function computeGridStatsXY');
 
-    assert.match(contextMenu, /createEmptyTilerGroup\(graph, targetMod, pt\.x, pt\.y\);/);
+    assert.match(contextMenu, /const t = isGardenBed\(cand\) \? cand : null;/); // CHANGE
+    assert.match(contextMenu, /if \(targetBed && targetMod && isGardenModule\(targetMod\)\)/); // CHANGE
+    assert.match(contextMenu, /createEmptyTilerGroup\(graph, targetMod, pt\.x, pt\.y, \{ source: "context-bed-add" \}\);/); // CHANGE
+    assert.doesNotMatch(contextMenu, /createEmptyTilerGroup\(graph, targetMod, pt\.x, pt\.y\);/); // CHANGE
     assert.match(wrapCreate, /model\.beginUpdate\(\);[\s\S]*graph\.addCell\(group, parent\);[\s\S]*finalizeCreatedTilerGroup\(graph, group, parent, "plant-circle-wrap"\);[\s\S]*model\.endUpdate\(\);/);
     assert.match(wrapCreate, /model\.setGeometry\(c, local\);/);
     assert.doesNotMatch(wrapCreate, /retileGroup\(graph, group\);/);

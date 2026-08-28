@@ -36,22 +36,67 @@ test("lane overlay headers do not use browser title tooltips", () => {
     assert.match(headerSource, /setLaneGroupCollapsed\(group, !isLaneGroupCollapsed\(group\)\)/);
 });
 
-test("planting overlay has Cards, Schedule, and Occupancy modes", () => {
+test("planting overlay has Cards, Schedule, and Spacing modes", () => {
     const source = readSource();
 
-    assert.match(source, /const MODE_OCCUPANCY = 'occupancy';/);
+    assert.match(source, /const MODE_SPACING = 'spacing';/); // CHANGE: physical layout controls moved into the diagram overlay.
     assert.match(source, /createModeButton\(entry, 'Cards', MODE_CARDS\)/);
     assert.match(source, /createModeButton\(entry, 'Schedule', MODE_SCHEDULE\)/);
-    assert.match(source, /createModeButton\(entry, 'Occupancy', MODE_OCCUPANCY\)/);
-    assert.match(source, /activeMode = mode === MODE_OCCUPANCY \? MODE_OCCUPANCY : \(mode === MODE_SCHEDULE \? MODE_SCHEDULE : MODE_CARDS\)/);
+    assert.match(source, /createModeButton\(entry, 'Spacing', MODE_SPACING\)/);
+    assert.match(source, /activeMode = mode === MODE_SPACING \? MODE_SPACING : \(mode === MODE_SCHEDULE \? MODE_SCHEDULE : MODE_CARDS\)/);
 });
 
-test("schedule-only planting overlays expose Occupancy without linked tasks", () => {
+test("schedule-only planting overlays expose Spacing without linked tasks", () => {
     const source = readSource();
 
     assert.match(source, /function createScheduleOnlyHeader\(entry\)[\s\S]*createModeButton\(entry, 'Schedule', MODE_SCHEDULE, effectiveMode\)/);
-    assert.match(source, /function createScheduleOnlyHeader\(entry\)[\s\S]*createModeButton\(entry, 'Occupancy', MODE_OCCUPANCY, effectiveMode\)/);
-    assert.match(source, /if \(activeMode === MODE_OCCUPANCY\) \{[\s\S]*renderOccupancyView\(entry, body\);[\s\S]*\}/);
+    assert.match(source, /function createScheduleOnlyHeader\(entry\)[\s\S]*createModeButton\(entry, 'Spacing', MODE_SPACING, effectiveMode\)/); // CHANGE: schedule-only overlays can still edit diagram spacing.
+    assert.match(source, /if \(activeMode === MODE_SPACING\) \{[\s\S]*renderSpacingView\(entry, body\);[\s\S]*\}/);
+});
+
+test("spacing editor isolates each plant in a fixed-width row and labels inactive rows", () => {
+    const source = readSource();
+    const editorSource = sourceBetween(source, "function renderSpacingEditor", "function renderSpacingView");
+
+    assert.match(source, /const SPACING_ROW_GRID_COLUMNS = 'minmax\(72px,1fr\) minmax\(48px,52px\) repeat\(4,minmax\(42px,46px\)\) 24px';/); // CHANGE: header and plant rows share fixed overlay columns.
+    assert.match(source, /function createSpacingGridRow\(className\)[\s\S]*row\.style\.gridTemplateColumns = SPACING_ROW_GRID_COLUMNS;[\s\S]*return row;/); // CHANGE: each plant owns one grid row.
+    assert.match(editorSource, /const rowsWrap = document\.createElement\('div'\);/);
+    assert.match(editorSource, /const headerRow = createSpacingGridRow\('manual-link-spacing-header'\);/);
+    assert.match(editorSource, /const rowEl = createSpacingGridRow\('manual-link-spacing-row'\);/);
+    assert.match(editorSource, /rowsWrap\.appendChild\(rowEl\);/);
+    assert.match(editorSource, /marker\.textContent = 'Inactive';/); // CHANGE: visible but disabled rows must explain why they are not editable.
+    assert.match(source, /input\.style\.width = '100%';/);
+    assert.match(source, /select\.style\.width = '100%';/);
+    assert.match(editorSource, /rowEl\.appendChild\(labelCell\);[\s\S]*rowEl\.appendChild\(template\);[\s\S]*\[spacingX, spacingY, offsetX, offsetY\]\.forEach\(input => rowEl\.appendChild\(input\)\);[\s\S]*rowEl\.appendChild\(revert\);/); // CHANGE: plant fields cannot flow into another plant row.
+    assert.doesNotMatch(editorSource, /minmax\(80px,1fr\) 84px 64px 64px 64px 64px 50px/);
+});
+
+test("spacing editor preserves active-window preview and reserved revert gating", () => {
+    const source = readSource();
+    const editorSource = sourceBetween(source, "function renderSpacingEditor", "function renderSpacingView");
+
+    assert.match(source, /function spacingIdleStatus\(rows\)[\s\S]*Only active-window rows preview and apply\./); // CHANGE: inactive rows remain context, not targets.
+    assert.match(editorSource, /const changed = rowStates\.filter\(state => state\.row\.enabled !== false && spacingRowChanged\(state\)\);/);
+    assert.match(editorSource, /revert\.textContent = '↺';/); // CHANGE: compact row action uses a revert symbol.
+    assert.match(editorSource, /revert\.setAttribute\('aria-label', 'Revert row spacing'\);/);
+    assert.match(editorSource, /revert\.title = 'Revert row spacing';/);
+    assert.match(editorSource, /revert\.style\.visibility = 'hidden';/); // CHANGE: the revert cell stays in layout even when hidden.
+    assert.match(editorSource, /state\.revert\.style\.visibility = showRevert \? 'visible' : 'hidden';/);
+    assert.match(editorSource, /state\.revert\.style\.pointerEvents = showRevert \? 'auto' : 'none';/);
+    assert.doesNotMatch(editorSource, /reset\.style\.display = 'none'|state\.reset\.style\.display/); // CHANGE: row actions must not remove a grid slot.
+    assert.match(editorSource, /status\.textContent = validation\.ok \? idleStatus : validation\.errors\.join\(' '\);/);
+    assert.match(editorSource, /const previewRows = draft\.map\(row => Object\.assign\(\{\}, row, \{ enabled: changed\.some\(state => state\.row\.cellId === row\.cellId\) \}\)\);/);
+});
+
+test("selected planting overlay clamps to cluster top instead of measuring occupancy navigator bounds", () => {
+    const source = readSource();
+    const positionSource = sourceBetween(source, "function positionPanel", "function itemCenterFromRow");
+
+    assert.match(positionSource, /const sourceBounds = getClusterBoundsForPanel\(source\);/);
+    assert.match(positionSource, /const left = sourceBounds\.x - PANEL_GAP - PANEL_SIDE_OFFSET - PANEL_WIDTH;/);
+    assert.match(positionSource, /const centeredTop = sourceBounds\.y \+ sourceBounds\.h \/ 2 - panelHeight \/ 2;/);
+    assert.match(positionSource, /const top = centeredTop < sourceBounds\.y \? sourceBounds\.y : centeredTop;/);
+    assert.doesNotMatch(source, /function getOccupancyNavigatorBoundsForPanel|function rectsOverlap|occupancyNavigatorBounds/); // CHANGE: avoid render-order-sensitive Occupancy DOM measurement.
 });
 
 test("schedule action button mirrors Trellis user planting permissions", () => {

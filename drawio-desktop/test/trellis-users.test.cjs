@@ -309,6 +309,19 @@ test("toolbar login enables users and keeps the first admin logged in for this d
     assert.equal(harness.context.window.localStorage.getItem("trellis_users_remembered_login_v1:" + key), users.getCurrentUser().id);
 });
 
+test("public diagram key API preserves remembered-login diagram identity", () => {
+    const harness = loadUsersPlugin();
+    const users = harness.context.window.Trellis.users;
+    assert.equal(typeof users.getDiagramKey, "function");
+    assert.equal(users.getDiagramKey({ create: false }), "");
+    const created = users.getDiagramKey({ create: true });
+    assert.match(created, /^diagram_users_/);
+    assert.equal(users.getDiagramKey({ create: false }), created);
+    assert.equal(users.getDiagramKey(false), created);
+    assert.equal(users._test.getDiagramLoginKey(false), created); // NEW: public API remains backed by the established login-memory key.
+    assert.equal(harness.model.setValueCalls, 1);
+});
+
 test("users toolbar button is inserted beside an existing ChangeMap History button", () => {
     const harness = loadUsersPlugin({ historyButton: true });
     const buttons = Array.from(harness.toolbarContainer.querySelectorAll("button"));

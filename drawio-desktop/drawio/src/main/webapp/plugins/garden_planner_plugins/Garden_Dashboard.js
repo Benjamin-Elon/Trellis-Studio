@@ -43,6 +43,7 @@ Draw.loadPlugin(function (ui) {
     const IRRIGATION_ACTIVE_BACKGROUND = "#eff6ff"; // CHANGE: match the Enter Irrigation Design Mode light-blue active fill
     const IRRIGATION_ACTIVE_TEXT = "#1e3a8a"; // CHANGE: match the Enter Irrigation Design Mode dark-blue active text
     const WORKSPACE_TASK_BOARD_STORAGE_PREFIX = "trellis.gardenDashboard.workspaceTaskBoard.v1"; // NEW: local per-user workspace task-board memory
+    const LAST_GARDEN_STORAGE_PREFIX = "trellis.gardenDashboard.lastGarden.v1"; // NEW: local per-user/per-page startup garden memory.
     const WORKSPACE_DISABLED_TITLE = "Return to Garden workspace before using garden tools."; // NEW: explain visible disabled dashboard actions outside Garden
     const TASK_BOARD_KEY = "KANBAN_BOARD"; // NEW: dashboard selector sync recognizes current task board cells locally
     const LEGACY_TASK_BOARD_KEY = "MAIN_KANBAN_BOARD"; // NEW: preserve selector sync for legacy main board cells
@@ -829,6 +830,7 @@ Draw.loadPlugin(function (ui) {
     // -------------------- Viewport toolbar (active dashboard UI) --------------------
     const toolbarExpandedByModuleId = new Map();
     const taskBoardSelectionByPreferenceKey = new Map(); // CHANGE: board memory is keyed by user/shared local preference
+    const lastGardenSelectionByPreferenceKey = new Map(); // NEW: cache local startup garden memory by diagram/page/user key.
     let viewportToolbar = null;
     let activeToolbarModule = null;
     let toolbarRefreshTimer = null;
@@ -1043,10 +1045,6 @@ Draw.loadPlugin(function (ui) {
         return resolveDashboardToolbarContext().moduleCell;
     }
 
-    function selectedCellIsGardenRelated() {
-        return !!selectedGardenModuleForToolbar();
-    }
-
     function modulesApi() {
         return graph && graph.__trellisModules; // NEW: workspace switching repairs companion modules through the existing Modules API
     }
@@ -1059,6 +1057,71 @@ Draw.loadPlugin(function (ui) {
         const users = window.Trellis && window.Trellis.users;
         const current = users && typeof users.getCurrentUser === "function" ? users.getCurrentUser() : null;
         return current && current.id ? "user:" + current.id : "shared"; // NEW: shared fallback keeps preferences useful without login
+    }
+
+    function currentDashboardPageKey() {
+        const page = ui && ui.currentPage;
+        const pageId = page && typeof page.getId === "function" ? page.getId() : (page && page.id);
+        return String(pageId || "default-page"); // NEW: single-page diagrams still get a stable page bucket.
+    }
+
+    function diagramPreferenceKey(create) {
+        const users = window.Trellis && window.Trellis.users;
+        if (!users || typeof users.getDiagramKey !== "function") return ""; // NEW: persistent memory depends on Trellis Users.
+        return String(users.getDiagramKey({ create: !!create }) || ""); // NEW: reuse the shared hidden diagram id contract.
+    }
+
+    function lastGardenPreferenceKey(create) {
+        const diagramKey = diagramPreferenceKey(create);
+        if (!diagramKey) return "";
+        return LAST_GARDEN_STORAGE_PREFIX + ":" + diagramKey + ":" + currentDashboardPageKey() + ":" + workspaceUserScopeKey(); // NEW
+    }
+
+    function loadRememberedGardenId() {
+        const key = lastGardenPreferenceKey(false);
+        if (!key) return "";
+        if (lastGardenSelectionByPreferenceKey.has(key)) return lastGardenSelectionByPreferenceKey.get(key) || ""; // NEW
+        const store = localStorageSafe();
+        let value = "";
+        if (store) {
+            try { value = String(store.getItem(key) || ""); } catch (_) { value = ""; }
+        }
+        lastGardenSelectionByPreferenceKey.set(key, value); // NEW
+        return value;
+    }
+
+    function saveRememberedGardenId(moduleCell) {
+        const id = cellId(moduleCell);
+        const key = id ? lastGardenPreferenceKey(true) : "";
+        if (!key || !id) return;
+        lastGardenSelectionByPreferenceKey.set(key, id); // NEW
+        const store = localStorageSafe();
+        if (store) {
+            try { store.setItem(key, id); } catch (_) { }
+        }
+    }
+
+    function clearRememberedGardenId() {
+        const key = lastGardenPreferenceKey(false);
+        if (!key) return;
+        lastGardenSelectionByPreferenceKey.delete(key); // NEW
+        const store = localStorageSafe();
+        if (store) {
+            try { store.removeItem(key); } catch (_) { }
+        }
+    }
+
+    function rememberedGardenModuleForStartup() {
+        const id = loadRememberedGardenId();
+        if (!id || !model.getCell) return null;
+        const moduleCell = model.getCell(id);
+        if (moduleCell && isGardenModule(moduleCell)) return moduleCell;
+        clearRememberedGardenId(); // NEW: stale ids should not block normal startup fallback.
+        return null;
+    }
+
+    function saveResolvedGardenSelection(context) {
+        if (context && context.moduleCell) saveRememberedGardenId(context.moduleCell); // NEW: only unambiguous garden contexts update startup memory.
     }
 
     function taskBoardPreferenceKey(moduleCell) {
@@ -1243,8 +1306,19 @@ Draw.loadPlugin(function (ui) {
         if (!dashboardDiagramIsOpen()) return;
         if (startupGardenFocusDone) return;
         startupGardenFocusDone = true;
+        const context = resolveDashboardToolbarContext();
+        if (context.moduleCell) {
+            saveResolvedGardenSelection(context); // NEW: restored garden-related selection becomes the latest garden.
+            selectAndZoomToGarden(context.moduleCell);
+            return;
+        }
+        const remembered = rememberedGardenModuleForStartup();
+        if (remembered) {
+            selectAndZoomToGarden(remembered);
+            return;
+        }
         const gardens = collectGardenModules();
-        if (gardens.length !== 1 || selectedCellIsGardenRelated()) return;
+        if (gardens.length !== 1) return;
         selectAndZoomToGarden(gardens[0]);
     }
 
@@ -2137,6 +2211,7 @@ Draw.loadPlugin(function (ui) {
         const context = resolveDashboardToolbarContext();
         lastToolbarContext = context;
         if (!context.moduleCell) { renderBlankViewportToolbar(context); return; }
+        saveResolvedGardenSelection(context); // NEW: remember direct, descendant, and unambiguous linked garden contexts.
         activeToolbarModule = context.moduleCell;
         renderViewportToolbar(context.moduleCell);
     }

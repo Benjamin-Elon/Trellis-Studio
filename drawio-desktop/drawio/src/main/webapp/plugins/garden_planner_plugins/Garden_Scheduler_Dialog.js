@@ -12250,9 +12250,7 @@ Draw.loadPlugin(function (ui) {
         tasksTab.insertBefore(taskDefaultsActions, taskEditorDiv);
 
         applySharedButtonStyle(restoreBuiltinsBtn, 'neutral');
-        appendLayoutTabControls();
-        writeLayoutControlsFromSelection();
-        refreshLayoutPreview();
+        writeLayoutControlsFromSelection(); // CHANGE: keep derived creation defaults available after moving layout editing to the diagram overlay.
 
 
         // ============================================================================
@@ -12409,20 +12407,8 @@ Draw.loadPlugin(function (ui) {
         tasksTabBtn.className = "usl-scheduler-tab";
         applySharedButtonStyle(tasksTabBtn, 'neutral');
         tasksTabBtn.style.minWidth = "100px";
-        const layoutTabBtn = mxUtils.button("Layout", () => {
-            writeLayoutControlsFromSelection();
-            refreshLayoutPreview();
-            tabsBody.innerHTML = "";
-            tabsBody.appendChild(layoutTab);
-            setActiveTabButton(layoutTabBtn);
-        });
-        layoutTabBtn.className = "usl-scheduler-tab";
-        applySharedButtonStyle(layoutTabBtn, 'neutral');
-        layoutTabBtn.style.minWidth = "100px";
-
         tabsHeader.appendChild(scheduleTabBtn);
         tabsHeader.appendChild(tasksTabBtn);
-        tabsHeader.appendChild(layoutTabBtn);
         tabsBody.appendChild(div);
 
         const dialogFooter = document.createElement("div");
@@ -14956,6 +14942,193 @@ Draw.loadPlugin(function (ui) {
         });
     }
 
+    function spacingLayoutContextForCell(activeGraph, cell) {
+        const api = activeGraph && activeGraph.__trellisBedSuccessionNavigator;
+        if (api && typeof api.getSelectedClusterLayoutContext === 'function') {
+            const context = api.getSelectedClusterLayoutContext(cell);
+            if (context && Array.isArray(context.cellIds) && context.cellIds.length) return context;
+        }
+        return {
+            selectedId: cell && cell.id || null,
+            cellIds: cell && cell.id ? [cell.id] : [],
+            enabledIds: cell && cell.id ? [cell.id] : [],
+            clusterBounds: null // CHANGE: spacing fallback exposes only model/layout context, not Occupancy DOM bounds.
+        };
+    }
+
+    function spacingCellRole(cell) {
+        return companionSourceGroupId(cell) ? 'companion' : 'anchor';
+    }
+
+    function spacingBedOffsetForCell(cell, bed) {
+        const pxPerCm = 5 * 0.18;
+        const rect = graphRectForCell(cell);
+        const bedRect = graphRectForCell(bed);
+        return {
+            x: layoutNumberOrNull(cell?.getAttribute?.('layout_offset_x_cm')) ?? (rect && bedRect ? (rect.x - bedRect.x) / pxPerCm : 0),
+            y: layoutNumberOrNull(cell?.getAttribute?.('layout_offset_y_cm')) ?? (rect && bedRect ? (rect.y - bedRect.y) / pxPerCm : 0)
+        };
+    }
+
+    function spacingRelationshipForCell(activeGraph, cell, sourceCell) {
+        if (!cell || spacingCellRole(cell) !== 'companion') return null;
+        const sourcePlant = { plant_id: cellPlantId(sourceCell), plant_name: sourceCell?.getAttribute?.('plant_name') || '' };
+        const companionPlant = { plant_id: cellPlantId(cell), plant_name: cell?.getAttribute?.('plant_name') || '' };
+        return buildGraphCreatedCompanionRelationship(sourcePlant, companionPlant, {
+            relationId: cell.getAttribute?.('companion_relation_id') || '',
+            sourcePlantId: cell.getAttribute?.('derived_source_plant_id') || cellPlantId(sourceCell),
+            companionPlantId: cell.getAttribute?.('derived_target_plant_id') || cellPlantId(cell),
+            startOffsetDays: cell.getAttribute?.('companion_start_offset_days') || 0,
+            layoutTemplate: cell.getAttribute?.('companion_layout_template') || '',
+            layoutSpacingXCm: cell.getAttribute?.('companion_layout_spacing_x_cm'),
+            layoutSpacingYCm: cell.getAttribute?.('companion_layout_spacing_y_cm'),
+            layoutOffsetXCm: cell.getAttribute?.('companion_offset_x_cm'),
+            layoutOffsetYCm: cell.getAttribute?.('companion_offset_y_cm'),
+            known: !!cell.getAttribute?.('companion_relation_id')
+        });
+    }
+
+    async function buildSpacingLayoutRows(activeGraph, selectedCell) {
+        const model = activeGraph && typeof activeGraph.getModel === 'function' ? activeGraph.getModel() : null;
+        const context = spacingLayoutContextForCell(activeGraph, selectedCell);
+        const enabledIds = new Set((context.enabledIds || context.cellIds || []).map(id => String(id || '')));
+        const rows = [];
+        for (const cellId of context.cellIds || []) {
+            const cell = model && typeof model.getCell === 'function' ? model.getCell(cellId) : null;
+            if (!cell || !isTilerGroup(cell)) continue;
+            const plantId = cellPlantId(cell);
+            const plant = plantId != null ? await PlantModel.loadById(plantId) : null;
+            const defaults = plantSpacingDefaults(plant);
+            const bed = findContainingBedForScheduleCell(cell);
+            const offsets = spacingBedOffsetForCell(cell, bed);
+            const sourceId = companionSourceGroupId(cell);
+            const sourceCell = sourceId ? graphCellById(activeGraph, sourceId) : null;
+            rows.push({
+                cellId: String(cell.id || ''),
+                selected: String(cell.id || '') === String(context.selectedId || ''),
+                enabled: enabledIds.has(String(cell.id || '')),
+                role: spacingCellRole(cell),
+                sourceCellId: sourceId,
+                label: cellLayoutLabel(cell),
+                plantId,
+                plantName: plant?.plant_name || cell?.getAttribute?.('plant_name') || '',
+                template: normalizeCompanionLayoutTemplate(cell.getAttribute?.('companion_layout_template')) || (sourceId ? 'beside' : ''),
+                spacingXCm: layoutNumberOrNull(cell.getAttribute?.('spacing_x_cm')) ?? layoutNumberOrNull(cell.getAttribute?.('spacing_cm')) ?? defaults.spacingXCm,
+                spacingYCm: layoutNumberOrNull(cell.getAttribute?.('spacing_y_cm')) ?? layoutNumberOrNull(cell.getAttribute?.('spacing_cm')) ?? defaults.spacingYCm,
+                offsetXCm: offsets.x,
+                offsetYCm: offsets.y,
+                rect: graphRectForCell(cell),
+                bedRect: graphRectForCell(bed),
+                relationship: spacingRelationshipForCell(activeGraph, cell, sourceCell)
+            }); // CHANGE: diagram overlay receives editable spacing rows without owning scheduler internals.
+        }
+        return Object.assign({}, context, { rows });
+    }
+
+    function normalizeSpacingDraftRows(rows) {
+        return (rows || []).map(row => Object.assign({}, row, {
+            template: row.role === 'companion' ? (normalizeCompanionLayoutTemplate(row.template) || 'beside') : '',
+            spacingXCm: layoutNumberOrNull(row.spacingXCm),
+            spacingYCm: layoutNumberOrNull(row.spacingYCm),
+            offsetXCm: layoutNumberOrNull(row.offsetXCm),
+            offsetYCm: layoutNumberOrNull(row.offsetYCm)
+        }));
+    }
+
+    function validateSpacingDraft(rows) {
+        const errors = [];
+        normalizeSpacingDraftRows(rows).forEach(row => {
+            if (!row.enabled) return;
+            const label = row.label || row.cellId || 'Planting';
+            if (!(row.spacingXCm > 0)) errors.push(label + ': Spacing X must be a positive number.');
+            if (!(row.spacingYCm > 0)) errors.push(label + ': Spacing Y must be a positive number.');
+            if (row.offsetXCm == null) errors.push(label + ': Offset X must be a finite number.');
+            if (row.offsetYCm == null) errors.push(label + ': Offset Y must be a finite number.');
+            if (row.role === 'companion' && !normalizeCompanionLayoutTemplate(row.template)) errors.push(label + ': Template is required.');
+        });
+        return { ok: errors.length === 0, errors };
+    }
+
+    function buildSpacingPreviewModel(rows) {
+        const previewRows = normalizeSpacingDraftRows(rows).filter(row => row.enabled).map(row => {
+            const fallbackRect = row.rect || { x: 0, y: 0, width: 120, height: 80 };
+            const rect = row.bedRect ? clampRectInsideRect(bedRelativeRectForLayoutRow(row, fallbackRect, row.bedRect), row.bedRect) : fallbackRect;
+            const dots = computePreviewCirclesForLayoutRow(rect, row, {}, row.bedRect || null);
+            return Object.assign({}, row, { rect, dots, warning: rect.clamped || dots.clamped ? 'Clamped inside bed.' : '' });
+        });
+        return {
+            status: 'ok',
+            rows: previewRows,
+            warning: previewRows.filter(row => row.warning).map(row => (row.label || row.cellId) + ': ' + row.warning).join(' ')
+        };
+    }
+
+    async function saveSpacingDefaultsForRows(rows, activeGraph, model) {
+        const enabled = normalizeSpacingDraftRows(rows).filter(row => row.enabled);
+        for (const row of enabled) {
+            if (row.role === 'companion') {
+                const cell = graphCellById(activeGraph, row.cellId);
+                const sourceCell = graphCellById(activeGraph, row.sourceCellId || companionSourceGroupId(cell));
+                const sourcePlantId = cellPlantId(sourceCell);
+                const companionPlantId = cellPlantId(cell) ?? row.plantId;
+                const sourcePlant = sourcePlantId != null ? await PlantModel.loadById(sourcePlantId) : null;
+                const companionPlant = companionPlantId != null ? await PlantModel.loadById(companionPlantId) : null;
+                const relationship = spacingRelationshipForCell(activeGraph, cell, sourceCell);
+                const ensured = await CompanionRelationshipModel.ensurePairDefaultsRelationship(sourcePlant, companionPlant, relationship, { startOffsetDays: cell?.getAttribute?.('companion_start_offset_days') || 0 });
+                await CompanionRelationshipModel.saveLayoutDefaults(ensured.relationId, row, ensured);
+                if (cell && ensured.relationId) writeCellAttribute(cell, 'companion_relation_id', ensured.relationId, model);
+            } else if (row.plantId != null) {
+                const patch = {};
+                if (row.spacingXCm != null) patch.spacing_x_cm = row.spacingXCm;
+                if (row.spacingYCm != null) patch.spacing_y_cm = row.spacingYCm;
+                if (row.spacingXCm != null && row.spacingYCm != null && row.spacingXCm === row.spacingYCm) patch.spacing_cm = row.spacingXCm;
+                if (Object.keys(patch).length) await PlantModel.update(row.plantId, patch);
+            }
+        }
+        const anchor = enabled.find(row => row.role === 'anchor' && row.plantId != null) || enabled.find(row => row.plantId != null);
+        if (anchor && enabled.filter(row => row.plantId != null).length > 1) {
+            await CompanionLayoutGroupDefaultModel.save(enabled.map(row => row.plantId), anchor.plantId, { rows: enabled });
+        }
+    }
+
+    async function applySpacingDraft(activeGraph, rows, options = {}) {
+        const model = activeGraph && typeof activeGraph.getModel === 'function' ? activeGraph.getModel() : null;
+        if (!activeGraph || !model) throw new Error('Graph is unavailable.');
+        const normalized = normalizeSpacingDraftRows(rows);
+        const validation = validateSpacingDraft(normalized);
+        if (!validation.ok) throw new Error(validation.errors.join('\n'));
+        if (options.saveDefaults) await saveSpacingDefaultsForRows(normalized, activeGraph, model);
+        const editable = normalized.filter(row => row.enabled);
+        model.beginUpdate();
+        try {
+            const tiler = window.USL && window.USL.tiler ? window.USL.tiler : null;
+            editable.forEach(row => {
+                const cell = graphCellById(activeGraph, row.cellId);
+                if (!cell) return;
+                applyCellAttributePatch(cell, plantingLayoutAttributePatch(row), model);
+                if (tiler && typeof tiler.retileGroup === 'function') tiler.retileGroup(activeGraph, cell, { inTransaction: true, preferInPlace: true });
+            });
+        } finally {
+            model.endUpdate();
+        }
+        editable.forEach(row => {
+            const cell = graphCellById(activeGraph, row.cellId);
+            if (cell && typeof activeGraph.refresh === 'function') activeGraph.refresh(cell);
+        });
+        if (typeof activeGraph.fireEvent === 'function' && typeof mxEventObject === 'function') {
+            activeGraph.fireEvent(new mxEventObject('trellisSelectionVisualsRefresh'));
+        }
+        return { ok: true, appliedCellIds: editable.map(row => row.cellId) };
+    }
+
+    const layoutTools = {
+        buildSpacingLayoutRows,
+        validateSpacingDraft,
+        buildSpacingPreviewModel,
+        applySpacingDraft,
+        normalizeCompanionLayoutTemplate
+    };
+
     window.USL = window.USL || {};
     window.USL.scheduler = Object.assign({}, window.USL.scheduler, {
         openScheduleDialog: (ui, cell) => openScheduleDialog(ui, cell),
@@ -14965,7 +15138,8 @@ Draw.loadPlugin(function (ui) {
         resolvePlantForPlanCrop,
         resolveCityForModule,
         proposeLifecycle,
-        openDraftScheduleDialog
+        openDraftScheduleDialog,
+        layoutTools
     });
     window.openUSLScheduleDialog = window.USL.scheduler.openScheduleDialog;
 
@@ -15122,6 +15296,7 @@ Draw.loadPlugin(function (ui) {
             computeActiveCompanionPlacement,
             selectCompanionLayoutAnchorFromSet,
             computePreviewPlantCircles,
+            layoutTools,
             normId,
             resolveStartAfterWindow
         }; // FIX: expose pure planner internals only when the regression harness opts in

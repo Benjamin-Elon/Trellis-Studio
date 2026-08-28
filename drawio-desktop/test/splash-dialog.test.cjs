@@ -150,6 +150,11 @@ function findButton(root, label) {
     return Array.from(root.querySelectorAll("button")).find((button) => button.textContent.includes(label));
 }
 
+function setInputValue(dom, input, value) {
+    input.value = value;
+    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+}
+
 function openOath(dialog, pathLabel = "Personal / Noncommercial") {
     const continueButton = findButton(dialog.container, "Continue to License");
     if (continueButton) continueButton.click();
@@ -297,10 +302,10 @@ function completeVisibleOath(dom, dialog) {
     overrideButton.click();
 
     const inputs = dialog.container.querySelectorAll("input");
-    inputs[0].value = "Test User";
-    inputs[1].value = "test@example.com";
-    inputs[2].value = "Test Project";
-    inputs[3].value = "Test User";
+    setInputValue(dom, inputs[0], "Test User");
+    setInputValue(dom, inputs[1], "test@example.com");
+    setInputValue(dom, inputs[2], "Test Project");
+    setInputValue(dom, inputs[3], "Test User");
     inputs[4].checked = true;
 
     findButton(dialog.container, "I Affirm the Oath").click();
@@ -350,7 +355,9 @@ test("Commercial path shows contact guidance and the Grand Oath gate", () => {
     assert.ok(dialog.container.querySelector(".trellis-contact-row-email .trellis-contact-icon-email"));
     assert.ok(dialog.container.querySelector(".trellis-contact-row-phone .trellis-contact-icon-phone"));
     assert.ok(dialog.container.querySelector(".trellis-contact-row-github .trellis-contact-icon-github"));
-    assert.match(dialog.container.textContent, /I agree that people should have access to tools that increase shared regenerative capacity/);
+    assert.match(dialog.container.textContent, /People should have access to tools that increase shared regenerative capacity/);
+    assert.match(dialog.container.querySelector(".trellis-license-agreement-preview").textContent, /We, \[Organization\], agree that people should have access to tools that increase shared regenerative capacity/);
+    assert.doesNotMatch(dialog.container.textContent, /I agree that people should have access to tools that increase shared regenerative capacity/);
     assert.match(dialog.container.textContent, /Written approval is still required before commercial use of Trellis plugin files\./);
     assert.doesNotMatch(dialog.container.querySelector(".trellis-contact-column").textContent, /Patreon/i);
     assert.match(dialog.container.querySelector(".trellis-contact-column").textContent, /GitHub: Issues and feedback/);
@@ -446,6 +453,50 @@ test("Real affirm button stays put and reports missing oath requirements", () =>
     assert.equal(dialog.isTrellisLicenseWizardComplete(), false);
 });
 
+test("Oath agreement preview personalizes individual and commercial paths", () => {
+    const personal = loadSplashDialog();
+    openOath(personal.dialog);
+    let inputs = personal.dialog.container.querySelectorAll("input");
+
+    setInputValue(personal.dom, inputs[0], "Test User");
+    assert.match(personal.dialog.container.querySelector(".trellis-license-agreement-preview").textContent, /I, Test User, agree that people should have access to tools that increase shared regenerative capacity/);
+
+    const commercial = loadSplashDialog();
+    openOath(commercial.dialog, "Commercial / Client / Company");
+    inputs = commercial.dialog.container.querySelectorAll("input");
+
+    setInputValue(commercial.dom, inputs[2], "Test Project");
+    assert.match(commercial.dialog.container.querySelector(".trellis-license-agreement-preview").textContent, /We, Test Project, agree that people should have access to tools that increase shared regenerative capacity/);
+});
+
+test("Commercial oath requires organization before affirmation", () => {
+    const { dom, dialog } = loadSplashDialog();
+
+    openOath(dialog, "Commercial / Client / Company");
+    const playButton = findButton(dialog.container, "Play Oath Aloud");
+    playButton.click();
+    playButton.click();
+    playButton.click();
+    findButton(dialog.container, "Manual audio override").click();
+
+    const inputs = dialog.container.querySelectorAll("input");
+    setInputValue(dom, inputs[0], "Test User");
+    setInputValue(dom, inputs[1], "test@example.com");
+    setInputValue(dom, inputs[3], "Test User");
+    inputs[4].checked = true;
+
+    findButton(dialog.container, "I Affirm the Oath").click();
+    assert.equal(dom.window.localStorage.getItem(wizardStorageKey), null);
+    assert.match(dialog.container.textContent, /Enter an organization name for commercial use before affirming/);
+    assert.equal(dialog.isTrellisLicenseWizardComplete(), false);
+
+    setInputValue(dom, inputs[2], "Test Project");
+    assert.match(dialog.container.querySelector(".trellis-license-agreement-preview").textContent, /We, Test Project, agree/);
+    findButton(dialog.container, "I Affirm the Oath").click();
+    assert.equal(JSON.parse(dom.window.localStorage.getItem(wizardStorageKey)).organization, "Test Project");
+    assert.equal(dialog.isTrellisLicenseWizardComplete(), true);
+});
+
 test("Oath completion stores the wizard record and reveals actions after two seconds", () => {
     const { dom, dialog, timers } = loadSplashDialog();
     const actions = dialog.container.querySelector(".trellis-splash-actions");
@@ -528,6 +579,8 @@ test("Saved wizard records show summary, contact guidance, Change license, and d
     assert.equal(dialog.container.querySelector(".trellis-license-card .trellis-card-heading").textContent, "License");
     assert.equal(dialog.container.querySelector(".trellis-support-card .trellis-card-heading").textContent, "Support & contact");
     assert.equal(dialog.container.querySelectorAll(".trellis-contact-row").length, 3);
+    assert.equal(dialog.container.querySelector(".trellis-license-completed-agreement"), null);
+    assert.match(dialog.container.querySelector(".trellis-license-obligation").textContent, /We, \[Organization\], agree that people should have access to tools that increase shared regenerative capacity/);
     assert.match(dialog.container.textContent, /Written approval is still required before commercial use of Trellis plugin files\./);
     assert.doesNotMatch(dialog.container.querySelector(".trellis-contact-column").textContent, /Patreon/i);
     assert.doesNotMatch(dialog.container.textContent, /License oath completed/);
@@ -566,6 +619,21 @@ test("Incomplete or corrupt saved wizard records are ignored", () => {
     assert.match(mismatchedGuidance.dialog.container.textContent, /Hello, I am Benjamin/);
     assert.equal(mismatchedGuidance.dialog.isTrellisLicenseWizardComplete(), false);
     assert.equal(mismatchedGuidance.timers.length, 0);
+});
+
+test("Saved commercial wizard records show the completed organization agreement", () => {
+    const { dialog } = loadSplashDialog({
+        savedRecord: makeSavedRecord({
+            path: "commercial",
+            contactGuidance: true,
+            organization: "Saved Org"
+        })
+    });
+
+    assert.equal(dialog.isTrellisLicenseWizardComplete(), true);
+    assert.equal(dialog.container.querySelector(".trellis-license-completed-agreement"), null);
+    assert.match(dialog.container.querySelector(".trellis-license-obligation").textContent, /We, Saved Org, agree that people should have access to tools that increase shared regenerative capacity/);
+    assert.match(dialog.container.textContent, /Signed by Saved User using saved@example\.com\. Project: Saved Org\./);
 });
 
 test("SplashDialog ignores old v1 license acknowledgements", () => {
@@ -683,9 +751,10 @@ test("Trellis splash enhancement adds the branded shell, saved-state structure, 
 	assert.equal(dialog.container.querySelector(".trellis-splash-state-intro"), null);
 	assert.equal(dialog.container.querySelector(".trellis-saved-license-path").textContent, "Path: Personal / Noncommercial.");
 	assert.equal(dialog.container.querySelector(".trellis-saved-license-signer").textContent, "Signed by Saved User using Barneywilson@gmail.");
-    assert.equal(dialog.container.querySelector(".trellis-license-obligation-italic").textContent, "People should have access to tools that increase shared regenerative capacity.");
-    assert.match(dialog.container.querySelector(".trellis-license-obligation").textContent, /Written approval is required before commercial use of Trellis plugin files\./);
-    assert.doesNotMatch(dialog.container.querySelector(".trellis-license-obligation").textContent, /still required/);
+    assert.equal(dialog.container.querySelector(".trellis-license-completed-agreement"), null);
+    assert.equal(dialog.container.querySelector(".trellis-license-obligation-italic"), null);
+    assert.match(dialog.container.querySelector(".trellis-license-obligation").textContent, /I, Saved User, agree that people should have access to tools that increase shared regenerative capacity/);
+    assert.match(dialog.container.querySelector(".trellis-license-obligation").textContent, /Written approval is still required before commercial use of Trellis plugin files\./);
     const avatarControl = dialog.container.querySelector(".trellis-saved-license-card .trellis-avatar-control");
     assert.ok(avatarControl);
     assert.ok(avatarControl.classList.contains("trellis-license-icon"));

@@ -2520,9 +2520,10 @@ Draw.loadPlugin(function (ui) {
             mxEvent.addListener(addGroupBtn, "click", function (evt) {
                 mxEvent.consume(evt);
                 const moduleCell = activeModuleCell;
+                const bedCell = activeBedCell; // CHANGE
                 const pt = anchorModelPoint;
-                if (!moduleCell || !pt || !hasGardenSettingsSet(moduleCell)) return;
-                createEmptyTilerGroup(graph, moduleCell, pt.x, pt.y, { source: activeOverlayMode === "bed" ? "overlay-bed-add" : "overlay-module-add" });
+                if (!moduleCell || !bedCell || activeOverlayMode !== "bed" || !pt || !hasGardenSettingsSet(moduleCell)) return; // CHANGE
+                createEmptyTilerGroup(graph, moduleCell, pt.x, pt.y, { source: "overlay-bed-add" }); // CHANGE
                 hideToolbar();
             });
 
@@ -2737,7 +2738,7 @@ Draw.loadPlugin(function (ui) {
             if (!bedMode) renderGardenModuleLabelInput(moduleCell);
             settingsBtn.style.display = bedMode ? "none" : "";
             addBedBtn.style.display = bedMode ? "none" : "";
-            addGroupBtn.style.display = "";
+            addGroupBtn.style.display = bedMode ? "" : "none"; // CHANGE
             allocateModeBtn.style.display = bedMode ? "" : "none"; // NEW
             irrigationModeBtn.style.display = ""; // CHANGE
             settingsBtn.textContent = hasSettings ? "Edit Garden Settings" : "Set Garden Settings";
@@ -2745,10 +2746,11 @@ Draw.loadPlugin(function (ui) {
             addBedBtn.title = hasSettings ? "Add the default-sized garden bed at the selected location" : "Set garden settings before adding beds";
             addBedBtn.style.opacity = hasSettings ? "1" : "0.55";
             addBedBtn.style.cursor = hasSettings ? "pointer" : "default";
-            addGroupBtn.disabled = !hasSettings;
-            addGroupBtn.title = hasSettings ? (bedMode ? "Add a new plant group fitted to this garden bed" : "Add a new plant group at the selected location") : "Set garden settings before adding plants";
-            addGroupBtn.style.opacity = hasSettings ? "1" : "0.55";
-            addGroupBtn.style.cursor = hasSettings ? "pointer" : "default";
+            const canAddGroupInBed = bedMode && !!activeBedCell && hasSettings; // CHANGE
+            addGroupBtn.disabled = !canAddGroupInBed; // CHANGE
+            addGroupBtn.title = !bedMode || !activeBedCell ? "Select a garden bed before adding plants" : (hasSettings ? "Add a new plant group fitted to this garden bed" : "Set garden settings before adding plants"); // CHANGE
+            addGroupBtn.style.opacity = canAddGroupInBed ? "1" : "0.55"; // CHANGE
+            addGroupBtn.style.cursor = canAddGroupInBed ? "pointer" : "default"; // CHANGE
             allocateModeBtn.disabled = !hasSettings; // NEW
             allocateModeBtn.title = hasSettings ? "Enter allocation mode" : "Set garden settings before entering allocation mode"; // NEW
             allocateModeBtn.style.opacity = hasSettings ? "1" : "0.55"; // NEW
@@ -4507,6 +4509,16 @@ Draw.loadPlugin(function (ui) {
             return t;
         }
 
+        function resolveGardenBedTarget(cell, evt) { // CHANGE
+            const byParam = cell || null; // CHANGE
+            const byHit = evt ? hitTestCell(evt) : null; // CHANGE
+            const bySel = graph.getSelectionCell() || null; // CHANGE
+            const cand = byParam || byHit || bySel; // CHANGE
+            const t = isGardenBed(cand) ? cand : null; // CHANGE
+            log("[popup][bed] cand=" + JSON.stringify(dbgCellInfo(cand)) + " -> target=" + JSON.stringify(dbgCellInfo(t))); // CHANGE
+            return t; // CHANGE
+        }
+
         function collectSelectedTilerGroups(graph, fallbackTarget) {
             const sel = graph.getSelectionCells ? (graph.getSelectionCells() || []) : [];
             const out = new Map();
@@ -4584,6 +4596,7 @@ Draw.loadPlugin(function (ui) {
 
                 // ----- MODULE CONTEXT MENU -----
                 const targetMod = resolveModuleTarget(cell, evt);
+                const targetBed = resolveGardenBedTarget(cell, evt); // CHANGE
 
                 // -------------------- Garden Beds (selection-aware) --------------------
                 try {
@@ -4757,14 +4770,14 @@ Draw.loadPlugin(function (ui) {
                     });
                 }
 
-                // --- Add New Plant Group (requires garden settings) ----------------------------------
-                if (targetMod && isGardenModule(targetMod)) {
+                // --- Add New Plant Group (requires selected garden bed context) ----------------------------------
+                if (targetBed && targetMod && isGardenModule(targetMod)) { // CHANGE
                     if (hasGardenSettingsSet(targetMod)) {
                         menu.addItem("Add New Plant Group", null, function () {
                             try {
                                 const pt = graph.getPointForEvent(evt);
-                                createEmptyTilerGroup(graph, targetMod, pt.x, pt.y);
-                                log("[module] empty tiler group created");
+                                createEmptyTilerGroup(graph, targetMod, pt.x, pt.y, { source: "context-bed-add" }); // CHANGE
+                                log("[bed] empty tiler group created"); // CHANGE
                             } catch (e) {
                                 mxUtils.alert("Error creating tiler group: " + e.message);
                             }

@@ -638,6 +638,11 @@ Draw.loadPlugin(function (ui) {
         return key || "";
     }
 
+    function getDiagramKey(options) {
+        const create = typeof options === "boolean" ? options : !!(options && options.create); // NEW: support both object and boolean callers.
+        return getDiagramLoginKey(create); // NEW: expose the stable diagram id for local per-diagram Trellis preferences.
+    }
+
     function rememberStorageKey(create) {
         const diagramKey = getDiagramLoginKey(create);
         return diagramKey ? REMEMBER_STORAGE_PREFIX + diagramKey : "";
@@ -4071,6 +4076,7 @@ Draw.loadPlugin(function (ui) {
         enableUsers,
         login,
         logout,
+        getDiagramKey, // NEW: public non-test access to the diagram-scoped local preference key.
         showAuthDialog,
         rememberLogin,
         forgetRememberedLogin,

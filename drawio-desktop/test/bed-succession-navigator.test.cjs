@@ -185,25 +185,26 @@ function childOrder(parent) {
     return (parent.children || []).map(child => child.id);
 }
 
-function visibleMiniRail(document) {
-    return visibleControls(document).find(el => el.dataset && el.dataset.miniRail === "1");
+function visibleOccupancyNavigator(document) {
+    return visibleControls(document).find(el => el.dataset && el.dataset.occupancyNavigator === "1"); // CHANGE: Occupancy now renders as the above-cluster navigator.
 }
 
-function visibleMiniRailBars(document) {
-    const rail = visibleMiniRail(document);
-    return rail ? Array.from(rail.querySelectorAll("[data-mini-rail-bar='1']")) : [];
+function visibleOccupancyNavigatorBars(document) {
+    const rail = visibleOccupancyNavigator(document);
+    return rail ? Array.from(rail.querySelectorAll("[data-occupancy-navigator-bar='1']")) : []; // CHANGE: follow the renamed navigator data contract.
 }
 
-function visibleMiniRailAxisText(document) {
-    const rail = visibleMiniRail(document);
-    const axis = rail && rail.querySelector("[data-mini-rail-axis='1']");
+function visibleOccupancyNavigatorAxisText(document) {
+    const rail = visibleOccupancyNavigator(document);
+    const axis = rail && rail.querySelector("[data-occupancy-navigator-axis='1']");
     return axis ? String(axis.textContent || "") : "";
 }
 
-function visibleMiniRailAxisTicks(document) {
-    const rail = visibleMiniRail(document);
-    const axis = rail && rail.querySelector("[data-mini-rail-axis='1']");
-    return axis ? Array.from(axis.children).map(child => ({ text: String(child.textContent || ""), align: child.style.textAlign })) : [];
+function visibleOccupancyNavigatorAxisTicks(document) {
+    const rail = visibleOccupancyNavigator(document);
+    const axis = rail && rail.querySelector("[data-occupancy-navigator-axis='1']");
+    const tickWrap = axis && axis.children[1];
+    return tickWrap ? Array.from(tickWrap.children).map(child => ({ text: String(child.textContent || ""), align: child.style.textAlign })) : []; // CHANGE: axis now includes a planting label column before timeline ticks.
 }
 
 test("navigator source no longer contains day-count overlap badge machinery", () => {
@@ -342,29 +343,30 @@ test("two selected tilers with five-percent overlap hide duplicate cluster selec
     assert.ok(visibleImageByTitle(document, "Next"), "expected visible next button");
 });
 
-test("selected overlap cluster shows Mini Rail instead of numeric badge", () => {
+test("selected overlap cluster shows Occupancy navigator instead of numeric badge", () => {
     const { document } = makeHarness({
         secondTiler: true,
         tiler2State: { x: 29, y: 10, width: 20, height: 20 },
         tiler1Attrs: { plant_name: "Tomato", variety_name: "Roma", sow_date: "2026-04-01", harvest_end: "2026-07-01" },
         tiler2Attrs: { plant_name: "Basil", variety_name: "Genovese", sow_date: "2026-05-01", harvest_end: "2026-06-01" }
     });
-    const rail = visibleMiniRail(document);
+    const rail = visibleOccupancyNavigator(document);
     const numericBadge = visibleControls(document).find(el => /^\d+\s*\/\s*\d+$/.test(String(el.textContent || "").trim()));
 
-    assert.ok(rail, "expected visible Mini Rail");
+    assert.ok(rail, "expected visible Occupancy navigator");
     assert.equal(numericBadge, undefined);
-    assert.equal(visibleMiniRailBars(document).length, 2);
+    assert.equal(visibleOccupancyNavigatorBars(document).length, 2);
+    assert.equal(rail.style.top, "-91px"); // CHANGE: navigator stays above the selected cluster without falling below.
 });
 
-test("Mini Rail bars center crop variety names without left label column", () => {
+test("Occupancy navigator bars center crop variety names with a planting label column", () => {
     const { document } = makeHarness({
         secondTiler: true,
         tiler2State: { x: 29, y: 10, width: 20, height: 20 },
         tiler1Attrs: { plant_name: "Tomato", variety_name: "Very Long Roma Selection", sow_date: "2026-04-01", harvest_end: "2026-07-01" },
         tiler2Attrs: { plant_name: "Basil", variety_name: "Genovese", sow_date: "2026-05-01", harvest_end: "2026-06-01" }
     });
-    const bars = visibleMiniRailBars(document);
+    const bars = visibleOccupancyNavigatorBars(document);
     const tomato = bars.find(bar => bar.dataset.cellId === "tiler1");
 
     assert.ok(tomato);
@@ -372,17 +374,17 @@ test("Mini Rail bars center crop variety names without left label column", () =>
     assert.equal(tomato.style.textAlign, "center");
     assert.equal(tomato.style.textOverflow, "ellipsis");
     assert.match(tomato.title, /Tomato - Very Long Roma Selection - 2026-04-01 to 2026-07-01/);
-    assert.equal(visibleMiniRail(document).querySelector("[data-mini-rail-label]"), null);
+    assert.equal(visibleOccupancyNavigator(document).querySelector("[data-occupancy-navigator-axis='1']").firstChild.textContent, "Planting"); // CHANGE: full-row navigator includes a left label column.
 });
 
-test("Mini Rail bar click selects the exact planting group", () => {
+test("Occupancy navigator bar click selects the exact planting group", () => {
     const { document, getSelected } = makeHarness({
         secondTiler: true,
         tiler2State: { x: 29, y: 10, width: 20, height: 20 },
         tiler1Attrs: { plant_name: "Tomato", sow_date: "2026-04-01", harvest_end: "2026-07-01" },
         tiler2Attrs: { plant_name: "Basil", sow_date: "2026-05-01", harvest_end: "2026-06-01" }
     });
-    const basil = visibleMiniRailBars(document).find(bar => bar.dataset.cellId === "tiler2");
+    const basil = visibleOccupancyNavigatorBars(document).find(bar => bar.dataset.cellId === "tiler2");
 
     basil.dispatchEvent(new document.defaultView.MouseEvent("click", { bubbles: true, cancelable: true }));
 
@@ -407,14 +409,14 @@ test("cluster visibility keeps selected and temporally overlapping groups active
     assert.equal(tiler3.styles.imageOpacity, "0");
 });
 
-test("undated Mini Rail groups render dashed and inactive unless selected", () => {
+test("undated Occupancy navigator groups render dashed and inactive unless selected", () => {
     const { document, tiler2 } = makeHarness({
         secondTiler: true,
         tiler2State: { x: 29, y: 10, width: 20, height: 20 },
         tiler1Attrs: { plant_name: "Tomato", sow_date: "2026-04-01", harvest_end: "2026-07-01" },
         tiler2Attrs: { plant_name: "Basil", variety_name: "Genovese" }
     });
-    const basil = visibleMiniRailBars(document).find(bar => bar.dataset.cellId === "tiler2");
+    const basil = visibleOccupancyNavigatorBars(document).find(bar => bar.dataset.cellId === "tiler2");
 
     assert.ok(basil);
     assert.match(basil.title, /Basil - Genovese - Undated/);
@@ -442,15 +444,15 @@ test("Prev and Next cycle through all cluster members and recompute active overl
     assert.equal(tiler3.styles.fillOpacity, "0");
 });
 
-test("Mini Rail excludes perennial lifespan from axis and clips perennial display", () => {
+test("Occupancy navigator excludes perennial lifespan from axis and clips perennial display", () => {
     const { document, tiler1, tiler2 } = makeHarness({
         secondTiler: true,
         tiler2State: { x: 12, y: 12, width: 20, height: 20 },
         tiler1Attrs: { plant_name: "Apple", perennial: "1", season_start_year: "2026", lifespan_start: "2026-01-01", lifespan_end: "2030-12-31" },
         tiler2Attrs: { plant_name: "Broccoli", season_start_year: "2026", sow_date: "2026-08-05", harvest_end: "2026-11-08" }
     });
-    const axisText = visibleMiniRailAxisText(document);
-    const apple = visibleMiniRailBars(document).find(bar => bar.dataset.cellId === "tiler1");
+    const axisText = visibleOccupancyNavigatorAxisText(document);
+    const apple = visibleOccupancyNavigatorBars(document).find(bar => bar.dataset.cellId === "tiler1");
 
     assert.match(axisText, /AUG/);
     assert.match(axisText, /NOV/);
@@ -462,15 +464,15 @@ test("Mini Rail excludes perennial lifespan from axis and clips perennial displa
     assert.equal(tiler2.styles.fillOpacity, "100");
 });
 
-test("Mini Rail preserves non-perennial cross-year crop span", () => {
+test("Occupancy navigator preserves non-perennial cross-year crop span", () => {
     const { document } = makeHarness({
         secondTiler: true,
         tiler2State: { x: 12, y: 12, width: 20, height: 20 },
         tiler1Attrs: { plant_name: "Apple", perennial: "1", season_start_year: "2026", lifespan_start: "2025-01-01", lifespan_end: "2030-12-31" },
         tiler2Attrs: { plant_name: "Garlic", season_start_year: "2026", sow_date: "2025-12-15", harvest_end: "2026-02-20" }
     });
-    const axisText = visibleMiniRailAxisText(document);
-    const garlic = visibleMiniRailBars(document).find(bar => bar.dataset.cellId === "tiler2");
+    const axisText = visibleOccupancyNavigatorAxisText(document);
+    const garlic = visibleOccupancyNavigatorBars(document).find(bar => bar.dataset.cellId === "tiler2");
 
     assert.match(axisText, /DEC/);
     assert.match(axisText, /JAN/);
@@ -479,28 +481,28 @@ test("Mini Rail preserves non-perennial cross-year crop span", () => {
     assert.equal(garlic.textContent, "Garlic");
 });
 
-test("Mini Rail short spans keep monthly axis labels", () => {
+test("Occupancy navigator short spans keep monthly axis labels", () => {
     const { document } = makeHarness({
         secondTiler: true,
         tiler2State: { x: 12, y: 12, width: 20, height: 20 },
         tiler1Attrs: { plant_name: "Broccoli", season_start_year: "2026", sow_date: "2026-08-05", harvest_end: "2026-11-08" },
         tiler2Attrs: { plant_name: "Beet", season_start_year: "2026", sow_date: "2026-09-01", harvest_end: "2026-10-01" }
     });
-    const ticks = visibleMiniRailAxisTicks(document);
+    const ticks = visibleOccupancyNavigatorAxisTicks(document);
 
     assert.deepEqual(JSON.parse(JSON.stringify(ticks.map(tick => tick.text))), ["AUG", "SEP", "OCT", "NOV"]);
     assert.ok(ticks.every(tick => tick.align === "center"));
 });
 
-test("Mini Rail long spans show endpoint month-year labels only", () => {
+test("Occupancy navigator long spans show endpoint month-year labels only", () => {
     const { document } = makeHarness({
         secondTiler: true,
         tiler2State: { x: 12, y: 12, width: 20, height: 20 },
         tiler1Attrs: { plant_name: "Broccoli", season_start_year: "2026", sow_date: "2026-08-05", harvest_end: "2026-11-08" },
         tiler2Attrs: { plant_name: "Garlic", season_start_year: "2026", sow_date: "2026-12-15", harvest_end: "2027-07-20" }
     });
-    const ticks = visibleMiniRailAxisTicks(document);
-    const garlic = visibleMiniRailBars(document).find(bar => bar.dataset.cellId === "tiler2");
+    const ticks = visibleOccupancyNavigatorAxisTicks(document);
+    const garlic = visibleOccupancyNavigatorBars(document).find(bar => bar.dataset.cellId === "tiler2");
 
     assert.deepEqual(JSON.parse(JSON.stringify(ticks.map(tick => tick.text))), ["Aug 2026", "Jul 2027"]);
     assert.deepEqual(JSON.parse(JSON.stringify(ticks.map(tick => tick.align))), ["left", "right"]);
@@ -509,28 +511,28 @@ test("Mini Rail long spans show endpoint month-year labels only", () => {
     assert.notEqual(garlic.style.width, "");
 });
 
-test("Mini Rail endpoint labels ignore perennial lifespan", () => {
+test("Occupancy navigator endpoint labels ignore perennial lifespan", () => {
     const { document } = makeHarness({
         secondTiler: true,
         tiler2State: { x: 12, y: 12, width: 20, height: 20 },
         tiler1Attrs: { plant_name: "Apple", perennial: "1", season_start_year: "2026", lifespan_start: "2025-01-01", lifespan_end: "2030-12-31" },
         tiler2Attrs: { plant_name: "Garlic", season_start_year: "2026", sow_date: "2026-08-05", harvest_end: "2027-07-20" }
     });
-    const ticks = visibleMiniRailAxisTicks(document);
+    const ticks = visibleOccupancyNavigatorAxisTicks(document);
 
     assert.deepEqual(JSON.parse(JSON.stringify(ticks.map(tick => tick.text))), ["Aug 2026", "Jul 2027"]);
-    assert.doesNotMatch(visibleMiniRailAxisText(document), /2030/);
+    assert.doesNotMatch(visibleOccupancyNavigatorAxisText(document), /2030/);
 });
 
-test("Mini Rail perennial-only cluster falls back to selected season year", () => {
+test("Occupancy navigator perennial-only cluster falls back to selected season year", () => {
     const { document } = makeHarness({
         secondTiler: true,
         tiler2State: { x: 12, y: 12, width: 20, height: 20 },
         tiler1Attrs: { plant_name: "Apple", perennial: "1", season_start_year: "2026", lifespan_start: "2025-01-01", lifespan_end: "2030-12-31" },
         tiler2Attrs: { plant_name: "Rhubarb", perennial: "1", season_start_year: "2026", lifespan_start: "2026-03-01", lifespan_end: "2029-10-31" }
     });
-    const ticks = visibleMiniRailAxisTicks(document); // CHANGE: 12-month fallback now uses endpoint labels.
-    const apple = visibleMiniRailBars(document).find(bar => bar.dataset.cellId === "tiler1");
+    const ticks = visibleOccupancyNavigatorAxisTicks(document); // CHANGE: 12-month fallback now uses endpoint labels.
+    const apple = visibleOccupancyNavigatorBars(document).find(bar => bar.dataset.cellId === "tiler1");
 
     assert.deepEqual(JSON.parse(JSON.stringify(ticks.map(tick => tick.text))), ["Jan 2026", "Dec 2026"]); // CHANGE: long fallback spans should not render crowded monthly ticks.
     assert.deepEqual(JSON.parse(JSON.stringify(ticks.map(tick => tick.align))), ["left", "right"]); // CHANGE: endpoint labels anchor to each side of the rail.
@@ -573,6 +575,25 @@ test("selected cluster occupancy API returns schedule-ordered windows", () => {
         ["Lettuce", "2026-02-10", "2026-04-10"],
         ["Tomato", "2026-05-01", "2026-09-15"]
     ]);
+});
+
+test("selected cluster layout context exposes cluster bounds and enabled overlap ids", () => {
+    const { graph, tiler1 } = makeHarness({
+        secondTiler: true,
+        thirdTiler: true,
+        tiler2State: { x: 12, y: 12, width: 20, height: 20 },
+        tiler3State: { x: 14, y: 14, width: 20, height: 20 },
+        tiler1Attrs: { plant_name: "Tomato", sow_date: "2026-04-01", harvest_end: "2026-07-01" },
+        tiler2Attrs: { plant_name: "Basil", sow_date: "2026-05-01", harvest_end: "2026-06-01" },
+        tiler3Attrs: { plant_name: "Lettuce", sow_date: "2026-02-01", harvest_end: "2026-03-01" }
+    });
+    const context = graph.__trellisBedSuccessionNavigator.getSelectedClusterLayoutContext(tiler1);
+
+    assert.equal(context.selectedId, "tiler1");
+    assert.deepEqual(JSON.parse(JSON.stringify(context.cellIds)), ["tiler3", "tiler1", "tiler2"]); // CHANGE: spacing rows inherit the navigator's schedule order.
+    assert.deepEqual(JSON.parse(JSON.stringify(context.enabledIds.sort())), ["tiler1", "tiler2"]); // CHANGE: non-overlapping rows stay visible but disabled for spacing.
+    assert.deepEqual(JSON.parse(JSON.stringify(context.clusterBounds)), { x: 10, y: 10, w: 24, h: 24 });
+    assert.equal(Object.prototype.hasOwnProperty.call(context, "occupancyNavigatorBounds"), false); // CHANGE: selected overlay placement must not depend on navigator DOM measurement.
 });
 
 test("selected cluster occupancy uses perennial lifespan dates", () => {
