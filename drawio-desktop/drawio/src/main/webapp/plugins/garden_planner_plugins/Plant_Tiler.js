@@ -1493,6 +1493,28 @@ Draw.loadPlugin(function (ui) {
         return clone;
     }
 
+    const SIBLING_COMPANION_METADATA_ATTRS = [
+        "companion_relation_id",
+        "companion_rating",
+        "companion_type",
+        "companion_start_offset_days",
+        "companion_recommended_start_offset_days",
+        "companion_layout_template",
+        "companion_layout_spacing_x_cm",
+        "companion_layout_spacing_y_cm",
+        "companion_offset_x_cm",
+        "companion_offset_y_cm",
+        "companion_layout_anchor_group_id",
+        "companion_layout_interplant",
+        "companion_layout_clamped"
+    ]; // CHANGE: cloned scheduler siblings must not inherit legacy companion pair/layout identity.
+
+    function stripSiblingCompanionMetadata(value) {
+        if (!value || typeof value.removeAttribute !== "function") return;
+        ["derived_mode", "derived_source_group_id", "derived_source_plant_id", "derived_target_plant_id"].concat(SIBLING_COMPANION_METADATA_ATTRS)
+            .forEach(attr => value.removeAttribute(attr)); // CHANGE: Add Companion creates an ordinary planting; turnover writes fresh derived attrs after this strip.
+    }
+
     function finiteNumberOrNull(value) {
         const n = Number(value);
         return Number.isFinite(n) ? n : null;
@@ -4936,6 +4958,11 @@ Draw.loadPlugin(function (ui) {
         const creationSource = String(opts.source || 'derived-sibling');
         const attrs = Object.assign({}, opts.attributes || {}, { tiler_group: "1" });
         const value = cloneXmlValueWithAttrs(sourceCell, attrs);
+        stripSiblingCompanionMetadata(value);
+        for (const [k, v] of Object.entries(attrs || {})) {
+            if (v === null || v === undefined || v === "") value.removeAttribute(k);
+            else value.setAttribute(k, String(v));
+        } // CHANGE: strip stale companion metadata before applying fresh scheduler attributes.
         const sourceStyle = typeof sourceCell.getStyle === "function" ? sourceCell.getStyle() : sourceCell.style; // CHANGE
         const style = upsertStyleKV(sourceStyle || groupFrameStyle(), "connectable", "0"); // CHANGE
         const geometry = sourceGeo.clone ? sourceGeo.clone() : new mxGeometry(sourceGeo.x, sourceGeo.y, sourceGeo.width, sourceGeo.height);

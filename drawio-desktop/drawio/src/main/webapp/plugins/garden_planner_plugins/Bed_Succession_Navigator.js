@@ -1036,7 +1036,7 @@ Draw.loadPlugin(function (ui) {
                 companionType: String(derivedCell.getAttribute('companion_type') || ''),
                 startOffsetDays: String(derivedCell.getAttribute('companion_start_offset_days') || ''),
                 recommendedStartOffsetDays: String(derivedCell.getAttribute('companion_recommended_start_offset_days') || '')
-            };
+            }; // CHANGE: selected-cluster context restores persisted companion relationship snapshots without inferring persistence for ordinary overlaps.
         }
         if (mode === 'turnover') {
             return { mode, gapDays: String(derivedCell.getAttribute('turnover_gap_days') || '') };
@@ -1049,6 +1049,14 @@ Draw.loadPlugin(function (ui) {
         const variety = cell && cell.getAttribute ? (cell.getAttribute('variety_name') || cell.getAttribute('variety') || '') : '';
         if (plant && variety) return plant + ' - ' + variety;
         return plant || variety || (cell && cell.getAttribute && (cell.getAttribute('label') || cell.getAttribute('title'))) || (cell && cell.id) || 'Planting';
+    }
+
+    function plantingOccupancyCropName(cell) {
+        return cell && cell.getAttribute ? String(cell.getAttribute('plant_name') || cell.getAttribute('crop_name') || '').trim() : ''; // CHANGE: scheduler start hints need crop-only labels.
+    }
+
+    function plantingOccupancyVarietyName(cell) {
+        return cell && cell.getAttribute ? String(cell.getAttribute('variety_name') || cell.getAttribute('variety') || '').trim() : ''; // CHANGE: duplicate crop names can be disambiguated without lengthening every label.
     }
 
     function isPerennialPlanting(cell) {
@@ -1170,6 +1178,33 @@ Draw.loadPlugin(function (ui) {
         return miniRailItemsForState(st).filter(item => item.active).map(item => item.cell).filter(Boolean); // CHANGE: share the rail's temporal model with canvas visibility.
     }
 
+    function orderedOccupancyItemsForCells(cells, selected) {
+        const selectedId = selected && selected.id || '';
+        const selectedRange = trueOccupancyRangeForCell(selected);
+        return orderComponentByTime(cells || []).map(member => {
+            const window = plantingOccupancyWindowOf(member);
+            const range = trueOccupancyRangeForCell(member);
+            return {
+                cellId: member.id,
+                label: plantingOccupancyLabel(member),
+                cropName: plantingOccupancyCropName(member), // CHANGE: expose crop-only labels for scheduler relationship hints.
+                varietyName: plantingOccupancyVarietyName(member), // CHANGE: allow duplicate crop-name disambiguation.
+                startISO: window.startISO,
+                endISO: window.endISO,
+                active: String(member.id || '') === String(selectedId || '') || (!!range && !!selectedRange && occupancyRangesOverlap(range, selectedRange)), // CHANGE: bed-primary APIs expose the same active overlap rule as the navigator.
+                relationship: derivedRelationshipFor(member, selected)
+            };
+        });
+    }
+
+    function selectedBedOccupancyRecordFor(selected) {
+        const bed = resolveOccupiedBedAnchor(selected);
+        if (!bed) return null;
+        const cells = containedPlantingGroupsForBed(bed);
+        if (!cells.some(member => member && member.id === selected.id)) return null;
+        return { bed, cells: orderComponentByTime(cells), bounds: getAbsBounds(bed) }; // CHANGE: containing bed is the authoritative companion context when available.
+    }
+
     function miniRailDateTitle(item) {
         if (!item || !item.trueRange) return (item && item.label || 'Planting') + ' - Undated';
         const title = item.label + ' - ' + item.trueRange.startISO + ' to ' + item.trueRange.endISO;
@@ -1178,18 +1213,32 @@ Draw.loadPlugin(function (ui) {
 
     function selectedClusterOccupancyFor(cell) {
         const selected = findTilerGroupSelection(cell || graph.getSelectionCell());
-        if (!selected) return { selectedId: null, items: [] };
+        if (!selected) return { selectedId: null, scope: 'cluster', items: [] };
         const parent = model.getParent(selected);
         const components = parent ? buildAllComponentsInParent(parent) : [];
         const component = components.find(members => members.some(member => member && member.id === selected.id)) || [selected];
         const order = orderComponentByTime(component);
         return {
             selectedId: selected.id,
-            items: order.map(member => {
-                const window = plantingOccupancyWindowOf(member);
-                return { cellId: member.id, label: plantingOccupancyLabel(member), startISO: window.startISO, endISO: window.endISO, relationship: derivedRelationshipFor(member, selected) };
-            })
-        };
+            scope: 'cluster',
+            items: orderedOccupancyItemsForCells(order, selected)
+        }; // CHANGE: scheduler relationship context follows the spatial overlap cluster, including overhanging plantings outside the bed.
+    }
+
+    function selectedBedOccupancyFor(cell) {
+        const selected = findTilerGroupSelection(cell || graph.getSelectionCell());
+        if (!selected) return { selectedId: null, scope: 'bed', bedId: '', items: [] };
+        const bedRecord = selectedBedOccupancyRecordFor(selected);
+        if (bedRecord) {
+            return {
+                selectedId: selected.id,
+                scope: 'bed',
+                bedId: bedRecord.bed.id || '',
+                items: orderedOccupancyItemsForCells(bedRecord.cells, selected),
+                bedBounds: bedRecord.bounds
+            };
+        }
+        return { selectedId: selected.id, scope: 'bed', bedId: '', items: [], bedBounds: null }; // CHANGE: bed-only occupancy uses center-in-bed containment instead of overlap clustering.
     }
 
     function selectedClusterRecordFor(cell) {
@@ -1204,14 +1253,32 @@ Draw.loadPlugin(function (ui) {
 
     function selectedClusterLayoutContextFor(cell) {
         const record = selectedClusterRecordFor(cell);
-        if (!record) return { selectedId: null, cellIds: [], enabledIds: [], clusterBounds: null };
+        if (!record) return { selectedId: null, cellIds: [], enabledIds: [], clusterBounds: null, bedBounds: null };
+        const bedRecord = selectedBedOccupancyRecordFor(record.selected);
+        if (bedRecord) {
+            const activeIds = orderedOccupancyItemsForCells(bedRecord.cells, record.selected)
+                .filter(item => item.active)
+                .map(item => String(item.cellId || ''))
+                .filter(Boolean);
+            return {
+                selectedId: record.selected.id,
+                scope: 'bed',
+                bedId: bedRecord.bed.id || '',
+                cellIds: bedRecord.cells.map(member => String(member.id || '')).filter(Boolean),
+                enabledIds: activeIds,
+                clusterBounds: getClusterBBox(record.key), // CHANGE: panel placement follows the selected geometric cluster, not the containing bed.
+                bedBounds: bedRecord.bounds // CHANGE: bed bounds remain available for bed-scoped companion/default context.
+            };
+        }
         const activeIds = new Set(activeCellsForClusterState(record.st).map(member => String(member.id || '')));
         if (record.selected && record.selected.id) activeIds.add(String(record.selected.id));
         return {
             selectedId: record.selected.id,
+            scope: 'cluster',
             cellIds: (record.st.order || []).map(member => String(member.id || '')).filter(Boolean),
             enabledIds: Array.from(activeIds),
-            clusterBounds: getClusterBBox(record.key) // CHANGE: overlay positioning uses cluster bounds only, reserving above-cluster space deterministically.
+            clusterBounds: getClusterBBox(record.key), // CHANGE: overlay positioning uses cluster bounds only, reserving above-cluster space deterministically.
+            bedBounds: null
         };
     }
 
@@ -2379,6 +2446,7 @@ Draw.loadPlugin(function (ui) {
 
     graph.__trellisBedSuccessionNavigator = Object.assign({}, graph.__trellisBedSuccessionNavigator, {
         getSelectedClusterOccupancy: selectedClusterOccupancyFor,
+        getSelectedBedOccupancy: selectedBedOccupancyFor, // CHANGE: bed/layout/capacity callers need center-in-bed occupancy separate from spatial cluster context.
         getSelectedClusterLayoutContext: selectedClusterLayoutContextFor, // CHANGE: selected overlays need cluster bounds and active rows without measuring Occupancy DOM.
         resolveOccupiedBedMoveUnit: resolveOccupiedBedMoveUnit
     });

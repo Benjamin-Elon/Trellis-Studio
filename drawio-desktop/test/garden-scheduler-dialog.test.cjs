@@ -437,14 +437,14 @@ test('derived save creates sibling after validation and rolls it back on save fa
     assert.match(schedulerSource, /targetGroupId: cell\.id/);
 });
 
-test('existing derived companion opens companion edit context without forcing sibling creation', () => {
+test('existing legacy companion metadata opens as an ordinary schedule edit', () => {
     assert.match(schedulerSource, /async function resolveExistingDerivedScheduleContext\(cell, selectedPlant, allPlants, context = \{\}\)/);
     assert.match(schedulerSource, /if \(mode !== 'companion'\) return null;/);
     assert.match(schedulerSource, /const sourceCell = model\.getCell\(sourceId\);[\s\S]*if \(!sourceCell \|\| !isTilerGroup\(sourceCell\)\) return null;/);
     assert.match(schedulerSource, /derived\.operation = 'edit';/);
     assert.match(schedulerSource, /derived\.defaultPrimaryStartISO = '';/);
-    assert.match(schedulerSource, /else \{[\s\S]*derivedContext = await resolveExistingDerivedScheduleContext\(cell, selectedPlant, plants/);
-    assert.match(schedulerSource, /if \(derivedContext\) dialogPlants = derivedContext\.candidatePlants;/);
+    assert.match(schedulerSource, /else \{[\s\S]*derivedContext = null; \/\/ CHANGE: legacy companion cells edit as ordinary plantings; old metadata remains inert\./);
+    assert.doesNotMatch(schedulerSource, /derivedContext = await resolveExistingDerivedScheduleContext\(cell, selectedPlant, plants/);
 });
 
 test('companion timing help shows recommended and current actual offsets', () => {
@@ -453,10 +453,11 @@ test('companion timing help shows recommended and current actual offsets', () =>
     assert.match(schedulerSource, /const scheduleGapHint = document\.createElement\('span'\)/);
     assert.match(schedulerSource, /firstSowRowObj\.row\.appendChild\(scheduleGapHint\)/);
     assert.match(schedulerSource, /updateScheduleGapHint\(\);/);
-    assert.match(schedulerSource, /setTooltip\(startInput, \[scheduleGapTooltipText, companionTimingTooltipText\]/);
+    assert.match(schedulerSource, /scheduleGapTooltipText = ''; \/\/ CHANGE: occupancy relationship context is shown inline beside Start/); // CHANGE: occupancy hints no longer duplicate into the Start tooltip.
+    assert.match(schedulerSource, /setTooltip\(startInput, \[scheduleGapTooltipText, companionTimingTooltipText\]/); // CHANGE: companion timing remains the only populated Start tooltip contributor.
 });
 
-test('derived schedule helpers snapshot actual and recommended companion timing separately', () => {
+test('guided companion creation writes ordinary layout, not relationship identity metadata', () => {
     const sourceCell = {
         id: 'source-1',
         getAttribute: key => ({ plant_id: '11', sow_date: '2026-04-01', harvest_end: '2026-08-01' }[key] || '')
@@ -471,15 +472,15 @@ test('derived schedule helpers snapshot actual and recommended companion timing 
         relationshipByPlantId: new Map([['22', { relationId: 9, rating: 1, companionType: 'interplant', recommendedStartOffsetDays: 7 }]])
     };
     const patch = hooks.buildDerivedRelationshipPatch(sourceCell, targetPlant, result, context);
-    assert.equal(patch.derived_mode, 'companion');
-    assert.equal(patch.derived_source_group_id, 'source-1');
-    assert.equal(patch.derived_source_plant_id, '11');
-    assert.equal(patch.derived_target_plant_id, '22');
-    assert.equal(patch.companion_start_offset_days, '14');
-    assert.equal(patch.companion_recommended_start_offset_days, '7');
+    assert.equal(patch.derived_mode, undefined);
+    assert.equal(patch.derived_source_group_id, undefined);
+    assert.equal(patch.derived_source_plant_id, undefined);
+    assert.equal(patch.derived_target_plant_id, undefined);
+    assert.equal(patch.companion_start_offset_days, undefined);
+    assert.equal(patch.companion_recommended_start_offset_days, undefined);
 });
 
-test('derived companion layout patch materializes template spacing and offsets', () => {
+test('guided companion layout patch materializes only ordinary spacing and offsets', () => {
     const sourceCell = {
         id: 'source-layout',
         getGeometry: () => ({ x: 10, y: 20, width: 120, height: 80 }),
@@ -493,11 +494,13 @@ test('derived companion layout patch materializes template spacing and offsets',
         sourceOccupancy: hooks.sourceOccupancyWindowForDerived(sourceCell, makeCrop({ plant_id: 11 })),
         relationshipByPlantId: new Map([['22', relationship]])
     });
-    assert.equal(patch.companion_layout_template, 'staggered');
+    assert.equal(patch.companion_layout_template, undefined);
     assert.equal(patch.spacing_x_cm, '20');
     assert.equal(patch.spacing_y_cm, '22');
-    assert.equal(patch.companion_offset_x_cm, '12');
-    assert.equal(patch.companion_offset_y_cm, '-6');
+    assert.equal(patch.companion_offset_x_cm, undefined);
+    assert.equal(patch.companion_offset_y_cm, undefined);
+    assert.equal(patch.layout_offset_x_cm, '12');
+    assert.equal(patch.layout_offset_y_cm, '-6');
     assert.equal(patch.veg_diameter_cm, '18');
 });
 
@@ -610,9 +613,27 @@ test('layout patches write spacing and bed-relative offsets for current planting
         offsetXCm: 40,
         offsetYCm: 8
     });
-    assert.equal(companionPatch.companion_layout_template, 'interplant');
-    assert.equal(companionPatch.companion_offset_x_cm, '40');
-    assert.equal(companionPatch.companion_offset_y_cm, '8');
+    assert.equal(companionPatch.companion_layout_template, undefined);
+    assert.equal(companionPatch.companion_offset_x_cm, undefined);
+    assert.equal(companionPatch.companion_offset_y_cm, undefined);
+    assert.equal(companionPatch.layout_offset_x_cm, '40');
+    assert.equal(companionPatch.layout_offset_y_cm, '8');
+});
+
+test('companion set layout defaults use unordered crop identities and collapse duplicates', () => {
+    const rows = [
+        { plantId: 2, varietyId: 20, plantName: 'Basil', varietyName: 'Thai', spacingXCm: 18, spacingYCm: 20, offsetXCm: 3, offsetYCm: 4 },
+        { plantId: 1, plantName: 'Tomato', spacingXCm: 50, spacingYCm: 60, offsetXCm: 0, offsetYCm: 0 },
+        { plantId: 2, varietyId: 20, plantName: 'Basil duplicate', spacingXCm: 99, spacingYCm: 99, offsetXCm: 9, offsetYCm: 9 }
+    ];
+    assert.equal(hooks.CompanionSetLayoutDefaultModel.cropSetKey(rows), 'p:1+v:20'); // CHANGE: set defaults are unordered and variety-specific when a variety exists.
+    assert.equal(hooks.CompanionSetLayoutDefaultModel.cropSetKey(rows, true), 'p:1+p:2'); // CHANGE: plant-level fallback ignores varieties.
+    const normalized = hooks.CompanionSetLayoutDefaultModel.normalizeLayout(rows);
+    assert.equal(normalized.cropSetKey, 'p:1+v:20');
+    assert.equal(normalized.rows.length, 2);
+    assert.deepEqual(JSON.parse(JSON.stringify(normalized.rows.map(row => row.identityKey))), ['v:20', 'p:1']);
+    assert.equal(Object.prototype.hasOwnProperty.call(normalized.rows[0], 'template'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(normalized.rows[0], 'anchorPlantId'), false);
 });
 
 test('graph-created companion pairs get an in-memory relationship before DB default save', () => {
@@ -643,42 +664,72 @@ test('derived schedule helpers gate companion lifecycle and compute turnover gap
 
 test('scheduler adjacent gap hints render before and after gaps', () => {
     const hints = hooks.computeSchedulerAdjacentGapHints([
-        { cellId: 'prev', label: 'Lettuce', startISO: '2026-04-01', endISO: '2026-05-01' },
-        { cellId: 'current', label: 'Beet', startISO: '2026-05-05', endISO: '2026-06-01' },
-        { cellId: 'next', label: 'Carrot', startISO: '2026-06-13', endISO: '2026-07-01' }
+        { cellId: 'prev', label: 'Lettuce', cropName: 'Lettuce', startISO: '2026-04-01', endISO: '2026-05-01' },
+        { cellId: 'current', label: 'Beet', cropName: 'Beet', startISO: '2026-05-05', endISO: '2026-06-01' },
+        { cellId: 'next', label: 'Carrot', cropName: 'Carrot', startISO: '2026-06-13', endISO: '2026-07-01' }
     ], { startISO: '2026-05-05', endISO: '2026-06-01' }, { excludeCellIds: ['current'], basisLabel: 'current planting' });
-    assert.equal(hints.text, 'Before: 4d gap; After: 12d gap');
-    assert.match(hints.tooltip, /Before: 4d gap from Lettuce/);
-    assert.match(hints.tooltip, /After: 12d gap from Carrot/);
+    assert.equal(hints.text, '4d gap after Lettuce; 12d gap before Carrot'); // CHANGE: non-overlap text is neighbor-relative.
+    assert.match(hints.tooltip, /4d gap after Lettuce/);
+    assert.match(hints.tooltip, /12d gap before Carrot/);
 });
 
-test('scheduler adjacent gap hints label overlaps instead of gaps', () => {
+test('scheduler adjacent gap hints label overlaps by occupancy start delta', () => {
     const hints = hooks.computeSchedulerAdjacentGapHints([
-        { cellId: 'prev', label: 'Lettuce', startISO: '2026-04-01', endISO: '2026-05-08' },
-        { cellId: 'next', label: 'Carrot', startISO: '2026-05-28', endISO: '2026-07-01' }
+        { cellId: 'prev', label: 'Lettuce', cropName: 'Lettuce', startISO: '2026-05-01', endISO: '2026-05-08' },
+        { cellId: 'next', label: 'Carrot', cropName: 'Carrot', startISO: '2026-05-28', endISO: '2026-07-01' }
     ], { startISO: '2026-05-05', endISO: '2026-06-01' }, {});
-    assert.equal(hints.text, 'Before: overlaps 3d; After: overlaps 4d');
+    assert.equal(hints.text, 'Starts 4d after Lettuce; Starts 23d before Carrot'); // CHANGE: overlaps report start relationship instead of overlap duration.
+    assert.equal(hints.overlaps.length, 2);
 });
 
-test('scheduler adjacent gap hints support companion pair and turnover bases', () => {
+test('scheduler start hints use selected-cluster occupancy context', () => {
+    const hints = hooks.computeSchedulerAdjacentGapHints([
+        { cellId: 'overhang', label: 'Apple', cropName: 'Apple', startISO: '2025-01-01', endISO: '2030-12-31' }
+    ], { startISO: '2026-05-05', endISO: '2026-06-01' }, {});
+    assert.equal(hints.text, 'Starts 489d after Apple'); // CHANGE: cluster-supplied overhanging perennials can be referenced by Start context.
+    assert.match(schedulerSource, /function schedulerClusterOccupancyItemsForGap\(\)[\s\S]*getSelectedClusterOccupancy\(anchorCell\)/); // CHANGE: Start relationship hints intentionally use spatial cluster context.
+});
+
+test('scheduler adjacent gap hints cap multiple overlaps and disambiguate duplicate crop names', () => {
+    const capped = hooks.computeSchedulerAdjacentGapHints([
+        { cellId: 'a', label: 'Lettuce', cropName: 'Lettuce', startISO: '2026-05-01', endISO: '2026-05-20' },
+        { cellId: 'b', label: 'Basil', cropName: 'Basil', startISO: '2026-05-07', endISO: '2026-05-22' },
+        { cellId: 'c', label: 'Spinach', cropName: 'Spinach', startISO: '2026-04-20', endISO: '2026-06-01' }
+    ], { startISO: '2026-05-05', endISO: '2026-05-12' }, {});
+    assert.equal(capped.text, 'Starts 2d before Basil; Starts 4d after Lettuce; +1 more'); // CHANGE: show nearest overlapping starts only.
+
+    const duplicates = hooks.computeSchedulerAdjacentGapHints([
+        { cellId: 'l1', label: 'Lettuce - Buttercrunch', cropName: 'Lettuce', varietyName: 'Buttercrunch', startISO: '2026-05-01', endISO: '2026-05-20' },
+        { cellId: 'l2', label: 'Lettuce - Romaine', cropName: 'Lettuce', varietyName: 'Romaine', startISO: '2026-05-12', endISO: '2026-05-25' }
+    ], { startISO: '2026-05-10', endISO: '2026-05-18' }, {});
+    assert.equal(duplicates.text, 'Starts 2d before Lettuce - Romaine; Starts 9d after Lettuce - Buttercrunch'); // CHANGE: duplicate crop names use variety inline.
+});
+
+test('scheduler adjacent gap hints hide when no comparable plantings exist', () => {
+    const hints = hooks.computeSchedulerAdjacentGapHints([
+        { cellId: 'current', label: 'Beet', cropName: 'Beet', startISO: '2026-05-05', endISO: '2026-06-01' }
+    ], { startISO: '2026-05-05', endISO: '2026-06-01' }, { excludeCellIds: ['current'] });
+    assert.equal(hints.text, ''); // CHANGE: empty selected-cluster comparison does not add low-value text.
+    assert.equal(hints.tooltip, '');
+});
+
+test('scheduler adjacent gap hints support companion-own window and turnover bases', () => {
     const source = { startISO: '2026-05-10', endISO: '2026-07-01' };
     const companion = { startISO: '2026-05-01', endISO: '2026-06-15' };
-    const pairWindow = {
-        startISO: hooks.shiftISODate(source.startISO, -9),
-        endISO: source.endISO
-    };
     const companionHints = hooks.computeSchedulerAdjacentGapHints([
-        { cellId: 'source', label: 'Source lettuce', startISO: source.startISO, endISO: source.endISO },
-        { cellId: 'prev', label: 'Potato', startISO: '2026-03-01', endISO: '2026-04-20' },
-        { cellId: 'next', label: 'Carrot', startISO: '2026-07-10', endISO: '2026-08-01' }
-    ], pairWindow, { excludeCellIds: ['source'], basisLabel: 'source and companion planting pair' });
-    assert.equal(companionHints.text, 'Before: 11d gap; After: 9d gap');
-    assert.match(companionHints.tooltip, /source and companion planting pair/);
+        { cellId: 'source', label: 'Source lettuce', cropName: 'Lettuce', startISO: source.startISO, endISO: source.endISO },
+        { cellId: 'prev', label: 'Potato', cropName: 'Potato', startISO: '2026-03-01', endISO: '2026-04-20' },
+        { cellId: 'next', label: 'Carrot', cropName: 'Carrot', startISO: '2026-07-10', endISO: '2026-08-01' }
+    ], companion, { basisLabel: 'companion planting' });
+    assert.equal(companionHints.text, 'Starts 9d before Lettuce'); // CHANGE: companion start context uses the companion window and includes the source planting.
+    assert.match(companionHints.tooltip, /companion planting/);
+    assert.match(schedulerSource, /basisLabel:\s*'companion planting'/); // CHANGE: builder-level companion context no longer uses a combined pair window.
+    assert.doesNotMatch(schedulerSource, /source and companion planting pair/);
     const turnoverHints = hooks.computeSchedulerAdjacentGapHints([
-        { cellId: 'source', label: 'Lettuce', startISO: '2026-04-01', endISO: '2026-07-01' },
-        { cellId: 'next', label: 'Carrot', startISO: '2026-08-20', endISO: '2026-09-10' }
+        { cellId: 'source', label: 'Lettuce', cropName: 'Lettuce', startISO: '2026-04-01', endISO: '2026-07-01' },
+        { cellId: 'next', label: 'Carrot', cropName: 'Carrot', startISO: '2026-08-20', endISO: '2026-09-10' }
     ], { startISO: '2026-07-02', endISO: '2026-08-01' }, { basisLabel: 'turnover planting' });
-    assert.equal(turnoverHints.text, 'Before: 1d gap; After: 19d gap');
+    assert.equal(turnoverHints.text, '1d gap after Lettuce; 19d gap before Carrot'); // CHANGE: turnover keeps source/next gap context with new wording.
 });
 
 test('scheduler dialog removes Layout tab while exposing diagram spacing tools', () => {
@@ -689,10 +740,12 @@ test('scheduler dialog removes Layout tab while exposing diagram spacing tools',
     assert.doesNotMatch(schedulerSource, /tabsHeader\.appendChild\(layoutTabBtn\)/);
     assert.match(schedulerSource, /const layoutTools = \{[\s\S]*buildSpacingLayoutRows[\s\S]*validateSpacingDraft[\s\S]*buildSpacingPreviewModel[\s\S]*applySpacingDraft/); // CHANGE: diagram overlay uses a narrow scheduler layout service.
     assert.match(schedulerSource, /layoutOffsetForDerivedCreation\(\)/);
-    assert.match(schedulerSource, /writeCellAttribute\(targetCell, 'companion_relation_id', ensured\.relationId/);
+    assert.match(schedulerSource, /writeCellAttribute\(targetCell, 'companion_relation_id', '',/); // CHANGE: legacy relation metadata is cleared instead of refreshed.
     assert.match(schedulerSource, /targetGeometryRect: layoutGraphApplication\.targetRect/);
     assert.match(schedulerSource, /extraAttributePatches: \(layoutGraphApplication\.extraAttributePatches/);
-    assert.match(schedulerSource, /CompanionLayoutGroupDefaultModel\.save/);
+    assert.match(schedulerSource, /CompanionSetLayoutDefaultModel\.save/);
+    assert.match(schedulerSource, /applySetDefault/);
+    assert.match(schedulerSource, /applyScheduleCompanionSetDefaults/);
     assert.doesNotMatch(schedulerSource, /mxUtils\.button\('Apply layout'/);
     assert.doesNotMatch(schedulerSource, /Save changed defaults/);
     assert.doesNotMatch(schedulerSource, /geometryRect: rowRect/);
@@ -705,23 +758,39 @@ test('plant editor exposes layout defaults without a diagram preview', () => {
     assert.match(schedulerSource, /spacing_y_cm: readNullableNumber\(spacingYInput\)/);
     assert.doesNotMatch(schedulerSource, /plantLayoutHeading\.textContent = 'Layout'/);
     assert.doesNotMatch(schedulerSource, /plantLayoutPreview/);
-    assert.match(schedulerSource, /Companion pair layout defaults/);
-    assert.match(schedulerSource, /CompanionRelationshipModel\.saveLayoutDefaults\(relationship\.relationId, readCompanionLayoutDraft\(\), relationship\)/);
+    assert.doesNotMatch(schedulerSource, /Companion pair layout defaults/);
+    assert.doesNotMatch(schedulerSource, /CompanionRelationshipModel\.saveLayoutDefaults\(relationship\.relationId, readCompanionLayoutDraft\(\), relationship\)/);
 });
 
-test('turnover computed-window filtering rejects same-cluster occupancy overlap', () => {
+test('turnover computed-window filtering rejects same-bed occupancy overlap', () => {
     const sourceCell = { id: 'source-3', getAttribute: key => ({ sow_date: '2026-04-01', harvest_end: '2026-09-15' }[key] || '') };
-    const blockedGraph = { __trellisBedSuccessionNavigator: { getSelectedClusterOccupancy: () => ({ items: [
+    const blockedGraph = { __trellisBedSuccessionNavigator: { getSelectedBedOccupancy: () => ({ items: [
         { cellId: 'source-3', startISO: '2026-04-01', endISO: '2026-09-15' },
         { cellId: 'other', startISO: '2026-10-01', endISO: '2026-11-01' }
     ] }) } };
-    const clearGraph = { __trellisBedSuccessionNavigator: { getSelectedClusterOccupancy: () => ({ items: [
+    const clearGraph = { __trellisBedSuccessionNavigator: { getSelectedBedOccupancy: () => ({ items: [
         { cellId: 'source-3', startISO: '2026-04-01', endISO: '2026-09-15' },
         { cellId: 'other', startISO: '2026-11-15', endISO: '2026-12-01' }
     ] }) } };
     const computedWindow = { startISO: '2026-09-16', endISO: '2026-10-23' };
     assert.equal(hooks.turnoverComputedWindowFitsSourceCluster(sourceCell, computedWindow, blockedGraph), false);
     assert.equal(hooks.turnoverComputedWindowFitsSourceCluster(sourceCell, computedWindow, clearGraph), true);
+});
+
+test('turnover capacity ignores overhanging cluster occupancy when bed API is present', () => {
+    const sourceCell = { id: 'source-5', getAttribute: key => ({ sow_date: '2026-04-01', harvest_end: '2026-09-15' }[key] || '') };
+    const graph = { __trellisBedSuccessionNavigator: {
+        getSelectedBedOccupancy: () => ({ items: [
+            { cellId: 'source-5', startISO: '2026-04-01', endISO: '2026-09-15' }
+        ] }),
+        getSelectedClusterOccupancy: () => ({ items: [
+            { cellId: 'source-5', startISO: '2026-04-01', endISO: '2026-09-15' },
+            { cellId: 'overhang', startISO: '2026-10-01', endISO: '2026-11-01' }
+        ] })
+    } };
+    const computedWindow = { startISO: '2026-09-16', endISO: '2026-10-23' };
+    assert.equal(hooks.turnoverComputedWindowFitsSourceCluster(sourceCell, computedWindow, graph), true); // CHANGE: turnover capacity follows bed-contained occupancy instead of broader cluster context.
+    assert.match(schedulerSource, /getSelectedBedOccupancy\(sourceCell\)/); // CHANGE: derived turnover filtering prefers the new bed-only navigator API.
 });
 
 test('turnover candidate filtering uses the computed schedule window', async () => {
@@ -734,7 +803,7 @@ test('turnover candidate filtering uses the computed schedule window', async () 
     const window = await hooks.computeAnnualTurnoverWindowForCandidate(sourceCell, candidate, '2026-09-16', { city, cityName: city.city_name, year: 2026, bedProfile: hooks.normalizeBedProfile(null) });
     assert.ok(window?.startISO, 'expected computed turnover start');
     assert.ok(window?.endISO, 'expected computed turnover harvest end');
-    const blockedGraph = { __trellisBedSuccessionNavigator: { getSelectedClusterOccupancy: () => ({ items: [
+    const blockedGraph = { __trellisBedSuccessionNavigator: { getSelectedBedOccupancy: () => ({ items: [
         { cellId: 'source-4', startISO: '2026-04-01', endISO: '2026-09-15' },
         { cellId: 'other', startISO: window.endISO, endISO: hooks.shiftISODate(window.endISO, 2) }
     ] }) } };

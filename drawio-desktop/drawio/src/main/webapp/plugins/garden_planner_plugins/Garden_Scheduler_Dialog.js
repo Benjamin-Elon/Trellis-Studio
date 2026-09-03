@@ -789,6 +789,12 @@ Draw.loadPlugin(function (ui) {
                 updated_at TEXT NOT NULL,
                 UNIQUE(plant_set_key, anchor_plant_id)
             );`, []);
+            await execRunOnDb(dbId, `CREATE TABLE IF NOT EXISTS CompanionSetLayoutDefaults (
+                set_default_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                crop_set_key TEXT NOT NULL UNIQUE,
+                layout_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );`, []); // CHANGE: anchorless companion-set defaults are keyed only by the unordered active crop set.
             await execRunOnDb(dbId, `CREATE TABLE IF NOT EXISTS PlantGrowthStages (
                 stage_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 plant_id INTEGER NOT NULL REFERENCES Plants(plant_id) ON DELETE CASCADE,
@@ -1353,6 +1359,93 @@ Draw.loadPlugin(function (ui) {
                     ON CONFLICT(plant_set_key, anchor_plant_id) DO UPDATE SET
                         layout_json = excluded.layout_json,
                         updated_at = excluded.updated_at;`, [key, anchorId, JSON.stringify(normalized)]);
+            });
+            return normalized;
+        }
+    }
+
+    class CompanionSetLayoutDefaultModel {
+        static identityToken(row, broad = false) {
+            if (!broad && row?.identityKey) return String(row.identityKey || '').trim();
+            const plantId = finiteNumberOrNull(row?.plantId ?? row?.plant_id);
+            const varietyId = broad ? null : finiteNumberOrNull(row?.varietyId ?? row?.variety_id);
+            if (varietyId != null) return `v:${Math.trunc(varietyId)}`;
+            if (plantId != null) return `p:${Math.trunc(plantId)}`;
+            return '';
+        }
+
+        static cropSetKey(rows, broad = false) {
+            return Array.from(new Set((rows || []).map(row => CompanionSetLayoutDefaultModel.identityToken(row, broad)).filter(Boolean)))
+                .sort()
+                .join('+'); // CHANGE: unordered crop/variety identities replace anchor-specific companion layout keys.
+        }
+
+        static normalizeLayout(rows, broad = false) {
+            const normalizedRows = [];
+            const seen = new Set();
+            for (const row of rows || []) {
+                const identityKey = CompanionSetLayoutDefaultModel.identityToken(row, broad);
+                if (!identityKey || seen.has(identityKey)) continue;
+                seen.add(identityKey);
+                normalizedRows.push({
+                    identityKey,
+                    plantId: finiteNumberOrNull(row?.plantId ?? row?.plant_id),
+                    varietyId: broad ? null : finiteNumberOrNull(row?.varietyId ?? row?.variety_id),
+                    plantName: String(row?.plantName || row?.plant_name || ''),
+                    varietyName: String(row?.varietyName || row?.variety_name || ''),
+                    label: String(row?.label || row?.plantName || row?.plant_name || 'Planting'),
+                    spacingXCm: layoutNumberOrNull(row?.spacingXCm),
+                    spacingYCm: layoutNumberOrNull(row?.spacingYCm),
+                    offsetXCm: layoutNumberOrNull(row?.offsetXCm),
+                    offsetYCm: layoutNumberOrNull(row?.offsetYCm)
+                });
+            }
+            return { version: 1, cropSetKey: CompanionSetLayoutDefaultModel.cropSetKey(normalizedRows, false), rows: normalizedRows };
+        }
+
+        static parseRow(row) {
+            if (!row) return null;
+            try {
+                const parsed = JSON.parse(row.layout_json || '{}');
+                return Object.assign({}, parsed, {
+                    setDefaultId: String(row.set_default_id || ''),
+                    cropSetKey: row.crop_set_key || parsed.cropSetKey || '',
+                    updatedAt: row.updated_at || ''
+                });
+            } catch (_) {
+                return null;
+            }
+        }
+
+        static async loadByKey(key) {
+            const cropSetKey = String(key || '').trim();
+            if (!cropSetKey) return null;
+            await ensureSchedulerPhysiologySchema();
+            const rows = await queryAll('SELECT * FROM CompanionSetLayoutDefaults WHERE crop_set_key = ? LIMIT 1;', [cropSetKey]);
+            return CompanionSetLayoutDefaultModel.parseRow(rows[0]);
+        }
+
+        static async loadForRows(rows) {
+            const exactKey = CompanionSetLayoutDefaultModel.cropSetKey(rows, false);
+            const broadKey = CompanionSetLayoutDefaultModel.cropSetKey(rows, true);
+            return {
+                exactKey,
+                broadKey,
+                default: await CompanionSetLayoutDefaultModel.loadByKey(exactKey) || (broadKey !== exactKey ? await CompanionSetLayoutDefaultModel.loadByKey(broadKey) : null)
+            }; // CHANGE: variety-specific set defaults fall back to plant-level set defaults.
+        }
+
+        static async save(rows) {
+            const normalized = CompanionSetLayoutDefaultModel.normalizeLayout(rows, false);
+            if (!normalized.cropSetKey || normalized.rows.length < 2) throw new Error('At least two crop identities are required before saving a set default.');
+            await ensureSchedulerPhysiologySchema();
+            await withDbTransaction(async dbId => {
+                await execRunOnDb(dbId, `INSERT INTO CompanionSetLayoutDefaults
+                    (crop_set_key, layout_json, updated_at)
+                    VALUES (?, ?, datetime('now'))
+                    ON CONFLICT(crop_set_key) DO UPDATE SET
+                        layout_json = excluded.layout_json,
+                        updated_at = excluded.updated_at;`, [normalized.cropSetKey, JSON.stringify(normalized)]);
             });
             return normalized;
         }
@@ -3713,8 +3806,7 @@ Draw.loadPlugin(function (ui) {
         if (layout?.vegHeightCm != null) patch.veg_height_cm = String(layout.vegHeightCm);
         if (layout?.offsetXCm != null) patch.layout_offset_x_cm = String(layout.offsetXCm);
         if (layout?.offsetYCm != null) patch.layout_offset_y_cm = String(layout.offsetYCm);
-        if (layout?.template) patch.companion_layout_template = layout.template;
-        if (layout?.role === 'companion') Object.assign(patch, companionLayoutAttributePatch(layout));
+        if (layout?.companionLegacy === true) Object.assign(patch, companionLayoutAttributePatch(layout)); // CHANGE: ordinary planting layout patches never write companion metadata.
         return patch;
     }
     function graphRectForCell(cell) {
@@ -7076,9 +7168,10 @@ Draw.loadPlugin(function (ui) {
 
         const companionLayoutPanel = document.createElement('div');
         companionLayoutPanel.className = 'usl-plant-editor-layout-panel';
+        companionLayoutPanel.style.display = 'none'; // CHANGE: pair layout authoring moved out of Plant Editor; set defaults live in the diagram spacing overlay.
         const companionLayoutHeading = document.createElement('div');
         companionLayoutHeading.className = 'usl-plant-editor-layout-heading';
-        companionLayoutHeading.textContent = 'Companion pair layout defaults';
+        companionLayoutHeading.textContent = '';
         companionLayoutPanel.appendChild(companionLayoutHeading);
         const companionLayoutRelSel = document.createElement('select');
         companionLayoutRelSel.style.width = '100%';
@@ -7100,16 +7193,8 @@ Draw.loadPlugin(function (ui) {
         companionLayoutPanel.appendChild(row('Offset Y (cm):', companionLayoutOffsetYInput).row);
         const companionLayoutActions = document.createElement('div');
         companionLayoutActions.className = 'usl-plant-editor-layout-actions';
-        const companionLayoutSaveBtn = mxUtils.button('Save pair layout default', async () => {
-            try {
-                const relationship = selectedCompanionLayoutRelationship();
-                if (!relationship) throw new Error('Select a companion pair.');
-                await CompanionRelationshipModel.saveLayoutDefaults(relationship.relationId, readCompanionLayoutDraft(), relationship);
-                companionLayoutStatus.textContent = 'Saved pair layout default.';
-                await refreshCompanionLayoutDefaultsUI(relationship.relationId);
-            } catch (e) {
-                companionLayoutStatus.textContent = 'Save error: ' + (e?.message || String(e));
-            }
+        const companionLayoutSaveBtn = mxUtils.button('Save', async () => {
+            companionLayoutStatus.textContent = ''; // CHANGE: legacy pair-default editor is intentionally inert.
         });
         applySharedButtonStyle(companionLayoutSaveBtn, 'add');
         companionLayoutActions.appendChild(companionLayoutSaveBtn);
@@ -7270,31 +7355,10 @@ Draw.loadPlugin(function (ui) {
             refreshPlantEditorSectionSummaries();
         }
         async function refreshCompanionGroupDefaultsList() {
-            companionGroupDefaultsList.innerHTML = '';
-            const defaults = Number.isFinite(Number(currentPlantId)) ? await CompanionLayoutGroupDefaultModel.listForPlant(currentPlantId) : [];
-            const heading = document.createElement('div');
-            heading.className = 'usl-companion-defaults-heading';
-            heading.textContent = 'Saved plant-set layout defaults';
-            companionGroupDefaultsList.appendChild(heading);
-            if (!defaults.length) {
-                const empty = document.createElement('div');
-                empty.className = 'usl-companion-defaults-empty';
-                empty.textContent = 'No saved plant-set defaults for this plant.';
-                companionGroupDefaultsList.appendChild(empty);
-                return;
-            }
-            defaults.slice(0, 8).forEach(item => {
-                const rows = Array.isArray(item.rows) ? item.rows : [];
-                const row = document.createElement('div');
-                row.className = 'usl-companion-defaults-item';
-                const plants = rows.map(spec => spec.plantName || (spec.plantId ? `Plant ${spec.plantId}` : '')).filter(Boolean).join(' + ');
-                const companionCount = rows.filter(spec => spec.role === 'companion').length;
-                row.textContent = `${plants || item.plantSetKey} (${companionCount} companion${companionCount === 1 ? '' : 's'}, anchor ${item.anchorPlantId || 'unknown'})`;
-                companionGroupDefaultsList.appendChild(row);
-            });
+            companionGroupDefaultsList.innerHTML = ''; // CHANGE: Plant Editor no longer displays pair or set layout defaults.
         }
         async function refreshCompanionLayoutDefaultsUI(preferredRelationId = null) {
-            companionLayoutRelationships = Number.isFinite(Number(currentPlantId)) ? await CompanionRelationshipModel.listForSourcePlant(currentPlantId) : [];
+            companionLayoutRelationships = []; // CHANGE: companion relationship data remains for scheduling recommendations, not Plant Editor layout controls.
             companionLayoutRelSel.innerHTML = '';
             if (!companionLayoutRelationships.length) {
                 const opt = document.createElement('option');
@@ -7490,11 +7554,6 @@ Draw.loadPlugin(function (ui) {
                 key: 'growthStages',
                 defaultOpen: false,
                 summaryProvider: summarizeGrowingStagesSection
-            }),
-            createPlantEditorSection('Companion Defaults', [companionLayoutPanel], {
-                key: 'companions',
-                defaultOpen: false,
-                summaryProvider: summarizeCompanionSection
             })
         ];
         plantEditorSections.forEach(section => leftCol.appendChild(section.section));
@@ -9051,7 +9110,9 @@ Draw.loadPlugin(function (ui) {
             layoutOffsetXInput.disabled = derivedContext?.mode !== 'companion';
             layoutOffsetYInput.disabled = derivedContext?.mode !== 'companion';
             saveLayoutDefaultChk.checked = false;
-            void rebuildCompanionGroupLayoutEditor();
+            companionLayoutEditorState = null; // CHANGE: schedule saves no longer prepare anchor-based companion layout state.
+            if (singleLayoutSectionWrap) singleLayoutSectionWrap.style.display = 'none'; // CHANGE
+            if (groupLayoutSectionWrap) groupLayoutSectionWrap.style.display = 'none'; // CHANGE
         }
         function syncLayoutDraftFromControls() {
             if (companionLayoutEditorState?.active) {
@@ -9318,7 +9379,7 @@ Draw.loadPlugin(function (ui) {
             return {
                 anchorCell: state.anchor,
                 bed: state.bed,
-                plantSetKey: CompanionLayoutGroupDefaultModel.plantSetKey(rows.map(row => row.plantId)),
+                plantSetKey: CompanionSetLayoutDefaultModel.cropSetKey(rows), // CHANGE: hidden legacy editor uses the anchorless set key if reached.
                 anchorPlantId: rows.find(row => row.role === 'anchor')?.plantId ?? null,
                 rows
             };
@@ -9351,9 +9412,10 @@ Draw.loadPlugin(function (ui) {
             const initialLinked = collectLinkedCompanionLayoutCells(activeGraph, cell);
             const initialPlantIds = (initialLinked.members || []).map(member => cellPlantId(member));
             if (derivedContext?.mode === 'companion' && formState.plantId != null && !initialPlantIds.some(id => String(id || '') === String(formState.plantId))) initialPlantIds.push(formState.plantId);
-            const saved = initialPlantIds.length
-                ? await CompanionLayoutGroupDefaultModel.load(initialPlantIds, cellPlantId(initialLinked.anchor)) || await CompanionLayoutGroupDefaultModel.load(initialPlantIds, null)
-                : null;
+            const setInfo = initialPlantIds.length
+                ? await CompanionSetLayoutDefaultModel.loadForRows(initialPlantIds.map(plantId => ({ plantId })))
+                : null; // CHANGE: legacy group editor fallback reads anchorless set defaults.
+            const saved = setInfo?.default || null;
             if (token !== companionLayoutEditorLoadToken) return;
             const linked = collectLinkedCompanionLayoutCells(activeGraph, cell, saved);
             const anchorCell = linked.anchor || cell;
@@ -9397,9 +9459,9 @@ Draw.loadPlugin(function (ui) {
                     const patch = plantingLayoutAttributePatch(row);
                     const previewRow = byCell.get(String(row.cellId || row.plantId || row.role || ''));
                     if (row.role === 'companion') {
-                        patch.companion_layout_anchor_group_id = String(draft.anchorCell?.id || '');
-                        patch.companion_layout_interplant = row.template === 'interplant' ? '1' : '';
-                        patch.companion_layout_clamped = previewRow?.dots?.clamped || previewRow?.rect?.clamped ? '1' : '';
+                        patch.companion_layout_anchor_group_id = ''; // CHANGE: legacy pair metadata is cleared rather than refreshed.
+                        patch.companion_layout_interplant = ''; // CHANGE
+                        patch.companion_layout_clamped = ''; // CHANGE
                     }
                     if (row.role === 'anchor') patch.layout_clamped = previewRow?.dots?.clamped || previewRow?.rect?.clamped ? '1' : '';
                     applyCellAttributePatch(row.cell, patch, model);
@@ -9416,7 +9478,7 @@ Draw.loadPlugin(function (ui) {
         async function saveCompanionGroupLayoutDefaults() {
             const draft = readCompanionGroupLayoutDraftFromEditor();
             if (!draft) throw new Error('No companion layout group is available to save.');
-            await CompanionLayoutGroupDefaultModel.save(draft.rows.map(row => row.plantId), draft.anchorPlantId, { rows: draft.rows });
+            await CompanionSetLayoutDefaultModel.save(draft.rows); // CHANGE: even dormant layout default saves target the split, anchorless model.
             layoutStatus.textContent = 'Group layout defaults saved.';
             (companionLayoutEditorState?.rows || []).forEach(row => { row.changed = false; if (row.revertButton) row.revertButton.disabled = true; });
         }
@@ -9442,8 +9504,8 @@ Draw.loadPlugin(function (ui) {
             const rowPatch = row => {
                 const patch = plantingLayoutAttributePatch(row);
                 if (row.role === 'companion') {
-                    patch.companion_layout_anchor_group_id = String(draft.anchorCell?.id || '');
-                    patch.companion_layout_interplant = row.template === 'interplant' ? '1' : '';
+                    patch.companion_layout_anchor_group_id = ''; // CHANGE: hidden legacy editor cannot persist companion-anchor metadata.
+                    patch.companion_layout_interplant = ''; // CHANGE
                 }
                 return patch;
             };
@@ -9714,20 +9776,17 @@ Draw.loadPlugin(function (ui) {
             if (!targetWindow) return null;
             const excludeCellIds = [];
             let basisLabel = 'current planting';
-            if (cell?.id) excludeCellIds.push(String(cell.id));
             if (derivedContext?.mode === 'companion') {
-                const sourceWindow = derivedContext.sourceOccupancy;
-                if (!sourceWindow?.startISO || !sourceWindow?.endISO) return null;
-                if (derivedContext.sourceCell?.id) excludeCellIds.push(String(derivedContext.sourceCell.id));
+                const sourceId = String(derivedContext.sourceCell?.id || '');
+                const currentId = String(cell?.id || '');
+                if (currentId && currentId !== sourceId) excludeCellIds.push(currentId); // CHANGE: companion creation compares against the source; companion editing excludes only the edited target.
                 return {
-                    window: {
-                        startISO: minISODate(sourceWindow.startISO, targetWindow.startISO),
-                        endISO: maxISODate(sourceWindow.endISO, targetWindow.endISO)
-                    },
+                    window: targetWindow, // CHANGE: start-field occupancy context follows the companion's own schedule window.
                     excludeCellIds,
-                    basisLabel: 'source and companion planting pair'
+                    basisLabel: 'companion planting'
                 };
             }
+            if (cell?.id) excludeCellIds.push(String(cell.id));
             if (derivedContext?.mode === 'turnover') {
                 basisLabel = 'turnover planting';
                 excludeCellIds.splice(0, excludeCellIds.length);
@@ -9744,8 +9803,8 @@ Draw.loadPlugin(function (ui) {
             const text = hints?.text || '';
             scheduleGapHint.textContent = text;
             scheduleGapHint.style.display = text ? '' : 'none';
-            scheduleGapTooltipText = hints?.tooltip || '';
-            setTooltip(scheduleGapHint, scheduleGapTooltipText);
+            scheduleGapTooltipText = ''; // CHANGE: occupancy relationship context is shown inline beside Start, not duplicated into native tooltips.
+            setTooltip(scheduleGapHint, '');
             updatePrimaryDateTooltip();
         }
 
@@ -11432,7 +11491,7 @@ Draw.loadPlugin(function (ui) {
                                     }));
                                     derivedContext.metadataByPlantId?.set?.(companionKey, Object.assign({ known: true }, ensured));
                                 }
-                                if (targetCell && ensured.relationId) writeCellAttribute(targetCell, 'companion_relation_id', ensured.relationId, ui?.editor?.graph?.getModel?.() || null);
+                                if (targetCell && ensured.relationId) writeCellAttribute(targetCell, 'companion_relation_id', '', ui?.editor?.graph?.getModel?.() || null); // CHANGE: relationship ids are recommendation data, not planting identity.
                             } catch (e) {
                                 throw new Error('Save pair default error: ' + (e?.message || String(e)));
                             }
@@ -11455,6 +11514,9 @@ Draw.loadPlugin(function (ui) {
                 let createdDerivedCell = null;
                 let derivedRelationshipPatch = {};
                 let layoutGraphApplication = null;
+                const graphForLayoutDefaults = ui?.editor?.graph;
+                let spacingLayoutBaseline = !derivedContext ? await captureSpacingLayoutContext(graphForLayoutDefaults, targetCell) : null; // CHANGE: snapshot old bed overlap before schedule dates mutate.
+                let forceCompanionSetDefaults = false;
                 if (derivedContext) {
                     const graph = ui?.editor?.graph;
                     const relationshipSourceCell = derivedContext.sourceCell || cell;
@@ -11472,6 +11534,7 @@ Draw.loadPlugin(function (ui) {
                         });
                         if (!createdDerivedCell) throw new Error('Could not create derived plant group.');
                         targetCell = createdDerivedCell;
+                        forceCompanionSetDefaults = derivedContext.mode === 'companion'; // CHANGE: newly guided companion plantings should adopt the current set/plant defaults immediately.
                     }
                 }
                 layoutGraphApplication = buildLayoutGraphApplication(targetCell);
@@ -11490,6 +11553,9 @@ Draw.loadPlugin(function (ui) {
                     targetGeometryRect: layoutGraphApplication.targetRect,
                     preserveTargetGeometry: !!derivedContext,
                     extraAttributePatches: (layoutGraphApplication.extraAttributePatches || []).concat(climateModelAttributePatch ? [climateModelAttributePatch] : []),
+                    applyCompanionSetDefaults: true,
+                    spacingLayoutBaseline,
+                    forceCompanionSetDefaults,
                     afterGraphUpdate: persistPlantTaskDefault // FIX: undo graph edits if the database write fails
                     });
                 } catch (saveError) {
@@ -13961,6 +14027,9 @@ Draw.loadPlugin(function (ui) {
             applyGraphPatch,
             persist: options.afterGraphUpdate,
             finalizeGraph: async () => {
+                if (options.applyCompanionSetDefaults) {
+                    await applyScheduleCompanionSetDefaults(graph, cell, options.spacingLayoutBaseline || null, { force: !!options.forceCompanionSetDefaults }); // CHANGE: schedule saves can reapply anchorless companion-set defaults after occupancy changes.
+                }
                 graph.refresh(cell);
                 requestSelectionVisualsRefresh(graph, cell);
             },
@@ -14056,15 +14125,27 @@ Draw.loadPlugin(function (ui) {
         return left >= right ? leftISO : rightISO;
     }
 
+    function schedulerGapLabelParts(item) {
+        const rawLabel = String(item?.label || item?.cellId || 'Planting').trim();
+        const explicitCrop = String(item?.cropName || item?.plantName || item?.crop_name || item?.plant_name || '').trim();
+        const explicitVariety = String(item?.varietyName || item?.variety || item?.variety_name || '').trim();
+        if (explicitCrop) return { cropName: explicitCrop, varietyName: explicitVariety };
+        const parts = rawLabel.split(/\s+-\s+/);
+        return { cropName: String(parts[0] || rawLabel || 'Planting').trim(), varietyName: explicitVariety || String(parts.slice(1).join(' - ') || '').trim() }; // CHANGE: tolerate legacy labels that already combine crop and variety.
+    }
+
     function normalizeSchedulerGapItem(item) {
         const startISO = String(item?.startISO || '').trim();
         const endISO = String(item?.endISO || '').trim();
         const start = parseISODateUTCValue(startISO);
         const end = parseISODateUTCValue(endISO);
         if (!start || !end) return null;
+        const labelParts = schedulerGapLabelParts(item); // CHANGE: keep inline relationship labels crop-first while preserving variety for duplicate names.
         return {
             cellId: String(item?.cellId || '').trim(),
             label: String(item?.label || item?.cellId || 'Planting').trim(),
+            cropName: labelParts.cropName,
+            varietyName: labelParts.varietyName,
             startISO,
             endISO,
             start,
@@ -14072,55 +14153,131 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
-    function schedulerGapSideLabel(side, deltaDays) {
-        const prefix = side === 'after' ? 'After' : 'Before';
-        const delta = Number(deltaDays);
-        if (!Number.isFinite(delta)) return '';
-        if (delta < 0) return `${prefix}: overlaps ${Math.abs(delta)}d`;
-        if (delta === 0) return `${prefix}: same-day`;
-        return `${prefix}: ${delta}d gap`;
+    function schedulerGapDisplayLabels(items) {
+        const counts = new Map();
+        (items || []).forEach(item => {
+            const key = String(item?.cropName || item?.label || 'Planting').trim().toLowerCase();
+            counts.set(key, (counts.get(key) || 0) + 1);
+        });
+        const labels = new Map();
+        (items || []).forEach(item => {
+            const crop = String(item?.cropName || item?.label || 'Planting').trim();
+            const key = crop.toLowerCase();
+            const variety = String(item?.varietyName || '').trim();
+            labels.set(item, counts.get(key) > 1 && variety ? `${crop} - ${variety}` : crop); // CHANGE: use variety only when crop-only inline labels would collide.
+        });
+        return labels;
     }
 
-    function schedulerGapSideTooltip(side, deltaDays, adjacent, currentWindow) {
-        const prefix = side === 'after' ? 'After' : 'Before';
-        const label = adjacent?.label || 'adjacent planting';
+    function schedulerGapDaysLabel(deltaDays) {
         const delta = Number(deltaDays);
         if (!Number.isFinite(delta)) return '';
-        const relation = delta < 0 ? `overlaps ${Math.abs(delta)}d with` : (delta === 0 ? 'starts same-day with' : `${delta}d gap from`);
-        if (side === 'after') return `${prefix}: ${relation} ${label} (${currentWindow.endISO} to ${adjacent.startISO}).`;
-        return `${prefix}: ${relation} ${label} (${adjacent.endISO} to ${currentWindow.startISO}).`;
+        if (delta === 0) return 'same day';
+        return `${Math.abs(delta)}d`;
+    }
+
+    function schedulerOverlapStartLabel(adjacent, currentWindow, displayLabel) {
+        const delta = daysDeltaISO(adjacent?.startISO, currentWindow?.startISO);
+        const days = schedulerGapDaysLabel(delta);
+        if (!days) return '';
+        if (delta === 0) return `Starts same day as ${displayLabel}`;
+        return `Starts ${days} ${delta > 0 ? 'after' : 'before'} ${displayLabel}`; // CHANGE: overlapping occupancy reports start-date delta, not overlap length.
+    }
+
+    function schedulerNonOverlapGapLabel(side, adjacent, currentWindow, displayLabel) {
+        const delta = side === 'before'
+            ? daysDeltaISO(adjacent?.endISO, currentWindow?.startISO)
+            : daysDeltaISO(currentWindow?.endISO, adjacent?.startISO);
+        const days = schedulerGapDaysLabel(delta);
+        if (!days) return '';
+        return side === 'before' ? `${days} gap after ${displayLabel}` : `${days} gap before ${displayLabel}`; // CHANGE: non-overlap text is neighbor-relative for quick scanning.
+    }
+
+    function schedulerRelationshipTooltip(label, adjacent, currentWindow, kind) {
+        const range = adjacent?.startISO && adjacent?.endISO ? `${adjacent.startISO} to ${adjacent.endISO}` : '';
+        const basis = currentWindow?.startISO && currentWindow?.endISO ? `${currentWindow.startISO} to ${currentWindow.endISO}` : '';
+        return [label, range ? `${adjacent?.label || 'Planting'}: ${range}` : '', basis ? `Candidate: ${basis}` : '', kind ? `Relation: ${kind}` : ''].filter(Boolean).join('\n'); // CHANGE: inline text stays complete; tooltip keeps exact dates for verification.
+    }
+
+    function schedulerNearestOverlapHints(overlaps, currentWindow, maxCount) {
+        return (overlaps || [])
+            .slice()
+            .sort((a, b) => {
+                const startDelta = Math.abs(daysDeltaISO(a.startISO, currentWindow.startISO) ?? Infinity) - Math.abs(daysDeltaISO(b.startISO, currentWindow.startISO) ?? Infinity);
+                if (startDelta !== 0) return startDelta;
+                const startOrder = a.start - b.start;
+                if (startOrder !== 0) return startOrder;
+                return String(a.label || '').localeCompare(String(b.label || ''));
+            })
+            .slice(0, Math.max(0, Math.trunc(Number(maxCount) || 0))); // CHANGE: cap dense overlaps so the start row remains readable.
+    }
+
+    function schedulerAdjacentNonOverlapHints(items, currentWindow) {
+        const before = (items || [])
+            .filter(item => item.end < currentWindow.start)
+            .sort((a, b) => b.end - a.end)[0] || null;
+        const after = (items || [])
+            .filter(item => item.start > currentWindow.end)
+            .sort((a, b) => a.start - b.start)[0] || null;
+        return { before, after }; // CHANGE: adjacency ignores overlapping occupancy; overlaps are handled as start deltas.
+    }
+
+    function schedulerRelationshipHintForItem(kind, side, item, currentWindow, displayLabel) {
+        const text = kind === 'overlap'
+            ? schedulerOverlapStartLabel(item, currentWindow, displayLabel)
+            : schedulerNonOverlapGapLabel(side, item, currentWindow, displayLabel);
+        return text ? {
+            item,
+            side,
+            kind,
+            text,
+            tooltip: schedulerRelationshipTooltip(text, item, currentWindow, kind)
+        } : null;
     }
 
     function computeSchedulerAdjacentGapHints(items, currentWindow, options = {}) {
         const currentStart = parseISODateUTCValue(currentWindow?.startISO);
         const currentEnd = parseISODateUTCValue(currentWindow?.endISO);
-        if (!currentStart || !currentEnd || currentEnd < currentStart) return { before: null, after: null, text: '', tooltip: '' };
+        if (!currentStart || !currentEnd || currentEnd < currentStart) return { before: null, after: null, overlaps: [], text: '', tooltip: '' };
         const excludeIds = new Set((options.excludeCellIds || []).map(id => String(id || '').trim()).filter(Boolean));
         const normalized = (items || [])
             .map(normalizeSchedulerGapItem)
             .filter(item => item && !excludeIds.has(item.cellId));
-        const before = normalized
-            .filter(item => item.start <= currentStart)
-            .sort((a, b) => b.end - a.end)[0] || null;
-        const after = normalized
-            .filter(item => item.start >= currentStart)
-            .sort((a, b) => a.start - b.start)[0] || null;
-        const beforeDelta = before ? daysDeltaISO(before.endISO, currentWindow.startISO) : null;
-        const afterDelta = after ? daysDeltaISO(currentWindow.endISO, after.startISO) : null;
-        const beforeHint = before ? { item: before, deltaDays: beforeDelta, text: schedulerGapSideLabel('before', beforeDelta), tooltip: schedulerGapSideTooltip('before', beforeDelta, before, currentWindow) } : null;
-        const afterHint = after ? { item: after, deltaDays: afterDelta, text: schedulerGapSideLabel('after', afterDelta), tooltip: schedulerGapSideTooltip('after', afterDelta, after, currentWindow) } : null;
-        const text = [beforeHint?.text, afterHint?.text].filter(Boolean).join('; ');
+        const windowWithDates = Object.assign({}, currentWindow, { start: currentStart, end: currentEnd });
+        const overlaps = normalized.filter(item => item.start <= currentEnd && currentStart <= item.end);
+        const maxOverlapHints = Math.max(1, Math.trunc(Number(options.maxOverlapHints) || 2));
+        const selectedOverlaps = schedulerNearestOverlapHints(overlaps, windowWithDates, maxOverlapHints);
+        const adjacent = schedulerAdjacentNonOverlapHints(normalized, windowWithDates);
+        const displayedItems = selectedOverlaps.length ? selectedOverlaps : [adjacent.before, adjacent.after].filter(Boolean);
+        const labels = schedulerGapDisplayLabels(displayedItems);
+        const overlapHints = selectedOverlaps
+            .map(item => schedulerRelationshipHintForItem('overlap', null, item, currentWindow, labels.get(item) || item.cropName || item.label))
+            .filter(Boolean);
+        const beforeHint = !overlapHints.length && adjacent.before
+            ? schedulerRelationshipHintForItem('gap', 'before', adjacent.before, currentWindow, labels.get(adjacent.before) || adjacent.before.cropName || adjacent.before.label)
+            : null;
+        const afterHint = !overlapHints.length && adjacent.after
+            ? schedulerRelationshipHintForItem('gap', 'after', adjacent.after, currentWindow, labels.get(adjacent.after) || adjacent.after.cropName || adjacent.after.label)
+            : null;
+        const overflow = overlaps.length > selectedOverlaps.length ? `+${overlaps.length - selectedOverlaps.length} more` : '';
+        const text = overlapHints.length
+            ? overlapHints.map(hint => hint.text).concat(overflow ? [overflow] : []).join('; ')
+            : [beforeHint?.text, afterHint?.text].filter(Boolean).join('; ');
         const basis = options.basisLabel ? `Basis: ${options.basisLabel} (${currentWindow.startISO} to ${currentWindow.endISO}).` : '';
-        const tooltip = [basis, beforeHint?.tooltip, afterHint?.tooltip].filter(Boolean).join('\n');
-        return { before: beforeHint, after: afterHint, text, tooltip };
+        const tooltip = [basis].concat(overlapHints.map(hint => hint.tooltip), beforeHint?.tooltip, afterHint?.tooltip).filter(Boolean).join('\n\n');
+        return { before: beforeHint, after: afterHint, overlaps: overlapHints, text, tooltip }; // CHANGE: keep legacy before/after fields while adding overlap-specific hints.
     }
 
-    function getClusterOccupancyItemsForDerived(sourceCell, graph) {
+    function getBedOccupancyItemsForDerived(sourceCell, graph) {
         const api = graph?.__trellisBedSuccessionNavigator;
+        if (api && typeof api.getSelectedBedOccupancy === 'function') {
+            const result = api.getSelectedBedOccupancy(sourceCell);
+            if (result && Array.isArray(result.items)) return result.items;
+        } // CHANGE: turnover capacity is bed-contained and must not count overhanging cluster members.
         if (api && typeof api.getSelectedClusterOccupancy === 'function') {
             const result = api.getSelectedClusterOccupancy(sourceCell);
             if (result && Array.isArray(result.items)) return result.items;
-        }
+        } // CHANGE: legacy fallback preserves behavior when the navigator has not exposed the bed-only API yet.
         const sourceWindow = sourceOccupancyWindowForDerived(sourceCell, null);
         return sourceWindow ? [{ cellId: sourceCell?.id || '', startISO: sourceWindow.startISO, endISO: sourceWindow.endISO }] : [];
     }
@@ -14128,7 +14285,7 @@ Draw.loadPlugin(function (ui) {
     function turnoverComputedWindowFitsSourceCluster(sourceCell, computedWindow, graph) {
         if (!computedWindow?.startISO || !computedWindow?.endISO) return false;
         const sourceId = String(sourceCell?.id || '');
-        return !getClusterOccupancyItemsForDerived(sourceCell, graph).some(item => {
+        return !getBedOccupancyItemsForDerived(sourceCell, graph).some(item => {
             if (String(item?.cellId || '') === sourceId) return false;
             return isoRangesOverlap(computedWindow.startISO, computedWindow.endISO, item?.startISO, item?.endISO);
         });
@@ -14198,6 +14355,11 @@ Draw.loadPlugin(function (ui) {
     function buildDerivedRelationshipPatch(sourceCell, targetPlant, result, derivedContext) {
         if (!sourceCell || !derivedContext) return {};
         const mode = String(derivedContext.mode || '').trim();
+        if (mode === 'companion') {
+            const relationship = derivedContext.relationshipByPlantId?.get?.(String(targetPlant?.plant_id)) || null;
+            const layout = resolveCompanionLayout(sourceCell, targetPlant, relationship, derivedContext.layoutDraft || {});
+            return plantingLayoutAttributePatch(layout); // CHANGE: guided companion creation persists as a normal planting, not a derived relationship.
+        }
         const patch = {
             derived_mode: mode,
             derived_source_group_id: String(sourceCell.id || ''),
@@ -14206,17 +14368,7 @@ Draw.loadPlugin(function (ui) {
         };
         const sourceWindow = derivedContext.sourceOccupancy || sourceOccupancyWindowForDerived(sourceCell, derivedContext.sourcePlant);
         const targetStartISO = derivedOccupancyStartISO(result);
-        if (mode === 'companion') {
-            const actualOffset = sourceWindow ? daysDeltaISO(sourceWindow.startISO, targetStartISO) : null;
-            const relationship = derivedContext.relationshipByPlantId?.get?.(String(targetPlant?.plant_id)) || null;
-            const layout = resolveCompanionLayout(sourceCell, targetPlant, relationship, derivedContext.layoutDraft || {});
-            patch.companion_relation_id = relationship?.relationId || '';
-            patch.companion_start_offset_days = actualOffset == null ? '' : String(actualOffset);
-            patch.companion_recommended_start_offset_days = String(relationship?.recommendedStartOffsetDays ?? 0);
-            patch.companion_rating = relationship?.rating == null ? '' : String(relationship.rating);
-            patch.companion_type = relationship?.companionType || '';
-            Object.assign(patch, companionLayoutAttributePatch(layout));
-        } else if (mode === 'turnover') {
+        if (mode === 'turnover') {
             const gap = sourceWindow ? daysDeltaISO(sourceWindow.endISO, targetStartISO) : null;
             patch.turnover_gap_days = gap == null ? '' : String(gap);
         }
@@ -14432,16 +14584,7 @@ Draw.loadPlugin(function (ui) {
             selectedPlant = dialogPlants[0];
         }
         else {
-            derivedContext = await resolveExistingDerivedScheduleContext(cell, selectedPlant, plants, {
-                graph,
-                city: cityInit,
-                cityName: initialCityName,
-                year,
-                moduleCell: climateModelModuleCell,
-                bedProfile: scheduleBedContext.profile,
-                bedProfileSource: scheduleBedContext.source
-            });
-            if (derivedContext) dialogPlants = derivedContext.candidatePlants;
+            derivedContext = null; // CHANGE: legacy companion cells edit as ordinary plantings; old metadata remains inert.
         }
 
         const initialMethodSelection = await resolveInitialMethodSelection(cell, selectedPlant);
@@ -14957,7 +15100,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function spacingCellRole(cell) {
-        return companionSourceGroupId(cell) ? 'companion' : 'anchor';
+        return 'planting'; // CHANGE: spacing rows are no longer anchored companion roles.
     }
 
     function spacingBedOffsetForCell(cell, bed) {
@@ -14970,22 +15113,36 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
-    function spacingRelationshipForCell(activeGraph, cell, sourceCell) {
-        if (!cell || spacingCellRole(cell) !== 'companion') return null;
-        const sourcePlant = { plant_id: cellPlantId(sourceCell), plant_name: sourceCell?.getAttribute?.('plant_name') || '' };
-        const companionPlant = { plant_id: cellPlantId(cell), plant_name: cell?.getAttribute?.('plant_name') || '' };
-        return buildGraphCreatedCompanionRelationship(sourcePlant, companionPlant, {
-            relationId: cell.getAttribute?.('companion_relation_id') || '',
-            sourcePlantId: cell.getAttribute?.('derived_source_plant_id') || cellPlantId(sourceCell),
-            companionPlantId: cell.getAttribute?.('derived_target_plant_id') || cellPlantId(cell),
-            startOffsetDays: cell.getAttribute?.('companion_start_offset_days') || 0,
-            layoutTemplate: cell.getAttribute?.('companion_layout_template') || '',
-            layoutSpacingXCm: cell.getAttribute?.('companion_layout_spacing_x_cm'),
-            layoutSpacingYCm: cell.getAttribute?.('companion_layout_spacing_y_cm'),
-            layoutOffsetXCm: cell.getAttribute?.('companion_offset_x_cm'),
-            layoutOffsetYCm: cell.getAttribute?.('companion_offset_y_cm'),
-            known: !!cell.getAttribute?.('companion_relation_id')
-        });
+    function spacingPlantDefaultLayout(plant) {
+        const defaults = plantSpacingDefaults(plant);
+        return { spacingXCm: defaults.spacingXCm, spacingYCm: defaults.spacingYCm, offsetXCm: 0, offsetYCm: 0 }; // CHANGE: plant-default reset delegates final geometry normalization to the tiler.
+    }
+
+    function spacingIdentityForCell(cell) {
+        return {
+            plantId: cellPlantId(cell),
+            varietyId: finiteNumberOrNull(cell?.getAttribute?.('variety_id')),
+            plantName: String(cell?.getAttribute?.('plant_name') || ''),
+            varietyName: String(cell?.getAttribute?.('variety_name') || '')
+        }; // CHANGE: set defaults distinguish varieties but can fall back to plant-level keys.
+    }
+
+    function setDefaultRowForSpacingRow(setDefault, row) {
+        const rows = Array.isArray(setDefault?.rows) ? setDefault.rows : [];
+        const exact = CompanionSetLayoutDefaultModel.identityToken(row, false);
+        const broad = CompanionSetLayoutDefaultModel.identityToken(row, true);
+        return rows.find(item => String(item.identityKey || '') === exact)
+            || rows.find(item => String(item.identityKey || '') === broad)
+            || null;
+    }
+
+    function rowWithAppliedLayout(row, layout) {
+        return Object.assign({}, row, {
+            spacingXCm: layoutNumberOrNull(layout?.spacingXCm) ?? row.spacingXCm,
+            spacingYCm: layoutNumberOrNull(layout?.spacingYCm) ?? row.spacingYCm,
+            offsetXCm: layoutNumberOrNull(layout?.offsetXCm) ?? row.offsetXCm,
+            offsetYCm: layoutNumberOrNull(layout?.offsetYCm) ?? row.offsetYCm
+        }); // CHANGE: companion-set defaults persist only ordinary planting layout fields.
     }
 
     async function buildSpacingLayoutRows(activeGraph, selectedCell) {
@@ -15001,33 +15158,40 @@ Draw.loadPlugin(function (ui) {
             const defaults = plantSpacingDefaults(plant);
             const bed = findContainingBedForScheduleCell(cell);
             const offsets = spacingBedOffsetForCell(cell, bed);
-            const sourceId = companionSourceGroupId(cell);
-            const sourceCell = sourceId ? graphCellById(activeGraph, sourceId) : null;
+            const identity = spacingIdentityForCell(cell);
             rows.push({
                 cellId: String(cell.id || ''),
                 selected: String(cell.id || '') === String(context.selectedId || ''),
                 enabled: enabledIds.has(String(cell.id || '')),
                 role: spacingCellRole(cell),
-                sourceCellId: sourceId,
                 label: cellLayoutLabel(cell),
                 plantId,
+                varietyId: identity.varietyId,
                 plantName: plant?.plant_name || cell?.getAttribute?.('plant_name') || '',
-                template: normalizeCompanionLayoutTemplate(cell.getAttribute?.('companion_layout_template')) || (sourceId ? 'beside' : ''),
+                varietyName: identity.varietyName,
+                identityKey: CompanionSetLayoutDefaultModel.identityToken(identity, false),
                 spacingXCm: layoutNumberOrNull(cell.getAttribute?.('spacing_x_cm')) ?? layoutNumberOrNull(cell.getAttribute?.('spacing_cm')) ?? defaults.spacingXCm,
                 spacingYCm: layoutNumberOrNull(cell.getAttribute?.('spacing_y_cm')) ?? layoutNumberOrNull(cell.getAttribute?.('spacing_cm')) ?? defaults.spacingYCm,
                 offsetXCm: offsets.x,
                 offsetYCm: offsets.y,
+                plantDefaultLayout: spacingPlantDefaultLayout(plant),
                 rect: graphRectForCell(cell),
-                bedRect: graphRectForCell(bed),
-                relationship: spacingRelationshipForCell(activeGraph, cell, sourceCell)
+                bedRect: graphRectForCell(bed)
             }); // CHANGE: diagram overlay receives editable spacing rows without owning scheduler internals.
         }
-        return Object.assign({}, context, { rows });
+        const activeRows = rows.filter(row => row.enabled && row.plantId != null);
+        const setInfo = activeRows.length > 1 ? await CompanionSetLayoutDefaultModel.loadForRows(activeRows) : { exactKey: '', broadKey: '', default: null };
+        return Object.assign({}, context, {
+            rows,
+            activeSetKey: setInfo.exactKey,
+            activeBroadSetKey: setInfo.broadKey,
+            setDefault: setInfo.default,
+            hasSetDefault: !!setInfo.default
+        }); // CHANGE: spacing context carries anchorless set-default availability for the overlay.
     }
 
     function normalizeSpacingDraftRows(rows) {
         return (rows || []).map(row => Object.assign({}, row, {
-            template: row.role === 'companion' ? (normalizeCompanionLayoutTemplate(row.template) || 'beside') : '',
             spacingXCm: layoutNumberOrNull(row.spacingXCm),
             spacingYCm: layoutNumberOrNull(row.spacingYCm),
             offsetXCm: layoutNumberOrNull(row.offsetXCm),
@@ -15044,7 +15208,6 @@ Draw.loadPlugin(function (ui) {
             if (!(row.spacingYCm > 0)) errors.push(label + ': Spacing Y must be a positive number.');
             if (row.offsetXCm == null) errors.push(label + ': Offset X must be a finite number.');
             if (row.offsetYCm == null) errors.push(label + ': Offset Y must be a finite number.');
-            if (row.role === 'companion' && !normalizeCompanionLayoutTemplate(row.template)) errors.push(label + ': Template is required.');
         });
         return { ok: errors.length === 0, errors };
     }
@@ -15065,40 +15228,24 @@ Draw.loadPlugin(function (ui) {
 
     async function saveSpacingDefaultsForRows(rows, activeGraph, model) {
         const enabled = normalizeSpacingDraftRows(rows).filter(row => row.enabled);
-        for (const row of enabled) {
-            if (row.role === 'companion') {
-                const cell = graphCellById(activeGraph, row.cellId);
-                const sourceCell = graphCellById(activeGraph, row.sourceCellId || companionSourceGroupId(cell));
-                const sourcePlantId = cellPlantId(sourceCell);
-                const companionPlantId = cellPlantId(cell) ?? row.plantId;
-                const sourcePlant = sourcePlantId != null ? await PlantModel.loadById(sourcePlantId) : null;
-                const companionPlant = companionPlantId != null ? await PlantModel.loadById(companionPlantId) : null;
-                const relationship = spacingRelationshipForCell(activeGraph, cell, sourceCell);
-                const ensured = await CompanionRelationshipModel.ensurePairDefaultsRelationship(sourcePlant, companionPlant, relationship, { startOffsetDays: cell?.getAttribute?.('companion_start_offset_days') || 0 });
-                await CompanionRelationshipModel.saveLayoutDefaults(ensured.relationId, row, ensured);
-                if (cell && ensured.relationId) writeCellAttribute(cell, 'companion_relation_id', ensured.relationId, model);
-            } else if (row.plantId != null) {
-                const patch = {};
-                if (row.spacingXCm != null) patch.spacing_x_cm = row.spacingXCm;
-                if (row.spacingYCm != null) patch.spacing_y_cm = row.spacingYCm;
-                if (row.spacingXCm != null && row.spacingYCm != null && row.spacingXCm === row.spacingYCm) patch.spacing_cm = row.spacingXCm;
-                if (Object.keys(patch).length) await PlantModel.update(row.plantId, patch);
-            }
+        if (enabled.filter(row => row.plantId != null).length > 1) {
+            await CompanionSetLayoutDefaultModel.save(enabled);
+            return;
         }
-        const anchor = enabled.find(row => row.role === 'anchor' && row.plantId != null) || enabled.find(row => row.plantId != null);
-        if (anchor && enabled.filter(row => row.plantId != null).length > 1) {
-            await CompanionLayoutGroupDefaultModel.save(enabled.map(row => row.plantId), anchor.plantId, { rows: enabled });
+        for (const row of enabled) {
+            if (row.plantId == null) continue;
+            const patch = {};
+            if (row.spacingXCm != null) patch.spacing_x_cm = row.spacingXCm;
+            if (row.spacingYCm != null) patch.spacing_y_cm = row.spacingYCm;
+            if (row.spacingXCm != null && row.spacingYCm != null && row.spacingXCm === row.spacingYCm) patch.spacing_cm = row.spacingXCm;
+            if (Object.keys(patch).length) await PlantModel.update(row.plantId, patch);
         }
     }
 
-    async function applySpacingDraft(activeGraph, rows, options = {}) {
+    async function applyLayoutRowsToGraph(activeGraph, rows) {
         const model = activeGraph && typeof activeGraph.getModel === 'function' ? activeGraph.getModel() : null;
         if (!activeGraph || !model) throw new Error('Graph is unavailable.');
-        const normalized = normalizeSpacingDraftRows(rows);
-        const validation = validateSpacingDraft(normalized);
-        if (!validation.ok) throw new Error(validation.errors.join('\n'));
-        if (options.saveDefaults) await saveSpacingDefaultsForRows(normalized, activeGraph, model);
-        const editable = normalized.filter(row => row.enabled);
+        const editable = normalizeSpacingDraftRows(rows).filter(row => row.enabled);
         model.beginUpdate();
         try {
             const tiler = window.USL && window.USL.tiler ? window.USL.tiler : null;
@@ -15121,11 +15268,95 @@ Draw.loadPlugin(function (ui) {
         return { ok: true, appliedCellIds: editable.map(row => row.cellId) };
     }
 
+    async function applySetDefault(activeGraph, context) {
+        const setDefault = context && context.setDefault;
+        if (!setDefault) throw new Error('No set default is saved for the active companion set.');
+        const rows = (context.rows || []).map(row => {
+            if (!row.enabled) return row;
+            return rowWithAppliedLayout(row, setDefaultRowForSpacingRow(setDefault, row) || row.plantDefaultLayout);
+        });
+        return applyLayoutRowsToGraph(activeGraph, rows); // CHANGE: manual set-default restore uses the same graph application path as spacing edits.
+    }
+
+    function normalizedLayoutNumber(value) {
+        const n = layoutNumberOrNull(value);
+        return n == null ? null : Math.round(n * 1000) / 1000;
+    }
+
+    function spacingLayoutMatches(row, layout) {
+        if (!row || !layout) return false;
+        return normalizedLayoutNumber(row.spacingXCm) === normalizedLayoutNumber(layout.spacingXCm)
+            && normalizedLayoutNumber(row.spacingYCm) === normalizedLayoutNumber(layout.spacingYCm)
+            && normalizedLayoutNumber(row.offsetXCm) === normalizedLayoutNumber(layout.offsetXCm)
+            && normalizedLayoutNumber(row.offsetYCm) === normalizedLayoutNumber(layout.offsetYCm); // CHANGE: manual-edit protection compares the user-editable spacing/offset fields only.
+    }
+
+    function activeSpacingRows(context) {
+        return (context?.rows || []).filter(row => row && row.enabled && row.plantId != null);
+    }
+
+    function spacingContextKey(context) {
+        const rows = activeSpacingRows(context);
+        return rows.length > 1 ? CompanionSetLayoutDefaultModel.cropSetKey(rows, false) : '';
+    }
+
+    async function captureSpacingLayoutContext(activeGraph, cell) {
+        try {
+            return cell ? await buildSpacingLayoutRows(activeGraph, cell) : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    async function applyScheduleCompanionSetDefaults(activeGraph, cell, beforeContext, options = {}) {
+        const afterContext = await captureSpacingLayoutContext(activeGraph, cell);
+        if (!afterContext) return null;
+        const beforeKey = spacingContextKey(beforeContext);
+        const afterKey = spacingContextKey(afterContext);
+        if (!options.force && beforeKey === afterKey) return null;
+
+        const beforeRowsByCell = new Map((beforeContext?.rows || []).map(row => [String(row.cellId || ''), row]));
+        const afterRowsByCell = new Map((afterContext.rows || []).map(row => [String(row.cellId || ''), row]));
+        const targetIds = new Set();
+        activeSpacingRows(afterContext).forEach(row => targetIds.add(String(row.cellId || '')));
+        activeSpacingRows(beforeContext).forEach(row => targetIds.add(String(row.cellId || '')));
+
+        const rowsToApply = [];
+        targetIds.forEach(cellId => {
+            const afterRow = afterRowsByCell.get(cellId);
+            if (!afterRow) return;
+            const beforeRow = beforeRowsByCell.get(cellId);
+            const previousDefault = setDefaultRowForSpacingRow(beforeContext?.setDefault, beforeRow);
+            const safe = !!options.force
+                || spacingLayoutMatches(afterRow, previousDefault)
+                || spacingLayoutMatches(afterRow, beforeRow?.plantDefaultLayout);
+            if (!safe) return;
+            const nextLayout = afterKey
+                ? (setDefaultRowForSpacingRow(afterContext.setDefault, afterRow) || afterRow.plantDefaultLayout)
+                : afterRow.plantDefaultLayout;
+            if (!nextLayout) return;
+            rowsToApply.push(rowWithAppliedLayout(Object.assign({}, afterRow, { enabled: true }), nextLayout));
+        });
+        if (!rowsToApply.length) return { ok: true, appliedCellIds: [] };
+        return applyLayoutRowsToGraph(activeGraph, rowsToApply); // CHANGE: schedule changes reapply set/plant defaults without overwriting manual layout edits.
+    }
+
+    async function applySpacingDraft(activeGraph, rows, options = {}) {
+        const model = activeGraph && typeof activeGraph.getModel === 'function' ? activeGraph.getModel() : null;
+        if (!activeGraph || !model) throw new Error('Graph is unavailable.');
+        const normalized = normalizeSpacingDraftRows(rows);
+        const validation = validateSpacingDraft(normalized);
+        if (!validation.ok) throw new Error(validation.errors.join('\n'));
+        if (options.saveDefaults) await saveSpacingDefaultsForRows(normalized, activeGraph, model);
+        return applyLayoutRowsToGraph(activeGraph, normalized);
+    }
+
     const layoutTools = {
         buildSpacingLayoutRows,
         validateSpacingDraft,
         buildSpacingPreviewModel,
         applySpacingDraft,
+        applySetDefault,
         normalizeCompanionLayoutTemplate
     };
 
@@ -15261,6 +15492,7 @@ Draw.loadPlugin(function (ui) {
             PlantModel,
             TaskTemplateModel,
             CompanionLayoutGroupDefaultModel,
+            CompanionSetLayoutDefaultModel,
             PlantGrowthStageModel,
             CityClimate,
             PolicyFlags,
@@ -15774,6 +16006,7 @@ Draw.loadPlugin(function (ui) {
             describeTaskRule,
             buildTasksForPlan,
             CompanionLayoutGroupDefaultModel,
+            CompanionSetLayoutDefaultModel,
             findRepeatCutoffOmittedRuleKeys,
             filterPreviewTasks,
             getTaskPreviewRuleKey,

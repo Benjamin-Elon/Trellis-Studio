@@ -58,16 +58,18 @@ test("spacing editor isolates each plant in a fixed-width row and labels inactiv
     const source = readSource();
     const editorSource = sourceBetween(source, "function renderSpacingEditor", "function renderSpacingView");
 
-    assert.match(source, /const SPACING_ROW_GRID_COLUMNS = 'minmax\(72px,1fr\) minmax\(48px,52px\) repeat\(4,minmax\(42px,46px\)\) 24px';/); // CHANGE: header and plant rows share fixed overlay columns.
+    assert.match(source, /const SPACING_ROW_GRID_COLUMNS = 'minmax\(92px,1fr\) repeat\(4,minmax\(42px,46px\)\) 24px';/); // CHANGE: companion template column is removed; all rows use ordinary layout fields.
     assert.match(source, /function createSpacingGridRow\(className\)[\s\S]*row\.style\.gridTemplateColumns = SPACING_ROW_GRID_COLUMNS;[\s\S]*return row;/); // CHANGE: each plant owns one grid row.
     assert.match(editorSource, /const rowsWrap = document\.createElement\('div'\);/);
     assert.match(editorSource, /const headerRow = createSpacingGridRow\('manual-link-spacing-header'\);/);
     assert.match(editorSource, /const rowEl = createSpacingGridRow\('manual-link-spacing-row'\);/);
     assert.match(editorSource, /rowsWrap\.appendChild\(rowEl\);/);
     assert.match(editorSource, /marker\.textContent = 'Inactive';/); // CHANGE: visible but disabled rows must explain why they are not editable.
+    assert.match(source, /input\.step = '1';/); // CHANGE: spacing tab number fields use native 1cm spinner intervals without changing decimal parsing.
     assert.match(source, /input\.style\.width = '100%';/);
     assert.match(source, /select\.style\.width = '100%';/);
-    assert.match(editorSource, /rowEl\.appendChild\(labelCell\);[\s\S]*rowEl\.appendChild\(template\);[\s\S]*\[spacingX, spacingY, offsetX, offsetY\]\.forEach\(input => rowEl\.appendChild\(input\)\);[\s\S]*rowEl\.appendChild\(revert\);/); // CHANGE: plant fields cannot flow into another plant row.
+    assert.match(editorSource, /rowEl\.appendChild\(labelCell\);[\s\S]*\[spacingX, spacingY, offsetX, offsetY\]\.forEach\(input => rowEl\.appendChild\(input\)\);[\s\S]*rowEl\.appendChild\(revert\);/); // CHANGE: plant fields cannot flow into another plant row.
+    assert.doesNotMatch(editorSource, /rowEl\.appendChild\(template\);/); // CHANGE: companion templates are not part of spacing rows.
     assert.doesNotMatch(editorSource, /minmax\(80px,1fr\) 84px 64px 64px 64px 64px 50px/);
 });
 
@@ -78,8 +80,8 @@ test("spacing editor preserves active-window preview and reserved revert gating"
     assert.match(source, /function spacingIdleStatus\(rows\)[\s\S]*Only active-window rows preview and apply\./); // CHANGE: inactive rows remain context, not targets.
     assert.match(editorSource, /const changed = rowStates\.filter\(state => state\.row\.enabled !== false && spacingRowChanged\(state\)\);/);
     assert.match(editorSource, /revert\.textContent = '↺';/); // CHANGE: compact row action uses a revert symbol.
-    assert.match(editorSource, /revert\.setAttribute\('aria-label', 'Revert row spacing'\);/);
-    assert.match(editorSource, /revert\.title = 'Revert row spacing';/);
+    assert.match(editorSource, /revert\.setAttribute\('aria-label', 'Restore plant defaults'\);/);
+    assert.match(editorSource, /revert\.title = 'Restore plant defaults';/);
     assert.match(editorSource, /revert\.style\.visibility = 'hidden';/); // CHANGE: the revert cell stays in layout even when hidden.
     assert.match(editorSource, /state\.revert\.style\.visibility = showRevert \? 'visible' : 'hidden';/);
     assert.match(editorSource, /state\.revert\.style\.pointerEvents = showRevert \? 'auto' : 'none';/);
@@ -90,8 +92,10 @@ test("spacing editor preserves active-window preview and reserved revert gating"
 
 test("selected planting overlay clamps to cluster top instead of measuring occupancy navigator bounds", () => {
     const source = readSource();
+    const boundsSource = sourceBetween(source, "function getClusterBoundsForPanel", "function positionPanel");
     const positionSource = sourceBetween(source, "function positionPanel", "function itemCenterFromRow");
 
+    assert.match(boundsSource, /context\.overlayAnchorBounds \|\| context\.clusterBounds/); // CHANGE: overlay placement has a dedicated-anchor fallback before source bounds.
     assert.match(positionSource, /const sourceBounds = getClusterBoundsForPanel\(source\);/);
     assert.match(positionSource, /const left = sourceBounds\.x - PANEL_GAP - PANEL_SIDE_OFFSET - PANEL_WIDTH;/);
     assert.match(positionSource, /const centeredTop = sourceBounds\.y \+ sourceBounds\.h \/ 2 - panelHeight \/ 2;/);
@@ -112,16 +116,14 @@ test("schedule action button mirrors Trellis user planting permissions", () => {
     assert.match(buttonSource, /if \(!canScheduleTilerGroup\(liveSource\)\) return;/);
 });
 
-test("schedule action button label reflects companion edit mode", () => {
+test("schedule action button label uses ordinary schedule wording for all plantings", () => {
     const source = readSource();
-    const helperSource = sourceBetween(source, "function existingCompanionSourceCell", "function createScheduleActionButton");
+    const helperSource = sourceBetween(source, "function scheduleActionButtonLabelFor", "function createScheduleActionButton");
     const buttonSource = sourceBetween(source, "function createScheduleActionButton", "function createSetPlantActionButton");
-    assert.match(helperSource, /String\(getAttr\(cell, 'derived_mode'\) \|\| ''\)\.trim\(\)\.toLowerCase\(\) !== 'companion'/);
-    assert.match(helperSource, /const source = model\.getCell\(sourceId\);/);
-    assert.match(helperSource, /return isTilerGroup\(source\) \? source : null;/);
-    assert.match(helperSource, /if \(hasTilerSchedule\(source\) && existingCompanionSourceCell\(source\)\) return 'Edit companion';/);
     assert.match(helperSource, /return hasTilerSchedule\(source\) \? 'Edit schedule' : 'Set schedule';/);
-    assert.match(helperSource, /return 'Opens companion scheduling for this derived companion\.';/);
+    assert.doesNotMatch(source, /function existingCompanionSourceCell/);
+    assert.doesNotMatch(source, /Edit companion/);
+    assert.doesNotMatch(source, /Opens companion scheduling for this derived companion\./);
     assert.match(buttonSource, /button\.textContent = scheduleActionButtonLabelFor\(source\);/);
 });
 
@@ -153,12 +155,11 @@ test("derived schedule actions are gated by schedule dates and annual turnover",
     assert.match(helperSource, /await opener\(ui, liveSource, \{ mode \}\);/);
 });
 
-test("occupancy relationship badges require companion overlap and expose turnover gaps by tooltip", () => {
+test("occupancy relationship badges expose only explicit turnover gaps by tooltip", () => {
     const source = readSource();
     const badgeSource = sourceBetween(source, "function renderOccupancyRelationshipBadges", "function renderOccupancyRow");
-    assert.match(badgeSource, /if \(rel\.mode === 'companion'\) \{/);
-    assert.match(badgeSource, /if \(!occupancyRangesOverlap\(sourceRange, range\)\) return '';/);
-    assert.match(badgeSource, /makeRelationshipBadge\('companion ' \+ offset, '#166534'\)/);
+    assert.doesNotMatch(badgeSource, /rel\.mode === 'companion'/);
+    assert.doesNotMatch(badgeSource, /makeRelationshipBadge\('companion /);
     assert.match(badgeSource, /rel\.gapDays !== '' \? rel\.gapDays \+ 'd gap' : 'turnover'/);
     assert.match(badgeSource, /return 'Turnover relationship: ' \+ gap \+ '\.';/);
     assert.doesNotMatch(badgeSource, /makeRelationshipBadge\(gap, '#92400e'\)/);

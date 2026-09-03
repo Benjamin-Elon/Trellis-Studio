@@ -1513,19 +1513,17 @@ Draw.loadPlugin(function (ui) {
             const plant = normalizeBadgeText(getAttr(source, 'plant_name') || getAttr(source, 'crop_name') || '');
             const variety = normalizeBadgeText(getAttr(source, 'variety_name') || getAttr(source, 'variety') || '');
             if (plant && variety) return plant + ' - ' + variety;
-            return plant || variety || normalizeBadgeText(getAttr(source, 'title') || getRawTextLabel(source));
+            return plant || variety; // CHANGE: selected planting overlays use only crop/variety, never task/link metadata.
         }
 
         function getOverlayTitle(entry) {
             const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null;
-            const cropTitle = getSourceCropTitle(source);
-            return cropTitle ? 'Linked Task Schedule - ' + cropTitle : 'Linked Task Schedule';
+            return getSourceCropTitle(source) || 'Planting'; // CHANGE: title reflects the selected crop instead of the overlay's task internals.
         }
 
         function getScheduleOnlyTitle(entry) {
             const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null;
-            const cropTitle = getSourceCropTitle(source);
-            return cropTitle ? 'Plant Schedule - ' + cropTitle : 'Plant Schedule';
+            return getSourceCropTitle(source) || 'Planting'; // CHANGE: schedule-only overlay follows the same crop/variety title rule.
         }
 
         function hasTilerSchedule(cell) {
@@ -1559,7 +1557,7 @@ Draw.loadPlugin(function (ui) {
             const range = getPlantingOccupancyRange(source);
             return {
                 selectedId: source.id,
-                items: [{ cellId: source.id, label: getSourceCropTitle(source) || source.id || 'Planting', startISO: range.startISO, endISO: range.endISO }]
+                items: [{ cellId: source.id, label: getSourceCropTitle(source) || 'Planting', startISO: range.startISO, endISO: range.endISO }]
             };
         }
 
@@ -1745,23 +1743,13 @@ Draw.loadPlugin(function (ui) {
             if (evt && evt.preventDefault) evt.preventDefault();
         }
 
-        function existingCompanionSourceCell(cell) {
-            if (String(getAttr(cell, 'derived_mode') || '').trim().toLowerCase() !== 'companion') return null;
-            const sourceId = String(getAttr(cell, 'derived_source_group_id') || '').trim();
-            if (!sourceId) return null;
-            const source = model.getCell(sourceId);
-            return isTilerGroup(source) ? source : null;
-        }
-
         function scheduleActionButtonLabelFor(source) {
-            if (hasTilerSchedule(source) && existingCompanionSourceCell(source)) return 'Edit companion';
-            return hasTilerSchedule(source) ? 'Edit schedule' : 'Set schedule';
+            return hasTilerSchedule(source) ? 'Edit schedule' : 'Set schedule'; // CHANGE: legacy companion identity no longer changes schedule editing copy.
         }
 
         function scheduleActionButtonTitleFor(source, opener, allowed) {
             if (!allowed) return 'You do not have permission to schedule this planting group.';
             if (!opener) return 'Scheduler plugin is unavailable.';
-            if (hasTilerSchedule(source) && existingCompanionSourceCell(source)) return 'Opens companion scheduling for this derived companion.';
             return scheduleActionButtonLabelFor(source);
         }
 
@@ -2158,8 +2146,8 @@ Draw.loadPlugin(function (ui) {
                 box.style.width = Math.round(rect.width) + 'px';
                 box.style.height = Math.round(rect.height) + 'px';
                 box.style.boxSizing = 'border-box';
-                box.style.border = '2px dashed ' + (row.role === 'companion' ? '#166534' : '#1a73e8');
-                box.style.background = row.role === 'companion' ? 'rgba(22,101,52,0.08)' : 'rgba(26,115,232,0.08)';
+                box.style.border = '2px dashed #1a73e8'; // CHANGE: spacing preview rows are ordinary planting rows, not anchor/companion roles.
+                box.style.background = 'rgba(26,115,232,0.08)';
                 preview.appendChild(box);
                 (row.dots && row.dots.circles || []).forEach(dot => {
                     const circle = document.createElement('div');
@@ -2172,7 +2160,7 @@ Draw.loadPlugin(function (ui) {
                     circle.style.width = Math.round(r * 2) + 'px';
                     circle.style.height = Math.round(r * 2) + 'px';
                     circle.style.borderRadius = '50%';
-                    circle.style.background = row.role === 'companion' ? '#16a34a' : '#2563eb';
+                    circle.style.background = '#2563eb'; // CHANGE: spacing dots share one planting style after companion identity removal.
                     circle.style.opacity = '0.78';
                     preview.appendChild(circle);
                 });
@@ -2184,7 +2172,7 @@ Draw.loadPlugin(function (ui) {
         function spacingNumberInput(value, enabled) {
             const input = document.createElement('input');
             input.type = 'number';
-            input.step = '0.1';
+            input.step = '1'; // CHANGE: native spacing-tab steppers move in whole-centimeter intervals while typed decimals remain valid.
             input.value = value == null ? '' : String(Math.round(Number(value) * 10) / 10);
             input.disabled = !enabled;
             input.style.width = '100%'; // CHANGE: fit all spacing fields inside the fixed overlay width.
@@ -2223,7 +2211,6 @@ Draw.loadPlugin(function (ui) {
 
         function spacingDraftFromRowStates(rowStates) {
             return (rowStates || []).map(state => Object.assign({}, state.row, {
-                template: state.templateControl ? state.templateControl.value : state.row.template,
                 spacingXCm: state.spacingX.value,
                 spacingYCm: state.spacingY.value,
                 offsetXCm: state.offsetX.value,
@@ -2233,23 +2220,21 @@ Draw.loadPlugin(function (ui) {
 
         function spacingRowChanged(state) {
             const row = state.row;
-            return String(state.templateControl ? state.templateControl.value : row.template || '') !== String(row.template || '') ||
-                String(state.spacingX.value) !== String(row.spacingXCm == null ? '' : Math.round(Number(row.spacingXCm) * 10) / 10) ||
+            return String(state.spacingX.value) !== String(row.spacingXCm == null ? '' : Math.round(Number(row.spacingXCm) * 10) / 10) ||
                 String(state.spacingY.value) !== String(row.spacingYCm == null ? '' : Math.round(Number(row.spacingYCm) * 10) / 10) ||
                 String(state.offsetX.value) !== String(row.offsetXCm == null ? '' : Math.round(Number(row.offsetXCm) * 10) / 10) ||
                 String(state.offsetY.value) !== String(row.offsetYCm == null ? '' : Math.round(Number(row.offsetYCm) * 10) / 10);
         }
 
         function revertSpacingRowState(state) {
-            const row = state.row;
-            if (state.templateControl) state.templateControl.value = row.template || 'beside';
+            const row = state.row.plantDefaultLayout || state.row; // CHANGE: row reset restores plant defaults when the scheduler exposes them.
             state.spacingX.value = row.spacingXCm == null ? '' : String(Math.round(Number(row.spacingXCm) * 10) / 10);
             state.spacingY.value = row.spacingYCm == null ? '' : String(Math.round(Number(row.spacingYCm) * 10) / 10);
             state.offsetX.value = row.offsetXCm == null ? '' : String(Math.round(Number(row.offsetXCm) * 10) / 10);
             state.offsetY.value = row.offsetYCm == null ? '' : String(Math.round(Number(row.offsetYCm) * 10) / 10);
         }
 
-        const SPACING_ROW_GRID_COLUMNS = 'minmax(72px,1fr) minmax(48px,52px) repeat(4,minmax(42px,46px)) 24px'; // CHANGE: shared header/row columns keep every plant row aligned.
+        const SPACING_ROW_GRID_COLUMNS = 'minmax(92px,1fr) repeat(4,minmax(42px,46px)) 24px'; // CHANGE: companion template column is gone; rows are uniform planting layout rows.
 
         function createSpacingGridRow(className) {
             const row = document.createElement('div');
@@ -2280,7 +2265,7 @@ Draw.loadPlugin(function (ui) {
             rowsWrap.style.width = '100%';
             rowsWrap.style.minWidth = '0';
             const headerRow = createSpacingGridRow('manual-link-spacing-header');
-            ['Planting', 'Template', 'Space X', 'Space Y', 'Off X', 'Off Y', ''].forEach(text => {
+            ['Planting', 'Space X', 'Space Y', 'Off X', 'Off Y', ''].forEach(text => {
                 const head = document.createElement('div');
                 head.textContent = text;
                 head.style.fontSize = '9px';
@@ -2316,11 +2301,6 @@ Draw.loadPlugin(function (ui) {
                 }
                 rowEl.appendChild(labelCell);
 
-                const template = row.role === 'companion' ? spacingSelect(row.template, enabled) : document.createElement('span');
-                if (row.role !== 'companion') template.textContent = '-';
-                if (row.role !== 'companion') template.style.textAlign = 'center'; // CHANGE: anchor placeholder stays aligned in the compact grid.
-                rowEl.appendChild(template);
-
                 const spacingX = spacingNumberInput(row.spacingXCm, enabled);
                 const spacingY = spacingNumberInput(row.spacingYCm, enabled);
                 const offsetX = spacingNumberInput(row.offsetXCm, enabled);
@@ -2330,8 +2310,8 @@ Draw.loadPlugin(function (ui) {
                 const revert = document.createElement('button');
                 revert.type = 'button';
                 revert.textContent = '↺'; // CHANGE: use a revert symbol instead of Reset text.
-                revert.setAttribute('aria-label', 'Revert row spacing'); // CHANGE: icon-only control remains accessible.
-                revert.title = 'Revert row spacing'; // CHANGE: clarify the compact revert symbol.
+                revert.setAttribute('aria-label', 'Restore plant defaults'); // CHANGE: row reset targets the plant-table defaults.
+                revert.title = 'Restore plant defaults'; // CHANGE: distinguish plant defaults from companion-set defaults.
                 revert.style.fontSize = '12px';
                 revert.style.lineHeight = '14px';
                 revert.style.visibility = 'hidden'; // CHANGE: reserve the grid slot without exposing inactive actions.
@@ -2343,7 +2323,7 @@ Draw.loadPlugin(function (ui) {
                 revert.style.padding = '2px 0'; // CHANGE: override shared compact padding to fit the icon column.
                 rowEl.appendChild(revert);
 
-                const state = { row, templateControl: row.role === 'companion' ? template : null, spacingX, spacingY, offsetX, offsetY, revert };
+                const state = { row, spacingX, spacingY, offsetX, offsetY, revert };
                 rowStates.push(state);
                 rowsWrap.appendChild(rowEl);
             });
@@ -2358,7 +2338,7 @@ Draw.loadPlugin(function (ui) {
             const saveDefaults = document.createElement('input');
             saveDefaults.type = 'checkbox';
             defaultLabel.appendChild(saveDefaults);
-            defaultLabel.appendChild(document.createTextNode('Save enabled rows as defaults'));
+            defaultLabel.appendChild(document.createTextNode('Save active rows as set default')); // CHANGE: defaults are anchorless active companion-set layouts.
             wrap.appendChild(defaultLabel);
 
             const status = document.createElement('div');
@@ -2372,7 +2352,14 @@ Draw.loadPlugin(function (ui) {
 
             const actions = document.createElement('div');
             actions.style.display = 'flex';
+            actions.style.gap = '6px';
             actions.style.justifyContent = 'flex-end';
+            const applySetDefault = document.createElement('button');
+            applySetDefault.type = 'button';
+            applySetDefault.textContent = 'Apply set default';
+            applySetDefault.style.display = context.hasSetDefault ? '' : 'none';
+            applyVertexButtonStyle(applySetDefault, 'neutral', { compact: true });
+            actions.appendChild(applySetDefault); // CHANGE: set defaults can be restored explicitly without editing a row first.
             const apply = document.createElement('button');
             apply.type = 'button';
             apply.textContent = 'Apply';
@@ -2405,7 +2392,7 @@ Draw.loadPlugin(function (ui) {
             }
 
             rowStates.forEach(state => {
-                [state.templateControl, state.spacingX, state.spacingY, state.offsetX, state.offsetY].filter(Boolean).forEach(control => {
+                [state.spacingX, state.spacingY, state.offsetX, state.offsetY].filter(Boolean).forEach(control => {
                     control.addEventListener('input', refreshDraftState);
                     control.addEventListener('change', refreshDraftState);
                 });
@@ -2423,6 +2410,18 @@ Draw.loadPlugin(function (ui) {
                     await tools.applySpacingDraft(graph, spacingDraftFromRowStates(rowStates), { saveDefaults: saveDefaults.checked });
                     clearSpacingPreview();
                     status.textContent = 'Spacing applied.';
+                    setTimeout(refresh, 0);
+                } catch (e) {
+                    status.textContent = e && e.message ? e.message : String(e);
+                }
+            });
+            applySetDefault.addEventListener('click', async function (evt) {
+                consumeOverlayControlEvent(evt);
+                if (!context.hasSetDefault || !tools || typeof tools.applySetDefault !== 'function') return;
+                try {
+                    await tools.applySetDefault(graph, context);
+                    clearSpacingPreview();
+                    status.textContent = 'Set default applied.';
                     setTimeout(refresh, 0);
                 } catch (e) {
                     status.textContent = e && e.message ? e.message : String(e);
@@ -2741,16 +2740,9 @@ Draw.loadPlugin(function (ui) {
         function renderOccupancyRelationshipBadges(entry, labelCell, item, range) {
             const rel = item && item.relationship;
             if (!rel || !range) return '';
-            const source = entry && entry.sourceId ? model.getCell(entry.sourceId) : null;
-            const sourceRange = occupancyRangeForItem(fallbackOccupancyForSource(source).items[0]);
-            if (rel.mode === 'companion') {
-                if (!occupancyRangesOverlap(sourceRange, range)) return '';
-                const offset = rel.startOffsetDays !== '' ? rel.startOffsetDays + 'd' : 'same day';
-                labelCell.appendChild(makeRelationshipBadge('companion ' + offset, '#166534'));
-                return 'Companion relationship: ' + offset + ' from source planting.';
-            } else if (rel.mode === 'turnover') {
+            if (rel.mode === 'turnover') {
                 const gap = rel.gapDays !== '' ? rel.gapDays + 'd gap' : 'turnover';
-                return 'Turnover relationship: ' + gap + '.';
+                return 'Turnover relationship: ' + gap + '.'; // CHANGE: only explicit turnover keeps relationship tooltip semantics.
             }
             return '';
         }
@@ -3051,7 +3043,7 @@ Draw.loadPlugin(function (ui) {
             const api = graph.__trellisBedSuccessionNavigator;
             if (api && typeof api.getSelectedClusterLayoutContext === 'function') {
                 const context = api.getSelectedClusterLayoutContext(source);
-                const bounds = normalizeLayoutBounds(context && context.clusterBounds);
+                const bounds = normalizeLayoutBounds(context && (context.overlayAnchorBounds || context.clusterBounds)); // CHANGE: visual anchoring is separate from bed-scoped layout context.
                 if (bounds) return bounds;
             }
             return getSourceBoundsForPanel(source);

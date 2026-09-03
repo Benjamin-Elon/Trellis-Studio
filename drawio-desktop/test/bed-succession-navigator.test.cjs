@@ -564,7 +564,7 @@ test("selected cluster occupancy API returns schedule-ordered windows", () => {
         secondTiler: true,
         tiler2State: { x: 29, y: 10, width: 20, height: 20 },
         tiler1Attrs: { plant_name: "Tomato", sow_date: "2026-03-01", transplant_date: "2026-05-01", harvest_end: "2026-09-15" },
-        tiler2Attrs: { plant_name: "Lettuce", sow_date: "2026-02-10", harvest_end: "2026-04-10" }
+        tiler2Attrs: { plant_name: "Lettuce", variety_name: "Romaine", sow_date: "2026-02-10", harvest_end: "2026-04-10" }
     });
     const api = graph.__trellisBedSuccessionNavigator;
     const result = api.getSelectedClusterOccupancy(tiler1);
@@ -572,9 +572,30 @@ test("selected cluster occupancy API returns schedule-ordered windows", () => {
     assert.equal(result.selectedId, "tiler1");
     assert.deepEqual(JSON.parse(JSON.stringify(result.items.map(item => item.cellId))), ["tiler2", "tiler1"]);
     assert.deepEqual(JSON.parse(JSON.stringify(result.items.map(item => [item.label, item.startISO, item.endISO]))), [
-        ["Lettuce", "2026-02-10", "2026-04-10"],
+        ["Lettuce - Romaine", "2026-02-10", "2026-04-10"],
         ["Tomato", "2026-05-01", "2026-09-15"]
     ]);
+    assert.deepEqual(JSON.parse(JSON.stringify(result.items.map(item => [item.cropName, item.varietyName]))), [["Lettuce", "Romaine"], ["Tomato", ""]]); // CHANGE: selected-cluster occupancy exposes crop/variety for scheduler start hints.
+});
+
+test("cluster occupancy includes overhanging planting while bed occupancy excludes it", () => {
+    const { graph, tiler1 } = makeHarness({
+        secondTiler: true,
+        tiler2State: { x: 20, y: 10, width: 180, height: 20 },
+        tiler1Attrs: { plant_name: "Tomato", sow_date: "2026-04-01", harvest_end: "2026-08-01" },
+        tiler2Attrs: { plant_name: "Apple", perennial: "1", lifespan_start: "2025-01-01", lifespan_end: "2030-12-31" }
+    });
+    const api = graph.__trellisBedSuccessionNavigator;
+    const cluster = api.getSelectedClusterOccupancy(tiler1);
+    const bed = api.getSelectedBedOccupancy(tiler1);
+
+    assert.equal(cluster.scope, "cluster");
+    assert.deepEqual(JSON.parse(JSON.stringify(cluster.items.map(item => item.cellId).sort())), ["tiler1", "tiler2"]); // CHANGE: spatial cluster context includes the outside-center overhanging perennial without constraining navigator order.
+    assert.equal(cluster.items.find(item => item.cellId === "tiler2").active, true); // CHANGE: overlapping occupancy is eligible as inferred display context.
+    assert.equal(cluster.items.find(item => item.cellId === "tiler2").relationship, null); // CHANGE: inferred companions are contextual only unless explicitly saved.
+    assert.equal(bed.scope, "bed");
+    assert.equal(bed.bedId, "bed");
+    assert.deepEqual(JSON.parse(JSON.stringify(bed.items.map(item => item.cellId))), ["tiler1"]); // CHANGE: bed occupancy remains center-in-bed contained.
 });
 
 test("selected cluster layout context exposes cluster bounds and enabled overlap ids", () => {
@@ -590,9 +611,11 @@ test("selected cluster layout context exposes cluster bounds and enabled overlap
     const context = graph.__trellisBedSuccessionNavigator.getSelectedClusterLayoutContext(tiler1);
 
     assert.equal(context.selectedId, "tiler1");
+    assert.equal(context.scope, "bed"); // CHANGE: spacing context is bed-primary when the selected planting is contained by a bed.
     assert.deepEqual(JSON.parse(JSON.stringify(context.cellIds)), ["tiler3", "tiler1", "tiler2"]); // CHANGE: spacing rows inherit the navigator's schedule order.
     assert.deepEqual(JSON.parse(JSON.stringify(context.enabledIds.sort())), ["tiler1", "tiler2"]); // CHANGE: non-overlapping rows stay visible but disabled for spacing.
-    assert.deepEqual(JSON.parse(JSON.stringify(context.clusterBounds)), { x: 10, y: 10, w: 24, h: 24 });
+    assert.deepEqual(JSON.parse(JSON.stringify(context.clusterBounds)), { x: 10, y: 10, w: 24, h: 24 }); // CHANGE: floating planting overlays anchor to the selected geometric cluster.
+    assert.deepEqual(JSON.parse(JSON.stringify(context.bedBounds)), { x: 0, y: 0, w: 100, h: 100 }); // CHANGE: containing bed context remains available without driving overlay placement.
     assert.equal(Object.prototype.hasOwnProperty.call(context, "occupancyNavigatorBounds"), false); // CHANGE: selected overlay placement must not depend on navigator DOM measurement.
 });
 
@@ -612,9 +635,37 @@ test("selected cluster occupancy exposes derived relationship snapshots from eit
         tiler2Attrs: { plant_name: "Basil", sow_date: "2026-04-08", harvest_end: "2026-06-01", derived_mode: "companion", derived_source_group_id: "tiler1", companion_relation_id: "12", companion_rating: "1", companion_type: "interplant", companion_start_offset_days: "7", companion_recommended_start_offset_days: "3" }
     });
     const fromSource = graph.__trellisBedSuccessionNavigator.getSelectedClusterOccupancy(tiler1);
-    assert.equal(fromSource.items.find(item => item.cellId === "tiler2").relationship.startOffsetDays, "7");
+    assert.deepEqual(JSON.parse(JSON.stringify(fromSource.items.find(item => item.cellId === "tiler2").relationship)), {
+        mode: "companion",
+        relationId: "12",
+        rating: "1",
+        companionType: "interplant",
+        startOffsetDays: "7",
+        recommendedStartOffsetDays: "3"
+    }); // CHANGE: saved companion metadata is display context, not ignored as legacy noise.
     const fromDerived = graph.__trellisBedSuccessionNavigator.getSelectedClusterOccupancy(tiler2);
-    assert.equal(fromDerived.items.find(item => item.cellId === "tiler1").relationship.recommendedStartOffsetDays, "3");
+    assert.deepEqual(JSON.parse(JSON.stringify(fromDerived.items.find(item => item.cellId === "tiler1").relationship)), {
+        mode: "companion",
+        relationId: "12",
+        rating: "1",
+        companionType: "interplant",
+        startOffsetDays: "7",
+        recommendedStartOffsetDays: "3"
+    }); // CHANGE: relationship snapshots are symmetric from source and derived selections.
+});
+
+test("selected cluster occupancy exposes turnover relationship snapshots from either side", () => {
+    const { graph, tiler1, tiler2 } = makeHarness({
+        secondTiler: true,
+        tiler2State: { x: 29, y: 10, width: 20, height: 20 },
+        tiler1Attrs: { plant_name: "Lettuce", sow_date: "2026-04-01", harvest_end: "2026-06-01" },
+        tiler2Attrs: { plant_name: "Carrot", sow_date: "2026-06-08", harvest_end: "2026-08-01", derived_mode: "turnover", derived_source_group_id: "tiler1", turnover_gap_days: "7" }
+    });
+    const fromSource = graph.__trellisBedSuccessionNavigator.getSelectedClusterOccupancy(tiler1);
+    const fromDerived = graph.__trellisBedSuccessionNavigator.getSelectedClusterOccupancy(tiler2);
+
+    assert.deepEqual(JSON.parse(JSON.stringify(fromSource.items.find(item => item.cellId === "tiler2").relationship)), { mode: "turnover", gapDays: "7" }); // CHANGE: turnover metadata remains available in cluster snapshots.
+    assert.deepEqual(JSON.parse(JSON.stringify(fromDerived.items.find(item => item.cellId === "tiler1").relationship)), { mode: "turnover", gapDays: "7" }); // CHANGE: source-side rows can describe the derived turnover relation.
 });
 
 test("bed-select returns beds behind tilers after selecting a tiler", () => {
