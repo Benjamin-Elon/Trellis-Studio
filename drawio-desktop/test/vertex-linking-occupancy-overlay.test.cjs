@@ -88,6 +88,39 @@ test("spacing editor preserves active-window preview and reserved revert gating"
     assert.doesNotMatch(editorSource, /reset\.style\.display = 'none'|state\.reset\.style\.display/); // CHANGE: row actions must not remove a grid slot.
     assert.match(editorSource, /status\.textContent = validation\.ok \? idleStatus : validation\.errors\.join\(' '\);/);
     assert.match(editorSource, /const previewRows = draft\.map\(row => Object\.assign\(\{\}, row, \{ enabled: changed\.some\(state => state\.row\.cellId === row\.cellId\) \}\)\);/);
+    assert.match(editorSource, /tools\.buildSpacingPreviewModel\(graph, previewRows\);/); // CHANGE: preview model can use the read-only tiler API.
+    assert.match(editorSource, /refreshDraftState\(\); \/\/ CHANGE: preserve and redraw valid spacing drafts across view refreshes\./);
+});
+
+test("spacing preview renders DOM-only draft planting group copies", () => {
+    const source = readSource();
+    const previewSource = sourceBetween(source, "const spacingPreviewState", "function spacingNumberInput");
+
+    assert.match(previewSource, /const spacingPreviewState = \{ host: null, hidden: \[\], chromeCells: \[\] \}/); // CHANGE: no model preview cells.
+    assert.match(previewSource, /function renderSpacingGroupCopyPreview\(preview, row, cell\)/);
+    assert.match(previewSource, /hideSpacingPreviewCell\(cell\);/);
+    assert.match(previewSource, /node\.style\.opacity = '0';/); // CHANGE: real group is visually hidden without model visibility changes.
+    assert.match(previewSource, /setSpacingPreviewSelectionChromeVisible\(cell, false\);/);
+    assert.match(previewSource, /setSpacingPreviewSelectionChromeVisible\(cell, true\)/);
+    assert.match(previewSource, /circle\.style\.border = '2px solid #2563eb';/);
+    assert.match(previewSource, /circle\.style\.background = 'rgba\(255,255,255,0\.72\)';/);
+    assert.match(previewSource, /circle\.textContent = dot\.label \|\| '';/);
+    assert.match(previewSource, /frame\.style\.pointerEvents = 'none';/);
+    assert.match(previewSource, /circle\.style\.pointerEvents = 'none';/);
+    assert.doesNotMatch(previewSource, /model\.setVisible|graph\.addCell|graph\.addCells|graph\.removeCells|new mxCell/);
+    assert.doesNotMatch(previewSource, /fadeSpacingPreviewCell/);
+});
+
+test("spacing drafts survive view refresh but clear on affected graph edits", () => {
+    const source = readSource();
+    const overlaySource = sourceBetween(source, "const taskScheduleOverlay = (function ()", "// Primary flag persistence");
+
+    assert.match(overlaySource, /spacingDraftByCellId: new Map\(\)/);
+    assert.match(overlaySource, /function writeStoredSpacingDrafts\(entry, rowStates\)/);
+    assert.match(overlaySource, /function clearSpacingDraftsForChanges\(changes\)/);
+    assert.match(overlaySource, /spacingDraftTouchesCell\(entry, changeCellForSpacingDraft\(change\)\)/);
+    assert.match(overlaySource, /clearSpacingPreview\(\); \/\/ CHANGE: affected undo\/redo\/model edits restore real groups immediately\./);
+    assert.match(source, /taskScheduleOverlay\.clearSpacingDraftsForChanges\(edit && edit\.changes\);/);
 });
 
 test("selected planting overlay clamps to cluster top instead of measuring occupancy navigator bounds", () => {

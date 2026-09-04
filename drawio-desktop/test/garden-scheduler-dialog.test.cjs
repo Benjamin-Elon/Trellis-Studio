@@ -526,6 +526,64 @@ test('layout preview model renders no-bed and clamps companion placement', () =>
     assert.ok(normalDense.circles[0].r > 2);
 });
 
+test('spacing preview model uses tiler-faithful draft group copies with a 1000 circle cap', () => {
+    let call = null;
+    const cell = {
+        id: 'carrot-group',
+        getAttribute: key => ({ tiler_group: '1', plant_abbr: 'CAR', label: 'Carrot' }[key] || '')
+    };
+    const graph = {
+        getModel() {
+            return {
+                getCell(id) {
+                    return id === 'carrot-group' ? cell : null;
+                }
+            };
+        }
+    };
+    hooks.__testWindow.USL = hooks.__testWindow.USL || {};
+    hooks.__testWindow.USL.tiler = {
+        buildDraftTilerGroupPreview(activeGraph, groupCell, draft) {
+            call = { activeGraph, groupCell, draft };
+            return {
+                status: 'ok',
+                rect: draft.rect,
+                label: 'Carrot',
+                abbr: 'CAR',
+                groupLabelFontPx: 12,
+                groupLabelBandPx: 21,
+                rotationDeg: 15,
+                circles: [{ x: 14, y: 28, r: 7, label: 'CAR', fontPx: 8 }],
+                total: 1002,
+                rendered: 1000,
+                capped: true,
+                lodCollapsed: false
+            };
+        }
+    };
+
+    const model = hooks.layoutTools.buildSpacingPreviewModel(graph, [{
+        cellId: 'carrot-group',
+        enabled: true,
+        label: 'Carrot',
+        rect: { x: 10, y: 20, width: 90, height: 70 },
+        spacingXCm: 20,
+        spacingYCm: 25,
+        offsetXCm: 3,
+        offsetYCm: 4
+    }]);
+
+    assert.equal(call.activeGraph, graph);
+    assert.equal(call.groupCell, cell);
+    assert.equal(call.draft.maxCircles, 1000);
+    assert.equal(model.rows[0].groupPreview.label, 'Carrot');
+    assert.equal(model.rows[0].groupPreview.rotationDeg, 15);
+    assert.equal(model.rows[0].dots.circles[0].label, 'CAR');
+    assert.equal(model.rows[0].dots.summarized, true);
+    assert.match(model.warning, /Carrot: Preview capped at 1000 of 1002 plants/);
+    assert.equal(model.rows[0].groupPreview.lodCollapsed, false);
+});
+
 test('active companion layout templates compute distinct placements', () => {
     const anchor = { x: 10, y: 20, width: 100, height: 80 };
     const companion = { x: 10, y: 20, width: 60, height: 40 };

@@ -2091,25 +2091,56 @@ Draw.loadPlugin(function (ui) {
             return context && Array.isArray(context.cellIds) && context.cellIds.length ? context.cellIds.length : 1;
         }
 
-        const spacingPreviewState = { host: null, faded: [] };
+        const spacingPreviewState = { host: null, hidden: [], chromeCells: [] }; // CHANGE: spacing draft previews are DOM-only copies, not faded mxCells.
 
         function clearSpacingPreview() {
-            spacingPreviewState.faded.forEach(item => {
+            spacingPreviewState.hidden.forEach(item => {
                 if (item && item.node && item.node.style) item.node.style.opacity = item.opacity;
             });
-            spacingPreviewState.faded = [];
+            spacingPreviewState.hidden = [];
+            spacingPreviewState.chromeCells.forEach(cell => setSpacingPreviewSelectionChromeVisible(cell, true));
+            spacingPreviewState.chromeCells = [];
             removeNode(spacingPreviewState.host);
             spacingPreviewState.host = null;
         }
 
-        function fadeSpacingPreviewCell(cell) {
-            const state = cell && graph.getView && graph.getView().getState(cell);
-            const node = state && state.shape && state.shape.node;
-            if (!node || !node.style) return;
-            if (!spacingPreviewState.faded.some(item => item.node === node)) {
-                spacingPreviewState.faded.push({ node, opacity: node.style.opacity || '' });
+        function setSpacingPreviewSelectionChromeVisible(cell, visible) { // NEW: hide handles without changing graph selection.
+            const handler = graph.selectionCellsHandler && typeof graph.selectionCellsHandler.getHandler === 'function'
+                ? graph.selectionCellsHandler.getHandler(cell)
+                : null;
+            if (!handler || typeof handler.setHandlesVisible !== 'function') return;
+            handler.setHandlesVisible(!!visible);
+            if (visible && typeof handler.redraw === 'function') handler.redraw();
+        }
+
+        function rememberSpacingPreviewChromeCell(cell) { // NEW: restore selected-cell chrome when draft preview clears.
+            if (!cell || spacingPreviewState.chromeCells.indexOf(cell) >= 0) return;
+            spacingPreviewState.chromeCells.push(cell);
+            setSpacingPreviewSelectionChromeVisible(cell, false);
+        }
+
+        function spacingPreviewCellNodes(cell) { // NEW: hide a group and its rendered descendants while the DOM copy is visible.
+            const view = graph.getView && graph.getView();
+            const out = [];
+            const stack = cell ? [cell] : [];
+            while (stack.length && view) {
+                const current = stack.pop();
+                const state = view.getState && view.getState(current);
+                if (state && state.shape && state.shape.node) out.push(state.shape.node);
+                if (state && state.text && state.text.node) out.push(state.text.node);
+                const count = model.getChildCount ? model.getChildCount(current) : 0;
+                for (let i = 0; i < count; i++) stack.push(model.getChildAt(current, i));
             }
-            node.style.opacity = '0.28'; // CHANGE: draft spacing preview keeps the real group visible as context.
+            return out;
+        }
+
+        function hideSpacingPreviewCell(cell) {
+            spacingPreviewCellNodes(cell).forEach(node => {
+                if (!node || !node.style || spacingPreviewState.hidden.some(item => item.node === node)) return;
+                spacingPreviewState.hidden.push({ node, opacity: node.style.opacity || '' });
+                node.style.opacity = '0'; // CHANGE: keep the real cell hit-testable but visually replaced by the draft copy.
+            });
+            rememberSpacingPreviewChromeCell(cell);
         }
 
         function modelRectToViewRect(rect) {
@@ -2125,6 +2156,88 @@ Draw.loadPlugin(function (ui) {
             };
         }
 
+        function modelPointToViewPoint(point) { // NEW: preview circle centers are model coordinates from the tiler helper.
+            const view = graph.getView && graph.getView();
+            const scale = Number(view && view.scale) || 1;
+            const translate = view && view.translate || { x: 0, y: 0 };
+            return {
+                x: (Number(point && point.x || 0) + Number(translate.x || 0)) * scale,
+                y: (Number(point && point.y || 0) + Number(translate.y || 0)) * scale,
+                scale
+            };
+        }
+
+        function appendSpacingDraftFrame(preview, rowPreview) { // NEW: render the planting group frame as an overlay copy.
+            const rect = modelRectToViewRect(rowPreview.rect || {});
+            const frame = document.createElement('div');
+            frame.className = 'manual-link-spacing-preview-group-frame';
+            frame.dataset.spacingPreviewCell = rowPreview.cellId || '';
+            frame.style.position = 'absolute';
+            frame.style.left = Math.round(rect.x) + 'px';
+            frame.style.top = Math.round(rect.y) + 'px';
+            frame.style.width = Math.round(rect.width) + 'px';
+            frame.style.height = Math.round(rect.height) + 'px';
+            frame.style.boxSizing = 'border-box';
+            frame.style.border = '2px dashed #2563eb';
+            frame.style.background = 'rgba(37,99,235,0.04)';
+            frame.style.boxShadow = '0 0 0 3px rgba(37,99,235,0.16)';
+            frame.style.color = '#111827';
+            frame.style.fontFamily = 'Arial, sans-serif';
+            frame.style.fontWeight = '700';
+            frame.style.fontSize = Math.max(8, Math.round(Number(rowPreview.groupLabelFontPx || 12) * rect.scale)) + 'px';
+            frame.style.lineHeight = '1.2';
+            frame.style.textAlign = 'center';
+            frame.style.overflow = 'hidden';
+            frame.style.transformOrigin = '50% 50%';
+            frame.style.transform = rowPreview.rotationDeg ? 'rotate(' + Number(rowPreview.rotationDeg || 0) + 'deg)' : '';
+            frame.style.pointerEvents = 'none';
+            const label = document.createElement('div');
+            label.textContent = rowPreview.label || rowPreview.abbr || '';
+            label.style.padding = Math.max(1, Math.round(2 * rect.scale)) + 'px ' + Math.max(2, Math.round(4 * rect.scale)) + 'px';
+            label.style.background = 'rgba(255,255,255,0.88)';
+            label.style.borderBottom = '1px solid rgba(37,99,235,0.35)';
+            label.style.whiteSpace = 'nowrap';
+            label.style.overflow = 'hidden';
+            label.style.textOverflow = 'ellipsis';
+            frame.appendChild(label);
+            preview.appendChild(frame);
+        }
+
+        function appendSpacingDraftCircle(preview, dot) { // NEW: render a plant circle copy with draft-blue stroke.
+            const center = modelPointToViewPoint(dot);
+            const r = Math.max(2, Number(dot.r || 2.5) * center.scale);
+            const circle = document.createElement('div');
+            circle.className = 'manual-link-spacing-preview-plant';
+            circle.style.position = 'absolute';
+            circle.style.left = Math.round(center.x - r) + 'px';
+            circle.style.top = Math.round(center.y - r) + 'px';
+            circle.style.width = Math.round(r * 2) + 'px';
+            circle.style.height = Math.round(r * 2) + 'px';
+            circle.style.borderRadius = '50%';
+            circle.style.boxSizing = 'border-box';
+            circle.style.border = '2px solid #2563eb';
+            circle.style.background = 'rgba(255,255,255,0.72)';
+            circle.style.boxShadow = '0 0 0 2px rgba(37,99,235,0.14)';
+            circle.style.color = '#1d4ed8';
+            circle.style.display = 'flex';
+            circle.style.alignItems = 'center';
+            circle.style.justifyContent = 'center';
+            circle.style.fontFamily = 'Arial, sans-serif';
+            circle.style.fontWeight = '700';
+            circle.style.fontSize = Math.max(6, Math.round(Number(dot.fontPx || 10) * center.scale)) + 'px';
+            circle.style.lineHeight = '1';
+            circle.style.pointerEvents = 'none';
+            circle.textContent = dot.label || '';
+            preview.appendChild(circle);
+        }
+
+        function renderSpacingGroupCopyPreview(preview, row, cell) { // NEW: preferred draft rendering path.
+            const rowPreview = row.groupPreview;
+            hideSpacingPreviewCell(cell);
+            appendSpacingDraftFrame(preview, Object.assign({}, rowPreview, { cellId: row.cellId || rowPreview.cellId || '' }));
+            (rowPreview.circles || []).forEach(dot => appendSpacingDraftCircle(preview, dot));
+        }
+
         function renderSpacingPreview(modelPreview) {
             clearSpacingPreview();
             const rows = modelPreview && Array.isArray(modelPreview.rows) ? modelPreview.rows : [];
@@ -2136,7 +2249,11 @@ Draw.loadPlugin(function (ui) {
             preview.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;';
             rows.forEach(row => {
                 const cell = row.cellId ? model.getCell(row.cellId) : null;
-                fadeSpacingPreviewCell(cell);
+                if (row.groupPreview) {
+                    renderSpacingGroupCopyPreview(preview, row, cell);
+                    return;
+                }
+                hideSpacingPreviewCell(cell);
                 const rect = modelRectToViewRect(row.rect || {});
                 const box = document.createElement('div');
                 box.dataset.spacingPreviewCell = row.cellId || '';
@@ -2218,6 +2335,38 @@ Draw.loadPlugin(function (ui) {
             }));
         }
 
+        function spacingDraftKey(row) {
+            return String(row && row.cellId || '');
+        }
+
+        function readStoredSpacingDraft(entry, row) { // NEW: view refreshes keep uncommitted field values.
+            const key = spacingDraftKey(row);
+            return key && entry && entry.spacingDraftByCellId ? entry.spacingDraftByCellId.get(key) : null;
+        }
+
+        function writeStoredSpacingDrafts(entry, rowStates) { // NEW: draft state lives outside the graph model.
+            if (!entry) return;
+            if (!entry.spacingDraftByCellId) entry.spacingDraftByCellId = new Map();
+            (rowStates || []).forEach(state => {
+                const key = spacingDraftKey(state.row);
+                if (!key || state.row.enabled === false) return;
+                if (spacingRowChanged(state)) {
+                    entry.spacingDraftByCellId.set(key, {
+                        spacingXCm: state.spacingX.value,
+                        spacingYCm: state.spacingY.value,
+                        offsetXCm: state.offsetX.value,
+                        offsetYCm: state.offsetY.value
+                    });
+                } else {
+                    entry.spacingDraftByCellId.delete(key);
+                }
+            });
+        }
+
+        function clearStoredSpacingDrafts(entry) {
+            if (entry && entry.spacingDraftByCellId) entry.spacingDraftByCellId.clear();
+        }
+
         function spacingRowChanged(state) {
             const row = state.row;
             return String(state.spacingX.value) !== String(row.spacingXCm == null ? '' : Math.round(Number(row.spacingXCm) * 10) / 10) ||
@@ -2280,6 +2429,8 @@ Draw.loadPlugin(function (ui) {
             const rowStates = [];
             (context.rows || []).forEach(row => {
                 const enabled = row.enabled !== false;
+                const storedDraft = readStoredSpacingDraft(entry, row);
+                const displayRow = storedDraft ? Object.assign({}, row, storedDraft) : row;
                 const rowEl = createSpacingGridRow('manual-link-spacing-row');
                 rowEl.dataset.spacingRowCell = row.cellId || '';
                 const labelCell = document.createElement('div');
@@ -2301,10 +2452,10 @@ Draw.loadPlugin(function (ui) {
                 }
                 rowEl.appendChild(labelCell);
 
-                const spacingX = spacingNumberInput(row.spacingXCm, enabled);
-                const spacingY = spacingNumberInput(row.spacingYCm, enabled);
-                const offsetX = spacingNumberInput(row.offsetXCm, enabled);
-                const offsetY = spacingNumberInput(row.offsetYCm, enabled);
+                const spacingX = spacingNumberInput(displayRow.spacingXCm, enabled);
+                const spacingY = spacingNumberInput(displayRow.spacingYCm, enabled);
+                const offsetX = spacingNumberInput(displayRow.offsetXCm, enabled);
+                const offsetY = spacingNumberInput(displayRow.offsetYCm, enabled);
                 [spacingX, spacingY, offsetX, offsetY].forEach(input => rowEl.appendChild(input));
 
                 const revert = document.createElement('button');
@@ -2371,6 +2522,7 @@ Draw.loadPlugin(function (ui) {
 
             function refreshDraftState() {
                 const changed = rowStates.filter(state => state.row.enabled !== false && spacingRowChanged(state));
+                writeStoredSpacingDrafts(entry, rowStates);
                 rowStates.forEach(state => {
                     const showRevert = state.row.enabled !== false && spacingRowChanged(state);
                     state.revert.style.visibility = showRevert ? 'visible' : 'hidden'; // CHANGE: keep row layout stable while toggling the revert affordance.
@@ -2386,7 +2538,13 @@ Draw.loadPlugin(function (ui) {
                     return;
                 }
                 const previewRows = draft.map(row => Object.assign({}, row, { enabled: changed.some(state => state.row.cellId === row.cellId) }));
-                const preview = tools.buildSpacingPreviewModel(previewRows);
+                const preview = tools.buildSpacingPreviewModel(graph, previewRows); // CHANGE: pass graph so scheduler can use the read-only tiler preview API.
+                if (preview && preview.status === 'invalid') {
+                    apply.disabled = true; // CHANGE: zero in-bounds plant drafts cannot be applied.
+                    clearSpacingPreview();
+                    status.textContent = preview.warning || 'No plants remain inside the planting area.';
+                    return;
+                }
                 renderSpacingPreview(preview);
                 if (preview.warning) status.textContent = preview.warning;
             }
@@ -2408,6 +2566,7 @@ Draw.loadPlugin(function (ui) {
                 if (apply.disabled) return;
                 try {
                     await tools.applySpacingDraft(graph, spacingDraftFromRowStates(rowStates), { saveDefaults: saveDefaults.checked });
+                    clearStoredSpacingDrafts(entry);
                     clearSpacingPreview();
                     status.textContent = 'Spacing applied.';
                     setTimeout(refresh, 0);
@@ -2420,6 +2579,7 @@ Draw.loadPlugin(function (ui) {
                 if (!context.hasSetDefault || !tools || typeof tools.applySetDefault !== 'function') return;
                 try {
                     await tools.applySetDefault(graph, context);
+                    clearStoredSpacingDrafts(entry);
                     clearSpacingPreview();
                     status.textContent = 'Set default applied.';
                     setTimeout(refresh, 0);
@@ -2427,6 +2587,7 @@ Draw.loadPlugin(function (ui) {
                     status.textContent = e && e.message ? e.message : String(e);
                 }
             });
+            refreshDraftState(); // CHANGE: preserve and redraw valid spacing drafts across view refreshes.
         }
 
         function renderSpacingView(entry, body) {
@@ -3252,6 +3413,7 @@ Draw.loadPlugin(function (ui) {
                 panelLeft: 0,
                 panelTop: 0,
                 visibleItems: [],
+                spacingDraftByCellId: new Map(),
                 lines: new Map()
             };
             for (const card of validCards) entry.linkLabels.set(card.id, linkLabels && linkLabels.get ? (linkLabels.get(card.id) || '') : '');
@@ -3271,6 +3433,7 @@ Draw.loadPlugin(function (ui) {
                 panelLeft: 0,
                 panelTop: 0,
                 visibleItems: [],
+                spacingDraftByCellId: new Map(),
                 lines: new Map()
             };
             registry.set(source.id, entry);
@@ -3285,9 +3448,36 @@ Draw.loadPlugin(function (ui) {
             for (const entry of Array.from(registry.values())) renderEntry(entry);
         }
 
+        function changeCellForSpacingDraft(change) { // NEW: detect committed graph edits that invalidate transient drafts.
+            return change && (change.cell || change.child || change.terminal || null);
+        }
+
+        function spacingDraftTouchesCell(entry, cell) {
+            if (!entry || !entry.spacingDraftByCellId || !entry.spacingDraftByCellId.size || !cell) return false;
+            const draftIds = entry.spacingDraftByCellId;
+            for (let cur = cell; cur; cur = model.getParent ? model.getParent(cur) : null) {
+                if (cur.id && draftIds.has(String(cur.id))) return true;
+            }
+            return false;
+        }
+
+        function clearSpacingDraftsForChanges(changes) {
+            const list = Array.isArray(changes) ? changes : [];
+            if (!list.length) return;
+            let cleared = false;
+            registry.forEach(entry => {
+                if (!entry.spacingDraftByCellId || !entry.spacingDraftByCellId.size) return;
+                if (!list.some(change => spacingDraftTouchesCell(entry, changeCellForSpacingDraft(change)))) return;
+                clearStoredSpacingDrafts(entry);
+                cleared = true;
+            });
+            if (cleared) clearSpacingPreview(); // CHANGE: affected undo/redo/model edits restore real groups immediately.
+        }
+
         function setMode(mode) {
             clearSpacingPreview();
             activeMode = mode === MODE_SPACING ? MODE_SPACING : (mode === MODE_SCHEDULE ? MODE_SCHEDULE : MODE_CARDS);
+            if (activeMode !== MODE_SPACING) registry.forEach(entry => clearStoredSpacingDrafts(entry)); // CHANGE: leaving Spacing discards uncommitted layout drafts.
             refresh();
         }
 
@@ -3296,6 +3486,7 @@ Draw.loadPlugin(function (ui) {
             showScheduleOnly,
             clear,
             refresh,
+            clearSpacingDraftsForChanges,
             setMode
         };
     })();
@@ -3909,6 +4100,329 @@ Draw.loadPlugin(function (ui) {
     });
 
 
+    // -------------------- Paste hook: cursor-anchored parenting --------------------
+    const PASTE_PARENT_POINTER_TOLERANCE_PX = 8; // NEW: repeated keyboard paste keeps the original parent through minor pointer jitter.
+    let lastPasteParentPointerPoint = null; // NEW
+    let pasteParentAnchor = null; // NEW
+
+    function finitePasteParentNumber(value, fallback) { // NEW
+        const n = Number(value); // NEW
+        return Number.isFinite(n) ? n : fallback; // NEW
+    } // NEW
+
+    function eventClientPoint(evt) { // NEW
+        if (!evt) return null; // NEW
+        const x = finitePasteParentNumber(evt.clientX, NaN); // NEW
+        const y = finitePasteParentNumber(evt.clientY, NaN); // NEW
+        return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null; // NEW
+    } // NEW
+
+    function graphPointFromClientPoint(point) { // NEW
+        if (!point || !graph.container || !mxUtils || !mxUtils.convertPoint) return null; // NEW
+        const converted = mxUtils.convertPoint(graph.container, point.x, point.y); // NEW
+        return converted ? { x: finitePasteParentNumber(converted.x, 0), y: finitePasteParentNumber(converted.y, 0) } : null; // NEW
+    } // NEW
+
+    function rememberPasteParentPointerPoint(evt) { // NEW
+        const client = eventClientPoint(evt); // NEW
+        const graphPt = graphPointFromClientPoint(client); // NEW
+        if (client && graphPt) lastPasteParentPointerPoint = { x: graphPt.x, y: graphPt.y, clientX: client.x, clientY: client.y }; // NEW
+    } // NEW
+
+    function addPasteParentPointerListener(name) { // NEW
+        if (!graph.container) return; // NEW
+        if (mxEvent && typeof mxEvent.addListener === 'function') mxEvent.addListener(graph.container, name, rememberPasteParentPointerPoint); // NEW
+        else if (graph.container.addEventListener) graph.container.addEventListener(name, rememberPasteParentPointerPoint, true); // NEW
+    } // NEW
+
+    addPasteParentPointerListener('pointermove'); // NEW
+    addPasteParentPointerListener('mousemove'); // NEW
+    addPasteParentPointerListener('mousedown'); // NEW
+
+    function pasteParentPointFromExplicitPoint(pt) { // NEW
+        if (!pt) return null; // NEW
+        const x = finitePasteParentNumber(pt.x, NaN); // NEW
+        const y = finitePasteParentNumber(pt.y, NaN); // NEW
+        return Number.isFinite(x) && Number.isFinite(y) ? { x, y, clientX: null, clientY: null, explicit: true } : null; // NEW
+    } // NEW
+
+    function pasteParentAnchorPoint(pt, evt) { // NEW
+        const explicit = pasteParentPointFromExplicitPoint(pt); // NEW
+        if (explicit) return explicit; // NEW
+        const client = eventClientPoint(evt); // NEW
+        const graphPt = graphPointFromClientPoint(client); // NEW
+        if (client && graphPt) return { x: graphPt.x, y: graphPt.y, clientX: client.x, clientY: client.y, explicit: false }; // NEW
+        return lastPasteParentPointerPoint ? Object.assign({ explicit: false }, lastPasteParentPointerPoint) : null; // NEW
+    } // NEW
+
+    function pasteParentPointsNear(a, b) { // NEW
+        if (!a || !b) return false; // NEW
+        const useClient = Number.isFinite(Number(a.clientX)) && Number.isFinite(Number(a.clientY)) && Number.isFinite(Number(b.clientX)) && Number.isFinite(Number(b.clientY)); // NEW
+        const ax = useClient ? a.clientX : a.x; // NEW
+        const ay = useClient ? a.clientY : a.y; // NEW
+        const bx = useClient ? b.clientX : b.x; // NEW
+        const by = useClient ? b.clientY : b.y; // NEW
+        return Math.max(Math.abs(ax - bx), Math.abs(ay - by)) <= PASTE_PARENT_POINTER_TOLERANCE_PX; // NEW
+    } // NEW
+
+    function isDiagramCellPasteXml(ctx, xml, compat) { // NEW
+        if (compat) return true; // NEW
+        return !!(ctx && typeof ctx.isCompatibleString === 'function' && ctx.isCompatibleString(xml)); // NEW
+    } // NEW
+
+    function cellAtPasteParentPoint(point) { // NEW
+        if (!point || !graph.getCellAt) return null; // NEW
+        try { return graph.getCellAt(point.x, point.y) || null; } catch (_) { return null; } // NEW
+    } // NEW
+
+    function modelContainsPasteParentCell(cell) { // NEW
+        const m = graph.getModel(); // NEW
+        if (!cell || !m) return false; // NEW
+        if (typeof m.contains === 'function') return !!m.contains(cell); // NEW
+        const root = m.getRoot && m.getRoot(); // NEW
+        let cur = cell; // NEW
+        while (cur) { // NEW
+            if (cur === root) return true; // NEW
+            cur = m.getParent ? m.getParent(cur) : cur.parent; // NEW
+        } // NEW
+        return !root; // NEW
+    } // NEW
+
+    function pasteParentCellId(cell) { // NEW
+        return cell && (cell.id || (cell.getId && cell.getId())) || null; // NEW
+    } // NEW
+
+    function pasteParentSetContainsAncestor(cell, cellSet) { // NEW
+        const m = graph.getModel(); // NEW
+        let cur = cell ? (m.getParent ? m.getParent(cell) : cell.parent) : null; // NEW
+        while (cur) { // NEW
+            if (cellSet.has(cur)) return true; // NEW
+            cur = m.getParent ? m.getParent(cur) : cur.parent; // NEW
+        } // NEW
+        return false; // NEW
+    } // NEW
+
+    function pasteParentTerminal(edge, source) { // NEW
+        const m = graph.getModel(); // NEW
+        if (m && typeof m.getTerminal === 'function') return m.getTerminal(edge, source); // NEW
+        return edge ? (source ? edge.source : edge.target) : null; // NEW
+    } // NEW
+
+    function pasteParentEndpointInBatch(endpoint, batchSet) { // NEW
+        if (!endpoint) return false; // NEW
+        if (batchSet.has(endpoint)) return true; // NEW
+        const m = graph.getModel(); // NEW
+        let cur = m && m.getParent ? m.getParent(endpoint) : endpoint.parent; // NEW
+        while (cur) { // NEW
+            if (batchSet.has(cur)) return true; // NEW
+            cur = m && m.getParent ? m.getParent(cur) : cur.parent; // NEW
+        } // NEW
+        return false; // NEW
+    } // NEW
+
+    function topLevelPasteParentRoots(cells) { // NEW
+        const m = graph.getModel(); // NEW
+        const list = Array.isArray(cells) ? cells.filter(Boolean) : []; // NEW
+        const batchSet = new Set(list); // NEW
+        const out = []; // NEW
+        const seen = new Set(); // NEW
+        for (const cell of list) { // NEW
+            if (!cell || pasteParentSetContainsAncestor(cell, batchSet)) continue; // NEW
+            const id = pasteParentCellId(cell) || String(out.length); // NEW
+            if (seen.has(id)) continue; // NEW
+            if (m && m.isEdge && m.isEdge(cell)) { // NEW
+                const source = pasteParentTerminal(cell, true); // NEW
+                const target = pasteParentTerminal(cell, false); // NEW
+                if (!pasteParentEndpointInBatch(source, batchSet) || !pasteParentEndpointInBatch(target, batchSet)) continue; // NEW
+            } // NEW
+            seen.add(id); // NEW
+            out.push(cell); // NEW
+        } // NEW
+        return out; // NEW
+    } // NEW
+
+    function isPasteParentCandidateValid(candidate, roots, evt) { // NEW
+        const m = graph.getModel(); // NEW
+        if (!candidate || !roots || !roots.length || !modelContainsPasteParentCell(candidate)) return false; // NEW
+        if (m && typeof m.isVertex === 'function' && !m.isVertex(candidate)) return false; // NEW
+        if (graph.isCellVisible && !graph.isCellVisible(candidate)) return false; // NEW
+        if (graph.isCellLocked && graph.isCellLocked(candidate)) return false; // NEW
+        if (roots.indexOf(candidate) >= 0) return false; // NEW
+        const rootSet = new Set(roots); // NEW
+        if (pasteParentSetContainsAncestor(candidate, rootSet)) return false; // NEW
+        if (graph.isValidDropTarget) { // NEW
+            try { if (!graph.isValidDropTarget(candidate, roots, evt)) return false; } catch (_) { return false; } // NEW
+        } // NEW
+        return true; // NEW
+    } // NEW
+
+    function resolvePasteParentFromHit(hit, roots, evt) { // NEW
+        const m = graph.getModel(); // NEW
+        let cur = hit; // NEW
+        while (cur) { // NEW
+            if (isPasteParentCandidateValid(cur, roots, evt)) return cur; // NEW
+            cur = m && m.getParent ? m.getParent(cur) : cur.parent; // NEW
+        } // NEW
+        return null; // NEW
+    } // NEW
+
+    function getPasteParentStyle(cell) { // NEW
+        return (cell && typeof cell.getStyle === 'function' ? cell.getStyle() : cell && cell.style) || ''; // NEW
+    } // NEW
+
+    function isPasteParentSwimlane(cell) { // NEW
+        if (graph.isSwimlane) { try { if (graph.isSwimlane(cell)) return true; } catch (_) { } } // NEW
+        return /(?:^|;)swimlane(?:;|$)|(?:^|;)shape=swimlane(?:;|$)/.test(String(getPasteParentStyle(cell))); // NEW
+    } // NEW
+
+    function pasteParentStartSize(cell) { // NEW
+        if (graph.getStartSize) { // NEW
+            try { return graph.getStartSize(cell) || { width: 0, height: 0 }; } catch (_) { } // NEW
+        } // NEW
+        const match = String(getPasteParentStyle(cell)).match(/(?:^|;)startSize=(\d+(?:\.\d+)?)(?=;|$)/); // NEW
+        return { width: 0, height: match ? finitePasteParentNumber(match[1], 0) : 0 }; // NEW
+    } // NEW
+
+    function pasteParentGeometry(cell) { // NEW
+        const m = graph.getModel(); // NEW
+        if (m && typeof m.getGeometry === 'function') return m.getGeometry(cell); // NEW
+        if (graph.getCellGeometry) return graph.getCellGeometry(cell); // NEW
+        return cell && (cell.geometry || (cell.getGeometry && cell.getGeometry())) || null; // NEW
+    } // NEW
+
+    function pasteParentPageBounds(cell) { // NEW
+        const m = graph.getModel(); // NEW
+        const geo = pasteParentGeometry(cell); // NEW
+        if (!geo || geo.relative) return null; // NEW
+        let x = finitePasteParentNumber(geo.x, 0); // NEW
+        let y = finitePasteParentNumber(geo.y, 0); // NEW
+        const w = finitePasteParentNumber(geo.width, 0); // NEW
+        const h = finitePasteParentNumber(geo.height, 0); // NEW
+        let parent = m && m.getParent ? m.getParent(cell) : cell && cell.parent; // NEW
+        while (parent) { // NEW
+            const parentGeo = pasteParentGeometry(parent); // NEW
+            if (parentGeo && !parentGeo.relative) { // NEW
+                x += finitePasteParentNumber(parentGeo.x, 0); // NEW
+                y += finitePasteParentNumber(parentGeo.y, 0); // NEW
+                if (isPasteParentSwimlane(parent)) y += finitePasteParentNumber(pasteParentStartSize(parent).height, 0); // NEW
+            } // NEW
+            parent = m && m.getParent ? m.getParent(parent) : parent.parent; // NEW
+        } // NEW
+        return { x, y, w, h }; // NEW
+    } // NEW
+
+    function pasteParentChildOrigin(parent) { // NEW
+        if (!parent) return { x: 0, y: 0 }; // NEW
+        const bounds = pasteParentPageBounds(parent); // NEW
+        if (!bounds) return { x: 0, y: 0 }; // NEW
+        return { x: bounds.x, y: bounds.y + (isPasteParentSwimlane(parent) ? finitePasteParentNumber(pasteParentStartSize(parent).height, 0) : 0) }; // NEW
+    } // NEW
+
+    function clonePasteParentGeometry(geo) { // NEW
+        return geo && typeof geo.clone === 'function' ? geo.clone() : Object.assign({}, geo); // NEW
+    } // NEW
+
+    function movePasteRootToParent(root, parent) { // NEW
+        const m = graph.getModel(); // NEW
+        const index = m.getChildCount ? m.getChildCount(parent) : undefined; // NEW
+        if (m.add) m.add(parent, root, index); // NEW
+        else if (graph.addCell) graph.addCell(root, parent); // NEW
+    } // NEW
+
+    function setPasteRootGeometry(root, geometry) { // NEW
+        const m = graph.getModel(); // NEW
+        if (m.setGeometry) m.setGeometry(root, geometry); // NEW
+        else if (root) root.geometry = geometry; // NEW
+    } // NEW
+
+    function reparentPasteRoots(parent, roots) { // NEW
+        const m = graph.getModel(); // NEW
+        for (const root of roots || []) { // NEW
+            if (!root || (m.getParent && m.getParent(root) === parent)) continue; // NEW
+            const geo = pasteParentGeometry(root); // NEW
+            const bounds = geo && !(m.isEdge && m.isEdge(root)) ? pasteParentPageBounds(root) : null; // NEW
+            const nextGeo = bounds ? clonePasteParentGeometry(geo) : null; // NEW
+            const origin = bounds ? pasteParentChildOrigin(parent) : null; // NEW
+            movePasteRootToParent(root, parent); // NEW
+            if (nextGeo && origin) { // NEW
+                nextGeo.x = bounds.x - origin.x; // NEW
+                nextGeo.y = bounds.y - origin.y; // NEW
+                setPasteRootGeometry(root, nextGeo); // NEW
+            } // NEW
+        } // NEW
+        if (graph.refresh) graph.refresh(parent); // NEW
+    } // NEW
+
+    function beginCursorAnchoredPaste(pt, evt) { // NEW
+        const point = pasteParentAnchorPoint(pt, evt); // NEW
+        if (!point) return null; // NEW
+        const canReuse = pasteParentAnchor && !point.explicit && pasteParentPointsNear(point, pasteParentAnchor.point); // NEW
+        return { point, cachedParent: canReuse ? pasteParentAnchor.parent : null, hit: canReuse ? null : cellAtPasteParentPoint(point) }; // NEW
+    } // NEW
+
+    function completeCursorAnchoredPaste(op, cells, evt) { // NEW
+        const roots = topLevelPasteParentRoots(cells); // NEW
+        if (!op || !roots.length) return null; // NEW
+        let parent = isPasteParentCandidateValid(op.cachedParent, roots, evt) ? op.cachedParent : null; // NEW
+        if (!parent) parent = resolvePasteParentFromHit(op.cachedParent ? cellAtPasteParentPoint(op.point) : op.hit, roots, evt); // NEW
+        if (!parent) { pasteParentAnchor = null; return null; } // NEW
+        reparentPasteRoots(parent, roots); // NEW
+        pasteParentAnchor = { point: op.point, parent }; // NEW
+        return parent; // NEW
+    } // NEW
+
+    function installCursorAnchoredPasteParenting() { // NEW
+        if (graph.__trellisCursorAnchoredPasteParentingInstalled) return; // NEW
+        graph.__trellisCursorAnchoredPasteParentingInstalled = true; // NEW
+
+        const originalPasteXml = ui.pasteXml; // NEW
+        if (typeof originalPasteXml === 'function') { // NEW
+            ui.pasteXml = function (xml, pasteAsLabel, compat, evt, html, pt) { // NEW
+                if (!isDiagramCellPasteXml(this, xml, compat)) return originalPasteXml.apply(this, arguments); // NEW
+                const op = beginCursorAnchoredPaste(pt, evt); // NEW
+                const m = graph.getModel(); // NEW
+                m.beginUpdate(); // NEW
+                try { // NEW
+                    const cells = originalPasteXml.apply(this, arguments); // NEW
+                    completeCursorAnchoredPaste(op, cells, evt); // NEW
+                    return cells; // NEW
+                } finally { // NEW
+                    m.endUpdate(); // NEW
+                } // NEW
+            }; // NEW
+        } // NEW
+
+        const originalPasteFromLocalClipboard = ui.pasteFromLocalClipboard; // NEW
+        if (typeof originalPasteFromLocalClipboard === 'function' && typeof mxClipboard !== 'undefined' && mxClipboard && typeof mxClipboard.paste === 'function') { // NEW
+            ui.pasteFromLocalClipboard = function (pt) { // NEW
+                const m = graph.getModel(); // NEW
+                const op = beginCursorAnchoredPaste(pt, null); // NEW
+                m.beginUpdate(); // NEW
+                try { // NEW
+                    const cells = mxClipboard.paste(graph); // NEW
+                    if (graph.moveCellsTo) graph.moveCellsTo(cells, pt); // NEW
+                    completeCursorAnchoredPaste(op, cells, null); // NEW
+                    return cells; // NEW
+                } finally { // NEW
+                    m.endUpdate(); // NEW
+                } // NEW
+            }; // NEW
+        } // NEW
+
+        graph.__trellisPasteParenting = { // NEW
+            rememberPointer: rememberPasteParentPointerPoint, // NEW
+            beginPaste: beginCursorAnchoredPaste, // NEW
+            completePaste: completeCursorAnchoredPaste, // NEW
+            roots: topLevelPasteParentRoots, // NEW
+            resolve: resolvePasteParentFromHit, // NEW
+            clearAnchor: function () { pasteParentAnchor = null; }, // NEW
+            getAnchor: function () { return pasteParentAnchor; } // NEW
+        }; // NEW
+    } // NEW
+
+    installCursorAnchoredPasteParenting(); // NEW
+
+
     // -------------------- Paste/Add hook: auto-return links on pasted vertices --------------------  
     graph.addListener(mxEvent.CELLS_ADDED, function (sender, evt) {
         const cells = asVertexArray(evt.getProperty('cells'));
@@ -4252,8 +4766,10 @@ Draw.loadPlugin(function (ui) {
         view.addListener(mxEvent.SCALE_AND_TRANSLATE, refreshViewOnlyLinkVisuals);
     }
 
-    graph.getModel().addListener(mxEvent.CHANGE, function () {
+    graph.getModel().addListener(mxEvent.CHANGE, function (_sender, evt) {
         // Any geometry change (move/resize) will trigger recompute                
+        const edit = evt && evt.getProperty && evt.getProperty('edit');
+        taskScheduleOverlay.clearSpacingDraftsForChanges(edit && edit.changes); // CHANGE: committed edits invalidate affected spacing drafts.
         linkOverlays.refreshAll();
         taskScheduleOverlay.refresh();
     });

@@ -768,8 +768,9 @@ Draw.loadPlugin(function (ui) {
     }
 
     function shouldCollapseLOD(graph, groupCell, spacingXpx, spacingYpx) {
-        const { count } = computeGridStatsXY(groupCell, spacingXpx, spacingYpx);
-        return count > LOD_TILE_THRESHOLD;
+        const { bandPx } = groupLabelMetrics(groupCell);
+        const stats = classifyPlantingSlots(groupCell, spacingXpx, spacingYpx, bandPx, readDisabledSet(groupCell));
+        return stats.actual > LOD_TILE_THRESHOLD; // CHANGE: outside omitted slots do not force summary LOD.
     }
 
     function isCollapsedLOD(groupCell) {
@@ -860,17 +861,33 @@ Draw.loadPlugin(function (ui) {
         };
     }
 
-    function clampSlotCenterInsidePlantingFrame(groupCell, center, iconDiamPx, bandPx) {
+    function plantingContentBoundsLocal(groupCell, bandPx) { // NEW: slot omission uses the same non-label content area everywhere.
         const g = groupCell && groupCell.getGeometry ? groupCell.getGeometry() : null;
-        if (!g || !center) return center;
-        const radius = Math.max(0, Number(iconDiamPx) || 0) / 2;
-        const minX = GROUP_PADDING_PX + radius;
-        const minY = GROUP_PADDING_PX + (bandPx || GROUP_LABEL_BAND_PX) + radius;
-        const maxX = Math.max(minX, Number(g.width || 0) - GROUP_PADDING_PX - radius);
-        const maxY = Math.max(minY, Number(g.height || 0) - GROUP_PADDING_PX - radius);
+        const width = Math.max(0, Number(g && g.width) || 0);
+        const height = Math.max(0, Number(g && g.height) || 0);
+        const minX = GROUP_PADDING_PX;
+        const minY = GROUP_PADDING_PX + (bandPx || GROUP_LABEL_BAND_PX);
+        const maxX = Math.max(minX, width - GROUP_PADDING_PX);
+        const maxY = Math.max(minY, height - GROUP_PADDING_PX);
+        return { minX, minY, maxX, maxY };
+    }
+
+    function isPointInPlantingContentArea(groupCell, center, bandPx) { // NEW: center-in-bounds replaces clamp-to-edge.
+        if (!center) return false;
+        const bounds = plantingContentBoundsLocal(groupCell, bandPx);
+        const x = Number(center.x);
+        const y = Number(center.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+        const eps = 0.01;
+        return x >= bounds.minX - eps && x <= bounds.maxX + eps && y >= bounds.minY - eps && y <= bounds.maxY + eps;
+    }
+
+    function shiftedSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx) { // NEW: offset visibly moves the grid instead of being swallowed by clamping.
+        const logical = interplantSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx);
+        const offset = layoutGridOffsetPx(groupCell);
         return {
-            x: clamp(Number(center.x) || 0, minX, maxX),
-            y: clamp(Number(center.y) || 0, minY, maxY)
+            x: logical.x + offset.x,
+            y: logical.y + offset.y
         };
     }
 
@@ -903,16 +920,12 @@ Draw.loadPlugin(function (ui) {
     }
 
     function layoutSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx, iconDiamPx) {
-        const logical = interplantSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx);
-        const offset = layoutGridOffsetPx(groupCell);
-        const shifted = {
-            x: logical.x + offset.x,
-            y: logical.y + offset.y
-        };
-        return clampSlotCenterInsidePlantingFrame(groupCell, shifted, iconDiamPx, bandPx);
+        const shifted = shiftedSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx);
+        return isPointInPlantingContentArea(groupCell, shifted, bandPx) ? shifted : null; // CHANGE: outside slot centers are omitted, not clamped.
     }
 
     function visualCenterFromLogicalCenter(groupCell, logicalCenter, rotationDeg) {
+        if (!logicalCenter) return null;
         return rotatePointAround(logicalCenter, groupCenterLocal(groupCell), rotationDeg);
     }
 
@@ -927,6 +940,7 @@ Draw.loadPlugin(function (ui) {
 
     function tileGeometryAtSlot(groupCell, r, c, spacingXpx, spacingYpx, iconDiamPx, bandPx) {
         const center = visualSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx, iconDiamPx);
+        if (!center) return null; // CHANGE: callers skip generated slots outside the content area.
         return geometryFromVisualCenter(center, iconDiamPx, iconDiamPx);
     }
 
@@ -1068,8 +1082,9 @@ Draw.loadPlugin(function (ui) {
 
 
             const disabledSet = readDisabledSet(groupCell);
-            applyCounts(model, groupCell, count, disabledSet);
-            const actual = getNumberAttr(groupCell, ATTR_PLANT_COUNT_ACT, count);
+            const slotStats = classifyPlantingSlots(groupCell, spacingXpx, spacingYpx, bandPx, disabledSet);
+            applyCounts(model, groupCell, slotStats, disabledSet); // CHANGE: LOD counts omit offset-shifted slots outside the planting content area.
+            const actual = getNumberAttr(groupCell, ATTR_PLANT_COUNT_ACT, slotStats.actual);
             const y = updateGroupYield(model, groupCell, { abbr, countOverride: actual });
 
             // Pull unit and potential targets from attrs
@@ -1200,8 +1215,9 @@ Draw.loadPlugin(function (ui) {
 
 
     function shouldExpandLOD(graph, groupCell, spacingXpx, spacingYpx) {
-        const { count } = computeGridStatsXY(groupCell, spacingXpx, spacingYpx);
-        return count <= LOD_TILE_THRESHOLD;
+        const { bandPx } = groupLabelMetrics(groupCell);
+        const stats = classifyPlantingSlots(groupCell, spacingXpx, spacingYpx, bandPx, readDisabledSet(groupCell));
+        return stats.actual <= LOD_TILE_THRESHOLD; // CHANGE: LOD follows visible in-bounds circles.
     }
 
     function expandTiles(graph, groupCell, abbr, spacingXpx, spacingYpx, iconDiamPx, opts = {}) {
@@ -1220,10 +1236,11 @@ Draw.loadPlugin(function (ui) {
 
             pruneDisabledToGrid(model, groupCell, rows, cols);
             const disabledSet2 = readDisabledSet(groupCell);
-            const { actual } = applyCounts(model, groupCell, count, disabledSet2);
+            const slotStats = classifyPlantingSlots(groupCell, spacingXpx, spacingYpx, bandPx, disabledSet2);
+            const { actual } = applyCounts(model, groupCell, slotStats, disabledSet2); // CHANGE: expanded rebuild count matches omitted outside slots.
             updateGroupYield(model, groupCell, { abbr, countOverride: actual });
 
-            if (count > MAX_TILES) {
+            if (slotStats.actual > MAX_TILES) {
                 collapseToSummary(graph, groupCell, abbr, spacingXpx, spacingYpx, { layoutSnapshot: snapObj, useLiveSnapshot: false });
                 return;
             }
@@ -1231,7 +1248,8 @@ Draw.loadPlugin(function (ui) {
             const cells = [];
             for (let r = 0; r < rows; r++) {
                 for (let c = 0; c < cols; c++) {
-                    if (disabledSet2.has(`${r},${c}`)) continue;
+                    const key = `${r},${c}`;
+                    if (disabledSet2.has(key) || !slotStats.inBoundsKeys.has(key)) continue; // CHANGE: outside generated centers are removed instead of clamped.
 
                     const snap = snapMap.get(`${r},${c}`);
                     let geo;
@@ -1247,9 +1265,12 @@ Draw.loadPlugin(function (ui) {
                         const h = iconDiamPx;
 
                         if (okXY) {
-                            geo = visualGeometryFromLogicalGeometry(groupCell, { x: sx, y: sy, w, h });
-                            autoAttr = String(snap.auto || "0");
-                            dirtyAttr = String(snap.dirty || "1");
+                            const snapCenter = { x: sx + w / 2, y: sy + h / 2 };
+                            if (isPointInPlantingContentArea(groupCell, snapCenter, bandPx)) { // CHANGE: outside manual snapshot centers are removed during retile.
+                                geo = visualGeometryFromLogicalGeometry(groupCell, { x: sx, y: sy, w, h });
+                                autoAttr = String(snap.auto || "0");
+                                dirtyAttr = String(snap.dirty || "1");
+                            }
                         }
                     }
 
@@ -1257,6 +1278,7 @@ Draw.loadPlugin(function (ui) {
                     if (!geo) {
                         geo = tileGeometryAtSlot(groupCell, r, c, spacingXpx, spacingYpx, iconDiamPx, bandPx);
                     }
+                    if (!geo) continue; // CHANGE: skip omitted slots defensively.
 
                     const vVal = createXmlValue("PlantTile", {
                         plant_tiler: "1",
@@ -1332,12 +1354,11 @@ Draw.loadPlugin(function (ui) {
         const fontPx = tileFontPx(iconDiamPx);
         const nextStyle = plantCircleStyle(fontPx || tileFontPx(iconDiamPx));
         const { rows, cols, count } = computeGridStatsXY(groupCell, spacingXpx, spacingYpx);
-        if (count > MAX_TILES) return { changed: false, fallback: true, reason: "max-tiles" };
-
         const kids = graph.getChildVertices(groupCell) || [];
         const slotMap = new Map();
         const occupiedDisabledAutoTiles = [];
         const disabledSet = readDisabledSet(groupCell);
+        if (classifyPlantingSlots(groupCell, spacingXpx, spacingYpx, bandPx, disabledSet).actual > MAX_TILES) return { changed: false, fallback: true, reason: "max-tiles" }; // CHANGE: raw omitted slots do not force fallback.
         const snapObj = resolveLayoutSnapshot(graph, groupCell, opts);
         const snapMap = snapshotTileMap(snapObj);
 
@@ -1377,16 +1398,21 @@ Draw.loadPlugin(function (ui) {
         try {
             pruneDisabledToGrid(model, groupCell, rows, cols);
             const disabledSet2 = readDisabledSet(groupCell);
-            const { actual } = applyCounts(model, groupCell, count, disabledSet2);
+            const slotStats = classifyPlantingSlots(groupCell, spacingXpx, spacingYpx, bandPx, disabledSet2);
+            const { actual } = applyCounts(model, groupCell, slotStats, disabledSet2); // CHANGE: in-place retile count uses in-bounds slots only.
             updateGroupYield(model, groupCell, { abbr, countOverride: actual });
 
             for (const [key, tile] of slotMap.entries()) {
                 const parts = key.split(",");
                 const r = Number(parts[0]);
                 const c = Number(parts[1]);
-                if (r >= rows || c >= cols || disabledSet2.has(key)) {
-                    if (isAutoTile(tile) && !isDirty(tile)) toRemove.push(tile);
-                    else if (isChildOutOfGroupBounds(groupCell, tile)) toRemove.push(tile);
+                if (r >= rows || c >= cols || disabledSet2.has(key) || !slotStats.inBoundsKeys.has(key)) {
+                    toRemove.push(tile); // CHANGE: spacing retile removes any tile whose slot center is outside the content area.
+                    continue;
+                }
+                if (!(isAutoTile(tile) && !isDirty(tile)) && !isPointInPlantingContentArea(groupCell, childCenterInUnrotatedGroupSpace(groupCell, tile), bandPx)) {
+                    toRemove.push(tile); // CHANGE: dirty/manual circles outside the content area are removed during retile.
+                    slotMap.delete(key); // CHANGE: valid generated slots can be recreated after removing outside manual geometry.
                     continue;
                 }
 
@@ -1403,6 +1429,11 @@ Draw.loadPlugin(function (ui) {
                     dirtyAttr = String(snap.dirty || "1");
                 } else {
                     geo = tileGeometryAtSlot(groupCell, r, c, spacingXpx, spacingYpx, iconDiamPx, bandPx);
+                }
+                if (!geo) {
+                    toRemove.push(tile);
+                    slotMap.delete(key);
+                    continue;
                 }
 
                 changed = setGeometryIfChanged(model, tile, geo) || changed;
@@ -1426,7 +1457,7 @@ Draw.loadPlugin(function (ui) {
             for (let r = 0; r < rows; r++) {
                 for (let c = 0; c < cols; c++) {
                     const key = `${r},${c}`;
-                    if (disabledSet2.has(key) || slotMap.has(key)) continue;
+                    if (disabledSet2.has(key) || slotMap.has(key) || !slotStats.inBoundsKeys.has(key)) continue; // CHANGE: omitted slots are not recreated.
                     const v = addTileAtSlot(graph, groupCell, abbr, r, c, spacingXpx, spacingYpx, iconDiamPx, disabledSet2, bandPx, fontPx);
                     if (v) changed = true;
                 }
@@ -3031,7 +3062,9 @@ Draw.loadPlugin(function (ui) {
             const { rows, cols, count } = computeGridStatsXY(groupCell, sx, sy);
             pruneDisabledToGrid(model, groupCell, rows, cols);
             const disabledSet2 = readDisabledSet(groupCell);
-            const { actual } = applyCounts(model, groupCell, count, disabledSet2);
+            const { bandPx } = groupLabelMetrics(groupCell);
+            const slotStats = classifyPlantingSlots(groupCell, sx, sy, bandPx, disabledSet2);
+            const { actual } = applyCounts(model, groupCell, slotStats, disabledSet2); // CHANGE: bed cleanup count respects offset-omitted slots.
             updateGroupYield(model, groupCell, { abbr, countOverride: actual });
         } finally {
             model.endUpdate();
@@ -4431,7 +4464,9 @@ Draw.loadPlugin(function (ui) {
             const { rows, cols, count } = computeGridStatsXY(groupCell, spacingXpx, spacingYpx);
             pruneDisabledToGrid(model, groupCell, rows, cols);
             const disabledSet2 = readDisabledSet(groupCell);
-            const { actual } = applyCounts(model, groupCell, count, disabledSet2);
+            const { bandPx } = groupLabelMetrics(groupCell);
+            const slotStats = classifyPlantingSlots(groupCell, spacingXpx, spacingYpx, bandPx, disabledSet2);
+            const { actual } = applyCounts(model, groupCell, slotStats, disabledSet2); // CHANGE: disabling plants preserves offset-omitted count semantics.
             updateGroupYield(model, groupCell, { abbr, countOverride: actual });
         } finally {
             model.endUpdate();
@@ -5145,6 +5180,123 @@ Draw.loadPlugin(function (ui) {
         return out;
     }
 
+    function previewDraftNumber(value, fallback) { // NEW: shared draft preview normalization without mutating cells.
+        const n = Number(value);
+        return Number.isFinite(n) ? n : fallback;
+    }
+
+    function previewDraftAttrs(groupCell, draft) { // NEW: overlays can render an uncommitted tiler-faithful copy.
+        const attrs = {};
+        if (draft && draft.spacingXCm != null) attrs.spacing_x_cm = String(draft.spacingXCm);
+        if (draft && draft.spacingYCm != null) attrs.spacing_y_cm = String(draft.spacingYCm);
+        if (draft && draft.spacingXCm != null && draft.spacingYCm != null && Number(draft.spacingXCm) === Number(draft.spacingYCm)) attrs.spacing_cm = String(draft.spacingXCm);
+        if (draft && draft.vegDiameterCm != null) attrs.veg_diameter_cm = String(draft.vegDiameterCm);
+        if (draft && draft.offsetXCm != null) attrs.layout_offset_x_cm = String(draft.offsetXCm);
+        if (draft && draft.offsetYCm != null) attrs.layout_offset_y_cm = String(draft.offsetYCm);
+        if (draft && draft.label != null) attrs.label = String(draft.label);
+        if (draft && draft.abbr != null) attrs.plant_abbr = String(draft.abbr);
+        return attrs;
+    }
+
+    function previewStyleRotationDeg(activeGraph, groupCell) { // NEW: read rotation for data-only previews.
+        try {
+            const graphForStyle = activeGraph || graph;
+            const style = graphForStyle && typeof graphForStyle.getCellStyle === "function" ? graphForStyle.getCellStyle(groupCell) : null;
+            const raw = style && (style[mxConstants.STYLE_ROTATION] != null ? style[mxConstants.STYLE_ROTATION] : style.rotation);
+            const n = Number(raw);
+            if (Number.isFinite(n)) return n;
+        } catch (_) { }
+        const match = String(getStyleSafe(groupCell) || "").match(/(?:^|;)rotation=([^;]+)/);
+        const fallback = match ? Number(match[1]) : 0;
+        return Number.isFinite(fallback) ? fallback : 0;
+    }
+
+    function makeDraftPreviewCell(groupCell, rect, attrs) { // NEW: tiny cell facade lets preview reuse tiler geometry helpers.
+        const width = Math.max(0, Number(rect && rect.width) || 0);
+        const height = Math.max(0, Number(rect && rect.height) || 0);
+        const geometry = { x: 0, y: 0, width, height };
+        return {
+            id: groupCell && groupCell.id || "",
+            style: getStyleSafe(groupCell),
+            getStyle: function () { return getStyleSafe(groupCell); },
+            getGeometry: function () { return geometry; },
+            getAttribute: function (key) {
+                if (Object.prototype.hasOwnProperty.call(attrs, key)) return attrs[key];
+                return groupCell && typeof groupCell.getAttribute === "function" ? groupCell.getAttribute(key) : "";
+            }
+        };
+    }
+
+    function buildDraftTilerGroupPreview(activeGraph, groupCell, draft = {}, opts = {}) { // NEW: read-only public preview API for DOM overlays.
+        if (!groupCell || !isTilerGroup(groupCell)) return null;
+        const sourceGeo = groupCell.getGeometry && groupCell.getGeometry();
+        const rect = Object.assign({
+            x: Number(sourceGeo && sourceGeo.x) || 0,
+            y: Number(sourceGeo && sourceGeo.y) || 0,
+            width: Number(sourceGeo && sourceGeo.width) || 0,
+            height: Number(sourceGeo && sourceGeo.height) || 0
+        }, draft.rect || opts.rect || {});
+        const attrs = previewDraftAttrs(groupCell, draft);
+        const previewCell = makeDraftPreviewCell(groupCell, rect, attrs);
+        const spacingXcm = previewDraftNumber(previewCell.getAttribute("spacing_x_cm") || previewCell.getAttribute("spacing_cm"), 30);
+        const spacingYcm = previewDraftNumber(previewCell.getAttribute("spacing_y_cm") || previewCell.getAttribute("spacing_cm"), 30);
+        const spacingXpx = toPx(spacingXcm > 0 ? spacingXcm : 30);
+        const spacingYpx = toPx(spacingYcm > 0 ? spacingYcm : 30);
+        const vegDiamCm = previewDraftNumber(previewCell.getAttribute("veg_diameter_cm"), 0);
+        let iconDiam = vegDiamCm > 0 ? toPx(vegDiamCm) : clamp(DEFAULT_ICON_DIAM_RATIO * Math.min(spacingXpx, spacingYpx), MIN_ICON_DIAM_PX, MAX_ICON_DIAM_PX);
+        iconDiam = Math.max(iconDiam, 6);
+        const { fontPx, bandPx } = groupLabelMetrics(previewCell);
+        const tileFont = tileFontPx(iconDiam);
+        const grid = computeGridStatsXY(previewCell, spacingXpx, spacingYpx);
+        const disabledSet = readDisabledSet(groupCell);
+        const slotStats = classifyPlantingSlots(previewCell, spacingXpx, spacingYpx, bandPx, disabledSet);
+        const maxCircles = Math.max(1, Math.trunc(previewDraftNumber(draft.maxCircles ?? opts.maxCircles, 1000)));
+        const rotationDeg = previewStyleRotationDeg(activeGraph, groupCell);
+        const label = getGroupDisplayName(previewCell, previewCell.getAttribute("plant_abbr") || "?");
+        const abbr = previewCell.getAttribute("plant_abbr") || "?";
+        const circles = [];
+        for (let r = 0; r < grid.rows; r++) {
+            for (let c = 0; c < grid.cols; c++) {
+                const slotKey = `${r},${c}`;
+                if (!slotStats.renderedKeys.has(slotKey)) continue; // CHANGE: draft preview omits outside and disabled slots.
+                if (circles.length >= maxCircles) continue;
+                const shifted = shiftedSlotCenterLocal(previewCell, r, c, spacingXpx, spacingYpx, bandPx);
+                const center = rotatePointAround(shifted, groupCenterLocal(previewCell), rotationDeg);
+                circles.push({ row: r, col: c, x: rect.x + center.x, y: rect.y + center.y, r: iconDiam / 2, label: abbr, fontPx: tileFont });
+            }
+        }
+        const committedCount = getNumberAttr(groupCell, ATTR_PLANT_COUNT_ACT, getNumberAttr(groupCell, ATTR_PLANT_COUNT, 0));
+        const unit = groupCell.getAttribute("yield_unit") || YIELD_UNIT;
+        const perYield = getNumberAttr(groupCell, "plant_yield", 0);
+        const committedExpectedYield = getNumberAttr(groupCell, ATTR_YIELD_EXPECTED, committedCount * perYield);
+        const draftExpectedYield = slotStats.actual * perYield;
+        return {
+            status: "ok",
+            rect,
+            label,
+            abbr,
+            groupLabelFontPx: fontPx,
+            groupLabelBandPx: bandPx,
+            circleFontPx: tileFont,
+            rotationDeg,
+            paddingPx: GROUP_PADDING_PX,
+            circles,
+            total: slotStats.actual,
+            rendered: circles.length,
+            capped: slotStats.actual > circles.length,
+            theoretical: slotStats.theoretical,
+            omitted: slotStats.omitted,
+            capacity: slotStats.capacity,
+            disabled: slotStats.disabled,
+            actual: slotStats.actual,
+            committedCount,
+            draftExpectedYield,
+            committedExpectedYield,
+            yieldUnit: unit,
+            lodCollapsed: false
+        };
+    }
+
     function listGardenBeds(moduleCell) {
         if (!moduleCell) return [];
         return (graph.getChildVertices(moduleCell) || []).filter(isGardenBed);
@@ -5260,6 +5412,42 @@ Draw.loadPlugin(function (ui) {
         return { rows, cols, count: rows * cols };
     }
 
+    function classifyPlantingSlots(groupCell, spacingXpx, spacingYpx, bandPx, disabledSet) { // NEW: one source of truth for offset omission and counts.
+        const grid = computeGridStatsXY(groupCell, spacingXpx, spacingYpx);
+        const disabled = disabledSet || new Set();
+        const inBoundsKeys = new Set();
+        const renderedKeys = new Set();
+        const omittedKeys = new Set();
+        let disabledInBounds = 0;
+        for (let r = 0; r < grid.rows; r++) {
+            for (let c = 0; c < grid.cols; c++) {
+                const key = `${r},${c}`;
+                const center = shiftedSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx);
+                const inBounds = isPointInPlantingContentArea(groupCell, center, bandPx);
+                if (inBounds) inBoundsKeys.add(key);
+                if (disabled.has(key)) {
+                    if (inBounds) disabledInBounds += 1;
+                    continue;
+                }
+                if (!inBounds) {
+                    omittedKeys.add(key);
+                    continue;
+                }
+                renderedKeys.add(key);
+            }
+        }
+        return Object.assign({}, grid, {
+            theoretical: grid.count,
+            omitted: omittedKeys.size,
+            capacity: inBoundsKeys.size,
+            disabled: disabledInBounds,
+            actual: renderedKeys.size,
+            inBoundsKeys,
+            renderedKeys,
+            omittedKeys
+        });
+    }
+
 
     function hasTileRC(cell) {
         if (!cell || !cell.getAttribute) return false;
@@ -5356,8 +5544,9 @@ Draw.loadPlugin(function (ui) {
         const iconDiam = Math.max(
             vegDiam > 0 ? toPx(vegDiam) : clamp(DEFAULT_ICON_DIAM_RATIO * Math.min(sx, sy), MIN_ICON_DIAM_PX, MAX_ICON_DIAM_PX), 6
         );
-        const { rows, cols, count } = computeGridStatsXY(groupCell, sx, sy);
-        if (count > MAX_TILES) {
+        const { bandPx } = groupLabelMetrics(groupCell);
+        const stats = classifyPlantingSlots(groupCell, sx, sy, bandPx, readDisabledSet(groupCell));
+        if (stats.actual > MAX_TILES) {
             collapseToSummary(graph, groupCell, abbr, sx, sy, opts);
             return;
         }
@@ -5790,6 +5979,7 @@ Draw.loadPlugin(function (ui) {
         if (disabledSet && disabledSet.has(`${r},${c}`)) return null;
 
         const geo = tileGeometryAtSlot(groupCell, r, c, spacingXpx, spacingYpx, iconDiamPx, bandPx);
+        if (!geo) return null; // CHANGE: offset-shifted slots outside the content area are omitted.
 
         const vVal = createXmlValue("PlantTile", {
             plant_tiler: "1",
@@ -5846,7 +6036,7 @@ Draw.loadPlugin(function (ui) {
                         const key = `${r},${c}`;
                         if (slotMap.has(key)) continue;
                         const v = addTileAtSlot(graph, groupCell, abbr, r, c, spacingXpx, spacingYpx, iconDiamPx, disabledSet, bandPx, fontPx);
-                        slotMap.set(key, v);
+                        if (v) slotMap.set(key, v); // CHANGE: omitted outside slots do not occupy the slot map.
                     }
                 }
             }
@@ -5858,8 +6048,8 @@ Draw.loadPlugin(function (ui) {
             for (const k of kids) {
                 if (!isPlantCircle(k)) continue;
 
-                // (A) Remove dirty circles that are outside group bounds                   
-                if (isDirty(k) && isChildOutOfGroupBounds(groupCell, k)) {
+                // (A) Remove dirty/manual circles that are outside the planting content area.
+                if (!(isAutoTile(k) && !isDirty(k)) && !isPointInPlantingContentArea(groupCell, childCenterInUnrotatedGroupSpace(groupCell, k), bandPx)) { // CHANGE
                     toRemove.push(k);
                     continue;
                 }
@@ -5871,7 +6061,9 @@ Draw.loadPlugin(function (ui) {
                 const c = Number(k.getAttribute("tile_c"));
                 if (!Number.isFinite(r) || !Number.isFinite(c)) continue;
 
-                if (r >= next.rows || c >= next.cols) toRemove.push(k);
+                const key = `${r},${c}`;
+                const center = shiftedSlotCenterLocal(groupCell, r, c, spacingXpx, spacingYpx, bandPx);
+                if (r >= next.rows || c >= next.cols || !isPointInPlantingContentArea(groupCell, center, bandPx)) toRemove.push(k); // CHANGE: auto tiles outside the content area are omitted.
             }
 
             if (toRemove.length) graph.removeCells(toRemove);
@@ -5972,14 +6164,18 @@ Draw.loadPlugin(function (ui) {
     }
 
     function applyCounts(model, groupCell, capacityCount, disabledSet) {
-        const disabledN = disabledSet ? disabledSet.size : 0;
-        const actual = Math.max(0, Number(capacityCount) - disabledN);
+        const fromStats = capacityCount && typeof capacityCount === "object";
+        const rawCapacity = fromStats ? Number(capacityCount.capacity || 0) : Number(capacityCount || 0);
+        const capacity = Number.isFinite(rawCapacity) ? Math.max(0, rawCapacity) : 0;
+        const disabledN = fromStats ? Number(capacityCount.disabled || 0) : (disabledSet ? disabledSet.size : 0);
+        const rawActual = fromStats ? Number(capacityCount.actual || 0) : Math.max(0, capacity - disabledN);
+        const actual = Number.isFinite(rawActual) ? Math.max(0, rawActual) : 0;
         setCellAttrsNoTxn(model, groupCell, {
-            [ATTR_PLANT_COUNT_CAP]: String(capacityCount),
+            [ATTR_PLANT_COUNT_CAP]: String(capacity),
             [ATTR_PLANT_COUNT_ACT]: String(actual),
             [ATTR_PLANT_COUNT]: String(actual),
         });
-        return { capacity: capacityCount, actual, disabledN };
+        return { capacity, actual, disabledN }; // CHANGE: capacity is now in-bounds before disabled slots.
     }
 
     function buildBedResizeSnapshot(bed) {
@@ -6173,19 +6369,18 @@ Draw.loadPlugin(function (ui) {
                     pruneDisabledToGrid(model, g, next.rows, next.cols);
 
                     // Update group count/yield to match new capacity
-                    {
-                        const disabledSet = readDisabledSet(g);
-                        const { actual } = applyCounts(model, g, next.count, disabledSet);
-                        updateGroupYield(model, g, {
-                            abbr: g.getAttribute("plant_abbr") || "?",
-                            countOverride: actual
-                        });
-                    }
+                    const disabledSet = readDisabledSet(g);
+                    const slotStats = classifyPlantingSlots(g, snap.spacingXpx, snap.spacingYpx, nextBandPx, disabledSet);
+                    const { actual } = applyCounts(model, g, slotStats, disabledSet); // CHANGE: resize counts only in-bounds offset slots.
+                    updateGroupYield(model, g, {
+                        abbr: g.getAttribute("plant_abbr") || "?",
+                        countOverride: actual
+                    });
 
                     const abbr = g.getAttribute("plant_abbr") || "?";
 
                     // LOD thresholds
-                    if (next.count > MAX_TILES || next.count > LOD_TILE_THRESHOLD) {
+                    if (slotStats.actual > MAX_TILES || slotStats.actual > LOD_TILE_THRESHOLD) {
                         collapseToSummary(graph, g, abbr, snap.spacingXpx, snap.spacingYpx, snap.rotated ? { layoutSnapshot: snap.layoutSnapshot, useLiveSnapshot: false } : {});
                         groupsNeedingRefresh.push(g);
                         continue;
@@ -6247,6 +6442,7 @@ Draw.loadPlugin(function (ui) {
         createSiblingTilerGroupFromSource,
         listGardenBeds,
         readBedProfile,
+        buildDraftTilerGroupPreview,
         listPlantingFootprints,
         proposePlantingGeometry,
         createPlantingFromProposal,

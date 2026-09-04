@@ -173,6 +173,23 @@ test('scheduler sibling plant groups clone footprint and attrs without reusing s
     assert.match(source, /createSiblingTilerGroupFromSource,/);
 });
 
+test('plant tiler exposes a read-only draft group preview helper', () => {
+    const source = readPlantTilerSource();
+    const helperSource = sourceSlice(source, 'function buildDraftTilerGroupPreview', 'function listGardenBeds');
+    const exportSource = sourceSlice(source, 'window.USL.tiler = Object.assign', 'installTrellisDebugSurface');
+
+    assert.match(helperSource, /function buildDraftTilerGroupPreview\(activeGraph, groupCell, draft = \{\}, opts = \{\}\)/);
+    assert.match(helperSource, /makeDraftPreviewCell\(groupCell, rect, attrs\)/);
+    assert.match(helperSource, /computeGridStatsXY\(previewCell, spacingXpx, spacingYpx\)/);
+    assert.match(helperSource, /readDisabledSet\(groupCell\)/);
+    assert.match(helperSource, /maxCircles[\s\S]*1000/);
+    assert.match(helperSource, /rotatePointAround\(clamped, groupCenterLocal\(previewCell\), rotationDeg\)/);
+    assert.match(helperSource, /circles\.push\(\{ row: r, col: c, x: rect\.x \+ center\.x, y: rect\.y \+ center\.y, r: iconDiam \/ 2, label: abbr, fontPx: tileFont \}\);/);
+    assert.match(helperSource, /lodCollapsed: false/);
+    assert.doesNotMatch(helperSource, /model\.beginUpdate|model\.endUpdate|graph\.addCell|graph\.addCells|graph\.removeCells|model\.set/);
+    assert.match(exportSource, /buildDraftTilerGroupPreview,/);
+});
+
 test('planting groups and plant circles disable native Draw.io connectors', () => { // CHANGE
     const source = readPlantTilerSource(); // CHANGE
     const circleStyle = sourceSlice(source, 'function plantCircleStyle', 'function groupFrameStyle'); // CHANGE

@@ -3893,10 +3893,6 @@ Draw.loadPlugin(function (ui) {
         const companions = (cluster.members || []).filter(candidate => candidate && candidate !== anchor);
         return { anchor, companions, bed: cluster.bed, members: cluster.members, root: cluster.root };
     }
-    function clampPreviewCircleAxis(value, min, max) {
-        if (max < min) return min + (max - min) / 2;
-        return Math.max(min, Math.min(max, value));
-    }
     function computePreviewPlantCircles(groupRect, spacingXCm, spacingYCm, opts = {}) {
         const pxPerCm = 5 * 0.18;
         const spacingX = Math.max(1, (layoutNumberOrNull(spacingXCm) ?? 30) * pxPerCm);
@@ -3906,34 +3902,36 @@ Draw.loadPlugin(function (ui) {
         const radius = vegDiameterPx > 0 ? Math.max(2.4, vegDiameterPx / 2) : Math.max(2.4, Math.min(spacingX, spacingY) * 0.32);
         const cols = Math.max(1, Math.floor(Math.max(1, groupRect.width) / spacingX));
         const rows = Math.max(1, Math.floor(Math.max(1, groupRect.height) / spacingY));
-        const total = rows * cols;
-        const count = Math.min(total, maxCircles);
         const circles = [];
         const originX = layoutNumberOrNull(opts.originX) ?? groupRect.x;
         const originY = layoutNumberOrNull(opts.originY) ?? groupRect.y;
-        const bounds = opts.clampRect || groupRect;
-        const minX = Number(bounds.x || 0) + radius;
-        const minY = Number(bounds.y || 0) + radius;
-        const maxX = Number(bounds.x || 0) + Math.max(0, Number(bounds.width || 0)) - radius;
-        const maxY = Number(bounds.y || 0) + Math.max(0, Number(bounds.height || 0)) - radius;
-        let clamped = false;
-        for (let i = 0; i < count; i++) {
-            const r = Math.floor(i / cols);
-            const c = i % cols;
+        const bounds = opts.boundsRect || opts.clampRect || groupRect;
+        const minX = Number(bounds.x || 0);
+        const minY = Number(bounds.y || 0);
+        const maxX = Number(bounds.x || 0) + Math.max(0, Number(bounds.width || 0));
+        const maxY = Number(bounds.y || 0) + Math.max(0, Number(bounds.height || 0));
+        let total = 0;
+        let omitted = 0;
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
             const rawX = originX + spacingX / 2 + c * spacingX;
             const rawY = originY + spacingY / 2 + r * spacingY;
-            const x = clampPreviewCircleAxis(rawX, minX, maxX);
-            const y = clampPreviewCircleAxis(rawY, minY, maxY);
-            if (Math.abs(x - rawX) > 0.01 || Math.abs(y - rawY) > 0.01) clamped = true;
+                if (rawX < minX || rawX > maxX || rawY < minY || rawY > maxY) {
+                    omitted += 1;
+                    continue;
+                }
+                total += 1;
+                if (circles.length >= maxCircles) continue;
             circles.push({
-                x,
-                y,
+                    x: rawX,
+                    y: rawY,
                 row: r,
                 col: c,
                 r: radius
             });
+            }
         }
-        return { circles, total, summarized: total > count, clamped };
+        return { circles, total, summarized: total > circles.length, clamped: false, omitted }; // CHANGE: fallback previews omit outside centers instead of clamping.
     }
     function buildLayoutPreviewModel({ bedRect = null, sourceRect = null, layout = null, sourceSpacing = null, companionLabel = 'Companion', sourceLabel = 'Source', requireRealBed = false, showCompanion = true } = {}) {
         if (!bedRect && requireRealBed) return { status: 'no-bed', message: 'No containing garden bed for this planting.' };
@@ -4014,40 +4012,44 @@ Draw.loadPlugin(function (ui) {
         const offsetX = layoutNumberOrNull(row?.offsetXCm);
         const offsetY = layoutNumberOrNull(row?.offsetYCm);
         return {
-            x: offsetX == null || !bedRect ? rect.x : bedRect.x + offsetX * pxPerCm,
-            y: offsetY == null || !bedRect ? rect.y : bedRect.y + offsetY * pxPerCm
+            x: rect.x + (offsetX == null ? 0 : offsetX * pxPerCm),
+            y: rect.y + (offsetY == null ? 0 : offsetY * pxPerCm)
         };
     }
     function computePreviewCirclesForLayoutRow(rect, row, anchorSpacing = {}, bedRect = null) {
         const spacingX = layoutNumberOrNull(row?.spacingXCm) ?? 30;
         const spacingY = layoutNumberOrNull(row?.spacingYCm) ?? 30;
         const origin = previewGridOriginForLayoutRow(bedRect, row, rect);
-        const dots = computePreviewPlantCircles(rect, spacingX, spacingY, { maxCircles: 5000, vegDiameterCm: row?.vegDiameterCm, originX: origin.x, originY: origin.y, clampRect: bedRect || rect });
+        const dots = computePreviewPlantCircles(rect, spacingX, spacingY, { maxCircles: 1000, vegDiameterCm: row?.vegDiameterCm, originX: origin.x, originY: origin.y, clampRect: bedRect || rect }); // CHANGE: draft spacing previews cap at 1000 circles.
         if (normalizeCompanionLayoutTemplate(row?.template) !== 'interplant') return dots;
         const pxPerCm = 5 * 0.18;
         const dx = (layoutNumberOrNull(anchorSpacing.spacingXCm) ?? spacingX) * pxPerCm / 2;
         const dy = (layoutNumberOrNull(anchorSpacing.spacingYCm) ?? spacingY) * pxPerCm / 2;
-        const radius = Math.max(0, Number(dots.circles[0]?.r || 0));
         const bounds = bedRect || rect;
-        const minX = Number(bounds.x || 0) + radius;
-        const minY = Number(bounds.y || 0) + radius;
-        const maxX = Number(bounds.x || 0) + Math.max(0, Number(bounds.width || 0)) - radius;
-        const maxY = Number(bounds.y || 0) + Math.max(0, Number(bounds.height || 0)) - radius;
+        const minX = Number(bounds.x || 0);
+        const minY = Number(bounds.y || 0);
+        const maxX = Number(bounds.x || 0) + Math.max(0, Number(bounds.width || 0));
+        const maxY = Number(bounds.y || 0) + Math.max(0, Number(bounds.height || 0));
+        let interplantOmitted = 0;
         dots.circles = dots.circles.map(p => {
             const offset = ((Number(p.row) || 0) + (Number(p.col) || 0)) % 2 === 0;
             const rawX = p.x + (offset ? dx : 0);
             const rawY = p.y + (offset ? dy : 0);
-            const x = clampPreviewCircleAxis(rawX, minX, maxX);
-            const y = clampPreviewCircleAxis(rawY, minY, maxY);
-            if (Math.abs(x - rawX) > 0.01 || Math.abs(y - rawY) > 0.01) dots.clamped = true;
+            if (rawX < minX || rawX > maxX || rawY < minY || rawY > maxY) {
+                interplantOmitted += 1;
+                return null;
+            }
             return {
-                x,
-                y,
+                x: rawX,
+                y: rawY,
                 row: p.row,
                 col: p.col,
                 r: p.r
             };
-        });
+        }).filter(Boolean);
+        dots.total = Math.max(0, Number(dots.total || 0) - interplantOmitted);
+        dots.omitted = (Number(dots.omitted || 0) + interplantOmitted);
+        dots.summarized = dots.total > dots.circles.length;
         return dots;
     }
     function buildCompanionLayoutPreviewModel({ bedRect = null, anchorRow = null, companionRows = [], requireRealBed = true } = {}) {
@@ -15212,18 +15214,88 @@ Draw.loadPlugin(function (ui) {
         return { ok: errors.length === 0, errors };
     }
 
-    function buildSpacingPreviewModel(rows) {
-        const previewRows = normalizeSpacingDraftRows(rows).filter(row => row.enabled).map(row => {
-            const fallbackRect = row.rect || { x: 0, y: 0, width: 120, height: 80 };
-            const rect = row.bedRect ? clampRectInsideRect(bedRelativeRectForLayoutRow(row, fallbackRect, row.bedRect), row.bedRect) : fallbackRect;
-            const dots = computePreviewCirclesForLayoutRow(rect, row, {}, row.bedRect || null);
-            return Object.assign({}, row, { rect, dots, warning: rect.clamped || dots.clamped ? 'Clamped inside bed.' : '' });
+    function spacingPreviewCapWarning(row, preview) { // NEW: forced-circle draft preview still protects the browser.
+        if (!preview || !preview.capped) return '';
+        const hidden = Math.max(0, Number(preview.total || 0) - Number(preview.rendered || 0));
+        return 'Preview capped at ' + preview.rendered + ' of ' + preview.total + ' plants' + (hidden ? ' (' + hidden + ' more).' : '.');
+    }
+
+    function formatSpacingPreviewYield(value, unit) { // NEW: status text compares draft yield against the committed group.
+        const n = Number(value);
+        if (!Number.isFinite(n)) return '';
+        return (Math.round(n * 10) / 10).toFixed(1) + ' ' + (unit || 'kg');
+    }
+
+    function spacingPreviewYieldChangeWarning(preview) { // NEW: make count/yield consequences visible while editing spacing.
+        if (!preview) return '';
+        const beforeCount = Number(preview.committedCount);
+        const afterCount = Number(preview.actual != null ? preview.actual : preview.total);
+        if (!Number.isFinite(beforeCount) || !Number.isFinite(afterCount) || beforeCount === afterCount) return '';
+        const beforeYield = formatSpacingPreviewYield(preview.committedExpectedYield, preview.yieldUnit);
+        const afterYield = formatSpacingPreviewYield(preview.draftExpectedYield, preview.yieldUnit);
+        const countText = beforeCount + ' -> ' + afterCount + ' plants';
+        return beforeYield && afterYield ? countText + ', ' + beforeYield + ' -> ' + afterYield + ' expected.' : countText + '.';
+    }
+
+    function spacingPreviewRowWarning(row, preview) { // NEW: combine yield and preview-cap consequences for the row status.
+        return [spacingPreviewYieldChangeWarning(preview), spacingPreviewCapWarning(row, preview)].filter(Boolean).join(' ');
+    }
+
+    function fallbackSpacingPreviewRow(row) { // NEW: legacy data path when Plant_Tiler.js preview API is not available.
+        const fallbackRect = row.rect || { x: 0, y: 0, width: 120, height: 80 };
+        const rect = fallbackRect; // CHANGE: spacing offsets move the internal grid, not the planting group frame.
+        const dots = computePreviewCirclesForLayoutRow(rect, row, {}, null); // CHANGE: spacing fallback bounds are the fixed planting frame, not the bed.
+        const warningParts = [];
+        if (dots.total <= 0) warningParts.push('No plants remain inside the planting area.');
+        if (dots.summarized) warningParts.push('Preview capped at ' + dots.circles.length + ' of ' + dots.total + ' plants.');
+        return Object.assign({}, row, { rect, dots, invalid: dots.total <= 0, warning: warningParts.join(' ') });
+    }
+
+    function buildSpacingPreviewModel(activeGraphOrRows, maybeRows) {
+        const activeGraph = Array.isArray(activeGraphOrRows) ? graph : activeGraphOrRows;
+        const sourceRows = Array.isArray(activeGraphOrRows) ? activeGraphOrRows : maybeRows;
+        const tiler = window.USL && window.USL.tiler ? window.USL.tiler : null;
+        const previewRows = normalizeSpacingDraftRows(sourceRows).filter(row => row.enabled).map(row => {
+            const cell = activeGraph && row.cellId ? graphCellById(activeGraph, row.cellId) : null;
+            if (tiler && typeof tiler.buildDraftTilerGroupPreview === 'function' && cell) {
+                const fallbackRect = row.rect || { x: 0, y: 0, width: 120, height: 80 };
+                const preview = tiler.buildDraftTilerGroupPreview(activeGraph, cell, Object.assign({}, row, {
+                    rect: fallbackRect,
+                    maxCircles: 1000
+                })); // CHANGE: spacing drafts use a read-only copy of the real tiler layout.
+                if (preview && preview.status === 'ok') {
+                    const dots = { circles: preview.circles || [], total: preview.total || 0, summarized: !!preview.capped, clamped: false };
+                    if (Number(preview.actual != null ? preview.actual : preview.total) <= 0) {
+                        return Object.assign({}, row, { rect: preview.rect || fallbackRect, dots, invalid: true, warning: 'No plants remain inside the planting area.' }); // CHANGE: zero-plant drafts restore originals and block Apply.
+                    }
+                    return Object.assign({}, row, { rect: preview.rect || fallbackRect, dots, groupPreview: preview, warning: spacingPreviewRowWarning(row, preview) });
+                }
+            }
+            return fallbackSpacingPreviewRow(row);
         });
         return {
-            status: 'ok',
+            status: previewRows.some(row => row.invalid) ? 'invalid' : 'ok',
             rows: previewRows,
             warning: previewRows.filter(row => row.warning).map(row => (row.label || row.cellId) + ': ' + row.warning).join(' ')
         };
+    }
+
+    function validateSpacingDraftGeometry(activeGraph, rows) { // NEW: zero in-bounds plant layouts are invalid on Apply too.
+        const tiler = window.USL && window.USL.tiler ? window.USL.tiler : null;
+        if (!tiler || typeof tiler.buildDraftTilerGroupPreview !== 'function') return { ok: true, errors: [] };
+        const errors = [];
+        normalizeSpacingDraftRows(rows).forEach(row => {
+            if (!row.enabled) return;
+            const cell = activeGraph && row.cellId ? graphCellById(activeGraph, row.cellId) : null;
+            if (!cell) return;
+            const preview = tiler.buildDraftTilerGroupPreview(activeGraph, cell, Object.assign({}, row, {
+                rect: row.rect || graphRectForCell(cell),
+                maxCircles: 1
+            }));
+            const actual = preview ? Number(preview.actual != null ? preview.actual : preview.total) : 1;
+            if (Number.isFinite(actual) && actual <= 0) errors.push((row.label || row.cellId || 'Planting') + ': No plants remain inside the planting area.');
+        });
+        return { ok: errors.length === 0, errors };
     }
 
     async function saveSpacingDefaultsForRows(rows, activeGraph, model) {
@@ -15246,6 +15318,8 @@ Draw.loadPlugin(function (ui) {
         const model = activeGraph && typeof activeGraph.getModel === 'function' ? activeGraph.getModel() : null;
         if (!activeGraph || !model) throw new Error('Graph is unavailable.');
         const editable = normalizeSpacingDraftRows(rows).filter(row => row.enabled);
+        const geometryValidation = validateSpacingDraftGeometry(activeGraph, editable);
+        if (!geometryValidation.ok) throw new Error(geometryValidation.errors.join('\n')); // CHANGE: prevent zero-plant offset commits.
         model.beginUpdate();
         try {
             const tiler = window.USL && window.USL.tiler ? window.USL.tiler : null;
@@ -15525,6 +15599,7 @@ Draw.loadPlugin(function (ui) {
             plantingLayoutAttributePatch,
             buildLayoutPreviewModel,
             buildCompanionLayoutPreviewModel,
+            layoutTools, // CHANGE: expose the spacing preview layout service to the opt-in regression harness.
             computeActiveCompanionPlacement,
             selectCompanionLayoutAnchorFromSet,
             computePreviewPlantCircles,
@@ -16041,6 +16116,7 @@ Draw.loadPlugin(function (ui) {
             plantingLayoutAttributePatch,
             buildLayoutPreviewModel,
             buildCompanionLayoutPreviewModel,
+            layoutTools, // CHANGE: expose the spacing preview layout service to the Node regression harness.
             computeActiveCompanionPlacement,
             selectCompanionLayoutAnchorFromSet,
             computePreviewPlantCircles,
