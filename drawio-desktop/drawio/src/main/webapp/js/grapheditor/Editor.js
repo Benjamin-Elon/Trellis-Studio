@@ -1188,9 +1188,12 @@ OpenFile.prototype.cancel = function(cancel)
 /**
  * Basic dialogs that are available in the viewer (print dialog).
  */
+var TRELLIS_NATIVE_DIALOG_Z = 2000000000;
+
 function Dialog(editorUi, elt, w, h, modal, closable, onClose, noScroll, transparent, minSize, ignoreBgClick)
 {
 	this.editorUi = editorUi;
+	var dialogZIndex = null;
 	
 	if (this.bg == null)
 	{
@@ -1199,12 +1202,19 @@ function Dialog(editorUi, elt, w, h, modal, closable, onClose, noScroll, transpa
 	
 	if (modal)
 	{
+		dialogZIndex = TRELLIS_NATIVE_DIALOG_Z + (((editorUi.dialogs != null) ? editorUi.dialogs.length : 0) * 2);
+		this.bg.style.zIndex = String(dialogZIndex);
 		document.body.appendChild(this.bg);
 	}
 	
 	var div = editorUi.createDiv(transparent? 'geTransDialog' : 'geDialog');
 	div.style.width = (w + 60) + 'px';
 	div.style.height = (h + 60) + 'px';
+	
+	if (modal)
+	{
+		div.style.zIndex = String(dialogZIndex + 1);
+	}
 
 	if (urlParams['embedInline'] == '1' && !Editor.inlineFullscreen &&
 		editorUi.embedViewport != null)

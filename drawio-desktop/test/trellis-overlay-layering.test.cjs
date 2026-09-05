@@ -2,10 +2,13 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
+const { JSDOM } = require("jsdom");
 
 const PROJECT_ROOT = path.join(__dirname, "..");
 const PLUGIN_ROOT = path.join(PROJECT_ROOT, "drawio", "src", "main", "webapp", "plugins", "garden_planner_plugins");
 const DIALOG_LAYER = 2e9;
+const GRAPH_CONTROL_TOP_LAYER = 10030;
 
 function readProjectFile(relPath) {
     return fs.readFileSync(path.join(PROJECT_ROOT, relPath), "utf8");
@@ -13,6 +16,46 @@ function readProjectFile(relPath) {
 
 function readPlugin(name) {
     return fs.readFileSync(path.join(PLUGIN_ROOT, name), "utf8");
+}
+
+function sourceSlice(source, startNeedle, endNeedle) {
+    const start = source.indexOf(startNeedle);
+    assert.notEqual(start, -1, "missing source start: " + startNeedle);
+    const end = source.indexOf(endNeedle, start);
+    assert.notEqual(end, -1, "missing source end: " + endNeedle);
+    return source.slice(start, end);
+}
+
+function createNativeDialogHarness(existingDialogCount = 0) {
+    const dom = new JSDOM("<!doctype html><body></body>");
+    const editorSource = readProjectFile("drawio/src/main/webapp/js/grapheditor/Editor.js");
+    const dialogSource = sourceSlice(editorSource, "var TRELLIS_NATIVE_DIALOG_Z", "Dialog.prototype.noColorImage");
+    const events = [];
+    const context = {
+        document: dom.window.document,
+        urlParams: {},
+        Editor: { inlineFullscreen: false, crossImage: "close.png" },
+        mxEventObject: function mxEventObject(name) { this.name = name; },
+        editorUi: {
+            dialogs: Array.from({ length: existingDialogCount }, () => ({})),
+            embedViewport: null,
+            createDiv(className) {
+                const div = dom.window.document.createElement("div");
+                div.className = className;
+                return div;
+            },
+            editor: {
+                fireEvent(evt) {
+                    events.push(evt);
+                }
+            }
+        },
+        elt: dom.window.document.createElement("section")
+    };
+
+    vm.runInNewContext(dialogSource, context, { filename: "Editor.js#Dialog" });
+    const dialog = vm.runInNewContext("new Dialog(editorUi, elt, 320, 180, true, false)", context, { filename: "Editor.js#DialogRuntime" });
+    return { document: dom.window.document, dialog, events };
 }
 
 function overlayLayerSource(name) {
@@ -56,6 +99,41 @@ test("graph overlay plugins share a dialog-safe layer contract", () => {
 
     assert.match(readProjectFile("drawio/src/main/webapp/js/diagramly/EditorUi.js"), /zIndex: 2e9/);
     assert.match(readProjectFile("drawio/src/main/webapp/js/diagramly/Dialogs.js"), /zIndex: 2e9/);
+});
+
+test("native Draw.io modal dialogs render above graph overlay controls", () => {
+    const source = readProjectFile("drawio/src/main/webapp/js/grapheditor/Editor.js");
+    assert.match(source, /var TRELLIS_NATIVE_DIALOG_Z = 2000000000;/);
+    assert.match(source, /dialogZIndex = TRELLIS_NATIVE_DIALOG_Z \+ \(\(\(editorUi\.dialogs != null\) \? editorUi\.dialogs\.length : 0\) \* 2\)/);
+    assert.match(source, /this\.bg\.style\.zIndex = String\(dialogZIndex\)/);
+    assert.match(source, /div\.style\.zIndex = String\(dialogZIndex \+ 1\)/);
+
+    const first = createNativeDialogHarness();
+    assert.equal(first.dialog.bg.style.zIndex, "2000000000");
+    assert.equal(first.dialog.container.style.zIndex, "2000000001");
+    assert.ok(Number(first.dialog.bg.style.zIndex) > GRAPH_CONTROL_TOP_LAYER);
+    assert.ok(Number(first.dialog.container.style.zIndex) > Number(first.dialog.bg.style.zIndex));
+    assert.equal(first.document.body.children[0], first.dialog.bg);
+    assert.equal(first.document.body.children[1], first.dialog.container);
+
+    const nested = createNativeDialogHarness(2);
+    assert.equal(nested.dialog.bg.style.zIndex, "2000000004");
+    assert.equal(nested.dialog.container.style.zIndex, "2000000005");
+});
+
+test("production bundles keep native modal dialogs above graph overlays", () => {
+    [
+        "app.min.js",
+        "integrate.min.js",
+        "viewer.min.js",
+        "viewer-static.min.js"
+    ].forEach(name => {
+        const source = readProjectFile("drawio/src/main/webapp/js/" + name);
+        const dialogSource = sourceSlice(source, "function Dialog(", "Dialog.prototype.noColorImage");
+        assert.match(dialogSource, /style\.zIndex=String\(v\)/, name + " should elevate modal backdrops");
+        assert.match(dialogSource, /style\.zIndex=String\(v\+1\)/, name + " should elevate modal dialogs");
+        assert.match(dialogSource, /2e9\+\(null!=[ab]\.dialogs\?[ab]\.dialogs\.length:0\)\*2/, name + " should stack modal dialog pairs above graph overlays");
+    });
 });
 
 test("irrigation controls render above irrigation annotations and connection overlays", () => {
