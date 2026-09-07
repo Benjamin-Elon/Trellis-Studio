@@ -1,0 +1,197 @@
+TAP version 13
+# [TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+# [TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+# [Kanban] linksChanged: no deletedIds/impactedIds payload
+# [Kanban] linksChanged: no deletedIds/impactedIds payload
+# [Kanban] linksChanged: no deletedIds/impactedIds payload
+# [Kanban] linksChanged: no deletedIds/impactedIds payload
+# [Kanban] linksChanged: no deletedIds/impactedIds payload
+# [Kanban] linksChanged: no deletedIds/impactedIds payload
+# [Kanban] linksChanged: no deletedIds/impactedIds payload
+# [Kanban] linksChanged: no deletedIds/impactedIds payload
+# [Kanban] linksChanged: no deletedIds/impactedIds payload
+# [Kanban] linksChanged: no deletedIds/impactedIds payload
+# [Kanban] linksChanged: no deletedIds/impactedIds payload
+# [Kanban] linksChanged: no deletedIds/impactedIds payload
+# [Kanban] linksChanged: no deletedIds/impactedIds payload
+# [Kanban] linksChanged: no deletedIds/impactedIds payload
+# [Kanban] linksChanged: no deletedIds/impactedIds payload
+# [TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+# [TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+# [TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+# [TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+# [TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+# [TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+# [TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+# [TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+# Subtest: Main creation is usable, idempotent, inclusive, and gives secondary projects unused names
+ok 1 - Main creation is usable, idempotent, inclusive, and gives secondary projects unused names
+  ---
+  duration_ms: 483.8444
+  type: 'test'
+  ...
+# Subtest: personal perspectives change projection but neither serialized XML nor undo history
+ok 2 - personal perspectives change projection but neither serialized XML nor undo history
+  ---
+  duration_ms: 334.1026
+  type: 'test'
+  ...
+# Subtest: object shifts expand processes, shrinking clamps to children, and every edit undoes together
+ok 3 - object shifts expand processes, shrinking clamps to children, and every edit undoes together
+  ---
+  duration_ms: 226.9989
+  type: 'test'
+  ...
+# Subtest: status transitions retain progress and reject Done to Blocked without changing XML
+ok 4 - status transitions retain progress and reject Done to Blocked without changing XML
+  ---
+  duration_ms: 156.5103
+  type: 'test'
+  ...
+# Subtest: transparent columns select the object; process drag stays disabled; view is exported from a clone
+ok 5 - transparent columns select the object; process drag stays disabled; view is exported from a clone
+  ---
+  duration_ms: 211.1654
+  type: 'test'
+  ...
+# Subtest: readers can change their view but cannot mutate roadmap content
+ok 6 - readers can change their view but cannot mutate roadmap content
+  ---
+  duration_ms: 171.0006
+  type: 'test'
+  ...
+# Subtest: standalone roadmap task creation integrates production Modules and Task Manager atomically
+ok 7 - standalone roadmap task creation integrates production Modules and Task Manager atomically
+  ---
+  duration_ms: 1148.1927
+  type: 'test'
+  ...
+# Subtest: Garden creation links all companions while unavailable Roadmap Manager leaves no shell
+ok 8 - Garden creation links all companions while unavailable Roadmap Manager leaves no shell
+  ---
+  duration_ms: 1021.5038
+  type: 'test'
+  ...
+# Subtest: task creation validates dates before mutation and rolls back a failed destination command
+ok 9 - task creation validates dates before mutation and rolls back a failed destination command
+  ---
+  duration_ms: 372.7592
+  type: 'test'
+  ...
+# Subtest: missing assignee linking is explicit, permission checked, and never changes source assignments
+ok 10 - missing assignee linking is explicit, permission checked, and never changes source assignments
+  ---
+  duration_ms: 712.9962
+  type: 'test'
+  ...
+# Subtest: deletion prompts only with tasks, preserves tasks by default, and undo restores reciprocal links
+ok 11 - deletion prompts only with tasks, preserves tasks by default, and undo restores reciprocal links
+  ---
+  duration_ms: 661.6699
+  type: 'test'
+  ...
+# Subtest: copying planning content clears task links and source IDs while retaining dates and valid roles
+ok 12 - copying planning content clears task links and source IDs while retaining dates and valid roles
+  ---
+  duration_ms: 420.0602
+  type: 'test'
+  ...
+# Subtest: live gestures leave XML untouched until release, Escape cancels, and multiple objects shift equally
+ok 13 - live gestures leave XML untouched until release, Escape cancels, and multiple objects shift equally
+  ---
+  duration_ms: 248.1896
+  type: 'test'
+  ...
+# Subtest: actual Users identity changes invalidate personal geometry without XML changes
+ok 14 - actual Users identity changes invalidate personal geometry without XML changes
+  ---
+  duration_ms: 110.9066
+  type: 'test'
+  ...
+# Subtest: reader clicks select short objects without beginning a date gesture
+ok 15 - reader clicks select short objects without beginning a date gesture
+  ---
+  duration_ms: 107.3232
+  type: 'test'
+  ...
+# Subtest: growing and deleting projects preserves a managed vertical stack through undo
+ok 16 - growing and deleting projects preserves a managed vertical stack through undo
+  ---
+  duration_ms: 726.1671
+  type: 'test'
+  ...
+# Subtest: clipped date gestures keep preview bars inside visible timeframes
+ok 17 - clipped date gestures keep preview bars inside visible timeframes
+  ---
+  duration_ms: 126.8498
+  type: 'test'
+  ...
+# Subtest: Main deletion is explicit, recreation is on request, and secondary names fill unused numbers
+ok 18 - Main deletion is explicit, recreation is on request, and secondary names fill unused numbers
+  ---
+  duration_ms: 228.1786
+  type: 'test'
+  ...
+# Subtest: copy insertion remaps role membership, preserves module Main, and clears task links
+ok 19 - copy insertion remaps role membership, preserves module Main, and clears task links
+  ---
+  duration_ms: 701.1273
+  type: 'test'
+  ...
+# Subtest: Users permits task companion creation and navigation cleanup without task edit access
+ok 20 - Users permits task companion creation and navigation cleanup without task edit access
+  ---
+  duration_ms: 499.7754
+  type: 'test'
+  ...
+# Subtest: the real isolated renderer applies personal geometry while embedded XML stays canonical
+ok 21 - the real isolated renderer applies personal geometry while embedded XML stays canonical
+  ---
+  duration_ms: 195.7345
+  type: 'test'
+  ...
+# Subtest: Today rollover waits for gesture release and preserves document data
+ok 22 - Today rollover waits for gesture release and preserves document data
+  ---
+  duration_ms: 135.1779
+  type: 'test'
+  ...
+# Subtest: unavailable storage retains isolated session preferences
+ok 23 - unavailable storage retains isolated session preferences
+  ---
+  duration_ms: 129.8288
+  type: 'test'
+  ...
+# Subtest: Users rejection cannot hide unauthorized task edits inside authorized roadmap cleanup
+ok 24 - Users rejection cannot hide unauthorized task edits inside authorized roadmap cleanup
+  ---
+  duration_ms: 571.8016
+  type: 'test'
+  ...
+# Subtest: task dialog cancellation leaves no companion or document edit
+ok 25 - task dialog cancellation leaves no companion or document edit
+  ---
+  duration_ms: 114.9959
+  type: 'test'
+  ...
+# Subtest: focused trim buttons refresh state across repeated clicks
+ok 26 - focused trim buttons refresh state across repeated clicks
+  ---
+  duration_ms: 332.2589
+  type: 'test'
+  ...
+# Subtest: export decodes unopened pages in isolation
+ok 27 - export decodes unopened pages in isolation
+  ---
+  duration_ms: 97.5408
+  type: 'test'
+  ...
+1..27
+# tests 27
+# suites 0
+# pass 27
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 11061.8033

@@ -19,9 +19,27 @@ GENERATED_TABLES = [
     "PlantGrowthStages",
     "PlantTaskTemplates",
     "VarietyTaskTemplates",
+    "NutritionNutrients",
+    "PlantNutritionMappings",
+    "PlantNutritionValues",
+    "NutritionRequirements",
 ]
 
 WEATHER_TABLES = {"CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily"}
+NUTRITION_NUTRIENT_KEYS = {
+    "energy_kcal", "protein_g", "fiber_g", "vitamin_a_rae_mcg", "vitamin_c_mg",
+    "vitamin_k_mcg", "folate_dfe_mcg", "potassium_mg", "iron_mg", "calcium_mg",
+}
+NUTRITION_NUTRIENT_COLUMNS = {"nutrient_key", "nutrient_name", "unit", "sort_order"}
+NUTRITION_REQUIREMENT_PERSONAS = {"adult_19_50", "child_1_8"}
+NUTRITION_REQUIREMENT_COLUMNS = {"persona_key", "nutrient_key", "amount_per_day", "unit", "source_url", "source_note", "updated_at"}
+PLANT_NUTRITION_MAPPING_CONFIDENCE = {"low", "medium", "high", "reviewed"}
+PLANT_NUTRITION_MAPPING_STATUS = {"pending", "reviewed", "missing"}
+PLANT_NUTRITION_MAPPING_COLUMNS = {
+    "plant_id", "plant_name", "fdc_id", "fdc_description", "fdc_data_type", "food_form",
+    "match_confidence", "match_status", "source_url", "source_note", "updated_at",
+}
+PLANT_NUTRITION_VALUE_COLUMNS = {"plant_id", "plant_name", "nutrient_key", "amount_per_100g", "source_fdc_id", "updated_at"}
 
 CITY_GEO_IDENTITY_COLUMNS = {"country_name", "country_code", "region_name", "region_code"}
 CITY_CLIMATE_BANDS = {"hot", "temperate", "cold"}

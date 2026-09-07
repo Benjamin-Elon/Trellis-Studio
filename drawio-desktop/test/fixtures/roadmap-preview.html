@@ -1,0 +1,27 @@
+<!doctype html>
+<!-- Isolated visual integration fixture; uses production mxGraph and Trellis plugins. NEW -->
+<html lang="en"><head><meta charset="utf-8"><title>Roadmap integration preview</title>
+<style>
+html,body{margin:0;height:100%;font:13px Arial;background:#f1f5f9}header{height:48px;display:flex;align-items:center;gap:12px;padding:0 16px;background:#0f172a;color:white}button{cursor:pointer;padding:6px 10px}#graph{position:absolute;inset:48px 0 0;overflow:auto;background:white}#dialog{position:fixed;inset:0;background:#0005;display:none;align-items:center;justify-content:center;z-index:2000000000}#dialog>div{background:white;max-height:90vh;max-width:90vw;border-radius:8px;box-shadow:0 12px 50px #0005}#error{color:#fca5a5}
+</style>
+<script>var mxLoadResources=false,mxLoadStylesheets=false;</script>
+<script src="../../drawio/src/main/webapp/mxgraph/mxClient.js"></script>
+</head><body><header><strong>Roadmap integration preview</strong><button id="create">New Roadmap Module</button><button id="undo">Undo</button><button id="redo">Redo</button><span id="error"></span></header><div id="graph"></div><div id="dialog"></div>
+<script>
+// Desktop-only shell services are replaced; graph, commands, rendering and plugins are production. NEW
+var Graph=mxGraph,graph=new mxGraph(document.getElementById('graph')); graph.isSpecialColor=function(){return false;};
+var model=graph.getModel(),history=new mxUndoManager(); model.addListener(mxEvent.UNDO,function(sender,event){history.undoableEditHappened(event.getProperty('edit'));});
+var actionMap=new Map(), ui={editor:{graph:graph,getGraphXml:function(){return new mxCodec().encode(model);}},alert:function(message){document.getElementById('error').textContent=message;},showDialog:function(body,width,height){var shell=document.getElementById('dialog');shell.replaceChildren(body);body.style.width=width+'px';body.style.height=height+'px';shell.style.display='flex';},hideDialog:function(){document.getElementById('dialog').style.display='none';},actions:{get:function(key){return actionMap.get(key)||{funct:function(){}};},addAction:function(key,fn){var action={funct:fn};actionMap.set(key,action);return action;}},menus:{createPopupMenu:function(){},get:function(){return {funct:function(){}};}},format:{refresh:function(){}}};
+var Draw={loadPlugin:function(fn){fn(ui);}};
+window.addEventListener('error',function(event){document.getElementById('error').textContent=event.message;});
+</script>
+<script src="../../drawio/src/main/webapp/plugins/garden_planner_plugins/Garden_Roadmap_Core.js"></script>
+<script src="../../drawio/src/main/webapp/plugins/garden_planner_plugins/Garden_Roadmap_Renderer.js"></script><!-- NEW -->
+<script src="../../drawio/src/main/webapp/plugins/garden_planner_plugins/Garden_Task_Manager.js"></script>
+<script src="../../drawio/src/main/webapp/plugins/garden_planner_plugins/Garden_Roadmap_Manager.js"></script>
+<script src="../../drawio/src/main/webapp/plugins/garden_planner_plugins/Modules_Standalone.js"></script>
+<script src="../../drawio/src/main/webapp/plugins/garden_planner_plugins/Deep_Click_Through.js"></script>
+<script>
+document.getElementById('create').onclick=function(){var module=graph.__trellisModules.createModuleAtPoint({x:40,y:120},'roadmap');if(module){var board=graph.__trellisRoadmapManager.ensureMainRoadmapInRoadmapModule(module);setTimeout(function(){graph.__trellisRoadmapManager.openBoard(board);},40);}};
+document.getElementById('undo').onclick=function(){history.undo();};document.getElementById('redo').onclick=function(){history.redo();};
+</script></body></html>

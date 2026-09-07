@@ -232,6 +232,7 @@ test("PlanSchema normalizes legacy yield fields and strips runtime-only persiste
             { id: "farmers_market", label: "Farmers Market", type: "market" },
             { id: "wholesale", label: "Wholesale", type: "wholesale" }
         ],
+        selfSufficiency: { adults: 0, children: 0, nutritionMultiplier: 1, lines: [] },
         demands: [],
         csa: { enabled: false, boxesPerWeek: 0, start: "", end: "", salePricePerBox: null, salePriceMode: "auto", components: [] }
     });
@@ -1225,16 +1226,16 @@ test("YearPlanDashboard expands checks only when blocking errors first appear", 
     assert.equal(state.planCheckExpanded, false);
     const invalid = { validationErrors: ["Plan error"] };
     let changes = api.YearPlanDashboard.syncExpansionState(state, invalid, ["CSA error"], []);
-    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: true, csaChanged: true, demandChanged: false });
+    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: true, csaChanged: true, demandChanged: false, selfSufficiencyChanged: false });
     state.planCheckExpanded = false; state.csaExpanded = false;
     changes = api.YearPlanDashboard.syncExpansionState(state, invalid, ["CSA error"], []);
-    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: false, csaChanged: false, demandChanged: false });
+    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: false, csaChanged: false, demandChanged: false, selfSufficiencyChanged: false });
     api.YearPlanDashboard.syncExpansionState(state, { validationErrors: [] }, [], []);
     changes = api.YearPlanDashboard.syncExpansionState(state, invalid, ["CSA error"], []);
-    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: true, csaChanged: true, demandChanged: false });
+    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: true, csaChanged: true, demandChanged: false, selfSufficiencyChanged: false });
     state.planCheckExpanded = false; state.csaExpanded = false;
     changes = api.YearPlanDashboard.syncExpansionState(state, { validationErrors: [], diagnostics: ["Runtime warning"] }, [], []);
-    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: false, csaChanged: false, demandChanged: false });
+    assert.deepEqual(JSON.parse(JSON.stringify(changes)), { planCheckChanged: false, csaChanged: false, demandChanged: false, selfSufficiencyChanged: false });
 });
 
 test("YearPlanDashboard resolves selection after crop removal and preserves unknown methods", () => {
@@ -1263,4 +1264,91 @@ test("PlanSchema infers method category for legacy dotted crop methods", () => {
 
     assert.equal(plan.crops[0].method, "transplant.indoor");
     assert.equal(plan.crops[0].methodCategoryId, "transplant");
+});
+
+function addSelfUse(plan, overrides = {}) {
+    const line = {
+        id: `self_${(plan.selfSufficiency.lines || []).length + 1}`,
+        cropId: "crop_1",
+        qty: 1,
+        unit: "kg",
+        frequency: "week",
+        everyN: 1,
+        from: "2026-06-01",
+        to: "2026-06-07",
+        ...overrides
+    };
+    plan.selfSufficiency.lines.push(line);
+    return line;
+}
+
+test("Self Sufficiency demand expands separately from sales demand", () => {
+    const { api } = createHarness();
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    plan.crops.push(emptyCrop({ harvestStart: "2026-06-01", harvestEnd: "2026-06-07" }));
+    addSelfUse(plan, { qty: 2 });
+    addDemand(plan, { qty: 3 });
+
+    const weekly = api.PlanMath.computePlanWeekly(plan, []);
+
+    assert.equal(api.PlanMath.computePlanCropTotals(plan, weekly)[0].targetKg, 5);
+    assert.equal(weekly.perSelfLine.get("self_1").target.reduce((sum, value) => sum + value, 0), 2);
+    assert.equal(weekly.perDemandLine.get("demand_1").target.reduce((sum, value) => sum + value, 0), 3);
+});
+
+test("Harvest allocation satisfies Self Sufficiency before CSA and sales", () => {
+    const { api } = createHarness();
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    const crop = emptyCrop({ harvestStart: "2026-06-01", harvestEnd: "2026-06-07" });
+    plan.crops.push(crop);
+    addSelfUse(plan, { qty: 1 });
+    plan.csa = { enabled: true, boxesPerWeek: 1, start: "2026-06-01", end: "2026-06-07", salePricePerBox: 0, salePriceMode: "auto", components: [{ cropId: "crop_1", qty: 1, unit: "kg", everyNWeeks: 1, start: "2026-06-01", end: "2026-06-07" }] };
+    addDemand(plan, { qty: 1 });
+    setActualHarvest(api, plan, crop, [["2026-06-01", 2]]);
+
+    const weekly = api.PlanMath.computePlanWeekly(plan, []);
+
+    assert.equal(weekly.selfSufficiency.usableSupply.reduce((sum, value) => sum + value, 0), 1);
+    assert.equal(weekly.csa.usableSupply.reduce((sum, value) => sum + value, 0), 1);
+    assert.equal(weekly.sales.short.reduce((sum, value) => sum + value, 0), 1);
+});
+
+test("Required plants and Plan Check default to combined demand", () => {
+    const { api } = createHarness();
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    plan.crops.push(emptyCrop({ kgPerPlant: 2, harvestStart: "2026-06-01", harvestEnd: "2026-06-07" }));
+    addSelfUse(plan, { qty: 2 });
+    addDemand(plan, { qty: 4 });
+
+    const weekly = api.PlanMath.computePlanWeekly(plan, []);
+    const totals = api.PlanMath.computePlanCropTotals(plan, weekly)[0];
+    const combined = api.PlanMath.summarizePlanChartModel(api.PlanMath.buildPlanChartModel(weekly, "crop_1"));
+    const selfOnly = api.PlanMath.summarizePlanChartModel(api.PlanMath.buildPlanChartModel(weekly, "crop_1", { scope: "self" }));
+    const salesOnly = api.PlanMath.summarizePlanChartModel(api.PlanMath.buildPlanChartModel(weekly, "crop_1", { scope: "sales" }));
+
+    assert.equal(totals.plantsReq, 3);
+    assert.equal(combined.targetKg, 6);
+    assert.equal(selfOnly.targetKg, 2);
+    assert.equal(salesOnly.targetKg, 4);
+});
+
+test("NutritionPlanner calculates requested and fulfilled self-use nutrition", () => {
+    const { api } = createHarness();
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    const crop = emptyCrop({ plantId: "1", harvestStart: "2026-06-01", harvestEnd: "2026-06-07" });
+    plan.crops.push(crop);
+    plan.selfSufficiency.adults = 1;
+    addSelfUse(plan, { qty: 1 });
+    setActualHarvest(api, plan, crop, [["2026-06-01", 0.5]]);
+    const weekly = api.PlanMath.computePlanWeekly(plan, []);
+
+    const nutrition = api.NutritionPlanner.compute(plan, weekly, {
+        values: [{ plant_id: 1, nutrient_key: "energy_kcal", amount_per_100g: 10, unit: "kcal" }],
+        requirements: [{ persona_key: "adult_19_50", nutrient_key: "energy_kcal", amount_per_day: 100, unit: "kcal" }]
+    });
+    const energy = nutrition.rows.find(row => row.nutrientKey === "energy_kcal");
+
+    assert.equal(energy.requestedAmount, 100);
+    assert.equal(energy.fulfilledAmount, 50);
+    assert.equal(energy.requirementAmount, 36500);
 });

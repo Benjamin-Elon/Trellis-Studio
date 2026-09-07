@@ -255,6 +255,7 @@ Draw.loadPlugin(function (ui) {
             return {
                 top: {
                     cropPlanExpanded: top.cropPlanExpanded === false ? false : true,
+                    selfSufficiencyExpanded: top.selfSufficiencyExpanded === true,
                     demandExpanded: top.demandExpanded === false ? false : true,
                     csaExpanded: top.csaExpanded === true,
                     planCheckExpanded: top.planCheckExpanded === true
@@ -276,6 +277,7 @@ Draw.loadPlugin(function (ui) {
             const record = normalize({
                 top: {
                     cropPlanExpanded: state.cropPlanExpanded,
+                    selfSufficiencyExpanded: state.selfSufficiencyExpanded,
                     demandExpanded: state.demandExpanded,
                     csaExpanded: state.csaExpanded,
                     planCheckExpanded: state.planCheckExpanded
@@ -384,6 +386,39 @@ Draw.loadPlugin(function (ui) {
             return await queryAll(sql, [pid]);
         }
 
+        async function queryNutritionByPlantIds(plantIds) {
+            const ids = Array.from(new Set((plantIds || []).map(value => Number(value)).filter(Number.isFinite)));
+            if (!ids.length) return { available: true, mappings: [], values: [] };
+            const placeholders = ids.map(() => "?").join(",");
+            try {
+                const mappings = await queryAll(`
+                    SELECT plant_id, fdc_id, fdc_description, fdc_data_type, food_form, match_confidence, source_url, source_note
+                    FROM PlantNutritionMappings
+                    WHERE food_form = 'raw' AND plant_id IN (${placeholders});`, ids);
+                const values = await queryAll(`
+                    SELECT v.plant_id, v.nutrient_key, COALESCE(n.nutrient_name, v.nutrient_key) AS nutrient_name,
+                           COALESCE(n.unit, '') AS unit, v.amount_per_100g, v.source_fdc_id
+                    FROM PlantNutritionValues v
+                    LEFT JOIN NutritionNutrients n ON n.nutrient_key = v.nutrient_key
+                    WHERE v.plant_id IN (${placeholders});`, ids);
+                return { available: true, mappings, values };
+            } catch (_) {
+                return { available: false, mappings: [], values: [] };
+            }
+        } // NEW: nutrition data is optional at runtime until the packaged DB has the schema.
+
+        async function queryNutritionRequirements() {
+            try {
+                const requirements = await queryAll(`
+                    SELECT persona_key, nutrient_key, amount_per_day, unit
+                    FROM NutritionRequirements
+                    ORDER BY persona_key, nutrient_key;`, []);
+                return { available: true, requirements };
+            } catch (_) {
+                return { available: false, requirements: [] };
+            }
+        } // NEW
+
         return {
             getDbPath,
             queryAll,
@@ -391,7 +426,9 @@ Draw.loadPlugin(function (ui) {
             getPlantsBasicCached,
             invalidatePlantsBasicCache,
             queryVarietiesByPlantId,
-            queryPlantingMethodsForPlantId
+            queryPlantingMethodsForPlantId,
+            queryNutritionByPlantIds,
+            queryNutritionRequirements
         };
     })();
 
@@ -750,16 +787,17 @@ Draw.loadPlugin(function (ui) {
             return { availableSupply, usableSupply, short, surplus, expired, endingInventory };
         }
 
-        function buildPlanChartModel(weekly, cropId) {
+        function buildPlanChartModel(weekly, cropId, options) {
+            const scope = String(options && options.scope || "combined"); // NEW: Plan Check can inspect self, CSA, sales, or combined demand.
             const source = cropId && weekly && weekly.perCrop
                 ? (weekly.perCrop.get(cropId) || weekly.perCrop.get(String(cropId)))
                 : null;
             const weeks = weekly && Array.isArray(weekly.weeks) ? weekly.weeks : [];
-            const target = source ? source.target : (weekly && weekly.targetTotal) || [];
+            const target = source ? scopedSeries(source, scope, "target") : scopedWeeklySeries(weekly, scope, "target"); // CHANGE
             const harvest = source ? source.supply : (weekly && weekly.supplyTotal) || [];
             const available = source ? source.availableSupply : (weekly && weekly.availableSupplyTotal) || [];
-            const usable = source ? source.usableSupply : (weekly && weekly.usableSupplyTotal) || [];
-            const short = source ? source.short : (weekly && weekly.shortTotal) || [];
+            const usable = source ? scopedSeries(source, scope, "usableSupply") : scopedWeeklySeries(weekly, scope, "usableSupply"); // CHANGE
+            const short = source ? scopedSeries(source, scope, "short") : scopedWeeklySeries(weekly, scope, "short"); // CHANGE
             const surplus = source ? source.surplus : (weekly && weekly.surplusTotal) || [];
             const expired = source ? source.expired : (weekly && weekly.expiredTotal) || [];
             const endingInventory = source ? source.endingInventory : (weekly && weekly.endingInventoryTotal) || [];
@@ -776,6 +814,23 @@ Draw.loadPlugin(function (ui) {
                 endingInventoryKg: Math.max(0, Number(endingInventory[index]) || 0)
             }));
         }
+
+        function scopedSeries(source, scope, field) {
+            if (!source) return [];
+            const suffix = field.charAt(0).toUpperCase() + field.slice(1);
+            if (scope === "self") return source["self" + suffix] || [];
+            if (scope === "csa") return source["csa" + suffix] || [];
+            if (scope === "sales") return source["sales" + suffix] || [];
+            return source[field] || [];
+        } // NEW: per-crop scope series share the existing chart row shape.
+
+        function scopedWeeklySeries(weekly, scope, field) {
+            if (scope === "self") return weekly && weekly.selfSufficiency && weekly.selfSufficiency[field] || [];
+            if (scope === "csa") return weekly && weekly.csa && weekly.csa[field] || [];
+            if (scope === "sales") return weekly && weekly.sales && weekly.sales[field] || [];
+            const map = { target: "targetTotal", usableSupply: "usableSupplyTotal", short: "shortTotal" };
+            return weekly && weekly[map[field] || field] || [];
+        } // NEW: aggregate scope series let Plan Check switch demand sources without redrawing logic.
 
         function summarizePlanChartModel(chartModel) {
             const rows = Array.isArray(chartModel) ? chartModel : [];
@@ -839,11 +894,24 @@ Draw.loadPlugin(function (ui) {
             const demandLineOrder = new Map();
             const channelOrder = new Map(((plan && plan.demandChannels) || []).map((channel, index) => [String(channel && channel.id || ""), index]));
             const perDemandLine = new Map();
+            const perSelfLine = new Map(); // NEW
             const perChannel = new Map();
             const perPriority = new Map();
+            const selfWeekly = { target: Array(n).fill(0), usableSupply: Array(n).fill(0), short: Array(n).fill(0), groceryValue: Array(n).fill(0), fulfilledGroceryValue: Array(n).fill(0), groceryValueByCropId: new Map(), fulfilledGroceryValueByCropId: new Map() }; // NEW
+            const salesWeekly = { target: Array(n).fill(0), usableSupply: Array(n).fill(0), short: Array(n).fill(0), potentialRevenue: Array(n).fill(0), fulfilledRevenue: Array(n).fill(0) }; // NEW
             const csaWeekly = { target: Array(n).fill(0), usableSupply: Array(n).fill(0), short: Array(n).fill(0), potentialRevenue: Array(n).fill(0), fulfilledRevenue: Array(n).fill(0), boxFillRatio: Array(n).fill(0), potentialRevenueByCropId: new Map(), fulfilledRevenueByCropId: new Map(), componentValuePerBox: 0, salePricePerBox: 0 };
             const csaComponentRequests = [];
             const priorityRank = new Map([["committed", 0], ["target", 1], ["optional", 2]]);
+
+            function ensureSelfValueArrays(cropId) {
+                const key = String(cropId || "");
+                if (!selfWeekly.groceryValueByCropId.has(key)) selfWeekly.groceryValueByCropId.set(key, Array(n).fill(0));
+                if (!selfWeekly.fulfilledGroceryValueByCropId.has(key)) selfWeekly.fulfilledGroceryValueByCropId.set(key, Array(n).fill(0));
+                return {
+                    potential: selfWeekly.groceryValueByCropId.get(key),
+                    fulfilled: selfWeekly.fulfilledGroceryValueByCropId.get(key)
+                };
+            } // NEW: package prices are reused as estimated grocery value for self-use rows.
 
             function ensureCsaRevenueArrays(cropId) {
                 const key = String(cropId || "");
@@ -854,6 +922,43 @@ Draw.loadPlugin(function (ui) {
                     fulfilled: csaWeekly.fulfilledRevenueByCropId.get(key)
                 };
             }
+
+            for (const [lineIndex, line] of ((plan && plan.selfSufficiency && plan.selfSufficiency.lines) || []).entries()) {
+                const crop = findCrop(plan, line && line.cropId);
+                if (!crop) { pushWarn(warns, "Self Sufficiency line skipped (missing crop)."); continue; } // NEW
+                const qty = Number(line && line.qty);
+                if (!Number.isFinite(qty) || qty <= 0) { pushWarn(warns, `Self Sufficiency line skipped (qty missing) for ${crop.plant || crop.id}`); continue; } // NEW
+                if (!hasYmd(line.from) || !hasYmd(line.to)) { pushWarn(warns, `Self Sufficiency line skipped (missing dates) for ${crop.plant || crop.id}`); continue; } // NEW
+                if (line.from > line.to) { pushWarn(warns, `Self Sufficiency line skipped (start date after end date) for ${crop.plant || crop.id}`); continue; } // NEW
+                const kgPerUnit = resolveUnitToKgPerUnit(crop, line.unit);
+                if (!Number.isFinite(kgPerUnit)) { pushWarn(warns, `Self Sufficiency line skipped (unknown unit "${line.unit}") for ${crop.plant || crop.id}`); continue; } // NEW
+                const unitPrice = resolvePackagePriceForUnit(crop, line.unit);
+                const target = Array(n).fill(0);
+                if (!addDemandAcrossWeeks(target, weeks, line, kgPerUnit, weekStartDow)) continue;
+                const result = {
+                    line,
+                    cropId: String(crop.id),
+                    lineIndex,
+                    kgPerUnit,
+                    unitPrice,
+                    target,
+                    usableSupply: Array(n).fill(0),
+                    short: Array(n).fill(0),
+                    groceryValue: target.map(value => Number.isFinite(unitPrice) ? (value / kgPerUnit) * unitPrice : 0),
+                    fulfilledGroceryValue: Array(n).fill(0)
+                };
+                perSelfLine.set(String(line.id), result);
+                const cropArrays = ensureCropArrays(crop.id);
+                if (!cropArrays.selfTarget) cropArrays.selfTarget = Array(n).fill(0); // NEW
+                const cropValue = ensureSelfValueArrays(crop.id);
+                for (let i = 0; i < n; i++) {
+                    cropArrays.target[i] += target[i];
+                    cropArrays.selfTarget[i] += target[i];
+                    selfWeekly.target[i] += target[i];
+                    selfWeekly.groceryValue[i] += result.groceryValue[i];
+                    cropValue.potential[i] += result.groceryValue[i];
+                }
+            } // NEW: self-use demand participates in total crop requirements but remains independently reportable.
 
             for (const [lineIndex, line] of ((plan && plan.demands) || []).entries()) {
                 demandLineOrder.set(String(line && line.id || ""), lineIndex);
@@ -883,7 +988,13 @@ Draw.loadPlugin(function (ui) {
                 };
                 perDemandLine.set(String(line.id), result);
                 const cropArrays = ensureCropArrays(crop.id);
-                for (let i = 0; i < n; i++) cropArrays.target[i] += target[i];
+                if (!cropArrays.salesTarget) cropArrays.salesTarget = Array(n).fill(0); // NEW
+                for (let i = 0; i < n; i++) {
+                    cropArrays.target[i] += target[i];
+                    cropArrays.salesTarget[i] += target[i];
+                    salesWeekly.target[i] += target[i];
+                    salesWeekly.potentialRevenue[i] += result.potentialRevenue[i];
+                } // CHANGE: sales-channel demand remains scope-separable from household demand.
             }
 
             // CSA
@@ -989,10 +1100,17 @@ Draw.loadPlugin(function (ui) {
                 arr.surplus = Array(n).fill(0);
                 arr.expired = Array(n).fill(0);
                 arr.endingInventory = Array(n).fill(0);
+                arr.selfTarget = Array.isArray(arr.selfTarget) ? arr.selfTarget : Array(n).fill(0); // NEW
+                arr.selfUsableSupply = Array(n).fill(0); // NEW
+                arr.selfShort = Array(n).fill(0); // NEW
                 arr.csaUsableSupply = Array(n).fill(0);
                 arr.csaShort = Array(n).fill(0);
+                arr.salesTarget = Array.isArray(arr.salesTarget) ? arr.salesTarget : Array(n).fill(0); // NEW
+                arr.salesUsableSupply = Array(n).fill(0); // NEW
+                arr.salesShort = Array(n).fill(0); // NEW
                 const lifetimeWeeks = Math.max(1, Math.ceil(Math.max(0, Number(crop.shelfLifeDays) || 0) / 7));
                 const inventory = [];
+                const selfResults = Array.from(perSelfLine.values()).filter(result => result.cropId === String(crop.id)); // NEW
                 const demandResults = Array.from(perDemandLine.values())
                     .filter(result => result.cropId === String(crop.id))
                     .sort((a, b) => {
@@ -1020,6 +1138,22 @@ Draw.loadPlugin(function (ui) {
                     if (harvestedKg > 0) inventory.push({ kg: harvestedKg, expiresWeek: weekIndex + lifetimeWeeks });
                     while (inventory.length && inventory[0].expiresWeek <= weekIndex) arr.expired[weekIndex] += inventory.shift().kg;
                     arr.availableSupply[weekIndex] = inventory.reduce((sum, batch) => sum + batch.kg, 0);
+                    for (const result of selfResults) {
+                        const allocation = consume(result.target[weekIndex]);
+                        result.usableSupply[weekIndex] = allocation.used;
+                        result.short[weekIndex] = allocation.short;
+                        result.fulfilledGroceryValue[weekIndex] = Number.isFinite(result.unitPrice)
+                            ? (allocation.used / result.kgPerUnit) * result.unitPrice
+                            : 0;
+                        arr.selfUsableSupply[weekIndex] += allocation.used;
+                        arr.selfShort[weekIndex] += allocation.short;
+                        arr.usableSupply[weekIndex] += allocation.used;
+                        arr.short[weekIndex] += allocation.short;
+                        selfWeekly.usableSupply[weekIndex] += allocation.used;
+                        selfWeekly.short[weekIndex] += allocation.short;
+                        selfWeekly.fulfilledGroceryValue[weekIndex] += result.fulfilledGroceryValue[weekIndex];
+                        ensureSelfValueArrays(crop.id).fulfilled[weekIndex] += result.fulfilledGroceryValue[weekIndex];
+                    } // NEW: household food is allocated before CSA and sales.
                     const csaAllocation = consume(arr.csaTarget && arr.csaTarget[weekIndex]);
                     csaWeekly.usableSupply[weekIndex] += csaAllocation.used;
                     csaWeekly.short[weekIndex] += csaAllocation.short;
@@ -1034,6 +1168,11 @@ Draw.loadPlugin(function (ui) {
                         result.fulfilledRevenue[weekIndex] = Number.isFinite(result.unitPrice)
                             ? (allocation.used / result.kgPerUnit) * result.unitPrice
                             : 0;
+                        arr.salesUsableSupply[weekIndex] += allocation.used; // NEW
+                        arr.salesShort[weekIndex] += allocation.short; // NEW
+                        salesWeekly.usableSupply[weekIndex] += allocation.used; // NEW
+                        salesWeekly.short[weekIndex] += allocation.short; // NEW
+                        salesWeekly.fulfilledRevenue[weekIndex] += result.fulfilledRevenue[weekIndex]; // NEW
                         arr.usableSupply[weekIndex] += allocation.used;
                         arr.short[weekIndex] += allocation.short;
                     }
@@ -1136,8 +1275,11 @@ Draw.loadPlugin(function (ui) {
                 endingInventoryTotal,
                 perCrop,
                 perDemandLine,
+                perSelfLine,
                 perChannel,
                 perPriority,
+                selfSufficiency: selfWeekly,
+                sales: salesWeekly,
                 csa: csaWeekly
             };
         }
@@ -1191,6 +1333,125 @@ Draw.loadPlugin(function (ui) {
         };
     })();
 
+    // -------------------- NutritionPlanner --------------------
+    const NutritionPlanner = (() => {
+        const FOCUSED_NUTRIENTS = Object.freeze([
+            { key: "energy_kcal", label: "Calories", unit: "kcal" },
+            { key: "protein_g", label: "Protein", unit: "g" },
+            { key: "fiber_g", label: "Fiber", unit: "g" },
+            { key: "vitamin_a_rae_mcg", label: "Vitamin A", unit: "mcg RAE" },
+            { key: "vitamin_c_mg", label: "Vitamin C", unit: "mg" },
+            { key: "vitamin_k_mcg", label: "Vitamin K", unit: "mcg" },
+            { key: "folate_dfe_mcg", label: "Folate", unit: "mcg DFE" },
+            { key: "potassium_mg", label: "Potassium", unit: "mg" },
+            { key: "iron_mg", label: "Iron", unit: "mg" },
+            { key: "calcium_mg", label: "Calcium", unit: "mg" }
+        ]);
+
+        function sumSeries(series) {
+            return (Array.isArray(series) ? series : []).reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
+        }
+
+        function rowsFromMap(nutrientsByPlantId) {
+            const rows = [];
+            if (!nutrientsByPlantId || typeof nutrientsByPlantId.forEach !== "function") return rows;
+            nutrientsByPlantId.forEach((value, plantId) => {
+                const nutrientRows = value && typeof value.forEach === "function" ? Array.from(value.values()) : (Array.isArray(value) ? value : []);
+                for (const row of nutrientRows) rows.push({ ...(row || {}), plant_id: row && row.plant_id !== undefined ? row.plant_id : plantId });
+            });
+            return rows;
+        }
+
+        function normalizeData(data) {
+            const source = data && typeof data === "object" ? data : {};
+            const available = source.available !== false;
+            const values = Array.isArray(source.values) ? source.values : rowsFromMap(source.nutrientsByPlantId);
+            const requirements = Array.isArray(source.requirements) ? source.requirements : [];
+            const valuesByPlantId = new Map();
+            for (const row of values) {
+                const plantId = String(row && (row.plant_id ?? row.plantId) || "");
+                const key = String(row && row.nutrient_key || "");
+                const amount = Number(row && row.amount_per_100g);
+                if (!plantId || !key || !Number.isFinite(amount)) continue;
+                if (!valuesByPlantId.has(plantId)) valuesByPlantId.set(plantId, new Map());
+                valuesByPlantId.get(plantId).set(key, { amountPer100g: Math.max(0, amount), unit: String(row.unit || "") });
+            }
+            const requirementsByPersona = new Map();
+            for (const row of requirements) {
+                const persona = String(row && row.persona_key || "");
+                const key = String(row && row.nutrient_key || "");
+                const amount = Number(row && row.amount_per_day);
+                if (!persona || !key || !Number.isFinite(amount)) continue;
+                if (!requirementsByPersona.has(persona)) requirementsByPersona.set(persona, new Map());
+                requirementsByPersona.get(persona).set(key, { amountPerDay: Math.max(0, amount), unit: String(row.unit || "") });
+            }
+            return { available, valuesByPlantId, requirementsByPersona };
+        }
+
+        function compute(plan, weekly, data) {
+            const normalized = normalizeData(data);
+            const self = plan && plan.selfSufficiency || {};
+            const adults = Math.max(0, Number(self.adults) || 0);
+            const children = Math.max(0, Number(self.children) || 0);
+            const multiplier = Math.max(0, Number(self.nutritionMultiplier) || 1);
+            const totals = new Map(FOCUSED_NUTRIENTS.map(nutrient => [nutrient.key, { requestedAmount: 0, fulfilledAmount: 0 }]));
+            const missingCropIds = new Set();
+            const missingCropNames = [];
+            const perSelfLine = weekly && weekly.perSelfLine;
+            if (perSelfLine && typeof perSelfLine.forEach === "function") {
+                perSelfLine.forEach(result => {
+                    const crop = PlanMath.findCrop(plan, result && result.cropId);
+                    const plantId = String(crop && crop.plantId || "");
+                    const nutrientValues = normalized.valuesByPlantId.get(plantId);
+                    const requestedKg = sumSeries(result && result.target);
+                    const fulfilledKg = sumSeries(result && result.usableSupply);
+                    if (requestedKg <= EPS && fulfilledKg <= EPS) return;
+                    if (!normalized.available) return;
+                    if (!plantId || !nutrientValues || !nutrientValues.size) {
+                        if (!missingCropIds.has(String(result && result.cropId || ""))) {
+                            missingCropIds.add(String(result && result.cropId || ""));
+                            missingCropNames.push(crop ? crop.plant || crop.id : String(result && result.cropId || "Unknown crop"));
+                        }
+                        return;
+                    }
+                    for (const nutrient of FOCUSED_NUTRIENTS) {
+                        const value = nutrientValues.get(nutrient.key);
+                        if (!value) continue;
+                        const target = totals.get(nutrient.key);
+                        target.requestedAmount += requestedKg * 10 * value.amountPer100g;
+                        target.fulfilledAmount += fulfilledKg * 10 * value.amountPer100g;
+                    }
+                });
+            }
+
+            const adultReq = normalized.requirementsByPersona.get("adult_19_50") || new Map();
+            const childReq = normalized.requirementsByPersona.get("child_1_8") || new Map();
+            const rows = FOCUSED_NUTRIENTS.map(nutrient => {
+                const requested = totals.get(nutrient.key) || { requestedAmount: 0, fulfilledAmount: 0 };
+                const adultAmount = adultReq.get(nutrient.key);
+                const childAmount = childReq.get(nutrient.key);
+                const requirementAmount = ((Number(adultAmount && adultAmount.amountPerDay) || 0) * adults
+                    + (Number(childAmount && childAmount.amountPerDay) || 0) * children) * multiplier * 365;
+                return {
+                    nutrientKey: nutrient.key,
+                    label: nutrient.label,
+                    unit: nutrient.unit,
+                    requestedAmount: requested.requestedAmount,
+                    fulfilledAmount: requested.fulfilledAmount,
+                    requirementAmount,
+                    requestedCoveragePct: requirementAmount > EPS ? (requested.requestedAmount / requirementAmount) * 100 : 0,
+                    fulfilledCoveragePct: requirementAmount > EPS ? (requested.fulfilledAmount / requirementAmount) * 100 : 0
+                };
+            });
+            const warnings = [];
+            if (!normalized.available) warnings.push("Nutrition data is not available in this database.");
+            for (const name of missingCropNames) warnings.push(`No nutrition mapping for ${name}; excluded from nutrition totals.`);
+            return { available: normalized.available, rows, warnings, missingCropNames };
+        }
+
+        return { FOCUSED_NUTRIENTS, compute };
+    })();
+
     // -------------------- PlanSchema --------------------
     /**
      * Owns the persisted plan shape, runtime normalization, validation, and crop identity rules.
@@ -1235,6 +1496,7 @@ Draw.loadPlugin(function (ui) {
                 year: Number(year),
                 weekStartDow: 1,
                 crops: [],
+                selfSufficiency: { adults: 0, children: 0, nutritionMultiplier: 1, lines: [] }, // NEW: household food planning is persisted beside commercial demand.
                 demandChannels: clonePlain(DEFAULT_DEMAND_CHANNELS),
                 demands: [],
                 csa: { enabled: false, boxesPerWeek: 0, start: "", end: "", salePricePerBox: null, salePriceMode: "auto", components: [] }
@@ -1305,6 +1567,12 @@ Draw.loadPlugin(function (ui) {
                 ? weekStartDow
                 : 1;
             normalized.crops = Array.isArray(normalized.crops) ? normalized.crops : [];
+            if (!normalized.selfSufficiency || typeof normalized.selfSufficiency !== "object") normalized.selfSufficiency = {}; // NEW
+            normalized.selfSufficiency.adults = Math.max(0, Math.trunc(Number(normalized.selfSufficiency.adults) || 0)); // NEW
+            normalized.selfSufficiency.children = Math.max(0, Math.trunc(Number(normalized.selfSufficiency.children) || 0)); // NEW
+            const nutritionMultiplier = Number(normalized.selfSufficiency.nutritionMultiplier); // NEW
+            normalized.selfSufficiency.nutritionMultiplier = Number.isFinite(nutritionMultiplier) && nutritionMultiplier > 0 ? nutritionMultiplier : 1; // NEW
+            normalized.selfSufficiency.lines = Array.isArray(normalized.selfSufficiency.lines) ? normalized.selfSufficiency.lines : []; // NEW
             if (!Array.isArray(normalized.demandChannels)) normalized.demandChannels = clonePlain(DEFAULT_DEMAND_CHANNELS);
             normalized.demands = Array.isArray(normalized.demands) ? normalized.demands : [];
 
@@ -1352,6 +1620,8 @@ Draw.loadPlugin(function (ui) {
                 delete crop.market;
             }
             for (const demandLine of (plan.demands || [])) delete demandLine.price;
+            delete plan.__nutritionData; // NEW: loaded USDA rows are runtime cache, not plan data.
+            if (plan.selfSufficiency) delete plan.selfSufficiency.__nutrition; // NEW: analysis output is recalculated and never persisted.
             if (plan.csa) delete plan.csa.__componentValuePerBox;
             return plan;
         }
@@ -1415,6 +1685,10 @@ Draw.loadPlugin(function (ui) {
         function demandTarget(field, extra) {
             return { area: "demand", field, ...(extra || {}) };
         }
+
+        function selfSufficiencyTarget(field, extra) {
+            return { area: "self-sufficiency", field, ...(extra || {}) };
+        } // NEW: diagnostics can focus household-planning controls.
 
         function validateCrop(crop) {
             const errors = [];
@@ -1519,6 +1793,31 @@ Draw.loadPlugin(function (ui) {
             return errors;
         }
 
+        function validateSelfSufficiency(plan) {
+            const errors = [];
+            const self = plan && plan.selfSufficiency || {};
+            const lines = Array.isArray(self.lines) ? self.lines : [];
+            const lineIds = new Set();
+            if ((Number(self.adults) || 0) < 0) errors.push(makeValidation("self-sufficiency", "self.invalid_adults", "Enter adults as 0 or greater.", { field: "adults", target: selfSufficiencyTarget("adults") })); // NEW
+            if ((Number(self.children) || 0) < 0) errors.push(makeValidation("self-sufficiency", "self.invalid_children", "Enter children as 0 or greater.", { field: "children", target: selfSufficiencyTarget("children") })); // NEW
+            if (!Number.isFinite(Number(self.nutritionMultiplier)) || Number(self.nutritionMultiplier) <= 0) errors.push(makeValidation("self-sufficiency", "self.invalid_multiplier", "Enter nutrition multiplier greater than 0.", { field: "nutritionMultiplier", target: selfSufficiencyTarget("nutritionMultiplier") })); // NEW
+            for (const [lineIndex, line] of lines.entries()) {
+                const id = String(line && line.id || "").trim();
+                const crop = PlanMath.findCrop(plan, line && line.cropId);
+                if (!id) errors.push(makeValidation("self-sufficiency", "self.line_missing_id", "Self Sufficiency line needs an id.", { field: "id", target: selfSufficiencyTarget("id", { selfLineIndex: lineIndex }) })); // NEW
+                else if (lineIds.has(id)) errors.push(makeValidation("self-sufficiency", "self.line_duplicate_id", `Use a unique Self Sufficiency line id: ${id}.`, { field: "id", target: selfSufficiencyTarget("id", { selfLineId: id, selfLineIndex: lineIndex }) })); // NEW
+                else lineIds.add(id);
+                if (!crop) errors.push(makeValidation("self-sufficiency", "self.line_missing_crop", `Choose a crop for Self Sufficiency line ${id || "unknown"}.`, { field: "cropId", target: selfSufficiencyTarget("cropId", { selfLineId: id, selfLineIndex: lineIndex }) })); // NEW
+                if (!Number.isFinite(Number(line && line.qty)) || Number(line.qty) <= 0) errors.push(makeValidation("self-sufficiency", "self.line_invalid_quantity", `Enter quantity greater than 0 for Self Sufficiency line ${id || "unknown"}.`, { field: "qty", target: selfSufficiencyTarget("qty", { selfLineId: id, selfLineIndex: lineIndex }) })); // NEW
+                if (!DEMAND_FREQUENCIES.includes(String(line && line.frequency || ""))) errors.push(makeValidation("self-sufficiency", "self.line_invalid_frequency", `Choose a valid frequency for Self Sufficiency line ${id || "unknown"}.`, { field: "frequency", target: selfSufficiencyTarget("frequency", { selfLineId: id, selfLineIndex: lineIndex }) })); // NEW
+                if (!Number.isInteger(Number(line && line.everyN)) || Number(line.everyN) < 1) errors.push(makeValidation("self-sufficiency", "self.line_invalid_every_n", `Enter every value greater than 0 for Self Sufficiency line ${id || "unknown"}.`, { field: "everyN", target: selfSufficiencyTarget("everyN", { selfLineId: id, selfLineIndex: lineIndex }) })); // NEW
+                if (!PlanMath.hasYmd(line && line.from) || !PlanMath.hasYmd(line && line.to)) errors.push(makeValidation("self-sufficiency", "self.line_missing_dates", `Enter Self Sufficiency dates for line ${id || "unknown"}.`, { field: "from", target: selfSufficiencyTarget("from", { selfLineId: id, selfLineIndex: lineIndex }) })); // NEW
+                if (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to) errors.push(makeValidation("self-sufficiency", "self.line_reversed_dates", `Set Self Sufficiency start on or before end for line ${id || "unknown"}.`, { field: "from", target: selfSufficiencyTarget("from", { selfLineId: id, selfLineIndex: lineIndex }) })); // NEW
+                if (crop && !Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, line && line.unit))) errors.push(makeValidation("self-sufficiency", "self.line_unresolved_unit", `Choose a valid unit for Self Sufficiency line ${id || "unknown"}.`, { cropId: String(crop.id || ""), field: "unit", target: selfSufficiencyTarget("unit", { selfLineId: id, selfLineIndex: lineIndex }) })); // NEW
+            }
+            return errors;
+        } // NEW: household demand validates separately from sales-channel demand.
+
         function validate(plan) {
             const errors = [];
             const crops = (plan && plan.crops) || [];
@@ -1526,6 +1825,7 @@ Draw.loadPlugin(function (ui) {
 
             const duplicate = findFirstDuplicateCrop(plan);
             if (duplicate) errors.push(makeValidation("crop", "crop.duplicate_identity", "Each plant/variety can appear only once in a year plan.", { cropId: String(duplicate.second && duplicate.second.id || ""), field: "varietyId", target: cropTarget(duplicate.second, "basics", "varietyId") }));
+            errors.push(...validateSelfSufficiency(plan)); // NEW
             errors.push(...validateDemand(plan));
             errors.push(...validateCsa(plan));
             return errors;
@@ -1550,6 +1850,7 @@ Draw.loadPlugin(function (ui) {
             inferMethodCategoryFromMethodId,
             normalizeCropMethodFieldsForRuntime,
             validateCrop,
+            validateSelfSufficiency,
             validateDemand,
             validateCsa,
             validate
@@ -1697,6 +1998,10 @@ Draw.loadPlugin(function (ui) {
                 shiftFieldYear(demandLine, "from", deltaYears);
                 shiftFieldYear(demandLine, "to", deltaYears);
             }
+            for (const selfLine of (plan.selfSufficiency && plan.selfSufficiency.lines || [])) {
+                shiftFieldYear(selfLine, "from", deltaYears); // NEW: self-use template dates roll forward with the rest of the plan.
+                shiftFieldYear(selfLine, "to", deltaYears); // NEW
+            }
             if (!plan.csa) return;
             shiftFieldYear(plan.csa, "start", deltaYears);
             shiftFieldYear(plan.csa, "end", deltaYears);
@@ -1759,6 +2064,9 @@ Draw.loadPlugin(function (ui) {
             }
             for (const demandLine of rekeyed.demands) {
                 demandLine.cropId = idMap.has(demandLine.cropId) ? idMap.get(demandLine.cropId) : "";
+            }
+            for (const selfLine of (rekeyed.selfSufficiency && rekeyed.selfSufficiency.lines || [])) {
+                selfLine.cropId = idMap.has(selfLine.cropId) ? idMap.get(selfLine.cropId) : ""; // NEW: template self-use rows keep pointing at the copied crop rows.
             }
             if (idMap.has(rekeyed.cropFilterId)) rekeyed.cropFilterId = idMap.get(rekeyed.cropFilterId);
             else delete rekeyed.cropFilterId;
@@ -2301,6 +2609,25 @@ Draw.loadPlugin(function (ui) {
             crop.__sync_lastHarvestEnd = crop.__sync_lastHarvestEnd ?? (oldSnapshot && oldSnapshot.he) ?? "";
             crop.__sync_lastAvailEnd = crop.__sync_lastAvailEnd ?? (oldSnapshot && oldSnapshot.availEnd) ?? "";
 
+            for (const selfLine of ((plan && plan.selfSufficiency && plan.selfSufficiency.lines) || [])) {
+                if (!selfLine || selfLine.cropId !== crop.id) continue;
+                if (previousLegacyEnd && String(selfLine.to || "") === previousLegacyEnd) selfLine.to = previousHarvestEnd; // NEW
+                if (shouldAutoReplaceDate(selfLine.from, crop.__sync_lastHarvestStart) && PlanMath.hasYmd(harvestStart)) {
+                    selfLine.from = harvestStart; // NEW: self-use windows track the crop availability window when sync is enabled.
+                }
+                selfLine.from = clampYmdIntoRange(selfLine.from, harvestStart, availableEnd); // NEW
+
+                const lastAutomaticEnd = crop.__sync_lastAvailEnd || crop.__sync_lastHarvestEnd;
+                const looksAutomatic = PlanMath.hasYmd(harvestEnd)
+                    && PlanMath.hasYmd(selfLine.to)
+                    && String(selfLine.to) === String(harvestEnd);
+                if (shouldAutoReplaceDate(selfLine.to, lastAutomaticEnd) || looksAutomatic) {
+                    if (PlanMath.hasYmd(availableEnd)) selfLine.to = availableEnd;
+                    else if (PlanMath.hasYmd(harvestEnd)) selfLine.to = harvestEnd;
+                }
+                selfLine.to = clampYmdIntoRange(selfLine.to, harvestStart, availableEnd); // NEW
+            }
+
             for (const demandLine of ((plan && plan.demands) || [])) {
                 if (!demandLine || demandLine.cropId !== crop.id) continue;
                 if (previousLegacyEnd && String(demandLine.to || "") === previousLegacyEnd) demandLine.to = previousHarvestEnd;
@@ -2703,6 +3030,7 @@ Draw.loadPlugin(function (ui) {
             const prefs = preferences && typeof preferences === "object" ? preferences : {};
             const top = prefs.top && typeof prefs.top === "object" ? prefs.top : {};
             state.csaExpanded = top.csaExpanded === true;
+            state.selfSufficiencyExpanded = top.selfSufficiencyExpanded === true; // NEW: preserve the self-use strip state.
             state.demandExpanded = top.demandExpanded === false ? false : true;
             state.cropPlanExpanded = top.cropPlanExpanded === false ? false : true;
             state.planCheckExpanded = top.planCheckExpanded === true;
@@ -2717,13 +3045,16 @@ Draw.loadPlugin(function (ui) {
                 selectedCropId: resolveSelectedCropId(crops, "", 0),
                 activeTab: "basics",
                 csaExpanded: false,
+                selfSufficiencyExpanded: false,
                 demandExpanded: true,
+                planCheckScope: "combined",
                 collapsedDemandChannelIds: new Set(),
                 collapsedDemandLineIds: new Set(),
                 cropPlanExpanded: true,
                 planCheckExpanded: false,
                 hadBlockingErrors: false,
                 hadCsaErrors: false,
+                hadSelfSufficiencyErrors: false,
                 hadDemandErrors: false,
                 baselineSnapshot: "",
                 validationState: "idle",
@@ -2801,6 +3132,17 @@ Draw.loadPlugin(function (ui) {
             };
         }
 
+        function summarizeSelfSufficiencyWeekly(selfWeekly) {
+            const sum = values => (Array.isArray(values) ? values : []).reduce((total, value) => total + Math.max(0, Number(value) || 0), 0);
+            return {
+                targetKg: sum(selfWeekly && selfWeekly.target),
+                usableSupplyKg: sum(selfWeekly && selfWeekly.usableSupply),
+                shortKg: sum(selfWeekly && selfWeekly.short),
+                groceryValue: sum(selfWeekly && selfWeekly.groceryValue),
+                fulfilledGroceryValue: sum(selfWeekly && selfWeekly.fulfilledGroceryValue)
+            };
+        } // NEW: household grocery value mirrors revenue summaries but stays separate from sales.
+
         function buildCompactStatus(dashboard) {
             const cropCount = Math.max(0, Math.trunc(Number(dashboard && dashboard.cropCount) || 0));
             const parts = [String(Number(dashboard && dashboard.year) || ""), `${cropCount} crop${cropCount === 1 ? "" : "s"}`];
@@ -2822,11 +3164,12 @@ Draw.loadPlugin(function (ui) {
             return parts.join(" \u00b7 ");
         }
 
-        function syncExpansionState(state, dashboard, csaErrors, demandErrors) {
+        function syncExpansionState(state, dashboard, csaErrors, demandErrors, selfSufficiencyErrors) {
             const hasBlockingErrors = !!(dashboard && dashboard.validationErrors && dashboard.validationErrors.length);
             const hasCsaErrors = !!(csaErrors && csaErrors.length);
             const hasDemandErrors = !!(demandErrors && demandErrors.length);
-            const changes = { planCheckChanged: false, csaChanged: false, demandChanged: false };
+            const hasSelfSufficiencyErrors = !!(selfSufficiencyErrors && selfSufficiencyErrors.length);
+            const changes = { planCheckChanged: false, csaChanged: false, demandChanged: false, selfSufficiencyChanged: false };
             if (hasBlockingErrors && !state.hadBlockingErrors && !state.planCheckExpanded) {
                 state.planCheckExpanded = true;
                 changes.planCheckChanged = true;
@@ -2839,9 +3182,14 @@ Draw.loadPlugin(function (ui) {
                 state.demandExpanded = true;
                 changes.demandChanged = true;
             }
+            if (hasSelfSufficiencyErrors && !state.hadSelfSufficiencyErrors && !state.selfSufficiencyExpanded) {
+                state.selfSufficiencyExpanded = true;
+                changes.selfSufficiencyChanged = true;
+            }
             state.hadBlockingErrors = hasBlockingErrors;
             state.hadCsaErrors = hasCsaErrors;
             state.hadDemandErrors = hasDemandErrors;
+            state.hadSelfSufficiencyErrors = hasSelfSufficiencyErrors;
             return changes;
         }
 
@@ -2937,6 +3285,8 @@ Draw.loadPlugin(function (ui) {
             const potentialRevenue = channelMetrics.reduce((sum, metric) => sum + metric.potentialRevenue, 0);
             const fulfilledRevenue = channelMetrics.reduce((sum, metric) => sum + metric.fulfilledRevenue, 0);
             const csaMetric = summarizeCsaWeekly(weekly && weekly.csa);
+            const selfSufficiencyMetric = summarizeSelfSufficiencyWeekly(weekly && weekly.selfSufficiency);
+            const selfSufficiencyNutrition = NutritionPlanner.compute(plan, weekly, settings.nutritionData || plan.__nutritionData || {});
             const totalPotentialRevenue = potentialRevenue + csaMetric.potentialRevenue;
             const totalFulfilledRevenue = fulfilledRevenue + csaMetric.fulfilledRevenue;
             const shortageWeeks = [];
@@ -2952,16 +3302,20 @@ Draw.loadPlugin(function (ui) {
                     }, 0);
                     const csaDemandKg = Math.max(0, Number(weekly.csa && weekly.csa.target[i]) || 0);
                     const csaShortKg = Math.max(0, Number(weekly.csa && weekly.csa.short[i]) || 0);
-                    if (channelShortKg + csaShortKg <= EPS) continue;
+                    const selfDemandKg = Math.max(0, Number(weekly.selfSufficiency && weekly.selfSufficiency.target[i]) || 0);
+                    const selfShortKg = Math.max(0, Number(weekly.selfSufficiency && weekly.selfSufficiency.short[i]) || 0);
+                    if (channelShortKg + csaShortKg + selfShortKg <= EPS) continue;
                     shortageWeeks.push({
                         week: String(weekly.weeks[i] && weekly.weeks[i].iso || ""),
-                        channelDemandKg, channelShortKg, csaDemandKg, csaShortKg
+                        selfDemandKg, selfShortKg, channelDemandKg, channelShortKg, csaDemandKg, csaShortKg
                     });
                 }
             }
             const diagnostics = uniqueMessages([
                 ...((runtime && runtime.warnings) || []),
                 ...validationErrors.map(validationMessage),
+                ...((selfSufficiencyNutrition && selfSufficiencyNutrition.warnings) || []),
+                ...((plan && plan.selfSufficiency && plan.selfSufficiency.lines || []).length && !((Number(plan.selfSufficiency.adults) || 0) + (Number(plan.selfSufficiency.children) || 0)) ? ["Self Sufficiency has crop demand lines but household size is zero. Nutrition coverage will be 0%."] : []),
                 ...((settings.extraDiagnostics) || [])
             ]);
             const badges = [];
@@ -2993,6 +3347,8 @@ Draw.loadPlugin(function (ui) {
                 channelMetricsById: new Map(channelMetrics.map(metric => [String(metric.channel.id), metric])),
                 priorityMetrics,
                 csaMetric,
+                selfSufficiencyMetric,
+                selfSufficiencyNutrition,
                 shortageWeeks,
                 potentialRevenue,
                 fulfilledRevenue,
@@ -3016,6 +3372,7 @@ Draw.loadPlugin(function (ui) {
             formatMoney,
             formatYmd,
             summarizeDemandAggregate,
+            summarizeSelfSufficiencyWeekly,
             buildCompactStatus,
             buildCsaSummary,
             syncExpansionState,
@@ -3363,6 +3720,8 @@ Draw.loadPlugin(function (ui) {
             let demandRefs = {};
             let csaRefs = {};
             let chartHitModel = null;
+            let nutritionLoadKey = "";
+            let nutritionLoadVersion = 0;
             const visibleChartSeriesIds = new Set(PLAN_CHART_SERIES.map(series => series.id));
 
             function pruneCollapseState() {
@@ -3551,10 +3910,12 @@ Draw.loadPlugin(function (ui) {
             editorBox.style.cssText = "border:1px solid #ddd;border-radius:8px;background:#fff;min-height:280px;";
             const csaBox = document.createElement("div");
             const demandBox = document.createElement("div");
+            const selfSufficiencyBox = document.createElement("div");
             const cropPlanBox = document.createElement("div");
             const planCheckBox = document.createElement("div");
             csaBox.dataset.yearPlanStrip = "csa";
             demandBox.dataset.yearPlanStrip = "demand";
+            selfSufficiencyBox.dataset.yearPlanStrip = "self-sufficiency"; // NEW
             cropPlanBox.dataset.yearPlanStrip = "crop-plan";
             planCheckBox.dataset.yearPlanStrip = "plan-check";
             mainColumn.appendChild(editorBox);
@@ -3562,6 +3923,7 @@ Draw.loadPlugin(function (ui) {
             dashboardGrid.appendChild(mainColumn);
             body.appendChild(summaryBox);
             body.appendChild(cropPlanBox);
+            body.appendChild(selfSufficiencyBox);
             body.appendChild(demandBox);
             body.appendChild(csaBox);
             body.appendChild(planCheckBox);
@@ -3574,6 +3936,7 @@ Draw.loadPlugin(function (ui) {
             const chartControls = document.createElement("div");
             chartControls.className = "yp-row";
             chartControls.style.marginBottom = "6px";
+            const planCheckScopeSel = document.createElement("select");
             const cropFilterSel = document.createElement("select");
             const planCheckSummary = document.createElement("div");
             planCheckSummary.className = "yp-plan-check-summary";
@@ -3600,6 +3963,8 @@ Draw.loadPlugin(function (ui) {
             const totalsBox = document.createElement("div");
             const diagnosticsBox = document.createElement("div");
             diagnosticsBox.style.marginTop = "10px";
+            chartControls.appendChild(document.createTextNode("Scope"));
+            chartControls.appendChild(planCheckScopeSel);
             chartControls.appendChild(document.createTextNode("Crop filter"));
             chartControls.appendChild(cropFilterSel);
             chartBox.appendChild(chartControls);
@@ -3839,6 +4204,8 @@ Draw.loadPlugin(function (ui) {
                 if (target.componentIndex !== undefined) selectorParts.push(`[data-csa-component-index="${String(target.componentIndex).replace(/"/g, '\\"')}"]`);
                 if (target.channelId) selectorParts.push(`[data-year-plan-demand-channel-id="${String(target.channelId).replace(/"/g, '\\"')}"]`);
                 if (target.lineId) selectorParts.push(`[data-year-plan-demand-line-id="${String(target.lineId).replace(/"/g, '\\"')}"]`);
+                if (target.selfLineId) selectorParts.push(`[data-year-plan-self-line-id="${String(target.selfLineId).replace(/"/g, '\\"')}"]`); // NEW
+                if (target.selfLineIndex !== undefined) selectorParts.push(`[data-year-plan-self-line-index="${String(target.selfLineIndex).replace(/"/g, '\\"')}"]`); // NEW
                 return card.querySelector(selectorParts.join(""));
             }
 
@@ -3854,6 +4221,9 @@ Draw.loadPlugin(function (ui) {
                 } else if (target.area === "csa") {
                     state.csaExpanded = true;
                     renderCsa(true);
+                } else if (target.area === "self-sufficiency") {
+                    state.selfSufficiencyExpanded = true; // NEW
+                    renderSelfSufficiencyStrip(true); // NEW
                 } else if (target.area === "demand") {
                     state.demandExpanded = true;
                     const line = target.lineId
@@ -3967,6 +4337,7 @@ Draw.loadPlugin(function (ui) {
                 }
                 if (chartSummary && chartSummary.expiredKg > EPS) add(createChip(`Expired ${formatKg(chartSummary.expiredKg)}`, "", "warning", () => { state.planCheckExpanded = true; renderPlanCheck(); }));
                 if (PlanSchema.validateDemand(plan).length) add(createChip("Demand dates invalid", "", "danger", () => { state.demandExpanded = true; renderDemandStrip(true); }));
+                if (PlanSchema.validateSelfSufficiency(plan).length) add(createChip("Self Sufficiency needs setup", "", "danger", () => { state.selfSufficiencyExpanded = true; renderSelfSufficiencyStrip(true); })); // NEW
                 if (PlanSchema.validateCsa(plan).length) add(createDiagnosticsChip("CSA setup issues", "danger", csaValidationResults(), () => { state.csaExpanded = true; renderCsa(true); }));
                 if ((dashboard && dashboard.diagnostics || []).length && !items.length) add(createChip("Plan Check has diagnostics", "", "warning", () => { state.planCheckExpanded = true; renderPlanCheck(); }));
                 return items;
@@ -4012,6 +4383,8 @@ Draw.loadPlugin(function (ui) {
                 if (data.componentIndex !== undefined) control.dataset.csaComponentIndex = String(data.componentIndex);
                 if (data.channelId !== undefined) control.dataset.yearPlanDemandChannelId = String(data.channelId);
                 if (data.lineId !== undefined) control.dataset.yearPlanDemandLineId = String(data.lineId);
+                if (data.selfLineId !== undefined) control.dataset.yearPlanSelfLineId = String(data.selfLineId); // NEW
+                if (data.selfLineIndex !== undefined) control.dataset.yearPlanSelfLineIndex = String(data.selfLineIndex); // NEW
                 return control;
             }
 
@@ -4209,6 +4582,42 @@ Draw.loadPlugin(function (ui) {
                 }, 90);
             }
 
+            function currentNutritionPlantIds() {
+                const ids = new Set();
+                const cropsById = new Map((plan.crops || []).map(crop => [String(crop && crop.id || ""), crop]));
+                for (const line of ((plan.selfSufficiency && plan.selfSufficiency.lines) || [])) {
+                    const crop = cropsById.get(String(line && line.cropId || ""));
+                    const plantId = Number(crop && crop.plantId);
+                    if (Number.isFinite(plantId)) ids.add(plantId);
+                }
+                return Array.from(ids).sort((a, b) => a - b);
+            } // NEW
+
+            function scheduleNutritionLoad() {
+                const plantIds = currentNutritionPlantIds();
+                const key = plantIds.join(",");
+                if (!plantIds.length || key === nutritionLoadKey) return;
+                const version = ++nutritionLoadVersion;
+                nutritionLoadKey = key;
+                Promise.all([
+                    DbClient.queryNutritionByPlantIds(plantIds),
+                    DbClient.queryNutritionRequirements()
+                ]).then(([nutritionRows, requirementRows]) => {
+                    if (!SessionController.isActive(session) || version !== nutritionLoadVersion) return;
+                    plan.__nutritionData = {
+                        available: !!(nutritionRows && nutritionRows.available && requirementRows && requirementRows.available),
+                        mappings: nutritionRows && nutritionRows.mappings || [],
+                        values: nutritionRows && nutritionRows.values || [],
+                        requirements: requirementRows && requirementRows.requirements || []
+                    };
+                    refreshDerived(null, { rebuildSelfSufficiency: true });
+                }).catch(() => {
+                    if (!SessionController.isActive(session) || version !== nutritionLoadVersion) return;
+                    plan.__nutritionData = { available: false, mappings: [], values: [], requirements: [] };
+                    refreshDerived(null, { rebuildSelfSufficiency: true });
+                });
+            } // NEW: DB reads stay asynchronous and only rerender when the self-use crop set changes.
+
             function fillTemplateDropdown() {
                 templateSel.innerHTML = "";
                 templateSel.appendChild(new Option("-- Select template --", ""));
@@ -4224,6 +4633,17 @@ Draw.loadPlugin(function (ui) {
                 plan.cropFilterId = cropFilterSel.value;
             }
 
+            function fillPlanCheckScope() {
+                const current = ["combined", "self", "csa", "sales"].includes(String(state.planCheckScope || "")) ? String(state.planCheckScope) : "combined";
+                planCheckScopeSel.innerHTML = "";
+                planCheckScopeSel.appendChild(new Option("Combined", "combined"));
+                planCheckScopeSel.appendChild(new Option("Self", "self"));
+                planCheckScopeSel.appendChild(new Option("CSA", "csa"));
+                planCheckScopeSel.appendChild(new Option("Sales", "sales"));
+                planCheckScopeSel.value = current;
+                state.planCheckScope = current;
+            } // NEW: Plan Check can scope chart and totals without changing persisted demand.
+
             function replacePlan(nextPlan, nextYear, loadedExisting) {
                 Object.keys(plan).forEach(key => delete plan[key]);
                 Object.assign(plan, PlanSchema.normalizeForRuntime(nextPlan, nextYear));
@@ -4234,6 +4654,7 @@ Draw.loadPlugin(function (ui) {
                 state.activeTab = "basics";
                 state.hadBlockingErrors = false;
                 state.hadCsaErrors = false;
+                state.hadSelfSufficiencyErrors = false;
                 state.hadDemandErrors = false;
                 state.validationState = "idle";
                 state.lastSavedAt = null;
@@ -4436,14 +4857,34 @@ Draw.loadPlugin(function (ui) {
                 return (Array.isArray(values) ? values : []).reduce((total, value) => total + Math.max(0, Number(value) || 0), 0);
             }
 
-            function summarizePlanCheckRevenue(cropId) {
+            function summarizePlanCheckRevenue(cropId, scope) {
                 const selectedCropId = String(cropId || "");
+                const selectedScope = String(scope || "combined");
+                const selfMetric = dashboard && dashboard.selfSufficiencyMetric || {};
+                const csaMetric = dashboard && dashboard.csaMetric || {};
                 if (!selectedCropId) {
+                    if (selectedScope === "self") return {
+                        potentialRevenue: Math.max(0, Number(selfMetric.groceryValue) || 0),
+                        fulfilledRevenue: Math.max(0, Number(selfMetric.fulfilledGroceryValue) || 0)
+                    };
+                    if (selectedScope === "csa") return {
+                        potentialRevenue: Math.max(0, Number(csaMetric.potentialRevenue) || 0),
+                        fulfilledRevenue: Math.max(0, Number(csaMetric.fulfilledRevenue) || 0)
+                    };
+                    if (selectedScope === "sales") return {
+                        potentialRevenue: Math.max(0, Number(dashboard.potentialRevenue) || 0),
+                        fulfilledRevenue: Math.max(0, Number(dashboard.fulfilledRevenue) || 0)
+                    };
                     return {
-                        potentialRevenue: Math.max(0, Number(dashboard.totalPotentialRevenue) || 0),
-                        fulfilledRevenue: Math.max(0, Number(dashboard.totalFulfilledRevenue) || 0)
+                        potentialRevenue: Math.max(0, Number(dashboard.totalPotentialRevenue) || 0) + Math.max(0, Number(selfMetric.groceryValue) || 0),
+                        fulfilledRevenue: Math.max(0, Number(dashboard.totalFulfilledRevenue) || 0) + Math.max(0, Number(selfMetric.fulfilledGroceryValue) || 0)
                     };
                 }
+                const selfWeekly = runtime.weekly && runtime.weekly.selfSufficiency;
+                const selfPotentialByCrop = selfWeekly && selfWeekly.groceryValueByCropId;
+                const selfFulfilledByCrop = selfWeekly && selfWeekly.fulfilledGroceryValueByCropId;
+                const selfPotential = sumPositiveValues(selfPotentialByCrop && selfPotentialByCrop.get ? selfPotentialByCrop.get(selectedCropId) : null);
+                const selfFulfilled = sumPositiveValues(selfFulfilledByCrop && selfFulfilledByCrop.get ? selfFulfilledByCrop.get(selectedCropId) : null);
                 let salesPotential = 0;
                 let salesFulfilled = 0;
                 if (runtime.weekly && runtime.weekly.perDemandLine && typeof runtime.weekly.perDemandLine.forEach === "function") {
@@ -4456,20 +4897,27 @@ Draw.loadPlugin(function (ui) {
                 const csaWeekly = runtime.weekly && runtime.weekly.csa;
                 const csaPotentialByCrop = csaWeekly && csaWeekly.potentialRevenueByCropId;
                 const csaFulfilledByCrop = csaWeekly && csaWeekly.fulfilledRevenueByCropId;
+                const csaPotential = sumPositiveValues(csaPotentialByCrop && csaPotentialByCrop.get ? csaPotentialByCrop.get(selectedCropId) : null);
+                const csaFulfilled = sumPositiveValues(csaFulfilledByCrop && csaFulfilledByCrop.get ? csaFulfilledByCrop.get(selectedCropId) : null);
+                if (selectedScope === "self") return { potentialRevenue: selfPotential, fulfilledRevenue: selfFulfilled };
+                if (selectedScope === "csa") return { potentialRevenue: csaPotential, fulfilledRevenue: csaFulfilled };
+                if (selectedScope === "sales") return { potentialRevenue: salesPotential, fulfilledRevenue: salesFulfilled };
                 return {
-                    potentialRevenue: salesPotential + sumPositiveValues(csaPotentialByCrop && csaPotentialByCrop.get ? csaPotentialByCrop.get(selectedCropId) : null),
-                    fulfilledRevenue: salesFulfilled + sumPositiveValues(csaFulfilledByCrop && csaFulfilledByCrop.get ? csaFulfilledByCrop.get(selectedCropId) : null)
+                    potentialRevenue: selfPotential + salesPotential + csaPotential,
+                    fulfilledRevenue: selfFulfilled + salesFulfilled + csaFulfilled
                 };
-            }
+            } // CHANGE: value totals now follow the selected Plan Check scope and include household grocery value.
 
             function renderPlanCheck() {
                 const cropId = String(plan.cropFilterId || "");
+                const chartScope = ["combined", "self", "csa", "sales"].includes(String(state.planCheckScope || "")) ? String(state.planCheckScope) : "combined";
+                planCheckScopeSel.value = chartScope;
                 const visibleCrops = cropId
                     ? (plan.crops || []).filter(crop => String(crop && crop.id || "") === cropId)
                     : (plan.crops || []);
-                const chartModel = PlanMath.buildPlanChartModel(runtime.weekly, cropId);
+                const chartModel = PlanMath.buildPlanChartModel(runtime.weekly, cropId, { scope: chartScope });
                 const chartSummary = PlanMath.summarizePlanChartModel(chartModel);
-                const scopedRevenue = summarizePlanCheckRevenue(cropId);
+                const scopedRevenue = summarizePlanCheckRevenue(cropId, chartScope);
                 renderStripBox(planCheckBox, {
                     title: "Plan Check",
                     expanded: state.planCheckExpanded,
@@ -4497,14 +4945,28 @@ Draw.loadPlugin(function (ui) {
                 ]);
 
                 const rows = visibleCrops.map(crop => {
-                    const summary = PlanMath.summarizePlanChartModel(PlanMath.buildPlanChartModel(runtime.weekly, String(crop.id)));
-                    const revenue = summarizePlanCheckRevenue(crop.id);
+                    const summary = PlanMath.summarizePlanChartModel(PlanMath.buildPlanChartModel(runtime.weekly, String(crop.id), { scope: chartScope }));
+                    const revenue = summarizePlanCheckRevenue(crop.id, chartScope);
                     const metric = dashboard.cropMetricsById.get(String(crop.id));
                     return `<tr><td>${mxUtils.htmlEntities(cropLabel(crop))}</td><td>${summary.targetKg.toFixed(1)}</td><td>${summary.harvestKg.toFixed(1)}</td><td>${summary.usableSupplyKg.toFixed(1)}</td><td>${summary.shortKg.toFixed(1)}</td><td>${summary.expiredKg.toFixed(1)}</td><td>${formatMoney(revenue.potentialRevenue)}</td><td>${formatMoney(revenue.fulfilledRevenue)}</td><td>${mxUtils.htmlEntities(metric ? metric.status : "Missing data")}</td></tr>`;
                 }).join("");
-                const channelRows = dashboard.channelMetrics.map(metric => `<tr><td>${mxUtils.htmlEntities(metric.channel.label || metric.channel.id)}</td><td>${metric.targetKg.toFixed(1)}</td><td>${metric.usableSupplyKg.toFixed(1)}</td><td>${metric.shortKg.toFixed(1)}</td><td>${metric.lineCount}</td><td>${formatMoney(metric.potentialRevenue)}</td><td>${formatMoney(metric.fulfilledRevenue)}</td><td>${mxUtils.htmlEntities(metric.status)}</td></tr>`).join("");
-                const priorityRows = dashboard.priorityMetrics.map(metric => `<tr><td>${mxUtils.htmlEntities(metric.priority)}</td><td>${metric.targetKg.toFixed(1)}</td><td>${metric.usableSupplyKg.toFixed(1)}</td><td>${metric.shortKg.toFixed(1)}</td><td>${formatMoney(metric.potentialRevenue)}</td><td>${formatMoney(metric.fulfilledRevenue)}</td></tr>`).join("");
-                const shortageRows = dashboard.shortageWeeks.map(row => `<tr><td>${mxUtils.htmlEntities(row.week)}</td><td>${row.csaDemandKg.toFixed(1)}</td><td>${row.csaShortKg.toFixed(1)}</td><td>${row.channelDemandKg.toFixed(1)}</td><td>${row.channelShortKg.toFixed(1)}</td></tr>`).join("");
+                const selfMetric = dashboard.selfSufficiencyMetric || {};
+                const selfSourceRow = `<tr><td>Self Sufficiency</td><td>${(Number(selfMetric.targetKg) || 0).toFixed(1)}</td><td>${(Number(selfMetric.usableSupplyKg) || 0).toFixed(1)}</td><td>${(Number(selfMetric.shortKg) || 0).toFixed(1)}</td><td>${(plan.selfSufficiency && plan.selfSufficiency.lines || []).length}</td><td>${formatMoney(selfMetric.groceryValue)}</td><td>${formatMoney(selfMetric.fulfilledGroceryValue)}</td><td>${Number(selfMetric.shortKg) > EPS ? "Short" : "OK"}</td></tr>`;
+                const csaMetric = dashboard.csaMetric || {};
+                const csaSourceRow = `<tr><td>CSA</td><td>${(Number(csaMetric.targetKg) || 0).toFixed(1)}</td><td>${(Number(csaMetric.usableSupplyKg) || 0).toFixed(1)}</td><td>${(Number(csaMetric.shortKg) || 0).toFixed(1)}</td><td>${(plan.csa && plan.csa.components || []).length}</td><td>${formatMoney(csaMetric.potentialRevenue)}</td><td>${formatMoney(csaMetric.fulfilledRevenue)}</td><td>${Number(csaMetric.shortKg) > EPS ? "Short" : "OK"}</td></tr>`;
+                const salesChannelRows = dashboard.channelMetrics.map(metric => `<tr><td>${mxUtils.htmlEntities(metric.channel.label || metric.channel.id)}</td><td>${metric.targetKg.toFixed(1)}</td><td>${metric.usableSupplyKg.toFixed(1)}</td><td>${metric.shortKg.toFixed(1)}</td><td>${metric.lineCount}</td><td>${formatMoney(metric.potentialRevenue)}</td><td>${formatMoney(metric.fulfilledRevenue)}</td><td>${mxUtils.htmlEntities(metric.status)}</td></tr>`).join("");
+                const channelRows = chartScope === "self"
+                    ? selfSourceRow
+                    : (chartScope === "csa" ? csaSourceRow : (chartScope === "sales" ? salesChannelRows : selfSourceRow + csaSourceRow + salesChannelRows));
+                const priorityRows = (chartScope === "self" || chartScope === "csa")
+                    ? ""
+                    : dashboard.priorityMetrics.map(metric => `<tr><td>${mxUtils.htmlEntities(metric.priority)}</td><td>${metric.targetKg.toFixed(1)}</td><td>${metric.usableSupplyKg.toFixed(1)}</td><td>${metric.shortKg.toFixed(1)}</td><td>${formatMoney(metric.potentialRevenue)}</td><td>${formatMoney(metric.fulfilledRevenue)}</td></tr>`).join("");
+                const shortageRows = dashboard.shortageWeeks.filter(row => {
+                    if (chartScope === "self") return Number(row.selfShortKg) > EPS;
+                    if (chartScope === "csa") return Number(row.csaShortKg) > EPS;
+                    if (chartScope === "sales") return Number(row.channelShortKg) > EPS;
+                    return true;
+                }).map(row => `<tr><td>${mxUtils.htmlEntities(row.week)}</td><td>${row.selfDemandKg.toFixed(1)}</td><td>${row.selfShortKg.toFixed(1)}</td><td>${row.csaDemandKg.toFixed(1)}</td><td>${row.csaShortKg.toFixed(1)}</td><td>${row.channelDemandKg.toFixed(1)}</td><td>${row.channelShortKg.toFixed(1)}</td></tr>`).join("");
                 totalsBox.innerHTML =
                     `
                     <div style="font-weight:700;margin-bottom:6px;">Plan Check totals</div>
@@ -4512,10 +4974,10 @@ Draw.loadPlugin(function (ui) {
                     <div style="font-weight:700;margin:10px 0 6px;">Channels</div>
                     <table style="width:100%;border-collapse:collapse;"><thead><tr><th>Channel</th><th>Demand</th><th>Usable</th><th>Short</th><th>Lines</th><th>Potential</th><th>Fulfilled</th><th>Status</th></tr></thead><tbody>${channelRows || '<tr><td colspan="8">No channels.</td></tr>'}</tbody></table>
                     <div style="font-weight:700;margin:10px 0 6px;">Priorities</div>
-                    <table style="width:100%;border-collapse:collapse;"><thead><tr><th>Priority</th><th>Demand</th><th>Usable</th><th>Short</th><th>Potential</th><th>Fulfilled</th></tr></thead><tbody>${priorityRows}</tbody></table>
+                    <table style="width:100%;border-collapse:collapse;"><thead><tr><th>Priority</th><th>Demand</th><th>Usable</th><th>Short</th><th>Potential</th><th>Fulfilled</th></tr></thead><tbody>${priorityRows || '<tr><td colspan="6">No priority breakdown for this scope.</td></tr>'}</tbody></table>
                     <div style="font-weight:700;margin:10px 0 6px;">Shortage weeks</div>
-                    <table style="width:100%;border-collapse:collapse;"><thead><tr><th>Week</th><th>CSA demand</th><th>CSA short</th><th>Channel demand</th><th>Channel short</th></tr></thead><tbody>${shortageRows || '<tr><td colspan="5">No shortage weeks.</td></tr>'}</tbody></table>
-                    <div style="margin-top:9px;"><strong>Revenue:</strong> Total potential ${formatMoney(dashboard.totalPotentialRevenue)} | Total fulfilled ${formatMoney(dashboard.totalFulfilledRevenue)}. Sales ${formatMoney(dashboard.fulfilledRevenue)} | CSA ${formatMoney(dashboard.csaMetric && dashboard.csaMetric.fulfilledRevenue)}.</div>`;
+                    <table style="width:100%;border-collapse:collapse;"><thead><tr><th>Week</th><th>Self demand</th><th>Self short</th><th>CSA demand</th><th>CSA short</th><th>Channel demand</th><th>Channel short</th></tr></thead><tbody>${shortageRows || '<tr><td colspan="7">No shortage weeks.</td></tr>'}</tbody></table>
+                    <div style="margin-top:9px;"><strong>Value:</strong> Scope potential ${formatMoney(scopedRevenue.potentialRevenue)} | Scope fulfilled ${formatMoney(scopedRevenue.fulfilledRevenue)}. Self ${formatMoney(selfMetric.fulfilledGroceryValue)} | Sales ${formatMoney(dashboard.fulfilledRevenue)} | CSA ${formatMoney(dashboard.csaMetric && dashboard.csaMetric.fulfilledRevenue)}.</div>`;
                 for (const cell of totalsBox.querySelectorAll("th,td")) cell.style.cssText = "border:1px solid #ddd;padding:4px;text-align:left;";
                 const cropRows = totalsBox.querySelectorAll("table:first-of-type tbody tr");
                 visibleCrops.forEach((crop, index) => {
@@ -4561,6 +5023,11 @@ Draw.loadPlugin(function (ui) {
                         id: String(line && line.id || ""),
                         from: String(line && line.from || ""),
                         to: String(line && line.to || "")
+                    }))),
+                    selfSufficiency: JSON.stringify(((plan && plan.selfSufficiency && plan.selfSufficiency.lines) || []).map(line => ({
+                        id: String(line && line.id || ""),
+                        from: String(line && line.from || ""),
+                        to: String(line && line.to || "")
                     })))
                 };
             }
@@ -4573,8 +5040,9 @@ Draw.loadPlugin(function (ui) {
                 const dirty = state.baselineSnapshot ? YearPlanDashboard.isDirty(state, plan) : false;
                 dashboard = YearPlanDashboard.compute(plan, runtime, { dirty, extraDiagnostics: state.extraDiagnostics, extraValidationErrors: state.saveValidationErrors }); // CHANGE: include save-only validation after failed saves.
                 const demandErrors = PlanSchema.validateDemand(plan);
+                const selfSufficiencyErrors = PlanSchema.validateSelfSufficiency(plan);
                 const hadDemandErrors = state.hadDemandErrors;
-                const expansionChanges = YearPlanDashboard.syncExpansionState(state, dashboard, PlanSchema.validateCsa(plan), demandErrors);
+                const expansionChanges = YearPlanDashboard.syncExpansionState(state, dashboard, PlanSchema.validateCsa(plan), demandErrors, selfSufficiencyErrors);
                 if (demandErrors.length && !hadDemandErrors) {
                     for (const error of demandErrors) {
                         const target = error && error.target || {};
@@ -4598,8 +5066,11 @@ Draw.loadPlugin(function (ui) {
                     || beforeRecalculation.csa !== afterRecalculation.csa;
                 const demandDatesChanged = comparisonSnapshot.demand !== afterRecalculation.demand
                     || beforeRecalculation.demand !== afterRecalculation.demand;
+                const selfSufficiencyDatesChanged = comparisonSnapshot.selfSufficiency !== afterRecalculation.selfSufficiency
+                    || beforeRecalculation.selfSufficiency !== afterRecalculation.selfSufficiency;
                 renderSummary();
                 renderCropList();
+                renderSelfSufficiencyStrip(!!options.rebuildSelfSufficiency || expansionChanges.selfSufficiencyChanged || (state.selfSufficiencyExpanded && selfSufficiencyDatesChanged));
                 renderCsa(!!options.rebuildCsa || expansionChanges.csaChanged || (state.csaExpanded && csaDatesChanged));
                 renderDemandStrip(!!options.rebuildDemand || expansionChanges.demandChanged || (state.demandExpanded && demandDatesChanged));
                 renderCropPlan(false);
@@ -4608,6 +5079,7 @@ Draw.loadPlugin(function (ui) {
                 syncEditorDerived();
                 syncDemandDerived();
                 syncCsaDerived();
+                scheduleNutritionLoad();
                 return runtime;
             }
 
@@ -5146,6 +5618,232 @@ Draw.loadPlugin(function (ui) {
                 addLine.addEventListener("click", () => addDemandLine(channelSelect.value));
             }
 
+            function cropAvailabilityEnd(crop) {
+                if (!crop || !PlanMath.hasYmd(crop.harvestEnd)) return "";
+                const shelfDays = Math.max(0, Math.trunc(Number(crop.shelfLifeDays) || 0));
+                return shelfDays > 0 ? (PlanRuntimeService.addDaysYmd(crop.harvestEnd, shelfDays) || crop.harvestEnd) : (PlanRuntimeService.cropAvailableEndYmd(crop) || crop.harvestEnd);
+            } // NEW: self-use rows default to the edible availability window, including shelf-life.
+
+            function createSelfSufficiencyLine() {
+                const crop = (plan.crops || [])[0] || null;
+                return {
+                    id: Env.uid("self"),
+                    cropId: crop ? crop.id : "",
+                    qty: 1,
+                    unit: defaultUnit(crop),
+                    frequency: "week",
+                    everyN: 1,
+                    from: crop && crop.harvestStart || "",
+                    to: cropAvailabilityEnd(crop)
+                };
+            } // NEW
+
+            function selfSufficiencyValidationResults() {
+                return ((dashboard && dashboard.validationErrors) || []).filter(error => error && error.scope === "self-sufficiency");
+            } // NEW
+
+            function selfLineSummaryChips(line, crop) {
+                const result = runtime && runtime.weekly && runtime.weekly.perSelfLine && runtime.weekly.perSelfLine.get(String(line && line.id || ""));
+                const demandKg = result ? sumPositiveValues(result.target) : 0;
+                const shortKg = result ? sumPositiveValues(result.short) : 0;
+                const groceryValue = result ? sumPositiveValues(result.groceryValue) : 0;
+                const fulfilledGroceryValue = result ? sumPositiveValues(result.fulfilledGroceryValue) : 0;
+                const from = YearPlanDashboard.formatYmd(line && line.from) || "?";
+                const to = YearPlanDashboard.formatYmd(line && line.to) || "?";
+                return [
+                    createChip("Crop", crop ? cropLabel(crop) : String(line && line.cropId || "Crop"), crop ? "primary" : "warning"),
+                    createChip("Qty", `${formatCompactNumber(line && line.qty)} ${line && line.unit || "kg"} / ${demandFrequencyLabel(line && line.frequency, line && line.everyN)}`, "neutral"),
+                    createChip("Dates", `${from}-${to}`, from === "?" || to === "?" ? "warning" : "neutral"),
+                    createChip("Demand", formatKg(demandKg), "neutral"),
+                    createChip(shortKg > EPS ? "Short" : "Status", shortKg > EPS ? formatKg(shortKg) : (result ? "OK" : "Not calculated"), shortKg > EPS ? "danger" : (result ? "success" : "warning")),
+                    createChip("Grocery value", formatMoney(groceryValue), "neutral"),
+                    createChip("Fulfilled", formatMoney(fulfilledGroceryValue), fulfilledGroceryValue > EPS ? "success" : "neutral")
+                ];
+            } // NEW
+
+            function openCropPackages(cropId) {
+                if (!setSelectedCropEverywhere(cropId, { expandCropPlan: true, syncPlanCheck: false, activeTab: "packages" })) return;
+                renderCropList();
+                renderSelectedEditor();
+                renderCropPlan(true);
+            } // NEW
+
+            function formatNutritionValue(value, unit) {
+                const number = Math.max(0, Number(value) || 0);
+                const fixed = number >= 100 ? number.toFixed(0) : (number >= 10 ? number.toFixed(1) : number.toFixed(2));
+                return `${fixed} ${unit || ""}`.trim();
+            } // NEW
+
+            function renderSelfNutrition(details) {
+                const nutrition = dashboard && dashboard.selfSufficiencyNutrition;
+                if (!nutrition) return;
+                const box = document.createElement("div");
+                box.style.cssText = "margin:0 0 10px;";
+                const title = document.createElement("div");
+                title.style.cssText = "font-weight:700;margin-bottom:6px;";
+                title.textContent = "Annual nutrition coverage";
+                const table = document.createElement("table");
+                table.style.cssText = "width:100%;border-collapse:collapse;";
+                const rows = (nutrition.rows || []).map(row => `<tr><td>${mxUtils.htmlEntities(row.label)}</td><td>${formatNutritionValue(row.requirementAmount, row.unit)}</td><td>${formatNutritionValue(row.requestedAmount, row.unit)}</td><td>${Math.max(0, Number(row.requestedCoveragePct) || 0).toFixed(0)}%</td><td>${formatNutritionValue(row.fulfilledAmount, row.unit)}</td><td>${Math.max(0, Number(row.fulfilledCoveragePct) || 0).toFixed(0)}%</td></tr>`).join("");
+                table.innerHTML = `<thead><tr><th>Nutrient</th><th>Annual need</th><th>Requested</th><th>Target</th><th>Fulfilled</th><th>Covered</th></tr></thead><tbody>${rows}</tbody>`;
+                for (const cell of table.querySelectorAll("th,td")) cell.style.cssText = "border:1px solid #ddd;padding:4px;text-align:left;";
+                box.appendChild(title);
+                box.appendChild(table);
+                if (nutrition.warnings && nutrition.warnings.length) {
+                    const warning = document.createElement("div");
+                    warning.style.cssText = `color:${YP_COLORS.warning};font-size:11px;margin-top:5px;`;
+                    warning.textContent = nutrition.warnings.join(" ");
+                    box.appendChild(warning);
+                }
+                details.appendChild(box);
+            } // NEW
+
+            function renderSelfSufficiencyLine(line, host, lineIndex) {
+                const crop = PlanMath.findCrop(plan, line.cropId);
+                const lineId = String(line.id || "");
+                const row = document.createElement("div");
+                row.className = "yp-demand-line yp-self-line";
+                row.dataset.selfLineId = lineId;
+                row.dataset.yearPlanSelfLineIndex = String(lineIndex);
+                const summary = document.createElement("div");
+                summary.className = "yp-self-line-summary";
+                summary.style.gridColumn = "1 / -1";
+                setChipRow(summary, selfLineSummaryChips(line, crop));
+                const cropSelect = mkSelect((plan.crops || []).map(item => ({ value: item.id, label: cropLabel(item) })), line.cropId || "");
+                const qty = mkInput("number", line.qty ?? 1);
+                qty.min = "0"; qty.step = "any";
+                const unit = mkSelect(listUnitOptions(crop), line.unit || defaultUnit(crop));
+                const frequency = mkSelect([{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }], line.frequency || "week");
+                const every = mkInput("number", line.everyN ?? 1);
+                every.min = "1"; every.step = "1";
+                const from = mkInput("date", line.from || "");
+                const to = mkInput("date", line.to || "");
+                const remove = mkBtn("Remove", "danger");
+                const editPackages = mkBtn("Edit packages", "neutral");
+                editPackages.disabled = !crop;
+                editPackages.title = crop ? "Open this crop's Packages tab." : "Choose a crop before editing packages.";
+                ensureSelectOption(cropSelect, line.cropId, `${line.cropId || "Missing crop"} (unavailable)`);
+                ensureSelectOption(unit, line.unit, `${line.unit || "Missing unit"} (unavailable)`);
+                cropSelect.value = String(line.cropId || "");
+                unit.value = String(line.unit || defaultUnit(crop));
+                setYearPlanField(cropSelect, "cropId", { selfLineId: lineId, selfLineIndex: lineIndex });
+                setYearPlanField(qty, "qty", { selfLineId: lineId, selfLineIndex: lineIndex });
+                setYearPlanField(unit, "unit", { selfLineId: lineId, selfLineIndex: lineIndex });
+                setYearPlanField(frequency, "frequency", { selfLineId: lineId, selfLineIndex: lineIndex });
+                setYearPlanField(every, "everyN", { selfLineId: lineId, selfLineIndex: lineIndex });
+                setYearPlanField(from, "from", { selfLineId: lineId, selfLineIndex: lineIndex });
+                setYearPlanField(to, "to", { selfLineId: lineId, selfLineIndex: lineIndex });
+                row.appendChild(summary);
+                addField(row, "Crop", cropSelect);
+                addField(row, "Qty", qty);
+                addField(row, "Unit", unit, Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, line.unit)) ? "" : "Add or repair this unit on the crop Packages tab.");
+                addField(row, "Frequency", frequency);
+                addField(row, "Every", every);
+                addField(row, "From", from);
+                addField(row, "To", to);
+                addField(row, "Packages", editPackages);
+                addField(row, "Remove", remove);
+                host.appendChild(row);
+                cropSelect.addEventListener("change", () => {
+                    const nextCrop = PlanMath.findCrop(plan, cropSelect.value);
+                    line.cropId = cropSelect.value;
+                    line.unit = defaultUnit(nextCrop);
+                    line.from = nextCrop && nextCrop.harvestStart || "";
+                    line.to = cropAvailabilityEnd(nextCrop);
+                    refreshDerived(null, { rebuildSelfSufficiency: true });
+                });
+                qty.addEventListener("input", () => { line.qty = Math.max(0, Number(qty.value) || 0); debounceRefresh(); });
+                unit.addEventListener("change", () => { line.unit = unit.value; refreshDerived(null, { rebuildSelfSufficiency: true }); });
+                frequency.addEventListener("change", () => { line.frequency = frequency.value; refreshDerived(); });
+                every.addEventListener("input", () => { line.everyN = Math.max(1, Math.trunc(Number(every.value) || 1)); debounceRefresh(); });
+                editPackages.addEventListener("click", () => { if (line.cropId) openCropPackages(line.cropId); });
+                bindPairedDateControls(from, to, {
+                    diagnostic: `Self Sufficiency start date cannot be after end date for "${crop ? cropLabel(crop) : line.cropId}".`,
+                    setStart: value => { line.from = value; },
+                    setEnd: value => { line.to = value; }
+                });
+                remove.addEventListener("click", () => {
+                    plan.selfSufficiency.lines = (plan.selfSufficiency.lines || []).filter(item => item !== line);
+                    refreshDerived(null, { rebuildSelfSufficiency: true });
+                });
+            } // NEW
+
+            function renderSelfSufficiency(details) {
+                plan.selfSufficiency = plan.selfSufficiency || { adults: 0, children: 0, nutritionMultiplier: 1, lines: [] };
+                plan.selfSufficiency.lines = Array.isArray(plan.selfSufficiency.lines) ? plan.selfSufficiency.lines : [];
+                const controls = document.createElement("div");
+                controls.className = "yp-row";
+                controls.style.marginBottom = "9px";
+                const adults = mkInput("number", plan.selfSufficiency.adults ?? 0, 90);
+                adults.min = "0"; adults.step = "1";
+                const children = mkInput("number", plan.selfSufficiency.children ?? 0, 90);
+                children.min = "0"; children.step = "1";
+                const multiplier = mkInput("number", plan.selfSufficiency.nutritionMultiplier ?? 1, 90);
+                multiplier.min = "0.01"; multiplier.step = "0.01";
+                const addLine = mkBtn("Add self-use line", "add");
+                addLine.disabled = !(plan.crops || []).length;
+                setYearPlanField(adults, "adults");
+                setYearPlanField(children, "children");
+                setYearPlanField(multiplier, "nutritionMultiplier");
+                controls.appendChild(document.createTextNode("Adults")); controls.appendChild(adults);
+                controls.appendChild(document.createTextNode("Children")); controls.appendChild(children);
+                controls.appendChild(document.createTextNode("Nutrition multiplier")); controls.appendChild(multiplier);
+                controls.appendChild(addLine);
+                const note = document.createElement("div");
+                note.style.cssText = "color:#666;font-size:11px;margin:-2px 0 9px;";
+                note.textContent = "Nutrition coverage is a planning estimate, not dietary advice. Harvest kg is treated as edible kg.";
+                const rowsHost = document.createElement("div");
+                rowsHost.style.cssText = "display:flex;flex-direction:column;gap:8px;";
+                details.appendChild(controls);
+                details.appendChild(note);
+                renderSelfNutrition(details);
+                details.appendChild(rowsHost);
+                plan.selfSufficiency.lines.forEach((line, index) => renderSelfSufficiencyLine(line, rowsHost, index));
+                if (!plan.selfSufficiency.lines.length) {
+                    const empty = document.createElement("div");
+                    empty.style.cssText = "padding:12px;color:#666;text-align:center;";
+                    empty.textContent = "Add crop-specific household consumption lines to plan personal use.";
+                    rowsHost.appendChild(empty);
+                }
+                adults.addEventListener("input", () => { plan.selfSufficiency.adults = Math.max(0, Math.trunc(Number(adults.value) || 0)); debounceRefresh(); });
+                children.addEventListener("input", () => { plan.selfSufficiency.children = Math.max(0, Math.trunc(Number(children.value) || 0)); debounceRefresh(); });
+                multiplier.addEventListener("input", () => { plan.selfSufficiency.nutritionMultiplier = Math.max(0.01, Number(multiplier.value) || 1); debounceRefresh(); });
+                addLine.addEventListener("click", () => {
+                    plan.selfSufficiency.lines.push(createSelfSufficiencyLine());
+                    state.selfSufficiencyExpanded = true;
+                    refreshDerived(null, { rebuildSelfSufficiency: true });
+                });
+            } // NEW
+
+            function renderSelfSufficiencyStrip(rebuildDetails) {
+                const self = plan.selfSufficiency || {};
+                const metric = dashboard && dashboard.selfSufficiencyMetric || {};
+                const nutrition = dashboard && dashboard.selfSufficiencyNutrition;
+                const lineCount = Array.isArray(self.lines) ? self.lines.length : 0;
+                const errors = PlanSchema.validateSelfSufficiency(plan);
+                renderStripBox(selfSufficiencyBox, {
+                    title: "Self Sufficiency",
+                    expanded: state.selfSufficiencyExpanded,
+                    summaryChips: [
+                        createChip("Adults", String(Math.max(0, Math.trunc(Number(self.adults) || 0))), "neutral"),
+                        createChip("Children", String(Math.max(0, Math.trunc(Number(self.children) || 0))), "neutral"),
+                        errors.length ? createDiagnosticsChip("Setup issues", "danger", errors, null) : createChip("Lines", String(lineCount), "neutral"),
+                        createChip("Demand", formatKg(metric.targetKg), "primary"),
+                        createChip("Short", formatKg(metric.shortKg), metric.shortKg > EPS ? "danger" : "success"),
+                        createChip("Grocery value", formatMoney(metric.groceryValue), "neutral"),
+                        createChip("Fulfilled", formatMoney(metric.fulfilledGroceryValue), metric.fulfilledGroceryValue > EPS ? "success" : "neutral"),
+                        createChip("Nutrition", nutrition && nutrition.available ? (nutrition.missingCropNames && nutrition.missingCropNames.length ? "Partial" : "Mapped") : "Unavailable", nutrition && nutrition.available ? "neutral" : "warning")
+                    ],
+                    rebuildDetails: !!rebuildDetails,
+                    onToggle: () => {
+                        state.selfSufficiencyExpanded = !state.selfSufficiencyExpanded;
+                        saveCollapsePreferences();
+                        renderSelfSufficiencyStrip(state.selfSufficiencyExpanded);
+                    },
+                    renderDetails: details => renderSelfSufficiency(details)
+                });
+            } // NEW
+
             function renderDemandStrip(rebuildDetails) {
                 const channelCount = (plan.demandChannels || []).length;
                 const lineCount = (plan.demands || []).length;
@@ -5227,15 +5925,15 @@ Draw.loadPlugin(function (ui) {
                         addPackageField(row, "Price", price);
                         row.appendChild(remove);
                         rowsHost.appendChild(row);
-                        unit.addEventListener("input", () => { pkg.unit = unit.value; debounceRefresh({ rebuildDemand: true, rebuildCsa: true }); });
-                        baseQty.addEventListener("input", () => { pkg.baseQty = Math.max(0, Number(baseQty.value) || 0); debounceRefresh(); });
-                        baseType.addEventListener("change", () => { pkg.baseType = baseType.value; refreshDerived(); });
-                        price.addEventListener("input", () => { pkg.price = price.value === "" ? NaN : Math.max(0, Number(price.value) || 0); debounceRefresh({ rebuildDemand: true }); });
-                        remove.addEventListener("click", () => { crop.packages = crop.packages.filter(item => item !== pkg); renderRows(); refreshDerived(null, { rebuildDemand: true, rebuildCsa: true }); });
+                        unit.addEventListener("input", () => { pkg.unit = unit.value; debounceRefresh({ rebuildSelfSufficiency: true, rebuildDemand: true, rebuildCsa: true }); });
+                        baseQty.addEventListener("input", () => { pkg.baseQty = Math.max(0, Number(baseQty.value) || 0); debounceRefresh({ rebuildSelfSufficiency: true }); });
+                        baseType.addEventListener("change", () => { pkg.baseType = baseType.value; refreshDerived(null, { rebuildSelfSufficiency: true }); });
+                        price.addEventListener("input", () => { pkg.price = price.value === "" ? NaN : Math.max(0, Number(price.value) || 0); debounceRefresh({ rebuildSelfSufficiency: true, rebuildDemand: true }); });
+                        remove.addEventListener("click", () => { crop.packages = crop.packages.filter(item => item !== pkg); renderRows(); refreshDerived(null, { rebuildSelfSufficiency: true, rebuildDemand: true, rebuildCsa: true }); });
                     }
                 }
 
-                add.addEventListener("click", () => { crop.packages.push({ unit: "kg", baseType: "kg", baseQty: 1, price: NaN }); renderRows(); refreshDerived(null, { rebuildDemand: true, rebuildCsa: true }); });
+                add.addEventListener("click", () => { crop.packages.push({ unit: "kg", baseType: "kg", baseQty: 1, price: NaN }); renderRows(); refreshDerived(null, { rebuildSelfSufficiency: true, rebuildDemand: true, rebuildCsa: true }); });
                 renderRows();
             }
 
@@ -5273,6 +5971,7 @@ Draw.loadPlugin(function (ui) {
                     const index = plan.crops.indexOf(crop);
                     const removedDemandLineIds = (plan.demands || []).filter(line => line.cropId === crop.id).map(line => String(line && line.id || ""));
                     plan.crops = plan.crops.filter(item => item !== crop);
+                    if (plan.selfSufficiency && Array.isArray(plan.selfSufficiency.lines)) plan.selfSufficiency.lines = plan.selfSufficiency.lines.filter(line => line.cropId !== crop.id); // NEW
                     plan.demands = (plan.demands || []).filter(line => line.cropId !== crop.id);
                     for (const lineId of removedDemandLineIds) state.collapsedDemandLineIds.delete(lineId);
                     if (plan.csa && Array.isArray(plan.csa.components)) plan.csa.components = plan.csa.components.filter(component => component.cropId !== crop.id);
@@ -5280,7 +5979,7 @@ Draw.loadPlugin(function (ui) {
                     if (nextCropId) setSelectedCropEverywhere(nextCropId);
                     else { state.selectedCropId = ""; plan.cropFilterId = ""; cropFilterSel.value = ""; }
                     saveCollapsePreferences();
-                    renderSelectedEditor(); fillCropFilter(); refreshDerived(null, { rebuildCsa: true, rebuildDemand: true }); loadAddCropOptions(false);
+                    renderSelectedEditor(); fillCropFilter(); refreshDerived(null, { rebuildSelfSufficiency: true, rebuildCsa: true, rebuildDemand: true }); loadAddCropOptions(false);
                 });
                 syncEditorDerived();
             }
@@ -5405,10 +6104,11 @@ Draw.loadPlugin(function (ui) {
             }
 
             function renderAll() {
+                fillPlanCheckScope();
                 fillCropFilter();
                 renderSelectedEditor();
                 renderCropPlan(true);
-                refreshDerived(null, { rebuildCsa: true, rebuildDemand: true });
+                refreshDerived(null, { rebuildSelfSufficiency: true, rebuildCsa: true, rebuildDemand: true });
                 emitHarvestWindowsNeeded(plan.crops || []); // CHANGE: loaded crops can receive sowing-window estimates, not only newly added crops.
                 loadAddCropOptions(false);
             }
@@ -5726,6 +6426,10 @@ Draw.loadPlugin(function (ui) {
                 renderPlanCheck();
                 renderFooter();
             });
+            planCheckScopeSel.addEventListener("change", () => {
+                state.planCheckScope = String(planCheckScopeSel.value || "combined"); // NEW
+                renderPlanCheck(); // NEW
+            });
             canvas.addEventListener("mousemove", event => {
                 if (!chartHitModel || !chartHitModel.weekCenters.length) return;
                 const canvasRect = canvas.getBoundingClientRect();
@@ -5851,6 +6555,7 @@ Draw.loadPlugin(function (ui) {
             DiagramStore,
             DbClient,
             PlanMath,
+            NutritionPlanner,
             PlanSchema,
             PlanRepository,
             DiagramPlanReader,

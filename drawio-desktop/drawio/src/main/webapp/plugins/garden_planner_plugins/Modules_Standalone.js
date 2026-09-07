@@ -420,8 +420,10 @@ Draw.loadPlugin(function (ui) {
         return !!cell && getXmlFlag(cell, "task_module");
     }
 
+    function isRoadmapModule(cell) { return !!cell && getXmlFlag(cell, "roadmap_module"); } // NEW
+
     function isPlainRegularModule(cell) {
-        return isModule(cell) && !isGardenModule(cell) && !isTeamModule(cell) && !isTaskModule(cell); // CHANGE
+        return isModule(cell) && !isGardenModule(cell) && !isTeamModule(cell) && !isTaskModule(cell) && !isRoadmapModule(cell); // CHANGE
     }
 
     function isGardenDashboardCell(cell) {
@@ -484,7 +486,8 @@ Draw.loadPlugin(function (ui) {
     }
 
     function setStringValueAttr(cell, key, value) {
-        const elt = ensureXmlValue(cell);
+        const source = ensureXmlValue(cell); // CHANGE: companion links must preserve their old XML value for undo.
+        const elt = source && source.cloneNode(true); // NEW
         if (!elt) return;
         const next = value == null || value === "" ? "" : String(value);
         if (next) elt.setAttribute(key, next);
@@ -527,6 +530,7 @@ Draw.loadPlugin(function (ui) {
     function companionModuleLabelFallback(cell) {
         if (isTeamModule(cell)) return "Team Module";
         if (isTaskModule(cell)) return "Task Module";
+        if (isRoadmapModule(cell)) return "Roadmap Module"; // NEW
         if (isGardenModule(cell)) return "Garden Module";
         return "Module";
     }
@@ -573,7 +577,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function linkedGardenModuleForCompanion(cell) {
-        const gardenId = getValueAttr(cell, ATTR_TEAM_GARDEN_MODULE) || getValueAttr(cell, ATTR_TASK_GARDEN_MODULE);
+        const gardenId = getValueAttr(cell, ATTR_TEAM_GARDEN_MODULE) || getValueAttr(cell, ATTR_TASK_GARDEN_MODULE) || getValueAttr(cell, "roadmap_garden_module_id"); // CHANGE
         const garden = gardenId && model.getCell ? model.getCell(gardenId) : null;
         return isGardenModule(garden) ? garden : null;
     }
@@ -863,6 +867,8 @@ Draw.loadPlugin(function (ui) {
             setXmlFlag(cell, "garden_module", false);
             setXmlFlag(cell, "team_module", false);
             setXmlFlag(cell, "task_module", false);
+            setXmlFlag(cell, "roadmap_module", false); // NEW
+            setStringValueAttr(cell, "roadmap_type", type === "roadmap" ? "module" : ""); // NEW
 
             // Set the desired flag
             if (type === "garden") {
@@ -872,6 +878,8 @@ Draw.loadPlugin(function (ui) {
                 setXmlFlag(cell, "team_module", true);
             } else if (type === "task") {
                 setXmlFlag(cell, "task_module", true);
+            } else if (type === "roadmap") { // NEW
+                setXmlFlag(cell, "roadmap_module", true); // NEW
             }
 
             let st = getStyle(cell) || "";
@@ -884,6 +892,8 @@ Draw.loadPlugin(function (ui) {
                 st += (st ? ";" : "") + "swimlaneFillColor=#FFF2CC";
             } else if (type === "task") {
                 st += (st ? ";" : "") + "swimlaneFillColor=#E0F2FE";
+            } else if (type === "roadmap") { // NEW
+                st += (st ? ";" : "") + "swimlaneFillColor=#EDE9FE"; // NEW
             } else {
                 st += (st ? ";" : "") + "swimlaneFillColor=default";
             }
@@ -2050,12 +2060,87 @@ Draw.loadPlugin(function (ui) {
         return task;
     }
 
+    /** Check before creating roadmap cells; Garden creation may continue without this companion. */ // NEW
+    function roadmapApiReady() { // NEW
+        if (graph.__trellisRoadmapManager && typeof graph.__trellisRoadmapManager.ensureMainRoadmapInRoadmapModule === "function") return true; // NEW
+        const message = "Roadmap Manager is unavailable. The Garden remains usable; create its Roadmap companion after the plugin is loaded."; // NEW
+        if (ui.alert) ui.alert(message); else if (mxUtils.alert) mxUtils.alert(message); // NEW
+        return false; // NEW
+    } // NEW
+
+    /** Companion links are written only after the new module contains a usable Main Roadmap. */ // NEW
+    function ensureGardenRoadmapModule(gardenCell, insideRoadmapCommand) { // CHANGE
+        if (!isGardenModule(gardenCell) || !roadmapApiReady()) return null; // NEW
+        const roadmapApi = graph.__trellisRoadmapManager; // NEW
+        if (!insideRoadmapCommand && roadmapApi.runModelCommand) return roadmapApi.runModelCommand(() => ensureGardenRoadmapModule(gardenCell, true)); // NEW: companion access and links share failure rollback.
+        const userApi = graph.__trellisUsers; // NEW
+        if (userApi && userApi.canAddCell && !userApi.canAddCell(gardenCell)) { if (ui.alert) ui.alert("You do not have permission to create a Roadmap companion."); return null; } // NEW
+        const typed = model.getCell(getValueAttr(gardenCell, "roadmap_module_id")); // NEW
+        let roadmap = isRoadmapModule(typed) && getValueAttr(typed, "roadmap_garden_module_id") === cellId(gardenCell) ? typed : null; // NEW
+        if (!roadmap && model.cells) roadmap = Object.values(model.cells).find(cell => isRoadmapModule(cell) && getValueAttr(cell, "roadmap_garden_module_id") === cellId(gardenCell)); // NEW
+        let created = false; // NEW
+        model.beginUpdate(); // NEW
+        try { // NEW
+            const task = ensureGardenTaskModule(gardenCell, { insideUpdate: true, createMainBoard: true }); // NEW
+            const team = ensureGardenTeamModule(gardenCell, { insideUpdate: true }); // CHANGE: legacy Gardens may not have companions yet.
+            if (!roadmap) { // NEW
+                const geometry = model.getGeometry(task || gardenCell); // NEW
+                const gap = modulePairExternalMargin(gardenCell, task || gardenCell); // NEW
+                roadmap = createSiblingModuleCell(gardenCell, geometry.x, geometry.y + geometry.height + gap); // NEW
+                created = true; setModuleType(roadmap, "roadmap"); setCellLabel(roadmap, getModuleLabel(gardenCell, "Garden") + " Roadmap"); // NEW
+            } // NEW
+            syncCompanionModuleAccess(gardenCell, roadmap); // NEW
+            setStringValueAttr(roadmap, "roadmap_garden_module_id", cellId(gardenCell)); // NEW
+            setStringValueAttr(roadmap, "roadmap_task_module_id", cellId(task)); // NEW
+            setStringValueAttr(roadmap, "roadmap_team_module_id", cellId(team)); // NEW
+            if (!graph.__trellisRoadmapManager.ensureMainRoadmapInRoadmapModule(roadmap)) throw new Error("Could not create the Main Roadmap."); // CHANGE
+            setStringValueAttr(gardenCell, "roadmap_module_id", cellId(roadmap)); // NEW
+            [gardenCell, task, team].filter(Boolean).forEach(cell => addReciprocalLink(roadmap, cell)); // NEW
+            applyModuleMargins(roadmap, { allowShrink: false, manageUpdate: false }); // NEW
+            enforceModuleExternalMarginsFor([gardenCell, team, task, roadmap].filter(Boolean), { manageUpdate: false }); // NEW
+            return roadmap; // NEW
+        } catch (error) { // NEW
+            if (insideRoadmapCommand) throw error; // NEW: the command reverses the entire companion operation.
+            if (created && roadmap && model.getCell(cellId(roadmap))) model.remove(roadmap); // NEW
+            if (ui.alert) ui.alert(error.message || String(error)); return null; // NEW
+        } finally { model.endUpdate(); } // NEW
+    } // NEW
+
+    /** Resolve a Garden task companion or create a standalone sibling only on task submission. */ // NEW
+    function ensureRoadmapTaskModule(roadmap, options) { // NEW
+        if (!isRoadmapModule(roadmap)) return null; // NEW
+        const taskApi = graph.__trellisTaskManager; // NEW
+        if (!taskApi || !taskApi.ensureMainBoardInTaskModule) throw new Error("Task Manager is unavailable."); // NEW
+        const garden = linkedGardenModuleForCompanion(roadmap); // NEW
+        let task = model.getCell(getValueAttr(roadmap, "roadmap_task_module_id")); // NEW
+        const manageUpdate = !(options && options.insideUpdate); // NEW
+        if (manageUpdate) model.beginUpdate(); // NEW
+        try { // NEW
+            if (garden) task = ensureGardenTaskModule(garden, { insideUpdate: true, createMainBoard: true }); // NEW
+            else if (!isTaskModule(task)) { // NEW
+                const geometry = model.getGeometry(roadmap); // NEW
+                task = createSiblingModuleCell(roadmap, geometry.x, geometry.y + geometry.height + getModuleExternalMarginValue(roadmap, 40)); // NEW
+                setModuleType(task, "task"); setCellLabel(task, getModuleLabel(roadmap, "Roadmap") + " Tasks"); // NEW
+                syncCompanionModuleAccess(roadmap, task); // NEW
+            } // NEW
+            if (!task || !taskApi.ensureMainBoardInTaskModule(task)) throw new Error("Could not create the companion Main Task Board."); // NEW
+            setStringValueAttr(roadmap, "roadmap_task_module_id", cellId(task)); // NEW
+            setStringValueAttr(task, "roadmap_module_id", cellId(roadmap)); // NEW
+            addReciprocalLink(roadmap, task); // NEW
+            applyModuleMargins(task, { allowShrink: false, manageUpdate: false }); // NEW
+            return task; // NEW
+        } finally { if (manageUpdate) model.endUpdate(); } // NEW
+    } // NEW
+
     function normalizeRootModuleType(type) {
-        return type === "garden" || type === "team" || type === "task" ? type : "regular";
+        return type === "garden" || type === "team" || type === "task" || type === "roadmap" ? type : "regular"; // CHANGE
     }
 
-    function createModuleAtPoint(point, type) {
+    function createModuleAtPoint(point, type, insideRoadmapCommand) { // CHANGE
         const moduleType = normalizeRootModuleType(type);
+        const roadmapApi = graph.__trellisRoadmapManager; // NEW
+        if (!insideRoadmapCommand && (moduleType === 'garden' || moduleType === 'roadmap') && roadmapApi && roadmapApi.runModelCommand) return roadmapApi.runModelCommand(() => createModuleAtPoint(point, type, true)); // NEW
+        if (moduleType === "roadmap" && !roadmapApiReady()) return null; // NEW: never create an unusable module shell.
         const x = Number(point && point.x) || 0;
         const y = Number(point && point.y) || 0;
         let mod = null;
@@ -2065,7 +2150,8 @@ Draw.loadPlugin(function (ui) {
             applyModuleMargins(mod);
             if (moduleType !== "regular") setModuleType(mod, moduleType);
             if (window.Trellis && window.Trellis.users && typeof window.Trellis.users.stampCreatedOwner === "function") window.Trellis.users.stampCreatedOwner(mod); // NEW: modules created by logged-in users become ownership boundaries
-            if (moduleType === "garden") { ensureGardenTeamModule(mod, { insideUpdate: true }); ensureGardenTaskModule(mod, { insideUpdate: true, createMainBoard: true }); }
+            if (moduleType === "garden") { ensureGardenTeamModule(mod, { insideUpdate: true }); ensureGardenTaskModule(mod, { insideUpdate: true, createMainBoard: true }); ensureGardenRoadmapModule(mod); } // CHANGE
+            if (moduleType === "roadmap" && !graph.__trellisRoadmapManager.ensureMainRoadmapInRoadmapModule(mod)) { model.remove(mod); return null; } // NEW
             enforceModuleExternalMarginsFor([mod], { manageUpdate: false }); // NEW
             if (mod && graph.setSelectionCell) graph.setSelectionCell(mod);
         } finally {
@@ -2210,6 +2296,7 @@ Draw.loadPlugin(function (ui) {
             overlay.appendChild(makeOverlayButton("Add Garden Module", "garden"));
             overlay.appendChild(makeOverlayButton("Add Team Module", "team"));
             overlay.appendChild(makeOverlayButton("Add Task Module", "task"));
+            overlay.appendChild(makeOverlayButton("Add Roadmap Module", "roadmap")); // NEW
             const host = ensureOverlayHost();
             if (host) host.appendChild(overlay);
             return overlay;
@@ -2777,6 +2864,10 @@ Draw.loadPlugin(function (ui) {
     graph.popupMenuHandler && (graph.popupMenuHandler.selectOnPopup = false);
 
     graph.__trellisModules = {
+        getPeerCollisionDelta: function (a, b, margin) { // NEW: shared read-only policy for Roadmap's saved and personal peer layouts.
+            const left = { x: a.x, y: a.y, w: a.width, h: a.height }, right = { x: b.x, y: b.y, w: b.width, h: b.height }; // NEW
+            return vectorExternalMarginDelta(left, right, margin, relativePushVector(left, right)) || shortestExternalMarginDelta(left, right, margin); // NEW
+        }, // NEW
         applyModuleMargins: function (moduleCell, opts) {
             return applyModuleMargins(moduleCell, opts);
         },
@@ -2835,6 +2926,8 @@ Draw.loadPlugin(function (ui) {
         ensureGardenTaskModule: function (gardenCell, opts) {
             return ensureGardenTaskModule(gardenCell, opts);
         },
+        ensureGardenRoadmapModule: ensureGardenRoadmapModule, // NEW
+        ensureRoadmapTaskModule: ensureRoadmapTaskModule, // NEW
         findExistingCompanionTask: function (gardenCell) {
             return findExistingCompanionTask(gardenCell);
         },

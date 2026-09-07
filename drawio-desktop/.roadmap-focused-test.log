@@ -1,0 +1,333 @@
+✔ garden dashboard toolbar is mounted to the graph viewport and sized from the viewport (5.4392ms)
+✔ garden dashboard toolbar width follows a narrowed graph container rect (0.5381ms)
+✔ garden dashboard toolbar follows garden module and descendant selection (1.5218ms)
+✔ garden dashboard toolbar controls use module scoped plugin contracts (4.4382ms)
+✔ garden dashboard toolbar exposes share only for eligible selected scopes (1.193ms)
+✔ garden dashboard toolbar groups tools left and messages export share table right (1.7017ms)
+✔ garden dashboard toolbar disables Allocate until the selected year has saved crops (5.9774ms)
+✔ garden dashboard blank state keeps controls visible and exposes searchable garden picker (1.45ms)
+✔ garden dashboard waits for an opened diagram before rendering toolbar (2.2208ms)
+✔ garden dashboard picker searches by garden name while preserving city grouping (1.9443ms)
+✔ garden dashboard picker selection and no-garden create path select and zoom gardens (1.9758ms)
+✔ garden dashboard startup focuses sole garden only once (2.2778ms)
+✔ garden dashboard persists the last selected garden by diagram page and user (2.2919ms)
+✔ garden dashboard updates last garden memory only for unambiguous garden contexts (1.2465ms)
+✔ garden dashboard startup uses selected remembered then sole-garden fallback (1.5646ms)
+✔ garden dashboard last garden restore runs only on file open, not page switch (0.946ms)
+✔ garden dashboard resolves linked and ambiguous module contexts (1.2239ms)
+✔ garden dashboard applies selected year to linked task module cards (1.1611ms)
+✔ garden dashboard derives active workspace from selection (0.7824ms)
+✔ garden workspace switcher repairs companions and pulses destinations (2.0089ms)
+✔ garden dashboard disables garden tools outside Garden workspace (2.5638ms)
+✔ garden dashboard toolbar exposes Garden Workspace Switcher with task badge and selector (2.2233ms)
+✔ garden dashboard toolbar uses task manager API for boards and unseen counts (1.6112ms)
+✔ garden dashboard toolbar persists the selected task board in local user storage (1.5676ms)
+✔ garden dashboard selected task board resolver is strict across selected cells (0.6792ms)
+✔ garden dashboard toolbar marks Irrigation active with existing blue (5.3349ms)
+✔ garden dashboard irrigation buttons close active irrigation mode (4.0575ms)
+✔ garden dashboard messages button calls users API for active module and prompts auth (1.5553ms)
+✔ garden dashboard table is collapsed by default and session scoped (1.3962ms)
+✔ legacy dashboard cell code is removed from the viewport dashboard plugin (1.11ms)
+✔ Main creation is usable, idempotent, inclusive, and gives secondary projects unused names (652.9306ms)
+✔ personal perspectives change projection but neither serialized XML nor undo history (307.3592ms)
+✔ object shifts expand processes, shrinking clamps to children, and every edit undoes together (222.0251ms)
+✔ status transitions retain progress and reject Done to Blocked without changing XML (205.0629ms)
+✔ transparent columns select the object; process drag stays disabled; view is exported from a clone (274.892ms)
+✔ readers can change their view but cannot mutate roadmap content (152.8387ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager routes garden board creation through companion Task Modules (9.9148ms)
+✔ task manager exposes dashboard board APIs and unseen-created state (2.4606ms)
+✔ task manager canonical lane and card styles disable native Draw.io connectors (5.8812ms)
+✔ task manager installs a selected Task Module add-board overlay (2.3479ms)
+✔ task manager fails closed instead of creating garden-contained boards without Modules API (334.4292ms)
+✔ task manager list open and scheduler do not create missing companion Task Modules (101.205ms)
+✔ task manager source keeps dashboard open highlights before seen marking (5.2531ms)
+✔ task manager source clears manual selection by active dashboard year only (103.708ms)
+✔ task manager scheduler emissions may create a missing main board in an existing Task Module (10.9337ms)
+✔ scheduler sync-created tasks target the companion Task Module main board (114.2798ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay edits labels with one bed-style field and no clamping (186.2217ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay creates a main board when no task board exists (107.2381ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay creates a secondary board when a task board already exists (139.6863ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task board header overlay edits board labels with role defaults (313.8883ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task board header overlay does not migrate existing Kanban labels (112.9609ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay delegates label writes to the Modules API when available (85.5265ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay delegates margin prompts to the Modules API (108.7625ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ unlinked task module overlay only shows the editable label input (70.2994ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay follows the cursor and alternates show and hide (92.8434ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay keeps cursor anchor when view coordinates differ from model geometry (76.0893ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task module overlay uses the right-click cursor as its anchor (50.0403ms)
+✔ task manager reflow scope policy maps command categories (4.1325ms)
+✔ task manager normalizes canonical assignee ids and treats assignments as user touches (3.818ms)
+✔ task manager preserves assignments only across unique scheduler keys and retains unsafe occurrences as missing (8.3952ms)
+✔ task manager builds greedy height-aware pages and clamps full cards to standard minimum (3.9395ms)
+✔ task manager rebuilds paging cache on load and migrates invalid numeric state without undo edits (34.7609ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager selection overlays render above graph and defer until states are available (188.9117ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager DOM overlays avoid SVG overlayPane hosts (84.1516ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager hides task overlays during week card drag and refreshes once after mouseup (108.8503ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager hides task overlays during full-mode card drag (71.6162ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager releases overlay suppression on moved and resized commit events (108.1223ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager non-task mouse interactions do not suppress overlays (81.5028ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager staged start badge uses visible-week weekday wording (109.0466ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week scheduler lays out day heights and selected-lane controls (110.0633ms)
+✔ scheduler task replacement API joins caller update when requested (58.8896ms)
+✔ scheduler sync-created tasks preserve selection and viewport (97.1964ms)
+✔ direct task replacement focuses generated cards by default (58.2441ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ legacy tasksCreated event still performs standalone replacement (125.0867ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager keeps week time scale visible for the last active board (103.674ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week board shrinks to visible day lanes and aligns time scale (226.8108ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager hides remembered week time scale when another task board becomes active in full view (111.1562ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager normalizes narrow and wide day cards to the lane interior (72.6943ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager dragged cards adopt the destination day-lane width (57.7857ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager day-lane overlay appears only for selected week day lanes (126.3631ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager day-lane overlay opens closes and adds breaks for selected day (170.1401ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager day-lane overlay hides open close on non-empty days and hides add break when closed (92.4299ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager day-lane change hours dialog saves only selected weekday override (71.2353ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager day-lane vertical resize edits selected-week hours by moved edge (158.3106ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager shrinking day-lane hours keeps cards visible and marks overflow (119.6572ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager overflow cards do not auto-expand day lanes or persist hours (172.4842ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week selection only reflows when active day changes (119.6624ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager note-only edits refresh badges without layout (85.9107ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager unchanged badge refresh skips label rewrites (142.8636ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager restores staged card style when week card is dragged back to staged (72.9576ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager toggles destination view labels, arrows, and board selection (194.4624ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager board controls show current-mode lane toggles and apply visibility (154.6145ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager lane toggles keep full and week selections independent (341.3522ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager lane toggles keep at least one lane visible and expand legacy folded lanes (97.7432ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week day cards show workflow colors and time badge (155.9276ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager adds break cards and derives stacked schedule attributes (114.4479ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager hides day-owned breaks outside their visible week (114.5306ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager same-lane reorder refreshes persisted schedule order (95.281ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager assigns times from same-lane drop order and recalculates overflow (128.9141ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager midpoint drops support between after-last and unchanged slots (131.9761ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager inserts cross-day task and break drops by position (140.7385ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager keeps multi-card schedule moves contiguous (66.6122ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager reflows source and destination schedules across boards (63.1594ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager card resize and horizontal movement do not reorder schedules (90.4942ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager migrates existing undated breaks to the visible lane date (66.0232ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager allocates selected staged cards to clamped start dates (60.8554ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager direct day-lane resize persists selected weekday width (89.1709ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager rejects direct horizontal day-card geometry changes (60.2473ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager ignores week-lane layout geometry when width is unchanged (57.231ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager replaces legacy board layout ownership with canonical managed styles (38.1087ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager full-mode board resize persists lane height and refreshes paging (44.9155ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager direct full-mode lane resize snaps shared lane and board height (45.2356ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager direct full-mode lane width resize persists per non-day lane and grows board (37.6835ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager narrower non-day lane widths persist and shrink board to content (55.0013ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager renders retained Trellis pager controls and repairs hidden-card selection (96.567ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager scales and clamps retained pager controls at low zoom (54.2399ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager pages week-view staged lane with retained Trellis controls (45.1047ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager refreshes week-view staged paging after selected-period context changes (98.6642ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week-view staged width persists separately from weekday widths (56.4338ms)
+✔ task manager repairs same-lane and same-board hidden selections but preserves cross-board selection (48.2438ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager keeps week schedule height separate from full-view card height (146.254ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager migrates existing full-view card height without using week schedule height (45.2657ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week-mode board resize expands staged lane only (55.4518ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager repairs direct week-view staged lane resize to board-owned height (44.3086ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week-mode board resize clamps below tallest day lane (56.8438ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager week-mode board height is restored per selected week (98.7149ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager restores persisted full-mode board height after week mode (69.2154ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager closed week days label closed and clear schedule attributes (95.1956ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager all-closed week hides time scale and keeps day lanes compact (155.2311ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager edit hours shifts existing day stack and marks overflow (130.1768ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager edit hours start and end changes do not compress durations (194.2224ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager edit hours dialog uses Trellis dialog layer (145.5009ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager single DONE card still offers TODO and DOING actions (102.4467ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager hides workflow actions for staged and mixed non-day selections (76.88ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager multi-card overlay applies note, date, reset, and clear actions (246.6706ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager assignment control enforces Week-mode single-board task eligibility (103.9829ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager assignment picker groups linked roles, searches, and applies a single assignment (207.101ms)
+[TaskManager] Kanban loaded. Use window.TaskBus.createTasks([...]).
+✔ task manager bulk assignment uses reversible Existing and All cards controls (154.0954ms)
+✔ task manager assignee badges expand to readable name stack, navigate, and clear deleted roles (124.6092ms)
+✔ tidy menu applies standard action submenus to regular cells (200.7727ms)
+✔ tidy menu keeps Trellis cells under the standard actions parent (38.3794ms)
+✔ tidy menu leaves blank canvas menus unchanged when no selection exists (11.2913ms)
+✔ tidy menu still suppresses Trellis tooltips without suppressing regular cells (22.9131ms)
+✔ disabled diagrams do not prompt or block edits (250.4629ms)
+✔ toolbar login enables users and keeps the first admin logged in for this diagram (65.7954ms)
+✔ public diagram key API preserves remembered-login diagram identity (15.4883ms)
+✔ users toolbar button is inserted beside an existing ChangeMap History button (15.6768ms)
+✔ enable users creates the first admin and persists usersEnabled (18.8323ms)
+✔ accepted visible edits merge actor metadata into the same undoable edit (25.4293ms)
+✔ created planting ownership metadata is included in the creation undo edit (23.4575ms)
+✔ direct actor stamping mutates XML without model setValue calls (23.6454ms)
+✔ logged-out enabled diagrams reject edits (37.6735ms)
+✔ permission rejected edits show a cursor popover with request access (50.4003ms)
+✔ rejected edit popover clamps to the viewport and replaces prior notices (36.4742ms)
+✔ rejected edit popover auto-dismiss pauses while hovered or focused (33.9487ms)
+✔ rejected edit popover login action opens auth dialog (21.6209ms)
+✔ rejected edit popover falls back to status when no host is available (14.9171ms)
+✔ enabled diagram load changes are allowed while logged out but later edits are rejected (29.4757ms)
+✔ direct setGraphXml load changes are allowed and then show the auth gate (20.6031ms)
+✔ auth gate failed login stays inline without a Draw.io alert (20.2508ms)
+✔ auth gate successful login closes silently and leaves no stale failed alert (32.0104ms)
+✔ repeated auth gate triggers reuse one overlay (21.9352ms)
+✔ logged-out enabled diagrams show an opaque auth gate until login succeeds (27.6146ms)
+✔ remembered login restores on file load and logout forgets it (19.3853ms)
+✔ remembered login is ignored when the stored user is disabled (23.9128ms)
+✔ logged-in toolbar button toggles a user panel below the button (72.6711ms)
+✔ admin roster management supports PIN reset disable reactivate and last-admin guards (31.5404ms)
+✔ admin roster PIN reset uses an inline form without native prompt (127.2788ms)
+✔ admin panel groups networked local and pending users (203.181ms)
+✔ people access panel title and filters search roster invites and access rows by name or email (248.0063ms)
+✔ selected access summarizes scope labels and hides editor for multiple selections (118.4933ms)
+✔ visitor grant keeps regular users view-only (52.0294ms)
+✔ access request from inaccessible child resolves to nearest shareable scope (41.0631ms)
+✔ duplicate pending access request updates level note and timestamp (38.7463ms)
+✔ denied access request persists with note and can be reopened (42.4492ms)
+✔ approving access request creates grant and removes request (36.5806ms)
+✔ approval creates unread requester message and supports read and dismiss lifecycle (44.7391ms)
+✔ denial creates requester message while denied request remains reopenable (48.7254ms)
+✔ already-granted access request cleanup still creates requester message (38.2844ms)
+✔ selected access panel shows requester approval response without no-access contradiction (78.5101ms)
+✔ deleted scope response remains visible as unavailable in requester messages (47.8795ms)
+✔ requester access messages are private to the requester (64.0899ms)
+✔ messages dialog renders access request and response sections with response actions (1.1221ms)
+✔ incoming access request count is visible only to owner or admin (57.4934ms)
+✔ disabled requester and deleted scope access requests cannot be approved (53.3418ms)
+✔ selected access panel shows request access action and requester status (47.3976ms)
+✔ permission diagnostics stay quiet unless explicitly enabled (25.4854ms)
+✔ permission diagnostics do not throw when console is unavailable (25.7359ms)
+✔ trellis debug surface reports users status and toggles debug flags (19.1724ms)
+✔ admin remains allowed for bed-fit relevant child geometry and style changes (19.5378ms)
+✔ admin planting creation allows generated plant tile churn in the same edit (17.6576ms)
+✔ gardener grant creates and manages only owned planting groups (43.8938ms)
+✔ gardener planting creation allows initialization edits and generated plant tile churn (32.7434ms)
+✔ gardener cannot create or delete garden beds in a granted module (45.4164ms)
+✔ generated plant tile churn still requires a valid planting context (17.5398ms)
+✔ generated plant tile initialization rejects outside the created planting context (33.095ms)
+✔ created planting context does not allow manual plant tile initialization (33.7981ms)
+✔ planting context does not allow ordinary or manual orphan child changes (40.3956ms)
+✔ owner can transfer ownership to an active user (36.5445ms)
+✔ regular granted users cannot add delete move reparent or change protected access attributes (65.857ms)
+✔ owner and admin can add delete and move within owned scopes (31.8196ms)
+✔ unowned modules are claimed on first allowed edit and only owner or admin can delete modules (71.8298ms)
+✔ gardener grant allows only owned linked or created manual task edits (34.9264ms)
+✔ coordinator grant can manage access but cannot transfer ownership (42.9737ms)
+✔ coordinator preset manages all content and access (23.188ms)
+✔ access editor exposes presets without granular capability checkboxes (66.4741ms)
+✔ child access view shows inherited coordinator without writing grants (69.282ms)
+✔ ordinary child cells cannot receive direct access grants (15.3575ms)
+✔ direct named child grants remain distinguishable from inherited parent access (62.4829ms)
+✔ coordinator can create and delete garden beds in a granted module (29.851ms)
+✔ linked role cards do not bypass gardener task ownership rules (22.0066ms)
+✔ garden grant creates a garden-scoped role card and links it to garden task boards (26.0329ms)
+✔ user can have separate active role cards in multiple gardens (20.2954ms)
+✔ removing garden access unlinks the user but preserves the role card (16.2299ms)
+✔ rechecking garden access restores the archived role card without duplicating profile data in archive (26.6612ms)
+✔ admin roster garden access view does not repair missing companion teams (57.6042ms)
+✔ admin roster shows one garden access dropdown per user with checkbox rows (60.9857ms)
+✔ garden access dropdown checkbox creates archives and restores role cards (112.4917ms)
+✔ garden access popover filters by garden name and preserves search after checkbox changes (96.9046ms)
+✔ restored garden role keeps task assignment ids and relinks boards (17.6974ms)
+✔ garden access dropdown checkboxes keep multiple gardens independent for one user (114.6651ms)
+✔ pending invite creates regular pending user grants and email draft (13.5816ms)
+✔ pending garden invite creates no role card until acceptance (18.858ms)
+✔ duplicate invite email is rejected for pending users (14.8474ms)
+✔ pending invite stores selected preset capabilities (12.1746ms)
+✔ accept invite activates pending regular user and prevents token reuse (30.6388ms)
+✔ revoking pending invite removes pending grants (14.3652ms)
+✔ resend invite rotates code and expiry (11.661ms)
+✔ regular non-owner cannot invite selected scopes (31.4899ms)
+✔ expired invites are hidden and remove pending grants (12.6005ms)
+ℹ tests 230
+ℹ suites 0
+ℹ pass 230
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11480.063

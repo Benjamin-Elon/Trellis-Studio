@@ -15,6 +15,10 @@ from .schema import (
     COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS,
     COMPANION_LAYOUT_TEMPLATES,
     GENERATED_TABLES,
+    NUTRITION_NUTRIENT_COLUMNS,
+    NUTRITION_NUTRIENT_KEYS,
+    NUTRITION_REQUIREMENT_COLUMNS,
+    NUTRITION_REQUIREMENT_PERSONAS,
     PLANTING_WINDOW_CONFIDENCE,
     PLANTING_WINDOW_REFERENCE_COLUMNS,
     PLANTING_WINDOW_STAGES,
@@ -23,6 +27,10 @@ from .schema import (
     PLANT_FLAG_FIELDS,
     PLANT_GROWTH_STAGE_COLUMNS,
     PLANT_INTEGER_FIELDS,
+    PLANT_NUTRITION_MAPPING_COLUMNS,
+    PLANT_NUTRITION_MAPPING_CONFIDENCE,
+    PLANT_NUTRITION_MAPPING_STATUS,
+    PLANT_NUTRITION_VALUE_COLUMNS,
     PLANT_VARIETY_COLUMNS,
     PLANT_REAL_FIELDS,
     PLANT_TEXT_FIELDS,
@@ -338,6 +346,71 @@ def validate_row(
             errors.append(f"{prefix}.end_doy does not match end_mm_dd.")
         if row.get("is_cross_year") not in (0, 1, "0", "1", True, False):
             errors.append(f"{prefix}.is_cross_year must be 0 or 1.")
+    elif table == "NutritionNutrients":
+        unknown = sorted(set(row) - NUTRITION_NUTRIENT_COLUMNS)
+        if unknown:
+            errors.append(f"{prefix} has unknown columns: {unknown}")
+        if row.get("nutrient_key") not in NUTRITION_NUTRIENT_KEYS:
+            errors.append(f"{prefix}.nutrient_key must be one of: {', '.join(sorted(NUTRITION_NUTRIENT_KEYS))}.")
+        if not str(row.get("nutrient_name") or "").strip():
+            errors.append(f"{prefix}.nutrient_name is required.")
+        if not str(row.get("unit") or "").strip():
+            errors.append(f"{prefix}.unit is required.")
+        if _coerce_integer(row.get("sort_order")) is None:
+            errors.append(f"{prefix}.sort_order must be an integer.")
+    elif table == "PlantNutritionMappings":
+        unknown = sorted(set(row) - PLANT_NUTRITION_MAPPING_COLUMNS)
+        if unknown:
+            errors.append(f"{prefix} has unknown columns: {unknown}")
+        if not row.get("plant_id") and not str(row.get("plant_name") or "").strip():
+            errors.append(f"{prefix} needs plant_id or plant_name.")
+        if _coerce_integer(row.get("fdc_id")) is None:
+            errors.append(f"{prefix}.fdc_id must be an integer.")
+        for key in ("fdc_description", "fdc_data_type", "food_form", "match_confidence", "match_status", "updated_at"):
+            if not str(row.get(key) or "").strip():
+                errors.append(f"{prefix}.{key} is required.")
+        if str(row.get("food_form") or "").strip().casefold() != "raw":
+            errors.append(f"{prefix}.food_form must be raw for v1 nutrition planning.")
+        if row.get("match_confidence") not in PLANT_NUTRITION_MAPPING_CONFIDENCE:
+            errors.append(f"{prefix}.match_confidence must be one of {sorted(PLANT_NUTRITION_MAPPING_CONFIDENCE)}.")
+        if row.get("match_status") not in PLANT_NUTRITION_MAPPING_STATUS:
+            errors.append(f"{prefix}.match_status must be one of {sorted(PLANT_NUTRITION_MAPPING_STATUS)}.")
+        if row.get("match_confidence") in {"low", "medium"} or row.get("match_status") == "pending":
+            warnings.append(f"{prefix} is reviewable: {row.get('plant_name') or row.get('plant_id')} maps to FDC {row.get('fdc_id')} with {row.get('match_confidence')} confidence / {row.get('match_status')} status.")
+        if not row.get("source_url") and not row.get("source_note"):
+            errors.append(f"{prefix} needs source_url or source_note.")
+    elif table == "PlantNutritionValues":
+        unknown = sorted(set(row) - PLANT_NUTRITION_VALUE_COLUMNS)
+        if unknown:
+            errors.append(f"{prefix} has unknown columns: {unknown}")
+        if not row.get("plant_id") and not str(row.get("plant_name") or "").strip():
+            errors.append(f"{prefix} needs plant_id or plant_name.")
+        if row.get("nutrient_key") not in NUTRITION_NUTRIENT_KEYS:
+            errors.append(f"{prefix}.nutrient_key must be one of: {', '.join(sorted(NUTRITION_NUTRIENT_KEYS))}.")
+        value = _coerce_number(row.get("amount_per_100g"))
+        if value is None or value < 0:
+            errors.append(f"{prefix}.amount_per_100g must be 0 or greater.")
+        if _coerce_integer(row.get("source_fdc_id")) is None:
+            errors.append(f"{prefix}.source_fdc_id must be an integer.")
+        if not str(row.get("updated_at") or "").strip():
+            errors.append(f"{prefix}.updated_at is required.")
+    elif table == "NutritionRequirements":
+        unknown = sorted(set(row) - NUTRITION_REQUIREMENT_COLUMNS)
+        if unknown:
+            errors.append(f"{prefix} has unknown columns: {unknown}")
+        if row.get("persona_key") not in NUTRITION_REQUIREMENT_PERSONAS:
+            errors.append(f"{prefix}.persona_key must be one of {sorted(NUTRITION_REQUIREMENT_PERSONAS)}.")
+        if row.get("nutrient_key") not in NUTRITION_NUTRIENT_KEYS:
+            errors.append(f"{prefix}.nutrient_key must be one of: {', '.join(sorted(NUTRITION_NUTRIENT_KEYS))}.")
+        value = _coerce_number(row.get("amount_per_day"))
+        if value is None or value < 0:
+            errors.append(f"{prefix}.amount_per_day must be 0 or greater.")
+        if not str(row.get("unit") or "").strip():
+            errors.append(f"{prefix}.unit is required.")
+        if not row.get("source_url") and not row.get("source_note"):
+            errors.append(f"{prefix} needs source_url or source_note.")
+        if not str(row.get("updated_at") or "").strip():
+            errors.append(f"{prefix}.updated_at is required.")
     elif table == "CityWeatherMonthly":
         for key in ("city_name", "weather_month", "provider", "dataset"):
             if not row.get(key):
@@ -471,11 +544,13 @@ def _validate_db_dependencies(generated_dir: Path, db_path: Path) -> dict[str, l
         methods = {row[0] for row in conn.execute("SELECT method_id FROM PlantingMethods")}
         categories = {row[0] for row in conn.execute("SELECT method_category_id FROM PlantingMethodCategories")}
         db_plants = {_norm(row["plant_name"]) for row in conn.execute("SELECT plant_name FROM Plants")}
+        db_nutrients = _load_db_nutrient_keys(conn)
         db_cities = _load_db_city_rows(conn)
         db_varieties = {(_norm(row["plant_name"]), _norm(row["variety_name"])) for row in conn.execute("SELECT p.plant_name, v.variety_name FROM PlantVarieties v JOIN Plants p ON p.plant_id = v.plant_id")}
         db_companions = {(_norm(row["p1"]), _norm(row["p2"])) for row in conn.execute("SELECT p1, p2 FROM Companions")}
 
     generated_plants = {_norm(row.get("plant_name")) for row in read_json(generated_dir / "Plants.json", []) or []}
+    generated_nutrients = {str(row.get("nutrient_key") or "") for row in read_json(generated_dir / "NutritionNutrients.json", []) or []}
     generated_cities = read_json(generated_dir / "Cities.json", []) or []
     generated_varieties = {(_norm(row.get("plant_name")), _norm(row.get("variety_name"))) for row in read_json(generated_dir / "PlantVarieties.json", []) or []}
     generated_companions = {(_norm(row.get("p1")), _norm(row.get("p2"))) for row in read_json(generated_dir / "Companions.json", []) or []}
@@ -513,7 +588,23 @@ def _validate_db_dependencies(generated_dir: Path, db_path: Path) -> dict[str, l
             errors.append(f"PlantingWindowReferences cannot resolve plant: {row.get('plant_name')}")
         if not _city_reference_resolves(row, generated_cities, db_cities):
             errors.append(f"PlantingWindowReferences cannot resolve city: {row.get('city_name')}")
+    for table in ("PlantNutritionMappings", "PlantNutritionValues"):
+        for row in read_json(generated_dir / f"{table}.json", []) or []:
+            if _norm(row.get("plant_name")) not in generated_plants | db_plants and not row.get("plant_id"):
+                errors.append(f"{table} cannot resolve plant: {row.get('plant_name')}")
+            if table == "PlantNutritionValues" and str(row.get("nutrient_key") or "") not in generated_nutrients | db_nutrients:
+                errors.append(f"{table} cannot resolve nutrient: {row.get('nutrient_key')}")
+    for row in read_json(generated_dir / "NutritionRequirements.json", []) or []:
+        if str(row.get("nutrient_key") or "") not in generated_nutrients | db_nutrients:
+            errors.append(f"NutritionRequirements cannot resolve nutrient: {row.get('nutrient_key')}")
     return {"errors": errors, "warnings": warnings}
+
+
+def _load_db_nutrient_keys(conn: sqlite3.Connection) -> set[str]:
+    tables = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "NutritionNutrients" not in tables:
+        return set()
+    return {str(row[0]) for row in conn.execute("SELECT nutrient_key FROM NutritionNutrients")}
 
 
 def _load_db_city_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:

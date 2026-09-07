@@ -61,6 +61,13 @@ function findCropFilterSelect(document) {
     ) || null;
 }
 
+function findPlanCheckScopeSelect(document) {
+    return Array.from(document.querySelectorAll("select")).find(select => {
+        const labels = Array.from(select.options).map(option => option.textContent);
+        return labels.includes("Combined") && labels.includes("Self") && labels.includes("CSA") && labels.includes("Sales");
+    }) || null;
+}
+
 function findCropCard(document, label) {
     return Array.from(document.querySelectorAll(".yp-crop-card")).find(card => card.textContent.includes(label)) || null;
 }
@@ -77,6 +84,26 @@ function findDemandPriceInput(document) {
 
 function findDemandLine(document, lineId = "demand_1") {
     return findStripDetails(document, "demand").querySelector(`[data-demand-line-id="${lineId}"]`);
+}
+
+function findSelfLine(document, lineId = "self_1") {
+    return findStripDetails(document, "self-sufficiency").querySelector(`[data-self-line-id="${lineId}"]`);
+}
+
+function addSelfUse(plan, overrides = {}) {
+    const line = {
+        id: `self_${(plan.selfSufficiency.lines || []).length + 1}`,
+        cropId: "crop_1",
+        qty: 1,
+        unit: "kg",
+        frequency: "week",
+        everyN: 1,
+        from: "2026-06-01",
+        to: "2026-06-07",
+        ...overrides
+    };
+    plan.selfSufficiency.lines.push(line);
+    return line;
 }
 
 function findKpiText(document, label) {
@@ -203,7 +230,7 @@ function yearPlannerStyleText(document) {
     return style.textContent.replace(/\s+/g, " ");
 }
 
-test("modal renders four ordered strips with the expected defaults and crop tabs", async t => {
+test("modal renders ordered strips with the expected defaults and crop tabs", async t => {
     const harness = createYearPlannerHarness();
     t.after(() => harness.dom.window.close());
     savePlan(harness, 2026);
@@ -217,8 +244,8 @@ test("modal renders four ordered strips with the expected defaults and crop tabs
         .filter(label => ["Basics", "Packages", "Advanced"].includes(label));
     assert.deepEqual(tabLabels, ["Basics", "Packages"]);
     const strips = Array.from(harness.document.querySelectorAll("[data-year-plan-strip]"));
-    assert.deepEqual(strips.map(strip => strip.dataset.yearPlanStrip), ["crop-plan", "demand", "csa", "plan-check"]);
-    assert.deepEqual(strips.map(strip => strip.querySelector(".yp-strip-title").textContent), ["Crop Plan", "Demand", "CSA", "Plan Check"]);
+    assert.deepEqual(strips.map(strip => strip.dataset.yearPlanStrip), ["crop-plan", "self-sufficiency", "demand", "csa", "plan-check"]);
+    assert.deepEqual(strips.map(strip => strip.querySelector(".yp-strip-title").textContent), ["Crop Plan", "Self Sufficiency", "Demand", "CSA", "Plan Check"]);
     assert.doesNotMatch(harness.document.body.textContent, /Diagnostics/);
 
     const csaStrip = findCsaStrip(harness.document);
@@ -226,6 +253,7 @@ test("modal renders four ordered strips with the expected defaults and crop tabs
     assert.match(csaStrip.textContent, /Status\s*Off/);
     assert.equal(csaStrip.getAttribute("aria-expanded"), "false");
     assert.equal(findStripHeader(harness.document, "demand").getAttribute("aria-expanded"), "true");
+    assert.equal(findStripHeader(harness.document, "self-sufficiency").getAttribute("aria-expanded"), "false");
     assert.equal(findStripHeader(harness.document, "crop-plan").getAttribute("aria-expanded"), "true");
     assert.equal(findStripHeader(harness.document, "plan-check").getAttribute("aria-expanded"), "false");
     const styleText = yearPlannerStyleText(harness.document);
@@ -1352,7 +1380,7 @@ test("Plan Check summary follows the crop filter and chart hover shows inventory
     assert.match(summary.textContent, /Target\s*5\.0 kg/);
     assert.match(summary.textContent, /Short weeks\s*1/);
     assert.deepEqual(planCheckTotalsCropNames(harness.document), ["Tomato", "Carrot"]);
-    assert.match(findStripDetails(harness.document, "plan-check").textContent, /Channels[\s\S]*Priorities[\s\S]*Shortage weeks[\s\S]*Revenue:/);
+    assert.match(findStripDetails(harness.document, "plan-check").textContent, /Channels[\s\S]*Priorities[\s\S]*Shortage weeks[\s\S]*Value:/);
 
     cropFilter.value = "crop_1";
     cropFilter.dispatchEvent(new harness.window.Event("change", { bubbles: true }));
@@ -1825,6 +1853,76 @@ test("Harvest-window suggestions synchronize visible Demand and CSA date control
     const csaDates = findCsaStrip(harness.document).parentElement.querySelectorAll('input[type="date"]');
     assert.deepEqual(Array.from(demandDates).map(input => input.value), ["2026-07-01", "2026-07-31"]);
     assert.deepEqual(Array.from(csaDates).map(input => input.value), ["2026-07-01", "2026-07-31", "2026-07-01", "2026-07-31"]);
+});
+
+test("Self Sufficiency strip edits household fields, lines, package repair flow, and nutrition warnings", async t => {
+    const harness = createYearPlannerHarness({
+        nutritionByPlantIds: {
+            available: true,
+            mappings: [{ plant_id: 1, fdc_id: 1, fdc_description: "Tomato, raw", match_confidence: "medium" }],
+            values: [{ plant_id: 1, nutrient_key: "energy_kcal", amount_per_100g: 20, unit: "kcal" }]
+        },
+        nutritionRequirements: {
+            available: true,
+            requirements: [{ persona_key: "adult_19_50", nutrient_key: "energy_kcal", amount_per_day: 2000, unit: "kcal" }]
+        }
+    });
+    t.after(() => harness.dom.window.close());
+    savePlan(harness, 2026, plan => {
+        plan.crops[0].harvestStart = "2026-06-01";
+        plan.crops[0].harvestEnd = "2026-06-07";
+        plan.crops[0].shelfLifeDays = 7;
+        plan.crops[0].packages = [{ unit: "head", baseType: "kg", baseQty: 1, price: 2 }];
+        addSelfUse(plan, { unit: "crate" });
+    });
+    const session = await harness.openModal(2026);
+    setStripExpanded(harness.document, "self-sufficiency", true);
+    await harness.settle(120);
+
+    assert.match(findStripHeader(harness.document, "self-sufficiency").textContent, /Adults\s*0.*Children\s*0.*Setup issues/);
+    assert.match(findStripDetails(harness.document, "self-sufficiency").textContent, /Nutrition coverage is a planning estimate, not dietary advice/);
+    assert.match(findStripDetails(harness.document, "self-sufficiency").textContent, /Annual nutrition coverage/);
+    assert.match(findStripDetails(harness.document, "self-sufficiency").textContent, /Add or repair this unit on the crop Packages tab/);
+
+    harness.setControlValue(findYearPlanField(harness.document, "adults"), 2);
+    harness.setControlValue(findYearPlanField(harness.document, "children"), 1);
+    harness.setControlValue(findYearPlanField(harness.document, "nutritionMultiplier"), 1.25);
+    assert.equal(session.plan.selfSufficiency.adults, 2);
+    assert.equal(session.plan.selfSufficiency.children, 1);
+    assert.equal(session.plan.selfSufficiency.nutritionMultiplier, 1.25);
+
+    Array.from(findSelfLine(harness.document).querySelectorAll("button")).find(button => button.textContent === "Edit packages").click();
+    assert.equal(findStripHeader(harness.document, "crop-plan").getAttribute("aria-expanded"), "true");
+    assert.match(findStripDetails(harness.document, "crop-plan").textContent, /Save as default for plant/);
+
+    setStripExpanded(harness.document, "self-sufficiency", true);
+    harness.findButton("Add self-use line").click();
+    await harness.settle(120);
+    assert.equal(session.plan.selfSufficiency.lines.length, 2);
+    assert.equal(session.plan.selfSufficiency.lines[1].unit, "head");
+    assert.equal(session.plan.selfSufficiency.lines[1].from, "2026-06-01");
+    assert.equal(session.plan.selfSufficiency.lines[1].to, "2026-06-14");
+});
+
+test("Plan Check scope selector filters combined, self, and sales demand", async t => {
+    const harness = createYearPlannerHarness();
+    t.after(() => harness.dom.window.close());
+    savePlan(harness, 2026, plan => {
+        plan.crops[0].harvestStart = "2026-06-01";
+        plan.crops[0].harvestEnd = "2026-06-07";
+        addSelfUse(plan, { qty: 2 });
+        addDemand(plan, { qty: 3 });
+    });
+    await harness.openModal(2026);
+    setStripExpanded(harness.document, "plan-check", true);
+    const scope = findPlanCheckScopeSelect(harness.document);
+    assert.ok(scope);
+
+    assert.match(harness.document.querySelector(".yp-plan-check-summary").textContent, /Target\s*5\.0 kg/);
+    harness.setControlValue(scope, "self", "change");
+    assert.match(harness.document.querySelector(".yp-plan-check-summary").textContent, /Target\s*2\.0 kg/);
+    harness.setControlValue(scope, "sales", "change");
+    assert.match(harness.document.querySelector(".yp-plan-check-summary").textContent, /Target\s*3\.0 kg/);
 });
 
 test("dirty close uses the inline save-discard-cancel workflow", async t => {

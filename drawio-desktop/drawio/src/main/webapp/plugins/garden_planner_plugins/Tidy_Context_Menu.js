@@ -98,6 +98,7 @@ Draw.loadPlugin(function (ui) {
      */
     function isTrellisCell(cell) {
         if (!cell) return false;
+        if (getCellAttribute(cell, 'roadmap_type')) return true; // NEW: roadmap metadata belongs in its dedicated controls.
 
         const trellisFlags = [
             'garden_module',
@@ -400,6 +401,8 @@ Draw.loadPlugin(function (ui) {
 
         const oldGetTooltipForCell = graph.getTooltipForCell;
         graph.getTooltipForCell = function (cell) {
+            const roadmap = graph.__trellisRoadmapManager; // NEW
+            if (roadmap && roadmap.isRoadmapCell(cell)) return roadmap.getTooltipForCell(cell) || ''; // NEW
             if (isTrellisCell(cell)) {
                 return '';
             }

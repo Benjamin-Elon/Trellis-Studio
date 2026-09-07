@@ -4686,6 +4686,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             // Decide per candidate
             forEachCandidate(function (card) {
                 cardsSeen++;
+                if (getAttr(card, 'roadmap_source_object_name') || getAttr(card, 'roadmap_source_object_id')) { // NEW: roadmap deletion explicitly decides whether to preserve these independent tasks.
+                    const surviving = getLinkSet(card); deletedIds.forEach(id => surviving.delete(id)); // NEW
+                    setLinkSet(card, surviving); return; // NEW
+                } // NEW
 
                 // Current link set for this card
                 const linkSet = getLinkSet(card);
@@ -5853,7 +5857,51 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         applySchedulerTaskReplacement: taskCommands.applySchedulerTaskReplacement
     });
 
+    /** Create an independently scheduled task; no day allocation or scheduler synchronization. */ // NEW
+    function createRoadmapTaskInBoard(board, options) { // NEW
+        const o = options || {}; // NEW
+        const users = graph.__trellisUsers || (window.Trellis && window.Trellis.users); // NEW
+        if (!board || ![BOARD_KEY, 'MAIN_KANBAN_BOARD'].includes(getAttr(board, 'board_key'))) throw new Error('Select a valid Task Board.'); // NEW
+        if (users && users.canAddCell && !users.canAddCell(board)) throw new Error('You do not have permission to create tasks on this board.'); // NEW
+        const title = String(o.title || '').trim(); // NEW
+        if (!title || !parseTaskCalendarISO(o.startISO) || !parseTaskCalendarISO(o.endISO) || o.startISO > o.endISO) throw new Error('Enter a task name and valid inclusive task date range.'); // NEW
+        if (!['TODO', 'DOING'].includes(o.workflowState)) throw new Error('Roadmap tasks must start in TODO or DOING.'); // NEW
+        const eligibleRoles = new Set(getBoardRoleRoster(board).map(role => String(role.id))); // NEW
+        if (normalizeTaskAssigneeRoleIds(o.assigneeRoleIds || []).some(id => !eligibleRoles.has(id))) throw new Error('Task assignees must be directly and reciprocally linked to the destination board.'); // NEW
+        return taskTransactions.runModelUpdate(o, function () { // NEW
+            ensureLanes(board); // NEW
+            const lanes = lanesMap(board), lane = lanes[o.workflowState] || lanes.TODO_STAGED; // NEW
+            const card = createCard(lane, { title, startISO: o.startISO, endISO: o.endISO }, true); // NEW
+            applyCardPatchInsideUpdate(card, { // NEW
+                [TASK_WORKFLOW_STATE_ATTR]: o.workflowState, [TASK_ASSIGNED_DAY_ATTR]: null, // NEW
+                [TASK_ASSIGNEE_ROLE_IDS_ATTR]: serializeTaskAssigneeRoleIds(o.assigneeRoleIds || []), // NEW
+                roadmap_source_object_id: o.roadmapObjectId, roadmap_source_board_id: o.roadmapBoardId, // NEW
+                roadmap_source_object_name: o.roadmapObjectName, roadmap_source_board_name: o.roadmapBoardName // NEW
+            }); // NEW
+            refreshCardLabel(card, true); scanAndReflowBoard(board, { insideUpdate: true, scope: getTaskReflowScopeForCommand('workflow') }); // NEW
+            return card; // NEW
+        }); // NEW
+    } // NEW
+
+    /** Membership linking is explicit and permission checked; it never changes Garden grants. */ // NEW
+    function linkRoadmapAssigneesToBoard(board, roleIds) { // NEW
+        const users = graph.__trellisUsers || (window.Trellis && window.Trellis.users); // NEW
+        if (users && users.canManageAccess && !users.canManageAccess(board)) return false; // NEW
+        const roles = normalizeTaskAssigneeRoleIds(roleIds).map(id => model.getCell(id)); // NEW
+        if (roles.some(role => !isRoleCard(role))) return false; // NEW
+        model.beginUpdate(); // NEW
+        try { roles.forEach(role => { // NEW
+            const boardLinks = getLinkSet(board), roleLinks = getLinkSet(role); boardLinks.add(String(role.id)); roleLinks.add(String(board.id)); // NEW
+            model.setValue(board, cloneCardValueWithAttributes(board, { [LINK_ATTR]: Array.from(boardLinks).join(',') })); // NEW
+            model.setValue(role, cloneCardValueWithAttributes(role, { [LINK_ATTR]: Array.from(roleLinks).join(',') })); // NEW
+        }); } finally { model.endUpdate(); } // NEW
+        return true; // NEW
+    } // NEW
+
     graph.__trellisTaskManager = Object.assign({}, graph.__trellisTaskManager || {}, {
+        createRoadmapTaskInBoard, getBoardRoleRoster, linkRoadmapAssigneesToBoard, // NEW
+        listBoardsInTaskModule: function (moduleCell) { const boards = findBoardsIn(moduleCell); return [boards.main].concat(boards.secondary).filter(Boolean).map(board => ({ id: String(board.id), name: getAttr(board, 'label') || graph.convertValueToString(board), role: board === boards.main ? 'main' : 'secondary' })); }, // NEW
+        openTaskCard: function (card) { const board = findBoardAncestor(card); if (!board) return null; setBoardPlanningView(board, 'FULL'); graph.setSelectionCell(card); if (graph.scrollCellToVisible) graph.scrollCellToVisible(card); return card; }, // NEW
         ensureMainBoardInTaskModule: function (taskModule) {
             return taskCommands.ensureBoardTemplateInUpdate(taskModule);
         },
@@ -6582,19 +6630,19 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         requestRefresh();
     }
 
-    function makeBoardNameInput(board) {
-        let committedLabel = boardDisplayName(board); // CHANGE: Escape restores the latest committed label, not the first render label
+    function makeNameInput({ value, title, commit, disabled = false }) { // CHANGE: reusable Task-style editor with caller-owned validation.
+        let committedLabel = value; // CHANGE: Escape restores the latest committed label, not the first render label
         const input = document.createElement('input');
         input.type = 'text';
         input.value = committedLabel;
-        input.title = 'Task board name';
-        input.setAttribute('aria-label', 'Task board name');
+        input.title = title; input.disabled = disabled; // CHANGE
+        input.setAttribute('aria-label', title); // CHANGE
         input.style.cssText = 'box-sizing:border-box;width:180px;min-width:0;border:1px solid rgba(75,85,99,.35);border-radius:4px;padding:3px 5px;font:12px Arial,sans-serif;font-weight:600;';
         ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup'].forEach(function (type) { input.addEventListener(type, stopDomPropagation); }); // NEW: text editing should not start graph gestures
         input.addEventListener('keydown', function (evt) {
             stopDomPropagation(evt);
             if (evt.key === 'Enter') {
-                input.value = writeBoardLabelUndoable(board, input.value);
+                input.value = commit(input.value);
                 committedLabel = input.value; // NEW
                 if (input.blur) input.blur();
                 if (evt.preventDefault) evt.preventDefault();
@@ -6604,7 +6652,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             }
         });
         ['keypress', 'keyup'].forEach(function (type) { input.addEventListener(type, stopDomPropagation); });
-        input.addEventListener('blur', function () { input.value = writeBoardLabelUndoable(board, input.value); committedLabel = input.value; }); // CHANGE
+        input.addEventListener('blur', function () { input.value = commit(input.value); committedLabel = input.value; }); // CHANGE
         return input;
     }
 
@@ -6762,7 +6810,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             const nextBoardNameContextKey = taskCellId(board);
             if (boardNameContextKey !== nextBoardNameContextKey || !boardNameInput) {
                 nameSlot.innerHTML = '';
-                boardNameInput = makeBoardNameInput(board); // NEW
+                boardNameInput = makeNameInput({ value: boardDisplayName(board), title: 'Task board name', commit: value => writeBoardLabelUndoable(board, value) }); // CHANGE // NEW
                 nameSlot.appendChild(boardNameInput);
                 boardNameContextKey = nextBoardNameContextKey;
             } else if (document.activeElement !== boardNameInput) {
@@ -7343,6 +7391,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         addGraphViewRefreshListener(requestRefresh);
         requestRefresh();
     }
+
+    // Shared presentation services retain Task Manager behavior and keep model commands separate. // NEW
+    graph.__trellisTaskUi = Object.freeze({ ensureControlHost: ensureTaskControlOverlayHost, getCellVisualBounds, positionDomOverlayFromBounds, makeRoleAvatarNode, makeNameInput, showDialog: showTaskManagerDialogImpl, applyButtonStyle: applyTaskButtonStyle }); // NEW
 
     function installSelectedCardActionOverlay() {
         if (graph.__trellisTaskCardOverlayInstalled || !document || !document.createElement) return;

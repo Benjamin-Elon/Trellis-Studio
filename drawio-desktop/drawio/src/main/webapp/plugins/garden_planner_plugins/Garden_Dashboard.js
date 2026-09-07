@@ -1962,6 +1962,7 @@ Draw.loadPlugin(function (ui) {
         const workspaceTasksBtn = workspaceSwitcher.tasksBtn; // NEW
         const workspaceTeamBtn = workspaceSwitcher.teamBtn; // NEW
         const planBtn = createToolbarButton("Plan", "Open the year planner", "open");
+        const roadmapBtn = createToolbarButton("Main Roadmap", "Open or create the linked Main Roadmap", "open"); // NEW
         const equipmentBtn = createToolbarButton("Equipment", "Open garden equipment", "open");
         const irrigationBtn = createToolbarButton("Irrigation", "Open irrigation planner", "open");
         const allocateBtn = createToolbarButton("Allocate", "Allocate the current plan", "add");
@@ -1989,6 +1990,7 @@ Draw.loadPlugin(function (ui) {
         leftControls.appendChild(yearLabel);
         leftControls.appendChild(next);
         leftControls.appendChild(planBtn);
+        leftControls.appendChild(roadmapBtn); // NEW
         leftControls.appendChild(allocateBtn);
         leftControls.appendChild(irrigationBtn);
         leftControls.appendChild(equipmentBtn);
@@ -2003,7 +2005,7 @@ Draw.loadPlugin(function (ui) {
         wrap.appendChild(panel);
         host.appendChild(wrap);
 
-        viewportToolbar = { wrap, panel, controls, leftControls, rightActions, gardenName, gardenPickerWrap, gardenPickerBtn, createGardenBtn, gardenPickerPopover: null, workspaceWrap, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, prev, next, yearLabel, planBtn, equipmentBtn, irrigationBtn, allocateBtn, taskBoardSelect, messagesBtn, exportBtn, shareBtn, tableBtn, table }; // CHANGE
+        viewportToolbar = { wrap, panel, controls, leftControls, rightActions, gardenName, gardenPickerWrap, gardenPickerBtn, createGardenBtn, gardenPickerPopover: null, workspaceWrap, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, prev, next, yearLabel, planBtn, roadmapBtn, equipmentBtn, irrigationBtn, allocateBtn, taskBoardSelect, messagesBtn, exportBtn, shareBtn, tableBtn, table }; // CHANGE
         [prev, next, planBtn, equipmentBtn, irrigationBtn, allocateBtn, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, messagesBtn, exportBtn, shareBtn, tableBtn, gardenPickerBtn, createGardenBtn].forEach(function (button) {
             button.__trellisDashboardDefaultTitle = button.title || "";
         });
@@ -2027,6 +2029,12 @@ Draw.loadPlugin(function (ui) {
             setToolbarYear(activeToolbarModule, year);
             try { window.dispatchEvent(new CustomEvent(PLAN_YEAR_EVENT, { detail: { moduleCellId: cellId(activeToolbarModule), year } })); } catch (_) { }
         });
+        roadmapBtn.addEventListener("click", function () { // NEW
+            if (!activeToolbarModule) return; // NEW
+            const api = graph.__trellisRoadmapManager; // NEW
+            if (api && api.openRoadmapForGarden) api.openRoadmapForGarden(activeToolbarModule); // NEW
+            else if (ui.alert) ui.alert("Roadmap Manager is unavailable. Load the Roadmap plugin to open this Garden’s roadmap."); // NEW
+        }); // NEW
         equipmentBtn.addEventListener("click", function () {
             if (!activeToolbarModule) return;
             const equipmentApi = graph && graph.__trellisEquipment;
@@ -2101,6 +2109,7 @@ Draw.loadPlugin(function (ui) {
         const entry = ensureViewportToolbar();
         if (!entry) return;
         activeToolbarModule = null;
+        entry.roadmapBtn.disabled = true; // NEW
         if (taskManagerApi() && typeof taskManagerApi().setActiveDashboardContext === "function") taskManagerApi().setActiveDashboardContext(null, null);
         entry.gardenName.textContent = "No active garden";
         entry.gardenName.title = "No active garden";
@@ -2136,6 +2145,7 @@ Draw.loadPlugin(function (ui) {
         if (!entry || !moduleCell) return;
         closeGardenPicker(entry);
         entry.gardenName.textContent = gardenLabel(moduleCell);
+        entry.roadmapBtn.disabled = false; // NEW
         entry.gardenName.title = gardenLabel(moduleCell);
         entry.gardenPickerWrap.style.display = "none";
         entry.createGardenBtn.style.display = "none";

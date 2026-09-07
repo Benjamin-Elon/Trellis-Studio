@@ -1,0 +1,100 @@
+✔ createModuleAtPoint creates a regular module at requested coordinates (53.9796ms)
+✔ createModuleAtPoint creates garden module with settings-needed event (20.1571ms)
+✔ createModuleAtPoint creates team module (60.3731ms)
+✔ createModuleAtPoint creates task module (6.1357ms)
+✔ garden companion team repair reuses typed team module (7.8309ms)
+✔ garden companion task repair reuses typed task module and mirrors access (7.7814ms)
+✔ module cells cannot be dropped under non-module parents (5.9586ms)
+✔ protected trellis objects clamp by module type (44.8227ms)
+✔ regular module children can drag past right and bottom to grow the module (5.4136ms)
+✔ regular module children clamp at left and top edges (6.7332ms)
+✔ team and task module ordinary children do not use regular outside growth (25.5718ms)
+✔ role cards clamp to team modules and role internals clamp to their role parent (15.1957ms)
+✔ mixed protected selections share one clamped delta (12.0472ms)
+✔ protected cells reject drops outside their current module (7.0739ms)
+✔ CELLS_MOVED clamps leaked protected cells instead of reparenting to root (6.576ms)
+✔ garden child moves do not auto-shrink the garden module (5.5701ms)
+✔ kanban cards can move to another board lane while lanes remain fixed (5.9229ms)
+✔ promptSetModuleMargin updates style and reapplies module sizing (12.6679ms)
+✔ module margin prompt can be requested through the fallback graph event (20.8551ms)
+✔ module margin API updates style and reapplies module sizing without prompt (5.6739ms)
+✔ garden module margin API ignores legacy internal margin values (5.5267ms)
+✔ garden module resize cannot shrink below child contents (11.8729ms)
+✔ garden module resize restores only undersized dimensions (5.3374ms)
+✔ garden module resize minimum ignores legacy internal margin (6.9428ms)
+✔ empty garden module resize honors base minimum (21.5754ms)
+✔ garden resize minimum does not normalize negative child positions (25.1986ms)
+✔ module margin can be set through the fallback graph event (11.6857ms)
+✔ module external margin API stores spacing and pushes neighbors (8.7308ms)
+✔ created modules push neighboring modules to maintain external margins (10.6024ms)
+✔ moved modules push neighbors using the move vector (8.7529ms)
+✔ resized modules push neighbors on expanded edges (7.5942ms)
+✔ shrunk modules pull nearby right-side neighbors to the exact external margin (14.9321ms)
+✔ programmatic module margin growth preserves external margins (8.3095ms)
+✔ programmatic module margin shrink pulls nearby neighbors to the exact external margin (8.4529ms)
+✔ shrunk modules leave neighbors beyond three external margins in place (8.2313ms)
+✔ programmatic module margin no-op leaves neighbors in place (7.5167ms)
+✖ empty canvas click renders root module overlay buttons (30.6941ms)
+✔ overlay buttons create the selected module type at stored click point and hide (46.3421ms)
+✔ clicking an existing cell does not render the root module overlay (9.1392ms)
+✔ overlay dismisses on Escape and outside graph gesture (34.0264ms)
+✔ empty canvas click while overlay is active dismisses without reopening (24.6393ms)
+✔ selecting one team module renders the add role card overlay (24.0423ms)
+✔ team module overlay edits labels without graph action side effects (29.1441ms)
+✔ module label API writes garden and team labels with clone-backed undo values (6.5907ms)
+✔ linked team module overlay uses a single editable team label field (14.8158ms)
+✔ team module overlay position is not clamped to the viewport (11.9632ms)
+✔ first click selecting a team module shows role overlay next to the click (11.2412ms)
+✔ selecting regular or garden modules does not render the role card overlay (5.784ms)
+✔ role overlay button creates role card from stored click point and hides (15.7442ms)
+✔ context menu add role card uses one top-level model transaction (16.2322ms)
+✔ role overlay button falls back to top-left content placement (12.515ms)
+✔ role overlay margin button opens the combined module margins dialog (14.5874ms)
+✔ linked team module margin dialog uses the garden unit system (15.6029ms)
+✔ clicking the already-selected team module hides role overlay without reopening (17.2469ms)
+✔ role overlay hides on Escape, outside gesture, model change, and view change (25.9543ms)
+✔ new role cards use v2 compact roster profile geometry (12.84ms)
+✔ v2 role card summary syncs name and role without prefixing value fields (15.0816ms)
+✔ legacy role cards are not rewritten by summary sync (16.1915ms)
+✔ empty role image slot shows add affordances for role card and image row only (17.697ms)
+✔ existing role image shows change overlay from image section or avatar only (27.5346ms)
+✔ role image overlay button invokes insert image and creates the avatar (23.3465ms)
+✔ inserted role image replaces any prior avatar (41.8647ms)
+ℹ tests 62
+ℹ suites 0
+ℹ pass 61
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1596.7003
+
+✖ failing tests:
+
+test at test\modules-standalone.test.cjs:949:1
+✖ empty canvas click renders root module overlay buttons (30.6941ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+      'Add Module',
+      'Add Garden Module',
+      'Add Team Module',
+      'Add Task Module',
+  +   'Add Roadmap Module'
+    ]
+  
+      at TestContext.<anonymous> (C:\Users\user\Desktop\Trellis for Drawio\drawio-desktop\test\modules-standalone.test.cjs:953:12)
+      at Test.runInAsyncScope (node:async_hooks:214:14)
+      at Test.run (node:internal/test_runner/test:1047:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+      at Test.postRun (node:internal/test_runner/test:1173:19)
+      at Test.run (node:internal/test_runner/test:1101:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'Add Module', 'Add Garden Module', 'Add Team Module', 'Add Task Module', 'Add Roadmap Module' ],
+    expected: [ 'Add Module', 'Add Garden Module', 'Add Team Module', 'Add Task Module' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

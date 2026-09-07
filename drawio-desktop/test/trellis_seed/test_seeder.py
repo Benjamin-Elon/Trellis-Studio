@@ -141,6 +141,10 @@ class TrellisSeederTests(unittest.TestCase):
             self.assertIn("CompanionEvidence", tables)
             self.assertIn("CompanionLayoutGroupDefaults", tables)
             self.assertIn("PlantingWindowReferences", tables)
+            self.assertIn("NutritionNutrients", tables)
+            self.assertIn("PlantNutritionMappings", tables)
+            self.assertIn("PlantNutritionValues", tables)
+            self.assertIn("NutritionRequirements", tables)
             cols = [row[1] for row in conn.execute("PRAGMA table_info(VarietyTaskTemplates);")]
             self.assertIn("method_id", cols)
             self.assertIn("template_json", cols)
@@ -167,6 +171,57 @@ class TrellisSeederTests(unittest.TestCase):
             self.assertIn("plant_set_key", group_default_cols)
             self.assertIn("anchor_plant_id", group_default_cols)
             self.assertIn("layout_json", group_default_cols)
+            nutrition_mapping_cols = [row[1] for row in conn.execute("PRAGMA table_info(PlantNutritionMappings);")]
+            self.assertIn("fdc_id", nutrition_mapping_cols)
+            self.assertIn("match_confidence", nutrition_mapping_cols)
+            self.assertIn("match_status", nutrition_mapping_cols)
+
+    def test_packaged_seed_database_includes_reviewable_nutrition_snapshot(self) -> None:
+        with closing(sqlite3.connect(ROOT / "trellis_database" / "Trellis_database.sqlite")) as conn:
+            active_plants = conn.execute("SELECT COUNT(*) FROM Plants WHERE abbr IS NOT NULL").fetchone()[0]
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM NutritionNutrients").fetchone()[0], 10)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM NutritionRequirements").fetchone()[0], 20)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantNutritionMappings WHERE food_form='raw'").fetchone()[0], active_plants)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantNutritionValues").fetchone()[0], active_plants * 10)
+            self.assertGreater(conn.execute("SELECT COUNT(*) FROM PlantNutritionMappings WHERE match_status='pending'").fetchone()[0], 0)
+
+    def test_nutrition_validation_warns_on_reviewable_auto_mappings(self) -> None:
+        report = validate_row("PlantNutritionMappings", {
+            "plant_name": "Apple",
+            "fdc_id": 1102640,
+            "fdc_description": "Apple, raw",
+            "fdc_data_type": "Foundation",
+            "food_form": "raw",
+            "match_confidence": "medium",
+            "match_status": "pending",
+            "source_url": "https://fdc.nal.usda.gov/download-datasets/",
+            "updated_at": "2026-09-07T00:00:00+00:00",
+        })
+        self.assertEqual(report["errors"], [])
+        self.assertTrue(any("reviewable" in warning for warning in report["warnings"]))
+        bad = validate_row("PlantNutritionValues", {
+            "plant_name": "Apple",
+            "nutrient_key": "unknown",
+            "amount_per_100g": 1,
+            "source_fdc_id": 1102640,
+            "updated_at": "2026-09-07T00:00:00+00:00",
+        })
+        self.assertTrue(any("nutrient_key" in error for error in bad["errors"]))
+
+    def test_apply_run_loads_generated_nutrition_tables(self) -> None:
+        generated = self.tmp_path / "run" / "generated"
+        generated.mkdir(parents=True)
+        now = "2026-09-07T00:00:00+00:00"
+        write_json(generated / "NutritionNutrients.json", [{"nutrient_key": "energy_kcal", "nutrient_name": "Calories", "unit": "kcal", "sort_order": 1}])
+        write_json(generated / "NutritionRequirements.json", [{"persona_key": "adult_19_50", "nutrient_key": "energy_kcal", "amount_per_day": 2100, "unit": "kcal", "source_note": "test", "updated_at": now}])
+        write_json(generated / "PlantNutritionMappings.json", [{"plant_name": "Apple", "fdc_id": 1102640, "fdc_description": "Apple, raw", "fdc_data_type": "Foundation", "food_form": "raw", "match_confidence": "reviewed", "match_status": "reviewed", "source_url": "https://fdc.nal.usda.gov/download-datasets/", "updated_at": now}])
+        write_json(generated / "PlantNutritionValues.json", [{"plant_name": "Apple", "nutrient_key": "energy_kcal", "amount_per_100g": 53, "source_fdc_id": 1102640, "updated_at": now}])
+
+        report = apply_run(self.tmp_path / "run", self.db_path)
+        self.assertEqual(report["tables"]["PlantNutritionValues"], 1)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            value = conn.execute("SELECT amount_per_100g FROM PlantNutritionValues v JOIN Plants p ON p.plant_id=v.plant_id WHERE p.plant_name='Apple' AND nutrient_key='energy_kcal'").fetchone()[0]
+            self.assertEqual(value, 53)
 
     def test_companion_migration_adds_directional_timing_and_nullable_id_backfill(self) -> None:
         with closing(sqlite3.connect(":memory:")) as conn:

@@ -769,9 +769,11 @@ function render(data)
 		}
 		
 		// Parses XML into graph
-		var codec = new mxCodec(xmlDoc);
+		var renderingXml = extras && extras.globalVars && extras.globalVars.__trellisRoadmapProjection ? xmlDoc.cloneNode(true) : xmlDoc; // NEW: mxCodec consumes wrapper nodes; retain canonical XML for embedding.
+		var codec = new mxCodec(renderingXml); // CHANGE
 		var model = graph.getModel();
-		codec.decode(xmlDoc.documentElement, model);
+		codec.decode(renderingXml.documentElement, model); // CHANGE
+		if (window.TrellisRoadmapRenderer && extras && extras.globalVars) window.TrellisRoadmapRenderer.applyProjection(graph, extras.globalVars.__trellisRoadmapProjection, currentPageId); // NEW: modify only the isolated rendering model, preserving embedded source XML.
 
 		var bg;
 		

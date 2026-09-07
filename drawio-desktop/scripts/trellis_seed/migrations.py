@@ -56,6 +56,9 @@ def pending_migrations(conn: sqlite3.Connection) -> list[str]:
         pending.append("create PlantingWindowReferences")
     if "VarietyTaskTemplates" not in tables or "method_id" not in table_columns(conn, "VarietyTaskTemplates"):
         pending.append("repair VarietyTaskTemplates key to (variety_id, method_id)")
+    for table in ("NutritionNutrients", "PlantNutritionMappings", "PlantNutritionValues", "NutritionRequirements"):
+        if table not in tables:
+            pending.append(f"create {table}")
     return pending
 
 
@@ -249,9 +252,54 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
             updated_at TEXT NOT NULL,
             PRIMARY KEY (variety_id, method_id)
         );
+
+        CREATE TABLE IF NOT EXISTS NutritionNutrients (
+            nutrient_key TEXT PRIMARY KEY,
+            nutrient_name TEXT NOT NULL,
+            unit TEXT NOT NULL,
+            sort_order INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS PlantNutritionMappings (
+            plant_id INTEGER NOT NULL REFERENCES Plants(plant_id) ON DELETE CASCADE,
+            fdc_id INTEGER NOT NULL,
+            fdc_description TEXT NOT NULL,
+            fdc_data_type TEXT NOT NULL,
+            food_form TEXT NOT NULL DEFAULT 'raw',
+            match_confidence TEXT NOT NULL,
+            match_status TEXT NOT NULL DEFAULT 'pending',
+            source_url TEXT,
+            source_note TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (plant_id, food_form)
+        );
+        CREATE INDEX IF NOT EXISTS idx_PlantNutritionMappings_fdc_id
+            ON PlantNutritionMappings(fdc_id);
+
+        CREATE TABLE IF NOT EXISTS PlantNutritionValues (
+            plant_id INTEGER NOT NULL REFERENCES Plants(plant_id) ON DELETE CASCADE,
+            nutrient_key TEXT NOT NULL REFERENCES NutritionNutrients(nutrient_key) ON DELETE CASCADE,
+            amount_per_100g REAL NOT NULL,
+            source_fdc_id INTEGER NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (plant_id, nutrient_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_PlantNutritionValues_nutrient
+            ON PlantNutritionValues(nutrient_key);
+
+        CREATE TABLE IF NOT EXISTS NutritionRequirements (
+            persona_key TEXT NOT NULL,
+            nutrient_key TEXT NOT NULL REFERENCES NutritionNutrients(nutrient_key) ON DELETE CASCADE,
+            amount_per_day REAL NOT NULL,
+            unit TEXT NOT NULL,
+            source_url TEXT,
+            source_note TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (persona_key, nutrient_key)
+        );
         """
     )
-    for label in ("CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily", "CompanionEvidence", "CompanionLayoutGroupDefaults", "PlantingWindowReferences", "VarietyTaskTemplates"):
+    for label in ("CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily", "CompanionEvidence", "CompanionLayoutGroupDefaults", "PlantingWindowReferences", "VarietyTaskTemplates", "NutritionNutrients", "PlantNutritionMappings", "PlantNutritionValues", "NutritionRequirements"):
         if label not in tables or label == "VarietyTaskTemplates":
             applied.append(f"ensured {label}")
     return applied

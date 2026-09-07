@@ -950,7 +950,7 @@ test("empty canvas click renders root module overlay buttons", () => {
     const harness = makeHarness();
     fireGraphClick(harness, { clientX: 120, clientY: 150, graphX: 200, graphY: 230 });
     const buttons = overlayButtons(harness.document);
-    assert.deepEqual(buttons.map(button => button.textContent), ["Add Module", "Add Garden Module", "Add Team Module", "Add Task Module"]);
+    assert.deepEqual(buttons.map(button => button.textContent), ["Add Module", "Add Garden Module", "Add Team Module", "Add Task Module", "Add Roadmap Module"]); // CHANGE
     assert.equal(harness.document.querySelector(".trellis-root-module-overlay").style.display, "flex");
 });
 

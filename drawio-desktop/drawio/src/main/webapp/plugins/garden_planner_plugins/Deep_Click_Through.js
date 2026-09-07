@@ -32,6 +32,9 @@ Draw.loadPlugin(function (ui) {
     const baseGetCursorForMouseEvent = graph.getCursorForMouseEvent;
 
     graph.getCellAt = function (x, y, parent, vertices, edges, ignoreFn) {
+        const roadmap = this.__trellisRoadmapManager; // NEW
+        const roadmapHit = roadmap && roadmap.getHitCellAt ? roadmap.getHitCellAt(x, y) : null; // NEW
+        if (roadmapHit && !(ignoreFn && ignoreFn(this.view.getState(roadmapHit), x, y))) return roadmapHit; // NEW: transparent timeframe bodies must not hide object bars.
         const initial = baseGetCellAt.call(this, x, y, parent, vertices, edges, plantExactHitIgnoreFn(ignoreFn));
         if (!initial) return null;
         const plantTarget = getPlantClickThroughCellAt(this, x, y, parent, initial);
@@ -204,6 +207,8 @@ Draw.loadPlugin(function (ui) {
     }
 
     function getWorkspaceContainerType(cell) {
+        const roadmapType = cell && cell.getAttribute && cell.getAttribute('roadmap_type'); // NEW
+        if (roadmapType === 'process' || roadmapType === 'board') return roadmapType; // NEW: reuse the native workspace move handle.
         if (isKanbanLane(cell)) return 'lane';
         if (isGardenModule(cell) || isTrellisModule(cell)) return 'module';
         return null;
@@ -573,6 +578,7 @@ Draw.loadPlugin(function (ui) {
         const selectedTilerTarget = selectedTilerDragTargetForEvent(graph, me, fallback);
         if (selectedTilerTarget) return selectedTilerTarget;
         const deepest = getDeepestCellForMouseEvent(graph, me, fallback);
+        if (graph && graph.__trellisRoadmapManager && graph.__trellisRoadmapManager.isRoadmapGestureCell(deepest)) return deepest; // NEW: never promote a fixed process or timeframe drag to its movable ancestor.
         if (graph && deepest && isPlantTile(deepest) && graph.getModel().isVertex(deepest)) { // CHANGE: draggable plant circles own their drag unless draw.io marks them locked.
             if (graph.isCellMovable(deepest)) return deepest; // CHANGE
             const movablePlantParent = findMovableDragAncestorForLockedCell(graph, deepest); // CHANGE
@@ -756,7 +762,7 @@ Draw.loadPlugin(function (ui) {
     function workspaceHandleTitle(cell) {
         const unit = isOccupiedBedHandleCell(cell) ? getOccupiedBedMoveUnit(cell) : null;
         if (unit) return unit.bedAssemblies && unit.bedAssemblies.length ? 'Move garden bed, irrigation assembly, and planting groups' : 'Move garden bed and planting groups';
-        return getWorkspaceContainerType(cell) === 'lane' ? 'Move lane' : 'Move module';
+        return 'Move ' + (getWorkspaceContainerType(cell) || 'module'); // CHANGE
     }
 
     function viewBoundsForCells(cells) {

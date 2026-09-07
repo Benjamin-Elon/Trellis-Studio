@@ -10,7 +10,21 @@ from typing import Any
 
 from .jsonio import read_json, write_json
 from .migrations import apply_migrations, pending_migrations
-from .schema import CITY_COLUMNS, COMPANION_COLUMNS, COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS, COMPANION_LAYOUT_TEMPLATES, PLANT_COLUMNS, PLANT_GROWTH_STAGE_COLUMNS, PLANTING_WINDOW_REFERENCE_COLUMNS, VARIETY_MATURITY_CLASSES, WEATHER_TABLES
+from .schema import (
+    CITY_COLUMNS,
+    COMPANION_COLUMNS,
+    COMPANION_LAYOUT_GROUP_DEFAULT_COLUMNS,
+    COMPANION_LAYOUT_TEMPLATES,
+    NUTRITION_NUTRIENT_COLUMNS,
+    NUTRITION_REQUIREMENT_COLUMNS,
+    PLANT_COLUMNS,
+    PLANT_GROWTH_STAGE_COLUMNS,
+    PLANT_NUTRITION_MAPPING_COLUMNS,
+    PLANT_NUTRITION_VALUE_COLUMNS,
+    PLANTING_WINDOW_REFERENCE_COLUMNS,
+    VARIETY_MATURITY_CLASSES,
+    WEATHER_TABLES,
+)
 from .validator import normalize_key, validate_run
 from .weather import checksum_rows
 
@@ -188,7 +202,8 @@ def _apply_order() -> list[str]:
     return [
         "Plants", "Cities", "PlantAllowedMethodCategories", "PlantVarieties", "PlantGrowthStages",
         "Companions", "CompanionLayoutGroupDefaults", "CompanionEvidence", "PlantTaskTemplates",
-        "VarietyTaskTemplates", "PlantingWindowReferences", "CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily",
+        "VarietyTaskTemplates", "PlantingWindowReferences", "NutritionNutrients", "PlantNutritionMappings",
+        "PlantNutritionValues", "NutritionRequirements", "CityWeatherMonthly", "CityWeatherDaily", "CityWeatherForecastDaily",
     ]
 
 
@@ -215,6 +230,14 @@ def _apply_table(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]
         return _replace_variety_templates(conn, rows)
     if table == "PlantingWindowReferences":
         return _replace_planting_window_references(conn, rows)
+    if table == "NutritionNutrients":
+        return _upsert_by_key(conn, "NutritionNutrients", rows, NUTRITION_NUTRIENT_COLUMNS, ["nutrient_key"])
+    if table == "PlantNutritionMappings":
+        return _upsert_plant_nutrition_mappings(conn, rows)
+    if table == "PlantNutritionValues":
+        return _upsert_plant_nutrition_values(conn, rows)
+    if table == "NutritionRequirements":
+        return _upsert_by_key(conn, "NutritionRequirements", rows, NUTRITION_REQUIREMENT_COLUMNS, ["persona_key", "nutrient_key"])
     if table == "CityWeatherMonthly":
         return _replace_weather(conn, table, rows, "weather_month", ["city_id", "weather_month", "provider", "dataset"])
     if table == "CityWeatherDaily":
@@ -460,6 +483,53 @@ def _replace_planting_window_references(conn: sqlite3.Connection, rows: list[dic
     return len(rows)
 
 
+def _upsert_by_key(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]], allowed_columns: set[str], key_cols: list[str]) -> int:
+    for raw in rows:
+        payload = {column: raw.get(column) for column in allowed_columns if column in raw}
+        cols = list(payload)
+        assignments = [column for column in cols if column not in key_cols]
+        sql = (
+            f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)}) "
+            f"ON CONFLICT({', '.join(key_cols)}) DO UPDATE SET " + ", ".join(f"{column}=excluded.{column}" for column in assignments)
+        )
+        conn.execute(sql, [payload[column] for column in cols])
+    return len(rows)
+
+
+def _upsert_plant_nutrition_mappings(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
+    for raw in rows:
+        row = {column: raw.get(column) for column in PLANT_NUTRITION_MAPPING_COLUMNS if column in raw}
+        row["plant_id"] = _resolve_plant_id(conn, row)
+        row.pop("plant_name", None)
+        row["food_form"] = str(row.get("food_form") or "raw").strip().casefold()
+        cols = [
+            "plant_id", "fdc_id", "fdc_description", "fdc_data_type", "food_form",
+            "match_confidence", "match_status", "source_url", "source_note", "updated_at",
+        ]
+        assignments = [column for column in cols if column not in {"plant_id", "food_form"}]
+        sql = (
+            f"INSERT INTO PlantNutritionMappings ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)}) "
+            "ON CONFLICT(plant_id, food_form) DO UPDATE SET " + ", ".join(f"{column}=excluded.{column}" for column in assignments)
+        )
+        conn.execute(sql, [row.get(column) for column in cols])
+    return len(rows)
+
+
+def _upsert_plant_nutrition_values(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
+    for raw in rows:
+        row = {column: raw.get(column) for column in PLANT_NUTRITION_VALUE_COLUMNS if column in raw}
+        row["plant_id"] = _resolve_plant_id(conn, row)
+        row.pop("plant_name", None)
+        cols = ["plant_id", "nutrient_key", "amount_per_100g", "source_fdc_id", "updated_at"]
+        assignments = [column for column in cols if column not in {"plant_id", "nutrient_key"}]
+        sql = (
+            f"INSERT INTO PlantNutritionValues ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)}) "
+            "ON CONFLICT(plant_id, nutrient_key) DO UPDATE SET " + ", ".join(f"{column}=excluded.{column}" for column in assignments)
+        )
+        conn.execute(sql, [row.get(column) for column in cols])
+    return len(rows)
+
+
 def _replace_weather(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]], date_col: str, key_cols: list[str]) -> int:
     if not rows:
         return 0
@@ -546,6 +616,17 @@ def _existing_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> 
                 """,
                 [plant_id, city_id, row.get("method_id"), row.get("stage"), row.get("window_label"), row.get("start_mm_dd"), row.get("end_mm_dd")]
             ).fetchone()
+        if table == "NutritionNutrients":
+            return conn.execute("SELECT * FROM NutritionNutrients WHERE nutrient_key=?", [row.get("nutrient_key")]).fetchone() if row.get("nutrient_key") else None
+        if table == "PlantNutritionMappings":
+            plant_id = row.get("plant_id") or _find_id_by_name(conn, "Plants", "plant_id", "plant_name", row.get("plant_name"))
+            food_form = str(row.get("food_form") or "raw").strip().casefold()
+            return conn.execute("SELECT * FROM PlantNutritionMappings WHERE plant_id=? AND food_form=?", [plant_id, food_form]).fetchone() if plant_id else None
+        if table == "PlantNutritionValues":
+            plant_id = row.get("plant_id") or _find_id_by_name(conn, "Plants", "plant_id", "plant_name", row.get("plant_name"))
+            return conn.execute("SELECT * FROM PlantNutritionValues WHERE plant_id=? AND nutrient_key=?", [plant_id, row.get("nutrient_key")]).fetchone() if plant_id and row.get("nutrient_key") else None
+        if table == "NutritionRequirements":
+            return conn.execute("SELECT * FROM NutritionRequirements WHERE persona_key=? AND nutrient_key=?", [row.get("persona_key"), row.get("nutrient_key")]).fetchone() if row.get("persona_key") and row.get("nutrient_key") else None
     except sqlite3.OperationalError:
         return None
     return None
@@ -606,6 +687,14 @@ def _identity_label(conn: sqlite3.Connection, table: str, row: dict[str, Any], g
         return f"{row.get('plant_set_key')} / anchor {row.get('anchor_plant_id')}"
     if table == "PlantingWindowReferences":
         return f"{row.get('plant_name') or _db_plant_name(conn, row.get('plant_id'))} / {_city_identity_label(row) or _db_city_name(conn, row.get('city_id'))} / {row.get('method_id')} / {row.get('stage')} / {row.get('window_label')}"
+    if table == "NutritionNutrients":
+        return str(row.get("nutrient_key") or row.get("nutrient_name"))
+    if table == "PlantNutritionMappings":
+        return f"{row.get('plant_name') or _db_plant_name(conn, row.get('plant_id'))} / {row.get('food_form') or 'raw'} / FDC {row.get('fdc_id')}"
+    if table == "PlantNutritionValues":
+        return f"{row.get('plant_name') or _db_plant_name(conn, row.get('plant_id'))} / {row.get('nutrient_key')}"
+    if table == "NutritionRequirements":
+        return f"{row.get('persona_key')} / {row.get('nutrient_key')}"
     return str(row.get("plant_name") or _city_identity_label(row) or row.get("variety_name") or row.get("method_id") or f"{row.get('p1')} / {row.get('p2')}")
 
 

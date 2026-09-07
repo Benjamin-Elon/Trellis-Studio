@@ -759,6 +759,7 @@ Draw.loadPlugin(function (ui) {
         refreshPanel();
         updateToolbarButton();
         if (!hadAuthGate && message) showStatus(message);
+        if (window.CustomEvent) window.dispatchEvent(new window.CustomEvent("trellisUsersSessionChanged")); // NEW
     }
 
     function enableUsersState(name, pin) {
@@ -849,6 +850,7 @@ Draw.loadPlugin(function (ui) {
         refreshPanel();
         updateToolbarButton();
         applyAuthGateIfNeeded("Logged out.");
+        if (window.CustomEvent) window.dispatchEvent(new window.CustomEvent("trellisUsersSessionChanged")); // NEW
     }
 
     function userIdsFromAttr(cell) {
@@ -903,7 +905,7 @@ Draw.loadPlugin(function (ui) {
 
     function isTaskBoard(cell) {
         const key = String(getAttr(cell, "board_key") || "");
-        return key === "KANBAN_BOARD" || key === "MAIN_KANBAN_BOARD";
+        return key === "KANBAN_BOARD" || key === "MAIN_KANBAN_BOARD" || getAttr(cell, "roadmap_type") === "board"; // CHANGE: board membership/access policies also apply to project roadmaps.
     }
 
     function isTaskCard(cell) {
@@ -969,7 +971,11 @@ Draw.loadPlugin(function (ui) {
     }
 
     function findGardenModuleAncestor(cell) {
-        return nearestAncestorMatching(cell, isGardenModule);
+        const direct = nearestAncestorMatching(cell, isGardenModule); // CHANGE
+        if (direct) return direct; // NEW
+        const companion = nearestAncestorMatching(cell, function (candidate) { return !!getAttr(candidate, "roadmap_garden_module_id"); }); // NEW
+        const garden = companion && model.getCell(getAttr(companion, "roadmap_garden_module_id")); // NEW
+        return isGardenModule(garden) ? garden : null; // NEW
     }
 
     function linkedPlantingGroupsForTask(cell) {
@@ -1215,6 +1221,8 @@ Draw.loadPlugin(function (ui) {
     function taskBoardsInGarden(gardenCell) {
         const boards = [];
         traverseCells(gardenCell, function (cell) { if (cell !== gardenCell && isTaskBoard(cell)) boards.push(cell); });
+        const roadmap = model.getCell(getAttr(gardenCell, "roadmap_module_id")); // NEW
+        if (roadmap) traverseCells(roadmap, function (cell) { if (isTaskBoard(cell)) boards.push(cell); }); // NEW
         return boards;
     }
 
@@ -1381,6 +1389,8 @@ Draw.loadPlugin(function (ui) {
         const task = typeof modules.findExistingCompanionTask === "function" ? modules.findExistingCompanionTask(cell) : null;
         if (team && typeof modules.syncCompanionModuleAccess === "function") modules.syncCompanionModuleAccess(cell, team);
         if (task && typeof modules.syncCompanionModuleAccess === "function") modules.syncCompanionModuleAccess(cell, task);
+        const roadmap = model.getCell(getAttr(cell, "roadmap_module_id")); // NEW
+        if (roadmap && getAttr(roadmap, "roadmap_garden_module_id") === cellId(cell) && typeof modules.syncCompanionModuleAccess === "function") modules.syncCompanionModuleAccess(cell, roadmap); // NEW
     }
 
     function setScopeGrant(cell, grant) {
@@ -1574,6 +1584,7 @@ Draw.loadPlugin(function (ui) {
     function eligibleScopeType(cell) {
         if (!cell || cell === model.getRoot() || cell === graph.getDefaultParent()) return "";
         if (isModuleCell(cell)) return "module";
+        if (getAttr(cell, "roadmap_type") === "board") return "roadmap board"; // NEW
         if (isTaskBoard(cell)) return "task board";
         if (isGardenBed(cell)) return "garden bed";
         return "";
@@ -2269,7 +2280,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function previousParentOfChange(change) {
-        return change && change.previous || null;
+        return change && change.constructor && change.constructor.name === "mxChildChange" ? change.previous || null : null; // CHANGE: values, styles, and geometries are not parent cells.
     }
 
     function debugCellId(cell) {
@@ -2478,20 +2489,65 @@ Draw.loadPlugin(function (ui) {
         return nearestPlanting(cell) ? canManagePlanting(cell) : false;
     }
 
+    /** Build deletion context from authorized child removals, including their retained descendants. */ // NEW
     function editPermissionContext(changes) {
         const source = Array.isArray(changes) ? changes : [];
         const createdPlantingIds = collectAllowedCreatedPlantingIds(source);
-        return {
-            createdPlantingIds,
-            allowGeneratedPlantTileChurn: createdPlantingIds.size > 0 || source.some(plantingContextAllowsGeneratedTileChurn)
-        };
+        const roadmapDeletedIds = new Set(), roadmapTransfers = new Map(); // CHANGE
+        function roadmapBoard(cell) { for (let cur = cell; cur; cur = model.getParent(cur)) if (getAttr(cur, 'roadmap_type') === 'board') return cur; return null; } // NEW
+        source.forEach(function (change) { // NEW
+            const cell = cellFromChange(change), previousParent = previousParentOfChange(change); // NEW
+            const destination = currentParentOfChange(change); // NEW
+            if (previousParent && destination && canDeleteFromPreviousParent(cell, previousParent) && canAddCell(destination)) { // NEW
+                const before = roadmapBoard(previousParent), after = roadmapBoard(destination); // NEW
+                if (before && after && before !== after && model.getParent(before) === model.getParent(after)) traverseCells(cell, object => { if (getAttr(object, 'roadmap_type') === 'object') roadmapTransfers.set(String(cellStableId(object)), { before: String(cellStableId(before)), after: String(cellStableId(after)) }); }); // NEW
+            } // NEW
+            if (!previousParent || destination || !canDeleteFromPreviousParent(cell, previousParent)) return; // CHANGE
+            traverseCells(cell, function (removed) { if (getAttr(removed, 'roadmap_type') || isTaskCard(removed)) roadmapDeletedIds.add(String(cellStableId(removed))); }); // NEW
+        }); // NEW
+        return { createdPlantingIds, roadmapDeletedIds, roadmapTransfers, allowGeneratedPlantTileChurn: createdPlantingIds.size > 0 || source.some(plantingContextAllowsGeneratedTileChurn) }; // CHANGE
     }
+
+    /** Permit only the source-board navigation repair caused by an authorized object transfer. */ // NEW
+    function roadmapTransferAllowed(change, context) { // NEW
+        if (!change || change.constructor.name !== 'mxValueChange' || !isTaskCard(change.cell) || !context || !context.roadmapTransfers) return false; // NEW
+        const before = allValueAttrSnapshot(change.previous), after = allValueAttrSnapshot(change.value || change.cell.value), move = context.roadmapTransfers.get(before.roadmap_source_object_id); // NEW
+        return !!move && changedAttributeNames(change).every(key => key === 'roadmap_source_board_id') && before.roadmap_source_board_id === move.before && after.roadmap_source_board_id === move.after; // NEW
+    } // NEW
+
+    /** Navigation cleanup permits only removal of IDs deleted by this same authorized edit. */ // NEW
+    function roadmapCleanupAllowed(change, context) { // NEW
+        if (!change || !change.constructor || change.constructor.name !== 'mxValueChange' || !context || !context.roadmapDeletedIds || !context.roadmapDeletedIds.size) return false; // NEW
+        const before = allValueAttrSnapshot(change.previous), after = allValueAttrSnapshot(change.value || change.cell.value); // NEW
+        const removed = context.roadmapDeletedIds; // NEW
+        function onlyDeletedIds(oldIds, newIds) { return Array.isArray(oldIds) && Array.isArray(newIds) && newIds.every(id => oldIds.includes(id)) && oldIds.every(id => newIds.includes(id) || removed.has(String(id)) || removed.has(String(cellStableId(change.cell)))); } // CHANGE: the deleted endpoint can also drop its own reciprocal links.
+        return changedAttributeNames(change).every(function (key) { // NEW
+            if (key === 'linkedTo') return onlyDeletedIds((before[key] || '').split(',').filter(Boolean), (after[key] || '').split(',').filter(Boolean)); // NEW
+            if (key === 'roadmap_task_ids_json') return onlyDeletedIds(parseJson(before[key], []), parseJson(after[key], [])); // NEW
+            if (key === 'roadmap_source_object_id' || key === 'roadmap_source_board_id') return !after[key] && removed.has(before.roadmap_source_object_id); // NEW
+            return false; // NEW
+        }); // NEW
+    } // NEW
+
+    /** A membership manager may add a reciprocal board link to a role, without editing its profile. */ // NEW
+    function roadmapMembershipLinkAllowed(change) { // NEW
+        if (!change || !change.constructor || change.constructor.name !== 'mxValueChange' || !isRoleCard(change.cell)) return false; // NEW
+        if (!changedAttributeNames(change).every(key => key === 'linkedTo')) return false; // NEW
+        const before = allValueAttrSnapshot(change.previous), after = allValueAttrSnapshot(change.value || change.cell.value); // NEW
+        const oldIds = (before.linkedTo || '').split(',').filter(Boolean), newIds = (after.linkedTo || '').split(',').filter(Boolean); // NEW
+        if (!oldIds.every(id => newIds.includes(id))) return false; // NEW
+        return newIds.filter(id => !oldIds.includes(id)).every(function (id) { // NEW
+            const board = model.getCell(id); // NEW
+            return isTaskBoard(board) && canManageAccess(board) && hasLink(board, String(cellStableId(change.cell))); // NEW
+        }); // NEW
+    } // NEW
 
     function changeAllowed(change, context) {
         if (change && change.__trellisUsersActorStamp) return true;
         const name = change && change.constructor && change.constructor.name;
         const cell = cellFromChange(change);
         if (!name || !cell) return true;
+        if (roadmapTransferAllowed(change, context) || roadmapCleanupAllowed(change, context) || roadmapMembershipLinkAllowed(change)) return true; // NEW: exact metadata-only exceptions.
         if (roleUserLinkChanged(change)) return canTransferOwnership(cell);
         const changedAttrs = (name === "mxCellAttributeChange" || name === "mxValueChange") ? changedAttributeNames(change) : [];
         if (changedAttrs.indexOf(ATTR_OWNER) >= 0) return canTransferOwnership(cell);

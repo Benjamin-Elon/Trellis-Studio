@@ -292,6 +292,8 @@ App.pluginRegistry = {    'trellisUpdatesLinks': 'plugins/garden_planner_plugins
     'gardenSuccession': 'plugins/garden_planner_plugins/Bed_Succession_Navigator.js',           // CHANGE
     'plantTiler': 'plugins/garden_planner_plugins/Plant_Tiler.js',                               // CHANGE
     'gardenTasks': 'plugins/garden_planner_plugins/Garden_Task_Manager.js',                     // CHANGE
+    'gardenRoadmapCore': 'plugins/garden_planner_plugins/Garden_Roadmap_Core.js', // NEW
+    'gardenRoadmaps': 'plugins/garden_planner_plugins/Garden_Roadmap_Manager.js', // NEW
     'gardenModules': 'plugins/garden_planner_plugins/Modules_Standalone.js',                    // CHANGE
     'gardenParenting': 'plugins/garden_planner_plugins/Planting_Group_Parenting_Controls.js',   // CHANGE
     'gardenScheduler': 'plugins/garden_planner_plugins/Garden_Scheduler_Dialog.js',              // CHANGE
@@ -316,6 +318,8 @@ App.publicPlugin = [
     'gardenSuccession',                                       // CHANGE
     'plantTiler',                                             // CHANGE
     'gardenTasks',                                            // CHANGE
+    'gardenRoadmapCore', // NEW
+    'gardenRoadmaps', // NEW
     'gardenModules',                                          // CHANGE
     'gardenParenting',                                        // CHANGE
     'gardenScheduler',                                        // CHANGE
@@ -1391,6 +1395,41 @@ App.initPluginCallback = function()
 App.pluginsLoaded = {};
 App.embedModePluginsCount = 0;
 
+/** Load Roadmap dependencies by completion, independently of unrelated plugin timing. */ // NEW
+App.loadRoadmapPlugin = function(pluginId)
+{
+	if (pluginId === 'gardenRoadmaps' && !App.roadmapManagerRequested) { App.roadmapManagerRequested = true; App.embedModePluginsCount++; App.pluginsLoaded[PLUGINS_BASE_PATH + App.pluginRegistry.gardenRoadmaps] = true; } // CHANGE: reserve the stored Manager path while its pure dependencies load.
+	App.roadmapScriptLoads = App.roadmapScriptLoads || {}; // NEW
+	function load(path, complete)
+	{
+		var url = PLUGINS_BASE_PATH + path; // NEW
+		var entry = App.roadmapScriptLoads[url]; // NEW
+		if (entry != null) { if (entry.done) complete(); else entry.waiters.push(complete); return; } // NEW
+		entry = {done: false, waiters: [complete]}; // NEW
+		App.roadmapScriptLoads[url] = entry; // NEW
+		App.pluginsLoaded[url] = true; // NEW: also deduplicate the stored-path loading branch.
+		mxscript((typeof window.drawDevUrl === 'undefined' ? '' : window.drawDevUrl) + url, function()
+		{
+			entry.done = true; var waiters = entry.waiters.splice(0); // NEW
+			waiters.forEach(function(callback) { callback(); }); // NEW
+		}, null, null, true, function(message)
+		{
+			delete App.roadmapScriptLoads[url]; delete App.pluginsLoaded[url]; // NEW: a later request may retry.
+			entry.waiters.length = 0; // NEW: never initialize Manager without its dependencies.
+			if (App.roadmapManagerRequested && !App.roadmapManagerLoaded) { App.roadmapManagerRequested = false; App.embedModePluginsCount--; delete App.pluginsLoaded[PLUGINS_BASE_PATH + App.pluginRegistry.gardenRoadmaps]; } // CHANGE
+			if (window.console) console.error('Roadmap dependency unavailable:', message); // NEW
+		}); // NEW
+	}
+	load(App.pluginRegistry.gardenRoadmapCore, function()
+	{
+		if (pluginId !== 'gardenRoadmaps') return; // NEW
+		load('plugins/garden_planner_plugins/Garden_Roadmap_Renderer.js', function()
+		{
+			load(App.pluginRegistry.gardenRoadmaps, function() { App.roadmapManagerLoaded = true; }); // NEW
+		}); // NEW
+	}); // NEW
+}; // NEW
+
 /**
  * Queue for loading plugins and wait for UI instance
  */
@@ -1404,6 +1443,7 @@ App.loadPlugins = function(plugins, useInclude)
 		{
 			try
 			{
+				if (plugins[i] === 'gardenRoadmapCore' || plugins[i] === 'gardenRoadmaps') { App.loadRoadmapPlugin(plugins[i]); continue; } // NEW
 				if (App.pluginRegistry[plugins[i]] != null)
 				{
 					var url = PLUGINS_BASE_PATH + App.pluginRegistry[plugins[i]];

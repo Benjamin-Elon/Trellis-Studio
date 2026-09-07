@@ -216,6 +216,8 @@ function createYearPlannerHarness(options = {}) {
         method_name: "Direct sow",
         method_category_id: "direct_sow"
     }];
+    api.DbClient.queryNutritionByPlantIds = async plantIds => options.nutritionByPlantIds || { available: true, mappings: [], values: [] };
+    api.DbClient.queryNutritionRequirements = async () => options.nutritionRequirements || { available: true, requirements: [] };
 
     function addCell(parent, cell) {
         parent.children.push(cell);

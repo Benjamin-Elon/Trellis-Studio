@@ -20,6 +20,8 @@ const trellisDefaultPluginIds = [
     "gardenSuccession",
     "plantTiler",
     "gardenTasks",
+    "gardenRoadmapCore", // NEW
+    "gardenRoadmaps", // NEW
     "gardenModules",
     "gardenParenting",
     "gardenScheduler",
@@ -45,6 +47,8 @@ const trellisDefaultPluginPaths = [
     "plugins/garden_planner_plugins/Bed_Succession_Navigator.js",
     "plugins/garden_planner_plugins/Plant_Tiler.js",
     "plugins/garden_planner_plugins/Garden_Task_Manager.js",
+    "plugins/garden_planner_plugins/Garden_Roadmap_Core.js", // NEW
+    "plugins/garden_planner_plugins/Garden_Roadmap_Manager.js", // NEW
     "plugins/garden_planner_plugins/Modules_Standalone.js",
     "plugins/garden_planner_plugins/Planting_Group_Parenting_Controls.js",
     "plugins/garden_planner_plugins/Garden_Scheduler_Dialog.js",
@@ -229,3 +233,48 @@ test("Trellis plugin defaults stay aligned across source and bundled runtime", (
     assert.match(integrateBundleSource, /App\.trellisDefaultPlugins=App\.publicPlugin\.slice\(\)/);
     assert.match(integrateBundleSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/);
 });
+
+/** Extract an actual assignment, honoring strings/comments and balanced JS delimiters. */ // NEW
+function runtimeAssignment(source, field) { // NEW
+    const match = new RegExp('App\\.' + field + '\\s*=').exec(source); assert.ok(match, field); // NEW
+    let depth = 0, quote = '', comment = ''; // NEW
+    for (let i = match.index; i < source.length; i++) { // NEW
+        const c = source[i], next = source[i + 1]; // NEW
+        if (comment === 'line') { if (c === '\n') comment = ''; continue; } // NEW
+        if (comment === 'block') { if (c === '*' && next === '/') { comment = ''; i++; } continue; } // NEW
+        if (quote) { if (c === '\\') i++; else if (c === quote) quote = ''; continue; } // NEW
+        if (c === '/' && next === '/') { comment = 'line'; i++; continue; } // NEW
+        if (c === '/' && next === '*') { comment = 'block'; i++; continue; } // NEW
+        if (c === '"' || c === "'") { quote = c; continue; } // NEW
+        if ('([{'.includes(c)) depth++; else if (')]}'.includes(c)) depth--; // NEW
+        if (c === ';' && depth === 0) return source.slice(match.index, i + 1); // NEW
+    } // NEW
+    throw new Error('Unterminated runtime assignment: ' + field); // NEW
+} // NEW
+
+for (const filePath of [appPath, appBundlePath, integrateBundlePath]) { // NEW
+    test(path.basename(filePath) + ' actual registry, public list, and defaults register Roadmap dependencies', () => { // NEW
+        const source = readProjectFile(filePath), context = { App: {} }; // NEW
+        for (const field of ['pluginRegistry', 'publicPlugin', 'trellisDefaultPlugins']) vm.runInNewContext(runtimeAssignment(source, field), context); // NEW
+        assert.deepEqual(Array.from(context.App.publicPlugin), trellisDefaultPluginIds); // NEW
+        assert.deepEqual(Array.from(context.App.trellisDefaultPlugins), trellisDefaultPluginIds); // NEW
+        trellisDefaultPluginIds.forEach((id, index) => assert.equal(context.App.pluginRegistry[id], trellisDefaultPluginPaths[index])); // NEW
+        assert.ok(context.App.publicPlugin.indexOf('gardenRoadmapCore') < context.App.publicPlugin.indexOf('gardenRoadmaps')); // NEW
+    }); // NEW
+
+    test(path.basename(filePath) + ' waits for Core and renderer completion, deduplicates requests, and retries failures', () => { // NEW
+        const source = readProjectFile(filePath), requests = []; // NEW
+        assert.doesNotThrow(() => new vm.Script(source)); // NEW: a registered plugin is useless if its host bundle cannot parse.
+        const context = { App: { pluginsLoaded: {}, embedModePluginsCount: 0 }, PLUGINS_BASE_PATH: '', window: { console: { error() {} }, drawDevUrl: '/dev/' }, console: { error() {} }, EditorUi: { debug() {} }, mxscript: (url, done, id, key, noWrite, fail) => requests.push({ url, done, fail }) }; // NEW
+        for (const field of ['pluginRegistry', 'loadRoadmapPlugin', 'loadPlugins']) vm.runInNewContext(runtimeAssignment(source, field), context); // NEW
+        context.App.loadPlugins(['gardenRoadmaps', 'gardenRoadmapCore', 'gardenRoadmaps'], true); // NEW
+        assert.equal(requests.length, 1); assert.match(requests[0].url, /^\/dev\/.*Garden_Roadmap_Core.js$/); // NEW
+        assert.equal(context.App.embedModePluginsCount, 1); // NEW
+        assert.equal(context.App.pluginsLoaded[context.App.pluginRegistry.gardenRoadmaps], true); // NEW: stored-path loading must wait for dependencies too.
+        requests[0].fail('injected failure'); assert.equal(context.App.embedModePluginsCount, 0); assert.equal(requests.length, 1); // NEW
+        context.App.loadPlugins(['gardenRoadmaps']); assert.equal(requests.length, 2); requests[1].done(); // NEW
+        assert.equal(requests.length, 3); assert.match(requests[2].url, /Garden_Roadmap_Renderer.js$/); // NEW
+        requests[2].done(); assert.equal(requests.length, 4); assert.match(requests[3].url, /Garden_Roadmap_Manager.js$/); // NEW
+        requests[3].done(); context.App.loadPlugins(['gardenRoadmapCore', 'gardenRoadmaps']); assert.equal(requests.length, 4); // NEW
+    }); // NEW
+} // NEW
