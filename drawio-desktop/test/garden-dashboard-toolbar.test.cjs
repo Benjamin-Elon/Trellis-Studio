@@ -114,9 +114,10 @@ test("garden dashboard toolbar groups tools left and messages export share table
 test("garden dashboard toolbar disables Allocate until the selected year has saved crops", () => {
     const fullSource = source();
     const text = viewportToolbarSource();
-    assert.match(fullSource, /const ALLOCATE_NO_PLAN_TITLE = "Create a year plan before allocating\.";[\s\S]*const ALLOCATE_EMPTY_PLAN_TITLE = "Add at least one crop to the year plan before allocating\.";/);
+    assert.match(fullSource, /const ALLOCATE_NO_PLAN_TITLE = "Create a year plan before allocating\.";[\s\S]*const ALLOCATE_DRAFT_PLAN_TITLE = "Finish and save the year plan draft before allocating\.";[\s\S]*const ALLOCATE_EMPTY_PLAN_TITLE = "Add at least one crop to the year plan before allocating\.";/);
     assert.match(fullSource, /function allocationPlanStatus\(moduleCell, year\)/);
     assert.match(fullSource, /const planObj = getPlanYearObject\(moduleCell, year\);/);
+    assert.match(fullSource, /getPlanYearDraftObject\(moduleCell, year\)/);
     assert.match(fullSource, /const crops = Array\.isArray\(planObj\.crops\) \? planObj\.crops : \[\];/);
     assert.match(fullSource, /crops\.length[\s\S]*\{ enabled: true, title: "Allocate the current plan" \}/);
     assert.match(text, /const allocateStatus = allocationPlanStatus\(moduleCell, year\);/);
@@ -136,8 +137,17 @@ test("garden dashboard toolbar disables Allocate until the selected year has sav
         const obj = root[String(year)];
         return obj && typeof obj === "object" ? obj : null;
     }
+    function getPlanYearDraftObject(moduleCell, year) {
+        const raw = getCellAttr(moduleCell, "plan_year_drafts_json", "");
+        if (!raw) return null;
+        const root = safeJsonParse(raw, null);
+        if (!root || typeof root !== "object") return null;
+        const obj = root[String(year)];
+        return obj && typeof obj === "object" ? obj : null;
+    }
     function allocationPlanStatus(moduleCell, year) {
         const planObj = getPlanYearObject(moduleCell, year);
+        if (!planObj && getPlanYearDraftObject(moduleCell, year)) return { enabled: false, title: "Finish and save the year plan draft before allocating." };
         if (!planObj) return { enabled: false, title: "Create a year plan before allocating." };
         const crops = Array.isArray(planObj.crops) ? planObj.crops : [];
         return crops.length
@@ -146,8 +156,10 @@ test("garden dashboard toolbar disables Allocate until the selected year has sav
     }
 
     assert.deepEqual(allocationPlanStatus({ attrs: {} }, 2026), { enabled: false, title: "Create a year plan before allocating." });
+    assert.deepEqual(allocationPlanStatus({ attrs: { plan_year_drafts_json: JSON.stringify({ 2026: { plan: { crops: [{}] } } }) } }, 2026), { enabled: false, title: "Finish and save the year plan draft before allocating." });
     assert.deepEqual(allocationPlanStatus({ attrs: { plan_year_json: JSON.stringify({ 2026: { crops: [] } }) } }, 2026), { enabled: false, title: "Add at least one crop to the year plan before allocating." });
     assert.deepEqual(allocationPlanStatus({ attrs: { plan_year_json: JSON.stringify({ 2026: { crops: [{}] } }) } }, 2026), { enabled: true, title: "Allocate the current plan" });
+    assert.deepEqual(allocationPlanStatus({ attrs: { plan_year_json: JSON.stringify({ 2026: { crops: [{}] } }), plan_year_drafts_json: JSON.stringify({ 2026: { plan: { crops: [{}] } } }) } }, 2026), { enabled: true, title: "Allocate the current plan" });
     assert.deepEqual(allocationPlanStatus({ attrs: { plan_year_json: JSON.stringify({ 2025: { crops: [{}] } }) } }, 2026), { enabled: false, title: "Create a year plan before allocating." });
 });
 

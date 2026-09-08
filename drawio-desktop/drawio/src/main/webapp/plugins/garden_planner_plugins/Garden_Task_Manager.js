@@ -74,20 +74,20 @@ const WEEK_TIME_RULER_WIDTH = 56; // NEW: non-cell gutter used by the week-mode 
 const DEFAULT_TASK_CARD_HEIGHT = 80;
 const DEFAULT_DAY_LANE_WIDTH = 220;
 const MIN_DAY_LANE_WIDTH = 140;
-const DEFAULT_WORK_START_MINUTE = 6 * 60;
-const DEFAULT_WORK_END_MINUTE = 18 * 60;
-const DEFAULT_WEEKDAY_WORK_START_MINUTE = 17 * 60; // NEW: realistic default for after-work garden sessions
-const DEFAULT_WEEKDAY_WORK_END_MINUTE = 19 * 60; // NEW: cap weekday default capacity at two hours
-const DEFAULT_WEEKEND_WORK_START_MINUTE = 8 * 60; // NEW: weekend garden work starts after early morning setup
-const DEFAULT_WEEKEND_WORK_END_MINUTE = 12 * 60; // NEW: weekend default avoids assuming all-day availability
-const DEFAULT_WEEK_WORK_HOUR_WINDOWS = Object.freeze([ // NEW: explicit new-board defaults; malformed saved data still uses legacy normalizer fallback
-    { startMinute: DEFAULT_WEEKEND_WORK_START_MINUTE, endMinute: DEFAULT_WEEKEND_WORK_END_MINUTE },
+const DEFAULT_WORK_START_MINUTE = 8 * 60;
+const DEFAULT_WORK_END_MINUTE = 17 * 60;
+const DEFAULT_WEEKDAY_WORK_START_MINUTE = 8 * 60; // CHANGE: new boards default to standard weekday work hours
+const DEFAULT_WEEKDAY_WORK_END_MINUTE = 17 * 60; // CHANGE: new boards default to standard weekday work hours
+const DEFAULT_WEEKEND_WORK_START_MINUTE = 8 * 60; // CHANGE: closed weekends still keep editable time defaults
+const DEFAULT_WEEKEND_WORK_END_MINUTE = 17 * 60; // CHANGE: closed weekends still keep editable time defaults
+const DEFAULT_WEEK_WORK_HOUR_WINDOWS = Object.freeze([ // NEW: explicit new-board defaults; existing saved defaults are not migrated
+    { closed: true, startMinute: DEFAULT_WEEKEND_WORK_START_MINUTE, endMinute: DEFAULT_WEEKEND_WORK_END_MINUTE },
     { startMinute: DEFAULT_WEEKDAY_WORK_START_MINUTE, endMinute: DEFAULT_WEEKDAY_WORK_END_MINUTE },
     { startMinute: DEFAULT_WEEKDAY_WORK_START_MINUTE, endMinute: DEFAULT_WEEKDAY_WORK_END_MINUTE },
     { startMinute: DEFAULT_WEEKDAY_WORK_START_MINUTE, endMinute: DEFAULT_WEEKDAY_WORK_END_MINUTE },
     { startMinute: DEFAULT_WEEKDAY_WORK_START_MINUTE, endMinute: DEFAULT_WEEKDAY_WORK_END_MINUTE },
     { startMinute: DEFAULT_WEEKDAY_WORK_START_MINUTE, endMinute: DEFAULT_WEEKDAY_WORK_END_MINUTE },
-    { startMinute: DEFAULT_WEEKEND_WORK_START_MINUTE, endMinute: DEFAULT_WEEKEND_WORK_END_MINUTE }
+    { closed: true, startMinute: DEFAULT_WEEKEND_WORK_START_MINUTE, endMinute: DEFAULT_WEEKEND_WORK_END_MINUTE }
 ]);
 
 const KANBAN_BOARD_KEY = 'KANBAN_BOARD'; // NEW: shared by runtime guards and pure policy tests
@@ -1549,7 +1549,9 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
     const LANES = KANBAN_LANE_DEFS; // CHANGE: template and policy use the same canonical lane list
     const lanePagingStates = new Map(); // NEW: current plans drive DOM rendering without a public API
+    const stagedSearchQueries = new Map(); // NEW: runtime-only week staged search state keyed by lane id
     let requestLanePagerOverlayRefresh = function () {}; // NEW: installed after the shared overlay host exists
+    let requestStagedSearchOverlayRefresh = function () {}; // NEW: installed with retained staged search controls
     let taskPagingSelectionGuard = false; // NEW: prevents selection repair and reveal loops
     let activeDashboardTaskContext = null;
     let suppressDashboardSeenSelection = false;
@@ -2754,6 +2756,61 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         return String(cell && (cell.id || (cell.getId && cell.getId())) || '');
     }
 
+    function normalizeStagedSearchQuery(value) {
+        return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    }
+
+    function getStagedSearchQuery(lane) {
+        return normalizeStagedSearchQuery(stagedSearchQueries.get(taskCellId(lane)) || '');
+    }
+
+    function setStagedSearchQuery(lane, value) {
+        const laneId = taskCellId(lane);
+        if (!laneId) return false;
+        const next = normalizeStagedSearchQuery(value);
+        const previous = getStagedSearchQuery(lane);
+        if (next) stagedSearchQueries.set(laneId, next);
+        else stagedSearchQueries.delete(laneId);
+        return next !== previous;
+    }
+
+    function buildStagedSearchText(card) {
+        const fields = [
+            getCellDisplayText(card),
+            getAttr(card, 'title'),
+            getAttr(card, 'label'),
+            getAttr(card, 'notes'),
+            getAttr(card, 'card_note'),
+            getAttr(card, 'plant_name'),
+            getAttr(card, 'method'),
+            getAttr(card, 'variety_name'),
+            getAttr(card, 'start'),
+            getAttr(card, 'end'),
+            getAttr(card, 'due'),
+            getAttr(card, TASK_ASSIGNED_DAY_ATTR)
+        ];
+        return normalizeStagedSearchQuery(fields.filter(value => value != null && value !== '').join(' '));
+    }
+
+    function weekStagedSearchApplies(board, lane, laneKey) {
+        return !!(board && lane && laneKey === 'TODO_STAGED' && getBoardViewMode(board) === 'WEEK' &&
+            getBoardVisibleLaneKeys(board, 'WEEK').indexOf('TODO_STAGED') >= 0 &&
+            (!model.isVisible || model.isVisible(lane) !== false));
+    }
+
+    function applyStagedSearchFilter(lane, laneKey, cards, opts) {
+        const board = (opts && opts.board) || findBoardAncestor(lane);
+        if (!weekStagedSearchApplies(board, lane, laneKey)) return cards || [];
+        const query = getStagedSearchQuery(lane);
+        if (!query) return cards || [];
+        const terms = query.split(/\s+/).filter(Boolean);
+        if (!terms.length) return cards || [];
+        return (cards || []).filter(card => {
+            const haystack = buildStagedSearchText(card);
+            return terms.every(term => haystack.indexOf(term) >= 0);
+        });
+    }
+
     function setCellVisibleNoUndo(cell, visible) { // NEW: cached page visibility persists without creating an undo edit
         const next = !!visible;
         const current = !model.isVisible || model.isVisible(cell);
@@ -2830,7 +2887,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     function applyLanePaging(lane, laneKey, sortedCards, opts) { // CHANGE: task manager owns height planning, visibility, anchor, and selection repair
         if (!lane) return null;
         const options = opts || {};
-        const renderableCards = (sortedCards || []).filter(isRenderableKanbanCard);
+        const renderableCards = applyStagedSearchFilter(lane, laneKey, (sortedCards || []).filter(isRenderableKanbanCard), options);
         const allLaneCards = []; // NEW: rebuild the complete persisted visibility cache, including excluded occurrences
         for (let childIndex = 0; childIndex < model.getChildCount(lane); childIndex++) {
             const child = model.getChildAt(lane, childIndex);
@@ -2936,6 +2993,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         const sortedCards = sortLaneCards(lane, laneKey, opts) || [];
         const pageOptions = {};
         if (opts && opts.resetSelectedPeriodStagedPage && selectedPeriodStagedSortEnabled(laneKey, opts)) pageOptions.anchorCardId = ''; // NEW: selected-period changes start from the newly sorted first page
+        if (opts && Number.isFinite(Number(opts.targetPageIndex))) pageOptions.targetPageIndex = Number(opts.targetPageIndex); // NEW: staged search resets paging to the first filtered page
         applyLanePaging(lane, laneKey, sortedCards, pageOptions);
     }
 
@@ -6420,6 +6478,89 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         requestLanePagerOverlayRefresh();
     }
 
+    function createStagedSearchNode(host, lane) {
+        const element = document.createElement('div');
+        element.className = 'trellis-task-staged-search';
+        element.setAttribute('data-lane-id', taskCellId(lane));
+        const input = document.createElement('input');
+        input.type = 'search';
+        input.className = 'trellis-task-staged-search__input';
+        input.placeholder = 'Search staged tasks';
+        input.setAttribute('aria-label', 'Search staged tasks');
+        input.value = getStagedSearchQuery(lane);
+        input.style.cssText = 'box-sizing:border-box;width:100%;height:28px;border:1px solid #9CA3AF;border-radius:4px;padding:0 8px;background:#FFF;color:#111;font:12px Arial,sans-serif;box-shadow:0 1px 2px rgba(0,0,0,.12);';
+        ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup', 'keydown', 'keypress', 'keyup'].forEach(type => input.addEventListener(type, stopDomPropagation));
+        input.addEventListener('input', function () {
+            setStagedSearchQuery(lane, input.value);
+            const board = findBoardAncestor(lane);
+            resortAndPageLane(lane, 'TODO_STAGED', Object.assign({}, getBoardSortContext(board), { board, targetPageIndex: 0 }));
+            requestLanePagerOverlayRefresh();
+            requestStagedSearchOverlayRefresh();
+        });
+        element.appendChild(input);
+        host.appendChild(element);
+        registerTaskOverlayGestureElement(element);
+        return { element, input, lane };
+    }
+
+    function positionStagedSearch(node, lane, host) {
+        const bounds = getCellVisualBounds(lane, host);
+        const geo = lane && (lane.getGeometry ? lane.getGeometry() : lane.geometry);
+        if (!bounds || !geo || bounds.width <= 0 || bounds.height <= 0) return false;
+        const effectiveScale = Math.min(bounds.width / Math.max(1, Number(geo.width) || bounds.width), bounds.height / Math.max(1, Number(geo.height) || bounds.height));
+        const width = Math.max(80, Math.min(240, Math.round(bounds.width - 12)));
+        const height = 28;
+        const fitScale = Math.max(0.001, Math.min(1, Math.max(0, (bounds.width - 8) / width), Math.max(0, (bounds.height - 4) / height)));
+        node.element.style.position = 'absolute';
+        node.element.style.pointerEvents = 'auto';
+        node.element.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL_TOP);
+        node.element.style.width = width + 'px';
+        node.element.style.left = Math.round(bounds.x + (bounds.width / 2)) + 'px';
+        node.element.style.top = Math.round(bounds.y + Math.max(2, 6 * effectiveScale)) + 'px';
+        node.element.style.transformOrigin = 'top center';
+        node.element.style.transform = 'translateX(-50%) scale(' + fitScale.toFixed(3) + ')';
+        return true;
+    }
+
+    function installWeekStagedSearchOverlay() {
+        if (graph.__trellisTaskStagedSearchInstalled || !document || !document.createElement) return;
+        graph.__trellisTaskStagedSearchInstalled = true;
+        const host = ensureTaskControlOverlayHost();
+        if (!host) return;
+        const nodes = new Map();
+
+        function removeObsoleteNodes() {
+            nodes.forEach((node, laneId) => {
+                const lane = model.getCell ? model.getCell(laneId) : node.lane;
+                if (lane) return;
+                unregisterTaskOverlayGestureElement(node.element);
+                if (node.element.parentNode) node.element.parentNode.removeChild(node.element);
+                nodes.delete(laneId);
+                stagedSearchQueries.delete(laneId);
+            });
+        }
+
+        function refresh() {
+            removeObsoleteNodes();
+            nodes.forEach(node => { node.element.style.display = 'none'; });
+            const board = selectedTaskBoard();
+            if (!board || taskOverlayGestureActive || getBoardViewMode(board) !== 'WEEK') return;
+            const lane = boardLanes(board).TODO_STAGED;
+            if (!weekStagedSearchApplies(board, lane, 'TODO_STAGED')) return;
+            const laneId = taskCellId(lane);
+            let node = nodes.get(laneId);
+            if (!node) { node = createStagedSearchNode(host, lane); nodes.set(laneId, node); }
+            if (document.activeElement !== node.input) node.input.value = getStagedSearchQuery(lane);
+            node.element.style.display = positionStagedSearch(node, lane, host) ? 'block' : 'none';
+        }
+
+        requestStagedSearchOverlayRefresh = createDeferredTaskOverlayRefresh(refresh);
+        const selectionModel = graph.getSelectionModel && graph.getSelectionModel();
+        if (selectionModel && selectionModel.addListener) selectionModel.addListener(mxEvent.CHANGE, requestStagedSearchOverlayRefresh);
+        addGraphViewRefreshListener(requestStagedSearchOverlayRefresh);
+        requestStagedSearchOverlayRefresh();
+    }
+
     function roleInitials(name) {
         const words = String(name || '').trim().split(/\s+/).filter(Boolean);
         if (!words.length || String(name) === 'Deleted role') return '?';
@@ -6607,7 +6748,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             layer.style.display = 'block';
             (function walk(cell) {
                 if (!cell) return;
-                if (isBoardCell(cell) && getBoardViewMode(cell) === 'WEEK') {
+                if (isBoardCell(cell) && ['WEEK', 'FULL'].indexOf(getBoardViewMode(cell)) >= 0) {
                     collectBoardCards(cell).forEach(entry => {
                         if (!isScheduleBreakCard(entry.card) && getTaskAssigneeRoleIds(entry.card).length) {
                             renderCardBadge(entry.card, cell);
@@ -7743,6 +7884,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     // -------------------- Boot sequence --------------------
     installTaskOverlayGestureGate();
     installLanePagerOverlay();
+    installWeekStagedSearchOverlay();
     addGraphViewRefreshListener(refreshTransientUnseenHighlightPositions);
     if (model.addListener) model.addListener(mxEvent.CHANGE, clearTransientUnseenHighlights);
     initializeLanePagingFromModel();

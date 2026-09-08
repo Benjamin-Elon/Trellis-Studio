@@ -178,11 +178,22 @@ class TrellisSeederTests(unittest.TestCase):
 
     def test_packaged_seed_database_includes_reviewable_nutrition_snapshot(self) -> None:
         with closing(sqlite3.connect(ROOT / "trellis_database" / "Trellis_database.sqlite")) as conn:
-            active_plants = conn.execute("SELECT COUNT(*) FROM Plants WHERE abbr IS NOT NULL").fetchone()[0]
+            plant_count = conn.execute("SELECT COUNT(*) FROM Plants").fetchone()[0]
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM NutritionNutrients").fetchone()[0], 10)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM NutritionRequirements").fetchone()[0], 20)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantNutritionMappings WHERE food_form='raw'").fetchone()[0], active_plants)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantNutritionValues").fetchone()[0], active_plants * 10)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantNutritionMappings WHERE food_form='raw'").fetchone()[0], plant_count)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantNutritionValues").fetchone()[0], plant_count * 10)
+            incomplete = conn.execute(
+                """
+                SELECT p.plant_name, COUNT(v.nutrient_key)
+                FROM Plants p
+                LEFT JOIN PlantNutritionValues v ON v.plant_id = p.plant_id
+                GROUP BY p.plant_id, p.plant_name
+                HAVING COUNT(v.nutrient_key) != 10
+                ORDER BY p.plant_name
+                """
+            ).fetchall()
+            self.assertEqual(incomplete, [])
             self.assertGreater(conn.execute("SELECT COUNT(*) FROM PlantNutritionMappings WHERE match_status='pending'").fetchone()[0], 0)
 
     def test_nutrition_validation_warns_on_reviewable_auto_mappings(self) -> None:

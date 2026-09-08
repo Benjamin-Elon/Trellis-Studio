@@ -90,6 +90,13 @@ function findSelfLine(document, lineId = "self_1") {
     return findStripDetails(document, "self-sufficiency").querySelector(`[data-self-line-id="${lineId}"]`);
 }
 
+function nutritionRowCells(document, nutrientLabel = "Calories") {
+    const details = findStripDetails(document, "self-sufficiency");
+    const row = Array.from(details.querySelectorAll("tbody tr")).find(item => item.cells[0] && item.cells[0].textContent.trim() === nutrientLabel);
+    assert.ok(row);
+    return Array.from(row.cells).map(cell => cell.textContent.trim());
+}
+
 function addSelfUse(plan, overrides = {}) {
     const line = {
         id: `self_${(plan.selfSufficiency.lines || []).length + 1}`,
@@ -140,9 +147,26 @@ function optionLabels(group) {
     return Array.from(group.querySelectorAll("option")).map(option => option.textContent);
 }
 
+function selectLabels(select) {
+    return Array.from(select.querySelectorAll("option")).map(option => option.textContent);
+}
+
 function findEditorBox(harness) {
     const removeCrop = harness.findButton("Remove crop");
     return removeCrop ? removeCrop.parentElement.parentElement : null;
+}
+
+function installScrollSpy(harness) {
+    const calls = [];
+    const original = harness.window.HTMLElement.prototype.scrollIntoView;
+    harness.window.HTMLElement.prototype.scrollIntoView = function scrollIntoViewSpy(options) {
+        calls.push({ element: this, options });
+    };
+    return {
+        calls,
+        reset() { calls.length = 0; },
+        restore() { harness.window.HTMLElement.prototype.scrollIntoView = original; }
+    };
 }
 
 function findEditorField(harness, labelText) {
@@ -172,7 +196,8 @@ function openDiagnostics(document, labelPattern) {
     const triggers = Array.from(document.querySelectorAll(".yp-diagnostics-trigger"));
     const trigger = triggers.find(button => labelPattern.test(button.getAttribute("aria-label") || button.parentElement.textContent));
     assert.ok(trigger);
-    const popover = trigger.parentElement.querySelector(".yp-diagnostics-popover");
+    const popover = trigger.parentElement.querySelector(".yp-diagnostics-popover")
+        || Array.from(document.querySelectorAll(".yp-diagnostics-layer .yp-diagnostics-popover")).find(candidate => candidate.__ypDiagnosticsOwner === trigger.parentElement);
     assert.ok(popover);
     if (popover.hidden) trigger.click();
     assert.equal(popover.hidden, false);
@@ -513,6 +538,34 @@ test("Packages render labeled compact package rows", async t => {
     assert.equal(editor.querySelector(".yp-package-line"), null);
 });
 
+test("Edit packages and Add package scroll to the package section", async t => {
+    const harness = createYearPlannerHarness();
+    const scrollSpy = installScrollSpy(harness);
+    t.after(() => { scrollSpy.restore(); harness.dom.window.close(); });
+    savePlan(harness, 2026, plan => {
+        plan.selfSufficiency.adults = 1;
+        addSelfUse(plan, { qty: 1 });
+    });
+    await harness.openModal(2026);
+    setStripExpanded(harness.document, "self-sufficiency", true);
+
+    scrollSpy.reset();
+    Array.from(findSelfLine(harness.document).querySelectorAll("button")).find(button => button.textContent === "Edit packages").click();
+
+    assert.equal(findStripHeader(harness.document, "crop-plan").getAttribute("aria-expanded"), "true");
+    assert.ok(findEditorBox(harness).querySelector("[data-year-plan-packages-section]"));
+    assert.ok(scrollSpy.calls.some(call => call.element.matches("[data-year-plan-packages-section]")));
+
+    scrollSpy.reset();
+    harness.findButton("Add package").click();
+
+    const packageRows = findEditorBox(harness).querySelectorAll(".yp-package-row");
+    assert.equal(packageRows.length, 2);
+    assert.equal(scrollSpy.calls.at(-1).element, packageRows[1]);
+    assert.equal(scrollSpy.calls.at(-1).options.block, "center");
+    assert.equal(scrollSpy.calls.at(-1).options.inline, "nearest");
+});
+
 test("empty plans show Demand and Crop Plan guidance", async t => {
     const harness = createYearPlannerHarness();
     t.after(() => harness.dom.window.close());
@@ -526,17 +579,19 @@ test("empty plans show Demand and Crop Plan guidance", async t => {
     assert.match(findStripHeader(harness.document, "crop-plan").textContent, /Crops\s*0.*No crop selected/);
 });
 
-test("empty year plans cannot be saved until a crop exists", async t => {
+test("empty year plans save as drafts until a crop exists", async t => {
     const harness = createYearPlannerHarness();
     t.after(() => harness.dom.window.close());
     await harness.openModal(2026);
 
-    harness.findButton("Save").click();
+    harness.findButton("Save draft").click();
 
     assert.equal(harness.api.PlanRepository.loadPlanForYear(harness.moduleCell, 2026), null);
-    assert.match(harness.document.body.textContent, /Validation failed/);
-    assert.match(findStripDetails(harness.document, "plan-check").textContent, /Add at least one crop to the year plan before saving\./);
+    assert.ok(harness.api.PlanRepository.loadDraftForYear(harness.moduleCell, 2026));
+    assert.match(harness.document.body.textContent, /Draft saved .*validation failed/);
+    assert.match(findStripDetails(harness.document, "plan-check").textContent, /Add at least one crop to the year plan before publishing\./);
     assert.match(findStripHeader(harness.document, "crop-plan").getAttribute("aria-expanded"), /true/);
+    assert.ok(harness.findButton("Save draft"));
 
     const select = findAddCropSelect(harness.document);
     const annualGroup = Array.from(select.querySelectorAll("optgroup")).find(group => group.label === "Annual crops");
@@ -547,8 +602,9 @@ test("empty year plans cannot be saved until a crop exists", async t => {
     harness.findButton("Save").click();
 
     assert.ok(harness.api.PlanRepository.loadPlanForYear(harness.moduleCell, 2026));
+    assert.equal(harness.api.PlanRepository.loadDraftForYear(harness.moduleCell, 2026), null);
     assert.match(harness.document.body.textContent, /Last saved/);
-    assert.doesNotMatch(findStripDetails(harness.document, "plan-check").textContent, /Add at least one crop to the year plan before saving\./);
+    assert.doesNotMatch(findStripDetails(harness.document, "plan-check").textContent, /Add at least one crop to the year plan before publishing\./);
 });
 
 test("hero stays overview-only for clean and unsaved clean plans", async t => {
@@ -635,6 +691,31 @@ test("crop diagnostics popover navigates to invalid basics and package fields", 
     clickDiagnosticItem(diagnostics.popover, /package quantity/);
     assert.ok(harness.findButton("Basics"));
     assert.equal(harness.document.activeElement, findYearPlanField(harness.document, "baseQty", { cropId: "crop_1", packageIndex: "0" }));
+});
+
+test("diagnostics popovers render in the modal layer and clamp inside the card", async t => {
+    const harness = createYearPlannerHarness();
+    t.after(() => harness.dom.window.close());
+    savePlan(harness, 2026, plan => {
+        plan.crops[0].kgPerPlant = 0;
+        plan.crops[0].baseKgPerPlant = null;
+    });
+    await harness.openModal(2026);
+
+    const card = harness.document.querySelector(".yp-modal-card");
+    const trigger = findCropCardById(harness.document, "crop_1").querySelector(".yp-diagnostics-trigger");
+    const popover = trigger.parentElement.querySelector(".yp-diagnostics-popover");
+    card.getBoundingClientRect = () => ({ left: 0, top: 0, right: 300, bottom: 200, width: 300, height: 200 });
+    trigger.getBoundingClientRect = () => ({ left: 0, top: 170, right: 20, bottom: 190, width: 20, height: 20 });
+    Object.defineProperty(popover, "offsetWidth", { configurable: true, value: 260 });
+    Object.defineProperty(popover, "offsetHeight", { configurable: true, value: 80 });
+
+    trigger.click();
+
+    assert.equal(popover.parentElement, harness.document.querySelector(".yp-diagnostics-layer"));
+    assert.equal(popover.hidden, false);
+    assert.equal(popover.style.left, "8px");
+    assert.equal(popover.style.top, "86px");
 });
 
 test("duplicate crop identity diagnostics attach to the second crop and focus variety", async t => {
@@ -738,8 +819,9 @@ test("save failure focuses diagnostics trigger and unavailable actual harvest is
     assert.equal(harvestSource.querySelector('option[value="actual_harvest"]').disabled, true);
     assert.equal(session.plan.crops[0].useActualHarvest, false);
 
-    harness.findButton("Save").click();
-    assert.match(harness.document.body.textContent, /Validation failed/);
+    harness.findButton("Save draft").click();
+    assert.match(harness.document.body.textContent, /Draft saved .*validation failed/);
+    assert.ok(harness.api.PlanRepository.loadDraftForYear(harness.moduleCell, 2026));
     assert.ok(harness.document.activeElement.classList.contains("yp-diagnostics-trigger"));
     assert.equal(saved.crops[0].useActualHarvest, true);
 });
@@ -923,6 +1005,120 @@ test("Demand validation auto-expands saved-collapsed demand lines", async t => {
     const channel = findStripDetails(harness.document, "demand").querySelector("[data-demand-channel-id='farm_store']");
     assert.equal(channel.querySelector(".yp-demand-channel-details").style.display, "block");
     assert.equal(findDemandLine(harness.document).querySelector(".yp-demand-line-details").style.display, "grid");
+});
+
+test("quantity unit dropdowns show crop packages only and open Packages from the add option", async t => {
+    const harness = createYearPlannerHarness();
+    t.after(() => harness.dom.window.close());
+    savePlan(harness, 2026, plan => {
+        plan.crops[0].packages = [
+            { unit: "box", baseType: "kg", baseQty: 2, price: 10 },
+            { unit: " Box ", baseType: "kg", baseQty: 3, price: 12 },
+            { unit: "bunch", baseType: "kg", baseQty: 0.5, price: 4 },
+            { unit: "", baseType: "kg", baseQty: 1, price: 1 }
+        ];
+        addDemand(plan, { unit: "kg" });
+        plan.selfSufficiency.lines.push({ id: "self_1", cropId: "crop_1", qty: 1, unit: "plant", frequency: "week", everyN: 1, from: "2026-06-01", to: "2026-06-07" });
+        plan.csa.enabled = true;
+        plan.csa.boxesPerWeek = 1;
+        plan.csa.components.push({ cropId: "crop_1", qty: 1, unit: "lb", everyNWeeks: 1, start: "2026-06-01", end: "2026-06-07" });
+    });
+    const session = await harness.openModal(2026);
+    setStripExpanded(harness.document, "self-sufficiency", true);
+    setStripExpanded(harness.document, "csa", true);
+
+    assert.equal(session.plan.demands[0].unit, "");
+    assert.equal(session.plan.selfSufficiency.lines[0].unit, "");
+    assert.equal(session.plan.csa.components[0].unit, "");
+
+    const demandUnit = findYearPlanField(harness.document, "unit", { yearPlanDemandLineId: "demand_1" });
+    const selfUnit = findYearPlanField(harness.document, "unit", { yearPlanSelfLineId: "self_1" });
+    const csaUnit = findYearPlanField(harness.document, "unit", { csaComponentIndex: "0" });
+    assert.deepEqual(selectLabels(demandUnit), ["-- Select package unit --", "box", "bunch", "Add packages..."]);
+    assert.deepEqual(selectLabels(selfUnit), ["-- Select package unit --", "box", "bunch", "Add packages..."]);
+    assert.deepEqual(selectLabels(csaUnit), ["-- Select package unit --", "box", "bunch", "Add packages..."]);
+
+    harness.setControlValue(demandUnit, "bunch", "change");
+    await harness.settle(120);
+    assert.equal(session.plan.demands[0].unit, "bunch");
+
+    const refreshedDemandUnit = findYearPlanField(harness.document, "unit", { yearPlanDemandLineId: "demand_1" });
+    harness.setControlValue(refreshedDemandUnit, "__trellis_add_packages__", "change");
+    await harness.settle(120);
+    assert.equal(session.plan.demands[0].unit, "");
+    assert.equal(findStripHeader(harness.document, "crop-plan").getAttribute("aria-expanded"), "true");
+    assert.match(findEditorBox(harness).textContent, /Save as default for plant/);
+});
+
+test("new crops without saved package defaults start with no demand unit choices", async t => {
+    const harness = createYearPlannerHarness({
+        plants: [{ plant_id: 1, plant_name: "Tomato", yield_per_plant_kg: 1, default_planting_method: "direct_sow.field", annual: 1, biennial: 0, perennial: 0 }]
+    });
+    t.after(() => harness.dom.window.close());
+    const session = await harness.openModal(2026);
+    const select = findAddCropSelect(harness.document);
+    select.value = Array.from(select.querySelectorAll("option")).find(option => option.textContent === "Tomato").value;
+    harness.findButton("Add crop").click();
+    await harness.settle(120);
+
+    assert.deepEqual(Array.from(session.plan.crops[0].packages), []);
+    harness.findButton("Add demand line").click();
+    await harness.settle(120);
+
+    const lineId = String(session.plan.demands[0] && session.plan.demands[0].id || "");
+    const unit = findYearPlanField(harness.document, "unit", { yearPlanDemandLineId: lineId });
+    assert.deepEqual(selectLabels(unit), ["-- Add package unit --", "Add packages..."]);
+    assert.equal(session.plan.demands[0].unit, "");
+});
+
+test("Self Sufficiency lines collapse, persist, expand, and prune on remove", async t => {
+    const harness = createYearPlannerHarness();
+    t.after(() => harness.dom.window.close());
+    savePlan(harness, 2026, plan => {
+        plan.selfSufficiency.adults = 1;
+        plan.crops[0].packages[0].price = 2;
+        addSelfUse(plan, { qty: 4 });
+    });
+    const session = await harness.openModal(2026);
+    setStripExpanded(harness.document, "self-sufficiency", true);
+
+    const line = findSelfLine(harness.document);
+    assert.equal(line.querySelector(".yp-self-line-details").style.display, "grid");
+    Array.from(line.querySelectorAll(".yp-self-line-header button")).find(button => button.textContent === "Collapse").click();
+
+    const collapsedLine = findSelfLine(harness.document);
+    assert.equal(collapsedLine.querySelector(".yp-self-line-details").style.display, "none");
+    assert.match(collapsedLine.textContent, /Crop\s*Tomato/);
+    assert.match(collapsedLine.textContent, /Qty\s*4 kg \/ week/);
+    const key = harness.api.YearPlanCollapsePreferences.storageKey(harness.moduleCell, 2026);
+    assert.deepEqual(JSON.parse(harness.window.localStorage.getItem(key)).collapsedSelfSufficiencyLineIds, ["self_1"]);
+
+    Array.from(collapsedLine.querySelectorAll(".yp-self-line-header button")).find(button => button.textContent === "Expand").click();
+    const expandedLine = findSelfLine(harness.document);
+    assert.equal(expandedLine.querySelector(".yp-self-line-details").style.display, "grid");
+    Array.from(expandedLine.querySelectorAll("button")).find(button => button.textContent === "Remove").click();
+
+    assert.equal(session.plan.selfSufficiency.lines.length, 0);
+    assert.equal(findSelfLine(harness.document), null);
+    assert.deepEqual(JSON.parse(harness.window.localStorage.getItem(key)).collapsedSelfSufficiencyLineIds, []);
+});
+
+test("Self Sufficiency validation auto-expands saved-collapsed self-use lines", async t => {
+    const harness = createYearPlannerHarness();
+    t.after(() => harness.dom.window.close());
+    savePlan(harness, 2026, plan => {
+        plan.selfSufficiency.adults = 1;
+        addSelfUse(plan, { from: "2026-07-01", to: "2026-06-01" });
+    });
+    harness.window.localStorage.setItem(harness.api.YearPlanCollapsePreferences.storageKey(harness.moduleCell, 2026), JSON.stringify({
+        top: { selfSufficiencyExpanded: false },
+        collapsedSelfSufficiencyLineIds: ["self_1"]
+    }));
+
+    await harness.openModal(2026);
+
+    assert.equal(findStripHeader(harness.document, "self-sufficiency").getAttribute("aria-expanded"), "true");
+    assert.equal(findSelfLine(harness.document).querySelector(".yp-self-line-details").style.display, "grid");
 });
 
 test("Demand price is read-only and follows matching package price edits", async t => {
@@ -1312,11 +1508,12 @@ test("Footer and reset action follow the currently loaded year", async t => {
     assert.match(harness.document.body.textContent, /New plan/);
     assert.ok(harness.findButton("Clear"));
 
-    harness.findButton("Save").click();
-    assert.ok(harness.findButton("Clear"));
-    assert.match(harness.document.body.textContent, /Validation failed/);
+    harness.findButton("Save draft").click();
+    assert.ok(harness.findButton("Discard draft"));
+    assert.match(harness.document.body.textContent, /Draft saved .*validation failed/);
+    assert.ok(harness.api.PlanRepository.loadDraftForYear(harness.moduleCell, 2027));
 
-    harness.findButton("Clear").click();
+    harness.findButton("Discard draft").click();
     assert.ok(harness.findButton("Clear"));
     assert.match(harness.document.body.textContent, /New plan/);
 });
@@ -1759,7 +1956,7 @@ test("Harvest date controls reject reversed ranges and allow same-day windows", 
     assert.equal(dates[1].value, "2026-06-30");
 });
 
-test("Existing reversed persisted dates remain visible, block saving, and can be corrected", async t => {
+test("Existing reversed persisted dates remain visible, save as draft, and can be corrected", async t => {
     const harness = createYearPlannerHarness();
     t.after(() => harness.dom.window.close());
     savePlan(harness, 2026, plan => {
@@ -1773,8 +1970,9 @@ test("Existing reversed persisted dates remain visible, block saving, and can be
     assert.equal(dates[0].max, "2026-06-01");
     assert.equal(dates[1].min, "2026-07-01");
 
-    harness.findButton("Save").click();
-    assert.match(harness.document.body.textContent, /Validation failed/);
+    harness.findButton("Save draft").click();
+    assert.match(harness.document.body.textContent, /Draft saved .*validation failed/);
+    assert.ok(harness.api.PlanRepository.loadDraftForYear(harness.moduleCell, 2026));
     assert.equal(session.plan.demands[0].to, "2026-06-01");
 
     dates = findStripDetails(harness.document, "demand").querySelectorAll('input[type="date"]');
@@ -1904,6 +2102,73 @@ test("Self Sufficiency strip edits household fields, lines, package repair flow,
     assert.equal(session.plan.selfSufficiency.lines[1].to, "2026-06-14");
 });
 
+test("Self Sufficiency nutrition coverage rerenders when nutrition-affecting line fields change", async t => {
+    const harness = createYearPlannerHarness({
+        plants: [
+            { plant_id: 1, plant_name: "Tomato", yield_per_plant_kg: 1, default_planting_method: "direct_sow.field", default_planting_method_category: "direct_sow", annual: 1, biennial: 0, perennial: 0 },
+            { plant_id: 2, plant_name: "Lettuce", yield_per_plant_kg: 1, default_planting_method: "direct_sow.field", default_planting_method_category: "direct_sow", annual: 1, biennial: 0, perennial: 0 }
+        ],
+        nutritionByPlantIds: {
+            available: true,
+            mappings: [
+                { plant_id: 1, fdc_id: 1, fdc_description: "Tomato, raw", match_confidence: "medium" },
+                { plant_id: 2, fdc_id: 2, fdc_description: "Lettuce, raw", match_confidence: "medium" }
+            ],
+            values: [
+                { plant_id: 1, nutrient_key: "energy_kcal", amount_per_100g: 20, unit: "kcal" },
+                { plant_id: 2, nutrient_key: "energy_kcal", amount_per_100g: 40, unit: "kcal" }
+            ]
+        },
+        nutritionRequirements: {
+            available: true,
+            requirements: [{ persona_key: "adult_19_50", nutrient_key: "energy_kcal", amount_per_day: 1, unit: "kcal" }]
+        }
+    });
+    t.after(() => harness.dom.window.close());
+    savePlan(harness, 2026, plan => {
+        plan.selfSufficiency.adults = 1;
+        plan.crops[0].packages = [{ unit: "kg", baseType: "kg", baseQty: 1, price: 2 }];
+        plan.crops.push(makePlanCrop({ id: "crop_2", plantId: "2", plant: "Lettuce", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 3 }, { unit: "box", baseType: "kg", baseQty: 2, price: 5 }] }));
+        addSelfUse(plan, { qty: 1, unit: "kg" });
+        addDemand(plan, { qty: 9, unit: "kg" });
+    });
+    await harness.openModal(2026);
+    setStripExpanded(harness.document, "self-sufficiency", true);
+    await harness.settle(120);
+
+    assert.deepEqual(nutritionRowCells(harness.document).slice(1, 4), ["365 kcal", "200 kcal", "55%"]);
+
+    const selfQty = findYearPlanField(harness.document, "qty", { yearPlanSelfLineId: "self_1" });
+    selfQty.focus();
+    harness.setControlValue(selfQty, 2);
+    await harness.settle(120);
+    assert.deepEqual(nutritionRowCells(harness.document).slice(1, 4), ["365 kcal", "400 kcal", "110%"]);
+    assert.equal(harness.document.activeElement, findYearPlanField(harness.document, "qty", { yearPlanSelfLineId: "self_1" }));
+
+    harness.setControlValue(findYearPlanField(harness.document, "cropId", { yearPlanSelfLineId: "self_1" }), "crop_2", "change");
+    await harness.settle(120);
+    assert.deepEqual(nutritionRowCells(harness.document).slice(1, 4), ["365 kcal", "800 kcal", "219%"]);
+
+    harness.setControlValue(findYearPlanField(harness.document, "unit", { yearPlanSelfLineId: "self_1" }), "box", "change");
+    assert.deepEqual(nutritionRowCells(harness.document).slice(1, 4), ["365 kcal", "1600 kcal", "438%"]);
+
+    harness.setControlValue(findYearPlanField(harness.document, "frequency", { yearPlanSelfLineId: "self_1" }), "day", "change");
+    assert.deepEqual(nutritionRowCells(harness.document).slice(1, 4), ["365 kcal", "11200 kcal", "3068%"]);
+
+    harness.setControlValue(findYearPlanField(harness.document, "everyN", { yearPlanSelfLineId: "self_1" }), 2);
+    await harness.settle(120);
+    assert.deepEqual(nutritionRowCells(harness.document).slice(1, 4), ["365 kcal", "6400 kcal", "1753%"]);
+
+    harness.setControlValue(findYearPlanField(harness.document, "nutritionMultiplier"), 2);
+    await harness.settle(120);
+    assert.deepEqual(nutritionRowCells(harness.document).slice(1, 4), ["730 kcal", "6400 kcal", "877%"]);
+
+    setStripExpanded(harness.document, "demand", true);
+    harness.setControlValue(findDemandLine(harness.document).querySelector('[data-year-plan-field="qty"]'), 1);
+    await harness.settle(120);
+    assert.deepEqual(nutritionRowCells(harness.document).slice(1, 4), ["730 kcal", "6400 kcal", "877%"]);
+});
+
 test("Plan Check scope selector filters combined, self, and sales demand", async t => {
     const harness = createYearPlannerHarness();
     t.after(() => harness.dom.window.close());
@@ -1925,7 +2190,7 @@ test("Plan Check scope selector filters combined, self, and sales demand", async
     assert.match(harness.document.querySelector(".yp-plan-check-summary").textContent, /Target\s*3\.0 kg/);
 });
 
-test("dirty close uses the inline save-discard-cancel workflow", async t => {
+test("dirty close auto-saves a draft that can be discarded", async t => {
     const harness = createYearPlannerHarness();
     t.after(() => harness.dom.window.close());
     savePlan(harness, 2026);
@@ -1935,16 +2200,39 @@ test("dirty close uses the inline save-discard-cancel workflow", async t => {
     harness.findButton("Add package").click();
     harness.findButton("Close").click();
 
-    assert.match(harness.document.body.textContent, /Unsaved changes\./);
-    assert.ok(harness.findButton("Save and Close"));
-    assert.ok(harness.findButton("Discard"));
-    assert.ok(harness.findButton("Cancel"));
-    assert.equal(harness.findButton("Discard").getAttribute("data-trellis-button-variant"), "danger"); // NEW
-    assert.match(harness.findButton("Discard").getAttribute("style") || "", /background:\s*(?:var\(--yp-danger\)|#b3261e|rgb\(179,\s*38,\s*30\))/); // NEW
+    assert.equal(harness.document.body.children.length, 0);
+    assert.equal(harness.api.PlanRepository.loadPlanForYear(harness.moduleCell, 2026).crops[0].packages.length, 1);
+    assert.equal(harness.api.PlanRepository.loadDraftForYear(harness.moduleCell, 2026).plan.crops[0].packages.length, 2);
 
-    harness.findButton("Cancel").click();
-    assert.equal(harness.findButton("Save and Close").parentElement.style.display, "none");
-    assert.ok(harness.findButton("Close"));
+    await harness.openModal(2026);
+    assert.match(planHero(harness.document).textContent, /Draft/);
+    harness.findButton("Discard draft").click();
+    assert.equal(harness.confirmations.at(-1), "Discard the saved draft for 2026?");
+    assert.equal(harness.api.PlanRepository.loadDraftForYear(harness.moduleCell, 2026), null);
+    assert.equal(harness.api.PlanRepository.loadPlanForYear(harness.moduleCell, 2026).crops[0].packages.length, 1);
+    assert.ok(harness.findButton("Reset"));
+});
+
+test("year changes auto-save dirty work as a draft without blocking", async t => {
+    const harness = createYearPlannerHarness();
+    t.after(() => harness.dom.window.close());
+    savePlan(harness, 2026);
+    const session = await harness.openModal(2026);
+
+    harness.findButton("Packages").click();
+    harness.findButton("Add package").click();
+    const yearInput = Array.from(harness.document.querySelectorAll('input[type="number"]')).find(input => input.value === "2026");
+    harness.setControlValue(yearInput, 2027, "change");
+    await harness.settle(10);
+
+    assert.match(harness.document.body.textContent, /Plan Year 2027/);
+    assert.equal(harness.api.PlanRepository.loadPlanForYear(harness.moduleCell, 2026).crops[0].packages.length, 1);
+    assert.equal(harness.api.PlanRepository.loadDraftForYear(harness.moduleCell, 2026).plan.crops[0].packages.length, 2);
+    const currentYearInput = Array.from(harness.document.querySelectorAll('input[type="number"]')).find(input => input.value === "2027");
+    harness.setControlValue(currentYearInput, 2026, "change");
+    await harness.settle(10);
+    assert.equal(session.plan.crops[0].packages.length, 2);
+    assert.match(planHero(harness.document).textContent, /Draft/);
 });
 
 test("public plan request event opens one modal and replaces the active session", async t => {

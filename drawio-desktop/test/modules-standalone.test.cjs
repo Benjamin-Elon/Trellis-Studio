@@ -111,7 +111,7 @@ function makeEventObject(name, pairs) {
 
 function makeHarness() {
     nextCellId = 1;
-    const dom = new JSDOM("<!doctype html><body><div id='graph'></div></body>");
+    const dom = new JSDOM("<!doctype html><body><div id='graph'></div></body>", { url: "https://trellis.test/" }); // CHANGE
     const document = dom.window.document;
     const root = new TestCell("", null, "");
     root.id = "root";
@@ -123,6 +123,8 @@ function makeHarness() {
     const firedEvents = [];
     const contextMenuContributors = [];
     let insertImageCalls = 0;
+    const editingStarts = []; // NEW
+    const electronRequests = []; // NEW
     let promptValue = "40";
     const promptCalls = [];
     let lastDialog = null; // NEW
@@ -175,6 +177,7 @@ function makeHarness() {
         setSelectionCells(cells) { selectedCells = (cells || []).filter(Boolean); (selectionListeners.get("change") || []).forEach(listener => listener(this, {})); },
         getSelectionCell() { return selectedCells[0] || null; },
         getSelectionCells() { return selectedCells.slice(); },
+        startEditingAtCell(cell, evt, initialText) { editingStarts.push({ cell, evt, initialText }); }, // NEW
         getSelectionModel() { return { addListener(eventName, listener) { addMappedListener(selectionListeners, eventName, listener); } }; },
         addMouseListener(listener) { mouseListeners.push(listener); },
         addListener(eventName, listener) { addMappedListener(graphListeners, eventName, listener); },
@@ -253,7 +256,45 @@ function makeHarness() {
     };
 
     vm.runInNewContext(fs.readFileSync(PLUGIN_PATH, "utf8"), context, { filename: PLUGIN_PATH });
-    return { dom, document, graph, model, root, mouseListeners, graphListeners, viewListeners, selectionListeners, firedEvents, contextMenuContributors, promptCalls, setPromptValue(value) { promptValue = value; }, clearValueWrites() { model.valueWrites.length = 0; }, get valueWrites() { return model.valueWrites.slice(); }, get insertImageCalls() { return insertImageCalls; }, get selectedCell() { return selectedCells[0] || null; }, get lastDialog() { return lastDialog; } }; // CHANGE
+    return {
+        dom,
+        document,
+        graph,
+        model,
+        root,
+        mouseListeners,
+        graphListeners,
+        viewListeners,
+        selectionListeners,
+        firedEvents,
+        contextMenuContributors,
+        promptCalls,
+        setPromptValue(value) { promptValue = value; },
+        setElectronImagePicker(options = {}) {
+            dom.window.electron = {
+                request(msg, callback, error) {
+                    electronRequests.push(msg); // NEW
+                    try {
+                        if (msg.action === "getPicturesFolder") callback(options.picturesFolder || "C:\\Users\\test\\Pictures");
+                        else if (msg.action === "getDocumentsFolder") callback(options.documentsFolder || "C:\\Users\\test\\Documents");
+                        else if (msg.action === "showOpenDialog") callback(options.paths || ["C:\\Users\\test\\Pictures\\role.png"]);
+                        else if (msg.action === "dirname") callback(options.dirname || "C:\\Users\\test\\Pictures");
+                        else if (msg.action === "readFile") callback(options.base64 || "test");
+                        else throw new Error("unexpected electron request " + msg.action);
+                    } catch (e) {
+                        if (error) error(e.message, e);
+                    }
+                }
+            };
+        }, // NEW
+        clearValueWrites() { model.valueWrites.length = 0; },
+        get valueWrites() { return model.valueWrites.slice(); },
+        get insertImageCalls() { return insertImageCalls; },
+        get editingStarts() { return editingStarts.slice(); }, // NEW
+        get electronRequests() { return electronRequests.slice(); }, // NEW
+        get selectedCell() { return selectedCells[0] || null; },
+        get lastDialog() { return lastDialog; }
+    }; // CHANGE
 }
 
 function makeMouseEvent(window, type, opts) {
@@ -276,8 +317,8 @@ function fireGraphClick(harness, opts = {}) {
     const graph = harness.graph;
     const cell = opts.cell || null;
     graph.__hitCell = opts.hitCell === undefined ? cell : opts.hitCell;
-    const down = makeMouseEvent(harness.dom.window, "mousedown", { clientX: opts.clientX || 100, clientY: opts.clientY || 120, graphX: opts.graphX || 90, graphY: opts.graphY || 100, detail: opts.detail });
-    const up = makeMouseEvent(harness.dom.window, "mouseup", { clientX: opts.upClientX || opts.clientX || 100, clientY: opts.upClientY || opts.clientY || 120, graphX: opts.graphX || 90, graphY: opts.graphY || 100, detail: opts.detail });
+    const down = makeMouseEvent(harness.dom.window, "mousedown", { clientX: opts.clientX || 100, clientY: opts.clientY || 120, graphX: opts.graphX || 90, graphY: opts.graphY || 100, detail: opts.detail, ctrlKey: opts.ctrlKey, metaKey: opts.metaKey, shiftKey: opts.shiftKey, altKey: opts.altKey, button: opts.button }); // CHANGE
+    const up = makeMouseEvent(harness.dom.window, "mouseup", { clientX: opts.upClientX || opts.clientX || 100, clientY: opts.upClientY || opts.clientY || 120, graphX: opts.graphX || 90, graphY: opts.graphY || 100, detail: opts.detail, ctrlKey: opts.ctrlKey, metaKey: opts.metaKey, shiftKey: opts.shiftKey, altKey: opts.altKey, button: opts.button }); // CHANGE
     const makeMe = event => ({
         getEvent() { return event; },
         getCell() { return cell; },
@@ -1125,7 +1166,7 @@ test("selecting regular or garden modules does not render the role card overlay"
     assert.equal(roleOverlay(harness.document), null);
 });
 
-test("role overlay button creates role card from stored click point and hides", () => {
+test("role overlay button creates role card from stored click point and focuses name", async () => {
     const harness = makeHarness();
     const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
     harness.document.dispatchEvent(new harness.dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -1135,14 +1176,17 @@ test("role overlay button creates role card from stored click point and hides", 
     roleOverlayButtons(harness.document)[0].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
     const role = team.children.find(child => /(^|;)role_card=1(;|$)/.test(child.style));
     assert.ok(role);
+    const nameRow = role.children.find(child => styleHas(child, "role_name=1"));
     assert.equal(role.geometry.x, 40);
     assert.equal(role.geometry.y, 40);
-    assert.equal(harness.selectedCell, role);
+    assert.equal(harness.selectedCell, nameRow);
+    await waitForTimers();
+    assert.equal(harness.editingStarts.at(-1).cell, nameRow);
     assert.equal(roleOverlay(harness.document).style.display, "none");
     assert.equal(harness.model.topLevelUpdateCount - updateCountBefore, 1);
 });
 
-test("context menu add role card uses one top-level model transaction", () => {
+test("context menu add role card uses one top-level model transaction and focuses name", async () => {
     const harness = makeHarness();
     const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
     const evt = makeMouseEvent(harness.dom.window, "mouseup", { clientX: 110, clientY: 130, graphX: 95, graphY: 105 });
@@ -1152,9 +1196,12 @@ test("context menu add role card uses one top-level model transaction", () => {
     addRole.funct();
     const role = team.children.find(child => /(^|;)role_card=1(;|$)/.test(child.style));
     assert.ok(role);
+    const nameRow = role.children.find(child => styleHas(child, "role_name=1"));
     assert.equal(role.geometry.x, 45);
     assert.equal(role.geometry.y, 45);
-    assert.equal(harness.selectedCell, role);
+    assert.equal(harness.selectedCell, nameRow);
+    await waitForTimers();
+    assert.equal(harness.editingStarts.at(-1).cell, nameRow);
     assert.equal(harness.model.topLevelUpdateCount - updateCountBefore, 1);
 });
 
@@ -1164,9 +1211,10 @@ test("role overlay button falls back to top-left content placement", () => {
     roleOverlayButtons(harness.document)[0].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
     const role = team.children.find(child => /(^|;)role_card=1(;|$)/.test(child.style));
     assert.ok(role);
+    const nameRow = role.children.find(child => styleHas(child, "role_name=1"));
     assert.equal(role.geometry.x, 100);
     assert.equal(role.geometry.y, 100);
-    assert.equal(harness.selectedCell, role);
+    assert.equal(harness.selectedCell, nameRow);
     assert.equal(roleOverlay(harness.document).style.display, "none");
 });
 
@@ -1322,15 +1370,40 @@ test("legacy role cards are not rewritten by summary sync", () => {
     assert.equal(role.value, "Legacy Role");
 });
 
-test("empty role image slot shows add affordances for role card and image row only", () => {
+test("single clicking role text fields starts editing", async () => {
+    const harness = makeHarness();
+    const { nameRow, titleRow, notesRow, contactRow } = createRoleFixture(harness);
+    for (const field of [nameRow, titleRow, notesRow, contactRow]) {
+        fireGraphClick(harness, { cell: field, hitCell: field, clientX: 100, clientY: 120 });
+        await waitForTimers();
+        assert.equal(harness.selectedCell, field);
+        assert.equal(harness.editingStarts.at(-1).cell, field);
+    }
+}); // NEW
+
+test("single click editing ignores role labels image boxes drags double clicks and modifiers", async () => {
+    const harness = makeHarness();
+    const { role, imageRow, nameRow, fieldLabels, headerSeparator } = createRoleFixture(harness);
+    const before = harness.editingStarts.length;
+    fireGraphClick(harness, { cell: fieldLabels[0], hitCell: fieldLabels[0] });
+    fireGraphClick(harness, { cell: headerSeparator, hitCell: headerSeparator });
+    fireGraphClick(harness, { cell: role, hitCell: role });
+    fireGraphClick(harness, { cell: imageRow, hitCell: imageRow, upClientX: 130 });
+    fireGraphClick(harness, { cell: nameRow, hitCell: nameRow, detail: 2 });
+    fireGraphClick(harness, { cell: nameRow, hitCell: nameRow, ctrlKey: true });
+    await waitForTimers();
+    assert.equal(harness.editingStarts.length, before);
+}); // NEW
+
+test("empty role image slot has no add-image overlay and keeps context affordances", () => {
     const harness = makeHarness();
     const { role, imageRow, nameRow } = createRoleFixture(harness);
     harness.graph.setSelectionCell(role);
-    assert.equal(roleImageOverlayButtons(harness.document)[0].textContent, "Add Image");
-    assert.equal(isRoleImageOverlayVisible(harness.document), true);
+    assert.equal(roleImageOverlayButtons(harness.document).length, 0);
+    assert.equal(isRoleImageOverlayVisible(harness.document), false);
     harness.graph.setSelectionCell(imageRow);
-    assert.equal(roleImageOverlayButtons(harness.document)[0].textContent, "Add Image");
-    assert.equal(isRoleImageOverlayVisible(harness.document), true);
+    assert.equal(roleImageOverlayButtons(harness.document).length, 0);
+    assert.equal(isRoleImageOverlayVisible(harness.document), false);
     harness.graph.setSelectionCell(nameRow);
     assert.equal(isRoleImageOverlayVisible(harness.document), false);
     assert.equal(runModulesContextMenu(harness, role).labels.includes("Add Role Image"), true);
@@ -1338,7 +1411,18 @@ test("empty role image slot shows add affordances for role card and image row on
     assert.equal(runModulesContextMenu(harness, nameRow).labels.includes("Add Role Image"), false);
 });
 
-test("existing role image shows change overlay from image section or avatar only", async () => {
+test("clicking the role card does not open the native image picker", async () => {
+    const harness = makeHarness();
+    harness.setElectronImagePicker({ base64: "native", paths: ["C:\\Users\\test\\Pictures\\role.jpg"] });
+    const { role, imageRow } = createRoleFixture(harness);
+    fireGraphClick(harness, { cell: role, hitCell: role, selectCellOnDown: role });
+    await waitForTimers();
+    assert.equal(harness.selectedCell, role);
+    assert.equal(getRoleAvatar(imageRow), null);
+    assert.deepEqual(harness.electronRequests, []);
+}); // NEW
+
+test("existing role image does not render an add-image overlay", async () => {
     const harness = makeHarness();
     const { role, imageRow } = createRoleFixture(harness);
     harness.graph.__trellisModules.selectRoleImage(role);
@@ -1348,24 +1432,28 @@ test("existing role image shows change overlay from image section or avatar only
     harness.graph.setSelectionCell(role);
     assert.equal(isRoleImageOverlayVisible(harness.document), false);
     harness.graph.setSelectionCell(imageRow);
-    assert.equal(roleImageOverlayButtons(harness.document)[0].textContent, "Change Image");
-    assert.equal(isRoleImageOverlayVisible(harness.document), true);
+    assert.equal(roleImageOverlayButtons(harness.document).length, 0);
+    assert.equal(isRoleImageOverlayVisible(harness.document), false);
     harness.graph.setSelectionCell(avatar);
-    assert.equal(roleImageOverlayButtons(harness.document)[0].textContent, "Change Image");
-    assert.equal(isRoleImageOverlayVisible(harness.document), true);
+    assert.equal(roleImageOverlayButtons(harness.document).length, 0);
+    assert.equal(isRoleImageOverlayVisible(harness.document), false);
     assert.equal(runModulesContextMenu(harness, role).labels.includes("Change Role Image"), false);
     assert.equal(runModulesContextMenu(harness, imageRow).labels.includes("Change Role Image"), false);
     assert.equal(runModulesContextMenu(harness, avatar).labels.includes("Change Role Image"), true);
 });
 
-test("role image overlay button invokes insert image and creates the avatar", async () => {
+test("clicking the photo box opens native image picker and creates the avatar", async () => {
     const harness = makeHarness();
+    harness.setElectronImagePicker({ base64: "native", paths: ["C:\\Users\\test\\Pictures\\role.jpg"] });
     const { role, imageRow } = createRoleFixture(harness);
-    harness.graph.setSelectionCell(role);
-    roleImageOverlayButtons(harness.document)[0].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
+    fireGraphClick(harness, { cell: imageRow, hitCell: imageRow });
     await waitForTimers();
     const avatar = getRoleAvatar(imageRow);
-    assert.equal(harness.insertImageCalls, 1);
+    assert.deepEqual(harness.electronRequests.map(item => item.action), ["getPicturesFolder", "showOpenDialog", "dirname", "readFile"]);
+    assert.equal(harness.electronRequests[1].defaultPath, "C:\\Users\\test\\Pictures");
+    assert.deepEqual(Array.from(harness.electronRequests[1].filters[0].extensions), ["png", "jpg", "jpeg", "gif", "webp", "svg"]); // CHANGE
+    assert.equal(harness.electronRequests[3].encoding, "base64");
+    assert.equal(harness.insertImageCalls, 0);
     assert.ok(avatar);
     assert.equal(avatar.parent, imageRow);
     assert.equal(avatar.geometry.width, 40);
@@ -1374,18 +1462,33 @@ test("role image overlay button invokes insert image and creates the avatar", as
     assert.equal(avatar.geometry.y, 5);
     assert.equal(imageRow.value, "");
     assert.doesNotMatch(String(role.value), /<img/i);
-    assert.match(role.style, /(?:^|;)image=data:image\/png;base64,test(?:;|$)/);
+    assert.match(avatar.style, /(?:^|;)image=data:image\/jpeg,native(?:;|$)/); // CHANGE
+    assert.doesNotMatch(avatar.style, /;base64,/); // NEW
+    assert.match(role.style, /(?:^|;)image=data:image\/jpeg,native(?:;|$)/); // CHANGE
+    assert.doesNotMatch(role.style, /;base64,/); // NEW
     assert.match(role.style, /(?:^|;)imageWidth=38(?:;|$)/);
 });
 
-test("inserted role image replaces any prior avatar", async () => {
+test("canceling the native role image picker leaves the photo unchanged", async () => {
     const harness = makeHarness();
+    harness.setElectronImagePicker({ paths: [] });
+    const { imageRow } = createRoleFixture(harness);
+    fireGraphClick(harness, { cell: imageRow, hitCell: imageRow });
+    await waitForTimers();
+    assert.equal(getRoleAvatar(imageRow), null);
+    assert.deepEqual(harness.electronRequests.map(item => item.action), ["getPicturesFolder", "showOpenDialog"]);
+}); // NEW
+
+test("clicking an existing role avatar replaces it with a native image", async () => {
+    const harness = makeHarness();
+    harness.setElectronImagePicker({ base64: "first", paths: ["C:\\Users\\test\\Pictures\\first.png"] });
     const { role, imageRow } = createRoleFixture(harness);
-    harness.graph.__trellisModules.selectRoleImage(role);
+    fireGraphClick(harness, { cell: imageRow, hitCell: imageRow });
     await waitForTimers();
     const firstAvatar = getRoleAvatar(imageRow);
     assert.ok(firstAvatar);
-    harness.graph.__trellisModules.selectRoleImage(role);
+    harness.setElectronImagePicker({ base64: "second", paths: ["C:\\Users\\test\\Pictures\\second.webp"] });
+    fireGraphClick(harness, { cell: firstAvatar, hitCell: firstAvatar });
     await waitForTimers();
     const avatars = imageRow.children.filter(child => styleHas(child, "role_avatar=1"));
     assert.equal(avatars.length, 1);
@@ -1393,6 +1496,9 @@ test("inserted role image replaces any prior avatar", async () => {
     assert.equal(firstAvatar.parent, null);
     assert.equal(avatars[0].geometry.width, 40);
     assert.equal(avatars[0].geometry.height, 40);
-    assert.match(role.style, /(?:^|;)image=data:image\/png;base64,test(?:;|$)/);
+    assert.match(avatars[0].style, /(?:^|;)image=data:image\/webp,second(?:;|$)/); // CHANGE
+    assert.doesNotMatch(avatars[0].style, /;base64,/); // NEW
+    assert.match(role.style, /(?:^|;)image=data:image\/webp,second(?:;|$)/); // CHANGE
+    assert.doesNotMatch(role.style, /;base64,/); // NEW
     assert.doesNotMatch(String(role.value), /<img/i);
 });

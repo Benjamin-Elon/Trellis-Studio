@@ -2364,6 +2364,16 @@ function getDocumentsFolder() {
 	return '.';
 };
 
+function getPicturesFolder() {
+	// On some systems, the configured Pictures folder can be unavailable.
+	try {
+		return app.getPath('pictures');
+	}
+	catch (e) { }
+
+	return getDocumentsFolder();
+}; // NEW
+
 function checkFileExists(pathParts) {
 	let filePath = path.join(...pathParts);
 	return { exists: fs.existsSync(filePath), path: filePath };
@@ -2620,6 +2630,9 @@ ipcMain.on("rendererReq", async (event, args) => {
 			case 'getDocumentsFolder':
 				ret = await getDocumentsFolder();
 				break;
+			case 'getPicturesFolder':
+				ret = await getPicturesFolder();
+				break; // NEW
 			case 'checkFileExists':
 				ret = await checkFileExists(args.pathParts);
 				break;

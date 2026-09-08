@@ -28,6 +28,7 @@ Draw.loadPlugin(function (ui) {
     const MODULE_CURRENT_YEAR_ATTR = "current_year";
     const YEAR_HIDDEN_ATTR = "year_hidden";
     const PLAN_YEAR_JSON_ATTR = "plan_year_json";
+    const PLAN_YEAR_DRAFTS_JSON_ATTR = "plan_year_drafts_json"; // CHANGE
 
     const BTN_SIZE = 22;
     const BTN_GAP = 6;
@@ -39,6 +40,7 @@ Draw.loadPlugin(function (ui) {
     const ALLOCATE_PLAN_EVENT = "usl:allocatePlanRequested";
     const IRRIGATION_MODE_CHANGED_EVENT = "trellisIrrigationModeChanged";
     const ALLOCATE_NO_PLAN_TITLE = "Create a year plan before allocating."; // CHANGE: explain why Allocate is disabled before a saved plan exists.
+    const ALLOCATE_DRAFT_PLAN_TITLE = "Finish and save the year plan draft before allocating."; // CHANGE
     const ALLOCATE_EMPTY_PLAN_TITLE = "Add at least one crop to the year plan before allocating."; // CHANGE: saved empty plans are not allocatable.
     const IRRIGATION_ACTIVE_BACKGROUND = "#eff6ff"; // CHANGE: match the Enter Irrigation Design Mode light-blue active fill
     const IRRIGATION_ACTIVE_TEXT = "#1e3a8a"; // CHANGE: match the Enter Irrigation Design Mode dark-blue active text
@@ -162,9 +164,19 @@ Draw.loadPlugin(function (ui) {
         return (obj && typeof obj === "object") ? obj : null;
     }
 
+    function getPlanYearDraftObject(moduleCell, year) {
+        const raw = getCellAttr(moduleCell, PLAN_YEAR_DRAFTS_JSON_ATTR, "");
+        if (!raw) return null;
+        const root = safeJsonParse(raw, null);
+        if (!root || typeof root !== "object") return null;
+        const obj = root[String(year)];
+        return (obj && typeof obj === "object") ? obj : null;
+    } // CHANGE
+
     function allocationPlanStatus(moduleCell, year) {
         const planObj = getPlanYearObject(moduleCell, year);
-        if (!planObj) return { enabled: false, title: ALLOCATE_NO_PLAN_TITLE }; // CHANGE: Allocate requires a saved plan for the selected toolbar year.
+        if (!planObj && getPlanYearDraftObject(moduleCell, year)) return { enabled: false, title: ALLOCATE_DRAFT_PLAN_TITLE }; // CHANGE
+        if (!planObj) return { enabled: false, title: ALLOCATE_NO_PLAN_TITLE }; // CHANGE: Allocate requires a committed plan for the selected toolbar year.
         const crops = Array.isArray(planObj.crops) ? planObj.crops : [];
         return crops.length
             ? { enabled: true, title: "Allocate the current plan" }

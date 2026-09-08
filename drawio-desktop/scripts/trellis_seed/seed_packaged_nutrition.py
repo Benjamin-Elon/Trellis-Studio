@@ -87,7 +87,10 @@ def seed_packaged_nutrition(db_path: Path) -> None:
                 "ON CONFLICT(persona_key,nutrient_key) DO UPDATE SET amount_per_day=excluded.amount_per_day, unit=excluded.unit, source_url=excluded.source_url, source_note=excluded.source_note, updated_at=excluded.updated_at",
                 requirement_rows,
             )
-            plant_ids = {name: plant_id for plant_id, name in conn.execute("SELECT plant_id, plant_name FROM Plants WHERE abbr IS NOT NULL")}
+            plant_ids = {name: plant_id for plant_id, name in conn.execute("SELECT plant_id, plant_name FROM Plants")}
+            missing_snapshot = sorted(set(plant_ids) - set(RAW_VALUES_PER_100G))
+            if missing_snapshot:
+                raise RuntimeError(f"Missing packaged raw nutrition values for plants: {', '.join(missing_snapshot)}")
             mapping_rows = []
             value_rows = []
             for plant_name, (fdc_id, description, data_type, values) in RAW_VALUES_PER_100G.items():

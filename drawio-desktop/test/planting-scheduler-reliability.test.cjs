@@ -3213,13 +3213,13 @@ test('stack scheduler time helpers snap, normalize hours, and pack cumulatively'
     });
     const defaults = taskHooks.defaultWeekWorkHours();
     assert.deepEqual(JSON.parse(JSON.stringify(defaults.map(day => [day.startMinute, day.endMinute, day.closed]))), [
-        [480, 720, false],
-        [1020, 1140, false],
-        [1020, 1140, false],
-        [1020, 1140, false],
-        [1020, 1140, false],
-        [1020, 1140, false],
-        [480, 720, false]
+        [480, 1020, true],
+        [480, 1020, false],
+        [480, 1020, false],
+        [480, 1020, false],
+        [480, 1020, false],
+        [480, 1020, false],
+        [480, 1020, true]
     ]);
 
     const closed = taskHooks.normalizeWorkHourWindow({ closed: true, startMinute: 500, endMinute: 700 });
@@ -3230,10 +3230,10 @@ test('stack scheduler time helpers snap, normalize hours, and pack cumulatively'
         '2026-07-12'
     );
     assert.deepEqual(JSON.parse(JSON.stringify(week[0])), { closed: true, startMinute: 360, endMinute: 720 });
-    assert.equal(week[1].startMinute, 360);
+    assert.equal(week[1].startMinute, 480);
     const scale = taskHooks.buildWeekTimeScale(defaults);
-    assert.deepEqual({ active: scale.active, startMinute: scale.startMinute, endMinute: scale.endMinute, durationMinutes: scale.durationMinutes }, { active: true, startMinute: 480, endMinute: 1140, durationMinutes: 660 });
-    assert.equal(taskHooks.getWeekTimeScaleOffsetPx(defaults[1], scale), 720);
+    assert.deepEqual({ active: scale.active, startMinute: scale.startMinute, endMinute: scale.endMinute, durationMinutes: scale.durationMinutes }, { active: true, startMinute: 480, endMinute: 1020, durationMinutes: 540 });
+    assert.equal(taskHooks.getWeekTimeScaleOffsetPx(defaults[1], scale), 0);
     const quarterScale = taskHooks.buildWeekTimeScale([{ startMinute: 510, endMinute: 1035 }]);
     assert.deepEqual({ startMinute: quarterScale.startMinute, endMinute: quarterScale.endMinute }, { startMinute: 480, endMinute: 1080 });
     assert.equal(taskHooks.getWeekTimeScaleOffsetPx({ startMinute: 510, endMinute: 1035 }, quarterScale), 40);

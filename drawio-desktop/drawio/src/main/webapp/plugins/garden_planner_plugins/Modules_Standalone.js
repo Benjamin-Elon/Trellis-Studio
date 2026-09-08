@@ -986,10 +986,36 @@ Draw.loadPlugin(function (ui) {
         return children.find(function (child) { return styleHasKeyValue(child, flag, "1"); }) || null;
     }
 
+    function isRoleCardDirectChild(cell) {
+        const parent = model.getParent(cell);
+        return !!parent && isRoleCard(parent);
+    } // NEW
+
+    function isRoleTextValueCell(cell) {
+        if (!cell || !isRoleCardDirectChild(cell)) return false;
+        if (isRoleImageRow(cell) || isRoleAvatar(cell)) return false;
+        if (styleHasKeyValue(cell, "role_field_label", "1") || styleHasKeyValue(cell, "role_header_separator", "1")) return false;
+        return !/(^|;)editable=0(;|$)/.test(getStyle(cell));
+    } // NEW
+
     function roleFieldDisplayValue(roleCard, flag, fallback) {
         const text = getCellDisplayText(getRoleField(roleCard, flag));
         return text || fallback;
     }
+
+    function focusRoleTextField(cell, evt) {
+        if (!cell || !isRoleTextValueCell(cell)) return false;
+        if (graph.setSelectionCell) graph.setSelectionCell(cell);
+        setTimeout(function () {
+            if (graph.getSelectionCell && graph.getSelectionCell() !== cell) return;
+            if (graph.startEditingAtCell) graph.startEditingAtCell(cell, evt || null);
+        }, 0);
+        return true;
+    } // NEW
+
+    function focusRoleNameField(roleCard) {
+        return focusRoleTextField(getRoleField(roleCard, "role_name"), null);
+    } // NEW
 
     function roleInitials(name) {
         const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
@@ -1008,6 +1034,10 @@ Draw.loadPlugin(function (ui) {
         const match = getStyle(cell).match(/(?:^|;)image=(.*?)(?=;[A-Za-z_][A-Za-z0-9_]*=|;?$)/);
         return match ? String(match[1] || "").trim() : "";
     }
+
+    function styleSafeRoleImageSource(imageSource) {
+        return String(imageSource || "").replace(/^(data:image\/[^;,]+);base64,/i, "$1,");
+    } // NEW
 
     function removeStyleKey(style, key) {
         const safeKey = String(key || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1043,7 +1073,7 @@ Draw.loadPlugin(function (ui) {
         ["image", "imageWidth", "imageHeight", "imageAlign", "imageVerticalAlign", "imageAspect", "spacingLeft", "spacingRight", "spacingTop", "align", "verticalAlign"].forEach(function (key) {
             st = removeStyleKey(st, key);
         });
-        st = setStyleValue(st, "image", imageSource);
+        st = setStyleValue(st, "image", styleSafeRoleImageSource(imageSource)); // CHANGE
         st = setStyleValue(st, "imageWidth", "38");
         st = setStyleValue(st, "imageHeight", "38");
         st = setStyleValue(st, "imageAlign", "left");
@@ -1068,6 +1098,7 @@ Draw.loadPlugin(function (ui) {
 
     function syncRoleCardSummary(roleCard) {
         if (!isRoleCardV2(roleCard)) return false;
+        normalizeRoleAvatarImageStyle(getRoleAvatar(roleCard)); // NEW
         const name = roleFieldDisplayValue(roleCard, "role_name", "Unnamed person");
         const title = roleFieldDisplayValue(roleCard, "role_title", "Unspecified role");
         const nextLabel = buildCollapsedRoleLabel(roleCard);
@@ -1150,7 +1181,7 @@ Draw.loadPlugin(function (ui) {
         if (!roleCard) return null;
         const hasAvatar = roleHasAvatar(roleCard);
         if (hasAvatar && !isRoleAvatar(cell) && !(opts.allowImageRowChange && isRoleImageRow(cell))) return null;
-        if (!hasAvatar && !(isRoleCard(cell) || isRoleImageRow(cell))) return null;
+        if (!hasAvatar && !(isRoleImageRow(cell) || (opts.allowRoleCardAdd !== false && isRoleCard(cell)))) return null; // CHANGE
         return { roleCard: roleCard, mode: hasAvatar ? "change" : "add", avatar: getRoleAvatar(roleCard), imageRow: getRoleImageRow(roleCard), sourceCell: cell };
     }
 
@@ -1179,6 +1210,13 @@ Draw.loadPlugin(function (ui) {
         model.setStyle(cell, st);
     }
 
+    function normalizeRoleAvatarImageStyle(cell) {
+        const imageSource = getStyleImageSource(cell);
+        if (!imageSource) return;
+        const st = setStyleValue(getStyle(cell), "image", styleSafeRoleImageSource(imageSource));
+        if (st !== getStyle(cell)) model.setStyle(cell, st);
+    } // NEW
+
     function placeRoleAvatar(roleCard, cell) {
         const imageRow = getOrCreateRoleImageRow(roleCard);
         removeExistingRoleAvatar(imageRow);
@@ -1189,11 +1227,104 @@ Draw.loadPlugin(function (ui) {
         geo.x = 5;
         geo.y = 5;
         model.setGeometry(cell, geo);
+        normalizeRoleAvatarImageStyle(cell); // NEW
         tagRoleAvatar(cell);
         model.remove(cell);
         model.add(imageRow, cell);
         syncRoleCardSummary(roleCard);
     }
+
+    function mimeTypeForRoleImagePath(path) {
+        const ext = String(path || "").toLowerCase().split("?")[0].split("#")[0].match(/\.([^.\\\/]+)$/);
+        switch (ext ? ext[1] : "") {
+            case "jpg":
+            case "jpeg": return "image/jpeg";
+            case "gif": return "image/gif";
+            case "webp": return "image/webp";
+            case "svg": return "image/svg+xml";
+            default: return "image/png";
+        }
+    } // NEW
+
+    function createRoleImageCell(imageSource, width, height) {
+        const cell = new mxCell("", new mxGeometry(0, 0, width || 40, height || 40), "shape=image;image=" + styleSafeRoleImageSource(imageSource)); // CHANGE
+        cell.vertex = true;
+        return cell;
+    } // NEW
+
+    function applyRoleImageSource(ui, roleCard, imageSource, sourceSize) {
+        function finish(data, width, height) {
+            const cell = createRoleImageCell(data || imageSource, width || 40, height || 40);
+            model.beginUpdate();
+            try {
+                placeRoleAvatar(roleCard, cell);
+            } finally {
+                model.endUpdate();
+            }
+        }
+
+        if (ui && typeof ui.loadImage === "function" && typeof ui.resizeImage === "function") {
+            ui.loadImage(imageSource, function (img) {
+                ui.resizeImage(img, imageSource, finish, true, ui.maxImageSize, null, sourceSize);
+            }, function () {
+                finish(imageSource, 40, 40);
+            });
+        } else {
+            finish(imageSource, 40, 40);
+        }
+    } // NEW
+
+    function electronRequest(args) {
+        const electron = window && window.electron;
+        if (!electron || typeof electron.request !== "function") return Promise.reject(new Error("electron request unavailable"));
+        return new Promise(function (resolve, reject) {
+            electron.request(args, resolve, function (msg, e) { reject(e || new Error(msg || "electron request failed")); });
+        });
+    } // NEW
+
+    function getStoredRoleImageDirectory() {
+        try { return window.localStorage ? (window.localStorage.getItem(".trellisRoleImageDir") || "") : ""; } catch (e) { return ""; }
+    } // NEW
+
+    function setStoredRoleImageDirectory(path) {
+        try { if (window.localStorage && path) window.localStorage.setItem(".trellisRoleImageDir", path); } catch (e) { }
+    } // NEW
+
+    async function roleImageDefaultDirectory() {
+        const stored = getStoredRoleImageDirectory();
+        if (stored) return stored;
+        try {
+            const pictures = await electronRequest({ action: "getPicturesFolder" });
+            if (pictures) return pictures;
+        } catch (e) { }
+        try {
+            return await electronRequest({ action: "getDocumentsFolder" });
+        } catch (e) { }
+        return undefined;
+    } // NEW
+
+    async function selectRoleImageFromNativePicker(ui, roleCard) {
+        const defaultPath = await roleImageDefaultDirectory();
+        const paths = await electronRequest({
+            action: "showOpenDialog",
+            defaultPath: defaultPath,
+            filters: [
+                { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] },
+                { name: "All Files", extensions: ["*"] }
+            ],
+            properties: ["openFile"]
+        });
+        const filePath = paths && paths[0];
+        if (!filePath) return false;
+        try {
+            const dir = await electronRequest({ action: "dirname", path: filePath });
+            setStoredRoleImageDirectory(dir);
+        } catch (e) { }
+        const data = await electronRequest({ action: "readFile", filename: filePath, encoding: "base64" });
+        const imageSource = "data:" + mimeTypeForRoleImagePath(filePath) + ";base64," + data;
+        applyRoleImageSource(ui, roleCard, imageSource, data ? String(data).length : 0);
+        return true;
+    } // NEW
 
 
     function createReadOnlyRoleLabel(text, x, y, width) {
@@ -1270,12 +1401,16 @@ Draw.loadPlugin(function (ui) {
         } finally {
             model.endUpdate();
         }
-        if (role && graph.setSelectionCell) graph.setSelectionCell(role);
+        if (role) focusRoleNameField(role); // CHANGE
         return role;
     }
 
 
     function selectRoleImage(ui, graph, roleCard) {
+        if (window && window.electron && window.electron.request) {
+            return selectRoleImageFromNativePicker(ui, roleCard); // CHANGE
+        } // NEW
+
         const origInsertVertex = graph.insertVertex;
         let restored = false;
 
@@ -2731,133 +2866,108 @@ Draw.loadPlugin(function (ui) {
         if (graph.__trellisSelectedRoleImageOverlayInstalled) return;
         graph.__trellisSelectedRoleImageOverlayInstalled = true;
 
-        const OFFSET_PX = 8;
-        let overlay = null;
-        let button = null;
-        let currentAction = null;
+        const SIMPLE_CLICK_MAX_MOVE_PX = 4;
+        let pendingImageClick = null;
 
-        function overlayHost() {
-            return graph.container || null;
-        }
+        function isPlainLeftMouseEvent(evt) {
+            if (!evt) return false;
+            const button = typeof evt.button === "number" ? evt.button : 0;
+            const popup = mxEvent.isPopupTrigger && mxEvent.isPopupTrigger(evt);
+            return button === 0 && !popup && !mxEvent.isControlDown(evt) && !mxEvent.isMetaDown(evt) && !mxEvent.isShiftDown(evt) && !evt.altKey;
+        } // NEW
 
-        function ensureOverlayHost() {
-            const host = overlayHost();
-            if (!host) return null;
-            const style = window.getComputedStyle ? window.getComputedStyle(host) : null;
-            if (style && style.position === "static") host.style.position = "relative";
-            return host;
-        }
+        function isDoubleClick(evt) {
+            return !!evt && Number(evt.detail || 0) > 1;
+        } // NEW
 
-        function selectedRoleImageAction() {
-            const cells = graph.getSelectionCells ? (graph.getSelectionCells() || []) : (graph.getSelectionCell ? [graph.getSelectionCell()] : []);
-            if (!cells || cells.length !== 1) return null;
-            const action = roleImageActionForCell(cells[0], { allowImageRowChange: true });
-            if (action && action.roleCard) normalizeRoleImagePlaceholder(action.roleCard);
-            return action;
-        }
+        function eventClientPoint(evt) {
+            return { x: mxEvent.getClientX(evt), y: mxEvent.getClientY(evt) };
+        } // NEW
 
-        function anchorCellForAction(action) {
-            if (!action) return null;
-            if (action.mode === "change") return isRoleImageRow(action.sourceCell) || isRoleAvatar(action.sourceCell) ? action.sourceCell : action.avatar;
-            return action.imageRow || action.roleCard;
-        }
+        function isSimpleClick(start, evt) {
+            if (!start || !evt) return false;
+            const client = eventClientPoint(evt);
+            const dx = client.x - start.client.x;
+            const dy = client.y - start.client.y;
+            return Math.sqrt(dx * dx + dy * dy) <= SIMPLE_CLICK_MAX_MOVE_PX;
+        } // NEW
 
-        function hideOverlay() {
-            currentAction = null;
-            if (overlay) overlay.style.display = "none";
-        }
+        if (graph.addMouseListener) {
+            graph.addMouseListener({
+                mouseDown: function (_sender, me) {
+                    const evt = me && me.getEvent ? me.getEvent() : null;
+                    pendingImageClick = null;
+                    if (!isPlainLeftMouseEvent(evt) || isDoubleClick(evt)) return;
+                    const cell = me && typeof me.getCell === "function" ? me.getCell() : null;
+                    const action = roleImageActionForCell(cell, { allowImageRowChange: true, allowRoleCardAdd: false }); // CHANGE
+                    if (!action || !action.roleCard) return;
+                    normalizeRoleImagePlaceholder(action.roleCard);
+                    pendingImageClick = { client: eventClientPoint(evt), action: action };
+                },
+                mouseMove: function () { },
+                mouseUp: function (_sender, me) {
+                    const evt = me && me.getEvent ? me.getEvent() : null;
+                    const start = pendingImageClick;
+                    pendingImageClick = null;
+                    if (!isPlainLeftMouseEvent(evt) || isDoubleClick(evt) || !isSimpleClick(start, evt)) return;
+                    mxEvent.consume(evt);
+                    const result = selectRoleImage(ui, graph, start.action.roleCard); // CHANGE
+                    if (result && typeof result.catch === "function") result.catch(function (e) { if (window.console && window.console.warn) window.console.warn(e); }); // NEW
+                }
+            });
+        } // CHANGE
+    }
 
-        function invokeRoleImageAction(evt) {
-            mxEvent.consume(evt);
-            const action = currentAction;
-            if (!action || !action.roleCard) { hideOverlay(); return; }
-            hideOverlay();
-            selectRoleImage(ui, graph, action.roleCard);
-        }
+    function installRoleCardFieldClickEditing() {
+        if (graph.__trellisRoleCardFieldClickEditingInstalled) return;
+        graph.__trellisRoleCardFieldClickEditingInstalled = true;
 
-        function makeOverlayButton() {
-            const btn = document.createElement("button");
-            btn.type = "button";
-            btn.style.border = "1px solid #b8b8b8";
-            btn.style.borderRadius = "4px";
-            btn.style.background = "#fff";
-            btn.style.color = "#222";
-            btn.style.cursor = "pointer";
-            btn.style.font = "12px Arial, sans-serif";
-            btn.style.padding = "5px 8px";
-            btn.style.whiteSpace = "nowrap";
-            applyTrellisButtonStyle(btn, "open", { compact: true });
-            mxEvent.addListener(btn, "click", invokeRoleImageAction);
-            return btn;
-        }
+        const SIMPLE_CLICK_MAX_MOVE_PX = 4;
+        let pendingFieldClick = null;
 
-        function ensureOverlay() {
-            if (overlay) return overlay;
-            overlay = document.createElement("div");
-            overlay.className = "trellis-role-image-overlay";
-            overlay.style.position = "absolute";
-            overlay.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL);
-            overlay.style.display = "none";
-            overlay.style.padding = "4px";
-            overlay.style.background = "rgba(255,255,255,0.96)";
-            overlay.style.border = "1px solid #c7c7cc";
-            overlay.style.borderRadius = "6px";
-            overlay.style.boxShadow = "0 2px 8px rgba(0,0,0,0.16)";
-            overlay.style.font = "12px Arial, sans-serif";
-            overlay.style.pointerEvents = "auto";
-            mxEvent.addListener(overlay, "mousedown", function (evt) { mxEvent.consume(evt); });
-            mxEvent.addListener(overlay, "click", function (evt) { mxEvent.consume(evt); });
-            button = makeOverlayButton();
-            overlay.appendChild(button);
-            const host = ensureOverlayHost();
-            if (host) host.appendChild(overlay);
-            return overlay;
-        }
+        function isPlainLeftMouseEvent(evt) {
+            if (!evt) return false;
+            const button = typeof evt.button === "number" ? evt.button : 0;
+            const popup = mxEvent.isPopupTrigger && mxEvent.isPopupTrigger(evt);
+            return button === 0 && !popup && !mxEvent.isControlDown(evt) && !mxEvent.isMetaDown(evt) && !mxEvent.isShiftDown(evt) && !evt.altKey;
+        } // NEW
 
-        function positionOverlay(action) {
-            const host = ensureOverlayHost();
-            const div = ensureOverlay();
-            const anchorCell = anchorCellForAction(action);
-            const view = graph.getView ? graph.getView() : graph.view;
-            const state = view && typeof view.getState === "function" && anchorCell ? view.getState(anchorCell) : null;
-            if (!host || !div || !state) { hideOverlay(); return; }
-            if (div.parentNode !== host) host.appendChild(div);
-            if (button) button.textContent = action.mode === "change" ? "Change Image" : "Add Image";
-            currentAction = action;
-            div.style.display = "flex";
-            div.style.left = "0px";
-            div.style.top = "0px";
-            const width = div.offsetWidth || 105;
-            const height = div.offsetHeight || 30;
-            const scrollLeft = host.scrollLeft || 0;
-            const scrollTop = host.scrollTop || 0;
-            const maxLeft = scrollLeft + Math.max(0, (host.clientWidth || width) - width - OFFSET_PX);
-            const maxTop = scrollTop + Math.max(0, (host.clientHeight || height) - height - OFFSET_PX);
-            const left = Math.max(scrollLeft, Math.min(maxLeft, Math.round(state.x + (state.width || 0) + OFFSET_PX)));
-            const top = Math.max(scrollTop, Math.min(maxTop, Math.round(state.y)));
-            div.style.left = left + "px";
-            div.style.top = top + "px";
-        }
+        function isDoubleClick(evt) {
+            return !!evt && Number(evt.detail || 0) > 1;
+        } // NEW
 
-        function refreshSelectedOverlay() {
-            const action = selectedRoleImageAction();
-            if (!action) { hideOverlay(); return; }
-            positionOverlay(action);
-        }
+        function eventClientPoint(evt) {
+            return { x: mxEvent.getClientX(evt), y: mxEvent.getClientY(evt) };
+        } // NEW
 
-        const selectionModel = graph.getSelectionModel ? graph.getSelectionModel() : null;
-        if (selectionModel && selectionModel.addListener) selectionModel.addListener(mxEvent.CHANGE, refreshSelectedOverlay);
-        if (model.addListener) model.addListener(mxEvent.CHANGE, refreshSelectedOverlay);
-        if (graph.getView && graph.getView()) {
-            const view = graph.getView();
-            if (view.addListener) {
-                view.addListener(mxEvent.SCALE, refreshSelectedOverlay);
-                view.addListener(mxEvent.TRANSLATE, refreshSelectedOverlay);
-                view.addListener(mxEvent.SCALE_AND_TRANSLATE, refreshSelectedOverlay);
-            }
-        }
-        mxEvent.addListener(document, "keydown", function (evt) { if (evt && evt.key === "Escape") hideOverlay(); });
-        graph.addListener && graph.addListener(mxEvent.DESTROY, function () { if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay); overlay = null; button = null; currentAction = null; });
+        function isSimpleClick(start, evt) {
+            if (!start || !evt) return false;
+            const client = eventClientPoint(evt);
+            const dx = client.x - start.client.x;
+            const dy = client.y - start.client.y;
+            return Math.sqrt(dx * dx + dy * dy) <= SIMPLE_CLICK_MAX_MOVE_PX;
+        } // NEW
+
+        if (graph.addMouseListener) {
+            graph.addMouseListener({
+                mouseDown: function (_sender, me) {
+                    const evt = me && me.getEvent ? me.getEvent() : null;
+                    pendingFieldClick = null;
+                    if (!isPlainLeftMouseEvent(evt) || isDoubleClick(evt)) return;
+                    const cell = me && typeof me.getCell === "function" ? me.getCell() : null;
+                    if (!isRoleTextValueCell(cell)) return;
+                    pendingFieldClick = { client: eventClientPoint(evt), cell: cell };
+                },
+                mouseMove: function () { },
+                mouseUp: function (_sender, me) {
+                    const evt = me && me.getEvent ? me.getEvent() : null;
+                    const start = pendingFieldClick;
+                    pendingFieldClick = null;
+                    if (!isPlainLeftMouseEvent(evt) || isDoubleClick(evt) || !isSimpleClick(start, evt)) return;
+                    focusRoleTextField(start.cell, evt);
+                }
+            });
+        } // NEW
     }
 
     // Ensure right-click does not alter selection unexpectedly                           
@@ -2957,6 +3067,7 @@ Draw.loadPlugin(function (ui) {
     installRootModuleCreationOverlay();
     installSelectedTeamModuleRoleOverlay();
     installSelectedRoleImageOverlay();
+    installRoleCardFieldClickEditing(); // NEW
 
     graph.addListener("usl:requestApplyModuleMargins", function (_sender, evt) {
         const cell = evt && evt.getProperty ? evt.getProperty("cell") : null;

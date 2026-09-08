@@ -5191,8 +5191,14 @@ Draw.loadPlugin(function (ui) {
         if (draft && draft.spacingYCm != null) attrs.spacing_y_cm = String(draft.spacingYCm);
         if (draft && draft.spacingXCm != null && draft.spacingYCm != null && Number(draft.spacingXCm) === Number(draft.spacingYCm)) attrs.spacing_cm = String(draft.spacingXCm);
         if (draft && draft.vegDiameterCm != null) attrs.veg_diameter_cm = String(draft.vegDiameterCm);
-        if (draft && draft.offsetXCm != null) attrs.layout_offset_x_cm = String(draft.offsetXCm);
-        if (draft && draft.offsetYCm != null) attrs.layout_offset_y_cm = String(draft.offsetYCm);
+        if (draft && draft.offsetXCm != null) {
+            attrs.layout_offset_x_cm = String(draft.offsetXCm);
+            attrs.companion_offset_x_cm = ""; // CHANGE: previewed planting offsets must override stale legacy companion offsets.
+        }
+        if (draft && draft.offsetYCm != null) {
+            attrs.layout_offset_y_cm = String(draft.offsetYCm);
+            attrs.companion_offset_y_cm = ""; // CHANGE: previewed planting offsets must override stale legacy companion offsets.
+        }
         if (draft && draft.label != null) attrs.label = String(draft.label);
         if (draft && draft.abbr != null) attrs.plant_abbr = String(draft.abbr);
         return attrs;

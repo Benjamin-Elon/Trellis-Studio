@@ -2523,6 +2523,55 @@ test("task manager refreshes week-view staged paging after selected-period conte
     assert.equal(attr(h.weekWedLane, "task_page_anchor_card_id"), null); // NEW: weekday schedule lanes remain unpaged
 });
 
+test("task manager week-view staged search filters task fields without persisting state", async () => {
+    const h = makeHarness();
+    for (let i = 0; i < 10; i++) addHarnessCard(h, h.stagedLane, `stagedSearchExtra${i}`, { workflow_state: "STAGED", title: `Queued bed prep ${i}`, notes: "bulk queue" });
+    h.setState(h.stagedLane, { x: 20, y: 40, width: 220, height: 260 });
+    h.graph.setSelectionCell(h.board);
+    h.fireModelChange();
+    await nextTick();
+    await nextTick();
+
+    const search = h.document.querySelector(".trellis-task-staged-search input[type='search']");
+    assert.ok(search);
+    assert.equal(search.placeholder, "Search staged tasks");
+    assert.equal(search.closest(".trellis-task-staged-search").style.display, "block");
+    assert.ok(h.document.querySelector(".trellis-task-lane-pager[data-lane-id='staged']"));
+
+    search.value = "compost";
+    search.dispatchEvent(new h.document.defaultView.Event("input", { bubbles: true }));
+    await nextTick();
+    await nextTick();
+
+    assert.equal(h.stagedCard.visible, true);
+    assert.equal(h.stagedBeforeCard.visible, false);
+    assert.equal(h.stagedAfterCard.visible, false);
+    assert.equal(h.stagedInvalidCard.visible, false);
+    assert.equal(attr(h.stagedLane, "task_page_anchor_card_id"), null);
+    assert.equal(attr(h.stagedLane, "label"), "TODO (staged)");
+    assert.equal(attr(h.stagedLane, "task_staged_search_query"), null);
+
+    search.value = "No date";
+    search.dispatchEvent(new h.document.defaultView.Event("input", { bubbles: true }));
+    await nextTick();
+    assert.equal(h.stagedCard.visible, false);
+    assert.equal(h.stagedInvalidCard.visible, true);
+
+    search.value = "";
+    search.dispatchEvent(new h.document.defaultView.Event("input", { bubbles: true }));
+    await nextTick();
+    await nextTick();
+
+    const visibleStagedCards = h.stagedLane.children.filter(child => attr(child, "kanban_card") === "1" && child.visible !== false);
+    assert.ok(visibleStagedCards.length > 1);
+    assert.match(attr(h.stagedLane, "label"), /^TODO \(staged\)\nPage 1 of /);
+
+    setAttr(h.board, "task_view_mode", "FULL");
+    h.fireModelChange();
+    await nextTick();
+    assert.equal(h.document.querySelector(".trellis-task-staged-search").style.display, "none");
+});
+
 test("task manager week-view staged width persists separately from weekday widths", async () => {
     const h = makeHarness();
     h.graph.setSelectionCell(h.board);
@@ -3047,7 +3096,7 @@ test("task manager assignment picker groups linked roles, searches, and applies 
     setAttr(h.board, "task_view_mode", "FULL");
     h.fireModelChange();
     await nextTick();
-    assert.equal(h.document.querySelectorAll(".trellis-task-assignee-stack").length, 0);
+    assert.equal(h.document.querySelectorAll(".trellis-task-assignee-stack").length, 1);
 });
 
 test("task manager bulk assignment uses reversible Existing and All cards controls", async () => {

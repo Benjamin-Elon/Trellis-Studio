@@ -175,15 +175,18 @@ test('scheduler sibling plant groups clone footprint and attrs without reusing s
 
 test('plant tiler exposes a read-only draft group preview helper', () => {
     const source = readPlantTilerSource();
+    const attrsSource = sourceSlice(source, 'function previewDraftAttrs', 'function previewStyleRotationDeg');
     const helperSource = sourceSlice(source, 'function buildDraftTilerGroupPreview', 'function listGardenBeds');
     const exportSource = sourceSlice(source, 'window.USL.tiler = Object.assign', 'installTrellisDebugSurface');
 
+    assert.match(attrsSource, /attrs\.companion_offset_x_cm = "";/);
+    assert.match(attrsSource, /attrs\.companion_offset_y_cm = "";/);
     assert.match(helperSource, /function buildDraftTilerGroupPreview\(activeGraph, groupCell, draft = \{\}, opts = \{\}\)/);
     assert.match(helperSource, /makeDraftPreviewCell\(groupCell, rect, attrs\)/);
     assert.match(helperSource, /computeGridStatsXY\(previewCell, spacingXpx, spacingYpx\)/);
     assert.match(helperSource, /readDisabledSet\(groupCell\)/);
     assert.match(helperSource, /maxCircles[\s\S]*1000/);
-    assert.match(helperSource, /rotatePointAround\(clamped, groupCenterLocal\(previewCell\), rotationDeg\)/);
+    assert.match(helperSource, /rotatePointAround\(shifted, groupCenterLocal\(previewCell\), rotationDeg\)/);
     assert.match(helperSource, /circles\.push\(\{ row: r, col: c, x: rect\.x \+ center\.x, y: rect\.y \+ center\.y, r: iconDiam \/ 2, label: abbr, fontPx: tileFont \}\);/);
     assert.match(helperSource, /lodCollapsed: false/);
     assert.doesNotMatch(helperSource, /model\.beginUpdate|model\.endUpdate|graph\.addCell|graph\.addCells|graph\.removeCells|model\.set/);
@@ -210,10 +213,11 @@ test('interplant companion groups offset alternating tile slots during retile', 
     assert.match(slotSource, /x: Math\.min\(maxX, center\.x \+ spacingXpx \/ 2\)/);
     assert.match(source, /function layoutGridOffsetPx\(groupCell\)/);
     assert.match(source, /getXmlAttr\(groupCell, "companion_offset_x_cm", ""\)/);
-    assert.match(source, /function clampSlotCenterInsidePlantingFrame\(groupCell, center, iconDiamPx, bandPx\)/);
+    assert.match(source, /finiteNumberOrNull\(getXmlAttr\(groupCell, "companion_offset_x_cm", ""\)\) \?\? finiteNumberOrNull\(getXmlAttr\(groupCell, "layout_offset_x_cm", ""\)\)/);
+    assert.match(source, /function isPointInPlantingContentArea\(groupCell, center, bandPx\)/);
     assert.match(slotSource, /function layoutSlotCenterLocal\(groupCell, r, c, spacingXpx, spacingYpx, bandPx, iconDiamPx\)/);
-    assert.match(slotSource, /const logical = interplantSlotCenterLocal\(groupCell, r, c, spacingXpx, spacingYpx, bandPx\);/);
-    assert.match(slotSource, /const shifted = \{[\s\S]*x: logical\.x \+ offset\.x,[\s\S]*y: logical\.y \+ offset\.y/);
+    assert.match(source, /function shiftedSlotCenterLocal\(groupCell, r, c, spacingXpx, spacingYpx, bandPx\)/);
+    assert.match(source, /const shifted = shiftedSlotCenterLocal\(groupCell, r, c, spacingXpx, spacingYpx, bandPx\);/); // CHANGE: offset application is centralized before bounds checks.
     assert.match(expandSource, /tileGeometryAtSlot\(groupCell, r, c, spacingXpx, spacingYpx, iconDiamPx, bandPx\)/);
     assert.match(trimSource, /reason: "layout-grid-offset"/);
 });

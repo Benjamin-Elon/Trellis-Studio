@@ -6,7 +6,8 @@
  *     { moduleCellId: string, dashCellId?: string, year: number }
  *
  * Stores plan JSON on the module cell attribute:
- *   plan_year_json  -> JSON object keyed by year string
+ *   plan_year_json         -> committed valid plan JSON object keyed by year string
+ *   plan_year_drafts_json  -> resumable draft plan JSON object keyed by year string
  */
 Draw.loadPlugin(function (ui) {
     const graph = ui.editor && ui.editor.graph;
@@ -16,12 +17,13 @@ Draw.loadPlugin(function (ui) {
 
     // -------------------- Config --------------------
     const PLAN_YEARS_ATTR = "plan_year_json";
+    const PLAN_DRAFTS_ATTR = "plan_year_drafts_json"; // CHANGE: drafts persist invalid/incomplete work without changing committed plans.
     const PLAN_TEMPLATES_ATTR = "plan_year_templates";      // (diagram-scoped)
     const PLAN_UNIT_DEFAULTS_ATTR = "plan_unit_defaults";   // (diagram-scoped, per plantId)
     const PLAN_METADATA_CELL_ATTR = "usl_year_planner_metadata";
     const EPS = 0.0001;
     const TRELLIS_DIALOG_Z = 2000000000;
-    const EMPTY_PLAN_SAVE_MESSAGE = "Add at least one crop to the year plan before saving."; // CHANGE: empty plans can be edited but not persisted.
+    const EMPTY_PLAN_SAVE_MESSAGE = "Add at least one crop to the year plan before publishing."; // CHANGE: empty plans persist as drafts but cannot become committed plans.
     const __YP_GLOBAL = window.__uslYearPlannerGlobal || (window.__uslYearPlannerGlobal = {});
 
     function installTrellisInteractionModeController() {
@@ -183,6 +185,7 @@ Draw.loadPlugin(function (ui) {
             uid,
             ATTRS: {
                 PLAN_YEARS_ATTR,
+                PLAN_DRAFTS_ATTR, // CHANGE
                 PLAN_TEMPLATES_ATTR,
                 PLAN_UNIT_DEFAULTS_ATTR,
                 PLAN_METADATA_CELL_ATTR
@@ -261,7 +264,8 @@ Draw.loadPlugin(function (ui) {
                     planCheckExpanded: top.planCheckExpanded === true
                 },
                 collapsedDemandChannelIds: normalizeIdList(source.collapsedDemandChannelIds),
-                collapsedDemandLineIds: normalizeIdList(source.collapsedDemandLineIds)
+                collapsedDemandLineIds: normalizeIdList(source.collapsedDemandLineIds),
+                collapsedSelfSufficiencyLineIds: normalizeIdList(source.collapsedSelfSufficiencyLineIds)
             };
         }
 
@@ -283,7 +287,8 @@ Draw.loadPlugin(function (ui) {
                     planCheckExpanded: state.planCheckExpanded
                 },
                 collapsedDemandChannelIds: Array.from(state.collapsedDemandChannelIds || []),
-                collapsedDemandLineIds: Array.from(state.collapsedDemandLineIds || [])
+                collapsedDemandLineIds: Array.from(state.collapsedDemandLineIds || []),
+                collapsedSelfSufficiencyLineIds: Array.from(state.collapsedSelfSufficiencyLineIds || [])
             });
             try { store.setItem(storageKey(moduleCell, year), JSON.stringify(record)); } catch (_) { }
         }
@@ -570,22 +575,35 @@ Draw.loadPlugin(function (ui) {
             return list.find(c => c && c.id === cropId) || null;
         }
 
+        function normalizePackageUnitKey(unit) {
+            return String(unit || "").trim().toLowerCase();
+        } // CHANGE: demand-like rows may only use package units explicitly defined by the crop.
+
+        function packageUnitOptions(crop) {
+            const options = [];
+            const seen = new Set();
+            for (const pkg of ((crop && crop.packages) || [])) {
+                const unit = String(pkg && pkg.unit || "").trim();
+                const key = normalizePackageUnitKey(unit);
+                if (!key || seen.has(key)) continue;
+                seen.add(key);
+                options.push({ value: unit, label: unit });
+            }
+            return options;
+        } // CHANGE: package rows are the single source of selectable quantity units.
+
+        function hasPackageUnit(crop, unit) {
+            const key = normalizePackageUnitKey(unit);
+            if (!key) return false;
+            return ((crop && crop.packages) || []).some(pkg => normalizePackageUnitKey(pkg && pkg.unit) === key);
+        } // CHANGE
+
         function resolveUnitToKgPerUnit(crop, unit) {
-            const u = String(unit || "").trim().toLowerCase();
+            const u = normalizePackageUnitKey(unit);
             if (!u) return NaN;
 
-            if (u === "kg") return 1;
-            if (u === "g") return 0.001;
-            if (u === "lb" || u === "lbs") return 0.45359237;
-
-            if (u === "plant" || u === "plants") {
-                const kgPerPlant = Number(crop && crop.kgPerPlant);
-                if (!Number.isFinite(kgPerPlant) || kgPerPlant <= 0) return NaN;
-                return kgPerPlant;
-            }
-
             const packs = (crop && crop.packages) ? crop.packages : [];
-            const p = packs.find(x => String(x.unit || "").trim().toLowerCase() === u);
+            const p = packs.find(x => normalizePackageUnitKey(x && x.unit) === u);
             if (!p) return NaN;
 
             const baseType = String(p.baseType || "").trim().toLowerCase();
@@ -604,10 +622,10 @@ Draw.loadPlugin(function (ui) {
         }
 
         function resolvePackagePriceForUnit(crop, unit) {
-            const u = String(unit || "").trim().toLowerCase();
+            const u = normalizePackageUnitKey(unit);
             if (!u) return NaN;
             const packs = Array.isArray(crop && crop.packages) ? crop.packages : [];
-            const pkg = packs.find(item => String(item && item.unit || "").trim().toLowerCase() === u);
+            const pkg = packs.find(item => normalizePackageUnitKey(item && item.unit) === u);
             if (!pkg || pkg.price === "" || pkg.price === null || pkg.price === undefined) return NaN;
             const price = Number(pkg.price);
             return Number.isFinite(price) && price >= 0 ? price : NaN;
@@ -1317,6 +1335,8 @@ Draw.loadPlugin(function (ui) {
             weekStartMsForDate,
             weekOffsetFromWindowStart,
             findCrop,
+            packageUnitOptions,
+            hasPackageUnit,
             resolvePackagePriceForUnit,
             resolveUnitToKgPerUnit,
             addKgAcrossWeeks,
@@ -1557,6 +1577,17 @@ Draw.loadPlugin(function (ui) {
             return crop.harvestWindowSource;
         }
 
+        function clearUnavailableQuantityUnits(plan) {
+            const clearIfUnavailable = line => {
+                if (!line || !String(line.unit || "").trim()) return;
+                const crop = PlanMath.findCrop(plan, line.cropId);
+                if (!crop || !PlanMath.hasPackageUnit(crop, line.unit)) line.unit = ""; // CHANGE: legacy built-in or stale units must be reselected from crop packages.
+            };
+            for (const line of ((plan && plan.demands) || [])) clearIfUnavailable(line);
+            for (const line of ((plan && plan.selfSufficiency && plan.selfSufficiency.lines) || [])) clearIfUnavailable(line);
+            for (const component of ((plan && plan.csa && plan.csa.components) || [])) clearIfUnavailable(component);
+        } // CHANGE
+
         function normalizeForRuntime(plan, year) {
             const normalized = plan && typeof plan === "object" ? plan : {};
             normalized.version = 2;
@@ -1594,6 +1625,7 @@ Draw.loadPlugin(function (ui) {
                     crop.germRate = 1.0;
                 }
             }
+            clearUnavailableQuantityUnits(normalized); // CHANGE
 
             return normalized;
         }
@@ -1842,6 +1874,7 @@ Draw.loadPlugin(function (ui) {
             normalizeForRuntime,
             stripRuntimeFields,
             serializeForPersistence,
+            clearUnavailableQuantityUnits, // CHANGE
             makeCropIdentityKey,
             getCropIdentityKey,
             findDuplicateCrop,
@@ -1970,6 +2003,37 @@ Draw.loadPlugin(function (ui) {
             writeJsonMap(moduleCell, Env.ATTRS.PLAN_YEARS_ATTR, plans);
         }
 
+        function normalizeDraftRecord(record, year) {
+            if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+            const rawPlan = (record.plan && typeof record.plan === "object" && !Array.isArray(record.plan)) ? record.plan : null;
+            if (!rawPlan) return null;
+            return {
+                plan: PlanSchema.normalizeForRuntime(PlanSchema.clonePlain(rawPlan), year),
+                updatedAt: String(record.updatedAt || "")
+            };
+        } // CHANGE: draft metadata stays outside the committed plan payload.
+
+        function loadDraftForYear(moduleCell, year) {
+            return normalizeDraftRecord(readJsonMap(moduleCell, Env.ATTRS.PLAN_DRAFTS_ATTR)[String(year)], year);
+        } // CHANGE
+
+        function saveDraftForYear(moduleCell, year, plan) {
+            const drafts = readJsonMap(moduleCell, Env.ATTRS.PLAN_DRAFTS_ATTR);
+            const record = {
+                plan: PlanSchema.serializeForPersistence(plan),
+                updatedAt: new Date().toISOString()
+            };
+            drafts[String(year)] = record;
+            writeJsonMap(moduleCell, Env.ATTRS.PLAN_DRAFTS_ATTR, drafts);
+            return normalizeDraftRecord(record, year);
+        } // CHANGE
+
+        function deleteDraftForYear(moduleCell, year) {
+            const drafts = readJsonMap(moduleCell, Env.ATTRS.PLAN_DRAFTS_ATTR);
+            delete drafts[String(year)];
+            writeJsonMap(moduleCell, Env.ATTRS.PLAN_DRAFTS_ATTR, drafts);
+        } // CHANGE
+
         function daysInMonthLocal(year, monthIndex) {
             return new Date(year, monthIndex + 1, 0).getDate();
         }
@@ -2091,6 +2155,9 @@ Draw.loadPlugin(function (ui) {
             loadPlanForYear,
             savePlanForYear,
             deletePlanForYear,
+            loadDraftForYear, // CHANGE
+            saveDraftForYear, // CHANGE
+            deleteDraftForYear, // CHANGE
             listTemplateNames,
             loadTemplateByName,
             saveTemplateByName,
@@ -3036,6 +3103,7 @@ Draw.loadPlugin(function (ui) {
             state.planCheckExpanded = top.planCheckExpanded === true;
             state.collapsedDemandChannelIds = new Set(Array.isArray(prefs.collapsedDemandChannelIds) ? prefs.collapsedDemandChannelIds.map(String).filter(Boolean) : []);
             state.collapsedDemandLineIds = new Set(Array.isArray(prefs.collapsedDemandLineIds) ? prefs.collapsedDemandLineIds.map(String).filter(Boolean) : []);
+            state.collapsedSelfSufficiencyLineIds = new Set(Array.isArray(prefs.collapsedSelfSufficiencyLineIds) ? prefs.collapsedSelfSufficiencyLineIds.map(String).filter(Boolean) : []);
             return state;
         }
 
@@ -3050,6 +3118,7 @@ Draw.loadPlugin(function (ui) {
                 planCheckScope: "combined",
                 collapsedDemandChannelIds: new Set(),
                 collapsedDemandLineIds: new Set(),
+                collapsedSelfSufficiencyLineIds: new Set(),
                 cropPlanExpanded: true,
                 planCheckExpanded: false,
                 hadBlockingErrors: false,
@@ -3059,6 +3128,7 @@ Draw.loadPlugin(function (ui) {
                 baselineSnapshot: "",
                 validationState: "idle",
                 lastSavedAt: null,
+                lastDraftSavedAt: null, // CHANGE
                 closePromptOpen: false,
                 extraDiagnostics: [],
                 saveValidationErrors: [] // CHANGE: populated only after save attempts so new empty plans do not open invalid.
@@ -3701,12 +3771,31 @@ Draw.loadPlugin(function (ui) {
     // -------------------- Dashboard modal controller --------------------
     /** Owns dashboard DOM construction, event orchestration, persistence, and session-scoped UI state. */
     const YearPlanModalController = (() => {
+        function parseStoredDate(value) {
+            const date = value ? new Date(value) : null;
+            return date && Number.isFinite(date.getTime()) ? date : null;
+        } // CHANGE
+
         function open(moduleCell, year) {
+            function loadWorkingYear(targetYear) {
+                const committed = PlanRepository.loadPlanForYear(moduleCell, targetYear);
+                const draft = PlanRepository.loadDraftForYear(moduleCell, targetYear);
+                const workingPlan = draft ? draft.plan : (committed || PlanSchema.createEmptyPlan(targetYear));
+                return {
+                    plan: PlanSchema.normalizeForRuntime(workingPlan, targetYear),
+                    loadedCommitted: !!committed,
+                    loadedDraft: !!draft,
+                    draftUpdatedAt: draft && draft.updatedAt || ""
+                };
+            } // CHANGE
+
             let currentYear = Number(year);
-            const existing = PlanRepository.loadPlanForYear(moduleCell, currentYear);
-            let loadedExistingForCurrentYear = !!existing;
-            const plan = PlanSchema.normalizeForRuntime(existing || PlanSchema.createEmptyPlan(currentYear), currentYear);
+            const initialWorkingYear = loadWorkingYear(currentYear); // CHANGE
+            let loadedExistingForCurrentYear = initialWorkingYear.loadedCommitted; // CHANGE
+            let loadedDraftForCurrentYear = initialWorkingYear.loadedDraft; // CHANGE
+            const plan = initialWorkingYear.plan; // CHANGE
             const state = YearPlanDashboard.createState(plan, YearPlanCollapsePreferences.load(moduleCell, currentYear));
+            state.lastDraftSavedAt = parseStoredDate(initialWorkingYear.draftUpdatedAt); // CHANGE
             const session = SessionController.start(moduleCell, currentYear, plan);
             const varietyCache = new Map();
             const methodCache = new Map();
@@ -3727,11 +3816,15 @@ Draw.loadPlugin(function (ui) {
             function pruneCollapseState() {
                 const channelIds = new Set((plan.demandChannels || []).map(channel => String(channel && channel.id || "")).filter(Boolean));
                 const lineIds = new Set((plan.demands || []).map(line => String(line && line.id || "")).filter(Boolean));
+                const selfLineIds = new Set(((plan.selfSufficiency && plan.selfSufficiency.lines) || []).map(line => String(line && line.id || "")).filter(Boolean));
                 for (const channelId of Array.from(state.collapsedDemandChannelIds || [])) {
                     if (!channelIds.has(String(channelId))) state.collapsedDemandChannelIds.delete(channelId);
                 }
                 for (const lineId of Array.from(state.collapsedDemandLineIds || [])) {
                     if (!lineIds.has(String(lineId))) state.collapsedDemandLineIds.delete(lineId);
+                }
+                for (const lineId of Array.from(state.collapsedSelfSufficiencyLineIds || [])) {
+                    if (!selfLineIds.has(String(lineId))) state.collapsedSelfSufficiencyLineIds.delete(lineId);
                 }
             }
 
@@ -3744,7 +3837,7 @@ Draw.loadPlugin(function (ui) {
             wrap.style.cssText = "position:fixed;inset:0;z-index:" + TRELLIS_DIALOG_Z + ";background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;";
             const card = document.createElement("div");
             card.className = "yp-modal-card";
-            card.style.cssText = "width:1180px;max-width:97vw;height:92vh;background:#fff;border:1px solid #777;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.25);display:flex;flex-direction:column;overflow:hidden;font:12px Arial,sans-serif;";
+            card.style.cssText = "position:relative;width:1180px;max-width:97vw;height:92vh;background:#fff;border:1px solid #777;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.25);display:flex;flex-direction:column;overflow:hidden;font:12px Arial,sans-serif;"; // CHANGE: card-local overlay positioning needs a containing block.
             const style = document.createElement("style");
             style.textContent = `
                 .yp-modal-card{--yp-primary:${YP_COLORS.primary};--yp-primary-bg:${YP_COLORS.primaryBg};--yp-primary-soft:${YP_COLORS.primarySoft};--yp-primary-dark:${YP_COLORS.primaryDark};--yp-success:${YP_COLORS.success};--yp-success-bg:${YP_COLORS.successBg};--yp-danger:${YP_COLORS.danger};--yp-danger-bg:${YP_COLORS.dangerBg};--yp-warning:${YP_COLORS.warning};--yp-warning-bg:${YP_COLORS.warningBg};--yp-neutral-900:${YP_COLORS.neutral900};--yp-neutral-700:${YP_COLORS.neutral700};--yp-neutral-500:${YP_COLORS.neutral500};--yp-neutral-300:${YP_COLORS.neutral300};--yp-neutral-100:${YP_COLORS.neutral100}}
@@ -3833,7 +3926,8 @@ Draw.loadPlugin(function (ui) {
                 .yp-chip[data-clickable="true"]{cursor:pointer}
                 .yp-diagnostics-wrap{display:inline-flex;align-items:center;gap:4px;position:relative}
                 .yp-diagnostics-trigger{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--yp-danger);border-radius:50%;background:#fff;color:var(--yp-danger);font:700 12px Arial,sans-serif;cursor:pointer}
-                .yp-diagnostics-popover{position:absolute;z-index:2;top:calc(100% + 4px);right:0;min-width:230px;max-width:320px;padding:7px;border:1px solid var(--yp-danger);border-radius:7px;background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.18);color:var(--yp-neutral-900)}
+                .yp-diagnostics-layer{position:absolute;inset:0;z-index:4;pointer-events:none}
+                .yp-diagnostics-popover{position:absolute;z-index:2;min-width:230px;max-width:320px;padding:7px;border:1px solid var(--yp-danger);border-radius:7px;background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.18);color:var(--yp-neutral-900);pointer-events:auto}
                 .yp-diagnostics-popover[hidden]{display:none}
                 .yp-diagnostics-title{font-weight:700;margin-bottom:5px;color:var(--yp-danger)}
                 .yp-diagnostics-item{display:block;width:100%;padding:5px 6px;border:0;border-radius:5px;background:#fff;text-align:left;color:var(--yp-neutral-900);font:12px Arial,sans-serif;cursor:pointer}
@@ -3963,6 +4057,8 @@ Draw.loadPlugin(function (ui) {
             const totalsBox = document.createElement("div");
             const diagnosticsBox = document.createElement("div");
             diagnosticsBox.style.marginTop = "10px";
+            const diagnosticsLayer = document.createElement("div"); // CHANGE
+            diagnosticsLayer.className = "yp-diagnostics-layer"; // CHANGE
             chartControls.appendChild(document.createTextNode("Scope"));
             chartControls.appendChild(planCheckScopeSel);
             chartControls.appendChild(document.createTextNode("Crop filter"));
@@ -3995,11 +4091,16 @@ Draw.loadPlugin(function (ui) {
             card.appendChild(secondaryToolbar);
             card.appendChild(body);
             card.appendChild(footer);
+            card.appendChild(diagnosticsLayer); // CHANGE: popovers render above scrollable content without inheriting clipped overflow.
             wrap.appendChild(card);
             document.body.appendChild(wrap);
             session.ui.modalEl = wrap;
             SessionController.addWindowListener(session, "keydown", event => { if (event.key === "Escape") closeDiagnosticsPopovers(null); });
             SessionController.addWindowListener(session, "click", event => { if (!event.target || !event.target.closest || !event.target.closest(".yp-diagnostics-wrap")) closeDiagnosticsPopovers(null); });
+            SessionController.addWindowListener(session, "resize", () => closeDiagnosticsPopovers(null)); // CHANGE: avoid stale absolute popover placement after viewport changes.
+            const closeDiagnosticsOnScroll = () => closeDiagnosticsPopovers(null); // CHANGE
+            body.addEventListener("scroll", closeDiagnosticsOnScroll); // CHANGE: close instead of letting detached popovers drift while content scrolls.
+            session.disposers.push(() => body.removeEventListener("scroll", closeDiagnosticsOnScroll)); // CHANGE
 
             function getWheelDeltaY(event) {
                 if (!event) return 0;
@@ -4084,6 +4185,31 @@ Draw.loadPlugin(function (ui) {
                 return select;
             }
 
+            function captureDetailFocus(details) {
+                const active = document.activeElement;
+                if (!active || !details || !details.contains(active) || !active.dataset || !active.dataset.yearPlanField) return null;
+                const dataset = {};
+                for (const key of ["yearPlanField", "cropId", "packageIndex", "csaComponentIndex", "yearPlanDemandChannelId", "yearPlanDemandLineId", "yearPlanSelfLineId", "yearPlanSelfLineIndex"]) {
+                    if (active.dataset[key] !== undefined) dataset[key] = String(active.dataset[key]);
+                }
+                return {
+                    dataset,
+                    selectionStart: typeof active.selectionStart === "number" ? active.selectionStart : null,
+                    selectionEnd: typeof active.selectionEnd === "number" ? active.selectionEnd : null
+                };
+            } // CHANGE: rebuilding cached strip details should not interrupt editing the same logical field.
+
+            function restoreDetailFocus(details, snapshot) {
+                if (!details || !snapshot || !snapshot.dataset || !snapshot.dataset.yearPlanField) return;
+                const candidates = Array.from(details.querySelectorAll("[data-year-plan-field]"));
+                const target = candidates.find(control => Object.entries(snapshot.dataset).every(([key, value]) => String(control.dataset[key] || "") === value));
+                if (!target || target.disabled) return;
+                target.focus();
+                if (snapshot.selectionStart !== null && typeof target.setSelectionRange === "function") {
+                    try { target.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd); } catch (_) { }
+                }
+            } // CHANGE
+
             /**
              * Renders one persistent collapsible strip shell and rebuilds its details only when requested.
              */
@@ -4126,9 +4252,11 @@ Draw.loadPlugin(function (ui) {
                 shell.details.style.display = settings.expanded ? "block" : "none";
                 const shouldBuild = !!settings.rebuildDetails || (!shell.detailsBuilt && (settings.expanded || settings.mountWhenCollapsed));
                 if (shouldBuild && settings.renderDetails) {
+                    const focusSnapshot = captureDetailFocus(shell.details); // CHANGE
                     shell.details.innerHTML = "";
                     settings.renderDetails(shell.details);
                     shell.detailsBuilt = true;
+                    restoreDetailFocus(shell.details, focusSnapshot); // CHANGE
                 }
                 return shell;
             }
@@ -4182,9 +4310,33 @@ Draw.loadPlugin(function (ui) {
 
             function closeDiagnosticsPopovers(except) {
                 for (const popover of card.querySelectorAll(".yp-diagnostics-popover")) {
-                    if (popover !== except) { popover.hidden = true; if (popover.parentElement) popover.parentElement.dataset.pinned = "false"; }
+                    if (popover.__ypDiagnosticsOwner && !popover.__ypDiagnosticsOwner.isConnected) { popover.remove(); continue; } // CHANGE
+                    if (popover !== except) {
+                        popover.hidden = true;
+                        if (popover.__ypDiagnosticsOwner) popover.__ypDiagnosticsOwner.dataset.pinned = "false"; // CHANGE
+                    }
                 }
             }
+
+            function positionDiagnosticsPopover(trigger, popover) {
+                if (!trigger || !popover || !card.isConnected) return;
+                if (popover.parentElement !== diagnosticsLayer) diagnosticsLayer.appendChild(popover); // CHANGE
+                const cardRect = card.getBoundingClientRect();
+                const triggerRect = trigger.getBoundingClientRect();
+                popover.hidden = false;
+                const width = Math.max(230, Math.min(320, popover.offsetWidth || 230));
+                const height = popover.offsetHeight || 80;
+                const gutter = 8;
+                const preferredLeft = triggerRect.right - cardRect.left - width;
+                const maximumLeft = Math.max(gutter, cardRect.width - width - gutter);
+                const left = Math.max(gutter, Math.min(maximumLeft, preferredLeft));
+                const belowTop = triggerRect.bottom - cardRect.top + 4;
+                const aboveTop = triggerRect.top - cardRect.top - height - 4;
+                const fitsBelow = belowTop + height <= cardRect.height - gutter;
+                const top = fitsBelow ? belowTop : Math.max(gutter, aboveTop);
+                popover.style.left = `${left}px`;
+                popover.style.top = `${top}px`;
+            } // CHANGE
 
             function focusAndHighlight(element) {
                 if (!element) return false;
@@ -4195,6 +4347,10 @@ Draw.loadPlugin(function (ui) {
                 if (typeof element.scrollIntoView === "function") element.scrollIntoView({ block: "center", inline: "nearest" });
                 return true;
             }
+
+            function scrollToElement(element, block) {
+                if (element && typeof element.scrollIntoView === "function") element.scrollIntoView({ block: block || "start", inline: "nearest" });
+            } // CHANGE: command buttons should move the modal viewport to the section they reveal.
 
             function findTargetControl(target) {
                 if (!target || typeof target !== "object") return null;
@@ -4223,6 +4379,10 @@ Draw.loadPlugin(function (ui) {
                     renderCsa(true);
                 } else if (target.area === "self-sufficiency") {
                     state.selfSufficiencyExpanded = true; // NEW
+                    const line = target.selfLineId
+                        ? ((plan.selfSufficiency && plan.selfSufficiency.lines) || []).find(item => String(item && item.id || "") === String(target.selfLineId))
+                        : ((plan.selfSufficiency && plan.selfSufficiency.lines) || [])[Math.max(0, Math.trunc(Number(target.selfLineIndex) || 0))];
+                    if (line) state.collapsedSelfSufficiencyLineIds.delete(String(line.id || "")); // NEW
                     renderSelfSufficiencyStrip(true); // NEW
                 } else if (target.area === "demand") {
                     state.demandExpanded = true;
@@ -4257,6 +4417,7 @@ Draw.loadPlugin(function (ui) {
                 const popover = document.createElement("div");
                 popover.className = "yp-diagnostics-popover";
                 popover.hidden = true;
+                popover.__ypDiagnosticsOwner = wrapControl; // CHANGE
                 const title = document.createElement("div");
                 title.className = "yp-diagnostics-title";
                 title.textContent = label;
@@ -4269,12 +4430,14 @@ Draw.loadPlugin(function (ui) {
                     item.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); navigateToValidation(result, trigger); });
                     popover.appendChild(item);
                 }
-                const show = pinned => { closeDiagnosticsPopovers(popover); popover.hidden = false; if (pinned) wrapControl.dataset.pinned = "true"; };
+                const show = pinned => { closeDiagnosticsPopovers(popover); positionDiagnosticsPopover(trigger, popover); if (pinned) wrapControl.dataset.pinned = "true"; }; // CHANGE
                 const hide = () => { if (wrapControl.dataset.pinned !== "true") popover.hidden = true; };
                 trigger.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); const nextPinned = wrapControl.dataset.pinned !== "true"; wrapControl.dataset.pinned = nextPinned ? "true" : "false"; if (nextPinned) show(true); else popover.hidden = true; });
                 trigger.addEventListener("focus", () => show(false));
                 trigger.addEventListener("mouseenter", () => show(false));
-                wrapControl.addEventListener("mouseleave", hide);
+                wrapControl.addEventListener("mouseleave", event => { if (!popover.contains(event.relatedTarget)) hide(); }); // CHANGE
+                popover.addEventListener("mouseleave", hide); // CHANGE
+                popover.addEventListener("click", event => event.stopPropagation()); // CHANGE
                 wrapControl.addEventListener("click", event => event.stopPropagation());
                 wrapControl.appendChild(trigger);
                 wrapControl.appendChild(popover);
@@ -4351,21 +4514,40 @@ Draw.loadPlugin(function (ui) {
                 renderPlanCheck();
             }
 
-            function listUnitOptions(crop) {
-                const options = [{ value: "kg", label: "kg" }, { value: "g", label: "g" }, { value: "lb", label: "lb" }, { value: "plant", label: "plant" }];
-                const seen = new Set(options.map(option => option.value));
-                for (const pkg of ((crop && crop.packages) || [])) {
-                    const unit = String(pkg && pkg.unit || "").trim();
-                    const key = unit.toLowerCase();
-                    if (!key || seen.has(key)) continue;
-                    seen.add(key);
-                    options.push({ value: unit, label: unit });
-                }
-                return options;
-            }
+            const ADD_PACKAGES_UNIT_VALUE = "__trellis_add_packages__"; // CHANGE
 
             function defaultUnit(crop) {
-                return String(crop && crop.packages && crop.packages[0] && crop.packages[0].unit || "").trim() || "kg";
+                const first = PlanMath.packageUnitOptions(crop)[0];
+                return first ? String(first.value || "") : "";
+            } // CHANGE
+
+            function mkPackageUnitSelect(crop, selectedUnit, width) {
+                const options = PlanMath.packageUnitOptions(crop);
+                const selectedKey = String(selectedUnit || "").trim().toLowerCase();
+                const selectedOption = options.find(option => String(option && option.value || "").trim().toLowerCase() === selectedKey);
+                const value = selectedOption ? String(selectedOption.value || "") : "";
+                const select = mkSelect([], "", width);
+                const placeholder = new Option(options.length ? "-- Select package unit --" : "-- Add package unit --", "");
+                placeholder.disabled = true;
+                select.appendChild(placeholder);
+                for (const option of options) select.appendChild(new Option(option.label, option.value));
+                const addPackages = new Option("Add packages...", ADD_PACKAGES_UNIT_VALUE);
+                addPackages.disabled = !crop;
+                select.appendChild(addPackages);
+                select.value = value;
+                return select;
+            } // CHANGE
+
+            function handlePackageUnitSelection(select, cropId, setUnit, refresh) {
+                if (select.value === ADD_PACKAGES_UNIT_VALUE) {
+                    setUnit("");
+                    select.value = "";
+                    if (typeof refresh === "function") refresh();
+                    if (cropId) openCropPackages(cropId);
+                    return;
+                }
+                setUnit(select.value);
+                if (typeof refresh === "function") refresh();
             }
 
             function ensureSelectOption(select, value, label) {
@@ -4644,11 +4826,13 @@ Draw.loadPlugin(function (ui) {
                 state.planCheckScope = current;
             } // NEW: Plan Check can scope chart and totals without changing persisted demand.
 
-            function replacePlan(nextPlan, nextYear, loadedExisting) {
+            function replacePlan(nextPlan, nextYear, loadedExisting, loadedDraft, draftUpdatedAt) {
+                closeDiagnosticsPopovers(null); // CHANGE
                 Object.keys(plan).forEach(key => delete plan[key]);
                 Object.assign(plan, PlanSchema.normalizeForRuntime(nextPlan, nextYear));
                 currentYear = Number(nextYear);
                 loadedExistingForCurrentYear = !!loadedExisting;
+                loadedDraftForCurrentYear = !!loadedDraft; // CHANGE
                 plan.year = currentYear;
                 state.selectedCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, "", 0);
                 state.activeTab = "basics";
@@ -4658,8 +4842,10 @@ Draw.loadPlugin(function (ui) {
                 state.hadDemandErrors = false;
                 state.validationState = "idle";
                 state.lastSavedAt = null;
+                state.lastDraftSavedAt = parseStoredDate(draftUpdatedAt); // CHANGE
                 state.closePromptOpen = false;
                 state.extraDiagnostics = [];
+                state.collapsedSelfSufficiencyLineIds = new Set(); // NEW
                 YearPlanDashboard.applyCollapsePreferences(state, YearPlanCollapsePreferences.load(moduleCell, currentYear));
                 titleEl.textContent = `Plan Year ${currentYear}`;
                 yearInput.value = String(currentYear);
@@ -4686,6 +4872,7 @@ Draw.loadPlugin(function (ui) {
                 const statusRow = document.createElement("div");
                 statusRow.className = "yp-chip-row";
                 statusRow.appendChild(createChip("Status", statusText, statusToneName));
+                if (loadedDraftForCurrentYear) statusRow.appendChild(createChip("Draft", "", "primary")); // CHANGE
                 if (dirty) statusRow.appendChild(createChip("Unsaved", "", "primary"));
                 head.appendChild(titleGroup);
                 head.appendChild(statusRow);
@@ -4995,9 +5182,17 @@ Draw.loadPlugin(function (ui) {
 
             function renderFooter() {
                 const dirty = YearPlanDashboard.isDirty(state, plan);
-                reset.textContent = loadedExistingForCurrentYear ? "Reset" : "Clear";
-                if (state.validationState === "invalid") footerStatus.textContent = "Validation failed";
+                const commitReady = isCommitReady(); // CHANGE
+                save.textContent = commitReady ? "Save" : "Save draft"; // CHANGE
+                saveClose.textContent = commitReady ? "Save & Close" : "Save draft & Close"; // CHANGE
+                promptSave.textContent = commitReady ? "Save and Close" : "Save draft and close"; // CHANGE
+                exportButton.textContent = loadedDraftForCurrentYear || !commitReady ? "Export draft" : "Export"; // CHANGE
+                reset.textContent = loadedDraftForCurrentYear ? "Discard draft" : (loadedExistingForCurrentYear ? "Reset" : "Clear"); // CHANGE
+                if (state.validationState === "invalid" && state.lastDraftSavedAt) footerStatus.textContent = `Draft saved ${state.lastDraftSavedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}; validation failed`; // CHANGE
+                else if (state.validationState === "invalid") footerStatus.textContent = "Validation failed";
                 else if (dirty) footerStatus.textContent = "Unsaved changes";
+                else if (loadedDraftForCurrentYear && state.lastDraftSavedAt) footerStatus.textContent = `Draft saved ${state.lastDraftSavedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`; // CHANGE
+                else if (loadedDraftForCurrentYear) footerStatus.textContent = "Loaded draft"; // CHANGE
                 else if (state.lastSavedAt) footerStatus.textContent = `Last saved ${state.lastSavedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
                 else footerStatus.textContent = loadedExistingForCurrentYear ? "Loaded saved plan" : "New plan";
                 headerStatus.textContent = footerStatus.textContent;
@@ -5036,12 +5231,14 @@ Draw.loadPlugin(function (ui) {
                 const options = renderOptions || {};
                 if (((plan && plan.crops) || []).length && state.saveValidationErrors.length) state.saveValidationErrors = []; // CHANGE: clear save-only empty-plan errors as soon as the plan has a crop.
                 const beforeRecalculation = captureDateRangeSnapshot();
+                PlanSchema.clearUnavailableQuantityUnits(plan); // CHANGE: package edits immediately clear row units that no longer exist.
                 runtime = PlanRuntimeService.recalculate(moduleCell, currentYear, plan);
                 const dirty = state.baselineSnapshot ? YearPlanDashboard.isDirty(state, plan) : false;
                 dashboard = YearPlanDashboard.compute(plan, runtime, { dirty, extraDiagnostics: state.extraDiagnostics, extraValidationErrors: state.saveValidationErrors }); // CHANGE: include save-only validation after failed saves.
                 const demandErrors = PlanSchema.validateDemand(plan);
                 const selfSufficiencyErrors = PlanSchema.validateSelfSufficiency(plan);
                 const hadDemandErrors = state.hadDemandErrors;
+                const hadSelfSufficiencyErrors = state.hadSelfSufficiencyErrors; // NEW
                 const expansionChanges = YearPlanDashboard.syncExpansionState(state, dashboard, PlanSchema.validateCsa(plan), demandErrors, selfSufficiencyErrors);
                 if (demandErrors.length && !hadDemandErrors) {
                     for (const error of demandErrors) {
@@ -5059,6 +5256,15 @@ Draw.loadPlugin(function (ui) {
                         }
                     }
                 }
+                if (selfSufficiencyErrors.length && !hadSelfSufficiencyErrors) { // NEW
+                    for (const error of selfSufficiencyErrors) { // NEW
+                        const target = error && error.target || {}; // NEW
+                        const line = target.selfLineId // NEW
+                            ? ((plan.selfSufficiency && plan.selfSufficiency.lines) || []).find(item => String(item && item.id || "") === String(target.selfLineId)) // NEW
+                            : (target.selfLineIndex !== undefined ? ((plan.selfSufficiency && plan.selfSufficiency.lines) || [])[Math.max(0, Math.trunc(Number(target.selfLineIndex) || 0))] : null); // NEW
+                        if (line) state.collapsedSelfSufficiencyLineIds.delete(String(line.id || "")); // NEW
+                    } // NEW
+                } // NEW
                 state.selectedCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, state.selectedCropId, 0);
                 const afterRecalculation = captureDateRangeSnapshot();
                 const comparisonSnapshot = beforeDateRanges || beforeRecalculation;
@@ -5387,7 +5593,7 @@ Draw.loadPlugin(function (ui) {
                 const priorityLabel = priorityValue.charAt(0).toUpperCase() + priorityValue.slice(1);
                 return [
                     createChip("Crop", crop ? cropLabel(crop) : String(line && line.cropId || "Crop"), crop ? "primary" : "warning"),
-                    createChip("Qty", `${formatCompactNumber(line && line.qty)} ${line && line.unit || "kg"} / ${demandFrequencyLabel(line && line.frequency, line && line.everyN)}`, "neutral"),
+                    createChip("Qty", `${formatCompactNumber(line && line.qty)} ${line && line.unit || "No unit"} / ${demandFrequencyLabel(line && line.frequency, line && line.everyN)}`, "neutral"), // CHANGE
                     createChip("Dates", `${from}-${to}`, from === "?" || to === "?" ? "warning" : "neutral"),
                     createChip("Priority", priorityLabel, "neutral"),
                     createChip("Demand", formatKg(demandKg), "neutral"),
@@ -5446,7 +5652,7 @@ Draw.loadPlugin(function (ui) {
                 const cropSelect = mkSelect((plan.crops || []).map(item => ({ value: item.id, label: cropLabel(PlanMath.findCrop(plan, item.id)) })), line.cropId || "");
                 const qty = mkInput("number", line.qty ?? 1);
                 qty.min = "0"; qty.step = "any";
-                const unit = mkSelect(listUnitOptions(crop), line.unit || defaultUnit(crop));
+                const unit = mkPackageUnitSelect(crop, line.unit || defaultUnit(crop));
                 const frequency = mkSelect([{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }], line.frequency || "week");
                 const every = mkInput("number", line.everyN ?? 1);
                 every.min = "1"; every.step = "1";
@@ -5499,7 +5705,7 @@ Draw.loadPlugin(function (ui) {
                     refreshDerived(null, { rebuildDemand: true });
                 });
                 qty.addEventListener("input", () => { line.qty = Math.max(0, Number(qty.value) || 0); debounceRefresh(); });
-                unit.addEventListener("change", () => { line.unit = unit.value; refreshDerived(null, { rebuildDemand: true }); });
+                unit.addEventListener("change", () => handlePackageUnitSelection(unit, line.cropId, value => { line.unit = value; }, () => refreshDerived(null, { rebuildDemand: true }))); // CHANGE
                 frequency.addEventListener("change", () => { line.frequency = frequency.value; refreshDerived(); });
                 every.addEventListener("input", () => { line.everyN = Math.max(1, Math.trunc(Number(every.value) || 1)); debounceRefresh(); });
                 priority.addEventListener("change", () => { line.priority = priority.value; refreshDerived(); });
@@ -5652,7 +5858,7 @@ Draw.loadPlugin(function (ui) {
                 const to = YearPlanDashboard.formatYmd(line && line.to) || "?";
                 return [
                     createChip("Crop", crop ? cropLabel(crop) : String(line && line.cropId || "Crop"), crop ? "primary" : "warning"),
-                    createChip("Qty", `${formatCompactNumber(line && line.qty)} ${line && line.unit || "kg"} / ${demandFrequencyLabel(line && line.frequency, line && line.everyN)}`, "neutral"),
+                    createChip("Qty", `${formatCompactNumber(line && line.qty)} ${line && line.unit || "No unit"} / ${demandFrequencyLabel(line && line.frequency, line && line.everyN)}`, "neutral"), // CHANGE
                     createChip("Dates", `${from}-${to}`, from === "?" || to === "?" ? "warning" : "neutral"),
                     createChip("Demand", formatKg(demandKg), "neutral"),
                     createChip(shortKg > EPS ? "Short" : "Status", shortKg > EPS ? formatKg(shortKg) : (result ? "OK" : "Not calculated"), shortKg > EPS ? "danger" : (result ? "success" : "warning")),
@@ -5666,6 +5872,7 @@ Draw.loadPlugin(function (ui) {
                 renderCropList();
                 renderSelectedEditor();
                 renderCropPlan(true);
+                scrollToElement(editorBox.querySelector("[data-year-plan-packages-section]") || editorBox, "start"); // CHANGE
             } // NEW
 
             function formatNutritionValue(value, unit) {
@@ -5701,18 +5908,26 @@ Draw.loadPlugin(function (ui) {
             function renderSelfSufficiencyLine(line, host, lineIndex) {
                 const crop = PlanMath.findCrop(plan, line.cropId);
                 const lineId = String(line.id || "");
+                const shell = document.createElement("section"); // NEW
+                shell.className = "yp-demand-line-shell yp-self-line-shell"; // NEW
+                shell.dataset.selfLineId = lineId; // NEW
+                shell.dataset.yearPlanSelfLineIndex = String(lineIndex); // NEW
+                const collapsed = state.collapsedSelfSufficiencyLineIds.has(lineId); // NEW
+                const header = document.createElement("div"); // NEW
+                header.className = "yp-demand-line-header yp-self-line-header"; // NEW
+                const toggle = mkBtn(collapsed ? "Expand" : "Collapse", "neutral"); // NEW
+                toggle.setAttribute("aria-expanded", collapsed ? "false" : "true"); // NEW
+                const summary = document.createElement("div"); // NEW
+                summary.className = "yp-demand-line-summary yp-self-line-summary"; // NEW
+                setChipRow(summary, selfLineSummaryChips(line, crop)); // NEW
+                header.appendChild(toggle); header.appendChild(summary); // NEW
                 const row = document.createElement("div");
-                row.className = "yp-demand-line yp-self-line";
-                row.dataset.selfLineId = lineId;
-                row.dataset.yearPlanSelfLineIndex = String(lineIndex);
-                const summary = document.createElement("div");
-                summary.className = "yp-self-line-summary";
-                summary.style.gridColumn = "1 / -1";
-                setChipRow(summary, selfLineSummaryChips(line, crop));
+                row.className = "yp-demand-line yp-self-line yp-self-line-details"; // NEW
+                row.style.display = collapsed ? "none" : "grid"; // NEW
                 const cropSelect = mkSelect((plan.crops || []).map(item => ({ value: item.id, label: cropLabel(item) })), line.cropId || "");
                 const qty = mkInput("number", line.qty ?? 1);
                 qty.min = "0"; qty.step = "any";
-                const unit = mkSelect(listUnitOptions(crop), line.unit || defaultUnit(crop));
+                const unit = mkPackageUnitSelect(crop, line.unit || defaultUnit(crop));
                 const frequency = mkSelect([{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }], line.frequency || "week");
                 const every = mkInput("number", line.everyN ?? 1);
                 every.min = "1"; every.step = "1";
@@ -5723,9 +5938,7 @@ Draw.loadPlugin(function (ui) {
                 editPackages.disabled = !crop;
                 editPackages.title = crop ? "Open this crop's Packages tab." : "Choose a crop before editing packages.";
                 ensureSelectOption(cropSelect, line.cropId, `${line.cropId || "Missing crop"} (unavailable)`);
-                ensureSelectOption(unit, line.unit, `${line.unit || "Missing unit"} (unavailable)`);
                 cropSelect.value = String(line.cropId || "");
-                unit.value = String(line.unit || defaultUnit(crop));
                 setYearPlanField(cropSelect, "cropId", { selfLineId: lineId, selfLineIndex: lineIndex });
                 setYearPlanField(qty, "qty", { selfLineId: lineId, selfLineIndex: lineIndex });
                 setYearPlanField(unit, "unit", { selfLineId: lineId, selfLineIndex: lineIndex });
@@ -5733,7 +5946,6 @@ Draw.loadPlugin(function (ui) {
                 setYearPlanField(every, "everyN", { selfLineId: lineId, selfLineIndex: lineIndex });
                 setYearPlanField(from, "from", { selfLineId: lineId, selfLineIndex: lineIndex });
                 setYearPlanField(to, "to", { selfLineId: lineId, selfLineIndex: lineIndex });
-                row.appendChild(summary);
                 addField(row, "Crop", cropSelect);
                 addField(row, "Qty", qty);
                 addField(row, "Unit", unit, Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, line.unit)) ? "" : "Add or repair this unit on the crop Packages tab.");
@@ -5743,7 +5955,15 @@ Draw.loadPlugin(function (ui) {
                 addField(row, "To", to);
                 addField(row, "Packages", editPackages);
                 addField(row, "Remove", remove);
-                host.appendChild(row);
+                shell.appendChild(header); // NEW
+                shell.appendChild(row); // NEW
+                host.appendChild(shell); // NEW
+                toggle.addEventListener("click", () => { // NEW
+                    if (collapsed) state.collapsedSelfSufficiencyLineIds.delete(lineId); // NEW
+                    else state.collapsedSelfSufficiencyLineIds.add(lineId); // NEW
+                    saveCollapsePreferences(); // NEW
+                    renderSelfSufficiencyStrip(true); // NEW
+                }); // NEW
                 cropSelect.addEventListener("change", () => {
                     const nextCrop = PlanMath.findCrop(plan, cropSelect.value);
                     line.cropId = cropSelect.value;
@@ -5752,18 +5972,21 @@ Draw.loadPlugin(function (ui) {
                     line.to = cropAvailabilityEnd(nextCrop);
                     refreshDerived(null, { rebuildSelfSufficiency: true });
                 });
-                qty.addEventListener("input", () => { line.qty = Math.max(0, Number(qty.value) || 0); debounceRefresh(); });
-                unit.addEventListener("change", () => { line.unit = unit.value; refreshDerived(null, { rebuildSelfSufficiency: true }); });
-                frequency.addEventListener("change", () => { line.frequency = frequency.value; refreshDerived(); });
-                every.addEventListener("input", () => { line.everyN = Math.max(1, Math.trunc(Number(every.value) || 1)); debounceRefresh(); });
+                qty.addEventListener("input", () => { line.qty = Math.max(0, Number(qty.value) || 0); debounceRefresh({ rebuildSelfSufficiency: true }); }); // CHANGE: nutrition coverage is rendered inside cached strip details.
+                unit.addEventListener("change", () => handlePackageUnitSelection(unit, line.cropId, value => { line.unit = value; }, () => refreshDerived(null, { rebuildSelfSufficiency: true }))); // CHANGE
+                frequency.addEventListener("change", () => { line.frequency = frequency.value; refreshDerived(null, { rebuildSelfSufficiency: true }); }); // CHANGE
+                every.addEventListener("input", () => { line.everyN = Math.max(1, Math.trunc(Number(every.value) || 1)); debounceRefresh({ rebuildSelfSufficiency: true }); }); // CHANGE
                 editPackages.addEventListener("click", () => { if (line.cropId) openCropPackages(line.cropId); });
                 bindPairedDateControls(from, to, {
                     diagnostic: `Self Sufficiency start date cannot be after end date for "${crop ? cropLabel(crop) : line.cropId}".`,
                     setStart: value => { line.from = value; },
-                    setEnd: value => { line.to = value; }
+                    setEnd: value => { line.to = value; },
+                    afterCommit: beforeDateRanges => refreshDerived(beforeDateRanges, { rebuildSelfSufficiency: true }) // CHANGE
                 });
                 remove.addEventListener("click", () => {
                     plan.selfSufficiency.lines = (plan.selfSufficiency.lines || []).filter(item => item !== line);
+                    state.collapsedSelfSufficiencyLineIds.delete(lineId); // NEW
+                    saveCollapsePreferences(); // NEW
                     refreshDerived(null, { rebuildSelfSufficiency: true });
                 });
             } // NEW
@@ -5805,11 +6028,14 @@ Draw.loadPlugin(function (ui) {
                     empty.textContent = "Add crop-specific household consumption lines to plan personal use.";
                     rowsHost.appendChild(empty);
                 }
-                adults.addEventListener("input", () => { plan.selfSufficiency.adults = Math.max(0, Math.trunc(Number(adults.value) || 0)); debounceRefresh(); });
-                children.addEventListener("input", () => { plan.selfSufficiency.children = Math.max(0, Math.trunc(Number(children.value) || 0)); debounceRefresh(); });
-                multiplier.addEventListener("input", () => { plan.selfSufficiency.nutritionMultiplier = Math.max(0.01, Number(multiplier.value) || 1); debounceRefresh(); });
+                adults.addEventListener("input", () => { plan.selfSufficiency.adults = Math.max(0, Math.trunc(Number(adults.value) || 0)); debounceRefresh({ rebuildSelfSufficiency: true }); }); // CHANGE
+                children.addEventListener("input", () => { plan.selfSufficiency.children = Math.max(0, Math.trunc(Number(children.value) || 0)); debounceRefresh({ rebuildSelfSufficiency: true }); }); // CHANGE
+                multiplier.addEventListener("input", () => { plan.selfSufficiency.nutritionMultiplier = Math.max(0.01, Number(multiplier.value) || 1); debounceRefresh({ rebuildSelfSufficiency: true }); }); // CHANGE
                 addLine.addEventListener("click", () => {
-                    plan.selfSufficiency.lines.push(createSelfSufficiencyLine());
+                    const line = createSelfSufficiencyLine(); // NEW
+                    plan.selfSufficiency.lines.push(line); // NEW
+                    state.collapsedSelfSufficiencyLineIds.delete(String(line.id || "")); // NEW
+                    saveCollapsePreferences(); // NEW
                     state.selfSufficiencyExpanded = true;
                     refreshDerived(null, { rebuildSelfSufficiency: true });
                 });
@@ -5888,6 +6114,7 @@ Draw.loadPlugin(function (ui) {
             }
 
             function renderPackages(crop, content) {
+                content.dataset.yearPlanPackagesSection = "true"; // CHANGE
                 const defaultLabel = document.createElement("label");
                 defaultLabel.className = "yp-row";
                 const saveDefault = document.createElement("input");
@@ -5933,7 +6160,12 @@ Draw.loadPlugin(function (ui) {
                     }
                 }
 
-                add.addEventListener("click", () => { crop.packages.push({ unit: "kg", baseType: "kg", baseQty: 1, price: NaN }); renderRows(); refreshDerived(null, { rebuildSelfSufficiency: true, rebuildDemand: true, rebuildCsa: true }); });
+                add.addEventListener("click", () => {
+                    crop.packages.push({ unit: "kg", baseType: "kg", baseQty: 1, price: NaN });
+                    renderRows();
+                    scrollToElement(rowsHost.querySelector(`.yp-package-row[data-package-index="${crop.packages.length - 1}"]`), "center"); // CHANGE
+                    refreshDerived(null, { rebuildSelfSufficiency: true, rebuildDemand: true, rebuildCsa: true });
+                });
                 renderRows();
             }
 
@@ -5970,10 +6202,12 @@ Draw.loadPlugin(function (ui) {
                 remove.addEventListener("click", () => {
                     const index = plan.crops.indexOf(crop);
                     const removedDemandLineIds = (plan.demands || []).filter(line => line.cropId === crop.id).map(line => String(line && line.id || ""));
+                    const removedSelfLineIds = ((plan.selfSufficiency && plan.selfSufficiency.lines) || []).filter(line => line.cropId === crop.id).map(line => String(line && line.id || "")); // NEW
                     plan.crops = plan.crops.filter(item => item !== crop);
                     if (plan.selfSufficiency && Array.isArray(plan.selfSufficiency.lines)) plan.selfSufficiency.lines = plan.selfSufficiency.lines.filter(line => line.cropId !== crop.id); // NEW
                     plan.demands = (plan.demands || []).filter(line => line.cropId !== crop.id);
                     for (const lineId of removedDemandLineIds) state.collapsedDemandLineIds.delete(lineId);
+                    for (const lineId of removedSelfLineIds) state.collapsedSelfSufficiencyLineIds.delete(lineId); // NEW
                     if (plan.csa && Array.isArray(plan.csa.components)) plan.csa.components = plan.csa.components.filter(component => component.cropId !== crop.id);
                     const nextCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, "", index);
                     if (nextCropId) setSelectedCropEverywhere(nextCropId);
@@ -6065,14 +6299,12 @@ Draw.loadPlugin(function (ui) {
                         const crop = PlanMath.findCrop(plan, component.cropId);
                         const cropSelect = mkSelect((plan.crops || []).map(item => ({ value: item.id, label: cropLabel(item) })), component.cropId || "", 220);
                         const qty = mkInput("number", component.qty ?? 1, 70);
-                        const unit = mkSelect(listUnitOptions(crop), component.unit || defaultUnit(crop), 100);
+                        const unit = mkPackageUnitSelect(crop, component.unit || defaultUnit(crop), 130);
                         const every = mkInput("number", component.everyNWeeks ?? 1, 65);
                         const from = mkInput("date", component.start || plan.csa.start || "", 145);
                         const to = mkInput("date", component.end || plan.csa.end || "", 145);
                         ensureSelectOption(cropSelect, component.cropId, `${component.cropId || "Missing crop"} (unavailable)`);
-                        ensureSelectOption(unit, component.unit, `${component.unit || "Missing unit"} (unavailable)`);
                         cropSelect.value = String(component.cropId || "");
-                        unit.value = String(component.unit || defaultUnit(crop));
                         setYearPlanField(cropSelect, "cropId", { componentIndex });
                         setYearPlanField(qty, "qty", { componentIndex });
                         setYearPlanField(unit, "unit", { componentIndex });
@@ -6084,7 +6316,7 @@ Draw.loadPlugin(function (ui) {
                         rowsHost.appendChild(row);
                         cropSelect.addEventListener("change", () => { component.cropId = cropSelect.value; component.unit = defaultUnit(PlanMath.findCrop(plan, component.cropId)); renderRows(); refreshDerived(); });
                         qty.addEventListener("input", () => { component.qty = Math.max(0, Number(qty.value) || 0); debounceRefresh(); });
-                        unit.addEventListener("change", () => { component.unit = unit.value; refreshDerived(); });
+                        unit.addEventListener("change", () => handlePackageUnitSelection(unit, component.cropId, value => { component.unit = value; }, () => refreshDerived(null, { rebuildCsa: true }))); // CHANGE
                         every.addEventListener("input", () => { component.everyNWeeks = Math.max(1, Math.trunc(Number(every.value) || 1)); debounceRefresh(); });
                         bindPairedDateControls(from, to, {
                             diagnostic: `CSA component start date cannot be after end date for "${crop ? crop.plant || crop.id : component.cropId}".`,
@@ -6122,8 +6354,40 @@ Draw.loadPlugin(function (ui) {
             function validateSaveReadiness() {
                 return ((plan && plan.crops) || []).length
                     ? []
-                    : [{ scope: "plan", code: "plan.empty_crops", message: EMPTY_PLAN_SAVE_MESSAGE, target: { area: "crop-list" } }]; // CHANGE: Save requires an allocatable crop plan.
+                    : [{ scope: "plan", code: "plan.empty_crops", message: EMPTY_PLAN_SAVE_MESSAGE, target: { area: "crop-list" } }]; // CHANGE: publishing requires an allocatable crop plan.
             }
+
+            function commitValidationErrors() {
+                return YearPlanDashboard.uniqueValidationResults([
+                    ...PlanSchema.validate(plan),
+                    ...validateSaveReadiness()
+                ]);
+            } // CHANGE: committed plans stay allocatable; drafts may remain incomplete.
+
+            function isCommitReady() {
+                return commitValidationErrors().length === 0;
+            } // CHANGE
+
+            function noteDraftSaved(record, validationErrors) {
+                loadedDraftForCurrentYear = true;
+                state.lastDraftSavedAt = parseStoredDate(record && record.updatedAt) || new Date();
+                YearPlanDashboard.markBaseline(state, plan, null);
+                state.validationState = (validationErrors || []).length ? "invalid" : "idle";
+            } // CHANGE
+
+            function saveDraft(validationErrors) {
+                const record = PlanRepository.saveDraftForYear(moduleCell, currentYear, plan);
+                noteDraftSaved(record, validationErrors || commitValidationErrors());
+                return record;
+            } // CHANGE
+
+            function saveDraftIfDirty() {
+                if (!YearPlanDashboard.isDirty(state, plan)) return false;
+                saveDraft(commitValidationErrors());
+                return true;
+            } // CHANGE
+
+            session.disposers.push(() => { if (SessionController.isActive(session)) saveDraftIfDirty(); }); // CHANGE: replaced dialogs also preserve dirty work as drafts.
 
             function focusSaveValidationFailure() {
                 const firstDiagnostics = card.querySelector(".yp-diagnostics-trigger");
@@ -6133,24 +6397,29 @@ Draw.loadPlugin(function (ui) {
             }
 
             function saveCurrent(closeAfter) {
-                state.saveValidationErrors = validateSaveReadiness(); // CHANGE: save-only rule runs for Save, Save & Close, and prompt Save.
+                state.saveValidationErrors = validateSaveReadiness(); // CHANGE: save-only rule runs for Save/commit readiness and draft diagnostics.
                 refreshDerived();
-                if (dashboard.validationErrors.length) {
-                    state.validationState = "invalid";
+                const validationErrors = commitValidationErrors(); // CHANGE
+                if (validationErrors.length) {
+                    saveDraft(validationErrors); // CHANGE
                     state.planCheckExpanded = true;
                     if (state.saveValidationErrors.some(error => error && error.code === "plan.empty_crops")) state.cropPlanExpanded = true; // CHANGE: show where to add the required crop.
                     if (PlanSchema.validateCsa(plan).length) state.csaExpanded = true;
+                    if (closeAfter) { SessionController.close(); return true; } // CHANGE: Save draft & Close should not block leaving.
                     renderCsa(true); renderPlanCheck(); renderFooter();
                     focusSaveValidationFailure();
-                    return false;
+                    return true;
                 }
                 persistPackageDefaults();
                 PlanRepository.savePlanForYear(moduleCell, currentYear, plan);
+                PlanRepository.deleteDraftForYear(moduleCell, currentYear); // CHANGE
                 loadedExistingForCurrentYear = true;
+                loadedDraftForCurrentYear = false; // CHANGE
                 YearPlanDashboard.markBaseline(state, plan, new Date());
                 state.closePromptOpen = false;
                 state.saveValidationErrors = []; // CHANGE: clear save-only diagnostics after a successful save.
                 state.extraDiagnostics = [];
+                state.lastDraftSavedAt = null; // CHANGE
                 refreshDerived();
                 if (closeAfter) SessionController.close();
                 return true;
@@ -6158,9 +6427,8 @@ Draw.loadPlugin(function (ui) {
 
             function requestClose() {
                 refreshDerived();
-                if (!YearPlanDashboard.isDirty(state, plan)) { SessionController.close(); return; }
-                state.closePromptOpen = true;
-                renderFooter();
+                saveDraftIfDirty(); // CHANGE: closing preserves unfinished work without prompting.
+                SessionController.close(); // CHANGE
             }
 
             const yearInput = mkInput("number", currentYear, 88);
@@ -6366,7 +6634,7 @@ Draw.loadPlugin(function (ui) {
                     varietyId: selectedOption.varietyId == null ? null : (Number.isFinite(numericVarietyId) ? numericVarietyId : selectedOption.varietyId), variety: selectedOption.varietyName, harvestStart: "", harvestEnd: "", harvestWindowSource: "sowing_window_estimate", useActualHarvest: false, syncharvest: false, // CHANGE: new crops default to the sowing-window planning source while dates are requested.
                     shelfLifeDays: 0, baseKgPerPlant: baseYield, kgPerPlant: cropYield,
                     kgPerPlantMode: "auto", actualPlants: 0, germRate: 1,
-                    packages: defaults && defaults.length ? PlanSchema.clonePlain(defaults) : [{ unit: "kg", baseType: "kg", baseQty: 1, price: NaN }]
+                    packages: defaults && defaults.length ? PlanSchema.clonePlain(defaults) : [] // CHANGE: demand units are user-defined packages only.
                 };
                 plan.crops.push(crop);
                 setSelectedCropEverywhere(crop.id);
@@ -6380,9 +6648,9 @@ Draw.loadPlugin(function (ui) {
                 const nextYear = Number(yearInput.value);
                 if (!Number.isFinite(nextYear) || nextYear < 1900 || nextYear > 3000) { yearInput.value = String(currentYear); return; }
                 if (nextYear === currentYear) return;
-                if (!saveCurrent(false)) { yearInput.value = String(currentYear); return; }
-                const nextExisting = PlanRepository.loadPlanForYear(moduleCell, nextYear);
-                replacePlan(nextExisting || PlanSchema.createEmptyPlan(nextYear), nextYear, !!nextExisting);
+                saveDraftIfDirty(); // CHANGE: year changes preserve unfinished work without blocking.
+                const nextWorkingYear = loadWorkingYear(nextYear); // CHANGE
+                replacePlan(nextWorkingYear.plan, nextYear, nextWorkingYear.loadedCommitted, nextWorkingYear.loadedDraft, nextWorkingYear.draftUpdatedAt); // CHANGE
                 renderAll();
                 YearPlanDashboard.markBaseline(state, plan, null);
                 refreshDerived();
@@ -6391,7 +6659,7 @@ Draw.loadPlugin(function (ui) {
                 const name = String(templateSel.value || "");
                 const template = name && PlanRepository.loadTemplateByName(name);
                 if (!template) return;
-                replacePlan(PlanRepository.rekeyTemplateToPlan(template, currentYear), currentYear, loadedExistingForCurrentYear);
+                replacePlan(PlanRepository.rekeyTemplateToPlan(template, currentYear), currentYear, loadedExistingForCurrentYear, loadedDraftForCurrentYear, state.lastDraftSavedAt && state.lastDraftSavedAt.toISOString ? state.lastDraftSavedAt.toISOString() : ""); // CHANGE
                 renderAll();
             });
             templateSel.addEventListener("change", () => {
@@ -6465,13 +6733,22 @@ Draw.loadPlugin(function (ui) {
             close.addEventListener("click", requestClose);
             exportButton.addEventListener("click", () => {
                 const safeName = String(DiagramStore.getCellAttr(moduleCell, "label", "garden")).replace(/[^\w\-]+/g, "_").slice(0, 60);
-                downloadJson(`${safeName}_${currentYear}_plan.json`, PlanSchema.serializeForPersistence(plan));
+                const suffix = loadedDraftForCurrentYear || !isCommitReady() ? "draft_plan" : "plan"; // CHANGE
+                downloadJson(`${safeName}_${currentYear}_${suffix}.json`, PlanSchema.serializeForPersistence(plan)); // CHANGE
             });
             reset.addEventListener("click", () => {
-                if (!confirm(`Clear the saved ${currentYear} plan?`)) return;
-                PlanRepository.deletePlanForYear(moduleCell, currentYear);
-                replacePlan(PlanSchema.createEmptyPlan(currentYear), currentYear, false);
-                state.saveValidationErrors = []; // CHANGE: Reset/Clear deletes the plan instead of saving an empty one.
+                if (loadedDraftForCurrentYear) {
+                    if (!confirm(`Discard the saved draft for ${currentYear}?`)) return;
+                    PlanRepository.deleteDraftForYear(moduleCell, currentYear); // CHANGE
+                    const nextWorkingYear = loadWorkingYear(currentYear); // CHANGE
+                    replacePlan(nextWorkingYear.plan, currentYear, nextWorkingYear.loadedCommitted, nextWorkingYear.loadedDraft, nextWorkingYear.draftUpdatedAt); // CHANGE
+                } else {
+                    if (!confirm(`Clear the saved ${currentYear} plan?`)) return;
+                    PlanRepository.deletePlanForYear(moduleCell, currentYear);
+                    PlanRepository.deleteDraftForYear(moduleCell, currentYear); // CHANGE
+                    replacePlan(PlanSchema.createEmptyPlan(currentYear), currentYear, false, false, ""); // CHANGE
+                }
+                state.saveValidationErrors = []; // CHANGE: Reset/Clear deletes stored state instead of saving an empty committed plan.
                 renderAll();
                 YearPlanDashboard.markBaseline(state, plan, null);
                 refreshDerived();

@@ -346,6 +346,21 @@ test("PlanSchema rejects duplicate crop package units", () => {
     assert.ok(messages(errors).some(message => message.includes("unique package unit")));
 });
 
+test("PlanSchema clears demand-like units that are not crop packages", () => {
+    const { api } = createHarness();
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    plan.crops.push(emptyCrop({ packages: [{ unit: "box", baseType: "kg", baseQty: 2, price: 10 }] }));
+    addDemand(plan, { unit: "kg" });
+    plan.selfSufficiency.lines.push({ id: "self_1", cropId: "crop_1", qty: 1, unit: "lb", frequency: "week", everyN: 1, from: "2026-06-01", to: "2026-06-07" });
+    plan.csa.components.push({ cropId: "crop_1", qty: 1, unit: "plant", everyNWeeks: 1, start: "2026-06-01", end: "2026-06-07" });
+
+    api.PlanSchema.clearUnavailableQuantityUnits(plan);
+
+    assert.equal(plan.demands[0].unit, "");
+    assert.equal(plan.selfSufficiency.lines[0].unit, "");
+    assert.equal(plan.csa.components[0].unit, "");
+});
+
 test("PlanSchema strips legacy demand prices from persisted plans", () => {
     const { api } = createHarness();
     const plan = api.PlanSchema.createEmptyPlan(2026);
@@ -443,6 +458,14 @@ test("PlanRepository round-trips plans, templates, defaults, and leap-day shifts
 
     api.PlanRepository.savePlanForYear(moduleCell, 2024, plan);
     assert.equal(api.PlanRepository.loadPlanForYear(moduleCell, 2024).crops[0].harvestStart, "2024-02-29");
+    plan.crops[0].harvestStart = "";
+    const draft = api.PlanRepository.saveDraftForYear(moduleCell, 2024, plan);
+    assert.ok(draft.updatedAt);
+    assert.equal(api.PlanRepository.loadDraftForYear(moduleCell, 2024).plan.crops[0].harvestStart, "");
+    assert.equal(api.PlanRepository.loadPlanForYear(moduleCell, 2024).crops[0].harvestStart, "2024-02-29");
+    api.PlanRepository.deleteDraftForYear(moduleCell, 2024);
+    assert.equal(api.PlanRepository.loadDraftForYear(moduleCell, 2024), null);
+    plan.crops[0].harvestStart = "2024-02-29";
     api.PlanRepository.deletePlanForYear(moduleCell, 2024);
     assert.equal(api.PlanRepository.loadPlanForYear(moduleCell, 2024), null);
 
@@ -923,7 +946,27 @@ test("PlanMath counts missing CSA component prices as zero with a non-blocking w
     assert.equal(api.PlanSchema.validateCsa(plan).some(error => /price/i.test(error.message)), false);
 });
 
-test("PlanMath prices demand from exact package unit matches only", () => {
+test("PlanMath requires explicit packages for built-in unit names", () => {
+    const { api } = createHarness();
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    const crop = emptyCrop({
+        actualPlants: 20,
+        useActualHarvest: false,
+        harvestStart: "2026-06-01",
+        harvestEnd: "2026-06-07",
+        packages: []
+    });
+    plan.crops.push(crop);
+    addDemand(plan, { id: "kg_line", qty: 4, unit: "kg" });
+
+    assert.equal(Number.isFinite(api.PlanMath.resolveUnitToKgPerUnit(crop, "kg")), false);
+    assert.equal(Number.isFinite(api.PlanMath.resolveUnitToKgPerUnit(crop, "g")), false);
+    assert.equal(Number.isFinite(api.PlanMath.resolveUnitToKgPerUnit(crop, "lb")), false);
+    assert.equal(Number.isFinite(api.PlanMath.resolveUnitToKgPerUnit(crop, "plant")), false);
+    assert.equal(api.PlanMath.computePlanWeekly(plan, []).perDemandLine.has("kg_line"), false);
+});
+
+test("PlanMath prices demand from package unit matches only", () => {
     const { api } = createHarness();
     const plan = api.PlanSchema.createEmptyPlan(2026);
     const crop = emptyCrop({
@@ -933,21 +976,27 @@ test("PlanMath prices demand from exact package unit matches only", () => {
         harvestEnd: "2026-06-07",
         packages: [
             { unit: "kg", baseType: "kg", baseQty: 1, price: 3 },
+            { unit: "g", baseType: "kg", baseQty: 0.001, price: 0.01 },
+            { unit: "lb", baseType: "kg", baseQty: 0.45359237, price: 2 },
+            { unit: "plant", baseType: "plant", baseQty: 1, price: 8 },
             { unit: "box", baseType: "kg", baseQty: 2, price: 10 }
         ]
     });
     plan.crops.push(crop);
     addDemand(plan, { id: "kg_line", qty: 4, unit: "kg", price: 100 });
+    addDemand(plan, { id: "g_line", qty: 500, unit: "g", price: 100 });
     addDemand(plan, { id: "box_line", qty: 2, unit: "box", price: 100 });
+    addDemand(plan, { id: "plant_line", qty: 2, unit: "plant", price: 100 });
     addDemand(plan, { id: "lb_line", qty: 1, unit: "lb", price: 100 });
     assert.equal(api.PlanMath.resolvePackagePriceForUnit(crop, " KG "), 3);
-    assert.equal(Number.isFinite(api.PlanMath.resolvePackagePriceForUnit(crop, "lb")), false);
+    assert.equal(api.PlanMath.resolvePackagePriceForUnit(crop, "lb"), 2);
 
     const weekly = api.PlanMath.computePlanWeekly(plan, []);
     assert.equal(weekly.perDemandLine.get("kg_line").potentialRevenue.reduce((sum, value) => sum + value, 0), 12);
+    assert.equal(weekly.perDemandLine.get("g_line").potentialRevenue.reduce((sum, value) => sum + value, 0), 5);
     assert.equal(weekly.perDemandLine.get("box_line").potentialRevenue.reduce((sum, value) => sum + value, 0), 20);
-    assert.equal(weekly.perDemandLine.get("lb_line").potentialRevenue.reduce((sum, value) => sum + value, 0), 0);
-    assert.equal(weekly.perDemandLine.get("lb_line").fulfilledRevenue.reduce((sum, value) => sum + value, 0), 0);
+    assert.equal(weekly.perDemandLine.get("plant_line").potentialRevenue.reduce((sum, value) => sum + value, 0), 16);
+    assert.equal(weekly.perDemandLine.get("lb_line").potentialRevenue.reduce((sum, value) => sum + value, 0), 2);
 });
 
 test("PlanMath breaks equal-priority shortages by stored channel order", () => {
@@ -1351,4 +1400,16 @@ test("NutritionPlanner calculates requested and fulfilled self-use nutrition", (
     assert.equal(energy.requestedAmount, 100);
     assert.equal(energy.fulfilledAmount, 50);
     assert.equal(energy.requirementAmount, 36500);
+});
+
+test("YearPlanDashboard opens Self Sufficiency strip on first self-use validation errors", () => {
+    const { api } = createHarness();
+    const state = api.YearPlanDashboard.createState();
+
+    const first = api.YearPlanDashboard.syncExpansionState(state, { validationErrors: [] }, [], [], [{ code: "self.line_invalid_quantity" }]);
+    const repeated = api.YearPlanDashboard.syncExpansionState(state, { validationErrors: [] }, [], [], [{ code: "self.line_invalid_quantity" }]);
+
+    assert.equal(first.selfSufficiencyChanged, true);
+    assert.equal(state.selfSufficiencyExpanded, true);
+    assert.equal(repeated.selfSufficiencyChanged, false);
 });

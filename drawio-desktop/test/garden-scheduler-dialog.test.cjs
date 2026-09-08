@@ -497,8 +497,8 @@ test('guided companion layout patch materializes only ordinary spacing and offse
     assert.equal(patch.companion_layout_template, undefined);
     assert.equal(patch.spacing_x_cm, '20');
     assert.equal(patch.spacing_y_cm, '22');
-    assert.equal(patch.companion_offset_x_cm, undefined);
-    assert.equal(patch.companion_offset_y_cm, undefined);
+    assert.equal(patch.companion_offset_x_cm, null);
+    assert.equal(patch.companion_offset_y_cm, null);
     assert.equal(patch.layout_offset_x_cm, '12');
     assert.equal(patch.layout_offset_y_cm, '-6');
     assert.equal(patch.veg_diameter_cm, '18');
@@ -614,9 +614,9 @@ test('multi-companion preview model renders anchor and all companions with warni
     assert.equal(model.rows[0].role, 'anchor');
     assert.equal(model.rows[0].rect.x, 20);
     assert.equal(model.rows[1].rect.x, 0);
-    assert.ok(model.rows[0].dots.circles[0].x < model.rows[0].rect.x);
-    assert.ok(model.rows[2].dots.clamped);
-    assert.match(model.warning, /Tomato: Clamped inside bed/);
+    assert.ok(model.rows[0].dots.circles[0].x > model.rows[0].rect.x); // CHANGE: positive planting offsets move the internal grid rightward.
+    assert.ok(model.rows[2].dots.omitted > 0); // CHANGE: out-of-bed offset centers are omitted rather than clamped.
+    assert.match(model.warning, /Tomato: Plants outside bed omitted/);
 });
 
 test('saved plant-set defaults select their saved anchor when opened from another set member', () => {
@@ -662,6 +662,8 @@ test('layout patches write spacing and bed-relative offsets for current planting
     assert.equal(patch.veg_diameter_cm, '12');
     assert.equal(patch.layout_offset_x_cm, '30');
     assert.equal(patch.layout_offset_y_cm, '6');
+    assert.equal(patch.companion_offset_x_cm, null);
+    assert.equal(patch.companion_offset_y_cm, null);
 
     const companionPatch = hooks.plantingLayoutAttributePatch({
         role: 'companion',
@@ -672,8 +674,8 @@ test('layout patches write spacing and bed-relative offsets for current planting
         offsetYCm: 8
     });
     assert.equal(companionPatch.companion_layout_template, undefined);
-    assert.equal(companionPatch.companion_offset_x_cm, undefined);
-    assert.equal(companionPatch.companion_offset_y_cm, undefined);
+    assert.equal(companionPatch.companion_offset_x_cm, null);
+    assert.equal(companionPatch.companion_offset_y_cm, null);
     assert.equal(companionPatch.layout_offset_x_cm, '40');
     assert.equal(companionPatch.layout_offset_y_cm, '8');
 });

@@ -3804,8 +3804,14 @@ Draw.loadPlugin(function (ui) {
         if (layout?.spacingXCm != null && layout?.spacingYCm != null && layout.spacingXCm === layout.spacingYCm) patch.spacing_cm = String(layout.spacingXCm);
         if (layout?.vegDiameterCm != null) patch.veg_diameter_cm = String(layout.vegDiameterCm);
         if (layout?.vegHeightCm != null) patch.veg_height_cm = String(layout.vegHeightCm);
-        if (layout?.offsetXCm != null) patch.layout_offset_x_cm = String(layout.offsetXCm);
-        if (layout?.offsetYCm != null) patch.layout_offset_y_cm = String(layout.offsetYCm);
+        if (layout?.offsetXCm != null) {
+            patch.layout_offset_x_cm = String(layout.offsetXCm);
+            patch.companion_offset_x_cm = null; // CHANGE: edited planting offsets must not be shadowed by legacy companion offsets.
+        }
+        if (layout?.offsetYCm != null) {
+            patch.layout_offset_y_cm = String(layout.offsetYCm);
+            patch.companion_offset_y_cm = null; // CHANGE: edited planting offsets must not be shadowed by legacy companion offsets.
+        }
         if (layout?.companionLegacy === true) Object.assign(patch, companionLayoutAttributePatch(layout)); // CHANGE: ordinary planting layout patches never write companion metadata.
         return patch;
     }
@@ -4084,7 +4090,7 @@ Draw.loadPlugin(function (ui) {
             placed.rawX = currentRect.x;
             placed.rawY = currentRect.y;
             const dots = computePreviewCirclesForLayoutRow(placed, row, anchorSpacing, bed);
-            const warning = (placed.clamped || dots.clamped) ? 'Clamped inside bed.' : '';
+            const warning = (placed.clamped || dots.clamped) ? 'Clamped inside bed.' : (Number(dots.omitted || 0) > 0 ? 'Plants outside bed omitted.' : ''); // CHANGE: offset previews omit outside centers and report that loss.
             if (warning) warnings.push(`${row?.label || 'Companion'}: ${warning}`);
             rows.push({
                 role: 'companion',
