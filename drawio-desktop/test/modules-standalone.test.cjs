@@ -84,8 +84,10 @@ class TestModel {
 
     remove(cell) {
         if (!cell) return null;
+        (cell.children || []).slice().forEach(child => this.remove(child)); // NEW
         if (cell.parent && cell.parent.children) cell.parent.children = cell.parent.children.filter(child => child !== cell);
         cell.parent = null;
+        if (cell.id) delete this.cells[cell.id]; // NEW
         return cell;
     }
 
@@ -122,17 +124,29 @@ function makeHarness() {
     const selectionListeners = new Map();
     const firedEvents = [];
     const contextMenuContributors = [];
+    const removeCalls = []; // NEW
+    const foldCalls = []; // NEW
+    const confirmations = []; // NEW
+    const alerts = []; // NEW
     let insertImageCalls = 0;
     const editingStarts = []; // NEW
     const electronRequests = []; // NEW
     let promptValue = "40";
+    let confirmResult = true; // NEW
     const promptCalls = [];
     let lastDialog = null; // NEW
     let selectedCells = [];
+    let nullLeafChildren = false; // NEW
     const container = document.getElementById("graph");
+    const originalGetChildren = model.getChildren.bind(model); // NEW
+    model.getChildren = cell => { // NEW
+        const children = originalGetChildren(cell); // NEW
+        return nullLeafChildren && (!children || !children.length) ? null : children; // NEW
+    }; // NEW
     Object.defineProperty(container, "clientWidth", { value: 800, configurable: true });
     Object.defineProperty(container, "clientHeight", { value: 600, configurable: true });
     container.getBoundingClientRect = () => ({ left: 10, top: 20, width: 800, height: 600 });
+    dom.window.confirm = message => { confirmations.push(String(message)); return confirmResult; }; // NEW
 
     function addMappedListener(map, eventName, listener) {
         if (!map.has(eventName)) map.set(eventName, []);
@@ -158,6 +172,25 @@ function makeHarness() {
         getView() { return this.view; },
         refresh() {},
         insertVertex(parent, id, value, x, y, w, h, style) { const cell = new TestCell(value, new TestGeometry(x, y, w, h), style); cell.vertex = true; return model.add(parent || root, cell); },
+        removeCells(cells, includeEdges) { // NEW
+            const removed = []; // NEW
+            function collect(cell) { // NEW
+                if (!cell || removed.includes(cell)) return; // NEW
+                removed.push(cell); // NEW
+                (model.getChildren(cell) || []).forEach(collect); // NEW
+            } // NEW
+            (cells || selectedCells).forEach(collect); // NEW
+            removeCalls.push({ cells: (cells || selectedCells).slice(), includeEdges }); // NEW
+            removed.forEach(cell => model.remove(cell)); // NEW
+            this.fireEvent(makeEventObject("cellsRemoved", ["cells", removed])); // NEW
+            return removed; // NEW
+        }, // NEW
+        foldCells(collapse, recurse, cells) { // NEW
+            foldCalls.push({ collapse: !!collapse, recurse: !!recurse, cells: (cells || []).slice() }); // NEW
+            (cells || []).forEach(cell => { if (cell) cell.collapsed = !!collapse; }); // NEW
+            return cells || []; // NEW
+        }, // NEW
+        isCellCollapsed(cell) { return !!(cell && cell.collapsed); }, // NEW
         moveCells(cells, dx = 0, dy = 0, _clone = false, target = null) { // NEW
             const moved = (cells || []).filter(Boolean);
             moved.forEach(cell => {
@@ -208,6 +241,7 @@ function makeHarness() {
             promptCalls.push({ message, value });
             callback(promptValue);
         },
+        alert(message) { alerts.push(String(message)); }, // NEW
         showDialog(node) {
             lastDialog = node; // NEW
             document.body.appendChild(node); // NEW
@@ -224,6 +258,7 @@ function makeHarness() {
         console: { log() {}, warn() {}, error() {} },
         setTimeout,
         clearTimeout,
+        confirm(message) { confirmations.push(String(message)); return confirmResult; }, // NEW
         Draw: { loadPlugin(callback) { callback(ui); } },
         mxCell: TestCell,
         mxGeometry: TestGeometry,
@@ -231,12 +266,15 @@ function makeHarness() {
         mxStackLayout: function mxStackLayout() {},
         mxEventObject: function mxEventObject(name, ...pairs) { return makeEventObject(name, pairs); },
         mxUtils: {
-            createXmlDocument() { return document.implementation.createDocument("", "", null); }
+            createXmlDocument() { return document.implementation.createDocument("", "", null); },
+            alert(message) { alerts.push(String(message)); } // NEW
         },
         mxEvent: {
             CHANGE: "change",
+            REMOVE_CELLS: "removeCells", // NEW
             ADD_CELLS: "addCells",
             CELLS_ADDED: "cellsAdded",
+            CELLS_REMOVED: "cellsRemoved", // NEW
             CELLS_MOVED: "cellsMoved",
             CELLS_RESIZED: "cellsResized",
             SCALE: "scale",
@@ -269,7 +307,14 @@ function makeHarness() {
         firedEvents,
         contextMenuContributors,
         promptCalls,
+        removeCalls, // NEW
+        foldCalls, // NEW
+        confirmations, // NEW
+        alerts, // NEW
         setPromptValue(value) { promptValue = value; },
+        setConfirmResult(value) { confirmResult = value !== false; }, // NEW
+        setNullLeafChildren(value) { nullLeafChildren = !!value; }, // NEW
+        disableConfirm() { dom.window.confirm = undefined; context.confirm = undefined; }, // NEW
         setElectronImagePicker(options = {}) {
             dom.window.electron = {
                 request(msg, callback, error) {
@@ -388,6 +433,32 @@ function makeValue(document, attrs) {
     Object.entries(attrs || {}).forEach(([key, attrValue]) => value.setAttribute(key, String(attrValue)));
     return value;
 }
+
+function addTestChild(harness, parent, attrs = {}) { // NEW
+    const child = new TestCell(makeValue(harness.document, attrs), new TestGeometry(10, 10, 40, 20), "shape=rectangle;"); // NEW
+    child.vertex = true; // NEW
+    harness.model.add(parent, child); // NEW
+    return child; // NEW
+} // NEW
+
+function installRoadmapCreationStub(harness) { // NEW
+    const ensured = []; // NEW
+    harness.graph.__trellisRoadmapManager = { // NEW
+        ensureMainRoadmapInRoadmapModule(moduleCell) { ensured.push(moduleCell); return true; } // NEW
+    }; // NEW
+    return ensured; // NEW
+} // NEW
+
+function createGardenCluster(harness) { // NEW
+    installRoadmapCreationStub(harness); // NEW
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
+    return { // NEW
+        garden, // NEW
+        team: harness.model.getCell(garden.getAttribute("trellis_team_module_id")), // NEW
+        task: harness.model.getCell(garden.getAttribute("trellis_task_module_id")), // NEW
+        roadmap: harness.model.getCell(garden.getAttribute("roadmap_module_id")) // NEW
+    }; // NEW
+} // NEW
 
 function makeCell(harness, attrs, geometry, style = "") {
     const cell = new TestCell(makeValue(harness.document, attrs), geometry, style);
@@ -545,6 +616,30 @@ test("createModuleAtPoint creates garden module with settings-needed event", asy
     assert.equal(settingsEvents[0].getProperty("cell"), mod);
 });
 
+test("createModuleAtPoint creates garden neighbor modules including roadmap when available", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const ensuredRoadmaps = installRoadmapCreationStub(harness); // NEW
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
+    const team = harness.model.getCell(garden.getAttribute("trellis_team_module_id")); // NEW
+    const task = harness.model.getCell(garden.getAttribute("trellis_task_module_id")); // NEW
+    const roadmap = harness.model.getCell(garden.getAttribute("roadmap_module_id")); // NEW
+    assert.equal(team.getAttribute("trellis_garden_module_id"), garden.id); // NEW
+    assert.equal(task.getAttribute("trellis_garden_module_id"), garden.id); // NEW
+    assert.equal(roadmap.getAttribute("roadmap_garden_module_id"), garden.id); // NEW
+    assert.equal(roadmap.getAttribute("roadmap_task_module_id"), task.id); // NEW
+    assert.equal(roadmap.getAttribute("roadmap_team_module_id"), team.id); // NEW
+    assert.equal(ensuredRoadmaps.at(-1), roadmap); // NEW
+}); // NEW
+
+test("garden creation falls back to partial cluster when roadmap manager is unavailable", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
+    assert.ok(harness.model.getCell(garden.getAttribute("trellis_team_module_id"))); // NEW
+    assert.ok(harness.model.getCell(garden.getAttribute("trellis_task_module_id"))); // NEW
+    assert.equal(garden.getAttribute("roadmap_module_id"), null); // NEW
+    assert.deepEqual(harness.alerts, ["Roadmap Manager is unavailable. The Garden remains usable; create its Roadmap companion after the plugin is loaded."]); // NEW
+}); // NEW
+
 test("createModuleAtPoint creates team module", () => {
     const harness = makeHarness();
     const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
@@ -594,6 +689,106 @@ test("garden companion task repair reuses typed task module and mirrors access",
     harness.graph.__trellisModules.ensureGardenTaskModule(garden, { createMainBoard: true });
     assert.equal(ensuredTaskBoard, repaired);
 });
+
+test("delete on expanded module folds without deleting", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
+    harness.graph.removeCells([mod]); // NEW
+    assert.equal(mod.collapsed, true); // NEW
+    assert.equal(harness.model.getParent(mod), harness.root); // NEW
+    assert.equal(harness.removeCalls.length, 0); // NEW
+    assert.equal(harness.foldCalls.length, 1); // CHANGE
+    assert.equal(harness.foldCalls[0].cells[0], mod); // CHANGE
+}); // NEW
+
+test("delete on folded standalone module confirms and removes descendants", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
+    const child = addTestChild(harness, mod, { label: "Child" }); // NEW
+    mod.collapsed = true; // NEW
+    harness.graph.removeCells([mod]); // NEW
+    assert.deepEqual(harness.confirmations, ["Delete this module and its contents? This and any other action can be undone with Ctrl+Z."]); // NEW
+    assert.equal(harness.model.getCell(mod.id), null); // NEW
+    assert.equal(harness.model.getCell(child.id), null); // NEW
+}); // NEW
+
+test("delete on expanded garden folds cluster root without deleting neighbors", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const cluster = createGardenCluster(harness); // NEW
+    harness.alerts.length = 0; // NEW
+    harness.graph.removeCells([cluster.garden]); // NEW
+    assert.equal(cluster.garden.collapsed, true); // NEW
+    assert.equal(harness.model.getParent(cluster.team), harness.root); // NEW
+    assert.equal(harness.model.getParent(cluster.task), harness.root); // NEW
+    assert.equal(harness.model.getParent(cluster.roadmap), harness.root); // NEW
+    assert.equal(harness.removeCalls.length, 0); // NEW
+}); // NEW
+
+test("delete on folded garden confirms and removes typed cluster with descendants", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const cluster = createGardenCluster(harness); // NEW
+    const child = addTestChild(harness, cluster.task, { label: "Task child" }); // NEW
+    harness.alerts.length = 0; // NEW
+    cluster.garden.collapsed = true; // NEW
+    harness.graph.removeCells([cluster.garden]); // NEW
+    assert.deepEqual(harness.confirmations, ["Delete this Garden and its neighboring Team, Task, and Roadmap modules? This and any other action can be undone with Ctrl+Z."]); // NEW
+    [cluster.garden, cluster.team, cluster.task, cluster.roadmap, child].forEach(cell => assert.equal(harness.model.getCell(cell.id), null)); // NEW
+}); // NEW
+
+test("delete on folded garden companion is blocked", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const cluster = createGardenCluster(harness); // NEW
+    harness.alerts.length = 0; // NEW
+    cluster.team.collapsed = true; // NEW
+    harness.graph.removeCells([cluster.team]); // NEW
+    assert.deepEqual(harness.alerts, ["Only the Garden module can delete this cluster. Select the folded Garden module and press Delete to remove the Garden and its neighboring modules."]); // NEW
+    assert.equal(harness.model.getParent(cluster.team), harness.root); // NEW
+    assert.equal(harness.removeCalls.length, 0); // NEW
+}); // NEW
+
+test("mixed delete removes ordinary cells while folding expanded modules", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
+    const ordinary = addTestChild(harness, harness.root, { label: "Ordinary" }); // NEW
+    harness.graph.removeCells([mod, ordinary]); // NEW
+    assert.equal(mod.collapsed, true); // NEW
+    assert.equal(harness.model.getParent(mod), harness.root); // NEW
+    assert.equal(harness.model.getCell(ordinary.id), null); // NEW
+}); // NEW
+
+test("garden cluster deletion requires delete permission for every descendant", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const cluster = createGardenCluster(harness); // NEW
+    const deniedChild = addTestChild(harness, cluster.task, { label: "Denied" }); // NEW
+    cluster.garden.collapsed = true; // NEW
+    harness.alerts.length = 0; // NEW
+    harness.graph.__trellisUsers = { canDeleteCell(cell) { return cell !== deniedChild; } }; // NEW
+    harness.graph.removeCells([cluster.garden]); // NEW
+    assert.deepEqual(harness.alerts, ["You do not have permission to delete the selected module contents."]); // NEW
+    [cluster.garden, cluster.team, cluster.task, cluster.roadmap, deniedChild].forEach(cell => assert.ok(harness.model.getCell(cell.id))); // NEW
+    assert.equal(harness.removeCalls.length, 0); // NEW
+}); // NEW
+
+test("folded module deletion cancels when confirmation is unavailable", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
+    mod.collapsed = true; // NEW
+    harness.disableConfirm(); // NEW
+    harness.graph.removeCells([mod]); // NEW
+    assert.deepEqual(harness.alerts, ["Delete confirmation is unavailable. Nothing was deleted."]); // NEW
+    assert.ok(harness.model.getCell(mod.id)); // NEW
+    assert.equal(harness.removeCalls.length, 0); // NEW
+}); // NEW
+
+test("folded leaf module deletion tolerates null child lists", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
+    mod.collapsed = true; // NEW
+    harness.setNullLeafChildren(true); // NEW
+    harness.graph.removeCells([mod]); // NEW
+    assert.deepEqual(harness.confirmations, ["Delete this module and its contents? This and any other action can be undone with Ctrl+Z."]); // NEW
+    assert.equal(harness.model.getCell(mod.id), null); // NEW
+}); // NEW
 
 test("module cells cannot be dropped under non-module parents", () => {
     const harness = makeHarness();
@@ -1006,6 +1201,19 @@ test("overlay buttons create the selected module type at stored click point and 
     assert.equal(mod.getAttribute("garden_module"), "1");
     assert.equal(harness.document.querySelector(".trellis-root-module-overlay").style.display, "none");
 });
+
+test("module context menu omits module type conversion actions", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const regular = harness.graph.__trellisModules.createModuleAtPoint({ x: 10, y: 20 }, "regular"); // NEW
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
+    const event = makeMouseEvent(harness.dom.window, "mouseup", { clientX: 110, clientY: 130, graphX: 95, graphY: 105 }); // NEW
+    const regularLabels = menuItemsFor(harness, regular, event).map(item => item.label); // NEW
+    const gardenLabels = menuItemsFor(harness, garden, event).map(item => item.label); // NEW
+    assert.equal(regularLabels.some(label => /^Set as /.test(label)), false); // NEW
+    assert.equal(gardenLabels.some(label => /^Set as /.test(label)), false); // NEW
+    assert.ok(regularLabels.includes("Add Submodule")); // NEW
+    assert.ok(gardenLabels.includes("Set Internal Margin (diagram units)...")); // NEW
+}); // NEW
 
 test("clicking an existing cell does not render the root module overlay", () => {
     const harness = makeHarness();

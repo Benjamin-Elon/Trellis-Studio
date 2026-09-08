@@ -711,6 +711,14 @@ test('graph-created companion pairs get an in-memory relationship before DB defa
     assert.equal(relationship.graphCreated, true);
 });
 
+test('scheduler companion layout reads prefer current planting offsets over legacy companion offsets', () => {
+    assert.match(schedulerSource, /layoutOffsetXCm: finiteNumberOrNull\(companionCell\?\.getAttribute\?\.\('layout_offset_x_cm'\)\) \?\? finiteNumberOrNull\(companionCell\?\.getAttribute\?\.\('companion_offset_x_cm'\)\)/); // CHANGE: graph-created relationship fallback must not shadow edited planting offsets.
+    assert.match(schedulerSource, /layoutOffsetYCm: finiteNumberOrNull\(companionCell\?\.getAttribute\?\.\('layout_offset_y_cm'\)\) \?\? finiteNumberOrNull\(companionCell\?\.getAttribute\?\.\('companion_offset_y_cm'\)\)/);
+    assert.match(schedulerSource, /x: readCellLayoutNumber\(companionCell, 'layout_offset_x_cm'\) \?\? readCellLayoutNumber\(companionCell, 'companion_offset_x_cm'\)/); // CHANGE: companion rows display the canonical planting offset when both attrs exist.
+    assert.match(schedulerSource, /y: readCellLayoutNumber\(companionCell, 'layout_offset_y_cm'\) \?\? readCellLayoutNumber\(companionCell, 'companion_offset_y_cm'\)/);
+    assert.match(schedulerSource, /layoutOffsetXCm: finiteNumberOrNull\(cell\.getAttribute\?\.\('layout_offset_x_cm'\)\) \?\? finiteNumberOrNull\(cell\.getAttribute\?\.\('companion_offset_x_cm'\)\)/); // CHANGE: legacy schedule edits preserve fallback without overriding canonical offsets.
+});
+
 test('derived schedule helpers gate companion lifecycle and compute turnover gaps', () => {
     const annual = makeCrop({ plant_id: 1, annual: 1, biennial: 0, perennial: 0 });
     const perennial = makeCrop({ plant_id: 2, annual: 0, biennial: 0, perennial: 1, lifespan_years: 3 });

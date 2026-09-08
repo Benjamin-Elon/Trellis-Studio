@@ -51,6 +51,12 @@ Draw.loadPlugin(function (ui) {
     const DEFAULT_BED_LENGTH_CM_ATTR = "default_bed_length_cm";
     const CM_PER_METER = 100;
     const CM_PER_FOOT = 30.48;
+    const DEFAULT_CREATED_GARDEN_MODULE_WIDTH_UNITS = 160; // NEW: used to recognize the unsized garden shell created before settings are chosen.
+    const DEFAULT_CREATED_GARDEN_MODULE_HEIGHT_UNITS = 100; // NEW: used to recognize the unsized garden shell created before settings are chosen.
+    const DEFAULT_METRIC_GARDEN_WIDTH_CM = 4 * CM_PER_METER; // NEW: new metric gardens start as whole-number presets.
+    const DEFAULT_METRIC_GARDEN_LENGTH_CM = 8 * CM_PER_METER; // NEW: new metric gardens start as whole-number presets.
+    const DEFAULT_IMPERIAL_GARDEN_WIDTH_CM = 12 * CM_PER_FOOT; // NEW: new imperial gardens start as whole-number presets.
+    const DEFAULT_IMPERIAL_GARDEN_LENGTH_CM = 24 * CM_PER_FOOT; // NEW: new imperial gardens start as whole-number presets.
     const DEFAULT_METRIC_BED_WIDTH_CM = 100;
     const DEFAULT_METRIC_BED_LENGTH_CM = 200;
     const DEFAULT_IMPERIAL_BED_WIDTH_CM = 4 * CM_PER_FOOT;
@@ -852,8 +858,8 @@ Draw.loadPlugin(function (ui) {
     }
 
     function layoutGridOffsetPx(groupCell) {
-        const xCm = finiteNumberOrNull(getXmlAttr(groupCell, "companion_offset_x_cm", "")) ?? finiteNumberOrNull(getXmlAttr(groupCell, "layout_offset_x_cm", ""));
-        const yCm = finiteNumberOrNull(getXmlAttr(groupCell, "companion_offset_y_cm", "")) ?? finiteNumberOrNull(getXmlAttr(groupCell, "layout_offset_y_cm", ""));
+        const xCm = finiteNumberOrNull(getXmlAttr(groupCell, "layout_offset_x_cm", "")) ?? finiteNumberOrNull(getXmlAttr(groupCell, "companion_offset_x_cm", "")); // CHANGE: current planting offsets are authoritative; companion offsets are legacy fallback.
+        const yCm = finiteNumberOrNull(getXmlAttr(groupCell, "layout_offset_y_cm", "")) ?? finiteNumberOrNull(getXmlAttr(groupCell, "companion_offset_y_cm", "")); // CHANGE: current planting offsets are authoritative; companion offsets are legacy fallback.
         return {
             x: xCm == null ? 0 : toPx(xCm),
             y: yCm == null ? 0 : toPx(yCm),
@@ -1082,6 +1088,7 @@ Draw.loadPlugin(function (ui) {
 
 
             const disabledSet = readDisabledSet(groupCell);
+            const { bandPx } = groupLabelMetrics(groupCell); // CHANGE: collapse count classification needs the same label band used by expanded tiling.
             const slotStats = classifyPlantingSlots(groupCell, spacingXpx, spacingYpx, bandPx, disabledSet);
             applyCounts(model, groupCell, slotStats, disabledSet); // CHANGE: LOD counts omit offset-shifted slots outside the planting content area.
             const actual = getNumberAttr(groupCell, ATTR_PLANT_COUNT_ACT, slotStats.actual);
@@ -1632,6 +1639,12 @@ Draw.loadPlugin(function (ui) {
         return null;
     }
 
+    function defaultGardenDimensionsCmForUnits(units) {
+        if (units === "metric") return { widthCm: DEFAULT_METRIC_GARDEN_WIDTH_CM, lengthCm: DEFAULT_METRIC_GARDEN_LENGTH_CM }; // NEW
+        if (units === "imperial") return { widthCm: DEFAULT_IMPERIAL_GARDEN_WIDTH_CM, lengthCm: DEFAULT_IMPERIAL_GARDEN_LENGTH_CM }; // NEW
+        return null; // NEW
+    } // NEW
+
     function getSavedDefaultBedDimensionsCm(moduleCell) {
         const widthCm = positiveFiniteNumber(getXmlAttr(moduleCell, DEFAULT_BED_WIDTH_CM_ATTR, ""));
         const lengthCm = positiveFiniteNumber(getXmlAttr(moduleCell, DEFAULT_BED_LENGTH_CM_ATTR, ""));
@@ -1690,6 +1703,20 @@ Draw.loadPlugin(function (ui) {
         const geo = moduleCell && moduleCell.getGeometry ? moduleCell.getGeometry() : null;
         return geo ? { widthCm: graphUnitsToCm(Number(geo.width) || 0), lengthCm: graphUnitsToCm(Number(geo.height) || 0) } : null;
     } // CHANGE
+
+    function isDefaultCreatedGardenGeometry(moduleCell) {
+        const geo = moduleCell && moduleCell.getGeometry ? moduleCell.getGeometry() : null; // NEW
+        if (!geo) return false; // NEW
+        return Math.abs((Number(geo.width) || 0) - DEFAULT_CREATED_GARDEN_MODULE_WIDTH_UNITS) < BED_FIT_TOLERANCE
+            && Math.abs((Number(geo.height) || 0) - DEFAULT_CREATED_GARDEN_MODULE_HEIGHT_UNITS) < BED_FIT_TOLERANCE; // NEW
+    } // NEW
+
+    function shouldUseNewGardenDimensionPresets(moduleCell) {
+        if (!moduleCell || !isDefaultCreatedGardenGeometry(moduleCell)) return false; // NEW
+        const city = String(getXmlAttr(moduleCell, "city_id", "") || getXmlAttr(moduleCell, "city_name", "") || "").trim(); // NEW
+        const units = String(getXmlAttr(moduleCell, "unit_system", "") || "").trim(); // NEW
+        return !city && !units && !getSavedDefaultBedDimensionsCm(moduleCell); // NEW
+    } // NEW
 
     function getModuleHeaderHeightForSettings(moduleCell) {
         if (!moduleCell) return 0;
@@ -2055,7 +2082,8 @@ Draw.loadPlugin(function (ui) {
         const curCity = getXmlAttr(moduleCell, "city_name", "");
         const curUnits = getXmlAttr(moduleCell, "unit_system", "");
         const curModuleExternalMargin = getGardenModuleExternalMargin(moduleCell); // NEW
-        const curGardenDimsCm = geometryDimensionsCm(moduleCell); // CHANGE
+        const useNewGardenDimensionPresets = shouldUseNewGardenDimensionPresets(moduleCell); // NEW
+        const curGardenDimsCm = useNewGardenDimensionPresets ? null : geometryDimensionsCm(moduleCell); // CHANGE
         const savedBedDimsCm = getSavedDefaultBedDimensionsCm(moduleCell);
         let activeGardenDisplayUnits = curUnits || ""; // CHANGE
         let activeMarginDisplayUnits = curUnits || ""; // CHANGE
@@ -2211,14 +2239,21 @@ Draw.loadPlugin(function (ui) {
             return widthCm && lengthCm ? { widthCm, lengthCm } : null; // CHANGE
         }
 
-        function setGardenInputsFromCm(dimsCm, units) {
+        function gardenDimensionDisplayValue(cm, units, roundWhole) {
+            const displayValue = lengthCmToDisplay(cm, units); // NEW
+            if (!roundWhole) return formatBedDisplayValue(displayValue); // NEW
+            return String(Math.max(1, Math.round(displayValue))); // NEW
+        } // NEW
+
+        function setGardenInputsFromCm(dimsCm, units, options) {
             if (!dimsCm || !units) {
                 gardenWidthInput.value = ""; // CHANGE
                 gardenLengthInput.value = ""; // CHANGE
                 return;
             }
-            gardenWidthInput.value = formatBedDisplayValue(lengthCmToDisplay(dimsCm.widthCm, units)); // CHANGE
-            gardenLengthInput.value = formatBedDisplayValue(lengthCmToDisplay(dimsCm.lengthCm, units)); // CHANGE
+            const roundWhole = !!(options && options.roundWhole); // NEW
+            gardenWidthInput.value = gardenDimensionDisplayValue(dimsCm.widthCm, units, roundWhole); // CHANGE
+            gardenLengthInput.value = gardenDimensionDisplayValue(dimsCm.lengthCm, units, roundWhole); // CHANGE
         }
 
         function setModuleMarginInputFromUnits(inputEl, marginUnits, units) {
@@ -2248,7 +2283,8 @@ Draw.loadPlugin(function (ui) {
 
         function syncGardenDimensionInputs(nextUnits) {
             const priorDims = activeGardenDisplayUnits ? readGardenInputsAsCm(activeGardenDisplayUnits) : null; // CHANGE
-            const nextDims = priorDims || curGardenDimsCm; // CHANGE
+            const priorUnits = activeGardenDisplayUnits; // NEW
+            const nextDims = priorDims || curGardenDimsCm || defaultGardenDimensionsCmForUnits(nextUnits); // CHANGE
             const enabled = !!nextUnits; // CHANGE
             const unitLabel = enabled ? bedDisplayUnitLabel(nextUnits) : ""; // CHANGE
             activeGardenDisplayUnits = nextUnits || ""; // CHANGE
@@ -2256,7 +2292,7 @@ Draw.loadPlugin(function (ui) {
             gardenLengthRow.label.textContent = enabled ? `Garden length (${unitLabel}):` : "Garden length:"; // CHANGE
             gardenWidthInput.disabled = !enabled; // CHANGE
             gardenLengthInput.disabled = !enabled; // CHANGE
-            setGardenInputsFromCm(enabled ? nextDims : null, nextUnits); // CHANGE
+            setGardenInputsFromCm(enabled ? nextDims : null, nextUnits, { roundWhole: !!(priorDims && priorUnits !== nextUnits) }); // CHANGE
         }
 
         function syncModuleExternalMarginInput(nextUnits) {

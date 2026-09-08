@@ -9214,8 +9214,8 @@ Draw.loadPlugin(function (ui) {
                 layoutTemplate: companionCell?.getAttribute?.('companion_layout_template') || '',
                 layoutSpacingXCm: finiteNumberOrNull(companionCell?.getAttribute?.('companion_layout_spacing_x_cm')),
                 layoutSpacingYCm: finiteNumberOrNull(companionCell?.getAttribute?.('companion_layout_spacing_y_cm')),
-                layoutOffsetXCm: finiteNumberOrNull(companionCell?.getAttribute?.('companion_offset_x_cm')),
-                layoutOffsetYCm: finiteNumberOrNull(companionCell?.getAttribute?.('companion_offset_y_cm')),
+                layoutOffsetXCm: finiteNumberOrNull(companionCell?.getAttribute?.('layout_offset_x_cm')) ?? finiteNumberOrNull(companionCell?.getAttribute?.('companion_offset_x_cm')), // CHANGE: current planting offsets override legacy companion offsets.
+                layoutOffsetYCm: finiteNumberOrNull(companionCell?.getAttribute?.('layout_offset_y_cm')) ?? finiteNumberOrNull(companionCell?.getAttribute?.('companion_offset_y_cm')), // CHANGE: current planting offsets override legacy companion offsets.
                 known: !!companionCell?.getAttribute?.('companion_relation_id')
             });
         }
@@ -9233,8 +9233,8 @@ Draw.loadPlugin(function (ui) {
             const fallback = resolveCompanionLayout(anchorCell, targetPlant, relationship, {});
             const template = normalizeCompanionLayoutTemplate(companionCell?.getAttribute?.('companion_layout_template')) || fallback.template;
             const offsets = {
-                x: readCellLayoutNumber(companionCell, 'companion_offset_x_cm') ?? readCellLayoutNumber(companionCell, 'layout_offset_x_cm') ?? bedRelativeOffsetForCell(companionCell, bedCell).x,
-                y: readCellLayoutNumber(companionCell, 'companion_offset_y_cm') ?? readCellLayoutNumber(companionCell, 'layout_offset_y_cm') ?? bedRelativeOffsetForCell(companionCell, bedCell).y
+                x: readCellLayoutNumber(companionCell, 'layout_offset_x_cm') ?? readCellLayoutNumber(companionCell, 'companion_offset_x_cm') ?? bedRelativeOffsetForCell(companionCell, bedCell).x, // CHANGE: current planting offsets override legacy companion offsets.
+                y: readCellLayoutNumber(companionCell, 'layout_offset_y_cm') ?? readCellLayoutNumber(companionCell, 'companion_offset_y_cm') ?? bedRelativeOffsetForCell(companionCell, bedCell).y // CHANGE: current planting offsets override legacy companion offsets.
             };
             return {
                 role: 'companion',
@@ -14463,8 +14463,8 @@ Draw.loadPlugin(function (ui) {
                 layoutTemplate: cell.getAttribute?.('companion_layout_template') || '',
                 layoutSpacingXCm: finiteNumberOrNull(cell.getAttribute?.('companion_layout_spacing_x_cm')),
                 layoutSpacingYCm: finiteNumberOrNull(cell.getAttribute?.('companion_layout_spacing_y_cm')),
-                layoutOffsetXCm: finiteNumberOrNull(cell.getAttribute?.('companion_offset_x_cm')),
-                layoutOffsetYCm: finiteNumberOrNull(cell.getAttribute?.('companion_offset_y_cm')),
+                layoutOffsetXCm: finiteNumberOrNull(cell.getAttribute?.('layout_offset_x_cm')) ?? finiteNumberOrNull(cell.getAttribute?.('companion_offset_x_cm')), // CHANGE: current planting offsets override legacy companion offsets.
+                layoutOffsetYCm: finiteNumberOrNull(cell.getAttribute?.('layout_offset_y_cm')) ?? finiteNumberOrNull(cell.getAttribute?.('companion_offset_y_cm')), // CHANGE: current planting offsets override legacy companion offsets.
                 known: false
             });
             if (graphRelationship) derived.relationshipByPlantId.set(targetPlantId, graphRelationship);

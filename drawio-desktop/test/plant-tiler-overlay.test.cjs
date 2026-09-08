@@ -55,6 +55,22 @@ test('Garden Settings can open with an empty city table so City Manager can add 
     assert.match(source, /Empty city lists are allowed so the City Manager can create the first scheduler-ready city/);
 });
 
+test('Garden Settings starts new garden dimensions from whole-number unit presets', () => { // NEW
+    const source = readPlantTilerSource(); // NEW
+    const dialogSource = sourceSlice(source, 'async function showGardenSettingsDialog', 'function plainGardenModuleLabel'); // NEW
+
+    assert.match(source, /const DEFAULT_METRIC_GARDEN_WIDTH_CM = 4 \* CM_PER_METER;/); // NEW
+    assert.match(source, /const DEFAULT_METRIC_GARDEN_LENGTH_CM = 8 \* CM_PER_METER;/); // NEW
+    assert.match(source, /const DEFAULT_IMPERIAL_GARDEN_WIDTH_CM = 12 \* CM_PER_FOOT;/); // NEW
+    assert.match(source, /const DEFAULT_IMPERIAL_GARDEN_LENGTH_CM = 24 \* CM_PER_FOOT;/); // NEW
+    assert.match(source, /function shouldUseNewGardenDimensionPresets\(moduleCell\) \{[\s\S]*isDefaultCreatedGardenGeometry\(moduleCell\)[\s\S]*return !city && !units && !getSavedDefaultBedDimensionsCm\(moduleCell\);/); // NEW
+    assert.match(dialogSource, /const useNewGardenDimensionPresets = shouldUseNewGardenDimensionPresets\(moduleCell\);/); // NEW
+    assert.match(dialogSource, /const curGardenDimsCm = useNewGardenDimensionPresets \? null : geometryDimensionsCm\(moduleCell\);/); // NEW
+    assert.match(dialogSource, /const nextDims = priorDims \|\| curGardenDimsCm \|\| defaultGardenDimensionsCmForUnits\(nextUnits\);/); // NEW
+    assert.match(dialogSource, /setGardenInputsFromCm\(enabled \? nextDims : null, nextUnits, \{ roundWhole: !!\(priorDims && priorUnits !== nextUnits\) \}\);/); // NEW
+    assert.match(dialogSource, /gardenWidthInput\.step = "0\.01";[\s\S]*gardenLengthInput\.step = "0\.01";/); // NEW
+});
+
 test('Garden module and bed overlays expose exclusive mode launchers', () => { // CHANGE
     const source = readPlantTilerSource();
     assert.match(source, /const ALLOCATE_PLAN_EVENT = "usl:allocatePlanRequested";/); // NEW
@@ -147,10 +163,12 @@ test('Plant group creation finalizes tiling and bed fit inside the creation tran
     const source = readPlantTilerSource();
     const finalizer = sourceSlice(source, 'function finalizeCreatedTilerGroup', 'function createDefaultGardenBed');
     const createEmpty = sourceSlice(source, 'function createEmptyTilerGroup', '// ---------- Debug helpers');
+    const collapseSource = sourceSlice(source, 'function collapseToSummary', '// ---------------- LOD layout snapshot');
 
     assert.match(finalizer, /retileAndFitToContainingBed\(graph, group, \{ source: debugSource, inTransaction: true, txnId \}\);/);
     assert.match(createEmpty, /const creationSource = \(opts && opts\.source\) \|\| "empty-group";[\s\S]*const creationTxnId = \+\+bedFitTxnSeq;[\s\S]*model\.beginUpdate\(\);[\s\S]*graph\.addCell\(group, moduleCell\);[\s\S]*finalizeCreatedTilerGroup\(graph, group, moduleCell, creationSource, creationTxnId\);[\s\S]*model\.endUpdate\(\);/);
     assert.match(createEmpty, /notifyTilerGroupCreated\(graph, group, creationSource, creationTxnId\);/);
+    assert.match(collapseSource, /const \{ bandPx \} = groupLabelMetrics\(groupCell\);[\s\S]*classifyPlantingSlots\(groupCell, spacingXpx, spacingYpx, bandPx, disabledSet\)/); // CHANGE: collapse cannot clear children and then throw on an undefined label band.
     assert.doesNotMatch(createEmpty, /retileGroup\(graph, group\);/);
 });
 
@@ -212,8 +230,9 @@ test('interplant companion groups offset alternating tile slots during retile', 
     assert.match(slotSource, /if \(\(r \+ c\) % 2 !== 0\) return center;/);
     assert.match(slotSource, /x: Math\.min\(maxX, center\.x \+ spacingXpx \/ 2\)/);
     assert.match(source, /function layoutGridOffsetPx\(groupCell\)/);
+    assert.match(source, /finiteNumberOrNull\(getXmlAttr\(groupCell, "layout_offset_x_cm", ""\)\) \?\? finiteNumberOrNull\(getXmlAttr\(groupCell, "companion_offset_x_cm", ""\)\)/); // CHANGE: canonical layout offsets win over legacy companion offsets.
+    assert.match(source, /finiteNumberOrNull\(getXmlAttr\(groupCell, "layout_offset_y_cm", ""\)\) \?\? finiteNumberOrNull\(getXmlAttr\(groupCell, "companion_offset_y_cm", ""\)\)/); // CHANGE: canonical layout offsets win over legacy companion offsets.
     assert.match(source, /getXmlAttr\(groupCell, "companion_offset_x_cm", ""\)/);
-    assert.match(source, /finiteNumberOrNull\(getXmlAttr\(groupCell, "companion_offset_x_cm", ""\)\) \?\? finiteNumberOrNull\(getXmlAttr\(groupCell, "layout_offset_x_cm", ""\)\)/);
     assert.match(source, /function isPointInPlantingContentArea\(groupCell, center, bandPx\)/);
     assert.match(slotSource, /function layoutSlotCenterLocal\(groupCell, r, c, spacingXpx, spacingYpx, bandPx, iconDiamPx\)/);
     assert.match(source, /function shiftedSlotCenterLocal\(groupCell, r, c, spacingXpx, spacingYpx, bandPx\)/);

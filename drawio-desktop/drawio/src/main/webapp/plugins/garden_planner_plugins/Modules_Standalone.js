@@ -10,6 +10,13 @@ Draw.loadPlugin(function (ui) {
     const ATTR_ACCESS_GRANTS = "trellis_access_grants_json";
     const LINK_ATTR = "linkedTo";
     const COMPANION_TEAM_GAP = 40;
+    const MODULE_DELETE_MESSAGE = "Delete this module and its contents? This and any other action can be undone with Ctrl+Z."; // NEW
+    const MODULES_DELETE_MESSAGE = "Delete these modules and their contents? This and any other action can be undone with Ctrl+Z."; // NEW
+    const GARDEN_CLUSTER_DELETE_MESSAGE = "Delete this Garden and its neighboring Team, Task, and Roadmap modules? This and any other action can be undone with Ctrl+Z."; // NEW
+    const GARDEN_CLUSTERS_DELETE_MESSAGE = "Delete these Gardens and their neighboring Team, Task, and Roadmap modules? This and any other action can be undone with Ctrl+Z."; // NEW
+    const GARDEN_COMPANION_DELETE_BLOCK_MESSAGE = "Only the Garden module can delete this cluster. Select the folded Garden module and press Delete to remove the Garden and its neighboring modules."; // NEW
+    const CONFIRM_UNAVAILABLE_DELETE_MESSAGE = "Delete confirmation is unavailable. Nothing was deleted."; // NEW
+    const DELETE_PERMISSION_DENIED_MESSAGE = "You do not have permission to delete the selected module contents."; // NEW
     const CM_PER_METER = 100; // NEW
     const CM_PER_FOOT = 30.48; // NEW
     const PX_PER_CM = 5; // NEW
@@ -2114,6 +2121,56 @@ Draw.loadPlugin(function (ui) {
         return pool.find(function (cell) { return validCompanionTask(gardenCell, cell); }) || null;
     }
 
+    function cellChildren(cell) { // NEW
+        const children = model.getChildren ? model.getChildren(cell) : cell && cell.children; // NEW
+        return Array.isArray(children) ? children : []; // NEW
+    } // NEW
+
+    function allModelCells() { // NEW
+        if (model.cells) return Object.values(model.cells).filter(Boolean); // NEW
+        const root = model.getRoot && model.getRoot(); // NEW
+        const out = []; // NEW
+        (function walk(cell) { // NEW
+            if (!cell) return; // NEW
+            out.push(cell); // NEW
+            cellChildren(cell).forEach(walk); // CHANGE
+        })(root); // NEW
+        return out; // NEW
+    } // NEW
+
+    function validCompanionRoadmap(gardenCell, roadmapCell) { // NEW
+        return !!(gardenCell && roadmapCell && isRoadmapModule(roadmapCell) && getValueAttr(roadmapCell, "roadmap_garden_module_id") === cellId(gardenCell)); // NEW
+    } // NEW
+
+    function findExistingCompanionRoadmap(gardenCell) { // NEW
+        const expectedGardenId = cellId(gardenCell); // NEW
+        if (!expectedGardenId) return null; // NEW
+        const typedId = getValueAttr(gardenCell, "roadmap_module_id"); // NEW
+        const typed = typedId && model.getCell ? model.getCell(typedId) : null; // NEW
+        if (validCompanionRoadmap(gardenCell, typed)) return typed; // NEW
+        return allModelCells().find(function (cell) { return validCompanionRoadmap(gardenCell, cell); }) || null; // NEW
+    } // NEW
+
+    function gardenClusterModules(gardenCell) { // NEW
+        if (!isGardenModule(gardenCell)) return []; // NEW
+        const out = []; // NEW
+        const seen = new Set(); // NEW
+        function add(cell) { // NEW
+            const id = cellId(cell); // NEW
+            if (!cell || !id || seen.has(id)) return; // NEW
+            seen.add(id); // NEW
+            out.push(cell); // NEW
+        } // NEW
+        add(gardenCell); // NEW
+        add(findExistingCompanionTeam(gardenCell)); // NEW
+        add(findExistingCompanionTask(gardenCell)); // NEW
+        add(findExistingCompanionRoadmap(gardenCell)); // NEW
+        allModelCells().forEach(function (cell) { // NEW
+            if (validCompanionTeam(gardenCell, cell) || validCompanionTask(gardenCell, cell) || validCompanionRoadmap(gardenCell, cell)) add(cell); // NEW
+        }); // NEW
+        return out; // NEW
+    } // NEW
+
     function companionTeamPoint(gardenCell) {
         const g = graph.getCellGeometry(gardenCell) || { x: 0, y: 0, width: 160 };
         const gap = getModuleExternalMarginValue(gardenCell, COMPANION_TEAM_GAP); // CHANGE
@@ -2210,9 +2267,7 @@ Draw.loadPlugin(function (ui) {
         if (!insideRoadmapCommand && roadmapApi.runModelCommand) return roadmapApi.runModelCommand(() => ensureGardenRoadmapModule(gardenCell, true)); // NEW: companion access and links share failure rollback.
         const userApi = graph.__trellisUsers; // NEW
         if (userApi && userApi.canAddCell && !userApi.canAddCell(gardenCell)) { if (ui.alert) ui.alert("You do not have permission to create a Roadmap companion."); return null; } // NEW
-        const typed = model.getCell(getValueAttr(gardenCell, "roadmap_module_id")); // NEW
-        let roadmap = isRoadmapModule(typed) && getValueAttr(typed, "roadmap_garden_module_id") === cellId(gardenCell) ? typed : null; // NEW
-        if (!roadmap && model.cells) roadmap = Object.values(model.cells).find(cell => isRoadmapModule(cell) && getValueAttr(cell, "roadmap_garden_module_id") === cellId(gardenCell)); // NEW
+        let roadmap = findExistingCompanionRoadmap(gardenCell); // CHANGE
         let created = false; // NEW
         model.beginUpdate(); // NEW
         try { // NEW
@@ -2294,6 +2349,134 @@ Draw.loadPlugin(function (ui) {
         }
         return mod;
     }
+
+    function alertModuleDelete(message) { // NEW
+        if (ui.alert) ui.alert(message); // NEW
+        else if (mxUtils.alert) mxUtils.alert(message); // NEW
+    } // NEW
+
+    function confirmModuleDelete(message) { // NEW
+        try { if (window && typeof window.confirm === "function") return !!window.confirm(message); } catch (_) { } // CHANGE
+        try { if (typeof confirm === "function") return !!confirm(message); } catch (_) { } // CHANGE
+        alertModuleDelete(CONFIRM_UNAVAILABLE_DELETE_MESSAGE); // NEW
+        return false; // NEW
+    } // NEW
+
+    function collectCellDescendants(cells) { // NEW
+        const out = []; // NEW
+        const seen = new Set(); // NEW
+        function walk(cell) { // NEW
+            const id = cellId(cell); // NEW
+            if (!cell || !id || seen.has(id)) return; // NEW
+            seen.add(id); // NEW
+            out.push(cell); // NEW
+            cellChildren(cell).forEach(walk); // CHANGE
+        } // NEW
+        (cells || []).forEach(walk); // NEW
+        return out; // NEW
+    } // NEW
+
+    function moduleDeleteAllowed(cells) { // NEW
+        const users = graph.__trellisUsers; // NEW
+        if (!users || typeof users.canDeleteCell !== "function") return true; // NEW
+        return collectCellDescendants(cells).every(function (cell) { return users.canDeleteCell(cell); }); // NEW
+    } // NEW
+
+    function selectedCellsForRemove(cells) { // NEW
+        if (cells && cells.length) return Array.from(cells).filter(Boolean); // NEW
+        return graph.getSelectionCells ? graph.getSelectionCells().filter(Boolean) : []; // NEW
+    } // NEW
+
+    function removeDescendantTargets(targets) { // NEW
+        const targetSet = new Set(targets); // NEW
+        return targets.filter(function (cell) { // NEW
+            let parent = model.getParent ? model.getParent(cell) : cell && cell.parent; // NEW
+            while (parent) { // NEW
+                if (targetSet.has(parent)) return false; // NEW
+                parent = model.getParent ? model.getParent(parent) : parent.parent; // NEW
+            } // NEW
+            return true; // NEW
+        }); // NEW
+    } // NEW
+
+    function linkedGardenForClusterCompanion(cell) { // NEW
+        const garden = linkedGardenModuleForCompanion(cell); // NEW
+        return garden && (isTeamModule(cell) || isTaskModule(cell) || isRoadmapModule(cell)) ? garden : null; // NEW
+    } // NEW
+
+    function installModuleDeleteLifecycle() { // NEW
+        const baseRemoveCells = graph.removeCells; // NEW
+        if (graph.__trellisModuleDeleteLifecycleInstalled || typeof baseRemoveCells !== "function") return; // NEW
+        graph.__trellisModuleDeleteLifecycleInstalled = true; // NEW
+        let deletingThroughModules = false; // NEW
+
+        function removeWithBase(targets, includeEdges) { // NEW
+            deletingThroughModules = true; // NEW
+            try { return baseRemoveCells.call(graph, removeDescendantTargets(targets), includeEdges == null ? true : includeEdges); } // NEW
+            finally { deletingThroughModules = false; } // NEW
+        } // NEW
+
+        function removeWithRoadmapCleanup(targets, includeEdges) { // NEW
+            const roadmapApi = graph.__trellisRoadmapManager; // NEW
+            const filtered = removeDescendantTargets(targets); // NEW
+            if (roadmapApi && typeof roadmapApi.deleteRoadmapCells === "function") return roadmapApi.deleteRoadmapCells(filtered, "delete"); // NEW
+            return removeWithBase(filtered, includeEdges); // NEW
+        } // NEW
+
+        graph.removeCells = function (cells, includeEdges) { // NEW
+            if (deletingThroughModules) return baseRemoveCells.apply(this, arguments); // NEW
+            const selected = selectedCellsForRemove(cells); // NEW
+            const modules = selected.filter(isModule).sort(function (left, right) { return (isGardenModule(right) ? 1 : 0) - (isGardenModule(left) ? 1 : 0); }); // NEW
+            if (!modules.length) return baseRemoveCells.apply(this, arguments); // NEW
+
+            const blocked = []; // NEW
+            const foldTargets = []; // NEW
+            const standaloneDeleteTargets = []; // NEW
+            const gardenDeleteTargets = []; // NEW
+            const handledIds = new Set(); // NEW
+
+            modules.forEach(function (moduleCell) { // NEW
+                const id = cellId(moduleCell); // NEW
+                if (!id || handledIds.has(id)) return; // NEW
+                handledIds.add(id); // NEW
+                const collapsed = graph.isCellCollapsed && graph.isCellCollapsed(moduleCell); // NEW
+                if (!collapsed) { foldTargets.push(moduleCell); return; } // NEW
+                if (isGardenModule(moduleCell)) { // NEW
+                    gardenClusterModules(moduleCell).forEach(function (cell) { gardenDeleteTargets.push(cell); handledIds.add(cellId(cell)); }); // NEW
+                    return; // NEW
+                } // NEW
+                if (linkedGardenForClusterCompanion(moduleCell)) { blocked.push(moduleCell); return; } // NEW
+                standaloneDeleteTargets.push(moduleCell); // NEW
+            }); // NEW
+
+            const moduleHandledIds = new Set(modules.map(cellId)); // NEW
+            const selectedOutsideHandledModules = selected.filter(function (cell) { return !moduleHandledIds.has(cellId(cell)); }); // NEW
+            if (foldTargets.length && graph.foldCells) graph.foldCells(true, false, foldTargets); // NEW
+            if (blocked.length) alertModuleDelete(GARDEN_COMPANION_DELETE_BLOCK_MESSAGE); // NEW
+
+            const destructiveTargets = []; // NEW
+            if (gardenDeleteTargets.length) { // NEW
+                const gardens = removeDescendantTargets(gardenDeleteTargets).filter(isGardenModule); // NEW
+                if (confirmModuleDelete(gardens.length > 1 ? GARDEN_CLUSTERS_DELETE_MESSAGE : GARDEN_CLUSTER_DELETE_MESSAGE)) destructiveTargets.push.apply(destructiveTargets, gardenDeleteTargets); // NEW
+            } // NEW
+            if (standaloneDeleteTargets.length) { // NEW
+                if (confirmModuleDelete(standaloneDeleteTargets.length > 1 ? MODULES_DELETE_MESSAGE : MODULE_DELETE_MESSAGE)) destructiveTargets.push.apply(destructiveTargets, standaloneDeleteTargets); // NEW
+            } // NEW
+
+            const removableModules = removeDescendantTargets(destructiveTargets); // NEW
+            const removableOrdinary = selectedOutsideHandledModules.filter(function (cell) { // NEW
+                return !collectCellDescendants(removableModules).includes(cell); // NEW
+            }); // NEW
+            if (removableModules.length && !moduleDeleteAllowed(removableModules)) { // NEW
+                alertModuleDelete(DELETE_PERMISSION_DENIED_MESSAGE); // NEW
+                return removableOrdinary.length ? removeWithBase(removableOrdinary, includeEdges) : null; // NEW
+            } // NEW
+
+            const targets = removableOrdinary.concat(removableModules); // NEW
+            if (!targets.length) return []; // CHANGE
+            return removableModules.length ? removeWithRoadmapCleanup(targets, includeEdges) : removeWithBase(targets, includeEdges); // NEW
+        }; // NEW
+    } // NEW
 
     function installRootModuleCreationOverlay() {
         if (graph.__trellisRootModuleCreationOverlayInstalled) return;
@@ -3068,6 +3251,7 @@ Draw.loadPlugin(function (ui) {
     installSelectedTeamModuleRoleOverlay();
     installSelectedRoleImageOverlay();
     installRoleCardFieldClickEditing(); // NEW
+    installModuleDeleteLifecycle(); // NEW
 
     graph.addListener("usl:requestApplyModuleMargins", function (_sender, evt) {
         const cell = evt && evt.getProperty ? evt.getProperty("cell") : null;
@@ -3143,26 +3327,8 @@ Draw.loadPlugin(function (ui) {
         }
 
         if (cell && isModule(cell)) {
-            const isGarden = isGardenModule(cell);
             const isTeam = isTeamModule(cell);
-            const isTask = isTaskModule(cell);
 
-            // Toggle options based on current type                                       
-            if (!isGarden && !isTeam && !isTask) {
-                menu.addItem("Set as Garden Module", null, function () {
-                    setModuleType(cell, "garden");
-                });
-                menu.addItem("Set as Team Module", null, function () {
-                    setModuleType(cell, "team");
-                });
-                menu.addItem("Set as Task Module", null, function () {
-                    setModuleType(cell, "task");
-                });
-            } else {
-                menu.addItem("Set as Regular Module", null, function () {
-                    setModuleType(cell, "regular");
-                });
-            }
             // Add Submodule (child module with relative coordinates)               
             menu.addItem("Add Submodule", null, function () {
                 const pt = graph.getPointForEvent(evt);
