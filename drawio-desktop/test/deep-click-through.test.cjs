@@ -242,6 +242,13 @@ function ids(cells) {
     return Array.from(cells || [], cell => cell && cell.id);
 }
 
+function trackedDomEvent(clientX, clientY) { // NEW
+    const event = { button: 0, clientX, clientY, prevented: 0, stopped: 0 }; // NEW
+    event.preventDefault = () => { event.prevented += 1; }; // NEW
+    event.stopPropagation = () => { event.stopped += 1; }; // NEW
+    return event; // NEW
+} // NEW
+
 function makeCursorState(cell) {
     return { cell, cursor: null, setCursor(cursor) { this.cursor = cursor; } };
 }
@@ -556,6 +563,29 @@ test("workspace module handle drag uses only the handled module as drag cells", 
     assert.deepEqual(ids(getSelected()), ["regular"]); // CHANGE
     assert.deepEqual(ids(graph.graphHandler.__trellisWorkspaceHandleDragCells), ["regular"]); // NEW
     assert.deepEqual(ids(graph.graphHandler.getCells(regularModule)), ["regular"]); // NEW
+}); // NEW
+
+test("workspace handle drag consumes gesture events and clears active markers", () => { // NEW
+    const { graph, regularModule } = makeHarness(); // NEW
+    const api = graph.__trellisWorkspaceDragPolicy; // NEW
+    const down = trackedDomEvent(20, 300); // NEW
+    api.beginHandleDragForTests(regularModule, down); // NEW
+    assert.ok(down.prevented > 0); // NEW
+    assert.ok(down.stopped > 0); // NEW
+    assert.equal(graph.__trellisWorkspaceHandleDragActive, true); // NEW
+    assert.equal(graph.graphHandler.__trellisWorkspaceHandleDragActive, true); // NEW
+    const move = trackedDomEvent(30, 300); // NEW
+    graph.__gestureMove(move); // NEW
+    assert.ok(move.prevented > 0); // NEW
+    assert.ok(move.stopped > 0); // NEW
+    assert.equal(graph.__trellisWorkspaceHandleDragActive, true); // NEW
+    const up = trackedDomEvent(30, 300); // NEW
+    graph.__gestureUp(up); // NEW
+    assert.ok(up.prevented > 0); // NEW
+    assert.ok(up.stopped > 0); // NEW
+    assert.equal(graph.__trellisWorkspaceHandleDragActive, false); // NEW
+    assert.equal(graph.graphHandler.__trellisWorkspaceHandleDragActive, false); // NEW
+    assert.equal(graph.graphHandler.__trellisWorkspaceHandleDragCells, null); // NEW
 }); // NEW
 
 test("workspace handles omit canonical kanban board lanes", () => {

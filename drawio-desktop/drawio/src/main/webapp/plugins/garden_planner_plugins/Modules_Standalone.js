@@ -2795,6 +2795,7 @@ Draw.loadPlugin(function (ui) {
             if (deletingThroughModules) return baseRemoveCells.apply(this, arguments); // NEW
             const selected = selectedCellsForRemove(cells); // NEW
             const modules = selected.filter(isModule).sort(function (left, right) { return (isGardenModule(right) ? 1 : 0) - (isGardenModule(left) ? 1 : 0); }); // NEW
+            if (modules.length && graph.__trellisWorkspaceHandleDragActive) return []; // NEW
             if (!modules.length) return baseRemoveCells.apply(this, arguments); // NEW
 
             const blocked = []; // NEW

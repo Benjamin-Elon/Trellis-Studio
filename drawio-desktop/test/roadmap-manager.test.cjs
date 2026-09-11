@@ -304,10 +304,12 @@ test('roadmap process and object overlays expose delete buttons', async t => { /
     const h = harness(t, ['Garden_Task_Manager.js', 'Modules_Standalone.js']); // NEW
     const empty = h.api.addObject(h.process); h.graph.refresh(); h.graph.setSelectionCell(empty); h.api.refresh(); await frame(h); // NEW
     const objectDelete = graphButton(h, 'Delete Object'); assert.ok(objectDelete); assert.equal(objectDelete.getAttribute('data-trellis-button-variant'), 'danger'); // NEW
+    assert.equal(Array.from(objectDelete.closest('.trellis-roadmap-control').querySelectorAll('button')).map(button => button.textContent).at(-1), 'Delete Object'); // CHANGE: object delete stays at the bottom of its overlay.
     objectDelete.click(); assert.equal(h.dialogs.length, 0); assert.equal(h.model.getCell(empty.id), undefined); // NEW
     const task = h.api.createTaskFromRoadmapObject(h.object, { title: 'Prompt from overlay', linkMissingAssignees: false }); // NEW
     h.graph.refresh(); h.graph.setSelectionCell(h.process); h.api.refresh(); await frame(h); // NEW
     const processDelete = graphButton(h, 'Delete Process'); assert.ok(processDelete); assert.equal(processDelete.getAttribute('data-trellis-button-variant'), 'danger'); // NEW
+    assert.equal(Array.from(processDelete.closest('.trellis-roadmap-control').querySelectorAll('button')).map(button => button.textContent).at(-1), 'Delete Process'); // CHANGE: process delete stays at the bottom of its overlay.
     processDelete.click(); assert.equal(h.dialogs.length, 1); assert.match(h.dialogs[0].textContent, /Delete Roadmap Content/); assert.ok(h.model.getCell(h.process.id)); assert.ok(h.model.getCell(task.id)); // CHANGE
     h.ui.hideDialog(); h.api.deleteRoadmapCells([h.process], 'keep'); assert.ok(h.model.getCell(task.id)); // NEW
 }); // NEW

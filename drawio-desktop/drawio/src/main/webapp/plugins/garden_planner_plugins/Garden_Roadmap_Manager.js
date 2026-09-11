@@ -255,6 +255,10 @@ Draw.loadPlugin(function (ui) {
 
     function invalidateLayouts() { layouts.clear(); projections = new WeakMap(); } // NEW
     function isModuleCell(cell) { return kind(cell) === 'module' || /(?:^|;)module=1(?:;|$)/.test(cell && cell.style || ''); } // NEW
+    function isRoadmapModuleCell(cell) { return !!cell && (kind(cell) === 'module' || attr(cell, 'roadmap_module') || attr(cell, 'moduleType') === 'roadmap'); } // NEW
+    function collapsedRoadmapModuleFor(cell) { const module = isRoadmapModuleCell(cell) ? cell : ancestor(cell, 'module'); return module && graph.isCellCollapsed && graph.isCellCollapsed(module) ? module : null; } // NEW
+    function isHiddenByCollapsedRoadmapModule(cell) { const collapsed = collapsedRoadmapModuleFor(cell); return !!collapsed && collapsed !== cell && TYPES.has(kind(cell)); } // NEW
+    function shouldRenderRoadmapControlsFor(cell) { return !!cell && !collapsedRoadmapModuleFor(cell); } // NEW
     function peerMargin(cell) { const modules = graph.__trellisModules; return modules && modules.getModuleExternalMargin ? modules.getModuleExternalMargin(cell, 40) : 40; } // NEW
     function rectRecord(cell, geometry) { return { id: id(cell), x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height, margin: peerMargin(cell) }; } // NEW
     function peerPlan(cells, geometries, seeds, previous, fixed) { // NEW
@@ -615,6 +619,7 @@ Draw.loadPlugin(function (ui) {
     // Project personal geometry without mutating any stored cell or undo history. // NEW
     graph.getCellGeometry = function (cell) { // CHANGE
         if (committingCanonical || commandDepth || !cell) return baseGeometry(cell); // NEW: model-side Modules listeners must only observe canonical bounds.
+        if (collapsedRoadmapModuleFor(cell)) return baseGeometry(cell); // NEW
         if (kind(cell) === 'board' || isModuleCell(cell)) { const projected = personalProjection(cellRoot(cell)).get(cell); if (projected) return projected.clone(); } // NEW
         const board = ancestor(cell, 'board'); // NEW
         if (board && !attr(board, 'roadmap_export_snapshot')) { const projected = getLayout(board).geometry.get(id(cell)); if (projected) return projected.clone(); } // NEW
@@ -622,6 +627,7 @@ Draw.loadPlugin(function (ui) {
     }; // NEW
 
     graph.isCellVisible = function (cell) {
+        if (isHiddenByCollapsedRoadmapModule(cell)) return false; // NEW
         const board = ancestor(cell, 'board');
         return baseVisible(cell) && (!board || attr(board, 'roadmap_export_snapshot') || !getLayout(board).hidden.has(id(cell)));
     };
@@ -946,7 +952,9 @@ Draw.loadPlugin(function (ui) {
         overlay.replaceChildren();
         const cell = graph.getSelectionCell && graph.getSelectionCell(); if (!cell) return; // CHANGE
         const type = kind(cell), board = ancestor(cell, 'board');
+        if (!shouldRenderRoadmapControlsFor(cell)) return; // NEW
         function panel(anchor, topOffset) {
+            if (!shouldRenderRoadmapControlsFor(anchor) || !graph.isCellVisible(anchor)) return null; // NEW
             const state = graph.view.getState(anchor); if (!state) return null;
             const host = element('div', null, 'trellis-roadmap-control'); host.style.cssText = 'position:absolute;display:flex;flex-direction:column;align-items:flex-start;gap:4px;background:#fff;border:1px solid #111;padding:4px;pointer-events:auto;font:12px Arial;white-space:nowrap;'; // CHANGE
             host.__roadmapAnchor = anchor; host.__roadmapAbove = topOffset < 0; // CHANGE
@@ -970,7 +978,7 @@ Draw.loadPlugin(function (ui) {
         } else if (type === 'process' || type === 'object') {
             const state = graph.view.getState(cell), host = state && panel(cell, state.height + 8); if (!host) return;
             nameControl(host, cell); button('Edit', () => showEditDialog(cell), host, !allowed(cell));
-            button(type === 'process' ? 'Delete Process' : 'Delete Object', () => graph.removeCells([cell]), host, !allowed(cell, 'canDeleteCell')); // NEW
+            const deleteLabel = type === 'process' ? 'Delete Process' : 'Delete Object'; // NEW: defer delete until the overlay's type-specific controls are appended.
             if (type === 'process') {
                 const color = inputField(host, 'Process color', processColor(cell) || nextProcessColor(board), 'color'); // NEW
                 color.disabled = !allowed(cell); // NEW
@@ -982,13 +990,14 @@ Draw.loadPlugin(function (ui) {
                 button('Create Task', () => showTaskCreationDialog(cell), host, !allowed(cell) || !['Planned', 'Doing'].includes(attr(cell, 'roadmap_status')));
                 const tasks = linkedTasks(cell); button('Open Tasks (' + tasks.length + ')', () => showTasks(cell), host, !tasks.length);
             }
+            button(deleteLabel, () => graph.removeCells([cell]), host, !allowed(cell, 'canDeleteCell')); // CHANGE: keep the destructive process/object action at the bottom of the overlay.
         }
         positionControls(); // NEW
     }
 
     function positionControls() { // NEW
         if (!overlay) return; const shared = graph.__trellisTaskUi; // NEW
-        Array.from(overlay.children).forEach(host => { const anchor = host.__roadmapAnchor, state = anchor && graph.view.getState(anchor); if (!state) return; const bounds = shared ? shared.getCellVisualBounds(anchor, overlay) : state; if (shared) shared.positionDomOverlayFromBounds(host, bounds, !host.__roadmapAbove, host.__roadmapAbove, 3, host.__roadmapAbove ? 0 : 20); else host.style.top = Math.max(0, host.__roadmapAbove ? bounds.y - host.offsetHeight - 9 : bounds.y + bounds.height + 9) + 'px'; }); // NEW
+        Array.from(overlay.children).forEach(host => { const anchor = host.__roadmapAnchor; if (!shouldRenderRoadmapControlsFor(anchor) || !graph.isCellVisible(anchor)) { host.remove(); return; } const state = graph.view.getState(anchor); if (!state) return; const bounds = shared ? shared.getCellVisualBounds(anchor, overlay) : state; if (shared) shared.positionDomOverlayFromBounds(host, bounds, !host.__roadmapAbove, host.__roadmapAbove, 3, host.__roadmapAbove ? 0 : 20); else host.style.top = Math.max(0, host.__roadmapAbove ? bounds.y - host.offsetHeight - 9 : bounds.y + bounds.height + 9) + 'px'; }); // CHANGE
     } // NEW
 
     function point(event) { const rect = graph.container.getBoundingClientRect(); return { x: event.clientX - rect.left + graph.container.scrollLeft, y: event.clientY - rect.top + graph.container.scrollTop }; }

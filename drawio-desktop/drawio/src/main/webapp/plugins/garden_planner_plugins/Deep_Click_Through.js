@@ -837,6 +837,13 @@ Draw.loadPlugin(function (ui) {
         workspaceHandleRefreshThread = window.setTimeout(refreshWorkspaceHandles, 0);
     }
 
+    function consumeWorkspaceHandleDragEvent(evt) { // NEW
+        if (!evt) return; // NEW
+        if (evt.preventDefault) evt.preventDefault(); // NEW
+        if (evt.stopPropagation) evt.stopPropagation(); // NEW
+        if (typeof mxEvent !== 'undefined' && mxEvent.consume) mxEvent.consume(evt); // NEW
+    } // NEW
+
     function eventPointInGraphContainer(evt) {
         if (!evt || !graph.container) return null;
         return mxUtils.convertPoint(graph.container, mxEvent.getClientX(evt), mxEvent.getClientY(evt));
@@ -895,7 +902,8 @@ Draw.loadPlugin(function (ui) {
     }
 
     function beginWorkspaceHandleDrag(cell, evt) {
-        if (!cell || !graph.isCellMovable(cell)) return;
+        consumeWorkspaceHandleDragEvent(evt); // NEW
+        if (!cell || !graph.isCellMovable(cell)) return; // CHANGE
         const dragCells = getWorkspaceHandleDragCells(cell);
         const occupiedBedDrag = isOccupiedBedHandleCell(cell);
         restoreWorkspaceCursor();
@@ -913,9 +921,15 @@ Draw.loadPlugin(function (ui) {
             handler.delayedSelection = true;
             handler.cell = cell;
             handler.__trellisWorkspaceHandleDragCells = dragCells; // CHANGE
+            graph.__trellisWorkspaceHandleDragActive = true; // NEW
+            handler.__trellisWorkspaceHandleDragActive = true; // NEW
             const move = function (moveEvt) {
-                updateIrrigationWorkspaceHandleSuppression(irrigationSuppressionApi, moveEvt); // CHANGE
-                handler.mouseMove(graph, createWorkspaceMouseEvent(moveEvt, cell));
+                try { // NEW
+                    updateIrrigationWorkspaceHandleSuppression(irrigationSuppressionApi, moveEvt); // CHANGE
+                    handler.mouseMove(graph, createWorkspaceMouseEvent(moveEvt, cell)); // CHANGE
+                } finally { // NEW
+                    consumeWorkspaceHandleDragEvent(moveEvt); // NEW
+                } // NEW
             };
             const up = function (upEvt) {
                 try {
@@ -924,15 +938,17 @@ Draw.loadPlugin(function (ui) {
                     graph.isMouseDown = oldMouseDown;
                     workspaceDraggingHandleCell = null;
                     handler.__trellisWorkspaceHandleDragCells = null;
+                    graph.__trellisWorkspaceHandleDragActive = false; // NEW
+                    handler.__trellisWorkspaceHandleDragActive = false; // NEW
                     mxEvent.removeGestureListeners(document, null, move, up);
                     finishIrrigationWorkspaceHandleSuppression(irrigationSuppressionApi); // CHANGE
+                    consumeWorkspaceHandleDragEvent(upEvt); // NEW
                     scheduleWorkspaceHandleRefresh();
                 }
             };
             mxEvent.addGestureListeners(document, null, move, up);
         }
         scheduleWorkspaceHandleRefresh();
-        mxEvent.consume(evt);
     }
 
     function createWorkspaceMouseEvent(evt, fallbackCell) {

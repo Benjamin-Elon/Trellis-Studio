@@ -722,6 +722,18 @@ test("delete on expanded module folds without deleting", () => { // NEW
     assert.equal(harness.foldCalls[0].cells[0], mod); // CHANGE
 }); // NEW
 
+test("workspace handle drag suppresses module delete lifecycle", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
+    harness.graph.__trellisWorkspaceHandleDragActive = true; // NEW
+    assert.deepEqual(harness.graph.removeCells([mod]), []); // NEW
+    assert.equal(!!mod.collapsed, false); // CHANGE
+    assert.equal(harness.model.getParent(mod), harness.root); // NEW
+    assert.equal(harness.removeCalls.length, 0); // NEW
+    assert.equal(harness.foldCalls.length, 0); // NEW
+    assert.deepEqual(harness.confirmations, []); // NEW
+}); // NEW
+
 test("delete on folded standalone module confirms and removes descendants", () => { // NEW
     const harness = makeHarness(); // NEW
     const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
