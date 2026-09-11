@@ -5985,6 +5985,11 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     });
 
     // -------------------- DOM overlay host and installers --------------------
+    function isTeamPermissionModeActiveForTaskOverlay() {
+        const users = typeof window !== 'undefined' && window.Trellis && window.Trellis.users; // NEW
+        return !!(users && typeof users.isTeamPermissionModeActive === 'function' && users.isTeamPermissionModeActive()); // NEW
+    }
+
     function ensureTaskControlOverlayHost() {
         const pane = graph.view && graph.view.overlayPane ? graph.view.overlayPane : null;
         const paneIsSvg = !!(pane && pane.namespaceURI === 'http://www.w3.org/2000/svg');
@@ -6245,6 +6250,10 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         };
     }
 
+    function bindTeamPermissionModeOverlayRefresh(refresh) {
+        if (typeof window !== 'undefined' && window.addEventListener && refresh) window.addEventListener('trellisTeamPermissionModeChanged', function (evt) { if (evt && evt.detail && evt.detail.active) hideTaskOverlayGestureElements(); refresh(); }); // NEW
+    }
+
     function addGraphViewRefreshListener(refresh) {
         if (!refresh) return;
         if (graph.view && graph.view.addListener) {
@@ -6460,6 +6469,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             removeObsoleteNodes();
             const board = selectedTaskBoard();
             nodes.forEach(node => { node.element.style.display = 'none'; });
+            if (isTeamPermissionModeActiveForTaskOverlay()) return; // NEW
             if (!board || taskOverlayGestureActive) return;
             lanePagingStates.forEach((state, laneId) => {
                 if (!state || state.board !== board || !state.plan.paged || isWeekDayLane(state.laneKey)) return;
@@ -6474,6 +6484,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         requestLanePagerOverlayRefresh = createDeferredTaskOverlayRefresh(refresh);
         const selectionModel = graph.getSelectionModel && graph.getSelectionModel();
         if (selectionModel && selectionModel.addListener) selectionModel.addListener(mxEvent.CHANGE, function () { revealExternallySelectedPage(); requestLanePagerOverlayRefresh(); });
+        bindTeamPermissionModeOverlayRefresh(requestLanePagerOverlayRefresh); // NEW
         addGraphViewRefreshListener(requestLanePagerOverlayRefresh);
         requestLanePagerOverlayRefresh();
     }
@@ -6543,6 +6554,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         function refresh() {
             removeObsoleteNodes();
             nodes.forEach(node => { node.element.style.display = 'none'; });
+            if (isTeamPermissionModeActiveForTaskOverlay()) return; // NEW
             const board = selectedTaskBoard();
             if (!board || taskOverlayGestureActive || getBoardViewMode(board) !== 'WEEK') return;
             const lane = boardLanes(board).TODO_STAGED;
@@ -6557,6 +6569,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         requestStagedSearchOverlayRefresh = createDeferredTaskOverlayRefresh(refresh);
         const selectionModel = graph.getSelectionModel && graph.getSelectionModel();
         if (selectionModel && selectionModel.addListener) selectionModel.addListener(mxEvent.CHANGE, requestStagedSearchOverlayRefresh);
+        bindTeamPermissionModeOverlayRefresh(requestStagedSearchOverlayRefresh); // NEW
         addGraphViewRefreshListener(requestStagedSearchOverlayRefresh);
         requestStagedSearchOverlayRefresh();
     }
@@ -6744,6 +6757,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             const expectedExpandedCardId = expandedAssigneeCardId;
             let renderedExpandedCard = false;
             layer.innerHTML = '';
+            if (isTeamPermissionModeActiveForTaskOverlay()) { layer.style.display = 'none'; return; } // NEW
             if (taskOverlayGestureActive) { layer.style.display = 'none'; return; }
             layer.style.display = 'block';
             (function walk(cell) {
@@ -6765,6 +6779,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
         const requestRefresh = createDeferredTaskOverlayRefresh(refresh);
         addGraphViewRefreshListener(requestRefresh);
+        bindTeamPermissionModeOverlayRefresh(requestRefresh); // NEW
         graph.addListener('linksChanged', requestRefresh);
         window.addEventListener('trellisHistoryAfterRestore', requestRefresh);
         document.addEventListener('keydown', function (evt) { if (expandedAssigneeCardId && (evt.key === 'Escape' || evt.keyCode === 27)) { consumeDomEvent(evt); collapseExpandedAssigneeCard(requestRefresh); } });
@@ -6942,6 +6957,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         let boardNameContextKey = null;
 
         function refresh() {
+            if (isTeamPermissionModeActiveForTaskOverlay()) { bar.style.display = 'none'; return; } // NEW
             const board = selectedBoard();
             if (!board) { bar.style.display = 'none'; columnsExpanded = false; columnsContextKey = null; boardNameContextKey = null; boardNameInput = null; nameSlot.innerHTML = ''; return; } // CHANGE
             ensureBoardPlanningDefaults(board);
@@ -6985,6 +7001,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
         const requestRefresh = createDeferredTaskOverlayRefresh(refresh);
         graph.getSelectionModel().addListener(mxEvent.CHANGE, requestRefresh);
+        bindTeamPermissionModeOverlayRefresh(requestRefresh); // NEW
         addGraphViewRefreshListener(requestRefresh);
         requestRefresh();
     }
@@ -7269,6 +7286,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         const closeDayBtn = add('Close Day', ctx => taskCommands.closeSelectedWeekDay(ctx.board, ctx.lane), 'danger');
 
         function refresh() {
+            if (isTeamPermissionModeActiveForTaskOverlay()) { overlay.style.display = 'none'; return; } // NEW
             const ctx = selectedDayLaneContext();
             if (!ctx) { overlay.style.display = 'none'; return; }
             ensureBoardPlanningDefaults(ctx.board);
@@ -7284,6 +7302,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
         const requestRefresh = createDeferredTaskOverlayRefresh(refresh);
         graph.getSelectionModel().addListener(mxEvent.CHANGE, requestRefresh);
+        bindTeamPermissionModeOverlayRefresh(requestRefresh); // NEW
         addGraphViewRefreshListener(requestRefresh);
         requestRefresh();
     }
@@ -7450,6 +7469,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         }
 
         function showOverlay(taskModule, anchor) {
+            if (isTeamPermissionModeActiveForTaskOverlay()) { hideOverlay(); return; } // NEW
             currentTaskModule = taskModule;
             renderTaskModuleLabelControls(taskModule);
             addBoardBtn.textContent = taskModuleAddBoardLabel(taskModule); // NEW
@@ -7476,6 +7496,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         });
 
         function refresh() {
+            if (isTeamPermissionModeActiveForTaskOverlay()) { hideOverlay(); return; } // NEW
             const taskModule = selectedTaskModule();
             if (!taskModule) { currentTaskModule = null; manuallyHiddenTaskModule = null; hideOverlay(); return; }
             if (manuallyHiddenTaskModule && manuallyHiddenTaskModule !== taskModule) manuallyHiddenTaskModule = null;
@@ -7489,6 +7510,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         function onMouseDown(_sender, me) {
             const evt = me && me.getEvent ? me.getEvent() : null;
             if (evt && overlay.contains(mxEvent.getSource ? mxEvent.getSource(evt) : evt.target)) return;
+            if (isTeamPermissionModeActiveForTaskOverlay()) { pendingToggleCell = null; pendingClickAnchor = null; pendingAnchorCell = null; hideOverlay(); return; } // NEW
             pendingToggleCell = null;
             pendingClickAnchor = null;
             pendingAnchorCell = null; // NEW
@@ -7503,6 +7525,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
         function onMouseUp(_sender, me) {
             const evt = me && me.getEvent ? me.getEvent() : null;
+            if (isTeamPermissionModeActiveForTaskOverlay()) { pendingToggleCell = null; pendingClickAnchor = null; pendingAnchorCell = null; hideOverlay(); return; } // NEW
             const selected = selectedTaskModule();
             const toggleCell = pendingToggleCell;
             const anchorCell = pendingAnchorCell; // NEW
@@ -7529,6 +7552,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
         const requestRefresh = createDeferredTaskOverlayRefresh(refresh);
         graph.getSelectionModel().addListener(mxEvent.CHANGE, requestRefresh);
+        bindTeamPermissionModeOverlayRefresh(requestRefresh); // NEW
         addGraphViewRefreshListener(requestRefresh);
         requestRefresh();
     }
@@ -7626,6 +7650,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         }
 
         function openAssignmentPicker(cards) {
+            if (isTeamPermissionModeActiveForTaskOverlay()) { closeAssignmentPicker(false); overlay.style.display = 'none'; return; } // NEW
             const context = getAssignmentSelectionContext(cards);
             if (!context) return;
             const rosterIds = new Set(context.roster.map(profile => profile.id));
@@ -7776,6 +7801,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         const clearBtn = add('Clear Note', cards => cards.length === 1 ? taskCommands.clearCardNote(cards[0]) : taskCommands.applyBulkCardEdit(cards, { replaceNote: true, note: '' }), 'danger');
 
         function refresh() {
+            if (isTeamPermissionModeActiveForTaskOverlay()) { closeAssignmentPicker(false); overlay.style.display = 'none'; return; } // NEW
             const cards = selectedKanbanCards();
             const assignmentContext = getAssignmentSelectionContext(cards);
             if (assignmentPicker && assignmentContextSignature(assignmentContext) !== assignmentPickerSignature) closeAssignmentPicker(false);
@@ -7812,6 +7838,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
         const requestRefresh = createDeferredTaskOverlayRefresh(refresh);
         graph.getSelectionModel().addListener(mxEvent.CHANGE, requestRefresh);
+        bindTeamPermissionModeOverlayRefresh(requestRefresh); // NEW
         addGraphViewRefreshListener(requestRefresh);
         document.addEventListener('mousedown', function (evt) { if (assignmentPicker && !assignmentPicker.contains(evt.target) && evt.target !== assignBtn) closeAssignmentPicker(); }, true);
         document.addEventListener('keydown', function (evt) { if (assignmentPicker && (evt.key === 'Escape' || evt.keyCode === 27)) { consumeDomEvent(evt); closeAssignmentPicker(); } });

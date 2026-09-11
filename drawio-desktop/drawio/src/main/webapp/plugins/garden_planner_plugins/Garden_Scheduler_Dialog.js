@@ -4646,6 +4646,26 @@ Draw.loadPlugin(function (ui) {
     function findSowingSeasonForDate(windows, startISO) {
         return normalizeSowingSeasons(windows).find(window => sowDateInWindow(startISO, window)) || null;
     }
+    function pluralDays(count) {
+        return Math.abs(Number(count) || 0) === 1 ? 'day' : 'days';
+    }
+    function formatSowingSeasonRelativeTiming(window, todayISO = localTodayISO()) {
+        const normalized = normalizeSowingSeason(window);
+        const today = parseISODateUTCValue(todayISO);
+        const start = parseISODateUTCValue(normalized?.startISO);
+        const end = parseISODateUTCValue(normalized?.endISO);
+        if (!normalized || !today || !start || !end) return '';
+        if (today < start) {
+            const days = daysBetweenUTC(today, start);
+            return `Starts in ${days} ${pluralDays(days)}`;
+        }
+        if (today <= end) {
+            const days = daysBetweenUTC(today, end);
+            return days === 0 ? 'Last day' : `${days} ${pluralDays(days)} left`;
+        }
+        const days = daysBetweenUTC(end, today);
+        return `Ended ${days} ${pluralDays(days)} ago`;
+    }
     function formatSowingSeasonsSummary(windows) {
         const normalized = normalizeSowingSeasons(windows);
         if (!normalized.length) return 'No feasible sowing seasons.';
@@ -4658,7 +4678,8 @@ Draw.loadPlugin(function (ui) {
     function buildSowingSeasonSelectorState({
         sowingSeasons = [],
         activeSowingSeasonId = '',
-        startISO = ''
+        startISO = '',
+        todayISO = localTodayISO()
     } = {}) {
         const windows = normalizeSowingSeasons(sowingSeasons);
         const options = [];
@@ -4669,15 +4690,21 @@ Draw.loadPlugin(function (ui) {
         if (!windows.length && !options.length) {
             options.push({ value: '', label: 'No feasible sowing season', disabled: false });
         } else {
-            windows.forEach(window => options.push({ value: window.id, label: window.riskSummary ? `${window.label} - ${window.riskSummary}` : window.label, disabled: false }));
+            windows.forEach(window => {
+                const timing = formatSowingSeasonRelativeTiming(window, todayISO);
+                const suffixes = [timing, window.riskSummary].filter(Boolean);
+                options.push({ value: window.id, label: suffixes.length ? `${window.label} - ${suffixes.join(' - ')}` : window.label, disabled: false }); // CHANGE: selected season shows relative timing.
+            });
         }
         const activeWindow = windows.find(window => window.id === String(activeSowingSeasonId || '').trim()) || null;
         const selectedValue = options.some(option => option.value === activeSowingSeasonId) ? String(activeSowingSeasonId || '') : '';
+        const timingText = activeWindow ? formatSowingSeasonRelativeTiming(activeWindow, todayISO) : '';
         return {
             options,
             value: selectedValue,
             activeWindow,
-            boundsText: activeWindow ? `${activeWindow.startISO} to ${activeWindow.endISO}` : ''
+            boundsText: activeWindow ? [`${activeWindow.startISO} to ${activeWindow.endISO}`, timingText].filter(Boolean).join(' - ') : '', // CHANGE: window field mirrors the relative season timing.
+            timingText
         };
     }
     function pickDefaultSowingSeasonId(windows, { savedStartISO = '', todayISO = '' } = {}) {
@@ -10672,7 +10699,7 @@ Draw.loadPlugin(function (ui) {
                 trackWrap.appendChild(bandEl);
             });
 
-            function appendVerticalTimelineBoundary({ percent, label, tooltip, dataAttr }) {
+            function appendVerticalTimelineBoundary({ percent, label, tooltip, dataAttr, lineColor = '#64748b', labelColor = '#64748b' }) {
                 if (!Number.isFinite(Number(percent))) return;
                 const boundary = document.createElement('div');
                 if (dataAttr) boundary.setAttribute(dataAttr, '1');
@@ -10680,7 +10707,7 @@ Draw.loadPlugin(function (ui) {
                 boundary.style.left = `${percent}%`;
                 boundary.style.top = '8px';
                 boundary.style.height = '42px';
-                boundary.style.borderLeft = '1px dashed #64748b';
+                boundary.style.borderLeft = '1px dashed ' + lineColor; // CHANGE: Today can use blue while other timeline boundaries remain neutral.
                 boundary.style.transform = 'translateX(-50%)';
                 boundary.style.opacity = '0.65';
                 const labelEl = document.createElement('div');
@@ -10691,7 +10718,7 @@ Draw.loadPlugin(function (ui) {
                 labelEl.style.transform = timelineAxisLabelTransform(percent);
                 labelEl.style.fontSize = '10px';
                 labelEl.style.lineHeight = '1';
-                labelEl.style.color = '#64748b';
+                labelEl.style.color = labelColor; // CHANGE: Today can use blue while other timeline boundaries remain neutral.
                 labelEl.style.whiteSpace = 'nowrap';
                 setTooltip(boundary, tooltip);
                 setTooltip(labelEl, tooltip);
@@ -10704,7 +10731,9 @@ Draw.loadPlugin(function (ui) {
                     percent: model.todayPercent,
                     label: 'Today',
                     tooltip: `Today: ${model.todayISO}`,
-                    dataAttr: 'data-usl-today-marker'
+                    dataAttr: 'data-usl-today-marker',
+                    lineColor: '#2563eb',
+                    labelColor: '#1d4ed8'
                 });
             }
 
@@ -13283,7 +13312,120 @@ Draw.loadPlugin(function (ui) {
         return { startISO: fmtISO(rangeStart), endISO: fmtISO(rangeEnd) };
     }
 
-    function renderTaskTimelinePreview(container, { tasks = [], scheduleRange = null, message = '', error = '' } = {}) {
+    function buildTaskTimelineAxisMarkers(rangeStart, rangeEnd, totalDays) {
+        if (!isUsableDate(rangeStart) || !isUsableDate(rangeEnd) || rangeEnd < rangeStart) return { months: [], years: [] };
+        const spanDays = Math.max(1, Number.isFinite(Number(totalDays)) ? Number(totalDays) : timelineDaysBetween(rangeStart, rangeEnd));
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const months = [];
+        const years = [];
+        const useMonthlyTicks = spanDays < 183; // CHANGE: short generated task timelines get denser calendar context.
+        const monthStep = useMonthlyTicks ? 1 : 3;
+        for (let year = rangeStart.getUTCFullYear(); year <= rangeEnd.getUTCFullYear(); year += 1) {
+            const yearDate = asUTCDate(year, 1, 1);
+            if (yearDate >= rangeStart && yearDate <= rangeEnd) {
+                years.push({ iso: fmtISO(yearDate), label: String(year), percent: timelinePercentForDate(yearDate, rangeStart, spanDays) ?? 0 });
+            }
+            for (let monthIndex = 0; monthIndex < 12; monthIndex += monthStep) {
+                const monthDate = asUTCDate(year, monthIndex + 1, 1);
+                if (monthDate < rangeStart || monthDate > rangeEnd) continue;
+                months.push({ iso: fmtISO(monthDate), label: monthNames[monthIndex], percent: timelinePercentForDate(monthDate, rangeStart, spanDays) ?? 0 });
+            }
+        }
+        return { months, years };
+    }
+
+    function taskTimelineAxisLabelTransform(percent) {
+        const n = Number(percent);
+        if (Number.isFinite(n) && n <= 1) return 'translateX(0)';
+        if (Number.isFinite(n) && n >= 99) return 'translateX(-100%)';
+        return 'translateX(-50%)';
+    }
+
+    function renderTaskTimelineCalendarAxis(axis) {
+        const wrap = document.createElement('div');
+        wrap.setAttribute('data-usl-task-timeline-axis', '1');
+        wrap.style.position = 'relative';
+        wrap.style.height = '34px';
+        wrap.style.marginTop = '2px';
+        const monthRow = document.createElement('div');
+        monthRow.style.position = 'relative';
+        monthRow.style.height = '19px';
+        (axis?.months || []).forEach(marker => {
+            const tick = document.createElement('div');
+            tick.setAttribute('data-usl-task-timeline-month-tick', '1');
+            tick.style.position = 'absolute';
+            tick.style.left = `${marker.percent}%`;
+            tick.style.top = '0';
+            tick.style.height = '6px';
+            tick.style.borderLeft = '1px solid #cbd5e1';
+            tick.style.transform = 'translateX(-50%)';
+            monthRow.appendChild(tick);
+            const label = document.createElement('div');
+            label.setAttribute('data-usl-task-timeline-month-label', '1');
+            label.textContent = marker.label;
+            label.style.position = 'absolute';
+            label.style.left = `${marker.percent}%`;
+            label.style.top = '7px';
+            label.style.transform = taskTimelineAxisLabelTransform(marker.percent);
+            label.style.fontSize = '10px';
+            label.style.lineHeight = '1';
+            label.style.color = '#64748b';
+            label.style.whiteSpace = 'nowrap';
+            setTooltip(label, `${marker.label}: ${marker.iso}`);
+            monthRow.appendChild(label);
+        });
+        const yearRow = document.createElement('div');
+        yearRow.style.position = 'relative';
+        yearRow.style.height = '15px';
+        (axis?.years || []).forEach(marker => {
+            const tick = document.createElement('div');
+            tick.setAttribute('data-usl-task-timeline-year-tick', '1');
+            tick.style.position = 'absolute';
+            tick.style.left = `${marker.percent}%`;
+            tick.style.top = '0';
+            tick.style.height = '14px';
+            tick.style.borderLeft = '1px solid #94a3b8';
+            tick.style.transform = 'translateX(-50%)';
+            yearRow.appendChild(tick);
+            const label = document.createElement('div');
+            label.setAttribute('data-usl-task-timeline-year-label', '1');
+            label.textContent = marker.label;
+            label.style.position = 'absolute';
+            label.style.left = `${marker.percent}%`;
+            label.style.top = '1px';
+            label.style.transform = taskTimelineAxisLabelTransform(marker.percent);
+            label.style.fontSize = '10px';
+            label.style.lineHeight = '1';
+            label.style.fontWeight = '600';
+            label.style.color = '#475569';
+            label.style.whiteSpace = 'nowrap';
+            setTooltip(label, `Year ${marker.label}: ${marker.iso}`);
+            yearRow.appendChild(label);
+        });
+        wrap.appendChild(monthRow);
+        wrap.appendChild(yearRow);
+        return wrap;
+    }
+
+    function appendTaskTimelineTodayMarker(track, percent, top = '0', bottom = '0') {
+        if (!track || !Number.isFinite(Number(percent))) return null;
+        const todayLine = document.createElement('div');
+        todayLine.setAttribute('data-usl-task-timeline-today-marker', '1');
+        todayLine.style.position = 'absolute';
+        todayLine.style.left = `${percent}%`;
+        todayLine.style.top = top;
+        todayLine.style.bottom = bottom;
+        todayLine.style.width = '0';
+        todayLine.style.borderLeft = '1px dashed #2563eb'; // CHANGE: task preview Today marker uses the scheduler blue timeline style.
+        todayLine.style.transform = 'translateX(-50%)';
+        todayLine.style.opacity = '0.78';
+        todayLine.style.zIndex = '3';
+        setTooltip(todayLine, 'Today');
+        track.appendChild(todayLine);
+        return todayLine;
+    }
+
+    function renderTaskTimelinePreview(container, { tasks = [], scheduleRange = null, message = '', error = '', todayISO = localTodayISO() } = {}) {
         container.innerHTML = '';
         if (error || message || !tasks.length) {
             const empty = document.createElement('div');
@@ -13303,6 +13445,10 @@ Draw.loadPlugin(function (ui) {
             return;
         }
         const totalDays = Math.max(1, Math.round((rangeEnd - rangeStart) / 86400000));
+        const todayDate = parseISODateUTCValue(todayISO);
+        const todayPercent = todayDate && todayDate >= rangeStart && todayDate <= rangeEnd
+            ? timelinePercentForDate(todayDate, rangeStart, totalDays)
+            : null;
 
         const labels = document.createElement('div');
         labels.style.display = 'grid';
@@ -13310,14 +13456,40 @@ Draw.loadPlugin(function (ui) {
         labels.style.gap = '8px';
         const spacer = document.createElement('div');
         const dateScale = document.createElement('div');
-        dateScale.style.display = 'flex';
-        dateScale.style.justifyContent = 'space-between';
+        dateScale.style.position = 'relative';
+        dateScale.style.minHeight = '54px';
         dateScale.style.fontSize = '11px';
         dateScale.style.color = '#6b7280';
+        if (todayPercent != null) {
+            const todayLabel = document.createElement('div');
+            todayLabel.setAttribute('data-usl-task-timeline-today-label', '1');
+            todayLabel.textContent = 'Today';
+            todayLabel.style.position = 'absolute';
+            todayLabel.style.left = `${todayPercent}%`;
+            todayLabel.style.top = '0';
+            todayLabel.style.transform = taskTimelineAxisLabelTransform(todayPercent);
+            todayLabel.style.fontSize = '10px';
+            todayLabel.style.lineHeight = '1';
+            todayLabel.style.fontWeight = '700';
+            todayLabel.style.color = '#1d4ed8'; // CHANGE: task preview Today label uses blue instead of neutral text.
+            todayLabel.style.whiteSpace = 'nowrap';
+            setTooltip(todayLabel, `Today: ${fmtISO(todayDate)}`);
+            dateScale.appendChild(todayLabel);
+            appendTaskTimelineTodayMarker(dateScale, todayPercent, '12px', '0');
+        }
         const startLabel = document.createElement('span');
         const endLabel = document.createElement('span');
         startLabel.textContent = fmtISO(rangeStart);
         endLabel.textContent = fmtISO(rangeEnd);
+        startLabel.style.position = 'absolute';
+        startLabel.style.left = '0';
+        startLabel.style.bottom = '0';
+        endLabel.style.position = 'absolute';
+        endLabel.style.right = '0';
+        endLabel.style.bottom = '0';
+        const axis = renderTaskTimelineCalendarAxis(buildTaskTimelineAxisMarkers(rangeStart, rangeEnd, totalDays));
+        axis.style.paddingTop = todayPercent == null ? '0' : '12px';
+        dateScale.appendChild(axis);
         dateScale.appendChild(startLabel);
         dateScale.appendChild(endLabel);
         labels.appendChild(spacer);
@@ -13343,6 +13515,7 @@ Draw.loadPlugin(function (ui) {
             track.style.height = '16px';
             track.style.background = '#e5e7eb';
             track.style.borderRadius = '3px';
+            if (todayPercent != null) appendTaskTimelineTodayMarker(track, todayPercent); // CHANGE: each task row shows the same Today boundary as the scale.
             group.occurrences.forEach(task => {
                 const taskStart = parseISODateUTCValue(task.startISO);
                 const taskEnd = parseISODateUTCValue(task.endISO);
@@ -15184,6 +15357,7 @@ Draw.loadPlugin(function (ui) {
                 offsetYCm: offsets.y,
                 plantDefaultLayout: spacingPlantDefaultLayout(plant),
                 rect: graphRectForCell(cell),
+                bedId: bed && bed.id ? String(bed.id) : '', // CHANGE: spacing preview can hide and redraw the containing bed.
                 bedRect: graphRectForCell(bed)
             }); // CHANGE: diagram overlay receives editable spacing rows without owning scheduler internals.
         }
@@ -15254,34 +15428,37 @@ Draw.loadPlugin(function (ui) {
         const warningParts = [];
         if (dots.total <= 0) warningParts.push('No plants remain inside the planting area.');
         if (dots.summarized) warningParts.push('Preview capped at ' + dots.circles.length + ' of ' + dots.total + ' plants.');
-        return Object.assign({}, row, { rect, dots, invalid: dots.total <= 0, warning: warningParts.join(' ') });
+        return Object.assign({}, row, { rect, dots, invalid: !row.previewOnly && dots.total <= 0, warning: row.previewOnly ? '' : warningParts.join(' ') }); // CHANGE: context-only bed rows do not block applying an edited row.
     }
 
     function buildSpacingPreviewModel(activeGraphOrRows, maybeRows) {
         const activeGraph = Array.isArray(activeGraphOrRows) ? graph : activeGraphOrRows;
         const sourceRows = Array.isArray(activeGraphOrRows) ? activeGraphOrRows : maybeRows;
         const tiler = window.USL && window.USL.tiler ? window.USL.tiler : null;
-        const previewRows = normalizeSpacingDraftRows(sourceRows).filter(row => row.enabled).map(row => {
+        const previewRows = normalizeSpacingDraftRows(sourceRows).filter(row => row.enabled || row.previewOnly).map(row => { // CHANGE: bed previews include unchanged plantings as upright context.
             const cell = activeGraph && row.cellId ? graphCellById(activeGraph, row.cellId) : null;
             if (tiler && typeof tiler.buildDraftTilerGroupPreview === 'function' && cell) {
                 const fallbackRect = row.rect || { x: 0, y: 0, width: 120, height: 80 };
+                const previewOpts = row.previewUnrotated ? { rotationDeg: 0 } : {}; // CHANGE: bed-scoped spacing previews render upright even when the diagram bed is rotated.
                 const preview = tiler.buildDraftTilerGroupPreview(activeGraph, cell, Object.assign({}, row, {
                     rect: fallbackRect,
                     maxCircles: 1000
-                })); // CHANGE: spacing drafts use a read-only copy of the real tiler layout.
+                }), previewOpts); // CHANGE: spacing drafts use a read-only copy of the real tiler layout.
                 if (preview && preview.status === 'ok') {
                     const dots = { circles: preview.circles || [], total: preview.total || 0, summarized: !!preview.capped, clamped: false };
                     if (Number(preview.actual != null ? preview.actual : preview.total) <= 0) {
-                        return Object.assign({}, row, { rect: preview.rect || fallbackRect, dots, invalid: true, warning: 'No plants remain inside the planting area.' }); // CHANGE: zero-plant drafts restore originals and block Apply.
+                        return Object.assign({}, row, { rect: preview.rect || fallbackRect, dots, invalid: !row.previewOnly, warning: row.previewOnly ? '' : 'No plants remain inside the planting area.' }); // CHANGE: preview-only bed rows cannot block Apply.
                     }
-                    return Object.assign({}, row, { rect: preview.rect || fallbackRect, dots, groupPreview: preview, warning: spacingPreviewRowWarning(row, preview) });
+                    return Object.assign({}, row, { rect: preview.rect || fallbackRect, dots, groupPreview: preview, warning: row.previewOnly ? '' : spacingPreviewRowWarning(row, preview) }); // CHANGE: unchanged bed rows are visual context, not status noise.
                 }
             }
             return fallbackSpacingPreviewRow(row);
         });
+        const bedRow = previewRows.find(row => row.previewUnrotated && row.bedId && row.bedRect) || null;
         return {
             status: previewRows.some(row => row.invalid) ? 'invalid' : 'ok',
             rows: previewRows,
+            bedPreview: bedRow ? { cellId: bedRow.bedId, rect: bedRow.bedRect } : null, // CHANGE: preview renderer can replace the actual rotated bed.
             warning: previewRows.filter(row => row.warning).map(row => (row.label || row.cellId) + ': ' + row.warning).join(' ')
         };
     }
@@ -15611,7 +15788,9 @@ Draw.loadPlugin(function (ui) {
             computePreviewPlantCircles,
             layoutTools,
             normId,
-            resolveStartAfterWindow
+            resolveStartAfterWindow,
+            formatSowingSeasonRelativeTiming, // CHANGE: expose season timing copy for regression tests.
+            buildSowingSeasonSelectorState
         }; // FIX: expose pure planner internals only when the regression harness opts in
     }
 
@@ -16048,6 +16227,7 @@ Draw.loadPlugin(function (ui) {
             projectSowingSeasonForPrimaryDate,
             projectSowingSeasonsForPrimaryDate,
             formatSowingSeasonsSummary,
+            formatSowingSeasonRelativeTiming, // CHANGE: regression tests cover selected-season relative timing copy.
             formatScheduleQualityDiagnosticRanges,
             buildSowingSeasonSelectorState,
             pickDefaultSowingSeasonId,
@@ -16095,6 +16275,8 @@ Draw.loadPlugin(function (ui) {
             groupPreviewTasksByRule,
             resolveTaskPreviewScheduleRange,
             resolveTaskPreviewDisplayRange,
+            buildTaskTimelineAxisMarkers,
+            renderTaskTimelinePreview,
             resolveStartAfterWindow,
             requireCanSchedulePlantingGroup,
             buildScheduleAttributePatch,

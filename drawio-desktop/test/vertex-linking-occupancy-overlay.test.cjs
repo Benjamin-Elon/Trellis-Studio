@@ -46,6 +46,19 @@ test("planting overlay has Cards, Schedule, and Spacing modes", () => {
     assert.match(source, /activeMode = mode === MODE_SPACING \? MODE_SPACING : \(mode === MODE_SCHEDULE \? MODE_SCHEDULE : MODE_CARDS\)/);
 });
 
+test("team permission mode suppresses only the planting schedule panel controls", () => {
+    const source = readSource();
+    const overlaySource = sourceBetween(source, "const taskScheduleOverlay = (function ()", "// Primary flag persistence");
+    const selectionSource = sourceBetween(source, "graph.getSelectionModel().addListener(mxEvent.CHANGE", "// -------------------- Context Menu Hook");
+
+    assert.match(overlaySource, /function isTeamPermissionModeActiveForTaskScheduleOverlay\(\)/);
+    assert.match(overlaySource, /function show\(source, cards, linkLabels\) \{[\s\S]*clear\(\);[\s\S]*if \(isTeamPermissionModeActiveForTaskScheduleOverlay\(\)\) return;/);
+    assert.match(overlaySource, /function showScheduleOnly\(source\) \{[\s\S]*clear\(\);[\s\S]*if \(isTeamPermissionModeActiveForTaskScheduleOverlay\(\)\) return;/);
+    assert.match(overlaySource, /function refresh\(\) \{[\s\S]*if \(isTeamPermissionModeActiveForTaskScheduleOverlay\(\)\) \{ clear\(\); return; \}/);
+    assert.match(selectionSource, /trellisTeamPermissionModeChanged[\s\S]*if \(evt && evt\.detail && evt\.detail\.active\) taskScheduleOverlay\.clear\(\);[\s\S]*else refreshCurrentHighlight\(\);/);
+    assert.match(source, /linkOverlays\.refreshAll\(\);[\s\S]*taskScheduleOverlay\.refresh\(\);/);
+}); // NEW
+
 test("schedule-only planting overlays expose Spacing without linked tasks", () => {
     const source = readSource();
 
@@ -87,7 +100,9 @@ test("spacing editor preserves active-window preview and reserved revert gating"
     assert.match(editorSource, /state\.revert\.style\.pointerEvents = showRevert \? 'auto' : 'none';/);
     assert.doesNotMatch(editorSource, /reset\.style\.display = 'none'|state\.reset\.style\.display/); // CHANGE: row actions must not remove a grid slot.
     assert.match(editorSource, /status\.textContent = validation\.ok \? idleStatus : validation\.errors\.join\(' '\);/);
-    assert.match(editorSource, /const previewRows = draft\.map\(row => Object\.assign\(\{\}, row, \{ enabled: changed\.some\(state => state\.row\.cellId === row\.cellId\) \}\)\);/);
+    assert.match(editorSource, /const bedScopedPreview = context && context\.scope === 'bed' && draft\.some\(row => row\.bedId\);/); // CHANGE: rotated beds preview as a full upright bed unit.
+    assert.match(editorSource, /previewOnly: includeBedContext && !isChanged/); // CHANGE: unchanged bed rows are drawn without becoming apply targets.
+    assert.match(editorSource, /previewUnrotated: includeBedContext/); // CHANGE: bed-scoped spacing previews suppress plant group rotation.
     assert.match(editorSource, /tools\.buildSpacingPreviewModel\(graph, previewRows\);/); // CHANGE: preview model can use the read-only tiler API.
     assert.match(editorSource, /refreshDraftState\(\); \/\/ CHANGE: preserve and redraw valid spacing drafts across view refreshes\./);
 });
@@ -98,6 +113,9 @@ test("spacing preview renders DOM-only draft planting group copies", () => {
 
     assert.match(previewSource, /const spacingPreviewState = \{ host: null, hidden: \[\], chromeCells: \[\] \}/); // CHANGE: no model preview cells.
     assert.match(previewSource, /function renderSpacingGroupCopyPreview\(preview, row, cell\)/);
+    assert.match(previewSource, /function renderSpacingBedCopyPreview\(preview, bedPreview\)/); // CHANGE: the actual rotated bed is hidden behind an upright preview frame.
+    assert.match(previewSource, /hideSpacingPreviewCell\(bed\);/); // CHANGE: spacing preview replaces the bed visually, not just its plantings.
+    assert.match(previewSource, /manual-link-spacing-preview-bed-frame/); // CHANGE: bed context remains visible while the real bed is hidden.
     assert.match(previewSource, /hideSpacingPreviewCell\(cell\);/);
     assert.match(previewSource, /node\.style\.opacity = '0';/); // CHANGE: real group is visually hidden without model visibility changes.
     assert.match(previewSource, /setSpacingPreviewSelectionChromeVisible\(cell, false\);/);
@@ -127,10 +145,14 @@ test("selected planting overlay clamps to cluster top instead of measuring occup
     const source = readSource();
     const boundsSource = sourceBetween(source, "function getClusterBoundsForPanel", "function positionPanel");
     const positionSource = sourceBetween(source, "function positionPanel", "function itemCenterFromRow");
+    const styleSource = sourceBetween(source, "function applyPanelStyle", "function makeTextSpan");
 
     assert.match(boundsSource, /context\.overlayAnchorBounds \|\| context\.clusterBounds/); // CHANGE: overlay placement has a dedicated-anchor fallback before source bounds.
+    assert.match(styleSource, /panel\.style\.width = 'max-content';/); // CHANGE: compact planting overlays size to rendered content.
+    assert.match(styleSource, /function dynamicPanelWidth\(panel\)/);
     assert.match(positionSource, /const sourceBounds = getClusterBoundsForPanel\(source\);/);
-    assert.match(positionSource, /const left = sourceBounds\.x - PANEL_GAP - PANEL_SIDE_OFFSET - PANEL_WIDTH;/);
+    assert.match(positionSource, /const panelWidth = dynamicPanelWidth\(entry\.panel\);/);
+    assert.match(positionSource, /const left = sourceBounds\.x - PANEL_GAP - PANEL_SIDE_OFFSET - panelWidth;/);
     assert.match(positionSource, /const centeredTop = sourceBounds\.y \+ sourceBounds\.h \/ 2 - panelHeight \/ 2;/);
     assert.match(positionSource, /const top = centeredTop < sourceBounds\.y \? sourceBounds\.y : centeredTop;/);
     assert.doesNotMatch(source, /function getOccupancyNavigatorBoundsForPanel|function rectsOverlap|occupancyNavigatorBounds/); // CHANGE: avoid render-order-sensitive Occupancy DOM measurement.

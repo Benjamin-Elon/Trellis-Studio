@@ -452,6 +452,26 @@ test("selected bed overlays are suppressed while irrigation mode is active", () 
     assert.equal(getSelectedBedOverlays(graph).length, 0);
 });
 
+test("selected bed overlays are suppressed while team permission mode is active", () => {
+    const { api, bed, graph } = loadPlugin();
+    const pluginWindow = graph.container.ownerDocument.defaultView;
+    api.writeBedConditions(bed, { sunExposure: "full_sun", irrigation: "drip" });
+    graph.getSelectionCells = () => [bed];
+    pluginWindow.Trellis = { users: { isTeamPermissionModeActive() { return false; } } }; // NEW
+    api._test.syncSelectedBedOverlays();
+    assert.equal(getSelectedBedOverlays(graph).length, 1);
+
+    pluginWindow.Trellis.users.isTeamPermissionModeActive = () => true;
+    pluginWindow.dispatchEvent(new pluginWindow.CustomEvent("trellisTeamPermissionModeChanged", { detail: { active: true, teamModuleId: "team" } }));
+    assert.equal(getSelectedBedOverlays(graph).length, 0);
+    api._test.syncSelectedBedOverlays();
+    assert.equal(getSelectedBedOverlays(graph).length, 0);
+
+    pluginWindow.Trellis.users.isTeamPermissionModeActive = () => false;
+    pluginWindow.dispatchEvent(new pluginWindow.CustomEvent("trellisTeamPermissionModeChanged", { detail: { active: false, teamModuleId: "team" } }));
+    assert.equal(getSelectedBedOverlays(graph).length, 1);
+}); // NEW
+
 test("selected bed overlay opens the bed conditions editor", () => {
     const { api, bed, graph, ui } = loadPlugin();
     graph.getSelectionCells = () => [bed];

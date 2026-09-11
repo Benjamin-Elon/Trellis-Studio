@@ -262,7 +262,7 @@ for (const filePath of [appPath, appBundlePath, integrateBundlePath]) { // NEW
         assert.ok(context.App.publicPlugin.indexOf('gardenRoadmapCore') < context.App.publicPlugin.indexOf('gardenRoadmaps')); // NEW
     }); // NEW
 
-    test(path.basename(filePath) + ' waits for Core and renderer completion, deduplicates requests, and retries failures', () => { // NEW
+    test(path.basename(filePath) + ' waits for Core completion, deduplicates requests, and retries failures', () => { // CHANGE
         const source = readProjectFile(filePath), requests = []; // NEW
         assert.doesNotThrow(() => new vm.Script(source)); // NEW: a registered plugin is useless if its host bundle cannot parse.
         const context = { App: { pluginsLoaded: {}, embedModePluginsCount: 0 }, PLUGINS_BASE_PATH: '', window: { console: { error() {} }, drawDevUrl: '/dev/' }, console: { error() {} }, EditorUi: { debug() {} }, mxscript: (url, done, id, key, noWrite, fail) => requests.push({ url, done, fail }) }; // NEW
@@ -273,8 +273,7 @@ for (const filePath of [appPath, appBundlePath, integrateBundlePath]) { // NEW
         assert.equal(context.App.pluginsLoaded[context.App.pluginRegistry.gardenRoadmaps], true); // NEW: stored-path loading must wait for dependencies too.
         requests[0].fail('injected failure'); assert.equal(context.App.embedModePluginsCount, 0); assert.equal(requests.length, 1); // NEW
         context.App.loadPlugins(['gardenRoadmaps']); assert.equal(requests.length, 2); requests[1].done(); // NEW
-        assert.equal(requests.length, 3); assert.match(requests[2].url, /Garden_Roadmap_Renderer.js$/); // NEW
-        requests[2].done(); assert.equal(requests.length, 4); assert.match(requests[3].url, /Garden_Roadmap_Manager.js$/); // NEW
-        requests[3].done(); context.App.loadPlugins(['gardenRoadmapCore', 'gardenRoadmaps']); assert.equal(requests.length, 4); // NEW
+        assert.equal(requests.length, 3); assert.match(requests[2].url, /Garden_Roadmap_Manager.js$/); // CHANGE
+        requests[2].done(); context.App.loadPlugins(['gardenRoadmapCore', 'gardenRoadmaps']); assert.equal(requests.length, 3); // CHANGE
     }); // NEW
 } // NEW

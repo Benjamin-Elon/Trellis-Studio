@@ -15,6 +15,7 @@ const coreModule = new Module(PLUGIN_PATH, module); // NEW
 coreModule._compile(SOURCE, PLUGIN_PATH); // NEW
 const core = coreModule.exports; // NEW
 const ANCHOR = core.parseDay('2024-03-10'); // NEW
+const DEFAULT_SCALES = [75 / 335, 75 / 23, 75 / 7, 400 / 7, 400 / 7, 400 / 16, 400 / 335, 400 / 365]; // NEW
  // NEW
 /** Relative tolerance accommodates floating point conversions across different scales. */ // NEW
 function near(actual, expected, tolerance = 1e-8) { // NEW
@@ -89,27 +90,36 @@ test('local today follows timezone calendar dates across DST and UTC date bounda
 }); // NEW
  // NEW
 test('view normalization independently defaults and clamps each perspective without mutation', () => { // NEW
-    const defaults = { scales: Array(8).fill(4), multiplier: 1, leftHidden: 0, rightHidden: 0 }; // NEW
+    const defaults = { scales: DEFAULT_SCALES, multiplier: 1, leftHidden: 3, rightHidden: 0 }; // CHANGE
     for (const value of [undefined, null, false, 'bad', []]) { // NEW
         assert.deepEqual(core.normalizeView(value), { perspective: 'today', today: defaults, inception: defaults }); // NEW
     } // NEW
     const input = freezeDeep({ perspective: 'inception', today: { scales: [1, 0, -1, Infinity, NaN, '2', 0.5, 8, 9], multiplier: 2, leftHidden: 99, rightHidden: -1 }, inception: { scales: [9], multiplier: 0, leftHidden: 2.9, rightHidden: 99 } }); // NEW
     const view = core.normalizeView(input); // NEW
-    assert.deepEqual(view.today, { scales: [1, 4, 4, 4, 4, 4, 0.5, 8], multiplier: 2, leftHidden: 3, rightHidden: 0 }); // NEW
-    assert.deepEqual(view.inception, { scales: [9, 4, 4, 4, 4, 4, 4, 4], multiplier: 1, leftHidden: 2, rightHidden: 4 }); // NEW
+    assert.deepEqual(view.today, { scales: [1, DEFAULT_SCALES[1], DEFAULT_SCALES[2], DEFAULT_SCALES[3], DEFAULT_SCALES[4], DEFAULT_SCALES[5], 0.5, 8], multiplier: 2, leftHidden: 3, rightHidden: 0 }); // CHANGE
+    assert.deepEqual(view.inception, { scales: [9, DEFAULT_SCALES[1], DEFAULT_SCALES[2], DEFAULT_SCALES[3], DEFAULT_SCALES[4], DEFAULT_SCALES[5], DEFAULT_SCALES[6], DEFAULT_SCALES[7]], multiplier: 1, leftHidden: 2, rightHidden: 4 }); // CHANGE
     view.today.scales[0] = 100; // NEW
     assert.equal(view.inception.scales[0], 9); // NEW
     assert.equal(input.today.scales[0], 1); // NEW
     assert.equal(core.normalizeView({ perspective: 'unknown' }).perspective, 'today'); // NEW
 }); // NEW
+
+test('default user view hides past columns and gives nominal 75px/400px widths', () => { // NEW
+    const timeline = core.buildTimeline({ anchor: ANCHOR }); // NEW
+    assert.deepEqual(timeline.columns.map(column => column.visible), [false, false, false, true, true, true, true, true]); // NEW
+    assert.deepEqual(timeline.columns.map(column => Math.round(column.width)), [0, 0, 0, 400, 400, 400, 400, 400]); // NEW
+    assert.equal(timeline.width, 2000); // NEW
+    assert.equal(core.dayToX(timeline, ANCHOR), 0); // NEW
+}); // NEW
  // NEW
 test('timeline uses exact half-open boundaries, stable labels, and pixels per day', () => { // NEW
-    const timeline = core.buildTimeline({ anchor: ANCHOR }); // NEW
+    const timeline = core.buildTimeline({ anchor: ANCHOR, view: { scales: Array(8).fill(4), leftHidden: 0 } }); // CHANGE
     assert.deepEqual(timeline.columns.map(column => column.start - ANCHOR), [-365, -30, -7, 0, 7, 14, 30, 365]); // NEW
     assert.deepEqual(timeline.columns.map(column => column.end - ANCHOR), [-30, -7, 0, 7, 14, 30, 365, 730]); // NEW
     assert.deepEqual(timeline.columns.map(column => column.label), ['Past Year', 'Past Month', 'Past Week', 'This Week', 'Next Week', 'Next Month', 'Next Year', 'Future']); // NEW
     assert.deepEqual(timeline.columns.map(column => column.key), ['pastYear', 'pastMonth', 'pastWeek', 'thisWeek', 'nextWeek', 'nextMonth', 'nextYear', 'future']); // NEW
     assert.deepEqual(timeline.columns.map(column => column.tickStep), [30, 7, 1, 1, 1, 7, 30, 30]); // NEW
+    assert.deepEqual(timeline.columns.map(column => column.tickUnit), ['month', 'week', 'day', 'day', 'day', 'week', 'month', 'month']); // NEW
     assert.equal(timeline.anchor, ANCHOR); // NEW
     assert.equal(timeline.width, 1095 * 4); // NEW
     assert.equal(core.dayToX(timeline, ANCHOR), 365 * 4); // NEW
@@ -121,18 +131,27 @@ test('timeline uses exact half-open boundaries, stable labels, and pixels per da
         assert.equal(core.dayToX(timeline, column.end), column.x + column.width); // NEW
     } // NEW
 }); // NEW
+
+test('calendar ticks align to days, Sunday weeks, and first-of-month boundaries', () => { // NEW
+    const timeline = core.buildTimeline({ anchor: ANCHOR, view: { scales: Array(8).fill(4), leftHidden: 0 } }); // NEW
+    assert.deepEqual(core.calendarTicks(timeline.columns[3]).map(tick => tick.label), ['10', '11', '12', '13', '14', '15', '16']); // NEW
+    assert.deepEqual(core.calendarTicks(timeline.columns[5]).map(tick => core.formatDay(tick.day)), ['2024-03-24', '2024-03-31', '2024-04-07']); // NEW
+    assert.deepEqual(core.calendarTicks(timeline.columns[6]).slice(0, 3).map(tick => tick.label), ['May', 'Jun', 'Jul']); // NEW
+    assert.throws(() => core.calendarTicks({ start: 2, end: 1, tickUnit: 'day' }), RangeError); // NEW
+}); // NEW
  // NEW
 test('outer ranges expand inclusively without moving inner boundaries or shrinking defaults', () => { // NEW
-    const base = core.buildTimeline({ anchor: ANCHOR, minDay: ANCHOR, maxDay: ANCHOR }); // NEW
-    const expanded = core.buildTimeline({ anchor: core.formatDay(ANCHOR), minDay: ANCHOR - 1000, maxDay: ANCHOR + 1500 }); // NEW
+    const full = { scales: Array(8).fill(4), leftHidden: 0 }; // NEW
+    const base = core.buildTimeline({ anchor: ANCHOR, minDay: ANCHOR, maxDay: ANCHOR, view: full }); // CHANGE
+    const expanded = core.buildTimeline({ anchor: core.formatDay(ANCHOR), minDay: ANCHOR - 1000, maxDay: ANCHOR + 1500, view: full }); // CHANGE
     assert.equal(expanded.start, ANCHOR - 1000); // NEW
     assert.equal(expanded.end, ANCHOR + 1501); // NEW
     assert.deepEqual(expanded.columns.slice(1, 7), base.columns.slice(1, 7).map(column => ({ ...column, x: column.x + 635 * 4 }))); // NEW
-    assert.equal(core.buildTimeline({ anchor: ANCHOR, maxDay: ANCHOR + 730 }).end, ANCHOR + 731); // NEW
+    assert.equal(core.buildTimeline({ anchor: ANCHOR, maxDay: ANCHOR + 730, view: full }).end, ANCHOR + 731); // CHANGE
     assert.throws(() => core.buildTimeline({ anchor: '2024-02-30' }), TypeError); // NEW
     assert.throws(() => core.buildTimeline({ anchor: ANCHOR, minDay: 2, maxDay: 1 }), RangeError); // NEW
     assert.throws(() => core.buildTimeline({ anchor: Number.MAX_SAFE_INTEGER }), RangeError); // NEW
-    assert.throws(() => core.buildTimeline({ anchor: ANCHOR, view: { multiplier: Number.MAX_VALUE } }), RangeError); // NEW
+    assert.throws(() => core.buildTimeline({ anchor: ANCHOR, view: { multiplier: Number.MAX_VALUE, leftHidden: 0 } }), RangeError); // CHANGE
     assert.throws(() => core.buildTimeline({ anchor: ANCHOR, view: { multiplier: Number.MIN_VALUE } }), RangeError); // NEW
 }); // NEW
  // NEW
@@ -142,6 +161,7 @@ test('all trim combinations preserve This Week, contiguous x, inverse conversion
             const timeline = core.buildTimeline({ anchor: ANCHOR, minDay: ANCHOR - 900, maxDay: ANCHOR + 1200, view: { scales: [0.25, 0.5, 2, 7, 3, 1.5, 0.2, 0.1], multiplier: 1.3, leftHidden, rightHidden } }); // NEW
             const active = timeline.columns.filter(column => column.visible); // NEW
             assert.deepEqual(timeline.columns.map(column => column.tickStep), [30, 7, 1, 1, 1, 7, 30, 30]); // NEW
+            assert.deepEqual(timeline.columns.map(column => column.tickUnit), ['month', 'week', 'day', 'day', 'day', 'week', 'month', 'month']); // NEW
             assert.equal(active.length, 8 - leftHidden - rightHidden); // NEW
             assert.ok(timeline.columns[3].visible); // NEW
             assert.equal(active[0].x, 0); // NEW
@@ -240,7 +260,7 @@ test('every title-case transition preserves stored progress except Done and forb
 }); // NEW
  // NEW
 test('layout uses board/process coordinate spaces, inclusive widths, and fixed dimensions', () => { // NEW
-    const timeline = freezeDeep(core.buildTimeline({ anchor: ANCHOR, view: { leftHidden: 3, rightHidden: 4 } })); // NEW
+    const timeline = freezeDeep(core.buildTimeline({ anchor: ANCHOR, view: { scales: Array(8).fill(4), leftHidden: 3, rightHidden: 4 } })); // CHANGE
     const processes = freezeDeep([{ id: 'p', start: ANCHOR, end: ANCHOR + 2, objects: [{ id: 'a', start: ANCHOR, end: ANCHOR, height: 900 }, { id: 'b', start: ANCHOR, end: ANCHOR + 1 }, { id: 'c', start: ANCHOR + 1, end: ANCHOR + 2 }] }, { id: 'empty', start: ANCHOR + 3, end: ANCHOR + 3, objects: [] }]); // NEW
     const layout = core.layoutRoadmap({ processes, timeline }); // NEW
     assert.deepEqual(layout.processes.get('p'), { x: 12, y: 76, width: 12, height: 112 }); // NEW

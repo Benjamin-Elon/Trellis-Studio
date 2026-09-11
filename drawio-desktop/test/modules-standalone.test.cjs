@@ -387,6 +387,27 @@ function roleOverlayButtons(document) {
     return Array.from(document.querySelectorAll(".trellis-team-role-overlay button"));
 }
 
+function visibleRoleOverlayButtonTexts(document) {
+    return roleOverlayButtons(document).filter(button => button.style.display !== "none").map(button => button.textContent); // NEW
+}
+
+function roleOverlayButton(document, text) {
+    const button = roleOverlayButtons(document).find(entry => entry.textContent === text); // NEW
+    assert.ok(button, "missing team overlay button " + text); // NEW
+    return button; // NEW
+} // NEW
+
+function roleCardsUnder(cell) {
+    const out = []; // NEW
+    function walk(current) { // NEW
+        if (!current) return; // NEW
+        if (styleHas(current, "role_card=1")) out.push(current); // NEW
+        (current.children || []).forEach(walk); // NEW
+    } // NEW
+    walk(cell); // NEW
+    return out; // NEW
+} // NEW
+
 function roleOverlayInput(document, ariaLabel) {
     const input = document.querySelector(`.trellis-team-role-overlay input[aria-label='${ariaLabel}']`);
     assert.ok(input, "missing team overlay input " + ariaLabel);
@@ -790,6 +811,25 @@ test("folded leaf module deletion tolerates null child lists", () => { // NEW
     assert.equal(harness.model.getCell(mod.id), null); // NEW
 }); // NEW
 
+test("folded module deletion does not re-prompt when Roadmap Manager wraps after Modules", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
+    const modulesRemoveCells = harness.graph.removeCells; // NEW
+    let roadmapDeleteCalls = 0; // NEW
+    mod.collapsed = true; // NEW
+    harness.graph.__trellisRoadmapManager = { // NEW
+        deleteRoadmapCells(cells) { // NEW
+            roadmapDeleteCalls += 1; // NEW
+            return modulesRemoveCells.call(harness.graph, cells, true); // NEW
+        } // NEW
+    }; // NEW
+    harness.graph.removeCells = function (cells) { return harness.graph.__trellisRoadmapManager.deleteRoadmapCells(cells); }; // NEW
+    harness.graph.removeCells([mod]); // NEW
+    assert.deepEqual(harness.confirmations, ["Delete this module and its contents? This and any other action can be undone with Ctrl+Z."]); // NEW
+    assert.equal(roadmapDeleteCalls, 1); // NEW
+    assert.equal(harness.model.getCell(mod.id), null); // NEW
+}); // NEW
+
 test("module cells cannot be dropped under non-module parents", () => {
     const harness = makeHarness();
     const nonModule = new TestCell("plain", new TestGeometry(0, 0, 400, 300), "shape=rectangle;");
@@ -859,7 +899,7 @@ test("team and task module ordinary children do not use regular outside growth",
         harness.graph.moveCells([child], 120, 120);
         assert.deepEqual(harness.graph.lastMoveDelta, { dx: 20, dy: 30 }); // CHANGE
         assert.equal(insideRightBottomInnerMargin(child, mod), true); // CHANGE
-        assert.equal(mod.geometry.width, 320); // CHANGE
+        assert.equal(mod.geometry.width, type === "team" ? 360 : 320); // CHANGE
         assert.equal(mod.geometry.height, 220); // CHANGE
         assert.equal(harness.model.getParent(child), mod); // CHANGE
     });
@@ -1248,12 +1288,11 @@ test("empty canvas click while overlay is active dismisses without reopening", (
     assert.equal(overlay.style.display, "flex");
 });
 
-test("selecting one team module renders the add role card overlay", () => {
+test("selecting one team module renders the team management overlay", () => {
     const harness = makeHarness();
     const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
-    const buttons = roleOverlayButtons(harness.document);
-    assert.deepEqual(buttons.map(button => button.textContent), ["Add Role Card", "Set Module Margins"]); // CHANGE
-    assert.equal(roleOverlayInput(harness.document, "Team label").value, "Team Module");
+    assert.deepEqual(visibleRoleOverlayButtonTexts(harness.document), ["Add Team", "Set Permissions", "Set Module Margins"]); // CHANGE
+    assert.equal(roleOverlayInput(harness.document, "Name").value, "Team Module"); // CHANGE
     assert.equal(roleOverlay(harness.document).querySelectorAll(".trellis-team-module-label-controls input").length, 1);
     assert.equal(roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls").textContent.includes("Garden label"), false);
     assert.equal(roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls").textContent.includes("Team label"), false);
@@ -1263,13 +1302,283 @@ test("selecting one team module renders the add role card overlay", () => {
     assert.equal(harness.selectedCell, team);
 });
 
+test("selecting team sections and role cards renders permissions in their overlays", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const section = api.createTeamSection(team, "Propagation");
+    const role = api.addRoleCardToTeamModule(team, 140, 160);
+
+    harness.graph.setSelectionCell(section);
+    let buttons = visibleRoleOverlayButtonTexts(harness.document); // CHANGE
+    assert.deepEqual(buttons, ["Add New Role", "Set Permissions"]); // CHANGE
+    assert.equal(roleOverlayInput(harness.document, "Name").value, "Propagation"); // CHANGE: team overlay uses the same editable name field as the team module overlay.
+    assert.equal(roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls").textContent.includes("Team:"), false); // CHANGE
+
+    harness.graph.setSelectionCell(role);
+    buttons = visibleRoleOverlayButtonTexts(harness.document); // CHANGE
+    assert.deepEqual(buttons, ["Set Permissions"]); // CHANGE
+    assert.match(roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls").textContent, /Role:/);
+});
+
+test("team sections lazily migrate direct role cards into Unassigned", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const role = api.createRoleCard(team, 110, 140);
+    assert.equal(harness.model.getParent(role), team);
+
+    api.ensureTeamModuleSections(team);
+    const sections = api.teamSectionsInModule(team);
+    const unassigned = sections.find(section => section.getAttribute("trellis_team_unassigned") === "1");
+    assert.ok(unassigned);
+    assert.equal(api.isTeamSection(unassigned), true);
+    assert.equal(harness.model.getParent(role), unassigned);
+    assert.equal(roleCardsUnder(unassigned).includes(role), true);
+});
+
+test("team-aware role insertion uses selected named team section", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const section = api.createTeamSection(team, "Propagation");
+    harness.graph.setSelectionCell(section);
+
+    const role = api.addRoleCardToTeamModule(team, 140, 160);
+    assert.ok(role);
+    assert.equal(harness.model.getParent(role), section);
+    assert.equal(api.isTeamSection(section), true);
+    assert.equal(section.getAttribute("trellis_team_id").length > 0, true);
+    assert.equal(role.geometry.x, 20);
+    assert.equal(role.geometry.y, 54);
+});
+
+test("role cards can use active team sections as live drop targets", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = makeModuleReady(api.createModuleAtPoint({ x: 50, y: 60 }, "team"), 1000, 520, 0);
+    const source = api.createTeamSection(team, "Propagation", { point: { x: 20, y: 20 } });
+    const target = api.createTeamSection(team, "Harvest", { point: { x: 420, y: 20 } });
+    const archived = api.createTeamSection(team, "Archived", { point: { x: 760, y: 20 } });
+    const otherTeam = makeModuleReady(api.createModuleAtPoint({ x: 1300, y: 60 }, "team"), 700, 420, 0);
+    const otherSection = api.createTeamSection(otherTeam, "External", { point: { x: 20, y: 20 } });
+    archived.value.setAttribute("trellis_team_archived", "1"); // NEW
+    harness.graph.setSelectionCell(source);
+    const role = api.addRoleCardToTeamModule(team, 140, 160);
+
+    assert.equal(harness.graph.isValidDropTarget(target, [role]), true); // NEW
+    assert.equal(harness.graph.isValidDropTarget(archived, [role]), false); // NEW
+    assert.equal(harness.graph.isValidDropTarget(otherSection, [role]), false); // NEW
+
+    harness.graph.moveCells([role], 420, 0, false, target);
+
+    assert.equal(harness.model.getParent(role), target); // NEW
+});
+
+test("dragged role cards reparent to the team section containing their center", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = makeModuleReady(api.createModuleAtPoint({ x: 50, y: 60 }, "team"), 1000, 520, 0);
+    const source = api.createTeamSection(team, "Propagation", { point: { x: 20, y: 20 } });
+    const target = api.createTeamSection(team, "Harvest", { point: { x: 420, y: 20 } });
+    target.geometry.height = 200; // NEW
+    harness.graph.setSelectionCell(source);
+    const role = api.addRoleCardToTeamModule(team, 140, 160);
+    const before = absoluteBounds(role);
+
+    harness.graph.moveCells([role], 420, 0);
+
+    const after = absoluteBounds(role);
+    assert.equal(harness.model.getParent(role), target); // NEW
+    assert.equal(after.x, before.x + 420); // NEW
+    assert.equal(after.y, before.y); // NEW
+    assert.equal(role.geometry.x, after.x - absoluteBounds(target).x); // NEW
+    assert.equal(role.geometry.y, after.y - absoluteBounds(target).y); // NEW
+    assert.equal(target.geometry.height, 324); // NEW
+});
+
+test("dragged role cards stay in their team when their center lands in a gap", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = makeModuleReady(api.createModuleAtPoint({ x: 50, y: 60 }, "team"), 1000, 520, 0);
+    const source = api.createTeamSection(team, "Propagation", { point: { x: 20, y: 20 } });
+    const target = api.createTeamSection(team, "Harvest", { point: { x: 420, y: 20 } });
+    target.geometry.height = 200; // NEW
+    harness.graph.setSelectionCell(source);
+    const role = api.addRoleCardToTeamModule(team, 140, 160);
+
+    harness.graph.moveCells([role], 240, 0);
+
+    assert.equal(harness.model.getParent(role), source); // NEW
+    assert.equal(role.geometry.x, 40); // NEW
+    assert.equal(role.geometry.y, 54); // NEW
+});
+
+test("dragged unassigned role cards reparent into named team sections", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = makeModuleReady(api.createModuleAtPoint({ x: 50, y: 60 }, "team"), 1000, 1000, 0);
+    const unassigned = api.ensureTeamModuleSections(team);
+    const target = api.createTeamSection(team, "Harvest", { point: { x: 420, y: 400 } });
+    target.geometry.height = 200; // NEW
+    harness.graph.setSelectionCell(unassigned);
+    const role = api.addRoleCardToTeamModule(team, 140, 160);
+    const roleBefore = absoluteBounds(role); // NEW
+    const targetBefore = absoluteBounds(target); // NEW
+    const dx = targetBefore.x + targetBefore.width / 2 - (roleBefore.x + roleBefore.width / 2); // NEW
+    const dy = targetBefore.y + targetBefore.height / 2 - (roleBefore.y + roleBefore.height / 2); // NEW
+
+    harness.graph.moveCells([role], dx, dy); // CHANGE
+
+    assert.equal(harness.model.getParent(role), target); // NEW
+    assert.notEqual(harness.model.getParent(role), unassigned); // NEW
+});
+
+test("dragged role cards do not reparent into archived team sections", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = makeModuleReady(api.createModuleAtPoint({ x: 50, y: 60 }, "team"), 1000, 700, 0);
+    const source = api.createTeamSection(team, "Propagation", { point: { x: 20, y: 20 } });
+    const archived = api.createTeamSection(team, "Archived", { point: { x: 420, y: 20 } });
+    archived.geometry.height = 200; // NEW
+    archived.value.setAttribute("trellis_team_archived", "1"); // NEW
+    harness.graph.setSelectionCell(source);
+    const role = api.addRoleCardToTeamModule(team, 140, 160);
+
+    harness.graph.moveCells([role], 420, 0);
+
+    assert.equal(harness.model.getParent(role), source); // NEW
+    assert.notEqual(harness.model.getParent(role), archived); // NEW
+    assert.equal(role.geometry.x, 40); // NEW
+    assert.equal(role.geometry.y, 54); // NEW
+});
+
+test("manual team section enlargement persists after resize events", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const section = api.createTeamSection(team, "Propagation");
+
+    resizeCellAndFire(harness, section, 520, 280);
+
+    assert.equal(section.geometry.width, 520); // NEW
+    assert.equal(section.geometry.height, 280); // NEW
+});
+
+test("team section resize restores only dimensions undersized for role contents", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const section = api.createTeamSection(team, "Propagation");
+    harness.graph.setSelectionCell(section);
+    api.addRoleCardToTeamModule(team, 140, 160);
+
+    resizeCellAndFire(harness, section, 500, 200);
+
+    assert.equal(section.geometry.width, 500); // NEW
+    assert.equal(section.geometry.height, 324); // NEW
+});
+
+test("resized team sections push neighboring sections away", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const left = api.createTeamSection(team, "Propagation", { point: { x: 20, y: 20 } });
+    const right = api.createTeamSection(team, "Harvest", { point: { x: 380, y: 20 } });
+
+    resizeCellAndFire(harness, left, 350, 140);
+
+    assert.equal(left.geometry.width, 350); // NEW
+    assert.equal(right.geometry.x, 390); // NEW
+});
+
+test("dragged team sections stay fixed while neighbors restore the minimum spacing", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const dragged = api.createTeamSection(team, "Propagation", { point: { x: 20, y: 180 } });
+    const neighbor = api.createTeamSection(team, "Harvest", { point: { x: 380, y: 180 } });
+
+    harness.graph.moveCells([dragged], 300, 0);
+
+    assert.equal(dragged.geometry.x, 320); // NEW
+    assert.equal(dragged.geometry.y, 180); // NEW
+    assert.equal(neighbor.geometry.x, 380); // NEW
+    assert.equal(neighbor.geometry.y, 20); // NEW
+});
+
+test("resized team sections restore spacing by shortest movement instead of resize vector", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const resized = api.createTeamSection(team, "Propagation", { point: { x: 20, y: 20 } });
+    const neighbor = api.createTeamSection(team, "Harvest", { point: { x: 330, y: 210 } });
+    const previous = resized.geometry.clone();
+    const next = resized.geometry.clone();
+    next.height = 220;
+
+    harness.model.setGeometry(resized, next);
+    harness.graph.fireEvent(makeEventObject("cellsResized", ["cells", [resized], "bounds", [next], "previous", [previous], "dx", 0, "dy", 80]));
+
+    assert.equal(resized.geometry.height, 220); // NEW
+    assert.equal(neighbor.geometry.x, 360); // NEW
+    assert.equal(neighbor.geometry.y, 210); // NEW
+});
+
+test("dragged team sections push Unassigned sections out of the 20px minimum spacing", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const unassigned = api.ensureTeamModuleSections(team);
+    const active = api.createTeamSection(team, "Propagation");
+
+    harness.graph.moveCells([active], 0, -160);
+
+    assert.equal(active.geometry.y, 20); // NEW
+    assert.equal(unassigned.geometry.y, -140); // NEW
+});
+
+test("dragged team sections push archived sections out of the 20px minimum spacing", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    api.ensureTeamModuleSections(team);
+    const active = api.createTeamSection(team, "Propagation");
+    const archived = api.createTeamSection(team, "Archived");
+    archived.value.setAttribute("trellis_team_archived", "1"); // NEW
+
+    harness.graph.moveCells([active], 0, 160);
+
+    assert.equal(active.geometry.y, 340); // NEW
+    assert.equal(archived.geometry.y, 180); // NEW
+});
+
+test("Add Team creates the next section below unassigned active and archived teams", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const unassigned = api.ensureTeamModuleSections(team);
+    const active = api.createTeamSection(team, "Propagation");
+    const archived = api.createTeamSection(team, "Archived");
+    archived.value.setAttribute("trellis_team_archived", "1"); // NEW
+    harness.graph.setSelectionCell(team);
+
+    roleOverlayButton(harness.document, "Add Team").dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
+
+    const created = team.children.filter(child => child.getAttribute("trellis_team_section") === "1").at(-1);
+    assert.notEqual(created, unassigned); // NEW
+    assert.notEqual(created, active); // NEW
+    assert.notEqual(created, archived); // NEW
+    assert.equal(created.geometry.y, archived.geometry.y + archived.geometry.height + 20); // NEW
+});
+
 test("team module overlay edits labels without graph action side effects", () => {
     const harness = makeHarness();
     const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
     harness.clearValueWrites();
     const oldTeamValue = team.value;
     const oldTeamLabel = oldTeamValue.getAttribute("label");
-    let input = roleOverlayInput(harness.document, "Team label");
+    let input = roleOverlayInput(harness.document, "Name"); // CHANGE
     input.value = "Harvest Crew";
     input.dispatchEvent(new harness.dom.window.Event("blur"));
     assert.equal(team.getAttribute("label"), "Harvest Crew");
@@ -1280,7 +1589,7 @@ test("team module overlay edits labels without graph action side effects", () =>
 
     harness.graph.setSelectionCell(team);
     harness.clearValueWrites();
-    input = roleOverlayInput(harness.document, "Team label");
+    input = roleOverlayInput(harness.document, "Name"); // CHANGE
     input.value = "Draft Crew";
     dispatchInputKey(input, "Escape");
     assert.equal(input.value, "Harvest Crew");
@@ -1291,6 +1600,40 @@ test("team module overlay edits labels without graph action side effects", () =>
     dispatchInputKey(input, "Enter");
     assert.equal(team.getAttribute("label"), "Team Module");
 });
+
+test("team section overlay edits labels with the module overlay name field behavior", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules; // CHANGE
+    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team"); // CHANGE
+    const section = api.createTeamSection(team, "Propagation"); // CHANGE
+    harness.graph.setSelectionCell(section); // CHANGE
+
+    harness.clearValueWrites(); // CHANGE
+    const oldSectionValue = section.value; // CHANGE
+    const oldSectionLabel = oldSectionValue.getAttribute("label"); // CHANGE
+    let input = roleOverlayInput(harness.document, "Name"); // CHANGE
+    input.value = "Harvest"; // CHANGE
+    input.dispatchEvent(new harness.dom.window.Event("blur")); // CHANGE
+    assert.equal(section.getAttribute("label"), "Harvest"); // CHANGE
+    assert.equal(harness.valueWrites.length, 1); // CHANGE
+    assert.equal(harness.valueWrites[0].cell, section); // CHANGE
+    assert.equal(harness.valueWrites[0].oldValue, oldSectionValue); // CHANGE
+    assert.notEqual(harness.valueWrites[0].newValue, oldSectionValue); // CHANGE
+    assert.equal(oldSectionValue.getAttribute("label"), oldSectionLabel); // CHANGE
+
+    harness.graph.setSelectionCell(section); // CHANGE
+    harness.clearValueWrites(); // CHANGE
+    input = roleOverlayInput(harness.document, "Name"); // CHANGE
+    input.value = "Draft"; // CHANGE
+    dispatchInputKey(input, "Escape"); // CHANGE
+    assert.equal(input.value, "Harvest"); // CHANGE
+    assert.equal(section.getAttribute("label"), "Harvest"); // CHANGE
+    assert.equal(harness.valueWrites.length, 0); // CHANGE
+
+    input.value = "   "; // CHANGE
+    dispatchInputKey(input, "Enter"); // CHANGE
+    assert.equal(section.getAttribute("label"), "New Team"); // CHANGE
+}); // CHANGE
 
 test("module label API writes garden and team labels with clone-backed undo values", () => {
     const harness = makeHarness();
@@ -1331,15 +1674,49 @@ test("linked team module overlay uses a single editable team label field", () =>
     harness.graph.__trellisModules.writeModuleLabel(garden, "Kitchen Garden");
     harness.graph.setSelectionCell(team);
     const controls = roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls");
-    assert.equal(controls.querySelectorAll("input[aria-label='Team label']").length, 1);
+    assert.equal(controls.querySelectorAll("input[aria-label='Name']").length, 1); // CHANGE
+    assert.deepEqual(visibleRoleOverlayButtonTexts(harness.document), ["Add Team", "Set Permissions", "Set Module Margins"]); // CHANGE
     assert.equal(controls.textContent.includes("Garden label"), false);
     assert.equal(controls.textContent.includes("Team label"), false);
-    assert.equal(roleOverlayInput(harness.document, "Team label").value, "Garden Team");
+    assert.equal(roleOverlayInput(harness.document, "Name").value, "Garden Team"); // CHANGE
 
     garden.value.setAttribute("label", "Market Garden");
     harness.graph.setSelectionCell(team);
     assert.equal(roleOverlay(harness.document).querySelector(".trellis-team-module-label-controls").textContent.includes("Market Garden"), false);
 });
+
+test("garden team overlay set permissions opens team permission mode", () => {
+    const harness = makeHarness();
+    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden");
+    const team = harness.model.getCell(garden.getAttribute("trellis_team_module_id"));
+    let opened = null;
+    harness.dom.window.Trellis = { users: { openTeamPermissionMode(moduleCell) { opened = moduleCell; return { ok: true }; } } }; // NEW
+
+    harness.graph.setSelectionCell(team);
+    roleOverlayButton(harness.document, "Set Permissions").dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true })); // NEW
+
+    assert.equal(opened, team); // NEW
+    assert.equal(roleOverlay(harness.document).style.display, "none"); // NEW
+});
+
+test("team role overlay stays suppressed while team permission mode is active", () => {
+    const harness = makeHarness();
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    let active = false;
+    harness.dom.window.Trellis = { users: { isTeamPermissionModeActive() { return active; } } }; // NEW
+    harness.graph.setSelectionCell(team);
+    assert.equal(roleOverlay(harness.document).style.display, "flex");
+
+    active = true;
+    harness.dom.window.dispatchEvent(new harness.dom.window.CustomEvent("trellisTeamPermissionModeChanged", { detail: { active: true, teamModuleId: team.id } }));
+    assert.equal(roleOverlay(harness.document).style.display, "none");
+    harness.graph.setSelectionCell(team);
+    assert.equal(roleOverlay(harness.document).style.display, "none");
+
+    active = false;
+    harness.dom.window.dispatchEvent(new harness.dom.window.CustomEvent("trellisTeamPermissionModeChanged", { detail: { active: false, teamModuleId: team.id } }));
+    assert.equal(roleOverlay(harness.document).style.display, "flex");
+}); // NEW
 
 test("team module overlay position is not clamped to the viewport", () => {
     const harness = makeHarness();
@@ -1355,11 +1732,28 @@ test("first click selecting a team module shows role overlay next to the click",
     const harness = makeHarness();
     const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
     harness.graph.setSelectionCell(null);
-    fireGraphClick(harness, { cell: team, hitCell: team, selectCellOnDown: team, clientX: 180, clientY: 220, graphX: 90, graphY: 100 });
+    fireGraphClick(harness, { cell: team, hitCell: team, clientX: 180, clientY: 220, graphX: 90, graphY: 100 }); // CHANGE
+    harness.graph.setSelectionCell(team); // NEW
     const overlay = roleOverlay(harness.document);
     assert.equal(overlay.style.display, "flex");
     assert.equal(overlay.style.left, "178px");
     assert.equal(overlay.style.top, "208px");
+    assert.deepEqual(visibleRoleOverlayButtonTexts(harness.document), ["Add Team", "Set Permissions", "Set Module Margins"]); // NEW
+});
+
+test("first click selecting a team section shows team overlay next to the click", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const section = api.createTeamSection(team, "Propagation");
+    harness.graph.setSelectionCell(null);
+    fireGraphClick(harness, { cell: section, hitCell: section, clientX: 180, clientY: 220, graphX: 90, graphY: 100 }); // NEW
+    harness.graph.setSelectionCell(section); // NEW
+    const overlay = roleOverlay(harness.document);
+    assert.equal(overlay.style.display, "flex"); // NEW
+    assert.equal(overlay.style.left, "178px"); // NEW
+    assert.equal(overlay.style.top, "208px"); // NEW
+    assert.deepEqual(visibleRoleOverlayButtonTexts(harness.document), ["Add New Role", "Set Permissions"]); // NEW
 });
 
 test("selecting regular or garden modules does not render the role card overlay", () => {
@@ -1376,17 +1770,20 @@ test("selecting regular or garden modules does not render the role card overlay"
 
 test("role overlay button creates role card from stored click point and focuses name", async () => {
     const harness = makeHarness();
-    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const api = harness.graph.__trellisModules; // CHANGE
+    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team"); // CHANGE
+    const section = api.createTeamSection(team, "Propagation"); // CHANGE
     harness.document.dispatchEvent(new harness.dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    fireGraphClick(harness, { cell: team, hitCell: team, clientX: 100, clientY: 120, graphX: 90, graphY: 100 });
-    harness.graph.setSelectionCell(team);
+    fireGraphClick(harness, { cell: section, hitCell: section, clientX: 100, clientY: 120, graphX: 90, graphY: 100 }); // CHANGE
+    harness.graph.setSelectionCell(section); // CHANGE
     const updateCountBefore = harness.model.topLevelUpdateCount;
-    roleOverlayButtons(harness.document)[0].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
-    const role = team.children.find(child => /(^|;)role_card=1(;|$)/.test(child.style));
+    roleOverlayButton(harness.document, "Add New Role").dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true })); // CHANGE
+    const role = roleCardsUnder(team)[0]; // CHANGE
     assert.ok(role);
     const nameRow = role.children.find(child => styleHas(child, "role_name=1"));
-    assert.equal(role.geometry.x, 40);
-    assert.equal(role.geometry.y, 40);
+    assert.equal(harness.graph.__trellisModules.isTeamSection(harness.model.getParent(role)), true); // NEW
+    assert.equal(role.geometry.x, 20); // CHANGE
+    assert.equal(role.geometry.y, 54); // CHANGE
     assert.equal(harness.selectedCell, nameRow);
     await waitForTimers();
     assert.equal(harness.editingStarts.at(-1).cell, nameRow);
@@ -1402,11 +1799,12 @@ test("context menu add role card uses one top-level model transaction and focuse
     assert.ok(addRole);
     const updateCountBefore = harness.model.topLevelUpdateCount;
     addRole.funct();
-    const role = team.children.find(child => /(^|;)role_card=1(;|$)/.test(child.style));
+    const role = roleCardsUnder(team)[0]; // CHANGE
     assert.ok(role);
     const nameRow = role.children.find(child => styleHas(child, "role_name=1"));
-    assert.equal(role.geometry.x, 45);
-    assert.equal(role.geometry.y, 45);
+    assert.equal(harness.graph.__trellisModules.isTeamSection(harness.model.getParent(role)), true); // NEW
+    assert.equal(role.geometry.x, 20); // CHANGE
+    assert.equal(role.geometry.y, 54); // CHANGE
     assert.equal(harness.selectedCell, nameRow);
     await waitForTimers();
     assert.equal(harness.editingStarts.at(-1).cell, nameRow);
@@ -1415,13 +1813,17 @@ test("context menu add role card uses one top-level model transaction and focuse
 
 test("role overlay button falls back to top-left content placement", () => {
     const harness = makeHarness();
-    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
-    roleOverlayButtons(harness.document)[0].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
-    const role = team.children.find(child => /(^|;)role_card=1(;|$)/.test(child.style));
+    const api = harness.graph.__trellisModules; // CHANGE
+    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team"); // CHANGE
+    const section = api.createTeamSection(team, "Propagation"); // CHANGE
+    harness.graph.setSelectionCell(section); // CHANGE
+    roleOverlayButton(harness.document, "Add New Role").dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true })); // CHANGE
+    const role = roleCardsUnder(team)[0]; // CHANGE
     assert.ok(role);
     const nameRow = role.children.find(child => styleHas(child, "role_name=1"));
-    assert.equal(role.geometry.x, 100);
-    assert.equal(role.geometry.y, 100);
+    assert.equal(harness.graph.__trellisModules.isTeamSection(harness.model.getParent(role)), true); // NEW
+    assert.equal(role.geometry.x, 20); // CHANGE
+    assert.equal(role.geometry.y, 54); // CHANGE
     assert.equal(harness.selectedCell, nameRow);
     assert.equal(roleOverlay(harness.document).style.display, "none");
 });
@@ -1429,7 +1831,7 @@ test("role overlay button falls back to top-left content placement", () => {
 test("role overlay margin button opens the combined module margins dialog", () => {
     const harness = makeHarness();
     const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
-    roleOverlayButtons(harness.document)[1].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
+    roleOverlayButton(harness.document, "Set Module Margins").dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true })); // CHANGE
     assert.ok(harness.lastDialog); // CHANGE
     assert.equal(harness.lastDialog.querySelector("div").textContent, "Set Module Margins"); // CHANGE
     const inputs = harness.lastDialog.querySelectorAll("input"); // CHANGE
@@ -1442,23 +1844,21 @@ test("role overlay margin button opens the combined module margins dialog", () =
     assert.equal(roleOverlay(harness.document).style.display, "none");
 });
 
-test("linked team module margin dialog uses the garden unit system", () => {
+test("standalone team module margin dialog uses diagram units", () => {
     const harness = makeHarness();
-    const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden");
-    garden.value.setAttribute("unit_system", "metric"); // NEW
-    const team = harness.model.getCell(garden.getAttribute("trellis_team_module_id"));
+    const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "team"); // CHANGE
     team.style += ";module_margin=180;module_external_margin=45"; // NEW
     harness.graph.setSelectionCell(team);
 
-    roleOverlayButtons(harness.document)[1].dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true }));
+    roleOverlayButton(harness.document, "Set Module Margins").dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true })); // CHANGE
     const labels = Array.from(harness.lastDialog.querySelectorAll("label")).map(label => label.textContent); // NEW
     const inputs = harness.lastDialog.querySelectorAll("input"); // NEW
-    assert.deepEqual(labels, ["Internal margin (m):", "External margin (m):"]); // NEW
-    assert.equal(inputs[0].value, "2"); // NEW
-    assert.equal(inputs[1].value, "0.5"); // NEW
+    assert.deepEqual(labels, ["Internal margin (diagram units):", "External margin (diagram units):"]); // CHANGE
+    assert.equal(inputs[0].value, "180"); // CHANGE
+    assert.equal(inputs[1].value, "45"); // CHANGE
 
-    inputs[0].value = "3"; // NEW
-    inputs[1].value = "1.25"; // NEW
+    inputs[0].value = "270"; // CHANGE
+    inputs[1].value = "113"; // CHANGE
     Array.from(harness.lastDialog.querySelectorAll("button")).find(button => button.textContent === "OK").dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true })); // NEW
     assert.match(team.style, /(?:^|;)module_margin=270(?:;|$)/); // NEW
     assert.match(team.style, /(?:^|;)module_external_margin=113(?:;|$)/); // NEW
@@ -1471,7 +1871,21 @@ test("clicking the already-selected team module hides role overlay without reope
     assert.equal(overlay.style.display, "flex");
     fireGraphClick(harness, { cell: team, hitCell: team, clientX: 100, clientY: 120, graphX: 90, graphY: 100 });
     assert.equal(overlay.style.display, "none");
-    assert.equal(roleOverlayButtons(harness.document).length, 2); // CHANGE
+    assert.deepEqual(visibleRoleOverlayButtonTexts(harness.document), ["Add Team", "Set Permissions", "Set Module Margins"]); // CHANGE
+});
+
+test("clicking the already-selected team section hides team overlay without reopening", () => {
+    const harness = makeHarness();
+    const api = harness.graph.__trellisModules;
+    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const section = api.createTeamSection(team, "Propagation");
+    harness.graph.setSelectionCell(section);
+    const overlay = roleOverlay(harness.document);
+    assert.equal(overlay.style.display, "flex"); // NEW
+    assert.deepEqual(visibleRoleOverlayButtonTexts(harness.document), ["Add New Role", "Set Permissions"]); // NEW
+    fireGraphClick(harness, { cell: section, hitCell: section, clientX: 100, clientY: 120, graphX: 90, graphY: 100 }); // NEW
+    assert.equal(overlay.style.display, "none"); // NEW
+    assert.deepEqual(visibleRoleOverlayButtonTexts(harness.document), ["Add New Role", "Set Permissions"]); // NEW
 });
 
 test("role overlay hides on Escape, outside gesture, model change, and view change", () => {

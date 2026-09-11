@@ -1416,7 +1416,9 @@ Draw.loadPlugin(function (ui) {
         const MODE_CARDS = 'cards';
         const MODE_SCHEDULE = 'schedule';
         const MODE_SPACING = 'spacing';
-        const PANEL_WIDTH = 380;
+        const PANEL_MIN_WIDTH = 168; // CHANGE: compact schedule-only overlays should shrink to their controls.
+        const PANEL_MAX_WIDTH = 520; // CHANGE: wider spacing/task views can grow without overrunning the canvas.
+        const PANEL_FALLBACK_WIDTH = 380; // CHANGE: preserve the old width as a measurement fallback.
         const PANEL_GAP = 12;
         const PANEL_SIDE_OFFSET = 60;
         const BODY_MAX_HEIGHT = 360;
@@ -1426,6 +1428,11 @@ Draw.loadPlugin(function (ui) {
         const laneCollapseState = new Map(); // laneKey -> collapsed boolean
         let laneCollapseLoaded = false;
         let activeMode = MODE_CARDS;
+
+        function isTeamPermissionModeActiveForTaskScheduleOverlay() {
+            const users = window.Trellis && window.Trellis.users; // NEW
+            return !!(users && typeof users.isTeamPermissionModeActive === 'function' && users.isTeamPermissionModeActive()); // NEW
+        }
 
         function getOverlayPane() {
             const layeredPane = ensureGraphOverlaySvgLayer('connection');
@@ -1662,7 +1669,9 @@ Draw.loadPlugin(function (ui) {
         function applyPanelStyle(panel) {
             panel.style.position = 'absolute';
             panel.style.zIndex = String(GRAPH_OVERLAY_Z.CONTROL);
-            panel.style.width = PANEL_WIDTH + 'px';
+            panel.style.width = 'max-content'; // CHANGE: let the planting overlay size from current mode/content.
+            panel.style.minWidth = PANEL_MIN_WIDTH + 'px';
+            panel.style.maxWidth = PANEL_MAX_WIDTH + 'px';
             panel.style.boxSizing = 'border-box';
             panel.style.padding = '8px';
             panel.style.border = '1px solid rgba(60, 64, 67, 0.28)';
@@ -1674,6 +1683,11 @@ Draw.loadPlugin(function (ui) {
             panel.style.lineHeight = '16px';
             panel.style.pointerEvents = 'all';
             panel.style.color = '#202124';
+        }
+
+        function dynamicPanelWidth(panel) {
+            const measured = Number(panel && panel.offsetWidth);
+            return Number.isFinite(measured) && measured > 0 ? measured : PANEL_FALLBACK_WIDTH; // CHANGE: positioning follows rendered dynamic width.
         }
 
         function makeTextSpan(text, color) {
@@ -2167,6 +2181,32 @@ Draw.loadPlugin(function (ui) {
             };
         }
 
+        function appendSpacingDraftBedFrame(preview, bedPreview) { // NEW: render a straight bed reference behind upright spacing previews.
+            if (!bedPreview || !bedPreview.rect) return;
+            const rect = modelRectToViewRect(bedPreview.rect || {});
+            const frame = document.createElement('div');
+            frame.className = 'manual-link-spacing-preview-bed-frame';
+            frame.dataset.spacingPreviewBed = bedPreview.cellId || '';
+            frame.style.position = 'absolute';
+            frame.style.left = Math.round(rect.x) + 'px';
+            frame.style.top = Math.round(rect.y) + 'px';
+            frame.style.width = Math.round(rect.width) + 'px';
+            frame.style.height = Math.round(rect.height) + 'px';
+            frame.style.boxSizing = 'border-box';
+            frame.style.border = '2px solid #15803d';
+            frame.style.background = 'rgba(22,163,74,0.035)';
+            frame.style.boxShadow = '0 0 0 3px rgba(22,163,74,0.12)';
+            frame.style.pointerEvents = 'none';
+            preview.appendChild(frame);
+        }
+
+        function renderSpacingBedCopyPreview(preview, bedPreview) { // NEW: hide the rotated bed while the upright bed preview is visible.
+            if (!bedPreview) return;
+            const bed = bedPreview.cellId ? model.getCell(bedPreview.cellId) : null;
+            hideSpacingPreviewCell(bed);
+            appendSpacingDraftBedFrame(preview, bedPreview);
+        }
+
         function appendSpacingDraftFrame(preview, rowPreview) { // NEW: render the planting group frame as an overlay copy.
             const rect = modelRectToViewRect(rowPreview.rect || {});
             const frame = document.createElement('div');
@@ -2247,6 +2287,7 @@ Draw.loadPlugin(function (ui) {
             const preview = document.createElement('div');
             preview.className = 'manual-link-spacing-preview';
             preview.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;';
+            renderSpacingBedCopyPreview(preview, modelPreview && modelPreview.bedPreview); // CHANGE: spacing over a rotated bed gets an upright bed reference.
             rows.forEach(row => {
                 const cell = row.cellId ? model.getCell(row.cellId) : null;
                 if (row.groupPreview) {
@@ -2537,7 +2578,17 @@ Draw.loadPlugin(function (ui) {
                     clearSpacingPreview();
                     return;
                 }
-                const previewRows = draft.map(row => Object.assign({}, row, { enabled: changed.some(state => state.row.cellId === row.cellId) }));
+                const changedCellIds = new Set(changed.map(state => String(state.row.cellId || '')));
+                const bedScopedPreview = context && context.scope === 'bed' && draft.some(row => row.bedId); // CHANGE: bed spacing previews replace the whole rotated bed unit.
+                const previewRows = draft.map(row => {
+                    const isChanged = changedCellIds.has(String(row.cellId || ''));
+                    const includeBedContext = !!(bedScopedPreview && row.bedId);
+                    return Object.assign({}, row, {
+                        enabled: isChanged,
+                        previewOnly: includeBedContext && !isChanged,
+                        previewUnrotated: includeBedContext
+                    });
+                });
                 const preview = tools.buildSpacingPreviewModel(graph, previewRows); // CHANGE: pass graph so scheduler can use the read-only tiler preview API.
                 if (preview && preview.status === 'invalid') {
                     apply.disabled = true; // CHANGE: zero in-bounds plant drafts cannot be applied.
@@ -2818,7 +2869,7 @@ Draw.loadPlugin(function (ui) {
                 today.style.left = todayPct + '%';
                 today.style.top = '-12px';
                 today.style.transform = 'translateX(-50%)';
-                today.style.color = '#b91c1c';
+                today.style.color = '#1d4ed8'; // CHANGE: today marker label uses neutral blue instead of error red.
                 today.style.fontWeight = 'bold';
                 ticks.appendChild(today);
             }
@@ -2942,7 +2993,7 @@ Draw.loadPlugin(function (ui) {
                 todayLine.style.top = '0';
                 todayLine.style.bottom = '0';
                 todayLine.style.width = '1px';
-                todayLine.style.background = '#b91c1c';
+                todayLine.style.background = '#2563eb'; // CHANGE: today marker line uses neutral blue instead of error red.
                 todayLine.style.opacity = '0.75';
                 track.appendChild(todayLine);
             }
@@ -2991,7 +3042,7 @@ Draw.loadPlugin(function (ui) {
                 todayLine.style.top = '0';
                 todayLine.style.bottom = '0';
                 todayLine.style.width = '1px';
-                todayLine.style.background = '#b91c1c';
+                todayLine.style.background = '#2563eb'; // CHANGE: today marker line uses neutral blue instead of error red.
                 todayLine.style.opacity = '0.75';
                 track.appendChild(todayLine);
             }
@@ -3216,7 +3267,8 @@ Draw.loadPlugin(function (ui) {
             if (!host || !entry.panel || !sourceBounds) return false;
 
             const panelHeight = entry.panel.offsetHeight || 32;
-            const left = sourceBounds.x - PANEL_GAP - PANEL_SIDE_OFFSET - PANEL_WIDTH; // CHANGE: spacing/task overlay now lives on the left side of the selected cluster.
+            const panelWidth = dynamicPanelWidth(entry.panel); // CHANGE: keep the left anchor correct for dynamically sized overlays.
+            const left = sourceBounds.x - PANEL_GAP - PANEL_SIDE_OFFSET - panelWidth; // CHANGE: spacing/task overlay now lives on the left side of the selected cluster.
             const centeredTop = sourceBounds.y + sourceBounds.h / 2 - panelHeight / 2; // CHANGE: center only when the overlay would not enter the reserved occupancy space above the cluster.
             const top = centeredTop < sourceBounds.y ? sourceBounds.y : centeredTop; // CHANGE: deterministic clamp avoids render-order-sensitive Occupancy bounds measurement.
 
@@ -3400,6 +3452,7 @@ Draw.loadPlugin(function (ui) {
 
         function show(source, cards, linkLabels) {
             clear();
+            if (isTeamPermissionModeActiveForTaskScheduleOverlay()) return; // NEW
             if (!source || !source.id || !cards || cards.length === 0) return;
 
             const validCards = cards.filter(isValidOverlayCard).sort(compareTaskCardsByStartDate);
@@ -3423,6 +3476,7 @@ Draw.loadPlugin(function (ui) {
 
         function showScheduleOnly(source) {
             clear();
+            if (isTeamPermissionModeActiveForTaskScheduleOverlay()) return; // NEW
             if (!source || !source.id || !isTilerGroup(source)) return;
             const entry = {
                 sourceId: source.id,
@@ -3445,6 +3499,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         function refresh() {
+            if (isTeamPermissionModeActiveForTaskScheduleOverlay()) { clear(); return; } // NEW
             for (const entry of Array.from(registry.values())) renderEntry(entry);
         }
 
@@ -4530,6 +4585,10 @@ Draw.loadPlugin(function (ui) {
         refreshCurrentHighlight();
         taskScheduleOverlay.refresh();
     });
+    window.addEventListener('trellisTeamPermissionModeChanged', function (evt) {
+        if (evt && evt.detail && evt.detail.active) taskScheduleOverlay.clear(); // NEW
+        else refreshCurrentHighlight(); // NEW
+    }); // NEW
 
 
     // -------------------- Context Menu Hook --------------------

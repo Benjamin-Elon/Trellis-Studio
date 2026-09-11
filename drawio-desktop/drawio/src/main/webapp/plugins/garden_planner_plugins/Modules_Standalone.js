@@ -10,6 +10,15 @@ Draw.loadPlugin(function (ui) {
     const ATTR_ACCESS_GRANTS = "trellis_access_grants_json";
     const LINK_ATTR = "linkedTo";
     const COMPANION_TEAM_GAP = 40;
+    const ATTR_TEAM_SECTION = "trellis_team_section"; // NEW
+    const ATTR_TEAM_ID = "trellis_team_id"; // NEW
+    const ATTR_TEAM_ARCHIVED = "trellis_team_archived"; // NEW
+    const ATTR_TEAM_UNASSIGNED = "trellis_team_unassigned"; // NEW
+    const TEAM_SECTION_MARGIN_UNITS = 20; // NEW
+    const TEAM_SECTION_DEFAULT_W = 320; // NEW
+    const TEAM_SECTION_DEFAULT_H = 140; // NEW
+    const TEAM_SECTION_PAD = 20; // NEW
+    const TEAM_SECTION_HEADER_H = 34; // NEW
     const MODULE_DELETE_MESSAGE = "Delete this module and its contents? This and any other action can be undone with Ctrl+Z."; // NEW
     const MODULES_DELETE_MESSAGE = "Delete these modules and their contents? This and any other action can be undone with Ctrl+Z."; // NEW
     const GARDEN_CLUSTER_DELETE_MESSAGE = "Delete this Garden and its neighboring Team, Task, and Roadmap modules? This and any other action can be undone with Ctrl+Z."; // NEW
@@ -36,6 +45,11 @@ Draw.loadPlugin(function (ui) {
             if (activeOpen) button.style.fontWeight = "700"; // NEW
         }
         return button;
+    }
+
+    function isTeamPermissionModeActiveForOverlay() {
+        const users = window.Trellis && window.Trellis.users; // NEW
+        return !!(users && typeof users.isTeamPermissionModeActive === "function" && users.isTeamPermissionModeActive()); // NEW
     }
 
     // Override resizeChildCells so modules do not resize children
@@ -535,6 +549,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function companionModuleLabelFallback(cell) {
+        if (isTeamSection(cell)) return isUnassignedTeamSection(cell) ? "Unassigned" : "New Team"; // CHANGE: team-section overlay uses the same editable name field pattern as team modules.
         if (isTeamModule(cell)) return "Team Module";
         if (isTaskModule(cell)) return "Task Module";
         if (isRoadmapModule(cell)) return "Roadmap Module"; // NEW
@@ -937,6 +952,136 @@ Draw.loadPlugin(function (ui) {
         return /(^|;)swimlane(;|$)/.test(st) && !!p && isModule(p) && isTeamModule(p);
     }
 
+    function isTeamSection(cell) {
+        return !!cell && (getValueAttr(cell, ATTR_TEAM_SECTION) === "1" || /(?:^|;)trellis_team_section=1(?:;|$)/.test(getStyle(cell))); // NEW
+    }
+
+    function isActiveTeamSection(cell) {
+        return isTeamSection(cell) && getValueAttr(cell, ATTR_TEAM_ARCHIVED) !== "1"; // NEW
+    }
+
+    function isUnassignedTeamSection(cell) {
+        return isTeamSection(cell) && getValueAttr(cell, ATTR_TEAM_UNASSIGNED) === "1"; // NEW
+    }
+
+    function teamSectionId(cell) {
+        if (!isTeamSection(cell)) return ""; // NEW
+        let id = getValueAttr(cell, ATTR_TEAM_ID); // NEW
+        if (id) return id; // NEW
+        id = "team_" + (cellId(cell) || Math.random().toString(36).slice(2)); // NEW
+        setStringValueAttr(cell, ATTR_TEAM_ID, id); // NEW
+        return id; // NEW
+    }
+
+    function parentTeamModuleForSection(section) {
+        let cursor = model.getParent(section); // NEW
+        while (cursor) { // NEW
+            if (isTeamModule(cursor)) return cursor; // NEW
+            cursor = model.getParent(cursor); // NEW
+        } // NEW
+        return null; // NEW
+    }
+
+    function teamSectionsInModule(teamCell, opts) {
+        const options = opts || {}; // NEW
+        const out = []; // NEW
+        function visit(cell) { // NEW
+            (model.getChildren(cell) || []).forEach(function (child) { // NEW
+                if (isTeamSection(child) && (!getValueAttr(child, ATTR_TEAM_ARCHIVED) || options.includeArchived)) out.push(child); // NEW
+                visit(child); // NEW
+            }); // NEW
+        } // NEW
+        if (teamCell && isTeamModule(teamCell)) visit(teamCell); // NEW
+        return out; // NEW
+    }
+
+    function directTeamSectionsInModule(teamCell, opts) {
+        const options = opts || {}; // NEW
+        return (model.getChildren(teamCell) || []).filter(function (child) { // NEW
+            return isTeamSection(child) && (!getValueAttr(child, ATTR_TEAM_ARCHIVED) || options.includeArchived); // NEW
+        }); // NEW
+    }
+
+    function teamSectionContainingPagePoint(teamCell, point) {
+        const sections = directTeamSectionsInModule(teamCell).filter(isActiveTeamSection); // NEW
+        return sections.filter(function (section) { // NEW
+            const b = cellPageBounds(section); // NEW
+            return b && point && point.x >= b.x && point.x <= b.x + b.w && point.y >= b.y && point.y <= b.y + b.h; // NEW
+        }).sort(function (a, b) { // NEW
+            const ag = model.getGeometry(a) || { width: 0, height: 0 }; // NEW
+            const bg = model.getGeometry(b) || { width: 0, height: 0 }; // NEW
+            return ((ag.width || 0) * (ag.height || 0)) - ((bg.width || 0) * (bg.height || 0)); // NEW
+        })[0] || null; // NEW
+    }
+
+    function createTeamSectionCell(label, x, y, opts) {
+        const o = opts || {}; // NEW
+        const geo = new mxGeometry(x, y, TEAM_SECTION_DEFAULT_W, TEAM_SECTION_DEFAULT_H); // NEW
+        geo.alternateBounds = makeAlternateBounds(x, y, TEAM_SECTION_DEFAULT_W, TEAM_SECTION_HEADER_H); // NEW
+        const cell = new mxCell("", geo, "rounded=1;whiteSpace=wrap;html=1;container=1;recursiveResize=0;collapsible=1;fillColor=#FFFBEB;strokeColor=#D97706;fontStyle=1;align=left;verticalAlign=top;spacing=8;spacingTop=8;trellis_team_section=1;"); // NEW
+        cell.vertex = true; // NEW
+        setCellLabel(cell, label || "New Team"); // NEW
+        setStringValueAttr(cell, ATTR_TEAM_SECTION, "1"); // NEW
+        setStringValueAttr(cell, ATTR_TEAM_ID, o.teamId || "team_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7)); // NEW
+        if (o.unassigned) setStringValueAttr(cell, ATTR_TEAM_UNASSIGNED, "1"); // NEW
+        return cell; // NEW
+    }
+
+    function nextTeamSectionPoint(teamCell) {
+        const sections = directTeamSectionsInModule(teamCell, { includeArchived: true }); // NEW
+        const headerH = getModuleHeaderHeight(teamCell); // NEW
+        if (!sections.length) return { x: TEAM_SECTION_MARGIN_UNITS, y: headerH + TEAM_SECTION_MARGIN_UNITS }; // NEW
+        let bottom = headerH + TEAM_SECTION_MARGIN_UNITS; // NEW
+        sections.forEach(function (section) { // NEW
+            const g = model.getGeometry(section); // NEW
+            if (g && !g.relative) bottom = Math.max(bottom, (Number(g.y) || 0) + (Number(g.height) || TEAM_SECTION_DEFAULT_H)); // NEW
+        }); // NEW
+        return { x: TEAM_SECTION_MARGIN_UNITS, y: bottom + TEAM_SECTION_MARGIN_UNITS }; // NEW
+    }
+
+    function createTeamSection(teamCell, label, opts) {
+        if (!teamCell || !isTeamModule(teamCell)) return null; // NEW
+        const o = opts || {}; // NEW
+        const pt = o.point || nextTeamSectionPoint(teamCell); // NEW
+        let section = null; // NEW
+        const manageUpdate = o.manageUpdate !== false; // NEW
+        if (manageUpdate) model.beginUpdate(); // NEW
+        try { // NEW
+            section = createTeamSectionCell(label || (o.unassigned ? "Unassigned" : "New Team"), pt.x, pt.y, o); // NEW
+            model.add(teamCell, section); // NEW
+            teamSectionId(section); // NEW
+            applyModuleMargins(teamCell, { allowShrink: false, manageUpdate: false }); // NEW
+            enforceTeamSectionMarginsFor([section], { manageUpdate: false }); // NEW
+        } finally { // NEW
+            if (manageUpdate) model.endUpdate(); // NEW
+        } // NEW
+        if (section && graph.refresh) graph.refresh(section); // NEW
+        return section; // NEW
+    }
+
+    function ensureUnassignedTeamSection(teamCell) {
+        if (!teamCell || !isTeamModule(teamCell)) return null; // NEW
+        const existing = directTeamSectionsInModule(teamCell, { includeArchived: true }).find(isUnassignedTeamSection); // NEW
+        if (existing) return existing; // NEW
+        const pt = nextTeamSectionPoint(teamCell); // NEW
+        return createTeamSection(teamCell, "Unassigned", { unassigned: true, point: pt, manageUpdate: false }); // NEW
+    }
+
+    function ensureTeamModuleSections(teamCell) {
+        if (!teamCell || !isTeamModule(teamCell)) return null; // NEW
+        let unassigned = null; // NEW
+        model.beginUpdate(); // NEW
+        try { // NEW
+            unassigned = ensureUnassignedTeamSection(teamCell); // NEW
+            const directRoles = (model.getChildren(teamCell) || []).filter(isRoleCard); // NEW
+            directRoles.forEach(function (role) { moveRoleCardToTeamSection(role, unassigned); }); // NEW
+            autosizeTeamSections([unassigned]); // NEW
+        } finally { // NEW
+            model.endUpdate(); // NEW
+        } // NEW
+        return unassigned; // NEW
+    }
+
     function isRoleImageRow(cell) {
         return /(^|;)role_imagerow=1(;|$)/.test(getStyle(cell));
     }
@@ -1130,6 +1275,189 @@ Draw.loadPlugin(function (ui) {
 
     function makeAlternateBounds(x, y, width, height) {
         return (typeof mxRectangle !== "undefined") ? new mxRectangle(x, y, width, height) : new mxGeometry(x, y, width, height);
+    }
+
+    function roleCardTeamModule(roleCard) {
+        let cursor = model.getParent(roleCard); // NEW
+        while (cursor) { // NEW
+            if (isTeamModule(cursor)) return cursor; // NEW
+            cursor = model.getParent(cursor); // NEW
+        } // NEW
+        return null; // NEW
+    }
+
+    function sectionRelativePointForPageBounds(section, pageBounds) {
+        const sectionBounds = cellPageBounds(section); // NEW
+        return { x: (pageBounds ? pageBounds.x : 0) - (sectionBounds ? sectionBounds.x : 0), y: (pageBounds ? pageBounds.y : 0) - (sectionBounds ? sectionBounds.y : 0) }; // NEW
+    }
+
+    function moveRoleCardToTeamSection(roleCard, section) {
+        if (!isRoleCard(roleCard) || !isTeamSection(section)) return false; // NEW
+        const current = model.getParent(roleCard); // NEW
+        if (current === section) return false; // NEW
+        const b = cellPageBounds(roleCard); // NEW
+        const g = model.getGeometry(roleCard); // NEW
+        if (b && g) { // NEW
+            const point = sectionRelativePointForPageBounds(section, b); // NEW
+            const g2 = g.clone(); // NEW
+            g2.x = point.x; // NEW
+            g2.y = point.y; // NEW
+            model.setGeometry(roleCard, g2); // NEW
+        } // NEW
+        model.add(section, roleCard); // NEW
+        return true; // NEW
+    }
+
+    function roleCardDefaultPointInSection(section) {
+        const children = (model.getChildren(section) || []).filter(isRoleCard); // NEW
+        let bottom = TEAM_SECTION_HEADER_H; // NEW
+        children.forEach(function (role) { // NEW
+            const g = model.getGeometry(role); // NEW
+            if (g && !g.relative) bottom = Math.max(bottom, (Number(g.y) || 0) + (Number(g.height) || ROLE_EXPANDED_H)); // NEW
+        }); // NEW
+        const sectionBounds = cellPageBounds(section) || { x: 0, y: 0 }; // NEW
+        return { x: sectionBounds.x + TEAM_SECTION_PAD, y: sectionBounds.y + Math.max(TEAM_SECTION_HEADER_H, bottom + TEAM_SECTION_PAD) }; // NEW
+    }
+
+    function roleCardPageCenter(roleCard) {
+        const b = cellPageBounds(roleCard); // NEW
+        return b ? { x: b.x + b.w / 2, y: b.y + b.h / 2 } : null; // NEW
+    }
+
+    function clampRoleCardIntoTeamSection(roleCard, section) {
+        const g = model.getGeometry(roleCard); // NEW
+        const sg = model.getGeometry(section); // NEW
+        if (!g || !sg || g.relative || sg.relative) return false; // NEW
+        const nextX = Math.max(TEAM_SECTION_PAD, Math.min(Number(g.x) || 0, Math.max(TEAM_SECTION_PAD, (Number(sg.width) || TEAM_SECTION_DEFAULT_W) - (Number(g.width) || ROLE_EXPANDED_W) - TEAM_SECTION_PAD))); // NEW
+        const nextY = Math.max(TEAM_SECTION_HEADER_H, Math.min(Number(g.y) || 0, Math.max(TEAM_SECTION_HEADER_H, (Number(sg.height) || TEAM_SECTION_DEFAULT_H) - (Number(g.height) || ROLE_EXPANDED_H) - TEAM_SECTION_PAD))); // NEW
+        if (Math.abs(nextX - (Number(g.x) || 0)) < EPS && Math.abs(nextY - (Number(g.y) || 0)) < EPS) return false; // NEW
+        const g2 = g.clone(); // NEW
+        g2.x = nextX; // NEW
+        g2.y = nextY; // NEW
+        model.setGeometry(roleCard, g2); // NEW
+        return true; // NEW
+    }
+
+    function resolveMovedRoleCardTeamSection(roleCard) {
+        if (!isRoleCard(roleCard)) return null; // NEW
+        const teamCell = roleCardTeamModule(roleCard); // NEW
+        if (!teamCell) return null; // NEW
+        let currentSection = isTeamSection(model.getParent(roleCard)) ? model.getParent(roleCard) : null; // CHANGE
+        if (!currentSection) { // NEW
+            ensureTeamModuleSections(teamCell); // NEW
+            currentSection = isTeamSection(model.getParent(roleCard)) ? model.getParent(roleCard) : ensureUnassignedTeamSection(teamCell); // NEW
+        } // NEW
+        if (model.getParent(roleCard) !== currentSection) moveRoleCardToTeamSection(roleCard, currentSection); // NEW
+        return { teamCell: teamCell, currentSection: currentSection, targetSection: teamSectionContainingPagePoint(teamCell, roleCardPageCenter(roleCard)) }; // NEW
+    }
+
+    function reconcileMovedRoleCard(roleCard) {
+        const resolved = resolveMovedRoleCardTeamSection(roleCard); // CHANGE
+        if (!resolved || !resolved.currentSection) return null; // CHANGE
+        const touchedSections = [resolved.currentSection]; // NEW
+        let finalSection = resolved.currentSection; // NEW
+        if (resolved.targetSection && resolved.targetSection !== resolved.currentSection) { // CHANGE
+            moveRoleCardToTeamSection(roleCard, resolved.targetSection); // CHANGE
+            finalSection = resolved.targetSection; // NEW
+            touchedSections.push(resolved.targetSection); // NEW
+        } else if (!resolved.targetSection) { // CHANGE
+            clampRoleCardIntoTeamSection(roleCard, resolved.currentSection); // CHANGE
+        } // CHANGE
+        return { teamCell: resolved.teamCell, finalSection: finalSection, touchedSections: touchedSections }; // CHANGE
+    }
+
+    function teamSectionChildUnion(section) {
+        const children = (model.getChildren(section) || []).filter(isRoleCard); // NEW
+        if (!children.length) return null; // NEW
+        let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity; // NEW
+        children.forEach(function (child) { // NEW
+            const g = model.getGeometry(child); // NEW
+            if (!g || g.relative) return; // NEW
+            left = Math.min(left, Number(g.x) || 0); // NEW
+            top = Math.min(top, Number(g.y) || 0); // NEW
+            right = Math.max(right, (Number(g.x) || 0) + (Number(g.width) || 0)); // NEW
+            bottom = Math.max(bottom, (Number(g.y) || 0) + (Number(g.height) || 0)); // NEW
+        }); // NEW
+        return Number.isFinite(left) ? { x: left, y: top, w: right - left, h: bottom - top } : null; // NEW
+    }
+
+    function enforceTeamSectionMinimum(section) {
+        if (!isTeamSection(section) || getValueAttr(section, ATTR_TEAM_ARCHIVED) === "1") return false; // NEW
+        const g = model.getGeometry(section); // NEW
+        if (!g || g.relative) return false; // NEW
+        const union = teamSectionChildUnion(section); // NEW
+        const minW = Math.max(TEAM_SECTION_DEFAULT_W, union ? union.x + union.w + TEAM_SECTION_PAD : TEAM_SECTION_DEFAULT_W); // CHANGE: manual team section growth is intentional; only enforce content-safe minima.
+        const minH = Math.max(TEAM_SECTION_DEFAULT_H, union ? union.y + union.h + TEAM_SECTION_PAD : TEAM_SECTION_DEFAULT_H); // CHANGE
+        const nextW = Math.max(Number(g.width) || 0, minW); // CHANGE
+        const nextH = Math.max(Number(g.height) || 0, minH); // CHANGE
+        if (Math.abs((Number(g.width) || 0) - nextW) < EPS && Math.abs((Number(g.height) || 0) - nextH) < EPS) return false; // NEW
+        const g2 = g.clone(); // NEW
+        g2.width = nextW; // NEW
+        g2.height = nextH; // NEW
+        if (g2.alternateBounds) { g2.alternateBounds.width = nextW; g2.alternateBounds.height = TEAM_SECTION_HEADER_H; } // NEW
+        model.setGeometry(section, g2); // NEW
+        if (graph.refresh) graph.refresh(section); // NEW
+        return true; // NEW
+    }
+
+    function autosizeTeamSections(sections) {
+        const touched = []; // NEW
+        (sections || []).forEach(function (section) { if (enforceTeamSectionMinimum(section)) touched.push(section); }); // CHANGE
+        if (touched.length) enforceTeamSectionMarginsFor(touched, { manageUpdate: false }); // NEW
+        return touched; // NEW
+    }
+
+    function teamSectionRect(section) {
+        const g = model.getGeometry(section); // NEW
+        return g && !g.relative ? { x: Number(g.x) || 0, y: Number(g.y) || 0, w: Number(g.width) || 0, h: Number(g.height) || 0 } : null; // NEW
+    }
+
+    function translateTeamSection(section, dx, dy) {
+        const g = model.getGeometry(section); // NEW
+        if (!g || g.relative || (Math.abs(dx) < EPS && Math.abs(dy) < EPS)) return false; // NEW
+        const g2 = g.clone(); // NEW
+        g2.x = (Number(g2.x) || 0) + dx; // NEW
+        g2.y = (Number(g2.y) || 0) + dy; // NEW
+        model.setGeometry(section, g2); // NEW
+        if (graph.refresh) graph.refresh(section); // NEW
+        return true; // NEW
+    }
+
+    function enforceTeamSectionMarginsFor(seedSections, opts) {
+        const options = opts || {}; // NEW
+        const seeds = (seedSections || []).filter(function (cell) { return isTeamSection(cell); }); // NEW
+        if (!seeds.length || graph.__trellisTeamSectionMarginEnforcing) return; // NEW
+        const teamCell = parentTeamModuleForSection(seeds[0]); // NEW
+        if (!teamCell) return; // NEW
+        const sections = directTeamSectionsInModule(teamCell, { includeArchived: true }); // CHANGE
+        if (sections.length < 2) return; // NEW
+        const seedIds = new Set(seeds.map(cellId)); // NEW
+        let frontier = seeds.slice(); // NEW
+        const manageUpdate = options.manageUpdate !== false; // NEW
+        graph.__trellisTeamSectionMarginEnforcing = true; // NEW
+        if (manageUpdate) model.beginUpdate(); // NEW
+        try { // NEW
+            const maxPasses = Math.max(1, sections.length * 2); // NEW
+            for (let pass = 0; pass < maxPasses && frontier.length; pass++) { // NEW
+                const movedThisPass = []; // NEW
+                frontier.forEach(function (anchor) { // NEW
+                    const anchorRect = teamSectionRect(anchor); // NEW
+                    if (!anchorRect) return; // NEW
+                    sections.forEach(function (candidate) { // NEW
+                        if (candidate === anchor || seedIds.has(cellId(candidate))) return; // NEW
+                        const candidateRect = teamSectionRect(candidate); // NEW
+                        if (!candidateRect) return; // NEW
+                        const delta = shortestExternalMarginDelta(anchorRect, candidateRect, TEAM_SECTION_MARGIN_UNITS); // CHANGE
+                        if (delta && translateTeamSection(candidate, delta.dx, delta.dy)) movedThisPass.push(candidate); // NEW
+                    }); // NEW
+                }); // NEW
+                frontier = movedThisPass; // NEW
+            } // NEW
+            applyModuleMargins(teamCell, { allowShrink: false, manageUpdate: false }); // NEW
+        } finally { // NEW
+            if (manageUpdate) model.endUpdate(); // NEW
+            graph.__trellisTeamSectionMarginEnforcing = false; // NEW
+        } // NEW
     }
 
     if (model.addListener && typeof mxEvent !== "undefined" && mxEvent.CHANGE) {
@@ -1359,10 +1687,10 @@ Draw.loadPlugin(function (ui) {
         const o = opts || {};
         const manageUpdate = o.manageUpdate !== false;
         const w = ROLE_EXPANDED_W, h = ROLE_EXPANDED_H;
-        const moduleGeo = graph.getCellGeometry(moduleCell);
-
-        const relX = x - moduleGeo.x;
-        const relY = y - moduleGeo.y;
+        const parentBounds = isTeamSection(moduleCell) ? cellPageBounds(moduleCell) : null; // NEW
+        const moduleGeo = graph.getCellGeometry(moduleCell) || { x: 0, y: 0 }; // CHANGE
+        const relX = isTeamSection(moduleCell) ? x - (parentBounds ? parentBounds.x : 0) : x - moduleGeo.x; // CHANGE
+        const relY = isTeamSection(moduleCell) ? y - (parentBounds ? parentBounds.y : 0) : y - moduleGeo.y; // CHANGE
 
         const roleGeo = new mxGeometry(relX, relY, w, h);
         roleGeo.alternateBounds = makeAlternateBounds(relX, relY, ROLE_COLLAPSED_W, ROLE_COLLAPSED_H);
@@ -1401,9 +1729,15 @@ Draw.loadPlugin(function (ui) {
     function addRoleCardToTeamModule(moduleCell, x, y) {
         if (!moduleCell || !isTeamModule(moduleCell)) return null;
         let role = null;
+        let targetSection = null; // NEW
         model.beginUpdate();
         try {
-            role = createRoleCard(graph, moduleCell, x, y, { manageUpdate: false });
+            ensureTeamModuleSections(moduleCell); // NEW
+            const selected = graph.getSelectionCells ? (graph.getSelectionCells() || []) : []; // NEW
+            targetSection = selected.find(function (cell) { return isTeamSection(cell) && parentTeamModuleForSection(cell) === moduleCell && !isUnassignedTeamSection(cell); }) || teamSectionContainingPagePoint(moduleCell, { x, y }) || ensureUnassignedTeamSection(moduleCell); // NEW
+            const point = roleCardDefaultPointInSection(targetSection); // NEW
+            role = createRoleCard(graph, targetSection, point.x, point.y, { manageUpdate: false }); // CHANGE
+            autosizeTeamSections([targetSection]); // NEW
             applyModuleMargins(moduleCell, { manageUpdate: false });
         } finally {
             model.endUpdate();
@@ -1775,6 +2109,10 @@ Draw.loadPlugin(function (ui) {
             return !!target && isKanbanLaneCell(target);
         } // NEW
 
+        function isValidRoleCardTeamSectionDropTarget(target, roleCard) {
+            return isRoleCard(roleCard) && isActiveTeamSection(target) && parentTeamModuleForSection(target) === roleCardTeamModule(roleCard); // NEW
+        }
+
         function isAllowedModuleParent(parent) {
             return !!parent && (parent === graph.getDefaultParent() || isModule(parent));
         }
@@ -1815,7 +2153,7 @@ Draw.loadPlugin(function (ui) {
             if (dragged.some(isKanbanLaneCell)) return false; // NEW
             if (dragged.some(function (draggedCell) { return isKanbanCardCell(draggedCell) && cell && !isValidKanbanCardDropTarget(cell); })) return false; // NEW
             if (dragged.some(function (draggedCell) { const parent = getImmediateProtectedParent(draggedCell); return parent && cell && cell !== parent; })) return false; // NEW
-            if (dragged.some(function (draggedCell) { const moduleCell = directModuleParent(draggedCell) || (isTopLevelContainerProtectedCell(draggedCell) ? findModuleAncestor(draggedCell) : null); return moduleCell && cell && cell !== moduleCell; })) return false; // CHANGE
+            if (dragged.some(function (draggedCell) { const moduleCell = directModuleParent(draggedCell) || (isTopLevelContainerProtectedCell(draggedCell) ? findModuleAncestor(draggedCell) : null); return moduleCell && cell && cell !== moduleCell && !isValidRoleCardTeamSectionDropTarget(cell, draggedCell); })) return false; // CHANGE
             return originalIsValidDropTarget ? originalIsValidDropTarget.apply(this, arguments) : true;
         };
 
@@ -1828,7 +2166,7 @@ Draw.loadPlugin(function (ui) {
                 if (!movable.length) return requested; // NEW
                 const args = Array.prototype.slice.call(arguments);
                 args[0] = movable;
-                if (target && movable.some(function (cell) { const container = getClampContainer(cell); return container && target !== container; })) args[4] = null; // CHANGE
+                if (target && movable.some(function (cell) { const container = getClampContainer(cell); return container && target !== container && !isValidRoleCardTeamSectionDropTarget(target, cell); })) args[4] = null; // CHANGE
                 const adjusted = clampedMoveDelta(movable, Number(dx) || 0, Number(dy) || 0);
                 args[1] = adjusted.dx;
                 args[2] = adjusted.dy;
@@ -1953,11 +2291,28 @@ Draw.loadPlugin(function (ui) {
             sanitizeModuleParents(cells);
 
             const seenModules = new Set();
+            const touchedTeamSections = new Set(); // NEW
             const toRoot = [];
             const protectedLeaks = []; // NEW
 
             // Determine which children have left their module                          
             cells.forEach(c => {
+                if (isRoleCard(c)) { // NEW
+                    const result = reconcileMovedRoleCard(c); // CHANGE
+                    if (result) { // CHANGE
+                        (result.touchedSections || []).forEach(function (section) { if (section) touchedTeamSections.add(cellId(section)); }); // NEW
+                        if (result.teamCell) seenModules.add(cellId(result.teamCell)); // NEW
+                    } else { // NEW
+                        const teamCell = roleCardTeamModule(c); // NEW
+                        if (teamCell) seenModules.add(cellId(teamCell)); // NEW
+                    } // NEW
+                    return; // NEW
+                } // NEW
+                if (isTeamSection(c)) { // NEW
+                    touchedTeamSections.add(cellId(c)); // NEW
+                    const teamCell = parentTeamModuleForSection(c); // NEW
+                    if (teamCell) seenModules.add(cellId(teamCell)); // NEW
+                } // NEW
                 const protectedContainer = getClampContainer(c); // NEW
                 if (protectedContainer) {
                     const b = getAbsBounds(c);
@@ -2028,6 +2383,8 @@ Draw.loadPlugin(function (ui) {
             }
 
             // Shrink/expand modules after any reparenting                              
+            autosizeTeamSections(Array.from(touchedTeamSections).map(function (id) { return model.getCell(id); }).filter(Boolean)); // NEW
+            enforceTeamSectionMarginsFor(Array.from(touchedTeamSections).map(function (id) { return model.getCell(id); }).filter(Boolean)); // CHANGE
             seenModules.forEach(id => {
                 const mod = model.getCell(id);
                 if (mod) applyModuleMargins(mod, { allowShrink: true });
@@ -2041,13 +2398,20 @@ Draw.loadPlugin(function (ui) {
             const bounds = evt.getProperty("bounds") || []; // NEW
             const previous = evt.getProperty("previous") || []; // NEW
             const seenModules = new Set();
+            const touchedTeamSections = new Set(); // NEW
             cells.forEach(c => {
                 if (isGardenModule(c)) enforceGardenModuleMinimum(c);
+                if (isTeamSection(c)) touchedTeamSections.add(cellId(c)); // NEW
+                if (isRoleCard(c) && isTeamSection(model.getParent(c))) touchedTeamSections.add(cellId(model.getParent(c))); // NEW
                 if (isModule(c)) seenModules.add(c.id);                // module resized by user
                 const p = model.getParent(c);
                 if (p && isModule(p)) seenModules.add(p.id);           // child resized
+                if (p && isTeamSection(p)) { touchedTeamSections.add(cellId(p)); const teamCell = parentTeamModuleForSection(p); if (teamCell) seenModules.add(cellId(teamCell)); } // NEW
             });
             // Do NOT shrink for module resize or child resize                                      
+            const resizedTeamSections = Array.from(touchedTeamSections).map(function (id) { return model.getCell(id); }).filter(Boolean); // NEW
+            autosizeTeamSections(resizedTeamSections); // CHANGE: enforce minima without undoing intentional manual team-section size.
+            enforceTeamSectionMarginsFor(resizedTeamSections); // CHANGE
             seenModules.forEach(id => applyModuleMargins(model.getCell(id), { allowShrink: false }));
             cells.forEach(function (cell, index) {
                 if (!isModule(cell)) return;
@@ -2419,11 +2783,15 @@ Draw.loadPlugin(function (ui) {
         function removeWithRoadmapCleanup(targets, includeEdges) { // NEW
             const roadmapApi = graph.__trellisRoadmapManager; // NEW
             const filtered = removeDescendantTargets(targets); // NEW
-            if (roadmapApi && typeof roadmapApi.deleteRoadmapCells === "function") return roadmapApi.deleteRoadmapCells(filtered, "delete"); // NEW
+            if (graph.removeCells === moduleRemoveCells && roadmapApi && typeof roadmapApi.deleteRoadmapCells === "function") { // CHANGE: only top-level module deletes should enter Roadmap cleanup.
+                deletingThroughModules = true; // NEW
+                try { return roadmapApi.deleteRoadmapCells(filtered, "delete"); } // CHANGE
+                finally { deletingThroughModules = false; } // NEW
+            } // NEW
             return removeWithBase(filtered, includeEdges); // NEW
         } // NEW
 
-        graph.removeCells = function (cells, includeEdges) { // NEW
+        function moduleRemoveCells(cells, includeEdges) { // NEW
             if (deletingThroughModules) return baseRemoveCells.apply(this, arguments); // NEW
             const selected = selectedCellsForRemove(cells); // NEW
             const modules = selected.filter(isModule).sort(function (left, right) { return (isGardenModule(right) ? 1 : 0) - (isGardenModule(left) ? 1 : 0); }); // NEW
@@ -2475,7 +2843,8 @@ Draw.loadPlugin(function (ui) {
             const targets = removableOrdinary.concat(removableModules); // NEW
             if (!targets.length) return []; // CHANGE
             return removableModules.length ? removeWithRoadmapCleanup(targets, includeEdges) : removeWithBase(targets, includeEdges); // NEW
-        }; // NEW
+        } // NEW
+        graph.removeCells = moduleRemoveCells; // NEW
     } // NEW
 
     function installRootModuleCreationOverlay() {
@@ -2624,6 +2993,7 @@ Draw.loadPlugin(function (ui) {
             const host = ensureOverlayHost();
             const div = ensureOverlay();
             if (!host || !div) return;
+            if (isTeamPermissionModeActiveForOverlay()) { hideOverlay(); return; } // NEW
             if (div.parentNode !== host) host.appendChild(div);
             div.style.display = "flex";
             div.style.left = "0px";
@@ -2641,6 +3011,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         function showOverlay(anchor) {
+            if (isTeamPermissionModeActiveForOverlay()) { hideOverlay(); return; } // NEW
             const div = ensureOverlay();
             if (!div) return;
             div.__trellisModulePoint = { x: anchor.model.x, y: anchor.model.y };
@@ -2659,6 +3030,7 @@ Draw.loadPlugin(function (ui) {
                 mouseDown: function (_sender, me) {
                     const evt = me && me.getEvent ? me.getEvent() : null;
                     if (eventInOverlay(evt)) return;
+                    if (isTeamPermissionModeActiveForOverlay()) { dismissOnlyClick = false; pendingClick = null; hideOverlay(); return; } // NEW
                     if (isOverlayVisible()) {
                         dismissOnlyClick = true;
                         pendingClick = null;
@@ -2686,6 +3058,7 @@ Draw.loadPlugin(function (ui) {
                     const start = pendingClick;
                     pendingClick = null;
                     if (eventInOverlay(evt)) return;
+                    if (isTeamPermissionModeActiveForOverlay()) { hideOverlay(); return; } // NEW
                     if (!isPlainLeftMouseEvent(evt) || isDoubleClick(evt) || !isSimpleClick(start, evt)) return;
                     if (cellForMouseEvent(me, evt)) return;
                     showOverlay(start);
@@ -2705,6 +3078,7 @@ Draw.loadPlugin(function (ui) {
             }
         }
         mxEvent.addListener(document, "keydown", function (evt) { if (evt && evt.key === "Escape") hideOverlay(); });
+        if (window && window.addEventListener) window.addEventListener("trellisTeamPermissionModeChanged", function (evt) { if (evt && evt.detail && evt.detail.active) hideOverlay(); }); // NEW
         graph.addListener && graph.addListener(mxEvent.DESTROY, function () { if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay); overlay = null; });
     }
 
@@ -2719,10 +3093,16 @@ Draw.loadPlugin(function (ui) {
         let pendingClick = null;
         let lastClickAnchor = null;
         let currentTeamModule = null;
+        let currentTeamContext = null; // NEW
         let dismissOnlyClick = false;
         let recentlyDismissedCell = null;
         let recentlyDismissedAt = 0;
+        let clickOverlaySelectionCell = null; // NEW
         let labelControls = null;
+        let addTeamButton = null; // NEW
+        let addRoleButton = null; // NEW
+        let permissionsButton = null; // NEW
+        let marginsButton = null; // NEW
 
         function overlayHost() {
             return graph.container || null;
@@ -2801,9 +3181,24 @@ Draw.loadPlugin(function (ui) {
             return cells && cells.length === 1 && isModule(cells[0]) && isTeamModule(cells[0]) ? cells[0] : null;
         }
 
+        function teamContextForCell(cell) {
+            if (isModule(cell) && isTeamModule(cell)) return { kind: "module", cell, moduleCell: cell }; // NEW
+            if (isTeamSection(cell)) { const moduleCell = parentTeamModuleForSection(cell); return moduleCell ? { kind: "team", cell, moduleCell } : null; } // NEW
+            if (isRoleCard(cell)) { const moduleCell = roleCardTeamModule(cell); return moduleCell ? { kind: "role", cell, moduleCell } : null; } // NEW
+            return null; // NEW
+        }
+
+        function selectedTeamContext() {
+            const cells = graph.getSelectionCells ? graph.getSelectionCells() : (graph.getSelectionCell ? [graph.getSelectionCell()] : []); // NEW
+            if (!cells || cells.length !== 1) return null; // NEW
+            return teamContextForCell(cells[0]); // CHANGE
+        }
+
         function hideOverlay() {
             if (overlay) overlay.style.display = "none";
             currentTeamModule = null;
+            currentTeamContext = null; // NEW
+            clickOverlaySelectionCell = null; // NEW
         }
 
         function isOverlayVisible() {
@@ -2813,6 +3208,11 @@ Draw.loadPlugin(function (ui) {
         function moduleContainsPoint(moduleCell, point) {
             const geo = graph.getCellGeometry(moduleCell);
             return !!geo && !!point && point.x >= geo.x && point.x <= geo.x + geo.width && point.y >= geo.y && point.y <= geo.y + geo.height;
+        }
+
+        function cellContainsPagePoint(cell, point) {
+            const bounds = cellPageBounds(cell); // NEW
+            return !!bounds && !!point && point.x >= bounds.x && point.x <= bounds.x + bounds.w && point.y >= bounds.y && point.y <= bounds.y + bounds.h; // NEW
         }
 
         function fallbackRoleCardPoint(moduleCell) {
@@ -2841,8 +3241,8 @@ Draw.loadPlugin(function (ui) {
         }
 
         function overlayAnchorForCell(cell) {
-            if (pendingClick && moduleContainsPoint(cell, pendingClick.model)) return pendingClick;
-            if (lastClickAnchor && moduleContainsPoint(cell, lastClickAnchor.model)) return lastClickAnchor;
+            if (pendingClick && cellContainsPagePoint(cell, pendingClick.model)) return pendingClick; // CHANGE
+            if (lastClickAnchor && cellContainsPagePoint(cell, lastClickAnchor.model)) return lastClickAnchor; // CHANGE
             return moduleOverlayAnchor(cell);
         }
 
@@ -2863,16 +3263,37 @@ Draw.loadPlugin(function (ui) {
 
         function addRoleCardFromOverlay(evt) {
             mxEvent.consume(evt);
-            const moduleCell = currentTeamModule || selectedTeamModule();
+            const moduleCell = currentTeamModule || (currentTeamContext && currentTeamContext.moduleCell) || selectedTeamModule(); // CHANGE
             if (!moduleCell) { hideOverlay(); return; }
             const point = roleCardPoint(moduleCell);
             addRoleCardToTeamModule(moduleCell, point.x, point.y);
             hideOverlay();
         }
 
+        function addTeamFromOverlay(evt) {
+            mxEvent.consume(evt); // NEW
+            const moduleCell = currentTeamModule || (currentTeamContext && currentTeamContext.moduleCell) || selectedTeamModule(); // CHANGE
+            if (!moduleCell) { hideOverlay(); return; } // NEW
+            const section = createTeamSection(moduleCell, "New Team"); // NEW
+            if (section && graph.setSelectionCell) graph.setSelectionCell(section); // NEW
+            if (section && graph.startEditingAtCell) graph.startEditingAtCell(section, evt || null); // NEW
+            hideOverlay(); // NEW
+        }
+
+        function openPermissionsFromOverlay(evt) {
+            mxEvent.consume(evt); // NEW
+            const moduleCell = currentTeamModule || (currentTeamContext && currentTeamContext.moduleCell) || selectedTeamModule(); // CHANGE
+            if (!moduleCell) { hideOverlay(); return; } // NEW
+            ensureTeamModuleSections(moduleCell); // NEW
+            const users = window.Trellis && window.Trellis.users; // NEW
+            if (users && typeof users.openTeamPermissionMode === "function") users.openTeamPermissionMode(moduleCell); // NEW
+            else if (graph.fireEvent && typeof mxEventObject !== "undefined") graph.fireEvent(new mxEventObject("trellis:openTeamPermissions", "teamModule", moduleCell)); // NEW
+            hideOverlay(); // NEW
+        }
+
         function promptModuleMarginsFromOverlay(evt) {
             mxEvent.consume(evt);
-            const moduleCell = currentTeamModule || selectedTeamModule();
+            const moduleCell = currentTeamModule || (currentTeamContext && currentTeamContext.moduleCell) || selectedTeamModule(); // CHANGE
             if (!moduleCell) { hideOverlay(); return; }
             hideOverlay();
             promptSetModuleMargins(moduleCell); // CHANGE
@@ -2933,7 +3354,7 @@ Draw.loadPlugin(function (ui) {
         function renderTeamModuleLabelControls(moduleCell) {
             if (!labelControls) return;
             labelControls.innerHTML = "";
-            labelControls.appendChild(makeModuleLabelInput(moduleCell, "Team label"));
+            labelControls.appendChild(makeModuleLabelInput(moduleCell, "Name")); // CHANGE
         }
 
         function ensureOverlay() {
@@ -2962,26 +3383,52 @@ Draw.loadPlugin(function (ui) {
             labelControls.style.padding = "2px 2px 4px";
             labelControls.style.borderBottom = "1px solid #e5e7eb";
             overlay.appendChild(labelControls);
-            overlay.appendChild(makeOverlayButton("Add Role Card", addRoleCardFromOverlay, "add"));
-            overlay.appendChild(makeOverlayButton("Set Module Margins", promptModuleMarginsFromOverlay, "open")); // CHANGE
+            addTeamButton = makeOverlayButton("Add Team", addTeamFromOverlay, "add"); // NEW
+            addRoleButton = makeOverlayButton("Add New Role", addRoleCardFromOverlay, "add"); // NEW
+            permissionsButton = makeOverlayButton("Set Permissions", openPermissionsFromOverlay, "open"); // CHANGE
+            marginsButton = makeOverlayButton("Set Module Margins", promptModuleMarginsFromOverlay, "open"); // NEW
+            overlay.appendChild(addTeamButton); // NEW
+            overlay.appendChild(addRoleButton); // NEW
+            overlay.appendChild(permissionsButton); // NEW
+            overlay.appendChild(marginsButton); // NEW
             const host = ensureOverlayHost();
             if (host) host.appendChild(overlay);
             return overlay;
         }
 
-        function showOverlay(cell, anchor) {
-            currentTeamModule = cell;
+        function renderTeamContextControls(context) {
+            const ctx = context || {}; // NEW
+            const moduleCell = ctx.moduleCell; // NEW
+            if (!labelControls || !moduleCell) return; // NEW
+            labelControls.innerHTML = ""; // NEW
+            labelControls.style.display = "flex"; // NEW
+            if (ctx.kind === "module" || ctx.kind === "team") labelControls.appendChild(makeModuleLabelInput(ctx.cell, "Name")); // CHANGE: team-section overlay now shares the module overlay name-field pattern.
+            else { const label = document.createElement("div"); label.textContent = (ctx.kind === "team" ? "Team: " : "Role: ") + getModuleLabel(ctx.cell); label.style.cssText = "font-weight:700;color:#374151;padding:3px 5px;"; labelControls.appendChild(label); } // NEW
+            if (addTeamButton) addTeamButton.style.display = ctx.kind === "module" ? "" : "none"; // CHANGE
+            if (addRoleButton) addRoleButton.style.display = ctx.kind === "team" ? "" : "none"; // CHANGE
+            if (permissionsButton) permissionsButton.textContent = "Set Permissions"; // CHANGE
+            if (marginsButton) marginsButton.style.display = ctx.kind === "module" ? "" : "none"; // CHANGE
+        }
+
+        function showOverlay(context, anchor) {
+            if (isTeamPermissionModeActiveForOverlay()) { hideOverlay(); return; } // NEW
+            const ctx = context && context.moduleCell ? context : { kind: "module", cell: context, moduleCell: context }; // CHANGE
+            currentTeamModule = ctx.moduleCell; // CHANGE
+            currentTeamContext = ctx; // NEW
+            ensureTeamModuleSections(ctx.moduleCell); // CHANGE
             ensureOverlay();
-            renderTeamModuleLabelControls(cell);
-            positionOverlay(anchor || moduleOverlayAnchor(cell));
+            renderTeamContextControls(ctx); // NEW
+            positionOverlay(anchor || moduleOverlayAnchor(ctx.cell)); // CHANGE
         }
 
         function refreshSelectedOverlay() {
-            const cell = selectedTeamModule();
+            if (isTeamPermissionModeActiveForOverlay()) { hideOverlay(); return; } // NEW
+            const context = selectedTeamContext(); // CHANGE
+            if (context && isOverlayVisible() && currentTeamContext && currentTeamContext.cell === context.cell && clickOverlaySelectionCell === context.cell) { clickOverlaySelectionCell = null; return; } // CHANGE
             hideOverlay();
-            if (!cell) return;
-            if (recentlyDismissedCell === cell && Date.now() - recentlyDismissedAt < 250) return;
-            showOverlay(cell, overlayAnchorForCell(cell));
+            if (!context) return; // CHANGE
+            if (recentlyDismissedCell === context.cell && Date.now() - recentlyDismissedAt < 250) return; // CHANGE
+            showOverlay(context, overlayAnchorForCell(context.cell)); // CHANGE
         }
 
         function onDismissEvent() {
@@ -2994,14 +3441,18 @@ Draw.loadPlugin(function (ui) {
                 mouseDown: function (_sender, me) {
                     const evt = me && me.getEvent ? me.getEvent() : null;
                     if (eventInOverlay(evt)) return;
+                    if (isTeamPermissionModeActiveForOverlay()) { dismissOnlyClick = false; pendingClick = null; hideOverlay(); return; } // NEW
                     const hitCell = cellForMouseEvent(me, evt);
                     if (isOverlayVisible()) {
-                        dismissOnlyClick = true;
+                        const hitContext = teamContextForCell(hitCell); // NEW
+                        const sameOverlayTarget = !!(currentTeamContext && hitContext && hitContext.cell === currentTeamContext.cell); // NEW
+                        const shouldOnlyDismiss = !hitContext || sameOverlayTarget; // NEW
+                        dismissOnlyClick = shouldOnlyDismiss; // CHANGE
                         pendingClick = null;
-                        recentlyDismissedCell = hitCell === currentTeamModule ? currentTeamModule : null;
+                        recentlyDismissedCell = sameOverlayTarget ? currentTeamContext.cell : null; // CHANGE
                         recentlyDismissedAt = recentlyDismissedCell ? Date.now() : 0;
                         hideOverlay();
-                        return;
+                        if (shouldOnlyDismiss) return; // CHANGE
                     }
                     dismissOnlyClick = false;
                     pendingClick = null;
@@ -3023,9 +3474,12 @@ Draw.loadPlugin(function (ui) {
                     const start = pendingClick;
                     pendingClick = null;
                     if (eventInOverlay(evt)) return;
+                    if (isTeamPermissionModeActiveForOverlay()) { hideOverlay(); return; } // NEW
                     if (!isPlainLeftMouseEvent(evt) || isDoubleClick(evt) || !isSimpleClick(start, evt)) return;
                     lastClickAnchor = { model: { x: start.model.x, y: start.model.y }, container: { x: start.container.x, y: start.container.y } };
-                    refreshSelectedOverlay();
+                    const clickContext = teamContextForCell(cellForMouseEvent(me, evt)); // NEW
+                    if (clickContext) { clickOverlaySelectionCell = clickContext.cell; showOverlay(clickContext, lastClickAnchor); } // CHANGE
+                    else refreshSelectedOverlay(); // CHANGE
                 }
             });
         }
@@ -3042,7 +3496,8 @@ Draw.loadPlugin(function (ui) {
             }
         }
         mxEvent.addListener(document, "keydown", function (evt) { if (evt && evt.key === "Escape") hideOverlay(); });
-        graph.addListener && graph.addListener(mxEvent.DESTROY, function () { if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay); overlay = null; currentTeamModule = null; });
+        if (window && window.addEventListener) window.addEventListener("trellisTeamPermissionModeChanged", function (evt) { if (evt && evt.detail && evt.detail.active) hideOverlay(); else refreshSelectedOverlay(); }); // NEW
+        graph.addListener && graph.addListener(mxEvent.DESTROY, function () { if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay); overlay = null; currentTeamModule = null; currentTeamContext = null; }); // CHANGE
     }
 
     function installSelectedRoleImageOverlay() {
@@ -3209,6 +3664,39 @@ Draw.loadPlugin(function (ui) {
         },
         createRoleCard: function (moduleCell, x, y) {
             return createRoleCard(graph, moduleCell, x, y);
+        },
+        addRoleCardToTeamModule: function (moduleCell, x, y) {
+            return addRoleCardToTeamModule(moduleCell, x, y); // NEW
+        },
+        createTeamSection: function (teamCell, label, opts) {
+            return createTeamSection(teamCell, label, opts); // NEW
+        },
+        ensureTeamModuleSections: function (teamCell) {
+            return ensureTeamModuleSections(teamCell); // NEW
+        },
+        ensureUnassignedTeamSection: function (teamCell) {
+            return ensureUnassignedTeamSection(teamCell); // NEW
+        },
+        isTeamSection: function (cell) {
+            return isTeamSection(cell); // NEW
+        },
+        isActiveTeamSection: function (cell) {
+            return isActiveTeamSection(cell); // NEW
+        },
+        isUnassignedTeamSection: function (cell) {
+            return isUnassignedTeamSection(cell); // NEW
+        },
+        teamSectionId: function (cell) {
+            return teamSectionId(cell); // NEW
+        },
+        teamSectionsInModule: function (teamCell, opts) {
+            return teamSectionsInModule(teamCell, opts); // NEW
+        },
+        parentTeamModuleForSection: function (section) {
+            return parentTeamModuleForSection(section); // NEW
+        },
+        autosizeTeamSections: function (sections) {
+            return autosizeTeamSections(sections); // NEW
         },
         ensureGardenTeamModule: function (gardenCell) {
             return ensureGardenTeamModule(gardenCell);

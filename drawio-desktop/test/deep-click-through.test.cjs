@@ -70,6 +70,7 @@ function makeHarness(options = {}) {
     const regularChild = appendChild(regularModule, new TestCell("regularChild", {}));
     const teamRole = appendChild(teamModule, new TestCell("teamRole", {}, "shape=swimlane;role_card=1"));
     const plainTop = appendChild(root, new TestCell("plainTop", {}));
+    const timeframe = appendChild(regularModule, new TestCell("timeframe", { roadmap_type: "timeframe" })); // NEW
     const model = new TestModel(root);
     let selectedCells = [];
     const movableCells = new Map();
@@ -95,6 +96,7 @@ function makeHarness(options = {}) {
     stateMap.set(regularChild, { cell: regularChild, x: 40, y: 360, width: 80, height: 40 });
     stateMap.set(teamRole, { cell: teamRole, x: 430, y: 360, width: 80, height: 40 });
     stateMap.set(plainTop, { cell: plainTop, x: 720, y: 360, width: 80, height: 40 });
+    stateMap.set(timeframe, { cell: timeframe, x: 120, y: 360, width: 120, height: 40 }); // NEW
     const graph = {
         model,
         container: document.getElementById("graph"),
@@ -173,7 +175,7 @@ function makeHarness(options = {}) {
     const graphHandler = new context.mxGraphHandler();
     graphHandler.graph = graph;
     graph.graphHandler = graphHandler;
-    return { graph, window: dom.window, Handler: context.mxGraphHandler, gardenModule, legacyGardenModule, regularModule, teamModule, regularChild, teamRole, plainTop, bed, emptyBed, bedAssembly, tilerGroup, plantTile, lockedPlantTile, occupiedTiler, lane, card, siblingLane, siblingCard, kanbanBoard, kanbanLane, kanbanCard, movableCells, getSelected: () => selectedCells.slice() }; // CHANGE
+    return { graph, window: dom.window, Handler: context.mxGraphHandler, gardenModule, legacyGardenModule, regularModule, teamModule, regularChild, teamRole, plainTop, timeframe, bed, emptyBed, bedAssembly, tilerGroup, plantTile, lockedPlantTile, occupiedTiler, lane, card, siblingLane, siblingCard, kanbanBoard, kanbanLane, kanbanCard, movableCells, getSelected: () => selectedCells.slice() }; // CHANGE
 }
 
 function isHarnessBed(cell) {
@@ -307,6 +309,14 @@ test("plain second-click on regular and team modules stays selected", () => {
     assert.deepEqual(getSelected(), [teamModule]);
     assert.deepEqual(closeCalls, []);
 });
+
+test("plain second-click inside selected roadmap timeframe keeps the timeframe selected", () => { // NEW
+    const { graph, regularModule, timeframe, getSelected } = makeHarness(); // NEW
+    graph.setSelectionCell(timeframe); // NEW
+    graph.__hitCell = regularModule; // NEW
+    graph.selectCellForEvent(regularModule, { detail: 1, clientX: 130, clientY: 370, button: 0 }); // NEW
+    assert.deepEqual(getSelected(), [timeframe]); // NEW
+}); // NEW
 
 test("plain second-click on garden objects other than modules stays selected", () => {
     const { graph, bed, tilerGroup, getSelected } = makeHarness();
@@ -537,6 +547,16 @@ test("occupied bed handle drag selects the bed and contained planting groups", (
     assert.deepEqual(ids(graph.graphHandler.__trellisWorkspaceHandleDragCells), ["bed", "occupiedTiler"]);
     assert.deepEqual(ids(graph.graphHandler.getCells(bed)), ["bed", "occupiedTiler"]);
 });
+
+test("workspace module handle drag uses only the handled module as drag cells", () => { // NEW
+    const { graph, regularModule, regularChild, getSelected } = makeHarness(); // NEW
+    const api = graph.__trellisWorkspaceDragPolicy; // NEW
+    graph.setSelectionCells([regularModule, regularChild]); // NEW
+    api.beginHandleDragForTests(regularModule, { button: 0, clientX: 20, clientY: 300, preventDefault() {} }); // NEW
+    assert.deepEqual(ids(getSelected()), ["regular"]); // CHANGE
+    assert.deepEqual(ids(graph.graphHandler.__trellisWorkspaceHandleDragCells), ["regular"]); // NEW
+    assert.deepEqual(ids(graph.graphHandler.getCells(regularModule)), ["regular"]); // NEW
+}); // NEW
 
 test("workspace handles omit canonical kanban board lanes", () => {
     const { graph, kanbanLane } = makeHarness();

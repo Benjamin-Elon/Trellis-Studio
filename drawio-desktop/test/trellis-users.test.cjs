@@ -99,6 +99,12 @@ function makeXmlCell(document, id, attrs = {}) {
     return new TestCell(id, node);
 }
 
+function makeTeamSectionCell(harness, users, id, label, attrs = {}) {
+    const section = makeXmlCell(harness.document, id, Object.assign({ label, [users.attrs.teamSection]: "1", [users.attrs.teamId]: id }, attrs)); // NEW
+    section.style = "swimlane;trellis_team_section=1;"; // NEW
+    return section; // NEW
+} // NEW
+
 function loadUsersPlugin(options = {}) {
     const dom = new JSDOM("<!doctype html><body><div id='host'><div id='graph'></div></div></body>", { url: "https://app.test/" });
     const document = dom.window.document;
@@ -819,6 +825,154 @@ test("visitor grant keeps regular users view-only", () => {
     undone = false;
     harness.model.fireChange({ changes: [{ constructor: { name: "mxChildChange" }, child: bed, previous: harness.module }], undo() { undone = true; } });
     assert.equal(undone, true);
+});
+
+test("team grants create derived mirrors and merge more permissively than individual grants", () => {
+    const harness = loadUsersPlugin();
+    const users = harness.context.window.Trellis.users;
+    users.enableUsers("Alice", "1234");
+    harness.module.style = "module=1";
+    const bob = users.createUser("Bob", "5678", false).user;
+    const teamModule = appendChild(harness.layer, makeXmlCell(harness.document, "team-module", { label: "Team Module", team_module: "1" }));
+    const team = appendChild(teamModule, makeTeamSectionCell(harness, users, "team-alpha", "Alpha"));
+    const role = appendChild(team, new TestCell("role-bob", makeXmlCell(harness.document, "role-value", { label: "Bob Role", [users.attrs.roleUser]: bob.id }).value, "shape=swimlane;role_card=1;"));
+
+    assert.equal(users.setTeamScopeGrant(harness.module, team, "gardener").ok, true);
+    let stored = JSON.parse(harness.module.getAttribute(users.attrs.accessGrants));
+    assert.equal(stored.some(grant => grant.subjectType === "team" && grant.teamId === "team-alpha" && grant.preset === "gardener"), true);
+    assert.equal(stored.some(grant => grant.subjectType === "user" && grant.userId === bob.id && grant.derived && grant.preset === "gardener"), true);
+    assert.equal(users.effectiveCapabilitiesForCell(harness.card, bob.id).includes(users.capabilities.createPlantings), true);
+
+    assert.equal(users.setScopeGrant(harness.module, { userId: bob.id, preset: "visitor" }).ok, true);
+    stored = JSON.parse(harness.module.getAttribute(users.attrs.accessGrants));
+    assert.equal(stored.some(grant => grant.userId === bob.id && grant.derived), false);
+    assert.equal(stored.some(grant => grant.userId === bob.id && !grant.subjectType && grant.preset === "visitor"), true);
+    assert.equal(users.effectiveCapabilitiesForCell(harness.card, bob.id).includes(users.capabilities.createPlantings), true);
+    assert.equal(users._test.activeAccessTeamIdsForRoleCard(role).includes("team-alpha"), true);
+});
+
+test("archived team sections keep grants but do not grant effective access", () => {
+    const harness = loadUsersPlugin();
+    const users = harness.context.window.Trellis.users;
+    users.enableUsers("Alice", "1234");
+    harness.module.style = "module=1";
+    const bob = users.createUser("Bob", "5678", false).user;
+    const teamModule = appendChild(harness.layer, makeXmlCell(harness.document, "archive-team-module", { label: "Team Module", team_module: "1" }));
+    const team = appendChild(teamModule, makeTeamSectionCell(harness, users, "team-archive", "Archive Team"));
+    appendChild(team, new TestCell("role-archive-bob", makeXmlCell(harness.document, "role-archive-value", { label: "Bob Role", [users.attrs.roleUser]: bob.id }).value, "shape=swimlane;role_card=1;"));
+
+    assert.equal(users.setTeamScopeGrant(harness.module, team, "coordinator").ok, true);
+    team.setAttribute(users.attrs.teamArchived, "1");
+    users.syncTeamDerivedGrants();
+    const stored = JSON.parse(harness.module.getAttribute(users.attrs.accessGrants));
+    assert.equal(stored.some(grant => grant.subjectType === "team" && grant.teamId === "team-archive"), true);
+    assert.equal(stored.some(grant => grant.userId === bob.id && grant.derived), false);
+    assert.equal(users.effectiveCapabilitiesForCell(harness.card, bob.id).includes(users.capabilities.manageAccess), false);
+});
+
+test("team permission mode renders linked scopes and applies team radio grants", () => {
+    const harness = loadUsersPlugin();
+    const users = harness.context.window.Trellis.users;
+    users.enableUsers("Alice", "1234");
+    harness.module.style = "module=1";
+    harness.module.setAttribute("linkedTo", "permission-team-module");
+    const teamModule = appendChild(harness.layer, makeXmlCell(harness.document, "permission-team-module", { label: "Team Module", team_module: "1", linkedTo: "module" }));
+    const team = appendChild(teamModule, makeTeamSectionCell(harness, users, "team-permission", "Permission Team"));
+    harness.graph.setSelectionCell(team);
+
+    assert.equal(users.openTeamPermissionMode(teamModule).ok, true);
+    const overlay = harness.document.querySelector(".trellis-team-permission-overlay");
+    assert.ok(overlay);
+    assert.match(overlay.textContent, /Subjects/);
+    assert.match(overlay.textContent, /Team: Permission Team/);
+    assert.match(overlay.textContent, /Module: Module/);
+    const row = overlay.querySelector(".trellis-team-permission-scope-row[data-scope-id='module']");
+    assert.ok(row);
+    const radios = Array.from(row.querySelectorAll("input[type='radio']")).map(input => input.value);
+    assert.deepEqual(radios, ["none", "visitor", "gardener", "coordinator"]);
+    row.querySelector("input[value='coordinator']").click();
+    const stored = JSON.parse(harness.module.getAttribute(users.attrs.accessGrants));
+    assert.equal(stored.some(grant => grant.subjectType === "team" && grant.teamId === "team-permission" && grant.preset === "coordinator"), true);
+    users.closeTeamPermissionMode();
+    assert.equal(harness.document.querySelector(".trellis-team-permission-overlay"), null);
+});
+
+test("team permission mode exposes active state and dispatches lifecycle events", () => {
+    const harness = loadUsersPlugin();
+    const users = harness.context.window.Trellis.users;
+    users.enableUsers("Alice", "1234");
+    harness.module.style = "module=1";
+    harness.module.setAttribute("linkedTo", "permission-team-module");
+    const teamModule = appendChild(harness.layer, makeXmlCell(harness.document, "permission-team-module", { label: "Team Module", team_module: "1", linkedTo: "module" }));
+    appendChild(teamModule, makeTeamSectionCell(harness, users, "team-permission", "Permission Team"));
+    const events = [];
+    harness.context.window.addEventListener("trellisTeamPermissionModeChanged", evt => events.push(evt.detail));
+
+    assert.equal(users.isTeamPermissionModeActive(), false);
+    assert.equal(users.openTeamPermissionMode(teamModule).ok, true);
+    assert.equal(users.isTeamPermissionModeActive(), true);
+    users.closeTeamPermissionMode();
+    assert.equal(users.isTeamPermissionModeActive(), false);
+
+    assert.deepEqual(JSON.parse(JSON.stringify(events)), [
+        { active: true, teamModuleId: "permission-team-module" },
+        { active: false, teamModuleId: "permission-team-module" }
+    ]);
+}); // NEW
+
+test("team permission mode seeds subjects from selected scope grants and expands badge clicks", () => {
+    const harness = loadUsersPlugin();
+    const users = harness.context.window.Trellis.users;
+    users.enableUsers("Alice", "1234");
+    harness.module.style = "module=1";
+    harness.graph.getView = () => ({ getState: cell => cell === harness.module ? { x: 20, y: 30, width: 180, height: 120 } : null });
+    harness.module.setAttribute("linkedTo", "permission-team-module");
+    const teamModule = appendChild(harness.layer, makeXmlCell(harness.document, "permission-team-module", { label: "Team Module", team_module: "1", linkedTo: "module" }));
+    const team = appendChild(teamModule, makeTeamSectionCell(harness, users, "team-permission", "Permission Team"));
+    assert.equal(users.setTeamScopeGrant(harness.module, team, "gardener").ok, true);
+    harness.graph.setSelectionCell(team);
+
+    assert.equal(users.openTeamPermissionMode(teamModule).ok, true);
+    const overlay = harness.document.querySelector(".trellis-team-permission-overlay");
+    assert.equal(checkboxByLabelIn(overlay, "Team: Permission Team").checked, true);
+    const badge = harness.document.querySelector(".trellis-team-permission-badge[data-scope-id='module']");
+    assert.ok(badge);
+    assert.match(badge.textContent, /Module/);
+    assert.match(badge.textContent, /Access: Gardener/);
+    assert.equal(badge.querySelector("input[type='radio']"), null);
+
+    badge.click();
+    const expanded = harness.document.querySelector(".trellis-team-permission-badge[data-scope-id='module']");
+    assert.equal(harness.graph.getSelectionCell(), harness.module);
+    assert.ok(expanded.querySelector("input[type='radio'][value='gardener']"));
+});
+
+test("team permission action labels and scope-derived role checks follow the current selection", () => {
+    const harness = loadUsersPlugin();
+    const users = harness.context.window.Trellis.users;
+    users.enableUsers("Alice", "1234");
+    harness.module.style = "module=1";
+    harness.module.setAttribute("linkedTo", "permission-team-module");
+    const bob = users.createUser("Bob", "5678", false).user;
+    const teamModule = appendChild(harness.layer, makeXmlCell(harness.document, "permission-team-module", { label: "Team Module", team_module: "1", linkedTo: "module" }));
+    appendChild(teamModule, makeTeamSectionCell(harness, users, "team-permission", "Permission Team"));
+    const role = appendChild(teamModule, new TestCell("role-bob", makeXmlCell(harness.document, "role-value", { label: "Bob Role", [users.attrs.roleUser]: bob.id }).value, "shape=swimlane;role_card=1;"));
+    const bed = appendChild(harness.module, makeXmlCell(harness.document, "permission-bed", { garden_bed: "1", label: "North Bed" }));
+    const board = appendChild(harness.module, makeXmlCell(harness.document, "permission-board", { board_key: "KANBAN_BOARD", label: "Harvest Board" }));
+
+    harness.graph.setSelectionCell(bed);
+    assert.equal(users.teamPermissionActionLabel(teamModule), "Add Permissions");
+    assert.equal(users.setScopeGrant(board, { userId: bob.id, preset: "gardener" }).ok, true);
+    harness.graph.setSelectionCell(board);
+    assert.equal(users.teamPermissionActionLabel(teamModule), "Change Permissions");
+    assert.equal(users.openTeamPermissionMode(teamModule).ok, true);
+    const overlay = harness.document.querySelector(".trellis-team-permission-overlay");
+    assert.equal(checkboxByLabelIn(overlay, "Team: Permission Team").checked, false);
+    assert.equal(checkboxByLabelIn(overlay, "Role: Bob Role").checked, true);
+
+    users.closeTeamPermissionMode();
+    harness.graph.setSelectionCells([role, board]);
+    assert.equal(users.teamPermissionActionLabel(teamModule), "Add/Change Permissions (Selection)");
 });
 
 test("access request from inaccessible child resolves to nearest shareable scope", () => {

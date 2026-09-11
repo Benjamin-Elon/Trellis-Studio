@@ -1,4 +1,4 @@
-// Pure roadmap policy and geometry; no DOM, Draw, persistence, or input mutation. // NEW
+// Roadmap policy, geometry, and optional native Draw.io renderer registration. // CHANGE
 (function (root) { // NEW
     'use strict'; // NEW
  // NEW
@@ -7,6 +7,10 @@
     const KEYS = ['pastYear', 'pastMonth', 'pastWeek', 'thisWeek', 'nextWeek', 'nextMonth', 'nextYear', 'future']; // NEW
     const LABELS = ['Past Year', 'Past Month', 'Past Week', 'This Week', 'Next Week', 'Next Month', 'Next Year', 'Future']; // NEW
     const TICK_STEPS = [30, 7, 1, 1, 1, 7, 30, 30]; // NEW
+    const TICK_UNITS = ['month', 'week', 'day', 'day', 'day', 'week', 'month', 'month']; // NEW
+    const DEFAULT_WIDTHS = [75, 75, 75, 400, 400, 400, 400, 400]; // NEW
+    const DEFAULT_SCALES = DEFAULT_WIDTHS.map((width, index) => width / (OFFSETS[index + 1] - OFFSETS[index])); // NEW
+    const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; // NEW
     const STATUSES = ['Planned', 'Doing', 'Blocked', 'Done']; // NEW
     const PADDING = 12; // NEW
     const BOARD_HEADER = 64; // NEW
@@ -48,9 +52,9 @@
         const value = record && typeof record === 'object' ? record : {}; // NEW
         const scales = Array.isArray(value.scales) ? value.scales : []; // NEW
         return { // NEW
-            scales: Array.from({ length: 8 }, (_, index) => Number.isFinite(scales[index]) && scales[index] > 0 ? scales[index] : 4), // NEW
+            scales: Array.from({ length: 8 }, (_, index) => Number.isFinite(scales[index]) && scales[index] > 0 ? scales[index] : DEFAULT_SCALES[index]), // CHANGE
             multiplier: Number.isFinite(value.multiplier) && value.multiplier > 0 ? value.multiplier : 1, // NEW
-            leftHidden: Number.isFinite(value.leftHidden) ? Math.max(0, Math.min(3, Math.trunc(value.leftHidden))) : 0, // NEW
+            leftHidden: Number.isFinite(value.leftHidden) ? Math.max(0, Math.min(3, Math.trunc(value.leftHidden))) : 3, // CHANGE
             rightHidden: Number.isFinite(value.rightHidden) ? Math.max(0, Math.min(4, Math.trunc(value.rightHidden))) : 0 // NEW
         }; // NEW
     } // NEW
@@ -97,7 +101,7 @@
             if (!Number.isFinite(scale) || scale <= 0 || !Number.isFinite(1 / scale) || !Number.isFinite(columnWidth) || (visible && columnWidth <= 0)) { // NEW
                 throw new RangeError('timeline scale produces unrepresentable coordinates'); // NEW
             } // NEW
-            const column = { key, label: LABELS[index], start: boundaries[index], end: boundaries[index + 1], x: width, width: columnWidth, scale, visible, tickStep: TICK_STEPS[index] }; // NEW
+            const column = { key, label: LABELS[index], start: boundaries[index], end: boundaries[index + 1], x: width, width: columnWidth, scale, visible, tickStep: TICK_STEPS[index], tickUnit: TICK_UNITS[index] }; // CHANGE
             width += columnWidth; // NEW
             return column; // NEW
         }); // NEW
@@ -122,6 +126,52 @@
         if (!active.length) throw new RangeError('timeline must contain a visible column'); // NEW
         const column = active.find(candidate => x < candidate.x + candidate.width) || active[active.length - 1]; // NEW
         return column.start + (x - column.x) / column.scale; // NEW
+    } // NEW
+
+    function dateForDay(day) { // NEW
+        const date = new Date(day * DAY_MS); // NEW
+        if (!Number.isFinite(date.getTime())) throw new RangeError('day must produce a finite Date'); // NEW
+        return date; // NEW
+    } // NEW
+
+    function monthStartDay(year, monthIndex) { // NEW
+        const date = new Date(0); // NEW
+        date.setUTCFullYear(year, monthIndex, 1); // NEW
+        date.setUTCHours(0, 0, 0, 0); // NEW
+        return date.getTime() / DAY_MS; // NEW
+    } // NEW
+
+    function tickLabel(day, unit) { // NEW
+        const date = dateForDay(day); // NEW
+        if (unit === 'day') return String(date.getUTCDate()); // NEW
+        if (unit === 'week') return MONTH_NAMES[date.getUTCMonth()] + ' ' + date.getUTCDate(); // NEW
+        return MONTH_NAMES[date.getUTCMonth()]; // NEW
+    } // NEW
+
+    function firstCalendarTick(start, unit) { // NEW
+        const date = dateForDay(start); // NEW
+        if (unit === 'day') return start; // NEW
+        if (unit === 'week') return start + ((7 - date.getUTCDay()) % 7); // NEW: Sunday starts each calendar week.
+        let first = monthStartDay(date.getUTCFullYear(), date.getUTCMonth()); // NEW
+        if (first < start) first = monthStartDay(date.getUTCFullYear(), date.getUTCMonth() + 1); // NEW
+        return first; // NEW
+    } // NEW
+
+    function nextCalendarTick(day, unit) { // NEW
+        if (unit === 'day') return day + 1; // NEW
+        if (unit === 'week') return day + 7; // NEW
+        const date = dateForDay(day); // NEW
+        return monthStartDay(date.getUTCFullYear(), date.getUTCMonth() + 1); // NEW
+    } // NEW
+
+    function calendarTicks(column) { // NEW
+        const unit = column && column.tickUnit || 'day', start = requireDay(column && column.start, 'start'), end = requireDay(column && column.end, 'end'); // NEW
+        if (end < start) throw new RangeError('tick end must not precede start'); // NEW
+        const ticks = []; // NEW
+        for (let day = firstCalendarTick(start, unit), count = 0; day < end && count < 10000; day = nextCalendarTick(day, unit), count++) { // NEW
+            ticks.push({ day, label: tickLabel(day, unit), unit }); // NEW
+        } // NEW
+        return ticks; // NEW
     } // NEW
  // NEW
     /** Validate collection identity without mutating records; strings and finite numbers are distinct IDs. */ // NEW
@@ -311,7 +361,87 @@
         throw new Error('Cannot resolve neighboring layout without a collision.'); // NEW
     } // NEW
 
-    const api = Object.freeze({ parseDay, formatDay, todayDay, normalizeView, buildTimeline, dayToX, xToDay, planCollisions, packIntervals, progressSummary, transitionStatus, layoutRoadmap }); // NEW
+    const api = Object.freeze({ parseDay, formatDay, todayDay, normalizeView, buildTimeline, dayToX, xToDay, calendarTicks, planCollisions, packIntervals, progressSummary, transitionStatus, layoutRoadmap }); // CHANGE
     root.TrellisRoadmapCore = api; // NEW
     if (typeof module !== 'undefined' && module && typeof module.exports !== 'undefined') module.exports = api; // NEW
+})(globalThis); // NEW
+
+/** Shared native shapes and isolated export projection; no editor UI. */ // NEW
+(function (root) { // NEW
+    'use strict'; // NEW
+    const core = root.TrellisRoadmapCore, HEADER = 64, PROCESS_HEADER = 28; // CHANGE
+    if (!core || root.TrellisRoadmapRenderer) return; // NEW
+    function frameTicks(start, end, unit) { try { return core.calendarTicks({ start, end, tickUnit: unit }); } catch (_) { return []; } } // CHANGE
+    /** Native timeframe shape keeps ticks inside SVG/image exports, not only DOM overlays. */ // NEW
+    if (typeof mxRectangleShape !== 'undefined' && typeof mxCellRenderer !== 'undefined') { // NEW
+        function arcSize(shape, width, height) { return shape.isRounded && shape.getArcSize ? shape.getArcSize(width, height) : 0; } // CHANGE
+        function paintRect(shape, canvas, x, y, width, height) { // CHANGE
+            const arc = arcSize(shape, width, height); // CHANGE
+            if (arc > 0) canvas.roundrect(x, y, width, height, arc, arc); else canvas.rect(x, y, width, height); // CHANGE
+        } // CHANGE
+        function paintHeaderBand(shape, canvas, x, y, width, height, headerHeight) { // CHANGE
+            const arc = arcSize(shape, width, height); // CHANGE
+            if (arc <= 0 || headerHeight >= height) { paintRect(shape, canvas, x, y, width, headerHeight); return; } // CHANGE
+            const bandArc = Math.min(arc, width / 2, headerHeight); // CHANGE
+            canvas.begin(); canvas.moveTo(x, y + headerHeight); canvas.lineTo(x, y + bandArc); canvas.quadTo(x, y, x + bandArc, y); canvas.lineTo(x + width - bandArc, y); canvas.quadTo(x + width, y, x + width, y + bandArc); canvas.lineTo(x + width, y + headerHeight); canvas.close(); // CHANGE
+        } // CHANGE
+        function tintColor(color, fallback) { // NEW
+            const match = String(color || '').match(/^#([0-9a-f]{6})$/i); // NEW
+            if (!match) return fallback; // NEW
+            const hex = match[1], parts = [0, 2, 4].map(index => Number.parseInt(hex.slice(index, index + 2), 16)); // NEW
+            return '#' + parts.map(value => Math.round((value + 255) / 2).toString(16).padStart(2, '0')).join(''); // NEW
+        } // NEW
+        function paintHeaderBandShape(shape, canvas, x, y, width, height, headerHeight, fallbackHeader, useStyleHeader) { // CHANGE
+            const style = shape.style || {}, fill = style.fillColor || '#ffffff', stroke = style.strokeColor || '#64748b', header = useStyleHeader === false ? fallbackHeader : style.roadmapHeaderColor || fallbackHeader; // CHANGE
+            canvas.setFillColor(fill); canvas.setStrokeColor(stroke); paintRect(shape, canvas, x, y, width, height); canvas.fillAndStroke(); // CHANGE
+            canvas.setFillColor(header); canvas.setStrokeColor(stroke); paintHeaderBand(shape, canvas, x, y, width, height, Math.min(headerHeight, height)); canvas.fillAndStroke(); // CHANGE
+        } // NEW
+
+        function BoardShape() { mxRectangleShape.apply(this, arguments); } // NEW
+        BoardShape.prototype = Object.create(mxRectangleShape.prototype); // NEW
+        BoardShape.prototype.constructor = BoardShape; // NEW
+        BoardShape.prototype.paintVertexShape = function (canvas, x, y, width, height) { paintHeaderBandShape(this, canvas, x, y, width, height, HEADER, '#e2e8f0'); }; // CHANGE
+        mxCellRenderer.registerShape('trellisRoadmapBoard', BoardShape); // NEW
+
+        function ProcessShape() { mxRectangleShape.apply(this, arguments); } // NEW
+        ProcessShape.prototype = Object.create(mxRectangleShape.prototype); // NEW
+        ProcessShape.prototype.constructor = ProcessShape; // NEW
+        ProcessShape.prototype.paintVertexShape = function (canvas, x, y, width, height) { paintHeaderBandShape(this, canvas, x, y, width, height, PROCESS_HEADER, tintColor(this.style && this.style.strokeColor, '#e2e8f0'), false); }; // CHANGE
+        mxCellRenderer.registerShape('trellisRoadmapProcess', ProcessShape); // NEW
+
+        function TimeframeShape() { mxRectangleShape.apply(this, arguments); } // NEW
+        TimeframeShape.prototype = Object.create(mxRectangleShape.prototype); // NEW
+        TimeframeShape.prototype.constructor = TimeframeShape; // NEW
+        TimeframeShape.prototype.paintVertexShape = function (canvas, x, y, width, height) { // NEW
+            const style = this.style || {}, start = Number(style.roadmapFrameStart), end = Number(style.roadmapFrameEnd), scale = Number(style.roadmapFrameScale), unit = style.roadmapFrameTickUnit || 'day'; // CHANGE
+            canvas.setStrokeColor('#cbd5e1'); canvas.begin(); canvas.moveTo(x, y + 22); canvas.lineTo(x, y + height); canvas.stroke(); // NEW
+            if (!scale || !Number.isFinite(start) || !Number.isFinite(end)) return; // NEW
+            const ticks = frameTicks(start, end, unit), tickWidth = unit === 'day' ? 18 : unit === 'week' ? 42 : 28; // NEW
+            const density = Math.max(1, Math.ceil(3 / Math.max(0.001, tickDistance(ticks, scale)))); // CHANGE
+            const labelStride = Math.max(density, Math.ceil(tickWidth / Math.max(0.001, tickDistance(ticks, scale)))); // CHANGE
+            canvas.setFontSize(8); canvas.setFontColor('#64748b'); // NEW
+            for (let index = 0; index < ticks.length; index += density) { // CHANGE
+                const tick = ticks[index], px = x + (tick.day - start) * scale; // CHANGE
+                canvas.begin(); canvas.moveTo(px, y + HEADER - 8); canvas.lineTo(px, y + HEADER); canvas.stroke(); // NEW
+                if (index % labelStride === 0 && px + tickWidth < x + width) canvas.text(px + 2, y + HEADER - 22, tickWidth, 12, tick.label, 'left', 'top', false, '', null, false, 0); // CHANGE
+            } // NEW
+        }; // NEW
+        mxCellRenderer.registerShape('trellisRoadmapTimeframe', TimeframeShape); // NEW
+        function tickDistance(ticks, scale) { return ticks.length > 1 ? (ticks[1].day - ticks[0].day) * scale : 999; } // NEW
+    } // NEW
+
+    /** Apply display data only to the export renderer's decoded model. Original XML stays canonical. */ // NEW
+    function applyProjection(graph, pages, pageId) { // NEW
+        const records = pages && pages[String(pageId || '')]; // NEW
+        if (!records) return; // NEW
+        const model = graph.getModel(); model.beginUpdate(); // NEW
+        try { records.forEach(record => { // NEW
+            const cell = model.getCell(record.id); if (!cell) return; // NEW
+            if (record.geometry) { const geometry = model.getGeometry(cell).clone(); Object.assign(geometry, record.geometry); model.setGeometry(cell, geometry); } // NEW
+            if (!record.visible) model.setVisible(cell, false); // NEW
+            if (record.label != null && cell.value && cell.value.cloneNode) { const value = cell.value.cloneNode(true); value.setAttribute('label', record.label); model.setValue(cell, value); } // NEW
+            if (record.frameStyle) model.setStyle(cell, cell.style + ';' + Object.entries(record.frameStyle).map(([key, value]) => key + '=' + value).join(';') + ';'); // NEW
+        }); } finally { model.endUpdate(); } // NEW
+    } // NEW
+    root.TrellisRoadmapRenderer = Object.freeze({ applyProjection }); // NEW
 })(globalThis); // NEW

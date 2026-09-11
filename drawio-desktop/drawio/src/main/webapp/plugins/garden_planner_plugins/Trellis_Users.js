@@ -27,14 +27,19 @@ Draw.loadPlugin(function (ui) {
     const ATTR_GARDEN_TASK_MODULE = "trellis_task_module_id";
     const ATTR_TASK_GARDEN_MODULE = "trellis_garden_module_id";
     const ATTR_TEAM_ROLE_ARCHIVE = "trellis_team_role_archive_json";
+    const ATTR_TEAM_SECTION = "trellis_team_section"; // NEW
+    const ATTR_TEAM_ID = "trellis_team_id"; // NEW
+    const ATTR_TEAM_ARCHIVED = "trellis_team_archived"; // NEW
+    const ATTR_TEAM_UNASSIGNED = "trellis_team_unassigned"; // NEW
     const ATTR_CREATED_BY = "createdByUserId";
     const ATTR_EDITED_BY = "lastEditedByUserId";
     const ATTR_ACTOR_NAME = "trellis_actor_name";
     const ATTR_ACTOR_ROLE = "trellis_actor_role";
     const ATTR_REMEMBER_DIAGRAM_ID = "trellis_users_diagram_id";
     const ATTR_HISTORY_ID = "trellis_history_id";
+    const TEAM_PERMISSION_MODE_CHANGED_EVENT = "trellisTeamPermissionModeChanged"; // NEW
 
-    const PROTECTED_ATTRS = new Set([ATTR_STORE, ATTR_OWNER, ATTR_ACCESS_USERS, ATTR_ACCESS_GRANTS, ATTR_ACCESS_OPEN, ATTR_ROLE_USER, ATTR_ROLE_GARDEN_MODULE, ATTR_ROLE_TEAM_MODULE, ATTR_ROLE_ARCHIVED_USER, ATTR_ROLE_INACTIVE, ATTR_GARDEN_TEAM_MODULE, ATTR_TEAM_GARDEN_MODULE, ATTR_TEAM_ROLE_ARCHIVE]);
+    const PROTECTED_ATTRS = new Set([ATTR_STORE, ATTR_OWNER, ATTR_ACCESS_USERS, ATTR_ACCESS_GRANTS, ATTR_ACCESS_OPEN, ATTR_ROLE_USER, ATTR_ROLE_GARDEN_MODULE, ATTR_ROLE_TEAM_MODULE, ATTR_ROLE_ARCHIVED_USER, ATTR_ROLE_INACTIVE, ATTR_GARDEN_TEAM_MODULE, ATTR_TEAM_GARDEN_MODULE, ATTR_TEAM_ROLE_ARCHIVE, ATTR_TEAM_SECTION, ATTR_TEAM_ID, ATTR_TEAM_ARCHIVED, ATTR_TEAM_UNASSIGNED]); // CHANGE
     const ACCESS_PRESETS = ["visitor", "gardener", "coordinator"];
     const CAP_CREATE_PLANTINGS = "create_plantings";
     const CAP_MANAGE_OWN_PLANTINGS = "manage_own_plantings";
@@ -99,6 +104,11 @@ Draw.loadPlugin(function (ui) {
     let gardenAccessSearchText = "";
     let gardenAccessOutsideHandler = null;
     let gardenAccessKeyHandler = null;
+    let teamPermissionMode = null; // NEW
+    let teamPermissionOverlay = null; // NEW
+    let teamPermissionBadgeHost = null; // NEW
+    let teamPermissionCollapsed = new Set(); // NEW
+    let syncingTeamDerivedGrants = false; // NEW
     let authOverlay = null;
     let authStatusNode = null;
     let toolbarButton = null;
@@ -474,30 +484,65 @@ Draw.loadPlugin(function (ui) {
         return normalizeCapabilityList(PRESET_CAPABILITIES[normalizePreset(preset)]);
     }
 
+    function presetRank(preset) {
+        const normalized = normalizePreset(preset); // NEW
+        return normalized === "coordinator" ? 3 : (normalized === "gardener" ? 2 : (normalized === "visitor" ? 1 : 0)); // NEW
+    }
+
+    function morePermissivePreset(left, right) {
+        return presetRank(left) >= presetRank(right) ? normalizePreset(left) : normalizePreset(right); // NEW
+    }
+
+    function grantSubjectType(source) {
+        if (source && (source.subjectType === "team" || source.teamId)) return "team"; // NEW
+        return "user"; // NEW
+    }
+
+    function grantSubjectKey(grant) {
+        const normalized = normalizeGrant(grant); // NEW
+        if (!normalized) return ""; // NEW
+        return normalized.subjectType + ":" + (normalized.subjectType === "team" ? normalized.teamId : normalized.userId) + (normalized.derived ? ":derived:" + (normalized.sourceTeamIds || []).join("|") : ":manual"); // NEW
+    }
+
     function normalizeGrant(grant) {
         const source = grant || {};
-        const userId = String(source.userId || source.id || "").trim();
-        if (!userId) return null;
+        const subjectType = grantSubjectType(source); // NEW
+        const userId = subjectType === "user" ? String(source.userId || source.id || "").trim() : ""; // CHANGE
+        const teamId = subjectType === "team" ? String(source.teamId || source.id || "").trim() : ""; // NEW
+        if (subjectType === "user" && !userId) return null; // CHANGE
+        if (subjectType === "team" && !teamId) return null; // NEW
         const preset = normalizePreset(source.preset);
-        return { userId, preset, capabilities: normalizeCapabilities(source.capabilities, preset) };
+        const normalized = { subjectType, preset, capabilities: normalizeCapabilities(source.capabilities, preset) }; // CHANGE
+        if (userId) normalized.userId = userId; // NEW
+        if (teamId) normalized.teamId = teamId; // NEW
+        if (source.derived === true || source.derived === "1") normalized.derived = true; // NEW
+        const sourceTeamIds = Array.isArray(source.sourceTeamIds) ? source.sourceTeamIds.map(String).filter(Boolean).sort() : []; // NEW
+        if (normalized.derived && sourceTeamIds.length) normalized.sourceTeamIds = Array.from(new Set(sourceTeamIds)); // NEW
+        return normalized; // CHANGE
     }
 
     function grantsFromAttr(cell) {
         const parsed = parseJson(getAttr(cell, ATTR_ACCESS_GRANTS), []);
         if (!Array.isArray(parsed)) return [];
-        const byUserId = new Map();
-        parsed.map(normalizeGrant).filter(Boolean).forEach(function (grant) { byUserId.set(grant.userId, grant); });
-        return Array.from(byUserId.values()).sort(function (left, right) { return left.userId.localeCompare(right.userId); });
+        const bySubject = new Map(); // CHANGE
+        parsed.map(normalizeGrant).filter(Boolean).forEach(function (grant) { bySubject.set(grantSubjectKey(grant), grant); }); // CHANGE
+        return Array.from(bySubject.values()).sort(function (left, right) { return grantSubjectKey(left).localeCompare(grantSubjectKey(right)); }); // CHANGE
     }
 
     function setGrantsAttr(cell, grants) {
-        const normalized = (grants || []).map(normalizeGrant).filter(Boolean).sort(function (left, right) { return left.userId.localeCompare(right.userId); });
-        setAttr(cell, ATTR_ACCESS_GRANTS, normalized.length ? JSON.stringify(normalized) : "");
+        const normalized = (grants || []).map(normalizeGrant).filter(Boolean).sort(function (left, right) { return grantSubjectKey(left).localeCompare(grantSubjectKey(right)); }); // CHANGE
+        setAttr(cell, ATTR_ACCESS_GRANTS, normalized.length ? JSON.stringify(normalized.map(publicGrant).filter(Boolean)) : ""); // CHANGE
     }
 
     function publicGrant(grant) {
         const normalized = normalizeGrant(grant);
-        return normalized ? { userId: normalized.userId, preset: normalized.preset, capabilities: normalized.capabilities.slice() } : null;
+        if (!normalized) return null; // CHANGE
+        const out = { preset: normalized.preset, capabilities: normalized.capabilities.slice() }; // CHANGE
+        if (normalized.subjectType === "team" || normalized.derived) out.subjectType = normalized.subjectType; // NEW
+        if (normalized.userId) out.userId = normalized.userId; // NEW
+        if (normalized.teamId) out.teamId = normalized.teamId; // NEW
+        if (normalized.derived) { out.derived = true; out.sourceTeamIds = (normalized.sourceTeamIds || []).slice(); } // NEW
+        return out; // CHANGE
     }
 
     function getScopeGrants(cell) {
@@ -916,6 +961,66 @@ Draw.loadPlugin(function (ui) {
         return !!cell && styleFlag(cell, "role_card");
     }
 
+    function modulesApi() {
+        return graph && graph.__trellisModules || null; // NEW
+    }
+
+    function isTeamSection(cell) {
+        const modules = modulesApi(); // NEW
+        if (modules && typeof modules.isTeamSection === "function") return modules.isTeamSection(cell); // NEW
+        return !!cell && (getAttr(cell, ATTR_TEAM_SECTION) === "1" || styleFlag(cell, ATTR_TEAM_SECTION)); // NEW
+    }
+
+    function isActiveTeamSection(cell) {
+        const modules = modulesApi(); // NEW
+        if (modules && typeof modules.isActiveTeamSection === "function") return modules.isActiveTeamSection(cell); // NEW
+        return isTeamSection(cell) && getAttr(cell, ATTR_TEAM_ARCHIVED) !== "1"; // NEW
+    }
+
+    function isUnassignedTeamSection(cell) {
+        const modules = modulesApi(); // NEW
+        if (modules && typeof modules.isUnassignedTeamSection === "function") return modules.isUnassignedTeamSection(cell); // NEW
+        return isTeamSection(cell) && getAttr(cell, ATTR_TEAM_UNASSIGNED) === "1"; // NEW
+    }
+
+    function teamSectionId(cell) {
+        if (!isTeamSection(cell)) return ""; // NEW
+        const modules = modulesApi(); // NEW
+        if (modules && typeof modules.teamSectionId === "function") return modules.teamSectionId(cell); // NEW
+        let id = String(getAttr(cell, ATTR_TEAM_ID) || "").trim(); // NEW
+        if (id) return id; // NEW
+        id = "team_" + (cellId(cell) || Math.random().toString(36).slice(2)); // NEW
+        setAttr(cell, ATTR_TEAM_ID, id); // NEW
+        return id; // NEW
+    }
+
+    function teamSectionIdForRead(cell) {
+        return isTeamSection(cell) ? String(getAttr(cell, ATTR_TEAM_ID) || cellId(cell) || "").trim() : ""; // NEW
+    }
+
+    function teamSectionForId(teamId) {
+        const target = String(teamId || "").trim(); // NEW
+        if (!target) return null; // NEW
+        return allCellsMatching(function (cell) { return isTeamSection(cell) && teamSectionIdForRead(cell) === target; })[0] || null; // NEW
+    }
+
+    function activeAccessTeamIdsForRoleCard(roleCard) {
+        if (!isRoleCard(roleCard)) return []; // NEW
+        const teams = []; // NEW
+        const parent = parentOf(roleCard); // NEW
+        if (isActiveTeamSection(parent) && !isUnassignedTeamSection(parent)) teams.push(parent); // NEW
+        allCellsMatching(function (cell) { return isActiveTeamSection(cell) && !isUnassignedTeamSection(cell) && hasLink(roleCard, cellId(cell)) && hasLink(cell, cellId(roleCard)); }).forEach(function (team) { // NEW
+            if (teams.indexOf(team) < 0) teams.push(team); // NEW
+        }); // NEW
+        return Array.from(new Set(teams.map(teamSectionIdForRead).filter(Boolean))); // NEW
+    }
+
+    function activeAccessTeamIdsForUser(userId) {
+        const ids = new Set(); // NEW
+        roleCardsForUser(userId).forEach(function (roleCard) { activeAccessTeamIdsForRoleCard(roleCard).forEach(function (id) { ids.add(id); }); }); // NEW
+        return ids; // NEW
+    }
+
     function hasLink(cell, id) {
         const target = String(id || "");
         if (!cell || !target) return false;
@@ -946,6 +1051,18 @@ Draw.loadPlugin(function (ui) {
         if (!leftLinks.has(rightId)) { leftLinks.add(rightId); setLinkSet(left, leftLinks); changed = true; }
         if (!rightLinks.has(leftId)) { rightLinks.add(leftId); setLinkSet(right, rightLinks); changed = true; }
         return changed;
+    }
+
+    function removeReciprocalLink(left, right) {
+        const leftId = cellId(left); // NEW
+        const rightId = cellId(right); // NEW
+        if (!left || !right || !leftId || !rightId || left === right) return false; // NEW
+        const leftLinks = linkSet(left); // NEW
+        const rightLinks = linkSet(right); // NEW
+        let changed = false; // NEW
+        if (leftLinks.delete(rightId)) { setLinkSet(left, leftLinks); changed = true; } // NEW
+        if (rightLinks.delete(leftId)) { setLinkSet(right, rightLinks); changed = true; } // NEW
+        return changed; // NEW
     }
 
     function cellDisplayLabel(cell, fallback) {
@@ -1014,12 +1131,25 @@ Draw.loadPlugin(function (ui) {
 
     function nearestUnownedModuleAncestor(cell) { return nearestAncestorMatching(cell, isUnownedModuleCell); }
 
+    function bestGrantForUserAtCell(cell, userId) {
+        const teamIds = activeAccessTeamIdsForUser(userId); // NEW
+        let best = null; // NEW
+        grantsFromAttr(cell).forEach(function (grant) { // NEW
+            const userMatch = grant.subjectType === "user" && grant.userId === userId; // NEW
+            const teamMatch = grant.subjectType === "team" && teamIds.has(grant.teamId) && isActiveTeamSection(teamSectionForId(grant.teamId)); // NEW
+            if (!userMatch && !teamMatch) return; // NEW
+            if (!best || presetRank(grant.preset) > presetRank(best.preset)) best = grant; // NEW
+        }); // NEW
+        return best; // NEW
+    }
+
     function directCapabilitiesForCell(cell, userId) {
         const caps = new Set();
+        const teamIds = activeAccessTeamIdsForUser(userId); // NEW
         let cursor = cell;
         while (cursor) {
             grantsFromAttr(cursor).forEach(function (grant) {
-                if (grant.userId === userId) grant.capabilities.forEach(function (capability) { caps.add(capability); });
+                if ((grant.subjectType === "user" && grant.userId === userId) || (grant.subjectType === "team" && teamIds.has(grant.teamId) && isActiveTeamSection(teamSectionForId(grant.teamId)))) grant.capabilities.forEach(function (capability) { caps.add(capability); }); // CHANGE
             });
             cursor = parentOf(cursor);
         }
@@ -1288,8 +1418,8 @@ Draw.loadPlugin(function (ui) {
 
     function syncGardenRoleCardsForGrantChange(gardenCell, previousGrants, nextGrants) {
         if (!isGardenModule(gardenCell)) return;
-        const before = new Map((previousGrants || []).map(function (grant) { return [grant.userId, grant]; }));
-        const after = new Map((nextGrants || []).map(function (grant) { return [grant.userId, grant]; }));
+        const before = new Map((previousGrants || []).filter(function (grant) { return grant && grant.subjectType === "user" && grant.userId && !grant.derived; }).map(function (grant) { return [grant.userId, grant]; })); // CHANGE
+        const after = new Map((nextGrants || []).filter(function (grant) { return grant && grant.subjectType === "user" && grant.userId && !grant.derived; }).map(function (grant) { return [grant.userId, grant]; })); // CHANGE
         before.forEach(function (grant, userId) { if (!after.has(userId)) clearGardenRoleCardUser(gardenCell, userId, grant); });
         after.forEach(function (grant, userId) { if (userById(userId)) ensureGardenRoleCardForUser(gardenCell, userId, grant); });
     }
@@ -1351,7 +1481,7 @@ Draw.loadPlugin(function (ui) {
             (scopeCellIds || []).forEach(function (cellId) {
                 const cell = model.getCell && model.getCell(cellId);
                 if (!cell) return;
-                setGrantsAttr(cell, grantsFromAttr(cell).filter(function (grant) { return grant.userId !== userId; }));
+                setGrantsAttr(cell, grantsFromAttr(cell).filter(function (grant) { return !(grant.subjectType === "user" && grant.userId === userId); })); // CHANGE
             });
         } finally {
             model.endUpdate();
@@ -1375,7 +1505,11 @@ Draw.loadPlugin(function (ui) {
     function setScopeGrantInternal(cell, grant) {
         const normalized = normalizeGrant(grant);
         if (!cell || !normalized) return false;
-        const grants = grantsFromAttr(cell).filter(function (entry) { return entry.userId !== normalized.userId; });
+        const grants = grantsFromAttr(cell).filter(function (entry) { // CHANGE
+            if (normalized.subjectType === "team") return !(entry.subjectType === "team" && entry.teamId === normalized.teamId); // NEW
+            if (normalized.derived) return !(entry.subjectType === "user" && entry.userId === normalized.userId && entry.derived); // NEW
+            return !(entry.subjectType === "user" && entry.userId === normalized.userId); // CHANGE
+        });
         grants.push(normalized);
         setGrantsAttr(cell, grants);
         return true;
@@ -1400,7 +1534,7 @@ Draw.loadPlugin(function (ui) {
         const previousGrants = grantsFromAttr(cell);
         graph[INTERNAL_FLAG] = true;
         model.beginUpdate();
-        try { setScopeGrantInternal(cell, normalized); syncGardenRoleCardsForGrantChange(cell, previousGrants, grantsFromAttr(cell)); syncCompanionAccessIfGarden(cell); } finally { model.endUpdate(); graph[INTERNAL_FLAG] = false; }
+        try { setScopeGrantInternal(cell, normalized); syncGardenRoleCardsForGrantChange(cell, previousGrants, grantsFromAttr(cell)); syncCompanionAccessIfGarden(cell); syncTeamDerivedGrants(); } finally { model.endUpdate(); graph[INTERNAL_FLAG] = false; } // CHANGE
         refreshPanel();
         return { ok: true, grant: publicGrant(normalized) };
     }
@@ -1410,9 +1544,75 @@ Draw.loadPlugin(function (ui) {
         const previousGrants = grantsFromAttr(cell);
         graph[INTERNAL_FLAG] = true;
         model.beginUpdate();
-        try { setGrantsAttr(cell, grantsFromAttr(cell).filter(function (grant) { return grant.userId !== userId; })); syncGardenRoleCardsForGrantChange(cell, previousGrants, grantsFromAttr(cell)); syncCompanionAccessIfGarden(cell); } finally { model.endUpdate(); graph[INTERNAL_FLAG] = false; }
+        try { setGrantsAttr(cell, grantsFromAttr(cell).filter(function (grant) { return !(grant.subjectType === "user" && grant.userId === userId); })); syncGardenRoleCardsForGrantChange(cell, previousGrants, grantsFromAttr(cell)); syncCompanionAccessIfGarden(cell); syncTeamDerivedGrants(); } finally { model.endUpdate(); graph[INTERNAL_FLAG] = false; } // CHANGE
         refreshPanel();
         return { ok: true };
+    }
+
+    function setTeamScopeGrant(cell, teamCell, preset) {
+        if (!cell || !canManageScopeGrants(cell)) return { ok: false, reason: "Select a module, garden bed, or task board to manage access." }; // NEW
+        if (!teamCell || !isActiveTeamSection(teamCell) || isUnassignedTeamSection(teamCell)) return { ok: false, reason: "Select an active named team." }; // NEW
+        const teamId = teamSectionId(teamCell); // NEW
+        const normalizedPreset = String(preset || "").trim().toLowerCase(); // NEW
+        graph[INTERNAL_FLAG] = true; // NEW
+        model.beginUpdate(); // NEW
+        try { // NEW
+            if (!normalizedPreset || normalizedPreset === "none") setGrantsAttr(cell, grantsFromAttr(cell).filter(function (grant) { return !(grant.subjectType === "team" && grant.teamId === teamId); })); // NEW
+            else setScopeGrantInternal(cell, { subjectType: "team", teamId, preset: normalizedPreset }); // NEW
+            syncTeamDerivedGrants(); // NEW
+        } finally { // NEW
+            model.endUpdate(); // NEW
+            graph[INTERNAL_FLAG] = false; // NEW
+        } // NEW
+        refreshPanel(); // NEW
+        refreshTeamPermissionMode(); // NEW
+        return { ok: true }; // NEW
+    }
+
+    function removeTeamScopeGrant(cell, teamCell) {
+        return setTeamScopeGrant(cell, teamCell, "none"); // NEW
+    }
+
+    function allPermissionScopes() {
+        return allCellsMatching(function (cell) { return !!eligibleScopeType(cell); }); // NEW
+    }
+
+    function manualUserGrantForScope(cell, userId) {
+        return grantsFromAttr(cell).find(function (grant) { return grant.subjectType === "user" && grant.userId === userId && !grant.derived; }) || null; // NEW
+    }
+
+    function userIdsForActiveTeamId(teamId) {
+        const out = new Set(); // NEW
+        const team = teamSectionForId(teamId); // NEW
+        if (!isActiveTeamSection(team) || isUnassignedTeamSection(team)) return out; // NEW
+        allCellsMatching(function (cell) { return isRoleCard(cell) && !!getAttr(cell, ATTR_ROLE_USER); }).forEach(function (roleCard) { // NEW
+            if (activeAccessTeamIdsForRoleCard(roleCard).indexOf(teamId) >= 0) out.add(getAttr(roleCard, ATTR_ROLE_USER)); // NEW
+        }); // NEW
+        return out; // NEW
+    }
+
+    function syncDerivedGrantsForScope(scopeCell) {
+        const existing = grantsFromAttr(scopeCell); // NEW
+        const manualOrTeam = existing.filter(function (grant) { return !(grant.subjectType === "user" && grant.derived); }); // NEW
+        const next = manualOrTeam.slice(); // NEW
+        existing.filter(function (grant) { return grant.subjectType === "team"; }).forEach(function (teamGrant) { // NEW
+            if (!isActiveTeamSection(teamSectionForId(teamGrant.teamId))) return; // NEW
+            userIdsForActiveTeamId(teamGrant.teamId).forEach(function (userId) { // NEW
+                if (manualUserGrantForScope(scopeCell, userId)) return; // NEW
+                next.push({ subjectType: "user", userId, preset: teamGrant.preset, capabilities: teamGrant.capabilities, derived: true, sourceTeamIds: [teamGrant.teamId] }); // NEW
+            }); // NEW
+        }); // NEW
+        const before = JSON.stringify(existing.map(publicGrant)); // NEW
+        const after = JSON.stringify(next.map(normalizeGrant).filter(Boolean).map(publicGrant)); // NEW
+        if (before !== after) setGrantsAttr(scopeCell, next); // NEW
+    }
+
+    function syncTeamDerivedGrants() {
+        if (syncingTeamDerivedGrants) return; // NEW
+        const ownUpdate = !graph[INTERNAL_FLAG]; // NEW
+        syncingTeamDerivedGrants = true; // NEW
+        if (ownUpdate) { graph[INTERNAL_FLAG] = true; model.beginUpdate(); } // NEW
+        try { allPermissionScopes().forEach(syncDerivedGrantsForScope); } finally { if (ownUpdate) { model.endUpdate(); graph[INTERNAL_FLAG] = false; } syncingTeamDerivedGrants = false; } // CHANGE
     }
 
     function parentOf(cell) {
@@ -1432,7 +1632,7 @@ Draw.loadPlugin(function (ui) {
     function nearestAccessGrant(cell, userId) {
         let cursor = cell;
         while (cursor) {
-            const grant = userId ? grantsFromAttr(cursor).find(function (entry) { return entry.userId === userId; }) : null;
+            const grant = userId ? bestGrantForUserAtCell(cursor, userId) : null; // CHANGE
             if (grant) return { cell: cursor, grant };
             cursor = parentOf(cursor);
         }
@@ -1901,14 +2101,19 @@ Draw.loadPlugin(function (ui) {
     function getAccessSummary(cell) {
         const owner = nearestOwnedAncestor(cell);
         const grants = getScopeGrants(cell);
+        const userGrants = grants.filter(function (grant) { return (grant.subjectType || "user") === "user" && !grant.derived; }); // CHANGE
+        const derivedUserGrants = grants.filter(function (grant) { return (grant.subjectType || "user") === "user" && grant.derived; }); // CHANGE
+        const teamGrants = grants.filter(function (grant) { return grant.subjectType === "team"; }); // NEW
         const current = currentUser();
         const currentInheritedGrant = current ? nearestInheritedAccessGrant(cell, current.id) : null;
         return {
             ownerUserId: owner && owner.ownerUserId || "",
             ownerCellId: owner && owner.cell && owner.cell.id || "",
             directOpen: getAttr(cell, ATTR_ACCESS_OPEN) === "1",
-            directUserIds: grants.map(function (grant) { return grant.userId; }),
-            directGrants: grants,
+            directUserIds: userGrants.map(function (grant) { return grant.userId; }), // CHANGE
+            directGrants: userGrants, // CHANGE
+            directDerivedGrants: derivedUserGrants, // NEW
+            directTeamGrants: teamGrants, // NEW
             effectiveCapabilities: current ? effectiveCapabilitiesForCell(cell, current.id) : [],
             inheritedAccessGrant: currentInheritedGrant ? publicGrant(currentInheritedGrant.grant) : null,
             inheritedAccessSource: currentInheritedGrant ? scopeSummaryForCell(currentInheritedGrant.cell) : null,
@@ -2071,6 +2276,7 @@ Draw.loadPlugin(function (ui) {
                 if (isRoleCard(cell) && cleanUserId && getAttr(cell, ATTR_ROLE_USER) === cleanUserId && cell !== roleCard && (gardenId ? getAttr(cell, ATTR_ROLE_GARDEN_MODULE) === gardenId : !getAttr(cell, ATTR_ROLE_GARDEN_MODULE))) setAttr(cell, ATTR_ROLE_USER, "");
             });
             setAttr(roleCard, ATTR_ROLE_USER, cleanUserId);
+            syncTeamDerivedGrants(); // NEW
         } finally {
             model.endUpdate();
             graph[INTERNAL_FLAG] = false;
@@ -3594,7 +3800,11 @@ Draw.loadPlugin(function (ui) {
     }
 
     function grantForUser(summary, userId) {
-        return (summary.directGrants || []).find(function (grant) { return grant.userId === userId; }) || { userId, preset: "visitor", capabilities: [] };
+        return (summary.directGrants || []).find(function (grant) { return (grant.subjectType || "user") === "user" && grant.userId === userId; }) || { userId, preset: "visitor", capabilities: [] }; // CHANGE
+    }
+
+    function derivedGrantForUser(summary, userId) {
+        return (summary.directDerivedGrants || []).find(function (grant) { return (grant.subjectType || "user") === "user" && grant.userId === userId; }) || null; // CHANGE
     }
 
     function effectiveAccessLabel(capabilities) {
@@ -3628,16 +3838,18 @@ Draw.loadPlugin(function (ui) {
 
     function accessDisplayForUser(cell, summary, user) {
         const directGrant = grantForUser(summary, user.id);
+        const derivedGrant = derivedGrantForUser(summary, user.id); // NEW
         const directlyGranted = summary.directUserIds.indexOf(user.id) >= 0;
         const inherited = nearestInheritedAccessGrant(cell, user.id);
         const effectiveCapabilities = effectiveCapabilitiesForCell(cell, user.id);
         return {
             userId: user.id,
             directGrant,
+            derivedGrant, // NEW
             directlyGranted,
             inheritedGrant: inherited ? publicGrant(inherited.grant) : null,
             inheritedSource: inherited ? scopeSummaryForCell(inherited.cell) : null,
-            preset: directlyGranted ? directGrant.preset : (inherited && inherited.grant ? normalizePreset(inherited.grant.preset) : directGrant.preset),
+            preset: directlyGranted ? directGrant.preset : (derivedGrant ? normalizePreset(derivedGrant.preset) : (inherited && inherited.grant ? normalizePreset(inherited.grant.preset) : directGrant.preset)), // CHANGE
             capabilities: effectiveCapabilities
         };
     }
@@ -3676,6 +3888,39 @@ Draw.loadPlugin(function (ui) {
         badge.textContent = label;
         badge.style.cssText = "display:inline-block;margin-left:6px;padding:1px 5px;border:1px solid #BFDBFE;border-radius:3px;color:#1D4ED8;background:#EFF6FF;font-size:10px;line-height:14px;";
         parent.appendChild(badge);
+    }
+
+    function appendTeamDerivedBadge(parent, grant) {
+        const badge = document.createElement("span"); // NEW
+        badge.textContent = "Team-derived"; // NEW
+        badge.style.cssText = "display:inline-block;margin-left:6px;padding:1px 5px;border:1px solid #93C5FD;border-radius:3px;color:#1D4ED8;background:#EFF6FF;font-size:10px;line-height:14px;"; // NEW
+        const names = (grant && grant.sourceTeamIds || []).map(function (teamId) { const team = teamSectionForId(teamId); return team ? cellDisplayLabel(team, "Team") : teamId; }).filter(Boolean); // NEW
+        if (names.length) badge.title = "From " + names.join(", "); // NEW
+        parent.appendChild(badge); // NEW
+    }
+
+    function teamSectionsForRoleCard(roleCard) {
+        const teamModule = roleTeamModule(roleCard); // NEW
+        const modules = modulesApi(); // NEW
+        const sections = teamModule && modules && typeof modules.teamSectionsInModule === "function" ? modules.teamSectionsInModule(teamModule) : allCellsMatching(function (cell) { return isTeamSection(cell) && parentTeamModuleForTeamSection(cell) === teamModule; }); // NEW
+        return sections.filter(function (section) { return isActiveTeamSection(section) && !isUnassignedTeamSection(section); }); // NEW
+    }
+
+    function setRoleCardSecondaryTeam(roleCard, teamCell, checked) {
+        if (!isRoleCard(roleCard) || !isActiveTeamSection(teamCell) || isUnassignedTeamSection(teamCell)) return { ok: false, reason: "Select an active named team." }; // NEW
+        graph[INTERNAL_FLAG] = true; // NEW
+        model.beginUpdate(); // NEW
+        try { // NEW
+            if (checked) addReciprocalLink(roleCard, teamCell); // NEW
+            else removeReciprocalLink(roleCard, teamCell); // NEW
+            syncTeamDerivedGrants(); // NEW
+        } finally { // NEW
+            model.endUpdate(); // NEW
+            graph[INTERNAL_FLAG] = false; // NEW
+        } // NEW
+        refreshPanel(); // NEW
+        refreshTeamPermissionMode(); // NEW
+        return { ok: true }; // NEW
     }
 
     function makeAccessDialogShell(titleText, width) {
@@ -3995,6 +4240,26 @@ Draw.loadPlugin(function (ui) {
                 if (!result.ok) showStatus(result.reason);
             });
             roleLink.appendChild(select);
+            const teams = teamSectionsForRoleCard(cell); // NEW
+            if (teams.length) { // NEW
+                const secondaryTitle = document.createElement("div"); // NEW
+                secondaryTitle.textContent = "Secondary teams"; // NEW
+                secondaryTitle.style.cssText = "font-weight:700;margin:8px 0 4px;"; // NEW
+                roleLink.appendChild(secondaryTitle); // NEW
+                const primary = parentOf(cell); // NEW
+                teams.forEach(function (teamCell) { // NEW
+                    const label = document.createElement("label"); // NEW
+                    label.style.cssText = "display:flex;align-items:center;gap:6px;padding:2px 0;color:" + (teamCell === primary ? "#6B7280" : "#111827") + ";"; // NEW
+                    const input = document.createElement("input"); // NEW
+                    input.type = "checkbox"; // NEW
+                    input.checked = teamCell === primary || (hasLink(cell, cellId(teamCell)) && hasLink(teamCell, cellId(cell))); // NEW
+                    input.disabled = teamCell === primary || !summary.canTransferOwnership; // NEW
+                    input.addEventListener("change", function () { const result = setRoleCardSecondaryTeam(cell, teamCell, input.checked); if (!result.ok) showStatus(result.reason); }); // NEW
+                    label.appendChild(input); // NEW
+                    label.appendChild(document.createTextNode(cellDisplayLabel(teamCell, "Team") + (teamCell === primary ? " (primary)" : ""))); // NEW
+                    roleLink.appendChild(label); // NEW
+                }); // NEW
+            } // NEW
             box.appendChild(roleLink);
         }
         const caps = document.createElement("div");
@@ -4026,6 +4291,7 @@ Draw.loadPlugin(function (ui) {
             const access = accessDisplayForUser(cell, summary, user);
             const grant = { userId: user.id, preset: access.preset, capabilities: access.capabilities };
             const directlyGranted = access.directlyGranted;
+            const teamDerived = !!access.derivedGrant && !directlyGranted; // NEW
             const row = document.createElement("div");
             row.className = "trellis-users-access-row";
             row.setAttribute("data-trellis-users-user-id", user.id);
@@ -4035,20 +4301,453 @@ Draw.loadPlugin(function (ui) {
             const name = document.createElement("div");
             name.textContent = user.name;
             if (directlyGranted) appendGrantedBadge(name);
+            if (teamDerived) appendTeamDerivedBadge(name, access.derivedGrant); // NEW
             if (access.inheritedSource) appendInheritedBadge(name, access.inheritedSource, access.inheritedGrant);
             head.appendChild(name);
-            head.appendChild(makePresetSelect(grant.preset, function (preset) {
+            const presetSelect = makePresetSelect(grant.preset, function (preset) { // CHANGE
                 const result = setScopeGrant(cell, { userId: user.id, preset });
                 if (!result.ok) showStatus(result.reason);
-            }));
-            head.appendChild(makeButton(directlyGranted ? "Remove" : "Apply", function () {
+            }); // CHANGE
+            presetSelect.disabled = teamDerived; // NEW
+            presetSelect.title = teamDerived ? "Team-derived access is edited from team permission mode." : ""; // NEW
+            head.appendChild(presetSelect); // CHANGE
+            const actionButton = makeButton(directlyGranted ? "Remove" : (teamDerived ? "Team" : "Apply"), function () { // CHANGE
+                if (teamDerived) { showStatus("Team-derived access is edited from team permission mode."); return; } // NEW
                 const result = directlyGranted ? removeScopeGrant(cell, user.id) : setScopeGrant(cell, { userId: user.id, preset: grant.preset || "visitor" });
                 if (!result.ok) showStatus(result.reason);
-            }, directlyGranted ? "danger" : "neutral"));
+                else if (directlyGranted && derivedGrantForUser(getAccessSummary(cell), user.id)) showStatus("Removed individual access. Team-derived access still applies."); // NEW
+            }, directlyGranted ? "danger" : "neutral"); // CHANGE
+            actionButton.disabled = teamDerived; // NEW
+            head.appendChild(actionButton); // CHANGE
             row.appendChild(head);
             box.appendChild(row);
         });
         parent.appendChild(box);
+    }
+
+    function selectedTeamPermissionSubjects(teamModule) {
+        const selections = selectedCells(); // NEW
+        return selections.filter(function (cell) { // NEW
+            if (isTeamSection(cell)) return parentTeamModuleForTeamSection(cell) === teamModule && isActiveTeamSection(cell) && !isUnassignedTeamSection(cell); // NEW
+            if (!isRoleCard(cell)) return false; // NEW
+            return roleTeamModule(cell) === teamModule; // NEW
+        }).map(subjectForCell).filter(Boolean); // NEW
+    }
+
+    function parentTeamModuleForTeamSection(section) {
+        const modules = modulesApi(); // NEW
+        if (modules && typeof modules.parentTeamModuleForSection === "function") return modules.parentTeamModuleForSection(section); // NEW
+        let cursor = parentOf(section); // NEW
+        while (cursor) { if (isTeamModule(cursor)) return cursor; cursor = parentOf(cursor); } // NEW
+        return null; // NEW
+    }
+
+    function roleTeamModule(roleCard) {
+        let cursor = parentOf(roleCard); // NEW
+        while (cursor) { if (isTeamModule(cursor)) return cursor; cursor = parentOf(cursor); } // NEW
+        return null; // NEW
+    }
+
+    function subjectForCell(cell) {
+        if (isTeamSection(cell)) return { type: "team", id: teamSectionId(cell), cell, label: cellDisplayLabel(cell, "Team") }; // NEW
+        if (isRoleCard(cell)) return { type: "role", id: cellId(cell), cell, userId: getAttr(cell, ATTR_ROLE_USER) || "", label: cellDisplayLabel(cell, "Role") }; // NEW
+        return null; // NEW
+    }
+
+    function allTeamPermissionSubjects(teamModule) {
+        const modules = modulesApi(); // NEW
+        if (modules && typeof modules.ensureTeamModuleSections === "function") modules.ensureTeamModuleSections(teamModule); // NEW
+        const subjects = []; // NEW
+        const sections = modules && typeof modules.teamSectionsInModule === "function" ? modules.teamSectionsInModule(teamModule) : allCellsMatching(function (cell) { return isTeamSection(cell) && parentTeamModuleForTeamSection(cell) === teamModule; }); // NEW
+        sections.filter(function (section) { return isActiveTeamSection(section) && !isUnassignedTeamSection(section); }).forEach(function (section) { subjects.push(subjectForCell(section)); }); // NEW
+        allCellsMatching(function (cell) { return isRoleCard(cell) && roleTeamModule(cell) === teamModule; }).forEach(function (role) { subjects.push(subjectForCell(role)); }); // NEW
+        return subjects.filter(Boolean); // NEW
+    }
+
+    function linkedNeighborModulesForTeam(teamModule) {
+        const modules = []; // NEW
+        const seen = new Set(); // NEW
+        function add(cell) { if (cell && isModuleCell(cell) && !seen.has(cellId(cell))) { seen.add(cellId(cell)); modules.push(cell); } } // NEW
+        const gardenId = getAttr(teamModule, ATTR_TEAM_GARDEN_MODULE); // NEW
+        const garden = gardenId && model.getCell ? model.getCell(gardenId) : null; // NEW
+        if (garden) { // NEW
+            add(garden); // NEW
+            add(teamModule); // NEW
+            add(model.getCell && model.getCell(getAttr(garden, ATTR_GARDEN_TASK_MODULE))); // NEW
+            add(model.getCell && model.getCell(getAttr(garden, "roadmap_module_id"))); // NEW
+        } // NEW
+        String(getAttr(teamModule, "linkedTo") || "").split(",").map(function (part) { return part.trim(); }).filter(Boolean).forEach(function (id) { // NEW
+            const linked = model.getCell && model.getCell(id); // NEW
+            if (linked && isModuleCell(linked) && hasLink(linked, cellId(teamModule))) add(linked); // NEW
+        }); // NEW
+        return modules; // NEW
+    }
+
+    function scopeChildrenForModule(moduleCell) {
+        const out = []; // NEW
+        traverseCells(moduleCell, function (cell) { // NEW
+            if (cell !== moduleCell && eligibleScopeType(cell)) out.push(cell); // NEW
+        }); // NEW
+        return out; // NEW
+    }
+
+    function linkedPermissionScopeGroups(teamModule) {
+        return linkedNeighborModulesForTeam(teamModule).map(function (moduleCell) { // NEW
+            return { moduleCell, scopes: [moduleCell].concat(scopeChildrenForModule(moduleCell)) }; // NEW
+        }); // NEW
+    }
+
+    function permissionScopeForSelection(cell) {
+        return nearestAncestorMatching(cell, function (candidate) { return !!eligibleScopeType(candidate); }); // NEW
+    }
+
+    function selectedPermissionScopes() {
+        const seen = new Set(); // NEW
+        return selectedCells().map(permissionScopeForSelection).filter(Boolean).filter(function (scope) { // NEW
+            const id = cellId(scope); // NEW
+            if (!id || seen.has(id)) return false; // NEW
+            seen.add(id); // NEW
+            return true; // NEW
+        }); // NEW
+    }
+
+    function selectedTeamPermissionScopes(teamModule) {
+        const allowed = new Set(); // NEW
+        linkedPermissionScopeGroups(teamModule).forEach(function (group) { group.scopes.forEach(function (scope) { allowed.add(cellId(scope)); }); }); // NEW
+        return selectedPermissionScopes().filter(function (scope) { return allowed.has(cellId(scope)); }); // NEW
+    }
+
+    function subjectMatchesGrant(subject, grant) {
+        if (!subject || !grant || grant.derived) return false; // NEW
+        if (subject.type === "team") return grant.subjectType === "team" && grant.teamId === subject.id; // NEW
+        return subject.type === "role" && !!subject.userId && grant.subjectType === "user" && grant.userId === subject.userId; // NEW
+    }
+
+    function subjectsGrantedOnScopes(teamModule, scopes) {
+        const available = allTeamPermissionSubjects(teamModule); // NEW
+        const keys = new Set(); // NEW
+        const out = []; // NEW
+        available.forEach(function (subject) { // NEW
+            const matched = (scopes || []).some(function (scope) { return grantsFromAttr(scope).some(function (grant) { return subjectMatchesGrant(subject, grant); }); }); // NEW
+            const key = subject.type + ":" + subject.id; // NEW
+            if (matched && !keys.has(key)) { keys.add(key); out.push(subject); } // NEW
+        }); // NEW
+        return out; // NEW
+    }
+
+    function defaultTeamPermissionSubjects(teamModule) {
+        const selectedSubjects = selectedTeamPermissionSubjects(teamModule); // NEW
+        if (selectedSubjects.length) return selectedSubjects; // NEW
+        return subjectsGrantedOnScopes(teamModule, selectedTeamPermissionScopes(teamModule)); // NEW
+    }
+
+    function resetTeamPermissionSubjectsFromSelection() {
+        if (!teamPermissionMode || teamPermissionMode.subjectTouched) return; // NEW
+        teamPermissionMode.subjectKeys = new Set(defaultTeamPermissionSubjects(teamPermissionMode.teamModule).map(function (subject) { return subject.type + ":" + subject.id; })); // NEW
+    }
+
+    function resetTeamPermissionScopesFromSelection() {
+        if (!teamPermissionMode || teamPermissionMode.scopeTouched) return; // NEW
+        teamPermissionMode.scopeIds = new Set(selectedTeamPermissionScopes(teamPermissionMode.teamModule).map(cellId)); // NEW
+    }
+
+    function scopeHasManualGrant(scope) {
+        return grantsFromAttr(scope).some(function (grant) { return !grant.derived; }); // NEW
+    }
+
+    function subjectHasGrantInGroups(teamModule, subjects) {
+        const active = subjects || []; // NEW
+        if (!active.length) return false; // NEW
+        return linkedPermissionScopeGroups(teamModule).some(function (group) { // NEW
+            return group.scopes.some(function (scope) { return grantsFromAttr(scope).some(function (grant) { return active.some(function (subject) { return subjectMatchesGrant(subject, grant); }); }); }); // NEW
+        }); // NEW
+    }
+
+    function teamPermissionActionLabel(teamModule) {
+        const selections = selectedCells(); // NEW
+        if (selections.length > 1) return "Add/Change Permissions (Selection)"; // NEW
+        const scopes = selectedTeamPermissionScopes(teamModule); // NEW
+        if (scopes.length) return scopes.some(scopeHasManualGrant) ? "Change Permissions" : "Add Permissions"; // NEW
+        return subjectHasGrantInGroups(teamModule, selectedTeamPermissionSubjects(teamModule)) ? "Change Permissions" : "Add Permissions"; // NEW
+    }
+
+    function subjectCurrentPreset(scope, subject) {
+        if (!scope || !subject) return "none"; // NEW
+        if (subject.type === "team") { // NEW
+            const grant = grantsFromAttr(scope).find(function (entry) { return entry.subjectType === "team" && entry.teamId === subject.id; }); // NEW
+            return grant ? normalizePreset(grant.preset) : "none"; // NEW
+        } // NEW
+        if (!subject.userId) return "none"; // NEW
+        const best = bestGrantForUserAtCell(scope, subject.userId); // NEW
+        return best ? normalizePreset(best.preset) : "none"; // NEW
+    }
+
+    function subjectPresetDisplay(scope, subjects) {
+        const list = subjects || []; // NEW
+        if (!list.length) return "No subject"; // NEW
+        const presets = Array.from(new Set(list.map(function (subject) { return subjectCurrentPreset(scope, subject); }))); // NEW
+        if (presets.length > 1) return "Mixed"; // NEW
+        return presets[0] === "none" ? "None" : presetLabel(presets[0]); // NEW
+    }
+
+    function applySubjectPreset(scope, subject, preset) {
+        const normalized = String(preset || "").trim().toLowerCase(); // NEW
+        if (subject.type === "team") return normalized === "none" ? removeTeamScopeGrant(scope, subject.cell) : setTeamScopeGrant(scope, subject.cell, normalized); // NEW
+        if (!subject.userId) return { ok: false, reason: "Link this role card to a Trellis user before setting individual access." }; // NEW
+        return normalized === "none" ? removeScopeGrant(scope, subject.userId) : setScopeGrant(scope, { userId: subject.userId, preset: normalized }); // NEW
+    }
+
+    function activePermissionSubjects() {
+        if (!teamPermissionMode) return []; // NEW
+        const all = allTeamPermissionSubjects(teamPermissionMode.teamModule); // NEW
+        const byKey = new Map(all.map(function (subject) { return [subject.type + ":" + subject.id, subject]; })); // NEW
+        return Array.from(teamPermissionMode.subjectKeys || []).map(function (key) { return byKey.get(key); }).filter(Boolean); // NEW
+    }
+
+    function setPermissionSubject(subject, checked) {
+        if (!teamPermissionMode || !subject) return; // NEW
+        const key = subject.type + ":" + subject.id; // NEW
+        teamPermissionMode.subjectTouched = true; // NEW
+        if (checked) teamPermissionMode.subjectKeys.add(key); else teamPermissionMode.subjectKeys.delete(key); // NEW
+        refreshTeamPermissionMode(); // NEW
+    }
+
+    function setPermissionScope(scope, checked) {
+        if (!teamPermissionMode || !scope) return; // NEW
+        const id = cellId(scope); // NEW
+        if (!id) return; // NEW
+        teamPermissionMode.scopeTouched = true; // NEW
+        if (checked) teamPermissionMode.scopeIds.add(id); else teamPermissionMode.scopeIds.delete(id); // NEW
+        refreshTeamPermissionMode(); // NEW
+    }
+
+    function selectPermissionScope(scope) {
+        if (!scope) return; // NEW
+        if (teamPermissionMode) teamPermissionMode.scopeIds.add(cellId(scope)); // NEW
+        if (graph && typeof graph.setSelectionCell === "function") graph.setSelectionCell(scope); // NEW
+        refreshTeamPermissionMode(); // NEW
+    }
+
+    function eventInPermissionBadgeControls(evt) {
+        const target = evt && evt.target; // NEW
+        return !!(target && target.closest && target.closest(".trellis-team-permission-badge-radios")); // NEW
+    }
+
+    function isTeamPermissionModeActive() {
+        return !!teamPermissionMode; // NEW
+    }
+
+    function dispatchTeamPermissionModeChanged(active, teamModule) {
+        if (!window || typeof window.dispatchEvent !== "function") return; // NEW
+        const EventCtor = window.CustomEvent || window.Event; // NEW
+        const teamModuleId = teamModule ? cellId(teamModule) : ""; // NEW
+        try { window.dispatchEvent(new EventCtor(TEAM_PERMISSION_MODE_CHANGED_EVENT, { detail: { active: !!active, teamModuleId } })); } catch (_) { } // NEW
+    }
+
+    function closeTeamPermissionMode() {
+        const closingTeamModule = teamPermissionMode && teamPermissionMode.teamModule; // NEW
+        const wasActive = !!teamPermissionMode; // NEW
+        teamPermissionMode = null; // NEW
+        if (teamPermissionOverlay && teamPermissionOverlay.parentNode) teamPermissionOverlay.parentNode.removeChild(teamPermissionOverlay); // NEW
+        teamPermissionOverlay = null; // NEW
+        if (teamPermissionBadgeHost && teamPermissionBadgeHost.parentNode) teamPermissionBadgeHost.parentNode.removeChild(teamPermissionBadgeHost); // NEW
+        teamPermissionBadgeHost = null; // NEW
+        if (wasActive) dispatchTeamPermissionModeChanged(false, closingTeamModule); // NEW
+    }
+
+    function makeAccessRadios(scope, subjects, compact) {
+        const wrap = document.createElement("div"); // NEW
+        wrap.className = compact ? "trellis-team-permission-badge-radios" : "trellis-team-permission-tree-radios"; // NEW
+        wrap.style.cssText = "display:flex;gap:6px;align-items:center;flex-wrap:wrap;"; // NEW
+        const groupName = "trellis-perm-" + cellId(scope) + "-" + subjects.map(function (subject) { return subject.type + "-" + subject.id; }).join("_"); // NEW
+        ["none", "visitor", "gardener", "coordinator"].forEach(function (preset) { // NEW
+            const label = document.createElement("label"); // NEW
+            label.style.cssText = "display:inline-flex;align-items:center;gap:2px;font-size:11px;white-space:nowrap;"; // NEW
+            const input = document.createElement("input"); // NEW
+            input.type = "radio"; // NEW
+            input.name = groupName; // CHANGE
+            input.value = preset; // NEW
+            input.disabled = !subjects.length || !canManageScopeGrants(scope) || subjects.some(function (subject) { return subject.type === "role" && !subject.userId; }); // NEW
+            const values = subjects.map(function (subject) { return subjectCurrentPreset(scope, subject); }); // NEW
+            input.checked = values.length > 0 && values.every(function (value) { return value === preset; }); // NEW
+            input.addEventListener("change", function () { // NEW
+                if (!input.checked) return; // NEW
+                subjects.forEach(function (subject) { const result = applySubjectPreset(scope, subject, preset); if (!result.ok) showStatus(result.reason); }); // NEW
+                refreshTeamPermissionMode(); // NEW
+            }); // NEW
+            label.appendChild(input); // NEW
+            label.appendChild(document.createTextNode(preset === "none" ? "None" : presetLabel(preset))); // NEW
+            wrap.appendChild(label); // NEW
+        }); // NEW
+        return wrap; // NEW
+    }
+
+    function renderPermissionSubjectPicker(parent, subjects, active) {
+        const box = document.createElement("div"); // NEW
+        box.className = "trellis-team-permission-subject-picker"; // NEW
+        box.style.cssText = "border-bottom:1px solid #E5E7EB;padding-bottom:8px;margin-bottom:8px;"; // NEW
+        const title = document.createElement("div"); // NEW
+        title.textContent = "Subjects"; // NEW
+        title.style.cssText = "font-weight:700;margin-bottom:4px;"; // NEW
+        box.appendChild(title); // NEW
+        if (!subjects.length) { const empty = document.createElement("div"); empty.textContent = "No teams or role cards in this team module."; empty.style.color = "#6B7280"; box.appendChild(empty); } // NEW
+        subjects.forEach(function (subject) { // NEW
+            const label = document.createElement("label"); // NEW
+            label.style.cssText = "display:flex;align-items:center;gap:6px;padding:2px 0;"; // NEW
+            const input = document.createElement("input"); // NEW
+            input.type = "checkbox"; // NEW
+            input.checked = active.some(function (entry) { return entry.type === subject.type && entry.id === subject.id; }); // NEW
+            input.addEventListener("change", function () { setPermissionSubject(subject, input.checked); }); // NEW
+            label.appendChild(input); // NEW
+            label.appendChild(document.createTextNode((subject.type === "team" ? "Team: " : "Role: ") + subject.label + (subject.type === "role" && !subject.userId ? " (unlinked)" : ""))); // NEW
+            box.appendChild(label); // NEW
+        }); // NEW
+        parent.appendChild(box); // NEW
+    }
+
+    function renderPermissionTree(parent, groups, subjects) {
+        const trigger = makeButton("Access scopes", function () { // NEW
+            const popover = parent.querySelector(".trellis-team-permission-tree-popover"); // NEW
+            if (popover) popover.style.display = popover.style.display === "none" ? "block" : "none"; // NEW
+        }, "open"); // NEW
+        trigger.className = (trigger.className || "") + " trellis-team-permission-combobox"; // NEW
+        parent.appendChild(trigger); // NEW
+        const popover = document.createElement("div"); // NEW
+        popover.className = "trellis-team-permission-tree-popover"; // NEW
+        popover.setAttribute("role", "dialog"); // NEW
+        popover.style.cssText = "display:block;margin-top:6px;max-height:320px;overflow:auto;border:1px solid #CBD5E1;border-radius:4px;background:#fff;padding:6px;"; // NEW
+        const search = makeInput("search", "Search scopes"); // NEW
+        search.className = "trellis-team-permission-search"; // NEW
+        search.style.cssText = "box-sizing:border-box;width:100%;margin-bottom:6px;padding:4px 6px;font:12px Arial,sans-serif;"; // NEW
+        popover.appendChild(search); // NEW
+        const list = document.createElement("div"); // NEW
+        popover.appendChild(list); // NEW
+        function draw() { // NEW
+            clearNode(list); // NEW
+            const query = String(search.value || "").trim().toLowerCase(); // NEW
+            if (!groups.length) { const empty = document.createElement("div"); empty.textContent = "No linked neighbor modules. Link this team module to garden, task, or roadmap modules first."; empty.style.color = "#6B7280"; list.appendChild(empty); return; } // NEW
+            groups.forEach(function (group) { // NEW
+                const key = cellId(group.moduleCell); // NEW
+                const visibleScopes = group.scopes.filter(function (scope) { return !query || cellDisplayLabel(scope, eligibleScopeType(scope)).toLowerCase().indexOf(query) >= 0; }); // NEW
+                if (!visibleScopes.length) return; // NEW
+                const header = document.createElement("button"); // NEW
+                header.type = "button"; // NEW
+                header.textContent = (teamPermissionCollapsed.has(key) ? "> " : "v ") + cellDisplayLabel(group.moduleCell, "Module") + " (" + visibleScopes.length + ")"; // NEW
+                header.setAttribute("aria-expanded", teamPermissionCollapsed.has(key) ? "false" : "true"); // NEW
+                header.style.cssText = "display:block;width:100%;text-align:left;border:0;background:#F8FAFC;color:#111827;font-weight:700;padding:4px 6px;margin-top:4px;"; // NEW
+                header.addEventListener("click", function () { if (teamPermissionCollapsed.has(key)) teamPermissionCollapsed.delete(key); else teamPermissionCollapsed.add(key); draw(); }); // NEW
+                list.appendChild(header); // NEW
+                if (teamPermissionCollapsed.has(key) && !query) return; // NEW
+                visibleScopes.forEach(function (scope) { // NEW
+                    const row = document.createElement("div"); // NEW
+                    row.className = "trellis-team-permission-scope-row"; // NEW
+                    row.setAttribute("data-scope-id", cellId(scope)); // NEW
+                    row.style.cssText = "display:grid;grid-template-columns:auto minmax(120px,1fr) auto;gap:8px;align-items:center;border-top:1px solid #F3F4F6;padding:5px 2px 5px " + (scope === group.moduleCell ? "6px" : "18px") + ";"; // CHANGE
+                    const check = document.createElement("input"); // NEW
+                    check.type = "checkbox"; // NEW
+                    check.checked = !!(teamPermissionMode && teamPermissionMode.scopeIds && teamPermissionMode.scopeIds.has(cellId(scope))); // NEW
+                    check.addEventListener("change", function () { setPermissionScope(scope, check.checked); }); // NEW
+                    row.appendChild(check); // NEW
+                    const name = document.createElement("div"); // NEW
+                    name.textContent = (scope === group.moduleCell ? "Module: " : titleCaseScopeType(eligibleScopeType(scope)) + ": ") + cellDisplayLabel(scope, eligibleScopeType(scope)); // NEW
+                    row.appendChild(name); // NEW
+                    row.appendChild(makeAccessRadios(scope, subjects, false)); // NEW
+                    list.appendChild(row); // NEW
+                }); // NEW
+            }); // NEW
+        } // NEW
+        search.addEventListener("input", draw); // NEW
+        draw(); // NEW
+        parent.appendChild(popover); // NEW
+    }
+
+    function cellScreenRect(cell) {
+        const view = graph.getView ? graph.getView() : graph.view; // NEW
+        const state = view && typeof view.getState === "function" ? view.getState(cell) : null; // NEW
+        if (state) return { left: state.x, top: state.y, width: state.width, height: state.height }; // NEW
+        const g = cell && cell.getGeometry ? cell.getGeometry() : (model.getGeometry ? model.getGeometry(cell) : null); // NEW
+        const scale = view && view.scale ? view.scale : 1; // NEW
+        const translate = view && view.translate ? view.translate : { x: 0, y: 0 }; // NEW
+        return g ? { left: ((Number(g.x) || 0) + (translate.x || 0)) * scale, top: ((Number(g.y) || 0) + (translate.y || 0)) * scale, width: (Number(g.width) || 0) * scale, height: (Number(g.height) || 0) * scale } : null; // NEW
+    }
+
+    function ensurePermissionBadgeHost() {
+        const host = graph.container || document.body; // NEW
+        if (!teamPermissionBadgeHost) { // NEW
+            teamPermissionBadgeHost = document.createElement("div"); // NEW
+            teamPermissionBadgeHost.className = "trellis-team-permission-badge-host"; // NEW
+            teamPermissionBadgeHost.style.cssText = "position:absolute;left:0;top:0;z-index:" + (USERS_UI_LAYER_Z - 10) + ";pointer-events:none;"; // NEW
+            host.appendChild(teamPermissionBadgeHost); // NEW
+        } // NEW
+        return teamPermissionBadgeHost; // NEW
+    }
+
+    function renderPermissionBadges(groups, subjects) {
+        const host = ensurePermissionBadgeHost(); // NEW
+        clearNode(host); // NEW
+        const selectedIds = new Set(selectedPermissionScopes().map(cellId)); // NEW
+        groups.forEach(function (group) { // NEW
+            group.scopes.forEach(function (scope) { // NEW
+                const rect = cellScreenRect(scope); // NEW
+                if (!rect) return; // NEW
+                const badge = document.createElement("div"); // NEW
+                badge.className = "trellis-team-permission-badge"; // NEW
+                badge.setAttribute("data-scope-id", cellId(scope)); // NEW
+                badge.style.cssText = "position:absolute;left:" + Math.round(rect.left + 6) + "px;top:" + Math.round(rect.top + 6) + "px;pointer-events:auto;background:#FFFFFF;border:1px solid #2563EB;color:#1D4ED8;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.16);padding:3px 5px;font:11px Arial,sans-serif;"; // NEW
+                badge.title = titleCaseScopeType(eligibleScopeType(scope)) + " - Access: " + subjectPresetDisplay(scope, subjects); // CHANGE
+                badge.addEventListener("click", function (evt) { if (evt) evt.stopPropagation(); if (!eventInPermissionBadgeControls(evt)) selectPermissionScope(scope); }); // CHANGE
+                const typeLabel = document.createElement("div"); // NEW
+                typeLabel.textContent = titleCaseScopeType(eligibleScopeType(scope)); // NEW
+                typeLabel.style.cssText = "font-weight:700;color:#111827;"; // NEW
+                badge.appendChild(typeLabel); // NEW
+                const label = document.createElement("div"); // NEW
+                label.textContent = "Access: " + subjectPresetDisplay(scope, subjects); // CHANGE
+                badge.appendChild(label); // NEW
+                if (selectedIds.has(cellId(scope))) badge.appendChild(makeAccessRadios(scope, subjects, true)); // NEW
+                host.appendChild(badge); // NEW
+            }); // NEW
+        }); // NEW
+    }
+
+    function refreshTeamPermissionMode() {
+        if (!teamPermissionMode) return; // NEW
+        if (!document || !graph) return; // NEW
+        const teamModule = teamPermissionMode.teamModule; // NEW
+        resetTeamPermissionSubjectsFromSelection(); // NEW
+        resetTeamPermissionScopesFromSelection(); // NEW
+        const available = allTeamPermissionSubjects(teamModule); // NEW
+        const active = activePermissionSubjects(); // NEW
+        if (!teamPermissionOverlay) { // NEW
+            teamPermissionOverlay = document.createElement("div"); // NEW
+            teamPermissionOverlay.className = "trellis-team-permission-overlay"; // NEW
+            teamPermissionOverlay.style.cssText = "position:fixed;right:16px;top:72px;z-index:" + USERS_UI_LAYER_Z + ";width:440px;max-width:calc(100vw - 32px);max-height:calc(100vh - 96px);overflow:auto;background:#fff;border:1px solid #111;border-radius:4px;box-shadow:0 12px 32px rgba(0,0,0,.22);padding:10px;box-sizing:border-box;font:12px Arial,sans-serif;"; // NEW
+            (document.body || graph.container).appendChild(teamPermissionOverlay); // NEW
+        } // NEW
+        clearNode(teamPermissionOverlay); // NEW
+        const header = document.createElement("div"); // NEW
+        header.style.cssText = "display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;"; // NEW
+        const title = document.createElement("div"); // NEW
+        title.textContent = "Team permissions"; // NEW
+        title.style.fontWeight = "700"; // NEW
+        header.appendChild(title); // NEW
+        header.appendChild(makeButton("Close", closeTeamPermissionMode, "close")); // NEW
+        teamPermissionOverlay.appendChild(header); // NEW
+        const linked = linkedPermissionScopeGroups(teamModule); // NEW
+        renderPermissionSubjectPicker(teamPermissionOverlay, available, active); // NEW
+        renderPermissionTree(teamPermissionOverlay, linked, active); // NEW
+        renderPermissionBadges(linked, active); // NEW
+    }
+
+    function openTeamPermissionMode(teamModule) {
+        if (!teamModule || !isTeamModule(teamModule)) return { ok: false, reason: "Select a team module." }; // NEW
+        const modules = modulesApi(); // NEW
+        if (modules && typeof modules.ensureTeamModuleSections === "function") modules.ensureTeamModuleSections(teamModule); // NEW
+        const selectedSubjects = defaultTeamPermissionSubjects(teamModule); // CHANGE
+        const selectedScopes = selectedTeamPermissionScopes(teamModule); // NEW
+        teamPermissionMode = { teamModule, subjectKeys: new Set(selectedSubjects.map(function (subject) { return subject.type + ":" + subject.id; })), scopeIds: new Set(selectedScopes.map(cellId)), subjectTouched: false, scopeTouched: false }; // CHANGE
+        dispatchTeamPermissionModeChanged(true, teamModule); // NEW
+        refreshTeamPermissionMode(); // NEW
+        return { ok: true }; // NEW
     }
 
     function refreshPanel() {
@@ -4062,6 +4761,34 @@ Draw.loadPlugin(function (ui) {
         appendAdminRoster(rosterNode);
         appendPendingInvites(rosterNode);
         if (isEnabled() && isLoggedIn()) appendAccessSection(accessNode);
+    }
+
+    function refreshTeamPermissionModeSoon() {
+        if (!teamPermissionMode) return; // NEW
+        setTimeout(function () { refreshTeamPermissionMode(); }, 0); // NEW
+    }
+
+    function selectedPermissionTeamModule() {
+        const cell = selectedCell(); // NEW
+        if (isTeamModule(cell)) return cell; // NEW
+        if (isTeamSection(cell)) return parentTeamModuleForTeamSection(cell); // NEW
+        if (isRoleCard(cell)) return roleTeamModule(cell); // NEW
+        return null; // NEW
+    }
+
+    function handleTeamPermissionSelectionChange() {
+        if (!teamPermissionMode) return; // NEW
+        const selectedTeam = selectedPermissionTeamModule(); // NEW
+        if (selectedTeam && selectedTeam !== teamPermissionMode.teamModule) { closeTeamPermissionMode(); return; } // NEW
+        resetTeamPermissionSubjectsFromSelection(); // NEW
+        resetTeamPermissionScopesFromSelection(); // NEW
+        refreshTeamPermissionModeSoon(); // NEW
+    }
+
+    function installTeamPermissionModeShortcuts() {
+        if (!document || document.__trellisTeamPermissionShortcutsInstalled) return; // NEW
+        document.__trellisTeamPermissionShortcutsInstalled = true; // NEW
+        document.addEventListener("keydown", function (evt) { if (evt && evt.key === "Escape" && teamPermissionMode) closeTeamPermissionMode(); }, true); // NEW
     }
 
     function installAction() {
@@ -4109,7 +4836,11 @@ Draw.loadPlugin(function (ui) {
     installFileLoadedGate();
     installGraphXmlLoadGuard();
     installRejectedEditPointerTracking();
+    installTeamPermissionModeShortcuts(); // NEW
     promptLoginIfNeeded();
+    if (graph.addListener) graph.addListener("trellis:openTeamPermissions", function (_sender, evt) { openTeamPermissionMode(evt && evt.getProperty ? evt.getProperty("teamModule") : null); }); // NEW
+    if (graph.getSelectionModel && graph.getSelectionModel() && graph.getSelectionModel().addListener) graph.getSelectionModel().addListener(mxEvent.CHANGE, handleTeamPermissionSelectionChange); // CHANGE
+    if (model && model.addListener) model.addListener(mxEvent.CHANGE, function () { if (!graph[INTERNAL_FLAG]) syncTeamDerivedGrants(); refreshTeamPermissionModeSoon(); }); // NEW
 
     window.Trellis = window.Trellis || {};
     window.Trellis.users = {
@@ -4162,6 +4893,15 @@ Draw.loadPlugin(function (ui) {
         getScopeGrants,
         setScopeGrant,
         removeScopeGrant,
+        setTeamScopeGrant, // NEW
+        removeTeamScopeGrant, // NEW
+        setRoleCardSecondaryTeam, // NEW
+        syncTeamDerivedGrants, // NEW
+        openTeamPermissionMode, // NEW
+        teamPermissionActionLabel, // NEW
+        closeTeamPermissionMode, // NEW
+        isTeamPermissionModeActive, // NEW
+        refreshTeamPermissionMode, // NEW
         listRoleCards,
         getUserRoleCard,
         setUserRoleCard,
@@ -4186,6 +4926,10 @@ Draw.loadPlugin(function (ui) {
             gardenTaskModule: ATTR_GARDEN_TASK_MODULE,
             taskGardenModule: ATTR_TASK_GARDEN_MODULE,
             teamRoleArchive: ATTR_TEAM_ROLE_ARCHIVE,
+            teamSection: ATTR_TEAM_SECTION, // NEW
+            teamId: ATTR_TEAM_ID, // NEW
+            teamArchived: ATTR_TEAM_ARCHIVED, // NEW
+            teamUnassigned: ATTR_TEAM_UNASSIGNED, // NEW
             createdBy: ATTR_CREATED_BY,
             editedBy: ATTR_EDITED_BY
         },
@@ -4216,6 +4960,17 @@ Draw.loadPlugin(function (ui) {
             publicAccessMessage,
             normalizeAccessMessage,
             autoLinkGardenBoardMemberships,
+            activeAccessTeamIdsForRoleCard, // NEW
+            activeAccessTeamIdsForUser, // NEW
+            bestGrantForUserAtCell, // NEW
+            setTeamScopeGrant, // NEW
+            removeTeamScopeGrant, // NEW
+            setRoleCardSecondaryTeam, // NEW
+            syncTeamDerivedGrants, // NEW
+            openTeamPermissionMode, // NEW
+            closeTeamPermissionMode, // NEW
+            isTeamPermissionModeActive, // NEW
+            linkedPermissionScopeGroups, // NEW
             normalizeCapabilities,
             changeAllowed,
             composeInviteEmail,

@@ -1191,6 +1191,11 @@ Draw.loadPlugin(function (ui) {
         return !!(planner && typeof planner.isIrrigationModeActive === "function" && planner.isIrrigationModeActive());
     }
 
+    function isTeamPermissionModeActiveForBedOverlay() {
+        const users = typeof window !== "undefined" && window.Trellis && window.Trellis.users; // NEW
+        return !!(users && typeof users.isTeamPermissionModeActive === "function" && users.isTeamPermissionModeActive()); // NEW
+    }
+
     function getSelectedGardenBedsForOverlay() {
         const cells = graph.getSelectionCells ? (graph.getSelectionCells() || []) : [];
         if (!cells.length || cells.some(function (cell) { return !isGardenBed(cell); })) return [];
@@ -1203,6 +1208,7 @@ Draw.loadPlugin(function (ui) {
         ensureOverlayContainer();
         if (!graph.container) return;
         if (isIrrigationModeActiveForBedOverlay()) { clearSelectedBedOverlays(); return; }
+        if (isTeamPermissionModeActiveForBedOverlay()) { clearSelectedBedOverlays(); return; } // NEW
         const beds = getSelectedGardenBedsForOverlay();
         const keep = new Set();
         beds.forEach(function (bed) {
@@ -1240,6 +1246,7 @@ Draw.loadPlugin(function (ui) {
     }
     if (graph.container && graph.container.addEventListener) graph.container.addEventListener("scroll", refreshSelectedBedOverlaysSoon, { passive: true });
     if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("trellisIrrigationModeChanged", refreshSelectedBedOverlaysSoon);
+    if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("trellisTeamPermissionModeChanged", function (evt) { if (evt && evt.detail && evt.detail.active) clearSelectedBedOverlays(); else refreshSelectedBedOverlaysSoon(); }); // NEW
     graph.addListener && graph.addListener(mxEvent.DESTROY, clearSelectedBedOverlays);
 
     window.TrellisGardenBeds = {

@@ -15,7 +15,7 @@ This map identifies implementation and executable evidence, rather than relying 
 | Task creation, memberships and provenance | Manager validated task command and separate dialog; Task Manager `createRoadmapTaskInBoard` | Manager tests cover dates, failures, membership accept/decline/denial, companion creation, multiple links and source-assignment independence |
 | Conditional deletion and permissions | Manager selection-wide deletion; Users narrowly scoped navigation/membership exceptions; Task Manager orphan cleanup | Manager tests cover keep/delete behavior, source-name retention, reciprocal undo/redo, actual Users task-access denial, and rejection of unrelated edits smuggled into cleanup |
 | Copy hierarchy and assignments | Manager clone pairing and insertion finalization | Manager tests insert copies through graph APIs, verify Main role, reciprocal roster, cleared task links, default preferences and undo/redo |
-| Export projection with canonical embedded XML | `Garden_Roadmap_Renderer.js`, `export3.html`, `js/export.js`; Manager export variables | Isolated native graph renderer test checks actual timeframe shape and ISO labels, projected geometry and preserved canonical XML; real image/PDF application paths still require desktop verification |
+| Export projection with canonical embedded XML | `Garden_Roadmap_Core.js`, `export3.html`, `js/export.js`; Manager export variables | Isolated native graph renderer test checks actual timeframe shape and ISO labels, projected geometry and preserved canonical XML; real image/PDF application paths still require desktop verification | <!-- CHANGE -->
 
 Run focused evidence with:
 

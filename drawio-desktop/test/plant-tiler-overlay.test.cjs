@@ -38,6 +38,15 @@ test('Garden Settings suppresses the garden options overlay while the dialog is 
     assert.match(source, /function positionToolbar\(\) \{[\s\S]*if \(gardenSettingsOverlaySuppressed\) \{ hideToolbar\(\); return; \}/);
 });
 
+test('team permission mode suppresses the garden options overlay while active', () => {
+    const source = readPlantTilerSource();
+
+    assert.match(source, /function isTeamPermissionModeActiveForOverlay\(\)/);
+    assert.match(source, /function positionToolbar\(\) \{[\s\S]*if \(isTeamPermissionModeActiveForOverlay\(\)\) \{ hideToolbar\(\); return; \}/);
+    assert.match(source, /function refreshForSelection\(\) \{[\s\S]*if \(isTeamPermissionModeActiveForOverlay\(\)\) \{[\s\S]*hideToolbar\(\);[\s\S]*return;/);
+    assert.match(source, /trellisTeamPermissionModeChanged[\s\S]*if \(evt && evt\.detail && evt\.detail\.active\) hideToolbar\(\); else scheduleRefresh\(\);/);
+});
+
 test('Garden Settings entry points route through the overlay-suppressed opener', () => {
     const source = readPlantTilerSource();
 
@@ -204,6 +213,7 @@ test('plant tiler exposes a read-only draft group preview helper', () => {
     assert.match(helperSource, /computeGridStatsXY\(previewCell, spacingXpx, spacingYpx\)/);
     assert.match(helperSource, /readDisabledSet\(groupCell\)/);
     assert.match(helperSource, /maxCircles[\s\S]*1000/);
+    assert.match(helperSource, /requestedRotationDeg[\s\S]*opts\.rotationDeg[\s\S]*previewStyleRotationDeg\(activeGraph, groupCell\)/); // CHANGE: callers can request an upright draft preview.
     assert.match(helperSource, /rotatePointAround\(shifted, groupCenterLocal\(previewCell\), rotationDeg\)/);
     assert.match(helperSource, /circles\.push\(\{ row: r, col: c, x: rect\.x \+ center\.x, y: rect\.y \+ center\.y, r: iconDiam \/ 2, label: abbr, fontPx: tileFont \}\);/);
     assert.match(helperSource, /lodCollapsed: false/);

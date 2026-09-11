@@ -711,6 +711,16 @@ test("task manager source keeps dashboard open highlights before seen marking", 
     assert.doesNotMatch(text, /card\.style \+= .*strokeColor=#FACC15/);
 });
 
+test("task manager interactive overlays are suppressed during team permission mode", () => {
+    const text = taskManagerSource();
+    assert.match(text, /function isTeamPermissionModeActiveForTaskOverlay\(\)/);
+    assert.match(text, /function bindTeamPermissionModeOverlayRefresh\(refresh\)[\s\S]*trellisTeamPermissionModeChanged[\s\S]*hideTaskOverlayGestureElements\(\); refresh\(\);/);
+    assert.match(text, /const board = selectedTaskBoard\(\);[\s\S]*if \(isTeamPermissionModeActiveForTaskOverlay\(\)\) return;/);
+    assert.match(text, /function refresh\(\) \{[\s\S]*if \(isTeamPermissionModeActiveForTaskOverlay\(\)\) \{ bar\.style\.display = 'none'; return; \}/);
+    assert.match(text, /function openAssignmentPicker\(cards\) \{[\s\S]*if \(isTeamPermissionModeActiveForTaskOverlay\(\)\) \{ closeAssignmentPicker\(false\); overlay\.style\.display = 'none'; return; \}/);
+    assert.match(text, /function showOverlay\(taskModule, anchor\) \{[\s\S]*if \(isTeamPermissionModeActiveForTaskOverlay\(\)\) \{ hideOverlay\(\); return; \}/);
+}); // NEW
+
 test("task manager source clears manual selection by active dashboard year only", () => {
     const h = makeHarness();
     const text = taskManagerSource();

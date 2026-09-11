@@ -12,8 +12,9 @@ Draw.loadPlugin(function (ui) {
     const HEADER = 64, PAD = 12, PROCESS_HEADER = 28, OBJECT_HEIGHT = 26, GAP = 8;
     const TYPES = new Set(['module', 'board', 'process', 'object', 'timeframe', 'marker']);
     const STATUS_COLORS = { Planned: '#e2e8f0', Doing: '#bfdbfe', Blocked: '#fecaca', Done: '#bbf7d0' };
-    const BOARD_STYLE = 'rounded=0;fillColor=#ffffff;strokeColor=#64748b;container=1;collapsible=0;recursiveResize=0;resizable=0;connectable=0;verticalAlign=top;align=left;spacing=6;whiteSpace=nowrap;overflow=hidden;';
-    const PROCESS_STYLE = 'rounded=0;fillColor=#f8fafc;strokeColor=#94a3b8;container=1;collapsible=0;recursiveResize=0;resizable=0;movable=0;connectable=0;verticalAlign=top;align=left;spacing=5;whiteSpace=nowrap;overflow=hidden;fontSize=11;';
+    const PROCESS_COLORS = ['#2563eb', '#059669', '#d97706', '#7c3aed', '#dc2626', '#0891b2', '#be123c', '#4f46e5']; // NEW
+    const BOARD_STYLE = 'shape=trellisRoadmapBoard;rounded=0;fillColor=#ffffff;strokeColor=#64748b;container=1;collapsible=0;recursiveResize=0;resizable=0;connectable=0;verticalAlign=top;align=left;spacing=6;whiteSpace=nowrap;overflow=hidden;'; // CHANGE
+    const PROCESS_STYLE = 'shape=trellisRoadmapProcess;rounded=1;arcSize=12;fillColor=#f8fafc;strokeColor=#94a3b8;container=1;collapsible=0;recursiveResize=0;resizable=0;movable=0;connectable=0;verticalAlign=top;align=left;spacing=5;whiteSpace=nowrap;overflow=hidden;fontSize=11;'; // CHANGE
     const OBJECT_STYLE = 'rounded=1;arcSize=12;fillColor=#e2e8f0;strokeColor=#64748b;resizable=0;movable=0;connectable=0;whiteSpace=nowrap;overflow=hidden;spacing=3;fontSize=11;';
     const FRAME_STYLE = 'shape=trellisRoadmapTimeframe;fillColor=none;strokeColor=#cbd5e1;resizable=0;movable=0;connectable=0;verticalAlign=top;align=center;spacingTop=24;whiteSpace=nowrap;overflow=hidden;fontSize=10;';
     const preferences = new Map(), layouts = new Map();
@@ -39,6 +40,27 @@ Draw.loadPlugin(function (ui) {
     function alertError(error) { const message = error && error.message || String(error); if (dialogError && dialogError.isConnected) { dialogError.textContent = message; return; } if (ui.alert) ui.alert(message); else if (mxUtils.alert) mxUtils.alert(message); }
     function parseIds(text) { try { const value = JSON.parse(text || '[]'); return Array.isArray(value) ? Array.from(new Set(value.map(String).filter(Boolean))) : []; } catch (_) { return []; } }
     function links(cell) { return new Set(attr(cell, 'linkedTo').split(',').filter(Boolean)); }
+    function validColor(color) { return /^#[0-9a-f]{6}$/i.test(String(color || '')); } // NEW
+    function processColor(cell) { const color = attr(cell, 'roadmap_color'); return validColor(color) ? color : ''; } // NEW
+    function setStyleValue(style, key, value) { // NEW
+        const prefix = key + '=', replacement = prefix + value + ';'; // NEW
+        return String(style || '').includes(prefix) ? String(style || '').replace(new RegExp(key + '=[^;]*;'), replacement) : String(style || '') + replacement; // NEW
+    } // NEW
+    function processStyle(color) { return validColor(color) ? setStyleValue(PROCESS_STYLE, 'strokeColor', color) : PROCESS_STYLE; } // CHANGE
+    function objectStyle(process, status) { const fill = STATUS_COLORS[status || 'Planned'] || STATUS_COLORS.Planned; return setStyleValue(OBJECT_STYLE, 'fillColor', fill); } // CHANGE
+    function nextProcessColor(board) { // NEW
+        const used = new Set(typedChildren(board, 'process').map(processColor).filter(Boolean)); // NEW
+        return PROCESS_COLORS.find(color => !used.has(color)) || PROCESS_COLORS[typedChildren(board, 'process').length % PROCESS_COLORS.length]; // NEW
+    } // NEW
+    function styleText(cell) { return cell && typeof cell.getStyle === 'function' ? cell.getStyle() || '' : cell && cell.style || ''; } // NEW
+    function moduleHeaderHeight(moduleCell) { // NEW
+        if (!/(?:^|;)swimlane(?:;|$)/.test(styleText(moduleCell))) return 0; // NEW
+        const start = graph.getStartSize ? graph.getStartSize(moduleCell) : null; // NEW
+        if (start && Number.isFinite(start.height)) return Math.max(0, start.height); // NEW
+        const match = styleText(moduleCell).match(/(?:^|;)startSize=(\d+)(?=;|$)/); // NEW
+        return match ? Number(match[1]) : 0; // NEW
+    } // NEW
+    function firstBoardTop(moduleCell) { return moduleHeaderHeight(moduleCell) + PAD; } // NEW
 
     /** Clone XML values so each metadata change participates in mxGraph undo. // NEW */
     function patch(cell, attributes) {
@@ -116,6 +138,22 @@ Draw.loadPlugin(function (ui) {
     function processRecords(board) { return typedChildren(board, 'process').map(cell => Object.assign({ id: id(cell), cell, preferredRow: attr(cell, 'roadmap_preferred_row') === '' ? undefined : Number(attr(cell, 'roadmap_preferred_row')), objects: typedChildren(cell, 'object').map(objectRecord) }, range(cell))); }
     function getSummary(cell) { const objects = kind(cell) === 'object' ? [cell] : kind(cell) === 'process' ? typedChildren(cell, 'object') : typedChildren(cell, 'process').flatMap(process => typedChildren(process, 'object')); return core.progressSummary(objects.map(objectRecord)); }
     function summaryText(cell) { const result = getSummary(cell); return Math.round(result.percent) + '% · ' + result.blockedCount + ' blocked'; }
+    function dayWord(days) { return Math.abs(days) === 1 ? 'day' : 'days'; } // NEW
+    function relativeDayText(day, today) { const offset = day - (today == null ? core.todayDay(new Date()) : today); return offset === 0 ? 'today' : Math.abs(offset) + ' ' + dayWord(offset) + (offset > 0 ? ' from now' : ' ago'); } // NEW
+    function rangeDurationText(start, end) { const duration = end - start + 1; return duration + ' ' + dayWord(duration); } // NEW
+    function tooltipDateLine(name, day, today) { return name + ': ' + core.formatDay(day) + ' (' + relativeDayText(day, today) + ')'; } // NEW
+    function roadmapTooltipText(cell, dates) { // NEW
+        dates = dates || range(cell); const today = core.todayDay(new Date()); // NEW
+        const details = [label(cell), tooltipDateLine('Start', dates.start, today), tooltipDateLine('End', dates.end, today), 'Duration: ' + rangeDurationText(dates.start, dates.end)]; // NEW
+        if (kind(cell) === 'object') details.push((attr(cell, 'roadmap_status') || 'Planned') + ' · ' + summaryText(cell)); // CHANGE
+        else if (kind(cell) === 'process') details.push(summaryText(cell)); // CHANGE
+        return details.join('\n'); // NEW
+    } // NEW
+    function semanticResizeDates(cell, dates) { // NEW
+        if (kind(cell) !== 'process') return dates; // NEW
+        const objects = typedChildren(cell, 'object').map(range); // NEW
+        return objects.length ? { start: Math.min(dates.start, ...objects.map(item => item.start)), end: Math.max(dates.end, ...objects.map(item => item.end)) } : dates; // NEW
+    } // NEW
 
     /** Preference identity does not create a diagram ID as a side effect of viewing. // NEW */
     function preferenceKey(board) {
@@ -168,7 +206,7 @@ Draw.loadPlugin(function (ui) {
 
     /** Pack against full dates; trimming changes horizontal projection only. // NEW */
     function calculateLayout(board, canonical) {
-        const records = processRecords(board), state = canonical ? core.normalizeView({ perspective: 'inception' }) : getViewState(board);
+        const records = processRecords(board), state = canonical ? core.normalizeView({ perspective: 'inception', today: { leftHidden: 0 }, inception: { leftHidden: 0 } }) : getViewState(board); // CHANGE
         const anchor = anchorFor(board, records, state.perspective);
         const extent = records.flatMap(process => [process, ...process.objects]);
         const timeline = core.buildTimeline({ anchor, minDay: extent.length ? Math.min(...extent.map(item => item.start)) : anchor, maxDay: extent.length ? Math.max(...extent.map(item => item.end)) : anchor, view: state[state.perspective] });
@@ -227,8 +265,8 @@ Draw.loadPlugin(function (ui) {
     function moduleBounds(cell, geometries) { // NEW
         const saved = geometries.get(cell) || model.getGeometry(cell); if (!saved) return null; // NEW
         const next = saved.clone(), modules = graph.__trellisModules, margin = modules && modules.getModuleMargin ? modules.getModuleMargin(cell) : PAD; // NEW
-        next.width = 160; next.height = 100; const header = Number(baseCellStyle && baseCellStyle.call(graph, cell).startSize) || 0; // NEW
-        children(cell).forEach(child => { const g = geometries.get(child) || model.getGeometry(child); if (g) { next.width = Math.max(next.width, g.x + g.width + margin); next.height = Math.max(next.height, g.y + g.height + margin + header); } }); return next; // NEW
+        next.width = 160; next.height = 100; // CHANGE
+        children(cell).forEach(child => { const g = geometries.get(child) || model.getGeometry(child); if (g) { next.width = Math.max(next.width, g.x + g.width + margin); next.height = Math.max(next.height, g.y + g.height + margin); } }); return next; // CHANGE
     } // NEW
     function snapshotPeerBounds() { const result = new Map(allCells().filter(cell => kind(cell) === 'board' || isModuleCell(cell)).map(cell => [cell, model.getGeometry(cell)?.clone()]).filter(entry => entry[1])); result.parents = new Map(Array.from(result.keys()).map(cell => [cell, parent(cell)])); return result; } // CHANGE // NEW
     function differentBounds(a, b) { return !a || !b || ['x', 'y', 'width', 'height'].some(key => a[key] !== b[key]); } // NEW
@@ -272,17 +310,17 @@ Draw.loadPlugin(function (ui) {
         return prefix + number;
     }
 
-    function makeProcess(board, name, start, end) { return vertex(board, 'process', name, PROCESS_STYLE, { roadmap_start: core.formatDay(start), roadmap_end: core.formatDay(end) }); }
-    function makeObject(process, name, start, end) { return vertex(process, 'object', name, OBJECT_STYLE, { roadmap_start: core.formatDay(start), roadmap_end: core.formatDay(end), roadmap_status: 'Planned', roadmap_progress: '0' }); }
+    function makeProcess(board, name, start, end) { const color = nextProcessColor(board); return vertex(board, 'process', name, processStyle(color), { roadmap_start: core.formatDay(start), roadmap_end: core.formatDay(end), roadmap_color: color, roadmap_header_version: '1' }); } // CHANGE
+    function makeObject(process, name, start, end) { return vertex(process, 'object', name, objectStyle(process, 'Planned'), { roadmap_start: core.formatDay(start), roadmap_end: core.formatDay(end), roadmap_status: 'Planned', roadmap_progress: '0' }); } // CHANGE
 
     function createBoard(moduleCell, role) {
         requireEdit(moduleCell, 'canAddCell');
         if (kind(moduleCell) !== 'module' && attr(moduleCell, 'moduleType') !== 'roadmap') throw new Error('Select a Roadmap Module.');
         const boards = typedChildren(moduleCell, 'board');
         const board = vertex(moduleCell, 'board', role === 'main' ? 'Main Roadmap' : nextName(moduleCell, 'board', 'Roadmap ', 2), BOARD_STYLE, {
-            roadmap_role: role, roadmap_created_date: core.formatDay(lastToday), roadmap_document_key: attr(moduleCell, 'roadmap_document_key') || id(moduleCell) + '-' + Date.now().toString(36)
+            roadmap_role: role, roadmap_created_date: core.formatDay(lastToday), roadmap_document_key: attr(moduleCell, 'roadmap_document_key') || id(moduleCell) + '-' + Date.now().toString(36), roadmap_header_version: '1' // CHANGE
         });
-        const previousBottom = boards.reduce((bottom, cell) => { const g = model.getGeometry(cell); return g ? Math.max(bottom, g.y + g.height + 70) : bottom; }, PAD);
+        const previousBottom = boards.reduce((bottom, cell) => { const g = model.getGeometry(cell); return g ? Math.max(bottom, g.y + g.height + 70) : bottom; }, firstBoardTop(moduleCell)); // CHANGE
         setGeometry(board, new mxGeometry(PAD, previousBottom, 1, 1));
         const process = makeProcess(board, 'Planning', lastToday, lastToday + 30);
         makeObject(process, 'First Step', lastToday, lastToday + 7);
@@ -340,7 +378,11 @@ Draw.loadPlugin(function (ui) {
             requireEdit(process); if (kind(process) !== 'process') throw new Error('Select a process.');
             const dates = parseInputRange(changes, process), objects = typedChildren(process, 'object').map(range);
             if (objects.length) { dates.start = Math.min(dates.start, ...objects.map(item => item.start)); dates.end = Math.max(dates.end, ...objects.map(item => item.end)); }
-            patch(process, { label: changes.name == null ? label(process) : String(changes.name).trim() || 'Process', roadmap_start: core.formatDay(dates.start), roadmap_end: core.formatDay(dates.end) });
+            const color = changes.color == null ? processColor(process) : String(changes.color); // NEW
+            if (changes.color != null && !validColor(color)) throw new Error('Choose a valid process color.'); // NEW
+            patch(process, { label: changes.name == null ? label(process) : String(changes.name).trim() || 'Process', roadmap_start: core.formatDay(dates.start), roadmap_end: core.formatDay(dates.end), roadmap_color: color || null }); // CHANGE
+            if (model.setStyle && validColor(color)) model.setStyle(process, processStyle(color)); // NEW
+            if (validColor(color)) typedChildren(process, 'object').forEach(object => model.setStyle(object, objectStyle(process, attr(object, 'roadmap_status') || 'Planned'))); // NEW
             saveCanonicalLayout(ancestor(process, 'board')); return process;
         });
     }
@@ -354,11 +396,13 @@ Draw.loadPlugin(function (ui) {
                 const progress = Number(changes.progress); if (!Number.isInteger(progress) || progress < 0 || progress > 100) throw new Error('Doing progress must be a whole percentage from 0 to 100.'); status.progress = progress;
             }
             patch(cell, { label: changes.name == null ? label(cell) : String(changes.name).trim() || 'Roadmap Object', roadmap_start: core.formatDay(dates.start), roadmap_end: core.formatDay(dates.end), roadmap_status: status.status, roadmap_progress: status.progress, roadmap_notes: changes.notes == null ? attr(cell, 'roadmap_notes') : String(changes.notes) });
-            const style = String(cell.style || OBJECT_STYLE).replace(/fillColor=[^;]*;/, 'fillColor=' + STATUS_COLORS[status.status] + ';');
+            const style = objectStyle(parent(cell), status.status); // CHANGE
             if (model.setStyle) model.setStyle(cell, style);
             expandProcess(parent(cell)); saveCanonicalLayout(ancestor(cell, 'board')); return cell;
         });
     }
+
+    function setProcessColor(process, color) { return editProcess(process, { color, startISO: attr(process, 'roadmap_start'), endISO: attr(process, 'roadmap_end') }); } // NEW
 
     /** Remove selected descendants so a native container move never shifts them twice. */ // NEW
     function moveRoots(cells) { const selected = new Set(cells || []); return Array.from(selected).filter(cell => { for (let p = parent(cell); p; p = parent(p)) if (selected.has(p)) return false; return true; }); } // NEW
@@ -595,7 +639,7 @@ Draw.loadPlugin(function (ui) {
     };
 
     function getTooltipForCell(cell) {
-        if (kind(cell) === 'process' || kind(cell) === 'object') return label(cell) + '\n' + attr(cell, 'roadmap_start') + ' through ' + attr(cell, 'roadmap_end') + '\n' + (kind(cell) === 'object' ? attr(cell, 'roadmap_status') + ' · ' : '') + summaryText(cell);
+        if (kind(cell) === 'process' || kind(cell) === 'object') return roadmapTooltipText(cell); // CHANGE
         return TYPES.has(kind(cell)) ? label(cell) : null;
     }
     const baseTooltip = graph.getTooltipForCell;
@@ -650,10 +694,17 @@ Draw.loadPlugin(function (ui) {
     const baseCellStyle = graph.getCellStyle;
     if (baseCellStyle) graph.getCellStyle = function (cell) {
         const style = baseCellStyle.apply(this, arguments);
-        if (['process', 'object'].includes(kind(cell))) return Object.assign({}, style, { movable: 1, resizable: 1, editable: 0, rotatable: 0, recursiveResize: 0 }); // CHANGE: native label editing is disabled while move/resize handles stay available.
+        if (kind(cell) === 'process') { // CHANGE
+            const color = processColor(cell), next = Object.assign({}, style, { movable: 1, resizable: 1, editable: 0, rotatable: 0, recursiveResize: 0 }); // NEW
+            if (validColor(color)) next.strokeColor = color; // CHANGE
+            return next; // NEW
+        } // NEW
+        if (kind(cell) === 'object') { // CHANGE
+            return Object.assign({}, style, { movable: 1, resizable: 1, editable: 0, rotatable: 0, recursiveResize: 0 }); // CHANGE
+        } // NEW
         if (kind(cell) !== 'timeframe') return style;
         const board = ancestor(cell, 'board'), layout = getLayout(board), timeline = gesture && gesture.board === board && gesture.layout.timeline || layout.timeline, column = timeline.columns[Number(attr(cell, 'roadmap_timeframe_index'))]; // CHANGE
-        return Object.assign({}, style, { resizable: 1, movable: 0, rotatable: 0, roadmapFrameStart: column.start, roadmapFrameEnd: column.end, roadmapFrameAnchor: layout.anchor, roadmapFrameScale: column.scale, roadmapFrameStep: column.tickStep });
+        return Object.assign({}, style, { resizable: 1, movable: 0, rotatable: 0, roadmapFrameStart: column.start, roadmapFrameEnd: column.end, roadmapFrameAnchor: layout.anchor, roadmapFrameScale: column.scale, roadmapFrameStep: column.tickStep, roadmapFrameTickUnit: column.tickUnit }); // CHANGE
     };
 
     /** Patch an export-only XML clone; this never changes the editor's model. // NEW */
@@ -669,7 +720,7 @@ Draw.loadPlugin(function (ui) {
             if (wrapper && wrapper.setAttribute && ['board', 'process', 'object'].includes(kind(cell))) wrapper.setAttribute('label', graph.convertValueToString(cell));
             if (kind(cell) === 'timeframe') {
                 const style = graph.getCellStyle(cell);
-                xmlCell.setAttribute('style', (xmlCell.getAttribute('style') || '') + ';' + ['roadmapFrameStart', 'roadmapFrameEnd', 'roadmapFrameAnchor', 'roadmapFrameScale', 'roadmapFrameStep'].map(key => key + '=' + style[key]).join(';') + ';');
+                xmlCell.setAttribute('style', (xmlCell.getAttribute('style') || '') + ';' + ['roadmapFrameStart', 'roadmapFrameEnd', 'roadmapFrameAnchor', 'roadmapFrameScale', 'roadmapFrameStep', 'roadmapFrameTickUnit'].map(key => key + '=' + style[key]).join(';') + ';'); // CHANGE
             }
         });
         return copy;
@@ -688,7 +739,7 @@ Draw.loadPlugin(function (ui) {
             const pageId = pageIdFor(cell), geometry = graph.getCellGeometry(cell); // NEW
             const record = { id: id(cell), visible: graph.isCellVisible(cell), geometry: geometry && { x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height } }; // NEW
             if (['board', 'process', 'object'].includes(kind(cell))) record.label = graph.convertValueToString(cell); // NEW
-            if (kind(cell) === 'timeframe') { const style = graph.getCellStyle(cell); record.frameStyle = {}; ['roadmapFrameStart', 'roadmapFrameEnd', 'roadmapFrameAnchor', 'roadmapFrameScale', 'roadmapFrameStep'].forEach(key => { record.frameStyle[key] = style[key]; }); } // NEW
+            if (kind(cell) === 'timeframe') { const style = graph.getCellStyle(cell); record.frameStyle = {}; ['roadmapFrameStart', 'roadmapFrameEnd', 'roadmapFrameAnchor', 'roadmapFrameScale', 'roadmapFrameStep', 'roadmapFrameTickUnit'].forEach(key => { record.frameStyle[key] = style[key]; }); } // CHANGE
             (pages[pageId] || (pages[pageId] = [])).push(record); // NEW
         })); // NEW
         return pages; // NEW
@@ -885,7 +936,7 @@ Draw.loadPlugin(function (ui) {
         button('Hide future', () => changeView({ rightHidden: settings.rightHidden + 1 }), columns, settings.rightHidden >= 4); button('Show future', () => changeView({ rightHidden: settings.rightHidden - 1 }), columns, !settings.rightHidden); // NEW
         const scale = inputField(columns, 'Scale %', Math.round(settings.multiplier * 100), 'number'); scale.min = '1'; scale.max = '10000'; scale.style.width = '64px'; // NEW
         scale.addEventListener('change', () => { const multiplier = Number(scale.value) / 100; if (multiplier > 0 && multiplier <= 100) changeView({ multiplier }); }); // NEW
-        button('Reset scale', () => changeView({ scales: Array(8).fill(4), multiplier: 1 }), columns); // NEW
+        button('Reset scale', () => changeView({ scales: core.normalizeView()[mode].scales, multiplier: 1 }), columns); // CHANGE
     } // NEW
 
     function renderControls() {
@@ -919,9 +970,12 @@ Draw.loadPlugin(function (ui) {
         } else if (type === 'process' || type === 'object') {
             const state = graph.view.getState(cell), host = state && panel(cell, state.height + 8); if (!host) return;
             nameControl(host, cell); button('Edit', () => showEditDialog(cell), host, !allowed(cell));
+            button(type === 'process' ? 'Delete Process' : 'Delete Object', () => graph.removeCells([cell]), host, !allowed(cell, 'canDeleteCell')); // NEW
             if (type === 'process') {
-                const start = inputField(host, 'Start date', attr(cell, 'roadmap_start'), 'date'), end = inputField(host, 'End date', attr(cell, 'roadmap_end'), 'date');
-                [start, end].forEach(input => { input.disabled = !allowed(cell); input.addEventListener('change', () => editProcess(cell, { startISO: start.value, endISO: end.value })); });
+                const color = inputField(host, 'Process color', processColor(cell) || nextProcessColor(board), 'color'); // NEW
+                color.disabled = !allowed(cell); // NEW
+                ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup'].forEach(type => color.addEventListener(type, stopDomPropagation)); // NEW
+                color.addEventListener('change', () => setProcessColor(cell, color.value)); // NEW
                 button('Add Roadmap Object', () => addObject(cell), host, !allowed(cell, 'canAddCell'));
             } else {
                 button('Assign', () => showAssignmentDialog(cell), host, !allowed(cell));
@@ -946,7 +1000,8 @@ Draw.loadPlugin(function (ui) {
         const layout = getLayout(board); // NEW
         gesture = { cell, edge, board, layout, targets, settings: getViewState(board), startPoint: point(event), boardState: graph.view.getState(board), geometry: graph.getCellGeometry(cell).clone(), delta: 0 }; // NEW
         closeAssignmentPicker(); // NEW
-        if (!dateHint) { dateHint = element('div', '', 'trellis-roadmap-date-hint'); dateHint.style.cssText = 'position:absolute;z-index:10030;pointer-events:none;background:#fff;border:1px solid #111;padding:4px;font:12px Arial;'; graph.container.appendChild(dateHint); } // NEW
+        if (graph.tooltipHandler && graph.tooltipHandler.hide) graph.tooltipHandler.hide(); else if (graph.tooltipHandler && graph.tooltipHandler.hideTooltip) graph.tooltipHandler.hideTooltip(); // NEW
+        if (!dateHint) { dateHint = element('div', '', 'trellis-roadmap-date-hint'); dateHint.style.cssText = 'position:absolute;z-index:10030;pointer-events:none;background:#fff;border:1px solid #111;padding:4px;font:12px Arial;white-space:pre-line;'; graph.container.appendChild(dateHint); } // CHANGE
         dateHint.style.display = ''; if (overlay) overlay.style.display = 'none'; // NEW
     } // NEW
 
@@ -961,13 +1016,14 @@ Draw.loadPlugin(function (ui) {
         const dx = nativeDx == null ? (current.x - g.startPoint.x) / graph.view.scale : nativeDx, dy = nativeDy == null ? (current.y - g.startPoint.y) / graph.view.scale : nativeDy; // NEW
         g.dx = dx; g.dy = dy; // NEW
         if (kind(g.cell) === 'board') dateHint.style.display = 'none'; // NEW
-        else if (kind(g.cell) === 'timeframe') { const column = g.layout.timeline.columns[Number(attr(g.cell, 'roadmap_timeframe_index'))]; dateHint.textContent = (Math.max(0.05, (g.geometry.width + dx) / (column.end - column.start) / g.settings[g.settings.perspective].multiplier)).toFixed(2) + ' px/day'; } // CHANGE // NEW
+        else if (kind(g.cell) === 'timeframe') { const column = g.layout.timeline.columns[Number(attr(g.cell, 'roadmap_timeframe_index'))]; dateHint.textContent = (Math.max(0.05, (g.geometry.width + dx) / (column.end - column.start))).toFixed(2) + ' px/day'; } // CHANGE
         else { // NEW
             g.delta = gestureDays(g.cell, dx, g.layout); const dates = range(g.cell); // NEW
             const start = g.edge === 'right' ? dates.start : Math.min(dates.end, dates.start + g.delta); // NEW
             const end = g.edge === 'left' ? dates.end : Math.max(start, dates.end + g.delta); // NEW
             const crossProject = g.edge === 'move' && nativeMove && nativeMove.target && ancestor(nativeMove.target, 'board') !== g.board; // NEW
-            dateHint.textContent = core.formatDay(crossProject ? dates.start : g.edge === 'move' ? dates.start + g.delta : start) + ' → ' + core.formatDay(crossProject ? dates.end : end); // CHANGE // NEW
+            const previewDates = { start: crossProject ? dates.start : g.edge === 'move' ? dates.start + g.delta : start, end: crossProject ? dates.end : end }; // NEW
+            dateHint.textContent = roadmapTooltipText(g.cell, g.edge === 'move' ? previewDates : semanticResizeDates(g.cell, previewDates)); // CHANGE
         } // NEW
         dateHint.style.left = current.x + 15 + 'px'; dateHint.style.top = current.y - 30 + 'px'; // NEW
     } // NEW
@@ -1087,7 +1143,7 @@ Draw.loadPlugin(function (ui) {
         addProcess, addObject, editProcess, editObject, setAssignments, getViewState, setViewState, getLayout, getSummary, shiftObjects, deleteRoadmapCells,
         getHitCellAt, getTooltipForCell, isRoadmapCell: cell => TYPES.has(kind(cell)), isRoadmapGestureCell: cell => ['object', 'timeframe', 'marker'].includes(kind(cell)),
         projectExportXml, exportProjection, refresh, openBoard, showTaskCreationDialog, showEditDialog, linkedTasks, roleRoster,
-        _test: { moveContent, planMove, setObjectStatuses, setObjectAssignments, resizeTimelineCell, command, beginGesture, previewGesture, endGesture, checkToday, calculateLayout, get gesture() { return gesture; } }
+        _test: { moveContent, planMove, setObjectStatuses, setObjectAssignments, setProcessColor, resizeTimelineCell, command, beginGesture, previewGesture, endGesture, checkToday, calculateLayout, get gesture() { return gesture; } } // CHANGE
     };
     refresh();
 });

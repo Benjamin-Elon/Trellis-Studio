@@ -26,7 +26,7 @@ function harness(t, extraPlugins = []) {
     w.Draw = { loadPlugin: fn => fn(ui) };
     w.ExportDialog = { exportFile(editorUi) { return editorUi.editor.getGraphXml(); } };
     const load = name => w.eval(fs.readFileSync(path.join(webapp, 'plugins/garden_planner_plugins', name), 'utf8'));
-    load('Garden_Roadmap_Core.js'); load('Garden_Roadmap_Renderer.js'); // CHANGE
+    load('Garden_Roadmap_Core.js'); // CHANGE: core registers native roadmap rendering.
     extraPlugins.filter(name => ['Trellis_Users.js', 'Garden_Task_Manager.js'].includes(name)).forEach(load); // NEW
     load('Garden_Roadmap_Manager.js'); extraPlugins.filter(name => !['Trellis_Users.js', 'Garden_Task_Manager.js'].includes(name)).forEach(load); // CHANGE
     function cell(parent, attrs, style) { const value = w.mxUtils.createXmlDocument().createElement('object'); Object.entries(attrs).forEach(([key, val]) => value.setAttribute(key, String(val))); return graph.insertVertex(parent || graph.getDefaultParent(), null, value, 20, 20, 300, 200, style || ''); }
@@ -42,6 +42,10 @@ function harness(t, extraPlugins = []) {
 function frame(h) { return new Promise(resolve => h.w.requestAnimationFrame(resolve)); } // NEW
 function roadmapNameInputs(h) { return Array.from(h.graph.container.querySelectorAll('.trellis-roadmap-control input[aria-label="Name"]')); } // NEW
 function roadmapNameInputFor(h, cell) { return roadmapNameInputs(h).find(input => input.value === cell.getAttribute('label')); } // NEW
+function styleValue(style, key) { return style && typeof style === 'object' ? style[key] : (String(style || '').match(new RegExp('(?:^|;)' + key + '=([^;]*)(?=;|$)')) || [])[1]; } // NEW
+function callRecordingCanvas() { const calls = []; let fillColor = null, strokeColor = null; return { calls, setFillColor(color) { fillColor = color; calls.push(['setFillColor', color]); }, setStrokeColor(color) { strokeColor = color; calls.push(['setStrokeColor', color]); }, rect(x, y, width, height) { calls.push(['rect', x, y, width, height]); }, roundrect(x, y, width, height, arcWidth, arcHeight) { calls.push(['roundrect', x, y, width, height, arcWidth, arcHeight]); }, begin() { calls.push(['begin']); }, moveTo(x, y) { calls.push(['moveTo', x, y]); }, lineTo(x, y) { calls.push(['lineTo', x, y]); }, quadTo() { calls.push(['quadTo']); }, close() { calls.push(['close']); }, fillAndStroke() { calls.push(['fillAndStroke', fillColor, strokeColor]); } }; } // CHANGE
+function graphButton(h, text) { return Array.from(h.graph.container.querySelectorAll('button')).find(button => button.textContent === text); } // NEW
+const THIS_WEEK_DAY_PX = 400 / 7; // NEW
 
 test('Main creation is usable, idempotent, inclusive, and gives secondary projects unused names', t => {
     const h = harness(t); assert.ok(h.board, h.alerts.join('\n'));
@@ -50,12 +54,99 @@ test('Main creation is usable, idempotent, inclusive, and gives secondary projec
     assert.equal(h.typed(h.board, 'marker').length, 1);
     assert.equal(h.process.getAttribute('label'), 'Planning');
     assert.equal(h.object.getAttribute('label'), 'First Step');
+    assert.equal(h.board.getAttribute('roadmap_header_version'), '1'); // NEW
+    assert.equal(h.process.getAttribute('roadmap_header_version'), '1'); // NEW
+    assert.equal(h.process.getAttribute('roadmap_color'), '#2563eb'); // NEW
+    assert.equal(styleValue(h.process.style, 'rounded'), '1'); // CHANGE
+    assert.equal(styleValue(h.process.style, 'arcSize'), '12'); // CHANGE
+    assert.equal(styleValue(h.object.style, 'rounded'), '1'); // CHANGE
+    assert.equal(styleValue(h.object.style, 'arcSize'), '12'); // CHANGE
     const c = h.w.TrellisRoadmapCore;
     assert.equal(c.parseDay(h.process.getAttribute('roadmap_end')) - c.parseDay(h.process.getAttribute('roadmap_start')), 30);
     assert.equal(c.parseDay(h.object.getAttribute('roadmap_end')) - c.parseDay(h.object.getAttribute('roadmap_start')), 7);
     assert.equal(h.api.createSecondaryRoadmapInRoadmapModule(h.module).getAttribute('label'), 'Roadmap 2');
     assert.equal(h.api.createSecondaryRoadmapInRoadmapModule(h.module).getAttribute('label'), 'Roadmap 3');
 });
+
+test('roadmap tooltips show relative dates and inclusive duration', t => { // NEW
+    const h = harness(t), c = h.w.TrellisRoadmapCore, today = c.todayDay(); // NEW
+    const objectTip = h.graph.getTooltipForCell(h.object); // NEW
+    assert.match(objectTip, /^First Step\n/); // NEW
+    assert.match(objectTip, new RegExp('Start: ' + c.formatDay(today) + ' \\(today\\)')); // NEW
+    assert.match(objectTip, new RegExp('End: ' + c.formatDay(today + 7) + ' \\(7 days from now\\)')); // NEW
+    assert.match(objectTip, /Duration: 8 days/); // NEW
+    assert.match(objectTip, /Planned · 0% · 0 blocked/); // NEW
+    const processTip = h.graph.getTooltipForCell(h.process); // NEW
+    assert.match(processTip, new RegExp('Start: ' + c.formatDay(today) + ' \\(today\\)')); // NEW
+    assert.match(processTip, /Duration: 31 days/); // NEW
+    assert.doesNotMatch(processTip, /Planned ·/); // NEW
+    h.api.editObject(h.object, { startISO: c.formatDay(today - 2), endISO: c.formatDay(today) }); // NEW
+    const pastTip = h.graph.getTooltipForCell(h.object); // NEW
+    assert.match(pastTip, new RegExp('Start: ' + c.formatDay(today - 2) + ' \\(2 days ago\\)')); // NEW
+    assert.match(pastTip, new RegExp('End: ' + c.formatDay(today) + ' \\(today\\)')); // NEW
+    assert.match(pastTip, /Duration: 3 days/); // NEW
+}); // NEW
+
+test('roadmap resize hint follows preview dates with full tooltip details', t => { // NEW
+    const h = harness(t), c = h.w.TrellisRoadmapCore, today = c.todayDay(); h.graph.refresh(); // NEW
+    let hiddenNativeTooltip = 0; const originalHide = h.graph.tooltipHandler.hide; h.graph.tooltipHandler.hide = function () { hiddenNativeTooltip += 1; return originalHide.apply(this, arguments); }; // NEW
+    const state = h.graph.view.getState(h.object), right = { button: 0, clientX: state.x + state.width, clientY: state.y + 13, preventDefault() {} }; // NEW
+    h.api._test.beginGesture(h.object, 'right', right); h.api._test.previewGesture({ ...right, clientX: right.clientX + 3 * THIS_WEEK_DAY_PX }); // NEW
+    const hint = h.graph.container.querySelector('.trellis-roadmap-date-hint'); // NEW
+    assert.equal(hiddenNativeTooltip, 1); // NEW
+    assert.match(hint.textContent, /^First Step\n/); // NEW
+    assert.match(hint.textContent, new RegExp('End: ' + c.formatDay(today + 10) + ' \\(10 days from now\\)')); // NEW
+    assert.match(hint.textContent, /Duration: 11 days/); // NEW
+    h.api._test.endGesture(true); // NEW
+    const left = { button: 0, clientX: state.x, clientY: state.y + 13, preventDefault() {} }; // NEW
+    h.api._test.beginGesture(h.object, 'left', left); h.api._test.previewGesture({ ...left, clientX: left.clientX + 2 * THIS_WEEK_DAY_PX }); // NEW
+    assert.match(hint.textContent, new RegExp('Start: ' + c.formatDay(today + 2) + ' \\(2 days from now\\)')); // NEW
+    assert.match(hint.textContent, new RegExp('End: ' + c.formatDay(today + 7) + ' \\(7 days from now\\)')); // NEW
+    assert.match(hint.textContent, /Duration: 6 days/); // NEW
+    h.api._test.endGesture(true); // NEW
+    h.graph.refresh(); const processState = h.graph.view.getState(h.process), processRight = { button: 0, clientX: processState.x + processState.width, clientY: processState.y + 13, preventDefault() {} }; // NEW
+    h.api._test.beginGesture(h.process, 'right', processRight); h.api._test.previewGesture({ ...processRight, clientX: processRight.clientX + 3 * THIS_WEEK_DAY_PX }); // NEW
+    assert.match(hint.textContent, /^Planning\n/); // NEW
+    assert.match(hint.textContent, new RegExp('End: ' + c.formatDay(today + 33) + ' \\(33 days from now\\)')); // NEW
+    assert.match(hint.textContent, /Duration: 34 days/); // NEW
+    h.api._test.endGesture(true); // NEW
+    const processLeft = { button: 0, clientX: processState.x, clientY: processState.y + 13, preventDefault() {} }; // NEW
+    h.api._test.beginGesture(h.process, 'left', processLeft); h.api._test.previewGesture({ ...processLeft, clientX: processLeft.clientX + 2 * THIS_WEEK_DAY_PX }); // NEW
+    assert.match(hint.textContent, new RegExp('Start: ' + c.formatDay(today) + ' \\(today\\)')); // NEW
+    assert.match(hint.textContent, /Duration: 31 days/); // NEW
+    h.api._test.endGesture(true); // NEW
+}); // NEW
+
+test('roadmap process renderer honors rounded style', t => { // NEW
+    const h = harness(t), Shape = h.w.mxCellRenderer.defaultShapes.trellisRoadmapProcess; // NEW
+    assert.ok(Shape); // NEW
+    const rounded = new Shape(); rounded.style = { rounded: 1, arcSize: 12, fillColor: '#fff', strokeColor: '#123456', roadmapHeaderColor: '#ff0000' }; rounded.isRounded = true; // CHANGE
+    const roundedCanvas = callRecordingCanvas(); rounded.paintVertexShape(roundedCanvas, 0, 0, 100, 90); // NEW
+    assert.ok(roundedCanvas.calls.some(call => call[0] === 'roundrect')); // CHANGE
+    assert.ok(roundedCanvas.calls.some(call => call[0] === 'quadTo')); // CHANGE
+    assert.deepEqual(roundedCanvas.calls.filter(call => call[0] === 'fillAndStroke'), [['fillAndStroke', '#fff', '#123456'], ['fillAndStroke', '#899aab', '#123456']]); // CHANGE
+    assert.ok(roundedCanvas.calls.some(call => call[0] === 'lineTo' && call[2] === 28)); // NEW
+    const square = new Shape(); square.style = { rounded: 0, fillColor: '#fff', strokeColor: '#111' }; square.isRounded = false; // NEW
+    const squareCanvas = callRecordingCanvas(); square.paintVertexShape(squareCanvas, 0, 0, 100, 90); // NEW
+    assert.equal(squareCanvas.calls.some(call => call[0] === 'roundrect'), false); // CHANGE
+}); // NEW
+
+test('new roadmap view defaults hide past frames and use 75px/400px nominal widths', t => { // NEW
+    const h = harness(t), frames = h.typed(h.board, 'timeframe'); // NEW
+    const state = h.api.getViewState(h.board); // NEW
+    assert.equal(state.today.leftHidden, 3); assert.equal(state.inception.leftHidden, 3); // NEW
+    assert.deepEqual(Array.from(frames, frame => h.graph.isCellVisible(frame)), [false, false, false, true, true, true, true, true]); // CHANGE
+    assert.deepEqual(Array.from(frames, frame => Math.round(h.graph.getCellGeometry(frame).width)), [0, 0, 0, 400, 400, 400, 400, 400]); // CHANGE
+    h.api.setViewState(h.board, { today: { leftHidden: 0 } }); // NEW
+    assert.deepEqual(Array.from(frames.slice(0, 3), frame => Math.round(h.graph.getCellGeometry(frame).width)), [75, 75, 75]); // CHANGE
+}); // NEW
+
+test('explicit view preferences keep past visibility', t => { // CHANGE
+    const h = harness(t); h.api.setViewState(h.board, { today: { leftHidden: 0 }, inception: { leftHidden: 0 } }); // CHANGE
+    const state = h.api.getViewState(h.board); // NEW
+    assert.equal(state.today.leftHidden, 0); assert.equal(state.inception.leftHidden, 0); // NEW
+    assert.equal(h.graph.isCellVisible(h.typed(h.board, 'timeframe')[0]), true); // NEW
+}); // NEW
 
 test('personal perspectives change projection but neither serialized XML nor undo history', t => {
     const h = harness(t); assert.ok(h.board, h.alerts.join('\n'));
@@ -92,6 +183,32 @@ test('status transitions retain progress and reject Done to Blocked without chan
     assert.equal(h.api.editObject(h.object, { status: 'Blocked' }), null); assert.equal(h.xml(), before);
     h.api.editObject(h.object, { status: 'Doing' }); assert.equal(h.api.getSummary(h.board).percent, 100);
 });
+
+test('new processes rotate colors while object borders stay neutral', t => { // CHANGE
+    const h = harness(t), second = h.api.addProcess(h.board); // NEW
+    assert.equal(second.getAttribute('roadmap_color'), '#059669'); // NEW
+    assert.equal(styleValue(h.graph.getCellStyle(h.process), 'strokeColor'), '#2563eb'); // NEW
+    assert.equal(styleValue(h.graph.getCellStyle(h.process), 'roadmapHeaderColor'), undefined); // NEW
+    assert.equal(styleValue(h.graph.getCellStyle(h.object), 'strokeColor'), '#64748b'); // CHANGE
+    h.api._test.setProcessColor(h.process, '#123456'); // NEW
+    assert.equal(h.process.getAttribute('roadmap_color'), '#123456'); // NEW
+    assert.equal(styleValue(h.graph.getCellStyle(h.process), 'strokeColor'), '#123456'); // NEW
+    assert.equal(styleValue(h.graph.getCellStyle(h.process), 'roadmapHeaderColor'), undefined); // CHANGE
+    assert.equal(styleValue(h.graph.getCellStyle(h.object), 'strokeColor'), '#64748b'); // CHANGE
+    h.api.editObject(h.object, { status: 'Doing', progress: 40 }); // NEW
+    assert.equal(styleValue(h.graph.getCellStyle(h.object), 'fillColor'), '#bfdbfe'); // NEW
+    assert.equal(styleValue(h.graph.getCellStyle(h.object), 'strokeColor'), '#64748b'); // CHANGE
+}); // NEW
+
+test('process overlay exposes color picker without inline date fields', async t => { // CHANGE
+    const h = harness(t); h.graph.setSelectionCell(h.process); h.api.refresh(); await frame(h); // NEW
+    const color = h.graph.container.querySelector('.trellis-roadmap-control input[aria-label="Process color"]'); // NEW
+    assert.ok(color); color.value = '#654321'; color.dispatchEvent(new h.w.Event('change', { bubbles: true })); // NEW
+    assert.equal(h.process.getAttribute('roadmap_color'), '#654321'); // NEW
+    assert.equal(styleValue(h.graph.getCellStyle(h.process), 'strokeColor'), '#654321'); // CHANGE
+    assert.equal(styleValue(h.graph.getCellStyle(h.object), 'strokeColor'), '#64748b'); // CHANGE
+    assert.equal(h.graph.container.querySelectorAll('.trellis-roadmap-control input[type="date"]').length, 0); // NEW
+}); // NEW
 
 test('transparent columns select the object; process handles are movable; view is exported from a clone', t => {
     const h = harness(t); h.graph.refresh();
@@ -136,6 +253,7 @@ test('Garden creation links all companions while unavailable Roadmap Manager lea
     assert.equal(roadmap.getAttribute('roadmap_task_module_id'), garden.getAttribute('trellis_task_module_id'));
     assert.equal(roadmap.getAttribute('roadmap_team_module_id'), garden.getAttribute('trellis_team_module_id'));
     assert.equal(h.typed(roadmap, 'board').length, 1);
+    assert.equal(h.model.getGeometry(h.typed(roadmap, 'board')[0]).y, h.graph.getStartSize(roadmap).height + 12); // NEW
     h.graph.__trellisRoadmapManager = null;
     const incompleteGarden = modules.createModuleAtPoint({ x: 500, y: 100 }, 'garden');
     assert.ok(incompleteGarden); assert.ok(incompleteGarden.getAttribute('trellis_task_module_id'));
@@ -182,6 +300,18 @@ test('deletion prompts only with tasks, preserves tasks by default, and undo res
     h.api.deleteRoadmapCells([h.process], 'delete'); assert.equal(h.model.getCell(task.id), undefined);
 });
 
+test('roadmap process and object overlays expose delete buttons', async t => { // NEW
+    const h = harness(t, ['Garden_Task_Manager.js', 'Modules_Standalone.js']); // NEW
+    const empty = h.api.addObject(h.process); h.graph.refresh(); h.graph.setSelectionCell(empty); h.api.refresh(); await frame(h); // NEW
+    const objectDelete = graphButton(h, 'Delete Object'); assert.ok(objectDelete); assert.equal(objectDelete.getAttribute('data-trellis-button-variant'), 'danger'); // NEW
+    objectDelete.click(); assert.equal(h.dialogs.length, 0); assert.equal(h.model.getCell(empty.id), undefined); // NEW
+    const task = h.api.createTaskFromRoadmapObject(h.object, { title: 'Prompt from overlay', linkMissingAssignees: false }); // NEW
+    h.graph.refresh(); h.graph.setSelectionCell(h.process); h.api.refresh(); await frame(h); // NEW
+    const processDelete = graphButton(h, 'Delete Process'); assert.ok(processDelete); assert.equal(processDelete.getAttribute('data-trellis-button-variant'), 'danger'); // NEW
+    processDelete.click(); assert.equal(h.dialogs.length, 1); assert.match(h.dialogs[0].textContent, /Delete Roadmap Content/); assert.ok(h.model.getCell(h.process.id)); assert.ok(h.model.getCell(task.id)); // CHANGE
+    h.ui.hideDialog(); h.api.deleteRoadmapCells([h.process], 'keep'); assert.ok(h.model.getCell(task.id)); // NEW
+}); // NEW
+
 test('copying planning content clears task links and source IDs while retaining dates and valid roles', t => {
     const h = harness(t, ['Garden_Task_Manager.js', 'Modules_Standalone.js']);
     const task = h.api.createTaskFromRoadmapObject(h.object, { title: 'Original only', linkMissingAssignees: false });
@@ -198,7 +328,7 @@ test('live gestures leave XML untouched until release, Escape cancels, and multi
     h.graph.refresh(); h.graph.setSelectionCells([h.object, second]);
     const state = h.graph.view.getState(h.object), before = h.xml();
     const event = (x, y) => ({ button: 0, clientX: x, clientY: y, preventDefault() {} });
-    const start = event(state.x + 10, state.y + 10), moved = event(state.x + 30, state.y + 10);
+    const start = event(state.x + 10, state.y + 10), moved = event(state.x + 10 + 5 * THIS_WEEK_DAY_PX, state.y + 10); // CHANGE
     h.api._test.beginGesture(h.object, 'move', start); h.api._test.previewGesture(moved);
     assert.equal(h.xml(), before); h.api._test.endGesture(true); assert.equal(h.xml(), before);
     const c = h.w.TrellisRoadmapCore, initial = c.parseDay(h.object.getAttribute('roadmap_start'));
@@ -242,8 +372,8 @@ test('clipped date gestures keep preview bars inside visible timeframes', t => {
     h.api.editObject(h.object, { startISO: core.formatDay(anchor - 20) }); h.api.setViewState(h.board, { today: { leftHidden: 3, rightHidden: 4 } }); h.graph.refresh(); // NEW
     const before = h.xml(), state = h.graph.view.getState(h.object); // NEW
     const event = { button: 0, clientX: state.x + 2, clientY: state.y + 2, preventDefault() {} }; // NEW
-    h.api._test.beginGesture(h.object, 'move', event); h.api._test.previewGesture({ ...event, clientX: event.clientX + 4 }); // NEW
-    assert.equal(h.graph.getCellGeometry(h.object).width, 28); assert.equal(h.graph.getCellGeometry(h.object).x, 0); // NEW
+    h.api._test.beginGesture(h.object, 'move', event); h.api._test.previewGesture({ ...event, clientX: event.clientX + THIS_WEEK_DAY_PX }); // CHANGE
+    assert.equal(Math.round(h.graph.getCellGeometry(h.object).width), 400); assert.equal(h.graph.getCellGeometry(h.object).x, 0); // CHANGE
     assert.equal(h.xml(), before); h.api._test.endGesture(true); assert.equal(h.xml(), before); // NEW
 }); // NEW
 
@@ -341,7 +471,7 @@ test('task dialog cancellation leaves no companion or document edit', t => { // 
 }); // NEW
 
 test('focused trim buttons refresh state across repeated clicks', async t => { // NEW
-    const h = harness(t); h.graph.setSelectionCell(h.board); h.api.refresh(); // NEW
+    const h = harness(t); h.api.setViewState(h.board, { today: { leftHidden: 0 } }); h.graph.setSelectionCell(h.board); h.api.refresh(); // CHANGE
     const frame = () => new Promise(resolve => h.w.requestAnimationFrame(resolve)); await frame(); // NEW
     const before = h.xml(); // NEW
     for (let hidden = 1; hidden <= 3; hidden++) { // NEW
@@ -371,10 +501,10 @@ function pointer(h, type, x, y, cell, extras = {}) { // NEW
 test('native graph handler previews without XML edits, commits dates and supports Escape', t => { // NEW
     const h = harness(t); h.graph.setGridEnabled(false); h.graph.refresh(); h.graph.setSelectionCell(h.object); // NEW
     const state = h.graph.view.getState(h.object), x = state.x + 12, y = state.y + 12, before = h.xml(), start = h.object.getAttribute('roadmap_start'); // NEW
-    pointer(h, 'mouseDown', x, y, h.object); pointer(h, 'mouseMove', x + 20, y, h.object); // NEW
+    pointer(h, 'mouseDown', x, y, h.object); pointer(h, 'mouseMove', x + 5 * THIS_WEEK_DAY_PX, y, h.object); // CHANGE
     assert.ok(h.graph.graphHandler.shape); assert.equal(h.xml(), before); // NEW
-    h.graph.escape(); pointer(h, 'mouseUp', x + 20, y, h.object); assert.equal(h.xml(), before); assert.equal(h.api._test.gesture, null); // CHANGE: release the cancelled native gesture before starting another. // NEW
-    pointer(h, 'mouseDown', x, y, h.object); pointer(h, 'mouseMove', x + 20, y, h.object); pointer(h, 'mouseUp', x + 20, y, h.object); // NEW
+    h.graph.escape(); pointer(h, 'mouseUp', x + 5 * THIS_WEEK_DAY_PX, y, h.object); assert.equal(h.xml(), before); assert.equal(h.api._test.gesture, null); // CHANGE: release the cancelled native gesture before starting another. // NEW
+    pointer(h, 'mouseDown', x, y, h.object); pointer(h, 'mouseMove', x + 5 * THIS_WEEK_DAY_PX, y, h.object); pointer(h, 'mouseUp', x + 5 * THIS_WEEK_DAY_PX, y, h.object); // CHANGE
     assert.equal(h.w.TrellisRoadmapCore.parseDay(h.object.getAttribute('roadmap_start')) - h.w.TrellisRoadmapCore.parseDay(start), 5); // NEW
     h.undo.undo(); assert.equal(h.xml(), before); h.undo.redo(); assert.notEqual(h.xml(), before); // NEW
 }); // NEW
@@ -383,7 +513,7 @@ test('native vertex handlers expose only horizontal external handles and resize 
     const h = harness(t); h.graph.setGridEnabled(false); h.graph.refresh(); h.graph.setSelectionCell(h.object); // NEW
     const handler = h.graph.selectionCellsHandler.getHandler(h.object), state = h.graph.view.getState(h.object), end = h.w.TrellisRoadmapCore.parseDay(h.object.getAttribute('roadmap_end')), before = h.xml(); // NEW
     assert.ok(handler instanceof h.w.mxVertexHandler); assert.equal(handler.isSizerVisible(4), true); assert.equal(handler.isSizerVisible(1), false); // NEW
-    handler.start(state.x + state.width, state.y + 13, 4); handler.resizeCell(h.object, 12, 0, 4); handler.reset(); // NEW
+    handler.start(state.x + state.width, state.y + 13, 4); handler.resizeCell(h.object, 3 * THIS_WEEK_DAY_PX, 0, 4); handler.reset(); // CHANGE
     assert.equal(h.w.TrellisRoadmapCore.parseDay(h.object.getAttribute('roadmap_end')), end + 3); h.undo.undo(); assert.equal(h.xml(), before); // NEW
     h.api.editObject(h.object, { endISO: h.object.getAttribute('roadmap_start') }); h.api.setViewState(h.board, { today: { multiplier: 0.01 } }); h.graph.refresh(); // NEW
     const short = h.graph.selectionCellsHandler.getHandler(h.object); short.redraw(); assert.ok(short.horizontalOffset > 0); // NEW
@@ -391,7 +521,7 @@ test('native vertex handlers expose only horizontal external handles and resize 
 
 test('native process movement shifts descendants once and persists compact row preference', t => { // NEW
     const h = harness(t), second = h.api.addProcess(h.board); h.graph.refresh(); const before = h.xml(), day = h.w.TrellisRoadmapCore.parseDay(h.object.getAttribute('roadmap_start')); // NEW
-    const moved = h.graph.moveCells([h.process, h.object], 20, 100, false); assert.equal(moved.length, 1); // NEW
+    const moved = h.graph.moveCells([h.process, h.object], 5 * THIS_WEEK_DAY_PX, 100, false); assert.equal(moved.length, 1); // CHANGE
     assert.equal(h.w.TrellisRoadmapCore.parseDay(h.object.getAttribute('roadmap_start')), day + 5); assert.equal(h.process.getAttribute('roadmap_preferred_row'), '1'); // NEW
     assert.equal(h.api.getLayout(h.board).packedProcesses.rows.length, 2); h.undo.undo(); assert.equal(h.xml(), before); // NEW
     assert.ok(second); // NEW
@@ -399,7 +529,7 @@ test('native process movement shifts descendants once and persists compact row p
 
 test('native movement reparents objects and cross-project transfers preserve calendar dates', t => { // NEW
     const h = harness(t), destination = h.api.addProcess(h.board), original = h.object.getAttribute('roadmap_start'); // NEW
-    assert.equal(h.graph.moveCells([h.object], 8, 0, false, destination)[0], h.object); assert.equal(h.model.getParent(h.object), destination); // NEW
+    assert.equal(h.graph.moveCells([h.object], 2 * THIS_WEEK_DAY_PX, 0, false, destination)[0], h.object); assert.equal(h.model.getParent(h.object), destination); // CHANGE
     assert.equal(h.w.TrellisRoadmapCore.parseDay(h.object.getAttribute('roadmap_start')) - h.w.TrellisRoadmapCore.parseDay(original), 2); // NEW
     const board = h.api.createSecondaryRoadmapInRoadmapModule(h.module), target = h.typed(board, 'process')[0], before = h.xml(), dates = [h.object.getAttribute('roadmap_start'), h.object.getAttribute('roadmap_end')]; // NEW
     h.graph.moveCells([h.object], 800, 300, false, target); assert.equal(h.model.getParent(h.object), target); assert.deepEqual([h.object.getAttribute('roadmap_start'), h.object.getAttribute('roadmap_end')], dates); // NEW
@@ -459,14 +589,24 @@ test('reader roadmap overlay name inputs are disabled and reject scripted writes
 
 test('native modifier-copy uses remapped planning data and clears task links', t => { // NEW
     const h = harness(t); const date = h.w.TrellisRoadmapCore.parseDay(h.object.getAttribute('roadmap_start')), before = h.xml(); // NEW
-    const result = h.graph.moveCells([h.object], 20, 0, true); assert.equal(result.length, 1, h.alerts.join(' | ')); assert.notEqual(result[0], h.object); // NEW
+    const result = h.graph.moveCells([h.object], 5 * THIS_WEEK_DAY_PX, 0, true); assert.equal(result.length, 1, h.alerts.join(' | ')); assert.notEqual(result[0], h.object); // CHANGE
     assert.equal(h.w.TrellisRoadmapCore.parseDay(result[0].getAttribute('roadmap_start')), date + 5); assert.equal(h.api.linkedTasks(result[0]).length, 0); h.undo.undo(); assert.equal(h.xml(), before); // NEW
 }); // NEW
 
 test('timeframe native resize changes only personal scale', t => { // NEW
     const h = harness(t), frame = h.typed(h.board, 'timeframe')[3], before = h.xml(), history = h.undo.history.length, geometry = h.graph.getCellGeometry(frame); // NEW
     const resized = geometry.clone(); resized.width *= 2; h.graph.resizeCells([frame], [resized]); // NEW
-    assert.equal(h.api.getViewState(h.board).today.scales[3], 8); assert.equal(h.xml(), before); assert.equal(h.undo.history.length, history); // NEW
+    assert.equal(h.api.getViewState(h.board).today.scales[3], 800 / 7); assert.equal(h.xml(), before); assert.equal(h.undo.history.length, history); // CHANGE
+}); // NEW
+
+test('timeframe resize hint reports effective px per day while dragging', t => { // NEW
+    const h = harness(t), frame = h.typed(h.board, 'timeframe')[3]; h.graph.refresh(); // NEW
+    const state = h.graph.view.getState(frame), start = { button: 0, clientX: state.x + state.width, clientY: state.y + 20, preventDefault() {} }; // NEW
+    h.api._test.beginGesture(frame, 'right', start); // NEW
+    h.api._test.previewGesture({ ...start, clientX: start.clientX + 400 }); // NEW
+    const hint = h.graph.container.querySelector('.trellis-roadmap-date-hint'); // NEW
+    assert.equal(hint.textContent, (800 / 7).toFixed(2) + ' px/day'); // NEW
+    h.api._test.endGesture(true); // NEW
 }); // NEW
 
 test('shared workspace handles move processes through the native handler', t => { // NEW
@@ -476,9 +616,18 @@ test('shared workspace handles move processes through the native handler', t => 
     const handle = h.graph.container.querySelector('[data-trellis-workspace-drag-handle="1"]'); assert.ok(handle); // NEW
     const state = h.graph.view.getState(h.process), x = state.x + 4, y = state.y + 4, before = h.xml(), start = h.w.TrellisRoadmapCore.parseDay(h.object.getAttribute('roadmap_start')); // NEW
     handle.dispatchEvent(new h.w.MouseEvent('mousedown', { button: 0, bubbles: true, clientX: x, clientY: y })); // NEW
-    h.w.document.dispatchEvent(new h.w.MouseEvent('mousemove', { button: 0, bubbles: true, clientX: x + 20, clientY: y })); assert.equal(h.xml(), before); // NEW
-    h.w.document.dispatchEvent(new h.w.MouseEvent('mouseup', { button: 0, bubbles: true, clientX: x + 20, clientY: y })); // NEW
+    h.w.document.dispatchEvent(new h.w.MouseEvent('mousemove', { button: 0, bubbles: true, clientX: x + 5 * THIS_WEEK_DAY_PX, clientY: y })); assert.equal(h.xml(), before); // CHANGE
+    h.w.document.dispatchEvent(new h.w.MouseEvent('mouseup', { button: 0, bubbles: true, clientX: x + 5 * THIS_WEEK_DAY_PX, clientY: y })); // CHANGE
     assert.equal(h.w.TrellisRoadmapCore.parseDay(h.object.getAttribute('roadmap_start')), start + 5); h.undo.undo(); assert.equal(h.xml(), before); // NEW
+}); // NEW
+
+test('roadmap module workspace handle moves the module without folding or deleting boards', t => { // NEW
+    const h = harness(t, ['Modules_Standalone.js', 'Deep_Click_Through.js']); h.graph.setGridEnabled(false); h.graph.refresh(); h.graph.setSelectionCells([h.module, h.board]); // NEW
+    const policy = h.graph.__trellisWorkspaceDragPolicy; policy.beginHandleDragForTests(h.module, { button: 0, clientX: 25, clientY: 25, preventDefault() {}, stopPropagation() {} }); // CHANGE
+    const dragCells = policy.getHandleDragCellsForTests(h.module); assert.equal(dragCells.length, 1); assert.equal(dragCells[0], h.module); // CHANGE
+    h.w.document.dispatchEvent(new h.w.MouseEvent('mousemove', { button: 0, bubbles: true, clientX: 65, clientY: 25 })); // NEW
+    h.w.document.dispatchEvent(new h.w.MouseEvent('mouseup', { button: 0, bubbles: true, clientX: 65, clientY: 25 })); // NEW
+    assert.equal(h.model.getParent(h.board), h.module); assert.equal(h.dialogs.length, 0); assert.ok(h.model.getCell(h.board.id)); // NEW
 }); // NEW
 
 test('Users permits only task navigation repair during authorized cross-project transfers', t => { // NEW

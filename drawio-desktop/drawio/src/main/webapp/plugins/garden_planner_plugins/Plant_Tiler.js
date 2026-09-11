@@ -2725,6 +2725,11 @@ Draw.loadPlugin(function (ui) {
             return !!(planner && typeof planner.isIrrigationModeActive === "function" && planner.isIrrigationModeActive());
         }
 
+        function isTeamPermissionModeActiveForOverlay() {
+            const users = typeof window !== "undefined" && window.Trellis && window.Trellis.users; // NEW
+            return !!(users && typeof users.isTeamPermissionModeActive === "function" && users.isTeamPermissionModeActive()); // NEW
+        }
+
         function getSingleSelectedOverlayTarget() {
             const cells = graph.getSelectionCells ? (graph.getSelectionCells() || []) : [];
             if (cells.length !== 1) return null;
@@ -2809,6 +2814,7 @@ Draw.loadPlugin(function (ui) {
         function positionToolbar() {
             if (gardenSettingsOverlaySuppressed) { hideToolbar(); return; }
             if (isIrrigationModeActiveForOverlay()) { hideToolbar(); return; }
+            if (isTeamPermissionModeActiveForOverlay()) { hideToolbar(); return; } // NEW
             if (!toolbar || !activeModuleCell || !anchorModelPoint) return;
             const host = ensureOverlayHost();
             if (host && toolbar.parentNode !== host) host.appendChild(toolbar);
@@ -2860,6 +2866,10 @@ Draw.loadPlugin(function (ui) {
                 hideToolbar();
                 return;
             }
+            if (isTeamPermissionModeActiveForOverlay()) { // NEW
+                hideToolbar(); // NEW
+                return; // NEW
+            } // NEW
             const target = getSingleSelectedOverlayTarget();
             clearHiddenModuleIfTargetChanged(target);
             if (!target || gestureHidden) {
@@ -2927,6 +2937,7 @@ Draw.loadPlugin(function (ui) {
         graph.getModel().addListener(mxEvent.REDO, scheduleRefresh);
         mxEvent.addListener(window, "resize", scheduleRefresh);
         mxEvent.addListener(window, "trellisIrrigationModeChanged", scheduleRefresh);
+        mxEvent.addListener(window, "trellisTeamPermissionModeChanged", function (evt) { if (evt && evt.detail && evt.detail.active) hideToolbar(); else scheduleRefresh(); }); // NEW
         setTimeout(scheduleRefresh, 0);
     }
 
@@ -5293,7 +5304,8 @@ Draw.loadPlugin(function (ui) {
         const disabledSet = readDisabledSet(groupCell);
         const slotStats = classifyPlantingSlots(previewCell, spacingXpx, spacingYpx, bandPx, disabledSet);
         const maxCircles = Math.max(1, Math.trunc(previewDraftNumber(draft.maxCircles ?? opts.maxCircles, 1000)));
-        const rotationDeg = previewStyleRotationDeg(activeGraph, groupCell);
+        const requestedRotationDeg = opts && Object.prototype.hasOwnProperty.call(opts, "rotationDeg") ? Number(opts.rotationDeg) : null;
+        const rotationDeg = Number.isFinite(requestedRotationDeg) ? requestedRotationDeg : previewStyleRotationDeg(activeGraph, groupCell); // CHANGE: spacing overlays can request an upright read-only preview without mutating the group.
         const label = getGroupDisplayName(previewCell, previewCell.getAttribute("plant_abbr") || "?");
         const abbr = previewCell.getAttribute("plant_abbr") || "?";
         const circles = [];

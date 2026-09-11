@@ -147,6 +147,8 @@ Draw.loadPlugin(function (ui) {
     }
 
     function getSelectionCellForNativeEvent(graph, evt, fallback) {
+        const selectedFrame = selectedRoadmapTimeframeClick(graph, evt, fallback); // NEW
+        if (selectedFrame) return selectedFrame; // NEW
         const deepest = getDeepestCellForNativeEvent(graph, evt, fallback);
         const plantTarget = getPlantSelectionTargetForEvent(graph, deepest, evt);
         if (plantTarget && (plantTarget !== deepest || isPlantTile(plantTarget))) return plantTarget;
@@ -157,6 +159,15 @@ Draw.loadPlugin(function (ui) {
         }
         return plantTarget || deepest;
     }
+
+    function selectedRoadmapTimeframeClick(graph, evt, cell) { // NEW
+        const selected = graph && graph.getSelectionCells ? graph.getSelectionCells() || [] : []; // NEW
+        const candidate = cell && cell.getAttribute && cell.getAttribute('roadmap_type') === 'timeframe' ? cell : selected.length === 1 ? selected[0] : null; // CHANGE
+        if (!graph || !candidate || !candidate.getAttribute || candidate.getAttribute('roadmap_type') !== 'timeframe') return null; // CHANGE
+        if (!graph.isCellSelected || !graph.isCellSelected(candidate) || mxEvent.isControlDown(evt) || mxEvent.isMetaDown(evt) || mxEvent.isShiftDown(evt)) return null; // CHANGE
+        const state = graph.view && graph.view.getState(candidate), pt = eventPointInGraphContainer(evt) || mxUtils.convertPoint(graph.container, mxEvent.getClientX(evt), mxEvent.getClientY(evt)); // CHANGE
+        return cellStateContainsPoint(graph, state, pt.x, pt.y) ? candidate : null; // CHANGE
+    } // NEW
 
     function isPlantTile(cell) {
         return !!cell && cell.getAttribute && cell.getAttribute('plant_tiler') === '1';
@@ -888,8 +899,8 @@ Draw.loadPlugin(function (ui) {
         const dragCells = getWorkspaceHandleDragCells(cell);
         const occupiedBedDrag = isOccupiedBedHandleCell(cell);
         restoreWorkspaceCursor();
-        if (occupiedBedDrag && graph.setSelectionCells) graph.setSelectionCells(dragCells);
-        else if (!occupiedBedDrag && (!graph.isCellSelected || !graph.isCellSelected(cell))) graph.setSelectionCell(cell);
+        if (graph.setSelectionCells) graph.setSelectionCells(dragCells); // CHANGE
+        else if (graph.setSelectionCell) graph.setSelectionCell(cell); // CHANGE
         workspaceDraggingHandleCell = cell;
         workspaceHoveredCell = cell;
         const handler = graph.graphHandler;
@@ -901,7 +912,7 @@ Draw.loadPlugin(function (ui) {
             handler.mouseDownY = mxEvent.getClientY(evt);
             handler.delayedSelection = true;
             handler.cell = cell;
-            if (occupiedBedDrag) handler.__trellisWorkspaceHandleDragCells = dragCells;
+            handler.__trellisWorkspaceHandleDragCells = dragCells; // CHANGE
             const move = function (moveEvt) {
                 updateIrrigationWorkspaceHandleSuppression(irrigationSuppressionApi, moveEvt); // CHANGE
                 handler.mouseMove(graph, createWorkspaceMouseEvent(moveEvt, cell));

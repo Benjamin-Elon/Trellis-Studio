@@ -183,6 +183,26 @@ test('sowing-window scoring ranks inside windows before nearest outside windows'
     assert.equal(after.hint, '14d late');
 });
 
+test('sowing season selector labels include relative timing', () => {
+    const windows = [
+        { id: 'spring', label: 'Spring (Mar 1-May 31)', startISO: '2026-03-01', endISO: '2026-05-31' },
+        { id: 'winter', label: 'Winter (Nov 22-Dec 31)', startISO: '2026-11-22', endISO: '2026-12-31', riskSummary: '100% window left' }
+    ];
+
+    assert.equal(hooks.formatSowingSeasonRelativeTiming(windows[0], '2026-03-15'), '77 days left');
+    assert.equal(hooks.formatSowingSeasonRelativeTiming(windows[1], '2026-11-01'), 'Starts in 21 days');
+    assert.equal(hooks.formatSowingSeasonRelativeTiming(windows[0], '2026-06-10'), 'Ended 10 days ago');
+
+    const state = hooks.buildSowingSeasonSelectorState({
+        sowingSeasons: windows,
+        activeSowingSeasonId: 'winter',
+        todayISO: '2026-11-01'
+    });
+    assert.equal(state.options[1].label, 'Winter (Nov 22-Dec 31) - Starts in 21 days - 100% window left');
+    assert.equal(state.boundsText, '2026-11-22 to 2026-12-31 - Starts in 21 days');
+    assert.equal(state.timingText, 'Starts in 21 days');
+});
+
 test('crop option sorting prefers suitability then name within lifecycle groups', () => {
     const crops = [
         makeCrop({ plant_id: 1, plant_name: 'Late Crop', annual: 1, biennial: 0, perennial: 0 }),
@@ -543,8 +563,8 @@ test('spacing preview model uses tiler-faithful draft group copies with a 1000 c
     };
     hooks.__testWindow.USL = hooks.__testWindow.USL || {};
     hooks.__testWindow.USL.tiler = {
-        buildDraftTilerGroupPreview(activeGraph, groupCell, draft) {
-            call = { activeGraph, groupCell, draft };
+        buildDraftTilerGroupPreview(activeGraph, groupCell, draft, opts) {
+            call = { activeGraph, groupCell, draft, opts };
             return {
                 status: 'ok',
                 rect: draft.rect,
@@ -576,12 +596,80 @@ test('spacing preview model uses tiler-faithful draft group copies with a 1000 c
     assert.equal(call.activeGraph, graph);
     assert.equal(call.groupCell, cell);
     assert.equal(call.draft.maxCircles, 1000);
+    assert.equal(JSON.stringify(call.opts), '{}');
     assert.equal(model.rows[0].groupPreview.label, 'Carrot');
     assert.equal(model.rows[0].groupPreview.rotationDeg, 15);
     assert.equal(model.rows[0].dots.circles[0].label, 'CAR');
     assert.equal(model.rows[0].dots.summarized, true);
     assert.match(model.warning, /Carrot: Preview capped at 1000 of 1002 plants/);
     assert.equal(model.rows[0].groupPreview.lodCollapsed, false);
+});
+
+test('spacing preview model supports upright bed context rows without status noise', () => {
+    let calls = [];
+    const bed = { id: 'bed-1', getAttribute: key => ({ garden_bed: '1', label: 'Bed 1' }[key] || '') };
+    const edited = { id: 'carrot-group', getAttribute: key => ({ tiler_group: '1', plant_abbr: 'CAR', label: 'Carrot' }[key] || '') };
+    const context = { id: 'lettuce-group', getAttribute: key => ({ tiler_group: '1', plant_abbr: 'LET', label: 'Lettuce' }[key] || '') };
+    const graph = {
+        getModel() {
+            return {
+                getCell(id) {
+                    return ({ 'bed-1': bed, 'carrot-group': edited, 'lettuce-group': context }[id] || null);
+                }
+            };
+        }
+    };
+    hooks.__testWindow.USL = hooks.__testWindow.USL || {};
+    hooks.__testWindow.USL.tiler = {
+        buildDraftTilerGroupPreview(activeGraph, groupCell, draft, opts) {
+            calls.push({ activeGraph, groupCell, draft, opts });
+            return {
+                status: 'ok',
+                rect: draft.rect,
+                label: groupCell.id,
+                abbr: groupCell.id.slice(0, 3).toUpperCase(),
+                groupLabelFontPx: 12,
+                groupLabelBandPx: 21,
+                rotationDeg: opts.rotationDeg,
+                circles: [],
+                total: 0,
+                actual: 0,
+                rendered: 0,
+                capped: false,
+                lodCollapsed: false
+            };
+        }
+    };
+
+    const model = hooks.layoutTools.buildSpacingPreviewModel(graph, [
+        {
+            cellId: 'carrot-group',
+            bedId: 'bed-1',
+            enabled: true,
+            previewUnrotated: true,
+            label: 'Carrot',
+            rect: { x: 10, y: 20, width: 90, height: 70 },
+            bedRect: { x: 0, y: 0, width: 200, height: 100 }
+        },
+        {
+            cellId: 'lettuce-group',
+            bedId: 'bed-1',
+            enabled: false,
+            previewOnly: true,
+            previewUnrotated: true,
+            label: 'Lettuce',
+            rect: { x: 100, y: 20, width: 70, height: 70 },
+            bedRect: { x: 0, y: 0, width: 200, height: 100 }
+        }
+    ]);
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].opts.rotationDeg, 0);
+    assert.equal(calls[1].opts.rotationDeg, 0);
+    assert.equal(JSON.stringify(model.bedPreview), JSON.stringify({ cellId: 'bed-1', rect: { x: 0, y: 0, width: 200, height: 100 } }));
+    assert.equal(model.status, 'invalid');
+    assert.match(model.warning, /Carrot: No plants remain inside the planting area/);
+    assert.doesNotMatch(model.warning, /Lettuce/);
 });
 
 test('active companion layout templates compute distinct placements', () => {
@@ -1161,11 +1249,11 @@ test('scheduler year selector owns visible date bounds and clamping', () => {
     assert.doesNotMatch(schedulerSource, /function syncSeasonStartYearFromPrimaryDate/);
 });
 
-test('latest harvest timeline marker reuses today boundary styling', () => {
-    assert.match(schedulerSource, /function appendVerticalTimelineBoundary\(\{ percent, label, tooltip, dataAttr \}\)/);
-    assert.match(schedulerSource, /label: 'Today'[\s\S]*tooltip: `Today: \$\{model\.todayISO\}`[\s\S]*dataAttr: 'data-usl-today-marker'/);
+test('today timeline boundary is blue while latest harvest remains neutral', () => {
+    assert.match(schedulerSource, /function appendVerticalTimelineBoundary\(\{ percent, label, tooltip, dataAttr, lineColor = '#64748b', labelColor = '#64748b' \}\)/);
+    assert.match(schedulerSource, /label: 'Today'[\s\S]*tooltip: `Today: \$\{model\.todayISO\}`[\s\S]*dataAttr: 'data-usl-today-marker'[\s\S]*lineColor: '#2563eb'[\s\S]*labelColor: '#1d4ed8'/);
     assert.match(schedulerSource, /label: model\.latestHarvestBoundary\.label[\s\S]*tooltip: model\.latestHarvestBoundary\.tooltip[\s\S]*dataAttr: 'data-usl-latest-harvest-marker'/);
-    assert.match(schedulerSource, /boundary\.style\.borderLeft = '1px dashed #64748b';/);
+    assert.match(schedulerSource, /boundary\.style\.borderLeft = '1px dashed ' \+ lineColor;/);
     assert.match(schedulerSource, /labelEl\.textContent = label;/);
 });
 
@@ -1323,4 +1411,61 @@ test('visible task after harvest extends generated task timeline end', () => {
         startISO: scheduleRange.startISO,
         endISO: '2026-06-01'
     });
+});
+
+test('generated task timeline renders blue today marker only inside display range', () => {
+    const document = hooks.__testWindow.document;
+    const container = document.createElement('div');
+    const tasks = [{ title: 'Water', startISO: '2026-04-10', endISO: '2026-04-12', previewRuleKey: 'water::0' }];
+    document.body.appendChild(container);
+
+    hooks.renderTaskTimelinePreview(container, {
+        tasks,
+        scheduleRange: { startISO: '2026-04-01', endISO: '2026-05-01' },
+        todayISO: '2026-04-15'
+    });
+
+    const todayLabel = container.querySelector('[data-usl-task-timeline-today-label="1"]');
+    const todayMarkers = Array.from(container.querySelectorAll('[data-usl-task-timeline-today-marker="1"]'));
+    assert.equal(todayLabel.textContent, 'Today');
+    assert.equal(todayLabel.style.color, 'rgb(29, 78, 216)');
+    assert.ok(todayMarkers.length >= 2);
+    assert.ok(todayMarkers.every(marker => marker.style.borderLeft.includes('rgb(37, 99, 235)') || marker.style.borderLeft.includes('#2563eb')));
+
+    hooks.renderTaskTimelinePreview(container, {
+        tasks,
+        scheduleRange: { startISO: '2026-04-01', endISO: '2026-05-01' },
+        todayISO: '2026-08-01'
+    });
+
+    assert.equal(container.querySelector('[data-usl-task-timeline-today-label="1"]'), null);
+    assert.equal(container.querySelector('[data-usl-task-timeline-today-marker="1"]'), null);
+});
+
+test('generated task timeline renders adaptive calendar ticks', () => {
+    const document = hooks.__testWindow.document;
+    const container = document.createElement('div');
+    const tasks = [{ title: 'Water', startISO: '2026-01-10', endISO: '2026-01-12', previewRuleKey: 'water::0' }];
+    document.body.appendChild(container);
+
+    hooks.renderTaskTimelinePreview(container, {
+        tasks,
+        scheduleRange: { startISO: '2026-01-01', endISO: '2026-05-01' },
+        todayISO: '2025-12-01'
+    });
+    assert.deepEqual(Array.from(container.querySelectorAll('[data-usl-task-timeline-month-label="1"]')).map(label => label.textContent), ['Jan', 'Feb', 'Mar', 'Apr', 'May']);
+
+    hooks.renderTaskTimelinePreview(container, {
+        tasks,
+        scheduleRange: { startISO: '2026-01-01', endISO: '2026-10-01' },
+        todayISO: '2025-12-01'
+    });
+    assert.deepEqual(Array.from(container.querySelectorAll('[data-usl-task-timeline-month-label="1"]')).map(label => label.textContent), ['Jan', 'Apr', 'Jul', 'Oct']);
+
+    hooks.renderTaskTimelinePreview(container, {
+        tasks: [{ title: 'Plan', startISO: '2026-12-20', endISO: '2027-01-05', previewRuleKey: 'plan::0' }],
+        scheduleRange: { startISO: '2026-11-15', endISO: '2027-02-15' },
+        todayISO: '2025-12-01'
+    });
+    assert.deepEqual(Array.from(container.querySelectorAll('[data-usl-task-timeline-year-label="1"]')).map(label => label.textContent), ['2027']);
 });
