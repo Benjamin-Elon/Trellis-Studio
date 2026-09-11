@@ -142,6 +142,7 @@ Draw.loadPlugin(function (ui) {
     function relativeDayText(day, today) { const offset = day - (today == null ? core.todayDay(new Date()) : today); return offset === 0 ? 'today' : Math.abs(offset) + ' ' + dayWord(offset) + (offset > 0 ? ' from now' : ' ago'); } // NEW
     function rangeDurationText(start, end) { const duration = end - start + 1; return duration + ' ' + dayWord(duration); } // NEW
     function tooltipDateLine(name, day, today) { return name + ': ' + core.formatDay(day) + ' (' + relativeDayText(day, today) + ')'; } // NEW
+    function roadmapDragHintText(dates, edge) { const today = core.todayDay(new Date()), day = edge === 'right' ? dates.end : dates.start; return relativeDayText(day, today) + '\nDuration: ' + rangeDurationText(dates.start, dates.end); } // NEW
     function roadmapTooltipText(cell, dates) { // NEW
         dates = dates || range(cell); const today = core.todayDay(new Date()); // NEW
         const details = [label(cell), tooltipDateLine('Start', dates.start, today), tooltipDateLine('End', dates.end, today), 'Duration: ' + rangeDurationText(dates.start, dates.end)]; // NEW
@@ -1007,7 +1008,7 @@ Draw.loadPlugin(function (ui) {
         const selected = graph.getSelectionCells(), targets = edge === 'move' && selected.includes(cell) ? moveRoots(selected) : [cell]; // NEW
         if (targets.some(item => ancestor(item, 'board') !== board)) return; // NEW
         const layout = getLayout(board); // NEW
-        gesture = { cell, edge, board, layout, targets, settings: getViewState(board), startPoint: point(event), boardState: graph.view.getState(board), geometry: graph.getCellGeometry(cell).clone(), delta: 0 }; // NEW
+        gesture = { cell, edge, board, layout, targets, settings: getViewState(board), startPoint: event && event.graphPoint || point(event), boardState: graph.view.getState(board), geometry: graph.getCellGeometry(cell).clone(), delta: 0 }; // CHANGE
         closeAssignmentPicker(); // NEW
         if (graph.tooltipHandler && graph.tooltipHandler.hide) graph.tooltipHandler.hide(); else if (graph.tooltipHandler && graph.tooltipHandler.hideTooltip) graph.tooltipHandler.hideTooltip(); // NEW
         if (!dateHint) { dateHint = element('div', '', 'trellis-roadmap-date-hint'); dateHint.style.cssText = 'position:absolute;z-index:10030;pointer-events:none;background:#fff;border:1px solid #111;padding:4px;font:12px Arial;white-space:pre-line;'; graph.container.appendChild(dateHint); } // CHANGE
@@ -1015,6 +1016,9 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function gestureDays(cell, dx, layout) { const dates = range(cell); return Math.round(core.xToDay(layout.timeline, core.dayToX(layout.timeline, dates.start) + dx) - dates.start); } // NEW
+    function previewDatesForGesture(cell, edge, dx, layout) { const dates = range(cell); if (edge === 'right') { const end = Math.max(dates.start, Math.round(core.xToDay(layout.timeline, core.dayToX(layout.timeline, dates.end + 1) + dx)) - 1); return { dates: { start: dates.start, end }, delta: end - dates.end }; } const delta = gestureDays(cell, dx, layout); const start = edge === 'move' ? dates.start + delta : Math.min(dates.end, dates.start + delta); return { dates: { start, end: edge === 'move' ? dates.end + delta : dates.end }, delta }; } // NEW: right resize previews from the right edge so piecewise timeframe scales match commit math.
+    function resizePreviewDx(g, bounds) { return g.edge === 'left' ? Number(bounds.x) - Number(g.geometry.x) : Number(bounds.x) + Number(bounds.width) - Number(g.geometry.x) - Number(g.geometry.width); } // NEW
+    function resizePreviewDy(g, bounds) { return Number(bounds.y) - Number(g.geometry.y); } // NEW
     function requestedRow(g, dy) { // NEW
         const rows = g.layout.packedProcesses.rows; let top = HEADER + PAD; // NEW
         const wanted = g.geometry.y + dy, candidates = rows.map((row, index) => { const distance = Math.abs(top - wanted); top += row.height + GAP; return { index, distance }; }); // NEW
@@ -1027,12 +1031,10 @@ Draw.loadPlugin(function (ui) {
         if (kind(g.cell) === 'board') dateHint.style.display = 'none'; // NEW
         else if (kind(g.cell) === 'timeframe') { const column = g.layout.timeline.columns[Number(attr(g.cell, 'roadmap_timeframe_index'))]; dateHint.textContent = (Math.max(0.05, (g.geometry.width + dx) / (column.end - column.start))).toFixed(2) + ' px/day'; } // CHANGE
         else { // NEW
-            g.delta = gestureDays(g.cell, dx, g.layout); const dates = range(g.cell); // NEW
-            const start = g.edge === 'right' ? dates.start : Math.min(dates.end, dates.start + g.delta); // NEW
-            const end = g.edge === 'left' ? dates.end : Math.max(start, dates.end + g.delta); // NEW
+            const preview = previewDatesForGesture(g.cell, g.edge, dx, g.layout), dates = range(g.cell); g.delta = preview.delta; // CHANGE
             const crossProject = g.edge === 'move' && nativeMove && nativeMove.target && ancestor(nativeMove.target, 'board') !== g.board; // NEW
-            const previewDates = { start: crossProject ? dates.start : g.edge === 'move' ? dates.start + g.delta : start, end: crossProject ? dates.end : end }; // NEW
-            dateHint.textContent = roadmapTooltipText(g.cell, g.edge === 'move' ? previewDates : semanticResizeDates(g.cell, previewDates)); // CHANGE
+            const previewDates = crossProject ? dates : preview.dates; // CHANGE
+            dateHint.textContent = roadmapDragHintText(g.edge === 'move' ? previewDates : semanticResizeDates(g.cell, previewDates), g.edge); // CHANGE
         } // NEW
         dateHint.style.left = current.x + 15 + 'px'; dateHint.style.top = current.y - 30 + 'px'; // NEW
     } // NEW
@@ -1103,8 +1105,9 @@ Draw.loadPlugin(function (ui) {
     RoadmapVertexHandler.prototype.isSizerVisible = function (index) { return kind(this.state.cell) === 'timeframe' ? index === 4 : index === 3 || index === 4; }; // NEW
     RoadmapVertexHandler.prototype.getHandleForEvent = function (me) { const index = mxVertexHandler.prototype.getHandleForEvent.call(this, me); return this.isSizerVisible(index) ? index : null; }; // NEW
     RoadmapVertexHandler.prototype.redrawHandles = function () { mxVertexHandler.prototype.redrawHandles.call(this); (this.sizers || []).forEach((sizer, index) => { if (sizer && sizer.node && !this.isSizerVisible(index)) sizer.node.style.display = 'none'; }); }; // NEW
-    RoadmapVertexHandler.prototype.start = function (x, y, index) { beginGesture(this.state.cell, index === 3 ? 'left' : 'right', { button: 0, clientX: x, clientY: y }); mxVertexHandler.prototype.start.apply(this, arguments); }; // NEW
-    RoadmapVertexHandler.prototype.mouseMove = function (sender, me) { mxVertexHandler.prototype.mouseMove.call(this, sender, me); if (this.index != null) previewGesture(me.getEvent()); }; // NEW
+    RoadmapVertexHandler.prototype.updateHint = function () { if (this.hint && this.hint.parentNode) this.hint.parentNode.removeChild(this.hint); this.hint = null; }; // NEW: roadmap date hints replace draw.io width/height hints.
+    RoadmapVertexHandler.prototype.start = function (x, y, index) { beginGesture(this.state.cell, index === 3 ? 'left' : 'right', { button: 0, clientX: x, clientY: y, graphPoint: { x, y } }); mxVertexHandler.prototype.start.apply(this, arguments); }; // CHANGE
+    RoadmapVertexHandler.prototype.mouseMove = function (sender, me) { mxVertexHandler.prototype.mouseMove.call(this, sender, me); if (this.index != null && gesture) previewGesture(me.getEvent(), this.unscaledBounds ? resizePreviewDx(gesture, this.unscaledBounds) : undefined, this.unscaledBounds ? resizePreviewDy(gesture, this.unscaledBounds) : undefined); }; // CHANGE
     RoadmapVertexHandler.prototype.resizeCell = function (cell, dx, dy, index) { const bounds = gesture.geometry.clone(); if (index === 3) { bounds.x += dx; bounds.width -= dx; } else bounds.width += dx; graph.resizeCells([cell], [bounds]); }; // NEW
     RoadmapVertexHandler.prototype.reset = function () { mxVertexHandler.prototype.reset.call(this); if (gesture && gesture.edge !== 'move') clearGesture(); }; // NEW
     const baseCreateHandler = graph.createHandler; // NEW

@@ -46,6 +46,14 @@ function styleValue(style, key) { return style && typeof style === 'object' ? st
 function callRecordingCanvas() { const calls = []; let fillColor = null, strokeColor = null; return { calls, setFillColor(color) { fillColor = color; calls.push(['setFillColor', color]); }, setStrokeColor(color) { strokeColor = color; calls.push(['setStrokeColor', color]); }, rect(x, y, width, height) { calls.push(['rect', x, y, width, height]); }, roundrect(x, y, width, height, arcWidth, arcHeight) { calls.push(['roundrect', x, y, width, height, arcWidth, arcHeight]); }, begin() { calls.push(['begin']); }, moveTo(x, y) { calls.push(['moveTo', x, y]); }, lineTo(x, y) { calls.push(['lineTo', x, y]); }, quadTo() { calls.push(['quadTo']); }, close() { calls.push(['close']); }, fillAndStroke() { calls.push(['fillAndStroke', fillColor, strokeColor]); } }; } // CHANGE
 function graphButton(h, text) { return Array.from(h.graph.container.querySelectorAll('button')).find(button => button.textContent === text); } // NEW
 const THIS_WEEK_DAY_PX = 400 / 7; // NEW
+const BOUNDARY_SCALES = [0.31, 0.73, 5, 11, 2, 6, 1.3, 0.42]; // NEW
+function relativeHintText(c, day) { const offset = day - c.todayDay(); return offset === 0 ? 'today' : Math.abs(offset) + ' ' + (Math.abs(offset) === 1 ? 'day' : 'days') + (offset > 0 ? ' from now' : ' ago'); } // NEW
+function expectedDragHint(c, dates, edge) { const day = edge === 'right' ? dates.end : dates.start, duration = dates.end - dates.start + 1; return relativeHintText(c, day) + '\nDuration: ' + duration + ' ' + (duration === 1 ? 'day' : 'days'); } // NEW
+function dateRange(c, cell) { return { start: c.parseDay(cell.getAttribute('roadmap_start')), end: c.parseDay(cell.getAttribute('roadmap_end')) }; } // NEW
+function applyBoundaryScaleView(h) { h.api.setViewState(h.board, { today: { scales: BOUNDARY_SCALES, multiplier: 1, leftHidden: 2, rightHidden: 0 } }); h.graph.refresh(); } // NEW
+function timelineDx(h, fromDay, toDay) { const c = h.w.TrellisRoadmapCore, timeline = h.api.getLayout(h.board).timeline; return c.dayToX(timeline, toDay) - c.dayToX(timeline, fromDay); } // NEW
+function pointerEvent(x, y) { return { button: 0, clientX: x, clientY: y, preventDefault() {} }; } // NEW
+function handlerMouseMove(h, handler, x, y, cell) { const rect = h.graph.container.getBoundingClientRect(); const event = new h.w.MouseEvent('mousemove', { bubbles: true, button: 0, clientX: x - h.graph.container.scrollLeft + rect.left, clientY: y - h.graph.container.scrollTop + rect.top }); Object.defineProperty(event, 'target', { value: h.graph.container }); const me = new h.w.mxMouseEvent(event, cell && h.graph.view.getState(cell)); me.graphX = x; me.graphY = y; handler.mouseMove(h.graph, me); } // NEW
 
 test('Main creation is usable, idempotent, inclusive, and gives secondary projects unused names', t => {
     const h = harness(t); assert.ok(h.board, h.alerts.join('\n'));
@@ -87,34 +95,72 @@ test('roadmap tooltips show relative dates and inclusive duration', t => { // NE
     assert.match(pastTip, /Duration: 3 days/); // NEW
 }); // NEW
 
-test('roadmap resize hint follows preview dates with full tooltip details', t => { // NEW
+test('roadmap resize hint shows relative active date and duration only', t => { // CHANGE
     const h = harness(t), c = h.w.TrellisRoadmapCore, today = c.todayDay(); h.graph.refresh(); // NEW
     let hiddenNativeTooltip = 0; const originalHide = h.graph.tooltipHandler.hide; h.graph.tooltipHandler.hide = function () { hiddenNativeTooltip += 1; return originalHide.apply(this, arguments); }; // NEW
     const state = h.graph.view.getState(h.object), right = { button: 0, clientX: state.x + state.width, clientY: state.y + 13, preventDefault() {} }; // NEW
     h.api._test.beginGesture(h.object, 'right', right); h.api._test.previewGesture({ ...right, clientX: right.clientX + 3 * THIS_WEEK_DAY_PX }); // NEW
     const hint = h.graph.container.querySelector('.trellis-roadmap-date-hint'); // NEW
     assert.equal(hiddenNativeTooltip, 1); // NEW
-    assert.match(hint.textContent, /^First Step\n/); // NEW
-    assert.match(hint.textContent, new RegExp('End: ' + c.formatDay(today + 10) + ' \\(10 days from now\\)')); // NEW
-    assert.match(hint.textContent, /Duration: 11 days/); // NEW
+    assert.equal(hint.textContent, '10 days from now\nDuration: 11 days'); // CHANGE
+    assert.doesNotMatch(hint.textContent, new RegExp(c.formatDay(today + 10) + '|First Step|Start:|End:')); // NEW
     h.api._test.endGesture(true); // NEW
     const left = { button: 0, clientX: state.x, clientY: state.y + 13, preventDefault() {} }; // NEW
     h.api._test.beginGesture(h.object, 'left', left); h.api._test.previewGesture({ ...left, clientX: left.clientX + 2 * THIS_WEEK_DAY_PX }); // NEW
-    assert.match(hint.textContent, new RegExp('Start: ' + c.formatDay(today + 2) + ' \\(2 days from now\\)')); // NEW
-    assert.match(hint.textContent, new RegExp('End: ' + c.formatDay(today + 7) + ' \\(7 days from now\\)')); // NEW
-    assert.match(hint.textContent, /Duration: 6 days/); // NEW
+    assert.equal(hint.textContent, '2 days from now\nDuration: 6 days'); // CHANGE
     h.api._test.endGesture(true); // NEW
-    h.graph.refresh(); const processState = h.graph.view.getState(h.process), processRight = { button: 0, clientX: processState.x + processState.width, clientY: processState.y + 13, preventDefault() {} }; // NEW
-    h.api._test.beginGesture(h.process, 'right', processRight); h.api._test.previewGesture({ ...processRight, clientX: processRight.clientX + 3 * THIS_WEEK_DAY_PX }); // NEW
-    assert.match(hint.textContent, /^Planning\n/); // NEW
-    assert.match(hint.textContent, new RegExp('End: ' + c.formatDay(today + 33) + ' \\(33 days from now\\)')); // NEW
-    assert.match(hint.textContent, /Duration: 34 days/); // NEW
+    h.graph.refresh(); const processState = h.graph.view.getState(h.process), processRight = { button: 0, clientX: processState.x + processState.width, clientY: processState.y + 13, preventDefault() {} }, processDx = timelineDx(h, today + 31, today + 34); // CHANGE
+    h.api._test.beginGesture(h.process, 'right', processRight); h.api._test.previewGesture({ ...processRight, clientX: processRight.clientX + processDx * h.graph.view.scale }); // CHANGE
+    assert.equal(hint.textContent, '33 days from now\nDuration: 34 days'); // CHANGE
     h.api._test.endGesture(true); // NEW
     const processLeft = { button: 0, clientX: processState.x, clientY: processState.y + 13, preventDefault() {} }; // NEW
     h.api._test.beginGesture(h.process, 'left', processLeft); h.api._test.previewGesture({ ...processLeft, clientX: processLeft.clientX + 2 * THIS_WEEK_DAY_PX }); // NEW
-    assert.match(hint.textContent, new RegExp('Start: ' + c.formatDay(today) + ' \\(today\\)')); // NEW
-    assert.match(hint.textContent, /Duration: 31 days/); // NEW
+    assert.equal(hint.textContent, 'today\nDuration: 31 days'); // CHANGE
     h.api._test.endGesture(true); // NEW
+}); // NEW
+
+test('roadmap right resize hint matches commit across custom timeframe scales', t => { // NEW
+    const h = harness(t), c = h.w.TrellisRoadmapCore, today = c.todayDay(); applyBoundaryScaleView(h); // NEW
+    h.api.editObject(h.object, { startISO: c.formatDay(today), endISO: c.formatDay(today + 6) }); h.graph.refresh(); // NEW
+    const state = h.graph.view.getState(h.object), start = pointerEvent(state.x + state.width, state.y + 13), dx = timelineDx(h, today + 7, today + 10); // NEW
+    h.api._test.beginGesture(h.object, 'right', start); h.api._test.previewGesture({ ...start, clientX: start.clientX + dx * h.graph.view.scale }); // NEW
+    const preview = h.graph.container.querySelector('.trellis-roadmap-date-hint').textContent; h.api._test.endGesture(true); // NEW
+    const bounds = h.graph.getCellGeometry(h.object).clone(); bounds.width += dx; h.api._test.resizeTimelineCell(h.object, bounds, 'right'); // NEW
+    assert.deepEqual(dateRange(c, h.object), { start: today, end: today + 9 }); // NEW
+    assert.equal(preview, expectedDragHint(c, dateRange(c, h.object), 'right')); // NEW
+}); // NEW
+
+test('roadmap left resize hint matches commit across custom timeframe scales', t => { // NEW
+    const h = harness(t), c = h.w.TrellisRoadmapCore, today = c.todayDay(); applyBoundaryScaleView(h); // NEW
+    h.api.editObject(h.object, { startISO: c.formatDay(today), endISO: c.formatDay(today + 5) }); h.graph.refresh(); // NEW
+    const state = h.graph.view.getState(h.object), start = pointerEvent(state.x, state.y + 13), dx = timelineDx(h, today, today - 3); // NEW
+    h.api._test.beginGesture(h.object, 'left', start); h.api._test.previewGesture({ ...start, clientX: start.clientX + dx * h.graph.view.scale }); // NEW
+    const preview = h.graph.container.querySelector('.trellis-roadmap-date-hint').textContent; h.api._test.endGesture(true); // NEW
+    const bounds = h.graph.getCellGeometry(h.object).clone(); bounds.x += dx; bounds.width -= dx; h.api._test.resizeTimelineCell(h.object, bounds, 'left'); // NEW
+    assert.deepEqual(dateRange(c, h.object), { start: today - 3, end: today + 5 }); // NEW
+    assert.equal(preview, expectedDragHint(c, dateRange(c, h.object), 'left')); // NEW
+}); // NEW
+
+test('roadmap process right resize hint keeps child-expanded dates across custom timeframe scales', t => { // NEW
+    const h = harness(t), c = h.w.TrellisRoadmapCore, today = c.todayDay(); applyBoundaryScaleView(h); // NEW
+    h.api.editObject(h.object, { startISO: c.formatDay(today + 5), endISO: c.formatDay(today + 6) }); h.api.editProcess(h.process, { startISO: c.formatDay(today), endISO: c.formatDay(today + 6) }); // NEW
+    h.cell(h.process, { label: 'Beyond Edge', roadmap_type: 'object', roadmap_start: c.formatDay(today + 11), roadmap_end: c.formatDay(today + 11), roadmap_status: 'Planned', roadmap_progress: '0' }); h.graph.refresh(); // NEW
+    const state = h.graph.view.getState(h.process), start = pointerEvent(state.x + state.width, state.y + 13), dx = timelineDx(h, today + 7, today + 10); // NEW
+    h.api._test.beginGesture(h.process, 'right', start); h.api._test.previewGesture({ ...start, clientX: start.clientX + dx * h.graph.view.scale }); // NEW
+    const preview = h.graph.container.querySelector('.trellis-roadmap-date-hint').textContent; h.api._test.endGesture(true); // NEW
+    const bounds = h.graph.getCellGeometry(h.process).clone(); bounds.width += dx; h.api._test.resizeTimelineCell(h.process, bounds, 'right'); // NEW
+    assert.deepEqual(dateRange(c, h.process), { start: today, end: today + 11 }); // NEW
+    assert.equal(preview, expectedDragHint(c, dateRange(c, h.process), 'right')); // NEW
+}); // NEW
+
+test('roadmap move hint matches commit across custom timeframe scales', t => { // NEW
+    const h = harness(t), c = h.w.TrellisRoadmapCore, today = c.todayDay(); applyBoundaryScaleView(h); // NEW
+    h.api.editObject(h.object, { startISO: c.formatDay(today + 5), endISO: c.formatDay(today + 6) }); h.graph.refresh(); // NEW
+    const state = h.graph.view.getState(h.object), start = pointerEvent(state.x + 8, state.y + 13), dx = timelineDx(h, today + 5, today + 9); // NEW
+    h.api._test.beginGesture(h.object, 'move', start); h.api._test.previewGesture({ ...start, clientX: start.clientX + dx * h.graph.view.scale }); // NEW
+    const preview = h.graph.container.querySelector('.trellis-roadmap-date-hint').textContent; h.api._test.endGesture(false); // NEW
+    assert.deepEqual(dateRange(c, h.object), { start: today + 9, end: today + 10 }); // NEW
+    assert.equal(preview, expectedDragHint(c, dateRange(c, h.object), 'move')); // NEW
 }); // NEW
 
 test('roadmap process renderer honors rounded style', t => { // NEW
@@ -519,6 +565,18 @@ test('native vertex handlers expose only horizontal external handles and resize 
     assert.equal(h.w.TrellisRoadmapCore.parseDay(h.object.getAttribute('roadmap_end')), end + 3); h.undo.undo(); assert.equal(h.xml(), before); // NEW
     h.api.editObject(h.object, { endISO: h.object.getAttribute('roadmap_start') }); h.api.setViewState(h.board, { today: { multiplier: 0.01 } }); h.graph.refresh(); // NEW
     const short = h.graph.selectionCellsHandler.getHandler(h.object); short.redraw(); assert.ok(short.horizontalOffset > 0); // NEW
+}); // NEW
+
+test('native vertex resize hint uses handler bounds under viewport offset and scroll', t => { // NEW
+    const h = harness(t), c = h.w.TrellisRoadmapCore, today = c.todayDay(); h.graph.setGridEnabled(false); h.graph.view.setScale(1.35); h.graph.container.scrollLeft = 240; h.graph.container.scrollTop = 60; h.graph.container.getBoundingClientRect = () => ({ left: 100, top: 45, right: 1100, bottom: 745, width: 1000, height: 700 }); // NEW
+    h.graph.refresh(); h.graph.setSelectionCell(h.object); // NEW
+    const handler = h.graph.selectionCellsHandler.getHandler(h.object), state = h.graph.view.getState(h.object), before = h.xml(); // NEW
+    const startX = state.x + state.width, startY = state.y + 13, dx = 3 * THIS_WEEK_DAY_PX * h.graph.view.scale; // NEW
+    handler.start(startX, startY, 4); handlerMouseMove(h, handler, startX + dx, startY, h.object); // NEW
+    const hint = h.graph.container.querySelector('.trellis-roadmap-date-hint'); // NEW
+    assert.equal(hint.textContent, expectedDragHint(c, { start: today, end: today + 10 }, 'right')); // NEW
+    assert.equal(h.graph.container.querySelector('.geHint'), null); // NEW
+    assert.equal(h.xml(), before); handler.reset(); // NEW
 }); // NEW
 
 test('native process movement shifts descendants once and persists compact row preference', t => { // NEW
