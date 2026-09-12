@@ -2343,10 +2343,11 @@ test('derived sowing season summary matches selector labels', () => {
     const selectorLabels = hooks.buildSowingSeasonSelectorState({
         sowingSeasons: windows,
         activeSowingSeasonId: 'spring',
-        startISO: '2026-04-15'
+        startISO: '2026-04-15',
+        todayISO: '2026-09-11' // CHANGE: keep relative timing labels deterministic.
     }).options.map(option => option.label);
-    const summary = hooks.formatSowingSeasonsSummary(windows);
-    assert.equal(JSON.stringify(selectorLabels), JSON.stringify(windows.map(window => window.label)));
+    const summary = hooks.formatSowingSeasonsSummary(windows, '2026-09-11'); // CHANGE: summary should mirror the selector's decorated labels.
+    assert.equal(JSON.stringify(selectorLabels), JSON.stringify(windows.map(window => hooks.formatSowingSeasonDisplayLabel(window, '2026-09-11')))); // CHANGE
     selectorLabels.forEach(label => assert.match(summary, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))));
 });
 

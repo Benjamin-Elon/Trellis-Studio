@@ -4666,13 +4666,18 @@ Draw.loadPlugin(function (ui) {
         const days = daysBetweenUTC(end, today);
         return `Ended ${days} ${pluralDays(days)} ago`;
     }
-    function formatSowingSeasonsSummary(windows) {
+    function formatSowingSeasonDisplayLabel(window, todayISO = localTodayISO()) { // NEW
+        const timing = formatSowingSeasonRelativeTiming(window, todayISO); // NEW
+        const suffixes = [timing, window?.riskSummary].filter(Boolean); // NEW
+        return suffixes.length ? `${window.label} - ${suffixes.join(' - ')}` : window.label; // NEW
+    } // NEW
+    function formatSowingSeasonsSummary(windows, todayISO = localTodayISO()) { // CHANGE: summary labels mirror the selector's relative timing copy.
         const normalized = normalizeSowingSeasons(windows);
         if (!normalized.length) return 'No feasible sowing seasons.';
         return normalized.map(window => {
             const risk = window.riskSummary ? ` [${window.riskSummary}]` : '';
             const details = (window.diagnostics || []).slice(0, 6).map(diagnostic => diagnostic?.message).filter(Boolean);
-            return `${window.label}: ${window.startISO} to ${window.endISO}${risk}${details.length ? `\n  ${details.join('\n  ')}` : ''}`;
+            return `${formatSowingSeasonDisplayLabel(window, todayISO)}: ${window.startISO} to ${window.endISO}${risk}${details.length ? `\n  ${details.join('\n  ')}` : ''}`; // CHANGE
         }).join('\n');
     }
     function buildSowingSeasonSelectorState({
@@ -4691,9 +4696,7 @@ Draw.loadPlugin(function (ui) {
             options.push({ value: '', label: 'No feasible sowing season', disabled: false });
         } else {
             windows.forEach(window => {
-                const timing = formatSowingSeasonRelativeTiming(window, todayISO);
-                const suffixes = [timing, window.riskSummary].filter(Boolean);
-                options.push({ value: window.id, label: suffixes.length ? `${window.label} - ${suffixes.join(' - ')}` : window.label, disabled: false }); // CHANGE: selected season shows relative timing.
+                options.push({ value: window.id, label: formatSowingSeasonDisplayLabel(window, todayISO), disabled: false }); // CHANGE: share season option text with the summary.
             });
         }
         const activeWindow = windows.find(window => window.id === String(activeSowingSeasonId || '').trim()) || null;
@@ -16228,6 +16231,7 @@ Draw.loadPlugin(function (ui) {
             projectSowingSeasonsForPrimaryDate,
             formatSowingSeasonsSummary,
             formatSowingSeasonRelativeTiming, // CHANGE: regression tests cover selected-season relative timing copy.
+            formatSowingSeasonDisplayLabel, // NEW
             formatScheduleQualityDiagnosticRanges,
             buildSowingSeasonSelectorState,
             pickDefaultSowingSeasonId,

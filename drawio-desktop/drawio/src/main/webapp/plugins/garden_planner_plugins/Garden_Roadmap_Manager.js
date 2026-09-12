@@ -20,7 +20,7 @@ Draw.loadPlugin(function (ui) {
     const preferences = new Map(), layouts = new Map();
     let projections = new WeakMap(), committingCanonical = false, fixedBoardMoves = new Set(); // NEW
     let commandDepth = 0, journal = null, gesture = null, refreshPending = false, boardRegistry = null, destroyed = false; // CHANGE
-    let lastToday = core.todayDay(), overlay = null, dateHint = null, assignmentPicker = null, dialogError = null; // CHANGE
+    let lastToday = core.todayDay(), overlay = null, dateHint = null, dateHud = null, assignmentPicker = null, dialogError = null; // CHANGE
     const columnPanels = new WeakMap(); // NEW // CHANGE
     const baseGeometry = graph.getCellGeometry.bind(graph);
     const baseVisible = graph.isCellVisible ? graph.isCellVisible.bind(graph) : () => true;
@@ -140,6 +140,9 @@ Draw.loadPlugin(function (ui) {
     function summaryText(cell) { const result = getSummary(cell); return Math.round(result.percent) + '% · ' + result.blockedCount + ' blocked'; }
     function dayWord(days) { return Math.abs(days) === 1 ? 'day' : 'days'; } // NEW
     function relativeDayText(day, today) { const offset = day - (today == null ? core.todayDay(new Date()) : today); return offset === 0 ? 'today' : Math.abs(offset) + ' ' + dayWord(offset) + (offset > 0 ? ' from now' : ' ago'); } // NEW
+    function relativeDayShortText(day, today) { const offset = day - (today == null ? core.todayDay(new Date()) : today); return offset === 0 ? 'today' : Math.abs(offset) + 'd' + (offset > 0 ? ' from now' : ' ago'); } // NEW
+    function compactDateText(day) { const iso = core.formatDay(day); return iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(2, 4); } // NEW
+    function compactDurationText(start, end) { return (end - start + 1) + 'd'; } // NEW
     function rangeDurationText(start, end) { const duration = end - start + 1; return duration + ' ' + dayWord(duration); } // NEW
     function tooltipDateLine(name, day, today) { return name + ': ' + core.formatDay(day) + ' (' + relativeDayText(day, today) + ')'; } // NEW
     function roadmapDragHintText(dates, edge) { const today = core.todayDay(new Date()), day = edge === 'right' ? dates.end : dates.start; return relativeDayText(day, today) + '\nDuration: ' + rangeDurationText(dates.start, dates.end); } // NEW
@@ -400,7 +403,9 @@ Draw.loadPlugin(function (ui) {
             if (changes.progress != null && status.status === 'Doing') {
                 const progress = Number(changes.progress); if (!Number.isInteger(progress) || progress < 0 || progress > 100) throw new Error('Doing progress must be a whole percentage from 0 to 100.'); status.progress = progress;
             }
-            patch(cell, { label: changes.name == null ? label(cell) : String(changes.name).trim() || 'Roadmap Object', roadmap_start: core.formatDay(dates.start), roadmap_end: core.formatDay(dates.end), roadmap_status: status.status, roadmap_progress: status.progress, roadmap_notes: changes.notes == null ? attr(cell, 'roadmap_notes') : String(changes.notes) });
+            const hasNotes = Object.prototype.hasOwnProperty.call(changes, 'notes'); // CHANGE
+            const notes = hasNotes ? (String(changes.notes == null ? '' : changes.notes).trim() ? String(changes.notes) : null) : attr(cell, 'roadmap_notes') || null; // CHANGE
+            patch(cell, { label: changes.name == null ? label(cell) : String(changes.name).trim() || 'Roadmap Object', roadmap_start: core.formatDay(dates.start), roadmap_end: core.formatDay(dates.end), roadmap_status: status.status, roadmap_progress: status.progress, roadmap_notes: notes }); // CHANGE
             const style = objectStyle(parent(cell), status.status); // CHANGE
             if (model.setStyle) model.setStyle(cell, style);
             expandProcess(parent(cell)); saveCanonicalLayout(ancestor(cell, 'board')); return cell;
@@ -755,14 +760,18 @@ Draw.loadPlugin(function (ui) {
     graph.getExportVariables = function () { return Object.assign({}, baseExportVariables ? baseExportVariables.apply(this, arguments) : {}, { __trellisRoadmapProjection: exportProjection() }); }; // NEW
 
     function element(tag, text, className) { const node = document.createElement(tag); if (text != null) node.textContent = text; if (className) node.className = className; return node; }
-    function button(text, action, host, disabled) {
+    function button(text, action, host, disabled, options) { // CHANGE
+        const opts = options || {}; // NEW
         const node = element('button', text); node.type = 'button'; node.disabled = !!disabled;
         node.style.cssText = 'font:12px Arial;padding:3px 6px;cursor:pointer;'; // CHANGE
-        const variant = /^(Add|Create|Save|Apply|Link)/.test(text) ? 'add' : /^Delete/.test(text) ? 'danger' : /^(Open|Edit|Today|Inception)/.test(text) ? 'open' : 'neutral'; // NEW
+        const variant = opts.variant || (/^(Add|Create|Save|Apply|Link)/.test(text) ? 'add' : /^Delete/.test(text) ? 'danger' : /^(Open|Edit|Today|Inception)/.test(text) ? 'open' : 'neutral'); // CHANGE
         const shared = graph.__trellisTaskUi; // NEW
-        if (shared) shared.applyButtonStyle(node, variant, { compact: true, active: text.includes('✓') }); // NEW
+        if (shared) shared.applyButtonStyle(node, variant, { compact: true, active: opts.active === true || text.includes('✓') }); // CHANGE
         else if (window.Trellis && window.Trellis.ui && window.Trellis.ui.applyButtonStyle) window.Trellis.ui.applyButtonStyle(node, variant, { compact: true }); // NEW
         else { node.style.border = '1px solid #6b7280'; node.style.color = '#111827'; node.style.background = '#fff'; } // NEW
+        if (opts.active) { node.setAttribute('aria-pressed', 'true'); node.style.fontWeight = '700'; node.style.borderColor = '#2563eb'; node.style.background = '#eff6ff'; node.style.color = '#1e3a8a'; } // NEW
+        else if (opts.pressed === false) node.setAttribute('aria-pressed', 'false'); // NEW
+        if (opts.title) node.title = opts.title; // NEW
         node.addEventListener('mousedown', event => mxEvent.consume(event)); // NEW
         node.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); action(); });
         if (host) host.appendChild(node); return node;
@@ -810,6 +819,47 @@ Draw.loadPlugin(function (ui) {
         }, kind(cell) === 'object' ? 590 : 335);
     }
 
+    function clampProgress(value) { return Math.max(0, Math.min(100, Math.round(Number(value) || 0))); } // NEW
+    function statusTransitionIssue(cells, next) { // NEW
+        const conflicts = []; // NEW
+        (cells || []).forEach(cell => { try { core.transitionStatus(objectRecord(cell), next); } catch (_) { conflicts.push(label(cell)); } }); // NEW
+        return conflicts.length ? 'Cannot change the selected status for: ' + conflicts.join(', ') : ''; // NEW
+    } // NEW
+    function renderStatusButtons(cells, host) { // NEW
+        const objects = Array.from(new Set(cells || [])).filter(cell => kind(cell) === 'object'); // NEW
+        if (!objects.length) return null; // NEW
+        const row = element('div', null, 'trellis-roadmap-status-buttons'); // NEW
+        row.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;align-items:center;'; // NEW
+        const statuses = new Set(objects.map(cell => attr(cell, 'roadmap_status') || 'Planned')); // NEW
+        const active = objects.length === 1 || statuses.size === 1 ? Array.from(statuses)[0] : ''; // CHANGE
+        ['Planned', 'Doing', 'Blocked', 'Done'].filter(value => objects.some(cell => (attr(cell, 'roadmap_status') || 'Planned') !== value) && !statusTransitionIssue(objects, value)).forEach(value => { // CHANGE: show only applicable status actions.
+            const issue = statusTransitionIssue(objects, value); // NEW
+            const denied = objects.some(cell => !allowed(cell)); // NEW
+            button(value, () => setObjectStatuses(objects, value), row, denied || !!issue, { active: active === value, pressed: active !== value, variant: active === value ? 'open' : 'neutral', title: issue }); // NEW
+        }); // NEW
+        host.appendChild(row); return row; // NEW
+    } // NEW
+    function renderDoingProgress(cell, host) { // NEW
+        if (kind(cell) !== 'object' || (attr(cell, 'roadmap_status') || 'Planned') !== 'Doing') return null; // NEW
+        const progress = clampProgress(attr(cell, 'roadmap_progress')); // NEW
+        const row = element('div', null, 'trellis-roadmap-progress'); // NEW
+        row.style.cssText = 'display:flex;gap:4px;align-items:center;'; // NEW
+        const value = element('span', progress + '%'); // NEW
+        value.setAttribute('aria-label', 'Doing percentage'); // NEW
+        button('-10', () => editObject(cell, { progress: clampProgress(progress - 10) }), row, !allowed(cell) || progress <= 0); // NEW
+        row.appendChild(value); // NEW
+        button('+10', () => editObject(cell, { progress: clampProgress(progress + 10) }), row, !allowed(cell) || progress >= 100); // NEW
+        host.appendChild(row); return row; // NEW
+    } // NEW
+    function showNoteDialog(cell) { // NEW
+        const existing = attr(cell, 'roadmap_notes'); // NEW
+        dialog(existing ? 'Edit Note' : 'Add Note', body => { // NEW
+            const notes = inputField(body, 'Note', existing, 'textarea'); // NEW
+            notes.rows = 5; // NEW
+            dialogActions(body, () => { if (editObject(cell, { notes: notes.value })) closeDialog(); }); // NEW
+        }, 300); // NEW
+    } // NEW
+
     function closeAssignmentPicker() { if (assignmentPicker) assignmentPicker.remove(); assignmentPicker = null; } // NEW
     function selectionSignature(cells) { return cells.map(cell => id(cell) + ':' + attr(cell, 'roadmap_assignee_role_ids_json') + ':' + id(parent(cell))).sort().join('|'); } // NEW
     /** Task-style anchored picker: mixed assignments remain unchanged until explicitly toggled. */ // NEW
@@ -842,7 +892,7 @@ Draw.loadPlugin(function (ui) {
         const state = graph.view.getState(cells[0]), bounds = shared ? shared.getCellVisualBounds(cells[0], host) : state; // NEW
         if (bounds) { picker.style.left = Math.max(0, bounds.x + 20) + 'px'; picker.style.top = Math.max(0, bounds.y + bounds.height + 9) + 'px'; } // NEW
     } // NEW
-    function showStatusDialog(cells) { dialog('Change Status', body => { const select = element('select'); select.setAttribute('aria-label', 'Status'); ['Planned', 'Doing', 'Blocked', 'Done'].forEach(value => select.appendChild(element('option', value))); body.appendChild(select); dialogActions(body, () => { if (setObjectStatuses(cells, select.value)) closeDialog(); }, 'Apply'); }, 220); } // NEW
+    function showStatusDialog(cells) { dialog('Change Status', body => { renderStatusButtons(cells, body); button('Close', closeDialog, body); }, 220); } // CHANGE
 
     function taskBoards(moduleCell) {
         const taskModule = taskModuleFor(moduleCell), api = graph.__trellisTaskManager;
@@ -946,7 +996,44 @@ Draw.loadPlugin(function (ui) {
         button('Reset scale', () => changeView({ scales: core.normalizeView()[mode].scales, multiplier: 1 }), columns); // CHANGE
     } // NEW
 
+    function ensureDateHud() { // NEW
+        if (!dateHud) {
+            dateHud = element('div', null, 'trellis-roadmap-date-hud');
+            dateHud.style.cssText = 'position:absolute;left:0;top:0;z-index:10025;pointer-events:none;font:11px Arial,sans-serif;color:#111827;';
+            graph.container.appendChild(dateHud);
+        }
+        return dateHud;
+    } // NEW
+    function dateHudContext() { // NEW
+        if (gesture && ['process', 'object'].includes(kind(gesture.cell))) {
+            const dates = gesture.previewDates || range(gesture.cell);
+            return { cell: gesture.cell, dates, moved: { left: gesture.edge === 'left' || gesture.edge === 'move', right: gesture.edge === 'right' || gesture.edge === 'move' } };
+        }
+        const selected = graph.getSelectionCells ? graph.getSelectionCells() : []; // NEW
+        if (selected.length !== 1 || !['process', 'object'].includes(kind(selected[0]))) return null; // NEW
+        return { cell: selected[0], dates: range(selected[0]), moved: {} }; // NEW
+    } // NEW
+    function renderDateHud() { // NEW
+        if (!document || !graph.container) return; // NEW
+        const ctx = dateHudContext(), host = ensureDateHud(); host.replaceChildren(); // NEW
+        if (!ctx || !shouldRenderRoadmapControlsFor(ctx.cell) || !graph.isCellVisible(ctx.cell)) { host.style.display = 'none'; return; } // NEW
+        const state = graph.view.getState(ctx.cell); if (!state) { host.style.display = 'none'; return; } // NEW
+        host.style.display = 'block'; // NEW
+        const today = core.todayDay(new Date()), sideGap = 14; // CHANGE: give resize handles breathing room beside the date badges.
+        function badge(className, text, left, top, transform) { // NEW
+            const node = element('div', text, 'trellis-roadmap-date-badge ' + className); // NEW
+            node.style.cssText = 'position:absolute;background:#fff;border:1px solid #111;border-radius:4px;padding:2px 5px;line-height:13px;white-space:pre;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.12);'; // NEW
+            node.style.left = Math.round(left) + 'px'; node.style.top = Math.round(top) + 'px'; node.style.transform = transform; // NEW
+            host.appendChild(node); return node; // NEW
+        } // NEW
+        function sideText(day, moved) { return compactDateText(day) + (moved ? '\n' + relativeDayShortText(day, today) : ''); } // NEW
+        badge('trellis-roadmap-date-badge-start', sideText(ctx.dates.start, ctx.moved.left), state.x - sideGap, state.y + state.height / 2, 'translate(-100%,-50%)'); // NEW
+        badge('trellis-roadmap-date-badge-end', sideText(ctx.dates.end, ctx.moved.right), state.x + state.width + sideGap, state.y + state.height / 2, 'translate(0,-50%)'); // NEW
+        badge('trellis-roadmap-date-badge-duration', compactDurationText(ctx.dates.start, ctx.dates.end), state.x + state.width / 2, state.y - 6, 'translate(-50%,-100%)'); // NEW
+    } // NEW
+
     function renderControls() {
+        renderDateHud(); // NEW
         if (!document || !graph.container || gesture) return; // CHANGE
         if (!overlay) { overlay = element('div', null, 'trellis-roadmap-controls'); overlay.style.cssText = 'position:absolute;left:0;top:0;z-index:10020;pointer-events:none;'; (graph.__trellisTaskUi ? graph.__trellisTaskUi.ensureControlHost() : graph.container).appendChild(overlay); }
         if (overlay.contains(document.activeElement) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return; // CHANGE: focused buttons must refresh their captured perspective/trim settings after every click.
@@ -965,7 +1052,7 @@ Draw.loadPlugin(function (ui) {
         if (board) { const host = panel(board, -85); if (host) toolbar(board, host); } // NEW
         const selected = graph.getSelectionCells(); // NEW
         if (selected.length > 1) { // NEW
-            if (selected.every(item => kind(item) === 'object' && ancestor(item, 'board') === board)) { const state = graph.view.getState(cell), host = state && panel(cell, state.height + 9); if (host) { host.appendChild(element('span', selected.length + ' objects selected')); button('Assign', () => showAssignmentDialog(selected), host, selected.some(item => !allowed(item))); button('Status', () => showStatusDialog(selected), host, selected.some(item => !allowed(item))); } } // NEW
+            if (selected.every(item => kind(item) === 'object' && ancestor(item, 'board') === board)) { const state = graph.view.getState(cell), host = state && panel(cell, state.height + 9); if (host) { host.appendChild(element('span', selected.length + ' objects selected')); renderStatusButtons(selected, host); button('Assign', () => showAssignmentDialog(selected), host, selected.some(item => !allowed(item))); } } // CHANGE
             positionControls(); return; // NEW
         }
         if (type === 'module') {
@@ -978,7 +1065,7 @@ Draw.loadPlugin(function (ui) {
             typedChildren(cell, 'board').filter(item => item !== main).forEach(item => button(label(item), () => openBoard(item), host));
         } else if (type === 'process' || type === 'object') {
             const state = graph.view.getState(cell), host = state && panel(cell, state.height + 8); if (!host) return;
-            nameControl(host, cell); button('Edit', () => showEditDialog(cell), host, !allowed(cell));
+            nameControl(host, cell); // CHANGE
             const deleteLabel = type === 'process' ? 'Delete Process' : 'Delete Object'; // NEW: defer delete until the overlay's type-specific controls are appended.
             if (type === 'process') {
                 const color = inputField(host, 'Process color', processColor(cell) || nextProcessColor(board), 'color'); // NEW
@@ -987,9 +1074,11 @@ Draw.loadPlugin(function (ui) {
                 color.addEventListener('change', () => setProcessColor(cell, color.value)); // NEW
                 button('Add Roadmap Object', () => addObject(cell), host, !allowed(cell, 'canAddCell'));
             } else {
+                renderStatusButtons([cell], host); // NEW
+                renderDoingProgress(cell, host); // NEW
+                button(attr(cell, 'roadmap_notes') ? 'Edit Note' : 'Add Note', () => showNoteDialog(cell), host, !allowed(cell)); // NEW
                 button('Assign', () => showAssignmentDialog(cell), host, !allowed(cell));
                 button('Create Task', () => showTaskCreationDialog(cell), host, !allowed(cell) || !['Planned', 'Doing'].includes(attr(cell, 'roadmap_status')));
-                const tasks = linkedTasks(cell); button('Open Tasks (' + tasks.length + ')', () => showTasks(cell), host, !tasks.length);
             }
             button(deleteLabel, () => graph.removeCells([cell]), host, !allowed(cell, 'canDeleteCell')); // CHANGE: keep the destructive process/object action at the bottom of the overlay.
         }
@@ -997,6 +1086,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     function positionControls() { // NEW
+        renderDateHud(); // NEW
         if (!overlay) return; const shared = graph.__trellisTaskUi; // NEW
         Array.from(overlay.children).forEach(host => { const anchor = host.__roadmapAnchor; if (!shouldRenderRoadmapControlsFor(anchor) || !graph.isCellVisible(anchor)) { host.remove(); return; } const state = graph.view.getState(anchor); if (!state) return; const bounds = shared ? shared.getCellVisualBounds(anchor, overlay) : state; if (shared) shared.positionDomOverlayFromBounds(host, bounds, !host.__roadmapAbove, host.__roadmapAbove, 3, host.__roadmapAbove ? 0 : 20); else host.style.top = Math.max(0, host.__roadmapAbove ? bounds.y - host.offsetHeight - 9 : bounds.y + bounds.height + 9) + 'px'; }); // CHANGE
     } // NEW
@@ -1011,8 +1101,11 @@ Draw.loadPlugin(function (ui) {
         gesture = { cell, edge, board, layout, targets, settings: getViewState(board), startPoint: event && event.graphPoint || point(event), boardState: graph.view.getState(board), geometry: graph.getCellGeometry(cell).clone(), delta: 0 }; // CHANGE
         closeAssignmentPicker(); // NEW
         if (graph.tooltipHandler && graph.tooltipHandler.hide) graph.tooltipHandler.hide(); else if (graph.tooltipHandler && graph.tooltipHandler.hideTooltip) graph.tooltipHandler.hideTooltip(); // NEW
-        if (!dateHint) { dateHint = element('div', '', 'trellis-roadmap-date-hint'); dateHint.style.cssText = 'position:absolute;z-index:10030;pointer-events:none;background:#fff;border:1px solid #111;padding:4px;font:12px Arial;white-space:pre-line;'; graph.container.appendChild(dateHint); } // CHANGE
-        dateHint.style.display = ''; if (overlay) overlay.style.display = 'none'; // NEW
+        if (kind(cell) === 'timeframe') { // NEW
+            if (!dateHint) { dateHint = element('div', '', 'trellis-roadmap-date-hint'); dateHint.style.cssText = 'position:absolute;z-index:10030;pointer-events:none;background:#fff;border:1px solid #111;padding:4px;font:12px Arial;white-space:pre-line;'; graph.container.appendChild(dateHint); } // CHANGE
+            dateHint.style.display = ''; // NEW
+        } else if (dateHint) dateHint.style.display = 'none'; // NEW
+        if (overlay) overlay.style.display = 'none'; renderDateHud(); // CHANGE
     } // NEW
 
     function gestureDays(cell, dx, layout) { const dates = range(cell); return Math.round(core.xToDay(layout.timeline, core.dayToX(layout.timeline, dates.start) + dx) - dates.start); } // NEW
@@ -1028,17 +1121,17 @@ Draw.loadPlugin(function (ui) {
         if (!gesture) return; const g = gesture, current = point(event); // NEW
         const dx = nativeDx == null ? (current.x - g.startPoint.x) / graph.view.scale : nativeDx, dy = nativeDy == null ? (current.y - g.startPoint.y) / graph.view.scale : nativeDy; // NEW
         g.dx = dx; g.dy = dy; // NEW
-        if (kind(g.cell) === 'board') dateHint.style.display = 'none'; // NEW
+        if (kind(g.cell) === 'board') { if (dateHint) dateHint.style.display = 'none'; } // CHANGE: board drags can start before the timeframe hint exists.
         else if (kind(g.cell) === 'timeframe') { const column = g.layout.timeline.columns[Number(attr(g.cell, 'roadmap_timeframe_index'))]; dateHint.textContent = (Math.max(0.05, (g.geometry.width + dx) / (column.end - column.start))).toFixed(2) + ' px/day'; } // CHANGE
         else { // NEW
             const preview = previewDatesForGesture(g.cell, g.edge, dx, g.layout), dates = range(g.cell); g.delta = preview.delta; // CHANGE
             const crossProject = g.edge === 'move' && nativeMove && nativeMove.target && ancestor(nativeMove.target, 'board') !== g.board; // NEW
             const previewDates = crossProject ? dates : preview.dates; // CHANGE
-            dateHint.textContent = roadmapDragHintText(g.edge === 'move' ? previewDates : semanticResizeDates(g.cell, previewDates), g.edge); // CHANGE
+            g.previewDates = g.edge === 'move' ? previewDates : semanticResizeDates(g.cell, previewDates); renderDateHud(); // CHANGE
         } // NEW
-        dateHint.style.left = current.x + 15 + 'px'; dateHint.style.top = current.y - 30 + 'px'; // NEW
+        if (dateHint && dateHint.style.display !== 'none') { dateHint.style.left = current.x + 15 + 'px'; dateHint.style.top = current.y - 30 + 'px'; } // CHANGE
     } // NEW
-    function clearGesture() { gesture = null; if (dateHint) dateHint.style.display = 'none'; if (overlay) overlay.style.display = ''; checkToday(); refresh(); } // NEW
+    function clearGesture() { gesture = null; if (dateHint) dateHint.style.display = 'none'; if (overlay) overlay.style.display = ''; renderDateHud(); checkToday(); refresh(); } // CHANGE
     function endGesture(cancel) { const g = gesture; if (!g) return; if (!cancel && g.edge === 'move') moveContent(g.targets, null, { days: g.delta, preferredRow: kind(g.cell) === 'process' ? requestedRow(g, g.dy || 0) : undefined }); clearGesture(); } // CHANGE: direct command test seam, not a second pointer engine.
 
     function performNativeMove(cells, target, options) { // NEW
@@ -1148,7 +1241,7 @@ Draw.loadPlugin(function (ui) {
     listenModel(graph.getSelectionModel && graph.getSelectionModel(), mxEvent.CHANGE, () => { closeAssignmentPicker(); refresh(); }); // NEW
     [mxEvent.SCALE, mxEvent.TRANSLATE, mxEvent.SCALE_AND_TRANSLATE].filter(Boolean).forEach(event => listenModel(graph.view, event, renderControls)); // NEW
     const destroyGraph = graph.destroy; // NEW
-    graph.destroy = function () { destroyed = true; disposers.splice(0).forEach(dispose => dispose()); closeAssignmentPicker(); if (overlay) overlay.remove(); if (dateHint) dateHint.remove(); return destroyGraph.apply(this, arguments); }; // NEW
+    graph.destroy = function () { destroyed = true; disposers.splice(0).forEach(dispose => dispose()); closeAssignmentPicker(); if (overlay) overlay.remove(); if (dateHint) dateHint.remove(); if (dateHud) dateHud.remove(); return destroyGraph.apply(this, arguments); }; // CHANGE
     graph.__trellisRoadmapManager = {
         runModelCommand: command, // NEW: Modules joins Roadmap lifecycle rollback and post-edit permission validation.
         ensureMainRoadmapInRoadmapModule, createSecondaryRoadmapInRoadmapModule, listRoadmapsForGarden, openRoadmapForGarden, createTaskFromRoadmapObject,

@@ -726,7 +726,7 @@ test("workspace handle drag suppresses module delete lifecycle", () => { // NEW
     const harness = makeHarness(); // NEW
     const mod = harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"); // NEW
     harness.graph.__trellisWorkspaceHandleDragActive = true; // NEW
-    assert.deepEqual(harness.graph.removeCells([mod]), []); // NEW
+    assert.equal(harness.graph.removeCells([mod]).length, 0); // CHANGE: avoid cross-realm array prototype mismatch from the plugin VM.
     assert.equal(!!mod.collapsed, false); // CHANGE
     assert.equal(harness.model.getParent(mod), harness.root); // NEW
     assert.equal(harness.removeCalls.length, 0); // NEW

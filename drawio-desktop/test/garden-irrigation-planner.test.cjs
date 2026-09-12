@@ -7,6 +7,17 @@ const { JSDOM } = require("jsdom");
 
 const PROJECT_ROOT = path.join(__dirname, "..");
 const PLUGIN_PATH = path.join(PROJECT_ROOT, "drawio", "src", "main", "webapp", "plugins", "garden_planner_plugins", "Garden_Irrigation_Planner.js");
+const trackedDomWindows = []; // NEW
+const trackedTimers = new Set(); // NEW
+
+test.afterEach(() => { // NEW
+    for (const timer of trackedTimers) clearTimeout(timer); // NEW
+    trackedTimers.clear(); // NEW
+    while (trackedDomWindows.length) { // NEW
+        const win = trackedDomWindows.pop(); // NEW
+        if (win && typeof win.close === "function") win.close(); // NEW
+    } // NEW
+}); // NEW
 
 class TestCell {
     constructor(id, value = "", geometry = null, style = "") {
@@ -76,6 +87,7 @@ function descendants(cell, predicate, out = []) {
 
 function loadPlugin(options = {}) {
     const dom = new JSDOM(options.svgOverlayPane ? "<!doctype html><body><div id='graph'><svg><g id='overlay'></g></svg></div></body>" : "<!doctype html><body><div id='graph'></div></body>", { url: options.url || "https://trellis.test/" });
+    trackedDomWindows.push(dom.window); // NEW
     const document = dom.window.document;
     const consoleLogs = options.consoleLogs || [];
     const root = new TestCell("root");
@@ -94,6 +106,18 @@ function loadPlugin(options = {}) {
     const graphListeners = new Map();
     const mouseListeners = [];
     const viewListeners = new Map();
+    function trackedSetTimeout(fn, delay, ...args) { // NEW
+        const timer = setTimeout(() => { // NEW
+            trackedTimers.delete(timer); // NEW
+            fn(...args); // NEW
+        }, delay); // NEW
+        trackedTimers.add(timer); // NEW
+        return timer; // NEW
+    } // NEW
+    function trackedClearTimeout(timer) { // NEW
+        trackedTimers.delete(timer); // NEW
+        clearTimeout(timer); // NEW
+    } // NEW
     const graph = {
         selectionCell: options.selectedCell || moduleCell,
         selectionCells: options.selectedCells || null,
@@ -212,8 +236,8 @@ function loadPlugin(options = {}) {
         document,
         console: { log(...args) { consoleLogs.push(args); } },
         Date,
-        setTimeout,
-        clearTimeout,
+        setTimeout: trackedSetTimeout, // CHANGE: clear VM-created timers between tests.
+        clearTimeout: trackedClearTimeout, // CHANGE
         Blob: function TrellisTestBlob(parts) { this.parts = parts || []; context.lastDownloadText = this.parts.join(""); }, // CHANGE
         URL: { createObjectURL(blob) { context.lastDownloadText = ((blob && blob.parts) || []).join(""); return "#trellis-test-download"; }, revokeObjectURL(url) { context.lastRevokedUrl = url; } }, // CHANGE
         alert(message) { context.lastAlert = message; },
