@@ -139,6 +139,29 @@ def apply_run(run_dir: Path, db_path: Path) -> dict[str, Any]:
     return applied
 
 
+def apply_run_replacing_crop_catalog(run_dir: Path, db_path: Path) -> dict[str, Any]:
+    report = validate_run(run_dir, db_path)
+    if not report["ok"]:
+        raise RuntimeError("Run is not valid. Review validation_report.json before replacing the crop catalog.")
+    backup_path = _backup_db(db_path)
+    generated_dir = run_dir / "generated"
+    applied: dict[str, Any] = {"mode": "replace_crop_catalog", "backup_path": str(backup_path), "deleted_tables": {}, "tables": {}}  # CHANGE: replacement runs report destructive scope.
+    with closing(connect(db_path)) as conn:
+        with conn:
+            applied["migrations"] = apply_migrations(conn)
+            applied["previous_plant_count"] = _table_count(conn, "Plants")
+            applied["deleted_tables"] = _clear_crop_catalog(conn)
+            for table in _apply_order():
+                rows = read_json(generated_dir / f"{table}.json", []) or []
+                if rows:
+                    count = _apply_table(conn, table, rows)
+                    applied["tables"][table] = count
+            applied["final_plant_count"] = _table_count(conn, "Plants")
+            applied["final_visible_plant_count"] = _table_count(conn, "Plants", "abbr IS NOT NULL")
+    write_json(run_dir / "apply_report.json", applied)
+    return applied
+
+
 def apply_run_to_databases(run_dir: Path, db_paths: list[Path], seed_db_path: Path | None = None) -> dict[str, Any]:
     targets = _unique_paths(db_paths)
     if not targets:
@@ -164,6 +187,31 @@ def apply_run_to_databases(run_dir: Path, db_paths: list[Path], seed_db_path: Pa
     return combined
 
 
+def replace_crop_catalog_in_databases(run_dir: Path, db_paths: list[Path], seed_db_path: Path | None = None) -> dict[str, Any]:
+    targets = _unique_paths(db_paths)
+    if not targets:
+        raise RuntimeError("No database targets configured.")
+    seed_db_path = seed_db_path or targets[0]
+    for target in targets:
+        _ensure_apply_target_exists(target, seed_db_path)
+    validation_reports = {str(target): validate_run(run_dir, target) for target in targets}
+    invalid = {path: report for path, report in validation_reports.items() if not report["ok"]}
+    if invalid:
+        details = []
+        for path, report in invalid.items():
+            details.append(path)
+            details.extend(f"- {error}" for error in report["errors"])
+        raise RuntimeError("Run is not valid for all database targets:\n" + "\n".join(details))
+    reports = []
+    for target in targets:
+        report = apply_run_replacing_crop_catalog(run_dir, target)
+        report["db_path"] = str(target)
+        reports.append(report)
+    combined = {"mode": "replace_crop_catalog", "targets": reports}  # CHANGE: distinguish catalog replacement from additive apply in artifacts.
+    write_json(run_dir / "apply_report.json", combined)
+    return combined
+
+
 def show_pending_migrations(db_path: Path) -> list[str]:
     with closing(connect(db_path)) as conn:
         return pending_migrations(conn)
@@ -183,6 +231,43 @@ def _ensure_apply_target_exists(target: Path, seed_db_path: Path) -> None:
         raise RuntimeError(f"Seed DB missing; cannot initialize apply target: {seed_db_path}")
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(seed_db_path, target)
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", [table]).fetchone() is not None
+
+
+def _table_count(conn: sqlite3.Connection, table: str, where_sql: str | None = None) -> int:
+    if not _table_exists(conn, table):
+        return 0
+    sql = f"SELECT COUNT(*) FROM {table}" + (f" WHERE {where_sql}" if where_sql else "")
+    return int(conn.execute(sql).fetchone()[0])
+
+
+def _delete_all_if_exists(conn: sqlite3.Connection, table: str) -> int:
+    if not _table_exists(conn, table):
+        return 0
+    count = _table_count(conn, table)
+    conn.execute(f"DELETE FROM {table}")
+    return count
+
+
+def _clear_crop_catalog(conn: sqlite3.Connection) -> dict[str, int]:
+    delete_order = [
+        "CompanionEvidence",
+        "CompanionLayoutGroupDefaults",
+        "VarietyTaskTemplates",
+        "PlantTaskTemplates",
+        "PlantingWindowReferences",
+        "PlantNutritionValues",
+        "PlantNutritionMappings",
+        "PlantGrowthStages",
+        "PlantAllowedMethodCategories",
+        "PlantVarieties",
+        "Companions",
+        "Plants",
+    ]
+    return {table: _delete_all_if_exists(conn, table) for table in delete_order}  # CHANGE: replacement preserves non-plant reference data.
 
 
 def _unique_paths(paths: list[Path]) -> list[Path]:

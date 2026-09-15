@@ -1,5 +1,5 @@
 /**
- * Draw.io Plugin: Trellis Garden Equipment
+ * Trellis plugin: Garden Equipment
  *
  * Purpose
  * - Stores garden equipment inventory on a Trellis garden module.
@@ -2813,7 +2813,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     // -------------------------------------------------------------------------
-    // Draw.io integration
+    // Host editor integration
     // -------------------------------------------------------------------------
 
     function addActionAndMenus() {

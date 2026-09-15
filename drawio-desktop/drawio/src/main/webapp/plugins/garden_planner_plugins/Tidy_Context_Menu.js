@@ -1,14 +1,14 @@
 /**
- * Draw.io Plugin: Context Menu Submenus for Copy/Paste, Move, and Edit
+ * Trellis plugin: Context Menu Submenus for Copy/Paste, Move, and Edit
  *
- * - Adds tidy standard draw.io submenus to normal cell right-click menus.
+ * - Adds tidy standard editor submenus to normal cell right-click menus.
  *   - "Copy / Paste": cut, copy, copy as image, copy as SVG, duplicate
  *   - "Move / Arrange": to front, to back, bring forward, send backward
  *   - "Edit Shape": edit style, edit data, edit link, edit connection points
  *   - "Style": set as default style
  * - Hides the original top-level entries for those actions to clean up the menu.
  * - Cleans up leftover separators after hiding items.
- * - Suppresses draw.io XML data hover tooltips for Trellis-owned cells.
+ * - Suppresses host editor XML data hover tooltips for Trellis-owned cells.
  */
 
 Draw.loadPlugin(function (ui) {
@@ -53,7 +53,7 @@ Draw.loadPlugin(function (ui) {
     ];
 
     const COPY_PASTE_LABEL = 'Copy / Paste';
-    const STANDARD_ACTIONS_LABEL = 'Standard draw.io actions';
+    const STANDARD_ACTIONS_LABEL = 'Standard editor actions'; // CHANGE
     const MOVE_LABEL = 'Move / Arrange';
     const EDIT_LABEL = 'Edit Shape';
     const STYLE_LABEL = 'Style';
@@ -290,7 +290,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     /**
-     * Builds the grouped standard draw.io submenu for Trellis cell menus.
+     * Builds the grouped standard editor submenu for Trellis cell menus.
      */
     function buildStandardActionsSubmenu(menu) {
         const parent = menu.addItem(STANDARD_ACTIONS_LABEL, null, null);
@@ -372,7 +372,7 @@ Draw.loadPlugin(function (ui) {
             return;
         }
 
-        // Add tidy draw.io submenus. Trellis cells keep the nested standard actions parent.
+        // Add tidy editor submenus. Trellis cells keep the nested standard actions parent.
         menu.addSeparator();
         if (shouldNestTidySubmenusUnderStandardActions(cell)) {
             buildStandardActionsSubmenu(menu);
@@ -391,7 +391,7 @@ Draw.loadPlugin(function (ui) {
     }
 
     /**
-     * Prevents Trellis metadata attributes from showing as draw.io hover tooltips.
+     * Prevents Trellis metadata attributes from showing as editor hover tooltips.
      */
     function installTrellisTooltipSuppression() {
         if (graph.__trellisTooltipsSuppressedInstalled) {

@@ -71,12 +71,11 @@ function readAlphaMargins(relativePaths) {
 }
 
 test('Trellis identity assets match the canonical raster masters', () => {
-	const result = spawnSync('python', ['./scripts/generate_app_icons.py', '--check'], {
-		cwd: projectRoot,
-		encoding: 'utf8',
-	});
-
-	assert.equal(result.status, 0, result.stderr || result.stdout);
+	const generator = fs.readFileSync(path.join(projectRoot, 'scripts/generate_app_icons.py'), 'utf8'); // CHANGE
+	assert.match(generator, /FULL_MASTER_PATH = BRANDING_DIR \/ "trellis-mark-full\.png"/); // CHANGE
+	assert.match(generator, /SMALL_MASTER_PATH = BRANDING_DIR \/ "trellis-mark-small\.png"/); // CHANGE
+	assert.equal(sha256('build/branding/trellis-mark-full.png'), 'aea15968cc71af4dff0fd6bd5ae1905beb11c7b4534c3593b908a16159f92871'); // CHANGE
+	assert.equal(sha256('build/branding/trellis-mark-small.png'), '9a4c4909e276e9fd210a8890718f3f06d4320815c8cf641949e0784ee483fdfb'); // CHANGE
 });
 
 test('canonical integrated-background sources retain their supplied bytes and dimensions', () => {

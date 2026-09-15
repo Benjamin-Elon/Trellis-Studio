@@ -16,6 +16,7 @@ function loadPlugin(options = {}) {
     const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://app.test/" });
     const callbacks = [];
     let restoreCalls = 0;
+    let infoCalls = 0;
     const context = {
         window: dom.window,
         document: dom.window.document,
@@ -32,6 +33,28 @@ function loadPlugin(options = {}) {
         }
     };
     context.window.trellisApp = {
+        getDatabaseInfo() {
+            infoCalls += 1;
+            if (options.infoError) return Promise.reject(options.infoError);
+            return Promise.resolve(options.databaseInfo || {
+                live: {
+                    path: "C:/Users/user/AppData/Roaming/draw.io/trellis_database/Trellis_database.sqlite",
+                    exists: true,
+                    plantCount: 44,
+                    visiblePlantCount: 44,
+                    modifiedAt: "2026-09-11T18:49:06.000Z",
+                    sizeBytes: 8228864
+                },
+                builtin: {
+                    path: "C:/Program Files/Trellis/resources/trellis_database/Trellis_database.sqlite",
+                    exists: true,
+                    plantCount: 14,
+                    visiblePlantCount: 14,
+                    modifiedAt: "2026-06-10T04:00:00.000Z",
+                    sizeBytes: 8228864
+                }
+            });
+        },
         restoreBuiltInDatabase() {
             restoreCalls += 1;
             if (options.restoreError) return Promise.reject(options.restoreError);
@@ -44,7 +67,7 @@ function loadPlugin(options = {}) {
     };
 
     vm.runInNewContext(readProjectFile("drawio/src/main/webapp/plugins/garden_planner_plugins/Trellis_Database_Tools.js"), context, { filename: pluginPath });
-    return { context, callbacks, document: dom.window.document, restoreCalls: () => restoreCalls };
+    return { context, callbacks, document: dom.window.document, restoreCalls: () => restoreCalls, infoCalls: () => infoCalls };
 }
 
 function createUi() {
@@ -112,6 +135,11 @@ test("Trellis database tools registers Extras restore action and confirms before
     assert.equal(ui.dialog.container.style.zIndex, "2000000000");
     assert.equal(ui.dialog.bg.style.zIndex, "1999999999");
     assert.match(shown[0].node.textContent, /replace the local AppData Trellis database/);
+    await settle();
+    assert.equal(harness.infoCalls(), 1);
+    assert.match(shown[0].node.textContent, /Live AppData/);
+    assert.match(shown[0].node.textContent, /44 visible crops/);
+    assert.match(shown[0].node.textContent, /built-in source has fewer visible crops/);
     assert.equal(harness.restoreCalls(), 0);
     assert.equal(findButton(shown[0].node, "Restore built-in database").getAttribute("data-trellis-button-variant"), "danger"); // NEW
     assert.match(findButton(shown[0].node, "Restore built-in database").getAttribute("style") || "", /background:\s*(?:#b91c1c|rgb\(185,\s*28,\s*28\))/); // NEW
@@ -123,6 +151,24 @@ test("Trellis database tools registers Extras restore action and confirms before
     assert.match(shown[0].node.textContent, /Built-in database restored/);
     assert.match(shown[0].node.textContent, /Backup/);
     assert.match(shown[0].node.textContent, /Reopen any active Trellis dialogs/);
+});
+
+test("Trellis database tools dispatches restore event after successful restore", async () => {
+    const harness = loadPlugin();
+    const { ui, actions, shown } = createUi();
+    let restoredEvent = null;
+    harness.context.window.addEventListener("trellis:database-restored", event => {
+        restoredEvent = event;
+    });
+
+    harness.callbacks[0](ui);
+    actions.trellisRestoreBuiltInDatabase.funct();
+    await settle();
+    findButton(shown[0].node, "Restore built-in database").click();
+    await settle();
+
+    assert.ok(restoredEvent);
+    assert.match(restoredEvent.detail.dbPath, /Trellis_database\.sqlite/);
 });
 
 test("Trellis database tools reports restore failures without hiding the error", async () => {
@@ -163,9 +209,13 @@ test("Trellis database restore bridge and default plugin registration are wired"
     const electronSource = readProjectFile("src/main/electron.js");
 
     assert.match(preloadSource, /restoreBuiltInDatabase\(\)/);
+    assert.match(preloadSource, /getDatabaseInfo\(\)/);
     assert.match(preloadSource, /action: 'restoreBuiltInTrellisDatabase'/);
+    assert.match(preloadSource, /action: 'getTrellisDatabaseInfo'/);
     assert.match(electronSource, /function restoreBuiltInTrellisDatabase\(options\)/);
+    assert.match(electronSource, /function getTrellisDatabaseInfo\(options\)/);
     assert.match(electronSource, /case 'restoreBuiltInTrellisDatabase':/);
+    assert.match(electronSource, /case 'getTrellisDatabaseInfo':/);
     assert.match(electronSource, /backupPath/);
     assert.match(electronSource, /sourcePath/);
     assert.match(electronSource, /fs\.copyFileSync\(sourcePath, dbPath\)/);

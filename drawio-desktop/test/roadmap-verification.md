@@ -23,7 +23,7 @@ Run focused evidence with:
 node --test test/roadmap-core.test.cjs test/roadmap-manager.test.cjs test/trellis-startup-defaults.test.cjs
 ```
 
-The manager harness loads production mxGraph, Draw.io `Graph.js`, sanitizer and plugins, with desktop dialog services stubbed. CSS color resolution and SVG text measurements use DOM-test adapters. It is not equivalent to a complete Electron application test. The local visual fixture is `test/fixtures/roadmap-preview.html`.
+The manager harness loads production mxGraph, host editor `Graph.js`, sanitizer and plugins, with desktop dialog services stubbed. CSS color resolution and SVG text measurements use DOM-test adapters. It is not equivalent to a complete Electron application test. The local visual fixture is `test/fixtures/roadmap-preview.html`.
 
 On 2026-09-06, automated desktop verification was blocked: Windows automation denied Google Chrome access, and the in-app browser rejected the local-file URL. No bypass was attempted. Real application startup, overlay appearance, and image/PDF output remain release verification requirements.
 

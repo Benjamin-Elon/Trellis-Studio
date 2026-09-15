@@ -5206,6 +5206,17 @@ App.prototype.createFile = function(title, data, libs, mode, done, replace, fold
 	if (title != null && this.spinner.spin(document.body, mxResources.get('inserting')))
 	{
 		data = (data != null) ? data : this.emptyDiagramXml;
+		var trellisNewBlankDiagram = data == this.emptyDiagramXml; // NEW
+
+		var markTrellisNewBlankDiagram = function(file) // NEW
+		{
+			if (file != null && trellisNewBlankDiagram) // NEW
+			{
+				file.trellisNewBlankDiagram = true; // NEW
+			}
+
+			return file; // NEW
+		};
 
 		// Decompresses existing content
 		if (data != null && !Editor.defaultCompressed)
@@ -5237,7 +5248,7 @@ App.prototype.createFile = function(title, data, libs, mode, done, replace, fold
 			var fileCreated = mxUtils.bind(this, function(file)
 			{
 				complete();
-				this.fileCreated(file, libs, replace, done, clibs, success);
+				this.fileCreated(markTrellisNewBlankDiagram(file), libs, replace, done, clibs, success); // CHANGE
 			});
 
 			if (mode == App.MODE_GOOGLE && this.drive != null)
@@ -5279,7 +5290,7 @@ App.prototype.createFile = function(title, data, libs, mode, done, replace, fold
 				
 				this.showSaveFilePicker(mxUtils.bind(this, function(fileHandle, desc)
 				{
-					var file = new LocalFile(this, data, desc.name, null, fileHandle, desc);
+					var file = markTrellisNewBlankDiagram(new LocalFile(this, data, desc.name, null, fileHandle, desc)); // CHANGE
 					
 					file.saveFile(desc.name, false, mxUtils.bind(this, function()
 					{
@@ -5296,7 +5307,7 @@ App.prototype.createFile = function(title, data, libs, mode, done, replace, fold
 			else
 			{
 				complete();
-				this.fileCreated(new LocalFile(this, data, title, mode == null),
+				this.fileCreated(markTrellisNewBlankDiagram(new LocalFile(this, data, title, mode == null)), // CHANGE
 					libs, replace, done, clibs, success);
 			}
 		}

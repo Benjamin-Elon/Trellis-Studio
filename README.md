@@ -1,6 +1,6 @@
-Trellis Studio extends Draw.io with a coordinated suite of plugins that turn diagrams into a spacial garden planning and management system.
+Trellis Studio is a visual garden planning and management workspace that turns diagrams into coordinated, data-rich plans.
 
-**Licensing:** Trellis Studio is a mixed-license distribution. Upstream draw.io and third-party material keep their existing notices. Trellis's restricted source-available terms apply only to files under `drawio-desktop/drawio/src/main/webapp/plugins/garden_planner_plugins/`; commercial use of those covered plugin files requires written approval. See [drawio-desktop/LICENSES.md](drawio-desktop/LICENSES.md).
+**Licensing:** Trellis Studio is a mixed-license distribution. Upstream and third-party material keep their existing notices. Trellis's restricted source-available terms apply only to files under `drawio-desktop/drawio/src/main/webapp/plugins/garden_planner_plugins/`; commercial use of those covered plugin files requires written approval. See [drawio-desktop/LICENSES.md](drawio-desktop/LICENSES.md).
 
 **Features:**
 
@@ -12,7 +12,7 @@ Trellis Studio extends Draw.io with a coordinated suite of plugins that turn dia
 - Manage and coordinate tasks with Automated, linked Kanban boards.
 - Build multi-person workflows and ownership.
 - Track and visualize diagram edits, exploring change history directly on the canvas.
-- In addition to all the base features included in Draw.io
+- Built on a fast, responsive graphical canvas with local-first document support.
 
 **Who This Is For**
 
@@ -24,16 +24,6 @@ Trellis Studio extends Draw.io with a coordinated suite of plugins that turn dia
 - Anyone who dislikes juggling spreadsheets and calendar apps
 - Ecological Landscapers
 - Plant Nurseries
-
-**Why Draw.io?** 
-
-Draw.io offers:
-
-- A fast, responsive graphical canvas
-- XML-structured shapes (ideal for embedding data)
-- A plugin system with full graph access
-- Zero required server dependencies (extensible for web, app and server)
-- Compatibility with existing Draw.io diagrams
 
 **To run this:**
 

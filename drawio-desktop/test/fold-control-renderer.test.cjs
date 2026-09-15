@@ -154,7 +154,7 @@ test('clicking a parent fold control still folds the parent without selected chi
     assert.equal(selectedChild.collapsed, false);
 });
 
-test('built draw.io bundles carry the fixed-size fold-control patch and top marker', () => {
+test('built editor bundles carry the fixed-size fold-control patch and top marker', () => { // CHANGE
     for (const bundle of runtimeBundles) {
         const source = fs.readFileSync(bundle, 'utf8');
         assert.match(source.slice(0, 200), new RegExp(marker), path.basename(bundle));

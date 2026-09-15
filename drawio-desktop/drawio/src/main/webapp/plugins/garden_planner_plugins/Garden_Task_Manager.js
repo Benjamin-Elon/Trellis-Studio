@@ -1,5 +1,5 @@
 /**
- * Draw.io Plugin: Task Manager (Kanban Template Style + Auto Placement + Auto Archive + Badges)
+ * Trellis plugin: Task Manager (Kanban Template Style + Auto Placement + Auto Archive + Badges)
  */
 
 // -------------------- Scheduler event contract --------------------
@@ -48,7 +48,7 @@ const TASK_VIEW_MODES = ['FULL', 'WEEK']; // CHANGE: Day mode now normalizes to 
 const TASK_WORKFLOW_STATES = ['STAGED', 'TODO', 'DOING', 'DONE'];
 const WEEK_DAY_LANE_KEYS = ['WEEK_SUN', 'WEEK_MON', 'WEEK_TUE', 'WEEK_WED', 'WEEK_THU', 'WEEK_FRI', 'WEEK_SAT'];
 const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 });
-const TRELLIS_DIALOG_Z = 2000000000; // NEW: match Draw.io dialog layer ordering
+const TRELLIS_DIALOG_Z = 2000000000; // CHANGE: match host editor dialog layer ordering
 
 function applyTaskButtonStyle(button, variant, options) {
     const semanticVariant = variant || 'neutral';
@@ -1119,7 +1119,7 @@ function isCardVisibilityEligible(source) { // NEW: paging and lane counts share
 }
 
 const TASK_LANE_HEADER_HEIGHT = 40; // NEW: stable two-line title band for every non-day lane
-const TASK_LANE_STACK_BORDER = 20; // NEW: matches the canonical Draw.io stack layout inset
+const TASK_LANE_STACK_BORDER = 20; // CHANGE: matches the canonical editor stack layout inset
 const TASK_LANE_PAGER_MARGIN_TOP = 20; // NEW: reserves a 28px pager row without narrowing cards
 const TASK_LANE_STACK_SPACING = 20; // NEW: matches LANE_STYLE_BASE stackSpacing
 const TASK_LANE_MIN_CARD_HEIGHT = DEFAULT_TASK_CARD_HEIGHT; // CHANGE: full task cards must never be clamped below the standard 80px height
@@ -1496,11 +1496,11 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
 
 
     // -------------------- Template styles --------------------
-    const BOARD_STYLE = // CHANGE: task layout owns board-child geometry instead of Draw.io stack fill
+    const BOARD_STYLE = // CHANGE: task layout owns board-child geometry instead of editor stack fill
         'swimlane;fontStyle=2;horizontal=1;startSize=28;collapsible=1;swimlaneFillColor=#F8FAFC;fontFamily=Permanent Marker;fontSize=16;points=[];verticalAlign=top;resizable=1;strokeWidth=2;disableMultiStroke=1;'; // CHANGE: opaque body remains visible below shorter week lanes
     const LANE_STYLE_BASE =
-        'swimlane;strokeWidth=2;fontFamily=Permanent Marker;fontSize=12;html=0;startSize=40;align=center;verticalAlign=middle;whiteSpace=wrap;spacingBottom=5;points=[];childLayout=stackLayout;stackBorder=20;stackSpacing=20;marginTop=0;resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=0;movable=0;connectable=0;fillStyle=solid;swimlaneFillColor=default;'; // CHANGE: lane visibility is controlled by board toggles, not draw.io collapse handles
-    const SCHEDULE_LANE_STYLE_BASE = // NEW: plugin-owned schedule geometry prevents Draw.io stack layout from expanding day lanes
+        'swimlane;strokeWidth=2;fontFamily=Permanent Marker;fontSize=12;html=0;startSize=40;align=center;verticalAlign=middle;whiteSpace=wrap;spacingBottom=5;points=[];childLayout=stackLayout;stackBorder=20;stackSpacing=20;marginTop=0;resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=0;movable=0;connectable=0;fillStyle=solid;swimlaneFillColor=default;'; // CHANGE: lane visibility is controlled by board toggles, not editor collapse handles
+    const SCHEDULE_LANE_STYLE_BASE = // CHANGE: plugin-owned schedule geometry prevents editor stack layout from expanding day lanes
         'swimlane;strokeWidth=2;fontFamily=Permanent Marker;html=0;startSize=1;verticalAlign=bottom;spacingBottom=5;points=[];resizeLast=0;resizeParent=0;horizontalStack=0;collapsible=0;movable=0;connectable=0;fillStyle=solid;swimlaneFillColor=default;'; // CHANGE
     const CARD_STYLE =
         'whiteSpace=wrap;html=1;strokeWidth=2;fillColor=swimlane;fontStyle=1;spacingTop=0;rounded=1;arcSize=9;points=[];fontFamily=Permanent Marker;hachureGap=8;fillWeight=1;connectable=0;'; // CHANGE
@@ -1559,7 +1559,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
     let missingTaskModuleWarningShown = false;
 
 
-    // -------------------- Draw.io adapter factory: values, cells, and model writes --------------------
+    // -------------------- Host editor adapter factory: values, cells, and model writes --------------------
     function createTaskRuntimeAdapters({ graph }) {
         function ensureXmlValue(cell) {
             if (!cell.value || typeof cell.value === 'string') {
@@ -1784,6 +1784,13 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         return String(role || '') === 'secondary' ? 'Secondary Board' : 'Main Board'; // NEW: newly created boards use role-specific names
     }
 
+    function resizeTaskModuleForAddedBoard(taskModule) { // CHANGE
+        if (!taskModule || !isTaskModule(taskModule)) return; // CHANGE
+        const modules = taskModulesApi(); // CHANGE
+        if (!modules || typeof modules.applyModuleMargins !== 'function') return; // CHANGE
+        try { modules.applyModuleMargins(taskModule, { allowShrink: false, manageUpdate: false }); } catch (_) { } // CHANGE
+    } // CHANGE
+
     // -------------------- Board and lane template commands --------------------
     function ensureBoardTemplateIn(containerVertex, opts) {
         const parent = isGardenModule(containerVertex) ? boardContainerForGarden(containerVertex) : (containerVertex || graph.getDefaultParent());
@@ -1802,6 +1809,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
             }
             ensureBoardPlanningDefaults(main);
             ensureLanes(main);
+            resizeTaskModuleForAddedBoard(parent); // CHANGE
             return { parent, board: main, lanes: lanesMap(main) };
         });
     }
@@ -1826,6 +1834,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         setAttrNoUndo(board, BOARD_ROLE_ATTR, 'secondary');
         ensureBoardPlanningDefaults(board);
         ensureLanes(board);
+        resizeTaskModuleForAddedBoard(parent); // CHANGE
         return board;
     }
 
@@ -4143,7 +4152,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         return sourceParents.length === 1 && isWeekDayLane(getAttr(sourceParents[0], 'lane_key')) ? sourceParents[0] : null;
     }
 
-    function createScheduleDropContext(movedCards, target, dy) { // NEW: snapshot stable order before Draw.io mutates parents and geometry
+    function createScheduleDropContext(movedCards, target, dy) { // CHANGE: snapshot stable order before the editor mutates parents and geometry
         const targetLane = resolveScheduleDropLane(movedCards, target, dy);
         if (!targetLane) return null;
         const targetBoard = findBoardAncestor(targetLane);
@@ -4282,7 +4291,7 @@ function createGardenTaskManagerRuntime({ ui, taskPolicy, schedulePolicy }) {
         return changed;
     }
 
-    function installKanbanParentingGuards() { // NEW: block invalid drag/drop before draw.io mutates the model
+    function installKanbanParentingGuards() { // CHANGE: block invalid drag/drop before the editor mutates the model
         if (graph.__trellisKanbanParentingGuardsInstalled) return;
         graph.__trellisKanbanParentingGuardsInstalled = true;
 

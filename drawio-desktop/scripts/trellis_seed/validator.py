@@ -36,6 +36,7 @@ from .schema import (
     PLANT_TEXT_FIELDS,
     VARIETY_MATURITY_CLASSES,
 )
+from .generic_varieties import is_generic_maturity_profile_name
 
 
 HARD_PLANT_RANGES = {
@@ -281,8 +282,11 @@ def validate_row(
             errors.append(f"{prefix} has unknown columns: {unknown}")
         if not row.get("plant_id") and not str(row.get("plant_name") or "").strip():
             errors.append(f"{prefix} needs plant_id or plant_name.")
-        if not str(row.get("variety_name") or "").strip():
+        variety_name = str(row.get("variety_name") or "").strip()
+        if not variety_name:
             errors.append(f"{prefix}.variety_name is required.")
+        elif _is_placeholder_variety_name(variety_name, str(row.get("plant_name") or "")):
+            errors.append(f"{prefix}.variety_name appears to be a placeholder: {variety_name}")
         maturity_class = str(row.get("maturity_class") or "").strip().casefold()
         if maturity_class and maturity_class not in VARIETY_MATURITY_CLASSES:
             errors.append(f"{prefix}.maturity_class must be one of: {', '.join(sorted(VARIETY_MATURITY_CLASSES))}.")
@@ -480,6 +484,26 @@ def _validate_companion_group_layout_json(prefix: str, raw: Any, plant_set_key: 
     if anchor_count != 1:
         errors.append(f"{prefix}.layout_json.rows must contain exactly one anchor row.")
     return errors
+
+
+def _is_placeholder_variety_name(name: str, plant_name: str) -> bool:
+    if is_generic_maturity_profile_name(name):
+        return False
+    key = normalize_key(name)
+    plant_key = normalize_key(plant_name)
+    if key in {"generic", "standard", "common", "default", "variety", "cultivar", "n/a", "na", "unknown"}:
+        return True
+    stripped = key.removeprefix(plant_key).strip() if plant_key else key
+    if stripped in {"variety", "cultivar", "type", "standard"}:
+        return True
+    tokens = stripped.replace("-", " ").split()
+    if len(tokens) == 2 and tokens[0] in {"variety", "cultivar", "type"} and tokens[1].isdigit():
+        return True
+    if plant_key and key.startswith(f"{plant_key} variety ") and key.rsplit(" ", 1)[-1].isdigit():
+        return True
+    if plant_key and key.startswith(f"{plant_key} cultivar ") and key.rsplit(" ", 1)[-1].isdigit():
+        return True
+    return False
 
 
 def validate_source_map(row: dict[str, Any], source_values: set[str], required_fields: set[str], prefix: str) -> list[str]:

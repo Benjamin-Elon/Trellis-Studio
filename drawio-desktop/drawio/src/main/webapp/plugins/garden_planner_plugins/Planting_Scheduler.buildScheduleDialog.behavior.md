@@ -697,7 +697,7 @@ Save and Cancel close the dialog through `closeScheduleDialog()`, which
 invalidates all pending work before calling `ui.hideDialog()`.
 
 A `MutationObserver` also detects removal performed outside those controls.
-This covers replacement by another draw.io dialog and other host-driven closes.
+This covers replacement by another editor dialog and other host-driven closes.
 The observer is disconnected when the dialog becomes inactive.
 
 ### Save isolation

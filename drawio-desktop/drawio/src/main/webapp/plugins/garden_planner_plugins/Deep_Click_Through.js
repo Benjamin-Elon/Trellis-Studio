@@ -1,5 +1,5 @@
 /**
- * Draw.io Plugin: Deep Click-Through Selection
+ * Trellis plugin: Deep Click-Through Selection
  *
  * Selects and drags the deepest visible child under the pointer instead of
  * letting a selected parent intercept descendant clicks. Locked or otherwise
@@ -590,7 +590,7 @@ Draw.loadPlugin(function (ui) {
         if (selectedTilerTarget) return selectedTilerTarget;
         const deepest = getDeepestCellForMouseEvent(graph, me, fallback);
         if (graph && graph.__trellisRoadmapManager && graph.__trellisRoadmapManager.isRoadmapGestureCell(deepest)) return deepest; // NEW: never promote a fixed process or timeframe drag to its movable ancestor.
-        if (graph && deepest && isPlantTile(deepest) && graph.getModel().isVertex(deepest)) { // CHANGE: draggable plant circles own their drag unless draw.io marks them locked.
+        if (graph && deepest && isPlantTile(deepest) && graph.getModel().isVertex(deepest)) { // CHANGE: draggable plant circles own their drag unless the editor marks them locked.
             if (graph.isCellMovable(deepest)) return deepest; // CHANGE
             const movablePlantParent = findMovableDragAncestorForLockedCell(graph, deepest); // CHANGE
             if (!movablePlantParent) return deepest; // CHANGE

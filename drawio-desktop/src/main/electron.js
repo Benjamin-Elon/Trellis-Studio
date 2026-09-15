@@ -34,16 +34,16 @@ import Database from 'better-sqlite3';
 const fileWatchRegistry = createFileWatchRegistry();
 
 try {
-	const drawioUserDataPath = path.join(app.getPath('appData'), 'draw.io'); // Trellis release: preserve the existing draw.io runtime profile.
+	const drawioUserDataPath = path.join(app.getPath('appData'), 'draw.io'); // CHANGE: preserve the existing legacy runtime profile.
 
 	if (!fs.existsSync(drawioUserDataPath)) {
 		fs.mkdirSync(drawioUserDataPath, { recursive: true }); // Trellis release: ensure electron-store and Chromium can use the compatibility path.
 	}
 
-	app.setPath('userData', drawioUserDataPath); // Trellis release: keep plugins, localStorage, drafts, and settings under the old profile.
+	app.setPath('userData', drawioUserDataPath); // CHANGE: keep plugins, localStorage, drafts, and settings under the old profile.
 }
 catch (e) {
-	console.error('Failed to preserve draw.io userData path:', e); // Trellis release: launch with Electron default if compatibility pin fails.
+	console.error('Failed to preserve legacy userData path:', e); // CHANGE: launch with Electron default if compatibility pin fails.
 }
 
 let store;
@@ -139,6 +139,40 @@ function restoreBuiltInTrellisDatabase(options) {
 		} catch (_) { }
 		throw e;
 	}
+}
+
+function readTrellisDatabaseInfo(dbPath) {
+	const info = { path: dbPath, exists: fs.existsSync(dbPath), sizeBytes: 0, modifiedAt: null, plantCount: 0, visiblePlantCount: 0 }; // CHANGE: restore UI needs lightweight DB metadata.
+	if (!info.exists) return info;
+	try {
+		const stat = fs.statSync(dbPath);
+		info.sizeBytes = stat.size;
+		info.modifiedAt = stat.mtime.toISOString();
+		const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+		try {
+			info.plantCount = Number(db.prepare('SELECT COUNT(*) AS count FROM Plants').get().count || 0);
+			info.visiblePlantCount = Number(db.prepare('SELECT COUNT(*) AS count FROM Plants WHERE abbr IS NOT NULL').get().count || 0);
+		}
+		finally {
+			db.close();
+		}
+	}
+	catch (e) {
+		info.error = e && e.message ? e.message : String(e);
+	}
+	return info;
+}
+
+function getTrellisDatabaseInfo(options) {
+	options = options || {};
+	const dbName = String(options.dbName || 'Trellis_database.sqlite');
+	const sourceRelPath = String(options.seedRelPath || TRELLIS_BUILT_IN_DB_REL_PATH);
+	const sourcePath = path.resolve(__dirname, sourceRelPath);
+	const livePath = getLiveDbPath(dbName);
+	return {
+		live: readTrellisDatabaseInfo(livePath),
+		builtin: readTrellisDatabaseInfo(sourcePath)
+	};
 }
 
 // (ADD): validate DB path and allow read-only open by default
@@ -715,7 +749,7 @@ app.whenReady().then(() => {
 		program
 			.version(app.getVersion())
 			.usage('[options] <input file/folder>')
-			.argument('[input file/folder]', 'input drawio file or a folder with drawio files')
+			.argument('[input file/folder]', 'input diagram file or a folder with diagram files') // CHANGE
 			.allowUnknownOption() //-h and --help are considered unknown!!
 			.option('-c, --create', 'creates a new empty file if no file is passed')
 			.option('-k, --check', 'does not overwrite existing files')
@@ -2686,6 +2720,9 @@ ipcMain.on("rendererReq", async (event, args) => {
 				break;
 			case 'getTrellisAppInfo':
 				ret = getTrellisAppInfo();
+				break;
+			case 'getTrellisDatabaseInfo':
+				ret = getTrellisDatabaseInfo(args); // CHANGE: restore UI can compare live and built-in DB state.
 				break;
 			case 'getTrellisReleases':
 				ret = await getTrellisReleases();

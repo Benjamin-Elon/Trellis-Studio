@@ -55,7 +55,7 @@ ipcRenderer.on('mainResp', (event, resp) => {
 	try {
 	  const cbEntry = reqInfo[resp.reqId];
 	  if (cbEntry) {
-		// Classic window.electron.request(...) path (core Draw.io)
+		// Classic window.electron.request(...) path (core editor)
 		if (resp.error) cbEntry.error(resp.msg, resp.e);
 		else cbEntry.callback(resp.data);
 		delete reqInfo[resp.reqId];
@@ -131,6 +131,15 @@ contextBridge.exposeInMainWorld('trellisApp', {
 				{ action: 'restoreBuiltInTrellisDatabase' },
 				(data) => resolve(data || {}),
 				(msg) => reject(new Error(msg || 'restoreBuiltInTrellisDatabase failed'))
+			);
+		});
+	},
+	getDatabaseInfo() {
+		return new Promise((resolve, reject) => {
+			requestViaIPC(
+				{ action: 'getTrellisDatabaseInfo' },
+				(data) => resolve(data || {}),
+				(msg) => reject(new Error(msg || 'getTrellisDatabaseInfo failed'))
 			);
 		});
 	}

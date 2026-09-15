@@ -55,6 +55,11 @@ function findAddCropSelect(document) {
     ) || null;
 }
 
+function selectAddCropOption(select, option) {
+    select.value = option.value;
+    select.dispatchEvent(new select.ownerDocument.defaultView.Event("change", { bubbles: true })); // CHANGE: crop selection now commits immediately.
+}
+
 function findCropFilterSelect(document) {
     return Array.from(document.querySelectorAll("select")).find(select =>
         Array.from(select.options).some(option => option.textContent === "-- All crops --")
@@ -203,6 +208,14 @@ function openDiagnostics(document, labelPattern) {
     assert.equal(popover.hidden, false);
     return { trigger, popover };
 }
+
+function findAttentionButton(document, labelPattern) {
+    return Array.from(attentionStrip(document).querySelectorAll(".yp-chip[data-clickable='true']")).find(button => labelPattern.test(button.textContent)) || null;
+} // NEW: attention badge tests target the actionable chip rather than its diagnostics trigger.
+
+function findPlanCheckCropRow(document, cropId) {
+    return document.querySelector(`[data-plan-check-crop-id="${cropId}"]`);
+} // NEW
 
 function clickDiagnosticItem(popover, messagePattern) {
     const item = Array.from(popover.querySelectorAll(".yp-diagnostics-item")).find(button => messagePattern.test(button.textContent));
@@ -595,8 +608,7 @@ test("empty year plans save as drafts until a crop exists", async t => {
 
     const select = findAddCropSelect(harness.document);
     const annualGroup = Array.from(select.querySelectorAll("optgroup")).find(group => group.label === "Annual crops");
-    select.value = annualGroup.querySelector("option").value;
-    harness.findButton("Add crop").click();
+    selectAddCropOption(select, annualGroup.querySelector("option"));
     await harness.settle(10);
 
     harness.findButton("Save").click();
@@ -669,6 +681,121 @@ test("Needs attention surfaces problems while the hero remains simple", async t 
         assert.match(attentionStrip(harness.document).textContent, scenario.expected, scenario.name);
     }
 });
+
+test("Demand invalid badge shows count, tooltip, and navigates to the first invalid demand line", async t => {
+    const harness = createYearPlannerHarness();
+    t.after(() => harness.dom.window.close());
+    const scrollSpy = installScrollSpy(harness);
+    t.after(() => scrollSpy.restore());
+    savePlan(harness, 2026, plan => {
+        addDemand(plan, { from: "2026-07-01", to: "2026-06-01" });
+        addDemand(plan, { id: "demand_2", from: "", to: "" });
+    });
+    await harness.openModal(2026);
+
+    const firstLine = findDemandLine(harness.document, "demand_1");
+    Array.from(firstLine.querySelectorAll(".yp-demand-line-header button")).find(button => button.textContent === "Collapse").click();
+    Array.from(findStripDetails(harness.document, "demand").querySelector("[data-demand-channel-id='farm_store']").querySelectorAll("button")).find(button => button.textContent === "Collapse").click();
+    setStripExpanded(harness.document, "demand", false);
+    scrollSpy.reset();
+
+    const badge = findAttentionButton(harness.document, /Demand dates invalid/);
+    assert.ok(badge);
+    assert.match(badge.textContent, /Demand dates invalid \(2\)/);
+    assert.match(badge.title, /Set demand start on or before end for line demand_1/);
+    assert.match(badge.title, /Enter demand dates for line demand_2/);
+    badge.click();
+
+    assert.equal(findStripHeader(harness.document, "demand").getAttribute("aria-expanded"), "true");
+    const channel = findStripDetails(harness.document, "demand").querySelector("[data-demand-channel-id='farm_store']");
+    assert.equal(channel.querySelector(".yp-demand-channel-details").style.display, "block");
+    assert.equal(findDemandLine(harness.document, "demand_1").querySelector(".yp-demand-line-details").style.display, "grid");
+    const from = findYearPlanField(harness.document, "from", { yearPlanDemandLineId: "demand_1" });
+    assert.equal(harness.document.activeElement, from);
+    assert.ok(scrollSpy.calls.some(call => call.element === from));
+}); // NEW
+
+test("Self Sufficiency invalid badge shows count, tooltip, and navigates to the first invalid line", async t => {
+    const harness = createYearPlannerHarness();
+    t.after(() => harness.dom.window.close());
+    const scrollSpy = installScrollSpy(harness);
+    t.after(() => scrollSpy.restore());
+    savePlan(harness, 2026, plan => {
+        addSelfUse(plan, { from: "2026-07-01", to: "2026-06-01" });
+        addSelfUse(plan, { id: "self_2", from: "", to: "" });
+    });
+    await harness.openModal(2026);
+
+    Array.from(findSelfLine(harness.document, "self_1").querySelectorAll(".yp-self-line-header button")).find(button => button.textContent === "Collapse").click();
+    setStripExpanded(harness.document, "self-sufficiency", false);
+    scrollSpy.reset();
+
+    const badge = findAttentionButton(harness.document, /Self Sufficiency needs setup/);
+    assert.ok(badge);
+    assert.match(badge.textContent, /Self Sufficiency needs setup \(2\)/);
+    assert.match(badge.title, /Set Self Sufficiency start on or before end for line self_1/);
+    assert.match(badge.title, /Enter Self Sufficiency dates for line self_2/);
+    badge.click();
+
+    assert.equal(findStripHeader(harness.document, "self-sufficiency").getAttribute("aria-expanded"), "true");
+    assert.equal(findSelfLine(harness.document, "self_1").querySelector(".yp-self-line-details").style.display, "grid");
+    const from = findYearPlanField(harness.document, "from", { yearPlanSelfLineId: "self_1" });
+    assert.equal(harness.document.activeElement, from);
+    assert.ok(scrollSpy.calls.some(call => call.element === from));
+}); // NEW
+
+test("CSA setup badge shows count, tooltip, and navigates to the first invalid field", async t => {
+    const harness = createYearPlannerHarness();
+    t.after(() => harness.dom.window.close());
+    const scrollSpy = installScrollSpy(harness);
+    t.after(() => scrollSpy.restore());
+    savePlan(harness, 2026, plan => {
+        plan.csa.enabled = true;
+        plan.csa.boxesPerWeek = 0;
+        plan.csa.components = [{ cropId: "crop_1", qty: 1, unit: "crate", everyNWeeks: 1, start: "2026-06-01", end: "2026-06-07" }]; // CHANGE: pair the global error with a stable component validation issue.
+    });
+    await harness.openModal(2026);
+    setStripExpanded(harness.document, "csa", false);
+    scrollSpy.reset();
+
+    const badge = findAttentionButton(harness.document, /CSA setup issues/);
+    assert.ok(badge);
+    assert.match(badge.textContent, /CSA setup issues \(2\)/);
+    assert.match(badge.title, /Enter CSA boxes\/week greater than 0/);
+    assert.match(badge.title, /Choose a valid CSA unit for Tomato/);
+    badge.click();
+
+    assert.equal(findStripHeader(harness.document, "csa").getAttribute("aria-expanded"), "true");
+    const boxes = findYearPlanField(harness.document, "boxesPerWeek");
+    assert.equal(harness.document.activeElement, boxes);
+    assert.ok(scrollSpy.calls.some(call => call.element === boxes));
+}); // NEW
+
+test("crop metric warning badge selects crop, opens editor, and scrolls to Plan Check row", async t => {
+    const harness = createYearPlannerHarness();
+    t.after(() => harness.dom.window.close());
+    const scrollSpy = installScrollSpy(harness);
+    t.after(() => scrollSpy.restore());
+    savePlan(harness, 2026, plan => {
+        plan.crops.push(makePlanCrop({ id: "crop_2", plantId: "2", plant: "Lettuce" }));
+        addDemand(plan, { cropId: "crop_2", qty: 20 });
+    });
+    await harness.openModal(2026);
+    setStripExpanded(harness.document, "crop-plan", false);
+    setStripExpanded(harness.document, "plan-check", false);
+    scrollSpy.reset();
+
+    const badge = findAttentionButton(harness.document, /Lettuce short/);
+    assert.ok(badge);
+    badge.click();
+
+    assert.equal(findCropCardById(harness.document, "crop_2").dataset.selected, "true");
+    assert.equal(findStripHeader(harness.document, "crop-plan").getAttribute("aria-expanded"), "true");
+    assert.equal(findStripHeader(harness.document, "plan-check").getAttribute("aria-expanded"), "true");
+    const row = findPlanCheckCropRow(harness.document, "crop_2");
+    assert.ok(row);
+    assert.ok(scrollSpy.calls.some(call => call.element === row));
+}); // NEW
 
 test("crop diagnostics popover navigates to invalid basics and package fields", async t => {
     const harness = createYearPlannerHarness();
@@ -1057,8 +1184,7 @@ test("new crops without saved package defaults start with no demand unit choices
     t.after(() => harness.dom.window.close());
     const session = await harness.openModal(2026);
     const select = findAddCropSelect(harness.document);
-    select.value = Array.from(select.querySelectorAll("option")).find(option => option.textContent === "Tomato").value;
-    harness.findButton("Add crop").click();
+    selectAddCropOption(select, Array.from(select.querySelectorAll("option")).find(option => option.textContent === "Tomato"));
     await harness.settle(120);
 
     assert.deepEqual(Array.from(session.plan.crops[0].packages), []);
@@ -1259,8 +1385,7 @@ test("Garden variety resolution preserves identity, applies yield override, and 
     let gardenGroup = Array.from(select.querySelectorAll("optgroup")).find(group => group.label.startsWith("Crops in this garden"));
     assert.deepEqual(optionLabels(gardenGroup), ["Tomato - Roma"]);
 
-    select.value = gardenGroup.querySelector("option").value;
-    harness.findButton("Add crop").click();
+    selectAddCropOption(select, gardenGroup.querySelector("option"));
     await harness.settle(10);
     assert.equal(session.plan.crops.length, 1);
     assert.equal(session.plan.crops[0].varietyId, 10);
@@ -1389,8 +1514,7 @@ test("adding a crop selects it and syncs Plan Check filter", async t => {
 
     const select = findAddCropSelect(harness.document);
     const annualGroup = Array.from(select.querySelectorAll("optgroup")).find(group => group.label === "Annual crops");
-    select.value = annualGroup.querySelector("option").value;
-    harness.findButton("Add crop").click();
+    selectAddCropOption(select, annualGroup.querySelector("option"));
     await harness.settle(10);
 
     assert.equal(session.plan.crops.length, 1);
@@ -1408,8 +1532,7 @@ test("Add crop stores planting method category from defaults and blank defaults 
     t.after(() => defaultHarness.dom.window.close());
     let session = await defaultHarness.openModal(2026);
     let select = findAddCropSelect(defaultHarness.document);
-    select.value = select.querySelector("optgroup option").value;
-    defaultHarness.findButton("Add crop").click();
+    selectAddCropOption(select, select.querySelector("optgroup option"));
     await defaultHarness.settle(10);
     assert.equal(session.plan.crops[0].method, "transplant.indoor");
     assert.equal(session.plan.crops[0].methodCategoryId, "transplant");
@@ -1420,8 +1543,7 @@ test("Add crop stores planting method category from defaults and blank defaults 
     t.after(() => fallbackHarness.dom.window.close());
     session = await fallbackHarness.openModal(2026);
     select = findAddCropSelect(fallbackHarness.document);
-    select.value = select.querySelector("optgroup option").value;
-    fallbackHarness.findButton("Add crop").click();
+    selectAddCropOption(select, select.querySelector("optgroup option"));
     await fallbackHarness.settle(10);
     assert.equal(session.plan.crops[0].method, "direct_sow.field");
     assert.equal(session.plan.crops[0].methodCategoryId, "direct_sow");
@@ -1449,8 +1571,7 @@ test("Unavailable garden records are skipped while deleted persisted varieties r
     assert.deepEqual(optionLabels(gardenGroup), ["Tomato - Old Favorite"]);
     assert.match(harness.document.body.textContent, /Skipped 2 unavailable garden crops/);
 
-    select.value = gardenGroup.querySelector("option").value;
-    harness.findButton("Add crop").click();
+    selectAddCropOption(select, gardenGroup.querySelector("option"));
     await harness.settle(10);
     assert.equal(session.plan.crops[0].varietyId, 99);
     assert.equal(session.plan.crops[0].variety, "Old Favorite");
@@ -1548,7 +1669,7 @@ test("Stale Add crop loads cannot replace newer grouped options", async t => {
     const annualGroup = Array.from(select.querySelectorAll("optgroup")).find(group => group.label === "Annual crops");
     assert.deepEqual(optionLabels(annualGroup), ["Newer"]);
     assert.equal(select.disabled, false);
-    assert.equal(harness.findButton("Add crop").disabled, false);
+    assert.equal(harness.findButton("Add crop"), null);
 });
 
 test("Plan Check summary follows the crop filter and chart hover shows inventory details", async t => {
@@ -1932,8 +2053,7 @@ test("Harvest date controls reject reversed ranges and allow same-day windows", 
     const select = findAddCropSelect(harness.document);
     await harness.settle(10);
     const annualGroup = Array.from(select.querySelectorAll("optgroup")).find(group => group.label === "Annual crops");
-    select.value = annualGroup.querySelector("option").value;
-    harness.findButton("Add crop").click();
+    selectAddCropOption(select, annualGroup.querySelector("option"));
     await harness.settle(10);
     const crop = session.plan.crops[0];
     crop.useActualHarvest = false;

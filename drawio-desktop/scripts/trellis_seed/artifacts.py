@@ -53,7 +53,7 @@ def artifact_status(path: Path) -> str:
         return "incomplete"
     if not (path / "validation_report.json").exists():
         return "incomplete"
-    return "complete"
+    return "applied" if (path / "apply_report.json").exists() else "unapplied"  # CHANGE: valid runs now expose whether DB targets were actually updated.
 
 
 def list_artifacts(runs_dir: Path, *, complete_runs_only: bool = False) -> list[Path]:
@@ -61,7 +61,7 @@ def list_artifacts(runs_dir: Path, *, complete_runs_only: bool = False) -> list[
         return []
     folders = sorted([path for path in runs_dir.iterdir() if path.is_dir()], reverse=True)
     if complete_runs_only:
-        return [path for path in folders if artifact_status(path) == "complete"]
+        return [path for path in folders if artifact_status(path) in {"unapplied", "applied"}]  # CHANGE: both valid states are selectable for review/apply.
     return folders
 
 
@@ -83,8 +83,6 @@ def artifacts_after_keeping_latest(artifacts: list[Path], keep_count: int, runs_
 
 def artifact_label(path: Path) -> str:
     status = artifact_status(path)
-    if status == "complete":
-        return f"{path.name} [complete]"
     return f"{path.name} [{status}]"
 
 

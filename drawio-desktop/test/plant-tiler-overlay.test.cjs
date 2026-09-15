@@ -51,12 +51,25 @@ test('Garden Settings entry points route through the overlay-suppressed opener',
     const source = readPlantTilerSource();
 
     assert.match(source, /await openGardenSettingsDialogWithOverlaySuppressed\(moduleCell\);/);
-    assert.match(source, /if \(hasGardenSettingsSet\(moduleCell\)\) return;[\s\S]*openGardenSettingsDialogWithOverlaySuppressed\(moduleCell\);/);
+    assert.match(source, /if \(hasGardenSettingsSet\(moduleCell\)\) \{ if \(focusAfterSettingsClose\) selectAndZoomToGarden\(moduleCell\); return; \}[\s\S]*openGardenSettingsDialogWithOverlaySuppressed\(moduleCell, handleSettingsClose\);/); // CHANGE
     assert.match(source, /await openGardenSettingsDialogWithOverlaySuppressed\(targetMod\);/);
 
     const directDialogReferences = source.match(/showGardenSettingsDialog\(ui, graph,/g) || [];
     assert.equal(directDialogReferences.length, 4);
 });
+
+test('Garden Settings close can focus newly-created gardens using dashboard zoom pattern', () => { // NEW
+    const source = readPlantTilerSource(); // NEW
+
+    assert.match(source, /function cellBoundsInModel\(cell\)[\s\S]*graph\.view && graph\.view\.getState \? graph\.view\.getState\(cell\) : null/); // NEW
+    assert.match(source, /function zoomGardenToViewport\(moduleCell\)[\s\S]*const bounds = cellBoundsInModel\(moduleCell\);[\s\S]*graph\.fitWindow\(bounds, 48\);/); // NEW
+    assert.match(source, /if \(graph\.view && Number\(graph\.view\.scale\) > 1 && graph\.zoomTo\) graph\.zoomTo\(1\);/); // NEW
+    assert.match(source, /function selectAndZoomToGarden\(moduleCell\)[\s\S]*graph\.setSelectionCell\(moduleCell\)[\s\S]*zoomGardenToViewport\(moduleCell\);/); // NEW
+    assert.match(source, /const focusAfterSettingsClose = !!\(evt && evt\.getProperty && evt\.getProperty\("focusAfterSettingsClose"\)\);/); // NEW
+    assert.match(source, /function handleSettingsClose\(\)[\s\S]*graph\.__plantTilerRefreshGardenModuleOverlay\(\);[\s\S]*if \(focusAfterSettingsClose\) selectAndZoomToGarden\(moduleCell\);/); // NEW
+    assert.match(source, /openGardenSettingsDialogWithOverlaySuppressed\(moduleCell, handleSettingsClose\);/); // NEW
+    assert.match(source, /showGardenSettingsDialog\(ui, graph, moduleCell, handleSettingsClose\);/); // NEW
+}); // NEW
 
 test('Garden Settings can open with an empty city table so City Manager can add the first city', () => {
     const source = readPlantTilerSource();
@@ -125,6 +138,57 @@ test('Garden module settings expose external margin but no internal margin', () 
     assert.match(source, /setGardenModuleExternalMargin\(moduleCell, chosenModuleExternalMargin\);/); // NEW
     assert.match(source, /if \(!toolbar \|\| !labelInputWrap \|\| !settingsBtn \|\| !addBedBtn \|\| !addGroupBtn \|\| !allocateModeBtn \|\| !irrigationModeBtn \|\| !moduleCell\) return;/); // CHANGE
 });
+
+test('Garden Settings exposes fixed path width presets with explicit enablement', () => { // NEW
+    const source = readPlantTilerSource(); // NEW
+    const dialogSource = sourceSlice(source, 'async function showGardenSettingsDialog', 'function plainGardenModuleLabel'); // NEW
+
+    assert.match(source, /const CM_PER_INCH = CM_PER_FOOT \/ 12;/); // NEW
+    assert.match(source, /const DEFAULT_PATH_WIDTH_PRESETS = \[[\s\S]*\{ id: "small", label: "Small", metricCm: 45, imperialCm: 18 \* CM_PER_INCH \}[\s\S]*\{ id: "medium", label: "Medium", metricCm: 75, imperialCm: 30 \* CM_PER_INCH \}[\s\S]*\{ id: "large", label: "Large", metricCm: 100, imperialCm: 48 \* CM_PER_INCH \}/); // NEW
+    assert.match(source, /function pathPresetWidthAttr\(id\) \{[\s\S]*return `default_path_\$\{id\}_width_cm`;/); // NEW
+    assert.match(source, /function pathPresetEnabledAttr\(id\) \{[\s\S]*return `default_path_\$\{id\}_enabled`;/); // NEW
+    assert.match(source, /function getSavedPathWidthPresetsCm\(moduleCell\)[\s\S]*enabled: enabledAttr === "" \? true : enabledAttr !== "0"[\s\S]*widthCm: savedWidth \|\| preset\.widthCm/); // NEW
+    assert.match(source, /function hasSavedPathWidthPresetAttrs\(moduleCell\)[\s\S]*pathPresetWidthAttr\(preset\.id\)[\s\S]*pathPresetEnabledAttr\(preset\.id\)/); // NEW
+    assert.match(dialogSource, /const savedPathPresetsCm = hasSavedPathWidthPresetAttrs\(moduleCell\) \? getSavedPathWidthPresetsCm\(moduleCell\) : null;/); // NEW
+    assert.match(dialogSource, /const pathPresetRows = DEFAULT_PATH_WIDTH_PRESETS\.map\(function \(preset\)/); // NEW
+    assert.match(dialogSource, /enabledInput\.type = "checkbox";[\s\S]*widthInput\.type = "number";/); // NEW
+    assert.match(dialogSource, /function syncPathWidthInputs\(nextUnits\)[\s\S]*item\.row\.label\.textContent = enabled \? `\$\{item\.preset\.label\} path width \(\$\{unitLabel\}\):`/); // NEW
+    assert.match(dialogSource, /const chosenPathPresetsCm = readPathWidthInputsAsCm\(chosenUnits\);/); // NEW
+    assert.match(dialogSource, /Enabled path widths must be positive numbers\./); // NEW
+    assert.match(dialogSource, /pathAttrs\[pathPresetEnabledAttr\(preset\.id\)\] = preset\.enabled \? "1" : "0";[\s\S]*pathAttrs\[pathPresetWidthAttr\(preset\.id\)\] = formatBedCmAttr\(preset\.widthCm\);/); // NEW
+    assert.match(dialogSource, /ui\.showDialog\(div, 460, 560, true, true, notifyClose\);/); // NEW
+}); // NEW
+
+test('Garden bed path snapping evaluates direct neighbors and closest path presets', () => { // NEW
+    const source = readPlantTilerSource(); // NEW
+    const snapSource = sourceSlice(source, 'function normalizeRotationDeg', 'function bedAtGraphPoint'); // NEW
+
+    assert.match(source, /const PATH_WIDTH_TOLERANCE_RATIO = 0\.25;/); // NEW
+    assert.match(source, /const PATH_WIDTH_TOLERANCE_CAP_CM = 30;/); // NEW
+    assert.match(snapSource, /function isAxisAlignedPathSnapBed\(cell\)[\s\S]*normalizeRotationDeg\(getTilerRotationDeg\(cell\)\) <= ROTATION_EPS_DEG/); // NEW
+    assert.match(snapSource, /function directBedNeighborsByDirection\(moduleCell, bedCell, activeRect\)[\s\S]*aboveGap > 0 && rectsOverlapOnX\(activeRect, rect\)[\s\S]*belowGap > 0 && rectsOverlapOnX\(activeRect, rect\)[\s\S]*leftGap > 0 && rectsOverlapOnY\(activeRect, rect\)[\s\S]*rightGap > 0 && rectsOverlapOnY\(activeRect, rect\)/); // NEW
+    assert.match(snapSource, /function bestPathPresetForGap\(gapUnits, presets\)[\s\S]*diff > pathSnapToleranceUnits\(target\)[\s\S]*diff < best\.diff/); // NEW
+    assert.match(snapSource, /function pathSnapToleranceUnits\(widthUnits\)[\s\S]*PATH_WIDTH_TOLERANCE_RATIO[\s\S]*PATH_WIDTH_TOLERANCE_CAP_CM/); // NEW
+    assert.match(snapSource, /function buildPathSnapCandidate\(moduleCell, activeRect, neighbor, presets\)[\s\S]*if \(!rectInsideModuleBounds\(moduleCell, finalRect\)\) return candidate;/); // NEW
+    assert.match(snapSource, /const xSnap = chooseAxisPathSnap\(candidates, "x"\);[\s\S]*const ySnap = chooseAxisPathSnap\(candidates, "y"\);/); // NEW
+    assert.match(snapSource, /candidate\.activeSnap = candidate === xSnap \|\| candidate === ySnap;/); // NEW
+}); // NEW
+
+test('Garden bed path snapping hooks creation, move, resize, Alt bypass, and overlay badges', () => { // NEW
+    const source = readPlantTilerSource(); // NEW
+    const snapSource = sourceSlice(source, 'function normalizeRotationDeg', 'function bedAtGraphPoint'); // NEW
+    const resizeSource = sourceSlice(source, 'graph.resizeCells = function (cells, bounds, recurse)', '// ---- Public API export'); // NEW
+
+    assert.match(source, /applyBedPathSnapNoTxn\(model, bed, \{ source: "bed-created" \}\);/); // NEW
+    assert.match(source, /function installBedPathSnapMoveWrapper\(\)[\s\S]*const oldMoveCells = graph\.moveCells;[\s\S]*applyBedPathSnapNoTxn\(model, cells\[0\], \{ source: "bed-moved", event: evt \}\);/); // NEW
+    assert.match(resizeSource, /!isBedPathSnapAltBypassActive\(\) && canConsiderBedPathSnapForCells\(cells, null, false, null\)[\s\S]*applyBedPathSnapNoTxn\(model, cells\[0\], \{ source: "bed-resized" \}\)/); // NEW
+    assert.match(snapSource, /function canConsiderBedPathSnapForCells\(cells, evt, clone, target\)[\s\S]*mxEvent\.isAltDown[\s\S]*\(cells \|\| \[\]\)\.length === 1/); // NEW
+    assert.match(snapSource, /function installBedPathSnapOverlay\(\)[\s\S]*PATH_SNAP_OVERLAY_CLASS[\s\S]*PATH_SNAP_BAND_CLASS[\s\S]*PATH_SNAP_BADGE_CLASS/); // NEW
+    assert.match(snapSource, /candidate\.activeSnap \? "rgba\(239,246,255,0\.98\)" : "rgba\(255,255,255,0\.96\)"/); // NEW
+    assert.match(snapSource, /badge\.textContent = formatPathDistanceLabelFromUnits\(candidate\.gap, units\) \+ snapLabel;/); // NEW
+    assert.match(snapSource, /lastBedPathSnapPointerEvent = me && me\.getEvent \? me\.getEvent\(\) : null;/); // NEW
+    assert.match(snapSource, /if \(isBedPathSnapAltBypassActive\(\)\) \{ hideOverlay\(\); return; \}/); // NEW
+}); // NEW
 
 test('Garden module overlay uses a single editable bed-style label input', () => {
     const source = readPlantTilerSource();
@@ -221,7 +285,7 @@ test('plant tiler exposes a read-only draft group preview helper', () => {
     assert.match(exportSource, /buildDraftTilerGroupPreview,/);
 });
 
-test('planting groups and plant circles disable native Draw.io connectors', () => { // CHANGE
+test('planting groups and plant circles disable native editor connectors', () => { // CHANGE
     const source = readPlantTilerSource(); // CHANGE
     const circleStyle = sourceSlice(source, 'function plantCircleStyle', 'function groupFrameStyle'); // CHANGE
     const groupStyle = sourceSlice(source, 'function groupFrameStyle', 'let __dbPathCached'); // CHANGE

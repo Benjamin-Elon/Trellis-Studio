@@ -9,6 +9,7 @@ from typing import Any
 from .artifacts import input_summary_slug, unique_artifact_dir
 from .config import Settings, read_openai_api_key
 from .db import load_cities, load_method_categories, load_methods, load_plant_allowed_categories, load_plants
+from .generic_varieties import generic_maturity_varieties_for_plant
 from .jsonio import read_json, write_json
 from .planner import effective_tables_from_input, selected_tables_warning
 from .providers import NasaPowerClient, OpenAIJsonClient, OpenMeteoClient, ProviderError, ProviderTrace
@@ -26,7 +27,7 @@ from .schema import (
     compact_json,
 )
 from .sowing_windows import normalize_window_row, select_cities_for_crop, usable_crop_for_sowing_windows
-from .validator import normalize_key, source_ref_allowed, source_values_from_input, validate_input, validate_row, validate_run
+from .validator import normalize_key, source_values_from_input, validate_input, validate_row, validate_run
 from .weather import forecast_rows, history_window, summarize_city_monthly_weather
 
 
@@ -54,7 +55,7 @@ CROP_PROMPT_FIELD_GUIDE = {
     "spacing": "spacing_x_cm and spacing_y_cm should describe in-row and between-row spacing when useful.",  # prompt quality
     "methods": "allowed_method_categories are broad capabilities; allowed_method_ids are concrete fixed_methods that truly fit the crop.",  # prompt quality
     "default_method": "default_planting_method must be one of allowed_method_ids and should reflect the most common reliable home-garden method.",  # prompt quality
-    "varieties": "Return real named cultivars only, preferably widely available and suitable for temperate gardens.",  # prompt quality
+    "varieties": "Do not return cultivar varieties; Trellis generates deterministic Early/Mid/Late maturity profiles after the crop row is accepted.",  # prompt quality
     "growth_stages": "Return harvest-form stages for the scheduler's 'Grown for' control, such as microgreens, baby leaf, shoots, immature harvest, or mature; do not return lifecycle milestones like germination, vegetative, flowering, or fruiting.",  # prompt quality
     "provenance": "For required provenance fields, use exact strings from allowed_provenance_references only.",  # prompt quality
 }
@@ -463,13 +464,12 @@ def _city_geocode_qualifiers(city: dict[str, Any], display_name: str) -> dict[st
 
 
 def _generate_crops(settings: Settings, input_data: dict[str, Any], openai: OpenAIJsonClient, methods: list[dict[str, Any]], generated: dict[str, list[dict[str, Any]]], provenance: dict[str, Any], run_dir: Path, generate_templates: bool) -> None:
-    default_variety_count = int(input_data.get("settings", {}).get("variety_count", settings.data.get("default_variety_count", 5)))
     crops = input_data.get("crops", []) or []
     for crop_index, crop in enumerate(crops, 1):
         name = str(crop.get("plant_name") or crop.get("name")).strip()
         generated_lengths = _generated_lengths(generated)
         try:
-            _generate_one_crop(settings, crop, crop_index, len(crops), default_variety_count, openai, methods, generated, provenance, generate_templates)
+            _generate_one_crop(settings, crop, crop_index, len(crops), openai, methods, generated, provenance, generate_templates)
         except Exception as exc:
             _restore_generated_lengths(generated, generated_lengths)
             _record_generation_failure(run_dir, provenance, "crop", name, exc)
@@ -477,13 +477,12 @@ def _generate_crops(settings: Settings, input_data: dict[str, Any], openai: Open
             continue
 
 
-def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int, crop_count: int, default_variety_count: int, openai: OpenAIJsonClient, methods: list[dict[str, Any]], generated: dict[str, list[dict[str, Any]]], provenance: dict[str, Any], generate_templates: bool) -> None:
+def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int, crop_count: int, openai: OpenAIJsonClient, methods: list[dict[str, Any]], generated: dict[str, list[dict[str, Any]]], provenance: dict[str, Any], generate_templates: bool) -> None:
         name = str(crop.get("plant_name") or crop.get("name")).strip()
-        requested_varieties = int(crop.get("variety_count") or default_variety_count)
         print(f"Generating crop {crop_index}/{crop_count}: {name}", flush=True)
         source_values = _crop_source_values(crop, methods)
         print(f"  - Source/provenance references available: {len(source_values)}", flush=True)
-        print(f"  - Requested varieties: {requested_varieties}", flush=True)
+        print("  - Generic maturity profiles will be generated deterministically", flush=True)
         result, trace = _call_openai_with_retry(
             openai,
             schema_name="trellis_crop_row",
@@ -497,8 +496,7 @@ def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int
                 "Never return nulls or empty strings for plant row fields; use concise 'N/A' only for text fields that truly do not apply. "
                 "Numeric and integer fields must be in the requested units, never text. "
                 "Lifecycle flags must be coherent, method flags must match allowed planting methods, and default_planting_method must be a concrete allowed method. "
-                "Return real named cultivars/varieties only; never placeholders such as '<crop> variety 1', 'generic', 'standard', or crop-name-only varieties. "
-                "Set variety.maturity_class only when a supplied variety source explicitly supports early, mid, or late maturity; otherwise return an empty string. "
+                "Do not return cultivar or variety rows; Trellis synthesizes generic Early/Mid/Late maturity profiles deterministically from the accepted crop row. "
                 "Generate growth_stages as harvest-form 'grown for' targets that scale scheduler timing and layout; always include a Mature stage with gdd_ratio 1.0, and exclude lifecycle milestones such as germination, vegetative, flowering, and fruiting. "
                 "Do not include planting methods (such as propagation-by-cutting) unless the crop is normally grown using the method. "
                 "provenance.field_sources must cite exact supplied strings from allowed_provenance_references for required provenance fields; do not cite invented estimate labels."
@@ -508,7 +506,6 @@ def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int
                 "trellis_field_guide": CROP_PROMPT_FIELD_GUIDE,  # prompt quality
                 "fixed_method_categories": sorted({m["method_category_id"] for m in methods}),
                 "fixed_methods": methods,
-                "default_variety_count": requested_varieties,
                 "allowed_provenance_references": sorted(source_values),
             }, indent=2),
         )
@@ -525,18 +522,9 @@ def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int
         print(f"  - Allowed planting methods: {', '.join(allowed_method_ids) or '[none]'}", flush=True)
         for category in allowed_categories:
             generated["PlantAllowedMethodCategories"].append({"plant_name": row["plant_name"], "method_category_id": category})
-        varieties = result.get("varieties", [])[:requested_varieties]
-        print(f"  - Varieties generated: {len(varieties)}", flush=True)
-        for variety in varieties:
-            variety_row = {
-                "plant_name": row["plant_name"],
-                "variety_name": variety["variety_name"],
-                "overrides": _override_pairs_to_dict(variety.get("overrides") or {}),
-            }
-            maturity_class = str(variety.get("maturity_class") or "").strip().casefold()
-            if maturity_class and _has_explicit_variety_sources(variety):
-                variety_row["maturity_class"] = maturity_class
-            generated["PlantVarieties"].append(variety_row)
+        varieties = generic_maturity_varieties_for_plant(row)
+        print(f"  - Generic maturity profiles generated: {len(varieties)}", flush=True)
+        generated["PlantVarieties"].extend(varieties)
         for stage in result.get("growth_stages") or []:
             generated.setdefault("PlantGrowthStages", []).append({"plant_name": row["plant_name"], **stage})
         print(f"  - Growth stages generated: {len(result.get('growth_stages') or [])}", flush=True)
@@ -956,21 +944,6 @@ def _print_openai_errors(label: str | None, errors: list[str]) -> None:
         print(f"      - {error}", flush=True)
     if len(errors) > 5:
         print(f"      - ... {len(errors) - 5} more", flush=True)
-
-
-def _override_pairs_to_dict(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    if not isinstance(value, list):
-        return {}
-    result: dict[str, Any] = {}
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        field = str(item.get("field") or "").strip()
-        if field:
-            result[field] = item.get("value")
-    return result
 
 
 def build_task_template_from_method(method: dict[str, Any]) -> dict[str, Any]:
@@ -1451,57 +1424,8 @@ def _validate_crop_result(result: dict[str, Any], source_values: set[str], metho
     if not result.get("allowed_method_categories"):
         errors.append("allowed_method_categories is required.")
     errors.extend(_validate_allowed_method_ids(result, methods or []))
-    errors.extend(_validate_varieties(result.get("varieties"), str(row.get("plant_name") or ""), source_values))
     errors.extend(_validate_growth_stages(result.get("growth_stages"), str(row.get("plant_name") or "")))
     return errors
-
-
-def _validate_varieties(varieties: Any, plant_name: str, source_values: set[str] | None = None) -> list[str]:
-    errors: list[str] = []
-    if not isinstance(varieties, list):
-        return ["varieties must be a list."]
-    seen: set[str] = set()
-    plant_key = normalize_key(plant_name)
-    for index, variety in enumerate(varieties):
-        prefix = f"varieties[{index}]"
-        if not isinstance(variety, dict):
-            errors.append(f"{prefix} must be an object.")
-            continue
-        name = str(variety.get("variety_name") or "").strip()
-        key = normalize_key(name)
-        if not name:
-            errors.append(f"{prefix}.variety_name is required.")
-            continue
-        if key in seen:
-            errors.append(f"{prefix}.variety_name duplicates another variety: {name}")
-        seen.add(key)
-        if key == plant_key:
-            errors.append(f"{prefix}.variety_name must be a real cultivar/variety, not the crop name.")
-        if _is_placeholder_variety_name(name, plant_name):
-            errors.append(f"{prefix}.variety_name appears to be a placeholder: {name}")
-        maturity_class = str(variety.get("maturity_class") or "").strip().casefold()
-        if maturity_class and maturity_class not in {"early", "mid", "late"}:
-            errors.append(f"{prefix}.maturity_class must be early, mid, or late.")
-        if maturity_class in {"early", "mid", "late"}:
-            errors.extend(_validate_variety_maturity_sources(prefix, variety, source_values))
-    return errors
-
-
-def _has_explicit_variety_sources(variety: dict[str, Any]) -> bool:
-    return any(str(source).strip() for source in (variety.get("sources") or []))
-
-
-def _validate_variety_maturity_sources(prefix: str, variety: dict[str, Any], source_values: set[str] | None) -> list[str]:
-    sources = [str(source).strip() for source in (variety.get("sources") or []) if str(source).strip()]
-    if not sources:
-        return [f"{prefix}.maturity_class requires at least one explicit source in {prefix}.sources."]
-    if source_values is None:
-        return []
-    return [
-        f"{prefix}.sources references an input source/note that was not supplied: {source}"
-        for source in sources
-        if not source_ref_allowed(source, source_values)
-    ]
 
 
 def _validate_growth_stages(stages: Any, plant_name: str) -> list[str]:
@@ -1528,24 +1452,6 @@ def _validate_growth_stages(stages: Any, plant_name: str) -> list[str]:
     if default_count != 1:
         errors.append("growth_stages must have exactly one default stage.")
     return errors
-
-
-def _is_placeholder_variety_name(name: str, plant_name: str) -> bool:
-    key = normalize_key(name)
-    plant_key = normalize_key(plant_name)
-    if key in {"generic", "standard", "common", "default", "variety", "cultivar", "n/a", "na", "unknown"}:
-        return True
-    stripped = key.removeprefix(plant_key).strip()
-    if stripped in {"variety", "cultivar", "type", "standard"}:
-        return True
-    tokens = stripped.replace("-", " ").split()
-    if len(tokens) == 2 and tokens[0] in {"variety", "cultivar", "type"} and tokens[1].isdigit():
-        return True
-    if key.startswith(f"{plant_key} variety ") and key.rsplit(" ", 1)[-1].isdigit():
-        return True
-    if key.startswith(f"{plant_key} cultivar ") and key.rsplit(" ", 1)[-1].isdigit():
-        return True
-    return False
 
 
 def _validate_allowed_method_ids(result: dict[str, Any], methods: list[dict[str, Any]]) -> list[str]:

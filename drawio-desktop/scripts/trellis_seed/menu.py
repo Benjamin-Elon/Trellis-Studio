@@ -8,7 +8,7 @@ from pathlib import Path
 from .artifacts import artifact_label, artifacts_after_keeping_latest, artifacts_older_than, list_artifacts, select_artifacts_by_indices
 from .climate_benchmarks import generate_climate_benchmark, preflight_climate_benchmark
 from .config import ensure_default_config, load_settings, read_openai_api_key, save_settings
-from .db import apply_run_to_databases, create_diff_report, print_diff_report, show_pending_migrations
+from .db import apply_run_to_databases, create_diff_report, print_diff_report, replace_crop_catalog_in_databases, show_pending_migrations
 from .generator import GenerationOptions, estimate_openai_calls, generate_run, normalize_input, preflight
 from .jsonio import read_json
 from .paths import DEFAULT_CONFIG_PATH, DEFAULT_SAMPLE_INPUT_PATH
@@ -34,12 +34,13 @@ def run_menu() -> None:
         print("2. Generate from input JSON")
         print("3. Review/Validate run")
         print("4. Apply valid run to seed DB")
-        print("5. Manage run folders")
-        print("6. Settings and credentials")
-        print("7. Run live tests")
-        print("8. Compare scheduler to sowing-season references")  # terminology alignment
-        print("9. Generate climate benchmark")
-        print("10. Exit")
+        print("5. Replace crop catalog from valid run")  # CHANGE: destructive catalog replacement is explicit.
+        print("6. Manage run folders")
+        print("7. Settings and credentials")
+        print("8. Run live tests")
+        print("9. Compare scheduler to sowing-season references")  # terminology alignment
+        print("10. Generate climate benchmark")
+        print("11. Exit")
         choice = input("Choose an option: ").strip()
         if choice == "1":
             _suggest_input_flow(settings)
@@ -50,16 +51,18 @@ def run_menu() -> None:
         elif choice == "4":
             _apply_flow(settings)
         elif choice == "5":
-            _manage_runs(settings)
+            _replace_crop_catalog_flow(settings)
         elif choice == "6":
-            settings = _settings_flow(settings.path)
+            _manage_runs(settings)
         elif choice == "7":
-            _live_tests_flow()
+            settings = _settings_flow(settings.path)
         elif choice == "8":
-            _sowing_window_diagnostics_flow(settings)
+            _live_tests_flow()
         elif choice == "9":
-            _climate_benchmark_flow(settings)
+            _sowing_window_diagnostics_flow(settings)
         elif choice == "10":
+            _climate_benchmark_flow(settings)
+        elif choice == "11":
             return
         else:
             print("Unknown option.")
@@ -286,6 +289,46 @@ def _apply_flow(settings) -> None:
     print("Apply complete.")
     for target in report["targets"]:
         print(f"Backup ({target['db_path']}): {target['backup_path']}")
+
+
+def _replace_crop_catalog_flow(settings) -> None:
+    run_dir = _choose_run(settings, complete_only=True)
+    if not run_dir:
+        return
+    report = validate_run(run_dir, settings.db_path)
+    if not report["ok"]:
+        print("Run is not valid:")
+        for error in report["errors"]:
+            print(f"- {error}")
+        return
+    targets = settings.apply_db_paths
+    for target in targets:
+        if not target.exists() and target != settings.db_path:
+            print(f"Live/app DB does not exist and will be initialized from seed DB: {target}")
+        if target.exists():
+            pending = show_pending_migrations(target)
+            if pending:
+                print(f"Pending schema migrations for {target}:")
+                for item in pending:
+                    print(f"- {item}")
+    diff = create_diff_report(run_dir, settings.db_path)
+    print_diff_report(diff)
+    print("Replacement targets:")
+    for target in targets:
+        print(f"- {target}")
+    print("This will delete the existing crop catalog and plant-dependent rows before applying this run.")  # CHANGE: destructive scope is visible.
+    if input("Replace the crop catalog in all targets above? Type REPLACE to continue: ").strip() != "REPLACE":
+        print("Replacement cancelled.")
+        return
+    try:
+        report = replace_crop_catalog_in_databases(run_dir, targets, settings.db_path)
+    except Exception as exc:
+        print(f"Replacement failed: {exc}")
+        return
+    print("Crop catalog replacement complete.")
+    for target in report["targets"]:
+        print(f"Backup ({target['db_path']}): {target['backup_path']}")
+        print(f"Plants: {target.get('previous_plant_count', 0)} -> {target.get('final_plant_count', 0)}")
 
 
 def _manage_runs(settings) -> None:

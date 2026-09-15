@@ -1,5 +1,5 @@
 /**
- * Draw.io Plugin: Manual Vertex Linker with Highlight and Overlay Navigation
+ * Trellis plugin: Manual Vertex Linker with Highlight and Overlay Navigation
  * - Right-click to link/unlink selected vertices
  * - Highlights linked vertices and draws dashed edges
  * - Left-click a visible link or link label to navigate between linked vertices
@@ -4811,7 +4811,7 @@ Draw.loadPlugin(function (ui) {
             linkOverlays.refreshAll();
             taskScheduleOverlay.refresh();
 
-            // Draw.io may recreate SVG nodes during zoom/pan, so reapply DOM highlights
+            // The host editor may recreate SVG nodes during zoom/pan, so reapply DOM highlights
             // after the view has finished its redraw cycle.
             setTimeout(function () {
                 refreshCurrentHighlight();

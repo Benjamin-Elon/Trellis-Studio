@@ -1,4 +1,4 @@
-// USL Draw.io Plugin Module: Garden Scheduler annual pure planning core.
+// USL Trellis plugin module: Garden Scheduler annual pure planning core.
 (function (root) {
     'use strict';
 

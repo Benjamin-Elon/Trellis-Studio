@@ -1,5 +1,5 @@
 /**
- * Draw.io Plugin: Drag Circle → Auto Group → Resize to Tile (Square Grid, SQLite-backed)
+ * Trellis plugin: Drag Circle → Auto Group → Resize to Tile (Square Grid, SQLite-backed)
  * With debug logs, re-entrancy guard, resize debounce, and max-tile cap.
  */
 Draw.loadPlugin(function (ui) {
@@ -51,6 +51,7 @@ Draw.loadPlugin(function (ui) {
     const DEFAULT_BED_LENGTH_CM_ATTR = "default_bed_length_cm";
     const CM_PER_METER = 100;
     const CM_PER_FOOT = 30.48;
+    const CM_PER_INCH = CM_PER_FOOT / 12; // NEW: path widths display in inches for short imperial distances.
     const DEFAULT_CREATED_GARDEN_MODULE_WIDTH_UNITS = 160; // NEW: used to recognize the unsized garden shell created before settings are chosen.
     const DEFAULT_CREATED_GARDEN_MODULE_HEIGHT_UNITS = 100; // NEW: used to recognize the unsized garden shell created before settings are chosen.
     const DEFAULT_METRIC_GARDEN_WIDTH_CM = 4 * CM_PER_METER; // NEW: new metric gardens start as whole-number presets.
@@ -61,6 +62,16 @@ Draw.loadPlugin(function (ui) {
     const DEFAULT_METRIC_BED_LENGTH_CM = 200;
     const DEFAULT_IMPERIAL_BED_WIDTH_CM = 4 * CM_PER_FOOT;
     const DEFAULT_IMPERIAL_BED_LENGTH_CM = 8 * CM_PER_FOOT;
+    const DEFAULT_PATH_WIDTH_PRESETS = [ // NEW: fixed per-garden path snap presets.
+        { id: "small", label: "Small", metricCm: 45, imperialCm: 18 * CM_PER_INCH },
+        { id: "medium", label: "Medium", metricCm: 75, imperialCm: 30 * CM_PER_INCH },
+        { id: "large", label: "Large", metricCm: 100, imperialCm: 48 * CM_PER_INCH }
+    ];
+    const PATH_WIDTH_TOLERANCE_RATIO = 0.25; // NEW
+    const PATH_WIDTH_TOLERANCE_CAP_CM = 30; // NEW
+    const PATH_SNAP_OVERLAY_CLASS = "trellis-path-snap-overlay"; // NEW
+    const PATH_SNAP_BAND_CLASS = "trellis-path-snap-band"; // NEW
+    const PATH_SNAP_BADGE_CLASS = "trellis-path-snap-badge"; // NEW
     const DEFAULT_MODULE_MARGIN_CM = 5 * CM_PER_METER; // CHANGE
     const TILER_GROUP_CREATED_EVENT = "usl:tilerGroupCreated";
     const ALLOCATE_PLAN_EVENT = "usl:allocatePlanRequested"; // NEW
@@ -1628,6 +1639,14 @@ Draw.loadPlugin(function (ui) {
         return String(Math.round((Number(cm) || 0) * 1000) / 1000);
     }
 
+    function pathPresetWidthAttr(id) {
+        return `default_path_${id}_width_cm`; // NEW
+    }
+
+    function pathPresetEnabledAttr(id) {
+        return `default_path_${id}_enabled`; // NEW
+    }
+
     function formatBedDisplayValue(value) {
         const rounded = Math.round((Number(value) || 0) * 1000) / 1000;
         return String(rounded);
@@ -1643,6 +1662,47 @@ Draw.loadPlugin(function (ui) {
         if (units === "metric") return { widthCm: DEFAULT_METRIC_GARDEN_WIDTH_CM, lengthCm: DEFAULT_METRIC_GARDEN_LENGTH_CM }; // NEW
         if (units === "imperial") return { widthCm: DEFAULT_IMPERIAL_GARDEN_WIDTH_CM, lengthCm: DEFAULT_IMPERIAL_GARDEN_LENGTH_CM }; // NEW
         return null; // NEW
+    } // NEW
+
+    function defaultPathWidthPresetsCmForUnits(units) {
+        if (!units) return []; // NEW
+        return DEFAULT_PATH_WIDTH_PRESETS.map(function (preset) { // NEW
+            return {
+                id: preset.id,
+                label: preset.label,
+                enabled: true,
+                widthCm: units === "imperial" ? preset.imperialCm : preset.metricCm
+            };
+        }); // NEW
+    } // NEW
+
+    function getSavedPathWidthPresetsCm(moduleCell) {
+        const units = getXmlAttr(moduleCell, "unit_system", "") || "metric"; // NEW
+        const defaults = defaultPathWidthPresetsCmForUnits(units); // NEW
+        return defaults.map(function (preset) { // NEW
+            const savedWidth = positiveFiniteNumber(getXmlAttr(moduleCell, pathPresetWidthAttr(preset.id), ""));
+            const enabledAttr = getXmlAttr(moduleCell, pathPresetEnabledAttr(preset.id), "");
+            return {
+                id: preset.id,
+                label: preset.label,
+                enabled: enabledAttr === "" ? true : enabledAttr !== "0",
+                widthCm: savedWidth || preset.widthCm
+            };
+        }); // NEW
+    } // NEW
+
+    function hasSavedPathWidthPresetAttrs(moduleCell) {
+        return DEFAULT_PATH_WIDTH_PRESETS.some(function (preset) { // NEW
+            return getXmlAttr(moduleCell, pathPresetWidthAttr(preset.id), "") !== "" || getXmlAttr(moduleCell, pathPresetEnabledAttr(preset.id), "") !== ""; // NEW
+        }); // NEW
+    } // NEW
+
+    function getEnabledPathWidthPresets(moduleCell) {
+        return getSavedPathWidthPresetsCm(moduleCell).filter(function (preset) { // NEW
+            return preset.enabled && positiveFiniteNumber(preset.widthCm);
+        }).map(function (preset) {
+            return Object.assign({}, preset, { widthUnits: cmToGraphUnits(preset.widthCm) });
+        }); // NEW
     } // NEW
 
     function getSavedDefaultBedDimensionsCm(moduleCell) {
@@ -1686,6 +1746,17 @@ Draw.loadPlugin(function (ui) {
     function lengthCmToDisplay(cm, units) {
         return units === "imperial" ? Number(cm) / CM_PER_FOOT : Number(cm) / CM_PER_METER;
     } // CHANGE
+
+    function formatPathDistanceLabelFromUnits(graphUnits, units) {
+        const cm = Math.max(0, graphUnitsToCm(graphUnits)); // NEW
+        if (units === "imperial") { // NEW
+            const inches = cm / CM_PER_INCH; // NEW
+            if (inches < 120) return `${Math.round(inches)} in`; // NEW
+            return `${Math.round((inches / 12) * 10) / 10} ft`; // NEW
+        }
+        if (cm < 100) return `${Math.round(cm)} cm`; // NEW
+        return `${Math.round((cm / 100) * 10) / 10} m`; // NEW
+    } // NEW
 
     function positiveLengthDisplayToCm(value, units) {
         const n = positiveFiniteNumber(value);
@@ -2085,10 +2156,13 @@ Draw.loadPlugin(function (ui) {
         const useNewGardenDimensionPresets = shouldUseNewGardenDimensionPresets(moduleCell); // NEW
         const curGardenDimsCm = useNewGardenDimensionPresets ? null : geometryDimensionsCm(moduleCell); // CHANGE
         const savedBedDimsCm = getSavedDefaultBedDimensionsCm(moduleCell);
+        const savedPathPresetsCm = hasSavedPathWidthPresetAttrs(moduleCell) ? getSavedPathWidthPresetsCm(moduleCell) : null; // NEW
         let activeGardenDisplayUnits = curUnits || ""; // CHANGE
         let activeMarginDisplayUnits = curUnits || ""; // CHANGE
         let activeBedDisplayUnits = curUnits || "";
+        let activePathDisplayUnits = curUnits || ""; // NEW
         let bedDimensionsEdited = false;
+        let pathWidthsEdited = false; // NEW
         let closeNotified = false;
 
         function notifyClose() {
@@ -2225,6 +2299,31 @@ Draw.loadPlugin(function (ui) {
         mxEvent.addListener(bedWidthInput, "input", function () { bedDimensionsEdited = true; });
         mxEvent.addListener(bedLengthInput, "input", function () { bedDimensionsEdited = true; });
 
+        const pathPresetRows = DEFAULT_PATH_WIDTH_PRESETS.map(function (preset) { // NEW
+            const enabledInput = document.createElement("input"); // NEW
+            enabledInput.type = "checkbox"; // NEW
+            enabledInput.style.margin = "0"; // NEW
+            const widthInput = document.createElement("input"); // NEW
+            widthInput.type = "number"; // NEW
+            widthInput.step = "0.01"; // NEW
+            widthInput.min = "0.01"; // NEW
+            widthInput.style.flex = "1"; // NEW
+            const control = document.createElement("div"); // NEW
+            control.style.display = "flex"; // NEW
+            control.style.alignItems = "center"; // NEW
+            control.style.gap = "8px"; // NEW
+            control.style.flex = "1"; // NEW
+            control.appendChild(enabledInput); // NEW
+            control.appendChild(widthInput); // NEW
+            const rowRef = row(`${preset.label} path width:`, control); // NEW
+            mxEvent.addListener(enabledInput, "change", function () { // NEW
+                pathWidthsEdited = true; // NEW
+                widthInput.disabled = !enabledInput.checked; // NEW
+            }); // NEW
+            mxEvent.addListener(widthInput, "input", function () { pathWidthsEdited = true; }); // NEW
+            return { preset, enabledInput, widthInput, row: rowRef }; // NEW
+        }); // NEW
+
         const moduleExternalMarginInput = document.createElement("input"); // NEW
         moduleExternalMarginInput.type = "number"; // NEW
         moduleExternalMarginInput.step = "0.01"; // NEW
@@ -2281,6 +2380,37 @@ Draw.loadPlugin(function (ui) {
             bedLengthInput.value = formatBedDisplayValue(bedDimensionCmToDisplay(dimsCm.lengthCm, units));
         }
 
+        function pathPresetById(presets, id) {
+            return (presets || []).find(function (preset) { return preset.id === id; }) || null; // NEW
+        } // NEW
+
+        function readPathWidthInputsAsCm(units) {
+            if (!units) return null; // NEW
+            const defaults = defaultPathWidthPresetsCmForUnits(units); // NEW
+            return pathPresetRows.map(function (item) { // NEW
+                const defaultPreset = pathPresetById(defaults, item.preset.id) || item.preset; // NEW
+                const current = positiveLengthDisplayToCm(item.widthInput.value, units); // NEW
+                if (item.enabledInput.checked && !current) return null; // NEW
+                return {
+                    id: item.preset.id,
+                    label: item.preset.label,
+                    enabled: !!item.enabledInput.checked,
+                    widthCm: current || defaultPreset.widthCm
+                };
+            }).filter(Boolean); // NEW
+        } // NEW
+
+        function setPathWidthInputsFromCm(presets, units) {
+            const defaults = defaultPathWidthPresetsCmForUnits(units); // NEW
+            pathPresetRows.forEach(function (item) { // NEW
+                const preset = pathPresetById(presets, item.preset.id) || pathPresetById(defaults, item.preset.id); // NEW
+                const enabled = !preset || preset.enabled !== false; // NEW
+                item.enabledInput.checked = enabled; // NEW
+                item.widthInput.disabled = !enabled || !units; // NEW
+                item.widthInput.value = preset && units ? formatBedDisplayValue(lengthCmToDisplay(preset.widthCm, units)) : ""; // NEW
+            }); // NEW
+        } // NEW
+
         function syncGardenDimensionInputs(nextUnits) {
             const priorDims = activeGardenDisplayUnits ? readGardenInputsAsCm(activeGardenDisplayUnits) : null; // CHANGE
             const priorUnits = activeGardenDisplayUnits; // NEW
@@ -2323,6 +2453,19 @@ Draw.loadPlugin(function (ui) {
             setBedInputsFromCm(enabled ? nextDims : null, nextUnits);
         }
 
+        function syncPathWidthInputs(nextUnits) {
+            const priorPresets = activePathDisplayUnits && pathWidthsEdited ? readPathWidthInputsAsCm(activePathDisplayUnits) : null; // NEW
+            const nextPresets = priorPresets || savedPathPresetsCm || defaultPathWidthPresetsCmForUnits(nextUnits); // NEW
+            const enabled = !!nextUnits; // NEW
+            const unitLabel = enabled ? bedDisplayUnitLabel(nextUnits) : ""; // NEW
+            activePathDisplayUnits = nextUnits || ""; // NEW
+            pathPresetRows.forEach(function (item) { // NEW
+                item.row.label.textContent = enabled ? `${item.preset.label} path width (${unitLabel}):` : `${item.preset.label} path width:`; // NEW
+                item.enabledInput.disabled = !enabled; // NEW
+            }); // NEW
+            setPathWidthInputsFromCm(enabled ? nextPresets : null, nextUnits); // NEW
+        } // NEW
+
         function gardenDimensionsFit(widthUnits, heightUnits) {
             const union = childUnionRelative(moduleCell); // CHANGE
             if (!union) return true; // CHANGE
@@ -2346,10 +2489,12 @@ Draw.loadPlugin(function (ui) {
             syncGardenDimensionInputs(nextUnits); // CHANGE
             syncModuleExternalMarginInput(nextUnits); // CHANGE
             syncBedDimensionInputs(nextUnits); // CHANGE
+            syncPathWidthInputs(nextUnits); // NEW
         });
         syncGardenDimensionInputs(curUnits); // CHANGE
         syncModuleExternalMarginInput(curUnits); // CHANGE
         syncBedDimensionInputs(curUnits);
+        syncPathWidthInputs(curUnits); // NEW
 
         function showError(msg) {
             err.textContent = msg;
@@ -2372,6 +2517,7 @@ Draw.loadPlugin(function (ui) {
             const chosenUnits = (unitsSel.value || "").trim();
             const chosenGardenDimsCm = readGardenInputsAsCm(chosenUnits); // CHANGE
             const chosenBedDimsCm = readBedInputsAsCm(chosenUnits);
+            const chosenPathPresetsCm = readPathWidthInputsAsCm(chosenUnits); // NEW
             const chosenModuleExternalMargin = readModuleMarginInput(moduleExternalMarginInput, chosenUnits); // NEW
             const chosenGardenWidthUnits = chosenGardenDimsCm ? cmToGraphUnits(chosenGardenDimsCm.widthCm) : null; // CHANGE
             const chosenGardenHeightUnits = chosenGardenDimsCm ? cmToGraphUnits(chosenGardenDimsCm.lengthCm) : null; // CHANGE
@@ -2380,6 +2526,7 @@ Draw.loadPlugin(function (ui) {
             if (!chosenUnits) { showError("Units are required."); unitsSel.focus(); return; }
             if (!chosenGardenDimsCm) { showError("Garden width and length must be positive numbers."); gardenWidthInput.focus(); return; } // CHANGE
             if (!chosenBedDimsCm) { showError("Default bed width and length must be positive numbers."); bedWidthInput.focus(); return; }
+            if (!chosenPathPresetsCm || chosenPathPresetsCm.length !== DEFAULT_PATH_WIDTH_PRESETS.length) { showError("Enabled path widths must be positive numbers."); pathPresetRows[0].widthInput.focus(); return; } // NEW
             if (chosenModuleExternalMargin == null) { showError("External margin must be a non-negative number."); moduleExternalMarginInput.focus(); return; } // NEW
             if (!gardenDimensionsFit(chosenGardenWidthUnits, chosenGardenHeightUnits)) { showError(requiredGardenFitMessage(chosenUnits)); gardenWidthInput.focus(); return; } // CHANGE
 
@@ -2402,6 +2549,12 @@ Draw.loadPlugin(function (ui) {
                     [DEFAULT_BED_WIDTH_CM_ATTR]: formatBedCmAttr(chosenBedDimsCm.widthCm),
                     [DEFAULT_BED_LENGTH_CM_ATTR]: formatBedCmAttr(chosenBedDimsCm.lengthCm),
                 });
+                const pathAttrs = {}; // NEW
+                chosenPathPresetsCm.forEach(function (preset) { // NEW
+                    pathAttrs[pathPresetEnabledAttr(preset.id)] = preset.enabled ? "1" : "0"; // NEW
+                    pathAttrs[pathPresetWidthAttr(preset.id)] = formatBedCmAttr(preset.widthCm); // NEW
+                }); // NEW
+                setCellAttrsNoTxn(model, moduleCell, pathAttrs); // NEW
                 setGardenModuleExternalMargin(moduleCell, chosenModuleExternalMargin); // NEW
             } finally {
                 model.endUpdate();
@@ -2414,12 +2567,57 @@ Draw.loadPlugin(function (ui) {
         btnRow.appendChild(okBtn);
         div.appendChild(btnRow);
 
-        ui.showDialog(div, 420, 450, true, true, notifyClose); // CHANGE
+        ui.showDialog(div, 460, 560, true, true, notifyClose); // CHANGE
         elevateTrellisDialog();
         gardenNameInput.focus();
     }
 
     let openGardenSettingsDialogWithOverlaySuppressed = null;
+
+    function cellBoundsInModel(cell) { // NEW
+        const model = graph.getModel(); // NEW
+        const state = graph.view && graph.view.getState ? graph.view.getState(cell) : null; // NEW
+        if (state && Number.isFinite(Number(state.x)) && Number.isFinite(Number(state.y))) { // NEW
+            const scale = Number(graph.view && graph.view.scale) || 1; // NEW
+            const translate = graph.view && graph.view.translate ? graph.view.translate : { x: 0, y: 0 }; // NEW
+            return { // NEW
+                x: Number(state.x) / scale - (Number(translate.x) || 0), // NEW
+                y: Number(state.y) / scale - (Number(translate.y) || 0), // NEW
+                width: Math.max(0, (Number(state.width) || 0) / scale), // NEW
+                height: Math.max(0, (Number(state.height) || 0) / scale) // NEW
+            }; // NEW
+        } // NEW
+
+        const geo = cell && model.getGeometry ? model.getGeometry(cell) : null; // NEW
+        if (!geo) return null; // NEW
+        let x = Number(geo.x) || 0; // NEW
+        let y = Number(geo.y) || 0; // NEW
+        let parent = model.getParent ? model.getParent(cell) : cell && cell.parent; // NEW
+        while (parent) { // NEW
+            const parentGeo = model.getGeometry ? model.getGeometry(parent) : null; // NEW
+            if (parentGeo) { x += Number(parentGeo.x) || 0; y += Number(parentGeo.y) || 0; } // NEW
+            parent = model.getParent ? model.getParent(parent) : parent.parent; // NEW
+        } // NEW
+        return { x, y, width: Math.max(0, Number(geo.width) || 0), height: Math.max(0, Number(geo.height) || 0) }; // NEW
+    } // NEW
+
+    function zoomGardenToViewport(moduleCell) { // NEW
+        const bounds = cellBoundsInModel(moduleCell); // NEW
+        if (!bounds || !graph.container || typeof graph.fitWindow !== "function") { // NEW
+            if (graph.scrollCellToVisible) graph.scrollCellToVisible(moduleCell, true); // NEW
+            return; // NEW
+        } // NEW
+        graph.fitWindow(bounds, 48); // NEW
+        setTimeout(function () { // NEW
+            if (graph.view && Number(graph.view.scale) > 1 && graph.zoomTo) graph.zoomTo(1); // NEW
+        }, 0); // NEW
+    } // NEW
+
+    function selectAndZoomToGarden(moduleCell) { // NEW
+        if (!moduleCell || !isGardenModule(moduleCell)) return; // NEW
+        if (graph.setSelectionCell) graph.setSelectionCell(moduleCell); // NEW
+        zoomGardenToViewport(moduleCell); // NEW
+    } // NEW
 
     function installGardenModuleOverlay() {
         if (graph.__plantTilerGardenModuleOverlayInstalled) return;
@@ -2949,17 +3147,22 @@ Draw.loadPlugin(function (ui) {
         graph.addListener("usl:gardenModuleNeedsSettings", function (sender, evt) {
             const moduleCell = evt.getProperty("cell");
             if (!moduleCell || !isGardenModule(moduleCell)) return;
+            const focusAfterSettingsClose = !!(evt && evt.getProperty && evt.getProperty("focusAfterSettingsClose")); // NEW
+            function handleSettingsClose() { // NEW
+                if (graph.__plantTilerRefreshGardenModuleOverlay) graph.__plantTilerRefreshGardenModuleOverlay(); // NEW
+                if (focusAfterSettingsClose) selectAndZoomToGarden(moduleCell); // NEW
+            } // NEW
 
-            if (hasGardenSettingsSet(moduleCell)) return;
+            if (hasGardenSettingsSet(moduleCell)) { if (focusAfterSettingsClose) selectAndZoomToGarden(moduleCell); return; } // CHANGE
 
             // Defer dialog until after current paint/update completes                        
             setTimeout(() => {
                 // Re-check in case settings were set during the delay                         
-                if (hasGardenSettingsSet(moduleCell)) return;
+                if (hasGardenSettingsSet(moduleCell)) { if (focusAfterSettingsClose) selectAndZoomToGarden(moduleCell); return; } // CHANGE
                 if (openGardenSettingsDialogWithOverlaySuppressed) {
-                    openGardenSettingsDialogWithOverlaySuppressed(moduleCell);
+                    openGardenSettingsDialogWithOverlaySuppressed(moduleCell, handleSettingsClose); // CHANGE
                 } else {
-                    showGardenSettingsDialog(ui, graph, moduleCell, graph.__plantTilerRefreshGardenModuleOverlay);
+                    showGardenSettingsDialog(ui, graph, moduleCell, handleSettingsClose); // CHANGE
                 }
             }, 0);
         });
@@ -3021,6 +3224,329 @@ Draw.loadPlugin(function (ui) {
         }
         return null;
     }
+
+    function normalizeRotationDeg(deg) {
+        const n = ((Number(deg) || 0) % 360 + 360) % 360; // NEW
+        return Math.min(n, 360 - n); // NEW
+    } // NEW
+
+    function isAxisAlignedPathSnapBed(cell) {
+        return isGardenBed(cell) && normalizeRotationDeg(getTilerRotationDeg(cell)) <= ROTATION_EPS_DEG; // NEW
+    } // NEW
+
+    function rectRight(rect) {
+        return rect ? (Number(rect.x) || 0) + (Number(rect.w) || 0) : 0; // NEW
+    } // NEW
+
+    function rectBottom(rect) {
+        return rect ? (Number(rect.y) || 0) + (Number(rect.h) || 0) : 0; // NEW
+    } // NEW
+
+    function rectsOverlapOnX(a, b) {
+        return Math.min(rectRight(a), rectRight(b)) - Math.max(a.x, b.x) > 0; // NEW
+    } // NEW
+
+    function rectsOverlapOnY(a, b) {
+        return Math.min(rectBottom(a), rectBottom(b)) - Math.max(a.y, b.y) > 0; // NEW
+    } // NEW
+
+    function cloneModelRect(rect) {
+        return rect ? { x: Number(rect.x) || 0, y: Number(rect.y) || 0, w: Math.max(0, Number(rect.w) || 0), h: Math.max(0, Number(rect.h) || 0) } : null; // NEW
+    } // NEW
+
+    function pathSnapToleranceUnits(widthUnits) {
+        return Math.min(Math.max(0, Number(widthUnits) || 0) * PATH_WIDTH_TOLERANCE_RATIO, cmToGraphUnits(PATH_WIDTH_TOLERANCE_CAP_CM)); // NEW
+    } // NEW
+
+    function bestPathPresetForGap(gapUnits, presets) {
+        let best = null; // NEW
+        for (const preset of (presets || [])) { // NEW
+            const target = Number(preset.widthUnits) || 0; // NEW
+            if (target <= 0) continue; // NEW
+            const diff = Math.abs((Number(gapUnits) || 0) - target); // NEW
+            if (diff > pathSnapToleranceUnits(target)) continue; // NEW
+            if (!best || diff < best.diff || (diff === best.diff && target < best.target)) { // NEW
+                best = Object.assign({}, preset, { target, diff }); // NEW
+            } // NEW
+        } // NEW
+        return best; // NEW
+    } // NEW
+
+    function rectInsideModuleBounds(moduleCell, rect) {
+        const geo = moduleCell && moduleCell.getGeometry ? moduleCell.getGeometry() : null; // NEW
+        if (!geo || !rect) return false; // NEW
+        const width = Number(geo.width) || 0; // NEW
+        const height = Number(geo.height) || 0; // NEW
+        return rect.x >= -0.5 && rect.y >= -0.5 && rectRight(rect) <= width + 0.5 && rectBottom(rect) <= height + 0.5; // NEW
+    } // NEW
+
+    function movedRect(rect, dx, dy) {
+        const out = cloneModelRect(rect); // NEW
+        if (!out) return null; // NEW
+        out.x += Number(dx) || 0; // NEW
+        out.y += Number(dy) || 0; // NEW
+        return out; // NEW
+    } // NEW
+
+    function gapBandRectForDirection(activeRect, neighborRect, direction, gap) {
+        if (!activeRect || !neighborRect || !(gap > 0)) return null; // NEW
+        if (direction === "above" || direction === "below") { // NEW
+            const x = Math.max(activeRect.x, neighborRect.x); // NEW
+            const right = Math.min(rectRight(activeRect), rectRight(neighborRect)); // NEW
+            return { x, y: direction === "above" ? rectBottom(neighborRect) : rectBottom(activeRect), w: Math.max(1, right - x), h: gap }; // NEW
+        } // NEW
+        const y = Math.max(activeRect.y, neighborRect.y); // NEW
+        const bottom = Math.min(rectBottom(activeRect), rectBottom(neighborRect)); // NEW
+        return { x: direction === "left" ? rectRight(neighborRect) : rectRight(activeRect), y, w: gap, h: Math.max(1, bottom - y) }; // NEW
+    } // NEW
+
+    function directBedNeighborsByDirection(moduleCell, bedCell, activeRect) {
+        const out = { above: null, below: null, left: null, right: null }; // NEW
+        if (!moduleCell || !bedCell || !activeRect) return out; // NEW
+        const beds = (graph.getChildVertices(moduleCell) || []).filter(isAxisAlignedPathSnapBed); // NEW
+        for (const other of beds) { // NEW
+            if (!other || other === bedCell || other.id === bedCell.id) continue; // NEW
+            const rect = getModelRect(other); // NEW
+            if (!rect || rect.w <= 0 || rect.h <= 0) continue; // NEW
+            const aboveGap = activeRect.y - rectBottom(rect); // NEW
+            if (aboveGap > 0 && rectsOverlapOnX(activeRect, rect) && (!out.above || aboveGap < out.above.gap)) out.above = { direction: "above", bed: other, rect, gap: aboveGap }; // NEW
+            const belowGap = rect.y - rectBottom(activeRect); // NEW
+            if (belowGap > 0 && rectsOverlapOnX(activeRect, rect) && (!out.below || belowGap < out.below.gap)) out.below = { direction: "below", bed: other, rect, gap: belowGap }; // NEW
+            const leftGap = activeRect.x - rectRight(rect); // NEW
+            if (leftGap > 0 && rectsOverlapOnY(activeRect, rect) && (!out.left || leftGap < out.left.gap)) out.left = { direction: "left", bed: other, rect, gap: leftGap }; // NEW
+            const rightGap = rect.x - rectRight(activeRect); // NEW
+            if (rightGap > 0 && rectsOverlapOnY(activeRect, rect) && (!out.right || rightGap < out.right.gap)) out.right = { direction: "right", bed: other, rect, gap: rightGap }; // NEW
+        } // NEW
+        return out; // NEW
+    } // NEW
+
+    function pathSnapDeltaForDirection(activeRect, neighbor, preset) {
+        const target = preset && Number(preset.target || preset.widthUnits) || 0; // NEW
+        if (!activeRect || !neighbor || target <= 0) return null; // NEW
+        if (neighbor.direction === "above") return { dx: 0, dy: rectBottom(neighbor.rect) + target - activeRect.y }; // NEW
+        if (neighbor.direction === "below") return { dx: 0, dy: neighbor.rect.y - target - activeRect.h - activeRect.y }; // NEW
+        if (neighbor.direction === "left") return { dx: rectRight(neighbor.rect) + target - activeRect.x, dy: 0 }; // NEW
+        if (neighbor.direction === "right") return { dx: neighbor.rect.x - target - activeRect.w - activeRect.x, dy: 0 }; // NEW
+        return null; // NEW
+    } // NEW
+
+    function buildPathSnapCandidate(moduleCell, activeRect, neighbor, presets) {
+        if (!neighbor) return null; // NEW
+        const preset = bestPathPresetForGap(neighbor.gap, presets); // NEW
+        const band = gapBandRectForDirection(activeRect, neighbor.rect, neighbor.direction, neighbor.gap); // NEW
+        const candidate = Object.assign({}, neighbor, { band, preset: null, snap: null }); // NEW
+        if (!preset) return candidate; // NEW
+        const delta = pathSnapDeltaForDirection(activeRect, neighbor, preset); // NEW
+        if (!delta) return candidate; // NEW
+        const finalRect = movedRect(activeRect, delta.dx, delta.dy); // NEW
+        if (!rectInsideModuleBounds(moduleCell, finalRect)) return candidate; // NEW
+        candidate.preset = preset; // NEW
+        candidate.snap = Object.assign({}, delta, { preset, axis: neighbor.direction === "left" || neighbor.direction === "right" ? "x" : "y" }); // NEW
+        return candidate; // NEW
+    } // NEW
+
+    function chooseAxisPathSnap(candidates, axis) {
+        const matches = candidates.filter(function (candidate) { return candidate && candidate.snap && candidate.snap.axis === axis; }); // NEW
+        matches.sort(function (a, b) { // NEW
+            const diff = a.preset.diff - b.preset.diff; // NEW
+            if (diff) return diff; // NEW
+            return a.gap - b.gap; // NEW
+        }); // NEW
+        return matches[0] || null; // NEW
+    } // NEW
+
+    function evaluateBedPathSnap(moduleCell, bedCell, activeRect) {
+        const units = getXmlAttr(moduleCell, "unit_system", "") || "metric"; // NEW
+        const presets = getEnabledPathWidthPresets(moduleCell); // NEW
+        const directions = directBedNeighborsByDirection(moduleCell, bedCell, activeRect); // NEW
+        const candidates = ["above", "below", "left", "right"].map(function (direction) { // NEW
+            return buildPathSnapCandidate(moduleCell, activeRect, directions[direction], presets); // NEW
+        }).filter(Boolean); // NEW
+        const xSnap = chooseAxisPathSnap(candidates, "x"); // NEW
+        const ySnap = chooseAxisPathSnap(candidates, "y"); // NEW
+        const dx = xSnap && xSnap.snap ? xSnap.snap.dx : 0; // NEW
+        const dy = ySnap && ySnap.snap ? ySnap.snap.dy : 0; // NEW
+        candidates.forEach(function (candidate) { // NEW
+            candidate.activeSnap = candidate === xSnap || candidate === ySnap; // NEW
+        }); // NEW
+        return { moduleCell, bedCell, activeRect, units, candidates, xSnap, ySnap, dx, dy }; // NEW
+    } // NEW
+
+    let lastBedPathSnapPointerEvent = null; // NEW
+
+    function isBedPathSnapAltBypassActive() {
+        return !!(lastBedPathSnapPointerEvent && mxEvent.isAltDown && mxEvent.isAltDown(lastBedPathSnapPointerEvent)); // NEW
+    } // NEW
+
+    function canConsiderBedPathSnapForCells(cells, evt, clone, target) {
+        if (clone || target || (evt && mxEvent.isAltDown && mxEvent.isAltDown(evt))) return false; // NEW
+        return (cells || []).length === 1 && isAxisAlignedPathSnapBed(cells[0]) && !!findGardenModuleAncestor(graph, cells[0]); // NEW
+    } // NEW
+
+    function applyBedPathSnapNoTxn(model, bedCell, opts) {
+        if (!model || !bedCell || !isAxisAlignedPathSnapBed(bedCell)) return null; // NEW
+        if (opts && opts.event && mxEvent.isAltDown && mxEvent.isAltDown(opts.event)) return null; // NEW
+        const moduleCell = findGardenModuleAncestor(graph, bedCell); // NEW
+        const rect = getModelRect(bedCell); // NEW
+        if (!moduleCell || !rect) return null; // NEW
+        const evaluation = evaluateBedPathSnap(moduleCell, bedCell, rect); // NEW
+        if (!evaluation || (!evaluation.dx && !evaluation.dy)) return evaluation; // NEW
+        const geo = model.getGeometry ? model.getGeometry(bedCell) : bedCell.getGeometry && bedCell.getGeometry(); // NEW
+        if (!geo) return evaluation; // NEW
+        const next = geo.clone ? geo.clone() : new mxGeometry(geo.x, geo.y, geo.width, geo.height); // NEW
+        next.x = (Number(next.x) || 0) + evaluation.dx; // NEW
+        next.y = (Number(next.y) || 0) + evaluation.dy; // NEW
+        model.setGeometry(bedCell, next); // NEW
+        evaluation.applied = true; // NEW
+        return evaluation; // NEW
+    } // NEW
+
+    function installBedPathSnapOverlay() {
+        if (graph.__plantTilerBedPathSnapOverlayInstalled) return; // NEW
+        graph.__plantTilerBedPathSnapOverlayInstalled = true; // NEW
+
+        let overlay = null; // NEW
+        let refreshTimer = null; // NEW
+
+        function overlayHost() {
+            return graph.container || null; // NEW
+        } // NEW
+
+        function ensureOverlayHost() {
+            const host = overlayHost(); // NEW
+            if (!host) return null; // NEW
+            const style = window.getComputedStyle ? window.getComputedStyle(host) : null; // NEW
+            if (style && style.position === "static") host.style.position = "relative"; // NEW
+            return host; // NEW
+        } // NEW
+
+        function ensureOverlay() {
+            const host = ensureOverlayHost(); // NEW
+            if (!host) return null; // NEW
+            if (!overlay) { // NEW
+                overlay = document.createElement("div"); // NEW
+                overlay.className = PATH_SNAP_OVERLAY_CLASS; // NEW
+                overlay.style.cssText = `position:absolute;left:0;top:0;right:0;bottom:0;z-index:${GRAPH_OVERLAY_Z.ANNOTATION};pointer-events:none;display:none;font:12px Arial,sans-serif;`; // NEW
+            } // NEW
+            if (overlay.parentNode !== host) host.appendChild(overlay); // NEW
+            return overlay; // NEW
+        } // NEW
+
+        function hideOverlay() {
+            if (overlay) { // NEW
+                overlay.innerHTML = ""; // NEW
+                overlay.style.display = "none"; // NEW
+            } // NEW
+        } // NEW
+
+        function selectedPathSnapBed() {
+            const cells = graph.getSelectionCells ? (graph.getSelectionCells() || []) : []; // NEW
+            return cells.length === 1 && isAxisAlignedPathSnapBed(cells[0]) ? cells[0] : null; // NEW
+        } // NEW
+
+        function activeResizeRectForBed(bed) {
+            const handlers = graph.selectionCellsHandler; // NEW
+            const handler = handlers && typeof handlers.getHandler === "function" ? handlers.getHandler(bed) : null; // NEW
+            const bounds = handler && handler.index != null && handler.unscaledBounds ? handler.unscaledBounds : null; // NEW
+            if (!bounds) return null; // NEW
+            return { x: Number(bounds.x) || 0, y: Number(bounds.y) || 0, w: Math.max(0, Number(bounds.width) || 0), h: Math.max(0, Number(bounds.height) || 0) }; // NEW
+        } // NEW
+
+        function activeMoveRectForBed(bed) {
+            const handler = graph.graphHandler; // NEW
+            if (!handler || handler.currentDx == null || handler.currentDy == null || !Array.isArray(handler.cells) || handler.cells.indexOf(bed) < 0) return null; // NEW
+            const rect = getModelRect(bed); // NEW
+            const scale = graph.view && graph.view.scale ? graph.view.scale : 1; // NEW
+            return rect ? movedRect(rect, Number(handler.currentDx) / scale, Number(handler.currentDy) / scale) : null; // NEW
+        } // NEW
+
+        function activePreviewRectForBed(bed) {
+            return activeResizeRectForBed(bed) || activeMoveRectForBed(bed) || getModelRect(bed); // NEW
+        } // NEW
+
+        function isGestureActiveForBed(bed) {
+            if (!bed || !graph.isMouseDown) return false; // NEW
+            return !!(activeResizeRectForBed(bed) || activeMoveRectForBed(bed)); // NEW
+        } // NEW
+
+        function viewPointForGraphPoint(pt) {
+            const s = graph.view.scale || 1; // NEW
+            const tr = graph.view.translate || { x: 0, y: 0 }; // NEW
+            return {
+                x: ((Number(pt.x) || 0) + tr.x) * s + (graph.panDx || 0),
+                y: ((Number(pt.y) || 0) + tr.y) * s + (graph.panDy || 0)
+            }; // NEW
+        } // NEW
+
+        function viewRectForModuleLocalRect(moduleCell, rect) {
+            const geo = moduleCell && moduleCell.getGeometry ? moduleCell.getGeometry() : null; // NEW
+            if (!geo || !rect) return null; // NEW
+            const p1 = viewPointForGraphPoint({ x: (Number(geo.x) || 0) + rect.x, y: (Number(geo.y) || 0) + rect.y }); // NEW
+            const p2 = viewPointForGraphPoint({ x: (Number(geo.x) || 0) + rectRight(rect), y: (Number(geo.y) || 0) + rectBottom(rect) }); // NEW
+            return { x: p1.x, y: p1.y, w: Math.max(1, p2.x - p1.x), h: Math.max(1, p2.y - p1.y) }; // NEW
+        } // NEW
+
+        function appendBand(root, moduleCell, candidate) {
+            if (!candidate || !candidate.activeSnap || !candidate.band) return; // NEW
+            const vr = viewRectForModuleLocalRect(moduleCell, candidate.band); // NEW
+            if (!vr) return; // NEW
+            const band = document.createElement("div"); // NEW
+            band.className = PATH_SNAP_BAND_CLASS; // NEW
+            band.style.cssText = `position:absolute;left:${Math.round(vr.x)}px;top:${Math.round(vr.y)}px;width:${Math.max(1, Math.round(vr.w))}px;height:${Math.max(1, Math.round(vr.h))}px;background:rgba(37,99,235,0.14);border:1px solid rgba(37,99,235,0.50);box-sizing:border-box;`; // NEW
+            root.appendChild(band); // NEW
+        } // NEW
+
+        function appendBadge(root, moduleCell, candidate, units) {
+            if (!candidate || !candidate.band) return; // NEW
+            const vr = viewRectForModuleLocalRect(moduleCell, candidate.band); // NEW
+            if (!vr) return; // NEW
+            const badge = document.createElement("div"); // NEW
+            const snapLabel = candidate.preset ? ` · ${candidate.preset.label} snap` : ""; // NEW
+            badge.className = PATH_SNAP_BADGE_CLASS + (candidate.activeSnap ? " active" : ""); // NEW
+            badge.textContent = formatPathDistanceLabelFromUnits(candidate.gap, units) + snapLabel; // NEW
+            badge.style.cssText = `position:absolute;left:${Math.round(vr.x + vr.w / 2)}px;top:${Math.round(vr.y + vr.h / 2)}px;transform:translate(-50%,-50%);max-width:160px;padding:3px 6px;border-radius:4px;border:1px solid ${candidate.activeSnap ? "#2563eb" : "#6b7280"};background:${candidate.activeSnap ? "rgba(239,246,255,0.98)" : "rgba(255,255,255,0.96)"};color:${candidate.activeSnap ? "#1d4ed8" : "#374151"};box-shadow:0 1px 4px rgba(0,0,0,0.14);white-space:nowrap;`; // NEW
+            root.appendChild(badge); // NEW
+        } // NEW
+
+        function refreshOverlay() {
+            refreshTimer = null; // NEW
+            if (isBedPathSnapAltBypassActive()) { hideOverlay(); return; } // NEW
+            const bed = selectedPathSnapBed(); // NEW
+            if (!bed || !isGestureActiveForBed(bed)) { hideOverlay(); return; } // NEW
+            const moduleCell = findGardenModuleAncestor(graph, bed); // NEW
+            const rect = activePreviewRectForBed(bed); // NEW
+            if (!moduleCell || !rect || !rectInsideModuleBounds(moduleCell, rect)) { hideOverlay(); return; } // NEW
+            const evaluation = evaluateBedPathSnap(moduleCell, bed, rect); // NEW
+            if (!evaluation.candidates.length) { hideOverlay(); return; } // NEW
+            const root = ensureOverlay(); // NEW
+            if (!root) return; // NEW
+            root.innerHTML = ""; // NEW
+            root.style.display = "block"; // NEW
+            evaluation.candidates.forEach(function (candidate) { appendBand(root, moduleCell, candidate); }); // NEW
+            evaluation.candidates.forEach(function (candidate) { appendBadge(root, moduleCell, candidate, evaluation.units); }); // NEW
+        } // NEW
+
+        function scheduleOverlayRefresh() {
+            if (refreshTimer != null) clearTimeout(refreshTimer); // NEW
+            refreshTimer = setTimeout(refreshOverlay, 0); // NEW
+        } // NEW
+
+        graph.addMouseListener({ // NEW
+            mouseDown: function (_sender, me) { lastBedPathSnapPointerEvent = me && me.getEvent ? me.getEvent() : null; scheduleOverlayRefresh(); },
+            mouseMove: function (_sender, me) { lastBedPathSnapPointerEvent = me && me.getEvent ? me.getEvent() : lastBedPathSnapPointerEvent; scheduleOverlayRefresh(); },
+            mouseUp: function (_sender, me) { lastBedPathSnapPointerEvent = me && me.getEvent ? me.getEvent() : lastBedPathSnapPointerEvent; setTimeout(hideOverlay, 0); }
+        }); // NEW
+        if (graph.getSelectionModel) graph.getSelectionModel().addListener(mxEvent.CHANGE, scheduleOverlayRefresh); // NEW
+        graph.addListener(mxEvent.CELLS_MOVED, scheduleOverlayRefresh); // NEW
+        graph.addListener(mxEvent.CELLS_RESIZED, scheduleOverlayRefresh); // NEW
+        graph.getView().addListener(mxEvent.SCALE, scheduleOverlayRefresh); // NEW
+        graph.getView().addListener(mxEvent.TRANSLATE, scheduleOverlayRefresh); // NEW
+        graph.getView().addListener(mxEvent.SCALE_AND_TRANSLATE, scheduleOverlayRefresh); // NEW
+        graph.getView().addListener(mxEvent.REPAINT, scheduleOverlayRefresh); // NEW
+        mxEvent.addListener(window, "resize", scheduleOverlayRefresh); // NEW
+    } // NEW
+
+    installBedPathSnapOverlay(); // NEW
 
     function bedAtGraphPoint(graph, moduleCell, gx, gy) {
         // Use mxGraph hit-testing so "actual shape" is used, not rectangular bounds. 
@@ -4213,6 +4739,7 @@ Draw.loadPlugin(function (ui) {
         model.beginUpdate();
         try {
             graph.addCell(bed, moduleCell);
+            applyBedPathSnapNoTxn(model, bed, { source: "bed-created" }); // NEW
             graph.setSelectionCell(bed);
             reorderModuleChildrenForLayering(model, moduleCell);
         } finally {
@@ -5894,6 +6421,28 @@ Draw.loadPlugin(function (ui) {
         });
     })();
 
+    (function installBedPathSnapMoveWrapper() {
+        if (graph.__plantTilerBedPathSnapMoveInstalled) return; // NEW
+        graph.__plantTilerBedPathSnapMoveInstalled = true; // NEW
+
+        const oldMoveCells = graph.moveCells; // NEW
+        graph.moveCells = function (cells, dx, dy, clone, target, evt, mapping) { // NEW
+            const shouldSnap = canConsiderBedPathSnapForCells(cells, evt, clone, target); // NEW
+            if (!shouldSnap) return oldMoveCells.call(this, cells, dx, dy, clone, target, evt, mapping); // NEW
+            const model = graph.getModel(); // NEW
+            let res; // NEW
+            model.beginUpdate(); // NEW
+            try { // NEW
+                res = oldMoveCells.call(this, cells, dx, dy, clone, target, evt, mapping); // NEW
+                applyBedPathSnapNoTxn(model, cells[0], { source: "bed-moved", event: evt }); // NEW
+            } finally { // NEW
+                model.endUpdate(); // NEW
+            } // NEW
+            if (graph.refresh) graph.refresh(cells[0]); // NEW
+            return res; // NEW
+        }; // NEW
+    })();
+
     function minGroupSizePx(spacingXpx, spacingYpx, bandPx) {
         const b = Number.isFinite(Number(bandPx)) ? Number(bandPx) : GROUP_LABEL_BAND_PX;
         const minW = (GROUP_PADDING_PX * 2) + spacingXpx;
@@ -6471,6 +7020,11 @@ Draw.loadPlugin(function (ui) {
 
                     groupsNeedingRefresh.push(g);
                 }
+
+                if (!isBedPathSnapAltBypassActive() && canConsiderBedPathSnapForCells(cells, null, false, null)) { // NEW
+                    const snapEval = applyBedPathSnapNoTxn(model, cells[0], { source: "bed-resized" }); // NEW
+                    if (snapEval && snapEval.applied) groupsNeedingRefresh.push(cells[0]); // NEW
+                } // NEW
 
                 if (hasResizedBeds) {
                     const bedFitResult = refitGroupsForResizedBeds(bedSnapshots, { source: "bed-resized", inTransaction: true, txnId: bedResizeTxnId });

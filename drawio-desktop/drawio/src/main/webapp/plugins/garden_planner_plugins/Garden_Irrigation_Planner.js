@@ -1,5 +1,5 @@
 /**
- * Draw.io Plugin: Garden Irrigation Planner
+ * Trellis plugin: Garden Irrigation Planner
  *
  * Market-garden irrigation design support:
  * - Module-scoped irrigation parts catalog.
@@ -335,6 +335,7 @@ Draw.loadPlugin(function (ui) {
     let programmaticEdgeInsertDepth = 0;
     let activeIrrigationEditDepth = 0;
     let pendingHudGraphSyncModuleCells = [];
+    let pendingIrrigationRenderSession = null; // CHANGE
     let irrigationUndoRedoReplayDepth = 0;
     let irrigationDebugQuietDepth = 0;
     let originalSetSelectionCellForIrrigation = null; // NEW
@@ -392,10 +393,16 @@ Draw.loadPlugin(function (ui) {
                 flushQueuedHudGraphStateSync();
                 return result;
             } finally {
-                try { model.endUpdate && model.endUpdate(); } finally { activeIrrigationEditDepth = Math.max(0, activeIrrigationEditDepth - 1); }
+                try { model.endUpdate && model.endUpdate(); } finally { activeIrrigationEditDepth = Math.max(0, activeIrrigationEditDepth - 1); flushPendingIrrigationModeRender(); } // CHANGE
             }
         });
     }
+
+    function flushPendingIrrigationModeRender() { // CHANGE
+        const session = pendingIrrigationRenderSession; // CHANGE
+        pendingIrrigationRenderSession = null; // CHANGE
+        if (session && activeIrrigationMode === session && !isIrrigationModeClosing(session)) renderIrrigationMode(session); // CHANGE
+    } // CHANGE
 
     function queueHudGraphStateSync(moduleCell) {
         if (!moduleCell || pendingHudGraphSyncModuleCells.indexOf(moduleCell) >= 0) return;
@@ -7399,6 +7406,7 @@ Draw.loadPlugin(function (ui) {
             if (session.frontedBedAssemblyId) { reorderIrrigationModuleLayering(session.moduleCell); session.frontedBedAssemblyId = ""; }
             removeIrrigationModeListeners(session);
             activeIrrigationMode = null;
+            pendingIrrigationRenderSession = null; // CHANGE
             const modes = window.Trellis && window.Trellis.interactionModes; // NEW
             if (modes && typeof modes.release === "function") modes.release(IRRIGATION_INTERACTION_MODE_ID, session.interactionOwnerId); // NEW
         } finally {
@@ -7713,6 +7721,7 @@ Draw.loadPlugin(function (ui) {
 
     function renderIrrigationMode(session) {
         if (!session || activeIrrigationMode !== session || isIrrigationModeClosing(session)) return;
+        if (activeIrrigationEditDepth > 0) { pendingIrrigationRenderSession = session; return; } // CHANGE
         removeIrrigationModeOverlayNodes(session); // CHANGE
         if (session.suppressHudDuringDrag) return; // CHANGE
 
@@ -10164,9 +10173,10 @@ Draw.loadPlugin(function (ui) {
             if (bom.missingPartIds.length) return { ok: false, message: "Cannot apply template. Missing required parts: " + bom.missingPartIds.join(", ") + "." };
             return { ok: true, message: "" };
         }
-        function commitBedTemplateDraft() {
+        function commitBedTemplateDraft(options) { // CHANGE
             if (activeIrrigationMode !== session || isIrrigationModeClosing(session)) return false;
             if (!draftDirty) return false;
+            const preserveHud = !!(options && options.preserveHud); // CHANGE
             const draft = currentDraft();
             const validation = validateBedTemplateDraft(draft);
             if (!validation.ok) { session.message = validation.message; summary.textContent = validation.message; summary.style.color = "#8a4b00"; return false; } // CHANGE
@@ -10206,7 +10216,7 @@ Draw.loadPlugin(function (ui) {
             });
             draftDirty = false;
             session.message = "Bed layout updated.";
-            renderIrrigationMode(session);
+            if (!preserveHud) renderIrrigationMode(session); // CHANGE
             return true;
         }
         function markDraftAndRefresh(clearInvalidSelections) {
@@ -10219,7 +10229,7 @@ Draw.loadPlugin(function (ui) {
             markDraftAndRefresh(clearInvalidSelections);
             const draft = currentDraft(); // CHANGE
             if ((!draft.outletPartId && !draft.headerEndCapPartId) || !draft.rowEndCapPartId) return; // CHANGE
-            commitBedTemplateDraft();
+            commitBedTemplateDraft({ preserveHud: true }); // CHANGE
         }
         function commitTextFieldOnEnter(ev) {
             if (!ev || ev.key !== "Enter") return;
@@ -12489,6 +12499,10 @@ Draw.loadPlugin(function (ui) {
             emitterSpacingDisplayValueToIn, // NEW
             emitterSpacingInToDisplayValue, // NEW
             formatEmitterSpacingDisplayValue, // NEW
+            bedRolePartOptions, // NEW
+            bedRowPartOptions, // NEW
+            bedFittingPartOptions, // NEW
+            bedOutletPartOptions, // NEW
             resolveTemplateAnchorPart,
             boundaryMatchForAnchor,
             buildReportSummary: ReportModel.buildSummary,

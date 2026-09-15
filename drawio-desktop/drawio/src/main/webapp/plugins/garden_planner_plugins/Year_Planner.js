@@ -1,5 +1,5 @@
 /**
- * Draw.io Plugin: Year Planner (listens for dashboard Plan button events)
+ * Trellis plugin: Year Planner (listens for dashboard Plan button events)
  *
  * Listens:
  *   window event "usl:planYearRequested" with detail:
@@ -436,6 +436,7 @@ Draw.loadPlugin(function (ui) {
             queryNutritionRequirements
         };
     })();
+    window.addEventListener("trellis:database-restored", () => DbClient.invalidatePlantsBasicCache()); // CHANGE: restored DB should not leave stale crop options in memory.
 
 
 
@@ -3801,6 +3802,7 @@ Draw.loadPlugin(function (ui) {
             const methodCache = new Map();
             const addCropOptionById = new Map();
             let addCropOptionsLoadVersion = 0;
+            let pendingAddCropMessage = "";
             let runtime = null;
             let dashboard = null;
             let refreshTimer = null;
@@ -4278,7 +4280,7 @@ Draw.loadPlugin(function (ui) {
                 return "neutral";
             }
 
-            function createChip(label, value, tone, onClick) {
+            function createChip(label, value, tone, onClick, options) {
                 const chip = document.createElement(onClick ? "button" : "span");
                 if (onClick) chip.type = "button";
                 chip.className = "yp-chip";
@@ -4287,6 +4289,7 @@ Draw.loadPlugin(function (ui) {
                 chip.innerHTML = value === undefined || value === null || value === ""
                     ? mxUtils.htmlEntities(String(label || ""))
                     : `<strong>${mxUtils.htmlEntities(String(label || ""))}</strong> ${mxUtils.htmlEntities(String(value))}`;
+                if (options && options.title) chip.title = String(options.title); // CHANGE: actionable badges expose their issue list in a native tooltip.
                 if (onClick) chip.addEventListener("click", onClick);
                 return chip;
             }
@@ -4294,6 +4297,18 @@ Draw.loadPlugin(function (ui) {
             function validationMessage(result) {
                 return YearPlanDashboard.validationMessage(result);
             }
+
+            function validationTooltip(results) {
+                return (results || []).map(validationMessage).filter(Boolean).join("\n");
+            } // NEW: validation-backed badges reuse the same messages as diagnostics popovers.
+
+            function countedValidationLabel(label, results) {
+                return `${label} (${(results || []).length})`;
+            } // NEW: aggregate validation badges show how many issues they represent.
+
+            function htmlAttr(value) {
+                return mxUtils.htmlEntities(String(value ?? "")).replace(/"/g, "&quot;");
+            } // NEW: Plan Check row markers are emitted through innerHTML.
 
             function cropValidationResults(cropId) {
                 const wanted = String(cropId || "");
@@ -4351,6 +4366,21 @@ Draw.loadPlugin(function (ui) {
             function scrollToElement(element, block) {
                 if (element && typeof element.scrollIntoView === "function") element.scrollIntoView({ block: block || "start", inline: "nearest" });
             } // CHANGE: command buttons should move the modal viewport to the section they reveal.
+
+            function findPlanCheckCropRow(cropId) {
+                return Array.from(totalsBox.querySelectorAll("[data-plan-check-crop-id]")).find(row => String(row.dataset.planCheckCropId || "") === String(cropId || "")) || null;
+            } // NEW: metric attention badges can land on the exact Plan Check crop row.
+
+            function scrollToPlanCheckCropRow(cropId) {
+                const row = findPlanCheckCropRow(cropId);
+                scrollToElement(row || planCheckBox, row ? "center" : "start");
+            } // NEW
+
+            function scrollToPlanCheck() {
+                state.planCheckExpanded = true;
+                renderPlanCheck();
+                scrollToElement(planCheckBox, "start");
+            } // NEW: aggregate Plan Check warnings open the analysis section.
 
             function findTargetControl(target) {
                 if (!target || typeof target !== "object") return null;
@@ -4444,14 +4474,25 @@ Draw.loadPlugin(function (ui) {
                 return wrapControl;
             }
 
-            function createDiagnosticsChip(label, tone, results, onClick) {
+            function createDiagnosticsChip(label, tone, results, onClick, options) {
                 const wrapControl = document.createElement("span");
                 wrapControl.className = "yp-diagnostics-wrap";
-                wrapControl.appendChild(createChip(label, "", tone, onClick));
+                wrapControl.appendChild(createChip(label, "", tone, onClick, options)); // CHANGE
                 const diagnostics = createDiagnosticsControl(label, results);
                 if (diagnostics) wrapControl.appendChild(diagnostics);
                 return wrapControl;
             }
+
+            function createValidationAttentionChip(label, tone, results, countIssues, fallback) {
+                const diagnostics = (results || []).filter(error => validationMessage(error));
+                const displayLabel = countIssues ? countedValidationLabel(label, diagnostics) : label;
+                const openFirstIssue = event => {
+                    const first = diagnostics[0];
+                    if (first && navigateToValidation(first, event && event.currentTarget)) return;
+                    if (typeof fallback === "function") fallback(event);
+                };
+                return createDiagnosticsChip(displayLabel, tone, diagnostics, openFirstIssue, { title: validationTooltip(diagnostics) });
+            } // NEW: aggregate badges jump to the first issue while the adjacent diagnostics lists every issue.
 
             function setChipRow(host, chips) {
                 host.innerHTML = "";
@@ -4493,26 +4534,30 @@ Draw.loadPlugin(function (ui) {
                 const add = item => { if (items.length < 8 && item) items.push(item); };
                 for (const metric of ((dashboard && dashboard.cropMetrics) || [])) {
                     const cropDiagnostics = cropValidationResults(metric.crop.id);
-                    if (metric.status === "Missing data") add(createDiagnosticsChip(`${cropLabel(metric.crop)} missing data`, "danger", cropDiagnostics, () => selectCropFromAttention(metric.crop.id)));
-                    else if (cropDiagnostics.length) add(createDiagnosticsChip(`${cropLabel(metric.crop)} diagnostics`, "danger", cropDiagnostics, () => selectCropFromAttention(metric.crop.id)));
-                    else if (metric.status === "Short") add(createChip(`${cropLabel(metric.crop)} short ${formatKg(metric.shortKg)}`, "", "danger", () => selectCropFromAttention(metric.crop.id)));
-                    else if (metric.status === "Expired / timing issue") add(createChip(`${cropLabel(metric.crop)} timing ${formatKg(metric.shortKg)}`, "", "warning", () => selectCropFromAttention(metric.crop.id)));
+                    if (metric.status === "Missing data") add(createValidationAttentionChip(`${cropLabel(metric.crop)} missing data`, "danger", cropDiagnostics, false, () => selectCropFromAttention(metric.crop.id)));
+                    else if (cropDiagnostics.length) add(createValidationAttentionChip(`${cropLabel(metric.crop)} diagnostics`, "danger", cropDiagnostics, false, () => selectCropFromAttention(metric.crop.id)));
+                    else if (metric.status === "Short") add(createChip(`${cropLabel(metric.crop)} short ${formatKg(metric.shortKg)}`, "", "danger", () => selectCropFromAttention(metric.crop.id, { scrollPlanCheckRow: true })));
+                    else if (metric.status === "Expired / timing issue") add(createChip(`${cropLabel(metric.crop)} timing ${formatKg(metric.shortKg)}`, "", "warning", () => selectCropFromAttention(metric.crop.id, { scrollPlanCheckRow: true })));
                 }
-                if (chartSummary && chartSummary.expiredKg > EPS) add(createChip(`Expired ${formatKg(chartSummary.expiredKg)}`, "", "warning", () => { state.planCheckExpanded = true; renderPlanCheck(); }));
-                if (PlanSchema.validateDemand(plan).length) add(createChip("Demand dates invalid", "", "danger", () => { state.demandExpanded = true; renderDemandStrip(true); }));
-                if (PlanSchema.validateSelfSufficiency(plan).length) add(createChip("Self Sufficiency needs setup", "", "danger", () => { state.selfSufficiencyExpanded = true; renderSelfSufficiencyStrip(true); })); // NEW
-                if (PlanSchema.validateCsa(plan).length) add(createDiagnosticsChip("CSA setup issues", "danger", csaValidationResults(), () => { state.csaExpanded = true; renderCsa(true); }));
-                if ((dashboard && dashboard.diagnostics || []).length && !items.length) add(createChip("Plan Check has diagnostics", "", "warning", () => { state.planCheckExpanded = true; renderPlanCheck(); }));
+                if (chartSummary && chartSummary.expiredKg > EPS) add(createChip(`Expired ${formatKg(chartSummary.expiredKg)}`, "", "warning", () => scrollToPlanCheck()));
+                const demandErrors = PlanSchema.validateDemand(plan); // NEW
+                if (demandErrors.length) add(createValidationAttentionChip("Demand dates invalid", "danger", demandErrors, true, () => { state.demandExpanded = true; renderDemandStrip(true); })); // CHANGE
+                const selfErrors = PlanSchema.validateSelfSufficiency(plan); // NEW
+                if (selfErrors.length) add(createValidationAttentionChip("Self Sufficiency needs setup", "danger", selfErrors, true, () => { state.selfSufficiencyExpanded = true; renderSelfSufficiencyStrip(true); })); // CHANGE
+                const csaErrors = PlanSchema.validateCsa(plan); // NEW
+                if (csaErrors.length) add(createValidationAttentionChip("CSA setup issues", "danger", csaErrors, true, () => { state.csaExpanded = true; renderCsa(true); })); // CHANGE
+                if ((dashboard && dashboard.diagnostics || []).length && !items.length) add(createChip("Plan Check has diagnostics", "", "warning", () => scrollToPlanCheck(), { title: (dashboard.diagnostics || []).join("\n") })); // CHANGE
                 return items;
             }
 
-            function selectCropFromAttention(cropId) {
+            function selectCropFromAttention(cropId, options) {
                 if (!setSelectedCropEverywhere(cropId, { expandCropPlan: true, expandPlanCheck: true })) return;
                 renderCropList();
                 renderSelectedEditor();
                 renderCropPlan(false);
                 renderPlanCheck();
-            }
+                if (options && options.scrollPlanCheckRow) scrollToPlanCheckCropRow(cropId); // NEW
+            } // CHANGE
 
             const ADD_PACKAGES_UNIT_VALUE = "__trellis_add_packages__"; // CHANGE
 
@@ -5135,7 +5180,7 @@ Draw.loadPlugin(function (ui) {
                     const summary = PlanMath.summarizePlanChartModel(PlanMath.buildPlanChartModel(runtime.weekly, String(crop.id), { scope: chartScope }));
                     const revenue = summarizePlanCheckRevenue(crop.id, chartScope);
                     const metric = dashboard.cropMetricsById.get(String(crop.id));
-                    return `<tr><td>${mxUtils.htmlEntities(cropLabel(crop))}</td><td>${summary.targetKg.toFixed(1)}</td><td>${summary.harvestKg.toFixed(1)}</td><td>${summary.usableSupplyKg.toFixed(1)}</td><td>${summary.shortKg.toFixed(1)}</td><td>${summary.expiredKg.toFixed(1)}</td><td>${formatMoney(revenue.potentialRevenue)}</td><td>${formatMoney(revenue.fulfilledRevenue)}</td><td>${mxUtils.htmlEntities(metric ? metric.status : "Missing data")}</td></tr>`;
+                    return `<tr data-plan-check-crop-id="${htmlAttr(crop.id)}"><td>${mxUtils.htmlEntities(cropLabel(crop))}</td><td>${summary.targetKg.toFixed(1)}</td><td>${summary.harvestKg.toFixed(1)}</td><td>${summary.usableSupplyKg.toFixed(1)}</td><td>${summary.shortKg.toFixed(1)}</td><td>${summary.expiredKg.toFixed(1)}</td><td>${formatMoney(revenue.potentialRevenue)}</td><td>${formatMoney(revenue.fulfilledRevenue)}</td><td>${mxUtils.htmlEntities(metric ? metric.status : "Missing data")}</td></tr>`; // CHANGE: attention navigation can scroll to the matching crop row.
                 }).join("");
                 const selfMetric = dashboard.selfSufficiencyMetric || {};
                 const selfSourceRow = `<tr><td>Self Sufficiency</td><td>${(Number(selfMetric.targetKg) || 0).toFixed(1)}</td><td>${(Number(selfMetric.usableSupplyKg) || 0).toFixed(1)}</td><td>${(Number(selfMetric.shortKg) || 0).toFixed(1)}</td><td>${(plan.selfSufficiency && plan.selfSufficiency.lines || []).length}</td><td>${formatMoney(selfMetric.groceryValue)}</td><td>${formatMoney(selfMetric.fulfilledGroceryValue)}</td><td>${Number(selfMetric.shortKg) > EPS ? "Short" : "OK"}</td></tr>`;
@@ -6053,7 +6098,7 @@ Draw.loadPlugin(function (ui) {
                     summaryChips: [
                         createChip("Adults", String(Math.max(0, Math.trunc(Number(self.adults) || 0))), "neutral"),
                         createChip("Children", String(Math.max(0, Math.trunc(Number(self.children) || 0))), "neutral"),
-                        errors.length ? createDiagnosticsChip("Setup issues", "danger", errors, null) : createChip("Lines", String(lineCount), "neutral"),
+                        errors.length ? createValidationAttentionChip("Setup issues", "danger", errors, true, () => { state.selfSufficiencyExpanded = true; renderSelfSufficiencyStrip(true); }) : createChip("Lines", String(lineCount), "neutral"), // CHANGE
                         createChip("Demand", formatKg(metric.targetKg), "primary"),
                         createChip("Short", formatKg(metric.shortKg), metric.shortKg > EPS ? "danger" : "success"),
                         createChip("Grocery value", formatMoney(metric.groceryValue), "neutral"),
@@ -6231,7 +6276,7 @@ Draw.loadPlugin(function (ui) {
                     summaryChips: [
                         createChip("Status", plan.csa.enabled ? "On" : "Off", plan.csa.enabled ? "success" : "neutral"),
                         createChip("Boxes/week", String(Math.max(0, Math.trunc(Number(plan.csa.boxesPerWeek) || 0))), "neutral"),
-                        csaErrors.length ? createDiagnosticsChip("CSA setup issues", "danger", csaErrors, null) : createChip("Dates", `${start}-${end}`, "neutral"),
+                        csaErrors.length ? createValidationAttentionChip("CSA setup issues", "danger", csaErrors, true, () => { state.csaExpanded = true; renderCsa(true); }) : createChip("Dates", `${start}-${end}`, "neutral"), // CHANGE
                         createChip("Components", String(componentCount), "neutral"),
                         createChip("Component value", formatMoney(csaMetric.componentValuePerBox), "neutral"),
                         createChip("Sale value", formatMoney(csaMetric.salePricePerBox), "neutral"),
@@ -6458,11 +6503,10 @@ Draw.loadPlugin(function (ui) {
 
             const plantSelect = document.createElement("select");
             plantSelect.style.cssText = "padding:6px;border:1px solid #bbb;border-radius:6px;min-width:260px;flex:1 1 260px;";
-            const addCrop = mkBtn("Add crop", "add");
             const reloadPlants = mkBtn("Reload crops", "neutral");
             const plantMessage = document.createElement("span");
             plantMessage.style.color = "#666";
-            addRow.appendChild(plantSelect); addRow.appendChild(addCrop); addRow.appendChild(reloadPlants); addRow.appendChild(plantMessage);
+            addRow.appendChild(plantSelect); addRow.appendChild(reloadPlants); addRow.appendChild(plantMessage);
 
             footerActions.appendChild(exportButton); footerActions.appendChild(reset);
             closePrompt.appendChild(promptSave); closePrompt.appendChild(promptDiscard); closePrompt.appendChild(promptCancel);
@@ -6537,7 +6581,6 @@ Draw.loadPlugin(function (ui) {
             async function loadAddCropOptions(force) {
                 const loadVersion = ++addCropOptionsLoadVersion;
                 plantSelect.disabled = true;
-                addCrop.disabled = true;
                 reloadPlants.disabled = true;
                 addCropOptionById.clear();
                 plantSelect.innerHTML = "";
@@ -6594,9 +6637,9 @@ Draw.loadPlugin(function (ui) {
                     appendAddCropOptionGroup("Biennial crops", sortOptions(byLifecycle.biennial));
                     appendAddCropOptionGroup("Perennial crops", sortOptions(byLifecycle.perennial));
                     appendAddCropOptionGroup("Uncategorized crops", sortOptions(byLifecycle.uncategorized));
-                    plantMessage.textContent = skippedGardenCount
-                        ? `Skipped ${skippedGardenCount} unavailable garden crop${skippedGardenCount === 1 ? "" : "s"}.`
-                        : "";
+                    const skippedMessage = skippedGardenCount ? `Skipped ${skippedGardenCount} unavailable garden crop${skippedGardenCount === 1 ? "" : "s"}.` : "";
+                    plantMessage.textContent = pendingAddCropMessage || skippedMessage; // CHANGE: preserve auto-add confirmation after the picker refreshes.
+                    pendingAddCropMessage = "";
                 } catch (error) {
                     if (SessionController.isActive(session) && loadVersion === addCropOptionsLoadVersion) {
                         addCropOptionById.clear();
@@ -6605,13 +6648,12 @@ Draw.loadPlugin(function (ui) {
                 } finally {
                     if (SessionController.isActive(session) && loadVersion === addCropOptionsLoadVersion) {
                         plantSelect.disabled = false;
-                        addCrop.disabled = false;
                         reloadPlants.disabled = false;
                     }
                 }
             }
 
-            addCrop.addEventListener("click", () => {
+            function addSelectedCropFromPicker() {
                 const selectedOption = addCropOptionById.get(String(plantSelect.value || ""));
                 if (!selectedOption) return;
                 if (PlanSchema.findDuplicateCrop(plan, selectedOption.plantId, selectedOption.varietyId || "", "")) {
@@ -6640,8 +6682,10 @@ Draw.loadPlugin(function (ui) {
                 setSelectedCropEverywhere(crop.id);
                 crop.__harvestWindowSourceMissing = false; // CHANGE: new rows already default to the sowing-window source.
                 emitHarvestWindowsNeeded(crop);
+                pendingAddCropMessage = `Added ${selectedOption.label}.`;
                 renderAll();
-            });
+            }
+            plantSelect.addEventListener("change", addSelectedCropFromPicker);
             reloadPlants.addEventListener("click", () => loadAddCropOptions(true));
 
             yearInput.addEventListener("change", () => {

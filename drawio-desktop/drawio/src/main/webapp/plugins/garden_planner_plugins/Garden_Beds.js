@@ -1,5 +1,5 @@
 /**
- * Draw.io Plugin: Garden Beds
+ * Trellis plugin: Garden Beds
  *
  * Stores growing-condition metadata on Trellis garden beds,
  * then renders selected-bed overlays from that saved metadata.
@@ -172,6 +172,8 @@ Draw.loadPlugin(function (ui) {
 
     let copiedProfile = null;
     const selectedBedOverlays = new Map();
+    const BED_DRAG_SUPPRESS_THRESHOLD_PX = 4; // NEW
+    const selectedBedOverlayDrag = { candidate: null, startPoint: null, suppressed: false }; // NEW
 
     function isGardenBed(cell) {
         if (!cell || !cell.getAttribute) return false;
@@ -1204,9 +1206,67 @@ Draw.loadPlugin(function (ui) {
         return Array.from(byId.values());
     }
 
+    function selectedBedOverlayDragCell(evt) { // NEW
+        if (evt && typeof evt.getCell === "function") return evt.getCell(); // NEW
+        if (evt && evt.cell) return evt.cell; // NEW
+        const state = evt && typeof evt.getState === "function" ? evt.getState() : evt && evt.state; // NEW
+        return state && state.cell ? state.cell : null; // NEW
+    } // NEW
+
+    function selectedBedOverlayDragPoint(evt) { // NEW
+        const domEvent = evt && typeof evt.getEvent === "function" ? evt.getEvent() : evt; // NEW
+        if (!domEvent) return null; // NEW
+        if (typeof mxEvent !== "undefined" && mxEvent.getClientX && mxEvent.getClientY) return { x: mxEvent.getClientX(domEvent), y: mxEvent.getClientY(domEvent) }; // NEW
+        if (domEvent.clientX != null && domEvent.clientY != null) return { x: Number(domEvent.clientX), y: Number(domEvent.clientY) }; // NEW
+        return null; // NEW
+    } // NEW
+
+    function selectedBedIdsForOverlayDrag() { // NEW
+        return new Set(getSelectedGardenBedsForOverlay().map(getCellId).filter(Boolean)); // NEW
+    } // NEW
+
+    function clearSelectedBedOverlayDrag() { // NEW
+        selectedBedOverlayDrag.candidate = null; // NEW
+        selectedBedOverlayDrag.startPoint = null; // NEW
+        selectedBedOverlayDrag.suppressed = false; // NEW
+    } // NEW
+
+    function beginSelectedBedOverlayDrag(evt) { // NEW
+        clearSelectedBedOverlayDrag(); // NEW
+        const target = selectedBedOverlayDragCell(evt); // NEW
+        if (!isGardenBed(target)) return false; // NEW
+        if (!selectedBedIdsForOverlayDrag().has(getCellId(target))) return false; // NEW
+        const point = selectedBedOverlayDragPoint(evt); // NEW
+        if (!point) return false; // NEW
+        selectedBedOverlayDrag.candidate = target; // NEW
+        selectedBedOverlayDrag.startPoint = point; // NEW
+        return true; // NEW
+    } // NEW
+
+    function updateSelectedBedOverlayDrag(evt) { // NEW
+        if (!selectedBedOverlayDrag.candidate || selectedBedOverlayDrag.suppressed) return false; // NEW
+        const start = selectedBedOverlayDrag.startPoint; // NEW
+        const point = selectedBedOverlayDragPoint(evt); // NEW
+        if (!start || !point) return false; // NEW
+        const dx = point.x - start.x; // NEW
+        const dy = point.y - start.y; // NEW
+        if (Math.sqrt(dx * dx + dy * dy) < BED_DRAG_SUPPRESS_THRESHOLD_PX) return false; // NEW
+        selectedBedOverlayDrag.suppressed = true; // NEW
+        clearSelectedBedOverlays(); // NEW
+        return true; // NEW
+    } // NEW
+
+    function finishSelectedBedOverlayDrag() { // NEW
+        const wasSuppressed = selectedBedOverlayDrag.suppressed; // NEW
+        clearSelectedBedOverlayDrag(); // NEW
+        if (wasSuppressed) refreshSelectedBedOverlaysSoon(); // NEW
+        return wasSuppressed; // NEW
+    } // NEW
+
     function syncSelectedBedOverlays() {
         ensureOverlayContainer();
         if (!graph.container) return;
+        if (selectedBedOverlayDrag.suppressed) { clearSelectedBedOverlays(); return; } // NEW
         if (isIrrigationModeActiveForBedOverlay()) { clearSelectedBedOverlays(); return; }
         if (isTeamPermissionModeActiveForBedOverlay()) { clearSelectedBedOverlays(); return; } // NEW
         const beds = getSelectedGardenBedsForOverlay();
@@ -1247,6 +1307,8 @@ Draw.loadPlugin(function (ui) {
     if (graph.container && graph.container.addEventListener) graph.container.addEventListener("scroll", refreshSelectedBedOverlaysSoon, { passive: true });
     if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("trellisIrrigationModeChanged", refreshSelectedBedOverlaysSoon);
     if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("trellisTeamPermissionModeChanged", function (evt) { if (evt && evt.detail && evt.detail.active) clearSelectedBedOverlays(); else refreshSelectedBedOverlaysSoon(); }); // NEW
+    if (graph.addMouseListener) graph.addMouseListener({ mouseDown: function (_sender, evt) { beginSelectedBedOverlayDrag(evt); }, mouseMove: function (_sender, evt) { updateSelectedBedOverlayDrag(evt); }, mouseUp: function () { finishSelectedBedOverlayDrag(); } }); // NEW
+    if (typeof window !== "undefined" && window.addEventListener) ["mouseup", "pointerup", "blur"].forEach(function (eventName) { window.addEventListener(eventName, finishSelectedBedOverlayDrag); }); // NEW
     graph.addListener && graph.addListener(mxEvent.DESTROY, clearSelectedBedOverlays);
 
     window.TrellisGardenBeds = {
@@ -1276,7 +1338,10 @@ Draw.loadPlugin(function (ui) {
             showConditionEditorDialog: showConditionEditorDialog,
             syncSelectedBedOverlays: syncSelectedBedOverlays,
             syncGeneratedBedLabels: syncGeneratedBedLabels,
-            collectSelectedBeds: collectSelectedBeds
+            collectSelectedBeds: collectSelectedBeds,
+            beginSelectedBedOverlayDrag: beginSelectedBedOverlayDrag, // NEW
+            updateSelectedBedOverlayDrag: updateSelectedBedOverlayDrag, // NEW
+            finishSelectedBedOverlayDrag: finishSelectedBedOverlayDrag // NEW
         }
     };
     window.TrellisBedConditions = window.TrellisGardenBeds;

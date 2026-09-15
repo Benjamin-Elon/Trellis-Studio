@@ -3227,7 +3227,10 @@
 					success();
 				}
 				
-				this.editor.fireEvent(new mxEventObject('fileLoaded'));
+				this.editor.fireEvent(new mxEventObject('fileLoaded',
+					'file', file,
+					'trellisNewBlankDiagram', !!(file && file.trellisNewBlankDiagram))); // CHANGE
+				if (file) delete file.trellisNewBlankDiagram; // NEW
 				result = true;
 
 				if (!this.isOffline() && file.getMode() != null)

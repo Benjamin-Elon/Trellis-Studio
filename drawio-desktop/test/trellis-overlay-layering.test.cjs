@@ -79,7 +79,7 @@ function assertLayerContract(name) {
     assert.ok(z.annotation < z.connection, name + " annotations should sit below connection visuals");
     assert.ok(z.connection < z.control, name + " connection visuals should sit below controls");
     assert.ok(z.control < z.controlTop, name + " controls should sit below top controls");
-    assert.ok(z.controlTop < DIALOG_LAYER, name + " graph overlays should stay below Draw.io dialogs");
+    assert.ok(z.controlTop < DIALOG_LAYER, name + " graph overlays should stay below editor dialogs"); // CHANGE
 }
 
 test("graph overlay plugins share a dialog-safe layer contract", () => {
@@ -101,7 +101,7 @@ test("graph overlay plugins share a dialog-safe layer contract", () => {
     assert.match(readProjectFile("drawio/src/main/webapp/js/diagramly/Dialogs.js"), /zIndex: 2e9/);
 });
 
-test("native Draw.io modal dialogs render above graph overlay controls", () => {
+test("native editor modal dialogs render above graph overlay controls", () => { // CHANGE
     const source = readProjectFile("drawio/src/main/webapp/js/grapheditor/Editor.js");
     assert.match(source, /var TRELLIS_NATIVE_DIALOG_Z = 2000000000;/);
     assert.match(source, /dialogZIndex = TRELLIS_NATIVE_DIALOG_Z \+ \(\(\(editorUi\.dialogs != null\) \? editorUi\.dialogs\.length : 0\) \* 2\)/);
@@ -182,7 +182,7 @@ test("graph-local Trellis controls use control layers", () => {
     assert.match(vertexLinking, /panel\.style\.zIndex = String\(GRAPH_OVERLAY_Z\.CONTROL\)/);
 });
 
-test("custom Trellis dialogs render at the Draw.io dialog layer", () => {
+test("custom Trellis dialogs render at the editor dialog layer", () => { // CHANGE
     const users = readPlugin("Trellis_Users.js");
     assert.match(users, /const USERS_UI_LAYER_Z = 2000000000;/);
     assert.match(users, /const AUTH_OVERLAY_Z = 2147483000;/);

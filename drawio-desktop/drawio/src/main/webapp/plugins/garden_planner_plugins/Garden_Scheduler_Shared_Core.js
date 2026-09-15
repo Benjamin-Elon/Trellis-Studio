@@ -1,4 +1,4 @@
-// USL Draw.io Plugin Module: Garden Scheduler shared pure helpers.
+// USL Trellis plugin module: Garden Scheduler shared pure helpers.
 (function (root) {
     'use strict';
 

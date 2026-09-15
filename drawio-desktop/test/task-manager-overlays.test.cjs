@@ -170,7 +170,7 @@ test("task manager exposes dashboard board APIs and unseen-created state", () =>
     assert.match(text, /viewer\.unscheduled = Date\.now\(\);/);
 });
 
-test("task manager canonical lane and card styles disable native Draw.io connectors", () => { // CHANGE
+test("task manager canonical lane and card styles disable native editor connectors", () => { // CHANGE
     const text = taskManagerSource();
     assert.match(text, /const LANE_STYLE_BASE =[\s\S]*movable=0/); // NEW
     assert.match(text, /const SCHEDULE_LANE_STYLE_BASE =[\s\S]*movable=0/); // NEW
@@ -656,14 +656,16 @@ function makeHarness(options = {}) {
 function attachCompanionTaskFixture(h) {
     const garden = new TestCell("garden", makeValue(h.document, { garden_module: "1", label: "Kitchen Garden" }), new TestGeometry(0, 0, 500, 360), "shape=swimlane;");
     const taskModule = new TestCell("taskModule", makeValue(h.document, { task_module: "1", trellis_garden_module_id: "garden", label: "Kitchen Garden Tasks" }), new TestGeometry(540, 180, 500, 360), "shape=swimlane;");
+    const moduleResizeCalls = []; // CHANGE
     h.addCell(h.root, garden);
     h.addCell(h.root, taskModule);
     setAttr(garden, "trellis_task_module_id", taskModule.id);
     h.graph.__trellisModules = {
         ensureGardenTaskModule(cell) { return cell === garden ? taskModule : null; },
-        findExistingCompanionTask(cell) { return cell === garden ? taskModule : null; }
+        findExistingCompanionTask(cell) { return cell === garden ? taskModule : null; },
+        applyModuleMargins(cell, opts) { moduleResizeCalls.push({ cell, opts }); } // CHANGE
     };
-    return { garden, taskModule };
+    return { garden, taskModule, moduleResizeCalls }; // CHANGE
 }
 
 function boardCellsUnder(cell) {
@@ -805,7 +807,7 @@ test("task module overlay edits labels with one bed-style field and no clamping"
 
 test("task module overlay creates a main board when no task board exists", async () => {
     const h = makeHarness();
-    const { taskModule } = attachCompanionTaskFixture(h);
+    const { taskModule, moduleResizeCalls } = attachCompanionTaskFixture(h); // CHANGE
     h.graph.setSelectionCell(taskModule);
     await nextTick();
 
@@ -819,17 +821,22 @@ test("task module overlay creates a main board when no task board exists", async
     assert.equal(attr(boards[0], "board_role"), "main"); // NEW
     assert.equal(attr(boards[0], "label"), "Main Board"); // NEW
     assert.equal(h.selectedCell, boards[0]); // NEW
+    assert.equal(moduleResizeCalls.length, 1); // CHANGE
+    assert.equal(moduleResizeCalls[0].cell, taskModule); // CHANGE
+    assert.equal(moduleResizeCalls[0].opts.allowShrink, false); // CHANGE
+    assert.equal(moduleResizeCalls[0].opts.manageUpdate, false); // CHANGE
 });
 
 test("task module overlay creates a secondary board when a task board already exists", async () => {
     const h = makeHarness();
-    const { taskModule } = attachCompanionTaskFixture(h);
+    const { taskModule, moduleResizeCalls } = attachCompanionTaskFixture(h); // CHANGE
     const mainResult = h.graph.__trellisTaskManager.ensureMainBoardInTaskModule(taskModule);
     assert.ok(mainResult && mainResult.board); // NEW
     assert.equal(attr(mainResult.board, "label"), "Main Board"); // NEW
     const existingSecondary = h.graph.__trellisTaskManager.createSecondaryBoardInTaskModule(taskModule); // NEW
     assert.ok(existingSecondary); // NEW
     assert.equal(attr(existingSecondary, "label"), "Secondary Board"); // NEW
+    moduleResizeCalls.length = 0; // CHANGE
     h.graph.setSelectionCell(taskModule);
     await nextTick();
 
@@ -845,6 +852,28 @@ test("task module overlay creates a secondary board when a task board already ex
     assert.equal(attr(h.selectedCell, "board_role"), "secondary"); // NEW
     assert.equal(attr(h.selectedCell, "label"), "Secondary Board"); // NEW
     assert.ok(h.selectedCell.geometry.y >= existingSecondary.geometry.y + existingSecondary.geometry.height + 40); // NEW
+    assert.equal(moduleResizeCalls.length, 1); // CHANGE
+    assert.equal(moduleResizeCalls[0].cell, taskModule); // CHANGE
+    assert.equal(moduleResizeCalls[0].opts.allowShrink, false); // CHANGE
+    assert.equal(moduleResizeCalls[0].opts.manageUpdate, false); // CHANGE
+});
+
+test("task module overlay still creates a board when module resize API is unavailable", async () => {
+    const h = makeHarness();
+    const { taskModule } = attachCompanionTaskFixture(h);
+    delete h.graph.__trellisModules.applyModuleMargins; // CHANGE
+    h.graph.setSelectionCell(taskModule);
+    await nextTick();
+
+    const overlay = taskModuleOverlay(h.document);
+    const addMain = buttonByText(overlay, "Add Main Task Board");
+    assert.ok(addMain); // CHANGE
+    addMain.click();
+
+    const boards = boardCellsUnder(taskModule);
+    assert.equal(boards.length, 1); // CHANGE
+    assert.equal(attr(boards[0], "board_role"), "main"); // CHANGE
+    assert.equal(h.selectedCell, boards[0]); // CHANGE
 });
 
 test("task board header overlay edits board labels with role defaults", async () => {

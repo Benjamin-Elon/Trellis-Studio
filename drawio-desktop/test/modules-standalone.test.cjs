@@ -120,6 +120,7 @@ function makeHarness() {
     const model = new TestModel(root);
     const mouseListeners = [];
     const graphListeners = new Map();
+    const editorListeners = new Map(); // NEW
     const viewListeners = new Map();
     const selectionListeners = new Map();
     const firedEvents = [];
@@ -185,9 +186,27 @@ function makeHarness() {
             this.fireEvent(makeEventObject("cellsRemoved", ["cells", removed])); // NEW
             return removed; // NEW
         }, // NEW
+        updateAlternateBounds(_cell, geo) { // NEW
+            if (!geo.alternateBounds) geo.alternateBounds = { x: 0, y: 0, width: 80, height: 30 }; // NEW
+            geo.alternateBounds.x = Number(geo.x || 0); // NEW
+            geo.alternateBounds.y = Number(geo.y || 0); // NEW
+        }, // NEW
         foldCells(collapse, recurse, cells) { // NEW
             foldCalls.push({ collapse: !!collapse, recurse: !!recurse, cells: (cells || []).slice() }); // NEW
-            (cells || []).forEach(cell => { if (cell) cell.collapsed = !!collapse; }); // NEW
+            (cells || []).forEach(cell => { // CHANGE
+                const geo = cell && model.getGeometry(cell); // NEW
+                if (geo) { // NEW
+                    const actual = { x: Number(geo.x || 0), y: Number(geo.y || 0), width: Number(geo.width || 0), height: Number(geo.height || 0) }; // NEW
+                    graph.updateAlternateBounds(cell, geo, !!collapse); // NEW
+                    const alternate = geo.alternateBounds || actual; // NEW
+                    geo.x = Number(alternate.x || 0); // NEW
+                    geo.y = Number(alternate.y || 0); // NEW
+                    geo.width = Number(alternate.width || 0); // NEW
+                    geo.height = Number(alternate.height || 0); // NEW
+                    geo.alternateBounds = actual; // NEW
+                } // NEW
+                if (cell) cell.collapsed = !!collapse; // CHANGE
+            }); // CHANGE
             return cells || []; // NEW
         }, // NEW
         isCellCollapsed(cell) { return !!(cell && cell.collapsed); }, // NEW
@@ -235,7 +254,7 @@ function makeHarness() {
     };
 
     const ui = {
-        editor: { graph },
+        editor: { graph, addListener(eventName, listener) { addMappedListener(editorListeners, eventName, listener); } }, // CHANGE
         actions,
         prompt(message, value, callback) {
             promptCalls.push({ message, value });
@@ -302,6 +321,7 @@ function makeHarness() {
         root,
         mouseListeners,
         graphListeners,
+        editorListeners, // NEW
         viewListeners,
         selectionListeners,
         firedEvents,
@@ -313,6 +333,7 @@ function makeHarness() {
         alerts, // NEW
         setPromptValue(value) { promptValue = value; },
         setConfirmResult(value) { confirmResult = value !== false; }, // NEW
+        fireEditorEvent(eventName, pairs = []) { (editorListeners.get(eventName) || []).forEach(listener => listener(ui.editor, makeEventObject(eventName, pairs))); }, // NEW
         setNullLeafChildren(value) { nullLeafChildren = !!value; }, // NEW
         disableConfirm() { dom.window.confirm = undefined; context.confirm = undefined; }, // NEW
         setElectronImagePicker(options = {}) {
@@ -487,6 +508,12 @@ function makeCell(harness, attrs, geometry, style = "") {
     return cell;
 }
 
+function makeLegacyTeamModule(harness, x = 0, y = 0) { // NEW
+    const team = makeCell(harness, { team_module: "1", label: "Team Module" }, new TestGeometry(x, y, 160, 100), "swimlane;whiteSpace=wrap;html=1;module=1;swimlaneFillColor=#FFF2CC"); // NEW
+    harness.model.add(harness.root, team); // NEW
+    return team; // NEW
+} // NEW
+
 function makeModuleReady(moduleCell, width = 320, height = 220, margin = 0) {
     moduleCell.geometry.width = width;
     moduleCell.geometry.height = height;
@@ -507,6 +534,10 @@ function absoluteBounds(cell) {
     }
     return { x, y, width: Number(geo.width || 0), height: Number(geo.height || 0) };
 }
+
+function geometryCenter(geo) {
+    return { x: Number(geo.x || 0) + Number(geo.width || 0) / 2, y: Number(geo.y || 0) + Number(geo.height || 0) / 2 }; // NEW
+} // NEW
 
 function centerInside(cell, container) {
     const cellBounds = absoluteBounds(cell);
@@ -549,6 +580,24 @@ function cellText(cell) {
     const raw = cell.value && cell.value.getAttribute ? (cell.value.getAttribute("label") || "") : (cell.value == null ? "" : String(cell.value));
     return String(raw).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 }
+
+function assertStarterTeamContent(harness, team) { // NEW
+    const api = harness.graph.__trellisModules; // NEW
+    const sections = api.teamSectionsInModule(team, { includeArchived: true }); // NEW
+    const normalSections = sections.filter(section => section.getAttribute("trellis_team_unassigned") !== "1"); // NEW
+    const unassignedSections = sections.filter(section => section.getAttribute("trellis_team_unassigned") === "1"); // NEW
+    assert.equal(normalSections.length, 1); // NEW
+    assert.equal(unassignedSections.length, 1); // NEW
+    assert.equal(cellText(normalSections[0]), "New Team"); // NEW
+    const roles = roleCardsUnder(normalSections[0]); // NEW
+    assert.equal(roles.length, 1); // NEW
+    assert.match(roles[0].style, /(?:^|;)role_card_version=2(?:;|$)/); // NEW
+    assert.equal(roles[0].getAttribute("trellis_role_user_id"), null); // NEW
+    assert.equal(roles[0].children.find(child => styleHas(child, "role_name=1")).value, ""); // NEW
+    assert.equal(roles[0].children.find(child => styleHas(child, "role_title=1")).value, ""); // NEW
+    assert.equal(roleCardsUnder(unassignedSections[0]).length, 0); // NEW
+    return { starterTeam: normalSections[0], starterRole: roles[0], unassigned: unassignedSections[0] }; // NEW
+} // NEW
 
 function createRoleFixture(harness) {
     const team = harness.graph.__trellisModules.createModuleAtPoint({ x: 50, y: 60 }, "team");
@@ -628,6 +677,7 @@ test("createModuleAtPoint creates garden module with settings-needed event", asy
     assert.match(mod.getAttribute("linkedTo") || "", new RegExp(task.id));
     assert.match(task.getAttribute("linkedTo") || "", new RegExp(mod.id));
     assert.equal(ensuredTaskBoard, task);
+    assertStarterTeamContent(harness, team); // NEW
     assert.match(mod.style, /swimlaneFillColor=#B9E0A5/);
     assert.equal(mod.geometry.width, 160); // CHANGE
     assert.equal(mod.geometry.height, 100); // CHANGE
@@ -635,6 +685,7 @@ test("createModuleAtPoint creates garden module with settings-needed event", asy
     const settingsEvents = harness.firedEvents.filter(event => event.name === "usl:gardenModuleNeedsSettings");
     assert.equal(settingsEvents.length, 1);
     assert.equal(settingsEvents[0].getProperty("cell"), mod);
+    assert.equal(settingsEvents[0].getProperty("focusAfterSettingsClose"), true); // NEW
 });
 
 test("createModuleAtPoint creates garden neighbor modules including roadmap when available", () => { // NEW
@@ -649,16 +700,50 @@ test("createModuleAtPoint creates garden neighbor modules including roadmap when
     assert.equal(roadmap.getAttribute("roadmap_garden_module_id"), garden.id); // NEW
     assert.equal(roadmap.getAttribute("roadmap_task_module_id"), task.id); // NEW
     assert.equal(roadmap.getAttribute("roadmap_team_module_id"), team.id); // NEW
+    assertStarterTeamContent(harness, team); // NEW
     assert.equal(ensuredRoadmaps.at(-1), roadmap); // NEW
 }); // NEW
 
 test("garden creation falls back to partial cluster when roadmap manager is unavailable", () => { // NEW
     const harness = makeHarness(); // NEW
     const garden = harness.graph.__trellisModules.createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
-    assert.ok(harness.model.getCell(garden.getAttribute("trellis_team_module_id"))); // NEW
+    const team = harness.model.getCell(garden.getAttribute("trellis_team_module_id")); // NEW
+    assert.ok(team); // NEW
     assert.ok(harness.model.getCell(garden.getAttribute("trellis_task_module_id"))); // NEW
+    assertStarterTeamContent(harness, team); // NEW
     assert.equal(garden.getAttribute("roadmap_module_id"), null); // NEW
     assert.deepEqual(harness.alerts, ["Roadmap Manager is unavailable. The Garden remains usable; create its Roadmap companion after the plugin is loaded."]); // NEW
+}); // NEW
+
+test("new blank diagram fileLoaded auto-creates a focused garden cluster", async () => { // NEW
+    const harness = makeHarness(); // NEW
+    installRoadmapCreationStub(harness); // NEW
+    harness.fireEditorEvent("fileLoaded", ["trellisNewBlankDiagram", true]); // NEW
+    await waitForTimers(); // NEW
+    await waitForTimers(); // NEW
+    const gardens = harness.root.children.filter(child => child.getAttribute("garden_module") === "1"); // NEW
+    assert.equal(gardens.length, 1); // NEW
+    const garden = gardens[0]; // NEW
+    assert.ok(harness.model.getCell(garden.getAttribute("trellis_team_module_id"))); // NEW
+    assert.ok(harness.model.getCell(garden.getAttribute("trellis_task_module_id"))); // NEW
+    assert.ok(harness.model.getCell(garden.getAttribute("roadmap_module_id"))); // NEW
+    const settingsEvents = harness.firedEvents.filter(event => event.name === "usl:gardenModuleNeedsSettings"); // NEW
+    assert.equal(settingsEvents.at(-1).getProperty("focusAfterSettingsClose"), true); // NEW
+}); // NEW
+
+test("new blank diagram seeder ignores unflagged or nonempty diagrams", async () => { // NEW
+    const unflagged = makeHarness(); // NEW
+    unflagged.fireEditorEvent("fileLoaded", ["trellisNewBlankDiagram", false]); // NEW
+    await waitForTimers(); // NEW
+    assert.equal(unflagged.root.children.length, 0); // NEW
+
+    const nonempty = makeHarness(); // NEW
+    nonempty.graph.__trellisModules.createModuleAtPoint({ x: 1, y: 2 }, "regular"); // NEW
+    nonempty.alerts.length = 0; // NEW
+    nonempty.fireEditorEvent("fileLoaded", ["trellisNewBlankDiagram", true]); // NEW
+    await waitForTimers(); // NEW
+    assert.equal(nonempty.root.children.filter(child => child.getAttribute("garden_module") === "1").length, 0); // NEW
+    assert.equal(nonempty.root.children.length, 1); // NEW
 }); // NEW
 
 test("createModuleAtPoint creates team module", () => {
@@ -667,8 +752,19 @@ test("createModuleAtPoint creates team module", () => {
     assert.equal(mod.getAttribute("team_module"), "1");
     assert.equal(mod.getAttribute("garden_module"), null);
     assert.match(mod.style, /swimlaneFillColor=#FFF2CC/);
+    assertStarterTeamContent(harness, mod); // NEW
     assert.equal(harness.selectedCell, mod);
 });
+
+test("garden companion team repair does not backfill starter team content", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const garden = makeCell(harness, { garden_module: "1", label: "Legacy Garden" }, new TestGeometry(30, 40, 160, 100), "swimlane;whiteSpace=wrap;html=1;module=1;swimlaneFillColor=#B9E0A5"); // CHANGE
+    harness.model.add(harness.root, garden); // NEW
+    const team = harness.graph.__trellisModules.ensureGardenTeamModule(garden); // NEW
+    assert.ok(team); // NEW
+    assert.equal(harness.graph.__trellisModules.teamSectionsInModule(team, { includeArchived: true }).length, 0); // NEW
+    assert.equal(roleCardsUnder(team).length, 0); // NEW
+}); // NEW
 
 test("createModuleAtPoint creates task module", () => {
     const harness = makeHarness();
@@ -710,6 +806,56 @@ test("garden companion task repair reuses typed task module and mirrors access",
     harness.graph.__trellisModules.ensureGardenTaskModule(garden, { createMainBoard: true });
     assert.equal(ensuredTaskBoard, repaired);
 });
+
+test("regular modules collapse around their geometry center", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const mod = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"), 320, 220); // NEW
+    const beforeCenter = geometryCenter(mod.geometry); // NEW
+    harness.graph.foldCells(true, false, [mod]); // NEW
+    assert.deepEqual(geometryCenter(mod.geometry), beforeCenter); // NEW
+    assert.equal(mod.geometry.width, 80); // NEW
+    assert.equal(mod.geometry.height, 30); // NEW
+    assert.notEqual(mod.geometry.x, 11); // NEW
+}); // NEW
+
+test("moved collapsed modules expand around their moved center", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const mod = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 11, y: 22 }, "regular"), 320, 220); // NEW
+    harness.graph.foldCells(true, false, [mod]); // NEW
+    harness.graph.moveCells([mod], 42, 18); // NEW
+    const movedCollapsedCenter = geometryCenter(mod.geometry); // NEW
+    harness.graph.foldCells(false, false, [mod]); // NEW
+    assert.deepEqual(geometryCenter(mod.geometry), movedCollapsedCenter); // NEW
+    assert.equal(mod.geometry.width, 320); // NEW
+    assert.equal(mod.geometry.height, 220); // NEW
+}); // NEW
+
+test("typed modules and nested submodules use center-stable folding", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const cluster = createGardenCluster(harness); // NEW
+    const submodule = makeCell(harness, { label: "Nested" }, new TestGeometry(24, 64, 180, 120), "swimlane;whiteSpace=wrap;html=1;module=1;collapsible=1;"); // NEW
+    harness.model.add(cluster.garden, submodule); // NEW
+    [cluster.garden, cluster.team, cluster.task, cluster.roadmap, submodule].forEach(moduleCell => { // NEW
+        const beforeCenter = geometryCenter(moduleCell.geometry); // NEW
+        harness.graph.foldCells(true, false, [moduleCell]); // NEW
+        assert.deepEqual(geometryCenter(moduleCell.geometry), beforeCenter); // NEW
+        assert.equal(moduleCell.geometry.width, 80); // NEW
+        assert.equal(moduleCell.geometry.height, 30); // NEW
+    }); // NEW
+}); // NEW
+
+test("center-stable module folding excludes non-module and explicitly non-collapsible cells", () => { // NEW
+    const harness = makeHarness(); // NEW
+    const generic = makeCell(harness, { label: "Generic" }, new TestGeometry(300, 40, 160, 90), "rounded=1;collapsible=1;"); // NEW
+    const disabledModule = makeCell(harness, { label: "Disabled" }, new TestGeometry(80, 120, 220, 140), "swimlane;module=1;collapsible=0;"); // NEW
+    harness.model.add(harness.root, generic); // NEW
+    harness.model.add(harness.root, disabledModule); // NEW
+    const genericTopLeft = { x: generic.geometry.x, y: generic.geometry.y }; // NEW
+    const disabledTopLeft = { x: disabledModule.geometry.x, y: disabledModule.geometry.y }; // NEW
+    harness.graph.foldCells(true, false, [generic, disabledModule]); // NEW
+    assert.deepEqual({ x: generic.geometry.x, y: generic.geometry.y }, genericTopLeft); // NEW
+    assert.deepEqual({ x: disabledModule.geometry.x, y: disabledModule.geometry.y }, disabledTopLeft); // NEW
+}); // NEW
 
 test("delete on expanded module folds without deleting", () => { // NEW
     const harness = makeHarness(); // NEW
@@ -905,13 +1051,13 @@ test("regular module children clamp at left and top edges", () => {
 test("team and task module ordinary children do not use regular outside growth", () => {
     ["team", "task"].forEach(type => {
         const harness = makeHarness();
-        const mod = makeModuleReady(harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, type), 320, 220, 20);
+        const mod = makeModuleReady(type === "team" ? makeLegacyTeamModule(harness, 0, 0) : harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, type), 320, 220, 20); // CHANGE
         const child = makeCell(harness, { label: "ordinary" }, new TestGeometry(240, 140, 40, 30), type === "task" ? "swimlane;" : "");
         harness.model.add(mod, child);
         harness.graph.moveCells([child], 120, 120);
         assert.deepEqual(harness.graph.lastMoveDelta, { dx: 20, dy: 30 }); // CHANGE
         assert.equal(insideRightBottomInnerMargin(child, mod), true); // CHANGE
-        assert.equal(mod.geometry.width, type === "team" ? 360 : 320); // CHANGE
+        assert.equal(mod.geometry.width, 320); // CHANGE
         assert.equal(mod.geometry.height, 220); // CHANGE
         assert.equal(harness.model.getParent(child), mod); // CHANGE
     });
@@ -1540,7 +1686,7 @@ test("resized team sections restore spacing by shortest movement instead of resi
 test("dragged team sections push Unassigned sections out of the 20px minimum spacing", () => {
     const harness = makeHarness();
     const api = harness.graph.__trellisModules;
-    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const team = makeLegacyTeamModule(harness, 50, 60); // CHANGE
     const unassigned = api.ensureTeamModuleSections(team);
     const active = api.createTeamSection(team, "Propagation");
 
@@ -1553,7 +1699,7 @@ test("dragged team sections push Unassigned sections out of the 20px minimum spa
 test("dragged team sections push archived sections out of the 20px minimum spacing", () => {
     const harness = makeHarness();
     const api = harness.graph.__trellisModules;
-    const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team");
+    const team = makeLegacyTeamModule(harness, 50, 60); // CHANGE
     api.ensureTeamModuleSections(team);
     const active = api.createTeamSection(team, "Propagation");
     const archived = api.createTeamSection(team, "Archived");
@@ -1789,8 +1935,9 @@ test("role overlay button creates role card from stored click point and focuses 
     fireGraphClick(harness, { cell: section, hitCell: section, clientX: 100, clientY: 120, graphX: 90, graphY: 100 }); // CHANGE
     harness.graph.setSelectionCell(section); // CHANGE
     const updateCountBefore = harness.model.topLevelUpdateCount;
+    const rolesBefore = new Set(roleCardsUnder(team)); // NEW
     roleOverlayButton(harness.document, "Add New Role").dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true })); // CHANGE
-    const role = roleCardsUnder(team)[0]; // CHANGE
+    const role = roleCardsUnder(team).find(candidate => !rolesBefore.has(candidate)); // CHANGE
     assert.ok(role);
     const nameRow = role.children.find(child => styleHas(child, "role_name=1"));
     assert.equal(harness.graph.__trellisModules.isTeamSection(harness.model.getParent(role)), true); // NEW
@@ -1810,13 +1957,14 @@ test("context menu add role card uses one top-level model transaction and focuse
     const addRole = menuItemsFor(harness, team, evt).find(item => item.label === "Add Role Card");
     assert.ok(addRole);
     const updateCountBefore = harness.model.topLevelUpdateCount;
+    const rolesBefore = new Set(roleCardsUnder(team)); // NEW
     addRole.funct();
-    const role = roleCardsUnder(team)[0]; // CHANGE
+    const role = roleCardsUnder(team).find(candidate => !rolesBefore.has(candidate)); // CHANGE
     assert.ok(role);
     const nameRow = role.children.find(child => styleHas(child, "role_name=1"));
     assert.equal(harness.graph.__trellisModules.isTeamSection(harness.model.getParent(role)), true); // NEW
     assert.equal(role.geometry.x, 20); // CHANGE
-    assert.equal(role.geometry.y, 54); // CHANGE
+    assert.equal(role.geometry.y, 324); // CHANGE
     assert.equal(harness.selectedCell, nameRow);
     await waitForTimers();
     assert.equal(harness.editingStarts.at(-1).cell, nameRow);
@@ -1829,8 +1977,9 @@ test("role overlay button falls back to top-left content placement", () => {
     const team = api.createModuleAtPoint({ x: 50, y: 60 }, "team"); // CHANGE
     const section = api.createTeamSection(team, "Propagation"); // CHANGE
     harness.graph.setSelectionCell(section); // CHANGE
+    const rolesBefore = new Set(roleCardsUnder(team)); // NEW
     roleOverlayButton(harness.document, "Add New Role").dispatchEvent(new harness.dom.window.MouseEvent("click", { bubbles: true })); // CHANGE
-    const role = roleCardsUnder(team)[0]; // CHANGE
+    const role = roleCardsUnder(team).find(candidate => !rolesBefore.has(candidate)); // CHANGE
     assert.ok(role);
     const nameRow = role.children.find(child => styleHas(child, "role_name=1"));
     assert.equal(harness.graph.__trellisModules.isTeamSection(harness.model.getParent(role)), true); // NEW

@@ -1,5 +1,5 @@
 /**
- * Draw.io Plugin: ChangeMap + CreateMap (Scope + Time Slice + Navigate)
+ * Trellis plugin: ChangeMap + CreateMap (Scope + Time Slice + Navigate)
  *
  * Features
  * - Right-click menu: Show/Hide ChangeMap, Show/Hide CreateMap

@@ -1,5 +1,5 @@
 /**
- * Draw.io Plugin: Trellis Users
+ * Trellis plugin: Users
  *
  * Low-security, diagram-local identity and permission workflow for Trellis.
  * This is not tamper-proof security; it is UI policy, attribution, and

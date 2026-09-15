@@ -34,9 +34,10 @@ from trellis_seed.climate_benchmarks import (  # noqa: E402
     select_benchmark_cities,
     select_benchmark_crop,
 )
-from trellis_seed.db import apply_run, apply_run_to_databases, create_diff_report, load_methods, print_diff_report  # noqa: E402
+from trellis_seed.db import apply_run, apply_run_to_databases, create_diff_report, load_methods, print_diff_report, replace_crop_catalog_in_databases  # noqa: E402
 from trellis_seed import db as seed_db  # noqa: E402
 from trellis_seed.config import Settings, read_openai_api_key  # noqa: E402
+from trellis_seed.generic_varieties import generic_maturity_varieties_for_plant, replace_database_varieties_with_generic_profiles  # noqa: E402
 from trellis_seed.generator import (
     GenerationOptions,
     _call_openai_with_retry,
@@ -176,25 +177,12 @@ class TrellisSeederTests(unittest.TestCase):
             self.assertIn("match_confidence", nutrition_mapping_cols)
             self.assertIn("match_status", nutrition_mapping_cols)
 
-    def test_packaged_seed_database_includes_reviewable_nutrition_snapshot(self) -> None:
+    def test_packaged_seed_database_keeps_nutrition_reference_tables_without_old_crop_mappings(self) -> None:
         with closing(sqlite3.connect(ROOT / "trellis_database" / "Trellis_database.sqlite")) as conn:
-            plant_count = conn.execute("SELECT COUNT(*) FROM Plants").fetchone()[0]
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM NutritionNutrients").fetchone()[0], 10)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM NutritionRequirements").fetchone()[0], 20)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantNutritionMappings WHERE food_form='raw'").fetchone()[0], plant_count)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantNutritionValues").fetchone()[0], plant_count * 10)
-            incomplete = conn.execute(
-                """
-                SELECT p.plant_name, COUNT(v.nutrient_key)
-                FROM Plants p
-                LEFT JOIN PlantNutritionValues v ON v.plant_id = p.plant_id
-                GROUP BY p.plant_id, p.plant_name
-                HAVING COUNT(v.nutrient_key) != 10
-                ORDER BY p.plant_name
-                """
-            ).fetchall()
-            self.assertEqual(incomplete, [])
-            self.assertGreater(conn.execute("SELECT COUNT(*) FROM PlantNutritionMappings WHERE match_status='pending'").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantNutritionMappings").fetchone()[0], 0)  # CHANGE: replacement catalog intentionally drops stale old-crop mappings.
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantNutritionValues").fetchone()[0], 0)  # CHANGE
 
     def test_nutrition_validation_warns_on_reviewable_auto_mappings(self) -> None:
         report = validate_row("PlantNutritionMappings", {
@@ -225,13 +213,13 @@ class TrellisSeederTests(unittest.TestCase):
         now = "2026-09-07T00:00:00+00:00"
         write_json(generated / "NutritionNutrients.json", [{"nutrient_key": "energy_kcal", "nutrient_name": "Calories", "unit": "kcal", "sort_order": 1}])
         write_json(generated / "NutritionRequirements.json", [{"persona_key": "adult_19_50", "nutrient_key": "energy_kcal", "amount_per_day": 2100, "unit": "kcal", "source_note": "test", "updated_at": now}])
-        write_json(generated / "PlantNutritionMappings.json", [{"plant_name": "Apple", "fdc_id": 1102640, "fdc_description": "Apple, raw", "fdc_data_type": "Foundation", "food_form": "raw", "match_confidence": "reviewed", "match_status": "reviewed", "source_url": "https://fdc.nal.usda.gov/download-datasets/", "updated_at": now}])
-        write_json(generated / "PlantNutritionValues.json", [{"plant_name": "Apple", "nutrient_key": "energy_kcal", "amount_per_100g": 53, "source_fdc_id": 1102640, "updated_at": now}])
+        write_json(generated / "PlantNutritionMappings.json", [{"plant_name": "Kale", "fdc_id": 1102640, "fdc_description": "Kale, raw", "fdc_data_type": "Foundation", "food_form": "raw", "match_confidence": "reviewed", "match_status": "reviewed", "source_url": "https://fdc.nal.usda.gov/download-datasets/", "updated_at": now}])
+        write_json(generated / "PlantNutritionValues.json", [{"plant_name": "Kale", "nutrient_key": "energy_kcal", "amount_per_100g": 53, "source_fdc_id": 1102640, "updated_at": now}])
 
         report = apply_run(self.tmp_path / "run", self.db_path)
         self.assertEqual(report["tables"]["PlantNutritionValues"], 1)
         with closing(sqlite3.connect(self.db_path)) as conn:
-            value = conn.execute("SELECT amount_per_100g FROM PlantNutritionValues v JOIN Plants p ON p.plant_id=v.plant_id WHERE p.plant_name='Apple' AND nutrient_key='energy_kcal'").fetchone()[0]
+            value = conn.execute("SELECT amount_per_100g FROM PlantNutritionValues v JOIN Plants p ON p.plant_id=v.plant_id WHERE p.plant_name='Kale' AND nutrient_key='energy_kcal'").fetchone()[0]
             self.assertEqual(value, 53)
 
     def test_companion_migration_adds_directional_timing_and_nullable_id_backfill(self) -> None:
@@ -430,6 +418,33 @@ class TrellisSeederTests(unittest.TestCase):
         })
         self.assertTrue(any("maturity_class" in error for error in invalid["errors"]))
 
+    def test_replace_database_varieties_with_generic_profiles_backs_up_and_replaces_rows(self) -> None:
+        report = replace_database_varieties_with_generic_profiles(self.db_path)
+        self.assertTrue(Path(report["backup_path"]).exists())
+        self.assertEqual(report["inserted_varieties"], report["plants"] * 3)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            plant_count = conn.execute("SELECT COUNT(*) FROM Plants").fetchone()[0]
+            variety_count = conn.execute("SELECT COUNT(*) FROM PlantVarieties").fetchone()[0]
+            template_count = conn.execute("SELECT COUNT(*) FROM VarietyTaskTemplates").fetchone()[0]
+            self.assertEqual(variety_count, plant_count * 3)
+            self.assertEqual(template_count, 0)
+            bad_names = conn.execute("""
+                SELECT COUNT(*)
+                FROM PlantVarieties
+                WHERE variety_name NOT IN ('Early maturity', 'Mid maturity', 'Late maturity')
+            """).fetchone()[0]
+            self.assertEqual(bad_names, 0)
+            per_plant = conn.execute("""
+                SELECT COUNT(*)
+                FROM (
+                    SELECT plant_id, COUNT(*) AS count, COUNT(DISTINCT maturity_class) AS classes
+                    FROM PlantVarieties
+                    GROUP BY plant_id
+                    HAVING count != 3 OR classes != 3
+                )
+            """).fetchone()[0]
+            self.assertEqual(per_plant, 0)
+
     def test_growth_stage_validation_requires_positive_ratios(self) -> None:
         valid = validate_row("PlantGrowthStages", {
             "plant_name": "Lettuce",
@@ -546,7 +561,7 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertEqual(without_templates["estimated_total"], without_templates["crop_rows"] + without_templates["companion_rows"])
 
     def test_sowing_window_call_estimate_and_preflight_label(self) -> None:
-        data = {"sowing_windows": {"enabled": True, "crop_allowlist": ["Apple"]}}
+        data = {"sowing_windows": {"enabled": True, "crop_allowlist": ["Kale"]}}
         settings = Settings(self.tmp_path / "config.json", {"db_path": str(self.db_path)})
         estimate = estimate_openai_calls(data, settings, self.db_path, GenerationOptions(generate_templates=False))
         self.assertEqual(estimate["sowing_window_crops"], 1)
@@ -600,10 +615,12 @@ class TrellisSeederTests(unittest.TestCase):
         write_json(failed / "metadata.json", {"status": "failed"})
 
         self.assertEqual(artifact_status(suggestion), "suggestion")
-        self.assertEqual(artifact_status(complete), "complete")
+        self.assertEqual(artifact_status(complete), "unapplied")
         self.assertEqual(artifact_status(incomplete), "incomplete")
         self.assertEqual(artifact_status(failed), "failed")
         self.assertEqual(list_artifacts(runs_dir, complete_runs_only=True), [complete])
+        write_json(complete / "apply_report.json", {"targets": []})
+        self.assertEqual(artifact_status(complete), "applied")
 
     def test_cleanup_candidate_selection_is_limited_to_direct_children(self) -> None:
         runs_dir = self.tmp_path / "runs"
@@ -651,9 +668,9 @@ class TrellisSeederTests(unittest.TestCase):
 
     def test_suggestion_context_extracts_normalized_existing_db_values(self) -> None:
         context = load_suggestion_context(self.db_path)
-        self.assertIn("apple", context["plant_keys"])
+        self.assertIn("kale", context["plant_keys"])
         self.assertIn("vancouver", context["city_keys"])
-        self.assertTrue(context["companion_pair_keys"])
+        self.assertIsInstance(context["companion_pair_keys"], list)  # CHANGE: replacement catalog currently has no packaged companions.
 
     def test_suggestion_validation_rejects_duplicates_and_bad_companion_endpoints(self) -> None:
         context = load_suggestion_context(self.db_path)
@@ -661,7 +678,7 @@ class TrellisSeederTests(unittest.TestCase):
             "section": "crops",
             "requested_count": 2,
             "suggestions": [
-                {"name": "Apple", "rationale": "already exists", "source_hints": ["source"]},
+                {"name": "Kale", "rationale": "already exists", "source_hints": ["source"]},
                 {"name": "Parsnip", "rationale": "new root crop", "source_hints": ["source"]},
             ],
         }
@@ -670,7 +687,7 @@ class TrellisSeederTests(unittest.TestCase):
         companion_result = {
             "section": "companions",
             "requested_count": 1,
-            "suggestions": [{"p1": "Apple", "p2": "Missing Plant", "rationale": "bad endpoint", "source_hints": ["source"]}],
+            "suggestions": [{"p1": "Kale", "p2": "Missing Plant", "rationale": "bad endpoint", "source_hints": ["source"]}],
         }
         self.assertTrue(any("must already exist" in error for error in validate_suggestion_list(companion_result, "companions", 1, context)))
 
@@ -715,11 +732,11 @@ class TrellisSeederTests(unittest.TestCase):
         }
         self.assertTrue(any("needs at least one source" in error for error in validate_input_draft(invalid_crop_draft, "crops", accepted_crop, context)))
 
-        accepted_companion = [{"p1": "Apple", "p2": "Beet", "rationale": "existing endpoints", "source_hints": ["source"]}]
+        accepted_companion = [{"p1": "Kale", "p2": "Lettuce", "rationale": "existing endpoints", "source_hints": ["source"]}]
         companion_draft = {
             "crops": [],
             "cities": [],
-            "companions": [{"p1": "Apple", "p2": "Beet", "sources": ["https://example.test/apple-beet"], "notes": ""}],
+            "companions": [{"p1": "Kale", "p2": "Lettuce", "sources": ["https://example.test/kale-lettuce"], "notes": ""}],
         }
         self.assertEqual(validate_input_draft(companion_draft, "companions", accepted_companion, context), [])
 
@@ -1370,11 +1387,9 @@ class TrellisSeederTests(unittest.TestCase):
         for field_schema in row_schema.values():
             self.assertNotIn("null", field_schema.get("type") if isinstance(field_schema.get("type"), list) else [field_schema.get("type")])
 
-    def test_openai_plant_schema_declares_variety_maturity_class_enum(self) -> None:
-        variety_schema = OPENAI_PLANT_SCHEMA["properties"]["varieties"]["items"]
-        maturity_schema = variety_schema["properties"]["maturity_class"]
-        self.assertIn("maturity_class", variety_schema["required"])
-        self.assertEqual(maturity_schema["enum"], ["early", "mid", "late", "", None])
+    def test_openai_plant_schema_omits_cultivar_varieties(self) -> None:
+        self.assertNotIn("varieties", OPENAI_PLANT_SCHEMA["properties"])
+        self.assertNotIn("varieties", OPENAI_PLANT_SCHEMA["required"])
 
     def test_openai_plant_schema_requires_growth_stages(self) -> None:
         stage_schema = OPENAI_PLANT_SCHEMA["properties"]["growth_stages"]["items"]
@@ -1492,7 +1507,6 @@ class TrellisSeederTests(unittest.TestCase):
         result = {
             "row": complete_plant_row(),
             "allowed_method_categories": ["direct_sow"],
-            "varieties": [{"variety_name": "Buttercrunch", "overrides": [], "sources": []}],
             "growth_stages": [{
                 "stage_key": "mature",
                 "stage_label": "Mature",
@@ -1516,49 +1530,22 @@ class TrellisSeederTests(unittest.TestCase):
         }
         self.assertEqual(_validate_crop_result(result, source_values), [])
 
-    def test_crop_validation_requires_sourced_variety_maturity_class(self) -> None:
-        methods = [{
-            "method_id": "direct_sow.field",
-            "method_category_id": "direct_sow",
-            "method_name": "Direct sow (field)",
-        }]
-        crop = {"name": "Lettuce", "sources": ["https://example.test/lettuce"]}
-        source_values = _crop_source_values(crop, methods)
-
-        def errors_for(variety: dict[str, object]) -> list[str]:
-            result = {
-                "row": complete_plant_row(),
-                "allowed_method_categories": ["direct_sow"],
-                "allowed_method_ids": ["direct_sow.field"],
-                "varieties": [variety],
-                "provenance": {"field_sources": []},
-            }
-            prepared = _prepare_crop_result(result, crop, methods)
-            return _validate_crop_result(prepared, source_values, methods)
-
-        unsourced = errors_for({"variety_name": "Buttercrunch", "maturity_class": "early", "overrides": [], "sources": []})
-        self.assertTrue(any("maturity_class requires at least one explicit source" in error for error in unsourced))
-        unknown_source = errors_for({"variety_name": "Romaine", "maturity_class": "mid", "overrides": [], "sources": ["https://example.test/other"]})
-        self.assertTrue(any("was not supplied" in error for error in unknown_source))
-        invalid_class = errors_for({"variety_name": "Looseleaf", "maturity_class": "extra late", "overrides": [], "sources": ["https://example.test/lettuce"]})
-        self.assertTrue(any("maturity_class must be early, mid, or late" in error for error in invalid_class))
-        self.assertEqual(errors_for({"variety_name": "Oakleaf", "maturity_class": "late", "overrides": [], "sources": ["https://example.test/lettuce"]}), [])
-
-    def test_crop_validation_rejects_placeholder_varieties(self) -> None:
-        result = {
-            "row": complete_plant_row(),
-            "allowed_method_categories": ["direct_sow"],
-            "allowed_method_ids": ["direct_sow.field"],
-            "varieties": [
-                {"variety_name": "Lettuce variety 1", "overrides": [], "sources": []},
-                {"variety_name": "Generic", "overrides": [], "sources": []},
-            ],
-            "provenance": {"field_sources": []},
-        }
-        methods = [{"method_id": "direct_sow.field", "method_category_id": "direct_sow", "method_name": "Direct sow (field)"}]
-        prepared = _prepare_crop_result(result, {"name": "Lettuce"}, methods)
-        errors = _validate_crop_result(prepared, _crop_source_values({"name": "Lettuce"}, methods), methods)
-        self.assertTrue(any("placeholder" in error for error in errors))
+    def test_plant_variety_validation_rejects_placeholders_but_allows_generic_profiles(self) -> None:
+        for name, maturity_class in (("Early maturity", "early"), ("Mid maturity", "mid"), ("Late maturity", "late")):
+            valid = validate_row("PlantVarieties", {
+                "plant_name": "Lettuce",
+                "variety_name": name,
+                "maturity_class": maturity_class,
+                "overrides": {},
+            })
+            self.assertEqual(valid["errors"], [])
+        for name in ("Lettuce variety 1", "Generic", "Standard"):
+            invalid = validate_row("PlantVarieties", {
+                "plant_name": "Lettuce",
+                "variety_name": name,
+                "overrides": {},
+            })
+            self.assertTrue(any("placeholder" in error for error in invalid["errors"]))
 
     def test_crop_generation_repair_handles_incomplete_typed_rows(self) -> None:
         class FakeOpenAI:
@@ -1576,14 +1563,12 @@ class TrellisSeederTests(unittest.TestCase):
                         "row": {"plant_name": "Lettuce", "family": None},
                         "allowed_method_categories": ["direct_sow"],
                         "allowed_method_ids": ["direct_sow.field"],
-                        "varieties": [{"variety_name": "Lettuce variety 1", "overrides": [], "sources": []}],
                         "provenance": {"field_sources": []},
                     }, trace
                 return {
                     "row": complete_plant_row(),
                     "allowed_method_categories": ["direct_sow"],
                     "allowed_method_ids": ["direct_sow.field"],
-                    "varieties": [{"variety_name": "Buttercrunch", "overrides": [], "sources": []}],
                     "provenance": {"field_sources": []},
                 }, trace
 
@@ -1601,7 +1586,7 @@ class TrellisSeederTests(unittest.TestCase):
         )
         self.assertEqual(fake.calls, 2)
         self.assertIn("repair_for", trace.request)
-        self.assertEqual(result["varieties"][0]["variety_name"], "Buttercrunch")
+        self.assertEqual(result["row"]["plant_name"], "Lettuce")
 
     def test_crop_generation_unrepaired_incomplete_row_fails(self) -> None:
         class FakeOpenAI:
@@ -1613,7 +1598,6 @@ class TrellisSeederTests(unittest.TestCase):
                     "row": {"plant_name": "Lettuce", "family": None},
                     "allowed_method_categories": ["direct_sow"],
                     "allowed_method_ids": ["direct_sow.field"],
-                    "varieties": [{"variety_name": "Lettuce variety 1", "overrides": [], "sources": []}],
                     "provenance": {"field_sources": []},
                 }, ProviderTrace("fake", {})
 
@@ -1646,14 +1630,12 @@ class TrellisSeederTests(unittest.TestCase):
                         "row": {"plant_name": "Broken Crop", "family": None},
                         "allowed_method_categories": ["direct_sow"],
                         "allowed_method_ids": ["direct_sow.field"],
-                        "varieties": [{"variety_name": "Generic", "overrides": [], "sources": []}],
                         "provenance": {"field_sources": []},
                     }, trace
                 return {
                     "row": complete_plant_row(plant_name="Good Crop", abbr="GDC"),
                     "allowed_method_categories": ["direct_sow"],
                     "allowed_method_ids": ["direct_sow.field"],
-                    "varieties": [{"variety_name": "Good Crop Select", "overrides": [], "sources": []}],
                     "provenance": {"field_sources": []},
                 }, trace
 
@@ -1675,21 +1657,16 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertEqual([row["plant_name"] for row in generated["Plants"]], ["Good Crop"])
         self.assertEqual(provenance["failures"]["crop"][0]["label"], "Broken Crop")
 
-    def test_crop_generation_emits_only_explicit_sourced_maturity_classes(self) -> None:
+    def test_crop_generation_emits_deterministic_generic_maturity_profiles(self) -> None:
         class FakeOpenAI:
             model = "fake"
             reasoning_effort = "low"
 
             def generate_json(self, **_kwargs):
                 return {
-                    "row": complete_plant_row(),
+                    "row": complete_plant_row(days_maturity=60, gdd_to_maturity=1200),
                     "allowed_method_categories": ["direct_sow"],
                     "allowed_method_ids": ["direct_sow.field"],
-                    "varieties": [
-                        {"variety_name": "Buttercrunch", "maturity_class": "early", "overrides": [], "sources": ["https://example.test/lettuce"]},
-                        {"variety_name": "Romaine", "maturity_class": "", "overrides": [], "sources": ["https://example.test/lettuce"]},
-                        {"variety_name": "Oakleaf", "overrides": [], "sources": []},
-                    ],
                     "provenance": {"field_sources": []},
                 }, ProviderTrace("fake", {})
 
@@ -1699,14 +1676,28 @@ class TrellisSeederTests(unittest.TestCase):
         methods = [{"method_id": "direct_sow.field", "method_category_id": "direct_sow", "method_name": "Direct sow (field)"}]
         generated = {table: [] for table in ("Plants", "PlantAllowedMethodCategories", "PlantVarieties", "PlantTaskTemplates", "VarietyTaskTemplates")}
         provenance = {"traces": [], "tables": {}}
-        input_data = {"crops": [{"name": "Lettuce", "sources": ["https://example.test/lettuce"], "variety_count": 3}]}
+        input_data = {"crops": [{"name": "Lettuce", "sources": ["https://example.test/lettuce"], "variety_count": 99}]}
 
         _generate_crops(settings, input_data, FakeOpenAI(), methods, generated, provenance, run_dir, generate_templates=False)
 
+        self.assertEqual([row["variety_name"] for row in generated["PlantVarieties"]], ["Early maturity", "Mid maturity", "Late maturity"])
         varieties = {row["variety_name"]: row for row in generated["PlantVarieties"]}
-        self.assertEqual(varieties["Buttercrunch"]["maturity_class"], "early")
-        self.assertNotIn("maturity_class", varieties["Romaine"])
-        self.assertNotIn("maturity_class", varieties["Oakleaf"])
+        self.assertEqual(varieties["Early maturity"]["maturity_class"], "early")
+        self.assertEqual(varieties["Early maturity"]["overrides"], {"days_maturity": 51, "gdd_to_maturity": 1020.0})
+        self.assertEqual(varieties["Mid maturity"]["maturity_class"], "mid")
+        self.assertEqual(varieties["Mid maturity"]["overrides"], {})
+        self.assertEqual(varieties["Late maturity"]["maturity_class"], "late")
+        self.assertEqual(varieties["Late maturity"]["overrides"], {"days_maturity": 69, "gdd_to_maturity": 1380.0})
+
+    def test_generic_maturity_profiles_omit_missing_or_nonnumeric_timing_overrides(self) -> None:
+        varieties = {row["variety_name"]: row for row in generic_maturity_varieties_for_plant({
+            "plant_name": "Test Crop",
+            "days_maturity": "",
+            "gdd_to_maturity": "unknown",
+        })}
+        self.assertEqual(varieties["Early maturity"]["overrides"], {})
+        self.assertEqual(varieties["Mid maturity"]["overrides"], {})
+        self.assertEqual(varieties["Late maturity"]["overrides"], {})
 
     def test_crop_generation_emits_growth_stage_rows(self) -> None:
         class FakeOpenAI:
@@ -1718,7 +1709,6 @@ class TrellisSeederTests(unittest.TestCase):
                     "row": complete_plant_row(),
                     "allowed_method_categories": ["direct_sow"],
                     "allowed_method_ids": ["direct_sow.field"],
-                    "varieties": [{"variety_name": "Buttercrunch", "maturity_class": "", "overrides": [], "sources": []}],
                     "growth_stages": [
                         {
                             "stage_key": "baby leaf",
@@ -1936,7 +1926,6 @@ class TrellisSeederTests(unittest.TestCase):
         result = {
             "row": complete_plant_row(direct_sow="yes", transplant="true"),
             "allowed_method_categories": ["direct_sow"],
-            "varieties": [{"variety_name": "Buttercrunch", "overrides": [], "sources": []}],
             "provenance": {"field_sources": []},
         }
         methods = [{"method_id": "direct_sow.field", "method_category_id": "direct_sow", "method_name": "Direct sow (field)"}]
@@ -1955,7 +1944,6 @@ class TrellisSeederTests(unittest.TestCase):
             "row": complete_plant_row(direct_sow=0, transplant=1, default_planting_method_category="transplant", default_planting_method="transplant.indoor"),
             "allowed_method_categories": ["transplant"],
             "allowed_method_ids": ["transplant.indoor", "transplant.purchased"],
-            "varieties": [{"variety_name": "Buttercrunch", "overrides": [], "sources": []}],
             "provenance": {"field_sources": []},
         }
         prepared = _prepare_crop_result(result, {"name": "Lettuce"}, methods)
@@ -1971,7 +1959,6 @@ class TrellisSeederTests(unittest.TestCase):
         base = {
             "row": complete_plant_row(),
             "allowed_method_categories": ["direct_sow"],
-            "varieties": [{"variety_name": "Buttercrunch", "overrides": [], "sources": []}],
             "provenance": {"field_sources": []},
         }
         missing = _prepare_crop_result(dict(base), {"name": "Lettuce"}, methods)
@@ -2402,6 +2389,40 @@ class TrellisSeederTests(unittest.TestCase):
             with closing(sqlite3.connect(db_path)) as conn:
                 found = conn.execute("SELECT city_name FROM Cities WHERE city_name='Multi Target City'").fetchone()
                 self.assertIsNotNone(found)
+
+    def test_replace_crop_catalog_to_databases_removes_existing_plants_and_dependents(self) -> None:
+        run_dir = self.tmp_path / "run-replace-crops"
+        generated = run_dir / "generated"
+        generated.mkdir(parents=True)
+        live_db = self.tmp_path / "appdata" / "draw.io" / "trellis_database" / "Trellis_database.sqlite"
+        plants = [
+            complete_plant_row(plant_name="Replacement Kale", abbr="RKA"),
+            complete_plant_row(plant_name="Replacement Plum", abbr="RPL", perennial=1, annual=0, direct_sow=0),
+        ]
+        write_json(generated / "Plants.json", plants)
+        write_json(generated / "PlantAllowedMethodCategories.json", [
+            {"plant_name": "Replacement Kale", "method_category_id": "direct_sow"},
+            {"plant_name": "Replacement Plum", "method_category_id": "transplant"},
+        ])
+        write_json(run_dir / "validation_report.json", validate_run(run_dir, self.db_path))
+
+        report = replace_crop_catalog_in_databases(run_dir, [self.db_path, live_db], self.db_path)
+
+        self.assertEqual(report["mode"], "replace_crop_catalog")
+        self.assertEqual(len(report["targets"]), 2)
+        for target in report["targets"]:
+            self.assertGreater(target["previous_plant_count"], 0)
+            self.assertEqual(target["final_plant_count"], 2)
+            self.assertEqual(target["final_visible_plant_count"], 2)
+            self.assertGreater(target["deleted_tables"]["Plants"], 0)
+            self.assertTrue(Path(target["backup_path"]).exists())
+        for db_path in (self.db_path, live_db):
+            with closing(sqlite3.connect(db_path)) as conn:
+                names = [row[0] for row in conn.execute("SELECT plant_name FROM Plants ORDER BY plant_name")]
+                self.assertEqual(names, ["Replacement Kale", "Replacement Plum"])
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantAllowedMethodCategories").fetchone()[0], 2)
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM Companions").fetchone()[0], 0)
+                self.assertGreater(conn.execute("SELECT COUNT(*) FROM PlantingMethods").fetchone()[0], 0)
 
     def test_apply_validation_fails_for_missing_child_dependencies(self) -> None:
         run_dir = self.tmp_path / "run-missing-dep"

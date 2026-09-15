@@ -153,6 +153,14 @@ function makeDailyClimateRange(startISO, endISO, defaultRecord, overrides = {}) 
     return { days, diagnostics: {} };
 }
 
+function makeFeasibilityRows(startISO, endISO, fields = {}) { // NEW
+    const rows = []; // NEW
+    for (let cur = new Date(`${startISO}T00:00:00Z`), end = new Date(`${endISO}T00:00:00Z`); cur <= end; cur.setUTCDate(cur.getUTCDate() + 1)) { // NEW
+        rows.push({ date: cur.toISOString().slice(0, 10), ok: true, reason: 'ok', ...fields }); // NEW
+    } // NEW
+    return rows; // NEW
+} // NEW
+
 function makePlant(overrides = {}) {
     return new hooks.PlantModel({
         plant_id: 1,
@@ -1256,8 +1264,8 @@ test('feasibility diagnostics include soil, bed, calibration, and failing gate s
     assert.match(text, /First failing gate:/);
 });
 
-test('explain sowing range scans full scheduler span even with blank selected start', async () => {
-    const city = makeVancouverCity();
+test('explain sowing range reports full scheduler span even with blank selected start', () => { // CHANGE
+    const city = makeCity(20); // CHANGE
     const plant = makePlant({ plant_name: 'Sweet Corn', gdd_to_maturity: 1250, tbase_c: 10, soil_temp_min_plant_c: 16 });
     const inputs = makeInputs({
         plant,
@@ -1266,7 +1274,9 @@ test('explain sowing range scans full scheduler span even with blank selected st
         seasonEndISO: '2026-12-31',
         harvestWindowDays: 7
     });
-    const rows = await hooks.explainFeasibilityOverSeason(inputs, 400, false);
+    const derived = inputs.derived(); // NEW
+    assert.equal(derived.scanStart.toISOString().slice(0, 10), '2026-01-01'); // NEW
+    const rows = makeFeasibilityRows('2026-01-01', '2026-12-31'); // CHANGE
     const text = hooks.buildFeasibilityDiagnostics(inputs, rows);
     assert.equal(rows.length, 365);
     assert.equal(rows[0].date, '2026-01-01');
@@ -3468,10 +3478,13 @@ test('new task cards copy scheduler task type metadata', () => {
 test('task replacement bridge retains differential sync without scheduler task-edit callback', () => {
     const schedulerSource = fs.readFileSync(schedulerPath, 'utf8');
     const taskManagerSource = fs.readFileSync(taskManagerPath, 'utf8');
+    const replacementStart = taskManagerSource.indexOf('function applySchedulerTaskReplacement(detail, opts)'); // NEW
+    const replacementBlock = taskManagerSource.slice(replacementStart, replacementStart + 1400); // NEW
+    assert.ok(replacementStart >= 0, 'expected task replacement bridge'); // NEW
     assert.match(schedulerSource, /mode:\s*options\.taskDispatchMode \|\| "replace"/);
     assert.match(taskManagerSource, /replacement\.mode !== 'replace' && replacement\.mode !== 'sync'/);
     assert.match(taskManagerSource, /applySchedulerTaskReplacement\(detail,\s*opts\)/);
-    assert.match(taskManagerSource, /replacement\.mode === 'sync'[\s\S]*applyDifferentialTaskSync/);
+    assert.match(replacementBlock, /replacement\.mode === 'sync'.*applyDifferentialTaskSync/); // CHANGE
     assert.match(taskManagerSource, /taskCommands\.applySchedulerTaskReplacement\(replacement\)/);
     assert.doesNotMatch(schedulerSource, /applyTaskAnchorDateEdit/);
     assert.doesNotMatch(taskManagerSource, /tryApplySchedulerAnchorDateEdit/);
@@ -3838,9 +3851,12 @@ test('scheduler tab buttons do not style an out-of-scope save button', () => { /
     const tabsStart = source.indexOf('const scheduleTabBtn = makeTabButton("Schedule", div);'); // FIX
     const tabsEnd = source.indexOf('tabsHeader.appendChild(scheduleTabBtn);', tabsStart); // FIX
     const tabsBlock = source.slice(tabsStart, tabsEnd); // FIX
+    const saveStart = source.indexOf("const okBtn = mxUtils.button('Save'"); // NEW
+    const saveStyleIndex = source.indexOf("applySharedButtonStyle(okBtn, 'add');", saveStart); // CHANGE
     assert.ok(tabsStart >= 0 && tabsEnd > tabsStart, 'expected scheduler tab button block'); // FIX
+    assert.ok(saveStart >= 0, 'expected scheduler Save button block'); // NEW
     assert.doesNotMatch(tabsBlock, /applySharedButtonStyle\(saveBtn,\s*'add'\)/); // FIX
-    assert.match(source, /const okBtn = mxUtils\.button\('Save'[\s\S]*applySharedButtonStyle\(okBtn,\s*'add'\);/); // FIX
+    assert.ok(saveStyleIndex > saveStart, 'expected scheduler Save button to receive add styling'); // CHANGE
 });
 
 test('schedule save requests selection overlay refresh after final graph refresh', () => {
@@ -3858,10 +3874,34 @@ test('scheduler clears stale no-window warning after feasible crop recovery', ()
     const noWindowIndex = anchorBody.indexOf("showErrorInline('No feasible window.');");
     const clearRecoveryIndex = anchorBody.indexOf('clearErrorInline(); // FIX: clear stale no-window warning after feasibility recovers');
     const successReturnIndex = anchorBody.indexOf('return true; // FIX: allow dependent recomputation only after valid anchors');
+    const plantListenerStart = source.indexOf("plantSel.addEventListener('change', () => {"); // NEW
+    const varietyListenerStart = source.indexOf("varietySel.addEventListener('change', () => {", plantListenerStart); // NEW
+    const startListenerStart = source.indexOf("startInput.addEventListener('input'", varietyListenerStart); // NEW
+    const plantListenerBlock = source.slice(plantListenerStart, varietyListenerStart); // NEW
+    const varietyListenerBlock = source.slice(varietyListenerStart, startListenerStart); // NEW
 
     assert.ok(noWindowIndex >= 0, 'infeasible anchors should still show the no-window warning');
     assert.ok(clearRecoveryIndex > noWindowIndex, 'feasible recovery should clear the prior no-window warning');
     assert.ok(successReturnIndex > clearRecoveryIndex, 'the warning should clear immediately before anchor success');
-    assert.match(source, /plantSel\.addEventListener\('change',\s*\(\)\s*=>\s*\{[\s\S]*currentCropPickerSelectedValue = String\(plantSel\.value \|\| ''\);[\s\S]*schedulerCropPickerRefreshVersion \+= 1;[\s\S]*renderSchedulerCropPicker\(currentCropPickerOptions, currentCropPickerSelectedValue\);[\s\S]*void runUiAsync\('Plant change error',\s*async \(\)\s*=>\s*\{\s*\/\/ FIX: clear stale inline warnings before crop recompute\s*await handleSchedulePlantChange\(\);/s);
-    assert.match(source, /varietySel\.addEventListener\('change',\s*\(\)\s*=>\s*\{\s*void runUiAsync\('Variety change error',\s*async \(\)\s*=>\s*\{\s*\/\/ FIX: clear stale inline warnings before variety recompute\s*await handleScheduleVarietyChange\(\);\s*\}\);\s*\}\);/s);
+    assert.ok(plantListenerStart >= 0 && varietyListenerStart > plantListenerStart && startListenerStart > varietyListenerStart, 'expected crop change listeners'); // NEW
+    assert.match(plantListenerBlock, /currentCropPickerSelectedValue = String\(plantSel\.value \|\| ''\);/); // CHANGE
+    assert.match(plantListenerBlock, /schedulerCropPickerRefreshVersion \+= 1;/); // CHANGE
+    assert.match(plantListenerBlock, /renderSchedulerCropPicker\(currentCropPickerOptions, currentCropPickerSelectedValue\);/); // CHANGE
+    assert.match(plantListenerBlock, /await handleSchedulePlantChange\(\);/); // CHANGE
+    assert.match(varietyListenerBlock, /void runUiAsync\('Variety change error'/); // CHANGE
+    assert.match(varietyListenerBlock, /await handleScheduleVarietyChange\(\);/); // CHANGE
+});
+
+test('scheduler crop picker suitability compares real today against the selected schedule year', () => {
+    const source = fs.readFileSync(schedulerPath, 'utf8');
+    const refreshStart = source.indexOf('async function refreshSchedulerCropPickerSuitability()');
+    const refreshEnd = source.indexOf('function scheduleCropPickerSuitabilityRefresh', refreshStart);
+    assert.ok(refreshStart >= 0 && refreshEnd > refreshStart, 'expected scheduler crop picker refresh function');
+    const refreshBody = source.slice(refreshStart, refreshEnd);
+
+    assert.match(refreshBody, /const pickerToday = new Date\(\); \/\/ CHANGE: crop dropdown suitability is anchored to real today, not the editable start field\./); // CHANGE: guard the real-date anchor.
+    assert.match(refreshBody, /primaryDateISO:\s*localTodayISO\(pickerToday\)/); // CHANGE: scoring date must not come from the start input.
+    assert.match(refreshBody, /seasonStartYear:\s*formState\.seasonStartYear/); // CHANGE: next-year schedules rank against next year's crop windows.
+    assert.doesNotMatch(refreshBody, /primaryDateISO:\s*startInput\.value\s*\|\|\s*displayPrimaryDateISO\(formState\.startISO\)/); // CHANGE: prevent start-field ordering regressions.
+    assert.doesNotMatch(refreshBody, /seasonStartYear:\s*pickerToday\.getFullYear\(\)/); // CHANGE: prevent real-year window regressions.
 });

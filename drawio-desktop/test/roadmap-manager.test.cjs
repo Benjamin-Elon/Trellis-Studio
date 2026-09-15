@@ -14,11 +14,11 @@ function harness(t, extraPlugins = []) {
     w.HTMLCanvasElement.prototype.getContext = () => ({ fillStyle: '#000000', fillRect() {}, getImageData: () => ({ data: [0, 0, 0, 255] }) }); // CHANGE: Graph resolves CSS colors through canvas; diagram rendering remains SVG.
     w.SVGElement.prototype.getBBox = () => ({ x: 0, y: 0, width: 50, height: 16 });
     w.eval(fs.readFileSync(path.join(webapp, 'mxgraph/mxClient.js'), 'utf8'));
-    w.urlParams = { grid: '0' }; w.DOM_PURIFY_CONFIG = {}; w.Editor = function () {}; w.EditorUi = function () {}; // NEW: shell constructors; graph behavior is production Draw.io.
+    w.urlParams = { grid: '0' }; w.DOM_PURIFY_CONFIG = {}; w.Editor = function () {}; w.EditorUi = function () {}; // CHANGE: shell constructors; graph behavior is production editor.
     w.eval(fs.readFileSync(path.join(webapp, 'js/sanitizer/purify.min.js'), 'utf8')); // NEW
     w.eval(fs.readFileSync(path.join(webapp, 'js/grapheditor/Graph.js'), 'utf8')); // NEW
     const graph = new w.Graph(w.document.getElementById('graph'));
-    graph.isSpecialColor = () => -1; // NEW: Draw.io color-placeholder adapter; geometry/model/view remain production mxGraph.
+    graph.isSpecialColor = () => -1; // CHANGE: editor color-placeholder adapter; geometry/model/view remain production mxGraph.
     const model = graph.getModel(), alerts = [], dialogs = [], undo = new w.mxUndoManager();
     model.addListener(w.mxEvent.UNDO, (_sender, event) => undo.undoableEditHappened(event.getProperty('edit')));
     const actions = new Map();
@@ -511,7 +511,7 @@ test('the real isolated renderer applies personal geometry while embedded XML st
     const h = harness(t); const canonical = h.xml(); // NEW
     h.api.setViewState(h.board, { today: { multiplier: 2, leftHidden: 2 } }); // NEW
     const projection = JSON.parse(JSON.stringify(h.graph.getExportVariables().__trellisRoadmapProjection)); // NEW
-    const container = h.w.document.createElement('div'); h.w.document.body.appendChild(container); const exported = new h.w.Graph(container); exported.isSpecialColor = () => -1; // NEW: Draw.io placeholder adapter. // NEW
+    const container = h.w.document.createElement('div'); h.w.document.body.appendChild(container); const exported = new h.w.Graph(container); exported.isSpecialColor = () => -1; // CHANGE: editor placeholder adapter. // NEW
     const doc = h.w.mxUtils.parseXml(canonical), renderingXml = doc.cloneNode(true); new h.w.mxCodec(renderingXml).decode(renderingXml.documentElement, exported.model); // CHANGE
     h.w.TrellisRoadmapRenderer.applyProjection(exported, projection, ''); exported.refresh(); // NEW
     assert.equal(exported.model.getGeometry(exported.model.getCell(h.board.id)).width, h.graph.getCellGeometry(h.board).width); // NEW

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate Trellis application identity assets from checked-in raster masters.
 
-The script intentionally keeps semantic Draw.io command icons out of scope. It
+The script intentionally keeps semantic host editor command icons out of scope. It
 only generates product marks, package icons, favicons, wordmarks, and the
 existing embed-logo composition. Run without arguments to write assets or with
 ``--check`` to verify that checked-in outputs match the canonical masters.

@@ -1,7 +1,7 @@
 /**
- * Draw.io Plugin: Trellis UI Cleanup
+ * Trellis plugin: UI Cleanup
  *
- * Keeps Trellis' primary drawing surface compact while preserving draw.io's
+ * Keeps Trellis' primary drawing surface compact while preserving the host editor's
  * less common commands behind explicit overflow submenus.
  */
 
@@ -118,12 +118,12 @@ Draw.loadPlugin(function (ui) {
     const actions = ui.actions;
 
     const MENU_LABELS = {
-        file: 'More draw.io file options',
-        edit: 'More draw.io edit options',
-        view: 'More draw.io view options',
-        arrange: 'More draw.io arrange options',
-        extras: 'More draw.io extras',
-        help: 'More draw.io help options'
+        file: 'More editor file options', // CHANGE
+        edit: 'More editor edit options', // CHANGE
+        view: 'More editor view options', // CHANGE
+        arrange: 'More editor arrange options', // CHANGE
+        extras: 'More editor extras', // CHANGE
+        help: 'More editor help options' // CHANGE
     };
 
     const ACTION_LABELS = {

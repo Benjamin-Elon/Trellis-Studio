@@ -1,5 +1,5 @@
 /**
- * Draw.io Plugin: Garden Dashboard (Garden-Module Viewport Toolbar)
+ * Trellis plugin: Garden Dashboard (Garden-Module Viewport Toolbar)
  *
  * Features:
  * - Floating garden-relative toolbar appears when a garden module or descendant is selected
@@ -83,6 +83,10 @@ Draw.loadPlugin(function (ui) {
         return !!(cell && cell.getAttribute && cell.getAttribute("team_module") === "1");
     }
 
+    function isRoadmapModule(cell) {
+        return !!(cell && cell.getAttribute && cell.getAttribute("roadmap_module") === "1"); // NEW: dashboard workspace switcher treats Roadmap as a peer module.
+    }
+
     function isTaskBoard(cell) {
         const key = getCellAttr(cell, "board_key", "");
         return key === TASK_BOARD_KEY || key === LEGACY_TASK_BOARD_KEY; // NEW: mirror task manager board recognition without coupling APIs
@@ -132,6 +136,16 @@ Draw.loadPlugin(function (ui) {
         let cur = cell;
         while (cur) {
             if (isTeamModule(cur)) return cur;
+            cur = m.getParent(cur);
+        }
+        return null;
+    }
+
+    function findRoadmapModuleAncestor(graph, cell) {
+        const m = graph.getModel();
+        let cur = cell;
+        while (cur) {
+            if (isRoadmapModule(cur)) return cur; // NEW: selections inside a roadmap keep the Garden dashboard anchored.
             cur = m.getParent(cur);
         }
         return null;
@@ -959,7 +973,7 @@ Draw.loadPlugin(function (ui) {
     function linkedGardenModulesForCompanion(moduleCell) {
         if (!moduleCell) return [];
         const ids = linkIdSet(moduleCell);
-        const typedGardenId = getCellAttr(moduleCell, "trellis_garden_module_id", "");
+        const typedGardenId = getCellAttr(moduleCell, "trellis_garden_module_id", "") || getCellAttr(moduleCell, "roadmap_garden_module_id", ""); // CHANGE: Roadmap companions store their linked garden under a roadmap-specific key.
         if (typedGardenId) ids.add(typedGardenId);
         const seen = new Set();
         const gardens = [];
@@ -980,6 +994,8 @@ Draw.loadPlugin(function (ui) {
         if (taskModule) return linkedGardenModulesForCompanion(taskModule);
         const teamModule = isTeamModule(cell) ? cell : findTeamModuleAncestor(graph, cell);
         if (teamModule) return linkedGardenModulesForCompanion(teamModule);
+        const roadmapModule = isRoadmapModule(cell) ? cell : findRoadmapModuleAncestor(graph, cell); // NEW
+        if (roadmapModule) return linkedGardenModulesForCompanion(roadmapModule); // NEW
         return [];
     }
 
@@ -1169,6 +1185,7 @@ Draw.loadPlugin(function (ui) {
         if (isGardenModule(cell) || findGardenModuleAncestor(graph, cell)) return "garden"; // NEW
         if (isTaskModule(cell) || findTaskModuleAncestor(graph, cell)) return "tasks"; // NEW
         if (isTeamModule(cell) || findTeamModuleAncestor(graph, cell)) return "team"; // NEW
+        if (isRoadmapModule(cell) || findRoadmapModuleAncestor(graph, cell)) return "roadmap"; // NEW
         return null;
     }
 
@@ -1491,15 +1508,17 @@ Draw.loadPlugin(function (ui) {
         const gardenBtn = createWorkspaceSegment("Garden", "garden");
         const tasksBtn = createWorkspaceSegment("Tasks", "tasks");
         const teamBtn = createWorkspaceSegment("Team", "team");
+        const roadmapBtn = createWorkspaceSegment("Roadmap", "roadmap"); // NEW
         gardenBtn.style.borderTopLeftRadius = "6px";
         gardenBtn.style.borderBottomLeftRadius = "6px";
-        teamBtn.style.borderTopRightRadius = "6px";
-        teamBtn.style.borderBottomRightRadius = "6px";
+        roadmapBtn.style.borderTopRightRadius = "6px"; // CHANGE: Roadmap is now the final switcher segment.
+        roadmapBtn.style.borderBottomRightRadius = "6px"; // CHANGE
         attachTaskWorkspaceBadge(tasksBtn);
         wrap.appendChild(gardenBtn);
         wrap.appendChild(tasksBtn);
         wrap.appendChild(teamBtn);
-        return { wrap, gardenBtn, tasksBtn, teamBtn };
+        wrap.appendChild(roadmapBtn); // NEW
+        return { wrap, gardenBtn, tasksBtn, teamBtn, roadmapBtn }; // CHANGE
     }
 
     function createTaskBoardSelect() {
@@ -1596,6 +1615,19 @@ Draw.loadPlugin(function (ui) {
                 renderViewportToolbar(moduleCell);
             }
             return teamModule || null;
+        }
+        if (workspace === "roadmap") {
+            const api = graph.__trellisRoadmapManager; // NEW
+            if (!api || typeof api.openRoadmapForGarden !== "function") { // NEW
+                if (ui.alert) ui.alert("Roadmap Manager is unavailable. Load the Roadmap plugin to open this Garden’s roadmap."); // NEW
+                return null; // NEW
+            }
+            const roadmap = api.openRoadmapForGarden(moduleCell); // NEW
+            if (roadmap) { // NEW
+                setTimeout(function () { pulseWorkspaceDestination(roadmap); }, 0); // NEW
+                renderViewportToolbar(moduleCell); // NEW
+            }
+            return roadmap || null; // NEW
         }
         if (workspace !== "tasks") return null;
         const taskModule = ensureWorkspaceTaskModule(moduleCell);
@@ -1707,6 +1739,7 @@ Draw.loadPlugin(function (ui) {
         applyWorkspaceSegmentState(entry.workspaceGardenBtn, activeWorkspace === "garden", false);
         applyWorkspaceSegmentState(entry.workspaceTasksBtn, activeWorkspace === "tasks", false);
         applyWorkspaceSegmentState(entry.workspaceTeamBtn, activeWorkspace === "team", false);
+        applyWorkspaceSegmentState(entry.workspaceRoadmapBtn, activeWorkspace === "roadmap", false); // NEW
         const badge = entry.workspaceTasksBtn && entry.workspaceTasksBtn.__trellisTaskBadge;
         const badgeTotal = taskSummary && !taskSummary.hidden ? (Number(taskSummary.total) || 0) : 0;
         if (badge) { badge.style.display = badgeTotal > 0 ? "" : "none"; badge.textContent = String(badgeTotal); } // CHANGE
@@ -1973,8 +2006,8 @@ Draw.loadPlugin(function (ui) {
         const workspaceGardenBtn = workspaceSwitcher.gardenBtn; // NEW
         const workspaceTasksBtn = workspaceSwitcher.tasksBtn; // NEW
         const workspaceTeamBtn = workspaceSwitcher.teamBtn; // NEW
+        const workspaceRoadmapBtn = workspaceSwitcher.roadmapBtn; // NEW
         const planBtn = createToolbarButton("Plan", "Open the year planner", "open");
-        const roadmapBtn = createToolbarButton("Main Roadmap", "Open or create the linked Main Roadmap", "open"); // NEW
         const equipmentBtn = createToolbarButton("Equipment", "Open garden equipment", "open");
         const irrigationBtn = createToolbarButton("Irrigation", "Open irrigation planner", "open");
         const allocateBtn = createToolbarButton("Allocate", "Allocate the current plan", "add");
@@ -2002,7 +2035,6 @@ Draw.loadPlugin(function (ui) {
         leftControls.appendChild(yearLabel);
         leftControls.appendChild(next);
         leftControls.appendChild(planBtn);
-        leftControls.appendChild(roadmapBtn); // NEW
         leftControls.appendChild(allocateBtn);
         leftControls.appendChild(irrigationBtn);
         leftControls.appendChild(equipmentBtn);
@@ -2017,8 +2049,8 @@ Draw.loadPlugin(function (ui) {
         wrap.appendChild(panel);
         host.appendChild(wrap);
 
-        viewportToolbar = { wrap, panel, controls, leftControls, rightActions, gardenName, gardenPickerWrap, gardenPickerBtn, createGardenBtn, gardenPickerPopover: null, workspaceWrap, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, prev, next, yearLabel, planBtn, roadmapBtn, equipmentBtn, irrigationBtn, allocateBtn, taskBoardSelect, messagesBtn, exportBtn, shareBtn, tableBtn, table }; // CHANGE
-        [prev, next, planBtn, equipmentBtn, irrigationBtn, allocateBtn, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, messagesBtn, exportBtn, shareBtn, tableBtn, gardenPickerBtn, createGardenBtn].forEach(function (button) {
+        viewportToolbar = { wrap, panel, controls, leftControls, rightActions, gardenName, gardenPickerWrap, gardenPickerBtn, createGardenBtn, gardenPickerPopover: null, workspaceWrap, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, workspaceRoadmapBtn, prev, next, yearLabel, planBtn, equipmentBtn, irrigationBtn, allocateBtn, taskBoardSelect, messagesBtn, exportBtn, shareBtn, tableBtn, table }; // CHANGE: Roadmap lives inside the workspace switcher.
+        [prev, next, planBtn, equipmentBtn, irrigationBtn, allocateBtn, workspaceGardenBtn, workspaceTasksBtn, workspaceTeamBtn, workspaceRoadmapBtn, messagesBtn, exportBtn, shareBtn, tableBtn, gardenPickerBtn, createGardenBtn].forEach(function (button) { // CHANGE
             button.__trellisDashboardDefaultTitle = button.title || "";
         });
 
@@ -2041,12 +2073,6 @@ Draw.loadPlugin(function (ui) {
             setToolbarYear(activeToolbarModule, year);
             try { window.dispatchEvent(new CustomEvent(PLAN_YEAR_EVENT, { detail: { moduleCellId: cellId(activeToolbarModule), year } })); } catch (_) { }
         });
-        roadmapBtn.addEventListener("click", function () { // NEW
-            if (!activeToolbarModule) return; // NEW
-            const api = graph.__trellisRoadmapManager; // NEW
-            if (api && api.openRoadmapForGarden) api.openRoadmapForGarden(activeToolbarModule); // NEW
-            else if (ui.alert) ui.alert("Roadmap Manager is unavailable. Load the Roadmap plugin to open this Garden’s roadmap."); // NEW
-        }); // NEW
         equipmentBtn.addEventListener("click", function () {
             if (!activeToolbarModule) return;
             const equipmentApi = graph && graph.__trellisEquipment;
@@ -2062,6 +2088,7 @@ Draw.loadPlugin(function (ui) {
         workspaceGardenBtn.addEventListener("click", function () { openGardenWorkspace(activeToolbarModule, "garden"); }); // NEW
         workspaceTasksBtn.addEventListener("click", function () { openToolbarTaskBoard(activeToolbarModule, taskBoardSelect.value); }); // CHANGE
         workspaceTeamBtn.addEventListener("click", function () { openGardenWorkspace(activeToolbarModule, "team"); }); // NEW
+        workspaceRoadmapBtn.addEventListener("click", function () { openGardenWorkspace(activeToolbarModule, "roadmap"); }); // NEW
         taskBoardSelect.addEventListener("change", function () { if (activeToolbarModule && taskBoardSelect.value) { saveRememberedTaskBoardId(activeToolbarModule, taskBoardSelect.value); openToolbarTaskBoard(activeToolbarModule, taskBoardSelect.value); } }); // CHANGE
         gardenPickerBtn.addEventListener("click", function (ev) {
             ev.preventDefault();
@@ -2121,7 +2148,6 @@ Draw.loadPlugin(function (ui) {
         const entry = ensureViewportToolbar();
         if (!entry) return;
         activeToolbarModule = null;
-        entry.roadmapBtn.disabled = true; // NEW
         if (taskManagerApi() && typeof taskManagerApi().setActiveDashboardContext === "function") taskManagerApi().setActiveDashboardContext(null, null);
         entry.gardenName.textContent = "No active garden";
         entry.gardenName.title = "No active garden";
@@ -2157,14 +2183,13 @@ Draw.loadPlugin(function (ui) {
         if (!entry || !moduleCell) return;
         closeGardenPicker(entry);
         entry.gardenName.textContent = gardenLabel(moduleCell);
-        entry.roadmapBtn.disabled = false; // NEW
         entry.gardenName.title = gardenLabel(moduleCell);
         entry.gardenPickerWrap.style.display = "none";
         entry.createGardenBtn.style.display = "none";
         const year = getToolbarYear(moduleCell);
         const activeWorkspace = getActiveWorkspaceForSelection() || "garden"; // NEW
-        const gardenToolsDisabled = activeWorkspace === "tasks" || activeWorkspace === "team"; // NEW
-        const yearControlsDisabled = activeWorkspace === "team"; // NEW: linked Task workspace can still drive the garden year
+        const gardenToolsDisabled = activeWorkspace === "tasks" || activeWorkspace === "team" || activeWorkspace === "roadmap"; // CHANGE
+        const yearControlsDisabled = activeWorkspace === "team" || activeWorkspace === "roadmap"; // CHANGE: linked Task workspace can still drive the garden year
         setGardenActionControlsDisabled(entry, gardenToolsDisabled, gardenToolsDisabled ? WORKSPACE_DISABLED_TITLE : "");
         setYearActionControlsDisabled(entry, yearControlsDisabled, yearControlsDisabled ? WORKSPACE_DISABLED_TITLE : "");
         const expanded = toolbarExpandedByModuleId.get(cellId(moduleCell)) === true;

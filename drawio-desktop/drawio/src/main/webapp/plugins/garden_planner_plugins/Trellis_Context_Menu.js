@@ -2,7 +2,7 @@
  * Trellis Plugin: Deterministic Context Menu Dispatcher
  *
  * - Provides window.TrellisContextMenu for Trellis-owned context menu contributors.
- * - Calls draw.io's original popup factory once, then runs Trellis contributors in priority order.
+ * - Calls the host editor's original popup factory once, then runs Trellis contributors in priority order.
  * - Keeps contributor ordering independent of plugin script load timing.
  */
 (function () {

@@ -16,13 +16,13 @@ function readBundledFile(fileName) {
 test('bootstrap detects Trellis Electron through the preload bridge', () => {
 	const source = readBundledFile('drawio/src/main/webapp/js/bootstrap.js');
 
-	// Trellis keeps its own branding, so Electron detection must not require the old draw.io user-agent suffix.
+	// Trellis keeps its own branding, so Electron detection must not require the old editor user-agent suffix. // CHANGE
 	assert.match(source, /function isElectronRuntime\(\)/, 'bootstrap should centralize Electron runtime detection');
 	assert.match(source, /versions\.electron != null/, 'bootstrap should detect Electron from exposed process versions');
 	assert.match(source, /window\.electron != null/, 'bootstrap should detect Electron from the preload bridge');
-	assert.match(source, /userAgent\.indexOf\(' draw\.io\/'\) > -1/, 'bootstrap should preserve the legacy draw.io user-agent fallback');
+	assert.match(source, /userAgent\.indexOf\(' draw\.io\/'\) > -1/, 'bootstrap should preserve the legacy editor user-agent fallback'); // CHANGE
 	assert.match(source, /var mxIsElectron = isElectronRuntime\(\);/, 'mxIsElectron should use the centralized detector');
-	assert.doesNotMatch(source, /var mxIsElectron = navigator\.userAgent/, 'mxIsElectron should not directly require draw.io-branded user agents');
+	assert.doesNotMatch(source, /var mxIsElectron = navigator\.userAgent/, 'mxIsElectron should not directly require legacy-branded user agents'); // CHANGE
 });
 
 test('bootstrap uses shared Electron desktop hook paths', () => {

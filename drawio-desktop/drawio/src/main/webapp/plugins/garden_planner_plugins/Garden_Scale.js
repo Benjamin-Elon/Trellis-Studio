@@ -1,10 +1,10 @@
 /**
- * Draw.io Plugin: Selection Scale Overlay (Garden Modules + Garden Beds + Tiler Groups)
+ * Trellis plugin: Selection Scale Overlay (Garden Modules + Garden Beds + Tiler Groups)
  *
  * Shows one compact unit-aware dimension chip for selected garden modules
  * (garden_module=1), garden beds (garden_bed=1), and tiler groups (tiler_group=1). The chip uses the nearest
  * garden module's unit_system setting, and the same formatter is reused for
- * draw.io's built-in resize hint while garden modules, garden beds, and groups are resized.
+ * the host editor's built-in resize hint while garden modules, garden beds, and groups are resized.
  *
  * If a plant circle (plant_tiler=1) is selected, the overlay is shown for its
  * tiler group ancestor.
@@ -28,7 +28,7 @@ Draw.loadPlugin(function (ui) {
     const OVERLAY_FONT = "12px";
     const GRAPH_OVERLAY_Z = Object.freeze({ ANNOTATION: 10000, CONNECTION: 10010, CONTROL: 10020, CONTROL_TOP: 10030 });
     const OVERLAY_Z = GRAPH_OVERLAY_Z.ANNOTATION;
-    const CHIP_Y_OFFSET = 8; // px below rotated bounds, matching draw.io hint intent.
+    const CHIP_Y_OFFSET = 8; // CHANGE: px below rotated bounds, matching editor hint intent.
 
     const GROUP_LABEL_FONT_PX = 12;
     const GROUP_LABEL_LINE_HEIGHT = 1.25;

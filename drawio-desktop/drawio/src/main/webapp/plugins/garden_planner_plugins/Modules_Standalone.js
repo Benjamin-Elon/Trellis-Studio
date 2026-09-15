@@ -85,6 +85,30 @@ Draw.loadPlugin(function (ui) {
         return !!cell && getStyle(cell).includes("module=1");
     }
 
+    function isCenterStableFoldModule(cell) {
+        return isModule(cell) && !/(?:^|;)collapsible=0(?=;|$)/.test(getStyle(cell)); // NEW
+    } // NEW
+
+    function centerAlternateBoundsOnGeometry(geo) {
+        if (!geo || !geo.alternateBounds) return false; // NEW
+        const centerX = Number(geo.x || 0) + Number(geo.width || 0) / 2; // NEW
+        const centerY = Number(geo.y || 0) + Number(geo.height || 0) / 2; // NEW
+        geo.alternateBounds.x = centerX - Number(geo.alternateBounds.width || 0) / 2; // NEW
+        geo.alternateBounds.y = centerY - Number(geo.alternateBounds.height || 0) / 2; // NEW
+        return true; // NEW
+    } // NEW
+
+    function installCenterStableModuleFolding() {
+        if (graph.__trellisCenterStableModuleFoldingInstalled || typeof graph.updateAlternateBounds !== "function") return; // NEW
+        graph.__trellisCenterStableModuleFoldingInstalled = true; // NEW
+        const originalUpdateAlternateBounds = graph.updateAlternateBounds; // NEW
+        graph.updateAlternateBounds = function (cell, geo, willCollapse) { // NEW
+            const result = originalUpdateAlternateBounds.apply(this, arguments); // NEW
+            if (isCenterStableFoldModule(cell)) centerAlternateBoundsOnGeometry(geo); // NEW
+            return result; // NEW
+        }; // NEW
+    } // NEW
+
     // Get child union bounds relative to module (direct children only)
     function getChildUnionRelative(moduleCell) {
         const kids = model.getChildren(moduleCell) || [];
@@ -870,12 +894,14 @@ Draw.loadPlugin(function (ui) {
         return !!(city && units);                                                             
     }                                                                                         
 
-    function emitGardenSettingsNeededIfMissing(graph, moduleCell) {                           
+    function emitGardenSettingsNeededIfMissing(graph, moduleCell, opts) { // CHANGE
         if (!graph || !moduleCell) return;                                                    
         if (hasGardenSettingsSet(moduleCell)) return;                                         
+        const o = opts || {}; // NEW
         graph.fireEvent(new mxEventObject(                                                    
             "usl:gardenModuleNeedsSettings",                                                  
-            "cell", moduleCell                                                                
+            "cell", moduleCell,
+            "focusAfterSettingsClose", !!o.focusAfterSettingsClose // NEW
         ));                                                                                   
     }                                                                                         
 
@@ -939,7 +965,7 @@ Draw.loadPlugin(function (ui) {
         }
 
         if (becameGarden) {
-            setTimeout(() => emitGardenSettingsNeededIfMissing(graph, cell), 0);
+            setTimeout(() => emitGardenSettingsNeededIfMissing(graph, cell, { focusAfterSettingsClose: true }), 0); // CHANGE
         }                                                                              
     }                                                                                        
 
@@ -1746,6 +1772,26 @@ Draw.loadPlugin(function (ui) {
         return role;
     }
 
+    function bootstrapNewTeamModule(teamCell) { // NEW
+        if (!teamCell || !isTeamModule(teamCell)) return null; // NEW
+        let starterTeam = null; // NEW
+        let starterRole = null; // NEW
+        model.beginUpdate(); // NEW
+        try { // NEW
+            starterTeam = createTeamSection(teamCell, "New Team", { manageUpdate: false }); // NEW
+            if (starterTeam) { // NEW
+                const point = roleCardDefaultPointInSection(starterTeam); // NEW
+                starterRole = createRoleCard(graph, starterTeam, point.x, point.y, { manageUpdate: false }); // NEW
+                autosizeTeamSections([starterTeam]); // NEW
+            } // NEW
+            ensureUnassignedTeamSection(teamCell); // NEW
+            applyModuleMargins(teamCell, { allowShrink: false, manageUpdate: false }); // NEW
+        } finally { // NEW
+            model.endUpdate(); // NEW
+        } // NEW
+        return { team: starterTeam, role: starterRole }; // NEW
+    } // NEW
+
 
     function selectRoleImage(ui, graph, roleCard) {
         if (window && window.electron && window.electron.request) {
@@ -1766,7 +1812,7 @@ Draw.loadPlugin(function (ui) {
             const insertedStyle = style || getStyle(cell);
 
             if (insertedStyle && insertedStyle.includes("shape=image")) {
-                // Delay to let Draw.io finish committing the inserted image
+                // Delay to let the editor finish committing the inserted image
                 setTimeout(() => {
                     model.beginUpdate();
                     try {
@@ -1822,7 +1868,7 @@ Draw.loadPlugin(function (ui) {
     if (!graph.__uslHandlersInstalled) {
         graph.__uslHandlersInstalled = true;
 
-        // NOTE: We keep edges/vertices default behavior (Draw.io handles containment).         
+        // NOTE: We keep edges/vertices default behavior (the editor handles containment).
 
         graph.addListener(mxEvent.ADD_CELLS, function (sender, evt) {
             const cells = evt.getProperty("cells") || [];
@@ -2704,7 +2750,8 @@ Draw.loadPlugin(function (ui) {
             applyModuleMargins(mod);
             if (moduleType !== "regular") setModuleType(mod, moduleType);
             if (window.Trellis && window.Trellis.users && typeof window.Trellis.users.stampCreatedOwner === "function") window.Trellis.users.stampCreatedOwner(mod); // NEW: modules created by logged-in users become ownership boundaries
-            if (moduleType === "garden") { ensureGardenTeamModule(mod, { insideUpdate: true }); ensureGardenTaskModule(mod, { insideUpdate: true, createMainBoard: true }); ensureGardenRoadmapModule(mod); } // CHANGE
+            if (moduleType === "team") bootstrapNewTeamModule(mod); // NEW
+            if (moduleType === "garden") { const team = ensureGardenTeamModule(mod, { insideUpdate: true }); bootstrapNewTeamModule(team); ensureGardenTaskModule(mod, { insideUpdate: true, createMainBoard: true }); ensureGardenRoadmapModule(mod); } // CHANGE
             if (moduleType === "roadmap" && !graph.__trellisRoadmapManager.ensureMainRoadmapInRoadmapModule(mod)) { model.remove(mod); return null; } // NEW
             enforceModuleExternalMarginsFor([mod], { manageUpdate: false }); // NEW
             if (mod && graph.setSelectionCell) graph.setSelectionCell(mod);
@@ -2713,6 +2760,28 @@ Draw.loadPlugin(function (ui) {
         }
         return mod;
     }
+
+    function defaultParentChildren() { // NEW
+        const parent = graph.getDefaultParent ? graph.getDefaultParent() : (model.getRoot && model.getRoot()); // NEW
+        const children = parent && model.getChildren ? model.getChildren(parent) : (parent && parent.children); // NEW
+        return Array.isArray(children) ? children.filter(Boolean) : []; // NEW
+    } // NEW
+
+    function canAutoSeedNewBlankDiagram() { // NEW
+        return defaultParentChildren().length === 0; // NEW
+    } // NEW
+
+    function autoSeedNewBlankDiagram(evt) { // NEW
+        const shouldSeed = !!(evt && evt.getProperty && evt.getProperty("trellisNewBlankDiagram")); // NEW
+        if (!shouldSeed || !canAutoSeedNewBlankDiagram()) return; // NEW
+        createModuleAtPoint({ x: 30, y: 40 }, "garden"); // NEW
+    } // NEW
+
+    function installNewBlankDiagramSeeder() { // NEW
+        if (!ui || !ui.editor || ui.__trellisNewBlankGardenSeederInstalled || typeof ui.editor.addListener !== "function") return; // NEW
+        ui.__trellisNewBlankGardenSeederInstalled = true; // NEW
+        ui.editor.addListener("fileLoaded", function (_sender, evt) { setTimeout(function () { autoSeedNewBlankDiagram(evt); }, 0); }); // NEW
+    } // NEW
 
     function alertModuleDelete(message) { // NEW
         if (ui.alert) ui.alert(message); // NEW
@@ -3740,7 +3809,9 @@ Draw.loadPlugin(function (ui) {
     installSelectedTeamModuleRoleOverlay();
     installSelectedRoleImageOverlay();
     installRoleCardFieldClickEditing(); // NEW
+    installCenterStableModuleFolding(); // NEW
     installModuleDeleteLifecycle(); // NEW
+    installNewBlankDiagramSeeder(); // NEW
 
     graph.addListener("usl:requestApplyModuleMargins", function (_sender, evt) {
         const cell = evt && evt.getProperty ? evt.getProperty("cell") : null;

@@ -316,7 +316,7 @@ test("pasteHere uses the explicit menu point as a fresh anchor", () => {
     assert.equal(model.getParent(pasted), moduleB);
 });
 
-test("local clipboard diagram paste is cursor-parented after draw.io movement", () => {
+test("local clipboard diagram paste is cursor-parented after editor movement", () => { // CHANGE
     const { graph, model, layer, moduleA, childA, ui, setPendingLocalClipboardCells, api } = makeHarness();
     const pasted = appendChild(layer, makeCell("local", 220, 110));
     setPendingLocalClipboardCells([pasted]);

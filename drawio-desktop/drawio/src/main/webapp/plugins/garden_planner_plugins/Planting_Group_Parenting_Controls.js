@@ -1,5 +1,5 @@
 /**
- * Draw.io Plugin: Tiler Group Non-Parenting
+ * Trellis plugin: Tiler Group Non-Parenting
  * - Nothing user-dropped may become a child of a tiler group.
  * - Generated plant tiles and LOD summaries remain valid tiler group internals.
  */

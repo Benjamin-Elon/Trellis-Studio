@@ -1,4 +1,4 @@
-// USL Draw.io Plugin: Garden Scheduler dialog and runtime facade.
+// USL Trellis plugin: Garden Scheduler dialog and runtime facade.
 //
 // - Schedule entry is rendered by Vertex_Linking_Standalone.js
 // - Fetches plant/city from SQLite via window.dbBridge
@@ -5746,7 +5746,7 @@ Draw.loadPlugin(function (ui) {
         fallbackCopyExplainText(text);
     }
 
-    function fallbackCopyExplainText(text) { // ADDED: support draw.io desktop webviews without navigator.clipboard.
+    function fallbackCopyExplainText(text) { // CHANGE: support desktop webviews without navigator.clipboard.
         const textarea = document.createElement('textarea');
         textarea.value = text;
         textarea.setAttribute('readonly', 'readonly');
@@ -9692,12 +9692,13 @@ Draw.loadPlugin(function (ui) {
         async function refreshSchedulerCropPickerSuitability() {
             const refreshVersion = ++schedulerCropPickerRefreshVersion;
             try {
+                const pickerToday = new Date(); // CHANGE: crop dropdown suitability is anchored to real today, not the editable start field.
                 const city = await CityClimate.resolve({ cityId: formState.cityId, cityName: formState.cityName });
                 const context = city ? {
                     city,
                     cityName: formState.cityName,
-                    primaryDateISO: startInput.value || displayPrimaryDateISO(formState.startISO),
-                    seasonStartYear: formState.seasonStartYear,
+                    primaryDateISO: localTodayISO(pickerToday), // CHANGE: ordering answers "what makes sense now" even while editing a future/past schedule.
+                    seasonStartYear: formState.seasonStartYear, // CHANGE: compare real today against the selected schedule year's crop windows.
                     climateModelModuleCell,
                     bedProfile: formState.bedProfile,
                     bedProfileSource: formState.bedProfileSource,
@@ -15635,7 +15636,7 @@ Draw.loadPlugin(function (ui) {
     window.openUSLScheduleDialog = window.USL.scheduler.openScheduleDialog;
 
     async function openSetPlantDialog(ui, cell) {
-        if (!ui || !ui.editor || !ui.editor.graph) throw new Error('Draw.io UI is unavailable.');
+        if (!ui || !ui.editor || !ui.editor.graph) throw new Error('Trellis editor UI is unavailable.'); // CHANGE
         if (!isTilerGroup(cell)) throw new Error('Set Plant requires a tiler group.');
 
         const graph = ui.editor.graph;
@@ -16318,7 +16319,7 @@ Draw.loadPlugin(function (ui) {
             annualCore,
             perennialCore
         };
-        return; // FIX: tests do not install Draw.io menus
+        return; // CHANGE: tests do not install editor menus
     }
 
     installSchedulerPluginAfterCoreLoad(ui);

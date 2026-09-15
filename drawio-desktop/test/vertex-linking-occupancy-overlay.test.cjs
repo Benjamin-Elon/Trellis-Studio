@@ -294,7 +294,7 @@ test("plant-tiler sibling task highlights use blue without changing direct non-t
     assert.match(source, /for \(const otherCard of sameBoardLinkedCards\)[\s\S]*highlight\(otherCard, otherIsPrimary \? YELLOW : SAME_CROP_HIGHLIGHT, 1\.5\);/);
 });
 
-test("standard link overlays use the native draw.io overlay pane", () => {
+test("standard link overlays use the native editor overlay pane", () => { // CHANGE
     const source = readSource();
     const linkOverlaySource = sourceBetween(source, "const linkOverlays = (function () {", "function formatLinkOverlayBadgeLabel");
 

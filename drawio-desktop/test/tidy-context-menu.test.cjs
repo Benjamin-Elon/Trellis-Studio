@@ -144,7 +144,7 @@ test("tidy menu applies standard action submenus to regular cells", () => {
 
     contributor.addItems(menu, new TestCell(), null);
 
-    assert.equal(menu.getTopLevelLabels().includes("Standard draw.io actions"), false);
+    assert.equal(menu.getTopLevelLabels().includes("Standard editor actions"), false); // CHANGE
     assert.deepEqual(menu.getTopLevelLabels().filter(label => [
         "Copy / Paste",
         "Move / Arrange",
@@ -175,8 +175,8 @@ test("tidy menu keeps Trellis cells under the standard actions parent", () => {
 
     contributor.addItems(menu, new TestCell({ garden_bed: "1" }), null);
 
-    assert.ok(menu.getTopLevelLabels().includes("Standard draw.io actions"));
-    assert.deepEqual(menu.getSubmenuLabels("Standard draw.io actions"), [
+    assert.ok(menu.getTopLevelLabels().includes("Standard editor actions")); // CHANGE
+    assert.deepEqual(menu.getSubmenuLabels("Standard editor actions"), [ // CHANGE
         "Copy / Paste",
         "Move / Arrange",
         "Edit Shape",
@@ -192,7 +192,7 @@ test("tidy menu leaves blank canvas menus unchanged when no selection exists", (
 
     contributor.addItems(menu, null, null);
 
-    assert.equal(menu.getTopLevelLabels().includes("Standard draw.io actions"), false);
+    assert.equal(menu.getTopLevelLabels().includes("Standard editor actions"), false); // CHANGE
     assert.equal(menu.getTopLevelLabels().includes("Cut"), true);
 });
 

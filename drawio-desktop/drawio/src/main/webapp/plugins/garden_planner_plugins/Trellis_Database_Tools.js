@@ -34,6 +34,7 @@
             ".trellis-db-tools-status{padding:10px 12px;background:#f5f7fa;border:1px solid #d7dde5;border-radius:4px;line-height:1.4}",
             ".trellis-db-tools-danger{background:#fff7ed;border-color:#f59e0b}",
             ".trellis-db-tools-error{background:#fef2f2;border-color:#ef4444}",
+            ".trellis-db-tools-warning{margin-top:6px;color:#b91c1c;font-weight:700}", // CHANGE
             ".trellis-db-tools-paths{font-size:12px;line-height:1.45;word-break:break-all}",
             ".trellis-db-tools-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:auto}",
             ".trellis-db-tools-btn{border:1px solid #6b7280;background:#fff;color:#111827;padding:7px 10px;border-radius:4px;cursor:pointer}",
@@ -68,6 +69,48 @@
         container.appendChild(line);
     }
 
+    function formatDbSummary(info) {
+        if (!info || !info.exists) return "missing";
+        const visible = Number(info.visiblePlantCount || 0);
+        const total = Number(info.plantCount || 0);
+        const modified = info.modifiedAt ? new Date(info.modifiedAt).toLocaleString() : "unknown modified time";
+        return `${visible} visible crops / ${total} plants, modified ${modified}`; // CHANGE: expose the catalog size before restore.
+    }
+
+    function renderDatabaseInfo(container, info) {
+        clearNode(container);
+        const live = info && info.live;
+        const builtin = info && info.builtin;
+        appendPath(container, "Live AppData", formatDbSummary(live));
+        appendPath(container, "Built-in source", formatDbSummary(builtin));
+        appendPath(container, "Live path", live && live.path);
+        appendPath(container, "Built-in path", builtin && builtin.path);
+        const liveVisible = Number(live && live.visiblePlantCount || 0);
+        const builtinVisible = Number(builtin && builtin.visiblePlantCount || 0);
+        const liveTime = live && live.modifiedAt ? Date.parse(live.modifiedAt) : 0;
+        const builtinTime = builtin && builtin.modifiedAt ? Date.parse(builtin.modifiedAt) : 0;
+        if (liveVisible > 0 && builtinVisible < liveVisible) {
+            container.appendChild(createEl("div", "trellis-db-tools-warning", "Warning: the built-in source has fewer visible crops than the live database.")); // CHANGE
+        } else if (liveTime > 0 && builtinTime > 0 && builtinTime < liveTime) {
+            container.appendChild(createEl("div", "trellis-db-tools-warning", "Warning: the built-in source is older than the live database.")); // CHANGE
+        }
+        if ((live && live.error) || (builtin && builtin.error)) {
+            container.appendChild(createEl("div", "trellis-db-tools-warning", "Some database metadata could not be read.")); // CHANGE
+        }
+    }
+
+    function loadDatabaseInfo(container) {
+        if (!window.trellisApp || typeof window.trellisApp.getDatabaseInfo !== "function") {
+            container.textContent = "Database metadata is not available in this build.";
+            return;
+        }
+        window.trellisApp.getDatabaseInfo().then(function (info) {
+            renderDatabaseInfo(container, info || {});
+        }).catch(function (error) {
+            container.textContent = error && error.message ? error.message : String(error || "Database metadata could not be read.");
+        });
+    }
+
     function renderResult(root, result) {
         clearNode(root);
         addStyles(root);
@@ -93,6 +136,9 @@
         root.appendChild(createEl("div", "trellis-db-tools-title", ACTION_LABEL));
         root.appendChild(createEl("div", "trellis-db-tools-status trellis-db-tools-danger", "This will replace the local AppData Trellis database with the built-in database. A timestamped backup of the current AppData database will be created first."));
         root.appendChild(createEl("div", "trellis-db-tools-status", "This does not reload the current diagram. Reopen any active Trellis dialogs after the restore completes."));
+        const databaseInfo = createEl("div", "trellis-db-tools-status trellis-db-tools-paths", "Loading database details...");
+        root.appendChild(databaseInfo);
+        loadDatabaseInfo(databaseInfo); // CHANGE: show live/source counts before destructive restore.
 
         const actions = createEl("div", "trellis-db-tools-actions");
         const cancel = createButton("Cancel", function () { closeDialog(ui); }, "neutral");
@@ -105,6 +151,7 @@
                 return;
             }
             window.trellisApp.restoreBuiltInDatabase().then(function (result) {
+                try { window.dispatchEvent(new window.CustomEvent("trellis:database-restored", { detail: result || {} })); } catch (_) { } // CHANGE: invalidate open crop caches after restore.
                 renderResult(root, result || {});
             }).catch(function (error) {
                 renderError(root, error);

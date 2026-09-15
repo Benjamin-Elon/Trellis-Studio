@@ -321,14 +321,14 @@ test("shared Trellis button helper applies semantic variants and preserves butto
     assert.equal(made.getAttribute("data-trellis-button-variant"), "add");
 });
 
-test("File keeps normal entries and moves only named draw.io entries to overflow", () => {
+test("File keeps normal entries and moves only named editor entries to overflow", () => { // CHANGE
     const { document, menuEntries } = createHarness();
     const menu = new TestMenu(document);
 
     menuEntries.file.funct(menu, null);
 
-    assert.deepEqual(menu.getVisibleLabels(), ["New", "Save", "More draw.io file options"]);
-    assert.deepEqual(menu.getSubmenuLabels("More draw.io file options"), [
+    assert.deepEqual(menu.getVisibleLabels(), ["New", "Save", "More editor file options"]); // CHANGE
+    assert.deepEqual(menu.getSubmenuLabels("More editor file options"), [ // CHANGE
         "Synchronize",
         "New Library",
         "Open Library",
@@ -346,12 +346,12 @@ test("Edit and Arrange expose a single escape-hatch submenu", () => {
     menuEntries.edit.funct(editMenu, null);
     menuEntries.arrange.funct(arrangeMenu, null);
 
-    assert.deepEqual(editMenu.getVisibleLabels(), ["More draw.io edit options"]);
-    assert.ok(editMenu.getSubmenuLabels("More draw.io edit options").includes("Edit Style"));
-    assert.ok(editMenu.getSubmenuLabels("More draw.io edit options").includes("Select All"));
-    assert.deepEqual(arrangeMenu.getVisibleLabels(), ["More draw.io arrange options"]);
-    assert.ok(arrangeMenu.getSubmenuLabels("More draw.io arrange options").includes("To Front"));
-    assert.ok(arrangeMenu.getSubmenuLabels("More draw.io arrange options").includes("Group"));
+    assert.deepEqual(editMenu.getVisibleLabels(), ["More editor edit options"]); // CHANGE
+    assert.ok(editMenu.getSubmenuLabels("More editor edit options").includes("Edit Style")); // CHANGE
+    assert.ok(editMenu.getSubmenuLabels("More editor edit options").includes("Select All")); // CHANGE
+    assert.deepEqual(arrangeMenu.getVisibleLabels(), ["More editor arrange options"]); // CHANGE
+    assert.ok(arrangeMenu.getSubmenuLabels("More editor arrange options").includes("To Front")); // CHANGE
+    assert.ok(arrangeMenu.getSubmenuLabels("More editor arrange options").includes("Group")); // CHANGE
 });
 
 test("View top level contains only Grid, Guides, and overflow", () => {
@@ -360,9 +360,9 @@ test("View top level contains only Grid, Guides, and overflow", () => {
 
     menuEntries.view.funct(menu, null);
 
-    assert.deepEqual(menu.getVisibleLabels(), ["Grid", "Guides", "More draw.io view options"]);
-    assert.ok(menu.getSubmenuLabels("More draw.io view options").includes("Format"));
-    assert.ok(menu.getSubmenuLabels("More draw.io view options").includes("Zoom In"));
+    assert.deepEqual(menu.getVisibleLabels(), ["Grid", "Guides", "More editor view options"]); // CHANGE
+    assert.ok(menu.getSubmenuLabels("More editor view options").includes("Format")); // CHANGE
+    assert.ok(menu.getSubmenuLabels("More editor view options").includes("Zoom In")); // CHANGE
 });
 
 test("Extras keeps Plugins and Trellis database restore at top level", () => {
@@ -374,9 +374,9 @@ test("Extras keeps Plugins and Trellis database restore at top level", () => {
     assert.deepEqual(menu.getVisibleLabels(), [
         "Plugins",
         "Restore Built-in Trellis Database...",
-        "More draw.io extras"
+        "More editor extras" // CHANGE
     ]);
-    assert.deepEqual(menu.getSubmenuLabels("More draw.io extras"), ["Language", "Configuration"]);
+    assert.deepEqual(menu.getSubmenuLabels("More editor extras"), ["Language", "Configuration"]); // CHANGE
 });
 
 test("Help moves only desktop zoom items into overflow", () => {
@@ -389,9 +389,9 @@ test("Help moves only desktop zoom items into overflow", () => {
         "Keyboard Shortcuts",
         "About",
         "Trellis Updates & Links",
-        "More draw.io help options"
+        "More editor help options" // CHANGE
     ]);
-    assert.deepEqual(menu.getSubmenuLabels("More draw.io help options"), [
+    assert.deepEqual(menu.getSubmenuLabels("More editor help options"), [ // CHANGE
         "Actual Size",
         "Zoom In",
         "Zoom Out"
@@ -416,5 +416,5 @@ test("plugin install guard prevents duplicate wrapping", () => {
     vm.runInNewContext(readProjectFile("drawio/src/main/webapp/plugins/garden_planner_plugins/Trellis_UI_Cleanup.js"), context, { filename: pluginPath });
     menuEntries.view.funct(menu, null);
 
-    assert.deepEqual(menu.getVisibleLabels(), ["Grid", "Guides", "More draw.io view options"]);
+    assert.deepEqual(menu.getVisibleLabels(), ["Grid", "Guides", "More editor view options"]); // CHANGE
 });

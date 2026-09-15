@@ -167,20 +167,6 @@ OPENAI_PLANT_SCHEMA = {
         },
         "allowed_method_categories": {"type": "array", "items": {"type": "string"}},
         "allowed_method_ids": {"type": "array", "items": {"type": "string"}},  # concrete crop methods
-        "varieties": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "variety_name": {"type": "string"},
-                    "maturity_class": {"type": ["string", "null"], "enum": ["early", "mid", "late", "", None]},
-                    "overrides": {"type": "array", "items": OVERRIDE_ENTRY_SCHEMA},
-                    "sources": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["variety_name", "maturity_class", "overrides", "sources"],
-            },
-        },
         "growth_stages": {
             "type": "array",
             "items": {
@@ -206,7 +192,7 @@ OPENAI_PLANT_SCHEMA = {
         },
         "provenance": PROVENANCE_SCHEMA,
     },
-    "required": ["row", "allowed_method_categories", "allowed_method_ids", "varieties", "growth_stages", "provenance"],
+    "required": ["row", "allowed_method_categories", "allowed_method_ids", "growth_stages", "provenance"],
 }
 
 OPENAI_TEMPLATE_SCHEMA = {

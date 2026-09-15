@@ -8,6 +8,7 @@ const projectRoot = path.resolve(__dirname, "..");
 const settingsPath = path.join(projectRoot, "drawio/src/main/webapp/js/diagramly/Settings.js");
 const initPath = path.join(projectRoot, "drawio/src/main/webapp/js/diagramly/Init.js");
 const appPath = path.join(projectRoot, "drawio/src/main/webapp/js/diagramly/App.js");
+const editorUiPath = path.join(projectRoot, "drawio/src/main/webapp/js/diagramly/EditorUi.js"); // NEW
 const appBundlePath = path.join(projectRoot, "drawio/src/main/webapp/js/app.min.js");
 const integrateBundlePath = path.join(projectRoot, "drawio/src/main/webapp/js/integrate.min.js");
 
@@ -186,7 +187,7 @@ test("non-empty stored plugin settings are preserved", () => {
     assert.deepEqual(hostArray(mxSettings.getPlugins()), customPlugins);
 });
 
-test("old draw.io autosave transition no longer forces Trellis autosave off", () => {
+test("old editor autosave transition no longer forces Trellis autosave off", () => { // CHANGE
     const { mxSettings, localStorage } = loadSettings({
         localStorage: {
             ".drawio-config": storedConfig({ plugins: ["plugins/custom.js"], showStartScreen: false, autosave: false }),
@@ -233,6 +234,20 @@ test("Trellis plugin defaults stay aligned across source and bundled runtime", (
     assert.match(integrateBundleSource, /App\.trellisDefaultPlugins=App\.publicPlugin\.slice\(\)/);
     assert.match(integrateBundleSource, /App\.loadPlugins\(App\.trellisDefaultPlugins\)/);
 });
+
+test("new blank diagram runtime flag is carried through fileLoaded", () => { // NEW
+    const appSource = readProjectFile(appPath); // NEW
+    const editorUiSource = readProjectFile(editorUiPath); // NEW
+    const appBundleSource = readProjectFile(appBundlePath); // NEW
+    const integrateBundleSource = readProjectFile(integrateBundlePath); // NEW
+
+    assert.match(appSource, /var trellisNewBlankDiagram = data == this\.emptyDiagramXml;/); // NEW
+    assert.match(appSource, /file\.trellisNewBlankDiagram = true;/); // NEW
+    assert.match(editorUiSource, /new mxEventObject\('fileLoaded',[\s\S]*'trellisNewBlankDiagram', !!\(file && file\.trellisNewBlankDiagram\)/); // NEW
+    assert.match(editorUiSource, /delete file\.trellisNewBlankDiagram;/); // NEW
+    assert.match(appBundleSource, /trellisNewBlankDiagram/); // NEW
+    assert.match(integrateBundleSource, /trellisNewBlankDiagram/); // NEW
+}); // NEW
 
 /** Extract an actual assignment, honoring strings/comments and balanced JS delimiters. */ // NEW
 function runtimeAssignment(source, field) { // NEW

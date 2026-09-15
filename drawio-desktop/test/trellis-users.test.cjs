@@ -531,7 +531,7 @@ test("direct setGraphXml load changes are allowed and then show the auth gate", 
     assert.ok(harness.document.querySelector(".trellis-users-auth-overlay"));
 });
 
-test("auth gate failed login stays inline without a Draw.io alert", () => {
+test("auth gate failed login stays inline without a host editor alert", () => { // CHANGE
     const harness = loadUsersPlugin();
     const users = harness.context.window.Trellis.users;
     users.enableUsers("Alice", "1234");

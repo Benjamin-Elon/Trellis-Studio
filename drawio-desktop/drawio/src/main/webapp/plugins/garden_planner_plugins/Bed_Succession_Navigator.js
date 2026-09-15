@@ -1,5 +1,5 @@
 /**
- * Draw.io Plugin: Tiler Group Overlap Navigator (Multi-Cluster, DOM Buttons)
+ * Trellis plugin: Tiler Group Overlap Navigator (Multi-Cluster, DOM Buttons)
  * - Builds bed-aware and outside-overlap succession clusters per parent.
  * - Keeps bed-contained clusters separate from outside overhang clusters.
  * - Each selected planting cluster gets an above-cluster Occupancy timeline.
@@ -971,7 +971,7 @@ Draw.loadPlugin(function (ui) {
                 btnPrev: null,
                 btnNext: null,
                 miniRail: null, // CHANGE: Mini Rail replaces the old 1/N badge.
-                miniRailHeight: 0, // CHANGE: jsdom and draw.io overlays both need deterministic positioning.
+                miniRailHeight: 0, // CHANGE: jsdom and editor overlays both need deterministic positioning.
                 dimmed: new Set(),
                 btnDrag: null,
                 btnSelectAll: null,

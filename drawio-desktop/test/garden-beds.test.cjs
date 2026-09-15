@@ -76,6 +76,7 @@ function loadPlugin(options = {}) {
     const bed2 = appendChild(moduleCell, makeXmlCell(document, "bed2", { garden_bed: "1", label: "Bed 2" }));
     const model = new TestModel(root);
     const contributors = [];
+    const mouseListeners = []; // NEW
     const graph = {
         __states: new Map([[bed, { x: 10, y: 20, width: 100, height: 60 }], [bed2, { x: 130, y: 20, width: 100, height: 60 }]]),
         container: document.getElementById("graph"),
@@ -88,7 +89,8 @@ function loadPlugin(options = {}) {
             getState: cell => graph.__states.get(cell),
             addListener() {}
         },
-        addListener() {}
+        addListener() {},
+        addMouseListener(listener) { mouseListeners.push(listener); } // NEW
     };
     if (options.irrigationMethods) graph.__trellisIrrigationPlanner = { getBedIrrigationMethods() { return options.irrigationMethods; } };
     const ui = {
@@ -103,7 +105,7 @@ function loadPlugin(options = {}) {
         console,
         setTimeout(fn) { fn(); },
         Draw: { loadPlugin(callback) { callback(ui); } },
-        mxEvent: { CHANGE: "change", SCALE: "scale", TRANSLATE: "translate", SCALE_AND_TRANSLATE: "scaleAndTranslate", DESTROY: "destroy" },
+        mxEvent: { CHANGE: "change", SCALE: "scale", TRANSLATE: "translate", SCALE_AND_TRANSLATE: "scaleAndTranslate", DESTROY: "destroy", getClientX(evt) { return evt && evt.clientX || 0; }, getClientY(evt) { return evt && evt.clientY || 0; } }, // CHANGE
         mxUtils: {
             createXmlDocument() { return document.implementation.createDocument("", "", null); },
             button(label, fn) { const button = document.createElement("button"); button.textContent = label; button.addEventListener("click", fn); return button; }
@@ -115,7 +117,7 @@ function loadPlugin(options = {}) {
     };
 
     vm.runInNewContext(fs.readFileSync(PLUGIN_PATH, "utf8"), context, { filename: PLUGIN_PATH });
-    return { api: dom.window.TrellisGardenBeds, legacyApi: dom.window.TrellisBedConditions, contributors, graph, model, root, moduleCell, bed, bed2, ui, document };
+    return { api: dom.window.TrellisGardenBeds, legacyApi: dom.window.TrellisBedConditions, contributors, graph, model, root, moduleCell, bed, bed2, ui, document, mouseListeners }; // CHANGE
 }
 
 function getDialogButton(ui, label) {
@@ -183,6 +185,11 @@ function getOverlayNameInput(overlay) {
 function dispatchInputKey(input, key) {
     input.dispatchEvent(new input.ownerDocument.defaultView.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
 }
+
+function makeGraphMouseEvent(cell, clientX, clientY) { // NEW
+    const event = { clientX, clientY }; // NEW
+    return { getCell() { return cell; }, getEvent() { return event; } }; // NEW
+} // NEW
 
 function plainRows(rows) {
     return JSON.parse(JSON.stringify(rows));
@@ -470,6 +477,27 @@ test("selected bed overlays are suppressed while team permission mode is active"
     pluginWindow.Trellis.users.isTeamPermissionModeActive = () => false;
     pluginWindow.dispatchEvent(new pluginWindow.CustomEvent("trellisTeamPermissionModeChanged", { detail: { active: false, teamModuleId: "team" } }));
     assert.equal(getSelectedBedOverlays(graph).length, 1);
+}); // NEW
+
+test("selected bed overlays hide while a selected garden bed is dragged", () => { // NEW
+    const { api, bed, graph, mouseListeners } = loadPlugin(); // NEW
+    api.writeBedConditions(bed, { sunExposure: "full_sun" }); // NEW
+    graph.getSelectionCells = () => [bed]; // NEW
+    api._test.syncSelectedBedOverlays(); // NEW
+    assert.equal(getSelectedBedOverlays(graph).length, 1); // NEW
+    assert.equal(mouseListeners.length, 1); // NEW
+
+    mouseListeners[0].mouseDown(graph, makeGraphMouseEvent(bed, 10, 10)); // NEW
+    mouseListeners[0].mouseMove(graph, makeGraphMouseEvent(bed, 12, 10)); // NEW
+    assert.equal(getSelectedBedOverlays(graph).length, 1); // NEW
+
+    mouseListeners[0].mouseMove(graph, makeGraphMouseEvent(bed, 15, 10)); // NEW
+    assert.equal(getSelectedBedOverlays(graph).length, 0); // NEW
+    api._test.syncSelectedBedOverlays(); // NEW
+    assert.equal(getSelectedBedOverlays(graph).length, 0); // NEW
+
+    mouseListeners[0].mouseUp(graph, makeGraphMouseEvent(bed, 15, 10)); // NEW
+    assert.equal(getSelectedBedOverlays(graph).length, 1); // NEW
 }); // NEW
 
 test("selected bed overlay opens the bed conditions editor", () => {

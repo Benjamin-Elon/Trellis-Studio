@@ -664,7 +664,7 @@ test("workspace container header hover keeps native cursor", () => {
     assert.equal(sourceState.cursor, "move");
 });
 
-test("workspace drag handle renders Draw.io move image and keeps move cursor", () => {
+test("workspace drag handle renders editor move image and keeps move cursor", () => { // CHANGE
     const { graph, gardenModule } = makeHarness();
     const api = graph.__trellisWorkspaceDragPolicy;
     graph.setSelectionCell(gardenModule);
@@ -673,7 +673,7 @@ test("workspace drag handle renders Draw.io move image and keeps move cursor", (
     assert.ok(handle, "expected workspace handle");
     assert.equal(handle.style.cursor, "move");
     const img = handle.querySelector("img");
-    assert.ok(img, "expected Draw.io move image");
+    assert.ok(img, "expected editor move image"); // CHANGE
     assert.equal(img.getAttribute("src"), TEST_MOVE_IMAGE);
 });
 

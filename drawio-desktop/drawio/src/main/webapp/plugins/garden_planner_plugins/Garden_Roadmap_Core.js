@@ -1,4 +1,4 @@
-// Roadmap policy, geometry, and optional native Draw.io renderer registration. // CHANGE
+// Roadmap policy, geometry, and optional native editor renderer registration. // CHANGE
 (function (root) { // NEW
     'use strict'; // NEW
  // NEW
