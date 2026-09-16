@@ -7,12 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import input_summary_slug, unique_artifact_dir
-from .config import Settings, read_openai_api_key
+from .config import DEFAULT_CONFIG, Settings, read_openai_api_key
 from .db import load_cities, load_method_categories, load_methods, load_plant_allowed_categories, load_plants
 from .generic_varieties import generic_maturity_varieties_for_plant
 from .jsonio import read_json, write_json
 from .planner import effective_tables_from_input, selected_tables_warning
-from .providers import NasaPowerClient, OpenAIJsonClient, OpenMeteoClient, ProviderError, ProviderTrace
+from .nutrition import CachedFdcClient, ensure_reference_nutrition_rows, synthesize_nutrition_for_plant
+from .providers import FoodDataCentralClient, NasaPowerClient, OpenAIJsonClient, OpenMeteoClient, ProviderError, ProviderTrace
 from .schema import (
     CITY_GEO_IDENTITY_COLUMNS,
     GENERATED_TABLES,
@@ -55,7 +56,8 @@ CROP_PROMPT_FIELD_GUIDE = {
     "spacing": "spacing_x_cm and spacing_y_cm should describe in-row and between-row spacing when useful.",  # prompt quality
     "methods": "allowed_method_categories are broad capabilities; allowed_method_ids are concrete fixed_methods that truly fit the crop.",  # prompt quality
     "default_method": "default_planting_method must be one of allowed_method_ids and should reflect the most common reliable home-garden method.",  # prompt quality
-    "varieties": "Do not return cultivar varieties; Trellis generates deterministic Early/Mid/Late maturity profiles after the crop row is accepted.",  # prompt quality
+    "varieties": "Do not return cultivar varieties; Trellis generates deterministic Very Early/Early/Mid/Late/Very Late maturity profiles after the crop row is accepted.",  # prompt quality
+    "nutrition_aliases": "Return likely USDA FoodData Central raw-food search aliases, such as plural commodity names and raw edible forms; do not return nutrition values.",  # prompt quality
     "growth_stages": "Return harvest-form stages for the scheduler's 'Grown for' control, such as microgreens, baby leaf, shoots, immature harvest, or mature; do not return lifecycle milestones like germination, vegetative, flowering, or fruiting.",  # prompt quality
     "provenance": "For required provenance fields, use exact strings from allowed_provenance_references only.",  # prompt quality
 }
@@ -463,13 +465,14 @@ def _city_geocode_qualifiers(city: dict[str, Any], display_name: str) -> dict[st
     }
 
 
-def _generate_crops(settings: Settings, input_data: dict[str, Any], openai: OpenAIJsonClient, methods: list[dict[str, Any]], generated: dict[str, list[dict[str, Any]]], provenance: dict[str, Any], run_dir: Path, generate_templates: bool) -> None:
+def _generate_crops(settings: Settings, input_data: dict[str, Any], openai: OpenAIJsonClient, methods: list[dict[str, Any]], generated: dict[str, list[dict[str, Any]]], provenance: dict[str, Any], run_dir: Path, generate_templates: bool, fdc: CachedFdcClient | None = None) -> None:
     crops = input_data.get("crops", []) or []
+    fdc = fdc or CachedFdcClient(FoodDataCentralClient(DEFAULT_CONFIG["fdc"] | (settings.data.get("fdc") or {})), run_dir / "traces" / "fdc")
     for crop_index, crop in enumerate(crops, 1):
         name = str(crop.get("plant_name") or crop.get("name")).strip()
         generated_lengths = _generated_lengths(generated)
         try:
-            _generate_one_crop(settings, crop, crop_index, len(crops), openai, methods, generated, provenance, generate_templates)
+            _generate_one_crop(settings, crop, crop_index, len(crops), openai, methods, generated, provenance, generate_templates, fdc)
         except Exception as exc:
             _restore_generated_lengths(generated, generated_lengths)
             _record_generation_failure(run_dir, provenance, "crop", name, exc)
@@ -477,7 +480,7 @@ def _generate_crops(settings: Settings, input_data: dict[str, Any], openai: Open
             continue
 
 
-def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int, crop_count: int, openai: OpenAIJsonClient, methods: list[dict[str, Any]], generated: dict[str, list[dict[str, Any]]], provenance: dict[str, Any], generate_templates: bool) -> None:
+def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int, crop_count: int, openai: OpenAIJsonClient, methods: list[dict[str, Any]], generated: dict[str, list[dict[str, Any]]], provenance: dict[str, Any], generate_templates: bool, fdc: CachedFdcClient) -> None:
         name = str(crop.get("plant_name") or crop.get("name")).strip()
         print(f"Generating crop {crop_index}/{crop_count}: {name}", flush=True)
         source_values = _crop_source_values(crop, methods)
@@ -496,7 +499,8 @@ def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int
                 "Never return nulls or empty strings for plant row fields; use concise 'N/A' only for text fields that truly do not apply. "
                 "Numeric and integer fields must be in the requested units, never text. "
                 "Lifecycle flags must be coherent, method flags must match allowed planting methods, and default_planting_method must be a concrete allowed method. "
-                "Do not return cultivar or variety rows; Trellis synthesizes generic Early/Mid/Late maturity profiles deterministically from the accepted crop row. "
+                "Do not return cultivar or variety rows; Trellis synthesizes generic Very Early/Early/Mid/Late/Very Late maturity profiles deterministically from the accepted crop row. "
+                "Return nutrition_aliases for FoodData Central search only; do not estimate nutrition values in this crop response. "
                 "Generate growth_stages as harvest-form 'grown for' targets that scale scheduler timing and layout; always include a Mature stage with gdd_ratio 1.0, and exclude lifecycle milestones such as germination, vegetative, flowering, and fruiting. "
                 "Do not include planting methods (such as propagation-by-cutting) unless the crop is normally grown using the method. "
                 "provenance.field_sources must cite exact supplied strings from allowed_provenance_references for required provenance fields; do not cite invented estimate labels."
@@ -528,6 +532,17 @@ def _generate_one_crop(settings: Settings, crop: dict[str, Any], crop_index: int
         for stage in result.get("growth_stages") or []:
             generated.setdefault("PlantGrowthStages", []).append({"plant_name": row["plant_name"], **stage})
         print(f"  - Growth stages generated: {len(result.get('growth_stages') or [])}", flush=True)
+        ensure_reference_nutrition_rows(generated)
+        mappings, values, nutrition_traces = synthesize_nutrition_for_plant(
+            plant_row=row,
+            aliases=result.get("nutrition_aliases") or [],
+            fdc=fdc,
+            openai=openai,
+        )
+        generated.setdefault("PlantNutritionMappings", []).extend(mappings)
+        generated.setdefault("PlantNutritionValues", []).extend(values)
+        provenance["traces"].extend(nutrition_traces)
+        print(f"  - Nutrition rows generated: {len(mappings)} mapping, {len(values)} values", flush=True)
         crop_methods = [m for m in methods if m["method_id"] in set(allowed_method_ids)]
         if not generate_templates:
             print("  - Plant task templates skipped; scheduler defaults will be used", flush=True)  # template opt-in
@@ -1183,6 +1198,7 @@ def _prepare_crop_result(result: dict[str, Any], crop: dict[str, Any], methods: 
             for method_id in prepared["allowed_method_ids"]
             if method_id in method_by_id and method_by_id[method_id].get("method_category_id")
         })
+    prepared["nutrition_aliases"] = _nutrition_aliases(prepared.get("nutrition_aliases"), row.get("plant_name") or name)
     provenance = prepared.get("provenance") if isinstance(prepared.get("provenance"), dict) else {"field_sources": []}
     provenance["field_sources"] = _merge_field_sources(
         provenance.get("field_sources"),
@@ -1424,8 +1440,18 @@ def _validate_crop_result(result: dict[str, Any], source_values: set[str], metho
     if not result.get("allowed_method_categories"):
         errors.append("allowed_method_categories is required.")
     errors.extend(_validate_allowed_method_ids(result, methods or []))
+    if not (result.get("nutrition_aliases") or row.get("plant_name")):
+        errors.append("nutrition_aliases is required.")
     errors.extend(_validate_growth_stages(result.get("growth_stages"), str(row.get("plant_name") or "")))
     return errors
+
+
+def _nutrition_aliases(raw_aliases: Any, plant_name: Any) -> list[str]:
+    aliases = [str(alias).strip() for alias in (raw_aliases if isinstance(raw_aliases, list) else []) if str(alias).strip()]
+    name = str(plant_name or "").strip()
+    if name:
+        aliases.extend([name, f"{name}, raw", f"raw {name}"])
+    return _unique(aliases)
 
 
 def _validate_growth_stages(stages: Any, plant_name: str) -> list[str]:

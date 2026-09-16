@@ -3924,7 +3924,7 @@ test("stale bridge plans fail before creating partial bridge assemblies or edges
 
 test("bed assemblies sync to linked beds, apply templates, and assembly reports ignore legacy objects", () => {
     const { api, graph, moduleCell, bed, bed2, document, model } = loadPlugin();
-    api.writeCatalog(moduleCell, addDripTapeBomParts(sampleCatalog()));
+    api.writeCatalog(moduleCell, catalogWithItemIds(addDripTapeBomParts(sampleCatalog()), ["half_barb_coupler", "drip_tape_8mil_12in", "barb_tee_1_2", "end_cap_1_2_barb", "poly_distribution_1_2"])); // CHANGE
     const source = api.__test.createSourceAssembly(moduleCell, "Well", { connectorType: "barb", nominalSize: "1/2", method: "drip", pipeConnection: true, usableFlowGpm: 5, staticPressurePsi: 45 }, { x: 30, y: 40 });
     const originalBedGeometry = Object.assign({}, bed.geometry);
     const bedAssembly = api.__test.createBedAssembly(moduleCell, bed, { x: 30, y: 220 });

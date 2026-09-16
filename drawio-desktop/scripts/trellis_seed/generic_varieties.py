@@ -11,9 +11,11 @@ from typing import Any
 
 
 GENERIC_MATURITY_PROFILES = (
+    {"variety_name": "Very early maturity", "maturity_class": "very_early", "multiplier": 0.75},
     {"variety_name": "Early maturity", "maturity_class": "early", "multiplier": 0.85},
     {"variety_name": "Mid maturity", "maturity_class": "mid", "multiplier": 1.0},
     {"variety_name": "Late maturity", "maturity_class": "late", "multiplier": 1.15},
+    {"variety_name": "Very late maturity", "maturity_class": "very_late", "multiplier": 1.25},
 )
 GENERIC_MATURITY_PROFILE_NAMES = frozenset(profile["variety_name"] for profile in GENERIC_MATURITY_PROFILES)
 GENERIC_MATURITY_CLASSES = frozenset(profile["maturity_class"] for profile in GENERIC_MATURITY_PROFILES)

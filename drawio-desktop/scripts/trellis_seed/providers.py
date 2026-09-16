@@ -359,3 +359,60 @@ class NasaPowerClient:
         wait = base * (2 ** max(0, attempt - 1))
         jitter = random.uniform(0, min(5.0, base))
         return min(wait + jitter, max_wait)
+
+
+class FoodDataCentralClient:
+    def __init__(self, config: dict[str, Any]) -> None:
+        self.config = config
+
+    def search(self, query: str) -> tuple[dict[str, Any], ProviderTrace]:
+        params = {
+            "api_key": self.config.get("api_key") or "DEMO_KEY",
+            "query": query,
+            "dataType": self.config.get("data_types", "Foundation,SR Legacy,Survey (FNDDS)"),
+            "pageSize": int(self.config.get("page_size", 10)),
+        }
+        url = OpenMeteoClient._url(str(self.config["search_url"]), params)
+        data = self._get_json(url)
+        foods = data.get("foods") or []
+        return data, ProviderTrace("fdc", {"url": url, "query": query}, {"result_count": len(foods)})
+
+    def food(self, fdc_id: int) -> tuple[dict[str, Any], ProviderTrace]:
+        params = {"api_key": self.config.get("api_key") or "DEMO_KEY"}
+        url = OpenMeteoClient._url(str(self.config["food_url"]).rstrip("/") + f"/{int(fdc_id)}", params)
+        data = self._get_json(url)
+        return data, ProviderTrace("fdc", {"url": url, "fdc_id": int(fdc_id)}, {"description": data.get("description"), "data_type": data.get("dataType")})
+
+    def _get_json(self, url: str) -> dict[str, Any]:
+        last_error: Exception | None = None
+        max_attempts = int(self.config.get("rate_limit_max_attempts", 5))
+        for attempt in range(1, max_attempts + 1):
+            try:
+                with urllib.request.urlopen(url, timeout=45) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except HTTPError as exc:
+                last_error = exc
+                if exc.code != 429 or attempt == max_attempts:
+                    break
+                wait_seconds = self._rate_limit_wait_seconds(exc, attempt)
+                print(f"FoodData Central rate limited; waiting {wait_seconds:.0f}s before retry {attempt + 1}/{max_attempts}", flush=True)
+                time.sleep(wait_seconds)
+            except (ConnectionResetError, TimeoutError, URLError) as exc:
+                last_error = exc
+                if attempt == max_attempts:
+                    break
+                time.sleep(attempt * 2)
+        raise ProviderError(f"FoodData Central request failed after {max_attempts} attempts: {last_error}") from last_error
+
+    def _rate_limit_wait_seconds(self, exc: HTTPError, attempt: int) -> float:
+        max_wait = float(self.config.get("rate_limit_max_wait_seconds", 300))
+        retry_after = exc.headers.get("Retry-After") if exc.headers else None
+        if retry_after:
+            try:
+                return min(float(retry_after), max_wait)
+            except ValueError:
+                pass
+        base = float(self.config.get("rate_limit_base_wait_seconds", 30))
+        wait = base * (2 ** max(0, attempt - 1))
+        jitter = random.uniform(0, min(5.0, base))
+        return min(wait + jitter, max_wait)

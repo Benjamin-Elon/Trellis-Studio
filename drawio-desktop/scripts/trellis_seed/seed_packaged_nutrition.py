@@ -5,47 +5,7 @@ from contextlib import closing
 from pathlib import Path
 
 from .migrations import apply_migrations, pending_migrations
-
-
-NUTRIENTS = [
-    ("energy_kcal", "Calories", "kcal", 1),
-    ("protein_g", "Protein", "g", 2),
-    ("fiber_g", "Fiber", "g", 3),
-    ("vitamin_a_rae_mcg", "Vitamin A", "mcg RAE", 4),
-    ("vitamin_c_mg", "Vitamin C", "mg", 5),
-    ("vitamin_k_mcg", "Vitamin K", "mcg", 6),
-    ("folate_dfe_mcg", "Folate", "mcg DFE", 7),
-    ("potassium_mg", "Potassium", "mg", 8),
-    ("iron_mg", "Iron", "mg", 9),
-    ("calcium_mg", "Calcium", "mg", 10),
-]
-
-REQUIREMENTS = {
-    "adult_19_50": {
-        "energy_kcal": 2200,
-        "protein_g": 50,
-        "fiber_g": 28,
-        "vitamin_a_rae_mcg": 800,
-        "vitamin_c_mg": 82.5,
-        "vitamin_k_mcg": 105,
-        "folate_dfe_mcg": 400,
-        "potassium_mg": 3700,
-        "iron_mg": 13.5,
-        "calcium_mg": 1000,
-    },
-    "child_1_8": {
-        "energy_kcal": 1200,
-        "protein_g": 16,
-        "fiber_g": 19.4,
-        "vitamin_a_rae_mcg": 350,
-        "vitamin_c_mg": 22.5,
-        "vitamin_k_mcg": 45,
-        "folate_dfe_mcg": 180,
-        "potassium_mg": 2300,
-        "iron_mg": 8.5,
-        "calcium_mg": 800,
-    },
-}
+from .nutrition import NUTRIENTS, REQUIREMENTS
 
 RAW_VALUES_PER_100G = {
     "Apple": (1102640, "Apple, raw", "Foundation", {"energy_kcal": 52, "protein_g": 0.26, "fiber_g": 2.4, "vitamin_a_rae_mcg": 3, "vitamin_c_mg": 4.6, "vitamin_k_mcg": 2.2, "folate_dfe_mcg": 3, "potassium_mg": 107, "iron_mg": 0.12, "calcium_mg": 6}),

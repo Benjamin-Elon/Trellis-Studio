@@ -43,7 +43,7 @@ PLANT_NUTRITION_VALUE_COLUMNS = {"plant_id", "plant_name", "nutrient_key", "amou
 
 CITY_GEO_IDENTITY_COLUMNS = {"country_name", "country_code", "region_name", "region_code"}
 CITY_CLIMATE_BANDS = {"hot", "temperate", "cold"}
-VARIETY_MATURITY_CLASSES = {"early", "mid", "late"}
+VARIETY_MATURITY_CLASSES = {"very_early", "early", "mid", "late", "very_late"}
 PLANT_VARIETY_COLUMNS = {"variety_id", "plant_id", "plant_name", "variety_name", "maturity_class", "overrides", "overrides_json"}
 PLANT_GROWTH_STAGE_COLUMNS = {
     "stage_id", "plant_id", "plant_name", "stage_key", "stage_label", "gdd_ratio",
@@ -167,6 +167,7 @@ OPENAI_PLANT_SCHEMA = {
         },
         "allowed_method_categories": {"type": "array", "items": {"type": "string"}},
         "allowed_method_ids": {"type": "array", "items": {"type": "string"}},  # concrete crop methods
+        "nutrition_aliases": {"type": "array", "items": {"type": "string"}},
         "growth_stages": {
             "type": "array",
             "items": {
@@ -192,7 +193,7 @@ OPENAI_PLANT_SCHEMA = {
         },
         "provenance": PROVENANCE_SCHEMA,
     },
-    "required": ["row", "allowed_method_categories", "allowed_method_ids", "growth_stages", "provenance"],
+    "required": ["row", "allowed_method_categories", "allowed_method_ids", "nutrition_aliases", "growth_stages", "provenance"],
 }
 
 OPENAI_TEMPLATE_SCHEMA = {

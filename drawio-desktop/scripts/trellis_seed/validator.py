@@ -368,8 +368,6 @@ def validate_row(
             errors.append(f"{prefix} has unknown columns: {unknown}")
         if not row.get("plant_id") and not str(row.get("plant_name") or "").strip():
             errors.append(f"{prefix} needs plant_id or plant_name.")
-        if _coerce_integer(row.get("fdc_id")) is None:
-            errors.append(f"{prefix}.fdc_id must be an integer.")
         for key in ("fdc_description", "fdc_data_type", "food_form", "match_confidence", "match_status", "updated_at"):
             if not str(row.get(key) or "").strip():
                 errors.append(f"{prefix}.{key} is required.")
@@ -379,6 +377,11 @@ def validate_row(
             errors.append(f"{prefix}.match_confidence must be one of {sorted(PLANT_NUTRITION_MAPPING_CONFIDENCE)}.")
         if row.get("match_status") not in PLANT_NUTRITION_MAPPING_STATUS:
             errors.append(f"{prefix}.match_status must be one of {sorted(PLANT_NUTRITION_MAPPING_STATUS)}.")
+        if row.get("fdc_id") is None:
+            if row.get("match_confidence") != "low" or row.get("match_status") != "pending" or not str(row.get("source_note") or "").strip():
+                errors.append(f"{prefix}.fdc_id can be null only for low-confidence pending estimated rows with source_note.")
+        elif _coerce_integer(row.get("fdc_id")) is None:
+            errors.append(f"{prefix}.fdc_id must be an integer.")
         if row.get("match_confidence") in {"low", "medium"} or row.get("match_status") == "pending":
             warnings.append(f"{prefix} is reviewable: {row.get('plant_name') or row.get('plant_id')} maps to FDC {row.get('fdc_id')} with {row.get('match_confidence')} confidence / {row.get('match_status')} status.")
         if not row.get("source_url") and not row.get("source_note"):
@@ -394,7 +397,7 @@ def validate_row(
         value = _coerce_number(row.get("amount_per_100g"))
         if value is None or value < 0:
             errors.append(f"{prefix}.amount_per_100g must be 0 or greater.")
-        if _coerce_integer(row.get("source_fdc_id")) is None:
+        if row.get("source_fdc_id") is not None and _coerce_integer(row.get("source_fdc_id")) is None:
             errors.append(f"{prefix}.source_fdc_id must be an integer.")
         if not str(row.get("updated_at") or "").strip():
             errors.append(f"{prefix}.updated_at is required.")

@@ -7,5 +7,6 @@ node_modules
 package-lock.json
 .DS_Store
 trellis_seed_runs/
+test-results/
 __pycache__/
 *.pyc

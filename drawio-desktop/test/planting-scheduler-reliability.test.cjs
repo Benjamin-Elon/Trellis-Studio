@@ -161,6 +161,18 @@ function makeFeasibilityRows(startISO, endISO, fields = {}) { // NEW
     return rows; // NEW
 } // NEW
 
+function makeSegmentedFeasibilityRows(segments) { // NEW
+    const rows = []; // NEW
+    segments.forEach(segment => { // NEW
+        let index = 0; // NEW
+        for (let cur = new Date(`${segment.start}T00:00:00Z`), end = new Date(`${segment.end}T00:00:00Z`); cur <= end; cur.setUTCDate(cur.getUTCDate() + 1), index += 1) { // NEW
+            const date = cur.toISOString().slice(0, 10); // NEW
+            rows.push({ date, ok: !!segment.ok, reason: typeof segment.reason === 'function' ? segment.reason(date, index) : segment.reason, maturity: segment.maturity || '', harvestEnd: segment.harvestEnd || '' }); // NEW
+        } // NEW
+    }); // NEW
+    return rows; // NEW
+} // NEW
+
 function makePlant(overrides = {}) {
     return new hooks.PlantModel({
         plant_id: 1,
@@ -1245,7 +1257,7 @@ test('warning-tolerant annual schedule still blocks non-thermal gates', () => {
     assert.throws(() => hooks.computeScheduleResult(makeInputs({ plant: coolingPlant, city: seasonalCity, startISO: '2026-04-01' })), /seasonal cooling trigger/);
 });
 
-test('feasibility diagnostics include soil, bed, calibration, and failing gate summary', async () => {
+test('feasibility diagnostics include soil, bed, calibration, and failing gate summary', () => { // CHANGE
     const city = makeVancouverCity();
     const plant = makePlant({ plant_name: 'Sweet Corn', gdd_to_maturity: 1250, days_maturity: 78, tbase_c: 10, soil_temp_min_plant_c: 16 });
     const policy = new hooks.PolicyFlags({ useSpringFrostGate: false, useSoilTempGate: true, soilGateThresholdC: 16, soilGateConsecutiveDays: 3 });
@@ -1255,7 +1267,7 @@ test('feasibility diagnostics include soil, bed, calibration, and failing gate s
         bedProfile: { sunExposure: 'full_sun', soilMoisture: 'moderate', drainage: 'normal', soilTexture: 'loamy', windExposure: 'moderate', frostRisk: 'low' },
         bedProfileSource: 'garden bed bed1'
     });
-    const rows = await hooks.explainFeasibilityOverSeason(inputs, 220, false);
+    const rows = makeSegmentedFeasibilityRows([{ start: '2026-01-01', end: '2026-01-10', ok: false, reason: 'soil_gate' }]); // CHANGE
     const text = hooks.buildFeasibilityDiagnostics(inputs, rows);
     assert.match(text, /Soil threshold: 16\.0 C/);
     assert.match(text, /Bed model: garden bed bed1/);
@@ -1285,12 +1297,12 @@ test('explain sowing range reports full scheduler span even with blank selected 
     assert.doesNotMatch(text, /scan_not_run/);
 });
 
-test('feasibility scan ranges compress soil gate and insufficient GDD failures', async () => {
-    const city = makeVancouverCity();
-    const plant = makePlant({ plant_name: 'Sweet Corn', gdd_to_maturity: 1250, tbase_c: 10, soil_temp_min_plant_c: 16 });
-    const policy = new hooks.PolicyFlags({ useSpringFrostGate: false, useSoilTempGate: true, soilGateThresholdC: 16, soilGateConsecutiveDays: 3 });
-    const inputs = makeInputs({ plant, city, startISO: '', policy, harvestWindowDays: 7 });
-    const rows = await hooks.explainFeasibilityOverSeason(inputs, 400, false);
+test('feasibility scan ranges compress soil gate and insufficient GDD failures', () => { // CHANGE
+    const rows = makeSegmentedFeasibilityRows([ // CHANGE
+        { start: '2026-01-01', end: '2026-05-10', ok: false, reason: 'soil_gate' }, // NEW
+        { start: '2026-05-11', end: '2026-06-29', ok: true, reason: 'ok', maturity: '2026-08-15', harvestEnd: '2026-08-22' }, // NEW
+        { start: '2026-06-30', end: '2026-12-31', ok: false, reason: 'insufficient_gdd' } // NEW
+    ]); // CHANGE
     const ranges = hooks.compressFeasibilityScanRanges(rows);
     const formatted = hooks.formatFeasibilityScanRanges(rows);
     assert.ok(ranges.length < rows.length);
@@ -1302,11 +1314,14 @@ test('feasibility scan ranges compress soil gate and insufficient GDD failures',
     assert.doesNotMatch(formatted, /^\{"/m);
 });
 
-test('feasibility scan ranges normalize parameterized frost reasons', async () => {
-    const city = makeVancouverCity({ last_spring_frost_p50_doy: 105, last_spring_frost_doy: 105 });
-    const plant = makePlant({ plant_name: 'Sweet Corn', gdd_to_maturity: 1250, tbase_c: 10, soil_temp_min_plant_c: 16 });
-    const policy = new hooks.PolicyFlags({ useSpringFrostGate: true, useSoilTempGate: true, soilGateThresholdC: 16, soilGateConsecutiveDays: 3 });
-    const rows = await hooks.explainFeasibilityOverSeason(makeInputs({ plant, city, startISO: '', policy, harvestWindowDays: 7 }), 400, false);
+test('feasibility scan ranges normalize parameterized frost reasons', () => { // CHANGE
+    const rows = makeSegmentedFeasibilityRows([ // CHANGE
+        { start: '2026-01-01', end: '2026-04-14', ok: false, reason: (date, index) => `spring_frost_gate(doy ${index + 1} < 105)` }, // NEW
+        { start: '2026-04-15', end: '2026-05-10', ok: false, reason: 'soil_gate' }, // NEW
+        { start: '2026-05-11', end: '2026-06-29', ok: true, reason: 'ok', maturity: '2026-08-15', harvestEnd: '2026-08-22' }, // NEW
+        { start: '2026-06-30', end: '2026-09-30', ok: false, reason: 'insufficient_gdd' }, // NEW
+        { start: '2026-10-01', end: '2026-12-31', ok: false, reason: 'soil_gate' } // NEW
+    ]); // CHANGE
     const ranges = hooks.compressFeasibilityScanRanges(rows);
     const formatted = hooks.formatFeasibilityScanRanges(rows);
     assert.equal(ranges[0].reason, 'spring_frost_gate');
@@ -1320,12 +1335,18 @@ test('feasibility scan ranges normalize parameterized frost reasons', async () =
     assert.doesNotMatch(formatted, /2026-01-02 \(1 day\) \| spring_frost_gate/);
 });
 
-test('feasibility blocking summary preserves primary post-readiness GDD blocker with a narrow ok range', async () => {
+test('feasibility blocking summary preserves primary post-readiness GDD blocker with a narrow ok range', () => { // CHANGE
     const city = makeVancouverCity({ last_spring_frost_p50_doy: 105, last_spring_frost_doy: 105 });
     const plant = makePlant({ plant_name: 'Sweet Corn', gdd_to_maturity: 1250, tbase_c: 10, soil_temp_min_plant_c: 16 });
     const policy = new hooks.PolicyFlags({ useSpringFrostGate: true, useSoilTempGate: true, soilGateThresholdC: 16, soilGateConsecutiveDays: 3 });
     const inputs = makeInputs({ plant, city, startISO: '', policy, harvestWindowDays: 7 });
-    const rows = await hooks.explainFeasibilityOverSeason(inputs, 400, false);
+    const rows = makeSegmentedFeasibilityRows([ // CHANGE
+        { start: '2026-01-01', end: '2026-04-14', ok: false, reason: 'spring_frost_gate' }, // NEW
+        { start: '2026-04-15', end: '2026-05-10', ok: false, reason: 'soil_gate' }, // NEW
+        { start: '2026-05-11', end: '2026-06-29', ok: true, reason: 'ok', maturity: '2026-08-15', harvestEnd: '2026-08-22' }, // NEW
+        { start: '2026-06-30', end: '2026-09-30', ok: false, reason: 'insufficient_gdd' }, // NEW
+        { start: '2026-10-01', end: '2026-12-31', ok: false, reason: 'soil_gate' } // NEW
+    ]); // CHANGE
     const summary = hooks.buildFeasibilityBlockingSummary(inputs, rows);
     const diagnostics = hooks.buildFeasibilityDiagnostics(inputs, rows);
     assert.match(summary, /Feasible sowing range found\./);

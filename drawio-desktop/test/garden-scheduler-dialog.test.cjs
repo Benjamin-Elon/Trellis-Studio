@@ -1006,6 +1006,30 @@ test('variety options group by manual class, DTM inference, and GDD fallback', (
     ]);
 });
 
+test('variety options support very early and very late maturity classes', () => {
+    const groups = hooks.buildGroupedVarietyOptions([
+        makeVariety({ variety_id: 1, variety_name: 'Very Quick', maturity_class: 'very_early', overrides: { days_maturity: 40 } }),
+        makeVariety({ variety_id: 2, variety_name: 'Quick', maturity_class: 'early', overrides: { days_maturity: 50 } }),
+        makeVariety({ variety_id: 3, variety_name: 'Middle', maturity_class: 'mid', overrides: { days_maturity: 60 } }),
+        makeVariety({ variety_id: 4, variety_name: 'Slow', maturity_class: 'late', overrides: { days_maturity: 70 } }),
+        makeVariety({ variety_id: 5, variety_name: 'Very Slow', maturity_class: 'very_late', overrides: { days_maturity: 80 } })
+    ]);
+    assert.deepEqual(Array.from(groups, group => group.label), [
+        'Very early varieties',
+        'Early varieties',
+        'Mid varieties',
+        'Late varieties',
+        'Very late varieties'
+    ]);
+    assert.deepEqual(Array.from(groups, group => group.options[0].label), [
+        'Very Quick - 40d',
+        'Quick - 50d',
+        'Middle - 60d',
+        'Slow - 70d',
+        'Very Slow - 80d'
+    ]);
+});
+
 test('variety grouping leaves insufficient inferred data uncategorized but honors manual class', () => {
     const groups = hooks.buildGroupedVarietyOptions([
         makeVariety({ variety_id: 1, variety_name: 'Only One', overrides: { days_maturity: 45 } }),

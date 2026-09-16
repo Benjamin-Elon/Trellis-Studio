@@ -954,6 +954,7 @@ Draw.loadPlugin(function (ui) {
                 const unitPrice = resolvePackagePriceForUnit(crop, line.unit);
                 const target = Array(n).fill(0);
                 if (!addDemandAcrossWeeks(target, weeks, line, kgPerUnit, weekStartDow)) continue;
+                if (!Number.isFinite(unitPrice)) pushWarn(warns, `Self Sufficiency value for ${crop.plant || crop.id} ${line.unit || "unit"} counted as $0 because no matching package price is set.`); // NEW
                 const result = {
                     line,
                     cropId: String(crop.id),
@@ -992,6 +993,7 @@ Draw.loadPlugin(function (ui) {
                 const unitPrice = resolvePackagePriceForUnit(crop, line.unit);
                 const target = Array(n).fill(0);
                 if (!addDemandAcrossWeeks(target, weeks, line, kgPerUnit, weekStartDow)) continue;
+                if (!Number.isFinite(unitPrice)) pushWarn(warns, `Demand revenue for ${crop.plant || crop.id} ${line.unit || "unit"} counted as $0 because no matching package price is set.`); // NEW
                 const result = {
                     line,
                     cropId: String(crop.id),
@@ -1734,7 +1736,7 @@ Draw.loadPlugin(function (ui) {
                 errors.push(makeValidation("crop", "crop.invalid_kg_per_plant", `Enter kg/plant greater than 0 for ${cropName}.`, { cropId, field: "kgPerPlant", target: cropTarget(crop, "basics", "kgPerPlant") }));
             }
             if (PlanMath.hasYmd(crop.harvestStart) && PlanMath.hasYmd(crop.harvestEnd) && crop.harvestStart > crop.harvestEnd) {
-                errors.push(makeValidation("crop", "crop.reversed_harvest_window", `Set ${cropName} harvest start on or before harvest end.`, { cropId, field: "harvestStart", target: cropTarget(crop, "basics", "harvestStart") }));
+                errors.push(makeValidation("crop", "crop.reversed_harvest_window", `Set ${cropName} harvest start on or before harvest end.`, { cropId, field: "harvestStart", relatedFields: ["harvestStart", "harvestEnd"], target: cropTarget(crop, "basics", "harvestStart", { relatedFields: ["harvestStart", "harvestEnd"] }) })); // CHANGE
             }
 
             const packageUnitKeys = new Set();
@@ -1768,7 +1770,7 @@ Draw.loadPlugin(function (ui) {
                     errors.push(makeValidation("csa", "csa.invalid_boxes_per_week", "Enter CSA boxes/week greater than 0.", { field: "boxesPerWeek", target: csaTarget("boxesPerWeek") }));
                 }
                 if (PlanMath.hasYmd(plan.csa.start) && PlanMath.hasYmd(plan.csa.end) && plan.csa.start > plan.csa.end) {
-                    errors.push(makeValidation("csa", "csa.reversed_date_range", "Set CSA start on or before CSA end.", { field: "start", target: csaTarget("start") }));
+                    errors.push(makeValidation("csa", "csa.reversed_date_range", "Set CSA start on or before CSA end.", { field: "start", relatedFields: ["start", "end"], target: csaTarget("start", { relatedFields: ["start", "end"] }) })); // CHANGE
                 }
                 for (const [componentIndex, component] of (plan.csa.components || []).entries()) {
                     const crop = PlanMath.findCrop(plan, component.cropId);
@@ -1780,10 +1782,10 @@ Draw.loadPlugin(function (ui) {
                     const from = component.start || plan.csa.start;
                     const to = component.end || plan.csa.end;
                     if (!PlanMath.hasYmd(from) || !PlanMath.hasYmd(to)) {
-                        errors.push(makeValidation("csa", "csa.component_missing_dates", `Enter CSA component dates for ${cropName}.`, { cropId: String(crop.id || ""), componentIndex, field: "start", target: csaTarget("start", { componentIndex }) }));
+                        errors.push(makeValidation("csa", "csa.component_missing_dates", `Enter CSA component dates for ${cropName}.`, { cropId: String(crop.id || ""), componentIndex, field: "start", relatedFields: ["start", "end"], target: csaTarget("start", { componentIndex, relatedFields: ["start", "end"] }) })); // CHANGE
                     }
                     if (PlanMath.hasYmd(from) && PlanMath.hasYmd(to) && from > to) {
-                        errors.push(makeValidation("csa", "csa.component_reversed_dates", `Set CSA component start on or before end for ${cropName}.`, { cropId: String(crop.id || ""), componentIndex, field: "start", target: csaTarget("start", { componentIndex }) }));
+                        errors.push(makeValidation("csa", "csa.component_reversed_dates", `Set CSA component start on or before end for ${cropName}.`, { cropId: String(crop.id || ""), componentIndex, field: "start", relatedFields: ["start", "end"], target: csaTarget("start", { componentIndex, relatedFields: ["start", "end"] }) })); // CHANGE
                     }
                     if (!Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, component.unit))) {
                         errors.push(makeValidation("csa", "csa.component_unresolved_unit", `Choose a valid CSA unit for ${cropName}.`, { cropId: String(crop.id || ""), componentIndex, field: "unit", target: csaTarget("unit", { componentIndex }) }));
@@ -1819,8 +1821,8 @@ Draw.loadPlugin(function (ui) {
                 if (!DEMAND_FREQUENCIES.includes(String(line && line.frequency || ""))) errors.push(makeValidation("demand", "demand.line_invalid_frequency", `Choose a valid frequency for demand line ${id || "unknown"}.`, { field: "frequency", target: demandTarget("frequency", { lineId: id, lineIndex }) }));
                 if (!Number.isInteger(Number(line && line.everyN)) || Number(line.everyN) < 1) errors.push(makeValidation("demand", "demand.line_invalid_every_n", `Enter every value greater than 0 for demand line ${id || "unknown"}.`, { field: "everyN", target: demandTarget("everyN", { lineId: id, lineIndex }) }));
                 if (!DEMAND_PRIORITIES.includes(String(line && line.priority || ""))) errors.push(makeValidation("demand", "demand.line_invalid_priority", `Choose a valid priority for demand line ${id || "unknown"}.`, { field: "priority", target: demandTarget("priority", { lineId: id, lineIndex }) }));
-                if (!PlanMath.hasYmd(line && line.from) || !PlanMath.hasYmd(line && line.to)) errors.push(makeValidation("demand", "demand.line_missing_dates", `Enter demand dates for line ${id || "unknown"}.`, { field: "from", target: demandTarget("from", { lineId: id, lineIndex }) }));
-                if (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to) errors.push(makeValidation("demand", "demand.line_reversed_dates", `Set demand start on or before end for line ${id || "unknown"}.`, { field: "from", target: demandTarget("from", { lineId: id, lineIndex }) }));
+                if (!PlanMath.hasYmd(line && line.from) || !PlanMath.hasYmd(line && line.to)) errors.push(makeValidation("demand", "demand.line_missing_dates", `Enter demand dates for line ${id || "unknown"}.`, { field: "from", relatedFields: ["from", "to"], target: demandTarget("from", { lineId: id, lineIndex, relatedFields: ["from", "to"] }) })); // CHANGE
+                if (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to) errors.push(makeValidation("demand", "demand.line_reversed_dates", `Set demand start on or before end for line ${id || "unknown"}.`, { field: "from", relatedFields: ["from", "to"], target: demandTarget("from", { lineId: id, lineIndex, relatedFields: ["from", "to"] }) })); // CHANGE
                 if (crop && !Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, line && line.unit))) errors.push(makeValidation("demand", "demand.line_unresolved_unit", `Choose a valid unit for demand line ${id || "unknown"}.`, { cropId: String(crop.id || ""), field: "unit", target: demandTarget("unit", { lineId: id, lineIndex }) }));
             }
             return errors;
@@ -1844,8 +1846,8 @@ Draw.loadPlugin(function (ui) {
                 if (!Number.isFinite(Number(line && line.qty)) || Number(line.qty) <= 0) errors.push(makeValidation("self-sufficiency", "self.line_invalid_quantity", `Enter quantity greater than 0 for Self Sufficiency line ${id || "unknown"}.`, { field: "qty", target: selfSufficiencyTarget("qty", { selfLineId: id, selfLineIndex: lineIndex }) })); // NEW
                 if (!DEMAND_FREQUENCIES.includes(String(line && line.frequency || ""))) errors.push(makeValidation("self-sufficiency", "self.line_invalid_frequency", `Choose a valid frequency for Self Sufficiency line ${id || "unknown"}.`, { field: "frequency", target: selfSufficiencyTarget("frequency", { selfLineId: id, selfLineIndex: lineIndex }) })); // NEW
                 if (!Number.isInteger(Number(line && line.everyN)) || Number(line.everyN) < 1) errors.push(makeValidation("self-sufficiency", "self.line_invalid_every_n", `Enter every value greater than 0 for Self Sufficiency line ${id || "unknown"}.`, { field: "everyN", target: selfSufficiencyTarget("everyN", { selfLineId: id, selfLineIndex: lineIndex }) })); // NEW
-                if (!PlanMath.hasYmd(line && line.from) || !PlanMath.hasYmd(line && line.to)) errors.push(makeValidation("self-sufficiency", "self.line_missing_dates", `Enter Self Sufficiency dates for line ${id || "unknown"}.`, { field: "from", target: selfSufficiencyTarget("from", { selfLineId: id, selfLineIndex: lineIndex }) })); // NEW
-                if (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to) errors.push(makeValidation("self-sufficiency", "self.line_reversed_dates", `Set Self Sufficiency start on or before end for line ${id || "unknown"}.`, { field: "from", target: selfSufficiencyTarget("from", { selfLineId: id, selfLineIndex: lineIndex }) })); // NEW
+                if (!PlanMath.hasYmd(line && line.from) || !PlanMath.hasYmd(line && line.to)) errors.push(makeValidation("self-sufficiency", "self.line_missing_dates", `Enter Self Sufficiency dates for line ${id || "unknown"}.`, { field: "from", relatedFields: ["from", "to"], target: selfSufficiencyTarget("from", { selfLineId: id, selfLineIndex: lineIndex, relatedFields: ["from", "to"] }) })); // CHANGE
+                if (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to) errors.push(makeValidation("self-sufficiency", "self.line_reversed_dates", `Set Self Sufficiency start on or before end for line ${id || "unknown"}.`, { field: "from", relatedFields: ["from", "to"], target: selfSufficiencyTarget("from", { selfLineId: id, selfLineIndex: lineIndex, relatedFields: ["from", "to"] }) })); // CHANGE
                 if (crop && !Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, line && line.unit))) errors.push(makeValidation("self-sufficiency", "self.line_unresolved_unit", `Choose a valid unit for Self Sufficiency line ${id || "unknown"}.`, { cropId: String(crop.id || ""), field: "unit", target: selfSufficiencyTarget("unit", { selfLineId: id, selfLineIndex: lineIndex }) })); // NEW
             }
             return errors;
@@ -3297,7 +3299,7 @@ Draw.loadPlugin(function (ui) {
                 if (target > EPS && (!PlanMath.hasYmd(crop.harvestStart) || !PlanMath.hasYmd(crop.harvestEnd))) {
                     const cropName = String(crop.plant || crop.id);
                     const field = PlanMath.hasYmd(crop.harvestStart) ? "harvestEnd" : "harvestStart";
-                    errors.push({ scope: "crop", code: "crop.missing_harvest_window", message: `Enter a harvest window for ${cropName}.`, cropId: String(crop.id || ""), field, target: { area: "crop", cropId: String(crop.id || ""), tab: "basics", field } });
+                    errors.push({ scope: "crop", code: "crop.missing_harvest_window", message: `Enter a harvest window for ${cropName}.`, cropId: String(crop.id || ""), field, relatedFields: ["harvestStart", "harvestEnd"], target: { area: "crop", cropId: String(crop.id || ""), tab: "basics", field, relatedFields: ["harvestStart", "harvestEnd"] } }); // CHANGE
                 }
                 let status = "OK";
 
@@ -3697,6 +3699,10 @@ Draw.loadPlugin(function (ui) {
         return `${kg >= 10 ? kg.toFixed(0) : kg.toFixed(1)} kg`;
     }
 
+    function harvestMarkerText(item) {
+        return `${item.label === "S" ? "Harvest start" : "Harvest end"}: ${item.ymd}`;
+    } // CHANGE: marker popovers and accessible labels share one exact harvest-date formatter.
+
     function renderCropTimeline(hostEl, weekStarts, cropWeekly, crop) {
         if (!hostEl) return;
         const weeks = Array.isArray(weekStarts) ? weekStarts : [];
@@ -3761,7 +3767,15 @@ Draw.loadPlugin(function (ui) {
                 const marker = document.createElement("div");
                 marker.className = `yp-harvest-marker ${markers.length > 1 ? "yp-harvest-marker-combined" : (markers[0].label === "S" ? "yp-harvest-marker-start" : "yp-harvest-marker-end")}`;
                 marker.setAttribute("data-label", markers.map(item => item.label).join("/"));
-                marker.title = markers.map(item => `${item.label === "S" ? "Harvest start" : "Harvest end"} ${item.ymd}`).join(" / ");
+                const markerText = markers.map(harvestMarkerText);
+                const popover = document.createElement("div");
+                popover.className = "yp-harvest-marker-popover";
+                popover.id = `yp-harvest-marker-popover-${index}-${markers.map(item => item.label).join("-")}`;
+                popover.textContent = markerText.join("\n");
+                marker.tabIndex = 0;
+                marker.setAttribute("aria-label", markerText.join("; "));
+                marker.setAttribute("aria-describedby", popover.id);
+                marker.appendChild(popover); // CHANGE: harvest-window date popover opens on marker hover/focus.
                 week.appendChild(marker); // harvest-window marker
             }
             hostEl.appendChild(week);
@@ -3878,8 +3892,12 @@ Draw.loadPlugin(function (ui) {
                 .yp-crop-timeline-bar-demand{border:1px solid #c59b18;background:#ffd95a}
                 .yp-crop-timeline-bar-harvest{border:2px solid #0c3f1a;background:transparent;box-shadow:inset 0 0 0 1px rgba(12,63,26,.36),0 0 0 1px rgba(255,255,255,.78)}
                 .yp-crop-timeline-bar-inventory{border:1px solid #4f8b57;background:#62a96b}
-                .yp-harvest-marker{position:absolute;left:50%;top:-13px;bottom:0;width:0;border-left:2px solid #7a3f12;transform:translateX(-1px);pointer-events:none}
+                .yp-harvest-marker{position:absolute;left:50%;top:-13px;bottom:0;width:0;border-left:2px solid #7a3f12;transform:translateX(-1px);pointer-events:auto;outline:none}
                 .yp-harvest-marker::before{content:attr(data-label);position:absolute;top:-1px;left:50%;transform:translateX(-50%);min-width:12px;height:12px;line-height:12px;border-radius:6px;background:#7a3f12;color:#fff;font-size:9px;font-weight:700;text-align:center}
+                .yp-harvest-marker:focus-visible::before{box-shadow:0 0 0 2px #fff,0 0 0 4px var(--yp-primary)}
+                .yp-harvest-marker-popover{display:none;position:absolute;left:50%;top:-8px;transform:translate(-50%,-100%);z-index:3;min-width:132px;box-sizing:border-box;padding:5px 7px;border:1px solid var(--yp-neutral-700);border-radius:5px;background:#fff;color:var(--yp-neutral-900);box-shadow:0 5px 14px rgba(0,0,0,.18);font-size:10px;font-weight:700;line-height:1.35;white-space:pre;pointer-events:none;text-align:left}
+                .yp-harvest-marker-popover::after{content:"";position:absolute;left:50%;bottom:-5px;transform:translateX(-50%) rotate(45deg);width:8px;height:8px;border-right:1px solid var(--yp-neutral-700);border-bottom:1px solid var(--yp-neutral-700);background:#fff}
+                .yp-harvest-marker:hover .yp-harvest-marker-popover,.yp-harvest-marker:focus .yp-harvest-marker-popover{display:block}
                 .yp-harvest-marker-start{border-left-color:#1f5f99}
                 .yp-harvest-marker-start::before{background:#1f5f99}
                 .yp-harvest-marker-end{border-left-color:#9a3d2f}
@@ -3935,6 +3953,7 @@ Draw.loadPlugin(function (ui) {
                 .yp-diagnostics-item{display:block;width:100%;padding:5px 6px;border:0;border-radius:5px;background:#fff;text-align:left;color:var(--yp-neutral-900);font:12px Arial,sans-serif;cursor:pointer}
                 .yp-diagnostics-item:hover,.yp-diagnostics-item:focus{background:var(--yp-danger-bg);outline:1px solid var(--yp-danger)}
                 .yp-field-highlight{outline:2px solid var(--yp-danger)!important;outline-offset:2px}
+                .yp-target-highlight{outline:2px solid var(--yp-warning)!important;outline-offset:2px;background:var(--yp-warning-bg)!important} /* CHANGE */
                 .yp-attention-strip{display:none;margin-top:6px;padding:6px;border:1px solid var(--yp-warning);border-radius:6px;background:var(--yp-warning-bg)}
                 .yp-attention-title{font-weight:700;margin-bottom:4px;color:var(--yp-neutral-900)}
                 .yp-crop-card{box-sizing:border-box;border:0;border-bottom:1px solid #eee;background:#fff;padding:10px;text-align:left;cursor:pointer;width:100%;overflow-wrap:anywhere}
@@ -4281,16 +4300,18 @@ Draw.loadPlugin(function (ui) {
             }
 
             function createChip(label, value, tone, onClick, options) {
-                const chip = document.createElement(onClick ? "button" : "span");
-                if (onClick) chip.type = "button";
+                const action = onClick || (options && (options.targets || options.primaryTarget || options.highlightOnlyTarget) ? event => activateYearPlanTarget(options.primaryTarget || options.targets || options.highlightOnlyTarget, options.fallback, event && event.currentTarget) : null); // CHANGE
+                const chip = document.createElement(action ? "button" : "span"); // CHANGE
+                if (action) chip.type = "button"; // CHANGE
                 chip.className = "yp-chip";
                 chip.dataset.tone = tone || "neutral";
-                if (onClick) chip.dataset.clickable = "true";
+                if (options && options.chipKind) chip.dataset.chipKind = String(options.chipKind); // CHANGE
+                if (action) chip.dataset.clickable = "true"; // CHANGE
                 chip.innerHTML = value === undefined || value === null || value === ""
                     ? mxUtils.htmlEntities(String(label || ""))
                     : `<strong>${mxUtils.htmlEntities(String(label || ""))}</strong> ${mxUtils.htmlEntities(String(value))}`;
                 if (options && options.title) chip.title = String(options.title); // CHANGE: actionable badges expose their issue list in a native tooltip.
-                if (onClick) chip.addEventListener("click", onClick);
+                if (action) chip.addEventListener("click", action); // CHANGE
                 return chip;
             }
 
@@ -4353,12 +4374,26 @@ Draw.loadPlugin(function (ui) {
                 popover.style.top = `${top}px`;
             } // CHANGE
 
-            function focusAndHighlight(element) {
-                if (!element) return false;
-                if (element.disabled) return false;
+            function highlightElements(elements, className) {
+                const nodes = (Array.isArray(elements) ? elements : [elements]).filter(Boolean);
+                if (!nodes.length) return false;
+                const highlightClass = className || "yp-field-highlight";
+                for (const node of nodes) {
+                    if (!node.classList) continue;
+                    node.classList.add(highlightClass);
+                    setTimeout(() => { if (node && node.classList) node.classList.remove(highlightClass); }, 1200);
+                }
+                return true;
+            } // CHANGE
+
+            function focusAndHighlight(element, relatedElements) {
+                const related = (relatedElements || []).filter(Boolean);
+                if (!element || element.disabled) {
+                    highlightElements(related.length ? related : element, "yp-field-highlight"); // CHANGE
+                    return false;
+                }
                 if (typeof element.focus === "function") element.focus();
-                element.classList.add("yp-field-highlight");
-                setTimeout(() => { if (element && element.classList) element.classList.remove("yp-field-highlight"); }, 1200);
+                highlightElements([element].concat(related), "yp-field-highlight"); // CHANGE
                 if (typeof element.scrollIntoView === "function") element.scrollIntoView({ block: "center", inline: "nearest" });
                 return true;
             }
@@ -4382,6 +4417,60 @@ Draw.loadPlugin(function (ui) {
                 scrollToElement(planCheckBox, "start");
             } // NEW: aggregate Plan Check warnings open the analysis section.
 
+            function scrollAndHighlightTarget(element) {
+                if (!element) return false;
+                highlightElements(element, "yp-target-highlight");
+                scrollToElement(element, "center");
+                return true;
+            } // CHANGE
+
+            function packageIndexForUnit(crop, unit) {
+                const unitKey = String(unit || "").trim().toLowerCase();
+                if (!unitKey) return -1;
+                return ((crop && crop.packages) || []).findIndex(pkg => String(pkg && pkg.unit || "").trim().toLowerCase() === unitKey);
+            } // NEW
+
+            function firstMissingPackagePriceTarget() {
+                const missingForLine = line => {
+                    const crop = PlanMath.findCrop(plan, line && line.cropId);
+                    if (!crop || !Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, line && line.unit))) return null;
+                    if (Number.isFinite(PlanMath.resolvePackagePriceForUnit(crop, line && line.unit))) return null;
+                    const packageIndex = packageIndexForUnit(crop, line && line.unit);
+                    return packageIndex >= 0 ? { area: "crop", cropId: String(crop.id || ""), tab: "packages", field: "price", packageIndex } : null;
+                };
+                for (const line of ((plan && plan.selfSufficiency && plan.selfSufficiency.lines) || [])) {
+                    const target = missingForLine(line);
+                    if (target) return target;
+                }
+                for (const line of ((plan && plan.demands) || [])) {
+                    const target = missingForLine(line);
+                    if (target) return target;
+                }
+                for (const component of ((plan && plan.csa && plan.csa.components) || [])) {
+                    const crop = PlanMath.findCrop(plan, component && component.cropId);
+                    if (!crop || !Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, component && component.unit))) continue;
+                    if (Number.isFinite(PlanMath.resolvePackagePriceForUnit(crop, component && component.unit))) continue;
+                    const packageIndex = packageIndexForUnit(crop, component && component.unit);
+                    if (packageIndex >= 0) return { area: "crop", cropId: String(crop.id || ""), tab: "packages", field: "price", packageIndex };
+                }
+                return null;
+            } // NEW: price warnings navigate to the package row that can repair the understated value.
+
+            function missingPackagePriceTargetForLine(line) {
+                const crop = PlanMath.findCrop(plan, line && line.cropId);
+                if (!crop || !Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, line && line.unit))) return null;
+                if (Number.isFinite(PlanMath.resolvePackagePriceForUnit(crop, line && line.unit))) return null;
+                const packageIndex = packageIndexForUnit(crop, line && line.unit);
+                return packageIndex >= 0 ? { area: "crop", cropId: String(crop.id || ""), tab: "packages", field: "price", packageIndex } : null;
+            } // CHANGE
+
+            function navigateToMissingPackagePrice(event) {
+                const target = firstMissingPackagePriceTarget();
+                if (!target) return scrollToPlanCheck();
+                if (target.cropId) openCropPackages(target.cropId);
+                if (!activateYearPlanTarget(target, scrollToPlanCheck, event && event.currentTarget)) scrollToPlanCheck(); // CHANGE
+            } // NEW
+
             function findTargetControl(target) {
                 if (!target || typeof target !== "object") return null;
                 const selectorParts = [`[data-year-plan-field="${String(target.field || "").replace(/"/g, '\\"')}"]`];
@@ -4395,9 +4484,27 @@ Draw.loadPlugin(function (ui) {
                 return card.querySelector(selectorParts.join(""));
             }
 
-            function navigateToValidation(result, fallbackTrigger) {
-                const target = result && result.target;
-                if (!target || typeof target !== "object") return focusAndHighlight(fallbackTrigger);
+            function targetWithField(target, field) {
+                return target && field ? { ...target, field } : null;
+            } // CHANGE
+
+            function relatedTargetsFor(target, result) {
+                const fields = result && Array.isArray(result.relatedFields) ? result.relatedFields : target && target.relatedFields;
+                if (fields && fields.length) return fields.map(field => targetWithField(target, field)).filter(Boolean);
+                const code = String(result && result.code || "");
+                const field = String(target && target.field || "");
+                if (/date|harvest_window/i.test(code) || ["from", "start", "harvestStart"].includes(field)) {
+                    if (target && target.area === "crop") return [targetWithField(target, "harvestStart"), targetWithField(target, "harvestEnd")];
+                    if (target && target.area === "csa" && target.componentIndex !== undefined) return [targetWithField(target, "start"), targetWithField(target, "end")];
+                    if (target && target.area === "csa") return [targetWithField(target, "start"), targetWithField(target, "end")];
+                    if (target && target.area === "demand") return [targetWithField(target, "from"), targetWithField(target, "to")];
+                    if (target && target.area === "self-sufficiency") return [targetWithField(target, "from"), targetWithField(target, "to")];
+                }
+                return [];
+            } // CHANGE
+
+            function revealYearPlanTarget(target) {
+                if (!target || typeof target !== "object") return;
                 if (target.area === "crop") {
                     const targetTab = target.tab || "basics";
                     const needsCropRender = String(state.selectedCropId || "") !== String(target.cropId || "") || state.activeTab !== targetTab;
@@ -4408,12 +4515,12 @@ Draw.loadPlugin(function (ui) {
                     state.csaExpanded = true;
                     renderCsa(true);
                 } else if (target.area === "self-sufficiency") {
-                    state.selfSufficiencyExpanded = true; // NEW
+                    state.selfSufficiencyExpanded = true;
                     const line = target.selfLineId
                         ? ((plan.selfSufficiency && plan.selfSufficiency.lines) || []).find(item => String(item && item.id || "") === String(target.selfLineId))
                         : ((plan.selfSufficiency && plan.selfSufficiency.lines) || [])[Math.max(0, Math.trunc(Number(target.selfLineIndex) || 0))];
-                    if (line) state.collapsedSelfSufficiencyLineIds.delete(String(line.id || "")); // NEW
-                    renderSelfSufficiencyStrip(true); // NEW
+                    if (line) state.collapsedSelfSufficiencyLineIds.delete(String(line.id || ""));
+                    renderSelfSufficiencyStrip(true);
                 } else if (target.area === "demand") {
                     state.demandExpanded = true;
                     const line = target.lineId
@@ -4426,12 +4533,68 @@ Draw.loadPlugin(function (ui) {
                         state.collapsedDemandChannelIds.delete(String(target.channelId));
                     }
                     renderDemandStrip(true);
+                    syncDemandDerived();
                 } else if (target.area === "crop-list") {
                     state.cropPlanExpanded = true;
                     renderCropPlan(false);
+                } else if (target.area === "plan-check") {
+                    state.planCheckExpanded = true;
+                    renderPlanCheck();
                 }
-                const control = findTargetControl(target);
-                return focusAndHighlight(control) || focusAndHighlight(fallbackTrigger);
+            } // CHANGE
+
+            function findHighlightTarget(target) {
+                if (!target || typeof target !== "object") return null;
+                if (target.area === "plan-check") {
+                    if (target.cropId) return findPlanCheckCropRow(target.cropId);
+                    if (target.chipKind) return planCheckSummary.querySelector(`.yp-chip[data-chip-kind="${String(target.chipKind).replace(/"/g, '\\"')}"]`);
+                    if (target.rowKind) return totalsBox.querySelector(`[data-plan-check-row-kind="${String(target.rowKind).replace(/"/g, '\\"')}"]`);
+                    if (target.section === "diagnostics") return diagnosticsBox;
+                    if (target.section === "summary") return planCheckSummary; // CHANGE
+                    return planCheckBox;
+                }
+                if (target.area === "demand") {
+                    if (target.lineId) return demandBox.querySelector(`[data-demand-line-id="${String(target.lineId).replace(/"/g, '\\"')}"]`); // CHANGE
+                    if (target.channelId) return demandBox.querySelector(`[data-demand-channel-id="${String(target.channelId).replace(/"/g, '\\"')}"]`); // CHANGE
+                    return demandBox;
+                }
+                if (target.area === "self-sufficiency") {
+                    if (target.section === "nutrition") return selfSufficiencyBox.querySelector("[data-year-plan-nutrition-section]"); // CHANGE
+                    if (target.selfLineId) return selfSufficiencyBox.querySelector(`[data-self-line-id="${String(target.selfLineId).replace(/"/g, '\\"')}"]`); // CHANGE
+                    return selfSufficiencyBox;
+                }
+                if (target.area === "csa") {
+                    if (target.componentIndex !== undefined) return csaBox.querySelector(`[data-csa-component-index="${String(target.componentIndex).replace(/"/g, '\\"')}"]`); // CHANGE
+                    return csaBox;
+                }
+                if (target.area === "crop") {
+                    if (target.cropId) return card.querySelector(`.yp-crop-card[data-crop-id="${String(target.cropId).replace(/"/g, '\\"')}"]`) || editorBox;
+                    return cropPlanBox;
+                }
+                return null;
+            } // CHANGE
+
+            function activateYearPlanTarget(targets, fallback, fallbackTrigger, result) {
+                const list = (Array.isArray(targets) ? targets : [targets]).filter(Boolean);
+                if (!list.length) {
+                    if (typeof fallback === "function") fallback();
+                    return focusAndHighlight(fallbackTrigger);
+                }
+                const primary = list[0];
+                revealYearPlanTarget(primary);
+                const primaryControl = primary.field ? findTargetControl(primary) : null;
+                const relatedControls = list.concat(relatedTargetsFor(primary, result)).slice(1).map(findTargetControl).filter(Boolean);
+                if (primaryControl && primaryControl.disabled) return focusAndHighlight(fallbackTrigger) || scrollAndHighlightTarget(findHighlightTarget(primary)); // CHANGE
+                if (primaryControl && focusAndHighlight(primaryControl, relatedControls)) return true;
+                if (relatedControls.length && focusAndHighlight(relatedControls[0], relatedControls.slice(1))) return true;
+                if (scrollAndHighlightTarget(findHighlightTarget(primary))) return true;
+                if (typeof fallback === "function") fallback();
+                return focusAndHighlight(fallbackTrigger);
+            } // CHANGE
+
+            function navigateToValidation(result, fallbackTrigger) {
+                const target = result && result.target;
+                return activateYearPlanTarget([target].concat(relatedTargetsFor(target, result)), null, fallbackTrigger, result); // CHANGE
             }
 
             function createDiagnosticsControl(label, results) {
@@ -4532,21 +4695,23 @@ Draw.loadPlugin(function (ui) {
             function buildAttentionItems(chartSummary) {
                 const items = [];
                 const add = item => { if (items.length < 8 && item) items.push(item); };
+                const priceDiagnostics = ((dashboard && dashboard.diagnostics) || []).filter(message => /no matching package price is set/i.test(String(message || ""))); // NEW
+                if (priceDiagnostics.length) add(createChip(`Missing package price${priceDiagnostics.length === 1 ? "" : "s"}`, "", "warning", navigateToMissingPackagePrice, { title: priceDiagnostics.join("\n") })); // CHANGE: missing-price warnings jump to the package price field that fixes them.
                 for (const metric of ((dashboard && dashboard.cropMetrics) || [])) {
                     const cropDiagnostics = cropValidationResults(metric.crop.id);
                     if (metric.status === "Missing data") add(createValidationAttentionChip(`${cropLabel(metric.crop)} missing data`, "danger", cropDiagnostics, false, () => selectCropFromAttention(metric.crop.id)));
                     else if (cropDiagnostics.length) add(createValidationAttentionChip(`${cropLabel(metric.crop)} diagnostics`, "danger", cropDiagnostics, false, () => selectCropFromAttention(metric.crop.id)));
-                    else if (metric.status === "Short") add(createChip(`${cropLabel(metric.crop)} short ${formatKg(metric.shortKg)}`, "", "danger", () => selectCropFromAttention(metric.crop.id, { scrollPlanCheckRow: true })));
-                    else if (metric.status === "Expired / timing issue") add(createChip(`${cropLabel(metric.crop)} timing ${formatKg(metric.shortKg)}`, "", "warning", () => selectCropFromAttention(metric.crop.id, { scrollPlanCheckRow: true })));
+                    else if (metric.status === "Short") add(createChip(`${cropLabel(metric.crop)} short ${formatKg(metric.shortKg)}`, "", "danger", () => selectCropFromAttention(metric.crop.id, { highlightPlanCheckRow: true }))); // CHANGE
+                    else if (metric.status === "Expired / timing issue") add(createChip(`${cropLabel(metric.crop)} timing ${formatKg(metric.shortKg)}`, "", "warning", () => selectCropFromAttention(metric.crop.id, { highlightPlanCheckRow: true }))); // CHANGE
                 }
-                if (chartSummary && chartSummary.expiredKg > EPS) add(createChip(`Expired ${formatKg(chartSummary.expiredKg)}`, "", "warning", () => scrollToPlanCheck()));
+                if (chartSummary && chartSummary.expiredKg > EPS) add(createChip(`Expired ${formatKg(chartSummary.expiredKg)}`, "", "warning", null, { primaryTarget: { area: "plan-check", chipKind: "expired" }, chipKind: "attention-expired" })); // CHANGE
                 const demandErrors = PlanSchema.validateDemand(plan); // NEW
                 if (demandErrors.length) add(createValidationAttentionChip("Demand dates invalid", "danger", demandErrors, true, () => { state.demandExpanded = true; renderDemandStrip(true); })); // CHANGE
                 const selfErrors = PlanSchema.validateSelfSufficiency(plan); // NEW
                 if (selfErrors.length) add(createValidationAttentionChip("Self Sufficiency needs setup", "danger", selfErrors, true, () => { state.selfSufficiencyExpanded = true; renderSelfSufficiencyStrip(true); })); // CHANGE
                 const csaErrors = PlanSchema.validateCsa(plan); // NEW
                 if (csaErrors.length) add(createValidationAttentionChip("CSA setup issues", "danger", csaErrors, true, () => { state.csaExpanded = true; renderCsa(true); })); // CHANGE
-                if ((dashboard && dashboard.diagnostics || []).length && !items.length) add(createChip("Plan Check has diagnostics", "", "warning", () => scrollToPlanCheck(), { title: (dashboard.diagnostics || []).join("\n") })); // CHANGE
+                if ((dashboard && dashboard.diagnostics || []).length && !items.length) add(createChip("Plan Check has diagnostics", "", "warning", null, { title: (dashboard.diagnostics || []).join("\n"), primaryTarget: { area: "plan-check", section: "diagnostics" }, chipKind: "plan-check-diagnostics" })); // CHANGE
                 return items;
             }
 
@@ -4556,7 +4721,8 @@ Draw.loadPlugin(function (ui) {
                 renderSelectedEditor();
                 renderCropPlan(false);
                 renderPlanCheck();
-                if (options && options.scrollPlanCheckRow) scrollToPlanCheckCropRow(cropId); // NEW
+                if (options && options.highlightPlanCheckRow) scrollAndHighlightTarget(findPlanCheckCropRow(cropId)); // CHANGE
+                else if (options && options.scrollPlanCheckRow) scrollToPlanCheckCropRow(cropId); // NEW
             } // CHANGE
 
             const ADD_PACKAGES_UNIT_VALUE = "__trellis_add_packages__"; // CHANGE
@@ -4916,7 +5082,7 @@ Draw.loadPlugin(function (ui) {
                 titleGroup.appendChild(sub);
                 const statusRow = document.createElement("div");
                 statusRow.className = "yp-chip-row";
-                statusRow.appendChild(createChip("Status", statusText, statusToneName));
+                statusRow.appendChild(createChip("Status", statusText, statusToneName, null, statusToneName === "warning" || statusToneName === "danger" ? { primaryTarget: { area: "plan-check", section: (dashboard && dashboard.diagnostics || []).length ? "diagnostics" : "summary" } } : null)); // CHANGE
                 if (loadedDraftForCurrentYear) statusRow.appendChild(createChip("Draft", "", "primary")); // CHANGE
                 if (dirty) statusRow.appendChild(createChip("Unsaved", "", "primary"));
                 head.appendChild(titleGroup);
@@ -4972,7 +5138,7 @@ Draw.loadPlugin(function (ui) {
                     name.textContent = cropLabel(metric.crop);
                     const statusHost = document.createElement("span");
                     statusHost.className = "yp-diagnostics-wrap";
-                    statusHost.appendChild(createChip(detail, "", statusTone(metric.status)));
+                    statusHost.appendChild(createChip(detail, "", statusTone(metric.status), (metric.status === "Short" || metric.status === "Expired / timing issue") ? () => selectCropFromAttention(metric.crop.id, { highlightPlanCheckRow: true }) : null)); // CHANGE
                     const cropDiagnostics = cropHasDiagnostics(metric.crop.id) ? createDiagnosticsControl(`${cropLabel(metric.crop)} diagnostics`, cropValidationResults(metric.crop.id)) : null;
                     if (cropDiagnostics) statusHost.appendChild(cropDiagnostics);
                     top.appendChild(name);
@@ -5168,10 +5334,10 @@ Draw.loadPlugin(function (ui) {
                     createChip("Target", formatKg(chartSummary.targetKg), "primary"),
                     createChip("Harvested", formatKg(chartSummary.harvestKg), chartSummary.harvestKg > EPS ? "success" : "neutral"),
                     createChip("Usable", formatKg(chartSummary.usableSupplyKg), chartSummary.usableSupplyKg > EPS ? "success" : "neutral"),
-                    createChip("Short", formatKg(chartSummary.shortKg), chartSummary.shortKg > EPS ? "danger" : "success"),
-                    createChip("Expired", formatKg(chartSummary.expiredKg), chartSummary.expiredKg > EPS ? "warning" : "neutral"),
-                    createChip("Worst shortage", worstShortage, chartSummary.worstShortageKg > EPS ? "danger" : "neutral"),
-                    createChip("Short weeks", String(chartSummary.shortWeeks), chartSummary.shortWeeks > 0 ? "danger" : "success"),
+                    createChip("Short", formatKg(chartSummary.shortKg), chartSummary.shortKg > EPS ? "danger" : "success", null, chartSummary.shortKg > EPS ? { primaryTarget: { area: "plan-check", rowKind: "shortage-weeks" }, chipKind: "short" } : null), // CHANGE
+                    createChip("Expired", formatKg(chartSummary.expiredKg), chartSummary.expiredKg > EPS ? "warning" : "neutral", null, chartSummary.expiredKg > EPS ? { primaryTarget: { area: "plan-check", chipKind: "expired" }, chipKind: "expired" } : null), // CHANGE
+                    createChip("Worst shortage", worstShortage, chartSummary.worstShortageKg > EPS ? "danger" : "neutral", null, chartSummary.worstShortageKg > EPS ? { primaryTarget: { area: "plan-check", rowKind: "shortage-weeks" }, chipKind: "worst-shortage" } : null), // CHANGE
+                    createChip("Short weeks", String(chartSummary.shortWeeks), chartSummary.shortWeeks > 0 ? "danger" : "success", null, chartSummary.shortWeeks > 0 ? { primaryTarget: { area: "plan-check", rowKind: "shortage-weeks" }, chipKind: "short-weeks" } : null), // CHANGE
                     createChip("Total potential", formatMoney(scopedRevenue.potentialRevenue), "neutral"),
                     createChip("Total fulfilled", formatMoney(scopedRevenue.fulfilledRevenue), scopedRevenue.fulfilledRevenue > EPS ? "success" : "neutral")
                 ]);
@@ -5180,7 +5346,7 @@ Draw.loadPlugin(function (ui) {
                     const summary = PlanMath.summarizePlanChartModel(PlanMath.buildPlanChartModel(runtime.weekly, String(crop.id), { scope: chartScope }));
                     const revenue = summarizePlanCheckRevenue(crop.id, chartScope);
                     const metric = dashboard.cropMetricsById.get(String(crop.id));
-                    return `<tr data-plan-check-crop-id="${htmlAttr(crop.id)}"><td>${mxUtils.htmlEntities(cropLabel(crop))}</td><td>${summary.targetKg.toFixed(1)}</td><td>${summary.harvestKg.toFixed(1)}</td><td>${summary.usableSupplyKg.toFixed(1)}</td><td>${summary.shortKg.toFixed(1)}</td><td>${summary.expiredKg.toFixed(1)}</td><td>${formatMoney(revenue.potentialRevenue)}</td><td>${formatMoney(revenue.fulfilledRevenue)}</td><td>${mxUtils.htmlEntities(metric ? metric.status : "Missing data")}</td></tr>`; // CHANGE: attention navigation can scroll to the matching crop row.
+                    return `<tr data-plan-check-crop-id="${htmlAttr(crop.id)}" data-plan-check-row-kind="${metric && (metric.status === "Short" || metric.status === "Expired / timing issue" || metric.status === "Missing data") ? "crop-problem" : "crop"}"><td>${mxUtils.htmlEntities(cropLabel(crop))}</td><td>${summary.targetKg.toFixed(1)}</td><td>${summary.harvestKg.toFixed(1)}</td><td>${summary.usableSupplyKg.toFixed(1)}</td><td>${summary.shortKg.toFixed(1)}</td><td>${summary.expiredKg.toFixed(1)}</td><td>${formatMoney(revenue.potentialRevenue)}</td><td>${formatMoney(revenue.fulfilledRevenue)}</td><td>${mxUtils.htmlEntities(metric ? metric.status : "Missing data")}</td></tr>`; // CHANGE: attention navigation can scroll to the matching crop row.
                 }).join("");
                 const selfMetric = dashboard.selfSufficiencyMetric || {};
                 const selfSourceRow = `<tr><td>Self Sufficiency</td><td>${(Number(selfMetric.targetKg) || 0).toFixed(1)}</td><td>${(Number(selfMetric.usableSupplyKg) || 0).toFixed(1)}</td><td>${(Number(selfMetric.shortKg) || 0).toFixed(1)}</td><td>${(plan.selfSufficiency && plan.selfSufficiency.lines || []).length}</td><td>${formatMoney(selfMetric.groceryValue)}</td><td>${formatMoney(selfMetric.fulfilledGroceryValue)}</td><td>${Number(selfMetric.shortKg) > EPS ? "Short" : "OK"}</td></tr>`;
@@ -5198,7 +5364,7 @@ Draw.loadPlugin(function (ui) {
                     if (chartScope === "csa") return Number(row.csaShortKg) > EPS;
                     if (chartScope === "sales") return Number(row.channelShortKg) > EPS;
                     return true;
-                }).map(row => `<tr><td>${mxUtils.htmlEntities(row.week)}</td><td>${row.selfDemandKg.toFixed(1)}</td><td>${row.selfShortKg.toFixed(1)}</td><td>${row.csaDemandKg.toFixed(1)}</td><td>${row.csaShortKg.toFixed(1)}</td><td>${row.channelDemandKg.toFixed(1)}</td><td>${row.channelShortKg.toFixed(1)}</td></tr>`).join("");
+                }).map(row => `<tr data-plan-check-row-kind="shortage-weeks"><td>${mxUtils.htmlEntities(row.week)}</td><td>${row.selfDemandKg.toFixed(1)}</td><td>${row.selfShortKg.toFixed(1)}</td><td>${row.csaDemandKg.toFixed(1)}</td><td>${row.csaShortKg.toFixed(1)}</td><td>${row.channelDemandKg.toFixed(1)}</td><td>${row.channelShortKg.toFixed(1)}</td></tr>`).join(""); // CHANGE
                 totalsBox.innerHTML =
                     `
                     <div style="font-weight:700;margin-bottom:6px;">Plan Check totals</div>
@@ -5603,7 +5769,7 @@ Draw.loadPlugin(function (ui) {
                 return [
                     createChip("Demand", formatKg(metric.targetKg), "neutral"),
                     createChip("Usable", formatKg(metric.usableSupplyKg), metric.usableSupplyKg > EPS ? "success" : "neutral"),
-                    createChip(metric.shortKg > EPS ? "Short" : "Status", metric.shortKg > EPS ? formatKg(metric.shortKg) : "OK", metric.shortKg > EPS ? "danger" : "success"),
+                    createChip(metric.shortKg > EPS ? "Short" : "Status", metric.shortKg > EPS ? formatKg(metric.shortKg) : "OK", metric.shortKg > EPS ? "danger" : "success", null, metric.shortKg > EPS ? { primaryTarget: { area: "plan-check", rowKind: "shortage-weeks" } } : null), // CHANGE
                     createChip("Lines", String(metric.lineCount), "neutral"),
                     createChip("Committed", formatKg(metric.priorityKg.committed), "neutral"),
                     createChip("Target", formatKg(metric.priorityKg.target), "neutral"),
@@ -5626,6 +5792,14 @@ Draw.loadPlugin(function (ui) {
                 return `every ${every} ${unit}${unit.endsWith("s") ? "" : "s"}`;
             }
 
+            function demandLineTarget(line, field) {
+                return { area: "demand", field, lineId: String(line && line.id || "") }; // CHANGE
+            } // CHANGE
+
+            function selfLineTarget(line, field, lineIndex) {
+                return { area: "self-sufficiency", field, selfLineId: String(line && line.id || ""), selfLineIndex: lineIndex };
+            } // CHANGE
+
             function demandLineSummaryChips(line, crop) {
                 const result = runtime && runtime.weekly && runtime.weekly.perDemandLine && runtime.weekly.perDemandLine.get(String(line && line.id || ""));
                 const demandKg = result ? sumPositiveValues(result.target) : 0;
@@ -5636,14 +5810,16 @@ Draw.loadPlugin(function (ui) {
                 const to = YearPlanDashboard.formatYmd(line && line.to) || "?";
                 const priorityValue = String(line && line.priority || "target");
                 const priorityLabel = priorityValue.charAt(0).toUpperCase() + priorityValue.slice(1);
+                const datesInvalid = from === "?" || to === "?" || (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to); // CHANGE
+                const priceTarget = missingPackagePriceTargetForLine(line); // CHANGE
                 return [
-                    createChip("Crop", crop ? cropLabel(crop) : String(line && line.cropId || "Crop"), crop ? "primary" : "warning"),
+                    createChip("Crop", crop ? cropLabel(crop) : String(line && line.cropId || "Crop"), crop ? "primary" : "warning", null, crop ? null : { primaryTarget: demandLineTarget(line, "cropId") }), // CHANGE
                     createChip("Qty", `${formatCompactNumber(line && line.qty)} ${line && line.unit || "No unit"} / ${demandFrequencyLabel(line && line.frequency, line && line.everyN)}`, "neutral"), // CHANGE
-                    createChip("Dates", `${from}-${to}`, from === "?" || to === "?" ? "warning" : "neutral"),
+                    createChip("Dates", `${from}-${to}`, datesInvalid ? "warning" : "neutral", null, datesInvalid ? { targets: [demandLineTarget(line, "from"), demandLineTarget(line, "to")] } : null), // CHANGE
                     createChip("Priority", priorityLabel, "neutral"),
                     createChip("Demand", formatKg(demandKg), "neutral"),
-                    createChip(shortKg > EPS ? "Short" : "Status", shortKg > EPS ? formatKg(shortKg) : (result ? "OK" : "Not calculated"), shortKg > EPS ? "danger" : (result ? "success" : "warning")),
-                    createChip("Potential", formatMoney(potentialRevenue), "neutral"),
+                    createChip(shortKg > EPS ? "Short" : "Status", shortKg > EPS ? formatKg(shortKg) : (result ? "OK" : "Not calculated"), shortKg > EPS ? "danger" : (result ? "success" : "warning"), null, shortKg > EPS || !result ? { primaryTarget: { area: "demand", lineId: String(line && line.id || ""), channelId: String(line && line.channelId || "") } } : null), // CHANGE
+                    createChip("Potential", formatMoney(potentialRevenue), result && !Number.isFinite(result.unitPrice) ? "warning" : "neutral", null, result && !Number.isFinite(result.unitPrice) ? { primaryTarget: priceTarget || demandLineTarget(line, "unit") } : null), // CHANGE: blank package prices still calculate demand but flag understated revenue.
                     createChip("Fulfilled", formatMoney(fulfilledRevenue), fulfilledRevenue > EPS ? "success" : "neutral")
                 ];
             }
@@ -5893,7 +6069,7 @@ Draw.loadPlugin(function (ui) {
                 return ((dashboard && dashboard.validationErrors) || []).filter(error => error && error.scope === "self-sufficiency");
             } // NEW
 
-            function selfLineSummaryChips(line, crop) {
+            function selfLineSummaryChips(line, crop, lineIndex) {
                 const result = runtime && runtime.weekly && runtime.weekly.perSelfLine && runtime.weekly.perSelfLine.get(String(line && line.id || ""));
                 const demandKg = result ? sumPositiveValues(result.target) : 0;
                 const shortKg = result ? sumPositiveValues(result.short) : 0;
@@ -5901,13 +6077,15 @@ Draw.loadPlugin(function (ui) {
                 const fulfilledGroceryValue = result ? sumPositiveValues(result.fulfilledGroceryValue) : 0;
                 const from = YearPlanDashboard.formatYmd(line && line.from) || "?";
                 const to = YearPlanDashboard.formatYmd(line && line.to) || "?";
+                const datesInvalid = from === "?" || to === "?" || (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to); // CHANGE
+                const priceTarget = missingPackagePriceTargetForLine(line); // CHANGE
                 return [
-                    createChip("Crop", crop ? cropLabel(crop) : String(line && line.cropId || "Crop"), crop ? "primary" : "warning"),
+                    createChip("Crop", crop ? cropLabel(crop) : String(line && line.cropId || "Crop"), crop ? "primary" : "warning", null, crop ? null : { primaryTarget: selfLineTarget(line, "cropId", lineIndex) }), // CHANGE
                     createChip("Qty", `${formatCompactNumber(line && line.qty)} ${line && line.unit || "No unit"} / ${demandFrequencyLabel(line && line.frequency, line && line.everyN)}`, "neutral"), // CHANGE
-                    createChip("Dates", `${from}-${to}`, from === "?" || to === "?" ? "warning" : "neutral"),
+                    createChip("Dates", `${from}-${to}`, datesInvalid ? "warning" : "neutral", null, datesInvalid ? { targets: [selfLineTarget(line, "from", lineIndex), selfLineTarget(line, "to", lineIndex)] } : null), // CHANGE
                     createChip("Demand", formatKg(demandKg), "neutral"),
-                    createChip(shortKg > EPS ? "Short" : "Status", shortKg > EPS ? formatKg(shortKg) : (result ? "OK" : "Not calculated"), shortKg > EPS ? "danger" : (result ? "success" : "warning")),
-                    createChip("Grocery value", formatMoney(groceryValue), "neutral"),
+                    createChip(shortKg > EPS ? "Short" : "Status", shortKg > EPS ? formatKg(shortKg) : (result ? "OK" : "Not calculated"), shortKg > EPS ? "danger" : (result ? "success" : "warning"), null, shortKg > EPS || !result ? { primaryTarget: { area: "self-sufficiency", selfLineId: String(line && line.id || ""), selfLineIndex: lineIndex } } : null), // CHANGE
+                    createChip("Grocery value", formatMoney(groceryValue), result && !Number.isFinite(result.unitPrice) ? "warning" : "neutral", null, result && !Number.isFinite(result.unitPrice) ? { primaryTarget: priceTarget || selfLineTarget(line, "unit", lineIndex) } : null), // CHANGE: blank package prices still calculate demand but flag understated grocery value.
                     createChip("Fulfilled", formatMoney(fulfilledGroceryValue), fulfilledGroceryValue > EPS ? "success" : "neutral")
                 ];
             } // NEW
@@ -5930,6 +6108,7 @@ Draw.loadPlugin(function (ui) {
                 const nutrition = dashboard && dashboard.selfSufficiencyNutrition;
                 if (!nutrition) return;
                 const box = document.createElement("div");
+                box.dataset.yearPlanNutritionSection = "true"; // CHANGE
                 box.style.cssText = "margin:0 0 10px;";
                 const title = document.createElement("div");
                 title.style.cssText = "font-weight:700;margin-bottom:6px;";
@@ -5964,7 +6143,7 @@ Draw.loadPlugin(function (ui) {
                 toggle.setAttribute("aria-expanded", collapsed ? "false" : "true"); // NEW
                 const summary = document.createElement("div"); // NEW
                 summary.className = "yp-demand-line-summary yp-self-line-summary"; // NEW
-                setChipRow(summary, selfLineSummaryChips(line, crop)); // NEW
+                setChipRow(summary, selfLineSummaryChips(line, crop, lineIndex)); // CHANGE
                 header.appendChild(toggle); header.appendChild(summary); // NEW
                 const row = document.createElement("div");
                 row.className = "yp-demand-line yp-self-line yp-self-line-details"; // NEW
@@ -6100,10 +6279,10 @@ Draw.loadPlugin(function (ui) {
                         createChip("Children", String(Math.max(0, Math.trunc(Number(self.children) || 0))), "neutral"),
                         errors.length ? createValidationAttentionChip("Setup issues", "danger", errors, true, () => { state.selfSufficiencyExpanded = true; renderSelfSufficiencyStrip(true); }) : createChip("Lines", String(lineCount), "neutral"), // CHANGE
                         createChip("Demand", formatKg(metric.targetKg), "primary"),
-                        createChip("Short", formatKg(metric.shortKg), metric.shortKg > EPS ? "danger" : "success"),
+                        createChip("Short", formatKg(metric.shortKg), metric.shortKg > EPS ? "danger" : "success", null, metric.shortKg > EPS ? { primaryTarget: { area: "plan-check", rowKind: "shortage-weeks" } } : null), // CHANGE
                         createChip("Grocery value", formatMoney(metric.groceryValue), "neutral"),
                         createChip("Fulfilled", formatMoney(metric.fulfilledGroceryValue), metric.fulfilledGroceryValue > EPS ? "success" : "neutral"),
-                        createChip("Nutrition", nutrition && nutrition.available ? (nutrition.missingCropNames && nutrition.missingCropNames.length ? "Partial" : "Mapped") : "Unavailable", nutrition && nutrition.available ? "neutral" : "warning")
+                        createChip("Nutrition", nutrition && nutrition.available ? (nutrition.missingCropNames && nutrition.missingCropNames.length ? "Partial" : "Mapped") : "Unavailable", nutrition && nutrition.available && !(nutrition.missingCropNames && nutrition.missingCropNames.length) ? "neutral" : "warning", null, nutrition && nutrition.available && !(nutrition.missingCropNames && nutrition.missingCropNames.length) ? null : { primaryTarget: { area: "self-sufficiency", section: "nutrition" } }) // CHANGE
                     ],
                     rebuildDetails: !!rebuildDetails,
                     onToggle: () => {
@@ -6127,7 +6306,7 @@ Draw.loadPlugin(function (ui) {
                         createChip("Channels", String(channelCount), "neutral"),
                         createChip("Lines", String(lineCount), "neutral"),
                         createChip("Demand", formatKg(demandKg), "primary"),
-                        createChip("Short", formatKg(shortKg), shortKg > EPS ? "danger" : "success"),
+                        createChip("Short", formatKg(shortKg), shortKg > EPS ? "danger" : "success", null, shortKg > EPS ? { primaryTarget: { area: "plan-check", rowKind: "shortage-weeks" } } : null), // CHANGE
                         createChip("Potential", formatMoney(dashboard && dashboard.potentialRevenue), "neutral"),
                         createChip("Fulfilled", formatMoney(dashboard && dashboard.fulfilledRevenue), (dashboard && dashboard.fulfilledRevenue) > EPS ? "success" : "neutral")
                     ],
@@ -6673,7 +6852,7 @@ Draw.loadPlugin(function (ui) {
                 const crop = {
                     id: Env.uid("crop"), plantId, plant: selectedOption.plantName, method: String(item.default_planting_method || "").trim() || "direct_sow.field",
                     methodCategoryId: String(item.default_planting_method_category || PlanSchema.inferMethodCategoryFromMethodId(item.default_planting_method) || "direct_sow").trim(),
-                    varietyId: selectedOption.varietyId == null ? null : (Number.isFinite(numericVarietyId) ? numericVarietyId : selectedOption.varietyId), variety: selectedOption.varietyName, harvestStart: "", harvestEnd: "", harvestWindowSource: "sowing_window_estimate", useActualHarvest: false, syncharvest: false, // CHANGE: new crops default to the sowing-window planning source while dates are requested.
+                    varietyId: selectedOption.varietyId == null ? null : (Number.isFinite(numericVarietyId) ? numericVarietyId : selectedOption.varietyId), variety: selectedOption.varietyName, harvestStart: "", harvestEnd: "", harvestWindowSource: "sowing_window_estimate", useActualHarvest: false, syncharvest: true, // CHANGE: new crops default to synced demand while sowing-window dates are requested.
                     shelfLifeDays: 0, baseKgPerPlant: baseYield, kgPerPlant: cropYield,
                     kgPerPlantMode: "auto", actualPlants: 0, germRate: 1,
                     packages: defaults && defaults.length ? PlanSchema.clonePlain(defaults) : [] // CHANGE: demand units are user-defined packages only.

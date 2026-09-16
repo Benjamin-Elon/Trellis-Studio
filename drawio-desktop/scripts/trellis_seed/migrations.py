@@ -13,6 +13,13 @@ def table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
     return [str(row[1]) for row in conn.execute(f"PRAGMA table_info({table});").fetchall()]
 
 
+def column_is_not_null(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    for row in conn.execute(f"PRAGMA table_info({table});").fetchall():
+        if str(row[1]) == column:
+            return bool(row[3])
+    return False
+
+
 def city_has_unique_name_constraint(conn: sqlite3.Connection) -> bool:
     if "Cities" not in existing_tables(conn):
         return False
@@ -59,6 +66,10 @@ def pending_migrations(conn: sqlite3.Connection) -> list[str]:
     for table in ("NutritionNutrients", "PlantNutritionMappings", "PlantNutritionValues", "NutritionRequirements"):
         if table not in tables:
             pending.append(f"create {table}")
+    if "PlantNutritionMappings" in tables and column_is_not_null(conn, "PlantNutritionMappings", "fdc_id"):
+        pending.append("allow nullable PlantNutritionMappings.fdc_id")
+    if "PlantNutritionValues" in tables and column_is_not_null(conn, "PlantNutritionValues", "source_fdc_id"):
+        pending.append("allow nullable PlantNutritionValues.source_fdc_id")
     return pending
 
 
@@ -138,6 +149,12 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
         suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         conn.execute(f"ALTER TABLE VarietyTaskTemplates RENAME TO VarietyTaskTemplates_legacy_{suffix};")
         applied.append("renamed legacy VarietyTaskTemplates")
+    if "PlantNutritionMappings" in tables and column_is_not_null(conn, "PlantNutritionMappings", "fdc_id"):
+        _rebuild_plant_nutrition_mappings_nullable(conn)
+        applied.append("allowed nullable PlantNutritionMappings.fdc_id")
+    if "PlantNutritionValues" in tables and column_is_not_null(conn, "PlantNutritionValues", "source_fdc_id"):
+        _rebuild_plant_nutrition_values_nullable(conn)
+        applied.append("allowed nullable PlantNutritionValues.source_fdc_id")
 
     conn.executescript(
         """
@@ -262,7 +279,7 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
 
         CREATE TABLE IF NOT EXISTS PlantNutritionMappings (
             plant_id INTEGER NOT NULL REFERENCES Plants(plant_id) ON DELETE CASCADE,
-            fdc_id INTEGER NOT NULL,
+            fdc_id INTEGER,
             fdc_description TEXT NOT NULL,
             fdc_data_type TEXT NOT NULL,
             food_form TEXT NOT NULL DEFAULT 'raw',
@@ -280,7 +297,7 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
             plant_id INTEGER NOT NULL REFERENCES Plants(plant_id) ON DELETE CASCADE,
             nutrient_key TEXT NOT NULL REFERENCES NutritionNutrients(nutrient_key) ON DELETE CASCADE,
             amount_per_100g REAL NOT NULL,
-            source_fdc_id INTEGER NOT NULL,
+            source_fdc_id INTEGER,
             updated_at TEXT NOT NULL,
             PRIMARY KEY (plant_id, nutrient_key)
         );
@@ -340,6 +357,69 @@ def _backfill_companion_plant_ids(conn: sqlite3.Connection) -> int:
         )
         resolved += 1
     return resolved
+
+
+def _rebuild_plant_nutrition_mappings_nullable(conn: sqlite3.Connection) -> None:
+    suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    legacy = f"PlantNutritionMappings_legacy_{suffix}"
+    conn.execute(f"ALTER TABLE PlantNutritionMappings RENAME TO {legacy};")
+    conn.executescript(
+        """
+        CREATE TABLE PlantNutritionMappings (
+            plant_id INTEGER NOT NULL REFERENCES Plants(plant_id) ON DELETE CASCADE,
+            fdc_id INTEGER,
+            fdc_description TEXT NOT NULL,
+            fdc_data_type TEXT NOT NULL,
+            food_form TEXT NOT NULL DEFAULT 'raw',
+            match_confidence TEXT NOT NULL,
+            match_status TEXT NOT NULL DEFAULT 'pending',
+            source_url TEXT,
+            source_note TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (plant_id, food_form)
+        );
+        CREATE INDEX IF NOT EXISTS idx_PlantNutritionMappings_fdc_id
+            ON PlantNutritionMappings(fdc_id);
+        """
+    )
+    conn.execute(
+        f"""
+        INSERT INTO PlantNutritionMappings
+        (plant_id, fdc_id, fdc_description, fdc_data_type, food_form, match_confidence, match_status, source_url, source_note, updated_at)
+        SELECT plant_id, fdc_id, fdc_description, fdc_data_type, food_form, match_confidence, match_status, source_url, source_note, updated_at
+        FROM {legacy};
+        """
+    )
+    conn.execute(f"DROP TABLE {legacy};")
+
+
+def _rebuild_plant_nutrition_values_nullable(conn: sqlite3.Connection) -> None:
+    suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    legacy = f"PlantNutritionValues_legacy_{suffix}"
+    conn.execute(f"ALTER TABLE PlantNutritionValues RENAME TO {legacy};")
+    conn.executescript(
+        """
+        CREATE TABLE PlantNutritionValues (
+            plant_id INTEGER NOT NULL REFERENCES Plants(plant_id) ON DELETE CASCADE,
+            nutrient_key TEXT NOT NULL REFERENCES NutritionNutrients(nutrient_key) ON DELETE CASCADE,
+            amount_per_100g REAL NOT NULL,
+            source_fdc_id INTEGER,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (plant_id, nutrient_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_PlantNutritionValues_nutrient
+            ON PlantNutritionValues(nutrient_key);
+        """
+    )
+    conn.execute(
+        f"""
+        INSERT INTO PlantNutritionValues
+        (plant_id, nutrient_key, amount_per_100g, source_fdc_id, updated_at)
+        SELECT plant_id, nutrient_key, amount_per_100g, source_fdc_id, updated_at
+        FROM {legacy};
+        """
+    )
+    conn.execute(f"DROP TABLE {legacy};")
 
 
 def _rebuild_cities_without_unique_name(conn: sqlite3.Connection) -> None:

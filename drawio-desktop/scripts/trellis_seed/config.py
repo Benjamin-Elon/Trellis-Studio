@@ -51,6 +51,16 @@ DEFAULT_CONFIG = {
         "rate_limit_max_wait_seconds": 900,
         "rate_limit_base_wait_seconds": 60,
     },
+    "fdc": {
+        "search_url": "https://api.nal.usda.gov/fdc/v1/foods/search",
+        "food_url": "https://api.nal.usda.gov/fdc/v1/food",
+        "api_key": os.getenv("FDC_API_KEY", "DEMO_KEY"),
+        "data_types": "Foundation,SR Legacy,Survey (FNDDS)",
+        "page_size": 10,
+        "rate_limit_max_attempts": 5,
+        "rate_limit_max_wait_seconds": 300,
+        "rate_limit_base_wait_seconds": 30,
+    },
 }
 
 
@@ -104,6 +114,7 @@ def load_settings(path: Path = DEFAULT_CONFIG_PATH) -> Settings:
     data = DEFAULT_CONFIG | (read_json(path, {}) or {})
     data["open_meteo"] = DEFAULT_CONFIG["open_meteo"] | (data.get("open_meteo") or {})
     data["nasa_power"] = DEFAULT_CONFIG["nasa_power"] | (data.get("nasa_power") or {})
+    data["fdc"] = DEFAULT_CONFIG["fdc"] | (data.get("fdc") or {})
     data["sowing_windows"] = DEFAULT_CONFIG["sowing_windows"] | (data.get("sowing_windows") or {})
     data["climate_benchmark"] = DEFAULT_CONFIG["climate_benchmark"] | (data.get("climate_benchmark") or {})
     return Settings(path=path, data=data)

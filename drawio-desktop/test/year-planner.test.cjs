@@ -654,7 +654,8 @@ test("PlanRuntimeService recalculation is idempotent and preserves manual harves
     plan.crops.push(emptyCrop({
         useActualHarvest: false,
         harvestStart: "2025-08-01",
-        harvestEnd: "2025-08-07"
+        harvestEnd: "2025-08-07",
+        packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 2 }] // CHANGE: this idempotence fixture should not exercise missing-price diagnostics.
     }));
     addDemand(plan, { qty: 2, from: "2025-08-01", to: "2025-08-07" });
 
@@ -946,6 +947,34 @@ test("PlanMath counts missing CSA component prices as zero with a non-blocking w
     assert.equal(api.PlanSchema.validateCsa(plan).some(error => /price/i.test(error.message)), false);
 });
 
+test("PlanMath counts missing self-use and demand prices as zero with non-blocking warnings", () => { // NEW
+    const { api } = createHarness();
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    const crop = emptyCrop({ actualPlants: 10, useActualHarvest: false, harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: null }] });
+    plan.crops.push(crop);
+    setActualHarvest(api, plan, crop, [["2026-06-01", 10]]);
+    addSelfUse(plan, { id: "self_missing_price", qty: 2, unit: "kg" });
+    addDemand(plan, { id: "demand_missing_price", qty: 4, unit: "kg" });
+
+    const warnings = [];
+    const weekly = api.PlanMath.computePlanWeekly(plan, warnings);
+    const selfLine = weekly.perSelfLine.get("self_missing_price");
+    const demandLine = weekly.perDemandLine.get("demand_missing_price");
+
+    assert.equal(selfLine.target.reduce((sum, value) => sum + value, 0), 2);
+    assert.equal(selfLine.usableSupply.reduce((sum, value) => sum + value, 0), 2);
+    assert.equal(selfLine.groceryValue.reduce((sum, value) => sum + value, 0), 0);
+    assert.equal(selfLine.fulfilledGroceryValue.reduce((sum, value) => sum + value, 0), 0);
+    assert.equal(demandLine.target.reduce((sum, value) => sum + value, 0), 4);
+    assert.equal(demandLine.usableSupply.reduce((sum, value) => sum + value, 0), 4);
+    assert.equal(demandLine.potentialRevenue.reduce((sum, value) => sum + value, 0), 0);
+    assert.equal(demandLine.fulfilledRevenue.reduce((sum, value) => sum + value, 0), 0);
+    assert.ok(warnings.some(warning => /Self Sufficiency value.*counted as \$0/.test(warning)));
+    assert.ok(warnings.some(warning => /Demand revenue.*counted as \$0/.test(warning)));
+    assert.equal(api.PlanSchema.validateSelfSufficiency(plan).some(error => /price/i.test(error.message)), false);
+    assert.equal(api.PlanSchema.validateDemand(plan).some(error => /price/i.test(error.message)), false);
+});
+
 test("PlanMath requires explicit packages for built-in unit names", () => {
     const { api } = createHarness();
     const plan = api.PlanSchema.createEmptyPlan(2026);
@@ -964,6 +993,39 @@ test("PlanMath requires explicit packages for built-in unit names", () => {
     assert.equal(Number.isFinite(api.PlanMath.resolveUnitToKgPerUnit(crop, "lb")), false);
     assert.equal(Number.isFinite(api.PlanMath.resolveUnitToKgPerUnit(crop, "plant")), false);
     assert.equal(api.PlanMath.computePlanWeekly(plan, []).perDemandLine.has("kg_line"), false);
+});
+
+test("PlanMath still blocks demand-like rows when package quantity conversion is invalid", () => { // NEW
+    const { api } = createHarness();
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    const crop = emptyCrop({
+        actualPlants: 20,
+        useActualHarvest: false,
+        harvestStart: "2026-06-01",
+        harvestEnd: "2026-06-07",
+        packages: [{ unit: "kg", baseType: "kg", baseQty: null, price: null }]
+    });
+    plan.crops.push(crop);
+    addSelfUse(plan, { id: "self_bad_package", qty: 2, unit: "kg" });
+    addDemand(plan, { id: "demand_bad_package", qty: 4, unit: "kg" });
+    plan.csa.enabled = true;
+    plan.csa.boxesPerWeek = 1;
+    plan.csa.start = "2026-06-01";
+    plan.csa.end = "2026-06-07";
+    plan.csa.components = [{ cropId: "crop_1", qty: 1, unit: "kg", everyNWeeks: 1, start: "", end: "" }];
+
+    const warnings = [];
+    const weekly = api.PlanMath.computePlanWeekly(plan, warnings);
+
+    assert.equal(weekly.perSelfLine.has("self_bad_package"), false);
+    assert.equal(weekly.perDemandLine.has("demand_bad_package"), false);
+    assert.equal(weekly.csa.target.reduce((sum, value) => sum + value, 0), 0);
+    assert.ok(warnings.some(warning => /Self Sufficiency line skipped \(unknown unit/.test(warning)));
+    assert.ok(warnings.some(warning => /Demand line skipped \(unknown unit/.test(warning)));
+    assert.ok(codes(api.PlanSchema.validateCrop(crop)).includes("crop.package_invalid_base_qty"));
+    assert.ok(codes(api.PlanSchema.validateSelfSufficiency(plan)).includes("self.line_unresolved_unit"));
+    assert.ok(codes(api.PlanSchema.validateDemand(plan)).includes("demand.line_unresolved_unit"));
+    assert.ok(codes(api.PlanSchema.validateCsa(plan)).includes("csa.component_unresolved_unit"));
 });
 
 test("PlanMath prices demand from package unit matches only", () => {

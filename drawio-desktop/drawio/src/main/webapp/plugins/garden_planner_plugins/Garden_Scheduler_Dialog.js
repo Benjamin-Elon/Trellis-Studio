@@ -1608,16 +1608,20 @@ Draw.loadPlugin(function (ui) {
     // PlantVarietyModel (JSON overrides)                                    
     // =====================================================================
     const VARIETY_MATURITY_CLASS_LABELS = Object.freeze({
+        very_early: 'Very early varieties',
         early: 'Early varieties',
         mid: 'Mid varieties',
         late: 'Late varieties',
+        very_late: 'Very late varieties',
         uncategorized: 'Uncategorized'
     });
-    const VARIETY_MATURITY_CLASS_ORDER = Object.freeze(['early', 'mid', 'late', 'uncategorized']);
+    const VARIETY_MATURITY_CLASS_ORDER = Object.freeze(['very_early', 'early', 'mid', 'late', 'very_late', 'uncategorized']);
+    const VARIETY_MATURITY_THREE_BUCKETS = Object.freeze(['early', 'mid', 'late']);
+    const VARIETY_MATURITY_FIVE_BUCKETS = Object.freeze(['very_early', 'early', 'mid', 'late', 'very_late']);
 
     function normalizeVarietyMaturityClass(value) {
         const key = String(value || '').trim().toLowerCase();
-        return key === 'early' || key === 'mid' || key === 'late' ? key : '';
+        return Object.prototype.hasOwnProperty.call(VARIETY_MATURITY_CLASS_LABELS, key) && key !== 'uncategorized' ? key : '';
     }
 
     function varietyOverridesObject(row) {
@@ -1637,7 +1641,8 @@ Draw.loadPlugin(function (ui) {
 
     function maturityClassForRank(index, total) {
         if (!Number.isFinite(total) || total < 3) return '';
-        return ['early', 'mid', 'late'][Math.min(2, Math.floor((Math.max(0, index) * 3) / total))] || '';
+        const buckets = total >= 5 ? VARIETY_MATURITY_FIVE_BUCKETS : VARIETY_MATURITY_THREE_BUCKETS;
+        return buckets[Math.min(buckets.length - 1, Math.floor((Math.max(0, index) * buckets.length) / total))] || '';
     }
 
     function sortMaturityRows(rows, metricKey) {
@@ -6598,9 +6603,11 @@ Draw.loadPlugin(function (ui) {
         varietyNameRow.row.style.display = 'none';
         const maturityClassSel = makeSelect([
             { value: '', label: '' },
+            { value: 'very_early', label: 'Very early' },
             { value: 'early', label: 'Early' },
             { value: 'mid', label: 'Mid' },
-            { value: 'late', label: 'Late' }
+            { value: 'late', label: 'Late' },
+            { value: 'very_late', label: 'Very late' }
         ], '');
         const maturityClassRow = row('Maturity class:', maturityClassSel);
         maturityClassRow.row.style.display = 'none';

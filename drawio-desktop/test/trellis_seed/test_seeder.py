@@ -61,6 +61,7 @@ from trellis_seed.generator import (
 from trellis_seed.jsonio import read_json, write_json  # noqa: E402
 from trellis_seed.menu import _preflight_provider_labels, _should_prompt_template_generation, _sowing_window_diagnostics_flow  # noqa: E402  # diagnostics command coverage
 from trellis_seed.migrations import apply_migrations, pending_migrations  # noqa: E402
+from trellis_seed.nutrition import CachedFdcClient, _candidate_aliases, best_fdc_candidate, nutrient_values_from_fdc, synthesize_nutrition_for_plant  # noqa: E402
 from trellis_seed.planner import effective_tables_from_input, selected_tables_warning  # noqa: E402
 from trellis_seed.providers import NasaPowerClient, OpenAIJsonClient, OpenMeteoClient, ProviderTrace  # noqa: E402
 from trellis_seed.schema import OPENAI_CITY_LABEL_SCHEMA, OPENAI_PLANT_SCHEMA, OPENAI_SOWING_WINDOW_SCHEMA, OPENAI_TEMPLATE_SCHEMA, PLANT_INTEGER_FIELDS, PLANT_REAL_FIELDS, PLANT_TEXT_FIELDS  # noqa: E402
@@ -113,6 +114,44 @@ def complete_plant_row(**overrides):
     })
     row.update(overrides)
     return row
+
+
+class FakeNutritionFdc:
+    def __init__(self) -> None:
+        self.search_calls: list[str] = []
+        self.food_calls: list[int] = []
+        self.description = "Lettuce, raw"
+
+    def search(self, query: str):
+        self.search_calls.append(query)
+        self.description = f"{query}, raw" if "raw" not in query.casefold() else query
+        return {
+            "foods": [{
+                "fdcId": 123,
+                "description": self.description,
+                "dataType": "Foundation",
+            }]
+        }, ProviderTrace("fdc", {"query": query})
+
+    def food(self, fdc_id: int):
+        self.food_calls.append(fdc_id)
+        return {
+            "fdcId": fdc_id,
+            "description": self.description,
+            "dataType": "Foundation",
+            "foodNutrients": [
+                {"nutrient": {"id": 1008, "name": "Energy", "unitName": "kcal"}, "amount": 15},
+                {"nutrient": {"id": 1003, "name": "Protein", "unitName": "g"}, "amount": 1.36},
+                {"nutrient": {"id": 1079, "name": "Fiber, total dietary", "unitName": "g"}, "amount": 1.3},
+                {"nutrient": {"id": 1106, "name": "Vitamin A, RAE", "unitName": "mcg_RAE"}, "amount": 370},
+                {"nutrient": {"id": 1162, "name": "Vitamin C, total ascorbic acid", "unitName": "mg"}, "amount": 9.2},
+                {"nutrient": {"id": 1185, "name": "Vitamin K (phylloquinone)", "unitName": "mcg"}, "amount": 126.3},
+                {"nutrient": {"id": 1177, "name": "Folate, DFE", "unitName": "mcg_DFE"}, "amount": 38},
+                {"nutrient": {"id": 1092, "name": "Potassium, K", "unitName": "mg"}, "amount": 194},
+                {"nutrient": {"id": 1089, "name": "Iron, Fe", "unitName": "mg"}, "amount": 0.86},
+                {"nutrient": {"id": 1087, "name": "Calcium, Ca", "unitName": "mg"}, "amount": 36},
+            ],
+        }, ProviderTrace("fdc", {"fdc_id": fdc_id})
 
 
 class TrellisSeederTests(unittest.TestCase):
@@ -177,12 +216,13 @@ class TrellisSeederTests(unittest.TestCase):
             self.assertIn("match_confidence", nutrition_mapping_cols)
             self.assertIn("match_status", nutrition_mapping_cols)
 
-    def test_packaged_seed_database_keeps_nutrition_reference_tables_without_old_crop_mappings(self) -> None:
+    def test_packaged_seed_database_has_crop_nutrition_rows(self) -> None:
         with closing(sqlite3.connect(ROOT / "trellis_database" / "Trellis_database.sqlite")) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM NutritionNutrients").fetchone()[0], 10)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM NutritionRequirements").fetchone()[0], 20)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantNutritionMappings").fetchone()[0], 0)  # CHANGE: replacement catalog intentionally drops stale old-crop mappings.
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantNutritionValues").fetchone()[0], 0)  # CHANGE
+            plant_count = conn.execute("SELECT COUNT(*) FROM Plants").fetchone()[0]
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantNutritionMappings").fetchone()[0], plant_count)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM PlantNutritionValues").fetchone()[0], plant_count * 10)
 
     def test_nutrition_validation_warns_on_reviewable_auto_mappings(self) -> None:
         report = validate_row("PlantNutritionMappings", {
@@ -206,6 +246,127 @@ class TrellisSeederTests(unittest.TestCase):
             "updated_at": "2026-09-07T00:00:00+00:00",
         })
         self.assertTrue(any("nutrient_key" in error for error in bad["errors"]))
+
+    def test_nutrition_validation_allows_nullable_fdc_only_for_estimates(self) -> None:
+        valid = validate_row("PlantNutritionMappings", {
+            "plant_name": "Mystery Crop",
+            "fdc_id": None,
+            "fdc_description": "OpenAI estimated raw edible portion",
+            "fdc_data_type": "OpenAI estimate",
+            "food_form": "raw",
+            "match_confidence": "low",
+            "match_status": "pending",
+            "source_note": "OpenAI estimate because USDA match was unavailable.",
+            "updated_at": "2026-09-15T00:00:00+00:00",
+        })
+        self.assertEqual(valid["errors"], [])
+
+        invalid = validate_row("PlantNutritionMappings", {
+            "plant_name": "Mystery Crop",
+            "fdc_id": None,
+            "fdc_description": "OpenAI estimated raw edible portion",
+            "fdc_data_type": "OpenAI estimate",
+            "food_form": "raw",
+            "match_confidence": "medium",
+            "match_status": "pending",
+            "updated_at": "2026-09-15T00:00:00+00:00",
+        })
+        self.assertTrue(any("fdc_id can be null" in error for error in invalid["errors"]))
+
+        value = validate_row("PlantNutritionValues", {
+            "plant_name": "Mystery Crop",
+            "nutrient_key": "energy_kcal",
+            "amount_per_100g": 20,
+            "source_fdc_id": None,
+            "updated_at": "2026-09-15T00:00:00+00:00",
+        })
+        self.assertEqual(value["errors"], [])
+
+    def test_fdc_candidate_matching_prefers_raw_nonbranded_data_types(self) -> None:
+        foods = [
+            {"fdcId": 1, "description": "Tomato soup, canned", "dataType": "Survey (FNDDS)"},
+            {"fdcId": 2, "description": "Tomatoes, red, ripe, raw", "dataType": "SR Legacy"},
+            {"fdcId": 3, "description": "Brand X tomatoes", "dataType": "Branded"},
+            {"fdcId": 4, "description": "Tomatoes, raw", "dataType": "Foundation"},
+        ]
+        match = best_fdc_candidate("Tomato", "tomatoes raw", foods)
+        self.assertEqual(match["fdcId"], 4)
+
+    def test_nutrition_aliases_try_exact_crop_raw_before_override_duplicates(self) -> None:
+        aliases = _candidate_aliases("Blackberry", ["blackberries, raw", "blackberry, raw"])
+        self.assertLess(aliases.index("Blackberry, raw"), aliases.index("blackberries, raw"))
+
+    def test_fdc_nutrient_values_extract_fixed_nutrient_set(self) -> None:
+        values = nutrient_values_from_fdc(FakeNutritionFdc().food(123)[0])
+        self.assertEqual(set(values), {
+            "energy_kcal", "protein_g", "fiber_g", "vitamin_a_rae_mcg", "vitamin_c_mg",
+            "vitamin_k_mcg", "folate_dfe_mcg", "potassium_mg", "iron_mg", "calcium_mg",
+        })
+        self.assertEqual(values["energy_kcal"], 15)
+        self.assertEqual(values["calcium_mg"], 36)
+
+    def test_cached_fdc_client_reuses_search_and_food_payloads(self) -> None:
+        class CountingFdc:
+            def __init__(self) -> None:
+                self.search_count = 0
+                self.food_count = 0
+
+            def search(self, query: str):
+                self.search_count += 1
+                return {"foods": [{"fdcId": 123, "description": query, "dataType": "Foundation"}]}, ProviderTrace("fdc", {"query": query})
+
+            def food(self, fdc_id: int):
+                self.food_count += 1
+                return {"fdcId": fdc_id, "description": "Lettuce, raw", "foodNutrients": []}, ProviderTrace("fdc", {"fdc_id": fdc_id})
+
+        inner = CountingFdc()
+        cached = CachedFdcClient(inner, self.tmp_path / "fdc-cache")
+        self.assertEqual(cached.search("lettuce raw")[0], cached.search("lettuce raw")[0])
+        self.assertEqual(cached.food(123)[0], cached.food(123)[0])
+        self.assertEqual(inner.search_count, 1)
+        self.assertEqual(inner.food_count, 1)
+
+    def test_nutrition_synthesis_falls_back_to_openai_estimate(self) -> None:
+        class EmptyFdc:
+            def search(self, query: str):
+                return {"foods": []}, ProviderTrace("fdc", {"query": query})
+
+            def food(self, _fdc_id: int):
+                raise AssertionError("food detail should not be called")
+
+        class FakeOpenAI:
+            model = "fake"
+            reasoning_effort = "low"
+
+            def generate_json(self, **kwargs):
+                self.schema_name = kwargs["schema_name"]
+                return {
+                    "values": {
+                        "energy_kcal": 20,
+                        "protein_g": 1,
+                        "fiber_g": 2,
+                        "vitamin_a_rae_mcg": 3,
+                        "vitamin_c_mg": 4,
+                        "vitamin_k_mcg": 5,
+                        "folate_dfe_mcg": 6,
+                        "potassium_mg": 7,
+                        "iron_mg": 0.8,
+                        "calcium_mg": 9,
+                    },
+                    "source_note": "OpenAI estimate because no USDA match was available.",
+                }, ProviderTrace("openai", {"schema_name": kwargs["schema_name"]})
+
+        mapping_rows, value_rows, traces = synthesize_nutrition_for_plant(
+            plant_row={"plant_name": "Unmatched Crop"},
+            aliases=["unmatched crop raw"],
+            fdc=EmptyFdc(),
+            openai=FakeOpenAI(),
+        )
+        self.assertEqual(mapping_rows[0]["fdc_id"], None)
+        self.assertEqual(mapping_rows[0]["match_confidence"], "low")
+        self.assertEqual(mapping_rows[0]["match_status"], "pending")
+        self.assertEqual(len(value_rows), 10)
+        self.assertTrue(any(trace["provider"] == "openai" for trace in traces))
 
     def test_apply_run_loads_generated_nutrition_tables(self) -> None:
         generated = self.tmp_path / "run" / "generated"
@@ -421,17 +582,17 @@ class TrellisSeederTests(unittest.TestCase):
     def test_replace_database_varieties_with_generic_profiles_backs_up_and_replaces_rows(self) -> None:
         report = replace_database_varieties_with_generic_profiles(self.db_path)
         self.assertTrue(Path(report["backup_path"]).exists())
-        self.assertEqual(report["inserted_varieties"], report["plants"] * 3)
+        self.assertEqual(report["inserted_varieties"], report["plants"] * 5)
         with closing(sqlite3.connect(self.db_path)) as conn:
             plant_count = conn.execute("SELECT COUNT(*) FROM Plants").fetchone()[0]
             variety_count = conn.execute("SELECT COUNT(*) FROM PlantVarieties").fetchone()[0]
             template_count = conn.execute("SELECT COUNT(*) FROM VarietyTaskTemplates").fetchone()[0]
-            self.assertEqual(variety_count, plant_count * 3)
+            self.assertEqual(variety_count, plant_count * 5)
             self.assertEqual(template_count, 0)
             bad_names = conn.execute("""
                 SELECT COUNT(*)
                 FROM PlantVarieties
-                WHERE variety_name NOT IN ('Early maturity', 'Mid maturity', 'Late maturity')
+                WHERE variety_name NOT IN ('Very early maturity', 'Early maturity', 'Mid maturity', 'Late maturity', 'Very late maturity')
             """).fetchone()[0]
             self.assertEqual(bad_names, 0)
             per_plant = conn.execute("""
@@ -440,7 +601,7 @@ class TrellisSeederTests(unittest.TestCase):
                     SELECT plant_id, COUNT(*) AS count, COUNT(DISTINCT maturity_class) AS classes
                     FROM PlantVarieties
                     GROUP BY plant_id
-                    HAVING count != 3 OR classes != 3
+                    HAVING count != 5 OR classes != 5
                 )
             """).fetchone()[0]
             self.assertEqual(per_plant, 0)
@@ -1531,7 +1692,13 @@ class TrellisSeederTests(unittest.TestCase):
         self.assertEqual(_validate_crop_result(result, source_values), [])
 
     def test_plant_variety_validation_rejects_placeholders_but_allows_generic_profiles(self) -> None:
-        for name, maturity_class in (("Early maturity", "early"), ("Mid maturity", "mid"), ("Late maturity", "late")):
+        for name, maturity_class in (
+            ("Very early maturity", "very_early"),
+            ("Early maturity", "early"),
+            ("Mid maturity", "mid"),
+            ("Late maturity", "late"),
+            ("Very late maturity", "very_late"),
+        ):
             valid = validate_row("PlantVarieties", {
                 "plant_name": "Lettuce",
                 "variety_name": name,
@@ -1652,7 +1819,7 @@ class TrellisSeederTests(unittest.TestCase):
             ]
         }
 
-        _generate_crops(settings, input_data, FakeOpenAI(), methods, generated, provenance, run_dir, generate_templates=False)
+        _generate_crops(settings, input_data, FakeOpenAI(), methods, generated, provenance, run_dir, generate_templates=False, fdc=FakeNutritionFdc())
 
         self.assertEqual([row["plant_name"] for row in generated["Plants"]], ["Good Crop"])
         self.assertEqual(provenance["failures"]["crop"][0]["label"], "Broken Crop")
@@ -1678,16 +1845,30 @@ class TrellisSeederTests(unittest.TestCase):
         provenance = {"traces": [], "tables": {}}
         input_data = {"crops": [{"name": "Lettuce", "sources": ["https://example.test/lettuce"], "variety_count": 99}]}
 
-        _generate_crops(settings, input_data, FakeOpenAI(), methods, generated, provenance, run_dir, generate_templates=False)
+        _generate_crops(settings, input_data, FakeOpenAI(), methods, generated, provenance, run_dir, generate_templates=False, fdc=FakeNutritionFdc())
 
-        self.assertEqual([row["variety_name"] for row in generated["PlantVarieties"]], ["Early maturity", "Mid maturity", "Late maturity"])
+        self.assertEqual(len(generated["NutritionNutrients"]), 10)
+        self.assertEqual(len(generated["NutritionRequirements"]), 20)
+        self.assertEqual(len(generated["PlantNutritionMappings"]), 1)
+        self.assertEqual(len(generated["PlantNutritionValues"]), 10)
+        self.assertEqual([row["variety_name"] for row in generated["PlantVarieties"]], [
+            "Very early maturity",
+            "Early maturity",
+            "Mid maturity",
+            "Late maturity",
+            "Very late maturity",
+        ])
         varieties = {row["variety_name"]: row for row in generated["PlantVarieties"]}
+        self.assertEqual(varieties["Very early maturity"]["maturity_class"], "very_early")
+        self.assertEqual(varieties["Very early maturity"]["overrides"], {"days_maturity": 45, "gdd_to_maturity": 900.0})
         self.assertEqual(varieties["Early maturity"]["maturity_class"], "early")
         self.assertEqual(varieties["Early maturity"]["overrides"], {"days_maturity": 51, "gdd_to_maturity": 1020.0})
         self.assertEqual(varieties["Mid maturity"]["maturity_class"], "mid")
         self.assertEqual(varieties["Mid maturity"]["overrides"], {})
         self.assertEqual(varieties["Late maturity"]["maturity_class"], "late")
         self.assertEqual(varieties["Late maturity"]["overrides"], {"days_maturity": 69, "gdd_to_maturity": 1380.0})
+        self.assertEqual(varieties["Very late maturity"]["maturity_class"], "very_late")
+        self.assertEqual(varieties["Very late maturity"]["overrides"], {"days_maturity": 75, "gdd_to_maturity": 1500.0})
 
     def test_generic_maturity_profiles_omit_missing_or_nonnumeric_timing_overrides(self) -> None:
         varieties = {row["variety_name"]: row for row in generic_maturity_varieties_for_plant({
@@ -1695,9 +1876,11 @@ class TrellisSeederTests(unittest.TestCase):
             "days_maturity": "",
             "gdd_to_maturity": "unknown",
         })}
+        self.assertEqual(varieties["Very early maturity"]["overrides"], {})
         self.assertEqual(varieties["Early maturity"]["overrides"], {})
         self.assertEqual(varieties["Mid maturity"]["overrides"], {})
         self.assertEqual(varieties["Late maturity"]["overrides"], {})
+        self.assertEqual(varieties["Very late maturity"]["overrides"], {})
 
     def test_crop_generation_emits_growth_stage_rows(self) -> None:
         class FakeOpenAI:
@@ -1744,7 +1927,7 @@ class TrellisSeederTests(unittest.TestCase):
         provenance = {"traces": [], "tables": {}}
         input_data = {"crops": [{"name": "Lettuce", "sources": ["https://example.test/lettuce"], "variety_count": 1}]}
 
-        _generate_crops(settings, input_data, FakeOpenAI(), methods, generated, provenance, run_dir, generate_templates=False)
+        _generate_crops(settings, input_data, FakeOpenAI(), methods, generated, provenance, run_dir, generate_templates=False, fdc=FakeNutritionFdc())
 
         self.assertEqual([row["stage_key"] for row in generated["PlantGrowthStages"]], ["mature", "baby_leaf"])
         self.assertEqual(generated["PlantGrowthStages"][0]["stage_label"], "Mature")
