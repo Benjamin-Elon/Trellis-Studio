@@ -63,6 +63,44 @@ Draw.loadPlugin(function (ui) {
         return d.toISOString().slice(0, 10);
     }
 
+    function normAllocationMethodId(value) {
+        return String(value || "").trim().toLowerCase();
+    }
+
+    const ALLOCATION_METHOD_CATEGORIES = Object.freeze({
+        "transplant.indoor": "transplant",
+        "transplant.outdoor": "transplant",
+        "transplant.purchased": "transplant",
+        "transplant.cutting": "transplant",
+        "direct_sow.field": "direct_sow",
+        "direct_sow.pre_germinated": "direct_sow",
+        "direct_sow.plug": "direct_sow"
+    }); // CHANGE: Allocate repairs concrete method/category context before calling lifecycle scheduling.
+
+    function inferAllocationMethodCategory(methodId) {
+        const normalized = normAllocationMethodId(methodId);
+        return normalized.indexOf(".") > 0 ? normalized.split(".")[0] : "";
+    }
+
+    function resolveCropMethodContext(crop) {
+        const methodId = normAllocationMethodId(crop && (crop.method || crop.methodId));
+        const explicitCategory = normAllocationMethodId(crop && (crop.methodCategoryId || crop.method_category_id));
+        const supportedCategory = ALLOCATION_METHOD_CATEGORIES[methodId] || "";
+        const inferredCategory = supportedCategory || inferAllocationMethodCategory(methodId);
+        if (!methodId) return { ok: false, reason: "invalid Year Plan method" };
+        if (methodId.indexOf(".") < 0) return { ok: false, methodId, methodCategoryId: explicitCategory, reason: "Year Plan method must be a concrete method like direct_sow.field." }; // CHANGE: stop category-only legacy methods before scheduler.
+        if (!supportedCategory) return { ok: false, methodId, methodCategoryId: explicitCategory || inferredCategory, reason: "Unsupported Year Plan method: " + methodId + "." }; // CHANGE
+        return { ok: true, methodId, methodCategoryId: supportedCategory, repairedMethodCategoryId: explicitCategory && explicitCategory !== supportedCategory }; // CHANGE
+    }
+
+    function allocationLifecycleReason(reason) {
+        const text = String(reason || "").trim();
+        if (/methodCategoryId is required/i.test(text)) return "Year Plan method category is missing."; // CHANGE: expose scheduler contract failures as plan data issues.
+        if (/does not belong to methodCategoryId/i.test(text)) return "Year Plan method/category mismatch: " + text;
+        if (/Unsupported methodId/i.test(text)) return "Unsupported Year Plan method: " + text;
+        return text || "No lifecycle.";
+    }
+
     function localStorageSafe() {
         try { return window.localStorage || null; } catch (_) { return null; }
     }
@@ -153,6 +191,11 @@ Draw.loadPlugin(function (ui) {
         return ((plan && plan.crops) || []).find(crop => String(crop.id) === String(cropId)) || null;
     }
 
+    function opportunityContainsCrop(opportunityModel, cropId) {
+        const id = String(cropId || "");
+        return ["actionable", "unresolved", "satisfied"].some(key => ((opportunityModel && opportunityModel[key]) || []).some(crop => String(crop.cropId || crop.id || "") === id));
+    }
+
     function weekCropShortage(coverage, weekIndex, cropId) {
         const week = (coverage && coverage.weekSummaries || []).find(item => item.weekIndex === weekIndex);
         const row = week && (week.cropShortages || []).find(item => String(item.cropId) === String(cropId));
@@ -240,7 +283,7 @@ Draw.loadPlugin(function (ui) {
         return (result.geometry && result.geometry.capacity || 0) - (result.plantCount || 0);
     }
 
-    async function computeBedResult(state, crop, bed) {
+    async function resolveAllocationContext(state, crop, bed) {
         const scheduler = window.USL && window.USL.scheduler;
         const tiler = window.USL && window.USL.tiler;
         const planning = window.USL && window.USL.planningCore;
@@ -249,10 +292,13 @@ Draw.loadPlugin(function (ui) {
         if (!plantResolution || !plantResolution.ok) return { ok: false, status: "structural_failure", reason: plantResolution && plantResolution.reason || "Plant not found." };
         const week = selectedWeek(state);
         const weekStartISO = week && week.start || "";
+        const methodContext = resolveCropMethodContext(crop);
+        if (!methodContext.ok) return { ok: false, status: "structural_failure", reason: methodContext.reason, bed, crop, plantResolution }; // CHANGE: validate saved Year Plan method context before lifecycle scheduling.
         const lifecycle = await scheduler.proposeLifecycle({
             plant: plantResolution.plant,
             city: state.city,
-            methodId: crop.method,
+            methodId: methodContext.methodId,
+            methodCategoryId: methodContext.methodCategoryId, // CHANGE: preserve planting method category through allocation lifecycle scheduling.
             weekStartISO,
             weekEndISO: addDaysISO(weekStartISO, 6),
             chooseBestFeasibleDay: true,
@@ -261,59 +307,117 @@ Draw.loadPlugin(function (ui) {
             bedProfile: tiler.readBedProfile(bed),
             bedProfileSource: getAttr(bed, "label") || "garden bed"
         });
-        if (!lifecycle || !lifecycle.ok) return { ok: false, status: "structural_failure", reason: lifecycle && lifecycle.reason || "No lifecycle." };
+        if (!lifecycle || !lifecycle.ok) return { ok: false, status: "structural_failure", reason: allocationLifecycleReason(lifecycle && lifecycle.reason), bed, crop, plantResolution, lifecycle }; // CHANGE
         const harvestStart = lifecycleHarvestStart(lifecycle);
         const harvestEnd = lifecycleHarvestEnd(lifecycle);
         const kgPerPlant = Number(crop.kgPerPlant || plantResolution.plant.yield_per_plant_kg || plantResolution.plant.yield_kg_per_plant || 0);
         if (!Number.isFinite(kgPerPlant) || kgPerPlant <= EPS) return { ok: false, status: "structural_failure", reason: "Missing yield data.", bed, crop, lifecycle, plantResolution };
-        const recommendation = planning.recommendPlantCount({
+        return { ok: true, scheduler, tiler, planning, plantResolution, lifecycle, weekStartISO, harvestStart, harvestEnd, kgPerPlant };
+    }
+
+    function recommendFullPlantCount(state, crop, context) {
+        const recommendation = context.planning.recommendPlantCount({
             moduleCell: state.moduleCell,
             year: state.year,
             plan: state.plan,
             candidate: {
                 cropId: crop.cropId || crop.id,
-                harvestStart,
-                harvestEnd,
-                kgPerPlant,
-                shelfLifeDays: crop.shelfLifeDays || plantResolution.plant.shelf_life_days || 0
+                harvestStart: context.harvestStart,
+                harvestEnd: context.harvestEnd,
+                kgPerPlant: context.kgPerPlant,
+                shelfLifeDays: crop.shelfLifeDays || context.plantResolution.plant.shelf_life_days || 0
             }
         });
-        if (Number(recommendation.reachableShortKg) <= EPS) return { ok: false, status: "no_fit", reason: "No reachable demand", bed, crop, lifecycle, plantResolution };
-        const plantCount = Math.max(1, Math.trunc(Number(recommendation.plantCount) || 0));
-        const geometry = tiler.proposePlantingGeometry({
+        if (Number(recommendation.reachableShortKg) <= EPS) return { ok: false, status: "no_fit", reason: "No reachable demand", recommendation };
+        return {
+            ok: true,
+            recommendation,
+            fullPlantCount: Math.max(1, Math.trunc(Number(recommendation.plantCount) || 0))
+        };
+    }
+
+    function proposeGeometryForPlantCount(state, crop, bed, context, plantCount, orientationOverride) {
+        return context.tiler.proposePlantingGeometry({
             bedCell: bed,
             plantCount,
-            spacingXCm: plantResolution.plant.spacing_x_cm || plantResolution.plant.spacing_cm || 30,
-            spacingYCm: plantResolution.plant.spacing_y_cm || plantResolution.plant.spacing_cm || 30,
-            vegHeightCm: plantResolution.plant.veg_height_cm || null,
+            spacingXCm: context.plantResolution.plant.spacing_x_cm || context.plantResolution.plant.spacing_cm || 30,
+            spacingYCm: context.plantResolution.plant.spacing_y_cm || context.plantResolution.plant.spacing_cm || 30,
+            vegHeightCm: context.plantResolution.plant.veg_height_cm || null,
             occupancy: state.occupancy || [],
-            entryISO: lifecycle.primaryDateISO || weekStartISO,
-            harvestEndISO: harvestEnd,
-            orientationOverride: crop.orientationOverride || ""
+            entryISO: context.lifecycle.primaryDateISO || context.weekStartISO,
+            harvestEndISO: context.harvestEnd,
+            orientationOverride: orientationOverride != null ? orientationOverride : (crop.orientationOverride || "")
         });
-        if (!geometry || !geometry.ok) {
-            return { ok: false, status: "unavailable", reason: "Need " + plantCount + " plants", capacity: geometry && geometry.capacity || 0, plantCount, lifecycle, plantResolution, geometry };
-        }
-        const warnings = [].concat(lifecycle.warnings || [], geometry.warnings || []);
-        const status = (lifecycle.status === "warning" || geometry.status === "warning" || warnings.length) ? "warning" : "compatible";
+    }
+
+    function demandServedByCandidate(state, crop, context, plantCount) {
+        const simulation = context.planning.simulateCandidatePlanting({
+            moduleCell: state.moduleCell,
+            year: state.year,
+            plan: state.plan,
+            candidate: {
+                cropId: crop.cropId || crop.id,
+                harvestStart: context.harvestStart,
+                harvestEnd: context.harvestEnd,
+                kgPerPlant: context.kgPerPlant,
+                plantCount,
+                shelfLifeDays: crop.shelfLifeDays || context.plantResolution.plant.shelf_life_days || 0
+            }
+        });
+        return Math.max(0, Number(simulation && simulation.demandServedKg) || 0);
+    }
+
+    function partialAllocationWarning(plantCount, fullPlantCount) {
+        return "Partial allocation: " + plantCount + " of " + fullPlantCount + " plants fit in this bed.";
+    }
+
+    function allocationWarnings(lifecycle, geometry, partialWarning) {
+        return [].concat(lifecycle && lifecycle.warnings || [], geometry && geometry.warnings || [], partialWarning ? [partialWarning] : []);
+    }
+
+    function buildBedResult(state, crop, bed, context, geometry, plantCount, fullPlantCount, partialWarning) {
+        const warnings = allocationWarnings(context.lifecycle, geometry, partialWarning);
+        const status = (context.lifecycle.status === "warning" || geometry.status === "warning" || warnings.length) ? "warning" : "compatible";
         return {
             ok: true,
             status,
             bed,
             crop,
-            plantResolution,
-            lifecycle,
+            plantResolution: context.plantResolution,
+            lifecycle: context.lifecycle,
             geometry,
             plantCount,
-            kgPerPlant,
-            harvestStart,
-            harvestEnd,
-            demandServedKg: Number(recommendation.reachableShortKg) || 0,
-            projectedKg: plantCount * kgPerPlant,
-            taskPreview: lifecycle.taskPreview || [],
+            fullPlantCount,
+            partialPlanting: !!partialWarning,
+            partialWarning: partialWarning || "",
+            kgPerPlant: context.kgPerPlant,
+            harvestStart: context.harvestStart,
+            harvestEnd: context.harvestEnd,
+            demandServedKg: demandServedByCandidate(state, crop, context, plantCount),
+            projectedKg: plantCount * context.kgPerPlant,
+            taskPreview: context.lifecycle.taskPreview || [],
             warnings,
             conflictGroupIds: geometry.conflictGroupIds || []
         };
+    }
+
+    async function computeBedResult(state, crop, bed) {
+        const context = await resolveAllocationContext(state, crop, bed);
+        if (!context || !context.ok) return Object.assign({ bed, crop }, context || {});
+        const need = recommendFullPlantCount(state, crop, context);
+        if (!need.ok) return { ok: false, status: need.status, reason: need.reason, bed, crop, lifecycle: context.lifecycle, plantResolution: context.plantResolution, recommendation: need.recommendation };
+        const fullPlantCount = need.fullPlantCount;
+        const fullGeometry = proposeGeometryForPlantCount(state, crop, bed, context, fullPlantCount);
+        if (fullGeometry && fullGeometry.ok) return buildBedResult(state, crop, bed, context, fullGeometry, fullPlantCount, fullPlantCount, "");
+        const capacity = Math.max(0, Math.trunc(Number(fullGeometry && fullGeometry.capacity) || 0));
+        if (capacity > 0 && capacity < fullPlantCount) {
+            const partialPlantCount = Math.max(1, Math.min(fullPlantCount, capacity));
+            const partialGeometry = proposeGeometryForPlantCount(state, crop, bed, context, partialPlantCount);
+            if (partialGeometry && partialGeometry.ok) {
+                return buildBedResult(state, crop, bed, context, partialGeometry, partialPlantCount, fullPlantCount, partialAllocationWarning(partialPlantCount, fullPlantCount));
+            }
+        }
+        return { ok: false, status: "unavailable", reason: capacity > 0 ? "Need " + fullPlantCount + " plants" : "No bed capacity", capacity, plantCount: fullPlantCount, fullPlantCount, lifecycle: context.lifecycle, plantResolution: context.plantResolution, geometry: fullGeometry, bed, crop };
     }
 
     function createButton(label, variant) {
@@ -365,6 +469,7 @@ Draw.loadPlugin(function (ui) {
                 draft: null,
                 overlayVersion: 0,
                 draftVersion: 0,
+                noticeMessage: "",
                 closed: false,
                 cleanups: []
             };
@@ -407,11 +512,14 @@ Draw.loadPlugin(function (ui) {
             const globalOpportunityModel = buildOpportunityModel(state.plan, state.coverage);
             state.weekIndex = globalOpportunityModel.actionableWeekIndices.includes(state.weekIndex) ? state.weekIndex : (globalOpportunityModel.actionableWeekIndices[0] ?? 0);
             state.opportunityModel = await buildWeekOpportunityModel(state);
-            if (state.selectedCropId && !state.opportunityModel.actionable.some(crop => crop.cropId === state.selectedCropId)) state.selectedCropId = "";
+            if (state.selectedCropId && !opportunityContainsCrop(state.opportunityModel, state.selectedCropId)) state.selectedCropId = "";
+            state.noticeMessage = "";
             if (state.coverage.totals.targetKg <= EPS) state.message = "No demand to allocate.";
             else if (state.coverage.totals.shortKg <= EPS) state.message = "The plan is covered.";
-            else if (!state.opportunityModel.actionable.length && state.opportunityModel.unresolved.length) state.message = "Only unresolved crops remain.";
-            else state.message = "";
+            else {
+                state.message = "";
+                if (!state.opportunityModel.actionable.length && state.opportunityModel.unresolved.length) state.noticeMessage = "Only unresolved crops remain for this week.";
+            }
         }
 
         async function buildWeekOpportunityModel(state) {
@@ -461,7 +569,7 @@ Draw.loadPlugin(function (ui) {
             const panel = state.hud;
             if (!panel) return;
             const bedContext = currentBedContext(state);
-            panel.style.display = state.message || bedContext ? "flex" : "none";
+            panel.style.display = state.message || state.noticeMessage || bedContext || state.opportunityModel ? "flex" : "none";
             panel.innerHTML = "";
             const header = document.createElement("div");
             header.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;";
@@ -480,7 +588,7 @@ Draw.loadPlugin(function (ui) {
             const status = document.createElement("div");
             status.style.cssText = "line-height:1.35;color:#374151;";
             if (state.message) status.textContent = state.message;
-            else status.textContent = formatKg(state.coverage.totals.shortKg) + " unmet of " + formatKg(state.coverage.totals.targetKg) + " demand";
+            else status.textContent = formatKg(state.coverage.totals.shortKg) + " unmet of " + formatKg(state.coverage.totals.targetKg) + " demand" + (state.noticeMessage ? " - " + state.noticeMessage : "");
             panel.appendChild(status);
 
             if (state.message) return;
@@ -499,6 +607,8 @@ Draw.loadPlugin(function (ui) {
             weekRow.appendChild(label);
             weekRow.appendChild(next);
             panel.appendChild(weekRow);
+
+            renderUnresolvedReasons(state, panel);
 
             const cropSelect = document.createElement("select");
             cropSelect.style.cssText = "width:100%;box-sizing:border-box;";
@@ -537,7 +647,7 @@ Draw.loadPlugin(function (ui) {
                 rows.forEach(row => {
                     const opt = document.createElement("option");
                     opt.value = row.cropId;
-                    opt.textContent = row.label + (row.shortKg > EPS ? " - " + formatKg(row.shortKg) + " short" : "");
+                    opt.textContent = row.label + (row.shortKg > EPS ? " - " + formatKg(row.shortKg) + " short" : "") + (row.unresolvedReason ? " - " + row.unresolvedReason : "");
                     opt.disabled = !!disabled;
                     optgroup.appendChild(opt);
                 });
@@ -552,9 +662,33 @@ Draw.loadPlugin(function (ui) {
             group("Satisfied this week", state.opportunityModel.satisfied, true);
         }
 
+        function renderUnresolvedReasons(state, panel) {
+            const unresolved = state.opportunityModel && state.opportunityModel.unresolved || [];
+            if (!unresolved.length) return;
+            const box = document.createElement("div");
+            box.style.cssText = "border:1px solid #fed7aa;border-radius:6px;background:#fff7ed;color:#92400e;padding:7px;display:flex;flex-direction:column;gap:3px;line-height:1.3;";
+            const title = document.createElement("div");
+            title.style.cssText = "font-weight:700;";
+            title.textContent = "Unresolved this week";
+            box.appendChild(title);
+            unresolved.slice(0, 5).forEach(crop => {
+                const row = document.createElement("div");
+                row.textContent = crop.label + ": " + (crop.unresolvedReason || "not currently allocatable");
+                box.appendChild(row);
+            });
+            if (unresolved.length > 5) {
+                const more = document.createElement("div");
+                more.textContent = "+" + (unresolved.length - 5) + " more";
+                box.appendChild(more);
+            }
+            panel.appendChild(box);
+        }
+
         function renderDraftSummary(state, box) {
             if (!state.draft) {
-                box.textContent = "Select a bed to preview placement.";
+                box.textContent = state.opportunityModel && !state.opportunityModel.actionable.length && state.opportunityModel.unresolved.length
+                    ? "No actionable crops this week. Resolve the reasons above or switch weeks."
+                    : "Select a bed to preview placement.";
                 return;
             }
             const d = state.draft;
@@ -563,10 +697,11 @@ Draw.loadPlugin(function (ui) {
                 d.crop.label,
                 methodBedEntryLabel(d.crop.method) + " " + (d.lifecycle.primaryDateISO || ""),
                 String(d.plantCount || 0) + " plants - " + formatKg(d.projectedKg) + " projected",
+                d.partialPlanting ? "Partial: " + d.plantCount + " of " + d.fullPlantCount + " plants" : "",
                 "Harvest " + (d.harvestStart || "n/a") + " to " + (d.harvestEnd || "n/a"),
                 "Serves " + formatKg(d.demandServedKg || 0) + " unmet demand",
                 d.status === "compatible" ? "Compatible" : (d.reason || d.status)
-            ].forEach(text => {
+            ].filter(Boolean).forEach(text => {
                 const div = document.createElement("div");
                 div.textContent = text;
                 box.appendChild(div);
@@ -630,7 +765,8 @@ Draw.loadPlugin(function (ui) {
         function overlayModel(result) {
             if (!result || !result.ok) return { label: result && result.reason || "No current fit", tone: "bad" };
             const status = result.status === "warning" ? "Warning" : "Good match";
-            return { label: result.crop.label + "\n" + result.plantCount + " fit - " + status, tone: result.status === "warning" ? "warn" : "good", result };
+            const fitLabel = result.partialPlanting ? (result.plantCount + " of " + result.fullPlantCount + " fit") : (result.plantCount + " fit");
+            return { label: result.crop.label + "\n" + fitLabel + " - " + status, tone: result.status === "warning" ? "warn" : "good", result };
         }
 
         function renderBedOverlay(state, bed, modelValue) {
@@ -683,7 +819,7 @@ Draw.loadPlugin(function (ui) {
                 orientationOverride: d.geometry.orientation === "normal" ? "rotated_grid" : "normal"
             });
             d.geometry = next;
-            d.warnings = [].concat(d.lifecycle && d.lifecycle.warnings || [], next && next.warnings || []);
+            d.warnings = allocationWarnings(d.lifecycle, next, d.partialWarning);
             d.status = d.warnings.length ? "warning" : "compatible";
             d.conflictGroupIds = next && next.conflictGroupIds || [];
             renderGhost(state);
@@ -756,10 +892,11 @@ Draw.loadPlugin(function (ui) {
                 draft.crop.label,
                 methodBedEntryLabel(draft.crop.method) + " " + (draft.lifecycle.primaryDateISO || ""),
                 String(draft.plantCount) + " plants",
+                draft.partialPlanting ? "Partial: " + draft.plantCount + " of " + draft.fullPlantCount + " plants fit in this bed" : "",
                 "Harvest " + draft.harvestStart + " to " + draft.harvestEnd,
                 "Serves " + formatKg(draft.demandServedKg),
                 "Bed: " + (getAttr(draft.bed, "label") || cellId(draft.bed))
-            ].forEach(text => {
+            ].filter(Boolean).forEach(text => {
                 const row = document.createElement("div");
                 row.textContent = text;
                 div.appendChild(row);
@@ -844,8 +981,13 @@ Draw.loadPlugin(function (ui) {
                         allocation_year: String(state.year),
                         allocation_plan_crop_id: String(draft.crop.cropId || draft.crop.id || ""),
                         allocation_week: String(draft.allocationWeek || state.weekIndex + 1),
+                        allocation_demand_served_kg: String(Number(draft.demandServedKg || 0)),
                         allocation_override_json: draft.status === "compatible" ? "" : JSON.stringify({ occurred: true, reasons: draft.warnings || [draft.reason || draft.status], timestamp: new Date().toISOString() })
                     });
+                    if (draft.partialPlanting) {
+                        attrs.allocation_partial = "1";
+                        attrs.allocation_full_plant_count = String(draft.fullPlantCount || draft.plantCount || 0);
+                    }
                     group = tiler.createPlantingFromProposal({
                         graph,
                         moduleCell: state.moduleCell,
@@ -871,7 +1013,7 @@ Draw.loadPlugin(function (ui) {
                 operation();
             }
             await loadState(state);
-            state.selectedCropId = state.opportunityModel.actionable.some(crop => crop.cropId === previousCropId) ? previousCropId : "";
+            state.selectedCropId = opportunityContainsCrop(state.opportunityModel, previousCropId) ? previousCropId : "";
             renderHud(state);
             scheduleOverlayEvaluation(state);
         }
@@ -935,6 +1077,9 @@ Draw.loadPlugin(function (ui) {
         isActive: AllocateController.isActive,
         __test: {
             buildOpportunityModel,
+            computeBedResult,
+            partialAllocationWarning,
+            resolveCropMethodContext,
             reviewKey,
             methodBedEntryLabel
         }

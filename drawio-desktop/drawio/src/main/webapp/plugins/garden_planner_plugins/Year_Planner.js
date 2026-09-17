@@ -252,6 +252,16 @@ Draw.loadPlugin(function (ui) {
                 : [];
         }
 
+        function normalizePickerTreeState(value) {
+            const source = value && typeof value === "object" ? value : {};
+            const normalized = {};
+            for (const key of Object.keys(source)) {
+                const ids = normalizeIdList(source[key]);
+                if (ids.length) normalized[String(key)] = ids;
+            }
+            return normalized;
+        } // CHANGE: picker expansion state is persisted with the existing per-user planner UI preferences.
+
         function normalize(record) {
             const source = record && typeof record === "object" ? record : {};
             const top = source.top && typeof source.top === "object" ? source.top : {};
@@ -265,7 +275,8 @@ Draw.loadPlugin(function (ui) {
                 },
                 collapsedDemandChannelIds: normalizeIdList(source.collapsedDemandChannelIds),
                 collapsedDemandLineIds: normalizeIdList(source.collapsedDemandLineIds),
-                collapsedSelfSufficiencyLineIds: normalizeIdList(source.collapsedSelfSufficiencyLineIds)
+                collapsedSelfSufficiencyLineIds: normalizeIdList(source.collapsedSelfSufficiencyLineIds),
+                pickerTreeExpanded: normalizePickerTreeState(source.pickerTreeExpanded) // CHANGE
             };
         }
 
@@ -288,7 +299,8 @@ Draw.loadPlugin(function (ui) {
                 },
                 collapsedDemandChannelIds: Array.from(state.collapsedDemandChannelIds || []),
                 collapsedDemandLineIds: Array.from(state.collapsedDemandLineIds || []),
-                collapsedSelfSufficiencyLineIds: Array.from(state.collapsedSelfSufficiencyLineIds || [])
+                collapsedSelfSufficiencyLineIds: Array.from(state.collapsedSelfSufficiencyLineIds || []),
+                pickerTreeExpanded: state.pickerTreeExpanded || {} // CHANGE
             });
             try { store.setItem(storageKey(moduleCell, year), JSON.stringify(record)); } catch (_) { }
         }
@@ -1721,6 +1733,14 @@ Draw.loadPlugin(function (ui) {
             return { area: "demand", field, ...(extra || {}) };
         }
 
+        function demandLineLabel(line, crop, lineIndex) {
+            const plantName = String(crop && crop.plant || "").trim();
+            const varietyName = String(crop && crop.variety || "").trim();
+            const cropName = plantName && varietyName ? `${plantName} - ${varietyName}` : (plantName || varietyName);
+            const unit = String(line && line.unit || "").trim() || "No unit";
+            return cropName ? `${cropName}: ${unit}` : `line ${Math.max(0, Number(lineIndex) || 0) + 1}`;
+        } // CHANGE: demand validation diagnostics name the crop/unit instead of exposing internal demand ids.
+
         function selfSufficiencyTarget(field, extra) {
             return { area: "self-sufficiency", field, ...(extra || {}) };
         } // NEW: diagnostics can focus household-planning controls.
@@ -1812,18 +1832,19 @@ Draw.loadPlugin(function (ui) {
             for (const [lineIndex, line] of demands.entries()) {
                 const id = String(line && line.id || "").trim();
                 const crop = PlanMath.findCrop(plan, line && line.cropId);
-                if (!id) errors.push(makeValidation("demand", "demand.line_missing_id", "Demand line needs an id.", { field: "id", target: demandTarget("id", { lineIndex }) }));
-                else if (demandIds.has(id)) errors.push(makeValidation("demand", "demand.line_duplicate_id", `Use a unique demand line id: ${id}.`, { field: "id", target: demandTarget("id", { lineId: id, lineIndex }) }));
+                const lineLabel = demandLineLabel(line, crop, lineIndex); // CHANGE
+                if (!id) errors.push(makeValidation("demand", "demand.line_missing_id", `Demand line ${lineIndex + 1} needs an id.`, { field: "id", target: demandTarget("id", { lineIndex }) })); // CHANGE
+                else if (demandIds.has(id)) errors.push(makeValidation("demand", "demand.line_duplicate_id", `Use a unique demand line id for ${lineLabel}.`, { field: "id", target: demandTarget("id", { lineId: id, lineIndex }) })); // CHANGE
                 else demandIds.add(id);
-                if (!channelIds.has(String(line && line.channelId || ""))) errors.push(makeValidation("demand", "demand.line_missing_channel", `Choose a valid channel for demand line ${id || "unknown"}.`, { field: "channelId", target: demandTarget("channelId", { lineId: id, lineIndex }) }));
-                if (!crop) errors.push(makeValidation("demand", "demand.line_missing_crop", `Choose a crop for demand line ${id || "unknown"}.`, { field: "cropId", target: demandTarget("cropId", { lineId: id, lineIndex }) }));
-                if (!Number.isFinite(Number(line && line.qty)) || Number(line.qty) <= 0) errors.push(makeValidation("demand", "demand.line_invalid_quantity", `Enter quantity greater than 0 for demand line ${id || "unknown"}.`, { field: "qty", target: demandTarget("qty", { lineId: id, lineIndex }) }));
-                if (!DEMAND_FREQUENCIES.includes(String(line && line.frequency || ""))) errors.push(makeValidation("demand", "demand.line_invalid_frequency", `Choose a valid frequency for demand line ${id || "unknown"}.`, { field: "frequency", target: demandTarget("frequency", { lineId: id, lineIndex }) }));
-                if (!Number.isInteger(Number(line && line.everyN)) || Number(line.everyN) < 1) errors.push(makeValidation("demand", "demand.line_invalid_every_n", `Enter every value greater than 0 for demand line ${id || "unknown"}.`, { field: "everyN", target: demandTarget("everyN", { lineId: id, lineIndex }) }));
-                if (!DEMAND_PRIORITIES.includes(String(line && line.priority || ""))) errors.push(makeValidation("demand", "demand.line_invalid_priority", `Choose a valid priority for demand line ${id || "unknown"}.`, { field: "priority", target: demandTarget("priority", { lineId: id, lineIndex }) }));
-                if (!PlanMath.hasYmd(line && line.from) || !PlanMath.hasYmd(line && line.to)) errors.push(makeValidation("demand", "demand.line_missing_dates", `Enter demand dates for line ${id || "unknown"}.`, { field: "from", relatedFields: ["from", "to"], target: demandTarget("from", { lineId: id, lineIndex, relatedFields: ["from", "to"] }) })); // CHANGE
-                if (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to) errors.push(makeValidation("demand", "demand.line_reversed_dates", `Set demand start on or before end for line ${id || "unknown"}.`, { field: "from", relatedFields: ["from", "to"], target: demandTarget("from", { lineId: id, lineIndex, relatedFields: ["from", "to"] }) })); // CHANGE
-                if (crop && !Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, line && line.unit))) errors.push(makeValidation("demand", "demand.line_unresolved_unit", `Choose a valid unit for demand line ${id || "unknown"}.`, { cropId: String(crop.id || ""), field: "unit", target: demandTarget("unit", { lineId: id, lineIndex }) }));
+                if (!channelIds.has(String(line && line.channelId || ""))) errors.push(makeValidation("demand", "demand.line_missing_channel", `Choose a valid channel for ${lineLabel}.`, { field: "channelId", target: demandTarget("channelId", { lineId: id, lineIndex }) })); // CHANGE
+                if (!crop) errors.push(makeValidation("demand", "demand.line_missing_crop", `Choose a crop for ${lineLabel}.`, { field: "cropId", target: demandTarget("cropId", { lineId: id, lineIndex }) })); // CHANGE
+                if (!Number.isFinite(Number(line && line.qty)) || Number(line.qty) <= 0) errors.push(makeValidation("demand", "demand.line_invalid_quantity", `Enter quantity greater than 0 for ${lineLabel}.`, { field: "qty", target: demandTarget("qty", { lineId: id, lineIndex }) })); // CHANGE
+                if (!DEMAND_FREQUENCIES.includes(String(line && line.frequency || ""))) errors.push(makeValidation("demand", "demand.line_invalid_frequency", `Choose a valid frequency for ${lineLabel}.`, { field: "frequency", target: demandTarget("frequency", { lineId: id, lineIndex }) })); // CHANGE
+                if (!Number.isInteger(Number(line && line.everyN)) || Number(line.everyN) < 1) errors.push(makeValidation("demand", "demand.line_invalid_every_n", `Enter every value greater than 0 for ${lineLabel}.`, { field: "everyN", target: demandTarget("everyN", { lineId: id, lineIndex }) })); // CHANGE
+                if (!DEMAND_PRIORITIES.includes(String(line && line.priority || ""))) errors.push(makeValidation("demand", "demand.line_invalid_priority", `Choose a valid priority for ${lineLabel}.`, { field: "priority", target: demandTarget("priority", { lineId: id, lineIndex }) })); // CHANGE
+                if (!PlanMath.hasYmd(line && line.from) || !PlanMath.hasYmd(line && line.to)) errors.push(makeValidation("demand", "demand.line_missing_dates", `Enter demand dates for ${lineLabel}.`, { field: "from", relatedFields: ["from", "to"], target: demandTarget("from", { lineId: id, lineIndex, relatedFields: ["from", "to"] }) })); // CHANGE
+                if (PlanMath.hasYmd(line && line.from) && PlanMath.hasYmd(line && line.to) && line.from > line.to) errors.push(makeValidation("demand", "demand.line_reversed_dates", `Set demand start on or before end for ${lineLabel}.`, { field: "from", relatedFields: ["from", "to"], target: demandTarget("from", { lineId: id, lineIndex, relatedFields: ["from", "to"] }) })); // CHANGE
+                if (crop && !Number.isFinite(PlanMath.resolveUnitToKgPerUnit(crop, line && line.unit))) errors.push(makeValidation("demand", "demand.line_unresolved_unit", `Choose a valid unit for ${lineLabel}.`, { cropId: String(crop.id || ""), field: "unit", target: demandTarget("unit", { lineId: id, lineIndex }) })); // CHANGE
             }
             return errors;
         }
@@ -3107,6 +3128,7 @@ Draw.loadPlugin(function (ui) {
             state.collapsedDemandChannelIds = new Set(Array.isArray(prefs.collapsedDemandChannelIds) ? prefs.collapsedDemandChannelIds.map(String).filter(Boolean) : []);
             state.collapsedDemandLineIds = new Set(Array.isArray(prefs.collapsedDemandLineIds) ? prefs.collapsedDemandLineIds.map(String).filter(Boolean) : []);
             state.collapsedSelfSufficiencyLineIds = new Set(Array.isArray(prefs.collapsedSelfSufficiencyLineIds) ? prefs.collapsedSelfSufficiencyLineIds.map(String).filter(Boolean) : []);
+            state.pickerTreeExpanded = prefs.pickerTreeExpanded && typeof prefs.pickerTreeExpanded === "object" ? PlanSchema.clonePlain(prefs.pickerTreeExpanded) : {}; // CHANGE
             return state;
         }
 
@@ -3122,6 +3144,7 @@ Draw.loadPlugin(function (ui) {
                 collapsedDemandChannelIds: new Set(),
                 collapsedDemandLineIds: new Set(),
                 collapsedSelfSufficiencyLineIds: new Set(),
+                pickerTreeExpanded: {}, // CHANGE
                 cropPlanExpanded: true,
                 planCheckExpanded: false,
                 hadBlockingErrors: false,
@@ -3814,7 +3837,7 @@ Draw.loadPlugin(function (ui) {
             const session = SessionController.start(moduleCell, currentYear, plan);
             const varietyCache = new Map();
             const methodCache = new Map();
-            const addCropOptionById = new Map();
+            let addCropPickerNodes = []; // CHANGE
             let addCropOptionsLoadVersion = 0;
             let pendingAddCropMessage = "";
             let runtime = null;
@@ -3921,6 +3944,36 @@ Draw.loadPlugin(function (ui) {
                 .yp-demand-line-summary{flex:1 1 320px;min-width:0;color:var(--yp-neutral-700);overflow-wrap:anywhere}
                 .yp-demand-line{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:8px;padding:9px;border:1px solid #e1e1e1;border-radius:6px;background:#fcfcfc}
                 .yp-demand-line-details{border:0;border-top:1px solid var(--yp-neutral-300);border-radius:0}
+                .yp-picker-layer{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.62);padding:16px} /* CHANGE */
+                .yp-picker-dialog{box-sizing:border-box;width:min(720px,94vw);max-height:76vh;display:flex;flex-direction:column;border:1px solid var(--yp-neutral-500);border-radius:8px;background:#fff;box-shadow:0 10px 28px rgba(0,0,0,.22);overflow:hidden} /* CHANGE */
+                .yp-picker-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid var(--yp-neutral-300);background:var(--yp-neutral-100)} /* CHANGE */
+                .yp-picker-title{font-weight:700;font-size:13px;color:var(--yp-neutral-900)} /* CHANGE */
+                .yp-picker-body{padding:10px 12px;overflow:auto;min-height:220px} /* CHANGE */
+                .yp-picker-search{width:100%;box-sizing:border-box;margin-bottom:9px;padding:6px 8px;border:1px solid #bbb;border-radius:6px;font:12px Arial,sans-serif} /* CHANGE */
+                .yp-picker-tree{display:flex;flex-direction:column;gap:2px} /* CHANGE */
+                .yp-picker-row{display:grid;grid-template-columns:20px 20px minmax(0,1fr) auto;gap:5px;align-items:center;min-height:25px;border-radius:5px;padding:2px 5px;color:var(--yp-neutral-900)} /* CHANGE */
+                .yp-picker-row[data-disabled="true"]{color:var(--yp-neutral-500)} /* CHANGE */
+                .yp-picker-row:hover{background:var(--yp-neutral-100)} /* CHANGE */
+                .yp-picker-toggle{width:20px;height:20px;border:0;background:transparent;cursor:pointer;color:inherit;font:12px Arial,sans-serif} /* CHANGE */
+                .yp-picker-spacer{width:20px;height:20px} /* CHANGE */
+                .yp-picker-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap} /* CHANGE */
+                .yp-picker-meta{color:var(--yp-neutral-700);font-size:11px;white-space:nowrap} /* CHANGE */
+                .yp-picker-empty{padding:14px;text-align:center;color:var(--yp-neutral-700)} /* CHANGE */
+                .yp-picker-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 12px;border-top:1px solid var(--yp-neutral-300);background:#fff} /* CHANGE */
+                .yp-picker-warning{color:var(--yp-danger);font-weight:700} /* CHANGE */
+                .yp-package-transfer-dialog{width:min(920px,96vw)} /* CHANGE */
+                .yp-package-transfer-summary{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;color:var(--yp-neutral-700);font-size:11px;font-weight:700} /* CHANGE */
+                .yp-package-transfer-panes{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start} /* CHANGE */
+                .yp-package-transfer-pane{min-width:0;border:1px solid var(--yp-neutral-300);border-radius:7px;background:#fff;overflow:hidden} /* CHANGE */
+                .yp-package-transfer-pane-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 8px;border-bottom:1px solid var(--yp-neutral-300);background:var(--yp-neutral-100);font-weight:700} /* CHANGE */
+                .yp-package-transfer-list{display:flex;flex-direction:column;gap:4px;max-height:42vh;overflow:auto;padding:7px} /* CHANGE */
+                .yp-package-transfer-crop{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:4px 0 1px;color:var(--yp-neutral-700);font-size:11px;font-weight:700} /* CHANGE */
+                .yp-package-transfer-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;align-items:center;min-height:30px;padding:4px 6px;border-radius:5px;background:#fff} /* CHANGE */
+                .yp-package-transfer-row:hover{background:var(--yp-neutral-100)} /* CHANGE */
+                .yp-package-transfer-row[data-pending="true"]{background:var(--yp-warning-bg)} /* CHANGE */
+                .yp-package-transfer-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} /* CHANGE */
+                .yp-package-transfer-meta{color:var(--yp-neutral-700);font-size:10px;white-space:nowrap} /* CHANGE */
+                .yp-package-transfer-empty{padding:12px;text-align:center;color:var(--yp-neutral-700)} /* CHANGE */
                 .yp-header-main{padding:10px 12px 8px;border-bottom:1px solid var(--yp-neutral-300);display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:#fff}
                 .yp-secondary-toolbar{padding:7px 12px;border-bottom:1px solid var(--yp-neutral-300);display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--yp-neutral-100)}
                 .yp-header-status{color:var(--yp-neutral-700);font-weight:700}
@@ -3948,10 +4001,14 @@ Draw.loadPlugin(function (ui) {
                 .yp-diagnostics-trigger{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--yp-danger);border-radius:50%;background:#fff;color:var(--yp-danger);font:700 12px Arial,sans-serif;cursor:pointer}
                 .yp-diagnostics-layer{position:absolute;inset:0;z-index:4;pointer-events:none}
                 .yp-diagnostics-popover{position:absolute;z-index:2;min-width:230px;max-width:320px;padding:7px;border:1px solid var(--yp-danger);border-radius:7px;background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.18);color:var(--yp-neutral-900);pointer-events:auto}
+                .yp-diagnostics-popover[data-tone="warning"]{border-color:var(--yp-warning);max-width:360px;max-height:220px;overflow:auto} /* CHANGE */
                 .yp-diagnostics-popover[hidden]{display:none}
                 .yp-diagnostics-title{font-weight:700;margin-bottom:5px;color:var(--yp-danger)}
+                .yp-diagnostics-popover[data-tone="warning"] .yp-diagnostics-title{color:var(--yp-warning)} /* CHANGE */
                 .yp-diagnostics-item{display:block;width:100%;padding:5px 6px;border:0;border-radius:5px;background:#fff;text-align:left;color:var(--yp-neutral-900);font:12px Arial,sans-serif;cursor:pointer}
                 .yp-diagnostics-item:hover,.yp-diagnostics-item:focus{background:var(--yp-danger-bg);outline:1px solid var(--yp-danger)}
+                .yp-diagnostics-message{display:block;width:100%;box-sizing:border-box;padding:6px 7px;border-radius:5px;background:#fff;text-align:left;color:var(--yp-neutral-900);font:12px Arial,sans-serif;line-height:1.35;white-space:normal;overflow-wrap:anywhere} /* CHANGE */
+                .yp-diagnostics-message + .yp-diagnostics-message{margin-top:3px;border-top:1px solid var(--yp-neutral-300)} /* CHANGE */
                 .yp-field-highlight{outline:2px solid var(--yp-danger)!important;outline-offset:2px}
                 .yp-target-highlight{outline:2px solid var(--yp-warning)!important;outline-offset:2px;background:var(--yp-warning-bg)!important} /* CHANGE */
                 .yp-attention-strip{display:none;margin-top:6px;padding:6px;border:1px solid var(--yp-warning);border-radius:6px;background:var(--yp-warning-bg)}
@@ -4053,6 +4110,7 @@ Draw.loadPlugin(function (ui) {
             chartControls.style.marginBottom = "6px";
             const planCheckScopeSel = document.createElement("select");
             const cropFilterSel = document.createElement("select");
+            const cropFilterBadgeHost = document.createElement("span"); // CHANGE: selected planned crops can surface package setup warnings beside the selector.
             const planCheckSummary = document.createElement("div");
             planCheckSummary.className = "yp-plan-check-summary";
             planCheckSummary.style.cssText = "display:flex;flex-wrap:wrap;gap:5px 14px;padding:7px 8px;margin-bottom:6px;border:1px solid #e0e0e0;border-radius:6px;background:#fafafa;";
@@ -4084,6 +4142,7 @@ Draw.loadPlugin(function (ui) {
             chartControls.appendChild(planCheckScopeSel);
             chartControls.appendChild(document.createTextNode("Crop filter"));
             chartControls.appendChild(cropFilterSel);
+            chartControls.appendChild(cropFilterBadgeHost); // CHANGE
             chartBox.appendChild(chartControls);
             chartBox.appendChild(planCheckSummary);
             chartBox.appendChild(chartLegend);
@@ -4206,6 +4265,259 @@ Draw.loadPlugin(function (ui) {
                 return select;
             }
 
+            function pickerExpandedSet(key) {
+                const storageKey = String(key || "");
+                state.pickerTreeExpanded = state.pickerTreeExpanded && typeof state.pickerTreeExpanded === "object" ? state.pickerTreeExpanded : {};
+                if (!Array.isArray(state.pickerTreeExpanded[storageKey])) state.pickerTreeExpanded[storageKey] = [];
+                return new Set(state.pickerTreeExpanded[storageKey].map(String).filter(Boolean));
+            } // CHANGE
+
+            function savePickerExpandedSet(key, expanded) {
+                const storageKey = String(key || "");
+                state.pickerTreeExpanded = state.pickerTreeExpanded && typeof state.pickerTreeExpanded === "object" ? state.pickerTreeExpanded : {};
+                state.pickerTreeExpanded[storageKey] = Array.from(expanded || []).map(String).filter(Boolean);
+                saveCollapsePreferences();
+            } // CHANGE
+
+            function pickerNodeText(node) {
+                const parts = [node && node.label, node && node.meta];
+                for (const child of ((node && node.children) || [])) parts.push(pickerNodeText(child));
+                return parts.join(" ").toLocaleLowerCase();
+            } // CHANGE
+
+            function pickerSelectableLeaves(node) {
+                const leaves = [];
+                const visit = item => {
+                    if (!item) return;
+                    if (item.selectable && !item.disabled) leaves.push(item);
+                    for (const child of (item.children || [])) visit(child);
+                };
+                visit(node);
+                return leaves;
+            } // CHANGE
+
+            function pickerFlattenLeaves(nodes) {
+                const leaves = [];
+                for (const node of (nodes || [])) leaves.push(...pickerSelectableLeaves(node));
+                return leaves;
+            } // CHANGE
+
+            function openTreePicker(config) {
+                const settings = config || {};
+                const key = String(settings.key || Env.uid("picker"));
+                const roots = Array.isArray(settings.nodes) ? settings.nodes : [];
+                const leafOrder = pickerFlattenLeaves(roots).map(node => String(node.id));
+                const leafById = new Map();
+                const expanded = pickerExpandedSet(key);
+                const selected = new Set();
+                let query = "";
+                let discardWarned = false;
+                let closed = false;
+
+                const layer = document.createElement("div");
+                layer.className = "yp-picker-layer";
+                layer.dataset.yearPlanPicker = key;
+                const dialog = document.createElement("div");
+                dialog.className = "yp-picker-dialog";
+                dialog.setAttribute("role", "dialog");
+                dialog.setAttribute("aria-modal", "true");
+                const head = document.createElement("div");
+                head.className = "yp-picker-head";
+                const title = document.createElement("div");
+                title.className = "yp-picker-title";
+                title.textContent = settings.title || "Select items";
+                const close = mkBtn("Close", "neutral");
+                head.appendChild(title);
+                head.appendChild(close);
+                const bodyEl = document.createElement("div");
+                bodyEl.className = "yp-picker-body";
+                const search = mkInput("search", "", 0);
+                search.className = "yp-picker-search";
+                search.placeholder = "Search";
+                const tree = document.createElement("div");
+                tree.className = "yp-picker-tree";
+                bodyEl.appendChild(search);
+                bodyEl.appendChild(tree);
+                const foot = document.createElement("div");
+                foot.className = "yp-picker-foot";
+                const status = document.createElement("div");
+                status.className = "yp-picker-status";
+                const warning = document.createElement("div");
+                warning.className = "yp-picker-warning";
+                const actions = document.createElement("div");
+                actions.className = "yp-row";
+                const cancel = mkBtn("Cancel", "neutral");
+                const add = mkBtn(settings.addLabel || "Add selected", "add");
+                actions.appendChild(cancel);
+                actions.appendChild(add);
+                foot.appendChild(status);
+                foot.appendChild(warning);
+                foot.appendChild(actions);
+                dialog.appendChild(head);
+                dialog.appendChild(bodyEl);
+                dialog.appendChild(foot);
+                layer.appendChild(dialog);
+                card.appendChild(layer);
+
+                function rememberLeaf(node) {
+                    if (node && node.selectable) leafById.set(String(node.id), node);
+                    for (const child of ((node && node.children) || [])) rememberLeaf(child);
+                }
+                roots.forEach(rememberLeaf);
+
+                function filteredNode(node) {
+                    if (!query) return node;
+                    const needle = query.toLocaleLowerCase();
+                    if (pickerNodeText(node).indexOf(needle) < 0) return null;
+                    const copy = { ...node };
+                    copy.children = (node.children || []).map(filteredNode).filter(Boolean);
+                    return copy;
+                }
+
+                function nodeIsExpanded(node) {
+                    return !!query || expanded.has(String(node && node.id || ""));
+                }
+
+                function setSelection(ids, checked) {
+                    for (const id of ids) {
+                        if (checked) selected.add(String(id));
+                        else selected.delete(String(id));
+                    }
+                    discardWarned = false;
+                    render();
+                }
+
+                function descendantIds(node) {
+                    return pickerSelectableLeaves(node).map(item => String(item.id));
+                }
+
+                function selectedCount(node) {
+                    const ids = descendantIds(node);
+                    return { selected: ids.filter(id => selected.has(id)).length, total: ids.length, ids };
+                }
+
+                function toggleExpanded(node) {
+                    if (!node || !(node.children || []).length) return;
+                    const id = String(node.id || "");
+                    if (expanded.has(id)) expanded.delete(id);
+                    else expanded.add(id);
+                    savePickerExpandedSet(key, expanded);
+                    render();
+                }
+
+                function renderNode(node, depth) {
+                    const hasChildren = !!((node.children || []).length);
+                    const isExpanded = nodeIsExpanded(node);
+                    const counts = selectedCount(node);
+                    const row = document.createElement("div");
+                    row.className = "yp-picker-row";
+                    row.dataset.pickerNodeId = String(node.id || "");
+                    row.dataset.disabled = node.disabled ? "true" : "false";
+                    row.style.paddingLeft = `${5 + Math.max(0, depth) * 18}px`;
+                    const toggle = hasChildren ? document.createElement("button") : document.createElement("span");
+                    toggle.className = hasChildren ? "yp-picker-toggle" : "yp-picker-spacer";
+                    if (hasChildren) {
+                        toggle.type = "button";
+                        toggle.textContent = isExpanded ? "-" : "+";
+                        toggle.setAttribute("aria-label", isExpanded ? "Collapse" : "Expand");
+                        toggle.addEventListener("click", event => { event.stopPropagation(); toggleExpanded(node); });
+                    }
+                    const check = document.createElement("input");
+                    check.type = "checkbox";
+                    const canSelectGroup = node.selects === "all" && counts.total > 0;
+                    const canSelectLeaf = node.selectable && !node.disabled;
+                    check.disabled = !(canSelectGroup || canSelectLeaf);
+                    check.checked = canSelectLeaf ? selected.has(String(node.id)) : (canSelectGroup && counts.selected === counts.total);
+                    check.indeterminate = canSelectGroup && counts.selected > 0 && counts.selected < counts.total;
+                    check.addEventListener("change", event => {
+                        event.stopPropagation();
+                        if (canSelectLeaf) setSelection([String(node.id)], check.checked);
+                        else if (canSelectGroup) setSelection(counts.ids, check.checked);
+                    });
+                    const label = document.createElement("div");
+                    label.className = "yp-picker-label";
+                    label.textContent = node.label || "";
+                    const meta = document.createElement("div");
+                    meta.className = "yp-picker-meta";
+                    meta.textContent = node.meta || (counts.total ? `${counts.selected}/${counts.total}` : "");
+                    row.appendChild(toggle);
+                    row.appendChild(check);
+                    row.appendChild(label);
+                    row.appendChild(meta);
+                    row.addEventListener("click", event => {
+                        if (event.target === check || event.target === toggle) return;
+                        if (node.selects === "base" && node.baseLeafId) {
+                            if (hasChildren && !isExpanded) toggleExpanded(node);
+                            setSelection([String(node.baseLeafId)], !selected.has(String(node.baseLeafId)));
+                            return;
+                        }
+                        if (canSelectGroup) setSelection(counts.ids, counts.selected < counts.total);
+                        else if (canSelectLeaf) setSelection([String(node.id)], !selected.has(String(node.id)));
+                        else if (hasChildren) toggleExpanded(node);
+                    });
+                    tree.appendChild(row);
+                    if (hasChildren && isExpanded) {
+                        for (const child of (node.children || [])) renderNode(child, depth + 1);
+                    }
+                }
+
+                function render() {
+                    tree.innerHTML = "";
+                    const shown = roots.map(filteredNode).filter(Boolean);
+                    if (!shown.length) {
+                        const empty = document.createElement("div");
+                        empty.className = "yp-picker-empty";
+                        empty.textContent = query ? "No matches." : (settings.emptyText || "No selectable items.");
+                        tree.appendChild(empty);
+                    } else {
+                        for (const rootNode of shown) renderNode(rootNode, 0);
+                    }
+                    const selectedLabels = Array.from(selected).map(id => leafById.get(id)).filter(Boolean);
+                    status.textContent = `${selectedLabels.length} selected`;
+                    warning.textContent = "";
+                    add.disabled = !selectedLabels.length;
+                }
+
+                function closePicker(force) {
+                    if (closed) return;
+                    if (!force && selected.size && !discardWarned) {
+                        discardWarned = true;
+                        warning.textContent = "Selection will be lost. Close again to discard.";
+                        return;
+                    }
+                    closed = true;
+                    window.removeEventListener("keydown", onKeyDown, true);
+                    if (layer.parentNode) layer.parentNode.removeChild(layer);
+                }
+
+                function selectedValuesInOrder() {
+                    return leafOrder.filter(id => selected.has(id)).map(id => leafById.get(id)).filter(Boolean).map(node => node.value);
+                }
+
+                function onKeyDown(event) {
+                    if (event.key === "Escape") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        closePicker(false);
+                    }
+                }
+
+                search.addEventListener("input", () => { query = search.value.trim(); render(); });
+                add.addEventListener("click", () => {
+                    const values = selectedValuesInOrder();
+                    if (!values.length) return;
+                    if (typeof settings.onAdd === "function") settings.onAdd(values);
+                    closePicker(true);
+                });
+                cancel.addEventListener("click", () => closePicker(false));
+                close.addEventListener("click", () => closePicker(false));
+                layer.addEventListener("click", event => { if (event.target === layer) closePicker(false); });
+                window.addEventListener("keydown", onKeyDown, true);
+                render();
+                setTimeout(() => search.focus(), 0);
+                return { close: () => closePicker(true), layer };
+            } // CHANGE: shared searchable tree picker for bulk crop and package selection.
+
             function captureDetailFocus(details) {
                 const active = document.activeElement;
                 if (!active || !details || !details.contains(active) || !active.dataset || !active.dataset.yearPlanField) return null;
@@ -4288,6 +4600,16 @@ Draw.loadPlugin(function (ui) {
                 return plantName && varietyName ? `${plantName} - ${varietyName}` : (plantName || varietyName || String(crop && crop.id || "Crop"));
             }
 
+            function cropPackageUnitCount(crop) {
+                return PlanMath.packageUnitOptions(crop).length;
+            } // CHANGE: planned-crop selector badges count usable package units, not blank package rows.
+
+            function cropFilterOptionLabel(crop) {
+                const count = cropPackageUnitCount(crop);
+                if (!count) return `${cropLabel(crop)} (Needs packages)`;
+                return `${cropLabel(crop)} (${count} package${count === 1 ? "" : "s"})`;
+            } // CHANGE
+
             const formatKg = YearPlanDashboard.formatKg;
             const formatMoney = YearPlanDashboard.formatMoney;
 
@@ -4360,7 +4682,8 @@ Draw.loadPlugin(function (ui) {
                 const cardRect = card.getBoundingClientRect();
                 const triggerRect = trigger.getBoundingClientRect();
                 popover.hidden = false;
-                const width = Math.max(230, Math.min(320, popover.offsetWidth || 230));
+                const maxWidth = popover.dataset.tone === "warning" ? 360 : 320; // CHANGE
+                const width = Math.max(230, Math.min(maxWidth, popover.offsetWidth || 230)); // CHANGE
                 const height = popover.offsetHeight || 80;
                 const gutter = 8;
                 const preferredLeft = triggerRect.right - cardRect.left - width;
@@ -4637,6 +4960,39 @@ Draw.loadPlugin(function (ui) {
                 return wrapControl;
             }
 
+            function createMessagePopoverChip(label, tone, messages, action, options) {
+                const diagnostics = (messages || []).map(message => String(message || "").trim()).filter(Boolean);
+                const chip = createChip(label, "", tone, action, options);
+                if (!diagnostics.length) return chip;
+                const wrapControl = document.createElement("span");
+                wrapControl.className = "yp-diagnostics-wrap";
+                const popover = document.createElement("div");
+                popover.className = "yp-diagnostics-popover";
+                popover.dataset.tone = tone || "neutral";
+                popover.hidden = true;
+                popover.__ypDiagnosticsOwner = wrapControl; // CHANGE
+                const title = document.createElement("div");
+                title.className = "yp-diagnostics-title";
+                title.textContent = options && options.popoverTitle ? String(options.popoverTitle) : label; // CHANGE
+                popover.appendChild(title);
+                for (const message of diagnostics) {
+                    const item = document.createElement("div");
+                    item.className = "yp-diagnostics-message";
+                    item.textContent = message;
+                    popover.appendChild(item);
+                }
+                const show = () => { closeDiagnosticsPopovers(popover); positionDiagnosticsPopover(chip, popover); }; // CHANGE
+                const hide = () => { popover.hidden = true; };
+                chip.addEventListener("focus", show);
+                chip.addEventListener("mouseenter", show);
+                wrapControl.addEventListener("mouseleave", event => { if (!popover.contains(event.relatedTarget)) hide(); }); // CHANGE
+                popover.addEventListener("mouseleave", hide); // CHANGE
+                popover.addEventListener("click", event => event.stopPropagation()); // CHANGE
+                wrapControl.appendChild(chip);
+                wrapControl.appendChild(popover);
+                return wrapControl;
+            } // CHANGE: warning attention chips can show formatted plain-message popovers without losing chip clicks.
+
             function createDiagnosticsChip(label, tone, results, onClick, options) {
                 const wrapControl = document.createElement("span");
                 wrapControl.className = "yp-diagnostics-wrap";
@@ -4696,7 +5052,7 @@ Draw.loadPlugin(function (ui) {
                 const items = [];
                 const add = item => { if (items.length < 8 && item) items.push(item); };
                 const priceDiagnostics = ((dashboard && dashboard.diagnostics) || []).filter(message => /no matching package price is set/i.test(String(message || ""))); // NEW
-                if (priceDiagnostics.length) add(createChip(`Missing package price${priceDiagnostics.length === 1 ? "" : "s"}`, "", "warning", navigateToMissingPackagePrice, { title: priceDiagnostics.join("\n") })); // CHANGE: missing-price warnings jump to the package price field that fixes them.
+                if (priceDiagnostics.length) add(createMessagePopoverChip(`Missing package price${priceDiagnostics.length === 1 ? "" : "s"}`, "warning", priceDiagnostics, navigateToMissingPackagePrice, { popoverTitle: "Missing package prices" })); // CHANGE: missing-price warnings use a styled popover while chip clicks still jump to the price field.
                 for (const metric of ((dashboard && dashboard.cropMetrics) || [])) {
                     const cropDiagnostics = cropValidationResults(metric.crop.id);
                     if (metric.status === "Missing data") add(createValidationAttentionChip(`${cropLabel(metric.crop)} missing data`, "danger", cropDiagnostics, false, () => selectCropFromAttention(metric.crop.id)));
@@ -4732,10 +5088,56 @@ Draw.loadPlugin(function (ui) {
                 return first ? String(first.value || "") : "";
             } // CHANGE
 
-            function mkPackageUnitSelect(crop, selectedUnit, width) {
-                const options = PlanMath.packageUnitOptions(crop);
-                const selectedKey = String(selectedUnit || "").trim().toLowerCase();
-                const selectedOption = options.find(option => String(option && option.value || "").trim().toLowerCase() === selectedKey);
+            function packageUnitKey(unit) {
+                return String(unit || "").trim().toLowerCase();
+            } // CHANGE
+
+            function createDefaultPackage() {
+                return { unit: "kg", baseType: "kg", baseQty: 1, price: NaN };
+            } // CHANGE
+
+            function packageRowTarget(crop, packageIndex, field) {
+                return { area: "crop", cropId: String(crop && crop.id || ""), tab: "packages", field: field || "unit", packageIndex };
+            } // CHANGE
+
+            function findPackageRow(target) {
+                if (!target || target.area !== "crop" || target.packageIndex === undefined) return null;
+                const cropSelector = String(target.cropId || "").replace(/"/g, '\\"');
+                const indexSelector = String(target.packageIndex).replace(/"/g, '\\"');
+                return editorBox.querySelector(`.yp-package-row[data-crop-id="${cropSelector}"][data-package-index="${indexSelector}"]`);
+            } // CHANGE
+
+            function addPackageAndFocusUnit(cropOrId) {
+                const crop = typeof cropOrId === "object" ? cropOrId : PlanMath.findCrop(plan, cropOrId);
+                if (!crop) return null;
+                crop.packages = Array.isArray(crop.packages) ? crop.packages : [];
+                crop.packages.push(createDefaultPackage()); // CHANGE
+                const packageIndex = crop.packages.length - 1;
+                openCropPackages(crop.id);
+                const target = packageRowTarget(crop, packageIndex, "unit");
+                scrollAndHighlightTarget(findPackageRow(target)); // CHANGE
+                activateYearPlanTarget(target, null, null); // CHANGE
+                refreshDerived(null, { rebuildSelfSufficiency: true, rebuildDemand: true, rebuildCsa: true }); // CHANGE
+                return target;
+            } // CHANGE
+
+            function findAddPackageButton() {
+                return Array.from(editorBox.querySelectorAll("button")).find(button => button.textContent.trim() === "Add package") || null;
+            } // CHANGE
+
+            function openCropPackagesSetup(cropId) {
+                openCropPackages(cropId);
+                const add = findAddPackageButton();
+                if (add && typeof add.focus === "function") add.focus();
+                highlightElements(add, "yp-target-highlight");
+                scrollToElement(add || editorBox.querySelector("[data-year-plan-packages-section]") || editorBox, "center");
+            } // CHANGE: planned-crop package warnings navigate to the corrective Packages action.
+
+            function mkPackageUnitSelect(crop, selectedUnit, width, allowedUnitKeys) {
+                const selectedKey = packageUnitKey(selectedUnit);
+                const allowed = allowedUnitKeys ? new Set(Array.from(allowedUnitKeys).map(packageUnitKey).filter(Boolean)) : null;
+                const options = PlanMath.packageUnitOptions(crop).filter(option => !allowed || allowed.has(packageUnitKey(option && option.value)) || packageUnitKey(option && option.value) === selectedKey); // CHANGE
+                const selectedOption = options.find(option => packageUnitKey(option && option.value) === selectedKey);
                 const value = selectedOption ? String(selectedOption.value || "") : "";
                 const select = mkSelect([], "", width);
                 const placeholder = new Option(options.length ? "-- Select package unit --" : "-- Add package unit --", "");
@@ -4754,12 +5156,549 @@ Draw.loadPlugin(function (ui) {
                     setUnit("");
                     select.value = "";
                     if (typeof refresh === "function") refresh();
-                    if (cropId) openCropPackages(cropId);
+                    if (cropId) addPackageAndFocusUnit(cropId); // CHANGE
                     return;
                 }
                 setUnit(select.value);
                 if (typeof refresh === "function") refresh();
             }
+
+            function demandDestinationKey(kind, destinationId) {
+                return `${String(kind || "")}:${String(destinationId || "")}`;
+            } // CHANGE
+
+            function demandDestinationPickerKey(kind, destinationId) {
+                return `package-picker:${demandDestinationKey(kind, destinationId)}`;
+            } // CHANGE
+
+            function demandDestinationRows(kind, destinationId) {
+                if (kind === "demand") return (plan.demands || []).filter(line => String(line && line.channelId || "") === String(destinationId || ""));
+                if (kind === "self") return (plan.selfSufficiency && plan.selfSufficiency.lines) || [];
+                if (kind === "csa") return (plan.csa && plan.csa.components) || [];
+                return [];
+            } // CHANGE
+
+            function rowCropId(row) {
+                return String(row && row.cropId || "");
+            } // CHANGE
+
+            function rowUnit(row) {
+                return String(row && row.unit || "");
+            } // CHANGE
+
+            function usedPackageKeysForDestination(kind, destinationId, cropId, currentRow) {
+                const keys = new Set();
+                for (const row of demandDestinationRows(kind, destinationId)) {
+                    if (row === currentRow || rowCropId(row) !== String(cropId || "")) continue;
+                    const key = packageUnitKey(rowUnit(row));
+                    if (key) keys.add(key);
+                }
+                return keys;
+            } // CHANGE
+
+            function firstUnusedPackageUnit(crop, kind, destinationId, currentRow) {
+                const used = usedPackageKeysForDestination(kind, destinationId, crop && crop.id, currentRow);
+                const option = PlanMath.packageUnitOptions(crop).find(item => !used.has(packageUnitKey(item && item.value)));
+                return option ? String(option.value || "") : "";
+            } // CHANGE
+
+            function allowedPackageKeysForRow(crop, selectedUnit, kind, destinationId, currentRow) {
+                const selectedKey = packageUnitKey(selectedUnit);
+                const used = usedPackageKeysForDestination(kind, destinationId, crop && crop.id, currentRow);
+                const keys = new Set();
+                for (const option of PlanMath.packageUnitOptions(crop)) {
+                    const key = packageUnitKey(option && option.value);
+                    if (!key) continue;
+                    if (!used.has(key) || key === selectedKey) keys.add(key);
+                }
+                return keys;
+            } // CHANGE
+
+            function packageCoverageForDestination(kind, destinationId) {
+                const included = new Map();
+                for (const row of demandDestinationRows(kind, destinationId)) {
+                    const cropId = rowCropId(row);
+                    const key = packageUnitKey(rowUnit(row));
+                    if (!cropId || !key) continue;
+                    if (!included.has(cropId)) included.set(cropId, new Set());
+                    included.get(cropId).add(key);
+                }
+                const cropStats = [];
+                for (const crop of (plan.crops || [])) {
+                    const packages = PlanMath.packageUnitOptions(crop);
+                    const used = included.get(String(crop && crop.id || "")) || new Set();
+                    const missing = packages.filter(option => !used.has(packageUnitKey(option && option.value)));
+                    const present = packages.filter(option => used.has(packageUnitKey(option && option.value)));
+                    cropStats.push({ crop, packages, missing, present });
+                }
+                return cropStats;
+            } // CHANGE
+
+            function packageTransferKey(cropId, unit) {
+                const cropKey = String(cropId || "");
+                const unitKey = packageUnitKey(unit);
+                return cropKey && unitKey ? `${cropKey}::${unitKey}` : "";
+            } // CHANGE
+
+            function packageTransferCoverage(kind, destinationId) {
+                const crops = (plan.crops || []).slice().sort((a, b) => cropLabel(a).localeCompare(cropLabel(b)));
+                const packageByKey = new Map();
+                const includedRows = [];
+                const rows = demandDestinationRows(kind, destinationId);
+                for (const [rowIndex, row] of rows.entries()) {
+                    const crop = PlanMath.findCrop(plan, rowCropId(row));
+                    if (!crop) continue;
+                    const unitKey = packageUnitKey(rowUnit(row));
+                    if (!unitKey) continue;
+                    const option = PlanMath.packageUnitOptions(crop).find(item => packageUnitKey(item && item.value) === unitKey);
+                    if (!option) continue;
+                    const cropId = String(crop.id || "");
+                    const itemKey = packageTransferKey(cropId, option.value);
+                    includedRows.push({
+                        id: `row:${rowIndex}`,
+                        key: itemKey,
+                        crop,
+                        cropId,
+                        unit: String(option.value || ""),
+                        label: String(option.label || option.value || ""),
+                        row,
+                        duplicate: false
+                    });
+                }
+                const seenIncluded = new Set();
+                for (const entry of includedRows) {
+                    entry.duplicate = seenIncluded.has(entry.key);
+                    seenIncluded.add(entry.key);
+                }
+                for (const crop of crops) {
+                    const cropId = String(crop && crop.id || "");
+                    for (const option of PlanMath.packageUnitOptions(crop)) {
+                        const key = packageTransferKey(cropId, option && option.value);
+                        if (!key || packageByKey.has(key)) continue;
+                        packageByKey.set(key, {
+                            key,
+                            crop,
+                            cropId,
+                            unit: String(option && option.value || ""),
+                            label: String(option && option.label || option && option.value || "")
+                        });
+                    }
+                }
+                return { crops, packageByKey, includedRows, totalPackages: packageByKey.size };
+            } // CHANGE
+
+            function removePackageTransferRows(kind, destinationId, rowsToRemove) {
+                const removeSet = new Set(rowsToRemove || []);
+                if (!removeSet.size) return;
+                if (kind === "demand") {
+                    plan.demands = (plan.demands || []).filter(line => {
+                        if (!removeSet.has(line)) return true;
+                        state.collapsedDemandLineIds.delete(String(line && line.id || ""));
+                        return false;
+                    });
+                    state.collapsedDemandChannelIds.delete(String(destinationId || ""));
+                } else if (kind === "self") {
+                    plan.selfSufficiency = plan.selfSufficiency || { adults: 0, children: 0, nutritionMultiplier: 1, lines: [] };
+                    plan.selfSufficiency.lines = (plan.selfSufficiency.lines || []).filter(line => {
+                        if (!removeSet.has(line)) return true;
+                        state.collapsedSelfSufficiencyLineIds.delete(String(line && line.id || ""));
+                        return false;
+                    });
+                } else if (kind === "csa") {
+                    plan.csa = plan.csa || { enabled: false, boxesPerWeek: 0, start: "", end: "", salePricePerBox: null, salePriceMode: "auto", components: [] };
+                    plan.csa.components = (plan.csa.components || []).filter(component => !removeSet.has(component));
+                }
+            } // CHANGE
+
+            function applyPackageTransferChanges(kind, destinationId, addedPackages, removedRows, callbacks) {
+                removePackageTransferRows(kind, destinationId, removedRows);
+                if (kind === "demand") {
+                    if (!(plan.demandChannels || []).some(channel => String(channel.id) === String(destinationId))) return;
+                    for (const selection of (addedPackages || [])) {
+                        const line = createDemandLine(destinationId, selection);
+                        plan.demands.push(line);
+                        state.collapsedDemandLineIds.delete(String(line.id || ""));
+                    }
+                    state.collapsedDemandChannelIds.delete(String(destinationId || ""));
+                    saveCollapsePreferences();
+                    refreshDerived(null, { rebuildDemand: true });
+                } else if (kind === "self") {
+                    plan.selfSufficiency = plan.selfSufficiency || { adults: 0, children: 0, nutritionMultiplier: 1, lines: [] };
+                    plan.selfSufficiency.lines = Array.isArray(plan.selfSufficiency.lines) ? plan.selfSufficiency.lines : [];
+                    for (const selection of (addedPackages || [])) {
+                        const line = createSelfSufficiencyLine(selection);
+                        plan.selfSufficiency.lines.push(line);
+                        state.collapsedSelfSufficiencyLineIds.delete(String(line.id || ""));
+                    }
+                    state.selfSufficiencyExpanded = true;
+                    saveCollapsePreferences();
+                    refreshDerived(null, { rebuildSelfSufficiency: true });
+                } else if (kind === "csa") {
+                    plan.csa = plan.csa || { enabled: false, boxesPerWeek: 0, start: "", end: "", salePricePerBox: null, salePriceMode: "auto", components: [] };
+                    plan.csa.components = Array.isArray(plan.csa.components) ? plan.csa.components : [];
+                    for (const selection of (addedPackages || [])) plan.csa.components.push(createCsaComponent(selection));
+                    state.csaExpanded = true;
+                    if (callbacks && typeof callbacks.renderRows === "function") callbacks.renderRows();
+                    if (callbacks && typeof callbacks.refreshSummary === "function") callbacks.refreshSummary();
+                    refreshDerived(null, { rebuildCsa: true });
+                }
+            } // CHANGE
+
+            function openPackageTransferPicker(config) {
+                const settings = config || {};
+                const kind = String(settings.kind || "");
+                const destinationId = String(settings.destinationId || "");
+                const coverage = packageTransferCoverage(kind, destinationId);
+                const addedKeys = new Set();
+                const removedRowIds = new Set();
+                const originalByRowId = new Map(coverage.includedRows.map(entry => [entry.id, entry]));
+                let query = "";
+                let discardWarned = false;
+                let editBlocked = false;
+                let closed = false;
+
+                const layer = document.createElement("div");
+                layer.className = "yp-picker-layer";
+                layer.dataset.yearPlanPicker = demandDestinationPickerKey(kind, destinationId);
+                const dialog = document.createElement("div");
+                dialog.className = "yp-picker-dialog yp-package-transfer-dialog";
+                dialog.setAttribute("role", "dialog");
+                dialog.setAttribute("aria-modal", "true");
+                const head = document.createElement("div");
+                head.className = "yp-picker-head";
+                const title = document.createElement("div");
+                title.className = "yp-picker-title";
+                title.textContent = settings.title || "Manage packages";
+                const close = mkBtn("Close", "neutral");
+                head.appendChild(title);
+                head.appendChild(close);
+                const bodyEl = document.createElement("div");
+                bodyEl.className = "yp-picker-body";
+                const search = mkInput("search", "", 0);
+                search.className = "yp-picker-search";
+                search.placeholder = "Search";
+                const summary = document.createElement("div");
+                summary.className = "yp-package-transfer-summary";
+                const panes = document.createElement("div");
+                panes.className = "yp-package-transfer-panes";
+                const availablePane = document.createElement("section");
+                availablePane.className = "yp-package-transfer-pane";
+                const includedPane = document.createElement("section");
+                includedPane.className = "yp-package-transfer-pane";
+                bodyEl.appendChild(search);
+                bodyEl.appendChild(summary);
+                bodyEl.appendChild(panes);
+                panes.appendChild(availablePane);
+                panes.appendChild(includedPane);
+                const foot = document.createElement("div");
+                foot.className = "yp-picker-foot";
+                const status = document.createElement("div");
+                status.className = "yp-picker-status";
+                const warning = document.createElement("div");
+                warning.className = "yp-picker-warning";
+                const actions = document.createElement("div");
+                actions.className = "yp-row";
+                const cancel = mkBtn("Cancel", "neutral");
+                const apply = mkBtn("Apply changes", "add");
+                actions.appendChild(cancel);
+                actions.appendChild(apply);
+                foot.appendChild(status);
+                foot.appendChild(warning);
+                foot.appendChild(actions);
+                dialog.appendChild(head);
+                dialog.appendChild(bodyEl);
+                dialog.appendChild(foot);
+                layer.appendChild(dialog);
+                card.appendChild(layer);
+
+                function hasPendingChanges() {
+                    return addedKeys.size + removedRowIds.size > 0;
+                }
+
+                function activeIncludedEntries() {
+                    const entries = coverage.includedRows.filter(entry => !removedRowIds.has(entry.id));
+                    for (const key of addedKeys) {
+                        const item = coverage.packageByKey.get(key);
+                        if (!item) continue;
+                        entries.push({ ...item, id: `add:${key}`, row: null, pendingAdd: true, duplicate: false });
+                    }
+                    return entries;
+                }
+
+                function activePackageKeys() {
+                    return new Set(activeIncludedEntries().map(entry => entry.key));
+                }
+
+                function removedEntries() {
+                    return Array.from(removedRowIds).map(id => originalByRowId.get(id)).filter(Boolean);
+                }
+
+                function availableEntries() {
+                    const active = activePackageKeys();
+                    const removedByKey = new Set(removedEntries().map(entry => entry.key));
+                    const entries = removedEntries().map(entry => ({ ...entry, pendingRemove: true }));
+                    for (const item of coverage.packageByKey.values()) {
+                        if (active.has(item.key) || removedByKey.has(item.key)) continue;
+                        entries.push({ ...item, id: `pkg:${item.key}` });
+                    }
+                    return entries.sort((a, b) => cropLabel(a.crop).localeCompare(cropLabel(b.crop)) || String(a.label || "").localeCompare(String(b.label || "")));
+                }
+
+                function entryMatches(entry) {
+                    if (!query) return true;
+                    const text = `${cropLabel(entry && entry.crop)} ${entry && entry.label || ""} ${entry && entry.meta || ""}`.toLocaleLowerCase();
+                    return text.indexOf(query.toLocaleLowerCase()) >= 0;
+                }
+
+                function groupEntries(entries) {
+                    const groups = [];
+                    const byCrop = new Map();
+                    for (const crop of coverage.crops) {
+                        const cropId = String(crop && crop.id || "");
+                        byCrop.set(cropId, { crop, entries: [] });
+                    }
+                    for (const entry of entries) {
+                        const cropId = String(entry && entry.cropId || "");
+                        if (!byCrop.has(cropId)) byCrop.set(cropId, { crop: entry.crop, entries: [] });
+                        byCrop.get(cropId).entries.push(entry);
+                    }
+                    for (const group of byCrop.values()) {
+                        const visible = group.entries.filter(entryMatches);
+                        if (visible.length) groups.push({ crop: group.crop, entries: visible });
+                    }
+                    return groups;
+                }
+
+                function packageCountLabel(count, total) {
+                    return `${count}/${total} package${total === 1 ? "" : "s"}`;
+                }
+
+                function setRowAction(entry, side) {
+                    if (side === "available") {
+                        if (entry.pendingRemove) removedRowIds.delete(entry.id);
+                        else addedKeys.add(entry.key);
+                    } else if (entry.pendingAdd) {
+                        addedKeys.delete(entry.key);
+                    } else {
+                        removedRowIds.add(entry.id);
+                    }
+                    discardWarned = false;
+                    editBlocked = false;
+                    render();
+                }
+
+                function renderPane(host, label, countText, actionLabel, entries, side, emptyText) {
+                    host.innerHTML = "";
+                    const headEl = document.createElement("div");
+                    headEl.className = "yp-package-transfer-pane-head";
+                    const titleEl = document.createElement("div");
+                    titleEl.textContent = `${label} ${countText}`;
+                    const all = mkBtn(actionLabel, side === "available" ? "add" : "danger");
+                    const groups = groupEntries(entries);
+                    all.disabled = !groups.some(group => group.entries.length);
+                    all.addEventListener("click", () => {
+                        for (const group of groups) for (const entry of group.entries) setRowAction(entry, side);
+                    });
+                    headEl.appendChild(titleEl);
+                    headEl.appendChild(all);
+                    const list = document.createElement("div");
+                    list.className = "yp-package-transfer-list";
+                    host.appendChild(headEl);
+                    host.appendChild(list);
+                    if (!groups.length) {
+                        const empty = document.createElement("div");
+                        empty.className = "yp-package-transfer-empty";
+                        empty.textContent = emptyText;
+                        list.appendChild(empty);
+                        return;
+                    }
+                    for (const group of groups) {
+                        const cropHead = document.createElement("div");
+                        cropHead.className = "yp-package-transfer-crop";
+                        const cropName = document.createElement("div");
+                        cropName.textContent = cropLabel(group.crop);
+                        const cropCount = document.createElement("div");
+                        cropCount.textContent = `${group.entries.length}`;
+                        cropHead.appendChild(cropName);
+                        cropHead.appendChild(cropCount);
+                        list.appendChild(cropHead);
+                        for (const entry of group.entries) {
+                            const row = document.createElement("div");
+                            row.className = "yp-package-transfer-row";
+                            row.dataset.transferPackageKey = String(entry.key || "");
+                            row.dataset.pending = entry.pendingAdd || entry.pendingRemove ? "true" : "false";
+                            const labelEl = document.createElement("div");
+                            labelEl.className = "yp-package-transfer-label";
+                            labelEl.textContent = entry.label || "";
+                            const controls = document.createElement("div");
+                            controls.className = "yp-row";
+                            if (entry.duplicate || entry.pendingAdd || entry.pendingRemove) {
+                                const meta = document.createElement("span");
+                                meta.className = "yp-package-transfer-meta";
+                                meta.textContent = entry.pendingAdd ? "Will add" : (entry.pendingRemove ? "Undo remove" : "Duplicate row");
+                                controls.appendChild(meta);
+                            }
+                            const action = mkBtn(side === "available" ? "Add" : "Remove", side === "available" ? "add" : "danger");
+                            action.addEventListener("click", () => setRowAction(entry, side));
+                            controls.appendChild(action);
+                            row.appendChild(labelEl);
+                            row.appendChild(controls);
+                            list.appendChild(row);
+                        }
+                    }
+                }
+
+                function renderNeedsPackages() {
+                    const crops = coverage.crops.filter(crop => !PlanMath.packageUnitOptions(crop).length && (!query || cropLabel(crop).toLocaleLowerCase().indexOf(query.toLocaleLowerCase()) >= 0));
+                    if (!crops.length) return [];
+                    return crops.map(crop => ({
+                        key: `needs:${String(crop && crop.id || "")}`,
+                        crop,
+                        cropId: String(crop && crop.id || ""),
+                        label: "No packages",
+                        editOnly: true
+                    }));
+                }
+
+                function renderAvailableWithNeeds() {
+                    const entries = availableEntries();
+                    const needs = renderNeedsPackages();
+                    renderPane(availablePane, "Available", packageCountLabel(Math.max(0, coverage.totalPackages - activePackageKeys().size), coverage.totalPackages), "Add all visible", entries, "available", query ? "No available matches." : "No available packages.");
+                    if (!needs.length) return;
+                    const list = availablePane.querySelector(".yp-package-transfer-list");
+                    const cropHead = document.createElement("div");
+                    cropHead.className = "yp-package-transfer-crop";
+                    cropHead.textContent = "Needs packages";
+                    list.appendChild(cropHead);
+                    for (const entry of needs) {
+                        const row = document.createElement("div");
+                        row.className = "yp-package-transfer-row";
+                        const labelEl = document.createElement("div");
+                        labelEl.className = "yp-package-transfer-label";
+                        labelEl.textContent = cropLabel(entry.crop);
+                        const controls = document.createElement("div");
+                        controls.className = "yp-row";
+                        const meta = document.createElement("span");
+                        meta.className = "yp-package-transfer-meta";
+                        meta.textContent = "0 packages";
+                        const edit = mkBtn("Edit packages", "neutral");
+                        edit.addEventListener("click", () => {
+                            if (hasPendingChanges()) {
+                                editBlocked = true;
+                                warning.textContent = "Apply or cancel pending changes before editing packages.";
+                                return;
+                            }
+                            closePicker(true);
+                            openCropPackages(entry.cropId);
+                        });
+                        controls.appendChild(meta);
+                        controls.appendChild(edit);
+                        row.appendChild(labelEl);
+                        row.appendChild(controls);
+                        list.appendChild(row);
+                    }
+                }
+
+                function render() {
+                    const included = activeIncludedEntries();
+                    const includedUnique = activePackageKeys().size;
+                    summary.innerHTML = "";
+                    for (const text of [
+                        `Total ${coverage.totalPackages} package${coverage.totalPackages === 1 ? "" : "s"}`,
+                        `Included ${includedUnique}`,
+                        `Available ${Math.max(0, coverage.totalPackages - includedUnique)}`
+                    ]) {
+                        const item = document.createElement("span");
+                        item.textContent = text;
+                        summary.appendChild(item);
+                    }
+                    renderAvailableWithNeeds();
+                    renderPane(includedPane, "Included", packageCountLabel(includedUnique, coverage.totalPackages), "Remove all visible", included, "included", query ? "No included matches." : "No included packages.");
+                    const addCount = addedKeys.size;
+                    const removeCount = removedRowIds.size;
+                    status.textContent = hasPendingChanges() ? `Add ${addCount}, remove ${removeCount}` : "No pending changes";
+                    if (!editBlocked) warning.textContent = "";
+                    apply.disabled = !hasPendingChanges();
+                }
+
+                function closePicker(force) {
+                    if (closed) return;
+                    if (!force && hasPendingChanges() && !discardWarned) {
+                        discardWarned = true;
+                        warning.textContent = "Pending changes will be lost. Close again to discard.";
+                        return;
+                    }
+                    closed = true;
+                    window.removeEventListener("keydown", onKeyDown, true);
+                    if (layer.parentNode) layer.parentNode.removeChild(layer);
+                }
+
+                function onKeyDown(event) {
+                    if (event.key === "Escape") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        closePicker(false);
+                    }
+                }
+
+                search.addEventListener("input", () => { query = search.value.trim(); render(); });
+                apply.addEventListener("click", () => {
+                    if (!hasPendingChanges()) return;
+                    const added = Array.from(addedKeys).map(key => coverage.packageByKey.get(key)).filter(Boolean);
+                    const removed = Array.from(removedRowIds).map(id => originalByRowId.get(id)).filter(Boolean).map(entry => entry.row);
+                    closePicker(true);
+                    applyPackageTransferChanges(kind, destinationId, added, removed, settings);
+                });
+                cancel.addEventListener("click", () => closePicker(false));
+                close.addEventListener("click", () => closePicker(false));
+                layer.addEventListener("click", event => { if (event.target === layer) closePicker(false); });
+                window.addEventListener("keydown", onKeyDown, true);
+                render();
+                setTimeout(() => search.focus(), 0);
+                return { close: () => closePicker(true), layer };
+            } // CHANGE
+
+            function cropCoverageLabel(stat) {
+                const crop = stat && stat.crop;
+                const packages = (stat && stat.packages) || [];
+                const missing = (stat && stat.missing) || [];
+                if (!packages.length) return `${cropLabel(crop)} (0)`;
+                if (!missing.length) return `${cropLabel(crop)} (${packages.length})`;
+                return `${cropLabel(crop)} (${missing.length} missing, ${packages.length - missing.length} included)`;
+            } // CHANGE
+
+            function handleCropSelectPackageNavigation(select, currentCropId) {
+                const nextCrop = PlanMath.findCrop(plan, select && select.value);
+                if (!nextCrop || PlanMath.packageUnitOptions(nextCrop).length) return nextCrop;
+                select.value = String(currentCropId || "");
+                addPackageAndFocusUnit(nextCrop); // CHANGE: choosing a no-package crop is a navigation/repair action, not a row crop change.
+                return null;
+            } // CHANGE
+
+            function mkCropSelectForDestination(kind, destinationId, selectedCropId, currentRow, width) {
+                const stats = packageCoverageForDestination(kind, destinationId).slice().sort((a, b) => cropLabel(a.crop).localeCompare(cropLabel(b.crop)));
+                const select = mkSelect([], "", width);
+                const groups = [
+                    { label: "Missing packages", items: stats.filter(item => item.missing.length) },
+                    { label: "All packages included", items: stats.filter(item => item.packages.length && !item.missing.length) },
+                    { label: "Needs packages", items: stats.filter(item => !item.packages.length) }
+                ];
+                for (const groupDef of groups) {
+                    if (!groupDef.items.length) continue;
+                    const group = document.createElement("optgroup");
+                    group.label = groupDef.label;
+                    for (const stat of groupDef.items) {
+                        const cropId = String(stat.crop && stat.crop.id || "");
+                        const option = new Option(cropCoverageLabel(stat), cropId);
+                        option.disabled = cropId !== String(selectedCropId || "") && stat.packages.length && !firstUnusedPackageUnit(stat.crop, kind, destinationId, currentRow);
+                        group.appendChild(option);
+                    }
+                    select.appendChild(group);
+                }
+                ensureSelectOption(select, selectedCropId, `${selectedCropId || "Missing crop"} (unavailable)`);
+                select.value = String(selectedCropId || "");
+                return select;
+            } // CHANGE
 
             function ensureSelectOption(select, value, label) {
                 const desired = String(value ?? "");
@@ -4827,6 +5766,7 @@ Draw.loadPlugin(function (ui) {
                 if (settings.syncPlanCheck !== false) {
                     plan.cropFilterId = selectedId;
                     cropFilterSel.value = selectedId;
+                    renderCropFilterPackageBadge(); // CHANGE
                 }
                 return true;
             }
@@ -5021,10 +5961,20 @@ Draw.loadPlugin(function (ui) {
                 const current = String(plan.cropFilterId || "");
                 cropFilterSel.innerHTML = "";
                 cropFilterSel.appendChild(new Option("-- All crops --", ""));
-                for (const crop of (plan.crops || [])) cropFilterSel.appendChild(new Option(cropLabel(crop), crop.id));
+                for (const crop of (plan.crops || [])) cropFilterSel.appendChild(new Option(cropFilterOptionLabel(crop), crop.id)); // CHANGE
                 cropFilterSel.value = (plan.crops || []).some(crop => String(crop.id) === current) ? current : "";
                 plan.cropFilterId = cropFilterSel.value;
+                renderCropFilterPackageBadge(); // CHANGE
             }
+
+            function renderCropFilterPackageBadge() {
+                cropFilterBadgeHost.innerHTML = "";
+                const crop = (plan.crops || []).find(item => String(item && item.id || "") === String(cropFilterSel.value || plan.cropFilterId || ""));
+                if (!crop || cropPackageUnitCount(crop)) return;
+                cropFilterBadgeHost.appendChild(createChip("Needs packages", "", "warning", () => openCropPackagesSetup(crop.id), {
+                    title: "Open this crop's Packages tab and add a package unit."
+                }));
+            } // CHANGE
 
             function fillPlanCheckScope() {
                 const current = ["combined", "self", "csa", "sales"].includes(String(state.planCheckScope || "")) ? String(state.planCheckScope) : "combined";
@@ -5485,6 +6435,7 @@ Draw.loadPlugin(function (ui) {
                     || beforeRecalculation.demand !== afterRecalculation.demand;
                 const selfSufficiencyDatesChanged = comparisonSnapshot.selfSufficiency !== afterRecalculation.selfSufficiency
                     || beforeRecalculation.selfSufficiency !== afterRecalculation.selfSufficiency;
+                fillCropFilter(); // CHANGE: planned-crop selector package labels track package edits immediately.
                 renderSummary();
                 renderCropList();
                 renderSelfSufficiencyStrip(!!options.rebuildSelfSufficiency || expansionChanges.selfSufficiencyChanged || (state.selfSufficiencyExpanded && selfSufficiencyDatesChanged));
@@ -5824,14 +6775,15 @@ Draw.loadPlugin(function (ui) {
                 ];
             }
 
-            function createDemandLine(channelId) {
-                const crop = (plan.crops || [])[0] || null;
+            function createDemandLine(channelId, packageSelection) {
+                const crop = packageSelection && packageSelection.crop ? packageSelection.crop : ((plan.crops || [])[0] || null); // CHANGE
+                const unit = packageSelection && packageSelection.unit !== undefined ? String(packageSelection.unit || "") : defaultUnit(crop); // CHANGE
                 return {
                     id: Env.uid("demand"),
                     channelId: String(channelId || ""),
                     cropId: crop ? crop.id : "",
                     qty: 1,
-                    unit: defaultUnit(crop),
+                    unit,
                     frequency: "week",
                     everyN: 1,
                     from: crop && crop.harvestStart || "",
@@ -5841,15 +6793,13 @@ Draw.loadPlugin(function (ui) {
                 };
             }
 
-            function addDemandLine(channelId) {
-                if (!(plan.crops || []).length || !(plan.demandChannels || []).some(channel => String(channel.id) === String(channelId))) return;
-                const line = createDemandLine(channelId);
-                plan.demands.push(line);
-                state.collapsedDemandChannelIds.delete(String(channelId));
-                state.collapsedDemandLineIds.delete(String(line.id || ""));
-                saveCollapsePreferences();
-                refreshDerived(null, { rebuildDemand: true });
-            }
+            function openDemandPackagePicker(channelId) {
+                openPackageTransferPicker({
+                    kind: "demand",
+                    destinationId: channelId,
+                    title: "Manage demand packages"
+                });
+            } // CHANGE
 
             function renderDemandLine(line, host) {
                 const crop = PlanMath.findCrop(plan, line.cropId);
@@ -5870,10 +6820,10 @@ Draw.loadPlugin(function (ui) {
                 const row = document.createElement("div");
                 row.className = "yp-demand-line yp-demand-line-details";
                 row.style.display = collapsed ? "none" : "grid";
-                const cropSelect = mkSelect((plan.crops || []).map(item => ({ value: item.id, label: cropLabel(PlanMath.findCrop(plan, item.id)) })), line.cropId || "");
+                const cropSelect = mkCropSelectForDestination("demand", line.channelId, line.cropId || "", line);
                 const qty = mkInput("number", line.qty ?? 1);
                 qty.min = "0"; qty.step = "any";
-                const unit = mkPackageUnitSelect(crop, line.unit || defaultUnit(crop));
+                const unit = mkPackageUnitSelect(crop, line.unit || defaultUnit(crop), null, allowedPackageKeysForRow(crop, line.unit, "demand", line.channelId, line)); // CHANGE
                 const frequency = mkSelect([{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }], line.frequency || "week");
                 const every = mkInput("number", line.everyN ?? 1);
                 every.min = "1"; every.step = "1";
@@ -5921,8 +6871,10 @@ Draw.loadPlugin(function (ui) {
                     syncDemandDerived();
                 });
                 cropSelect.addEventListener("change", () => {
+                    const nextCrop = handleCropSelectPackageNavigation(cropSelect, line.cropId); // CHANGE
+                    if (!nextCrop) return; // CHANGE
                     line.cropId = cropSelect.value;
-                    line.unit = defaultUnit(PlanMath.findCrop(plan, line.cropId));
+                    line.unit = firstUnusedPackageUnit(nextCrop, "demand", line.channelId, line); // CHANGE
                     refreshDerived(null, { rebuildDemand: true });
                 });
                 qty.addEventListener("input", () => { line.qty = Math.max(0, Number(qty.value) || 0); debounceRefresh(); });
@@ -5989,10 +6941,11 @@ Draw.loadPlugin(function (ui) {
                     empty.textContent = "No demand lines in this channel.";
                     rows.appendChild(empty);
                 }
-                const add = mkBtn("Add demand line", "add");
+                const add = mkBtn("Manage packages", "add"); // CHANGE
                 add.style.marginTop = "8px";
-                add.disabled = !(plan.crops || []).length;
-                add.addEventListener("click", () => addDemandLine(channelId));
+                add.disabled = !(plan.crops || []).length; // CHANGE
+                add.title = (plan.crops || []).length ? "Add or remove crop packages for this channel." : "Add crops before managing packages."; // CHANGE
+                add.addEventListener("click", () => openDemandPackagePicker(channelId)); // CHANGE
                 details.appendChild(rows); details.appendChild(add);
                 box.appendChild(header); box.appendChild(details); host.appendChild(box);
                 label.addEventListener("input", () => { channel.label = label.value; debounceRefresh(); });
@@ -6020,11 +6973,7 @@ Draw.loadPlugin(function (ui) {
                 toolbar.className = "yp-row";
                 toolbar.style.marginBottom = "9px";
                 const addChannel = mkBtn("Add channel", "add");
-                const channelSelect = mkSelect((plan.demandChannels || []).map(channel => ({ value: channel.id, label: channel.label || channel.id })), plan.demandChannels && plan.demandChannels[0] ? plan.demandChannels[0].id : "", 180);
-                channelSelect.setAttribute("aria-label", "Demand line channel");
-                const addLine = mkBtn("Add demand line", "add");
-                addLine.disabled = !(plan.crops || []).length || !(plan.demandChannels || []).length;
-                toolbar.appendChild(addChannel); toolbar.appendChild(channelSelect); toolbar.appendChild(addLine);
+                toolbar.appendChild(addChannel); // CHANGE: demand rows are added from each channel's own bulk picker.
                 const channelsHost = document.createElement("div");
                 channelsHost.style.cssText = "display:flex;flex-direction:column;gap:9px;";
                 content.appendChild(toolbar); content.appendChild(channelsHost);
@@ -6042,7 +6991,6 @@ Draw.loadPlugin(function (ui) {
                     saveCollapsePreferences();
                     refreshDerived(null, { rebuildDemand: true });
                 });
-                addLine.addEventListener("click", () => addDemandLine(channelSelect.value));
             }
 
             function cropAvailabilityEnd(crop) {
@@ -6051,19 +6999,44 @@ Draw.loadPlugin(function (ui) {
                 return shelfDays > 0 ? (PlanRuntimeService.addDaysYmd(crop.harvestEnd, shelfDays) || crop.harvestEnd) : (PlanRuntimeService.cropAvailableEndYmd(crop) || crop.harvestEnd);
             } // NEW: self-use rows default to the edible availability window, including shelf-life.
 
-            function createSelfSufficiencyLine() {
-                const crop = (plan.crops || [])[0] || null;
+            function createSelfSufficiencyLine(packageSelection) {
+                const crop = packageSelection && packageSelection.crop ? packageSelection.crop : ((plan.crops || [])[0] || null); // CHANGE
+                const unit = packageSelection && packageSelection.unit !== undefined ? String(packageSelection.unit || "") : defaultUnit(crop); // CHANGE
                 return {
                     id: Env.uid("self"),
                     cropId: crop ? crop.id : "",
                     qty: 1,
-                    unit: defaultUnit(crop),
+                    unit,
                     frequency: "week",
                     everyN: 1,
                     from: crop && crop.harvestStart || "",
                     to: cropAvailabilityEnd(crop)
                 };
             } // NEW
+
+            function openSelfPackagePicker() {
+                openPackageTransferPicker({
+                    kind: "self",
+                    destinationId: "self-use",
+                    title: "Manage self-use packages"
+                });
+            } // CHANGE
+
+            function createCsaComponent(packageSelection) {
+                const crop = packageSelection && packageSelection.crop ? packageSelection.crop : ((plan.crops || [])[0] || null);
+                const unit = packageSelection && packageSelection.unit !== undefined ? String(packageSelection.unit || "") : defaultUnit(crop);
+                return { cropId: crop ? crop.id : "", qty: 1, unit, everyNWeeks: 1, start: plan.csa && plan.csa.start || "", end: plan.csa && plan.csa.end || "" };
+            } // CHANGE
+
+            function openCsaPackagePicker(renderRows, refreshSummary) {
+                openPackageTransferPicker({
+                    kind: "csa",
+                    destinationId: "csa",
+                    title: "Manage CSA packages",
+                    renderRows,
+                    refreshSummary
+                });
+            } // CHANGE
 
             function selfSufficiencyValidationResults() {
                 return ((dashboard && dashboard.validationErrors) || []).filter(error => error && error.scope === "self-sufficiency");
@@ -6148,10 +7121,10 @@ Draw.loadPlugin(function (ui) {
                 const row = document.createElement("div");
                 row.className = "yp-demand-line yp-self-line yp-self-line-details"; // NEW
                 row.style.display = collapsed ? "none" : "grid"; // NEW
-                const cropSelect = mkSelect((plan.crops || []).map(item => ({ value: item.id, label: cropLabel(item) })), line.cropId || "");
+                const cropSelect = mkCropSelectForDestination("self", "self-use", line.cropId || "", line);
                 const qty = mkInput("number", line.qty ?? 1);
                 qty.min = "0"; qty.step = "any";
-                const unit = mkPackageUnitSelect(crop, line.unit || defaultUnit(crop));
+                const unit = mkPackageUnitSelect(crop, line.unit || defaultUnit(crop), null, allowedPackageKeysForRow(crop, line.unit, "self", "self-use", line)); // CHANGE
                 const frequency = mkSelect([{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }], line.frequency || "week");
                 const every = mkInput("number", line.everyN ?? 1);
                 every.min = "1"; every.step = "1";
@@ -6189,9 +7162,10 @@ Draw.loadPlugin(function (ui) {
                     renderSelfSufficiencyStrip(true); // NEW
                 }); // NEW
                 cropSelect.addEventListener("change", () => {
-                    const nextCrop = PlanMath.findCrop(plan, cropSelect.value);
+                    const nextCrop = handleCropSelectPackageNavigation(cropSelect, line.cropId); // CHANGE
+                    if (!nextCrop) return; // CHANGE
                     line.cropId = cropSelect.value;
-                    line.unit = defaultUnit(nextCrop);
+                    line.unit = firstUnusedPackageUnit(nextCrop, "self", "self-use", line); // CHANGE
                     line.from = nextCrop && nextCrop.harvestStart || "";
                     line.to = cropAvailabilityEnd(nextCrop);
                     refreshDerived(null, { rebuildSelfSufficiency: true });
@@ -6227,8 +7201,9 @@ Draw.loadPlugin(function (ui) {
                 children.min = "0"; children.step = "1";
                 const multiplier = mkInput("number", plan.selfSufficiency.nutritionMultiplier ?? 1, 90);
                 multiplier.min = "0.01"; multiplier.step = "0.01";
-                const addLine = mkBtn("Add self-use line", "add");
-                addLine.disabled = !(plan.crops || []).length;
+                const addLine = mkBtn("Manage packages", "add"); // CHANGE
+                addLine.disabled = !(plan.crops || []).length; // CHANGE
+                addLine.title = (plan.crops || []).length ? "Add or remove crop packages for self-use." : "Add crops before managing packages."; // CHANGE
                 setYearPlanField(adults, "adults");
                 setYearPlanField(children, "children");
                 setYearPlanField(multiplier, "nutritionMultiplier");
@@ -6256,12 +7231,7 @@ Draw.loadPlugin(function (ui) {
                 children.addEventListener("input", () => { plan.selfSufficiency.children = Math.max(0, Math.trunc(Number(children.value) || 0)); debounceRefresh({ rebuildSelfSufficiency: true }); }); // CHANGE
                 multiplier.addEventListener("input", () => { plan.selfSufficiency.nutritionMultiplier = Math.max(0.01, Number(multiplier.value) || 1); debounceRefresh({ rebuildSelfSufficiency: true }); }); // CHANGE
                 addLine.addEventListener("click", () => {
-                    const line = createSelfSufficiencyLine(); // NEW
-                    plan.selfSufficiency.lines.push(line); // NEW
-                    state.collapsedSelfSufficiencyLineIds.delete(String(line.id || "")); // NEW
-                    saveCollapsePreferences(); // NEW
-                    state.selfSufficiencyExpanded = true;
-                    refreshDerived(null, { rebuildSelfSufficiency: true });
+                    openSelfPackagePicker(); // CHANGE
                 });
             } // NEW
 
@@ -6385,10 +7355,7 @@ Draw.loadPlugin(function (ui) {
                 }
 
                 add.addEventListener("click", () => {
-                    crop.packages.push({ unit: "kg", baseType: "kg", baseQty: 1, price: NaN });
-                    renderRows();
-                    scrollToElement(rowsHost.querySelector(`.yp-package-row[data-package-index="${crop.packages.length - 1}"]`), "center"); // CHANGE
-                    refreshDerived(null, { rebuildSelfSufficiency: true, rebuildDemand: true, rebuildCsa: true });
+                    addPackageAndFocusUnit(crop); // CHANGE
                 });
                 renderRows();
             }
@@ -6496,8 +7463,10 @@ Draw.loadPlugin(function (ui) {
                 pricingControls.appendChild(document.createTextNode("Component value / box")); pricingControls.appendChild(componentValue); pricingControls.appendChild(document.createTextNode("Sale value / box")); pricingControls.appendChild(salePrice); pricingControls.appendChild(resetSale);
                 const rowsHost = document.createElement("div");
                 rowsHost.style.cssText = "display:flex;flex-direction:column;gap:7px;margin-top:10px;";
-                const add = mkBtn("Add component", "add");
+                const add = mkBtn("Manage packages", "add"); // CHANGE
                 add.style.marginTop = "8px";
+                add.disabled = !(plan.crops || []).length; // CHANGE
+                add.title = (plan.crops || []).length ? "Add or remove crop packages for CSA." : "Add crops before managing packages."; // CHANGE
                 details.appendChild(controls); details.appendChild(pricingControls); details.appendChild(rowsHost); details.appendChild(add);
                 csaRefs = { componentValue, salePrice, resetSale };
                 const refreshSummary = () => { renderCsa(false); };
@@ -6521,9 +7490,9 @@ Draw.loadPlugin(function (ui) {
                         row.className = "yp-row";
                         row.dataset.csaComponentIndex = String(componentIndex);
                         const crop = PlanMath.findCrop(plan, component.cropId);
-                        const cropSelect = mkSelect((plan.crops || []).map(item => ({ value: item.id, label: cropLabel(item) })), component.cropId || "", 220);
+                        const cropSelect = mkCropSelectForDestination("csa", "csa", component.cropId || "", component, 220); // CHANGE
                         const qty = mkInput("number", component.qty ?? 1, 70);
-                        const unit = mkPackageUnitSelect(crop, component.unit || defaultUnit(crop), 130);
+                        const unit = mkPackageUnitSelect(crop, component.unit || defaultUnit(crop), 130, allowedPackageKeysForRow(crop, component.unit, "csa", "csa", component)); // CHANGE
                         const every = mkInput("number", component.everyNWeeks ?? 1, 65);
                         const from = mkInput("date", component.start || plan.csa.start || "", 145);
                         const to = mkInput("date", component.end || plan.csa.end || "", 145);
@@ -6538,7 +7507,7 @@ Draw.loadPlugin(function (ui) {
                         const remove = mkBtn("Remove", "danger");
                         row.appendChild(cropSelect); row.appendChild(qty); row.appendChild(unit); row.appendChild(document.createTextNode("Every")); row.appendChild(every); row.appendChild(document.createTextNode("weeks")); row.appendChild(from); row.appendChild(to); row.appendChild(remove);
                         rowsHost.appendChild(row);
-                        cropSelect.addEventListener("change", () => { component.cropId = cropSelect.value; component.unit = defaultUnit(PlanMath.findCrop(plan, component.cropId)); renderRows(); refreshDerived(); });
+                        cropSelect.addEventListener("change", () => { const nextCrop = handleCropSelectPackageNavigation(cropSelect, component.cropId); if (!nextCrop) return; component.cropId = cropSelect.value; component.unit = firstUnusedPackageUnit(nextCrop, "csa", "csa", component); renderRows(); refreshDerived(); }); // CHANGE
                         qty.addEventListener("input", () => { component.qty = Math.max(0, Number(qty.value) || 0); debounceRefresh(); });
                         unit.addEventListener("change", () => handlePackageUnitSelection(unit, component.cropId, value => { component.unit = value; }, () => refreshDerived(null, { rebuildCsa: true }))); // CHANGE
                         every.addEventListener("input", () => { component.everyNWeeks = Math.max(1, Math.trunc(Number(every.value) || 1)); debounceRefresh(); });
@@ -6551,10 +7520,7 @@ Draw.loadPlugin(function (ui) {
                     }
                 }
                 add.addEventListener("click", () => {
-                    const crop = plan.crops && plan.crops[0];
-                    plan.csa.components.push({ cropId: crop ? crop.id : "", qty: 1, unit: defaultUnit(crop), everyNWeeks: 1, start: plan.csa.start || "", end: plan.csa.end || "" });
-                    state.csaExpanded = true;
-                    renderRows(); refreshSummary(); refreshDerived();
+                    openCsaPackagePicker(renderRows, refreshSummary); // CHANGE
                 });
                 renderRows();
             }
@@ -6680,30 +7646,61 @@ Draw.loadPlugin(function (ui) {
             fillTemplateDropdown();
             saveTemplate.disabled = true;
 
-            const plantSelect = document.createElement("select");
-            plantSelect.style.cssText = "padding:6px;border:1px solid #bbb;border-radius:6px;min-width:260px;flex:1 1 260px;";
+            const addCropsButton = mkBtn("Add crops", "add"); // CHANGE
             const reloadPlants = mkBtn("Reload crops", "neutral");
             const plantMessage = document.createElement("span");
             plantMessage.style.color = "#666";
-            addRow.appendChild(plantSelect); addRow.appendChild(reloadPlants); addRow.appendChild(plantMessage);
+            addRow.appendChild(addCropsButton); addRow.appendChild(reloadPlants); addRow.appendChild(plantMessage); // CHANGE
 
             footerActions.appendChild(exportButton); footerActions.appendChild(reset);
             closePrompt.appendChild(promptSave); closePrompt.appendChild(promptDiscard); closePrompt.appendChild(promptCancel);
 
-            function appendAddCropOptionGroup(label, options) {
-                if (!options.length) return;
-                const group = document.createElement("optgroup");
-                group.label = label;
-                for (const option of options) {
-                    const optionId = Env.uid("addcrop");
-                    addCropOptionById.set(optionId, option);
-                    const element = document.createElement("option");
-                    element.value = optionId;
-                    element.textContent = option.label;
-                    group.appendChild(element);
+            function addCropOptionId(option) {
+                return `addcrop:${String(option && option.plantId || "")}:${option && option.varietyId != null ? String(option.varietyId) : "base"}`;
+            } // CHANGE
+
+            function makeAddCropLeaf(option, disabled, meta) {
+                const id = addCropOptionId(option);
+                return {
+                    id,
+                    label: option.varietyName ? option.varietyName : "Base plant",
+                    meta: meta || "",
+                    selectable: !disabled,
+                    disabled: !!disabled,
+                    value: option
+                };
+            } // CHANGE
+
+            function makeAddCropPlantNode(plantName, plantId, children, baseLeafId) {
+                const varietyCount = Math.max(0, children.length - 1);
+                return {
+                    id: `addcrop:plant:${String(plantId || plantName)}`,
+                    label: `${plantName || "Crop"} (${varietyCount})`,
+                    selects: baseLeafId ? "base" : null,
+                    baseLeafId,
+                    children
+                };
+            } // CHANGE
+
+            function appendAddCropCategory(nodes, label, optionsByPlant) {
+                const plants = Array.from(optionsByPlant.values()).sort((a, b) => String(a.plantName || "").localeCompare(String(b.plantName || "")));
+                const children = plants.map(group => makeAddCropPlantNode(group.plantName, group.plantId, group.children, group.baseLeafId));
+                if (children.length) nodes.push({ id: `addcrop:category:${label.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-")}`, label, children }); // CHANGE
+            } // CHANGE
+
+            function addOptionToPlantGroup(map, option, disabled, meta) {
+                const plantId = String(option && option.plantId || "");
+                if (!map.has(plantId)) map.set(plantId, { plantId, plantName: option.plantName, children: [], baseLeafId: "" });
+                const group = map.get(plantId);
+                const leaf = makeAddCropLeaf(option, disabled, meta);
+                if (option.varietyId == null) {
+                    group.children.unshift(leaf);
+                    if (!disabled) group.baseLeafId = leaf.id;
+                } else {
+                    group.children.push(leaf);
+                    group.children.sort((a, b) => (a.label === "Base plant" ? -1 : b.label === "Base plant" ? 1 : a.label.localeCompare(b.label)));
                 }
-                plantSelect.appendChild(group);
-            }
+            } // CHANGE
 
             function getPlantLifecycle(row) {
                 const enabled = [
@@ -6759,11 +7756,9 @@ Draw.loadPlugin(function (ui) {
 
             async function loadAddCropOptions(force) {
                 const loadVersion = ++addCropOptionsLoadVersion;
-                plantSelect.disabled = true;
+                addCropsButton.disabled = true; // CHANGE
                 reloadPlants.disabled = true;
-                addCropOptionById.clear();
-                plantSelect.innerHTML = "";
-                plantSelect.appendChild(new Option("-- Select crop --", ""));
+                addCropPickerNodes = []; // CHANGE
                 plantMessage.textContent = "Loading crops...";
                 try {
                     if (force) {
@@ -6773,7 +7768,7 @@ Draw.loadPlugin(function (ui) {
                     const plants = await DbClient.getPlantsBasicCached();
                     const plantRowsById = new Map(plants.map(row => [String(row.plant_id), row]));
                     const plannedKeys = new Set((plan.crops || []).map(crop => PlanSchema.getCropIdentityKey(crop)).filter(Boolean));
-                    const gardenOptions = [];
+                    const gardenOptionsByPlant = new Map(); // CHANGE
                     const gardenKeys = new Set();
                     let skippedGardenCount = 0;
 
@@ -6781,20 +7776,19 @@ Draw.loadPlugin(function (ui) {
                         const option = await resolveGardenCropOption(candidate, plantRowsById);
                         if (!option) { skippedGardenCount += 1; continue; }
                         const key = PlanSchema.makeCropIdentityKey(option.plantId, option.varietyId || "");
-                        if (!key || plannedKeys.has(key) || gardenKeys.has(key)) continue;
+                        if (!key || gardenKeys.has(key)) continue; // CHANGE
                         gardenKeys.add(key);
-                        gardenOptions.push(option);
+                        addOptionToPlantGroup(gardenOptionsByPlant, option, plannedKeys.has(key), plannedKeys.has(key) ? "Already in plan" : ""); // CHANGE
                     }
 
                     if (!SessionController.isActive(session) || loadVersion !== addCropOptionsLoadVersion) return;
-                    const byLifecycle = { annual: [], biennial: [], perennial: [], uncategorized: [] };
+                    const byLifecycle = { annual: new Map(), biennial: new Map(), perennial: new Map(), uncategorized: new Map() }; // CHANGE
                     for (const row of plants) {
                         const plantId = String(row.plant_id);
-                        const key = PlanSchema.makeCropIdentityKey(plantId, "");
-                        if (!key || plannedKeys.has(key) || gardenKeys.has(key)) continue;
                         const plantName = String(row.plant_name || "").trim();
                         const lifecycle = getPlantLifecycle(row);
-                        byLifecycle[lifecycle].push({
+                        const targetGroup = byLifecycle[lifecycle] || byLifecycle.uncategorized; // CHANGE
+                        const baseOption = {
                             source: "database",
                             plantId,
                             plantName,
@@ -6804,42 +7798,57 @@ Draw.loadPlugin(function (ui) {
                             row,
                             lifecycle,
                             label: plantName
-                        });
+                        };
+                        const baseKey = PlanSchema.makeCropIdentityKey(plantId, "");
+                        addOptionToPlantGroup(targetGroup, baseOption, plannedKeys.has(baseKey) || gardenKeys.has(baseKey), plannedKeys.has(baseKey) ? "Already in plan" : (gardenKeys.has(baseKey) ? "Shown in garden" : "")); // CHANGE
+                        const varietyRows = await getVarietyRows(plantId); // CHANGE
+                        for (const varietyRow of varietyRows.slice().sort((a, b) => String(a.variety_name || "").localeCompare(String(b.variety_name || "")))) {
+                            const varietyId = String(varietyRow.variety_id);
+                            const varietyName = String(varietyRow.variety_name || "").trim();
+                            const varietyKey = PlanSchema.makeCropIdentityKey(plantId, varietyId);
+                            addOptionToPlantGroup(targetGroup, {
+                                source: "database",
+                                plantId,
+                                plantName,
+                                varietyId,
+                                varietyName,
+                                varietyRow,
+                                row,
+                                lifecycle,
+                                label: `${plantName} - ${varietyName}`
+                            }, plannedKeys.has(varietyKey) || gardenKeys.has(varietyKey), plannedKeys.has(varietyKey) ? "Already in plan" : (gardenKeys.has(varietyKey) ? "Shown in garden" : "")); // CHANGE
+                        }
                     }
 
-                    const sortOptions = options => options.sort((a, b) => a.label.localeCompare(b.label));
-                    plantSelect.innerHTML = "";
-                    plantSelect.appendChild(new Option("-- Select crop --", ""));
-                    addCropOptionById.clear();
-                    appendAddCropOptionGroup("Crops in this garden, not yet in plan", sortOptions(gardenOptions));
-                    appendAddCropOptionGroup("Annual crops", sortOptions(byLifecycle.annual));
-                    appendAddCropOptionGroup("Biennial crops", sortOptions(byLifecycle.biennial));
-                    appendAddCropOptionGroup("Perennial crops", sortOptions(byLifecycle.perennial));
-                    appendAddCropOptionGroup("Uncategorized crops", sortOptions(byLifecycle.uncategorized));
+                    const nodes = []; // CHANGE
+                    appendAddCropCategory(nodes, "Crops in this garden", gardenOptionsByPlant); // CHANGE
+                    appendAddCropCategory(nodes, "Annual crops", byLifecycle.annual); // CHANGE
+                    appendAddCropCategory(nodes, "Biennial crops", byLifecycle.biennial); // CHANGE
+                    appendAddCropCategory(nodes, "Perennial crops", byLifecycle.perennial); // CHANGE
+                    appendAddCropCategory(nodes, "Uncategorized crops", byLifecycle.uncategorized); // CHANGE
+                    addCropPickerNodes = nodes; // CHANGE
                     const skippedMessage = skippedGardenCount ? `Skipped ${skippedGardenCount} unavailable garden crop${skippedGardenCount === 1 ? "" : "s"}.` : "";
                     plantMessage.textContent = pendingAddCropMessage || skippedMessage; // CHANGE: preserve auto-add confirmation after the picker refreshes.
                     pendingAddCropMessage = "";
                 } catch (error) {
                     if (SessionController.isActive(session) && loadVersion === addCropOptionsLoadVersion) {
-                        addCropOptionById.clear();
+                        addCropPickerNodes = []; // CHANGE
                         plantMessage.textContent = String(error && error.message || error);
                     }
                 } finally {
                     if (SessionController.isActive(session) && loadVersion === addCropOptionsLoadVersion) {
-                        plantSelect.disabled = false;
+                        addCropsButton.disabled = !addCropPickerNodes.length; // CHANGE
                         reloadPlants.disabled = false;
                     }
                 }
             }
 
-            function addSelectedCropFromPicker() {
-                const selectedOption = addCropOptionById.get(String(plantSelect.value || ""));
-                if (!selectedOption) return;
+            function createCropFromAddOption(selectedOption) {
+                if (!selectedOption) return null;
                 if (PlanSchema.findDuplicateCrop(plan, selectedOption.plantId, selectedOption.varietyId || "", "")) {
                     state.extraDiagnostics = [`Crop already exists for ${selectedOption.label}.`];
                     state.planCheckExpanded = true;
-                    refreshDerived();
-                    return;
+                    return null;
                 }
                 state.extraDiagnostics = [];
                 const plantId = selectedOption.plantId;
@@ -6857,14 +7866,37 @@ Draw.loadPlugin(function (ui) {
                     kgPerPlantMode: "auto", actualPlants: 0, germRate: 1,
                     packages: defaults && defaults.length ? PlanSchema.clonePlain(defaults) : [] // CHANGE: demand units are user-defined packages only.
                 };
-                plan.crops.push(crop);
-                setSelectedCropEverywhere(crop.id);
                 crop.__harvestWindowSourceMissing = false; // CHANGE: new rows already default to the sowing-window source.
-                emitHarvestWindowsNeeded(crop);
-                pendingAddCropMessage = `Added ${selectedOption.label}.`;
+                return crop;
+            } // CHANGE
+
+            function addSelectedCropOptions(options) {
+                const added = [];
+                for (const selectedOption of (options || [])) {
+                    const crop = createCropFromAddOption(selectedOption);
+                    if (!crop) continue;
+                    plan.crops.push(crop);
+                    added.push(crop);
+                }
+                if (!added.length) { refreshDerived(); return; }
+                setSelectedCropEverywhere(added[0].id);
+                emitHarvestWindowsNeeded(added);
+                pendingAddCropMessage = `Added ${added.length} crop${added.length === 1 ? "" : "s"}.`;
                 renderAll();
-            }
-            plantSelect.addEventListener("change", addSelectedCropFromPicker);
+            } // CHANGE
+
+            function openAddCropPicker() {
+                openTreePicker({
+                    key: "add-crop",
+                    title: "Add crops",
+                    nodes: addCropPickerNodes,
+                    addLabel: "Add selected",
+                    emptyText: "No crops are available.",
+                    onAdd: addSelectedCropOptions
+                });
+            } // CHANGE
+
+            addCropsButton.addEventListener("click", openAddCropPicker); // CHANGE
             reloadPlants.addEventListener("click", () => loadAddCropOptions(true));
 
             yearInput.addEventListener("change", () => {
