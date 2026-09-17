@@ -135,11 +135,23 @@ test("Allocate resolves crop method context from explicit and legacy dotted meth
     assert.equal(inferred.methodId, "direct_sow.field");
     assert.equal(inferred.methodCategoryId, "direct_sow");
 
+    const repaired = api.resolveCropMethodContext({ method: "direct_sow.field", methodCategoryId: "transplant" });
+    assert.equal(repaired.ok, true);
+    assert.equal(repaired.methodId, "direct_sow.field");
+    assert.equal(repaired.methodCategoryId, "direct_sow");
+    assert.equal(repaired.repairedMethodCategoryId, true);
+
     const categoryOnly = api.resolveCropMethodContext({ method: "direct_sow" });
     assert.equal(categoryOnly.ok, false);
     assert.equal(categoryOnly.methodId, "direct_sow");
     assert.equal(categoryOnly.methodCategoryId, "");
     assert.equal(categoryOnly.reason, "Year Plan method must be a concrete method like direct_sow.field.");
+
+    const unsupported = api.resolveCropMethodContext({ method: "legacy.method", methodCategoryId: "legacy" });
+    assert.equal(unsupported.ok, false);
+    assert.equal(unsupported.methodId, "legacy.method");
+    assert.equal(unsupported.methodCategoryId, "legacy");
+    assert.equal(unsupported.reason, "Unsupported Year Plan method: legacy.method.");
 });
 
 test("Allocate bed result creates max-fit partial draft when full recommendation is oversized", async () => {
@@ -270,6 +282,61 @@ test("Allocate bed result keeps full-fit draft semantics", async () => {
     assert.equal(lifecycleRequests[0].methodCategoryId, "direct_sow");
 });
 
+test("Allocate repairs mismatched Year Plan method categories before lifecycle scheduling", async () => {
+    const api = loadAllocatePlugin();
+    const lifecycleRequests = [];
+    api.__window.USL.scheduler = {
+        async resolvePlantForPlanCrop() {
+            return {
+                ok: true,
+                plant: { plant_id: 1, plant_name: "Lettuce", spacing_cm: 30, yield_per_plant_kg: 1 },
+                plantId: "1",
+                varietyId: "",
+                varietyName: "",
+                label: "Lettuce"
+            };
+        },
+        async proposeLifecycle(options) {
+            lifecycleRequests.push(options);
+            return {
+                ok: true,
+                status: "compatible",
+                primaryDateISO: "2027-04-01",
+                attributePatch: { harvest_start: "2027-06-01", harvest_end: "2027-06-30" },
+                warnings: [],
+                taskPreview: []
+            };
+        }
+    };
+    api.__window.USL.tiler = {
+        readBedProfile() { return {}; },
+        proposePlantingGeometry() {
+            return { ok: true, status: "compatible", capacity: 48, geometry: { x: 0, y: 0, width: 100, height: 40 }, slots: [] };
+        }
+    };
+    api.__window.USL.planningCore = {
+        recommendPlantCount() { return { plantCount: 10, reachableShortKg: 10 }; },
+        simulateCandidatePlanting() { return { demandServedKg: 10 }; }
+    };
+    const state = {
+        moduleCell: {},
+        year: 2027,
+        plan: { crops: [] },
+        city: {},
+        coverage: { weekSummaries: [{ weekIndex: 22, start: "2027-06-01" }] },
+        weekIndex: 22,
+        occupancy: []
+    };
+
+    const crop = { id: "lettuce", cropId: "lettuce", plantId: "1", plant: "Lettuce", method: "direct_sow.field", methodCategoryId: "transplant", kgPerPlant: 1 };
+    const result = await api.computeBedResult(state, crop, { getAttribute: () => "" });
+
+    assert.equal(result.ok, true);
+    assert.equal(crop.methodCategoryId, "transplant");
+    assert.equal(lifecycleRequests[0].methodId, "direct_sow.field");
+    assert.equal(lifecycleRequests[0].methodCategoryId, "direct_sow");
+});
+
 test("Allocate bed result reports category-only Year Plan methods before lifecycle scheduling", async () => {
     const api = loadAllocatePlugin();
     let lifecycleCalled = false;
@@ -311,6 +378,50 @@ test("Allocate bed result reports category-only Year Plan methods before lifecyc
 
     assert.equal(result.ok, false);
     assert.equal(result.reason, "Year Plan method must be a concrete method like direct_sow.field.");
+    assert.equal(lifecycleCalled, false);
+});
+
+test("Allocate bed result reports unsupported concrete methods before lifecycle scheduling", async () => {
+    const api = loadAllocatePlugin();
+    let lifecycleCalled = false;
+    api.__window.USL.scheduler = {
+        async resolvePlantForPlanCrop() {
+            return {
+                ok: true,
+                plant: { plant_id: 1, plant_name: "Radish", spacing_cm: 10, yield_per_plant_kg: 1 },
+                plantId: "1",
+                varietyId: "",
+                varietyName: "",
+                label: "Radish"
+            };
+        },
+        async proposeLifecycle() {
+            lifecycleCalled = true;
+            return { ok: true };
+        }
+    };
+    api.__window.USL.tiler = {
+        readBedProfile() { return {}; },
+        proposePlantingGeometry() { return { ok: true, status: "compatible", capacity: 1, geometry: {}, slots: [] }; }
+    };
+    api.__window.USL.planningCore = {
+        recommendPlantCount() { return { plantCount: 1, reachableShortKg: 1 }; },
+        simulateCandidatePlanting() { return { demandServedKg: 1 }; }
+    };
+    const state = {
+        moduleCell: {},
+        year: 2027,
+        plan: { crops: [] },
+        city: {},
+        coverage: { weekSummaries: [{ weekIndex: 22, start: "2027-06-01" }] },
+        weekIndex: 22,
+        occupancy: []
+    };
+
+    const result = await api.computeBedResult(state, { id: "radish", cropId: "radish", plantId: "1", plant: "Radish", method: "legacy.method", methodCategoryId: "legacy", kgPerPlant: 1 }, { getAttribute: () => "" });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, "Unsupported Year Plan method: legacy.method.");
     assert.equal(lifecycleCalled, false);
 });
 
