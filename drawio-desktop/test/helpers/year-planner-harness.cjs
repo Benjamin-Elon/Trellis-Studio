@@ -85,10 +85,13 @@ function createYearPlannerHarness(options = {}) {
     const { document } = window;
     const root = new TestCell("root");
     const moduleCell = new TestCell("module", { label: "Test Garden" });
+    moduleCell.parent = root; // CHANGE
     root.children.push(moduleCell);
     const cells = new Map([[root.id, root], [moduleCell.id, moduleCell]]);
     const graphListeners = new Map();
     const confirmations = [];
+    const selectionLog = []; // CHANGE
+    const scrollLog = []; // CHANGE
 
     window.__USL_YEAR_PLANNER_TEST_HOOK__ = true;
     window.HTMLCanvasElement.prototype.getContext = function getContext() {
@@ -120,6 +123,8 @@ function createYearPlannerHarness(options = {}) {
             cells.set(cell.id, cell);
             return cell;
         },
+        setSelectionCell(cell) { selectionLog.push(cell); }, // CHANGE
+        scrollCellToVisible(cell, center) { scrollLog.push({ cell, center }); }, // CHANGE
         setAttributeForCell(cell, key, value) {
             if (value == null) cell.attributes.delete(key);
             else cell.attributes.set(key, String(value));
@@ -220,6 +225,7 @@ function createYearPlannerHarness(options = {}) {
     api.DbClient.queryNutritionRequirements = async () => options.nutritionRequirements || { available: true, requirements: [] };
 
     function addCell(parent, cell) {
+        cell.parent = parent; // CHANGE
         parent.children.push(cell);
         cells.set(cell.id, cell);
         return cell;
@@ -257,6 +263,8 @@ function createYearPlannerHarness(options = {}) {
         moduleCell,
         openModal,
         root,
+        scrollLog, // CHANGE
+        selectionLog, // CHANGE
         setControlValue,
         settle,
         TestCell,

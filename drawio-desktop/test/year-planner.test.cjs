@@ -227,12 +227,12 @@ test("PlanSchema normalizes legacy yield fields and strips runtime-only persiste
         version: 2,
         weekStartDow: 1,
         demandChannels: [
-            { id: "farm_store", label: "Farm Store", type: "farm_store" },
-            { id: "restaurant_1", label: "Restaurant 1", type: "restaurant" },
-            { id: "farmers_market", label: "Farmers Market", type: "market" },
-            { id: "wholesale", label: "Wholesale", type: "wholesale" }
+            { id: "farm_store", label: "Farm Store", type: "farm_store", enabled: true }, // CHANGE
+            { id: "restaurant_1", label: "Restaurant 1", type: "restaurant", enabled: true }, // CHANGE
+            { id: "farmers_market", label: "Farmers Market", type: "market", enabled: true }, // CHANGE
+            { id: "wholesale", label: "Wholesale", type: "wholesale", enabled: true } // CHANGE
         ],
-        selfSufficiency: { adults: 0, children: 0, nutritionMultiplier: 1, lines: [] },
+        selfSufficiency: { enabled: true, adults: 0, children: 0, nutritionMultiplier: 1, lines: [] }, // CHANGE
         demands: [],
         csa: { enabled: false, boxesPerWeek: 0, start: "", end: "", salePricePerBox: null, salePriceMode: "auto", components: [] }
     });
@@ -840,6 +840,35 @@ test("PlanMath inventory uses conservative weekly shelf-life buckets and FIFO co
     assert.deepEqual(Array.from(longLife.expired), [0, 0, 0, 4]);
 });
 
+test("PlanMath tracks planting source provenance through FIFO inventory", () => {
+    const { api } = createHarness();
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    const weeks = api.PlanMath.buildWeekStartsForYearLocal(2026, plan.weekStartDow);
+    const firstWeek = api.PlanMath.weekIndexForDate(weeks, "2026-06-01");
+    const secondWeek = api.PlanMath.weekIndexForDate(weeks, "2026-06-08");
+    const crop = emptyCrop({ harvestStart: "2026-06-01", harvestEnd: "2026-06-14", shelfLifeDays: 14 });
+    crop.__actualHarvestWeeklyKg = Array(weeks.length).fill(0);
+    crop.__actualHarvestWeeklyKg[firstWeek] = 10;
+    crop.__actualHarvestSourceRows = [{
+        sourceId: "planting_1",
+        cellId: "planting_1",
+        label: "Tomato / Sungold (West Bed) 10 plants",
+        plantCount: 10,
+        weeklyKg: crop.__actualHarvestWeeklyKg.slice()
+    }];
+    plan.crops.push(crop);
+    addDemand(plan, { from: "2026-06-08", to: "2026-06-14", qty: 4 });
+
+    const weekly = api.PlanMath.computePlanWeekly(plan, []);
+    const cropWeekly = weekly.perCrop.get("crop_1");
+
+    assert.equal(cropWeekly.plantingSourcesByWeek[firstWeek][0].harvestedKg, 10);
+    assert.equal(cropWeekly.plantingSourcesByWeek[firstWeek][0].endingKg, 10);
+    assert.equal(cropWeekly.plantingSourcesByWeek[secondWeek][0].carriedInKg, 10);
+    assert.equal(cropWeekly.plantingSourcesByWeek[secondWeek][0].usedKg, 4);
+    assert.equal(cropWeekly.plantingSourcesByWeek[secondWeek][0].endingKg, 6);
+});
+
 test("PlanMath expands daily, weekly, and prorated monthly demand on calendar anchors", () => {
     const { api } = createHarness();
     const weeks = api.PlanMath.buildWeekStartsForYearLocal(2024, 1);
@@ -993,6 +1022,24 @@ test("PlanMath requires explicit packages for built-in unit names", () => {
     assert.equal(Number.isFinite(api.PlanMath.resolveUnitToKgPerUnit(crop, "lb")), false);
     assert.equal(Number.isFinite(api.PlanMath.resolveUnitToKgPerUnit(crop, "plant")), false);
     assert.equal(api.PlanMath.computePlanWeekly(plan, []).perDemandLine.has("kg_line"), false);
+});
+
+test("PlanMath resolves standard package weight bases to kg", () => {
+    const { api } = createHarness();
+    const crop = emptyCrop({
+        packages: [
+            { unit: "gram_pack", baseType: "g", baseQty: 500 },
+            { unit: "ounce_pack", baseType: "ounce", baseQty: 16 },
+            { unit: "pound_pack", baseType: "pound", baseQty: 2 },
+            { unit: "plant_pack", baseType: "plant", baseQty: 3 }
+        ]
+    });
+
+    assert.equal(api.PlanMath.resolveUnitToKgPerUnit(crop, "gram_pack"), 0.5);
+    assert.equal(api.PlanMath.resolveUnitToKgPerUnit(crop, "ounce_pack"), 16 * 0.028349523125);
+    assert.equal(api.PlanMath.resolveUnitToKgPerUnit(crop, "pound_pack"), 2 * 0.45359237);
+    assert.equal(api.PlanMath.resolveUnitToKgPerUnit(crop, "plant_pack"), 3);
+    assert.equal(codes(api.PlanSchema.validateCrop(crop)).includes("crop.package_invalid_base_type"), false);
 });
 
 test("PlanMath still blocks demand-like rows when package quantity conversion is invalid", () => { // NEW
@@ -1406,6 +1453,57 @@ test("Self Sufficiency demand expands separately from sales demand", () => {
     assert.equal(weekly.perSelfLine.get("self_1").target.reduce((sum, value) => sum + value, 0), 2);
     assert.equal(weekly.perDemandLine.get("demand_1").target.reduce((sum, value) => sum + value, 0), 3);
 });
+
+test("disabled self-use, commercial channels, and CSA stay saved but leave demand totals", () => { // CHANGE
+    const { api } = createHarness();
+    const sum = values => (Array.isArray(values) ? values : []).reduce((total, value) => total + Math.max(0, Number(value) || 0), 0);
+    const plan = api.PlanSchema.createEmptyPlan(2026);
+    plan.crops.push(emptyCrop({ harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 2 }] }));
+    addSelfUse(plan, { id: "self_disabled", qty: 2, from: "2026-06-01", to: "2026-06-07" });
+    addDemand(plan, { id: "channel_disabled", qty: 3, from: "2026-06-01", to: "2026-06-07" });
+    plan.csa = { enabled: true, boxesPerWeek: 4, start: "2026-06-01", end: "2026-06-07", salePricePerBox: null, salePriceMode: "auto", components: [{ cropId: "crop_1", qty: 1, unit: "kg", everyNWeeks: 1, start: "", end: "" }] };
+
+    let weekly = api.PlanMath.computePlanWeekly(plan, []);
+    assert.equal(sum(weekly.selfSufficiency.target), 2);
+    assert.equal(sum(weekly.sales.target), 3);
+    assert.equal(sum(weekly.csa.target), 4);
+    assert.equal(sum(weekly.targetTotal), 9);
+
+    plan.selfSufficiency.enabled = false;
+    plan.demandChannels.find(channel => channel.id === "farm_store").enabled = false;
+    plan.csa.enabled = false;
+    plan.selfSufficiency.lines[0].from = "2026-07-01";
+    plan.selfSufficiency.lines[0].to = "2026-06-01";
+    plan.demands[0].from = "2026-07-01";
+    plan.demands[0].to = "2026-06-01";
+    plan.csa.boxesPerWeek = 0;
+
+    weekly = api.PlanMath.computePlanWeekly(plan, []);
+    assert.equal(sum(weekly.selfSufficiency.target), 0);
+    assert.equal(sum(weekly.sales.target), 0);
+    assert.equal(sum(weekly.csa.target), 0);
+    assert.equal(sum(weekly.targetTotal), 0);
+    assert.equal(weekly.perSelfLine.has("self_disabled"), false);
+    assert.equal(weekly.perDemandLine.has("channel_disabled"), false);
+    assert.deepEqual(codes(api.PlanSchema.validateSelfSufficiency(plan)), []);
+    assert.deepEqual(codes(api.PlanSchema.validateDemand(plan)), []);
+    assert.deepEqual(codes(api.PlanSchema.validateCsa(plan)), []);
+
+    plan.selfSufficiency.enabled = true;
+    plan.demandChannels.find(channel => channel.id === "farm_store").enabled = true;
+    plan.csa.enabled = true;
+    plan.selfSufficiency.lines[0].from = "2026-06-01";
+    plan.selfSufficiency.lines[0].to = "2026-06-07";
+    plan.demands[0].from = "2026-06-01";
+    plan.demands[0].to = "2026-06-07";
+    plan.csa.boxesPerWeek = 4;
+
+    weekly = api.PlanMath.computePlanWeekly(plan, []);
+    assert.equal(sum(weekly.selfSufficiency.target), 2);
+    assert.equal(sum(weekly.sales.target), 3);
+    assert.equal(sum(weekly.csa.target), 4);
+    assert.equal(sum(weekly.targetTotal), 9);
+}); // CHANGE
 
 test("Harvest allocation satisfies Self Sufficiency before CSA and sales", () => {
     const { api } = createHarness();

@@ -19,6 +19,24 @@ function viewportToolbarSource() {
     return text.slice(start, end);
 }
 
+function blankViewportToolbarSource() {
+    const text = viewportToolbarSource();
+    const start = text.indexOf("function renderBlankViewportToolbar(context)");
+    const end = text.indexOf("function renderViewportToolbar(moduleCell)", start);
+    assert.notEqual(start, -1, "Missing blank viewport toolbar renderer");
+    assert.notEqual(end, -1, "Missing active viewport toolbar renderer");
+    return text.slice(start, end);
+}
+
+function activeViewportToolbarSource() {
+    const text = viewportToolbarSource();
+    const start = text.indexOf("function renderViewportToolbar(moduleCell)");
+    const end = text.indexOf("function hideViewportToolbar()", start);
+    assert.notEqual(start, -1, "Missing active viewport toolbar renderer");
+    assert.notEqual(end, -1, "Missing toolbar hide function");
+    return text.slice(start, end);
+}
+
 test("garden dashboard toolbar is mounted to the graph viewport and sized from the viewport", () => {
     const text = viewportToolbarSource();
     const fullSource = source();
@@ -76,6 +94,17 @@ test("garden dashboard toolbar follows garden module and descendant selection", 
     assert.match(text, /const moduleCell = isGardenModule\(cell\) \? cell : findGardenModuleAncestor\(graph, cell\);/);
     assert.match(text, /if \(!context\.moduleCell\) \{ renderBlankViewportToolbar\(context\); return; \}/);
     assert.match(fullSource, /graph\.getSelectionModel\(\)\.addListener\(mxEvent\.CHANGE, scheduleViewportToolbarRefresh\);/);
+});
+
+test("garden dashboard blank toolbar leaves module-scoped flash lookup to active render", () => {
+    const blankText = blankViewportToolbarSource();
+    const activeText = activeViewportToolbarSource();
+    assert.doesNotMatch(blankText, /\bmoduleCell\b/); // CHANGE: root/unrelated selection has no active module.
+    assert.doesNotMatch(blankText, /pendingPlanButtonFlashByModuleId/); // CHANGE: pending flashes are handled only when a module is active.
+    assert.doesNotMatch(blankText, /flashPlanButton/); // CHANGE: blank toolbar cannot flash a module-specific plan button.
+    assert.match(activeText, /const moduleId = cellId\(moduleCell\);/); // CHANGE
+    assert.match(activeText, /pendingPlanButtonFlashByModuleId\.get\(moduleId\)/); // CHANGE
+    assert.match(activeText, /flashPlanButton\(entry, moduleId, pendingFlash\.durationMs\)/); // CHANGE
 });
 
 test("garden dashboard toolbar controls use module scoped plugin contracts", () => {

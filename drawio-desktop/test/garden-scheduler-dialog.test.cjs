@@ -918,6 +918,12 @@ test('plant editor exposes layout defaults without a diagram preview', () => {
     assert.doesNotMatch(schedulerSource, /CompanionRelationshipModel\.saveLayoutDefaults\(relationship\.relationId, readCompanionLayoutDraft\(\), relationship\)/);
 });
 
+test('add variety editor focuses and temporarily highlights the variety name field', () => { // CHANGE
+    assert.match(schedulerSource, /\.usl-plant-editor-field-highlight\{/); // CHANGE
+    assert.match(schedulerSource, /function focusAndHighlightVarietyNameField\(\) \{[\s\S]*basics\.setOpen\(true\)[\s\S]*varietyNameInput[\s\S]*classList\.add\('usl-plant-editor-field-highlight'\)[\s\S]*setTimeout\(\(\) => \{ if \(target && target\.classList\) target\.classList\.remove\('usl-plant-editor-field-highlight'\); \}, 1200\)[\s\S]*target\.focus/); // CHANGE
+    assert.match(schedulerSource, /const commitPromise = showCommitDialog\(ui, \{ container: div, width: 940, height: 620, modal: true, closable: true \}\);[\s\S]*if \(initialStartVarietyMode === 'add'\) focusAndHighlightVarietyNameField\(\);[\s\S]*return await commitPromise/); // CHANGE
+}); // CHANGE
+
 test('turnover computed-window filtering rejects same-bed occupancy overlap', () => {
     const sourceCell = { id: 'source-3', getAttribute: key => ({ sow_date: '2026-04-01', harvest_end: '2026-09-15' }[key] || '') };
     const blockedGraph = { __trellisBedSuccessionNavigator: { getSelectedBedOccupancy: () => ({ items: [
@@ -988,68 +994,58 @@ function makeVariety(overrides = {}) {
     };
 }
 
-test('variety options group by manual class, DTM inference, and GDD fallback', () => {
+test('variety options group exact Trellis defaults separately from user varieties', () => {
     const groups = hooks.buildGroupedVarietyOptions([
-        makeVariety({ variety_id: 1, variety_name: 'Quick', overrides: { days_maturity: 45 } }),
-        makeVariety({ variety_id: 2, variety_name: 'Middle', overrides: { days_maturity: 60 } }),
-        makeVariety({ variety_id: 3, variety_name: 'Slow', overrides: { days_maturity: 80 } }),
-        makeVariety({ variety_id: 4, variety_name: 'Curated Late', maturity_class: 'late', overrides: { days_maturity: 40 } }),
-        makeVariety({ variety_id: 5, variety_name: 'Heat Only', overrides: { gdd_to_maturity: 900 } }),
-        makeVariety({ variety_id: 6, variety_name: 'Heat Mid', overrides: { gdd_to_maturity: 1200 } }),
-        makeVariety({ variety_id: 7, variety_name: 'Heat Late', overrides: { gdd_to_maturity: 1500 } })
+        makeVariety({ variety_id: 1, variety_name: 'Late maturity', maturity_class: 'late', overrides: { days_maturity: 70 } }),
+        makeVariety({ variety_id: 2, variety_name: 'Roma', maturity_class: 'early', overrides: { days_maturity: 50 } }),
+        makeVariety({ variety_id: 3, variety_name: 'Very early maturity', maturity_class: 'very_early', overrides: { days_maturity: 40 } }),
+        makeVariety({ variety_id: 4, variety_name: 'Black Krim', overrides: { days_maturity: 80 } }),
+        makeVariety({ variety_id: 5, variety_name: 'Mid maturity', maturity_class: 'mid', overrides: { days_maturity: 60 } })
     ]);
-    assert.deepEqual(Array.from(groups, group => group.label), ['Early varieties', 'Mid varieties', 'Late varieties']);
+    assert.deepEqual(Array.from(groups, group => group.label), ['Trellis defaults', 'Your varieties']);
     assert.deepEqual(Array.from(groups, group => Array.from(group.options, option => option.label)), [
-        ['Quick - 45d', 'Heat Only - 900 GDD'],
-        ['Middle - 60d', 'Heat Mid - 1200 GDD'],
-        ['Curated Late - 40d', 'Slow - 80d', 'Heat Late - 1500 GDD']
+        ['Very early maturity - 40d', 'Mid maturity - 60d', 'Late maturity - 70d'],
+        ['Black Krim - 80d', 'Roma - 50d']
     ]);
 });
 
-test('variety options support very early and very late maturity classes', () => {
+test('variety options require exact generic name and class for Trellis defaults', () => {
     const groups = hooks.buildGroupedVarietyOptions([
-        makeVariety({ variety_id: 1, variety_name: 'Very Quick', maturity_class: 'very_early', overrides: { days_maturity: 40 } }),
-        makeVariety({ variety_id: 2, variety_name: 'Quick', maturity_class: 'early', overrides: { days_maturity: 50 } }),
-        makeVariety({ variety_id: 3, variety_name: 'Middle', maturity_class: 'mid', overrides: { days_maturity: 60 } }),
-        makeVariety({ variety_id: 4, variety_name: 'Slow', maturity_class: 'late', overrides: { days_maturity: 70 } }),
-        makeVariety({ variety_id: 5, variety_name: 'Very Slow', maturity_class: 'very_late', overrides: { days_maturity: 80 } })
+        makeVariety({ variety_id: 1, variety_name: 'Very early maturity', maturity_class: 'early' }),
+        makeVariety({ variety_id: 2, variety_name: 'Early maturity', maturity_class: 'early' }),
+        makeVariety({ variety_id: 3, variety_name: 'Very Quick', maturity_class: 'very_early' })
     ]);
-    assert.deepEqual(Array.from(groups, group => group.label), [
-        'Very early varieties',
-        'Early varieties',
-        'Mid varieties',
-        'Late varieties',
-        'Very late varieties'
-    ]);
-    assert.deepEqual(Array.from(groups, group => group.options[0].label), [
-        'Very Quick - 40d',
-        'Quick - 50d',
-        'Middle - 60d',
-        'Slow - 70d',
-        'Very Slow - 80d'
-    ]);
+    assert.deepEqual(Array.from(groups, group => group.label), ['Trellis defaults', 'Your varieties']);
+    assert.deepEqual(Array.from(groups[0].options, option => option.label), ['Early maturity']);
+    assert.deepEqual(Array.from(groups[1].options, option => option.label), ['Very early maturity', 'Very Quick']);
 });
 
-test('variety grouping leaves insufficient inferred data uncategorized but honors manual class', () => {
-    const groups = hooks.buildGroupedVarietyOptions([
-        makeVariety({ variety_id: 1, variety_name: 'Only One', overrides: { days_maturity: 45 } }),
-        makeVariety({ variety_id: 2, variety_name: 'Only Two', overrides: { days_maturity: 55 } }),
-        makeVariety({ variety_id: 3, variety_name: 'Manual Early', maturity_class: 'early' })
-    ]);
-    assert.deepEqual(Array.from(groups, group => group.label), ['Early varieties', 'Uncategorized']);
-    assert.deepEqual(Array.from(groups[0].options, option => option.label), ['Manual Early']);
-    assert.deepEqual(Array.from(groups[1].options, option => option.label), ['Only One - 45d', 'Only Two - 55d']);
+test('variety picker uses flat user-only list and defaults-only add group', () => {
+    const userOnly = hooks.buildVarietyPickerGroups([
+        makeVariety({ variety_id: 1, variety_name: 'Zebra' }),
+        makeVariety({ variety_id: 2, variety_name: 'Alpha' })
+    ], { includeBase: true, includeNew: true, newValue: '__NEW__' });
+    assert.equal(userOnly.length, 1);
+    assert.equal(userOnly[0].flat, true);
+    assert.deepEqual(Array.from(userOnly[0].options, option => option.label), ['(base plant)', 'Add variety...', 'Alpha', 'Zebra']);
+
+    const defaultsOnly = hooks.buildVarietyPickerGroups([
+        makeVariety({ variety_id: 3, variety_name: 'Very late maturity', maturity_class: 'very_late' })
+    ], { includeBase: true, includeNew: true, newValue: '__NEW__' });
+    assert.deepEqual(Array.from(defaultsOnly, group => group.label), ['Selection', 'Trellis defaults', 'Your varieties']);
+    assert.deepEqual(Array.from(defaultsOnly[2].options, option => option.label), ['Add variety...']);
 });
 
-test('rendered variety dropdown keeps base plant first and omits empty optgroups', () => {
+test('rendered variety dropdown keeps base plant first and source groups', () => {
     const document = hooks.__testWindow.document;
     const select = document.createElement('select');
     const groups = hooks.buildGroupedVarietyOptions([
-        makeVariety({ variety_id: 1, variety_name: 'Alpha', maturity_class: 'early' })
+        makeVariety({ variety_id: 1, variety_name: 'Early maturity', maturity_class: 'early' }),
+        makeVariety({ variety_id: 2, variety_name: 'Alpha', maturity_class: 'early' })
     ]);
     hooks.renderGroupedVarietyOptions(select, groups, '1');
     assert.equal(select.options[0].textContent, '(base plant)');
-    assert.deepEqual(Array.from(select.querySelectorAll('optgroup'), group => group.label), ['Selection', 'Early varieties']);
+    assert.deepEqual(Array.from(select.querySelectorAll('optgroup'), group => group.label), ['Trellis defaults', 'Your varieties']);
     assert.equal(select.value, '1');
 });
 

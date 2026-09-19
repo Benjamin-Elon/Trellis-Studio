@@ -37,6 +37,7 @@ Draw.loadPlugin(function (ui) {
     const DEFAULT_MODULE_HEIGHT = 100;
 
     const PLAN_YEAR_EVENT = "usl:planYearRequested";
+    const PLAN_BUTTON_FLASH_EVENT = "usl:yearPlanButtonFlashRequested"; // CHANGE
     const ALLOCATE_PLAN_EVENT = "usl:allocatePlanRequested";
     const IRRIGATION_MODE_CHANGED_EVENT = "trellisIrrigationModeChanged";
     const ALLOCATE_NO_PLAN_TITLE = "Create a year plan before allocating."; // CHANGE: explain why Allocate is disabled before a saved plan exists.
@@ -864,6 +865,8 @@ Draw.loadPlugin(function (ui) {
     let gardenPickerSearchText = "";
     let lastToolbarContext = null;
     let startupGardenFocusDone = false;
+    const pendingPlanButtonFlashByModuleId = new Map(); // CHANGE
+    const planButtonFlashTimersByModuleId = new Map(); // CHANGE
 
     function dashboardDiagramIsOpen() {
         return !!(ui && typeof ui.getCurrentFile === "function" && ui.getCurrentFile());
@@ -872,6 +875,22 @@ Draw.loadPlugin(function (ui) {
     function cellId(cell) {
         return cell && cell.getId ? cell.getId() : (cell && cell.id) || "";
     }
+
+    function flashPlanButton(entry, moduleId, durationMs) {
+        if (!entry || !entry.planBtn || !moduleId) return;
+        const button = entry.planBtn;
+        if (planButtonFlashTimersByModuleId.has(moduleId)) clearTimeout(planButtonFlashTimersByModuleId.get(moduleId));
+        button.style.transition = "box-shadow .18s ease, background-color .18s ease, color .18s ease";
+        button.style.boxShadow = "0 0 0 3px rgba(47,111,237,.36),0 0 0 6px rgba(47,111,237,.14)";
+        button.style.backgroundColor = "#eef4ff";
+        button.style.color = "#1f4fbf";
+        planButtonFlashTimersByModuleId.set(moduleId, setTimeout(function () {
+            button.style.boxShadow = "";
+            button.style.backgroundColor = "";
+            button.style.color = "";
+            planButtonFlashTimersByModuleId.delete(moduleId);
+        }, Math.max(500, Number(durationMs) || 2000)));
+    } // CHANGE
 
     function getViewportToolbarContainer() {
         return graph && graph.container;
@@ -2245,6 +2264,12 @@ Draw.loadPlugin(function (ui) {
         }
         entry.wrap.style.display = "block";
         positionViewportToolbar(entry);
+        const moduleId = cellId(moduleCell); // CHANGE: consume queued module-specific flashes only while rendering an active module.
+        const pendingFlash = pendingPlanButtonFlashByModuleId.get(moduleId); // CHANGE
+        if (pendingFlash) { // CHANGE
+            pendingPlanButtonFlashByModuleId.delete(moduleId); // CHANGE
+            flashPlanButton(entry, moduleId, pendingFlash.durationMs); // CHANGE
+        } // CHANGE
     }
 
     function hideViewportToolbar() {
@@ -2281,6 +2306,20 @@ Draw.loadPlugin(function (ui) {
         scheduleViewportToolbarRefresh();
     }
 
+    function handlePlanButtonFlashRequested(event) { // CHANGE
+        const detail = event && event.detail || {};
+        const moduleId = String(detail.moduleCellId || "");
+        if (!moduleId) return;
+        pendingPlanButtonFlashByModuleId.set(moduleId, { durationMs: Math.max(500, Number(detail.durationMs) || 2000) });
+        if (activeToolbarModule && cellId(activeToolbarModule) === moduleId && viewportToolbar) {
+            const pending = pendingPlanButtonFlashByModuleId.get(moduleId);
+            pendingPlanButtonFlashByModuleId.delete(moduleId);
+            flashPlanButton(viewportToolbar, moduleId, pending.durationMs);
+        } else {
+            scheduleViewportToolbarRefresh();
+        }
+    } // CHANGE
+
     const oldValidate = graph.view.validate;
     graph.view.validate = function () {
         const res = oldValidate.apply(this, arguments);
@@ -2302,6 +2341,7 @@ Draw.loadPlugin(function (ui) {
     window.addEventListener("trellisUsersStoreChanged", scheduleViewportToolbarRefresh);
     window.addEventListener("trellisTaskBoardSeenStateChanged", scheduleViewportToolbarRefresh);
     window.addEventListener(IRRIGATION_MODE_CHANGED_EVENT, scheduleViewportToolbarRefresh);
+    window.addEventListener(PLAN_BUTTON_FLASH_EVENT, handlePlanButtonFlashRequested); // CHANGE
     const viewportToolbarHost = getViewportToolbarContainer();
     if (viewportToolbarHost && viewportToolbarHost.addEventListener) {
         viewportToolbarHost.addEventListener("scroll", scheduleViewportToolbarRefresh);

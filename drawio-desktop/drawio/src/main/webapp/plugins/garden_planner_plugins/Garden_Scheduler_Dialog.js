@@ -1618,6 +1618,14 @@ Draw.loadPlugin(function (ui) {
     const VARIETY_MATURITY_CLASS_ORDER = Object.freeze(['very_early', 'early', 'mid', 'late', 'very_late', 'uncategorized']);
     const VARIETY_MATURITY_THREE_BUCKETS = Object.freeze(['early', 'mid', 'late']);
     const VARIETY_MATURITY_FIVE_BUCKETS = Object.freeze(['very_early', 'early', 'mid', 'late', 'very_late']);
+    const TRELLIS_DEFAULT_VARIETY_PROFILES = Object.freeze([ // CHANGE
+        { name: 'Very early maturity', maturityClass: 'very_early' },
+        { name: 'Early maturity', maturityClass: 'early' },
+        { name: 'Mid maturity', maturityClass: 'mid' },
+        { name: 'Late maturity', maturityClass: 'late' },
+        { name: 'Very late maturity', maturityClass: 'very_late' }
+    ]); // CHANGE
+    const TRELLIS_DEFAULT_VARIETY_ORDER = new Map(TRELLIS_DEFAULT_VARIETY_PROFILES.map((profile, index) => [`${profile.name}|${profile.maturityClass}`, index])); // CHANGE
 
     function normalizeVarietyMaturityClass(value) {
         const key = String(value || '').trim().toLowerCase();
@@ -1708,33 +1716,73 @@ Draw.loadPlugin(function (ui) {
         return String(a.label || '').localeCompare(String(b.label || ''));
     }
 
+    function trellisDefaultVarietyOrder(row) { // CHANGE
+        const name = String(row && row.variety_name || '').trim(); // CHANGE
+        const maturityClass = normalizeVarietyMaturityClass(row && row.maturity_class); // CHANGE
+        const order = TRELLIS_DEFAULT_VARIETY_ORDER.get(`${name}|${maturityClass}`); // CHANGE
+        return Number.isInteger(order) ? order : -1; // CHANGE
+    } // CHANGE
+
+    function isTrellisDefaultVariety(row) { // CHANGE
+        return trellisDefaultVarietyOrder(row) >= 0; // CHANGE
+    } // CHANGE
+
+    function compareUserVarietyRows(a, b) { // CHANGE
+        return String(a && (a.variety_name || a.variety_id) || '').localeCompare(String(b && (b.variety_name || b.variety_id) || ''), undefined, { sensitivity: 'base' }); // CHANGE
+    } // CHANGE
+
+    function splitVarietyRowsBySource(varieties) { // CHANGE
+        const defaults = []; // CHANGE
+        const users = []; // CHANGE
+        for (const row of Array.isArray(varieties) ? varieties : []) { // CHANGE
+            if (isTrellisDefaultVariety(row)) defaults.push(row); // CHANGE
+            else users.push(row); // CHANGE
+        } // CHANGE
+        defaults.sort((a, b) => { // CHANGE
+            const ao = trellisDefaultVarietyOrder(a); // CHANGE
+            const bo = trellisDefaultVarietyOrder(b); // CHANGE
+            return ao !== bo ? ao - bo : compareUserVarietyRows(a, b); // CHANGE
+        }); // CHANGE
+        users.sort(compareUserVarietyRows); // CHANGE
+        return { defaults, users }; // CHANGE
+    } // CHANGE
+
+    function makeVarietyOption(row) { // CHANGE
+        return { // CHANGE
+            value: String(row.variety_id), // CHANGE
+            label: formatVarietyOptionLabel(row), // CHANGE
+            row // CHANGE
+        }; // CHANGE
+    } // CHANGE
+
     function buildGroupedVarietyOptions(varieties) {
-        const inferred = inferVarietyMaturityClasses(varieties);
-        const byClass = new Map(VARIETY_MATURITY_CLASS_ORDER.map(key => [key, []]));
-        for (const row of Array.isArray(varieties) ? varieties : []) {
-            const manual = normalizeVarietyMaturityClass(row && row.maturity_class);
-            const inferredClass = inferred.get(makeVarietyRowKey(row))?.className || '';
-            const className = manual || inferredClass || 'uncategorized';
-            byClass.get(className).push({
-                value: String(row.variety_id),
-                label: formatVarietyOptionLabel(row),
-                row,
-                manualClass: manual,
-                inferredClass
-            });
-        }
-        return VARIETY_MATURITY_CLASS_ORDER
-            .map(key => ({ key, label: VARIETY_MATURITY_CLASS_LABELS[key], options: byClass.get(key).sort(compareVarietyGroupOptions) }))
-            .filter(group => group.options.length > 0);
+        const { defaults, users } = splitVarietyRowsBySource(varieties); // CHANGE
+        if (defaults.length && users.length) return [ // CHANGE
+            { key: 'trellis-defaults', label: 'Trellis defaults', options: defaults.map(makeVarietyOption) }, // CHANGE
+            { key: 'your-varieties', label: 'Your varieties', options: users.map(makeVarietyOption) } // CHANGE
+        ]; // CHANGE
+        if (defaults.length) return [{ key: 'trellis-defaults', label: 'Trellis defaults', options: defaults.map(makeVarietyOption) }]; // CHANGE
+        return users.length ? [{ key: 'your-varieties-flat', label: '', flat: true, options: users.map(makeVarietyOption) }] : []; // CHANGE
     }
 
     function buildVarietyPickerGroups(varieties, { includeBase = true, includeNew = false, newValue = '__NEW__' } = {}) {
-        const groups = [];
-        const selectionOptions = [];
-        if (includeBase) selectionOptions.push({ value: '', label: '(base plant)', displayLabel: '(base plant)' });
-        if (includeNew) selectionOptions.push({ value: newValue, label: 'New variety...', displayLabel: 'New variety...' });
-        if (selectionOptions.length) groups.push({ key: 'selection', label: 'Selection', options: selectionOptions });
-        return groups.concat(buildGroupedVarietyOptions(varieties));
+        const sourceGroups = buildGroupedVarietyOptions(varieties); // CHANGE
+        const baseOption = includeBase ? { value: '', label: '(base plant)', displayLabel: '(base plant)' } : null; // CHANGE
+        const newOption = includeNew ? { value: newValue, label: 'Add variety...', displayLabel: 'Add variety...' } : null; // CHANGE
+        if (sourceGroups.length === 1 && sourceGroups[0].flat) { // CHANGE
+            return [{ key: 'varieties-flat', label: '', flat: true, options: [baseOption, newOption].filter(Boolean).concat(sourceGroups[0].options) }]; // CHANGE
+        } // CHANGE
+        if (!sourceGroups.length) return [{ key: 'varieties-flat', label: '', flat: true, options: [baseOption, newOption].filter(Boolean) }]; // CHANGE
+        const groups = []; // CHANGE
+        if (baseOption) groups.push({ key: 'selection', label: 'Selection', options: [baseOption] }); // CHANGE
+        const defaultsOnly = sourceGroups.length === 1 && sourceGroups[0].key === 'trellis-defaults'; // CHANGE
+        groups.push(...sourceGroups); // CHANGE
+        if (newOption) { // CHANGE
+            const userGroup = groups.find(group => group.key === 'your-varieties'); // CHANGE
+            if (userGroup) userGroup.options = [newOption].concat(userGroup.options); // CHANGE
+            else if (defaultsOnly) groups.push({ key: 'your-varieties', label: 'Your varieties', options: [newOption] }); // CHANGE
+        } // CHANGE
+        return groups; // CHANGE
     }
 
     function renderGroupedVarietyOptions(selectEl, groups, selectedValue = '') {
@@ -2999,6 +3047,15 @@ Draw.loadPlugin(function (ui) {
             return;
         }
         (groups || []).forEach(groupSpec => {
+            if (groupSpec && groupSpec.flat) { // CHANGE
+                (groupSpec.options || []).forEach(optionSpec => { // CHANGE
+                    const opt = document.createElement('option'); // CHANGE
+                    opt.value = String(optionSpec.value); // CHANGE
+                    opt.textContent = optionSpec.displayLabel || optionSpec.label; // CHANGE
+                    selectEl.appendChild(opt); // CHANGE
+                }); // CHANGE
+                return; // CHANGE
+            } // CHANGE
             const group = document.createElement('optgroup');
             group.label = groupSpec.label;
             (groupSpec.options || []).forEach(optionSpec => {
@@ -3216,13 +3273,15 @@ Draw.loadPlugin(function (ui) {
                     return !q || String(haystack || '').toLocaleLowerCase().includes(q);
                 });
                 if (!matching.length) return;
-                const heading = document.createElement('div');
-                heading.textContent = group.label;
-                heading.style.padding = '6px 8px 3px';
-                heading.style.fontSize = '10px';
-                heading.style.fontWeight = '700';
-                heading.style.color = '#6b7280';
-                list.appendChild(heading);
+                if (!group.flat) { // CHANGE
+                    const heading = document.createElement('div'); // CHANGE
+                    heading.textContent = group.label; // CHANGE
+                    heading.style.padding = '6px 8px 3px'; // CHANGE
+                    heading.style.fontSize = '10px'; // CHANGE
+                    heading.style.fontWeight = '700'; // CHANGE
+                    heading.style.color = '#6b7280'; // CHANGE
+                    list.appendChild(heading); // CHANGE
+                } // CHANGE
                 matching.forEach(option => list.appendChild(renderOption(option)));
             });
             if (!list.children.length) {
@@ -6259,6 +6318,11 @@ Draw.loadPlugin(function (ui) {
                 color:#92400e;
                 background:#fffbeb;
             }
+            .usl-plant-editor-field-highlight{
+                outline:2px solid #f59e0b!important;
+                outline-offset:2px;
+                background:#fffbeb!important;
+            }
             .usl-plant-editor-section-toggle{
                 color:#4b5563;
                 font-weight:700;
@@ -6624,6 +6688,20 @@ Draw.loadPlugin(function (ui) {
         leftCol.appendChild(maturityClassWarning);
         const abbrRow = row('Abbreviation (abbr):', abbrInput);
         leftCol.appendChild(abbrRow.row);
+
+        function focusAndHighlightVarietyNameField() { // CHANGE
+            if (plantEditorSections && plantEditorSections.length) { // CHANGE
+                const basics = plantEditorSections.find(section => section.key === 'basics'); // CHANGE
+                if (basics && basics.setOpen) basics.setOpen(true); // CHANGE
+            } // CHANGE
+            const target = varietyNameInput; // CHANGE
+            if (!target) return; // CHANGE
+            target.classList.add('usl-plant-editor-field-highlight'); // CHANGE
+            setTimeout(() => { if (target && target.classList) target.classList.remove('usl-plant-editor-field-highlight'); }, 1200); // CHANGE
+            setTimeout(() => { // CHANGE
+                try { if (target && target.focus) target.focus({ preventScroll: false }); } catch (_) { if (target && target.focus) target.focus(); } // CHANGE
+            }, 0); // CHANGE
+        } // CHANGE
 
         function buildDraftVarietyRowForMaturityWarning() {
             return {
@@ -8172,7 +8250,9 @@ Draw.loadPlugin(function (ui) {
         btns.appendChild(saveBtn);
         div.appendChild(btns);
 
-        return await showCommitDialog(ui, { container: div, width: 940, height: 620, modal: true, closable: true });
+        const commitPromise = showCommitDialog(ui, { container: div, width: 940, height: 620, modal: true, closable: true }); // CHANGE
+        if (initialStartVarietyMode === 'add') focusAndHighlightVarietyNameField(); // CHANGE
+        return await commitPromise; // CHANGE
     }
 
 
@@ -8630,31 +8710,36 @@ Draw.loadPlugin(function (ui) {
         varietyControlsWrap.style.gap = '8px';
         varietyControlsWrap.style.alignItems = 'center';
         varietyControlsWrap.appendChild(scheduleVarietyCombo.root);
+        const SCHEDULE_NEW_VARIETY_VALUE = "__NEW__"; // CHANGE
+
+        async function openSchedulerAddVariety() { // CHANGE
+            syncStateFromControls(); // CHANGE
+
+            const pid = Number(formState.plantId); // CHANGE
+            if (!Number.isFinite(pid)) { // CHANGE
+                showErrorInline('Select a plant first'); // CHANGE
+                return; // CHANGE
+            } // CHANGE
+
+            const saved = await openPlantEditorDialog(ui, { // CHANGE
+                mode: 'add', // CHANGE
+                plantId: pid, // CHANGE
+                startVarietyMode: 'add' // CHANGE
+            }); // CHANGE
+            if (!saved) return; // CHANGE
+
+            await reloadVarietyOptionsForPlant(pid); // CHANGE
+
+            const savedId = Number(saved?.variety_id ?? saved?.varietyId ?? saved?.id); // CHANGE
+            if (Number.isFinite(savedId)) varietySel.value = String(savedId); // CHANGE
+            if (Number.isFinite(savedId)) renderScheduleVarietyPicker(String(savedId)); // CHANGE
+
+            await handleScheduleVarietyChange(); // CHANGE
+        } // CHANGE
 
         const addVarietyBtn = styleCompactActionButton(inlineButton('+', async () => {
             try {
-                syncStateFromControls();
-
-                const pid = Number(formState.plantId);
-                if (!Number.isFinite(pid)) {
-                    showErrorInline('Select a plant first');
-                    return;
-                }
-
-                const saved = await openPlantEditorDialog(ui, {
-                    mode: 'add',
-                    plantId: pid,
-                    startVarietyMode: 'add'
-                });
-                if (!saved) return;
-
-                await reloadVarietyOptionsForPlant(pid);
-
-                const savedId = Number(saved?.variety_id ?? saved?.varietyId ?? saved?.id);
-                if (Number.isFinite(savedId)) varietySel.value = String(savedId);
-                if (Number.isFinite(savedId)) renderScheduleVarietyPicker(String(savedId));
-
-                await handleScheduleVarietyChange(); // FIX: await the shared variety selection workflow
+                await openSchedulerAddVariety(); // CHANGE
             } catch (e) {
                 showErrorInline('Add variety error: ' + (e?.message || String(e)));
             }
@@ -8718,7 +8803,7 @@ Draw.loadPlugin(function (ui) {
         let currentVarieties = [];
         function renderScheduleVarietyPicker(selectedVarietyId = varietySel.value) {
             const sel = Number.isFinite(Number(selectedVarietyId)) ? String(selectedVarietyId) : '';
-            const groups = buildVarietyPickerGroups(currentVarieties, { includeBase: true, includeNew: false });
+            const groups = buildVarietyPickerGroups(currentVarieties, { includeBase: true, includeNew: true, newValue: SCHEDULE_NEW_VARIETY_VALUE }); // CHANGE
             renderGroupedSelectOptions(varietySel, groups, sel, { emptyLabel: 'No varieties match' });
             scheduleVarietyCombo.refresh(groups, varietySel.value || sel);
         }
@@ -11021,6 +11106,12 @@ Draw.loadPlugin(function (ui) {
         }
 
         async function handleScheduleVarietyChange() { // FIX: provide an awaitable schedule variety workflow
+            if (String(varietySel.value || '') === SCHEDULE_NEW_VARIETY_VALUE) { // CHANGE
+                varietySel.value = String(formState.varietyId || ''); // CHANGE
+                renderScheduleVarietyPicker(varietySel.value); // CHANGE
+                await openSchedulerAddVariety(); // CHANGE
+                return; // CHANGE
+            } // CHANGE
             syncVarietyButtons();
             syncStateFromControls();
             await refreshEffectivePlant();
@@ -15811,6 +15902,43 @@ Draw.loadPlugin(function (ui) {
 
         // Schedule entry is now rendered by Vertex_Linking_Standalone.js so it can live inside the linked-task overlay.
 
+        if (!graph.__uslVarietyEditorBridgeInstalled) { // CHANGE
+            graph.__uslVarietyEditorBridgeInstalled = true; // CHANGE
+            window.addEventListener("usl:openVarietyEditor", async ev => { // CHANGE
+                const detail = ev && ev.detail || {}; // CHANGE
+                const plantId = Number(detail.plantId ?? detail.plant_id); // CHANGE
+                if (!Number.isFinite(plantId)) return; // CHANGE
+                const rawVarietyId = detail.varietyId ?? detail.variety_id; // CHANGE
+                const varietyId = Number(rawVarietyId); // CHANGE
+                const startVarietyMode = detail.startVarietyMode || (Number.isFinite(varietyId) ? "edit" : "add"); // CHANGE
+                try { // CHANGE
+                    const saved = await openPlantEditorDialog(ui, { // CHANGE
+                        mode: "add", // CHANGE
+                        plantId, // CHANGE
+                        varietyId: Number.isFinite(varietyId) ? varietyId : null, // CHANGE
+                        startVarietyMode // CHANGE
+                    }); // CHANGE
+                    if (!saved) return; // CHANGE
+                    window.dispatchEvent(new CustomEvent("usl:varietyEditorSaved", { detail: { // CHANGE
+                        requestId: detail.requestId || "", // CHANGE
+                        cropId: detail.cropId || "", // CHANGE
+                        plantId: Number(saved.plant_id ?? plantId), // CHANGE
+                        varietyId: saved.variety_id ?? saved.varietyId ?? saved.id ?? null, // CHANGE
+                        varietyName: saved.variety_name ?? saved.varietyName ?? "" // CHANGE
+                    } })); // CHANGE
+                } catch (error) { // CHANGE
+                    console.error("[USL][Scheduler] Failed to open variety editor", error); // CHANGE
+                    window.dispatchEvent(new CustomEvent("usl:varietyEditorSaved", { detail: { // CHANGE
+                        requestId: detail.requestId || "", // CHANGE
+                        cropId: detail.cropId || "", // CHANGE
+                        plantId, // CHANGE
+                        action: "error", // CHANGE
+                        error: String(error && error.message || error) // CHANGE
+                    } })); // CHANGE
+                } // CHANGE
+            }); // CHANGE
+        } // CHANGE
+
         // --- Harvest window bridge (installed once) ---
         if (!graph.__uslHarvestWindowsBridgeInstalled) {
             graph.__uslHarvestWindowsBridgeInstalled = true;
@@ -16176,6 +16304,7 @@ Draw.loadPlugin(function (ui) {
             buildGroupedCropOptions,
             renderGroupedCropOptions,
             buildGroupedVarietyOptions,
+            buildVarietyPickerGroups, // CHANGE
             renderGroupedVarietyOptions,
             inferVarietyMaturityClasses,
             manualVarietyMaturityMismatch,
