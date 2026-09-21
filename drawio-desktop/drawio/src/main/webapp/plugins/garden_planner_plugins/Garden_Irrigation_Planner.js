@@ -7352,6 +7352,13 @@ Draw.loadPlugin(function (ui) {
             selectedBoundaries: [],
             inlineActionAnchorPort: null,
             lastModelPoint: null,
+            creationMode: "", // NEW
+            creationAnchor: null, // NEW
+            creationModelPoint: null, // NEW
+            creationPreviewBounds: null, // NEW
+            creationPreviewNodes: [], // NEW
+            sourceDraft: null, // NEW
+            partDraftPartId: "", // NEW
             preservePortSelectionOnNextGraphSelection: false,
             partPickerVisible: false,
             bedAssemblyPickerVisible: false,
@@ -7401,6 +7408,7 @@ Draw.loadPlugin(function (ui) {
             removeNodeList(session.portBadges);
             removeNodeList(session.inlineActionNodes);
             removeNodeList(session.zoneBadges);
+            removeNodeList(session.creationPreviewNodes); // NEW
             removeIrrigationControlLayerChildren();
             clearIrrigationDragState(session); // CHANGE
             if (session.frontedBedAssemblyId) { reorderIrrigationModuleLayering(session.moduleCell); session.frontedBedAssemblyId = ""; }
@@ -7604,12 +7612,20 @@ Draw.loadPlugin(function (ui) {
 
     function updateSessionPointerFromDomEvent(session, domEvent) {
         if (!session || !domEvent || typeof mxUtils === "undefined" || typeof mxEvent === "undefined" || !graph.container) return;
+        if (isCreationPointerIgnoredEvent(domEvent)) return; // NEW
         const pt = mxUtils.convertPoint(graph.container, mxEvent.getClientX(domEvent), mxEvent.getClientY(domEvent));
         const scale = finiteNumber(graph.view && graph.view.scale, 1) || 1;
         const translate = graph.view && graph.view.translate ? graph.view.translate : { x: 0, y: 0 };
         const modelPoint = { x: pt.x / scale - finiteNumber(translate.x, 0), y: pt.y / scale - finiteNumber(translate.y, 0) };
         session.lastModelPoint = modelPointToModulePoint(session.moduleCell, modelPoint);
     }
+
+    function isCreationPointerIgnoredEvent(domEvent) { // NEW
+        let target = domEvent && domEvent.target; // NEW
+        if (target && target.nodeType !== 1) target = target.parentElement || target.parentNode; // NEW
+        if (!target || typeof target.closest !== "function") return false; // NEW
+        return !!target.closest(".trellis-irrigation-mode-hud,.trellis-irrigation-creation-preview"); // NEW
+    } // NEW
 
     function modelPointToModulePoint(moduleCell, modelPoint) {
         const moduleBounds = cellBoundsInModel(moduleCell) || { x: 0, y: 0 };
@@ -7714,6 +7730,8 @@ Draw.loadPlugin(function (ui) {
         removeNodeList(session.portBadges); // CHANGE
         removeNodeList(session.inlineActionNodes); // CHANGE
         removeNodeList(session.zoneBadges); // CHANGE
+        removeNodeList(session.creationPreviewNodes); // NEW
+        session.creationPreviewBounds = null; // NEW
         removeIrrigationControlLayerChildren(); // CHANGE
         session.portBadgeNodeByKey = new Map(); // CHANGE
         session.connectionBadgeNodeByKey = new Map(); // CHANGE
@@ -7729,7 +7747,7 @@ Draw.loadPlugin(function (ui) {
         const assemblySelection = selectedAssemblyContextCells();
         const inlineAction = resolveInlineConnectionAction(session);
         const hudEligible = currentSelectionIsIrrigationHudEligible(session);
-        if (!hudEligible && !inlineAction) return;
+        if (!hudEligible && !inlineAction) { clearCreationMode(session); return; } // CHANGE
         const connectionContext = inlineAction ? null : resolveSelectedConnectionContext(session);
         const bridgeSuggestionPorts = !connectionContext && !inlineAction ? selectedBridgeSuggestionPorts(session) : null; // CHANGE
         const portOnlyContext = !connectionContext && !inlineAction && !bridgeSuggestionPorts ? resolveSelectedFreePortOnlyContext(session) : null; // CHANGE
@@ -7750,6 +7768,7 @@ Draw.loadPlugin(function (ui) {
             appendOverlayNode(hud);
             session.hud = hud;
             positionHudForSelection(hud, selected, session);
+            renderCreationPreview(session); // NEW
             irrigationDebug("renderIrrigationMode:hud", {
                 selected: debugCellSummary(selected),
                 isLocal: !!assemblySelection.length || isGardenBed(selected),
@@ -7770,24 +7789,69 @@ Draw.loadPlugin(function (ui) {
 
     function renderModuleIrrigationHud(session, hud) {
         hud.className += " trellis-irrigation-module-hud";
-        appendIrrigationHudHeader(hud, session, "Irrigation Mode", { bomPartIds: [], syncBeforeBom: true });
+        appendIrrigationHudHeader(hud, session, creationHudTitle(session), { bomPartIds: [], syncBeforeBom: true }); // CHANGE
         appendHudStatus(hud, session);
         const actions = hudActions();
-        actions.appendChild(button("Create Source", function () {
-            session.sourceFormVisible = true;
-            session.partPickerVisible = false;
-            renderIrrigationMode(session);
-        }));
-        actions.appendChild(button("Add Part", function () {
-            session.partPickerVisible = true;
-            session.sourceFormVisible = false;
-            renderIrrigationMode(session);
-        }));
+        const createSource = button("Create Source", function () { activateCreationMode(session, "source"); }); // CHANGE
+        styleCreationModeButton(createSource, session.creationMode === "source"); // NEW
+        actions.appendChild(createSource); // CHANGE
+        const addPart = button("Add Part", function () { activateCreationMode(session, "part"); }); // CHANGE
+        styleCreationModeButton(addPart, session.creationMode === "part"); // NEW
+        actions.appendChild(addPart); // CHANGE
         appendHudActionSection(hud, "Connections", actions);
         if (session.sourceFormVisible) renderSourceForm(session, hud);
         if (session.partPickerVisible) renderAddPartAssemblyForm(session, hud);
         appendModuleSummary(session, hud);
     }
+
+    function creationHudTitle(session) { // NEW
+        if (session && session.creationMode === "source") return "Create new source"; // NEW
+        if (session && session.creationMode === "part") return "Create new part"; // NEW
+        return "Irrigation Mode"; // NEW
+    } // NEW
+
+    function styleCreationModeButton(buttonNode, active) { // NEW
+        applyIrrigationButtonStyle(buttonNode, "open", { active: !!active }); // NEW
+        buttonNode.setAttribute("aria-pressed", active ? "true" : "false"); // NEW
+    } // NEW
+
+    function activateCreationMode(session, mode) { // NEW
+        if (!session) return; // NEW
+        const shouldCaptureAnchor = !session.creationMode || !session.creationModelPoint; // NEW
+        session.creationMode = mode; // NEW
+        if (shouldCaptureAnchor) session.creationModelPoint = cloneCreationModelPoint(defaultCreationModelPoint(session)); // CHANGE
+        session.creationAnchor = modelPointToModulePoint(session.moduleCell, session.creationModelPoint); // CHANGE
+        session.creationPreviewBounds = null; // NEW
+        session.sourceFormVisible = mode === "source"; // NEW
+        session.partPickerVisible = mode === "part"; // NEW
+        if (mode === "source") ensureSourceDraft(session); // NEW
+        if (mode === "part" && !session.partDraftPartId) session.partDraftPartId = ""; // NEW
+        if (shouldCaptureAnchor) centerViewportOnCreationAnchor(session); // CHANGE
+        renderIrrigationMode(session); // NEW
+    } // NEW
+
+    function clearCreationMode(session) { // NEW
+        if (!session) return; // NEW
+        session.creationMode = ""; // NEW
+        session.creationAnchor = null; // NEW
+        session.creationModelPoint = null; // NEW
+        session.creationPreviewBounds = null; // NEW
+        session.sourceFormVisible = false; // NEW
+        session.partPickerVisible = false; // NEW
+        removeNodeList(session.creationPreviewNodes); // NEW
+    } // NEW
+
+    function defaultCreationModelPoint(session) { // NEW
+        return modulePointToModelPoint(session && session.moduleCell, defaultAssemblyAnchor(session)); // NEW
+    } // NEW
+
+    function cloneCreationModelPoint(point) { // NEW
+        return { x: finiteNumber(point && point.x, 24), y: finiteNumber(point && point.y, 72) }; // NEW
+    } // NEW
+
+    function cloneCreationAnchor(point) { // NEW
+        return { x: Math.max(0, Math.round(finiteNumber(point && point.x, 24))), y: Math.max(0, Math.round(finiteNumber(point && point.y, 72))) }; // NEW
+    } // NEW
 
     function renderAnalysisHud(session, hud, view) { // NEW
         hud.className += " trellis-irrigation-analysis-hud"; // NEW
@@ -8228,23 +8292,30 @@ Draw.loadPlugin(function (ui) {
     }
 
     function renderSourceForm(session, hud) {
+        const draft = ensureSourceDraft(session); // NEW
         const form = document.createElement("div");
         form.className = "trellis-irrigation-source-form";
         form.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px;";
-        const label = addTextField(form, "Label", "Water Source " + (collectHudEndpoints(session.moduleCell, "source").length + 1));
+        const label = addTextField(form, "Label", draft.label); // CHANGE
         const connectorOptions = catalogConnectorOptions(session.moduleCell);
-        const type = addSelectField(form, "Connector", ensureOptionValue(connectorOptions.types, "barb"), "barb");
-        const size = addSelectField(form, "Size", ensureOptionValue(connectorOptions.sizes, "3/4"), "3/4");
-        const flow = addTextField(form, "Flow gpm", "5");
-        const pressure = addTextField(form, "Static psi", "45");
+        const type = addSelectField(form, "Connector", ensureOptionValue(connectorOptions.types, draft.connectorType || "barb"), draft.connectorType || "barb"); // CHANGE
+        const size = addSelectField(form, "Size", ensureOptionValue(connectorOptions.sizes, draft.nominalSize || "3/4"), draft.nominalSize || "3/4"); // CHANGE
+        const flow = addTextField(form, "Flow gpm", draft.usableFlowGpm); // CHANGE
+        const pressure = addTextField(form, "Static psi", draft.staticPressurePsi); // CHANGE
+        bindSourceDraftField(session, label, "label"); // NEW
+        bindSourceDraftField(session, type, "connectorType"); // NEW
+        bindSourceDraftField(session, size, "nominalSize"); // NEW
+        bindSourceDraftField(session, flow, "usableFlowGpm"); // NEW
+        bindSourceDraftField(session, pressure, "staticPressurePsi"); // NEW
         const commit = button("Commit Source", function () {
+            syncSourceDraft(session, label, type, size, flow, pressure); // NEW
             const created = runIrrigationEdit("commitSource", function () { const result = createSourceAssembly(session.moduleCell, label.value.trim() || "Water Source", {
                 connectorType: type.value.trim(),
                 nominalSize: size.value.trim(),
                 usableFlowGpm: finiteNumber(flow.value, 5),
                 staticPressurePsi: finiteNumber(pressure.value, 45)
-            }, defaultAssemblyAnchor(session)); scheduleHudGraphStateSync(session.moduleCell); return result; });
-            session.sourceFormVisible = false;
+            }, creationAnchorOrDefault(session)); scheduleHudGraphStateSync(session.moduleCell); return result; }); // CHANGE
+            clearCreationMode(session); // CHANGE
             selectCell(created.assembly, false);
             renderIrrigationMode(session);
         });
@@ -8259,22 +8330,44 @@ Draw.loadPlugin(function (ui) {
         form.style.cssText = "display:grid;gap:6px;margin-top:8px;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;";
         const context = addPartPickerContext(session);
         form.appendChild(hudText(context ? "Compatible with " + addPartContextLabel(session.moduleCell, context) : "All catalog parts"));
-        const select = createPartPickerSelect(addPartPickerParts(session, context), "", { placeholder: "Choose part", emptyText: "No compatible parts", selectClassName: "trellis-irrigation-add-part-picker", rootClassName: "trellis-irrigation-add-part-combobox" }); // CHANGE
+        const select = createPartPickerSelect(addPartPickerParts(session, context), session.partDraftPartId || "", { placeholder: "Choose part", emptyText: "No compatible parts", selectClassName: "trellis-irrigation-add-part-picker", rootClassName: "trellis-irrigation-add-part-combobox" }); // CHANGE
+        select.addEventListener("change", function () { session.partDraftPartId = select.value || ""; refreshCreationPreview(session); }); // NEW
         form.appendChild(select);
         form.appendChild(select.__trellisPartPicker.root); // CHANGE
         form.appendChild(button("Add Part", function () {
+            session.partDraftPartId = select.value || ""; // NEW
             const part = partById(readCatalog(session.moduleCell), select.value);
             if (!part) { session.message = "Choose a catalog part."; renderIrrigationMode(session); return; }
-            const result = runIrrigationEdit("addPart", function () { const applied = context && context.row && context.row.bedPort ? applyBedPortPartChoice(session, context.row, part) : (context ? applyConnectionPartChoice(session.moduleCell, context.row, part) : null); if (context) { if (applied && applied.cell) scheduleHudGraphStateSync(session.moduleCell); return applied; } const createdPart = createPartAssembly(session.moduleCell, part, defaultAssemblyAnchor(session)); scheduleHudGraphStateSync(session.moduleCell); return { cell: createdPart.assembly, message: "" }; });
+            const result = runIrrigationEdit("addPart", function () { const applied = context && context.row && context.row.bedPort ? applyBedPortPartChoice(session, context.row, part) : (context ? applyConnectionPartChoice(session.moduleCell, context.row, part) : null); if (context) { if (applied && applied.cell) scheduleHudGraphStateSync(session.moduleCell); return applied; } const createdPart = createPartAssembly(session.moduleCell, part, creationAnchorOrDefault(session)); scheduleHudGraphStateSync(session.moduleCell); return { cell: createdPart.assembly, message: "" }; }); // CHANGE
             if (context && (!result || !result.cell)) { session.message = result && result.message || "Part could not be added at the selected connection."; renderIrrigationMode(session); return; }
             const created = { assembly: findAssemblyAncestor(result.cell) || result.cell };
-            session.partPickerVisible = false;
+            clearCreationMode(session); // CHANGE
             selectCell(created.assembly, false);
             if (result && result.message) session.message = result.message;
             renderIrrigationMode(session);
         }));
         hud.appendChild(form);
     }
+
+    function ensureSourceDraft(session) { // NEW
+        if (!session.sourceDraft) session.sourceDraft = { label: "Water Source " + (collectHudEndpoints(session.moduleCell, "source").length + 1), connectorType: "barb", nominalSize: "3/4", usableFlowGpm: "5", staticPressurePsi: "45" }; // NEW
+        return session.sourceDraft; // NEW
+    } // NEW
+
+    function bindSourceDraftField(session, field, key) { // NEW
+        field.addEventListener("input", function () { ensureSourceDraft(session)[key] = field.value; refreshCreationPreview(session); }); // NEW
+        field.addEventListener("change", function () { ensureSourceDraft(session)[key] = field.value; refreshCreationPreview(session); }); // NEW
+    } // NEW
+
+    function syncSourceDraft(session, label, type, size, flow, pressure) { // NEW
+        session.sourceDraft = { label: label.value, connectorType: type.value, nominalSize: size.value, usableFlowGpm: flow.value, staticPressurePsi: pressure.value }; // NEW
+        return session.sourceDraft; // NEW
+    } // NEW
+
+    function creationAnchorOrDefault(session) { // NEW
+        if (session && session.creationModelPoint) return modelPointToModulePoint(session.moduleCell, session.creationModelPoint); // CHANGE
+        return cloneCreationAnchor(session && session.creationAnchor ? session.creationAnchor : defaultAssemblyAnchor(session)); // NEW
+    } // NEW
 
     function renderSelectedConnectionActions(session, hud) {
         const ports = selectedValidPorts(session);
@@ -11318,10 +11411,12 @@ Draw.loadPlugin(function (ui) {
     function positionModelBox(node, box) { // NEW
         const topLeft = modelPointToScreenPoint({ x: box.x, y: box.y }); // NEW
         const scale = finiteNumber(graph.view && graph.view.scale, 1) || 1; // NEW
-        node.style.left = Math.round(topLeft.x) + "px"; // NEW
-        node.style.top = Math.round(topLeft.y) + "px"; // NEW
-        node.style.width = Math.max(2, Math.round(finiteNumber(box.width, 0) * scale)) + "px"; // NEW
-        node.style.height = Math.max(2, Math.round(finiteNumber(box.height, 0) * scale)) + "px"; // NEW
+        const bounds = { left: Math.round(topLeft.x), top: Math.round(topLeft.y), width: Math.max(2, Math.round(finiteNumber(box.width, 0) * scale)), height: Math.max(2, Math.round(finiteNumber(box.height, 0) * scale)) }; // CHANGE
+        node.style.left = bounds.left + "px"; // CHANGE
+        node.style.top = bounds.top + "px"; // CHANGE
+        node.style.width = bounds.width + "px"; // CHANGE
+        node.style.height = bounds.height + "px"; // CHANGE
+        return bounds; // NEW
     } // NEW
 
     function modelPointToScreenPoint(point) { // NEW
@@ -11966,6 +12061,10 @@ Draw.loadPlugin(function (ui) {
     }
 
     function positionHudForSelection(hud, selected, session) {
+        if (session && session.creationMode && session.creationModelPoint) { // CHANGE
+            positionHudBelowCreationPreview(hud, session); // CHANGE
+            return; // NEW
+        } // NEW
         if (isAssemblyModeObject(selected) || isHudIrrigationObject(selected) || isGardenBed(selected)) {
             const state = cellState(selected);
             const width = hud.offsetWidth || hud.clientWidth || 260;
@@ -11979,6 +12078,92 @@ Draw.loadPlugin(function (ui) {
         }
         positionModuleHudAtViewportCenter(hud);
     }
+
+    function refreshCreationPreview(session) { // NEW
+        removeNodeList(session && session.creationPreviewNodes); // NEW
+        if (session) session.creationPreviewBounds = null; // NEW
+        renderCreationPreview(session); // NEW
+    } // NEW
+
+    function renderCreationPreview(session) { // NEW
+        if (!session || !session.creationMode || !session.creationModelPoint) return; // CHANGE
+        removeNodeList(session.creationPreviewNodes); // NEW
+        const label = session.creationMode === "source" ? sourcePreviewLabel(session) : partPreviewLabel(session); // NEW
+        const node = createAssemblyPreviewNode(label, session.creationMode); // NEW
+        const modelBox = creationPreviewModelBox(session); // CHANGE
+        session.creationPreviewBounds = positionModelBox(node, modelBox); // CHANGE
+        appendOverlayNode(node); // NEW
+        session.creationPreviewNodes.push(node); // NEW
+    } // NEW
+
+    function sourcePreviewLabel(session) { // NEW
+        const draft = ensureSourceDraft(session); // NEW
+        return String(draft.label || "").trim() || "Water Source"; // NEW
+    } // NEW
+
+    function partPreviewLabel(session) { // NEW
+        const part = partById(readCatalog(session.moduleCell), session.partDraftPartId || ""); // NEW
+        return part ? installedPartDisplayName(part, false) : "Choose part"; // NEW
+    } // NEW
+
+    function createAssemblyPreviewNode(label, mode) { // NEW
+        const node = document.createElement("div"); // NEW
+        node.className = "trellis-irrigation-creation-preview trellis-irrigation-creation-preview-" + mode; // NEW
+        node.style.cssText = "position:absolute;z-index:1004;box-sizing:border-box;border:1px dashed #2563eb;border-radius:6px;background:rgba(239,246,255,.72);box-shadow:0 2px 8px rgba(37,99,235,.18);pointer-events:none;color:#1f2937;font:12px Arial,sans-serif;overflow:hidden;"; // NEW
+        const header = document.createElement("div"); // NEW
+        header.className = "trellis-irrigation-creation-preview-header"; // NEW
+        header.style.cssText = "height:" + ASSEMBLY_HEADER_SIZE + "px;line-height:" + ASSEMBLY_HEADER_SIZE + "px;padding:0 8px;box-sizing:border-box;border-bottom:1px dashed #93c5fd;background:rgba(255,255,255,.78);font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"; // NEW
+        header.textContent = mode === "source" ? "Source Assembly" : "Assembly"; // NEW
+        const row = document.createElement("div"); // NEW
+        row.className = "trellis-irrigation-creation-preview-row"; // NEW
+        row.style.cssText = "position:absolute;left:20px;right:40px;top:" + ASSEMBLY_HEADER_SIZE + "px;height:" + ASSEMBLY_PART_HEIGHT + "px;line-height:" + ASSEMBLY_PART_HEIGHT + "px;box-sizing:border-box;border:1px solid #4b5563;border-radius:4px;background:rgba(255,255,255,.88);font-size:10px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 4px;"; // NEW
+        row.textContent = label; // NEW
+        node.appendChild(header); // NEW
+        node.appendChild(row); // NEW
+        return node; // NEW
+    } // NEW
+
+    function creationPreviewModelBox(session) { // CHANGE
+        const modelPoint = session && session.creationModelPoint ? session.creationModelPoint : defaultCreationModelPoint(session); // CHANGE
+        return { x: finiteNumber(modelPoint && modelPoint.x, 0), y: finiteNumber(modelPoint && modelPoint.y, 0), width: ASSEMBLY_DEFAULT_WIDTH, height: assemblyPartLaneHeight(1) }; // CHANGE
+    } // NEW
+
+    function modulePointToModelPoint(moduleCell, point) { // NEW
+        const moduleBounds = cellBoundsInModel(moduleCell) || { x: 0, y: 0 }; // NEW
+        return { x: finiteNumber(moduleBounds.x, 0) + finiteNumber(point && point.x, 0), y: finiteNumber(moduleBounds.y, 0) + finiteNumber(point && point.y, 0) }; // NEW
+    } // NEW
+
+    function positionHudBelowCreationPreview(hud, session) { // NEW
+        const previewBounds = session.creationPreviewBounds || previewBoundsForModelBox(creationPreviewModelBox(session)); // NEW
+        const width = hud.offsetWidth || hud.clientWidth || 260; // NEW
+        hud.style.left = Math.round(Math.max(0, previewBounds.left + previewBounds.width / 2 - width / 2)) + "px"; // CHANGE
+        hud.style.top = Math.round(Math.max(0, previewBounds.top + previewBounds.height + 100)) + "px"; // CHANGE
+        session.creationPreviewBounds = previewBounds; // NEW
+    } // NEW
+
+    function previewBoundsForModelBox(modelBox) { // NEW
+        const topLeft = modelPointToScreenPoint({ x: modelBox.x, y: modelBox.y }); // NEW
+        const scale = finiteNumber(graph.view && graph.view.scale, 1) || 1; // NEW
+        return { left: Math.round(topLeft.x), top: Math.round(topLeft.y), width: Math.max(2, Math.round(finiteNumber(modelBox.width, 0) * scale)), height: Math.max(2, Math.round(finiteNumber(modelBox.height, 0) * scale)) }; // NEW
+    } // NEW
+
+    function centerViewportOnCreationAnchor(session) { // NEW
+        if (!session || !session.creationModelPoint) return null; // CHANGE
+        const modelPoint = session.creationModelPoint; // CHANGE
+        const screen = modelPointToScreenPoint(modelPoint); // CHANGE
+        const host = graph.container; // CHANGE
+        const clientWidth = finiteNumber(host && host.clientWidth, 0); // NEW
+        const clientHeight = finiteNumber(host && host.clientHeight, 0); // NEW
+        if (host && clientWidth > 0 && clientHeight > 0 && Number.isFinite(screen.x) && Number.isFinite(screen.y)) { // NEW
+            host.scrollLeft = Math.max(0, Math.round(screen.x - clientWidth / 2)); // NEW
+            host.scrollTop = Math.max(0, Math.round(screen.y - clientHeight / 2)); // NEW
+            return { scrollLeft: host.scrollLeft, scrollTop: host.scrollTop, screenX: screen.x, screenY: screen.y }; // NEW
+        } // NEW
+        if (typeof graph.scrollPointToVisible === "function") { graph.scrollPointToVisible(screen.x, screen.y, false, 100); return { screenX: screen.x, screenY: screen.y }; } // NEW
+        if (typeof graph.scrollRectToVisible === "function") { const bounds = { x: modelPoint.x, y: modelPoint.y, width: 1, height: 1 }; graph.scrollRectToVisible(bounds); return bounds; } // CHANGE
+        if (graph.scrollCellToVisible) graph.scrollCellToVisible(session.moduleCell, true); // NEW
+        return { screenX: screen.x, screenY: screen.y }; // CHANGE
+    } // NEW
 
     function positionHudLeftOfModulePoint(hud, moduleCell, point) {
         const moduleBounds = cellBoundsInModel(moduleCell) || { x: 0, y: 0 };

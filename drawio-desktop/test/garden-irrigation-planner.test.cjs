@@ -148,7 +148,7 @@ function loadPlugin(options = {}) {
             translate: { x: 0, y: 0 },
             getState(cell) {
                 const absolute = absoluteGeometry(cell);
-                return { x: absolute.x, y: absolute.y, width: absolute.width, height: absolute.height };
+                return { x: (absolute.x + this.translate.x) * this.scale, y: (absolute.y + this.translate.y) * this.scale, width: absolute.width * this.scale, height: absolute.height * this.scale }; // CHANGE
             },
             addListener(event, listener) { if (!viewListeners.has(event)) viewListeners.set(event, []); viewListeners.get(event).push(listener); },
             removeListener(listener) { viewListeners.forEach(list => { const index = list.indexOf(listener); if (index >= 0) list.splice(index, 1); }); },
@@ -173,8 +173,8 @@ function loadPlugin(options = {}) {
             const event = { clientX: x, clientY: y };
             (graphListeners.get("click") || []).forEach(listener => listener(this, { getProperty(key) { return key === "cell" ? cell : key === "event" ? event : null; } }));
         },
-        fireMouseMove(x = 0, y = 0) {
-            const event = { clientX: x, clientY: y };
+        fireMouseMove(x = 0, y = 0, target = container) { // CHANGE
+            const event = { clientX: x, clientY: y, target }; // CHANGE
             mouseListeners.forEach(listener => listener.mouseMove && listener.mouseMove(this, { getEvent() { return event; } }));
         },
         fireCellsAdded(cells) {
@@ -1870,8 +1870,18 @@ test("source commit creates one undoable edit at the latest click point and HUD 
     actions.get("trellisIrrigationPlanner").funct();
     assert.equal(graph.container.querySelector(".trellis-irrigation-source-form"), null);
     graph.fireMouseMove(310, 180);
+    model.completedEdits = []; // NEW
     clickButton(graph.container, "Create Source");
     assert.ok(graph.container.querySelector(".trellis-irrigation-source-form"));
+    assert.match(irrigationHeader(graph.container).textContent, /Create new source/); // NEW
+    assert.equal(buttonByText(graph.container, "Create Source").getAttribute("aria-pressed"), "true"); // NEW
+    assert.equal(buttonByText(graph.container, "Add Part").getAttribute("aria-pressed"), "false"); // NEW
+    const sourcePreview = graph.container.querySelector(".trellis-irrigation-creation-preview-source"); // CHANGE
+    assert.ok(sourcePreview); // CHANGE
+    assert.equal(model.completedEdits.length, 0); // NEW
+    const sourceHud = graph.container.querySelector(".trellis-irrigation-mode-hud"); // NEW
+    assert.equal(Number.parseInt(sourceHud.style.top, 10), Number.parseInt(sourcePreview.style.top, 10) + Number.parseInt(sourcePreview.style.height, 10) + 100); // NEW
+    graph.fireMouseMove(650, 420); // NEW
     model.completedEdits = [];
     clickButton(graph.container, "Commit Source");
     const sourceAssembly = assemblyCells(moduleCell, api)[0];
@@ -1880,6 +1890,7 @@ test("source commit creates one undoable edit at the latest click point and HUD 
     assert.equal(sourceAssembly.geometry.x, 310);
     assert.equal(sourceAssembly.geometry.y, 180);
     assert.equal(graph.getSelectionCell(), sourceAssembly);
+    assert.equal(graph.container.querySelector(".trellis-irrigation-creation-preview-source"), null); // NEW
     const sourcePart = api.__test.firstAssemblyPart(sourceAssembly);
     assertAssemblyPartPlannerManagedStyle(sourcePart);
     const profile = JSON.parse(sourcePart.getAttribute(api.attrs.ENDPOINT_PROFILE_JSON));
@@ -1892,6 +1903,123 @@ test("source commit creates one undoable edit at the latest click point and HUD 
     runTrackedTimers(); // CHANGE
     assert.equal(model.valuesWritten, writesAfterCommit);
 });
+
+test("creation previews, HUDs, viewport centering, and commits share transformed model coordinates", () => { // NEW
+    const sourceEnv = loadPlugin({ clientWidth: 400, clientHeight: 300 }); // NEW
+    sourceEnv.api.writeCatalog(sourceEnv.moduleCell, sampleCatalog()); // NEW
+    sourceEnv.graph.view.scale = 2; // NEW
+    sourceEnv.graph.view.translate = { x: 10, y: 20 }; // NEW
+    sourceEnv.actions.get("trellisIrrigationPlanner").funct(); // NEW
+    sourceEnv.graph.fireMouseMove(900, 700); // NEW
+    sourceEnv.model.completedEdits = []; // NEW
+    clickButton(sourceEnv.graph.container, "Create Source"); // NEW
+    const sourcePreview = sourceEnv.graph.container.querySelector(".trellis-irrigation-creation-preview-source"); // NEW
+    const sourceHud = sourceEnv.graph.container.querySelector(".trellis-irrigation-mode-hud"); // NEW
+    assert.equal(sourcePreview.style.left, "900px"); // NEW
+    assert.equal(sourcePreview.style.top, "700px"); // NEW
+    assert.equal(sourceEnv.graph.container.scrollLeft, 700); // NEW
+    assert.equal(sourceEnv.graph.container.scrollTop, 550); // NEW
+    assert.equal(Number.parseInt(sourceHud.style.left, 10), Math.round(Number.parseInt(sourcePreview.style.left, 10) + Number.parseInt(sourcePreview.style.width, 10) / 2 - 130)); // CHANGE
+    assert.equal(Number.parseInt(sourceHud.style.top, 10), Number.parseInt(sourcePreview.style.top, 10) + Number.parseInt(sourcePreview.style.height, 10) + 100); // NEW
+    assert.equal(sourceEnv.model.completedEdits.length, 0); // NEW
+    sourceEnv.graph.fireMouseMove(1020, 860); // NEW
+    clickButton(sourceEnv.graph.container, "Commit Source"); // NEW
+    const sourceAssembly = assemblyCells(sourceEnv.moduleCell, sourceEnv.api)[0]; // NEW
+    assert.equal(sourceEnv.model.completedEdits.length, 1); // NEW
+    assert.equal(sourceAssembly.geometry.x, 440); // NEW
+    assert.equal(sourceAssembly.geometry.y, 330); // NEW
+    assert.equal(sourceEnv.graph.container.querySelector(".trellis-irrigation-creation-preview-source"), null); // NEW
+
+    const partEnv = loadPlugin({ clientWidth: 400, clientHeight: 300 }); // NEW
+    partEnv.api.writeCatalog(partEnv.moduleCell, sampleCatalog()); // NEW
+    partEnv.graph.view.scale = 1.5; // NEW
+    partEnv.graph.view.translate = { x: 30, y: 40 }; // NEW
+    partEnv.actions.get("trellisIrrigationPlanner").funct(); // NEW
+    partEnv.graph.fireMouseMove(780, 660); // NEW
+    partEnv.model.completedEdits = []; // NEW
+    clickButton(partEnv.graph.container, "Add Part"); // NEW
+    const partPreview = partEnv.graph.container.querySelector(".trellis-irrigation-creation-preview-part"); // NEW
+    const partHud = partEnv.graph.container.querySelector(".trellis-irrigation-mode-hud"); // NEW
+    assert.equal(partPreview.style.left, "780px"); // NEW
+    assert.equal(partPreview.style.top, "660px"); // NEW
+    assert.equal(partEnv.graph.container.scrollLeft, 580); // NEW
+    assert.equal(partEnv.graph.container.scrollTop, 510); // NEW
+    assert.equal(Number.parseInt(partHud.style.left, 10), Math.round(Number.parseInt(partPreview.style.left, 10) + Number.parseInt(partPreview.style.width, 10) / 2 - 130)); // NEW
+    assert.equal(Number.parseInt(partHud.style.top, 10), Number.parseInt(partPreview.style.top, 10) + Number.parseInt(partPreview.style.height, 10) + 100); // NEW
+    const select = partEnv.graph.container.querySelector(".trellis-irrigation-add-part-picker"); // NEW
+    select.value = "filter"; // NEW
+    select.dispatchEvent(new partEnv.graph.container.ownerDocument.defaultView.Event("change", { bubbles: true })); // NEW
+    assert.match(partEnv.graph.container.querySelector(".trellis-irrigation-creation-preview-part").textContent, /Filter/); // NEW
+    assert.equal(partEnv.model.completedEdits.length, 0); // NEW
+    partEnv.graph.fireMouseMove(900, 780); // NEW
+    clickButton(partEnv.graph.container.querySelector(".trellis-irrigation-add-assembly-form"), "Add Part"); // NEW
+    const partAssembly = assemblyCells(partEnv.moduleCell, partEnv.api)[0]; // NEW
+    assert.equal(partEnv.model.completedEdits.length, 1); // NEW
+    assert.equal(partAssembly.geometry.x, 490); // NEW
+    assert.equal(partAssembly.geometry.y, 400); // NEW
+    assert.equal(partEnv.graph.container.querySelector(".trellis-irrigation-creation-preview-part"), null); // NEW
+}); // NEW
+
+test("creation mode switches preserve the frozen creation point", () => { // NEW
+    const sourceToPart = loadPlugin(); // NEW
+    sourceToPart.api.writeCatalog(sourceToPart.moduleCell, sampleCatalog()); // NEW
+    sourceToPart.actions.get("trellisIrrigationPlanner").funct(); // NEW
+    sourceToPart.graph.fireMouseMove(310, 180); // NEW
+    clickButton(sourceToPart.graph.container, "Create Source"); // NEW
+    const sourcePreview = sourceToPart.graph.container.querySelector(".trellis-irrigation-creation-preview-source"); // NEW
+    assert.equal(sourcePreview.style.left, "310px"); // NEW
+    sourceToPart.graph.fireMouseMove(650, 420, buttonByText(sourceToPart.graph.container, "Add Part")); // NEW
+    clickButton(sourceToPart.graph.container, "Add Part"); // NEW
+    const switchedPartPreview = sourceToPart.graph.container.querySelector(".trellis-irrigation-creation-preview-part"); // NEW
+    assert.equal(switchedPartPreview.style.left, "310px"); // NEW
+    assert.equal(switchedPartPreview.style.top, "180px"); // NEW
+    const select = sourceToPart.graph.container.querySelector(".trellis-irrigation-add-part-picker"); // NEW
+    select.value = "filter"; // NEW
+    sourceToPart.model.completedEdits = []; // NEW
+    clickButton(sourceToPart.graph.container.querySelector(".trellis-irrigation-add-assembly-form"), "Add Part"); // NEW
+    const partAssembly = assemblyCells(sourceToPart.moduleCell, sourceToPart.api)[0]; // NEW
+    assert.equal(sourceToPart.model.completedEdits.length, 1); // NEW
+    assert.equal(partAssembly.geometry.x, 310); // NEW
+    assert.equal(partAssembly.geometry.y, 180); // NEW
+
+    const partToSource = loadPlugin(); // NEW
+    partToSource.api.writeCatalog(partToSource.moduleCell, sampleCatalog()); // NEW
+    partToSource.actions.get("trellisIrrigationPlanner").funct(); // NEW
+    partToSource.graph.fireMouseMove(360, 220); // NEW
+    clickButton(partToSource.graph.container, "Add Part"); // NEW
+    const partPreview = partToSource.graph.container.querySelector(".trellis-irrigation-creation-preview-part"); // NEW
+    assert.equal(partPreview.style.left, "360px"); // NEW
+    partToSource.graph.fireMouseMove(690, 430, buttonByText(partToSource.graph.container, "Create Source")); // NEW
+    clickButton(partToSource.graph.container, "Create Source"); // NEW
+    const switchedSourcePreview = partToSource.graph.container.querySelector(".trellis-irrigation-creation-preview-source"); // NEW
+    assert.equal(switchedSourcePreview.style.left, "360px"); // NEW
+    assert.equal(switchedSourcePreview.style.top, "220px"); // NEW
+    partToSource.model.completedEdits = []; // NEW
+    clickButton(partToSource.graph.container, "Commit Source"); // NEW
+    const sourceAssembly = assemblyCells(partToSource.moduleCell, partToSource.api)[0]; // NEW
+    assert.equal(partToSource.model.completedEdits.length, 1); // NEW
+    assert.equal(sourceAssembly.geometry.x, 360); // NEW
+    assert.equal(sourceAssembly.geometry.y, 220); // NEW
+}); // NEW
+
+test("HUD-originated pointer movement does not change the next creation anchor", () => { // NEW
+    const { api, graph, model, moduleCell, actions } = loadPlugin(); // NEW
+    api.writeCatalog(moduleCell, sampleCatalog()); // NEW
+    actions.get("trellisIrrigationPlanner").funct(); // NEW
+    graph.fireMouseMove(240, 160); // NEW
+    const hud = graph.container.querySelector(".trellis-irrigation-mode-hud"); // NEW
+    graph.fireMouseMove(640, 420, hud); // NEW
+    model.completedEdits = []; // NEW
+    clickButton(graph.container, "Create Source"); // NEW
+    const preview = graph.container.querySelector(".trellis-irrigation-creation-preview-source"); // NEW
+    assert.equal(preview.style.left, "240px"); // NEW
+    assert.equal(preview.style.top, "160px"); // NEW
+    assert.equal(model.completedEdits.length, 0); // NEW
+    clickButton(graph.container, "Commit Source"); // NEW
+    const sourceAssembly = assemblyCells(moduleCell, api)[0]; // NEW
+    assert.equal(sourceAssembly.geometry.x, 240); // NEW
+    assert.equal(sourceAssembly.geometry.y, 160); // NEW
+}); // NEW
 
 test("source and part assemblies store compact stack row geometry", () => { // NEW
     const { api, moduleCell } = loadPlugin(); // NEW
@@ -1971,9 +2099,18 @@ test("Add Part groups global options and creates one undoable unconnected assemb
     assert.match(buttonByText(header, "Catalog").getAttribute("style"), /border:\s*1px solid (?:#2563eb|rgb\(37,\s*99,\s*235\))/);
     assert.equal(hudSectionTitles(graph.container).includes("Tools"), false);
     graph.fireMouseMove(360, 220);
+    model.completedEdits = []; // NEW
     clickButton(graph.container, "Add Part");
     const form = graph.container.querySelector(".trellis-irrigation-add-assembly-form");
     assert.ok(form, "Missing Add Part form");
+    assert.match(irrigationHeader(graph.container).textContent, /Create new part/); // NEW
+    assert.equal(buttonByText(graph.container, "Add Part").getAttribute("aria-pressed"), "true"); // NEW
+    assert.equal(buttonByText(graph.container, "Create Source").getAttribute("aria-pressed"), "false"); // NEW
+    const partPreview = graph.container.querySelector(".trellis-irrigation-creation-preview-part"); // CHANGE
+    assert.ok(partPreview, "Missing Add Part preview"); // CHANGE
+    assert.equal(model.completedEdits.length, 0); // NEW
+    const partHud = graph.container.querySelector(".trellis-irrigation-mode-hud"); // NEW
+    assert.equal(Number.parseInt(partHud.style.top, 10), Number.parseInt(partPreview.style.top, 10) + Number.parseInt(partPreview.style.height, 10) + 100); // NEW
     const select = form.querySelector(".trellis-irrigation-add-part-picker");
     assert.ok(select, "Missing Add Part picker");
     const picker = form.querySelector(".trellis-irrigation-add-part-combobox");
@@ -1997,12 +2134,17 @@ test("Add Part groups global options and creates one undoable unconnected assemb
     assert.match(filterOption.textContent, /In stock/); // CHANGE
     filterOption.click();
     assert.equal(select.value, "filter"); // CHANGE
+    assert.match(graph.container.querySelector(".trellis-irrigation-creation-preview-part").textContent, /Filter/); // NEW
+    graph.fireMouseMove(620, 410); // NEW
     model.completedEdits = [];
     clickButton(form, "Add Part");
     const partAssembly = assemblyCells(moduleCell, api)[0];
     assert.equal(model.completedEdits.length, 1);
     assert.equal(partAssembly.getAttribute(api.attrs.ASSEMBLY_TYPE), "parts");
+    assert.equal(partAssembly.geometry.x, 360); // NEW
+    assert.equal(partAssembly.geometry.y, 220); // NEW
     assert.equal(api.__test.firstAssemblyPart(partAssembly).getAttribute(api.attrs.CATALOG_PART_ID), "filter");
+    assert.equal(graph.container.querySelector(".trellis-irrigation-creation-preview-part"), null); // NEW
     assert.doesNotMatch(graph.container.textContent, /Create Source/);
     assert.doesNotMatch(graph.container.textContent, /Add Part/);
 });

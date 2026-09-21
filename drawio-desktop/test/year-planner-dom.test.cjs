@@ -146,8 +146,9 @@ function setPickerSearch(harness, value) {
 }
 
 async function addCropFromPicker(harness, label) {
-    harness.findButton("Add crops").click();
+    harness.findButton("Add/Remove crops").click();
     await harness.settle(10);
+    assert.equal(findPicker(harness.document).querySelector(".yp-picker-title").textContent.trim(), "Add/Remove crops"); // CHANGE
     setPickerSearch(harness, label);
     const row = pickerRowByLabel(harness.document, label);
     assert.ok(row);
@@ -258,6 +259,14 @@ function addSelfUse(plan, overrides = {}) {
     return line;
 }
 
+function assertGroupedCropRemovalMessage(message, cropLabel, expectedRows) { // CHANGE
+    assert.match(message, new RegExp(`Remove ${cropLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} from this year plan\\?`)); // CHANGE
+    assert.match(message, /The following linked rows will also be deleted:/); // CHANGE
+    assert.match(message, new RegExp(`- ${cropLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n  - `)); // CHANGE
+    assert.doesNotMatch(message, /Demand - Farm Store/); // CHANGE
+    for (const row of expectedRows) assert.match(message, row); // CHANGE
+} // CHANGE
+
 function findKpiText(document, label) {
     const tile = Array.from(document.querySelectorAll(".yp-kpi-tile")).find(item => item.textContent.includes(label));
     return tile ? tile.textContent.replace(/\s+/g, " ").trim() : "";
@@ -353,6 +362,18 @@ function installHarvestEstimateResponder(harness, resolver) {
 }
 
 function openDiagnostics(document, labelPattern) {
+    const popovers = Array.from(document.querySelectorAll(".yp-diagnostics-layer .yp-diagnostics-popover"));
+    const titledPopover = popovers.find(candidate => labelPattern.test((candidate.querySelector(".yp-diagnostics-title") || candidate).textContent || ""));
+    if (titledPopover && titledPopover.__ypDiagnosticsOwner) {
+        const trigger = titledPopover.__ypDiagnosticsOwner.querySelector(".yp-chip[data-clickable='true'],.yp-chip,.yp-diagnostics-trigger");
+        assert.ok(trigger);
+        if (titledPopover.hidden) {
+            trigger.dispatchEvent(new document.defaultView.Event("focus"));
+            trigger.dispatchEvent(new document.defaultView.MouseEvent("mouseenter", { bubbles: true }));
+        }
+        assert.equal(titledPopover.hidden, false);
+        return { trigger, popover: titledPopover };
+    }
     const triggers = Array.from(document.querySelectorAll(".yp-diagnostics-trigger"));
     const trigger = triggers.find(button => labelPattern.test(button.getAttribute("aria-label") || button.parentElement.textContent));
     assert.ok(trigger);
@@ -363,6 +384,15 @@ function openDiagnostics(document, labelPattern) {
     assert.equal(popover.hidden, false);
     return { trigger, popover };
 }
+
+function diagnosticsPopoverOwnedBy(document, owner) { // CHANGE
+    return Array.from(document.querySelectorAll(".yp-diagnostics-layer .yp-diagnostics-popover"))
+        .find(popover => popover.__ypDiagnosticsOwner && owner && owner.contains(popover.__ypDiagnosticsOwner)) || null;
+} // CHANGE
+
+function topDiagnosticsTrigger(document) { // CHANGE
+    return attentionStrip(document).querySelector(".yp-diagnostics-trigger");
+} // CHANGE
 
 function visibleWarningPopover(document) { // CHANGE
     return Array.from(document.querySelectorAll(".yp-diagnostics-layer .yp-diagnostics-popover[data-tone='warning']")).find(popover => !popover.hidden) || null; // CHANGE
@@ -378,6 +408,10 @@ function findAttentionButton(document, labelPattern) {
 
 function findClickableChip(root, labelPattern) {
     return Array.from(root.querySelectorAll(".yp-chip[data-clickable='true']")).find(button => labelPattern.test(button.textContent)) || null;
+} // CHANGE
+
+function findChip(root, labelPattern) { // CHANGE
+    return Array.from(root.querySelectorAll(".yp-chip")).find(chip => labelPattern.test(chip.textContent)) || null;
 } // CHANGE
 
 function findPlanCheckCropRow(document, cropId) {
@@ -896,6 +930,7 @@ test("Needs attention surfaces problems while the hero remains simple", async t 
 
         assertHeroOverviewOnly(harness.document);
         assert.equal(attentionStrip(harness.document).style.display, "block", scenario.name);
+        assert.match(attentionStrip(harness.document).textContent, /Plan alerts/, scenario.name); // CHANGE
         assert.match(attentionStrip(harness.document).textContent, scenario.expected, scenario.name);
     }
 });
@@ -1163,14 +1198,15 @@ test("diagnostics popovers render in the modal layer and clamp inside the card",
     await harness.openModal(2026);
 
     const card = harness.document.querySelector(".yp-modal-card");
-    const trigger = findCropCardById(harness.document, "crop_1").querySelector(".yp-diagnostics-trigger");
-    const popover = harness.document.querySelector(".yp-diagnostics-layer .yp-diagnostics-popover"); // CHANGE
+    const popover = diagnosticsPopoverOwnedBy(harness.document, findCropCardById(harness.document, "crop_1")); // CHANGE
+    const trigger = popover && popover.__ypDiagnosticsOwner.querySelector(".yp-chip"); // CHANGE
+    assert.ok(trigger); // CHANGE
     card.getBoundingClientRect = () => ({ left: 0, top: 0, right: 300, bottom: 200, width: 300, height: 200 });
     trigger.getBoundingClientRect = () => ({ left: 0, top: 170, right: 20, bottom: 190, width: 20, height: 20 });
     Object.defineProperty(popover, "offsetWidth", { configurable: true, value: 260 });
     Object.defineProperty(popover, "offsetHeight", { configurable: true, value: 80 });
 
-    trigger.click();
+    trigger.dispatchEvent(new harness.window.MouseEvent("mouseenter", { bubbles: true })); // CHANGE
 
     assert.equal(popover.parentElement, harness.document.querySelector(".yp-diagnostics-layer"));
     assert.equal(popover.hidden, false);
@@ -1187,12 +1223,12 @@ test("duplicate crop identity diagnostics attach to the second crop and focus va
     await harness.openModal(2026);
     setStripExpanded(harness.document, "plan-check", true);
 
-    assert.equal(findCropCardById(harness.document, "crop_1").querySelector(".yp-diagnostics-trigger"), null);
-    assert.ok(findCropCardById(harness.document, "crop_2").querySelector(".yp-diagnostics-trigger"));
+    assert.equal(diagnosticsPopoverOwnedBy(harness.document, findCropCardById(harness.document, "crop_1")), null); // CHANGE
+    assert.ok(diagnosticsPopoverOwnedBy(harness.document, findCropCardById(harness.document, "crop_2"))); // CHANGE
     const cropRows = findStripDetails(harness.document, "plan-check").querySelectorAll("table:first-of-type tbody tr");
     const statusColumn = planCheckTotalsColumnIndex(harness.document, "Status");
-    assert.equal(cropRows[0].cells[statusColumn].querySelector(".yp-diagnostics-trigger"), null);
-    assert.ok(cropRows[1].cells[statusColumn].querySelector(".yp-diagnostics-trigger"));
+    assert.equal(cropRows[0].cells[statusColumn].querySelector(".yp-chip[data-clickable='true']"), null); // CHANGE
+    assert.ok(cropRows[1].cells[statusColumn].querySelector(".yp-chip[data-clickable='true']")); // CHANGE
 
     findCropCardById(harness.document, "crop_2").click();
     await harness.settle(10);
@@ -1946,7 +1982,7 @@ test("Tree picker dirty close guard covers cancel, escape, outside click, and cl
     await harness.openModal(2026);
 
     async function expectGuard(action) {
-        harness.findButton("Add crops").click();
+        harness.findButton("Add/Remove crops").click();
         await harness.settle(10);
         setPickerSearch(harness, "Tomato (0)");
         Array.from(pickerRowByLabel(harness.document, "Tomato (0)").querySelectorAll("button")).find(button => button.textContent.trim() === "Add").click(); // CHANGE
@@ -2181,6 +2217,54 @@ test("Missing package price badge targets self-use before demand and CSA prices"
     assert.match(findEditorBox(harness).textContent, /Lettuce/);
 });
 
+test("warning badge popovers bridge hover gaps and sticky close paths", async t => { // CHANGE
+    const harness = createYearPlannerHarness({
+        plants: [
+            { plant_id: 1, plant_name: "Tomato", yield_per_plant_kg: 1, default_planting_method: "direct_sow.field", annual: 1, biennial: 0, perennial: 0 },
+            { plant_id: 2, plant_name: "Lettuce", yield_per_plant_kg: 1, default_planting_method: "direct_sow.field", annual: 1, biennial: 0, perennial: 0 }
+        ]
+    });
+    t.after(() => harness.dom.window.close());
+    savePlan(harness, 2026, plan => {
+        plan.crops[0].packages[0].price = null;
+        plan.crops.push(makePlanCrop({ id: "crop_2", plantId: "2", plant: "Lettuce", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: null }] }));
+        addDemand(plan, { cropId: "crop_1", qty: 2 });
+        addSelfUse(plan, { cropId: "crop_2", qty: 1 });
+    });
+    await harness.openModal(2026);
+
+    const badge = findAttentionButton(harness.document, /Missing package prices/);
+    assert.ok(badge);
+    badge.dispatchEvent(new harness.window.MouseEvent("mouseenter", { bubbles: true }));
+    let popover = visibleWarningPopover(harness.document);
+    assert.ok(popover);
+    badge.dispatchEvent(new harness.window.MouseEvent("mouseleave", { bubbles: true, relatedTarget: popover }));
+    await harness.settle(120);
+    assert.equal(popover.hidden, false);
+
+    popover.dispatchEvent(new harness.window.MouseEvent("mouseleave", { bubbles: true, relatedTarget: harness.document.body }));
+    await harness.settle(120);
+    assert.equal(popover.hidden, true);
+
+    badge.click();
+    popover = visibleWarningPopover(harness.document);
+    assert.ok(popover);
+    popover.dispatchEvent(new harness.window.MouseEvent("mouseleave", { bubbles: true, relatedTarget: harness.document.body }));
+    await harness.settle(120);
+    assert.equal(popover.hidden, false);
+
+    harness.document.body.dispatchEvent(new harness.window.MouseEvent("click", { bubbles: true }));
+    assert.equal(popover.hidden, true);
+    badge.click();
+    assert.equal(popover.hidden, false);
+    harness.window.dispatchEvent(new harness.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(popover.hidden, true);
+    badge.click();
+    assert.equal(popover.hidden, false);
+    badge.click();
+    assert.equal(popover.hidden, true);
+}); // CHANGE
+
 test("Demand quantity edits update visible sales and total revenue", async t => {
     const harness = createYearPlannerHarness();
     t.after(() => harness.dom.window.close());
@@ -2258,7 +2342,7 @@ test("Add crop prioritizes garden crops and groups remaining plants by lifecycle
     await harness.openModal(2026);
     await harness.settle(10);
 
-    harness.findButton("Add crops").click();
+    harness.findButton("Add/Remove crops").click();
     await harness.settle(10);
     assert.deepEqual(pickerCategoryLabels(harness.document), [
         "Crops in this garden",
@@ -2292,7 +2376,7 @@ test("Add crop picker groups Trellis defaults and user varieties per plant", asy
 
     await harness.openModal(2026); // CHANGE
     await harness.settle(10); // CHANGE
-    harness.findButton("Add crops").click(); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
     await harness.settle(10); // CHANGE
     expandPickerRow(harness.document, "Annual crops"); // CHANGE
     expandPickerRow(harness.document, "Basil (5)"); // CHANGE
@@ -2334,7 +2418,7 @@ test("Add crop picker shows user-only varieties flat and defaults-only add row",
 
     await harness.openModal(2026); // CHANGE
     await harness.settle(10); // CHANGE
-    harness.findButton("Add crops").click(); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
     await harness.settle(10); // CHANGE
 
     expandPickerRow(harness.document, "Annual crops"); // CHANGE
@@ -2342,7 +2426,7 @@ test("Add crop picker shows user-only varieties flat and defaults-only add row",
     assert.deepEqual(pickerPlantSubtreeLabels(harness.document, "Tomato (2)"), ["Tomato (2)", "Base plant", "Add variety...", "Amish Paste", "Roma"]); // CHANGE
 
     closeOpenPicker(harness); // CHANGE
-    harness.findButton("Add crops").click(); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
     await harness.settle(10); // CHANGE
     expandPickerRow(harness.document, "Annual crops"); // CHANGE
     expandPickerRow(harness.document, "Lettuce (1)"); // CHANGE
@@ -2364,7 +2448,7 @@ test("Add crop picker Add variety row requests the variety editor and is not cou
 
     await harness.openModal(2026); // CHANGE
     await harness.settle(10); // CHANGE
-    harness.findButton("Add crops").click(); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
     await harness.settle(10); // CHANGE
     expandPickerRow(harness.document, "Annual crops"); // CHANGE
     expandPickerRow(harness.document, "Lettuce (1)"); // CHANGE
@@ -2441,7 +2525,7 @@ test("Garden variety resolution preserves identity, applies yield override, and 
 
     const session = await harness.openModal(2026);
     await harness.settle(10);
-    harness.findButton("Add crops").click();
+    harness.findButton("Add/Remove crops").click();
     await harness.settle(10);
     assert.ok(pickerCategoryLabels(harness.document).includes("Crops in this garden"));
     assertPickerHasLabel(harness, "Tomato (1)");
@@ -2458,7 +2542,7 @@ test("Garden variety resolution preserves identity, applies yield override, and 
     assert.equal(session.plan.crops[0].syncharvest, true); // CHANGE: picker-created crops default demand-window sync on.
     assert.equal(findYearPlanField(harness.document, "syncharvest", { cropId: session.plan.crops[0].id }).checked, true); // CHANGE: the crop editor reflects the new sync default.
 
-    harness.findButton("Add crops").click();
+    harness.findButton("Add/Remove crops").click();
     await harness.settle(10);
     assert.equal(pickerCategoryLabels(harness.document).includes("Crops in this garden"), true);
     setPickerSearch(harness, "Roma");
@@ -2468,7 +2552,7 @@ test("Garden variety resolution preserves identity, applies yield override, and 
 
     harness.findButton("Remove crop").click();
     await harness.settle(10);
-    harness.findButton("Add crops").click();
+    harness.findButton("Add/Remove crops").click();
     await harness.settle(10);
     assert.ok(pickerCategoryLabels(harness.document).includes("Crops in this garden"));
     assertPickerHasLabel(harness, "Roma");
@@ -2483,16 +2567,18 @@ test("Add crops transfer stages additions and removals before applying", async t
     }); // CHANGE
     t.after(() => harness.dom.window.close()); // CHANGE
     const saved = savePlan(harness, 2026, plan => { // CHANGE
-        addDemand(plan, { id: "demand_tomato", cropId: "crop_1" }); // CHANGE
-        addSelfUse(plan, { id: "self_tomato", cropId: "crop_1" }); // CHANGE
-        plan.csa.components.push({ cropId: "crop_1", qty: 1, unit: "kg", everyNWeeks: 1, start: "", end: "" }); // CHANGE
+        plan.crops[0].varietyId = "roma"; // CHANGE
+        plan.crops[0].variety = "Roma"; // CHANGE
+        addDemand(plan, { id: "demand_tomato", cropId: "crop_1", qty: 2 }); // CHANGE
+        addSelfUse(plan, { id: "self_tomato", cropId: "crop_1", qty: 3 }); // CHANGE
+        plan.csa.components.push({ cropId: "crop_1", qty: 4, unit: "kg", everyNWeeks: 1, start: "", end: "" }); // CHANGE
     }); // CHANGE
     const session = await harness.openModal(2026); // CHANGE
     assert.equal(saved.crops.length, 1); // CHANGE
 
-    harness.findButton("Add crops").click(); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
     await harness.settle(10); // CHANGE
-    assert.ok(transferRowByLabel(harness.document, "Included", "Tomato")); // CHANGE
+    assert.ok(transferRowByLabel(harness.document, "Included", "Tomato - Roma")); // CHANGE
     setPickerSearch(harness, "Lettuce"); // CHANGE
     Array.from(pickerRowByLabel(harness.document, "Lettuce (0)").querySelectorAll("button")).find(button => button.textContent.trim() === "Add").click(); // CHANGE
     assert.equal(session.plan.crops.length, 1); // CHANGE
@@ -2500,11 +2586,11 @@ test("Add crops transfer stages additions and removals before applying", async t
     setPickerSearch(harness, ""); // CHANGE
     clickTransferButton(harness.document, "Included", "Remove"); // CHANGE
     assert.equal(session.plan.crops.length, 1); // CHANGE
-    assert.ok(transferRowByLabel(harness.document, "Available", "Tomato")); // CHANGE
+    assert.ok(transferRowByLabel(harness.document, "Available", "Tomato - Roma")); // CHANGE
 
     harness.findButton("Apply changes").click(); // CHANGE
     await harness.settle(120); // CHANGE
-    assert.match(harness.confirmations.at(-1), /Linked demand, self-use, and CSA rows/); // CHANGE
+    assertGroupedCropRemovalMessage(harness.confirmations.at(-1), "Tomato - Roma", [/Farm Store: 2 kg \/ week/, /Self-use: 3 kg \/ week/, /CSA component 1: 4 kg/]); // CHANGE
     assert.equal(session.plan.crops.length, 1); // CHANGE
     assert.equal(session.plan.crops[0].plant, "Lettuce"); // CHANGE
     assert.equal(session.plan.demands.length, 0); // CHANGE
@@ -2523,7 +2609,7 @@ test("Add crops transfer add and remove actions reset both pane scroll positions
     t.after(() => harness.dom.window.close()); // CHANGE
     await harness.openModal(2026); // CHANGE
     await harness.settle(10); // CHANGE
-    harness.findButton("Add crops").click(); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
     await harness.settle(10); // CHANGE
 
     function setTransferScrolls() { // CHANGE
@@ -2560,27 +2646,83 @@ test("Add crops removal confirmation cancel keeps staged changes and linked rows
     const harness = createYearPlannerHarness({ confirmResult: false }); // CHANGE
     t.after(() => harness.dom.window.close()); // CHANGE
     const saved = savePlan(harness, 2026, plan => { // CHANGE
-        addDemand(plan, { id: "demand_tomato", cropId: "crop_1" }); // CHANGE
-        addSelfUse(plan, { id: "self_tomato", cropId: "crop_1" }); // CHANGE
-        plan.csa.components.push({ cropId: "crop_1", qty: 1, unit: "kg", everyNWeeks: 1, start: "", end: "" }); // CHANGE
+        plan.crops[0].varietyId = "roma"; // CHANGE
+        plan.crops[0].variety = "Roma"; // CHANGE
+        addDemand(plan, { id: "demand_tomato", cropId: "crop_1", qty: 2 }); // CHANGE
+        addSelfUse(plan, { id: "self_tomato", cropId: "crop_1", qty: 3 }); // CHANGE
+        plan.csa.components.push({ cropId: "crop_1", qty: 4, unit: "kg", everyNWeeks: 1, start: "", end: "" }); // CHANGE
     }); // CHANGE
     const session = await harness.openModal(2026); // CHANGE
     assert.equal(saved.crops.length, 1); // CHANGE
 
-    harness.findButton("Add crops").click(); // CHANGE
+    harness.findButton("Add/Remove crops").click(); // CHANGE
     await harness.settle(10); // CHANGE
     clickTransferButton(harness.document, "Included", "Remove"); // CHANGE
     harness.findButton("Apply changes").click(); // CHANGE
     await harness.settle(10); // CHANGE
 
     assert.ok(findPicker(harness.document)); // CHANGE
-    assert.match(harness.confirmations.at(-1), /Linked demand, self-use, and CSA rows/); // CHANGE
+    assertGroupedCropRemovalMessage(harness.confirmations.at(-1), "Tomato - Roma", [/Farm Store: 2 kg \/ week/, /Self-use: 3 kg \/ week/, /CSA component 1: 4 kg/]); // CHANGE
     assert.match(findPicker(harness.document).textContent, /Changes not applied/); // CHANGE
     assert.equal(session.plan.crops.length, 1); // CHANGE
     assert.equal(session.plan.demands.length, 1); // CHANGE
     assert.equal(session.plan.selfSufficiency.lines.length, 1); // CHANGE
     assert.equal(session.plan.csa.components.length, 1); // CHANGE
-    assert.ok(transferRowByLabel(harness.document, "Available", "Tomato")); // CHANGE
+    assert.ok(transferRowByLabel(harness.document, "Available", "Tomato - Roma")); // CHANGE
+}); // CHANGE
+
+test("direct crop removal confirmation groups linked rows by crop variety", async t => { // CHANGE
+    const harness = createYearPlannerHarness(); // CHANGE
+    t.after(() => harness.dom.window.close()); // CHANGE
+    savePlan(harness, 2026, plan => { // CHANGE
+        plan.crops[0].varietyId = "roma"; // CHANGE
+        plan.crops[0].variety = "Roma"; // CHANGE
+        addDemand(plan, { id: "demand_tomato", qty: 2 }); // CHANGE
+        addSelfUse(plan, { id: "self_tomato", qty: 3 }); // CHANGE
+        plan.csa.components.push({ cropId: "crop_1", qty: 4, unit: "kg", everyNWeeks: 1, start: "", end: "" }); // CHANGE
+    }); // CHANGE
+    const session = await harness.openModal(2026); // CHANGE
+
+    harness.findButton("Remove crop").click(); // CHANGE
+
+    assertGroupedCropRemovalMessage(harness.confirmations.at(-1), "Tomato - Roma", [/Farm Store: 2 kg \/ week/, /Self-use: 3 kg \/ week/, /CSA component 1: 4 kg/]); // CHANGE
+    assert.equal(session.plan.crops.length, 0); // CHANGE
+    assert.equal(session.plan.demands.length, 0); // CHANGE
+    assert.equal(session.plan.selfSufficiency.lines.length, 0); // CHANGE
+    assert.equal(session.plan.csa.components.length, 0); // CHANGE
+}); // CHANGE
+
+test("canceling direct crop removal preserves linked rows", async t => { // CHANGE
+    const harness = createYearPlannerHarness({ confirmResult: false }); // CHANGE
+    t.after(() => harness.dom.window.close()); // CHANGE
+    savePlan(harness, 2026, plan => { // CHANGE
+        plan.crops[0].varietyId = "roma"; // CHANGE
+        plan.crops[0].variety = "Roma"; // CHANGE
+        addDemand(plan, { id: "demand_tomato", qty: 2 }); // CHANGE
+        addSelfUse(plan, { id: "self_tomato", qty: 3 }); // CHANGE
+        plan.csa.components.push({ cropId: "crop_1", qty: 4, unit: "kg", everyNWeeks: 1, start: "", end: "" }); // CHANGE
+    }); // CHANGE
+    const session = await harness.openModal(2026); // CHANGE
+
+    harness.findButton("Remove crop").click(); // CHANGE
+
+    assertGroupedCropRemovalMessage(harness.confirmations.at(-1), "Tomato - Roma", [/Farm Store: 2 kg \/ week/, /Self-use: 3 kg \/ week/, /CSA component 1: 4 kg/]); // CHANGE
+    assert.equal(session.plan.crops.length, 1); // CHANGE
+    assert.equal(session.plan.demands.length, 1); // CHANGE
+    assert.equal(session.plan.selfSufficiency.lines.length, 1); // CHANGE
+    assert.equal(session.plan.csa.components.length, 1); // CHANGE
+}); // CHANGE
+
+test("direct crop removal without linked rows does not ask for confirmation", async t => { // CHANGE
+    const harness = createYearPlannerHarness(); // CHANGE
+    t.after(() => harness.dom.window.close()); // CHANGE
+    savePlan(harness, 2026); // CHANGE
+    const session = await harness.openModal(2026); // CHANGE
+
+    harness.findButton("Remove crop").click(); // CHANGE
+
+    assert.deepEqual(harness.confirmations, []); // CHANGE
+    assert.equal(session.plan.crops.length, 0); // CHANGE
 }); // CHANGE
 
 test("Centralized Demand remains visible and removes lines with their crop", async t => {
@@ -2738,7 +2880,7 @@ test("Unavailable garden records are skipped while deleted persisted varieties r
 
     const session = await harness.openModal(2026);
     await harness.settle(10);
-    harness.findButton("Add crops").click();
+    harness.findButton("Add/Remove crops").click();
     await harness.settle(10);
     assert.ok(pickerCategoryLabels(harness.document).includes("Crops in this garden"));
     assertPickerHasLabel(harness, "Old Favorite");
@@ -2764,7 +2906,7 @@ test("Add crop options refresh after year changes, template application, and res
 
     await harness.openModal(2026);
     await harness.settle(10);
-    harness.findButton("Add crops").click();
+    harness.findButton("Add/Remove crops").click();
     await harness.settle(10);
     assert.equal(pickerCategoryLabels(harness.document).includes("Crops in this garden"), true);
     closeOpenPicker(harness);
@@ -2772,7 +2914,7 @@ test("Add crop options refresh after year changes, template application, and res
     const yearInput = Array.from(harness.document.querySelectorAll('input[type="number"]')).find(input => input.value === "2026");
     harness.setControlValue(yearInput, 2027, "change");
     await harness.settle(10);
-    harness.findButton("Add crops").click();
+    harness.findButton("Add/Remove crops").click();
     await harness.settle(10);
     assert.ok(pickerCategoryLabels(harness.document).includes("Crops in this garden"));
     assertPickerHasLabel(harness, "Tomato (0)");
@@ -2784,14 +2926,14 @@ test("Add crop options refresh after year changes, template application, and res
     templateSelect.value = "Tomato Template";
     harness.findButton("Apply template").click();
     await harness.settle(10);
-    harness.findButton("Add crops").click();
+    harness.findButton("Add/Remove crops").click();
     await harness.settle(10);
     assert.equal(pickerCategoryLabels(harness.document).includes("Crops in this garden"), true);
     closeOpenPicker(harness);
 
     harness.findButton("Clear").click();
     await harness.settle(10);
-    harness.findButton("Add crops").click();
+    harness.findButton("Add/Remove crops").click();
     await harness.settle(10);
     assert.ok(pickerCategoryLabels(harness.document).includes("Crops in this garden"));
     assertPickerHasLabel(harness, "Tomato (0)");
@@ -2849,7 +2991,7 @@ test("Stale Add crop loads cannot replace newer grouped options", async t => {
     resolveFirst([{ plant_id: 1, plant_name: "Stale", yield_per_plant_kg: 1, default_planting_method: "direct_sow.field", annual: 1, biennial: 0, perennial: 0 }]);
     await harness.settle(10);
 
-    harness.findButton("Add crops").click();
+    harness.findButton("Add/Remove crops").click();
     await harness.settle(10);
     assertPickerHasLabel(harness, "Newer (0)");
     assert.equal(pickerRowByLabel(harness.document, "Stale (0)"), null);
@@ -2879,10 +3021,18 @@ test("Plan Check summary follows the crop filter and chart hover shows inventory
     const planCheckHeaderSummary = findStripHeader(harness.document, "plan-check").querySelector(".yp-strip-summary");
     assert.ok(summary);
     assert.ok(cropFilter);
-    assert.match(planCheckHeaderSummary.textContent, /Warnings\s+\d+\?/); // CHANGE
-    assert.ok(planCheckHeaderSummary.querySelector(".yp-chip[data-clickable='true']")); // CHANGE
+    assert.equal(planCheckHeaderSummary.querySelector(".yp-diagnostics-trigger"), null); // CHANGE
+    const attentionChildren = Array.from(attentionStrip(harness.document).querySelector(".yp-chip-row").children); // CHANGE
+    assert.equal(harness.document.querySelectorAll(".yp-diagnostics-trigger").length, 1); // CHANGE
+    assert.ok(attentionChildren.at(-1).querySelector(".yp-diagnostics-trigger")); // CHANGE
+    assert.match(attentionChildren.at(-2).textContent, /Short\s*5\.0 kg/); // CHANGE
+    assert.match(attentionChildren.map(child => child.textContent).join(" "), /Tomato short[\s\S]*Carrot short[\s\S]*Short\s*5\.0 kg/); // CHANGE
+    assert.match(summary.textContent, /Short\s*2/); // CHANGE
+    assert.match(summary.textContent, /Good\s*0/); // CHANGE
+    assert.match(summary.textContent, /Excess\s*0/); // CHANGE
     assert.match(summary.textContent, /Target\s*5\.0 kg/);
-    assert.match(summary.textContent, /Short weeks\s*1/);
+    assert.doesNotMatch(summary.textContent, /Worst shortage/); // CHANGE
+    assert.doesNotMatch(summary.textContent, /Short weeks/); // CHANGE
     assert.deepEqual(planCheckTotalsCropNames(harness.document), ["Tomato", "Carrot"]);
     assert.match(findStripDetails(harness.document, "plan-check").textContent, /Channels[\s\S]*Priorities[\s\S]*Shortage weeks[\s\S]*Value:/);
 
@@ -2903,6 +3053,64 @@ test("Plan Check summary follows the crop filter and chart hover shows inventory
     canvas.dispatchEvent(new harness.window.MouseEvent("mouseleave", { bubbles: true }));
     assert.equal(tooltip.style.display, "none");
 });
+
+test("Plan Check status badges group crops by coverage thresholds and navigate to crop timeline", async t => { // CHANGE
+    const harness = createYearPlannerHarness({ plants: [
+        { plant_id: 1, plant_name: "Tomato", yield_per_plant_kg: 1, default_planting_method: "direct_sow.field", annual: 1, biennial: 0, perennial: 0 },
+        { plant_id: 2, plant_name: "Carrot", yield_per_plant_kg: 1, default_planting_method: "direct_sow.field", annual: 1, biennial: 0, perennial: 0 },
+        { plant_id: 3, plant_name: "Lettuce", yield_per_plant_kg: 1, default_planting_method: "direct_sow.field", annual: 1, biennial: 0, perennial: 0 },
+        { plant_id: 4, plant_name: "Dill", yield_per_plant_kg: 1, default_planting_method: "direct_sow.field", annual: 1, biennial: 0, perennial: 0 },
+        { plant_id: 5, plant_name: "Basil", yield_per_plant_kg: 1, default_planting_method: "direct_sow.field", annual: 1, biennial: 0, perennial: 0 }
+    ] });
+    t.after(() => harness.dom.window.close());
+    harness.addCell(harness.moduleCell, new harness.TestCell("tomato-short", { tiler_group: "1", plant_id: "1", plant_name: "Tomato", plant_count: "9", season_start_year: "2026", harvest_start: "2026-06-01", harvest_end: "2026-06-07" }));
+    harness.addCell(harness.moduleCell, new harness.TestCell("carrot-good", { tiler_group: "1", plant_id: "2", plant_name: "Carrot", plant_count: "10", season_start_year: "2026", harvest_start: "2026-06-01", harvest_end: "2026-06-07" }));
+    harness.addCell(harness.moduleCell, new harness.TestCell("lettuce-excess", { tiler_group: "1", plant_id: "3", plant_name: "Lettuce", plant_count: "12", season_start_year: "2026", harvest_start: "2026-06-01", harvest_end: "2026-06-07" }));
+    harness.addCell(harness.moduleCell, new harness.TestCell("basil-timing", { tiler_group: "1", plant_id: "5", plant_name: "Basil", plant_count: "10", season_start_year: "2026", harvest_start: "2026-01-05", harvest_end: "2026-01-11" }));
+    savePlan(harness, 2026, plan => {
+        Object.assign(plan.crops[0], { plantId: "1", plant: "Tomato", harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 2 }] });
+        plan.crops.push(makePlanCrop({ id: "crop_2", plantId: "2", plant: "Carrot", harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 2 }] }));
+        plan.crops.push(makePlanCrop({ id: "crop_3", plantId: "3", plant: "Lettuce", harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 2 }] }));
+        plan.crops.push(makePlanCrop({ id: "crop_4", plantId: "4", plant: "Dill", harvestStart: "2026-06-01", harvestEnd: "2026-06-07", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 2 }] }));
+        plan.crops.push(makePlanCrop({ id: "crop_5", plantId: "5", plant: "Basil", harvestStart: "2026-01-05", harvestEnd: "2026-01-11", packages: [{ unit: "kg", baseType: "kg", baseQty: 1, price: 2 }] }));
+        addDemand(plan, { id: "demand_short", cropId: "crop_1", qty: 10 });
+        addDemand(plan, { id: "demand_good", cropId: "crop_2", qty: 10 });
+        addDemand(plan, { id: "demand_excess", cropId: "crop_3", qty: 10 });
+        addDemand(plan, { id: "demand_timing", cropId: "crop_5", qty: 10, from: "2026-01-12", to: "2026-01-18" });
+    });
+    await harness.openModal(2026);
+    setStripExpanded(harness.document, "plan-check", true);
+
+    const summary = harness.document.querySelector(".yp-plan-check-summary");
+    assert.match(summary.textContent, /Short\s*1/);
+    assert.match(summary.textContent, /Good\s*1/);
+    assert.match(summary.textContent, /Excess\s*1/);
+    assert.doesNotMatch(summary.textContent, /Worst shortage|Short weeks/);
+
+    const short = findClickableChip(summary, /^Short\s*1$/);
+    assert.ok(short);
+    short.dispatchEvent(new harness.window.MouseEvent("mouseenter", { bubbles: true }));
+    let popover = visibleDiagnosticsPopover(harness.document);
+    assert.match(popover.textContent, /Tomato - 1\.0 kg short - 90%/);
+    assert.doesNotMatch(popover.textContent, /Basil|Dill/);
+
+    const good = findChip(summary, /^Good\s*1$/);
+    assert.ok(good);
+    good.dispatchEvent(new harness.window.MouseEvent("mouseenter", { bubbles: true }));
+    popover = visibleDiagnosticsPopover(harness.document);
+    assert.match(popover.textContent, /Carrot - on target - 100%/);
+    assert.doesNotMatch(popover.textContent, /Dill|Basil/);
+
+    const excess = findClickableChip(summary, /^Excess\s*1$/);
+    assert.ok(excess);
+    excess.dispatchEvent(new harness.window.MouseEvent("mouseenter", { bubbles: true }));
+    popover = visibleDiagnosticsPopover(harness.document);
+    assert.match(popover.textContent, /Lettuce - 2\.0 kg excess - 120%/);
+    clickDiagnosticItem(popover, /Lettuce/);
+    assert.match(findEditorBox(harness).textContent, /Lettuce/);
+    assert.ok(findEditorBox(harness).querySelector(".yp-harvest-timeline-section.yp-target-highlight"));
+    assert.equal(findStripHeader(harness.document, "plan-check").getAttribute("aria-expanded"), "true");
+}); // CHANGE
 
 test("Plan Check chart summary revenue follows crop filter and CSA value attribution", async t => {
     const harness = createYearPlannerHarness({ plants: [
@@ -3064,7 +3272,7 @@ test("question mark diagnostics badge sections collapse for the dialog session",
 
     await harness.openModal(2026);
     setStripExpanded(harness.document, "plan-check", true);
-    let trigger = harness.document.querySelector('[data-year-plan-strip="plan-check"] .yp-diagnostics-trigger');
+    let trigger = topDiagnosticsTrigger(harness.document); // CHANGE
     assert.ok(trigger);
     trigger.click();
     await harness.settle(5);
@@ -3082,7 +3290,7 @@ test("question mark diagnostics badge sections collapse for the dialog session",
 
     setStripExpanded(harness.document, "plan-check", false);
     setStripExpanded(harness.document, "plan-check", true);
-    trigger = harness.document.querySelector('[data-year-plan-strip="plan-check"] .yp-diagnostics-trigger');
+    trigger = topDiagnosticsTrigger(harness.document); // CHANGE
     trigger.click();
     await harness.settle(5);
     popover = Array.from(harness.document.querySelectorAll(".yp-diagnostics-popover")).find(node => !node.hidden);
@@ -3092,7 +3300,7 @@ test("question mark diagnostics badge sections collapse for the dialog session",
     harness.findButton("Close").click();
     await harness.openModal(2026);
     setStripExpanded(harness.document, "plan-check", true);
-    trigger = harness.document.querySelector('[data-year-plan-strip="plan-check"] .yp-diagnostics-trigger');
+    trigger = topDiagnosticsTrigger(harness.document); // CHANGE
     trigger.click();
     await harness.settle(5);
     popover = Array.from(harness.document.querySelectorAll(".yp-diagnostics-popover")).find(node => !node.hidden);
@@ -3579,7 +3787,7 @@ test("year changes auto-save dirty work as a draft without blocking", async t =>
     assert.match(planHero(harness.document).textContent, /Draft/);
 });
 
-test("crop timeline source popover navigates to demand rows and planting cells", async t => {
+test("crop timeline details popover rows navigate to demand rows and planting cells", async t => { // CHANGE
     const harness = createYearPlannerHarness();
     t.after(() => harness.dom.window.close());
     const plan = savePlan(harness, 2026, current => {
@@ -3602,31 +3810,56 @@ test("crop timeline source popover navigates to demand rows and planting cells",
         harvest_end: "2026-06-07",
         bed_name: "West Bed"
     }));
+    harness.addCell(harness.moduleCell, new harness.TestCell("planting_2", { // CHANGE
+        tiler_group: "1", // CHANGE
+        plant_id: "1", // CHANGE
+        variety_id: "v1", // CHANGE
+        plant_name: "Tomato", // CHANGE
+        variety_name: "Sungold", // CHANGE
+        plant_count: "5", // CHANGE
+        harvest_start: "2026-06-01", // CHANGE
+        harvest_end: "2026-06-07" // CHANGE
+    })); // CHANGE
     const flashEvents = [];
     harness.window.addEventListener("usl:yearPlanButtonFlashRequested", event => flashEvents.push(event.detail));
 
     await harness.openModal(2026);
     const sourceWeek = harness.document.querySelector(".yp-crop-timeline-week[data-has-sources='true']");
     assert.ok(sourceWeek, "expected an interactive timeline week");
+    assert.equal(sourceWeek.dataset.clickHint, "details"); // CHANGE
+    assert.match(sourceWeek.title, /Click for details/); // CHANGE
+    assert.match(sourceWeek.getAttribute("aria-label"), /Show details/); // CHANGE
     sourceWeek.click();
     await harness.settle(5);
-    let popover = harness.document.querySelector(".yp-crop-timeline-source-popover");
-    assert.ok(popover);
-    assert.match(popover.textContent, /Tomato \/ Sungold \(West Bed\) 10 plants/);
-    assert.match(popover.textContent, /Farm Store/);
+    let details = harness.document.querySelector(".yp-crop-timeline-details-popover"); // CHANGE
+    assert.ok(details); // CHANGE
+    assert.equal(harness.document.querySelector(".yp-crop-timeline-source-popover"), null); // CHANGE
+    assert.match(details.textContent, /Tomato - Sungold/); // CHANGE
+    assert.match(details.textContent, /Week of 2026-06-01/); // CHANGE
+    assert.match(details.textContent, /West Bed/); // CHANGE
+    assert.match(details.textContent, /Unassigned bed/); // CHANGE
+    assert.match(details.textContent, /Tomato \/ Sungold 10 plants/); // CHANGE
+    assert.match(details.textContent, /Tomato \/ Sungold 5 plants/); // CHANGE
+    assert.doesNotMatch(details.textContent, /Tomato \/ Sungold \(West Bed\) 10 plants/); // CHANGE
+    assert.match(details.textContent, /Inventory/); // CHANGE
+    assert.doesNotMatch(details.textContent, /Ending/); // CHANGE
+    assert.equal(details.querySelector(".yp-crop-timeline-details-sources"), null); // CHANGE
+    assert.equal(harness.document.querySelector(".yp-crop-timeline-source-popover"), null); // CHANGE
+    assert.match(details.textContent, /Farm Store/); // CHANGE
 
-    const demandButton = Array.from(popover.querySelectorAll(".yp-crop-timeline-source-row"))
+    const demandButton = Array.from(details.querySelectorAll(".yp-crop-timeline-details-row")) // CHANGE
         .find(button => button.textContent.includes("Target 3.00 kg"));
     assert.ok(demandButton, "expected demand source row");
     demandButton.click();
     await harness.settle(5);
-    assert.equal(harness.document.querySelector(".yp-crop-timeline-source-popover"), null);
+    assert.equal(harness.document.querySelector(".yp-crop-timeline-details-popover"), null); // CHANGE
     assert.ok(findDemandLine(harness.document, "demand_source_1").classList.contains("yp-target-highlight"));
 
     harness.document.querySelector(".yp-crop-timeline-week[data-has-sources='true']").click();
     await harness.settle(5);
-    popover = harness.document.querySelector(".yp-crop-timeline-source-popover");
-    const plantingButton = Array.from(popover.querySelectorAll(".yp-crop-timeline-source-row"))
+    details = harness.document.querySelector(".yp-crop-timeline-details-popover"); // CHANGE
+    assert.ok(details); // CHANGE
+    const plantingButton = Array.from(details.querySelectorAll(".yp-crop-timeline-details-row")) // CHANGE
         .find(button => button.textContent.includes("Tomato / Sungold"));
     assert.ok(plantingButton, "expected planting source row");
     plantingButton.click();
@@ -3642,10 +3875,10 @@ test("crop timeline source popover navigates to demand rows and planting cells",
 
     await harness.openModal(2026);
     await harness.settle(5);
-    assert.ok(harness.document.querySelector(".yp-crop-timeline-source-popover"), "expected return context to reopen the week source popover");
+    assert.ok(harness.document.querySelector(".yp-crop-timeline-details-popover"), "expected return context to reopen the week details popover"); // CHANGE
 });
 
-test("crop timeline source popover groups demand sources and supports keyboard close behavior", async t => {
+test("crop timeline details popover includes grouped demand action rows and supports keyboard close behavior", async t => { // CHANGE
     const harness = createYearPlannerHarness();
     t.after(() => harness.dom.window.close());
     savePlan(harness, 2026, current => {
@@ -3663,25 +3896,48 @@ test("crop timeline source popover groups demand sources and supports keyboard c
     assert.ok(sourceWeek, "expected an interactive timeline week");
     sourceWeek.dispatchEvent(new harness.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await harness.settle(5);
-    let popover = harness.document.querySelector(".yp-crop-timeline-source-popover");
-    assert.ok(popover);
-    assert.match(popover.textContent, /Self Sufficiency/);
-    assert.match(popover.textContent, /Self line 1 - 1 kg/);
-    assert.match(popover.textContent, /CSA/);
-    assert.match(popover.textContent, /CSA component 1 - 1 kg/);
-    assert.match(popover.textContent, /Farm Store/);
-    assert.match(popover.textContent, /Target 3\.00 kg/);
+    let details = harness.document.querySelector(".yp-crop-timeline-details-popover"); // CHANGE
+    assert.ok(details); // CHANGE
+    assert.doesNotMatch(details.textContent, /No planting sources for this week/); // CHANGE
+    assert.equal(details.querySelector(".yp-crop-timeline-details-sources"), null); // CHANGE
+    assert.equal(harness.document.querySelector(".yp-crop-timeline-source-popover"), null); // CHANGE
+    assert.match(details.textContent, /Self Sufficiency/); // CHANGE
+    assert.match(details.textContent, /Self line 1 - 1 kg/); // CHANGE
+    assert.match(details.textContent, /CSA/); // CHANGE
+    assert.match(details.textContent, /CSA component 1 - 1 kg/); // CHANGE
+    assert.match(details.textContent, /Farm Store/); // CHANGE
+    assert.match(details.textContent, /Target 3\.00 kg/); // CHANGE
 
-    sourceWeek.dispatchEvent(new harness.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-    await harness.settle(5);
-    assert.equal(harness.document.querySelector(".yp-crop-timeline-source-popover"), null);
+    const selfButton = Array.from(details.querySelectorAll(".yp-crop-timeline-details-row")).find(button => button.textContent.includes("Self line 1")); // CHANGE
+    assert.ok(selfButton, "expected self-use details row"); // CHANGE
+    selfButton.click(); // CHANGE
+    await harness.settle(5); // CHANGE
+    assert.ok(findSelfLine(harness.document, "self_source_1").classList.contains("yp-target-highlight")); // CHANGE
 
-    sourceWeek.dispatchEvent(new harness.window.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+    let reopenedWeek = harness.document.querySelector(".yp-crop-timeline-week[data-has-sources='true']"); // CHANGE
+    reopenedWeek.dispatchEvent(new harness.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); // CHANGE
+    await harness.settle(5); // CHANGE
+    details = harness.document.querySelector(".yp-crop-timeline-details-popover"); // CHANGE
+    const csaButton = Array.from(details.querySelectorAll(".yp-crop-timeline-details-row")).find(button => button.textContent.includes("CSA component 1")); // CHANGE
+    assert.ok(csaButton, "expected CSA details row"); // CHANGE
+    csaButton.click(); // CHANGE
+    await harness.settle(5); // CHANGE
+    assert.ok(findStripDetails(harness.document, "csa").querySelector('[data-csa-component-index="0"]').classList.contains("yp-target-highlight")); // CHANGE
+
+    reopenedWeek = harness.document.querySelector(".yp-crop-timeline-week[data-has-sources='true']"); // CHANGE
+    reopenedWeek.dispatchEvent(new harness.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); // CHANGE
+    await harness.settle(5); // CHANGE
+
+    reopenedWeek.dispatchEvent(new harness.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); // CHANGE
     await harness.settle(5);
-    assert.ok(harness.document.querySelector(".yp-crop-timeline-source-popover"));
+    assert.equal(harness.document.querySelector(".yp-crop-timeline-details-popover"), null); // CHANGE
+
+    reopenedWeek.dispatchEvent(new harness.window.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true })); // CHANGE
+    await harness.settle(5);
+    assert.ok(harness.document.querySelector(".yp-crop-timeline-details-popover")); // CHANGE
     harness.document.body.dispatchEvent(new harness.window.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     await harness.settle(5);
-    assert.equal(harness.document.querySelector(".yp-crop-timeline-source-popover"), null);
+    assert.equal(harness.document.querySelector(".yp-crop-timeline-details-popover"), null); // CHANGE
 });
 
 test("public plan request event opens one modal and replaces the active session", async t => {

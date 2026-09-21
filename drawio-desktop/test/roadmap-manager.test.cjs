@@ -55,6 +55,9 @@ function hudBadge(h, className) { const badge = h.graph.container.querySelector(
 function hudSnapshot(h) { return { start: hudBadge(h, 'trellis-roadmap-date-badge-start').textContent, end: hudBadge(h, 'trellis-roadmap-date-badge-end').textContent, duration: hudBadge(h, 'trellis-roadmap-date-badge-duration').textContent }; } // NEW
 function expectedHud(c, dates, moved = {}) { return { start: expectedHudSide(c, dates.start, moved.left), end: expectedHudSide(c, dates.end, moved.right), duration: (dates.end - dates.start + 1) + 'd' }; } // NEW
 function dateRange(c, cell) { return { start: c.parseDay(cell.getAttribute('roadmap_start')), end: c.parseDay(cell.getAttribute('roadmap_end')) }; } // NEW
+function descendantsOf(h, cell) { const result = []; function walk(current) { if (!current) return; result.push(current); (h.model.getChildren(current) || []).forEach(walk); } walk(cell); return result; } // NEW
+function clearIdsForDecodedPaste(h, cell) { descendantsOf(h, cell).forEach(current => { if (current.setId) current.setId(''); else current.id = ''; }); } // NEW
+function hasMaterializedId(cell) { const value = cell && (cell.getId ? cell.getId() : cell.id); return value != null && String(value) !== ''; } // NEW
 function applyBoundaryScaleView(h) { h.api.setViewState(h.board, { today: { scales: BOUNDARY_SCALES, multiplier: 1, leftHidden: 2, rightHidden: 0 } }); h.graph.refresh(); } // NEW
 function timelineDx(h, fromDay, toDay) { const c = h.w.TrellisRoadmapCore, timeline = h.api.getLayout(h.board).timeline; return c.dayToX(timeline, toDay) - c.dayToX(timeline, fromDay); } // NEW
 function pointerEvent(x, y) { return { button: 0, clientX: x, clientY: y, preventDefault() {} }; } // NEW
@@ -491,6 +494,34 @@ test('copy insertion remaps role membership, preserves module Main, and clears t
     assert.ok(!copy.getAttribute('roadmap_task_module_id')); assert.equal(h.api.getViewState(board).today.multiplier, 1); // NEW
     h.undo.undo(); assert.equal(h.xml(), before); h.undo.redo(); assert.equal(h.api.roleRoster(board).length, 1); // NEW
     const separate = h.graph.cloneCells([h.board], true)[0]; h.graph.addCells([separate], h.module); assert.equal(separate.getAttribute('roadmap_role'), 'secondary'); // NEW
+}); // NEW
+
+test('decoded roadmap module paste materializes blank IDs before layout', t => { // NEW
+    const h = harness(t, ['Garden_Task_Manager.js', 'Modules_Standalone.js']); // NEW
+    const role = h.cell(null, { label: 'Alex' }, 'role_card=1;'); h.graph.__trellisModules.addReciprocalLink(role, h.board); h.api.setAssignments(h.object, [role.id]); // NEW
+    const task = h.api.createTaskFromRoadmapObject(h.object, { title: 'Original task', linkMissingAssignees: false }); assert.ok(task); // NEW
+    const before = h.xml(), copy = h.graph.cloneCells([h.module], true)[0]; clearIdsForDecodedPaste(h, copy); // NEW
+    assert.doesNotThrow(() => h.graph.addCells([copy])); // NEW
+    assert.equal(descendantsOf(h, copy).every(hasMaterializedId), true); // NEW
+    const board = h.typed(copy, 'board')[0], object = h.typed(h.typed(board, 'process')[0], 'object')[0]; // NEW
+    assert.doesNotThrow(() => h.api.getLayout(board)); // NEW
+    assert.equal(board.getAttribute('roadmap_role'), 'main'); // NEW
+    assert.deepEqual(Array.from(h.api.roleRoster(board), rosterRole => rosterRole.id), [role.id]); // NEW
+    assert.equal(object.getAttribute('roadmap_assignee_role_ids_json'), JSON.stringify([role.id])); // NEW
+    assert.equal(h.api.linkedTasks(object).length, 0); // NEW
+    h.undo.undo(); assert.equal(h.xml(), before); // NEW
+}); // NEW
+
+test('decoded roadmap board paste materializes blank IDs and becomes secondary', t => { // NEW
+    const h = harness(t, ['Garden_Task_Manager.js', 'Modules_Standalone.js']); // NEW
+    const task = h.api.createTaskFromRoadmapObject(h.object, { title: 'Original task', linkMissingAssignees: false }); assert.ok(task); // NEW
+    const copy = h.graph.cloneCells([h.board], true)[0]; clearIdsForDecodedPaste(h, copy); // NEW
+    assert.doesNotThrow(() => h.graph.addCells([copy], h.module)); // NEW
+    assert.equal(descendantsOf(h, copy).every(hasMaterializedId), true); // NEW
+    assert.equal(copy.getAttribute('roadmap_role'), 'secondary'); // NEW
+    assert.doesNotThrow(() => h.api.getLayout(copy)); // NEW
+    const object = h.typed(h.typed(copy, 'process')[0], 'object')[0]; // NEW
+    assert.equal(h.api.linkedTasks(object).length, 0); // NEW
 }); // NEW
 
 test('Users permits task companion creation and navigation cleanup without task edit access', t => { // NEW

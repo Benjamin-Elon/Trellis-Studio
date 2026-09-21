@@ -1175,6 +1175,9 @@ Draw.loadPlugin(function (ui) {
                         cellId: String(sourceRow.cellId || sourceId),
                         cell: sourceRow.cell || null,
                         label: String(sourceRow.label || "Planting"),
+                        plantName: String(sourceRow.plantName || ""), // CHANGE
+                        varietyName: String(sourceRow.varietyName || ""), // CHANGE
+                        bedName: String(sourceRow.bedName || ""), // CHANGE
                         plantCount: Math.max(0, Math.trunc(Number(sourceRow.plantCount) || 0)),
                         harvestStart: String(sourceRow.harvestStart || ""),
                         harvestEnd: String(sourceRow.harvestEnd || ""),
@@ -2527,10 +2530,22 @@ Draw.loadPlugin(function (ui) {
             return String(cell && (typeof cell.getId === "function" ? cell.getId() : cell.id) || "");
         } // CHANGE
 
+        function isGardenBedCell(cell) { // CHANGE
+            return !!cell && (
+                DiagramStore.getCellAttr(cell, "garden_bed", "") === "1"
+                || DiagramStore.getCellAttr(cell, "gardenBed", "") === "1"
+                || DiagramStore.getCellAttr(cell, "is_garden_bed", "") === "1"
+            );
+        } // CHANGE
+
         function nonGenericBedName(tilerGroup) {
             const parent = tilerGroup && (tilerGroup.parent || tilerGroup.getParent && tilerGroup.getParent());
+            const explicit = String(DiagramStore.getCellAttr(tilerGroup, "bed_name", "") || "").trim(); // CHANGE
+            if (explicit && explicit.toLocaleLowerCase() !== "garden bed") return explicit; // CHANGE
+            if (!isGardenBedCell(parent)) return ""; // CHANGE
             const raw = String(
-                DiagramStore.getCellAttr(tilerGroup, "bed_name", "")
+                DiagramStore.getCellAttr(parent, "user_bed_name", "") // CHANGE
+                || DiagramStore.getCellAttr(parent, "userBedName", "") // CHANGE
                 || DiagramStore.getCellAttr(parent, "label", "")
                 || DiagramStore.getCellAttr(parent, "name", "")
                 || ""
@@ -2538,9 +2553,17 @@ Draw.loadPlugin(function (ui) {
             return raw && raw.toLocaleLowerCase() !== "garden bed" ? raw : "";
         } // CHANGE
 
+        function plantingCropNames(tilerGroup) { // CHANGE
+            return {
+                plant: String(DiagramStore.getCellAttr(tilerGroup, "plant_name", "") || "").trim(),
+                variety: String(DiagramStore.getCellAttr(tilerGroup, "variety_name", "") || "").trim()
+            };
+        } // CHANGE
+
         function plantingSourceLabel(tilerGroup, count) {
-            const plant = String(DiagramStore.getCellAttr(tilerGroup, "plant_name", "") || "").trim();
-            const variety = String(DiagramStore.getCellAttr(tilerGroup, "variety_name", "") || "").trim();
+            const namesRecord = plantingCropNames(tilerGroup); // CHANGE
+            const plant = namesRecord.plant; // CHANGE
+            const variety = namesRecord.variety; // CHANGE
             const bed = nonGenericBedName(tilerGroup);
             const names = [plant, variety].filter(Boolean).join(" / ") || String(DiagramStore.getCellAttr(tilerGroup, "label", "") || "Planting").trim();
             return `${names}${bed ? ` (${bed})` : ""} ${Math.max(0, Math.trunc(Number(count) || 0))} plants`;
@@ -2651,11 +2674,15 @@ Draw.loadPlugin(function (ui) {
                     count * kgPerPlant,
                     year
                 ); // CHANGE
+                const namesRecord = plantingCropNames(tilerGroup); // CHANGE
                 ensureSourceRows(key).push({ // CHANGE
                     sourceId: cellId(tilerGroup),
                     cellId: cellId(tilerGroup),
                     cell: tilerGroup,
                     label: plantingSourceLabel(tilerGroup, count),
+                    plantName: namesRecord.plant, // CHANGE
+                    varietyName: namesRecord.variety, // CHANGE
+                    bedName: nonGenericBedName(tilerGroup), // CHANGE
                     plantCount: count,
                     harvestStart: start,
                     harvestEnd: end,
@@ -3860,59 +3887,123 @@ Draw.loadPlugin(function (ui) {
             .join(" | ");
     } // CHANGE
 
+    function cropTimelineCropLabel(crop) { // CHANGE
+        const plant = String(crop && crop.plant || "").trim();
+        const variety = String(crop && crop.variety || "").trim();
+        return [plant, variety].filter(Boolean).join(" - ") || "Crop";
+    } // CHANGE
+
+    function plantingDetailLabel(sourceRow) { // CHANGE
+        const plant = String(sourceRow && sourceRow.plantName || "").trim();
+        const variety = String(sourceRow && sourceRow.varietyName || "").trim();
+        const count = Math.max(0, Math.trunc(Number(sourceRow && sourceRow.plantCount) || 0));
+        const names = [plant, variety].filter(Boolean).join(" / ");
+        if (names) return `${names}${count ? ` ${count} plants` : ""}`;
+        const bed = String(sourceRow && sourceRow.bedName || "").trim();
+        let label = String(sourceRow && sourceRow.label || "Planting").trim();
+        if (bed) label = label.replace(new RegExp(`\\s*\\(${bed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`, "g"), "");
+        return label || "Planting";
+    } // CHANGE
+
+    function groupedPlantingSourcesByBed(sourceModel) { // CHANGE
+        const groups = new Map();
+        for (const sourceRow of ((sourceModel && sourceModel.plantings) || [])) {
+            const bedName = String(sourceRow && sourceRow.bedName || "").trim() || "Unassigned bed";
+            if (!groups.has(bedName)) groups.set(bedName, []);
+            groups.get(bedName).push(sourceRow);
+        }
+        return Array.from(groups.entries()).map(entry => ({ bedName: entry[0], rows: entry[1] }));
+    } // CHANGE
+
     function closeCropTimelinePopover(hostEl) {
         if (hostEl && typeof hostEl.__ypCloseTimelinePopover === "function") hostEl.__ypCloseTimelinePopover();
     } // CHANGE
 
-    function renderCropTimelineSourcePopover(hostEl, anchor, row, options) {
+    function cropTimelineSourceIsActionable(sourceRow, kind, options) { // CHANGE
+        if (!options || typeof options.onActivateSource !== "function") return false;
+        if (kind === "planting") return !!(sourceRow && (sourceRow.cell || sourceRow.cellId));
+        return !!(sourceRow && sourceRow.target);
+    } // CHANGE
+
+    function cropTimelineSourceMetrics(sourceRow, kind) { // CHANGE
+        return kind === "planting"
+            ? sourceMetricText(sourceRow, [["Harvested", "harvestedKg"], ["Carried", "carriedInKg"], ["Used", "usedKg"], ["Inventory", "endingKg"], ["Expired", "expiredKg"]])
+            : sourceMetricText(sourceRow, [["Target", "targetKg"], ["Fulfilled", "fulfilledKg"], ["Short", "shortKg"]]);
+    } // CHANGE
+
+    function appendCropTimelineActionRow(section, sourceRow, kind, row, hostEl, options, label) { // CHANGE
+        const actionable = cropTimelineSourceIsActionable(sourceRow, kind, options);
+        const item = document.createElement(actionable ? "button" : "div");
+        item.className = `yp-crop-timeline-details-row${actionable ? " yp-crop-timeline-details-action" : ""}`;
+        item.dataset.sourceKind = kind;
+        if (actionable) item.type = "button";
+        const name = document.createElement("div");
+        name.className = "yp-crop-timeline-details-name";
+        name.textContent = label || sourceRow && sourceRow.label || "Source";
+        const metrics = document.createElement("div");
+        metrics.className = "yp-crop-timeline-details-metrics";
+        metrics.textContent = cropTimelineSourceMetrics(sourceRow, kind) || (kind === "planting" ? "No planting metrics for this week" : "No demand metrics for this week");
+        item.appendChild(name);
+        item.appendChild(metrics);
+        if (actionable) {
+            item.addEventListener("click", event => {
+                event.preventDefault();
+                event.stopPropagation();
+                closeCropTimelinePopover(hostEl);
+                options.onActivateSource(sourceRow, kind, row);
+            });
+        }
+        section.appendChild(item);
+    } // CHANGE
+
+    function renderCropTimelineDetailsPopover(hostEl, anchor, row, crop, options) { // CHANGE
         closeCropTimelinePopover(hostEl);
         const sourceModel = row && row.sources;
         if (!cropTimelineHasSources(sourceModel)) return;
         const popover = document.createElement("div");
-        popover.className = "yp-crop-timeline-source-popover";
+        popover.className = "yp-crop-timeline-details-popover";
         popover.setAttribute("role", "dialog");
-        popover.setAttribute("aria-label", `Sources for week of ${row.week && row.week.iso || ""}`);
+        popover.setAttribute("aria-label", `Details for week of ${row.week && row.week.iso || ""}`);
+
         const title = document.createElement("div");
-        title.className = "yp-crop-timeline-source-title";
-        title.textContent = `Week of ${row.week && row.week.iso || "week"}`;
+        title.className = "yp-crop-timeline-details-title";
+        title.textContent = cropTimelineCropLabel(crop);
         popover.appendChild(title);
 
-        function addSection(label, rows, kind) {
-            if (!rows || !rows.length) return;
-            const section = document.createElement("div");
-            section.className = "yp-crop-timeline-source-section";
-            const heading = document.createElement("div");
-            heading.className = "yp-crop-timeline-source-heading";
-            heading.textContent = label;
-            section.appendChild(heading);
-            for (const sourceRow of rows) {
-                const button = document.createElement("button");
-                button.type = "button";
-                button.className = "yp-crop-timeline-source-row";
-                button.dataset.sourceKind = kind;
-                const name = document.createElement("span");
-                name.className = "yp-crop-timeline-source-name";
-                name.textContent = sourceRow.label || "Source";
-                const metrics = document.createElement("span");
-                metrics.className = "yp-crop-timeline-source-metrics";
-                metrics.textContent = kind === "planting"
-                    ? sourceMetricText(sourceRow, [["Harvested", "harvestedKg"], ["Carried", "carriedInKg"], ["Used", "usedKg"], ["Ending", "endingKg"], ["Expired", "expiredKg"]])
-                    : sourceMetricText(sourceRow, [["Target", "targetKg"], ["Fulfilled", "fulfilledKg"], ["Short", "shortKg"]]);
-                button.appendChild(name);
-                button.appendChild(metrics);
-                button.addEventListener("click", event => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    closeCropTimelinePopover(hostEl);
-                    if (options && typeof options.onActivateSource === "function") options.onActivateSource(sourceRow, kind, row);
-                });
-                section.appendChild(button);
+        const week = document.createElement("div");
+        week.className = "yp-crop-timeline-details-week";
+        week.textContent = `Week of ${row.week && row.week.iso || "week"}`;
+        popover.appendChild(week);
+
+        const groups = groupedPlantingSourcesByBed(sourceModel);
+        if (groups.length) {
+            for (const group of groups) {
+                const section = document.createElement("div");
+                section.className = "yp-crop-timeline-details-section";
+                const heading = document.createElement("div");
+                heading.className = "yp-crop-timeline-details-heading";
+                heading.textContent = group.bedName;
+                section.appendChild(heading);
+                for (const sourceRow of group.rows) {
+                    appendCropTimelineActionRow(section, sourceRow, "planting", row, hostEl, options || {}, plantingDetailLabel(sourceRow)); // CHANGE
+                }
+                popover.appendChild(section);
             }
-            popover.appendChild(section);
         }
 
-        addSection("Plantings", sourceModel.plantings || [], "planting");
-        for (const group of (sourceModel.demandGroups || [])) addSection(group.label, group.rows || [], group.kind || "demand");
+        for (const group of (sourceModel.demandGroups || [])) { // CHANGE
+            const rows = Array.isArray(group && group.rows) ? group.rows : [];
+            if (!rows.length) continue;
+            const section = document.createElement("div");
+            section.className = "yp-crop-timeline-details-section";
+            const heading = document.createElement("div");
+            heading.className = "yp-crop-timeline-details-heading";
+            heading.textContent = group.label || "Demand";
+            section.appendChild(heading);
+            for (const sourceRow of rows) appendCropTimelineActionRow(section, sourceRow, group.kind || "demand", row, hostEl, options || {}, sourceRow && sourceRow.label || "Demand");
+            popover.appendChild(section);
+        } // CHANGE
+
         anchor.appendChild(popover);
         const outside = event => {
             if (popover.contains(event.target) || anchor.contains(event.target)) return;
@@ -4007,18 +4098,20 @@ Draw.loadPlugin(function (ui) {
             if (cropTimelineHasSources(row.sources)) { // CHANGE
                 week.tabIndex = 0;
                 week.setAttribute("role", "button");
-                week.setAttribute("aria-label", `Show sources for week of ${row.week && row.week.iso || "week"}`);
+                week.setAttribute("aria-label", `Show details for week of ${row.week && row.week.iso || "week"}`); // CHANGE
+                week.title = `${cropTimelineTooltip(row)}\nClick for details`; // CHANGE
                 week.dataset.hasSources = "true";
-                const openSources = event => {
+                week.dataset.clickHint = "details"; // CHANGE
+                const openDetails = event => { // CHANGE
                     if (event) {
                         event.preventDefault();
                         event.stopPropagation();
                     }
-                    renderCropTimelineSourcePopover(hostEl, week, row, options || {});
+                    renderCropTimelineDetailsPopover(hostEl, week, row, crop, options || {}); // CHANGE
                 };
-                week.addEventListener("click", openSources);
+                week.addEventListener("click", openDetails); // CHANGE
                 week.addEventListener("keydown", event => {
-                    if (event.key === "Enter" || event.key === " ") openSources(event);
+                    if (event.key === "Enter" || event.key === " ") openDetails(event); // CHANGE
                     else if (event.key === "Escape") closeCropTimelinePopover(hostEl);
                 });
             }
@@ -4174,22 +4267,25 @@ Draw.loadPlugin(function (ui) {
                 .yp-crop-timeline-y-axis-zero{position:absolute;right:5px;bottom:-3px;white-space:nowrap}
                 .yp-crop-timeline-week{display:block;border-bottom:1px solid var(--yp-neutral-300)}
                 .yp-crop-timeline-week[data-has-sources="true"]{cursor:pointer}
-                .yp-crop-timeline-week[data-has-sources="true"]:focus-visible{outline:2px solid var(--yp-primary);outline-offset:2px}
+                .yp-crop-timeline-week[data-has-sources="true"]:hover{background:rgba(16,124,65,.08);box-shadow:inset 0 0 0 1px var(--yp-primary)}
+                .yp-crop-timeline-week[data-has-sources="true"]:focus-visible{outline:2px solid var(--yp-primary);outline-offset:2px;background:rgba(16,124,65,.08)}
                 .yp-crop-timeline-week[data-month-start="true"]{border-left:1px solid var(--yp-neutral-300)}
                 .yp-crop-timeline-week[data-month-start="true"]::after{content:attr(data-month-label);position:absolute;left:1px;bottom:-14px;color:var(--yp-neutral-700);font-size:9px;line-height:1;white-space:nowrap}
                 .yp-crop-timeline-bar{position:absolute;left:50%;bottom:0;box-sizing:border-box;width:100%;transform:translateX(-50%);min-width:3px;border-radius:2px 2px 0 0}
                 .yp-crop-timeline-bar-demand{border:1px solid #c59b18;background:#ffd95a}
                 .yp-crop-timeline-bar-harvest{border:2px solid #0c3f1a;background:transparent;box-shadow:inset 0 0 0 1px rgba(12,63,26,.36),0 0 0 1px rgba(255,255,255,.78)}
                 .yp-crop-timeline-bar-inventory{border:1px solid #4f8b57;background:#62a96b}
-                .yp-crop-timeline-source-popover{position:absolute;z-index:6;left:50%;top:-8px;transform:translate(-50%,-100%);box-sizing:border-box;width:300px;max-width:min(82vw,340px);max-height:260px;overflow:auto;padding:8px;border:1px solid var(--yp-neutral-700);border-radius:7px;background:#fff;color:var(--yp-neutral-900);box-shadow:0 8px 22px rgba(0,0,0,.22);font:12px Arial,sans-serif;text-align:left}
-                .yp-crop-timeline-source-popover::after{content:"";position:absolute;left:50%;bottom:-5px;transform:translateX(-50%) rotate(45deg);width:8px;height:8px;border-right:1px solid var(--yp-neutral-700);border-bottom:1px solid var(--yp-neutral-700);background:#fff}
-                .yp-crop-timeline-source-title{font-weight:700;margin-bottom:6px}
-                .yp-crop-timeline-source-section + .yp-crop-timeline-source-section{margin-top:7px;padding-top:6px;border-top:1px solid var(--yp-neutral-300)}
-                .yp-crop-timeline-source-heading{font-size:11px;font-weight:700;color:var(--yp-neutral-700);margin-bottom:3px}
-                .yp-crop-timeline-source-row{display:block;width:100%;box-sizing:border-box;margin:2px 0;padding:5px 6px;border:0;border-radius:5px;background:#fff;text-align:left;color:var(--yp-neutral-900);font:12px Arial,sans-serif;cursor:pointer}
-                .yp-crop-timeline-source-row:hover,.yp-crop-timeline-source-row:focus{background:var(--yp-primary-bg);outline:1px solid var(--yp-primary)}
-                .yp-crop-timeline-source-name{display:block;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-                .yp-crop-timeline-source-metrics{display:block;margin-top:2px;color:var(--yp-neutral-700);font-size:10px;line-height:1.35;white-space:normal}
+                .yp-crop-timeline-details-popover{position:absolute;z-index:6;left:50%;top:-8px;transform:translate(-50%,-100%);box-sizing:border-box;width:320px;max-width:min(84vw,360px);max-height:280px;overflow:auto;padding:9px;border:1px solid var(--yp-neutral-700);border-radius:7px;background:#fff;color:var(--yp-neutral-900);box-shadow:0 8px 22px rgba(0,0,0,.22);font:12px Arial,sans-serif;text-align:left}
+                .yp-crop-timeline-details-popover::after{content:"";position:absolute;left:50%;bottom:-5px;transform:translateX(-50%) rotate(45deg);width:8px;height:8px;border-right:1px solid var(--yp-neutral-700);border-bottom:1px solid var(--yp-neutral-700);background:#fff}
+                .yp-crop-timeline-details-title{font-weight:700;font-size:13px;margin-bottom:2px}
+                .yp-crop-timeline-details-week{color:var(--yp-neutral-700);font-size:11px;margin-bottom:8px}
+                .yp-crop-timeline-details-section + .yp-crop-timeline-details-section{margin-top:8px;padding-top:7px;border-top:1px solid var(--yp-neutral-300)}
+                .yp-crop-timeline-details-heading{font-size:11px;font-weight:700;color:var(--yp-neutral-700);margin-bottom:4px}
+                .yp-crop-timeline-details-row{display:block;width:100%;box-sizing:border-box;margin:2px 0;padding:5px 6px;border:0;border-radius:5px;background:#fff;text-align:left;color:var(--yp-neutral-900);font:12px Arial,sans-serif}
+                .yp-crop-timeline-details-action{cursor:pointer}
+                .yp-crop-timeline-details-action:hover,.yp-crop-timeline-details-action:focus{background:var(--yp-primary-bg);outline:1px solid var(--yp-primary)}
+                .yp-crop-timeline-details-name{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+                .yp-crop-timeline-details-metrics{margin-top:2px;color:var(--yp-neutral-700);font-size:10px;line-height:1.35;white-space:normal}
                 .yp-harvest-marker{position:absolute;left:50%;top:-13px;bottom:0;width:0;border-left:2px solid #7a3f12;transform:translateX(-1px);pointer-events:auto;outline:none}
                 .yp-harvest-marker::before{content:attr(data-label);position:absolute;top:-1px;left:50%;transform:translateX(-50%);min-width:12px;height:12px;line-height:12px;border-radius:6px;background:#7a3f12;color:#fff;font-size:9px;font-weight:700;text-align:center}
                 .yp-harvest-marker:focus-visible::before{box-shadow:0 0 0 2px #fff,0 0 0 4px var(--yp-primary)}
@@ -4281,12 +4377,15 @@ Draw.loadPlugin(function (ui) {
                 .yp-chip[data-clickable="true"]{cursor:pointer}
                 .yp-diagnostics-wrap{display:inline-flex;align-items:center;gap:4px;position:relative}
                 .yp-diagnostics-trigger{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--yp-danger);border-radius:50%;background:#fff;color:var(--yp-danger);font:700 12px Arial,sans-serif;cursor:pointer}
+                .yp-diagnostics-trigger[data-tone="warning"]{border-color:var(--yp-warning);color:var(--yp-warning)} /* CHANGE */
                 .yp-diagnostics-layer{position:absolute;inset:0;z-index:4;pointer-events:none}
                 .yp-diagnostics-popover{position:absolute;z-index:2;min-width:230px;max-width:320px;padding:7px;border:1px solid var(--yp-danger);border-radius:7px;background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.18);color:var(--yp-neutral-900);pointer-events:auto}
                 .yp-diagnostics-popover[data-tone="warning"]{border-color:var(--yp-warning);max-width:360px;max-height:220px;overflow:auto} /* CHANGE */
+                .yp-diagnostics-popover[data-tone="danger"]{border-color:var(--yp-danger);max-width:360px;max-height:240px;overflow:auto} /* CHANGE */
                 .yp-diagnostics-popover[hidden]{display:none}
                 .yp-diagnostics-title{font-weight:700;margin-bottom:5px;color:var(--yp-danger)}
                 .yp-diagnostics-popover[data-tone="warning"] .yp-diagnostics-title{color:var(--yp-warning)} /* CHANGE */
+                .yp-diagnostics-popover[data-tone="danger"] .yp-diagnostics-title{color:var(--yp-danger)} /* CHANGE */
                 .yp-diagnostics-group-title{margin:6px 0 3px;padding-top:5px;border-top:1px solid var(--yp-neutral-300);font-size:11px;font-weight:700;color:var(--yp-neutral-700)} /* CHANGE */
                 .yp-diagnostics-title + .yp-diagnostics-group-title{margin-top:0;padding-top:0;border-top:0} /* CHANGE */
                 .yp-diagnostics-section + .yp-diagnostics-section{margin-top:5px;padding-top:5px;border-top:1px solid var(--yp-neutral-300)} /* NEW */
@@ -5057,6 +5156,7 @@ Draw.loadPlugin(function (ui) {
                 if (key === "csa") return "CSA setup";
                 if (key === "package-prices") return "Package prices";
                 if (key === "nutrition") return "Nutrition";
+                if (key === "shortage") return "Shortages"; // CHANGE
                 return "Plan Check";
             } // CHANGE
 
@@ -5104,10 +5204,8 @@ Draw.loadPlugin(function (ui) {
                     if (!cropPackageUnitCount(crop)) add({ type: "crop-packages", message: `${cropLabel(crop)} needs a package unit.`, target: { area: "crop", cropId: String(crop.id || ""), tab: "packages", field: "addPackage" }, sourceLabel: cropLabel(crop) }); // CHANGE
                 }
                 for (const metric of ((dashboard && dashboard.cropMetrics) || [])) {
-                    if (!metric || metric.status === "Missing data" || metric.status === "OK" || metric.status === "No demand" || metric.status === "Surplus") continue;
-                    const label = metric.status === "Short"
-                        ? `${cropLabel(metric.crop)} short ${formatKg(metric.shortKg)}.`
-                        : `${cropLabel(metric.crop)} has timing issues: ${formatKg(metric.shortKg)} expired or unavailable.`;
+                    if (!metric || metric.status === "Short" || metric.status === "Missing data" || metric.status === "OK" || metric.status === "No demand" || metric.status === "Surplus") continue; // CHANGE
+                    const label = `${cropLabel(metric.crop)} has timing issues: ${formatKg(metric.shortKg)} expired or unavailable.`; // CHANGE
                     add({ type: "crop-status", message: label, target: { area: "plan-check", cropId: String(metric.crop && metric.crop.id || "") }, sourceLabel: cropLabel(metric.crop) }); // CHANGE
                 }
                 for (const message of ((dashboard && dashboard.diagnostics) || [])) {
@@ -5123,10 +5221,6 @@ Draw.loadPlugin(function (ui) {
                     }); // CHANGE
                 }
                 return warnings;
-            } // CHANGE
-
-            function createWholePlanDiagnosticsControl(label) {
-                return createDiagnosticsControl(label || "All warnings", null, { groupedWarnings: wholePlanWarningItems(), tone: "warning" }); // CHANGE
             } // CHANGE
 
             function diagnosticsSectionKey(label, sectionId) {
@@ -5185,16 +5279,11 @@ Draw.loadPlugin(function (ui) {
             } // NEW
 
             function createWarningChipWithDetails(label, value, tone, onClick, options) {
-                const wrapControl = document.createElement("span");
-                wrapControl.className = "yp-diagnostics-wrap";
                 const primaryTarget = options && (options.primaryTarget || options.targets || options.highlightOnlyTarget); // CHANGE
                 const warningItems = Array.isArray(options && options.warningItems)
                     ? options.warningItems
                     : (String(label || "") === "Warnings" ? wholePlanWarningItems() : [{ message: `${label || ""}${value ? " " + value : ""}`.trim(), target: primaryTarget, action: onClick }]); // CHANGE
-                wrapControl.appendChild(createActionablePopoverChip(label, value, tone, warningItems, onClick, { ...(options || {}), popoverTitle: options && options.diagnosticsLabel ? String(options.diagnosticsLabel) : "All warnings" })); // CHANGE
-                const diagnostics = createWholePlanDiagnosticsControl(options && options.diagnosticsLabel ? String(options.diagnosticsLabel) : "All warnings"); // CHANGE
-                if (diagnostics) wrapControl.appendChild(diagnostics);
-                return wrapControl;
+                return createActionablePopoverChip(label, value, tone, warningItems, onClick, { ...(options || {}), popoverTitle: options && options.popoverTitle ? String(options.popoverTitle) : String(label || "Warnings") }); // CHANGE
             } // CHANGE
 
             function closeDiagnosticsPopovers(except) {
@@ -5206,6 +5295,52 @@ Draw.loadPlugin(function (ui) {
                     }
                 }
             }
+
+            function bindDiagnosticsPopover(wrapControl, trigger, popover, options) {
+                const settings = options || {};
+                let hideTimer = null;
+                const clearHideTimer = () => {
+                    if (hideTimer !== null) {
+                        clearTimeout(hideTimer);
+                        hideTimer = null;
+                    }
+                };
+                const show = pinned => {
+                    clearHideTimer();
+                    closeDiagnosticsPopovers(popover);
+                    positionDiagnosticsPopover(trigger, popover);
+                    if (pinned) wrapControl.dataset.pinned = "true";
+                };
+                const hide = () => {
+                    clearHideTimer();
+                    if (wrapControl.dataset.pinned !== "true") popover.hidden = true;
+                };
+                const scheduleHide = event => {
+                    const related = event && event.relatedTarget;
+                    if (related && (wrapControl.contains(related) || popover.contains(related))) return;
+                    clearHideTimer();
+                    hideTimer = setTimeout(hide, 90);
+                };
+                trigger.addEventListener("focus", () => show(false));
+                trigger.addEventListener("mouseenter", () => show(false));
+                trigger.addEventListener("mouseleave", scheduleHide);
+                wrapControl.addEventListener("mouseleave", scheduleHide);
+                popover.addEventListener("mouseenter", clearHideTimer);
+                popover.addEventListener("mouseleave", scheduleHide);
+                popover.addEventListener("click", event => event.stopPropagation());
+                wrapControl.addEventListener("click", event => event.stopPropagation());
+                if (settings.toggleOnClick) {
+                    trigger.addEventListener("click", event => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const nextPinned = wrapControl.dataset.pinned !== "true";
+                        wrapControl.dataset.pinned = nextPinned ? "true" : "false";
+                        if (nextPinned) show(true);
+                        else popover.hidden = true;
+                    });
+                }
+                return { show, hide };
+            } // CHANGE: all diagnostics popovers share hover, sticky, and gap-tolerant close behavior.
 
             function positionDiagnosticsPopover(trigger, popover) {
                 if (!trigger || !popover || !card.isConnected) return;
@@ -5504,26 +5639,18 @@ Draw.loadPlugin(function (ui) {
             function createActionablePopoverChip(label, value, tone, items, singleAction, options) {
                 const diagnostics = (items || []).filter(item => diagnosticItemMessage(item));
                 const actionable = diagnostics.filter(diagnosticItemIsActionable);
-                if (actionable.length <= 1) {
-                    const direct = event => {
-                        if (actionable[0]) return activateDiagnosticItem(actionable[0], event && event.currentTarget, event);
-                        if (typeof singleAction === "function") return singleAction(event);
-                        return false;
-                    };
-                    return createChip(label, value, tone, actionable.length || singleAction ? direct : null, options);
-                }
+                if (!diagnostics.length) return createChip(label, value, tone, typeof singleAction === "function" ? singleAction : null, options); // CHANGE
                 const wrapControl = document.createElement("span");
                 wrapControl.className = "yp-diagnostics-wrap";
-                let popover = null;
-                let show = null;
-                const chip = createChip(label, value, tone, event => {
-                    event.preventDefault(); event.stopPropagation();
-                    const nextPinned = wrapControl.dataset.pinned !== "true";
-                    wrapControl.dataset.pinned = nextPinned ? "true" : "false";
-                    if (nextPinned) show(true);
-                    else popover.hidden = true;
-                }, options); // CHANGE
-                popover = document.createElement("div");
+                const directAction = diagnostics.length === 1 && (actionable[0] || typeof singleAction === "function")
+                    ? event => {
+                        if (actionable[0]) return activateDiagnosticItem(actionable[0], event && event.currentTarget, event);
+                        return singleAction(event);
+                    }
+                    : null; // CHANGE
+                const pinAction = !directAction && diagnostics.length > 1 ? () => {} : null; // CHANGE
+                const chip = createChip(label, value, tone, directAction || pinAction, options); // CHANGE
+                const popover = document.createElement("div");
                 popover.className = "yp-diagnostics-popover";
                 popover.dataset.tone = tone || "neutral";
                 popover.hidden = true;
@@ -5533,14 +5660,7 @@ Draw.loadPlugin(function (ui) {
                 title.textContent = options && options.popoverTitle ? String(options.popoverTitle) : label;
                 popover.appendChild(title);
                 for (const item of diagnostics) appendDiagnosticPopoverItem(popover, item, chip);
-                show = pinned => { closeDiagnosticsPopovers(popover); positionDiagnosticsPopover(chip, popover); if (pinned) wrapControl.dataset.pinned = "true"; };
-                const hide = () => { if (wrapControl.dataset.pinned !== "true") popover.hidden = true; };
-                chip.addEventListener("focus", () => show(false));
-                chip.addEventListener("mouseenter", () => show(false));
-                wrapControl.addEventListener("mouseleave", event => { if (!popover.contains(event.relatedTarget)) hide(); });
-                popover.addEventListener("mouseleave", hide);
-                popover.addEventListener("click", event => event.stopPropagation());
-                wrapControl.addEventListener("click", event => event.stopPropagation());
+                bindDiagnosticsPopover(wrapControl, chip, popover, { toggleOnClick: !directAction && diagnostics.length > 1 }); // CHANGE
                 wrapControl.appendChild(chip);
                 diagnosticsLayer.appendChild(popover);
                 return wrapControl;
@@ -5558,6 +5678,7 @@ Draw.loadPlugin(function (ui) {
                 trigger.className = "yp-diagnostics-trigger";
                 trigger.textContent = "?";
                 trigger.setAttribute("aria-label", label);
+                if (settings.tone) trigger.dataset.tone = String(settings.tone); // CHANGE
                 const popover = document.createElement("div");
                 popover.className = "yp-diagnostics-popover";
                 if (settings.tone) popover.dataset.tone = String(settings.tone); // CHANGE
@@ -5580,15 +5701,7 @@ Draw.loadPlugin(function (ui) {
                 } else {
                     appendDiagnosticsSection(popover, label, "diagnostics", "Diagnostics", diagnostics.map(result => ({ message: validationMessage(result), target: result && result.target, result })), trigger); // CHANGE
                 }
-                const show = pinned => { closeDiagnosticsPopovers(popover); positionDiagnosticsPopover(trigger, popover); if (pinned) wrapControl.dataset.pinned = "true"; }; // CHANGE
-                const hide = () => { if (wrapControl.dataset.pinned !== "true") popover.hidden = true; };
-                trigger.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); const nextPinned = wrapControl.dataset.pinned !== "true"; wrapControl.dataset.pinned = nextPinned ? "true" : "false"; if (nextPinned) show(true); else popover.hidden = true; });
-                trigger.addEventListener("focus", () => show(false));
-                trigger.addEventListener("mouseenter", () => show(false));
-                wrapControl.addEventListener("mouseleave", event => { if (!popover.contains(event.relatedTarget)) hide(); }); // CHANGE
-                popover.addEventListener("mouseleave", hide); // CHANGE
-                popover.addEventListener("click", event => event.stopPropagation()); // CHANGE
-                wrapControl.addEventListener("click", event => event.stopPropagation());
+                bindDiagnosticsPopover(wrapControl, trigger, popover, { toggleOnClick: true }); // CHANGE
                 wrapControl.appendChild(trigger);
                 diagnosticsLayer.appendChild(popover); // CHANGE: hidden details should not pollute strip/header textContent.
                 return wrapControl;
@@ -5596,41 +5709,12 @@ Draw.loadPlugin(function (ui) {
 
             function createMessagePopoverChip(label, tone, messages, action, options) {
                 const diagnostics = (messages || []).map(message => typeof message === "string" ? { message: String(message || "").trim() } : message).filter(item => diagnosticItemMessage(item)); // CHANGE
-                if (diagnostics.some(diagnosticItemIsActionable)) return createActionablePopoverChip(label, "", tone, diagnostics, action, options); // CHANGE
-                const chip = createChip(label, "", tone, action, options); // CHANGE
-                if (!diagnostics.length) return chip;
-                const wrapControl = document.createElement("span");
-                wrapControl.className = "yp-diagnostics-wrap";
-                const popover = document.createElement("div");
-                popover.className = "yp-diagnostics-popover";
-                popover.dataset.tone = tone || "neutral";
-                popover.hidden = true;
-                popover.__ypDiagnosticsOwner = wrapControl; // CHANGE
-                const title = document.createElement("div");
-                title.className = "yp-diagnostics-title";
-                title.textContent = options && options.popoverTitle ? String(options.popoverTitle) : label; // CHANGE
-                popover.appendChild(title);
-                for (const item of diagnostics) appendDiagnosticPopoverItem(popover, item, chip); // CHANGE
-                const show = () => { closeDiagnosticsPopovers(popover); positionDiagnosticsPopover(chip, popover); }; // CHANGE
-                const hide = () => { popover.hidden = true; };
-                chip.addEventListener("focus", show);
-                chip.addEventListener("mouseenter", show);
-                wrapControl.addEventListener("mouseleave", event => { if (!popover.contains(event.relatedTarget)) hide(); }); // CHANGE
-                popover.addEventListener("mouseleave", hide); // CHANGE
-                popover.addEventListener("click", event => event.stopPropagation()); // CHANGE
-                wrapControl.appendChild(chip);
-                diagnosticsLayer.appendChild(popover); // CHANGE: hidden details should not pollute badge host textContent.
-                return wrapControl;
+                return diagnostics.length ? createActionablePopoverChip(label, "", tone, diagnostics, action, options) : createChip(label, "", tone, action, options); // CHANGE
             } // CHANGE: warning attention chips can show formatted plain-message popovers without losing chip clicks.
 
             function createDiagnosticsChip(label, tone, results, onClick, options) {
-                const wrapControl = document.createElement("span");
-                wrapControl.className = "yp-diagnostics-wrap";
                 const items = (results || []).map(result => ({ message: validationMessage(result), target: result && result.target, result })); // CHANGE
-                wrapControl.appendChild(createActionablePopoverChip(label, "", tone, items, onClick, options)); // CHANGE
-                const diagnostics = createWholePlanDiagnosticsControl(label); // CHANGE
-                if (diagnostics) wrapControl.appendChild(diagnostics);
-                return wrapControl;
+                return createActionablePopoverChip(label, "", tone, items, onClick, options); // CHANGE
             }
 
             function createValidationAttentionChip(label, tone, results, countIssues, fallback) {
@@ -5679,6 +5763,84 @@ Draw.loadPlugin(function (ui) {
                     : { targetKg: Number(dashboard && dashboard.targetKg) || 0, usableSupplyKg: Math.max(0, (Number(dashboard && dashboard.targetKg) || 0) - (Number(dashboard && dashboard.shortKg) || 0)), shortKg: Number(dashboard && dashboard.shortKg) || 0, expiredKg: 0, worstShortageKg: 0, worstShortageWeek: "", shortWeeks: 0 };
             }
 
+            const PLAN_CHECK_GOOD_MIN_RATIO = 0.95; // CHANGE
+            const PLAN_CHECK_GOOD_MAX_RATIO = 1.10; // CHANGE
+
+            function cropCoverageRatio(metric) {
+                const target = Math.max(0, Number(metric && metric.targetKg) || 0);
+                return target > EPS ? (Math.max(0, Number(metric && metric.supplyKg) || 0) / target) : null;
+            } // CHANGE
+
+            function planCheckStatusDeltaText(metric, kind) {
+                const target = Math.max(0, Number(metric && metric.targetKg) || 0);
+                const supply = Math.max(0, Number(metric && metric.supplyKg) || 0);
+                const ratio = cropCoverageRatio(metric);
+                const pct = ratio == null ? "" : ` - ${Math.round(ratio * 100)}%`;
+                const delta = kind === "short"
+                    ? Math.max(0, target - supply)
+                    : (kind === "excess" ? Math.max(0, supply - target) : Math.abs(supply - target));
+                const label = kind === "short" ? "short" : (kind === "excess" ? "excess" : (supply >= target ? "excess" : "short"));
+                return delta > EPS ? `${formatKg(delta)} ${label}${pct}` : `on target${pct}`;
+            } // CHANGE
+
+            function planCheckStatusGroups(crops) {
+                const groups = { short: [], good: [], excess: [] };
+                for (const crop of (crops || [])) {
+                    const metric = dashboard && dashboard.cropMetricsById && dashboard.cropMetricsById.get(String(crop && crop.id || ""));
+                    const ratio = cropCoverageRatio(metric);
+                    if (!metric || ratio == null || metric.status === "Missing data" || metric.status === "No demand" || metric.status === "Expired / timing issue") continue;
+                    const kind = ratio < PLAN_CHECK_GOOD_MIN_RATIO ? "short" : (ratio > PLAN_CHECK_GOOD_MAX_RATIO ? "excess" : "good");
+                    const cropId = String(metric.crop && metric.crop.id || "");
+                    groups[kind].push({
+                        type: kind === "short" ? "shortage" : kind,
+                        tone: kind === "short" ? "danger" : "success",
+                        message: `${cropLabel(metric.crop)} - ${planCheckStatusDeltaText(metric, kind)}`,
+                        sourceLabel: "Plan Check",
+                        target: { area: "crop", cropId, tab: "basics", section: "timeline" },
+                        action: () => selectCropTimelineFromStatus(cropId),
+                        metric
+                    });
+                }
+                return groups;
+            } // CHANGE
+
+            function createPlanCheckStatusBadge(label, tone, items, chipKind) {
+                return createActionablePopoverChip(label, String((items || []).length), tone, items || [], null, { popoverTitle: `${label} crops`, chipKind });
+            } // CHANGE
+
+            function selectCropTimelineFromStatus(cropId) {
+                selectCropFromAttention(cropId, { scrollTimeline: true, syncPlanCheck: true });
+            } // CHANGE
+
+            function topShortageItems() {
+                return ((dashboard && dashboard.cropMetrics) || [])
+                    .filter(metric => metric && metric.status === "Short" && Number(metric.shortKg) > EPS)
+                    .map(metric => {
+                        const cropId = String(metric.crop && metric.crop.id || "");
+                        return {
+                            type: "shortage",
+                            tone: "danger",
+                            shortKg: Number(metric.shortKg) || 0,
+                            message: `${cropLabel(metric.crop)} short ${formatKg(metric.shortKg)}`,
+                            sourceLabel: "Plan Check",
+                            target: { area: "plan-check", cropId },
+                            action: () => selectCropFromAttention(cropId, { highlightPlanCheckRow: true })
+                        };
+                    });
+            } // CHANGE
+
+            function createGroupedShortAttentionChip(shortageItems) {
+                const items = Array.isArray(shortageItems) ? shortageItems : [];
+                if (!items.length) return null;
+                const shortKg = items.reduce((sum, item) => sum + Math.max(0, Number(item && item.shortKg) || 0), 0);
+                return createActionablePopoverChip("Short", formatKg(shortKg), "danger", items, null, { popoverTitle: "Short crops", chipKind: "attention-short-group" });
+            } // CHANGE
+
+            function createTopWarningsControl(shortageItems) {
+                const items = wholePlanWarningItems().concat(Array.isArray(shortageItems) ? shortageItems : []);
+                return items.length ? createDiagnosticsControl("All warnings", null, { groupedWarnings: items, tone: "danger" }) : null;
+            } // CHANGE
+
             function buildAttentionItems(chartSummary) {
                 const items = [];
                 const add = item => { if (items.length < 8 && item) items.push(item); };
@@ -5700,6 +5862,11 @@ Draw.loadPlugin(function (ui) {
                 const csaErrors = PlanSchema.validateCsa(plan); // NEW
                 if (csaErrors.length) add(createValidationAttentionChip("CSA setup issues", "danger", csaErrors, true, () => { state.csaExpanded = true; renderCsa(true); })); // CHANGE
                 if ((dashboard && dashboard.diagnostics || []).length && !items.length) add(createChip("Plan Check has diagnostics", "", "warning", null, { title: (dashboard.diagnostics || []).join("\n"), primaryTarget: { area: "plan-check", section: "diagnostics" }, chipKind: "plan-check-diagnostics" })); // CHANGE
+                const shortageItems = topShortageItems(); // CHANGE
+                const groupedShort = createGroupedShortAttentionChip(shortageItems); // CHANGE
+                if (groupedShort) items.push(groupedShort); // CHANGE
+                const warningsControl = createTopWarningsControl(shortageItems); // CHANGE
+                if (warningsControl) items.push(warningsControl); // CHANGE
                 return items;
             }
 
@@ -5709,7 +5876,8 @@ Draw.loadPlugin(function (ui) {
                 renderSelectedEditor();
                 renderCropPlan(false);
                 renderPlanCheck();
-                if (options && options.highlightPlanCheckRow) scrollAndHighlightTarget(findPlanCheckCropRow(cropId)); // CHANGE
+                if (options && options.scrollTimeline) scrollAndHighlightTarget(editorBox.querySelector(".yp-harvest-timeline-section") || editorBox.querySelector(".yp-harvest-timeline") || editorBox); // CHANGE
+                else if (options && options.highlightPlanCheckRow) scrollAndHighlightTarget(findPlanCheckCropRow(cropId)); // CHANGE
                 else if (options && options.scrollPlanCheckRow) scrollToPlanCheckCropRow(cropId); // NEW
             } // CHANGE
 
@@ -5973,6 +6141,56 @@ Draw.loadPlugin(function (ui) {
                 } // CHANGE
                 if (entry.kind === "self") return `Self-use - ${cropLabel(crop)} ${qty} / ${demandFrequencyLabel(row.frequency, row.everyN)} (${from}-${to})`; // CHANGE
                 return `CSA component ${Number(entry.componentIndex) + 1} - ${cropLabel(crop)} ${qty} (${from}-${to})`; // CHANGE
+            } // CHANGE
+
+            function cropLinkedRows(crops) { // CHANGE
+                const cropList = (Array.isArray(crops) ? crops : [crops]).filter(Boolean); // CHANGE
+                const cropById = new Map(cropList.map(crop => [String(crop && crop.id || ""), crop]).filter(entry => entry[0])); // CHANGE
+                const groups = cropList.map(crop => ({ crop, rows: [] })).filter(group => String(group.crop && group.crop.id || "")); // CHANGE
+                const groupByCropId = new Map(groups.map(group => [String(group.crop && group.crop.id || ""), group])); // CHANGE
+                for (const line of (plan.demands || [])) { // CHANGE
+                    const group = groupByCropId.get(rowCropId(line)); // CHANGE
+                    if (group) group.rows.push({ kind: "demand", row: line }); // CHANGE
+                } // CHANGE
+                for (const line of ((plan.selfSufficiency && plan.selfSufficiency.lines) || [])) { // CHANGE
+                    const group = groupByCropId.get(rowCropId(line)); // CHANGE
+                    if (group) group.rows.push({ kind: "self", row: line }); // CHANGE
+                } // CHANGE
+                for (const [componentIndex, component] of ((plan.csa && plan.csa.components) || []).entries()) { // CHANGE
+                    const group = groupByCropId.get(rowCropId(component)); // CHANGE
+                    if (group) group.rows.push({ kind: "csa", row: component, componentIndex }); // CHANGE
+                } // CHANGE
+                return groups.filter(group => cropById.has(String(group.crop && group.crop.id || "")) && group.rows.length); // CHANGE
+            } // CHANGE
+
+            function cropLinkedRowLabel(entry) { // CHANGE
+                const row = entry && entry.row || {}; // CHANGE
+                const qty = `${formatCompactNumber(row.qty)} ${row.unit || "No unit"}`; // CHANGE
+                const from = YearPlanDashboard.formatYmd(row.from || row.start || (entry.kind === "csa" && plan.csa && plan.csa.start) || "") || "?"; // CHANGE
+                const to = YearPlanDashboard.formatYmd(row.to || row.end || (entry.kind === "csa" && plan.csa && plan.csa.end) || "") || "?"; // CHANGE
+                if (entry.kind === "demand") { // CHANGE
+                    const channel = (plan.demandChannels || []).find(item => String(item && item.id || "") === String(row.channelId || "")); // CHANGE
+                    return `${String(channel && channel.label || row.channelId || "Channel")}: ${qty} / ${demandFrequencyLabel(row.frequency, row.everyN)} (${from}-${to})`; // CHANGE
+                } // CHANGE
+                if (entry.kind === "self") return `Self-use: ${qty} / ${demandFrequencyLabel(row.frequency, row.everyN)} (${from}-${to})`; // CHANGE
+                return `CSA component ${Number(entry.componentIndex) + 1}: ${qty} (${from}-${to})`; // CHANGE
+            } // CHANGE
+
+            function cropDeletionConfirmMessage(crops, groups) { // CHANGE
+                const cropList = (Array.isArray(crops) ? crops : [crops]).filter(Boolean); // CHANGE
+                const title = cropList.length === 1 ? `Remove ${cropLabel(cropList[0])} from this year plan?` : `Remove ${cropList.length} crops from this year plan?`; // CHANGE
+                const lines = []; // CHANGE
+                for (const group of (groups || [])) { // CHANGE
+                    lines.push(`- ${cropLabel(group.crop)}`); // CHANGE
+                    for (const row of group.rows || []) lines.push(`  - ${cropLinkedRowLabel(row)}`); // CHANGE
+                } // CHANGE
+                return `${title}\n\nThe following linked rows will also be deleted:\n${lines.join("\n")}\n\nContinue?`; // CHANGE
+            } // CHANGE
+
+            function confirmCropRemoval(crops) { // CHANGE
+                const cropList = (Array.isArray(crops) ? crops : [crops]).filter(Boolean); // CHANGE
+                const groups = cropLinkedRows(cropList); // CHANGE
+                return !groups.length || confirm(cropDeletionConfirmMessage(cropList, groups)); // CHANGE
             } // CHANGE
 
             function packageDeletionConfirmMessage(crop, pkg, linkedRows) { // CHANGE
@@ -6769,7 +6987,7 @@ Draw.loadPlugin(function (ui) {
                 if (attentionItems.length) {
                     const label = document.createElement("div");
                     label.className = "yp-attention-title";
-                    label.textContent = "Needs attention";
+                    label.textContent = "Plan alerts"; // CHANGE
                     const row = document.createElement("div");
                     row.className = "yp-chip-row";
                     for (const item of attentionItems) row.appendChild(item);
@@ -6814,10 +7032,8 @@ Draw.loadPlugin(function (ui) {
                     statusHost.title = detail; // CHANGE
                     const badgeAction = cropMenuBadgeAction(metric); // CHANGE
                     const cropResults = cropValidationResults(metric.crop.id); // CHANGE
-                    const badgeItems = metric.status === "Missing data" && cropResults.length ? cropResults.map(result => ({ message: validationMessage(result), target: result && result.target, result })) : []; // CHANGE
+                    const badgeItems = cropResults.length ? cropResults.map(result => ({ message: validationMessage(result), target: result && result.target, result })) : []; // CHANGE
                     statusHost.appendChild(badgeItems.length ? createActionablePopoverChip(detail, "", statusTone(metric.status), badgeItems, badgeAction, { popoverTitle: `${cropLabel(metric.crop)} diagnostics` }) : createChip(detail, "", statusTone(metric.status), badgeAction)); // CHANGE
-                    const cropDiagnostics = badgeAction ? createWholePlanDiagnosticsControl(`${cropLabel(metric.crop)} diagnostics`) : (cropHasDiagnostics(metric.crop.id) ? createDiagnosticsControl(`${cropLabel(metric.crop)} diagnostics`, cropResults) : null); // CHANGE
-                    if (cropDiagnostics) statusHost.appendChild(cropDiagnostics);
                     cardEl.appendChild(name); // CHANGE
                     cardEl.appendChild(statusHost); // CHANGE
                     cardEl.addEventListener("click", () => {
@@ -6997,7 +7213,7 @@ Draw.loadPlugin(function (ui) {
                     const weeklyCrop = runtime.weekly && runtime.weekly.perCrop && runtime.weekly.perCrop.get(String(crop.id));
                     const timelineCrop = weeklyCrop ? { ...weeklyCrop, sourcesByWeek: buildCropTimelineSources(crop, weeklyCrop) } : weeklyCrop; // CHANGE
                     const openWeekIndex = Number.isFinite(Number(state.pendingTimelineWeekIndex)) ? Number(state.pendingTimelineWeekIndex) : null; // CHANGE
-                    const restoredOpen = renderCropTimeline(editorRefs.harvestTimeline, runtime.weekStarts, timelineCrop, crop, { openWeekIndex, onActivateSource: activateCropTimelineSource }); // CHANGE: show demand, raw harvest, inventory, and source popovers for the selected crop.
+                    const restoredOpen = renderCropTimeline(editorRefs.harvestTimeline, runtime.weekStarts, timelineCrop, crop, { openWeekIndex, onActivateSource: activateCropTimelineSource }); // CHANGE: show demand, raw harvest, inventory, and actionable details for the selected crop.
                     if (restoredOpen) setTimeout(() => { if (state.pendingTimelineWeekIndex === openWeekIndex) state.pendingTimelineWeekIndex = null; }, 0); // CHANGE
                 }
             }
@@ -7145,17 +7361,15 @@ Draw.loadPlugin(function (ui) {
                 updateChartLegendState();
                 chartHiddenMessage.style.display = visibleChartSeriesIds.size === 0 ? "block" : "none";
                 chartHitModel = drawPlanChart(canvas, chartModel, visibleChartSeriesIds);
-                const worstShortage = chartSummary.worstShortageKg > 0
-                    ? `${formatKg(chartSummary.worstShortageKg)} \u00b7 Week of ${mxUtils.htmlEntities(chartSummary.worstShortageWeek)}`
-                    : "-";
+                const statusGroups = planCheckStatusGroups(visibleCrops); // CHANGE
                 setChipRow(planCheckSummary, [
+                    createPlanCheckStatusBadge("Short", "danger", statusGroups.short, "plan-check-status-short"), // CHANGE
+                    createPlanCheckStatusBadge("Good", "success", statusGroups.good, "plan-check-status-good"), // CHANGE
+                    createPlanCheckStatusBadge("Excess", "success", statusGroups.excess, "plan-check-status-excess"), // CHANGE
                     createChip("Target", formatKg(chartSummary.targetKg), "primary"),
                     createChip("Harvested", formatKg(chartSummary.harvestKg), chartSummary.harvestKg > EPS ? "success" : "neutral"),
                     createChip("Usable", formatKg(chartSummary.usableSupplyKg), chartSummary.usableSupplyKg > EPS ? "success" : "neutral"),
-                    createChip("Short", formatKg(chartSummary.shortKg), chartSummary.shortKg > EPS ? "danger" : "success", null, chartSummary.shortKg > EPS ? { primaryTarget: { area: "plan-check", rowKind: "shortage-weeks" }, chipKind: "short" } : null), // CHANGE
                     createChip("Expired", formatKg(chartSummary.expiredKg), chartSummary.expiredKg > EPS ? "warning" : "neutral", null, chartSummary.expiredKg > EPS ? { primaryTarget: { area: "plan-check", chipKind: "expired" }, chipKind: "expired" } : null), // CHANGE
-                    createChip("Worst shortage", worstShortage, chartSummary.worstShortageKg > EPS ? "danger" : "neutral", null, chartSummary.worstShortageKg > EPS ? { primaryTarget: { area: "plan-check", rowKind: "shortage-weeks" }, chipKind: "worst-shortage" } : null), // CHANGE
-                    createChip("Short weeks", String(chartSummary.shortWeeks), chartSummary.shortWeeks > 0 ? "danger" : "success", null, chartSummary.shortWeeks > 0 ? { primaryTarget: { area: "plan-check", rowKind: "shortage-weeks" }, chipKind: "short-weeks" } : null), // CHANGE
                     createChip("Total potential", formatMoney(scopedRevenue.potentialRevenue), "neutral"),
                     createChip("Total fulfilled", formatMoney(scopedRevenue.fulfilledRevenue), scopedRevenue.fulfilledRevenue > EPS ? "success" : "neutral")
                 ]);
@@ -7200,7 +7414,7 @@ Draw.loadPlugin(function (ui) {
                     const metric = dashboard.cropMetricsById.get(String(crop.id));
                     const statusCell = cropRows[index] && cropRows[index].cells && cropRows[index].cells[8];
                     if (!statusCell || !metric || !cropHasDiagnostics(crop.id)) return;
-                    const diagnostics = createDiagnosticsControl(`${cropLabel(crop)} diagnostics`, cropValidationResults(crop.id));
+                    const diagnostics = createDiagnosticsChip("Details", statusTone(metric.status), cropValidationResults(crop.id), null, { popoverTitle: `${cropLabel(crop)} diagnostics` }); // CHANGE
                     if (diagnostics) statusCell.appendChild(document.createTextNode(" "));
                     if (diagnostics) statusCell.appendChild(diagnostics);
                 });
@@ -8375,6 +8589,7 @@ Draw.loadPlugin(function (ui) {
                 if (state.activeTab === "packages") renderPackages(crop, content);
                 else renderBasics(crop, content);
                 remove.addEventListener("click", () => {
+                    if (!confirmCropRemoval(crop)) return; // CHANGE
                     const index = removePlanCropAndLinkedRows(crop); // CHANGE
                     const nextCropId = YearPlanDashboard.resolveSelectedCropId(plan.crops, "", index);
                     if (nextCropId) setSelectedCropEverywhere(nextCropId);
@@ -8618,7 +8833,7 @@ Draw.loadPlugin(function (ui) {
             fillTemplateDropdown();
             saveTemplate.disabled = true;
 
-            const addCropsButton = mkBtn("Add crops", "add"); // CHANGE
+            const addCropsButton = mkBtn("Add/Remove crops", "add"); // CHANGE
             const reloadPlants = mkBtn("Reload crops", "neutral");
             const plantMessage = document.createElement("span");
             plantMessage.style.color = "#666";
@@ -8960,7 +9175,7 @@ Draw.loadPlugin(function (ui) {
                 head.className = "yp-picker-head"; // CHANGE
                 const title = document.createElement("div"); // CHANGE
                 title.className = "yp-picker-title"; // CHANGE
-                title.textContent = "Add crops"; // CHANGE
+                title.textContent = "Add/Remove crops"; // CHANGE
                 const close = mkBtn("Close", "neutral"); // CHANGE
                 head.appendChild(title); head.appendChild(close); // CHANGE
                 const bodyEl = document.createElement("div"); // CHANGE
@@ -9286,12 +9501,12 @@ Draw.loadPlugin(function (ui) {
                 search.addEventListener("input", () => { query = search.value.trim(); render(); }); // CHANGE
                 apply.addEventListener("click", () => { // CHANGE
                     if (!hasPendingChanges()) return; // CHANGE
-                    if (removedCropIds.size && !confirm(`Remove ${removedCropIds.size} crop${removedCropIds.size === 1 ? "" : "s"} from this year plan? Linked demand, self-use, and CSA rows for removed crops will also be deleted.`)) { // CHANGE
+                    const removedCrops = Array.from(removedCropIds).map(id => originalByCropId.get(id)).filter(Boolean); // CHANGE
+                    if (removedCrops.length && !confirmCropRemoval(removedCrops)) { // CHANGE
                         warning.textContent = "Changes not applied."; // CHANGE
                         return; // CHANGE
                     } // CHANGE
                     const addedOptions = leafOrder.filter(id => addedLeafIds.has(id)).map(id => leafById.get(id)).filter(Boolean).map(node => node.value); // CHANGE
-                    const removedCrops = Array.from(removedCropIds).map(id => originalByCropId.get(id)).filter(Boolean); // CHANGE
                     closePicker(true); // CHANGE
                     applyAddCropTransferChanges(addedOptions, removedCrops, previousSelectedId); // CHANGE
                 }); // CHANGE

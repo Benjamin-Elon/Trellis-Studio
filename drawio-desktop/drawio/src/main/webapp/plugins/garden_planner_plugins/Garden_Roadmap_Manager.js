@@ -26,7 +26,8 @@ Draw.loadPlugin(function (ui) {
     const baseVisible = graph.isCellVisible ? graph.isCellVisible.bind(graph) : () => true;
 
     function attr(cell, name) { return cell && cell.value && cell.value.getAttribute ? cell.value.getAttribute(name) || '' : ''; }
-    function id(cell) { return cell ? String(cell.id || (cell.getId && cell.getId()) || '') : ''; }
+    function rawId(cell) { return cell ? (cell.getId ? cell.getId() : cell.id) : null; } // NEW
+    function id(cell) { const value = rawId(cell); return value == null ? '' : String(value); } // CHANGE
     function kind(cell) { return attr(cell, 'roadmap_type'); }
     function children(cell) { return model.getChildren ? model.getChildren(cell) || [] : Array.from({ length: model.getChildCount(cell) }, (_, i) => model.getChildAt(cell, i)); }
     function parent(cell) { return model.getParent ? model.getParent(cell) : cell && cell.parent; }
@@ -61,6 +62,18 @@ Draw.loadPlugin(function (ui) {
         return match ? Number(match[1]) : 0; // NEW
     } // NEW
     function firstBoardTop(moduleCell) { return moduleHeaderHeight(moduleCell) + PAD; } // NEW
+
+    function hasMissingCellId(cell) { const value = rawId(cell); return value == null || String(value) === ''; } // NEW
+    function isContainedCell(cell) { return !!cell && (!model.contains || model.contains(cell)); } // NEW
+    function materializeInsertedCellIds(cells) { // NEW
+        collectDescendants(cells || []).forEach(cell => { // NEW
+            if (!hasMissingCellId(cell) || !isContainedCell(cell)) return; // NEW
+            const previous = rawId(cell); // NEW
+            if (previous != null && model.cells && model.cells[previous] === cell) delete model.cells[previous]; // NEW
+            if (cell.setId) cell.setId(null); else cell.id = null; // NEW
+            if (model.cellAdded) model.cellAdded(cell); // NEW
+        }); // NEW
+    } // NEW
 
     /** Clone XML values so each metadata change participates in mxGraph undo. // NEW */
     function patch(cell, attributes) {
@@ -210,6 +223,7 @@ Draw.loadPlugin(function (ui) {
 
     /** Pack against full dates; trimming changes horizontal projection only. // NEW */
     function calculateLayout(board, canonical) {
+        materializeInsertedCellIds([board]); // NEW
         const records = processRecords(board), state = canonical ? core.normalizeView({ perspective: 'inception', today: { leftHidden: 0 }, inception: { leftHidden: 0 } }) : getViewState(board); // CHANGE
         const anchor = anchorFor(board, records, state.perspective);
         const extent = records.flatMap(process => [process, ...process.objects]);
@@ -294,6 +308,7 @@ Draw.loadPlugin(function (ui) {
 
     /** Build one immutable display arrangement per root; no personal offset is stored in a cell. */ // NEW
     function personalProjection(root) { // NEW
+        materializeInsertedCellIds([root]); // NEW
         const roadmapBoards = collectDescendants([root]).filter(cell => kind(cell) === 'board'); // NEW
         const key = roadmapBoards.map(preferenceKey).join('|'), cached = projections.get(root); if (cached && cached.key === key) return cached.geometry; // NEW
         const geometry = new Map(), previous = new Map(), modules = new Set(roadmapBoards.map(parent)); // NEW
@@ -618,8 +633,8 @@ Draw.loadPlugin(function (ui) {
     const baseCellsAdded = graph.cellsAdded; // NEW
     if (baseCellsAdded) graph.cellsAdded = function (cells) { // NEW
         const args = arguments, receiver = this; // NEW
-        if (!collectDescendants(cells || []).some(cell => pendingCopies.has(cell))) return baseCellsAdded.apply(this, args); // NEW
-        return command(() => { const result = baseCellsAdded.apply(receiver, args); finishCopies(cells); return result; }); // NEW
+        if (!collectDescendants(cells || []).some(cell => pendingCopies.has(cell))) { const result = baseCellsAdded.apply(this, args); materializeInsertedCellIds(cells); return result; } // CHANGE
+        return command(() => { const result = baseCellsAdded.apply(receiver, args); materializeInsertedCellIds(cells); finishCopies(cells); return result; }); // CHANGE
     }; // NEW
 
     // Project personal geometry without mutating any stored cell or undo history. // NEW

@@ -2159,14 +2159,16 @@ Draw.loadPlugin(function (ui) {
             return isRoleCard(roleCard) && isActiveTeamSection(target) && parentTeamModuleForSection(target) === roleCardTeamModule(roleCard); // NEW
         }
 
-        function isAllowedModuleParent(parent) {
-            return !!parent && (parent === graph.getDefaultParent() || isModule(parent));
+        function isAllowedModuleParentForCell(cell, parent) {
+            if (!isModule(cell) || !parent) return false; // CHANGE: module parenting is decided from both child and target type.
+            if (parent === graph.getDefaultParent()) return true; // CHANGE: every module type may live at the diagram root.
+            return isPlainRegularModule(cell) && isPlainRegularModule(parent); // CHANGE: only regular modules may nest, and only inside regular modules.
         }
 
         function restoreModuleToDefaultParent(cell) {
             if (!isModule(cell)) return false;
             const parent = model.getParent(cell);
-            if (isAllowedModuleParent(parent)) return false;
+            if (isAllowedModuleParentForCell(cell, parent)) return false; // CHANGE: typed modules are repaired out of any nested parent.
             const b = getAbsBounds(cell);
             const root = graph.getDefaultParent();
             const rootGeo = model.getGeometry(root);
@@ -2195,7 +2197,7 @@ Draw.loadPlugin(function (ui) {
         const originalIsValidDropTarget = graph.isValidDropTarget;
         graph.isValidDropTarget = function (cell, cells, evt) {
             const dragged = cells || [];
-            if (dragged.some(isModule) && cell && !isAllowedModuleParent(cell)) return false;
+            if (dragged.some(function (draggedCell) { return isModule(draggedCell) && cell && !isAllowedModuleParentForCell(draggedCell, cell); })) return false; // CHANGE
             if (dragged.some(isKanbanLaneCell)) return false; // NEW
             if (dragged.some(function (draggedCell) { return isKanbanCardCell(draggedCell) && cell && !isValidKanbanCardDropTarget(cell); })) return false; // NEW
             if (dragged.some(function (draggedCell) { const parent = getImmediateProtectedParent(draggedCell); return parent && cell && cell !== parent; })) return false; // NEW
@@ -2212,6 +2214,7 @@ Draw.loadPlugin(function (ui) {
                 if (!movable.length) return requested; // NEW
                 const args = Array.prototype.slice.call(arguments);
                 args[0] = movable;
+                if (target && movable.some(function (cell) { return isModule(cell) && !isAllowedModuleParentForCell(cell, target); })) args[4] = null; // CHANGE: illegal module drops move but do not reparent.
                 if (target && movable.some(function (cell) { const container = getClampContainer(cell); return container && target !== container && !isValidRoleCardTeamSectionDropTarget(target, cell); })) args[4] = null; // CHANGE
                 const adjusted = clampedMoveDelta(movable, Number(dx) || 0, Number(dy) || 0);
                 args[1] = adjusted.dx;
@@ -3889,29 +3892,31 @@ Draw.loadPlugin(function (ui) {
         if (cell && isModule(cell)) {
             const isTeam = isTeamModule(cell);
 
-            // Add Submodule (child module with relative coordinates)               
-            menu.addItem("Add Submodule", null, function () {
-                const pt = graph.getPointForEvent(evt);
-                const sub = placeChildInModule(
-                    cell,                                                           // parent module
-                    pt.x,                                                           // abs X
-                    pt.y,                                                           // abs Y
-                    function (relX, relY) {                                         // factory: create submodule
-                        const w = 160, h = 100;                                     // match createModuleCell defaults
-                        const subCell = new mxCell(
-                            "",
-                            new mxGeometry(relX, relY, w, h),
-                            "swimlane;whiteSpace=wrap;html=1;swimlaneFillColor=default;module=1"
-                        );
-                        subCell.vertex = true;
-                        return subCell;
-                    },
-                    { applyMargins: true }                                         // optional, keeps parent margins updated
-                );
-                if (sub) {
-                    graph.setSelectionCell(sub);
-                }
-            });
+            if (isPlainRegularModule(cell)) { // CHANGE: submodules are allowed only under regular modules.
+                // Add Submodule (child module with relative coordinates)
+                menu.addItem("Add Submodule", null, function () {
+                    const pt = graph.getPointForEvent(evt);
+                    const sub = placeChildInModule(
+                        cell,                                                           // parent module
+                        pt.x,                                                           // abs X
+                        pt.y,                                                           // abs Y
+                        function (relX, relY) {                                         // factory: create submodule
+                            const w = 160, h = 100;                                     // match createModuleCell defaults
+                            const subCell = new mxCell(
+                                "",
+                                new mxGeometry(relX, relY, w, h),
+                                "swimlane;whiteSpace=wrap;html=1;swimlaneFillColor=default;module=1"
+                            );
+                            subCell.vertex = true;
+                            return subCell;
+                        },
+                        { applyMargins: true }                                         // optional, keeps parent margins updated
+                    );
+                    if (sub) {
+                        graph.setSelectionCell(sub);
+                    }
+                });
+            }
 
             // Keep your existing margin editor (using ui.prompt)                         
             menu.addItem("Set Internal Margin (diagram units)...", null, function () { // CHANGE

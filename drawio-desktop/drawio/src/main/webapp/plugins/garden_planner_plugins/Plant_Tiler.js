@@ -3379,9 +3379,39 @@ Draw.loadPlugin(function (ui) {
     } // NEW
 
     function canConsiderBedPathSnapForCells(cells, evt, clone, target) {
-        if (clone || target || (evt && mxEvent.isAltDown && mxEvent.isAltDown(evt))) return false; // NEW
-        return (cells || []).length === 1 && isAxisAlignedPathSnapBed(cells[0]) && !!findGardenModuleAncestor(graph, cells[0]); // NEW
+        return !!resolveBedPathSnapMoveContext(cells, evt, clone, target, { singleBedOnly: true }); // CHANGE
     } // NEW
+
+    function resolveBedPathSnapMoveContext(cells, evt, clone, target, opts) {
+        if (clone || target || (evt && mxEvent.isAltDown && mxEvent.isAltDown(evt))) return null; // CHANGE
+        const moveCells = (cells || []).filter(Boolean); // CHANGE
+        if (moveCells.length === 1 && isAxisAlignedPathSnapBed(moveCells[0]) && !!findGardenModuleAncestor(graph, moveCells[0])) {
+            return { bedCell: moveCells[0], moveCells: [moveCells[0]], source: "single-bed" }; // CHANGE
+        } // CHANGE
+        if (opts && opts.singleBedOnly) return null; // CHANGE
+        if (graph.__trellisWorkspaceHandleDragActive !== true || moveCells.length < 2) return null; // CHANGE
+        const bedCell = moveCells[0]; // CHANGE
+        if (!isAxisAlignedPathSnapBed(bedCell) || !findGardenModuleAncestor(graph, bedCell)) return null; // CHANGE
+        return { bedCell, moveCells: moveCells.slice(), source: "workspace-handle" }; // CHANGE
+    } // CHANGE
+
+    function applyBedPathSnapDeltaNoTxn(model, cells, dx, dy) {
+        const changed = []; // CHANGE
+        const seen = new Set(); // CHANGE
+        for (const cell of (cells || [])) { // CHANGE
+            const id = cell && (cell.id || (cell.getId && cell.getId())); // CHANGE
+            if (!cell || (id && seen.has(id))) continue; // CHANGE
+            if (id) seen.add(id); // CHANGE
+            const geo = model.getGeometry ? model.getGeometry(cell) : cell.getGeometry && cell.getGeometry(); // CHANGE
+            if (!geo) continue; // CHANGE
+            const next = geo.clone ? geo.clone() : new mxGeometry(geo.x, geo.y, geo.width, geo.height); // CHANGE
+            next.x = (Number(next.x) || 0) + dx; // CHANGE
+            next.y = (Number(next.y) || 0) + dy; // CHANGE
+            model.setGeometry(cell, next); // CHANGE
+            changed.push(cell); // CHANGE
+        } // CHANGE
+        return changed; // CHANGE
+    } // CHANGE
 
     function applyBedPathSnapNoTxn(model, bedCell, opts) {
         if (!model || !bedCell || !isAxisAlignedPathSnapBed(bedCell)) return null; // NEW
@@ -3391,13 +3421,9 @@ Draw.loadPlugin(function (ui) {
         if (!moduleCell || !rect) return null; // NEW
         const evaluation = evaluateBedPathSnap(moduleCell, bedCell, rect); // NEW
         if (!evaluation || (!evaluation.dx && !evaluation.dy)) return evaluation; // NEW
-        const geo = model.getGeometry ? model.getGeometry(bedCell) : bedCell.getGeometry && bedCell.getGeometry(); // NEW
-        if (!geo) return evaluation; // NEW
-        const next = geo.clone ? geo.clone() : new mxGeometry(geo.x, geo.y, geo.width, geo.height); // NEW
-        next.x = (Number(next.x) || 0) + evaluation.dx; // NEW
-        next.y = (Number(next.y) || 0) + evaluation.dy; // NEW
-        model.setGeometry(bedCell, next); // NEW
-        evaluation.applied = true; // NEW
+        const changed = applyBedPathSnapDeltaNoTxn(model, (opts && opts.moveCells) || [bedCell], evaluation.dx, evaluation.dy); // CHANGE
+        evaluation.applied = changed.length > 0; // CHANGE
+        evaluation.appliedCells = changed; // CHANGE
         return evaluation; // NEW
     } // NEW
 
@@ -6427,18 +6453,18 @@ Draw.loadPlugin(function (ui) {
 
         const oldMoveCells = graph.moveCells; // NEW
         graph.moveCells = function (cells, dx, dy, clone, target, evt, mapping) { // NEW
-            const shouldSnap = canConsiderBedPathSnapForCells(cells, evt, clone, target); // NEW
-            if (!shouldSnap) return oldMoveCells.call(this, cells, dx, dy, clone, target, evt, mapping); // NEW
+            const snapContext = resolveBedPathSnapMoveContext(cells, evt, clone, target); // CHANGE
+            if (!snapContext) return oldMoveCells.call(this, cells, dx, dy, clone, target, evt, mapping); // CHANGE
             const model = graph.getModel(); // NEW
             let res; // NEW
             model.beginUpdate(); // NEW
             try { // NEW
                 res = oldMoveCells.call(this, cells, dx, dy, clone, target, evt, mapping); // NEW
-                applyBedPathSnapNoTxn(model, cells[0], { source: "bed-moved", event: evt }); // NEW
+                applyBedPathSnapNoTxn(model, snapContext.bedCell, { source: "bed-moved", event: evt, moveCells: snapContext.moveCells }); // CHANGE
             } finally { // NEW
                 model.endUpdate(); // NEW
             } // NEW
-            if (graph.refresh) graph.refresh(cells[0]); // NEW
+            if (graph.refresh) (snapContext.moveCells || []).forEach(function (cell) { graph.refresh(cell); }); // CHANGE
             return res; // NEW
         }; // NEW
     })();

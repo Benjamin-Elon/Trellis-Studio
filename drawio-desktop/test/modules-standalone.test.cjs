@@ -1000,6 +1000,60 @@ test("module cells cannot be dropped under non-module parents", () => {
     assert.equal(harness.model.getParent(mod), harness.root);
 });
 
+test("only regular modules can be dropped under regular modules", () => { // NEW
+    const typedCases = [
+        { name: "garden", attrs: { garden_module: "1" } },
+        { name: "task", attrs: { task_module: "1" } },
+        { name: "team", attrs: { team_module: "1" } },
+        { name: "roadmap", attrs: { roadmap_module: "1" } }
+    ]; // NEW
+
+    typedCases.forEach(({ name, attrs }) => {
+        const harness = makeHarness();
+        const parent = harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "regular");
+        const regularChild = makeCell(harness, {}, new TestGeometry(10, 10, 30, 20), "swimlane;whiteSpace=wrap;html=1;module=1;"); // NEW
+        const typedParent = makeCell(harness, attrs, new TestGeometry(500, 0, 160, 100), "swimlane;whiteSpace=wrap;html=1;module=1;");
+        const typedChild = makeCell(harness, attrs, new TestGeometry(700, 0, 160, 100), "swimlane;whiteSpace=wrap;html=1;module=1;");
+        harness.model.add(harness.root, regularChild); // NEW
+        harness.model.add(harness.root, typedParent);
+        harness.model.add(harness.root, typedChild);
+
+        assert.equal(harness.graph.isValidDropTarget(parent, [regularChild]), true, name + " setup should allow regular nesting"); // NEW
+        harness.graph.moveCells([regularChild], 0, 0, false, parent);
+        assert.equal(harness.model.getParent(regularChild), parent, name + " setup should keep regular child nested"); // NEW
+
+        assert.equal(harness.graph.isValidDropTarget(parent, [typedChild]), false, name + " modules cannot become children"); // NEW
+        harness.graph.moveCells([typedChild], 0, 0, false, parent);
+        assert.equal(harness.model.getParent(typedChild), harness.root, name + " module stays top-level after invalid drop"); // NEW
+
+        const regularForTypedParent = makeCell(harness, {}, new TestGeometry(510, 10, 30, 20), "swimlane;whiteSpace=wrap;html=1;module=1;"); // NEW
+        harness.model.add(harness.root, regularForTypedParent); // NEW
+        assert.equal(harness.graph.isValidDropTarget(typedParent, [regularForTypedParent]), false, "regular module cannot be nested under " + name); // NEW
+        harness.graph.moveCells([regularForTypedParent], 0, 0, false, typedParent);
+        assert.equal(harness.model.getParent(regularForTypedParent), harness.root, "regular module stays top-level after invalid " + name + " drop"); // NEW
+    });
+});
+
+test("invalid nested modules are restored to root with page position preserved", () => { // NEW
+    const harness = makeHarness();
+    const regularParent = harness.graph.__trellisModules.createModuleAtPoint({ x: 100, y: 50 }, "regular");
+    const typedParent = makeCell(harness, { garden_module: "1" }, new TestGeometry(400, 80, 160, 100), "swimlane;whiteSpace=wrap;html=1;module=1;");
+    const nestedGarden = makeCell(harness, { garden_module: "1" }, new TestGeometry(12, 18, 160, 100), "swimlane;whiteSpace=wrap;html=1;module=1;");
+    const nestedRegular = harness.graph.__trellisModules.createModuleAtPoint({ x: 700, y: 0 }, "regular");
+    harness.model.add(harness.root, typedParent);
+    harness.model.add(regularParent, nestedGarden);
+    harness.model.add(typedParent, nestedRegular);
+
+    const gardenBefore = absoluteBounds(nestedGarden);
+    const regularBefore = absoluteBounds(nestedRegular);
+    harness.graph.fireEvent(makeEventObject("cellsMoved", ["cells", [nestedGarden, nestedRegular], "dx", 0, "dy", 0]));
+
+    assert.equal(harness.model.getParent(nestedGarden), harness.root); // NEW
+    assert.deepEqual(absoluteBounds(nestedGarden), gardenBefore); // NEW
+    assert.equal(harness.model.getParent(nestedRegular), harness.root); // NEW
+    assert.deepEqual(absoluteBounds(nestedRegular), regularBefore); // NEW
+});
+
 test("protected trellis objects clamp by module type", () => {
     const cases = [
         { name: "garden bed", attrs: { garden_bed: "1" }, type: "garden", expected: { dx: 40, dy: 50 }, inside: insideModuleBounds },
@@ -1301,6 +1355,18 @@ test("moved modules push neighbors using the move vector", () => {
     assert.equal(right.geometry.x, 320); // NEW
 });
 
+test("moved typed top-level modules still push neighbors", () => { // NEW
+    const harness = makeHarness();
+    const garden = makeCell(harness, { garden_module: "1" }, new TestGeometry(0, 0, 160, 100), "swimlane;whiteSpace=wrap;html=1;module=1;"); // NEW
+    const right = harness.graph.__trellisModules.createModuleAtPoint({ x: 300, y: 0 }, "regular"); // NEW
+    harness.model.add(harness.root, garden); // NEW
+    const moved = garden.geometry.clone(); // NEW
+    moved.x = 120; // NEW
+    harness.model.setGeometry(garden, moved); // NEW
+    harness.graph.fireEvent(makeEventObject("cellsMoved", ["cells", [garden], "dx", 120, "dy", 0])); // NEW
+    assert.equal(right.geometry.x, 320); // NEW
+}); // NEW
+
 test("resized modules push neighbors on expanded edges", () => {
     const harness = makeHarness();
     const left = harness.graph.__trellisModules.createModuleAtPoint({ x: 0, y: 0 }, "regular");
@@ -1410,6 +1476,7 @@ test("module context menu omits module type conversion actions", () => { // NEW
     assert.equal(regularLabels.some(label => /^Set as /.test(label)), false); // NEW
     assert.equal(gardenLabels.some(label => /^Set as /.test(label)), false); // NEW
     assert.ok(regularLabels.includes("Add Submodule")); // NEW
+    assert.equal(gardenLabels.includes("Add Submodule"), false); // NEW
     assert.ok(gardenLabels.includes("Set Internal Margin (diagram units)...")); // NEW
 }); // NEW
 
